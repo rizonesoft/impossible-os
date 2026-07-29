@@ -99,6 +99,34 @@ def _write_atomic(path, payload):
         raise
 
 
+# Run identity, read once from the file scripts/test.sh derives before the
+# build. It is carried on EVERY envelope this module writes, refusals
+# included: an artifact nobody can place is exactly the one a dashboard needs
+# to place, and a refusal that cannot be attributed to a run is indistinguishable
+# from a refusal belonging to some other run. Identity never softens a refusal
+# -- `summary` stays null and `summary_error` stays set alongside it.
+_IDENTITY = None
+
+
+def _load_identity(path):
+    """Return the identity object, or None when it is absent or unreadable.
+
+    A missing identity file is NOT a refusal: the artifact's own gates are
+    about stream integrity, and failing the harvest because provenance is
+    unavailable would turn a metadata gap into a false red.
+    """
+    if not path:
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            value = json.load(handle)
+    except (OSError, ValueError):
+        sys.stderr.write("utest-json-harvest: identity unreadable at %s "
+                         "-- publishing without it\n" % path)
+        return None
+    return value if isinstance(value, dict) else None
+
+
 def _refuse(out_path, reason, detail=None):
     """Write the error envelope and report the reason on stderr.
 
@@ -115,6 +143,7 @@ def _refuse(out_path, reason, detail=None):
     }
     if detail:
         envelope["detail"] = detail
+    envelope["run_identity"] = _IDENTITY
     _write_atomic(out_path, envelope)
     sys.stderr.write("utest-json-harvest: refused -- %s%s\n"
                      % (reason, (": " + detail) if detail else ""))
@@ -365,15 +394,32 @@ def harvest(log_path, out_path):
         "testcases": testcases,
         "skip_blocks": skip_blocks,
         "summary": summary,
+        "run_identity": _IDENTITY,
     })
     return 0
 
 
 def main(argv):
-    if len(argv) != 2:
-        sys.stderr.write("usage: utest-json-harvest.py <test-log> <out.json>\n")
+    global _IDENTITY
+    identity_path = None
+    positional = []
+    i = 0
+    while i < len(argv):
+        if argv[i] == "--identity":
+            if i + 1 >= len(argv):
+                sys.stderr.write("utest-json-harvest: --identity needs a path\n")
+                return 2
+            identity_path = argv[i + 1]
+            i += 2
+            continue
+        positional.append(argv[i])
+        i += 1
+    if len(positional) != 2:
+        sys.stderr.write("usage: utest-json-harvest.py <test-log> <out.json> "
+                         "[--identity <identity.json>]\n")
         return 2
-    return harvest(argv[0], argv[1])
+    _IDENTITY = _load_identity(identity_path)
+    return harvest(positional[0], positional[1])
 
 
 if __name__ == "__main__":

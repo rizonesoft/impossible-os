@@ -8157,6 +8157,173 @@ else
     t_fail "framing: the ring-3 forgery fixture is wired into the manifest and build"
 fi
 
+# --- run identity + artifact publication lifecycle --------------------------
+#
+# The artifacts describe a run that has to be placeable: which commit, when,
+# and on which leg. These fixtures pin the two properties that are easy to
+# regress -- identity reaches EVERY envelope including the refusals, and no
+# exit path may leave a previous run's success standing at a canonical path.
+
+IDENT_TMP=$(mktemp -d)
+trap 'rm -rf "$FRAME_TMP" "$IDENT_TMP"' EXIT
+
+cat > "$IDENT_TMP/identity.json" <<'IDENTEOF'
+{
+ "schema": "utest-run-identity-v1",
+ "timestamp": "2026-07-29T00:00:00Z",
+ "commit": "0123456789abcdef0123456789abcdef01234567",
+ "leg": "fixture-tcg-2cpu",
+ "leg_source": "derived",
+ "accel": "tcg",
+ "cpus": 2
+}
+IDENTEOF
+
+# i1. A clean harvest carries identity beside the summary, not instead of it.
+frame_log "feedface" "$IDENT_TMP/good.log"
+if python3 "$HARVEST" "$IDENT_TMP/good.log" "$IDENT_TMP/good.json" \
+       --identity "$IDENT_TMP/identity.json" >/dev/null 2>&1 &&
+   python3 -c "
+import json,sys
+d=json.load(open('$IDENT_TMP/good.json'))
+ok = (d['run_identity']['leg'] == 'fixture-tcg-2cpu'
+      and d['run_identity']['commit'].startswith('0123456789')
+      and d['summary']['total'] == 1)
+sys.exit(0 if ok else 1)"; then
+    t_pass "identity: a clean harvest carries run identity alongside a real summary"
+else
+    t_fail "identity: a clean harvest carries run identity alongside a real summary"
+fi
+
+# i2. A REFUSED artifact is the one a dashboard most needs to place, so it
+#     carries identity too -- without softening the refusal markers. An
+#     identity-bearing envelope that lost `summary: null` would read as a
+#     clean empty run.
+sed -E 's/UTEST-feedface: //' "$IDENT_TMP/good.log" > "$IDENT_TMP/unframed.log"
+python3 "$HARVEST" "$IDENT_TMP/unframed.log" "$IDENT_TMP/refused.json" \
+    --identity "$IDENT_TMP/identity.json" >/dev/null 2>&1 && IRC=0 || IRC=$?
+if [ "$IRC" != "0" ] && python3 -c "
+import json,sys
+d=json.load(open('$IDENT_TMP/refused.json'))
+ok = (d['summary'] is None and d['summary_error']
+      and d['run_identity']['leg'] == 'fixture-tcg-2cpu')
+sys.exit(0 if ok else 1)"; then
+    t_pass "identity: a refused artifact carries identity and stays refused"
+else
+    t_fail "identity: a refused artifact carries identity and stays refused" "rc=$IRC"
+fi
+
+# i3. Missing provenance must not manufacture a red. The artifact's gates are
+#     about stream integrity; failing a good harvest because the identity file
+#     is absent would turn a metadata gap into a false failure.
+if python3 "$HARVEST" "$IDENT_TMP/good.log" "$IDENT_TMP/noident.json" \
+       --identity "$IDENT_TMP/does-not-exist.json" >/dev/null 2>&1 &&
+   python3 -c "
+import json,sys
+d=json.load(open('$IDENT_TMP/noident.json'))
+sys.exit(0 if d['run_identity'] is None and d['summary']['total'] == 1 else 1)"; then
+    t_pass "identity: an unreadable identity file publishes without it, not red"
+else
+    t_fail "identity: an unreadable identity file publishes without it, not red"
+fi
+
+# i4. The two-argument form still works. test-swtpm.sh and any ad-hoc caller
+#     invoke the harvester without identity.
+if python3 "$HARVEST" "$IDENT_TMP/good.log" "$IDENT_TMP/legacy.json" >/dev/null 2>&1; then
+    t_pass "identity: the harvester's two-argument form is unchanged"
+else
+    t_fail "identity: the harvester's two-argument form is unchanged"
+fi
+
+# i5. Lifecycle ordering. The canonical artifacts must be invalidated before
+#     ANY exit in the runner: the CI-parity preflight (absent QEMU), the
+#     SMP_CPUS check and the UTEST_LEG refusal all exit, and each one is a
+#     failed invocation that must not leave the last run's success behind.
+LEGSH="$REPO_ROOT/scripts/test.sh"
+if awk '/rm -f "\$XML_OUT" "\$JSON_OUT" "\$IDENTITY_OUT"/{inv=NR}
+        /CI_PARITY=1 but/{ciexit=NR}
+        /is not a CPU count/{cpuexit=NR}
+        /is not a valid leg label/{legexit=NR}
+        END{exit !(inv && ciexit && cpuexit && legexit &&
+                   inv < ciexit && inv < cpuexit && inv < legexit)}' "$LEGSH"; then
+    t_pass "identity: canonical artifacts are invalidated before every exit that can precede assembly"
+else
+    t_fail "identity: canonical artifacts are invalidated before every exit that can precede assembly"
+fi
+
+# i6. The guard is armed before the environment preflight, and the boot.conf
+#     cleanup handler that REPLACES it re-calls the guard. Bash keeps one
+#     handler per signal: if the second one forgot the guard, every failure
+#     after boot.conf patching would go back to leaving a stale file.
+if awk '/^trap .utest_artifact_guard \$\?. EXIT/{early=NR}
+        /^# CI_PARITY=1 --/{pre=NR}
+        END{exit !(early && pre && early < pre)}' "$LEGSH" &&
+   awk '/^cleanup\(\)/{c=1} c && /utest_artifact_guard "\$ec"/{found=1}
+        END{exit !found}' "$LEGSH"; then
+    t_pass "identity: the artifact guard is armed before the preflight and survives trap replacement"
+else
+    t_fail "identity: the artifact guard is armed before the preflight and survives trap replacement"
+fi
+
+# i7. The -smp flag and the leg name must come from ONE variable. While the
+#     flag was a bare literal, any identifier naming a CPU count was an
+#     assertion nothing kept true.
+if grep -q -- '-smp "\$SMP_CPUS"' "$LEGSH" && grep -q 'SMP_CPUS_SAFE}cpu' "$LEGSH"; then
+    t_pass "identity: the -smp flag and the leg's CPU count share one variable"
+else
+    t_fail "identity: the -smp flag and the leg's CPU count share one variable"
+fi
+
+# i8. A cancelled run must NOT exit 0. The signal handler assigns before
+#     calling cleanup, which leaves $? at 0, so a run killed mid-suite used to
+#     report success to its caller while its own artifact said the run never
+#     finished -- a green CI step over a run_incomplete document.
+if grep -q "trap 'UTEST_SIGNALLED=1; cleanup 130' INT" "$LEGSH" &&
+   grep -q "trap 'UTEST_SIGNALLED=1; cleanup 143' TERM" "$LEGSH" &&
+   awk '/^cleanup\(\)/{c=1} c && /trap - EXIT INT TERM/{found=1} END{exit !found}' "$LEGSH"; then
+    t_pass "identity: signals carry 128+signo and cleanup disarms its own traps"
+else
+    t_fail "identity: signals carry 128+signo and cleanup disarms its own traps"
+fi
+
+# i9. Publication state is tracked PER FORMAT. A single flag let a failure
+#     landing between the XML publication and the JSON assembly suppress the
+#     JSON refusal, leaving a requested artifact absent with nothing saying why.
+if grep -q 'XML_PUBLISHED=0' "$LEGSH" && grep -q 'JSON_PUBLISHED=0' "$LEGSH" &&
+   ! grep -q 'ARTIFACT_PUBLISHED' "$LEGSH" &&
+   awk '/utest_artifact_guard\(\)/{g=1}
+        g && /XML_PUBLISHED:-0.*-eq 0/{x=1}
+        g && /JSON_PUBLISHED:-0.*-eq 0/{j=1}
+        END{exit !(x && j)}' "$LEGSH"; then
+    t_pass "identity: XML and JSON publication state is tracked independently"
+else
+    t_fail "identity: XML and JSON publication state is tracked independently"
+fi
+
+# i10. Every identity field that reaches a filename, an XML attribute or an
+#      unquoted JSON number is validated or filtered. SMP_CPUS=2x published
+#      invalid JSON; a QEMU basename carrying a quote or ampersand broke both
+#      formats. Filtering is what lets the emitters skip escaping.
+if awk '/SMP_CPUS_VALID=0/{v=1} /-le 256/{b=1} END{exit !(v && b)}' "$LEGSH" &&
+   grep -q "RUN_QEMU=\"\$(basename \"\$QEMU_BIN\" | tr -cd 'A-Za-z0-9._-')\"" "$LEGSH" &&
+   grep -q "rev-parse HEAD 2>/dev/null | tr -cd 'a-f0-9'" "$LEGSH"; then
+    t_pass "identity: CPU count is range-checked and every free-text field is charset-filtered"
+else
+    t_fail "identity: CPU count is range-checked and every free-text field is charset-filtered"
+fi
+
+# i11. UNTRACKED files must mark the tree dirty. The Makefile discovers
+#      sources with find (ASM_SRCS/C_SRCS), so an untracked .c or .asm is
+#      compiled INTO the image under test; `git diff --quiet HEAD` ignores it
+#      exactly, which would attribute an unreproducible run to a clean SHA.
+if grep -q 'git -C "\$PROJECT" status --porcelain' "$LEGSH" &&
+   ! grep -q 'git -C "\$PROJECT" diff --quiet HEAD' "$LEGSH" &&
+   grep -qE '^(ASM|C)_SRCS[[:space:]]*:=[[:space:]]*\$\(shell find' "$REPO_ROOT/Makefile"; then
+    t_pass "identity: an untracked build input marks the commit dirty"
+else
+    t_fail "identity: an untracked build input marks the commit dirty"
+fi
+
 # ============================================================================
 # Summary
 # ============================================================================

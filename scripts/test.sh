@@ -110,61 +110,152 @@ for arg in "$@"; do
     esac
 done
 
-# --- Step 1: Build ---
-echo -e "${CYAN}${BOLD}[TEST]${RESET} Building kernel..."
-if ! bash "$PROJECT/scripts/build.sh" > /dev/null 2>&1; then
-    echo -e "${RED}${BOLD}[FAIL]${RESET} Build failed. Check build/build.log"
-    exit 1
-fi
-echo -e "${GREEN}[TEST]${RESET} Build OK"
-
-# --- Step 2: Patch boot.conf for test mode ---
+# --- Step 0a: Artifact lifecycle, armed before ANY exit ---
 #
-# An ARRAY, not a space-joined string. The values here are user-supplied and
-# one of them is a GLOB: a scalar expanded unquoted as `$PATCH_ARGS` is
-# pathname-expanded against the repository first, so `UTEST_FILTER=*` would
-# reach the patcher as a list of repo filenames -- silently writing some
-# arbitrary filename as the filter and shifting every later key/value pair.
-# The array keeps each element exactly as typed.
-PATCH_ARGS=(test 1)
-if [ -n "$SUITE_CATEGORY" ]; then
-    PATCH_ARGS+=(test_suite "$SUITE_CATEGORY")
-fi
-if [ "$QUIET_MODE" -eq 1 ]; then
-    PATCH_ARGS+=(test_quiet 1)
-fi
-if [ "$XML_MODE" -eq 1 ]; then
-    PATCH_ARGS+=(xml 1)
-fi
-if [ "$JSON_MODE" -eq 1 ]; then
-    PATCH_ARGS+=(json 1)
-fi
-if [ "$TAP_MODE" -eq 1 ]; then
-    PATCH_ARGS+=(tap 1)
-fi
-if [ -n "$UTEST_FILTER" ]; then
-    PATCH_ARGS+=(utest_filter "$UTEST_FILTER")
-fi
-bash "$PROJECT/scripts/patch-boot-conf.sh" "${PATCH_ARGS[@]}" > /dev/null
+# Until now both machine artifacts described a run that nothing could place:
+# no timestamp, no commit, no environment identity, and one fixed output path
+# per artifact that the next configuration's run silently overwrote. The same
+# commit is deliberately tested on several configurations, and this repo's
+# doctrine treats a failure on ONE of them as the finding rather than noise --
+# which is only actionable if two runs' artifacts can be told apart.
+#
+# This half runs FIRST, ahead of the environment preflight below, because the
+# preflight can exit. Stale-artifact removal used to live inside the harvest
+# step alone, so every earlier exit -- a failed build, an absent CI-parity
+# QEMU, a bad argument -- left the PREVIOUS run's green artifact at the
+# canonical path, and CI that uploads artifacts regardless of exit code
+# attributes it to this run. Nothing below this line can exit without leaving
+# either a document belonging to THIS run or no document at all.
 
-# Install cleanup trap now that boot.conf is patched. Runs on normal exit,
-# SIGINT (Ctrl-C), or SIGTERM, restoring boot.conf and killing any backgrounded
-# QEMU process. Preserves the caller's exit code.
-QEMU_PID=""
-cleanup() {
-    local ec=$?
-    if [ -n "${QEMU_PID:-}" ] && kill -0 "$QEMU_PID" 2>/dev/null; then
-        kill "$QEMU_PID" 2>/dev/null || true
-        wait "$QEMU_PID" 2>/dev/null || true
-    fi
-    bash "$PROJECT/scripts/patch-boot-conf.sh" reset > /dev/null 2>&1 || true
-    exit "$ec"
+XML_OUT="$PROJECT/build/test-results.xml"
+JSON_OUT="$PROJECT/build/test-results.json"
+IDENTITY_OUT="$PROJECT/build/test-run-identity.json"
+# The leg-suffixed destinations cannot be named until the accelerator is
+# chosen; until then the guard publishes to the canonical paths alone.
+XML_LEG_OUT=""
+JSON_LEG_OUT=""
+
+mkdir -p "$PROJECT/build"
+rm -f "$XML_OUT" "$JSON_OUT" "$IDENTITY_OUT"
+
+# Identity fields, filled by Step 0b. Read at call time, so a refusal
+# published before Step 0b carries "unknown" rather than a stale value.
+RUN_TS="unknown"
+RUN_COMMIT="unknown"
+RUN_LEG="unknown"
+RUN_LEG_SOURCE="underived"
+RUN_ACCEL="unknown"
+RUN_HOST="unknown"
+RUN_HOSTNAME="unknown"
+RUN_QEMU="unknown"
+SMP_CPUS_SAFE="0"
+
+# Every identity value is generated or charset-filtered before it reaches
+# these emitters (ISO timestamp, hex SHA, [a-z0-9-] leg, filtered hostname and
+# QEMU basename, integer CPU count), so neither XML nor JSON escaping has
+# anything to escape. The filters are what make that true -- do not widen one
+# without adding the escaping it removes the need for.
+utest_xml_identity_attrs() {
+    printf ' timestamp="%s" hostname="%s"' "$RUN_TS" "$RUN_HOSTNAME"
 }
-trap cleanup EXIT INT TERM
 
-# --- Step 3: Boot QEMU headless ---
-cp "$OVMF_VARS" "$OVMF_VARS_CP"
-rm -f "$TEST_LOG"
+utest_xml_identity_props() {
+    printf '    <property name="commit" value="%s"/>\n' "$RUN_COMMIT"
+    printf '    <property name="leg" value="%s"/>\n' "$RUN_LEG"
+    printf '    <property name="leg_source" value="%s"/>\n' "$RUN_LEG_SOURCE"
+    printf '    <property name="accel" value="%s"/>\n' "$RUN_ACCEL"
+    printf '    <property name="cpus" value="%s"/>\n' "$SMP_CPUS_SAFE"
+    printf '    <property name="qemu" value="%s"/>\n' "$RUN_QEMU"
+}
+
+# Publish a staged document to the leg path first and the canonical alias
+# second. The leg artifact is the record; the alias is a convenience that must
+# never be newer than the record it points at. Before the leg is known the
+# staged file becomes the canonical artifact directly.
+utest_publish() {
+    local staged="$1" leg="$2" canonical="$3"
+    if [ -n "$leg" ]; then
+        mv -f "$staged" "$leg" || return 1
+        cp -f "$leg" "$canonical.tmp" || return 1
+        mv -f "$canonical.tmp" "$canonical" || return 1
+    else
+        mv -f "$staged" "$canonical" || return 1
+    fi
+    return 0
+}
+
+# Tracked PER FORMAT. One flag for both would let a signal landing between the
+# XML publication and the JSON assembly suppress the JSON refusal, leaving a
+# requested artifact simply absent with nothing saying why.
+XML_PUBLISHED=0
+JSON_PUBLISHED=0
+
+# Set by the INT/TERM handlers so a refusal can say what actually happened. A
+# signalled run reaches the trap with $? still 0, and a document reading
+# "exited with status 0" while carrying errors="1" is exactly the kind of
+# self-contradicting artifact the rest of this pipeline refuses to publish.
+UTEST_SIGNALLED=0
+
+utest_artifact_guard() {
+    local ec="${1:-0}" why staged
+    if [ "${UTEST_SIGNALLED:-0}" -eq 1 ]; then
+        why="interrupted by a signal before the artifact was assembled"
+    else
+        why="the run exited with status $ec before the artifact was assembled"
+    fi
+
+    # Only a format this run would have produced owes a document. Publishing a
+    # refusal for an artifact nobody asked for is noise, not honesty.
+    if [ "${XML_MODE:-0}" -eq 1 ] || [ "${HAS_XML:-0}" -eq 1 ]; then
+        if [ "${XML_PUBLISHED:-0}" -eq 0 ]; then
+            staged="$PROJECT/build/.test-results-refusal.xml"
+            if {
+                echo '<?xml version="1.0" encoding="UTF-8"?>'
+                printf '<testsuite name="impossible-os-usermode" tests="1" failures="0" skipped="0" errors="1" time="0"%s>\n' \
+                    "$(utest_xml_identity_attrs)"
+                echo '  <properties>'
+                echo '    <property name="aborted" value="true"/>'
+                echo '    <property name="not_run" value="0"/>'
+                utest_xml_identity_props
+                echo '  </properties>'
+                echo '  <testcase name="run-incomplete" classname="infrastructure">'
+                printf '    <error message="%s"/>\n' "$why"
+                echo '  </testcase>'
+                echo '</testsuite>'
+            } > "$staged" 2>/dev/null; then
+                utest_publish "$staged" "$XML_LEG_OUT" "$XML_OUT" && XML_PUBLISHED=1
+            fi
+            rm -f "$staged"
+        fi
+    fi
+
+    if [ "${JSON_MODE:-0}" -eq 1 ] || [ "${HAS_JSON:-0}" -eq 1 ]; then
+        if [ "${JSON_PUBLISHED:-0}" -eq 0 ]; then
+            staged="$PROJECT/build/.test-results-refusal.json"
+            if {
+                printf '{"schema": "utest-json-v1", "testcases": [], "skip_blocks": [],\n'
+                printf ' "summary": null, "summary_error": "run_incomplete",\n'
+                printf ' "detail": "%s",\n' "$why"
+                printf ' "run_identity": '
+                cat "$IDENTITY_OUT" 2>/dev/null || printf 'null'
+                printf '}\n'
+            } > "$staged" 2>/dev/null; then
+                utest_publish "$staged" "$JSON_LEG_OUT" "$JSON_OUT" && JSON_PUBLISHED=1
+            fi
+            rm -f "$staged"
+        fi
+    fi
+    return 0
+}
+
+# Armed before the environment preflight. The boot.conf `cleanup` handler
+# below REPLACES these (bash keeps one handler per signal), and calls the same
+# guard. INT and TERM carry their conventional 128+signo status: a cancelled
+# run that exited 0 would be reported as a SUCCESS by every caller, including
+# CI, no matter what its artifact said.
+trap 'utest_artifact_guard $?' EXIT
+trap 'UTEST_SIGNALLED=1; utest_artifact_guard 130; exit 130' INT
+trap 'UTEST_SIGNALLED=1; utest_artifact_guard 143; exit 143' TERM
 
 # CI_PARITY=1 -- reproduce what CI runs, exactly, before code leaves the machine.
 #
@@ -226,13 +317,194 @@ else
     echo -e "${YELLOW}[TEST]${RESET} KVM not available -- using TCG (add user to kvm group for 10x speedup)"
 fi
 
+# --- Step 0b: Run identity ---
+#
+# The accelerator is settled, so the leg can be named. Everything here is
+# derived from what the run OBSERVED; nothing is taken on an operator's word.
+
+# xs:dateTime (the type the JUnit `timestamp` attribute carries) accepts the
+# trailing Z. A local naive timestamp cannot be ordered against another leg
+# that ran in a different zone, which is most of the point of carrying one.
+RUN_TS="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+RUN_COMMIT="$(git -C "$PROJECT" rev-parse HEAD 2>/dev/null | tr -cd 'a-f0-9')"
+if [ -z "$RUN_COMMIT" ]; then
+    RUN_COMMIT="unknown"
+elif [ -n "$(git -C "$PROJECT" status --porcelain 2>/dev/null)" ]; then
+    # UNTRACKED files count. The Makefile discovers sources with `find`
+    # (ASM_SRCS/C_SRCS), so an untracked .c or .asm is compiled INTO the image
+    # under test -- attributing that run to the bare SHA would make an
+    # unreproducible result look commit-reproducible. `git diff --quiet HEAD`
+    # misses exactly that case, which is why this uses status --porcelain.
+    RUN_COMMIT="${RUN_COMMIT}-dirty"
+fi
+
+# Read back from the arguments QEMU will actually receive, not from ACCEL_NAME
+# (human prose) -- the artifact must report what ran.
+case "$ACCEL_ARGS" in
+    *"-accel kvm"*) RUN_ACCEL="kvm" ;;
+    *)              RUN_ACCEL="tcg" ;;
+esac
+
+# One variable behind both the -smp flag and the leg name. While the flag was
+# a bare literal, any identifier naming a CPU count was an assertion nothing
+# kept true. It is validated because it reaches a filename, an XML attribute
+# and an UNQUOTED JSON number: `SMP_CPUS=2x` would publish invalid JSON, and a
+# value carrying a slash would invent path components.
+SMP_CPUS="${SMP_CPUS:-2}"
+case "$SMP_CPUS" in
+    ''|*[!0-9]*) SMP_CPUS_VALID=0 ;;
+    *)           SMP_CPUS_VALID=1 ;;
+esac
+if [ "$SMP_CPUS_VALID" -eq 1 ] && [ "$SMP_CPUS" -ge 1 ] && [ "$SMP_CPUS" -le 256 ]; then
+    SMP_CPUS_SAFE="$SMP_CPUS"
+else
+    echo -e "${RED}[TEST]${RESET} SMP_CPUS='$SMP_CPUS' is not a CPU count (expected 1-256)."
+    exit 1
+fi
+
+# QEMU_BIN is caller-supplied and its basename reaches both artifact formats.
+# Filtering to the same charset the other identity fields use is what lets
+# every emitter below skip escaping.
+RUN_QEMU="$(basename "$QEMU_BIN" | tr -cd 'A-Za-z0-9._-')"
+[ -n "$RUN_QEMU" ] || RUN_QEMU="unknown"
+
+if [ -n "${WSL_DISTRO_NAME:-}" ] || grep -qi microsoft /proc/version 2>/dev/null; then
+    RUN_HOST="wsl2"
+else
+    RUN_HOST="$(uname -s 2>/dev/null | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9')"
+    [ -n "$RUN_HOST" ] || RUN_HOST="unknown"
+fi
+
+RUN_HOSTNAME="$(uname -n 2>/dev/null | tr -cd 'A-Za-z0-9._-')"
+[ -n "$RUN_HOSTNAME" ] || RUN_HOSTNAME="unknown"
+
+RUN_LEG="${RUN_HOST}-${RUN_ACCEL}-${SMP_CPUS_SAFE}cpu"
+[ "${CI_PARITY:-0}" = "1" ] && RUN_LEG="${RUN_LEG}-ciparity"
+RUN_LEG_SOURCE="derived"
+
+# UTEST_LEG may ADD a label; it may not redefine what ran. This script can only
+# ever select KVM or TCG, so an override that renamed a leg to whpx, vbox or
+# baremetal would publish coverage nothing executed. The derived accelerator
+# and CPU count stay in the name and in their own fields either way, and the
+# provenance is recorded so a consumer can see a human had a hand in it.
+if [ -n "${UTEST_LEG:-}" ]; then
+    if printf '%s' "$UTEST_LEG" | grep -qE '^[a-z0-9][a-z0-9-]{0,31}$'; then
+        RUN_LEG="${RUN_LEG}-${UTEST_LEG}"
+        RUN_LEG_SOURCE="derived+override"
+    else
+        # Refuse rather than ignore: the value lands in a filename, and a
+        # silently dropped override publishes under a name the caller does
+        # not expect -- which is the collision this whole step exists to stop.
+        echo -e "${RED}[TEST]${RESET} UTEST_LEG='$UTEST_LEG' is not a valid leg label."
+        echo -e "${YELLOW}       Allowed: 1-32 chars of [a-z0-9-], starting alphanumeric.${RESET}"
+        exit 1
+    fi
+fi
+
+# Leg-suffixed artifacts accumulate (one per configuration); the canonical
+# unsuffixed paths, already cleared in Step 0a, remain for existing consumers
+# and always name THIS invocation rather than merely the last successful one.
+XML_LEG_OUT="$PROJECT/build/test-results-${RUN_LEG}.xml"
+JSON_LEG_OUT="$PROJECT/build/test-results-${RUN_LEG}.json"
+# The .staged siblings go too: a publication that failed partway through a
+# previous run leaves one behind, and it is not covered by the destinations.
+rm -f "$XML_LEG_OUT" "$JSON_LEG_OUT" "$XML_LEG_OUT.staged" "$JSON_LEG_OUT.staged"
+
+{
+    printf '{\n'
+    printf ' "schema": "utest-run-identity-v1",\n'
+    printf ' "timestamp": "%s",\n' "$RUN_TS"
+    printf ' "commit": "%s",\n' "$RUN_COMMIT"
+    printf ' "leg": "%s",\n' "$RUN_LEG"
+    printf ' "leg_source": "%s",\n' "$RUN_LEG_SOURCE"
+    printf ' "host": "%s",\n' "$RUN_HOST"
+    printf ' "hostname": "%s",\n' "$RUN_HOSTNAME"
+    printf ' "accel": "%s",\n' "$RUN_ACCEL"
+    printf ' "cpus": %s,\n' "$SMP_CPUS_SAFE"
+    printf ' "qemu": "%s",\n' "$RUN_QEMU"
+    printf ' "ci_parity": %s\n' "$([ "${CI_PARITY:-0}" = "1" ] && echo true || echo false)"
+    printf '}\n'
+} > "$IDENTITY_OUT.tmp" && mv -f "$IDENTITY_OUT.tmp" "$IDENTITY_OUT"
+
+# --- Step 1: Build ---
+echo -e "${CYAN}${BOLD}[TEST]${RESET} Building kernel..."
+if ! bash "$PROJECT/scripts/build.sh" > /dev/null 2>&1; then
+    echo -e "${RED}${BOLD}[FAIL]${RESET} Build failed. Check build/build.log"
+    exit 1
+fi
+echo -e "${GREEN}[TEST]${RESET} Build OK"
+
+# --- Step 2: Patch boot.conf for test mode ---
+#
+# An ARRAY, not a space-joined string. The values here are user-supplied and
+# one of them is a GLOB: a scalar expanded unquoted as `$PATCH_ARGS` is
+# pathname-expanded against the repository first, so `UTEST_FILTER=*` would
+# reach the patcher as a list of repo filenames -- silently writing some
+# arbitrary filename as the filter and shifting every later key/value pair.
+# The array keeps each element exactly as typed.
+PATCH_ARGS=(test 1)
+if [ -n "$SUITE_CATEGORY" ]; then
+    PATCH_ARGS+=(test_suite "$SUITE_CATEGORY")
+fi
+if [ "$QUIET_MODE" -eq 1 ]; then
+    PATCH_ARGS+=(test_quiet 1)
+fi
+if [ "$XML_MODE" -eq 1 ]; then
+    PATCH_ARGS+=(xml 1)
+fi
+if [ "$JSON_MODE" -eq 1 ]; then
+    PATCH_ARGS+=(json 1)
+fi
+if [ "$TAP_MODE" -eq 1 ]; then
+    PATCH_ARGS+=(tap 1)
+fi
+if [ -n "$UTEST_FILTER" ]; then
+    PATCH_ARGS+=(utest_filter "$UTEST_FILTER")
+fi
+bash "$PROJECT/scripts/patch-boot-conf.sh" "${PATCH_ARGS[@]}" > /dev/null
+
+# Install cleanup trap now that boot.conf is patched. Runs on normal exit,
+# SIGINT (Ctrl-C), or SIGTERM, restoring boot.conf and killing any backgrounded
+# QEMU process. Preserves the caller's exit code.
+QEMU_PID=""
+cleanup() {
+    local ec="${1:-$?}"
+    # Run EXACTLY once. `exit` below re-enters the EXIT trap, and a signal
+    # arriving mid-publication would otherwise re-enter from the top -- either
+    # way the guard could overwrite a document it had just published.
+    trap - EXIT INT TERM
+    if [ -n "${QEMU_PID:-}" ] && kill -0 "$QEMU_PID" 2>/dev/null; then
+        kill "$QEMU_PID" 2>/dev/null || true
+        wait "$QEMU_PID" 2>/dev/null || true
+    fi
+    bash "$PROJECT/scripts/patch-boot-conf.sh" reset > /dev/null 2>&1 || true
+    # This handler replaced the Step 0 EXIT trap, so it owns the artifact
+    # obligation too: an interrupt or an early exit past this point must still
+    # leave a document belonging to THIS run.
+    utest_artifact_guard "$ec"
+    exit "$ec"
+}
+# These REPLACE the Step 0a handlers and carry the same contract: the status
+# is passed explicitly, because a signal handler reaches cleanup with $? still
+# 0 and a cancelled run reported as exit 0 is a green CI step over an
+# artifact that says the run never finished.
+trap 'cleanup $?' EXIT
+trap 'UTEST_SIGNALLED=1; cleanup 130' INT
+trap 'UTEST_SIGNALLED=1; cleanup 143' TERM
+
+# --- Step 3: Boot QEMU headless ---
+cp "$OVMF_VARS" "$OVMF_VARS_CP"
+rm -f "$TEST_LOG"
+
+
 echo -e "${CYAN}[TEST]${RESET} Booting QEMU headless (${ACCEL_NAME}, ${TIMEOUT}s timeout)..."
 
 # Launch QEMU in background -- kernel continues to desktop after tests,
 # so we poll for the summary line and kill QEMU once we have results.
 "$QEMU_BIN" \
     $ACCEL_ARGS \
-    -smp 2 \
+    -smp "$SMP_CPUS" \
     -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
     -drive if=pflash,format=raw,file="$OVMF_VARS_CP" \
     -drive id=disk0,file="$DISK",format=raw,if=none \
@@ -812,7 +1084,8 @@ fi
 #
 # No-op when no `[UTEST-XML]` lines are present (xml= was not enabled).
 
-XML_OUT="$PROJECT/build/test-results.xml"
+# XML_OUT / XML_LEG_OUT are set in Step 0, before the build, because the
+# publication lifecycle starts there rather than here.
 HAS_XML=0
 [ -n "$UF" ] && grep -qE "${UF}\[UTEST-XML\]" "$TEST_LOG" 2>/dev/null && HAS_XML=1
 
@@ -831,15 +1104,20 @@ HAS_XML=0
 # green suite. A stale artifact from a previous run is removed first so a
 # death before this point cannot leave one behind masquerading as current.
 if [ "$XML_MODE" -eq 1 ] && [ "$HAS_XML" -eq 0 ]; then
-    rm -f "$XML_OUT"
+    rm -f "$XML_OUT" "$XML_LEG_OUT"
     {
         echo '<?xml version="1.0" encoding="UTF-8"?>'
-        echo '<testsuite name="impossible-os-usermode" tests="1" failures="0" skipped="0" errors="1" time="0">'
+        printf '<testsuite name="impossible-os-usermode" tests="1" failures="0" skipped="0" errors="1" time="0"%s>\n' \
+            "$(utest_xml_identity_attrs)"
+        echo '  <properties>'
+        utest_xml_identity_props
+        echo '  </properties>'
         echo '  <testcase name="artifact-pipeline" classname="infrastructure">'
         echo '    <error message="XML=1 requested but no [UTEST-XML] stream reached serial"/>'
         echo '  </testcase>'
         echo '</testsuite>'
-    } > "$XML_OUT.tmp" && mv -f "$XML_OUT.tmp" "$XML_OUT"
+    } > "$XML_LEG_OUT.staged" &&
+        utest_publish "$XML_LEG_OUT.staged" "$XML_LEG_OUT" "$XML_OUT" && XML_PUBLISHED=1
     echo -e "  ${RED}[UTEST]${RESET} XML=1 requested but no [UTEST-XML] stream on serial -- artifact pipeline broken, failing the run"
     UTEST_FAIL=$(( ${UTEST_FAIL:-0} + 1 ))
 fi
@@ -849,7 +1127,7 @@ if [ "$HAS_XML" -eq 1 ]; then
     # Any artifact from a previous run goes first: a death partway through
     # assembly must not leave the old document at the canonical path where a
     # consumer would read it as this run's result.
-    rm -f "$XML_OUT"
+    rm -f "$XML_OUT" "$XML_LEG_OUT"
     # Strip ANSI + klog wrapper prefix (timestamp, [cpu:N], level badge,
     # UTEST subsystem tag) in one sed pass. Everything after the first
     # `[UTEST-XML] ` or `[UTEST-XML-SUMMARY] ` marker is the payload.
@@ -904,12 +1182,17 @@ sys.stdout.write("\n".join(mod.parse_file(sys.argv[2])["lines"]))
             # run as a completed green suite.
             {
                 echo '<?xml version="1.0" encoding="UTF-8"?>'
-                echo '<testsuite name="impossible-os-usermode" tests="1" failures="0" skipped="0" errors="1" time="0">'
+                printf '<testsuite name="impossible-os-usermode" tests="1" failures="0" skipped="0" errors="1" time="0"%s>\n' \
+                    "$(utest_xml_identity_attrs)"
+                echo '  <properties>'
+                utest_xml_identity_props
+                echo '  </properties>'
                 echo '  <testcase name="artifact-pipeline" classname="infrastructure">'
                 echo '    <error message="[UTEST-XML-SUMMARY] carries no aborted=/not_run= fields -- run completeness unknown"/>'
                 echo '  </testcase>'
                 echo '</testsuite>'
-            } > "$XML_OUT.tmp" && mv -f "$XML_OUT.tmp" "$XML_OUT"
+            } > "$XML_LEG_OUT.staged" &&
+                utest_publish "$XML_LEG_OUT.staged" "$XML_LEG_OUT" "$XML_OUT" && XML_PUBLISHED=1
             XML_SUMMARY_OK=0
         fi
     else
@@ -931,12 +1214,17 @@ sys.stdout.write("\n".join(mod.parse_file(sys.argv[2])["lines"]))
         # continued.
         {
             echo '<?xml version="1.0" encoding="UTF-8"?>'
-            echo '<testsuite name="impossible-os-usermode" tests="1" failures="0" skipped="0" errors="1" time="0">'
+            printf '<testsuite name="impossible-os-usermode" tests="1" failures="0" skipped="0" errors="1" time="0"%s>\n' \
+                "$(utest_xml_identity_attrs)"
+            echo '  <properties>'
+            utest_xml_identity_props
+            echo '  </properties>'
             echo '  <testcase name="artifact-pipeline" classname="infrastructure">'
             echo '    <error message="[UTEST-XML] records on serial with no parseable [UTEST-XML-SUMMARY] -- counts unknown"/>'
             echo '  </testcase>'
             echo '</testsuite>'
-        } > "$XML_OUT.tmp" && mv -f "$XML_OUT.tmp" "$XML_OUT"
+        } > "$XML_LEG_OUT.staged" &&
+            utest_publish "$XML_LEG_OUT.staged" "$XML_LEG_OUT" "$XML_OUT" && XML_PUBLISHED=1
         XML_SUMMARY_OK=0
     fi
 
@@ -965,7 +1253,9 @@ fi
 if [ "$HAS_XML" -eq 1 ] && [ "$XML_SUMMARY_OK" -eq 1 ]; then
     {
         echo '<?xml version="1.0" encoding="UTF-8"?>'
-        echo "<testsuite name=\"impossible-os-usermode\" tests=\"${XML_TESTS}\" failures=\"${XML_FAIL}\" skipped=\"${XML_SKIP}\" errors=\"${XML_ERRORS}\" time=\"${XML_TIME}\">"
+        printf '<testsuite name="impossible-os-usermode" tests="%s" failures="%s" skipped="%s" errors="%s" time="%s"%s>\n' \
+            "${XML_TESTS}" "${XML_FAIL}" "${XML_SKIP}" "${XML_ERRORS}" "${XML_TIME}" \
+            "$(utest_xml_identity_attrs)"
         # <properties> must be the first child of <testsuite> per the JUnit
         # schema. Emitted on every run, not only aborted ones, so that a
         # consumer can distinguish "this run completed" from "this artifact
@@ -977,6 +1267,7 @@ if [ "$HAS_XML" -eq 1 ] && [ "$XML_SUMMARY_OK" -eq 1 ]; then
             echo '    <property name="aborted" value="false"/>'
         fi
         echo "    <property name=\"not_run\" value=\"${XML_NOT_RUN:-0}\"/>"
+        utest_xml_identity_props
         echo '  </properties>'
         if [ "${XML_ABORTED:-0}" -ne 0 ]; then
             echo '  <testcase name="suite-abort" classname="infrastructure">'
@@ -997,11 +1288,12 @@ if [ "$HAS_XML" -eq 1 ] && [ "$XML_SUMMARY_OK" -eq 1 ]; then
         echo "$STRIPPED" | sed -n "s/.*${UF}\[UTEST-XML\] //p" |
             grep -E '^<testcase' || true
         echo '</testsuite>'
-    } > "$XML_OUT.tmp" && mv -f "$XML_OUT.tmp" "$XML_OUT"
+    } > "$XML_LEG_OUT.staged" &&
+        utest_publish "$XML_LEG_OUT.staged" "$XML_LEG_OUT" "$XML_OUT" && XML_PUBLISHED=1
     if [ "${XML_ABORTED:-0}" -ne 0 ]; then
-        echo -e "${CYAN}[TEST]${RESET} JUnit XML written: $XML_OUT (tests=${XML_TESTS} failures=${XML_FAIL} skipped=${XML_SKIP} ABORTED, not_run=${XML_NOT_RUN})"
+        echo -e "${CYAN}[TEST]${RESET} JUnit XML written: $XML_LEG_OUT (tests=${XML_TESTS} failures=${XML_FAIL} skipped=${XML_SKIP} ABORTED, not_run=${XML_NOT_RUN})"
     else
-        echo -e "${CYAN}[TEST]${RESET} JUnit XML written: $XML_OUT (tests=${XML_TESTS} failures=${XML_FAIL} skipped=${XML_SKIP})"
+        echo -e "${CYAN}[TEST]${RESET} JUnit XML written: $XML_LEG_OUT (tests=${XML_TESTS} failures=${XML_FAIL} skipped=${XML_SKIP})"
     fi
 fi
 
@@ -1020,7 +1312,7 @@ fi
 # matching. The harvester publishes atomically and writes an explicit
 # error envelope (summary: null) on every refusal.
 
-JSON_OUT="$PROJECT/build/test-results.json"
+# JSON_OUT / JSON_LEG_OUT are set in Step 0 alongside the XML pair.
 HAS_JSON=0
 [ -n "$UF" ] && grep -qE "${UF}\[UTEST-JSON\]" "$TEST_LOG" 2>/dev/null && HAS_JSON=1
 
@@ -1030,24 +1322,38 @@ if [ "$JSON_MODE" -eq 1 ] || [ "$HAS_JSON" -eq 1 ]; then
     # at the canonical path outlives the run that failed to replace it, and
     # CI that uploads artifacts regardless of exit code would attribute that
     # old success to this run.
-    rm -f "$JSON_OUT"
+    rm -f "$JSON_OUT" "$JSON_LEG_OUT"
     if ! command -v python3 >/dev/null 2>&1; then
         # Fail rather than skip: JSON=1 asked for an artifact, and silently
         # producing none is the false-green this step exists to close. Leave
         # an error envelope behind so a consumer reading only the file sees
-        # the reason instead of a missing path.
-        printf '%s\n' \
-            '{"schema": "utest-json-v1", "testcases": [], "skip_blocks": [],' \
-            ' "summary": null, "summary_error": "no_python3",' \
-            ' "detail": "python3 unavailable -- artifact could not be assembled"}' \
-            > "$JSON_OUT.tmp" && mv -f "$JSON_OUT.tmp" "$JSON_OUT"
-        echo -e "  ${RED}[UTEST]${RESET} python3 not available -- cannot assemble $JSON_OUT"
+        # the reason instead of a missing path. It carries identity like every
+        # other envelope -- an unattributable failure is the one a dashboard
+        # most needs to place.
+        {
+            printf '{"schema": "utest-json-v1", "testcases": [], "skip_blocks": [],\n'
+            printf ' "summary": null, "summary_error": "no_python3",\n'
+            printf ' "detail": "python3 unavailable -- artifact could not be assembled",\n'
+            printf ' "run_identity": '
+            cat "$IDENTITY_OUT" 2>/dev/null || printf 'null'
+            printf '}\n'
+        } > "$JSON_LEG_OUT.staged" &&
+            utest_publish "$JSON_LEG_OUT.staged" "$JSON_LEG_OUT" "$JSON_OUT" && JSON_PUBLISHED=1
+        echo -e "  ${RED}[UTEST]${RESET} python3 not available -- cannot assemble $JSON_LEG_OUT"
         UTEST_FAIL=$(( ${UTEST_FAIL:-0} + 1 ))
     else
+        # The harvester writes the LEG artifact; test.sh mirrors it to the
+        # canonical alias, so both files come from one assembly and the alias
+        # can never be newer than the record it points at.
         JSON_ERR=$(python3 "$PROJECT/scripts/utest-json-harvest.py" \
-                       "$TEST_LOG" "$JSON_OUT" 2>&1) && JSON_RC=0 || JSON_RC=$?
+                       "$TEST_LOG" "$JSON_LEG_OUT" --identity "$IDENTITY_OUT" 2>&1) &&
+            JSON_RC=0 || JSON_RC=$?
+        if [ -f "$JSON_LEG_OUT" ]; then
+            cp -f "$JSON_LEG_OUT" "$JSON_OUT.tmp" &&
+                mv -f "$JSON_OUT.tmp" "$JSON_OUT" && JSON_PUBLISHED=1
+        fi
         if [ "$JSON_RC" -eq 0 ]; then
-            echo -e "${CYAN}[TEST]${RESET} JSON results written: $JSON_OUT"
+            echo -e "${CYAN}[TEST]${RESET} JSON results written: $JSON_LEG_OUT"
         else
             # rc 3 is "no stream at all", which is only a failure when the
             # run actually asked for JSON. Every other refusal means records

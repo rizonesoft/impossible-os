@@ -253,13 +253,26 @@ producer drift, not an old artifact, and a document asserting
     failures="N"           <!-- verdict == FAIL (incl. leaks/timeouts/isolation) -->
     skipped="N"            <!-- binaries that exited 77 + skip-block records -->
     errors="N"             <!-- 1 when the smoke gate aborted the suite, else 0 -->
-    time="S.MMM">          <!-- wall-clock seconds for the whole suite -->
+    time="S.MMM"           <!-- wall-clock seconds for the whole suite -->
+    timestamp="..."        <!-- ISO-8601 UTC, xs:dateTime with the trailing Z -->
+    hostname="...">        <!-- uname -n, filtered to [A-Za-z0-9._-] -->
   <!-- Always emitted, and always the first child (the JUnit schema requires
        that position). Absence means the artifact predates the completeness
        dimension; it never means the run completed. -->
   <properties>
     <property name="aborted" value="true|false"/>
     <property name="not_run" value="N"/>
+    <!-- Run identity. Present on every document this pipeline writes,
+         including the synthetic error documents and the refusal envelopes:
+         an artifact nobody can place is the one a dashboard most needs to
+         place. Identity never softens a refusal -- errors="1" and the
+         <error> element stay exactly as they were. -->
+    <property name="commit" value="SHA[-dirty]"/>
+    <property name="leg" value="HOST-ACCEL-Ncpu[-ciparity][-LABEL]"/>
+    <property name="leg_source" value="derived|derived+override"/>
+    <property name="accel" value="kvm|tcg"/>
+    <property name="cpus" value="N"/>
+    <property name="qemu" value="QEMU-BINARY-BASENAME"/>
   </properties>
   <!-- Emitted ONLY on an aborted run. The properties above are queryable but
        inert: the smoke gate aborts on any non-PASS verdict INCLUDING skip,
@@ -465,9 +478,46 @@ death before publication cannot leave a stale file that reads as current.
     "passed": 1, "failed": 1, "skipped": 1, "total": 3, "time_ms": 180,
     "reported": { /* the run_report fields */ },
     "aborted": false, "not_run": 0
-  }
+  },
+  "run_identity": { /* build/test-run-identity.json, verbatim; null if absent */ }
 }
 ```
+
+### Run identity and artifact paths
+
+Both artifacts are written twice: to a leg-suffixed path that accumulates
+(`build/test-results-<leg>.xml` / `.json`) and to the canonical unsuffixed
+path, which is an alias for the invocation that wrote it. The leg artifact is
+published first and the alias second, so the alias is never newer than the
+record it points at.
+
+`scripts/test.sh` derives identity before the build and writes it to
+`build/test-run-identity.json` (`utest-run-identity-v1`), which the harvester
+reads via `--identity`:
+
+| Field | Source |
+|---|---|
+| `timestamp` | `date -u`, ISO-8601 with `Z` |
+| `commit` | `git rev-parse HEAD`, `-dirty` appended when tracked files differ |
+| `leg` | `<host>-<accel>-<n>cpu`, plus `-ciparity` and any validated `UTEST_LEG` label |
+| `leg_source` | `derived`, or `derived+override` when `UTEST_LEG` added a label |
+| `accel` | read back from the arguments QEMU receives, never from display text |
+| `cpus` | `SMP_CPUS`, the same variable behind the `-smp` flag |
+
+`UTEST_LEG` may only ADD a label. `scripts/test.sh` can select KVM or TCG and
+nothing else, so an override that renamed a leg to `whpx`, `vbox` or
+`baremetal` would publish coverage nothing executed; the derived accelerator
+and CPU count stay in the name and in their own fields regardless, and the
+provenance is recorded. A label outside `[a-z0-9-]{1,32}` is refused rather
+than ignored, because the value lands in a filename.
+
+Publication is fail-closed at both ends. The canonical pair is invalidated
+before anything in the run can fail -- including the argument check above --
+and an EXIT trap armed before the build publishes an identity-bearing
+refusal (`summary_error: "run_incomplete"`) for any exit that never reached
+assembly. A failed or interrupted run therefore leaves a document that names
+itself, never the previous run's success sitting where CI would upload it as
+current.
 
 The artifact is a GATE, not a convenience. A stream that does not agree with
 its own summary must fail the run rather than publish a smaller plausible
