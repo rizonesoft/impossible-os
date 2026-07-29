@@ -182,7 +182,7 @@ Kernel GS (`IA32_GS_BASE`) holds per-CPU data. User GS (`IA32_KERNEL_GS_BASE`) h
 > - Shipped: per-thread `kernel_gs_base` (struct thread + task mirror) set at task_exec/fork; switch save/restore with exec_pending save-gate, NULL guard, MSR readback-verify, fail-closed boot-halt for ring-3-with-TEB-but-zero-GS.
 > - Review (Codex 3x) confirmed the switch save/restore is sound but found exec/fork staging defects -- fixes owned by §19.
 > - Scope boundary: exec_pending TOCTOU + fork parent-TEB + mirror staleness + per-switch readback cost -> §19; §4 checklist still describes the pre-§15 per-task model.
-> **Deferred:** [Critical] task_exec/task_fork GS-base staging races (exec_pending published before TEB prime; fork publishes a runnable child with the parent TEB) + switch mirror/readback issues. -> XREF: §19 (item: "[CRITICAL] task_exec sets `exec_pending=1` (1996) before priming TEB/GS..." at line 447)
+> **Deferred:** [Critical] task_exec/task_fork GS-base staging races (exec_pending published before TEB prime; fork publishes a runnable child with the parent TEB) + switch mirror/readback issues. -> XREF: §19 (item: "[CRITICAL] task_exec sets `exec_pending=1` (1996) before priming TEB/GS..." at line 555)
 > **Quality reviewed:** 2026-06-28 | Codex 3x (adversarial, consistency, perf) | 1C+1H+2M deferred-to-§19, 0 fixed | scope: kernel-code-quality
 
 ---
@@ -513,7 +513,7 @@ Currently, all threads in a process share `tasks[pid].teb` (one TEB per task), w
 
 **Test checkpoint:** `tls_set_value(pid, 0, 0xCAFE)` writes inside the mapped TEB (not the env page) and a read of `gs:[0x1480]` returns it; two threads' TEB ranges and the env/RTLPP/PEB pages are provably disjoint (unit test); boot still reaches `C:\>`. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
-> **Deferred:** [Critical] §16 is design-reviewed (Codex design `bnqdm310m`: VA band pinned -- `TEB_USER_BASE=0x7FF88000`, dedicated band [0x7FF6A000,0x7FF8A000), 2-page per-process `vmm_map_user_page(cr3)` mapping with a stage-then-publish sequence) but BLOCKED on §19's exec_pending ordering for correctness (the design verdict: do not complete §16 while exec_pending can be visible before TEB/GS is staged). §16 + §19 are a coordinated CRITICAL VA-layout + exec/fork change for a fresh-context implementation. -> XREF: §19 (item: "[CRITICAL] task_exec sets `exec_pending=1` (1996) before priming TEB/GS..." at line 547)
+> **Deferred:** [Critical] §16 is design-reviewed (Codex design `bnqdm310m`: VA band pinned -- `TEB_USER_BASE=0x7FF88000`, dedicated band [0x7FF6A000,0x7FF8A000), 2-page per-process `vmm_map_user_page(cr3)` mapping with a stage-then-publish sequence) but BLOCKED on §19's exec_pending ordering for correctness (the design verdict: do not complete §16 while exec_pending can be visible before TEB/GS is staged). §16 + §19 are a coordinated CRITICAL VA-layout + exec/fork change for a fresh-context implementation. -> XREF: §19 (item: "[CRITICAL] task_exec sets `exec_pending=1` (1996) before priming TEB/GS..." at line 555)
 
 ---
 
@@ -553,6 +553,7 @@ The §2 PEB places OSMajorVersion at 0xA4, OSMinorVersion at 0xA8, OSBuildNumber
 The §4 context-switch save/restore (per-thread GS, NULL guard, fail-closed) is structurally sound, but the Codex 3x review of §4 surfaced staging + cost defects across `task_exec`, `task_fork`, and the switch save path. -> XREF: §4 (switch save/restore), §5 (task_exec), §6 (TEB alloc).
 
 - [ ] [CRITICAL] task_exec sets `exec_pending=1` (1996) before priming TEB/GS (2014); a preemption there can clobber the primed GS via the save-gate. Fix: stage fully before publishing exec_pending, or disable preemption across it
+      **REPRODUCED 2026-07-29, no longer theoretical.** The `smoke-matrix` `kvm:2cpu` leg halted booting `cmd.exe`: `[CRIT] sched: ring-3 task 4 thread 0 has TEB but kernel_gs_base=0 (task.teb=0x7ffdb000 thread.teb=0x7ffdb000)` -- section 6's own fail-closed guard firing on exactly this window, one instruction-stream away from a ring-3 task running with a stale GS. Intermittent and SMP-only: 1 failure in 3 consecutive 4-leg matrix runs on an unrelated tree, kvm:2cpu ONLY, with kvm:1cpu and both tcg legs green every time. Evidence: `.claude/overnight/artifacts/20260729-*-s24-smoke3.log`. A previous kvm:2cpu failure on 2026-07-28 could not be diagnosed because the matrix destroyed its own leg logs; that reporting bug is fixed, so this is the first captured instance of a signature CLAUDE.md already documents under the Smoke Test section
 - [ ] [HIGH] task_fork (1241-1248) publishes a runnable child with the parent TEB+GS, no child TEB alloc (fork: syscall.c:401); a child run before exec gets the parent PID/TID/TLS. Fix: alloc a child TEB before publishing
 - [ ] [MEDIUM] Switch save (852/1071) updates only `threads[prev].kernel_gs_base`; for prev_thread==0 the task-level mirror goes stale and fork copies it stale. Fix: update the mirror + fork copies one canonical value
 - [ ] [MEDIUM] Switch readback (859/1073) does 3 MSR ops per user-thread switch (rdmsr+wrmsr+rdmsr). Fix: cache the programmed GS per CPU + skip when unchanged, or gate the readback to one-time/post-exec
@@ -561,7 +562,7 @@ The §4 context-switch save/restore (per-thread GS, NULL guard, fail-closed) is 
 
 **Test checkpoint:** a forced preemption between exec_pending publish and TEB prime does not clobber the primed GS; a fork child reads its OWN PID/TID/TLS before exec; the task/thread-0 mirror stays equal across switches + fork; steady-state switches skip the redundant readback (instrumentation counter). Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
-> **Deferred:** [Critical] exec/fork/switch GS-base Staging Correctness and Cost -- deferred as part of the coordinated §16-§27 CRITICAL ABI/SMP fix-campaign from the §1-§15 review sweep (operator-reserved per CLAUDE.md ABI-change/large-refactor; design-verified for §16); filed plan ready for a focused fresh-context implementation. -> XREF: §19 (item: "[CRITICAL] task_exec sets `exec_pending=1` (1996) before priming TEB/GS (2014);" at line 549).
+> **Deferred:** [Critical] exec/fork/switch GS-base Staging Correctness and Cost -- deferred as part of the coordinated §16-§27 CRITICAL ABI/SMP fix-campaign from the §1-§15 review sweep (operator-reserved per CLAUDE.md ABI-change/large-refactor; design-verified for §16); filed plan ready for a focused fresh-context implementation. -> XREF: §19 (item: "[CRITICAL] task_exec sets `exec_pending=1` (1996) before priming TEB/GS (2014);" at line 555).
 
 ---
 

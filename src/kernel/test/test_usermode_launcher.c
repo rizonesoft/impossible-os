@@ -61,6 +61,9 @@ int test_usermode_format_json_run_report(char *dst, uint32_t cap,
                                          uint32_t unreported);
 int test_usermode_format_json_run_meta(char *dst, uint32_t cap, int aborted,
                                        uint32_t not_run);
+int test_usermode_format_tap_point(char *dst, uint32_t cap, int ok,
+                                   uint32_t point, const char *name,
+                                   const char *directive);
 uint32_t test_usermode_json_line_max(void);
 int test_usermode_format_report_summary(char *dst, uint32_t cap,
                                         uint32_t a_pass, uint32_t a_fail,
@@ -727,6 +730,66 @@ static void test_json_records_fit_klog_transport(void)
     TEST_ASSERT(test_usermode_format_json_run_meta(line, cap,
                                                    1, 4294967295u) == 1,
                 "run_meta fits the transport at every field's maximum");
+}
+
+static void test_tap_point_shapes_and_refusals(void)
+{
+    /* TAP puts its directive LAST, and klog truncates at its message field,
+     * so an over-long name used to cut `# SKIP` off the end and turn a
+     * skipped test into a bare passing `ok` -- silently, with no marker.
+     * The emitter is not directly callable (it klogs), so pin the property
+     * that makes it safe: the bound it formats against is the transport
+     * cap, and the widest name the launcher can hand it does NOT fit, which
+     * is exactly when the fail-closed `not ok` path must engage. */
+    char line[384];
+    char longname[300];
+    uint32_t cap = test_usermode_json_line_max();
+    uint32_t i;
+
+    /* The ordinary shapes, exactly as a TAP consumer must see them. */
+    TEST_ASSERT(test_usermode_format_tap_point(line, cap, 1, 4,
+                                               "test_harness_smoke.exe",
+                                               (const char *)0) == 1,
+                "a passing TAP point formats");
+    TEST_ASSERT(u_test_streq(line, "ok 4 - test_harness_smoke.exe"),
+                "a passing point carries no directive");
+    TEST_ASSERT(test_usermode_format_tap_point(line, cap, 1, 5,
+                                               "test_skip_me.exe",
+                                               "SKIP") == 1,
+                "a skipped TAP point formats");
+    TEST_ASSERT(u_test_streq(line, "ok 5 - test_skip_me.exe # SKIP"),
+                "the SKIP directive is the point's suffix");
+    TEST_ASSERT(test_usermode_format_tap_point(line, cap, 0, 6,
+                                               "test_leaky.exe",
+                                               "1 handle(s) leaked") == 1,
+                "a failing TAP point formats");
+    TEST_ASSERT(u_test_streq(line,
+                    "not ok 6 - test_leaky.exe # 1 handle(s) leaked"),
+                "a failing point keeps its reason");
+
+    /* Truncation: TAP puts the directive LAST, so a name long enough to
+     * push it past the transport used to cut `# SKIP` off the end and turn
+     * a skipped test into a bare passing `ok`. The formatter must REFUSE so
+     * the emitter can publish a failure instead. The widest synthetic
+     * skip-record name is built into a VFS_MAX_NAME + 24 buffer. */
+    for (i = 0; i < sizeof(longname) - 1; i++)
+        longname[i] = 'x';
+    longname[sizeof(longname) - 1] = '\0';
+    TEST_ASSERT(test_usermode_format_tap_point(line, cap, 1, 7, longname,
+                                               "SKIP reported by binary") == 0,
+                "an over-long TAP point is refused, never silently truncated");
+
+    /* Directive injection: a name carrying `#` would choose its own TAP
+     * meaning. u_is_valid_manifest_name permits `#`, and glob-discovered
+     * names come from the filesystem, so the formatter refuses them. */
+    TEST_ASSERT(test_usermode_format_tap_point(line, cap, 0, 8,
+                                               "test_a # SKIP fake.exe",
+                                               (const char *)0) == 0,
+                "a name carrying a TAP directive is refused");
+    TEST_ASSERT(test_usermode_format_tap_point(line, cap, 1, 9,
+                                               "test_ok.exe # TODO",
+                                               (const char *)0) == 0,
+                "a failing point cannot be downgraded by an injected TODO");
 }
 
 static void test_json_run_report_refuses_truncation(void)
@@ -1760,6 +1823,9 @@ void test_register_usermode_launcher(void)
                             TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: JSON run_report refuses truncation",
                             test_json_run_report_refuses_truncation,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: TAP point shapes and refusals",
+                            test_tap_point_shapes_and_refusals,
                             TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: JSON run_meta record",
                             test_json_run_meta_record, TEST_CAT_EXEC);

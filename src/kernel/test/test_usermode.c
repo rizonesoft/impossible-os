@@ -1663,7 +1663,7 @@ static void u_emit_xml_suite_close(uint32_t passed, uint32_t failed,
                                    uint64_t total_ms, int aborted,
                                    uint32_t not_run)
 {
-    char line[192];
+    char line[UTEST_RECORD_LINE_MAX];
 
     if (!s_xml_mode) return;
     /* Emit a summary line (not a valid XML fragment on its own --
@@ -1684,8 +1684,6 @@ static void u_emit_xml_suite_close(uint32_t passed, uint32_t failed,
              "[UTEST-XML-SUMMARY-OVERFLOW] summary line exceeded %u bytes",
              (uint64_t)sizeof(line));
     }
-    (void)passed;
-
     utest_record_log(LOG_INFO, "[UTEST-XML] </testsuite>");
 }
 
@@ -2061,7 +2059,7 @@ static int u_format_report_summary(char *dst, uint32_t cap,
 
 static void u_emit_report_summary(const struct u_report_totals *rt)
 {
-    char line[224];
+    char line[UTEST_RECORD_LINE_MAX];
 
     if (u_format_report_summary(line, sizeof(line), rt))
         utest_record_log(LOG_INFO, "%s", line);
@@ -2167,6 +2165,71 @@ static int u_build_skip_record_name(char *dst, uint32_t cap,
  * the section exists to remove. One record per skip block satisfies both:
  * the standard fields become literally accurate and the binary keeps its
  * true verdict. */
+/* Emit one TAP point, bounded by the same transport cap as every other
+ * record and FAIL-CLOSED on overflow.
+ *
+ * TAP puts its directive LAST (`ok 7 - name # SKIP`), and klog truncates at
+ * its message field -- so a long enough binary name silently cut the
+ * `# SKIP` off the end and turned a skipped test into a bare passing `ok`,
+ * with no marker anywhere. Skip-record points are worse: their synthetic
+ * name is built into a VFS_MAX_NAME+24 buffer, so for a long parent the
+ * directive was ALWAYS lost.
+ *
+ * A point we cannot represent faithfully is emitted as `not ok` with an
+ * overflow directive instead. Turning an unrepresentable record into a
+ * failure is the only safe direction: the alternative reads as a pass. */
+static int u_format_tap_point(char *dst, uint32_t cap, int ok, uint32_t point,
+                              const char *name, const char *directive)
+{
+    uint32_t pos = 0;
+    const char *p;
+
+    if (cap == 0) return 0;
+    dst[0] = '\0';
+    /* A name carrying `#` would inject a TAP directive of its own: TAP reads
+     * everything after ` # ` as SKIP/TODO, so a binary called
+     * `test_a # SKIP .exe` turns its own point into a skip. Names are
+     * checked by u_is_valid_manifest_name, which rejects path characters
+     * and control bytes but PERMITS `#` and spaces -- and glob-discovered
+     * names come from the filesystem, not the manifest. Refuse rather than
+     * emit a point a binary chose the meaning of. */
+    for (p = name; p && *p; p++)
+        if (*p == '#')
+            return 0;
+
+    if (!u_append(dst, &pos, cap, ok ? "ok " : "not ok ")) return 0;
+    if (!u_append_uint(dst, &pos, cap, point)) return 0;
+    if (!u_append(dst, &pos, cap, " - ")) return 0;
+    if (!u_append(dst, &pos, cap, name)) return 0;
+    if (directive && directive[0]) {
+        if (!u_append(dst, &pos, cap, " # ")) return 0;
+        if (!u_append(dst, &pos, cap, directive)) return 0;
+    }
+    return 1;
+}
+
+static void u_emit_tap_point(int ok, uint32_t point, const char *name,
+                             const char *directive)
+{
+    char line[UTEST_RECORD_LINE_MAX];
+
+    if (!s_tap_mode) return;
+
+    if (u_format_tap_point(line, sizeof(line), ok, point, name, directive)) {
+        utest_record_log(LOG_INFO, "%s", line);
+        return;
+    }
+    /* Fail CLOSED. A point we cannot represent faithfully -- too long for
+     * the transport, or carrying a forgeable directive -- becomes a
+     * FAILURE, never a silent pass. */
+    utest_record_log(LOG_ERROR,
+         "[UTEST-RECORD-OVERFLOW] TAP point %u could not be represented",
+         (uint64_t)point);
+    utest_record_log(LOG_INFO,
+         "not ok %u - unrepresentable # TAP record refused",
+         (uint64_t)point);
+}
+
 static uint32_t u_emit_skip_records(const char *name, utest_type_t type,
                                     const struct u_report *rep,
                                     uint32_t already_emitted,
@@ -2221,11 +2284,8 @@ static uint32_t u_emit_skip_records(const char *name, utest_type_t type,
                  name, (uint64_t)(rep->skip_blocks - k + 1));
             return k - 1;
         }
-        if (s_tap_mode)
-            utest_record_log(LOG_INFO, "ok %u - %s # SKIP reported by binary",
-                 (uint64_t)(++(*tap_point)), rec);
-        else
-            (*tap_point)++;
+        (*tap_point)++;
+        u_emit_tap_point(1, *tap_point, rec, "SKIP reported by binary");
         u_emit_xml_testcase(rec, type, 2, 0,
                             "sub-test block skipped (reason on serial log)",
                             "skip-block");
@@ -2379,10 +2439,7 @@ static void u_run_one(const char *name, utest_type_t type,
         rt->unreported++;   /* never ran, so it never reported */
         *out_verdict = 1;
         test_num = ++(*tap_point);
-        if (s_tap_mode)
-            utest_record_log(LOG_INFO,
-                 "not ok %u - %s # task_create failed",
-                 (uint64_t)test_num, name_copy);
+        u_emit_tap_point(0, test_num, name_copy, "task_create failed");
         u_emit_xml_testcase(name_copy, type, 1, 0, "task_create failed",
                             (const char *)0);
         u_emit_json_testcase(name_copy, type, 1, 0, "task_create failed",
@@ -2569,48 +2626,54 @@ static void u_run_one(const char *name, utest_type_t type,
     test_num = ++(*tap_point);
     if (*out_verdict == 0) {
         utest_record_log(LOG_INFO, "%s: PASS (exit=0)", name_copy);
-        if (s_tap_mode)
-            utest_record_log(LOG_INFO, "ok %u - %s",
-                 (uint64_t)test_num, name_copy);
+        u_emit_tap_point(1, test_num, name_copy, (const char *)0);
     } else if (*out_verdict == 2) {
         utest_record_log(LOG_INFO, "%s: SKIP (exit=77)", name_copy);
-        if (s_tap_mode)
-            utest_record_log(LOG_INFO, "ok %u - %s # SKIP",
-                 (uint64_t)test_num, name_copy);
+        u_emit_tap_point(1, test_num, name_copy, "SKIP");
     } else if (have_stem && leaked > 0 && exit_status == 0 && !timed_out &&
                !isolation_failed) {
         /* Escalated from PASS by leak detection only. */
         utest_record_log(LOG_ERROR,
              "%s: FAIL (%u handle(s) leaked -- escalated from PASS)",
              name_copy, (uint64_t)leaked);
-        if (s_tap_mode)
-            utest_record_log(LOG_INFO,
-                 "not ok %u - %s # %u handle(s) leaked",
-                 (uint64_t)test_num, name_copy, (uint64_t)leaked);
+        {
+            char d[48];
+            uint32_t dp = 0;
+            d[0] = '\0';
+            if (u_append_uint(d, &dp, sizeof(d), leaked))
+                (void)u_append(d, &dp, sizeof(d), " handle(s) leaked");
+            u_emit_tap_point(0, test_num, name_copy, d);
+        }
     } else if (isolation_failed && exit_status == 0 && !timed_out) {
         /* Escalated from PASS by isolation failure only. */
         utest_record_log(LOG_ERROR,
              "%s: FAIL (isolation failed -- escalated from PASS)",
              name_copy);
-        if (s_tap_mode)
-            utest_record_log(LOG_INFO,
-                 "not ok %u - %s # isolation failed",
-                 (uint64_t)test_num, name_copy);
+        u_emit_tap_point(0, test_num, name_copy, "isolation failed");
     } else if (timed_out) {
         utest_record_log(LOG_ERROR, "%s: FAIL (timeout after %ums)",
              name_copy, (uint64_t)(s_timeout_ms ? s_timeout_ms
                                                 : UTEST_DEFAULT_TIMEOUT_MS));
-        if (s_tap_mode)
-            utest_record_log(LOG_INFO,
-                 "not ok %u - %s # timeout",
-                 (uint64_t)test_num, name_copy);
+        u_emit_tap_point(0, test_num, name_copy, "timeout");
     } else {
         utest_record_log(LOG_ERROR, "%s: FAIL (exit=%d)",
              name_copy, (int64_t)exit_status);
-        if (s_tap_mode)
-            utest_record_log(LOG_INFO,
-                 "not ok %u - %s # exit=%d",
-                 (uint64_t)test_num, name_copy, (int64_t)exit_status);
+        {
+            char d[48];
+            uint32_t dp = 0;
+            d[0] = '\0';
+            /* u_append_uint is the only numeric appender; carry the sign
+             * separately so a negative exit status still reads correctly. */
+            if (u_append(d, &dp, sizeof(d), "exit=")
+                && (exit_status >= 0
+                    || u_append(d, &dp, sizeof(d), "-"))) {
+                uint64_t mag = (exit_status < 0)
+                    ? (uint64_t)(-(int64_t)exit_status)
+                    : (uint64_t)exit_status;
+                (void)u_append_uint(d, &dp, sizeof(d), mag);
+            }
+            u_emit_tap_point(0, test_num, name_copy, d);
+        }
     }
 
     /* Extra WARN context for leaks / isolation failures that ride on
@@ -2976,7 +3039,28 @@ void test_usermode_run(void)
     /* Abort announcement -- unconditionally reachable, because it lives
      * outside the phase loop that every abort path breaks out of. */
     if (suite_aborted) {
-        not_run = total_planned - total_ran;
+        /* total_planned comes from the planning walk and total_ran from a
+         * SECOND traversal of C:\ taken after live children have run, so
+         * the two can disagree if the directory changed in between. A blind
+         * unsigned subtraction would then publish ~4.29e9 as the
+         * completeness count into the abort klog and both machine
+         * summaries.
+         *
+         * Clamping alone is not enough either: reporting not_run=0 would
+         * describe the aborted run as having skipped nothing, which is the
+         * kind of internally-consistent lie the completeness dimension
+         * exists to prevent. So clamp AND say so on the channel the host
+         * already fails on -- a disagreement between the two walks is a
+         * producer bug, not a number to quietly round. */
+        if (total_ran > total_planned) {
+            utest_record_log(LOG_ERROR,
+                 "[UTEST-RECORD-OVERFLOW] planned %u binaries but ran %u -- "
+                 "not_run is unknown",
+                 (uint64_t)total_planned, (uint64_t)total_ran);
+            not_run = 0u;
+        } else {
+            not_run = total_planned - total_ran;
+        }
         utest_record_log(LOG_ERROR,
              "suite ABORT (smoke failed) -- skipping %u non-smoke binaries",
              (uint64_t)not_run);
@@ -3199,6 +3283,16 @@ int test_usermode_format_json_run_meta(char *dst, uint32_t cap, int aborted,
 {
     if (cap == 0) return 0;
     return u_format_json_run_meta(dst, cap, aborted, not_run);
+}
+
+int test_usermode_format_tap_point(char *dst, uint32_t cap, int ok,
+                                   uint32_t point, const char *name,
+                                   const char *directive);
+int test_usermode_format_tap_point(char *dst, uint32_t cap, int ok,
+                                   uint32_t point, const char *name,
+                                   const char *directive)
+{
+    return u_format_tap_point(dst, cap, ok, point, name, directive);
 }
 
 int test_usermode_format_report_summary(char *dst, uint32_t cap,

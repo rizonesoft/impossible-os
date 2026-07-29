@@ -107,6 +107,26 @@ per the TAP contract that nothing follows a bail-out. `scripts/test.sh`
 treats any observed bail-out as a run failure, since an aborted suite left
 most binaries unexecuted.
 
+**A point the launcher cannot represent faithfully is emitted as a
+FAILURE, never omitted and never silently shortened:**
+
+```
+[UTEST-RECORD-OVERFLOW] TAP point 7 could not be represented
+not ok 7 - unrepresentable # TAP record refused
+```
+
+Two cases produce it, and both used to corrupt the point silently. TAP
+puts its directive LAST, and every record is bounded by the 256-byte
+transport, so a name long enough to push `# SKIP` past the limit turned a
+skipped test into a bare passing `ok`; synthetic skip-record points, whose
+names are built into a `VFS_MAX_NAME + 24` buffer, lost it for any long
+parent. And a name containing `#` would choose its own TAP meaning --
+`test_a # SKIP fake.exe` reads as a skip -- because the name validator
+rejects path characters and control bytes but permits `#`, and
+glob-discovered names come from the filesystem rather than the manifest.
+Refusing in the failing direction is the only safe option: the alternative
+reads as a pass.
+
 Lines pass through the kernel log prefix (`[INFO] UTEST: `), so a TAP
 parser consuming the raw serial log must strip everything up to the
 first `1..` / `ok` / `not ok` / `Bail out!` token per line.
@@ -380,13 +400,28 @@ death before publication cannot leave a stale file that reads as current.
 
 The artifact is a GATE, not a convenience. A stream that does not agree with
 its own summary must fail the run rather than publish a smaller plausible
-result, so the assembler refuses on: a missing/duplicate/non-terminal
-summary, a missing or duplicate `run_report`/`run_meta`, the launcher's own
-`summary_error` overflow marker, an unparseable record, an unknown
-`record_kind`, a binary count that disagrees with `summary.total`, per-status
-counts that disagree with `passed`/`failed`/`skipped`, a `skip_block` count
-that disagrees with `reported.skip_records`, and a not-aborted run that
-nevertheless reports binaries as not run.
+result. Every refusal reason it can emit:
+
+| `summary_error`             | Meaning                                                            |
+|-----------------------------|--------------------------------------------------------------------|
+| `missing_stream`            | `JSON=1` was requested and no `[UTEST-JSON]` record reached serial  |
+| `malformed_record`          | a record is not parseable JSON, or is not an object                 |
+| `producer_overflow`         | the launcher published its own overflow marker instead of a record  |
+| `unknown_record_kind`       | a record carries a `record_kind` this assembler does not know       |
+| `missing_summary`           | records reached serial but the summary did not -- stream truncated  |
+| `duplicate_summary`         | more than one summary record                                        |
+| `missing_report`            | no `run_report` record -- the assertion dimension is absent         |
+| `duplicate_run_report`      | more than one `run_report` record                                   |
+| `missing_completeness`      | no `run_meta`, or its `aborted`/`not_run` are not a bool/int        |
+| `duplicate_run_meta`        | more than one `run_meta` record                                     |
+| `records_after_summary`     | the stream does not end `run_report`, `summary`, `run_meta`         |
+| `malformed_summary`         | the summary is not an object                                        |
+| `malformed_report`          | a `run_report` counter is not a non-negative integer                |
+| `unknown_status`            | a binary record carries a status outside `PASS`/`FAIL`/`SKIP`       |
+| `count_mismatch`            | binary count, per-status counts, or skip-record count disagree with the summary |
+| `report_partition_mismatch` | `binaries_reported + binaries_invalid + binaries_unreported` does not equal `summary.total`, although the launcher increments exactly one of them per binary |
+| `inconsistent_completeness` | a not-aborted run nevertheless reports binaries as not run          |
+| `no_python3`                | written by `scripts/test.sh` when the assembler cannot run at all   |
 
 On refusal it writes an explicit error envelope -- `"summary": null` plus a
 `summary_error` reason and `detail` -- and exits nonzero, so `test.sh` fails
