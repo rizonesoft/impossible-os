@@ -7348,6 +7348,164 @@ else
 fi
 
 # ============================================================================
+# Launcher record framing -- host-side parser gates
+#
+# test_forge.exe proves the LIVE path: a ring-3 binary printing launcher-
+# shaped records cannot reach an artifact or a verdict. It deliberately does
+# NOT forge a frame ANNOUNCEMENT, because the host fails a run on a nonce
+# conflict and a fixture shipping in the default suite would then turn every
+# run red by design. Those refusal paths are asserted here instead, against
+# synthetic logs, where a red verdict IS the assertion.
+# ============================================================================
+
+if [ "$QUIET" = "0" ]; then
+    echo ""
+    echo -e "${CYAN}Launcher record framing (host parsers)${NC}"
+fi
+
+FRAME_TMP=$(mktemp -d)
+trap 'rm -rf "$FRAME_TMP"' EXIT
+
+# A minimal well-formed framed stream: announcement, one JSON binary record,
+# the three run-level records, and the terminator. records= counts every
+# framed record before the terminator (6), so a whole stream is 7 lines.
+frame_log() {
+    local nonce="$1" out="$2"
+    {
+        echo "[  1.000] [cpu:0] [INFO] UTEST-${nonce}: [UTEST-FRAME] v=1 run=1"
+        echo "[  1.010] [cpu:0] [ OK ] UTEST-${nonce}: [UTEST-JSON] {\"record_kind\":\"binary\",\"name\":\"test_real.exe\",\"type\":\"correctness\",\"status\":\"PASS\",\"time_ms\":5}"
+        echo "[  1.020] [cpu:0] [ OK ] UTEST-${nonce}: [UTEST-JSON] {\"record_kind\":\"run_report\",\"asserts_passed\":1,\"asserts_failed\":0,\"skip_blocks\":0,\"skip_records\":0,\"binaries_reported\":1,\"binaries_invalid\":0,\"binaries_unreported\":0}"
+        echo "[  1.030] [cpu:0] [ OK ] UTEST-${nonce}: [UTEST-JSON] {\"summary\":{\"passed\":1,\"failed\":0,\"skipped\":0,\"total\":1,\"time_ms\":5}}"
+        echo "[  1.040] [cpu:0] [ OK ] UTEST-${nonce}: [UTEST-JSON] {\"record_kind\":\"run_meta\",\"aborted\":false,\"not_run\":0}"
+        echo "[  1.050] [cpu:0] [ OK ] UTEST-${nonce}: === 1 passed, 0 failed, 0 skipped of 1 total ==="
+        echo "[  1.060] [cpu:0] [ OK ] UTEST-${nonce}: [UTEST-FRAME-END] run=1 records=6"
+    } > "$out"
+}
+
+HARVEST="$REPO_ROOT/scripts/utest-json-harvest.py"
+
+# 1. Baseline: a genuine framed stream harvests cleanly.
+frame_log "1a2b3c4d" "$FRAME_TMP/good.log"
+if python3 "$HARVEST" "$FRAME_TMP/good.log" "$FRAME_TMP/good.json" >/dev/null 2>&1 &&
+   python3 -c "import json,sys; d=json.load(open('$FRAME_TMP/good.json')); sys.exit(0 if d['summary']['total']==1 else 1)"; then
+    t_pass "framing: a genuine framed stream harvests to a real summary"
+else
+    t_fail "framing: a genuine framed stream harvests to a real summary"
+fi
+
+# 2. UNFRAMED records are not records. This is the pre-section behaviour the
+#    harvester used to accept verbatim: bare `[UTEST-JSON] ` anywhere on a
+#    line was folded straight into the artifact.
+sed -E 's/UTEST-1a2b3c4d: //' "$FRAME_TMP/good.log" > "$FRAME_TMP/unframed.log"
+python3 "$HARVEST" "$FRAME_TMP/unframed.log" "$FRAME_TMP/unframed.json" >/dev/null 2>&1 && HRC=0 || HRC=$?
+if [ "$HRC" != "0" ] &&
+   python3 -c "import json,sys; d=json.load(open('$FRAME_TMP/unframed.json')); sys.exit(0 if d['summary'] is None else 1)"; then
+    t_pass "framing: unframed records are refused, not harvested"
+else
+    t_fail "framing: unframed records are refused, not harvested" "harvester rc=$HRC"
+fi
+
+# 3. A GUESSED nonce is refused exactly like no frame at all -- the frame is
+#    learned from the announcement, never pattern-matched.
+frame_log "1a2b3c4d" "$FRAME_TMP/guess.log"
+sed -i -E 's/^(.*)UTEST-1a2b3c4d: (\[UTEST-JSON\] \{"record_kind":"binary")/\1UTEST-deadbeef: \2/' \
+    "$FRAME_TMP/guess.log"
+if python3 "$HARVEST" "$FRAME_TMP/guess.log" "$FRAME_TMP/guess.json" >/dev/null 2>&1; then
+    if python3 -c "
+import json,sys
+d=json.load(open('$FRAME_TMP/guess.json'))
+names=[r.get('name') for r in d.get('testcases',[])]
+sys.exit(0 if 'test_real.exe' not in names else 1)" 2>/dev/null; then
+        t_pass "framing: a wrong-nonce record never reaches the artifact"
+    else
+        t_fail "framing: a wrong-nonce record never reaches the artifact" "record was harvested"
+    fi
+else
+    # A refusal is also a correct outcome here: dropping the binary record
+    # leaves the stream inconsistent with its own summary.
+    t_pass "framing: a wrong-nonce record never reaches the artifact"
+fi
+
+# 4. The FIRST valid announcement wins. A later, different announcement must
+#    not re-point the parser at an imitator's records.
+frame_log "1a2b3c4d" "$FRAME_TMP/two.log"
+{
+    echo "[  2.000] [cpu:0] [INFO] UTEST-deadbeef: [UTEST-FRAME] v=1 run=1"
+    echo "[  2.010] [cpu:0] [ OK ] UTEST-deadbeef: [UTEST-JSON] {\"record_kind\":\"binary\",\"name\":\"forged.exe\",\"type\":\"correctness\",\"status\":\"PASS\",\"time_ms\":0}"
+} >> "$FRAME_TMP/two.log"
+python3 "$HARVEST" "$FRAME_TMP/two.log" "$FRAME_TMP/two.json" >/dev/null 2>&1 || true
+if python3 -c "
+import json,sys
+d=json.load(open('$FRAME_TMP/two.json'))
+blob=json.dumps(d)
+sys.exit(0 if 'forged.exe' not in blob else 1)"; then
+    t_pass "framing: the first announcement wins, a second one cannot re-point the parser"
+else
+    t_fail "framing: the first announcement wins, a second one cannot re-point the parser"
+fi
+
+# 5. Two legitimate launcher runs in one boot. The nonce is per-BOOT and
+#    test_usermode_run() is documented safe to call repeatedly, so both runs
+#    share a prefix; the artifact must describe the LAST COMPLETE run rather
+#    than merging both into a duplicate-record refusal.
+frame_log "1a2b3c4d" "$FRAME_TMP/run1.log"
+# Second run, built from a COPY: appending a transform of the same file to
+# itself makes sed chase its own growing output and never terminate.
+sed -E 's/run=1/run=2/; s/test_real\.exe/test_second.exe/' \
+    "$FRAME_TMP/run1.log" > "$FRAME_TMP/run2.log"
+cat "$FRAME_TMP/run2.log" >> "$FRAME_TMP/run1.log"
+if python3 "$HARVEST" "$FRAME_TMP/run1.log" "$FRAME_TMP/run1.json" >/dev/null 2>&1 &&
+   python3 -c "
+import json,sys
+d=json.load(open('$FRAME_TMP/run1.json'))
+names=[r.get('name') for r in d.get('testcases',[])]
+sys.exit(0 if names==['test_second.exe'] else 1)"; then
+    t_pass "framing: two launcher runs in one boot publish the last complete run"
+else
+    t_fail "framing: two launcher runs in one boot publish the last complete run"
+fi
+
+# 6. The terminator's record count must reconcile with what reached serial.
+#    A stream cut before its tail, or padded after it, invalidates every
+#    count derived from it.
+frame_log "1a2b3c4d" "$FRAME_TMP/short.log"
+grep -v 'record_kind":"run_meta' "$FRAME_TMP/short.log" > "$FRAME_TMP/short2.log"
+FRAMED=$(grep -c 'UTEST-1a2b3c4d: ' "$FRAME_TMP/short2.log" || true)
+DECLARED=$(grep -oE 'records=[0-9]+' "$FRAME_TMP/short2.log" | sed -E 's/records=//' | head -1)
+if [ "$FRAMED" -ne $(( DECLARED + 1 )) ]; then
+    t_pass "framing: a cut stream fails record-count reconciliation"
+else
+    t_fail "framing: a cut stream fails record-count reconciliation" "framed=$FRAMED declared=$DECLARED"
+fi
+
+# 7. The disk sink must never SERIALIZE a raw subsystem tag. The frame nonce
+#    is an authenticating value and every disk log lives in a directory ring
+#    3 can open, so each rendering has to go through klog_disk_subsystem().
+#    Checked generally rather than by output-shape: the first version of this
+#    gate matched only buf_puts()/line[] formatting and therefore missed the
+#    events.jsonl serializer, which kept publishing the real nonce while the
+#    text logs withheld it. A lookup that returns a NUMBER (klog_get_dropped)
+#    is not a disclosure and is the one allowed raw use.
+RAW_SUBSYS=$(grep -n 'e->subsystem' "$REPO_ROOT/src/kernel/klog_disk.c" |
+             grep -v 'klog_disk_subsystem' |
+             grep -vc 'klog_get_dropped' || true)
+if [ "${RAW_SUBSYS:-1}" -eq 0 ]; then
+    t_pass "framing: no disk sink serializes a raw subsystem tag"
+else
+    t_fail "framing: no disk sink serializes a raw subsystem tag" \
+           "unaliased e->subsystem reads: ${RAW_SUBSYS}"
+fi
+
+# 8. The live fixture must stay wired: it is the only ring-3 producer of
+#    forged launcher records, and a run without it proves nothing.
+if grep -q '^test_forge\.exe$' "$REPO_ROOT/tests/usermode.manifest" &&
+   grep -q 'test_forge\.exe' "$REPO_ROOT/Makefile"; then
+    t_pass "framing: the ring-3 forgery fixture is wired into the manifest and build"
+else
+    t_fail "framing: the ring-3 forgery fixture is wired into the manifest and build"
+fi
+
+# ============================================================================
 # Summary
 # ============================================================================
 

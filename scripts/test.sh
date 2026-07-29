@@ -261,6 +261,32 @@ QEMU_PID=$!
 #      kernel-only runs (test_kernel_skip=0 + no usermode binaries / boot
 #      where launcher never starts) emit zero `UTEST:` lines, so this gate
 #      is a no-op for them. Codex adversarial 2026-04-22.
+# Learn this boot's launcher frame from the announcement, echoing the
+# subsystem prefix every launcher-owned record carries (or nothing).
+#
+# Shared by the boot-completion poll and the Step 5b gates so both agree on
+# what "framed" means. The nonce lives in the TAG and nowhere else -- the
+# announcement body deliberately does not restate it, because a body copy
+# would survive the kernel's disk-sink alias and put the value back into the
+# one log ring 3 can read. The FIRST announcement wins: the launcher
+# announces before it creates any ring-3 task, so nothing of that run can
+# have printed ahead of it.
+#
+# It has to be learned, not pattern-matched. A poll that accepted any
+# `UTEST-[0-9a-f]{8}:` prefix would accept a GUESSED one -- which is not
+# hypothetical: test_forge.exe prints `UTEST-deadbeef: [UTEST-FRAME-END]`,
+# and against a generic pattern that line ended the run early, reopening
+# the exact hole the framing closes.
+utest_frame_prefix() {
+    local log="$1" line tag body
+    [ -f "$log" ] || return 0
+    line=$(grep -oE 'UTEST-[0-9a-f]{8}: \[UTEST-FRAME\] v=1 run=[0-9]+' \
+           "$log" 2>/dev/null | head -1 || true)
+    [ -n "$line" ] || return 0
+    tag=$(echo "$line" | sed -E 's/^UTEST-([0-9a-f]{8}):.*/\1/')
+    echo "UTEST-${tag}: "
+}
+
 ELAPSED=0
 FOUND=0
 while [ "$ELAPSED" -lt "$TIMEOUT" ]; do
@@ -275,13 +301,24 @@ while [ "$ELAPSED" -lt "$TIMEOUT" ]; do
         # line is emitted at the END of the run, so a launcher cut short
         # would leave a plan-less (malformed) TAP stream.
         [ "$TAP_MODE" -eq 1 ] && UMODE_NEEDED=1
-        # If any UTEST: line has appeared, the launcher has started;
-        # require its summary too so a mid-run panic cannot exit green.
-        if [ "$UMODE_NEEDED" -eq 0 ] && grep -q 'UTEST:' "$TEST_LOG" 2>/dev/null; then
+        # If a FRAMED launcher line has appeared, the launcher has started;
+        # require its terminator too so a mid-run panic cannot exit green.
+        # Framed, not bare `UTEST:`: ring-3 stdout shares this serial stream
+        # (sys_write copies caller bytes straight to serial_putchar), so an
+        # unframed match proves nothing about who wrote it.
+        POLL_UF=$(utest_frame_prefix "$TEST_LOG")
+        if [ "$UMODE_NEEDED" -eq 0 ] && [ -n "$POLL_UF" ]; then
             UMODE_NEEDED=1
         fi
         if [ "$UMODE_NEEDED" -eq 1 ]; then
-            if grep -q 'UTEST: === .* passed, .* failed, .* skipped of' \
+            # Wait for the launcher's TERMINATOR, not its summary. A binary
+            # that prints a plausible summary line and then hangs used to end
+            # the run here; the terminator is framed with THIS boot's learned
+            # nonce and states the record count the whole stream must
+            # reconcile against, so only the launcher can produce it and only
+            # a complete run carries it.
+            if [ -n "$POLL_UF" ] && \
+               grep -qE "${POLL_UF}\[UTEST-FRAME-END\] run=[0-9]+ records=[0-9]+" \
                     "$TEST_LOG" 2>/dev/null; then
                 sleep 1
                 break
@@ -424,8 +461,60 @@ done
 # red FAIL) and fold any UTEST FAIL count into the final exit code so
 # `make test` exits non-zero when ANY user-mode binary regressed --
 # the kernel TEST summary alone does not catch user-mode failures.
+#
+# EVERY pattern below keys on the FRAMED subsystem tag the kernel derives
+# once per boot (`UTEST-<8 hex>:`), never on the bare `UTEST:` literal.
+# Ring-3 stdout and the launcher share one serial stream -- `sys_write(fd=1)`
+# copies caller-controlled bytes straight to `serial_putchar` -- so before
+# framing a test binary could print a well-formed summary and this gate
+# would accept it as authoritative. A record that fails the framing check is
+# REFUSED, never accepted as a fallback.
+
+# Learn this boot's frame from the launcher's announcement. The nonce is
+# stated twice in that line, in the subsystem tag and in the body, and both
+# must agree: it is the only line that defines the frame, so it has to be
+# self-consistent to be believed. FIRST match wins -- the launcher announces
+# before it creates any ring-3 task, so nothing of this run can have printed
+# ahead of it.
+UTEST_NONCE=""
+UF_LEARNED=$(utest_frame_prefix "$TEST_LOG")
+if [ -n "$UF_LEARNED" ]; then
+    UTEST_NONCE=$(echo "$UF_LEARNED" | sed -E 's/^UTEST-([0-9a-f]{8}): $/\1/')
+fi
+
+# A second, DIFFERENT nonce means something other than this boot's launcher
+# emitted a frame announcement -- ring-3 output imitating one, since the
+# launcher publishes exactly one nonce per boot and reuses it across runs.
+#
+# The FIRST announcement still wins and stays authoritative: the launcher
+# announces before it creates any ring-3 task, so nothing of this run can
+# have printed ahead of it. Discarding the frame instead would let one
+# binary printing one string throw away every genuine result and take the
+# run down with it -- a denial of service handed to exactly the buggy
+# binary this framing exists to contain. The conflict is instead reported
+# as a FAILURE below: correct results, and a loud, accurate verdict.
+NONCE_CONFLICT=0
+if [ -n "$UTEST_NONCE" ]; then
+    DISTINCT_NONCES=$(grep -oE 'UTEST-[0-9a-f]{8}: \[UTEST-FRAME\] v=1 ' \
+                      "$TEST_LOG" 2>/dev/null | sed -E 's/^UTEST-([0-9a-f]{8}):.*/\1/' |
+                      sort -u | wc -l)
+    if [ "$DISTINCT_NONCES" -gt 1 ]; then
+        NONCE_CONFLICT="$DISTINCT_NONCES"
+    fi
+fi
+
+# The single prefix every framed pattern below is built from. When no frame
+# was learned it is set to a token that cannot occur on serial, so every
+# framed grep matches nothing rather than silently falling back to the
+# forgeable bare literal.
+if [ -n "$UTEST_NONCE" ]; then
+    UF="UTEST-${UTEST_NONCE}: "
+else
+    UF="UTEST-frame-absent: "
+fi
+
 HAS_UTEST=0
-grep -qE 'UTEST: === [0-9]+ passed' "$TEST_LOG" 2>/dev/null && HAS_UTEST=1
+grep -qE "${UF}=== [0-9]+ passed" "$TEST_LOG" 2>/dev/null && HAS_UTEST=1
 
 UTEST_PASS=0
 UTEST_FAIL=0
@@ -438,9 +527,9 @@ if [ "$HAS_UTEST" -eq 1 ]; then
     # Per-binary verdict lines (`UTEST: <name>: <STATUS> ...`). Skip the
     # informational `format=` plumb-through and the framing summary lines
     # that the loop below would otherwise echo as ambiguous "OK" entries.
-    { grep -E 'UTEST: [^ ]+\.exe: (PASS|FAIL|SKIP|TIMEOUT|ISOLATION|LEAK|format=)' \
+    { grep -E "${UF}[^ ]+\.exe: (PASS|FAIL|SKIP|TIMEOUT|ISOLATION|LEAK|format=)" \
           "$TEST_LOG" 2>/dev/null || true; } | while IFS= read -r line; do
-        verdict=$(echo "$line" | sed -E 's/.*UTEST: //')
+        verdict=$(echo "$line" | sed -E "s/.*${UF}//")
         if echo "$verdict" | grep -qE ': (FAIL|TIMEOUT|ISOLATION|LEAK)'; then
             echo -e "  ${RED}FAIL${RESET}  $verdict"
         elif echo "$verdict" | grep -q ': SKIP'; then
@@ -474,15 +563,15 @@ if [ "$HAS_UTEST" -eq 1 ]; then
     # run and no reason for it. The plan is now trailing and is suppressed
     # after a bail-out, per the TAP contract that nothing follows it.
     HAS_TAP=0
-    grep -qE 'UTEST: (ok|not ok|Bail out!|1\.\.[0-9]+)' "$TEST_LOG" 2>/dev/null && HAS_TAP=1
+    grep -qE "${UF}(ok|not ok|Bail out!|1\.\.[0-9]+)" "$TEST_LOG" 2>/dev/null && HAS_TAP=1
     if [ "$HAS_TAP" -eq 1 ] && [ "$QUIET_MODE" -eq 0 ]; then
         echo -e "  ${CYAN}TAP${RESET} producer stream:"
-        grep -E 'UTEST: (ok|not ok|Bail out!|1\.\.[0-9]+)' "$TEST_LOG" 2>/dev/null |
-            sed -E 's/.*UTEST: /    /'
+        grep -E "${UF}(ok|not ok|Bail out!|1\.\.[0-9]+)" "$TEST_LOG" 2>/dev/null |
+            sed -E "s/.*${UF}/    /"
     fi
 
     # Pull the launcher's authoritative summary numbers.
-    UTEST_SUM=$(grep -E 'UTEST: === [0-9]+ passed, [0-9]+ failed, [0-9]+ skipped of [0-9]+ total' \
+    UTEST_SUM=$(grep -E "${UF}=== [0-9]+ passed, [0-9]+ failed, [0-9]+ skipped of [0-9]+ total" \
                 "$TEST_LOG" 2>/dev/null | tail -1 || true)
     if [ -n "$UTEST_SUM" ]; then
         UTEST_PASS=$(echo "$UTEST_SUM" | sed -E 's/.*=== ([0-9]+) passed.*/\1/')
@@ -500,7 +589,7 @@ if [ "$HAS_UTEST" -eq 1 ]; then
     # `grep -c` exits 1 when zero matches; set -euo pipefail would abort
     # the run, so swallow the exit + guarantee an integer with `|| true`
     # and a `:-0` default.
-    UTEST_FAIL_OBSERVED=$({ grep -cE 'UTEST: [^ ]+\.exe: (FAIL|TIMEOUT|ISOLATION|LEAK)' \
+    UTEST_FAIL_OBSERVED=$({ grep -cE "${UF}[^ ]+\.exe: (FAIL|TIMEOUT|ISOLATION|LEAK)" \
                             "$TEST_LOG" 2>/dev/null || true; } | head -1)
     UTEST_FAIL_OBSERVED=${UTEST_FAIL_OBSERVED:-0}
     if [ "$UTEST_FAIL_OBSERVED" -gt "${UTEST_FAIL:-0}" ]; then
@@ -522,7 +611,7 @@ if [ "$HAS_UTEST" -eq 1 ]; then
     # under-reports what the per-binary lines show, the run FAILS. A
     # partially-skipped binary that reports honestly is not a failure --
     # an inconsistent reporting path is.
-    UTEST_REPORT_SUM=$(grep -E 'UTEST: \[UTEST-REPORT-SUMMARY\] ' \
+    UTEST_REPORT_SUM=$(grep -E "${UF}\[UTEST-REPORT-SUMMARY\] " \
                        "$TEST_LOG" 2>/dev/null | tail -1 || true)
     if [ -n "$UTEST_REPORT_SUM" ]; then
         RPT_BLOCKS=$(echo "$UTEST_REPORT_SUM" | sed -E 's/.* skip_blocks=([0-9]+).*/\1/')
@@ -533,9 +622,9 @@ if [ "$HAS_UTEST" -eq 1 ]; then
         # Cross-check: recount the per-binary report lines from serial. A
         # summary claiming fewer reporting binaries than the stream shows
         # means a launcher counter bug -- trust the stream.
-        RPT_LINES=$({ grep -cE 'UTEST: \[UTEST-REPORT\] ' "$TEST_LOG" 2>/dev/null || true; } | head -1)
+        RPT_LINES=$({ grep -cE "${UF}\[UTEST-REPORT\] " "$TEST_LOG" 2>/dev/null || true; } | head -1)
         RPT_LINES=${RPT_LINES:-0}
-        RPT_INVALID_OBSERVED=$({ grep -cE 'UTEST: \[UTEST-REPORT\] .* state=INVALID' \
+        RPT_INVALID_OBSERVED=$({ grep -cE "${UF}\[UTEST-REPORT\] .* state=INVALID" \
                                  "$TEST_LOG" 2>/dev/null || true; } | head -1)
         RPT_INVALID_OBSERVED=${RPT_INVALID_OBSERVED:-0}
         RPT_TOTAL_EXPECTED=$(( ${RPT_REPORTED:-0} + ${RPT_INVALID:-0} ))
@@ -555,7 +644,7 @@ if [ "$HAS_UTEST" -eq 1 ]; then
             echo -e "  ${RED}[UTEST]${RESET} ${RPT_INVALID_TOTAL} binary/binaries submitted a self-contradicting report -- failing the run"
             UTEST_FAIL=$(( UTEST_FAIL + RPT_INVALID_TOTAL ))
         fi
-    elif grep -qE 'UTEST: \[UTEST-REPORT\] ' "$TEST_LOG" 2>/dev/null; then
+    elif grep -qE "${UF}\[UTEST-REPORT\] " "$TEST_LOG" 2>/dev/null; then
         # Per-binary report lines but no summary: the report channel was
         # cut off mid-run. Fail rather than silently skipping the whole
         # cross-check.
@@ -567,7 +656,7 @@ if [ "$HAS_UTEST" -eq 1 ]; then
     # truncated -- the launcher emits an explicit overflow marker instead.
     # Its presence means an artifact is missing its summary, which is an
     # observability failure on the reporting path itself.
-    UTEST_OVERFLOW=$({ grep -cE 'UTEST: \[UTEST-(XML|JSON|REPORT)-SUMMARY-OVERFLOW\]' \
+    UTEST_OVERFLOW=$({ grep -cE "${UF}\[UTEST-(XML|JSON|REPORT)-SUMMARY-OVERFLOW\]" \
                        "$TEST_LOG" 2>/dev/null || true; } | head -1)
     UTEST_OVERFLOW=${UTEST_OVERFLOW:-0}
     if [ "$UTEST_OVERFLOW" -gt 0 ]; then
@@ -582,7 +671,7 @@ if [ "$HAS_UTEST" -eq 1 ]; then
     # 2026-07-28 the host still exited 0 on that: a run where most of the
     # suite silently did not execute reported success. The abort itself is
     # the failure, whatever verdict triggered it.
-    UTEST_ABORT=$({ grep -cE 'UTEST: (Bail out!|suite ABORT)' "$TEST_LOG" 2>/dev/null || true; } | head -1)
+    UTEST_ABORT=$({ grep -cE "${UF}(Bail out!|suite ABORT)" "$TEST_LOG" 2>/dev/null || true; } | head -1)
     UTEST_ABORT=${UTEST_ABORT:-0}
     if [ "$UTEST_ABORT" -gt 0 ]; then
         echo -e "  ${RED}[UTEST]${RESET} suite ABORTED (smoke gate) -- the remaining binaries never ran; failing the run"
@@ -598,7 +687,7 @@ if [ "$HAS_UTEST" -eq 1 ]; then
     # and says so explicitly. Records it knows about but did not emit mean
     # the artifacts under-report skips, which is the same false-coverage
     # class the reporting path exists to close.
-    UTEST_BUDGET=$({ grep -cE 'UTEST: \[UTEST-SKIP-RECORD-BUDGET\]' "$TEST_LOG" 2>/dev/null || true; } | head -1)
+    UTEST_BUDGET=$({ grep -cE "${UF}\[UTEST-SKIP-RECORD-BUDGET\]" "$TEST_LOG" 2>/dev/null || true; } | head -1)
     UTEST_BUDGET=${UTEST_BUDGET:-0}
     if [ "$UTEST_BUDGET" -gt 0 ]; then
         echo -e "  ${RED}[UTEST]${RESET} ${UTEST_BUDGET} binary/binaries exceeded the run-wide skip-record budget -- artifacts under-report skips"
@@ -609,11 +698,118 @@ if [ "$HAS_UTEST" -eq 1 ]; then
     # verdict-preserving fallback with the name dropped, so the artifact
     # stays well-formed -- but a record whose identity was lost is still
     # an artifact that cannot be traced back to its binary. Host-fatal.
-    UTEST_RECORD_OVERFLOW=$({ grep -cE 'UTEST: \[UTEST-RECORD-OVERFLOW\]' "$TEST_LOG" 2>/dev/null || true; } | head -1)
+    UTEST_RECORD_OVERFLOW=$({ grep -cE "${UF}\[UTEST-RECORD-OVERFLOW\]" "$TEST_LOG" 2>/dev/null || true; } | head -1)
     UTEST_RECORD_OVERFLOW=${UTEST_RECORD_OVERFLOW:-0}
     if [ "$UTEST_RECORD_OVERFLOW" -gt 0 ]; then
         echo -e "  ${RED}[UTEST]${RESET} ${UTEST_RECORD_OVERFLOW} artifact record(s) lost their name to a buffer overflow -- untraceable results"
         UTEST_FAIL=$(( UTEST_FAIL + UTEST_RECORD_OVERFLOW ))
+    fi
+
+    # Record-count reconciliation. The launcher's terminator states how many
+    # framed records it emitted before it; a host that saw the whole stream
+    # counts exactly `records + 1` framed lines for that run. A disagreement
+    # means the stream was cut, dropped, or extended -- all of which make
+    # every count above unreliable, so it is host-fatal rather than a note.
+    # Summed over runs because test_usermode_run() is documented safe to
+    # call repeatedly and each invocation frames its own run.
+    FRAME_LINES=$({ grep -cE "^.*${UF}" "$TEST_LOG" 2>/dev/null || true; } | head -1)
+    FRAME_LINES=${FRAME_LINES:-0}
+    # Every terminator must CLOSE a matching announcement. Summing `records`
+    # over unbound terminators let `BEGIN run=1 ... END run=2 records=N`
+    # reconcile, and let two runs compensate each other's count errors across
+    # the boundary. Walk the framed run markers in order instead: an END
+    # counts only when it closes the open BEGIN with the same ordinal, and an
+    # unmatched or out-of-order marker fails the run.
+    FRAME_WALK=$(grep -oE "${UF}\[UTEST-FRAME(-END)?\] (v=1 )?run=[0-9]+( records=[0-9]+)?" \
+                 "$TEST_LOG" 2>/dev/null |
+                 awk '
+                   /FRAME-END\]/ { match($0, /run=[0-9]+/)
+                                   r = substr($0, RSTART+4, RLENGTH-4)
+                                   match($0, /records=[0-9]+/)
+                                   c = substr($0, RSTART+8, RLENGTH-8)
+                                   if (open == "" || r != open) { bad++; next }
+                                   n += c + 1; pairs++; open = ""
+                                   next }
+                   /FRAME\]/     { if (open != "") { bad++ }
+                                   match($0, /run=[0-9]+/)
+                                   open = substr($0, RSTART+4, RLENGTH-4)
+                                   next }
+                   END { print (bad + 0) " " (pairs + 0) " " (n + 0) }')
+    FRAME_BAD=$(echo "$FRAME_WALK" | cut -d" " -f1)
+    FRAME_ENDS=$(echo "$FRAME_WALK" | cut -d" " -f2)
+    FRAME_EXPECT=$(echo "$FRAME_WALK" | cut -d" " -f3)
+    FRAME_BAD=${FRAME_BAD:-0}; FRAME_ENDS=${FRAME_ENDS:-0}; FRAME_EXPECT=${FRAME_EXPECT:-0}
+    if [ "$FRAME_BAD" -gt 0 ]; then
+        echo -e "  ${RED}[UTEST]${RESET} ${FRAME_BAD} framed run marker(s) do not pair: a terminator closed no matching announcement, or a run re-opened before its terminator"
+        UTEST_FAIL=$(( UTEST_FAIL + 1 ))
+    fi
+    # A forged frame announcement did not corrupt the results above (the
+    # launcher's own announcement came first and is what every pattern keyed
+    # on), but a binary emitting launcher-shaped framing is a defect in its
+    # own right and must not pass silently.
+    if [ "$NONCE_CONFLICT" -gt 1 ]; then
+        echo -e "  ${RED}[UTEST]${RESET} serial carries ${NONCE_CONFLICT} distinct launcher nonces -- something other than the launcher emitted a frame announcement (results parsed from the launcher's own, which came first)"
+        UTEST_FAIL=$(( UTEST_FAIL + 1 ))
+    fi
+
+    # The ring-3 forgery fixture is only proof if something CHECKS it. When
+    # test_forge.exe ran, its forged records reached serial by construction;
+    # assert here that none of them reached a verdict or an artifact. Without
+    # this the fixture proves only that bytes were written, and an XML/JSON
+    # parser regression could accept forged output while the suite stays
+    # green. Scoped to runs where the fixture actually executed.
+    if grep -qE "${UF}test_forge\.exe: (PASS|FAIL)" "$TEST_LOG" 2>/dev/null; then
+        FORGE_LEAK=0
+        for artifact in "$PROJECT/build/test-results.xml" "$PROJECT/build/test-results.json"; do
+            [ -f "$artifact" ] || continue
+            if grep -qE 'forged-(xml|json)|"total": ?9[89]|tests="9[89]"' "$artifact" 2>/dev/null; then
+                echo -e "  ${RED}[UTEST]${RESET} FORGED record from test_forge.exe reached $(basename "$artifact") -- the framing check is not being applied by the artifact assembler"
+                FORGE_LEAK=$(( FORGE_LEAK + 1 ))
+            fi
+        done
+        # The forged summaries claim 99 and 98 binaries; the run's own count
+        # must come from the launcher, not from them.
+        if [ "$UTEST_PASS" -ge 98 ]; then
+            echo -e "  ${RED}[UTEST]${RESET} run counts (${UTEST_PASS} passed) match test_forge.exe's forged summary -- a forged verdict was read as authoritative"
+            FORGE_LEAK=$(( FORGE_LEAK + 1 ))
+        fi
+        if [ "$FORGE_LEAK" -gt 0 ]; then
+            UTEST_FAIL=$(( UTEST_FAIL + FORGE_LEAK ))
+        fi
+    fi
+
+    if [ "$FRAME_ENDS" -eq 0 ]; then
+        echo -e "  ${RED}[UTEST]${RESET} framed launcher stream has no [UTEST-FRAME-END] terminator -- the run did not finish, or its tail never reached serial"
+        UTEST_FAIL=$(( UTEST_FAIL + 1 ))
+    elif [ "$FRAME_LINES" -ne "$FRAME_EXPECT" ]; then
+        echo -e "  ${RED}[UTEST]${RESET} framed record count mismatch: serial carries ${FRAME_LINES} framed lines, the launcher accounted for ${FRAME_EXPECT} -- stream truncated or extended"
+        UTEST_FAIL=$(( UTEST_FAIL + 1 ))
+    fi
+fi
+
+# Framing is fail-closed in BOTH directions. Above, a framed stream that
+# does not reconcile fails. Here, the absence of a usable frame fails
+# whenever anything on serial claims to be a launcher record: that is either
+# a producer that stopped framing (drift against a host that now requires
+# it) or ring-3 output imitating one, and neither may pass as "no user-mode
+# tests ran".
+if [ "$HAS_UTEST" -eq 0 ]; then
+    if [ -n "$UTEST_NONCE" ]; then
+        # The launcher framed a run and then never published its summary --
+        # it was cut short. Distinct from "nothing ran": the announcement
+        # proves the launcher started.
+        echo ""
+        echo -e "  ${RED}[UTEST]${RESET} launcher announced frame ${UTEST_NONCE} but never published a summary -- the run was cut short"
+        UTEST_FAIL=$(( UTEST_FAIL + 1 ))
+    elif grep -qE '(^|[^-])UTEST: (=== [0-9]+ passed|\[UTEST-(XML|JSON|REPORT))' \
+              "$TEST_LOG" 2>/dev/null; then
+        # Launcher-shaped records with no frame at all: either a producer
+        # that stopped framing (drift against a host that now requires it)
+        # or ring-3 output imitating one. Neither may pass as "no user-mode
+        # tests ran".
+        echo ""
+        echo -e "  ${RED}[UTEST]${RESET} serial carries UNFRAMED launcher-shaped records and no frame announcement -- refusing to read them as results"
+        UTEST_FAIL=$(( UTEST_FAIL + 1 ))
     fi
 fi
 
@@ -634,7 +830,7 @@ fi
 
 XML_OUT="$PROJECT/build/test-results.xml"
 HAS_XML=0
-grep -q '\[UTEST-XML\]' "$TEST_LOG" 2>/dev/null && HAS_XML=1
+grep -qE "${UF}\[UTEST-XML\]" "$TEST_LOG" 2>/dev/null && HAS_XML=1
 
 # Belt-and-suspenders: XML=1 was requested but the kernel produced no
 # [UTEST-XML] stream. The normal empty-suite case (total_planned=0 with
@@ -675,8 +871,26 @@ if [ "$HAS_XML" -eq 1 ]; then
     # `[UTEST-XML] ` or `[UTEST-XML-SUMMARY] ` marker is the payload.
     STRIPPED=$(sed -E 's/\x1b\[[0-9;]*m//g' "$TEST_LOG")
 
+    # Narrow to the LAST complete framed run. test_usermode_run() is
+    # documented safe to call repeatedly and the nonce is per-BOOT, so a boot
+    # with two launcher runs puts two full record streams under one prefix --
+    # and assembling both mixes every run's testcases under the last run's
+    # counts. Each run brackets itself with [UTEST-FRAME] / [UTEST-FRAME-END],
+    # so the last closed pair is the run to publish. Falls through unchanged
+    # when there is no bracket pair, which is the single-run case's own shape
+    # before the terminator lands.
+    if [ -n "$UTEST_NONCE" ]; then
+        RUN_BEGIN=$(echo "$STRIPPED" | grep -nE "${UF}\[UTEST-FRAME\] v=1 run=[0-9]+" |
+                    tail -1 | cut -d: -f1)
+        RUN_END=$(echo "$STRIPPED" | grep -nE "${UF}\[UTEST-FRAME-END\] " |
+                  tail -1 | cut -d: -f1)
+        if [ -n "$RUN_BEGIN" ] && [ -n "$RUN_END" ] && [ "$RUN_END" -gt "$RUN_BEGIN" ]; then
+            STRIPPED=$(echo "$STRIPPED" | sed -n "${RUN_BEGIN},${RUN_END}p")
+        fi
+    fi
+
     # Extract the summary numbers (tests=N failures=N skipped=N time=S.MMM).
-    SUM_LINE=$(echo "$STRIPPED" | sed -n 's/.*\[UTEST-XML-SUMMARY\] //p' |
+    SUM_LINE=$(echo "$STRIPPED" | sed -n "s/.*${UF}\[UTEST-XML-SUMMARY\] //p" |
                grep -E '^tests=[0-9]+ failures=[0-9]+ skipped=[0-9]+ time=' |
                tail -1 || true)
 
@@ -797,7 +1011,7 @@ if [ "$HAS_XML" -eq 1 ] && [ "$XML_SUMMARY_OK" -eq 1 ]; then
         # matched nothing, test=0, etc.) and the script must continue
         # to the final verdict + cleanup trap. Without this, set -e
         # would abort the entire test.sh run before the normal path.
-        echo "$STRIPPED" | sed -n 's/.*\[UTEST-XML\] //p' |
+        echo "$STRIPPED" | sed -n "s/.*${UF}\[UTEST-XML\] //p" |
             grep -E '^<testcase' || true
         echo '</testsuite>'
     } > "$XML_OUT.tmp" && mv -f "$XML_OUT.tmp" "$XML_OUT"
@@ -825,7 +1039,7 @@ fi
 
 JSON_OUT="$PROJECT/build/test-results.json"
 HAS_JSON=0
-grep -q '\[UTEST-JSON\]' "$TEST_LOG" 2>/dev/null && HAS_JSON=1
+grep -qE "${UF}\[UTEST-JSON\]" "$TEST_LOG" 2>/dev/null && HAS_JSON=1
 
 if [ "$JSON_MODE" -eq 1 ] || [ "$HAS_JSON" -eq 1 ]; then
     # Remove any artifact from a previous run BEFORE anything can fail --

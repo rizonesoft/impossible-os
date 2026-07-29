@@ -284,7 +284,10 @@ static int format_entry(const klog_entry_t *e, char *line, int max)
 
     /* Subsystem */
     {
-        const char *ss = e->subsystem ? e->subsystem : "???";
+        const char *ss = klog_disk_subsystem(e->subsystem);
+
+        if (!ss)
+            ss = "???";
         int j;
         for (j = 0; ss[j] && pos < max - 8; j++)
             line[pos++] = ss[j];
@@ -1141,9 +1144,15 @@ void klog_disk_append(const klog_entry_t *e)
     buf_puts("] ");
     buf_puts(level_str(e->level));
     buf_putc(' ');
-    if (e->subsystem && e->subsystem[0]) {
-        buf_puts(e->subsystem);
-        buf_puts(": ");
+    {
+        /* Aliased: an authenticating tag must not reach a ring-3-readable
+         * sink. No-op for every ordinary subsystem. */
+        const char *ss = klog_disk_subsystem(e->subsystem);
+
+        if (ss && ss[0]) {
+            buf_puts(ss);
+            buf_puts(": ");
+        }
     }
     buf_puts(e->message);
     buf_putc('\n');
@@ -1617,7 +1626,15 @@ static void klog_disk_flush_locked(void)
                          * Escapes: \ -> \\, " -> \", control chars < 0x20 dropped. */
                         char esc_sub[48], esc_msg[300];
                         {
-                            const char *src = e->subsystem ? e->subsystem : "";
+                            /* Aliased like every other disk rendering: this
+                             * sink is in the same ring-3-readable directory,
+                             * so serializing the raw tag here would publish
+                             * an authenticating value the text logs are
+                             * careful to withhold. */
+                            const char *src = klog_disk_subsystem(e->subsystem);
+
+                            if (!src)
+                                src = "";
                             uint32_t ep = 0, emax = sizeof(esc_sub) - 1;
                             while (*src && ep < emax) {
                                 if (*src == '"' || *src == '\\') {

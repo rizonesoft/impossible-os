@@ -43,6 +43,8 @@
 #include "kernel/ob/ob_process.h"
 #include "kernel/timer.h"
 #include "kernel/test/test_usermode.h"
+#include "kernel/csprng.h"
+#include "kernel/time/mono_clock.h"
 #include "registry.h"
 
 /* ---- Internal state -------------------------------------------------- */
@@ -1455,7 +1457,178 @@ _Static_assert(UTEST_RECORD_LINE_MAX <= sizeof(((klog_entry_t *)0)->message),
  * not by anything unbounded, so the limiter has nothing to protect here.
  *
  * Human-readable UTEST progress lines deliberately keep the rate limit. */
-#define utest_record_log(level, ...) klog_unrated((level), "UTEST", __VA_ARGS__)
+
+/* ---- Non-forgeable record framing ---------------------------------- *
+ *
+ * Ring-3 stdout and every launcher record share one serial stream:
+ * `sys_write(fd=1, ...)` copies caller-controlled bytes straight to
+ * `serial_putchar` (src/kernel/sched/syscall.c) with no annotation of any
+ * kind. A test binary could therefore print a byte-identical
+ * `UTEST: === 5 passed, 0 failed, 0 skipped of 5 total ===`, and the host's
+ * boot-completion poll would accept it, stop QEMU, and report success
+ * without ever seeing the launcher's real verdict. The same shared
+ * namespace let a binary inject `[UTEST-XML]` / `[UTEST-JSON]` records
+ * straight into the assembled artifact, where no budget or counter
+ * accounted for them.
+ *
+ * The frame is a per-boot nonce carried in the klog SUBSYSTEM field, so a
+ * launcher record renders as `[INFO] UTEST-1a2b3c4d: <payload>` where a
+ * forgery can only manage `[INFO] UTEST: <payload>`. It rides the subsystem
+ * rather than the message because every record is bounded by klog's
+ * 256-byte message field and the JSON summary already measured 242 of 255
+ * usable bytes: framing inside the message would be paid for by every
+ * emitter and would push the tightest records over the wire. The subsystem
+ * is a `const char *`, so the tag costs the record budget nothing.
+ *
+ * Ring 3 cannot observe the value. It is derived in kernel context, no
+ * syscall reads it back, and it leaves the kernel on SERIAL ONLY: the live
+ * disk log is openable from ring 3, so the frame tag is aliased back to the
+ * plain "UTEST" on that sink (klog_set_disk_alias) and the announcement
+ * body does not restate the nonce. Without both, a binary could read
+ * X:\Logs\Serial_*.log -- which klog appends and flushes synchronously,
+ * before the first test task runs -- and forge a correctly framed
+ * terminator.
+ *
+ * The nonce is generated ONCE PER BOOT and never rewritten, for two
+ * reasons. test_usermode_run() is documented safe to call repeatedly, and
+ * klog's ring entries retain the subsystem as a POINTER -- rewriting the
+ * buffer for a second run would silently re-attribute every retained
+ * first-run entry, including the crash-region evidence the next boot reads
+ * back. Each run instead gets its own ordinal and its own record count. */
+#define UTEST_FRAME_NONCE_HEX 8u
+#define UTEST_FRAME_TAG_MAX   (sizeof("UTEST-") + UTEST_FRAME_NONCE_HEX)
+_Static_assert(UTEST_FRAME_TAG_MAX <= KLOG_SUBSYSTEM_MAX,
+               "the framed subsystem tag must fit klog's serialized "
+               "subsystem field or crash-region and debug-console evidence "
+               "is truncated for every launcher record");
+
+/* Written exactly once per boot, then read for the life of the boot: klog
+ * keeps the pointer, so this storage must outlive every entry logged under
+ * it. `s_frame_ready` publishes the buffer with release ordering. */
+static char     s_frame_tag[UTEST_FRAME_TAG_MAX];
+static uint32_t s_frame_nonce;    /* 0 = not generated yet (the sentinel) */
+static uint32_t s_frame_ready;    /* 1 = s_frame_tag is filled and stable */
+static uint32_t s_frame_records;  /* framed records emitted in THIS run */
+static uint32_t s_frame_run;      /* run ordinal, 1-based */
+
+/* Format "UTEST-<8 lowercase hex>" into dst. Pure: touches no globals and
+ * logs nothing, so a unit test can exercise it directly. Returns 1 on
+ * success, 0 if the buffer cannot hold the tag and its NUL. */
+static int u_frame_tag_format(char *dst, uint32_t cap, uint32_t nonce)
+{
+    static const char hex[] = "0123456789abcdef";
+    const char       *pre   = "UTEST-";
+    uint32_t          i     = 0;
+    uint32_t          k;
+
+    if (!dst || cap < UTEST_FRAME_TAG_MAX)
+        return 0;
+    while (*pre)
+        dst[i++] = *pre++;
+    for (k = 0; k < UTEST_FRAME_NONCE_HEX; k++)
+        dst[i++] = hex[(nonce >> (28u - 4u * k)) & 0xFu];
+    dst[i] = '\0';
+    return 1;
+}
+
+/* The subsystem every framed record is logged under. Falls back to the
+ * unframed literal before the frame is published, which is unreachable by
+ * construction (the launcher publishes before it emits anything) and fails
+ * CLOSED if it ever happens: the record is still counted, so the host's
+ * count reconciliation refuses the run rather than accepting a stream with
+ * a silently unframed record in it. */
+static const char *u_frame_tag(void)
+{
+    if (__atomic_load_n(&s_frame_ready, __ATOMIC_ACQUIRE))
+        return s_frame_tag;
+    return "UTEST";
+}
+
+/* Machine-artifact records bypass the per-subsystem rate limiter (see
+ * above) and carry the frame. Every framed record is counted so the run's
+ * terminator can state how many the host must have seen. */
+#define utest_record_log(level, ...)                                   \
+    do {                                                               \
+        __atomic_fetch_add(&s_frame_records, 1u, __ATOMIC_RELAXED);    \
+        klog_unrated((level), u_frame_tag(), __VA_ARGS__);             \
+    } while (0)
+
+/* Derive this boot's nonce. csprng is seeded in Phase 1, long before the
+ * launcher runs in Phase 3; the TSC mix is a defence-in-depth salt, not a
+ * substitute, since a monotonic counter is approximable from outside. 0 is
+ * the "not generated" sentinel, so it is folded to 1. */
+static uint32_t u_frame_nonce_fold(uint64_t mixed)
+{
+    uint32_t nonce = (uint32_t)(mixed ^ (mixed >> 32));
+
+    return nonce ? nonce : 1u;
+}
+
+static uint32_t u_frame_nonce_new(void)
+{
+    return u_frame_nonce_fold(csprng_u64() ^ rdtsc_ns());
+}
+
+/* Open a framed run: publish the per-boot tag on first use, take the next
+ * run ordinal, reset the per-run record count, and announce the frame.
+ *
+ * The announcement is itself framed and is the FIRST framed record of the
+ * run, so the host learns the nonce from a line only the kernel can have
+ * produced at a point where no ring-3 code of this run has executed yet.
+ * Concurrent invocation is not a supported shape (the launcher is a
+ * boot-phase singleton driven from boot_tests_run) and fails closed if
+ * attempted: the loser's records are counted but unframed, so the host's
+ * reconciliation refuses the run. */
+static void u_frame_begin(void)
+{
+    uint32_t expected = 0;
+
+    if (!__atomic_load_n(&s_frame_ready, __ATOMIC_ACQUIRE)) {
+        uint32_t nonce = u_frame_nonce_new();
+
+        if (__atomic_compare_exchange_n(&s_frame_nonce, &expected, nonce, 0,
+                                        __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+            u_frame_tag_format(s_frame_tag, (uint32_t)sizeof(s_frame_tag),
+                               nonce);
+            /* Keep the nonce off the one sink ring 3 can read. The live
+             * disk log (X:\Logs\Serial_*.log) is openable through
+             * SYS_OPENFILE, and klog appends+flushes each message to it
+             * synchronously -- so without this the announcement is on disk
+             * BEFORE the first test task runs, and a binary could read the
+             * value back and emit a correctly framed terminator. Serial
+             * keeps the frame; disk keeps the records under the plain tag,
+             * so post-mortem diagnosis is unaffected. */
+            klog_set_disk_alias(s_frame_tag, "UTEST");
+            __atomic_store_n(&s_frame_ready, 1u, __ATOMIC_RELEASE);
+        }
+    }
+
+    __atomic_store_n(&s_frame_records, 0u, __ATOMIC_RELAXED);
+    s_frame_run++;
+
+    /* The body deliberately does NOT restate the nonce. The TAG carries it,
+     * and a body copy would survive the disk alias below -- putting the
+     * value back into the one sink ring 3 can read. Nothing is lost: a
+     * tag-vs-body cross-check only ever caught producer drift, which the
+     * record-count reconciliation now covers, and it was never a barrier to
+     * a forger who can write both fields. */
+    utest_record_log(LOG_INFO, "[UTEST-FRAME] v=1 run=%u",
+                     (uint64_t)s_frame_run);
+}
+
+/* Close a framed run. `records=` counts every framed record emitted before
+ * this line, so a host that saw the whole stream counts exactly
+ * `records + 1` framed lines for the run. A binary that prints a plausible
+ * summary and then hangs cannot produce this line, and a stream cut short
+ * cannot reconcile -- which is what makes the terminator, not the summary,
+ * the run's completion signal. */
+static void u_frame_end(void)
+{
+    uint32_t n = __atomic_load_n(&s_frame_records, __ATOMIC_RELAXED);
+
+    utest_record_log(LOG_INFO, "[UTEST-FRAME-END] run=%u records=%u",
+                     (uint64_t)s_frame_run, (uint64_t)n);
+}
 
 struct u_report {
     uint32_t asserts_passed;
@@ -2799,6 +2972,13 @@ void test_usermode_run(void)
         return;
     }
 
+    /* Open the framed run BEFORE anything else can reach serial. Every
+     * return path past this point pairs it with u_frame_end(); the two
+     * checks above return without a frame on purpose, because an
+     * unterminated frame is a stronger signal than no frame at all and
+     * neither of those paths emits a single record. */
+    u_frame_begin();
+
     /* Enable preemptive scheduler for the timeout watchdog. Pair with
      * scheduler_disable before returning so boot_phase3 continues in
      * its expected non-preemptive state. */
@@ -2882,6 +3062,7 @@ void test_usermode_run(void)
          * unchanged. */
         utest_record_log(LOG_INFO,
              "=== 0 passed, 0 failed, 0 skipped of 0 total ===");
+        u_frame_end();
         u_manifest_free(&manifest);
         scheduler_disable();
         return;
@@ -3128,6 +3309,10 @@ void test_usermode_run(void)
      * follows it as a cut-and-resumed stream. */
     u_emit_json_run_meta(suite_aborted, not_run);
     u_emit_report_summary(&rt);
+    /* Terminator, emitted last on every path including an aborted suite:
+     * it is what the host waits on instead of the summary, and what it
+     * reconciles its own framed-line count against. */
+    u_frame_end();
 }
 
 /* ---- Test-only exports --------------------------------------------- *
@@ -3139,6 +3324,21 @@ void test_usermode_run(void)
 int test_usermode_is_valid_manifest_name(const char *name)
 {
     return u_is_valid_manifest_name(name);
+}
+
+int test_usermode_frame_tag_format(char *dst, uint32_t cap, uint32_t nonce)
+{
+    return u_frame_tag_format(dst, cap, nonce);
+}
+
+uint32_t test_usermode_frame_nonce_fold(uint64_t mixed)
+{
+    return u_frame_nonce_fold(mixed);
+}
+
+uint32_t test_usermode_frame_tag_cap(void)
+{
+    return (uint32_t)UTEST_FRAME_TAG_MAX;
 }
 
 int test_usermode_derive_test_name(const char *name_in,

@@ -523,6 +523,31 @@ static void test_klog_defer_active(void)
 /* klog_dispatch_slot bins a log tag to its per-subsystem file slot (0-5) for the
  * single-pass disk routing, or -1 when the entry routes only to kernel.log.
  * Slots: 0 network 1 boot 2 fs 3 mm 4 drivers 5 security. Pure. */
+static int str_eq_local(const char *a, const char *b)
+{
+    if (!a || !b)
+        return a == b;
+    while (*a && *a == *b) { a++; b++; }
+    return *a == *b;
+}
+
+/* klog_disk_subsystem() is the disk sink's alias resolver: it keeps an
+ * AUTHENTICATING subsystem tag (the user-mode launcher's per-boot frame
+ * nonce) out of the one log sink ring 3 can open, while leaving every
+ * ordinary tag untouched. Read-only here -- registering an alias would
+ * consume the one-shot the launcher needs. */
+static void test_klog_disk_subsystem_passthrough(void)
+{
+    TEST_ASSERT(klog_disk_subsystem("mm") != (const char *)0,
+                "an unaliased tag resolves to something writable");
+    TEST_ASSERT(str_eq_local(klog_disk_subsystem("mm"), "mm"),
+                "an unaliased tag is written to disk unchanged");
+    TEST_ASSERT(str_eq_local(klog_disk_subsystem("drv"), "drv"),
+                "a second unaliased tag is also unchanged");
+    TEST_ASSERT(klog_disk_subsystem((const char *)0) == (const char *)0,
+                "a NULL tag stays NULL rather than becoming an alias");
+}
+
 static void test_klog_dispatch_slot(void)
 {
     TEST_ASSERT_EQ(klog_dispatch_slot("net"), 0, "net -> network.log (slot 0)");
@@ -641,6 +666,8 @@ void test_register_klog(void)
 {
     test_suite_register_cat("Klog: single-pass subsystem slot dispatch",
                             test_klog_dispatch_slot, TEST_CAT_BOOT);
+    test_suite_register_cat("Klog: disk sink leaves unaliased tags unchanged",
+                            test_klog_disk_subsystem_passthrough, TEST_CAT_BOOT);
     test_suite_register_cat("Klog: flush progress-due cadence",
                             test_klog_flush_progress_due, TEST_CAT_BOOT);
     test_suite_register_cat("Klog: LZ4 rotated-log compress/decompress roundtrip",

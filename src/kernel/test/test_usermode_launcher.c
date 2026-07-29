@@ -26,6 +26,7 @@
 #include "kernel/mm/pmm.h"       /* pmm_get_free_frames + ordinal countdown */
 #include "kernel/mm/vmm.h"       /* vmm_create_user_pml4 (the fork site)    */
 #include "kernel/boot_info.h"
+#include "kernel/klog.h"         /* KLOG_SUBSYSTEM_MAX (frame-tag bound)    */
 #include "registry.h"
 
 /* Exposed by src/kernel/test/test_usermode.c for unit-test use. Kept as
@@ -65,6 +66,9 @@ int test_usermode_format_tap_point(char *dst, uint32_t cap, int ok,
                                    uint32_t point, const char *name,
                                    const char *directive);
 uint32_t test_usermode_json_line_max(void);
+int test_usermode_frame_tag_format(char *dst, uint32_t cap, uint32_t nonce);
+uint32_t test_usermode_frame_nonce_fold(uint64_t mixed);
+uint32_t test_usermode_frame_tag_cap(void);
 int test_usermode_format_report_summary(char *dst, uint32_t cap,
                                         uint32_t a_pass, uint32_t a_fail,
                                         uint32_t blocks, uint32_t records,
@@ -1736,6 +1740,98 @@ static void test_stress_iters_boot_config_has_nonzero_room(void)
 
 /* ---- Registration --------------------------------------------------- */
 
+/* ---- Non-forgeable record framing --------------------------------- */
+
+/* Poison a scratch buffer so a formatter that writes nothing is visibly
+ * distinct from one that wrote an empty string. Freestanding kernel: no
+ * memset, and a loop is clearer than pulling one in for four call sites. */
+static void u_test_fill(char *dst, uint32_t cap)
+{
+    uint32_t i;
+
+    for (i = 0; i < cap; i++)
+        dst[i] = 'Z';
+}
+
+/* The tag is what a host regex anchors on and what klog copies into its
+ * fixed-width serialized subsystem field, so its exact bytes and its exact
+ * length are both load-bearing. */
+static void test_frame_tag_exact_bytes(void)
+{
+    char tag[32];
+
+    u_test_fill(tag, sizeof(tag));
+    TEST_ASSERT(test_usermode_frame_tag_format(tag, sizeof(tag), 0x1A2B3C4Du) == 1,
+                "a nonce must format into an ample buffer");
+    TEST_ASSERT(u_test_streq(tag, "UTEST-1a2b3c4d"),
+                "the tag is 'UTEST-' plus 8 LOWERCASE hex digits");
+    TEST_ASSERT_EQ(test_usermode_frame_tag_cap() - 1u, 14u,
+                   "tag length is fixed at 14 bytes so the host regex can "
+                   "anchor on a fixed-width hex run");
+
+    u_test_fill(tag, sizeof(tag));
+    TEST_ASSERT(test_usermode_frame_tag_format(tag, sizeof(tag), 0u) == 1,
+                "zero formats even though it is never published");
+    TEST_ASSERT(u_test_streq(tag, "UTEST-00000000"),
+                "hex digits are zero-padded to a fixed width, never trimmed");
+
+    u_test_fill(tag, sizeof(tag));
+    TEST_ASSERT(test_usermode_frame_tag_format(tag, sizeof(tag), 0xFFFFFFFFu) == 1,
+                "the all-ones nonce formats");
+    TEST_ASSERT(u_test_streq(tag, "UTEST-ffffffff"),
+                "the top nibble is not sign-extended or dropped");
+}
+
+/* The tag must fit klog's serialized subsystem field (KLOG_SUBSYSTEM_MAX),
+ * or every launcher record loses its frame in the crash-region evidence the
+ * next boot reads back. */
+static void test_frame_tag_fits_klog_subsystem(void)
+{
+    uint32_t cap = test_usermode_frame_tag_cap();
+
+    TEST_ASSERT_EQ(cap, 15u,
+                   "'UTEST-' + 8 hex + NUL is 15 bytes");
+    TEST_ASSERT(cap <= (uint32_t)KLOG_SUBSYSTEM_MAX,
+                "the framed tag must fit klog's serialized subsystem field");
+}
+
+/* Fail closed on a buffer that cannot hold the whole tag: a truncated tag
+ * would be a frame no host could verify, published as if it were real. */
+static void test_frame_tag_refuses_short_buffer(void)
+{
+    char tag[16];
+    uint32_t cap = test_usermode_frame_tag_cap();
+
+    u_test_fill(tag, sizeof(tag));
+    TEST_ASSERT(test_usermode_frame_tag_format(tag, cap - 1u, 0x1A2B3C4Du) == 0,
+                "one byte short of exact capacity must refuse");
+    TEST_ASSERT_EQ((uint32_t)(unsigned char)tag[0], (uint32_t)'Z',
+                   "a refused format writes nothing at all");
+    TEST_ASSERT(test_usermode_frame_tag_format(tag, cap, 0x1A2B3C4Du) == 1,
+                "exact capacity is accepted");
+    TEST_ASSERT(test_usermode_frame_tag_format((char *)0, 64u, 1u) == 0,
+                "a NULL destination must refuse");
+}
+
+/* 0 is the "no nonce generated yet" sentinel, so the fold must never
+ * produce it -- a folded-to-zero nonce would leave the frame permanently
+ * unpublished and every record silently unframed. */
+static void test_frame_nonce_fold_never_zero(void)
+{
+    TEST_ASSERT_EQ(test_usermode_frame_nonce_fold(0ull), 1u,
+                   "an all-zero mix folds to the reserved 1, never to 0");
+    TEST_ASSERT_EQ(test_usermode_frame_nonce_fold(0x00000001ull << 32 | 1ull), 1u,
+                   "halves that cancel exactly must still not yield 0");
+    TEST_ASSERT_EQ(test_usermode_frame_nonce_fold(0xFFFFFFFFFFFFFFFFull), 1u,
+                   "all-ones halves cancel to 0 and fold to 1");
+    TEST_ASSERT_EQ(test_usermode_frame_nonce_fold(0x00000000A5A5A5A5ull),
+                   0xA5A5A5A5u,
+                   "a low-half-only mix passes through unchanged");
+    TEST_ASSERT_EQ(test_usermode_frame_nonce_fold(0xA5A5A5A500000000ull),
+                   0xA5A5A5A5u,
+                   "the high half is folded in, not discarded");
+}
+
 void test_register_usermode_launcher(void);
 void test_register_usermode_launcher(void)
 {
@@ -1929,6 +2025,14 @@ void test_register_usermode_launcher(void)
     test_suite_register_cat("UTEST: set_stress_iters accepts 0/100/65535",
                             test_stress_iters_boot_config_has_nonzero_room,
                             TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: frame tag formats exact host-visible bytes",
+                            test_frame_tag_exact_bytes, TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: frame tag fits klog's subsystem field",
+                            test_frame_tag_fits_klog_subsystem, TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: frame tag refuses a short buffer",
+                            test_frame_tag_refuses_short_buffer, TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: frame nonce never folds to the 0 sentinel",
+                            test_frame_nonce_fold_never_zero, TEST_CAT_EXEC);
 }
 
 #endif /* KERNEL_TESTS */

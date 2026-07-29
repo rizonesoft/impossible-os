@@ -326,7 +326,7 @@ typedef struct {
     uint8_t  _pad[3];
     uint32_t pid;
     uint32_t tid;
-    char     subsystem[16];
+    char     subsystem[KLOG_SUBSYSTEM_MAX];
     char     message[128];
 } klog_crash_entry_t;  /* 164 bytes */
 /* Pin the serialized crash-entry layout: it is the physical-memory format read
@@ -403,7 +403,8 @@ void klog_crash_persist(void)
         dst[i]._pad[2]   = 0;
         dst[i].pid       = klog_ring[idx].pid;
         dst[i].tid       = klog_ring[idx].tid;
-        str_copy_n(dst[i].subsystem, klog_ring[idx].subsystem, 16);
+        str_copy_n(dst[i].subsystem, klog_ring[idx].subsystem,
+                   KLOG_SUBSYSTEM_MAX);
         str_copy_n(dst[i].message, klog_ring[idx].message, 128);
     }
 
@@ -693,6 +694,41 @@ static int str_eq(const char *a, const char *b)
 {
     while (*a && *a == *b) { a++; b++; }
     return *a == *b;
+}
+
+/* ---- Disk-sink subsystem alias ----
+ *
+ * One pair, published once per boot. See klog_set_disk_alias() in klog.h for
+ * why this exists; the short version is that the live disk log is readable
+ * from ring 3, so an authenticating tag must not reach it.
+ *
+ * Both pointers are caller-owned with boot-long storage. `s_disk_alias_as`
+ * is published with release ordering and read with acquire, so a reader that
+ * observes the alias also observes the tag it belongs to. */
+static const char *s_disk_alias_tag;
+static const char *s_disk_alias_as;
+
+void klog_set_disk_alias(const char *tag, const char *alias)
+{
+    if (!tag || !tag[0] || !alias)
+        return;
+    /* One-shot: a second, different tag would re-attribute entries already
+     * queued under the first. */
+    if (__atomic_load_n(&s_disk_alias_as, __ATOMIC_ACQUIRE))
+        return;
+    s_disk_alias_tag = tag;
+    __atomic_store_n(&s_disk_alias_as, alias, __ATOMIC_RELEASE);
+}
+
+const char *klog_disk_subsystem(const char *subsystem)
+{
+    const char *alias = __atomic_load_n(&s_disk_alias_as, __ATOMIC_ACQUIRE);
+
+    if (!alias || !subsystem)
+        return subsystem;
+    if (s_disk_alias_tag == subsystem || str_eq(s_disk_alias_tag, subsystem))
+        return alias;
+    return subsystem;
 }
 
 static log_level_t subsys_min_level(const char *subsystem)
@@ -1322,7 +1358,14 @@ static void klog_emit(log_level_t level, const char *subsystem, int bypass_rate,
     }
 
     /* ---- Live debug log: flush to X:\Logs\Serial\Serial_YYMMDDNN.log
-     * (klog_dir + "Serial\\") immediately ---- */
+     * (klog_dir + "Serial\\") immediately ----
+     *
+     * The disk sink is openable from ring 3, so a subsystem whose tag
+     * authenticates its records to a host reading serial must not have that
+     * value written where a user process can read it back. The substitution
+     * lives inside klog_disk_append (klog_disk.c), not here: this is only
+     * ONE of its two callers, and the batch ring drain is the one that
+     * actually fills kernel.log. Serial and the ring keep the real tag. */
     if (klog_disk_live_active()) {
         klog_disk_append(&snapshot);
         klog_disk_flush();

@@ -40,6 +40,13 @@ test_fastpath_fuzz.exe
 
 # §1 harness self-test + correctness suites.
 test_harness_smoke.exe
+
+# Adversarial input, not a unit test: prints launcher-shaped records on
+# fd 1 (a fake legacy summary, a fake JUnit testcase, a fake JSON record,
+# a wrong-nonce frame terminator) so the HOST gates are asserted against
+# real ring-3 forgery attempts rather than a synthetic log. It passes; the
+# proof is that none of its output reaches an artifact or a verdict.
+test_forge.exe
 test_syscall.exe
 test_libc.exe
 test_ipc.exe

@@ -94,6 +94,7 @@ title: "TODO-10 -- Kernel Security Hardening"
 | 💎   |  28   | Test-only TUs outside `src/kernel/test/` (NTFS self-test etc.)  | §26                        |  [x]   |
 | 💎   |  29   | Guard unguarded test-only helpers in production TUs             | §27, §28                   |  [x]   |
 | 💎   |  30   | Signed CI attestation for the release-flavor proof gate         | §27, §29                   |  [/]   |
+| 💎   |  31   | Legacy-syscall user-pointer validation (`sys_write`, `sys_log`) | (none)                     |  [ ]   |
 
 > 💎 = parity work: matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work: Impossible OS is superior or first.
@@ -915,6 +916,27 @@ Every `#ifdef KERNEL_TESTS` seam in the tree was live in the shipped kernel, bec
 > **Scope boundary:** §30 owns the tamper-resistant signed attestation + the reusable validate-not-recompute receipt + the DB flag-fingerprint (§27 F8/F9 + perf residuals). §27 owns the proof gate; §29 owns the helper guards + advisory audit. -> XREF: §27 + §29.
 
 > **Deferred:** [H] signed CI attestation + DB flag-fingerprint (F8/F9) need cryptographic signing infrastructure (a new tool dependency + a keyless-OIDC-vs-keyed operator decision), which is operator-reserved -> awaiting operator decision on the signing mechanism (XREF from §29 items "Gate robustness (§27 F8 ...)" + "(§27 F9 ...)").
+
+---
+
+## 31. Legacy-Syscall User-Pointer Validation
+
+`sys_write` (`src/kernel/sched/syscall.c`) casts the caller-supplied `buf` straight to `const char *` and dereferences it in kernel context: no user-range check, no overflow-safe bounds, no `copy_from_user`. A ring-3 process can therefore pass ANY kernel address and have the kernel read that memory and emit it byte by byte to serial (and to the terminal window) until it hits a NUL or `len`. The kernel links at a fixed address, so a caller can compute the address of any static it wants from the matching image. That is an arbitrary-kernel-memory disclosure primitive, not merely a bad-pointer crash: it reads out stack canaries, key material, and any secret the kernel holds in a static buffer.
+
+> [!WARNING]
+> Found 2026-07-29 by the adversarial review of `00-infrastructure/TODO-04` §25, which needed the opposite property. That section authenticates launcher records with a per-boot nonce held in a kernel static; a binary that can replay kernel memory to serial can echo the tag without ever learning its bytes, so §25's non-forgeability holds only against callers that cannot exercise this primitive. The nonce is a symptom -- the disclosure is the defect.
+
+- [ ] Validate the whole `[buf, buf + len)` range against the user address window with overflow-safe arithmetic (a
+      `buf + len` that wraps must be refused, not truncated) before any dereference, and reject a range that is not entirely user-accessible with the same status a bad handle gets. `include/kernel/mm/user_range.h` owns the window bounds; do not restate them
+- [ ] Copy through a kernel bounce buffer on the recoverable user-copy path rather than dereferencing the user pointer in
+      place, so a page that disappears between validation and use faults recoverably instead of taking the kernel down. `copy_from_user` already exists for the NT syscall surface (`nt_syscall.c`) -- reuse it rather than adding a second mechanism
+- [ ] Audit every remaining legacy (non-NT) syscall that consumes a caller pointer for the same shape, `sys_log` included,
+      and fix each rather than only the one the review named. A per-syscall inventory belongs in the commit message
+- [ ] Add a ring-3 regression test that passes a kernel address to the offending syscalls and asserts a refusal rather
+      than a dump, plus a bounds test for the wrapping `buf + len` case
+- [ ] Commit: `"security: validate user pointers in the legacy syscall surface"`
+
+**Test checkpoint:** A ring-3 binary calling `sys_write(1, <kernel address>, N)` receives an error status and produces NO serial output from kernel memory; a call with `buf + len` wrapping past the top of the address space is refused; ordinary user-buffer writes are unaffected and the user-mode suite stays green. Test on: QEMU TCG, QEMU KVM.
 
 ---
 

@@ -169,14 +169,34 @@ for _ in $(seq 1 "$TIMEOUT_SEC"); do
         # so this expensive live path cannot false-pass where the normal gate
         # fails: zero kernel FAILED, the `leaked` field present AND zero leaks,
         # and zero UTEST failures.
-        # The kernel renders the user-mode summary through subsystem UTEST, so on
-        # SERIAL it reads `UTEST: === N passed, M failed, K skipped of T total`
-        # (same marker scripts/test.sh keys on) -- NOT `[UTEST]`.
-        if grep -qE "=== [0-9]+ tests? passed" "$STRIPPED_LOG" && \
-           grep -qE "UTEST: === [0-9]+ passed, [0-9]+ failed, [0-9]+ skipped of" "$STRIPPED_LOG" && \
+        # The kernel renders the user-mode summary through a FRAMED subsystem
+        # tag, so on SERIAL it reads
+        # `UTEST-<8 hex>: === N passed, M failed, K skipped of T total`.
+        # The frame is mandatory here for the same reason it is in
+        # scripts/test.sh: ring-3 stdout shares this serial stream, so a bare
+        # `UTEST:` summary proves nothing about who wrote it, and this driver
+        # would otherwise accept a forged one while ignoring every genuine
+        # (framed) failure verdict -- a false pass on the most expensive
+        # validation path in the tree. Learned from the launcher's own
+        # announcement, whose nonce is stated twice and must agree.
+        UF_TPM=""
+        FRAME_TPM=$(grep -oE "UTEST-[0-9a-f]{8}: \[UTEST-FRAME\] v=1 run=[0-9]+" \
+                    "$STRIPPED_LOG" 2>/dev/null | head -1 || true)
+        if [ -n "$FRAME_TPM" ]; then
+            TAG_HEX=$(echo "$FRAME_TPM" | sed -E 's/^UTEST-([0-9a-f]{8}):.*/\1/')
+            UF_TPM="UTEST-${TAG_HEX}: "
+        fi
+        # No printable sentinel when the frame is unknown: ring 3 controls
+        # serial, so any placeholder string it can print becomes an
+        # acceptance prefix. An unlearned frame simply never satisfies the
+        # gate below, and the loop keeps waiting.
+        if [ -n "$UF_TPM" ] && \
+           grep -qE "=== [0-9]+ tests? passed" "$STRIPPED_LOG" && \
+           grep -qE "${UF_TPM}=== [0-9]+ passed, [0-9]+ failed, [0-9]+ skipped of" "$STRIPPED_LOG" && \
+           grep -qE "${UF_TPM}\[UTEST-FRAME-END\] run=[0-9]+ records=[0-9]+" "$STRIPPED_LOG" && \
            grep -qE "TPM2 transport up \(" "$STRIPPED_LOG"; then
             SUM=$(grep -E "=== [0-9]+ tests? passed" "$STRIPPED_LOG" | tail -1)
-            UT=$(grep -E "UTEST: === [0-9]+ passed, [0-9]+ failed" "$STRIPPED_LOG" | tail -1)
+            UT=$(grep -E "${UF_TPM}=== [0-9]+ passed, [0-9]+ failed" "$STRIPPED_LOG" | tail -1)
             if echo "$SUM" | grep -qE "[1-9][0-9]* FAILED"; then
                 echo -e "${RED}SWTPM TEST FAILED: kernel suite reported failures${NC}"; echo "$SUM"; exit 1
             fi
@@ -204,9 +224,24 @@ for _ in $(seq 1 "$TIMEOUT_SEC"); do
             fi
             # Per-binary cross-check: any explicit UTEST failure verdict (uppercase
             # FAIL/TIMEOUT/ISOLATION/LEAK) must not slip past a clean summary count.
-            if grep -E "UTEST:" "$STRIPPED_LOG" | grep -qE "\b(FAIL|TIMEOUT|ISOLATION|LEAK)\b"; then
+            if grep -E "${UF_TPM}" "$STRIPPED_LOG" | grep -qE "\b(FAIL|TIMEOUT|ISOLATION|LEAK)\b"; then
                 echo -e "${RED}SWTPM TEST FAILED: a user-mode binary reported a failure verdict${NC}"
-                grep -E "UTEST:" "$STRIPPED_LOG" | grep -E "\b(FAIL|TIMEOUT|ISOLATION|LEAK)\b" | tail -5; exit 1
+                grep -E "${UF_TPM}" "$STRIPPED_LOG" | grep -E "\b(FAIL|TIMEOUT|ISOLATION|LEAK)\b" | tail -5; exit 1
+            fi
+            # Record-count reconciliation, the same gate scripts/test.sh
+            # applies. Without it this driver accepts a stream that lost an
+            # earlier framed record but kept its summary and terminator --
+            # exactly the incomplete shape the framing contract declares
+            # unusable -- while claiming to apply the normal driver's gates.
+            TPM_FRAMED=$({ grep -c "${UF_TPM}" "$STRIPPED_LOG" 2>/dev/null || true; } | head -1)
+            TPM_FRAMED=${TPM_FRAMED:-0}
+            TPM_EXPECT=$(grep -oE "${UF_TPM}\[UTEST-FRAME-END\] run=[0-9]+ records=[0-9]+" \
+                         "$STRIPPED_LOG" 2>/dev/null |
+                         sed -E 's/.*records=([0-9]+).*/\1/' |
+                         awk '{ n += $1 + 1 } END { print n + 0 }')
+            if [ "$TPM_FRAMED" -ne "${TPM_EXPECT:-0}" ]; then
+                echo -e "${RED}SWTPM TEST FAILED: framed record count mismatch (${TPM_FRAMED} on serial, launcher accounted for ${TPM_EXPECT:-0}) -- stream truncated or extended${NC}"
+                exit 1
             fi
             PASSED=true; break
         fi

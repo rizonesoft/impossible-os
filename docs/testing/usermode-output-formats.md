@@ -64,13 +64,83 @@ reporting binary, and one `[UTEST-REPORT-SUMMARY]` for the run.
 
 ---
 
+## Record framing (always on)
+
+**Every launcher-owned record is framed with a per-boot nonce, and every
+host parser refuses a record that is not.** Ring-3 stdout and the launcher
+share one serial stream -- `sys_write(fd=1, ...)` copies caller-controlled
+bytes straight to `serial_putchar` with no annotation -- so before framing a
+test binary could print a byte-identical summary line and the runner's
+boot-completion poll would accept it, stop QEMU, and report success without
+ever seeing the real verdict. The same shared namespace let a binary inject
+`[UTEST-XML]` / `[UTEST-JSON]` records straight into the assembled artifact.
+
+The nonce rides the klog SUBSYSTEM field, so records read `UTEST-<8 hex>:`
+where a forgery can only manage `UTEST:`:
+
+```
+[INFO] UTEST-1a2b3c4d: [UTEST-FRAME] v=1 run=1
+[ OK ] UTEST-1a2b3c4d: test_syscall.exe: PASS (exit=0)
+[ OK ] UTEST-1a2b3c4d: [UTEST-FRAME-END] run=1 records=105
+```
+
+It rides the subsystem rather than the message because every record is
+bounded by klog's 256-byte message field and the JSON summary already
+measured 242 of 255 usable bytes; the subsystem is a `const char *`, so the
+tag costs the record budget nothing.
+
+**Learn the frame, never pattern-match it.** A consumer takes the nonce from
+the TAG of the FIRST `[UTEST-FRAME]` announcement and then requires exactly
+that prefix on every record it reads. Accepting any `UTEST-[0-9a-f]{8}:`
+prefix accepts a GUESSED one, which is not hypothetical: `test_forge.exe`
+prints `UTEST-deadbeef: [UTEST-FRAME-END]`, and against a generic pattern
+that line ended the run early.
+
+The announcement body carries NO copy of the nonce. Every ring-3-readable
+disk sink (`kernel.log`, `events.jsonl`, the per-subsystem files) renders
+the tag through an alias back to the plain `UTEST`, and a body copy would
+survive that alias and put the value back into the log a test binary can
+open. There is likewise no "frame absent" placeholder prefix: ring 3
+controls serial, so any printable sentinel becomes an acceptance prefix. An
+unlearned frame runs NO acceptance pattern at all.
+
+Each run brackets itself with `[UTEST-FRAME] ... run=N` and
+`[UTEST-FRAME-END] run=N`, and a terminator only counts when it closes the
+open announcement with the SAME ordinal -- otherwise a `run=1` open and a
+`run=2` close reconcile, and two runs can compensate each other's count
+errors across the boundary.
+
+First announcement wins: the launcher announces before it creates any ring-3
+task, so nothing of that run can have printed ahead of it. A later, different
+nonce is an imitator -- its records never match the learned prefix, and
+`scripts/test.sh` additionally fails the run on the conflict. It does not
+discard the frame, because that would let one binary printing one string
+throw away every genuine result.
+
+**`[UTEST-FRAME-END]` is the run's completion signal, not the summary.**
+`records=` counts every framed record emitted before it, so a consumer that
+saw the whole stream counts exactly `records + 1` framed lines for that run.
+A binary that prints a plausible summary and then hangs cannot produce this
+line, and a truncated stream cannot reconcile. `test_usermode_run()` is safe
+to call repeatedly: the nonce is generated once per boot and never
+rewritten (klog retains the subsystem pointer, so rewriting it would
+re-attribute retained entries), while each run gets its own ordinal and its
+own record count.
+
+The mechanism's boundary is framing, not cryptography: the threat model is a
+BUGGY binary printing something that matches a launcher pattern by accident
+as much as a hostile one. Ring 3 cannot read the nonce back through any
+syscall, but a binary that opens the on-disk kernel log can read it there.
+
+---
+
 ## Human-readable default (always on)
 
 Every binary produces two kernel-side lines:
 
 ```
-[INFO] UTEST: <name>: PASS (exit=0)
-[ OK ] UTEST: === N passed, M failed, K skipped of T total ===
+[INFO] UTEST-1a2b3c4d: <name>: PASS (exit=0)
+[ OK ] UTEST-1a2b3c4d: === N passed, M failed, K skipped of T total ===
 ```
 
 Plus whatever the user-mode harness writes via `[PASS]` / `[FAIL]` /
@@ -127,9 +197,10 @@ glob-discovered names come from the filesystem rather than the manifest.
 Refusing in the failing direction is the only safe option: the alternative
 reads as a pass.
 
-Lines pass through the kernel log prefix (`[INFO] UTEST: `), so a TAP
-parser consuming the raw serial log must strip everything up to the
-first `1..` / `ok` / `not ok` / `Bail out!` token per line.
+Lines pass through the kernel log prefix (`[INFO] UTEST-<nonce>: `), so a
+TAP parser consuming the raw serial log must learn the frame, require it,
+and then strip everything up to the first `1..` / `ok` / `not ok` /
+`Bail out!` token per line.
 `scripts/test.sh`'s post-processor does not currently produce a
 standalone TAP file (TAP is less useful than XML/JSON for CI), but
 nothing stops a downstream consumer from writing one.
@@ -469,8 +540,14 @@ refused to publish) means keying on `record_kind` yourself, and remembering
 that `reported` lives in the separate `run_report` record on the wire:
 
 ```sh
-# Per-binary pass-rate from serial -- select on record_kind, never on the
-# presence of .name, which the skip-block records also carry:
+# Per-binary pass-rate from serial. Two rules: select on record_kind (never
+# on the presence of .name, which the skip-block records also carry), and
+# require the FRAME, learned from the announcement -- an unframed
+# `[UTEST-JSON]` line on serial is not a launcher record:
+#
+#   UF="$(grep -oE 'UTEST-[0-9a-f]{8}: \[UTEST-FRAME\] v=1' build/test.log |
+#         head -1 | sed -E 's/(UTEST-[0-9a-f]{8}: ).*/\1/')"
+#
 grep '\[UTEST-JSON\] {' build/test.log |
   sed 's/.*\[UTEST-JSON\] //' |
   jq -c 'select(.record_kind == "binary") | {name, status, time_ms}'

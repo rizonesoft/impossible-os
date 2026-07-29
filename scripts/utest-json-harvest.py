@@ -54,6 +54,20 @@ SCHEMA = "utest-json-v1"
 MARKER = "[UTEST-JSON] "
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
+# A record is only believed when it is FRAMED. Ring-3 stdout shares the
+# serial stream with the launcher -- sys_write(fd=1) copies caller bytes
+# straight to serial_putchar -- so a bare `[UTEST-JSON] {...}` proves
+# nothing about who wrote it, and used to be folded into the artifact
+# verbatim. The kernel derives a per-boot nonce and logs every launcher
+# record under the subsystem tag `UTEST-<8 hex>`, which ring 3 cannot
+# reproduce because it never sees the value. The frame is learned from the
+# launcher's own announcement, and a log with no announcement (or with two
+# disagreeing ones) yields NO records rather than unframed ones.
+FRAME_ANNOUNCE_RE = re.compile(
+    r"UTEST-([0-9a-f]{8}): \[UTEST-FRAME\] v=1 run=([0-9]+)")
+FRAME_END_RE = re.compile(
+    r"UTEST-([0-9a-f]{8}): \[UTEST-FRAME-END\] run=([0-9]+) records=([0-9]+)")
+
 # Status vocabulary of a binary record, mapped to the summary counter it must
 # agree with. A record carrying anything else is a producer bug, not a new
 # outcome to tolerate.
@@ -105,16 +119,77 @@ def _refuse(out_path, reason, detail=None):
                      % (reason, (": " + detail) if detail else ""))
 
 
+def _learn_frame(lines):
+    """Return this boot's launcher frame prefix, or None.
+
+    The nonce lives in the TAG and nowhere else: the announcement body does
+    not restate it, because a body copy would survive the kernel's disk-sink
+    alias and put the value back into the one log ring 3 can read. The FIRST
+    announcement wins -- the launcher announces before it creates any ring-3
+    task, so nothing of that run can have printed ahead of it. A later,
+    different nonce is ring-3 output imitating the frame; its records simply
+    never match the learned prefix. Reporting that conflict is
+    scripts/test.sh's job -- this harvester's contract is to assemble only
+    records it can attribute.
+    """
+    for line in lines:
+        match = FRAME_ANNOUNCE_RE.search(line)
+        if match:
+            return "UTEST-%s: " % match.group(1)
+    return None
+
+
+def _last_run_slice(lines, frame):
+    """Narrow `lines` to the LAST complete framed run.
+
+    test_usermode_run() is documented safe to call repeatedly and the nonce
+    is deliberately per-BOOT, not per-run, so a boot with two launcher runs
+    puts two full record streams under the same prefix. Collecting both
+    yields duplicate summary / run_report / run_meta records, which this
+    harvester correctly refuses as a cut-and-resumed stream -- turning a
+    legitimate double run into a failed artifact.
+
+    Each run brackets itself with `[UTEST-FRAME] ... run=N` and
+    `[UTEST-FRAME-END] run=N`, so the last closed bracket pair is the run to
+    publish. An unterminated trailing run is NOT chosen: an artifact must
+    describe a run that finished.
+    """
+    begin = None
+    best = None
+    for index, line in enumerate(lines):
+        match = FRAME_ANNOUNCE_RE.search(line)
+        if match and line.find(frame) >= 0:
+            begin = (index, match.group(2))
+            continue
+        match = FRAME_END_RE.search(line)
+        if match and line.find(frame) >= 0 and begin is not None:
+            if match.group(2) == begin[1]:
+                best = (begin[0], index)
+                begin = None
+    if best is None:
+        return None
+    return lines[best[0]:best[1] + 1]
+
+
 def _extract_records(log_path):
-    """Return the payload strings following each [UTEST-JSON] marker."""
-    records = []
+    """Return the payload strings following each FRAMED [UTEST-JSON] marker."""
     with open(log_path, "r", encoding="utf-8", errors="replace") as handle:
-        for line in handle:
-            line = ANSI_RE.sub("", line).rstrip("\n")
-            idx = line.find(MARKER)
-            if idx < 0:
-                continue
-            records.append(line[idx + len(MARKER):].strip())
+        lines = [ANSI_RE.sub("", line).rstrip("\n") for line in handle]
+
+    frame = _learn_frame(lines)
+    if frame is None:
+        return []
+
+    lines = _last_run_slice(lines, frame)
+    if lines is None:
+        return []
+    framed_marker = frame + MARKER
+    records = []
+    for line in lines:
+        idx = line.find(framed_marker)
+        if idx < 0:
+            continue
+        records.append(line[idx + len(framed_marker):].strip())
     return records
 
 

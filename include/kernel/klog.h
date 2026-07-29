@@ -45,6 +45,41 @@ void klog(log_level_t level, const char *subsystem, const char *fmt, ...);
  * verbosity filter, ring/disk/serial sink, and lock discipline as klog(). */
 void klog_unrated(log_level_t level, const char *subsystem, const char *fmt, ...);
 
+/* Capacity of the SERIALIZED subsystem tag, including its NUL.
+ *
+ * The ring entry below stores the tag as a `const char *` and never copies
+ * it, but two consumers do copy it into a fixed field: the debug-console
+ * snapshot (klog_get_entries) and the crash-region record
+ * (`klog_crash_entry_t` in src/kernel/klog.c, whose on-region layout the
+ * next boot reads back). A caller that BUILDS a tag at runtime -- rather
+ * than passing a string literal -- must fit this bound, or its evidence is
+ * truncated in exactly the paths that matter after a crash, and must give
+ * that tag storage that outlives every entry logged under it. */
+#define KLOG_SUBSYSTEM_MAX 16
+
+/* Render `tag` as `alias` on the DISK sink only, leaving serial unchanged.
+ *
+ * Exists for one caller class: a subsystem tag that AUTHENTICATES its
+ * records to a host reading serial. The live disk log (X:\Logs\Serial_*.log)
+ * is openable from ring 3, so a tag that is secret on serial stops being
+ * secret the moment it is also written there -- a user process can read the
+ * value back and then emit records the host accepts as kernel-owned. The
+ * alias keeps the records in the on-disk log for post-mortem diagnosis
+ * while keeping the authenticating value out of it.
+ *
+ * Both pointers must have storage outliving every entry logged under them.
+ * Registering is one-shot per boot: a second call with a different tag is
+ * refused, because rewriting it would re-attribute entries already queued
+ * under the first. */
+void klog_set_disk_alias(const char *tag, const char *alias);
+
+/* Disk rendering for `subsystem`: the registered alias, or `subsystem`
+ * itself when none applies. Applied by the disk sink rather than its
+ * callers, because the sink has two of them -- the live per-message flush
+ * and the batch ring drain -- and a caller-side substitution silently
+ * covers only the first. */
+const char *klog_disk_subsystem(const char *subsystem);
+
 /* Ring buffer access for debug console */
 typedef struct {
     log_level_t level;
