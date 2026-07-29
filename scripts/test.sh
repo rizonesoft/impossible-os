@@ -277,14 +277,27 @@ QEMU_PID=$!
 # hypothetical: test_forge.exe prints `UTEST-deadbeef: [UTEST-FRAME-END]`,
 # and against a generic pattern that line ended the run early, reopening
 # the exact hole the framing closes.
-utest_frame_prefix() {
-    local log="$1" line tag body
-    [ -f "$log" ] || return 0
-    line=$(grep -oE 'UTEST-[0-9a-f]{8}: \[UTEST-FRAME\] v=1 run=[0-9]+' \
-           "$log" 2>/dev/null | head -1 || true)
-    [ -n "$line" ] || return 0
-    tag=$(echo "$line" | sed -E 's/^UTEST-([0-9a-f]{8}):.*/\1/')
-    echo "UTEST-${tag}: "
+utest_frame_scan() {
+    local log="$1"
+    [ -f "$log" ] || { echo '{}'; return 0; }
+    python3 "$PROJECT/scripts/utest-frame.py" "$log" 2>/dev/null || true
+}
+
+utest_frame_field() {
+    python3 -c '
+import json, sys
+try:
+    d = json.loads(sys.argv[1] or "{}")
+except Exception:
+    d = {}
+cur = d
+for key in sys.argv[2].split("."):
+    if not isinstance(cur, dict):
+        cur = None
+        break
+    cur = cur.get(key)
+print("" if cur is None or cur is False else ("1" if cur is True else cur))
+' "$1" "$2"
 }
 
 ELAPSED=0
@@ -306,7 +319,8 @@ while [ "$ELAPSED" -lt "$TIMEOUT" ]; do
         # Framed, not bare `UTEST:`: ring-3 stdout shares this serial stream
         # (sys_write copies caller bytes straight to serial_putchar), so an
         # unframed match proves nothing about who wrote it.
-        POLL_UF=$(utest_frame_prefix "$TEST_LOG")
+        POLL_SCAN=$(utest_frame_scan "$TEST_LOG")
+        POLL_UF=$(utest_frame_field "$POLL_SCAN" prefix)
         if [ "$UMODE_NEEDED" -eq 0 ] && [ -n "$POLL_UF" ]; then
             UMODE_NEEDED=1
         fi
@@ -317,9 +331,7 @@ while [ "$ELAPSED" -lt "$TIMEOUT" ]; do
             # nonce and states the record count the whole stream must
             # reconcile against, so only the launcher can produce it and only
             # a complete run carries it.
-            if [ -n "$POLL_UF" ] && \
-               grep -qE "${POLL_UF}\[UTEST-FRAME-END\] run=[0-9]+ records=[0-9]+" \
-                    "$TEST_LOG" 2>/dev/null; then
+            if [ -n "$(utest_frame_field "$POLL_SCAN" last_complete.run)" ]; then
                 sleep 1
                 break
             fi
@@ -470,51 +482,32 @@ done
 # would accept it as authoritative. A record that fails the framing check is
 # REFUSED, never accepted as a fallback.
 
-# Learn this boot's frame from the launcher's announcement. The nonce is
-# stated twice in that line, in the subsystem tag and in the body, and both
-# must agree: it is the only line that defines the frame, so it has to be
-# self-consistent to be believed. FIRST match wins -- the launcher announces
-# before it creates any ring-3 task, so nothing of this run can have printed
-# ahead of it.
-UTEST_NONCE=""
-UF_LEARNED=$(utest_frame_prefix "$TEST_LOG")
-if [ -n "$UF_LEARNED" ]; then
-    UTEST_NONCE=$(echo "$UF_LEARNED" | sed -E 's/^UTEST-([0-9a-f]{8}): $/\1/')
-fi
+# One scan answers every framing question: the nonce, whether any marker
+# failed to pair, how many foreign nonces announced a frame, and which run
+# closed cleanly. The parser is shared with the poll above, with
+# test-swtpm.sh and with the JSON harvester -- three consumers used to carry
+# their own copies of these rules and had already drifted apart.
+UTEST_FRAME_JSON=$(utest_frame_scan "$TEST_LOG")
+UTEST_NONCE=$(utest_frame_field "$UTEST_FRAME_JSON" nonce)
+FRAME_UNPAIRED=$(utest_frame_field "$UTEST_FRAME_JSON" unpaired)
+FRAME_UNPAIRED=${FRAME_UNPAIRED:-0}
+NONCE_CONFLICT=$(utest_frame_field "$UTEST_FRAME_JSON" conflicts)
+NONCE_CONFLICT=${NONCE_CONFLICT:-0}
+FRAME_COMPLETE_RUN=$(utest_frame_field "$UTEST_FRAME_JSON" last_complete.run)
+FRAME_BAD_CLOSE=$(utest_frame_field "$UTEST_FRAME_JSON" bad_close)
+FRAME_BAD_CLOSE=${FRAME_BAD_CLOSE:-0}
+FRAME_OK=$(utest_frame_field "$UTEST_FRAME_JSON" ok)
 
-# A second, DIFFERENT nonce means something other than this boot's launcher
-# emitted a frame announcement -- ring-3 output imitating one, since the
-# launcher publishes exactly one nonce per boot and reuses it across runs.
-#
-# The FIRST announcement still wins and stays authoritative: the launcher
-# announces before it creates any ring-3 task, so nothing of this run can
-# have printed ahead of it. Discarding the frame instead would let one
-# binary printing one string throw away every genuine result and take the
-# run down with it -- a denial of service handed to exactly the buggy
-# binary this framing exists to contain. The conflict is instead reported
-# as a FAILURE below: correct results, and a loud, accurate verdict.
-NONCE_CONFLICT=0
-if [ -n "$UTEST_NONCE" ]; then
-    DISTINCT_NONCES=$(grep -oE 'UTEST-[0-9a-f]{8}: \[UTEST-FRAME\] v=1 ' \
-                      "$TEST_LOG" 2>/dev/null | sed -E 's/^UTEST-([0-9a-f]{8}):.*/\1/' |
-                      sort -u | wc -l)
-    if [ "$DISTINCT_NONCES" -gt 1 ]; then
-        NONCE_CONFLICT="$DISTINCT_NONCES"
-    fi
-fi
-
-# The single prefix every framed pattern below is built from. When no frame
-# was learned it is set to a token that cannot occur on serial, so every
-# framed grep matches nothing rather than silently falling back to the
-# forgeable bare literal.
+# The prefix every framed pattern below is built from. A missing frame is an
+# INVALID STATE, not a printable placeholder: ring 3 controls serial, so any
+# sentinel string it could print would become an acceptance prefix. When no
+# nonce was learned, NO acceptance grep runs at all.
+UF=""
+HAS_UTEST=0
 if [ -n "$UTEST_NONCE" ]; then
     UF="UTEST-${UTEST_NONCE}: "
-else
-    UF="UTEST-frame-absent: "
+    grep -qE "${UF}=== [0-9]+ passed" "$TEST_LOG" 2>/dev/null && HAS_UTEST=1
 fi
-
-HAS_UTEST=0
-grep -qE "${UF}=== [0-9]+ passed" "$TEST_LOG" 2>/dev/null && HAS_UTEST=1
 
 UTEST_PASS=0
 UTEST_FAIL=0
@@ -712,43 +705,41 @@ if [ "$HAS_UTEST" -eq 1 ]; then
     # every count above unreliable, so it is host-fatal rather than a note.
     # Summed over runs because test_usermode_run() is documented safe to
     # call repeatedly and each invocation frames its own run.
-    FRAME_LINES=$({ grep -cE "^.*${UF}" "$TEST_LOG" 2>/dev/null || true; } | head -1)
-    FRAME_LINES=${FRAME_LINES:-0}
-    # Every terminator must CLOSE a matching announcement. Summing `records`
-    # over unbound terminators let `BEGIN run=1 ... END run=2 records=N`
-    # reconcile, and let two runs compensate each other's count errors across
-    # the boundary. Walk the framed run markers in order instead: an END
-    # counts only when it closes the open BEGIN with the same ordinal, and an
-    # unmatched or out-of-order marker fails the run.
-    FRAME_WALK=$(grep -oE "${UF}\[UTEST-FRAME(-END)?\] (v=1 )?run=[0-9]+( records=[0-9]+)?" \
-                 "$TEST_LOG" 2>/dev/null |
-                 awk '
-                   /FRAME-END\]/ { match($0, /run=[0-9]+/)
-                                   r = substr($0, RSTART+4, RLENGTH-4)
-                                   match($0, /records=[0-9]+/)
-                                   c = substr($0, RSTART+8, RLENGTH-8)
-                                   if (open == "" || r != open) { bad++; next }
-                                   n += c + 1; pairs++; open = ""
-                                   next }
-                   /FRAME\]/     { if (open != "") { bad++ }
-                                   match($0, /run=[0-9]+/)
-                                   open = substr($0, RSTART+4, RLENGTH-4)
-                                   next }
-                   END { print (bad + 0) " " (pairs + 0) " " (n + 0) }')
-    FRAME_BAD=$(echo "$FRAME_WALK" | cut -d" " -f1)
-    FRAME_ENDS=$(echo "$FRAME_WALK" | cut -d" " -f2)
-    FRAME_EXPECT=$(echo "$FRAME_WALK" | cut -d" " -f3)
-    FRAME_BAD=${FRAME_BAD:-0}; FRAME_ENDS=${FRAME_ENDS:-0}; FRAME_EXPECT=${FRAME_EXPECT:-0}
-    if [ "$FRAME_BAD" -gt 0 ]; then
-        echo -e "  ${RED}[UTEST]${RESET} ${FRAME_BAD} framed run marker(s) do not pair: a terminator closed no matching announcement, or a run re-opened before its terminator"
+    # Reconciliation is the PARSER's verdict, computed per run in its single
+    # pass: a terminator counts only when it closes the open announcement with
+    # the SAME ordinal, and a run is complete only when the framed lines
+    # between its markers equal `records + 1`. Summing boot-wide (what this
+    # did before) let `BEGIN run=1 ... END run=2` reconcile, and let two runs
+    # compensate each other's count errors across the boundary.
+    if [ "$FRAME_UNPAIRED" -gt 0 ]; then
+        echo -e "  ${RED}[UTEST]${RESET} ${FRAME_UNPAIRED} framed run marker(s) do not pair: a terminator closed no matching announcement, or a run re-opened before its terminator"
         UTEST_FAIL=$(( UTEST_FAIL + 1 ))
     fi
+    if [ -z "$FRAME_COMPLETE_RUN" ]; then
+        echo -e "  ${RED}[UTEST]${RESET} no framed launcher run reconciled -- the run did not finish, or its stream was truncated"
+        UTEST_FAIL=$(( UTEST_FAIL + 1 ))
+    fi
+
     # A forged frame announcement did not corrupt the results above (the
     # launcher's own announcement came first and is what every pattern keyed
     # on), but a binary emitting launcher-shaped framing is a defect in its
     # own right and must not pass silently.
-    if [ "$NONCE_CONFLICT" -gt 1 ]; then
-        echo -e "  ${RED}[UTEST]${RESET} serial carries ${NONCE_CONFLICT} distinct launcher nonces -- something other than the launcher emitted a frame announcement (results parsed from the launcher's own, which came first)"
+    # ANY foreign announcement is fatal. The threshold used to be `> 1`, from
+    # when this counted every distinct nonce including the launcher's own; the
+    # parser reports FOREIGN nonces only, so one forged announcement -- the
+    # normal shape -- slipped through here while the harvester and the swtpm
+    # runner refused the same stream. A consumer that disagrees with the
+    # shared parser is the drift the parser was introduced to remove.
+    if [ "$NONCE_CONFLICT" -gt 0 ]; then
+        echo -e "  ${RED}[UTEST]${RESET} ${NONCE_CONFLICT} foreign launcher nonce(s) announced a frame -- something other than the launcher emitted framing (results parsed from the launcher's own, which came first)"
+        UTEST_FAIL=$(( UTEST_FAIL + 1 ))
+    fi
+    if [ "$FRAME_BAD_CLOSE" -gt 0 ]; then
+        echo -e "  ${RED}[UTEST]${RESET} ${FRAME_BAD_CLOSE} framed run(s) closed without reconciling their declared record count -- the newest closed stream is incomplete"
+        UTEST_FAIL=$(( UTEST_FAIL + 1 ))
+    fi
+    if [ -z "$FRAME_OK" ]; then
+        echo -e "  ${RED}[UTEST]${RESET} the launcher frame did not validate -- refusing to read this stream as results"
         UTEST_FAIL=$(( UTEST_FAIL + 1 ))
     fi
 
@@ -778,13 +769,6 @@ if [ "$HAS_UTEST" -eq 1 ]; then
         fi
     fi
 
-    if [ "$FRAME_ENDS" -eq 0 ]; then
-        echo -e "  ${RED}[UTEST]${RESET} framed launcher stream has no [UTEST-FRAME-END] terminator -- the run did not finish, or its tail never reached serial"
-        UTEST_FAIL=$(( UTEST_FAIL + 1 ))
-    elif [ "$FRAME_LINES" -ne "$FRAME_EXPECT" ]; then
-        echo -e "  ${RED}[UTEST]${RESET} framed record count mismatch: serial carries ${FRAME_LINES} framed lines, the launcher accounted for ${FRAME_EXPECT} -- stream truncated or extended"
-        UTEST_FAIL=$(( UTEST_FAIL + 1 ))
-    fi
 fi
 
 # Framing is fail-closed in BOTH directions. Above, a framed stream that
@@ -830,7 +814,7 @@ fi
 
 XML_OUT="$PROJECT/build/test-results.xml"
 HAS_XML=0
-grep -qE "${UF}\[UTEST-XML\]" "$TEST_LOG" 2>/dev/null && HAS_XML=1
+[ -n "$UF" ] && grep -qE "${UF}\[UTEST-XML\]" "$TEST_LOG" 2>/dev/null && HAS_XML=1
 
 # Belt-and-suspenders: XML=1 was requested but the kernel produced no
 # [UTEST-XML] stream. The normal empty-suite case (total_planned=0 with
@@ -871,22 +855,21 @@ if [ "$HAS_XML" -eq 1 ]; then
     # `[UTEST-XML] ` or `[UTEST-XML-SUMMARY] ` marker is the payload.
     STRIPPED=$(sed -E 's/\x1b\[[0-9;]*m//g' "$TEST_LOG")
 
-    # Narrow to the LAST complete framed run. test_usermode_run() is
-    # documented safe to call repeatedly and the nonce is per-BOOT, so a boot
-    # with two launcher runs puts two full record streams under one prefix --
-    # and assembling both mixes every run's testcases under the last run's
-    # counts. Each run brackets itself with [UTEST-FRAME] / [UTEST-FRAME-END],
-    # so the last closed pair is the run to publish. Falls through unchanged
-    # when there is no bracket pair, which is the single-run case's own shape
-    # before the terminator lands.
-    if [ -n "$UTEST_NONCE" ]; then
-        RUN_BEGIN=$(echo "$STRIPPED" | grep -nE "${UF}\[UTEST-FRAME\] v=1 run=[0-9]+" |
-                    tail -1 | cut -d: -f1)
-        RUN_END=$(echo "$STRIPPED" | grep -nE "${UF}\[UTEST-FRAME-END\] " |
-                  tail -1 | cut -d: -f1)
-        if [ -n "$RUN_BEGIN" ] && [ -n "$RUN_END" ] && [ "$RUN_END" -gt "$RUN_BEGIN" ]; then
-            STRIPPED=$(echo "$STRIPPED" | sed -n "${RUN_BEGIN},${RUN_END}p")
-        fi
+    # Narrow to the LAST COMPLETE framed run using the parser's matched
+    # announcement/terminator pair. Selecting the last announcement and the
+    # last terminator INDEPENDENTLY breaks on a complete run followed by an
+    # unterminated one: the last terminator then precedes the last
+    # announcement, slicing is skipped, and both runs' testcases get
+    # published under one run's summary.
+    if [ -n "$FRAME_COMPLETE_RUN" ]; then
+        RUN_SLICE=$(python3 -c '
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("utest_frame", sys.argv[1])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+sys.stdout.write("\n".join(mod.parse_file(sys.argv[2])["lines"]))
+' "$PROJECT/scripts/utest-frame.py" "$TEST_LOG" 2>/dev/null || true)
+        [ -n "$RUN_SLICE" ] && STRIPPED="$RUN_SLICE"
     fi
 
     # Extract the summary numbers (tests=N failures=N skipped=N time=S.MMM).
@@ -1039,7 +1022,7 @@ fi
 
 JSON_OUT="$PROJECT/build/test-results.json"
 HAS_JSON=0
-grep -qE "${UF}\[UTEST-JSON\]" "$TEST_LOG" 2>/dev/null && HAS_JSON=1
+[ -n "$UF" ] && grep -qE "${UF}\[UTEST-JSON\]" "$TEST_LOG" 2>/dev/null && HAS_JSON=1
 
 if [ "$JSON_MODE" -eq 1 ] || [ "$HAS_JSON" -eq 1 ]; then
     # Remove any artifact from a previous run BEFORE anything can fail --

@@ -7372,7 +7372,7 @@ trap 'rm -rf "$FRAME_TMP"' EXIT
 frame_log() {
     local nonce="$1" out="$2"
     {
-        echo "[  1.000] [cpu:0] [INFO] UTEST-${nonce}: [UTEST-FRAME] v=1 run=1"
+        echo "[  1.000] [cpu:0] [ OK ] UTEST-${nonce}: [UTEST-FRAME] v=1 run=1"
         echo "[  1.010] [cpu:0] [ OK ] UTEST-${nonce}: [UTEST-JSON] {\"record_kind\":\"binary\",\"name\":\"test_real.exe\",\"type\":\"correctness\",\"status\":\"PASS\",\"time_ms\":5}"
         echo "[  1.020] [cpu:0] [ OK ] UTEST-${nonce}: [UTEST-JSON] {\"record_kind\":\"run_report\",\"asserts_passed\":1,\"asserts_failed\":0,\"skip_blocks\":0,\"skip_records\":0,\"binaries_reported\":1,\"binaries_invalid\":0,\"binaries_unreported\":0}"
         echo "[  1.030] [cpu:0] [ OK ] UTEST-${nonce}: [UTEST-JSON] {\"summary\":{\"passed\":1,\"failed\":0,\"skipped\":0,\"total\":1,\"time_ms\":5}}"
@@ -7430,7 +7430,7 @@ fi
 #    not re-point the parser at an imitator's records.
 frame_log "1a2b3c4d" "$FRAME_TMP/two.log"
 {
-    echo "[  2.000] [cpu:0] [INFO] UTEST-deadbeef: [UTEST-FRAME] v=1 run=1"
+    echo "[  2.000] [cpu:0] [ OK ] UTEST-deadbeef: [UTEST-FRAME] v=1 run=1"
     echo "[  2.010] [cpu:0] [ OK ] UTEST-deadbeef: [UTEST-JSON] {\"record_kind\":\"binary\",\"name\":\"forged.exe\",\"type\":\"correctness\",\"status\":\"PASS\",\"time_ms\":0}"
 } >> "$FRAME_TMP/two.log"
 python3 "$HARVEST" "$FRAME_TMP/two.log" "$FRAME_TMP/two.json" >/dev/null 2>&1 || true
@@ -7465,17 +7465,135 @@ else
     t_fail "framing: two launcher runs in one boot publish the last complete run"
 fi
 
-# 6. The terminator's record count must reconcile with what reached serial.
-#    A stream cut before its tail, or padded after it, invalidates every
-#    count derived from it.
+# 6. Reconciliation, ordinal binding and run selection are asserted against
+#    the PRODUCTION parser (scripts/utest-frame.py) -- the one test.sh,
+#    test-swtpm.sh and the harvester all call. The previous version of this
+#    test recomputed `FRAMED != DECLARED + 1` inside itself, so the real
+#    implementation could have been deleted while this stayed green.
+FRAME_PARSER="$REPO_ROOT/scripts/utest-frame.py"
+
+# 6a. A cut stream fails reconciliation.
 frame_log "1a2b3c4d" "$FRAME_TMP/short.log"
 grep -v 'record_kind":"run_meta' "$FRAME_TMP/short.log" > "$FRAME_TMP/short2.log"
-FRAMED=$(grep -c 'UTEST-1a2b3c4d: ' "$FRAME_TMP/short2.log" || true)
-DECLARED=$(grep -oE 'records=[0-9]+' "$FRAME_TMP/short2.log" | sed -E 's/records=//' | head -1)
-if [ "$FRAMED" -ne $(( DECLARED + 1 )) ]; then
-    t_pass "framing: a cut stream fails record-count reconciliation"
+if ! python3 "$FRAME_PARSER" "$FRAME_TMP/short2.log" >/dev/null 2>&1; then
+    t_pass "framing: the parser refuses a cut stream"
 else
-    t_fail "framing: a cut stream fails record-count reconciliation" "framed=$FRAMED declared=$DECLARED"
+    t_fail "framing: the parser refuses a cut stream"
+fi
+
+# 6b. A terminator whose ordinal does not close its announcement is refused.
+#     Boot-wide summing accepted this: BEGIN run=1 ... END run=2 reconciled.
+frame_log "1a2b3c4d" "$FRAME_TMP/ord.log"
+sed -i -E 's/\[UTEST-FRAME-END\] run=1/[UTEST-FRAME-END] run=2/' "$FRAME_TMP/ord.log"
+if ! python3 "$FRAME_PARSER" "$FRAME_TMP/ord.log" >/dev/null 2>&1; then
+    t_pass "framing: the parser refuses a terminator with a mismatched ordinal"
+else
+    t_fail "framing: the parser refuses a terminator with a mismatched ordinal"
+fi
+
+# 6c. A complete run followed by an UNTERMINATED one still publishes the
+#     complete one -- and never merges the two. Selecting the last
+#     announcement and the last terminator independently got this backwards.
+frame_log "1a2b3c4d" "$FRAME_TMP/trail.log"
+sed -E 's/run=1/run=2/; s/test_real\.exe/test_trailing.exe/' \
+    "$FRAME_TMP/trail.log" | grep -v 'UTEST-FRAME-END' > "$FRAME_TMP/trail2.log"
+cat "$FRAME_TMP/trail2.log" >> "$FRAME_TMP/trail.log"
+TRAIL=$(python3 "$FRAME_PARSER" "$FRAME_TMP/trail.log" 2>/dev/null || true)
+if echo "$TRAIL" | grep -q '"ok": true' &&
+   echo "$TRAIL" | python3 -c '
+import json,sys
+d=json.load(sys.stdin)
+sys.exit(0 if d["last_complete"]["run"] == 1 else 1)'; then
+    t_pass "framing: an unterminated trailing run never displaces the complete one"
+else
+    t_fail "framing: an unterminated trailing run never displaces the complete one"
+fi
+
+# 6d. Two COMPLETE runs: the newest wins, and the harvester agrees with the
+#     parser about which one that is.
+frame_log "1a2b3c4d" "$FRAME_TMP/two2.log"
+sed -E 's/run=1/run=2/; s/test_real\.exe/test_second.exe/' \
+    "$FRAME_TMP/two2.log" > "$FRAME_TMP/two2b.log"
+cat "$FRAME_TMP/two2b.log" >> "$FRAME_TMP/two2.log"
+if python3 "$FRAME_PARSER" "$FRAME_TMP/two2.log" 2>/dev/null |
+       python3 -c '
+import json,sys
+d=json.load(sys.stdin)
+sys.exit(0 if d["ok"] and d["last_complete"]["run"] == 2 else 1)'; then
+    t_pass "framing: the newest complete run is the one selected"
+else
+    t_fail "framing: the newest complete run is the one selected"
+fi
+
+# 6f. A previous boot's crash replay must not be mistaken for this boot's
+#     stream. klog_crash_recover() re-emits the PRIOR boot's entries with
+#     their real UTEST tag, so a recovered COMPLETE run would otherwise be
+#     learned as the frame and satisfy the completion gate before the current
+#     launcher ran a single binary.
+{
+    echo "[CRASH-PREV] UTEST-99999999: [UTEST-FRAME] v=1 run=1"
+    echo "[CRASH-PREV] UTEST-99999999: [UTEST-JSON] {\"record_kind\":\"binary\",\"name\":\"stale.exe\",\"type\":\"correctness\",\"status\":\"PASS\",\"time_ms\":1}"
+    echo "[CRASH-PREV] UTEST-99999999: [UTEST-FRAME-END] run=1 records=2"
+} > "$FRAME_TMP/crash.log"
+frame_log "1a2b3c4d" "$FRAME_TMP/live.log"
+cat "$FRAME_TMP/live.log" >> "$FRAME_TMP/crash.log"
+if python3 "$FRAME_PARSER" "$FRAME_TMP/crash.log" 2>/dev/null |
+       python3 -c '
+import json,sys
+d=json.load(sys.stdin)
+sys.exit(0 if d["nonce"] == "1a2b3c4d" and d["ok"] else 1)'; then
+    t_pass "framing: a previous boot's crash replay is not this boot's frame"
+else
+    t_fail "framing: a previous boot's crash replay is not this boot's frame"
+fi
+
+# 6g. A newer run that CLOSES without reconciling is fatal, and must not fall
+#     back to an older run that happened to reconcile -- that publishes stale
+#     results under a verdict the newest run never earned.
+frame_log "1a2b3c4d" "$FRAME_TMP/stale.log"
+sed -E 's/run=1/run=2/; s/records=6/records=99/' "$FRAME_TMP/stale.log" \
+    > "$FRAME_TMP/stale2.log"
+cat "$FRAME_TMP/stale2.log" >> "$FRAME_TMP/stale.log"
+if ! python3 "$FRAME_PARSER" "$FRAME_TMP/stale.log" >/dev/null 2>&1; then
+    t_pass "framing: a newer unreconciled run does not fall back to an older one"
+else
+    t_fail "framing: a newer unreconciled run does not fall back to an older one"
+fi
+
+# 6h. ONE foreign announcement is fatal. The main runner used to fail only at
+#     two or more, so the normal forgery shape passed there while the other
+#     two consumers refused it -- the exact drift the shared parser removes.
+frame_log "1a2b3c4d" "$FRAME_TMP/one.log"
+echo "[  9.000] [cpu:0] [ OK ] UTEST-deadbeef: [UTEST-FRAME] v=1 run=1" >> "$FRAME_TMP/one.log"
+if ! python3 "$FRAME_PARSER" "$FRAME_TMP/one.log" >/dev/null 2>&1; then
+    t_pass "framing: a single foreign announcement fails the frame"
+else
+    t_fail "framing: a single foreign announcement fails the frame"
+fi
+
+# 6i. A malformed numeric field must be refused, not crash the parser: an
+#     unbounded digit run reaches int() and, past CPython's integer-string
+#     limit, raises -- killing the harvester before it can write its refusal
+#     envelope.
+BIGRUN=$(python3 -c 'print("9" * 5000)')
+echo "[  1.000] [cpu:0] [ OK ] UTEST-1a2b3c4d: [UTEST-FRAME] v=1 run=${BIGRUN}" \
+    > "$FRAME_TMP/big.log"
+python3 "$FRAME_PARSER" "$FRAME_TMP/big.log" >/dev/null 2>&1; BIGRC=$?
+if [ "$BIGRC" -ne 0 ] && [ "$BIGRC" -ne 3 ]; then
+    t_pass "framing: an oversized numeric field is refused, not a traceback"
+else
+    t_fail "framing: an oversized numeric field is refused, not a traceback" "rc=$BIGRC"
+fi
+
+# 6e. The production consumers must AGREE with the parser. A consumer that
+#     validates differently is a consumer that passes what the others refuse.
+if grep -q 'utest-frame.py' "$REPO_ROOT/scripts/test.sh" &&
+   grep -q 'utest-frame.py' "$REPO_ROOT/scripts/test-swtpm.sh" &&
+   grep -q 'utest-frame.py' "$REPO_ROOT/scripts/utest-json-harvest.py"; then
+    t_pass "framing: all three host consumers use the canonical parser"
+else
+    t_fail "framing: all three host consumers use the canonical parser" \
+           "a consumer still carries its own copy of the framing rules"
 fi
 
 # 7. The disk sink must never SERIALIZE a raw subsystem tag. The frame nonce

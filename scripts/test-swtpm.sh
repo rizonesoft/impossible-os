@@ -169,32 +169,45 @@ for _ in $(seq 1 "$TIMEOUT_SEC"); do
         # so this expensive live path cannot false-pass where the normal gate
         # fails: zero kernel FAILED, the `leaked` field present AND zero leaks,
         # and zero UTEST failures.
-        # The kernel renders the user-mode summary through a FRAMED subsystem
-        # tag, so on SERIAL it reads
-        # `UTEST-<8 hex>: === N passed, M failed, K skipped of T total`.
-        # The frame is mandatory here for the same reason it is in
-        # scripts/test.sh: ring-3 stdout shares this serial stream, so a bare
-        # `UTEST:` summary proves nothing about who wrote it, and this driver
-        # would otherwise accept a forged one while ignoring every genuine
-        # (framed) failure verdict -- a false pass on the most expensive
-        # validation path in the tree. Learned from the launcher's own
-        # announcement, whose nonce is stated twice and must agree.
+        # Framing is parsed by the CANONICAL parser (scripts/utest-frame.py),
+        # the same one scripts/test.sh uses. This driver used to carry a hand
+        # copy of the learn-and-reconcile logic, and the copy had already
+        # drifted: it bound no terminator to its announcement, summed counts
+        # boot-wide, and checked none of the abort/integrity markers the main
+        # runner treats as fatal -- so an aborted suite with zero failed
+        # binaries reached PASSED=true on the most expensive validation path
+        # in the tree.
         UF_TPM=""
-        FRAME_TPM=$(grep -oE "UTEST-[0-9a-f]{8}: \[UTEST-FRAME\] v=1 run=[0-9]+" \
-                    "$STRIPPED_LOG" 2>/dev/null | head -1 || true)
-        if [ -n "$FRAME_TPM" ]; then
-            TAG_HEX=$(echo "$FRAME_TPM" | sed -E 's/^UTEST-([0-9a-f]{8}):.*/\1/')
-            UF_TPM="UTEST-${TAG_HEX}: "
+        FRAME_TPM_JSON=$(python3 "$PROJECT/scripts/utest-frame.py" "$STRIPPED_LOG" 2>/dev/null || true)
+        if [ -n "$FRAME_TPM_JSON" ]; then
+            UF_TPM=$(python3 -c '
+import json, sys
+try:
+    d = json.loads(sys.argv[1] or "{}")
+except Exception:
+    d = {}
+print(d.get("prefix") or "" if d.get("ok") else "")
+' "$FRAME_TPM_JSON")
         fi
-        # No printable sentinel when the frame is unknown: ring 3 controls
-        # serial, so any placeholder string it can print becomes an
-        # acceptance prefix. An unlearned frame simply never satisfies the
-        # gate below, and the loop keeps waiting.
+        # No printable sentinel when the frame is unknown or unreconciled:
+        # ring 3 controls serial, so any placeholder it can print becomes an
+        # acceptance prefix. An unusable frame simply never satisfies the gate
+        # and the loop keeps waiting.
         if [ -n "$UF_TPM" ] && \
            grep -qE "=== [0-9]+ tests? passed" "$STRIPPED_LOG" && \
            grep -qE "${UF_TPM}=== [0-9]+ passed, [0-9]+ failed, [0-9]+ skipped of" "$STRIPPED_LOG" && \
-           grep -qE "${UF_TPM}\[UTEST-FRAME-END\] run=[0-9]+ records=[0-9]+" "$STRIPPED_LOG" && \
-           grep -qE "TPM2 transport up \(" "$STRIPPED_LOG"; then
+           grep -qE "TPM2 transport up \\(" "$STRIPPED_LOG"; then
+            # The main runner's integrity markers are fatal here too. An
+            # aborted suite leaves most binaries unexecuted while reporting
+            # zero failures, which is exactly the false-green this driver
+            # existed to catch on real hardware.
+            for marker in "suite ABORT" "Bail out!" "\\[UTEST-SKIP-RECORD-BUDGET\\]" \
+                          "\\[UTEST-RECORD-OVERFLOW\\]" "-SUMMARY-OVERFLOW\\]"; do
+                if grep -qE "${UF_TPM}.*${marker}" "$STRIPPED_LOG"; then
+                    echo -e "${RED}SWTPM TEST FAILED: launcher reported an integrity marker (${marker}) -- the run is incomplete${NC}"
+                    exit 1
+                fi
+            done
             SUM=$(grep -E "=== [0-9]+ tests? passed" "$STRIPPED_LOG" | tail -1)
             UT=$(grep -E "${UF_TPM}=== [0-9]+ passed, [0-9]+ failed" "$STRIPPED_LOG" | tail -1)
             if echo "$SUM" | grep -qE "[1-9][0-9]* FAILED"; then
@@ -228,21 +241,9 @@ for _ in $(seq 1 "$TIMEOUT_SEC"); do
                 echo -e "${RED}SWTPM TEST FAILED: a user-mode binary reported a failure verdict${NC}"
                 grep -E "${UF_TPM}" "$STRIPPED_LOG" | grep -E "\b(FAIL|TIMEOUT|ISOLATION|LEAK)\b" | tail -5; exit 1
             fi
-            # Record-count reconciliation, the same gate scripts/test.sh
-            # applies. Without it this driver accepts a stream that lost an
-            # earlier framed record but kept its summary and terminator --
-            # exactly the incomplete shape the framing contract declares
-            # unusable -- while claiming to apply the normal driver's gates.
-            TPM_FRAMED=$({ grep -c "${UF_TPM}" "$STRIPPED_LOG" 2>/dev/null || true; } | head -1)
-            TPM_FRAMED=${TPM_FRAMED:-0}
-            TPM_EXPECT=$(grep -oE "${UF_TPM}\[UTEST-FRAME-END\] run=[0-9]+ records=[0-9]+" \
-                         "$STRIPPED_LOG" 2>/dev/null |
-                         sed -E 's/.*records=([0-9]+).*/\1/' |
-                         awk '{ n += $1 + 1 } END { print n + 0 }')
-            if [ "$TPM_FRAMED" -ne "${TPM_EXPECT:-0}" ]; then
-                echo -e "${RED}SWTPM TEST FAILED: framed record count mismatch (${TPM_FRAMED} on serial, launcher accounted for ${TPM_EXPECT:-0}) -- stream truncated or extended${NC}"
-                exit 1
-            fi
+            # Record-count reconciliation already passed: the parser only
+            # reports `ok` when a run's markers pair by ordinal AND its framed
+            # lines equal the terminator's declared count + 1.
             PASSED=true; break
         fi
     fi

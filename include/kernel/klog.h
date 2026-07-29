@@ -48,10 +48,10 @@ void klog_unrated(log_level_t level, const char *subsystem, const char *fmt, ...
 /* Capacity of the SERIALIZED subsystem tag, including its NUL.
  *
  * The ring entry below stores the tag as a `const char *` and never copies
- * it, but two consumers do copy it into a fixed field: the debug-console
- * snapshot (klog_get_entries) and the crash-region record
- * (`klog_crash_entry_t` in src/kernel/klog.c, whose on-region layout the
- * next boot reads back). A caller that BUILDS a tag at runtime -- rather
+ * it, but two serialized records DO copy it into a fixed field: the
+ * crash-region record (`klog_crash_entry_t` in src/kernel/klog.c, whose
+ * on-region layout the next boot reads back) and the panic evidence block
+ * (`struct panic_klog_entry` in include/kernel/panic.h). A caller that BUILDS a tag at runtime -- rather
  * than passing a string literal -- must fit this bound, or its evidence is
  * truncated in exactly the paths that matter after a crash, and must give
  * that tag storage that outlives every entry logged under it. */
@@ -68,10 +68,12 @@ void klog_unrated(log_level_t level, const char *subsystem, const char *fmt, ...
  * while keeping the authenticating value out of it.
  *
  * Both pointers must have storage outliving every entry logged under them.
- * Registering is one-shot per boot: a second call with a different tag is
- * refused, because rewriting it would re-attribute entries already queued
- * under the first. */
-void klog_set_disk_alias(const char *tag, const char *alias);
+ * Registering is one-shot per boot: a second call is refused, because
+ * rewriting the tag would re-attribute entries already queued under the
+ * first. Returns 1 when THIS call published the alias, 0 when it was
+ * refused -- a caller whose security property depends on the alias being
+ * live must check, since a refusal leaves the real tag reaching disk. */
+int klog_set_disk_alias(const char *tag, const char *alias);
 
 /* Disk rendering for `subsystem`: the registered alias, or `subsystem`
  * itself when none applies. Applied by the disk sink rather than its

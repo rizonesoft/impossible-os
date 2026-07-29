@@ -637,6 +637,11 @@ void klog_crash_write_to_disk(void)
 
         /* Subsystem */
         {
+            /* NOT alias-resolved, deliberately: s_recovered holds the
+             * PREVIOUS boot's entries, recovered from the crash region, and
+             * that boot's frame nonce is dead by construction -- it can
+             * authenticate nothing in this boot. Resolving here would instead
+             * rewrite a prior boot's evidence with this boot's alias. */
             const char *s = s_recovered[i].subsystem;
             while (*s && pos < 180) line[pos++] = *s++;
         }
@@ -707,17 +712,36 @@ static int str_eq(const char *a, const char *b)
  * observes the alias also observes the tag it belongs to. */
 static const char *s_disk_alias_tag;
 static const char *s_disk_alias_as;
+/* The one-shot claim. Separate from the published alias so a refused caller
+ * never writes s_disk_alias_tag: the pair is initialized only by the winner,
+ * between claiming and publishing. */
+static uint32_t     s_disk_alias_claimed;
 
-void klog_set_disk_alias(const char *tag, const char *alias)
+int klog_set_disk_alias(const char *tag, const char *alias)
 {
+    uint32_t unclaimed = 0;
+
     if (!tag || !tag[0] || !alias)
-        return;
-    /* One-shot: a second, different tag would re-attribute entries already
-     * queued under the first. */
-    if (__atomic_load_n(&s_disk_alias_as, __ATOMIC_ACQUIRE))
-        return;
+        return 0;
+
+    /* CLAIM the registration before touching either field. Writing the tag
+     * first and then testing the alias -- which is what this did -- let a
+     * refused SECOND call overwrite the winner's tag and return 0: the
+     * resolver then paired the winner's alias with the loser's tag, and the
+     * winner's real tag started reaching disk verbatim. For an authenticating
+     * tag that silently undoes the whole mechanism, and the caller has no way
+     * to notice because it was told it failed.
+     *
+     * The claim is the single atomic transition; the tag is initialized
+     * inside it, and the alias is release-published last so any reader that
+     * acquires the alias also observes the tag it belongs to. */
+    if (!__atomic_compare_exchange_n(&s_disk_alias_claimed, &unclaimed, 1u, 0,
+                                     __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
+        return 0;
+
     s_disk_alias_tag = tag;
     __atomic_store_n(&s_disk_alias_as, alias, __ATOMIC_RELEASE);
+    return 1;
 }
 
 const char *klog_disk_subsystem(const char *subsystem)

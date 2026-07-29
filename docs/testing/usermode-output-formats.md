@@ -540,17 +540,31 @@ refused to publish) means keying on `record_kind` yourself, and remembering
 that `reported` lives in the separate `run_report` record on the wire:
 
 ```sh
-# Per-binary pass-rate from serial. Two rules: select on record_kind (never
-# on the presence of .name, which the skip-block records also carry), and
-# require the FRAME, learned from the announcement -- an unframed
-# `[UTEST-JSON]` line on serial is not a launcher record:
-#
-#   UF="$(grep -oE 'UTEST-[0-9a-f]{8}: \[UTEST-FRAME\] v=1' build/test.log |
-#         head -1 | sed -E 's/(UTEST-[0-9a-f]{8}: ).*/\1/')"
-#
-grep '\[UTEST-JSON\] {' build/test.log |
-  sed 's/.*\[UTEST-JSON\] //' |
-  jq -c 'select(.record_kind == "binary") | {name, status, time_ms}'
+# Per-binary pass-rate from serial. Prefer build/test-results.json: the
+# harvester already learns the frame, binds each terminator to its
+# announcement, reconciles the record count per run, and publishes only the
+# last COMPLETE run. Reading serial directly means doing all of that
+# yourself. If you must, use the same parser rather than a grep:
+python3 scripts/utest-frame.py build/test.log     # {"nonce":..., "ok":true, ...}
+
+# An executable recipe. It emits ONLY the parser-selected run's records: a
+# full-log grep on the learned prefix still merges repeated runs, and an empty
+# prefix (refused stream) degrades it to an unframed search that accepts
+# ring-3 forgeries. A refusal terminates the recipe rather than continuing
+# with partial data:
+python3 -c '
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("f", "scripts/utest-frame.py")
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+r = m.parse_file("build/test.log")
+if not r["ok"]:
+    sys.exit("no complete framed run on serial -- refuse this log")
+marker = r["prefix"] + "[UTEST-JSON] "
+for line in r["lines"]:
+    i = line.find(marker)
+    if i >= 0:
+        print(line[i + len(marker):].strip())
+' | jq -c 'select(.record_kind == "binary") | {name, status}'
 
 # The assertion dimension and the completeness dimension, from their own records:
 grep '\[UTEST-JSON\] {' build/test.log |

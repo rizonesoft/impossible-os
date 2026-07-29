@@ -50,6 +50,18 @@ import re
 import sys
 import tempfile
 
+def _load_frame_parser():
+    """Import scripts/utest-frame.py, whose name is not a Python identifier."""
+    import importlib.util
+
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "utest-frame.py")
+    spec = importlib.util.spec_from_file_location("utest_frame", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 SCHEMA = "utest-json-v1"
 MARKER = "[UTEST-JSON] "
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
@@ -63,17 +75,6 @@ ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 # reproduce because it never sees the value. The frame is learned from the
 # launcher's own announcement, and a log with no announcement (or with two
 # disagreeing ones) yields NO records rather than unframed ones.
-FRAME_ANNOUNCE_RE = re.compile(
-    r"UTEST-([0-9a-f]{8}): \[UTEST-FRAME\] v=1 run=([0-9]+)")
-FRAME_END_RE = re.compile(
-    r"UTEST-([0-9a-f]{8}): \[UTEST-FRAME-END\] run=([0-9]+) records=([0-9]+)")
-
-# Status vocabulary of a binary record, mapped to the summary counter it must
-# agree with. A record carrying anything else is a producer bug, not a new
-# outcome to tolerate.
-STATUS_TO_COUNTER = {"PASS": "passed", "FAIL": "failed", "SKIP": "skipped"}
-
-
 def _write_atomic(path, payload):
     """Publish via temp file + rename.
 
@@ -119,73 +120,40 @@ def _refuse(out_path, reason, detail=None):
                      % (reason, (": " + detail) if detail else ""))
 
 
-def _learn_frame(lines):
-    """Return this boot's launcher frame prefix, or None.
+# Status vocabulary of a binary record, mapped to the summary counter it must
+# agree with. A record carrying anything else is a producer bug, not a new
+# outcome to tolerate.
+STATUS_TO_COUNTER = {"PASS": "passed", "FAIL": "failed", "SKIP": "skipped"}
 
-    The nonce lives in the TAG and nowhere else: the announcement body does
-    not restate it, because a body copy would survive the kernel's disk-sink
-    alias and put the value back into the one log ring 3 can read. The FIRST
-    announcement wins -- the launcher announces before it creates any ring-3
-    task, so nothing of that run can have printed ahead of it. A later,
-    different nonce is ring-3 output imitating the frame; its records simply
-    never match the learned prefix. Reporting that conflict is
-    scripts/test.sh's job -- this harvester's contract is to assemble only
-    records it can attribute.
-    """
-    for line in lines:
-        match = FRAME_ANNOUNCE_RE.search(line)
-        if match:
-            return "UTEST-%s: " % match.group(1)
-    return None
-
-
-def _last_run_slice(lines, frame):
-    """Narrow `lines` to the LAST complete framed run.
-
-    test_usermode_run() is documented safe to call repeatedly and the nonce
-    is deliberately per-BOOT, not per-run, so a boot with two launcher runs
-    puts two full record streams under the same prefix. Collecting both
-    yields duplicate summary / run_report / run_meta records, which this
-    harvester correctly refuses as a cut-and-resumed stream -- turning a
-    legitimate double run into a failed artifact.
-
-    Each run brackets itself with `[UTEST-FRAME] ... run=N` and
-    `[UTEST-FRAME-END] run=N`, so the last closed bracket pair is the run to
-    publish. An unterminated trailing run is NOT chosen: an artifact must
-    describe a run that finished.
-    """
-    begin = None
-    best = None
-    for index, line in enumerate(lines):
-        match = FRAME_ANNOUNCE_RE.search(line)
-        if match and line.find(frame) >= 0:
-            begin = (index, match.group(2))
-            continue
-        match = FRAME_END_RE.search(line)
-        if match and line.find(frame) >= 0 and begin is not None:
-            if match.group(2) == begin[1]:
-                best = (begin[0], index)
-                begin = None
-    if best is None:
-        return None
-    return lines[best[0]:best[1] + 1]
+# Framing is parsed by the CANONICAL parser (scripts/utest-frame.py), not by
+# a copy living here. Ring-3 stdout shares the serial stream with the
+# launcher, so a bare `[UTEST-JSON]` line proves nothing about who wrote it;
+# the parser learns this boot's nonce from the launcher's own announcement,
+# binds each terminator to its announcement by run ordinal, reconciles the
+# record count per run, and hands back only the LAST COMPLETE run's lines.
+# This file used to carry its own copy of those rules and had already drifted
+# from the other two consumers -- it never consumed the terminator's declared
+# count at all.
+_FRAME = _load_frame_parser()
 
 
 def _extract_records(log_path):
-    """Return the payload strings following each FRAMED [UTEST-JSON] marker."""
-    with open(log_path, "r", encoding="utf-8", errors="replace") as handle:
-        lines = [ANSI_RE.sub("", line).rstrip("\n") for line in handle]
+    """Return the payload strings following each FRAMED [UTEST-JSON] marker.
 
-    frame = _learn_frame(lines)
-    if frame is None:
+    Only records belonging to the last complete, reconciled run are returned;
+    an unframed record, a wrong-nonce record, a record from a run whose
+    markers do not pair, and a record from a run whose count does not
+    reconcile are all excluded. An empty result therefore means "nothing
+    attributable", which the caller turns into an explicit refusal rather
+    than an empty-but-valid artifact.
+    """
+    result = _FRAME.parse_file(log_path)
+    if not result["ok"]:
         return []
 
-    lines = _last_run_slice(lines, frame)
-    if lines is None:
-        return []
-    framed_marker = frame + MARKER
+    framed_marker = result["prefix"] + MARKER
     records = []
-    for line in lines:
+    for line in result["lines"]:
         idx = line.find(framed_marker)
         if idx < 0:
             continue

@@ -1566,6 +1566,19 @@ static uint32_t u_frame_nonce_fold(uint64_t mixed)
 
 static uint32_t u_frame_nonce_new(void)
 {
+    /* The nonce authenticates records, so an uncredited entropy source is
+     * worth saying out loud rather than assuming away. It is NOT fatal: the
+     * threat model is a binary printing a launcher pattern by accident as
+     * much as a hostile one, and a caller that cannot observe the value
+     * cannot exploit a weak one. The TSC term is a salt, not a backstop --
+     * rdtsc_ns() returns 0 outright when the active clocksource is not the
+     * TSC. */
+    if (!csprng_is_seeded())
+        klog(LOG_WARN, "UTEST",
+             "record framing nonce drawn before the CSPRNG was seeded -- "
+             "the frame is still unguessable from ring 3 but is not "
+             "cryptographically random");
+
     return u_frame_nonce_fold(csprng_u64() ^ rdtsc_ns());
 }
 
@@ -1588,8 +1601,9 @@ static void u_frame_begin(void)
 
         if (__atomic_compare_exchange_n(&s_frame_nonce, &expected, nonce, 0,
                                         __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
-            u_frame_tag_format(s_frame_tag, (uint32_t)sizeof(s_frame_tag),
-                               nonce);
+            int framed = u_frame_tag_format(s_frame_tag,
+                                            (uint32_t)sizeof(s_frame_tag),
+                                            nonce);
             /* Keep the nonce off the one sink ring 3 can read. The live
              * disk log (X:\Logs\Serial_*.log) is openable through
              * SYS_OPENFILE, and klog appends+flushes each message to it
@@ -1598,13 +1612,38 @@ static void u_frame_begin(void)
              * value back and emit a correctly framed terminator. Serial
              * keeps the frame; disk keeps the records under the plain tag,
              * so post-mortem diagnosis is unaffected. */
-            klog_set_disk_alias(s_frame_tag, "UTEST");
-            __atomic_store_n(&s_frame_ready, 1u, __ATOMIC_RELEASE);
+            if (framed)
+                framed = klog_set_disk_alias(s_frame_tag, "UTEST");
+
+            /* Framing is published ONLY when both halves took. Either
+             * refusal leaves the authenticating tag reaching the
+             * ring-3-readable disk log, and publishing anyway would assert a
+             * property the run does not have -- so this fails CLOSED: the
+             * records stay unframed, every host gate refuses them, and the
+             * run reports the refusal instead of a false green. */
+            if (framed) {
+                /* The per-subsystem verbosity ceiling is a whole-string
+                 * match, so the boot's klog_set_level("UTEST", LOG_DEBUG)
+                 * does NOT cover "UTEST-<nonce>". Without this the records
+                 * counted below could be dropped by the level filter before
+                 * reaching serial -- klog_unrated bypasses only the RATE
+                 * limiter -- and the host's count reconciliation would then
+                 * refuse a complete run. */
+                klog_set_level(s_frame_tag, LOG_DEBUG);
+                __atomic_store_n(&s_frame_ready, 1u, __ATOMIC_RELEASE);
+            } else {
+                klog(LOG_ERROR, "UTEST",
+                     "record framing unavailable -- launcher records will be "
+                     "refused by the host (tag format or disk alias refused)");
+            }
         }
     }
 
     __atomic_store_n(&s_frame_records, 0u, __ATOMIC_RELAXED);
-    s_frame_run++;
+    /* Atomic like its siblings: it is a run-identity field the host
+     * reconciles against, and the public header documents
+     * test_usermode_run() as safe to call repeatedly. */
+    (void)__atomic_add_fetch(&s_frame_run, 1u, __ATOMIC_RELAXED);
 
     /* The body deliberately does NOT restate the nonce. The TAG carries it,
      * and a body copy would survive the disk alias below -- putting the
@@ -1613,7 +1652,7 @@ static void u_frame_begin(void)
      * record-count reconciliation now covers, and it was never a barrier to
      * a forger who can write both fields. */
     utest_record_log(LOG_INFO, "[UTEST-FRAME] v=1 run=%u",
-                     (uint64_t)s_frame_run);
+                     (uint64_t)__atomic_load_n(&s_frame_run, __ATOMIC_RELAXED));
 }
 
 /* Close a framed run. `records=` counts every framed record emitted before
@@ -1627,7 +1666,8 @@ static void u_frame_end(void)
     uint32_t n = __atomic_load_n(&s_frame_records, __ATOMIC_RELAXED);
 
     utest_record_log(LOG_INFO, "[UTEST-FRAME-END] run=%u records=%u",
-                     (uint64_t)s_frame_run, (uint64_t)n);
+                     (uint64_t)__atomic_load_n(&s_frame_run, __ATOMIC_RELAXED),
+                     (uint64_t)n);
 }
 
 struct u_report {

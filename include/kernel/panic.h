@@ -13,6 +13,8 @@
 
 #pragma once
 
+#include "kernel/klog.h"  /* KLOG_SUBSYSTEM_MAX pins the serialized tag field */
+
 #include "kernel/types.h"
 
 /* Forward declaration */
@@ -98,7 +100,7 @@ struct panic_klog_entry {
     uint8_t  _pad[3];
     uint32_t pid;
     uint32_t tid;
-    char     subsystem[16];
+    char     subsystem[KLOG_SUBSYSTEM_MAX];
     char     message[176];
 };
 
