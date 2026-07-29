@@ -8967,6 +8967,24 @@ else
            "a consumer still carries its own copy of the framing rules"
 fi
 
+# 6f. The INCREMENTAL resume must be equivalent to a full reparse -- on every
+#     append prefix, not just the convenient ones. The poll resumes from a
+#     byte offset once per second, and acceptance depends on far more than an
+#     offset: a resume that dropped an earlier foreign nonce or a sticky
+#     bad_close would let a later genuine terminator report GREEN where a full
+#     reparse stays red. That is a false green, so it is asserted byte by
+#     byte against an independent oracle (Python's own universal-newline
+#     reader) rather than against the parser's own line splitter.
+FRAME_DIFF_OUT="$FRAME_TMP/differential.txt"
+if python3 "$REPO_ROOT/scripts/utest-frame-difftest.py" \
+        > "$FRAME_DIFF_OUT" 2>&1; then
+    FRAME_DIFF_N=$(grep -c '^ok ' "$FRAME_DIFF_OUT" || echo 0)
+    t_pass "framing: incremental resume equals a full reparse ($FRAME_DIFF_N checks)"
+else
+    t_fail "framing: incremental resume equals a full reparse" \
+           "$(grep -m3 '^FAIL' "$FRAME_DIFF_OUT" || tail -3 "$FRAME_DIFF_OUT")"
+fi
+
 # 7. The disk sink must never SERIALIZE a raw subsystem tag. The frame nonce
 #    is an authenticating value and every disk log lives in a directory ring
 #    3 can open, so each rendering has to go through klog_disk_subsystem().

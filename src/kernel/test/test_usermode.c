@@ -1421,9 +1421,94 @@ static void u_format_seconds(char *dst, uint32_t cap, uint64_t ms)
 /* Run-wide ceiling on synthetic skip records. The per-binary bound the
  * syscall enforces (TASK_UTEST_REPORT_SKIP_MAX) is multiplicative across
  * TASK_MAX binaries, so it cannot be the only stop; this is the aggregate
- * one. Sized generously against reality -- the whole suite reports a
- * handful of skip blocks today -- so a legitimate run never meets it. */
-#define UTEST_SKIP_RECORD_BUDGET 1024u
+ * one.
+ *
+ * It is DERIVED from what a burst costs the transport, not picked. The
+ * original 1024 was chosen while klog's per-subsystem rate limiter was the
+ * real ceiling; the artifact records moved to klog_unrated (see above), so
+ * this budget became the only bound on the burst and a picked number stopped
+ * being defensible.
+ *
+ * The derivation is deliberately transport-INDEPENDENT -- a serialized-BYTE
+ * allowance, never a time. Pinning it to a baud rate would be wrong on a
+ * supported configuration: serial init accepts 9600/19200/38400/57600/115200,
+ * preserves an unknown firmware-configured divisor when SPCR reports baud
+ * code 0, and falls back to 38400 on an unrecognized rate
+ * (src/kernel/drivers/serial.c:57-69), so a 115200-derived constant is off by
+ * up to 12x. Completion TIME is the host deadline's job; the kernel's job is
+ * to bound how many bytes it may add. */
+
+/* Physical records per logical skip, counted on the WORST path rather than
+ * the happy one. Three emitters fire per skip -- a TAP point, a JUnit
+ * <testcase> and a JSON record (u_emit_skip_records below) -- and each of
+ * them emits TWO records when its buffer overflows: an
+ * [UTEST-RECORD-OVERFLOW] marker plus a verdict-preserving fallback record
+ * (u_emit_tap_point, u_emit_xml_testcase and u_emit_json_testcase all take
+ * that shape at their `overflow:` labels). A binary name long enough to
+ * overflow every formatter therefore costs six framed lines per skip, not
+ * three, and deriving from three would have understated the worst-case burst
+ * by exactly 2x -- which is how a "derived" ceiling silently becomes as
+ * wrong as a picked one. */
+#define UTEST_SKIP_RECORD_FANOUT 6u
+
+/* Worst-case SERIALIZED cost of one record: the message cap plus every
+ * wrapper byte klog puts on the wire. Counting only UTEST_RECORD_LINE_MAX
+ * would under-count the real burst by roughly a third, which is the error
+ * that makes a "derived" number no better than a picked one. Components are
+ * read off klog's serial emit path (src/kernel/klog.c:1240-1341). */
+#define KLOG_WIRE_TIMESTAMP_MAX 12u  /* "[NNNNN.mmm] " (>= 3 digits, grows) */
+#define KLOG_WIRE_CPUTAG_MAX     9u  /* "[cpu:NN] " on SMP                 */
+#define KLOG_WIRE_LEVEL_ANSI_MAX 7u  /* longest level_ansi[] entry         */
+#define KLOG_WIRE_LEVEL_PREFIX   7u  /* "[CRIT] " -- every badge is 7      */
+#define KLOG_WIRE_ANSI_RESET     4u  /* the reset sequence                 */
+#define KLOG_WIRE_TEST_COLOR    19u  /* UTEST truecolor sequence           */
+#define KLOG_WIRE_TRUNC_MARK     1u  /* '~' appended on truncation         */
+#define KLOG_WIRE_CRLF           2u  /* newline reaches the wire as CR LF  */
+/* Subsystem tag plus its ": " separator. The tag is the framed
+ * "UTEST-<8hex>" (UTEST_FRAME_TAG_MAX), bounded by klog's own field. */
+#define KLOG_WIRE_SUBSYSTEM_MAX (KLOG_SUBSYSTEM_MAX + 2u)
+
+/* A full-line level re-emits its colour after the badge, so the level ANSI
+ * sequence and the reset can each appear twice on one record. */
+#define UTEST_RECORD_WIRE_MAX                                            \
+    (UTEST_RECORD_LINE_MAX + KLOG_WIRE_TIMESTAMP_MAX +                   \
+     KLOG_WIRE_CPUTAG_MAX + (2u * KLOG_WIRE_LEVEL_ANSI_MAX) +            \
+     KLOG_WIRE_LEVEL_PREFIX + (2u * KLOG_WIRE_ANSI_RESET) +              \
+     KLOG_WIRE_TEST_COLOR + KLOG_WIRE_SUBSYSTEM_MAX +                    \
+     KLOG_WIRE_TRUNC_MARK + KLOG_WIRE_CRLF)
+
+/* The allowance itself: how many bytes a pathological skip burst may add to
+ * the capture. A mebibyte is a rounding error against the multi-MB serial
+ * logs this framework already produces, and it is a bound a reader can check
+ * against a file size -- unlike a record count, which means nothing without
+ * knowing the per-record cost.
+ *
+ * It is 1 MiB rather than 512 KiB because the floor below is what actually
+ * constrains this: with the honest 6x overflow fanout, a 512 KiB allowance
+ * divides out to 252 records, under the 256 a single binary may legitimately
+ * report. Rather than accept a budget that clips an honest binary, the
+ * allowance doubles. The _Static_assert is what forced the choice into the
+ * open instead of leaving it to arithmetic nobody re-derives. */
+#define UTEST_SKIP_BURST_WIRE_MAX (1024u * 1024u)
+
+/* Refusing costs wire too. u_emit_skip_records() emits a
+ * [UTEST-SKIP-RECORD-BUDGET] marker on every request it clips, and a request
+ * is per BINARY, so a run can pay one marker per task slot. Budgeting only
+ * the permitted records left the diagnostics OUTSIDE the allowance the
+ * derivation advertises: at the boundary the logical records already consume
+ * 1,048,380 of 1,048,576 bytes, so a single marker overruns it. Reserving
+ * the refusal traffic FIRST keeps the 1 MiB figure a real bound instead of
+ * one that holds only until the budget is actually enforced. */
+#define UTEST_SKIP_REFUSAL_WIRE_MAX (TASK_MAX * UTEST_RECORD_WIRE_MAX)
+
+#define UTEST_SKIP_RECORD_BUDGET                                         \
+    ((UTEST_SKIP_BURST_WIRE_MAX - UTEST_SKIP_REFUSAL_WIRE_MAX) /         \
+     (UTEST_SKIP_RECORD_FANOUT * UTEST_RECORD_WIRE_MAX))
+
+/* The two asserts that pin this derivation live just below
+ * UTEST_RECORD_LINE_MAX, which the wire cost is expressed in terms of: a
+ * macro body is only expanded where it is USED, so asserting here would
+ * evaluate UTEST_RECORD_WIRE_MAX before that cap exists. */
 
 /* Transport cap for EVERY machine-artifact record.
  *
@@ -1443,6 +1528,45 @@ static void u_format_seconds(char *dst, uint32_t cap, uint64_t ms)
 _Static_assert(UTEST_RECORD_LINE_MAX <= sizeof(((klog_entry_t *)0)->message),
                "UTEST record buffer must fit klog's message field or the "
                "wire copy is silently truncated");
+
+/* --- pins for the derived skip-record budget above ------------------- *
+ *
+ * This ceiling bounds BYTES, not TIME, and the distinction is deliberate.
+ * A ceiling-sized burst is roughly a megabyte of serial traffic, which no
+ * supported UART carries inside the host's default 60-second deadline --
+ * about 90 seconds at 115200 8N1, far longer at 9600. That is not a
+ * contradiction to resolve by shrinking the number: the kernel cannot know
+ * the wire rate (the divisor may be firmware-configured and never reported),
+ * and a run that actually reaches this ceiling is PATHOLOGICAL by
+ * construction. It is the abuse the budget exists to bound, not a run that
+ * must be helped to finish; the host deadline failing it is the correct
+ * outcome and the reason the deadline exists. Real suites report a handful of
+ * skip blocks. The budget stops an unbounded burst from being EMITTED; TIME
+ * stays the host's to enforce.
+ *
+ * The floor is load-bearing, not a sanity check on arithmetic. The syscall
+ * side lets ONE binary report TASK_UTEST_REPORT_SKIP_MAX skip blocks, so a
+ * run-wide budget below that would clip a single HONEST binary -- turning an
+ * aggregate abuse stop into a per-binary truncation, which is the false-green
+ * class this path exists to close. Any future retune of the byte allowance or
+ * of the wire costs that would breach this fails the BUILD instead of
+ * silently shrinking what a legitimate binary may report. */
+_Static_assert(UTEST_SKIP_RECORD_BUDGET >= TASK_UTEST_REPORT_SKIP_MAX,
+               "run-wide skip budget must cover the per-binary ceiling or a "
+               "single legitimate binary's skip blocks get clipped");
+
+/* The whole point of the derivation: the worst-case burst must actually fit
+ * the allowance it was divided out of -- INCLUDING the refusal markers the
+ * budget's own enforcement emits, which is the boundary the first version of
+ * this assert missed. Integer division guarantees the arithmetic, so the
+ * assert exists to catch a future edit that replaces the division with a
+ * hand-written number and quietly breaks the relationship. */
+_Static_assert((uint64_t)UTEST_SKIP_RECORD_BUDGET *
+                       UTEST_SKIP_RECORD_FANOUT * UTEST_RECORD_WIRE_MAX +
+                   UTEST_SKIP_REFUSAL_WIRE_MAX <=
+                   UTEST_SKIP_BURST_WIRE_MAX,
+               "the worst-case skip burst plus its refusal markers must fit "
+               "the serialized-byte allowance the budget is derived from");
 
 /* Machine-artifact records bypass the per-subsystem rate limiter.
  *

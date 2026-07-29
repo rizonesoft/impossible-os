@@ -572,6 +572,29 @@ utest_frame_scan() {
     python3 "$PROJECT/scripts/utest-frame.py" "$log" 2>/dev/null || true
 }
 
+# The same question, asked once per second against a GROWING capture.
+#
+# The plain scan above re-reads from byte zero every time, so the poll's cost
+# scaled with the whole serial log rather than with what arrived since the
+# last answer -- on a 25 MB capture that is the dominant host-side cost of the
+# completion gate. `--state` resumes from the previous byte offset and
+# `--poll` drops the selected run's TEXT (the poll only needs to know whether
+# a run closed), which keeps the once-per-second state file small.
+#
+# It is not a weaker check. The parser persists its COMPLETE state machine and
+# binds it to the log's device/inode and committed offset: a rotated,
+# recreated or truncated log fails that binding and restarts from byte zero,
+# and every sticky failure (a foreign nonce, an unreconciled close) survives
+# the resume. scripts/utest-frame-difftest.py asserts equivalence with a full
+# reparse on every append prefix, byte by byte.
+UTEST_POLL_STATE="${TEST_LOG}.framestate"
+utest_frame_poll() {
+    local log="$1"
+    [ -f "$log" ] || { echo '{}'; return 0; }
+    python3 "$PROJECT/scripts/utest-frame.py" \
+        --state "$UTEST_POLL_STATE" --poll "$log" 2>/dev/null || true
+}
+
 utest_frame_field() {
     python3 -c '
 import json, sys
@@ -589,11 +612,32 @@ print("" if cur is None or cur is False else ("1" if cur is True else cur))
 ' "$1" "$2"
 }
 
-ELAPSED=0
+# A MONOTONIC deadline, not an iteration count and not the wall clock.
+#
+# The loop used to advance ELAPSED by one per pass and compare it against
+# TIMEOUT, so what it actually bounded was the number of `sleep 1` calls --
+# every second of parse time, QEMU startup and grep fell OUTSIDE the budget it
+# advertised. On a large capture the poll therefore ran well past `TIMEOUT`
+# seconds while still reporting it had waited `TIMEOUT`.
+#
+# The clock source is /proc/uptime, which is MONOTONIC. `date +%s` is wall
+# time: an NTP correction or a host resume steps it, and a backward step would
+# extend the run past TIMEOUT while a forward one would cut it short -- the
+# exact guarantee this loop exists to make. The fallback keeps the loop
+# bounded on a host without /proc/uptime rather than looping forever.
+mono_now() {
+    if [ -r /proc/uptime ]; then
+        read -r _mono _ < /proc/uptime
+        echo "${_mono%%.*}"
+    else
+        date +%s
+    fi
+}
+rm -f "$UTEST_POLL_STATE"
+POLL_DEADLINE=$(( $(mono_now) + TIMEOUT ))
 FOUND=0
-while [ "$ELAPSED" -lt "$TIMEOUT" ]; do
+while [ "$(mono_now)" -lt "$POLL_DEADLINE" ]; do
     sleep 1
-    ELAPSED=$((ELAPSED + 1))
     if [ -f "$TEST_LOG" ] && grep -q '=== .* tests\? passed' "$TEST_LOG" 2>/dev/null; then
         FOUND=1
         UMODE_NEEDED=0
@@ -608,7 +652,7 @@ while [ "$ELAPSED" -lt "$TIMEOUT" ]; do
         # Framed, not bare `UTEST:`: ring-3 stdout shares this serial stream
         # (sys_write copies caller bytes straight to serial_putchar), so an
         # unframed match proves nothing about who wrote it.
-        POLL_SCAN=$(utest_frame_scan "$TEST_LOG")
+        POLL_SCAN=$(utest_frame_poll "$TEST_LOG")
         POLL_UF=$(utest_frame_field "$POLL_SCAN" prefix)
         if [ "$UMODE_NEEDED" -eq 0 ] && [ -n "$POLL_UF" ]; then
             UMODE_NEEDED=1
@@ -1157,30 +1201,83 @@ if [ "$HAS_XML" -eq 1 ]; then
     # assembly must not leave the old document at the canonical path where a
     # consumer would read it as this run's result.
     rm -f "$XML_OUT" "$XML_LEG_OUT"
-    # Strip ANSI + klog wrapper prefix (timestamp, [cpu:N], level badge,
-    # UTEST subsystem tag) in one sed pass. Everything after the first
-    # `[UTEST-XML] ` or `[UTEST-XML-SUMMARY] ` marker is the payload.
-    STRIPPED=$(sed -E 's/\x1b\[[0-9;]*m//g' "$TEST_LOG")
-
-    # Narrow to the LAST COMPLETE framed run using the parser's matched
-    # announcement/terminator pair. Selecting the last announcement and the
-    # last terminator INDEPENDENTLY breaks on a complete run followed by an
-    # unterminated one: the last terminator then precedes the last
-    # announcement, slicing is skipped, and both runs' testcases get
-    # published under one run's summary.
+    # The XML payload source, as a FILE rather than a shell variable.
+    #
+    # This used to be `STRIPPED=$(sed ... "$TEST_LOG")` -- the entire
+    # ANSI-stripped capture in one shell variable -- and then `RUN_SLICE=$(...)`
+    # holding the selected run in a second one, which was already the third
+    # materialization after the parser's own line list. Peak host memory
+    # therefore scaled with the whole serial log (tens of MB) to extract a run
+    # slice measured in kilobytes. The parser writes the slice straight to
+    # disk instead, and the sed extractions below read that file.
+    #
+    # Narrowing to the LAST COMPLETE framed run still uses the parser's
+    # matched announcement/terminator pair. Selecting the last announcement
+    # and the last terminator INDEPENDENTLY breaks on a complete run followed
+    # by an unterminated one: the last terminator then precedes the last
+    # announcement, slicing is skipped, and both runs' testcases get published
+    # under one run's summary.
+    XML_SRC="$TEST_LOG.runslice"
+    rm -f "$XML_SRC"
+    XML_SLICE_FAILED=0
     if [ -n "$FRAME_COMPLETE_RUN" ]; then
-        RUN_SLICE=$(python3 -c '
-import importlib.util, sys
-spec = importlib.util.spec_from_file_location("utest_frame", sys.argv[1])
-mod = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(mod)
-sys.stdout.write("\n".join(mod.parse_file(sys.argv[2])["lines"]))
-' "$PROJECT/scripts/utest-frame.py" "$TEST_LOG" 2>/dev/null || true)
-        [ -n "$RUN_SLICE" ] && STRIPPED="$RUN_SLICE"
+        if ! python3 "$PROJECT/scripts/utest-frame.py" \
+                --emit-run "$XML_SRC" "$TEST_LOG" >/dev/null 2>&1; then
+            XML_SLICE_FAILED=1
+        fi
+        [ -s "$XML_SRC" ] || XML_SLICE_FAILED=1
+    fi
+    if [ "$XML_SLICE_FAILED" -eq 1 ]; then
+        # A complete run EXISTS but could not be sliced out. Falling back to
+        # the whole capture here would publish exactly the artifact the
+        # slicing exists to prevent -- the comment above describes it: two
+        # runs' testcases assembled under one run's summary, which reads to a
+        # JUnit consumer as a single coherent suite. That is a false artifact,
+        # so the run FAILS instead, matching the stance every other refusal on
+        # this path takes.
+        echo -e "  ${RED}[UTEST]${RESET} run slice failed for a COMPLETE framed run -- refusing to assemble from the whole capture"
+        UTEST_FAIL=$(( ${UTEST_FAIL:-0} + 1 ))
+        XML_SUMMARY_OK=0
+        {
+            echo '<?xml version="1.0" encoding="UTF-8"?>'
+            printf '<testsuite name="impossible-os-usermode" tests="1" failures="0" skipped="0" errors="1" time="0"%s>\n' \
+                "$(utest_xml_identity_attrs)"
+            echo '  <properties>'
+            echo '    <property name="aborted" value="true"/>'
+            echo '    <property name="not_run" value="0"/>'
+            utest_xml_identity_props
+            echo '  </properties>'
+            echo '  <testcase name="artifact-pipeline" classname="infrastructure">'
+            echo '    <error message="run slice failed for a complete framed run -- artifact would mix runs"/>'
+            echo '  </testcase>'
+            echo '</testsuite>'
+        } > "$XML_LEG_OUT.staged" &&
+            utest_publish "$XML_LEG_OUT.staged" "$XML_LEG_OUT" "$XML_OUT" && XML_PUBLISHED=1
+        # The payload greps below still run; give them an EMPTY source rather
+        # than a missing file (set -e would abort on the read) and rather than
+        # the whole capture (that is the mixing this branch refuses).
+        : > "$XML_SRC"
+    fi
+    # No complete run at all: the whole capture, ANSI-stripped, still as a
+    # file. This is not the failure case above -- with no complete run there
+    # is no slice to prefer, and the framing gates have already decided
+    # whether this run is publishable; this only controls what the payload
+    # greps see.
+    if [ ! -s "$XML_SRC" ] && [ "$XML_SLICE_FAILED" -eq 0 ]; then
+        sed -E 's/\x1b\[[0-9;]*m//g' "$TEST_LOG" > "$XML_SRC" || true
     fi
 
     # Extract the summary numbers (tests=N failures=N skipped=N time=S.MMM).
-    SUM_LINE=$(echo "$STRIPPED" | sed -n "s/.*${UF}\[UTEST-XML-SUMMARY\] //p" |
+    #
+    # Skipped entirely after a slice failure. That branch has already failed
+    # the run and published a refusal naming its SPECIFIC cause; falling
+    # through would find the deliberately-emptied XML_SRC, necessarily take
+    # the no-summary branch, count a SECOND failure for the same event, and
+    # overwrite the precise diagnosis with a generic "counts unknown"
+    # document. XML_SUMMARY_OK alone only stops final assembly -- it does not
+    # protect the refusal already published.
+    if [ "$XML_SLICE_FAILED" -eq 0 ]; then
+    SUM_LINE=$(sed -n "s/.*${UF}\[UTEST-XML-SUMMARY\] //p" "$XML_SRC" |
                grep -E '^tests=[0-9]+ failures=[0-9]+ skipped=[0-9]+ time=' |
                tail -1 || true)
 
@@ -1260,6 +1357,7 @@ sys.stdout.write("\n".join(mod.parse_file(sys.argv[2])["lines"]))
             utest_publish "$XML_LEG_OUT.staged" "$XML_LEG_OUT" "$XML_OUT" && XML_PUBLISHED=1
         XML_SUMMARY_OK=0
     fi
+    fi  # XML_SLICE_FAILED guard: the slice-failure refusal stands alone
 
     # An aborted suite gets a synthetic infrastructure <testcase> carrying an
     # <error>, and errors="1" to match it.
@@ -1318,7 +1416,7 @@ if [ "$HAS_XML" -eq 1 ] && [ "$XML_SUMMARY_OK" -eq 1 ]; then
         # matched nothing, test=0, etc.) and the script must continue
         # to the final verdict + cleanup trap. Without this, set -e
         # would abort the entire test.sh run before the normal path.
-        echo "$STRIPPED" | sed -n "s/.*${UF}\[UTEST-XML\] //p" |
+        sed -n "s/.*${UF}\[UTEST-XML\] //p" "$XML_SRC" |
             grep -E '^<testcase' || true
         echo '</testsuite>'
     } > "$XML_LEG_OUT.staged" &&
