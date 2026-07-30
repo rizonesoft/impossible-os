@@ -60,7 +60,8 @@ int test_usermode_refusal_already_seen(const char *stored, int stored_verdict,
 int test_usermode_plan_dedup(const char *a_name, int a_type,
                              uint32_t a_expects, const char *b_name,
                              int b_type, uint32_t b_expects,
-                             uint32_t *out_runs, uint32_t *out_refusals);
+                             uint32_t *out_runs, uint32_t *out_refusals,
+                             uint32_t *out_smoke_refused);
 int test_usermode_plan_overflow(uint32_t *out_overflowed,
                                 uint32_t *out_runs_after);
 int test_usermode_binary_present(const char *name);
@@ -68,6 +69,7 @@ int test_usermode_manifest_parse(char *buf, uint32_t len, const char *filter,
                                  uint32_t *out_runs,
                                  uint32_t *out_refusals,
                                  uint32_t *out_authoritative,
+                                 uint32_t *out_smoke_refused,
                                  uint32_t *out_first_type,
                                  uint32_t *out_first_expects,
                                  uint32_t *out_last_type,
@@ -408,7 +410,7 @@ static void test_plan_folds_an_identical_duplicate(void)
      * reconciliation could not see it. */
     if (!test_usermode_plan_dedup("test_dup.exe", UTEST_TYPE_CORRECTNESS, 1u,
                                   "test_DUP.exe", UTEST_TYPE_CORRECTNESS, 1u,
-                                  &runs, &refusals)) {
+                                  &runs, &refusals, (uint32_t *)0)) {
         TEST_SKIP("plan allocation unavailable");
         return;
     }
@@ -419,7 +421,7 @@ static void test_plan_folds_an_identical_duplicate(void)
 
 static void test_plan_refuses_a_conflicting_duplicate(void)
 {
-    uint32_t runs = 99, refusals = 99;
+    uint32_t runs = 99, refusals = 99, smoke_refused = 99;
 
     /* Filesystem identity does not settle manifest POLICY. Two case
      * variants of one file can disagree on `type=` -- and silently
@@ -429,7 +431,7 @@ static void test_plan_refuses_a_conflicting_duplicate(void)
      * under neither policy. */
     if (!test_usermode_plan_dedup("test_conf.exe", UTEST_TYPE_SMOKE, 1u,
                                   "test_CONF.exe", UTEST_TYPE_CORRECTNESS, 1u,
-                                  &runs, &refusals)) {
+                                  &runs, &refusals, &smoke_refused)) {
         TEST_SKIP("plan allocation unavailable");
         return;
     }
@@ -437,18 +439,54 @@ static void test_plan_refuses_a_conflicting_duplicate(void)
                    "a policy conflict must not run under a guessed policy");
     TEST_ASSERT_EQ(refusals, 1u,
                    "the conflicting identity is published exactly once");
+    /* The conflict refused a DECLARED smoke binary. Refusing it is a smoke
+     * non-PASS, so the suite must abort rather than carry on with the
+     * remaining binaries -- otherwise a crafted manifest could demote a
+     * smoke prerequisite to an ordinary counted failure and still run
+     * everything after it, with total_planned == total_ran so neither the
+     * completeness gate nor the artifact reconciliation could see it. */
+    TEST_ASSERT_EQ(smoke_refused, 1u,
+                   "refusing a declared smoke identity aborts the suite");
 
     /* A disagreement about task COST is the same class of conflict: it
      * understates the preflight task budget rather than the phase. */
     runs = 99; refusals = 99;
     if (!test_usermode_plan_dedup("test_cost.exe", UTEST_TYPE_CORRECTNESS, 1u,
                                   "test_COST.exe", UTEST_TYPE_CORRECTNESS, 4u,
-                                  &runs, &refusals)) {
+                                  &runs, &refusals, (uint32_t *)0)) {
         TEST_SKIP("plan allocation unavailable");
         return;
     }
     TEST_ASSERT_EQ(runs, 0u, "conflicting expects_tasks is also a conflict");
     TEST_ASSERT_EQ(refusals, 1u, "and is published exactly once");
+
+    /* A THIRD case variant refused for an unusable attribute must not add
+     * a second record for the same file: two failures for one binary read
+     * as two binaries, and the counts reconcile either way so nothing
+     * downstream can tell them apart. */
+    {
+        static char buf[512];
+        uint32_t i, p = 0, dup_runs = 99, dup_refusals = 99;
+        const char *text =
+            "test_d.exe type=stress\n"
+            "test_D.exe type=perf\n"
+            "test_d.exe type=bogus\n";
+
+        for (i = 0; text[i]; i++) buf[p++] = text[i];
+        buf[p] = '\0';
+        if (!test_usermode_manifest_parse(buf, p, (const char *)0, &dup_runs,
+                                          &dup_refusals, (uint32_t *)0,
+                                          (uint32_t *)0, (uint32_t *)0,
+                                          (uint32_t *)0, (uint32_t *)0,
+                                          (uint32_t *)0)) {
+            TEST_SKIP("plan allocation unavailable");
+            return;
+        }
+        TEST_ASSERT_EQ(dup_runs, 0u,
+                       "a conflicted identity does not run");
+        TEST_ASSERT_EQ(dup_refusals, 1u,
+                       "one filesystem identity yields one refusal record");
+    }
 }
 
 static void test_plan_overflow_runs_nothing(void)
@@ -501,8 +539,8 @@ static void test_manifest_parses_past_the_old_runnable_cap(void)
     buf[p] = '\0';
 
     if (!test_usermode_manifest_parse(buf, p, (const char *)0, &runs,
-                                      &refusals, (uint32_t *)0, &first_type,
-                                      &first_expects, &last_type,
+                                      &refusals, (uint32_t *)0, (uint32_t *)0,
+                                      &first_type, &first_expects, &last_type,
                                       &last_expects)) {
         TEST_SKIP("plan allocation unavailable");
         return;
@@ -541,7 +579,7 @@ static void test_manifest_refusal_is_terminal_for_its_identity(void)
     if (!test_usermode_manifest_parse(buf, p, (const char *)0, &runs,
                                       &refusals, (uint32_t *)0, (uint32_t *)0,
                                       (uint32_t *)0, (uint32_t *)0,
-                                      (uint32_t *)0)) {
+                                      (uint32_t *)0, (uint32_t *)0)) {
         TEST_SKIP("plan allocation unavailable");
         return;
     }
@@ -588,7 +626,7 @@ static void test_refused_attribute_vetoes_a_later_case_variant(void)
      * name must NOT be planned runnable and then refused as well -- both
      * counters would agree and the completeness gate would stay blind. */
     static char buf[512];
-    uint32_t runs = 99, refusals = 99;
+    uint32_t runs = 99, refusals = 99, smoke_refused = 99;
     uint32_t i, p = 0;
     const char *text =
         "test_v.exe type=bogus\n"
@@ -598,9 +636,9 @@ static void test_refused_attribute_vetoes_a_later_case_variant(void)
     buf[p] = '\0';
 
     if (!test_usermode_manifest_parse(buf, p, (const char *)0, &runs,
-                                      &refusals, (uint32_t *)0, (uint32_t *)0,
+                                      &refusals, (uint32_t *)0, &smoke_refused,
                                       (uint32_t *)0, (uint32_t *)0,
-                                      (uint32_t *)0)) {
+                                      (uint32_t *)0, (uint32_t *)0)) {
         TEST_SKIP("plan allocation unavailable");
         return;
     }
@@ -608,6 +646,12 @@ static void test_refused_attribute_vetoes_a_later_case_variant(void)
                    "a refused identity vetoes a case variant read after it");
     TEST_ASSERT_EQ(refusals, 1u,
                    "and the refusal is still published exactly once");
+    /* The vetoed entry DECLARED smoke, so the veto is a smoke non-PASS.
+     * Second route to the same bypass: the duplicate-policy branch covers
+     * a conflict between two accepted lines; this covers a refused line
+     * deleting an accepted smoke variant. */
+    TEST_ASSERT_EQ(smoke_refused, 1u,
+                   "vetoing a declared smoke identity aborts the suite");
 }
 
 static void test_fully_filtered_manifest_stays_authoritative(void)
@@ -630,7 +674,8 @@ static void test_fully_filtered_manifest_stays_authoritative(void)
     if (!test_usermode_manifest_parse(buf, p, "test_nomatch_*.exe", &runs,
                                       (uint32_t *)0, &authoritative,
                                       (uint32_t *)0, (uint32_t *)0,
-                                      (uint32_t *)0, (uint32_t *)0)) {
+                                      (uint32_t *)0, (uint32_t *)0,
+                                      (uint32_t *)0)) {
         TEST_SKIP("plan allocation unavailable");
         return;
     }
@@ -647,12 +692,199 @@ static void test_fully_filtered_manifest_stays_authoritative(void)
     if (!test_usermode_manifest_parse(buf, p, "test_al*.exe", &runs,
                                       (uint32_t *)0, &authoritative,
                                       (uint32_t *)0, (uint32_t *)0,
-                                      (uint32_t *)0, (uint32_t *)0)) {
+                                      (uint32_t *)0, (uint32_t *)0,
+                                      (uint32_t *)0)) {
         TEST_SKIP("plan allocation unavailable");
         return;
     }
     TEST_ASSERT_EQ(runs, 1u, "a matching filter plans only what it matched");
     TEST_ASSERT_EQ(authoritative, 1u, "and the manifest remains authoritative");
+}
+
+static void test_attribute_refused_smoke_aborts_the_suite(void)
+{
+    static char buf[512];
+    uint32_t runs = 99, refusals = 99, smoke_refused = 99;
+    uint32_t i, p = 0;
+    /* The NAME is accepted, so `type=smoke` is a TRUSTED declaration; only
+     * the task count is unusable. Refusing the line without aborting would
+     * publish the smoke prerequisite as an ordinary counted failure and
+     * run every later binary anyway -- the third route to the bypass, and
+     * the one that needs no case-variant trickery at all. */
+    const char *text =
+        "test_gate.exe type=smoke expects_tasks=0\n"
+        "test_other.exe\n";
+
+    for (i = 0; text[i]; i++) buf[p++] = text[i];
+    buf[p] = '\0';
+
+    if (!test_usermode_manifest_parse(buf, p, (const char *)0, &runs,
+                                      &refusals, (uint32_t *)0, &smoke_refused,
+                                      (uint32_t *)0, (uint32_t *)0,
+                                      (uint32_t *)0, (uint32_t *)0)) {
+        TEST_SKIP("plan allocation unavailable");
+        return;
+    }
+    TEST_ASSERT_EQ(refusals, 1u,
+                   "an unusable attribute refuses the line");
+    TEST_ASSERT_EQ(runs, 1u,
+                   "the unrelated entry is still planned");
+    TEST_ASSERT_EQ(smoke_refused, 1u,
+                   "refusing a trusted smoke declaration aborts the suite");
+
+    /* A name-REFUSED line must NOT abort: its type is never derived,
+     * exactly so untrusted bytes cannot claim smoke policy and reach the
+     * gate. Same shape, different trust. */
+    runs = 99; refusals = 99; smoke_refused = 99;
+    p = 0;
+    {
+        const char *bad = "test_smoke_a..exe\ntest_other.exe\n";
+        for (i = 0; bad[i]; i++) buf[p++] = bad[i];
+        buf[p] = '\0';
+    }
+    if (!test_usermode_manifest_parse(buf, p, (const char *)0, &runs,
+                                      &refusals, (uint32_t *)0, &smoke_refused,
+                                      (uint32_t *)0, (uint32_t *)0,
+                                      (uint32_t *)0, (uint32_t *)0)) {
+        TEST_SKIP("plan allocation unavailable");
+        return;
+    }
+    TEST_ASSERT_EQ(smoke_refused, 0u,
+                   "a name-refused line never claims smoke policy");
+}
+
+static void test_smoke_provenance_survives_every_refusal_route(void)
+{
+    static char buf[512];
+    uint32_t runs = 99, smoke_refused = 99;
+    uint32_t i, p = 0;
+
+    /* A THIRD declaration arriving after two non-smoke lines already
+     * converted the identity to a refusal. The smoke policy has to MERGE
+     * into that refusal record: if it were merely dropped, the identity
+     * would sit refused with no smoke provenance anywhere and the gate
+     * could not see it. This is the route that made per-site flag-setting
+     * untenable -- the gate is now derived from the records instead. */
+    const char *text =
+        "test_m.exe type=correctness\n"
+        "test_M.exe type=stress\n"
+        "test_m.exe type=smoke\n";
+
+    for (i = 0; text[i]; i++) buf[p++] = text[i];
+    buf[p] = '\0';
+
+    if (!test_usermode_manifest_parse(buf, p, (const char *)0, &runs,
+                                      (uint32_t *)0, (uint32_t *)0,
+                                      &smoke_refused, (uint32_t *)0,
+                                      (uint32_t *)0, (uint32_t *)0,
+                                      (uint32_t *)0)) {
+        TEST_SKIP("plan allocation unavailable");
+        return;
+    }
+    TEST_ASSERT_EQ(runs, 0u, "the conflicted identity does not run");
+    TEST_ASSERT_EQ(smoke_refused, 1u,
+                   "a smoke declaration suppressed by an existing refusal "
+                   "still reaches the gate");
+}
+
+static void test_deduplicated_refusal_keeps_smoke_provenance(void)
+{
+    static char buf[512];
+    uint32_t runs = 99, refusals = 99, smoke_refused = 99;
+    uint32_t i, p = 0;
+
+    /* Both lines name ONE file and both are attribute-refused, so the
+     * second collapses into the first at staging. The collapse must not
+     * discard what the second line declared: the identity was refused
+     * while carrying a trusted, selected `type=smoke`, so it is a refused
+     * smoke prerequisite. This route never reaches u_plan_add_run's
+     * terminal branch, which is why the correctness/stress/smoke fixture
+     * does not cover it. */
+    const char *text =
+        "test_gate.exe type=correctness expects_tasks=0\n"
+        "test_GATE.exe type=smoke expects_tasks=0\n"
+        "test_other.exe\n";
+
+    for (i = 0; text[i]; i++) buf[p++] = text[i];
+    buf[p] = '\0';
+
+    if (!test_usermode_manifest_parse(buf, p, (const char *)0, &runs,
+                                      &refusals, (uint32_t *)0, &smoke_refused,
+                                      (uint32_t *)0, (uint32_t *)0,
+                                      (uint32_t *)0, (uint32_t *)0)) {
+        TEST_SKIP("plan allocation unavailable");
+        return;
+    }
+    TEST_ASSERT_EQ(refusals, 1u,
+                   "one filesystem identity keeps one refusal record");
+    TEST_ASSERT_EQ(runs, 1u, "the unrelated entry is still planned");
+    TEST_ASSERT_EQ(smoke_refused, 1u,
+                   "a deduplicated refusal keeps the smoke provenance of "
+                   "the declaration it absorbed");
+}
+
+static void test_filtered_out_smoke_refusal_does_not_abort(void)
+{
+    static char buf[512];
+    uint32_t smoke_refused = 99, runs = 99;
+    uint32_t i, p = 0;
+
+    /* Refusals publish regardless of `utest_filter=` -- the filter picks
+     * among identities the launcher can trust. The ABORT is a different
+     * question: a smoke entry the filter excluded would never have been
+     * planned, so refusing it must not kill a focused run. Publication and
+     * abort therefore read different bits. */
+    const char *text =
+        "test_gate.exe type=smoke expects_tasks=0\n"
+        "test_other.exe\n";
+
+    for (i = 0; text[i]; i++) buf[p++] = text[i];
+    buf[p] = '\0';
+
+    if (!test_usermode_manifest_parse(buf, p, "test_other.exe", &runs,
+                                      (uint32_t *)0, (uint32_t *)0,
+                                      &smoke_refused, (uint32_t *)0,
+                                      (uint32_t *)0, (uint32_t *)0,
+                                      (uint32_t *)0)) {
+        TEST_SKIP("plan allocation unavailable");
+        return;
+    }
+    TEST_ASSERT_EQ(runs, 1u, "the selected binary is planned");
+    TEST_ASSERT_EQ(smoke_refused, 0u,
+                   "a smoke entry the filter excluded must not abort the run");
+}
+
+static void test_overlength_refusals_are_not_deduplicated(void)
+{
+    static char buf[2048];
+    uint32_t refusals = 99;
+    uint32_t i, p = 0;
+
+    /* Two length-refused names sharing their first VFS_MAX_NAME bytes are
+     * DIFFERENT files. u_name_equal_fs reports equal once it runs off the
+     * end of both strings without a terminator, so an unguarded identity
+     * dedup would collapse them into one record and silently lose the
+     * second span digest -- with every published count still reconciling.
+     * A name past the filesystem bound is not an identity at all. */
+    for (i = 0; i < 300u; i++) buf[p++] = (i < 5u) ? "test_"[i] : 'a';
+    buf[p++] = 'X';
+    for (i = 0; i < 4u; i++) buf[p++] = ".exe"[i];
+    buf[p++] = '\n';
+    for (i = 0; i < 300u; i++) buf[p++] = (i < 5u) ? "test_"[i] : 'a';
+    buf[p++] = 'Y';
+    for (i = 0; i < 4u; i++) buf[p++] = ".exe"[i];
+    buf[p++] = '\n';
+    buf[p] = '\0';
+
+    if (!test_usermode_manifest_parse(buf, p, (const char *)0, (uint32_t *)0,
+                                      &refusals, (uint32_t *)0, (uint32_t *)0,
+                                      (uint32_t *)0, (uint32_t *)0,
+                                      (uint32_t *)0, (uint32_t *)0)) {
+        TEST_SKIP("plan allocation unavailable");
+        return;
+    }
+    TEST_ASSERT_EQ(refusals, 2u,
+                   "two distinct over-length names keep two refusal records");
 }
 
 static void test_plan_alloc_failure_is_a_distinct_state(void)
@@ -682,10 +914,13 @@ static void test_plan_intern_exhaustion_and_compaction(void)
     uint32_t overflowed = 99, count_stable = 99;
     uint32_t refusals_kept = 99, order_kept = 99;
 
-    /* Three branches the capacity test cannot reach: the name arena
-     * filling independently of the entry array, the rollback that keeps a
-     * failed intern from leaving a nameless entry behind, and compaction
-     * with both kinds interleaved. */
+    /* The name arena holds one slot per ENTRY and an entry slot is always
+     * taken first, so the entry array is what binds -- the arena can never
+     * fill on its own, and the assert beside UTEST_PLAN_NAME_BYTES pins
+     * that. What this covers is therefore capacity refusal on a plan of
+     * INTERNED names (so a rejected append cannot leave a half-written
+     * arena slot or a nameless entry) and compaction with both kinds
+     * interleaved -- neither of which the all-RUN capacity test reaches. */
     if (!test_usermode_plan_intern_and_compaction(&overflowed, &count_stable,
                                                   &refusals_kept,
                                                   &order_kept)) {
@@ -693,7 +928,7 @@ static void test_plan_intern_exhaustion_and_compaction(void)
         return;
     }
     TEST_ASSERT_EQ(overflowed, 1u,
-                   "exhausting the name arena flags the plan incomplete");
+                   "filling a plan of interned names flags it incomplete");
     TEST_ASSERT_EQ(count_stable, 1u,
                    "a refused append leaves the entry count unchanged");
     TEST_ASSERT_EQ(refusals_kept, test_usermode_plan_capacity() / 2u,
@@ -3296,6 +3531,21 @@ void test_register_usermode_launcher(void)
                             TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: a fully filtered manifest stays authoritative",
                             test_fully_filtered_manifest_stays_authoritative,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: an attribute-refused smoke entry aborts",
+                            test_attribute_refused_smoke_aborts_the_suite,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: smoke provenance survives every refusal route",
+                            test_smoke_provenance_survives_every_refusal_route,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: a deduplicated refusal keeps smoke provenance",
+                            test_deduplicated_refusal_keeps_smoke_provenance,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: a filtered-out smoke refusal does not abort",
+                            test_filtered_out_smoke_refusal_does_not_abort,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: over-length refusals are not deduplicated",
+                            test_overlength_refusals_are_not_deduplicated,
                             TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: plan alloc failure is its own state",
                             test_plan_alloc_failure_is_a_distinct_state,

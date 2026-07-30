@@ -899,13 +899,17 @@ refusal rejected.
 
 Refused manifest entries live in their own bounded array
 (`UTEST_MANIFEST_REFUSAL_MAX`, 64) rather than competing with runnable
-entries for `UTEST_MANIFEST_MAX` slots. That separation is
-load-bearing: while they shared one array, the runnable cap was
-checked *before* classification and stopped parsing, so a malformed
-entry in the tail of an oversized manifest was never examined -- and
-the documented "tail runs via glob" fallback cannot recover it,
-because a name refused for an embedded NUL or an illegal byte may not
-exist as a directory entry at all.
+entries for slots. That separation is load-bearing: while they shared
+one array, the runnable cap was checked *before* classification and
+stopped parsing, so a malformed entry in the tail of an oversized
+manifest was never examined -- and the "tail runs via glob" fallback
+that was supposed to cover it could not, because a name refused for an
+embedded NUL or an illegal byte may not exist as a directory entry at
+all. Runnable entries no longer have a cap of their own at all: they go
+straight into the enumeration plan (`UTEST_PLAN_MAX`, 256), which is
+the single capacity bounding what one run can enumerate from either
+source. The old 128-entry runnable cap and its glob tail-fallback are
+both gone.
 
 Exhausting the refusal array is itself published as a refusal, through
 the same path as any other (`reason: refusal array full`), rather than
@@ -920,17 +924,27 @@ published once. That dedup compares names the way the filesystem does:
 `C:` is IXFS, which folds ASCII case, so `test_Bad.exe` and
 `test_bad.exe` are one file. `REFUSE_NUL` entries are excluded from it,
 because their stored string is the truncation at the NUL and no
-filename can contain one. The dedup for *accepted* entries stays
-bytewise on purpose -- it is followed by a `filter=` match, which
-compares literally, and folding one without the other can suppress a
-requested binary entirely.
+filename can contain one. The dedup for *accepted* entries folds case
+the same way, and so does `utest_filter=`: the two must agree, because
+a folded dedup beside a literal filter can suppress a requested binary
+entirely. Filesystem identity does not settle manifest *policy*,
+though -- two case variants of one file that disagree on `type=` or
+`expects_tasks=` are published as a single `manifest duplicate
+conflict` failure and run under neither declaration. A refusal is
+terminal for its identity, so no later variant can revive it; only
+*exact* identities count for that, never the sanitized prefix a glob
+refusal stores.
 
 ### Incomplete runs
 
-The launcher plans in one walk of `C:\` and executes in a second one
-taken after live children have run. A binary that disappears between
-them is now reported rather than subtracted: a completed run whose
-`total_ran` is short of `total_planned` emits
+The launcher enumerates `C:\` exactly once, into an immutable plan, and
+both execution phases iterate that plan -- there is no second directory
+walk. A planned binary that disappears before its turn is published by
+name as a counted `planned binary absent` failure, and if it was a
+smoke binary it aborts the suite like any other smoke non-PASS. The
+completeness reconciliation remains as the net for entries that
+produced no result at all (the tail a smoke abort never reaches): a run
+whose `total_ran` is short of `total_planned` emits
 
 ```
 [UTEST-RUN-INCOMPLETE] planned 18 binaries but ran 17 -- 1 planned binary/binaries produced no result

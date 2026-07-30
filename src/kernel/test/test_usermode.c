@@ -207,7 +207,7 @@ static int u_strncmp_fold(const char *a, const char *b, uint32_t n)
 }
 
 /* fnmatch-style `*` glob (single wildcard supported, anywhere). The
- * §4 spec calls for "literal name or `*`-glob" and that's exactly
+ * launcher-filter spec calls for "literal name or `*`-glob" and that's exactly
  * what tests need (`test_smoke_*.exe` etc.). NULL pattern matches
  * everything. Exposed for unit tests (u_glob_match_public).
  *
@@ -968,9 +968,9 @@ static void u_cleanup_manifest_apply(void)
  * execution, so no plan entry can outlive the bytes it points at.
  * ------------------------------------------------------------------- */
 
-/* Entries one run can plan. Larger than UTEST_MANIFEST_MAX on purpose:
- * the plan, not the manifest parser, is now the binding capacity, so a
- * manifest longer than the old 128-entry runnable array no longer loses
+/* Entries one run can plan, from either source. Deliberately larger than
+ * the 128-entry runnable array this replaced: the plan, not the manifest
+ * parser, is now the binding capacity, so a long manifest no longer loses
  * its tail to a glob fallback that could not reconstruct an entry's type,
  * task cost or ordering. */
 #define UTEST_PLAN_MAX 256u
@@ -981,6 +981,18 @@ static void u_cleanup_manifest_apply(void)
  * down this file and so cannot be referenced here. */
 #define UTEST_PLAN_NAME_SLOT  64u
 #define UTEST_PLAN_NAME_BYTES (UTEST_PLAN_MAX * UTEST_PLAN_NAME_SLOT)
+/* The arena holds one slot per ENTRY, and u_plan_intern only ever runs
+ * after u_plan_alloc has already taken an entry slot -- so the entry array
+ * is always the binding limit and the arena can never be the thing that
+ * fills first. That is a deliberate property, not a coincidence: it means
+ * a legitimate full plan of interned names cannot be refused for want of
+ * name storage. The intern-overflow branch and its rollback are therefore
+ * unreachable while this holds, and are kept fail-closed for the same
+ * reason u_build_refusal_id's overflow arm is. */
+_Static_assert(UTEST_PLAN_NAME_BYTES >= UTEST_PLAN_MAX * UTEST_PLAN_NAME_SLOT,
+               "the plan name arena must hold one slot per plan entry, or "
+               "u_plan_intern could refuse a name for a plan that still "
+               "has an entry slot free");
 
 typedef enum {
     UTEST_PLAN_RUN     = 0,   /* a binary to launch */
@@ -1016,6 +1028,21 @@ struct plan_entry {
      * a legitimate requested binary and leave its failures unobserved --
      * strictly worse than the double publication the rule prevents. */
     uint8_t      exact_name;
+    /* 1 = this record stands for a TRUSTED smoke declaration that the
+     * filter selected. The smoke gate is derived from this bit alone.
+     *
+     * Deliberately ONE bit rather than a (type, selected) pair: merging
+     * two declarations for one identity could otherwise pair the SMOKE
+     * type of one with the filter selection of another and invent a gate
+     * neither line asked for. Both halves are decided together, at the
+     * point the declaration is read, and only ever OR-ed afterwards.
+     *
+     * "Trusted" excludes name refusals -- their type is never derived, so
+     * untrusted bytes cannot reach the gate. "Selected" matters because
+     * refusals PUBLISH regardless of `utest_filter=` (the filter picks
+     * among identities the launcher can trust), while an abort is a
+     * statement about the run the operator actually asked for. */
+    uint8_t      smoke_selected;
 };
 
 #define UTEST_PLAN_BLOCK_BYTES                                             \
@@ -1044,6 +1071,20 @@ struct plan_state {
      * `overflowed` because it must not be reported as a capacity problem
      * with a directory. */
     int                alloc_failed;
+    /* 1 = a SMOKE-declared identity was refused during planning, so the
+     * suite must abort exactly as it would for a smoke binary that ran
+     * and failed.
+     *
+     * Only a DECLARED smoke type sets this. A name-refusal never does:
+     * bytes the launcher declined to trust must not be able to claim
+     * smoke policy and abort the suite through the smoke gate, which is
+     * why u_glob_next's refusal path never reaches u_type_for_name. A
+     * duplicate-policy conflict is the opposite case -- both lines were
+     * classified and accepted, so their `type=` is trusted, and dropping
+     * a smoke prerequisite to a counted failure while the rest of the
+     * suite runs on is exactly the abort bypass the gate exists to
+     * prevent. */
+    int                smoke_refused;
 };
 
 struct manifest_state {
@@ -1081,6 +1122,13 @@ struct manifest_state {
     const char  *refused_names[UTEST_MANIFEST_REFUSAL_MAX];
     uint32_t     refused_digest[UTEST_MANIFEST_REFUSAL_MAX];
     uint8_t      refused_verdict[UTEST_MANIFEST_REFUSAL_MAX];
+    /* Provenance the smoke gate is DERIVED from, carried per refusal so
+     * no single code path has to remember to raise a flag. Set only when
+     * the NAME was accepted and merely an attribute was unusable -- that
+     * `type=` came off a line the classifier trusted -- AND the filter
+     * selected the entry. A name refusal never sets it, which is what
+     * stops untrusted bytes from reaching the gate. */
+    uint8_t      refused_smoke_selected[UTEST_MANIFEST_REFUSAL_MAX];
     uint32_t     refused_count;
     int          refused_overflowed; /* 1 = more refusals than we can hold */
     /* 1 = a manifest EXISTS but could not be parsed at all (too large for
@@ -1117,7 +1165,7 @@ static void u_manifest_parse(struct manifest_state *ms, struct plan_state *ps,
 /* Applied by the parser once the refusal set is complete -- a refused
  * identity vetoes a runnable one that was read before it. */
 static void u_plan_suppress_refused(struct plan_state *ps,
-                                    const struct manifest_state *ms);
+                                    struct manifest_state *ms);
 
 /* Put a manifest_state into its "nothing loaded" state.
  *
@@ -1424,6 +1472,19 @@ static void u_manifest_parse(struct manifest_state *ms, struct plan_state *ps,
                         ms->refused_overflowed = 1;
                         continue;
                     }
+                    /* Provenance for the derived smoke gate. The type is
+                     * trusted ONLY when the name itself was accepted and
+                     * merely an attribute was unusable; a name refusal
+                     * records CORRECTNESS so untrusted bytes can never
+                     * reach the gate. The filter decision is recorded here
+                     * too, because publication ignores the filter but the
+                     * abort must not. */
+                    ms->refused_smoke_selected[ms->refused_count] =
+                        (uint8_t)((verdict == UTEST_NAME_REFUSE_ATTR &&
+                                   entry_type == UTEST_TYPE_SMOKE &&
+                                   test_usermode_glob_match(s_filter,
+                                                            name_start))
+                                  ? 1 : 0);
                     ms->refused_names[ms->refused_count]   = name_start;
                     ms->refused_digest[ms->refused_count]  =
                         u_name_digest(name_start, name_span);
@@ -3938,9 +3999,30 @@ static int u_name_equal_fs(const char *a, const char *b, uint32_t cap)
 
 /* ---- Enumeration-plan construction --------------------------------- */
 
-/* Defined just below, beside the refusal storage it reads. */
+/* Defined just below, beside the refusal storage they read. */
 static int u_refusal_already_seen(const struct manifest_state *ms,
                                   const char *name);
+static int u_refusal_index_of(const struct manifest_state *ms,
+                              const char *name);
+
+/* Does this name terminate inside the filesystem's name bound?
+ *
+ * u_name_equal_fs compares up to a cap and reports EQUAL when it runs off
+ * the end of both strings without finding a terminator -- fine when one
+ * side is a dirent, which always terminates within the bound, and wrong
+ * when both sides are refused manifest names, which may be over-length
+ * precisely because that is one reason to refuse them. Two 300-byte names
+ * sharing their first 256 bytes are different files, and a name past this
+ * bound is not a filesystem identity at all. */
+static int u_name_bounded(const char *name)
+{
+    uint32_t i;
+
+    for (i = 0; i < VFS_MAX_NAME; i++)
+        if (!name[i])
+            return 1;
+    return 0;
+}
 
 static int u_plan_init(struct plan_state *ps)
 {
@@ -3949,6 +4031,7 @@ static int u_plan_init(struct plan_state *ps)
     ps->count             = 0;
     ps->names_used        = 0;
     ps->skipped_by_filter = 0;
+    ps->smoke_refused     = 0;
     ps->block_phys        = 0;
     ps->overflowed   = 0;
     ps->alloc_failed = 0;
@@ -4002,8 +4085,13 @@ static void u_plan_free(struct plan_state *ps)
  * The fixed stride can only truncate a name longer than the slot, and the
  * static assert beside UTEST_MAX_BINARY_NAME proves no ACCEPTED name can
  * be; refusal prefixes are sanitized to UTEST_REFUSAL_PREFIX_STORE before
- * they get here. Returns NULL (and marks the plan incomplete) when the
- * arena is exhausted, so a truncated identity can never be planned. */
+ * they get here.
+ *
+ * The exhaustion arm below is UNREACHABLE while the arena assert holds
+ * (one slot per entry, and an entry slot is always taken first), and is
+ * kept fail-closed anyway so a future resizing that breaks the
+ * relationship refuses to plan a truncated identity rather than silently
+ * planning one. */
 static const char *u_plan_intern(struct plan_state *ps, const char *name)
 {
     char *dst;
@@ -4045,7 +4133,8 @@ static struct plan_entry *u_plan_alloc(struct plan_state *ps)
     e->kind          = (uint8_t)UTEST_PLAN_RUN;
     e->verdict       = 0;
     e->expects_tasks = 1u;
-    e->exact_name    = 1u;
+    e->exact_name     = 1u;
+    e->smoke_selected = 0u;
     return e;
 }
 
@@ -4114,12 +4203,36 @@ static int u_plan_add_run(struct plan_state *ps, const char *name,
                 continue;
             if (!u_name_equal_fs(prev->name, name, VFS_MAX_NAME))
                 continue;
+            /* MERGE the incoming declaration's policy into the refusal
+             * rather than dropping it on the floor. This declaration was
+             * classified and filtered like any other, so its `type=` is
+             * trusted -- and a smoke declaration that gets suppressed by
+             * an earlier refusal is still a refused smoke prerequisite.
+             * Without the merge, correctness-then-stress-then-smoke left
+             * the identity refused with no smoke provenance anywhere, and
+             * the gate could not see it. */
+            if (type == UTEST_TYPE_SMOKE)
+                prev->smoke_selected = 1u;
             return 1;   /* already published as refused; never runs */
         }
         if (!u_name_equal_fs(prev->name, name, VFS_MAX_NAME))
             continue;
         if (prev->type == type && prev->expects_tasks == expects)
             return 1;   /* one file, one policy, one plan slot */
+        /* If EITHER declaration called this a smoke binary, the identity
+         * is a smoke prerequisite and refusing it is a smoke non-PASS.
+         * Recorded before the type is overwritten below. Without this the
+         * conflict quietly demoted a declared smoke gate into an ordinary
+         * counted failure and let the rest of the suite run on -- with
+         * total_planned == total_ran, so neither the completeness gate nor
+         * the artifact reconciliation could see the bypass. */
+        /* The refusal RECORD carries the policy, so the gate is derived
+         * from the plan rather than raised by whichever branch happened to
+         * notice. Both declarations reached here THROUGH the filter, so
+         * either one calling this a smoke binary makes the refused
+         * identity a selected smoke prerequisite. */
+        if (prev->type == UTEST_TYPE_SMOKE || type == UTEST_TYPE_SMOKE)
+            prev->smoke_selected = 1u;
         prev->kind    = (uint8_t)UTEST_PLAN_REFUSAL;
         prev->reason  = UTEST_RSN_DUP_POLICY;
         prev->verdict = (uint8_t)UTEST_NAME_ACCEPT;
@@ -4157,10 +4270,65 @@ static int u_plan_add_run(struct plan_state *ps, const char *name,
  * rendering of it -- see plan_entry::exact_name. */
 static int u_plan_add_refusal(struct plan_state *ps, const char *name,
                               uint32_t digest, uint8_t verdict,
-                              const char *reason, int intern, int exact)
+                              const char *reason, int intern, int exact,
+                              int smoke_selected)
 {
-    struct plan_entry *e = u_plan_alloc(ps);
+    struct plan_entry *e;
 
+    /* One filesystem identity gets ONE refusal record.
+     *
+     * Two case variants of a name can be refused for DIFFERENT reasons --
+     * a duplicate-policy conflict converts one entry, and a third variant
+     * with an unusable attribute arrives separately from the manifest's
+     * refusal array -- and appending both published two failures for one
+     * file. The counts still reconciled, so nothing downstream could tell
+     * the operator that the two records were the same binary.
+     *
+     * Only EXACT identities can be compared this way, for the same reason
+     * the terminal-refusal rule requires it: a sanitized glob prefix is
+     * not the name it came from. First reason wins; both are failures and
+     * the run is red either way. */
+    /* The INCOMING verdict is checked as well as the stored one. A
+     * REFUSE_NUL entry's C string stops at the embedded NUL, so it is a
+     * truncation and not a filename: comparing it against an ordinary
+     * refusal would let `test_bad\0.exe` collapse into an existing
+     * `test_bad` record and lose its distinct span digest, with every
+     * published count still reconciling. It is never an identity in
+     * either direction. */
+    if (exact && verdict != (uint8_t)UTEST_NAME_REFUSE_NUL &&
+        u_name_bounded(name)) {
+        uint32_t i;
+        for (i = 0; i < ps->count; i++) {
+            const struct plan_entry *prev = &ps->entries[i];
+
+            if (prev->kind != (uint8_t)UTEST_PLAN_REFUSAL || !prev->exact_name)
+                continue;
+            if (prev->verdict == (uint8_t)UTEST_NAME_REFUSE_NUL)
+                continue;   /* a truncation, not a filename */
+            /* Both sides must terminate inside the bound. A length-refused
+             * name can run past it, and u_name_equal_fs reports EQUAL when
+             * it falls off the end of both strings -- so two distinct
+             * over-length names sharing their first VFS_MAX_NAME bytes
+             * would collapse into one record and the second span digest
+             * would be lost with every count still reconciling. */
+            if (!u_name_bounded(prev->name))
+                continue;
+            if (u_name_equal_fs(prev->name, name, VFS_MAX_NAME)) {
+                /* MERGE before returning. Collapsing a later refusal into
+                 * an earlier one for the same identity must not discard
+                 * what the later declaration said: refusing `test_gate.exe`
+                 * under correctness and then again as a selected
+                 * `type=smoke` is still a refused smoke prerequisite, and
+                 * dropping that here reproduced the exact bypass the
+                 * derivation was introduced to close. */
+                if (smoke_selected)
+                    ps->entries[i].smoke_selected = 1u;
+                return 1;   /* already published under this identity */
+            }
+        }
+    }
+
+    e = u_plan_alloc(ps);
     if (!e)
         return 0;
     if (intern) {
@@ -4176,7 +4344,8 @@ static int u_plan_add_refusal(struct plan_state *ps, const char *name,
     e->digest     = digest;
     e->verdict    = verdict;
     e->reason     = reason;
-    e->exact_name = exact ? 1u : 0u;
+    e->exact_name     = exact ? 1u : 0u;
+    e->smoke_selected = smoke_selected ? 1u : 0u;
     return 1;
 }
 
@@ -4196,19 +4365,61 @@ static int u_plan_add_refusal(struct plan_state *ps, const char *name,
  * is published separately from manifest_state -- converting would publish
  * the same identity twice. */
 static void u_plan_suppress_refused(struct plan_state *ps,
-                                    const struct manifest_state *ms)
+                                    struct manifest_state *ms)
 {
     uint32_t i, out = 0;
 
     for (i = 0; i < ps->count; i++) {
         if (ps->entries[i].kind == (uint8_t)UTEST_PLAN_RUN &&
-            u_refusal_already_seen(ms, ps->entries[i].name))
+            u_refusal_already_seen(ms, ps->entries[i].name)) {
+            /* TRANSFER the removed entry's policy onto the refusal that
+             * vetoed it, instead of raising a flag here. The removed entry
+             * was a trusted declaration -- it was classified and filtered
+             * like any other runnable -- so if it declared smoke, the
+             * identity the refusal now stands for is a refused smoke
+             * prerequisite, and the derived gate must be able to see that
+             * from the record alone. */
+            if (ps->entries[i].type == UTEST_TYPE_SMOKE) {
+                int idx = u_refusal_index_of(ms, ps->entries[i].name);
+                if (idx >= 0)
+                    ms->refused_smoke_selected[idx] = 1u;
+            }
             continue;
+        }
         if (out != i)
             ps->entries[out] = ps->entries[i];
         out++;
     }
     ps->count = out;
+}
+
+/* Derive the smoke gate from the plan, once, after every refusal has been
+ * staged.
+ *
+ * This replaces three separate "remember to set the flag" sites, each of
+ * which was found to miss a route: a duplicate-policy conflict, a refused
+ * line vetoing an accepted variant, an attribute refusal, and a third
+ * declaration suppressed by an existing refusal all end at the same
+ * place -- a REFUSAL record standing for an identity that was declared
+ * smoke. Reading that off the records means a future refusal route is
+ * covered by construction instead of by another flag setter.
+ *
+ * `selected` is what keeps a focused run honest: refusals publish
+ * regardless of `utest_filter=`, but a smoke entry the filter excluded
+ * would never have been planned, so refusing it must not abort the run
+ * the operator actually asked for. */
+static void u_plan_derive_smoke_gate(struct plan_state *ps)
+{
+    uint32_t i;
+
+    for (i = 0; i < ps->count; i++) {
+        const struct plan_entry *e = &ps->entries[i];
+
+        if (e->kind != (uint8_t)UTEST_PLAN_REFUSAL)
+            continue;
+        if (e->smoke_selected)
+            ps->smoke_refused = 1;
+    }
 }
 
 /* Drop every runnable entry, keeping the refusals already planned.
@@ -4245,8 +4456,8 @@ static void u_plan_drop_runs(struct plan_state *ps)
  * the TRUNCATION at the embedded NUL, not the name, and no filename can
  * contain a NUL -- so a dirent that matches that truncation is a
  * different file that would be wrongly suppressed. */
-static int u_refusal_already_seen(const struct manifest_state *ms,
-                                  const char *name)
+static int u_refusal_index_of(const struct manifest_state *ms,
+                              const char *name)
 {
     uint32_t i;
 
@@ -4254,9 +4465,15 @@ static int u_refusal_already_seen(const struct manifest_state *ms,
         if (ms->refused_verdict[i] == UTEST_NAME_REFUSE_NUL)
             continue;
         if (u_name_equal_fs(ms->refused_names[i], name, VFS_MAX_NAME))
-            return 1;
+            return (int)i;
     }
-    return 0;
+    return -1;
+}
+
+static int u_refusal_already_seen(const struct manifest_state *ms,
+                                  const char *name)
+{
+    return u_refusal_index_of(ms, name) >= 0;
 }
 
 /* Publish one refused binary as a counted infrastructure FAILURE.
@@ -4278,13 +4495,27 @@ static int u_refusal_already_seen(const struct manifest_state *ms,
  * caller adds total_ran, symmetrically with its u_run_one calls, so
  * not_run = total_planned - total_ran stays the completeness statement it
  * claims to be. */
-static void u_emit_refusal(const char *reason, uint32_t ordinal,
-                           const char *raw, uint32_t digest,
-                           uint32_t *tap_point, uint32_t *counters,
-                           struct u_report_totals *rt)
+/* `trusted` = `raw` is an identity the classifier already ACCEPTED, so it
+ * is inside the accepted charset and within UTEST_MAX_BINARY_NAME, and is
+ * published verbatim.
+ *
+ * The synthesized `refused_<ordinal>_<prefix>_<digest>.exe` identity
+ * exists to make UNTRUSTED bytes safe and distinguishable, and it costs a
+ * truncation to do it -- only about 14 prefix bytes survive for a small
+ * ordinal. For a planned binary that simply vanished, that truncation
+ * defeats the point: `test_component_alpha.exe` and
+ * `test_component_beta.exe` would land in the artifacts under the same
+ * prefix, and this section's whole claim is that the operator learns
+ * WHICH planned binary went missing. A trusted name needs no synthesis. */
+static void u_emit_refusal_named(const char *reason, uint32_t ordinal,
+                                 const char *raw, uint32_t digest,
+                                 int trusted,
+                                 uint32_t *tap_point, uint32_t *counters,
+                                 struct u_report_totals *rt)
 {
     char id[UTEST_MAX_BINARY_NAME + 1u];
     uint32_t point;
+    int built;
 
     /* Build BEFORE counting. The build cannot fail while the identity's
      * static assert holds, but counting first would make the fallback
@@ -4292,7 +4523,21 @@ static void u_emit_refusal(const char *reason, uint32_t ordinal,
      * above the record count, and the report partition above it too --
      * rather than merely one record short. Cheap ordering, strictly
      * better failure shape. */
-    if (!u_build_refusal_id(id, sizeof(id), ordinal, raw, digest)) {
+    if (trusted) {
+        uint32_t i = 0;
+        while (raw && raw[i] && i + 1u < sizeof(id)) {
+            id[i] = raw[i];
+            i++;
+        }
+        id[i] = '\0';
+        /* An accepted name is bounded by construction; a longer one here
+         * would mean the classifier let something through, so refuse to
+         * publish a truncation under a name that is not the file's. */
+        built = (raw && !raw[i]);
+    } else {
+        built = u_build_refusal_id(id, sizeof(id), ordinal, raw, digest);
+    }
+    if (!built) {
         /* Unreachable while the identity's static assert holds: the
          * fixed shape plus a minimum prefix is proven to fit the derived
          * bound. Kept fail-closed anyway, and on the marker channel the
@@ -4313,6 +4558,18 @@ static void u_emit_refusal(const char *reason, uint32_t ordinal,
                         (const char *)0);
     u_emit_json_testcase(id, UTEST_TYPE_CORRECTNESS, 1, 0, reason,
                          (const struct u_report *)0);
+}
+
+/* Untrusted-identity refusal: the raw bytes get the synthesized,
+ * sanitized identity. This is every enumeration refusal and every
+ * fail-closed aggregate. */
+static void u_emit_refusal(const char *reason, uint32_t ordinal,
+                           const char *raw, uint32_t digest,
+                           uint32_t *tap_point, uint32_t *counters,
+                           struct u_report_totals *rt)
+{
+    u_emit_refusal_named(reason, ordinal, raw, digest, 0,
+                         tap_point, counters, rt);
 }
 
 /* ---- Per-binary run: spawn, wait, log, cleanup --------------------- *
@@ -4388,9 +4645,13 @@ static void u_spawn_one(const char *name_copy, const char *path,
  * always was -- the gate for entries that produced no result at all, such
  * as the tail a smoke abort never reaches.
  *
- * Mirrors u_run_one's own path construction, and refuses a name that
- * would not fit the buffer u_run_one uses, so the two agree on what is
- * reachable. */
+ * Bounded by u_run_one's NAME_COPY buffer rather than its path buffer:
+ * u_run_one first snapshots the name into `char name_copy[VFS_MAX_NAME]`
+ * and truncates at VFS_MAX_NAME - 1 before building any path, so bounding
+ * on the path buffer here would call a name reachable that u_run_one
+ * would silently shorten. Not live today -- every RUN entry was accepted
+ * by u_classify_name_span, which bounds names at UTEST_MAX_BINARY_NAME --
+ * but the two must not disagree about what is reachable. */
 static int u_binary_present(const char *name)
 {
     char path[VFS_MAX_NAME + 4];
@@ -4398,7 +4659,7 @@ static int u_binary_present(const char *name)
     uint32_t ni = 0, pi = 3;
 
     path[0] = 'C'; path[1] = ':'; path[2] = '\\';
-    while (name[ni] && pi + 1u < sizeof(path))
+    while (name[ni] && ni + 1u < VFS_MAX_NAME && pi + 1u < sizeof(path))
         path[pi++] = name[ni++];
     path[pi] = '\0';
     if (name[ni])
@@ -4947,7 +5208,8 @@ void test_usermode_run(void)
         if (!u_plan_add_refusal(&plan, manifest.refused_names[i],
                                 manifest.refused_digest[i],
                                 manifest.refused_verdict[i],
-                                (const char *)0, 0, 1))
+                                (const char *)0, 0, 1,
+                                manifest.refused_smoke_selected[i]))
             break;      /* plan.overflowed is now set; its aggregate reports it */
     }
     if (manifest.refused_overflowed)
@@ -4973,7 +5235,19 @@ void test_usermode_run(void)
      * launched by the glob in the same run. Fail closed: the run is
      * already failing on the aggregate refusal, so discovering fewer
      * binaries costs nothing a green run depended on. */
-    if (!use_manifest && !manifest.refused_overflowed && !plan.alloc_failed) {
+    /* An UNREADABLE manifest is execution-fatal, not a reason to guess.
+     *
+     * The file existed and declared policy the launcher never got to read
+     * -- an oversized, unallocatable or short-read manifest may well have
+     * carried `type=smoke` lines. Falling back to the glob would rebuild a
+     * plan from filenames alone, silently downgrading those declarations
+     * to correctness and running stateful binaries with no smoke gate in
+     * front of them. The run is already failing on the counted
+     * `manifest unparseable` record; discovering fewer binaries costs
+     * nothing a green run depended on, and no post-planning scan can
+     * recover metadata that was never parsed. */
+    if (!use_manifest && !manifest.refused_overflowed && !plan.alloc_failed &&
+        !manifest.unreadable) {
         struct glob_state gs = { root, 0 };
         utest_name_verdict_t gv = UTEST_NAME_ACCEPT;
         while (u_glob_next(&gs, scratch_name, sizeof(scratch_name), &gv)) {
@@ -5018,7 +5292,8 @@ void test_usermode_run(void)
                      * it must never be identity-matched against a name. */
                     if (!u_plan_add_refusal(&plan, prefix,
                                             u_name_digest(scratch_name, nlen),
-                                            (uint8_t)gv, (const char *)0, 1, 0))
+                                            (uint8_t)gv, (const char *)0, 1, 0,
+                                            0))
                         break;
                     glob_refusal_count++;
                 }
@@ -5032,6 +5307,10 @@ void test_usermode_run(void)
                 break;
         }
     }
+
+    /* Every refusal is staged by now, so the gate can be read off the
+     * plan in one pass. */
+    u_plan_derive_smoke_gate(&plan);
 
     if (glob_refusal_overflowed)
         total_planned++;                /* the glob-refusal aggregate */
@@ -5260,9 +5539,13 @@ void test_usermode_run(void)
      * so neither is repeated here; every RUN entry in the plan is one the
      * launcher committed to executing. */
     {
-        int smoke_failed = 0;
+        /* A SMOKE identity refused during planning never gets to run, so
+         * the smoke gate has to fire from here rather than from a verdict.
+         * Seeded before the phases so no RUN entry executes past it, which
+         * is what a smoke non-PASS means everywhere else in this loop. */
+        int smoke_failed = plan.smoke_refused;
         int phase;
-        for (phase = 0; phase < 2; phase++) {
+        for (phase = 0; phase < 2 && !smoke_failed; phase++) {
             int want_smoke = (phase == 0);
             for (i = 0; i < plan.count; i++) {
                 const struct plan_entry *e = &plan.entries[i];
@@ -5278,8 +5561,16 @@ void test_usermode_run(void)
                      * the aggregate-only report this section replaced
                      * could say a binary was lost but never which one. */
                     total_ran++;
-                    u_emit_refusal(UTEST_RSN_ABSENT, ++refusal_ordinal,
-                                   e->name, 0u, &tap_point, counters, &rt);
+                    /* TRUSTED: e->name is an identity the classifier
+                     * accepted, so it is published verbatim. The
+                     * synthesized refusal id would truncate it to a
+                     * ~14-byte prefix and two long planned names would
+                     * become indistinguishable in the artifacts -- which
+                     * is precisely the question this record exists to
+                     * answer. */
+                    u_emit_refusal_named(UTEST_RSN_ABSENT, ++refusal_ordinal,
+                                         e->name, 0u, 1,
+                                         &tap_point, counters, &rt);
                     /* A vanished SMOKE binary is a smoke non-PASS, and the
                      * gate's rule is that ANY smoke non-PASS stops the run
                      * immediately. Publishing the failure and carrying on
@@ -5602,11 +5893,13 @@ int test_usermode_refusal_already_seen(const char *stored, int stored_verdict,
 int test_usermode_plan_dedup(const char *a_name, int a_type,
                              uint32_t a_expects, const char *b_name,
                              int b_type, uint32_t b_expects,
-                             uint32_t *out_runs, uint32_t *out_refusals);
+                             uint32_t *out_runs, uint32_t *out_refusals,
+                             uint32_t *out_smoke_refused);
 int test_usermode_plan_dedup(const char *a_name, int a_type,
                              uint32_t a_expects, const char *b_name,
                              int b_type, uint32_t b_expects,
-                             uint32_t *out_runs, uint32_t *out_refusals)
+                             uint32_t *out_runs, uint32_t *out_refusals,
+                             uint32_t *out_smoke_refused)
 {
     struct plan_state ps;
     uint32_t i, runs = 0, refusals = 0;
@@ -5625,6 +5918,9 @@ int test_usermode_plan_dedup(const char *a_name, int a_type,
         if (ps.entries[i].kind == (uint8_t)UTEST_PLAN_RUN) runs++;
         else                                               refusals++;
     }
+    u_plan_derive_smoke_gate(&ps);
+    if (out_smoke_refused)
+        *out_smoke_refused = (uint32_t)ps.smoke_refused;
     u_plan_free(&ps);
     if (out_runs)     *out_runs = runs;
     if (out_refusals) *out_refusals = refusals;
@@ -5690,6 +5986,7 @@ int test_usermode_manifest_parse(char *buf, uint32_t len, const char *filter,
                                  uint32_t *out_runs,
                                  uint32_t *out_refusals,
                                  uint32_t *out_authoritative,
+                                 uint32_t *out_smoke_refused,
                                  uint32_t *out_first_type,
                                  uint32_t *out_first_expects,
                                  uint32_t *out_last_type,
@@ -5698,6 +5995,7 @@ int test_usermode_manifest_parse(char *buf, uint32_t len, const char *filter,
                                  uint32_t *out_runs,
                                  uint32_t *out_refusals,
                                  uint32_t *out_authoritative,
+                                 uint32_t *out_smoke_refused,
                                  uint32_t *out_first_type,
                                  uint32_t *out_first_expects,
                                  uint32_t *out_last_type,
@@ -5721,10 +6019,24 @@ int test_usermode_manifest_parse(char *buf, uint32_t len, const char *filter,
     /* Exactly what u_manifest_load returns to the launcher, and therefore
      * what decides whether the directory glob runs at all. */
     if (out_authoritative) *out_authoritative = (ms.count > 0) ? 1u : 0u;
-    /* Manifest refusals live in manifest_state, not the plan, until the
-     * launcher stages them -- so counting plan entries alone would hide
-     * exactly the refusals a veto test is about. Count them here. */
-    refusals = ms.refused_count;
+    /* Stage manifest refusals into the plan exactly as test_usermode_run
+     * does. Without this the shim stops one step short of the launcher's
+     * actual plan: manifest refusals would still be sitting in
+     * manifest_state, so the identity dedup u_plan_add_refusal performs at
+     * staging -- the thing that keeps one file from publishing two failure
+     * records -- would never run, and counting the two stores separately
+     * would report that duplicate as normal. */
+    for (i = 0; i < ms.refused_count; i++) {
+        if (!u_plan_add_refusal(&ps, ms.refused_names[i], ms.refused_digest[i],
+                                ms.refused_verdict[i], (const char *)0, 0, 1,
+                                ms.refused_smoke_selected[i]))
+            break;
+    }
+    /* Derived AFTER staging, because the refusal records are what carry
+     * the smoke provenance -- reading the flag before they exist is how
+     * this shim previously reported 0 for a run the launcher aborts. */
+    u_plan_derive_smoke_gate(&ps);
+    if (out_smoke_refused) *out_smoke_refused = (uint32_t)ps.smoke_refused;
     for (i = 0; i < ps.count; i++) {
         if (ps.entries[i].kind == (uint8_t)UTEST_PLAN_RUN) {
             if (first < 0) first = (int)i;
@@ -5771,7 +6083,7 @@ int test_usermode_plan_lossy_refusal_suppresses(int exact, uint32_t *out_runs)
     s_filter = (const char *)0;
     u_plan_add_refusal(&ps, "test_bad_.exe", 0u,
                        (uint8_t)UTEST_NAME_REFUSE_CHARSET, (const char *)0,
-                       1, exact);
+                       1, exact, 0);
     u_plan_add_run(&ps, "test_bad_.exe", UTEST_TYPE_CORRECTNESS, 1u, 1);
     s_filter = saved_filter;
     for (i = 0; i < ps.count; i++)
@@ -5800,6 +6112,11 @@ int test_usermode_plan_alloc_failure(uint32_t *out_alloc_failed,
 
     pmm_alloc_fail_next();
     ok = u_plan_init(&ps);
+    /* Disarm unconditionally. pmm_fault_should_fire() returns without
+     * consuming the countdown when the IRQL is not PASSIVE, so on the
+     * not-fired path the injection would stay armed and claim the next
+     * unrelated allocation. */
+    pmm_alloc_fail_countdown_clear();
     if (out_alloc_failed)   *out_alloc_failed = (uint32_t)ps.alloc_failed;
     if (out_overflowed)     *out_overflowed   = (uint32_t)ps.overflowed;
     if (out_count)          *out_count        = ps.count;
@@ -5848,7 +6165,7 @@ int test_usermode_plan_intern_and_compaction(uint32_t *out_overflowed,
         name[p] = '\0';
         if (i & 1u)
             u_plan_add_refusal(&ps, name, i, (uint8_t)UTEST_NAME_REFUSE_CHARSET,
-                               (const char *)0, 1, 0);
+                               (const char *)0, 1, 0, 0);
         else
             u_plan_add_run(&ps, name, UTEST_TYPE_CORRECTNESS, 1u, 1);
     }
@@ -5859,7 +6176,7 @@ int test_usermode_plan_intern_and_compaction(uint32_t *out_overflowed,
     before = ps.count;
     u_plan_add_refusal(&ps, "t_extra.exe", 0u,
                        (uint8_t)UTEST_NAME_REFUSE_CHARSET, (const char *)0,
-                       1, 0);
+                       1, 0, 0);
     s_filter = saved_filter;
     if (out_overflowed)   *out_overflowed = (uint32_t)ps.overflowed;
     if (out_count_stable) *out_count_stable = (ps.count == before) ? 1u : 0u;
