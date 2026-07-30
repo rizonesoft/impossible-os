@@ -9076,9 +9076,10 @@ fi
 #     protected from the later no-summary branch.
 UAR_FNS=""
 for _fn in utest_xml_identity_attrs utest_json_identity utest_xml_identity_props \
-           utest_publish utest_alias_record utest_commit_record \
-           utest_finalize_record utest_xml_refusal_doc \
-           utest_publish_xml_refusal; do
+           utest_publish utest_alias_record utest_publish_leg_set \
+           utest_commit_record \
+           utest_publish_missing_refusals utest_finalize_record \
+           utest_xml_refusal_doc utest_publish_xml_refusal; do
     _body="$(sed -n "/^${_fn}() {/,/^}/p" "$REPO_ROOT/scripts/test.sh")"
     if [ -z "$_body" ]; then
         t_fail "artifact record: extracted $_fn from scripts/test.sh" "function not found"
@@ -9216,6 +9217,245 @@ echo "RESULT utest_fail=$UTEST_FAIL xml_published=$XML_PUBLISHED summary_ok=$XML
             "$(find "$UAR_TMP/build/test-runs/run1" -maxdepth 1 -name '.*' -type f 2>&1)"
     fi
 
+    # BEHAVIORAL fault injection, not a textual ordering grep. The structural
+    # assertions below (i12c) only prove the commit call is written above the
+    # alias calls; they passed while production published aliases after a
+    # FAILED marker, because the failure was swallowed. These drive the real
+    # functions and assert on the filesystem.
+    uar_drive() {
+        # $1 = extra shell setup injected before finalization, $2 = status
+        bash -c '
+set -euo pipefail
+RED=""; YELLOW=""; CYAN=""; RESET=""
+RECORD_DIR="'"$UAR_TMP"'/fi/rec"
+XML_RECORD="$RECORD_DIR/test-results.xml"
+JSON_RECORD="$RECORD_DIR/test-results.json"
+IDENTITY_RECORD="$RECORD_DIR/test-run-identity.json"
+RECORD_MARKER="$RECORD_DIR/record-complete.json"
+XML_LEG_OUT="'"$UAR_TMP"'/fi/test-results-leg.xml"
+JSON_LEG_OUT="'"$UAR_TMP"'/fi/test-results-leg.json"
+XML_OUT="'"$UAR_TMP"'/fi/test-results.xml"
+JSON_OUT="'"$UAR_TMP"'/fi/test-results.json"
+IDENTITY_OUT="'"$UAR_TMP"'/fi/test-run-identity.json"
+RUN_ID="rec"; RUN_TS="t"; RUN_COMMIT="c"; RUN_LEG="leg"; RUN_LEG_SOURCE="d"
+RUN_ACCEL="tcg"; RUN_HOST="h"; RUN_HOSTNAME="hn"; RUN_QEMU="q"; SMP_CPUS_SAFE="1"
+CI_PARITY=0; XML_MODE=0; JSON_MODE=0; HAS_XML=0; HAS_JSON=0
+UTEST_FAIL=0; XML_PUBLISHED=1; JSON_PUBLISHED=1; UTEST_FINALIZED=0
+'"$UAR_FNS"'
+'"$1"'
+utest_finalize_record "'"$2"'" || echo "FINALIZE_RC=$?"
+echo "UTEST_FAIL=$UTEST_FAIL"
+' 2>&1
+    }
+    uar_reset_fi() {
+        rm -rf "$UAR_TMP/fi"
+        mkdir -p "$UAR_TMP/fi/rec"
+        printf '<testsuite/>\n' > "$UAR_TMP/fi/rec/test-results.xml"
+        printf '{}\n' > "$UAR_TMP/fi/rec/test-results.json"
+        printf '{}\n' > "$UAR_TMP/fi/rec/test-run-identity.json"
+    }
+
+    # (a) marker failure -> NOT ONE alias may appear. The injection points
+    #     RECORD_MARKER at an unwritable location so the final rename fails.
+    #     (Making the marker path a DIRECTORY does not work: `mv file dir/`
+    #     succeeds by moving the file INTO it.)
+    uar_reset_fi
+    UAR_FI_A="$(uar_drive 'RECORD_MARKER=/proc/nonexistent-dir/marker.json' complete)"
+    if [ ! -e "$UAR_TMP/fi/test-results.xml" ] &&
+       [ ! -e "$UAR_TMP/fi/test-results-leg.xml" ] &&
+       [ ! -e "$UAR_TMP/fi/test-run-identity.json" ] &&
+       printf '%s' "$UAR_FI_A" | grep -q 'FINALIZE_RC=1'; then
+        t_pass "run record: a failed commit marker publishes NO alias"
+    else
+        t_fail "run record: a failed commit marker publishes NO alias" \
+            "$UAR_FI_A -- aliases: $(ls "$UAR_TMP/fi" 2>&1)"
+    fi
+
+    # (b) an INCOMPLETE record may reach the canonical alias (that names this
+    #     invocation) but must never replace the leg alias, which means the
+    #     latest COMPLETED run of that configuration.
+    uar_reset_fi
+    printf 'PREVIOUS-COMPLETED\n' > "$UAR_TMP/fi/test-results-leg.xml"
+    UAR_FI_B="$(uar_drive 'true' incomplete)"
+    if [ -f "$UAR_TMP/fi/test-results.xml" ] &&
+       grep -q 'PREVIOUS-COMPLETED' "$UAR_TMP/fi/test-results-leg.xml"; then
+        t_pass "run record: an incomplete record cannot replace the latest-completed leg alias"
+    else
+        t_fail "run record: an incomplete record cannot replace the latest-completed leg alias" \
+            "$UAR_FI_B -- leg: $(cat "$UAR_TMP/fi/test-results-leg.xml" 2>&1)"
+    fi
+
+    # (c) a COMPLETE record does replace the leg alias -- the guard above must
+    #     not have turned into a blanket refusal.
+    uar_reset_fi
+    printf 'PREVIOUS-COMPLETED\n' > "$UAR_TMP/fi/test-results-leg.xml"
+    UAR_FI_C="$(uar_drive 'true' complete)"
+    if [ -f "$UAR_TMP/fi/test-results-leg.xml" ] &&
+       ! grep -q 'PREVIOUS-COMPLETED' "$UAR_TMP/fi/test-results-leg.xml" &&
+       [ -f "$UAR_TMP/fi/rec/record-complete.json" ]; then
+        t_pass "run record: a complete record does replace the leg alias"
+    else
+        t_fail "run record: a complete record does replace the leg alias" "$UAR_FI_C"
+    fi
+
+    # (d) finalization is idempotent: a second call (the EXIT guard after the
+    #     normal path already finalized) must not re-publish or re-mark.
+    uar_reset_fi
+    UAR_FI_D="$(uar_drive 'utest_finalize_record complete; printf MARK > "$RECORD_MARKER"' complete)"
+    if [ "$(cat "$UAR_TMP/fi/rec/record-complete.json" 2>/dev/null)" = "MARK" ]; then
+        t_pass "run record: finalization is idempotent across a second call"
+    else
+        t_fail "run record: finalization is idempotent across a second call" "$UAR_FI_D"
+    fi
+
+    # (e) identity is the generation pointer: it must be published LAST, so a
+    #     consumer resolving through it never sees it lead the documents.
+    UAR_FINFN=$(awk '/^utest_finalize_record\(\)/{f=1} f{print} f&&/^\}/{exit}' \
+                "$REPO_ROOT/scripts/test.sh")
+    FIN_XML_LN=$(printf '%s\n' "$UAR_FINFN" | grep -n 'XML_RECORD' | head -1 | cut -d: -f1)
+    FIN_ID_LN=$(printf '%s\n' "$UAR_FINFN" | grep -n 'IDENTITY_RECORD' | head -1 | cut -d: -f1)
+    if [ -n "$FIN_XML_LN" ] && [ -n "$FIN_ID_LN" ] && [ "$FIN_ID_LN" -gt "$FIN_XML_LN" ]; then
+        t_pass "run record: the identity alias is published last as the generation pointer"
+    else
+        t_fail "run record: the identity alias is published last as the generation pointer" "$UAR_FINFN"
+    fi
+
+    # (g) the leg alias SET must describe ONE run. A previous run that left
+    #     both formats, followed by a complete XML-only run, must not leave
+    #     the previous run's JSON beside the new XML -- the exact
+    #     enumerate-and-be-misled pair this section exists to close.
+    uar_reset_fi
+    rm -f "$UAR_TMP/fi/rec/test-results.json"
+    printf 'PREV-XML\n' > "$UAR_TMP/fi/test-results-leg.xml"
+    printf 'PREV-JSON\n' > "$UAR_TMP/fi/test-results-leg.json"
+    UAR_FI_G="$(uar_drive 'true' complete)"
+    if [ ! -e "$UAR_TMP/fi/test-results-leg.json" ] &&
+       [ -f "$UAR_TMP/fi/test-results-leg.xml" ] &&
+       ! grep -q 'PREV-XML' "$UAR_TMP/fi/test-results-leg.xml"; then
+        t_pass "run record: a format this run did not produce is dropped from the leg alias set"
+    else
+        t_fail "run record: a format this run did not produce is dropped from the leg alias set" \
+            "$UAR_FI_G -- leg set: $(ls "$UAR_TMP/fi" 2>&1)"
+    fi
+
+    # (g2) TRANSITION-sensitive, not final-state. Inspecting only the end
+    #      state cannot tell "removed the old set before publishing" from
+    #      "published then cleaned up" -- both leave the same files, so an
+    #      ordering revert would pass (g) untouched. This instruments `mv` to
+    #      record what the leg set looked like at the instant the FIRST new
+    #      document was published, and asserts no previous-generation file was
+    #      still sitting there. Both formats present, which is the case the
+    #      one-format drop never covered.
+    uar_reset_fi
+    printf 'PREV-XML\n' > "$UAR_TMP/fi/test-results-leg.xml"
+    printf 'PREV-JSON\n' > "$UAR_TMP/fi/test-results-leg.json"
+    UAR_FI_G2="$(uar_drive 'mv() {
+  for _a in "$@"; do
+    case "$_a" in
+      *test-results-leg.xml|*test-results-leg.json)
+        if [ ! -f "'"$UAR_TMP"'/fi/.probe" ]; then
+          { grep -l PREV- "'"$UAR_TMP"'/fi"/test-results-leg.* 2>/dev/null || true; } > "'"$UAR_TMP"'/fi/.probe"
+        fi ;;
+    esac
+  done
+  command mv "$@"
+}' complete)"
+    if [ -f "$UAR_TMP/fi/.probe" ] && [ ! -s "$UAR_TMP/fi/.probe" ]; then
+        t_pass "run record: the old leg set is gone before any new document is published"
+    else
+        t_fail "run record: the old leg set is gone before any new document is published" \
+            "$UAR_FI_G2 -- stale present at first publish: $(cat "$UAR_TMP/fi/.probe" 2>&1)"
+    fi
+
+    # (g3) a staging failure must leave the PREVIOUS complete set intact and
+    #      leak no staging file. The injected `cp` writes a PARTIAL
+    #      destination before failing, which is what a real ENOSPC or I/O
+    #      error does -- an injection that fails before writing anything
+    #      could not tell a working cleanup from a deleted one, and the
+    #      partial temp would otherwise persist inside the retained record.
+    uar_reset_fi
+    printf 'PREV-XML\n' > "$UAR_TMP/fi/test-results-leg.xml"
+    printf 'PREV-JSON\n' > "$UAR_TMP/fi/test-results-leg.json"
+    UAR_FI_G3="$(uar_drive 'cp() {
+  for _a in "$@"; do
+    case "$_a" in *.jleg.tmp) printf PARTIAL > "$_a"; return 1 ;; esac
+  done
+  command cp "$@"
+}' complete)"
+    if grep -q 'PREV-XML' "$UAR_TMP/fi/test-results-leg.xml" 2>/dev/null &&
+       grep -q 'PREV-JSON' "$UAR_TMP/fi/test-results-leg.json" 2>/dev/null &&
+       [ ! -e "$UAR_TMP/fi/rec/.xleg.tmp" ] && [ ! -e "$UAR_TMP/fi/rec/.jleg.tmp" ] &&
+       printf '%s' "$UAR_FI_G3" | grep -q 'UTEST_FAIL=1'; then
+        t_pass "run record: a leg staging failure keeps the previous set and leaks no staging file"
+    else
+        t_fail "run record: a leg staging failure keeps the previous set and leaks no staging file" \
+            "$UAR_FI_G3 -- leg set: $(ls -a "$UAR_TMP/fi" "$UAR_TMP/fi/rec" 2>&1)"
+    fi
+
+    # (g4) a partially-cleared old set must stop publication outright: the
+    #      whole point of clearing as a set is that no new document ever
+    #      appears beside a survivor.
+    uar_reset_fi
+    printf 'PREV-XML\n' > "$UAR_TMP/fi/test-results-leg.xml"
+    printf 'PREV-JSON\n' > "$UAR_TMP/fi/test-results-leg.json"
+    UAR_FI_G4="$(uar_drive 'rm() {
+  for _a in "$@"; do
+    case "$_a" in *test-results-leg.xml) command rm -f "$@" 2>/dev/null; printf SURVIVOR > "'"$UAR_TMP"'/fi/test-results-leg.json"; return 0 ;; esac
+  done
+  command rm "$@"
+}' complete)"
+    if grep -q 'SURVIVOR' "$UAR_TMP/fi/test-results-leg.json" 2>/dev/null &&
+       [ ! -e "$UAR_TMP/fi/test-results-leg.xml" ] &&
+       printf '%s' "$UAR_FI_G4" | grep -qE 'UTEST_FAIL=[1-9]'; then
+        t_pass "run record: a partially-cleared leg set publishes nothing beside the survivor"
+    else
+        t_fail "run record: a partially-cleared leg set publishes nothing beside the survivor" \
+            "$UAR_FI_G4 -- leg set: $(ls "$UAR_TMP/fi" 2>&1)"
+    fi
+
+    # (h) an alias copy that FAILS must leave the destination absent, not
+    #     holding the previous run's document beside this run's other format.
+    #
+    #     The failure is injected with a scoped `cp` shell function that fails
+    #     only for the leg temp. An earlier draft used chmod 000 and SKIPPED
+    #     as root -- reporting PASS while exercising nothing, so a root CI or
+    #     container stayed green even if the destination-removal regressed.
+    #     A skip is not a pass, and permissions are incidental to the
+    #     invariant anyway.
+    #     The move (not the staging copy) is what fails here, so the leg set
+    #     has already been cleared: assert the destination is absent, that
+    #     EXACTLY one failure was counted, and that the OTHER format still
+    #     reached both its leg and canonical aliases from the current record
+    #     -- an injected XML failure must not be able to hide a broken JSON
+    #     publication behind an aggregate "at least one failure" check.
+    uar_reset_fi
+    printf 'PREV-XML\n' > "$UAR_TMP/fi/test-results-leg.xml"
+    UAR_FI_H="$(uar_drive 'mv() { for _a in "$@"; do case "$_a" in *test-results-leg.xml) return 1 ;; esac; done; command mv "$@"; }' complete)"
+    if [ ! -e "$UAR_TMP/fi/test-results-leg.xml" ] &&
+       printf '%s' "$UAR_FI_H" | grep -q 'UTEST_FAIL=1' &&
+       [ -f "$UAR_TMP/fi/test-results-leg.json" ] &&
+       [ -f "$UAR_TMP/fi/test-results.json" ]; then
+        t_pass "run record: a failed leg-alias publish leaves it absent, counts one failure, and spares the other format"
+    else
+        t_fail "run record: a failed leg-alias publish leaves it absent, counts one failure, and spares the other format" \
+            "$UAR_FI_H -- leg set: $(ls "$UAR_TMP/fi" 2>&1)"
+    fi
+
+    # (f) a format the run OWED but never published gets its refusal INTO the
+    #     record before the marker describes it -- otherwise the marker can
+    #     say "json": null while cleanup later writes a json document.
+    uar_reset_fi
+    rm -f "$UAR_TMP/fi/rec/test-results.json"
+    UAR_FI_F="$(uar_drive 'JSON_MODE=1; JSON_PUBLISHED=0' complete)"
+    if [ -f "$UAR_TMP/fi/rec/test-results.json" ] &&
+       grep -q 'run_incomplete' "$UAR_TMP/fi/rec/test-results.json" &&
+       grep -q '"json": "test-results.json"' "$UAR_TMP/fi/rec/record-complete.json"; then
+        t_pass "run record: an owed-but-unpublished format is refused before the marker names it"
+    else
+        t_fail "run record: an owed-but-unpublished format is refused before the marker names it" \
+            "$UAR_FI_F -- marker: $(cat "$UAR_TMP/fi/rec/record-complete.json" 2>&1)"
+    fi
+
     # Durability must be BOUNDED: every invocation leaves a record directory,
     # so an unpruned build/test-runs grows for as long as anyone runs tests.
     # The newest N survive and the run in progress is never a candidate.
@@ -9275,14 +9515,24 @@ if grep -q '9>&- &' "$REPO_ROOT/scripts/test.sh"; then
 else
     t_fail "concurrency: QEMU is launched with the lock descriptor closed" "9>&- not found on the QEMU launch"
 fi
-# Only THIS leg's alias may be cleared. Glob-clearing every leg would destroy
-# a sequential matrix's accumulated results.
-if grep -q 'rm -f "\$XML_LEG_OUT" "\$JSON_LEG_OUT"$' "$REPO_ROOT/scripts/test.sh" &&
+# Leg aliases mean "latest COMPLETED run of this leg". No blanket clear may
+# exist ANYWHERE -- not another configuration's (which would destroy a
+# sequential matrix's accumulated results), and not an up-front clear of this
+# leg's own (a run that then died would erase a perfectly good completed
+# artifact). The ONLY legal removals live in utest_publish_leg_set: the
+# set-level clear between staging and publication, and the fail-closed drop
+# when a publish fails. Behaviour is asserted in 6h(g), 6h(g2), 6h(g3) and
+# 6h(h); this pins that no OTHER clear crept back in.
+UAR_LEG_RM_ALL="$(grep -c 'rm -f .*LEG_OUT' "$REPO_ROOT/scripts/test.sh")"
+UAR_LEG_RM_OK="$(awk '/^utest_publish_leg_set\(\)/{a=1}
+                      a && /rm -f .*LEG_OUT/{n++} a && /^\}/{a=0} END{print n+0}' \
+                 "$REPO_ROOT/scripts/test.sh")"
+if [ "$UAR_LEG_RM_ALL" -eq "$UAR_LEG_RM_OK" ] &&
    ! grep -q 'rm -f .*test-results-\*' "$REPO_ROOT/scripts/test.sh"; then
-    t_pass "aliases: only this leg's alias is cleared, never another configuration's"
+    t_pass "aliases: leg aliases are cleared only by the finalizer's coherence and fail-closed drops"
 else
-    t_fail "aliases: only this leg's alias is cleared, never another configuration's" \
-        "a glob clear of leg aliases would break a sequential matrix"
+    t_fail "aliases: leg aliases are cleared only by the finalizer's coherence and fail-closed drops" \
+        "$UAR_LEG_RM_ALL leg removals, $UAR_LEG_RM_OK inside the finalizer: $(grep -n 'rm -f .*LEG_OUT' "$REPO_ROOT/scripts/test.sh" 2>&1)"
 fi
 
 # 7. The disk sink must never SERIALIZE a raw subsystem tag. The frame nonce
@@ -9446,7 +9696,7 @@ fi
 #     JSON refusal, leaving a requested artifact absent with nothing saying why.
 if grep -q 'XML_PUBLISHED=0' "$LEGSH" && grep -q 'JSON_PUBLISHED=0' "$LEGSH" &&
    ! grep -q 'ARTIFACT_PUBLISHED' "$LEGSH" &&
-   awk '/utest_artifact_guard\(\)/{g=1}
+   awk '/utest_publish_missing_refusals\(\)/{g=1}
         g && /XML_PUBLISHED:-0.*-eq 0/{x=1}
         g && /JSON_PUBLISHED:-0.*-eq 0/{j=1}
         END{exit !(x && j)}' "$LEGSH"; then
@@ -9488,14 +9738,30 @@ fi
 #      may abort the publication, and each must still fail the run.
 PUBFN=$(awk '/^utest_publish\(\)/{f=1} f{print} f&&/^\}/{exit}' "$LEGSH")
 ALIASFN=$(awk '/^utest_alias_record\(\)/{f=1} f{print} f&&/^\}/{exit}' "$LEGSH")
+LEGSETFN=$(awk '/^utest_publish_leg_set\(\)/{f=1} f{print} f&&/^\}/{exit}' "$LEGSH")
 if printf '%s' "$PUBFN" | grep -q 'mv -f "\$staged" "\$record" || return 1' &&
-   printf '%s' "$ALIASFN" | grep -q 'cp -f "\$record" "\$RECORD_DIR/\.\${tag}leg\.tmp"' &&
    printf '%s' "$ALIASFN" | grep -q 'cp -f "\$record" "\$RECORD_DIR/\.\${tag}canon\.tmp"' &&
-   [ "$(printf '%s' "$ALIASFN" | grep -c 'UTEST_FAIL=')" -eq 2 ] &&
-   ! printf '%s' "$ALIASFN" | grep -q 'return 1'; then
+   [ "$(printf '%s' "$ALIASFN" | grep -c 'UTEST_FAIL=')" -eq 1 ] &&
+   ! printf '%s' "$ALIASFN" | grep -q 'return 1' &&
+   printf '%s' "$LEGSETFN" | grep -q 'UTEST_FAIL='; then
     t_pass "identity: a landed leg artifact survives an alias-copy failure"
 else
-    t_fail "identity: a landed leg artifact survives an alias-copy failure" "$PUBFN$ALIASFN"
+    t_fail "identity: a landed leg artifact survives an alias-copy failure" "$PUBFN$ALIASFN$LEGSETFN"
+fi
+
+# i12f. The leg SET is published in two phases: every carried document is
+#       staged BEFORE any stable name changes, then the whole old set is
+#       removed, then the staged files move into place. Replacing them one at
+#       a time paired the first new document with the other format's
+#       previous-generation file for the whole gap between the operations.
+LEGSET_STAGE=$(printf '%s\n' "$LEGSETFN" | grep -n 'cp -f' | head -1 | cut -d: -f1)
+LEGSET_CLEAR=$(printf '%s\n' "$LEGSETFN" | grep -n 'rm -f "\$XML_LEG_OUT" "\$JSON_LEG_OUT"' | head -1 | cut -d: -f1)
+LEGSET_MOVE=$(printf '%s\n' "$LEGSETFN" | grep -n 'mv -f "\$staged_x"' | head -1 | cut -d: -f1)
+if [ -n "$LEGSET_STAGE" ] && [ -n "$LEGSET_CLEAR" ] && [ -n "$LEGSET_MOVE" ] &&
+   [ "$LEGSET_STAGE" -lt "$LEGSET_CLEAR" ] && [ "$LEGSET_CLEAR" -lt "$LEGSET_MOVE" ]; then
+    t_pass "aliases: the leg set is staged, then cleared as a set, then published"
+else
+    t_fail "aliases: the leg set is staged, then cleared as a set, then published" "$LEGSETFN"
 fi
 
 # i12b. There must be exactly ONE record-to-alias implementation. The JSON
@@ -9503,7 +9769,7 @@ fi
 #       alias copies, which swallowed a leg-alias failure and left
 #       JSON_PUBLISHED at 0 on a canonical failure -- so the EXIT guard then
 #       overwrote an already-landed record with a run_incomplete refusal.
-if [ "$(grep -c 'cp -f "\$record" "\$RECORD_DIR' "$LEGSH")" -eq 2 ] &&
+if [ "$(grep -c 'cp -f "\$record" "\$RECORD_DIR' "$LEGSH")" -eq 1 ] &&
    grep -q '"\$TEST_LOG" "\$RECORD_DIR/\.harvest\.json"' "$LEGSH" &&
    grep -q 'utest_publish "\$RECORD_DIR/\.harvest\.json" "\$JSON_RECORD"' "$LEGSH"; then
     t_pass "identity: JSON publication goes through the one shared record/alias path"
@@ -9512,14 +9778,24 @@ else
         "the harvester must stage privately and publish through utest_publish"
 fi
 
-# i12c. Aliases may only appear AFTER the record's commit marker. An alias
+# i12c. Aliases may only appear after a SUCCESSFUL commit marker. An alias
 #       published mid-run points into a record with no marker and possibly
 #       only one of two requested formats, which is exactly what an alias
 #       enumerator must never be able to consume.
+#
+#       Textual ordering alone is NOT the assertion. An earlier version of
+#       this check verified only that the commit call was written above the
+#       alias calls, and it passed while production swallowed the marker
+#       failure with `|| true` and aliased anyway. The behavioral proof lives
+#       in 6h(a); this pins the structure that makes it hold.
 FINFN=$(awk '/^utest_finalize_record\(\)/{f=1} f{print} f&&/^\}/{exit}' "$LEGSH")
 FIN_COMMIT=$(printf '%s\n' "$FINFN" | grep -n 'utest_commit_record' | head -1 | cut -d: -f1)
 FIN_ALIAS=$(printf '%s\n' "$FINFN" | grep -n 'utest_alias_record' | head -1 | cut -d: -f1)
-if [ -n "$FIN_COMMIT" ] && [ -n "$FIN_ALIAS" ] && [ "$FIN_COMMIT" -lt "$FIN_ALIAS" ] &&
+FIN_REFUSE=$(printf '%s\n' "$FINFN" | grep -n 'utest_publish_missing_refusals' | head -1 | cut -d: -f1)
+if [ -n "$FIN_COMMIT" ] && [ -n "$FIN_ALIAS" ] && [ -n "$FIN_REFUSE" ] &&
+   [ "$FIN_REFUSE" -lt "$FIN_COMMIT" ] && [ "$FIN_COMMIT" -lt "$FIN_ALIAS" ] &&
+   printf '%s' "$FINFN" | grep -q 'if ! utest_commit_record' &&
+   ! printf '%s' "$FINFN" | grep -q 'utest_commit_record .* || true' &&
    ! printf '%s' "$PUBFN" | grep -q 'utest_alias_record'; then
     t_pass "identity: aliases are published only after the record commit marker"
 else
@@ -9555,7 +9831,7 @@ XML_FIELDS=$(awk '/^utest_xml_identity_props\(\)/{f=1} f&&/name="/{ \
     f&&/^\}/{exit}' "$LEGSH" | sort)
 JSON_FIELDS=$(awk '/^utest_json_identity\(\)/{f=1} f&&/printf/{ \
     if (match($0, /"[a-z_]+":/)) print substr($0, RSTART+1, RLENGTH-3)} \
-    f&&/^\}/{exit}' "$LEGSH" | grep -vE '^(schema|timestamp|hostname)$' | sort)
+    f&&/^\}/{exit}' "$LEGSH" | grep -vE '^(timestamp|hostname)$' | sort)
 if [ -n "$XML_FIELDS" ] && [ "$XML_FIELDS" = "$JSON_FIELDS" ]; then
     t_pass "identity: the XML and JSON projections carry the same field set"
 else

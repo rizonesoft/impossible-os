@@ -267,6 +267,7 @@ producer drift, not an old artifact, and a document asserting
          an artifact nobody can place is the one a dashboard most needs to
          place. Identity never softens a refusal -- errors="1" and the
          <error> element stay exactly as they were. -->
+    <property name="schema" value="utest-run-identity-v1"/>
     <property name="run_id" value="TIMESTAMP-PID-RANDOM"/>
     <property name="commit" value="SHA[-dirty]"/>
     <property name="leg" value="HOST-ACCEL-Ncpu[-ciparity][-LABEL]"/>
@@ -274,6 +275,8 @@ producer drift, not an old artifact, and a document asserting
     <property name="accel" value="kvm|tcg"/>
     <property name="cpus" value="N"/>
     <property name="qemu" value="QEMU-BINARY-BASENAME"/>
+    <property name="host" value="wsl2|linux|..."/>
+    <property name="ci_parity" value="true|false"/>
   </properties>
   <!-- Emitted ONLY on an aborted run. The properties above are queryable but
        inert: the smoke gate aborts on any non-PASS verdict INCLUDING skip,
@@ -500,16 +503,29 @@ than merely improbable.
 | `build/test-results-<leg>.{xml,json}` | alias: the latest COMPLETED run of that leg |
 | `build/test-run-identity.json` | alias for the record's identity document |
 
-Publication order is **record -> commit marker -> aliases**, and every alias
-write goes through a private temp plus `mv`, so no alias is ever newer than
-the record it points at and none can be observed half-written. The marker
-comes BEFORE the aliases on purpose: an alias updated the moment one format
-landed would be visible while the run was still assembling the other, so a
-death in between would leave a stable pathname pointing into a record with no
-marker and possibly only one of two requested documents. A `SIGKILL` before
-the marker therefore leaves BOTH aliases absent, which is fail-CLOSED --
+Publication is **settle -> commit marker -> aliases**, in that order, and each
+step gates the next:
+
+1. Every format the run OWED but never published gets its refusal document, so
+   the record's contents are settled before the marker describes them.
+2. The marker is written. **If it cannot land, NO alias is published** and the
+   run fails -- a stable pathname pointing into a record with no marker is the
+   uncommitted-record exposure the marker exists to prevent.
+3. The aliases are copied out, identity LAST.
+
+Every alias write goes through a private temp plus `mv`, so no alias is ever
+newer than the record it points at and none can be observed half-written. A
+`SIGKILL` before the marker leaves every alias absent, which is fail-CLOSED:
 absence sends a consumer to the record directory, whereas a stale alias would
 answer with another run's document.
+
+Per-file `mv` makes each alias atomic but does not make the alias SET atomic,
+so **identity is the generation pointer**. It carries `run_id` and is
+published after the documents, so a consumer that resolves through
+`build/test-run-identity.json` and cross-checks its `run_id` against the
+`run_id` inside the document it read either sees one coherent generation or
+detects the skew. The record plus its marker remains the authoritative pair;
+the aliases are a compatibility surface.
 
 Both formats go through that one path. An alias that cannot be written fails
 the run rather than going silently missing, and finalization happens before
@@ -535,14 +551,36 @@ the run did not produce is `null` rather than missing. A marker that cannot be
 written fails the run: a green exit over an uncommitted record would be the
 same false-green this lifecycle exists to close.
 
-The two alias kinds mean DIFFERENT things and only one is "current". The
-canonical unsuffixed pair names this invocation and is cleared in Step 0a
-ahead of every exit path, so no preflight exit -- one occurring before the leg
-is even derivable -- can leave a stale document under it. The leg-suffixed
-pair accumulates one per configuration and means "the latest completed run of
-this leg"; only the running leg's own alias is cleared, never another
-configuration's, so a matrix that runs several legs in sequence still finds
-every leg readable at the end.
+The two alias kinds mean DIFFERENT things and only one is "current".
+
+The canonical unsuffixed pair names **this invocation**. It is cleared in Step
+0a ahead of every exit path, so no preflight exit -- one occurring before the
+leg is even derivable -- can leave a stale document under it, and an
+incomplete run publishes its refusal there and nowhere else.
+
+The leg-suffixed pair accumulates one per configuration and means **the latest
+COMPLETED run of that leg**. No leg alias is cleared up front -- not another
+configuration's, and not even the running leg's own -- because clearing it
+would erase a perfectly good completed artifact on behalf of a run that might
+then die. A leg alias is only ever REPLACED, and only from a record whose
+marker says `complete`. A matrix that runs several legs in sequence therefore
+finds every leg readable at the end, and an aborted leg leaves the previous
+completed one in place rather than overwriting it with a refusal.
+
+The leg set always describes **exactly one run**. At finalization any format
+the current record does not carry is dropped from the set, and it is dropped
+BEFORE the formats it does carry are published: otherwise a run producing only
+XML would leave its new XML beside a previous commit's JSON, and a reader
+landing mid-publication would see that same pair. In this order a reader sees
+the previous generation, a missing file, or the new generation, never two
+generations paired.
+
+A reader that already holds an open descriptor keeps reading its bytes
+regardless; no rename-or-pointer scheme can revoke that. **For a
+generation-coherent view, resolve through the record directory and its
+marker**, not by enumerating the leg pathnames; that is what the record is
+for. A per-leg pointer naming the record each leg resolves to is tracked in
+§34.
 
 Records are durable but BOUNDED: the newest `UTEST_RECORD_KEEP` (default 20)
 survive, pruned at the START of a run so an investigation's evidence is never
@@ -552,15 +590,25 @@ removed by the run still writing it.
 record, aliased to `build/test-run-identity.json` (`utest-run-identity-v1`),
 which the harvester reads via `--identity`:
 
+Every field below is emitted by BOTH projections, and a tooling assertion
+compares the two field sets so one cannot gain a field the other lacks.
+`timestamp` and `hostname` ride as `<testsuite>` attributes rather than
+properties; everything else is a `<property>`.
+
 | Field | Source |
 |---|---|
+| `schema` | `utest-run-identity-v1`, the identity contract's own version marker |
 | `run_id` | the record directory name: UTC timestamp, pid, and random suffix |
 | `timestamp` | `date -u` at Step 0a, when the run started, ISO-8601 with `Z` |
 | `commit` | `git rev-parse HEAD`, `-dirty` appended when tracked files differ |
 | `leg` | `<host>-<accel>-<n>cpu`, plus `-ciparity` and any validated `UTEST_LEG` label |
 | `leg_source` | `derived`, or `derived+override` when `UTEST_LEG` added a label |
+| `host` | `wsl2` when WSL is detected, else lowercased `uname -s`, charset-filtered |
+| `hostname` | `uname -n`, charset-filtered |
 | `accel` | read back from the arguments QEMU receives, never from display text |
 | `cpus` | `SMP_CPUS`, the same variable behind the `-smp` flag |
+| `qemu` | basename of the QEMU binary actually invoked, charset-filtered |
+| `ci_parity` | whether `CI_PARITY=1` selected the distro QEMU and forced TCG |
 
 `UTEST_LEG` may only ADD a label. `scripts/test.sh` can select KVM or TCG and
 nothing else, so an override that renamed a leg to `whpx`, `vbox` or
@@ -628,6 +676,7 @@ result. Every refusal reason it can emit:
 | `report_partition_mismatch` | `binaries_reported + binaries_invalid + binaries_unreported` does not equal `summary.total`, although the launcher increments exactly one of them per binary |
 | `inconsistent_completeness` | a not-aborted run nevertheless reports binaries as not run          |
 | `no_python3`                | written by `scripts/test.sh` when the assembler cannot run at all   |
+| `run_incomplete`            | written by `scripts/test.sh` when a run that OWED a JSON artifact ended before assembly (early exit, signal, or a format that never published) |
 
 On refusal it writes an explicit error envelope -- `"summary": null` plus a
 `summary_error` reason and `detail` -- and exits nonzero, so `test.sh` fails

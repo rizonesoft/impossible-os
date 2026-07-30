@@ -303,6 +303,10 @@ utest_json_identity() {
 # one and not the other gives two consumers two different identity contracts
 # for one run.
 utest_xml_identity_props() {
+    # `schema` rides here too. Without it the XML projection carried no
+    # version marker at all, so identity-schema drift was untestable on the
+    # side that most consumers actually read.
+    printf '    <property name="schema" value="utest-run-identity-v1"/>\n'
     printf '    <property name="run_id" value="%s"/>\n' "$RUN_ID"
     printf '    <property name="commit" value="%s"/>\n' "$RUN_COMMIT"
     printf '    <property name="leg" value="%s"/>\n' "$RUN_LEG"
@@ -337,25 +341,99 @@ utest_publish() {
     return 0
 }
 
-# Copy one landed record out to its two stable aliases. Each alias goes
-# through a private temp plus `mv`, so no alias is ever observed partially
-# written, and a failure is reported and FAILS the run rather than leaving a
-# promised pathname silently absent.
+# Copy one landed record out to its CANONICAL alias. That pair names THIS
+# invocation, so each format stands alone there and per-file atomicity is the
+# whole contract. The LEG pair is different -- its two files must agree with
+# each other -- and goes through utest_publish_leg_set below. A failure is
+# reported and FAILS the run rather than leaving a promised pathname silently
+# absent.
 utest_alias_record() {
-    local record="$1" leg="$2" canonical="$3" tag="$4"
+    local record="$1" canonical="$2" tag="$3"
     [ -f "$record" ] || return 0
-    if [ -n "$leg" ]; then
-        if ! { cp -f "$record" "$RECORD_DIR/.${tag}leg.tmp" &&
-               mv -f "$RECORD_DIR/.${tag}leg.tmp" "$leg"; }; then
-            rm -f "$RECORD_DIR/.${tag}leg.tmp"
-            echo -e "  ${RED}[UTEST]${RESET} run record published at $record but the leg alias $leg could not be written"
-            UTEST_FAIL=$(( ${UTEST_FAIL:-0} + 1 ))
-        fi
-    fi
     if ! { cp -f "$record" "$RECORD_DIR/.${tag}canon.tmp" &&
            mv -f "$RECORD_DIR/.${tag}canon.tmp" "$canonical"; }; then
         rm -f "$RECORD_DIR/.${tag}canon.tmp"
         echo -e "  ${RED}[UTEST]${RESET} run record published at $record but the canonical alias $canonical could not be written"
+        UTEST_FAIL=$(( ${UTEST_FAIL:-0} + 1 ))
+    fi
+    return 0
+}
+
+# Publish the per-leg alias SET as ONE generation, in two phases.
+#
+# The leg pair means "the latest COMPLETED run of this leg", so its two files
+# must never come from different runs. Replacing them one at a time cannot
+# hold that: with both formats present, whichever is written first sits beside
+# the other's previous-generation file for the whole gap between the two
+# operations, and a reader needs no pre-held descriptor to observe it. An
+# earlier draft only dropped a format the record did NOT carry, which fixed
+# the one-format case and left the two-format case exposed.
+#
+# Phase 1 stages every document this record carries, touching no stable name.
+# If staging fails the previous COMPLETE set is left exactly as it was -- an
+# intact older generation beats a torn new one. Phase 2 removes the whole old
+# set, then moves the staged files into place. A reader therefore sees the
+# previous generation, or missing files, or the new generation, never a pair
+# drawn from two runs; missing is fail-closed and sends it to the record.
+#
+# A reader that already holds an open descriptor keeps reading its bytes
+# regardless, and no scheme here can revoke that. That is why the record
+# directory plus its marker -- not these aliases -- is the generation-coherent
+# artifact; a per-leg pointer letting a consumer resolve the set in one atomic
+# step is tracked in section 34.
+utest_publish_leg_set() {
+    local staged_x="" staged_j=""
+    [ -n "$XML_LEG_OUT" ] || return 0
+
+    if [ -f "$XML_RECORD" ]; then
+        if cp -f "$XML_RECORD" "$RECORD_DIR/.xleg.tmp"; then
+            staged_x="$RECORD_DIR/.xleg.tmp"
+        else
+            rm -f "$RECORD_DIR/.xleg.tmp"
+            echo -e "  ${RED}[UTEST]${RESET} leg alias set NOT published: $XML_RECORD could not be staged (previous set left intact)"
+            UTEST_FAIL=$(( ${UTEST_FAIL:-0} + 1 ))
+            return 1
+        fi
+    fi
+    if [ -f "$JSON_RECORD" ]; then
+        if cp -f "$JSON_RECORD" "$RECORD_DIR/.jleg.tmp"; then
+            staged_j="$RECORD_DIR/.jleg.tmp"
+        else
+            rm -f "$RECORD_DIR/.xleg.tmp" "$RECORD_DIR/.jleg.tmp"
+            echo -e "  ${RED}[UTEST]${RESET} leg alias set NOT published: $JSON_RECORD could not be staged (previous set left intact)"
+            UTEST_FAIL=$(( ${UTEST_FAIL:-0} + 1 ))
+            return 1
+        fi
+    fi
+
+    # Phase 2: the old set goes as a SET, so no new document is ever visible
+    # beside an old one, and a format this record does not carry cannot
+    # linger from an earlier run.
+    #
+    # The clear is CHECKED, not assumed. This function is invoked through
+    # `|| true`, which suppresses errexit for everything inside it, so an
+    # unchecked `rm -f` of two operands could unlink one and fail on the
+    # other and publication would carry on regardless -- publishing the new
+    # XML beside a surviving previous JSON, precisely the mixed pair the two
+    # phases exist to prevent. If the old set cannot be made wholly absent,
+    # nothing is published: the staged files are dropped and the run fails.
+    # What remains is then all-previous or part-previous, never a pair drawn
+    # from two runs, which is the property that actually matters here.
+    rm -f "$XML_LEG_OUT" "$JSON_LEG_OUT" 2>/dev/null || true
+    if [ -e "$XML_LEG_OUT" ] || [ -e "$JSON_LEG_OUT" ]; then
+        rm -f "$staged_x" "$staged_j" 2>/dev/null || true
+        echo -e "  ${RED}[UTEST]${RESET} leg alias set NOT published: the previous set could not be cleared"
+        UTEST_FAIL=$(( ${UTEST_FAIL:-0} + 1 ))
+        return 1
+    fi
+    if [ -n "$staged_x" ] && ! mv -f "$staged_x" "$XML_LEG_OUT"; then
+        rm -f "$staged_x" "$XML_LEG_OUT"
+        echo -e "  ${RED}[UTEST]${RESET} leg alias $XML_LEG_OUT could not be written"
+        UTEST_FAIL=$(( ${UTEST_FAIL:-0} + 1 ))
+    fi
+    if [ -n "$staged_j" ] && ! mv -f "$staged_j" "$JSON_LEG_OUT"; then
+        rm -f "$staged_j" "$JSON_LEG_OUT"
+        echo -e "  ${RED}[UTEST]${RESET} leg alias $JSON_LEG_OUT could not be written"
         UTEST_FAIL=$(( ${UTEST_FAIL:-0} + 1 ))
     fi
     return 0
@@ -394,22 +472,54 @@ utest_commit_record() {
     return 1
 }
 
-# The one place a record becomes consumable: commit the marker, THEN publish
-# the aliases. Idempotent, because the normal path calls it before the final
-# verdict (so an alias failure can still fail the run) and the EXIT guard
-# calls it again for every path that never got there.
+# The one place a record becomes consumable. Three things happen in a fixed
+# order, and each gates the next:
+#
+#   1. Every format this run OWED but never published gets its refusal
+#      document, so the record's contents are settled before anything
+#      describes them. Skipping this let a marker say `"json": null` while the
+#      EXIT guard afterwards wrote a run_incomplete document into the record
+#      -- an immutable record disagreeing with its own commit marker.
+#   2. The marker is written. If it cannot land, NO alias is published: a
+#      stable pathname pointing into a record with no marker is exactly the
+#      uncommitted-record exposure the marker exists to prevent.
+#   3. The aliases are copied out, identity LAST. Per-file `mv` makes each
+#      alias atomic but does not make the SET atomic, so identity is the
+#      generation pointer: it carries `run_id`, it is published after the
+#      documents, and a consumer that resolves through it and cross-checks
+#      `run_id` against the document it read either sees one coherent
+#      generation or detects the skew. The record plus marker remains the
+#      authoritative pair; the aliases are a compatibility surface.
+#
+# Idempotent. The normal path calls it before the final verdict, so an alias
+# or marker failure can still fail the run; the EXIT guard calls it again for
+# every path that never got there.
 UTEST_FINALIZED=0
 utest_finalize_record() {
     local status="$1"
     [ "${UTEST_FINALIZED:-0}" -eq 0 ] || return 0
     UTEST_FINALIZED=1
-    utest_commit_record "$status" || true
-    # Aliases follow the marker, never precede it. A death before this point
-    # leaves both aliases ABSENT, which sends a consumer to the record
-    # directory rather than to another run's document.
-    utest_alias_record "$XML_RECORD" "$XML_LEG_OUT" "$XML_OUT" x
-    utest_alias_record "$JSON_RECORD" "$JSON_LEG_OUT" "$JSON_OUT" j
-    utest_alias_record "$IDENTITY_RECORD" "" "$IDENTITY_OUT" i
+    utest_publish_missing_refusals "${UTEST_FINALIZE_WHY:-the run ended before the artifact was assembled}"
+    if ! utest_commit_record "$status"; then
+        echo -e "  ${RED}[UTEST]${RESET} record not committed -- publishing no aliases; read $RECORD_DIR directly"
+        return 1
+    fi
+    # Leg aliases mean "the latest COMPLETED run of this leg", so only a
+    # complete record may replace one. An incomplete run publishes to the
+    # canonical pair alone -- that names THIS invocation and is supposed to
+    # say the run did not finish -- and leaves the previous leg's completed
+    # artifact where a matrix consumer can still find it.
+    # Only a COMPLETE record may touch the leg set, and it replaces the whole
+    # set at once. An incomplete run publishes to the canonical pair alone --
+    # that names THIS invocation and is supposed to say the run did not
+    # finish -- leaving the previous leg's completed artifacts where a matrix
+    # consumer can still find them.
+    if [ "$status" = "complete" ]; then
+        utest_publish_leg_set || true
+    fi
+    utest_alias_record "$XML_RECORD" "$XML_OUT" x
+    utest_alias_record "$JSON_RECORD" "$JSON_OUT" j
+    utest_alias_record "$IDENTITY_RECORD" "$IDENTITY_OUT" i
     return 0
 }
 
@@ -463,16 +573,15 @@ JSON_PUBLISHED=0
 # self-contradicting artifact the rest of this pipeline refuses to publish.
 UTEST_SIGNALLED=0
 
-utest_artifact_guard() {
-    local ec="${1:-0}" why staged
-    if [ "${UTEST_SIGNALLED:-0}" -eq 1 ]; then
-        why="interrupted by a signal before the artifact was assembled"
-    else
-        why="the run exited with status $ec before the artifact was assembled"
-    fi
-
-    # Only a format this run would have produced owes a document. Publishing a
-    # refusal for an artifact nobody asked for is noise, not honesty.
+# Give every format this run OWED but never published its refusal document.
+# Called from utest_finalize_record BEFORE the marker, so the record's
+# contents are settled before the marker describes them.
+#
+# Only a format this run would have produced owes a document. Publishing a
+# refusal for an artifact nobody asked for is noise, not honesty.
+UTEST_FINALIZE_WHY="the run ended before the artifact was assembled"
+utest_publish_missing_refusals() {
+    local why="$1" staged
     if [ "${XML_MODE:-0}" -eq 1 ] || [ "${HAS_XML:-0}" -eq 1 ]; then
         if [ "${XML_PUBLISHED:-0}" -eq 0 ]; then
             utest_publish_xml_refusal "run-incomplete" "$why"
@@ -495,10 +604,19 @@ utest_artifact_guard() {
             rm -f "$staged"
         fi
     fi
-    # Last thing the run does: name what the record actually contains. Until
-    # this lands the directory is abandoned staging, and a consumer that
-    # honours the marker cannot mistake it for a finished run.
-    utest_finalize_record "$([ "$ec" -eq 0 ] && echo complete || echo incomplete)"
+    return 0
+}
+
+utest_artifact_guard() {
+    local ec="${1:-0}"
+    if [ "${UTEST_SIGNALLED:-0}" -eq 1 ]; then
+        UTEST_FINALIZE_WHY="interrupted by a signal before the artifact was assembled"
+    else
+        UTEST_FINALIZE_WHY="the run exited with status $ec before the artifact was assembled"
+    fi
+    # Settle the record, name it, alias it. A no-op when the normal path
+    # already finalized; the whole sequence for every path that never did.
+    utest_finalize_record "$([ "$ec" -eq 0 ] && echo complete || echo incomplete)" || true
     return 0
 }
 
@@ -668,17 +786,23 @@ fi
 # COMPLETED run of this leg". Only THIS leg's alias is cleared, never another
 # configuration's: a matrix that runs several legs in sequence must still find
 # every leg readable at the end, which is the contract these aliases were
-# introduced to provide. Clearing our own is what keeps it honest -- if this
-# run dies, the leg alias is ABSENT rather than answering with the previous
-# run's document, and the previous run is still retrievable under its own run
-# id in build/test-runs/.
+# introduced to provide. They are NOT cleared here either.
+#
+# An earlier draft cleared this leg's own alias up front, reasoning that an
+# absent alias is more honest than a stale one. It is not, once the alias
+# means "latest COMPLETED": a run that then died left NO leg artifact even
+# though a perfectly good completed run existed a minute earlier, and an
+# aborted run's refusal document replaced it outright. Both are impossible
+# now -- utest_finalize_record replaces a leg alias only from a record whose
+# marker says `complete` -- and every run stays retrievable under its own run
+# id in build/test-runs/ regardless.
 #
 # The canonical unsuffixed pair means something different: THIS invocation. It
 # was already cleared in Step 0a, ahead of every exit path, so no preflight
-# exit can leave a stale document under the name a consumer reads as current.
+# exit can leave a stale document under the name a consumer reads as current,
+# and an incomplete run publishes its refusal there and nowhere else.
 XML_LEG_OUT="$PROJECT/build/test-results-${RUN_LEG}.xml"
 JSON_LEG_OUT="$PROJECT/build/test-results-${RUN_LEG}.json"
-rm -f "$XML_LEG_OUT" "$JSON_LEG_OUT"
 
 # The identity file lands in the RECORD now; its alias is published by
 # utest_finalize_record() along with the documents, after the commit marker.
@@ -1511,7 +1635,7 @@ fi
 # green suite. A stale artifact from a previous run is removed first so a
 # death before this point cannot leave one behind masquerading as current.
 if [ "$XML_MODE" -eq 1 ] && [ "$HAS_XML" -eq 0 ]; then
-    rm -f "$XML_OUT" "$XML_LEG_OUT"
+    rm -f "$XML_OUT"
     utest_publish_xml_refusal "artifact-pipeline" \
         "XML=1 requested but no [UTEST-XML] stream reached serial"
     echo -e "  ${RED}[UTEST]${RESET} XML=1 requested but no [UTEST-XML] stream on serial -- artifact pipeline broken, failing the run"
@@ -1522,8 +1646,10 @@ XML_SUMMARY_OK=1
 if [ "$HAS_XML" -eq 1 ]; then
     # Any artifact from a previous run goes first: a death partway through
     # assembly must not leave the old document at the canonical path where a
-    # consumer would read it as this run's result.
-    rm -f "$XML_OUT" "$XML_LEG_OUT"
+    # consumer would read it as this run's result. The LEG alias is left
+    # alone -- it means the latest COMPLETED run of this configuration, and
+    # only a complete record of this run may replace it.
+    rm -f "$XML_OUT"
     # The XML payload source, as a FILE rather than a shell variable.
     #
     # This used to be `STRIPPED=$(sed ... "$TEST_LOG")` -- the entire
@@ -1736,8 +1862,10 @@ if [ "$JSON_MODE" -eq 1 ] || [ "$HAS_JSON" -eq 1 ]; then
     # including the dependency check below. A stale successful envelope left
     # at the canonical path outlives the run that failed to replace it, and
     # CI that uploads artifacts regardless of exit code would attribute that
-    # old success to this run.
-    rm -f "$JSON_OUT" "$JSON_LEG_OUT"
+    # old success to this run. The LEG alias is left alone -- it means the
+    # latest COMPLETED run of this configuration, and only a complete record
+    # of this run may replace it.
+    rm -f "$JSON_OUT"
     if ! command -v python3 >/dev/null 2>&1; then
         # Fail rather than skip: JSON=1 asked for an artifact, and silently
         # producing none is the false-green this step exists to close. Leave
@@ -1794,7 +1922,12 @@ fi
 # exit status is already decided, so a failed alias write or an uncommittable
 # marker discovered there could never fail the run -- and both are exactly the
 # kind of silent artifact loss this lifecycle exists to make loud.
-utest_finalize_record complete
+# `|| true` because finalization returns non-zero when the marker could not
+# land, and a bare non-zero statement under `set -e` would abort the script
+# right here -- skipping the verdict summary the operator reads. The failure
+# is not lost: utest_commit_record already incremented UTEST_FAIL, so the
+# verdict below fails the run and SAYS why.
+utest_finalize_record complete || true
 
 # Final verdict -- kernel TEST and user-mode UTEST failures both gate exit.
 # A user-mode binary regression (e.g. PE loader segfaulting at _start)
