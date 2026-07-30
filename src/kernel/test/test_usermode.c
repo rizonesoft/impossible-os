@@ -103,11 +103,11 @@ int test_usermode_color_active(void)
 #define UTEST_DEFAULT_TIMEOUT_MS 10000u
 /* Grace period after SIGKILL before we force state=DEAD. */
 #define UTEST_KILL_GRACE_MS       500u
-/* Max binaries a single manifest can list; beyond this, extras fall
- * through to the directory-glob fallback. 128 is ~2x the -
- * planned binary set and matches what a future stress-test batch
- * would realistically enumerate. */
-#define UTEST_MANIFEST_MAX        128u
+/* There is deliberately no separate cap on manifest runnables. The
+ * enumeration plan (UTEST_PLAN_MAX) is the single capacity that bounds
+ * what a run can enumerate, from either source; a second, smaller cap
+ * here is what used to drop manifest entries past 128 onto a glob
+ * fallback that could not reconstruct their metadata. */
 
 void test_usermode_set_filter(const char *filter)
 {
@@ -181,10 +181,50 @@ static int u_ends_with(const char *s, const char *suffix)
     return u_strncmp(s + (sl - fl), suffix, fl + 1) == 0;
 }
 
+/* Fold one ASCII letter, matching what IXFS does to a filename.
+ *
+ * Declared up here because the filter below is the FIRST consumer in file
+ * order; u_name_equal_fs further down folds identically. Only ASCII needs
+ * it: the accepted charset is [A-Za-z0-9._-]. */
+static char u_fold(char c)
+{
+    return (c >= 'A' && c <= 'Z') ? (char)(c + 32) : c;
+}
+
+/* Case-insensitive fixed-length compare, same fold as the filesystem. */
+static int u_strncmp_fold(const char *a, const char *b, uint32_t n)
+{
+    uint32_t i;
+
+    for (i = 0; i < n; i++) {
+        char ca = u_fold(a[i]), cb = u_fold(b[i]);
+        if (ca != cb)
+            return ca < cb ? -1 : 1;
+        if (ca == '\0')
+            return 0;
+    }
+    return 0;
+}
+
 /* fnmatch-style `*` glob (single wildcard supported, anywhere). The
  * §4 spec calls for "literal name or `*`-glob" and that's exactly
  * what tests need (`test_smoke_*.exe` etc.). NULL pattern matches
- * everything. Exposed for unit tests (u_glob_match_public). */
+ * everything. Exposed for unit tests (u_glob_match_public).
+ *
+ * Matching is CASE-INSENSITIVE, because the filesystem it selects over is.
+ * C: is IXFS, whose ixfs_strcmp folds ASCII case (ixfs_core.c), so
+ * `test_Foo.exe` and `test_foo.exe` name one file -- and a filter that
+ * compared literally could reject a dirent under one spelling while the
+ * dedup that runs beside it treated the two as the same identity. That
+ * combination could suppress a requested binary entirely: the launcher
+ * would plan and run it zero times while total_planned and total_ran
+ * still agreed, which is a false green rather than a visible miss. Two
+ * spellings of one filename now mean one thing to the filter, the dedup
+ * and the filesystem alike.
+ *
+ * User-visible: a `utest_filter=` value that previously missed on case
+ * now matches. That is the intended direction -- the old behaviour could
+ * only ever run FEWER binaries than the operator asked for. */
 int test_usermode_glob_match(const char *pattern, const char *name);
 int test_usermode_glob_match(const char *pattern, const char *name)
 {
@@ -198,7 +238,7 @@ int test_usermode_glob_match(const char *pattern, const char *name)
     while (*star && *star != '*') star++;
     if (!*star) {
         const char *p = pattern, *n = name;
-        while (*p && *n && *p == *n) { p++; n++; }
+        while (*p && *n && u_fold(*p) == u_fold(*n)) { p++; n++; }
         return *p == 0 && *n == 0;
     }
     prefix_len = (uint32_t)(star - pattern);
@@ -207,13 +247,14 @@ int test_usermode_glob_match(const char *pattern, const char *name)
     while (name[name_len]) name_len++;
     if (name_len < prefix_len)
         return 0;
-    if (u_strncmp(pattern, name, prefix_len) != 0)
+    if (u_strncmp_fold(pattern, name, prefix_len) != 0)
         return 0;
     suffix_len = 0;
     while (suffix[suffix_len]) suffix_len++;
     if (suffix_len > name_len - prefix_len)
         return 0;
-    return u_strncmp(name + (name_len - suffix_len), suffix, suffix_len + 1) == 0;
+    return u_strncmp_fold(name + (name_len - suffix_len), suffix,
+                          suffix_len + 1) == 0;
 }
 
 static int u_is_test_binary(const char *name)
@@ -862,25 +903,25 @@ static void u_cleanup_manifest_apply(void)
  * Manifest format: one `test_*.exe` filename per line; `#` starts a
  * line comment; leading/trailing whitespace ignored; blank lines
  * skipped. First line that is not blank/comment is the first binary
- * to run, in file order. Maximum UTEST_MANIFEST_MAX binaries per
- * manifest -- a tripped cap logs a warning and falls back to the
- * directory glob for the remainder.
+ * to run, in file order. Runnable entries go straight into the
+ * enumeration plan, so UTEST_PLAN_MAX is the only thing bounding how
+ * many a manifest may list.
  *
  * Location: `C:\tests\usermode.manifest`. Absent = launcher falls
  * back to scanning C:\ root (legacy behavior). Makefile userland
  * target deploys the manifest file if `tests/usermode.manifest`
  * exists in the source tree.
  *
- * We store parsed entries in a file-scope static array of pointers
- * plus a single arena buffer for the filename text. The arena is
- * allocated once per test_usermode_run() invocation from PMM (8 KiB
- * exceeds kmalloc's 4 KiB ceiling per CLAUDE.md Freestanding Kernel
- * rules) and freed before return, so no permanent allocation survives.
+ * Parsed names are pointers into a single arena buffer holding the
+ * file's text. The arena is allocated once per test_usermode_run()
+ * invocation from PMM (8 KiB exceeds kmalloc's 4 KiB ceiling per
+ * CLAUDE.md Freestanding Kernel rules) and freed after execution, so no
+ * permanent allocation survives and no plan entry outlives its name.
  * ------------------------------------------------------------------ */
 
-/* Refused manifest entries a run can publish individually. Separate from
- * UTEST_MANIFEST_MAX because a refusal costs no task slot and must never
- * be crowded out by runnable entries; smaller because a manifest with
+/* Refused manifest entries a run can publish individually. Held apart
+ * from the runnable set because a refusal costs no task slot and must
+ * never be crowded out by runnable entries; small because a manifest with
  * dozens of malformed lines is already a broken manifest, and exhausting
  * this array is itself published as a fail-closed marker rather than
  * silently truncated. */
@@ -902,28 +943,135 @@ static void u_cleanup_manifest_apply(void)
 #define UTEST_MANIFEST_ARENA_BYTES 8192u  /* 128 entries * avg 64 bytes */
 #define UTEST_MANIFEST_ARENA_PAGES 2u     /* 2 x 4 KiB */
 
+/* ---- The immutable enumeration plan -------------------------------- *
+ *
+ * The launcher used to walk C:\ TWICE -- once to count `total_planned`,
+ * once to execute -- with live children running in between. Any binary
+ * that appeared, disappeared or was renamed across that window made the
+ * two walks disagree, and the launcher could only report the disagreement
+ * as an aggregate count: it never knew WHICH planned binary went missing.
+ *
+ * So enumeration happens ONCE and produces this plan; execution consumes
+ * the plan and never calls readdir again. `total_planned` is the plan's
+ * length by construction and `total_ran` counts entries consumed from the
+ * SAME array, so the two can no longer describe different sets -- and a
+ * binary deleted between planning and execution is a NAMED entry that
+ * failed to open rather than an anonymous decrement.
+ *
+ * Name lifetimes, which are the one subtlety here:
+ *   - manifest-sourced names point into the manifest arena, which lives
+ *     until u_manifest_free() at the end of the run;
+ *   - glob-sourced names are COPIED into this plan's own arena, because
+ *     vfs_readdir returns shared dirent storage that the next call reuses;
+ *   - aggregate records carry string literals.
+ * Both arenas are released at the same point in test_usermode_run(), after
+ * execution, so no plan entry can outlive the bytes it points at.
+ * ------------------------------------------------------------------- */
+
+/* Entries one run can plan. Larger than UTEST_MANIFEST_MAX on purpose:
+ * the plan, not the manifest parser, is now the binding capacity, so a
+ * manifest longer than the old 128-entry runnable array no longer loses
+ * its tail to a glob fallback that could not reconstruct an entry's type,
+ * task cost or ordering. */
+#define UTEST_PLAN_MAX 256u
+/* Bytes reserved per interned plan name. Fixed-stride rather than packed
+ * so an entry's storage is O(1) to reserve and the arena can never be
+ * fragmented by a long name; pinned against the derived record bound by a
+ * _Static_assert beside UTEST_MAX_BINARY_NAME, which is derived further
+ * down this file and so cannot be referenced here. */
+#define UTEST_PLAN_NAME_SLOT  64u
+#define UTEST_PLAN_NAME_BYTES (UTEST_PLAN_MAX * UTEST_PLAN_NAME_SLOT)
+
+typedef enum {
+    UTEST_PLAN_RUN     = 0,   /* a binary to launch */
+    UTEST_PLAN_REFUSAL = 1,   /* an identity to publish as a counted failure */
+} utest_plan_kind_t;
+
+struct plan_entry {
+    /* Stable for the whole run -- see the lifetime rules above. */
+    const char  *name;
+    /* REFUSAL only: a literal reason, or NULL to derive one from
+     * `verdict`. RUN entries leave it NULL. */
+    const char  *reason;
+    uint32_t     digest;
+    utest_type_t type;
+    uint8_t      kind;           /* utest_plan_kind_t */
+    uint8_t      verdict;        /* utest_name_verdict_t, REFUSAL only */
+    /* Expected total task_create cost for this binary, including nested
+     * sys_fork calls. Default 1 (the launcher-spawned task itself).
+     * Manifest entries tag fork-heavy binaries with `expects_tasks=<N>`
+     * so the pre-flight budget check sums actual slot consumption instead
+     * of counting binaries. Clamped to 1..255 -- a binary claiming more
+     * than 255 task slots almost certainly has a bug. */
+    uint8_t      expects_tasks;
+    /* 1 = `name` is the EXACT filesystem identity this entry stands for.
+     *
+     * Load-bearing for the terminal-refusal rule. A manifest refusal
+     * keeps the raw bytes off the manifest line, and a duplicate-policy
+     * refusal was a runnable entry a moment ago, so both are exact. A
+     * GLOB refusal is not: it stores a sanitized, truncated prefix with
+     * illegal bytes rewritten to `_`, so `test_bad?.exe` is stored as
+     * `test_bad_.exe` and would identity-match a genuinely different file
+     * of that name. Matching a lossy prefix as an identity would suppress
+     * a legitimate requested binary and leave its failures unobserved --
+     * strictly worse than the double publication the rule prevents. */
+    uint8_t      exact_name;
+};
+
+#define UTEST_PLAN_BLOCK_BYTES                                             \
+    (UTEST_PLAN_MAX * (uint32_t)sizeof(struct plan_entry)                  \
+     + UTEST_PLAN_NAME_BYTES)
+#define UTEST_PLAN_PAGES ((UTEST_PLAN_BLOCK_BYTES + 4095u) / 4096u)
+
+/* The plan is PMM-backed, not a stack array: UTEST_PLAN_MAX entries plus
+ * their name arena is far past what the launcher's frame can hold, and
+ * CLAUDE.md's freestanding rules put anything over 4 KiB on
+ * pmm_alloc_contiguous rather than kmalloc. */
+struct plan_state {
+    struct plan_entry *entries;      /* NULL until u_plan_init succeeds */
+    char              *names;
+    uint32_t           count;
+    uint32_t           names_used;
+    /* Runnable identities the `utest_filter=` value excluded. Owned by the
+     * plan because exclusion happens exactly once, at plan time, for both
+     * enumeration sources. */
+    uint32_t           skipped_by_filter;
+    uintptr_t          block_phys;
+    /* 1 = the entry array or the name arena filled. The plan is then no
+     * longer the complete enumeration, so nothing may run off it. */
+    int                overflowed;
+    /* 1 = the backing block could not be allocated at all. Distinct from
+     * `overflowed` because it must not be reported as a capacity problem
+     * with a directory. */
+    int                alloc_failed;
+};
+
 struct manifest_state {
-    const char  *names[UTEST_MANIFEST_MAX];
-    utest_type_t types[UTEST_MANIFEST_MAX]; /*: type per entry */
-    /* follow-up: expected total task_create cost for this binary,
-     * including nested sys_fork calls. Default 1 (the launcher-spawned
-     * task itself). Manifest entries tag fork-heavy binaries with
-     * `expects_tasks=<N>` so the pre-flight budget check sums actual
-     * slot consumption instead of counting binaries. Clamped to
-     * 1..255 -- a binary claiming more than 255 task slots almost
-     * certainly has a bug. */
-    uint8_t      expects_tasks[UTEST_MANIFEST_MAX];
+    /* Runnable entries live in the PLAN, not here: an array capped
+     * independently of the plan is exactly what used to drop manifest
+     * entries past its cap and hand the tail to a glob fallback that
+     * could not reconstruct their metadata. */
+    /* Manifest lines ACCEPTED as runnable -- which is a statement about
+     * the manifest, not about the plan. It is deliberately NOT the number
+     * of entries that survived into the plan: `utest_filter=` exclusions
+     * and refused-identity vetoes both remove entries afterwards, and a
+     * manifest whose every entry was filtered out is still authoritative.
+     * Conflating the two lets a filtered run report "no usable manifest"
+     * and fall back to scanning C:\, which would execute an on-disk
+     * binary the manifest never listed. */
     uint32_t     count;
-    /* Refused entries, in their OWN array rather than parallel to
-     * names[]. Keeping them separate is load-bearing, not tidiness: when
-     * refusals shared the runnable array they competed for the same
-     * UTEST_MANIFEST_MAX slots, and the cap check ran BEFORE
-     * classification and stopped parsing -- so a malformed entry in the
-     * tail of an oversized manifest was never classified at all. Its
-     * documented "tail runs via glob" fallback cannot recover it either,
-     * because a name refused for an embedded NUL or an illegal byte may
-     * not exist as a directory entry in the first place. Split apart, a
-     * full runnable array can no longer hide a refusal.
+    /* Refused entries, in their OWN array rather than parallel to the
+     * runnable ones. Keeping them separate is load-bearing, not tidiness:
+     * when refusals shared the runnable array they competed for the same
+     * slots, and the cap check ran BEFORE classification and stopped
+     * parsing -- so a malformed entry in the tail of an oversized manifest
+     * was never classified at all. The "tail runs via glob" fallback could
+     * not recover it either, because a name refused for an embedded NUL or
+     * an illegal byte may not exist as a directory entry in the first
+     * place. Split apart, a full runnable set can no longer hide a
+     * refusal. They stay HERE rather than moving into the plan because
+     * u_refusal_already_seen() dedups dirents against the raw, unbounded
+     * refused name, which the plan's fixed-stride arena cannot hold.
      *
      * `refused_digest[]` is the FNV-1a of the entry's EXACT line span,
      * taken at parse time because that is the only point where the span
@@ -944,7 +1092,6 @@ struct manifest_state {
     uintptr_t    arena_phys;    /* matching physical base for pmm_free_frame loop */
     uint32_t     arena_used;
     uint32_t     arena_cap;
-    int          overflowed;    /* 1 = hit UTEST_MANIFEST_MAX cap */
 };
 
 /* This struct is a LOCAL in test_usermode_run, so every array added to it
@@ -957,22 +1104,50 @@ _Static_assert(sizeof(struct manifest_state) <= 4096,
                "decision; the FRAME is not bounded by this and the deepest "
                "chain below here is u_rmtree's depth-8 recursion");
 
-static int u_manifest_load(struct manifest_state *ms)
+/* Defined below, next to the case-folding comparator they depend on. The
+ * parser appends runnable entries to the plan as it reads them, which is
+ * what removes the old independent runnable cap. */
+static int u_plan_add_run(struct plan_state *ps, const char *name,
+                          utest_type_t type, uint8_t expects, int intern);
+
+/* The classification half of the parser, split from the loader below so
+ * it can be exercised over caller-owned bytes. */
+static void u_manifest_parse(struct manifest_state *ms, struct plan_state *ps,
+                             char *buf, uint32_t len);
+/* Applied by the parser once the refusal set is complete -- a refused
+ * identity vetoes a runnable one that was read before it. */
+static void u_plan_suppress_refused(struct plan_state *ps,
+                                    const struct manifest_state *ms);
+
+/* Put a manifest_state into its "nothing loaded" state.
+ *
+ * SEPARATE from u_manifest_load because the caller must be able to reach
+ * this without reaching the loader: manifest_state is an automatic in
+ * test_usermode_run, and every later consumer -- the refusal loops, the
+ * unreadable flag, and u_manifest_free's pmm_free_frame walk -- reads it
+ * unconditionally. A path that skips the loader (plan allocation failing
+ * is one) would otherwise hand u_manifest_free a stale `arena_phys` off
+ * the stack and free two arbitrary physical frames. */
+static void u_manifest_reset(struct manifest_state *ms)
+{
+    ms->count              = 0;
+    ms->refused_count      = 0;
+    ms->refused_overflowed = 0;
+    ms->unreadable         = 0;
+    ms->arena              = (char *)0;
+    ms->arena_phys         = 0;
+    ms->arena_used         = 0;
+    ms->arena_cap          = 0;
+}
+
+static int u_manifest_load(struct manifest_state *ms, struct plan_state *ps)
 {
     struct vfs_node *f;
     uint8_t *buf;
     int n;
     uint32_t size;
 
-    ms->count       = 0;
-    ms->refused_count      = 0;
-    ms->refused_overflowed = 0;
-    ms->unreadable         = 0;
-    ms->arena       = (char *)0;
-    ms->arena_phys  = 0;
-    ms->arena_used  = 0;
-    ms->arena_cap   = 0;
-    ms->overflowed  = 0;
+    u_manifest_reset(ms);
 
     f = vfs_open("C:\\tests\\usermode.manifest", VFS_O_READ);
     if (!f)
@@ -1045,12 +1220,29 @@ static int u_manifest_load(struct manifest_state *ms)
         return 0;
     }
 
-    /* In-place tokenize: walk lines, trim ws + comments, NUL-terminate,
-     * append pointer to names[]. The arena buffer's raw content is
-     * safe to overwrite -- we're done reading the source file. */
+    u_manifest_parse(ms, ps, ms->arena, (uint32_t)n);
+    return ms->count > 0 ? 1 : 0;
+}
+
+/* Walk manifest TEXT and classify every line.
+ *
+ * Split out of u_manifest_load so the classification -- which is the half
+ * this section changed, since runnable entries now land in the plan
+ * instead of a capped array -- can be exercised over caller-owned bytes.
+ * The loader half still owns vfs_open/vfs_read and the arena lifetime,
+ * and stays out of reach of the test policy that forbids live
+ * infrastructure in test_*.c.
+ *
+ * `buf` is tokenized IN PLACE and must remain valid for as long as the
+ * plan does: every accepted name is stored as a pointer into it.
+ * Callers pass a buffer of at least `len + 1` bytes, because the
+ * tokenizer's `*line_end = '\0'` can write at buf[len]. */
+static void u_manifest_parse(struct manifest_state *ms, struct plan_state *ps,
+                             char *buf, uint32_t len)
+{
     {
-        char *p = ms->arena;
-        char *end = ms->arena + n;
+        char *p = buf;
+        char *end = buf + len;
         while (p < end) {
             char *line_start;
             char *line_end;
@@ -1239,29 +1431,35 @@ static int u_manifest_load(struct manifest_state *ms)
                     ms->refused_count++;
                     continue;
                 }
-                /* Runnable entry: now the cap applies. `continue` rather
-                 * than `break` because the tail still has to be scanned
-                 * for refusals -- the glob fallback that picks up valid
-                 * tail entries cannot see a name that is illegal as a
-                 * filename. */
-                if (ms->count >= UTEST_MANIFEST_MAX) {
-                    ms->overflowed = 1;
-                    continue;
-                }
-                ms->names[ms->count]         = name_start;
-                ms->types[ms->count]         = entry_type;
-                ms->expects_tasks[ms->count] = (uint8_t)entry_expects;
-                ms->count++;
+                /* Runnable entry: straight into the plan, which is now the
+                 * only capacity that bounds it.
+                 *
+                 * The old code stopped at a separate UTEST_MANIFEST_MAX
+                 * runnable array and left the tail to the directory glob.
+                 * That fallback provably could not reconstruct a dropped
+                 * entry -- not its `type`, not its `expects_tasks`, not its
+                 * position in the manifest's order, and not the entry at all
+                 * when the binary is absent from the image -- so a requested
+                 * test could vanish behind nothing louder than a WARN.
+                 *
+                 * The name stays a pointer into the arena rather than an
+                 * interned copy: it is stable until u_manifest_free() at
+                 * the end of the run, which outlives every plan consumer.
+                 *
+                 * A refused plan append sets ps->overflowed, which the
+                 * caller turns into a fail-closed aggregate; parsing
+                 * continues either way so the tail is still scanned for
+                 * refusals. */
+                if (u_plan_add_run(ps, name_start, entry_type,
+                                   (uint8_t)entry_expects, 0))
+                    ms->count++;
             }
         }
     }
 
-    if (ms->overflowed)
-        klog(LOG_WARN, "UTEST",
-             "manifest entries truncated at %u -- tail runs via glob",
-             (uint64_t)UTEST_MANIFEST_MAX);
-
-    return ms->count > 0 ? 1 : 0;
+    /* Only now is the refusal set complete, so only now can a refused
+     * identity veto a runnable one that was read before it. */
+    u_plan_suppress_refused(ps, ms);
 }
 
 static void u_manifest_free(struct manifest_state *ms)
@@ -1929,15 +2127,29 @@ _Static_assert(UTEST_SKIP_RECORD_BUDGET <= 9999999u,
 #define UTEST_RSN_ATTR       "manifest attribute unusable"
 #define UTEST_RSN_ARRAY_FULL "refusal array full"
 #define UTEST_RSN_UNREADABLE "manifest unparseable"
+/* Enumeration-plan reasons. Kept SHORT deliberately: UTEST_REASON_REFUSAL
+ * feeds UTEST_REASON_MAX, which every record's fixed shape subtracts from
+ * UTEST_RECORD_LINE_MAX to derive UTEST_MAX_BINARY_NAME -- so a verbose
+ * reason string here silently narrows the name budget every record kind
+ * gets. All four fit inside the pre-existing maximum (UTEST_RSN_SHAPE at
+ * 29 bytes), so the derived name bound is unchanged by this section. */
+#define UTEST_RSN_PLAN_FULL  "plan full"
+#define UTEST_RSN_PLAN_ALLOC "plan alloc failed"
+#define UTEST_RSN_DUP_POLICY "manifest duplicate conflict"
+#define UTEST_RSN_ABSENT     "planned binary absent"
 #define UTEST_REASON_REFUSAL                                               \
     UTEST_MAX2(UTEST_MAX2(UTEST_MAX2(UTEST_LIT(UTEST_RSN_LENGTH),          \
                                      UTEST_MAX2(UTEST_LIT(UTEST_RSN_CHARSET), \
                                                 UTEST_LIT(UTEST_RSN_ATTR))), \
-                          UTEST_MAX2(UTEST_LIT(UTEST_RSN_PATH),            \
-                                     UTEST_LIT(UTEST_RSN_NUL))),           \
+                          UTEST_MAX2(UTEST_MAX2(UTEST_LIT(UTEST_RSN_PATH), \
+                                                UTEST_LIT(UTEST_RSN_ABSENT)), \
+                                     UTEST_MAX2(UTEST_LIT(UTEST_RSN_NUL),  \
+                                                UTEST_LIT(UTEST_RSN_PLAN_FULL)))), \
                UTEST_MAX2(UTEST_MAX2(UTEST_LIT(UTEST_RSN_GENERIC),         \
-                                     UTEST_LIT(UTEST_RSN_SHAPE)),          \
-                          UTEST_MAX2(UTEST_LIT(UTEST_RSN_ARRAY_FULL),       \
+                                     UTEST_MAX2(UTEST_LIT(UTEST_RSN_SHAPE), \
+                                                UTEST_LIT(UTEST_RSN_DUP_POLICY))), \
+                          UTEST_MAX2(UTEST_MAX2(UTEST_LIT(UTEST_RSN_ARRAY_FULL), \
+                                                UTEST_LIT(UTEST_RSN_PLAN_ALLOC)), \
                                      UTEST_LIT(UTEST_RSN_UNREADABLE))))
 #define UTEST_REASON_MAX                                                   \
     UTEST_MAX2(UTEST_MAX2(UTEST_MAX2(UTEST_REASON_TIMEOUT,                 \
@@ -2046,6 +2258,23 @@ _Static_assert(UTEST_FIXED_JSON_SKIP + 2u * UTEST_MAX_BINARY_NAME <=
                    UTEST_RECORD_LINE_MAX - 1u,
                "a name at the derived bound must fit EVERY record kind "
                "without any formatter reaching its overflow fallback");
+
+/* The plan's name arena is sized in fixed strides declared far above this
+ * derivation (the plan structs have to precede the manifest parser that
+ * fills them, and the derivation depends on the record formats declared
+ * between the two). This is the assert that ties the two ends together:
+ * an ACCEPTED name is bounded by UTEST_MAX_BINARY_NAME, so as long as a
+ * slot can hold that plus its terminator, u_plan_intern cannot truncate
+ * one. Refusal prefixes are separately bounded by
+ * UTEST_REFUSAL_PREFIX_STORE. If a future record format shrinks the
+ * derived bound this stays true; if a future edit shrinks the SLOT, this
+ * fails the build instead of silently planning a truncated identity. */
+_Static_assert(UTEST_MAX_BINARY_NAME + 1u <= UTEST_PLAN_NAME_SLOT,
+               "UTEST_PLAN_NAME_SLOT must hold any accepted binary name "
+               "plus its NUL, or u_plan_intern would truncate an identity "
+               "the classifier already accepted");
+_Static_assert(UTEST_REFUSAL_PREFIX_STORE <= UTEST_PLAN_NAME_SLOT,
+               "a sanitized refusal prefix must fit an interned plan slot");
 
 /* Compatibility ratchet. The derivation is honest in one direction on
  * its own -- a name past the bound is refused rather than truncated --
@@ -3684,31 +3913,324 @@ static void u_emit_report_line(const char *name, const struct u_report *rep)
  * [A-Za-z0-9._-], and this is reached only for names a dirent could
  * actually carry.
  *
- * Used for REFUSAL identity only. The manifest-versus-dirent dedup for
- * ACCEPTED entries deliberately stays bytewise, because that path is
- * followed by a filter match and `utest_filter=` compares literally
- * (test_usermode_glob_match). A folded dedup there would suppress a
- * dirent whose manifest twin the filter had already rejected on case,
- * and the requested binary would run zero times while total_planned and
- * total_ran still agreed -- a false green, and a strictly worse one than
- * the duplicate run it was meant to prevent. Refusals have no such
- * interaction: they bypass the filter entirely. Aligning the filter's
- * case semantics with the filesystem's is a user-visible change to
- * `utest_filter=` and is owned by the enumeration-plan section. */
+ * Used for EVERY identity decision now -- refusals and accepted entries
+ * alike. The accepted-entry dedup used to stay bytewise for one specific
+ * reason: it is followed by a filter match, and `utest_filter=` compared
+ * literally, so a folded dedup could suppress an entry whose twin the
+ * filter had already rejected on case and run the requested binary zero
+ * times while total_planned and total_ran still agreed. That coupling is
+ * gone because `test_usermode_glob_match` now folds too, which is the
+ * user-visible half of this section: filter and filesystem finally agree
+ * on what one name means. */
 static int u_name_equal_fs(const char *a, const char *b, uint32_t cap)
 {
     uint32_t i;
 
     for (i = 0; i < cap; i++) {
-        char ca = a[i], cb = b[i];
-        if (ca >= 'A' && ca <= 'Z') ca = (char)(ca + 32);
-        if (cb >= 'A' && cb <= 'Z') cb = (char)(cb + 32);
+        char ca = u_fold(a[i]), cb = u_fold(b[i]);
         if (ca != cb)
             return 0;
         if (ca == '\0')
             return 1;
     }
     return 1;
+}
+
+/* ---- Enumeration-plan construction --------------------------------- */
+
+/* Defined just below, beside the refusal storage it reads. */
+static int u_refusal_already_seen(const struct manifest_state *ms,
+                                  const char *name);
+
+static int u_plan_init(struct plan_state *ps)
+{
+    ps->entries      = (struct plan_entry *)0;
+    ps->names        = (char *)0;
+    ps->count             = 0;
+    ps->names_used        = 0;
+    ps->skipped_by_filter = 0;
+    ps->block_phys        = 0;
+    ps->overflowed   = 0;
+    ps->alloc_failed = 0;
+
+    /* Well past kmalloc's 4 KiB ceiling, so PMM per CLAUDE.md's
+     * freestanding rules. Physical pages are identity-mapped in the
+     * kernel VA, so the physical base doubles as a valid pointer -- the
+     * same relationship the manifest arena above relies on. */
+    ps->block_phys = pmm_alloc_contiguous(UTEST_PLAN_PAGES);
+    if (!ps->block_phys) {
+        /* NOT merely a degraded run. Without a plan the launcher cannot
+         * enumerate at all, and the zero-planned path publishes a
+         * successful empty suite -- so this has to reach the caller as a
+         * distinct state that fails the run from storage which does not
+         * depend on this allocation. */
+        ps->alloc_failed = 1;
+        klog(LOG_WARN, "UTEST",
+             "plan pmm_alloc_contiguous(%u pages) failed -- counted as a "
+             "failure, no binary runs",
+             (uint64_t)UTEST_PLAN_PAGES);
+        return 0;
+    }
+    ps->entries = (struct plan_entry *)ps->block_phys;
+    ps->names   = (char *)(ps->block_phys
+                           + (uintptr_t)UTEST_PLAN_MAX
+                             * sizeof(struct plan_entry));
+    return 1;
+}
+
+static void u_plan_free(struct plan_state *ps)
+{
+    if (ps->block_phys) {
+        uint32_t p;
+        for (p = 0; p < UTEST_PLAN_PAGES; p++)
+            pmm_free_frame(ps->block_phys + (uintptr_t)p * 4096u);
+        ps->block_phys = 0;
+        ps->entries    = (struct plan_entry *)0;
+        ps->names      = (char *)0;
+    }
+    ps->count = 0;
+}
+
+/* Copy a name into the plan's own arena.
+ *
+ * Only glob-sourced names need this: vfs_readdir hands back shared dirent
+ * storage that the next call reuses, so a plan entry pointing at it would
+ * read a different file's name by the time execution consumed it.
+ * Manifest names are already stable in the manifest arena and are stored
+ * by pointer.
+ *
+ * The fixed stride can only truncate a name longer than the slot, and the
+ * static assert beside UTEST_MAX_BINARY_NAME proves no ACCEPTED name can
+ * be; refusal prefixes are sanitized to UTEST_REFUSAL_PREFIX_STORE before
+ * they get here. Returns NULL (and marks the plan incomplete) when the
+ * arena is exhausted, so a truncated identity can never be planned. */
+static const char *u_plan_intern(struct plan_state *ps, const char *name)
+{
+    char *dst;
+    uint32_t i;
+
+    if (!ps->entries)
+        return (const char *)0;
+    if (ps->names_used + UTEST_PLAN_NAME_SLOT > UTEST_PLAN_NAME_BYTES) {
+        ps->overflowed = 1;
+        return (const char *)0;
+    }
+    dst = ps->names + ps->names_used;
+    for (i = 0; i + 1u < UTEST_PLAN_NAME_SLOT && name[i]; i++)
+        dst[i] = name[i];
+    dst[i] = '\0';
+    ps->names_used += UTEST_PLAN_NAME_SLOT;
+    return dst;
+}
+
+static struct plan_entry *u_plan_alloc(struct plan_state *ps)
+{
+    struct plan_entry *e;
+
+    /* An unallocated plan is NOT an overflowing one. Reporting both would
+     * reserve two aggregate slots for one failure and publish a capacity
+     * problem the run never had. alloc_failed already has its own
+     * aggregate, so this returns without touching `overflowed`. */
+    if (ps->alloc_failed)
+        return (struct plan_entry *)0;
+    if (!ps->entries || ps->count >= UTEST_PLAN_MAX) {
+        ps->overflowed = 1;
+        return (struct plan_entry *)0;
+    }
+    e = &ps->entries[ps->count++];
+    e->name          = (const char *)0;
+    e->reason        = (const char *)0;
+    e->digest        = 0;
+    e->type          = UTEST_TYPE_CORRECTNESS;
+    e->kind          = (uint8_t)UTEST_PLAN_RUN;
+    e->verdict       = 0;
+    e->expects_tasks = 1u;
+    e->exact_name    = 1u;
+    return e;
+}
+
+/* Plan one runnable binary.
+ *
+ * Returns 1 when the identity is represented in the plan (freshly added,
+ * folded into an identical earlier entry, or converted to a counted
+ * policy-conflict failure) and 0 only when the plan could not hold it.
+ *
+ * The dedup is case-FOLDED because IXFS resolves names that way: two
+ * manifest lines spelling one file differently are one binary, and
+ * planning both would run it twice under two ordinals. But filesystem
+ * identity does not settle manifest POLICY -- the two lines can carry
+ * different `type=` or `expects_tasks=` values, and silently keeping
+ * either one can demote a smoke test out of the fast-fail phase or
+ * understate the task budget while every count still reconciles. So an
+ * identical duplicate folds away, and a conflicting one is refused
+ * outright: the earlier entry becomes the counted failure and the binary
+ * runs under neither policy. */
+static int u_plan_add_run(struct plan_state *ps, const char *name,
+                          utest_type_t type, uint8_t expects, int intern)
+{
+    struct plan_entry *e;
+    uint32_t i;
+
+    /* The filter is applied HERE, at plan time, for every source. An entry
+     * the filter excludes never enters the plan, so it is neither planned
+     * nor expected to run and the completeness reconciliation stays exact
+     * by construction. The previous code filtered in BOTH walks and had to
+     * special-case phase 0 to keep from counting the same exclusion twice.
+     * Refusals deliberately do NOT come through here: the filter selects
+     * among identities the launcher can trust, and letting a name it just
+     * declined decide whether it gets reported would hand back the
+     * authority the refusal withdrew. */
+    if (!test_usermode_glob_match(s_filter, name)) {
+        ps->skipped_by_filter++;
+        return 1;
+    }
+
+    for (i = 0; i < ps->count; i++) {
+        struct plan_entry *prev = &ps->entries[i];
+
+        if (prev->kind == (uint8_t)UTEST_PLAN_REFUSAL) {
+            /* A refusal is TERMINAL for its filesystem identity. Matching
+             * only RUN entries left a hole a crafted manifest could walk
+             * through: once two conflicting variants had converted the
+             * first entry to a refusal, a THIRD variant of the same name
+             * matched nothing and took a fresh RUN slot -- so the run
+             * published the identity as refused AND executed it, with
+             * every count still reconciling and the completeness gate
+             * blind. Same rule the manifest-versus-dirent dedup already
+             * applies, now enforced inside the plan too.
+             *
+             * Only EXACT identities are terminal. A sanitized or
+             * truncated glob prefix is not the name it came from, and
+             * suppressing a legitimate binary that merely collides with
+             * one is a silently missing test rather than a loud duplicate.
+             *
+             * REFUSE_NUL is excluded for the reason u_refusal_already_seen
+             * excludes it: the stored string is the truncation at the
+             * embedded NUL, not a filename, so a name matching it is a
+             * DIFFERENT file that would be wrongly suppressed. */
+            if (!prev->exact_name)
+                continue;
+            if (prev->verdict == (uint8_t)UTEST_NAME_REFUSE_NUL)
+                continue;
+            if (!u_name_equal_fs(prev->name, name, VFS_MAX_NAME))
+                continue;
+            return 1;   /* already published as refused; never runs */
+        }
+        if (!u_name_equal_fs(prev->name, name, VFS_MAX_NAME))
+            continue;
+        if (prev->type == type && prev->expects_tasks == expects)
+            return 1;   /* one file, one policy, one plan slot */
+        prev->kind    = (uint8_t)UTEST_PLAN_REFUSAL;
+        prev->reason  = UTEST_RSN_DUP_POLICY;
+        prev->verdict = (uint8_t)UTEST_NAME_ACCEPT;
+        prev->digest  = 0;
+        klog(LOG_WARN, "UTEST",
+             "manifest names one file under conflicting policy -- refusing "
+             "the identity instead of guessing which line wins");
+        return 1;
+    }
+
+    e = u_plan_alloc(ps);
+    if (!e)
+        return 0;
+    if (intern) {
+        e->name = u_plan_intern(ps, name);
+        if (!e->name) {
+            /* Roll the slot back so the plan never carries a nameless
+             * entry: the caller's fail-closed aggregate is the only thing
+             * that may describe an enumeration this incomplete. */
+            ps->count--;
+            return 0;
+        }
+    } else {
+        e->name = name;
+    }
+    e->type          = type;
+    e->kind          = (uint8_t)UTEST_PLAN_RUN;
+    e->expects_tasks = expects;
+    return 1;
+}
+
+/* Plan one refused identity. `reason` NULL derives the reason from the
+ * verdict at publication; a literal pins it (the aggregates). `exact`
+ * says whether `name` is the true filesystem identity or a lossy
+ * rendering of it -- see plan_entry::exact_name. */
+static int u_plan_add_refusal(struct plan_state *ps, const char *name,
+                              uint32_t digest, uint8_t verdict,
+                              const char *reason, int intern, int exact)
+{
+    struct plan_entry *e = u_plan_alloc(ps);
+
+    if (!e)
+        return 0;
+    if (intern) {
+        e->name = u_plan_intern(ps, name);
+        if (!e->name) {
+            ps->count--;
+            return 0;
+        }
+    } else {
+        e->name = name;
+    }
+    e->kind       = (uint8_t)UTEST_PLAN_REFUSAL;
+    e->digest     = digest;
+    e->verdict    = verdict;
+    e->reason     = reason;
+    e->exact_name = exact ? 1u : 0u;
+    return 1;
+}
+
+/* Drop every planned runnable whose identity the MANIFEST refused.
+ *
+ * Ordering, not policy: the refusal set is complete only once the whole
+ * file has been parsed, while accepted lines enter the plan as they are
+ * read. So `test_x.exe type=bogus` followed by a case variant of the same
+ * name would otherwise plan the identity as runnable and publish its
+ * refusal afterwards -- refusing and executing one file in the same run,
+ * with both counters agreeing so the completeness gate stays blind. The
+ * old two-walk code got this for free because its planning walk ran after
+ * the loader had finished; appending during the parse is what made the
+ * ordering explicit work.
+ *
+ * The entry is REMOVED rather than converted, because the refusal itself
+ * is published separately from manifest_state -- converting would publish
+ * the same identity twice. */
+static void u_plan_suppress_refused(struct plan_state *ps,
+                                    const struct manifest_state *ms)
+{
+    uint32_t i, out = 0;
+
+    for (i = 0; i < ps->count; i++) {
+        if (ps->entries[i].kind == (uint8_t)UTEST_PLAN_RUN &&
+            u_refusal_already_seen(ms, ps->entries[i].name))
+            continue;
+        if (out != i)
+            ps->entries[out] = ps->entries[i];
+        out++;
+    }
+    ps->count = out;
+}
+
+/* Drop every runnable entry, keeping the refusals already planned.
+ *
+ * Used by the fail-closed paths: when the refusal identity set overflowed
+ * we no longer hold every refused identity, so we cannot certify that an
+ * accepted entry is not a duplicate of one we have forgotten. Executing a
+ * partial plan while claiming the completeness this section exists to
+ * provide is exactly the false green it removes -- so the run publishes
+ * what it retained and launches nothing. */
+static void u_plan_drop_runs(struct plan_state *ps)
+{
+    uint32_t i, out = 0;
+
+    for (i = 0; i < ps->count; i++) {
+        if (ps->entries[i].kind == (uint8_t)UTEST_PLAN_RUN)
+            continue;
+        if (out != i)
+            ps->entries[out] = ps->entries[i];
+        out++;
+    }
+    ps->count = out;
 }
 
 /* Has this directory entry already been refused as a MANIFEST entry?
@@ -3847,6 +4369,45 @@ static void u_spawn_one(const char *name_copy, const char *path,
      * that task_cleanup is about to release. Taken unconditionally --
      * unlike leaks it does not depend on per-test isolation being on. */
     u_report_snapshot((uint32_t)pid, out_report);
+}
+
+/* Is a planned binary still on disk?
+ *
+ * The plan is immutable but the DIRECTORY is not: a live child can delete
+ * or rename an entry between planning and the moment it would launch. The
+ * whole point of planning once is that the launcher then knows exactly
+ * WHICH entry went missing instead of watching an aggregate count come up
+ * short, so the disappearance is published as a named, counted
+ * infrastructure failure rather than a silent decrement.
+ *
+ * It is deliberately a counted RESULT and not an unrun plan slot: both
+ * artifact formats reconcile record count against the summary total (the
+ * JSON harvester checks len(testcases) == summary.total), so a slot that
+ * produced no record would make the artifact unparseable rather than
+ * merely incomplete. `[UTEST-RUN-INCOMPLETE]` therefore stays what it
+ * always was -- the gate for entries that produced no result at all, such
+ * as the tail a smoke abort never reaches.
+ *
+ * Mirrors u_run_one's own path construction, and refuses a name that
+ * would not fit the buffer u_run_one uses, so the two agree on what is
+ * reachable. */
+static int u_binary_present(const char *name)
+{
+    char path[VFS_MAX_NAME + 4];
+    struct vfs_node *f;
+    uint32_t ni = 0, pi = 3;
+
+    path[0] = 'C'; path[1] = ':'; path[2] = '\\';
+    while (name[ni] && pi + 1u < sizeof(path))
+        path[pi++] = name[ni++];
+    path[pi] = '\0';
+    if (name[ni])
+        return 0;
+    f = vfs_open(path, VFS_O_READ);
+    if (!f)
+        return 0;
+    vfs_close(f);
+    return 1;
 }
 
 static void u_run_one(const char *name, utest_type_t type,
@@ -4284,13 +4845,10 @@ void test_usermode_run(void)
      * alone can only make collisions unlikely, and an operator who cannot
      * tell two refused binaries apart cannot act on either. */
     uint32_t              refusal_ordinal = 0;
-    /* Glob refusals captured by the planning walk, published by the
-     * preflight below. Only sanitized bytes are retained -- the raw name
-     * never outlives the walk that saw it. */
-    char                  glob_refusal_prefix[UTEST_GLOB_REFUSAL_MAX]
-                                             [UTEST_REFUSAL_PREFIX_STORE];
-    uint32_t              glob_refusal_digest[UTEST_GLOB_REFUSAL_MAX];
-    uint8_t               glob_refusal_verdict[UTEST_GLOB_REFUSAL_MAX];
+    /* The single enumeration this run executes from. Built once below,
+     * consumed unchanged by the execution loop -- the two can no longer
+     * describe different sets of binaries. */
+    struct plan_state     plan;
     uint32_t              glob_refusal_count = 0;
     int                   glob_refusal_overflowed = 0;
     /* Sum of expected task_create costs across planned binaries. A
@@ -4328,31 +4886,33 @@ void test_usermode_run(void)
      * its expected non-preemptive state. */
     scheduler_enable();
 
-    use_manifest = u_manifest_load(&manifest);
-
-    /* First pass: count planned binaries (post-filter) so the TAP
-     * plan line can emit `1..N` once, up-front. Both manifest and
-     * glob paths apply the same filter. */
-    /* Refused manifest entries are planned UNCONDITIONALLY -- outside the
-     * `use_manifest` gate and outside the filter.
+    /* ---- ENUMERATE ONCE ------------------------------------------- *
      *
-     * Outside the gate because `use_manifest` only decides whether the
-     * manifest is authoritative for what RUNS; a malformed line somebody
-     * wrote is a fault whether or not any valid line kept it company.
-     * Outside the filter because the filter selects among binaries we can
-     * IDENTIFY, and letting a name we just declined to trust decide
-     * whether it gets reported would hand it back the authority the
-     * refusal withdrew -- matching against the raw bytes is the only
-     * alternative, and those are exactly what must not be used. */
-    total_planned += manifest.refused_count;
-    /* Counted in the PLANNING phase, not at publication, so the task-slot
-     * preflight and the "=== Running N binary/binaries ===" banner -- both
-     * of which read total_planned before the refusals are published -- do
-     * not under-report by exactly the number of aggregate refusals. */
-    if (manifest.refused_overflowed)
-        total_planned++;
-    if (manifest.unreadable)
-        total_planned++;
+     * Everything below builds the plan. Nothing after it enumerates: the
+     * execution loop consumes this array and never touches readdir, which
+     * is what makes `total_ran` a walk of the same list `total_planned`
+     * counted rather than a second opinion about the directory.
+     *
+     * Aggregate records (the four fail-closed markers) are published from
+     * STATIC storage and counted here rather than planned as entries --
+     * an aggregate that needed a plan slot could be lost to the very
+     * exhaustion it exists to report. They are counted in the PLANNING
+     * phase, not at publication, so the task-slot preflight and the
+     * "=== Running N binary/binaries ===" banner -- both of which read
+     * total_planned before anything is published -- do not under-report.
+     * ---------------------------------------------------------------- */
+    /* BEFORE the plan, because the branch below can skip the loader and
+     * every later consumer -- including u_manifest_free's frame walk --
+     * reads this struct unconditionally. */
+    u_manifest_reset(&manifest);
+
+    if (!u_plan_init(&plan))
+        total_planned++;                /* the alloc-failure aggregate */
+
+    /* The parser appends runnable entries straight to the plan; refusals
+     * stay in manifest_state, whose raw names the dirent dedup needs. */
+    use_manifest = plan.alloc_failed ? 0 : u_manifest_load(&manifest, &plan);
+
     /* When the refusal identity set OVERFLOWED, nothing runs.
      *
      * No bounded array can hold an unbounded manifest, so a bigger cap
@@ -4365,51 +4925,58 @@ void test_usermode_run(void)
      * publishes the retained refusals plus one aggregate and executes
      * nothing; planned and ran reconcile on exactly that set, and the
      * run fails on the aggregate either way. */
-    if (use_manifest && !manifest.refused_overflowed) {
-        for (i = 0; i < manifest.count; i++) {
-            /* The SAME identity can appear twice in one manifest, once
-             * runnable and once refused -- `test_x.exe` beside
-             * `test_x.exe expects_tasks=0`, or a case variant of it. The
-             * refusal is published either way, so launching the accepted
-             * copy would both refuse and run one binary, and planned and
-             * ran would still agree, leaving the completeness gate blind.
-             * A refused identity wins. */
-            if (u_refusal_already_seen(&manifest, manifest.names[i]))
-                continue;
-            if (test_usermode_glob_match(s_filter, manifest.names[i])) {
-                total_planned++;
-                total_task_budget += manifest.expects_tasks[i];
-            }
-        }
+    if (manifest.refused_overflowed)
+        u_plan_drop_runs(&plan);
+
+    /* Refused manifest entries are planned UNCONDITIONALLY -- outside the
+     * `use_manifest` gate and outside the filter.
+     *
+     * Outside the gate because `use_manifest` only decides whether the
+     * manifest is authoritative for what RUNS; a malformed line somebody
+     * wrote is a fault whether or not any valid line kept it company.
+     * Outside the filter because the filter selects among binaries we can
+     * IDENTIFY, and letting a name we just declined to trust decide
+     * whether it gets reported would hand it back the authority the
+     * refusal withdrew -- matching against the raw bytes is the only
+     * alternative, and those are exactly what must not be used.
+     *
+     * Stored by POINTER: these names live in the manifest arena, which
+     * outlives the plan, and a refused name may exceed the plan arena's
+     * fixed stride precisely because over-length is one reason to refuse. */
+    for (i = 0; i < manifest.refused_count; i++) {
+        if (!u_plan_add_refusal(&plan, manifest.refused_names[i],
+                                manifest.refused_digest[i],
+                                manifest.refused_verdict[i],
+                                (const char *)0, 0, 1))
+            break;      /* plan.overflowed is now set; its aggregate reports it */
     }
-    /* Always also include glob-discovered binaries when the manifest
-     * was absent OR overflowed. If the manifest is authoritative (no
-     * overflow) we skip the glob. */
-    /* Glob discovery is disabled outright once the refusal identity set
-     * has overflowed. Past the cap we no longer HOLD the identities of
+    if (manifest.refused_overflowed)
+        total_planned++;
+    if (manifest.unreadable)
+        total_planned++;
+
+    /* Glob discovery runs ONLY when no usable manifest exists.
+     *
+     * The old "manifest entries truncated -- tail runs via glob" fallback
+     * is gone with the cap that produced it. It could never do the job
+     * claimed for it: a dropped entry's `type`, `expects_tasks` and
+     * position in manifest order are not recoverable from a directory
+     * entry, and an entry naming a binary absent from the image is not
+     * recoverable at all. Manifest runnables now enter the plan directly,
+     * so there is no tail to pick up.
+     *
+     * Glob discovery is also disabled outright once the refusal identity
+     * set has overflowed. Past the cap we no longer HOLD the identities of
      * every refused manifest entry, so u_refusal_already_seen cannot
      * promise suppression -- and a refusal whose NAME is valid (an
      * unusable attribute, say) would then be published as refused and
      * launched by the glob in the same run. Fail closed: the run is
      * already failing on the aggregate refusal, so discovering fewer
      * binaries costs nothing a green run depended on. */
-    if ((!use_manifest || manifest.overflowed) && !manifest.refused_overflowed) {
+    if (!use_manifest && !manifest.refused_overflowed && !plan.alloc_failed) {
         struct glob_state gs = { root, 0 };
         utest_name_verdict_t gv = UTEST_NAME_ACCEPT;
         while (u_glob_next(&gs, scratch_name, sizeof(scratch_name), &gv)) {
-            /* When overflowed, skip binaries already listed in the
-             * manifest to avoid double-running. */
-            if (manifest.overflowed) {
-                int already = 0;
-                for (i = 0; i < manifest.count; i++) {
-                    if (u_strncmp(manifest.names[i], scratch_name,
-                                  VFS_MAX_NAME) == 0) {
-                        already = 1;
-                        break;
-                    }
-                }
-                if (already) continue;
-            }
             /* An identity the MANIFEST already refused is skipped here
              * whatever the glob makes of it -- including when the glob
              * would accept it. That case is not hypothetical: an entry
@@ -4423,9 +4990,6 @@ void test_usermode_run(void)
              * because the accepted branch needs it too. */
             if (u_refusal_already_seen(&manifest, scratch_name))
                 continue;
-            /* Same rule as the manifest walk above: a refused entry is
-             * planned unconditionally, because the filter cannot be
-             * applied to a name that was refused for being unusable. */
             if (gv != UTEST_NAME_ACCEPT) {
                 /* CAPTURED here, not re-discovered later. The refusal
                  * preflight used to walk C:\ again to publish these,
@@ -4434,44 +4998,59 @@ void test_usermode_run(void)
                  * keeps the sanitized prefix, the span digest and the
                  * verdict -- everything publication needs and nothing
                  * untrusted. */
-                total_planned++;
                 if (glob_refusal_count >= UTEST_GLOB_REFUSAL_MAX) {
-                    /* Keep this entry's slot in total_planned only for the
-                     * FIRST overflow: the aggregate record that reports the
-                     * exhaustion occupies exactly one plan slot, however
-                     * many entries it stands for. */
-                    if (glob_refusal_overflowed)
-                        total_planned--;
                     glob_refusal_overflowed = 1;
                     continue;
                 }
                 {
-                    uint32_t gi = glob_refusal_count;
+                    char prefix[UTEST_REFUSAL_PREFIX_STORE];
                     uint32_t k, nlen = 0;
                     while (scratch_name[nlen]) nlen++;
                     for (k = 0; k + 1u < UTEST_REFUSAL_PREFIX_STORE &&
                                 scratch_name[k]; k++)
-                        glob_refusal_prefix[gi][k] =
-                            u_name_char_ok(scratch_name[k]) ? scratch_name[k]
-                                                            : '_';
-                    glob_refusal_prefix[gi][k]  = '\0';
-                    glob_refusal_digest[gi]     = u_name_digest(scratch_name,
-                                                                nlen);
-                    glob_refusal_verdict[gi]    = (uint8_t)gv;
+                        prefix[k] = u_name_char_ok(scratch_name[k])
+                                        ? scratch_name[k] : '_';
+                    prefix[k] = '\0';
+                    /* INTERNED: the sanitized bytes are built on this
+                     * frame and the raw name lives in shared dirent
+                     * storage, so neither survives the next readdir. */
+                    /* NOT exact: `prefix` is sanitized and truncated, so
+                     * it must never be identity-matched against a name. */
+                    if (!u_plan_add_refusal(&plan, prefix,
+                                            u_name_digest(scratch_name, nlen),
+                                            (uint8_t)gv, (const char *)0, 1, 0))
+                        break;
                     glob_refusal_count++;
                 }
                 continue;   /* refusals never launch, so no task budget */
             }
-            if (test_usermode_glob_match(s_filter, scratch_name)) {
-                total_planned++;
-                /* Glob-discovered binaries have no manifest metadata
-                 * so assume the default 1-task cost. Fork-heavy
-                 * binaries should be declared in the manifest with
-                 * expects_tasks=<N>. */
-                total_task_budget += 1u;
-            }
+            /* Glob-discovered binaries carry no manifest metadata, so the
+             * default 1-task cost applies. Fork-heavy binaries should be
+             * declared in the manifest with expects_tasks=<N>. */
+            if (!u_plan_add_run(&plan, scratch_name,
+                                u_type_for_name(scratch_name), 1u, 1))
+                break;
         }
     }
+
+    if (glob_refusal_overflowed)
+        total_planned++;                /* the glob-refusal aggregate */
+
+    /* The plan is now IMMUTABLE. Everything below reads it.
+     *
+     * An incomplete plan cannot certify what it did not enumerate, so it
+     * runs nothing at all -- the same contract the refusal overflow above
+     * takes, and for the same reason. */
+    if (plan.overflowed) {
+        total_planned++;                /* the plan-full aggregate */
+        u_plan_drop_runs(&plan);
+    }
+
+    total_planned      += plan.count;
+    skipped_by_filter   = plan.skipped_by_filter;
+    for (i = 0; i < plan.count; i++)
+        if (plan.entries[i].kind == (uint8_t)UTEST_PLAN_RUN)
+            total_task_budget += plan.entries[i].expects_tasks;
 
     if (total_planned == 0) {
         if (s_filter)
@@ -4510,6 +5089,7 @@ void test_usermode_run(void)
              "=== 0 passed, 0 failed, 0 skipped of 0 total ===");
         u_frame_end();
         u_manifest_free(&manifest);
+        u_plan_free(&plan);
         scheduler_disable();
         return;
     }
@@ -4567,17 +5147,17 @@ void test_usermode_run(void)
 
     /* two-phase execution: smoke binaries always run FIRST, and a
      * single smoke FAIL aborts the rest of the suite. Everything else
-     * runs in the second phase in manifest-then-glob order.
+     * runs in the second phase, both phases in plan order (which is
+     * manifest-then-glob, since that is the order they were enumerated).
      *
-     * Phase 1: smokes only. Both manifest and glob sources are walked
-     * but only entries whose derived type is UTEST_TYPE_SMOKE actually
-     * dispatch. A FAIL or SKIP in this phase sets smoke_failed and
-     * skips phase 2.
+     * Phase 1: smokes only. The whole plan is scanned but only entries
+     * whose type is UTEST_TYPE_SMOKE dispatch. A FAIL or SKIP in this
+     * phase sets smoke_failed and skips phase 2.
      *
-     * Phase 2: everything non-smoke. Same walk order.
+     * Phase 2: everything non-smoke. Same order.
      *
-     * Filter-skipped binaries contribute to skipped_by_filter in
-     * phase 1 only, to avoid double counting. */
+     * Filter exclusions are counted ONCE, at plan time, so neither phase
+     * has to special-case them to avoid double counting. */
     /* Enumeration refusals are published BEFORE any binary launches.
      *
      * They are not executions -- they are results the ENUMERATION already
@@ -4593,12 +5173,39 @@ void test_usermode_run(void)
      * Emitting here also removes the interaction entirely: a refusal can
      * neither trigger the smoke fast-fail nor be skipped by it, and the
      * phase loop below simply steps over refused entries. */
-    for (i = 0; i < manifest.refused_count; i++) {
+    for (i = 0; i < plan.count; i++) {
+        const struct plan_entry *e = &plan.entries[i];
+
+        if (e->kind != (uint8_t)UTEST_PLAN_REFUSAL)
+            continue;
         total_ran++;
-        u_emit_refusal(u_refusal_reason(
-                           (utest_name_verdict_t)manifest.refused_verdict[i]),
-                       ++refusal_ordinal, manifest.refused_names[i],
-                       manifest.refused_digest[i], &tap_point, counters, &rt);
+        /* A pinned literal reason (the policy-conflict case) wins;
+         * otherwise the reason follows from the name verdict. */
+        u_emit_refusal(e->reason ? e->reason
+                                 : u_refusal_reason(
+                                       (utest_name_verdict_t)e->verdict),
+                       ++refusal_ordinal, e->name, e->digest,
+                       &tap_point, counters, &rt);
+    }
+    if (plan.alloc_failed) {
+        /* Published from static storage on purpose: the plan that would
+         * normally carry a record is exactly what could not be allocated.
+         * Its slot was reserved during planning, so planned and ran still
+         * reconcile, and the run fails on this record instead of taking
+         * the zero-planned path that publishes a successful empty suite. */
+        total_ran++;
+        u_emit_refusal(UTEST_RSN_PLAN_ALLOC, ++refusal_ordinal,
+                       "enumeration_plan", (uint32_t)UTEST_PLAN_PAGES,
+                       &tap_point, counters, &rt);
+    }
+    if (plan.overflowed) {
+        /* More entries than one run can enumerate. Past the cap the plan
+         * is not the complete enumeration, so nothing ran (see above) and
+         * the aggregate is what the run reconciles and fails on. */
+        total_ran++;
+        u_emit_refusal(UTEST_RSN_PLAN_FULL, ++refusal_ordinal,
+                       "enumeration_plan_full", plan.count,
+                       &tap_point, counters, &rt);
     }
     if (manifest.refused_overflowed) {
         /* More malformed manifest entries than the run can publish
@@ -4632,17 +5239,6 @@ void test_usermode_run(void)
                        "manifest_unparseable", 0u,
                        &tap_point, counters, &rt);
     }
-    /* Published from what the PLANNING walk captured -- no second
-     * traversal. The set and its order are exactly what total_planned was
-     * derived from, so the two cannot drift apart at all here, which is a
-     * stronger guarantee than the reconciliation that catches drift. */
-    for (i = 0; i < glob_refusal_count; i++) {
-        total_ran++;
-        u_emit_refusal(u_refusal_reason(
-                           (utest_name_verdict_t)glob_refusal_verdict[i]),
-                       ++refusal_ordinal, glob_refusal_prefix[i],
-                       glob_refusal_digest[i], &tap_point, counters, &rt);
-    }
     if (glob_refusal_overflowed) {
         total_ran++;
         u_emit_refusal(UTEST_RSN_ARRAY_FULL, ++refusal_ordinal,
@@ -4650,99 +5246,66 @@ void test_usermode_run(void)
                        &tap_point, counters, &rt);
     }
 
+    /* EXECUTE THE PLAN.
+     *
+     * One array, two passes over it -- smoke first, everything else
+     * second -- and no directory traversal anywhere in here. That is the
+     * whole change: `total_ran` counts entries consumed from the same list
+     * `total_planned` measured, so the two can no longer describe
+     * different sets of binaries, and a directory that changed under the
+     * run surfaces as a NAMED entry that could not be launched rather
+     * than as an anonymous shortfall.
+     *
+     * The filter and the refused-identity dedup already ran at plan time,
+     * so neither is repeated here; every RUN entry in the plan is one the
+     * launcher committed to executing. */
     {
         int smoke_failed = 0;
         int phase;
         for (phase = 0; phase < 2; phase++) {
             int want_smoke = (phase == 0);
-            /* Same certification gate as the planning walk. */
-            if (use_manifest && !manifest.refused_overflowed) {
-                for (i = 0; i < manifest.count; i++) {
-                    int verdict;
-                    const char *nm = manifest.names[i];
-                    utest_type_t type = manifest.types[i];
-                    int is_smoke = (type == UTEST_TYPE_SMOKE);
-                    /* Mirrors the planning walk: a refused identity wins
-                     * over an accepted duplicate of the same file. */
-                    if (u_refusal_already_seen(&manifest, nm)) continue;
-                    if (is_smoke != want_smoke) continue;
-                    if (!test_usermode_glob_match(s_filter, nm)) {
-                        if (phase == 0) {
-                            skipped_by_filter++;
-                            klog(LOG_DEBUG, "UTEST",
-                                 "%s: SKIP (filter)", nm);
-                        }
-                        continue;
-                    }
+            for (i = 0; i < plan.count; i++) {
+                const struct plan_entry *e = &plan.entries[i];
+                int verdict;
+
+                if (e->kind != (uint8_t)UTEST_PLAN_RUN)
+                    continue;
+                if ((e->type == UTEST_TYPE_SMOKE) != want_smoke)
+                    continue;
+                if (!u_binary_present(e->name)) {
+                    /* Planned, then removed or renamed before it could
+                     * launch. Published by NAME as a counted failure --
+                     * the aggregate-only report this section replaced
+                     * could say a binary was lost but never which one. */
                     total_ran++;
-                    u_run_one(nm, type, &tap_point, counters, &rt, &verdict);
-                    if (want_smoke && verdict != 0) {
-                        /* Fast-fail is IMMEDIATE, per the gate's own spec:
-                         * stop this source right here rather than after the
-                         * rest of the phase. Continuing would run further
-                         * binaries past a smoke failure that may have left
-                         * the system in the state the smoke exists to
-                         * detect, and would inflate `total_ran` so the
-                         * `not_run` count published in the artifacts
-                         * described a boundary the gate never had. */
+                    u_emit_refusal(UTEST_RSN_ABSENT, ++refusal_ordinal,
+                                   e->name, 0u, &tap_point, counters, &rt);
+                    /* A vanished SMOKE binary is a smoke non-PASS, and the
+                     * gate's rule is that ANY smoke non-PASS stops the run
+                     * immediately. Publishing the failure and carrying on
+                     * would run stateful binaries past a foundational
+                     * prerequisite that is no longer even present, and
+                     * would describe the result as a completed suite where
+                     * the artifacts should say aborted. */
+                    if (want_smoke) {
                         smoke_failed = 1;
                         break;
                     }
+                    continue;
                 }
-            }
-            /* Same fail-closed gate as the planning walk: without a
-             * complete refusal identity set we cannot promise that a
-             * refused binary is not also launched here. */
-            if (!smoke_failed && !manifest.refused_overflowed &&
-                (!use_manifest || manifest.overflowed)) {
-                struct glob_state gs = { root, 0 };
-                utest_name_verdict_t gv = UTEST_NAME_ACCEPT;
-                while (u_glob_next(&gs, scratch_name, sizeof(scratch_name),
-                                   &gv)) {
-                    int verdict;
-                    utest_type_t type;
-                    int is_smoke;
-                    /* Already published by the refusal preflight above.
-                     * Skipping first is also what keeps a refused name
-                     * from ever reaching u_type_for_name: bytes we
-                     * declined to trust must not be able to claim smoke
-                     * policy and abort the suite through the smoke gate.
-                     * The manifest-refusal check mirrors the planning
-                     * walk exactly -- an entry the manifest refused for
-                     * an unusable ATTRIBUTE has a valid name the glob
-                     * would otherwise accept and launch. */
-                    if (gv != UTEST_NAME_ACCEPT) continue;
-                    if (u_refusal_already_seen(&manifest, scratch_name))
-                        continue;
-                    type = u_type_for_name(scratch_name);
-                    is_smoke = (type == UTEST_TYPE_SMOKE);
-                    if (is_smoke != want_smoke) continue;
-                    if (manifest.overflowed) {
-                        int already = 0;
-                        for (i = 0; i < manifest.count; i++) {
-                            if (u_strncmp(manifest.names[i], scratch_name,
-                                          VFS_MAX_NAME) == 0) {
-                                already = 1;
-                                break;
-                            }
-                        }
-                        if (already) continue;
-                    }
-                    if (!test_usermode_glob_match(s_filter, scratch_name)) {
-                        if (phase == 0) {
-                            skipped_by_filter++;
-                            klog(LOG_DEBUG, "UTEST",
-                                 "%s: SKIP (filter)", scratch_name);
-                        }
-                        continue;
-                    }
-                    total_ran++;
-                    u_run_one(scratch_name, type, &tap_point, counters,
-                              &rt, &verdict);
-                    if (want_smoke && verdict != 0) {
-                        smoke_failed = 1;
-                        break;
-                    }
+                total_ran++;
+                u_run_one(e->name, e->type, &tap_point, counters, &rt,
+                          &verdict);
+                if (want_smoke && verdict != 0) {
+                    /* Fast-fail is IMMEDIATE, per the gate's own spec:
+                     * stop right here rather than after the rest of the
+                     * phase. Continuing would run further binaries past a
+                     * smoke failure that may have left the system in the
+                     * state the smoke exists to detect, and would inflate
+                     * `total_ran` so the `not_run` count published in the
+                     * artifacts described a boundary the gate never had. */
+                    smoke_failed = 1;
+                    break;
                 }
             }
             if (smoke_failed && want_smoke) {
@@ -4823,7 +5386,10 @@ void test_usermode_run(void)
         }
     }
 
+    /* Both arenas are released HERE, after execution, so no plan entry
+     * ever outlives the bytes its name points at. */
     u_manifest_free(&manifest);
+    u_plan_free(&plan);
     scheduler_disable();
 
     run_end_ms = u_uptime_ms();
@@ -5019,6 +5585,313 @@ int test_usermode_refusal_already_seen(const char *stored, int stored_verdict,
     ms.refused_verdict[0] = (uint8_t)stored_verdict;
     ms.refused_digest[0]  = 0u;
     return u_refusal_already_seen(&ms, candidate);
+}
+
+/* ---- Enumeration-plan test shims ----------------------------------- *
+ *
+ * Each builds a PRIVATE plan, exercises one rule and frees it, so the
+ * test file needs neither `struct plan_state` nor the PMM lifecycle, and
+ * no test can leave a plan behind. They exercise the same u_plan_* code
+ * the launcher runs; none of them touches the live launcher, the
+ * scheduler, or the VFS.
+ * ------------------------------------------------------------------- */
+
+/* Plan two runnable identities and report how the plan resolved them.
+ * Returns 0 if the plan could not be allocated (the caller skips), else 1
+ * with the RUN and REFUSAL entry counts. */
+int test_usermode_plan_dedup(const char *a_name, int a_type,
+                             uint32_t a_expects, const char *b_name,
+                             int b_type, uint32_t b_expects,
+                             uint32_t *out_runs, uint32_t *out_refusals);
+int test_usermode_plan_dedup(const char *a_name, int a_type,
+                             uint32_t a_expects, const char *b_name,
+                             int b_type, uint32_t b_expects,
+                             uint32_t *out_runs, uint32_t *out_refusals)
+{
+    struct plan_state ps;
+    uint32_t i, runs = 0, refusals = 0;
+    /* u_plan_add_run applies the live `utest_filter=` value. Save and
+     * restore it around the probe so a filtered boot cannot make this
+     * assertion vacuous by excluding the synthetic names. */
+    const char *saved_filter = s_filter;
+
+    if (!u_plan_init(&ps))
+        return 0;
+    s_filter = (const char *)0;
+    u_plan_add_run(&ps, a_name, (utest_type_t)a_type, (uint8_t)a_expects, 1);
+    u_plan_add_run(&ps, b_name, (utest_type_t)b_type, (uint8_t)b_expects, 1);
+    s_filter = saved_filter;
+    for (i = 0; i < ps.count; i++) {
+        if (ps.entries[i].kind == (uint8_t)UTEST_PLAN_RUN) runs++;
+        else                                               refusals++;
+    }
+    u_plan_free(&ps);
+    if (out_runs)     *out_runs = runs;
+    if (out_refusals) *out_refusals = refusals;
+    return 1;
+}
+
+/* Fill the plan past its capacity, then apply the fail-closed rule the
+ * launcher applies. Reports whether the plan flagged the exhaustion and
+ * how many runnable entries survived it -- which must be zero, because an
+ * incomplete enumeration may not execute a partial plan. */
+int test_usermode_plan_overflow(uint32_t *out_overflowed,
+                                uint32_t *out_runs_after);
+int test_usermode_plan_overflow(uint32_t *out_overflowed,
+                                uint32_t *out_runs_after)
+{
+    struct plan_state ps;
+    uint32_t i, runs = 0;
+    char name[16];
+    const char *saved_filter = s_filter;   /* see the dedup probe above */
+
+    if (!u_plan_init(&ps))
+        return 0;
+    s_filter = (const char *)0;
+    /* Distinct names so the dedup never folds two of them together --
+     * this test is about capacity, not identity. */
+    for (i = 0; i < UTEST_PLAN_MAX + 4u; i++) {
+        uint32_t v = i, p = 0, d;
+        name[p++] = 't'; name[p++] = '_';
+        for (d = 100000u; d > 0u; d /= 10u) {
+            name[p++] = (char)('0' + (v / d) % 10u);
+        }
+        name[p] = '\0';
+        u_plan_add_run(&ps, name, UTEST_TYPE_CORRECTNESS, 1u, 1);
+    }
+    s_filter = saved_filter;
+    if (out_overflowed) *out_overflowed = (uint32_t)ps.overflowed;
+    u_plan_drop_runs(&ps);
+    for (i = 0; i < ps.count; i++)
+        if (ps.entries[i].kind == (uint8_t)UTEST_PLAN_RUN) runs++;
+    u_plan_free(&ps);
+    if (out_runs_after) *out_runs_after = runs;
+    return 1;
+}
+
+/* The plan's entry capacity, so a test can state an expectation derived
+ * from it (half the slots are refusals in the interleaved probe) instead
+ * of hardcoding a number that silently stops matching. */
+uint32_t test_usermode_plan_capacity(void);
+uint32_t test_usermode_plan_capacity(void)
+{
+    return UTEST_PLAN_MAX;
+}
+
+/* Parse caller-owned manifest TEXT into a private plan and report what
+ * survived. `buf` must have room for a terminator at buf[len] (the
+ * tokenizer writes one), which the caller sizes.
+ *
+ * This is the parser-to-plan seam this section introduced: entries no
+ * longer stop at a capped runnable array, so a regression there would
+ * silently restore the metadata loss the section removed. Returns 0 if
+ * the plan could not be allocated. */
+int test_usermode_manifest_parse(char *buf, uint32_t len, const char *filter,
+                                 uint32_t *out_runs,
+                                 uint32_t *out_refusals,
+                                 uint32_t *out_authoritative,
+                                 uint32_t *out_first_type,
+                                 uint32_t *out_first_expects,
+                                 uint32_t *out_last_type,
+                                 uint32_t *out_last_expects);
+int test_usermode_manifest_parse(char *buf, uint32_t len, const char *filter,
+                                 uint32_t *out_runs,
+                                 uint32_t *out_refusals,
+                                 uint32_t *out_authoritative,
+                                 uint32_t *out_first_type,
+                                 uint32_t *out_first_expects,
+                                 uint32_t *out_last_type,
+                                 uint32_t *out_last_expects)
+{
+    struct plan_state    ps;
+    struct manifest_state ms;
+    uint32_t i, runs = 0, refusals = 0;
+    int first = -1, last = -1;
+    const char *saved_filter = s_filter;
+
+    if (!u_plan_init(&ps))
+        return 0;
+    u_manifest_reset(&ms);
+    /* The filter is a PARAMETER, not a forced NULL: forcing it hid the
+     * path where a manifest whose entries are all excluded must still be
+     * authoritative. Saved and restored so a filtered boot is unaffected. */
+    s_filter = filter;
+    u_manifest_parse(&ms, &ps, buf, len);
+    s_filter = saved_filter;
+    /* Exactly what u_manifest_load returns to the launcher, and therefore
+     * what decides whether the directory glob runs at all. */
+    if (out_authoritative) *out_authoritative = (ms.count > 0) ? 1u : 0u;
+    /* Manifest refusals live in manifest_state, not the plan, until the
+     * launcher stages them -- so counting plan entries alone would hide
+     * exactly the refusals a veto test is about. Count them here. */
+    refusals = ms.refused_count;
+    for (i = 0; i < ps.count; i++) {
+        if (ps.entries[i].kind == (uint8_t)UTEST_PLAN_RUN) {
+            if (first < 0) first = (int)i;
+            last = (int)i;
+            runs++;
+        } else {
+            refusals++;
+        }
+    }
+    if (out_runs)     *out_runs = runs;
+    if (out_refusals) *out_refusals = refusals;
+    if (out_first_type)
+        *out_first_type = (first < 0) ? 0xFFFFFFFFu
+                                      : (uint32_t)ps.entries[first].type;
+    if (out_first_expects)
+        *out_first_expects = (first < 0) ? 0u
+                                    : ps.entries[first].expects_tasks;
+    if (out_last_type)
+        *out_last_type = (last < 0) ? 0xFFFFFFFFu
+                                    : (uint32_t)ps.entries[last].type;
+    if (out_last_expects)
+        *out_last_expects = (last < 0) ? 0u : ps.entries[last].expects_tasks;
+    u_plan_free(&ps);
+    return 1;
+}
+
+/* Plan a refusal whose stored name is a LOSSY rendering (a sanitized glob
+ * prefix), then plan a runnable binary that happens to spell the same
+ * bytes, and report whether the runnable survived.
+ *
+ * `test_bad?.exe` is stored as `test_bad_.exe` because `?` is outside the
+ * accepted charset; a genuinely different `test_bad_.exe` on disk must
+ * still run. Suppressing it would drop a requested test silently, which
+ * is worse than the double publication the terminal rule prevents. */
+int test_usermode_plan_lossy_refusal_suppresses(int exact, uint32_t *out_runs);
+int test_usermode_plan_lossy_refusal_suppresses(int exact, uint32_t *out_runs)
+{
+    struct plan_state ps;
+    uint32_t i, runs = 0;
+    const char *saved_filter = s_filter;
+
+    if (!u_plan_init(&ps))
+        return 0;
+    s_filter = (const char *)0;
+    u_plan_add_refusal(&ps, "test_bad_.exe", 0u,
+                       (uint8_t)UTEST_NAME_REFUSE_CHARSET, (const char *)0,
+                       1, exact);
+    u_plan_add_run(&ps, "test_bad_.exe", UTEST_TYPE_CORRECTNESS, 1u, 1);
+    s_filter = saved_filter;
+    for (i = 0; i < ps.count; i++)
+        if (ps.entries[i].kind == (uint8_t)UTEST_PLAN_RUN)
+            runs++;
+    u_plan_free(&ps);
+    if (out_runs) *out_runs = runs;
+    return 1;
+}
+
+/* Force the plan's backing allocation to fail and report the resulting
+ * state. The alloc-failure path is what keeps an unallocatable plan from
+ * publishing a successful empty suite, so it must be asserted rather than
+ * skipped past. */
+int test_usermode_plan_alloc_failure(uint32_t *out_alloc_failed,
+                                     uint32_t *out_overflowed,
+                                     uint32_t *out_count,
+                                     uint32_t *out_pointers_null);
+int test_usermode_plan_alloc_failure(uint32_t *out_alloc_failed,
+                                     uint32_t *out_overflowed,
+                                     uint32_t *out_count,
+                                     uint32_t *out_pointers_null)
+{
+    struct plan_state ps;
+    int ok;
+
+    pmm_alloc_fail_next();
+    ok = u_plan_init(&ps);
+    if (out_alloc_failed)   *out_alloc_failed = (uint32_t)ps.alloc_failed;
+    if (out_overflowed)     *out_overflowed   = (uint32_t)ps.overflowed;
+    if (out_count)          *out_count        = ps.count;
+    if (out_pointers_null)
+        *out_pointers_null = (ps.entries == (struct plan_entry *)0 &&
+                              ps.names == (char *)0 &&
+                              ps.block_phys == 0) ? 1u : 0u;
+    /* Free unconditionally: on the (unexpected) success path this returns
+     * the block, and on the failure path it is a documented no-op. */
+    u_plan_free(&ps);
+    return ok ? 1 : 0;
+}
+
+/* Interleave refusals among runnable entries, exhaust the NAME arena
+ * rather than the entry array, then compact the runnables away.
+ *
+ * Covers three branches the capacity test cannot reach: u_plan_intern's
+ * own exhaustion (distinct from u_plan_alloc's), the rollback that keeps
+ * a failed intern from leaving a nameless entry, and u_plan_drop_runs
+ * compaction with entries of both kinds interleaved. */
+int test_usermode_plan_intern_and_compaction(uint32_t *out_overflowed,
+                                             uint32_t *out_count_stable,
+                                             uint32_t *out_refusals_kept,
+                                             uint32_t *out_order_kept);
+int test_usermode_plan_intern_and_compaction(uint32_t *out_overflowed,
+                                             uint32_t *out_count_stable,
+                                             uint32_t *out_refusals_kept,
+                                             uint32_t *out_order_kept)
+{
+    struct plan_state ps;
+    uint32_t i, before, refusals = 0, order_kept = 1;
+    char name[16];
+    const char *saved_filter = s_filter;
+
+    if (!u_plan_init(&ps))
+        return 0;
+    s_filter = (const char *)0;
+    /* Alternate kinds so compaction has something to preserve, and give
+     * every refusal a digest equal to its ordinal so order is checkable
+     * after the runnables are removed. */
+    for (i = 0; i < UTEST_PLAN_MAX; i++) {
+        uint32_t v = i, p = 0, d;
+        name[p++] = 't'; name[p++] = '_';
+        for (d = 100000u; d > 0u; d /= 10u)
+            name[p++] = (char)('0' + (v / d) % 10u);
+        name[p] = '\0';
+        if (i & 1u)
+            u_plan_add_refusal(&ps, name, i, (uint8_t)UTEST_NAME_REFUSE_CHARSET,
+                               (const char *)0, 1, 0);
+        else
+            u_plan_add_run(&ps, name, UTEST_TYPE_CORRECTNESS, 1u, 1);
+    }
+    /* The arena holds exactly UTEST_PLAN_MAX slots, so it is exhausted at
+     * the same point the entry array is. Ask for one more INTERNED entry
+     * while forcing the arena to be the binding limit: count must not
+     * grow and no nameless entry may remain. */
+    before = ps.count;
+    u_plan_add_refusal(&ps, "t_extra.exe", 0u,
+                       (uint8_t)UTEST_NAME_REFUSE_CHARSET, (const char *)0,
+                       1, 0);
+    s_filter = saved_filter;
+    if (out_overflowed)   *out_overflowed = (uint32_t)ps.overflowed;
+    if (out_count_stable) *out_count_stable = (ps.count == before) ? 1u : 0u;
+    for (i = 0; i < ps.count; i++)
+        if (ps.entries[i].name == (const char *)0)
+            order_kept = 0;             /* a nameless entry survived */
+
+    u_plan_drop_runs(&ps);
+    for (i = 0; i < ps.count; i++) {
+        if (ps.entries[i].kind != (uint8_t)UTEST_PLAN_REFUSAL) {
+            order_kept = 0;             /* a runnable survived the drop */
+            continue;
+        }
+        refusals++;
+        /* Digests were assigned in ascending plan order; compaction must
+         * preserve that relative order. */
+        if (i > 0 && ps.entries[i].digest <= ps.entries[i - 1].digest)
+            order_kept = 0;
+    }
+    u_plan_free(&ps);
+    if (out_refusals_kept) *out_refusals_kept = refusals;
+    if (out_order_kept)    *out_order_kept = order_kept;
+    return 1;
+}
+
+/* Does a name the plan carries survive the path build the executor uses?
+ * A name too long for u_run_one's buffer is refused BEFORE any VFS call,
+ * which is the part that is pure enough to assert on here. */
+int test_usermode_binary_present(const char *name);
+int test_usermode_binary_present(const char *name)
+{
+    return u_binary_present(name);
 }
 
 /* The BINDING formatter: the skip_block carries the name twice, so it is

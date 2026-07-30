@@ -25,6 +25,7 @@
 #include "kernel/mm/heap.h"
 #include "kernel/mm/pmm.h"       /* pmm_get_free_frames + ordinal countdown */
 #include "kernel/mm/vmm.h"       /* vmm_create_user_pml4 (the fork site)    */
+#include "kernel/fs/vfs.h"       /* VFS_MAX_NAME (the executor's path bound) */
 #include "kernel/boot_info.h"
 #include "kernel/klog.h"         /* KLOG_SUBSYSTEM_MAX (frame-tag bound)    */
 #include "registry.h"
@@ -56,6 +57,31 @@ int test_usermode_format_json_skip(char *dst, uint32_t cap,
 int test_usermode_name_equal_fs(const char *a, const char *b);
 int test_usermode_refusal_already_seen(const char *stored, int stored_verdict,
                                        const char *candidate);
+int test_usermode_plan_dedup(const char *a_name, int a_type,
+                             uint32_t a_expects, const char *b_name,
+                             int b_type, uint32_t b_expects,
+                             uint32_t *out_runs, uint32_t *out_refusals);
+int test_usermode_plan_overflow(uint32_t *out_overflowed,
+                                uint32_t *out_runs_after);
+int test_usermode_binary_present(const char *name);
+int test_usermode_manifest_parse(char *buf, uint32_t len, const char *filter,
+                                 uint32_t *out_runs,
+                                 uint32_t *out_refusals,
+                                 uint32_t *out_authoritative,
+                                 uint32_t *out_first_type,
+                                 uint32_t *out_first_expects,
+                                 uint32_t *out_last_type,
+                                 uint32_t *out_last_expects);
+int test_usermode_plan_alloc_failure(uint32_t *out_alloc_failed,
+                                     uint32_t *out_overflowed,
+                                     uint32_t *out_count,
+                                     uint32_t *out_pointers_null);
+int test_usermode_plan_intern_and_compaction(uint32_t *out_overflowed,
+                                             uint32_t *out_count_stable,
+                                             uint32_t *out_refusals_kept,
+                                             uint32_t *out_order_kept);
+uint32_t test_usermode_plan_capacity(void);
+int test_usermode_plan_lossy_refusal_suppresses(int exact, uint32_t *out_runs);
 
 /* Mirror of the launcher's utest_name_verdict_t. The numeric values ARE
  * the contract these tests pin: the enum is file-local to the launcher,
@@ -335,6 +361,364 @@ static void test_embedded_nul_is_refused_not_truncated(void)
     TEST_ASSERT_EQ(test_usermode_classify_name_span("test_good.exe", 13u),
                    UT_NAME_ACCEPT,
                    "a span matching the C length still accepts");
+}
+
+static void test_filter_folds_case_like_the_filesystem(void)
+{
+    /* `utest_filter=` selects over IXFS, which resolves names
+     * case-insensitively, so the filter has to agree with it. While the
+     * filter compared literally and the dedup folded, a requested binary
+     * could be planned zero times with total_planned and total_ran still
+     * agreeing -- a false green rather than a visible miss. */
+    TEST_ASSERT(test_usermode_glob_match("test_foo.exe",
+                                         "test_FOO.exe") == 1,
+                "a literal pattern folds case, as the filesystem does");
+    TEST_ASSERT(test_usermode_glob_match("TEST_Smoke_a.exe",
+                                         "test_smoke_a.exe") == 1,
+                "the fold covers the whole literal, not just the stem");
+    TEST_ASSERT(test_usermode_glob_match("test_SMOKE_*.exe",
+                                         "test_smoke_boot.exe") == 1,
+                "a wildcard pattern folds its prefix");
+    TEST_ASSERT(test_usermode_glob_match("test_*.EXE",
+                                         "test_smoke_boot.exe") == 1,
+                "a wildcard pattern folds its suffix");
+    /* Folding must not turn the filter into a wildcard: names that
+     * genuinely differ still have to miss. */
+    TEST_ASSERT(test_usermode_glob_match("test_foo.exe",
+                                         "test_foo2.exe") == 0,
+                "a longer name is still not a match");
+    TEST_ASSERT(test_usermode_glob_match("test_smoke_*.exe",
+                                         "test_perf_a.exe") == 0,
+                "a non-matching prefix still misses");
+    TEST_ASSERT(test_usermode_glob_match("test_a-1.exe",
+                                         "test_A-1.exe") == 1,
+                "digits and punctuation survive the fold unchanged");
+    TEST_ASSERT(test_usermode_glob_match((const char *)0,
+                                         "anything.exe") == 1,
+                "a NULL pattern still matches everything");
+}
+
+static void test_plan_folds_an_identical_duplicate(void)
+{
+    uint32_t runs = 99, refusals = 99;
+
+    /* Two manifest spellings of ONE file carrying the SAME policy are one
+     * binary. Planning both would run it twice under two ordinals, and
+     * because planned and ran inflate together the completeness
+     * reconciliation could not see it. */
+    if (!test_usermode_plan_dedup("test_dup.exe", UTEST_TYPE_CORRECTNESS, 1u,
+                                  "test_DUP.exe", UTEST_TYPE_CORRECTNESS, 1u,
+                                  &runs, &refusals)) {
+        TEST_SKIP("plan allocation unavailable");
+        return;
+    }
+    TEST_ASSERT_EQ(runs, 1u, "one file with one policy takes one plan slot");
+    TEST_ASSERT_EQ(refusals, 0u,
+                   "an identical duplicate folds away rather than failing");
+}
+
+static void test_plan_refuses_a_conflicting_duplicate(void)
+{
+    uint32_t runs = 99, refusals = 99;
+
+    /* Filesystem identity does not settle manifest POLICY. Two case
+     * variants of one file can disagree on `type=` -- and silently
+     * keeping either one demotes a smoke test out of the fast-fail phase
+     * (or promotes one into it) while every count still reconciles. The
+     * conflict is published as a counted failure and the identity runs
+     * under neither policy. */
+    if (!test_usermode_plan_dedup("test_conf.exe", UTEST_TYPE_SMOKE, 1u,
+                                  "test_CONF.exe", UTEST_TYPE_CORRECTNESS, 1u,
+                                  &runs, &refusals)) {
+        TEST_SKIP("plan allocation unavailable");
+        return;
+    }
+    TEST_ASSERT_EQ(runs, 0u,
+                   "a policy conflict must not run under a guessed policy");
+    TEST_ASSERT_EQ(refusals, 1u,
+                   "the conflicting identity is published exactly once");
+
+    /* A disagreement about task COST is the same class of conflict: it
+     * understates the preflight task budget rather than the phase. */
+    runs = 99; refusals = 99;
+    if (!test_usermode_plan_dedup("test_cost.exe", UTEST_TYPE_CORRECTNESS, 1u,
+                                  "test_COST.exe", UTEST_TYPE_CORRECTNESS, 4u,
+                                  &runs, &refusals)) {
+        TEST_SKIP("plan allocation unavailable");
+        return;
+    }
+    TEST_ASSERT_EQ(runs, 0u, "conflicting expects_tasks is also a conflict");
+    TEST_ASSERT_EQ(refusals, 1u, "and is published exactly once");
+}
+
+static void test_plan_overflow_runs_nothing(void)
+{
+    uint32_t overflowed = 99, runs_after = 99;
+
+    /* Past its capacity the plan is no longer the complete enumeration,
+     * so it cannot certify what it did not enumerate. Executing the
+     * retained prefix would produce an internally consistent run that
+     * silently omitted binaries -- exactly the false green this section
+     * removes -- so the run publishes an aggregate and launches nothing. */
+    if (!test_usermode_plan_overflow(&overflowed, &runs_after)) {
+        TEST_SKIP("plan allocation unavailable");
+        return;
+    }
+    TEST_ASSERT_EQ(overflowed, 1u,
+                   "filling past the capacity must flag the plan incomplete");
+    TEST_ASSERT_EQ(runs_after, 0u,
+                   "an incomplete plan executes no binary at all");
+}
+
+static void test_manifest_parses_past_the_old_runnable_cap(void)
+{
+    /* The old parser stopped accepting runnable entries at 128 and handed
+     * the tail to a directory glob that could not reconstruct an entry's
+     * type, task cost or ordering -- and could not see a binary absent
+     * from the image at all. The cap is gone: entries go straight into
+     * the plan, so 129+ ordered entries with intact metadata must
+     * survive. 129 is the boundary that used to lose the last one. */
+    static char buf[8192];
+    uint32_t runs = 0, refusals = 0;
+    uint32_t first_type = 0, first_expects = 0;
+    uint32_t last_type = 0, last_expects = 0;
+    uint32_t i, p = 0;
+
+    /* Entry 0 declares smoke policy and a fork-heavy task cost; the last
+     * entry declares neither, so a parser that dropped or reordered
+     * metadata shows up as a mismatch on one end or the other. */
+    const char *head = "test_a000.exe type=smoke expects_tasks=4\n";
+    for (i = 0; head[i]; i++) buf[p++] = head[i];
+    for (i = 1; i < 129u; i++) {
+        const char *pre = "test_a";
+        uint32_t k;
+        for (k = 0; pre[k]; k++) buf[p++] = pre[k];
+        buf[p++] = (char)('0' + (i / 100u) % 10u);
+        buf[p++] = (char)('0' + (i / 10u) % 10u);
+        buf[p++] = (char)('0' + i % 10u);
+        for (k = 0; ".exe\n"[k]; k++) buf[p++] = ".exe\n"[k];
+    }
+    buf[p] = '\0';
+
+    if (!test_usermode_manifest_parse(buf, p, (const char *)0, &runs,
+                                      &refusals, (uint32_t *)0, &first_type,
+                                      &first_expects, &last_type,
+                                      &last_expects)) {
+        TEST_SKIP("plan allocation unavailable");
+        return;
+    }
+    TEST_ASSERT_EQ(runs, 129u,
+                   "every accepted manifest entry reaches the plan");
+    TEST_ASSERT_EQ(refusals, 0u, "well-formed entries are not refused");
+    TEST_ASSERT_EQ(first_type, (uint32_t)UTEST_TYPE_SMOKE,
+                   "an explicit type= survives the parse in plan order");
+    TEST_ASSERT_EQ(first_expects, 4u,
+                   "an explicit expects_tasks= survives the parse");
+    TEST_ASSERT_EQ(last_type, (uint32_t)UTEST_TYPE_CORRECTNESS,
+                   "the entry past the old cap keeps its derived type");
+    TEST_ASSERT_EQ(last_expects, 1u,
+                   "the entry past the old cap keeps its default task cost");
+}
+
+static void test_manifest_refusal_is_terminal_for_its_identity(void)
+{
+    /* A refused identity must stay refused. Matching only runnable
+     * entries left a hole: after two conflicting variants converted the
+     * first to a refusal, a THIRD variant of the same IXFS name matched
+     * nothing and took a fresh runnable slot -- so one file was published
+     * as refused AND executed, with every count still reconciling. */
+    static char buf[512];
+    uint32_t runs = 99, refusals = 99;
+    uint32_t i, p = 0;
+    const char *text =
+        "test_x.exe type=smoke\n"
+        "test_X.exe type=correctness\n"
+        "test_x.exe type=smoke\n";
+
+    for (i = 0; text[i]; i++) buf[p++] = text[i];
+    buf[p] = '\0';
+
+    if (!test_usermode_manifest_parse(buf, p, (const char *)0, &runs,
+                                      &refusals, (uint32_t *)0, (uint32_t *)0,
+                                      (uint32_t *)0, (uint32_t *)0,
+                                      (uint32_t *)0)) {
+        TEST_SKIP("plan allocation unavailable");
+        return;
+    }
+    TEST_ASSERT_EQ(runs, 0u,
+                   "a third case-variant must not revive a refused identity");
+    TEST_ASSERT_EQ(refusals, 1u,
+                   "the identity is published refused exactly once");
+}
+
+static void test_lossy_refusal_name_is_not_an_identity(void)
+{
+    uint32_t runs_lossy = 99, runs_exact = 99;
+
+    /* A glob refusal stores a SANITIZED prefix: `test_bad?.exe` becomes
+     * `test_bad_.exe` because `?` is outside the accepted charset, and an
+     * overlength name is truncated. Treating that rendering as an
+     * identity would suppress a genuinely different `test_bad_.exe` --
+     * dropping a requested test with nothing louder than the unrelated
+     * refusal's own record, which is strictly worse than the double
+     * publication the terminal rule exists to prevent. */
+    if (!test_usermode_plan_lossy_refusal_suppresses(0, &runs_lossy)) {
+        TEST_SKIP("plan allocation unavailable");
+        return;
+    }
+    TEST_ASSERT_EQ(runs_lossy, 1u,
+                   "a lossy refusal name must not suppress a real binary");
+
+    /* The same collision through an EXACT refusal (a manifest line, or a
+     * duplicate-policy conversion) must still be terminal, or the rule
+     * would not prevent anything. */
+    if (!test_usermode_plan_lossy_refusal_suppresses(1, &runs_exact)) {
+        TEST_SKIP("plan allocation unavailable");
+        return;
+    }
+    TEST_ASSERT_EQ(runs_exact, 0u,
+                   "an exact refused identity is still terminal");
+}
+
+static void test_refused_attribute_vetoes_a_later_case_variant(void)
+{
+    /* Ordering, not policy: accepted lines enter the plan as they are
+     * read, but the refusal set is complete only at end of file. A
+     * refused-attribute line followed by a case variant of the same IXFS
+     * name must NOT be planned runnable and then refused as well -- both
+     * counters would agree and the completeness gate would stay blind. */
+    static char buf[512];
+    uint32_t runs = 99, refusals = 99;
+    uint32_t i, p = 0;
+    const char *text =
+        "test_v.exe type=bogus\n"
+        "test_V.exe type=smoke\n";
+
+    for (i = 0; text[i]; i++) buf[p++] = text[i];
+    buf[p] = '\0';
+
+    if (!test_usermode_manifest_parse(buf, p, (const char *)0, &runs,
+                                      &refusals, (uint32_t *)0, (uint32_t *)0,
+                                      (uint32_t *)0, (uint32_t *)0,
+                                      (uint32_t *)0)) {
+        TEST_SKIP("plan allocation unavailable");
+        return;
+    }
+    TEST_ASSERT_EQ(runs, 0u,
+                   "a refused identity vetoes a case variant read after it");
+    TEST_ASSERT_EQ(refusals, 1u,
+                   "and the refusal is still published exactly once");
+}
+
+static void test_fully_filtered_manifest_stays_authoritative(void)
+{
+    /* A manifest whose every entry the filter excludes is still a
+     * manifest. If it reported "not usable", the launcher would scan C:\
+     * instead and could plan an on-disk binary the manifest never listed
+     * -- with glob-derived type and task cost -- when the operator asked
+     * for a narrower run, not a wider one. Manifest AUTHORITY is a
+     * statement about the file; the surviving entry count is a statement
+     * about the plan, and conflating them is what broke this. */
+    static char buf[256];
+    uint32_t runs = 99, authoritative = 99;
+    uint32_t i, p = 0;
+    const char *text = "test_alpha.exe\ntest_beta.exe\n";
+
+    for (i = 0; text[i]; i++) buf[p++] = text[i];
+    buf[p] = '\0';
+
+    if (!test_usermode_manifest_parse(buf, p, "test_nomatch_*.exe", &runs,
+                                      (uint32_t *)0, &authoritative,
+                                      (uint32_t *)0, (uint32_t *)0,
+                                      (uint32_t *)0, (uint32_t *)0)) {
+        TEST_SKIP("plan allocation unavailable");
+        return;
+    }
+    TEST_ASSERT_EQ(runs, 0u, "a filter excluding everything plans nothing");
+    TEST_ASSERT_EQ(authoritative, 1u,
+                   "a fully filtered manifest still suppresses glob discovery");
+
+    /* And the same manifest with a matching filter plans exactly the
+     * entries that matched -- so the authority bit is not simply stuck. */
+    runs = 99; authoritative = 99;
+    p = 0;
+    for (i = 0; text[i]; i++) buf[p++] = text[i];
+    buf[p] = '\0';
+    if (!test_usermode_manifest_parse(buf, p, "test_al*.exe", &runs,
+                                      (uint32_t *)0, &authoritative,
+                                      (uint32_t *)0, (uint32_t *)0,
+                                      (uint32_t *)0, (uint32_t *)0)) {
+        TEST_SKIP("plan allocation unavailable");
+        return;
+    }
+    TEST_ASSERT_EQ(runs, 1u, "a matching filter plans only what it matched");
+    TEST_ASSERT_EQ(authoritative, 1u, "and the manifest remains authoritative");
+}
+
+static void test_plan_alloc_failure_is_a_distinct_state(void)
+{
+    uint32_t alloc_failed = 99, overflowed = 99, count = 99, ptrs_null = 99;
+
+    /* An unallocatable plan must be its OWN state, not a capacity
+     * problem and not an empty plan: the zero-planned path publishes a
+     * SUCCESSFUL empty suite, so a run that cannot enumerate at all has
+     * to be distinguishable from a run with nothing to enumerate. */
+    if (test_usermode_plan_alloc_failure(&alloc_failed, &overflowed, &count,
+                                         &ptrs_null)) {
+        TEST_SKIP("injected PMM failure did not take effect");
+        return;
+    }
+    TEST_ASSERT_EQ(alloc_failed, 1u,
+                   "an unallocatable plan reports alloc_failed");
+    TEST_ASSERT_EQ(overflowed, 0u,
+                   "allocation failure is not reported as a capacity limit");
+    TEST_ASSERT_EQ(count, 0u, "a failed plan holds no entries");
+    TEST_ASSERT_EQ(ptrs_null, 1u,
+                   "a failed plan retains no block or interior pointers");
+}
+
+static void test_plan_intern_exhaustion_and_compaction(void)
+{
+    uint32_t overflowed = 99, count_stable = 99;
+    uint32_t refusals_kept = 99, order_kept = 99;
+
+    /* Three branches the capacity test cannot reach: the name arena
+     * filling independently of the entry array, the rollback that keeps a
+     * failed intern from leaving a nameless entry behind, and compaction
+     * with both kinds interleaved. */
+    if (!test_usermode_plan_intern_and_compaction(&overflowed, &count_stable,
+                                                  &refusals_kept,
+                                                  &order_kept)) {
+        TEST_SKIP("plan allocation unavailable");
+        return;
+    }
+    TEST_ASSERT_EQ(overflowed, 1u,
+                   "exhausting the name arena flags the plan incomplete");
+    TEST_ASSERT_EQ(count_stable, 1u,
+                   "a refused append leaves the entry count unchanged");
+    TEST_ASSERT_EQ(refusals_kept, test_usermode_plan_capacity() / 2u,
+                   "compaction keeps every refusal");
+    TEST_ASSERT_EQ(order_kept, 1u,
+                   "compaction preserves refusal order and leaves no "
+                   "nameless or runnable entry behind");
+}
+
+static void test_unbuildable_path_is_not_present(void)
+{
+    /* The executor builds `C:\<name>` into a fixed buffer. A name that
+     * cannot fit is reported absent BEFORE any VFS call, so the plan and
+     * the loader agree on what is reachable instead of the loader
+     * discovering it later as an opaque open failure. Deliberately only
+     * the pure half is asserted here: a name that DOES fit would reach
+     * vfs_open, and the live boot run covers that path. */
+    char too_long[VFS_MAX_NAME + 8];
+    uint32_t i;
+
+    for (i = 0; i < sizeof(too_long) - 1u; i++)
+        too_long[i] = 'a';
+    too_long[sizeof(too_long) - 1u] = '\0';
+    TEST_ASSERT(test_usermode_binary_present(too_long) == 0,
+                "a name past the path buffer is not a runnable binary");
 }
 
 static void test_name_identity_matches_the_filesystem(void)
@@ -2884,6 +3268,40 @@ void test_register_usermode_launcher(void)
                             TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: capture inherit: uncaptured parent stays uncaptured",
                             test_capture_inherit_uncaptured_parent_stays_uncaptured,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: filter folds case like the filesystem",
+                            test_filter_folds_case_like_the_filesystem,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: plan folds an identical case-variant duplicate",
+                            test_plan_folds_an_identical_duplicate,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: plan refuses a duplicate with conflicting policy",
+                            test_plan_refuses_a_conflicting_duplicate,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: an overflowing plan runs nothing",
+                            test_plan_overflow_runs_nothing, TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: an unbuildable path is not a runnable binary",
+                            test_unbuildable_path_is_not_present, TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: manifest parses past the old runnable cap",
+                            test_manifest_parses_past_the_old_runnable_cap,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: a refused identity stays refused",
+                            test_manifest_refusal_is_terminal_for_its_identity,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: a lossy refusal name is not an identity",
+                            test_lossy_refusal_name_is_not_an_identity,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: refused attribute vetoes a later variant",
+                            test_refused_attribute_vetoes_a_later_case_variant,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: a fully filtered manifest stays authoritative",
+                            test_fully_filtered_manifest_stays_authoritative,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: plan alloc failure is its own state",
+                            test_plan_alloc_failure_is_a_distinct_state,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: name-arena exhaustion rolls back and compacts",
+                            test_plan_intern_exhaustion_and_compaction,
                             TEST_CAT_EXEC);
 }
 
