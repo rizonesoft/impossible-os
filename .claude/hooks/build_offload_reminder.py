@@ -85,6 +85,43 @@ _SCRIPT_RES = (
 )
 
 
+# The sanctioned wrapper, recognised as an INVOCATION rather than a mention.
+# A bare `\brun-artifact\.sh\b` substring test exempted any segment that merely
+# contained the name -- `NOTE=run-artifact.sh bash scripts/test.sh` ran the
+# suite and was excused by its own comment-like assignment. The wrapper is only
+# a wrapper when it is the command being run, so require the same
+# interpreter-or-command-position shapes the suite detectors use, plus the
+# `-- ` that separates the wrapper's own arguments from the wrapped command.
+_RUN_ARTIFACT = r"scripts/overnight/run-artifact\.sh\b"
+#
+# ANCHORED to the start of the segment, because the exemption belongs to the
+# segment's EXECUTABLE, not to any word in it. Unanchored, a shape like
+# `bash -c '<the suite>' bash .../run-artifact.sh lbl -- true` runs the suite
+# out of the `-c` body while the trailing words -- mere positional arguments --
+# claimed the exemption for the whole segment. Interpreter flags are allowed
+# before the script, but `-c` is NOT: with `-c` the next word is a program, not
+# this wrapper.
+_RUN_ARTIFACT_RE = re.compile(
+    r"^\s*" + _ENV_PREFIX
+    + "(?:"
+    + r"(?:bash|sh)\s+(?:-(?!c\b)\S+\s+)*[\"']?(?:\S*/)?" + _RUN_ARTIFACT
+    + "|"
+    + r"[\"']?(?:\./|\S*/)?" + _RUN_ARTIFACT
+    + ")"
+    + r".*?\s--\s",
+    re.DOTALL)
+
+
+def _normalise_continuations(text: str) -> str:
+    """Fold backslash-newline continuations into single spaces.
+
+    A wrapped route split across lines for readability is the SAME invocation;
+    leaving the continuation in place made the `--` land on another line and
+    the anchored match fail, blocking the very route this gate recommends.
+    """
+    return re.sub(r"\\\n\s*", " ", text)
+
+
 def _match_suite_invocation(cmd: str):
     """First match of any suite-script/make-test invocation shape, else None."""
     for rx in _SCRIPT_RES:
@@ -194,6 +231,83 @@ def _recent_checks_runner_dispatch(root: Path) -> bool:
     return isinstance(ts, int) and (time.time_ns() - ts) <= FRESH_NS
 
 
+def _exempt_segment(text: str) -> bool:
+    """True when this ONE segment may name a suite script without invoking one.
+
+    Two shapes qualify:
+
+    - the SANCTIONED wrapped route (`run-artifact.sh <label> -- bash
+      scripts/build.sh`), which legitimately contains the inner invocation this
+      gate matches. Firing on it would BLOCK the very route the gate's own
+      message recommends -- it fired 9x on one properly-wrapped sequence (Codex
+      audit 2026-07-13, verified);
+    - a CODEX DISPATCH, whose prompt has to NAME the files it reviews. An
+      adversarial review of `scripts/test.sh` necessarily contains that string,
+      and the gate matched it as an invocation and BLOCKED the mandatory review
+      (observed 2026-07-30 reviewing orphaned-QEMU recovery, whose entire diff
+      is in that script). Nothing is run: a dispatch execs the companion with
+      ONE argument and `codex-dispatch.sh` enforces argc == 1.
+    """
+    if _RUN_ARTIFACT_RE.search(_normalise_continuations(text)):
+        return True
+    try:
+        from _codex_dispatch import is_codex_dispatch
+        return bool(is_codex_dispatch(text))
+    except Exception:
+        # A missing/renamed helper must not resurrect the false positive
+        # silently, but it must not crash the gate either: fall back to the
+        # narrow literal check.
+        return bool(re.search(
+            r"\breview-broker-codex-dispatch\.sh\b|\bcodex-dispatch\.sh\b"
+            r"|\bcodex-companion\.mjs\b", text))
+
+
+def _blocking_match(cmd: str):
+    """The suite invocation that should BLOCK, or None if every one is exempt.
+
+    Classification is PER SEGMENT. Exempting the whole command line on a
+    whole-command answer is a BYPASS: `is_codex_dispatch` (and a bare
+    `run-artifact.sh` substring search) is true when ANY segment qualifies, so
+    `codex-dispatch.sh '<prompt>' && bash scripts/test.sh` carried a real
+    dispatch AND a real bare suite run, and the dispatch alone excused both.
+    Judging each segment on its own keeps the exemption exactly as wide as the
+    thing it excuses.
+    """
+    segs = _codex_segments(cmd)
+    if not segs:
+        # UNSPLITTABLE -> FAIL CLOSED. The screen above already proved this
+        # command contains a suite invocation somewhere; what we have lost is
+        # the ability to say WHERE, and therefore any basis for excusing it.
+        # Granting the whole-command exemption here is fail-open, and it was
+        # reachable from valid shell: a backtick substitution containing `)`
+        # inside a `$( )` desynchronised the walk, so a command carrying both a
+        # Codex dispatch and a bare suite run split to nothing and was excused
+        # wholesale. A false BLOCK costs a rephrase; a false ALLOW runs the
+        # suite in the main context and nothing reports it.
+        return _match_suite_invocation(cmd)
+    for text, is_codex in segs:
+        if is_codex or _exempt_segment(text):
+            continue
+        # `lstrip()` because a segment's START is a command position, and the
+        # separator that produced it leaves the following space behind:
+        # `cd /repo && scripts/test.sh SUITE=mm` splits to " scripts/test.sh
+        # SUITE=mm", where the direct-exec detector's `^`-or-`[;&|(]` anchor no
+        # longer sits on the script. The whole command used to satisfy that
+        # anchor via the `&` itself, so segmenting silently un-matched it.
+        m = _match_suite_invocation(text.lstrip())
+        if m:
+            return m
+    return None
+
+
+def _codex_segments(cmd: str):
+    try:
+        from _codex_dispatch import command_segments
+        return command_segments(cmd)
+    except Exception:
+        return []
+
+
 def main() -> int:
     try:
         d = json.load(sys.stdin)
@@ -202,29 +316,27 @@ def main() -> int:
     if not isinstance(d, dict) or d.get("tool_name") != "Bash":
         return 0
     cmd = (d.get("tool_input") or {}).get("command") or ""
-    m = _match_suite_invocation(cmd)
-    if not m:
+    # Cheap whole-command screen first: no suite shape anywhere means there is
+    # nothing to segment or exempt.
+    if not _match_suite_invocation(cmd):
         return 0
     root = _repo_root()
     if root is None or not _in_sections(root):
         return 0
-    # Exempt the SANCTIONED wrapped route: `run-artifact.sh <label> -- bash
-    # scripts/build.sh` legitimately contains the inner `bash scripts/build.sh`
-    # that _SCRIPT_RE matches. Firing on it would nag (and, once promoted to a
-    # BLOCK, would BLOCK) the very route this reminder recommends -- it fired 9x
-    # on one properly-wrapped sequence (Codex audit 2026-07-13, verified). If an
-    # outer run-artifact.sh wrapper is present, the command is already offloaded.
-    # R2: record the reroute as a `follow` event -- offload-report.py counted
-    # only Agent dispatches as compliance, so the P3.4 reroute (a Bash call, not
-    # an Agent) read as a 9% follow rate when the block was in fact working
-    # (2026-07-19 measurement: all bare attempts blocked pre-execution).
-    if re.search(r"\brun-artifact\.sh\b", cmd):
-        try:
-            import _offload_log
-            _offload_log.log_event(root, "follow", "build_offload_reminder",
-                                   m.group(0))
-        except Exception:
-            pass
+    m = _blocking_match(cmd)
+    if m is None:
+        # R2: record the reroute as a `follow` event -- offload-report.py
+        # counted only Agent dispatches as compliance, so the P3.4 reroute (a
+        # Bash call, not an Agent) read as a 9% follow rate when the block was
+        # in fact working (2026-07-19 measurement: all bare attempts blocked
+        # pre-execution).
+        if _RUN_ARTIFACT_RE.search(_normalise_continuations(cmd)):
+            try:
+                import _offload_log
+                _offload_log.log_event(root, "follow", "build_offload_reminder",
+                                       _match_suite_invocation(cmd).group(0))
+            except Exception:
+                pass
         return 0
     if _recent_checks_runner_dispatch(root):
         return 0

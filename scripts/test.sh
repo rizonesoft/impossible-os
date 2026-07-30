@@ -167,6 +167,168 @@ else
     echo -e "${YELLOW}[TEST]${RESET} flock unavailable -- the concurrent-run refusal is NOT enforced this run."
 fi
 
+# --- Orphaned-QEMU recovery ---
+#
+# The lock above cannot see the hazard it looks like it should. QEMU is launched
+# with the lock descriptor closed, so an orphan left by a SIGKILLed wrapper holds
+# no lock to contend for -- it just keeps writing to the shared boot state this
+# run is about to reuse.
+#
+# This runs HERE, immediately after the lock and before ANYTHING shared is
+# touched, because every later placement is already too late. Below this line the
+# script clears the canonical aliases, prunes older run records (which could
+# delete the record of the very run that leaked the VM), and REBUILDS
+# system-disk.img -- and that image is open in the orphan as a writable AHCI
+# drive. A refusal taken at the boot.conf patch would arrive after the disk was
+# already rewritten underneath a live VM.
+#
+# A refusing run touches no shared name at all, exactly like the lock refusal: no
+# record directory exists yet, no alias has been cleared, and no artifact trap is
+# armed, so it owes no document to anyone.
+UTEST_QEMU_PIDFILE="$BUILD_DIR/.test-qemu.pid"
+
+# Ownership is proven by an open descriptor, never by process name: QEMU_BIN is
+# caller-supplied and need not contain "qemu". qemu-orphan.py holds that logic
+# (and the reap-time identity re-check that keeps a recycled pid from being
+# signalled); this function owns the POLICY -- refuse by default, reap only when
+# asked, degrade loudly if the check itself is unavailable.
+utest_orphan_guard() {
+    local rc=0 out="" pid start bid pcomm held stale="" failed=0
+    local p args=()
+    for p in "$@"; do
+        args+=(--path "$p")
+    done
+    # Detector stderr is KEPT (merged, since stdout is the holder table only on
+    # rc 3). Discarding it threw away the one diagnostic that explains a failed
+    # scan, at exactly the moment the operator needs it.
+    # The recorded pid is passed in so the detector can say INDETERMINATE
+    # instead of clean when that one process is alive but hides its
+    # descriptors -- the degraded case `pdeathsig.py --check` warns about.
+    local rec0=""
+    [ -f "$UTEST_QEMU_PIDFILE" ] && rec0="$(awk '{print $1}' "$UTEST_QEMU_PIDFILE" 2>/dev/null)"
+    case "$rec0" in ''|*[!0-9]*) rec0=0 ;; esac
+    out="$(python3 "$PROJECT/scripts/qemu-orphan.py" detect "${args[@]}" \
+             --exclude-pid "$$" --recorded-pid "$rec0" 2>&1)" || rc=$?
+    if [ "$rc" -eq 0 ]; then
+        # Nothing holds this tree's files, so any pidfile left behind names a VM
+        # that is already gone. Clearing it now keeps a later reap from aiming at
+        # a pid this tree no longer owns.
+        rm -f "$UTEST_QEMU_PIDFILE" 2>/dev/null || true
+        return 0
+    fi
+    if [ "$rc" -ne 3 ]; then
+        # FAIL CLOSED. This is deliberately NOT the missing-flock stance, and
+        # the difference is what the two silences mean. A missing `flock` is a
+        # STATIC property of the host -- the tool is absent, we know it, and the
+        # hazard it guards (a second run this operator started) is one the
+        # operator can see. A detector that RAN and errored is the opposite: it
+        # produced no evidence either way, and the hazard it guards is invisible
+        # by construction -- an orphan from a run that was SIGKILLed, holding a
+        # system-disk.img this run is about to rewrite underneath it. Treating
+        # "no evidence" as "no orphan" is precisely the corruption this guard
+        # exists to prevent, so an unavailable check refuses the run.
+        echo -e "${RED}[TEST]${RESET} orphan detection FAILED (qemu-orphan.py exit $rc) -- refusing the run."
+        [ -n "$out" ] && echo -e "${YELLOW}       $out${RESET}"
+        echo -e "${YELLOW}       A failed scan is not evidence that no VM holds this tree's boot state,${RESET}"
+        echo -e "${YELLOW}       and continuing would rebuild system-disk.img underneath one if it does.${RESET}"
+        echo -e "${YELLOW}       Fix the detector, or set UTEST_ORPHAN_UNCHECKED=1 to proceed unguarded.${RESET}"
+        if [ "${UTEST_ORPHAN_UNCHECKED:-0}" = "1" ]; then
+            echo -e "${YELLOW}[TEST]${RESET} UTEST_ORPHAN_UNCHECKED=1 -- proceeding with the guarantee ABSENT."
+            return 0
+        fi
+        exit 1
+    fi
+    # Only quote the pidfile when it actually describes one of the processes just
+    # detected. A pidfile left by a run whose VM is long gone names a run that
+    # has nothing to do with this holder, and attributing the blockage to it
+    # sends an operator after the wrong thing.
+    if [ -f "$UTEST_QEMU_PIDFILE" ]; then
+        stale="$(cat "$UTEST_QEMU_PIDFILE" 2>/dev/null || true)"
+        pid="$(printf '%s' "$stale" | awk '{print $1}')"
+        if [ -z "$pid" ] || ! printf '%s' "$out" | grep -q "^${pid}$(printf '\t')"; then
+            stale=""
+        fi
+    fi
+    if [ "${UTEST_ORPHAN_REAP:-0}" = "1" ]; then
+        # AUTHORISED BY PROVENANCE, not merely by association. An open
+        # descriptor proves a process is USING one of this tree's files; it says
+        # nothing about where that process came from. A `tail -f build/test.log`,
+        # a disk-image inspector, or an operator's own QEMU present exactly the
+        # evidence a leaked VM does -- and reaping every holder would SIGKILL
+        # them, unattended, which is the shape of damage this guard exists to
+        # prevent rather than cause. Automatic reaping is therefore limited to
+        # the holder THIS TREE RECORDED launching: pid, starttime and boot_id
+        # must all match the pidfile. Anything else is named and refused, just
+        # as it would be without the opt-in. (The identity re-check inside
+        # qemu-orphan.py is a different guarantee -- it stops a RECYCLED pid
+        # being signalled; it cannot tell whose process the pid belonged to.)
+        local rec_pid="" rec_start="" rec_bid="" reaped_any=0
+        if [ -f "$UTEST_QEMU_PIDFILE" ]; then
+            rec_pid="$(awk '{print $1}' "$UTEST_QEMU_PIDFILE" 2>/dev/null)"
+            rec_start="$(awk '{print $2}' "$UTEST_QEMU_PIDFILE" 2>/dev/null)"
+            rec_bid="$(awk '{print $3}' "$UTEST_QEMU_PIDFILE" 2>/dev/null)"
+        fi
+        while IFS="$(printf '\t')" read -r pid start bid pcomm held; do
+            [ -n "$pid" ] || continue
+            if [ -z "$rec_pid" ] || [ "$pid" != "$rec_pid" ] \
+               || [ "$start" != "$rec_start" ] || [ "$bid" != "$rec_bid" ]; then
+                echo -e "${YELLOW}[TEST]${RESET} NOT reaping pid $pid ($pcomm) holding $held -- this tree has no record of launching it."
+                failed=1
+                continue
+            fi
+            echo -e "${YELLOW}[TEST]${RESET} reaping orphaned VM pid $pid ($pcomm) holding $held"
+            if python3 "$PROJECT/scripts/qemu-orphan.py" reap --pid "$pid" \
+                    "${args[@]}" --expect-starttime "$start" --expect-boot-id "$bid"; then
+                reaped_any=1
+                continue
+            fi
+            failed=1
+        done <<< "$out"
+        # `reaped_any` matters as much as `failed`: with no recorded holder to
+        # reap, nothing was cleared, so falling through to the refusal is the
+        # honest outcome rather than reporting a successful recovery.
+        if [ "$reaped_any" -eq 1 ]; then
+            # RESCAN after EVERY successful reap, including the common case
+            # where the recorded orphan was the only holder. Returning straight
+            # out on that path skips the only observation that covers the reap
+            # WINDOW: a holder can appear, or inherit an owned descriptor, while
+            # the reap is in progress, and the run would then go on to truncate
+            # the serial log and rebuild system-disk.img underneath it. It also
+            # left `$out` stale, so the refusal below would have listed the pid
+            # just reaped as a live holder and sent an operator after a process
+            # that no longer exists.
+            rm -f "$UTEST_QEMU_PIDFILE" 2>/dev/null || true
+            rc=0
+            out="$(python3 "$PROJECT/scripts/qemu-orphan.py" detect "${args[@]}" \
+                     --exclude-pid "$$" 2>&1)" || rc=$?
+            if [ "$rc" -eq 0 ]; then
+                echo -e "${GREEN}[TEST]${RESET} orphaned VM reaped -- continuing."
+                return 0
+            fi
+            if [ "$rc" -ne 3 ]; then
+                echo -e "${RED}[TEST]${RESET} orphan re-detection FAILED after the reap (exit $rc) -- refusing the run."
+                [ -n "$out" ] && echo -e "${YELLOW}       $out${RESET}"
+                exit 1
+            fi
+            stale=""
+        fi
+        echo -e "${RED}[TEST]${RESET} an orphaned VM could not be reaped."
+    fi
+    echo -e "${RED}[TEST]${RESET} a live process still holds this tree's boot state:"
+    while IFS="$(printf '\t')" read -r pid start bid pcomm held; do
+        [ -n "$pid" ] || continue
+        echo -e "${YELLOW}       pid $pid ($pcomm) holds $held${RESET}"
+    done <<< "$out"
+    if [ -n "$stale" ]; then
+        echo -e "${YELLOW}       recorded by: $stale (pid starttime boot_id run_id)${RESET}"
+    fi
+    echo -e "${YELLOW}       This run would patch boot.conf, truncate the serial log and rebuild${RESET}"
+    echo -e "${YELLOW}       system-disk.img underneath it. Refusing instead of interleaving.${RESET}"
+    echo -e "${YELLOW}       Clear it, then re-run -- or set UTEST_ORPHAN_REAP=1 to reap it here.${RESET}"
+    exit 1
+}
+utest_orphan_guard "$OVMF_VARS_CP" "$TEST_LOG" "$DISK"
+
 # --- Per-run artifact record ---
 #
 # The RECORD is a per-invocation directory; the stable pathnames below are
@@ -449,12 +611,21 @@ utest_publish_leg_set() {
 # them. Its own write goes through a temp plus `mv`, so the marker can never
 # be observed partially written either.
 utest_commit_record() {
-    local status="$1" tmp="$RECORD_DIR/.marker.tmp"
+    local status="$1" tmp="$RECORD_DIR/.marker.tmp" qpid="null"
+    # A JSON number or `null`, never a bare empty field: an exit before the
+    # launch has no pid to report, and every path from the environment preflight
+    # onward can reach this function.
+    case "${QEMU_PID:-}" in
+        ''|*[!0-9]*) qpid="null" ;;
+        *) qpid="${QEMU_PID}" ;;
+    esac
     if {
         printf '{\n'
         printf '  "schema": "utest-run-record-v1",\n'
         printf '  "run_id": "%s",\n' "$RUN_ID"
         printf '  "status": "%s",\n' "$status"
+        printf '  "qemu_pid": %s,\n' "$qpid"
+        printf '  "qemu_state": "%s",\n' "${QEMU_STATE:-none}"
         printf '  "xml": %s,\n' "$([ -f "$XML_RECORD" ] && echo '"test-results.xml"' || echo 'null')"
         printf '  "json": %s,\n' "$([ -f "$JSON_RECORD" ] && echo '"test-results.json"' || echo 'null')"
         printf '  "identity": %s\n' "$([ -f "$IDENTITY_RECORD" ] && echo '"test-run-identity.json"' || echo 'null')"
@@ -494,11 +665,162 @@ utest_commit_record() {
 # Idempotent. The normal path calls it before the final verdict, so an alias
 # or marker failure can still fail the run; the EXIT guard calls it again for
 # every path that never got there.
+# The one place QEMU is reaped, and it is called from TWO places on purpose.
+#
+# The cleanup trap owns the exit path. utest_finalize_record calls it as well,
+# BEFORE the commit marker is written, because the normal path finalizes ahead of
+# the verdict -- long before any trap runs. A marker that said `status:
+# complete` while the VM it describes was still running would be the same class
+# of false-green the rest of this lifecycle exists to close, and `qemu_pid`
+# alone cannot distinguish "exited cleanly" from "never reaped".
+#
+# SIGTERM first (QEMU exits cleanly and flushes its serial sink), then SIGKILL,
+# because "reaped" has to be a fact rather than a request. Only a confirmed-gone
+# pid clears the pidfile: that file is what the NEXT run's detection reads to
+# name the run that leaked a VM, so clearing it optimistically would erase the
+# one clue an investigation has.
+#
+# Initialised here, ahead of the first artifact trap. QEMU_PID used to come into
+# existence only at the launch, so every exit path before it -- the environment
+# preflight, the build, the boot.conf patch -- reached a reap or a marker with
+# the variable unset under `set -u`.
+QEMU_PID=""
+QEMU_STATE=none
+utest_reap_qemu() {
+    [ -n "${QEMU_PID:-}" ] || return 0
+    # Already settled: the pid is a RECORD from here on, not a live handle.
+    # This function is called twice on the normal path -- once from
+    # utest_finalize_record, ahead of the marker, and again from the EXIT trap
+    # -- and QEMU_PID deliberately survives the first call because the marker
+    # reports it. Once the child has been `wait`ed, though, the kernel is free
+    # to hand that number to something else, and a second entry that re-derives
+    # liveness from `kill -0` alone would SIGTERM (then SIGKILL, on the timer)
+    # whatever inherited it. `QEMU_STATE` is the fact the second call must read.
+    # Written as an `if` rather than `[ ... ] && return 0`: the latter yields a
+    # non-zero list status on the common path, which is a needless `set -e`
+    # hazard in a function the regressions extract and run under `set -euo`.
+    if [ "${QEMU_STATE:-none}" = "reaped" ]; then
+        return 0
+    fi
+    # Defaulted HERE, not at file scope: under `set -u` an unset grace makes the
+    # watchdog subshell die on its own `sleep`, which disarms the escalation
+    # SILENTLY -- the failure mode is indistinguishable from a VM that exited on
+    # SIGTERM. Keeping it inside also keeps the function self-contained, which
+    # is what lets the regressions extract and exercise it directly.
+    local grace="${UTEST_REAP_GRACE:-5}" watchdog=""
+    # VALIDATED, because an unusable grace is worse than a wrong one: `sleep`
+    # rejects it, the watchdog subshell (which inherits this script's `set -e`)
+    # dies before reaching its escalation, and the parent then blocks in the
+    # unbounded `wait` forever -- the exact hang the timer exists to prevent,
+    # reachable from a single typo'd environment variable. Anything that is not
+    # a positive number falls back to the default rather than disarming the
+    # deadline.
+    # Shape first (digits and at most one dot), then VALUE: `0`, `00`, `.0` and
+    # `0.0` all pass a shape check while meaning "no grace at all", which turns
+    # the graceful SIGTERM into an immediate SIGKILL and costs the VM its
+    # chance to flush the serial sink. The contract is a strictly positive
+    # number, so enforce that and not merely its spelling.
+    case "$grace" in
+        ''|*[!0-9.]*|.|*.*.*)   grace=5 ;;
+        *[1-9]*)                : ;;     # contains a non-zero digit -> positive
+        *)                      grace=5 ;;
+    esac
+    if kill -0 "$QEMU_PID" 2>/dev/null; then
+        # Identity captured SYNCHRONOUSLY, in the parent, BEFORE the SIGTERM.
+        # Read inside the timer instead, it is read after the signal and after
+        # a scheduling gap: a VM that exits promptly can be reaped and its
+        # number reused before that read happens, at which point the recorded
+        # identity describes the SUCCESSOR and the later comparison "matches"
+        # the wrong process. Capturing here means the value provably belongs to
+        # the VM this call was asked to end. An empty read means the process is
+        # already gone, and the timer stands down rather than guessing.
+        local st0
+        st0="$(awk '{sub(/^.*\) /, ""); print $20}' \
+                "/proc/$QEMU_PID/stat" 2>/dev/null)"
+        kill "$QEMU_PID" 2>/dev/null || true
+        # The escalation is ARMED BEFORE the wait, not sequenced after it.
+        # `wait` on a child is UNBOUNDED, and the whole point of the SIGKILL is
+        # the case where SIGTERM is never processed -- a QEMU wedged in device
+        # emulation. Written as "SIGTERM; wait; then SIGKILL" the escalation is
+        # unreachable in exactly that case: the wait never returns, so the run
+        # hangs forever holding the run lock with boot.conf still patched and
+        # the record unfinalised. A background timer makes the SIGKILL a
+        # deadline rather than a follow-up.
+        # `9>&-` for the SAME reason the QEMU launch carries it: this subshell
+        # would otherwise inherit the run-lock descriptor, and killing it
+        # orphans its `sleep`, which keeps that descriptor -- and therefore the
+        # lock -- open for the rest of the grace. Measured: the next run was
+        # refused with "another run of this script holds build/.test-run.lock"
+        # for seconds after the previous one had exited. That is exactly the
+        # inherited-descriptor hazard section 30 closed at the launch, walked
+        # back in through the timer.
+        # `set +e` and `|| true` make the escalation FAIL-SAFE independently of
+        # the validation above: whatever goes wrong with the delay, the SIGKILL
+        # still runs. The subshell inherits `set -e` from the script, so a
+        # non-zero `sleep` would otherwise abandon the kill and strand the
+        # parent in its wait.
+        #
+        # But "a failed delay still escalates" cuts both ways, and cancellation
+        # works by INTERRUPTING that very delay -- so a blanket `sleep || true`
+        # turns every cancellation into an immediate escalation, aimed at a pid
+        # the parent has just `wait`ed and released.
+        #
+        # The delay's exit status is the discriminator, and it is trustworthy
+        # only because `grace` is validated above: a positive number cannot make
+        # `sleep` fail on its argument, so a non-zero status means it was
+        # SIGNALLED, which is precisely cancellation. The deadline therefore
+        # escalates when the delay COMPLETES and stands down when it is cut
+        # short. No cancellation token, no file, no shared path -- there is
+        # nothing for a concurrent run to collide with or for a symlink to
+        # redirect.
+        #
+        # `starttime` is then re-read as the identity proof: ticks-since-boot at
+        # process start is unique to a process, so a recycled number never
+        # matches. It is the same proof qemu-orphan.py requires before it
+        # signals, applied to the one signal path still holding a raw pid. An
+        # unreadable /proc entry means the process is already gone, which is
+        # also a reason not to signal.
+        (
+            set +e
+            [ -n "$st0" ] || exit 0
+            sleep "$grace" || exit 0
+            st1="$(awk '{sub(/^.*\) /, ""); print $20}' \
+                    "/proc/$QEMU_PID/stat" 2>/dev/null)"
+            [ -n "$st1" ] && [ "$st0" = "$st1" ] || exit 0
+            kill -9 "$QEMU_PID" 2>/dev/null
+        ) 9>&- &
+        watchdog=$!
+        # Safe against the normal path too: QEMU is our child and the poll loop
+        # never reaps it, so an exited VM is a ZOMBIE here -- `wait` returns at
+        # once and the timer is cancelled before it ever fires.
+        wait "$QEMU_PID" 2>/dev/null || true
+        # End the `sleep` as well as the subshell around it: ending the parent
+        # alone leaves the sleep running to term as an orphan. Ending the sleep
+        # is ALSO what cancels the deadline -- see the exit-status rule above.
+        for _wdkid in $(cat "/proc/$watchdog/task/$watchdog/children" 2>/dev/null); do
+            kill "$_wdkid" 2>/dev/null || true
+        done
+        kill "$watchdog" 2>/dev/null || true
+        wait "$watchdog" 2>/dev/null || true
+    fi
+    if kill -0 "$QEMU_PID" 2>/dev/null; then
+        QEMU_STATE=unreaped
+        return 0
+    fi
+    QEMU_STATE=reaped
+    if [ -n "${UTEST_QEMU_PIDFILE:-}" ]; then
+        rm -f "$UTEST_QEMU_PIDFILE" 2>/dev/null || true
+    fi
+    return 0
+}
+
 UTEST_FINALIZED=0
 utest_finalize_record() {
     local status="$1"
     [ "${UTEST_FINALIZED:-0}" -eq 0 ] || return 0
     UTEST_FINALIZED=1
+    # Settle the VM before the record describes the run -- see utest_reap_qemu.
+    utest_reap_qemu
     utest_publish_missing_refusals "${UTEST_FINALIZE_WHY:-the run ended before the artifact was assembled}"
     if ! utest_commit_record "$status"; then
         echo -e "  ${RED}[UTEST]${RESET} record not committed -- publishing no aliases; read $RECORD_DIR directly"
@@ -851,17 +1173,15 @@ bash "$PROJECT/scripts/patch-boot-conf.sh" "${PATCH_ARGS[@]}" > /dev/null
 # Install cleanup trap now that boot.conf is patched. Runs on normal exit,
 # SIGINT (Ctrl-C), or SIGTERM, restoring boot.conf and killing any backgrounded
 # QEMU process. Preserves the caller's exit code.
-QEMU_PID=""
 cleanup() {
     local ec="${1:-$?}"
     # Run EXACTLY once. `exit` below re-enters the EXIT trap, and a signal
     # arriving mid-publication would otherwise re-enter from the top -- either
     # way the guard could overwrite a document it had just published.
     trap - EXIT INT TERM
-    if [ -n "${QEMU_PID:-}" ] && kill -0 "$QEMU_PID" 2>/dev/null; then
-        kill "$QEMU_PID" 2>/dev/null || true
-        wait "$QEMU_PID" 2>/dev/null || true
-    fi
+    # One reap implementation, shared with utest_finalize_record: this handler
+    # and the marker must never disagree about whether the VM is gone.
+    utest_reap_qemu
     bash "$PROJECT/scripts/patch-boot-conf.sh" reset > /dev/null 2>&1 || true
     # This handler replaced the Step 0 EXIT trap, so it owns the artifact
     # obligation too: an interrupt or an early exit past this point must still
@@ -884,25 +1204,86 @@ rm -f "$TEST_LOG"
 
 echo -e "${CYAN}[TEST]${RESET} Booting QEMU headless (${ACCEL_NAME}, ${TIMEOUT}s timeout)..."
 
+# Record the pid the moment there is one, in two places for two readers.
+#
+# The run record's copy is durable and pruned with the record; it is also the ONLY
+# copy that survives the SIGKILL which prevents any commit marker from ever being
+# written, which is exactly the case a later investigation needs. The shared
+# pidfile is what the NEXT run reads to name the run that leaked a VM.
+#
+# Neither is authority to send a signal. That is decided by live descriptor
+# ownership in qemu-orphan.py, re-checked immediately before the kill, so a stale
+# copy of either file is inert rather than dangerous -- a pid is a reused name,
+# not an identity.
+utest_record_qemu_pid() {
+    local ident
+    ident="$(python3 "$PROJECT/scripts/qemu-orphan.py" identity --pid "$QEMU_PID" 2>/dev/null || true)"
+    [ -n "$ident" ] || ident="$QEMU_PID - -"
+    printf '%s %s\n' "$ident" "$RUN_ID" > "$RECORD_DIR/qemu.pid" 2>/dev/null || true
+    printf '%s %s\n' "$ident" "$RUN_ID" > "$UTEST_QEMU_PIDFILE" 2>/dev/null || true
+    return 0
+}
+
+# Parent-death reaping is armed in the KERNEL rather than in a trap, because a
+# SIGKILLed wrapper runs no handler at all -- and the VM it leaves behind holds
+# this tree's boot state until the next run notices.
+#
+# The capability is probed HERE, before the launch, so its warning reaches the
+# operator's terminal instead of disappearing into the launch's own 2>/dev/null.
+UTEST_PDEATHSIG=1
+if ! python3 "$PROJECT/scripts/pdeathsig.py" --check --exe "$QEMU_BIN" 2>/dev/null; then
+    UTEST_PDEATHSIG=0
+    echo -e "${YELLOW}[TEST]${RESET} parent-death reaping NOT enforced this run (prctl unavailable, or $QEMU_BIN is set-id / carries file capabilities)."
+    echo -e "${YELLOW}       A SIGKILLed wrapper can leave a live VM; the next run detects and names it.${RESET}"
+fi
+
 # Launch QEMU in background -- kernel continues to desktop after tests,
 # so we poll for the summary line and kill QEMU once we have results.
-"$QEMU_BIN" \
-    $ACCEL_ARGS \
-    -smp "$SMP_CPUS" \
-    -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
-    -drive if=pflash,format=raw,file="$OVMF_VARS_CP" \
-    -drive id=disk0,file="$DISK",format=raw,if=none \
-    -device ich9-ahci,id=ahci0 \
-    -device ide-hd,drive=disk0,bus=ahci0.0 \
-    -m 2G \
-    -serial file:"$TEST_LOG" \
-    -display none \
-    -device rtl8139,netdev=net0 \
-    -netdev user,id=net0 \
-    -device virtio-tablet-pci \
-    -rtc base=localtime \
-    -no-reboot 2>/dev/null 9>&- &
+#
+# An ARRAY for the same reason PATCH_ARGS is one: the argv is built once and
+# launched through one of two shapes, and a space-joined string would re-split
+# and glob every element at each use site. ACCEL_ARGS stays unquoted (it is an
+# internally derived word list, e.g. `-accel kvm -cpu host`), exactly as before.
+QEMU_ARGV=("$QEMU_BIN"
+    $ACCEL_ARGS
+    -smp "$SMP_CPUS"
+    -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE"
+    -drive if=pflash,format=raw,file="$OVMF_VARS_CP"
+    -drive id=disk0,file="$DISK",format=raw,if=none
+    -device ich9-ahci,id=ahci0
+    -device ide-hd,drive=disk0,bus=ahci0.0
+    -m 2G
+    -serial file:"$TEST_LOG"
+    -display none
+    -device rtl8139,netdev=net0
+    -netdev user,id=net0
+    -device virtio-tablet-pci
+    -rtc base=localtime
+    -no-reboot)
+
+# pdeathsig.py EXECS the real QEMU, so the pid `$!` reports is QEMU's own and the
+# reap path, the poll's `kill -0`, and the closed lock descriptor all behave
+# exactly as they did without the wrapper. `--parent $$` is what closes the
+# fork-then-prctl race: the helper refuses to exec at all if the shell that
+# launched it is already gone, which is the one case where exec'ing WOULD create
+# the orphan this is meant to prevent.
+#
+# `--provenance` makes the helper publish the shared pidfile ITSELF, before it
+# execs QEMU. The parent cannot do that in time: it only learns the pid after
+# the fork, so its own write (still made below, as the no-pdeathsig fallback)
+# lands with the VM already running. A wrapper `SIGKILL`ed in that window used
+# to leave a VM this tree genuinely launched but could no longer PROVE it had,
+# which the provenance-gated recovery path must then refuse to reap.
+if [ "$UTEST_PDEATHSIG" -eq 1 ]; then
+    python3 "$PROJECT/scripts/pdeathsig.py" --parent "$$" \
+        --provenance "$UTEST_QEMU_PIDFILE" --run-id "$RUN_ID" \
+        -- "${QEMU_ARGV[@]}" 2>/dev/null 9>&- &
+else
+    "${QEMU_ARGV[@]}" 2>/dev/null 9>&- &
+fi
 QEMU_PID=$!
+QEMU_STATE=running
+utest_record_qemu_pid
 
 # Poll for test summary line or timeout.
 #

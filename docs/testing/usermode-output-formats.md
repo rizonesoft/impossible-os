@@ -546,6 +546,7 @@ trusting any of them:
 
 ```json
 { "schema": "utest-run-record-v1", "run_id": "...", "status": "complete",
+  "qemu_pid": 12345, "qemu_state": "reaped",
   "xml": "test-results.xml", "json": "test-results.json",
   "identity": "test-run-identity.json" }
 ```
@@ -557,6 +558,22 @@ verdict -- a run whose tests failed still leaves a complete record. A format
 the run did not produce is `null` rather than missing. A marker that cannot be
 written fails the run: a green exit over an uncommitted record would be the
 same false-green this lifecycle exists to close.
+
+`qemu_pid` names the VM this run launched (`null` for an exit that never
+reached the launch) and `qemu_state` says what became of it: `none` (never
+launched), `running`, `reaped` (confirmed gone), or `unreaped` (it survived
+both a `SIGTERM` and a `SIGKILL`). The pair is what lets a later invocation
+tell "exited cleanly" from "died with a live VM". `status` alone cannot:
+finalization runs BEFORE the final verdict, so the VM is reaped inside
+finalization -- ahead of the marker -- precisely so `qemu_state` is a fact at
+the time the marker claims it rather than a prediction the cleanup trap has yet
+to fulfil.
+
+The pid is ALSO written to `build/test-runs/<run_id>/qemu.pid` at launch time,
+as `<pid> <starttime> <boot_id> <run_id>`. That copy exists because a `SIGKILL`
+prevents any marker from ever being written, which is exactly the case an
+orphan investigation cares about; see
+[Orphaned-QEMU recovery](#orphaned-qemu-recovery) below.
 
 The two alias kinds mean DIFFERENT things and only one is "current".
 
@@ -925,9 +942,94 @@ could publish `not_run=0` while quietly having skipped a binary.
 
 ---
 
+## Orphaned-QEMU recovery
+
+`scripts/test.sh` reaps its backgrounded QEMU from a cleanup trap. `SIGKILL`
+runs no trap, so a killed wrapper can leave a live VM still holding the shared
+boot state the tree owns -- the patched `boot.conf`, the `build/test.log`
+serial sink, the `build/OVMF_VARS_4M.fd` pflash copy, and
+`build/system-disk.img`. The run lock cannot see that VM: QEMU is launched with
+the lock descriptor closed (`9>&-`), so it holds no lock to contend for.
+
+Three mechanisms close the window, in the order a run meets them.
+
+**1. Parent death reaps the VM, in the kernel.** QEMU is launched through
+[`scripts/pdeathsig.py`](../../scripts/pdeathsig.py), which arms
+`prctl(PR_SET_PDEATHSIG, SIGKILL)` and then `exec`s the real QEMU -- so `$!`
+is still QEMU's own pid and the existing kill/wait path is unchanged. The
+helper takes the expected parent pid and refuses to `exec` at all unless
+`getppid()` matches it BOTH before and after the `prctl`. That is what closes
+the fork-then-prctl race: re-reading `getppid()` after the call alone proves
+nothing, because a parent that died before the FIRST read makes both reads
+agree on the already-reparented value. `test.sh` probes the mechanism with
+`--check` before launching (a set-id target or one carrying file capabilities
+would have PDEATHSIG cleared across the `exec`) and WARNS on the terminal
+rather than silently offering a guarantee it cannot keep.
+
+**2. A live orphan is detected before anything shared is touched.** The check
+runs immediately after the run lock is taken, which is earlier than it looks
+like it needs to be: below that point the script clears the canonical aliases,
+prunes older run records, and REBUILDS `system-disk.img` -- an image the orphan
+holds open as a writable AHCI drive. A refusal at the `boot.conf` patch would
+arrive after the disk had already been rewritten underneath a live VM. A
+refusing run therefore touches no shared name at all, exactly like the
+concurrent-run refusal, and owes no document to anyone.
+
+Ownership is proven by an EXACT open-descriptor match in
+[`scripts/qemu-orphan.py`](../../scripts/qemu-orphan.py), which reads `/proc`
+directly (no `lsof`/`fuser` dependency) and never gates on process name --
+`QEMU_BIN` is caller-supplied and need not contain "qemu". A descriptor whose
+file has been unlinked reads back as `<path> (deleted)`, which is the MAIN case
+rather than an edge case: `test.sh` deletes `build/test.log` before each launch,
+so a previous run's orphan holds precisely a deleted serial sink.
+
+The default on detection is REFUSAL, naming the pid and the path it holds.
+`UTEST_ORPHAN_REAP=1` reaps instead, for an unattended caller where a refusal
+would halt every later gate -- but only a holder whose pid, `starttime` and
+`boot_id` match what `build/.test-qemu.pid` recorded when THIS TREE launched a
+VM. An open descriptor proves a process is using one of our files, not that we
+started it: a `tail -f build/test.log` or a disk-image inspector presents the
+same evidence a leaked VM does, and reaping on that alone would SIGKILL an
+operator's unrelated process unattended. A holder with no recorded provenance is
+named and refused even in reap mode.
+
+Two distinct guarantees are easy to conflate here. Provenance (above) answers
+"is this OUR VM". Identity answers "is this still the SAME process": a pid is a
+reused name, so `qemu-orphan.py reap` pins the target with a pidfd before
+validating anything, re-checks the recorded `starttime` and `boot_id`, and
+re-confirms the process still holds one of this tree's files immediately before
+it signals. Termination is then detected by pidfd readability rather than by
+signal 0, which a zombie still accepts. Failing any check refuses rather than
+signalling on a guess.
+
+**3. The pid is recorded so a later run can attribute one.** See `qemu_pid` /
+`qemu_state` in the [commit marker](#run-identity-and-artifact-paths) above,
+plus `build/test-runs/<run_id>/qemu.pid` written at launch and the shared
+`build/.test-qemu.pid` the next run reads. Neither file is authority to signal;
+they name the run that leaked a VM. A clean run clears the shared pidfile, and
+so does a run that finds nothing holding its files -- a pidfile whose VM is
+already gone is stale by construction.
+
+If the detector itself cannot run, the run REFUSES and prints the detector's own
+error. This is deliberately not the stance taken for a missing `flock`, and the
+difference is what the two silences mean: a missing `flock` is a static property
+of the host guarding a hazard the operator can see, while a detector that ran and
+errored has produced no evidence either way about a hazard that is invisible by
+construction -- an orphan from a `SIGKILL`ed run, holding the `system-disk.img`
+this run is about to rewrite underneath it. Treating "no evidence" as "no orphan"
+is the corruption the guard exists to prevent. `UTEST_ORPHAN_UNCHECKED=1` is the
+separate escape hatch that proceeds anyway, saying loudly that the guarantee is
+absent; it is deliberately not the same switch as `UTEST_ORPHAN_REAP=1`, because
+"reap what you find" and "proceed having found nothing out" are different
+decisions.
+
+---
+
 ## Cross-references
 
 - **Launcher implementation:** [src/kernel/test/test_usermode.c](../../src/kernel/test/test_usermode.c)
+- **Orphan detection / reaping:** [scripts/qemu-orphan.py](../../scripts/qemu-orphan.py) -- `/proc` descriptor ownership, identity-checked reap
+- **Parent-death wrapper:** [scripts/pdeathsig.py](../../scripts/pdeathsig.py) -- `PR_SET_PDEATHSIG` + expected-parent verification
 - **Public API:** [include/kernel/test/test_usermode.h](../../include/kernel/test/test_usermode.h)
 - **Governing TODO:** [TODO-04 -- User-Mode Test Framework](../../todo/00-infrastructure/TODO-04-usermode-test-framework.md)
 - **Sibling environment matrix:** [usermode-env-matrix.md](usermode-env-matrix.md)

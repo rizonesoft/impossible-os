@@ -3747,6 +3747,240 @@ if [ -z "$BOR_OUT6" ] && [ "$BOR_RC6" = "0" ]; then
 else
     t_fail "build_offload_readonly  read-only grep was blocked, rc=$BOR_RC6: $BOR_OUT6"
 fi
+# The checks-runner fixture written above suppresses the gate BEFORE it ever
+# reaches the exemption logic, so every case below it would pass on the stale
+# dispatch alone and assert nothing. Clear it first -- this is what made the
+# original pair of dispatch cases non-discriminating (they returned 0 whether
+# the exemption existed or not).
+printf '{"timestamp_ns": 1, "subagent_type": "none", "by_type": {}}' > "$BOR_DISP"
+# A Codex REVIEW DISPATCH must name the files it reviews, so an adversarial
+# review of scripts/test.sh necessarily contains that string -- and the gate
+# matched it as an invocation and BLOCKED the mandatory review (observed
+# 2026-07-30 reviewing orphaned-QEMU recovery, whose whole diff is in that
+# script). A dispatch runs no suite: it execs the companion with ONE argument.
+BOR_OUT7="$(printf '%s' '{"tool_name":"Bash","tool_input":{"command":"bash scripts/overnight/review-broker-codex-dispatch.sh '"'"'[review-kind: adversarial] t.md review the scripts/test.sh diff'"'"'"}}' | \
+    python3 "$BOR_HOOK" 2>&1)"; BOR_RC7=$?
+if [ -z "$BOR_OUT7" ] && [ "$BOR_RC7" = "0" ]; then
+    t_pass "build_offload_dispatch  a Codex dispatch naming a suite script is not an invocation"
+else
+    t_fail "build_offload_dispatch  a review dispatch was blocked, rc=$BOR_RC7: $BOR_OUT7"
+fi
+# ...and the exemption must not become a bypass: a bare suite run still BLOCKs
+# even when the word "codex" appears somewhere in the command line.
+BOR_OUT8="$(printf '%s' '{"tool_name":"Bash","tool_input":{"command":"bash scripts/test.sh QUIET=1 # for codex"}}' | \
+    python3 "$BOR_HOOK" 2>&1)"; BOR_RC8=$?
+if echo "$BOR_OUT8" | grep -q "build-offload" && [ "$BOR_RC8" = "2" ]; then
+    t_pass "build_offload_dispatch  the dispatch exemption is not a bypass for a bare run"
+else
+    t_fail "build_offload_dispatch  a bare run escaped via the word codex, rc=$BOR_RC8: $BOR_OUT8"
+fi
+# CHAINED bypass, BOTH orders. The exemption used to be granted on a
+# whole-command answer, and `is_codex_dispatch` is true when ANY segment is a
+# dispatch -- so a real dispatch chained to a real bare suite run excused both.
+# Per-segment classification must block the suite segment and spare the
+# dispatch segment, whichever comes first.
+BOR_OUT9="$(printf '%s' '{"tool_name":"Bash","tool_input":{"command":"bash scripts/codex-dispatch.sh '"'"'[review-kind: adversarial] t.md body'"'"' && bash scripts/test.sh QUIET=1"}}' | \
+    python3 "$BOR_HOOK" 2>&1)"; BOR_RC9=$?
+if echo "$BOR_OUT9" | grep -q "build-offload" && [ "$BOR_RC9" = "2" ]; then
+    t_pass "build_offload_dispatch  a suite run CHAINED after a dispatch still BLOCKs"
+else
+    t_fail "build_offload_dispatch  chained dispatch-then-suite escaped, rc=$BOR_RC9: $BOR_OUT9"
+fi
+BOR_OUT10="$(printf '%s' '{"tool_name":"Bash","tool_input":{"command":"bash scripts/test.sh QUIET=1 && bash scripts/codex-dispatch.sh '"'"'[review-kind: adversarial] t.md body'"'"'"}}' | \
+    python3 "$BOR_HOOK" 2>&1)"; BOR_RC10=$?
+if echo "$BOR_OUT10" | grep -q "build-offload" && [ "$BOR_RC10" = "2" ]; then
+    t_pass "build_offload_dispatch  a suite run CHAINED before a dispatch still BLOCKs"
+else
+    t_fail "build_offload_dispatch  chained suite-then-dispatch escaped, rc=$BOR_RC10: $BOR_OUT10"
+fi
+# NESTED shell shapes. Classifying segments by re-joining tokens (`shlex.join`)
+# is lossy in exactly the way these regexes care about: `(bash scripts/test.sh)`
+# rejoins as `'(bash' scripts/test.sh`, which puts a quote between the
+# interpreter and its argument AND moves the script off a command position, so
+# both detectors go blind. Verified escaping before the classifier was changed
+# to raw source slices -- a real bare suite run in the overnight context.
+for BOR_SHAPE in \
+    '(bash scripts/test.sh QUIET=1)' \
+    'OUT=$(bash scripts/test.sh QUIET=1)' \
+    '`bash scripts/test.sh QUIET=1`' \
+    'bash scripts/codex-dispatch.sh '"'"'[review-kind: adversarial] t.md body'"'"' && (bash scripts/test.sh QUIET=1)' \
+    'bash scripts/codex-dispatch.sh '"'"'[review-kind: adversarial] t.md body'"'"' && OUT=$(bash scripts/test.sh QUIET=1)'
+do
+    BOR_JSON="$(BOR_SHAPE="$BOR_SHAPE" python3 -c 'import json,os; print(json.dumps({"tool_name":"Bash","tool_input":{"command":os.environ["BOR_SHAPE"]}}))')"
+    BOR_OUTN="$(printf '%s' "$BOR_JSON" | python3 "$BOR_HOOK" 2>&1)"; BOR_RCN=$?
+    if echo "$BOR_OUTN" | grep -q "build-offload" && [ "$BOR_RCN" = "2" ]; then
+        t_pass "build_offload_nested  BLOCKs a bare suite run in: $BOR_SHAPE"
+    else
+        t_fail "build_offload_nested  a nested bare run escaped: $BOR_SHAPE" \
+            "rc=$BOR_RCN: $BOR_OUTN"
+    fi
+done
+
+# An EXECUTABLE command substitution inside an exempt fragment still runs. A
+# dispatch is one fragment, but `codex-dispatch.sh "$(bash scripts/test.sh)"`
+# runs the suite while the fragment as a whole reads as a Codex dispatch, so
+# exempting the fragment excused it. Substitutions are therefore lifted out and
+# judged on their own -- inside double quotes too, where they still execute.
+for BOR_SHAPE in \
+    'bash scripts/codex-dispatch.sh "$(bash scripts/test.sh QUIET=1)"' \
+    'bash scripts/codex-dispatch.sh "`bash scripts/test.sh QUIET=1`"' \
+    'bash scripts/overnight/run-artifact.sh lbl -- bash scripts/build.sh "$(bash scripts/test.sh)"'
+do
+    BOR_JSON="$(BOR_SHAPE="$BOR_SHAPE" python3 -c 'import json,os; print(json.dumps({"tool_name":"Bash","tool_input":{"command":os.environ["BOR_SHAPE"]}}))')"
+    BOR_OUTN="$(printf '%s' "$BOR_JSON" | python3 "$BOR_HOOK" 2>&1)"; BOR_RCN=$?
+    if echo "$BOR_OUTN" | grep -q "build-offload" && [ "$BOR_RCN" = "2" ]; then
+        t_pass "build_offload_subst  BLOCKs an executing substitution inside an exempt fragment"
+    else
+        t_fail "build_offload_subst  a substitution escaped inside an exempt fragment: $BOR_SHAPE" \
+            "rc=$BOR_RCN: $BOR_OUTN"
+    fi
+done
+# VALID shell that the parser must not choke on: a backtick substitution whose
+# body contains `)` inside an outer `$( )`. Scanning those parens as the outer
+# delimiters closed the substitution early, desynchronised the walk, and made
+# the split return nothing -- at which point the whole-command fallback
+# EXEMPTED a command carrying both a dispatch and a bare suite run. Verified
+# escaping. Two independent fixes are asserted here: the parser handles it, and
+# an unsplittable command fails CLOSED rather than inheriting an exemption.
+BOR_SHAPE='bash scripts/codex-dispatch.sh "$(echo `echo )`; bash scripts/test.sh QUIET=1)"'
+BOR_JSON="$(BOR_SHAPE="$BOR_SHAPE" python3 -c 'import json,os; print(json.dumps({"tool_name":"Bash","tool_input":{"command":os.environ["BOR_SHAPE"]}}))')"
+BOR_OUTN="$(printf '%s' "$BOR_JSON" | python3 "$BOR_HOOK" 2>&1)"; BOR_RCN=$?
+if echo "$BOR_OUTN" | grep -q "build-offload" && [ "$BOR_RCN" = "2" ]; then
+    t_pass "build_offload_subst  a backtick-in-substitution shape cannot restore the exemption"
+else
+    t_fail "build_offload_subst  the nested-backtick bypass is open again" \
+        "rc=$BOR_RCN: $BOR_OUTN"
+fi
+# ...and the fail-closed fallback itself: an UNSPLITTABLE command that names a
+# suite must BLOCK even when it also carries a real dispatch. A false block
+# costs a rephrase; a false allow runs the suite with nothing reporting it.
+BOR_SHAPE="bash scripts/codex-dispatch.sh 'unbalanced && bash scripts/test.sh QUIET=1"
+BOR_JSON="$(BOR_SHAPE="$BOR_SHAPE" python3 -c 'import json,os; print(json.dumps({"tool_name":"Bash","tool_input":{"command":os.environ["BOR_SHAPE"]}}))')"
+BOR_OUTN="$(printf '%s' "$BOR_JSON" | python3 "$BOR_HOOK" 2>&1)"; BOR_RCN=$?
+if echo "$BOR_OUTN" | grep -q "build-offload" && [ "$BOR_RCN" = "2" ]; then
+    t_pass "build_offload_subst  an unsplittable command naming a suite fails CLOSED"
+else
+    t_fail "build_offload_subst  an unsplittable command was exempted (fail-open)" \
+        "rc=$BOR_RCN: $BOR_OUTN"
+fi
+# PROCESS substitutions run their body concurrently and are an ARGUMENT to the
+# surrounding command, so an exempt outer segment used to carry them along --
+# `codex-dispatch.sh <(bash scripts/test.sh)` is one dispatch fragment that also
+# runs the suite. Both forms, and inside the wrapped route too.
+for BOR_SHAPE in \
+    'bash scripts/codex-dispatch.sh <(bash scripts/test.sh QUIET=1)' \
+    'bash scripts/codex-dispatch.sh >(bash scripts/test.sh QUIET=1)' \
+    'bash scripts/overnight/run-artifact.sh lbl -- bash scripts/build.sh <(bash scripts/test.sh)'
+do
+    BOR_JSON="$(BOR_SHAPE="$BOR_SHAPE" python3 -c 'import json,os; print(json.dumps({"tool_name":"Bash","tool_input":{"command":os.environ["BOR_SHAPE"]}}))')"
+    BOR_OUTN="$(printf '%s' "$BOR_JSON" | python3 "$BOR_HOOK" 2>&1)"; BOR_RCN=$?
+    if echo "$BOR_OUTN" | grep -q "build-offload" && [ "$BOR_RCN" = "2" ]; then
+        t_pass "build_offload_subst  BLOCKs a suite inside a process substitution"
+    else
+        t_fail "build_offload_subst  a process substitution escaped: $BOR_SHAPE" \
+            "rc=$BOR_RCN: $BOR_OUTN"
+    fi
+done
+# The wrapper exemption must come from an INVOCATION, not a mention. A bare
+# substring test excused any segment containing the name, so an assignment that
+# merely quoted it laundered a bare suite run sitting right beside it.
+BOR_SHAPE='NOTE=run-artifact.sh bash scripts/test.sh QUIET=1'
+BOR_JSON="$(BOR_SHAPE="$BOR_SHAPE" python3 -c 'import json,os; print(json.dumps({"tool_name":"Bash","tool_input":{"command":os.environ["BOR_SHAPE"]}}))')"
+BOR_OUTN="$(printf '%s' "$BOR_JSON" | python3 "$BOR_HOOK" 2>&1)"; BOR_RCN=$?
+if echo "$BOR_OUTN" | grep -q "build-offload" && [ "$BOR_RCN" = "2" ]; then
+    t_pass "build_offload_subst  a run-artifact.sh MENTION does not exempt a bare run"
+else
+    t_fail "build_offload_subst  a run-artifact.sh mention laundered a bare run" \
+        "rc=$BOR_RCN: $BOR_OUTN"
+fi
+# Shell grammar the raw splitter does NOT model must FAIL CLOSED, not produce a
+# confident wrong split. A comment can carry a `<<WORD` that is not a heredoc, a
+# `$(( ))` uses `<<` as a left shift, and a `case` pattern ends in `)` with no
+# opening paren -- each was shown to desynchronise the scan and hide a bare
+# suite inside a fragment that was then exempted. Refusing to answer beats
+# answering wrongly; a real shell grammar is tracked separately.
+for BOR_SHAPE in \
+    "bash -c 'bash scripts/test.sh QUIET=1' bash scripts/overnight/run-artifact.sh lbl -- true" \
+    '# example uses <<EOF
+bash scripts/test.sh QUIET=1' \
+    'x=$((1 << 2))
+bash scripts/test.sh QUIET=1' \
+    'bash scripts/overnight/run-artifact.sh lbl -- true >(case x in x) bash scripts/test.sh QUIET=1;; esac)'
+do
+    BOR_JSON="$(BOR_SHAPE="$BOR_SHAPE" python3 -c 'import json,os; print(json.dumps({"tool_name":"Bash","tool_input":{"command":os.environ["BOR_SHAPE"]}}))')"
+    BOR_OUTN="$(printf '%s' "$BOR_JSON" | python3 "$BOR_HOOK" 2>&1)"; BOR_RCN=$?
+    if echo "$BOR_OUTN" | grep -q "build-offload" && [ "$BOR_RCN" = "2" ]; then
+        t_pass "build_offload_grammar  unmodelled shell grammar fails CLOSED"
+    else
+        t_fail "build_offload_grammar  an unmodelled-grammar shape escaped: $BOR_SHAPE" \
+            "rc=$BOR_RCN: $BOR_OUTN"
+    fi
+done
+# ...and the documented route must survive a readability line-break, which the
+# unnormalised match rejected because the `--` landed on the next line.
+BOR_SHAPE='bash scripts/overnight/run-artifact.sh lbl \
+  -- bash scripts/build.sh'
+BOR_JSON="$(BOR_SHAPE="$BOR_SHAPE" python3 -c 'import json,os; print(json.dumps({"tool_name":"Bash","tool_input":{"command":os.environ["BOR_SHAPE"]}}))')"
+BOR_OUTN="$(printf '%s' "$BOR_JSON" | python3 "$BOR_HOOK" 2>&1)"; BOR_RCN=$?
+if [ -z "$BOR_OUTN" ] && [ "$BOR_RCN" = "0" ]; then
+    t_pass "build_offload_grammar  a line-continued wrapped route is still the sanctioned route"
+else
+    t_fail "build_offload_grammar  a line-continued wrapped route was blocked" \
+        "rc=$BOR_RCN: $BOR_OUTN"
+fi
+# ...and the converse false positive: a suite script NAMED in a prompt is data.
+# Inside SINGLE quotes a `$(...)` is literal, and a heredoc BODY is data too --
+# the canonical apostrophe-safe dispatch shape puts the whole review prompt in
+# one, so a prompt line reading `bash scripts/test.sh fails because ...` must
+# not be split out and blocked as an invocation.
+BOR_HD="$(printf '%s' 'P=$(cat <<'"'"'X'"'"'
+bash scripts/test.sh QUIET=1 fails on this diff
+X
+)
+bash scripts/codex-dispatch.sh "$P"')"
+# A delimiter is a shell WORD, not an identifier: `<<'REVIEW-PROMPT'` is valid
+# and an identifier-only pattern missed it, leaving the prompt body to be
+# scanned as commands.
+BOR_HD2="$(printf '%s' 'P=$(cat <<'"'"'REVIEW-PROMPT'"'"'
+bash scripts/test.sh QUIET=1 fails on this diff
+REVIEW-PROMPT
+)
+bash scripts/codex-dispatch.sh "$P"')"
+for BOR_SHAPE in \
+    'bash scripts/codex-dispatch.sh '"'"'[review-kind: adversarial] t.md $(bash scripts/test.sh) is named here'"'"'' \
+    'bash scripts/codex-dispatch.sh '"'"'[review-kind: adversarial] t.md the prompt uses <<EOF and names bash scripts/test.sh here'"'"'' \
+    'bash scripts/codex-dispatch.sh <<< "review bash scripts/test.sh"' \
+    'bash scripts/codex-dispatch.sh '"'"'[review-kind: adversarial] t.md see #3, bash scripts/test.sh'"'"'' \
+    "$BOR_HD" \
+    "$BOR_HD2"
+do
+    BOR_JSON="$(BOR_SHAPE="$BOR_SHAPE" python3 -c 'import json,os; print(json.dumps({"tool_name":"Bash","tool_input":{"command":os.environ["BOR_SHAPE"]}}))')"
+    BOR_OUTN="$(printf '%s' "$BOR_JSON" | python3 "$BOR_HOOK" 2>&1)"; BOR_RCN=$?
+    if [ -z "$BOR_OUTN" ] && [ "$BOR_RCN" = "0" ]; then
+        t_pass "build_offload_subst  a suite script named as DATA in a prompt still dispatches"
+    else
+        t_fail "build_offload_subst  a prompt naming a suite script was blocked" \
+            "rc=$BOR_RCN: $BOR_OUTN"
+    fi
+done
+
+# The same hole existed in the run-artifact.sh exemption: the sanctioned
+# wrapped route must stay silent, but a bare run chained onto it must not
+# inherit its exemption.
+BOR_OUT11="$(printf '%s' '{"tool_name":"Bash","tool_input":{"command":"bash scripts/overnight/run-artifact.sh lbl -- bash scripts/build.sh"}}' | \
+    python3 "$BOR_HOOK" 2>&1)"; BOR_RC11=$?
+if [ -z "$BOR_OUT11" ] && [ "$BOR_RC11" = "0" ]; then
+    t_pass "build_offload_dispatch  the sanctioned run-artifact.sh route stays exempt"
+else
+    t_fail "build_offload_dispatch  the wrapped route was blocked, rc=$BOR_RC11: $BOR_OUT11"
+fi
+BOR_OUT12="$(printf '%s' '{"tool_name":"Bash","tool_input":{"command":"bash scripts/overnight/run-artifact.sh lbl -- bash scripts/build.sh && bash scripts/test.sh QUIET=1"}}' | \
+    python3 "$BOR_HOOK" 2>&1)"; BOR_RC12=$?
+if echo "$BOR_OUT12" | grep -q "build-offload" && [ "$BOR_RC12" = "2" ]; then
+    t_pass "build_offload_dispatch  a bare run CHAINED after the wrapped route still BLOCKs"
+else
+    t_fail "build_offload_dispatch  chained wrapper-then-bare escaped, rc=$BOR_RC12: $BOR_OUT12"
+fi
 unset OVERNIGHT_SEQUENCER_RUN
 rm -f "$BOR_SEQ" "$BOR_DISP"
 [ -n "$BOR_SEQ_BAK" ] && printf '%s' "$BOR_SEQ_BAK" > "$BOR_SEQ"
@@ -10161,7 +10395,7 @@ fi
 UAR_FNS=""
 for _fn in utest_xml_identity_attrs utest_json_identity utest_xml_identity_props \
            utest_publish utest_alias_record utest_publish_leg_set \
-           utest_commit_record \
+           utest_commit_record utest_reap_qemu \
            utest_publish_missing_refusals utest_finalize_record \
            utest_xml_refusal_doc utest_publish_xml_refusal; do
     _body="$(sed -n "/^${_fn}() {/,/^}/p" "$REPO_ROOT/scripts/test.sh")"
@@ -10989,6 +11223,961 @@ if grep -qF '^[a-z0-9][a-z0-9-]{0,31}$' "$LEGSH" &&
 else
     t_fail "identity: the documented leg grammar matches the one the runner enforces"
 fi
+
+# ============================================================================
+# Orphaned-QEMU recovery (see docs/testing/usermode-output-formats.md)
+# ============================================================================
+#
+# The hazard: `SIGKILL` of the test.sh wrapper bypasses its cleanup trap, so a
+# live VM keeps holding this tree's boot state -- and the NEXT run patches
+# boot.conf, truncates the serial log and REBUILDS system-disk.img underneath it.
+# Every assertion below is about a real process holding a real descriptor, not a
+# rendering: a mock would prove the message renders while saying nothing about
+# whether ownership is actually detected, whether a recycled pid is refused, or
+# whether the kernel really reaps the child when its parent is killed.
+
+QO_TMP="$FRAME_TMP/qemu-orphan"
+rm -rf "$QO_TMP"; mkdir -p "$QO_TMP"
+QO_HELD="$QO_TMP/held.img"
+: > "$QO_HELD"
+
+# A stand-in for the orphan: any process holding one of the owned paths open is
+# the finding, which is the whole point of not gating the scan on process name
+# (QEMU_BIN is caller-supplied and need not contain "qemu").
+sleep 45 < "$QO_HELD" &
+QO_HOLDER=$!
+sleep 0.3
+
+QO_OUT="$(python3 "$REPO_ROOT/scripts/qemu-orphan.py" detect --path "$QO_HELD" 2>&1)"
+QO_RC=$?
+if [ "$QO_RC" = "3" ] && printf '%s' "$QO_OUT" | grep -q "^${QO_HOLDER}	"; then
+    t_pass "qemu-orphan: a live descriptor holder is detected and named (exit 3)"
+else
+    t_fail "qemu-orphan: a live descriptor holder is detected and named (exit 3)" \
+        "rc=$QO_RC out=$QO_OUT (expected pid $QO_HOLDER)"
+fi
+
+# The clean path must be exit 0, or every normal run would refuse.
+python3 "$REPO_ROOT/scripts/qemu-orphan.py" detect --path "$QO_TMP/never-existed" >/dev/null 2>&1
+if [ "$?" = "0" ]; then
+    t_pass "qemu-orphan: an unheld path is not a finding (exit 0)"
+else
+    t_fail "qemu-orphan: an unheld path is not a finding (exit 0)"
+fi
+
+# THE main case, not an edge case: test.sh does `rm -f build/test.log` before each
+# launch, so an orphan from the previous run holds a DELETED inode. /proc renders
+# that as "<path> (deleted)"; without stripping the suffix the orphan is invisible.
+rm -f "$QO_HELD"
+python3 "$REPO_ROOT/scripts/qemu-orphan.py" detect --path "$QO_HELD" >/dev/null 2>&1
+if [ "$?" = "3" ]; then
+    t_pass "qemu-orphan: a holder of a DELETED owned path is still detected"
+else
+    t_fail "qemu-orphan: a holder of a DELETED owned path is still detected" \
+        "the ' (deleted)' suffix is not being stripped"
+fi
+: > "$QO_HELD"
+
+# A pid is a reused name, not an identity. Reap must refuse on a starttime that
+# does not match what was recorded -- otherwise UTEST_ORPHAN_REAP=1 could SIGKILL
+# an unrelated process that inherited the number.
+QO_OUT="$(python3 "$REPO_ROOT/scripts/qemu-orphan.py" reap --pid "$QO_HOLDER" \
+             --path "$QO_HELD" --expect-starttime 999999999 2>&1)"
+if [ "$?" = "4" ] && printf '%s' "$QO_OUT" | grep -q "pid reused"; then
+    t_pass "qemu-orphan: reap REFUSES a pid whose starttime does not match (exit 4)"
+else
+    t_fail "qemu-orphan: reap REFUSES a pid whose starttime does not match (exit 4)" \
+        "$QO_OUT"
+fi
+
+# Same refusal for a boot_id from a previous boot: `build/` survives a reboot, so
+# a recorded starttime is meaningless without the boot it was measured in.
+QO_OUT="$(python3 "$REPO_ROOT/scripts/qemu-orphan.py" reap --pid "$QO_HOLDER" \
+             --path "$QO_HELD" --expect-boot-id "00000000-0000-0000-0000-000000000000" 2>&1)"
+if [ "$?" = "4" ] && printf '%s' "$QO_OUT" | grep -q "previous boot"; then
+    t_pass "qemu-orphan: reap REFUSES a boot_id from a previous boot (exit 4)"
+else
+    t_fail "qemu-orphan: reap REFUSES a boot_id from a previous boot (exit 4)" "$QO_OUT"
+fi
+
+# And it must refuse a pid that no longer holds anything of ours, even when the
+# recorded identity matches: ownership is what authorises the signal.
+QO_IDENT="$(python3 "$REPO_ROOT/scripts/qemu-orphan.py" identity --pid "$QO_HOLDER" 2>/dev/null)"
+QO_START="$(printf '%s' "$QO_IDENT" | awk '{print $2}')"
+QO_OUT="$(python3 "$REPO_ROOT/scripts/qemu-orphan.py" reap --pid "$QO_HOLDER" \
+             --path "$QO_TMP/never-existed" --expect-starttime "$QO_START" 2>&1)"
+if [ "$?" = "4" ] && printf '%s' "$QO_OUT" | grep -q "no longer holds"; then
+    t_pass "qemu-orphan: reap REFUSES a pid that holds none of this tree's files"
+else
+    t_fail "qemu-orphan: reap REFUSES a pid that holds none of this tree's files" "$QO_OUT"
+fi
+
+# The authorised path: identity matches AND it still holds an owned file.
+python3 "$REPO_ROOT/scripts/qemu-orphan.py" reap --pid "$QO_HOLDER" \
+    --path "$QO_HELD" --expect-starttime "$QO_START" --timeout 5 >/dev/null 2>&1
+QO_RC=$?
+wait "$QO_HOLDER" 2>/dev/null
+if [ "$QO_RC" = "0" ] && ! kill -0 "$QO_HOLDER" 2>/dev/null; then
+    t_pass "qemu-orphan: reap kills an identity-verified holder and confirms it gone"
+else
+    t_fail "qemu-orphan: reap kills an identity-verified holder and confirms it gone" \
+        "rc=$QO_RC, pid $QO_HOLDER still alive"
+fi
+
+# The signal must go through a PINNED identity, not a raw pid. The reap
+# validates `starttime` and then walks all of /proc before signalling, so
+# "target exits, pid is reused, signal lands on the successor" is a window
+# measured in the length of a full scan. A pidfd refers to the PROCESS, so the
+# send either reaches the process it was opened for or fails with ESRCH.
+QO_PIN="$(python3 - <<'PY'
+import os, signal
+print("yes" if hasattr(os, "pidfd_open") and hasattr(signal, "pidfd_send_signal") else "no")
+PY
+)"
+if [ "$QO_PIN" = "yes" ]; then
+    if grep -q "pidfd_send_signal" "$REPO_ROOT/scripts/qemu-orphan.py" \
+       && grep -q "pidfd_open" "$REPO_ROOT/scripts/qemu-orphan.py"; then
+        t_pass "qemu-orphan: the reap signals through a pinned pidfd, not a bare pid"
+    else
+        t_fail "qemu-orphan: the reap signals through a pinned pidfd, not a bare pid" \
+            "no pidfd_open/pidfd_send_signal in qemu-orphan.py"
+    fi
+else
+    t_pass "qemu-orphan: pidfd pinning (SKIP: no pidfd support on this host)"
+fi
+# Termination must be detected by pidfd READABILITY, not by signal 0. The two
+# differ exactly on a zombie: it has released every descriptor it held and is a
+# hazard to nothing, but signal 0 keeps succeeding until its parent reaps it, so
+# a lazily-reaping PID 1 would burn the whole timeout and report exit 5 for a VM
+# that is already dead.
+if [ "$QO_PIN" = "yes" ]; then
+    QO_ZOMB="$(python3 - <<'PY' 2>&1
+import os, select, signal, subprocess, sys, time
+# A child we deliberately never reap: it is a zombie the moment it exits.
+p = subprocess.Popen(["sleep", "0"])
+time.sleep(0.4)
+fd = os.pidfd_open(p.pid, 0)
+sig0 = "alive"
+try:
+    signal.pidfd_send_signal(fd, 0)
+except ProcessLookupError:
+    sig0 = "gone"
+except OSError:
+    sig0 = "gone"
+ready, _, _ = select.select([fd], [], [], 1.0)
+print("sig0=%s readable=%s" % (sig0, "yes" if ready else "no"))
+os.close(fd)
+PY
+)"
+    if printf '%s' "$QO_ZOMB" | grep -q "readable=yes"; then
+        t_pass "qemu-orphan: a pidfd is readable for a terminated-but-unreaped process"
+    else
+        t_fail "qemu-orphan: a pidfd is readable for a terminated-but-unreaped process" "$QO_ZOMB"
+    fi
+    if grep -q "select.select(\[pidfd\]" "$REPO_ROOT/scripts/qemu-orphan.py"; then
+        t_pass "qemu-orphan: the post-kill wait polls the pidfd, not signal 0"
+    else
+        t_fail "qemu-orphan: the post-kill wait polls the pidfd, not signal 0" \
+            "no select on the pidfd in cmd_reap"
+    fi
+else
+    t_pass "qemu-orphan: pidfd exit polling (SKIP: no pidfd support on this host)"
+    t_pass "qemu-orphan: pidfd readability (SKIP: no pidfd support on this host)"
+fi
+
+# The DEGRADED path (no pidfd -- an older host) must still work end to end, and
+# must still refuse a mismatched identity rather than signal on a guess.
+sleep 60 <"$QO_HELD" &
+QO_HOLDER2=$!
+sleep 0.3
+QO_START2="$(python3 "$REPO_ROOT/scripts/qemu-orphan.py" identity --pid "$QO_HOLDER2" 2>/dev/null | awk '{print $2}')"
+QO_OUT="$(QEMU_ORPHAN_NO_PIDFD=1 python3 "$REPO_ROOT/scripts/qemu-orphan.py" reap \
+    --pid "$QO_HOLDER2" --path "$QO_HELD" --expect-starttime 99 2>&1)"; QO_RC=$?
+if [ "$QO_RC" = "4" ] && kill -0 "$QO_HOLDER2" 2>/dev/null; then
+    t_pass "qemu-orphan: without pidfd, a mismatched starttime still REFUSES (exit 4)"
+else
+    t_fail "qemu-orphan: without pidfd, a mismatched starttime still REFUSES (exit 4)" \
+        "rc=$QO_RC: $QO_OUT"
+fi
+QEMU_ORPHAN_NO_PIDFD=1 python3 "$REPO_ROOT/scripts/qemu-orphan.py" reap \
+    --pid "$QO_HOLDER2" --path "$QO_HELD" --expect-starttime "$QO_START2" \
+    --timeout 5 >/dev/null 2>&1
+QO_RC=$?
+wait "$QO_HOLDER2" 2>/dev/null
+if [ "$QO_RC" = "0" ] && ! kill -0 "$QO_HOLDER2" 2>/dev/null; then
+    t_pass "qemu-orphan: the no-pidfd fallback still reaps a verified holder"
+else
+    t_fail "qemu-orphan: the no-pidfd fallback still reaps a verified holder" \
+        "rc=$QO_RC, pid $QO_HOLDER2 still alive"
+fi
+
+# utest_reap_qemu must ESCALATE on a deadline, not after an unbounded `wait`.
+# A QEMU wedged in device emulation never processes SIGTERM, and the original
+# "SIGTERM; wait; then SIGKILL" ordering could never reach its own SIGKILL --
+# the run hung forever holding the lock with boot.conf still patched. The child
+# below ignores SIGTERM, so only a real deadline gets past it.
+# SYNCHRONISED, and the synchronisation is the whole test. Launched without
+# it, the child has not installed its trap yet when the SIGTERM arrives, so it
+# dies to the SIGTERM and the assertion passes whether or not any deadline
+# exists -- the same non-discriminating shape this suite has been bitten by
+# before. The child signals readiness through a file; only then do we reap.
+QO_TERMPROOF="$QO_TMP/termproof.sh"
+QO_READY="$QO_TMP/termproof.ready"
+rm -f "$QO_READY"   # every case below re-clears it before its own launch
+cat > "$QO_TERMPROOF" <<'TERMPROOF'
+#!/usr/bin/env bash
+trap '' TERM
+: > "$1"
+while :; do sleep 1; done
+TERMPROOF
+chmod +x "$QO_TERMPROOF"
+QO_REAP_OUT="$(cd "$REPO_ROOT" && timeout 40 bash -c '
+    set -u
+    QEMU_PID=""
+    QEMU_STATE=none
+    UTEST_QEMU_PIDFILE=""
+    eval "$(sed -n "/^utest_reap_qemu() {/,/^}/p" scripts/test.sh)"
+    UTEST_REAP_GRACE=2
+    "'"$QO_TERMPROOF"'" "'"$QO_READY"'" >/dev/null 2>&1 &
+    QEMU_PID=$!
+    for _ in $(seq 1 100); do [ -f "'"$QO_READY"'" ] && break; sleep 0.1; done
+    start=$SECONDS
+    utest_reap_qemu
+    echo "state=$QEMU_STATE elapsed=$((SECONDS - start))"
+' 2>&1)"; QO_REAP_RC=$?
+QO_REAP_ELAPSED="$(printf '%s' "$QO_REAP_OUT" | sed -n 's/.*elapsed=\([0-9]*\).*/\1/p')"
+# The deadline must be REACHED (elapsed >= grace: SIGTERM really was ignored)
+# and BOUNDED (well under the timeout: the escalation really fired).
+if [ "$QO_REAP_RC" = "0" ] && [ -f "$QO_READY" ] \
+   && printf '%s' "$QO_REAP_OUT" | grep -q "state=reaped" \
+   && [ -n "$QO_REAP_ELAPSED" ] && [ "$QO_REAP_ELAPSED" -ge 2 ] \
+   && [ "$QO_REAP_ELAPSED" -lt 15 ]; then
+    t_pass "test.sh: utest_reap_qemu force-ends a SIGTERM-resistant VM on a deadline"
+else
+    t_fail "test.sh: utest_reap_qemu force-ends a SIGTERM-resistant VM on a deadline" \
+        "rc=$QO_REAP_RC elapsed=$QO_REAP_ELAPSED: $QO_REAP_OUT"
+fi
+# A malformed or negative grace must not DISARM the deadline. The watchdog
+# inherits the script's `set -e`, so a `sleep` that rejects its argument exits
+# the subshell before the escalation runs and the parent then blocks in the
+# unbounded wait forever -- a hang reachable from one typo'd env var.
+# Cancelling the timer must not ADVANCE it into the escalation. Cancellation
+# works by interrupting the delay, so a blanket `sleep || true` would run the
+# SIGKILL against a pid the parent had just waited and released.
+#
+# OBSERVED AT THE SIGNAL, not inferred from a survivor. An earlier version of
+# this test watched an unrelated "bystander" process and asserted it was still
+# alive -- which proves nothing, because a broken watchdog signals the RELEASED
+# QEMU_PID, and that number is almost never the bystander's. Overriding `kill`
+# with a recording shell function makes the actual signal observable: the
+# subshell is a fork of this shell, so it inherits the override.
+QO_CANCEL_LOG="$QO_TMP/cancel-signals.log"
+: > "$QO_CANCEL_LOG"
+QO_CANCEL_OUT="$(cd "$REPO_ROOT" && timeout 30 bash -c '
+    set -euo pipefail
+    QO_LOG="'"$QO_CANCEL_LOG"'"
+    kill() { printf "%s\n" "$*" >> "$QO_LOG"; builtin kill "$@"; }
+    QEMU_PID=""; QEMU_STATE=none; UTEST_QEMU_PIDFILE=""
+    '"$(sed -n '/^utest_reap_qemu() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")"'
+    UTEST_REAP_GRACE=1
+    # A VM that exits promptly: the wait returns and the timer is cancelled by
+    # interrupting its sleep -- the exact moment the escalation must NOT fire.
+    sleep 0.2 &
+    QEMU_PID=$!
+    utest_reap_qemu
+    sleep 2      # give a wrongly-advanced escalation time to be recorded
+    echo "state=$QEMU_STATE qemu_pid=$QEMU_PID"
+' 2>&1)"
+QO_CANCEL_PID="$(printf '%s' "$QO_CANCEL_OUT" | sed -n 's/.*qemu_pid=\([0-9]*\).*/\1/p')"
+# The assertion: no `-9 <QEMU_PID>` was ever sent. The graceful SIGTERM to that
+# pid is expected and fine; the escalation is what must be absent.
+if [ -n "$QO_CANCEL_PID" ] \
+   && ! grep -q -- "-9 $QO_CANCEL_PID\$" "$QO_CANCEL_LOG" 2>/dev/null; then
+    t_pass "test.sh: cancelling the reap timer sends no escalation signal at all"
+else
+    t_fail "test.sh: cancelling the reap timer sends no escalation signal at all" \
+        "pid=$QO_CANCEL_PID signals=[$(tr '\n' ';' < "$QO_CANCEL_LOG" 2>/dev/null)] $QO_CANCEL_OUT"
+fi
+# ...and the same observation proves the ESCALATION still fires when it should,
+# so the assertion above cannot be satisfied by a timer that never signals.
+: > "$QO_CANCEL_LOG"
+rm -f "$QO_READY"
+QO_ESC_OUT="$(cd "$REPO_ROOT" && timeout 30 bash -c '
+    set -euo pipefail
+    QO_LOG="'"$QO_CANCEL_LOG"'"
+    kill() { printf "%s\n" "$*" >> "$QO_LOG"; builtin kill "$@"; }
+    QEMU_PID=""; QEMU_STATE=none; UTEST_QEMU_PIDFILE=""
+    '"$(sed -n '/^utest_reap_qemu() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")"'
+    UTEST_REAP_GRACE=1
+    "'"$QO_TERMPROOF"'" "'"$QO_READY"'" >/dev/null 2>&1 &
+    QEMU_PID=$!
+    for _ in $(seq 1 100); do [ -f "'"$QO_READY"'" ] && break; sleep 0.1; done
+    utest_reap_qemu
+    echo "state=$QEMU_STATE qemu_pid=$QEMU_PID"
+' 2>&1)"
+QO_ESC_PID="$(printf '%s' "$QO_ESC_OUT" | sed -n 's/.*qemu_pid=\([0-9]*\).*/\1/p')"
+rm -f "$QO_READY"
+if [ -n "$QO_ESC_PID" ] && grep -q -- "-9 $QO_ESC_PID\$" "$QO_CANCEL_LOG" 2>/dev/null; then
+    t_pass "test.sh: the escalation DOES signal when the deadline is actually reached"
+else
+    t_fail "test.sh: the escalation DOES signal when the deadline is actually reached" \
+        "pid=$QO_ESC_PID signals=[$(tr '\n' ';' < "$QO_CANCEL_LOG" 2>/dev/null)] $QO_ESC_OUT"
+fi
+# A grace of zero is not a grace. `0`, `00`, `.0` and `0.0` all look numeric but
+# mean "escalate immediately", which denies the VM its chance to flush.
+for QO_ZEROGRACE in 0 00 .0 0.0; do
+    # Cleared BEFORE the launch, never only after: a token left by an earlier
+    # case makes the readiness wait return instantly, the child takes the
+    # SIGTERM before its trap is installed, and the assertion measures nothing.
+    rm -f "$QO_READY"
+    QO_Z_OUT="$(cd "$REPO_ROOT" && timeout 30 bash -c '
+        set -euo pipefail
+        QEMU_PID=""; QEMU_STATE=none; UTEST_QEMU_PIDFILE=""
+        '"$(sed -n '/^utest_reap_qemu() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")"'
+        UTEST_REAP_GRACE="'"$QO_ZEROGRACE"'"
+        "'"$QO_TERMPROOF"'" "'"$QO_READY"'" >/dev/null 2>&1 &
+        QEMU_PID=$!
+        for _ in $(seq 1 100); do [ -f "'"$QO_READY"'" ] && break; sleep 0.1; done
+        start=$SECONDS
+        utest_reap_qemu
+        echo "state=$QEMU_STATE elapsed=$((SECONDS - start))"
+    ' 2>&1)"
+    rm -f "$QO_READY"
+    QO_Z_ELAPSED="$(printf '%s' "$QO_Z_OUT" | sed -n 's/.*elapsed=\([0-9]*\).*/\1/p')"
+    # The default (5s) must have been substituted, so the deadline is NOT instant.
+    if printf '%s' "$QO_Z_OUT" | grep -q "state=reaped" \
+       && [ -n "$QO_Z_ELAPSED" ] && [ "$QO_Z_ELAPSED" -ge 4 ]; then
+        t_pass "test.sh: a zero grace ('$QO_ZEROGRACE') falls back to the default, not an instant kill"
+    else
+        t_fail "test.sh: a zero grace ('$QO_ZEROGRACE') falls back to the default, not an instant kill" \
+            "elapsed=$QO_Z_ELAPSED: $QO_Z_OUT"
+    fi
+done
+for QO_BADGRACE in bogus -5 "" 0x5; do
+    rm -f "$QO_READY"
+    QO_BAD_OUT="$(cd "$REPO_ROOT" && timeout 30 bash -c '
+        set -euo pipefail
+        QEMU_PID=""
+        QEMU_STATE=none
+        UTEST_QEMU_PIDFILE=""
+        eval "$(sed -n "/^utest_reap_qemu() {/,/^}/p" scripts/test.sh)"
+        UTEST_REAP_GRACE="'"$QO_BADGRACE"'"
+        "'"$QO_TERMPROOF"'" "'"$QO_READY"'" >/dev/null 2>&1 &
+        QEMU_PID=$!
+        for _ in $(seq 1 100); do [ -f "'"$QO_READY"'" ] && break; sleep 0.1; done
+        utest_reap_qemu
+        echo "state=$QEMU_STATE"
+    ' 2>&1)"; QO_BAD_RC=$?
+    if [ "$QO_BAD_RC" = "0" ] && printf '%s' "$QO_BAD_OUT" | grep -q "state=reaped"; then
+        t_pass "test.sh: an invalid reap grace ('$QO_BADGRACE') still reaches the deadline"
+    else
+        t_fail "test.sh: an invalid reap grace ('$QO_BADGRACE') still reaches the deadline" \
+            "rc=$QO_BAD_RC (124 = hung): $QO_BAD_OUT"
+    fi
+done
+rm -f "$QO_READY"
+# ...and the deadline must not cost anything on the normal path: a VM that has
+# already exited is a zombie here, so the wait returns at once and the timer is
+# cancelled before it fires.
+QO_REAP_OUT2="$(cd "$REPO_ROOT" && timeout 30 bash -c '
+    set -u
+    QEMU_PID=""
+    QEMU_STATE=none
+    UTEST_QEMU_PIDFILE=""
+    eval "$(sed -n "/^utest_reap_qemu() {/,/^}/p" scripts/test.sh)"
+    UTEST_REAP_GRACE=20
+    sleep 0 &
+    QEMU_PID=$!
+    sleep 1
+    start=$SECONDS
+    utest_reap_qemu
+    echo "state=$QEMU_STATE elapsed=$((SECONDS - start))"
+' 2>&1)"; QO_REAP_RC2=$?
+QO_REAP_ELAPSED2="$(printf '%s' "$QO_REAP_OUT2" | sed -n 's/.*elapsed=\([0-9]*\).*/\1/p')"
+if [ "$QO_REAP_RC2" = "0" ] \
+   && printf '%s' "$QO_REAP_OUT2" | grep -q "state=reaped" \
+   && [ -n "$QO_REAP_ELAPSED2" ] && [ "$QO_REAP_ELAPSED2" -lt 5 ]; then
+    t_pass "test.sh: an already-exited VM is reaped immediately, not after the grace"
+else
+    t_fail "test.sh: an already-exited VM is reaped immediately, not after the grace" \
+        "rc=$QO_REAP_RC2: $QO_REAP_OUT2"
+fi
+
+# A SECOND reap must not re-derive liveness from the pid. QEMU_PID survives the
+# first call on purpose (the record marker reports it), but once the child has
+# been waited the kernel may hand that number to anything -- and this function
+# runs twice on the normal path, from utest_finalize_record and again from the
+# EXIT trap. Without a QEMU_STATE short-circuit the second call signals whatever
+# inherited the number, and the timer then escalates to signal 9.
+QO_REAP_OUT3="$(cd "$REPO_ROOT" && timeout 30 bash -c '
+    set -u
+    QEMU_PID=""; QEMU_STATE=none; UTEST_QEMU_PIDFILE=""
+    '"$(sed -n '/^utest_reap_qemu() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")"'
+    UTEST_REAP_GRACE=2
+    # Stand-in for an unrelated process that inherited the released pid.
+    sleep 12 &
+    victim=$!
+    QEMU_PID=$victim
+    QEMU_STATE=reaped
+    utest_reap_qemu
+    if kill -0 "$victim" 2>/dev/null; then echo "VICTIM=alive"; else echo "VICTIM=signalled"; fi
+    kill -9 "$victim" 2>/dev/null || true
+' 2>&1)"
+if printf '%s' "$QO_REAP_OUT3" | grep -q "VICTIM=alive"; then
+    t_pass "utest_reap_qemu: a second call after state=reaped never re-signals the pid"
+else
+    t_fail "utest_reap_qemu: a second call after state=reaped never re-signals the pid" \
+        "$QO_REAP_OUT3"
+fi
+
+# The escalation timer must not carry the RUN LOCK with it. The subshell
+# inherits every descriptor, and killing it orphans its `sleep`, which keeps
+# them -- so without `9>&-` the lock stays held for the rest of the grace after
+# the run exits and the NEXT run is refused with "another run holds
+# build/.test-run.lock". Measured live on the CI-parity leg of section 34; it is
+# the same inherited-descriptor hazard section 30 closed at the QEMU launch.
+QO_LOCK="$QO_TMP/lockfd.lock"
+: > "$QO_LOCK"
+timeout 30 bash -c '
+    set -u
+    exec 9>"'"$QO_LOCK"'"
+    flock -n 9 || exit 3
+    QEMU_PID=""; QEMU_STATE=none; UTEST_QEMU_PIDFILE=""
+    '"$(sed -n '/^utest_reap_qemu() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")"'
+    UTEST_REAP_GRACE=10
+    sleep 30 &
+    QEMU_PID=$!
+    utest_reap_qemu
+' >/dev/null 2>&1
+QO_RC=$?
+# The run has exited. A fresh descriptor must be able to take the lock AT ONCE.
+if [ "$QO_RC" = "0" ] && bash -c 'exec 9>"'"$QO_LOCK"'"; flock -n 9' 2>/dev/null; then
+    t_pass "test.sh: the reap timer does not carry the run lock past the run's exit"
+else
+    t_fail "test.sh: the reap timer does not carry the run lock past the run's exit" \
+        "rc=$QO_RC; the lock was still held after the run exited (missing 9>&- on the watchdog)"
+fi
+
+# The guard must FAIL CLOSED when detection cannot run. A failed scan is not
+# evidence that no VM holds this tree's boot state, and continuing rebuilds
+# system-disk.img underneath one if it does.
+QO_GUARD_SRC="$(sed -n '/^utest_orphan_guard() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")"
+if printf '%s' "$QO_GUARD_SRC" | grep -q 'refusing the run' \
+   && printf '%s' "$QO_GUARD_SRC" | grep -q 'UTEST_ORPHAN_UNCHECKED'; then
+    t_pass "test.sh: a failed orphan scan refuses the run instead of warning past it"
+else
+    t_fail "test.sh: a failed orphan scan refuses the run instead of warning past it" \
+        "no fail-closed branch in utest_orphan_guard"
+fi
+# The detector's own diagnostic must survive: 2>/dev/null threw away the one
+# explanation an operator has at exactly the moment the scan fails.
+if printf '%s' "$QO_GUARD_SRC" | grep -q 'qemu-orphan.py" detect' \
+   && ! printf '%s' "$QO_GUARD_SRC" | grep -q 'detect.*2>/dev/null'; then
+    t_pass "test.sh: the orphan detector's stderr is kept, not discarded"
+else
+    t_fail "test.sh: the orphan detector's stderr is kept, not discarded" \
+        "detect still redirects stderr to /dev/null"
+fi
+# The bypass must be a SEPARATE opt-in from the reap opt-in: "reap what you
+# find" and "proceed having found nothing out" are different decisions.
+if printf '%s' "$QO_GUARD_SRC" | grep -q 'UTEST_ORPHAN_REAP' \
+   && printf '%s' "$QO_GUARD_SRC" | grep -q 'UTEST_ORPHAN_UNCHECKED'; then
+    t_pass "test.sh: the unchecked-run bypass is separate from the reap opt-in"
+else
+    t_fail "test.sh: the unchecked-run bypass is separate from the reap opt-in" \
+        "the two overrides are not distinct"
+fi
+
+# An unreadable holder is INDETERMINATE, not absent. A non-dumpable process
+# hides /proc/<pid>/fd from its own user, so the scan cannot prove it is not
+# holding one of this tree's files -- and answering "clean" there is the
+# fail-open the guard exists to avoid. Scoped to the RECORDED pid, because
+# refusing on every unreadable process would refuse most hosts.
+QO_ND="$QO_TMP/nondumpable.py"
+cat > "$QO_ND" <<'NDPY'
+import ctypes, os, sys, time
+ctypes.CDLL("libc.so.6", use_errno=True).prctl(4, 0, 0, 0, 0)   # PR_SET_DUMPABLE 0
+fh = open(sys.argv[1], "r")
+sys.stderr.write("ready\n"); sys.stderr.flush()
+time.sleep(45)
+NDPY
+python3 "$QO_ND" "$QO_HELD" 2>"$QO_TMP/nd.ready" &
+QO_ND_PID=$!
+for _ in $(seq 1 60); do grep -q ready "$QO_TMP/nd.ready" 2>/dev/null && break; sleep 0.1; done
+if [ ! -r "/proc/$QO_ND_PID/fd" ] && kill -0 "$QO_ND_PID" 2>/dev/null; then
+    python3 "$REPO_ROOT/scripts/qemu-orphan.py" detect --path "$QO_HELD" \
+        --recorded-pid "$QO_ND_PID" >/dev/null 2>&1
+    if [ "$?" = "2" ]; then
+        t_pass "qemu-orphan: an unreadable RECORDED holder is indeterminate (exit 2), not clean"
+    else
+        t_fail "qemu-orphan: an unreadable RECORDED holder is indeterminate (exit 2), not clean" \
+            "detect did not report indeterminate for pid $QO_ND_PID"
+    fi
+    # ...and an unreadable UNRELATED process must not refuse the run, or every
+    # host carrying one would be permanently blocked.
+    python3 "$REPO_ROOT/scripts/qemu-orphan.py" detect --path "$QO_TMP/never-existed" \
+        >/dev/null 2>&1
+    if [ "$?" = "0" ]; then
+        t_pass "qemu-orphan: an unreadable UNRELATED process does not refuse the run"
+    else
+        t_fail "qemu-orphan: an unreadable UNRELATED process does not refuse the run"
+    fi
+else
+    t_pass "qemu-orphan: unreadable-holder handling (SKIP: /proc hides nothing on this host)"
+    t_pass "qemu-orphan: unrelated unreadable process (SKIP: /proc hides nothing on this host)"
+fi
+kill -9 "$QO_ND_PID" 2>/dev/null || true
+wait "$QO_ND_PID" 2>/dev/null
+
+# Provenance must be published by the CHILD, before it becomes QEMU: the parent
+# only learns the pid after the fork, so its write races a wrapper SIGKILL and
+# a genuine tree-launched VM can end up unprovable and therefore unreapable.
+QO_PROV="$QO_TMP/prov.pid"
+rm -f "$QO_PROV"
+python3 "$REPO_ROOT/scripts/pdeathsig.py" --provenance "$QO_PROV" --run-id run-xyz \
+    -- sleep 5 >/dev/null 2>&1 &
+QO_PROV_PID=$!
+for _ in $(seq 1 60); do [ -s "$QO_PROV" ] && break; sleep 0.1; done
+QO_PROV_LINE="$(cat "$QO_PROV" 2>/dev/null)"
+QO_PROV_REC="$(printf '%s' "$QO_PROV_LINE" | awk '{print $1}')"
+QO_PROV_START="$(python3 "$REPO_ROOT/scripts/qemu-orphan.py" identity --pid "$QO_PROV_PID" 2>/dev/null | awk '{print $2}')"
+if [ "$QO_PROV_REC" = "$QO_PROV_PID" ] \
+   && [ "$(printf '%s' "$QO_PROV_LINE" | awk '{print $2}')" = "$QO_PROV_START" ] \
+   && [ "$(printf '%s' "$QO_PROV_LINE" | awk '{print $4}')" = "run-xyz" ]; then
+    t_pass "pdeathsig: provenance is published before exec, naming the EXEC'd pid"
+else
+    t_fail "pdeathsig: provenance is published before exec, naming the EXEC'd pid" \
+        "pid=$QO_PROV_PID start=$QO_PROV_START line=[$QO_PROV_LINE]"
+fi
+kill -9 "$QO_PROV_PID" 2>/dev/null || true
+wait "$QO_PROV_PID" 2>/dev/null
+# A provenance path that cannot be written must REFUSE the exec, not run an
+# unprovable VM.
+python3 "$REPO_ROOT/scripts/pdeathsig.py" --provenance /proc/nonexistent-dir/x.pid \
+    -- /bin/true >/dev/null 2>&1
+if [ "$?" = "6" ]; then
+    t_pass "pdeathsig: an unwritable provenance path refuses the exec (exit 6)"
+else
+    t_fail "pdeathsig: an unwritable provenance path refuses the exec (exit 6)"
+fi
+
+# pdeathsig: the capability probe test.sh runs BEFORE the launch, so its warning
+# lands on the operator's terminal instead of the launch's own 2>/dev/null.
+python3 "$REPO_ROOT/scripts/pdeathsig.py" --check --exe /bin/sleep >/dev/null 2>&1
+if [ "$?" = "0" ]; then
+    t_pass "pdeathsig: --check reports the mechanism usable for an ordinary binary"
+else
+    t_fail "pdeathsig: --check reports the mechanism usable for an ordinary binary" \
+        "prctl(PR_SET_PDEATHSIG) is unavailable on this host"
+fi
+
+# A set-id target is reported as a HAZARD, because Linux clears PDEATHSIG when
+# credentials change across the exec -- a guarantee that silently is not one.
+QO_SETUID=""
+for _c in /bin/su /usr/bin/su /usr/bin/passwd /bin/mount; do
+    [ -u "$_c" ] && QO_SETUID="$_c" && break
+done
+if [ -n "$QO_SETUID" ]; then
+    QO_OUT="$(python3 "$REPO_ROOT/scripts/pdeathsig.py" --check --exe "$QO_SETUID" 2>&1)"
+    if [ "$?" = "4" ] && printf '%s' "$QO_OUT" | grep -q "set-id"; then
+        t_pass "pdeathsig: --check flags a set-id target (PDEATHSIG is cleared on exec)"
+    else
+        t_fail "pdeathsig: --check flags a set-id target (PDEATHSIG is cleared on exec)" \
+            "$QO_OUT"
+    fi
+else
+    t_pass "pdeathsig: --check set-id hazard (SKIP: no set-id binary on this host)"
+fi
+
+# The fork-then-prctl race, closed from the PARENT's side: if the launching shell
+# is already gone, exec'ing is precisely how the orphan gets created, so the
+# helper must refuse. A bogus --parent is the same condition, deterministically.
+QO_OUT="$(python3 "$REPO_ROOT/scripts/pdeathsig.py" --parent 999999999 -- /bin/true 2>&1)"
+if [ "$?" = "3" ] && printf '%s' "$QO_OUT" | grep -q "already gone"; then
+    t_pass "pdeathsig: refuses to exec when the expected parent is not this process's"
+else
+    t_fail "pdeathsig: refuses to exec when the expected parent is not this process's" \
+        "$QO_OUT"
+fi
+
+# END-TO-END, and the one assertion that actually proves the section: SIGKILL the
+# parent (the exact signal no trap can catch) and the child must be gone.
+: > "$QO_TMP/child.pid"
+bash -c "python3 '$REPO_ROOT/scripts/pdeathsig.py' --parent \$\$ -- sleep 60 & \
+         echo \$! > '$QO_TMP/child.pid'; sleep 8" &
+QO_PARENT=$!
+sleep 1.5
+QO_CHILD="$(cat "$QO_TMP/child.pid" 2>/dev/null)"
+kill -9 "$QO_PARENT" 2>/dev/null
+wait "$QO_PARENT" 2>/dev/null
+sleep 1
+if [ -n "$QO_CHILD" ] && ! kill -0 "$QO_CHILD" 2>/dev/null; then
+    t_pass "pdeathsig: a SIGKILLed parent takes its child with it (no trap involved)"
+else
+    t_fail "pdeathsig: a SIGKILLed parent takes its child with it (no trap involved)" \
+        "child $QO_CHILD survived -- the orphan window is still open"
+    [ -n "$QO_CHILD" ] && kill -9 "$QO_CHILD" 2>/dev/null
+fi
+
+# The launch site must keep the guarantees the reap path depends on: the wrapper
+# EXECS QEMU (so $! is QEMU's own pid), fd 9 stays closed (the orphan can never
+# wedge the run lock), and the expected parent is passed. Asserted against the
+# production text, because a wrapper that lost `9>&-` or `--parent` would still
+# boot a VM and pass every other test here.
+# Matched across the whole (now multi-line) launch statement rather than one
+# grep line: the invocation gained `--provenance`/`--run-id` and wrapped, and an
+# assertion pinned to a single physical line would fail on formatting alone
+# while saying nothing about the guarantees it is supposed to protect.
+QO_LAUNCH="$(sed -n '/pdeathsig.py" --parent/,/^fi$/p' "$REPO_ROOT/scripts/test.sh" | tr '\n' ' ')"
+if printf '%s' "$QO_LAUNCH" | grep -q -- '--parent "\$\$"' \
+   && printf '%s' "$QO_LAUNCH" | grep -q -- '--provenance "\$UTEST_QEMU_PIDFILE"' \
+   && printf '%s' "$QO_LAUNCH" | grep -q -- '-- "\${QEMU_ARGV\[@\]}" 2>/dev/null 9>&-'; then
+    t_pass "test.sh: the pdeathsig launch keeps --parent, --provenance, the argv array, and 9>&-"
+else
+    t_fail "test.sh: the pdeathsig launch keeps --parent, the argv array, and 9>&-" \
+        "found: $QO_LAUNCH"
+fi
+
+# Detection must run BEFORE anything shared is touched. The design review named
+# this exactly: below the guard the script clears aliases, prunes records, and
+# rebuilds system-disk.img -- which the orphan holds open as a writable drive.
+QO_GUARD_LN="$(grep -n '^utest_orphan_guard "' "$REPO_ROOT/scripts/test.sh" | head -1 | cut -d: -f1)"
+QO_REC_LN="$(grep -n '^RECORD_DIR="\$RUNS_DIR/\$RUN_ID"' "$REPO_ROOT/scripts/test.sh" | head -1 | cut -d: -f1)"
+QO_PATCH_LN="$(grep -n '^bash "\$PROJECT/scripts/patch-boot-conf.sh" "\${PATCH_ARGS\[@\]}"' "$REPO_ROOT/scripts/test.sh" | head -1 | cut -d: -f1)"
+if [ -n "$QO_GUARD_LN" ] && [ -n "$QO_REC_LN" ] && [ -n "$QO_PATCH_LN" ] &&
+   [ "$QO_GUARD_LN" -lt "$QO_REC_LN" ] && [ "$QO_GUARD_LN" -lt "$QO_PATCH_LN" ]; then
+    t_pass "test.sh: orphan detection runs before record creation and the boot.conf patch"
+else
+    t_fail "test.sh: orphan detection runs before record creation and the boot.conf patch" \
+        "guard=$QO_GUARD_LN record=$QO_REC_LN patch=$QO_PATCH_LN"
+fi
+
+# system-disk.img is the most destructive of the three owned paths (the next
+# run's BUILD rewrites it), so its presence in the guard's argument list is a
+# regression target rather than an implementation detail.
+if grep -q '^utest_orphan_guard "\$OVMF_VARS_CP" "\$TEST_LOG" "\$DISK"$' "$REPO_ROOT/scripts/test.sh"; then
+    t_pass "test.sh: the owned-path set includes system-disk.img, the OVMF copy, and the serial log"
+else
+    t_fail "test.sh: the owned-path set includes system-disk.img, the OVMF copy, and the serial log"
+fi
+
+# The marker must be able to say the VM was reaped, not merely that a pid
+# existed: the normal path finalizes BEFORE the verdict, long before any trap.
+QO_MARK="$(bash -c '
+RED=""; YELLOW=""; RESET=""
+RECORD_DIR="'"$QO_TMP"'/rec"; mkdir -p "$RECORD_DIR"
+RECORD_MARKER="$RECORD_DIR/record-complete.json"
+XML_RECORD="$RECORD_DIR/test-results.xml"; JSON_RECORD="$RECORD_DIR/j"; IDENTITY_RECORD="$RECORD_DIR/i"
+RUN_ID="run-marker"; UTEST_FAIL=0; QEMU_PID=""; QEMU_STATE=none
+'"$(sed -n '/^utest_commit_record() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")"'
+utest_commit_record complete >/dev/null 2>&1
+cat "$RECORD_MARKER"
+')"
+if printf '%s' "$QO_MARK" | grep -q '"qemu_pid": null' &&
+   printf '%s' "$QO_MARK" | grep -q '"qemu_state": "none"'; then
+    t_pass "record marker: a pre-launch exit records qemu_pid null and qemu_state none"
+else
+    t_fail "record marker: a pre-launch exit records qemu_pid null and qemu_state none" \
+        "$QO_MARK"
+fi
+
+QO_MARK="$(bash -c '
+RED=""; YELLOW=""; RESET=""
+RECORD_DIR="'"$QO_TMP"'/rec2"; mkdir -p "$RECORD_DIR"
+RECORD_MARKER="$RECORD_DIR/record-complete.json"
+XML_RECORD="$RECORD_DIR/test-results.xml"; JSON_RECORD="$RECORD_DIR/j"; IDENTITY_RECORD="$RECORD_DIR/i"
+RUN_ID="run-marker2"; UTEST_FAIL=0; QEMU_PID=4242; QEMU_STATE=reaped
+'"$(sed -n '/^utest_commit_record() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")"'
+utest_commit_record complete >/dev/null 2>&1
+cat "$RECORD_MARKER"
+')"
+if printf '%s' "$QO_MARK" | grep -q '"qemu_pid": 4242' &&
+   printf '%s' "$QO_MARK" | grep -q '"qemu_state": "reaped"'; then
+    t_pass "record marker: a reaped run records the pid as a JSON number plus qemu_state"
+else
+    t_fail "record marker: a reaped run records the pid as a JSON number plus qemu_state" \
+        "$QO_MARK"
+fi
+
+# The marker is JSON, and a hand-built printf document is exactly where a stray
+# comma or an unquoted field lands. Parse it rather than grepping it.
+if printf '%s' "$QO_MARK" | python3 -c 'import json,sys; d=json.load(sys.stdin); sys.exit(0 if d["qemu_pid"]==4242 and d["qemu_state"]=="reaped" and d["schema"]=="utest-run-record-v1" else 1)'; then
+    t_pass "record marker: the document with the new fields still parses as JSON"
+else
+    t_fail "record marker: the document with the new fields still parses as JSON" "$QO_MARK"
+fi
+
+# utest_reap_qemu is idempotent and must be safe with no VM at all, because
+# utest_finalize_record now calls it on EVERY path -- including the ones that
+# exit before a QEMU was ever launched.
+QO_OUT="$(bash -c '
+set -euo pipefail
+QEMU_PID=""; QEMU_STATE=none
+'"$(sed -n '/^utest_reap_qemu() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")"'
+utest_reap_qemu; utest_reap_qemu
+echo "STATE=$QEMU_STATE"
+' 2>&1)"
+if [ "$QO_OUT" = "STATE=none" ]; then
+    t_pass "utest_reap_qemu: a no-VM run is a no-op under set -euo pipefail"
+else
+    t_fail "utest_reap_qemu: a no-VM run is a no-op under set -euo pipefail" "$QO_OUT"
+fi
+
+# And it must reach `reaped` for a real child, escalating past SIGTERM. `sleep`
+# dies on SIGTERM; the escalation matters for a QEMU wedged in device emulation,
+# and "reaped" has to be a fact rather than a request either way.
+QO_OUT="$(bash -c '
+set -euo pipefail
+UTEST_QEMU_PIDFILE="'"$QO_TMP"'/reap.pid"
+sleep 30 &
+QEMU_PID=$!
+QEMU_STATE=running
+echo "x" > "$UTEST_QEMU_PIDFILE"
+'"$(sed -n '/^utest_reap_qemu() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")"'
+utest_reap_qemu
+echo "STATE=$QEMU_STATE PIDFILE=$([ -f "$UTEST_QEMU_PIDFILE" ] && echo present || echo cleared)"
+' 2>&1)"
+if [ "$QO_OUT" = "STATE=reaped PIDFILE=cleared" ]; then
+    t_pass "utest_reap_qemu: a live VM reaches state reaped and clears the pidfile"
+else
+    t_fail "utest_reap_qemu: a live VM reaches state reaped and clears the pidfile" "$QO_OUT"
+fi
+
+# POLICY, asserted against the extracted production function: a detected orphan
+# REFUSES by default (it must not patch boot.conf underneath a live VM), and
+# UTEST_ORPHAN_REAP=1 is the only way to make it reap instead.
+QO_GUARD_SRC="$(sed -n '/^utest_orphan_guard() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")"
+QO_OUT="$(bash -c '
+RED=""; YELLOW=""; GREEN=""; RESET=""
+PROJECT="'"$QO_TMP"'/fake"; mkdir -p "$PROJECT/scripts"
+UTEST_QEMU_PIDFILE="'"$QO_TMP"'/policy.pid"
+printf "%s\n" "import sys" "print(\"777\t1\t2\tqemu\t/x\")" "sys.exit(3)" > "$PROJECT/scripts/qemu-orphan.py"
+'"$QO_GUARD_SRC"'
+utest_orphan_guard /x 2>&1
+echo "GUARD_RETURNED=$?"
+')"
+if printf '%s' "$QO_OUT" | grep -q "pid 777" &&
+   printf '%s' "$QO_OUT" | grep -q "Refusing instead of interleaving" &&
+   ! printf '%s' "$QO_OUT" | grep -q "GUARD_RETURNED="; then
+    t_pass "utest_orphan_guard: a detected orphan refuses the run and names the pid"
+else
+    t_fail "utest_orphan_guard: a detected orphan refuses the run and names the pid" "$QO_OUT"
+fi
+
+# UTEST_ORPHAN_REAP=1 must reap only what THIS TREE RECORDED launching. An open
+# descriptor proves a process is using one of our files, not that we started it
+# -- a `tail -f build/test.log` or a disk inspector presents identical evidence
+# to a leaked VM. Reaping on that alone would SIGKILL an operator's unrelated
+# process, unattended, which is worse than the interleaving being prevented.
+QO_OUT="$(bash -c '
+RED=""; YELLOW=""; GREEN=""; RESET=""
+PROJECT="'"$QO_TMP"'/fake4"; mkdir -p "$PROJECT/scripts"
+UTEST_QEMU_PIDFILE="'"$QO_TMP"'/policy4.pid"
+UTEST_ORPHAN_REAP=1
+# The detector reports a holder this tree has no record of launching.
+printf "%s\n" "import sys" "print(\"777\t111\tBOOT\ttail\t/x\")" "sys.exit(3)" > "$PROJECT/scripts/qemu-orphan.py"
+: > "$UTEST_QEMU_PIDFILE"
+'"$QO_GUARD_SRC"'
+utest_orphan_guard /x 2>&1
+echo "GUARD_RETURNED=$?"
+')"
+if printf '%s' "$QO_OUT" | grep -q "NOT reaping pid 777" \
+   && ! printf '%s' "$QO_OUT" | grep -q "GUARD_RETURNED="; then
+    t_pass "utest_orphan_guard: reap mode REFUSES a holder this tree never launched"
+else
+    t_fail "utest_orphan_guard: reap mode REFUSES a holder this tree never launched" "$QO_OUT"
+fi
+# ...and it DOES reap the holder whose identity the pidfile records, so the
+# refusal above is a provenance check rather than reap mode being broken.
+QO_OUT="$(bash -c '
+RED=""; YELLOW=""; GREEN=""; RESET=""
+PROJECT="'"$QO_TMP"'/fake5"; mkdir -p "$PROJECT/scripts"
+UTEST_QEMU_PIDFILE="'"$QO_TMP"'/policy5.pid"
+UTEST_ORPHAN_REAP=1
+# The rescan after a reap is unconditional, so the stub must model the reap
+# having WORKED: holder on the first detect, clean on the second.
+printf "%s\n" \
+  "import sys, os" \
+  "st=\"'"$QO_TMP"'/fake5.calls\"" \
+  "if sys.argv[1] != \"detect\": sys.exit(0)" \
+  "n=(open(st).read().strip() if os.path.exists(st) else \"\").count(\"x\")" \
+  "open(st,\"a\").write(\"x\")" \
+  "if n>0: sys.exit(0)" \
+  "print(\"777\t111\tBOOT\tqemu\t/x\")" \
+  "sys.exit(3)" > "$PROJECT/scripts/qemu-orphan.py"
+rm -f "'"$QO_TMP"'/fake5.calls"
+printf "777 111 BOOT run-1\n" > "$UTEST_QEMU_PIDFILE"
+'"$QO_GUARD_SRC"'
+utest_orphan_guard /x 2>&1
+echo "GUARD_RETURNED=$?"
+')"
+if printf '%s' "$QO_OUT" | grep -q "reaping orphaned VM pid 777" \
+   && printf '%s' "$QO_OUT" | grep -q "GUARD_RETURNED=0"; then
+    t_pass "utest_orphan_guard: reap mode DOES reap the holder the pidfile records"
+else
+    t_fail "utest_orphan_guard: reap mode DOES reap the holder the pidfile records" "$QO_OUT"
+fi
+# The rescan after a successful reap is UNCONDITIONAL, including the common
+# sole-orphan case. Returning straight out there skips the only observation
+# that covers the reap WINDOW -- a holder can appear, or inherit an owned
+# descriptor, while the reap runs, and the run would then rebuild
+# system-disk.img underneath it. Detector: holder on the first call, a
+# DIFFERENT residual holder on the second.
+QO_OUT="$(bash -c '
+RED=""; YELLOW=""; GREEN=""; RESET=""
+PROJECT="'"$QO_TMP"'/fake6"; mkdir -p "$PROJECT/scripts"
+UTEST_QEMU_PIDFILE="'"$QO_TMP"'/policy6.pid"
+UTEST_ORPHAN_REAP=1
+printf "%s\n" \
+  "import sys, os" \
+  "st=\"'"$QO_TMP"'/fake6.calls\"" \
+  "if sys.argv[1] != \"detect\": sys.exit(0)" \
+  "n=(open(st).read().strip() if os.path.exists(st) else \"\").count(\"x\")" \
+  "open(st,\"a\").write(\"x\")" \
+  "print(\"777\t111\tBOOT\tqemu\t/x\" if n==0 else \"888\t222\tBOOT\ttail\t/x\")" \
+  "sys.exit(3)" > "$PROJECT/scripts/qemu-orphan.py"
+rm -f "'"$QO_TMP"'/fake6.calls"
+printf "777 111 BOOT run-1\n" > "$UTEST_QEMU_PIDFILE"
+'"$QO_GUARD_SRC"'
+utest_orphan_guard /x 2>&1
+echo "GUARD_RETURNED=$?"
+')"
+# It must refuse, naming the RESIDUAL holder (888) and NOT the reaped one (777).
+if printf '%s' "$QO_OUT" | grep -q "pid 888" \
+   && ! printf '%s' "$QO_OUT" | grep -q "pid 777 (qemu) holds" \
+   && ! printf '%s' "$QO_OUT" | grep -q "GUARD_RETURNED="; then
+    t_pass "utest_orphan_guard: a sole-orphan reap still rescans and reports only residual holders"
+else
+    t_fail "utest_orphan_guard: a sole-orphan reap still rescans and reports only residual holders" "$QO_OUT"
+fi
+# ...and a rescan that ERRORS must fail closed rather than continue.
+QO_OUT="$(bash -c '
+RED=""; YELLOW=""; GREEN=""; RESET=""
+PROJECT="'"$QO_TMP"'/fake7"; mkdir -p "$PROJECT/scripts"
+UTEST_QEMU_PIDFILE="'"$QO_TMP"'/policy7.pid"
+UTEST_ORPHAN_REAP=1
+printf "%s\n" \
+  "import sys, os" \
+  "st=\"'"$QO_TMP"'/fake7.calls\"" \
+  "if sys.argv[1] != \"detect\": sys.exit(0)" \
+  "n=(open(st).read().strip() if os.path.exists(st) else \"\").count(\"x\")" \
+  "open(st,\"a\").write(\"x\")" \
+  "if n>0: sys.stderr.write(\"rescan boom\n\"); sys.exit(2)" \
+  "print(\"777\t111\tBOOT\tqemu\t/x\")" \
+  "sys.exit(3)" > "$PROJECT/scripts/qemu-orphan.py"
+rm -f "'"$QO_TMP"'/fake7.calls"
+printf "777 111 BOOT run-1\n" > "$UTEST_QEMU_PIDFILE"
+'"$QO_GUARD_SRC"'
+utest_orphan_guard /x 2>&1
+echo "GUARD_RETURNED=$?"
+')"
+if printf '%s' "$QO_OUT" | grep -q "re-detection FAILED" \
+   && ! printf '%s' "$QO_OUT" | grep -q "GUARD_RETURNED="; then
+    t_pass "utest_orphan_guard: a rescan error after a reap fails CLOSED"
+else
+    t_fail "utest_orphan_guard: a rescan error after a reap fails CLOSED" "$QO_OUT"
+fi
+
+# A detection tool that cannot run must FAIL CLOSED. This assertion used to
+# require the opposite -- a warning and `GUARD_RETURNED=0`, on the reasoning
+# that a missing `flock` degrades the same way. The two are not alike, and the
+# adversarial review of section 34 named the difference: a missing `flock` is a
+# static property of the host guarding a hazard the operator can see, while a
+# detector that RAN and errored has produced no evidence either way about a
+# hazard that is invisible by construction (an orphan from a SIGKILLed run,
+# holding the system-disk.img this run rebuilds). Treating "no evidence" as "no
+# orphan" is the corruption the guard exists to prevent.
+QO_OUT="$(bash -c '
+RED=""; YELLOW=""; GREEN=""; RESET=""
+PROJECT="'"$QO_TMP"'/fake2"; mkdir -p "$PROJECT/scripts"
+UTEST_QEMU_PIDFILE="'"$QO_TMP"'/policy2.pid"
+printf "%s\n" "import sys" "sys.stderr.write(\"boom\n\")" "sys.exit(2)" > "$PROJECT/scripts/qemu-orphan.py"
+'"$QO_GUARD_SRC"'
+utest_orphan_guard /x 2>&1
+echo "GUARD_RETURNED=$?"
+')"
+if printf '%s' "$QO_OUT" | grep -q "refusing the run" &&
+   ! printf '%s' "$QO_OUT" | grep -q "GUARD_RETURNED="; then
+    t_pass "utest_orphan_guard: an unavailable detector FAILS CLOSED, refusing the run"
+else
+    t_fail "utest_orphan_guard: an unavailable detector FAILS CLOSED, refusing the run" \
+        "$QO_OUT"
+fi
+# The detector's own stderr has to reach the operator: it is the only
+# explanation of WHY the scan failed, and it used to go to /dev/null.
+if printf '%s' "$QO_OUT" | grep -q "boom"; then
+    t_pass "utest_orphan_guard: the detector's diagnostic is surfaced, not swallowed"
+else
+    t_fail "utest_orphan_guard: the detector's diagnostic is surfaced, not swallowed" "$QO_OUT"
+fi
+# The escape hatch exists, is SEPARATE from the reap opt-in, and is loud.
+QO_OUT="$(bash -c '
+RED=""; YELLOW=""; GREEN=""; RESET=""
+PROJECT="'"$QO_TMP"'/fake3"; mkdir -p "$PROJECT/scripts"
+UTEST_QEMU_PIDFILE="'"$QO_TMP"'/policy3.pid"
+UTEST_ORPHAN_UNCHECKED=1
+printf "%s\n" "import sys" "sys.exit(2)" > "$PROJECT/scripts/qemu-orphan.py"
+'"$QO_GUARD_SRC"'
+utest_orphan_guard /x 2>&1
+echo "GUARD_RETURNED=$?"
+')"
+if printf '%s' "$QO_OUT" | grep -q "guarantee ABSENT" &&
+   printf '%s' "$QO_OUT" | grep -q "GUARD_RETURNED=0"; then
+    t_pass "utest_orphan_guard: UTEST_ORPHAN_UNCHECKED=1 proceeds, and says the guarantee is gone"
+else
+    t_fail "utest_orphan_guard: UTEST_ORPHAN_UNCHECKED=1 proceeds, and says the guarantee is gone" \
+        "$QO_OUT"
+fi
+
+# Attribution has to be earned. The pidfile is quoted only when it names one of
+# the processes actually detected: a file left by a run whose VM is long gone
+# describes a different run entirely, and blaming it sends an operator after the
+# wrong thing. This is the reporter-accuracy rule, not cosmetics.
+QO_ATTRIB() {
+    local pidfile_pid="$1" holder_pid="$2" dir="$QO_TMP/attrib-$1-$2"
+    mkdir -p "$dir/scripts"
+    bash -c '
+RED=""; YELLOW=""; GREEN=""; RESET=""
+PROJECT="'"$dir"'"
+UTEST_QEMU_PIDFILE="'"$dir"'/pf"
+echo "'"$pidfile_pid"' 11 bid run-X" > "$UTEST_QEMU_PIDFILE"
+printf "%s\n" "import sys" "print(\"'"$holder_pid"'\t11\tbid\tqemu\t/x\")" "sys.exit(3)" \
+    > "$PROJECT/scripts/qemu-orphan.py"
+'"$QO_GUARD_SRC"'
+utest_orphan_guard /x 2>&1
+'
+}
+if printf '%s' "$(QO_ATTRIB 777 777)" | grep -q "recorded by: 777"; then
+    t_pass "utest_orphan_guard: quotes the pidfile when it names the detected holder"
+else
+    t_fail "utest_orphan_guard: quotes the pidfile when it names the detected holder"
+fi
+if ! printf '%s' "$(QO_ATTRIB 999 777)" | grep -q "recorded by"; then
+    t_pass "utest_orphan_guard: does NOT quote a pidfile naming an unrelated pid"
+else
+    t_fail "utest_orphan_guard: does NOT quote a pidfile naming an unrelated pid" \
+        "a stale pidfile is being blamed for another process's hold"
+fi
+
+# A pidfile whose VM is already gone is stale by construction, and leaving it
+# would point the next reap at a pid this tree no longer owns.
+QO_OUT="$(bash -c '
+RED=""; YELLOW=""; GREEN=""; RESET=""
+PROJECT="'"$QO_TMP"'/fake3"; mkdir -p "$PROJECT/scripts"
+UTEST_QEMU_PIDFILE="'"$QO_TMP"'/policy3.pid"
+echo "stale" > "$UTEST_QEMU_PIDFILE"
+printf "%s\n" "import sys" "sys.exit(0)" > "$PROJECT/scripts/qemu-orphan.py"
+'"$QO_GUARD_SRC"'
+utest_orphan_guard /x >/dev/null 2>&1
+echo "RC=$? PIDFILE=$([ -f "$UTEST_QEMU_PIDFILE" ] && echo present || echo cleared)"
+')"
+if [ "$QO_OUT" = "RC=0 PIDFILE=cleared" ]; then
+    t_pass "utest_orphan_guard: a clean tree clears a stale pidfile and proceeds"
+else
+    t_fail "utest_orphan_guard: a clean tree clears a stale pidfile and proceeds" "$QO_OUT"
+fi
+
+rm -rf "$QO_TMP"
 
 # ============================================================================
 # Summary

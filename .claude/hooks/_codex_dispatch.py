@@ -582,6 +582,302 @@ def is_codex_dispatch(cmd):
     return False
 
 
+def command_segments(cmd):
+    """Split `cmd` into shell segments of RAW SOURCE TEXT, each classified as a
+    Codex dispatch. Returns `[(raw_text, is_codex), ...]`, or `[]` when the
+    command cannot be split (a caller then falls back to whole-command
+    handling).
+
+    This exists because `is_codex_dispatch` answers "does this command CONTAIN
+    a dispatch", which is the right question for attributing a review receipt
+    and the WRONG one for granting an exemption: a gate that exempts the whole
+    command line on that answer lets `codex-dispatch.sh '<prompt>' && <the
+    thing being gated>` through on the strength of its first segment. A gate
+    wants per-segment truth -- exempt the dispatch, still judge everything
+    chained after it.
+
+    The segments are RAW SLICES of the original string, never a `shlex.join`
+    round-trip. Re-quoting is lossy in exactly the way a caller's regexes care
+    about: `(bash scripts/test.sh)` tokenizes to `(`, `bash`, ... and rejoins
+    as `'(bash' scripts/test.sh`, which puts a quote between `bash` and its
+    argument and moves the script off a command position. A caller matching
+    invocation shapes then sees nothing, and a real bare suite run inside a
+    subshell or a `$(...)` substitution sails through. Both shapes were
+    verified to escape before this was changed back to raw slices.
+    """
+    if not isinstance(cmd, str) or not cmd.strip():
+        return []
+    if _has_unmodelled_grammar(cmd):
+        return []
+    segs = [s for s in _split_raw_segments(cmd) if s.strip()]
+    if not segs:
+        return []
+    return [(s, is_codex_dispatch(s)) for s in segs]
+
+
+# Shell grammar this splitter does NOT model. Each of these puts characters the
+# scanner treats as structural into a context where they mean something else:
+#   `#`      -- a comment can carry an unbalanced quote or a `<<WORD` that is
+#               not a heredoc at all;
+#   `$((`    -- `<<` inside it is a left-shift operator, not a redirection;
+#   `case`   -- its patterns end in `)` with no opening paren, so a paren-
+#               balancing scan of any enclosing substitution closes early.
+# Every one was demonstrated to produce a WRONG split rather than a failed one,
+# and a wrong split is worse: it yields confident segments that hide a bare
+# suite run inside a fragment the caller then exempts. So they are declared
+# unsupported and reported as unsplittable, which the caller treats as
+# FAIL-CLOSED. Widening the splitter to model them properly means parsing shell
+# with a real grammar, which is tracked separately -- until then, refusing to
+# answer beats answering wrongly.
+_UNMODELLED = (
+    re.compile(r"(?:^|\s)#"),          # comment
+    re.compile(r"\$\(\("),             # arithmetic expansion
+    re.compile(r"(?:^|[\s;&|(])case(?=\s)"),
+    re.compile(r"(?:^|[\s;&|(])esac(?=$|[\s;&|)])"),
+)
+
+
+def _has_unmodelled_grammar(cmd):
+    """True when `cmd` uses shell grammar the raw splitter cannot model.
+
+    Quote-aware: the same text inside a quoted review prompt is prose, and
+    treating it as grammar would fail-closed on legitimate dispatches.
+    """
+    bare = []
+    quote = None
+    i, n = 0, len(cmd)
+    while i < n:
+        c = cmd[i]
+        if c == "\\" and quote != "'" and i + 1 < n:
+            i += 2
+            continue
+        if quote:
+            if c == quote:
+                quote = None
+                bare.append(" ")
+            i += 1
+            continue
+        if c in ("'", '"'):
+            quote = c
+            bare.append(" ")
+            i += 1
+            continue
+        bare.append(c)
+        i += 1
+    text = "".join(bare)
+    return any(rx.search(text) for rx in _UNMODELLED)
+
+
+# Unquoted control operators that end one command and begin the next. `(` and
+# `)` are deliberately NOT separators: a subshell's contents must stay attached
+# to their own text so a caller sees `(bash foo.sh` with the paren intact.
+_RAW_SEPS = (";;", "&&", "||", ";", "|", "&", "\n")
+
+# A heredoc delimiter is a shell WORD, not an identifier: `<<'REVIEW-PROMPT'`
+# and `<<"EOF.1"` are both valid and were missed by an identifier-only pattern,
+# leaving their bodies to be scanned as commands. `<<<` is a here-STRING with no
+# body and must not match at all.
+_HEREDOC_START = re.compile(
+    r"<<(?!<)(-?)\s*(?:'([^']*)'|\"([^\"]*)\"|([A-Za-z0-9_.\-]+))")
+
+
+def _strip_heredoc_bodies(cmd):
+    """Drop heredoc BODIES, keeping the command lines that introduce them.
+
+    A heredoc body is DATA, not commands. The canonical apostrophe-safe dispatch
+    shape puts the whole review prompt in one (`VAR=$(cat <<'X' ... X)`), so a
+    prompt line that happens to read `bash scripts/test.sh fails because ...`
+    would otherwise be split out as its own segment and classified as a bare
+    suite invocation -- blocking the very review it describes.
+
+    QUOTE-AWARE, because `<<` is only a redirection operator when it is shell
+    SYNTAX. A review prompt that quotes heredoc syntax while discussing it is
+    just text, and treating it as a real heredoc silently swallowed the rest of
+    the prompt -- including its closing quote, which made the whole split fail
+    and (under the fail-closed fallback) blocked a legitimate mandatory review.
+    """
+    out, pos, i, n = [], 0, 0, len(cmd)
+    quote = None
+    while i < n:
+        c = cmd[i]
+        if c == "\\" and quote != "'" and i + 1 < n:
+            i += 2
+            continue
+        if quote:
+            if c == quote:
+                quote = None
+            i += 1
+            continue
+        if c in ("'", '"'):
+            quote = c
+            i += 1
+            continue
+        m = _HEREDOC_START.match(cmd, i)
+        if not m:
+            i += 1
+            continue
+        tag = m.group(2) or m.group(3) or m.group(4)
+        dash = m.group(1) == "-"
+        nl = cmd.find("\n", m.end())
+        if not tag or nl < 0:
+            i = m.end()
+            continue
+        out.append(cmd[pos:nl])          # keep the introducing line
+        k = nl + 1
+        end = len(cmd)
+        while k <= len(cmd):
+            j = cmd.find("\n", k)
+            line = cmd[k:] if j < 0 else cmd[k:j]
+            if (line.lstrip() if dash else line).rstrip() == tag:
+                end = len(cmd) if j < 0 else j
+                break
+            if j < 0:
+                break
+            k = j + 1
+        pos = end
+        i = end
+    out.append(cmd[pos:])
+    return "".join(out)
+
+
+def _split_raw_segments(cmd):
+    """Split on unquoted control operators, returning raw substrings.
+
+    Quote- and escape-aware. Everything inside '...' is opaque, so a dispatch
+    prompt containing `&&` or `;` is never split apart.
+
+    Command substitutions -- `$(...)` and backticks -- are lifted out as their
+    OWN segments, including inside double quotes, because they EXECUTE. A
+    caller that exempts a whole fragment on the strength of the command it
+    names would otherwise excuse everything nested in that fragment's
+    arguments: `codex-dispatch.sh "$(bash scripts/test.sh)"` is one dispatch
+    fragment, and the suite inside it runs regardless. Inside SINGLE quotes the
+    same text is literal, so it stays attached to its fragment.
+    """
+    cmd = _strip_heredoc_bodies(cmd)
+    out = []
+    if not _scan_raw(cmd, out):
+        return []
+    return out
+
+
+def _scan_raw(text, out):
+    """Append `text`'s top-level segments to `out`; False on unbalanced quotes."""
+    buf = []
+    quote = None
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if c == "\\" and quote != "'" and i + 1 < n:
+            buf.append(c)
+            buf.append(text[i + 1])
+            i += 2
+            continue
+        if quote == "'":
+            buf.append(c)
+            if c == "'":
+                quote = None
+            i += 1
+            continue
+        if quote == '"':
+            # Process substitutions are NOT expanded inside double quotes, so
+            # only command substitutions are lifted here.
+            if text.startswith("$(", i) or c == "`":
+                i = _take_substitution(text, i, out)
+                if i < 0:
+                    return False
+                buf.append(" ")
+                continue
+            buf.append(c)
+            if c == '"':
+                quote = None
+            i += 1
+            continue
+        if c in ("'", '"'):
+            quote = c
+            buf.append(c)
+            i += 1
+            continue
+        # `<(...)` / `>(...)` run their body CONCURRENTLY and are an argument to
+        # the surrounding command, so an outer segment that earns an exemption
+        # would otherwise carry them along: `codex-dispatch.sh <(bash
+        # scripts/test.sh)` is one dispatch fragment that also runs the suite.
+        if (text.startswith("$(", i) or c == "`"
+                or text.startswith("<(", i) or text.startswith(">(", i)):
+            i = _take_substitution(text, i, out)
+            if i < 0:
+                return False
+            buf.append(" ")
+            continue
+        hit = ""
+        for sep in _RAW_SEPS:
+            if text.startswith(sep, i):
+                hit = sep
+                break
+        if hit:
+            out.append("".join(buf))
+            buf = []
+            i += len(hit)
+            continue
+        buf.append(c)
+        i += 1
+    if quote:
+        # Unbalanced quotes: the split is not trustworthy, so report failure
+        # and let the caller fall back to whole-command classification rather
+        # than hand it segments that may have been cut mid-string.
+        return False
+    out.append("".join(buf))
+    return True
+
+
+def _take_substitution(text, i, out):
+    """Scan the substitution starting at `i` into `out`; return the index just
+    past it, or -1 if it is unterminated."""
+    n = len(text)
+    if (text.startswith("$(", i) or text.startswith("<(", i)
+            or text.startswith(">(", i)):
+        depth, q, j = 0, None, i + 2
+        start = j
+        while j < n:
+            c = text[j]
+            if c == "\\" and q != "'" and j + 1 < n:
+                j += 2
+                continue
+            if q:
+                if c == q:
+                    q = None
+                j += 1
+                continue
+            if c in ("'", '"'):
+                q = c
+                j += 1
+                continue
+            if c == "`":
+                # A backtick substitution is its own lexical region, and its
+                # contents may contain unbalanced parens: `echo )` is valid
+                # shell. Scanning them as outer `$( )` delimiters closes the
+                # substitution early, which desynchronises the rest of the walk
+                # -- verified to make the whole split fail and hand the caller
+                # a fail-open whole-command answer.
+                k = text.find("`", j + 1)
+                if k < 0:
+                    return -1
+                j = k + 1
+                continue
+            if c == "(":
+                depth += 1
+            elif c == ")":
+                if depth == 0:
+                    return j + 1 if _scan_raw(text[start:j], out) else -1
+                depth -= 1
+            j += 1
+        return -1
+    j = text.find("`", i + 1)
+    if j < 0:
+        return -1
+    return j + 1 if _scan_raw(text[i + 1:j], out) else -1
+
+
 def extract_dispatch_prompt(cmd):
     """Return the prompt argv from the first matching Codex dispatch
     segment in `cmd`, or empty string. Uses the same shell-aware
