@@ -769,10 +769,152 @@ escaped before emission:
 - **JSON**: `"` -> `\"`, `\` -> `\\`, `\n` / `\r` / `\t` -> C-style
   escapes, any other control byte < 0x20 -> `\u00HH`.
 
-Today's inputs (names validated by `u_is_valid_manifest_name`,
-reasons launcher-formatted) never trigger escaping on the happy
-path; the escape is defense-in-depth for future consumers that might
-let a binary set its own reason string.
+Today's inputs never trigger escaping on the happy path: since the
+charset gate below, an accepted binary name contains no byte either
+escaper rewrites, so N accepted bytes cost N bytes on the wire. The
+escape stays as defense-in-depth for reason strings and for future
+consumers that might let a binary set its own.
+
+---
+
+## Binary name bound and refusal records
+
+### The bound is derived, not chosen
+
+A binary name used to be bounded only by `VFS_MAX_NAME` (256) while
+every record is bounded by `UTEST_RECORD_LINE_MAX` (256, klog's
+message field). A long enough name therefore pushed each emitter onto
+its own overflow fallback -- the XML testcase dropped the name, the
+JSON record substituted `"overflow"`, the TAP point became
+`unrepresentable`, and the human verdict line lost its `: PASS` /
+`: FAIL` token off the end. That last one is what the host's
+fail-closed recount greps for, so the binary silently left the count.
+
+`UTEST_MAX_BINARY_NAME` is the **minimum**, across every name-bearing
+record kind, of `(UTEST_RECORD_LINE_MAX - 1 - fixed_k) / mult_k`:
+
+| Record kind | Name appears | Room left for the name |
+|---|:---:|:---:|
+| Human verdict line | 1x | 196 |
+| `[UTEST-XML] <testcase>` | 1x | 120 |
+| `[UTEST-JSON]` `record_kind:binary` | 1x | 39 |
+| `[UTEST-JSON]` `record_kind:skip_block` | **2x** | **37** |
+| TAP point (skip-record shape) | 1x | 182 |
+| `[UTEST-REPORT]` line | 1x | 160 |
+
+Each `fixed_k` is summed from that kind's own format literals through
+`UTEST_LIT(s)`, so editing a format string moves the bound with it.
+The skip_block binds at **37** because it carries the name twice (as
+`name` and again as `parent`); the JSON binary record is two bytes
+behind it, which is why the derivation takes the minimum instead of
+assuming the twice-carried kind is worst. Digit widths come from each
+value's own cap, and `time_ms` is clamped at emit (`u_clamp_time_ms`)
+so its width is a fact rather than an assumption about run length.
+
+`%s: format=%s` is deliberately outside the minimum: no consumer
+parses it, and its second operand is a loader constant rather than
+part of the record contract.
+
+### Accepted charset
+
+`[A-Za-z0-9._-]`. This is what makes the bound provable: both
+escapers are the identity on every accepted byte. The set also
+subsumes the path checks the validator used to make one at a time
+(`\`, `/`, `:`, control bytes) and additionally excludes `#` and
+space, which closes the TAP-directive injection the point formatter
+previously had to defend against on its own.
+
+### A refusal is counted, never dropped
+
+Two outcomes that used to look the same are now distinct:
+
+- **Not a test file.** A readdir entry that is not `test_*.exe` is
+  ignored silently, as before.
+- **Test-shaped but refused.** A manifest entry, or a discovered
+  `test_*.exe`, that fails the length, charset, traversal or
+  embedded-NUL gate is a binary somebody intended to run. It is
+  counted into `total_planned`, never launched, and published as a
+  FAIL through the *existing* record kinds -- so no consumer needs a
+  new shape:
+
+```
+refused_1_test_a_b.exe_9f2c41ab.exe: FAIL (name refused: charset)
+not ok 4 - refused_1_test_a_b.exe_9f2c41ab.exe # name refused: charset
+[UTEST-XML] <testcase name="refused_1_..." classname="correctness" time="0.000"><failure message="name refused: charset"/></testcase>
+[UTEST-JSON] {"record_kind":"binary","name":"refused_1_...","type":"correctness","status":"FAIL","time_ms":0,"reason":"name refused: charset"}
+```
+
+The identity is `refused_<ordinal>_<sanitized prefix>_<8 hex>.exe`.
+The raw name never reaches serial, an artifact or a log line. Within
+a run, distinctness comes from the **ordinal** rather than from hash
+strength -- no digest width can guarantee it, and an operator who
+cannot tell two refusals apart cannot act on either. The FNV-1a
+digest covers the entry's exact byte **span**, so it survives an
+embedded NUL and correlates the same bad name across runs. The
+identity ends in `.exe` because the host's recount greps for a `.exe`
+name followed by a verdict token.
+
+Three counters move together with each refusal or an artifact would
+contradict itself: `counters[1]` (failed binaries), the TAP point,
+and `rt.unreported` -- the JSON harvester requires
+`reported + invalid + unreported == summary.total`, and a refused
+binary submitted no self-report. The caller adds `total_ran`, so
+`not_run = total_planned - total_ran` stays honest.
+
+Refusals are published in a **preflight pass before any binary
+launches**. They are enumeration results, not executions, and emitting
+them inside the two-phase run loop made them hostage to it: refusals
+are correctness-typed, so they landed in the non-smoke phase, which a
+failing smoke binary breaks out of before reaching.
+
+A refusal is counted **regardless of `filter=`**, and a refused
+*manifest* entry is counted **regardless of whether the manifest is
+authoritative**: the filter selects among binaries the launcher can
+identify, and matching it would mean trusting the very bytes the
+refusal rejected.
+
+Refused manifest entries live in their own bounded array
+(`UTEST_MANIFEST_REFUSAL_MAX`, 64) rather than competing with runnable
+entries for `UTEST_MANIFEST_MAX` slots. That separation is
+load-bearing: while they shared one array, the runnable cap was
+checked *before* classification and stopped parsing, so a malformed
+entry in the tail of an oversized manifest was never examined -- and
+the documented "tail runs via glob" fallback cannot recover it,
+because a name refused for an embedded NUL or an illegal byte may not
+exist as a directory entry at all.
+
+Exhausting the refusal array is itself published as a refusal, through
+the same path as any other (`reason: refusal array full`), rather than
+as a bare diagnostic. Both artifact formats reconcile record *count*
+against the summary total -- the JSON harvester checks
+`len(testcases) == summary.total` separately from the report partition
+-- so a counter bumped without a record does not merely under-describe
+the run, it makes the whole artifact unparseable.
+
+A refused name discovered from *both* the manifest and the directory is
+published once. That dedup compares names the way the filesystem does:
+`C:` is IXFS, which folds ASCII case, so `test_Bad.exe` and
+`test_bad.exe` are one file. `REFUSE_NUL` entries are excluded from it,
+because their stored string is the truncation at the NUL and no
+filename can contain one. The dedup for *accepted* entries stays
+bytewise on purpose -- it is followed by a `filter=` match, which
+compares literally, and folding one without the other can suppress a
+requested binary entirely.
+
+### Incomplete runs
+
+The launcher plans in one walk of `C:\` and executes in a second one
+taken after live children have run. A binary that disappears between
+them is now reported rather than subtracted: a completed run whose
+`total_ran` is short of `total_planned` emits
+
+```
+[UTEST-RUN-INCOMPLETE] planned 18 binaries but ran 17 -- 1 planned binary/binaries produced no result
+```
+
+which `scripts/test.sh` counts as a run failure. Previously this
+reconciliation ran only for smoke-aborted runs, so a completed run
+could publish `not_run=0` while quietly having skipped a binary.
 
 ---
 

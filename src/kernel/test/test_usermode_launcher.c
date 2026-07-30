@@ -34,6 +34,37 @@
  * because their only non-test consumer is the launcher itself. */
 int test_usermode_glob_match(const char *pattern, const char *name);
 int test_usermode_is_valid_manifest_name(const char *name);
+int test_usermode_classify_name(const char *name);
+int test_usermode_classify_name_span(const char *name, uint32_t span_len);
+uint32_t test_usermode_max_binary_name(void);
+uint32_t test_usermode_name_room(uint32_t kind);
+uint32_t test_usermode_name_digest(const char *p, uint32_t len);
+int test_usermode_build_refusal_id(char *dst, uint32_t cap, uint32_t ordinal,
+                                   const char *raw, uint32_t digest);
+uint64_t test_usermode_clamp_time_ms(uint64_t ms);
+uint32_t test_usermode_reason_max(void);
+int test_usermode_format_xml_testcase(char *dst, uint32_t cap,
+                                      const char *name, int verdict,
+                                      uint64_t time_ms, const char *reason);
+int test_usermode_format_json_testcase(char *dst, uint32_t cap,
+                                       const char *name, int verdict,
+                                       uint64_t time_ms, const char *reason,
+                                       int report_valid);
+int test_usermode_format_json_skip(char *dst, uint32_t cap,
+                                   const char *rec_name, const char *parent,
+                                   uint32_t index);
+int test_usermode_name_equal_fs(const char *a, const char *b);
+
+/* Mirror of the launcher's utest_name_verdict_t. The numeric values ARE
+ * the contract these tests pin: the enum is file-local to the launcher,
+ * and the manifest state stores a verdict as a uint8, so a reordering
+ * would silently reinterpret stored refusals. */
+#define UT_NAME_ACCEPT          0
+#define UT_NAME_NOT_TEST_SHAPED 1
+#define UT_NAME_REFUSE_LENGTH   2
+#define UT_NAME_REFUSE_CHARSET  3
+#define UT_NAME_REFUSE_PATH     4
+#define UT_NAME_REFUSE_NUL      5
 int test_usermode_derive_test_name(const char *name_in,
                                    char *out, uint32_t out_cap);
 int test_usermode_path_join(const char *parent, const char *name,
@@ -172,6 +203,365 @@ static void test_manifest_accepts_well_formed(void)
                 "accepts test_harness_smoke.exe");
     TEST_ASSERT(test_usermode_is_valid_manifest_name("test_.exe") == 1,
                 "accepts minimum-length test_.exe");
+}
+
+/* ---- Derived name bound + refusal taxonomy ------------------------- */
+
+/* Build a test_*.exe name of exactly `len` bytes into `dst`. */
+static void ut_name_of_len(char *dst, uint32_t cap, uint32_t len)
+{
+    const char *pre = "test_";
+    const char *suf = ".exe";
+    uint32_t i, p = 0;
+
+    if (len + 1u > cap || len < 9u) { dst[0] = '\0'; return; }
+    for (i = 0; pre[i]; i++) dst[p++] = pre[i];
+    while (p < len - 4u) dst[p++] = 'a';
+    for (i = 0; suf[i]; i++) dst[p++] = suf[i];
+    dst[p] = '\0';
+}
+
+static void test_name_bound_is_the_minimum_across_formatters(void)
+{
+    uint32_t bound = test_usermode_max_binary_name();
+    uint32_t k, min = 0xFFFFFFFFu;
+
+    /* The property the derivation exists for: the bound is the MINIMUM
+     * over every record kind, not the one kind that looks worst. The
+     * JSON binary record and the JSON skip_block land on the same byte
+     * today, so assuming either would be right only by luck. */
+    for (k = 0; k < 6u; k++) {
+        uint32_t room = test_usermode_name_room(k);
+        if (room < min) min = room;
+    }
+    TEST_ASSERT_EQ(bound, min,
+                   "derived bound equals the min room across all 6 kinds");
+    TEST_ASSERT(bound >= 24u,
+                "bound still admits the longest name this repo builds (22)");
+    TEST_ASSERT(test_usermode_name_room(3) * 2u + 24u <= 256u,
+                "the twice-carried skip_block name is priced at 2N");
+}
+
+static void test_name_at_bound_accepted_over_bound_refused(void)
+{
+    uint32_t bound = test_usermode_max_binary_name();
+    char at[128];
+    char over[128];
+
+    ut_name_of_len(at, sizeof(at), bound);
+    ut_name_of_len(over, sizeof(over), bound + 1u);
+    TEST_ASSERT_EQ(test_usermode_classify_name(at), UT_NAME_ACCEPT,
+                   "a name at exactly the bound runs normally");
+    TEST_ASSERT_EQ(test_usermode_classify_name(over), UT_NAME_REFUSE_LENGTH,
+                   "one byte past the bound is a counted refusal");
+}
+
+static void test_charset_refusals_are_distinct_from_not_test_shaped(void)
+{
+    /* The separation this section exists to make: a file that is not
+     * test_*.exe is ignored, a test-shaped name that fails the gate is
+     * REFUSED and must be counted. */
+    TEST_ASSERT_EQ(test_usermode_classify_name("notes.txt"),
+                   UT_NAME_NOT_TEST_SHAPED,
+                   "a non-test file is ignored, not refused");
+    TEST_ASSERT_EQ(test_usermode_classify_name("test_foo.txt"),
+                   UT_NAME_NOT_TEST_SHAPED,
+                   "wrong suffix is not test-shaped");
+    TEST_ASSERT_EQ(test_usermode_classify_name("test_a\"b.exe"),
+                   UT_NAME_REFUSE_CHARSET,
+                   "a quote would expand 6x through XML escaping");
+    TEST_ASSERT_EQ(test_usermode_classify_name("test_a&b.exe"),
+                   UT_NAME_REFUSE_CHARSET, "ampersand refused");
+    TEST_ASSERT_EQ(test_usermode_classify_name("test_a b.exe"),
+                   UT_NAME_REFUSE_CHARSET, "space refused");
+    TEST_ASSERT_EQ(test_usermode_classify_name("test_a#b.exe"),
+                   UT_NAME_REFUSE_CHARSET,
+                   "hash would inject a TAP directive");
+    TEST_ASSERT_EQ(test_usermode_classify_name("test_a\nb.exe"),
+                   UT_NAME_REFUSE_CHARSET,
+                   "newline would split a record across serial lines");
+    TEST_ASSERT_EQ(test_usermode_classify_name("test_a\\b.exe"),
+                   UT_NAME_REFUSE_CHARSET, "backslash refused");
+    TEST_ASSERT_EQ(test_usermode_classify_name("test_a..b.exe"),
+                   UT_NAME_REFUSE_PATH,
+                   "traversal is its own verdict, dots being in the charset");
+    TEST_ASSERT_EQ(test_usermode_classify_name("test_ok-1.2_x.exe"),
+                   UT_NAME_ACCEPT, "the full accepted charset passes");
+}
+
+static void test_embedded_nul_is_refused_not_truncated(void)
+{
+    /* A manifest line whose payload carries a NUL: everything downstream
+     * of C-string scanning sees only the prefix and would act on it,
+     * leaving the rest of the line unexamined and the run green. The span
+     * length is the only place the truncation is visible. */
+    static const char after[]  = "test_good.exe\0trailing";
+    /* The dangerous shape, and the one an ordering bug hides: the visible
+     * prefix is NOT test-shaped, so a classifier that checks shape before
+     * the span reports NOT_TEST_SHAPED and the entry is IGNORED rather
+     * than counted -- the false-green this section exists to close. */
+    static const char before[] = "test_bad\0.exe";
+    static const char leading[] = "\0test_x.exe";
+
+    TEST_ASSERT_EQ(test_usermode_classify_name(after), UT_NAME_ACCEPT,
+                   "C-string view alone sees a perfectly valid name");
+    TEST_ASSERT_EQ(test_usermode_classify_name_span(after,
+                                                    (uint32_t)(sizeof(after) - 1u)),
+                   UT_NAME_REFUSE_NUL,
+                   "NUL after a complete suffix is a counted failure");
+    TEST_ASSERT_EQ(test_usermode_classify_name_span(before,
+                                                    (uint32_t)(sizeof(before) - 1u)),
+                   UT_NAME_REFUSE_NUL,
+                   "NUL BEFORE the suffix is refused, never ignored");
+    TEST_ASSERT_EQ(test_usermode_classify_name_span(leading,
+                                                    (uint32_t)(sizeof(leading) - 1u)),
+                   UT_NAME_REFUSE_NUL,
+                   "a leading NUL is refused, not read as an empty entry");
+    TEST_ASSERT_EQ(test_usermode_classify_name_span("test_good.exe", 13u),
+                   UT_NAME_ACCEPT,
+                   "a span matching the C length still accepts");
+}
+
+static void test_name_identity_matches_the_filesystem(void)
+{
+    /* C: is IXFS, which resolves names case-insensitively over ASCII, so
+     * two spellings that differ only in case are ONE file. Every dedup
+     * between a manifest entry and a directory entry depends on this:
+     * a bytewise compare would plan, run or refuse that one file twice,
+     * and because both counters inflate together the completeness
+     * reconciliation cannot see it. */
+    TEST_ASSERT(test_usermode_name_equal_fs("test_bad.exe",
+                                            "test_Bad.exe") == 1,
+                "case-variant spellings are the same file to IXFS");
+    TEST_ASSERT(test_usermode_name_equal_fs("TEST_BAD.EXE",
+                                            "test_bad.exe") == 1,
+                "the fold covers the whole name, not just the stem");
+    TEST_ASSERT(test_usermode_name_equal_fs("test_bad.exe",
+                                            "test_bad.exe") == 1,
+                "identical names match");
+    TEST_ASSERT(test_usermode_name_equal_fs("test_bad.exe",
+                                            "test_bad2.exe") == 0,
+                "a longer name is not the same file");
+    TEST_ASSERT(test_usermode_name_equal_fs("test_bad.exe", "") == 0,
+                "an empty name matches nothing");
+    /* Digits and the punctuation in the accepted charset must not be
+     * folded into letters by a careless range check. */
+    TEST_ASSERT(test_usermode_name_equal_fs("test_a-1.exe",
+                                            "test_A-1.exe") == 1,
+                "punctuation and digits survive the fold unchanged");
+}
+
+static void test_taxonomy_edge_names(void)
+{
+    char big[300];
+    uint32_t i;
+
+    TEST_ASSERT_EQ(test_usermode_classify_name(""), UT_NAME_NOT_TEST_SHAPED,
+                   "an empty entry is ignored, not refused");
+    TEST_ASSERT_EQ(test_usermode_classify_name("test_.exe"), UT_NAME_ACCEPT,
+                   "the minimum test-shaped name is accepted");
+    TEST_ASSERT_EQ(test_usermode_classify_name("...."),
+                   UT_NAME_NOT_TEST_SHAPED,
+                   "an all-dots name is not test-shaped, so it is ignored");
+    TEST_ASSERT_EQ(test_usermode_classify_name("test_....exe"),
+                   UT_NAME_REFUSE_PATH,
+                   "dots inside a test-shaped name are traversal, refused");
+    /* A 255-byte test-shaped name -- the VFS_MAX_NAME ceiling a dirent
+     * can actually carry. It must refuse on LENGTH, and it must do so
+     * without reading past the buffer. */
+    for (i = 0; i < 255u; i++) big[i] = 'a';
+    big[255] = '\0';
+    big[0] = 't'; big[1] = 'e'; big[2] = 's'; big[3] = 't'; big[4] = '_';
+    big[251] = '.'; big[252] = 'e'; big[253] = 'x'; big[254] = 'e';
+    TEST_ASSERT_EQ(test_usermode_classify_name(big), UT_NAME_REFUSE_LENGTH,
+                   "a 255-byte test-shaped name refuses on length");
+}
+
+static void test_worst_case_record_fits_at_the_derived_bound(void)
+{
+    /* The derivation's fixed-cost macros are a SECOND copy of the format
+     * strings in the emitters. Formatting a bound-length name through the
+     * REAL formatters is the only thing that proves the two still agree
+     * -- every other assertion here checks the copy against itself. */
+    uint32_t bound = test_usermode_max_binary_name();
+    uint32_t rmax = test_usermode_reason_max();
+    char name[128];
+    char reason[128];
+    char line[256];
+    uint32_t i;
+
+    ut_name_of_len(name, sizeof(name), bound);
+    for (i = 0; i < rmax && i < sizeof(reason) - 1u; i++) reason[i] = 'r';
+    reason[i] = '\0';
+
+    TEST_ASSERT(test_usermode_format_xml_testcase(line, sizeof(line), name,
+                                                  1, 0xFFFFFFFFull,
+                                                  reason) == 1,
+                "worst-case XML failure record fits at the bound");
+    TEST_ASSERT(test_usermode_format_xml_testcase(line, sizeof(line), name,
+                                                  2, 0xFFFFFFFFull,
+                                                  reason) == 1,
+                "worst-case XML skipped record fits at the bound");
+    TEST_ASSERT(test_usermode_format_json_testcase(line, sizeof(line), name,
+                                                   1, 0xFFFFFFFFull,
+                                                   reason, 1) == 1,
+                "worst-case JSON record (reason + report fields) fits");
+    TEST_ASSERT(test_usermode_format_json_testcase(line, sizeof(line), name,
+                                                   1, 0xFFFFFFFFFFFFFFFFull,
+                                                   reason, 1) == 1,
+                "a uint64 uptime cannot widen the record past the bound");
+
+    /* The BINDING kind. The skip_block carries the name twice, so it is
+     * the record the bound is derived FROM -- covering only the two
+     * testcase formatters would leave the one that actually binds
+     * untested, which is precisely where a drifted fixed-cost macro
+     * would hide. */
+    {
+        char rec[128];
+        TEST_ASSERT(test_usermode_build_skip_record_name(rec, sizeof(rec),
+                                                         name, 999999u) == 1,
+                    "the synthetic skip-record name builds at the bound");
+        TEST_ASSERT(test_usermode_format_json_skip(line, sizeof(line), rec,
+                                                   name, 999999u) == 1,
+                    "worst-case JSON skip_block fits with the name twice");
+        TEST_ASSERT(test_usermode_format_tap_point(line, sizeof(line), 1,
+                                                   4294967295u, rec,
+                                                   "SKIP reported by binary") == 1,
+                    "worst-case TAP skip point fits at the bound");
+    }
+}
+
+static void test_name_digest_covers_bytes_past_a_nul(void)
+{
+    static const char a[] = "test_x.exe\0aaa";
+    static const char b[] = "test_x.exe\0bbb";
+
+    TEST_ASSERT(test_usermode_name_digest(a, (uint32_t)(sizeof(a) - 1u)) !=
+                test_usermode_name_digest(b, (uint32_t)(sizeof(b) - 1u)),
+                "the digest distinguishes bytes a C string cannot reach");
+
+    /* Known-answer vectors, not a self-comparison. The digest is the only
+     * thing that correlates the same refused name ACROSS runs and builds,
+     * so a changed basis, prime, byte order or signed-char treatment must
+     * fail here -- comparing two calls in one process would pass for any
+     * deterministic hash, including a wrong one. First three are the
+     * published FNV-1a 32-bit vectors. */
+    TEST_ASSERT_EQ(test_usermode_name_digest("", 0u), 0x811c9dc5u,
+                   "empty span yields the FNV-1a offset basis");
+    TEST_ASSERT_EQ(test_usermode_name_digest("a", 1u), 0xe40c292cu,
+                   "FNV-1a published vector for \"a\"");
+    TEST_ASSERT_EQ(test_usermode_name_digest("foobar", 6u), 0xbf9cf968u,
+                   "FNV-1a published vector for \"foobar\"");
+    TEST_ASSERT_EQ(test_usermode_name_digest(a, (uint32_t)(sizeof(a) - 1u)),
+                   0x97c75971u,
+                   "a NUL-bearing span hashes all 14 of its bytes");
+    TEST_ASSERT_EQ(test_usermode_name_digest("\xff", 1u), 0x7a0b824eu,
+                   "a high-bit byte is folded unsigned, not sign-extended");
+}
+
+static void test_refusal_id_is_bound_conforming_and_unique(void)
+{
+    uint32_t bound = test_usermode_max_binary_name();
+    char id1[128], id2[128], id3[128];
+    uint32_t l1 = 0, i;
+    int same;
+
+    TEST_ASSERT(test_usermode_build_refusal_id(id1, sizeof(id1), 1u,
+                                               "test_a\nb.exe", 0xDEADBEEFu) == 1,
+                "identity builds for a hostile raw name");
+    while (id1[l1]) l1++;
+    TEST_ASSERT(l1 <= bound,
+                "the identity obeys the bound it exists to prove");
+    for (i = 0; i < l1; i++) {
+        char c = id1[i];
+        int ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                 (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-';
+        TEST_ASSERT(ok, "every identity byte is inside the accepted charset");
+    }
+    TEST_ASSERT(id1[l1 - 4] == '.' && id1[l1 - 3] == 'e' &&
+                id1[l1 - 2] == 'x' && id1[l1 - 1] == 'e',
+                "identity ends in .exe so the host verdict recount sees it");
+
+    /* Uniqueness comes from the ordinal, not from digest strength: two
+     * refusals that hash identically must still be distinguishable. */
+    (void)test_usermode_build_refusal_id(id2, sizeof(id2), 2u,
+                                         "test_a\nb.exe", 0xDEADBEEFu);
+    same = 1;
+    for (i = 0; id1[i] || id2[i]; i++)
+        if (id1[i] != id2[i]) { same = 0; break; }
+    TEST_ASSERT(same == 0,
+                "same name, same digest, different ordinal -> distinct ids");
+
+    /* And the digest is what separates two different names, so a run
+     * cannot report two refusals under one identity. */
+    (void)test_usermode_build_refusal_id(id3, sizeof(id3), 1u,
+                                         "test_a\nb.exe", 0x12345678u);
+    same = 1;
+    for (i = 0; id1[i] || id3[i]; i++)
+        if (id1[i] != id3[i]) { same = 0; break; }
+    TEST_ASSERT(same == 0, "same ordinal, different digest -> distinct ids");
+
+    TEST_ASSERT(test_usermode_build_refusal_id(id1, 8u, 1u, "test_x.exe",
+                                               0u) == 0,
+                "a buffer too small for a conforming identity is refused");
+}
+
+static void test_refusal_id_survives_ordinal_digit_growth(void)
+{
+    /* The prefix budget is recomputed from the ordinal's ACTUAL digit
+     * width, so every decimal carry is a boundary: the identity must
+     * still build, still fit the bound, and still leave a readable
+     * prefix. The manifest alone admits 128 entries, so 99 -> 100 is
+     * reachable without a hostile directory. */
+    static const uint32_t ordinals[] = { 1u, 9u, 10u, 99u, 100u,
+                                         999u, 1000u, 4294967295u };
+    uint32_t bound = test_usermode_max_binary_name();
+    uint32_t k;
+
+    for (k = 0; k < sizeof(ordinals) / sizeof(ordinals[0]); k++) {
+        char id[128];
+        uint32_t len = 0, i, digits = 1u, v = ordinals[k], fixed;
+
+        TEST_ASSERT(test_usermode_build_refusal_id(id, sizeof(id),
+                                                   ordinals[k],
+                                                   "test_hostile_name.exe",
+                                                   0xA5A5A5A5u) == 1,
+                    "identity builds at every ordinal digit width");
+        while (id[len]) len++;
+        TEST_ASSERT(len <= bound,
+                    "identity stays within the bound as the ordinal grows");
+        for (i = 0; i < len; i++) {
+            char c = id[i];
+            int ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                     (c >= '0' && c <= '9') || c == '.' || c == '_' ||
+                     c == '-';
+            TEST_ASSERT(ok, "identity stays inside the accepted charset");
+        }
+        TEST_ASSERT(id[len - 4] == '.' && id[len - 3] == 'e' &&
+                    id[len - 2] == 'x' && id[len - 1] == 'e',
+                    "identity still ends in .exe at every ordinal");
+        /* Measure the sanitized prefix by SUBTRACTING the identity's
+         * fixed shape -- `refused_` + the ordinal's digits + `_` + the
+         * prefix + `_` + 8 hex + `.exe`. Scanning back for the digest's
+         * separator would be wrong: `_` is inside the accepted charset,
+         * so the prefix itself routinely contains one. */
+        while (v >= 10u) { v /= 10u; digits++; }
+        fixed = 8u + digits + 1u + 1u + 8u + 4u;
+        TEST_ASSERT(len > fixed && (len - fixed) >= 4u,
+                    "a readable prefix survives even a 10-digit ordinal");
+    }
+}
+
+static void test_time_ms_clamp_makes_the_digit_width_provable(void)
+{
+    TEST_ASSERT_EQ(test_usermode_clamp_time_ms(0ull), 0ull,
+                   "zero passes through");
+    TEST_ASSERT_EQ(test_usermode_clamp_time_ms(4294967295ull), 4294967295ull,
+                   "the widest reserved value passes through");
+    TEST_ASSERT_EQ(test_usermode_clamp_time_ms(4294967296ull), 4294967295ull,
+                   "one past it saturates instead of widening the record");
+    TEST_ASSERT_EQ(test_usermode_clamp_time_ms(0xFFFFFFFFFFFFFFFFull),
+                   4294967295ull, "a uint64 uptime cannot widen time_ms");
 }
 
 static void test_manifest_rejects_path_traversal(void)
@@ -2033,6 +2423,38 @@ void test_register_usermode_launcher(void)
                             test_frame_tag_refuses_short_buffer, TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: frame nonce never folds to the 0 sentinel",
                             test_frame_nonce_fold_never_zero, TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: name bound is the min across all formatters",
+                            test_name_bound_is_the_minimum_across_formatters,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: name at the bound runs, one past is refused",
+                            test_name_at_bound_accepted_over_bound_refused,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: charset refusal is distinct from not-a-test",
+                            test_charset_refusals_are_distinct_from_not_test_shaped,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: embedded NUL is refused, not truncated",
+                            test_embedded_nul_is_refused_not_truncated,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: name digest covers bytes past a NUL",
+                            test_name_digest_covers_bytes_past_a_nul,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: refusal identity is bounded and unique",
+                            test_refusal_id_is_bound_conforming_and_unique,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: time_ms clamp makes its digit width provable",
+                            test_time_ms_clamp_makes_the_digit_width_provable,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: taxonomy edge names (empty/dots/255-byte)",
+                            test_taxonomy_edge_names, TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: name identity matches the filesystem fold",
+                            test_name_identity_matches_the_filesystem,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: worst-case record fits at the derived bound",
+                            test_worst_case_record_fits_at_the_derived_bound,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: refusal identity survives ordinal growth",
+                            test_refusal_id_survives_ordinal_digit_growth,
+                            TEST_CAT_EXEC);
 }
 
 #endif /* KERNEL_TESTS */

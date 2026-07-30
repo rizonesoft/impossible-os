@@ -1481,6 +1481,22 @@ if [ "$HAS_UTEST" -eq 1 ]; then
         [ "${UTEST_FAIL:-0}" -eq 0 ] && UTEST_FAIL=1
     fi
 
+    # A COMPLETED run that produced fewer results than it planned. The
+    # launcher plans binaries in one walk of C:\ and executes them in a
+    # second one taken after live children have run, so a binary that
+    # disappears between the two is omitted from the results while the
+    # summary still reports success -- and a name REFUSED at ingest, which
+    # the planning walk counts precisely so it cannot vanish, would vanish
+    # exactly that way. The abort gate above does not cover it: nothing
+    # aborted, the walk simply came up short. Distinct from the abort so
+    # the diagnosis names the right producer bug.
+    UTEST_INCOMPLETE=$({ grep -cE "${UF}\[UTEST-RUN-INCOMPLETE\]" "$TEST_LOG" 2>/dev/null || true; } | head -1)
+    UTEST_INCOMPLETE=${UTEST_INCOMPLETE:-0}
+    if [ "$UTEST_INCOMPLETE" -gt 0 ]; then
+        echo -e "  ${RED}[UTEST]${RESET} ${UTEST_INCOMPLETE} launcher run(s) finished with planned binaries that produced no result -- the run is incomplete, not green"
+        UTEST_FAIL=$(( UTEST_FAIL + UTEST_INCOMPLETE ))
+    fi
+
     # The launcher refuses to emit skip records past its run-wide budget
     # and says so explicitly. Records it knows about but did not emit mean
     # the artifacts under-report skips, which is the same false-coverage

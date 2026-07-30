@@ -225,35 +225,51 @@ static int u_is_test_binary(const char *name)
     return 1;
 }
 
+/* Why a name gets refused, kept SEPARATE from "this is not a test file".
+ *
+ * A readdir entry that is not `test_*.exe` is not addressed to this
+ * framework at all and stays silently ignored, exactly as before. A
+ * manifest entry, or a discovered entry that IS test-shaped, is a binary
+ * somebody intended to run -- so refusing it is a result, not a filter,
+ * and it has to reach the artifacts as a counted infrastructure failure.
+ * Dropping one silently is the false-green this taxonomy exists to close:
+ * before it, a rejected entry never reached total_planned, so it vanished
+ * from every artifact while the suite still reported success. */
+typedef enum {
+    UTEST_NAME_ACCEPT = 0,
+    UTEST_NAME_NOT_TEST_SHAPED, /* not test_*.exe -- ignore, do not count */
+    UTEST_NAME_REFUSE_LENGTH,   /* longer than the derived record bound   */
+    UTEST_NAME_REFUSE_CHARSET,  /* byte outside [A-Za-z0-9._-]            */
+    UTEST_NAME_REFUSE_PATH,     /* `..` traversal component               */
+    UTEST_NAME_REFUSE_NUL       /* NUL inside the manifest line's span    */
+} utest_name_verdict_t;
+
+/* Defined after the record-bound derivation, which is expressed in terms
+ * of UTEST_RECORD_LINE_MAX and so cannot precede the parser that calls
+ * these. `span_len` is the length of the raw bytes the caller holds: the
+ * manifest passes its line span so an embedded NUL is caught rather than
+ * silently truncating the name, and the glob path passes the dirent's own
+ * string length. */
+static utest_name_verdict_t u_classify_name_span(const char *name,
+                                                 uint32_t span_len);
+static utest_name_verdict_t u_classify_name(const char *name);
+static uint32_t u_name_digest(const char *p, uint32_t len);
+
 /* Stricter gate used for manifest entries: the file is user-provided
  * text and u_run_one concatenates `C:\<name>` before vfs_open+task_exec,
  * so entries must stay in the C:\ root and must not contain path
  * separators, drive-letter colons, or upwards traversal components.
  * The glob-discovery path is already implicitly safe because vfs_readdir
  * returns one directory entry at a time, but the manifest path has no
- * such guard. */
+ * such guard.
+ *
+ * Now a thin boolean view of the taxonomy above, kept because both the
+ * unit tests and the cleanup-manifest path want the yes/no answer. Every
+ * ENUMERATION call site takes the verdict instead, because "why" is what
+ * decides between ignoring an entry and counting a failure. */
 static int u_is_valid_manifest_name(const char *name)
 {
-    const char *p;
-
-    if (!name || !name[0])
-        return 0;
-    if (!u_is_test_binary(name))
-        return 0;
-    /* Reject path-shaped inputs. `.` and `..` can never be a valid
-     * binary because they fail u_is_test_binary above, but an attacker
-     * could still try `test_.._foo.exe` -- we forbid any `..` substring
-     * as defense-in-depth. Same for `\`, `/`, and `:` which are the
-     * three path-structure characters on the Windows-convention path. */
-    for (p = name; *p; p++) {
-        if (*p == '\\' || *p == '/' || *p == ':')
-            return 0;
-        if ((unsigned char)*p < 0x20)  /* control byte */
-            return 0;
-        if (p[0] == '.' && p[1] == '.')
-            return 0;
-    }
-    return 1;
+    return u_classify_name(name) == UTEST_NAME_ACCEPT;
 }
 
 static uint64_t u_uptime_ms(void)
@@ -845,6 +861,13 @@ static void u_cleanup_manifest_apply(void)
  * rules) and freed before return, so no permanent allocation survives.
  * ------------------------------------------------------------------ */
 
+/* Refused manifest entries a run can publish individually. Separate from
+ * UTEST_MANIFEST_MAX because a refusal costs no task slot and must never
+ * be crowded out by runnable entries; smaller because a manifest with
+ * dozens of malformed lines is already a broken manifest, and exhausting
+ * this array is itself published as a fail-closed marker rather than
+ * silently truncated. */
+#define UTEST_MANIFEST_REFUSAL_MAX 64u
 #define UTEST_MANIFEST_ARENA_BYTES 8192u  /* 128 entries * avg 64 bytes */
 #define UTEST_MANIFEST_ARENA_PAGES 2u     /* 2 x 4 KiB */
 
@@ -860,12 +883,41 @@ struct manifest_state {
      * certainly has a bug. */
     uint8_t      expects_tasks[UTEST_MANIFEST_MAX];
     uint32_t     count;
+    /* Refused entries, in their OWN array rather than parallel to
+     * names[]. Keeping them separate is load-bearing, not tidiness: when
+     * refusals shared the runnable array they competed for the same
+     * UTEST_MANIFEST_MAX slots, and the cap check ran BEFORE
+     * classification and stopped parsing -- so a malformed entry in the
+     * tail of an oversized manifest was never classified at all. Its
+     * documented "tail runs via glob" fallback cannot recover it either,
+     * because a name refused for an embedded NUL or an illegal byte may
+     * not exist as a directory entry in the first place. Split apart, a
+     * full runnable array can no longer hide a refusal.
+     *
+     * `refused_digest[]` is the FNV-1a of the entry's EXACT line span,
+     * taken at parse time because that is the only point where the span
+     * length is still known -- an entry refused for an embedded NUL has
+     * a C string shorter than the bytes it came from, so hashing it
+     * later would hash the truncation. */
+    const char  *refused_names[UTEST_MANIFEST_REFUSAL_MAX];
+    uint32_t     refused_digest[UTEST_MANIFEST_REFUSAL_MAX];
+    uint8_t      refused_verdict[UTEST_MANIFEST_REFUSAL_MAX];
+    uint32_t     refused_count;
+    int          refused_overflowed; /* 1 = more refusals than we can hold */
     char        *arena;         /* pmm_alloc_contiguous()'d; NULL if not loaded */
     uintptr_t    arena_phys;    /* matching physical base for pmm_free_frame loop */
     uint32_t     arena_used;
     uint32_t     arena_cap;
     int          overflowed;    /* 1 = hit UTEST_MANIFEST_MAX cap */
 };
+
+/* This struct is a LOCAL in test_usermode_run, so every array added to it
+ * comes off the stack the launcher runs on. Pinning the size makes a
+ * future per-entry field an explicit decision instead of a stack overrun
+ * discovered on hardware. */
+_Static_assert(sizeof(struct manifest_state) <= 4096,
+               "manifest_state is stack-allocated by test_usermode_run -- "
+               "keep it well inside a single page");
 
 static int u_manifest_load(struct manifest_state *ms)
 {
@@ -875,6 +927,8 @@ static int u_manifest_load(struct manifest_state *ms)
     uint32_t size;
 
     ms->count       = 0;
+    ms->refused_count      = 0;
+    ms->refused_overflowed = 0;
     ms->arena       = (char *)0;
     ms->arena_phys  = 0;
     ms->arena_used  = 0;
@@ -968,10 +1022,8 @@ static int u_manifest_load(struct manifest_state *ms)
                 char *name_start;
                 char *tok = line_start;
                 utest_type_t entry_type;
-                if (ms->count >= UTEST_MANIFEST_MAX) {
-                    ms->overflowed = 1;
-                    break;
-                }
+                utest_name_verdict_t verdict;
+                uint32_t name_span;
                 /* Terminate the line in-place; safe by the ARENA-1
                  * cap above. */
                 *line_end = '\0';
@@ -979,6 +1031,21 @@ static int u_manifest_load(struct manifest_state *ms)
                 /* Extract the first token (binary name). Stops at
                  * first whitespace inside the line. */
                 name_start = tok;
+                /* True span of the name token, measured against the
+                 * LINE's end rather than by C-string scanning, and
+                 * captured BEFORE the tokenizer writes its terminators.
+                 * The scan below stops at an embedded NUL, so without
+                 * this the parser -- and every consumer after it -- would
+                 * see only the bytes preceding that NUL and never know
+                 * the entry was longer. Comparing this span against the
+                 * C length is what makes such an entry a counted refusal
+                 * instead of a silently truncated name. */
+                {
+                    const char *e = name_start;
+                    while (e < line_end && *e != ' ' && *e != '\t')
+                        e++;
+                    name_span = (uint32_t)(e - name_start);
+                }
                 while (*tok && *tok != ' ' && *tok != '\t')
                     tok++;
                 if (*tok) {
@@ -1020,17 +1087,56 @@ static int u_manifest_load(struct manifest_state *ms)
                     tok = kv_end;
                     while (*tok == ' ' || *tok == '\t') tok++;
                 }
-                /* Enforce the manifest trust boundary on the bare
-                 * name: test_*.exe, no path separators, no `..`,
-                 * no control bytes. */
-                if (!u_is_valid_manifest_name(name_start)) {
+                /* Enforce the manifest trust boundary on the bare name:
+                 * test_*.exe, inside the accepted charset, within the
+                 * derived record bound, no `..`, no embedded NUL.
+                 *
+                 * A refusal is KEPT, not dropped. Dropping it here is
+                 * what used to make a rejected entry invisible: it never
+                 * reached total_planned, so the artifacts and the host
+                 * recount described a run that silently skipped a binary
+                 * somebody asked for. The entry stays in the array with
+                 * its verdict and its span digest so both walks can count
+                 * it and the run walk can publish it as a failure.
+                 *
+                 * The raw name is NOT logged. It is untrusted bytes, and
+                 * a control byte in it would split this very WARN across
+                 * physical serial lines -- the sanitized identity the
+                 * record carries is emitted by the run walk instead. */
+                verdict = u_classify_name_span(name_start, name_span);
+                if (verdict == UTEST_NAME_NOT_TEST_SHAPED) {
                     klog(LOG_WARN, "UTEST",
-                         "manifest: rejecting invalid entry '%s'",
-                         name_start);
+                         "manifest: ignoring entry %u -- not test_*.exe",
+                         (uint64_t)(ms->count + ms->refused_count));
                     continue;
                 }
-                ms->names[ms->count] = name_start;
-                ms->types[ms->count] = entry_type;
+                if (verdict != UTEST_NAME_ACCEPT) {
+                    /* Refusals are classified and stored FIRST, before
+                     * the runnable cap is consulted, so an oversized
+                     * manifest can never stop the parser short of a
+                     * malformed entry it has not yet examined. */
+                    if (ms->refused_count >= UTEST_MANIFEST_REFUSAL_MAX) {
+                        ms->refused_overflowed = 1;
+                        continue;
+                    }
+                    ms->refused_names[ms->refused_count]   = name_start;
+                    ms->refused_digest[ms->refused_count]  =
+                        u_name_digest(name_start, name_span);
+                    ms->refused_verdict[ms->refused_count] = (uint8_t)verdict;
+                    ms->refused_count++;
+                    continue;
+                }
+                /* Runnable entry: now the cap applies. `continue` rather
+                 * than `break` because the tail still has to be scanned
+                 * for refusals -- the glob fallback that picks up valid
+                 * tail entries cannot see a name that is illegal as a
+                 * filename. */
+                if (ms->count >= UTEST_MANIFEST_MAX) {
+                    ms->overflowed = 1;
+                    continue;
+                }
+                ms->names[ms->count]         = name_start;
+                ms->types[ms->count]         = entry_type;
                 ms->expects_tasks[ms->count] = (uint8_t)entry_expects;
                 ms->count++;
             }
@@ -1623,6 +1729,379 @@ _Static_assert((uint64_t)UTEST_SKIP_RECORD_BUDGET *
                "the worst-case skip burst plus its refusal markers must fit "
                "the serialized-byte allowance the budget is derived from");
 
+/* ---- The binary-name bound, derived per formatter ------------------- *
+ *
+ * A binary name was bounded only by VFS_MAX_NAME (256) while every record
+ * is bounded by UTEST_RECORD_LINE_MAX (256), so a long enough name pushed
+ * each formatter onto its own overflow fallback: the XML testcase drops
+ * the name, the JSON record substitutes "overflow", the TAP point becomes
+ * "unrepresentable", and the verdict line loses its `: PASS` / `: FAIL`
+ * token off the end -- which is the token the host's recount greps for, so
+ * the binary silently left the fail-closed count entirely.
+ *
+ * The bound below is DERIVED rather than picked: each record kind's fixed
+ * cost is summed from that kind's OWN format literals through UTEST_LIT,
+ * so editing a format string moves the bound with it instead of leaving a
+ * hand-counted number behind. The name's MULTIPLICITY per record matters
+ * as much as the fixed cost -- the JSON skip_block carries it twice (as
+ * `rec_name` and again as `parent`), so it costs 2N there -- and the
+ * answer is the MINIMUM across every kind, not the skip_block's. Checking
+ * that assumption is what this block is for: the skip_block leaves 37
+ * bytes and the JSON binary record 39, so they are two bytes apart --
+ * close enough that one edit to either format string reverses which one
+ * binds, and far too close to settle by inspection. The unit test asserts
+ * the bound equals the minimum rather than any particular kind's room.
+ *
+ * Scope: the kinds below are the ones a host consumer PARSES -- the
+ * verdict line, the XML testcase, both JSON record kinds, the TAP point
+ * and the report line. The `%s: format=%s` diagnostic is deliberately not
+ * in the minimum: no consumer parses it, its tail truncating loses no
+ * machine-read field, and its second operand is a kernel-owned loader
+ * constant rather than part of the record contract -- pulling exec.c's
+ * label width into this derivation would couple the bound to an unrelated
+ * subsystem for a line that carries no accounting. */
+
+/* Length of a string literal, NUL excluded. */
+#define UTEST_LIT(s) ((uint32_t)(sizeof(s) - 1u))
+#define UTEST_MAX2(a, b) ((a) > (b) ? (a) : (b))
+#define UTEST_MIN2(a, b) ((a) < (b) ? (a) : (b))
+
+/* Decimal widths. Each is pinned to the cap the VALUE carries, not to the
+ * width of its C type, and each cap is asserted so a future retune that
+ * outgrows its digit count fails the build instead of silently overrunning
+ * a record whose bound was derived from it. */
+#define UTEST_DIGITS_U32     10u   /* 4294967295                        */
+#define UTEST_DIGITS_REPORT   7u   /* TASK_UTEST_REPORT_MAX = 1,000,000 */
+_Static_assert(TASK_UTEST_REPORT_MAX <= 9999999u,
+               "report counters must stay within the digit width the "
+               "record bound reserves for them");
+_Static_assert(TASK_UTEST_REPORT_SKIP_MAX <= 9999999u,
+               "skip-block counts must stay within the reserved digit width");
+_Static_assert(UTEST_SKIP_RECORD_BUDGET <= 9999999u,
+               "the skip-record budget bounds the skip_index field's digits");
+
+/* Elapsed milliseconds are the one record field with no natural cap:
+ * uptime is a uint64 and `end_ms - start_ms` inherits that, so its digit
+ * count could not be proven -- only assumed. It is CLAMPED at emit
+ * (u_clamp_time_ms) so the reservation below is a fact about the code
+ * rather than a bet on how long a run takes. */
+#define UTEST_TIME_MS_MAX    0xFFFFFFFFull
+#define UTEST_DIGITS_TIME    UTEST_DIGITS_U32
+/* u_format_seconds renders `<secs>.<3 digits>`; secs = ms/1000, so it can
+ * never be wider than the clamped millisecond field itself. */
+#define UTEST_SECONDS_MAX    (UTEST_DIGITS_TIME + UTEST_LIT(".000"))
+
+/* The reason string, derived from the launcher's own reason literals --
+ * every site that writes `reason` is enumerated here, so the widest one is
+ * a fact rather than an estimate. */
+#define UTEST_REASON_BUF     96u
+#define UTEST_REASON_TIMEOUT (UTEST_LIT("timeout after ") + UTEST_DIGITS_U32 \
+                              + UTEST_LIT("ms"))
+#define UTEST_REASON_EXIT    (UTEST_LIT("exit=-") + UTEST_DIGITS_U32)
+#define UTEST_REASON_LEAK    (UTEST_DIGITS_U32 + UTEST_LIT(" handle(s) leaked"))
+#define UTEST_REASON_ISOLATE UTEST_LIT("isolation failed")
+#define UTEST_REASON_INVALID UTEST_LIT("invalid test report")
+#define UTEST_REASON_REFUSAL UTEST_LIT("name refused: charset")
+#define UTEST_REASON_MAX                                                   \
+    UTEST_MAX2(UTEST_MAX2(UTEST_MAX2(UTEST_REASON_TIMEOUT,                 \
+                                     UTEST_REASON_EXIT),                   \
+                          UTEST_MAX2(UTEST_REASON_LEAK,                    \
+                                     UTEST_REASON_ISOLATE)),               \
+               UTEST_MAX2(UTEST_REASON_INVALID, UTEST_REASON_REFUSAL))
+_Static_assert(UTEST_REASON_MAX < UTEST_REASON_BUF,
+               "the widest reason the launcher composes must fit the buffer "
+               "u_run_one writes it into");
+
+/* The longest `classname` / `type` label either testcase emitter can put
+ * on a record: u_type_label's widest return, itself wider than the
+ * "skip-block" classname override. */
+#define UTEST_LABEL_MAX      UTEST_LIT("correctness")
+
+/* Per-kind fixed cost -- everything on the record that is NOT the name. */
+#define UTEST_FIXED_VERDICT                                                \
+    (UTEST_LIT(": FAIL (") + UTEST_DIGITS_U32 +                            \
+     UTEST_LIT(" handle(s) leaked -- escalated from PASS)"))
+#define UTEST_FIXED_XML                                                    \
+    (UTEST_LIT("[UTEST-XML] <testcase name=\"") +                          \
+     UTEST_LIT("\" classname=\"") + UTEST_LABEL_MAX +                      \
+     UTEST_LIT("\" time=\"") + UTEST_SECONDS_MAX + UTEST_LIT("\">") +      \
+     UTEST_LIT("<failure message=\"") + UTEST_REASON_MAX +                 \
+     UTEST_LIT("\"/>") + UTEST_LIT("</testcase>"))
+#define UTEST_FIXED_JSON_BINARY                                            \
+    (UTEST_LIT("[UTEST-JSON] {\"record_kind\":\"binary\",\"name\":\"") +    \
+     UTEST_LIT("\",\"type\":\"") + UTEST_LABEL_MAX +                       \
+     UTEST_LIT("\",\"status\":\"") + UTEST_LIT("PASS") +                   \
+     UTEST_LIT("\",\"time_ms\":") + UTEST_DIGITS_TIME +                    \
+     UTEST_LIT(",\"reason\":\"") + UTEST_REASON_MAX + UTEST_LIT("\"") +    \
+     UTEST_LIT(",\"asserts_passed\":") + UTEST_DIGITS_REPORT +             \
+     UTEST_LIT(",\"asserts_failed\":") + UTEST_DIGITS_REPORT +             \
+     UTEST_LIT(",\"skip_blocks\":") + UTEST_DIGITS_REPORT + UTEST_LIT("}"))
+/* The synthetic skip-record name both kinds below carry in place of the
+ * bare binary name: `<binary>::skipped-block-<k>`. */
+#define UTEST_FIXED_SKIP_SUFFIX                                            \
+    (UTEST_LIT("::skipped-block-") + UTEST_DIGITS_REPORT)
+#define UTEST_FIXED_JSON_SKIP                                              \
+    (UTEST_LIT("[UTEST-JSON] {\"record_kind\":\"skip_block\",\"name\":\"")  \
+     + UTEST_FIXED_SKIP_SUFFIX + UTEST_LIT("\",\"parent\":\"") +           \
+     UTEST_LIT("\",\"skip_index\":") + UTEST_DIGITS_REPORT +               \
+     UTEST_LIT(",\"status\":\"SKIP\",\"reason\":\"sub-test block skipped "  \
+               "(reason on serial log)\"}"))
+#define UTEST_FIXED_TAP                                                    \
+    (UTEST_LIT("not ok ") + UTEST_DIGITS_U32 + UTEST_LIT(" - ") +          \
+     UTEST_FIXED_SKIP_SUFFIX + UTEST_LIT(" # ") +                          \
+     UTEST_MAX2(UTEST_LIT("SKIP reported by binary"), UTEST_REASON_MAX))
+#define UTEST_FIXED_REPORT                                                 \
+    (UTEST_LIT("[UTEST-REPORT] ") + UTEST_LIT(" asserts_passed=") +        \
+     UTEST_DIGITS_REPORT + UTEST_LIT(" asserts_failed=") +                 \
+     UTEST_DIGITS_REPORT + UTEST_LIT(" skip_blocks=") +                    \
+     UTEST_DIGITS_REPORT + UTEST_LIT(" state=") + UTEST_LIT("INVALID"))
+
+/* Room a kind leaves for the name: the appenders refuse at
+ * `pos + 1 >= cap` (u_append), so a record holds UTEST_RECORD_LINE_MAX - 1
+ * content bytes. Divided by the multiplicity, because a kind that carries
+ * the name twice pays for it twice. */
+#define UTEST_NAME_ROOM(fixed, mult)                                       \
+    (((UTEST_RECORD_LINE_MAX - 1u) - (fixed)) / (mult))
+
+#define UTEST_MAX_BINARY_NAME                                              \
+    UTEST_MIN2(                                                            \
+        UTEST_MIN2(UTEST_MIN2(UTEST_NAME_ROOM(UTEST_FIXED_VERDICT, 1u),    \
+                              UTEST_NAME_ROOM(UTEST_FIXED_XML, 1u)),       \
+                   UTEST_MIN2(UTEST_NAME_ROOM(UTEST_FIXED_JSON_BINARY, 1u),\
+                              UTEST_NAME_ROOM(UTEST_FIXED_JSON_SKIP, 2u))),\
+        UTEST_MIN2(UTEST_NAME_ROOM(UTEST_FIXED_TAP, 1u),                   \
+                   UTEST_NAME_ROOM(UTEST_FIXED_REPORT, 1u)))
+
+/* Every kind must still fit at the derived bound. The division above makes
+ * that arithmetically true; the assert exists to catch a future edit that
+ * replaces the minimum with a literal and quietly breaks the relationship
+ * -- the same failure mode the skip-budget asserts above guard against. */
+_Static_assert(UTEST_FIXED_JSON_SKIP + 2u * UTEST_MAX_BINARY_NAME <=
+                   UTEST_RECORD_LINE_MAX - 1u &&
+               UTEST_FIXED_JSON_BINARY + UTEST_MAX_BINARY_NAME <=
+                   UTEST_RECORD_LINE_MAX - 1u &&
+               UTEST_FIXED_XML + UTEST_MAX_BINARY_NAME <=
+                   UTEST_RECORD_LINE_MAX - 1u &&
+               UTEST_FIXED_TAP + UTEST_MAX_BINARY_NAME <=
+                   UTEST_RECORD_LINE_MAX - 1u &&
+               UTEST_FIXED_VERDICT + UTEST_MAX_BINARY_NAME <=
+                   UTEST_RECORD_LINE_MAX - 1u &&
+               UTEST_FIXED_REPORT + UTEST_MAX_BINARY_NAME <=
+                   UTEST_RECORD_LINE_MAX - 1u,
+               "a name at the derived bound must fit EVERY record kind "
+               "without any formatter reaching its overflow fallback");
+
+/* Compatibility ratchet. The derivation is honest in one direction on
+ * its own -- a name past the bound is refused rather than truncated --
+ * but nothing stops a future format string from GROWING its fixed cost
+ * and silently shrinking this bound, which turns filenames that ran
+ * yesterday into counted failures today. That is a compatibility break
+ * and belongs in a review, not in a build that stays green.
+ *
+ * So the floor is today's derived value, not a comfortable margin above
+ * the longest name the repository currently builds (test_harness_smoke.exe,
+ * 22 bytes). Shrinking the bound now requires deliberately lowering this
+ * number, which is exactly the decision that should be explicit. It lives
+ * here alone rather than being mirrored into the unit test, so there is
+ * one ratchet to move rather than two that can disagree. */
+#define UTEST_NAME_BOUND_RATCHET 37u
+_Static_assert(UTEST_MAX_BINARY_NAME >= UTEST_NAME_BOUND_RATCHET,
+               "a record format grew and shrank the derived name bound: "
+               "names that were accepted before would now be refused, so "
+               "lower UTEST_NAME_BOUND_RATCHET deliberately or don't");
+
+/* Hex digits of the refused-name digest. The digest exists to correlate
+ * the SAME bad name across runs; within a run, uniqueness comes from the
+ * ordinal below rather than from hash strength, because no digest width
+ * can guarantee distinctness and this identity has to. */
+#define UTEST_NAME_DIGEST_HEX     8u
+#define UTEST_REFUSAL_PREFIX_MIN  4u
+/* The identity is assembled at runtime from the ordinal's ACTUAL digit
+ * count, so this reserves the worst case (a 10-digit ordinal) and asserts
+ * that a readable prefix still survives it. */
+#define UTEST_REFUSAL_ID_FIXED                                             \
+    (UTEST_LIT("refused_") + UTEST_DIGITS_U32 + UTEST_LIT("_") +           \
+     UTEST_LIT("_") + UTEST_NAME_DIGEST_HEX + UTEST_LIT(".exe"))
+_Static_assert(UTEST_REFUSAL_ID_FIXED + UTEST_REFUSAL_PREFIX_MIN <=
+                   UTEST_MAX_BINARY_NAME,
+               "a refusal identity must fit the bound it exists to prove, "
+               "with room left for a prefix an operator can read");
+
+/* The accepted charset. Restricting it is what makes the bound above
+ * PROVABLE rather than probabilistic: u_xml_escape and u_json_escape are
+ * the identity on every byte in this set, so N accepted bytes still cost
+ * N bytes on the wire. Without it a single `"` expands to `&quot;` and a
+ * name six times shorter than the bound could still overflow a record.
+ * The set also subsumes the path-shape checks this validator used to make
+ * one at a time -- `\`, `/`, `:`, spaces, `#` and every control byte are
+ * outside it -- so `#` can no longer inject a TAP directive either. */
+static int u_name_char_ok(char c)
+{
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+           (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-';
+}
+
+static utest_name_verdict_t u_classify_name_span(const char *name,
+                                                 uint32_t span_len)
+{
+    uint32_t len = 0;
+    const char *p;
+
+    if (!name)
+        return UTEST_NAME_NOT_TEST_SHAPED;
+    while (name[len])
+        len++;
+    /* The span check comes FIRST, ahead of the shape check, and the
+     * order is the whole point. An embedded NUL means the C string the
+     * validator, the filter and the digest all see is SHORTER than the
+     * bytes the caller actually holds. Classifying shape first would
+     * read that truncation as the real name -- and for `test_bad\0.exe`
+     * the truncation is `test_bad`, which is NOT test-shaped, so the
+     * entry would be ignored as a stray file rather than counted as the
+     * malformed request it is. A NUL anywhere in the span is a refusal
+     * regardless of what the visible prefix happens to look like.
+     *
+     * Only the manifest can produce a mismatch here: dirent names are C
+     * strings, so the glob path always passes span_len == len. */
+    if (len != span_len)
+        return UTEST_NAME_REFUSE_NUL;
+    if (!name[0])
+        return UTEST_NAME_NOT_TEST_SHAPED;
+    /* Shape next: a file that is not test_*.exe is not addressed to this
+     * framework, and classifying it as a refusal would turn every stray
+     * file in C:\ into a suite failure. Everything below this line is a
+     * binary somebody meant to run. */
+    if (!u_is_test_binary(name))
+        return UTEST_NAME_NOT_TEST_SHAPED;
+    if (len > UTEST_MAX_BINARY_NAME)
+        return UTEST_NAME_REFUSE_LENGTH;
+    for (p = name; *p; p++) {
+        if (!u_name_char_ok(*p))
+            return UTEST_NAME_REFUSE_CHARSET;
+        /* `.` and `..` cannot be test-shaped on their own, but
+         * `test_.._foo.exe` is, and both dots are inside the charset --
+         * so traversal stays an explicit check. */
+        if (p[0] == '.' && p[1] == '.')
+            return UTEST_NAME_REFUSE_PATH;
+    }
+    return UTEST_NAME_ACCEPT;
+}
+
+static utest_name_verdict_t u_classify_name(const char *name)
+{
+    uint32_t len = 0;
+
+    if (!name)
+        return UTEST_NAME_NOT_TEST_SHAPED;
+    while (name[len])
+        len++;
+    return u_classify_name_span(name, len);
+}
+
+/* Short human label for a refusal, used as the record's `reason`. Every
+ * string here is inside UTEST_REASON_REFUSAL's derived width. */
+static const char *u_refusal_reason(utest_name_verdict_t v)
+{
+    switch (v) {
+    case UTEST_NAME_REFUSE_LENGTH:  return "name refused: length";
+    case UTEST_NAME_REFUSE_CHARSET: return "name refused: charset";
+    case UTEST_NAME_REFUSE_PATH:    return "name refused: path";
+    case UTEST_NAME_REFUSE_NUL:     return "name refused: nul";
+    default:                        return "name refused";
+    }
+}
+
+/* FNV-1a over the EXACT byte span, not over a C string: the whole point
+ * of the digest is to distinguish two names the sanitized prefix renders
+ * identically, and a name refused for an embedded NUL is precisely the
+ * case where the C string stops early. Constants are the published FNV-1a
+ * 32-bit basis and prime. */
+#define UTEST_FNV1A_BASIS 2166136261u
+#define UTEST_FNV1A_PRIME 16777619u
+static uint32_t u_name_digest(const char *p, uint32_t len)
+{
+    uint32_t h = UTEST_FNV1A_BASIS;
+    uint32_t i;
+
+    for (i = 0; i < len; i++) {
+        h ^= (uint32_t)(uint8_t)p[i];
+        h *= UTEST_FNV1A_PRIME;
+    }
+    return h;
+}
+
+/* Build the identity a refused binary appears under:
+ * `refused_<ordinal>_<sanitized prefix>_<8 hex>.exe`.
+ *
+ * Three properties, in the order they matter. It never echoes the raw
+ * name, so a hostile name cannot reach the wire through the record that
+ * reports it. Its ordinal is unique WITHIN the run by construction, which
+ * is stronger than any digest width could be -- a 32-bit FNV-1a is not
+ * collision-resistant, and an operator who cannot tell two refusals apart
+ * cannot act on either. The digest is what still correlates the SAME bad
+ * name across runs, which the ordinal alone cannot do. It ends in `.exe`
+ * because the host's fail-closed recount greps for a `.exe` name followed
+ * by a verdict token; an identity that missed it would be reported by the
+ * launcher and dropped by the host.
+ *
+ * The prefix takes whatever the ordinal leaves, so an early refusal gets
+ * a readable prefix while the static assert above still holds against a
+ * worst-case 10-digit ordinal.
+ *
+ * `digest` is passed in rather than computed here: it must cover the
+ * entry's exact byte span, which only the ENUMERATOR still knows -- an
+ * entry refused for an embedded NUL has a C string shorter than the bytes
+ * it came from, so hashing `raw` at this point would hash the truncation
+ * instead of the name. `raw` is used only for the readable prefix, where
+ * stopping at the NUL is harmless. Returns 1 on success, 0 if `cap`
+ * cannot hold a bound-conforming identity. */
+static int u_build_refusal_id(char *dst, uint32_t cap, uint32_t ordinal,
+                              const char *raw, uint32_t digest)
+{
+    static const char hex[] = "0123456789abcdef";
+    uint32_t pos = 0;
+    uint32_t tail = UTEST_LIT("_") + UTEST_NAME_DIGEST_HEX + UTEST_LIT(".exe");
+    uint32_t budget, i;
+
+    if (!dst || cap < UTEST_MAX_BINARY_NAME + 1u)
+        return 0;
+    dst[0] = '\0';
+    if (!u_append(dst, &pos, cap, "refused_"))
+        return 0;
+    if (!u_append_uint(dst, &pos, cap, (uint64_t)ordinal))
+        return 0;
+    if (!u_append(dst, &pos, cap, "_"))
+        return 0;
+    /* Room left for the prefix once the fixed tail is reserved. */
+    if (pos + tail >= UTEST_MAX_BINARY_NAME)
+        return 0;
+    budget = UTEST_MAX_BINARY_NAME - pos - tail;
+    for (i = 0; i < budget && raw && raw[i]; i++)
+        dst[pos++] = u_name_char_ok(raw[i]) ? raw[i] : '_';
+    dst[pos] = '\0';
+    if (!u_append(dst, &pos, cap, "_"))
+        return 0;
+    for (i = 0; i < UTEST_NAME_DIGEST_HEX; i++) {
+        uint32_t shift = (UTEST_NAME_DIGEST_HEX - 1u - i) * 4u;
+        if (pos + 1u >= cap)
+            return 0;
+        dst[pos++] = hex[(digest >> shift) & 0xFu];
+    }
+    dst[pos] = '\0';
+    return u_append(dst, &pos, cap, ".exe");
+}
+
+/* Clamp elapsed milliseconds to the width the record bound reserves for
+ * them. Uptime is a uint64 with no natural cap, so without this the
+ * `time_ms` field's digit count is an assumption rather than a fact --
+ * and a bound derived from an assumption is the picked number the whole
+ * derivation exists to avoid. A run that reaches 49 days of uptime
+ * reports a saturated duration; every other field stays exact. */
+static uint64_t u_clamp_time_ms(uint64_t ms)
+{
+    return ms > UTEST_TIME_MS_MAX ? (uint64_t)UTEST_TIME_MS_MAX : ms;
+}
+
 /* Machine-artifact records bypass the per-subsystem rate limiter.
  *
  * klog drops messages past 100 per second per subsystem, and under
@@ -2093,20 +2572,27 @@ static void u_emit_xml_suite_close(uint32_t passed, uint32_t failed,
  * Codex quality M 2026-04-20: glob-discovered names up to VFS_MAX_NAME
  * (256 chars) could otherwise exceed the line buffer and corrupt the
  * assembled XML file downstream. */
-static void u_emit_xml_testcase(const char *name, utest_type_t type,
-                                 int verdict, uint64_t time_ms,
-                                 const char *reason,
+/* Split out of the emitter so the record can be BUILT without being
+ * logged. The name bound is derived from these very literals, and a
+ * derivation that only ever runs inside a klog call cannot be checked:
+ * the unit tests format a bound-length name here and assert the record
+ * fits, which is what proves UTEST_FIXED_XML still matches the format
+ * string below rather than a copy of it that drifted. Returns 1 on
+ * success, 0 if the record would not fit `cap`. */
+static int u_format_xml_testcase(char *line, uint32_t cap, const char *name,
+                                 utest_type_t type, int verdict,
+                                 uint64_t time_ms, const char *reason,
                                  const char *classname_override)
 {
-    char line[UTEST_RECORD_LINE_MAX];
     uint32_t pos = 0;
     char time_buf[24];
 
-    if (!s_xml_mode) return;
-    u_format_seconds(time_buf, sizeof(time_buf), time_ms);
+    if (cap == 0) return 0;
+    line[0] = '\0';
+    u_format_seconds(time_buf, sizeof(time_buf), u_clamp_time_ms(time_ms));
 
-    #define APP(s)     do { if (!u_append(line, &pos, sizeof(line), (s))) goto overflow; } while (0)
-    #define APP_XML(s) do { if (!u_xml_escape(line, &pos, sizeof(line), (s))) goto overflow; } while (0)
+    #define APP(s)     do { if (!u_append(line, &pos, cap, (s))) goto overflow; } while (0)
+    #define APP_XML(s) do { if (!u_xml_escape(line, &pos, cap, (s))) goto overflow; } while (0)
 
     APP("[UTEST-XML] <testcase name=\"");
     APP_XML(name);
@@ -2142,12 +2628,27 @@ static void u_emit_xml_testcase(const char *name, utest_type_t type,
         }
         APP("</testcase>");
     }
-    utest_record_log(LOG_INFO, "%s", line);
     #undef APP
     #undef APP_XML
-    return;
+    return 1;
 
 overflow:
+    return 0;
+}
+
+static void u_emit_xml_testcase(const char *name, utest_type_t type,
+                                 int verdict, uint64_t time_ms,
+                                 const char *reason,
+                                 const char *classname_override)
+{
+    char line[UTEST_RECORD_LINE_MAX];
+
+    if (!s_xml_mode) return;
+    if (u_format_xml_testcase(line, sizeof(line), name, type, verdict,
+                              time_ms, reason, classname_override)) {
+        utest_record_log(LOG_INFO, "%s", line);
+        return;
+    }
     /* The fallback must preserve the VERDICT and the classname, not just
      * stay well-formed. A self-closing <testcase/> reads as PASSED, so an
      * overflowing skip record used to vanish from the failures/skipped
@@ -2171,27 +2672,30 @@ overflow:
     }
 }
 
-/* Emit one `[UTEST-JSON] {...}` per binary. Overflow-safe via the same
- * goto-fallback pattern as u_emit_xml_testcase. */
-static void u_emit_json_testcase(const char *name, utest_type_t type,
-                                  int verdict, uint64_t time_ms,
-                                  const char *reason,
+/* Build one `[UTEST-JSON] {...}` per binary. Split from its emitter for
+ * the same reason as the XML formatter above: UTEST_FIXED_JSON_BINARY is
+ * derived from these literals, and the tests format a bound-length name
+ * here to prove the two have not drifted apart. Returns 1 on success, 0
+ * if the record would not fit `cap`. */
+static int u_format_json_testcase(char *line, uint32_t cap, const char *name,
+                                  utest_type_t type, int verdict,
+                                  uint64_t time_ms, const char *reason,
                                   const struct u_report *rep)
 {
-    char line[UTEST_RECORD_LINE_MAX];
     uint32_t pos = 0;
     const char *status;
 
-    if (!s_json_mode) return;
+    if (cap == 0) return 0;
+    line[0] = '\0';
     switch (verdict) {
     case 0: status = "PASS"; break;
     case 2: status = "SKIP"; break;
     default: status = "FAIL"; break;
     }
 
-    #define APP(s)      do { if (!u_append(line, &pos, sizeof(line), (s))) goto overflow; } while (0)
-    #define APP_JSON(s) do { if (!u_json_escape(line, &pos, sizeof(line), (s))) goto overflow; } while (0)
-    #define APP_UINT(v) do { if (!u_append_uint(line, &pos, sizeof(line), (uint64_t)(v))) goto overflow; } while (0)
+    #define APP(s)      do { if (!u_append(line, &pos, cap, (s))) goto overflow; } while (0)
+    #define APP_JSON(s) do { if (!u_json_escape(line, &pos, cap, (s))) goto overflow; } while (0)
+    #define APP_UINT(v) do { if (!u_append_uint(line, &pos, cap, (uint64_t)(v))) goto overflow; } while (0)
 
     /* record_kind is the stream's discriminator and leads every record.
      * The stream carries two kinds of object -- one per BINARY and one per
@@ -2205,7 +2709,7 @@ static void u_emit_json_testcase(const char *name, utest_type_t type,
     APP("\",\"status\":\"");
     APP(status);
     APP("\",\"time_ms\":");
-    APP_UINT(time_ms);
+    APP_UINT(u_clamp_time_ms(time_ms));
     if (reason && reason[0]) {
         APP(",\"reason\":\"");
         APP_JSON(reason);
@@ -2226,13 +2730,28 @@ static void u_emit_json_testcase(const char *name, utest_type_t type,
         APP_UINT(rep->skip_blocks);
     }
     APP("}");
-    utest_record_log(LOG_INFO, "%s", line);
     #undef APP
     #undef APP_JSON
     #undef APP_UINT
-    return;
+    return 1;
 
 overflow:
+    return 0;
+}
+
+static void u_emit_json_testcase(const char *name, utest_type_t type,
+                                  int verdict, uint64_t time_ms,
+                                  const char *reason,
+                                  const struct u_report *rep)
+{
+    char line[UTEST_RECORD_LINE_MAX];
+
+    if (!s_json_mode) return;
+    if (u_format_json_testcase(line, sizeof(line), name, type, verdict,
+                               time_ms, reason, rep)) {
+        utest_record_log(LOG_INFO, "%s", line);
+        return;
+    }
     /* Keep record_kind: it is the stream's discriminator, and a consumer
      * following the documented contract drops any record without it --
      * which would make an overflowing binary disappear entirely rather
@@ -2485,17 +3004,24 @@ static uint32_t u_skip_records_allowed(uint32_t already_emitted,
  * testcase emitter is what made the two indistinguishable.
  *
  * Same bounded-append + overflow-fallback contract as its sibling. */
-static void u_emit_json_skip_record(const char *rec_name, const char *parent,
-                                    uint32_t index)
+/* Split from its emitter for the same reason as the two testcase
+ * formatters -- and this is the one that matters most: the skip_block
+ * carries the name TWICE, so it is the kind that BINDS the derived
+ * bound. UTEST_FIXED_JSON_SKIP is a second copy of the literals below,
+ * and only formatting a bound-length name through this function proves
+ * the copy still matches. Returns 1 on success, 0 if it would not fit. */
+static int u_format_json_skip_record(char *line, uint32_t cap,
+                                     const char *rec_name, const char *parent,
+                                     uint32_t index)
 {
-    char line[UTEST_RECORD_LINE_MAX];
     uint32_t pos = 0;
 
-    if (!s_json_mode) return;
+    if (cap == 0) return 0;
+    line[0] = '\0';
 
-    #define APP(s)      do { if (!u_append(line, &pos, sizeof(line), (s))) goto overflow; } while (0)
-    #define APP_JSON(s) do { if (!u_json_escape(line, &pos, sizeof(line), (s))) goto overflow; } while (0)
-    #define APP_UINT(v) do { if (!u_append_uint(line, &pos, sizeof(line), (uint64_t)(v))) goto overflow; } while (0)
+    #define APP(s)      do { if (!u_append(line, &pos, cap, (s))) goto overflow; } while (0)
+    #define APP_JSON(s) do { if (!u_json_escape(line, &pos, cap, (s))) goto overflow; } while (0)
+    #define APP_UINT(v) do { if (!u_append_uint(line, &pos, cap, (uint64_t)(v))) goto overflow; } while (0)
 
     APP("[UTEST-JSON] {\"record_kind\":\"skip_block\",\"name\":\"");
     APP_JSON(rec_name);
@@ -2505,13 +3031,26 @@ static void u_emit_json_skip_record(const char *rec_name, const char *parent,
     APP_UINT(index);
     APP(",\"status\":\"SKIP\",\"reason\":\"sub-test block skipped "
         "(reason on serial log)\"}");
-    utest_record_log(LOG_INFO, "%s", line);
     #undef APP
     #undef APP_JSON
     #undef APP_UINT
-    return;
+    return 1;
 
 overflow:
+    return 0;
+}
+
+static void u_emit_json_skip_record(const char *rec_name, const char *parent,
+                                    uint32_t index)
+{
+    char line[UTEST_RECORD_LINE_MAX];
+
+    if (!s_json_mode) return;
+    if (u_format_json_skip_record(line, sizeof(line), rec_name, parent,
+                                  index)) {
+        utest_record_log(LOG_INFO, "%s", line);
+        return;
+    }
     utest_record_log(LOG_ERROR,
          "[UTEST-RECORD-OVERFLOW] JSON skip record for '%s' exceeded its buffer",
          parent);
@@ -2709,6 +3248,124 @@ static void u_emit_report_line(const char *name, const struct u_report *rep)
          rep->state == TASK_UTEST_REPORT_VALID ? "VALID" : "INVALID");
 }
 
+/* Compare two binary names the way the FILESYSTEM does.
+ *
+ * C: is IXFS (mounted in partition.c), and IXFS resolves directory names
+ * case-insensitively over ASCII -- `ixfs_strcmp` folds, matching the VFS
+ * uppercase fold in walk_path. So `test_Bad.exe` in a manifest and
+ * `test_bad.exe` on disk are the SAME FILE, and a bytewise comparison
+ * treats them as two. Every identity decision the launcher makes between
+ * a manifest entry and a dirent has to use the filesystem's notion of
+ * sameness, or it plans, runs or refuses one file twice.
+ *
+ * Only ASCII letters need folding: the accepted charset is
+ * [A-Za-z0-9._-], and this is reached only for names a dirent could
+ * actually carry.
+ *
+ * Used for REFUSAL identity only. The manifest-versus-dirent dedup for
+ * ACCEPTED entries deliberately stays bytewise, because that path is
+ * followed by a filter match and `utest_filter=` compares literally
+ * (test_usermode_glob_match). A folded dedup there would suppress a
+ * dirent whose manifest twin the filter had already rejected on case,
+ * and the requested binary would run zero times while total_planned and
+ * total_ran still agreed -- a false green, and a strictly worse one than
+ * the duplicate run it was meant to prevent. Refusals have no such
+ * interaction: they bypass the filter entirely. Aligning the filter's
+ * case semantics with the filesystem's is a user-visible change to
+ * `utest_filter=` and is owned by the enumeration-plan section. */
+static int u_name_equal_fs(const char *a, const char *b, uint32_t cap)
+{
+    uint32_t i;
+
+    for (i = 0; i < cap; i++) {
+        char ca = a[i], cb = b[i];
+        if (ca >= 'A' && ca <= 'Z') ca = (char)(ca + 32);
+        if (cb >= 'A' && cb <= 'Z') cb = (char)(cb + 32);
+        if (ca != cb)
+            return 0;
+        if (ca == '\0')
+            return 1;
+    }
+    return 1;
+}
+
+/* Has this directory entry already been refused as a MANIFEST entry?
+ *
+ * A name refused for length or charset can perfectly well exist on disk,
+ * and it is then discovered twice -- once from the manifest, once from
+ * the glob -- which would publish ONE bad binary as TWO failures under
+ * two ordinals. total_planned and total_ran would agree, so the
+ * completeness reconciliation cannot catch it; the dedup has to.
+ *
+ * REFUSE_NUL entries are deliberately excluded. Their stored C string is
+ * the TRUNCATION at the embedded NUL, not the name, and no filename can
+ * contain a NUL -- so a dirent that matches that truncation is a
+ * different file that would be wrongly suppressed. */
+static int u_refusal_already_seen(const struct manifest_state *ms,
+                                  const char *name)
+{
+    uint32_t i;
+
+    for (i = 0; i < ms->refused_count; i++) {
+        if (ms->refused_verdict[i] == UTEST_NAME_REFUSE_NUL)
+            continue;
+        if (u_name_equal_fs(ms->refused_names[i], name, VFS_MAX_NAME))
+            return 1;
+    }
+    return 0;
+}
+
+/* Publish one refused binary as a counted infrastructure FAILURE.
+ *
+ * This is the whole point of the refusal taxonomy: the binary was planned
+ * (it reached total_planned) and it will never launch, so if it produced
+ * no record the run would report fewer results than it planned and still
+ * exit green. It therefore takes the SAME shape a planned binary that
+ * failed to load takes -- a verdict line, a TAP point, an XML testcase
+ * and a JSON record -- which is why the host needs no new record kind to
+ * consume it.
+ *
+ * Three pieces of accounting have to move together or an artifact
+ * contradicts itself: counters[1] so the binary counts as failed and the
+ * host's fail-closed recount sees a matching verdict line; the TAP point
+ * so the trailing plan still reconciles; and rt->unreported, because the
+ * JSON harvester requires reported + invalid + unreported to equal
+ * summary.total and a refused binary submitted no self-report. The
+ * caller adds total_ran, symmetrically with its u_run_one calls, so
+ * not_run = total_planned - total_ran stays the completeness statement it
+ * claims to be. */
+static void u_emit_refusal(const char *reason, uint32_t ordinal,
+                           const char *raw, uint32_t digest,
+                           uint32_t *tap_point, uint32_t *counters,
+                           struct u_report_totals *rt)
+{
+    char id[UTEST_MAX_BINARY_NAME + 1u];
+    uint32_t point;
+
+    counters[1]++;      /* a refusal is a FAILED binary ...             */
+    rt->unreported++;   /* ... that could not submit a self-report      */
+
+    if (!u_build_refusal_id(id, sizeof(id), ordinal, raw, digest)) {
+        /* Unreachable while the identity's static assert holds: the
+         * fixed shape plus a minimum prefix is proven to fit the derived
+         * bound. Kept fail-closed anyway, and on the marker channel the
+         * host already fails the run on, because the alternative to a
+         * record without a name is no record at all. */
+        utest_record_log(LOG_ERROR,
+             "[UTEST-RECORD-OVERFLOW] refusal identity for planned binary "
+             "%u could not be built", (uint64_t)ordinal);
+        return;
+    }
+
+    point = ++(*tap_point);
+    utest_record_log(LOG_ERROR, "%s: FAIL (%s)", id, reason);
+    u_emit_tap_point(0, point, id, reason);
+    u_emit_xml_testcase(id, UTEST_TYPE_CORRECTNESS, 1, 0, reason,
+                        (const char *)0);
+    u_emit_json_testcase(id, UTEST_TYPE_CORRECTNESS, 1, 0, reason,
+                         (const struct u_report *)0);
+}
+
 /* ---- Per-binary run: spawn, wait, log, cleanup --------------------- *
  *
  * Called from test_usermode_run for each binary (either from the
@@ -2763,7 +3420,10 @@ static void u_run_one(const char *name, utest_type_t type,
     char name_copy[VFS_MAX_NAME];
     char path[VFS_MAX_NAME + 4];
     char stem[VFS_MAX_NAME];
-    char reason[96];
+    /* Sized by the derivation that bounds the records this string rides
+     * in, so widening a reason literal and overrunning the buffer are the
+     * same build failure rather than two separate surprises. */
+    char reason[UTEST_REASON_BUF];
     int  have_stem;
     int  isolation_failed = 0;
     uint32_t ni, pi;
@@ -3110,23 +3770,36 @@ struct glob_state {
 };
 
 static const char *u_glob_next(struct glob_state *gs,
-                               char *out_name, uint32_t out_cap)
+                               char *out_name, uint32_t out_cap,
+                               utest_name_verdict_t *out_verdict)
 {
     struct vfs_dirent *de;
 
     while ((de = vfs_readdir(gs->root, gs->idx)) != (struct vfs_dirent *)0) {
+        utest_name_verdict_t v;
+
         gs->idx++;
         if (de->type & VFS_DIRECTORY)
             continue;
-        /* Apply the SAME validator used for manifest entries: both
+        /* Apply the SAME classifier used for manifest entries: both
          * must reject path separators, control bytes, and `..`
          * components.  Without the stricter gate, a directory entry
          * like `test_bad\nline.exe` would pass `u_is_test_binary`
          * (prefix+suffix only) and split a subsequent [UTEST-XML]
          * testcase record across physical log lines, corrupting the
-         * post-processed JUnit XML. */
-        if (!u_is_valid_manifest_name(de->name))
+         * post-processed JUnit XML.
+         *
+         * The two outcomes are no longer the same. A file that is not
+         * test_*.exe is skipped exactly as before -- C:\ holds plenty of
+         * files this framework has no opinion about. A file that IS
+         * test-shaped and still fails the gate is RETURNED, carrying its
+         * verdict, so the caller counts it as the planned-and-refused
+         * binary it is instead of stepping over it in silence. */
+        v = u_classify_name(de->name);
+        if (v == UTEST_NAME_NOT_TEST_SHAPED)
             continue;
+        if (out_verdict)
+            *out_verdict = v;
         /* Snapshot the name -- de->name is shared dirent storage. */
         {
             uint32_t i;
@@ -3168,6 +3841,13 @@ void test_usermode_run(void)
     uint32_t              total_planned = 0;
     uint32_t              total_ran = 0;
     uint32_t              skipped_by_filter = 0;
+    /* Per-run refusal counter. Function-local, so the launcher gains no
+     * shared mutable state: test_usermode_run is the single enumerator,
+     * and a static here would make two runs in one boot collide. It is
+     * what makes refusal identities distinct BY CONSTRUCTION -- a digest
+     * alone can only make collisions unlikely, and an operator who cannot
+     * tell two refused binaries apart cannot act on either. */
+    uint32_t              refusal_ordinal = 0;
     /* Sum of expected task_create costs across planned binaries. A
      * plain `test_*.exe` costs 1 slot; fork-heavy binaries like
      * test_process.exe tag `expects_tasks=<N>` in the manifest so the
@@ -3208,6 +3888,18 @@ void test_usermode_run(void)
     /* First pass: count planned binaries (post-filter) so the TAP
      * plan line can emit `1..N` once, up-front. Both manifest and
      * glob paths apply the same filter. */
+    /* Refused manifest entries are planned UNCONDITIONALLY -- outside the
+     * `use_manifest` gate and outside the filter.
+     *
+     * Outside the gate because `use_manifest` only decides whether the
+     * manifest is authoritative for what RUNS; a malformed line somebody
+     * wrote is a fault whether or not any valid line kept it company.
+     * Outside the filter because the filter selects among binaries we can
+     * IDENTIFY, and letting a name we just declined to trust decide
+     * whether it gets reported would hand it back the authority the
+     * refusal withdrew -- matching against the raw bytes is the only
+     * alternative, and those are exactly what must not be used. */
+    total_planned += manifest.refused_count;
     if (use_manifest) {
         for (i = 0; i < manifest.count; i++) {
             if (test_usermode_glob_match(s_filter, manifest.names[i])) {
@@ -3221,7 +3913,8 @@ void test_usermode_run(void)
      * overflow) we skip the glob. */
     if (!use_manifest || manifest.overflowed) {
         struct glob_state gs = { root, 0 };
-        while (u_glob_next(&gs, scratch_name, sizeof(scratch_name))) {
+        utest_name_verdict_t gv = UTEST_NAME_ACCEPT;
+        while (u_glob_next(&gs, scratch_name, sizeof(scratch_name), &gv)) {
             /* When overflowed, skip binaries already listed in the
              * manifest to avoid double-running. */
             if (manifest.overflowed) {
@@ -3234,6 +3927,20 @@ void test_usermode_run(void)
                     }
                 }
                 if (already) continue;
+            }
+            /* Same rule as the manifest walk above: a refused entry is
+             * planned unconditionally, because the filter cannot be
+             * applied to a name that was refused for being unusable --
+             * unless the manifest already refused this same name, in
+             * which case one bad binary would otherwise be planned
+             * twice. This dedup is UNCONDITIONAL, unlike the
+             * already-listed check below, which only guards the
+             * overflowed-manifest case: manifest refusals are published
+             * even when the manifest is not authoritative. */
+            if (gv != UTEST_NAME_ACCEPT) {
+                if (!u_refusal_already_seen(&manifest, scratch_name))
+                    total_planned++;
+                continue;   /* refusals never launch, so no task budget */
             }
             if (test_usermode_glob_match(s_filter, scratch_name)) {
                 total_planned++;
@@ -3351,6 +4058,76 @@ void test_usermode_run(void)
      *
      * Filter-skipped binaries contribute to skipped_by_filter in
      * phase 1 only, to avoid double counting. */
+    /* Enumeration refusals are published BEFORE any binary launches.
+     *
+     * They are not executions -- they are results the ENUMERATION already
+     * produced -- and emitting them inside the phase loop made them
+     * hostage to it: refusals are correctness-typed (a name we refused to
+     * trust must not claim smoke policy), so they landed in the non-smoke
+     * phase, which a failing smoke binary breaks out of before reaching.
+     * The run still went red through the abort gate, but every specific
+     * refusal record this section promises -- verdict line, TAP point,
+     * XML testcase, JSON record, and the counters behind them -- was lost
+     * exactly when the operator most needed to know what was refused.
+     *
+     * Emitting here also removes the interaction entirely: a refusal can
+     * neither trigger the smoke fast-fail nor be skipped by it, and the
+     * phase loop below simply steps over refused entries. */
+    for (i = 0; i < manifest.refused_count; i++) {
+        total_ran++;
+        u_emit_refusal(u_refusal_reason(
+                           (utest_name_verdict_t)manifest.refused_verdict[i]),
+                       ++refusal_ordinal, manifest.refused_names[i],
+                       manifest.refused_digest[i], &tap_point, counters, &rt);
+    }
+    if (manifest.refused_overflowed) {
+        /* More malformed manifest entries than the run can publish
+         * individually. It rides the SAME path as any other refusal
+         * rather than a bare diagnostic, because both artifact formats
+         * reconcile record COUNT against the summary total (the JSON
+         * harvester at scripts/utest-json-harvest.py checks
+         * len(testcases) == summary.total, separately from the report
+         * partition): a counter bumped without a record does not merely
+         * under-describe the run, it makes the whole artifact
+         * unparseable. Dropping the tail with a WARN instead is the
+         * false-green this section exists to close. */
+        total_ran++;
+        total_planned++;
+        u_emit_refusal("refusal array full", ++refusal_ordinal,
+                       "manifest_refusal_overflow",
+                       manifest.refused_count, &tap_point, counters, &rt);
+    }
+    if (!use_manifest || manifest.overflowed) {
+        struct glob_state gs = { root, 0 };
+        utest_name_verdict_t gv = UTEST_NAME_ACCEPT;
+        while (u_glob_next(&gs, scratch_name, sizeof(scratch_name), &gv)) {
+            uint32_t nlen = 0;
+            if (gv == UTEST_NAME_ACCEPT)
+                continue;
+            /* Mirrors the planning walk's dedup exactly, or the two
+             * would disagree and the completeness gate would fire on a
+             * run that is actually consistent. */
+            if (u_refusal_already_seen(&manifest, scratch_name))
+                continue;
+            if (manifest.overflowed) {
+                int already = 0;
+                for (i = 0; i < manifest.count; i++) {
+                    if (u_strncmp(manifest.names[i], scratch_name,
+                                  VFS_MAX_NAME) == 0) {
+                        already = 1;
+                        break;
+                    }
+                }
+                if (already) continue;
+            }
+            while (scratch_name[nlen]) nlen++;
+            total_ran++;
+            u_emit_refusal(u_refusal_reason(gv), ++refusal_ordinal,
+                           scratch_name, u_name_digest(scratch_name, nlen),
+                           &tap_point, counters, &rt);
+        }
+    }
+
     {
         int smoke_failed = 0;
         int phase;
@@ -3389,10 +4166,20 @@ void test_usermode_run(void)
             }
             if (!smoke_failed && (!use_manifest || manifest.overflowed)) {
                 struct glob_state gs = { root, 0 };
-                while (u_glob_next(&gs, scratch_name, sizeof(scratch_name))) {
+                utest_name_verdict_t gv = UTEST_NAME_ACCEPT;
+                while (u_glob_next(&gs, scratch_name, sizeof(scratch_name),
+                                   &gv)) {
                     int verdict;
-                    utest_type_t type = u_type_for_name(scratch_name);
-                    int is_smoke = (type == UTEST_TYPE_SMOKE);
+                    utest_type_t type;
+                    int is_smoke;
+                    /* Already published by the refusal preflight above.
+                     * Skipping first is also what keeps a refused name
+                     * from ever reaching u_type_for_name: bytes we
+                     * declined to trust must not be able to claim smoke
+                     * policy and abort the suite through the smoke gate. */
+                    if (gv != UTEST_NAME_ACCEPT) continue;
+                    type = u_type_for_name(scratch_name);
+                    is_smoke = (type == UTEST_TYPE_SMOKE);
                     if (is_smoke != want_smoke) continue;
                     if (manifest.overflowed) {
                         int already = 0;
@@ -3436,31 +4223,51 @@ void test_usermode_run(void)
         suite_aborted = smoke_failed;
     }
 
+    /* Completeness reconciliation, for EVERY run and not only aborted
+     * ones.
+     *
+     * total_planned comes from the planning walk and total_ran from a
+     * SECOND traversal of C:\ taken after live children have run, so the
+     * two can disagree if the directory changed in between. A blind
+     * unsigned subtraction would then publish ~4.29e9 as the completeness
+     * count into both machine summaries.
+     *
+     * Clamping alone is not enough either: reporting not_run=0 would
+     * describe the run as having skipped nothing, which is the kind of
+     * internally-consistent lie the completeness dimension exists to
+     * prevent. So clamp AND say so on the channel the host already fails
+     * on -- a disagreement between the two walks is a producer bug, not a
+     * number to quietly round.
+     *
+     * Running it for COMPLETED runs is what closes the hole this section
+     * would otherwise have left: a passing binary can delete or rename a
+     * later entry between the two walks, the execution walk then omits it,
+     * and a refusal that the planning walk had already counted disappears
+     * from a run that still exits green. With the reconciliation here, a
+     * planned binary that never produced a result is a diagnosed failure
+     * instead of a silent subtraction. */
+    if (total_ran > total_planned) {
+        utest_record_log(LOG_ERROR,
+             "[UTEST-RECORD-OVERFLOW] planned %u binaries but ran %u -- "
+             "not_run is unknown",
+             (uint64_t)total_planned, (uint64_t)total_ran);
+        not_run = 0u;
+    } else {
+        not_run = total_planned - total_ran;
+    }
+    if (!suite_aborted && not_run > 0u) {
+        /* Not an abort: nothing stopped the walk, so every planned binary
+         * should have produced a record. The gap is the finding. */
+        utest_record_log(LOG_ERROR,
+             "[UTEST-RUN-INCOMPLETE] planned %u binaries but ran %u -- "
+             "%u planned binary/binaries produced no result",
+             (uint64_t)total_planned, (uint64_t)total_ran,
+             (uint64_t)not_run);
+    }
+
     /* Abort announcement -- unconditionally reachable, because it lives
      * outside the phase loop that every abort path breaks out of. */
     if (suite_aborted) {
-        /* total_planned comes from the planning walk and total_ran from a
-         * SECOND traversal of C:\ taken after live children have run, so
-         * the two can disagree if the directory changed in between. A blind
-         * unsigned subtraction would then publish ~4.29e9 as the
-         * completeness count into the abort klog and both machine
-         * summaries.
-         *
-         * Clamping alone is not enough either: reporting not_run=0 would
-         * describe the aborted run as having skipped nothing, which is the
-         * kind of internally-consistent lie the completeness dimension
-         * exists to prevent. So clamp AND say so on the channel the host
-         * already fails on -- a disagreement between the two walks is a
-         * producer bug, not a number to quietly round. */
-        if (total_ran > total_planned) {
-            utest_record_log(LOG_ERROR,
-                 "[UTEST-RECORD-OVERFLOW] planned %u binaries but ran %u -- "
-                 "not_run is unknown",
-                 (uint64_t)total_planned, (uint64_t)total_ran);
-            not_run = 0u;
-        } else {
-            not_run = total_planned - total_ran;
-        }
         utest_record_log(LOG_ERROR,
              "suite ABORT (smoke failed) -- skipping %u non-smoke binaries",
              (uint64_t)not_run);
@@ -3544,6 +4351,135 @@ int test_usermode_is_valid_manifest_name(const char *name)
 {
     return u_is_valid_manifest_name(name);
 }
+
+/* The refusal taxonomy and the derived name bound. Exported as plain
+ * integers so the test file does not need the file-local enum: the
+ * numeric values ARE the contract the tests pin, and a reordering of the
+ * enum that changed them would be caught by those assertions. */
+int test_usermode_classify_name(const char *name);
+int test_usermode_classify_name(const char *name)
+{
+    return (int)u_classify_name(name);
+}
+
+int test_usermode_classify_name_span(const char *name, uint32_t span_len);
+int test_usermode_classify_name_span(const char *name, uint32_t span_len)
+{
+    return (int)u_classify_name_span(name, span_len);
+}
+
+uint32_t test_usermode_max_binary_name(void);
+uint32_t test_usermode_max_binary_name(void)
+{
+    return (uint32_t)UTEST_MAX_BINARY_NAME;
+}
+
+/* Per-record room left at the derived bound. The tests use it to prove
+ * the minimum was taken across EVERY formatter rather than assumed from
+ * the one that looks worst -- the property the derivation exists for. */
+uint32_t test_usermode_name_room(uint32_t kind);
+uint32_t test_usermode_name_room(uint32_t kind)
+{
+    switch (kind) {
+    case 0:  return UTEST_NAME_ROOM(UTEST_FIXED_VERDICT, 1u);
+    case 1:  return UTEST_NAME_ROOM(UTEST_FIXED_XML, 1u);
+    case 2:  return UTEST_NAME_ROOM(UTEST_FIXED_JSON_BINARY, 1u);
+    case 3:  return UTEST_NAME_ROOM(UTEST_FIXED_JSON_SKIP, 2u);
+    case 4:  return UTEST_NAME_ROOM(UTEST_FIXED_TAP, 1u);
+    case 5:  return UTEST_NAME_ROOM(UTEST_FIXED_REPORT, 1u);
+    default: return 0u;
+    }
+}
+
+uint32_t test_usermode_name_digest(const char *p, uint32_t len);
+uint32_t test_usermode_name_digest(const char *p, uint32_t len)
+{
+    return u_name_digest(p, len);
+}
+
+int test_usermode_build_refusal_id(char *dst, uint32_t cap, uint32_t ordinal,
+                                   const char *raw, uint32_t digest);
+int test_usermode_build_refusal_id(char *dst, uint32_t cap, uint32_t ordinal,
+                                   const char *raw, uint32_t digest)
+{
+    return u_build_refusal_id(dst, cap, ordinal, raw, digest);
+}
+
+uint64_t test_usermode_clamp_time_ms(uint64_t ms);
+uint64_t test_usermode_clamp_time_ms(uint64_t ms)
+{
+    return u_clamp_time_ms(ms);
+}
+
+/* The two per-testcase formatters, so a test can build a worst-case
+ * record at the derived bound and assert it fits. This is what closes
+ * the loop on the derivation: the fixed-cost macros are a SECOND copy of
+ * these format strings, and only formatting through the real ones proves
+ * the copies have not drifted. `report_valid` selects the widest shape
+ * (the three report fields ride only on an accepted report). */
+int test_usermode_format_xml_testcase(char *dst, uint32_t cap,
+                                      const char *name, int verdict,
+                                      uint64_t time_ms, const char *reason);
+int test_usermode_format_xml_testcase(char *dst, uint32_t cap,
+                                      const char *name, int verdict,
+                                      uint64_t time_ms, const char *reason)
+{
+    return u_format_xml_testcase(dst, cap, name, UTEST_TYPE_CORRECTNESS,
+                                 verdict, time_ms, reason,
+                                 (const char *)0);
+}
+
+int test_usermode_format_json_testcase(char *dst, uint32_t cap,
+                                       const char *name, int verdict,
+                                       uint64_t time_ms, const char *reason,
+                                       int report_valid);
+int test_usermode_format_json_testcase(char *dst, uint32_t cap,
+                                       const char *name, int verdict,
+                                       uint64_t time_ms, const char *reason,
+                                       int report_valid)
+{
+    struct u_report rep;
+
+    rep.state          = TASK_UTEST_REPORT_VALID;
+    rep.asserts_passed = TASK_UTEST_REPORT_MAX;
+    rep.asserts_failed = TASK_UTEST_REPORT_MAX;
+    rep.skip_blocks    = TASK_UTEST_REPORT_SKIP_MAX;
+    return u_format_json_testcase(dst, cap, name, UTEST_TYPE_CORRECTNESS,
+                                  verdict, time_ms, reason,
+                                  report_valid ? &rep
+                                               : (const struct u_report *)0);
+}
+
+/* The widest reason the launcher can compose, so a test can build the
+ * worst-case record without hard-coding a literal that would drift from
+ * the derivation it is meant to check. */
+uint32_t test_usermode_reason_max(void);
+uint32_t test_usermode_reason_max(void)
+{
+    return (uint32_t)UTEST_REASON_MAX;
+}
+
+/* Filesystem-identity comparison. Exported because getting it wrong does
+ * not crash -- it silently plans, runs or refuses one file twice. */
+int test_usermode_name_equal_fs(const char *a, const char *b);
+int test_usermode_name_equal_fs(const char *a, const char *b)
+{
+    return u_name_equal_fs(a, b, VFS_MAX_NAME);
+}
+
+/* The BINDING formatter: the skip_block carries the name twice, so it is
+ * the kind the derived bound comes from. Exported so a test can build it
+ * at the bound with a worst-case skip index. */
+int test_usermode_format_json_skip(char *dst, uint32_t cap,
+                                   const char *rec_name, const char *parent,
+                                   uint32_t index);
+int test_usermode_format_json_skip(char *dst, uint32_t cap,
+                                   const char *rec_name, const char *parent,
+                                   uint32_t index)
+{
+    return u_format_json_skip_record(dst, cap, rec_name, parent, index);
+}
+
 
 int test_usermode_frame_tag_format(char *dst, uint32_t cap, uint32_t nonce)
 {
