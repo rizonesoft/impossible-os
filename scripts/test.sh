@@ -204,11 +204,16 @@ utest_orphan_guard() {
     # The recorded pid is passed in so the detector can say INDETERMINATE
     # instead of clean when that one process is alive but hides its
     # descriptors -- the degraded case `pdeathsig.py --check` warns about.
-    local rec0=""
-    [ -f "$UTEST_QEMU_PIDFILE" ] && rec0="$(awk '{print $1}' "$UTEST_QEMU_PIDFILE" 2>/dev/null)"
-    case "$rec0" in ''|*[!0-9]*) rec0=0 ;; esac
+    local rec0="" rec0s="" rec0b=""
+    if [ -f "$UTEST_QEMU_PIDFILE" ]; then
+        rec0="$(awk '{print $1}' "$UTEST_QEMU_PIDFILE" 2>/dev/null)"
+        rec0s="$(awk '{print $2}' "$UTEST_QEMU_PIDFILE" 2>/dev/null)"
+        rec0b="$(awk '{print $3}' "$UTEST_QEMU_PIDFILE" 2>/dev/null)"
+    fi
+    case "$rec0" in ''|*[!0-9]*) rec0=0; rec0s=""; rec0b="" ;; esac
     out="$(python3 "$PROJECT/scripts/qemu-orphan.py" detect "${args[@]}" \
-             --exclude-pid "$$" --recorded-pid "$rec0" 2>&1)" || rc=$?
+             --exclude-pid "$$" --recorded-pid "$rec0" \
+             --recorded-starttime "$rec0s" --recorded-boot-id "$rec0b" 2>&1)" || rc=$?
     if [ "$rc" -eq 0 ]; then
         # Nothing holds this tree's files, so any pidfile left behind names a VM
         # that is already gone. Clearing it now keeps a later reap from aiming at
@@ -725,6 +730,15 @@ utest_reap_qemu() {
         *[1-9]*)                : ;;     # contains a non-zero digit -> positive
         *)                      grace=5 ;;
     esac
+    # BOUNDED as well as positive. A deadline is only a deadline if it arrives:
+    # `UTEST_REAP_GRACE=99999999` passes every shape and value check above and
+    # still leaves the run parked in its `wait` for a year, which is the same
+    # hang the timer exists to prevent, reached by a different typo. 120s is far
+    # beyond any legitimate QEMU shutdown and still terminates a run.
+    if [ "${grace%%.*}" -gt 120 ] 2>/dev/null; then
+        echo -e "${YELLOW}[TEST]${RESET} UTEST_REAP_GRACE=$grace exceeds the 120s bound -- using 120."
+        grace=120
+    fi
     if kill -0 "$QEMU_PID" 2>/dev/null; then
         # Identity captured SYNCHRONOUSLY, in the parent, BEFORE the SIGTERM.
         # Read inside the timer instead, it is read after the signal and after
@@ -802,7 +816,19 @@ utest_reap_qemu() {
         done
         kill "$watchdog" 2>/dev/null || true
         wait "$watchdog" 2>/dev/null || true
+        # `wait` RETURNING for our own child is itself the proof it is gone --
+        # that is what `wait` means. Re-probing with `kill -0` afterwards asks
+        # about a NUMBER the kernel has already released, so a pid reused in
+        # the interval reports "alive" and this run records `unreaped` about an
+        # unrelated process (and, worse, tells its marker the VM outlived it).
+        QEMU_STATE=reaped
+        if [ -n "${UTEST_QEMU_PIDFILE:-}" ]; then
+            rm -f "$UTEST_QEMU_PIDFILE" 2>/dev/null || true
+        fi
+        return 0
     fi
+    # Not alive at entry and not previously reaped: it exited on its own and
+    # something else already collected it. Nothing to signal, nothing to probe.
     if kill -0 "$QEMU_PID" 2>/dev/null; then
         QEMU_STATE=unreaped
         return 0
@@ -821,6 +847,16 @@ utest_finalize_record() {
     UTEST_FINALIZED=1
     # Settle the VM before the record describes the run -- see utest_reap_qemu.
     utest_reap_qemu
+    # An UNREAPED VM is a run-level failure, not a field in a document nobody
+    # reads. The whole point of settling before the marker is that `complete`
+    # must not describe a run whose VM outlived it -- so if the VM survived even
+    # the deadline escalation, say so where it will be seen, and downgrade the
+    # status the record claims.
+    if [ "${QEMU_STATE:-none}" = "unreaped" ]; then
+        echo -e "  ${RED}[UTEST]${RESET} QEMU pid ${QEMU_PID:-?} survived SIGTERM and the escalation -- this run is NOT clean."
+        echo -e "  ${YELLOW}       The next run will detect it as an orphan and refuse (or reap with UTEST_ORPHAN_REAP=1).${RESET}"
+        status="incomplete"
+    fi
     utest_publish_missing_refusals "${UTEST_FINALIZE_WHY:-the run ended before the artifact was assembled}"
     if ! utest_commit_record "$status"; then
         echo -e "  ${RED}[UTEST]${RESET} record not committed -- publishing no aliases; read $RECORD_DIR directly"

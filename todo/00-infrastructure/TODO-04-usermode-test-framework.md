@@ -1323,7 +1323,7 @@ The artifacts carry only `reason` (`src/kernel/test/test_usermode.c:2587`, a 96-
 
 **Test checkpoint:** a run whose wrapper is `SIGKILL`ed leaves no QEMU holding this tree's OVMF vars copy or serial log, or the next run refuses with the offending pid named rather than patching `boot.conf` underneath it; a normal run is unaffected and pays no measurable startup cost. Test on: QEMU TCG, QEMU KVM. Verified 2026-07-30 by experiment, not by inspection: `scripts/test.sh` was launched, its wrapper `SIGKILL`ed once QEMU was up, and the VM was gone 2s later (`RESULT: NO ORPHAN -- pid 2596585 died with its SIGKILLed parent`). With a real process holding `build/system-disk.img`, `test.sh` exited 1 naming `pid 2596986 (sleep) holds .../build/system-disk.img` and left `boot.conf` unpatched (`test=1` count 0). The stale pidfile that the killed run left behind was cleared by the next clean run, which passed. Startup cost of the clean-path scan is MEASURED at ~50 ms (dominated by python interpreter startup), not zero -- against a ~24 s suite that is ~0.2%. Suites green on both engines: 27489 kernel + 17 user-mode on KVM, 27465 + 17 under `CI_PARITY=1` forced TCG.
 
-> **Test runner:** `bash scripts/test-tooling.sh` | 85 new host-tooling regressions (870/870 pass), including the end-to-end `SIGKILL`-the-parent assertion, deleted-inode attribution, both pid-reuse refusals, the no-pidfd fallback, the deadline escalation against a synchronised SIGTERM-resistant child, invalid and zero grace values, the cancel-does-not-signal-a-bystander assertion, the run-lock-not-carried-past-exit assertion, the guard's refuse / reap / fail-closed / stale-pidfile policy, and the gate's nested-shell shapes (subshell, command and process substitution, chained dispatch, unmodelled grammar) in both directions.
+> **Test runner:** `bash scripts/test-tooling.sh` | 89 new host-tooling regressions (876/876 pass), including the end-to-end `SIGKILL`-the-parent assertion, deleted-inode attribution, both pid-reuse refusals, the no-pidfd fallback, the deadline escalation against a synchronised SIGTERM-resistant child, invalid / zero / unbounded grace values, the no-escalation-on-cancel assertion observed at the signal itself, the run-lock-not-carried-past-exit assertion, the guard's refuse / reap / fail-closed / provenance / rescan policy, and the gate's nested-shell shapes (subshell, command and process substitution, chained dispatch, unmodelled grammar) in both directions.
 
 > **Notes:**
 > - Shipped: `/proc`-descriptor orphan detection + pidfd-pinned reap (`scripts/qemu-orphan.py`), kernel-armed parent-death reaping (`scripts/pdeathsig.py`), and `qemu_pid`/`qemu_state` in the run-record marker.
@@ -1333,9 +1333,9 @@ The artifacts carry only `reason` (`src/kernel/test/test_usermode.c:2587`, a 96-
 > - Canonical doc: [`docs/testing/usermode-output-formats.md`](../../docs/testing/usermode-output-formats.md) "Orphaned-QEMU recovery" + the commit-marker schema above it.
 > - Scope boundary: process lifetime only -- the per-leg generation pointer for coherent document resolution is §38; no kernel code is touched.
 
----
-
-## 38. Per-Leg Generation Pointer for Coherent Document Resolution
+> **Verified:** 2026-07-30 | commit `4c3201c2` | 4/4 items | build OK | tooling 876/876, kernel+usermode 27495+17 on KVM and 27465+17 under forced-TCG CI parity, runner control-plane 54/54, lint 0 errors
+> **Accepted:** [M] the Codex-dispatch exemption trusts a spoofable executable NAME, so a script renamed to `codex-dispatch.sh` inherits it (reason: the gate is a cost control, not a security boundary, and the correct fix is the grammar-accurate argv classification already filed) -> XREF: `00-infrastructure/TODO-08-automation-hardening.md` §32 (item: "Anchor the wrapper exemption on parsed argv rather than an anchored regex, so `run-artifact.sh` earns it only as the segment's actual executable")
+> **Quality reviewed:** 2026-07-30 | Codex 13x (design, adversarial x10, consistency, perf) | 14H+9M+0L fixed, 1 open | scope: N/A (host tooling; no kernel/boot/desktop/shell/userland surface, so no domain code-quality skill applies)
 
 A consumer of the per-leg artifacts resolves them by enumerating `build/test-results-<leg>.xml` and `build/test-results-<leg>.json` -- two independent paths that §30 can only publish in sequence, never atomically as a pair.
 

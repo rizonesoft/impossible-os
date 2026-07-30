@@ -121,8 +121,13 @@ def _publish_provenance(path, run_id):
     record or the whole new one.
     """
     start, bid = _self_starttime(), _boot_id()
-    if not start:
-        print("pdeathsig: cannot read own starttime -- refusing to publish an "
+    if not start or not bid:
+        # BOTH fields are load-bearing and an empty one is worse than none: a
+        # `starttime` is only meaningful within a boot, and a record with an
+        # empty boot_id would compare equal to the next unreadable one, so the
+        # reap path could match a recycled pid across a reboot on two blanks.
+        missing = "starttime" if not start else "boot_id"
+        print(f"pdeathsig: cannot read own {missing} -- refusing to publish an "
               "identity that cannot be re-verified", file=sys.stderr)
         return False
     tmp = f"{path}.{os.getpid()}.tmp"

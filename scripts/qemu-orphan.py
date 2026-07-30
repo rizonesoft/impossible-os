@@ -40,6 +40,10 @@ PROC = "/proc"
 _DELETED = " (deleted)"
 
 
+class _Opaque(Exception):
+    """A descriptor exists but cannot be read -- indeterminate, not absent."""
+
+
 def boot_id():
     """Identity of the running kernel boot.
 
@@ -107,10 +111,18 @@ def _link_target(link):
     `rm -f build/test.log` before each launch, so an orphan from the previous
     run holds precisely a deleted `test.log`. Stripping the suffix is what makes
     that orphan visible at all.
+
+    Raises `_Opaque` when the descriptor exists but cannot be read, because
+    "cannot read this one descriptor" is not the same answer as "this descriptor
+    names something else". Collapsing the two made a per-fd EACCES read as a
+    clean miss, so a process could hold one of these paths and still leave the
+    scan reporting nothing.
     """
     try:
         target = os.readlink(link)
-    except OSError:
+    except OSError as exc:
+        if exc.errno in (errno.EACCES, errno.EPERM):
+            raise _Opaque from exc
         return None
     if target.endswith(_DELETED):
         target = target[: -len(_DELETED)]
@@ -134,7 +146,20 @@ def holders(paths, exclude_pids, opaque=None):
     `opaque` and lets the caller decide which ones it actually cares about --
     which, in practice, is the one pid this tree recorded launching.
     """
-    wanted = {_real(p) for p in paths if p}
+    # Both spellings precomputed ONCE, so the per-descriptor test is a set
+    # membership on the string `readlink` already returned. Canonicalising every
+    # descriptor target instead costs a `realpath` -- several syscalls, and a
+    # stat on whatever the descriptor names -- for EVERY open file on the host,
+    # on the clean path that every single test run pays. `/proc/<pid>/fd`
+    # targets are already absolute, so the direct compare is what matches in
+    # practice; the realpath spelling is kept in the set for a caller that
+    # passes a symlinked or relative path.
+    wanted = set()
+    for p in paths:
+        if not p:
+            continue
+        wanted.add(_real(p))
+        wanted.add(os.path.abspath(p))
     if not wanted:
         return []
     skip = set(exclude_pids) | {os.getpid()}
@@ -162,20 +187,54 @@ def holders(paths, exclude_pids, opaque=None):
                 continue
             raise
         for fd in fds:
-            target = _link_target(f"{fddir}/{fd}")
+            try:
+                target = _link_target(f"{fddir}/{fd}")
+            except _Opaque:
+                # This one descriptor is unreadable, so this pid's answer is
+                # indeterminate rather than negative -- same treatment as an
+                # unreadable fd DIRECTORY, and for the same reason.
+                if opaque is not None and alive(pid):
+                    opaque.add(pid)
+                break
             if target is None:
                 continue
-            if _real(target) in wanted:
+            if target in wanted:
                 found.append({
                     "pid": pid,
                     "comm": comm(pid),
                     "starttime": starttime(pid) or "",
                     "boot_id": boot_id(),
-                    "path": _real(target),
+                    "path": target,
                 })
                 break  # one held path is enough to own the finding
     found.sort(key=lambda rec: rec["pid"])
     return found
+
+
+def _pid_holds_any(pid, paths):
+    """True if `pid` holds one of `paths` open. Raises `_Opaque` if unreadable.
+
+    The single-pid form of `holders()`, for the re-check immediately before a
+    signal -- where the pid is already known and a host-wide walk is wasted work.
+    """
+    wanted = set()
+    for p in paths:
+        if not p:
+            continue
+        wanted.add(_real(p))
+        wanted.add(os.path.abspath(p))
+    fddir = f"{PROC}/{pid}/fd"
+    try:
+        fds = os.listdir(fddir)
+    except OSError as exc:
+        if exc.errno in (errno.EACCES, errno.EPERM):
+            raise _Opaque from exc
+        return False
+    for fd in fds:
+        target = _link_target(f"{fddir}/{fd}")
+        if target is not None and target in wanted:
+            return True
+    return False
 
 
 def alive(pid):
@@ -207,6 +266,25 @@ def cmd_detect(args):
               "descriptors are unreadable (non-dumpable process) -- cannot "
               "prove it does not hold this tree's files", file=sys.stderr)
         return 2
+    # A recorded launch that is STILL THE SAME PROCESS is a holder whether or
+    # not it has opened anything yet. QEMU does not open its pflash, serial sink
+    # and disk image at exec; there is a window in which it is alive, was
+    # launched by this tree, and owns nothing -- and reporting "clean" there
+    # hands the next run a green light to rebuild system-disk.img just before
+    # the VM opens it. Gated on the FULL recorded identity, never the pid alone,
+    # so a stale pidfile naming a recycled number cannot wedge every later run.
+    if (args.recorded_pid and args.recorded_starttime and alive(args.recorded_pid)
+            and args.recorded_pid not in {r["pid"] for r in found}
+            and starttime(args.recorded_pid) == args.recorded_starttime
+            and (not args.recorded_boot_id or args.recorded_boot_id == boot_id())):
+        found.append({
+            "pid": args.recorded_pid,
+            "comm": comm(args.recorded_pid),
+            "starttime": args.recorded_starttime,
+            "boot_id": boot_id(),
+            "path": "<recorded launch, no descriptor open yet>",
+        })
+        found.sort(key=lambda rec: rec["pid"])
     if args.json:
         print(json.dumps({"schema": "qemu-orphan-v1", "holders": found}))
     else:
@@ -245,7 +323,20 @@ def _pin(pid):
         return None
     try:
         return opener(pid, 0)
-    except (OSError, ValueError):
+    except ProcessLookupError:
+        return None      # already gone; the caller's own checks handle it
+    except (OSError, ValueError) as exc:
+        # UNSUPPORTED is a reason to degrade; anything else is not. ENOSYS (no
+        # pidfd in this kernel) and EINVAL (rejected flags) mean the mechanism
+        # is absent, and the re-check-then-signal fallback is the right answer.
+        # A permission error or an unexpected errno means the mechanism EXISTS
+        # and refused us -- degrading silently there trades the one guarantee
+        # that closes pid reuse for a signal we cannot make safe, so say so.
+        if getattr(exc, "errno", None) not in (errno.ENOSYS, errno.EINVAL, None):
+            print(f"qemu-orphan: pidfd_open({pid}) failed unexpectedly ({exc}) "
+                  "-- falling back to re-checked raw-pid signalling, which "
+                  "narrows the pid-reuse window but cannot close it",
+                  file=sys.stderr)
         return None
 
 
@@ -304,12 +395,20 @@ def cmd_reap(args):
                       f"recorded {args.expect_starttime} (pid reused) -- "
                       "refusing to signal", file=sys.stderr)
                 return 4
+        # PID-SCOPED. The question here is only "does THIS pid still hold one of
+        # our files", and a host-wide walk answers it by scanning every other
+        # process too -- on the recovery path that made three full scans (detect,
+        # this, and the post-reap rescan) where two suffice. The host-wide
+        # rescan after the reap still runs; it is the one that catches holders
+        # this scan could not know about.
         try:
-            still = holders(args.path, [])
-        except RuntimeError as exc:
-            print(f"qemu-orphan: {exc}", file=sys.stderr)
-            return 2
-        if args.pid not in {rec["pid"] for rec in still}:
+            still_holds = _pid_holds_any(args.pid, args.path)
+        except _Opaque:
+            print(f"qemu-orphan: pid {args.pid} descriptors became unreadable "
+                  "-- refusing to signal on an unverifiable holder",
+                  file=sys.stderr)
+            return 4
+        if not still_holds:
             print(f"qemu-orphan: pid {args.pid} no longer holds any of this "
                   "tree's files -- refusing to signal", file=sys.stderr)
             return 4
@@ -390,6 +489,11 @@ def main(argv):
                      help="pid this tree recorded launching; if it is alive but "
                           "hides its descriptors, detection is INDETERMINATE "
                           "(exit 2) rather than clean")
+    det.add_argument("--recorded-starttime", default="",
+                     help="starttime recorded with --recorded-pid; when it "
+                          "still matches, that process counts as a holder even "
+                          "before it has opened anything")
+    det.add_argument("--recorded-boot-id", default="")
     det.add_argument("--json", action="store_true")
     det.set_defaults(fn=cmd_detect)
 

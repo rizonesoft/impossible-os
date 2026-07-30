@@ -11729,6 +11729,83 @@ fi
 kill -9 "$QO_ND_PID" 2>/dev/null || true
 wait "$QO_ND_PID" 2>/dev/null
 
+# A recorded launch that is STILL THE SAME PROCESS is a holder whether or not
+# it has opened anything yet. QEMU does not open its pflash, serial sink and
+# disk image at exec, so there is a window where it is alive, was launched by
+# this tree, and owns nothing -- and "clean" there green-lights the next run to
+# rebuild system-disk.img just before the VM opens it.
+sleep 30 < /dev/null &
+QO_NOFD=$!
+sleep 0.3
+QO_NOFD_ID="$(python3 "$REPO_ROOT/scripts/qemu-orphan.py" identity --pid "$QO_NOFD" 2>/dev/null)"
+QO_NOFD_ST="$(printf '%s' "$QO_NOFD_ID" | awk '{print $2}')"
+QO_NOFD_BID="$(printf '%s' "$QO_NOFD_ID" | awk '{print $3}')"
+QO_OUT="$(python3 "$REPO_ROOT/scripts/qemu-orphan.py" detect --path "$QO_TMP/never-existed" \
+    --recorded-pid "$QO_NOFD" --recorded-starttime "$QO_NOFD_ST" \
+    --recorded-boot-id "$QO_NOFD_BID" 2>&1)"; QO_RC=$?
+if [ "$QO_RC" = "3" ] && printf '%s' "$QO_OUT" | grep -q "no descriptor open yet"; then
+    t_pass "qemu-orphan: a live recorded launch with no descriptor open is still a holder"
+else
+    t_fail "qemu-orphan: a live recorded launch with no descriptor open is still a holder" \
+        "rc=$QO_RC: $QO_OUT"
+fi
+# ...but ONLY on the full recorded identity: a stale pidfile naming a recycled
+# number must not wedge every later run.
+QO_OUT="$(python3 "$REPO_ROOT/scripts/qemu-orphan.py" detect --path "$QO_TMP/never-existed" \
+    --recorded-pid "$QO_NOFD" --recorded-starttime 999999999 \
+    --recorded-boot-id "$QO_NOFD_BID" 2>&1)"; QO_RC=$?
+if [ "$QO_RC" = "0" ]; then
+    t_pass "qemu-orphan: a recycled recorded pid (starttime mismatch) is not a holder"
+else
+    t_fail "qemu-orphan: a recycled recorded pid (starttime mismatch) is not a holder" \
+        "rc=$QO_RC: $QO_OUT"
+fi
+kill -9 "$QO_NOFD" 2>/dev/null || true
+wait "$QO_NOFD" 2>/dev/null
+
+# A grace beyond any legitimate shutdown is a hang by another name: the value
+# passes every shape and positivity check and still parks the run in its wait.
+QO_BOUND_OUT="$(cd "$REPO_ROOT" && timeout 30 bash -c '
+    set -euo pipefail
+    RED=""; YELLOW=""; RESET=""
+    QEMU_PID=""; QEMU_STATE=none; UTEST_QEMU_PIDFILE=""
+    '"$(sed -n '/^utest_reap_qemu() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")"'
+    UTEST_REAP_GRACE=99999999
+    "'"$QO_TERMPROOF"'" "'"$QO_READY"'" >/dev/null 2>&1 &
+    QEMU_PID=$!
+    for _ in $(seq 1 100); do [ -f "'"$QO_READY"'" ] && break; sleep 0.1; done
+    utest_reap_qemu &
+    reaper=$!
+    sleep 3
+    if kill -0 $reaper 2>/dev/null; then echo "BOUND=not-yet"; else echo "BOUND=applied"; fi
+    kill -9 $reaper 2>/dev/null || true
+    kill -9 $QEMU_PID 2>/dev/null || true
+' 2>&1)"
+rm -f "$QO_READY"
+# The bound message is the observable: 120 was substituted for 99999999.
+if printf '%s' "$QO_BOUND_OUT" | grep -q "exceeds the 120s bound"; then
+    t_pass "test.sh: an unbounded reap grace is clamped to the 120s bound"
+else
+    t_fail "test.sh: an unbounded reap grace is clamped to the 120s bound" "$QO_BOUND_OUT"
+fi
+
+# An empty boot_id must not be published: a starttime is only meaningful within
+# a boot, and two blank ids compare equal across a reboot.
+QO_OUT="$(BOOT_ID_UNREADABLE=1 python3 - "$REPO_ROOT/scripts/pdeathsig.py" "$QO_TMP/prov-empty.pid" <<'EMPTYPY' 2>&1
+import runpy, sys
+mod = sys.argv[1]
+src = open(mod).read().replace('return fh.read().strip()', 'return ""', 1)
+ns = {"__name__": "notmain"}
+exec(compile(src, mod, "exec"), ns)
+print("refused" if not ns["_publish_provenance"](sys.argv[2], "r") else "published")
+EMPTYPY
+)"
+if printf '%s' "$QO_OUT" | grep -q "refused"; then
+    t_pass "pdeathsig: an unreadable boot_id refuses to publish provenance"
+else
+    t_fail "pdeathsig: an unreadable boot_id refuses to publish provenance" "$QO_OUT"
+fi
+
 # Provenance must be published by the CHILD, before it becomes QEMU: the parent
 # only learns the pid after the fork, so its write races a wrapper SIGKILL and
 # a genuine tree-launched VM can end up unprovable and therefore unreapable.
