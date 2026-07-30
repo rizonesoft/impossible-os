@@ -354,10 +354,10 @@ bash scripts/extract-shim-ca.sh >> "$LOG" 2>&1 || { \
     print_errors; echo "=== BUILD FAILED ===" >> "$LOG"; exit 1; }
 
 # ── Generated-ABI drift gate ────────────────────────────────────────────────
-# `make all` lists check-abi as a prerequisite, but THIS script -- the canonical
-# build path per CLAUDE.md, which forbids raw `make` -- drove `kernel` and
-# `userland` directly and never ran it. The drift guard was therefore off on the
-# only path anyone actually uses: editing a constant in one of the generator's
+# `make all` USED TO list check-abi as a prerequisite, but THIS script -- the
+# canonical build path per CLAUDE.md, which forbids raw `make` -- drove `kernel`
+# and `userland` directly and never ran it. The drift guard was therefore off on
+# the only path anyone actually uses: editing a constant in one of the generator's
 # source headers compiled the NEW value into the kernel while the generated ABI
 # artifact kept the OLD one, and the crt0 SYS_ABI_HANDSHAKE passed because the
 # generated side agreed with itself -- ring 3 compared against a stale number
@@ -369,6 +369,12 @@ bash scripts/extract-shim-ca.sh >> "$LOG" 2>&1 || { \
 # the right visibility and hand-define no ABI constant of their own. The shims
 # are ordinary committed source, so nothing else would catch a one-line edit
 # that detaches a side of the build from the generator.
+#
+# The Makefile ALSO gates every artifact target through its ABI validation stamp
+# (build/.abi-check.stamp), so this call is no longer the only net. It is kept
+# because it is the FAIL-FAST one: it reports "ABI DRIFT" with the regeneration
+# command before any build step starts, where make would instead report a failed
+# stamp target.
 if ! python3 scripts/gen-user-abi.py --check >> "$LOG" 2>&1; then
     printf '\n %b✗ ABI DRIFT:%b generated ABI contract is stale vs kernel source\n' \
         "$RED" "$RESET" | tee -a "$LOG"
