@@ -14,4 +14,10 @@ Findings from the long-horizon unattended run armed 2026-07-30 (month-scale targ
 
 ---
 
-_No findings yet._
+## 1. runner-doctor's expiry prune dirties a tracked file the rollover gate does not tolerate
+
+- [ ] Classify the launcher's own live-gotchas expiry prune as tolerated dirt (or sweep it at launch), so a mid-run expiry cannot block a ship rollover
+  - **Observed 2026-07-31 00:05, at arm time.** `.claude/state/live-gotchas.md` showed modified: exactly one deleted line, the 2026-07-28 entry carrying `(expires 2026-07-30)`. `runner-doctor.py` (invoked by `overnight-launch.sh:158` at every real launch) prunes expired entries and, correctly, never commits -- the launcher is not a committer -- so the deletion sits as working-tree dirt.
+  - **The gate does not tolerate it.** `_ROLLOVER_AUTOGEN` (`run_phase_guard.py:426`) lists only coverage.json/coverage.md/COUNT.md/todo-graph.md, so the prune classifies `tracked-source` and a ship rollover refuses with "tree not clean". Repaired this time by an attended commit (`f0802dc1`) seconds after launch.
+  - **This WILL recur mid-run**: two live entries carry `(expires 2026-08-15)`. When a watchdog relaunch on/after that date prunes them, the tree dirties with nobody attending, and the next ship rollover blocks until the run itself decides to own the file -- which no doctrine currently tells it to do.
+  - **Proposed shape (control plane, file-not-fix while unattended):** either add `.claude/state/live-gotchas.md` to the tolerated set when the diff is deletion-only (a prune can only remove lines; an ADDITION is run/operator content and must stay blocking), or have the run own-and-commit doctor prunes as pipeline output the way it owns XREF line-number repairs. The deletion-only classifier is the narrower and safer of the two.
