@@ -8734,21 +8734,36 @@ fi
 # bypass the generic %.c rule, and they are exactly what a per-recipe wiring
 # would have left ungated.
 # ---------------------------------------------------------------------------
-# make's database is captured into a variable before it is filtered, and NO
-# filter below exits early. Both matter under `set -o pipefail`: piping the
-# database into `grep -m1` (or into an awk that `exit`s on the first match)
-# closes the pipe while the writer is still going, and the writer's SIGPIPE
-# (141) then becomes the pipeline's status -- reporting a wiring failure that is
-# really a plumbing artifact. Every filter here reads its input to the end and
-# keeps only the FIRST matching rule line.
-abi_make_db() {
-    (cd "$REPO_ROOT" && make --print-data-base -n "$1" 2>/dev/null) || true
-}
+# ONE database capture, reused by every structural assertion below. Two details
+# are load-bearing:
+#
+# `-qp` and not `--print-data-base -n`. Under -n GNU make still EXECUTES
+# recursive $(MAKE) recipes, so the src/boot/uefi sub-make printed its own
+# database first and its `all: .../BOOTX64.EFI` line preceded the root `all:`
+# (measured: db line 2780 versus 29504). Any first-match filter therefore read
+# the SUB-MAKE's rule, which made the "all: carries no check-abi sibling"
+# assertion pass vacuously. -q runs no recipes, so only the root rules appear.
+#
+# Captured ONCE into a variable rather than re-run per assertion: the database is
+# roughly 1 MB, and seven separate captures cost about 8 MB and 1.2s for one
+# answer. And NO filter below exits early -- under `set -o pipefail`, piping into
+# `grep -m1` or an awk that `exit`s on first match kills the writer, and the
+# writer's SIGPIPE (141) becomes the pipeline status, reporting a wiring failure
+# that is really a plumbing artifact. Every filter reads to end and keeps the
+# FIRST matching rule line.
+ABI_MAKE_DB=$( (cd "$REPO_ROOT" && make -qp 2>/dev/null) || true )
+
+if [ -z "$ABI_MAKE_DB" ]; then
+    t_fail "gen_user_abi: make's rule database is readable for the ABI wiring checks" \
+           "every structural assertion below would pass or fail vacuously without it"
+else
+    t_pass "gen_user_abi: make's rule database is readable for the ABI wiring checks"
+fi
 
 abi_stamp_is_order_only_prereq_of() {
     # True when build/.abi-check.stamp appears AFTER the order-only `|`
-    # separator on $1's own rule line in make's expanded database.
-    printf '%s\n' "$(abi_make_db "$1")" | awk -v tgt="$1" '
+    # separator on $1's own rule line.
+    printf '%s\n' "$ABI_MAKE_DB" | awk -v tgt="$1" '
         !seen && index($0, tgt ":") == 1 {
             seen = 1
             bar = index($0, "|")
@@ -8758,12 +8773,12 @@ abi_stamp_is_order_only_prereq_of() {
 }
 
 # One sample per INDEPENDENT term of the production declaration
-# `$(C_OBJS) $(LZ4_FULL_OBJ) $(ASM_OBJS) $(AP_TRAMPOLINE_OBJ): | $(ABI_STAMP)`,
-# because dropping any single term leaves the other three green: an
-# explicit-rule C object and a pattern-rule one for C_OBJS, plus lz4_full,
-# an asm object, and the trampoline.
+# `$(C_OBJS) $(LZ4_OBJ) $(LZ4_FULL_OBJ) $(ASM_OBJS) $(AP_TRAMPOLINE_OBJ): | $(ABI_STAMP)`,
+# because dropping any single term leaves the other four green: an
+# explicit-rule C object and a pattern-rule one for C_OBJS, plus lz4 and
+# lz4_full, an asm object, and the trampoline.
 for _abi_obj in build/kernel/gfx/gfx_simd.o build/kernel/panic.o \
-                build/libs/lz4/lz4_full.o \
+                build/libs/lz4/lz4_full.o build/libs/lz4/lz4.o \
                 build/kernel/sched/switch_context.o \
                 build/kernel/smp/ap_trampoline.o; do
     if abi_stamp_is_order_only_prereq_of "$_abi_obj"; then
@@ -8789,7 +8804,7 @@ fi
 # to read is `build/sysroot/hello.exe:` and not the whole `&:` target list. The
 # stamp must appear BEFORE any `|`: a substring match alone would also accept an
 # order-only edge, which is a different (weaker) wiring than the one claimed.
-if printf '%s\n' "$(abi_make_db userland)" | awk '
+if printf '%s\n' "$ABI_MAKE_DB" | awk '
        !seen && index($0, "build/sysroot/hello.exe:") == 1 {
            seen = 1
            bar = index($0, "|")
@@ -8809,7 +8824,7 @@ fi
 # Asserted POSITIVELY -- the `all:` rule line must be found AND must not carry
 # check-abi. A vacuous pass when the database cannot be read would hide exactly
 # the regression this pins.
-if printf '%s\n' "$(abi_make_db all)" | awk '
+if printf '%s\n' "$ABI_MAKE_DB" | awk '
        !seen && index($0, "all:") == 1 {
            seen = 1
            if (index($0, "check-abi") == 0) ok = 1
@@ -8826,6 +8841,533 @@ if grep -qE '^\.PHONY: check-abi$' "$REPO_ROOT/Makefile"; then
 else
     t_fail "gen_user_abi: check-abi is declared .PHONY" \
            "an undeclared check-abi is shadowed by any file of that name"
+fi
+
+# ---------------------------------------------------------------------------
+# Key-completeness regression: the ABI_INCLUDE_ROOTS / ABI_KEY_EXCLUDE Makefile
+# comments CLAIM a tooling assertion pins that every -I/-isystem root the
+# generator's own flag vectors can resolve through is covered, and that
+# include/build_info.h is outside the generator's real dependency closure. The
+# re-adversarial round found neither assertion existed -- these two blocks are
+# them, mechanically, not by trusting the comment.
+# ---------------------------------------------------------------------------
+_ABI_CPPFLAGS_TOKENS=$( (cd "$REPO_ROOT" && make print-abi-cppflags 2>/dev/null) )
+_ABI_UFLAGS_TOKENS=$( (cd "$REPO_ROOT" && make print-user-cflags 2>/dev/null) )
+
+# Read the PRODUCTION root list out of the Makefile itself rather than
+# duplicating it here -- a hardcoded copy would stay green the moment someone
+# edits ABI_INCLUDE_ROOTS and removes a root the key still needs to hash.
+_ABI_PROD_ROOTS=$(grep -E '^ABI_INCLUDE_ROOTS[[:space:]]*:=' "$REPO_ROOT/Makefile" \
+    | head -1 | sed -E 's/^ABI_INCLUDE_ROOTS[[:space:]]*:=[[:space:]]*//')
+
+# Same principle for the exclusion: a hardcoded `include/build_info.h` check
+# would stay green the moment ABI_KEY_EXCLUDE changes to a DIFFERENT real
+# generator dependency, which is exactly the fail-open this section exists to
+# remove (re-adversarial finding, round 5).
+_ABI_PROD_EXCLUDE=$(grep -E '^ABI_KEY_EXCLUDE[[:space:]]*:=' "$REPO_ROOT/Makefile" \
+    | head -1 | sed -E 's/^ABI_KEY_EXCLUDE[[:space:]]*:=[[:space:]]*//')
+
+_abi_root_covered() {
+    # True when $1 is exactly, or a subdirectory of, one of the whitespace-
+    # separated $_ABI_PROD_ROOTS entries, or `build`/`build/generated` -- the
+    # two roots this section's dependency-closure check (below) proves the
+    # generator never actually reads from.
+    for _abi_prod_root in $_ABI_PROD_ROOTS; do
+        case "$1" in
+            "$_abi_prod_root"|"$_abi_prod_root"/*) return 0 ;;
+        esac
+    done
+    case "$1" in
+        build|build/generated) return 0 ;;
+    esac
+    return 1
+}
+
+if [ -z "$_ABI_PROD_ROOTS" ]; then
+    t_fail "gen_user_abi: every -I/-isystem root in the ABI flag vectors is covered by ABI_INCLUDE_ROOTS" \
+           "could not read ABI_INCLUDE_ROOTS out of the Makefile -- the coverage check has no baseline"
+elif [ -z "$_ABI_CPPFLAGS_TOKENS" ] && [ -z "$_ABI_UFLAGS_TOKENS" ]; then
+    t_fail "gen_user_abi: every -I/-isystem root in the ABI flag vectors is covered by ABI_INCLUDE_ROOTS" \
+           "make print-abi-cppflags / print-user-cflags produced nothing"
+else
+    _ABI_ROOTS_UNCOVERED=""
+    for _abi_tok in $_ABI_CPPFLAGS_TOKENS $_ABI_UFLAGS_TOKENS; do
+        case "$_abi_tok" in
+            -I*) _abi_root="${_abi_tok#-I}" ;;
+            -isystem*) _abi_root="${_abi_tok#-isystem}" ;;
+            *) continue ;;
+        esac
+        _abi_root="${_abi_root%/}"
+        _abi_root_covered "$_abi_root" || _ABI_ROOTS_UNCOVERED="$_ABI_ROOTS_UNCOVERED $_abi_root"
+    done
+    if [ -n "$_ABI_ROOTS_UNCOVERED" ]; then
+        t_fail "gen_user_abi: every -I/-isystem root in the ABI flag vectors is covered by ABI_INCLUDE_ROOTS" \
+               "uncovered roots:$_ABI_ROOTS_UNCOVERED -- add to ABI_INCLUDE_ROOTS or extend the accepted build/ exception"
+    else
+        t_pass "gen_user_abi: every -I/-isystem root in the ABI flag vectors is covered by ABI_INCLUDE_ROOTS"
+    fi
+fi
+
+# Dependency-closure proof: compile a probe TU that #includes the six kernel
+# headers scripts/gen-user-abi.py reads (syscall.h, service_numbers.h,
+# ntstatus.h, task.h, teb.h, kusd.h) through the SAME -I vector the generator
+# uses, and assert clang's own -M dependency list resolves entirely under
+# include/ -- proving the `build`/`build/generated` exception above is safe --
+# and never touches include/build_info.h, proving ABI_KEY_EXCLUDE cannot hide
+# a real ABI-relevant change.
+#
+# Run across the FULL 12-cell flavor matrix (KERNEL_TESTS x EXCEPT_TELEMETRY x
+# BUILD_ALT_BOOT), not just the default flavor -MMD/-print-abi-cppflags
+# happens to report: the -I list is flavor-invariant (only -D/-U defines
+# change per flavor), but a flavor-gated `#ifdef` inside a transitively
+# included header could still pull in a DIFFERENT header under one flavor and
+# not another, and the real generator preprocesses all 12 for exactly this
+# reason.
+_ABI_DEPCLOSURE_DIR="$(mktemp -d 2>/dev/null)"
+_ABI_DEPCLOSURE_OK=1
+_ABI_DEPCLOSURE_WHY=""
+_ABI_BUILD_HITS=""
+_ABI_BUILDINFO_HIT=0
+_ABI_UNCOVERED_DEPS=""
+if [ -z "$_ABI_DEPCLOSURE_DIR" ] || [ ! -d "$_ABI_DEPCLOSURE_DIR" ]; then
+    _ABI_DEPCLOSURE_OK=0
+    _ABI_DEPCLOSURE_WHY="mktemp -d failed, so the dependency closure was never probed"
+else
+    _ABI_PROBE_C="$_ABI_DEPCLOSURE_DIR/abi_dep_probe.c"
+    {
+        printf '#include "kernel/sched/syscall.h"\n'
+        printf '#include "kernel/nt/service_numbers.h"\n'
+        printf '#include "kernel/nt/ntstatus.h"\n'
+        printf '#include "kernel/sched/task.h"\n'
+        printf '#include "kernel/ob/teb.h"\n'
+        printf '#include "kernel/nt/kusd.h"\n'
+    } > "$_ABI_PROBE_C"
+    _abi_flavors_probed=0
+    for _abi_kt in on off; do
+        for _abi_et in on off; do
+            for _abi_abb in off diagnostic compatible; do
+                _abi_flavor_cppflags=$( (cd "$REPO_ROOT" && make print-abi-cppflags \
+                    "KERNEL_TESTS=$_abi_kt" "EXCEPT_TELEMETRY=$_abi_et" \
+                    "BUILD_ALT_BOOT=$_abi_abb" 2>/dev/null) )
+                if [ -z "$_abi_flavor_cppflags" ]; then
+                    _ABI_DEPCLOSURE_OK=0
+                    _ABI_DEPCLOSURE_WHY="make print-abi-cppflags produced nothing for KERNEL_TESTS=$_abi_kt EXCEPT_TELEMETRY=$_abi_et BUILD_ALT_BOOT=$_abi_abb"
+                    break 3
+                fi
+                # -MMD/-MP are stripped: they ask clang to emit deps as a SIDE
+                # EFFECT of a real compile, which conflicts with plain -M.
+                _abi_probe_flags=""
+                for _abi_tok in $_abi_flavor_cppflags; do
+                    case "$_abi_tok" in -MMD|-MP) continue ;; esac
+                    _abi_probe_flags="$_abi_probe_flags $_abi_tok"
+                done
+                _ABI_DEPS_RAW=$( (cd "$REPO_ROOT" && \
+                    eval clang-19 "$_abi_probe_flags" -M "$_ABI_PROBE_C") 2>/dev/null )
+                if [ -z "$_ABI_DEPS_RAW" ]; then
+                    _ABI_DEPCLOSURE_OK=0
+                    _ABI_DEPCLOSURE_WHY="clang -M produced no dependency list for KERNEL_TESTS=$_abi_kt EXCEPT_TELEMETRY=$_abi_et BUILD_ALT_BOOT=$_abi_abb"
+                    break 3
+                fi
+                for _abi_dep in $(printf '%s' "$_ABI_DEPS_RAW" | tr -d '\\'); do
+                    case "$_abi_dep" in
+                        *.o:|*abi_dep_probe.c) continue ;;
+                    esac
+                    case "$_abi_dep" in
+                        build/*) _ABI_BUILD_HITS="$_ABI_BUILD_HITS $_abi_dep(KERNEL_TESTS=$_abi_kt,EXCEPT_TELEMETRY=$_abi_et,BUILD_ALT_BOOT=$_abi_abb)" ;;
+                    esac
+                    [ -n "$_ABI_PROD_EXCLUDE" ] && [ "$_abi_dep" = "$_ABI_PROD_EXCLUDE" ] && _ABI_BUILDINFO_HIT=1
+                    # Every dependency clang actually reports must be covered
+                    # by the PRODUCTION key predicate itself (extension *.h
+                    # or *.inc, under a covered root) or be the explicit
+                    # build/ exception -- checking only "not under build/" and
+                    # "not build_info.h" left a real gap the re-adversarial
+                    # round found: a dependency with any OTHER extension
+                    # (e.g. a future *.inc fragment under a covered root)
+                    # would silently escape the key's own *.h-only glob while
+                    # sailing through both of those two checks.
+                    case "$_abi_dep" in
+                        build/*) ;;
+                        *.h|*.inc)
+                            _abi_root_covered "$(dirname "$_abi_dep")" || \
+                                _ABI_UNCOVERED_DEPS="$_ABI_UNCOVERED_DEPS $_abi_dep(KERNEL_TESTS=$_abi_kt,EXCEPT_TELEMETRY=$_abi_et,BUILD_ALT_BOOT=$_abi_abb)"
+                            ;;
+                        *) _ABI_UNCOVERED_DEPS="$_ABI_UNCOVERED_DEPS $_abi_dep(unmatched-extension,KERNEL_TESTS=$_abi_kt,EXCEPT_TELEMETRY=$_abi_et,BUILD_ALT_BOOT=$_abi_abb)" ;;
+                    esac
+                done
+                _abi_flavors_probed=$((_abi_flavors_probed + 1))
+            done
+        done
+    done
+    if [ "$_ABI_DEPCLOSURE_OK" = "1" ] && [ "$_abi_flavors_probed" -ne 12 ]; then
+        _ABI_DEPCLOSURE_OK=0
+        _ABI_DEPCLOSURE_WHY="only probed $_abi_flavors_probed/12 flavor combinations"
+    fi
+fi
+[ -n "$_ABI_DEPCLOSURE_DIR" ] && rm -rf "$_ABI_DEPCLOSURE_DIR" 2>/dev/null
+
+if [ "$_ABI_DEPCLOSURE_OK" = "1" ] && [ -z "$_ABI_BUILD_HITS" ]; then
+    t_pass "gen_user_abi: the generator's header dependency closure resolves under include/, never build/"
+else
+    t_fail "gen_user_abi: the generator's header dependency closure resolves under include/, never build/" \
+           "${_ABI_DEPCLOSURE_WHY:-dependencies under build/:$_ABI_BUILD_HITS -- the build/ ABI_INCLUDE_ROOTS exception no longer holds}"
+fi
+if [ -z "$_ABI_PROD_EXCLUDE" ]; then
+    t_fail "gen_user_abi: ABI_KEY_EXCLUDE's value is outside the generator's dependency closure" \
+           "could not read ABI_KEY_EXCLUDE out of the Makefile -- the exclusion-safety check has no baseline"
+elif [ "$_ABI_DEPCLOSURE_OK" = "1" ] && [ "$_ABI_BUILDINFO_HIT" = "0" ]; then
+    t_pass "gen_user_abi: ABI_KEY_EXCLUDE's value ($_ABI_PROD_EXCLUDE) is outside the generator's dependency closure"
+else
+    t_fail "gen_user_abi: ABI_KEY_EXCLUDE's value ($_ABI_PROD_EXCLUDE) is outside the generator's dependency closure" \
+           "${_ABI_DEPCLOSURE_WHY:-$_ABI_PROD_EXCLUDE is now reachable from the six generator headers -- ABI_KEY_EXCLUDE would hide a real ABI change}"
+fi
+if [ "$_ABI_DEPCLOSURE_OK" = "1" ] && [ -z "$_ABI_UNCOVERED_DEPS" ]; then
+    t_pass "gen_user_abi: every generator dependency across all 12 flavors is covered by the key's own file predicate"
+else
+    t_fail "gen_user_abi: every generator dependency across all 12 flavors is covered by the key's own file predicate" \
+           "${_ABI_DEPCLOSURE_WHY:-uncovered:$_ABI_UNCOVERED_DEPS -- a dependency clang actually reads would not move the cheap key}"
+fi
+
+# ---------------------------------------------------------------------------
+# scripts/abi-stamp-check.sh direct-invocation regressions (re-adversarial
+# round, 2026-07-30): the two High findings against the in-Makefile version,
+# proven against the script itself rather than through a full `make` build so
+# each case stays isolated and fast. A fixed constant KFLAGS/UFLAGS pair
+# stands in for the real flag vectors -- these two cases test the script's own
+# locking and compiler-identity logic, not production-flag fidelity (already
+# covered by the object-wiring assertions above).
+# ---------------------------------------------------------------------------
+# Direct mutual-exclusion proof, not a same-inputs convergence test: two
+# invocations racing on IDENTICAL inputs converge to one key via mktemp's
+# per-process-unique names alone, lock or no lock, so that shape never
+# actually exercised the flock (re-adversarial finding, round 2). Instead,
+# externally hold the SAME lock file the script takes and prove the script
+# does not publish anything until the external holder releases it.
+#
+# Absence-of-publish-within-N-seconds is NOT proof of blocking (re-adversarial
+# finding, round 3): an uncached run costs ~0.835s+ even with NO lock at all
+# (header hashing + two compiler probes + gen-user-abi.py --check), so a
+# short timing window looks identical whether flock works or is a no-op. The
+# oracle instead is POSITIVE: ABI_STAMP_CHECK_LOCK_MARKER is a test-only hook
+# (no-op unless set) that abi-stamp-check.sh touches immediately after `flock
+# 9` succeeds. The marker's ABSENCE while the external lock is held, and its
+# PROMPT appearance after release, is what genuinely distinguishes "blocked at
+# the flock line" from "just hasn't finished the rest of the work yet".
+_ABI_LOCK_OK=1
+_ABI_LOCK_WHY=""
+_ABI_LOCK_DIR="$(mktemp -d 2>/dev/null)"
+if [ -z "$_ABI_LOCK_DIR" ] || [ ! -d "$_ABI_LOCK_DIR" ]; then
+    _ABI_LOCK_OK=0
+    _ABI_LOCK_WHY="mktemp -d failed, so the lock behavior was never probed"
+else
+    _ABI_LOCK_STAMP="$_ABI_LOCK_DIR/.abi-check.stamp"
+    _ABI_LOCK_HELD="$_ABI_LOCK_DIR/lock-held"
+    _ABI_LOCK_RELEASE="$_ABI_LOCK_DIR/release-lock"
+    _ABI_LOCK_MARKER="$_ABI_LOCK_DIR/past-flock-marker"
+    (
+        flock -x 9
+        touch "$_ABI_LOCK_HELD"
+        # Wait for the outer test to say "go ahead", bounded so a bug here
+        # cannot hang the suite.
+        for _abi_lw in $(seq 1 100); do
+            [ -f "$_ABI_LOCK_RELEASE" ] && break
+            sleep 0.1
+        done
+    ) 9>"$_ABI_LOCK_STAMP.lock" &
+    _abi_lockholder_pid=$!
+
+    _abi_lock_acquired=0
+    for _abi_lw in $(seq 1 50); do
+        [ -f "$_ABI_LOCK_HELD" ] && { _abi_lock_acquired=1; break; }
+        sleep 0.1
+    done
+
+    if [ "$_abi_lock_acquired" != "1" ]; then
+        _ABI_LOCK_OK=0
+        _ABI_LOCK_WHY="the external lock holder never signaled that it acquired the lock"
+        touch "$_ABI_LOCK_RELEASE"
+        wait "$_abi_lockholder_pid" 2>/dev/null
+    else
+        ( cd "$REPO_ROOT" && ABI_STAMP_CHECK_LOCK_MARKER="$_ABI_LOCK_MARKER" \
+            bash scripts/abi-stamp-check.sh "$_ABI_LOCK_STAMP" \
+            abi/generated/abi_contract.h clang-19 "$_ABI_CPPFLAGS_TOKENS" "$_ABI_UFLAGS_TOKENS" \
+            'include/build_info.h' include src abi user/include \
+            >"$_ABI_LOCK_DIR/script.log" 2>&1 ) &
+        _abi_script_pid=$!
+
+        sleep 0.5
+        if [ -e "$_ABI_LOCK_MARKER" ]; then
+            _ABI_LOCK_OK=0
+            _ABI_LOCK_WHY="the script passed the flock line WHILE the external lock was still held"
+        fi
+
+        touch "$_ABI_LOCK_RELEASE"
+        wait "$_abi_lockholder_pid" 2>/dev/null
+
+        # Bounded wait for the marker to appear promptly after release --
+        # proves the block was genuinely on the lock, not on something else.
+        _abi_marker_seen=0
+        for _abi_mw in $(seq 1 50); do
+            [ -e "$_ABI_LOCK_MARKER" ] && { _abi_marker_seen=1; break; }
+            sleep 0.1
+        done
+        if [ "$_ABI_LOCK_OK" = "1" ] && [ "$_abi_marker_seen" != "1" ]; then
+            _ABI_LOCK_OK=0
+            _ABI_LOCK_WHY="the script never passed the flock line even after the external lock was released"
+        fi
+
+        wait "$_abi_script_pid"; _abi_script_rc=$?
+
+        if [ "$_ABI_LOCK_OK" = "1" ]; then
+            if [ "$_abi_script_rc" -ne 0 ]; then
+                _ABI_LOCK_OK=0
+                _ABI_LOCK_WHY="the script exited non-zero after the lock was released (rc=$_abi_script_rc)"
+            elif [ ! -e "$_ABI_LOCK_STAMP" ] || [ ! -e "$_ABI_LOCK_STAMP.key" ]; then
+                _ABI_LOCK_OK=0
+                _ABI_LOCK_WHY="the script never published a stamp/key after the lock was released"
+            fi
+        fi
+    fi
+    rm -rf "$_ABI_LOCK_DIR" 2>/dev/null
+fi
+if [ "$_ABI_LOCK_OK" = "1" ]; then
+    t_pass "gen_user_abi: abi-stamp-check.sh blocks on an externally held lock and proceeds only after release"
+else
+    t_fail "gen_user_abi: abi-stamp-check.sh blocks on an externally held lock and proceeds only after release" \
+           "$_ABI_LOCK_WHY"
+fi
+
+# Empty/misconfigured-root-set regression (re-adversarial finding, round 5):
+# before `xargs -r` was added, `find <empty-root> ... | xargs -0 sha256sum`
+# with ZERO matched files still ran sha256sum with no file args, which reads
+# stdin and produces a valid-looking non-empty digest of NOTHING -- so a
+# misconfigured root set (or, structurally, any partial pipeline failure that
+# still emits some output) would silently pass the emptiness-only guard
+# instead of failing loudly.
+_ABI_EMPTYROOT_OK=1
+_ABI_EMPTYROOT_WHY=""
+_ABI_EMPTYROOT_DIR="$(mktemp -d 2>/dev/null)"
+if [ -z "$_ABI_EMPTYROOT_DIR" ] || [ ! -d "$_ABI_EMPTYROOT_DIR" ]; then
+    _ABI_EMPTYROOT_OK=0
+    _ABI_EMPTYROOT_WHY="mktemp -d failed, so the empty-root scenario was never probed"
+else
+    _abi_empty_stamp="$_ABI_EMPTYROOT_DIR/.abi-check.stamp"
+    mkdir -p "$_ABI_EMPTYROOT_DIR/no-headers-here"
+    if ( cd "$REPO_ROOT" && bash scripts/abi-stamp-check.sh "$_abi_empty_stamp" \
+            abi/generated/abi_contract.h clang-19 "$_ABI_CPPFLAGS_TOKENS" "$_ABI_UFLAGS_TOKENS" \
+            'include/build_info.h' "$_ABI_EMPTYROOT_DIR/no-headers-here" \
+            >/dev/null 2>&1 ); then
+        _ABI_EMPTYROOT_OK=0
+        _ABI_EMPTYROOT_WHY="the script succeeded against a root with zero headers"
+    elif [ -e "$_abi_empty_stamp" ] || [ -e "$_abi_empty_stamp.key" ]; then
+        _ABI_EMPTYROOT_OK=0
+        _ABI_EMPTYROOT_WHY="a stamp or key was published despite zero headers being found"
+    fi
+    rm -rf "$_ABI_EMPTYROOT_DIR" 2>/dev/null
+fi
+if [ "$_ABI_EMPTYROOT_OK" = "1" ]; then
+    t_pass "gen_user_abi: an empty/misconfigured root set fails instead of publishing a bogus key"
+else
+    t_fail "gen_user_abi: an empty/misconfigured root set fails instead of publishing a bogus key" \
+           "$_ABI_EMPTYROOT_WHY"
+fi
+
+# Symlink-conversion regression (re-adversarial finding, round 6):
+# scripts/gen-user-abi.py deliberately REFUSES a symlinked contract/facade,
+# but `sha256sum` follows symlinks and records only "digest path" -- so a
+# plain-file-to-symlink conversion with IDENTICAL target content must still
+# move the key (forcing a real `--check`, which then correctly refuses),
+# not silently cache-hit past the generator's own guard.
+_ABI_SYMLINK_OK=1
+_ABI_SYMLINK_WHY=""
+_ABI_SYMLINK_DIR="$(mktemp -d 2>/dev/null)"
+if [ -z "$_ABI_SYMLINK_DIR" ] || [ ! -d "$_ABI_SYMLINK_DIR" ]; then
+    _ABI_SYMLINK_OK=0
+    _ABI_SYMLINK_WHY="mktemp -d failed, so the symlink-conversion scenario was never probed"
+else
+    # The same-content TARGET lives OUTSIDE the hashed root (in `outside/`,
+    # a sibling of `hdrs/`), not inside it: creating it inside the root that
+    # gets hashed would move the key because a NEW regular header was added,
+    # independent of whether the symlink-marker logic works at all -- the
+    # exact isolation bug the re-adversarial round (round 7) found in the
+    # first version of this fixture.
+    mkdir -p "$_ABI_SYMLINK_DIR/hdrs" "$_ABI_SYMLINK_DIR/outside"
+    printf 'int x;\n' > "$_ABI_SYMLINK_DIR/hdrs/probe.h"
+    _abi_sym_stamp="$_ABI_SYMLINK_DIR/.abi-check.stamp"
+    if ! ( cd "$REPO_ROOT" && bash scripts/abi-stamp-check.sh "$_abi_sym_stamp" \
+            abi/generated/abi_contract.h clang-19 "$_ABI_CPPFLAGS_TOKENS" "$_ABI_UFLAGS_TOKENS" \
+            'include/build_info.h' "$_ABI_SYMLINK_DIR/hdrs" >/dev/null 2>&1 ); then
+        _ABI_SYMLINK_OK=0
+        _ABI_SYMLINK_WHY="establishing the initial clean cache failed"
+    else
+        _abi_sym_key1="$(cat "$_abi_sym_stamp.key" 2>/dev/null)"
+        printf 'int x;\n' > "$_ABI_SYMLINK_DIR/outside/probe_target.h"
+        rm -f "$_ABI_SYMLINK_DIR/hdrs/probe.h"
+        ln -s "$_ABI_SYMLINK_DIR/outside/probe_target.h" "$_ABI_SYMLINK_DIR/hdrs/probe.h"
+        if ! ( cd "$REPO_ROOT" && bash scripts/abi-stamp-check.sh "$_abi_sym_stamp" \
+                abi/generated/abi_contract.h clang-19 "$_ABI_CPPFLAGS_TOKENS" "$_ABI_UFLAGS_TOKENS" \
+                'include/build_info.h' "$_ABI_SYMLINK_DIR/hdrs" >/dev/null 2>&1 ); then
+            _ABI_SYMLINK_OK=0
+            _ABI_SYMLINK_WHY="the run against the symlinked (same-content) header failed unexpectedly"
+        else
+            _abi_sym_key2="$(cat "$_abi_sym_stamp.key" 2>/dev/null)"
+            if [ -z "$_abi_sym_key1" ] || [ -z "$_abi_sym_key2" ] || [ "$_abi_sym_key1" = "$_abi_sym_key2" ]; then
+                _ABI_SYMLINK_OK=0
+                _ABI_SYMLINK_WHY="converting a header to a same-content symlink did not move the key -- a cache hit would skip --check"
+            fi
+        fi
+    fi
+    rm -rf "$_ABI_SYMLINK_DIR" 2>/dev/null
+fi
+if [ "$_ABI_SYMLINK_OK" = "1" ]; then
+    t_pass "gen_user_abi: converting a header to a same-content symlink still moves the stamp key"
+else
+    t_fail "gen_user_abi: converting a header to a same-content symlink still moves the stamp key" \
+           "$_ABI_SYMLINK_WHY"
+fi
+
+# Symlinked-directory regression (re-adversarial finding, round 7): `find`
+# without `-L` never descends into a symlinked directory, so a header
+# reachable only through one would be structurally invisible to the key --
+# the script must refuse outright rather than silently miss it.
+_ABI_DIRSYMLINK_OK=1
+_ABI_DIRSYMLINK_WHY=""
+_ABI_DIRSYMLINK_DIR="$(mktemp -d 2>/dev/null)"
+if [ -z "$_ABI_DIRSYMLINK_DIR" ] || [ ! -d "$_ABI_DIRSYMLINK_DIR" ]; then
+    _ABI_DIRSYMLINK_OK=0
+    _ABI_DIRSYMLINK_WHY="mktemp -d failed, so the symlinked-directory scenario was never probed"
+else
+    mkdir -p "$_ABI_DIRSYMLINK_DIR/hdrs" "$_ABI_DIRSYMLINK_DIR/external"
+    printf 'int y;\n' > "$_ABI_DIRSYMLINK_DIR/external/hidden.h"
+    ln -s "$_ABI_DIRSYMLINK_DIR/external" "$_ABI_DIRSYMLINK_DIR/hdrs/vendor"
+    if ( cd "$REPO_ROOT" && bash scripts/abi-stamp-check.sh "$_ABI_DIRSYMLINK_DIR/.abi-check.stamp" \
+            abi/generated/abi_contract.h clang-19 "$_ABI_CPPFLAGS_TOKENS" "$_ABI_UFLAGS_TOKENS" \
+            'include/build_info.h' "$_ABI_DIRSYMLINK_DIR/hdrs" >/dev/null 2>&1 ); then
+        _ABI_DIRSYMLINK_OK=0
+        _ABI_DIRSYMLINK_WHY="the script succeeded despite a symlinked directory under the root"
+    fi
+    rm -rf "$_ABI_DIRSYMLINK_DIR" 2>/dev/null
+fi
+if [ "$_ABI_DIRSYMLINK_OK" = "1" ]; then
+    t_pass "gen_user_abi: a symlinked directory under a root is refused, not silently missed"
+else
+    t_fail "gen_user_abi: a symlinked directory under a root is refused, not silently missed" \
+           "$_ABI_DIRSYMLINK_WHY"
+fi
+
+# Extension-named directory-symlink regression (re-adversarial finding, round
+# 8, the hard cap on this section's review): round 7 classified symlinks by
+# NAME, so a directory symlink named "vendor.h" bypassed the refusal by
+# taking the leaf-digest path instead (sha256sum failing against a directory
+# produced a STABLE "unreadable" marker, invisible to any later change inside
+# it). The fix classifies by DEREFERENCED type, not name -- this pins that a
+# `*.h`-named symlink pointing at a DIRECTORY is refused exactly like an
+# arbitrarily-named one.
+_ABI_EXTDIRSYM_OK=1
+_ABI_EXTDIRSYM_WHY=""
+_ABI_EXTDIRSYM_DIR="$(mktemp -d 2>/dev/null)"
+if [ -z "$_ABI_EXTDIRSYM_DIR" ] || [ ! -d "$_ABI_EXTDIRSYM_DIR" ]; then
+    _ABI_EXTDIRSYM_OK=0
+    _ABI_EXTDIRSYM_WHY="mktemp -d failed, so the extension-named directory-symlink scenario was never probed"
+else
+    mkdir -p "$_ABI_EXTDIRSYM_DIR/hdrs" "$_ABI_EXTDIRSYM_DIR/external"
+    printf 'int y;\n' > "$_ABI_EXTDIRSYM_DIR/external/hidden.h"
+    ln -s "$_ABI_EXTDIRSYM_DIR/external" "$_ABI_EXTDIRSYM_DIR/hdrs/vendor.h"
+    if ( cd "$REPO_ROOT" && bash scripts/abi-stamp-check.sh "$_ABI_EXTDIRSYM_DIR/.abi-check.stamp" \
+            abi/generated/abi_contract.h clang-19 "$_ABI_CPPFLAGS_TOKENS" "$_ABI_UFLAGS_TOKENS" \
+            'include/build_info.h' "$_ABI_EXTDIRSYM_DIR/hdrs" >/dev/null 2>&1 ); then
+        _ABI_EXTDIRSYM_OK=0
+        _ABI_EXTDIRSYM_WHY="the script succeeded despite a *.h-named symlink pointing at a directory"
+    fi
+    rm -rf "$_ABI_EXTDIRSYM_DIR" 2>/dev/null
+fi
+if [ "$_ABI_EXTDIRSYM_OK" = "1" ]; then
+    t_pass "gen_user_abi: a *.h-named symlink pointing at a directory is refused, not routed to leaf hashing"
+else
+    t_fail "gen_user_abi: a *.h-named symlink pointing at a directory is refused, not routed to leaf hashing" \
+           "$_ABI_EXTDIRSYM_WHY"
+fi
+
+# Lock-path hardening regression (re-adversarial finding, round 7):
+# `exec 9>"$LOCK"` follows symlinks and truncates on open before `flock` ever
+# runs -- a stale symlink at the lock path must be refused BEFORE any open,
+# not silently followed into truncating whatever it points to.
+_ABI_LOCKSYM_OK=1
+_ABI_LOCKSYM_WHY=""
+_ABI_LOCKSYM_DIR="$(mktemp -d 2>/dev/null)"
+if [ -z "$_ABI_LOCKSYM_DIR" ] || [ ! -d "$_ABI_LOCKSYM_DIR" ]; then
+    _ABI_LOCKSYM_OK=0
+    _ABI_LOCKSYM_WHY="mktemp -d failed, so the lock-symlink scenario was never probed"
+else
+    mkdir -p "$_ABI_LOCKSYM_DIR/hdrs"
+    printf 'int z;\n' > "$_ABI_LOCKSYM_DIR/hdrs/probe.h"
+    _abi_locksym_important="$_ABI_LOCKSYM_DIR/important-unrelated-file"
+    printf 'precious data\n' > "$_abi_locksym_important"
+    _abi_locksym_stamp="$_ABI_LOCKSYM_DIR/.abi-check.stamp"
+    ln -s "$_abi_locksym_important" "$_abi_locksym_stamp.lock"
+    if ( cd "$REPO_ROOT" && bash scripts/abi-stamp-check.sh "$_abi_locksym_stamp" \
+            abi/generated/abi_contract.h clang-19 "$_ABI_CPPFLAGS_TOKENS" "$_ABI_UFLAGS_TOKENS" \
+            'include/build_info.h' "$_ABI_LOCKSYM_DIR/hdrs" >/dev/null 2>&1 ); then
+        _ABI_LOCKSYM_OK=0
+        _ABI_LOCKSYM_WHY="the script succeeded despite a symlinked lock path"
+    elif [ "$(cat "$_abi_locksym_important" 2>/dev/null)" != "precious data" ]; then
+        _ABI_LOCKSYM_OK=0
+        _ABI_LOCKSYM_WHY="the file behind the symlinked lock path was truncated/modified"
+    fi
+    rm -rf "$_ABI_LOCKSYM_DIR" 2>/dev/null
+fi
+if [ "$_ABI_LOCKSYM_OK" = "1" ]; then
+    t_pass "gen_user_abi: a symlinked lock path is refused before any open, not silently followed"
+else
+    t_fail "gen_user_abi: a symlinked lock path is refused before any open, not silently followed" \
+           "$_ABI_LOCKSYM_WHY"
+fi
+
+_ABI_CLANG_ID_OK=1
+_ABI_CLANG_ID_WHY=""
+_ABI_CLANG_ID_DIR="$(mktemp -d 2>/dev/null)"
+if [ -z "$_ABI_CLANG_ID_DIR" ] || [ ! -d "$_ABI_CLANG_ID_DIR" ]; then
+    _ABI_CLANG_ID_OK=0
+    _ABI_CLANG_ID_WHY="mktemp -d failed"
+else
+    _abi_fake_cc_dir="$_ABI_CLANG_ID_DIR/bin"
+    mkdir -p "$_abi_fake_cc_dir"
+    _abi_real_clang="$(command -v clang-19 2>/dev/null)"
+    if [ -z "$_abi_real_clang" ]; then
+        _ABI_CLANG_ID_OK=0
+        _ABI_CLANG_ID_WHY="clang-19 not on PATH, so the ABI_CLANG override could not be exercised"
+    else
+        # Byte-distinct but behaviorally identical wrapper (forwards to the
+        # real compiler): only its own content differs, isolating the
+        # assertion to "did the key notice a different resolved binary".
+        printf '#!/bin/sh\n# fake clang wrapper for the ABI_CLANG identity regression\nexec "%s" "$@"\n' \
+            "$_abi_real_clang" > "$_abi_fake_cc_dir/fake-clang-19"
+        chmod +x "$_abi_fake_cc_dir/fake-clang-19"
+        _abi_stamp_a="$_ABI_CLANG_ID_DIR/stamp-a"
+        _abi_stamp_b="$_ABI_CLANG_ID_DIR/stamp-b"
+        (cd "$REPO_ROOT" && bash scripts/abi-stamp-check.sh "$_abi_stamp_a" \
+            abi/generated/abi_contract.h clang-19 "$_ABI_CPPFLAGS_TOKENS" "$_ABI_UFLAGS_TOKENS" \
+            'include/build_info.h' include src abi user/include >/dev/null 2>&1)
+        (cd "$REPO_ROOT" && PATH="$_abi_fake_cc_dir:$PATH" ABI_CLANG=fake-clang-19 \
+            bash scripts/abi-stamp-check.sh "$_abi_stamp_b" \
+            abi/generated/abi_contract.h clang-19 "$_ABI_CPPFLAGS_TOKENS" "$_ABI_UFLAGS_TOKENS" \
+            'include/build_info.h' include src abi user/include >/dev/null 2>&1)
+        _abi_key_a="$(cat "$_abi_stamp_a.key" 2>/dev/null)"
+        _abi_key_b="$(cat "$_abi_stamp_b.key" 2>/dev/null)"
+        if [ -z "$_abi_key_a" ] || [ -z "$_abi_key_b" ]; then
+            _ABI_CLANG_ID_OK=0
+            _ABI_CLANG_ID_WHY="one of the two key files was not published"
+        elif [ "$_abi_key_a" = "$_abi_key_b" ]; then
+            _ABI_CLANG_ID_OK=0
+            _ABI_CLANG_ID_WHY="ABI_CLANG changed the resolved compiler but the published key stayed identical"
+        fi
+    fi
+    rm -rf "$_ABI_CLANG_ID_DIR" 2>/dev/null
+fi
+if [ "$_ABI_CLANG_ID_OK" = "1" ]; then
+    t_pass "gen_user_abi: ABI_CLANG overriding the resolved compiler moves the stamp key"
+else
+    t_fail "gen_user_abi: ABI_CLANG overriding the resolved compiler moves the stamp key" \
+           "$_ABI_CLANG_ID_WHY"
 fi
 
 # ---------------------------------------------------------------------------
@@ -8873,7 +9415,7 @@ else
         # shellcheck disable=SC2064
         trap "git -C '$REPO_ROOT' worktree remove --force '$ABI_WT' >/dev/null 2>&1; rm -rf '$ABI_WT_BASE' \"\$CRSW_TMP\"" EXIT INT TERM
 
-        for _abi_cand in Makefile scripts/gen-user-abi.py; do
+        for _abi_cand in Makefile scripts/gen-user-abi.py scripts/abi-stamp-check.sh; do
             if ! cp "$REPO_ROOT/$_abi_cand" "$ABI_WT/$_abi_cand" 2>/dev/null ||
                ! cmp -s "$REPO_ROOT/$_abi_cand" "$ABI_WT/$_abi_cand"; then
                 _abi_setup_fail "could not stage the candidate $_abi_cand into the worktree"
@@ -8980,6 +9522,15 @@ fi
 
 # The digest guard: with no working sha256sum OR shasum on PATH the recipe must
 # FAIL rather than publish an empty stamp that a later run would accept.
+#
+# The prior step's successful regeneration already left a LEGITIMATE
+# `.abi-check.stamp.key` on disk -- abi-stamp-check.sh's first hash is the
+# compiler digest (needed before the key can even be assembled), so this
+# scenario must fail there and touch NEITHER file, not merely "leave no key at
+# all". The pre-existing key's content is captured before the broken-digest
+# run and asserted UNCHANGED after, which is what actually distinguishes
+# "failed cleanly" from the fail-open the re-adversarial round found in the
+# key/publish transaction (a key published with no matching validated check).
 if [ "$ABI_GATE_OK" = "1" ]; then
     _abi_nodigest="$ABI_WT_BASE/nodigest"
     mkdir -p "$_abi_nodigest"
@@ -8987,13 +9538,21 @@ if [ "$ABI_GATE_OK" = "1" ]; then
         printf '#!/bin/sh\nexit 1\n' > "$_abi_nodigest/$_abi_stub"
         chmod +x "$_abi_nodigest/$_abi_stub"
     done
+    _abi_prekey="$(cat "$ABI_WT/build/.abi-check.stamp.key" 2>/dev/null || true)"
     rm -f "$ABI_WT/build/.abi-check.stamp"
     if (cd "$ABI_WT" && PATH="$_abi_nodigest:$PATH" timeout 180 make -j1 \
             build/.abi-check.stamp >/dev/null 2>&1); then
         _abi_setup_fail "the stamp recipe succeeded with no usable digest command"
     elif [ -e "$ABI_WT/build/.abi-check.stamp" ] || \
-         [ -e "$ABI_WT/build/.abi-check.stamp.tmp" ]; then
-        _abi_setup_fail "a failed digest left a stamp or a .tmp behind"
+         [ -n "$(find "$ABI_WT/build" -maxdepth 1 \
+                  -name '.abi-check.stamp.??????' \
+                  -o -name '.abi-check.stamp.key.??????' 2>/dev/null)" ]; then
+        _abi_setup_fail "a failed digest left a stamp or a leaked mktemp file behind"
+    else
+        _abi_postkey="$(cat "$ABI_WT/build/.abi-check.stamp.key" 2>/dev/null || true)"
+        if [ "$_abi_prekey" != "$_abi_postkey" ]; then
+            _abi_setup_fail "a failed digest changed the published ABI key with no validated check behind it"
+        fi
     fi
 fi
 

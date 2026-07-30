@@ -157,6 +157,27 @@ EXCEPT_TELEMETRY_STAMP := $(BUILD_DIR)/.except-telemetry.stamp
 # drift check ahead of compilation, not to force a rebuild.
 ABI_STAMP := $(BUILD_DIR)/.abi-check.stamp
 
+# Every include root the ABI generator's own flag vectors can resolve a header
+# through: print-abi-cppflags emits -Iinclude -Isrc/kernel -Ibuild/generated
+# -Isrc -Ibuild, print-user-cflags emits -Iuser/include, and `abi` holds the
+# committed contract. The stamp's cheap key hashes every *.h under these roots,
+# so the roots ARE the completeness argument -- a scripts/test-tooling.sh check
+# pins that no -I/-isystem in either vector escapes this list.
+#
+# `build` is deliberately absent: it holds only Makefile-generated headers, and a
+# clang -M over the six generator inputs resolves 21 headers, ALL under include/
+# and none of them generated. Including build/ would also be self-defeating,
+# since its contents are written DURING the build the key is meant to bound.
+ABI_INCLUDE_ROOTS := include src abi user/include
+
+# The one generated header that lives INSIDE a key root and changes on every
+# single build (build number + timestamp), so hashing it would invalidate the key
+# mid-build and re-run the 0.835s check once per make process -- measured: that
+# is exactly what kept the count at 4. It carries version macros only and is NOT
+# in the generator's measured read set; a tooling assertion pins that, so if it
+# ever becomes reachable the exclusion is caught rather than silently trusted.
+ABI_KEY_EXCLUDE := include/build_info.h
+
 KERNEL_BIN := $(BUILD_DIR)/kernel.exe
 LINKER_SCRIPT := $(SRC_DIR)/boot/linker.ld
 
@@ -259,27 +280,43 @@ $(EXCEPT_TELEMETRY_STAMP): .FORCE
 # print-abi-cppflags, print-user-cflags) -- then preprocesses those headers with
 # clang, so its true read-set includes transitive includes no prerequisite list
 # can enumerate. A list that goes stale is fail-OPEN, which is the failure this
-# section exists to remove, so the check always runs instead. It costs 0.835s,
-# which the canonical `make all` path already paid through check-abi.
+# section exists to remove, so the recipe always RUNS.
 #
-# The CONTENT is the contract digest, not a bare touch: the mtime then moves
-# only when the ABI actually changes, so an always-running check never churns a
-# rebuild and the stamp is safe to take as a REAL prerequisite where that is
-# wanted (the grouped userland recipe).
+# But running the recipe is not the same as paying for the check. `--check` costs
+# 0.835s (clang across a 12-cell flavor matrix), and the canonical wrapper drives
+# five separate make processes, so an unconditional check cost 5 x 0.835s = ~4.2s
+# of a 13.3s build -- measured, and a real regression against the single check
+# that wrapper paid before this gate existed. So scripts/abi-stamp-check.sh first
+# computes a CHEAP key over a COMPLETE SUPERSET of the generator's read-set and
+# skips `--check` when it is unchanged: measured ~129ms instead of ~835ms, and
+# zero generator passes on an unchanged tree.
+#
+# The key is complete BY CONSTRUCTION rather than by enumeration, which is what
+# makes it safe where a prerequisite list was not. It hashes every `*.h` under
+# every include root the generator's own flag vectors can resolve through (paths
+# AND contents, so an added, removed, renamed or shadowing header all move it,
+# each as its own "digest  path" record so no boundary between two files can
+# alias against another), the compiler EFFECTIVELY used (resolving the same
+# ABI_CLANG override scripts/gen-user-abi.py honors, then hashing its content --
+# not just $(CC)'s name), both flag vectors, the generator, this Makefile, and
+# the check script itself. A regression test pins that every -I/-isystem in
+# those vectors is covered by ABI_INCLUDE_ROOTS, because an uncovered root is
+# the one way this key could go stale.
+#
+# The key is written ONLY after a successful check, so a failing check is never
+# cached and every later invocation re-runs it until the drift is fixed. The
+# whole compute-check-publish transaction runs under a `flock` on
+# $(ABI_STAMP).lock, so concurrent `make` PROCESSES (the canonical wrapper
+# drives five) recompute and compare under the lock rather than racing on
+# shared temp files -- see scripts/abi-stamp-check.sh for the full incident
+# history and the three re-adversarial findings it closes.
+#
+# The stamp CONTENT is the contract digest, not a bare touch: the mtime then
+# moves only when the ABI actually changes, so the gate never churns a rebuild
+# and is safe as a REAL prerequisite where that is wanted (grouped userland).
 $(ABI_STAMP): .FORCE
-	@mkdir -p $(dir $@)
-	@python3 scripts/gen-user-abi.py --check
-	@{ sha256sum $(ABI_CONTRACT_H) 2>/dev/null || shasum -a 256 $(ABI_CONTRACT_H); } \
-		| awk '{print $$1}' > $@.tmp
-	@test -s $@.tmp || { rm -f $@.tmp; \
-		echo "[ABI] cannot digest $(ABI_CONTRACT_H) -- no sha256sum or shasum" >&2; \
-		exit 1; }
-	@if ! cmp -s $@.tmp $@ 2>/dev/null; then \
-		mv $@.tmp $@; \
-		echo "[ABI] $@ ($(ABI_CONTRACT_H) validated, digest changed)"; \
-	else \
-		rm -f $@.tmp; \
-	fi
+	@bash scripts/abi-stamp-check.sh $@ $(ABI_CONTRACT_H) '$(CC)' '$(KERNEL_TU_FLAGS)' \
+		'$(USER_CFLAGS)' '$(ABI_KEY_EXCLUDE)' $(ABI_INCLUDE_ROOTS)
 
 # --- Source Discovery ---
 # Assembly sources (boot + kernel) — exclude ap_trampoline.asm (built separately as flat binary)
@@ -1843,7 +1880,7 @@ $(BUILD_DIR)/kernel/lz4.o: $(SRC_DIR)/kernel/lz4.c $(KERNEL_TESTS_STAMP) | $(GEN
 # Verified: make updates an order-only prerequisite even when the dependent
 # target is up to date, including under -j, and a failing stamp recipe aborts
 # make with the dependent recipe never invoked.
-$(C_OBJS) $(LZ4_FULL_OBJ) $(ASM_OBJS) $(AP_TRAMPOLINE_OBJ): | $(ABI_STAMP)
+$(C_OBJS) $(LZ4_OBJ) $(LZ4_FULL_OBJ) $(ASM_OBJS) $(AP_TRAMPOLINE_OBJ): | $(ABI_STAMP)
 
 # Compile C source files (64-bit)
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c $(KERNEL_TESTS_STAMP) $(EXCEPT_TELEMETRY_STAMP) | $(GENERATED_HDRS)
