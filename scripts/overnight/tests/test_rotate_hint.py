@@ -157,9 +157,13 @@ def test_no_emit_when_persist_fails():                     # A4 emit-after-persi
             os.chmod(state_dir, 0o755)
 
 
-def test_retired_by_default_is_inert():                    # B1 retirement
-    # With ROTATE_HINT_ENABLED False (the shipped default), the hook never counts
-    # and never emits -- even in a headless SECTIONS run past the threshold.
+def test_disable_switch_is_inert():                        # B1 retirement path
+    # The kill switch must still work: with ROTATE_HINT_ENABLED False the hook
+    # never counts and never emits, even in a headless SECTIONS run past the
+    # threshold. (This was the SHIPPED default from 2026-07-14 until 2026-07-30,
+    # when the rotation was re-enabled on corrected evidence -- see
+    # test_shipped_default_is_enabled below. Keep this path working so the
+    # mechanism can be switched off again without code surgery.)
     with tempfile.TemporaryDirectory() as d:
         root = pathlib.Path(d)
         _sections(root)
@@ -169,8 +173,27 @@ def test_retired_by_default_is_inert():                    # B1 retirement
         assert _hint(root) is None, "retired hook must not touch the counter"
 
 
+def test_shipped_default_is_enabled():
+    """The mid-section rotation was re-enabled 2026-07-30 after the retirement's
+    load-bearing premise ("140 tool-events ~= one section") was falsified by
+    measurement: three consecutive segments ran 334 / 420 / 768 tool-events, and
+    the 334 one shipped a SINGLE section at $179.27 with cache-read 85.3% of
+    spend. Pin the shipped values so a silent revert is caught -- flipping either
+    back is a deliberate decision that must update the doctrine with it."""
+    spec = importlib.util.spec_from_file_location("rh_shipped", HOOK)
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    assert m.ROTATE_HINT_ENABLED is True, "mid-section rotation must stay enabled"
+    assert m.ROTATE_HINT_TURNS == 200, "threshold is derived, not a free knob"
+    skill = (HOOK.parents[1] / "skills/overnight-sequencer/SKILL.md"
+             ).read_text(encoding="utf-8")
+    assert "Mid-section context-cap rotation -- ACTIVE" in skill, \
+        "the SKILL doctrine must agree with the flag"
+
+
 if __name__ == "__main__":
-    test_retired_by_default_is_inert()
+    test_disable_switch_is_inert()
+    test_shipped_default_is_enabled()
     test_hint_fires_at_threshold()
     test_silent_outside_sections()
     test_no_run_state_silent()

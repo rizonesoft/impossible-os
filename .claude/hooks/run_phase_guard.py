@@ -819,6 +819,33 @@ def _review_resolution_valid(root: Path):
         return False, (f"review-resolution receipt is for "
                        f"{str(rr.get('head'))[:12]}, HEAD is {head[:12]} -- re-run "
                        "`review-resolved` at HEAD after resolving the review cycle")
+    # A9 (HIGH, recorded 2026-07-14 as an unattended-arm gate; closed 2026-07-30).
+    # The receipt records `review_run_id` and NOTHING ever compared it. HEAD is not
+    # a sufficient binding on its own: a fix loop dispatches a NEW review round
+    # against the SAME commit all the time (receive -> fix -> commit --amend is not
+    # used, but a re-adversarial round on an unchanged HEAD is routine). The old
+    # receipt then still matched on `head` and certified the section as resolved
+    # while a newer review sat unreceived -- exactly the "stale receipt survives a
+    # newer review at the same HEAD" hole. Bind the receipt to the review round it
+    # attests, and fail-CLOSED when either side is missing or unreadable.
+    rec_run = str(rr.get("review_run_id") or "").strip()
+    if not rec_run:
+        return False, ("review-resolution receipt carries no review_run_id -- it "
+                       "cannot be bound to a review round; re-run `review-resolved`")
+    rs_path = root / ".claude/state/last-codex-review.json"
+    try:
+        rs_now = json.loads(rs_path.read_text()) if rs_path.exists() else {}
+    except (OSError, ValueError):
+        return False, "last-codex-review.json unreadable (fail-closed)"
+    cur_run = str((rs_now or {}).get("review_run_id") or "").strip()
+    if not cur_run:
+        return False, ("current review state carries no review_run_id -- cannot "
+                       "prove the resolution receipt is for the LATEST review")
+    if cur_run != rec_run:
+        return False, (f"review-resolution receipt is for review round "
+                       f"{rec_run[:12]}, but the latest review is {cur_run[:12]} -- "
+                       "a newer review round arrived at this same HEAD; receive and "
+                       "resolve it, then re-run `review-resolved`")
     return True, ""
 
 
@@ -1407,13 +1434,41 @@ def cli(argv):
                 print("[sequencer] review-resolved REFUSED: last-codex-review.json "
                       "unreadable (fail-closed).", file=sys.stderr)
                 return 1
-        if rs and rs.get("received") is not True:
+        # A8 (HIGH, recorded 2026-07-14 as an unattended-arm gate; closed
+        # 2026-07-30). Two bypasses, both from treating an EMPTY review state as
+        # acceptable:
+        #   - `if rs and rs.get("received") is not True` skipped the whole check
+        #     when `rs` was {} (file absent, or present but empty/`{}`), and the
+        #     binding check below was likewise guarded by `if rs else ""`. So a
+        #     section with NO Codex review at all could mint a resolution receipt
+        #     and satisfy the mid-section rotation gate -- certifying a review
+        #     cycle that never happened.
+        #   - `review_run_id` fell back to "" when absent, and A9 then had nothing
+        #     to bind against, so the receipt could not detect a newer round.
+        # Both now fail-CLOSED: a resolution receipt requires a real, received,
+        # HEAD-bound review carrying a non-empty run id.
+        if not rs:
+            print("[sequencer] review-resolved REFUSED: no Codex review recorded "
+                  "(.claude/state/last-codex-review.json absent or empty) -- a "
+                  "resolution receipt must attest a review cycle that actually "
+                  "ran. Dispatch + receive the section's review first.",
+                  file=sys.stderr)
+            return 1
+        if rs.get("received") is not True:
             print("[sequencer] review-resolved REFUSED: the last Codex review is "
                   "not yet received -- receive it (Skill "
                   "superpowers:receiving-code-review) and fix its findings first.",
                   file=sys.stderr)
             return 1
-        bind_fail = _review_not_binding_head(root, rs) if rs else ""
+        resolved_run_id = str(rs.get("review_run_id") or "").strip()
+        if not resolved_run_id:
+            print("[sequencer] review-resolved REFUSED: the review state carries no "
+                  "review_run_id -- the receipt could not be bound to a review "
+                  "round, so a newer review at this same HEAD would go unnoticed "
+                  "(A9). Re-dispatch the review through the broker.",
+                  file=sys.stderr)
+            return 1
+        bind_fail = _review_not_binding_head(root, rs)
         if bind_fail:
             print(f"[sequencer] review-resolved REFUSED: {bind_fail}. The received "
                   "review must bind the CURRENT HEAD (fixes committed + "
@@ -1434,7 +1489,7 @@ def cli(argv):
             print("[sequencer] review-resolved REFUSED: cannot read HEAD.",
                   file=sys.stderr)
             return 1
-        rec = {"head": head, "review_run_id": rs.get("review_run_id", ""),
+        rec = {"head": head, "review_run_id": resolved_run_id,
                "ts": int(time.time())}
         try:
             p = root / _REVIEW_RESOLUTION_REL

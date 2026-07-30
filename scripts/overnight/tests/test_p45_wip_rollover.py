@@ -52,12 +52,15 @@ def _head_blob(root, path):
                           capture_output=True, text=True).stdout.strip()
 
 
-def _review(root, received, bind_head=True):
+def _review(root, received, bind_head=True, run_id="rev-1"):
     # F3: a received review must bind the committed HEAD content. bind_head=True
     # writes trigger_blobs matching HEAD:src/x.c (the reviewed == committed case).
+    # A8/A9: a real review state always carries a review_run_id; the gate now
+    # fail-closes without one, so the helper supplies a default.
     blobs = {"src/x.c": _head_blob(root, "src/x.c")} if bind_head else {}
     (root / ".claude/state/last-codex-review.json").write_text(
-        json.dumps({"received": received, "trigger_blobs": blobs}))
+        json.dumps({"received": received, "trigger_blobs": blobs,
+                    "review_run_id": run_id}))
 
 
 # ----------------------------------------------------- WIP gate internals (P4.5)
@@ -316,10 +319,81 @@ def test_review_resolution_valid_head_bound():               # A5 helper contrac
         assert not ok and "no review-resolution receipt" in why
         head = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"],
                               capture_output=True, text=True).stdout.strip()
-        p.write_text(json.dumps({"head": head}))             # matches HEAD -> ok
+        _review(root, True, run_id="rev-1")
+        p.write_text(json.dumps({"head": head, "review_run_id": "rev-1"}))
         assert mod._review_resolution_valid(root)[0] is True
-        p.write_text(json.dumps({"head": "0" * 40}))         # stale -> refuse
+        p.write_text(json.dumps({"head": "0" * 40,           # stale HEAD -> refuse
+                                 "review_run_id": "rev-1"}))
         assert mod._review_resolution_valid(root)[0] is False
+
+
+def test_a9_receipt_bound_to_the_review_round_not_just_head():
+    """A9 (HIGH, recorded 2026-07-14, closed 2026-07-30): the receipt recorded
+    `review_run_id` and nothing ever compared it, so a NEWER review round arriving
+    at the SAME HEAD -- routine in a re-adversarial loop -- left the old receipt
+    matching on `head` alone and certifying the section as resolved."""
+    with tempfile.TemporaryDirectory() as d:
+        root = _git_repo(d)
+        mod = _load(root / ".claude/state/s.json", root)
+        p = root / ".claude/state/last-review-resolution.json"
+        head = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"],
+                              capture_output=True, text=True).stdout.strip()
+        _review(root, True, run_id="rev-1")
+        p.write_text(json.dumps({"head": head, "review_run_id": "rev-1"}))
+        assert mod._review_resolution_valid(root)[0] is True
+
+        # A NEWER review round at the SAME HEAD must invalidate the receipt.
+        _review(root, True, run_id="rev-2")
+        ok, why = mod._review_resolution_valid(root)
+        assert not ok and "newer review round" in why, why
+
+        # Fail-closed both ways: a receipt with no run id, and a review state
+        # with no run id, are each refusals rather than silent passes.
+        p.write_text(json.dumps({"head": head}))
+        ok, why = mod._review_resolution_valid(root)
+        assert not ok and "no review_run_id" in why, why
+        p.write_text(json.dumps({"head": head, "review_run_id": "rev-2"}))
+        (root / ".claude/state/last-codex-review.json").write_text(
+            json.dumps({"received": True, "trigger_blobs": {}}))
+        ok, why = mod._review_resolution_valid(root)
+        assert not ok and "no review_run_id" in why, why
+
+
+def test_a8_review_resolved_refuses_an_absent_or_unidentified_review():
+    """A8 (HIGH, recorded 2026-07-14, closed 2026-07-30): `if rs and ...` skipped
+    the received/binding checks entirely when the review state was empty, so a
+    section with NO Codex review at all could mint a resolution receipt. And an
+    absent `review_run_id` fell back to "", leaving A9 nothing to bind."""
+    with tempfile.TemporaryDirectory() as d:
+        root = _git_repo(d)
+        mod = _load(root / ".claude/state/s.json", root)
+        mod._build_suite_receipts_ok = lambda r: (True, "")
+        mod.save_state({"active": True, "phase": "SECTIONS", "file": "todo/T.md",
+                        "section_idx": 1})
+        receipt = root / ".claude/state/last-review-resolution.json"
+
+        # (1) no review state at all -> REFUSE, and write nothing.
+        rs = root / ".claude/state/last-codex-review.json"
+        if rs.exists():
+            rs.unlink()
+        assert mod.cli(["review-resolved"]) == 1
+        assert not receipt.exists(), "must not mint a receipt with no review"
+
+        # (2) present but empty -> REFUSE (the `if rs and` bypass).
+        rs.write_text("{}")
+        assert mod.cli(["review-resolved"]) == 1
+        assert not receipt.exists()
+
+        # (3) received + bound but NO review_run_id -> REFUSE (A9 needs the id).
+        rs.write_text(json.dumps({"received": True,
+                                  "trigger_blobs": {"src/x.c": _head_blob(root, "src/x.c")}}))
+        assert mod.cli(["review-resolved"]) == 1
+        assert not receipt.exists()
+
+        # (4) the complete, honest case -> ACCEPT and record the run id.
+        _review(root, True, run_id="rev-7")
+        assert mod.cli(["review-resolved"]) == 0
+        assert json.loads(receipt.read_text())["review_run_id"] == "rev-7"
 
 
 def _resolved_mod(root, received=True, bind_head=True, receipts_ok=True):

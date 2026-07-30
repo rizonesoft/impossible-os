@@ -15,6 +15,17 @@ SCRIPT = REPO / "scripts/overnight/cost-summary.py"
 FAILS = []
 
 
+def _mod():
+    """Import cost-summary.py directly so the pure helpers can be unit-tested
+    (the rest of this file drives the CLI as a subprocess)."""
+    import importlib.util
+    src = pathlib.Path(__file__).resolve().parent.parent / "cost-summary.py"
+    spec = importlib.util.spec_from_file_location("cost_summary", src)
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
 def check(name, cond):
     if not cond:
         FAILS.append(name)
@@ -118,6 +129,45 @@ def test_fail_open_on_missing_and_malformed():
         check("malformed file", "nothing to report" in _run(bad, d))
 
 
+
+def test_reread_sizing_declines_without_a_byte_extent():
+    """v04 item 2 (2026-07-30). The first estimator priced every read at the
+    file's CURRENT full size because nothing recorded the extent, and reported
+    re-read waste at 139.4% of the run's own cache-read -- an estimate larger
+    than the quantity it is a share of. Unsized reads must now contribute
+    NOTHING and be reported as not-sizeable, never back-filled with a guess."""
+    mod = _mod()
+    seq = [(1, "a.c", None, None), (2, "a.c", None, None), (3, "b.c", None, None)]
+    waste, first, unsized, tot = mod._reread_waste(seq, turns=100)
+    check("unsized reads contribute nothing", waste == 0 and first == 0 and tot == 0)
+    check("unsized reads are counted", unsized == 3)
+
+
+def test_reread_waste_never_exceeds_total_and_favours_early_reads():
+    mod = _mod()
+    # Same file read twice; 1 KB each, 100-turn segment.
+    seq = [(1, "a.c", 1024, None), (2, "a.c", 1024, None)]
+    waste, first, unsized, tot = mod._reread_waste(seq, turns=100)
+    check("no unsized", unsized == 0)
+    check("waste + first == total", waste + first == tot)
+    check("waste is a strict subset of total", 0 < waste < tot)
+    # Position dominates: a re-read EARLY in the segment costs more than a late
+    # one, which is exactly what a bare count cannot express.
+    early = mod._reread_waste(
+        [(1, "a.c", 1024, None), (2, "a.c", 1024, None)] +
+        [(i, f"f{i}.c", 1024, None) for i in range(3, 20)], turns=100)[0]
+    late = mod._reread_waste(
+        [(i, f"f{i}.c", 1024, None) for i in range(3, 20)] +
+        [(1, "a.c", 1024, None), (2, "a.c", 1024, None)], turns=100)[0]
+    check("an early re-read costs more than a late one", early > late)
+    # A line `limit` bounds the extent rather than being ignored.
+    capped = mod._reread_waste([(1, "a.c", 10_000_000, 10),
+                                (2, "a.c", 10_000_000, 10)], turns=10)[0]
+    full = mod._reread_waste([(1, "a.c", 10_000_000, None),
+                              (2, "a.c", 10_000_000, None)], turns=10)[0]
+    check("limit bounds the charged extent", capped < full)
+
+
 if __name__ == "__main__":
     test_totals_reconcile_with_the_raw_metrics()
     test_cache_read_is_reported_as_the_dominant_bucket()
@@ -125,6 +175,8 @@ if __name__ == "__main__":
     test_avg_context_is_labelled_as_length_confounded()
     test_split_estimate_is_omitted_when_it_cannot_be_derived()
     test_fail_open_on_missing_and_malformed()
+    test_reread_sizing_declines_without_a_byte_extent()
+    test_reread_waste_never_exceeds_total_and_favours_early_reads()
     if FAILS:
         for f in FAILS:
             print("FAIL:", f)

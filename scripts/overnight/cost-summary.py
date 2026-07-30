@@ -80,8 +80,12 @@ def _in_window(ts, start, end) -> bool:
 
 
 def _tool_history(root: Path, start, end):
-    """(reads_total, reads_distinct, skill_invocations{name:count}) in window."""
-    reads, distinct, skills = 0, set(), {}
+    """(reads_total, reads_distinct, skill_invocations{name:count}, read_seq).
+
+    `read_seq` is the ORDERED list of read targets in the window, which is what
+    lets re-read waste be priced (see _reread_waste): the count alone cannot,
+    because a re-read's cost depends on WHERE in the segment it lands."""
+    reads, distinct, skills, seq = 0, set(), {}, []
     p = root / ".claude/state/tool-history.jsonl"
     try:
         for line in p.read_text(encoding="utf-8", errors="replace").splitlines():
@@ -96,11 +100,66 @@ def _tool_history(root: Path, start, end):
             if name == "Read":
                 reads += 1
                 distinct.add(tgt)
+                # `bytes` is present only for records written after 2026-07-30
+                # (see tool_history_writer). None means UNSIZED -- the estimator
+                # must decline rather than substitute a full-file guess.
+                nb = d.get("bytes")
+                lim = d.get("limit")
+                seq.append((ts, tgt, nb if isinstance(nb, int) else None,
+                            lim if isinstance(lim, int) else None))
             elif name == "Skill":
                 skills[tgt] = skills.get(tgt, 0) + 1
     except OSError:
-        return (0, 0, {})
-    return (reads, len(distinct), skills)
+        return (0, 0, {}, [])
+    seq.sort()
+    return (reads, len(distinct), skills, seq)
+
+
+def _reread_waste(read_seq, turns):
+    """Tokens attributable to RE-reads. Returns (waste, first, unsized, total).
+
+    Sizing the OFFLOAD-MISS (token-saver v04 item 2, 2026-07-30). The re-read
+    COUNTER alone cannot answer "is this above the >=2% bar", because a re-read is
+    not charged once: it appends its bytes to the cached prefix, and that prefix is
+    re-charged as cache-read on EVERY remaining turn. So a re-read at turn i of a
+    T-turn segment costs roughly bytes/4 * (T - i) -- position dominates count, and
+    averaging over the count hides exactly that.
+
+    REQUIRES the per-read `bytes`/`limit` extent recorded by tool_history_writer
+    from 2026-07-30. The first attempt priced every read at the file's CURRENT
+    full size because nothing recorded the extent, and reported re-read waste at
+    **139.4% of the run's own cache-read** -- an estimate larger than the quantity
+    it is a share of, i.e. self-evidently invalid. Two independent over-counts
+    caused it: a `Read(offset, limit)` slice charged as a whole file, and files
+    that grew during the run (the segment was actively editing them) measured at
+    their final size. Rather than tune a fudge factor -- which would fabricate
+    precision -- an unsized read now contributes NOTHING and is counted in
+    `unsized`, so a caller can tell "not measurable yet" from "measured small".
+
+    A `limit` is in LINES, so it bounds the extent only when paired with bytes;
+    where both are present the read is charged at min(bytes, limit * 80) as a
+    line-length upper bound, which is still an over-estimate but a bounded one."""
+    n = len(read_seq)
+    waste = first = unsized = total = 0
+    seen = set()
+    for i, rec in enumerate(read_seq):
+        tgt, nb, lim = rec[1], rec[2], rec[3]
+        if nb is None:
+            unsized += 1
+            continue
+        extent = nb if lim is None else min(nb, max(0, lim) * 80)
+        tokens = max(0, extent) // 4
+        # Remaining turns this read is re-charged over, mapped from read position
+        # onto the segment's turn axis (reads are spread through the segment).
+        remaining = max(0, turns - (i * turns) // max(n, 1))
+        cost = tokens * remaining
+        total += cost
+        if tgt in seen:
+            waste += cost
+        else:
+            seen.add(tgt)
+            first += cost
+    return (waste, first, unsized, total)
 
 
 def _skill_bytes(root: Path, skills: dict):
@@ -182,7 +241,8 @@ def main(argv: list) -> int:
 
     start, end = _run_window(metrics)
     scoped = start is not None
-    reads, distinct, skills = _tool_history(root, start, end) if scoped else (0, 0, {})
+    reads, distinct, skills, read_seq = (_tool_history(root, start, end) if scoped
+                                         else (0, 0, {}, []))
     sk_bytes, sk_hit, sk_miss = _skill_bytes(root, skills)
     fires, hits, stores, conv, redis = _offload(root, start, end) if scoped else (0,)*5
 
@@ -236,6 +296,25 @@ def main(argv: list) -> int:
     else:
         ratio = (100 * (reads - distinct) // reads) if reads else 0
         print(f"  re-reads: {reads - distinct}/{reads} ({ratio}%) over {distinct} distinct files")
+        if read_seq:
+            waste, first, unsized, tot = _reread_waste(read_seq, turns)
+            sized = len(read_seq) - unsized
+            if not sized:
+                print(f"    re-read cost NOT SIZEABLE: 0 of {len(read_seq)} reads "
+                      f"carry a byte extent (pre-2026-07-30 telemetry). The count "
+                      f"alone cannot be compared to the >=2% bar -- see "
+                      f"tool_history_writer.")
+            else:
+                share = (100.0 * waste / cr) if cr else 0.0
+                bar = ("ABOVE the >=2% bar" if share >= 2.0
+                       else "below the >=2% bar")
+                note = (f"; {unsized}/{len(read_seq)} reads unsized, so this is a "
+                        f"FLOOR" if unsized else "")
+                print(f"    re-read cache-read cost ~{waste:,} tok "
+                      f"({share:.1f}% of this run's cache-read) -- {bar}{note}")
+                print(f"    (first reads ~{first:,} tok are NOT waste; a re-read is "
+                      f"priced extent/4 x remaining turns, so position dominates "
+                      f"count)")
         sk_note = f", {sk_miss} plugin-skill invocations unsized" if sk_miss else ""
         print(f"  skill injection: {sk_bytes:,} bytes from {sk_hit} repo-skill "
               f"invocations{sk_note}")

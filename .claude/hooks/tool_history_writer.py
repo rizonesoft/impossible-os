@@ -101,6 +101,26 @@ def main() -> int:
         "success": d.get("success"),
         "target": target,
     }
+    # Read EXTENT (token-saver v04 item 2, added 2026-07-30). Sizing re-read waste
+    # needs the bytes a Read actually pulled, and nothing recorded it: a
+    # `Read(offset, limit)` slice and a whole-file read were indistinguishable, so
+    # the only available estimator had to price every read at full file size. That
+    # over-counted so badly it reported re-read waste at 139% of the run's total
+    # cache-read -- a number that is self-evidently invalid, and worse than none.
+    # `offset`/`limit` are the request's own extent (no response access needed
+    # here); `bytes` is the file's size at read time, which for a full read IS the
+    # extent and for a slice bounds it. Absent/unreadable -> omitted, never
+    # guessed, so a consumer can tell "unsized" from "zero".
+    try:
+        if (record["tool_name"] or "").lower() == "read" and target:
+            ti2 = d.get("tool_input") or {}
+            for k in ("offset", "limit"):
+                if isinstance(ti2.get(k), int):
+                    record[k] = ti2[k]
+            fp = target if os.path.isabs(target) else os.path.join(root, target)
+            record["bytes"] = os.path.getsize(fp)
+    except Exception:
+        pass
     # Per design Q1: live rotate at 10 MiB. Single .1 slot; older lost.
     try:
         if os.path.exists(state_path) and os.path.getsize(state_path) >= LIVE_ROTATE_BYTES:

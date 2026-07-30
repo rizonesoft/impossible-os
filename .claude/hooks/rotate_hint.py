@@ -43,25 +43,40 @@ from pathlib import Path
 # property of Canary #2's section sizes, not of the runner, and the per-section
 # rollover demonstrably does NOT bound context any more.
 #
-# P1 STILL HOLDS, and it is the reason this flag stays False: `rollover-wip`
-# requires `_unpushed_count() > 0`, and mid-section the runner is always either
-# dirty (uncommitted) or fully pushed -- so re-enabling the hint alone would only
-# produce hints that refuse, which is exactly what the retirement avoided.
+# P1 was NOT a property of the runner -- it was a property of the RETIRED
+# doctrine, which never told the worker to make a mid-section WIP commit. The
+# restored SECTIONS-phase procedure does exactly that (a LOCAL commit, deliberately
+# unpushed), so the `_unpushed_count() > 0` precondition is now created rather than
+# waited for.
 #
-# TO RE-ENABLE, all four must land together (the split predictor at
-# `section-manifest.py:207` is NOT sufficient on its own: §34 had ALREADY been
-# split and the remainder still ran 330 turns, because the driver was the review
-# loop -- 23 findings -- which no item-count threshold can predict):
-#   1. adopt periodic unpushed WIP commits mid-section (breaks P1)   -- NOT DONE
-#   2. close arm-readiness A7 (range scan + fail-closed)             -- DONE 07-30
-#   3. close arm-readiness A8 + A9 (review-resolved certification)   -- NOT DONE
-#   4. flip this True and restore the SECTIONS-phase doctrine in the SKILL
-ROTATE_HINT_ENABLED = False
+# All four re-enable prerequisites are closed (2026-07-30). Note the split
+# predictor at `section-manifest.py:207` is NOT a substitute for any of them: §34
+# had ALREADY been split and the remainder still ran 330 turns, because the driver
+# was the review loop (23 findings) -- knowable only AFTER the review runs.
+#   1. periodic unpushed WIP commits mid-section  -- DONE (restored doctrine)
+#   2. arm-readiness A7 (range scan + fail-closed) -- DONE
+#   3. arm-readiness A8 + A9 (receipt certification + run-id binding) -- DONE
+#   4. this flag + the SECTIONS-phase doctrine    -- DONE
+ROTATE_HINT_ENABLED = True
 
-# Turn-count proxy for the doctrine context band. Deliberately conservative: the
-# hint is advisory, and P4.6 only acts at a safe boundary, so an early hint costs
-# nothing. Tune via the canary (P4.4/P4.8).
-ROTATE_HINT_TURNS = 140
+# Tool-event proxy for the doctrine context band, RE-DERIVED 2026-07-30 from the
+# measured accumulation rather than left at the retired guess.
+#
+# Measured: base ~57.5K, accumulation ~1,123 tok/turn, and tool-events track turns
+# about 1:1 on these segments (334 events / 335 turns). Context at turn T is
+# therefore ~57.5K + 1.123K*T, so the ~300K band lands at T ~= 215.
+#
+# Cost check, using the quadratic model cache-read ~ base*T + d*T^2/2 against the
+# 330-turn segment that cost $152.96 of cache-read:
+#     one 330-turn segment   ~80.1M   (measured 99.5M -- the model is conservative)
+#     two 165-turn segments  ~49.6M   62%
+#     three 110-turn segments ~39.4M  49%
+# Splitting keeps paying, but each rotation costs a re-orientation, so this is not
+# a "lower is always better" dial. 200 puts a typical 330-turn section at 2
+# segments and the observed 768-event outlier at 4, while staying above the ~132
+# events that Canary #2's genuinely-short sections reached -- so a section that
+# really does fit one context is still never nudged.
+ROTATE_HINT_TURNS = 200
 
 # Once the hint is set, re-surface it every N further tool-events until a verified
 # rollover clears the file -- the crossing-turn message can scroll far out of view
