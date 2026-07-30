@@ -85,6 +85,7 @@ scripts/overnight/
 
 # Cost gates (R2/R3/R4, 2026-07-19): block-capable hooks in the headless run --
 # a false-positive wedge is a run-breaking failure mode, so their edits gate on
+.claude/hooks/receipt_surface_guard.py
 # the suite (tests: test_build_offload_reminder.py, test_wait_websearch_gates.py)
 .claude/hooks/build_offload_reminder.py
 .claude/hooks/codex_wait_discipline.py

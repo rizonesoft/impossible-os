@@ -246,6 +246,79 @@ def test_gate_is_scoped_to_the_headless_run():
                 os.environ["OVERNIGHT_SEQUENCER_RUN"] = prev
 
 
+
+def test_v04_quoted_data_is_not_a_command_position():
+    """v04 runner item (2026-07-30). `_CMD_POS` treated `|` and `(` as command
+    positions with no notion of quoting, so a suite path inside a quoted
+    ARGUMENT read as an invocation. Two live hits 7 hours apart in the 3-day
+    canary: `(scripts/test.sh` inside prose, and the ledger string
+    `"high|scripts/test-tooling.sh:7883|..."`.
+
+    The EVASION is why this became a rewrite rather than a fourth special case:
+    after four consecutive blocked retries the run got a ledger write through by
+    splitting a string literal (`TT="scripts/test-tooling"".sh:7883"`). A gate
+    that teaches the model to obfuscate its own commands has stopped guarding
+    and started shaping behaviour."""
+    mod = _load()
+    benign = [
+        'python3 .claude/hooks/finding-ledger.py add "high|scripts/test-tooling.sh:7883|note"',
+        'git commit -m "reworded the (scripts/test.sh mention) in prose"',
+        'X="a|scripts/test.sh|b"',
+        'TT="scripts/test-tooling"".sh:7883"',       # the evasion, now needless
+        'echo "run (scripts/build.sh) later"',
+        'git log --oneline -- scripts/test.sh',       # `--` is a pathspec here
+    ]
+    for cmd in benign:
+        assert mod._match_suite_invocation(cmd) is None, cmd
+    # Real invocations must still be caught, including through a pipeline and a
+    # subshell -- the operators are only inert INSIDE quotes.
+    for cmd in ('bash scripts/test.sh', 'echo hi | bash scripts/test.sh',
+                '(bash scripts/test.sh)', 'BASH_ENV=x bash scripts/test-tooling.sh',
+                'time bash scripts/test.sh', '/bin/bash scripts/test.sh',
+                'bash "scripts/test.sh"', './scripts/test.sh',
+                'scripts/test.sh SUITE=mm', 'make test', 'make test-mm'):
+        assert mod._match_suite_invocation(cmd) is not None, cmd
+    assert mod._match_suite_invocation('make test=1') is None
+
+
+def test_v04_unparseable_is_split_by_which_risk_is_present():
+    """The v04 item prescribed a blanket fail-OPEN on a parse error ("a cost gate
+    that cannot parse the command must not be the thing that stops a run"). That
+    is right for the FALSE-POSITIVE class it was written about, and WRONG for the
+    bypass class -- the pre-existing tooling suite says so in as many words: "a
+    false block costs a rephrase; a false allow runs the suite with nothing
+    reporting it." Reconciled by which risk is actually present.
+
+    Unparseable AND names a suite -> fail CLOSED (possible bypass; falls back to
+    the legacy textual matcher, preserving hardening that suite earned).
+    Unparseable and names none -> nothing to block, so the fail-open intent
+    holds where it applies."""
+    mod = _load()
+    for cmd in ("echo 'unterminated", 'echo "unterminated',
+                "git commit -m 'unclosed message"):
+        assert mod._match_suite_invocation(cmd) is None, cmd
+    for cmd in ("bash scripts/test.sh 'oops",
+                "bash scripts/codex-dispatch.sh 'unbalanced && bash scripts/test.sh"):
+        assert mod._match_suite_invocation(cmd) is not None, cmd
+    assert mod._split_unquoted("echo 'x") is None
+
+
+def test_v04_substitution_and_dash_c_bodies_still_run():
+    """A substitution body and a `-c` string EXECUTE while being, syntactically,
+    an argument -- so an otherwise-exempt outer command carried a bare suite run
+    inside it. Pinned here because the structural rewrite had to re-earn these."""
+    mod = _load()
+    for cmd in (
+            'bash scripts/codex-dispatch.sh "`bash scripts/test.sh QUIET=1`"',
+            'bash scripts/codex-dispatch.sh "$(bash scripts/test.sh)"',
+            'bash scripts/codex-dispatch.sh <(bash scripts/test.sh QUIET=1)',
+            'bash scripts/codex-dispatch.sh >(bash scripts/test.sh QUIET=1)',
+            'bash scripts/codex-dispatch.sh "$(echo `echo )`; bash scripts/test.sh)"',
+            "bash -c 'bash scripts/test.sh QUIET=1' "
+            "bash scripts/overnight/run-artifact.sh lbl -- true"):
+        assert mod._match_suite_invocation(cmd) is not None, cmd
+
+
 if __name__ == "__main__":
     test_two_script_paths_are_not_an_invocation()
     test_real_interpreter_forms_still_block()
@@ -258,6 +331,9 @@ if __name__ == "__main__":
     test_lint_is_exempt_from_block()
     test_r2_bypass_shapes_block()
     test_r2_non_invocations_pass()
+    test_v04_quoted_data_is_not_a_command_position()
+    test_v04_unparseable_is_split_by_which_risk_is_present()
+    test_v04_substitution_and_dash_c_bodies_still_run()
     test_r2_wrapped_route_logs_follow()
     print("PASS: build_offload_reminder exemption + P3.4 BLOCK + dedup + lint-exempt"
           " + R2 bypass shapes + follow log")

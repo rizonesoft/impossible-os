@@ -35,6 +35,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import sys
 import time
 from pathlib import Path
@@ -122,12 +123,219 @@ def _normalise_continuations(text: str) -> str:
     return re.sub(r"\\\n\s*", " ", text)
 
 
+class _Hit:
+    """Minimal re.Match stand-in: callers only ever ask for .group(0)."""
+
+    __slots__ = ("_s",)
+
+    def __init__(self, s):
+        self._s = s
+
+    def group(self, n=0):
+        return self._s
+
+
+_TRANSPARENT = {"time", "exec", "nohup", "command", "stdbuf"}
+_ENV_ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+_SUITE_TOKEN_RE = re.compile(
+    r"(?:^|/)scripts/(?:build|test|test-smoke|test-tooling)\.sh$")
+_MAKE_TARGET_RE = re.compile(r"^test(?:-[A-Za-z0-9_-]+)?$")
+
+
+def _substitution_bodies(cmd: str):
+    """Bodies of `$(...)`, `` `...` ``, `<(...)` and `>(...)`, innermost included.
+
+    Balanced-paren scan rather than a regex, because a nested backtick whose body
+    contains `)` desynchronises any non-counting walk -- the exact shape the
+    tooling suite pins (`"$(echo \\`echo )\\`; bash scripts/test.sh)"`)."""
+    out = []
+    n = len(cmd)
+    i = 0
+    while i < n:
+        ch = cmd[i]
+        if ch == "`":
+            j = cmd.find("`", i + 1)
+            if j < 0:
+                break
+            out.append(cmd[i + 1:j])
+            i = j + 1
+            continue
+        opens = (cmd.startswith("$(", i) or cmd.startswith("<(", i)
+                 or cmd.startswith(">(", i))
+        if opens:
+            depth, j, tick = 1, i + 2, False
+            while j < n and depth:
+                c = cmd[j]
+                if c == "`":
+                    tick = not tick
+                elif not tick and c == "(":
+                    depth += 1
+                elif not tick and c == ")":
+                    depth -= 1
+                j += 1
+            if depth == 0:
+                body = cmd[i + 2:j - 1]
+                out.append(body)
+                out.extend(_substitution_bodies(body))
+                i = j
+                continue
+            break                 # unbalanced -> leave it to the fail-closed path
+        i += 1
+    return out
+
+
+def _split_unquoted(cmd: str):
+    """Split on control operators that are OUTSIDE quotes. None if unbalanced.
+
+    A quote-blind split was the whole defect: `_CMD_POS` treated `|` and `(` as
+    command positions with no notion of quoting, so `|` and `(` appearing inside
+    a quoted ARGUMENT read as the start of a new command."""
+    segs, cur, quote, esc = [], [], None, False
+    for ch in cmd:
+        if esc:
+            cur.append(ch)
+            esc = False
+            continue
+        if ch == "\\" and quote != "'":
+            cur.append(ch)
+            esc = True
+            continue
+        if quote:
+            cur.append(ch)
+            if ch == quote:
+                quote = None
+            continue
+        if ch in "'\"":
+            quote = ch
+            cur.append(ch)
+            continue
+        if ch in ";&|()\n":
+            segs.append("".join(cur))
+            cur = []
+            continue
+        cur.append(ch)
+    if quote or esc:
+        return None              # unterminated -> unparseable -> never block
+    segs.append("".join(cur))
+    return [s for s in segs if s.strip()]
+
+
+def _segment_invocation(seg: str):
+    """The suite invocation this ONE segment runs, or None.
+
+    Structural, not textual: the segment is tokenised and the COMMAND is
+    identified positionally, so a suite path appearing as DATA inside an
+    argument is never mistaken for an invocation."""
+    try:
+        toks = shlex.split(seg)
+    except ValueError:
+        return None              # same fail-safe as _skip_env (326bc786)
+    return _tokens_invocation(toks)
+
+
+def _tokens_invocation(toks):
+    """Same check over an already-tokenised command, so the WRAPPED route can
+    recurse: `run-artifact.sh <label> -- bash scripts/test.sh` must still report
+    the inner suite, because the caller logs that as a compliance `follow`
+    event. Without the recursion the sanctioned route would look like no suite
+    ran at all and offload-report's reroute-compliance count would read zero."""
+    i = 0
+    while i < len(toks) and (_ENV_ASSIGN_RE.match(toks[i])
+                             or toks[i] in _TRANSPARENT):
+        i += 1
+    if i >= len(toks):
+        return None
+    head = toks[i]
+    base = head.rsplit("/", 1)[-1]
+    if base in ("bash", "sh"):
+        j = i + 1
+        while j < len(toks) and toks[j].startswith("-"):
+            if toks[j] == "-c":
+                # The `-c` body is a COMMAND STRING, so parse it as one. Treating
+                # it as a dead end re-opens a KNOWN bypass:
+                # `bash -c '<the suite>' bash .../run-artifact.sh lbl -- true`
+                # runs the suite out of the body while the trailing words claim
+                # the wrapper exemption for the segment.
+                if j + 1 < len(toks):
+                    inner = _match_suite_invocation(toks[j + 1])
+                    if inner:
+                        return inner.group(0)
+                return None
+            j += 1
+        if j >= len(toks):
+            return None
+        if _SUITE_TOKEN_RE.search(toks[j]):
+            return f"{base} {toks[j]}"
+        head, i = toks[j], j      # e.g. `bash .../run-artifact.sh ...`
+    elif _SUITE_TOKEN_RE.search(head):
+        return head
+    if base == "make":
+        for t in toks[i + 1:]:
+            if "=" in t:
+                continue         # `make test=1` is a variable, not a target
+            if _MAKE_TARGET_RE.match(t):
+                return f"make {t}"
+    # Recurse past `--` ONLY for the sanctioned wrapper. A blanket recursion
+    # broke `git log --oneline -- scripts/test.sh`, where `--` separates git's
+    # options from a PATHSPEC and the suite path is an argument, not a command.
+    if head.rsplit("/", 1)[-1] == "run-artifact.sh" and "--" in toks[i:]:
+        tail = toks[i:]
+        rest = tail[tail.index("--") + 1:]
+        if rest:
+            return _tokens_invocation(rest)
+    return None
+
+
 def _match_suite_invocation(cmd: str):
-    """First match of any suite-script/make-test invocation shape, else None."""
-    for rx in _SCRIPT_RES:
-        m = rx.search(cmd)
-        if m:
-            return m
+    """First suite-script/make-test INVOCATION in `cmd`, else None.
+
+    REWRITTEN 2026-07-30 (v04 runner item). The regex matcher pattern-matched a
+    shell grammar it did not parse, and this was its THIRD false-positive shape:
+    `_SCRIPT_RES[0]`'s `\\b` was satisfied by the dot in `*.sh` (fixed 77d36c59),
+    then `_CMD_POS`'s `|` and `(` fired on quoted DATA -- live, twice, 7 hours
+    apart in the 3-day canary: once on `(scripts/test.sh` inside prose, once on
+    the ledger string `"high|scripts/test-tooling.sh:7883|..."`.
+
+    The evasion was the real finding: the run learned to split a string literal
+    (`TT="scripts/test-tooling"".sh:7883"`) to get a ledger write past the gate,
+    after four consecutive blocked retries. A gate that teaches the model to
+    obfuscate its own commands has stopped guarding and started shaping
+    behaviour, so this is a rewrite rather than a fourth special case.
+
+    Fail-SAFE throughout: an unbalanced quote or a shlex parse error yields NO
+    match. A cost gate that cannot parse the command must never be the thing
+    that stops a run -- the same lesson `_skip_env` paid for in 326bc786."""
+    # SUBSTITUTION BODIES RUN. `$(...)`, backticks and `<(...)`/`>(...)` execute
+    # their body as a command while being, syntactically, an ARGUMENT to the
+    # surrounding one -- so an otherwise-exempt outer segment used to carry a
+    # bare suite run along inside it. Checked FIRST, and against the raw command,
+    # because a body inside double quotes never reaches segment splitting.
+    for body in _substitution_bodies(cmd):
+        inner = _match_suite_invocation(body)
+        if inner:
+            return inner
+    segs = _split_unquoted(cmd)
+    if segs is None:
+        # UNPARSEABLE. The v04 item prescribed fail-OPEN here ("a cost gate that
+        # cannot parse the command must not be the thing that stops a run"), and
+        # that is right for the FALSE-POSITIVE class it was written about --
+        # quoted data blocking benign work. It is WRONG for this class, and the
+        # existing suite says so in as many words: "a false block costs a
+        # rephrase; a false allow runs the suite with nothing reporting it."
+        # Reconciled by which risk is actually present: a command we cannot parse
+        # that also NAMES a suite script is a possible bypass and falls back to
+        # the legacy textual matcher (fail-CLOSED, preserving the hardening that
+        # test earned); one that names no suite at all has nothing to block, so
+        # the fail-open intent is preserved where it applies.
+        for rx in _SCRIPT_RES:
+            m = rx.search(cmd)
+            if m:
+                return m
+        return None
+    for seg in segs:
+        hit = _segment_invocation(seg)
+        if hit:
+            return _Hit(hit)
     return None
 
 _MSG = (
