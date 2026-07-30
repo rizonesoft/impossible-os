@@ -377,19 +377,26 @@ The stream always ends `run_report`, `summary`, `run_meta`, in that order.
 The assembler rejects any other tail as a cut-and-resumed stream.
 
 **`record_kind` leads every record and is the stream's discriminator.**
-The stream carries two kinds of object: one per BINARY and one per
-synthetic skip block. A consumer that counted every object with a `name`
-would report more testcases than `summary.total` and skew every pass rate
-derived from it. Key on `record_kind`, never on the presence of `name`.
+The stream carries FOUR kinds, and a consumer must accept all of them:
+`binary` (one per binary), `skip_block` (one per synthetic skip record),
+plus the two run-level records `run_report` and `run_meta`. A consumer
+that counted every object with a `name` would report more testcases than
+`summary.total` and skew every pass rate derived from it; one that
+accepted only the two name-bearing kinds would reject the run-level
+records the harvester requires. Key on `record_kind`, never on the
+presence of `name`.
 
 `summary.total` counts BINARIES. The synthetic records are counted
 separately as `summary.reported.skip_records`, so
 `records == total + skip_records`.
 
 `summary.reported` is the report dimension described at the top of this
-document. `binaries_unreported` is what makes silence legible: a binary
-that never called `SYS_TEST_REPORT` is a different fact from one that
-reported zero skips, and only the second is evidence of full coverage.
+document. `binaries_unreported` is the partition slot for every binary
+WITHOUT an accepted self-report -- a binary that never called
+`SYS_TEST_REPORT`, one whose launch failed, and an ingest refusal that
+never ran at all. It is what makes silence legible: not reporting is a
+different fact from reporting zero skips, and only the second is evidence
+of full coverage.
 `binaries_invalid` counts every REJECTED or INCOMPLETE report, not only
 exit-status contradictions. A report is invalid when the binary submitted
 twice, submitted a count above its ceiling, died between claiming the
@@ -449,7 +456,7 @@ Summary record (wire) -- binary counts only:
 | `skip_records`          | integer  | synthetic records emitted (== skip_blocks unless the run-wide budget clipped them) |
 | `binaries_reported`     | integer  | binaries whose report was accepted                 |
 | `binaries_invalid`      | integer  | binaries whose report contradicted their exit      |
-| `binaries_unreported`   | integer  | binaries that never reported (legacy path)         |
+| `binaries_unreported`   | integer  | binaries with no accepted self-report: never reported, launch failed, or refused at ingest |
 
 `run_meta` record -- the run-completeness dimension, merged into `summary`
 in the assembled artifact:

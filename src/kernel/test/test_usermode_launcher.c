@@ -54,6 +54,8 @@ int test_usermode_format_json_skip(char *dst, uint32_t cap,
                                    const char *rec_name, const char *parent,
                                    uint32_t index);
 int test_usermode_name_equal_fs(const char *a, const char *b);
+int test_usermode_refusal_already_seen(const char *stored, int stored_verdict,
+                                       const char *candidate);
 
 /* Mirror of the launcher's utest_name_verdict_t. The numeric values ARE
  * the contract these tests pin: the enum is file-local to the launcher,
@@ -287,6 +289,16 @@ static void test_charset_refusals_are_distinct_from_not_test_shaped(void)
                    "traversal is its own verdict, dots being in the charset");
     TEST_ASSERT_EQ(test_usermode_classify_name("test_ok-1.2_x.exe"),
                    UT_NAME_ACCEPT, "the full accepted charset passes");
+    /* The two manifest comment spellings, pinned together because the
+     * lexer and the classifier only make sense as a pair. `#` introduces
+     * a comment solely after whitespace, so `test_a#b.exe` survives whole
+     * and earns a CHARSET refusal (above), while `test_ok.exe#note`
+     * becomes one token that fails the shape check. Neither may be
+     * silently dropped: the manifest path counts a shape failure as a
+     * refusal too, so both spellings reach an artifact. */
+    TEST_ASSERT_EQ(test_usermode_classify_name("test_ok.exe#note"),
+                   UT_NAME_NOT_TEST_SHAPED,
+                   "a comment with no leading space is part of the name");
 }
 
 static void test_embedded_nul_is_refused_not_truncated(void)
@@ -349,6 +361,34 @@ static void test_name_identity_matches_the_filesystem(void)
     TEST_ASSERT(test_usermode_name_equal_fs("test_a-1.exe",
                                             "test_A-1.exe") == 1,
                 "punctuation and digits survive the fold unchanged");
+}
+
+static void test_refusal_dedup_is_the_only_net_for_double_publication(void)
+{
+    /* A refused name that also exists on disk is discovered twice -- once
+     * from the manifest, once from the glob. Publishing it twice leaves
+     * total_planned and total_ran in agreement, so the completeness
+     * reconciliation is blind to it and this predicate is the only net. */
+    TEST_ASSERT(test_usermode_refusal_already_seen("test_bad.exe",
+                                                  UT_NAME_REFUSE_CHARSET,
+                                                  "test_bad.exe") == 1,
+                "an exact repeat of a stored refusal is deduped");
+    TEST_ASSERT(test_usermode_refusal_already_seen("test_Bad.exe",
+                                                  UT_NAME_REFUSE_LENGTH,
+                                                  "test_bad.exe") == 1,
+                "a case variant is the same file to IXFS, so it dedupes");
+    TEST_ASSERT(test_usermode_refusal_already_seen("test_bad.exe",
+                                                  UT_NAME_REFUSE_CHARSET,
+                                                  "test_other.exe") == 0,
+                "an unrelated dirent is not suppressed");
+    /* The exclusion that must NOT dedupe: a NUL-refused entry's stored
+     * string is the truncation at the NUL, and no filename can contain a
+     * NUL -- so a dirent matching that truncation is a DIFFERENT file and
+     * suppressing it would lose a real refusal. */
+    TEST_ASSERT(test_usermode_refusal_already_seen("test_bad",
+                                                  UT_NAME_REFUSE_NUL,
+                                                  "test_bad") == 0,
+                "a NUL refusal never suppresses a same-prefix real file");
 }
 
 static void test_taxonomy_edge_names(void)
@@ -2448,6 +2488,9 @@ void test_register_usermode_launcher(void)
                             test_taxonomy_edge_names, TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: name identity matches the filesystem fold",
                             test_name_identity_matches_the_filesystem,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: refusal dedup suppresses only the same file",
+                            test_refusal_dedup_is_the_only_net_for_double_publication,
                             TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: worst-case record fits at the derived bound",
                             test_worst_case_record_fits_at_the_derived_bound,

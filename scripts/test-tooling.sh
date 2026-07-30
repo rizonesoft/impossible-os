@@ -8956,6 +8956,89 @@ else
     t_fail "framing: an oversized numeric field is refused, not a traceback" "rc=$BIGRC"
 fi
 
+# 6r1. A REFUSED binary is a first-class artifact record (usermode name-bound
+#      and counted-ingest-refusal work).
+#      A name refused at ingest never launches, so it produces no self-report
+#      -- it has to land in the `unreported` bucket, and its testcase has to be
+#      present and FAIL. This is the artifact-level half of the section's test
+#      checkpoint: the kernel half is unit-tested, but only the harvester can
+#      say whether the published stream actually parses into a named failure.
+refusal_log() {
+    local nonce="$1" out="$2" total="$3"
+    {
+        echo "[  1.000] [cpu:0] [ OK ] UTEST-${nonce}: [UTEST-FRAME] v=1 run=1"
+        echo "[  1.010] [cpu:0] [ OK ] UTEST-${nonce}: [UTEST-JSON] {\"record_kind\":\"binary\",\"name\":\"refused_1_test_a_b.exe_9f2c41ab.exe\",\"type\":\"correctness\",\"status\":\"FAIL\",\"time_ms\":0,\"reason\":\"name refused: charset\"}"
+        echo "[  1.020] [cpu:0] [ OK ] UTEST-${nonce}: [UTEST-JSON] {\"record_kind\":\"run_report\",\"asserts_passed\":0,\"asserts_failed\":0,\"skip_blocks\":0,\"skip_records\":0,\"binaries_reported\":0,\"binaries_invalid\":0,\"binaries_unreported\":${total}}"
+        echo "[  1.030] [cpu:0] [ OK ] UTEST-${nonce}: [UTEST-JSON] {\"summary\":{\"passed\":0,\"failed\":${total},\"skipped\":0,\"total\":${total},\"time_ms\":0}}"
+        echo "[  1.040] [cpu:0] [ OK ] UTEST-${nonce}: [UTEST-JSON] {\"record_kind\":\"run_meta\",\"aborted\":false,\"not_run\":0}"
+        echo "[  1.050] [cpu:0] [ OK ] UTEST-${nonce}: === 0 passed, ${total} failed, 0 skipped of ${total} total ==="
+        echo "[  1.060] [cpu:0] [ OK ] UTEST-${nonce}: [UTEST-FRAME-END] run=1 records=6"
+    } > "$out"
+}
+
+refusal_log "1a2b3c4d" "$FRAME_TMP/refusal.log" 1
+if python3 "$HARVEST" "$FRAME_TMP/refusal.log" "$FRAME_TMP/refusal.json" >/dev/null 2>&1 &&
+   python3 -c "
+import json,sys
+d = json.load(open('$FRAME_TMP/refusal.json'))
+tc = d['testcases']
+ok = (d['summary']['total'] == 1 and d['summary']['failed'] == 1
+      and len(tc) == 1 and tc[0]['status'] == 'FAIL'
+      and tc[0]['name'].startswith('refused_')
+      and d['summary']['reported']['binaries_unreported'] == 1)
+sys.exit(0 if ok else 1)"; then
+    t_pass "utest refusal: a refused binary harvests as a named FAIL testcase"
+else
+    t_fail "utest refusal: a refused binary harvests as a named FAIL testcase"
+fi
+
+# 6r2. The invariant the refusal accounting DEPENDS on. Bumping the failed
+#      counter without emitting the matching record does not merely
+#      under-describe the run -- the harvester rejects the whole artifact,
+#      because it reconciles record COUNT against summary.total SEPARATELY
+#      from the reported/invalid/unreported partition. A refusal path that
+#      counts without publishing therefore produces no artifact at all.
+#
+#      binaries_unreported tracks the requested total on purpose, so the
+#      PARTITION reconciles and `count_mismatch` is the only check that can
+#      fire. The first version of this fixture left unreported=1 against
+#      total=2 and tripped report_partition_mismatch instead -- it would
+#      have kept passing with the count check deleted, pinning an invariant
+#      it was not testing.
+refusal_log "1a2b3c4d" "$FRAME_TMP/refusal_short.log" 2
+python3 "$HARVEST" "$FRAME_TMP/refusal_short.log" "$FRAME_TMP/refusal_short.json" \
+    >/dev/null 2>&1 && SHORTRC=0 || SHORTRC=$?
+if [ "$SHORTRC" != "0" ] &&
+   python3 -c "
+import json,sys
+d = json.load(open('$FRAME_TMP/refusal_short.json'))
+sys.exit(0 if d['summary'] is None
+         and d.get('summary_error') == 'count_mismatch' else 1)"; then
+    t_pass "utest refusal: a counted refusal with no record refuses the artifact"
+else
+    t_fail "utest refusal: a counted refusal with no record refuses the artifact" \
+           "harvester rc=$SHORTRC (expected refusal reason count_mismatch)"
+fi
+
+# 6r3. Producer and consumer must spell the incomplete-run marker identically.
+#      The kernel emits it and scripts/test.sh greps for it; a drift in either
+#      string silently disables the gate that catches a planned binary which
+#      produced no result, and nothing else would notice.
+#
+#      Asserted on the COMPLETE production shapes, not on substring presence:
+#      a bare grep for the token also matches a comment, and matches
+#      `UTEST-RUN-INCOMPLETE-v2`, which the host's bracketed pattern would
+#      no longer recognise. The emitter must carry the bracketed literal and
+#      the host must grep for the bracketed literal.
+if grep -q '"\[UTEST-RUN-INCOMPLETE\] planned %u binaries but ran %u' \
+        "$REPO_ROOT/src/kernel/test/test_usermode.c" &&
+   grep -q 'UF}\\\[UTEST-RUN-INCOMPLETE\\\]' "$REPO_ROOT/scripts/test.sh"; then
+    t_pass "utest refusal: the incomplete-run marker is spelled identically both sides"
+else
+    t_fail "utest refusal: the incomplete-run marker is spelled identically both sides" \
+           "the kernel emitter and the host gate disagree on the marker string"
+fi
+
 # 6e. The production consumers must AGREE with the parser. A consumer that
 #     validates differently is a consumer that passes what the others refuse.
 if grep -q 'utest-frame.py' "$REPO_ROOT/scripts/test.sh" &&

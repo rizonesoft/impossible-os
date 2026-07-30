@@ -1302,10 +1302,20 @@ if [ "${SKIP_LINT_TODO_PROSE:-}" = "1" ]; then
     echo -e "${YELLOW}warn${NC}: Check 19 (todo-prose) skipped via SKIP_LINT_TODO_PROSE=1"
     WARNINGS=$((WARNINGS + 1))
 else
+    # The trailing /dev/null is load-bearing, not defensive noise: awk with
+    # an EMPTY file-operand list falls back to stdin and blocks there
+    # forever. `find` yields nothing whenever this runs against a tree with
+    # no todo/ directory -- which is exactly what the tooling suite's
+    # scratch-repo fixtures do -- so without it a lint invocation hangs
+    # indefinitely instead of reporting. Measured 2026-07-30: an 18-minute
+    # stall in scripts/test-tooling.sh with awk parked in
+    # unix_stream_read_generic, which in an unattended run is a hang with
+    # no verdict rather than a slow gate. /dev/null contributes no lines,
+    # so the counts are unchanged.
     LINT19_ITEMS=$(awk '/^ *- \[[ x\/]\]/ && length>250 {c++} END{print c+0}' \
-        $(find "$REPO_ROOT/todo" -name '*.md' 2>/dev/null) 2>/dev/null || echo 0)
+        $(find "$REPO_ROOT/todo" -name '*.md' 2>/dev/null) /dev/null 2>/dev/null || echo 0)
     LINT19_FILES=$(awk '/^ *- \[[ x\/]\]/ && length>250 {print FILENAME}' \
-        $(find "$REPO_ROOT/todo" -name '*.md' 2>/dev/null) 2>/dev/null | sort -u | wc -l | tr -d ' ')
+        $(find "$REPO_ROOT/todo" -name '*.md' 2>/dev/null) /dev/null 2>/dev/null | sort -u | wc -l | tr -d ' ')
     if [ "${LINT19_ITEMS:-0}" -gt 0 ]; then
         echo -e "${YELLOW}warn${NC}: Check 19 (todo-item-length) $LINT19_ITEMS checklist item(s) over the 250-char cap across $LINT19_FILES file(s) (legacy debt; NEW ones are blocked at commit by scripts/todo-staged-check.py)"
         WARNINGS=$((WARNINGS + 1))
