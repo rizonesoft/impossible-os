@@ -1337,6 +1337,10 @@ The artifacts carry only `reason` (`src/kernel/test/test_usermode.c:2587`, a 96-
 > **Accepted:** [M] the Codex-dispatch exemption trusts a spoofable executable NAME, so a script renamed to `codex-dispatch.sh` inherits it (reason: the gate is a cost control, not a security boundary, and the correct fix is the grammar-accurate argv classification already filed) -> XREF: `00-infrastructure/TODO-08-automation-hardening.md` §32 (item: "Anchor the wrapper exemption on parsed argv rather than an anchored regex, so `run-artifact.sh` earns it only as the segment's actual executable")
 > **Quality reviewed:** 2026-07-30 | Codex 13x (design, adversarial x10, consistency, perf) | 14H+9M+0L fixed, 1 open | scope: N/A (host tooling; no kernel/boot/desktop/shell/userland surface, so no domain code-quality skill applies)
 
+---
+
+## 38. Per-Leg Generation Pointer for Coherent Document Resolution
+
 A consumer of the per-leg artifacts resolves them by enumerating `build/test-results-<leg>.xml` and `build/test-results-<leg>.json` -- two independent paths that §30 can only publish in sequence, never atomically as a pair.
 
 > [!NOTE]
