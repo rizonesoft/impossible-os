@@ -356,13 +356,49 @@ def make_query(target: str, overrides: dict = None) -> tuple:
     hand the compiler a translation context the kernel never used. (The Make
     side cannot represent such a flag today either -- `printf '%s\n' $(CFLAGS)`
     is word-split by the shell before printf sees it -- so quoting it there is
-    the other half of that fix if such a flag is ever added.)"""
-    cmd = ['make', '-s', target]
+    the other half of that fix if such a flag is ever added.)
+
+    `--no-print-directory` is explicit, not redundant with `-s`. When this
+    generator runs from INSIDE a recursive build (the ABI check is itself a
+    Makefile prerequisite, so a top-level `make` that recurses into a
+    subdirectory build exports MAKEFLAGS with `w` set), the child `make`
+    started here inherits that MAKEFLAGS and prints `make[N]: Entering
+    directory '...'` / `Leaving directory '...'` to STDOUT regardless of the
+    `-s` on this command line -- confirmed against GNU Make: `-s` silences
+    recipe echo, it does not imply `--no-print-directory`, and an inherited
+    `w` in MAKEFLAGS wins over nothing. Those announcement lines then land
+    INSIDE this function's return value and get handed to clang as filenames
+    the same way a stray $(info) did (CI run 30531605290, 2026-07-30,
+    `stale-abi-fixtures` job: `make[2]: Entering directory ...` reached
+    gen-user-abi as a bogus header path). An explicit `--no-print-directory`
+    on argv overrides the inherited environment flag for this invocation only
+    (GNU Make: command-line flags override MAKEFLAGS-derived ones).
+
+    `--no-print-directory` alone only neutralizes `w`. MAKEFLAGS/MFLAGS can
+    carry ANY GNU Make option, and several others corrupt this same stdout
+    channel worse than `w` did -- confirmed: an inherited `-p` (database dump)
+    or `-d` (debug trace) makes the child print 16,705 / 246,428 extra lines
+    ahead of the real flag vector; an inherited `-n` (dry-run) makes it print
+    the recipe's literal `printf '%s\n' -Wall ...` source line instead of
+    running it, which passes the "nonempty" check below but is not a flag at
+    all. There is no complete allow-list of make options to strip one by one
+    (adversarial round 2, 2026-07-30) -- the fix is to give this invocation NO
+    inherited make state at all: every value the query needs already reaches
+    the child through explicit argv (the target name, `-s`,
+    `--no-print-directory`, and `overrides` as `VAR=value` tokens), so
+    MAKEFLAGS/MFLAGS from the parent process carry nothing this call
+    legitimately needs and everything it can be corrupted by. Scrub both
+    before the child ever sees them, rather than reacting flag-by-flag to
+    each one someone happens to export."""
+    cmd = ['make', '-s', '--no-print-directory', target]
     for var, value in sorted((overrides or {}).items()):
         cmd.append(f'{var}={value}')
+    child_env = dict(os.environ)
+    child_env.pop('MAKEFLAGS', None)
+    child_env.pop('MFLAGS', None)
     try:
         proc = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True,
-                              text=True, check=False)
+                              text=True, check=False, env=child_env)
     except OSError as exc:
         return (None, f'cannot run `make {target}`: {exc}')
     if proc.returncode != 0:

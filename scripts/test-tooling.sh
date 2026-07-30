@@ -7756,6 +7756,47 @@ check("make_query_returns_whole_lines",
 check("make_query_names_a_missing_target",
       gua.make_query('print-abi-no-such-target')[1] is not None)
 
+# Regression: when this generator runs FROM INSIDE a recursive build (the ABI
+# check is itself a Makefile prerequisite of a top-level `make` that recurses
+# into a subdirectory build), the top-level make exports MAKEFLAGS, and the
+# child `make` this function starts inherits it. `w` alone made GNU Make print
+# `make[N]: Entering directory '...'` / `Leaving directory '...'` to STDOUT
+# despite `-s` and `--no-print-directory` not being redundant with it (CI run
+# 30531605290, 2026-07-30, stale-abi-fixtures job: that line reached clang as
+# a bogus header path). Adversarial round 2 found `-w` is not the only
+# corrupting option: `-p` (database dump) and `-d` (debug trace) make the
+# child print tens of thousands of extra lines, and `-n` (dry-run) makes it
+# print the recipe's literal source text instead of running it -- confirmed
+# empirically (16,705 / 246,428 / 1 line respectively against a
+# --no-print-directory-only fix, none of them the real flag vector). There is
+# no complete list of GNU Make options to special-case, so make_query() now
+# strips MAKEFLAGS/MFLAGS from the child's environment entirely (every value
+# the query needs already reaches the child via explicit argv). Proved here
+# as an INVARIANCE property rather than per-flag content checks: a clean-
+# environment baseline call must come back byte-for-byte identical regardless
+# of what poison the CALLING process's MAKEFLAGS carries -- covering `w`, the
+# two confirmed volume-bomb flags, the confirmed content-corrupting flag, the
+# two recipe-suppressing flags (`q`/`t`, included so a future consumer of this
+# function cannot regress into treating their empty/error output as data),
+# and a combined value with a long-option token, none of which this test
+# special-cases by name beyond listing them as inputs.
+_mf_baseline, _mf_baseline_err = gua.make_query('print-abi-cppflags')
+_MF_POISON = ('w', 'p', 'd', 'n', 'q', 't', 'p d n q t w', '--trace')
+_mf_saved = os.environ.get('MAKEFLAGS')
+_mf_all_match = _mf_baseline_err is None
+try:
+    for _mf_poison in _MF_POISON:
+        os.environ['MAKEFLAGS'] = _mf_poison
+        _mfl, _mflerr = gua.make_query('print-abi-cppflags')
+        if _mflerr != _mf_baseline_err or _mfl != _mf_baseline:
+            _mf_all_match = False
+finally:
+    if _mf_saved is None:
+        os.environ.pop('MAKEFLAGS', None)
+    else:
+        os.environ['MAKEFLAGS'] = _mf_saved
+check("make_query_immune_to_inherited_makeflags", _mf_all_match)
+
 # Offset assertions are discovered in the PREPROCESSED text, so a commented-out
 # or dead-arm assertion is not counted and a named-constant offset is seen.
 # Production reads the assertions out of the PREPROCESSED layout headers.
@@ -7853,7 +7894,7 @@ finally:
 PYGUA
 )
 GUA_OK=$(echo "$GUA_OUT" | grep -c "^OK ")
-GUA_EXPECT=109
+GUA_EXPECT=110
 if [ "$GUA_OK" = "$GUA_EXPECT" ]; then
     echo "$GUA_OUT" | grep "^OK " | while IFS= read -r line; do
         [ "$QUIET" = "0" ] && echo -e "  ${GREEN}PASS${NC}  gen_user_abi: $line"
