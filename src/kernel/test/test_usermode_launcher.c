@@ -102,6 +102,9 @@ uint32_t test_usermode_json_line_max(void);
 int test_usermode_frame_tag_format(char *dst, uint32_t cap, uint32_t nonce);
 uint32_t test_usermode_frame_nonce_fold(uint64_t mixed);
 uint32_t test_usermode_frame_tag_cap(void);
+int test_usermode_capture_escape(const char *raw, uint32_t raw_len,
+                                 char *out, uint32_t out_cap);
+uint32_t test_usermode_capture_chunk_max(void);
 int test_usermode_format_report_summary(char *dst, uint32_t cap,
                                         uint32_t a_pass, uint32_t a_fail,
                                         uint32_t blocks, uint32_t records,
@@ -757,6 +760,8 @@ static void test_report_reconcile_timeout_keeps_counts(void)
  * --------------------------------------------------------------------- */
 
 static struct task s_report_scratch;
+static struct task s_capture_parent_scratch;
+static struct task s_capture_child_scratch;
 
 static void u_reset_report_scratch(void)
 {
@@ -981,6 +986,23 @@ static int u_test_streq(const char *a, const char *b)
     for (i = 0; a[i] && a[i] == b[i]; i++)
         ;
     return a[i] == b[i];
+}
+
+/* True when `s` ends with the exact bytes of `suffix`. Used to pin the
+ * tail of a variable-prefix record (e.g. "owner=<N>" where N is a live
+ * pid this test does not control) without needing a generic substring
+ * search. */
+static int u_test_ends_with(const char *s, const char *suffix)
+{
+    uint32_t slen = 0, suflen = 0;
+
+    while (s[slen])
+        slen++;
+    while (suffix[suflen])
+        suflen++;
+    if (suflen > slen)
+        return 0;
+    return u_test_streq(s + (slen - suflen), suffix);
 }
 
 static void test_skip_record_name_shape(void)
@@ -2183,6 +2205,333 @@ static void u_test_fill(char *dst, uint32_t cap)
         dst[i] = 'Z';
 }
 
+/* Every existing marker (`[UTEST-XML]`, `[UTEST-JSON]`, `[UTEST-FRAME]`,
+ * `[UTEST-FRAME-END]`, `[UTEST-RECORD-OVERFLOW]`) shares the leading `[`,
+ * so escaping it blocks a captured payload from being mistaken for any
+ * of them. Everything outside safe printable ASCII (< 0x20 or >= 0x7F)
+ * is ALSO escaped, because scripts/utest-frame.py decodes each physical
+ * line as UTF-8 with errors="replace" -- an unescaped raw high byte or
+ * lone continuation byte would be irreversibly replaced with U+FFFD
+ * before this section's byte-exactness goal could be honored. Only
+ * printable ASCII minus '\' and '[' survives byte-for-byte. */
+static void test_capture_escape_marker_and_control_classes_only(void)
+{
+    char out[64];
+    int n;
+
+    u_test_fill(out, sizeof(out));
+    n = test_usermode_capture_escape("a\\b\nc\rd[e", 9u, out, sizeof(out));
+    TEST_ASSERT(n >= 0, "an ample buffer must not refuse");
+    TEST_ASSERT_EQ((uint32_t)n, 21u,
+                   "4 escaped bytes (\\, LF, CR, '[') at 4 chars each plus "
+                   "5 literal bytes (a b c d e) = 21");
+    TEST_ASSERT(u_test_streq(out, "a\\x5cb\\x0ac\\x0dd\\x5be"),
+                "backslash->\\x5c, LF->\\x0a, CR->\\x0d, '['->\\x5b, "
+                "every other byte passes through unescaped");
+
+    u_test_fill(out, sizeof(out));
+    n = test_usermode_capture_escape("plain ASCII, no escapes needed", 30u,
+                                     out, sizeof(out));
+    TEST_ASSERT_EQ((uint32_t)n, 30u,
+                   "unescaped input round-trips at identical length");
+    TEST_ASSERT(u_test_streq(out, "plain ASCII, no escapes needed"),
+                "no printable-ASCII byte outside \\ and [ is ever rewritten");
+
+    /* ']' is deliberately NOT escaped: only the OPENING '[' can start a
+     * marker-shaped prefix, so escaping it alone is sufficient and a
+     * captured payload containing a lone ']' is not itself a hazard. */
+    u_test_fill(out, sizeof(out));
+    n = test_usermode_capture_escape("]", 1u, out, sizeof(out));
+    TEST_ASSERT_EQ((uint32_t)n, 1u,
+                   "']' alone is not one of the escaped classes");
+    TEST_ASSERT(u_test_streq(out, "]"),
+                "']' passes through unescaped");
+
+    /* A raw high byte (0x80, a lone UTF-8 continuation byte) and DEL
+     * (0x7F) must both be escaped -- proving the ASCII-safety fix that
+     * closed the "host UTF-8 decode mangles non-ASCII capture" gap. */
+    u_test_fill(out, sizeof(out));
+    n = test_usermode_capture_escape("\x80\x7f", 2u, out, sizeof(out));
+    TEST_ASSERT_EQ((uint32_t)n, 8u,
+                   "both bytes outside 0x20-0x7E escape to \\xHH");
+    TEST_ASSERT(u_test_streq(out, "\\x80\\x7f"),
+                "0x80 and 0x7f both escape, never pass through raw");
+}
+
+/* A buffer one byte short of the exact worst-case need must refuse rather
+ * than write a truncated, silently-shorter escape a caller could mistake
+ * for a complete one. */
+static void test_capture_escape_refuses_short_buffer(void)
+{
+    char out[4];  /* "\xHH" is exactly 4 bytes; the NUL needs a 5th */
+
+    u_test_fill(out, sizeof(out));
+    TEST_ASSERT(test_usermode_capture_escape("\n", 1u, out, sizeof(out)) < 0,
+                "one raw byte needing 4 escaped chars plus a NUL must "
+                "refuse a 4-byte buffer");
+}
+
+static void test_capture_escape_empty_input(void)
+{
+    char out[8];
+
+    u_test_fill(out, sizeof(out));
+    TEST_ASSERT_EQ((uint32_t)test_usermode_capture_escape("", 0u, out, sizeof(out)),
+                   0u, "zero raw bytes escape to zero bytes");
+    TEST_ASSERT_EQ((uint32_t)(unsigned char)out[0], (uint32_t)'\0',
+                   "the output is still NUL-terminated at length zero");
+}
+
+/* The chunk size is DERIVED from UTEST_RECORD_LINE_MAX and the record's own
+ * fixed literal cost (matching how UTEST_MAX_BINARY_NAME is derived, never
+ * hand-picked), and the per-task staging buffer in task.h
+ * (utest_capture_buf[192]) must be large enough to hold it. */
+static void test_capture_chunk_max_is_positive_and_bounded(void)
+{
+    uint32_t chunk_max = test_usermode_capture_chunk_max();
+
+    TEST_ASSERT(chunk_max > 0u,
+                "the derived chunk size must leave room for at least one "
+                "raw byte per record");
+    TEST_ASSERT(chunk_max <= 192u,
+                "the chunk size must fit task.h's utest_capture_buf[192] "
+                "per-task staging buffer");
+}
+
+/* The kernel test suite itself runs as an ordinary task, never spawned
+ * through task_create_captured -- so its capture_active is the same
+ * zeroed baseline every constructor gives a fresh slot. This proves the
+ * gate end-to-end (not just via the header's release-flavor no-op): a
+ * real, running, KERNEL_TESTS task with capture inactive gets told to
+ * fall back to its own raw serial path. */
+static void test_capture_byte_uncaptured_task_returns_zero(void)
+{
+    TEST_ASSERT(test_usermode_capture_byte('x') == 0,
+                "the current (test-runner) task is never capture-owned, "
+                "so the byte must be declined for the caller's raw "
+                "serial fallback");
+}
+
+/* Driven against two zeroed scratch TCBs -- no task_create, no task_fork,
+ * no subsystem init, nothing live: task_utest_capture_inherit touches
+ * only the two named fields of the structs it is handed. This is the
+ * exact primitive task_fork() calls (TASK_UTEST_CAPTURE_INHERIT), so a
+ * pass here proves the inheritance CONTRACT independent of the live
+ * fork() path (which the ring-3 test_process.exe suite exercises
+ * end-to-end). */
+static void test_capture_inherit_copies_active_and_owner_unchanged(void)
+{
+    task_utest_capture_reset(&s_capture_parent_scratch);
+    task_utest_capture_reset(&s_capture_child_scratch);
+    s_capture_parent_scratch.utest_capture_active = 1;
+    s_capture_parent_scratch.utest_capture_owner_pid = 7u;
+    /* The child's own seq must stay untouched by inherit -- only the
+     * OWNER's slot is ever read, so a non-zero child seq here would prove
+     * inherit wrongly touched it. */
+    atomic_set(&s_capture_child_scratch.utest_capture_seq, 99);
+
+    task_utest_capture_inherit(&s_capture_child_scratch,
+                               &s_capture_parent_scratch);
+
+    TEST_ASSERT_EQ((uint64_t)s_capture_child_scratch.utest_capture_active,
+                   1u, "active is copied from parent to child unchanged");
+    TEST_ASSERT_EQ((uint64_t)s_capture_child_scratch.utest_capture_owner_pid,
+                   7u, "owner_pid is copied from parent to child unchanged, "
+                   "NOT set to the child's own pid");
+    TEST_ASSERT_EQ((uint64_t)atomic_read(&s_capture_child_scratch.utest_capture_seq),
+                   99u, "inherit must not touch the child's own seq field");
+}
+
+/* Positive path, end to end: temporarily arm the CURRENT (running,
+ * KERNEL_TESTS test-runner) task as its own capture owner, drive real
+ * bytes through the public test_usermode_capture_byte/_flush entry
+ * points exactly as the syscall handlers do, then inspect the actual
+ * klog ring entry that landed to prove the wire record is correct --
+ * not just that the pure escape helper is correct in isolation. Restores
+ * the task's original capture state unconditionally so no other test in
+ * this suite observes a captured test-runner task. */
+static void test_capture_byte_and_flush_produce_the_wire_record(void)
+{
+    struct task *self = task_current();
+    uint8_t  saved_active;
+    uint32_t saved_owner;
+    int32_t  saved_seq;
+    uint32_t count, head;
+    const klog_entry_t *ring;
+    const klog_entry_t *last;
+
+    if (!self) {
+        TEST_SKIP("no current task available in this test context");
+        return;
+    }
+    saved_active = self->utest_capture_active;
+    saved_owner  = self->utest_capture_owner_pid;
+    saved_seq    = atomic_read(&self->utest_capture_seq);
+
+    self->utest_capture_active = 1;
+    self->utest_capture_owner_pid = self->pid;
+    atomic_set(&self->utest_capture_seq, 0);
+
+    /* "A[B": a plain byte, an escaped byte ('[' -> \x5b), a plain byte --
+     * exercises the mixed case the pure-escape tests already pin in
+     * isolation, now through the REAL per-byte entry point. */
+    TEST_ASSERT(test_usermode_capture_byte('A') == 1,
+                "a captured task's byte is consumed, not raw-serial'd");
+    TEST_ASSERT(test_usermode_capture_byte('[') == 1,
+                "an escape-triggering byte is still consumed by capture");
+    TEST_ASSERT(test_usermode_capture_byte('B') == 1,
+                "capture stays active across multiple bytes of one write()");
+    test_usermode_capture_flush();
+
+    ring = klog_get_ring(&count, &head);
+    (void)count;
+    last = &ring[(head + KLOG_RING_SIZE - 1u) % KLOG_RING_SIZE];
+
+    TEST_ASSERT(u_test_ends_with(last->message, "final=1 A\\x5bB"),
+                "the wire record ends with the exact escaped payload "
+                "('[' -> \\x5b, 'A'/'B' unescaped) and final=1 (this "
+                "write() never crossed a chunk boundary)");
+
+    self->utest_capture_active = saved_active;
+    self->utest_capture_owner_pid = saved_owner;
+    atomic_set(&self->utest_capture_seq, saved_seq);
+}
+
+/* Regression for TWO adversarial-round-found bugs at the exact chunk
+ * boundary. Round 1: a write() landing EXACTLY on UTEST_CAPTURE_CHUNK_MAX
+ * bytes flushed mid-loop (final=0, buffer emptied), then the
+ * unconditional end-of-loop test_usermode_capture_flush() call emitted a
+ * SECOND, spurious len=0 final=1 record. Round 2 (after fixing round 1
+ * by only flushing non-final when a NEW byte needs room): the mid-loop
+ * flush check now runs BEFORE staging a byte, so an exact-multiple write
+ * never triggers it at all -- the whole chunk stays staged until the
+ * post-loop flush emits it. Exactly one record must land, and that one
+ * record must carry final=1 (an exact-multiple write is COMPLETE, not
+ * indistinguishable from an interrupted one). */
+static void test_capture_exact_chunk_boundary_emits_one_final_record(void)
+{
+    struct task *self = task_current();
+    uint8_t  saved_active;
+    uint32_t saved_owner;
+    int32_t  saved_seq;
+    uint32_t count_before, count_after, head;
+    uint32_t chunk_max = test_usermode_capture_chunk_max();
+    uint32_t i;
+    const klog_entry_t *ring;
+    const klog_entry_t *last;
+
+    if (!self) {
+        TEST_SKIP("no current task available in this test context");
+        return;
+    }
+    saved_active = self->utest_capture_active;
+    saved_owner  = self->utest_capture_owner_pid;
+    saved_seq    = atomic_read(&self->utest_capture_seq);
+
+    self->utest_capture_active = 1;
+    self->utest_capture_owner_pid = self->pid;
+    atomic_set(&self->utest_capture_seq, 0);
+
+    (void)klog_get_ring(&count_before, &head);
+    for (i = 0; i < chunk_max; i++)
+        (void)test_usermode_capture_byte('x');
+    /* Deferred-flush design: buf_len reaches chunk_max only AFTER staging
+     * the last byte, and the mid-loop check runs BEFORE staging, so no
+     * mid-loop flush ever fires for an exact-multiple write -- the whole
+     * chunk is still staged here, waiting for this call. */
+    test_usermode_capture_flush();
+    ring = klog_get_ring(&count_after, &head);
+    last = &ring[(head + KLOG_RING_SIZE - 1u) % KLOG_RING_SIZE];
+
+    TEST_ASSERT_EQ((uint64_t)(count_after - count_before), 1u,
+                   "exactly one record for an exact-chunk-multiple write "
+                   "-- neither a spurious empty second record (round 1 "
+                   "bug) nor a premature non-final mid-loop one (round 2 "
+                   "bug)");
+    TEST_ASSERT(u_test_contains(last->message, "final=1"),
+                "the single record for a complete, exact-multiple write "
+                "must carry final=1, not final=0");
+    TEST_ASSERT(!u_test_contains(last->message, "final=0"),
+                "must not ALSO carry final=0 anywhere (e.g. as a "
+                "leftover from a stale prior record read)");
+
+    self->utest_capture_active = saved_active;
+    self->utest_capture_owner_pid = saved_owner;
+    atomic_set(&self->utest_capture_seq, saved_seq);
+}
+
+/* One byte OVER the chunk boundary: the (chunk_max+1)-th byte's mid-loop
+ * check now DOES find a full buffer and flushes it non-final (final=0,
+ * making room), then that one extra byte stages alone and the post-loop
+ * flush emits it as a second record with final=1. Two records, first
+ * final=0 then final=1 -- proves the deferred-flush fix did not simply
+ * move the round-1 bug to the +1 case instead of fixing it. */
+static void test_capture_chunk_boundary_plus_one_emits_two_records(void)
+{
+    struct task *self = task_current();
+    uint8_t  saved_active;
+    uint32_t saved_owner;
+    int32_t  saved_seq;
+    uint32_t count_before, count_after, head;
+    uint32_t chunk_max = test_usermode_capture_chunk_max();
+    uint32_t i;
+    const klog_entry_t *ring;
+    const klog_entry_t *first_new, *last;
+
+    if (!self) {
+        TEST_SKIP("no current task available in this test context");
+        return;
+    }
+    saved_active = self->utest_capture_active;
+    saved_owner  = self->utest_capture_owner_pid;
+    saved_seq    = atomic_read(&self->utest_capture_seq);
+
+    self->utest_capture_active = 1;
+    self->utest_capture_owner_pid = self->pid;
+    atomic_set(&self->utest_capture_seq, 0);
+
+    (void)klog_get_ring(&count_before, &head);
+    for (i = 0; i < chunk_max + 1u; i++)
+        (void)test_usermode_capture_byte('y');
+    test_usermode_capture_flush();
+    ring = klog_get_ring(&count_after, &head);
+
+    TEST_ASSERT_EQ((uint64_t)(count_after - count_before), 2u,
+                   "chunk_max+1 bytes must produce exactly two records: "
+                   "the full chunk (mid-loop, non-final) plus the one "
+                   "leftover byte (post-loop, final)");
+    first_new = &ring[(head + KLOG_RING_SIZE - 2u) % KLOG_RING_SIZE];
+    last      = &ring[(head + KLOG_RING_SIZE - 1u) % KLOG_RING_SIZE];
+    TEST_ASSERT(u_test_contains(first_new->message, "final=0"),
+                "the full first chunk is NOT the write's last chunk");
+    TEST_ASSERT(u_test_ends_with(last->message, "final=1 y"),
+                "the second record carries the one leftover byte, "
+                "marked final=1");
+
+    self->utest_capture_active = saved_active;
+    self->utest_capture_owner_pid = saved_owner;
+    atomic_set(&self->utest_capture_seq, saved_seq);
+}
+
+/* A parent that is NOT itself captured (the common case: most tasks are
+ * never test binaries) must produce an equally uncaptured child -- fork
+ * must never MANUFACTURE ownership. */
+static void test_capture_inherit_uncaptured_parent_stays_uncaptured(void)
+{
+    task_utest_capture_reset(&s_capture_parent_scratch);
+    task_utest_capture_reset(&s_capture_child_scratch);
+    s_capture_child_scratch.utest_capture_active = 1;  /* poison, must be cleared */
+    s_capture_child_scratch.utest_capture_owner_pid = 42u;
+
+    task_utest_capture_inherit(&s_capture_child_scratch,
+                               &s_capture_parent_scratch);
+
+    TEST_ASSERT_EQ((uint64_t)s_capture_child_scratch.utest_capture_active,
+                   0u, "an uncaptured parent must not leave a captured child");
+    TEST_ASSERT_EQ((uint64_t)s_capture_child_scratch.utest_capture_owner_pid,
+                   0u, "owner_pid follows active down to the reset baseline");
+}
+
 /* The tag is what a host regex anchors on and what klog copies into its
  * fixed-width serialized subsystem field, so its exact bytes and its exact
  * length are both load-bearing. */
@@ -2497,6 +2846,35 @@ void test_register_usermode_launcher(void)
                             TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: refusal identity survives ordinal growth",
                             test_refusal_id_survives_ordinal_digit_growth,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: capture escapes marker+control/non-ASCII bytes only",
+                            test_capture_escape_marker_and_control_classes_only,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: capture escape refuses a too-small buffer",
+                            test_capture_escape_refuses_short_buffer,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: capture escape of empty input is empty",
+                            test_capture_escape_empty_input, TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: capture chunk size is positive and buffer-bounded",
+                            test_capture_chunk_max_is_positive_and_bounded,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: capture_byte is a no-op for an uncaptured task",
+                            test_capture_byte_uncaptured_task_returns_zero,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: capture_byte/flush produce the wire record",
+                            test_capture_byte_and_flush_produce_the_wire_record,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: exact chunk boundary emits one final record",
+                            test_capture_exact_chunk_boundary_emits_one_final_record,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: chunk boundary plus one emits two records",
+                            test_capture_chunk_boundary_plus_one_emits_two_records,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: capture inherit copies active+owner unchanged",
+                            test_capture_inherit_copies_active_and_owner_unchanged,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: capture inherit: uncaptured parent stays uncaptured",
+                            test_capture_inherit_uncaptured_parent_stays_uncaptured,
                             TEST_CAT_EXEC);
 }
 

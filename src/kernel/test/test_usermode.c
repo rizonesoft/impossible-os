@@ -2486,6 +2486,212 @@ static void u_frame_end(void)
                      (uint64_t)n);
 }
 
+/* ---- Source-level per-binary stdout capture -------------------------- *
+ *
+ * Every ring-3 write() byte that reaches this pipeline is escaped and
+ * chunked into "[UTEST-CAPTURE] owner=<pid> seq=<n> len=<raw-bytes>
+ * final=<0|1> <escaped>" records, riding the SAME frame-nonce mechanism
+ * every other launcher record uses (utest_record_log), so the new record
+ * type is non-forgeable for free and counted in the existing
+ * records-reconciliation total.
+ *
+ * Escaping: `\` and `[` are always rewritten as "\xHH" (2 hex digits of
+ * the escaped byte's value) -- backslash so the escape sequence stays
+ * unambiguous, and '[' because every existing marker ([UTEST-XML],
+ * [UTEST-JSON], [UTEST-FRAME], [UTEST-FRAME-END], [UTEST-RECORD-OVERFLOW],
+ * and this one) shares that one prefix byte, so escaping it blocks a
+ * captured payload from being mistaken for ANY record kind, current or
+ * future, by a consumer that greps for markers rather than anchoring to
+ * start-of-line. Every byte outside safe printable ASCII (< 0x20 or
+ * >= 0x7F) is ALSO escaped -- this covers raw LF/CR (scripts/
+ * utest-frame.py's canonical line splitter treats CRLF, bare LF, AND
+ * bare CR as line terminators, so an unescaped CR would still split one
+ * logical record into two parser-visible lines) and every non-ASCII or
+ * invalid-UTF-8 byte (that same parser decodes each line with
+ * `.decode("utf-8", errors="replace")`, which would otherwise silently
+ * and irreversibly replace a raw high byte or a lone UTF-8 continuation
+ * byte with U+FFFD before this section's own byte-exactness goal could
+ * be honored). Only printable ASCII minus '\' and '[' -- 0x20-0x7E -- is
+ * ever passed through unescaped. */
+#define UTEST_CAPTURE_ESCAPE_EXPANSION 4u   /* worst case: 1 raw byte -> "\xHH" */
+
+/* Fixed per-record literal cost, computed the same way UTEST_MAX_BINARY_NAME
+ * is -- from the actual format string's shape, never hand-picked -- so a
+ * future field added to the format and forgotten here fails the build
+ * instead of silently overrunning UTEST_RECORD_LINE_MAX. */
+#define UTEST_CAPTURE_FIXED                                                \
+    (UTEST_LIT("[UTEST-CAPTURE] owner=") + UTEST_DIGITS_U32 +              \
+     UTEST_LIT(" seq=") + UTEST_DIGITS_U32 +                               \
+     UTEST_LIT(" len=") + UTEST_DIGITS_U32 +                               \
+     UTEST_LIT(" final=1 "))
+
+/* Raw (pre-escape) bytes staged per chunk. Divided by the worst-case
+ * expansion factor so the ESCAPED output can never overflow the record
+ * even if every staged byte needs escaping. */
+#define UTEST_CAPTURE_CHUNK_MAX                                            \
+    (((UTEST_RECORD_LINE_MAX - 1u) - UTEST_CAPTURE_FIXED) /                \
+     UTEST_CAPTURE_ESCAPE_EXPANSION)
+_Static_assert(UTEST_CAPTURE_CHUNK_MAX > 0u && UTEST_CAPTURE_CHUNK_MAX <= 192u,
+               "the capture chunk size must fit the per-task staging "
+               "buffer (task.h utest_capture_buf[192]) and leave room for "
+               "the record's own fixed literal cost");
+
+static const char UTEST_HEX_DIGITS[] = "0123456789abcdef";
+
+/* Emits the currently staged bytes (if any) as one capture record, then
+ * clears the stage. `is_final` marks the last chunk of ONE write() call
+ * (not of the whole binary's lifetime -- a binary can write() many times,
+ * each ending its own chunk sequence with final=1). seq is drawn from the
+ * OWNER task's slot regardless of which task in a fork tree is actually
+ * emitting, giving an O(1) unique sequence number across the whole tree
+ * with no parentage walk and no lock (atomic_fetch_add on that one slot). */
+/* Pure escaping: `\` and `[` (marker-forgery hazards) plus every byte
+ * outside safe printable ASCII (< 0x20 or >= 0x7F) become "\xHH"; every
+ * other byte -- printable ASCII minus those two -- passes through
+ * unchanged. The wider-than-4-classes escape set is load-bearing, not
+ * just "safe measure": scripts/utest-frame.py decodes every physical
+ * line with `.decode("utf-8", errors="replace")`, so a raw non-ASCII or
+ * invalid-UTF-8 byte in the payload (a lone continuation byte, a stray
+ * 0x80-0xFF) would be IRREVERSIBLY replaced with U+FFFD before a captured
+ * payload could ever be reconstructed byte-exactly -- silently
+ * contradicting this section's own byte-exactness goal. Escaping
+ * everything outside 0x20-0x7E keeps the wire text pure 7-bit ASCII,
+ * which that same UTF-8 decode passes through byte-identical. NUL-
+ * terminates `out` and returns the escaped length (excluding the NUL),
+ * or 0xFFFFFFFFu if `out_cap` is too small for the worst case (caller-
+ * sized buffers in this file are always exactly the worst-case size, so
+ * that refusal is a defensive backstop, not a path exercised by the
+ * shipped callers). No task/scheduler state -- a pure buffer transform,
+ * testable without a live task context. */
+static uint32_t u_capture_escape(const char *raw, uint32_t raw_len,
+                                 char *out, uint32_t out_cap)
+{
+    uint32_t i, epos = 0;
+
+    for (i = 0; i < raw_len; i++) {
+        unsigned char c = (unsigned char)raw[i];
+        uint32_t need = (c == '\\' || c == '[' || c < 0x20u || c >= 0x7Fu)
+                        ? 4u : 1u;
+
+        if (epos + need + 1u > out_cap)
+            return 0xFFFFFFFFu;
+        if (need == 4u) {
+            out[epos++] = '\\';
+            out[epos++] = 'x';
+            out[epos++] = UTEST_HEX_DIGITS[(c >> 4) & 0xFu];
+            out[epos++] = UTEST_HEX_DIGITS[c & 0xFu];
+        } else {
+            out[epos++] = (char)c;
+        }
+    }
+    out[epos] = '\0';
+    return epos;
+}
+
+static void u_capture_flush_chunk(struct task *self, int is_final)
+{
+    struct task *owner;
+    char escaped[UTEST_CAPTURE_CHUNK_MAX * UTEST_CAPTURE_ESCAPE_EXPANSION + 1u];
+    uint32_t raw_len = self->utest_capture_buf_len;
+    uint32_t seq;
+
+    /* Unconditional: a flush call (mid-loop chunk-full OR end-of-loop
+     * "final") with nothing staged is always a no-op. Without this a
+     * write() landing exactly on a chunk boundary would flush its full
+     * chunk mid-loop (resetting buf_len to 0), then the unconditional
+     * end-of-loop test_usermode_capture_flush() call would emit a SECOND,
+     * spurious len=0 final=1 record for the same write(). */
+    if (raw_len == 0)
+        return;
+
+    owner = task_get_by_pid(self->utest_capture_owner_pid);
+    if (!owner) {
+        /* Owner slot lookup failing should not happen -- pids are
+         * monotonic within a boot and never reused, and owner_pid is
+         * always either self (at spawn) or inherited from an alive
+         * parent (at fork) -- but a corrupted owner pid must never
+         * dereference a wild pointer, and silently dropping the bytes
+         * would erase diagnostics with no trace (the future byte-
+         * reconciliation gate this feeds does not exist yet, so nothing
+         * else would catch the gap). Emit an explicit, authenticated
+         * loss record instead of nothing, so even this defensive-only
+         * path leaves evidence. */
+        utest_record_log(LOG_ERROR,
+                         "[UTEST-CAPTURE-LOST] owner=%u len=%u",
+                         (uint64_t)self->utest_capture_owner_pid,
+                         (uint64_t)raw_len);
+        self->utest_capture_buf_len = 0;
+        return;
+    }
+    seq = (uint32_t)atomic_fetch_add(&owner->utest_capture_seq, 1);
+
+    /* sizeof(escaped) is exactly the worst case for UTEST_CAPTURE_CHUNK_MAX
+     * raw bytes, so this call can only return 0xFFFFFFFFu if raw_len itself
+     * somehow exceeded UTEST_CAPTURE_CHUNK_MAX (a caller bug, since
+     * test_usermode_capture_byte flushes at that exact bound) -- fail
+     * closed rather than emit a truncated, unaccounted record. */
+    if (u_capture_escape(self->utest_capture_buf, raw_len,
+                         escaped, (uint32_t)sizeof(escaped)) == 0xFFFFFFFFu) {
+        self->utest_capture_buf_len = 0;
+        return;
+    }
+
+    utest_record_log(LOG_INFO,
+                     "[UTEST-CAPTURE] owner=%u seq=%u len=%u final=%u %s",
+                     (uint64_t)self->utest_capture_owner_pid, (uint64_t)seq,
+                     (uint64_t)raw_len, (uint64_t)(is_final ? 1u : 0u),
+                     escaped);
+    self->utest_capture_buf_len = 0;
+}
+
+/* One byte of a ring-3 write(). Called from the caller's single read of
+ * the raw user buffer (never a second dereference of the same byte) so it
+ * cannot observe a value the caller's own NUL-check or terminal echo did
+ * not also observe. Returns 1 (consumed) or 0 (not capture-owned, caller
+ * must fall back to its own raw serial_putchar path).
+ *
+ * The mid-write flush check runs BEFORE staging this byte, not after --
+ * flushing a chunk the moment it fills would emit that chunk with
+ * final=0 even when this byte turns out to be the WRITE's last byte,
+ * leaving no final=1 record at all for an exact-chunk-multiple write
+ * (indistinguishable from an interrupted one). Checking first means a
+ * full-but-not-yet-overflowing buffer is only ever flushed non-final when
+ * a byte genuinely needs the room; if the loop ends with the buffer
+ * sitting exactly full, the caller's end-of-loop test_usermode_capture_
+ * flush() call flushes it as final=1 instead. */
+int test_usermode_capture_byte(char c)
+{
+    struct task *self = task_current();
+
+    if (!self || !self->utest_capture_active)
+        return 0;
+
+    if (self->utest_capture_buf_len >= UTEST_CAPTURE_CHUNK_MAX)
+        u_capture_flush_chunk(self, 0);
+    self->utest_capture_buf[self->utest_capture_buf_len++] = c;
+    return 1;
+}
+
+void test_usermode_capture_flush(void)
+{
+    struct task *self = task_current();
+
+    if (!self || !self->utest_capture_active)
+        return;
+    u_capture_flush_chunk(self, 1);
+}
+
+/* Called from task_create_internal() (task.c), BEFORE the new task is
+ * published (num_tasks++) -- see the header declaration for why the
+ * timing is load-bearing: emitting this any later would let an
+ * immediately-scheduled task on another CPU emit capture chunk records
+ * before their owner binding reaches the wire. */
+void test_usermode_capture_begin(uint32_t owner_pid, const char *name)
+{
+    utest_record_log(LOG_INFO, "[UTEST-CAPTURE-BEGIN] owner=%u name=%s",
+                     (uint64_t)owner_pid, name);
+}
+
 struct u_report {
     uint32_t asserts_passed;
     uint32_t asserts_failed;
@@ -3555,7 +3761,16 @@ static void u_spawn_one(const char *name_copy, const char *path,
     out_report->skip_blocks    = 0;
     out_report->state          = TASK_UTEST_REPORT_NONE;
 
-    pid = task_create(utest_loader_func, name_copy);
+    /* task_create_captured (not plain task_create) arms this task's
+     * capture fields BEFORE it is published to the scheduler, so its
+     * earliest possible write() cannot race the arming. It ALSO emits
+     * the "[UTEST-CAPTURE-BEGIN] owner=<pid> name=<name>" binding
+     * BEFORE publication (not here, after task_create_captured()
+     * returns -- an already-published, immediately-scheduled task on
+     * another CPU could otherwise emit capture chunk records before
+     * their owner binding reaches the wire). See task_create_internal
+     * in task.c and test_usermode_capture_begin(). */
+    pid = task_create_captured(utest_loader_func, name_copy);
     *out_pid = pid;
     if (pid < 0) {
         *out_exit_status = -1;
@@ -4775,6 +4990,21 @@ uint32_t test_usermode_frame_nonce_fold(uint64_t mixed)
 uint32_t test_usermode_frame_tag_cap(void)
 {
     return (uint32_t)UTEST_FRAME_TAG_MAX;
+}
+
+int test_usermode_capture_escape(const char *raw, uint32_t raw_len,
+                                 char *out, uint32_t out_cap);
+int test_usermode_capture_escape(const char *raw, uint32_t raw_len,
+                                 char *out, uint32_t out_cap)
+{
+    uint32_t r = u_capture_escape(raw, raw_len, out, out_cap);
+    return (r == 0xFFFFFFFFu) ? -1 : (int)r;
+}
+
+uint32_t test_usermode_capture_chunk_max(void);
+uint32_t test_usermode_capture_chunk_max(void)
+{
+    return (uint32_t)UTEST_CAPTURE_CHUNK_MAX;
 }
 
 int test_usermode_derive_test_name(const char *name_in,

@@ -18,6 +18,7 @@
 
 #include "kernel/types.h"
 #include "kernel/boot_init.h"
+#include "kernel/atomic.h"     /* atomic_t utest_capture_seq */
 #include "kernel/sched/apc.h"     /* KAPC_STATE per-thread APC queues */
 #include "kernel/sched/spinlock.h"
 #include "kernel/sched/mutex.h"   /* mutex_t environ_lock (env is thread-context only) */
@@ -742,6 +743,44 @@ struct task {
      * one of the TASK_MAX slots plus a shift in slot-to-cache-line phase. */
 #ifdef KERNEL_TESTS
     struct task_utest_report utest_report;
+    /* Source-level per-binary stdout capture. Set once at spawn
+     * (task_create_captured), inherited unchanged across fork() -- the
+     * OPPOSITE of utest_report above, which is per-process and reset on
+     * every constructor. utest_capture_seq is meaningful ONLY in the
+     * OWNER's own slot (tasks[utest_capture_owner_pid]): every task in a
+     * fork tree sharing one owner increments THAT slot's counter via
+     * atomic_fetch_add rather than its own, giving an O(1) lock-free
+     * unique sequence number across the whole tree with no parentage
+     * walk. utest_capture_buf/_len is per-task staging for the
+     * escape-then-chunk pipeline in test_usermode.c. Scope boundary: a
+     * test binary with >1 thread concurrently calling write() would race
+     * on this same per-task buffer -- accepted because every shipped
+     * test binary is single-threaded and this is no worse than the raw
+     * byte interleaving concurrent writer threads already produce on
+     * shared serial output today.
+     *
+     * Reading task_current() to decide "is THIS task captured" carries a
+     * pre-existing, project-wide limitation this feature does not close:
+     * task_current()/thread_current() resolve through a GLOBAL scheduler
+     * cursor, not per-CPU state (documented at ssdt.c:36-41 for the
+     * identical previous_mode lookup). The blast radius is wider than a
+     * wrong owner_pid label: if CPU A's task_current() call races CPU
+     * B's context switch, CPU A can get back CPU B's struct task * and
+     * then mutate ITS utest_capture_buf/_buf_len -- an unsynchronized
+     * cross-CPU read-modify-write on state a wholly unrelated CPU may be
+     * concurrently touching, not just a misattributed byte. Every other
+     * task_current()-dependent kernel behavior has this same exposure;
+     * closing it needs the per-CPU current-task cursor work tracked in
+     * the SMP Phase 2 per-CPU run queues TODO (03-memory-concurrency/
+     * TODO-07) -- out of scope here for the same reason ssdt.c accepted
+     * it rather than fixing it inline, and disabling capture uniquely
+     * for THIS feature while every other current-task-dependent path
+     * stays exposed would be inconsistent rather than protective. */
+    uint8_t  utest_capture_active;
+    uint32_t utest_capture_owner_pid;
+    atomic_t utest_capture_seq;
+    char     utest_capture_buf[192];
+    uint16_t utest_capture_buf_len;
 #endif
     /* --- User-mode section-view VA bump allocator ---
      * Per-task bump pointer for MapViewOfSection / sys_shmem_map. The
@@ -807,6 +846,52 @@ struct task {
 
 /* Task entry function type */
 typedef void (*task_entry_t)(void);
+
+#ifdef KERNEL_TESTS
+/* Reset the capture fields to "not captured" -- called by EVERY task
+ * constructor exactly like TASK_UTEST_REPORT_RESET, so a fresh or recycled
+ * slot never inherits a prior tenant's owner pid or a stale
+ * partially-filled staging buffer. task_create_captured() (task.c) is the
+ * only caller that arms capture afterward, and it does so BEFORE the new
+ * task is published (num_tasks++), so a task cannot be selected by the
+ * scheduler on another CPU and run with capture_active still unset. */
+static inline void task_utest_capture_reset(struct task *t)
+{
+    t->utest_capture_active = 0;
+    t->utest_capture_owner_pid = 0;
+    atomic_set(&t->utest_capture_seq, 0);
+    t->utest_capture_buf_len = 0;
+}
+#define TASK_UTEST_CAPTURE_RESET(tp) task_utest_capture_reset(tp)
+
+/* Inherit capture ownership from parent to child unchanged -- the OPPOSITE
+ * of task_utest_capture_reset above (which the child's slot already got
+ * from its own constructor): a fork()'d descendant's writes belong to the
+ * same test binary as its parent, not to a new owner of its own.
+ * utest_capture_seq is deliberately left alone (task_utest_capture_reset
+ * already zeroed it): only the OWNER's own slot is ever read, so a
+ * descendant's own copy is never consulted. Extracted as its own function
+ * (rather than left inline in task_fork) so it is unit-testable on two
+ * plain struct task fixtures without a live scheduler. */
+static inline void task_utest_capture_inherit(struct task *child,
+                                              const struct task *parent)
+{
+    child->utest_capture_active = parent->utest_capture_active;
+    child->utest_capture_owner_pid = parent->utest_capture_owner_pid;
+}
+#define TASK_UTEST_CAPTURE_INHERIT(childp, parentp) \
+    task_utest_capture_inherit(childp, parentp)
+
+/* KERNEL_TESTS-only spawn entry point: identical to task_create() except
+ * the new task's capture fields are armed (active=1, owner=own pid) BEFORE
+ * the task is published, closing the publish-before-arm race a plain
+ * task_create() plus a post-hoc field-set would leave open. The only
+ * caller is the user-mode test launcher (test_usermode.c u_spawn_one()). */
+int task_create_captured(task_entry_t entry, const char *name);
+#else
+#define TASK_UTEST_CAPTURE_RESET(tp) ((void)0)
+#define TASK_UTEST_CAPTURE_INHERIT(childp, parentp) ((void)0)
+#endif /* KERNEL_TESTS */
 
 /* --- API --- */
 

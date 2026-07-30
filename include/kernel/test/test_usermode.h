@@ -141,6 +141,34 @@ void test_usermode_set_stress_iters(uint32_t n);
  * color. Read by klog's color-scope block; the launcher owns the flag. */
 int test_usermode_color_active(void);
 
+/* Source-level per-binary stdout capture, called from the ring-3 write
+ * syscall handlers (sys_write in syscall.c, the stdout branch of
+ * NtWriteFile in nt_syscall.c) for EVERY byte of a write(), before that
+ * handler decides how to emit it. Returns 1 if this byte was consumed into
+ * the framed capture pipeline (the caller must NOT also serial_putchar()
+ * it -- the payload crosses serial exactly once, either raw or framed,
+ * never both); returns 0 if the current task is not capture-owned, in
+ * which case the caller falls back to its existing raw serial_putchar()
+ * path unchanged. Internally escapes and chunks into one or more
+ * "[UTEST-CAPTURE] ..." records emitted through the same frame-nonce
+ * mechanism the non-forgeable launcher record framing uses, so the new
+ * record type is non-forgeable for free. */
+int test_usermode_capture_byte(char c);
+
+/* Flushes any partially-filled capture chunk as a final=1 record. Callers
+ * call this once after their write() loop ends, unconditionally -- a no-op
+ * when nothing was staged. */
+void test_usermode_capture_flush(void);
+
+/* Emits the one-time "[UTEST-CAPTURE-BEGIN] owner=<pid> name=<name>"
+ * announcement binding a capture owner pid to its binary name. The ONLY
+ * caller is task_create_internal() (task.c), which calls this BEFORE the
+ * new task is published (num_tasks++) -- emitting it any later (e.g. from
+ * the launcher after task_create_captured() returns) would let an
+ * immediately-scheduled task on another CPU emit capture chunk records
+ * before their owner binding exists on the wire. */
+void test_usermode_capture_begin(uint32_t owner_pid, const char *name);
+
 #else /* !KERNEL_TESTS */
 
 /* Release flavor: src/kernel/test/ is pruned from the build, so the launcher
@@ -156,5 +184,9 @@ static inline void test_usermode_set_xml(int enable __attribute__((unused))) {}
 static inline void test_usermode_set_json(int enable __attribute__((unused))) {}
 static inline void test_usermode_set_stress_iters(uint32_t n __attribute__((unused))) {}
 static inline int  test_usermode_color_active(void) { return 0; }
+static inline int  test_usermode_capture_byte(char c __attribute__((unused))) { return 0; }
+static inline void test_usermode_capture_flush(void) {}
+static inline void test_usermode_capture_begin(uint32_t owner_pid __attribute__((unused)),
+                                               const char *name __attribute__((unused))) {}
 
 #endif /* KERNEL_TESTS */

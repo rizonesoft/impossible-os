@@ -18,6 +18,8 @@
 #include "kernel/nt/syscall_filter.h"   /* syscall_filter_task_dead on SYS_KILL */
 #include "kernel/nt/pledge.h"           /* pledge/unveil enforcement on the legacy ABI */
 #include "kernel/sched/task.h"
+#include "kernel/test/test_usermode.h"  /* test_usermode_capture_byte/_flush -- KERNEL_TESTS
+                                          * no-op in release builds */
 #include "kernel/env.h"                 /* task_set_argv / env_adopt_block / argv_frame_bytes */
 #include "kernel/sched/irql.h"
 #include "kernel/smp.h"
@@ -86,10 +88,16 @@ static NTSTATUS sys_write(uint64_t fd, uint64_t buf, uint64_t len,
     }
 
     for (i = 0; i < len; i++) {
-        if (str[i] == '\0')
+        /* Single read of this ring-3 byte: `c` feeds the NUL check, the
+         * terminal echo, and (via test_usermode_capture_byte) the
+         * source-level capture pipeline. str is a raw, unvalidated
+         * ring-3 pointer with no copy_from_user -- re-dereferencing
+         * str[i] a second or third time would let a concurrently
+         * mutating buffer present different bytes to each sink. */
+        char c = str[i];
+
+        if (c == '\0')
             break;
-        /* Echo to serial for debugging */
-        serial_putchar(str[i]);
         /* Buffer into terminal window -- sets term_dirty=1.
          * Do NOT call terminal_render() here: rendering happens in the
          * main compositor loop (main.c) which calls terminal_render()
@@ -98,8 +106,17 @@ static NTSTATUS sys_write(uint64_t fd, uint64_t buf, uint64_t len,
          *   1. Text artifacts outside the window (partial composite)
          *   2. VBE Y-offset oscillation (fb_swap called from two paths) */
         if (terminal_is_open())
-            terminal_putchar(str[i]);
+            terminal_putchar(c);
+        /* test_usermode_capture_byte() consumes the byte into a framed,
+         * escaped, non-forgeable record when the current task is a
+         * captured test binary; it returns 0 (release builds always;
+         * KERNEL_TESTS builds when the task is not capture-owned) for
+         * the untouched raw serial echo below. The payload crosses
+         * serial exactly once either way -- never both. */
+        if (!test_usermode_capture_byte(c))
+            serial_putchar(c);
     }
+    test_usermode_capture_flush();
 
     *bytes_out = i;
     return STATUS_SUCCESS;

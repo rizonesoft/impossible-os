@@ -18,6 +18,8 @@
 #include "kernel/nt/service_numbers.h"
 #include "kernel/sched/syscall.h"
 #include "kernel/sched/task.h"
+#include "kernel/test/test_usermode.h"  /* test_usermode_capture_byte/_flush -- KERNEL_TESTS
+                                          * no-op in release builds */
 #include "kernel/nt/pledge.h"
 #include "kernel/klog.h"
 #include "kernel/fs/vfs.h"
@@ -377,14 +379,23 @@ write_bad_handle:
         return STATUS_INVALID_HANDLE;
     }
 
-    /* stdout: echo to serial + terminal */
+    /* stdout: echo to serial + terminal. Mirrors the legacy INT 0x80
+     * SYS_WRITE path in syscall.c exactly (single fetch of `c`, capture
+     * pipeline first, raw serial fallback only when capture declines) so
+     * a test binary reaching stdout through EITHER ABI gets the same
+     * source-level framing -- a binary using only this SSDT path would
+     * otherwise bypass the capture entirely. */
     for (i = 0; i < len; i++) {
-        if (buf[i] == '\0')
+        char c = buf[i];
+
+        if (c == '\0')
             break;
-        serial_putchar(buf[i]);
         if (terminal_is_open())
-            terminal_putchar(buf[i]);
+            terminal_putchar(c);
+        if (!test_usermode_capture_byte(c))
+            serial_putchar(c);
     }
+    test_usermode_capture_flush();
 
     if (iosb) {
         iosb->Status = STATUS_SUCCESS;

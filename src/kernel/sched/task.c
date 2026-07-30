@@ -10,6 +10,8 @@
  * ============================================================================ */
 
 #include "kernel/sched/task.h"
+#include "kernel/test/test_usermode.h"  /* test_usermode_capture_begin -- KERNEL_TESTS
+                                          * no-op in release builds */
 #include "kernel/idt.h"
 #include "kernel/gdt.h"
 #include "kernel/smp.h"
@@ -659,7 +661,15 @@ static void stack_run_release_after_guard_failure(uintptr_t base, uint32_t pages
     pmm_free_contiguous(base, (uint64_t)pages);
 }
 
-int task_create(task_entry_t entry, const char *name)
+/* arm_capture: when non-zero (KERNEL_TESTS builds only -- release callers
+ * always pass 0 via task_create()), the new task's source-level output
+ * capture is armed as this function's OWN owner (active=1,
+ * owner_pid=self) BEFORE the task is published (num_tasks++ below), so a
+ * task selected by the scheduler on another CPU the instant it becomes
+ * runnable can never observe capture_active still unset. task_create()
+ * and task_create_captured() are thin wrappers over this. */
+static int task_create_internal(task_entry_t entry, const char *name,
+                                int arm_capture)
 {
     uint32_t pid;
     uint8_t *stack;
@@ -894,6 +904,29 @@ int task_create(task_entry_t entry, const char *name)
     tasks[pid].token = inherited_token;
     signal_init_task(&tasks[pid].signals);
     ob_handle_table_init(&tasks[pid].handle_table);
+    /* Every constructor resets the capture fields, matching
+     * TASK_UTEST_REPORT_RESET's pattern, then arms them for THIS task
+     * (owner=self) when requested -- both BEFORE num_tasks++ publishes
+     * the task, for the same reason the token assignment above runs
+     * first: nothing may observe a half-initialized slot. task_exec()
+     * does NOT reset these (unlike utest_report): capture ownership is
+     * per-process-lifetime, not per-loaded-image, so it survives the
+     * kernel-task-to-ring-3 self-transition this loader performs. */
+    TASK_UTEST_CAPTURE_RESET(&tasks[pid]);
+#ifdef KERNEL_TESTS
+    if (arm_capture) {
+        tasks[pid].utest_capture_active = 1;
+        tasks[pid].utest_capture_owner_pid = pid;
+        /* The owner-to-name binding MUST reach the wire before num_tasks++
+         * below makes this task schedulable -- an already-published task
+         * selected by another CPU could otherwise emit a capture chunk
+         * record before a downstream consumer has any binding for its
+         * owner pid. */
+        test_usermode_capture_begin(pid, name);
+    }
+#else
+    (void)arm_capture;
+#endif
     /* Inherit the creator's process group + session AND publish the child in one
      * job-control critical section: a concurrent setsid group-reuse scan then
      * either sees this child (and rejects) or does not (child not yet a member) --
@@ -916,6 +949,18 @@ int task_create(task_entry_t entry, const char *name)
 
     return (int)pid;
 }
+
+int task_create(task_entry_t entry, const char *name)
+{
+    return task_create_internal(entry, name, 0);
+}
+
+#ifdef KERNEL_TESTS
+int task_create_captured(task_entry_t entry, const char *name)
+{
+    return task_create_internal(entry, name, 1);
+}
+#endif
 
 int task_create_user(task_entry_t entry, const char *name)
 {
@@ -2148,6 +2193,12 @@ int task_fork(struct interrupt_frame *frame)
      * NONE, so a forked child's own UTEST_END is its FIRST submission
      * rather than a repeat of the parent's. */
     TASK_UTEST_REPORT_RESET(&tasks[child_pid]);
+    /* Output capture starts from the same "not captured" baseline as
+     * every constructor, then below (once child_pid's slot is otherwise
+     * fully built) INHERITS the parent's ownership unchanged -- the
+     * OPPOSITE of the self-report reset just above, because a captured
+     * binary's descendant output still belongs to the same binary. */
+    TASK_UTEST_CAPTURE_RESET(&tasks[child_pid]);
 
     /* Inherit the parent's Job Object membership BEFORE num_tasks++ publishes
      * the child, so a fork can never be used to escape a job's active-process
@@ -2393,6 +2444,11 @@ int task_fork(struct interrupt_frame *frame)
     }
     tasks[child_pid].user_stack_base = ustack;
     tasks[child_pid].name = tasks[parent_pid_val].name;
+    /* Inherit output-capture ownership unchanged: a fork()'d descendant's
+     * writes belong to the same test binary as its parent, not to a new
+     * owner of its own (the opposite of the self-report reset above --
+     * see task_utest_capture_inherit in task.h). */
+    TASK_UTEST_CAPTURE_INHERIT(&tasks[child_pid], &tasks[parent_pid_val]);
     /* Child inherits the parent's cwd (snapshot the parent under its lock). */
     {
         char parent_cwd[TASK_CWD_MAX];
