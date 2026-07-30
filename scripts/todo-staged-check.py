@@ -99,7 +99,19 @@ def wrapped_block(added):
         spec.loader.exec_module(mod)
     except Exception:
         return 0                      # fail-open: never break a commit on this
-    block = [t for _, t in added]
+    # PROSE only. Feeding every added line to the detector made the RECOMMENDED
+    # repair trip the warning: converting an over-cap body into indented
+    # sub-bullets adds a run of similar-width `- ` lines, which is exactly the
+    # narrow-band-of-widths signature `_hard_wrapped` looks for. Observed
+    # 2026-07-30 on TODO-04 -- the commit that split the 4,865-char QEMU-reap
+    # item warned "hard-wrapped at ~111 columns" about its own fix. A bullet is
+    # never hard-wrapped prose, and `_classify` already knows that (bullets,
+    # headings, tables, quotes and fences all classify as `struct`).
+    #
+    # prev_blank=False deliberately: in a diff the preceding line is unknown,
+    # and False keeps an indented continuation line classified as prose (the
+    # thing we DO want to wrap-check) rather than as an indented code block.
+    block = [t for _, t in added if mod._classify(t, False) == "prose"]
     for i in range(len(block)):
         for j in range(i + 3, len(block) + 1):
             if mod._hard_wrapped(block[i:j]):
@@ -175,6 +187,25 @@ def _selftest() -> int:
           over_cap([(1, "- [ ] " + "x" * (CAP - 6))]) == [])
     check("one over cap fails",
           len(over_cap([(1, "- [ ] " + "x" * (CAP - 5))])) == 1)
+
+    # --- wrapped_block must not fire on the RECOMMENDED repair (2026-07-30) --
+    # Splitting an over-cap body into indented sub-bullets adds a run of
+    # similar-width `- ` lines -- the same narrow-band signature a fill column
+    # has. Before the prose filter at wrapped_block(), the commit that split
+    # TODO-04's 4,865-char QEMU-reap item warned about its own fix.
+    subs = [(i, "        - " + w) for i, w in enumerate([
+        "unlocked shared temp files letting a concurrent process publish a key",
+        "the key being blind to `ABI_CLANG` overrides and some more text here",
+        "header concatenation ambiguous across a sorted-adjacent boundary now",
+        "a wrapper-identity check stopping at file bytes not a behavior print"])]
+    check("sub-bullet run is not a fill column", wrapped_block(subs) == 0)
+    # ... while a genuine fill column is still caught.
+    real = [(i, t) for i, t in enumerate((
+        "`task_exec()` has no transactional commit point: it mutates the image and THEN performs\n"
+        "fallible work, so a late failure returns `-1` to a caller that iretqs back into an image\n"
+        "that no longer exists. It also replaces the stack base with a fresh guarded kernel stack\n"
+        "and never reclaims the old one.").split("\n"))]
+    check("genuine hard wrap still caught", wrapped_block(real) > 0)
 
     if fails:
         sys.stderr.write("todo-staged-check selftest FAIL: "
