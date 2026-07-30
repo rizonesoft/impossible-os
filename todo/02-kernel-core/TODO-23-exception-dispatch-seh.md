@@ -745,9 +745,9 @@ This section is gated on the Linux compat layer existing -- stub it out with a c
 - [ ] Commit: `"mm: guard-page stack auto-grow with commit/reserve tracking"`
 
 > **Deferred:** [H] auto-grow needs the FAULTING task's `cr3` at #PF time (a global VA-keyed registry is wrong: per-process PML4s reuse secondary-stack VAs at `task.c:3795-3810`) -> XREF: `03-memory-concurrency/TODO-07-smp-phase2.md` (item: "Per-CPU current-thread cursor" at line 120)
-> **Deferred:** [H] growable stacks need a reserved-VA window backed on demand + a per-process frame-map primitive (stacks are contiguous identity-mapped today, no headroom) -> XREF: `03-memory-concurrency/TODO-01-vmm-memory-protection.md §3` (item: "`MEM_COMMIT` path: mark region committed; zero-fill backing frames on first access" at line 119)
+> **Deferred:** [H] growable stacks need a reserved-VA window backed on demand + a per-process frame-map primitive (stacks are contiguous identity-mapped today, no headroom) -> XREF: `03-memory-concurrency/TODO-01-vmm-memory-protection.md §3` (item: "`MEM_COMMIT` path: mark region committed; zero-fill backing frames on first access" at line 124)
 > **Deferred:** [M] reserve-exhausted terminal must deliver `STATUS_STACK_OVERFLOW` without touching the exhausted stack; ring-3 delivery/termination is itself deferred -> XREF: `02-kernel-core/TODO-23 §5` (item: "clear the per-CPU scratch slot THEN hand to a guaranteed idle-frame terminate primitive" at line 309)
-> **Deferred:** [M] COMMIT (`pmm_alloc_frame` + `vmm_map_page`) is unlocked and cannot run under a short spinlock; needs PMM + per-process PML4 locking -> XREF: `03-memory-concurrency/TODO-01-vmm-memory-protection.md §3` (item: "Per-process PML4 spinlock" at line 124)
+> **Deferred:** [M] COMMIT (`pmm_alloc_frame` + `vmm_map_page`) is unlocked and cannot run under a short spinlock; needs PMM + per-process PML4 locking -> XREF: `03-memory-concurrency/TODO-01-vmm-memory-protection.md §3` (item: "Per-process PML4 spinlock" at line 129)
 
 
 ---

@@ -193,7 +193,7 @@ Lock-free LIFO singly-linked list (`SLIST_HEADER`); the free-list spine that the
 > - Retrofit owed: kmalloc backing -> synchronized tagged pool when 03-memory-concurrency/TODO-03 §6 ships `ExAllocatePoolWithTag`; Codex design+adversarial+test-coverage adoptions in the commit message.
 > - Scope boundary: §5 owns the lookaside OBJECTS + backing discipline; consumers (registry/ALPC/OB/klog) adopt the API in their own sections; kernel-wide heap SMP-safety owned by 03-memory-concurrency/TODO-03.
 > **Verified:** 2026-06-26 | commit `e10b246a` | 5/6 items | build OK | tests 141 kernel + 16 user PASS
-> **Accepted:** [H] backing cold path races the globally-unsynchronized kernel heap across CPUs (reason: pre-existing kernel-wide condition) -> XREF: 03-memory-concurrency/TODO-03 §6 (item: "Migrate lookaside backing to tagged pool" at line 212)
+> **Accepted:** [H] backing cold path races the globally-unsynchronized kernel heap across CPUs (reason: pre-existing kernel-wide condition) -> XREF: 03-memory-concurrency/TODO-03 §6 (item: "Migrate lookaside backing to tagged pool" at line 217)
 > **Accepted:** [H] custom-free-that-unmaps + delete/flush-while-in-use are caller concurrency contracts (reason: Windows-faithful; detection owned by verifier) -> XREF: 02-kernel-core/TODO-06 §14 (item: "Track ... lookaside misuse (... teardown-in-use + custom-free-unmap ...)" at line 197)
 > **Quality reviewed:** 2026-06-26 | Codex 5x (adversarial, consistency, perf, re-adversarial) | 2H+2M+2L fixed, 3H accepted-XREF | scope: kernel-code-quality
 

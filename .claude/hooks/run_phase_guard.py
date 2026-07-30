@@ -674,22 +674,53 @@ def _unpushed_count(root: Path):
 _SHIP_STAMP_RE = re.compile(r"^\+\s{0,3}(?:>\s*)+\*\*(Verified|Quality reviewed):\*\*")
 
 
-def _head_adds_ship_stamp(root: Path) -> bool:
-    """A4: True if HEAD's commit touches a review ship-stamp in a todo/ file -- i.e.
-    HEAD is a section-SHIP/stamp commit, not mid-section WIP. Robust vs the loose
-    section_idx (which is only a display value): keys on the definitive stamp the
-    review-gate recognizes. This closes the stamped-but-not-yet-pushed window the
-    unpushed>0 guard cannot see (progress/section_shipped is only set post-push).
-    Fail-open (False) on a git error -- the unpushed guard fail-CLOSES on the same
-    error, so the pair stays safe."""
+def _head_adds_ship_stamp(root: Path):
+    """A4: True if the UNPUSHED range adds a review ship-stamp to a todo/ file --
+    i.e. the section has SHIPPED and must use the full `rollover`, not the weaker
+    WIP path. Keys on the definitive stamp the review-gate recognizes rather than
+    the loose section_idx (a display value only). Closes the stamped-but-not-yet-
+    pushed window the unpushed>0 guard cannot see (progress/section_shipped is only
+    set post-push).
+
+    A7 (recorded 2026-07-14 as an unattended-arm gate, HIGH; closed 2026-07-30).
+    Two defects, both of which let a shipped section take the WIP path:
+
+      - It examined ONLY `HEAD`. A stamp commit followed by an unpushed FIXUP
+        leaves `unpushed>0` while HEAD no longer shows the stamp, so the check
+        returned False and `rollover-wip` proceeded on a shipped section. Now the
+        CUMULATIVE `@{u}..HEAD` range is scanned, so any stamp anywhere in the
+        unpushed run is seen regardless of what landed after it.
+      - It failed OPEN (False) on a git error/timeout/nonzero exit. The pairing
+        argument ("the unpushed guard fail-CLOSES on the same error") does not
+        hold: `_unpushed_count` returning None refuses, but a git failure confined
+        to THIS call (a `--` pathspec error, a timeout under load) left the
+        unpushed count perfectly readable and this check silently permissive.
+        Now returns None for "unknown", which the caller REFUSES.
+
+    Returns True (stamped) / False (clean WIP) / None (undeterminable -> refuse).
+    Falls back to HEAD-only when there is no upstream, which is the one case where
+    a range is not defined; that fallback is itself fail-closed on error."""
+    def _scan(argv):
+        r = subprocess.run(["git", "-C", str(root), *argv, "--", "todo"],
+                           capture_output=True, text=True, timeout=20)
+        if r.returncode != 0:
+            return None
+        return any(_SHIP_STAMP_RE.match(ln) for ln in r.stdout.splitlines())
     try:
-        r = subprocess.run(["git", "-C", str(root), "show", "--format=", "HEAD",
-                            "--", "todo"], capture_output=True, text=True, timeout=10)
+        upstream = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "--abbrev-ref", "@{u}"],
+            capture_output=True, text=True, timeout=10)
+        if upstream.returncode == 0 and upstream.stdout.strip():
+            return _scan(["log", "--format=%H", "-p", "@{u}..HEAD"])
+        # No upstream: a range is undefined, so fall back to HEAD alone. Note this
+        # MUST be `show`, not `log -1 <rev> -- <path>`: with a pathspec, `log -1`
+        # walks back to the newest commit that TOUCHES the path, so a stamp two
+        # commits back would be reported as if it were HEAD. Narrower than the
+        # range scan but still fail-closed on error, and the unpushed guard already
+        # refuses outright when it cannot resolve @{u}.
+        return _scan(["show", "--format=", "HEAD"])
     except Exception:
-        return False
-    if r.returncode != 0:
-        return False
-    return any(_SHIP_STAMP_RE.match(ln) for ln in r.stdout.splitlines())
+        return None
 
 
 def _ship_stamp_since(root: Path, epoch) -> str:
@@ -1485,11 +1516,22 @@ def cli(argv):
         # A4 (round 2): reliably refuse a SHIP/stamp commit even in the pre-push
         # window the unpushed guard cannot see -- key on the definitive **Verified:**
         # stamp, not the loose section_idx.
-        if _head_adds_ship_stamp(repo_root()):
-            print("[sequencer] rollover-wip REFUSED: HEAD is a section-SHIP/stamp "
-                  "commit (adds a **Verified:** stamp to a todo/ file) -- a shipped "
-                  "section uses the full `rollover` (receipts + todo-graph), never a "
-                  "WIP rotation. Push, then run `rollover`.", file=sys.stderr)
+        stamped = _head_adds_ship_stamp(repo_root())
+        if stamped is None:
+            # A7 fail-CLOSED: undeterminable is not "clean". See the docstring --
+            # the old fail-open let a git error confined to this call wave a
+            # shipped section through the weaker WIP gate.
+            print("[sequencer] rollover-wip REFUSED: could not determine whether "
+                  "the unpushed range adds a section-SHIP/stamp commit (git error "
+                  "or timeout). Fail-closed: resolve the git state, then use the "
+                  "full `rollover` if the section has shipped.", file=sys.stderr)
+            return 1
+        if stamped:
+            print("[sequencer] rollover-wip REFUSED: the unpushed range contains a "
+                  "section-SHIP/stamp commit (adds a **Verified:** stamp to a todo/ "
+                  "file) -- a shipped section uses the full `rollover` (receipts + "
+                  "todo-graph), never a WIP rotation. Push, then run `rollover`.",
+                  file=sys.stderr)
             return 1
         fails = _rollover_failures_wip(repo_root(), state)
         if fails:

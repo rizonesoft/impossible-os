@@ -21,15 +21,41 @@ import time
 from pathlib import Path
 
 # B1 (Canary #2, 2026-07-14): the mid-section rotation is RETIRED as an active
-# mechanism. Canary #2 proved its precondition never occurs -- the runner commits
-# AND pushes atomically at ship, so there is no committed-but-unpushed WIP window
-# for `rollover-wip` to fire on, and a full ~2h/7-review section reached only ~132
-# tool-events (140 ~= one section, so the per-section full rollover already handles
-# context hygiene; an oversized section should be SPLIT, not rotated mid-way). The
-# A1-A9 verb + gate code stays in place, dormant and fail-safe. This flag keeps the
-# hook inert so the runner is never nudged into a rotation that would only refuse.
-# To re-enable (e.g. if the runner ever adopts periodic unpushed WIP commits):
-# flip this True AND un-retire the SECTIONS-phase doctrine in the sequencer SKILL.
+# mechanism, on TWO stated premises. The A1-A9 verb + gate code stays in place,
+# dormant and fail-safe; this flag keeps the hook inert so the runner is never
+# nudged into a rotation that would only refuse.
+#
+#   (P1) the runner commits AND pushes atomically at ship, so there is no
+#        committed-but-unpushed WIP window for `rollover-wip` to fire on;
+#   (P2) a full ~2h/7-review section reached only ~132 tool-events, so 140 ~= one
+#        section and the per-section full rollover already handles context hygiene.
+#
+# P2 IS FALSIFIED (measured 2026-07-30). Three consecutive segments of that day's
+# canary ran 334, 420 and 768 tool-events -- 2.4x, 3x and 5.5x the threshold:
+#
+#     run-20260730-151719   334 tool-events   335 turns   $179.27   end-ctx 492K
+#     run-20260730-190528   420 tool-events
+#     run-20260730-111032   768 tool-events
+#
+# The 151719 segment shipped exactly ONE section (TODO-04 §34) and cost $179.27
+# with cache-read at 85.3% of spend; `cost-summary.py` puts the same work split
+# across 2-3 segments at 59-69% of that cache-read. So "140 ~= one section" was a
+# property of Canary #2's section sizes, not of the runner, and the per-section
+# rollover demonstrably does NOT bound context any more.
+#
+# P1 STILL HOLDS, and it is the reason this flag stays False: `rollover-wip`
+# requires `_unpushed_count() > 0`, and mid-section the runner is always either
+# dirty (uncommitted) or fully pushed -- so re-enabling the hint alone would only
+# produce hints that refuse, which is exactly what the retirement avoided.
+#
+# TO RE-ENABLE, all four must land together (the split predictor at
+# `section-manifest.py:207` is NOT sufficient on its own: §34 had ALREADY been
+# split and the remainder still ran 330 turns, because the driver was the review
+# loop -- 23 findings -- which no item-count threshold can predict):
+#   1. adopt periodic unpushed WIP commits mid-section (breaks P1)   -- NOT DONE
+#   2. close arm-readiness A7 (range scan + fail-closed)             -- DONE 07-30
+#   3. close arm-readiness A8 + A9 (review-resolved certification)   -- NOT DONE
+#   4. flip this True and restore the SECTIONS-phase doctrine in the SKILL
 ROTATE_HINT_ENABLED = False
 
 # Turn-count proxy for the doctrine context band. Deliberately conservative: the

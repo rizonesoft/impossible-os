@@ -383,20 +383,12 @@ information or judgment; none of this weakens a gate):**
     relaunch mechanism.)
   - **REFUSED** -> the listed failures are unfinished work: finish/clean them
     and continue in-session (never force a rollover past a red gate).
-- **Mid-section context-cap rotation -- RETIRED (B1, Canary #2 2026-07-14).** Do
-  NOT attempt a mid-section rotation; the `rotate_hint` reminder is disabled
-  (`ROTATE_HINT_ENABLED = False`) so it will not fire. Canary #2 proved the
-  mechanism's precondition never occurs: you commit AND push atomically at ship, so
-  there is never a committed-but-unpushed WIP window for `rollover-wip`, and a full
-  ~2h/7-review section reached only ~132 tool-events (140 ~= one section). The
-  per-section full `rollover` above already provides context hygiene at every
-  section boundary; a section too big for one context should be SPLIT (the
-  `section-manifest` split predictor), not rotated mid-way. The `rollover-wip` /
-  `review-resolved` verbs + the A1-A9 gates remain in the code, dormant and
-  fail-safe -- they only ever refuse if invoked. Re-enable ONLY if the runner ever
-  adopts periodic unpushed WIP commits (flip `ROTATE_HINT_ENABLED` True, restore
-  this doctrine from git history, and first close arm-readiness A7-A9). Until then:
-  rely on ship -> full rollover, and split oversized sections.
+- **Mid-section context-cap rotation -- STILL RETIRED, but on ONE premise now, not two (B1 2026-07-14; re-measured 2026-07-30).** Do NOT attempt a mid-section rotation; `ROTATE_HINT_ENABLED = False` so the reminder will not fire, and `rollover-wip` would only refuse. The retirement rested on two premises and one of them is now disproved.
+  - **FALSIFIED -- "140 tool-events ~= one section, so the per-section rollover already bounds context."** Measured 2026-07-30 across three consecutive canary segments: **334, 420 and 768 tool-events** (2.4x, 3x, 5.5x the threshold). The 334 segment shipped exactly ONE section (TODO-04 §34), ran 335 turns to a 492K end-of-segment context, and cost **$179.27** with cache-read at 85.3% of spend. `~132 tool-events` was a property of Canary #2's section sizes, not of the runner.
+  - **STILL HOLDS -- "you commit AND push atomically at ship, so there is no committed-but-unpushed WIP window."** This is why the flag stays off: `rollover-wip` requires `_unpushed_count() > 0`, and mid-section the tree is always either dirty or fully pushed, so a re-enabled hint would only nudge you into a refusal.
+  - **Splitting is NOT the answer on its own.** §34 had ALREADY been split by the predictor (`section-manifest.py:207`, `open_items >= 5`) and the remainder still ran 330 turns, because the length driver was the review loop (23 findings fixed), which is only knowable AFTER the review runs and which no item-count threshold can predict.
+  - **Until it is re-enabled**: rely on ship -> full `rollover`, and split oversized sections. The `rollover-wip` / `review-resolved` verbs + the A1-A9 gates remain in the code, dormant and fail-safe -- they only ever refuse if invoked.
+  - **Re-enabling needs all four together**: (1) adopt periodic unpushed WIP commits mid-section, which is what breaks the surviving premise -- NOT DONE; (2) arm-readiness A7 (cumulative `@{u}..HEAD` stamp scan + fail-closed on git error) -- **DONE 2026-07-30**; (3) arm-readiness A8 + A9 (review-resolved certifies a received-but-unfixed review / empty run ID; resolution receipt ignores `review_run_id`) -- NOT DONE; (4) flip `ROTATE_HINT_ENABLED` True and restore the firing doctrine from git history.
 - **Deferral uses the existing machinery.** If a section is genuinely blocked
   (missing prerequisite owned elsewhere, hardware-only validation, deliberate
   roadmap "no code today"), the implement/review skill marks it `[/]` + a

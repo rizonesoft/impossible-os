@@ -239,11 +239,61 @@ def test_head_adds_ship_stamp_detects_verified_stamp():      # A4 helper contrac
         subprocess.run(["git", "-C", str(root), "commit", "-qm", "ship stamp"],
                        check=True, capture_output=True)
         assert mod._head_adds_ship_stamp(root) is True
-        # a follow-up CODE commit (no stamp) -> not a ship commit
+        # No upstream configured -> the range is undefined and the helper falls
+        # back to HEAD alone, so a follow-up CODE commit hides the stamp. This is
+        # the documented narrow fallback, NOT the production path (the runner
+        # always has an upstream); the A7 test below covers the real one.
         (root / "src/x.c").write_text("int y;\n")
         subprocess.run(["git", "-C", str(root), "commit", "-qam", "wip"], check=True,
                        capture_output=True)
         assert mod._head_adds_ship_stamp(root) is False
+
+
+def test_a7_stamp_seen_across_the_whole_unpushed_range():
+    """A7 (HIGH, recorded 2026-07-14, closed 2026-07-30): the helper examined only
+    HEAD, so a ship-stamp commit followed by an unpushed FIXUP left `unpushed>0`
+    while HEAD no longer showed the stamp -- and a SHIPPED section took the weaker
+    WIP rotation path. With an upstream present the cumulative `@{u}..HEAD` range
+    is scanned, so the stamp is seen no matter what landed after it."""
+    with tempfile.TemporaryDirectory() as d:
+        root = _git_repo(d)
+        mod = _load(root / ".claude/state/s.json", root)
+        # Give the fixture a real upstream so the range is defined.
+        bare = pathlib.Path(d) / "origin.git"
+        subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True)
+        subprocess.run(["git", "-C", str(root), "remote", "add", "origin", str(bare)],
+                       check=True)
+        subprocess.run(["git", "-C", str(root), "push", "-q", "-u", "origin", "HEAD"],
+                       check=True, capture_output=True)
+        assert mod._head_adds_ship_stamp(root) is False   # nothing unpushed yet
+
+        (root / "todo").mkdir(exist_ok=True)
+        (root / "todo/T.md").write_text("## 1. X\n\n> **Verified:** 2026-07-30\n")
+        subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
+        subprocess.run(["git", "-C", str(root), "commit", "-qm", "ship stamp"],
+                       check=True, capture_output=True)
+        assert mod._head_adds_ship_stamp(root) is True
+
+        # The regression: an unpushed follow-up that is NOT itself a stamp.
+        (root / "src").mkdir(exist_ok=True)
+        (root / "src/x.c").write_text("int y;\n")
+        subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
+        subprocess.run(["git", "-C", str(root), "commit", "-qm", "fixup"],
+                       check=True, capture_output=True)
+        assert mod._head_adds_ship_stamp(root) is True, \
+            "stamp must still be seen through a follow-up commit (A7)"
+
+
+def test_a7_undeterminable_fails_closed():
+    """A7's second half: the helper used to return False (== 'clean WIP') on any
+    git error. A failure confined to THIS call left the unpushed count perfectly
+    readable, so the pairing argument did not hold and the check was silently
+    permissive. Unknown is now None, and `rollover-wip` refuses on it."""
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d) / "not-a-repo"      # git commands fail here
+        root.mkdir()
+        mod = _load(root / ".claude/state/s.json", root)
+        assert mod._head_adds_ship_stamp(root) is None
 
 
 # ------------------------------------ A5: review-resolution boundary + verb

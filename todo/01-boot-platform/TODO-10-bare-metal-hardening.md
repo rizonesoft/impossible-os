@@ -389,10 +389,10 @@ Implement the minimal per-process page table infrastructure so each task has its
 > - Full per-process VM (COW fork, mmap, arbitrary-VA user mapping) is out of scope here -- owned by `03-memory-concurrency/TODO-05` and `TODO-01 §12`.
 > - Status `[/]`: 2 items deferred (remove `pmm_mark_region_used`; external bare-metal SMEP/SMAP unblock).
 > **Verified:** 2026-06-08 | commit `0ee5aa32` | 6/8 items | build OK | mm 102+16 PASS (14 new §8 assertions), smoke PASS (KVM 2.4s)
-> **Accepted:** [Critical] `map_user_page_impl` splits the shared kernel PD (PDPT[1]) for `uthread_create` stacks, breaking per-process isolation -> XREF: 03-memory-concurrency/TODO-01 §12 (item: "Privatize cloned kernel PDs before splitting a huge page outside PD[4]" at line 267)
-> **Accepted:** [Critical] `task_exec` continues into `exec_load` after partial OOM remap, corrupting the parent image -> XREF: 03-memory-concurrency/TODO-01 §12 (item: "Make `task_exec` fork+exec private-frame remap atomic under OOM" at line 268)
+> **Accepted:** [Critical] `map_user_page_impl` splits the shared kernel PD (PDPT[1]) for `uthread_create` stacks, breaking per-process isolation -> XREF: 03-memory-concurrency/TODO-01 §12 (item: "Privatize cloned kernel PDs before splitting a huge page outside PD[4]" at line 272)
+> **Accepted:** [Critical] `task_exec` continues into `exec_load` after partial OOM remap, corrupting the parent image -> XREF: 03-memory-concurrency/TODO-01 §12 (item: "Make `task_exec` fork+exec private-frame remap atomic under OOM" at line 273)
 > **Accepted:** [M] scheduler reads CR3 on every context switch instead of a per-CPU cache -> XREF: 02-kernel-core/TODO-10 §6 (item: "Context switch (`task_switch`): update `smp_this_cpu()->user_cr3`" at line 182)
-> **Accepted:** [M] `task_exec` remap zeros 1 MiB scalar + per-page INVLPG -> XREF: 03-memory-concurrency/TODO-01 §12 (item: "In the `task_exec` private-frame remap loop, zero via `zero_page`" at line 269)
+> **Accepted:** [M] `task_exec` remap zeros 1 MiB scalar + per-page INVLPG -> XREF: 03-memory-concurrency/TODO-01 §12 (item: "In the `task_exec` private-frame remap loop, zero via `zero_page`" at line 274)
 > **Accepted:** [H] `task_cleanup` PML4 teardown only guards the local CPU CR3 -- an SMP reaper on another CPU could free a still-loaded page table (pre-existing reap assumption, same as the per-thread unmap path; not reachable on today's single-CPU scheduler) -> XREF: 03-memory-concurrency/TODO-07 §3 (item: "task_cleanup reap barrier: prove a TASK_DEAD task is off-CPU on ALL CPUs" at line 122)
 > **Quality reviewed:** 2026-06-08 | Codex 5x (adversarial x2, consistency, perf, re-adversarial) | 1H+1M fixed, 2Crit+1H+2M accepted-XREF | scope: kernel-code-quality
 
