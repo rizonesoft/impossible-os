@@ -7864,8 +7864,9 @@ else
            "ok=$GUA_OK/$GUA_EXPECT out=$GUA_OUT"
 fi
 
-# The canonical build path must RUN the drift check. `make all` lists check-abi
-# as a prerequisite, but CLAUDE.md forbids raw `make` and scripts/build.sh drove
+# The canonical build path must RUN the drift check. `make all` USED TO list
+# check-abi as a prerequisite (section 32 replaced that with $(ABI_STAMP) inside
+# the graph), but CLAUDE.md forbids raw `make` and scripts/build.sh drove
 # `kernel`/`userland` directly, so the guard was off on the only path in use:
 # a kernel-side constant change compiled into the kernel while the generated
 # contract kept the old value, stayed self-consistent, and passed the crt0
@@ -8717,6 +8718,300 @@ else
     t_fail "gen_user_abi: --check clean (generated contract matches kernel source)" \
            "run: python3 scripts/gen-user-abi.py"
 fi
+
+# ---------------------------------------------------------------------------
+# The ABI gate reaches EVERY artifact target, not just `all`.
+#
+# `check-abi` was a prerequisite of `all:` alone, so a raw `make kernel`,
+# `make userland` or `make system-disk` reached the compiler against a stale
+# generated contract -- and because both sides then recompile carrying the SAME
+# stale fingerprint, the crt0 SYS_ABI_HANDSHAKE still agrees while ring-3 calls
+# the wrong handler. $(ABI_STAMP) moves the check into the dependency graph.
+#
+# Asserted structurally out of make's OWN rule database rather than by reading
+# the Makefile, and on an EXPLICIT-rule object as well as a pattern-rule one:
+# fourteen explicit object rules (gfx_simd, memops, image, cJSON, json, lz4 ...)
+# bypass the generic %.c rule, and they are exactly what a per-recipe wiring
+# would have left ungated.
+# ---------------------------------------------------------------------------
+# make's database is captured into a variable before it is filtered, and NO
+# filter below exits early. Both matter under `set -o pipefail`: piping the
+# database into `grep -m1` (or into an awk that `exit`s on the first match)
+# closes the pipe while the writer is still going, and the writer's SIGPIPE
+# (141) then becomes the pipeline's status -- reporting a wiring failure that is
+# really a plumbing artifact. Every filter here reads its input to the end and
+# keeps only the FIRST matching rule line.
+abi_make_db() {
+    (cd "$REPO_ROOT" && make --print-data-base -n "$1" 2>/dev/null) || true
+}
+
+abi_stamp_is_order_only_prereq_of() {
+    # True when build/.abi-check.stamp appears AFTER the order-only `|`
+    # separator on $1's own rule line in make's expanded database.
+    printf '%s\n' "$(abi_make_db "$1")" | awk -v tgt="$1" '
+        !seen && index($0, tgt ":") == 1 {
+            seen = 1
+            bar = index($0, "|")
+            if (bar > 0 && index(substr($0, bar), "build/.abi-check.stamp") > 0) ok = 1
+        }
+        END { exit !ok }'
+}
+
+# One sample per INDEPENDENT term of the production declaration
+# `$(C_OBJS) $(LZ4_FULL_OBJ) $(ASM_OBJS) $(AP_TRAMPOLINE_OBJ): | $(ABI_STAMP)`,
+# because dropping any single term leaves the other three green: an
+# explicit-rule C object and a pattern-rule one for C_OBJS, plus lz4_full,
+# an asm object, and the trampoline.
+for _abi_obj in build/kernel/gfx/gfx_simd.o build/kernel/panic.o \
+                build/libs/lz4/lz4_full.o \
+                build/kernel/sched/switch_context.o \
+                build/kernel/smp/ap_trampoline.o; do
+    if abi_stamp_is_order_only_prereq_of "$_abi_obj"; then
+        t_pass "gen_user_abi: $_abi_obj waits on the ABI validation stamp"
+    else
+        t_fail "gen_user_abi: $_abi_obj waits on the ABI validation stamp" \
+               "the object lists must carry an order-only edge to \$(ABI_STAMP)"
+    fi
+done
+
+# .FORCE must be phony, or a repo-root file of that name satisfies it and every
+# .FORCE-driven recipe -- the ABI gate included -- silently stops running.
+if grep -qE '^\.PHONY: \.FORCE$' "$REPO_ROOT/Makefile"; then
+    t_pass "gen_user_abi: .FORCE is phony, so a stray .FORCE file cannot disarm the gate"
+else
+    t_fail "gen_user_abi: .FORCE is phony, so a stray .FORCE file cannot disarm the gate" \
+           "an old repo-root .FORCE file makes every .FORCE-driven stamp look current"
+fi
+
+# The grouped userland recipe takes the stamp as a REAL prerequisite (its mtime
+# is contract-digest-stable, so that costs no churn).
+# make expands a grouped (`&:`) target to one rule line PER target, so the line
+# to read is `build/sysroot/hello.exe:` and not the whole `&:` target list. The
+# stamp must appear BEFORE any `|`: a substring match alone would also accept an
+# order-only edge, which is a different (weaker) wiring than the one claimed.
+if printf '%s\n' "$(abi_make_db userland)" | awk '
+       !seen && index($0, "build/sysroot/hello.exe:") == 1 {
+           seen = 1
+           bar = index($0, "|")
+           head = (bar > 0 ? substr($0, 1, bar - 1) : $0)
+           if (index(head, "build/.abi-check.stamp") > 0) ok = 1
+       }
+       END { exit !ok }'; then
+    t_pass "gen_user_abi: the grouped userland recipe waits on the ABI validation stamp"
+else
+    t_fail "gen_user_abi: the grouped userland recipe waits on the ABI validation stamp" \
+           "add \$(ABI_STAMP) beside \$(ABI_CONTRACT_H) in the grouped prerequisite list"
+fi
+
+# `all:` must NOT also list check-abi: the stamp already covers it from inside
+# the graph, ORDERED, which a sibling prerequisite never was under -j. And
+# check-abi must be .PHONY so a stray file of that name cannot shadow it.
+# Asserted POSITIVELY -- the `all:` rule line must be found AND must not carry
+# check-abi. A vacuous pass when the database cannot be read would hide exactly
+# the regression this pins.
+if printf '%s\n' "$(abi_make_db all)" | awk '
+       !seen && index($0, "all:") == 1 {
+           seen = 1
+           if (index($0, "check-abi") == 0) ok = 1
+       }
+       END { exit !(seen && ok) }'; then
+    t_pass "gen_user_abi: all: reaches the ABI gate through the stamp, not a sibling"
+else
+    t_fail "gen_user_abi: all: reaches the ABI gate through the stamp, not a sibling" \
+           "check-abi as a sibling of kernel/userland is unordered under -j and doubles the check"
+fi
+
+if grep -qE '^\.PHONY: check-abi$' "$REPO_ROOT/Makefile"; then
+    t_pass "gen_user_abi: check-abi is declared .PHONY"
+else
+    t_fail "gen_user_abi: check-abi is declared .PHONY" \
+           "an undeclared check-abi is shadowed by any file of that name"
+fi
+
+# ---------------------------------------------------------------------------
+# Behavioral half: an un-regenerated SYS_* renumber must fail every artifact
+# target BEFORE the compiler runs.
+#
+# Runs in a DISPOSABLE git worktree and never touches this checkout. Trap-
+# restoring a tracked ABI header is the pattern this file already abandoned
+# (see the note above the main() cases): no trap survives SIGKILL, and an
+# interrupted run really did leave this checkout in a state that stalled a
+# later lint pass. The worktree also makes the artifact oracle EXACT -- it
+# starts with no build/ at all, so "no artifact produced" is ABSENCE, which a
+# deterministic compiler rewriting byte-identical output could not satisfy.
+# ---------------------------------------------------------------------------
+ABI_GATE_NAME="gen_user_abi: a stale contract fails kernel/userland/system-disk before compiling"
+ABI_GATE_OK=1
+ABI_GATE_WHY=""
+ABI_WT_BASE=""
+ABI_WT=""
+
+# Every setup step below is CHECKED. An unchecked mktemp, worktree-add or copy
+# lets this fixture report PASS without ever exercising the candidate -- and the
+# copy is the dangerous one: HEAD already contains a working Makefile, so a
+# failed copy would silently test the last commit instead of the working tree.
+_abi_setup_fail() { ABI_GATE_OK=0; ABI_GATE_WHY="$1"; }
+
+if ! ABI_WT_BASE=$(mktemp -d 2>/dev/null) || [ ! -d "$ABI_WT_BASE" ]; then
+    _abi_setup_fail "mktemp -d failed, so the worktree fixture never ran"
+else
+    ABI_WT="$ABI_WT_BASE/wt"
+    if ! git -C "$REPO_ROOT" worktree add --detach "$ABI_WT" HEAD >/dev/null 2>&1; then
+        # A FAILURE, not a skip: this suite runs from inside the git checkout it
+        # is testing, so worktree-add failing is a real problem and reporting it
+        # as a pass is precisely the fail-open shape this fixture guards against.
+        _abi_setup_fail "git worktree add failed, so the stale-contract refusal was never exercised"
+    else
+        # Scoped cleanup armed IMMEDIATELY after creation, and it removes only
+        # THIS worktree -- a repo-wide `git worktree prune` would reach unrelated
+        # stale worktrees that are none of this fixture's business.
+        #
+        # bash keeps ONE handler per signal, and this file arms successive EXIT
+        # traps that each replace the previous one, so ours must carry the
+        # cleanup already in force ($CRSW_TMP) forward or an interrupted run
+        # would leak it instead.
+        # shellcheck disable=SC2064
+        trap "git -C '$REPO_ROOT' worktree remove --force '$ABI_WT' >/dev/null 2>&1; rm -rf '$ABI_WT_BASE' \"\$CRSW_TMP\"" EXIT INT TERM
+
+        for _abi_cand in Makefile scripts/gen-user-abi.py; do
+            if ! cp "$REPO_ROOT/$_abi_cand" "$ABI_WT/$_abi_cand" 2>/dev/null ||
+               ! cmp -s "$REPO_ROOT/$_abi_cand" "$ABI_WT/$_abi_cand"; then
+                _abi_setup_fail "could not stage the candidate $_abi_cand into the worktree"
+                break
+            fi
+        done
+    fi
+fi
+
+if [ "$ABI_GATE_OK" = "1" ]; then
+    # INCREMENTAL, not fresh-tree. The stamp is established CLEAN first, and the
+    # drift is introduced without removing it, so the fixture depends on the
+    # stamp being re-validated on a later invocation. A fresh-tree-only fixture
+    # passes even with `.FORCE` deleted from the stamp rule (every stale build
+    # still fails on the missing stamp), which would leave the real incremental
+    # hazard -- an existing stamp treated as current forever -- unpinned.
+    if ! (cd "$ABI_WT" && timeout 180 make -j1 build/.abi-check.stamp >/dev/null 2>&1); then
+        _abi_setup_fail "the ABI stamp did not validate cleanly before any drift was introduced"
+    fi
+fi
+
+# Two clean runs in a row must leave the stamp byte- and mtime-identical: the
+# cmp gate is what lets an always-running check avoid churning a rebuild.
+if [ "$ABI_GATE_OK" = "1" ]; then
+    _abi_d1=$(cat "$ABI_WT/build/.abi-check.stamp" 2>/dev/null || true)
+    _abi_m1=$(stat -c '%Y.%y' "$ABI_WT/build/.abi-check.stamp" 2>/dev/null || true)
+    (cd "$ABI_WT" && timeout 180 make -j1 build/.abi-check.stamp >/dev/null 2>&1) || true
+    _abi_d2=$(cat "$ABI_WT/build/.abi-check.stamp" 2>/dev/null || true)
+    _abi_m2=$(stat -c '%Y.%y' "$ABI_WT/build/.abi-check.stamp" 2>/dev/null || true)
+    if [ -z "$_abi_d1" ] || [ "$_abi_d1" != "$_abi_d2" ] || [ "$_abi_m1" != "$_abi_m2" ]; then
+        _abi_setup_fail "a second clean run moved the stamp's content or mtime, so the check churns rebuilds"
+    fi
+fi
+
+if [ "$ABI_GATE_OK" = "1" ]; then
+    # A pure renumber: 0x0FD7 is unused, so this is drift and not a collision.
+    # The generated contract is left at the old value and THE STAMP IS LEFT IN
+    # PLACE -- exactly the "forgot to regenerate on an already-built tree" state.
+    sed -i 's/^#define SYS_NT_SHUTDOWN     0x00D7/#define SYS_NT_SHUTDOWN     0x0FD7/' \
+        "$ABI_WT/include/kernel/sched/syscall.h"
+    if ! grep -q '^#define SYS_NT_SHUTDOWN     0x0FD7' \
+            "$ABI_WT/include/kernel/sched/syscall.h"; then
+        _abi_setup_fail "could not apply the SYS_* renumber -- the fixture's sed anchor has drifted"
+    fi
+fi
+
+if [ "$ABI_GATE_OK" = "1" ]; then
+    # -j4 on the first target: under parallel make an ungated object recipe could
+    # otherwise run concurrently with the failing stamp, which -j1 hides by
+    # failing on the first gated prerequisite it reaches.
+    for _abi_tgt in kernel userland system-disk; do
+        _abi_jobs=-j1
+        [ "$_abi_tgt" = "kernel" ] && _abi_jobs=-j4
+        _abi_out=$( (cd "$ABI_WT" && timeout 180 make "$_abi_jobs" "$_abi_tgt" 2>&1) )
+        _abi_rc=$?
+        if [ "$_abi_rc" -eq 0 ]; then
+            _abi_setup_fail "make $_abi_tgt SUCCEEDED against a stale contract"
+            break
+        fi
+        # The failure must be the ABI gate, not an unrelated build error:
+        # make names the failing target, so the stamp appears by path.
+        if ! printf '%s' "$_abi_out" | grep -qE 'abi-check\.stamp|gen-user-abi'; then
+            _abi_setup_fail "make $_abi_tgt failed away from the ABI gate: $(printf '%s' "$_abi_out" | tail -3 | tr '\n' ' ')"
+            break
+        fi
+        # A retained stamp must not become reusable: the SAME invocation has to
+        # fail again rather than find the old stamp current.
+        if (cd "$ABI_WT" && timeout 180 make -j1 "$_abi_tgt" >/dev/null 2>&1); then
+            _abi_setup_fail "make $_abi_tgt succeeded on a REPEAT run, so the retained stamp masked the drift"
+            break
+        fi
+    done
+fi
+
+# No ABI-dependent artifact, and no object ANYWHERE under build/: the gate must
+# precede the compiler rather than follow it. Searching the whole tree (not just
+# build/kernel) is what makes build/libs/lz4/lz4_full.o visible. The bootloader
+# and its signature are deliberately NOT asserted -- they are unordered siblings
+# of $(KERNEL_BIN) under $(SYSTEM_DISK) and consume no ABI state.
+if [ "$ABI_GATE_OK" = "1" ]; then
+    for _abi_art in build/kernel.exe build/sysroot/hello.exe build/system-disk.img; do
+        if [ -e "$ABI_WT/$_abi_art" ]; then
+            _abi_setup_fail "$_abi_art was produced despite the stale contract"
+            break
+        fi
+    done
+fi
+if [ "$ABI_GATE_OK" = "1" ]; then
+    _abi_stray=$(find "$ABI_WT/build" -type f -name '*.o' -print -quit 2>/dev/null || true)
+    if [ -n "$_abi_stray" ]; then
+        _abi_setup_fail "an object ($_abi_stray) was compiled before the ABI gate failed"
+    fi
+fi
+
+# ...and regenerating clears the gate, so the drift is the cause and not a
+# permanently wedged target. Only the stamp is re-driven: what each artifact
+# target does AFTER the gate clears is unchanged by this section.
+if [ "$ABI_GATE_OK" = "1" ]; then
+    (cd "$ABI_WT" && python3 scripts/gen-user-abi.py >/dev/null 2>&1)
+    if ! (cd "$ABI_WT" && timeout 180 make -j1 build/.abi-check.stamp >/dev/null 2>&1); then
+        _abi_setup_fail "regenerating the contract did not clear the ABI gate"
+    fi
+fi
+
+# The digest guard: with no working sha256sum OR shasum on PATH the recipe must
+# FAIL rather than publish an empty stamp that a later run would accept.
+if [ "$ABI_GATE_OK" = "1" ]; then
+    _abi_nodigest="$ABI_WT_BASE/nodigest"
+    mkdir -p "$_abi_nodigest"
+    for _abi_stub in sha256sum shasum; do
+        printf '#!/bin/sh\nexit 1\n' > "$_abi_nodigest/$_abi_stub"
+        chmod +x "$_abi_nodigest/$_abi_stub"
+    done
+    rm -f "$ABI_WT/build/.abi-check.stamp"
+    if (cd "$ABI_WT" && PATH="$_abi_nodigest:$PATH" timeout 180 make -j1 \
+            build/.abi-check.stamp >/dev/null 2>&1); then
+        _abi_setup_fail "the stamp recipe succeeded with no usable digest command"
+    elif [ -e "$ABI_WT/build/.abi-check.stamp" ] || \
+         [ -e "$ABI_WT/build/.abi-check.stamp.tmp" ]; then
+        _abi_setup_fail "a failed digest left a stamp or a .tmp behind"
+    fi
+fi
+
+if [ "$ABI_GATE_OK" = "1" ]; then
+    t_pass "$ABI_GATE_NAME"
+else
+    t_fail "$ABI_GATE_NAME" "$ABI_GATE_WHY"
+fi
+
+# Tear down HERE, then RESTORE the handler that was in force before this fixture
+# armed its own -- disarming outright would drop the $CRSW_TMP cleanup for the
+# remainder of the run. Only this worktree is touched.
+if [ -n "$ABI_WT" ]; then
+    git -C "$REPO_ROOT" worktree remove --force "$ABI_WT" >/dev/null 2>&1
+fi
+[ -n "$ABI_WT_BASE" ] && rm -rf "$ABI_WT_BASE"
+trap 'rm -rf "$CRSW_TMP"' EXIT
+trap - INT TERM
 
 # ============================================================================
 # Launcher record framing -- host-side parser gates

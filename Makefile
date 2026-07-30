@@ -152,6 +152,11 @@ KERNEL_TU_FLAGS = $(CFLAGS) -I$(INCLUDE) -I$(KERNEL_DIR) -I$(GENERATED) \
 KERNEL_TESTS_STAMP := $(BUILD_DIR)/.kernel-tests.stamp
 EXCEPT_TELEMETRY_STAMP := $(BUILD_DIR)/.except-telemetry.stamp
 
+# ABI validation stamp -- content is the generated contract's digest. Unlike the
+# two flavor stamps above it is ORDER-ONLY on every object: its job is to RUN the
+# drift check ahead of compilation, not to force a rebuild.
+ABI_STAMP := $(BUILD_DIR)/.abi-check.stamp
+
 KERNEL_BIN := $(BUILD_DIR)/kernel.exe
 LINKER_SCRIPT := $(SRC_DIR)/boot/linker.ld
 
@@ -178,6 +183,15 @@ BUILD_INFO_H   := include/build_info.h
 
 # Generate include/build_info.h — always run the recipe (.FORCE), but only
 # overwrite the file when contents change (cmp -s) to avoid full recompilation.
+# .FORCE MUST be phony. Without the declaration it is an ordinary target name,
+# so a repo-root FILE called .FORCE makes it a real, satisfiable prerequisite:
+# every dependent whose own file is NEWER than that .FORCE then looks current
+# and its recipe never runs. Reproduced against $(ABI_STAMP) -- an old .FORCE
+# plus a drifted contract ran the ABI check zero times and let clang proceed --
+# which silently disarms the ABI gate, the KERNEL_TESTS / EXCEPT_TELEMETRY
+# flavor stamps and build_info.h alike. A phony target is never satisfied by a
+# file of that name, so the force semantics hold whatever is on disk.
+.PHONY: .FORCE
 .FORCE:
 
 $(BUILD_INFO_H): .FORCE
@@ -227,6 +241,42 @@ $(EXCEPT_TELEMETRY_STAMP): .FORCE
 	@if ! cmp -s $@.tmp $@ 2>/dev/null; then \
 		mv $@.tmp $@; \
 		echo "[GEN] $@ (EXCEPT_TELEMETRY=$(EXCEPT_TELEMETRY))"; \
+	else \
+		rm -f $@.tmp; \
+	fi
+
+# The ABI drift gate, INSIDE the dependency graph. `check-abi` below gated
+# `all:` only, so a raw `make kernel`/`userland`/`system-disk` reached the
+# compiler against a stale abi/generated/abi_contract.h -- and because both
+# sides then recompile carrying the same stale fingerprint, the crt0
+# SYS_ABI_HANDSHAKE still AGREES while ring-3 calls the wrong handler. Being a
+# sibling prerequisite of `all:` was never even ordered: under -j, check-abi's
+# recipe could run concurrently with the compilation it was meant to precede.
+#
+# .FORCE-driven rather than derived from a written-out prerequisite list. The
+# generator reads six kernel headers, the contract, both facades and itself, and
+# queries the flag vector back out of this Makefile (print-abi-config,
+# print-abi-cppflags, print-user-cflags) -- then preprocesses those headers with
+# clang, so its true read-set includes transitive includes no prerequisite list
+# can enumerate. A list that goes stale is fail-OPEN, which is the failure this
+# section exists to remove, so the check always runs instead. It costs 0.835s,
+# which the canonical `make all` path already paid through check-abi.
+#
+# The CONTENT is the contract digest, not a bare touch: the mtime then moves
+# only when the ABI actually changes, so an always-running check never churns a
+# rebuild and the stamp is safe to take as a REAL prerequisite where that is
+# wanted (the grouped userland recipe).
+$(ABI_STAMP): .FORCE
+	@mkdir -p $(dir $@)
+	@python3 scripts/gen-user-abi.py --check
+	@{ sha256sum $(ABI_CONTRACT_H) 2>/dev/null || shasum -a 256 $(ABI_CONTRACT_H); } \
+		| awk '{print $$1}' > $@.tmp
+	@test -s $@.tmp || { rm -f $@.tmp; \
+		echo "[ABI] cannot digest $(ABI_CONTRACT_H) -- no sha256sum or shasum" >&2; \
+		exit 1; }
+	@if ! cmp -s $@.tmp $@ 2>/dev/null; then \
+		mv $@.tmp $@; \
+		echo "[ABI] $@ ($(ABI_CONTRACT_H) validated, digest changed)"; \
 	else \
 		rm -f $@.tmp; \
 	fi
@@ -297,7 +347,11 @@ GENERATED_HDRS := include/build_info.h include/kernel/os_logo.h src/kernel/bsod_
 .PHONY: all _increment_build boot boot-icon boot-font kernel host-tools sysroot userland uefi-boot sign-efi system-disk test-disks run run-test run-debug run-log run-usb-ci run-nvme run-nvme-ci clean assets validate-assets sysroot-dirs sysroot-fonts sysroot-wallpapers sysroot-cursors sysroot-icons test-mm test-fs test-ob test-security test-ipc test-sched test-boot test-abi test-storage test-exec test-nls test-knf test-except test-quota test-x86 test-desktop test-ex test-visual test-wcag update-ui-refs boot-info-abi test-boot-info-abi test-tooling test-ai-system todo-graph todo-graph-ready todo-graph-blocked todo-graph-render-mermaid todo-graph-mcp lsp-mcp lsp-mcp-selftest
 
 ## all: Build everything (kernel + userland + system disk + boot_info ABI manifest)
-all: _increment_build check-abi assets kernel userland uefi-boot boot-info-abi post16-manifest system-disk
+# check-abi is deliberately NOT listed here: $(ABI_STAMP) now gates every object
+# and the grouped userland recipe, so `all` reaches the drift check through the
+# graph -- ORDERED ahead of compilation, which a sibling prerequisite never was
+# under -j. Keeping both would run the 0.835s check twice per build.
+all: _increment_build assets kernel userland uefi-boot boot-info-abi post16-manifest system-disk
 	@echo "[VERSION] Impossible OS v$(VERSION_RAW).$(BUILD_NUMBER) ($(GIT_BRANCH)@$(GIT_HASH), $(BUILD_TIME))"
 
 ## assets: Unified asset pipeline — validate + generate headers + populate sysroot
@@ -887,6 +941,7 @@ $(SYSROOT)/hello.exe $(SYSROOT)/cmd.exe $(SYSROOT)/sysinfo.exe $(SYSROOT)/test_h
                                                                               user/include/syscall.h \
                                                                               user/include/abi_numbers.h \
                                                                               $(ABI_CONTRACT_H) \
+                                                                              $(ABI_STAMP) \
                                                                               user/include/teb.h \
                                                                               user/include/kusd.h \
                                                                               user/include/win32.h \
@@ -1179,6 +1234,12 @@ test: all
 ## SYS_*/SSDT_*/STATUS_* renumber forgot to regenerate the contract -- silent
 ## drift was TODO-04 -17's original root cause. Safe to run standalone or chain
 ## in front of `make test`.
+##
+## This target is the EXPLICIT, always-runs entry point. The gate every artifact
+## target passes through is $(ABI_STAMP) (defined above), which runs the same
+## check from inside the dependency graph; `all:` no longer lists this target
+## because the stamp already covers it, ordered.
+.PHONY: check-abi
 check-abi:
 	@python3 scripts/gen-user-abi.py --check
 
@@ -1761,6 +1822,28 @@ $(BUILD_DIR)/kernel/lz4.o: $(SRC_DIR)/kernel/lz4.c $(KERNEL_TESTS_STAMP) | $(GEN
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -isystem include/freestanding -I$(INCLUDE) -I$(KERNEL_DIR) -I$(GENERATED) -I$(SRC_DIR) -c $< -o $@
 	@echo "[CC] $< (LZ4 wrapper)"
+
+# Every object that can carry ABI state waits on the ABI validation stamp, so a
+# stale generated contract fails the build BEFORE any compiler runs -- on `make
+# kernel`, `make userland` and `make system-disk` as much as on `all`.
+#
+# Declared ONCE over the object LISTS rather than per recipe: fourteen explicit
+# object rules (gfx_simd, gfx_simd_avx512, memops{,_avx512,_sse}, stb_truetype,
+# gfx_text, image, image_save, icon_store, cJSON, json, lz4_full, kernel/lz4)
+# bypass the generic pattern rule below, so enumerating recipes would have left
+# every one of them ungated -- and would go stale again the next time a file
+# needs its own flags. A target-specific prerequisite adds the edge without
+# touching any recipe, so a new explicit rule for a file already in these lists
+# inherits it for free.
+#
+# ORDER-ONLY (`|`): the stamp must RUN ahead of compilation, but its mtime must
+# never force a rebuild. Objects that actually consume ABI values reach
+# abi/generated/abi_contract.h through include/kernel/abi_hash.h, which -MMD
+# already tracks, so a real prerequisite here would add churn and no safety.
+# Verified: make updates an order-only prerequisite even when the dependent
+# target is up to date, including under -j, and a failing stamp recipe aborts
+# make with the dependent recipe never invoked.
+$(C_OBJS) $(LZ4_FULL_OBJ) $(ASM_OBJS) $(AP_TRAMPOLINE_OBJ): | $(ABI_STAMP)
 
 # Compile C source files (64-bit)
 $(BUILD_DIR)/%.o: $(SRC_DIR)/%.c $(KERNEL_TESTS_STAMP) $(EXCEPT_TELEMETRY_STAMP) | $(GENERATED_HDRS)

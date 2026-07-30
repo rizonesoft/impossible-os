@@ -76,6 +76,7 @@ title: "TODO-01 -- Developer Tooling Stack"
 | 💎   |  10   | Smoke-test POST16 assertions (boot-phase manifest)    | §3             |  [x]   |
 | ⭐   |  11   | Bare section-ref sweep (lint Check 5 zero-allowlist)  | §9             |  [x]   |
 | 💎   |  12   | Enforce required-tool version floors in `--verify`    | §1, §2         |  [x]   |
+| 💎   |  13   | Duplicate-recipe sweep in the root Makefile          | §3             |  [ ]   |
 
 > 💎 = parity work: Windows and Linux projects both rely on stable setup/build/test/CI contracts.
 > ⭐ = exclusive work: Impossible OS can provide a single operator-facing developer workflow with self-diagnosis instead of scattered scripts and tribal knowledge.
@@ -425,6 +426,22 @@ Rewrite the ~187 source / test / header / script files on the `scripts/lint.sh` 
 > - **Scope boundary:** owns host-tool floor enforcement only; SDK cross-compile toolchain is `D14 T01`, release signing/SBOM/reproducible builds are `D15 T01 §5/§6/§8`.
 > **Verified:** 2026-06-16 | commit `7942170c` | 7/7 items | build OK | lint 0, test-tooling 393/393, --verify exit 0
 > **Quality reviewed:** 2026-06-16 | Codex 6x (design, adversarial, consistency, perf) | 2H+5M fixed, 0 open | scope: N/A (host bash + CI + docs; re-adversarial skipped -- doc/config fixes, no code logic)
+
+---
+
+## 13. Duplicate-Recipe Sweep in the Root Makefile
+
+`make` warns on EVERY invocation that it is overriding recipes it already had: `run-test` is defined twice (`Makefile:1161` and `Makefile:1526`) and so is `run-debug` (`Makefile:1155` and `Makefile:1571`). GNU make keeps the LAST recipe and discards the earlier one silently, so in both cases a documented target does something other than what its first definition and `##` help comment describe (`run-test` gains a `test-disks` prerequisite; `run-debug`'s first recipe is dead code). Two costs: the documented behavior of two developer entry points is wrong, and four warning lines on every build train readers to ignore make's warnings, which is where a REAL override would hide. Filed 2026-07-30 from TODO-04 §32, which surfaced the warnings while wiring the ABI stamp; that section deliberately did not fix them because they are unrelated to ABI validation and belong to this TODO's wrapper-contract scope.
+
+- [ ] Reconcile each duplicate pair into ONE recipe whose behavior matches its `##` help text, deleting the dead definition
+      Decide per target which recipe is intended (`run-test` almost certainly wants `test-disks`; confirm `run-debug`'s two bodies actually differ before deleting either) and reconcile the `##` help comment to what survives. -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §32 (item: "Wired it over the object LISTS rather than per recipe, order-only for objects and a real prerequisite for the grouped userland recipe" at line 1080)
+- [ ] Add a `scripts/lint.sh` check that fails on any duplicate non-pattern target definition in the root Makefile
+      A one-time cleanup regresses the moment someone appends another target; the gate is what keeps a zero-warning `make` true. Prefer parsing `make --print-data-base` warnings or a direct scan for repeated `^<name>:` at column 0, excluding pattern and target-specific-prerequisite lines.
+- [ ] Assert a warning-free `make` in `scripts/test-tooling.sh`
+      Pin that a no-op `make --dry-run all` emits no `warning: overriding recipe` / `warning: ignoring old recipe` line, so the sweep cannot silently re-open.
+- [ ] Commit: `"make: reconcile duplicate run-test/run-debug recipes and gate the class"`
+
+**Test checkpoint:** `make --dry-run all` emits zero `overriding recipe` / `ignoring old recipe` warnings; `make run-test` and `make run-debug` each behave as their `##` help text describes; adding a deliberate duplicate target fails `scripts/lint.sh`. Test on: build host only.
 
 ---
 
