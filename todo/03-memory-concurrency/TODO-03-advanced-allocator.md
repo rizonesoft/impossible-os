@@ -149,7 +149,12 @@ Allocate virtually contiguous memory from scattered physical frames. For large k
 - [ ] `vfree(ptr)` -- unmap all pages, free each PMM frame, remove from interval list
 - [ ] NX bit on all vmalloc data pages
 - [ ] Route exec image STAGING off the kmalloc heap once vmalloc exists, and retire the interim
-      `EXEC_KMALLOC_STAGE_MAX` cap. Filed 2026-07-28 from TODO-21 §19's review. Three stagers read a whole executable into a `kmalloc` buffer -- `SYS_EXEC` (`src/kernel/sched/syscall.c`), `shell_loader_func`, and `exec_loader_func` -- against a fixed 512-page / 2 MiB heap (`heap.c` `HEAP_INITIAL_PAGES`). An unprivileged exec of a 1-2 MiB file therefore holds most of the global heap for the whole read-and-load and can starve concurrent kernel allocations, so those stagers are capped at `EXEC_KMALLOC_STAGE_MAX` (512 KiB, `include/kernel/exec.h`, derived as about a third of the boot-baseline free heap) purely to protect the arena. That cap is BELOW the format bound `EXEC_MAX_IMAGE_SIZE` (16 MiB), so a raw image between the two is loadable only via a path that stages with `pmm_alloc_contiguous`. Switch the three stagers to `vmalloc`, raise them to the format bound, and add a heap-pressure / concurrent-exec regression. -> XREF: `02-kernel-core/TODO-21-process-model-extensions.md` §19 (item: "Caller staging-buffer release no longer races publication")
+      `EXEC_KMALLOC_STAGE_MAX` cap. Filed 2026-07-28 from TODO-21 §19's review.
+      - **Three stagers read a whole executable into a `kmalloc` buffer** -- `SYS_EXEC` (`src/kernel/sched/syscall.c`), `shell_loader_func`, and `exec_loader_func` -- against a fixed 512-page / 2 MiB heap (`heap.c` `HEAP_INITIAL_PAGES`).
+      - **An unprivileged exec of a 1-2 MiB file therefore holds most of the global heap** for the whole read-and-load and can starve concurrent kernel allocations, so those stagers are capped at `EXEC_KMALLOC_STAGE_MAX` (512 KiB, `include/kernel/exec.h`, derived as about a third of the boot-baseline free heap) purely to protect the arena.
+      - **That cap is BELOW the format bound `EXEC_MAX_IMAGE_SIZE`** (16 MiB), so a raw image between the two is loadable only via a path that stages with `pmm_alloc_contiguous`.
+      - **Shape**: switch the three stagers to `vmalloc`, raise them to the format bound, and add a heap-pressure / concurrent-exec regression.
+      -> XREF: `02-kernel-core/TODO-21-process-model-extensions.md` §19 (item: "Caller staging-buffer release no longer races publication")
 - [ ] Commit: `"mm: vmalloc -- virtual contiguous allocator, scattered PMM frames"`
 
 **Test checkpoint:** `vmalloc(8 MiB)` succeeds; write pattern; read back; `vfree` -> PMM frames returned.
