@@ -12,4 +12,25 @@ Findings from the 3-day unattended canary armed 2026-07-28. This file is a CAPTU
 
 ---
 
-_No findings yet._
+## 1. Item-count splitting is necessary but not sufficient: the review loop is the real length driver
+
+- [ ] Rotate the worker context mid-section on a context threshold, not only at section boundaries
+      The adversarial review loop is the natural rotation point, and the split predictor cannot see it.
+  - **Observed live.** Segment `run-20260730-151719` ran 15:17:19 -> 19:05:27 (3h48m), 335 turns, **$179.27**, end-of-segment context **492,513 tokens**, accumulation ~1,123 tok/turn never trimmed.
+  - **It shipped exactly ONE section** -- TODO-04 §34, via `4c3201c2` (18:23), `228b8264` (19:01), `c131e286` (19:01), `019abb90` (19:02). The per-section report attributes 330 of the 335 turns to a single segment (`sec 0`, 99,509,865 cache-read tokens).
+  - **Mechanism, confirmed.** §34 had ALREADY been split by the recalibrated predictor: `d0126430` (14:40) split it into §34/§38 on the `open_items >= 5` gate at [`section-manifest.py:207`](../../scripts/overnight/section-manifest.py). The remainder still cost 330 turns.
+  - **The driver was the review loop, not item count** -- the run's own closing line reports 23 findings fixed, 1 accepted with an XREF, no deferrals. Item count is a pre-implementation feature; finding count is only knowable after the review runs, so no item-count threshold at any value can predict this section.
+  - **Third instance, not the first.** The calibration comment at [`section-manifest.py:204-206`](../../scripts/overnight/section-manifest.py) already recorded two sections of 352 and 379 turns carrying only 3-4 items, concluding verbatim that catching those "needs a different mechanism, not a lower number here." §34 is the third data point and the first measured end-to-end with a dollar figure.
+  - **Cost.** `cost-summary.py` projects the same work split across 2 segments at ~69% of this cache-read cost ($105.69 vs $152.96) and across 3 at ~59% ($89.94): a **31-41% saving on the dominant bucket**, ~$47-63 on this segment alone. Cache-read was 85.3% of segment spend. Far above the >= 2% bar.
+  - **Proposed shape.** Checkpoint and rotate when end-of-segment context crosses a threshold (~300K on this evidence), taking the rotation at a review-round boundary rather than mid-edit. A review round is the cheapest rotation point because its true input is the finding list plus the diff, not the accumulated conversation -- the state that must survive is already written down. Rotating at section boundaries only, as today, cannot help a single section that runs 330 turns.
+
+## 2. Zero agent dispatches and a 68% re-read rate across a 330-turn segment (OFFLOAD-MISS)
+
+- [ ] Size and close the offload miss: the router did not fire once in 330 turns, and two thirds of file reads were repeats
+  - **Observed live.** Same segment: `agent dispatches: 0`; `re-reads: 24/35 (68%) over 11 distinct files`; `agent cache: 0 hits / 0 stores (n/a)`; `sec 0` flagged **OFFLOAD-MISS**. The interactive-offload doctrine routes any task costing 3+ search/read rounds or ~50 KB to an analyst; 11 distinct files re-read 24 times is that shape, and nothing was dispatched.
+  - **Not yet sized.** Unlike item 1 the saving is not measured: the re-read counter records repeat reads but not their token cost, so the share of the 99.5M cache-read tokens attributable to re-reads is unknown. Attribute bytes per re-read first, then compare against the >= 2% bar. Filed as a measurement task, not a fix.
+  - **Do not assume the router is broken.** `build_offload_reminder.py` was fixed 2026-07-28 (the `\b` matched the dot in `build.sh`; `_is_headless_run()` added so `_in_sections()` requires run identity). A miss after that fix may be correct: a 330-turn review loop re-reading the same 11 files it is actively editing is not obviously offloadable. Establish which before changing anything.
+
+> **Not filed (below the 2% bar):** `review convergence: 1/2 rounds suppressed` -- the suppressor did fire, saving one round of two. Working as intended; no action.
+
+> **Incident, 2026-07-30 20:16 (attended, my fault -- recorded so the lesson survives).** Filing finding 1 while the run held the tree, I used `git commit -- <path>` believing the pathspec would leave the index alone. It did not: commit `7bef7604` swept the run's six staged §35 files. The run's next Edit was blocked 1s later by `section_review_required.py` (HEAD carried an `[x]` flip with no `Verified:` stamp) and it lost ~90s. Repaired with `git reset --soft HEAD~1` plus a restore of the three hook-touched files, leaving its staged set byte-identical; it resumed at 20:18:07 and shipped §35 normally. Rule: do not commit into the tree while a run holds it -- `todo/` being outside `BUILD_INPUT_PATHS` makes receipts safe, which is not the same as the shared index being safe.
