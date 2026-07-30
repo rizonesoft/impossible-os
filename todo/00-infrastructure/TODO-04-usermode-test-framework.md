@@ -1112,84 +1112,6 @@ The machine artifacts are now assembled, validated, and honest about whether the
 
 ---
 
-## 32. ABI Validation on Every Artifact Target, Not Just `all`
-
-`check-abi` WAS a prerequisite of `all:` only, so `kernel:`, `userland:` and `system-disk:` reached the compiler without it and `make system-disk` could build a BOOTABLE image against a stale contract: the kernel recompiles with a renumbered `SYS_*` while ring-3 recompiles against the un-regenerated contract, both carry the same stale fingerprint, and `SYS_ABI_HANDSHAKE` therefore SUCCEEDS while ring-3 calls the wrong handler. The canonical path was protected -- `scripts/build.sh` runs `--check` before compiling and CLAUDE.md forbids raw `make` -- so this was a policy-mitigated hole, not an open one, which is why it is its own section rather than a §28 fix: closing it changes the rebuild graph of three top-level targets and needs its own regression. Found by the §28 post-commit adversarial review; the exposure predated §28 (the two-header design had it identically). SHIPPED: `$(ABI_STAMP)` puts the check INSIDE the dependency graph, ahead of every object and the grouped userland recipe -- and the design review established that the old `all:` edge was never even ordered, since under `-j` a sibling prerequisite's recipe may run concurrently with the compilation it was meant to precede.
-
-- [x] Added the non-phony `$(ABI_STAMP)` (`build/.abi-check.stamp`), whose recipe RUNS `--check` and whose CONTENT is the contract digest
-      REJECTED deriving it from a written-out prerequisite list, which is what the plan first called for.
-      - **The generator's read-set cannot be enumerated**: it reads six kernel headers (`syscall.h`, `service_numbers.h`, `ntstatus.h`, `task.h` plus `ob/teb.h` + `nt/kusd.h`, the last two feeding the FNV hash and both missing from this section's original "four kernel source headers" wording), the contract, both facades and itself, AND queries the flag vector back out of this Makefile through `print-abi-config` / `print-abi-cppflags` / `print-user-cflags` -- then preprocesses those headers with clang across a 12-cell flavor matrix, so its true read-set includes transitive includes no prerequisite list can enumerate.
-      - **A list that goes stale is fail-OPEN**, which is the failure class this section exists to remove, so the check always runs instead (`.FORCE`, the house pattern of `$(KERNEL_TESTS_STAMP)` / `$(EXCEPT_TELEMETRY_STAMP)`). Cost is 0.835s, which the canonical `make all` path already paid through `check-abi`.
-      - **Writing the contract's sha256 rather than a bare `touch`** keeps the mtime stable across runs, so an always-running check never churns a rebuild; a missing `sha256sum`/`shasum` fails the recipe instead of publishing an empty stamp.
-      Post-ship review moved this recipe out of the Makefile into `scripts/abi-stamp-check.sh` and added a cheap cache key (every `*.h`/`*.inc` under the include roots, the resolved compiler's file digest AND a behavioral fingerprint under the real flag vectors, both flag vectors, the generator, the Makefile, and the check script itself) so `--check` runs only when that key moves: measured ~129ms vs ~835ms on a cache hit.
-      - **EIGHT re-adversarial rounds against this fix** (round 8 the circuit-breaker cap the `review-todo-section` skill's own convergence doctrine sets for a re-adversarial loop -- NOT this repo's `review_round_guard.py` ceiling, which is a separate 30-round stall mechanism) found and closed, in order:
-        - unlocked shared temp files letting a concurrent process publish another's unvalidated key
-        - the key being blind to `ABI_CLANG` overrides
-        - header concatenation ambiguous across a sorted-adjacent boundary
-        - a wrapper-identity check that stopped at file bytes instead of a behavioral fingerprint
-        - a root-completeness test and a dependency-closure test each hardcoded instead of reading the Makefile
-        - a concurrency test that passed with the lock removed
-        - a cleanup-trap ordering leak
-        - a behavior probe using host-default macros instead of the real target
-        - a lock test inferring "blocked" from elapsed time instead of a positive marker
-        - a `*.inc`-blind glob
-        - a systemic `set -e` pattern where standalone `VAR=$(cmd)` assignments silently aborted before their own diagnostic could run (found empirically, five call sites)
-        - `xargs` running on zero matched files and producing a bogus non-empty digest
-        - a hardcoded exclusion value
-        - a symlinked contract/facade bypassing `gen-user-abi.py`'s own refusal by leaving the key unchanged
-        - a symlinked directory being invisible to `find` without `-L`
-        - a directory symlink NAMED `*.h` bypassing the directory-symlink refusal by name instead of dereferenced-type classification
-      - **The mandatory consistency + perf dispatch after round 8 found four more:**
-        - `sha256sum -L` is not a valid GNU coreutils option, so the leaf-symlink content digest ALWAYS fell through to an unverified `shasum` fallback (fixed: plain `sha256sum`, which already dereferences)
-        - the shared-library `stat` probe spawned one process per library instead of one batched call
-        - the dependency-closure test spawned a `dirname` subprocess per reported dependency instead of parameter expansion
-        - the lock-path refusal is a check-then-open, not atomic
-      - **The lock-path residual is accepted, not fixed**: `scripts/abi-stamp-check.sh` refuses a symlinked or non-regular lock path already sitting there before ever opening it (the verified, realistic case); a concurrent replacement racing the exact open is an accepted residual (bash has no O_NOFOLLOW open), same threat-model boundary as the shared-library-swap residual below.
-      - Full incident history and rationale for each: the file's own header comment.
-- [x] Wired it over the object LISTS rather than per recipe, order-only for objects and a real prerequisite for the grouped userland recipe
-      One declaration -- `$(C_OBJS) $(LZ4_OBJ) $(LZ4_FULL_OBJ) $(ASM_OBJS) $(AP_TRAMPOLINE_OBJ): | $(ABI_STAMP)` -- because the design review found that FOURTEEN explicit object rules (`gfx_simd`, `gfx_simd_avx512`, `memops{,_avx512,_sse}`, `stb_truetype_impl`, `gfx_text`, `image`, `image_save`, `icon_store`, `cJSON`, `json`, `lz4_full`, `kernel/lz4`) bypass the generic `%.c` rule, so wiring the pattern rule plus the one lz4 override would have left every one of them ungated and gone stale again at the next per-file flag exception.
-      - **A target-specific prerequisite adds the edge without touching a recipe**, so a new explicit rule for a file already in those lists inherits it.
-      - **`$(LZ4_OBJ)`** (the merged `build/libs/lz4/lz4.o`, distinct from `$(LZ4_FULL_OBJ)`) was added to the declaration and its own sample after the re-adversarial round found the production edge had four independent terms but only two were asserted.
-      - **Order-only for objects**: the stamp must RUN ahead of compilation but must never force a rebuild, and objects that consume ABI values already reach the contract through `abi_hash.h` under `-MMD`.
-      - **`check-abi` was REMOVED from `all:` and declared `.PHONY`**: the stamp covers `all` from inside the graph and is ORDERED, which a sibling prerequisite never was under `-j`.
-- [x] Regression fixture: `scripts/test-tooling.sh` proves the wiring structurally and the refusal behaviorally -- 23 sub-tests
-      Structural half reads make's OWN expanded rule database (captured ONCE via `make -qp`, not `--print-data-base -n`, which still executes recursive sub-makes and let an earlier fixture read the `src/boot/uefi` sub-make's `all:` line instead of the root's) and asserts the order-only edge on an explicit-rule object, a pattern-rule one, `lz4.o` and `lz4_full.o`, the real edge on the grouped userland recipe, that `all:` no longer carries `check-abi`, and both `.PHONY` declarations.
-      - **Behavioral half renumbers one `SYS_*` in a DISPOSABLE `git worktree`** (0.395s, 77 MB) and asserts `make kernel`, `make userland` and `make system-disk` each fail naming the stamp, with no kernel object and no artifact produced.
-      - **Trap-restoring a tracked ABI header was REJECTED**: this suite already abandoned that pattern because no trap survives `SIGKILL` and an interrupted run really did corrupt the checkout. The worktree also makes the oracle EXACT -- it starts with no `build/`, so "no artifact" is ABSENCE, which a deterministic compiler rewriting byte-identical output could not satisfy.
-      - **Direct-invocation additions** (bypassing `make`, isolating `scripts/abi-stamp-check.sh`'s own logic):
-        - -I/-isystem root coverage read from the Makefile's actual `ABI_INCLUDE_ROOTS`
-        - a 12-flavor `clang -M` dependency-closure proof that the generator's six headers never resolve under `build/` or the Makefile's actual `ABI_KEY_EXCLUDE` value
-        - an externally-held-`flock` test proving genuine blocking via a positive marker (mutation-tested: bypassing `flock` makes the test fail, as required)
-        - an `ABI_CLANG` wrapper-identity test
-        - an empty-root-set refusal
-        - a same-content symlink conversion still moving the key
-        - a symlinked directory being refused
-        - a `*.h`-named directory symlink being refused (not routed to leaf hashing)
-        - a symlinked/non-regular lock path being refused before any open
-      -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §28 (item: "Chose the commit-point mechanism and recorded the rejected alternative" at line 1048)
-- [x] Closed the `.FORCE` fail-open the adversarial review found, and filed the duplicate-recipe warnings it sat behind
-      `.FORCE` was never declared `.PHONY`, so it was an ordinary target name: an old repo-root FILE called `.FORCE` satisfies it and every `.FORCE`-driven recipe silently stops running.
-      - **Reproduced in a worktree** -- an old `.FORCE` plus a drifted contract ran the ABI check ZERO times and let clang proceed -- which disarmed this section's gate, both flavor stamps and `build_info.h` at once. `.PHONY: .FORCE` closes all four.
-      - **The `-o`/`--old-file` bypass reported alongside it was REJECTED as out of model**: `-o`, `-t` and `-B` exist specifically to override the dependency graph, so no in-graph gate can survive them and the canonical path stays `scripts/build.sh`.
-      - **Separately**, `make` warns on every invocation that it is overriding duplicate `run-test`/`run-debug` recipes -- pre-existing, unrelated to ABI, and filed rather than fixed here.
-      -> XREF: `00-infrastructure/TODO-01-developer-tooling-stack.md` §13 (item: "Reconcile each duplicate pair into ONE recipe whose behavior matches its `##` help text, deleting the dead definition")
-- [x] Commit: `"abi: gate every artifact target on ABI validation, not just all"`
-
-**Test checkpoint:** with a kernel-side `SYS_*` renumber left un-regenerated, `make kernel`, `make userland` and `make system-disk` each exit non-zero naming the ABI stamp, and no kernel object, `kernel.exe`, sysroot `.exe` or disk image is produced; regenerating the contract clears the gate. Scoped deliberately to ABI-DEPENDENT artifacts: `$(UEFI_EFI)` and `$(SIGN_STAMP)` are unordered siblings of `$(KERNEL_BIN)` under `$(SYSTEM_DISK)` and `src/boot/` consumes no ABI state, so gating them would be scope without safety. An unchanged tree rebuilds nothing extra (the stamp's digest content keeps its mtime still, and the cheap key skips re-running `--check` at all). Test on: build host only.
-
-> **Test runner:** `bash scripts/test-tooling.sh` | 783/783 PASS (760 -> 783 across this section's re-adversarial rounds), covering the object-edge/grouped-userland/`.PHONY` wiring read out of make's expanded rule database, the disposable-worktree behavioral refusal driving all three artifact targets against a real un-regenerated `SYS_*` renumber, and direct invocations of `scripts/abi-stamp-check.sh` for the cache key, locking, and symlink/lock-path hardening (full list in the item above); the structural assertions were mutation-tested (removing the central edge line flips them to FAIL, as does bypassing `flock` in the lock test) and discriminate against targets that must NOT carry the edge (`build/tools/jpg2raw`, `build/tools/BOOTX64.EFI`).
-
-> **Notes:**
-> - What shipped: `$(ABI_STAMP)`, a non-phony stamp whose recipe (`scripts/abi-stamp-check.sh`) caches `--check` behind a cheap key, wired over the object lists and userland.
-> - How it runs: one order-only edge over `$(C_OBJS) $(LZ4_OBJ) $(LZ4_FULL_OBJ) $(ASM_OBJS) $(AP_TRAMPOLINE_OBJ)` plus a real edge on grouped userland; `check-abi` left `all:`.
-> - Downstream effects: artifact targets fail at the gate before compiling; a full build pays 0.835s once (only on a key miss), not the ~4.2s five `make` processes paid before caching.
-> - Canonical doc: `scripts/abi-stamp-check.sh`'s own header comment (full 8-round incident history); `docs/infrastructure/development-tooling.md` for the prose summary.
-> - Scope boundary: ABI-dependent artifact targets only; `-o`/`-t`/`-B` bypass by design; D00 T01 §13. Accepted residuals (see file header): shared-lib swap, lock-path race, dependency-list not manifest-derived.
-> **Verified:** 2026-07-30 | commit `c6af970e` | 4/4 items | build OK | 783/783 tooling | lint 0 errors | todo-graph 8/8
-> **Quality reviewed:** 2026-07-30 | Codex 10x (adversarial, consistency, perf, re-adversarial x8) | 10H+14M+1L fixed, 3 residuals accepted as documented (shared-lib swap, lock-path race, dependency-list not manifest-derived), 0 open | scope: N/A (pure build-tooling, no domain code-quality skill applies)
-
----
-
 ## 29. Serial-Transport Volume: Derived Burst Ceiling and Incremental Parse
 
 Everything the launcher tells the host crosses one serial line, and nothing in the framework bounds how much of it a single run may produce or what the host pays to read it back. Two costs sit together here: `UTEST_SKIP_RECORD_BUDGET` (1024) was sized while klog's per-subsystem rate limiter was the real ceiling, and §24 moved artifact records to `klog_unrated` so the budget is now the ONLY bound on a burst; and `scripts/utest-frame.py` re-parses the capture from byte zero once per completion poll, materializes the selected run twice more for XML assembly, and holds the whole log in a shell variable beside it. Each is affordable on today's suite -- one skip block, 0.11s per parse pass -- so this is headroom analysis rather than a live failure; it is worth closing now because §33's per-binary output capture is the change that makes both of them live.
@@ -1319,62 +1241,81 @@ Binary names are bounded only by `VFS_MAX_NAME` (256) while every launcher recor
 
 ---
 
-## 35. Immutable Enumeration Plan for the Two-Walk Launcher
+## 32. ABI Validation on Every Artifact Target, Not Just `all`
 
-`test_usermode_run` walks `C:\` twice: once to plan (`total_planned`, the TAP plan line, the task budget) and once to execute, with live children running in between. Any binary that appears, disappears or is renamed across that window makes the two walks disagree. §31 made the disagreement DIAGNOSABLE -- `[UTEST-RUN-INCOMPLETE]` fires and the host fails the run -- but the launcher still cannot say WHICH planned binary went missing, and a run that a directory change perturbs fails wholesale rather than reporting the one entry it lost.
+`check-abi` WAS a prerequisite of `all:` only, so `kernel:`, `userland:` and `system-disk:` reached the compiler without it and `make system-disk` could build a BOOTABLE image against a stale contract: the kernel recompiles with a renumbered `SYS_*` while ring-3 recompiles against the un-regenerated contract, both carry the same stale fingerprint, and `SYS_ABI_HANDSHAKE` therefore SUCCEEDS while ring-3 calls the wrong handler. The canonical path was protected -- `scripts/build.sh` runs `--check` before compiling and CLAUDE.md forbids raw `make` -- so this was a policy-mitigated hole, not an open one, which is why it is its own section rather than a §28 fix: closing it changes the rebuild graph of three top-level targets and needs its own regression. Found by the §28 post-commit adversarial review; the exposure predated §28 (the two-header design had it identically). SHIPPED: `$(ABI_STAMP)` puts the check INSIDE the dependency graph, ahead of every object and the grouped userland recipe -- and the design review established that the old `all:` edge was never even ordered, since under `-j` a sibling prerequisite's recipe may run concurrently with the compilation it was meant to precede.
 
-> [!NOTE]
-> Filed 2026-07-30 from §31's design review, which rated the two-walk window [high] against §31's "count every refusal" promise. §31 took the reviewer's stated minimum (reconcile and fail closed for completed runs, not only aborted ones); the immutable plan is the reviewer's preferred remedy and is a different blast radius -- it changes enumeration for every binary, not just refused ones, and needs storage for the glob-discovered names the manifest arena does not hold today.
+- [x] Added the non-phony `$(ABI_STAMP)` (`build/.abi-check.stamp`), whose recipe RUNS `--check` and whose CONTENT is the contract digest
+      REJECTED deriving it from a written-out prerequisite list, which is what the plan first called for.
+      - **The generator's read-set cannot be enumerated**: it reads six kernel headers (`syscall.h`, `service_numbers.h`, `ntstatus.h`, `task.h` plus `ob/teb.h` + `nt/kusd.h`, the last two feeding the FNV hash and both missing from this section's original "four kernel source headers" wording), the contract, both facades and itself, AND queries the flag vector back out of this Makefile through `print-abi-config` / `print-abi-cppflags` / `print-user-cflags` -- then preprocesses those headers with clang across a 12-cell flavor matrix, so its true read-set includes transitive includes no prerequisite list can enumerate.
+      - **A list that goes stale is fail-OPEN**, which is the failure class this section exists to remove, so the check always runs instead (`.FORCE`, the house pattern of `$(KERNEL_TESTS_STAMP)` / `$(EXCEPT_TELEMETRY_STAMP)`). Cost is 0.835s, which the canonical `make all` path already paid through `check-abi`.
+      - **Writing the contract's sha256 rather than a bare `touch`** keeps the mtime stable across runs, so an always-running check never churns a rebuild; a missing `sha256sum`/`shasum` fails the recipe instead of publishing an empty stamp.
+      Post-ship review moved this recipe out of the Makefile into `scripts/abi-stamp-check.sh` and added a cheap cache key (every `*.h`/`*.inc` under the include roots, the resolved compiler's file digest AND a behavioral fingerprint under the real flag vectors, both flag vectors, the generator, the Makefile, and the check script itself) so `--check` runs only when that key moves: measured ~129ms vs ~835ms on a cache hit.
+      - **EIGHT re-adversarial rounds against this fix** (round 8 the circuit-breaker cap the `review-todo-section` skill's own convergence doctrine sets for a re-adversarial loop -- NOT this repo's `review_round_guard.py` ceiling, which is a separate 30-round stall mechanism) found and closed, in order:
+        - unlocked shared temp files letting a concurrent process publish another's unvalidated key
+        - the key being blind to `ABI_CLANG` overrides
+        - header concatenation ambiguous across a sorted-adjacent boundary
+        - a wrapper-identity check that stopped at file bytes instead of a behavioral fingerprint
+        - a root-completeness test and a dependency-closure test each hardcoded instead of reading the Makefile
+        - a concurrency test that passed with the lock removed
+        - a cleanup-trap ordering leak
+        - a behavior probe using host-default macros instead of the real target
+        - a lock test inferring "blocked" from elapsed time instead of a positive marker
+        - a `*.inc`-blind glob
+        - a systemic `set -e` pattern where standalone `VAR=$(cmd)` assignments silently aborted before their own diagnostic could run (found empirically, five call sites)
+        - `xargs` running on zero matched files and producing a bogus non-empty digest
+        - a hardcoded exclusion value
+        - a symlinked contract/facade bypassing `gen-user-abi.py`'s own refusal by leaving the key unchanged
+        - a symlinked directory being invisible to `find` without `-L`
+        - a directory symlink NAMED `*.h` bypassing the directory-symlink refusal by name instead of dereferenced-type classification
+      - **The mandatory consistency + perf dispatch after round 8 found four more:**
+        - `sha256sum -L` is not a valid GNU coreutils option, so the leaf-symlink content digest ALWAYS fell through to an unverified `shasum` fallback (fixed: plain `sha256sum`, which already dereferences)
+        - the shared-library `stat` probe spawned one process per library instead of one batched call
+        - the dependency-closure test spawned a `dirname` subprocess per reported dependency instead of parameter expansion
+        - the lock-path refusal is a check-then-open, not atomic
+      - **The lock-path residual is accepted, not fixed**: `scripts/abi-stamp-check.sh` refuses a symlinked or non-regular lock path already sitting there before ever opening it (the verified, realistic case); a concurrent replacement racing the exact open is an accepted residual (bash has no O_NOFOLLOW open), same threat-model boundary as the shared-library-swap residual below.
+      - Full incident history and rationale for each: the file's own header comment.
+- [x] Wired it over the object LISTS rather than per recipe, order-only for objects and a real prerequisite for the grouped userland recipe
+      One declaration -- `$(C_OBJS) $(LZ4_OBJ) $(LZ4_FULL_OBJ) $(ASM_OBJS) $(AP_TRAMPOLINE_OBJ): | $(ABI_STAMP)` -- because the design review found that FOURTEEN explicit object rules (`gfx_simd`, `gfx_simd_avx512`, `memops{,_avx512,_sse}`, `stb_truetype_impl`, `gfx_text`, `image`, `image_save`, `icon_store`, `cJSON`, `json`, `lz4_full`, `kernel/lz4`) bypass the generic `%.c` rule, so wiring the pattern rule plus the one lz4 override would have left every one of them ungated and gone stale again at the next per-file flag exception.
+      - **A target-specific prerequisite adds the edge without touching a recipe**, so a new explicit rule for a file already in those lists inherits it.
+      - **`$(LZ4_OBJ)`** (the merged `build/libs/lz4/lz4.o`, distinct from `$(LZ4_FULL_OBJ)`) was added to the declaration and its own sample after the re-adversarial round found the production edge had four independent terms but only two were asserted.
+      - **Order-only for objects**: the stamp must RUN ahead of compilation but must never force a rebuild, and objects that consume ABI values already reach the contract through `abi_hash.h` under `-MMD`.
+      - **`check-abi` was REMOVED from `all:` and declared `.PHONY`**: the stamp covers `all` from inside the graph and is ORDERED, which a sibling prerequisite never was under `-j`.
+- [x] Regression fixture: `scripts/test-tooling.sh` proves the wiring structurally and the refusal behaviorally -- 23 sub-tests
+      Structural half reads make's OWN expanded rule database (captured ONCE via `make -qp`, not `--print-data-base -n`, which still executes recursive sub-makes and let an earlier fixture read the `src/boot/uefi` sub-make's `all:` line instead of the root's) and asserts the order-only edge on an explicit-rule object, a pattern-rule one, `lz4.o` and `lz4_full.o`, the real edge on the grouped userland recipe, that `all:` no longer carries `check-abi`, and both `.PHONY` declarations.
+      - **Behavioral half renumbers one `SYS_*` in a DISPOSABLE `git worktree`** (0.395s, 77 MB) and asserts `make kernel`, `make userland` and `make system-disk` each fail naming the stamp, with no kernel object and no artifact produced.
+      - **Trap-restoring a tracked ABI header was REJECTED**: this suite already abandoned that pattern because no trap survives `SIGKILL` and an interrupted run really did corrupt the checkout. The worktree also makes the oracle EXACT -- it starts with no `build/`, so "no artifact" is ABSENCE, which a deterministic compiler rewriting byte-identical output could not satisfy.
+      - **Direct-invocation additions** (bypassing `make`, isolating `scripts/abi-stamp-check.sh`'s own logic):
+        - -I/-isystem root coverage read from the Makefile's actual `ABI_INCLUDE_ROOTS`
+        - a 12-flavor `clang -M` dependency-closure proof that the generator's six headers never resolve under `build/` or the Makefile's actual `ABI_KEY_EXCLUDE` value
+        - an externally-held-`flock` test proving genuine blocking via a positive marker (mutation-tested: bypassing `flock` makes the test fail, as required)
+        - an `ABI_CLANG` wrapper-identity test
+        - an empty-root-set refusal
+        - a same-content symlink conversion still moving the key
+        - a symlinked directory being refused
+        - a `*.h`-named directory symlink being refused (not routed to leaf hashing)
+        - a symlinked/non-regular lock path being refused before any open
+      -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §28 (item: "Chose the commit-point mechanism and recorded the rejected alternative" at line 1048)
+- [x] Closed the `.FORCE` fail-open the adversarial review found, and filed the duplicate-recipe warnings it sat behind
+      `.FORCE` was never declared `.PHONY`, so it was an ordinary target name: an old repo-root FILE called `.FORCE` satisfies it and every `.FORCE`-driven recipe silently stops running.
+      - **Reproduced in a worktree** -- an old `.FORCE` plus a drifted contract ran the ABI check ZERO times and let clang proceed -- which disarmed this section's gate, both flavor stamps and `build_info.h` at once. `.PHONY: .FORCE` closes all four.
+      - **The `-o`/`--old-file` bypass reported alongside it was REJECTED as out of model**: `-o`, `-t` and `-B` exist specifically to override the dependency graph, so no in-graph gate can survive them and the canonical path stays `scripts/build.sh`.
+      - **Separately**, `make` warns on every invocation that it is overriding duplicate `run-test`/`run-debug` recipes -- pre-existing, unrelated to ABI, and filed rather than fixed here.
+      -> XREF: `00-infrastructure/TODO-01-developer-tooling-stack.md` §13 (item: "Reconcile each duplicate pair into ONE recipe whose behavior matches its `##` help text, deleting the dead definition")
+- [x] Commit: `"abi: gate every artifact target on ABI validation, not just all"`
 
-- [x] Snapshot the enumeration once: `struct plan_entry` carries name, kind, refusal verdict/reason, digest, type and task
-      cost, in a PMM-backed `struct plan_state` (`UTEST_PLAN_MAX` 256 entries plus a fixed-stride name arena, `UTEST_PLAN_PAGES`) rather than a second stack array. Name lifetimes are split deliberately: manifest names stay pointers into the manifest arena (stable, and a refused name may exceed the plan's stride precisely because over-length is a refusal reason), glob names are interned because dirent storage is reused by the next `readdir`. `_Static_assert(UTEST_MAX_BINARY_NAME + 1 <= UTEST_PLAN_NAME_SLOT)` ties the stride to the derived record bound so interning cannot truncate an accepted identity -> XREF: 00-infrastructure/TODO-04-usermode-test-framework.md §31 (item: "Made the completeness reconciliation run for COMPLETED runs" at line 1176)
-- [x] Execute the snapshot rather than re-walking: both execution phases iterate the plan and `readdir` is gone from the
-      execution path entirely, so `total_ran` counts entries consumed from the SAME array `total_planned` measured. A binary removed between planning and execution is now published BY NAME as a counted `planned binary absent` failure (`u_binary_present` checks before launch) instead of vanishing from a second directory walk as an anonymous shortfall
-- [x] Bound the snapshot explicitly and fail closed: `u_plan_alloc`/`u_plan_intern` set `overflowed` at capacity, and an
-      overflowing plan publishes one `plan full` aggregate and runs NOTHING (`u_plan_drop_runs`) -- the same contract the refusal-identity overflow already took, because past the cap the plan is not the complete enumeration and cannot certify what it did not see. Plan-block allocation failure is a separate `plan alloc failed` aggregate published from static storage, so it cannot fall through to the zero-planned empty-suite success path
-- [x] Stop losing ACCEPTED manifest entries: `UTEST_MANIFEST_MAX` is DELETED and the parser appends runnables straight into
-      the plan, so the plan is the only capacity that bounds enumeration. The "tail runs via glob" fallback is gone with the cap that produced it (it could not reconstruct `type`, `expects_tasks` or ordering, and could not see a binary absent from the image at all); glob discovery now runs only when no usable manifest exists -> XREF: 00-infrastructure/TODO-04-usermode-test-framework.md §31 (item: "Separated \"not a test file\" from \"test-shaped but refused\"" at line 1172)
-- [x] Kept `[UTEST-RUN-INCOMPLETE]` as the host-side gate, unchanged, for entries that produced no result at all (the tail a
-      smoke abort never reaches). A binary deleted between planning and execution is NAMED in both artifacts as a counted failure rather than left as an unrun slot: both formats reconcile record count against `summary.total` (`scripts/utest-json-harvest.py` checks `len(testcases) == summary.total`), so a reserved slot with no record makes the artifact unparseable instead of merely incomplete
-- [x] Reconciled `utest_filter=` case semantics with the filesystem's: `test_usermode_glob_match` now folds ASCII case for
-      both literal and wildcard forms via a shared `u_fold`, matching `ixfs_strcmp`. That unblocks folding the accepted-entry dedup, which §31 had to keep bytewise only because a folded dedup beside a literal filter could suppress a requested binary entirely. Filesystem identity does not settle manifest POLICY, so the dedup folds only metadata-identical entries; two case variants disagreeing on `type=`/`expects_tasks=` publish one `manifest duplicate conflict` failure and run under neither -> XREF: 00-infrastructure/TODO-04-usermode-test-framework.md §31 (item: "Identified the refused binary without echoing untrusted bytes" at line 1174)
-- [x] Commit: `"test: execute the usermode launcher from one immutable enumeration plan"`
+**Test checkpoint:** with a kernel-side `SYS_*` renumber left un-regenerated, `make kernel`, `make userland` and `make system-disk` each exit non-zero naming the ABI stamp, and no kernel object, `kernel.exe`, sysroot `.exe` or disk image is produced; regenerating the contract clears the gate. Scoped deliberately to ABI-DEPENDENT artifacts: `$(UEFI_EFI)` and `$(SIGN_STAMP)` are unordered siblings of `$(KERNEL_BIN)` under `$(SYSTEM_DISK)` and `src/boot/` consumes no ABI state, so gating them would be scope without safety. An unchanged tree rebuilds nothing extra (the stamp's digest content keeps its mtime still, and the cheap key skips re-running `--check` at all). Test on: build host only.
 
-**Test checkpoint:** a planned `test_*.exe` removed after the planning walk is NAMED in `build/test-results.xml` and `build/test-results.json` as a counted `planned binary absent` failure and the host fails the run; an unchanged directory produces the same artifacts as the pre-snapshot launcher. Shipped deviation from the drafted wording: `not_run` reconciles to 0 rather than 1 for that case, because the absent entry publishes a RECORD, and both artifact formats reconcile record count against `summary.total` (`utest-json-harvest.py` refuses `len(testcases) != summary.total`) -- a slot counted as unrun with no record would make the artifact unparseable rather than merely incomplete. `not_run` and `[UTEST-RUN-INCOMPLETE]` keep their §31 meaning: entries that produced no result at all. Test on: QEMU TCG, QEMU KVM.
-
-> **Test runner:** `bash scripts/test.sh SUITE=exec` | 17 new suites in `test_usermode_launcher.c` (`TEST_CAT_EXEC`): filter case-fold (literal + wildcard, non-matches still missing), identical-duplicate fold, conflicting-policy refusal on both `type=` and `expects_tasks=`, plan-overflow-runs-nothing, unbuildable-path rejection, manifest parse past the old 128-entry cap with metadata intact, terminal refusal, lossy-prefix non-suppression, refused-attribute veto, fully-filtered-manifest-stays-authoritative, plan-alloc-failure as a distinct state (via `pmm_alloc_fail_next`), name-arena rollback + interleaved compaction, over-length refusals not deduplicated, and five smoke-gate provenance suites (attribute-refused smoke aborts; a name-refused line never claims smoke policy; provenance survives a third declaration suppressed by an existing refusal; a deduplicated refusal keeps the provenance it absorbed; a filtered-out smoke refusal does not abort). All passing. **Note:** the fast-fail on an ABSENT planned binary is not unit-testable -- it lives inside `test_usermode_run`'s execution loop, which the test policy hard-bans from `test_*.c` (it takes over the scheduler and spawns user tasks); the derived smoke gate that feeds it IS covered above, and the execution path itself by the live `test=1` boot run.
+> **Test runner:** `bash scripts/test-tooling.sh` | 783/783 PASS (760 -> 783 across this section's re-adversarial rounds), covering the object-edge/grouped-userland/`.PHONY` wiring read out of make's expanded rule database, the disposable-worktree behavioral refusal driving all three artifact targets against a real un-regenerated `SYS_*` renumber, and direct invocations of `scripts/abi-stamp-check.sh` for the cache key, locking, and symlink/lock-path hardening (full list in the item above); the structural assertions were mutation-tested (removing the central edge line flips them to FAIL, as does bypassing `flock` in the lock test) and discriminate against targets that must NOT carry the edge (`build/tools/jpg2raw`, `build/tools/BOOTX64.EFI`).
 
 > **Notes:**
-> - Shipped: enumeration happens ONCE into a PMM-backed `struct plan_state`; both execution phases iterate that plan and `readdir` is gone from the execution path, so `total_planned` and `total_ran` measure the same list by construction.
-> - Integrates through `u_plan_init`/`_add_run`/`_add_refusal`/`_drop_runs`/`_free` in `test_usermode.c`; the manifest parser appends runnables directly, which is what let `UTEST_MANIFEST_MAX` and its "tail runs via glob" fallback be deleted outright.
-> - Downstream: `utest_filter=` is now case-insensitive (user-visible, and only ever runs MORE of what was asked for); the accepted-entry dedup folds with it, refusing metadata-conflicting duplicates instead of guessing a policy.
-> - Fail-closed set: plan-alloc failure, plan overflow, manifest refusal-identity overflow and an UNREADABLE manifest each publish an aggregate and execute NOTHING (an unparsed manifest may have declared `type=smoke`, and rebuilding from filenames would silently downgrade it); glob-refusal overflow publishes its aggregate and keeps running, because a dropped dirent refusal cannot be a duplicate of an accepted entry the way a forgotten manifest identity can. All fail the run.
-> - Smoke gate is DERIVED, not flagged: each refusal record carries one `smoke_selected` bit (trusted `type=smoke` AND filter-selected, decided together so no merge can pair one line's type with another's selection), every collapse point OR-merges it, and one post-planning scan sets the abort. Replaced three per-site flag setters that review found four distinct routes past.
-> - Canonical docs [`test_usermode.c`](../../src/kernel/test/test_usermode.c) (plan structs + name-lifetime rules at the `struct plan_entry` comment); scope boundary: the plan pins a NAME, not executable content, so a delete-then-recreate under the same name still runs the replacement -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §39.
-
-> **Verified:** 2026-07-30 | commit `ad83b4b0` + review fixes | 7/7 items | build OK | 27546 kernel + 17 user-mode tests pass | smoke matrix 4/4 (KVM+TCG x 1+2 CPU) | lint 0 errors
-> **Accepted:** [H] the plan pins a NAME, not executable content -- a child that deletes a planned binary and recreates the name runs the replacement under the planned identity, with every count reconciling (reason: needs content-identity digests, whose cost is a full extra read of every planned binary on the no-manifest path taken every boot, or VFS open-file pinning semantics IXFS does not define; a different mechanism and blast radius from enumeration) -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §39 (item: "Decide between content-digest identity and VFS file-object pinning" at line 1259)
-> **Accepted:** [L] no mechanical net binds the `UTEST_RSN_*` literal set to the `UTEST_REASON_REFUSAL` size tree, so a future reason omitted from the tree would silently understate `UTEST_REASON_MAX` and narrow the derived name bound (reason: pre-existing shape, and this section's four new reasons were verified present in the tree; the fix is a lint check, not a kernel change) -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §37 (item: "Bind the `UTEST_RSN_*` literal set to the `UTEST_REASON_REFUSAL` size tree mechanically" at line 1333)
-> **Quality reviewed:** 2026-07-30 | Codex 14x (design, adversarial, test-coverage, consistency, perf, re-adversarial x9) + kernel-quality-auditor | 1C+10H+11M+3L fixed, 2 open (2 accepted) | scope: kernel-code-quality
-
----
-
-## 39. Executable Identity for a Planned Entry
-
-The enumeration plan §35 shipped freezes WHICH names a run will execute, and that closes the two-walk window: a binary that disappears is named rather than silently subtracted. It does not freeze WHAT will execute under a planned name. `u_run_one` reconstructs `C:\<name>` and the loader reopens that path (`src/kernel/test/test_usermode.c`), so a child that deletes a planned binary and creates a different file under the same case-folded name before the entry's turn gets its replacement launched, reported and attributed to the original entry -- with every count reconciling and the run green.
-
-> [!NOTE]
-> Filed 2026-07-30 from §35's design review, which rated this [high] against §35's own "immutable plan" claim. It is deliberately NOT §35's scope: closing it needs a mechanism §35 does not have, and both candidates carry costs that belong in their own section. Content identity means digesting every planned binary during the planning walk -- a full extra read of every test binary on the no-manifest path, which is the path every boot takes -- and comparing it against the bytes the loader actually reads before `task_exec`. File-object pinning means holding an open handle across execution, which needs IXFS unlink-vs-open semantics the VFS does not define today, plus a bound on simultaneously-open handles.
-
-- [ ] Decide between content-digest identity and VFS file-object pinning, measuring the planning-walk read cost of the
-      digest option against the live no-manifest path before committing to it
-- [ ] Verify the chosen identity immediately before `task_exec`, and publish a mismatch as a counted, NAMED infrastructure
-      failure using the existing refusal record shape rather than a bare diagnostic -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §35 (item: "Execute the snapshot rather than re-walking" at line 1226)
-- [ ] Add a regression proving a binary replaced between planning and execution is reported as a mismatch rather than run
-      and attributed to the planned entry
-- [ ] Commit: `"test: pin executable identity, not just the name, for a planned entry"`
-
-**Test checkpoint:** with a fixture that replaces a planned `test_*.exe` with different contents after the planning walk, the run publishes a named identity-mismatch failure, does not execute the replacement, and the host fails the run; an unchanged directory produces the same artifacts as before the change. Test on: QEMU TCG, QEMU KVM.
+> - What shipped: `$(ABI_STAMP)`, a non-phony stamp whose recipe (`scripts/abi-stamp-check.sh`) caches `--check` behind a cheap key, wired over the object lists and userland.
+> - How it runs: one order-only edge over `$(C_OBJS) $(LZ4_OBJ) $(LZ4_FULL_OBJ) $(ASM_OBJS) $(AP_TRAMPOLINE_OBJ)` plus a real edge on grouped userland; `check-abi` left `all:`.
+> - Downstream effects: artifact targets fail at the gate before compiling; a full build pays 0.835s once (only on a key miss), not the ~4.2s five `make` processes paid before caching.
+> - Canonical doc: `scripts/abi-stamp-check.sh`'s own header comment (full 8-round incident history); `docs/infrastructure/development-tooling.md` for the prose summary.
+> - Scope boundary: ABI-dependent artifact targets only; `-o`/`-t`/`-B` bypass by design; D00 T01 §13. Accepted residuals (see file header): shared-lib swap, lock-path race, dependency-list not manifest-derived.
+> **Verified:** 2026-07-30 | commit `c6af970e` | 4/4 items | build OK | 783/783 tooling | lint 0 errors | todo-graph 8/8
+> **Quality reviewed:** 2026-07-30 | Codex 10x (adversarial, consistency, perf, re-adversarial x8) | 10H+14M+1L fixed, 3 residuals accepted as documented (shared-lib swap, lock-path race, dependency-list not manifest-derived), 0 open | scope: N/A (pure build-tooling, no domain code-quality skill applies)
 
 ---
 
@@ -1420,44 +1361,6 @@ The artifacts carry only `reason` (`src/kernel/test/test_usermode.c:2587`, a 96-
 > **Accepted:** [M] A force-killed task still mid-syscall on another CPU could emit a framed capture record after `[UTEST-FRAME-END]`, breaking the host's count reconciliation (reason: same root cause as the `task_current()` gap above -- proper per-CPU state is what would let the kill path definitively know a task has stopped running everywhere) -> XREF: `03-memory-concurrency/TODO-07-smp-phase2.md` §3 (item: "Per-CPU current-thread cursor" at line 120)
 > **Deferred:** [H] `seq` is unique and monotonic but does not guarantee physical serial-wire order matches seq order across a multi-threaded binary's concurrent writers (reason: klog itself releases its ring lock before the serial write for ANY caller, a systemic property this section inherits rather than introduces; closing it needs either klog-wide ordering work or a §36 reassembler that sorts by seq) -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §36 (item: "Reassemble a binary's captured payload by sorting..." )
 > **Quality reviewed:** 2026-07-30 | Codex 4x (adversarial, consistency, perf, re-adversarial) + kernel-quality-auditor + concurrency-evidence-mapper | 1H+4M+1L fixed, 3 open (2 accepted, 1 deferred) | scope: kernel-code-quality
-
----
-
-## 36. Per-Binary Output Artifacts and Fail-Closed Byte Reconciliation
-
-`build/test-results.xml` and its JSON counterpart carry no captured stdout at all today, only the launcher's own `reason` string -- and once §33 ships source-level framing, the host has a byte-exact per-binary payload with nowhere in either artifact to put it.
-
-> [!NOTE]
-> Split out of §33 (2026-07-30) by the sequencer's SPLIT-RECOMMENDED complexity gate. This section owns the host-side consumption of §33's record format: routing the captured payload into both artifacts and reconciling the byte count the record declares against the byte count the host actually captured. It ships strictly after §33 -- there is no record format to consume until the framing lands -- and shares no file with §37's refusal-tooling work.
-
-- [ ] Emit the captured text into both artifacts -- JUnit `<system-out>` and the JSON record -- bounded and escaped per artifact, with an explicit truncation field rather than a silent cut
-      Route the launcher's own kernel-observed diagnostics for that binary (`reason`, plus the leak / isolation / timeout notices at `:2650`, `:2817`, `:2897`) to `<system-err>`, which gives the element real meaning on a system whose only descriptor is `STDOUT_FD`.
-- [ ] Reconcile captured-versus-declared bytes FAIL-CLOSED, now that both sides count exactly the same bytes
-      With source framing the host's captured payload and the kernel's declared length cover the identical byte range, so a mismatch is corruption rather than ordinary interleaving: fail the run and publish a refusal artifact, matching the stance the XML and JSON assemblers already take on an unparseable summary.
-- [ ] Reassemble a binary's captured payload by sorting `[UTEST-CAPTURE]` records on their `seq` field, never on physical position in the serial/klog stream
-      `seq` (an `atomic_fetch_add` on the owner task's slot, §33) is unique and monotonic but does NOT additionally guarantee physical wire order matches seq order for a multi-threaded binary's concurrent writers -- klog itself releases its ring lock before the serial write, so two concurrent callers' physical writes can land in either order under preemption (a systemic klog property, not unique to capture). A reassembler that concatenates records in the order they were READ off serial, rather than sorted by `seq`, can silently interleave a multi-threaded binary's chunks out of order. -> XREF: `03-memory-concurrency/TODO-07-smp-phase2.md` §3 (item: "Per-CPU current-thread cursor" at line 120)
-- [ ] Commit: `"test: emit captured output to JUnit/JSON artifacts and reconcile bytes fail-closed"`
-
-**Test checkpoint:** a failing binary's stdout reaches `build/test-results.xml` as `<system-out>` and its JSON counterpart with the launcher's diagnostics in `<system-err>`, bounded and escaped so a binary emitting a megabyte of noise or a forged record boundary can neither break the frame nor exceed the run's record budget; a captured-versus-declared byte mismatch fails the run and publishes a refusal artifact. Test on: QEMU TCG, QEMU KVM.
-
----
-
-## 37. Refusal-Name Correlator and JUnit Error/Failure Classification
-
-`refused_<n>_<prefix>_<8hex>.exe` never echoes the raw name that triggered a refusal, so an operator staring at an artifact has an FNV-1a digest and no way to map it back to a candidate source file; and §31 shipped refusals as JUnit `<failure>` rather than `<error>` (the element convention for "never ran") purely to avoid extending the `errors=` accounting, a divergence that was accepted but never revisited.
-
-> [!NOTE]
-> Split out of §33 (2026-07-30) by the sequencer's SPLIT-RECOMMENDED complexity gate. Both items here depend only on §31's already-shipped refusal-identity and record-kind decisions, not on §33's kernel framing work, and share no file with either -- a standalone host-tool-plus-doc-decision section rather than a kernel change.
-
-- [ ] Give an operator a path from a refusal identity back to the offending file. `refused_<n>_<prefix>_<8hex>.exe`
-      never echoes the raw name, and a charset refusal has the very byte that caused it replaced by `_` in the prefix, so the FNV-1a digest is the only correlator -- and nothing computes it from a candidate filename. Ship a small host tool (or a documented one-liner) that hashes a candidate name to the same digest, and say in the doc which inputs to try -> XREF: 00-infrastructure/TODO-04-usermode-test-framework.md §31 (item: "Identified the refused binary without echoing untrusted bytes" at line 1174)
-- [ ] Decide, and record, whether a refusal belongs in JUnit `<error>` rather than `<failure>`. A refused binary never
-      ran, which is what `<error>` means by convention, and this pipeline already uses it for the structurally identical suite-abort (`scripts/test.sh:1832`); §31 reused `<failure>` so the host needed no new record kind. Either route refusals through `<error>` and extend the `errors=` accounting and the doc's element schema, or document the divergence where the schema defines `errors=` -> XREF: 00-infrastructure/TODO-04-usermode-test-framework.md §31 (item: "Separated \"not a test file\" from \"test-shaped but refused\"" at line 1172)
-- [ ] Bind the `UTEST_RSN_*` literal set to the `UTEST_REASON_REFUSAL` size tree mechanically. Every reason string must appear
-      as a leaf of that `UTEST_MAX2` tree, because `UTEST_REASON_MAX` is what every record's fixed shape subtracts from `UTEST_RECORD_LINE_MAX` to derive `UTEST_MAX_BINARY_NAME`. Today a new literal that is added but omitted from the tree understates the maximum and the record formatters silently reach their truncation fallback; nothing fails the build and only a comment guards it. A `scripts/lint.sh` check that greps `#define UTEST_RSN_` and requires each name to appear in the tree is the smallest net that actually holds -> XREF: 00-infrastructure/TODO-04-usermode-test-framework.md §35 (item: "Reconciled `utest_filter=` case semantics" at line 1234)
-- [ ] Commit: `"test: ship a refusal-name correlator and finalize JUnit error/failure classification"`
-
-**Test checkpoint:** the correlator tool, given a candidate filename, reproduces the same FNV-1a digest the kernel embeds in a `refused_<n>_<prefix>_<8hex>.exe` identity for that name; refusals route to the decided JUnit element (`<error>` or documented `<failure>`) consistently across the XML and JSON assemblers. Test on: host tool only (no QEMU dependency).
 
 ---
 
@@ -1519,6 +1422,84 @@ The artifacts carry only `reason` (`src/kernel/test/test_usermode.c:2587`, a 96-
 
 ---
 
+## 35. Immutable Enumeration Plan for the Two-Walk Launcher
+
+`test_usermode_run` walks `C:\` twice: once to plan (`total_planned`, the TAP plan line, the task budget) and once to execute, with live children running in between. Any binary that appears, disappears or is renamed across that window makes the two walks disagree. §31 made the disagreement DIAGNOSABLE -- `[UTEST-RUN-INCOMPLETE]` fires and the host fails the run -- but the launcher still cannot say WHICH planned binary went missing, and a run that a directory change perturbs fails wholesale rather than reporting the one entry it lost.
+
+> [!NOTE]
+> Filed 2026-07-30 from §31's design review, which rated the two-walk window [high] against §31's "count every refusal" promise. §31 took the reviewer's stated minimum (reconcile and fail closed for completed runs, not only aborted ones); the immutable plan is the reviewer's preferred remedy and is a different blast radius -- it changes enumeration for every binary, not just refused ones, and needs storage for the glob-discovered names the manifest arena does not hold today.
+
+- [x] Snapshot the enumeration once: `struct plan_entry` carries name, kind, refusal verdict/reason, digest, type and task
+      cost, in a PMM-backed `struct plan_state` (`UTEST_PLAN_MAX` 256 entries plus a fixed-stride name arena, `UTEST_PLAN_PAGES`) rather than a second stack array. Name lifetimes are split deliberately: manifest names stay pointers into the manifest arena (stable, and a refused name may exceed the plan's stride precisely because over-length is a refusal reason), glob names are interned because dirent storage is reused by the next `readdir`. `_Static_assert(UTEST_MAX_BINARY_NAME + 1 <= UTEST_PLAN_NAME_SLOT)` ties the stride to the derived record bound so interning cannot truncate an accepted identity -> XREF: 00-infrastructure/TODO-04-usermode-test-framework.md §31 (item: "Made the completeness reconciliation run for COMPLETED runs" at line 1176)
+- [x] Execute the snapshot rather than re-walking: both execution phases iterate the plan and `readdir` is gone from the
+      execution path entirely, so `total_ran` counts entries consumed from the SAME array `total_planned` measured. A binary removed between planning and execution is now published BY NAME as a counted `planned binary absent` failure (`u_binary_present` checks before launch) instead of vanishing from a second directory walk as an anonymous shortfall
+- [x] Bound the snapshot explicitly and fail closed: `u_plan_alloc`/`u_plan_intern` set `overflowed` at capacity, and an
+      overflowing plan publishes one `plan full` aggregate and runs NOTHING (`u_plan_drop_runs`) -- the same contract the refusal-identity overflow already took, because past the cap the plan is not the complete enumeration and cannot certify what it did not see. Plan-block allocation failure is a separate `plan alloc failed` aggregate published from static storage, so it cannot fall through to the zero-planned empty-suite success path
+- [x] Stop losing ACCEPTED manifest entries: `UTEST_MANIFEST_MAX` is DELETED and the parser appends runnables straight into
+      the plan, so the plan is the only capacity that bounds enumeration. The "tail runs via glob" fallback is gone with the cap that produced it (it could not reconstruct `type`, `expects_tasks` or ordering, and could not see a binary absent from the image at all); glob discovery now runs only when no usable manifest exists -> XREF: 00-infrastructure/TODO-04-usermode-test-framework.md §31 (item: "Separated \"not a test file\" from \"test-shaped but refused\"" at line 1172)
+- [x] Kept `[UTEST-RUN-INCOMPLETE]` as the host-side gate, unchanged, for entries that produced no result at all (the tail a
+      smoke abort never reaches). A binary deleted between planning and execution is NAMED in both artifacts as a counted failure rather than left as an unrun slot: both formats reconcile record count against `summary.total` (`scripts/utest-json-harvest.py` checks `len(testcases) == summary.total`), so a reserved slot with no record makes the artifact unparseable instead of merely incomplete
+- [x] Reconciled `utest_filter=` case semantics with the filesystem's: `test_usermode_glob_match` now folds ASCII case for
+      both literal and wildcard forms via a shared `u_fold`, matching `ixfs_strcmp`. That unblocks folding the accepted-entry dedup, which §31 had to keep bytewise only because a folded dedup beside a literal filter could suppress a requested binary entirely. Filesystem identity does not settle manifest POLICY, so the dedup folds only metadata-identical entries; two case variants disagreeing on `type=`/`expects_tasks=` publish one `manifest duplicate conflict` failure and run under neither -> XREF: 00-infrastructure/TODO-04-usermode-test-framework.md §31 (item: "Identified the refused binary without echoing untrusted bytes" at line 1174)
+- [x] Commit: `"test: execute the usermode launcher from one immutable enumeration plan"`
+
+**Test checkpoint:** a planned `test_*.exe` removed after the planning walk is NAMED in `build/test-results.xml` and `build/test-results.json` as a counted `planned binary absent` failure and the host fails the run; an unchanged directory produces the same artifacts as the pre-snapshot launcher. Shipped deviation from the drafted wording: `not_run` reconciles to 0 rather than 1 for that case, because the absent entry publishes a RECORD, and both artifact formats reconcile record count against `summary.total` (`utest-json-harvest.py` refuses `len(testcases) != summary.total`) -- a slot counted as unrun with no record would make the artifact unparseable rather than merely incomplete. `not_run` and `[UTEST-RUN-INCOMPLETE]` keep their §31 meaning: entries that produced no result at all. Test on: QEMU TCG, QEMU KVM.
+
+> **Test runner:** `bash scripts/test.sh SUITE=exec` | 17 new suites in `test_usermode_launcher.c` (`TEST_CAT_EXEC`): filter case-fold (literal + wildcard, non-matches still missing), identical-duplicate fold, conflicting-policy refusal on both `type=` and `expects_tasks=`, plan-overflow-runs-nothing, unbuildable-path rejection, manifest parse past the old 128-entry cap with metadata intact, terminal refusal, lossy-prefix non-suppression, refused-attribute veto, fully-filtered-manifest-stays-authoritative, plan-alloc-failure as a distinct state (via `pmm_alloc_fail_next`), name-arena rollback + interleaved compaction, over-length refusals not deduplicated, and five smoke-gate provenance suites (attribute-refused smoke aborts; a name-refused line never claims smoke policy; provenance survives a third declaration suppressed by an existing refusal; a deduplicated refusal keeps the provenance it absorbed; a filtered-out smoke refusal does not abort). All passing. **Note:** the fast-fail on an ABSENT planned binary is not unit-testable -- it lives inside `test_usermode_run`'s execution loop, which the test policy hard-bans from `test_*.c` (it takes over the scheduler and spawns user tasks); the derived smoke gate that feeds it IS covered above, and the execution path itself by the live `test=1` boot run.
+
+> **Notes:**
+> - Shipped: enumeration happens ONCE into a PMM-backed `struct plan_state`; both execution phases iterate that plan and `readdir` is gone from the execution path, so `total_planned` and `total_ran` measure the same list by construction.
+> - Integrates through `u_plan_init`/`_add_run`/`_add_refusal`/`_drop_runs`/`_free` in `test_usermode.c`; the manifest parser appends runnables directly, which is what let `UTEST_MANIFEST_MAX` and its "tail runs via glob" fallback be deleted outright.
+> - Downstream: `utest_filter=` is now case-insensitive (user-visible, and only ever runs MORE of what was asked for); the accepted-entry dedup folds with it, refusing metadata-conflicting duplicates instead of guessing a policy.
+> - Fail-closed set: plan-alloc failure, plan overflow, manifest refusal-identity overflow and an UNREADABLE manifest each publish an aggregate and execute NOTHING (an unparsed manifest may have declared `type=smoke`, and rebuilding from filenames would silently downgrade it); glob-refusal overflow publishes its aggregate and keeps running, because a dropped dirent refusal cannot be a duplicate of an accepted entry the way a forgotten manifest identity can. All fail the run.
+> - Smoke gate is DERIVED, not flagged: each refusal record carries one `smoke_selected` bit (trusted `type=smoke` AND filter-selected, decided together so no merge can pair one line's type with another's selection), every collapse point OR-merges it, and one post-planning scan sets the abort. Replaced three per-site flag setters that review found four distinct routes past.
+> - Canonical docs [`test_usermode.c`](../../src/kernel/test/test_usermode.c) (plan structs + name-lifetime rules at the `struct plan_entry` comment); scope boundary: the plan pins a NAME, not executable content, so a delete-then-recreate under the same name still runs the replacement -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §39.
+
+> **Verified:** 2026-07-30 | commit `ad83b4b0` + review fixes | 7/7 items | build OK | 27546 kernel + 17 user-mode tests pass | smoke matrix 4/4 (KVM+TCG x 1+2 CPU) | lint 0 errors
+> **Accepted:** [H] the plan pins a NAME, not executable content -- a child that deletes a planned binary and recreates the name runs the replacement under the planned identity, with every count reconciling (reason: needs content-identity digests, whose cost is a full extra read of every planned binary on the no-manifest path taken every boot, or VFS open-file pinning semantics IXFS does not define; a different mechanism and blast radius from enumeration) -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §39 (item: "Decide between content-digest identity and VFS file-object pinning" at line 1259)
+> **Accepted:** [L] no mechanical net binds the `UTEST_RSN_*` literal set to the `UTEST_REASON_REFUSAL` size tree, so a future reason omitted from the tree would silently understate `UTEST_REASON_MAX` and narrow the derived name bound (reason: pre-existing shape, and this section's four new reasons were verified present in the tree; the fix is a lint check, not a kernel change) -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §37 (item: "Bind the `UTEST_RSN_*` literal set to the `UTEST_REASON_REFUSAL` size tree mechanically" at line 1333)
+> **Quality reviewed:** 2026-07-30 | Codex 14x (design, adversarial, test-coverage, consistency, perf, re-adversarial x9) + kernel-quality-auditor | 1C+10H+11M+3L fixed, 2 open (2 accepted) | scope: kernel-code-quality
+
+---
+
+## 36. Per-Binary Output Artifacts and Fail-Closed Byte Reconciliation
+
+`build/test-results.xml` and its JSON counterpart carry no captured stdout at all today, only the launcher's own `reason` string -- and once §33 ships source-level framing, the host has a byte-exact per-binary payload with nowhere in either artifact to put it.
+
+> [!NOTE]
+> Split out of §33 (2026-07-30) by the sequencer's SPLIT-RECOMMENDED complexity gate. This section owns the host-side consumption of §33's record format: routing the captured payload into both artifacts and reconciling the byte count the record declares against the byte count the host actually captured. It ships strictly after §33 -- there is no record format to consume until the framing lands -- and shares no file with §37's refusal-tooling work.
+
+- [ ] Emit the captured text into both artifacts -- JUnit `<system-out>` and the JSON record -- bounded and escaped per artifact, with an explicit truncation field rather than a silent cut
+      Route the launcher's own kernel-observed diagnostics for that binary (`reason`, plus the leak / isolation / timeout notices at `:2650`, `:2817`, `:2897`) to `<system-err>`, which gives the element real meaning on a system whose only descriptor is `STDOUT_FD`.
+- [ ] Reconcile captured-versus-declared bytes FAIL-CLOSED, now that both sides count exactly the same bytes
+      With source framing the host's captured payload and the kernel's declared length cover the identical byte range, so a mismatch is corruption rather than ordinary interleaving: fail the run and publish a refusal artifact, matching the stance the XML and JSON assemblers already take on an unparseable summary.
+- [ ] Reassemble a binary's captured payload by sorting `[UTEST-CAPTURE]` records on their `seq` field, never on physical position in the serial/klog stream
+      `seq` (an `atomic_fetch_add` on the owner task's slot, §33) is unique and monotonic but does NOT additionally guarantee physical wire order matches seq order for a multi-threaded binary's concurrent writers -- klog itself releases its ring lock before the serial write, so two concurrent callers' physical writes can land in either order under preemption (a systemic klog property, not unique to capture). A reassembler that concatenates records in the order they were READ off serial, rather than sorted by `seq`, can silently interleave a multi-threaded binary's chunks out of order. -> XREF: `03-memory-concurrency/TODO-07-smp-phase2.md` §3 (item: "Per-CPU current-thread cursor" at line 120)
+- [ ] Commit: `"test: emit captured output to JUnit/JSON artifacts and reconcile bytes fail-closed"`
+
+**Test checkpoint:** a failing binary's stdout reaches `build/test-results.xml` as `<system-out>` and its JSON counterpart with the launcher's diagnostics in `<system-err>`, bounded and escaped so a binary emitting a megabyte of noise or a forged record boundary can neither break the frame nor exceed the run's record budget; a captured-versus-declared byte mismatch fails the run and publishes a refusal artifact. Test on: QEMU TCG, QEMU KVM.
+
+---
+
+## 37. Refusal-Name Correlator and JUnit Error/Failure Classification
+
+`refused_<n>_<prefix>_<8hex>.exe` never echoes the raw name that triggered a refusal, so an operator staring at an artifact has an FNV-1a digest and no way to map it back to a candidate source file; and §31 shipped refusals as JUnit `<failure>` rather than `<error>` (the element convention for "never ran") purely to avoid extending the `errors=` accounting, a divergence that was accepted but never revisited.
+
+> [!NOTE]
+> Split out of §33 (2026-07-30) by the sequencer's SPLIT-RECOMMENDED complexity gate. Both items here depend only on §31's already-shipped refusal-identity and record-kind decisions, not on §33's kernel framing work, and share no file with either -- a standalone host-tool-plus-doc-decision section rather than a kernel change.
+
+- [ ] Give an operator a path from a refusal identity back to the offending file. `refused_<n>_<prefix>_<8hex>.exe`
+      never echoes the raw name, and a charset refusal has the very byte that caused it replaced by `_` in the prefix, so the FNV-1a digest is the only correlator -- and nothing computes it from a candidate filename. Ship a small host tool (or a documented one-liner) that hashes a candidate name to the same digest, and say in the doc which inputs to try -> XREF: 00-infrastructure/TODO-04-usermode-test-framework.md §31 (item: "Identified the refused binary without echoing untrusted bytes" at line 1174)
+- [ ] Decide, and record, whether a refusal belongs in JUnit `<error>` rather than `<failure>`. A refused binary never
+      ran, which is what `<error>` means by convention, and this pipeline already uses it for the structurally identical suite-abort (`scripts/test.sh:1832`); §31 reused `<failure>` so the host needed no new record kind. Either route refusals through `<error>` and extend the `errors=` accounting and the doc's element schema, or document the divergence where the schema defines `errors=` -> XREF: 00-infrastructure/TODO-04-usermode-test-framework.md §31 (item: "Separated \"not a test file\" from \"test-shaped but refused\"" at line 1172)
+- [ ] Bind the `UTEST_RSN_*` literal set to the `UTEST_REASON_REFUSAL` size tree mechanically. Every reason string must appear
+      as a leaf of that `UTEST_MAX2` tree, because `UTEST_REASON_MAX` is what every record's fixed shape subtracts from `UTEST_RECORD_LINE_MAX` to derive `UTEST_MAX_BINARY_NAME`. Today a new literal that is added but omitted from the tree understates the maximum and the record formatters silently reach their truncation fallback; nothing fails the build and only a comment guards it. A `scripts/lint.sh` check that greps `#define UTEST_RSN_` and requires each name to appear in the tree is the smallest net that actually holds -> XREF: 00-infrastructure/TODO-04-usermode-test-framework.md §35 (item: "Reconciled `utest_filter=` case semantics" at line 1234)
+- [ ] Commit: `"test: ship a refusal-name correlator and finalize JUnit error/failure classification"`
+
+**Test checkpoint:** the correlator tool, given a candidate filename, reproduces the same FNV-1a digest the kernel embeds in a `refused_<n>_<prefix>_<8hex>.exe` identity for that name; refusals route to the decided JUnit element (`<error>` or documented `<failure>`) consistently across the XML and JSON assemblers. Test on: host tool only (no QEMU dependency).
+
+---
+
 ## 38. Per-Leg Generation Pointer for Coherent Document Resolution
 
 A consumer of the per-leg artifacts resolves them by enumerating `build/test-results-<leg>.xml` and `build/test-results-<leg>.json` -- two independent paths that §30 can only publish in sequence, never atomically as a pair.
@@ -1535,6 +1516,25 @@ A consumer of the per-leg artifacts resolves them by enumerating `build/test-res
 - [ ] Commit: `"test: resolve per-leg artifacts through one atomically replaced generation pointer"`
 
 **Test checkpoint:** a reader that resolves `build/test-results-<leg>.run` and then opens both documents from the record directory it names sees one run's XML and JSON or nothing, never a mixed pair, even when a second run publishes between the two opens; the documented resolution path is exercised by a regression that pauses a reader mid-resolution across an alias swap. Test on: host tooling only (no QEMU dependency).
+
+---
+
+## 39. Executable Identity for a Planned Entry
+
+The enumeration plan §35 shipped freezes WHICH names a run will execute, and that closes the two-walk window: a binary that disappears is named rather than silently subtracted. It does not freeze WHAT will execute under a planned name. `u_run_one` reconstructs `C:\<name>` and the loader reopens that path (`src/kernel/test/test_usermode.c`), so a child that deletes a planned binary and creates a different file under the same case-folded name before the entry's turn gets its replacement launched, reported and attributed to the original entry -- with every count reconciling and the run green.
+
+> [!NOTE]
+> Filed 2026-07-30 from §35's design review, which rated this [high] against §35's own "immutable plan" claim. It is deliberately NOT §35's scope: closing it needs a mechanism §35 does not have, and both candidates carry costs that belong in their own section. Content identity means digesting every planned binary during the planning walk -- a full extra read of every test binary on the no-manifest path, which is the path every boot takes -- and comparing it against the bytes the loader actually reads before `task_exec`. File-object pinning means holding an open handle across execution, which needs IXFS unlink-vs-open semantics the VFS does not define today, plus a bound on simultaneously-open handles.
+
+- [ ] Decide between content-digest identity and VFS file-object pinning, measuring the planning-walk read cost of the
+      digest option against the live no-manifest path before committing to it
+- [ ] Verify the chosen identity immediately before `task_exec`, and publish a mismatch as a counted, NAMED infrastructure
+      failure using the existing refusal record shape rather than a bare diagnostic -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §35 (item: "Execute the snapshot rather than re-walking" at line 1226)
+- [ ] Add a regression proving a binary replaced between planning and execution is reported as a mismatch rather than run
+      and attributed to the planned entry
+- [ ] Commit: `"test: pin executable identity, not just the name, for a planned entry"`
+
+**Test checkpoint:** with a fixture that replaces a planned `test_*.exe` with different contents after the planning walk, the run publishes a named identity-mismatch failure, does not execute the replacement, and the host fails the run; an unchanged directory produces the same artifacts as before the change. Test on: QEMU TCG, QEMU KVM.
 
 ---
 

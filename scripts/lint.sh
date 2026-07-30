@@ -1476,6 +1476,41 @@ else
 fi
 
 # ============================================================================
+# Check 22: TODO `## N.` section bodies must run in numeric order
+# ============================================================================
+# Sections were being filed dependency-adjacent -- a section discovered while
+# reviewing an earlier one was inserted directly after its parent and given the
+# next free number -- so TODO-04's bodies ran ... 28, 32, 29, 30, 31, 35, 39,
+# 33, 36, 37, 34, 38. Nothing BROKE (the Implementation Order table stayed
+# right, and section_slice.py matches by number rather than position), which is
+# exactly why it went unnoticed: the only cost is a reader scrolling for a
+# section, walking straight past it, and concluding it is missing. That
+# happened, and it cost real operator time.
+#
+# TODO-06 showed the worse form: sections 12 and 13 had been appended AFTER the
+# file's OS Comparison / Unit Tests / Verification / History blocks.
+#
+# The convention: a new section takes the next free number AND its body goes
+# LAST. Repair is one command and is a proven pure move (the tool refuses any
+# rewrite that is not a reordering of whole blocks).
+#
+# ERROR, not warn: the debt was fully cleared 2026-07-30, so there is no legacy
+# backlog to grandfather and any new hit is a fresh regression.
+if [ "${SKIP_LINT_SECTION_ORDER:-}" = "1" ]; then
+    echo -e "${YELLOW}warn${NC}: Check 22 (todo-section-order) skipped via SKIP_LINT_SECTION_ORDER=1"
+    WARNINGS=$((WARNINGS + 1))
+elif [ -f "$REPO_ROOT/scripts/todo-section-order.py" ]; then
+    LINT22_OUT="$(cd "$REPO_ROOT" && python3 scripts/todo-section-order.py --check 2>/dev/null || true)"
+    if [ -n "$LINT22_OUT" ]; then
+        while IFS= read -r line; do
+            [ -n "$line" ] || continue
+            echo -e "${RED}error${NC}: Check 22 (todo-section-order) $line -- repair with: python3 scripts/todo-section-order.py --fix"
+            ERRORS=$((ERRORS + 1))
+        done <<< "$LINT22_OUT"
+    fi
+fi
+
+# ============================================================================
 # Summary
 # ============================================================================
 echo ""

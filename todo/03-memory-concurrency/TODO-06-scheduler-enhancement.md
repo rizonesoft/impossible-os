@@ -256,6 +256,57 @@ The scheduler currently stores `kernel_rsp` per-task (in `struct task`), not per
 
 ---
 
+## 12. Dynamic Thread Table + Resource-Driven Thread Limits
+
+The current thread model uses `struct task { struct thread threads[THREAD_MAX]; uint32_t num_threads; }`, where TID is implicitly the array slot and the user-mode TEB/stack layout derives virtual addresses from that bounded TID. Slot reuse fixes leaks, but it does not remove the architectural ceiling: thread creation still bottoms out at a small compile-time constant and the user-mode ABI still assumes tightly bounded TIDs. This section replaces the fixed-slot design with a full resource-driven implementation.
+
+> [!IMPORTANT]
+> This is a full feature, not a temporary migration note. The target state is that thread admission fails only for real reasons: memory exhaustion, process quota, or user VA allocator exhaustion. A tiny fixed `THREAD_MAX` is an implementation artifact to remove, not a product requirement to preserve.
+
+> [!NOTE]
+> → XREF: [`02-kernel-core/TODO-11-peb-teb-user-abi.md §15`](../02-kernel-core/TODO-11-peb-teb-user-abi.md) -- per-thread TEB allocation currently uses `TEB_USER_BASE - tid * 0x1000`; this section must replace tid-derived user VA placement with allocator-backed TEB and user-stack reservations.
+> → XREF: [`02-kernel-core/TODO-21-process-model-extensions.md §9`](../02-kernel-core/TODO-21-process-model-extensions.md) -- process resource limits own the quota surface; this section consumes those limits when admitting new threads.
+
+- [ ] Replace fixed inline `threads[THREAD_MAX]` storage with growable per-task thread storage (`thread_capacity`, reusable free-slot tracking, explicit live-thread count). `num_threads` must stop meaning both "highest used slot" and "number of live threads".
+- [ ] Separate stable thread identity from storage slot. Add monotonic per-task TID allocation (or equivalent stable ID source) so TID survives slot reuse and table compaction. All scheduler, handle-table, and `NtQueryInformationThread` paths must stop assuming `tid == slot_index`.
+- [ ] Add reusable slot/free-list logic for dead joined threads. Slot reuse must be race-safe and must not block forever on double-join or stale TIDs.
+- [ ] Replace `TEB_USER_BASE - tid * 0x1000` and `USER_THREAD_STACK_BASE - tid * stride` placement with allocator-backed user VA reservations for TEB pages and user-thread stacks. Distinct live threads must never alias VAs even when storage slots are reused.
+- [ ] Update `uthread_create`, `NtCreateThread_handler`, and thread teardown paths to consume allocator-backed TEB and user-stack reservations, and to release them on thread death when the required unmap/shootdown infrastructure exists.
+- [ ] Make thread admission resource-driven: fail with `STATUS_INSUFFICIENT_RESOURCES` or quota-specific errors when stack pages, TEB pages, process thread quota, or user VA space cannot be reserved. Remove fixed-constant exhaustion as the primary failure mode.
+- [ ] Define inheritance and accounting rules for new threads: process affinity mask, scheduling policy/class, capability/mitigation state, and any future per-process thread quota must copy or intersect deterministically at creation time.
+- [ ] Add regression tests: create/join cycles beyond the old `THREAD_MAX`, sparse TID reuse, repeated kernel-thread slot reuse, user-thread TEB/stack uniqueness after slot reuse, quota exhaustion, and cleanup correctness on process exit.
+- [ ] Commit: `"sched: dynamic thread table and resource-driven thread limits"`
+
+**Test checkpoint:** Creating and joining more than 16 kernel threads in the same process no longer fails on a fixed slot ceiling. Multiple live user threads have unique TEB and stack VAs even after earlier threads exit and slots are reused. Thread creation fails only for real resource reasons (quota, VA exhaustion, page allocation failure), and the returned status identifies the real limit. `NtQueryInformationThread` and Ob thread lookup continue to return stable thread identities after table growth and slot reuse. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
+
+---
+
+## 13. Dynamic Task Table + Reusable PID Slot Allocation
+
+Mirror of §12 applied to tasks (processes): the current `tasks[TASK_MAX]` storage with `task_create()` using `pid = num_tasks++` monotonically means the global task table is **append-only**, not reusable. `task_cleanup()` frees handles + stacks + TEBs but never restores the slot -- so after `TASK_MAX` process creations (32 today), every subsequent `task_create()` returns -1 even though dead slots are sitting there fully torn down.
+
+> [!IMPORTANT]
+> Not triggered today (the user-mode test launcher ships only 2 binaries in the manifest), but becomes a hard blocker the moment the planned §9-§15 test suite lands (7-8 sequential task_create calls on top of boot-side cmd.exe/shell tasks; and the manifest advertises a 128-entry `UTEST_MANIFEST_MAX` ceiling). Caught by Codex adversarial re-review of 00-infrastructure/TODO-04 §4 (2026-04-20, commit `11e816fb`). Section §4 of the user-mode test framework already uses the consumer API and therefore validates the fix.
+
+> [!NOTE]
+> → XREF: [`00-infrastructure/TODO-04-usermode-test-framework.md §4`](../00-infrastructure/TODO-04-usermode-test-framework.md) -- user-mode test launcher is the first consumer to hit the ceiling once §9-§15 binaries ship.
+> → XREF: [`00-infrastructure/TODO-04-usermode-test-framework.md §8`](../00-infrastructure/TODO-04-usermode-test-framework.md) -- stress binaries currently loop internally because a launcher-side loop of N spawns would exhaust TASK_MAX; once this section lands, §8 can promote `stress_iters` from "reserved" to a runtime-tunable launcher policy.
+> → XREF: `§12` -- thread-table dynamic growth, same design shape applied to threads; this section consumes the same allocator-backed VA pattern for task-level TEB/kernel-stack placement.
+
+- [ ] Replace `static struct task tasks[TASK_MAX]; static uint32_t num_tasks` in [`src/kernel/sched/task.c`](../../src/kernel/sched/task.c) with growable task storage (`task_capacity`, explicit `live_task_count`, reusable PID free-list). `num_tasks` must stop meaning both "highest used slot" and "number of live tasks".
+- [ ] Move `static uint32_t current_task` (today a single global in [`src/kernel/sched/task.c`](../../src/kernel/sched/task.c)) into per-CPU state (`smp_this_cpu()->current_task_pid` or a pointer field). Every consumer of `task_current()` / `current_task` (scheduler, syscall dispatchers, fault-injection bridge, signal delivery, task_cleanup owner-check) must read from the current CPU's per-CPU record so that concurrent schedule() calls on other CPUs cannot stomp the identity of a task currently executing on THIS CPU. Caught by Codex adversarial review of the user-mode fault-injection bridge (2026-04-20) -- `sys_fault_inject_dispatch` reads `task_current()->pid` to scope the per-task filter, and a concurrent AP schedule() write to the global can hand it the wrong PID. Until this lands, SYS_FAULT_INJECT stamps a "SMP task-filter race bounded by the global current_task" caveat via an Accepted XREF; consumers that need stronger guarantees must synchronize externally.
+- [ ] Separate stable PID from storage slot. Add monotonic PID allocation with reuse-after-drain (or equivalent stable ID source) so PID survives slot reuse and table compaction. All `task_get_by_pid`, `signal_send`, `task_waitpid`, and `NtQueryInformationProcess` paths must stop assuming `pid == slot_index`.
+- [ ] Add reusable slot/free-list logic for dead tasks: `task_cleanup()` returns the slot to a free-list; `task_create()` pops from the free-list before appending/growing. Slot reuse must be race-safe (spinlock or RCU-style list) and must not resurrect a stale pointer held by the launcher or signal layer.
+- [ ] Atomic task-slot CLAIM: two creators (a tick preempts ring-0 mid-`task_create`) must never select the same `num_tasks` slot -- reserve/publish atomically. -> XREF: `02-kernel-core/TODO-21-process-model-extensions.md §9`
+- [ ] Replace the `num_tasks < TASK_MAX` creation gate with resource-driven admission: fail with `STATUS_INSUFFICIENT_RESOURCES` or quota-specific errors when kernel stack pages, PEB/TEB pages, or process quota cannot be reserved. Remove fixed-constant exhaustion as the primary failure mode.
+- [ ] Update `u_run_one()` in [`src/kernel/test/test_usermode.c`](../../src/kernel/test/test_usermode.c) path (the user-mode launcher) and other sequential-create consumers (cmd.exe launch in [`boot_desktop.c`](../../src/kernel/main/boot_desktop.c)) to tolerate sparse PIDs -- today they store the returned pid but never compare against a prior pid, so this should be a no-op; confirm with a code-truth pass.
+- [ ] Add regression tests under TEST_CAT_SCHED: create + cleanup cycles beyond the old `TASK_MAX`, sparse PID reuse, repeated task-slot reuse, quota exhaustion, and cleanup correctness. Prior dead slots must be reclaimed; the `N+1`-th task creation on a TASK_MAX-sized table must succeed after N tasks exited.
+- [ ] Commit: `"sched: dynamic task table and reusable PID slot allocation"`
+
+> **Blocks:** TODO-21 §15/§18 (POSIX reaping / wait4 / ZOMBIE lifecycle). Reaping cannot return a `tasks[]` slot, and NT process-handle identity cannot stay stable across reuse, until stable-PID + slot-reuse (items above) land -> XREF: `02-kernel-core/TODO-21-process-model-extensions.md §15` (Deferred design spec). The `PROCESS_OBJECT` terminal-state ownership choice that pairs with reuse is operator-reserved -> `todo/answers.md` Q2.
+
+**Test checkpoint:** Running the user-mode test launcher (TODO-04 §4) with a 64-entry manifest (synthetic test binaries generated for this regression) succeeds end-to-end; every binary spawns, runs, exits, and its slot is reused by a later binary with no `task_create failed` log. The existing TASK_MAX ceiling no longer gates boot-time test runs. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
+
 ## 14. Process/Job CPU Bandwidth Control `[Opus]`
 
 Enforce the CPU rate-limit records published by the quota subsystem: a per-period runtime budget for a process or job, refilled each period, with reservation admission and throttle/unthrottle. This is the CONSUMER of the policy record; §3 owns proportional weights within a priority level and does NOT own caps, periods, or reservations.
@@ -360,54 +411,3 @@ Every wait primitive publishes its waiter into the queue BEFORE setting `THREAD_
 | 2026-04-10 | validate | 11 sections checked; stripped 9 model tags, fixed 2 broken input anchors (planned files), fixed en-dash, compacted OS Comparison table (added §10/§11 rows), added Unit Tests skeleton, added §11 row to OS Comparison |
 
 ---
-
-## 12. Dynamic Thread Table + Resource-Driven Thread Limits
-
-The current thread model uses `struct task { struct thread threads[THREAD_MAX]; uint32_t num_threads; }`, where TID is implicitly the array slot and the user-mode TEB/stack layout derives virtual addresses from that bounded TID. Slot reuse fixes leaks, but it does not remove the architectural ceiling: thread creation still bottoms out at a small compile-time constant and the user-mode ABI still assumes tightly bounded TIDs. This section replaces the fixed-slot design with a full resource-driven implementation.
-
-> [!IMPORTANT]
-> This is a full feature, not a temporary migration note. The target state is that thread admission fails only for real reasons: memory exhaustion, process quota, or user VA allocator exhaustion. A tiny fixed `THREAD_MAX` is an implementation artifact to remove, not a product requirement to preserve.
-
-> [!NOTE]
-> → XREF: [`02-kernel-core/TODO-11-peb-teb-user-abi.md §15`](../02-kernel-core/TODO-11-peb-teb-user-abi.md) -- per-thread TEB allocation currently uses `TEB_USER_BASE - tid * 0x1000`; this section must replace tid-derived user VA placement with allocator-backed TEB and user-stack reservations.
-> → XREF: [`02-kernel-core/TODO-21-process-model-extensions.md §9`](../02-kernel-core/TODO-21-process-model-extensions.md) -- process resource limits own the quota surface; this section consumes those limits when admitting new threads.
-
-- [ ] Replace fixed inline `threads[THREAD_MAX]` storage with growable per-task thread storage (`thread_capacity`, reusable free-slot tracking, explicit live-thread count). `num_threads` must stop meaning both "highest used slot" and "number of live threads".
-- [ ] Separate stable thread identity from storage slot. Add monotonic per-task TID allocation (or equivalent stable ID source) so TID survives slot reuse and table compaction. All scheduler, handle-table, and `NtQueryInformationThread` paths must stop assuming `tid == slot_index`.
-- [ ] Add reusable slot/free-list logic for dead joined threads. Slot reuse must be race-safe and must not block forever on double-join or stale TIDs.
-- [ ] Replace `TEB_USER_BASE - tid * 0x1000` and `USER_THREAD_STACK_BASE - tid * stride` placement with allocator-backed user VA reservations for TEB pages and user-thread stacks. Distinct live threads must never alias VAs even when storage slots are reused.
-- [ ] Update `uthread_create`, `NtCreateThread_handler`, and thread teardown paths to consume allocator-backed TEB and user-stack reservations, and to release them on thread death when the required unmap/shootdown infrastructure exists.
-- [ ] Make thread admission resource-driven: fail with `STATUS_INSUFFICIENT_RESOURCES` or quota-specific errors when stack pages, TEB pages, process thread quota, or user VA space cannot be reserved. Remove fixed-constant exhaustion as the primary failure mode.
-- [ ] Define inheritance and accounting rules for new threads: process affinity mask, scheduling policy/class, capability/mitigation state, and any future per-process thread quota must copy or intersect deterministically at creation time.
-- [ ] Add regression tests: create/join cycles beyond the old `THREAD_MAX`, sparse TID reuse, repeated kernel-thread slot reuse, user-thread TEB/stack uniqueness after slot reuse, quota exhaustion, and cleanup correctness on process exit.
-- [ ] Commit: `"sched: dynamic thread table and resource-driven thread limits"`
-
-**Test checkpoint:** Creating and joining more than 16 kernel threads in the same process no longer fails on a fixed slot ceiling. Multiple live user threads have unique TEB and stack VAs even after earlier threads exit and slots are reused. Thread creation fails only for real resource reasons (quota, VA exhaustion, page allocation failure), and the returned status identifies the real limit. `NtQueryInformationThread` and Ob thread lookup continue to return stable thread identities after table growth and slot reuse. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
-
----
-
-## 13. Dynamic Task Table + Reusable PID Slot Allocation
-
-Mirror of §12 applied to tasks (processes): the current `tasks[TASK_MAX]` storage with `task_create()` using `pid = num_tasks++` monotonically means the global task table is **append-only**, not reusable. `task_cleanup()` frees handles + stacks + TEBs but never restores the slot -- so after `TASK_MAX` process creations (32 today), every subsequent `task_create()` returns -1 even though dead slots are sitting there fully torn down.
-
-> [!IMPORTANT]
-> Not triggered today (the user-mode test launcher ships only 2 binaries in the manifest), but becomes a hard blocker the moment the planned §9-§15 test suite lands (7-8 sequential task_create calls on top of boot-side cmd.exe/shell tasks; and the manifest advertises a 128-entry `UTEST_MANIFEST_MAX` ceiling). Caught by Codex adversarial re-review of 00-infrastructure/TODO-04 §4 (2026-04-20, commit `11e816fb`). Section §4 of the user-mode test framework already uses the consumer API and therefore validates the fix.
-
-> [!NOTE]
-> → XREF: [`00-infrastructure/TODO-04-usermode-test-framework.md §4`](../00-infrastructure/TODO-04-usermode-test-framework.md) -- user-mode test launcher is the first consumer to hit the ceiling once §9-§15 binaries ship.
-> → XREF: [`00-infrastructure/TODO-04-usermode-test-framework.md §8`](../00-infrastructure/TODO-04-usermode-test-framework.md) -- stress binaries currently loop internally because a launcher-side loop of N spawns would exhaust TASK_MAX; once this section lands, §8 can promote `stress_iters` from "reserved" to a runtime-tunable launcher policy.
-> → XREF: `§12` -- thread-table dynamic growth, same design shape applied to threads; this section consumes the same allocator-backed VA pattern for task-level TEB/kernel-stack placement.
-
-- [ ] Replace `static struct task tasks[TASK_MAX]; static uint32_t num_tasks` in [`src/kernel/sched/task.c`](../../src/kernel/sched/task.c) with growable task storage (`task_capacity`, explicit `live_task_count`, reusable PID free-list). `num_tasks` must stop meaning both "highest used slot" and "number of live tasks".
-- [ ] Move `static uint32_t current_task` (today a single global in [`src/kernel/sched/task.c`](../../src/kernel/sched/task.c)) into per-CPU state (`smp_this_cpu()->current_task_pid` or a pointer field). Every consumer of `task_current()` / `current_task` (scheduler, syscall dispatchers, fault-injection bridge, signal delivery, task_cleanup owner-check) must read from the current CPU's per-CPU record so that concurrent schedule() calls on other CPUs cannot stomp the identity of a task currently executing on THIS CPU. Caught by Codex adversarial review of the user-mode fault-injection bridge (2026-04-20) -- `sys_fault_inject_dispatch` reads `task_current()->pid` to scope the per-task filter, and a concurrent AP schedule() write to the global can hand it the wrong PID. Until this lands, SYS_FAULT_INJECT stamps a "SMP task-filter race bounded by the global current_task" caveat via an Accepted XREF; consumers that need stronger guarantees must synchronize externally.
-- [ ] Separate stable PID from storage slot. Add monotonic PID allocation with reuse-after-drain (or equivalent stable ID source) so PID survives slot reuse and table compaction. All `task_get_by_pid`, `signal_send`, `task_waitpid`, and `NtQueryInformationProcess` paths must stop assuming `pid == slot_index`.
-- [ ] Add reusable slot/free-list logic for dead tasks: `task_cleanup()` returns the slot to a free-list; `task_create()` pops from the free-list before appending/growing. Slot reuse must be race-safe (spinlock or RCU-style list) and must not resurrect a stale pointer held by the launcher or signal layer.
-- [ ] Atomic task-slot CLAIM: two creators (a tick preempts ring-0 mid-`task_create`) must never select the same `num_tasks` slot -- reserve/publish atomically. -> XREF: `02-kernel-core/TODO-21-process-model-extensions.md §9`
-- [ ] Replace the `num_tasks < TASK_MAX` creation gate with resource-driven admission: fail with `STATUS_INSUFFICIENT_RESOURCES` or quota-specific errors when kernel stack pages, PEB/TEB pages, or process quota cannot be reserved. Remove fixed-constant exhaustion as the primary failure mode.
-- [ ] Update `u_run_one()` in [`src/kernel/test/test_usermode.c`](../../src/kernel/test/test_usermode.c) path (the user-mode launcher) and other sequential-create consumers (cmd.exe launch in [`boot_desktop.c`](../../src/kernel/main/boot_desktop.c)) to tolerate sparse PIDs -- today they store the returned pid but never compare against a prior pid, so this should be a no-op; confirm with a code-truth pass.
-- [ ] Add regression tests under TEST_CAT_SCHED: create + cleanup cycles beyond the old `TASK_MAX`, sparse PID reuse, repeated task-slot reuse, quota exhaustion, and cleanup correctness. Prior dead slots must be reclaimed; the `N+1`-th task creation on a TASK_MAX-sized table must succeed after N tasks exited.
-- [ ] Commit: `"sched: dynamic task table and reusable PID slot allocation"`
-
-> **Blocks:** TODO-21 §15/§18 (POSIX reaping / wait4 / ZOMBIE lifecycle). Reaping cannot return a `tasks[]` slot, and NT process-handle identity cannot stay stable across reuse, until stable-PID + slot-reuse (items above) land -> XREF: `02-kernel-core/TODO-21-process-model-extensions.md §15` (Deferred design spec). The `PROCESS_OBJECT` terminal-state ownership choice that pairs with reuse is operator-reserved -> `todo/answers.md` Q2.
-
-**Test checkpoint:** Running the user-mode test launcher (TODO-04 §4) with a 64-entry manifest (synthetic test binaries generated for this regression) succeeds end-to-end; every binary spawns, runs, exits, and its slot is reused by a later binary with no `task_create failed` log. The existing TASK_MAX ceiling no longer gates boot-time test runs. Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
