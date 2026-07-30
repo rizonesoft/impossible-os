@@ -319,6 +319,21 @@ def test_v04_substitution_and_dash_c_bodies_still_run():
         assert mod._match_suite_invocation(cmd) is not None, cmd
 
 
+
+def test_v04_loop_and_conditional_bodies_still_caught():
+    """Segments start after `;`/`&`/`|`, so a loop body arrives as
+    `do bash scripts/test.sh`. Shell keywords must be transparent or every
+    `for`/`while`/`if` wrapper is a bypass the old textual matcher did not have."""
+    mod = _load()
+    for cmd in ("for i in 1 2; do bash scripts/test.sh; done",
+                "while true; do bash scripts/build.sh; done",
+                "if true; then bash scripts/test.sh; fi",
+                "until false; do scripts/test.sh; done"):
+        assert mod._match_suite_invocation(cmd) is not None, cmd
+    # ...while `done`/`fi` alone still end cleanly and prose stays free.
+    assert mod._match_suite_invocation(
+        "cat > f.md <<'EOF'\n- ran bash scripts/test.sh green\nEOF") is None
+
 if __name__ == "__main__":
     test_two_script_paths_are_not_an_invocation()
     test_real_interpreter_forms_still_block()
@@ -334,6 +349,7 @@ if __name__ == "__main__":
     test_v04_quoted_data_is_not_a_command_position()
     test_v04_unparseable_is_split_by_which_risk_is_present()
     test_v04_substitution_and_dash_c_bodies_still_run()
+    test_v04_loop_and_conditional_bodies_still_caught()
     test_r2_wrapped_route_logs_follow()
     print("PASS: build_offload_reminder exemption + P3.4 BLOCK + dedup + lint-exempt"
           " + R2 bypass shapes + follow log")

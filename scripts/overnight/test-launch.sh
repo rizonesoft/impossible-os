@@ -9,6 +9,13 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+# Snapshot the REAL reports dir so the isolation regression at the bottom can
+# prove the DRYRUNs never touched it (2026-07-30: before the launcher's DRYRUN
+# temp-dir redirect, the DRYRUNs here wrote stub logs, repointed latest.log,
+# and their retention prune EVICTED six real canary logs in one evening).
+REAL_BEFORE="$(ls -1 "$REPO_ROOT/.claude/overnight/reports"/run-*.log 2>/dev/null | sort | md5sum | cut -d" " -f1)"
+LINK_BEFORE="$(readlink "$REPO_ROOT/.claude/overnight/reports/latest.log" 2>/dev/null || true)"
 LAUNCH="$SCRIPT_DIR/overnight-launch.sh"
 
 fail() { echo "test-launch FAIL: $1" >&2; exit 1; }
@@ -84,5 +91,11 @@ elif [ "$ORACLE_STATE" = "NEEDS_WORK" ]; then
 else
   echo "test-launch NOTE: gate-seam check skipped (oracle state '$ORACLE_STATE', not NEEDS_WORK)"
 fi
+
+# DRYRUN isolation regression: nothing above may have touched the real dir.
+REAL_AFTER="$(ls -1 "$REPO_ROOT/.claude/overnight/reports"/run-*.log 2>/dev/null | sort | md5sum | cut -d" " -f1)"
+[ "$REAL_AFTER" = "$REAL_BEFORE" ] || fail "DRYRUN touched the real reports dir (stub written / log pruned)"
+LINK_AFTER="$(readlink "$REPO_ROOT/.claude/overnight/reports/latest.log" 2>/dev/null || true)"
+[ "$LINK_AFTER" = "$LINK_BEFORE" ] || fail "DRYRUN repointed latest.log"
 
 echo "test-launch PASS"

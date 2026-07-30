@@ -135,7 +135,13 @@ class _Hit:
         return self._s
 
 
-_TRANSPARENT = {"time", "exec", "nohup", "command", "stdbuf"}
+# Wrappers AND shell keywords that stand before the real command. The keywords
+# matter because the splitter's segments start after `;`/`&`/`|`, so a loop or
+# conditional body arrives as `do bash scripts/test.sh` -- without `do` here the
+# suite escaped through any `for`/`while` loop (review 2026-07-30; the old
+# textual matcher caught it by matching anywhere).
+_TRANSPARENT = {"time", "exec", "nohup", "command", "stdbuf",
+                "do", "then", "else", "elif", "if", "while", "until", "!"}
 _ENV_ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 _SUITE_TOKEN_RE = re.compile(
     r"(?:^|/)scripts/(?:build|test|test-smoke|test-tooling)\.sh$")

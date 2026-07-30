@@ -140,8 +140,8 @@ _MSG = (
     "it says -- and unlike a hook edit, that fails SILENTLY for as long as the "
     "run continues.\n"
     "  This is not a refusal of the work, only of applying it unwatched. FILE "
-    "it: append an item to `todo/overnight-runner-improvements/"
-    "overnight-runner-improvements-v04.md` (or the owning TODO) describing the "
+    "it: append an item to the NEWEST `todo/overnight-runner-improvements/"
+    "overnight-runner-improvements-vNN.md` (or the owning TODO) describing the "
     "change and why it is needed, then CONTINUE with the section. An operator "
     "applies it attended, where the diff gets read.\n"
     "  Ordinary work is unaffected: `src/`, `include/`, `user/`, `resources/` "
@@ -158,7 +158,11 @@ def main() -> int:
         return 0
     if not isinstance(d, dict):
         return 0
-    if d.get("tool_name") not in ("Edit", "Write", "NotebookEdit"):
+    # MultiEdit included (review 2026-07-30): the settings matcher is
+    # `Edit|Write|MultiEdit`, and a tuple that omitted MultiEdit let a
+    # multi-edit to build.sh through ungated -- the matcher and this set must
+    # agree or the wider one silently wins.
+    if d.get("tool_name") not in ("Edit", "Write", "MultiEdit", "NotebookEdit"):
         return 0
     if not _is_unattended():
         return 0

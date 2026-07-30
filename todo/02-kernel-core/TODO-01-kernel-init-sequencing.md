@@ -253,7 +253,7 @@ Storage, VFS, filesystem mount, registry, network, and AP bringup. BOOT_FATAL on
 > **Accepted:** [M] VirtIO-blk registry exposure/tuning runs before `registry_init` (silent HKLM loss) -> XREF: 04-drivers-hardware/TODO-13 §4 (item: "Gate VirtIO-blk registry exposure + tuning reads" at line 68)
 > **Accepted:** [M] BlackBox cleanup `path[64]` truncation can unlink wrong file -> XREF: 01-boot-platform/TODO-24 §10 (item: "Harden cleanup path builders" at line 315)
 > **Accepted:** [H] BlackBox low-space cleanup unbounded -> WDAT watchdog starvation -> XREF: 01-boot-platform/TODO-24 §10 (item: "Budget + batch the unbounded Logs\ delete loop" at line 319)
-> **Accepted:** [H] FAT32 `vol->lock` (`cli`) held across disk I/O in unlink/rename/write -> XREF: 05-storage-filesystems/TODO-04 §17 (item: "Restructure FAT32 unlink/rename/write/fsck" at line 435)
+> **Accepted:** [H] FAT32 `vol->lock` (`cli`) held across disk I/O in unlink/rename/write -> XREF: 05-storage-filesystems/TODO-04 §17 (item: "Restructure FAT32 unlink/rename/write/fsck" at line 443)
 > **Deferred:** [H] Phase 2 marks SUBSYS_VFS/REGISTRY ready after unchecked `void` inits; rootless boot reaches desktop (A/B rollback mitigates) -> XREF: 02-kernel-core/TODO-01 §4 (item: "Enforce typed fatal/degraded decisions from Phase 2 init return values" at line 233)
 > **Quality reviewed:** 2026-06-20 | Codex 3x (adversarial, consistency, perf) | 2M fixed, 2H+2M accepted-XREF, 1H deferred | scope: kernel-code-quality
 

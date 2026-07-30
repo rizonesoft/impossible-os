@@ -418,6 +418,17 @@ information or judgment; none of this weakens a gate):**
   there so the doctrine re-read stays small). Then `phase TRIAGE` and pick the
   next file (step 2).
 
+## Self-improvement filing (standing rule -- record, then continue)
+
+The run is expected to be self-observing: every runner defect, cost pattern, or improvement it cannot apply unattended is FILED in the same turn it is observed, then the run continues. A finding carried in-context to "report later" dies with the segment. Two capture surfaces, both OUTSIDE the traversal (nothing filed there is implemented by the run):
+
+- **Runner/flow findings** (gate misfires, wedges, evasions you were tempted into, flow inefficiency, machinery correctness) -> the NEWEST `todo/overnight-runner-improvements/overnight-runner-improvements-vNN.md`.
+- **Cost/token findings** (measured waste, context growth, offload misses; the >= 2% bar applies -- below it, record as excluded, not as work) -> the NEWEST `todo/token-saver/token-saver-vNN.md`.
+
+What may NOT be edited unattended -- file it instead: `.claude/hooks/**`, `.claude/skills/**`, `scripts/overnight/**`, `.githooks/**`, `.claude/settings.json` (the control plane), and the RECEIPT SURFACE -- `Makefile*`, `scripts/build.sh`, the ABI generator -- which `receipt_surface_guard.py` enforces with a BLOCK that names this rule. Ordinary work (src/, user/, tests, docs, TODO files) is fixed in place as normal; self-correction on ordinary code is the job, not a finding.
+
+House style for a filed item: what was observed live (timestamps, file:line), the mechanism confirmed at source, measured cost or risk; a projection is not a finding; if the fix is obvious, describe it -- do not apply it. Lead <= 250 chars, sub-bullet bodies <= 1,000.
+
 ## Hard rules (the guard enforces these; do not fight them)
 
 - **Never call `AskUserQuestion`.** Unattended = decide with the conservative

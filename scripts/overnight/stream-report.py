@@ -65,9 +65,17 @@ def stamp() -> str:
     return datetime.now().strftime("%H:%M:%S")
 
 
+# Terminal escape sequences captured from tool output (a tool error quoting the
+# lint banner embedded its \\033[0;36m codes verbatim -- run-20260730-151719
+# line 376). A viewer tailing across such a line inherits the colour until the
+# next reset, i.e. "everything after this point is cyan". The report is a plain-
+# text artifact; strip CSI/OSC sequences at the writer so no reader has to.
+_ANSI_RE = re.compile(r"\x1b(?:\[[0-9;?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\\\)?)")
+
+
 def emit(text: str) -> None:
     for line in text.splitlines() or [""]:
-        sys.stdout.write(f"{stamp()} {line}\n")
+        sys.stdout.write(f"{stamp()} {_ANSI_RE.sub('', line)}\n")
     sys.stdout.flush()
 
 

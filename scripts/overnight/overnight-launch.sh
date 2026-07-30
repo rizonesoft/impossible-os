@@ -189,6 +189,19 @@ prune_reports() {
     [ -n "$old" ] && rm -f "$old"
   done < <(ls -1t "$METRICS_DIR"/run-*.jsonl 2>/dev/null | tail -n +"$((keep + 1))")
 }
+# DRYRUN isolation (2026-07-30, found live). A DRYRUN reached this point with
+# the REAL report dir: it wrote a 377-byte stub, REPOINTED latest.log at it
+# (the monitor's follow target), and -- the expensive half -- ran prune_reports
+# against the real directory, so six test-suite runs in one evening EVICTED six
+# real canary run logs at keep=20. The DRYRUN's purpose ends at validating
+# selection + lock logic; give it a throwaway runtime so it can never touch a
+# real report, the real symlink, or the real retention window.
+if [ "${OVERNIGHT_SEQUENCER_DRYRUN:-}" = "1" ]; then
+  REPORT_DIR="$(mktemp -d)"
+  METRICS_DIR="$REPORT_DIR/metrics"
+  mkdir -p "$METRICS_DIR"
+fi
+
 prune_reports || true
 
 REPORT="$REPORT_DIR/run-$(date +%Y%m%d-%H%M%S).log"
