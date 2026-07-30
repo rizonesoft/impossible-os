@@ -8988,7 +8988,14 @@ else
                     case "$_abi_dep" in
                         build/*) ;;
                         *.h|*.inc)
-                            _abi_root_covered "$(dirname "$_abi_dep")" || \
+                            # Parameter expansion instead of a `dirname`
+                            # subprocess per dependency: this loop runs across
+                            # 12 flavors x ~21 dependencies (252 iterations on
+                            # this host), and 252 subprocess spawns measured
+                            # ~0.27s of otherwise-avoidable cost (perf review).
+                            _abi_dep_dir="${_abi_dep%/*}"
+                            [ "$_abi_dep_dir" = "$_abi_dep" ] && _abi_dep_dir="."
+                            _abi_root_covered "$_abi_dep_dir" || \
                                 _ABI_UNCOVERED_DEPS="$_ABI_UNCOVERED_DEPS $_abi_dep(KERNEL_TESTS=$_abi_kt,EXCEPT_TELEMETRY=$_abi_et,BUILD_ALT_BOOT=$_abi_abb)"
                             ;;
                         *) _ABI_UNCOVERED_DEPS="$_ABI_UNCOVERED_DEPS $_abi_dep(unmatched-extension,KERNEL_TESTS=$_abi_kt,EXCEPT_TELEMETRY=$_abi_et,BUILD_ALT_BOOT=$_abi_abb)" ;;

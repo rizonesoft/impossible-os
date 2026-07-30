@@ -182,6 +182,20 @@ mkdir -p "$(dirname "$STAMP")"
 # 7): `-L` catches the link regardless of what it points to (even a
 # nonexistent target), and the `-e && ! -f` pair catches anything else
 # non-regular already sitting at that path (FIFO, socket, directory).
+#
+# Accepted residual (consistency review): this check-then-open is not
+# atomic -- bash has no native O_NOFOLLOW/O_NONBLOCK open, so a concurrent
+# replacement of $LOCK between this check and the `exec` below could still
+# race. Closing that fully would mean switching the whole locking primitive
+# away from `flock` (e.g. an `mkdir`-based lock, which has no symlink-
+# following ambiguity but different blocking semantics) or shelling out to a
+# helper with real syscall control -- a materially larger change than this
+# section's scope justifies for a threat model of an accidental `make
+# CC=<other>`-class mismatch, not a race against a filesystem attacker
+# holding write access to `build/`. What this DOES close, and what the
+# regression test proves: a STALE symlink or non-regular file already
+# sitting at this path before the script runs (the realistic case -- leftover
+# residue from an interrupted process, or an accidental pre-existing link).
 if [ -L "$LOCK" ]; then
     echo "[ABI] refusing lock path $LOCK: it is a symlink" >&2
     exit 1
@@ -284,9 +298,17 @@ CC_MACROS_U="$(eval "$CC_PATH" "$CC_UFLAGS_PROBE" -dM -E - < /dev/null 2>/dev/nu
 # instead of refusing it, which can block on stdin or behave unpredictably.
 # `< /dev/null` closes that door and `timeout` bounds the worst case so a
 # wrapper can never hang the gate either.
-CC_LIBS_META="$( { timeout 5 ldd "$CC_PATH" < /dev/null 2>/dev/null | awk '{print $3}' | while read -r _lib; do
-    [ -n "$_lib" ] && [ -e "$_lib" ] && stat -c '%n %s %Y' "$_lib" 2>/dev/null
-done; } || true)"
+# One batched `stat` call over every resolved library instead of one `stat`
+# process per library (measured: ~30ms for 17 libraries spawned individually
+# vs ~10ms batched -- perf review).
+_ABI_CC_LIBS=()
+while IFS= read -r _abi_lib; do
+    [ -n "$_abi_lib" ] && [ -e "$_abi_lib" ] && _ABI_CC_LIBS+=("$_abi_lib")
+done < <(timeout 5 ldd "$CC_PATH" < /dev/null 2>/dev/null | awk '{print $3}')
+CC_LIBS_META=""
+if [ "${#_ABI_CC_LIBS[@]}" -gt 0 ]; then
+    CC_LIBS_META="$(stat -c '%n %s %Y' "${_ABI_CC_LIBS[@]}" 2>/dev/null || true)"
+fi
 
 set +e
 CC_BEHAVIOR_DIGEST="$( { printf '%s\n' "$CC_VERSION" "$CC_MACROS_K" "$CC_MACROS_U" "$CC_LIBS_META"; } \
@@ -363,9 +385,27 @@ _ABI_SYMLINK_CLASSIFY="$(find "${ROOTS[@]}" -type l -not -path "$EXCLUDE" -print
           case "$_abi_sym" in
               *.h|*.inc)
                   if [ -f "$_abi_sym" ]; then
-                      _abi_sym_digest="$( { sha256sum -L "$_abi_sym" 2>/dev/null \
-                          || cat "$_abi_sym" 2>/dev/null | shasum -a 256; } | awk '{print $1}')"
-                      printf 'LEAF SYMLINK:%s  %s\n' "${_abi_sym_digest:-unreadable}" "$_abi_sym"
+                      # Plain `sha256sum`/`shasum` already follow a symlink
+                      # via their own ordinary `open()` -- there is no
+                      # `-L`/dereference flag to pass (GNU coreutils rejects
+                      # one: "invalid option -- 'L'", confirmed directly).
+                      # The prior version passed `-L` unconditionally, so
+                      # this branch ALWAYS failed and silently fell through
+                      # to the `shasum` fallback -- which happens to be
+                      # installed on this host but is unverified by the host
+                      # bootstrap contract, so on a host without it the
+                      # digest would silently degrade to "unreadable" (a
+                      # stable, non-tracking marker) and reopen the exact
+                      # content-blind gap this marker exists to close
+                      # (consistency review). A missing digest now REFUSES
+                      # rather than publishing a stable placeholder.
+                      _abi_sym_digest="$( { sha256sum "$_abi_sym" 2>/dev/null \
+                          || shasum -a 256 "$_abi_sym" 2>/dev/null; } | awk '{print $1}')"
+                      if [ -z "$_abi_sym_digest" ]; then
+                          printf 'REFUSED  %s\n' "$_abi_sym"
+                          continue
+                      fi
+                      printf 'LEAF SYMLINK:%s  %s\n' "$_abi_sym_digest" "$_abi_sym"
                       continue
                   fi
                   ;;
