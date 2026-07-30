@@ -743,44 +743,43 @@ struct task {
      * one of the TASK_MAX slots plus a shift in slot-to-cache-line phase. */
 #ifdef KERNEL_TESTS
     struct task_utest_report utest_report;
-    /* Source-level per-binary stdout capture. Set once at spawn
-     * (task_create_captured), inherited unchanged across fork() -- the
-     * OPPOSITE of utest_report above, which is per-process and reset on
-     * every constructor. utest_capture_seq is meaningful ONLY in the
+    /* Source-level per-binary stdout capture ownership. Set once at
+     * spawn (task_create_captured), inherited unchanged across fork() --
+     * the OPPOSITE of utest_report above, which is per-process and reset
+     * on every constructor. utest_capture_seq is meaningful ONLY in the
      * OWNER's own slot (tasks[utest_capture_owner_pid]): every task in a
      * fork tree sharing one owner increments THAT slot's counter via
      * atomic_fetch_add rather than its own, giving an O(1) lock-free
      * unique sequence number across the whole tree with no parentage
-     * walk. utest_capture_buf/_len is per-task staging for the
-     * escape-then-chunk pipeline in test_usermode.c. Scope boundary: a
-     * test binary with >1 thread concurrently calling write() would race
-     * on this same per-task buffer -- accepted because every shipped
-     * test binary is single-threaded and this is no worse than the raw
-     * byte interleaving concurrent writer threads already produce on
-     * shared serial output today.
+     * walk, and (being assigned inside each caller's own sequential
+     * write() loop, never across threads) preserving emission order too.
+     *
+     * The per-write escape/chunk staging buffer deliberately does NOT
+     * live here: it is a local (stack) variable inside the syscall's own
+     * write loop (struct utest_capture_ctx, test_usermode.h), scoped to
+     * ONE call on ONE thread's own stack. Chunking was only ever meant
+     * to span one write() call (each call gets its own final=1
+     * terminator, never coalesced with a later call), so nothing needs
+     * to persist here between calls -- and a stack-local buffer needs no
+     * lock at all, closing both the intra-task multi-writer buffer race
+     * and the cross-thread chunk-ordering race an earlier per-task
+     * buffer design had.
      *
      * Reading task_current() to decide "is THIS task captured" carries a
      * pre-existing, project-wide limitation this feature does not close:
      * task_current()/thread_current() resolve through a GLOBAL scheduler
      * cursor, not per-CPU state (documented at ssdt.c:36-41 for the
-     * identical previous_mode lookup). The blast radius is wider than a
-     * wrong owner_pid label: if CPU A's task_current() call races CPU
-     * B's context switch, CPU A can get back CPU B's struct task * and
-     * then mutate ITS utest_capture_buf/_buf_len -- an unsynchronized
-     * cross-CPU read-modify-write on state a wholly unrelated CPU may be
-     * concurrently touching, not just a misattributed byte. Every other
-     * task_current()-dependent kernel behavior has this same exposure;
-     * closing it needs the per-CPU current-task cursor work tracked in
-     * the SMP Phase 2 per-CPU run queues TODO (03-memory-concurrency/
-     * TODO-07) -- out of scope here for the same reason ssdt.c accepted
-     * it rather than fixing it inline, and disabling capture uniquely
-     * for THIS feature while every other current-task-dependent path
-     * stays exposed would be inconsistent rather than protective. */
+     * identical previous_mode lookup). On real multi-CPU AP scheduling,
+     * CPU A's task_current() call could race CPU B's context switch and
+     * return CPU B's struct task *, misattributing bytes to the wrong
+     * owner. Every other task_current()-dependent kernel behavior has
+     * this same exposure; closing it needs the per-CPU current-task
+     * cursor work tracked in the SMP Phase 2 per-CPU run queues TODO
+     * (03-memory-concurrency/TODO-07) -- out of scope here for the same
+     * reason ssdt.c accepted it rather than fixing it inline. */
     uint8_t  utest_capture_active;
     uint32_t utest_capture_owner_pid;
     atomic_t utest_capture_seq;
-    char     utest_capture_buf[192];
-    uint16_t utest_capture_buf_len;
 #endif
     /* --- User-mode section-view VA bump allocator ---
      * Per-task bump pointer for MapViewOfSection / sys_shmem_map. The
@@ -860,7 +859,6 @@ static inline void task_utest_capture_reset(struct task *t)
     t->utest_capture_active = 0;
     t->utest_capture_owner_pid = 0;
     atomic_set(&t->utest_capture_seq, 0);
-    t->utest_capture_buf_len = 0;
 }
 #define TASK_UTEST_CAPTURE_RESET(tp) task_utest_capture_reset(tp)
 

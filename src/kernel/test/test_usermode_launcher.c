@@ -2284,8 +2284,8 @@ static void test_capture_escape_empty_input(void)
 
 /* The chunk size is DERIVED from UTEST_RECORD_LINE_MAX and the record's own
  * fixed literal cost (matching how UTEST_MAX_BINARY_NAME is derived, never
- * hand-picked), and the per-task staging buffer in task.h
- * (utest_capture_buf[192]) must be large enough to hold it. */
+ * hand-picked), and the per-call staging buffer in test_usermode.h
+ * (struct utest_capture_ctx._buf[192]) must be large enough to hold it. */
 static void test_capture_chunk_max_is_positive_and_bounded(void)
 {
     uint32_t chunk_max = test_usermode_capture_chunk_max();
@@ -2294,8 +2294,8 @@ static void test_capture_chunk_max_is_positive_and_bounded(void)
                 "the derived chunk size must leave room for at least one "
                 "raw byte per record");
     TEST_ASSERT(chunk_max <= 192u,
-                "the chunk size must fit task.h's utest_capture_buf[192] "
-                "per-task staging buffer");
+                "the chunk size must fit utest_capture_ctx._buf[192], "
+                "the per-write staging buffer");
 }
 
 /* The kernel test suite itself runs as an ordinary task, never spawned
@@ -2306,7 +2306,10 @@ static void test_capture_chunk_max_is_positive_and_bounded(void)
  * fall back to its own raw serial path. */
 static void test_capture_byte_uncaptured_task_returns_zero(void)
 {
-    TEST_ASSERT(test_usermode_capture_byte('x') == 0,
+    struct utest_capture_ctx ctx;
+
+    test_usermode_capture_start(&ctx);
+    TEST_ASSERT(test_usermode_capture_byte(&ctx, 'x') == 0,
                 "the current (test-runner) task is never capture-owned, "
                 "so the byte must be declined for the caller's raw "
                 "serial fallback");
@@ -2344,7 +2347,7 @@ static void test_capture_inherit_copies_active_and_owner_unchanged(void)
 
 /* Positive path, end to end: temporarily arm the CURRENT (running,
  * KERNEL_TESTS test-runner) task as its own capture owner, drive real
- * bytes through the public test_usermode_capture_byte/_flush entry
+ * bytes through the public test_usermode_capture_start/_byte/_end entry
  * points exactly as the syscall handlers do, then inspect the actual
  * klog ring entry that landed to prove the wire record is correct --
  * not just that the pure escape helper is correct in isolation. Restores
@@ -2353,6 +2356,7 @@ static void test_capture_inherit_copies_active_and_owner_unchanged(void)
 static void test_capture_byte_and_flush_produce_the_wire_record(void)
 {
     struct task *self = task_current();
+    struct utest_capture_ctx ctx;
     uint8_t  saved_active;
     uint32_t saved_owner;
     int32_t  saved_seq;
@@ -2371,17 +2375,18 @@ static void test_capture_byte_and_flush_produce_the_wire_record(void)
     self->utest_capture_active = 1;
     self->utest_capture_owner_pid = self->pid;
     atomic_set(&self->utest_capture_seq, 0);
+    test_usermode_capture_start(&ctx);
 
     /* "A[B": a plain byte, an escaped byte ('[' -> \x5b), a plain byte --
      * exercises the mixed case the pure-escape tests already pin in
      * isolation, now through the REAL per-byte entry point. */
-    TEST_ASSERT(test_usermode_capture_byte('A') == 1,
+    TEST_ASSERT(test_usermode_capture_byte(&ctx, 'A') == 1,
                 "a captured task's byte is consumed, not raw-serial'd");
-    TEST_ASSERT(test_usermode_capture_byte('[') == 1,
+    TEST_ASSERT(test_usermode_capture_byte(&ctx, '[') == 1,
                 "an escape-triggering byte is still consumed by capture");
-    TEST_ASSERT(test_usermode_capture_byte('B') == 1,
+    TEST_ASSERT(test_usermode_capture_byte(&ctx, 'B') == 1,
                 "capture stays active across multiple bytes of one write()");
-    test_usermode_capture_flush();
+    test_usermode_capture_end(&ctx);
 
     ring = klog_get_ring(&count, &head);
     (void)count;
@@ -2411,6 +2416,7 @@ static void test_capture_byte_and_flush_produce_the_wire_record(void)
 static void test_capture_exact_chunk_boundary_emits_one_final_record(void)
 {
     struct task *self = task_current();
+    struct utest_capture_ctx ctx;
     uint8_t  saved_active;
     uint32_t saved_owner;
     int32_t  saved_seq;
@@ -2431,15 +2437,16 @@ static void test_capture_exact_chunk_boundary_emits_one_final_record(void)
     self->utest_capture_active = 1;
     self->utest_capture_owner_pid = self->pid;
     atomic_set(&self->utest_capture_seq, 0);
+    test_usermode_capture_start(&ctx);
 
     (void)klog_get_ring(&count_before, &head);
     for (i = 0; i < chunk_max; i++)
-        (void)test_usermode_capture_byte('x');
-    /* Deferred-flush design: buf_len reaches chunk_max only AFTER staging
-     * the last byte, and the mid-loop check runs BEFORE staging, so no
-     * mid-loop flush ever fires for an exact-multiple write -- the whole
-     * chunk is still staged here, waiting for this call. */
-    test_usermode_capture_flush();
+        (void)test_usermode_capture_byte(&ctx, 'x');
+    /* Deferred-flush design: ctx's len reaches chunk_max only AFTER
+     * staging the last byte, and the mid-loop check runs BEFORE staging,
+     * so no mid-loop flush ever fires for an exact-multiple write -- the
+     * whole chunk is still staged here, waiting for this call. */
+    test_usermode_capture_end(&ctx);
     ring = klog_get_ring(&count_after, &head);
     last = &ring[(head + KLOG_RING_SIZE - 1u) % KLOG_RING_SIZE];
 
@@ -2469,6 +2476,7 @@ static void test_capture_exact_chunk_boundary_emits_one_final_record(void)
 static void test_capture_chunk_boundary_plus_one_emits_two_records(void)
 {
     struct task *self = task_current();
+    struct utest_capture_ctx ctx;
     uint8_t  saved_active;
     uint32_t saved_owner;
     int32_t  saved_seq;
@@ -2489,11 +2497,12 @@ static void test_capture_chunk_boundary_plus_one_emits_two_records(void)
     self->utest_capture_active = 1;
     self->utest_capture_owner_pid = self->pid;
     atomic_set(&self->utest_capture_seq, 0);
+    test_usermode_capture_start(&ctx);
 
     (void)klog_get_ring(&count_before, &head);
     for (i = 0; i < chunk_max + 1u; i++)
-        (void)test_usermode_capture_byte('y');
-    test_usermode_capture_flush();
+        (void)test_usermode_capture_byte(&ctx, 'y');
+    test_usermode_capture_end(&ctx);
     ring = klog_get_ring(&count_after, &head);
 
     TEST_ASSERT_EQ((uint64_t)(count_after - count_before), 2u,

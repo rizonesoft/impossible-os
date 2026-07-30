@@ -76,6 +76,26 @@ _Static_assert(UTEST_EXIT_SKIP == 77,
 _Static_assert(UTEST_EXIT_TIMEOUT < 0 && UTEST_EXIT_TIMEOUT != UTEST_EXIT_SKIP,
                "the timeout marker must not collide with a real exit status");
 
+/* Per-write source-level stdout capture context. Callers (sys_write in
+ * syscall.c, the stdout branch of NtWriteFile in nt_syscall.c) declare
+ * ONE of these as a LOCAL (stack) variable before their write() loop, in
+ * BOTH build flavors (hence this struct is defined unconditionally, not
+ * inside the KERNEL_TESTS block below -- a release build still needs the
+ * COMPLETE type to declare the local, even though every operation on it
+ * is then a no-op). Deliberately NOT stored on struct task: it belongs
+ * to exactly one call on exactly one thread's own stack, so accumulating
+ * bytes into it needs no lock even when a multi-threaded test binary's
+ * OTHER thread is concurrently inside its own write() -- there is no
+ * shared buffer left to race on. `_owner` is an opaque `struct task *`
+ * (kept untyped here so this header does not need to pull in task.h);
+ * test_usermode.c casts it back. */
+struct utest_capture_ctx {
+    void    *_owner;
+    uint32_t _len;
+    uint8_t  _active;
+    char     _buf[192];
+};
+
 #ifdef KERNEL_TESTS
 
 /* Run every test_*.exe found at C:\ root sequentially and collect
@@ -141,24 +161,29 @@ void test_usermode_set_stress_iters(uint32_t n);
  * color. Read by klog's color-scope block; the launcher owns the flag. */
 int test_usermode_color_active(void);
 
-/* Source-level per-binary stdout capture, called from the ring-3 write
- * syscall handlers (sys_write in syscall.c, the stdout branch of
- * NtWriteFile in nt_syscall.c) for EVERY byte of a write(), before that
- * handler decides how to emit it. Returns 1 if this byte was consumed into
- * the framed capture pipeline (the caller must NOT also serial_putchar()
- * it -- the payload crosses serial exactly once, either raw or framed,
- * never both); returns 0 if the current task is not capture-owned, in
- * which case the caller falls back to its existing raw serial_putchar()
- * path unchanged. Internally escapes and chunks into one or more
- * "[UTEST-CAPTURE] ..." records emitted through the same frame-nonce
- * mechanism the non-forgeable launcher record framing uses, so the new
- * record type is non-forgeable for free. */
-int test_usermode_capture_byte(char c);
+/* Resolves task_current() and its capture ownership ONCE per write(),
+ * not per byte. Safe to call even when not capture-owned -- ctx->_active
+ * ends up 0 and every later call on this ctx is then a cheap no-op. */
+void test_usermode_capture_start(struct utest_capture_ctx *ctx);
+
+/* One byte of a ring-3 write(). Called from the caller's single read of
+ * the raw user buffer (never a second dereference of the same byte) so it
+ * cannot observe a value the caller's own NUL-check or terminal echo did
+ * not also observe. Returns 1 if this byte was consumed into the framed
+ * capture pipeline (the caller must NOT also serial_putchar() it -- the
+ * payload crosses serial exactly once, either raw or framed, never
+ * both); returns 0 if this ctx is not capture-owned, in which case the
+ * caller falls back to its existing raw serial_putchar() path unchanged.
+ * Internally escapes and chunks into one or more "[UTEST-CAPTURE] ..."
+ * records emitted through the same frame-nonce mechanism the non-
+ * forgeable launcher record framing uses, so the new record type is
+ * non-forgeable for free. */
+int test_usermode_capture_byte(struct utest_capture_ctx *ctx, char c);
 
 /* Flushes any partially-filled capture chunk as a final=1 record. Callers
  * call this once after their write() loop ends, unconditionally -- a no-op
- * when nothing was staged. */
-void test_usermode_capture_flush(void);
+ * when nothing was staged (or when this ctx was never capture-owned). */
+void test_usermode_capture_end(struct utest_capture_ctx *ctx);
 
 /* Emits the one-time "[UTEST-CAPTURE-BEGIN] owner=<pid> name=<name>"
  * announcement binding a capture owner pid to its binary name. The ONLY
@@ -184,8 +209,10 @@ static inline void test_usermode_set_xml(int enable __attribute__((unused))) {}
 static inline void test_usermode_set_json(int enable __attribute__((unused))) {}
 static inline void test_usermode_set_stress_iters(uint32_t n __attribute__((unused))) {}
 static inline int  test_usermode_color_active(void) { return 0; }
-static inline int  test_usermode_capture_byte(char c __attribute__((unused))) { return 0; }
-static inline void test_usermode_capture_flush(void) {}
+static inline void test_usermode_capture_start(struct utest_capture_ctx *ctx __attribute__((unused))) {}
+static inline int  test_usermode_capture_byte(struct utest_capture_ctx *ctx __attribute__((unused)),
+                                              char c __attribute__((unused))) { return 0; }
+static inline void test_usermode_capture_end(struct utest_capture_ctx *ctx __attribute__((unused))) {}
 static inline void test_usermode_capture_begin(uint32_t owner_pid __attribute__((unused)),
                                                const char *name __attribute__((unused))) {}
 

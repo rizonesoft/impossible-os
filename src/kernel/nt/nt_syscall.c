@@ -18,7 +18,7 @@
 #include "kernel/nt/service_numbers.h"
 #include "kernel/sched/syscall.h"
 #include "kernel/sched/task.h"
-#include "kernel/test/test_usermode.h"  /* test_usermode_capture_byte/_flush -- KERNEL_TESTS
+#include "kernel/test/test_usermode.h"  /* test_usermode_capture_start/_byte/_end -- KERNEL_TESTS
                                           * no-op in release builds */
 #include "kernel/nt/pledge.h"
 #include "kernel/klog.h"
@@ -384,18 +384,25 @@ write_bad_handle:
      * pipeline first, raw serial fallback only when capture declines) so
      * a test binary reaching stdout through EITHER ABI gets the same
      * source-level framing -- a binary using only this SSDT path would
-     * otherwise bypass the capture entirely. */
-    for (i = 0; i < len; i++) {
-        char c = buf[i];
+     * otherwise bypass the capture entirely. cap_ctx is a local on this
+     * call's own stack; see test_usermode.h for why it is not on struct
+     * task. */
+    {
+        struct utest_capture_ctx cap_ctx;
+        test_usermode_capture_start(&cap_ctx);
 
-        if (c == '\0')
-            break;
-        if (terminal_is_open())
-            terminal_putchar(c);
-        if (!test_usermode_capture_byte(c))
-            serial_putchar(c);
+        for (i = 0; i < len; i++) {
+            char c = buf[i];
+
+            if (c == '\0')
+                break;
+            if (terminal_is_open())
+                terminal_putchar(c);
+            if (!test_usermode_capture_byte(&cap_ctx, c))
+                serial_putchar(c);
+        }
+        test_usermode_capture_end(&cap_ctx);
     }
-    test_usermode_capture_flush();
 
     if (iosb) {
         iosb->Status = STATUS_SUCCESS;

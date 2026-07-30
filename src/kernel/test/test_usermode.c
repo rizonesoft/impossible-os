@@ -2532,9 +2532,26 @@ static void u_frame_end(void)
     (((UTEST_RECORD_LINE_MAX - 1u) - UTEST_CAPTURE_FIXED) /                \
      UTEST_CAPTURE_ESCAPE_EXPANSION)
 _Static_assert(UTEST_CAPTURE_CHUNK_MAX > 0u && UTEST_CAPTURE_CHUNK_MAX <= 192u,
-               "the capture chunk size must fit the per-task staging "
-               "buffer (task.h utest_capture_buf[192]) and leave room for "
-               "the record's own fixed literal cost");
+               "the capture chunk size must fit the per-write staging "
+               "buffer (test_usermode.h utest_capture_ctx._buf[192]) and "
+               "leave room for the record's own fixed literal cost");
+
+/* [UTEST-CAPTURE-BEGIN]'s own fixed cost, same derivation style. It
+ * carries the binary name at the SAME UTEST_MAX_BINARY_NAME bound every
+ * other name-carrying record kind is proven against (the 7-way assert
+ * above UTEST_MAX_BINARY_NAME's definition) -- asserted here rather than
+ * folded into that MIN() because UTEST_CAPTURE_FIXED is not defined
+ * until after UTEST_MAX_BINARY_NAME already is; this assert still
+ * catches a future edit to the BEGIN format silently overrunning the
+ * record before it ships. */
+#define UTEST_CAPTURE_BEGIN_FIXED \
+    (UTEST_LIT("[UTEST-CAPTURE-BEGIN] owner=") + UTEST_DIGITS_U32 + \
+     UTEST_LIT(" name="))
+_Static_assert(UTEST_CAPTURE_BEGIN_FIXED + UTEST_MAX_BINARY_NAME <=
+                   UTEST_RECORD_LINE_MAX - 1u,
+               "a name at the derived bound must fit UTEST-CAPTURE-BEGIN "
+               "too, not just the 7 kinds UTEST_MAX_BINARY_NAME was "
+               "originally derived from");
 
 static const char UTEST_HEX_DIGITS[] = "0123456789abcdef";
 
@@ -2588,20 +2605,77 @@ static uint32_t u_capture_escape(const char *raw, uint32_t raw_len,
     return epos;
 }
 
-static void u_capture_flush_chunk(struct task *self, int is_final)
+/* Escapes+emits one chunk from ctx's own (call-local, never shared)
+ * staging buffer. seq is assigned via atomic_fetch_add on the OWNER's
+ * slot -- the only genuinely shared state left -- giving an O(1) unique,
+ * monotonically-assigned sequence VALUE per chunk (no two chunks ever
+ * collide or skip a number), which for one thread's own successive
+ * chunks always matches the order those chunks were actually filled.
+ *
+ * That value does NOT additionally guarantee the physical wire (serial)
+ * order across DIFFERENT threads matches seq order -- and neither does
+ * any other klog-based record in this kernel: klog_emit() (klog.c)
+ * reserves a ring slot under s_klog_lock (which DOES give a consistent
+ * ring-position order) but releases that lock before calling
+ * serial_write(), so two concurrent callers' physical serial writes can
+ * still land in either order under preemption. This is a systemic
+ * property of klog, not something this feature introduces or could
+ * close without either reintroducing a per-chunk lock spanning
+ * seq-assignment through serial commit (undoing the per-byte-lock
+ * removal that fixed the prior design's real perf and correctness
+ * bugs) or waiting on klog's own ordering guarantees to strengthen.
+ * Scope: multi-threaded test binaries only (none shipped today) --
+ * the host-side artifact/reconciliation work should treat seq as the
+ * authoritative ordering key, not physical log position. */
+static void u_capture_emit_chunk(struct task *owner, const char *raw,
+                                 uint32_t raw_len, int is_final)
 {
-    struct task *owner;
     char escaped[UTEST_CAPTURE_CHUNK_MAX * UTEST_CAPTURE_ESCAPE_EXPANSION + 1u];
-    uint32_t raw_len = self->utest_capture_buf_len;
     uint32_t seq;
 
-    /* Unconditional: a flush call (mid-loop chunk-full OR end-of-loop
+    /* Unconditional: a flush call (mid-loop chunk-full OR end-of-write
      * "final") with nothing staged is always a no-op. Without this a
      * write() landing exactly on a chunk boundary would flush its full
-     * chunk mid-loop (resetting buf_len to 0), then the unconditional
-     * end-of-loop test_usermode_capture_flush() call would emit a SECOND,
-     * spurious len=0 final=1 record for the same write(). */
+     * chunk mid-loop, then the unconditional end-of-loop
+     * test_usermode_capture_end() call would emit a SECOND, spurious
+     * len=0 final=1 record for the same write(). */
     if (raw_len == 0)
+        return;
+
+    seq = (uint32_t)atomic_fetch_add(&owner->utest_capture_seq, 1);
+
+    /* sizeof(escaped) is exactly the worst case for UTEST_CAPTURE_CHUNK_MAX
+     * raw bytes, so this call can only return 0xFFFFFFFFu if raw_len itself
+     * somehow exceeded UTEST_CAPTURE_CHUNK_MAX (a caller bug, since the
+     * ctx buffer is flushed at that exact bound) -- fail closed rather
+     * than emit a truncated, unaccounted record. */
+    if (u_capture_escape(raw, raw_len, escaped, (uint32_t)sizeof(escaped)) ==
+        0xFFFFFFFFu)
+        return;
+
+    utest_record_log(LOG_INFO,
+                     "[UTEST-CAPTURE] owner=%u seq=%u len=%u final=%u %s",
+                     (uint64_t)owner->pid, (uint64_t)seq,
+                     (uint64_t)raw_len, (uint64_t)(is_final ? 1u : 0u),
+                     escaped);
+}
+
+/* Resolves task_current() and its capture ownership ONCE per write() --
+ * not per byte, unlike an earlier design that re-resolved task_current()
+ * and re-acquired a per-task lock on every single byte. ctx->_owner
+ * resolves the OWNER task (task_get_by_pid on utest_capture_owner_pid),
+ * not task_current() itself, so u_capture_emit_chunk's atomic_fetch_add
+ * always targets the right slot even from a fork() descendant. */
+void test_usermode_capture_start(struct utest_capture_ctx *ctx)
+{
+    struct task *self = task_current();
+    struct task *owner;
+
+    ctx->_len = 0;
+    ctx->_active = 0;
+    ctx->_owner = (void *)0;
+
+    if (!self || !self->utest_capture_active)
         return;
 
     owner = task_get_by_pid(self->utest_capture_owner_pid);
@@ -2610,45 +2684,29 @@ static void u_capture_flush_chunk(struct task *self, int is_final)
          * monotonic within a boot and never reused, and owner_pid is
          * always either self (at spawn) or inherited from an alive
          * parent (at fork) -- but a corrupted owner pid must never
-         * dereference a wild pointer, and silently dropping the bytes
-         * would erase diagnostics with no trace (the future byte-
-         * reconciliation gate this feeds does not exist yet, so nothing
-         * else would catch the gap). Emit an explicit, authenticated
-         * loss record instead of nothing, so even this defensive-only
-         * path leaves evidence. */
+         * dereference a wild pointer later. Emit an explicit,
+         * authenticated loss record so even this defensive-only path
+         * leaves evidence, then decline capture for this write (the
+         * caller's raw serial_putchar fallback still delivers the
+         * bytes, just unframed). */
         utest_record_log(LOG_ERROR,
-                         "[UTEST-CAPTURE-LOST] owner=%u len=%u",
-                         (uint64_t)self->utest_capture_owner_pid,
-                         (uint64_t)raw_len);
-        self->utest_capture_buf_len = 0;
+                         "[UTEST-CAPTURE-LOST] owner=%u len=unknown",
+                         (uint64_t)self->utest_capture_owner_pid);
         return;
     }
-    seq = (uint32_t)atomic_fetch_add(&owner->utest_capture_seq, 1);
-
-    /* sizeof(escaped) is exactly the worst case for UTEST_CAPTURE_CHUNK_MAX
-     * raw bytes, so this call can only return 0xFFFFFFFFu if raw_len itself
-     * somehow exceeded UTEST_CAPTURE_CHUNK_MAX (a caller bug, since
-     * test_usermode_capture_byte flushes at that exact bound) -- fail
-     * closed rather than emit a truncated, unaccounted record. */
-    if (u_capture_escape(self->utest_capture_buf, raw_len,
-                         escaped, (uint32_t)sizeof(escaped)) == 0xFFFFFFFFu) {
-        self->utest_capture_buf_len = 0;
-        return;
-    }
-
-    utest_record_log(LOG_INFO,
-                     "[UTEST-CAPTURE] owner=%u seq=%u len=%u final=%u %s",
-                     (uint64_t)self->utest_capture_owner_pid, (uint64_t)seq,
-                     (uint64_t)raw_len, (uint64_t)(is_final ? 1u : 0u),
-                     escaped);
-    self->utest_capture_buf_len = 0;
+    ctx->_owner = (void *)owner;
+    ctx->_active = 1;
 }
 
-/* One byte of a ring-3 write(). Called from the caller's single read of
- * the raw user buffer (never a second dereference of the same byte) so it
- * cannot observe a value the caller's own NUL-check or terminal echo did
- * not also observe. Returns 1 (consumed) or 0 (not capture-owned, caller
- * must fall back to its own raw serial_putchar path).
+/* One byte of a ring-3 write(). ctx is a LOCAL variable on the caller's
+ * own stack (never shared across threads or CPUs), so staging a byte
+ * into it needs no lock -- there is no other execution context that can
+ * observe or mutate this particular ctx. Called from the caller's single
+ * read of the raw user buffer (never a second dereference of the same
+ * byte) so it cannot observe a value the caller's own NUL-check or
+ * terminal echo did not also observe. Returns 1 (consumed) or 0 (not
+ * capture-owned, caller must fall back to its own raw serial_putchar
+ * path).
  *
  * The mid-write flush check runs BEFORE staging this byte, not after --
  * flushing a chunk the moment it fills would emit that chunk with
@@ -2658,27 +2716,27 @@ static void u_capture_flush_chunk(struct task *self, int is_final)
  * full-but-not-yet-overflowing buffer is only ever flushed non-final when
  * a byte genuinely needs the room; if the loop ends with the buffer
  * sitting exactly full, the caller's end-of-loop test_usermode_capture_
- * flush() call flushes it as final=1 instead. */
-int test_usermode_capture_byte(char c)
+ * end() call flushes it as final=1 instead. */
+int test_usermode_capture_byte(struct utest_capture_ctx *ctx, char c)
 {
-    struct task *self = task_current();
-
-    if (!self || !self->utest_capture_active)
+    if (!ctx->_active)
         return 0;
 
-    if (self->utest_capture_buf_len >= UTEST_CAPTURE_CHUNK_MAX)
-        u_capture_flush_chunk(self, 0);
-    self->utest_capture_buf[self->utest_capture_buf_len++] = c;
+    if (ctx->_len >= UTEST_CAPTURE_CHUNK_MAX) {
+        u_capture_emit_chunk((struct task *)ctx->_owner, ctx->_buf,
+                             ctx->_len, 0);
+        ctx->_len = 0;
+    }
+    ctx->_buf[ctx->_len++] = c;
     return 1;
 }
 
-void test_usermode_capture_flush(void)
+void test_usermode_capture_end(struct utest_capture_ctx *ctx)
 {
-    struct task *self = task_current();
-
-    if (!self || !self->utest_capture_active)
+    if (!ctx->_active)
         return;
-    u_capture_flush_chunk(self, 1);
+    u_capture_emit_chunk((struct task *)ctx->_owner, ctx->_buf, ctx->_len, 1);
+    ctx->_len = 0;
 }
 
 /* Called from task_create_internal() (task.c), BEFORE the new task is

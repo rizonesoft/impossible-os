@@ -1115,6 +1115,14 @@ int task_create_user(task_entry_t entry, const char *name)
      * slot presenting the previous tenant's submission would make this
      * task's own UTEST_END read as the forbidden second call. */
     TASK_UTEST_REPORT_RESET(&tasks[pid]);
+    /* Same "every constructor resets this" rule as the report above --
+     * task_create_internal and task_fork both already call this; a
+     * recycled slot's stale owner pid or partially-filled staging buffer
+     * must not survive into a new ring-3 process here either. Currently
+     * a no-op in practice (slots are never recycled today), but the
+     * invariant this function's own precedents document must hold
+     * unconditionally, not "except here". */
+    TASK_UTEST_CAPTURE_RESET(&tasks[pid]);
     task_init_accounting(&tasks[pid]);
     task_rlimit_inherit(&tasks[pid], &tasks[current_task]); /* inherit creator's limits */
 
