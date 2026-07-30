@@ -1419,6 +1419,63 @@ PYEOF
 fi
 
 # ============================================================================
+# Check 21: no $(info) in the root Makefile -- parse-time stdout pollution
+# ============================================================================
+# $(info) writes to make's STDOUT and, at parse time, fires on EVERY make
+# invocation -- including the `print-abi-config` / `print-abi-cppflags` /
+# `print-user-cflags` query targets that scripts/gen-user-abi.py and
+# scripts/test-tooling.sh read as a machine-readable one-record-per-line
+# channel. A parse-time $(info) therefore lands INSIDE the flag vector, and
+# gen-user-abi.py hands the diagnostic to clang as a filename:
+#   clang-19: error: no such file or directory: '[SIGN] cert fingerprint
+#   changed (desired 5f8dddb8..., recorded ); invalidating stamp'
+# That failed build/.abi-check.stamp and reddened the CI release-flavor build
+# on 2026-07-30 (run 30516845328) while every local build stayed green,
+# because the local tree's recorded fingerprint matched and the branch never
+# fired. The consumer cannot defend against this -- a flag vector is
+# free-form text, so there is no shape a diagnostic could be rejected by.
+#
+# $(warning) writes to stderr, keeps the message visible in the build log,
+# and cannot reach the query channel. So the rule is absolute for this file:
+# parse-time diagnostics use $(warning), never $(info). ERROR, not WARN --
+# the failure mode is a red CI build that no local gate reproduces.
+# Both make delimiters and any function whitespace are covered, and the paths
+# are anchored at $REPO_ROOT. A grep for the literal `$(info ` in a
+# cwd-relative `Makefile` is trivially bypassed by syntax that pollutes stdout
+# identically: GNU make treats `${info x}` exactly like `$(info x)` and accepts
+# a TAB after the function name (probed against GNU make 4.4 -- `${info
+# BRACE_POLLUTION}` and `$(info<TAB>TAB_POLLUTION)` both print), and lint.sh
+# never cd's, so a relative operand silently skipped the whole check whenever
+# lint ran from anywhere but the repo root.
+if [ "${SKIP_LINT_MAKE_INFO:-}" = "1" ]; then
+    echo -e "${YELLOW}warn${NC}: Check 21 (Makefile \$(info)) skipped via SKIP_LINT_MAKE_INFO=1"
+    WARNINGS=$((WARNINGS + 1))
+else
+    LINT21_FILES=()
+    [ -f "$REPO_ROOT/Makefile" ] && LINT21_FILES+=("$REPO_ROOT/Makefile")
+    while IFS= read -r _l21f; do
+        [ -n "$_l21f" ] && LINT21_FILES+=("$_l21f")
+    done < <(find "$REPO_ROOT" -maxdepth 2 \( -name '*.mk' -o -name 'Makefile.*' \) \
+                 -not -path "$REPO_ROOT/build/*" -not -path "$REPO_ROOT/.git/*" \
+                 2>/dev/null | sort)
+    for _l21f in "${LINT21_FILES[@]}"; do
+        while IFS=: read -r lno _rest; do
+            [ -n "$lno" ] || continue
+            # A comment line (first non-whitespace char is `#`) mentioning the
+            # syntax in prose -- like the ones directly above this very block
+            # -- is not a live parse-time call; only a code line pollutes
+            # stdout when make evaluates it.
+            _l21_line="$(sed -n "${lno}p" "$_l21f")"
+            case "$_l21_line" in
+                [[:space:]]*'#'*|'#'*) continue ;;
+            esac
+            echo -e "${RED}error${NC}: ${_l21f#"$REPO_ROOT"/}:$lno: \$(info ...) / \${info ...} writes to make's stdout and pollutes the machine-readable print-abi-config / print-abi-cppflags / print-user-cflags query channel (gen-user-abi.py feeds it to clang as a filename). Use \$(warning ...) -- stderr -- instead."
+            ERRORS=$((ERRORS + 1))
+        done < <(grep -nE '\$[({]info([[:space:]]|[)}])' "$_l21f" || true)
+    done
+fi
+
+# ============================================================================
 # Summary
 # ============================================================================
 echo ""

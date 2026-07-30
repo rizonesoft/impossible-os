@@ -8908,6 +8908,105 @@ else
     fi
 fi
 
+# ---------------------------------------------------------------------------
+# Query-channel purity: the print-* targets are a MACHINE-READABLE stdout
+# channel (one record per line) that gen-user-abi.py feeds straight to clang.
+# A parse-time $(info) fires on EVERY make invocation, lands INSIDE that
+# vector, and the generator hands the diagnostic to clang as a filename:
+#   clang-19: error: no such file or directory: '[SIGN] cert fingerprint
+#   changed (desired 5f8dddb8..., recorded ); invalidating stamp'
+# -> build/.abi-check.stamp fails, CI release-flavor build goes red (run
+# 30516845328, 2026-07-30) while every LOCAL build stays green, because the
+# local recorded fingerprint matches and the branch never fires.
+#
+# scripts/lint.sh Check 21 bans `$(info`/`${info` in the makefiles
+# STRUCTURALLY. This is the BEHAVIORAL half, and it does NOT just grep for
+# `[SIGN]` -- that would only ever catch the one diagnostic already fixed. Two
+# assertions per target, which together cover both shapes of the class:
+#
+#   1. INVARIANCE. stdout from a run with the SIGN invalidation branch FIRING
+#      must be byte-identical to stdout from a control run where it does not.
+#      Any parse-time writer whose output is conditional -- a new $(info) under
+#      a new `ifneq`, a $(shell ... >&1), an included .mk -- moves one and not
+#      the other, whatever text it emits.
+#   2. RECORD SHAPE. Every stdout line must match the target's documented
+#      contract (the two flag vectors emit only `-`-prefixed tokens;
+#      print-abi-config emits only KEY=VALUE). That catches the UNCONDITIONAL
+#      writer, which is invariant by definition and so invisible to (1).
+#
+# Both runs must also exit 0: `|| true` with an unchecked rc lets a make that
+# died at parse time report empty stdout and sail through every comparison.
+#
+# Isolated by construction: SIGN_STAMP/SIGN_FINGERPRINT are overridden onto a
+# temp dir, so the parse-time `$(shell rm -f $(SIGN_STAMP))` deletes the
+# FIXTURE stamp and the real build/ signing state is untouched.
+#
+# Anti-vacuity is asserted FIRST: a fixture where the branch never fires would
+# pass while proving nothing (the exact "behavioral fixture can pass without
+# exercising the candidate" failure a prior review round found), so the
+# diagnostic MUST be observed on the triggered run's stderr -- and must be
+# ABSENT from the control run's -- before either comparison counts.
+_QP_DIR="$(mktemp -d 2>/dev/null)"
+if [ -z "$_QP_DIR" ] || [ ! -d "$_QP_DIR" ]; then
+    t_fail "makefile: parse-time diagnostics stay off the print-* stdout query channel" \
+           "could not create a temp dir for the fixture"
+else
+    : > "$_QP_DIR/fingerprint"          # recorded FP = empty, desired = bogus -> mismatch
+    _QP_FAILED=""
+    for _qp_target in print-abi-cppflags print-user-cflags print-abi-config; do
+        # Control: no stamp on disk, so the invalidation branch cannot fire.
+        rm -f "$_QP_DIR/stamp"
+        (cd "$REPO_ROOT" && make -s "$_qp_target" \
+            SIGN_STAMP="$_QP_DIR/stamp" \
+            SIGN_FINGERPRINT="$_QP_DIR/fingerprint" \
+            SIGN_DESIRED_FP=deadbeefcafe) >"$_QP_DIR/ctl.out" 2>"$_QP_DIR/ctl.err"
+        _qp_ctl_rc=$?
+        # Triggered: stamp present + desired != recorded -> branch fires.
+        : > "$_QP_DIR/stamp"
+        (cd "$REPO_ROOT" && make -s "$_qp_target" \
+            SIGN_STAMP="$_QP_DIR/stamp" \
+            SIGN_FINGERPRINT="$_QP_DIR/fingerprint" \
+            SIGN_DESIRED_FP=deadbeefcafe) >"$_QP_DIR/trg.out" 2>"$_QP_DIR/trg.err"
+        _qp_trg_rc=$?
+
+        if [ "$_qp_ctl_rc" -ne 0 ] || [ "$_qp_trg_rc" -ne 0 ]; then
+            _QP_FAILED="$_QP_FAILED $_qp_target(make-rc=$_qp_ctl_rc/$_qp_trg_rc)"
+            continue
+        fi
+        # Anti-vacuity, both directions.
+        if ! grep -q '\[SIGN\] cert fingerprint changed' "$_QP_DIR/trg.err"; then
+            _QP_FAILED="$_QP_FAILED $_qp_target(branch-never-fired)"
+            continue
+        fi
+        if grep -q '\[SIGN\] cert fingerprint changed' "$_QP_DIR/ctl.err"; then
+            _QP_FAILED="$_QP_FAILED $_qp_target(control-also-fired)"
+            continue
+        fi
+        # (1) invariance
+        if ! cmp -s "$_QP_DIR/ctl.out" "$_QP_DIR/trg.out"; then
+            _QP_FAILED="$_QP_FAILED $_qp_target(stdout-moved-with-diagnostic)"
+            continue
+        fi
+        # (2) record shape
+        case "$_qp_target" in
+            print-abi-config) _qp_shape='^[A-Za-z_][A-Za-z0-9_]*=' ;;
+            *)                _qp_shape='^-' ;;
+        esac
+        if [ ! -s "$_QP_DIR/trg.out" ]; then
+            _QP_FAILED="$_QP_FAILED $_qp_target(no-records)"
+        elif grep -qvE "$_qp_shape" "$_QP_DIR/trg.out"; then
+            _QP_FAILED="$_QP_FAILED $_qp_target(off-contract-record:$(grep -vE "$_qp_shape" "$_QP_DIR/trg.out" | head -1 | cut -c1-60))"
+        fi
+    done
+    rm -rf "$_QP_DIR"
+    if [ -n "$_QP_FAILED" ]; then
+        t_fail "makefile: parse-time diagnostics stay off the print-* stdout query channel" \
+               "offenders:$_QP_FAILED -- a parse-time \$(info ...) / \${info ...} pollutes the flag vector gen-user-abi.py feeds to clang; use \$(warning ...) (stderr). branch-never-fired / control-also-fired / make-rc mean the FIXTURE broke, not the Makefile."
+    else
+        t_pass "makefile: parse-time diagnostics stay off the print-* stdout query channel"
+    fi
+fi
+
 # Dependency-closure proof: compile a probe TU that #includes the six kernel
 # headers scripts/gen-user-abi.py reads (syscall.h, service_numbers.h,
 # ntstatus.h, task.h, teb.h, kusd.h) through the SAME -I vector the generator

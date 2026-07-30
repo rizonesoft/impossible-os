@@ -496,10 +496,28 @@ SIGN_RECORDED_FP := $(shell cat $(SIGN_FINGERPRINT) 2>/dev/null)
 # while the configured cert is unusable. Now: if MOK_KEY exists
 # and SIGN_DESIRED_FP is empty, force-invalidate the stamp so the
 # recipe re-runs (sign-efi.sh then surfaces the real error).
+#
+# $(warning), NOT $(info): these fire at PARSE time, so they are emitted by
+# EVERY make invocation -- including the `print-abi-config` /
+# `print-abi-cppflags` / `print-user-cflags` query targets that
+# scripts/gen-user-abi.py and scripts/test-tooling.sh read as machine-readable
+# stdout. $(info) writes to stdout, so the diagnostic landed INSIDE the flag
+# vector and gen-user-abi.py handed it to clang as a filename:
+#   clang-19: error: no such file or directory: '[SIGN] cert fingerprint
+#   changed (desired 5f8dddb8..., recorded ); invalidating stamp'
+# which failed `build/.abi-check.stamp` and reddened the CI release-flavor
+# build (run 30516845328, 2026-07-30). $(warning) writes to stderr, which is
+# where a human-facing parse-time diagnostic belongs: the query channel stays
+# byte-pure and the message is still visible in the build log. Never use
+# $(info) -- nor ${info} -- in this Makefile. scripts/lint.sh Check 21 enforces
+# that structurally across both make delimiters, and scripts/test-tooling.sh
+# asserts it behaviorally: the print-* stdout must be byte-identical whether or
+# not the invalidation branch is firing, and every record must match the
+# target's contract.
 ifneq ($(wildcard $(MOK_KEY)),)
 ifeq ($(SIGN_DESIRED_FP),)
 ifneq ($(wildcard $(SIGN_STAMP)),)
-$(info [SIGN] cert fingerprint NOT computable ($(MOK_CRT) missing/unreadable or sha256sum/shasum unavailable); invalidating stamp -- sign-efi.sh will report the underlying error)
+$(warning [SIGN] cert fingerprint NOT computable ($(MOK_CRT) missing/unreadable or sha256sum/shasum unavailable); invalidating stamp -- sign-efi.sh will report the underlying error)
 $(shell rm -f $(SIGN_STAMP))
 endif
 endif
@@ -507,7 +525,7 @@ endif
 ifneq ($(SIGN_DESIRED_FP),)
 ifneq ($(SIGN_DESIRED_FP),$(SIGN_RECORDED_FP))
 ifneq ($(wildcard $(SIGN_STAMP)),)
-$(info [SIGN] cert fingerprint changed (desired $(SIGN_DESIRED_FP), recorded $(SIGN_RECORDED_FP)); invalidating stamp)
+$(warning [SIGN] cert fingerprint changed (desired $(SIGN_DESIRED_FP), recorded $(SIGN_RECORDED_FP)); invalidating stamp)
 $(shell rm -f $(SIGN_STAMP))
 endif
 endif
