@@ -370,8 +370,20 @@ information or judgment; none of this weakens a gate):**
   as before; review-todo-section / complete-todo-file stay unblocked (they
   legitimately run post-ship). A fresh
   worker context is cheaper and sharper than a long-tail one; the durable
-  cursor (sequencer-run.json) carries all run state. After `progress`, run
-  `python3 .claude/hooks/run_phase_guard.py rollover`:
+  cursor (sequencer-run.json) carries all run state. After `progress`, FIRST
+  refresh the receipts in ONE shot, THEN request the rollover -- the section's
+  own work has invalidated the smoke receipt taken earlier in the section, so
+  requesting the rollover first is a GUARANTEED refusal ("smoke receipt not
+  content-valid (built image changed since the receipted smoke)"). Measured
+  2026-07-31: TODO-04 §37 and §38 each paid exactly that refusal, then ran the
+  same chain anyway. The J1 sequence lived only inside the guard's refusal text
+  and `receipts.py:270`, so it could only be learned by triggering the very
+  refuse-fix-refuse cascade the message warns about:
+  ```bash
+  bash scripts/build.sh && bash scripts/test.sh QUIET=1 && bash scripts/test-smoke.sh   # SMOKE LAST, no rebuild after it
+  python3 scripts/overnight/receipts.py record-rollover .
+  ```
+  Then run `python3 .claude/hooks/run_phase_guard.py rollover`:
   - **VERIFIED** (clean tree incl. untracked, nothing unpushed, todo-graph
     rebuild OK, content-bound build + test + smoke receipts valid, no
     unreceived review, no outstanding background jobs) -> final-answer with a
