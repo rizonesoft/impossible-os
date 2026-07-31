@@ -14283,19 +14283,32 @@ QO_REAP_OUT="$(cd "$REPO_ROOT" && timeout 40 bash -c '
     "'"$QO_TERMPROOF"'" "'"$QO_READY"'" >/dev/null 2>&1 &
     QEMU_PID=$!
     for _ in $(seq 1 100); do [ -f "'"$QO_READY"'" ] && break; sleep 0.1; done
+    start=$SECONDS
     utest_reap_qemu
-    echo "state=$QEMU_STATE qemu_pid=$QEMU_PID"
+    echo "state=$QEMU_STATE qemu_pid=$QEMU_PID elapsed=$((SECONDS - start))"
 ' 2>&1)"; QO_REAP_RC=$?
 QO_REAP_PID="$(printf '%s' "$QO_REAP_OUT" | sed -n 's/.*qemu_pid=\([0-9]*\).*/\1/p')"
+QO_REAP_ELAPSED="$(printf '%s' "$QO_REAP_OUT" | sed -n 's/.*elapsed=\([0-9]*\).*/\1/p')"
+# The `elapsed < 15` clause is BACK, and it is not a walk-back of the change
+# above. The flake was the LOWER bound: `elapsed >= 4` against a 5s default (and
+# `>= 2` against 2s) sits one truncation away from failing, and two independent
+# integer-second truncations can each shed most of a second. An UPPER bound of 15
+# against an expected ~2s has a 13-second margin -- no plausible amount of load
+# crosses it -- and it catches something the event records cannot: a mutant of the
+# shape `sleep "$grace"; sleep 20; kill -9 ...` writes every record this asserts
+# and still finishes inside the 40s outer timeout, holding the run lock and the
+# patched boot.conf far past the configured grace. So: the structural records
+# decide the CLAIM, and this stays purely as a catastrophic-stall net.
 if [ "$QO_REAP_RC" = "0" ] && [ -f "$QO_READY" ] && [ -n "$QO_REAP_PID" ] \
    && printf '%s' "$QO_REAP_OUT" | grep -q "state=reaped" \
    && grep -qx -- "sleep-begin 2" "$QO_DEADLINE_LOG" 2>/dev/null \
    && grep -qx -- "sleep-end 2 rc=0" "$QO_DEADLINE_LOG" 2>/dev/null \
-   && grep -qx -- "kill -9 $QO_REAP_PID" "$QO_DEADLINE_LOG" 2>/dev/null; then
+   && grep -qx -- "kill -9 $QO_REAP_PID" "$QO_DEADLINE_LOG" 2>/dev/null \
+   && [ -n "$QO_REAP_ELAPSED" ] && [ "$QO_REAP_ELAPSED" -lt 15 ]; then
     t_pass "test.sh: utest_reap_qemu force-ends a SIGTERM-resistant VM on a deadline"
 else
     t_fail "test.sh: utest_reap_qemu force-ends a SIGTERM-resistant VM on a deadline" \
-        "rc=$QO_REAP_RC pid=$QO_REAP_PID signals=[$(tr '\n' ';' < "$QO_DEADLINE_LOG" 2>/dev/null)] $QO_REAP_OUT"
+        "rc=$QO_REAP_RC pid=$QO_REAP_PID elapsed=$QO_REAP_ELAPSED signals=[$(tr '\n' ';' < "$QO_DEADLINE_LOG" 2>/dev/null)] $QO_REAP_OUT"
 fi
 # A malformed or negative grace must not DISARM the deadline. The watchdog
 # inherits the script's `set -e`, so a `sleep` that rejects its argument exits
@@ -14483,16 +14496,18 @@ QO_REAP_PID2="$(printf '%s' "$QO_REAP_OUT2" | sed -n 's/.*qemu_pid=\([0-9]*\).*/
 # case). `-c` reports a count and is consistent across both greps.
 QO_GONE_PROBES="$(grep -c -- "^kill -0 $QO_REAP_PID2\$" "$QO_GONE_LOG" 2>/dev/null || true)"
 QO_GONE_OTHER="$(grep -cv -- "^kill -0 $QO_REAP_PID2\$" "$QO_GONE_LOG" 2>/dev/null || true)"
-# EXACTLY the two probes the function itself makes -- the entry test and the
-# tail-path recheck -- and both aimed at OUR pid. A `-ge 1` bound would be
-# satisfied by a mutant that skips both and merely sets QEMU_STATE=reaped, and
-# an unbound pattern would accept a probe at some other process; the pairing of
-# an exact count with the pid is what makes this a real anti-vacuity guard
-# rather than a restatement of the premise.
+# AT LEAST ONE pid-bound probe, and nothing else. Not an exact count: because
+# the `gone=` premise above goes through `builtin kill` and is never recorded,
+# a mutant that skips the function's probes entirely records zero lines and
+# already fails this -- which is the whole anti-vacuity job. Demanding exactly
+# two would additionally pin the tail-path RECHECK as a permanent requirement,
+# and dropping that redundant second probe (the entry `kill -0` has already
+# failed by then) is a legitimate refactor that still reaps correctly. The test
+# should reject broken behaviour, not a cleanup.
 if [ "$QO_REAP_RC2" = "0" ] && [ -n "$QO_REAP_PID2" ] \
    && printf '%s' "$QO_REAP_OUT2" | grep -q "state=reaped" \
    && printf '%s' "$QO_REAP_OUT2" | grep -q "gone=yes" \
-   && [ "${QO_GONE_PROBES:-0}" -eq 2 ] && [ "${QO_GONE_OTHER:-1}" -eq 0 ]; then
+   && [ "${QO_GONE_PROBES:-0}" -ge 1 ] && [ "${QO_GONE_OTHER:-1}" -eq 0 ]; then
     t_pass "test.sh: an already-collected pid settles to reaped without signalling anything"
 else
     t_fail "test.sh: an already-collected pid settles to reaped without signalling anything" \
@@ -14522,9 +14537,15 @@ QO_PROMPT_OUT="$(cd "$REPO_ROOT" && timeout 30 bash -c '
     set -u
     QO_LOG="'"$QO_PROMPT_LOG"'"
     kill() { printf "kill %s\n" "$*" >> "$QO_LOG"; builtin kill "$@"; }
+    # The delay child is BACKGROUNDED and its pid recorded, so a case that fails
+    # (outer timeout, broken cancellation) cannot leave a 100-second `sleep`
+    # orphaned to idle past the end of the suite. The wrapper still blocks on it,
+    # so the watchdog behaves exactly as it would with a plain `sleep`.
     sleep() {
         printf "sleep-begin %s\n" "$1" >> "$QO_LOG"
-        command sleep "$@"; _rc=$?
+        command sleep "$@" & _sp=$!
+        printf "sleep-pid %s\n" "$_sp" >> "$QO_LOG"
+        wait "$_sp"; _rc=$?
         printf "sleep-end %s rc=%s\n" "$1" "$_rc" >> "$QO_LOG"
         return "$_rc"
     }
@@ -14541,15 +14562,38 @@ QO_PROMPT_OUT="$(cd "$REPO_ROOT" && timeout 30 bash -c '
     # reason -- a child still starting when the SIGTERM lands is a different path.
     bash -c ": > \"\$1\"; exec sleep 300" _ "'"$QO_READY"'" &
     QEMU_PID=$!
-    for _ in $(seq 1 100); do [ -f "'"$QO_READY"'" ] && break; command sleep 0.1; done
+    QO_READY_OK=no
+    for _ in $(seq 1 100); do
+        if [ -f "'"$QO_READY"'" ]; then QO_READY_OK=yes; break; fi
+        command sleep 0.1
+    done
     utest_reap_qemu
-    echo "state=$QEMU_STATE qemu_pid=$QEMU_PID"
+    echo "state=$QEMU_STATE qemu_pid=$QEMU_PID ready=$QO_READY_OK resolved=${UTEST_REAP_GRACE_RESOLVED:-unset}"
 ' 2>&1)"; QO_PROMPT_RC=$?
 rm -f "$QO_READY"
 QO_PROMPT_PID="$(printf '%s' "$QO_PROMPT_OUT" | sed -n 's/.*qemu_pid=\([0-9]*\).*/\1/p')"
+QO_PROMPT_RESOLVED="$(printf '%s' "$QO_PROMPT_OUT" | sed -n 's/.*resolved=\([^ ]*\).*/\1/p')"
+# Reap any delay child the case left behind before judging it, so a failure here
+# cannot idle a 100-second sleep into the rest of the suite.
+for _qp_sp in $(sed -n 's/^sleep-pid \([0-9]*\)$/\1/p' "$QO_PROMPT_LOG" 2>/dev/null); do
+    kill -9 "$_qp_sp" 2>/dev/null || true
+done
+# `resolved=100` rather than the watchdog's own `sleep-begin 100`, and the
+# difference is a RACE. The watchdog is backgrounded and the parent goes straight
+# to its `wait`; a child that dies instantly on the SIGTERM lets the parent reach
+# the cancellation before that subshell is ever scheduled, so the arm record can
+# legitimately be absent on a correct reap -- a flake, in the assertion written to
+# remove flakes. `UTEST_REAP_GRACE_RESOLVED` is published SYNCHRONOUSLY by the
+# function before it arms anything, so it pins the same "the grace we configured
+# was the grace in force" claim with no scheduling dependency, and it is the idiom
+# the eight zero-grace and bad-grace cases already use.
+# `ready=yes` is required, not assumed: an exhausted readiness loop would SIGTERM
+# the bootstrap before it exec'd the sleep, and the case would then pass without
+# ever exercising the live-at-entry path it exists to cover.
 if [ "$QO_PROMPT_RC" = "0" ] && [ -n "$QO_PROMPT_PID" ] \
    && printf '%s' "$QO_PROMPT_OUT" | grep -q "state=reaped" \
-   && grep -qx -- "sleep-begin 100" "$QO_PROMPT_LOG" 2>/dev/null \
+   && printf '%s' "$QO_PROMPT_OUT" | grep -q "ready=yes" \
+   && [ "$QO_PROMPT_RESOLVED" = "100" ] \
    && ! grep -qx -- "kill -9 $QO_PROMPT_PID" "$QO_PROMPT_LOG" 2>/dev/null; then
     t_pass "test.sh: a VM that exits on SIGTERM is reaped without waiting out the grace"
 else
