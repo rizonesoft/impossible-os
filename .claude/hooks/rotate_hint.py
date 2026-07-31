@@ -116,6 +116,21 @@ _MSG = (
 
 
 def _repo_root() -> Path | None:
+    """Root for this hook's state.
+
+    An explicit `CLAUDE_HOOK_STATE_ROOT` wins so a TEST can be authoritative
+    about its own fixture: the `__file__` walk below always lands on the real
+    repo (this file lives there), which is how a "fixture" test drove the LIVE
+    counter to 95 on 2026-07-31 while never touching its temp dir.
+    """
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import _state_root
+        forced = _state_root.override()
+        if forced:
+            return Path(forced)
+    except Exception:
+        pass
     here = Path(__file__).resolve()
     for p in here.parents:
         if (p / ".claude").is_dir():

@@ -103,6 +103,23 @@ _PHASE1_BASH_PATH_RE = re.compile(
 
 
 def _repo_root() -> Optional[str]:
+    """Root for this gate's state.
+
+    `git rev-parse` in the CURRENT directory makes the answer depend on how the
+    caller set itself up -- a `mktemp` fixture resolves to the fixture, the real
+    repo, or nothing depending on the environment, which is why four of this
+    gate's assertions flapped across suite runs on 2026-07-31 with no
+    intervening edits. An explicit override lets a test be authoritative.
+    """
+    try:
+        import sys as _sys
+        _sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import _state_root
+        forced = _state_root.override()
+        if forced:
+            return forced
+    except Exception:
+        pass
     try:
         return subprocess.check_output(
             ["git", "rev-parse", "--show-toplevel"],
