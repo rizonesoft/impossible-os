@@ -1345,7 +1345,7 @@ utest_publish_missing_refusals() {
         if [ "${JSON_PUBLISHED:-0}" -eq 0 ]; then
             staged="$RECORD_DIR/.refusal.json"
             if {
-                printf '{"schema": "utest-json-v1", "testcases": [], "skip_blocks": [],\n'
+                printf '{"schema": "utest-json-v2", "testcases": [], "skip_blocks": [],\n'
                 printf ' "summary": null, "summary_error": "run_incomplete",\n'
                 printf ' "detail": "%s",\n' "$why"
                 printf ' "run_identity": '
@@ -2909,7 +2909,7 @@ if [ "$JSON_MODE" -eq 1 ] || [ "$HAS_JSON" -eq 1 ]; then
         # other envelope -- an unattributable failure is the one a dashboard
         # most needs to place.
         {
-            printf '{"schema": "utest-json-v1", "testcases": [], "skip_blocks": [],\n'
+            printf '{"schema": "utest-json-v2", "testcases": [], "skip_blocks": [],\n'
             printf ' "summary": null, "summary_error": "no_python3",\n'
             printf ' "detail": "python3 unavailable -- artifact could not be assembled",\n'
             printf ' "run_identity": '

@@ -10242,6 +10242,128 @@ else
     t_fail "framing: an oversized numeric field is refused, not a traceback" "rc=$BIGRC"
 fi
 
+# 6j. The JSON artifact's self-describing abort signal (section 44). The XML
+#     side injects a synthetic `<testcase name="suite-abort">` carrying an
+#     <error>, so ANY generic JUnit consumer reds an aborted build just by
+#     walking testcase elements. JSON used to carry the abort ONLY as the
+#     boolean `summary.aborted`, which means a consumer following the doc's
+#     own worked recipe (`jq '.testcases[] | {name, status}'`) sees a smaller
+#     but internally consistent -- and apparently green -- set, because the
+#     binaries that never ran were never published as records. That is the
+#     precise false-completeness class this subsystem exists to close.
+sed 's/"record_kind":"run_meta","aborted":false,"not_run":0/"record_kind":"run_meta","aborted":true,"not_run":3/' \
+    "$FRAME_TMP/good.log" > "$FRAME_TMP/aborted.log"
+if python3 "$HARVEST" "$FRAME_TMP/aborted.log" "$FRAME_TMP/aborted.json" >/dev/null 2>&1; then
+    ABORT_OUT="$(python3 - "$FRAME_TMP/aborted.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+s, tc = d["summary"], d["testcases"]
+syn = [c for c in tc if c.get("synthetic")]
+problems = []
+if len(syn) != 1:
+    problems.append("expected exactly 1 synthetic record, got %d" % len(syn))
+else:
+    r = syn[0]
+    if r.get("name") != "suite-abort":
+        problems.append("synthetic record name=%r" % r.get("name"))
+    if r.get("status") != "ERROR":
+        problems.append("synthetic record status=%r" % r.get("status"))
+    if r.get("record_kind") != "infrastructure":
+        problems.append("synthetic record_kind=%r" % r.get("record_kind"))
+    if "3 binaries never ran" not in (r.get("reason") or ""):
+        problems.append("synthetic reason=%r" % r.get("reason"))
+# Producer counters must be UNTOUCHED: one infrastructure event standing for
+# N omitted binaries is not an additional binary, and writing it into the
+# producer's own dimension would publish a binary that never existed.
+for field, want in (("total", 1), ("passed", 1), ("failed", 0), ("errors", 0)):
+    if s.get(field) != want:
+        problems.append("producer summary.%s=%r, expected %r"
+                        % (field, s.get(field), want))
+if s["reported"]["binaries_unreported"] != 0:
+    problems.append("producer binaries_unreported=%r"
+                    % s["reported"]["binaries_unreported"])
+# The host dimension is stated explicitly instead.
+if s.get("synthetic_errors") != 1:
+    problems.append("synthetic_errors=%r" % s.get("synthetic_errors"))
+if s.get("testcase_total") != s["total"] + s.get("synthetic_errors", 0):
+    problems.append("testcase_total=%r != total+synthetic_errors"
+                    % s.get("testcase_total"))
+if s.get("testcase_total") != len(tc):
+    problems.append("testcase_total=%r but %d records published"
+                    % (s.get("testcase_total"), len(tc)))
+# The whole point: a consumer that walks testcases[] alone sees red.
+if all(c.get("status") == "PASS" for c in tc):
+    problems.append("a testcases[]-only walk still reads the aborted run green")
+print("; ".join(problems))
+PY
+)"
+    if [ -z "$ABORT_OUT" ]; then
+        t_pass "json abort: an aborted run publishes a synthetic ERROR record outside producer accounting"
+    else
+        t_fail "json abort: an aborted run publishes a synthetic ERROR record outside producer accounting" \
+            "$ABORT_OUT"
+    fi
+else
+    t_fail "json abort: an aborted run publishes a synthetic ERROR record outside producer accounting" \
+        "the harvester refused an internally consistent aborted stream"
+fi
+
+# The dimension is written on EVERY published run, not only aborted ones --
+# absent must mean "this artifact predates the dimension", never "zero", the
+# same stance the XML <properties> block takes.
+if python3 -c "
+import json, sys
+d = json.load(open('$FRAME_TMP/good.json'))
+s, tc = d['summary'], d['testcases']
+sys.exit(0 if (s.get('synthetic_errors') == 0
+               and s.get('testcase_total') == s['total'] == len(tc)
+               and not any(c.get('synthetic') for c in tc)) else 1)"; then
+    t_pass "json abort: a completed run states synthetic_errors=0 rather than omitting it"
+else
+    t_fail "json abort: a completed run states synthetic_errors=0 rather than omitting it" \
+        "a clean run carries a synthetic record or omits the host dimension"
+fi
+
+# The shape moved, so the VERSION must have moved with it: two new summary
+# fields on every run, plus a record in testcases whose record_kind is not
+# `binary`. A document carrying that while still claiming v1 is the silent
+# contract drift this artifact exists to refuse, and every writer of the
+# identifier has to agree -- the harvester and both of scripts/test.sh's
+# refusal-envelope printfs.
+JSCHEMA_OK=1
+for JSCHEMA_F in "$FRAME_TMP/good.json" "$FRAME_TMP/aborted.json"; do
+    python3 -c "
+import json, sys
+sys.exit(0 if json.load(open('$JSCHEMA_F'))['schema'] == 'utest-json-v2' else 1)" \
+        || JSCHEMA_OK=0
+done
+if [ "$JSCHEMA_OK" = "1" ] &&
+   [ "$(grep -c '"schema": "utest-json-v2"' "$REPO_ROOT/scripts/test.sh")" = "2" ] &&
+   ! grep -q 'utest-json-v1' "$REPO_ROOT/scripts/test.sh" \
+                             "$REPO_ROOT/scripts/utest-json-harvest.py"; then
+    t_pass "json abort: the changed artifact shape carries a bumped schema id everywhere"
+else
+    t_fail "json abort: the changed artifact shape carries a bumped schema id everywhere" \
+        "a writer still emits utest-json-v1, or a published artifact disagrees"
+fi
+
+# OWNERSHIP drift, which the writer check above cannot see. When the id moved,
+# the open item telling future work to evaluate this schema still named the
+# retired one -- so the unresolved compatibility question would have been
+# answered against a shape nothing publishes. Documentation and roadmap
+# references are part of the contract, not commentary on it. This file is
+# excluded because it names the retired id deliberately, as the thing to
+# assert the absence of.
+JSCHEMA_STALE="$(grep -rln 'utest-json-v1' "$REPO_ROOT/todo" "$REPO_ROOT/docs" \
+                 "$REPO_ROOT/scripts" 2>/dev/null |
+                 grep -v 'test-tooling.sh' || true)"
+if [ -z "$JSCHEMA_STALE" ]; then
+    t_pass "json abort: no roadmap or doc reference still owns the retired schema id"
+else
+    t_fail "json abort: no roadmap or doc reference still owns the retired schema id" \
+        "still naming utest-json-v1: $(printf '%s' "$JSCHEMA_STALE" | tr '\n' ' ')"
+fi
+
 # 6r1. A REFUSED binary is a first-class artifact record (usermode name-bound
 #      and counted-ingest-refusal work).
 #      A name refused at ingest never launches, so it produces no self-report
@@ -10550,9 +10672,18 @@ if python3 "$HARVEST" "$FRAME_TMP/refusal_aborted.log" \
 import json,sys
 d = json.load(open('$FRAME_TMP/refusal_aborted.json'))
 s = d['summary']
+# Split the two populations explicitly (section 44): the run is aborted, so
+# the artifact also carries the host-synthesized suite-abort record. Asserting
+# the producer records SEPARATELY is what proves the projection did not
+# contaminate the dimension the producer owns.
+produced = [t for t in d['testcases'] if not t.get('synthetic')]
+synthetic = [t for t in d['testcases'] if t.get('synthetic')]
 ok = (s['errors'] == 1 and s['failed'] == 1 and s['aborted'] is True
       and s['not_run'] == 4
-      and [t['status'] for t in d['testcases']] == ['ERROR'])
+      and [t['status'] for t in produced] == ['ERROR']
+      and [t['status'] for t in synthetic] == ['ERROR']
+      and s['synthetic_errors'] == 1
+      and s['testcase_total'] == s['total'] + 1)
 sys.exit(0 if ok else 1)"; then
     t_pass "utest errors: a refusal inside an ABORTED run keeps both dimensions in the artifact"
 else
@@ -11657,6 +11788,242 @@ echo "SURVIVED errors=$ERRORS"
         t_fail "utest reason lint: a failing checker reports its diagnostic instead of killing lint.sh" \
             "$LINT23_OUT"
     fi
+fi
+
+# 6r2f. The COMPOSED half of the reason lint (section 44). The five reasons
+#       built at run time were the gap the refusal set left standing: their
+#       fragments lived twice -- once in the size macro, once as a bare
+#       literal at the call site -- with nothing binding the copies. Set
+#       equality alone would not have closed it either, so what is asserted
+#       here is the ORDERED composition, which is the property the derived
+#       UTEST_MAX_BINARY_NAME actually rests on.
+UMODE_C="$REPO_ROOT/src/kernel/test/test_usermode.c"
+
+# A helper that appends one fragment TWICE builds a string wider than its
+# size macro measures, while every membership rule still holds -- the exact
+# hole a set check cannot see.
+sed 's|    u_append(dst, \&rp, cap, UTEST_RSNC_ISOLATE);|    u_append(dst, \&rp, cap, UTEST_RSNC_ISOLATE);\n    u_append(dst, \&rp, cap, UTEST_RSNC_ISOLATE);|' \
+    "$UMODE_C" > "$RLINT_TMP/dup-fragment.c"
+RL_OUT="$(python3 "$RLINT" --check "$RLINT_TMP/dup-fragment.c" 2>&1 || true)"
+python3 "$RLINT" --check "$RLINT_TMP/dup-fragment.c" >/dev/null 2>&1 && RL_RC=0 || RL_RC=$?
+if [ "$RL_RC" = "1" ] && printf '%s' "$RL_OUT" | grep -q 'different compositions'; then
+    t_pass "utest reason lint: a helper appending a fragment twice is an error"
+else
+    t_fail "utest reason lint: a helper appending a fragment twice is an error" \
+        "rc=$RL_RC out=$RL_OUT"
+fi
+
+# A bare literal at the call site is the ORIGINAL failure shape: it can be
+# widened without the size macro following it.
+sed 's|    u_append(dst, \&rp, cap, UTEST_RSNC_INVALID);|    u_append(dst, \&rp, cap, "invalid test report");|' \
+    "$UMODE_C" > "$RLINT_TMP/bare-literal.c"
+RL_OUT="$(python3 "$RLINT" --check "$RLINT_TMP/bare-literal.c" 2>&1 || true)"
+python3 "$RLINT" --check "$RLINT_TMP/bare-literal.c" >/dev/null 2>&1 && RL_RC=0 || RL_RC=$?
+if [ "$RL_RC" = "1" ] && printf '%s' "$RL_OUT" | grep -q 'appends the bare literal'; then
+    t_pass "utest reason lint: a bare literal appended into a reason is an error"
+else
+    t_fail "utest reason lint: a bare literal appended into a reason is an error" \
+        "rc=$RL_RC out=$RL_OUT"
+fi
+
+# The helper NAME is the binding, so a rename must fail CLOSED (rc 2) rather
+# than quietly leaving that composition unchecked -- the same stance the
+# missing-tree case takes.
+sed 's|static void u_reason_leak(|static void u_reason_leaked(|' \
+    "$UMODE_C" > "$RLINT_TMP/renamed-helper.c"
+python3 "$RLINT" --check "$RLINT_TMP/renamed-helper.c" >/dev/null 2>&1 && RL_RC=0 || RL_RC=$?
+if [ "$RL_RC" = "2" ]; then
+    t_pass "utest reason lint: a renamed composing helper fails closed"
+else
+    t_fail "utest reason lint: a renamed composing helper fails closed" "rc=$RL_RC (expected 2)"
+fi
+
+# A fragment measured by nothing is free to grow past the reservation -- the
+# composed mirror of the defined-but-unlisted refusal case.
+sed 's|#define UTEST_RSNC_NEG          "-"|#define UTEST_RSNC_NEG          "-"\n#define UTEST_RSNC_ORPHAN       "nobody measures me"|' \
+    "$UMODE_C" > "$RLINT_TMP/orphan-fragment.c"
+RL_OUT="$(python3 "$RLINT" --check "$RLINT_TMP/orphan-fragment.c" 2>&1 || true)"
+python3 "$RLINT" --check "$RLINT_TMP/orphan-fragment.c" >/dev/null 2>&1 && RL_RC=0 || RL_RC=$?
+if [ "$RL_RC" = "1" ] && printf '%s' "$RL_OUT" | grep -q 'UTEST_RSNC_ORPHAN is defined'; then
+    t_pass "utest reason lint: a fragment no composed reason measures is an error"
+else
+    t_fail "utest reason lint: a fragment no composed reason measures is an error" \
+        "rc=$RL_RC out=$RL_OUT"
+fi
+
+# The MACRO-EXPANSION bypass, found by section 44's adversarial review and
+# reproduced before it was closed: the ordered check reads the helper body as
+# TEXT and does not preprocess, so an append reaching u_append through a macro
+# was invisible to it -- this exact fixture linted CLEAN while the composed
+# string carried the fragment twice. The closed-shape rule is what refuses it.
+python3 - "$UMODE_C" "$RLINT_TMP/macro-append.c" <<'PY'
+import sys
+src, dst = sys.argv[1], sys.argv[2]
+s = open(src, encoding="utf-8").read()
+s = s.replace('#define UTEST_RSNC_ISOLATE      "isolation failed"',
+              '#define UTEST_RSNC_ISOLATE      "isolation failed"\n'
+              '#define SNEAK_APPEND(d,p,c) u_append((d),(p),(c),UTEST_RSNC_ISOLATE)')
+s = s.replace("    u_append(dst, &rp, cap, UTEST_RSNC_ISOLATE);\n}",
+              "    u_append(dst, &rp, cap, UTEST_RSNC_ISOLATE);\n"
+              "    SNEAK_APPEND(dst, &rp, cap);\n}")
+open(dst, "w", encoding="utf-8").write(s)
+PY
+RL_OUT="$(python3 "$RLINT" --check "$RLINT_TMP/macro-append.c" 2>&1 || true)"
+python3 "$RLINT" --check "$RLINT_TMP/macro-append.c" >/dev/null 2>&1 && RL_RC=0 || RL_RC=$?
+if [ "$RL_RC" = "1" ] && printf '%s' "$RL_OUT" | grep -q 'invokes SNEAK_APPEND()'; then
+    t_pass "utest reason lint: an append reaching u_append through a macro is refused"
+else
+    t_fail "utest reason lint: an append reaching u_append through a macro is refused" \
+        "rc=$RL_RC out=$RL_OUT"
+fi
+
+# A LOOP appends an unbounded number of times while the ordered sequence still
+# reads as one term per append -- the same class, reached without a macro.
+python3 - "$UMODE_C" "$RLINT_TMP/loop-append.c" <<'PY'
+import sys
+src, dst = sys.argv[1], sys.argv[2]
+s = open(src, encoding="utf-8").read()
+s = s.replace("    u_append(dst, &rp, cap, UTEST_RSNC_ISOLATE);\n}",
+              "    for (int i = 0; i < 3; i++)\n"
+              "        u_append(dst, &rp, cap, UTEST_RSNC_ISOLATE);\n}")
+open(dst, "w", encoding="utf-8").write(s)
+PY
+RL_OUT="$(python3 "$RLINT" --check "$RLINT_TMP/loop-append.c" 2>&1 || true)"
+python3 "$RLINT" --check "$RLINT_TMP/loop-append.c" >/dev/null 2>&1 && RL_RC=0 || RL_RC=$?
+if [ "$RL_RC" = "1" ] && printf '%s' "$RL_OUT" | grep -q 'uses `for`'; then
+    t_pass "utest reason lint: iteration inside a composing helper is refused"
+else
+    t_fail "utest reason lint: iteration inside a composing helper is refused" \
+        "rc=$RL_RC out=$RL_OUT"
+fi
+
+# A fragment that is not a plain STRING LITERAL is the quietest bypass of the
+# three the re-adversarial round found, because it needs no unusual syntax:
+# UTEST_LIT is sizeof(s)-1, so a parenthesized pointer expression measures
+# sizeof(char *)-1 while the whole string is still appended.
+sed 's|#define UTEST_RSNC_ISOLATE      "isolation failed"|#define UTEST_RSNC_ISOLATE      ("isolation failed and then a great deal more text" + 0)|' \
+    "$UMODE_C" > "$RLINT_TMP/ptr-fragment.c"
+RL_OUT="$(python3 "$RLINT" --check "$RLINT_TMP/ptr-fragment.c" 2>&1 || true)"
+python3 "$RLINT" --check "$RLINT_TMP/ptr-fragment.c" >/dev/null 2>&1 && RL_RC=0 || RL_RC=$?
+if [ "$RL_RC" = "1" ] && printf '%s' "$RL_OUT" | grep -q 'is not a plain string literal'; then
+    t_pass "utest reason lint: a fragment that decays to a pointer is refused"
+else
+    t_fail "utest reason lint: a fragment that decays to a pointer is refused" \
+        "rc=$RL_RC out=$RL_OUT"
+fi
+
+# Redefining the append primitive itself defeats every body check at once: the
+# helper still spells only the allowed token while each call expands to two.
+sed 's|#define UTEST_RSNC_ISOLATE      "isolation failed"|#define UTEST_RSNC_ISOLATE      "isolation failed"\n#define u_append(d,p,c,s) (u_append((d),(p),(c),(s)), u_append((d),(p),(c),(s)))|' \
+    "$UMODE_C" > "$RLINT_TMP/append-macro.c"
+RL_OUT="$(python3 "$RLINT" --check "$RLINT_TMP/append-macro.c" 2>&1 || true)"
+python3 "$RLINT" --check "$RLINT_TMP/append-macro.c" >/dev/null 2>&1 && RL_RC=0 || RL_RC=$?
+if [ "$RL_RC" = "1" ] && printf '%s' "$RL_OUT" | grep -q 'u_append is #defined as a macro'; then
+    t_pass "utest reason lint: redefining the append primitive as a macro is refused"
+else
+    t_fail "utest reason lint: redefining the append primitive as a macro is refused" \
+        "rc=$RL_RC out=$RL_OUT"
+fi
+
+# A brace inside a CHARACTER LITERAL used to stop the body scan early. With the
+# legitimate append placed BEFORE it the truncated body still matched its size
+# macro, so everything after the literal escaped every check and linted clean.
+python3 - "$UMODE_C" "$RLINT_TMP/brace-literal.c" <<'PY'
+import sys
+src, dst = sys.argv[1], sys.argv[2]
+s = open(src, encoding="utf-8").read()
+s = s.replace('#define UTEST_RSNC_ISOLATE      "isolation failed"',
+              '#define UTEST_RSNC_ISOLATE      "isolation failed"\n'
+              '#define HIDDEN(d,p,c) u_append((d),(p),(c),UTEST_RSNC_ISOLATE)')
+s = s.replace("    u_append(dst, &rp, cap, UTEST_RSNC_ISOLATE);\n}",
+              "    u_append(dst, &rp, cap, UTEST_RSNC_ISOLATE);\n"
+              "    (void)'}';\n    HIDDEN(dst, &rp, cap);\n}")
+open(dst, "w", encoding="utf-8").write(s)
+PY
+RL_OUT="$(python3 "$RLINT" --check "$RLINT_TMP/brace-literal.c" 2>&1 || true)"
+python3 "$RLINT" --check "$RLINT_TMP/brace-literal.c" >/dev/null 2>&1 && RL_RC=0 || RL_RC=$?
+if [ "$RL_RC" = "1" ] && printf '%s' "$RL_OUT" | grep -q 'invokes HIDDEN()'; then
+    t_pass "utest reason lint: a brace inside a literal cannot truncate the body scan"
+else
+    t_fail "utest reason lint: a brace inside a literal cannot truncate the body scan" \
+        "rc=$RL_RC out=$RL_OUT"
+fi
+
+# Comment stripping runs BEFORE every check, so a comment scanner that does
+# not know what a string is can erase real code first: `"/*"` ... `"*/"` in
+# two declarations deleted everything between them, duplicate append included.
+python3 - "$UMODE_C" "$RLINT_TMP/comment-strip.c" <<'PY'
+import sys
+src, dst = sys.argv[1], sys.argv[2]
+s = open(src, encoding="utf-8").read()
+s = s.replace("    u_append(dst, &rp, cap, UTEST_RSNC_ISOLATE);\n}",
+              "    u_append(dst, &rp, cap, UTEST_RSNC_ISOLATE);\n"
+              '    const char *open = "/*";\n'
+              "    u_append(dst, &rp, cap, UTEST_RSNC_ISOLATE);\n"
+              '    const char *close = "*/";\n'
+              "    (void)open; (void)close;\n}")
+open(dst, "w", encoding="utf-8").write(s)
+PY
+RL_OUT="$(python3 "$RLINT" --check "$RLINT_TMP/comment-strip.c" 2>&1 || true)"
+python3 "$RLINT" --check "$RLINT_TMP/comment-strip.c" >/dev/null 2>&1 && RL_RC=0 || RL_RC=$?
+if [ "$RL_RC" = "1" ] && printf '%s' "$RL_OUT" | grep -q 'different compositions'; then
+    t_pass "utest reason lint: a comment delimiter inside a string cannot erase helper code"
+else
+    t_fail "utest reason lint: a comment delimiter inside a string cannot erase helper code" \
+        "rc=$RL_RC out=$RL_OUT"
+fi
+
+# The ordered check reads every numeric append as one `<digits>` token and
+# cannot see the VALUE, so the parameter TYPE is what pins it to the ten
+# digits UTEST_DIGITS_U32 reserves. Widening one must trip the check rather
+# than silently making the derived name bound false.
+sed 's|static void u_reason_leak(char \*dst, uint32_t cap, uint32_t leaked)|static void u_reason_leak(char *dst, uint32_t cap, uint64_t leaked)|' \
+    "$UMODE_C" > "$RLINT_TMP/wide-param.c"
+RL_OUT="$(python3 "$RLINT" --check "$RLINT_TMP/wide-param.c" 2>&1 || true)"
+python3 "$RLINT" --check "$RLINT_TMP/wide-param.c" >/dev/null 2>&1 && RL_RC=0 || RL_RC=$?
+if [ "$RL_RC" = "1" ] && printf '%s' "$RL_OUT" | grep -q 'reserves UTEST_DIGITS_U32'; then
+    t_pass "utest reason lint: a helper parameter wider than its digit term is refused"
+else
+    t_fail "utest reason lint: a helper parameter wider than its digit term is refused" \
+        "rc=$RL_RC out=$RL_OUT"
+fi
+
+# And a file with no fragments at all is an extraction failure, not a pass:
+# a check that cannot find the composed half has not verified it.
+printf '#define UTEST_RSN_X "x"\n#define UTEST_REASON_REFUSAL UTEST_LIT(UTEST_RSN_X)\n' \
+    > "$RLINT_TMP/nofrag.c"
+python3 "$RLINT" --check "$RLINT_TMP/nofrag.c" >/dev/null 2>&1 && RL_RC=0 || RL_RC=$?
+if [ "$RL_RC" = "2" ]; then
+    t_pass "utest reason lint: a file with no composed fragments fails closed"
+else
+    t_fail "utest reason lint: a file with no composed fragments fails closed" "rc=$RL_RC (expected 2)"
+fi
+
+# 6r2g. The task_create failure path publishes like every other never-ran
+#       shape (section 44). It used to hand-roll its counters beside a plain
+#       klog line that did not match the framed verdict grammar the host
+#       recounts, so observed came out SMALLER than the summary on exactly
+#       that path -- and the host escalates only when observed EXCEEDS the
+#       summary, so the disagreement was silent by construction.
+if grep -q 'u_publish_never_ran(name_copy, type, UTEST_RSN_TASK_CREATE,' "$UMODE_C" &&
+   ! grep -q 'klog(LOG_ERROR, "UTEST", "%s: task_create failed"' "$UMODE_C"; then
+    t_pass "utest task_create: the failure path publishes through the never-ran publisher"
+else
+    t_fail "utest task_create: the failure path publishes through the never-ran publisher" \
+        "the path still hand-rolls its emission or its plain klog line survives"
+fi
+
+# The reason it publishes must be a MEASURED literal, and the caller's verdict
+# must still be set explicitly: u_publish_never_ran does not own out_verdict,
+# and u_run_one's caller reads it the instant the call returns.
+if grep -q '#define UTEST_RSN_TASK_CREATE "task_create failed"' "$UMODE_C" &&
+   grep -q 'UTEST_LIT(UTEST_RSN_TASK_CREATE)' "$UMODE_C" &&
+   grep -A22 'u_publish_never_ran(name_copy, type, UTEST_RSN_TASK_CREATE,' "$UMODE_C" |
+       grep -q '\*out_verdict = 1;'; then
+    t_pass "utest task_create: the reason is measured and the caller verdict stays explicit"
+else
+    t_fail "utest task_create: the reason is measured and the caller verdict stays explicit" \
+        "the reason is unmeasured, or *out_verdict is no longer set on that path"
 fi
 
 # 6r3. Producer and consumer must spell the incomplete-run marker identically.

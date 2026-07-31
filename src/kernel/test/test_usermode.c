@@ -2392,12 +2392,38 @@ _Static_assert(UTEST_SKIP_RECORD_BUDGET <= 9999999u,
  * every site that writes `reason` is enumerated here, so the widest one is
  * a fact rather than an estimate. */
 #define UTEST_REASON_BUF     96u
-#define UTEST_REASON_TIMEOUT (UTEST_LIT("timeout after ") + UTEST_DIGITS_U32 \
-                              + UTEST_LIT("ms"))
-#define UTEST_REASON_EXIT    (UTEST_LIT("exit=-") + UTEST_DIGITS_U32)
-#define UTEST_REASON_LEAK    (UTEST_DIGITS_U32 + UTEST_LIT(" handle(s) leaked"))
-#define UTEST_REASON_ISOLATE UTEST_LIT("isolation failed")
-#define UTEST_REASON_INVALID UTEST_LIT("invalid test report")
+/* The five COMPOSED reasons are built at run time rather than named by one
+ * literal, so each one's fragments are macros here and the ONLY code that
+ * concatenates them is the matching `u_reason_<name>` helper below. Before
+ * that, every fragment existed twice -- once inside the size macro, once as
+ * a bare literal at its `u_append(reason, ...)` call site -- with nothing
+ * tying the copies together: widening the call-site copy left
+ * UTEST_REASON_MAX understating the real width, the derived
+ * UTEST_MAX_BINARY_NAME too generous, and bound-length names falling into a
+ * truncation fallback the build otherwise proves unreachable. Set membership
+ * alone would not close it either -- a helper appending two fragments would
+ * satisfy every membership rule and still overrun -- so
+ * `scripts/utest-reason-lint.py` binds each helper's ORDERED append sequence
+ * to its size macro's ordered terms, which is the property the derivation
+ * actually rests on. */
+#define UTEST_RSNC_TIMEOUT_PRE  "timeout after "
+#define UTEST_RSNC_TIMEOUT_POST "ms"
+#define UTEST_RSNC_EXIT         "exit="
+/* Conditional at run time, UNCONDITIONAL in the size term: the bound must
+ * hold for the widest composition, which is the negative one. */
+#define UTEST_RSNC_NEG          "-"
+#define UTEST_RSNC_LEAK         " handle(s) leaked"
+#define UTEST_RSNC_ISOLATE      "isolation failed"
+#define UTEST_RSNC_INVALID      "invalid test report"
+#define UTEST_REASON_TIMEOUT (UTEST_LIT(UTEST_RSNC_TIMEOUT_PRE)             \
+                              + UTEST_DIGITS_U32                            \
+                              + UTEST_LIT(UTEST_RSNC_TIMEOUT_POST))
+#define UTEST_REASON_EXIT    (UTEST_LIT(UTEST_RSNC_EXIT)                    \
+                              + UTEST_LIT(UTEST_RSNC_NEG)                   \
+                              + UTEST_DIGITS_U32)
+#define UTEST_REASON_LEAK    (UTEST_DIGITS_U32 + UTEST_LIT(UTEST_RSNC_LEAK))
+#define UTEST_REASON_ISOLATE UTEST_LIT(UTEST_RSNC_ISOLATE)
+#define UTEST_REASON_INVALID UTEST_LIT(UTEST_RSNC_INVALID)
 /* Every refusal reason is NAMED here and used at its call site through
  * these macros, so the set below is the complete set by construction.
  * Enumerating one of them as a proxy (as the first version did) left the
@@ -2439,6 +2465,14 @@ _Static_assert(UTEST_SKIP_RECORD_BUDGET <= 9999999u,
  * file or an allocation failure. 22 bytes, inside the same pre-existing
  * UTEST_RSN_SHAPE maximum. */
 #define UTEST_RSN_UNVERIFIED "identity freeze failed"
+/* The launcher asked for a task and the kernel could not create one, so the
+ * binary never ran -- the same class as a refused name, and now reported
+ * through the same publisher. Named here rather than written inline at the
+ * call site for the reason every other reason is: an unenumerated literal is
+ * free to grow past the reservation without moving UTEST_REASON_MAX. 18
+ * bytes, inside the pre-existing UTEST_RSN_SHAPE maximum (29), so the derived
+ * name bound is unchanged. */
+#define UTEST_RSN_TASK_CREATE "task_create failed"
 #define UTEST_REASON_REFUSAL                                               \
     UTEST_MAX2(UTEST_MAX2(UTEST_MAX2(UTEST_LIT(UTEST_RSN_LENGTH),          \
                                      UTEST_MAX2(UTEST_LIT(UTEST_RSN_CHARSET), \
@@ -2452,7 +2486,8 @@ _Static_assert(UTEST_SKIP_RECORD_BUDGET <= 9999999u,
                                                 UTEST_LIT(UTEST_RSN_DUP_POLICY))), \
                           UTEST_MAX2(UTEST_MAX2(UTEST_LIT(UTEST_RSN_ARRAY_FULL), \
                                                 UTEST_LIT(UTEST_RSN_PLAN_ALLOC)), \
-                                     UTEST_MAX2(UTEST_LIT(UTEST_RSN_UNREADABLE), \
+                                     UTEST_MAX2(UTEST_MAX2(UTEST_LIT(UTEST_RSN_UNREADABLE), \
+                                                           UTEST_LIT(UTEST_RSN_TASK_CREATE)), \
                                                 UTEST_MAX2(UTEST_LIT(UTEST_RSN_MISMATCH), \
                                                            UTEST_LIT(UTEST_RSN_UNVERIFIED))))))
 #define UTEST_REASON_MAX                                                   \
@@ -2465,6 +2500,68 @@ _Static_assert(UTEST_REASON_MAX < UTEST_REASON_BUF,
                "the widest reason the launcher composes must fit the buffer "
                "u_run_one writes it into");
 
+/* The five composed reasons, each built in exactly ONE place.
+ *
+ * The helper name is the binding: `u_reason_timeout` composes what
+ * UTEST_REASON_TIMEOUT measures, and scripts/utest-reason-lint.py checks that
+ * its ordered append sequence matches that macro's ordered terms
+ * (`u_append(<FRAG>)` against `UTEST_LIT(<FRAG>)`, `u_append_uint` against
+ * `UTEST_DIGITS_U32`). A binding by comment would not survive a rename; a
+ * binding by name cannot drift without the lint losing its subject, which it
+ * reports as a hard error rather than a pass.
+ *
+ * Every write starts at offset 0 and the appends are individually bounds
+ * checked, so a caller passing its own `reason[UTEST_REASON_BUF]` gets the
+ * same overwrite-from-empty behaviour the inline blocks had. The static
+ * assert above proves none of these compositions can reach that bound. */
+static void u_reason_timeout(char *dst, uint32_t cap, uint32_t ms)
+{
+    uint32_t rp = 0;
+
+    u_append(dst, &rp, cap, UTEST_RSNC_TIMEOUT_PRE);
+    u_append_uint(dst, &rp, cap, ms);
+    u_append(dst, &rp, cap, UTEST_RSNC_TIMEOUT_POST);
+}
+
+static void u_reason_exit(char *dst, uint32_t cap, int32_t status)
+{
+    uint32_t rp = 0;
+
+    /* u_append_uint is the only numeric appender, so the sign is carried
+     * separately -- which is why the size macro counts it unconditionally. */
+    u_append(dst, &rp, cap, UTEST_RSNC_EXIT);
+    if (status < 0)
+        u_append(dst, &rp, cap, UTEST_RSNC_NEG);
+    /* Widened BEFORE the negation: -INT32_MIN is not representable in
+     * int32_t, so negating in the parameter's own width would be signed
+     * overflow on the one input that most wants to render correctly. */
+    u_append_uint(dst, &rp, cap,
+                  status < 0 ? (uint64_t)(-(int64_t)status)
+                             : (uint64_t)status);
+}
+
+static void u_reason_leak(char *dst, uint32_t cap, uint32_t leaked)
+{
+    uint32_t rp = 0;
+
+    u_append_uint(dst, &rp, cap, leaked);
+    u_append(dst, &rp, cap, UTEST_RSNC_LEAK);
+}
+
+static void u_reason_isolate(char *dst, uint32_t cap)
+{
+    uint32_t rp = 0;
+
+    u_append(dst, &rp, cap, UTEST_RSNC_ISOLATE);
+}
+
+static void u_reason_invalid(char *dst, uint32_t cap)
+{
+    uint32_t rp = 0;
+
+    u_append(dst, &rp, cap, UTEST_RSNC_INVALID);
+}
+
 /* The longest `classname` / `type` label either testcase emitter can put
  * on a record: u_type_label's widest return, itself wider than the
  * "skip-block" classname override. */
@@ -2473,7 +2570,7 @@ _Static_assert(UTEST_REASON_MAX < UTEST_REASON_BUF,
 /* Per-kind fixed cost -- everything on the record that is NOT the name. */
 #define UTEST_FIXED_VERDICT                                                \
     (UTEST_LIT(": FAIL (") + UTEST_DIGITS_U32 +                            \
-     UTEST_LIT(" handle(s) leaked -- escalated from PASS)"))
+     UTEST_LIT(UTEST_RSNC_LEAK " -- escalated from PASS)"))
 /* A non-PASS binary testcase carries ONE of two elements, and the wider of
  * the two is what the bound must reserve. `<failure` binds today; naming
  * both keeps the derivation honest if either literal ever changes, which
@@ -5801,7 +5898,8 @@ static int u_refusal_already_seen(const struct manifest_state *ms,
  * vanished, and a fail-closed aggregate -- because the counter movement
  * is what the artifacts reconcile against and three copies of it is three
  * chances for one to drift out of step with the other two. */
-static void u_publish_never_ran(const char *id, const char *reason,
+static void u_publish_never_ran(const char *id, utest_type_t type,
+                                const char *reason,
                                 uint32_t *tap_point, uint32_t *counters,
                                 struct u_report_totals *rt)
 {
@@ -5819,9 +5917,8 @@ static void u_publish_never_ran(const char *id, const char *reason,
      * element/status for "never ran", draw the finer distinction. */
     utest_record_log(LOG_ERROR, "%s: FAIL (%s)", id, reason);
     u_emit_tap_point(0, point, id, reason);
-    u_emit_xml_testcase(id, UTEST_TYPE_CORRECTNESS, 3, 0, reason,
-                        (const char *)0);
-    u_emit_json_testcase(id, UTEST_TYPE_CORRECTNESS, 3, 0, reason,
+    u_emit_xml_testcase(id, type, 3, 0, reason, (const char *)0);
+    u_emit_json_testcase(id, type, 3, 0, reason,
                          (const struct u_report *)0);
 }
 
@@ -5866,7 +5963,8 @@ static void u_emit_refusal_named(const char *reason, uint32_t ordinal,
         return;
     }
 
-    u_publish_never_ran(id, reason, tap_point, counters, rt);
+    u_publish_never_ran(id, UTEST_TYPE_CORRECTNESS, reason, tap_point,
+                        counters, rt);
 }
 
 /* Untrusted-identity refusal: the raw bytes get the synthesized,
@@ -5905,7 +6003,8 @@ static void u_emit_aggregate(const char *reason, utest_agg_kind_t kind,
              "not be built", (uint64_t)kind);
         return;
     }
-    u_publish_never_ran(id, reason, tap_point, counters, rt);
+    u_publish_never_ran(id, UTEST_TYPE_CORRECTNESS, reason, tap_point,
+                        counters, rt);
 }
 
 /* ---- Per-binary run: spawn, wait, log, cleanup --------------------- *
@@ -6100,22 +6199,25 @@ static void u_run_one(const char *name, utest_type_t type,
                 &timed_out, &leaked, &report, have_stem, expect_digest);
 
     if (pid < 0) {
-        klog(LOG_ERROR, "UTEST", "%s: task_create failed", name_copy);
-        counters[1]++;
         /* Same class as a refusal in the artifacts: no task was ever
-         * created, so nothing this binary could assert ever executed. The
-         * verdict the CALLER sees stays 1 -- `out_verdict` drives the
+         * created, so nothing this binary could assert ever executed --
+         * which is why it publishes through the SAME helper every other
+         * never-ran shape uses. It used to hand-roll the counter movement
+         * beside a plain `klog(LOG_ERROR, "UTEST", ...)` line, and that
+         * line did not match the framed verdict grammar the host recounts
+         * (scripts/test.sh greps `<frame><name>.exe: FAIL|TIMEOUT|...`), so
+         * on exactly this path the observed count came out SMALLER than the
+         * summary. Nothing tripped: the host escalates only when observed
+         * EXCEEDS the summary, so the two counters disagreed by
+         * construction and silently. */
+        u_publish_never_ran(name_copy, type, UTEST_RSN_TASK_CREATE,
+                            tap_point, counters, rt);
+        /* Set EXPLICITLY, not by the helper: `out_verdict` drives the
          * launcher's own aggregation and the smoke gate, which classify by
-         * pass/fail/skip and have no never-ran dimension. */
-        counters[3]++;
-        rt->unreported++;   /* never ran, so it never reported */
+         * pass/fail/skip and have no never-ran dimension. The caller reads
+         * it immediately after u_run_one returns, so leaving it to a helper
+         * that does not own it is how a smoke abort would be missed. */
         *out_verdict = 1;
-        test_num = ++(*tap_point);
-        u_emit_tap_point(0, test_num, name_copy, "task_create failed");
-        u_emit_xml_testcase(name_copy, type, 3, 0, "task_create failed",
-                            (const char *)0);
-        u_emit_json_testcase(name_copy, type, 3, 0, "task_create failed",
-                             (const struct u_report *)0);
         s_utest_color_active = 0;
         if (have_stem) {
             u_isolation_reap(stem);
@@ -6168,14 +6270,9 @@ static void u_run_one(const char *name, utest_type_t type,
         if (record_verdict == 3)
             counters[3]++;
         *out_verdict = 1;
-        {
-            uint32_t rp = 0;
-            u_append(reason, &rp, sizeof(reason), "timeout after ");
-            u_append_uint(reason, &rp, sizeof(reason),
-                          s_timeout_ms ? s_timeout_ms
-                                       : UTEST_DEFAULT_TIMEOUT_MS);
-            u_append(reason, &rp, sizeof(reason), "ms");
-        }
+        u_reason_timeout(reason, sizeof(reason),
+                         s_timeout_ms ? s_timeout_ms
+                                      : UTEST_DEFAULT_TIMEOUT_MS);
     } else {
         counters[1]++;  /* failed */
         /* A loader that never reached ring 3 is the same class as a
@@ -6204,16 +6301,7 @@ static void u_run_one(const char *name, utest_type_t type,
             uint32_t rp = 0;
             u_append(reason, &rp, sizeof(reason), UTEST_RSN_MISMATCH);
         } else {
-            uint32_t rp = 0;
-            u_append(reason, &rp, sizeof(reason), "exit=");
-            if (exit_status < 0) {
-                u_append(reason, &rp, sizeof(reason), "-");
-                u_append_uint(reason, &rp, sizeof(reason),
-                              (uint64_t)(-(int64_t)exit_status));
-            } else {
-                u_append_uint(reason, &rp, sizeof(reason),
-                              (uint64_t)exit_status);
-            }
+            u_reason_exit(reason, sizeof(reason), exit_status);
         }
     }
 
@@ -6265,10 +6353,7 @@ static void u_run_one(const char *name, utest_type_t type,
         *out_verdict = 1;
         counters[0]--;
         counters[1]++;
-        {
-            uint32_t rp = 0;
-            u_append(reason, &rp, sizeof(reason), "isolation failed");
-        }
+        u_reason_isolate(reason, sizeof(reason));
     }
 
     /* Handle-leak reason: only fill `reason` when we escalated from
@@ -6277,10 +6362,7 @@ static void u_run_one(const char *name, utest_type_t type,
      * but would require a structured reason schema and is a
      * nice-to-have, not a correctness issue. */
     if (reason[0] == '\0' && leaked > 0 && *out_verdict == 1) {
-        uint32_t rp = 0;
-        u_append(reason, &rp, sizeof(reason), "");
-        u_append_uint(reason, &rp, sizeof(reason), leaked);
-        u_append(reason, &rp, sizeof(reason), " handle(s) leaked");
+        u_reason_leak(reason, sizeof(reason), leaked);
     }
 
     /* Ring-3 self-report reconciliation. The counts are the binary's own
@@ -6301,8 +6383,7 @@ static void u_run_one(const char *name, utest_type_t type,
         rt->invalid++;
         *out_verdict = u_report_apply_invalid(*out_verdict, counters);
         if (!was_failing && reason[0] == '\0') {
-            uint32_t rp = 0;
-            u_append(reason, &rp, sizeof(reason), "invalid test report");
+            u_reason_invalid(reason, sizeof(reason));
         }
         klog(LOG_WARN, "UTEST",
              "%s: self-report contradicts outcome (exit=%d, reported "
@@ -6337,44 +6418,34 @@ static void u_run_one(const char *name, utest_type_t type,
                !isolation_failed) {
         /* Escalated from PASS by leak detection only. */
         utest_record_log(LOG_ERROR,
-             "%s: FAIL (%u handle(s) leaked -- escalated from PASS)",
+             "%s: FAIL (%u" UTEST_RSNC_LEAK " -- escalated from PASS)",
              name_copy, (uint64_t)leaked);
         {
-            char d[48];
-            uint32_t dp = 0;
-            d[0] = '\0';
-            if (u_append_uint(d, &dp, sizeof(d), leaked))
-                (void)u_append(d, &dp, sizeof(d), " handle(s) leaked");
+            /* The TAP detail is the SAME composition the reason buffer
+             * carries, so it goes through the same helper rather than a
+             * third hand-rolled copy of the fragments. */
+            char d[UTEST_REASON_BUF];
+            u_reason_leak(d, sizeof(d), leaked);
             u_emit_tap_point(0, test_num, name_copy, d);
         }
     } else if (isolation_failed && exit_status == 0 && !timed_out) {
         /* Escalated from PASS by isolation failure only. */
         utest_record_log(LOG_ERROR,
-             "%s: FAIL (isolation failed -- escalated from PASS)",
+             "%s: FAIL (" UTEST_RSNC_ISOLATE " -- escalated from PASS)",
              name_copy);
-        u_emit_tap_point(0, test_num, name_copy, "isolation failed");
+        u_emit_tap_point(0, test_num, name_copy, UTEST_RSNC_ISOLATE);
     } else if (timed_out) {
-        utest_record_log(LOG_ERROR, "%s: FAIL (timeout after %ums)",
+        utest_record_log(LOG_ERROR,
+             "%s: FAIL (" UTEST_RSNC_TIMEOUT_PRE "%u" UTEST_RSNC_TIMEOUT_POST ")",
              name_copy, (uint64_t)(s_timeout_ms ? s_timeout_ms
                                                 : UTEST_DEFAULT_TIMEOUT_MS));
         u_emit_tap_point(0, test_num, name_copy, "timeout");
     } else {
-        utest_record_log(LOG_ERROR, "%s: FAIL (exit=%d)",
+        utest_record_log(LOG_ERROR, "%s: FAIL (" UTEST_RSNC_EXIT "%d)",
              name_copy, (int64_t)exit_status);
         {
-            char d[48];
-            uint32_t dp = 0;
-            d[0] = '\0';
-            /* u_append_uint is the only numeric appender; carry the sign
-             * separately so a negative exit status still reads correctly. */
-            if (u_append(d, &dp, sizeof(d), "exit=")
-                && (exit_status >= 0
-                    || u_append(d, &dp, sizeof(d), "-"))) {
-                uint64_t mag = (exit_status < 0)
-                    ? (uint64_t)(-(int64_t)exit_status)
-                    : (uint64_t)exit_status;
-                (void)u_append_uint(d, &dp, sizeof(d), mag);
-            }
+            char d[UTEST_REASON_BUF];
+            u_reason_exit(d, sizeof(d), exit_status);
             u_emit_tap_point(0, test_num, name_copy, d);
         }
     }
@@ -6385,12 +6456,12 @@ static void u_run_one(const char *name, utest_type_t type,
      * reason (exit / timeout). */
     if (have_stem && leaked > 0 && !(exit_status == 0 && !timed_out)) {
         klog(LOG_WARN, "UTEST",
-             "%s: %u handle(s) leaked (open at exit)",
+             "%s: %u" UTEST_RSNC_LEAK " (open at exit)",
              name_copy, (uint64_t)leaked);
     }
     if (isolation_failed && !(exit_status == 0 && !timed_out)) {
         klog(LOG_WARN, "UTEST",
-             "%s: isolation failed (scratch/registry state may persist)",
+             "%s: " UTEST_RSNC_ISOLATE " (scratch/registry state may persist)",
              name_copy);
     }
 

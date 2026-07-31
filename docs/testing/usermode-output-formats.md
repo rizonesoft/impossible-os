@@ -418,16 +418,46 @@ The assembler rejects any other tail as a cut-and-resumed stream.
 **`record_kind` leads every record and is the stream's discriminator.**
 The stream carries FOUR kinds, and a consumer must accept all of them:
 `binary` (one per binary), `skip_block` (one per synthetic skip record),
-plus the two run-level records `run_report` and `run_meta`. A consumer
+plus the two run-level records `run_report` and `run_meta`. The assembled
+FILE adds a fifth, `infrastructure`, which exists only in `testcases[]` and
+only on an aborted run (see the `suite-abort` record below) -- it is written
+by the host, never by the launcher, so it never appears on the wire. A consumer
 that counted every object with a `name` would report more testcases than
 `summary.total` and skew every pass rate derived from it; one that
 accepted only the two name-bearing kinds would reject the run-level
 records the harvester requires. Key on `record_kind`, never on the
 presence of `name`.
 
-`summary.total` counts BINARIES. The synthetic records are counted
-separately as `summary.reported.skip_records`, so
-`records == total + skip_records`.
+`summary.total` counts BINARIES. The skip records are counted separately as
+`summary.reported.skip_records`, so `records == total + skip_records`.
+
+**An aborted run carries a `suite-abort` record, and it is NOT a binary.**
+The XML side injects a synthetic `<testcase name="suite-abort">` carrying an
+`<error>` so any generic JUnit consumer reds the build by walking testcase
+elements alone; the JSON artifact does the same, appending one record with
+`record_kind: "infrastructure"`, `synthetic: true`, and `status: "ERROR"` to
+`testcases`. Without it the abort rides only as the boolean
+`summary.aborted`, and a consumer following the worked recipe below sees a
+smaller but internally consistent -- and apparently green -- set, because the
+binaries that never ran were never published as records.
+
+That record moves NONE of the producer counters. `total`,
+`passed`/`failed`/`skipped`, `errors` and every `reported.*` field describe
+binaries the LAUNCHER accounted for, and one infrastructure event standing
+for `not_run` omitted binaries is not an additional binary; writing it into
+those counters would publish a binary that never existed. The host dimension
+is stated explicitly instead:
+
+| Field                      | Type    | Notes                                                     |
+|----------------------------|---------|-----------------------------------------------------------|
+| `summary.synthetic_errors` | integer | Host-synthesized ERROR records in `testcases` (0 or 1 today) |
+| `summary.testcase_total`   | integer | `total + synthetic_errors` -- the length of `testcases[]`  |
+
+Both are written on EVERY published run, not only aborted ones, for the same
+reason the XML `<properties>` block is: absent must mean "this artifact
+predates the dimension", never "zero". So a consumer reconciling record
+counts keys on `testcase_total`, and one that wants producer facts only
+filters `record_kind == "binary"`.
 
 `summary.reported` is the report dimension described at the top of this
 document. `binaries_unreported` is the partition slot for every binary
@@ -452,7 +482,7 @@ Per-binary record:
 
 | Field             | Type     | Notes                                                                 |
 |-------------------|----------|-----------------------------------------------------------------------|
-| `record_kind`     | string   | Always `"binary"`; discriminates from `"skip_block"` records          |
+| `record_kind`     | string   | Always `"binary"`; discriminates from `"skip_block"` and the host `"infrastructure"` record |
 | `name`            | string   | Binary filename (validated to test_*.exe prefix/suffix at ingest)     |
 | `type`            | string   | Test-type taxonomy label                                              |
 | `status`          | string   | `"PASS"` / `"FAIL"` / `"SKIP"` / `"ERROR"`. `ERROR` means the binary never RAN (refused name, launch failure) and is a SUBSET of the `failed` population, not a fourth bucket -- `summary.failed` counts it too |
@@ -472,6 +502,18 @@ Skip-block record (one per reported skip block):
 | `skip_index`  | integer  | 1-based index of the skip site within that binary          |
 | `status`      | string   | Always `"SKIP"`                                            |
 | `reason`      | string   | Fixed text; the human-readable reason stays on serial      |
+
+Host `suite-abort` record (present only when `summary.aborted` is true):
+
+| Field         | Type     | Notes                                                      |
+|---------------|----------|------------------------------------------------------------|
+| `record_kind` | string   | Always `"infrastructure"` -- never produced by the launcher |
+| `synthetic`   | boolean  | Always `true`; the machine-readable "this is a host projection" flag |
+| `name`        | string   | Always `"suite-abort"`, matching the XML `<testcase name>`  |
+| `classname`   | string   | Always `"infrastructure"`                                   |
+| `status`      | string   | Always `"ERROR"`, so a `testcases[]`-only walk reds the run |
+| `reason`      | string   | `smoke gate aborted the suite; N binaries never ran`        |
+| `time_ms`     | integer  | Always 0 -- it describes an omission, not an execution      |
 
 Summary record (wire) -- binary counts only:
 
@@ -522,13 +564,16 @@ death before publication cannot leave a stale file that reads as current.
 
 ```json
 {
-  "schema": "utest-json-v1",
-  "testcases": [ /* every record_kind=binary record, in stream order */ ],
+  "schema": "utest-json-v2",
+  "testcases": [ /* every record_kind=binary record, in stream order,
+                    plus the host record_kind=infrastructure suite-abort
+                    record LAST when the run aborted */ ],
   "skip_blocks": [ /* every record_kind=skip_block record */ ],
   "summary": {
     "passed": 1, "failed": 1, "skipped": 1, "total": 3, "time_ms": 180,
     "reported": { /* the run_report fields */ },
-    "aborted": false, "not_run": 0
+    "aborted": false, "not_run": 0,
+    "synthetic_errors": 0, "testcase_total": 3
   },
   "run_identity": { /* build/test-run-identity.json, verbatim; null if absent */ }
 }
@@ -879,8 +924,14 @@ jq '.summary | {total, aborted, not_run}' build/test-results.json
 
 # Per-binary pass rate. The artifact already separates the record kinds, so
 # there is no discriminator to remember and no way to inflate the count with
-# the synthetic skip-block records:
+# the synthetic skip-block records. On an ABORTED run this also yields the
+# host `suite-abort` ERROR record, which is deliberate: a walk of
+# `testcases[]` alone must not read a cut-short run as green.
 jq -c '.testcases[] | {name, status, time_ms}' build/test-results.json
+
+# Producer binaries only -- the population summary.total counts:
+jq -c '.testcases[] | select(.record_kind == "binary")
+       | {name, status}' build/test-results.json
 
 # Which binaries skipped work, and how much:
 jq -c '.testcases[] | select((.skip_blocks // 0) > 0)
@@ -1199,10 +1250,13 @@ both gone.
 Exhausting the refusal array is itself published as a refusal, through
 the same path as any other (`reason: refusal array full`), rather than
 as a bare diagnostic. Both artifact formats reconcile record *count*
-against the summary total -- the JSON harvester checks
-`len(testcases) == summary.total` separately from the report partition
--- so a counter bumped without a record does not merely under-describe
-the run, it makes the whole artifact unparseable.
+against the summary total -- the JSON harvester checks the PRODUCER
+record count against `summary.total` separately from the report
+partition, before any host record is appended -- so a counter bumped
+without a record does not merely under-describe the run, it makes the
+whole artifact unparseable. In the published file that same relation is
+stated as `summary.testcase_total`, which counts the host `suite-abort`
+record too.
 
 A refused name discovered from *both* the manifest and the directory is
 published once. That dedup compares names the way the filesystem does:

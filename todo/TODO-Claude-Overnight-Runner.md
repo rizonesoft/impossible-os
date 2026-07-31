@@ -469,7 +469,7 @@ scope, tests in `scripts/overnight/tests/`):
         - **Two independent symptoms, both observed 2026-07-29**: a `web-research-analyst` dispatch had every WebSearch and WebFetch blocked by R4 with the main-session reroute message, and `read_cache_block` charged that same agent's reads to the main session (it reported "read #7" for a file the main session had never opened).
         - **Net effect: a research question is unanswerable in the headless run** -- the main session is rerouted to the agent and the agent is rerouted to itself. This has now cost the same TODO-04 item two research attempts (§24 and §27).
         - **Fix requires seeing a real subagent PreToolUse payload** to learn the correct discriminator; do NOT guess a field. Until it is fixed, treat "research blocked" as a defer-with-XREF rather than an answer from memory.
-        -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §27 (item: "Evaluate `utest-json-v1` against CTRF (Common Test Report Format) before the schema has consumers")
+        -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §27 (item: "Evaluate `utest-json-v2` against CTRF (Common Test Report Format) before the schema has consumers")
 
 **Fail-direction policy (audited 2026-07-11 -- do not silently flip):** the
 LOAD-BEARING gates fail CLOSED -- `section_commit_gate.py` treats missing

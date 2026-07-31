@@ -36,6 +36,40 @@ Fail-closed rules -- any of these refuses to publish a normal envelope:
   * reported + invalid + unreported != summary.total (they partition it)
   * a not-aborted run that nevertheless reports binaries as not run
 
+An ABORTED run additionally gets a host-synthesized `suite-abort` record
+appended to `testcases`, mirroring the `<testcase name="suite-abort">`
+element the XML assembler injects (scripts/test.sh). Without it the abort
+rides only as the boolean `summary.aborted`, and a generic consumer
+walking `testcases[]` -- which is what the dashboards and trend tooling
+this artifact names as its audience actually do -- reads a smaller but
+internally consistent set as green, because the binaries that never ran
+were never published as records.
+
+That record is kept OUTSIDE the producer's accounting. It is appended only
+after every producer-stream reconciliation has passed, it carries
+`record_kind: "infrastructure"` and `synthetic: true`, and it moves NONE of
+the producer counters (`total`, `passed`/`failed`/`skipped`, `errors`,
+`reported.*`): those describe binaries the launcher accounted for, and one
+infrastructure event standing for N omitted binaries is not an additional
+binary. The published document states the host dimension explicitly
+instead -- `summary.synthetic_errors` and `summary.testcase_total`, with
+`testcase_total == total + synthetic_errors` -- so a consumer can tell a
+producer fact from a host projection rather than having to trust that the
+two were never mixed. Both fields are written on EVERY published run, not
+only aborted ones, for the same reason the XML `<properties>` block is:
+absent must mean "this artifact predates the dimension", never "zero".
+
+That is why the schema identifier moved to `utest-json-v2`. The change is
+observable in both directions -- two new `summary` fields on every run, and
+a record in `testcases` whose `record_kind` is not `binary` -- so a document
+carrying the shape while still claiming `v1` would be exactly the silent
+contract drift this artifact exists to refuse. Nothing reads the identifier
+today -- the user-mode test framework roadmap still tracks this schema as
+pre-consumer, pending its evaluation against a published cross-tool format --
+which is what makes moving it free; a strict reader written against v1 now
+fails closed on an unknown version instead of misreading a population it does
+not know about.
+
 On refusal an explicit error envelope is written (never a zero-filled one
 that reads as a clean empty run) and the exit code is nonzero.
 
@@ -62,7 +96,7 @@ def _load_frame_parser():
     return module
 
 
-SCHEMA = "utest-json-v1"
+SCHEMA = "utest-json-v2"
 MARKER = "[UTEST-JSON] "
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
@@ -638,6 +672,34 @@ def harvest(log_path, out_path):
             if entry.get("budget_stop"):
                 case["captured_budget_scope"] = entry.get("budget_scope", "")
                 case["captured_budget_limit"] = entry.get("budget_limit", 0)
+
+    # The host-synthesized abort record, appended LAST -- after the capture
+    # model's orphan reconciliation, which compares captured binaries against
+    # the testcase population. Appending earlier would enter `suite-abort`
+    # into that matching as a binary with no captured bytes; the reverse
+    # direction is already legal (a testcase with no capture), so keeping it
+    # out of the comparison entirely is what makes the two views agree.
+    #
+    # Producer counters are deliberately untouched: `summary.total` and the
+    # `reported` partition describe binaries the LAUNCHER accounted for, and
+    # this record is one infrastructure event standing for `not_run` omitted
+    # binaries. Publishing it as a binary would put a nonexistent unreported
+    # binary into the producer's own assertion dimension.
+    synthetic_errors = 0
+    if aborted:
+        testcases.append({
+            "record_kind": "infrastructure",
+            "name": "suite-abort",
+            "classname": "infrastructure",
+            "status": "ERROR",
+            "synthetic": True,
+            "time_ms": 0,
+            "reason": "smoke gate aborted the suite; %d binaries never ran"
+                      % not_run,
+        })
+        synthetic_errors = 1
+    summary["synthetic_errors"] = synthetic_errors
+    summary["testcase_total"] = summary["total"] + synthetic_errors
 
     _write_atomic(out_path, {
         "schema": SCHEMA,
