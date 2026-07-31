@@ -98,7 +98,7 @@ title: "TODO-04 -- User-Mode Test Framework"
 | 💎   |  38   | Per-leg generation pointer for coherent resolution  | §30                           |  [x]   |
 | ⭐   |  39   | Executable identity for a planned entry             | §35                           |  [x]   |
 | 💎   |  40   | Producer-side capture emission budget               | §33, §36                      |  [x]   |
-| 💎   | 41 | Post-ship follow-up backfill (2026-07-31 cohort) | -- | [ ] |
+| 💎   |  41   | Post-ship follow-up backfill (2026-07-31 cohort)    | --                            |  [/]   |
 | 💎   |  42   | Ring-3 entry evidence + structural reap-grace assertions | §34, §37                 |  [ ]   |
 | 💎   |  43   | Distinguishable identity kind for aggregate refusals | §35, §37                     |  [ ]   |
 | 💎   |  44   | Close the residual completeness gaps §37's review found | §37                       |  [ ]   |
@@ -1686,10 +1686,14 @@ The enumeration plan §35 shipped freezes WHICH names a run will execute, and th
 
 ## 41. Post-Ship Follow-Up Backfill (orphan cohort 2026-07-31)
 
+> **Deferred:** 2026-07-31 | operator-only surface: the section's sole item resolves to an edit of `scripts/gen-user-abi.py`, which `receipt_surface_guard.py:71` lists as ABI machinery and BLOCKs in the unattended run (receipt surface). Confirmed at source at this HEAD: `render()` (`gen-user-abi.py:1163-1178`) fingerprints `(SYS_*, SSDT_*, FAULT_*, TASK_EXIT_*, TEB/KUSD offsets)` -- names and numbers only, no signature input. Not blocked on design; blocked on the boundary. -> XREF: `overnight-runner-improvements/overnight-runner-improvements-v06.md` (item: "Fold syscall ARG COUNTS into the ABI fingerprint in `scripts/gen-user-abi.py`")
+
 Items moved here VERBATIM from their original, already-stamped sections, where they were unreachable: the triage oracle classifies a stamped section DONE without reading its body, so an item appended after the stamp is invisible to every later pass. Source section noted per group. Cohort context: `todo/overnight-runner-improvements/overnight-runner-improvements-v05.md` item 3.
 
 From the stamped section 18:
-- [ ] Fold syscall arg counts into the ABI fingerprint in `gen-user-abi.py` (today only SYS_* numbers) so a signature change (SYS_EXEC path,len->path,argv,envp, TODO-22 §4) bumps IMPOSSIBLE_OS_ABI_HASH and stale binaries fail the handshake
+- [/] Fold syscall arg counts into the ABI fingerprint in `gen-user-abi.py` (today only SYS_* numbers) so a signature change (SYS_EXEC path,len->path,argv,envp, TODO-22 §4) bumps IMPOSSIBLE_OS_ABI_HASH and stale binaries fail the handshake
+      - Deferred 2026-07-31: `scripts/gen-user-abi.py` is on the receipt surface, so the unattended run cannot make this edit; the work itself is unambiguous and is queued for an attended operator -> XREF: `overnight-runner-improvements/overnight-runner-improvements-v06.md` (item: "Fold syscall ARG COUNTS into the ABI fingerprint in `scripts/gen-user-abi.py`")
+      - The two generated headers it feeds (`include/kernel/abi_hash.h`, `user/include/abi_numbers.h`) are ordinary source and NOT gated; only the generator itself needs an operator
 
 **Test checkpoint:** per moved item; each carries its original acceptance text.
 

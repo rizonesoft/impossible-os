@@ -627,7 +627,16 @@ _TODO_PATH_RE = re.compile(r"(?<![\w/-])todo/[\w./-]+TODO-\d[\w./-]*\.md")
 
 # Section number locator: `§5`, `§ 5`, `section 5`. Captured for the
 # `section` field in the state entry; not used by the gate.
-_SECTION_RE = re.compile(r"(?:§\s*|section\s+)(\d+)", re.IGNORECASE)
+# `section\s+` required WHITESPACE, so the hyphenated form the runner actually
+# emits -- `[review-kind: perf] <todo-path> section-39 ...` -- parsed to NOTHING.
+# Measured 2026-07-31 on TODO-04 section 39: three perf dispatches were correctly
+# recognised as dispatches (kind detection handles every compound shape), but
+# each one recorded a section-less stamp, so `perf_section` kept the PREVIOUS
+# section's value (38) and the commit gate reported "perf (source changed since
+# dispatch)" -- which reads as staleness when the truth was misattribution. Cost:
+# 3 refused commits and 3 redundant Codex dispatches, ~15 min. Separators are now
+# whitespace, hyphen, underscore, or colon.
+_SECTION_RE = re.compile(r"(?:§\s*|section[\s\-_:]+)(\d+)", re.IGNORECASE)
 
 # Self-summary preambles that bias the reviewer toward agreement
 # (CONSENSAGENT ACL-2025). Detected on the first ~10 non-empty lines
@@ -911,6 +920,16 @@ def _record_stamp(
         entry[kind] = now_ns
         if section:
             entry[f"{kind}_section"] = section.lstrip("§").strip()
+        else:
+            # FAIL CLOSED on an unparseable section. Leaving the previous value
+            # in place is fail-OPEN: the stamp says this kind was reviewed for a
+            # section it was never dispatched against, and a later gate can be
+            # satisfied by a review belonging to different code. Clearing costs
+            # at worst one honest re-dispatch; keeping it can pass an unreviewed
+            # section. This is the stale-value half of the 2026-07-31 defect
+            # above -- the parser fix stops it arising, this stops it mattering
+            # if any other prompt shape ever fails to parse.
+            entry.pop(f"{kind}_section", None)
         if dispatch_head_sha:
             entry[f"{kind}_head"] = dispatch_head_sha
         # Preserve any unexpected keys but ensure the three canonical
