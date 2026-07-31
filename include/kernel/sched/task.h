@@ -751,8 +751,18 @@ struct task {
      * fork tree sharing one owner increments THAT slot's counter via
      * atomic_fetch_add rather than its own, giving an O(1) lock-free
      * unique sequence number across the whole tree with no parentage
-     * walk, and (being assigned inside each caller's own sequential
-     * write() loop, never across threads) preserving emission order too.
+     * walk.
+     *
+     * IT IS NOT A PHYSICAL-ORDER GUARANTEE. The values are unique and
+     * monotonically ASSIGNED, but two tasks sharing one owner (a fork
+     * descendant, or a second thread) can reach this counter
+     * concurrently, and klog releases its ring lock before the serial
+     * write, so the order records land on the wire can differ from
+     * their seq order. Every consumer MUST reassemble by sorting on
+     * seq, never by position in the stream; the host reconciler
+     * (scripts/utest-capture.py) does exactly that. An earlier version
+     * of this comment claimed emission order was preserved as well,
+     * which would invite a future consumer to undo that rule.
      *
      * The per-write escape/chunk staging buffer deliberately does NOT
      * live here: it is a local (stack) variable inside the syscall's own

@@ -45,13 +45,29 @@ delimiter design unprovable. Per owner:
     loss -- bytes went out unframed -- so the payload is known-incomplete.
 
 BOUNDING IS SEPARATE FROM RECONCILIATION, AND HAPPENS AFTER IT. Reconciliation
-validates the ENTIRE payload; only the artifact COPY is bounded, and only with
-an explicit truncated/truncated_bytes/total_bytes field. A silent cut would make
-the artifact disagree with its own byte count. Retention is streaming: the full
-payload is counted and validated but only the bounded prefix is ever held, so a
-binary emitting a megabyte cannot cost a megabyte of host memory per binary.
-Both a per-binary cap and a run-wide aggregate cap apply -- the per-binary cap
-alone does not bound a run with hundreds of binaries.
+validates the ENTIRE payload; only the artifact COPY is bounded, and never
+silently -- a silent cut would make the artifact disagree with its own byte
+count. Retention is streaming: the full payload is counted and validated but
+only the bounded prefix is ever held, so a binary emitting a megabyte cannot
+cost a megabyte of host memory per binary. Both a per-binary cap and a run-wide
+aggregate cap apply -- the per-binary cap alone does not bound a run with
+hundreds of binaries.
+
+Truncation is reported in THREE representations, which are deliberately named
+differently and must not be confused:
+
+  * this module's MODEL (the JSON written by `model`), per binary:
+    `total_bytes`, `retained_bytes`, `truncated`, `truncated_bytes`;
+  * the public JSON test artifact (scripts/utest-json-harvest.py), per testcase:
+    `captured_output`, `captured_bytes` (= total), `captured_retained_bytes`,
+    `captured_truncated`, `captured_truncated_bytes`;
+  * the JUnit XML: `<system-out>` carries the TEXT ONLY -- byte-identical to
+    `captured_output` -- and truncation rides as a SUITE-level property
+    `capture.truncated` whose value is a comma-separated list of
+    `<binary>:<retained>/<total>`, present only when something was truncated.
+    It is not on `<system-out>` because the Jenkins/xunit junit-10.xsd models
+    that element as string-only, so attributes there can make a validating
+    consumer reject the whole report.
 
 This module bounds the HOST. It cannot bound the producer: a binary can still
 put unlimited valid sub-256-byte records on the serial wire, which costs wire
@@ -99,11 +115,39 @@ SLICE_MAX_BYTES = 256 * 1024 * 1024
 MAX_RECORDS = 200000
 MAX_ESCAPED_BYTES = 64 * 1024 * 1024
 
-_BEGIN_RE = re.compile(r"\[UTEST-CAPTURE-BEGIN\] owner=(\d+) name=(\S+)\s*$")
+# Distinct owners, bounded separately. BEGIN and LOST records carry no payload,
+# so they cost nothing against MAX_ESCAPED_BYTES, but each DISTINCT pid retains
+# an _Owner -- measured at ~127 MiB RSS for 400,000 BEGIN records, and the
+# shortest accepted BEGIN fits ~4.7M times under SLICE_MAX_BYTES. A run cannot
+# legitimately spawn anything close to this: the launcher's own binary count is
+# two orders of magnitude smaller.
+MAX_OWNERS = 4096
+
+# ANCHORED and EXACT: these are matched with fullmatch() against the record body
+# (everything after the authenticated frame prefix), so they are the precise
+# inverse of the producer's printf formats in test_usermode.c -- no leading
+# garbage, no optional separator, no missing suffix.
+#
+# The separator before the payload is MANDATORY (the producer's format string is
+# "... final=%u %s"). Leaving it optional accepted `final=1abc`, a record shape
+# the kernel cannot emit, and quietly reinterpreted the first payload byte as
+# part of the field. Likewise [UTEST-CAPTURE-LOST] always carries " len=unknown";
+# matching without it would accept a truncated or version-skewed loss record.
+# Numeric fields are CANONICAL ASCII uint32, matching the producer's `%u`:
+# `[0-9]` rather than `\d` (which also matches Unicode digit characters), no
+# leading zeros, and a range check below. `\d+` plus int() silently NORMALIZED
+# non-producer forms -- `owner=07 seq=00 len=01` reconciled as a trustworthy
+# one-byte capture -- which let a malformed authenticated record slip past the
+# malformed-family detector by parsing successfully.
+_U32 = r"(0|[1-9][0-9]{0,9})"
+_BEGIN_RE = re.compile(r"\[UTEST-CAPTURE-BEGIN\] owner=" + _U32 + r" name=(\S+)")
 _CHUNK_RE = re.compile(
-    r"\[UTEST-CAPTURE\] owner=(\d+) seq=(\d+) len=(\d+) final=([01]) ?(.*)$"
+    r"\[UTEST-CAPTURE\] owner=" + _U32 + r" seq=" + _U32 + r" len=" + _U32
+    + r" final=([01]) (.*)"
 )
-_LOST_RE = re.compile(r"\[UTEST-CAPTURE-LOST\] owner=(\d+)")
+_LOST_RE = re.compile(r"\[UTEST-CAPTURE-LOST\] owner=" + _U32 + r" len=unknown")
+
+_UINT32_MAX = 0xFFFFFFFF
 
 # Escape decoder. The producer emits `\xHH` and nothing else, so a bare
 # backslash or a raw `[` in a payload is corruption by construction.
@@ -229,6 +273,47 @@ def _scan(lines, prefix):
     owners = {}
     records = 0
     escaped_bytes = 0
+
+    def _own(pid):
+        """Resolve an owner slot under the distinct-owner bound.
+
+        Every record kind goes through here. An earlier version allocated the
+        slot with a bare setdefault() from each branch, so only CHUNK records
+        were counted -- a flood of distinct BEGIN or LOST pids grew memory with
+        nothing bounding it.
+        """
+        if pid > _UINT32_MAX:
+            raise Refusal(
+                "capture_field_out_of_range",
+                f"owner={pid} is wider than the producer's uint32 field",
+            )
+        owner = owners.get(pid)
+        if owner is None:
+            if len(owners) >= MAX_OWNERS:
+                raise Refusal(
+                    "capture_owner_flood",
+                    f"more than {MAX_OWNERS} distinct capture owners in one run",
+                )
+            owner = _Owner(pid)
+            owners[pid] = owner
+        return owner
+
+    def _count(payload_len):
+        """Count one authenticated capture-family record against the bounds."""
+        nonlocal records, escaped_bytes
+        records += 1
+        escaped_bytes += payload_len
+        if records > MAX_RECORDS:
+            raise Refusal(
+                "capture_record_flood",
+                f"more than {MAX_RECORDS} capture records in one run",
+            )
+        if escaped_bytes > MAX_ESCAPED_BYTES:
+            raise Refusal(
+                "capture_volume_exceeded",
+                f"more than {MAX_ESCAPED_BYTES} escaped payload bytes in one run",
+            )
+
     for line in lines:
         if prefix:
             at = line.find(prefix)
@@ -239,21 +324,19 @@ def _scan(lines, prefix):
             body = line
         body = body.rstrip("\r\n")
 
-        m = _CHUNK_RE.search(body)
+        m = _CHUNK_RE.fullmatch(body)
         if m:
             pid, seq, dlen, final = (int(m.group(i)) for i in (1, 2, 3, 4))
             payload = m.group(5)
-            records += 1
-            escaped_bytes += len(payload)
-            if records > MAX_RECORDS:
+            _count(len(payload))
+            # The regex bounds each field to 10 digits; this rejects the values
+            # in [10^9, 2^32) that 10 digits still admits but a uint32 cannot
+            # hold, so no field can arrive wider than the producer's own type.
+            if seq > _UINT32_MAX or dlen > _UINT32_MAX:
                 raise Refusal(
-                    "capture_record_flood",
-                    f"more than {MAX_RECORDS} capture records in one run",
-                )
-            if escaped_bytes > MAX_ESCAPED_BYTES:
-                raise Refusal(
-                    "capture_volume_exceeded",
-                    f"more than {MAX_ESCAPED_BYTES} escaped payload bytes in one run",
+                    "capture_field_out_of_range",
+                    f"owner={pid} seq={seq} len={dlen} carries a value wider "
+                    "than the producer's uint32 fields",
                 )
             # The producer returns BEFORE consuming a seq when a write stages no
             # bytes (test_usermode.c: "if (raw_len == 0) return"), so a len=0
@@ -264,7 +347,7 @@ def _scan(lines, prefix):
                     f"owner={pid} seq={seq} declares len=0, which the producer "
                     "never emits",
                 )
-            owner = owners.setdefault(pid, _Owner(pid))
+            owner = _own(pid)
             if seq in owner.chunks:
                 raise Refusal(
                     "capture_duplicate_seq",
@@ -275,10 +358,11 @@ def _scan(lines, prefix):
             owner.records += 1
             continue
 
-        m = _BEGIN_RE.search(body)
+        m = _BEGIN_RE.fullmatch(body)
         if m:
             pid, name = int(m.group(1)), m.group(2)
-            owner = owners.setdefault(pid, _Owner(pid))
+            _count(0)
+            owner = _own(pid)
             if owner.name is not None and owner.name != name:
                 raise Refusal(
                     "capture_owner_rebound",
@@ -287,10 +371,11 @@ def _scan(lines, prefix):
             owner.name = name
             continue
 
-        m = _LOST_RE.search(body)
+        m = _LOST_RE.fullmatch(body)
         if m:
             pid = int(m.group(1))
-            owners.setdefault(pid, _Owner(pid)).lost = True
+            _count(0)
+            _own(pid).lost = True
             continue
 
         # An AUTHENTICATED capture-family line that parses as none of the above
@@ -299,7 +384,14 @@ def _scan(lines, prefix):
         # by an unparseable chunk (say `final=2`) reconciled as a valid binary
         # that wrote nothing. Frame-level record counting does not catch it
         # either -- the line still carries the nonce, so it counts as a record.
-        if body.startswith(_CAPTURE_FAMILY):
+        #
+        # The marker is looked for ANYWHERE in the body, not just at the start,
+        # so a record with leading garbage is refused rather than ignored. That
+        # is safe precisely because the producer escapes `[` as \x5b in every
+        # payload: a well-formed framed line cannot contain this marker unless
+        # it IS one of these records. Verified against a live 1518-record slice,
+        # where "contains" and "starts with" select the identical set.
+        if _CAPTURE_FAMILY in body:
             raise Refusal(
                 "capture_malformed_record",
                 f"authenticated capture-family record does not parse: {body[:120]!r}",
@@ -571,6 +663,7 @@ def cmd_splice_xml(argv):
         )
         return 1
 
+    truncated = []
     for case in root.iter("testcase"):
         if case.get("classname") in _SYNTHETIC_CLASSNAMES:
             continue
@@ -593,17 +686,37 @@ def cmd_splice_xml(argv):
         if record is None:
             continue
         out = ET.SubElement(case, "system-out")
-        text = record.get("text", "")
+        # TEXT ONLY, and exactly the model text -- byte-identical to the JSON
+        # `captured_output` for the same binary. Two earlier shapes were wrong:
+        # appending a human-readable "[capture truncated: ...]" notice made the
+        # artifacts disagree and attributed bytes to stdout the binary never
+        # wrote; carrying the counts as ATTRIBUTES on this element made the
+        # document nonstandard -- the Jenkins/xunit junit-10.xsd models
+        # system-out as a string-only element, so a consumer that validates
+        # before ingesting would reject the whole report and lose every result.
+        # Truncation metadata lives in the JSON artifact and in the suite-level
+        # <properties> block, which is the representation this document already
+        # uses for run identity.
+        out.text = record.get("text", "")
         if record.get("truncated"):
-            text += (
-                "\n[capture truncated: {0} of {1} byte(s) retained, "
-                "{2} dropped]\n".format(
-                    record["retained_bytes"],
-                    record["total_bytes"],
-                    record["truncated_bytes"],
-                )
+            truncated.append(
+                "%s:%d/%d"
+                % (name, record.get("retained_bytes", 0), record.get("total_bytes", 0))
             )
-        out.text = text
+
+    # A truncated payload must never be a SILENT cut in either artifact. The JSON
+    # record carries the per-binary counts; the XML says so here, at SUITE level,
+    # where <properties> is schema-legal and where this document already reports
+    # aborted/not_run and run identity. Absent when nothing was truncated, so a
+    # normal run's document is exactly what it was before.
+    if truncated:
+        props = root.find("properties")
+        if props is None:
+            props = ET.Element("properties")
+            root.insert(0, props)
+        prop = ET.SubElement(props, "property")
+        prop.set("name", "capture.truncated")
+        prop.set("value", ",".join(truncated))
 
     try:
         body = ET.tostring(root, encoding="unicode")

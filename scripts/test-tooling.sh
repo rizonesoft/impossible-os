@@ -11712,6 +11712,145 @@ else
     t_fail "capture: a refused model is still passed to the JSON harvester"
 fi
 
+# c31-c33. The grammar is the EXACT inverse of the producer's printf formats.
+#      Unanchored search() with an optional payload separator accepted record
+#      shapes the kernel cannot emit -- `final=1abc` parsed with "abc" as the
+#      payload, silently reinterpreting the first byte of a damaged record.
+_cap_nosep() {
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=3 final=1abc"
+}
+cap_refuses "a chunk with no payload separator is refused" \
+    capture_malformed_record _cap_nosep
+
+_cap_garbage() {
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
+    cap_line "junk [UTEST-CAPTURE] owner=7 seq=0 len=1 final=1 a"
+}
+cap_refuses "a chunk with leading garbage is refused" \
+    capture_malformed_record _cap_garbage
+
+_cap_lostsuffix() {
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE-LOST] owner=7"
+}
+cap_refuses "a loss record missing its len=unknown suffix is refused" \
+    capture_malformed_record _cap_lostsuffix
+
+# The producer formats every numeric field with %u, so a leading zero is a shape
+# it cannot emit. `\d+` plus int() used to NORMALIZE it into a valid record.
+_cap_leadzero() {
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=07 seq=00 len=01 final=1 a"
+}
+cap_refuses "a record with leading-zero numeric fields is refused" \
+    capture_malformed_record _cap_leadzero
+
+# Python's \d also matches Unicode digits; the producer emits ASCII only.
+_cap_unicodedigit() {
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
+    printf '[  1.000] [cpu:0] [ OK ] %s[UTEST-CAPTURE] owner=\xd9\xa7 seq=0 len=1 final=1 a\n' "$CAP_PREFIX"
+}
+cap_refuses "a record with a Unicode-digit field is refused" \
+    capture_malformed_record _cap_unicodedigit
+
+# 10 digits still admits values above 2^32 that the producer's uint32 cannot.
+_cap_overrange() {
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=4294967296 seq=0 len=1 final=1 a"
+}
+cap_refuses "a numeric field wider than uint32 is refused" \
+    capture_field_out_of_range _cap_overrange
+
+# The range check must cover BEGIN too, not only chunks: it used to live in the
+# chunk branch, so an over-range owner arrived as a perfectly fine empty binary.
+_cap_beginrange() {
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=4294967296 name=test_cap.exe"
+}
+cap_refuses "an over-range owner in a BEGIN record is refused" \
+    capture_field_out_of_range _cap_beginrange
+
+# c36. BEGIN and LOST carry no payload, so they cost nothing against the byte
+#      bound -- but each DISTINCT pid retained an _Owner with nothing counting
+#      it. Measured 400k BEGIN records at ~127 MiB RSS before this bound.
+python3 - "$CAP_TMP/flood.log" "$CAP_PREFIX" <<'PYEOF'
+import sys
+path, prefix = sys.argv[1], sys.argv[2]
+with open(path, "w") as fh:
+    for pid in range(5000):            # past MAX_OWNERS = 4096
+        fh.write("[  1.000] [cpu:0] [ OK ] %s[UTEST-CAPTURE-BEGIN] owner=%d name=test_f%d.exe\n"
+                 % (prefix, pid, pid))
+PYEOF
+if ! cap_model "$CAP_TMP/flood.log" "$CAP_TMP/flood.json" &&
+   [ "$(cap_field "$CAP_TMP/flood.json" 'm["refusal"]["reason"]')" = "capture_owner_flood" ]; then
+    t_pass "capture: a flood of distinct owners is bounded, not just chunk records"
+else
+    t_fail "capture: a flood of distinct owners is bounded, not just chunk records"
+fi
+
+# c34. Truncation is METADATA. <system-out> text must stay byte-identical to the
+#      JSON captured_output; appending a human-readable notice made the two
+#      artifacts disagree and attributed bytes to stdout the binary never wrote.
+python3 - "$CAP_TMP/trunc.log" "$CAP_PREFIX" <<'PYEOF'
+import sys
+path, prefix = sys.argv[1], sys.argv[2]
+# Deliberately NOT UTEST_CAPTURE_CHUNK_MAX. Mirroring the kernel's derived
+# bound here is the exact drift the section refuses to take on host-side, and
+# a fixture that hardcodes it keeps passing while silently stopping to
+# represent a producer-emittable stream. Any size the producer's
+# `UTEST_CAPTURE_CHUNK_MAX > 0` assertion admits is a valid stream.
+SIZE = 8
+chunk = "z" * SIZE
+total = (64 * 1024) // SIZE + 4        # deliberately past PER_BINARY_CAP
+with open(path, "w") as fh:
+    fh.write("[  1.000] [cpu:0] [ OK ] %s[UTEST-CAPTURE-BEGIN] owner=7 name=test_trunc.exe\n" % prefix)
+    for seq in range(total):
+        fh.write("[  1.000] [cpu:0] [ OK ] %s[UTEST-CAPTURE] owner=7 seq=%d len=%d final=%d %s\n"
+                 % (prefix, seq, SIZE, 1 if seq == total - 1 else 0, chunk))
+PYEOF
+cat > "$CAP_TMP/trunc.xml" <<'XEOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="t" tests="1">
+  <testcase name="test_trunc.exe" classname="correctness" time="0.001"/>
+</testsuite>
+XEOF
+if cap_model "$CAP_TMP/trunc.log" "$CAP_TMP/trunc.json" &&
+   python3 "$CAPTURE" splice-xml "$CAP_TMP/trunc.xml" "$CAP_TMP/trunc.json" \
+       "$CAP_TMP/trunc-out.xml" >/dev/null 2>&1 &&
+   python3 -c 'import json,sys,xml.etree.ElementTree as ET
+model = json.load(open(sys.argv[1]))
+rec = model["binaries"][0]
+assert rec["truncated"] is True, "fixture did not truncate"
+assert rec["truncated_bytes"] == rec["total_bytes"] - rec["retained_bytes"]
+root = ET.parse(sys.argv[2]).getroot()
+so = root.find(".//testcase/system-out")
+assert so.text == rec["text"], "XML text is not byte-identical to the model text"
+# system-out must stay a STRING-ONLY element: the Jenkins/xunit junit-10.xsd
+# rejects attributes on it, and a validating consumer would drop the report.
+assert not so.attrib, "system-out carries attributes: %r" % (so.attrib,)
+prop = [p for p in root.iter("property") if p.get("name") == "capture.truncated"]
+assert prop, "no suite-level capture.truncated property"
+assert prop[0].get("value") == "test_trunc.exe:%d/%d" % (rec["retained_bytes"], rec["total_bytes"])' \
+       "$CAP_TMP/trunc.json" "$CAP_TMP/trunc-out.xml" 2>/dev/null; then
+    t_pass "capture: truncation is suite-level metadata; system-out stays string-only"
+else
+    t_fail "capture: truncation is suite-level metadata; system-out stays string-only"
+fi
+
+# c35. A NORMAL (untruncated) run must not gain the property or any attribute --
+#      the schema-safe shape must also be the unchanged-document shape.
+if python3 "$CAPTURE" splice-xml "$CAP_TMP/in.xml" "$CAP_TMP/meta.json" \
+       "$CAP_TMP/plain.xml" >/dev/null 2>&1 &&
+   python3 -c 'import sys,xml.etree.ElementTree as ET
+root = ET.parse(sys.argv[1]).getroot()
+assert not [p for p in root.iter("property") if p.get("name") == "capture.truncated"]
+for so in root.iter("system-out"):
+    assert not so.attrib, so.attrib' "$CAP_TMP/plain.xml" 2>/dev/null; then
+    t_pass "capture: an untruncated run adds no truncation property and no attributes"
+else
+    t_fail "capture: an untruncated run adds no truncation property and no attributes"
+fi
+
 # c17. The capture model must be built for a JSON-only run too. It first lived
 #      inside the `if [ "$HAS_XML" -eq 1 ]` step, so `JSON=1` without `XML=1`
 #      built no slice, attached no captured output, and published testcases the
