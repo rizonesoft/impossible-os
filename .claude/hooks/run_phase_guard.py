@@ -441,7 +441,7 @@ def _dirty_path(porcelain_line: str) -> str:
 # An XREF stamp's line-number tail: `... (item: "NAME" at line 467)`.
 _XREF_LINENO_RE = re.compile(r"\bat line \d+\b")
 # Owners a rollover may proceed past. Everything else is real uncommitted work.
-_TOLERATED_OWNERS = ("auto-gen", "xref-repair")
+_TOLERATED_OWNERS = ("auto-gen", "xref-repair", "gotcha-prune")
 
 
 def _is_xref_lineno_repair(root: Path, path: str) -> bool:
@@ -503,6 +503,57 @@ def _is_xref_lineno_repair(root: Path, path: str) -> bool:
         return False                      # fail-closed: unsure -> keep blocking
 
 
+_GOTCHAS_REL = ".claude/state/live-gotchas.md"
+
+
+def _is_gotcha_expiry_prune(root: Path, path: str) -> bool:
+    """True iff `path`'s UNSTAGED diff is a pure DELETION of expired entries.
+
+    WHY (observed 2026-07-31 00:05, at arm time). `runner-doctor.py` runs at
+    EVERY real launch from `overnight-launch.sh:158` and prunes live-gotchas
+    entries whose `(expires YYYY-MM-DD)` has passed. It correctly never commits
+    -- a launcher is not a committer -- so the deletion sits as working-tree
+    dirt, classified `tracked-source`, and the next ship rollover refuses with
+    "tree not clean". That first occurrence was repaired by an attended commit
+    seconds later; the recurrence is scheduled, not hypothetical: two live
+    entries carry `(expires 2026-08-15)`, and a watchdog relaunch on that date
+    prunes them with nobody attending.
+
+    DELETION-ONLY is the whole safety argument, and it is checked rather than
+    assumed. The pruner can only drop lines (`runner-doctor.py` builds a `kept`
+    list and skips the rest), so a diff that ADDS anything is not the pruner:
+    it is the run appending a hazard, or an operator writing one, and that must
+    keep blocking exactly as it does today. A trailing-newline-only
+    normalisation is accepted for the same reason -- the pruner rewrites with
+    `"\n".join(kept) + "\n"` -- but any added CONTENT line fails.
+
+    Tolerating rather than committing matches the auto-gen and XREF-repair
+    precedent: the deletion stays unstaged, the next launch re-derives it
+    identically, and a later real commit sweeps it in. Fail-CLOSED on any git
+    error: unsure means keep blocking."""
+    try:
+        out = subprocess.run(["git", "diff", "--unified=0", "--", path],
+                             cwd=str(root), capture_output=True, text=True,
+                             timeout=30)
+        if out.returncode != 0:
+            return False
+        removed = added = 0
+        for ln in out.stdout.splitlines():
+            if ln.startswith(("+++", "---", "@@", "diff ", "index ",
+                              "new file", "deleted file", "similarity",
+                              "rename ", "old mode", "new mode")):
+                continue
+            if ln.startswith("-"):
+                removed += 1
+            elif ln.startswith("+"):
+                added += 1
+            elif ln.startswith("\\"):
+                continue                  # "\ No newline at end of file"
+        return removed > 0 and added == 0
+    except Exception:
+        return False                      # fail-closed: unsure -> keep blocking
+
+
 def _dirty_owner(porcelain_line: str, root: Path | None = None) -> str:
     """Classify a `git status --porcelain` line by its XY status (F4, C-RECV-class
     review 2026-07-14). ONLY an UNSTAGED modification (` M`) of an allowlisted
@@ -532,6 +583,9 @@ def _dirty_owner(porcelain_line: str, root: Path | None = None) -> str:
         # line-number repairs.
         if path in _ROLLOVER_AUTOGEN:
             return "auto-gen"
+        if (root is not None and path == _GOTCHAS_REL
+                and _is_gotcha_expiry_prune(root, path)):
+            return "gotcha-prune"
         if (root is not None and path.startswith("todo/")
                 and path.endswith(".md") and _is_xref_lineno_repair(root, path)):
             return "xref-repair"

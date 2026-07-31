@@ -12973,17 +12973,28 @@ for QO_ZEROGRACE in 0 00 .0 0.0; do
         for _ in $(seq 1 100); do [ -f "'"$QO_READY"'" ] && break; sleep 0.1; done
         start=$SECONDS
         utest_reap_qemu
-        echo "state=$QEMU_STATE elapsed=$((SECONDS - start))"
+        echo "state=$QEMU_STATE resolved=${UTEST_REAP_GRACE_RESOLVED:-unset} elapsed=$((SECONDS - start))"
     ' 2>&1)"
     rm -f "$QO_READY"
     QO_Z_ELAPSED="$(printf '%s' "$QO_Z_OUT" | sed -n 's/.*elapsed=\([0-9]*\).*/\1/p')"
-    # The default (5s) must have been substituted, so the deadline is NOT instant.
+    QO_Z_RESOLVED="$(printf '%s' "$QO_Z_OUT" | sed -n 's/.*resolved=\([^ ]*\).*/\1/p')"
+    # MECHANISM, not a stopwatch. This asserted `elapsed >= 4` against the 5s
+    # default until 2026-07-31, when it failed once on a host saturated by a
+    # concurrent lint + suite run and passed on an immediate quiet rerun with
+    # zero intervening changes -- red on correct code, which costs an
+    # unattended run a diagnosis cycle or a falsely-red ship gate. Two
+    # independent integer-second truncations ($SECONDS here, the deadline
+    # arithmetic inside the function) can each shed most of a second. The
+    # function now publishes the value it DECIDED on, so the substitution is
+    # checked exactly and the timing is irrelevant. Same lesson as the
+    # kernel-total bimodality gotcha: gate on the mechanism, not on a number
+    # that drifts with load.
     if printf '%s' "$QO_Z_OUT" | grep -q "state=reaped" \
-       && [ -n "$QO_Z_ELAPSED" ] && [ "$QO_Z_ELAPSED" -ge 4 ]; then
+       && [ "$QO_Z_RESOLVED" = "5" ]; then
         t_pass "test.sh: a zero grace ('$QO_ZEROGRACE') falls back to the default, not an instant kill"
     else
         t_fail "test.sh: a zero grace ('$QO_ZEROGRACE') falls back to the default, not an instant kill" \
-            "elapsed=$QO_Z_ELAPSED: $QO_Z_OUT"
+            "resolved=$QO_Z_RESOLVED (want 5) elapsed=$QO_Z_ELAPSED: $QO_Z_OUT"
     fi
 done
 for QO_BADGRACE in bogus -5 "" 0x5; do
@@ -12999,13 +13010,18 @@ for QO_BADGRACE in bogus -5 "" 0x5; do
         QEMU_PID=$!
         for _ in $(seq 1 100); do [ -f "'"$QO_READY"'" ] && break; sleep 0.1; done
         utest_reap_qemu
-        echo "state=$QEMU_STATE"
+        echo "state=$QEMU_STATE resolved=${UTEST_REAP_GRACE_RESOLVED:-unset}"
     ' 2>&1)"; QO_BAD_RC=$?
-    if [ "$QO_BAD_RC" = "0" ] && printf '%s' "$QO_BAD_OUT" | grep -q "state=reaped"; then
+    # Also pin the SUBSTITUTION itself, now that the function publishes it:
+    # "reached the deadline" alone cannot distinguish the 5s default from any
+    # other usable value the validator might drift to.
+    QO_BAD_RESOLVED="$(printf '%s' "$QO_BAD_OUT" | sed -n 's/.*resolved=\([^ ]*\).*/\1/p')"
+    if [ "$QO_BAD_RC" = "0" ] && printf '%s' "$QO_BAD_OUT" | grep -q "state=reaped" \
+       && [ "$QO_BAD_RESOLVED" = "5" ]; then
         t_pass "test.sh: an invalid reap grace ('$QO_BADGRACE') still reaches the deadline"
     else
         t_fail "test.sh: an invalid reap grace ('$QO_BADGRACE') still reaches the deadline" \
-            "rc=$QO_BAD_RC (124 = hung): $QO_BAD_OUT"
+            "rc=$QO_BAD_RC (124 = hung) resolved=$QO_BAD_RESOLVED (want 5): $QO_BAD_OUT"
     fi
 done
 rm -f "$QO_READY"

@@ -739,6 +739,17 @@ utest_reap_qemu() {
         echo -e "${YELLOW}[TEST]${RESET} UTEST_REAP_GRACE=$grace exceeds the 120s bound -- using 120."
         grace=120
     fi
+    # PUBLISH the resolved grace. It is a `local`, so the only way a caller
+    # could previously tell that a bad value had been substituted was to TIME
+    # the reap -- and the regressions that did (`elapsed >= 4` against the 5s
+    # default) are load-sensitive: measured 2026-07-31, one failed on a
+    # saturated host and passed on an immediate quiet rerun with no change, so
+    # the suite reported red on correct code. Two independent integer-second
+    # truncations ($SECONDS in the harness, the deadline arithmetic here) can
+    # each shed most of a second. Exporting the decision makes the assertion
+    # exact and load-independent: the test reads what the function DECIDED
+    # instead of inferring it from a stopwatch.
+    UTEST_REAP_GRACE_RESOLVED="$grace"
     if kill -0 "$QEMU_PID" 2>/dev/null; then
         # Identity captured SYNCHRONOUSLY, in the parent, BEFORE the SIGTERM.
         # Read inside the timer instead, it is read after the signal and after

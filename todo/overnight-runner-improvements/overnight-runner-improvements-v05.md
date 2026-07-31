@@ -16,11 +16,14 @@ Findings from the long-horizon unattended run armed 2026-07-30 (month-scale targ
 
 ## 1. runner-doctor's expiry prune dirties a tracked file the rollover gate does not tolerate
 
-- [ ] Classify the launcher's own live-gotchas expiry prune as tolerated dirt (or sweep it at launch), so a mid-run expiry cannot block a ship rollover
+- [x] Classify the launcher's own live-gotchas expiry prune as tolerated dirt (or sweep it at launch), so a mid-run expiry cannot block a ship rollover
   - **Observed 2026-07-31 00:05, at arm time.** `.claude/state/live-gotchas.md` showed modified: exactly one deleted line, the 2026-07-28 entry carrying `(expires 2026-07-30)`. `runner-doctor.py` (invoked by `overnight-launch.sh:158` at every real launch) prunes expired entries and, correctly, never commits -- the launcher is not a committer -- so the deletion sits as working-tree dirt.
   - **The gate does not tolerate it.** `_ROLLOVER_AUTOGEN` (`run_phase_guard.py:426`) lists only coverage.json/coverage.md/COUNT.md/todo-graph.md, so the prune classifies `tracked-source` and a ship rollover refuses with "tree not clean". Repaired this time by an attended commit (`f0802dc1`) seconds after launch.
   - **This WILL recur mid-run**: two live entries carry `(expires 2026-08-15)`. When a watchdog relaunch on/after that date prunes them, the tree dirties with nobody attending, and the next ship rollover blocks until the run itself decides to own the file -- which no doctrine currently tells it to do.
   - **Proposed shape (control plane, file-not-fix while unattended):** either add `.claude/state/live-gotchas.md` to the tolerated set when the diff is deletion-only (a prune can only remove lines; an ADDITION is run/operator content and must stay blocking), or have the run own-and-commit doctor prunes as pipeline output the way it owns XREF line-number repairs. The deletion-only classifier is the narrower and safer of the two.
+  - **RESOLVED 2026-07-31 (attended), by the narrower option.** `_is_gotcha_expiry_prune()` in `run_phase_guard.py` classifies an UNSTAGED `.claude/state/live-gotchas.md` whose diff adds NOTHING as `gotcha-prune`, now a member of `_TOLERATED_OWNERS` alongside `auto-gen` and `xref-repair`. Deletion-only is CHECKED against the real diff rather than assumed from the pruner's identity, so the safety argument does not depend on trusting a caller.
+  - **What still blocks, verified against a real git repo with the real prune shape**: a prune PLUS an appended hazard (the run or an operator writing content), a pure addition, a STAGED prune (index column set), and a deletion-only diff in any OTHER tracked file. Only the exact launcher-prune shape passes. The regression is mutation-tested: removing `gotcha-prune` from the tolerated set fails it.
+  - **Tolerate, not commit** -- matching the auto-gen and XREF-repair precedent. The deletion stays unstaged, the next launch re-derives it identically, and a later real commit sweeps it in. Having the rollover gate commit on the run's behalf would be a far larger behaviour change than this wedge warrants.
 
 ---
 
@@ -48,8 +51,11 @@ Findings from the long-horizon unattended run armed 2026-07-30 (month-scale targ
 
 ## 4. The zero-grace reap regression is timing-flaky under host load
 
-- [ ] Make the `utest_reap_qemu` zero-grace regression assert on MECHANISM, not wall-clock elapsed
+- [x] Make the `utest_reap_qemu` zero-grace regression assert on MECHANISM, not wall-clock elapsed
   - **Observed 2026-07-31 (attended).** `test-tooling.sh` "a zero grace ('00') falls back to the default, not an instant kill" FAILED once (1/918) while the host was saturated by concurrent lint + suite runs, then passed 918/918 on an immediate quiet rerun with zero intervening changes (`scripts/test.sh` and `scripts/test-tooling.sh` both HEAD-clean at the time).
   - **Mechanism.** The test asserts `elapsed >= 4` seconds around a SIGTERM-immune child (the substituted 5s default grace), and its ready-wait is a `seq 1 100` x `sleep 0.1` poll -- under load either side of the window can distort enough to land elapsed at 3.
   - **Risk.** An unattended run that hits this burns a diagnosis cycle on a green tree, or worse treats its own §-ship gate as red. Same class as the kernel-total bimodality gotcha (gate on failure lines, not totals).
   - **Proposed shape.** Assert the ORDER of events (SIGTERM observed by the immune child, then SIGKILL only after the deadline fires) via markers rather than a wall-clock floor, or lower the floor to the deadline's own lower bound minus scheduling slack and pin the substituted grace value directly from the log line.
+  - **RESOLVED 2026-07-31 (attended), by publishing the decision instead of timing it.** The grace was a `local` inside `utest_reap_qemu`, so the only way a caller could tell a bad value had been substituted was to TIME the reap. `scripts/test.sh` now sets `UTEST_REAP_GRACE_RESOLVED="$grace"` after validation and bounding, and the four zero-grace regressions assert `resolved = 5` instead of `elapsed >= 4`. The wall-clock floor is gone entirely (`grep -c 'QO_Z_ELAPSED.*-ge'` = 0); elapsed is still printed, as diagnostic context only.
+  - **The sibling `invalid reap grace` cases were strengthened for free.** They asserted only "reached the deadline", which cannot distinguish the 5s default from any other usable value the validator might drift to; they now pin `resolved = 5` as well.
+  - **Mutation-tested both ways.** Changing the substitution from `grace=5` to `grace=1` fails all four zero-grace cases; restoring it passes 972/972. That is the property the old assertion was trying to express, now checked exactly and independent of host load.
