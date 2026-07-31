@@ -1570,19 +1570,25 @@ A consumer of the per-leg artifacts resolves them by enumerating `build/test-res
       - **The pointer is NOT a member of the cleared alias set**, which the design review rated [high]: that set is removed and rewritten, so every member is briefly absent by construction, and a death in the window would leave the leg resolving to nothing permanently. One `mv -f` over a file that already names a complete, marker-committed record instead -- so the only observable states are the previous generation and the new one, both coherent.
       - **A torn or partially-published alias set does not advance it**, and a pointer that cannot be advanced is a counted `UTEST_FAIL` rather than a silent skew.
       - **Retention understands it**: `utest_prune_records` pins the records live pointers name (bounded by `UTEST_POINTER_PIN_MAX`, default 64, because `UTEST_LEG` can mint unboundedly many leg names) and sweeps any pointer left dangling, symlinked, or naming `.`/`..` via `utest_pointer_run_id`.
-      - **27 host-only regressions** in `scripts/test-tooling.sh` extract the production functions verbatim, including the paused-reader checkpoint, two transition probes (pointer state at the first alias publish, and at its own rename), a bounded FIFO case, and discriminating bound tables for both retention knobs.
+      - **34 host-only regressions** in `scripts/test-tooling.sh` extract the production functions verbatim, including the paused-reader checkpoint, two transition probes (pointer state at the first alias publish, and at its own rename), a bounded FIFO case, and discriminating bound tables for both retention knobs.
       -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §30 (item: "Published each invocation under a unique run record and reduced both stable pathnames to aliases")
 - [x] Commit: `"test: resolve per-leg artifacts through one atomically replaced generation pointer"`
 
 **Test checkpoint:** a reader that resolves `build/test-results-<leg>.run` and then opens both documents from the record directory it names sees one run's XML and JSON or nothing, never a mixed pair, even when a second run publishes between the two opens; the documented resolution path is exercised by a regression that pauses a reader mid-resolution across an alias swap. Test on: host tooling only (no QEMU dependency).
 
-**Test runner:** `bash scripts/test-tooling.sh` | 1011/1011 PASS 2026-07-31 (984 baseline + 27 new: 18 `run record:` retention/containment/bounds, 9 `leg pointer:`); no QEMU or kernel dependency.
+**Test runner:** `bash scripts/test-tooling.sh` | 1018/1018 PASS 2026-07-31 (984 baseline + 34 new: 22 `run record:` retention/containment/bounds, 12 `leg pointer:`); no QEMU or kernel dependency.
 
 > **Notes:**
-> - Shipped `build/test-results-<leg>.run` (`utest-leg-pointer-v1`) plus `utest_leg_pointer_doc` / `utest_publish_leg_pointer` / `utest_pointer_run_id` in `scripts/test.sh`, and pointer-aware retention in `utest_prune_records`.
-> - Integrates as the LAST step of `utest_publish_leg_set` and only when the whole alias set landed; the two leg aliases stay exactly as they were, so every existing consumer is unaffected.
-> - Downstream: `docs/testing/usermode-output-formats.md` now documents the pointer as THE resolution path with a fail-closed 4-step algorithm that never falls back to the aliases.
-> - Scope boundary: the resolve-then-open window is closed by a consumer-side re-resolve, not by a lease (§45); the sweep's check-then-act pair is `timeout`-bounded rather than atomic (§46).
+> - Shipped `build/test-results-<leg>.run` (`utest-leg-pointer-v1`) and its emitter/publisher/validators in `scripts/test.sh`, plus pointer-aware retention in `utest_prune_records`.
+> - Publishes as the LAST step of `utest_publish_leg_set`, only when the whole alias set landed; the two leg aliases are untouched, so every existing consumer is unaffected.
+> - A pin is a BYTE-FOR-BYTE match against the emitter publication uses, so a pointer this script did not write cannot spend the bounded pin budget a valid one needs.
+> - Downstream: `docs/testing/usermode-output-formats.md` documents the pointer as THE resolution path, with a fail-closed algorithm that validates before resolving and never falls back to the aliases.
+> - Scope boundary: the resolve-then-open window is closed by a bounded consumer-side re-resolve, not a lease (§45); the sweep's check-then-act pair is `timeout`-bounded, not atomic (§46).
+
+> **Verified:** 2026-07-31 | commit `1b780173` | 2/2 items | build OK | 27593 kernel + 17 user-mode, 1018/1018 tooling, lint 0 errors
+> **Deferred:** [H] a resolved generation loses its pin the moment its leg republishes, so a later prune can remove it in the reader's resolve-then-open window (reason: closed consumer-side by a bounded re-resolve; the writer-side lease needs a design decision) -> XREF: 00-infrastructure/TODO-04-usermode-test-framework.md §45 (item: "Implement it so a resolved generation cannot be pruned while a reader holds it, and a dead holder's lease is reclaimed without operator action" at line 1733)
+> **Deferred:** [M] the sweep classifies an entry by pathname and then opens or unlinks it, which is two syscalls (reason: the consequence is `timeout`-bounded; atomicity needs an `O_NOFOLLOW|O_NONBLOCK` primitive bash lacks, on a path that must work without python3) -> XREF: 00-infrastructure/TODO-04-usermode-test-framework.md §46 (item: "Classify, parse and unlink through ONE verified object, so a replacement between the check and the action cannot be parsed or deleted in place of what was checked" at line 1753)
+> **Quality reviewed:** 2026-07-31 | Codex 12x (design, adversarial, test-coverage, consistency, perf, re-adversarial) | 5H+21M fixed, 1H+1M open | scope: N/A (host bash tooling; no kernel/boot/desktop/shell/userland surface)
 
 ---
 

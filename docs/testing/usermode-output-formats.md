@@ -594,59 +594,96 @@ The pointer is replaced by ONE rename per completed run, and it is never a
 member of the cleared alias set. It therefore always names a **complete,
 immutable, marker-committed** record: the only two states a reader can observe
 are the previous generation and the new one, both internally coherent, and
-there is no window in which the leg resolves to nothing. A run whose alias set
-published only partially does NOT advance it -- the pointer stays on the last
-wholly-published generation and the run is failed.
+there is no window in which the leg resolves to nothing.
+
+Publication is not atomic ACROSS the pointer and the aliases, and the
+asymmetry is deliberate in both directions:
+
+- **Alias set torn or unpublishable -> the pointer does not move.** It stays on
+  the last wholly-published generation and the run is failed.
+- **Aliases published, then the pointer fails to advance -> the aliases are
+  AHEAD of the pointer**, and the run is failed. They are not rolled back:
+  rolling back would delete a valid new generation's documents to match an
+  older pointer, and the rollback can fail too. **The pointer is authoritative**
+  -- a consumer resolving through it reads the older generation and is correct
+  to; only alias-enumerating consumers see the newer one.
 
 The pointer is deliberately minimal. `record-complete.json` is the
 authoritative statement of what a record holds, so the pointer restates none
-of it and `record` is derived from `run_id` rather than carried separately;
-there is nothing here that can drift out of agreement with the marker.
+of it. `record` is emitted purely as a convenience, and a consumer must
+**derive** the path from the validated `run_id` rather than trust it (see step
+2 below) -- the two agree in everything this script writes, but a consumer
+validates what it reads, not what the writer intended.
 
 **Resolution algorithm (fail-closed; never fall back to the aliases):**
 
 1. Read `build/test-results-<leg>.run`. Absent -> that leg has no completed
    run: **stop**.
-2. Resolve `build/<record>` and read `<record>/record-complete.json`. Absent,
-   unparseable, `schema != utest-run-record-v1`, `run_id` not equal to the
-   pointer's, or `status != complete` -> re-read the pointer ONCE (a
-   concurrent run may have advanced it mid-resolution) and retry from step 2.
-   Still bad -> report the generation unavailable or corrupt: **stop**.
-3. **Open** the documents the marker NAMES, out of the record directory, not
-   out of the aliases -- and open both before processing either. A record is
-   never rewritten, so once you hold the descriptors the pair you read is one
-   run's no matter how many runs publish while you read.
-4. If any open fails with `ENOENT`, go back to step 1. Do not treat it as an
-   error and do not reach for the aliases.
+2. **Validate the pointer before it can name anything.** Reject unless it
+   parses as JSON with NO duplicate keys and carries exactly
+   `{schema, leg, run_id, record, marker}` with `schema ==
+   "utest-leg-pointer-v1"`, `leg` equal to the leg you asked for, `run_id`
+   matching `[A-Za-z0-9._-]+` and not beginning with `.`, `record ==
+   "test-runs/<run_id>"`, and `marker == "record-complete.json"`. Then resolve
+   the record as `build/test-runs/<run_id>` -- **built from the validated
+   `run_id`**, never from the `record` string -- so a malformed or
+   version-skewed pointer cannot redirect you outside `build/test-runs/`.
+3. Read `<record>/record-complete.json`. Absent, unparseable, `schema !=
+   utest-run-record-v1`, `run_id` not equal to the pointer's, or `status !=
+   complete` -> re-read the pointer ONCE (a concurrent run may have advanced it
+   mid-resolution) and retry from step 2. Still bad -> report the generation
+   unavailable or corrupt: **stop**.
+4. **Open** the documents the marker NAMES -- and take the names from the
+   MARKER, not from your own assumptions -- out of the record directory, not
+   out of the aliases, opening both before processing either. A record is never
+   rewritten, so once you hold the descriptors the pair you read is one run's
+   no matter how many runs publish while you read.
+   **The marker's `xml` and `json` fields are independently nullable**: `XML=1`
+   and `JSON=1` are separate switches, so `null` means "this run did not carry
+   that format" and is not an error -- a resolver that demands both rejects
+   valid single-format generations. A non-null value must be a **contained
+   basename** (no `/`, not `.` or `..`, not absolute); reject anything else
+   rather than joining it, or a corrupted marker walks you straight out of the
+   record you just validated.
+5. If any open fails with `ENOENT`, go back to step 1, up to a small fixed
+   number of restarts (3 is plenty). Do not treat it as an error before the
+   bound is exhausted, do not retry forever, and do not reach for the aliases.
 
-Step 3 is what makes the whole thing work, and step 2's "never fall back" is
+Step 4 is what makes the whole thing work, and step 3's "never fall back" is
 what keeps it honest: falling back to `build/test-results-<leg>.{xml,json}`
 after a failed resolution would silently hand back a different generation --
 the exact mixed-generation read the pointer exists to prevent.
 
-**What step 4 is for.** Immutability protects the bytes behind a descriptor you
-already hold; it does not protect a record you have merely *resolved*. In the
-window between reading the pointer and opening the documents, the leg can
-publish a new generation -- which unpins the one you resolved -- and a later
-prune can then remove it once it falls past the retention cutoff. That is the
-one race the pointer does not close on the writer side, and no rename scheme
-can: it is a lifetime question, not an atomicity one. Re-resolving is a
-terminating answer rather than a spin, because the record the CURRENT pointer
-names is always pinned. (`UTEST_POINTER_PIN_MAX=0` disables pinning entirely
-and with it this guarantee; a consumer that sets it is opting out of the
-resolution contract.) Giving a resolved generation an explicit reader lease, so
+**What step 5 is for, and why it is BOUNDED.** Immutability protects the bytes
+behind a descriptor you already hold; it does not protect a record you have
+merely *resolved*. In the window between reading the pointer and opening the
+documents, the leg can publish a new generation -- which unpins the one you
+resolved -- and a later prune can then remove it once it falls past the
+retention cutoff. That is the one race the pointer does not close on the writer
+side, and no rename scheme can: it is a lifetime question, not an atomicity
+one. Restarting usually wins immediately, because the record the current
+pointer names is normally pinned -- but "usually" is the honest word and a
+retry loop must not be written as though it were "always". Two things break the
+guarantee: a leg outside the `UTEST_POINTER_PIN_MAX` ranking is not pinned at
+all, and sustained publish-then-prune traffic can invalidate each successive
+resolution in turn. Hence a finite bound and an honest "generation
+unavailable". Giving a resolved generation an explicit reader lease, so
 retention cannot remove it out from under a reader at all, is tracked as
 [Reader Leases for a Resolved Generation](../../todo/00-infrastructure/TODO-04-usermode-test-framework.md#45-reader-leases-for-a-resolved-generation).
 
 Retention understands the pointer. `utest_prune_records` keeps the newest
-`UTEST_RECORD_KEEP` (20) records and additionally **pins** any record a live
-pointer resolves to, so the documented path cannot dangle after twenty
+`UTEST_RECORD_KEEP` (20) records and additionally **pins** the record a live
+pointer resolves to, so the documented path does not dangle after twenty
 unrelated runs of another leg. The pin is bounded by `UTEST_POINTER_PIN_MAX`
-(64 most recently published pointers) because `UTEST_LEG` can mint unboundedly
-many distinct leg names, and an unconditional exemption would nullify the disk
-bound. Any pointer left naming an absent record -- pruned past the cap, or
-removed by hand -- is deleted by the same pass, so a consumer sees "no
-pointer" rather than "a pointer to nothing".
+(the 64 most recently published pointers that actually validate) because
+`UTEST_LEG` can mint unboundedly many distinct leg names, and an unconditional
+exemption would nullify the disk bound. **Only pointers inside that ranking are
+protected:** past 64 live legs, the least recently published leg's current
+record is an ordinary age candidate, and resolution for that leg can become
+unavailable -- which is why step 5 is bounded rather than infinite.
+`UTEST_POINTER_PIN_MAX=0` disables pinning outright. Any pointer left naming an
+absent record -- pruned past the cap, or removed by hand -- is deleted by the
+same pass, so a consumer sees "no pointer" rather than "a pointer to nothing".
 
 Both formats go through that one path. An alias that cannot be written fails
 the run rather than going silently missing, and finalization happens before

@@ -398,6 +398,15 @@ utest_norm_bound() {
     case "$v" in
         ''|*[!0-9]*) printf '%s\n' "$2"; return 0 ;;
     esac
+    # The RAW length is bounded before the strip loop, because the loop is
+    # quadratic: `${v#0}` copies the remaining string every iteration, so a
+    # caller-supplied `UTEST_RECORD_KEEP` of ten thousand zeros costs about a
+    # second and a half -- spent holding the exclusive run lock, which is the
+    # opposite of what a function that exists to bound hostile numeric input
+    # should do. No legitimate value needs more than five significant digits,
+    # so anything past 32 characters is not a padded number, it is an attack or
+    # a typo, and takes the fallback.
+    [ "${#v}" -le 32 ] || { printf '%s\n' "$2"; return 0; }
     while :; do
         case "$v" in
             0?*) v="${v#0}" ;;
@@ -444,6 +453,87 @@ utest_pointer_run_id() {
     return 0
 }
 
+# Decide whether one pointer may PIN, and echo the run id if it may.
+#
+# Stricter than utest_pointer_run_id on purpose, because the two questions are
+# different. The SWEEP asks "does this name a record that still exists" -- a
+# weak test, and deliberately so: deleting a pointer merely because this script
+# would not have written it that way destroys something a human may have put
+# there. The PIN asks "should this hold a record against retention", and a
+# budget spent on a pointer that pins nothing is a VALID pointer denied its
+# pin, whose record then ages out and whose pointer the sweep afterwards
+# removes as dangling. So the pin requires the WHOLE contract: every field at
+# its exact value, the leg matching the filename it was found under, and a
+# record that is present AND marker-committed as complete.
+#
+# The documents are read ONCE into variables and matched in-shell. A
+# field-by-field `grep` would spawn a dozen processes per pointer on the
+# startup path for no added strictness.
+utest_pointer_pin_id() {
+    local ptr="$1" body mbody id leg sz rest
+    # BOUNDED, and bounded by SIZE FIRST. `timeout` bounds elapsed time, not
+    # bytes: a huge regular file would be pulled wholly into a shell variable
+    # before the clock ran out. And a byte-capped read alone is not enough
+    # either -- `head -c` caps what is read but proves nothing about what
+    # follows, while command substitution strips trailing newlines, so a file
+    # holding the canonical document, newline padding out to the cap, and then
+    # arbitrary contradictory bytes captures IDENTICALLY to the real thing.
+    # Establishing the size first means the snapshot below is the whole file.
+    sz="$(timeout 5 wc -c < "$ptr" 2>/dev/null)" || return 0
+    case "$sz" in ''|*[!0-9]*) return 0 ;; esac
+    [ "$sz" -le 4096 ] || return 0
+    body="$(timeout 5 head -c 4096 -- "$ptr" 2>/dev/null)" || return 0
+    [ -n "$body" ] || return 0
+    # From the SNAPSHOT, never by re-opening the file -- re-reading would
+    # validate one version and extract from another.
+    case "$body" in *'"run_id": "'*) ;; *) return 0 ;; esac
+    id="${body#*\"run_id\": \"}"
+    id="${id%%\"*}"
+    case "$id" in ''|.*|*[!A-Za-z0-9._-]*) return 0 ;; esac
+    # The leg IS the filename, so a pointer copied under another leg's name --
+    # the shape that would let one leg pin another's record -- fails here.
+    leg="${ptr##*/test-results-}"
+    leg="${leg%.run}"
+    # WHOLE-DOCUMENT comparison against what this script would have written for
+    # that leg and run id. Field-by-field substring tests were the wrong tool:
+    # they accept a document carrying every expected snippet PLUS a duplicate
+    # or contradictory extra field, and reject semantically identical JSON that
+    # merely spaces differently -- and no JSON parser is available here, since
+    # `scripts/test.sh` has to work on a host with no python3 (see the
+    # `.no-python3.json` refusal path). Byte-identity is the right test for a
+    # PIN specifically: a pointer this script did not write does not get to
+    # hold a record against retention. It is NOT the right test for the sweep,
+    # which is why the sweep keeps the weaker utest_pointer_run_id and leaves
+    # such a pointer alone rather than deleting it.
+    [ "$body" = "$(utest_leg_pointer_doc_for "$leg" "$id")" ] || return 0
+    [ -d "$RUNS_DIR/$id" ] || return 0
+    # The marker cannot be canonicalised the same way -- its qemu fields and
+    # document names legitimately vary -- so it is field-tested, with the
+    # negative check that a substring test needs: a document carrying BOTH
+    # statuses must not read as complete.
+    sz="$(timeout 5 wc -c < "$RUNS_DIR/$id/record-complete.json" 2>/dev/null)" || return 0
+    case "$sz" in ''|*[!0-9]*) return 0 ;; esac
+    [ "$sz" -le 4096 ] || return 0
+    mbody="$(timeout 5 head -c 4096 -- "$RUNS_DIR/$id/record-complete.json" 2>/dev/null)" || return 0
+    case "$mbody" in *"\"schema\": \"utest-run-record-v1\""*) ;;  *) return 0 ;; esac
+    case "$mbody" in *"\"run_id\": \"$id\""*) ;;                  *) return 0 ;; esac
+    case "$mbody" in *"\"status\": \"complete\""*) ;;             *) return 0 ;; esac
+    # EXACTLY ONE of each load-bearing key. A positive substring test alone
+    # cannot see a contradictory duplicate: a marker carrying the required
+    # `"status": "complete"` AND a later `"status":"incomplete"` satisfies
+    # every check above, while a real JSON parser -- which is what the
+    # documented resolver uses -- takes the LAST occurrence and rejects the
+    # generation. Pinning something no consumer can resolve is exactly the
+    # wasted-budget failure this validator exists to prevent. Counting
+    # occurrences is whitespace-independent, where matching a second spelling
+    # of the negative case would not be.
+    for rest in schema run_id status; do
+        case "${mbody#*\"$rest\"}" in *"\"$rest\""*) return 0 ;; esac
+    done
+    printf '%s\n' "$id"
+    return 0
+}
+
 utest_prune_records() {
     local keep="${UTEST_RECORD_KEEP:-20}" pin_max="${UTEST_POINTER_PIN_MAX:-64}" old pinned ptr
     keep="$(utest_norm_bound "$keep" 20 10000)"
@@ -466,21 +556,32 @@ utest_prune_records() {
     # is rewritten by every completed run of its leg, so it ranks legs by how
     # recently they actually ran; the losers become ordinary age candidates and
     # are swept below.
+    # The cap counts VALIDATED pins, not raw filenames. Truncating the
+    # candidate list first spends the budget on files that turn out to pin
+    # nothing: with `pin_max=1`, one newer CORRUPT pointer displaced a valid
+    # older one out of the list, the valid pointer's record then aged out and
+    # was pruned, and the sweep afterwards removed that pointer as dangling --
+    # so self-healing one junk file destroyed an unrelated published
+    # generation. Validating first and taking the cap afterwards means a
+    # malformed pointer costs only its own pin.
     pinned=""
     if [ "$pin_max" -gt 0 ]; then
         pinned="$(
             {
                 find "$PROJECT/build" -maxdepth 1 -type f -name 'test-results-*.run' \
-                    -printf '%T@\t%p\n' 2>/dev/null | sort -rn | head -n "$pin_max" |
+                    -printf '%T@\t%p\n' 2>/dev/null | sort -rn |
                     while IFS="$(printf '\t')" read -r _mtime ptr; do
                         [ -n "$ptr" ] || continue
-                        # Validated, not merely filtered -- see
-                        # utest_pointer_run_id. Nothing that fails validation
-                        # pins anything, so a malformed pointer can only ever
-                        # cost its own record its pin, never protect something
-                        # outside RUNS_DIR.
-                        utest_pointer_run_id "$ptr"
-                    done
+                        # The WHOLE contract, not just an extractable run id --
+                        # see utest_pointer_pin_id. Nothing that fails
+                        # validation pins anything or consumes budget, so a
+                        # malformed pointer can only ever cost its own record
+                        # its pin, never protect something outside RUNS_DIR and
+                        # never deny a valid pointer the slot it needed.
+                        old="$(utest_pointer_pin_id "$ptr")"
+                        [ -n "$old" ] || continue
+                        printf '%s\n' "$old"
+                    done | head -n "$pin_max"
             } || true
         )"
     fi
@@ -687,14 +788,22 @@ utest_alias_record() {
 # suffixed with a `^[a-z0-9][a-z0-9-]{0,31}$` label), so there is nothing here
 # for JSON escaping to escape. That is a property of the filters, not luck --
 # do not widen one without adding the escaping it removes the need for.
-utest_leg_pointer_doc() {
+# Parameterised so the RETENTION path can reconstruct exactly what publication
+# would have written for a given leg and run id, and compare a candidate
+# pointer against it byte for byte. One emitter, so the two can never drift
+# into disagreeing about what a valid pointer looks like.
+utest_leg_pointer_doc_for() {
     printf '{\n'
     printf '  "schema": "utest-leg-pointer-v1",\n'
-    printf '  "leg": "%s",\n' "$RUN_LEG"
-    printf '  "run_id": "%s",\n' "$RUN_ID"
-    printf '  "record": "test-runs/%s",\n' "$RUN_ID"
+    printf '  "leg": "%s",\n' "$1"
+    printf '  "run_id": "%s",\n' "$2"
+    printf '  "record": "test-runs/%s",\n' "$2"
     printf '  "marker": "record-complete.json"\n'
     printf '}\n'
+}
+
+utest_leg_pointer_doc() {
+    utest_leg_pointer_doc_for "$RUN_LEG" "$RUN_ID"
 }
 
 # Replace the pointer in ONE rename, and never as a member of the alias set.
@@ -715,7 +824,15 @@ utest_leg_pointer_doc() {
 utest_publish_leg_pointer() {
     local tmp="$RECORD_DIR/.legptr.tmp"
     [ -n "$RUN_POINTER_OUT" ] || return 0
-    if { utest_leg_pointer_doc > "$tmp"; } 2>/dev/null && mv -f "$tmp" "$RUN_POINTER_OUT"; then
+    # `-T` is load-bearing, not tidiness. Plain `mv -f file dir` MOVES the file
+    # INTO the directory and returns SUCCESS, so a directory sitting at the
+    # pointer pathname would swallow the staged document, report a published
+    # pointer, and count no failure -- while the pathname a consumer resolves
+    # stays an unreadable directory, run after green run. The sweep cannot
+    # clean that up either: it excludes directories by design, precisely so it
+    # can never `rm -rf` something in build/. `-T` refuses the overwrite and
+    # sends the whole thing down the counted-failure path below.
+    if { utest_leg_pointer_doc > "$tmp"; } 2>/dev/null && mv -fT -- "$tmp" "$RUN_POINTER_OUT"; then
         return 0
     fi
     rm -f "$tmp"
