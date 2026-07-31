@@ -4008,6 +4008,37 @@ if python3 "$REPO_ROOT/.claude/hooks/read_offload_reminder.py" --selftest >/dev/
 else
     t_fail "read_offload_reminder_selftest  embedded selftest failed"
 fi
+if python3 "$REPO_ROOT/.claude/hooks/attended_repair_guard.py" --selftest >/dev/null 2>&1; then
+    t_pass "attended_repair_guard_selftest  28-case whole-tree-git fixture suite green"
+else
+    t_fail "attended_repair_guard_selftest  embedded selftest failed"
+fi
+# The two properties whose loss would make the guard dangerous rather than
+# merely wrong: it must be INERT inside the unattended run (else it can wedge
+# the very run it protects), and inert with no run live (else it taxes ordinary
+# solo work). Both are asserted against a real payload, not read off the source.
+_arg_payload='{"tool_name":"Bash","tool_input":{"command":"git add -A"}}'
+_arg_state="$REPO_ROOT/.claude/state/sequencer-run.json"
+if [ -f "$_arg_state" ] && python3 -c "import json,sys;sys.exit(0 if json.load(open('$_arg_state')).get('active') is True else 1)" 2>/dev/null; then
+    if printf '%s' "$_arg_payload" | OVERNIGHT_SEQUENCER_RUN=1 python3 "$REPO_ROOT/.claude/hooks/attended_repair_guard.py" >/dev/null 2>&1; then
+        t_pass "attended_repair_guard_inert_in_run  OVERNIGHT_SEQUENCER_RUN=1 never blocks"
+    else
+        t_fail "attended_repair_guard_inert_in_run  guard blocked INSIDE the unattended run (wedge risk)"
+    fi
+    if printf '%s' "$_arg_payload" | python3 "$REPO_ROOT/.claude/hooks/attended_repair_guard.py" >/dev/null 2>&1; then
+        t_fail "attended_repair_guard_live_block  guard did NOT block git add -A with a run live"
+    else
+        t_pass "attended_repair_guard_live_block  blocks whole-tree staging while a run is live"
+    fi
+else
+    t_pass "attended_repair_guard_inert_no_run  no live run: guard silent (both live-run assertions skipped)"
+    if printf '%s' "$_arg_payload" | python3 "$REPO_ROOT/.claude/hooks/attended_repair_guard.py" >/dev/null 2>&1; then
+        t_pass "attended_repair_guard_no_run_pass  git add -A passes with no run active"
+    else
+        t_fail "attended_repair_guard_no_run_pass  guard blocked with NO run active (taxes solo work)"
+    fi
+fi
+unset _arg_payload _arg_state
 if python3 "$REPO_ROOT/.claude/hooks/edit_retry_reminder.py" --selftest >/dev/null 2>&1; then
     t_pass "edit_retry_reminder_selftest  fixture suite green"
 else
@@ -10314,6 +10345,55 @@ sys.exit(0 if d['summary'] is None
 else
     t_fail "utest errors: errors exceeding failed refuses the artifact" \
            "harvester rc=$EXCRC (expected refusal reason count_mismatch)"
+fi
+
+# 6r2b3. The never-ran subset meets the REPORTING partition. Every launcher
+#        path that counts a binary as never-ran increments binaries_unreported
+#        in the same breath, because a binary that never ran had nothing to
+#        report -- so `errors` can never exceed it. Until this check existed
+#        the two dimensions never met: the fixture below satisfies the
+#        partition (0+0+1 == total), the per-status counters, the ERROR record
+#        count and errors<=failed, and still says the same binary never ran
+#        AND submitted an accepted report.
+sed 's/"binaries_reported":0,"binaries_invalid":0,"binaries_unreported":1/"binaries_reported":1,"binaries_invalid":0,"binaries_unreported":0/' \
+    "$FRAME_TMP/refusal.log" > "$FRAME_TMP/errors_vs_unreported.log"
+python3 "$HARVEST" "$FRAME_TMP/errors_vs_unreported.log" \
+    "$FRAME_TMP/errors_vs_unreported.json" >/dev/null 2>&1 && UNRPRC=0 || UNRPRC=$?
+if [ "$UNRPRC" != "0" ] &&
+   python3 -c "
+import json,sys
+d = json.load(open('$FRAME_TMP/errors_vs_unreported.json'))
+sys.exit(0 if d['summary'] is None
+         and d.get('summary_error') == 'count_mismatch'
+         and 'binaries_unreported' in d.get('detail', '') else 1)"; then
+    t_pass "utest errors: an ERROR paired with reported=1/unreported=0 refuses the artifact"
+else
+    t_fail "utest errors: an ERROR paired with reported=1/unreported=0 refuses the artifact" \
+           "harvester rc=$UNRPRC (expected count_mismatch naming binaries_unreported)"
+fi
+
+# 6r2b4. A never-ran binary cannot self-report. The producer makes the shape
+#        unrepresentable -- u_format_json_testcase emits the assertion triple
+#        only for verdict != 3, which is the precondition the never-ran name
+#        bound is derived from -- so a stream carrying it did not come from
+#        the launcher this harvester reconciles. Refused rather than
+#        field-dropped: publishing it would put assertion counts on a
+#        testcase the same artifact declares never executed.
+sed 's/"reason":"name refused: charset"}/"reason":"name refused: charset","asserts_passed":3,"asserts_failed":0,"skip_blocks":0}/' \
+    "$FRAME_TMP/refusal.log" > "$FRAME_TMP/error_self_report.log"
+python3 "$HARVEST" "$FRAME_TMP/error_self_report.log" \
+    "$FRAME_TMP/error_self_report.json" >/dev/null 2>&1 && SELFRC=0 || SELFRC=$?
+if [ "$SELFRC" != "0" ] &&
+   python3 -c "
+import json,sys
+d = json.load(open('$FRAME_TMP/error_self_report.json'))
+sys.exit(0 if d['summary'] is None
+         and d.get('summary_error') == 'error_self_report'
+         and 'asserts_passed' in d.get('detail', '') else 1)"; then
+    t_pass "utest errors: an ERROR record carrying assertion fields refuses the artifact"
+else
+    t_fail "utest errors: an ERROR record carrying assertion fields refuses the artifact" \
+           "harvester rc=$SELFRC (expected refusal reason error_self_report)"
 fi
 
 # 6r2b2. Both dimensions in ONE run. `errors` and the completeness fields
