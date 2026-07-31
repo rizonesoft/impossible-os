@@ -475,7 +475,7 @@ Consumes the deterministic automation transport from `D08 T07 §6`. Runs WCAG 2.
 > The accessibility tree provider is NOT owned here: `D08 T07 §6` ships it. §14 is the test-framework consumer that turns the tree into a pass/fail gate.
 
 - [x] XREF confirmed: tree provider owned by `D08 T07 §6` (currently `[ ]` -- not started). §14 stays pure consumer; this section ships the test-framework scaffolding that lights up the moment D08 T07 §6 lands.
-- [ ] `test_ui_tree_walk(cb, ctx)` -- BLOCKED on D08 T07 §6 (automation_node_t type and root iterator not yet defined). When the provider ships, the walk body goes in `src/kernel/test/wcag.c wcag_sweep_run()` at the documented insertion point.
+- [/] `test_ui_tree_walk(cb, ctx)` -- BLOCKED on D08 T07 §6 (automation_node_t type and root iterator not yet defined). When the provider ships, the walk body goes in `src/kernel/test/wcag.c wcag_sweep_run()` at the documented insertion point.
 - [x] WCAG rule enum in `include/kernel/test/wcag.h`: `WCAG_RULE_1_4_3_CONTRAST` / `WCAG_RULE_1_4_11_NONTEXT` / `WCAG_RULE_2_1_1_KEYBOARD` / `WCAG_RULE_2_4_3_FOCUS_ORDER` / `WCAG_RULE_4_1_2_NAME_ROLE`. Values stable; append-only going forward. Rule semantics documented in the header comment blocks.
 - [x] Structured finding schema: `wcag_finding_t { wcag_rule_id_t rule_id; uint32_t node_id; wcag_severity_t severity; const char *message; }` in `include/kernel/test/wcag.h`. JSON artifact format is the natural serialization of this struct; CI runner drops when the sweep can actually produce findings.
 - [x] CI gate contract: `wcag_severity_t` {`WCAG_SEV_INFO`, `WCAG_SEV_WARN`, `WCAG_SEV_ERROR`}; runner fails the job on any `WCAG_SEV_ERROR` finding; `WCAG_SEV_WARN` is report-only. Enum + doc in the header.

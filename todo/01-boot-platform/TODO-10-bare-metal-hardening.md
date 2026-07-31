@@ -92,6 +92,7 @@ title: "TODO-10 -- Bare Metal Boot Hardening"
 | 💎   |  13   | CPU feature minimum requirements and verification | §4, §9     |  [x]   |
 | 💎   |  14   | Bare-metal test matrix and validation plan        | §3         |  [x]   |
 | 💎   |  15   | Boot splash spinner bare-metal fix                | §3, §10    |  [x]   |
+| 💎   | 16 | Post-ship follow-up backfill (2026-07-31 cohort) | -- | [ ] |
 
 > 💎 = parity -- Windows and Linux both handle bare-metal quirks, IST, ACPI gating, and graceful degradation.
 > ⭐ = exclusive -- dense 4-digit POST codes in every boot function are not standard in any OS kernel.
@@ -112,7 +113,7 @@ Implement a minimal `vmm_map_mmio_uc()` that creates uncacheable mappings for de
 - [x] Validate: page-aligned phys_base, size > 0, within 1 GiB MMIO VA limit
 - [x] Test: map LAPIC base (0xFEE00000) as UC in boot_phase0, verify LAPIC ID matches identity-mapped read
 - [x] Re-enable HPET calibration in `lapic.c`: `cal_try_hpet()` maps HPET via `vmm_map_mmio_uc()` and uses UC pointer for all MMIO reads
-- [ ] `hpet_read_ns()` -- deferred to TODO-11 §1 (UTS / HPET standalone driver); HPET calibration works without it
+- [/] `hpet_read_ns()` -- deferred to TODO-11 §1 (UTS / HPET standalone driver); HPET calibration works without it
 - [x] Commit: `"mm: minimal vmm_map_mmio_uc + HPET re-enabled with UC mapping"`
 
 **Test checkpoint:** QEMU: HPET calibration succeeds (`Tier 2: HPET calibration -> N ticks/ms`). Bare metal: HPET mapped via UC, no MCE, calibration succeeds. `hpet_read_ns()` is deferred (TODO-11 §1); when implemented, returns monotonic ns. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
@@ -150,9 +151,7 @@ Allocate dedicated interrupt stacks for Double Fault (#DF), NMI, and Machine Che
 - [x] Set `kernel_tss.ist1` = DF stack top, `kernel_tss.ist2` = NMI stack top, `kernel_tss.ist3` = MCE stack top
 - [x] Update IDT entries: vector 8 (#DF) → IST=1, vector 2 (NMI) → IST=2, vector 18 (MCE) → IST=3
 - [x] NMI/MCE/#DF handlers: existing `panic_screen()` provides register dump, BSOD, NVRAM write, halt -- no separate handler needed for the fatal-fault path (corrected/recoverable MCE recovery is a separate RAS scope, not yet owned -- see gap report)
-- [ ] Verify: stack overflow in kernel → #DF fires on IST1 stack → shows BSOD instead of triple fault *(deferred to BM Test 1)*
-- [ ] AP per-CPU TSS/IST: BSP-only today -- APs share one `kernel_tss`/IST (no AP `ltr`), so AP #DF/NMI/MCE IST delivery is not SMP-safe. Owned by `D01 T09 §10` (item: "Per-CPU TSS + IST").
-- [ ] Abort-safe serial for the panic path: panic_screen's serial_write holds g_serial_lock, so a #DF/#MC/NMI mid-write self-deadlocks before the BSOD -- add an emergency try-lock/raw serial primitive -> XREF: 02-kernel-core/TODO-23 §12
+- [/] Verify: stack overflow in kernel → #DF fires on IST1 stack → shows BSOD instead of triple fault *(deferred to BM Test 1)*
 - [x] Commit: `"kernel: IST stacks for #DF, NMI, MCE -- no more silent triple faults"`
 
 **Test checkpoint:** Intentionally overflow the kernel stack (recursive function). Verify #DF handler fires and shows a BSOD with register dump instead of a silent reboot. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
@@ -374,8 +373,8 @@ Implement the minimal per-process page table infrastructure so each task has its
 - [x] `task_create_user()`: creates per-process PML4, marks ELF + user stack pages as User, user stack at 0x8FC000 (in PD[4] range)
 - [x] `schedule()` + `schedule_now()`: CR3 switch if next task has different PML4
 - [x] `task_create()`: kernel tasks use boot PML4 (cr3=0)
-- [ ] Remove `pmm_mark_region_used(USER_ELF_BASE, USER_ELF_SIZE)` (`user_range.h`) -- deferred, ELF loader still uses fixed phys address
-- [ ] Bare-metal SMEP/SMAP unblock is external: boot-PML4 User-bit clearing / clean kernel PML4 owned by `D02 T10 §3-§6` (KPTI); §9 here only verifies once it lands
+- [/] Remove `pmm_mark_region_used(USER_ELF_BASE, USER_ELF_SIZE)` (`user_range.h`) -- deferred, ELF loader still uses fixed phys address
+- [/] Bare-metal SMEP/SMAP unblock is external: boot-PML4 User-bit clearing / clean kernel PML4 owned by `D02 T10 §3-§6` (KPTI); §9 here only verifies once it lands
 - [x] Commit: `"mm: per-process page tables -- user/kernel separation, CR3 switch"`
 
 **Test checkpoint:** Boot on QEMU WHPX. cmd.exe runs in user mode with its own PML4. Cloned per-process kernel pages don't have the User bit. `KeGetCurrentIrql()` works from user-mode interrupt. Boot on bare metal: cmd.exe runs in its own PML4, no page faults. SMEP/SMAP remain skipped on bare metal (boot-PML4 User-bit blocker, unblock owned by `D02 T10 §3-§6`); do NOT expect CR4.SMEP/SMAP set here. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
@@ -592,6 +591,18 @@ The boot splash spinner stutters on bare metal -- stops and restarts repeatedly 
 > **Verified:** 2026-06-11 | commit `62112f00` | 8/8 items | build OK | smoke PASS (KVM 2.400s)
 > **Accepted:** [M] NCQ tag state races AHCI ISR in `ncq_sync_rw` timeout path (reason: scope) -> XREF: 05-storage-filesystems/TODO-01 §3 (item: "Guard NCQ tag state vs AHCI ISR" at line 95)
 > **Quality reviewed:** 2026-06-11 | Codex 7x (adversarial x2, consistency, perf, re-adversarial x3) | 2H+6M+2L fixed, 1M accepted-XREF | scope: kernel-code-quality
+
+---
+
+## 16. Post-Ship Follow-Up Backfill (orphan cohort 2026-07-31)
+
+Items moved here VERBATIM from their original, already-stamped sections, where they were unreachable: the triage oracle classifies a stamped section DONE without reading its body, so an item appended after the stamp is invisible to every later pass. Source section noted per group. Cohort context: `todo/overnight-runner-improvements/overnight-runner-improvements-v05.md` item 3.
+
+From the stamped section 2:
+- [ ] AP per-CPU TSS/IST: BSP-only today -- APs share one `kernel_tss`/IST (no AP `ltr`), so AP #DF/NMI/MCE IST delivery is not SMP-safe. Owned by `D01 T09 §10` (item: "Per-CPU TSS + IST").
+- [ ] Abort-safe serial for the panic path: panic_screen's serial_write holds g_serial_lock, so a #DF/#MC/NMI mid-write self-deadlocks before the BSOD -- add an emergency try-lock/raw serial primitive -> XREF: 02-kernel-core/TODO-23 §12
+
+**Test checkpoint:** per moved item; each carries its original acceptance text.
 
 ---
 

@@ -75,6 +75,7 @@ title: "TODO-09 -- CPU Boot Sequencing & AP Hardening"
 | 💎   |   8   | MTRR/PAT AP synchronization                  | §4                       |  [x]   |
 | ⭐   |   9   | CPU register state audit trail               | §2, §5                   |  [x]   |
 | 💎   |  10   | AP bringup hardening & robustness            | §4, §6                   |  [x]   |
+| 💎   | 11 | Post-ship follow-up backfill (2026-07-31 cohort) | -- | [ ] |
 
 > 💎 = parity -- Windows and Linux both enforce EFER/CR4 ordering, AP parity, feature consistency, CR4 pinning, and PAT synchronization; Impossible OS must match that contract.
 > ⭐ = exclusive -- hypervisor pre-detection before timer HAL selection, per-activation postcode audit trail, and structured register dump are not surfaced the same way on Windows or Linux.
@@ -158,9 +159,9 @@ The UTS probe in `TODO-11-interrupt-timer-arch.md` §1 selects HPET vs PIT vs LA
 - [x] `platform_detect()` in `cpuid_platform.c` populates `g_boot_info.hv_vendor` + `g_boot_info.hv_flags` for Hyper-V, KVM, VMware, VirtualBox
 - [x] Detection runs from `timer_hal_init()` → `platform_detect()` in Phase 1, before timer backend selection
 - [x] UTS timer probe gates the Hyper-V MSR read on `HV_FLAG_APIC_FREQ_MSR` and uses `msr_try_read()` (`cal_try_hyperv_msr` in `lapic.c`)
-- [ ] Registry mirror deferred -- persist `hv_vendor` + `hv_flags` under `HKLM\HARDWARE\VM\` when `TODO-14-registry-completion.md` exposes pre-desktop hardware-hive writes
-- [ ] Hyper-V SynIC + reference TSC page MSR setup NOT owned here -- XREF `02-kernel-core/TODO-09-x86-64-architecture.md §13` (init `HV_X64_MSR_REFERENCE_TSC = 0x40000021`) and `01-boot-platform/TODO-11-interrupt-timer-arch.md §6` (UTS consumer)
-- [ ] `boot_info.cc_kind` bootloader mirror (needs a BOOT_INFO_VERSION bump) for downstream cache-type sequencing; kernel-side TDX/SEV detection owned by `02-kernel-core/TODO-09-x86-64-architecture.md §15` (`g_cpu.cc_kind`)
+- [/] Registry mirror deferred -- persist `hv_vendor` + `hv_flags` under `HKLM\HARDWARE\VM\` when `TODO-14-registry-completion.md` exposes pre-desktop hardware-hive writes
+- [/] Hyper-V SynIC + reference TSC page MSR setup NOT owned here -- XREF `02-kernel-core/TODO-09-x86-64-architecture.md §13` (init `HV_X64_MSR_REFERENCE_TSC = 0x40000021`) and `01-boot-platform/TODO-11-interrupt-timer-arch.md §6` (UTS consumer)
+- [/] `boot_info.cc_kind` bootloader mirror (needs a BOOT_INFO_VERSION bump) for downstream cache-type sequencing; kernel-side TDX/SEV detection owned by `02-kernel-core/TODO-09-x86-64-architecture.md §15` (`g_cpu.cc_kind`)
 - [x] Commit: `"boot: hypervisor detection with hv_flags in boot_info"`
 
 **Test checkpoint:** `g_boot_info.hv_vendor` / `hv_flags` populated before timer backend selection; klog or serial shows hypervisor detection before first `[UTS]` / `[Timer]` line on Hyper-V and KVM guests; bare metal shows empty vendor or known non-HV path. QEMU WHPX, TCG, VirtualBox, bare metal.
@@ -262,7 +263,6 @@ Windows triggers bug-check `MULTIPROCESSOR_CONFIGURATION_NOT_SUPPORTED` (0x3E) w
 - [x] TSC sync between APs NOT owned here -- relies on `02-kernel-core/TODO-08-time-filetime-management.md §3` "Per-CPU TSC sync"
 - [x] Verify (serial log): homogeneous shows `[AP%u] Feature validation OK`; BSP logs the global intersection mask; hybrid mismatches logged BSP-side
 - [x] Commit: `"smp: AP feature intersection + hybrid-aware consistency validation"`
-- [ ] PKU global skew: `cpu_enable_pku` sets global `pku_enabled` from any enabling CPU, but PKU is AP-optional -- consumers (`pku.c`/`task.c`) could run PKRU on a CPU without CR4.PKE. Gate it on the online-CPU intersection. Filed from D01 T10 §9.
 
 **Test checkpoint:** Boot on SMP system. Log shows `[AP1] Feature validation OK (core_type 0x..)` for every AP + `Global CPU feature intersection 0x..`. No degradation on homogeneous hardware. Unit tests assert the mask invariants (BSP satisfies required, required subset of probe, global intersection retains required). Bare metal: P/E hybrid CPUs may show feature differences (AVX-512) that degrade gracefully, not panic.
 
@@ -415,6 +415,17 @@ Neither Windows nor Linux produces a consolidated, structured, per-CPU register 
 > **Deferred:** [H] residual shared-trampoline window: a slow AP can run `ap_cpu_harden` on the next AP's stack before the LAPIC-ID guard parks it -> XREF: 01-boot-platform/TODO-09 §10 (item: "AP_DATA consume-ack handshake")
 > **Accepted:** [M] x2APIC >255 APIC IDs unsupported by the guard (reason: SIPI target + `lapic_id()` + `cpu_info.apic_id` are all 8-bit xAPIC, so unreachable today) -> XREF: 04-drivers-hardware/TODO-02 §1 (item: "Widen APIC IDs to 32 bits for systems with >255 cores" at line 55)
 > **Quality reviewed:** 2026-05-27 | Codex 5x (adversarial + consistency + perf + 2 re-adversarial) | 2H fixed, 1H deferred + 1M accepted-XREF | scope: kernel-code-quality
+
+---
+
+## 11. Post-Ship Follow-Up Backfill (orphan cohort 2026-07-31)
+
+Items moved here VERBATIM from their original, already-stamped sections, where they were unreachable: the triage oracle classifies a stamped section DONE without reading its body, so an item appended after the stamp is invisible to every later pass. Source section noted per group. Cohort context: `todo/overnight-runner-improvements/overnight-runner-improvements-v05.md` item 3.
+
+From the stamped section 6:
+- [ ] PKU global skew: `cpu_enable_pku` sets global `pku_enabled` from any enabling CPU, but PKU is AP-optional -- consumers (`pku.c`/`task.c`) could run PKRU on a CPU without CR4.PKE. Gate it on the online-CPU intersection. Filed from D01 T10 §9.
+
+**Test checkpoint:** per moved item; each carries its original acceptance text.
 
 ---
 

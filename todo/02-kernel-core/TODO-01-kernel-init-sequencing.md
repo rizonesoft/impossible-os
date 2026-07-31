@@ -180,7 +180,7 @@ Hardware abstraction layer: GDT/IDT, interrupt controllers, timer, RTC, display.
 - [x] `fb_init()` + `boot_splash_init()` -- BOOT_DEGRADED; display is optional for kernel correctness
 - [x] `boot_timing_init()` + boot timing report log path after timer calibration
 - [x] Wire `except_init()` in Phase 1 after IDT/IRQ setup (`boot_phase1()` calls it right after `idt_init()`; must be post-clear) (→ XREF: [TODO-23-exception-dispatch-seh.md §3](./TODO-23-exception-dispatch-seh.md))
-- [ ] Call `kd_init()` from Phase 1 after the COM IRQ path and IDT vectors KD relies on are registered, gated by boot args / registry per [TODO-29-kernel-debugger-kd-protocol.md §4](./TODO-29-kernel-debugger-kd-protocol.md) and ordering notes in §15 (-> XREF `TODO-29-kernel-debugger-kd-protocol.md §15`)
+- [/] Call `kd_init()` from Phase 1 after the COM IRQ path and IDT vectors KD relies on are registered, gated by boot args / registry per [TODO-29-kernel-debugger-kd-protocol.md §4](./TODO-29-kernel-debugger-kd-protocol.md) and ordering notes in §15 (-> XREF `TODO-29-kernel-debugger-kd-protocol.md §15`)
 - [x] `__asm__ volatile ("sti")` -- enable interrupts only after all of the above
 - [x] `boot_splash_start_animation()` -- after STI so LAPIC timer can drive the spinner
 - [x] Remove `#include "kernel/fs/vfs.h"` and `#include "kernel/fs/partition.h"` from this file

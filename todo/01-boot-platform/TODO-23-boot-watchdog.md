@@ -50,6 +50,7 @@ title: "TODO-23 -- Boot Watchdog & Hang Detection"
 | 💎   |   4   | Watchdog-triggered reboot with diagnostics              | §3, T21 §4                                |  [/]   |
 | 💎   |   5   | ACPI WDAT hardware watchdog (WDAT-first; iTCO deferred) | --                                        |  [x]   |
 | ⭐   |   6   | Watchdog status in VPD display                          | §1-§5                                     |  [/]   |
+| ⭐   | 7 | Post-ship follow-up backfill (2026-07-31 cohort) | -- | [ ] |
 
 > 💎 = parity -- Windows boot watchdog and Linux systemd watchdog both detect hung boots.
 > ⭐ = exclusive -- watchdog countdown visible in VPD during boot.
@@ -150,8 +151,6 @@ A hardware watchdog reboots the board even on a total CPU lockup. §5 is STANDAL
 - [x] Arm with a single generous 120s boot-wide timeout (per-phase timeouts are the deferred §2); pet from `boot_progress()` while armed (no-op otherwise)
 - [x] `hw_watchdog_boot_handoff()` (int): disarm + readback-verify after the final log flush, before `task_create`/`scheduler_enable`; fail-closed -- unconfirmed disarm returns -1 and the caller `boot_halt`s (never enters the desktop armed)
 - [x] If no usable WDAT: log `"HW watchdog: none"` -- NO reboot coverage until §1 (NMI) or the iTCO follow-up lands (QEMU path)
-- [ ] DEFERRED follow-up: direct Intel iTCO PCI fallback (PCH-generation chipset allowlist, LPC/PMC TCO base, GCS NO_REBOOT, SMI_EN, two-stage timeout, readback verify, verified-disarm)
-- [ ] DEFERRED follow-up: MEM-space GAS support -- validate the firmware register address against the memory map (reject RAM) + cache a UC mapping at init (no per-pet remap); first cut is I/O-space only
 - [x] Commit: `"boot: ACPI WDAT hardware watchdog -- WDAT-only, disarm at boot-handoff"`
 
 **Test checkpoint:** `test_watchdog.c` (TEST_CAT_BOOT, 16 cases / 17 assertions) validates the pure WDAT validator on crafted tables (valid 5-action I/O table + every guard: NULL, size, header_length, zero timer_period, min>max, entry overflow, zero entries, bad GAS, missing action, unknown instruction, wrong-instruction-class for GET_RUNNING_STATE / SET_COUNTDOWN / RESET, and a mixed-class rejection). QEMU smoke: `hw_watchdog_init` logs `"HW watchdog: none (no ACPI WDAT)"` and boot completes (~2.06s) -- the init/pet/handoff wiring is a clean no-op without firmware WDAT. Bare-metal arm/pet/disarm validated on Intel hardware via serial.
@@ -185,6 +184,18 @@ Show watchdog countdown in the VPD display during boot.
 
 > **Verified:** 2026-06-16 | 0/4 items (deferred) | build N/A | blocked on §1-§4 (per-phase + per-second NMI tick)
 > **Deferred:** [L] the per-phase / per-second countdown display is driven by the LAPIC timer tick and the per-phase model from §1-§4 (all deferred); the shipped §5 WDAT exposes only a coarse boot-wide countdown (GET_CURRENT_COUNTDOWN) with no per-phase breakdown -> XREF: 01-boot-platform/TODO-23 §2 (item: "Timeouts stored in boot_watchdog_timeouts[] -- configurable via boot.conf watchdog_timeout=")
+
+---
+
+## 7. Post-Ship Follow-Up Backfill (orphan cohort 2026-07-31)
+
+Items moved here VERBATIM from their original, already-stamped sections, where they were unreachable: the triage oracle classifies a stamped section DONE without reading its body, so an item appended after the stamp is invisible to every later pass. Source section noted per group. Cohort context: `todo/overnight-runner-improvements/overnight-runner-improvements-v05.md` item 3.
+
+From the stamped section 5:
+- [ ] DEFERRED follow-up: direct Intel iTCO PCI fallback (PCH-generation chipset allowlist, LPC/PMC TCO base, GCS NO_REBOOT, SMI_EN, two-stage timeout, readback verify, verified-disarm)
+- [ ] DEFERRED follow-up: MEM-space GAS support -- validate the firmware register address against the memory map (reject RAM) + cache a UC mapping at init (no per-pet remap); first cut is I/O-space only
+
+**Test checkpoint:** per moved item; each carries its original acceptance text.
 
 ---
 

@@ -91,6 +91,7 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 | 💎   |  18   | Anti-rollback in version fault diagnostics         | §13, §17                           |  [x]   |
 | ⭐   |  19   | Stale-ABI QEMU fixture harness                     | §7                                 |  [x]   |
 | 💎   |  20   | Bootloader build identity in handoff               | §1, §2, §17                        |  [x]   |
+| 💎   | 21 | Post-ship follow-up backfill (2026-07-31 cohort) | -- | [ ] |
 
 ---
 
@@ -100,7 +101,6 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 - [x] Mark kernel-populated fields (`degraded_mask`, `hv_flags`, `secure_boot_enabled`) separately from bootloader-populated fields.
 - [x] Identify fields that are stale, legacy, or only used by Multiboot2 and decide retain/deprecate.
 - [x] Add comments in `boot_info.h` that point to the ownership document rather than duplicating all policy inline.
-- [ ] **Single source of truth for `BOOT_INFO_PHYS_ADDR` macro** (filed 2026-05-01 from [`TODO-03 §1`](TODO-03-bootloader-error-recovery.md#1-elf-bounds-checking) review Codex consistency M1): the macro is defined three times today -- `src/boot/uefi/bootx64.c:111` (bootloader), `src/kernel/mm/boot_reserved.c` (kernel PMM reservation), `src/kernel/main/boot_payload.c` (kernel payload validator). If the handoff base ever changes, the bootloader's overlap check at `bootx64.c:3962` and the kernel's retained-region validators silently diverge while each file still compiles. Move the macro to [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h) (kernel-side single source of truth, mirrored by `src/boot/uefi/boot_info_mirror.h`); delete the three local `#define` copies; verify static-assert in mirror catches divergence. Test: change the macro value temporarily and confirm mirror static-assert + boot-info-abi manifest diff catch it.
 - [x] Commit: `"docs: boot_info field ownership matrix"`
 
 **Test checkpoint:** `docs/boot/boot-info-fields.md` exists and every `struct boot_info` field is listed with producer, first valid phase, consumer, lifetime, owning TODO, and validation rule. Spot-check `header`, `fb`, `usb_controller`, and TPM-related fields from `boot_info.h`, then confirm QEMU WHPX, QEMU TCG, VirtualBox, and bare-metal boot behavior is unchanged because this section is documentation-only.
@@ -250,7 +250,7 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 - [x] Reserve BOOT_PAYLOAD_FLAG_RESERVED payload ranges from PMM -- iterate `payload_descriptors[]` in boot_info and mark each descriptor's `phys_start` for `length` bytes as reserved when `BOOT_PAYLOAD_FLAG_RESERVED` is set. §5's bootloader loader sets this flag on every module/initrd/recovery_image allocation (UEFI `EfiLoaderData` is otherwise reclaimable), so without this step PMM can silently hand payload pages back to generic allocators after boot_payload_validate already passed. Add a kernel test that publishes a synthetic descriptor with FLAG_RESERVED, runs the reservation path, and asserts the range is unavailable to `pmm_alloc_contiguous()`.
 - [x] Teach PMM to log every retained region and fail on overlap.
 - [x] Add a boot diagnostic dump to BlackBox.
-- [ ] `VFS_O_TRUNC` end-to-end -- promoted to its own section (FAT32 cached-state refresh + exact-slot handle cleanup + directory-policy unification + final wiring + cross-FS tests). The 2026-04-30 design review surfaced 2H + 1M findings that put this out of single-function-plumbing scope; full work owned by [`05-storage-filesystems/TODO-04 §15 VFS_O_TRUNC End-to-End`](../05-storage-filesystems/TODO-04-fat32-hardening-vfs-semantics.md#15-vfs_o_trunc-end-to-end). The `boot_reserved_blackbox_dump` explicit-`vfs_truncate` workaround stays in place until that section ships.
+- [/] `VFS_O_TRUNC` end-to-end -- promoted to its own section (FAT32 cached-state refresh + exact-slot handle cleanup + directory-policy unification + final wiring + cross-FS tests). The 2026-04-30 design review surfaced 2H + 1M findings that put this out of single-function-plumbing scope; full work owned by [`05-storage-filesystems/TODO-04 §15 VFS_O_TRUNC End-to-End`](../05-storage-filesystems/TODO-04-fat32-hardening-vfs-semantics.md#15-vfs_o_trunc-end-to-end). The `boot_reserved_blackbox_dump` explicit-`vfs_truncate` workaround stays in place until that section ships.
 - [x] Commit: `"boot: centralize handoff memory reservations"`
 
 **Test checkpoint:** Early PMM logs enumerate every retained boot region exactly once, overlap attempts fail before free-memory handoff, and BlackBox captures the reservation dump for post-boot inspection. Verify the reservation table on QEMU WHPX, QEMU TCG, VirtualBox, and bare metal.
@@ -725,6 +725,17 @@ The handoff today carries `BOOT_INFO_VERSION` + the kernel `.bootproto` manifest
 
 > **Verified:** 2026-05-01 | commit `bda769ff` + review fixes | 8/8 items | build OK | tests 376/376 tooling PASS, lint 0, smoke PASS 2.44s on KVM with v13 handoff
 > **Quality reviewed:** 2026-05-01 | Codex 6x (design + adversarial + re-adversarial x2 + consistency + perf) | 1H+5M fixed inline (design H1: persist identity in v2 fault record; impl-adv H1: zero_fault memsets whole struct + bounded label copy; impl-re-adv H1: test_boot_version_record_size_pin updated 48 -> V1/V2/112; review adv M1: gen-loader-identity.sh worktree probe; review adv+cons M2: BUILD_LABEL_ESC backslash+quote escape; review adv M3: vfs_close on diag_dir node) | scope: boot-code-quality + kernel-code-quality
+
+---
+
+## 21. Post-Ship Follow-Up Backfill (orphan cohort 2026-07-31)
+
+Items moved here VERBATIM from their original, already-stamped sections, where they were unreachable: the triage oracle classifies a stamped section DONE without reading its body, so an item appended after the stamp is invisible to every later pass. Source section noted per group. Cohort context: `todo/overnight-runner-improvements/overnight-runner-improvements-v05.md` item 3.
+
+From the stamped section 1:
+- [ ] **Single source of truth for `BOOT_INFO_PHYS_ADDR` macro** (filed 2026-05-01 from [`TODO-03 §1`](TODO-03-bootloader-error-recovery.md#1-elf-bounds-checking) review Codex consistency M1): the macro is defined three times today -- `src/boot/uefi/bootx64.c:111` (bootloader), `src/kernel/mm/boot_reserved.c` (kernel PMM reservation), `src/kernel/main/boot_payload.c` (kernel payload validator). If the handoff base ever changes, the bootloader's overlap check at `bootx64.c:3962` and the kernel's retained-region validators silently diverge while each file still compiles. Move the macro to [`include/kernel/boot_info.h`](../../include/kernel/boot_info.h) (kernel-side single source of truth, mirrored by `src/boot/uefi/boot_info_mirror.h`); delete the three local `#define` copies; verify static-assert in mirror catches divergence. Test: change the macro value temporarily and confirm mirror static-assert + boot-info-abi manifest diff catch it.
+
+**Test checkpoint:** per moved item; each carries its original acceptance text.
 
 ---
 

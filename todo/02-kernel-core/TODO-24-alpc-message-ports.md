@@ -78,6 +78,7 @@ title: "TODO-24 -- ALPC / Message Ports"
 | 💎   |  10   | CSRSS ApiPort bootstrap                                  | §3-§9         |  [/]   |
 | 💎   |  11   | Message zones (pre-allocated message buffers)            | §4, §8-§9     |  [/]   |
 | ⭐   |  12   | Live port monitor & IPC latency profiler                 | §8-§9         |  [/]   |
+| ⭐   | 13 | Post-ship follow-up backfill (2026-07-31 cohort) | -- | [ ] |
 
 > 💎 = parity work; matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work; Impossible OS is superior or first.
@@ -233,9 +234,6 @@ The three-way handshake: client connects by name, server accepts/rejects, both s
 - [x] Fallback: if no completion port is associated (`port->CompletionPortHandle == 0`), `alpc_notify_completion_port()` early-returns and the send path uses only the synchronous `MessageQueue` + `WaitQueue` path from §4.
 - [x] Waitable port: when `ALPC_PORTFLG_WAITABLE_PORT` is set in the port's `Attributes.Flags`, the port caches `IsWaitable=1` and initializes a MANUAL_RESET `SignalledEvent`. `msg_queue_enqueue_locked` sets the event on the 0→1 Count transition; `msg_queue_dequeue_locked` clears it on the 1→0 transition -- both under `port->Lock`, so the event state can never disagree with the queue state a waiter observes. `wait_on_handle` (src/kernel/nt/nt_sync.c) grew an `ObpAlpcPortType` branch that dispatches on `IsWaitable`, returning `STATUS_OBJECT_TYPE_MISMATCH` for non-waitable ports.
 - [x] (Bonus fix) `wait_on_handle` Event and Timer branches had an inverted `event_wait_timeout` result mapping (`== 0 ? SUCCESS : TIMEOUT`) that would have reported timeouts as SUCCESS and successes as TIMEOUT. Caught during §5 design review; corrected to `? SUCCESS : TIMEOUT`.
-- [ ] **Race-proof the `AlpcAcceptConnectPort` failure unwinds.** They blindly consume the `client_comm->ConnectedPort` ref, but a sibling `AlpcDisconnectPort` can clear that link and consume its `server_comm` ref first, so the unwind double-frees
-  - Detach each cross-link under the owning port's lock and consume its reference ONLY if the pointer still matches; hold the `server_comm` creation ref until every detach completes, so no branch writes through a freed port
-  - Both the handle-alloc-failure and token-dup-failure branches (`alpc_port.c`); handle-quota exhaustion makes the first attacker-reachable. Add a disconnect-vs-failed-accept race test -> XREF: `02-kernel-core/TODO-24 §7`
 - [x] (Bonus fix) `IO_COMPLETION_PORT` gained a per-port `spinlock_t lock` plus `s_iocp_allocator_lock` guarding `s_iocp_allocated`. The previous "single-threaded today" assumption ceased to hold as soon as kernel ALPC sends started posting completion packets concurrently with user-mode `NtSet/Remove` handlers. All four IOCP handlers (`NtCreate/Set/Remove` + the new `io_completion_post`) now run under the port lock.
 - [x] Disconnect's PORT_CLOSED marker is now routed through `msg_queue_enqueue_locked` (was a manual append) so SignalledEvent tracks MessageQueue.Count transitions across every producer, including teardown.
 - [x] ~~Commit:~~ `"kernel/ipc/alpc: async completion list, waitable port, IO_COMPLETION integration"`
@@ -605,6 +603,19 @@ High-throughput ports like `\Windows\ApiPort` (CSRSS) process thousands of messa
 > - **Scope boundary** -- §12 owns the stats/histogram + monitor; the send path it hooks is §4, the info classes are §9, the ApiPort it demos against is §10, and the headroom is `TODO-33 §10`.
 
 > **Deferred:** [High] 2026-07-17 -- no code ships from §12. The ceiling half is CLEARED (2026-07-17, BSS end `0x6c2000`, ~1272 KiB headroom). This section is the one tail section that adds per-port BSS as well as `.text`, so RE-MEASURE against the `scripts/build.sh` BSS gate when it lands rather than assuming it fits -- 1272 KiB is ample, but the measurement is the acceptance evidence. The Implementation Order declares `§8-§9` as the dependency and both are deferred -> XREF: this file §9 (item: "NtAlpcQueryInformation: `ALPC_PORT_INFORMATION_CLASS` values (full enumeration):" at line 400). The monitor's headline case needs the CSRSS ApiPort -> XREF: this file §10 (item: "`\Windows\ApiPort` must be resolvable in the Ob namespace" at line 451).
+
+---
+
+## 13. Post-Ship Follow-Up Backfill (orphan cohort 2026-07-31)
+
+Items moved here VERBATIM from their original, already-stamped sections, where they were unreachable: the triage oracle classifies a stamped section DONE without reading its body, so an item appended after the stamp is invisible to every later pass. Source section noted per group. Cohort context: `todo/overnight-runner-improvements/overnight-runner-improvements-v05.md` item 3.
+
+From the stamped section 5:
+- [ ] **Race-proof the `AlpcAcceptConnectPort` failure unwinds.** They blindly consume the `client_comm->ConnectedPort` ref, but a sibling `AlpcDisconnectPort` can clear that link and consume its `server_comm` ref first, so the unwind double-frees
+  - Detach each cross-link under the owning port's lock and consume its reference ONLY if the pointer still matches; hold the `server_comm` creation ref until every detach completes, so no branch writes through a freed port
+  - Both the handle-alloc-failure and token-dup-failure branches (`alpc_port.c`); handle-quota exhaustion makes the first attacker-reachable. Add a disconnect-vs-failed-accept race test -> XREF: `02-kernel-core/TODO-24 §7`
+
+**Test checkpoint:** per moved item; each carries its original acceptance text.
 
 ---
 

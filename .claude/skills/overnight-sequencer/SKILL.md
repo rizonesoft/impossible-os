@@ -429,6 +429,8 @@ What may NOT be edited unattended -- file it instead: `.claude/hooks/**`, `.clau
 
 House style for a filed item: what was observed live (timestamps, file:line), the mechanism confirmed at source, measured cost or risk; a projection is not a finding; if the fix is obvious, describe it -- do not apply it. Lead <= 250 chars, sub-bullet bodies <= 1,000.
 
+**Never file a bare `- [ ]` into a section that already carries its Verified + Quality-reviewed stamps** -- the triage oracle never reads a stamped section's body, so the item is invisible to every later pass and `scripts/lint.sh` Check 23 will ERROR your commit. A follow-up on a stamped section is filed as `- [/]` with its owner/blocker named in the text, into a still-open NEEDS_WORK section, or as a NEW section (next free number, body LAST) with a reciprocal XREF.
+
 ## Hard rules (the guard enforces these; do not fight them)
 
 - **Never call `AskUserQuestion`.** Unattended = decide with the conservative

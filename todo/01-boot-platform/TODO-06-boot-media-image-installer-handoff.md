@@ -228,9 +228,9 @@ title: "TODO-06 -- Boot Media, Image Pipeline & Installer Handoff"
 
 > **Status (2026-05-06):** [/] partial-ship. Item 4 shipped (boot_info v18 SBAT/dbx/trust-landscape). Items 1-3 blocked on absent crypto: bootloader is freestanding UEFI and cannot call kernel `cng_*`; needs vendored Ed25519+SHA-256 verify subset tracked in [`09-desktop-shell/TODO-07 §1`](../09-desktop-shell/TODO-07-cng-crypto.md) plus host-side signing in [`15-installer-release/TODO-01 §5`](../15-installer-release/TODO-01-release-artifacts.md).
 
-- [ ] Sign artifact manifests with the release key; emit detached `manifest.json.sig` on the ESP. Blocked on 15-installer-release/TODO-01 §5 host signing + bootloader crypto vendor below.
-- [ ] Bootloader verifies manifest signature when Secure Boot is active or `require_manifest=1`; refuses load on mismatch. Blocked on 09-desktop-shell/TODO-07 §1 bootloader-side Ed25519+SHA-256 vendor.
-- [ ] Reject modified installer/recovery media unless `boot.conf` sets `allow_unsigned_media=1` (default 0). Blocked on bootloader crypto vendor above.
+- [/] Sign artifact manifests with the release key; emit detached `manifest.json.sig` on the ESP. Blocked on 15-installer-release/TODO-01 §5 host signing + bootloader crypto vendor below.
+- [/] Bootloader verifies manifest signature when Secure Boot is active or `require_manifest=1`; refuses load on mismatch. Blocked on 09-desktop-shell/TODO-07 §1 bootloader-side Ed25519+SHA-256 vendor.
+- [/] Reject modified installer/recovery media unless `boot.conf` sets `allow_unsigned_media=1` (default 0). Blocked on bootloader crypto vendor above.
 - [x] SBAT level + dbx blacklist status surfaced to `boot_info` v18 (`sbat_level`, `dbx_size`, `degraded_trust_flags`); kernel emits per-bit advisory klog and Registry under `HKLM\SYSTEM\Boot\Trust\*`. Details: see Notes block below.
 - [x] Commit (item 4 trust-landscape ship): `"boot: TODO-06 §7 partial -- v18 trust-landscape surface (item 4)"` (commit 5707412e). Full-section commit `"boot: verify signed artifact manifests"` will land when items 1-3 unblock.
 
@@ -283,7 +283,7 @@ title: "TODO-06 -- Boot Media, Image Pipeline & Installer Handoff"
 - [x] QEMU raw disk boot (KVM + TCG fallback): inline driver in `scripts/ci/boot-matrix.sh` boots `build/system-disk.img`; PASS = `Boot complete in` + `C:\>`.
 - [x] QEMU ISO boot: delegates to `scripts/release/boot-test-iso.sh`; PASS = `Boot complete in` only (no IXFS9660 driver yet).
 - [x] QEMU VHDX boot (KVM/TCG): delegates to `scripts/release/boot-test-vhdx.sh`; validates VHDX-driver path independent of host accelerator.
-- [ ] Hyper-V VHDX boot under WHPX: blocked on new `scripts/machines/boot-test-whpx.ps1` (`--disk`+timeout+serial polling); KVM/TCG VHDX is NOT a substitute. -> XREF: D01 T28 §2 registers `qemu-whpx`/`hyperv` (`launcher: None`) pending this runner.
+- [/] Hyper-V VHDX boot under WHPX: blocked on new `scripts/machines/boot-test-whpx.ps1` (`--disk`+timeout+serial polling); KVM/TCG VHDX is NOT a substitute. -> XREF: D01 T28 §2 registers `qemu-whpx`/`hyperv` (`launcher: None`) pending this runner.
 - [x] VirtualBox VDI boot: delegates to `scripts/release/boot-test-vbox.sh`; SKIPs when VBoxManage absent.
 - [x] USB image loopback smoke (`losetup` + qemu): inline driver; PASS = `Boot complete in` + `C:\>`; SKIPs when not-root or losetup absent. Manual bare-metal gate stays a release-checklist item.
 - [x] Commit: `"ci: boot every release artifact"` (commit pending)
@@ -336,10 +336,10 @@ UKI (Unified Kernel Image, single signed PE containing kernel + cmdline + `.init
 > **Status (2026-05-07):** [/] partial-ship. UKI artifact path shipped (item 1, UKI test, docs). Network-boot path blocked on TODO-25 (network bootloader infrastructure all `[ ]`); item 2 + network test stay `[ ]` with reciprocal items now filed in TODO-25 §6.
 
 - [x] UKI artifact path: `include/boot/uki_cmdline_media_role.h` static-inline parser + `bootx64.c` UKI override; UKI `.cmdline` `media_role=NAME` cleanly overrides disk `/IPOS/role.txt` (signed by firmware Secure Boot chain).
-- [ ] Network-boot artifact path: publish `boot_media_role=network` and verify DHCP-served `manifest.json.sig`. Blocked on TODO-25 §1-§6; reciprocal item filed in TODO-25 §6.
+- [/] Network-boot artifact path: publish `boot_media_role=network` and verify DHCP-served `manifest.json.sig`. Blocked on TODO-25 §1-§6; reciprocal item filed in TODO-25 §6.
 - [x] Document 3-source media-role precedence in `docs/boot/boot-info-fields.md`: UKI cmdline > DHCP option (planned) > ESP `/IPOS/role.txt` > default `normal`.
 - [/] Tests: `test_media_role_uki_cmdline` + `test_media_role_uki_cmdline_rejections` shipped (16 assertions). `test_media_role_network_dhcp_option` filed in TODO-25 §6.
-- [ ] Commit: `"boot: cross-format media role for UKI + network artifacts"` (commit pending)
+- [/] Commit: `"boot: cross-format media role for UKI + network artifacts"` (commit pending)
 
 **Test checkpoint:** UKI artifact with `media_role=recovery` in its `.cmdline` parses to `BOOT_MEDIA_ROLE_RECOVERY` and overrides any disk `/IPOS/role.txt` value. The `test_media_role_uki_cmdline` test (16 assertions covering canonical roles, whitespace boundaries, case-insensitivity, substring rejection, oversized values, and the producer-sentinel guard against `media_role=unset`) all PASS. PXE/HTTP boot reports `boot_media_role = network` once the network-boot infrastructure ships in TODO-25; `test_media_role_network_dhcp_option` and the manifest signature rejection are blocked on that work.
 

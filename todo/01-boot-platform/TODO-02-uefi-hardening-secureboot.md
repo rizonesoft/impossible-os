@@ -86,6 +86,7 @@ title: "TODO-02 -- UEFI Bootloader Hardening & Secure Boot"
 | 💎   |  17   | SBAT revocation metadata in boot artifacts               | §9, §11        |  [x]   |
 | 🛠️  |  18   | Build idempotency: UKI SBAT survives incremental rebuild | §11, §17       |  [/]   |
 | 🛠️  |  19   | Bootloader `ReadBlocks` IoAlign compliance               | §13            |  [/]   |
+| 🛠️  | 20 | Post-ship follow-up backfill (2026-07-31 cohort) | -- | [ ] |
 
 ---
 
@@ -420,7 +421,6 @@ Microsoft began rotating UEFI signing certificates in 2024-2025: the original `M
 - [x] Build-time check: `scripts/test-tooling.sh` `shim_ca_detection` block runs sign-efi.sh against synthetic 2011/2023 CA + pre-warn/warn/post-expiry date matrix via `SHIM_CA_TEST_TODAY` override env. Original wording continued: Add a build-time check (`scripts/build.sh` or `scripts/test-tooling.sh` sub-test): if the shim binary is signed only by the deprecated CA AND the build host's date is past 2026-04-01, emit a WARN. The 60-day pre-expiry window is the safety margin per the MS guidance.
 - [x] `HKLM\SYSTEM\SecureBoot\ShimCA` (DWORD) populated by `uefi_secureboot_populate_registry()` at boot from `SHIM_CA_YEAR` (build-time-extracted from `sbverify --list shim/shimx64.efi` via new `scripts/extract-shim-ca.sh` -> `build/generated/shim_ca.h`). Sentinels: 0 (not pinned), 0xFFFFFFFF (parse fail), 2011|2023. SHA-bound at gen time (Codex H1 fix). Original wording: Surface the shim CA generation in `HKLM\SYSTEM\SecureBoot\ShimCA` (DWORD: 2011 or 2023) at boot via [`uefi_secureboot_populate_registry()`](../../src/kernel/uefi_runtime.c). Consumers (msinfo32-equivalent, audit tools) can read it.
 - [x] Commit: `"boot: track MS UEFI CA 2023 transition; sign-efi.sh emits CA generation; registry surface"`
-- [ ] Make shim absence fail-loud after the 2026-07-01 expiry unpin: Makefile ESP packaging + secureboot smoke must FAIL (not silently direct-boot/skip) without a trusted shim; update §6 claims + docs; re-pin a 2023-CA shim per the vendor watch.
 
 **Test checkpoint:** `sbverify --list shim/shimx64.efi` output names a Microsoft Corporation UEFI CA generation; `HKLM\SYSTEM\SecureBoot\ShimCA` matches; `bash scripts/sign-efi.sh build/BOOTX64.EFI` logs `[shim] signed-by: ...`; the build-time warning fires when the deprecated CA date threshold is crossed. Test on: QEMU WHPX (signature path), QEMU TCG, VirtualBox, bare metal (real DB rotation).
 
@@ -584,7 +584,7 @@ Promoted from gap-audit 2026-06-13 (Codex parity-floor finding). The Impossible 
 - [x] `.sbat` in `BOOTX64.UKI.efi`: the UKI is built from the `BOOTX64.EFI` stub, so it inherits the stub's `.sbat` (no separate add -- re-adding would duplicate the section).
 - [x] Pin `.sbat` in the `docs/guides/secure-boot-keys.md` UKI section layout + cross-reference the SBAT-bump checklist (a CVE bump increments the `impossibleos` generation in `sbat.csv`).
 - [x] Build-time **content**-validating gate in `scripts/build.sh`: validates `sbat.csv` structure then byte-`cmp`s both artifacts' embedded `.sbat` against the source, hard-failing on any mismatch.
-- [ ] Commit: `"boot: embed .sbat revocation metadata in BOOTX64.EFI + UKI -- SBAT-revocable boot artifacts"`
+- [x] Commit: `"boot: embed .sbat revocation metadata in BOOTX64.EFI + UKI -- SBAT-revocable boot artifacts"` **Verified 2026-07-31:** done as `900ade7c` "boot: SBAT revocation metadata in boot artifacts" (message drifted from the plan; work + review shipped)
 
 > [!NOTE]
 > **No kernel test surface.** A `boot_info` `sbat_generation` field + kernel unit test was dropped (Codex design review 2026-06-13): the kernel cannot enforce shim SBAT revocation after ExitBootServices, and `boot_info` version/size is exact-match fatal, so a test-only ABI field adds a synchronized-reflash failure mode for zero runtime benefit. Verification is the build-time PE content gate above (validates the final artifacts before signing).
@@ -657,6 +657,17 @@ UEFI 2.10 §13.9 (`EFI_BLOCK_IO_PROTOCOL.ReadBlocks`) requires the data buffer t
 
 > **Verified:** 2026-06-16 | commit `7292f79e` + pow2-guard fix | 2/3 items | build OK | smoke PASS (KVM 1.99s, every retrofitted reader unregressed on the IoAlign<=1 fast path)
 > **Quality reviewed:** 2026-06-16 | Codex 5x (design, adversarial, consistency, perf) | 1H+2M fixed, 0 open | scope: boot-code-quality (re-adversarial skipped: 1-line pow2-guard fix)
+
+---
+
+## 20. Post-Ship Follow-Up Backfill (orphan cohort 2026-07-31)
+
+Items moved here VERBATIM from their original, already-stamped sections, where they were unreachable: the triage oracle classifies a stamped section DONE without reading its body, so an item appended after the stamp is invisible to every later pass. Source section noted per group. Cohort context: `todo/overnight-runner-improvements/overnight-runner-improvements-v05.md` item 3.
+
+From the stamped section 12:
+- [ ] Make shim absence fail-loud after the 2026-07-01 expiry unpin: Makefile ESP packaging + secureboot smoke must FAIL (not silently direct-boot/skip) without a trusted shim; update §6 claims + docs; re-pin a 2023-CA shim per the vendor watch.
+
+**Test checkpoint:** per moved item; each carries its original acceptance text.
 
 ---
 

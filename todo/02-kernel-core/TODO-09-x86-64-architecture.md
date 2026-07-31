@@ -86,6 +86,7 @@ title: "TODO-09 -- x86-64 Architecture Enhancements"
 | 💎   |  17   | AMX tile state + XFD dynamic XSAVE                     | §1, §4     |  [/]   |
 | 💎   |  18   | Split-lock (#AC) + bus-lock (#DB) detection            | §4         |  [/]   |
 | 💎   |  19   | WAITPKG + SERIALIZE + RDPID adoption                   | §4, §11    |  [/]   |
+| 💎   | 20 | Post-ship follow-up backfill (2026-07-31 cohort) | -- | [ ] |
 
 > 💎 = parity work: matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work: Impossible OS is superior or first.
@@ -304,7 +305,6 @@ title: "TODO-09 -- x86-64 Architecture Enhancements"
 
 - [x] Created `src/kernel/topology.c` and `include/kernel/topology.h`: `cpu_topo_t` struct with `logical_id`, `core_id`, `ccd_id`, `node_id`, `core_type`, `smt_siblings`. Globals: `g_cpu_topo[MAX_CPUS]`, `g_topo_cpu_count`, `p_core_mask`, `e_core_mask`, `g_numa_nodes`. Constants: `CORE_TYPE_GENERIC=0`, `CORE_TYPE_P=0x40`, `CORE_TYPE_E=0x20`. Helper: `topology_is_hybrid()`
 - [x] `topology_init()` called from Phase 2 (`boot_storage.c`) after `smp_init()`. Populates per-CPU topology from BSP CPUID data. Per-AP CPUID core_type now published by `01-boot-platform/TODO-09 §6` (consume item below)
-- [ ] `topology_init()` consume `per_cpu_data.core_type` (published per-AP by `01-boot-platform/TODO-09 §6`) to derive accurate `p_core_mask`/`e_core_mask` on Intel hybrid; today BSP core type is applied to all CPUs
 - [x] Zen path (`cpu_has(CPU_FEATURE_TOPO_EXT)`): BSP values from `g_cpu.compute_unit_id`/`g_cpu.node_id`; APs derive from LAPIC ID. Logs CCD count, NUMA nodes, CPU count
 - [x] `g_numa_nodes` = max `node_id` + 1; NUMA allocator deferred to `03-memory-concurrency`
 - [x] Intel hybrid path (`CPUID.07H:EDX[15]`): leaf 0x1A for core type (EAX[31:24]), leaf 0x1F for SMT/core topology levels (shift-based core_id extraction). Populates `p_core_mask`/`e_core_mask`. BSP core type applied to all CPUs until per-AP CPUID available
@@ -563,6 +563,17 @@ Three shipping x86 features the kernel detects but does not yet use: WAITPKG (us
 > **Deferred:** [L] SERIALIZE instruction adoption (`cpu_serialize()` helper + CPUID-fence-site swap) -> XREF: 02-kernel-core/TODO-09 §19 (item: "DEFERRED -- SERIALIZE adoption" at line 548)
 > **Deferred:** [L] RDPID instruction adoption (`cpu_current_id()` helper) -> XREF: 02-kernel-core/TODO-09 §19 (item: "DEFERRED -- RDPID adoption" at line 549)
 > **Quality reviewed:** 2026-06-28 | Codex 9x (design, adversarial, consistency, perf, re-adversarial) | 1H+3M+3L fixed | scope: kernel-code-quality
+
+---
+
+## 20. Post-Ship Follow-Up Backfill (orphan cohort 2026-07-31)
+
+Items moved here VERBATIM from their original, already-stamped sections, where they were unreachable: the triage oracle classifies a stamped section DONE without reading its body, so an item appended after the stamp is invisible to every later pass. Source section noted per group. Cohort context: `todo/overnight-runner-improvements/overnight-runner-improvements-v05.md` item 3.
+
+From the stamped section 9:
+- [ ] `topology_init()` consume `per_cpu_data.core_type` (published per-AP by `01-boot-platform/TODO-09 §6`) to derive accurate `p_core_mask`/`e_core_mask` on Intel hybrid; today BSP core type is applied to all CPUs
+
+**Test checkpoint:** per moved item; each carries its original acceptance text.
 
 ---
 

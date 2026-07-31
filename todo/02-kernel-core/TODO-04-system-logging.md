@@ -73,6 +73,7 @@ title: "TODO-04 -- System Logging"
 | 💎   |  12   | ETW advanced capture (stack/autologger/schema) | §11, T23, T18 §4 |  [/]   |
 | 💎   |  13   | Rotated-log compression (LZ4)                  | §4, T03 §3       |  [x]   |
 | ⭐   |  14   | Serial timestamp render bound                  | §1               |  [ ]   |
+| ⭐   | 15 | Post-ship follow-up backfill (2026-07-31 cohort) | -- | [ ] |
 
 > 💎 = parity -- Windows Event Log and Linux journald/syslog both have these capabilities.
 > ⭐ = exclusive -- HMAC-chained JSON Lines is human-readable AND cryptographically verifiable; beats Windows XML and Linux binary journal.
@@ -321,7 +322,6 @@ Add CPU number, process ID, and thread ID to every klog entry. Windows ETW inclu
 - [x] Add debug POST codes: `POST16_KLOG_CTX` (0xDE10), `POST16_KLOG_CTX_STRUCT` (0xDE11), `POST16_KLOG_CTX_SERIAL` (0xDE12), `POST16_KLOG_CTX_JSON` (0xDE13) -- range 0xDE1x confirmed free
 - [/] Bound-copy the `klog_entry_t` subsystem tag instead of the raw caller pointer (`klog.c` `e->subsystem`) -- superseded by TODO-32 §2 tag interning; no live bug (all v1 callers pass literals) (§2 review)
 - [/] Bound-copy the verbosity override-table tag instead of the raw `const char*` (`klog.c` `s_overrides[].tag`) -- superseded by TODO-32 §2 tag interning; v1 callers pass literals (§3 review)
-- [ ] Rate-stable `klog_entry_t.timestamp`: capture `uptime_ns()/1e7` (10ms units) at `klog()` emit, not raw PIT ticks, so disk-log ISO reconstruction survives `NtSetTimerResolution` rate changes (today it assumes 100 Hz). (TODO-08 §13 review.)
 - [x] Commit: `"kernel: add CPU/PID/TID context to klog entries"`
 
 **Test checkpoint:** Serial log shows `[cpu:0]` on BSP entries after SMP init. JSON in `events.jsonl` contains `"cpu":0,"pid":1,"tid":N` for entries logged after scheduler start. Entries logged before scheduler show `"pid":0,"tid":0`. On SMP boot, AP entries show `"cpu":1` (or higher). Verify on QEMU WHPX (SMP), QEMU TCG, VirtualBox, bare metal.
@@ -443,6 +443,17 @@ Discovered 2026-07-29 during a `00-infrastructure/TODO-04-usermode-test-framewor
 
 - [ ] Bound the timestamp digit loop in klog.c's serial renderer so it cannot write past its fixed stack buffer regardless of uptime seconds
       Size `tmp` to the true `uint32_t` worst case (10 digits) or cap the loop at 8 iterations and saturate/wrap once `sec` exceeds what the buffer holds, with a `_Static_assert` pinning the bound against `sizeof(tmp)`. Add a unit test driving the renderer at 7/8/9/10-digit `sec` values confirming no write past the declared size (canary byte after `tmp`, or refactor the digit-count logic into a testable pure function). Consumer: `00-infrastructure/TODO-04-usermode-test-framework.md` §29's `UTEST_RECORD_WIRE_MAX`, which must widen `KLOG_WIRE_TIMESTAMP_MAX` again if the fix changes the max digit count the renderer can safely emit.
+
+---
+
+## 15. Post-Ship Follow-Up Backfill (orphan cohort 2026-07-31)
+
+Items moved here VERBATIM from their original, already-stamped sections, where they were unreachable: the triage oracle classifies a stamped section DONE without reading its body, so an item appended after the stamp is invisible to every later pass. Source section noted per group. Cohort context: `todo/overnight-runner-improvements/overnight-runner-improvements-v05.md` item 3.
+
+From the stamped section 9:
+- [ ] Rate-stable `klog_entry_t.timestamp`: capture `uptime_ns()/1e7` (10ms units) at `klog()` emit, not raw PIT ticks, so disk-log ISO reconstruction survives `NtSetTimerResolution` rate changes (today it assumes 100 Hz). (TODO-08 §13 review.)
+
+**Test checkpoint:** per moved item; each carries its original acceptance text.
 
 ---
 

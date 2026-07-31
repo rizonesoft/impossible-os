@@ -82,6 +82,7 @@ implements_after: TODO-04
 | ⭐   |  16   | TSC frequency variability under hypervisor                  | --                                              |  [/]   |
 | ⭐   |  17   | PAT WC -> WT hypervisor trap quirk                          | §2 (consumer)                                   |  [/]   |
 | 💎   |  18   | Boot critical-path / dependency / resource-wait attribution | §1, §2                                          |  [/]   |
+| 💎   | 19 | Post-ship follow-up backfill (2026-07-31 cohort) | -- | [ ] |
 
 ---
 
@@ -96,7 +97,6 @@ Today `boot_progress(phase, step, postcode)` records 31 timeline entries with ab
 - [x] Soft = 1.5x target -> WARN; hard = 4x target -> ERR. Equal-to-target is OK. Halt-on-breach owned by TODO-23 watchdog.
 - [x] Total-boot-time `boot_perf_total_check()` -- compares `steps[last].tsc - steps[0].tsc` against 4000ms target with same soft/hard thresholds.
 - [x] Schema bump for `boot-timeline.json` -- per-record `target_ms` field (0 = no budget). Trend-analysis decoder is owned by §3.
-- [ ] Gate the full `PERF`/timeline serial tables behind debug/test builds (default = summary + `BOOT-BUDGET` breaches) -- the dump runs pre-cmd.exe, outside the `boot_perf_total_check()` window: user-visible but unbudgeted
 - [x] Commit: `"boot: per-phase perf budgets + threshold alarms"`
 
 **Test checkpoint:** `boot_perf_budget_classify(99, 100) == OK`; `(150, 100) == OK`; `(151, 100) == SOFT`; `(400, 100) == SOFT`; `(401, 100) == HARD`. Lookup of known step returns budget; unknown + NULL return NULL. Clean boot stays silent; synthetic over-budget step triggers WARN/ERR.
@@ -157,9 +157,6 @@ The §1 budget check catches absolute breaches, but a slow drift inside the budg
 - [x] Top-level schema validation only; bad `schema_version` or non-array `boots` -> rename to `.corrupt-<seq>` + fresh v1 write.
 - [x] 3-run median per phase (prior=`boots[3..5]`, newest=`boots[0..2]`); emits BOOT-TREND WARN when growth >15%; first 5 boots silent.
 - [x] CI hook stays owned by the boot-validation matrix (this section ships data file + warn line only). -> XREF: `TODO-28-boot-validation-certification-matrix.md §9` (release gate + dashboard; owns the median->fail CI gate that consumes `boot-trend.json`).
-- [ ] Defer `boot_trend_publish_json()` (cJSON RMW + sync VFS I/O) to a post-DESKTOP_READY work item; record only fixed-size durations during boot -- takes the trend layer's own cost out of measured boot time
-- [ ] Linearize `boot_trend_publish_json()` traversal (`boot_trend.c:317`): replace indexed `json_array_get` (O(N^2) loop on dense/malformed file) with `json_array_first`/`json_array_next`; quarantine over-long `boots` arrays. (TODO-24 §6)
-- [ ] C:\ fallback for `boot-trend.json` (`boot_trend.c:17-21`): build paths from `klog_using_blackbox ? "X:\\Perf\\" : klog_dir` like boot-profile/timeline, or gate BlackBox-only + document no fallback. (TODO-24 §6)
 - [x] Commit: `"boot: rolling boot-trend.json + regression alarms"`
 
 **Test checkpoint:** Synthetic 6-boot fixture with prior-3 `SMBIOS=[80,80,80]` and newest-3 `[150,150,150]` produces an 87% regression alarm. Same shape but newest-3 `[80,82,84]` stays silent (median 82 within 15% band). Unit test seeds the file with 16 fixture entries and asserts prepend+trim to 16. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
@@ -457,6 +454,21 @@ Smoke (KVM, 2026-05-03) records `[WARN] mm: PAT: entry 1 = 0x04 (expected WC=0x0
 **Test checkpoint:** Boot serial emits `[BOOT-CRIT]` lines naming the ordered longest-pole chain with per-step cause class; `boot-health.json` carries `critical_chain[]` (top-N) + a blame-sorted view. Pure-helper test covers the longest-pole walk + cause classifier. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
 > **Deferred:** [M] Boot critical-path attribution (new, gap-audit): per-step cause-class tagging in boot_progress + `boot_critical_chain()` + boot-health `critical_chain[]`/`blame[]` -- multi-commit boot-instrumentation + live-boot validation. -> XREF: 01-boot-platform/TODO-14-boot-diagnostics.md §9 (visual consumer); §18 owns attribution.
+---
+
+## 19. Post-Ship Follow-Up Backfill (orphan cohort 2026-07-31)
+
+Items moved here VERBATIM from their original, already-stamped sections, where they were unreachable: the triage oracle classifies a stamped section DONE without reading its body, so an item appended after the stamp is invisible to every later pass. Source section noted per group. Cohort context: `todo/overnight-runner-improvements/overnight-runner-improvements-v05.md` item 3.
+
+From the stamped section 1:
+- [ ] Gate the full `PERF`/timeline serial tables behind debug/test builds (default = summary + `BOOT-BUDGET` breaches) -- the dump runs pre-cmd.exe, outside the `boot_perf_total_check()` window: user-visible but unbudgeted
+From the stamped section 3:
+- [ ] Defer `boot_trend_publish_json()` (cJSON RMW + sync VFS I/O) to a post-DESKTOP_READY work item; record only fixed-size durations during boot -- takes the trend layer's own cost out of measured boot time
+- [ ] Linearize `boot_trend_publish_json()` traversal (`boot_trend.c:317`): replace indexed `json_array_get` (O(N^2) loop on dense/malformed file) with `json_array_first`/`json_array_next`; quarantine over-long `boots` arrays. (TODO-24 §6)
+- [ ] C:\ fallback for `boot-trend.json` (`boot_trend.c:17-21`): build paths from `klog_using_blackbox ? "X:\\Perf\\" : klog_dir` like boot-profile/timeline, or gate BlackBox-only + document no fallback. (TODO-24 §6)
+
+**Test checkpoint:** per moved item; each carries its original acceptance text.
+
 ---
 
 ## OS Comparison

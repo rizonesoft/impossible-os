@@ -225,8 +225,8 @@ Add bounded timeouts to all bulk transfers. The current code polls the xHCI even
 With proper SCSI retry (§1-§3) and USB transport recovery (§4-§5), the 2-second sleep after xhci_init is no longer needed.
 
 - [x] No global `sleep_ms(2000)` exists -- grep-confirmed empty across `src/`; `boot_phase2` calls `xhci_init()` with no trailing sleep, readiness is event-driven via `msc_poll_unit_ready` (§2) in `usb_msc_init`
-- [ ] Verify USB boot works on: QEMU TCG, bare metal i5-11600K, bare metal i5-4210U -- bare-metal "moment of truth"; user hardware action (no QEMU USB-drive-boot harness in WSL)
-- [ ] If any platform fails without the sleep: investigate root cause, don't add the sleep back -- contingent on the platform-boot validation above
+- [/] Verify USB boot works on: QEMU TCG, bare metal i5-11600K, bare metal i5-4210U -- bare-metal "moment of truth"; user hardware action (no QEMU USB-drive-boot harness in WSL)
+- [/] If any platform fails without the sleep: investigate root cause, don't add the sleep back -- contingent on the platform-boot validation above
 - [x] Verified: §4-§5 endpoint-stall + timeout recovery covers the readiness window the sleep masked -- now handled by §2 TUR poll + §3 BOT retry + §4 stall recovery + §5 bulk timeouts (`usb_msc_init` chain)
 - [x] Commit: `"drivers: remove USB 2-second sleep hack -- SCSI retry + transport recovery handles readiness"`
 
@@ -239,6 +239,7 @@ With proper SCSI retry (§1-§3) and USB transport recovery (§4-§5), the 2-sec
 > - Open items: cross-platform boot validation (QEMU TCG, i5-11600K, i5-4210U) is a bare-metal "moment of truth" user action -- kept `[ ]`; no QEMU USB-drive-boot harness exists in WSL.
 > **Verified:** 2026-06-15 | commit `pending` | 2/4 items | build OK | verify-only -- grep empty across `src/`, readiness chain code-truth confirmed
 > **Quality reviewed:** 2026-06-15 | Codex 0x (verify-only -- no code diff to review) | 0 findings | scope: N/A (verify-only, no source change)
+> **Deferred:** [awaiting-operator] bare-metal USB boot verification needs the operator's i5-11600K / i5-4210U hardware -- no unattended pass can perform this; operator action required (cohort 2026-07-31)
 
 **Regression risk:** HIGH -- this is the moment of truth. If retry logic isn't sufficient, USB boot breaks on slow hardware. Rollback: temporarily re-add `sleep_ms(500)` as a smaller delay while investigating.
 

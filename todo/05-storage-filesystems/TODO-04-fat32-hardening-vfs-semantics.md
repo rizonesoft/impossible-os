@@ -64,6 +64,7 @@ title: "TODO-04 -- FAT32 Hardening & VFS Win32 Semantics"
 | 💎  |  15   | §15 VFS_O_TRUNC end-to-end -- FAT32 cached refresh + handle cleanup + cross-FS policy | §8, §14 (handle table) + FAT32 truncate (§4 + §13)       |  [/]   |
 | 💎  |  16   | §16 VFS rename replace-existing -- atomic temp-file durable-write primitive          | §4 (LFN write), §15 (truncate path)                      |  [/]   |
 | 💎  |  17   | §17 FAT32 volume-lock hold time -- no blocking disk I/O under the `cli` `vol->lock`   | §3, §4 (FAT/dir write + delete paths)                    |  [ ]   |
+| 💎  | 18 | Post-ship follow-up backfill (2026-07-31 cohort) | -- | [ ] |
 
 > §7 (case-insensitive VFS) is `⭐` exclusive in architecture: Windows case-folds inside `NTFS.sys` / `FAT.sys` per volume type; Linux is case-sensitive by default with per-mount options. Impossible OS applies a unified case-fold in the VFS layer above all filesystem drivers -- one correct implementation that benefits NTFS, FAT32, IXFS, and any future driver equally.
 
@@ -360,10 +361,6 @@ Windows file system drivers support opportunistic locks that allow clients to ca
 - [x] Cross-FS regression tests -- 3 IXFS variants pin TRUNC shrinks / no-WRITE rejected / dir silently masked. FAT32 variant TEST_PENDING.
 - [x] 4 consumer retrofits to single-open `VFS_O_WRITE | VFS_O_CREATE | VFS_O_TRUNC`. Smoke: all 4 Phase-3 writers persist.
 - [x] **FAT32 zero-cluster cache coherency** -- fixed in 01-boot-platform/TODO-12 §6: `fat32_read/write_sectors_multi` overlay/sync overlapping cache slots; FAT32 TRUNC round-trip test runs live (was TEST_SKIP).
-- [ ] **VFS per-vnode share-mode locking** -- unlocked window between `vfs_add_handle` and `ref_count++` lets concurrent opens skip the share check; TRUNC dispatch lengthens it. Dormant on BSP-only Phase-3.
-- [ ] **FAT32 cache-slot stability for live handles** -- rebuilds can reassign a `dir_files` slot a live handle aims at. TODO-12 §6 shipped identity-preserving reset (same dir + SFN keeps state); full fix = per-open vnode alloc or pinning.
-- [ ] **FAT32 vol->lock concurrency overhaul** -- cli-spinlock held across blkdev I/O on writes, while reads/finddir touch the cache unlocked (locking them deadlocks). Convert to a sleepable mutex + one cache-access discipline.
-- [ ] **vfs_unmount filesystem hook** -- `vfs_unmount()` only clears the mount table; add a per-FS unmount op so FAT32 can flush + `fat32_mark_clean` + `blkdev_sync` on clean unmount (today only the ACPI shutdown path clean-marks X:).
 - [x] Commit: `"fs: VFS_O_TRUNC end-to-end -- FAT32 cached refresh + exact-slot handle cleanup + cross-FS policy"`
 
 **Test checkpoint:** Long file written, reopened with `VFS_O_TRUNC | VFS_O_WRITE`, shorter payload reads back at exact size with no stale tail (IXFS via unit test; FAT32 via smoke -- 4 Phase-3 writers persist). TRUNC without WRITE returns NULL. Directory + TRUNC silently masked at VFS layer. Smoke PASSes with no Phase-3 WARN cluster. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
@@ -404,7 +401,6 @@ Windows file system drivers support opportunistic locks that allow clients to ca
 - [x] FAT walk bound from BPB data region, capped at FAT32 spec max `0x0FFFFFEF`; rejects malformed/reserved cluster pointers before `cluster_to_sector`.
 - [x] Refuses non-first-cluster destinations (`dst_cluster != dir_cluster`) until cross-cluster LFN removal lands.
 - [x] Unit tests: IXFS rejects flag, legacy `vfs_rename` routes via `_ex` shim, flag-bit consistency.
-- [ ] **Cross-cluster LFN removal** -- walk back into prior cluster to mark trailing LFN slots `0xE5`; currently refused, so replace-existing AND `fat32_delete_file_vol` (LFN-aware since 01-boot-platform/TODO-12 §6) return -1 on those layouts.
 - [x] Commit: `"fs: VFS rename replace-existing -- atomic temp-file durable-write primitive (FAT32)"`
 
 **Test checkpoint:** Unit tests cover IXFS rejection, legacy 2-arg `vfs_rename` routing through the new `_ex` shim, and flag-bit consistency. FAT32 replace-existing happy path + dst-open refusal exercised via smoke once a consumer (TODO-29 §3 boot-trend.json) writes through the primitive; the `fat32_zero_cluster` cache-coherency gap that previously gated `test_vfs_o_trunc_fat32_lowercase_lfn` was fixed in 01-boot-platform/TODO-12 §6 (that test now runs live), so a FAT32-specific replace-existing unit test is unblocked. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
@@ -420,13 +416,6 @@ Windows file system drivers support opportunistic locks that allow clients to ca
 > - Unblocks history-preserving RMW writers: TODO-29 §3 boot-trend.json + future registry hive saves, ETW log rotation, BlackBox crash dumps.
 >
 > **Verified:** 2026-05-03 | commit `847d9a1e` | 12/13 items + 1 follow-up | build OK | smoke PASS (KVM 2.530s)
-- [ ] FIELD DEFECT 2026-07-30: `vfs_rename_ex` fails on a long two-dot filename, so the atomic publish this section shipped silently degrades to litter
-  - **Observed on a native-Windows WHPX boot** (operator run, real hardware): `[WARN] fat32: rename: source 'boot-trend.json.tmp' not found (sfn lookup rc=0)` then `[WARN] boot_trend: atomic rename failed (rc=-1); .tmp left in place`.
-  - **The write SUCCEEDED.** `boot_trend.c:370` only warns on a short write and there was no such warning, so the `.tmp` existed; the rename then could not find it. This is a lookup failure, not a write failure.
-  - **Confirmed at source**: `fat32_rename` resolves the source by GENERATED SHORT NAME only -- `fat32_make_short_name(old_name, old_short)` then `fat32_find_dirent_by_sfn` (`fat32_write.c:646-652`). There is no LFN lookup path in the file (`grep find_dirent_by_lfn` returns nothing), so a name that does not round-trip through the 8.3 mangler is unreachable by rename.
-  - **NOT yet root-caused, and one theory is already disproved.** Reproducing `fat32_make_short_name` (`fat32_dir.c:14-52`) on the failing name gives `boot-trend.json.tmp` -> `BOOT-T~1TMP` deterministically, and the create path uses the SAME function, so create and rename should agree. Do not ship the obvious "two dots break the mangler" fix without first proving what SFN is actually on disk -- dump the directory entries before the rename.
-  - **Adjacent hazard found while checking**: the `~1` tail is applied unconditionally with NO collision search, so any two long names sharing the first 6 characters and an extension collide (`boot-trend.json` and any other `boot-tr*.json*` both mangle to `BOOT-T~1JSO`). That is a silent wrong-file hazard for rename AND unlink, wider than this incident.
-  - **Impact**: every caller of the durable-write idiom this section exists to provide -- boot-trend, registry hive saves, ETW rotation, BlackBox dumps -- is exposed whenever its filename is long, and fails by leaving stale `.tmp` files rather than by erroring loudly.
 
 > **Accepted:** [H] open-handle gate runs outside FAT32 vol->lock (TOCTOU window) -> XREF: 05-storage-filesystems/TODO-04 §15 (item: "VFS per-vnode share-mode locking" at line 354 -- inherited from existing `vfs_unlink` race; dormant on BSP-only Phase-3)
 > **Accepted:** [H] FAT32 dir-cache eviction can detach the node tracked by VFS gate -> XREF: 05-storage-filesystems/TODO-04 §15 (item: "FAT32 cache-slot stability for live handles" at line 355 -- dormant on sequential writers)
@@ -444,6 +433,29 @@ Windows file system drivers support opportunistic locks that allow clients to ca
 - [ ] Commit: `"fs/fat32: drop blocking disk I/O out of the cli vol->lock window"`
 
 **Test checkpoint:** Delete a large directory on a FAT32 volume and confirm interrupts (timer tick / WDAT pet) keep firing during the operation; no watchdog reset on a full-volume BlackBox cleanup. Test on: QEMU TCG (device emulation), bare metal.
+
+---
+
+## 18. Post-Ship Follow-Up Backfill (orphan cohort 2026-07-31)
+
+Items moved here VERBATIM from their original, already-stamped sections, where they were unreachable: the triage oracle classifies a stamped section DONE without reading its body, so an item appended after the stamp is invisible to every later pass. Source section noted per group. Cohort context: `todo/overnight-runner-improvements/overnight-runner-improvements-v05.md` item 3.
+
+From the stamped section 15:
+- [ ] **VFS per-vnode share-mode locking** -- unlocked window between `vfs_add_handle` and `ref_count++` lets concurrent opens skip the share check; TRUNC dispatch lengthens it. Dormant on BSP-only Phase-3.
+- [ ] **FAT32 cache-slot stability for live handles** -- rebuilds can reassign a `dir_files` slot a live handle aims at. TODO-12 §6 shipped identity-preserving reset (same dir + SFN keeps state); full fix = per-open vnode alloc or pinning.
+- [ ] **FAT32 vol->lock concurrency overhaul** -- cli-spinlock held across blkdev I/O on writes, while reads/finddir touch the cache unlocked (locking them deadlocks). Convert to a sleepable mutex + one cache-access discipline.
+- [ ] **vfs_unmount filesystem hook** -- `vfs_unmount()` only clears the mount table; add a per-FS unmount op so FAT32 can flush + `fat32_mark_clean` + `blkdev_sync` on clean unmount (today only the ACPI shutdown path clean-marks X:).
+From the stamped section 16:
+- [ ] **Cross-cluster LFN removal** -- walk back into prior cluster to mark trailing LFN slots `0xE5`; currently refused, so replace-existing AND `fat32_delete_file_vol` (LFN-aware since 01-boot-platform/TODO-12 §6) return -1 on those layouts.
+- [ ] FIELD DEFECT 2026-07-30: `vfs_rename_ex` fails on a long two-dot filename, so the atomic publish this section shipped silently degrades to litter
+  - **Observed on a native-Windows WHPX boot** (operator run, real hardware): `[WARN] fat32: rename: source 'boot-trend.json.tmp' not found (sfn lookup rc=0)` then `[WARN] boot_trend: atomic rename failed (rc=-1); .tmp left in place`.
+  - **The write SUCCEEDED.** `boot_trend.c:370` only warns on a short write and there was no such warning, so the `.tmp` existed; the rename then could not find it. This is a lookup failure, not a write failure.
+  - **Confirmed at source**: `fat32_rename` resolves the source by GENERATED SHORT NAME only -- `fat32_make_short_name(old_name, old_short)` then `fat32_find_dirent_by_sfn` (`fat32_write.c:646-652`). There is no LFN lookup path in the file (`grep find_dirent_by_lfn` returns nothing), so a name that does not round-trip through the 8.3 mangler is unreachable by rename.
+  - **NOT yet root-caused, and one theory is already disproved.** Reproducing `fat32_make_short_name` (`fat32_dir.c:14-52`) on the failing name gives `boot-trend.json.tmp` -> `BOOT-T~1TMP` deterministically, and the create path uses the SAME function, so create and rename should agree. Do not ship the obvious "two dots break the mangler" fix without first proving what SFN is actually on disk -- dump the directory entries before the rename.
+  - **Adjacent hazard found while checking**: the `~1` tail is applied unconditionally with NO collision search, so any two long names sharing the first 6 characters and an extension collide (`boot-trend.json` and any other `boot-tr*.json*` both mangle to `BOOT-T~1JSO`). That is a silent wrong-file hazard for rename AND unlink, wider than this incident.
+  - **Impact**: every caller of the durable-write idiom this section exists to provide -- boot-trend, registry hive saves, ETW rotation, BlackBox dumps -- is exposed whenever its filename is long, and fails by leaving stale `.tmp` files rather than by erroring loudly.
+
+**Test checkpoint:** per moved item; each carries its original acceptance text.
 
 ---
 

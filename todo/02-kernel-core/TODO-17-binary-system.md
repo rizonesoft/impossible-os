@@ -108,7 +108,7 @@ Replace the direct `elf_load()` call in `task_exec()` (`src/kernel/sched/task.c`
 - [x] Register ELF format in `exec_init()` called from `boot_desktop.c` Phase 3; PE32+/EIF registration points ready
 - [x] Replace the direct `elf_load()` call in `task_exec()` (`task.c`) with `exec_load_fmt(data, size, &err, &fmt_name)` -- the format-name-returning superset that `exec_load()` wraps; user stack/PML4/context setup unchanged
 - [x] 3 unit tests: bad magic (ENOEXEC), null data (ENOEXEC), sub-magic-length buffer (ENOEXEC)
-- [ ] Exec argument passing: extend `task_exec`/`exec_load` to take a caller argv and populate the user stack + PEB `ProcessParameters.CommandLine` (today argc=1/argv[0]=name is fixed) -- prerequisite for §16 shebang
+- [x] Exec argument passing: extend `task_exec`/`exec_load` to take a caller argv and populate the user stack + PEB `ProcessParameters.CommandLine` (today argc=1/argv[0]=name is fixed) -- prerequisite for §16 shebang **Verified 2026-07-31:** shipped via 02-kernel-core/TODO-22 sections 4 + 15: SYS_EXEC argv/envp ingestion (src/kernel/sched/syscall.c:646, exec_snapshot_vec) and CommandLine population
 - [x] Commit: `"kernel: exec -- multi-format exec dispatcher"`
 
 **Test checkpoint:** Serial log shows `"exec: Registered format: ELF (magic 4 bytes)"` and `"exec: Exec subsystem initialized (1 format(s))"`. Unit tests: `exec_load` on `0xDEADBEEF` magic returns 0 + ENOEXEC; NULL data returns 0 + ENOEXEC; sub-magic-length (3-byte) buffer returns 0 + ENOEXEC. Adversarial review: 7 findings (2C/2H/1M/2L) all resolved -- SMP barrier, TOCTOU fix, buffer leak fix, input validation, alignment fix.

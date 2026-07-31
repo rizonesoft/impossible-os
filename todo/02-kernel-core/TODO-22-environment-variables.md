@@ -501,9 +501,9 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 - [x] `env_destroy_block()` -- Win32 `DestroyEnvironmentBlock`: pointer-only free via a hidden `{magic,wchars}` header (no kernel `LocalAlloc`); NULL is a no-op; called once with a live `env_create_block` pointer (Win32 contract).
 - [/] `ExpandEnvironmentStringsForUser()` -- Win32 `ExpandEnvironmentStringsForUserW` (`nt_rtlenv.c`): `htoken==NULL` expands the caller block via `RtlExpandEnvironmentStrings_U`; `htoken!=NULL` returns `STATUS_NOT_SUPPORTED`.
 - [x] **Profile-load policy honored:** a token needing HKCU vars without a loaded profile returns documented failure (`ENV_ERR_UNSUPPORTED`/`STATUS_NOT_SUPPORTED`); no profile path invented (MS Learn: user vars apply only after `LoadUserProfile`).
-- [ ] Per-user block/expansion (`htoken!=NULL`): token-SID -> `HKEY_USERS` hive + `LoadUserProfile` + HANDLE `granted_access` check. -> XREF: 02-kernel-core/TODO-15 §5 (item: "Enforce per-handle `granted_access` on token mutation syscalls")
-- [ ] `htoken==NULL` system-only / no-inherit fresh block: needs an SMP-safe runtime Registry snapshot (`env_init_defaults` is boot-only). -> XREF: 02-kernel-core/TODO-14 §14 (item: "Registry SMP synchronization")
-- [ ] User-mode `userenv.dll` export wiring: kernel returns kernel-resident blocks today (like the unwired `RtlExpandEnvironmentStrings_U`); needs a user heap -> XREF: 12-user-platform-sdk/TODO-04 §2 (item: "`RtlAllocateHeap`")
+- [/] Per-user block/expansion (`htoken!=NULL`): token-SID -> `HKEY_USERS` hive + `LoadUserProfile` + HANDLE `granted_access` check. -> XREF: 02-kernel-core/TODO-15 §5 (item: "Enforce per-handle `granted_access` on token mutation syscalls")
+- [/] `htoken==NULL` system-only / no-inherit fresh block: needs an SMP-safe runtime Registry snapshot (`env_init_defaults` is boot-only). -> XREF: 02-kernel-core/TODO-14 §14 (item: "Registry SMP synchronization")
+- [/] User-mode `userenv.dll` export wiring: kernel returns kernel-resident blocks today (like the unwired `RtlExpandEnvironmentStrings_U`); needs a user heap -> XREF: 12-user-platform-sdk/TODO-04 §2 (item: "`RtlAllocateHeap`")
 
 - [x] Commit: `"kernel/env: CreateEnvironmentBlock, DestroyEnvironmentBlock, ExpandEnvironmentStringsForUser"`
 

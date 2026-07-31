@@ -5,8 +5,11 @@ Surfaces terminal-park `[/]` checklist items whose cross-TODO XREF owner section
 has now SHIPPED (both `> **Verified:**` and `> **Quality reviewed:**` stamps),
 yet the item is still parked -- the "cross-TODO work that became runnable but was
 never re-opened" gap. It ONLY PRINTS a human-reviewable list; it never edits a
-TODO, never gates fixpoint, never re-opens anything. The acting pieces (P6.1
-owner-side sweep, P6.3 fixpoint gate, P6.4 backfill) are DEFERRED: the naive
+TODO and never re-opens anything itself. STALE-HEADER FIX 2026-07-31: the
+acting pieces are no longer all deferred -- P6.1 (owner-side sweep) is
+MANDATORY at implement-todo-section step 18, and P6.3 (fixpoint gate, `--gate`
+mode below) GATES run completion since 2026-07-27. Only P6.4 (bulk backfill)
+remains deliberately unbuilt. The original caution stands: the naive
 section-stamp signal the plan first proposed over-matched ~6x on the live tree
 (171 hits, 143 of them self-XREFs to already-open `[ ]` items), so nothing acts
 on this until the audit is proven accurate on real data.

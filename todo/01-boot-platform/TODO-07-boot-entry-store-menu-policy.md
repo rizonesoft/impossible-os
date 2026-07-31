@@ -429,14 +429,14 @@ The §1 envelope only carries the discriminator; this section owns the per-kind 
 
 - [x] `kind: split` validator (kernel required + ASCII + allowed-prefix + no `..`; cmdline / root / initrd[] optional). Authoritative loader: SOLE candidate, refuses fallback to ambient on miss.
 - [x] `kind: uki` schema-enforced validator: payload-absence accepted; payload-present requires `uki_path` (ASCII + Linux/ImpossibleOS prefix + no traversal), optional `profile` 0..15, all other keys rejected as smuggled overrides.
-- [ ] `kind: chainload` stub validator (`REJ_NOT_SUPPORTED`). LoadImage/StartImage runtime path -> [`TODO-27 §1`](TODO-27-uefi-advanced.md).
-- [ ] `kind: network` stub validator. HTTP/TFTP runtime + url+digest fields -> [`TODO-25 §7`](TODO-25-network-pxe-http-boot.md).
-- [ ] `kind: resume` stub validator. Hibernation snapshot runtime -> [`TODO-26 §3, §5`](TODO-26-hibernation-resume-fast-startup-handoff.md).
+- [/] `kind: chainload` stub validator (`REJ_NOT_SUPPORTED`). LoadImage/StartImage runtime path -> [`TODO-27 §1`](TODO-27-uefi-advanced.md).
+- [/] `kind: network` stub validator. HTTP/TFTP runtime + url+digest fields -> [`TODO-25 §7`](TODO-25-network-pxe-http-boot.md).
+- [/] `kind: resume` stub validator. Hibernation snapshot runtime -> [`TODO-26 §3, §5`](TODO-26-hibernation-resume-fast-startup-handoff.md).
 - [x] `kind: safe` accepts SPLIT shape; `recovery`/`installer`/`diagnostics`/`test` stub-reject pending production rules in §8 + §9 + §16.
 - [x] Per-kind dispatch via `boot_entry_kind_validate()` in `include/boot/boot_entry_kind.h` + `src/boot/uefi/boot_entry_kind.c`.
 - [x] `boot_policy_invoke()` validates AFTER menu+SAFE, BEFORE counter decrement; reject -> `FALLBACK_NO_VIABLE`; accept -> stashed decoded drives `load_kernel()` SOLE-candidate path.
 - [x] Per-kind fields documented in [`docs/boot/boot-entry-schema.md`](../../docs/boot/boot-entry-schema.md) section 4.1.
-- [ ] Widen `supported_kinds_mask` in `boot_policy_invoke()` to include CHAINLOAD / NETWORK / RESUME once their per-kind handlers land. Today only SPLIT/UKI/SAFE are admitted.
+- [/] Widen `supported_kinds_mask` in `boot_policy_invoke()` to include CHAINLOAD / NETWORK / RESUME once their per-kind handlers land. Today only SPLIT/UKI/SAFE are admitted.
 - [x] Commit: `"boot: per-entry-kind validators and load paths"`
 
 **Test checkpoint:** Each kind has matching parser-fixture tests (valid + 2 rejection cases). Selecting a `kind: uki` entry sets `BOOT_FLAG_INVOKED_VIA_UKI` and reaches the kernel without disk-side cmdline override. Selecting a `kind: chainload` entry under Secure Boot without `trusted_chainload` is rejected. `kind: resume` digest mismatch falls through to the next priority entry per §3. SPLIT-with-validated-kernel-path: load_kernel opens that exact path or fails (no ambient fallback); SPLIT-with-rejected-payload: ladder demotes to `FALLBACK_NO_VIABLE`. Test on: QEMU WHPX + TCG (UKI), TCG (network sim, chainload), bare metal once §4 menu ships.
@@ -473,9 +473,9 @@ Bootloader marks try-down (decrement `tries_left`); userspace marks good ONLY af
 
 Follow-ups (wanted checks depend on producers outside §14's scope):
 
-- [ ] Re-enable `network_reachable` wanted check once a NIC stack provides reachability state. Owner: TODO-25 (network) when basic L3 lands; check currently returns `SKIPPED`.
-- [ ] Re-enable `no_service_crash_60s` wanted check once a service supervisor lands. Owner: future service-supervisor TODO; check currently returns `SKIPPED`.
-- [ ] Wire TODO-21 §5 slot-level `mark_boot_successful()` call into `mark_entry_successful()` when TODO-21 §5 ships. Today it is a documented XREF hook in `boot_health_check.c`.
+- [/] Re-enable `network_reachable` wanted check once a NIC stack provides reachability state. Owner: TODO-25 (network) when basic L3 lands; check currently returns `SKIPPED`.
+- [/] Re-enable `no_service_crash_60s` wanted check once a service supervisor lands. Owner: future service-supervisor TODO; check currently returns `SKIPPED`.
+- [/] Wire TODO-21 §5 slot-level `mark_boot_successful()` call into `mark_entry_successful()` when TODO-21 §5 ships. Today it is a documented XREF hook in `boot_health_check.c`.
 
 **Test checkpoint:** Boot reaches desktop, all required checks pass -> entry marked good (mark-good UEFI var written; next bootloader run deletes the counter file). Boot reaches desktop but kernel logged `LOG_ERROR` from a `boot_*` subsystem -> `no_boot_err` returns HARD_FAIL, gate aggregates INDETERMINATE, no mark-good var written, tries_left stays decremented for next-boot retry. `network_reachable` and `no_service_crash_60s` return SKIPPED today (wanted), never block the gate. Smoke (no bootentries.json on test ESP) confirms gate fires + reports PASS + correctly skips mark-good because no CurBootCtr is written by the bootloader on the fallback path. Test on: QEMU WHPX + TCG; bare metal once a real bootentries.json with health_check_subset is present.
 
@@ -529,11 +529,11 @@ Who creates the FIRST default entry on a freshly-installed system? Who creates t
 
 - [x] `bootcfg.py emit-seed` produces byte-identical 3-entry store; ids deterministic from `(machine_id, kind, slot)` (wildcard machine_id -> `slot-a` / `slot-b` / `recovery`).
 - [/] Release-image-build integration shipped via `scripts/release/build-image.sh`; dedicated installer release script pending -> XREF: [`../15-installer-release/TODO-01-release-artifacts.md`](../15-installer-release/TODO-01-release-artifacts.md).
-- [ ] First-boot self-seed (synthesize 3-entry default on missing store). Blocked: [`TODO-22 §1`](TODO-22-recovery-partition.md) + [`TODO-21 §2`](TODO-21-ab-boot-rollback.md).
+- [/] First-boot self-seed (synthesize 3-entry default on missing store). Blocked: [`TODO-22 §1`](TODO-22-recovery-partition.md) + [`TODO-21 §2`](TODO-21-ab-boot-rollback.md).
 - [x] Image build path: `scripts/release/build-image.sh` ships the 3-entry seed; `kernel` path matches staged location per staged-vs-seeded contract.
-- [ ] Widen `supported_kinds_mask` to include INSTALLER once distinct installer-image load path exists AND first-install seeding is complete. Blocked: no distinct load path today.
-- [ ] Root-aware `load_kernel()`: honor a SPLIT entry's `payload.root` so a `slot-b` entry loads from Slot B (needs a bootloader IXFS reader) -> XREF: [`TODO-21 §3`](TODO-21-ab-boot-rollback.md). Blocked: no IXFS reader yet.
-- [ ] Flip the seeded `slot-b` entry inactive->active in `bootcfg.py` `_seed_store()` once root-aware `load_kernel` lands so the menu's Slot B entry is selectable -> XREF: [`TODO-21 §3`](TODO-21-ab-boot-rollback.md).
+- [/] Widen `supported_kinds_mask` to include INSTALLER once distinct installer-image load path exists AND first-install seeding is complete. Blocked: no distinct load path today.
+- [/] Root-aware `load_kernel()`: honor a SPLIT entry's `payload.root` so a `slot-b` entry loads from Slot B (needs a bootloader IXFS reader) -> XREF: [`TODO-21 §3`](TODO-21-ab-boot-rollback.md). Blocked: no IXFS reader yet.
+- [/] Flip the seeded `slot-b` entry inactive->active in `bootcfg.py` `_seed_store()` once root-aware `load_kernel` lands so the menu's Slot B entry is selectable -> XREF: [`TODO-21 §3`](TODO-21-ab-boot-rollback.md).
 - [x] Documented bootstrap order + ownership boundary in [`docs/boot/bootstrap.md`](../../docs/boot/bootstrap.md).
 - [x] Commit: `"boot: bootstrap and first-install entry seeding"`
 

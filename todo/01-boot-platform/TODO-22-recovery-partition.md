@@ -67,7 +67,7 @@ Add a read-only recovery partition to the GPT disk layout.
 - [/] Contents: `kernel.bak` (last known-good kernel) populated now via `mcopy`; `recovery.exe` (the §2 recovery bootloader) + `ixfs-fsck` (§3) deferred to those sections
 - [x] Recovery GPT entry read-only (attr bit 60) AND kernel-enforced: `gpt_is_recovery` + `partition_mount_filesystems` skip it, so a normal boot never drive-letter-mounts it (review HIGH: a FAT32 recovery would otherwise auto-mount writable as D: and expose `kernel.bak`)
 - [x] Build creates + FAT32-formats the recovery partition from the `.info` `RECOVERY_OFFSET`/`RECOVERY_SIZE` + populates `kernel.bak` (Makefile system-disk recipe)
-- [ ] First-boot self-seed (missing store + recovery + known-good slot -> synthesize 3-entry default) -> XREF: [`TODO-07 §16`](TODO-07-boot-entry-store-menu-policy.md#16-bootstrap-and-first-install-entry-seeding).
+- [/] First-boot self-seed (missing store + recovery + known-good slot -> synthesize 3-entry default) -> XREF: [`TODO-07 §16`](TODO-07-boot-entry-store-menu-policy.md#16-bootstrap-and-first-install-entry-seeding).
 - [x] Commit: `"build: add recovery partition to GPT disk layout"`
 
 **Test checkpoint:** `fdisk -l` shows the Recovery partition (6-partition A/B layout: EFI + BlackBox + ABMeta + Slot A + Slot B + Recovery); make-system-disk prints "Part 6 (Recovery) ... read-only"; the 6-partition image boots (smoke PASS).

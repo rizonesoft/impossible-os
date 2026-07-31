@@ -94,6 +94,7 @@ title: "TODO-12 -- Native API Layer (Nt/Zw)"
 | 💎   |  29   | Token lifecycle + SRM access check syscalls                    | §16, TODO-15 §7,§8 |  [/]   |
 | 💎   |  30   | Generic object management (make-temp/perm, set-info, compare)  | §17, TODO-05 §1,§9 |  [/]   |
 | 💎   |  31   | Modern ALPC port syscalls                                      | §20, TODO-24 §8-§9 |  [x]   |
+| 💎   | 32 | Post-ship follow-up backfill (2026-07-31 cohort) | -- | [ ] |
 
 > 💎 = parity -- Windows NT and Linux both have equivalents for these categories.
 > ⭐ = exclusive -- the ZwXxx privilege layer, the audit hook, SSDT integrity protection, and the IOSB/LastError unified path go beyond what Linux offers.
@@ -660,11 +661,6 @@ Extended file operations: metadata queries, attribute modification, device I/O c
 - [x] `NtCreateMailslotFile` (SSDT 0x001C): registered, returns STATUS_INVALID_DEVICE_REQUEST (one-way IPC deferred).
 - [x] `NtReadFileScatter` (SSDT 0x0024) / `NtWriteFileGather` (SSDT 0x0025): registered, returns STATUS_INVALID_DEVICE_REQUEST (requires page-aligned buffer segments).
 - [x] Commit: `"kernel: nt -- file metadata, device control, I/O completion ports"` (928051e4)
-- [ ] `FILE_OBJECT` canonical-path sync across ALIASED handles on rename: a node-shared current path so setinfo unveil re-checks use the current name for EVERY open handle, not just the renaming one (-> XREF: TODO-21 s12 unveil).
-- [ ] Serialize same-handle path-mutating `NtSetInformationFile` (FILE_OBJECT/node lock across unveil auth + rename/truncate + `fo->path` commit) so a racing rename cannot let a sibling thread authorize a stale path (-> XREF: TODO-21 s12).
-- [ ] Tail-pack `FILE_OBJECT.path` into the object-manager allocation (like the tail-packed SD) so a file open needs one heap node, not a second `kmalloc` on the open hot path (-> XREF: TODO-21 s12).
-- [ ] Variable-length `unveil_entry` (store the folded path inline-sized, not a fixed 512 B) so cloning a maximal 128-entry unveil set at fork copies far less than ~66 KiB through the heap (-> XREF: TODO-21 s12).
-- [ ] `NtSetInformationFile` NT ACCESS_MASK enforcement: track the granted mask on `FILE_OBJECT`, require DELETE for dispose/rename and FILE_WRITE_* for truncate/alloc/attrs (interim gate: any write access) (-> XREF: TODO-21 s12).
 
 **Test checkpoint:** `NtQueryInformationFile(FileBasicInformation)` returns valid timestamps. `NtSetInformationFile(FileDispositionInformation)` marks file for delete; file removed after close. `NtDeviceIoControlFile` reaches driver dispatch. I/O completion port post + dequeue round-trip succeeds.
 
@@ -1310,6 +1306,21 @@ NtQueryDirectoryFile (§6) currently returns `FileNamesInformation` only (name +
 > **Accepted:** [H] the TODO-24-retrofitted live ALPC handlers probe user buffers once then pass the original caller pointers into the ALPC engine (re-read/written after a wait) -- a TOCTOU/unprobed-usercopy path; the systemic copy_to_user/copy_from_user retrofit owns this -> XREF: 03-memory-concurrency/TODO-02-memory-security.md (item: "Audit all syscall handlers ... every `src/kernel/nt/nt_*.c` ... `nt_alpc.c`" at line 126)
 > **Accepted:** [H] pre-existing PE-loader OOB read (not §31; §31 only added export entries): `pe_resolve_dll_imports` (`pe.c`) validates untrusted import-name RVAs with 32-bit `name_rva+2`/`hint_rva+3` that wrap near `UINT32_MAX` -> bound passes, OOB read on a malformed PE -> XREF: 10-platform-services/TODO-07-win32-pe-loader.md §6 (item: "Harden `pe_resolve_dll_imports` RVA bounds")
 > **Quality reviewed:** 2026-07-03 | Codex 9x (adversarial x3, consistency x3, perf x3) | 1M fixed (Port/ALPC next-available hint), 4H accepted-XREF (ALPC engine, compacted-ABI class, usercopy TOCTOU, PE-import RVA wrap) | scope: kernel-code-quality
+
+---
+
+## 32. Post-Ship Follow-Up Backfill (orphan cohort 2026-07-31)
+
+Items moved here VERBATIM from their original, already-stamped sections, where they were unreachable: the triage oracle classifies a stamped section DONE without reading its body, so an item appended after the stamp is invisible to every later pass. Source section noted per group. Cohort context: `todo/overnight-runner-improvements/overnight-runner-improvements-v05.md` item 3.
+
+From the stamped section 13:
+- [ ] `FILE_OBJECT` canonical-path sync across ALIASED handles on rename: a node-shared current path so setinfo unveil re-checks use the current name for EVERY open handle, not just the renaming one (-> XREF: TODO-21 s12 unveil).
+- [ ] Serialize same-handle path-mutating `NtSetInformationFile` (FILE_OBJECT/node lock across unveil auth + rename/truncate + `fo->path` commit) so a racing rename cannot let a sibling thread authorize a stale path (-> XREF: TODO-21 s12).
+- [ ] Tail-pack `FILE_OBJECT.path` into the object-manager allocation (like the tail-packed SD) so a file open needs one heap node, not a second `kmalloc` on the open hot path (-> XREF: TODO-21 s12).
+- [ ] Variable-length `unveil_entry` (store the folded path inline-sized, not a fixed 512 B) so cloning a maximal 128-entry unveil set at fork copies far less than ~66 KiB through the heap (-> XREF: TODO-21 s12).
+- [ ] `NtSetInformationFile` NT ACCESS_MASK enforcement: track the granted mask on `FILE_OBJECT`, require DELETE for dispose/rename and FILE_WRITE_* for truncate/alloc/attrs (interim gate: any write access) (-> XREF: TODO-21 s12).
+
+**Test checkpoint:** per moved item; each carries its original acceptance text.
 
 ---
 

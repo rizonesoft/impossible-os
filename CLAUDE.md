@@ -130,6 +130,8 @@ Impossible OS is not trying to be a partial Windows clone or a Linux-alike with 
 - implement it now if it fits the current subsystem and one-session scope, or
 - file it immediately in the owning TODO section or TODO file with a concrete checklist item and reciprocal XREF.
 
+**Filing into a STAMPED section is filing into a black hole.** The triage oracle classifies a section from its Implementation Order row + stamps and never reads the body, so a bare `- [ ]` appended to a `[x]`/`[/]` section carrying both **Verified:** and **Quality reviewed:** stamps is invisible to every later pass (measured 2026-07-31: 117 such items had accumulated across 59 sections; all triaged and cleared the same day). When the owning section is already stamped, file the follow-up as ONE of: (a) a `- [/]` parked item naming its owner/blocker in the text (the owner-side `stranded_deferrals.py` sweep and the P6.3 fixpoint gate are the re-open path); (b) an item in a still-open NEEDS_WORK section; or (c) a NEW section (next free number, body last) with a reciprocal XREF. Never a bare `- [ ]` in a stamped, non-Deferred section -- `scripts/lint.sh` Check 23 ERRORs on it at commit (`scripts/todo-orphan-check.py` is the detector; Deferred-stamped sections are exempt because their items are deliberately parked).
+
 Do not ship happy-path completion with hidden adjacent gaps. "Done for this section" is not the bar; "credible, working, and properly owned" is the bar.
 
 ## Development Strategy -- Bare Metal First, SMP From Day One

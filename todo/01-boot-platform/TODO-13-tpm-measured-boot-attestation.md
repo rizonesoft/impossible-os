@@ -51,6 +51,7 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 | 💎   |  11   | TPM tests and event-log fixtures                             | §1-§10, §12, §13                                          |  [x]   |
 | 💎   |  12   | PCR allocation table and policy masks                        | (foundational; consumed by §6/§8/§13)                     |  [x]   |
 | 💎   |  13   | Attestation key provisioning and TPM2 quote                  | §3, §7, §12                                               |  [x]   |
+| 💎   | 14 | Post-ship follow-up backfill (2026-07-31 cohort) | -- | [ ] |
 
 ## 1. Harden TCG Event-Log Parser
 
@@ -175,10 +176,6 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 - [x] Enrollment gated by a recovery-authorized `tpm_enroll` config bit (NOT silent first-boot TOFU): when set, assemble + store the blob via `tpm_nv_define_data`/`tpm_nv_write`; report it as config/recovery-authorized enrollment.
 - [x] Phase-1 baseline verify step in `boot_interrupts` AFTER replay verify (NOT `tpm_integrity_init`): read the blob, compare current PCRs/SB/firmware-hash to golden -> set `boot_integrity_report.overall_status` VERIFIED / MISMATCH / NO_BASELINE.
 - [x] Baseline rotation under the recovery gate + monotonic generation counter (overwrite the blob; reject a lower generation).
-- [ ] Follow-up: trusted enrollment PROVENANCE -- gate enroll on a loader-validated recovery flag + console confirmation, NOT the boot.conf config gate (operator/ESP-write authority only). -> owner: recovery-kind + console-input infra.
-- [ ] Follow-up: actual bootloader + kernel image SHA-256 in the baseline -- bootloader must compute + carry them in `boot_info` (`.bootproto` sha is the ABI-manifest hash). -> XREF: §9 + `01-boot-platform/TODO-01`.
-- [ ] Follow-up (blocking for rollback-resistance claims): TPM NV write-lock / monotonic-counter anti-rollback so rotation cannot roll the baseline back to a tampered blob. -> XREF: §7 (`tpm_nv_*` NV mechanism).
-- [ ] Follow-up: atomic `boot_integrity_report` per-PCR publication -- refresh per-PCR statuses + add a PCR11 slot on baseline verdict (today `pcrs[8]` stays `NO_CRYPTO`, so VERIFIED self-contradicts the per-PCR detail). Owner: `tpm.c` report struct.
 - [x] Follow-up: consolidate the measured PCR set into one `tpm_pcr_baseline_pcrs()` iterator (from the allocation-table BASELINE mask); cache/replay/baseline call it instead of hard-coding `{0-7,11}`.
 - [x] Commit: `"tpm: enroll measured boot baseline"` (c7032e45)
 
@@ -205,9 +202,6 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 - [x] NV CRUD for one OWNER-auth OS data index: pure `tpm2_build_nv_{define,undefine,write,read,read_public}` + `tpm_nv_*` wrappers (`TPM_RS_PW` password auth) in `tpm_nv.{c,h}`; owner-auth data index distinct from the policy baseline.
 - [x] Degraded states: format-first `tpm_nv_classify_rc` exact-comparing format-0 warnings (`NV_LOCKED` 0x148, `NV_SPACE` 0x14B, `NV_DEFINED` 0x14C) to `tpm_nv_status_t`; never wedges. Raw 0x148-0x14C fixtures in `test_tpm_nv.c`.
 - [x] PCR-policy-protected baseline index: `TPMA_NV_POLICYREAD|POLICYWRITE` + `TPM2_StartAuthSession`/`TPM2_PolicyPCR` (trial computes authPolicy, real session satisfies r/w); owner auth only for define/undefine. -> XREF: §8.
-- [ ] Migration from UEFI authenticated-variable storage to TPM NV (lossless): DEFERRED until §6 ships the baseline schema; §7 provides the chunked NV read/write it consumes. -> XREF: §6 (baseline storage item).
-- [ ] Provide a monotonic / write-locked NV index for the A/B per-slot anti-rollback floor (the trust anchor that makes a below-floor slot genuinely unbootable, not merely CRC-corruption-detected) -> XREF: [`01-boot-platform/TODO-21 §8`](TODO-21-ab-boot-rollback.md) (anti-rollback floor authority; A/B selection reads the floor, this index stores it authentically).
-- [ ] Commit: `"tpm: measured boot NV index storage"`
 
 **Test checkpoint:** Define / read / write / undefine round-trip on one OS-owned NV index against QEMU swtpm; where the TPM supports it the index is PCR-policy-protected (a read under the wrong PCR state is denied); no-space and locked-NV return explicit degraded states (not a wedge); the UEFI-variable -> TPM-NV migration path moves an existing baseline without loss. Platforms: QEMU swtpm KVM; bare metal (test laptop fTPM). The PCR-state-deny + live round-trip are swtpm/bare-metal validation; the kernel unit suites cover marshal/parse/classifier + session-lifecycle teardown via the fake-TIS seam.
 
@@ -374,6 +368,24 @@ The TPM-rooted signing mechanism §9's report needs. A software-signed JSON cann
 > **Verified:** 2026-06-14 | commit `c9ce7bcd` (ship) + review (request/response binding) | 6/9 items | build OK | tests 903/903 PASS (security)
 > **Deferred:** [H] `TPMS_ATTEST.qualifiedSigner` not bound to the AK Qualified Name -> XREF: 01-boot-platform/TODO-13 §13 (item: "Bind `TPMS_ATTEST.qualifiedSigner` to the AK Qualified Name" at line 326) (reason: needs EK-pub capture + Name-algebra; verifier binds the signer via the exported AK pub)
 > **Quality reviewed:** 2026-06-14 | Codex 8x (adversarial, consistency, perf, re-adversarial) | 4H+4M fixed, 1H deferred | scope: kernel-code-quality
+
+---
+
+## 14. Post-Ship Follow-Up Backfill (orphan cohort 2026-07-31)
+
+Items moved here VERBATIM from their original, already-stamped sections, where they were unreachable: the triage oracle classifies a stamped section DONE without reading its body, so an item appended after the stamp is invisible to every later pass. Source section noted per group. Cohort context: `todo/overnight-runner-improvements/overnight-runner-improvements-v05.md` item 3.
+
+From the stamped section 6:
+- [ ] Follow-up: trusted enrollment PROVENANCE -- gate enroll on a loader-validated recovery flag + console confirmation, NOT the boot.conf config gate (operator/ESP-write authority only). -> owner: recovery-kind + console-input infra.
+- [ ] Follow-up: actual bootloader + kernel image SHA-256 in the baseline -- bootloader must compute + carry them in `boot_info` (`.bootproto` sha is the ABI-manifest hash). -> XREF: §9 + `01-boot-platform/TODO-01`.
+- [ ] Follow-up (blocking for rollback-resistance claims): TPM NV write-lock / monotonic-counter anti-rollback so rotation cannot roll the baseline back to a tampered blob. -> XREF: §7 (`tpm_nv_*` NV mechanism).
+- [ ] Follow-up: atomic `boot_integrity_report` per-PCR publication -- refresh per-PCR statuses + add a PCR11 slot on baseline verdict (today `pcrs[8]` stays `NO_CRYPTO`, so VERIFIED self-contradicts the per-PCR detail). Owner: `tpm.c` report struct.
+From the stamped section 7:
+- [ ] Migration from UEFI authenticated-variable storage to TPM NV (lossless): DEFERRED until §6 ships the baseline schema; §7 provides the chunked NV read/write it consumes. -> XREF: §6 (baseline storage item).
+- [ ] Provide a monotonic / write-locked NV index for the A/B per-slot anti-rollback floor (the trust anchor that makes a below-floor slot genuinely unbootable, not merely CRC-corruption-detected) -> XREF: [`01-boot-platform/TODO-21 §8`](TODO-21-ab-boot-rollback.md) (anti-rollback floor authority; A/B selection reads the floor, this index stores it authentically).
+- [ ] Commit: `"tpm: measured boot NV index storage"`
+
+**Test checkpoint:** per moved item; each carries its original acceptance text.
 
 ---
 

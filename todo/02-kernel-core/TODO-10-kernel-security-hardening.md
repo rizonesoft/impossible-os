@@ -95,6 +95,7 @@ title: "TODO-10 -- Kernel Security Hardening"
 | 💎   |  29   | Guard unguarded test-only helpers in production TUs             | §27, §28                   |  [x]   |
 | 💎   |  30   | Signed CI attestation for the release-flavor proof gate         | §27, §29                   |  [/]   |
 | 💎   |  31   | Legacy-syscall user-pointer validation (`sys_write`, `sys_log`) | (none)                     |  [ ]   |
+| 💎   | 32 | Post-ship follow-up backfill (2026-07-31 cohort) | -- | [ ] |
 
 > 💎 = parity work: matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work: Impossible OS is superior or first.
@@ -278,7 +279,7 @@ With trampoline and CR3 swap paths wired (S3-S5), allocate the actual sparse use
 - [x] Verified: `objdump` shows 0 `jmp/call *%reg` and 0 `*mem` in compiler-generated code; 600 `__x86_indirect_thunk_*` references present
 - [x] NASM inventory (retpoline does not rewrite hand-written asm): `ap_trampoline.asm` `call rax` = boot-only exempt; `kpti_trampoline.asm` `jmp [gs:...]` = runtime, convert to safe targets -> XREF: §4
 - [x] Spectre v1 **swapgs**: `lfence` after the conditional ring-3 entry swapgs in `isr_stubs.asm` (Linux `FENCE_SWAPGS_KERNEL_ENTRY`)
-- [ ] Scope boundary: §8 is the IBRS/IBPB/retpoline core. Additional predictor mitigations (SSBD, STIBP, RSB stuffing, concrete BHI_DIS_S, ITS, Retbleed) are owned by §25 (feature bits from §18); VERW microarchitectural-buffer clears are owned by §19
+- [/] Scope boundary: §8 is the IBRS/IBPB/retpoline core. Additional predictor mitigations (SSBD, STIBP, RSB stuffing, concrete BHI_DIS_S, ITS, Retbleed) are owned by §25 (feature bits from §18); VERW microarchitectural-buffer clears are owned by §19
 
 - [x] Commit: `"kernel/security: eIBRS set-once (SPEC_CTRL), IBPB at context switch, retpoline build flag"`
 
@@ -393,8 +394,6 @@ With trampoline and CR3 swap paths wired (S3-S5), allocate the actual sparse use
 - [x] `kmalloc_tagged(size, tag)` + `kfree_tagged(ptr, tag)`: 4-byte pool tag in the header; tag mismatch on free -> BugCheck (mixed-pool UAF). Tag field always present; plain `kmalloc` tags 0
 - [x] `init_on_alloc` default-on (`HEAP_INIT_ON_ALLOC`, Linux `INIT_ON_ALLOC` parity): zeroes every `kmalloc` user region; compile-time knob to disable
 - [/] zero-on-free (`HEAP_ZERO_ON_FREE`): scrubs freed user data; coded but DEFAULT-OFF -- enabling it surfaces a pre-existing FS use-after-free (next item) that zeros a still-referenced `i_size`
-- [ ] **(blocks zero-on-free)** Fix the IXFS/vfs use-after-free that `HEAP_ZERO_ON_FREE=1` surfaces, then flip the knob on
-  - A vnode/inode `i_size` is read after free; the scrub zeros it -> `file->size`=0 -> `cmd.exe` load + mmap content break. Trace the node lifecycle in `src/kernel/fs/ixfs/ixfs_ops.c` + `src/kernel/fs/vfs.c`
 - [x] Scope boundary: SLUB-style freelist hardening (pointer encoding, randomization, quarantine, per-CPU freelists) is owned elsewhere -> XREF: `03-memory-concurrency/TODO-03-advanced-allocator.md`; §11 owns the kmalloc cookie/redzone/zeroing tier
 
 - [x] Commit: `"kernel/mm: kmalloc cookie + redzone + irqsave lock hardening, kmalloc_zeroed/tagged, init_on_alloc"`
@@ -937,6 +936,18 @@ Every `#ifdef KERNEL_TESTS` seam in the tree was live in the shipped kernel, bec
 - [ ] Commit: `"security: validate user pointers in the legacy syscall surface"`
 
 **Test checkpoint:** A ring-3 binary calling `sys_write(1, <kernel address>, N)` receives an error status and produces NO serial output from kernel memory; a call with `buf + len` wrapping past the top of the address space is refused; ordinary user-buffer writes are unaffected and the user-mode suite stays green. Test on: QEMU TCG, QEMU KVM.
+
+---
+
+## 32. Post-Ship Follow-Up Backfill (orphan cohort 2026-07-31)
+
+Items moved here VERBATIM from their original, already-stamped sections, where they were unreachable: the triage oracle classifies a stamped section DONE without reading its body, so an item appended after the stamp is invisible to every later pass. Source section noted per group. Cohort context: `todo/overnight-runner-improvements/overnight-runner-improvements-v05.md` item 3.
+
+From the stamped section 11:
+- [ ] **(blocks zero-on-free)** Fix the IXFS/vfs use-after-free that `HEAP_ZERO_ON_FREE=1` surfaces, then flip the knob on
+  - A vnode/inode `i_size` is read after free; the scrub zeros it -> `file->size`=0 -> `cmd.exe` load + mmap content break. Trace the node lifecycle in `src/kernel/fs/ixfs/ixfs_ops.c` + `src/kernel/fs/vfs.c`
+
+**Test checkpoint:** per moved item; each carries its original acceptance text.
 
 ---
 

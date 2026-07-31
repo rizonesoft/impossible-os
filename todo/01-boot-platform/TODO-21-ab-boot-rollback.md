@@ -107,8 +107,8 @@ Modify the build system to create disk images with two root partitions.
 - [x] Dedicated A/B-metadata GPT partition (type GUID `...4D44...`) holding the two §1 blocks + `META_OFFSET`/`IXFS_B_OFFSET` in `.info`; the bootloader pre-EBS `EFI_BLOCK_IO` read landed in §3 (atomic write stays §7)
 - [x] Kernel stays on the SHARED ESP for §2 -- verified: `load_kernel` (`bootx64.c`) is FAT/ESP-only, cannot mount IXFS; slots are per-slot IXFS roots only
 - [x] Bootloader loads Slot A until §3 -- verified: `partition_scan_all` mounts the FIRST IXFS-GUID partition (Slot A) at C: and skips Slot B + the metadata partition; no boot change needed
-- [ ] **Deferred (per-slot kernel rollback):** kernel-inside-each-slot's-IXFS needs a bootloader IXFS reader + slot binding in `load_kernel` -> §3 or a follow-up; §2 ships shared-ESP kernel + per-slot roots
-- [ ] Commit: `"build: dual-slot disk layout -- grow disk, A/B metadata partition, Slot A+B IXFS"`
+- [/] **Deferred (per-slot kernel rollback):** kernel-inside-each-slot's-IXFS needs a bootloader IXFS reader + slot binding in `load_kernel` -> §3 or a follow-up; §2 ships shared-ESP kernel + per-slot roots
+- [x] Commit: `"build: dual-slot disk layout -- grow disk, A/B metadata partition, Slot A+B IXFS"` **Verified 2026-07-31:** work landed as `498cabfb` + review `698f19d1`; message drifted from the plan
 
 **Test checkpoint:** Built image has 5 partitions (ESP, BlackBox, A/B-metadata, Slot A, Slot B) in `fdisk -l`; the metadata partition LBAs appear in the `.info`; smoke still boots from Slot A. Test on: host `fdisk -l` + QEMU smoke; bare metal i5-4210U / i5-11600K.
 

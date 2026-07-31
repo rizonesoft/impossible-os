@@ -50,6 +50,7 @@ title: "TODO-19 -- Code Integrity & Trust Policy"
 | 💎   |   8   | Driver/module enforcement             | T18, D04 T04 |  [/]   |
 | 💎   |   9   | User-mode image enforcement           | T17, T20     |  [/]   |
 | ⭐   |  10   | CI audit, telemetry, and syscalls     | T12, T16     |  [/]   |
+| ⭐   | 11 | Post-ship follow-up backfill (2026-07-31 cohort) | -- | [ ] |
 
 ## 1. Code Integrity Policy Object
 
@@ -58,13 +59,9 @@ title: "TODO-19 -- Code Integrity & Trust Policy"
 - [x] Trust anchors are role-separated tiers (`ci_trust_tier_t`: compiled-in / boot-added / firmware-platform / revoked), not a flat list.
 - [x] Load compiled defaults + config merge (`kernel_config_get()`), gated FAIL-CLOSED: relax honored only when `kernel_safe_mode_allows(SAFE_COMP_CI_RELAX)` AND SB known-off; active/unreadable SB force ENFORCE + flags off.
 - [x] Atomic publish: `ci_init` builds the record then release-stores a ready flag; accessors acquire-load it and fail closed (ENFORCE / revoked / not-sealed) before publish -- no torn read, no fail-open window.
-- [ ] Wire `ci_init` at `POLICY_PHASE_POST_REGISTRY` (boot_desktop.c Phase 3) + add `SUBSYS_CI`; the module is unwired today so accessors fail closed until called.
-- [ ] Authenticate the policy artifact's own signature against a compiled-in Ed25519 policy-root key + key epoch (non-circular); `crypto_ed25519_check` is available.
-- [ ] Persistent CI-policy version floor (anti-rollback): reuse the `boot_rollback.c` mechanism but a DISTINCT counter (NOT `IPOSRequiredSecVersion`); fail-closed reads, steady-boot advance.
 - [x] Structural immutability shipped: no public mutator (only `ci_init` writes) + fail-closed pre-publish accessors. Wiring the seal into the `policy_lock.c` ratchet (registry downgrade -> `KeBugCheckEx`) is pending with the boot wiring.
-- [ ] Ratchet-domain merge: policy_lock caps ci.mode at 2 + collapses SB to a bool (vs CI UNKNOWN->ENFORCE / ACTIVE->SECUREBOOT). Wiring the ratchet needs a shared tri-state SB resolver + full ci_enforcement_t mode domain.
 - [/] Physical RO-after-lock page is BLOCKED: Phase-3 `vmm_set_ro` is local-TLB-only; needs SMP TLB shootdown + flattened page-aligned storage with the lock OUTSIDE the sealed range. -> XREF: D03 T07 §2 (SMP TLB shootdown).
-- [ ] Scope: the general kernel-lockdown surface (raw MSR / phys-mem / ACPI-override blocking once CI locks) is owned by T10, not here; §1 owns only image-admission policy.
+- [/] Scope: the general kernel-lockdown surface (raw MSR / phys-mem / ACPI-override blocking once CI locks) is owned by T10, not here; §1 owns only image-admission policy.
 - [x] Commit: `"kernel: ci -- code integrity policy object (foundational)"`
 
 **Test checkpoint:** the pure builder yields SECUREBOOT+flags-off under active SB, ENFORCE+flags-off under unreadable SB, and honors relax only when safe-mode-allowed AND SB known-off; the enforcement scalar is ordered and a permissive flag flip does not move it; pre-publish accessors fail closed (ENFORCE, every hash revoked, not sealed); a published fixture confirms a NULL digest still denies and the revocation scan matches. 8 `TEST_CAT_SECURITY` suites. Artifact Ed25519 auth + version-floor + POST_REGISTRY seal-log land with the follow-up items. Test on: QEMU WHPX + TCG; bare metal.
@@ -91,7 +88,6 @@ title: "TODO-19 -- Code Integrity & Trust Policy"
 - [/] Image-info `signer` + measured-boot context reserved (zeroed): signer needs embedded-signature parsing; the PCR record needs the TPM measured-boot binding. -> XREF: T19 §4; D01 T13.
 - [/] Wire `ci_image_init` + `ci_init` policy seal + `SUBSYS_CI` into boot: BLOCKED on unifying the enforcement authority (policy_lock `policy.ci.mode` vs `ci_policy`). -> XREF: T19 §1 ratchet-domain merge.
 - [/] Loaders call CI before mapping: needs transactional NX-until-admission remap (`task_exec` remaps before `exec_load_fmt`) + a real ALLOW path from signatures; per-domain wiring in §8/§9. -> XREF: T19 §4, §8, §9.
-- [ ] Gate dynamic-code sites: `NtAllocateVirtualMemory` (PAGE_EXECUTE) + `NtProtectVirtualMemory` (non-exec->exec) in src/kernel/nt/nt_memory.c must call `ci_validate_dynamic_code` before changing PTEs. -> XREF: T19 §4.
 - [x] Commit: `"kernel: ci -- image validation API and callback"`
 
 **Test checkpoint:** the decision engine denies an unverified image under ENFORCE (reason UNVERIFIED) and audit-allows it under AUDIT; a revoked digest is denied (reason REVOKED, overriding unverified) and the validator recomputes the digest, ignoring a caller-supplied hash; NULL/empty/unsealed inputs fail closed; DISABLED allows; dynamic W+X is refused and non-W+X runtime code is UNVERIFIED-by-mode; caller-prefilled signer/measured OUT fields are cleared. 4 new `TEST_CAT_SECURITY` suites. Live loader firing + boot wiring are deferred (see `[/]` items). Test on: QEMU WHPX + TCG; bare metal.
@@ -235,6 +231,22 @@ title: "TODO-19 -- Code Integrity & Trust Policy"
 **Test checkpoint:** `NtQuerySystemInformation(SystemCodeIntegrityInformation)` returns the current mode + flags; a deny decision is published via klog/ETW; `ci_dump_policy()` output appears in a crash dump; a post-lock policy downgrade via `NtSetSystemInformation` is rejected. Test on: QEMU WHPX + TCG; bare metal.
 >
 > **Deferred:** [H] CI audit/syscalls are blocked on the SSDT/syscall surface (NtQuery/NtSet) + the tamper-evident HMAC log; per-decision klog audit already ships in §2. `ci_dump_policy()` is the one near-term-implementable item (dumps the §1 policy). -> XREF: 02-kernel-core/TODO-19 §1 (item: "Wire `ci_init` at `POLICY_PHASE_POST_REGISTRY`" at line 61); 04-drivers-hardware/TODO-04 §10 (HMAC log integrity)
+
+---
+
+## 11. Post-Ship Follow-Up Backfill (orphan cohort 2026-07-31)
+
+Items moved here VERBATIM from their original, already-stamped sections, where they were unreachable: the triage oracle classifies a stamped section DONE without reading its body, so an item appended after the stamp is invisible to every later pass. Source section noted per group. Cohort context: `todo/overnight-runner-improvements/overnight-runner-improvements-v05.md` item 3.
+
+From the stamped section 1:
+- [ ] Wire `ci_init` at `POLICY_PHASE_POST_REGISTRY` (boot_desktop.c Phase 3) + add `SUBSYS_CI`; the module is unwired today so accessors fail closed until called.
+- [ ] Authenticate the policy artifact's own signature against a compiled-in Ed25519 policy-root key + key epoch (non-circular); `crypto_ed25519_check` is available.
+- [ ] Persistent CI-policy version floor (anti-rollback): reuse the `boot_rollback.c` mechanism but a DISTINCT counter (NOT `IPOSRequiredSecVersion`); fail-closed reads, steady-boot advance.
+- [ ] Ratchet-domain merge: policy_lock caps ci.mode at 2 + collapses SB to a bool (vs CI UNKNOWN->ENFORCE / ACTIVE->SECUREBOOT). Wiring the ratchet needs a shared tri-state SB resolver + full ci_enforcement_t mode domain.
+From the stamped section 2:
+- [ ] Gate dynamic-code sites: `NtAllocateVirtualMemory` (PAGE_EXECUTE) + `NtProtectVirtualMemory` (non-exec->exec) in src/kernel/nt/nt_memory.c must call `ci_validate_dynamic_code` before changing PTEs. -> XREF: T19 §4.
+
+**Test checkpoint:** per moved item; each carries its original acceptance text.
 
 ---
 

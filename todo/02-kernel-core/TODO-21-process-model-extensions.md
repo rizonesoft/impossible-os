@@ -73,6 +73,7 @@ title: "TODO-21 -- Process Model Extensions"
 | 💎   |  18   | Rich wait variants + NT multi-waiter wake + dumpable      | §15, §17           |  [/]   |
 | 💎   |  19   | `task_exec` commit point + kernel-stack reclamation       | §14, §15           |  [x]   |
 | 💎   |  20   | Page-table lifetime across reap + fork/exec               | §15, §19           |  [ ]   |
+| 💎   | 21 | Post-ship follow-up backfill (2026-07-31 cohort) | -- | [ ] |
 
 > 💎 = parity -- Windows NT (tokens + priority classes + accounting + rlimits) and Linux (capabilities + scheduling + getrusage + rlimits) both provide these.
 > ⭐ = exclusive -- strict drop-only inheritance and pledge/unveil-style restriction are more auditable than both Windows token elevation and Linux `setcap`.
@@ -85,19 +86,17 @@ title: "TODO-21 -- Process Model Extensions"
 
 - [x] Add `char cwd[TASK_CWD_MAX]` (512, `_Static_assert`-pinned to `VFS_MAX_PATH`) + `spinlock_t cwd_lock` to `struct task`; init `"C:\\"` at `task_init`/`task_create`/`task_create_user`
 - [x] Inherit CWD from parent at `task_fork()` (and `task_create_user`) -- snapshot parent under its lock, commit to child
-- [ ] Child environ inheritance (incl. this fork path) owned by `TODO-12` §7 (env_copy fail-closed pre-publish across ALL constructors; publish-lock + slot-reserve prereqs are the two `TODO-12` §7 items)
+- [/] Child environ inheritance (incl. this fork path) owned by `TODO-12` §7 (env_copy fail-closed pre-publish across ALL constructors; publish-lock + slot-reserve prereqs are the two `TODO-12` §7 items)
 - [x] `task_exec()` preserves CWD (mutates in place, never touches cwd); PEB `CurrentDirectory` re-synced from `task->cwd` in `peb_alloc_for_task`
 - [x] `vfs_resolve_path(cwd, in, out, size)` canonicalizer: join relative onto cwd, `/`->`\`, collapse `.`/empty, apply `..` without escaping the drive root, reject overflow (no truncation)
 - [x] `task_get_cwd`/`task_set_cwd`/`task_resolve_path` -- lock-guarded snapshot/commit so a concurrent set is never observed half-written
-- [ ] Concurrent `NtSetCurrentDirectory` non-linearizable (resolves vs a cwd snapshot outside `chdir_lock`; racing relative chdirs leave a non-serial cwd). Low-pri (Win not-thread-safe); fix via cwd gen-counter + verify-retry
 - [x] `NtSetCurrentDirectory(UNICODE_STRING *)` (SSDT 0x03D9): decode+narrow, resolve, require `VFS_DIRECTORY`, release the probe ref, leave cwd unchanged on failure
 - [x] `NtQueryCurrentDirectory(WCHAR *buf, ULONG bytes)` (SSDT 0x03DA): widen `task->cwd` to UTF-16, `STATUS_BUFFER_TOO_SMALL` if it does not fit, probe+copy_to_user
 - [x] Relative-path resolution wired into ALL fs pathname consumers -- NtCreateFile (`nt_syscall.c`), NtDeleteFile + NtQueryAttributesFile (`nt_file.c`); `vfs_open` stays absolute-only (design review F3)
 - [x] `oa_extract_path` hardened to bound its read by `ObjectName->Length` + output size (kills the unbounded-read; adversarial F1)
 - [x] Register both syscalls in SSDT (→ XREF: `TODO-12-native-api-ssdt.md §5`)
 - [/] Win32 A/W wrappers `SetCurrentDirectory`/`GetCurrentDirectory` are user-mode surface owned elsewhere (→ XREF: `TODO-05-win32-file-io-api.md §6` W-forms; `TODO-08-win32-api-surface.md §4` A-forms) -- kernel syscalls shipped here
-- [ ] Non-ASCII CWD: NtSetCurrentDirectory narrows via `nt_unicode_to_ascii` (rejects >0x7F), NtQuery/PEB byte-widen `cwd`; store cwd UTF-8 + strict UTF-16<->UTF-8 at NtSet/NtQuery/PEB so `SearchPathW` CWD supports non-ASCII -> XREF: `TODO-22 §14`.
-- [ ] Commit: `"kernel: task -- working directory field and Nt API wiring"`
+- [x] Commit: `"kernel: task -- working directory field and Nt API wiring"` **Verified 2026-07-31:** done as `a05f4688` "kernel: task -- working directory field and Nt API wiring"
 
 **Test checkpoint:** New process `task->cwd` is `"C:\\"`. `NtSetCurrentDirectory("C:\\Impossible")` updates CWD; `NtQueryCurrentDirectory` returns it. Setting a non-existent or non-directory path returns error, CWD unchanged. Relative `"System\\Logs"` resolves to `"C:\\System\\Logs"` from `"C:\\"`; `".."` pops one component but never escapes `X:\`. `task_fork()` child inherits parent CWD. Unit tests: 18 `ProcExt:` suites (TEST_CAT_SCHED) cover the resolver + cwd storage + boundary rejects. Test on: QEMU WHPX + TCG.
 
@@ -301,7 +300,6 @@ This section ships the native rlimit STORAGE + a locked, privilege-aware accesso
 - [/] Wire `RLIMIT_CORE` as the crash-dump size gate (0 suppresses the dump) -- deferred (-> XREF: `TODO-27-crash-dump-generation.md`, the dump-writer size check)
 - [/] Linux `sys_getrlimit`/`sys_setrlimit`/`sys_prlimit` -- deferred pending a `linux_syscall_table` registration point (same blocker as §8 getrusage); the accessors above are the ready call target
 - [x] Windows `ProcessQuotaLimits` query/set shipped by the unified quota authority, projecting `RLIMIT_CPU` and reconciling `RLIMIT_NOFILE` with `handle_table.handle_limit` read-only (-> XREF: `TODO-25-kernel-resource-accounting-quotas.md §8`)
-- [ ] Enforce working-set Min/Max so TODO-25 §9 pressure recovery can trim an offending process: needs the per-process VM/commit counters this section already owes `RLIMIT_AS`. -> XREF: `TODO-25-kernel-resource-accounting-quotas.md §9`
 
 **Test checkpoint:** `task_rlimit_set(RLIMIT_NOFILE, {500,1500}, caller_privileged=0)` commits (lowering within the cap is unprivileged) and `task_rlimit_get` reads it back. `rlim_cur > rlim_max` returns `RLIMIT_ERR_INVAL`. Raising `rlim_max` with `caller_privileged=0` returns `RLIMIT_ERR_PERM` and leaves the hard limit intact; with `caller_privileged=1` it commits. Lowering `rlim_max` unprivileged is allowed. An out-of-range resource index returns `RLIMIT_ERR_INVAL` (get zeroes its output). PID 0 carries the 8 MiB stack / 4096 NOFILE-max defaults; the task running the suite carries the same inherited defaults. No POST16 (post-Phase-3 task code -- klog only). Test on: QEMU WHPX + TCG.
 
@@ -704,6 +702,20 @@ A live task was observed executing against a REAPED task's PML4 whose frames had
 - [ ] Commit: `"kernel: mm -- page-table lifetime across reap and fork/exec"`
 
 **Test checkpoint:** a unit test drives reap-then-reuse of a user PML4 and asserts no runnable thread's CR3 names a freed frame; the debug-build assertion fires on a deliberately-inverted ordering. Re-run the 8.2.2 CI-parity quota suite and record the result either way -- a green run is evidence about the trigger, not about the invariant. Test on: QEMU TCG (8.2.2 and current), QEMU KVM; bare metal.
+
+---
+
+## 21. Post-Ship Follow-Up Backfill (orphan cohort 2026-07-31)
+
+Items moved here VERBATIM from their original, already-stamped sections, where they were unreachable: the triage oracle classifies a stamped section DONE without reading its body, so an item appended after the stamp is invisible to every later pass. Source section noted per group. Cohort context: `todo/overnight-runner-improvements/overnight-runner-improvements-v05.md` item 3.
+
+From the stamped section 1:
+- [ ] Concurrent `NtSetCurrentDirectory` non-linearizable (resolves vs a cwd snapshot outside `chdir_lock`; racing relative chdirs leave a non-serial cwd). Low-pri (Win not-thread-safe); fix via cwd gen-counter + verify-retry
+- [ ] Non-ASCII CWD: NtSetCurrentDirectory narrows via `nt_unicode_to_ascii` (rejects >0x7F), NtQuery/PEB byte-widen `cwd`; store cwd UTF-8 + strict UTF-16<->UTF-8 at NtSet/NtQuery/PEB so `SearchPathW` CWD supports non-ASCII -> XREF: `TODO-22 §14`.
+From the stamped section 9:
+- [ ] Enforce working-set Min/Max so TODO-25 §9 pressure recovery can trim an offending process: needs the per-process VM/commit counters this section already owes `RLIMIT_AS`. -> XREF: `TODO-25-kernel-resource-accounting-quotas.md §9`
+
+**Test checkpoint:** per moved item; each carries its original acceptance text.
 
 ---
 

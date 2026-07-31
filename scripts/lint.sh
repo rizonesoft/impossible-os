@@ -1511,6 +1511,43 @@ elif [ -f "$REPO_ROOT/scripts/todo-section-order.py" ]; then
 fi
 
 # ============================================================================
+# Check 23: no open `- [ ]` item orphaned behind a stamped (DONE) TODO section
+# ============================================================================
+# The triage oracle classifies a section from its Implementation Order row +
+# stamps and never reads the body, so a `- [ ]` appended to a stamped section is
+# invisible to every later pass: the runner never routes back, the item cannot
+# hold fixpoint open, and the run reports the repo complete over it. The
+# overnight run was actively creating these by following the completion-first
+# rule ("file adjacent work in the owning section") into closed sections.
+#
+# PRECISION: sections carrying a `> **Deferred:**` stamp are EXEMPT -- their
+# items are deliberately parked with a re-open path (owner-side
+# stranded_deferrals sweep + the P6.3 fixpoint gate). The naive rule without
+# that exemption over-matched 14.6x (1,712 hits, 1,595 of them parked).
+#
+# ERROR, not warn: the 2026-07-31 cohort (117 items / 59 sections) was fully
+# triaged and cleared the same day, so there is no legacy debt and any hit is a
+# fresh regression. Repair guidance is printed by the checker itself.
+if [ "${SKIP_LINT_ORPHAN_ITEMS:-}" = "1" ]; then
+    echo -e "${YELLOW}warn${NC}: Check 23 (todo-orphan-items) skipped via SKIP_LINT_ORPHAN_ITEMS=1"
+    WARNINGS=$((WARNINGS + 1))
+elif [ -f "$REPO_ROOT/scripts/todo-orphan-check.py" ]; then
+    LINT23_OUT="$(cd "$REPO_ROOT" && python3 scripts/todo-orphan-check.py 2>/dev/null || true)"
+    if [ -n "$LINT23_OUT" ]; then
+        while IFS= read -r line; do
+            [ -n "$line" ] || continue
+            case "$line" in
+                "    "*) ;;   # item detail lines -- show but do not double-count
+                *)
+                    echo -e "${RED}error${NC}: Check 23 (todo-orphan-items) $line"
+                    ERRORS=$((ERRORS + 1))
+                    ;;
+            esac
+        done <<< "$LINT23_OUT"
+    fi
+fi
+
+# ============================================================================
 # Summary
 # ============================================================================
 echo ""

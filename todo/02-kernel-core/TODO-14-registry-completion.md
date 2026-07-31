@@ -82,6 +82,7 @@ title: "TODO-14 -- Registry System Completion"
 | ⭐   |  13   | Schema-validated registry keys                    | §3, §4                    |  [/]   |
 | 💎   |  14   | Registry SMP synchronization                      | TODO-12 §14               |  [/]   |
 | 💎   |  15   | Value size expansion (16 KiB names, 1 MiB data)   | §1, §14                   |  [/]   |
+| 💎   | 16 | Post-ship follow-up backfill (2026-07-31 cohort) | -- | [ ] |
 
 > 💎 = parity work -- matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work -- Impossible OS is superior or first.
@@ -141,7 +142,6 @@ title: "TODO-14 -- Registry System Completion"
 - [x] `RegRenameKey(hKey, lpSubKeyName, lpNewKeyName)` -- in-place via `RegRenameKeyDirect` (unlink/relink, not copy+delete); `DELETE` right; `ERROR_ALREADY_EXISTS`(183) for a different sibling only, same-name no-op
 
 - [/] `RegSaveKey`/`RegRestoreKey` -- handle + SeBackup/SeRestorePrivilege gates shipped (`TODO-15 §8`); both return `ERROR_NOT_SUPPORTED` until the hive I/O bodies exist
-- [ ] `RegSaveKey`/`RegRestoreKey` hive I/O bodies -- probe/copy lpFile into a bounded kernel buffer (no TOCTOU), drive `hive_save`; restore stages into a scratch tree + atomic swap (removes stale entries, preserves original on failure)
 - [/] `NtSaveKey`/`NtRestoreKey` FileHandle hive body -- resolve FileHandle->path then the same hive bodies (privilege gate done in `TODO-15 §8`; FileHandle path still open) -> XREF: 02-kernel-core/TODO-15 §8
 
 - [x] `RegCreateKeyEx(REG_OPTION_VOLATILE 0x1)` sets `REG_FLAG_VOLATILE` on new-create only; excluded from `hive_count` + `child_count` + `hive_serialize_key` recursion (all three, else reload corrupts); RAM-only, gone on reboot
@@ -689,6 +689,17 @@ Raise registry value-name and value-data limits to Windows 11 parity (16 383-cha
 
 > **Test runner:** N/A (deferred, no code) | validation: on implementation, `scripts\debug\kernel\run-abi-tests.bat`
 > **Deferred:** [M] Value-size expansion (16 KiB names, 1 MiB data) deferred -- heap-backed migration of the 5 stack buffers + on-disk format bump must land under the §14 SMP lock (deferred) -> XREF: 02-kernel-core/TODO-14 §14 (item: "reg_dispatch_notify" at the §14 checklist)
+
+---
+
+## 16. Post-Ship Follow-Up Backfill (orphan cohort 2026-07-31)
+
+Items moved here VERBATIM from their original, already-stamped sections, where they were unreachable: the triage oracle classifies a stamped section DONE without reading its body, so an item appended after the stamp is invisible to every later pass. Source section noted per group. Cohort context: `todo/overnight-runner-improvements/overnight-runner-improvements-v05.md` item 3.
+
+From the stamped section 2:
+- [ ] `RegSaveKey`/`RegRestoreKey` hive I/O bodies -- probe/copy lpFile into a bounded kernel buffer (no TOCTOU), drive `hive_save`; restore stages into a scratch tree + atomic swap (removes stale entries, preserves original on failure)
+
+**Test checkpoint:** per moved item; each carries its original acceptance text.
 
 ---
 

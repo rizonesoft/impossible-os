@@ -63,6 +63,7 @@ title: "TODO-02 -- Kernel Configuration & Policy Plane"
 | ⭐   |   9   | Policy lock phases and tamper audit          | §2, §3                           |  [/]   |
 | 💎   |  10   | Boot status policy and boot success ledger   | §4, §5, D01 T21 §5, T30 §7       |  [/]   |
 | 💎   |  11   | Config dump, tests, and docs                 | §1-10, T11 §11, T31 §2           |  [/]   |
+| 💎   | 12 | Post-ship follow-up backfill (2026-07-31 cohort) | -- | [ ] |
 
 > 💎 = parity work: matches what Windows 11 and Linux already ship.
 > ⭐ = exclusive work: Impossible OS adds provenance, rollout, and tamper semantics neither platform exposes as one kernel-owned plane.
@@ -195,7 +196,6 @@ Give subsystems one typed registration surface for mutable policy instead of one
 - [x] Record owner subsystem, lock phase, and `source` provenance per tunable; `kernel_tunable_dump()` exposes them for audit.
 - [x] Callbacks run at PASSIVE only -- inline when caller is passive (IRQL sampled before the lock), else deferred to `sys_wq`; recursive self-writes refused; deferred dispatch atomic + monotonic via write-generation.
 - [/] Loadable modules register under a `module.<name>.` namespace (`TUNABLE_SRC_MODULE`); `kernel_tunable_unregister_owner()` quiesces callbacks then drops the module's tunables. Loader-side call owned elsewhere. -> XREF: D04 T05
-- [ ] Privileged production write path for tunables: no non-test `kernel_tunable_set` caller exists, so every `quota.user.<type>` default stays at its unlimited built-in and no quota cap can be enforced. -> XREF: `02-kernel-core/TODO-25 §6`
 - [x] Commit: `"kernel: add runtime tunable registry"`
 
 **Test checkpoint:** Writing `panic.timeout=9999` clamps to the declared max and logs `"[CONF] tunable clamp: panic.timeout"`. A read-only tunable write returns `STATUS_ACCESS_DENIED`, and a callback requested from syscall context runs later at PASSIVE_LEVEL. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
@@ -350,6 +350,17 @@ Close the loop with operator-visible diagnostics, regression coverage, and expli
 > **Verified:** 2026-06-20 | commit `e81e3b45` | 3/5 items | build OK | smoke PASS (KVM 3.1s)
 > **Deferred:** [M] LastKnownGood state-machine + failed-boot rollback tests are in-scope but blocked on §4's deferred control-set impl -> XREF: 02-kernel-core/TODO-02 §4 (item: "Implement `kernel_select_control_set()`" at line 143)
 > **Quality reviewed:** 2026-06-20 | Codex 5x (design, adversarial, consistency, perf; re-adversarial skipped: review-fix diff <50 LOC, no locking/atomics/lifecycle) | 2H+4M+1L fixed | scope: kernel-code-quality
+
+---
+
+## 12. Post-Ship Follow-Up Backfill (orphan cohort 2026-07-31)
+
+Items moved here VERBATIM from their original, already-stamped sections, where they were unreachable: the triage oracle classifies a stamped section DONE without reading its body, so an item appended after the stamp is invisible to every later pass. Source section noted per group. Cohort context: `todo/overnight-runner-improvements/overnight-runner-improvements-v05.md` item 3.
+
+From the stamped section 6:
+- [ ] Privileged production write path for tunables: no non-test `kernel_tunable_set` caller exists, so every `quota.user.<type>` default stays at its unlimited built-in and no quota cap can be enforced. -> XREF: `02-kernel-core/TODO-25 §6`
+
+**Test checkpoint:** per moved item; each carries its original acceptance text.
 
 ---
 

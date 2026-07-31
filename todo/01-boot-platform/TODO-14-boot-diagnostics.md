@@ -68,6 +68,7 @@ title: "TODO-14 -- Boot Diagnostics, Heartbeat & Spinner"
 | 💎   |   9   | Boot timeline visualization/import         | §2                                 |  [/]   |
 | ⭐   |  10   | Bootloader build identity dump in BlackBox | TODO-01 §20                        |  [x]   |
 | 💎   |  11   | Boot load status log (ntbtlog parity)      | §2                                 |  [/]   |
+| 💎   | 12 | Post-ship follow-up backfill (2026-07-31 cohort) | -- | [ ] |
 
 > 💎 = parity -- Windows and Linux both have equivalent diagnostics; Impossible OS must match them.
 > ⭐ = exclusive -- the QR code on BSOD and always-visible vital-signs strip are not present in either competitor at the kernel level.
@@ -185,8 +186,6 @@ Capture a `panic_evidence` struct at fault time into a fixed physical page that 
 - [x] `0x80000` kept out of the allocator by the existing pmm_init first-1-MiB reservation (identity-mapped, verified). -> XREF: D02 T27 crash-dump (minidump-addr coordination).
 - [x] `panic_evidence_restore_early()` (`kernel_main` after `boot_phase0`) restores/clears magic/logs; `panic_evidence_write_blackbox()` -> `X:\Crash\last-panic.txt` at desktop-ready. -> XREF: D01 T24 §7.
 - [x] Unexpected-shutdown notice: kernel-side `panic_had_previous_crash()` flag (NOT `g_boot_info` -- avoids the boot ABI change) -> `boot_splash_diag` + klog before `boot_splash_finish`.
-- [ ] Bare-metal reboot-reservation of `0x80000`: reserve it in the bootloader (AllocateAddress) before other allocations -- PMM only protects it post-kernel-entry, so firmware/BOOTX64 could clobber it pre-restore. Owner: `TODO-02` UEFI.
-- [ ] last-panic.txt true durability: IXFS `vfs_flush` (C:\ fallback) flushes FS cache but not the device (`blkdev_sync`), so the consume-after-flush could lose the retry copy on reset; IXFS flush must sync the device. Owner: IXFS/storage.
 - [x] Commit: `"kernel: panic forensic evidence -- cross-boot PMM page + last-panic.txt"`
 
 **Test checkpoint:** Force a panic (`crash_test=1`), reboot: serial shows `[PANIC] Previous crash evidence found`; `X:\Crash\last-panic.txt` contains the fault RIP + POST code. QEMU WHPX, QEMU TCG, VirtualBox, bare metal: evidence survives warm reboot.
@@ -289,9 +288,7 @@ Linux `systemd-analyze plot` and Windows performance tooling expose boot as a hu
 **Files:** `docs/` (schema + tooling notes), optional `scripts/` or `user/` offline converter
 
 - [x] Published v1 wire format `docs/boot/boot-timeline-schema.md` (8 fields, FPDT/TSC sources, anchoring + unreliable semantics, emit guards); linked from `docs/boot/black-box-artifacts.md`
-- [ ] Converters MUST preserve `target_ms`, `unreliable`, and §18 critical-chain/cause-class fields (→ XREF: [`TODO-29 §18`](TODO-29-boot-perf-health-observability.md) owns attribution; §9 owns the visual).
-- [ ] Optional offline converter or in-kernel `boot_timeline_to_svg()` to produce Gantt-style SVG comparable to `systemd-analyze plot` output
-- [ ] Optional Chrome trace event JSON export for `chrome://tracing` import (competitive edge vs plain SVG)
+- [/] Converters MUST preserve `target_ms`, `unreliable`, and §18 critical-chain/cause-class fields (→ XREF: [`TODO-29 §18`](TODO-29-boot-perf-health-observability.md) owns attribution; §9 owns the visual).
 - [x] Commit: `"docs: boot timeline JSON schema (v1 wire format) -- docs/boot/boot-timeline-schema.md"`
 
 **Test checkpoint:** With §9 shipped: JSON from a real boot validates against the schema; SVG or Chrome trace opens in target viewer without manual edits. The v1 schema doc is shipped; converters (items 2-4) remain open. QEMU WHPX + TCG smoke.
@@ -338,9 +335,6 @@ Win11 `ntbtlog.txt` records every driver/service that loaded or failed during bo
 - [x] `boot_load_status_dump_to_blackbox()` -> `X:\Diag\boot-load-status.txt` (2-page pmm buffer; header `N recorded / 64 cap, D dropped [TRUNCATED]`); wired in `boot_desktop.c` after `boot_run_deferred()`.
 - [x] `boot_load_status_report_summary()`: serial `klog` (authoritative) + best-effort `boot_splash_diag()` FAILED/DEGRADED one-liner, emitted after `boot_run_deferred` so the summary reflects the complete record (incl. deferred network/input).
 - [x] Initial call sites: storage probe block (`begin`/`finish`, captures async DEGRADED/FATAL-fallback) + network (`deferred_net_init` real outcome or in-phase `net_init`).
-- [ ] Granular per-driver `boot_load_record`: storage (ata/ahci/nvme/virtio-blk), input (PS2/USB HID), ACPI, GFX -- each self-reports vs the single aggregate `storage` entry. Owner: this section.
-- [ ] Probe-result aggregation (storage + network): split driver return codes so absent-vs-failed is distinguishable (rtl8139/ahci/virtio-blk return -1 for both; sequential storage always LOADED) for accurate SKIPPED/FAILED. Owner: this section.
-- [ ] NVMe per-controller status: expose attempted-vs-initialized count from `nvme_init` (today returns only the success count) so a partial multi-controller failure records DEGRADED, not BOOT_OK. Owner: this section / NVMe driver.
 - [x] Test `test_boot_load_status` (`test_boot_diag.c`, TEST_CAT_BOOT): mix + format + summary + all-LOADED + begin/finish + overflow + fail-closed + 64/65 boundary + pool-full token + name truncation; save/restore seam.
 - [x] Commit: `"diag: per-subsystem boot load/status log -> X:\Diag\boot-load-status.txt (ntbtlog parity)"`
 
@@ -356,6 +350,25 @@ Win11 `ntbtlog.txt` records every driver/service that loaded or failed during bo
 > **Accepted:** [H] sequential storage publishes LOADED on probe failure + async marks AHCI/VirtIO absence DEGRADED (reason: needs driver absent-vs-failed split) -> XREF: 01-boot-platform/TODO-14 §11 (item: "Probe-result aggregation (storage + network)" at line 278)
 > **Accepted:** [M] NVMe partial multi-controller failure reads BOOT_OK (reason: nvme_init exposes only the success count) -> XREF: 01-boot-platform/TODO-14 §11 (item: "NVMe per-controller status" at line 279)
 > **Quality reviewed:** 2026-06-14 | Codex 8x (design + test-coverage + adversarial + re-adversarial + consistency + perf) | 3H+8M+2L fixed, 1H+1M accepted-XREF | scope: kernel-code-quality
+
+---
+
+## 12. Post-Ship Follow-Up Backfill (orphan cohort 2026-07-31)
+
+Items moved here VERBATIM from their original, already-stamped sections, where they were unreachable: the triage oracle classifies a stamped section DONE without reading its body, so an item appended after the stamp is invisible to every later pass. Source section noted per group. Cohort context: `todo/overnight-runner-improvements/overnight-runner-improvements-v05.md` item 3.
+
+From the stamped section 5:
+- [ ] Bare-metal reboot-reservation of `0x80000`: reserve it in the bootloader (AllocateAddress) before other allocations -- PMM only protects it post-kernel-entry, so firmware/BOOTX64 could clobber it pre-restore. Owner: `TODO-02` UEFI.
+- [ ] last-panic.txt true durability: IXFS `vfs_flush` (C:\ fallback) flushes FS cache but not the device (`blkdev_sync`), so the consume-after-flush could lose the retry copy on reset; IXFS flush must sync the device. Owner: IXFS/storage.
+From the stamped section 9:
+- [ ] Optional offline converter or in-kernel `boot_timeline_to_svg()` to produce Gantt-style SVG comparable to `systemd-analyze plot` output
+- [ ] Optional Chrome trace event JSON export for `chrome://tracing` import (competitive edge vs plain SVG)
+From the stamped section 11:
+- [ ] Granular per-driver `boot_load_record`: storage (ata/ahci/nvme/virtio-blk), input (PS2/USB HID), ACPI, GFX -- each self-reports vs the single aggregate `storage` entry. Owner: this section.
+- [ ] Probe-result aggregation (storage + network): split driver return codes so absent-vs-failed is distinguishable (rtl8139/ahci/virtio-blk return -1 for both; sequential storage always LOADED) for accurate SKIPPED/FAILED. Owner: this section.
+- [ ] NVMe per-controller status: expose attempted-vs-initialized count from `nvme_init` (today returns only the success count) so a partial multi-controller failure records DEGRADED, not BOOT_OK. Owner: this section / NVMe driver.
+
+**Test checkpoint:** per moved item; each carries its original acceptance text.
 
 ---
 

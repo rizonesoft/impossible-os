@@ -247,7 +247,7 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 - [x] Continuous operation: fast-key-erasure on EVERY fill (ratchet under lock, stream outside) -- stronger than the drafted 4 MiB re-key, adopted from Codex design review
 - [/] Canary seed sharing: `csprng_u64()` ready; BLOCKED on `TODO-10-kernel-security-hardening.md §12` (`canary_init()` not implemented; reciprocal item filed there)
 - [x] `task_exec()` AT_RANDOM now `csprng_fill(rand_buf, 16)`; RDRAND/TSC fallback block deleted (satisfies `TODO-11-peb-teb-user-abi.md §13` follow-up)
-- [ ] Wire `csprng_u64()` into EIF `load_base=0` randomized base -- BLOCKED on `TODO-20-eif-full-implementation.md §8` (unimplemented; its spec already names the kernel CSPRNG)
+- [/] Wire `csprng_u64()` into EIF `load_base=0` randomized base -- BLOCKED on `TODO-20-eif-full-implementation.md §8` (unimplemented; its spec already names the kernel CSPRNG)
 - [x] `NtGetRandom(buf, len, flags)` at SSDT 0x03D8 (main count 470 -> 471): probe + 256 B chunked bounce copy, 1 MiB cap, `ntdll` export, master-table row (-> XREF `TODO-A-SSDT-Master-Table.md`)
 - [/] `csprng_add_entropy()` reseed API shipped (HIGH-only seed credit); remaining: reseed thresholds + interrupt-timing accounting; hwrng hook via `04-drivers-hardware/TODO-09` §12; first seed via `01-boot-platform/TODO-12` §8
 - [x] Single CSPRNG ownership: duplicate entropy plans routed to `csprng_fill()`/`csprng_add_entropy()` in `09-desktop-shell/TODO-06` §1, `07-networking/TODO-03` §5, `12-user-platform-sdk/TODO-01` §4

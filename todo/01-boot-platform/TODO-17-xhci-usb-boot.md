@@ -173,8 +173,8 @@ Finish the baseline xHCI boot path across controller vendors. The generic non-In
 - [x] Renesas (0x1912): detect vendor ID in the discovery loop; warn `Renesas controller -- USB unavailable if host firmware not loaded` so a firmware-less board is diagnosable; graceful skip via the existing no-device path (`xhci.c` `xhci_init`)
 - [x] Vendor diagnostics: `xhci_vendor_name()` maps VID to Intel/AMD/ASMedia/Renesas/VIA/QEMU; logged on bring-up (`Found xHCI at PCI ...: <vendor>`) on both the full-init and handover paths -- validated live (run-usb-ci: `QEMU (VID:DID 1b36:000d)`)
 - [x] Graceful degradation: no-xHCI logs `continuing boot without USB` (not a boot failure); init-failure logs + continues; `boot_storage.c` ignores the count and proceeds -- PS/2 + SATA/NVMe still work
-- [ ] Hardware test matrix (manual -- bare metal): AMD, ASMedia, Renesas, VIA controllers boot from USB via the generic path
-- [ ] Commit: `"drivers: xHCI non-Intel vendor compatibility + graceful degradation"`
+- [/] Hardware test matrix (manual -- bare metal): AMD, ASMedia, Renesas, VIA controllers boot from USB via the generic path
+- [/] Commit: `"drivers: xHCI non-Intel vendor compatibility + graceful degradation"`
 
 **Routed to owning TODOs (NOT owned by TODO-17 §6):**
 - BIOS/OS USBLEGSUP handoff (all vendors) -> XREF: `01-boot-platform/TODO-20-usb-zero-delay-handover.md §2` (implemented + marked complete)
@@ -192,6 +192,7 @@ Finish the baseline xHCI boot path across controller vendors. The generic non-In
 > - Scope boundary: §6 owns non-Intel xHCI vendor compat; legacy controllers + transport robustness are owned by the usb-stack / usb-boot-hardening / zero-delay-handover TODOs.
 > **Verified:** 2026-06-15 | this commit | 5/6 items [x], 1 [ ] manual (HW matrix) | build OK | run-usb-ci PASS (vendor "QEMU" logged on bring-up)
 > **Quality reviewed:** 2026-06-15 | Codex 1x (adversarial, §6 vendor diff: no material findings) | diagnostics/logging only; subsystem covered by the §1-§5 Codex 3x pass | scope: kernel-code-quality
+> **Deferred:** [awaiting-operator] the vendor hardware matrix needs physical AMD/ASMedia/Renesas/VIA machines -- no unattended pass can perform this; operator action required (cohort 2026-07-31)
 
 ---
 

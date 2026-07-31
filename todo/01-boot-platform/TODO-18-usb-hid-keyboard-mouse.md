@@ -95,7 +95,7 @@ Set up periodic interrupt transfers to receive HID reports from keyboard/mouse.
 - [x] BSP tick multiplexer (`timer.c` `timer_add/remove_tick_subscriber` + `tick_subs[4]`) -- additive to the singleton so the splash spinner + HID poll coexist; BSP-only writers, release/acquire ISR snapshot, status-returning remove
 - [x] Per-HID-device report DMA buffer (`pmm_alloc_contiguous`); `xhci_hid_queue_report` queues a Normal TRB on `dev->int_in_ring` + rings the EP doorbell (allocated in `xhci_hid_identify`)
 - [x] HID poll (`xhci_hid_poll`, ~10 ms via `timer_add_tick_subscriber`): drains the dedicated HID ring (bounded budget), delivers each report to `dev->int_in_report` (ISR-safe), re-queues -- validated live (QEMU usb-kbd usage codes)
-- [ ] Commit: `"drivers: xHCI dedicated HID interrupter + tick-mux interrupt polling"`
+- [x] Commit: `"drivers: xHCI dedicated HID interrupter + tick-mux interrupt polling"` **Verified 2026-07-31:** done as `1d947b72` "drivers: xHCI dedicated HID interrupter + tick-mux interrupt polling (TODO-18 section 2)"
 
 **Test checkpoint:** Press keys on USB keyboard in QEMU -- Transfer Event TRBs arrive on the dedicated HID interrupter and each report lands in `dev->int_in_report` (no per-tick serial log -- the poll runs in ISR context); the boot-splash spinner keeps animating (tick mux); no `usb`/`nvme`/`ahci` command timeouts (shared ring untouched).
 > **Test runner:** `scripts\debug\kernel\run-storage-tests.bat` (SUITE=storage) | `test_usb_hid.c` interval-encoding (pure); report polling is live-MMIO/ISR -- validated via QEMU usb-kbd + QMP send-key.

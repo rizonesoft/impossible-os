@@ -214,7 +214,7 @@ Replace all hardcoded IRQ-to-vector assignments with a runtime registration API 
 - [x] IRQ storm quarantine: all-`IRQ_NONE` streak + idt.c unhandled-vector limit both mask at the owning controller; a joining sharer is the recovery point (Linux `__setup_irq` parity); `irq list` exposure deferred with that item (D09 T12 §1)
 - [x] `irq_gsi_count(gsi)`: returns fire count via GSI→vector mapping table
 - [x] `irq_dispatch()` already exists in `irq.c` -- registered handler called + EOI sent
-- [ ] `irq list` shell command -- deferred to `09-desktop-shell/TODO-12-utilities.md` §1 (item: "Kernel diagnostic commands")
+- [/] `irq list` shell command -- deferred to `09-desktop-shell/TODO-12-utilities.md` §1 (item: "Kernel diagnostic commands")
 - [x] Drivers migrated to shared GSI claims: AHCI, vbox_mouse, rtl8139, virtio-input, ACPI SCI (fixes the S4 SCI vector regression); PS/2 done earlier (5466cc7e); MSI/MSI-X follow `04-drivers-hardware/TODO-02-apic-interrupt-routing.md` §3
 - [x] Vector-space hardening: INT 0x80/0x81 gates reserved out of the dynamic allocator (live ALPC-starvation incident), `irq_unregister` only clears IDT slots it owns, `irq_reserve_vector()` API for bare-IDT static claims
 - [x] Commit: `"kernel: GSI-based IRQ request API -- irq_request_gsi/free_gsi, IOAPIC-backed"`
@@ -244,7 +244,7 @@ A HAL that selects the best available timer clock and exposes a single `uptime_n
 - [x] PIT and LAPIC drivers implemented and working (in `pit.c` and `lapic.c`)
 - [x] Single clocksource contract: both driver vtables set `.read_ns = mono_ns` (no second HPET path); `MONO_SRC_LAPIC` scales by the LIVE tick frequency via pure `mono_lapic_ticks_to_ns()` (resolution-change safe)
 - [x] One-shot / TSC-deadline LAPIC mode: `arm_oneshot()` vtable hook, `IA32_TSC_DEADLINE` CPUID-gated with LVT one-shot fallback, overflow-safe conversion helpers; ISR auto-restores periodic mode until the D02 T26 idle governor owns tickless policy
-- [ ] Hyper-V reference TSC page consumer (`HV_X64_MSR_REFERENCE_TSC` preferred when enlightened): BLOCKED on the MSR/page init owned by `02-kernel-core/TODO-09 §15` (item: "Hyper-V SynIC + reference TSC MSR init")
+- [/] Hyper-V reference TSC page consumer (`HV_X64_MSR_REFERENCE_TSC` preferred when enlightened): BLOCKED on the MSR/page init owned by `02-kernel-core/TODO-09 §15` (item: "Hyper-V SynIC + reference TSC MSR init")
 - [x] LAPIC timer: calibration via Hyper-V MSR / PIT busy-wait already working
 - [x] Selection waterfall: platform_detect() -> Hyper-V MSR -> LAPIC calibration -> PIT fallback; `hv_flags` available
 - [x] `uptime_ns()` added: prefers `read_ns()`, falls back to `ticks * (1e9/freq)`
@@ -339,7 +339,7 @@ JSON boot timeline on disk plus optional shell charting later (overlay bar remov
 - [x] `boot_timeline_dump_json()`: writes `X:\Perf\boot-timeline.json` (path moved from `X:\Boot\` when FPDT records joined the timeline; see TODO-04 §4) with `[{"stage":"fpdt:reset_end","phase":0,"post":"0x0000","start_ms":0,"duration_ms":50,"target_ms":0,"source":"fpdt","unreliable":false},{"stage":"PMM","phase":0,"post":"0x20","start_ms":86,"duration_ms":7,"target_ms":10,"source":"tsc","unreliable":false},...]` (`target_ms` = per-step boot_perf_budget target, 0 when unbudgeted)
 - [x] Called from `boot_desktop.c` (Phase 3 desktop-ready path) after `boot_timing_write_report()`
 - [x] Single-open `VFS_O_WRITE|VFS_O_CREATE|VFS_O_TRUNC` write with fail-closed short-write handling (re-truncate to empty; same pattern as `boot_health.c`) -- added during review; previous bare `VFS_O_WRITE` left stale tail bytes across boots
-- [ ] `boot-timeline` shell command -- deferred to `09-desktop-shell/TODO-12-utilities.md` §1 (item: "Kernel diagnostic commands")
+- [/] `boot-timeline` shell command -- deferred to `09-desktop-shell/TODO-12-utilities.md` §1 (item: "Kernel diagnostic commands")
 - [x] Commit: `"kernel: boot timeline JSON dump"`
 
 **Test checkpoint:** With BlackBox mounted, `X:\Perf\boot-timeline.json` exists after desktop boot when dump path enabled; JSON contains stage objects. `boot-timeline` shell deferred to `09-desktop-shell/TODO-12-utilities.md` §1. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
@@ -370,7 +370,7 @@ Clean up all `#ifdef HYPERV_WORKAROUND` blocks now that correct ACPI/LAPIC/IOAPI
 - [x] No workaround paths to remove -- correct ACPI/LAPIC/IOAPIC init order established in Phase 1
 - [x] APIC-frequency capability gate unified (review fix): `HV_FLAG_APIC_FREQ_MSR` probed for KVM like VMware; `platform_has_apic_freq_msr()` and `cal_try_vmware_cpuid()` both gate on the flag instead of platform identity
 - [x] Calibration loops wall-clock bounded (review fix): `cal_deadline()` (4x 10ms window from boot TSC freq, plausibility-gated 1 MHz through 10 GHz) caps the HPET/PM/PIT measurement spins that previously relied on a 200M-iteration count alone
-- [ ] SMP IPI abstraction (`irq_send_ipi` style) -- deferred to `03-memory-concurrency/TODO-07-smp-phase2.md` §2 (today `lapic_send_ipi()` is the direct path)
+- [/] SMP IPI abstraction (`irq_send_ipi` style) -- deferred to `03-memory-concurrency/TODO-07-smp-phase2.md` §2 (today `lapic_send_ipi()` is the direct path)
 - [x] Commit: "(shipped) Hyper-V workaround compile-time blocks removed -- audit clean"
 
 **Test checkpoint:** `rg HYPERV_WORKAROUND src/kernel` returns no matches; SMP bringup logs AP online lines on `-smp 4` QEMU. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.

@@ -664,11 +664,11 @@ When a new object is created (file, directory, registry key, process) without an
   2. Explicit allow ACEs
   3. Inherited deny ACEs (in parent order)
   4. Inherited allow ACEs (in parent order)
-- [ ] `SeAssignSecurityEx` with `SEF_DACL_AUTO_INHERIT` / `SEF_SACL_AUTO_INHERIT` -- automatic propagation to EXISTING children -- DEFERRED: needs the object-tree enumeration + re-stamp path
-- [ ] Wire `SeAssignSecurity` into `ObCreateObject` (→ XREF `TODO-05 §1`): pass the parent directory's SD as `ParentSD` -- DEFERRED: `ob_alloc_object` takes no parent-SD/parent-object parameter (needs a signature change or wrapper)
-- [ ] Wire into VFS `CreateFile` / `CreateDirectory` paths (→ XREF `05-storage-filesystems/TODO-05 §4`): IXFS inode inherits parent SD -- DEFERRED: IXFS has no per-inode security-descriptor storage yet
+- [/] `SeAssignSecurityEx` with `SEF_DACL_AUTO_INHERIT` / `SEF_SACL_AUTO_INHERIT` -- automatic propagation to EXISTING children -- DEFERRED: needs the object-tree enumeration + re-stamp path
+- [/] Wire `SeAssignSecurity` into `ObCreateObject` (→ XREF `TODO-05 §1`): pass the parent directory's SD as `ParentSD` -- DEFERRED: `ob_alloc_object` takes no parent-SD/parent-object parameter (needs a signature change or wrapper)
+- [/] Wire into VFS `CreateFile` / `CreateDirectory` paths (→ XREF `05-storage-filesystems/TODO-05 §4`): IXFS inode inherits parent SD -- DEFERRED: IXFS has no per-inode security-descriptor storage yet
 - [x] `SE_DACL_PROTECTED` on child SD blocks PARENT inheritance (assign_security.c: skips the inherit branch -> falls through to token DefaultDacl if present, else fail-closed default; flag preserved on output SD)
-- [ ] Inherit conditional (callback) ACEs preserving their condition BLOB -- assign_security.c FAILS CLOSED on an inheritable callback ACE today; needs SeAccessCheck conditional evaluation (→ XREF §5 "Implement SeAccessCheck" at line 364)
+- [/] Inherit conditional (callback) ACEs preserving their condition BLOB -- assign_security.c FAILS CLOSED on an inheritable callback ACE today; needs SeAccessCheck conditional evaluation (→ XREF §5 "Implement SeAccessCheck" at line 364)
 - [x] Commit: `"kernel/security: SeAssignSecurity -- SD inheritance, ACE propagation, canonical ordering"`
 
 **Test checkpoint:** `test_se_assign_security` (SUITE=security) builds a parent DACL (allow SYSTEM CI|OI, deny World OI-only) and calls `SeAssignSecurity` directly: file child inherits both ACEs with `INHERITED_ACE` only (no propagation), deny-before-allow canonical order; directory child gets the CI|OI allow applied+propagating and the OI-only deny as `INHERITED_ACE|INHERIT_ONLY_ACE|OBJECT_INHERIT_ACE`; `SE_DACL_PROTECTED` with no token DefaultDacl -> 3-ACE fail-closed fallback (never a NULL DACL) with the flag preserved on the output SD; no resolvable owner, a malformed owner SID, and an inheritable conditional (callback) ACE each -> `STATUS_INVALID_PARAMETER`; `SeDeassignSecurity` NULLs the pointer. End-to-end file/dir creation via serial log is deferred with the VFS/IXFS wiring. Test on: QEMU WHPX + TCG.
