@@ -442,6 +442,46 @@ def test_bash_command_clip_survives_a_compound_command():
                       "command": cmd})
     assert "rollover" in line, line
 
+
+def test_hook_advisories_surface_from_attachment_events():
+    """A PostToolUse hook's systemMessage arrives as its own `attachment`
+    event, NOT as a tool_result. stream-report handled no such kind, so every
+    advisory hook was invisible in the run log -- which hid the context-rotation
+    hint through two canaries and produced the wrong conclusion twice.
+
+    Shapes are taken verbatim from a real session transcript
+    (run-20260731-155656): each firing emits BOTH a `hook_success` carrying raw
+    `{"systemMessage": ...}` stdout and a `hook_system_message` twin carrying the
+    rendered text. Only the twin may be surfaced, or every hint double-logs.
+    """
+    import json as _json
+    import subprocess as _sp
+    import sys as _sys
+    from pathlib import Path as _P
+    script = _P(__file__).resolve().parents[1] / "stream-report.py"
+    msg = "[sequencer] context-rotation hint set (90 tool-events since the last rollover)."
+    events = [
+        {"type": "attachment", "attachment": {
+            "type": "hook_success", "hookName": "PostToolUse:Bash",
+            "hookEvent": "PostToolUse", "toolUseID": "t1",
+            "stdout": _json.dumps({"systemMessage": msg}), "stderr": "", "content": ""}},
+        {"type": "attachment", "attachment": {
+            "type": "hook_system_message", "hookName": "PostToolUse:Bash",
+            "hookEvent": "PostToolUse", "toolUseID": "t1", "content": msg}},
+        {"type": "attachment", "attachment": {
+            "type": "hook_error", "hookName": "PreToolUse:Bash",
+            "hookEvent": "PreToolUse", "stderr": "boom", "content": ""}},
+    ]
+    payload = "\n".join(_json.dumps(e) for e in events)
+    r = _sp.run([_sys.executable, str(script)], input=payload,
+                capture_output=True, text=True, timeout=60)
+    out = r.stdout
+    assert out.count("context-rotation hint") == 1, (
+        "advisory must surface exactly once -- hook_success and its "
+        f"hook_system_message twin both logged?\n{out}")
+    assert "hook: [PostToolUse:Bash]" in out, out
+    assert "hook error: [PreToolUse:Bash] boom" in out, out
+
 if __name__ == "__main__":
     test_two_sections_split_on_progress()
     test_model_confirmed_matches_expected_no_warning()
@@ -466,4 +506,6 @@ if __name__ == "__main__":
     test_live_snapshot_removed_on_clean_finish()
     test_advisory_hook_output_is_surfaced()
     test_bash_command_clip_survives_a_compound_command()
+    test_hook_advisories_surface_from_attachment_events()
     print("PASS: stream-report metrics")
+

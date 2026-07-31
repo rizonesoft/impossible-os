@@ -679,6 +679,47 @@ def handle(event: dict, metrics: "SectionMetrics") -> None:
                 "type") == "tool_result" else ""
             if txt and _ADVISORY_RE.search(txt):
                 emit(f"hook: {_clip(txt, 400)}")
+    elif kind == "attachment":
+        # HOOK ATTACHMENTS (2026-07-31). A PostToolUse hook's systemMessage does
+        # NOT arrive as a tool_result -- it arrives as its own top-level event,
+        # `{"type": "attachment", "attachment": {"type": "hook_success",
+        # "hookEvent": "PostToolUse", "stdout": "{\"systemMessage\": ...}"}}`.
+        # stream-report handled no such kind, so it was dropped entirely.
+        #
+        # This is the SECOND half of the v05 observability defect, and v05
+        # believed it had fixed the whole thing: the branch above surfaces
+        # advisory output carried on a tool_result (the PreToolUse shape) and
+        # nothing else. MEASURED CONSEQUENCE: the context-rotation hint fired on
+        # schedule at event 90 and was delivered to the run 4 times, while
+        # `grep -c "context-rotation hint"` over every segment of 2026-07-31
+        # returned 0 -- which read as "the mechanism is dead" for a second
+        # consecutive canary. An advisory gate you cannot see is one you cannot
+        # tune, and the cost of not seeing this one is the rotation's entire
+        # unrealised 31-41% cache-read saving.
+        att = event.get("attachment")
+        if isinstance(att, dict):
+            atype = att.get("type")
+            name = str(att.get("hookName") or att.get("hookEvent") or "hook")
+            if atype == "hook_system_message":
+                # THE canonical advisory channel. Measured on one segment of
+                # run-20260731-155656: 113 `hook_system_message` events against
+                # 119 `hook_success`, carrying the rendered text for EVERY
+                # advisory hook (cd-prefix, inline-churn, verify-cadence,
+                # kernel-code-quality, artifact-pipe, todo-graph, and the
+                # context-rotation hint). Keying on hook_success.stdout instead
+                # would surface only hooks that happen to print JSON.
+                txt = att.get("content")
+                if isinstance(txt, str) and txt.strip():
+                    emit(f"hook: [{name}] {_clip(txt, 400)}")
+            elif atype == "hook_error":
+                err = att.get("stderr") or att.get("content")
+                if isinstance(err, str) and err.strip():
+                    emit(f"hook error: [{name}] {_clip(err, 400)}")
+            # hook_success is deliberately NOT surfaced: its stdout is the raw
+            # `{"systemMessage": ...}` JSON of the SAME advisory the
+            # hook_system_message twin renders, so emitting both double-logs
+            # every hint. Verified on the rotation hint: 2 firings produced 2
+            # of each. Do not "fix" this into an extra branch.
     elif kind == "result":
         metrics.flush("final")
         emit("=== final ===")
