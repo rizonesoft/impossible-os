@@ -11103,6 +11103,315 @@ else
 fi
 rm -f "$RID_TMP/offtree/src/kernel/test/test_usermode.c"
 
+# 6r2d-agg. Aggregate identities. Every label is read OUT OF THE KERNEL
+#           TABLE rather than copied here, so an aggregate added to
+#           UTEST_AGG_KINDS without a conforming identity fails this test
+#           on the host exactly as it fails the kernel vector -- a
+#           hardcoded list of five would simply not see the sixth.
+RID_KSRC="$REPO_ROOT/src/kernel/test/test_usermode.c"
+
+# Extraction is EXHAUSTIVE over the macro body and over the kernel's full
+# accepted label charset, and its cardinality is checked against the number
+# of rows rather than a floor -- an earlier draft matched `[a-z_]*` and
+# accepted `>= 5`, so a sixth label containing a digit or a dash would have
+# been silently dropped while the five older ones kept the test green. It
+# also reads the value-bearing column and the five publication sites, so a
+# call site that published the wrong kind cannot pass either.
+#
+# COMMENTS ARE STRIPPED FIRST. A structural claim read off raw C text is a
+# claim about the source file, not about what the compiler builds: wrapping
+# a real u_emit_aggregate(...) in /* ... */ would leave a raw regex green
+# while the publication disappears from the binary, and a commented-out
+# X(...) would be counted as a live table row. The mutation cases below
+# prove the stripping actually bites.
+RID_AGGSCAN="$RID_TMP/aggscan.py"
+cat > "$RID_AGGSCAN" <<'PYEOF'
+import re, sys
+
+def strip_c_comments(text):
+    out, i, n = [], 0, len(text)
+    while i < n:
+        two = text[i:i + 2]
+        if two == "/*":
+            j = text.find("*/", i + 2)
+            j = n if j < 0 else j + 2
+            out.append("".join(c if c == "\n" else " " for c in text[i:j]))
+            i = j
+        elif two == "//":
+            j = text.find("\n", i)
+            j = n if j < 0 else j
+            out.append(" " * (j - i))
+            i = j
+        elif text[i] in "\"'":
+            q, j = text[i], i + 1
+            while j < n and text[j] != q:
+                j += 2 if text[j] == "\\" else 1
+            j = min(j + 1, n)
+            out.append(text[i:j])
+            i = j
+        else:
+            out.append(text[i]); i += 1
+    return "".join(out)
+
+src = strip_c_comments(open(sys.argv[1], encoding="utf-8").read())
+m = re.search(r"#define UTEST_AGG_KINDS\(X\)(.*?)\n\n", src, re.S)
+if not m:
+    print("ERR no UTEST_AGG_KINDS table"); raise SystemExit(0)
+body = m.group(1)
+rows = re.findall(r'X\(\s*([A-Z0-9_]+)\s*,\s*"([A-Za-z0-9._-]+)"\s*,\s*([01])\s*\)',
+                  body)
+declared = len(re.findall(r"\bX\(", body))
+if len(rows) != declared:
+    print("ERR parsed %d of %d X() rows" % (len(rows), declared)); raise SystemExit(0)
+# Every publication site, and the kind each one passes.
+sites = re.findall(r"u_emit_aggregate\(\s*[A-Z0-9_]+\s*,\s*UTEST_AGG_([A-Z0-9_]+)",
+                   src)
+print("COUNT %d" % len(rows))
+print("SITES %d" % len(sites))
+print("SITEKINDS %s" % ",".join(sorted(sites)))
+print("TABLEKINDS %s" % ",".join(sorted(n for n, _, _ in rows)))
+for name, label, has_value in rows:
+    print("ROW %s %s %s" % (name, label, has_value))
+PYEOF
+RID_TABLE="$(python3 "$RID_AGGSCAN" "$RID_KSRC")"
+
+if printf '%s' "$RID_TABLE" | grep -q '^ERR '; then
+    t_fail "refusal correlator: the kernel aggregate table parses exhaustively" "$RID_TABLE"
+else
+    t_pass "refusal correlator: the kernel aggregate table parses exhaustively"
+fi
+
+RID_NLABELS="$(printf '%s\n' "$RID_TABLE" | awk '/^COUNT /{print $2}')"
+RID_NSITES="$(printf '%s\n' "$RID_TABLE" | awk '/^SITES /{print $2}')"
+RID_SITEKINDS="$(printf '%s\n' "$RID_TABLE" | sed -n 's/^SITEKINDS //p')"
+RID_TABLEKINDS="$(printf '%s\n' "$RID_TABLE" | sed -n 's/^TABLEKINDS //p')"
+
+# Every enumerated kind is published by exactly one site, and every site
+# publishes an enumerated kind. This is what makes "a new aggregate cannot
+# be added with a non-conforming identity" true of the CALL SITES and not
+# only of the builder.
+if [ -n "$RID_NSITES" ] && [ "$RID_NSITES" = "$RID_NLABELS" ] && \
+   [ "$RID_SITEKINDS" = "$RID_TABLEKINDS" ]; then
+    t_pass "refusal correlator: every aggregate kind has exactly one publication site"
+else
+    t_fail "refusal correlator: every aggregate kind has exactly one publication site" \
+        "sites=$RID_NSITES kinds=$RID_NLABELS site=[$RID_SITEKINDS] table=[$RID_TABLEKINDS]"
+fi
+
+# Exactly one kind publishes no number. If that ever becomes zero, the
+# unparseable-manifest path has silently gone back to publishing a `0`
+# that reads as "nothing was lost".
+RID_UNVALUED="$(printf '%s\n' "$RID_TABLE" | awk '/^ROW /&&$4=="0"{n++}END{print n+0}')"
+if [ "$RID_UNVALUED" = "1" ]; then
+    t_pass "refusal correlator: exactly one aggregate kind publishes no number"
+else
+    t_fail "refusal correlator: exactly one aggregate kind publishes no number" \
+        "found $RID_UNVALUED value-less kind(s)"
+fi
+
+RID_AGG_OK=1
+RID_AGG_WHY=""
+while read -r RID_TAG RID_NAME RID_LABEL RID_HASVAL; do
+    [ "$RID_TAG" = "ROW" ] || continue
+    # The value the KERNEL would publish for this kind -- taken from the
+    # table's own column, so the host cannot test a shape the launcher
+    # never emits (nor miss the one it does).
+    if [ "$RID_HASVAL" = "1" ]; then RID_VAL=7; else RID_VAL=unknown; fi
+    RID_ID="agg_${RID_LABEL}_${RID_VAL}.exe"
+    RID_OUT="$(python3 "$RID" match "$RID_ID" 2>&1 || true)"
+    python3 "$RID" match "$RID_ID" >/dev/null 2>&1 && RID_RC=0 || RID_RC=$?
+    if [ "$RID_RC" != "5" ]; then
+        RID_AGG_OK=0; RID_AGG_WHY="$RID_ID -> rc=$RID_RC (expected 5)"; break
+    fi
+    case "$RID_OUT" in
+        *AGGREGATE*"$RID_LABEL"*) : ;;
+        *) RID_AGG_OK=0
+           RID_AGG_WHY="$RID_ID -> report did not name the label: $RID_OUT"
+           break ;;
+    esac
+    # The unit the label carries must be READ BACK, not merely echoed --
+    # a `_kept` reported as a loss is the misreading this shape exists to
+    # prevent.
+    case "$RID_LABEL:$RID_HASVAL" in
+        *_pages:1) RID_WANT="page(s) requested" ;;
+        *_kept:1)  RID_WANT="RETAINED" ;;
+        *:0)       RID_WANT="could not derive" ;;
+        *)         RID_WANT="no unit suffix this tool recognizes" ;;
+    esac
+    case "$RID_OUT" in
+        *"$RID_WANT"*) : ;;
+        *) RID_AGG_OK=0
+           RID_AGG_WHY="$RID_ID -> value reading missing '$RID_WANT': $RID_OUT"
+           break ;;
+    esac
+done <<RIDEOF
+$RID_TABLE
+RIDEOF
+if [ "$RID_AGG_OK" = "1" ]; then
+    t_pass "refusal correlator: every kernel aggregate kind classifies with its unit (exit 5)"
+else
+    t_fail "refusal correlator: every kernel aggregate kind classifies with its unit (exit 5)" \
+        "$RID_AGG_WHY"
+fi
+
+# Numeric forms the launcher CANNOT emit must not be authenticated as
+# aggregates. u_append_uint writes canonical ASCII decimal from a uint32_t,
+# so leading zeros, a value past uint32, and non-ASCII decimal digits are
+# all corruption -- and aggregate recognition short-circuits correlation,
+# so accepting one would misreport a damaged identity as a launcher record.
+RID_NEG_OK=1
+RID_NEG_WHY=""
+for RID_BAD in 'agg_plan_kept_007.exe' 'agg_plan_kept_4294967296.exe' \
+               'agg_plan_kept_99999999999999999999.exe' \
+               'agg_plan_kept_٧.exe' 'agg__7.exe' 'agg_plan_kept_bad.exe' \
+               'agg_plan_kept_-1.exe' 'agg_plan_kept_7.EXE'; do
+    python3 "$RID" match "$RID_BAD" >/dev/null 2>&1 && RID_RC=0 || RID_RC=$?
+    if [ "$RID_RC" = "5" ]; then
+        RID_NEG_OK=0
+        RID_NEG_WHY="$RID_BAD was accepted as a genuine aggregate (rc=5)"
+        break
+    fi
+done
+if [ "$RID_NEG_OK" = "1" ]; then
+    t_pass "refusal correlator: numeric forms the launcher cannot emit are not aggregates"
+else
+    t_fail "refusal correlator: numeric forms the launcher cannot emit are not aggregates" \
+        "$RID_NEG_WHY"
+fi
+
+# MUTATION TESTS for the structural scan. Each mutates a COPY of the kernel
+# source in a way the compiler would honour, and the scan must notice --
+# otherwise the "every kind has exactly one publication site" claim is a
+# claim about text, not about the built launcher.
+RID_MUT="$RID_TMP/mutate.c"
+
+# (1) Comment out a real publication site -> site count must drop.
+python3 - "$RID_KSRC" "$RID_MUT" <<'PYEOF'
+import re, sys
+src = open(sys.argv[1], encoding="utf-8").read()
+src = re.sub(r"u_emit_aggregate\(\s*UTEST_RSN_UNREADABLE",
+             "/* u_emit_aggregate(UTEST_RSN_UNREADABLE", src, count=1)
+open(sys.argv[2], "w", encoding="utf-8").write(src)
+PYEOF
+RID_MUTSITES="$(python3 "$RID_AGGSCAN" "$RID_MUT" | awk '/^SITES /{print $2}')"
+if [ -n "$RID_MUTSITES" ] && [ "$RID_MUTSITES" -lt "$RID_NSITES" ]; then
+    t_pass "refusal correlator: a commented-out publication site is not counted"
+else
+    t_fail "refusal correlator: a commented-out publication site is not counted" \
+        "mutated sites=$RID_MUTSITES vs live=$RID_NSITES"
+fi
+
+# (2) Insert a commented phantom table row -> row count must NOT grow.
+python3 - "$RID_KSRC" "$RID_MUT" <<'PYEOF'
+import sys
+src = open(sys.argv[1], encoding="utf-8").read()
+src = src.replace('    X(GLOB_KEPT,     "glob_kept",     1)',
+                  '    X(GLOB_KEPT,     "glob_kept",     1) /* X(PHANTOM, "phantom", 1) */',
+                  1)
+open(sys.argv[2], "w", encoding="utf-8").write(src)
+PYEOF
+RID_MUTROWS="$(python3 "$RID_AGGSCAN" "$RID_MUT" | awk '/^COUNT /{print $2}')"
+if [ "$RID_MUTROWS" = "$RID_NLABELS" ]; then
+    t_pass "refusal correlator: a commented phantom table row is not counted"
+else
+    t_fail "refusal correlator: a commented phantom table row is not counted" \
+        "mutated rows=$RID_MUTROWS vs live=$RID_NLABELS"
+fi
+
+# The correlator must reject the OPPOSITE value form for every kind: the
+# form is a table column, so exactly one of the two is emittable per kind.
+RID_INV_OK=1
+RID_INV_WHY=""
+while read -r RID_TAG RID_NAME RID_LABEL RID_HASVAL; do
+    [ "$RID_TAG" = "ROW" ] || continue
+    if [ "$RID_HASVAL" = "1" ]; then RID_BADVAL=unknown; else RID_BADVAL=7; fi
+    RID_ID="agg_${RID_LABEL}_${RID_BADVAL}.exe"
+    python3 "$RID" match "$RID_ID" >/dev/null 2>&1 && RID_RC=0 || RID_RC=$?
+    if [ "$RID_RC" = "5" ]; then
+        RID_INV_OK=0
+        RID_INV_WHY="$RID_ID (wrong value form for this kind) was accepted"
+        break
+    fi
+done <<RIDEOF
+$RID_TABLE
+RIDEOF
+if [ "$RID_INV_OK" = "1" ]; then
+    t_pass "refusal correlator: the wrong value form for a kind is refused"
+else
+    t_fail "refusal correlator: the wrong value form for a kind is refused" "$RID_INV_WHY"
+fi
+
+# A label the launcher's table does not contain is not an aggregate at all.
+python3 "$RID" match 'agg_not_a_kind_7.exe' >/dev/null 2>&1 && RID_RC=0 || RID_RC=$?
+if [ "$RID_RC" = "2" ]; then
+    t_pass "refusal correlator: an unknown aggregate label is refused, not authenticated"
+else
+    t_fail "refusal correlator: an unknown aggregate label is refused, not authenticated" "rc=$RID_RC"
+fi
+
+# Off-tree, the form CANNOT be checked -- the tool must say so rather than
+# authenticate. It still classifies (exit 5); it just stops claiming the
+# identity was verified against a table it cannot see.
+RID_OUT="$(python3 "$RID_TMP/offtree/scripts/utest-refusal-id.py" \
+           match 'agg_plan_kept_unknown.exe' 2>&1 || true)"
+python3 "$RID_TMP/offtree/scripts/utest-refusal-id.py" \
+    match 'agg_plan_kept_unknown.exe' >/dev/null 2>&1 && RID_RC=0 || RID_RC=$?
+if [ "$RID_RC" = "5" ] && printf '%s' "$RID_OUT" | grep -q 'aggregate-SHAPED identity, not a verified one'; then
+    t_pass "refusal correlator: off-tree, an aggregate is reported as shaped-but-unverified"
+else
+    t_fail "refusal correlator: off-tree, an aggregate is reported as shaped-but-unverified" \
+        "rc=$RID_RC out=$RID_OUT"
+fi
+
+# A canonical zero IS emittable and must still classify.
+python3 "$RID" match 'agg_plan_kept_0.exe' >/dev/null 2>&1 && RID_RC=0 || RID_RC=$?
+if [ "$RID_RC" = "5" ]; then
+    t_pass "refusal correlator: a canonical zero value is a valid aggregate"
+else
+    t_fail "refusal correlator: a canonical zero value is a valid aggregate" "rc=$RID_RC"
+fi
+
+# The uint32 ceiling itself is emittable; one past it is not (checked above).
+python3 "$RID" match 'agg_plan_kept_4294967295.exe' >/dev/null 2>&1 && RID_RC=0 || RID_RC=$?
+if [ "$RID_RC" = "5" ]; then
+    t_pass "refusal correlator: the uint32 ceiling is a valid aggregate value"
+else
+    t_fail "refusal correlator: the uint32 ceiling is a valid aggregate value" "rc=$RID_RC"
+fi
+
+# An aggregate must NOT be correlated even when a candidate is offered --
+# the old shape's failure was naming an unrelated file whose digest equalled
+# the count, and the fix is that no search happens at all.
+RID_OUT="$(python3 "$RID" match "agg_plan_kept_7.exe" --name 'test_a.exe' 2>&1 || true)"
+if printf '%s' "$RID_OUT" | grep -q 'no correlation attempted'; then
+    t_pass "refusal correlator: an aggregate is not correlated even with candidates offered"
+else
+    t_fail "refusal correlator: an aggregate is not correlated even with candidates offered" "$RID_OUT"
+fi
+
+# The two shapes stay disjoint: a per-name refusal still correlates exactly
+# as it did before aggregates got their own kind.
+RID_OUT="$(python3 "$RID" match refused_1_test_a_b.exe_dd94b2b6.exe \
+           --name 'test_a#b.exe' 2>&1 || true)"
+python3 "$RID" match refused_1_test_a_b.exe_dd94b2b6.exe \
+    --name 'test_a#b.exe' >/dev/null 2>&1 && RID_RC=0 || RID_RC=$?
+if [ "$RID_RC" = "0" ] && printf '%s' "$RID_OUT" | grep -q 'MATCH (exact prefix)'; then
+    t_pass "refusal correlator: a per-name refusal still correlates after the aggregate split"
+else
+    t_fail "refusal correlator: a per-name refusal still correlates after the aggregate split" \
+        "rc=$RID_RC out=$RID_OUT"
+fi
+
+# A label carrying a byte the launcher renders `_` was not produced by it.
+RID_OUT="$(python3 "$RID" match 'agg_plan kept_7.exe' 2>&1 || true)"
+python3 "$RID" match 'agg_plan kept_7.exe' >/dev/null 2>&1 && RID_RC=0 || RID_RC=$?
+if [ "$RID_RC" = "2" ]; then
+    t_pass "refusal correlator: a non-conforming aggregate label is a usage error"
+else
+    t_fail "refusal correlator: a non-conforming aggregate label is a usage error" \
+        "rc=$RID_RC out=$RID_OUT"
+fi
+
 # Per-FILE and per-COUNT limits do not bound the total: one 16 MiB
 # single-line file repeated stays inside both while retaining gigabytes.
 # A candidate is a NAME, so an over-long one is refused outright, and the

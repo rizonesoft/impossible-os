@@ -37,9 +37,27 @@ matches only when its digest AND its sanitized prefix both agree, every
 candidate is reported, and more than one surviving candidate exits as
 AMBIGUOUS rather than naming the first one.
 
+AGGREGATE identities are a SECOND, structurally distinct shape:
+`agg_<label>_<value>.exe`. The five fail-closed aggregates are not
+refusals of a name -- no file produced them -- so there is nothing to
+correlate back to, and `match` says so instead of searching. They are
+recognized on the leading `agg_` token rather than by mirroring the
+kernel's list of labels, so a newly added aggregate is classified
+correctly by a tool that has never heard of it.
+
+The value's unit is carried by the LABEL, because it is not one semantic
+type across the five: `_pages` is a page count that was requested,
+`_kept` is how many entries were RETAINED before a cap bit (the loss is
+whatever came after, which was never counted), and the literal `unknown`
+replaces the number entirely where it is not knowable -- a manifest that
+would not parse leaves the number of lost entries underivable, and the
+older shape's `0` there read as "nothing was lost".
+
 Commands:
   digest   <input>            print the 8-hex digest of one candidate
-  match    <identity> <input> report which candidates produce that identity
+  match    <identity> <input> report which candidates produce that identity,
+                              or classify an aggregate identity (no candidate
+                              inputs are needed for an aggregate)
 
 Inputs (each may be repeated; `match` accepts any mix):
   --name NAME          a filename as an argv string (no NUL, no raw control
@@ -59,6 +77,11 @@ Exit codes:
   2  usage error
   3  no candidate matched
   4  more than one candidate matched (AMBIGUOUS -- report lists them all)
+  5  the identity is a fail-closed AGGREGATE: no filename produced it, so
+     no correlation was attempted. Deliberately not 0 (nothing was
+     matched) and not 3 (nothing was missing) -- a caller that treats
+     "aggregate" as either would be drawing a conclusion the tool did not
+     reach.
 """
 
 import argparse
@@ -98,6 +121,29 @@ _NAME_CHAR_OK = re.compile(rb"[A-Za-z0-9._-]")
 _IDENTITY_RE = re.compile(
     r"^refused_(?P<ordinal>\d+)_(?P<prefix>.*)_(?P<digest>[0-9a-f]{8})\.exe$")
 
+# `agg_<label>_<value>.exe`, the fail-closed aggregate shape. The label may
+# contain `_`, so the value is taken from the BACK and the label is the
+# greedy middle -- the same reading the refusal shape needs. The value is a
+# decimal, or the literal `unknown` where the kernel cannot derive one.
+#
+# Matched on the SHAPE, never against a mirrored list of kernel labels: an
+# aggregate added to the launcher tomorrow is classified correctly by a copy
+# of this tool that predates it, which a label allowlist could not do.
+#
+# The value grammar is CANONICAL ASCII uint32, not `\d+`. Python's `\d` is
+# Unicode-aware and `int()` is unbounded, so a permissive reading would
+# authenticate `agg_plan_kept_0007.exe`, `agg_plan_kept_4294967296.exe` and
+# identities built from non-ASCII decimal digits as genuine launcher
+# records -- none of which u_append_uint can emit from a uint32_t. Because
+# aggregate recognition short-circuits correlation entirely, accepting one
+# would misclassify a corrupted identity as a launcher record rather than
+# reporting it as unparseable.
+_AGGREGATE_VALUE_UNKNOWN = "unknown"
+_AGGREGATE_VALUE_MAX = 0xFFFFFFFF
+_AGGREGATE_RE = re.compile(
+    r"^agg_(?P<label>.*)_(?P<value>0|[1-9][0-9]*|" +
+    _AGGREGATE_VALUE_UNKNOWN + r")\.exe$", re.ASCII)
+
 
 def fnv1a32(data):
     """FNV-1a over an exact byte span -- not over a C string."""
@@ -133,9 +179,15 @@ def parse_identity(text):
     """
     match = _IDENTITY_RE.match(text)
     if not match:
+        # Name BOTH shapes. An identity that begins `agg_` but failed the
+        # aggregate grammar reaches here, and telling its operator only
+        # about the refusal shape would send them looking for the wrong
+        # defect -- the launcher publishes canonical ASCII decimals from a
+        # uint32, so `agg_plan_kept_007.exe` is corruption, not a refusal.
         raise ValueError(
-            "not a refusal identity: expected "
-            "refused_<ordinal>_<prefix>_<8 hex digits>.exe, got %r" % (text,))
+            "not a launcher identity: expected "
+            "refused_<ordinal>_<prefix>_<8 hex digits>.exe, or "
+            "agg_<label>_<uint32 or `unknown`>.exe, got %r" % (text,))
     prefix = match.group("prefix").encode("utf-8", "surrogateescape")
     # An EMPTY prefix is legal, and refusing it used to reject a shape the
     # kernel demonstrably emits. A manifest token whose FIRST byte is NUL
@@ -152,6 +204,100 @@ def parse_identity(text):
             "charset, which u_build_refusal_id renders `_`: %r" % (text,))
     return (int(match.group("ordinal")), prefix,
             int(match.group("digest"), 16))
+
+
+def strip_c_comments(text):
+    """Blank out C comments, preserving offsets and line structure.
+
+    A structural claim read off raw C text is a claim about the SOURCE
+    FILE, not about what the compiler builds: a commented-out table row or
+    publication site still matches a regex. Replacing comment bytes with
+    spaces (and keeping newlines) removes them from every later match
+    without disturbing line numbers.
+    """
+    out = []
+    i, n = 0, len(text)
+    while i < n:
+        two = text[i:i + 2]
+        if two == "/*":
+            j = text.find("*/", i + 2)
+            j = n if j < 0 else j + 2
+            out.append("".join(c if c == "\n" else " " for c in text[i:j]))
+            i = j
+        elif two == "//":
+            j = text.find("\n", i)
+            j = n if j < 0 else j
+            out.append(" " * (j - i))
+            i = j
+        elif text[i] in "\"'":
+            quote, j = text[i], i + 1
+            while j < n and text[j] != quote:
+                j += 2 if text[j] == "\\" else 1
+            j = min(j + 1, n)
+            out.append(text[i:j])
+            i = j
+        else:
+            out.append(text[i])
+            i += 1
+    return "".join(out)
+
+
+def parse_aggregate(text):
+    """Split an aggregate identity into (label, value) or return None.
+
+    `value` is an int, or None where the identity carries the `unknown`
+    literal instead of a number. Returning None for a non-aggregate is what
+    lets the caller fall through to the refusal shape: the two are disjoint
+    by construction, since a refusal identity always begins `refused_`.
+
+    The label is validated as something the kernel could have emitted --
+    non-empty and inside the accepted charset -- for the same reason the
+    refusal prefix is. Its LENGTH is deliberately not checked against the
+    kernel's derived name bound: that bound is build-specific, and a host
+    copy of it would mis-refuse identities from a kernel whose bound
+    differed, which is the mirrored-constant failure this tool exists
+    without.
+    """
+    match = _AGGREGATE_RE.match(text)
+    if not match:
+        return None
+    label = match.group("label").encode("utf-8", "surrogateescape")
+    if not label or sanitize(label) != label:
+        raise ValueError(
+            "aggregate identity label carries a byte outside the accepted "
+            "charset, which the launcher cannot emit: %r" % (text,))
+    raw_value = match.group("value")
+    if raw_value == _AGGREGATE_VALUE_UNKNOWN:
+        return (label, None)
+    value = int(raw_value)
+    if value > _AGGREGATE_VALUE_MAX:
+        raise ValueError(
+            "aggregate identity value %s is past the uint32 the launcher "
+            "publishes from, so no run produced it: %r" % (raw_value, text))
+    return (label, value)
+
+
+def describe_aggregate_value(label, value):
+    """Say what the number means, from the UNIT the label carries.
+
+    The launcher deliberately puts the unit in the label rather than
+    publishing every aggregate's number as "the count of what was lost" --
+    which is what the previous shape did, and it was wrong for four of the
+    five paths. This reads the unit back off the suffix, and says plainly
+    when it does not recognize one, rather than inventing a reading.
+    """
+    if value is None:
+        return ("the launcher could not derive this number -- it published "
+                "`unknown` rather than a zero that would read as 'nothing "
+                "was lost'")
+    text = label.decode("utf-8", "surrogateescape")
+    if text.endswith("_pages"):
+        return "%d page(s) requested" % (value,)
+    if text.endswith("_kept"):
+        return ("%d entr(y/ies) RETAINED before the cap bit -- what was lost "
+                "came after this point and was never counted" % (value,))
+    return ("%d -- this label carries no unit suffix this tool recognizes; "
+            "read the launcher's aggregate table for its meaning" % (value,))
 
 
 def candidate_matches(raw, prefix, digest):
@@ -336,6 +482,58 @@ def kernel_manifest_cap(source=None):
     return (int(match.group(1)), "read from %s" % (path,))
 
 
+def kernel_aggregate_kinds(source=None):
+    """The launcher's aggregate table as {label: publishes_a_number}.
+
+    READ from the kernel source, never mirrored -- the same rule (and the
+    same reader) as kernel_manifest_cap above. A hardcoded copy would be
+    the mirrored-constant failure this whole identity kind exists to avoid,
+    and it is what lets this tool reject a value FORM the table forbids
+    without ever knowing the labels in advance.
+
+    Returns (mapping, provenance). The mapping is None when there is
+    genuinely no kernel source to consult (this script copied out of the
+    tree), in which case the caller reports the identity as aggregate-
+    SHAPED but unverified rather than authenticating it.
+    """
+    path = source or os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                  "..", "src", "kernel", "test",
+                                  "test_usermode.c")
+    try:
+        text = read_bounded(path).decode("utf-8", "replace")
+    except FileNotFoundError:
+        if source:
+            raise ValueError("--kernel-source %s does not exist" % (path,))
+        if os.path.lexists(path):
+            raise ValueError(
+                "kernel source at %s is a broken link; repair it or pass "
+                "--kernel-source rather than reporting an aggregate whose "
+                "value form nothing checked" % (path,))
+        return (None, "no kernel source at %s" % (path,))
+    except (ValueError, OSError) as exc:
+        if source:
+            raise ValueError("--kernel-source %s" % (exc,))
+        raise ValueError(
+            "kernel source at %s is present but unusable (%s); pass a "
+            "readable one with --kernel-source" % (path, exc))
+    block = re.search(r"#define UTEST_AGG_KINDS\(X\)(.*?)\n\n", text, re.S)
+    if not block:
+        raise ValueError(
+            "kernel source at %s declares no UTEST_AGG_KINDS table; an "
+            "aggregate's value form cannot be checked against it" % (path,))
+    body = strip_c_comments(block.group(1))
+    rows = re.findall(
+        r'X\(\s*[A-Z0-9_]+\s*,\s*"([A-Za-z0-9._-]+)"\s*,\s*([01])\s*\)', body)
+    declared = len(re.findall(r"\bX\(", body))
+    if not rows or len(rows) != declared:
+        raise ValueError(
+            "kernel source at %s has a UTEST_AGG_KINDS table this tool "
+            "parsed only %d of %d rows from; refusing to check a value form "
+            "against a partial reading" % (path, len(rows), declared))
+    return ({label: has_value == "1" for label, has_value in rows},
+            "read from %s" % (path,))
+
+
 def collect_candidates(args):
     """Build the ordered (source, bytes) candidate list from the CLI."""
     candidates = []
@@ -418,6 +616,62 @@ def cmd_digest(args):
 
 
 def cmd_match(args):
+    # The aggregate shape is checked FIRST and short-circuits: no filename
+    # produced one, so searching candidates could only ever be misleading.
+    # Under the old shape an aggregate borrowed the refusal identity with a
+    # COUNT in the digest slot, and a candidate whose FNV-1a happened to
+    # equal that count matched for real -- the all-candidates rule could not
+    # flag it, because the digest genuinely agreed.
+    try:
+        aggregate = parse_aggregate(args.identity)
+    except ValueError as exc:
+        sys.stderr.write("utest-refusal-id: %s\n" % (exc,))
+        return 2
+    if aggregate is not None:
+        label, value = aggregate
+        # The grammar alone does not prove the launcher could emit THIS
+        # identity: whether a kind publishes a number is a column in the
+        # kernel's table, so `agg_plan_kept_unknown.exe` and
+        # `agg_manifest_bad_0.exe` are both well-formed and both
+        # impossible. Check the form against the table rather than
+        # authenticating a corrupted or ABI-skewed artifact.
+        try:
+            kinds, provenance = kernel_aggregate_kinds(args.kernel_source)
+        except ValueError as exc:
+            sys.stderr.write("utest-refusal-id: %s\n" % (exc,))
+            return 2
+        text_label = label.decode("utf-8", "surrogateescape")
+        if kinds is not None:
+            if text_label not in kinds:
+                sys.stderr.write(
+                    "utest-refusal-id: no aggregate kind named %r in the "
+                    "launcher's table (%s); this identity was not published "
+                    "by it\n" % (text_label, provenance))
+                return 2
+            if kinds[text_label] != (value is not None):
+                wanted = "a number" if kinds[text_label] else "`unknown`"
+                sys.stderr.write(
+                    "utest-refusal-id: aggregate %r publishes %s, so this "
+                    "identity's value form is one the launcher cannot emit "
+                    "(%s)\n" % (text_label, wanted, provenance))
+                return 2
+        print("identity: %s" % args.identity)
+        print("  AGGREGATE: a fail-closed aggregate published by the "
+              "launcher, not a refused filename")
+        print("  label %s" % _render(label))
+        print("  value %s" % describe_aggregate_value(label, value))
+        if kinds is None:
+            # Aggregate-SHAPED, but nothing checked it against the table.
+            # Saying so is the difference between a classification and an
+            # authentication.
+            print("  NOTE: %s, so the label and value form were NOT checked "
+                  "against the launcher's table -- this is an "
+                  "aggregate-SHAPED identity, not a verified one"
+                  % (provenance,))
+        print("  no correlation attempted: no file produced this record, so "
+              "there is nothing to match it back to")
+        return 5
+
     try:
         ordinal, prefix, digest = parse_identity(args.identity)
     except ValueError as exc:
@@ -505,7 +759,9 @@ def main(argv):
                              help="report which candidates produce an identity")
     p_match.add_argument("identity",
                          help="the refused_<n>_<prefix>_<8hex>.exe name from "
-                              "the artifact")
+                              "the artifact, or an agg_<label>_<value>.exe "
+                              "aggregate (classified, not correlated -- "
+                              "exit 5, no candidate inputs needed)")
     add_input_args(p_match)
     p_match.set_defaults(func=cmd_match)
 

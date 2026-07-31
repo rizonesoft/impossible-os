@@ -1093,16 +1093,57 @@ break the embedded-NUL case the tool exists to cover; it prints an explicit
 mistaken for a prefix-confirmed one. Pass the span with `--hex`, since no
 argv string can carry the leading NUL.
 
-**Aggregate refusals are NOT correlatable, by construction.** The
-fail-closed aggregates -- `enumeration_plan`, `enumeration_plan_full`,
-`manifest_refusal_overflow`, `manifest_unparseable`, `glob_refusal_overflow`
--- publish through the same `refused_<n>_<prefix>_<8hex>.exe` shape, but
-their digest field carries a COUNT (how many entries were lost), not
-`fnv1a32` of the label. No filename produced them, so there is nothing to
-correlate back to; `match` on one of these will not find the aggregate and
-may, in principle, name an unrelated candidate that happens to hash to the
-count. Giving aggregates an identity kind the tool can recognize
-structurally is tracked separately.
+**Aggregate refusals carry their own identity kind:
+`agg_<label>_<value>.exe`.** The five fail-closed aggregates are not
+refusals of a NAME -- no file produced them -- so there is nothing for the
+correlator to hash back to, and they no longer borrow the refusal shape to
+say so. `match` recognizes them on the leading `agg_` token and reports
+them as aggregates, naming the label and the value, without searching any
+candidate; it exits **5**, which is deliberately neither `0` (something
+matched) nor `3` (something was missing). The recognition is structural, so
+a copy of the tool that predates a newly added aggregate still classifies
+it correctly -- it never mirrors the kernel's list of labels.
+
+```bash
+python3 scripts/utest-refusal-id.py match agg_manifest_bad_unknown.exe
+# -> AGGREGATE ... label 'manifest_bad' ... no correlation attempted   (exit 5)
+```
+
+The value's **unit lives in the label**, because it is not one semantic
+type across the five paths:
+
+| Identity | Published when | Value |
+|---|---|---|
+| `agg_plan_pages_<n>.exe` | the enumeration plan could not be allocated | pages **requested** |
+| `agg_plan_kept_<n>.exe` | more entries than one run can enumerate | entries **retained** before the cap |
+| `agg_manifest_kept_<n>.exe` | more malformed manifest entries than can be published individually | refusals **retained** before the cap |
+| `agg_manifest_bad_unknown.exe` | the manifest exists but would not parse | **unknown** -- see below |
+| `agg_glob_kept_<n>.exe` | more glob refusals than can be published individually | refusals **retained** before the cap |
+
+Whether a kind publishes a number is a COLUMN in the launcher's table, not
+a per-call-site decision, so exactly one value form is emittable per kind.
+`match` reads that table out of the kernel source (the same way it reads
+the manifest cap) and refuses `agg_plan_kept_unknown.exe`,
+`agg_manifest_bad_0.exe`, or any label the table does not contain, rather
+than authenticating a corrupted or ABI-skewed artifact. Run out of the
+tree, where there is no table to consult, it still classifies the identity
+but says the label and form were **not** verified.
+
+A `_kept` number is what SURVIVED, not what was lost: the loss is whatever
+came after the cap bit, which by construction was never counted. And
+`manifest_bad` carries the literal `unknown` rather than a number, because
+a manifest that would not parse leaves the number of lost entries
+underivable -- the older shape published `0` there, which reads as
+"nothing was lost" on the one path where the loss is total.
+
+Until 2026-07-31 these five published through the same
+`refused_<n>_<prefix>_<8hex>.exe` shape with a number in the digest slot,
+which made them indistinguishable from a per-name refusal and let `match`
+in principle name an unrelated candidate whose `fnv1a32` happened to equal
+that number -- a false attribution the all-candidates rule could not catch,
+because the digest genuinely agreed. Every label is asserted at compile
+time to fit the derived name bound, so an aggregate identity never
+truncates and always names which path published it.
 
 Three counters move together with each refusal or an artifact would
 contradict itself: `counters[1]` (failed binaries, with `counters[3]`

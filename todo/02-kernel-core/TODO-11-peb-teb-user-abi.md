@@ -78,6 +78,7 @@ title: "TODO-11 -- PEB / TEB & User-Mode ABI"
 | 💎   |  25   | TLS expansion mapping safety + alloc race       | §12, §16           |  [/]   |
 | 💎   |  26   | auxv hardening: classified AT_RANDOM + AT_PHDR  | §13                |  [/]   |
 | 💎   |  27   | uthread_create robustness (guard/tid/stack)     | §14, §16           |  [/]   |
+| 💎   |  28   | Intermittent TEB-without-kernel_gs_base halt    | §1, §4             |  [ ]   |
 
 > 💎 = parity -- Windows NT / 11 and ntdll both require and implement all of these.
 > ⭐ = exclusive -- exposing PEB and TEB as queryable named Ob objects enables user-mode introspection tools and debuggers without any kernel patching; Windows hides these as private loader internals.
@@ -685,6 +686,24 @@ The §8 PEB Ldr main-module entry publishes wrong module identity: `peb_alloc_fo
 **Test checkpoint:** a rollback path uninstalls the kernel-stack guard before freeing (the frame is reusable); two concurrent uthread_create on one task get distinct tids/VAs (no slot corruption); an oversize/overlapping user_stack_size is rejected; a TEB map failure rolls back fully (no READY thread with a broken TEB). Test on: QEMU WHPX + TCG, VirtualBox, bare metal.
 
 > **Deferred:** [H] uthread_create Robustness: Guard-page Cleanup + tid Reservation + Stack-size Validation -- deferred as part of the coordinated §16-§27 CRITICAL ABI/SMP fix-campaign from the §1-§15 review sweep (operator-reserved per CLAUDE.md ABI-change/large-refactor; design-verified for §16); filed plan ready for a focused fresh-context implementation. -> XREF: §27 (item: "[HIGH] uthread_create frees a GUARDED kernel stack via pmm_free_pages (2777) wit" at line 645).
+
+---
+
+## 28. Intermittent TEB-without-kernel_gs_base Halt at Ring-3 Entry
+
+A 2-CPU `SUITE=exec` run halted at the FIRST user-mode binary with `[CRIT] sched: ring-3 task 4 thread 0 has TEB but kernel_gs_base=0 (task.teb=0x7ffdb000 thread.teb=0x7ffdb000)` (`src/kernel/sched/task.c:1426`), immediately after `PID 4 -> entry 0x800000`. Both TEB pointers were populated and only `kernel_gs_base` was zero, so the TEB was allocated and published while the MSR write that pairs with it did not land -- the check fired exactly as designed and the halt is correct behaviour; the DEFECT is the state it caught.
+
+> [!NOTE]
+> Observed 2026-07-31 during TODO-04 §43 (an unrelated host/launcher-identity change: the diff touched `src/kernel/test/test_usermode*.c` and two host scripts, and no file under `src/kernel/sched/`). INTERMITTENT -- one halt in three consecutive `SUITE=exec` runs on the same tree; the two re-runs reported `1840 tests passed, 0 failed` with zero occurrences of the CRIT. It is filed rather than fixed because the fix is an SMP/ABI ordering judgment call on the TEB <-> `kernel_gs_base` handoff, which is operator-reserved. CLAUDE.md records this same CRIT as a real 2-CPU regression once before, so a timing-dependent recurrence is a finding and not emulator noise.
+
+- [ ] Reproduce deterministically before changing anything: identify what orders the TEB publish against the `KERNEL_GS_BASE` write on the AP path, and whether a tick landing between them is the window
+      The single observed instance was `[cpu:0]` at the ring-3 entry of the first binary, on a 2-CPU TCG run. Both `task.teb` and `thread.teb` were already set, which narrows it to the MSR write rather than TEB allocation.
+- [ ] Close the window at the source rather than by retrying or by relaxing the check -- the check is the net that caught this and must keep halting
+      -> XREF: `02-kernel-core/TODO-11-peb-teb-user-abi.md` §4 (item: "KERNEL_GS_BASE written at task_exec / fork")
+- [ ] Add an SMP regression test that fails when the TEB is published without its paired `kernel_gs_base`, so the ordering cannot silently regress again
+- [ ] Commit: `"kernel: sched -- close the TEB/kernel_gs_base publish ordering window"`
+
+**Test checkpoint:** repeated 2-CPU `bash scripts/test.sh SUITE=exec` runs and `bash scripts/test-smoke-matrix.sh` (TCG+KVM x 1+2 CPUs) complete with zero `has TEB but kernel_gs_base=0` occurrences; the CRIT still fires when the pairing is deliberately broken. Test on: QEMU TCG, QEMU KVM, VirtualBox, bare metal.
 
 ---
 

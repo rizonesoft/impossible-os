@@ -2651,6 +2651,94 @@ _Static_assert(UTEST_REFUSAL_ID_FIXED + UTEST_REFUSAL_PREFIX_MIN <=
                "a refusal identity must fit the bound it exists to prove, "
                "with room left for a prefix an operator can read");
 
+/* ---- Aggregate identities ------------------------------------------ *
+ *
+ * The five fail-closed aggregates are not refusals of a NAME: no file
+ * produced them, so there is nothing for the correlator to hash back to.
+ * They used to borrow the refusal shape anyway, with the 8-hex digest
+ * slot carrying a number instead of `fnv1a32` of anything -- which made
+ * them indistinguishable from a per-name refusal to any consumer, and let
+ * scripts/utest-refusal-id.py in principle name an unrelated candidate
+ * whose digest happened to equal that number. The digest genuinely
+ * matched, so the tool's report-every-candidate rule could not catch it.
+ *
+ * They get their own shape instead: `agg_<label>_<value>.exe`. A consumer
+ * tells the two apart STRUCTURALLY, on the leading token, rather than by
+ * mirroring a list of kernel labels -- the mirrored-constant failure this
+ * subsystem has already refused twice. It cannot collide with a real
+ * binary either: u_is_test_binary requires a `test_` prefix, so no
+ * accepted name can begin `agg_`.
+ *
+ * No ordinal. A refusal ordinal exists because arbitrarily many names can
+ * be refused in one run and the digest cannot promise to separate them;
+ * each aggregate path below fires AT MOST ONCE per run and its label
+ * names which one, so the label already is the run-unique identity. The
+ * bytes that buys go to the label, which is why it never truncates.
+ *
+ * The VALUE is not one semantic type across the five, and the identity
+ * says which it is rather than presenting all of them as "the count of
+ * what was lost" (the previous shape, and the previous documentation,
+ * both claimed exactly that and were wrong for four of the five). Each
+ * label carries its own unit: `_pages` is a page count that was
+ * requested, `_kept` is how many entries were RETAINED before the cap bit
+ * -- the loss is whatever came after, which by construction was never
+ * counted -- and `manifest_bad` carries no number at all, because a
+ * manifest that would not parse leaves the number of lost entries
+ * genuinely unknowable. Publishing `0` for it, as the old shape did, is a
+ * false statement about an unknown quantity. */
+#define UTEST_AGG_VALUE_UNKNOWN "unknown"
+
+/* ONE authoritative table. The enum, the label mapping and the per-label
+ * bound assertion are all generated from it, so a new aggregate cannot be
+ * added to some of those lists and omitted from the others -- the failure
+ * the enumerated-reason tree above still has to guard against by hand. In
+ * particular the bound is asserted PER LABEL rather than against a
+ * hand-maintained maximum: a maximum that a new member is missing from
+ * still passes, and the omission would surface only as a lost identity on
+ * a rare path at runtime.
+ *
+ * The third column is whether the kind CARRIES a value at all. It is a
+ * property of the KIND, not a decision each call site makes: an
+ * unparseable manifest cannot know its loss on any code path, so no
+ * caller is in a position to say otherwise. Keeping it here means a
+ * publication site cannot pass the wrong one, which is strictly better
+ * than testing that all five happen to pass the right one -- flipping
+ * `manifest_bad` back to value-bearing would restore exactly the
+ * misleading zero this shape exists to remove. */
+#define UTEST_AGG_KINDS(X)                                                 \
+    X(PLAN_PAGES,    "plan_pages",    1)                                   \
+    X(PLAN_KEPT,     "plan_kept",     1)                                   \
+    X(MANIFEST_KEPT, "manifest_kept", 1)                                   \
+    X(MANIFEST_BAD,  "manifest_bad",  0)                                   \
+    X(GLOB_KEPT,     "glob_kept",     1)
+
+typedef enum {
+#define UTEST_AGG_ENUM(name, label, has_value) UTEST_AGG_##name,
+    UTEST_AGG_KINDS(UTEST_AGG_ENUM)
+#undef UTEST_AGG_ENUM
+    UTEST_AGG_COUNT
+} utest_agg_kind_t;
+
+/* Everything on an aggregate identity that is not the label. The value
+ * reserves the wider of a full uint32 in decimal and the literal that
+ * replaces it, for the same reason the refusal shape reserves a 10-digit
+ * ordinal: the runtime width is smaller, but the assert has to hold for
+ * the worst case the code can actually reach. */
+#define UTEST_AGG_VALUE_MAX                                                \
+    UTEST_MAX2(UTEST_DIGITS_U32, UTEST_LIT(UTEST_AGG_VALUE_UNKNOWN))
+#define UTEST_AGGREGATE_ID_FIXED                                           \
+    (UTEST_LIT("agg_") + UTEST_LIT("_") + UTEST_AGG_VALUE_MAX +            \
+     UTEST_LIT(".exe"))
+#define UTEST_AGG_FITS(name, label, has_value)                             \
+    _Static_assert(UTEST_AGGREGATE_ID_FIXED + UTEST_LIT(label) <=          \
+                       UTEST_MAX_BINARY_NAME,                              \
+                   "aggregate label \"" label "\" does not fit the "       \
+                   "derived name bound: shorten it rather than letting "   \
+                   "the identity truncate, because a truncated label no "  \
+                   "longer names which aggregate path published it");
+UTEST_AGG_KINDS(UTEST_AGG_FITS)
+#undef UTEST_AGG_FITS
+
 /* The accepted charset. Restricting it is what makes the bound above
  * PROVABLE rather than probabilistic: u_xml_escape and u_json_escape are
  * the identity on every byte in this set, so N accepted bytes still cost
@@ -2815,6 +2903,86 @@ static int u_build_refusal_id(char *dst, uint32_t cap, uint32_t ordinal,
     }
     dst[pos] = '\0';
     return u_append(dst, &pos, cap, ".exe");
+}
+
+/* The label an aggregate kind publishes under, from the same table the
+ * enum and the bound asserts come from. An unenumerated kind returns NULL
+ * and the builder below refuses it: a kind that reached this switch
+ * without a label has no identity, and publishing it under a blank one
+ * would put a record in the artifact that names no path at all. */
+static const char *u_aggregate_label(utest_agg_kind_t kind)
+{
+    switch (kind) {
+#define UTEST_AGG_CASE(name, label, has_value) \
+    case UTEST_AGG_##name: return label;
+    UTEST_AGG_KINDS(UTEST_AGG_CASE)
+#undef UTEST_AGG_CASE
+    default: return (const char *)0;
+    }
+}
+
+/* Whether a kind publishes a number at all, from the same table. A caller
+ * never decides this: see the table's comment. An unenumerated kind
+ * answers 0, but the builder rejects it on the missing label first. */
+static int u_aggregate_has_value(utest_agg_kind_t kind)
+{
+    switch (kind) {
+#define UTEST_AGG_HASVAL(name, label, has_value) \
+    case UTEST_AGG_##name: return has_value;
+    UTEST_AGG_KINDS(UTEST_AGG_HASVAL)
+#undef UTEST_AGG_HASVAL
+    default: return 0;
+    }
+}
+
+/* Build the identity a fail-closed aggregate appears under:
+ * `agg_<label>_<value>.exe`, or `agg_<label>_unknown.exe` when the value
+ * is not knowable.
+ *
+ * The unparseable-manifest path publishes the `unknown` token instead of
+ * a number, because every entry went unexamined and the number lost
+ * cannot be derived from anything the launcher still holds. It is a
+ * DISTINCT token rather than a zero so a consumer cannot read "nothing
+ * was lost" off a record that means "we cannot say". Which kinds those
+ * are is read from the table, NOT passed in: a caller is not in a
+ * position to know better, and one that passed the wrong answer would
+ * silently restore the zero.
+ *
+ * Unlike u_build_refusal_id there is no truncation arm: the label comes
+ * from a compile-time table whose every member is asserted to fit the
+ * derived bound, so a label that would not fit fails the BUILD instead of
+ * silently losing the bytes that say which path published the record.
+ * Returns 1 on success, 0 if the kind has no label or `cap` cannot hold a
+ * bound-conforming identity. */
+static int u_build_aggregate_id(char *dst, uint32_t cap,
+                                utest_agg_kind_t kind,
+                                uint32_t value)
+{
+    const char *label = u_aggregate_label(kind);
+    int has_value = u_aggregate_has_value(kind);
+    uint32_t pos = 0;
+
+    if (!dst || cap < UTEST_MAX_BINARY_NAME + 1u || !label)
+        return 0;
+    dst[0] = '\0';
+    if (!u_append(dst, &pos, cap, "agg_"))
+        return 0;
+    if (!u_append(dst, &pos, cap, label))
+        return 0;
+    if (!u_append(dst, &pos, cap, "_"))
+        return 0;
+    if (has_value) {
+        if (!u_append_uint(dst, &pos, cap, (uint64_t)value))
+            return 0;
+    } else if (!u_append(dst, &pos, cap, UTEST_AGG_VALUE_UNKNOWN)) {
+        return 0;
+    }
+    if (!u_append(dst, &pos, cap, ".exe"))
+        return 0;
+    /* The per-label static asserts prove the shape fits; this catches a
+     * caller that passed a buffer smaller than the bound demands, which
+     * the asserts cannot see. */
+    return pos <= UTEST_MAX_BINARY_NAME;
 }
 
 /* Clamp elapsed milliseconds to the width the record bound reserves for
@@ -5604,6 +5772,36 @@ static int u_refusal_already_seen(const struct manifest_state *ms,
  * `test_component_beta.exe` would land in the artifacts under the same
  * prefix, and this section's whole claim is that the operator learns
  * WHICH planned binary went missing. A trusted name needs no synthesis. */
+/* Publish one never-ran record under an identity the caller already
+ * built. Shared by every shape that reports a binary which produced no
+ * self-report -- a per-name refusal, a trusted planned binary that
+ * vanished, and a fail-closed aggregate -- because the counter movement
+ * is what the artifacts reconcile against and three copies of it is three
+ * chances for one to drift out of step with the other two. */
+static void u_publish_never_ran(const char *id, const char *reason,
+                                uint32_t *tap_point, uint32_t *counters,
+                                struct u_report_totals *rt)
+{
+    uint32_t point;
+
+    counters[1]++;      /* a refusal is a FAILED binary ...             */
+    counters[3]++;      /* ... that never RAN, so it is also an error   */
+    rt->unreported++;   /* ... and could not submit a self-report       */
+    point = ++(*tap_point);
+    /* The human verdict line, the TAP point and the legacy `=== N failed`
+     * summary all keep the FAIL vocabulary they have always used: the
+     * host's fail-closed recount counts these very lines against that
+     * summary, so re-spelling them would make the two disagree about a run
+     * neither of them got wrong. Only the machine artifacts, which have an
+     * element/status for "never ran", draw the finer distinction. */
+    utest_record_log(LOG_ERROR, "%s: FAIL (%s)", id, reason);
+    u_emit_tap_point(0, point, id, reason);
+    u_emit_xml_testcase(id, UTEST_TYPE_CORRECTNESS, 3, 0, reason,
+                        (const char *)0);
+    u_emit_json_testcase(id, UTEST_TYPE_CORRECTNESS, 3, 0, reason,
+                         (const struct u_report *)0);
+}
+
 static void u_emit_refusal_named(const char *reason, uint32_t ordinal,
                                  const char *raw, uint32_t digest,
                                  int trusted,
@@ -5611,7 +5809,6 @@ static void u_emit_refusal_named(const char *reason, uint32_t ordinal,
                                  struct u_report_totals *rt)
 {
     char id[UTEST_MAX_BINARY_NAME + 1u];
-    uint32_t point;
     int built;
 
     /* Build BEFORE counting. The build cannot fail while the identity's
@@ -5646,27 +5843,13 @@ static void u_emit_refusal_named(const char *reason, uint32_t ordinal,
         return;
     }
 
-    counters[1]++;      /* a refusal is a FAILED binary ...             */
-    counters[3]++;      /* ... that never RAN, so it is also an error   */
-    rt->unreported++;   /* ... and could not submit a self-report       */
-    point = ++(*tap_point);
-    /* The human verdict line, the TAP point and the legacy `=== N failed`
-     * summary all keep the FAIL vocabulary they have always used: the
-     * host's fail-closed recount counts these very lines against that
-     * summary, so re-spelling them would make the two disagree about a run
-     * neither of them got wrong. Only the machine artifacts, which have an
-     * element/status for "never ran", draw the finer distinction. */
-    utest_record_log(LOG_ERROR, "%s: FAIL (%s)", id, reason);
-    u_emit_tap_point(0, point, id, reason);
-    u_emit_xml_testcase(id, UTEST_TYPE_CORRECTNESS, 3, 0, reason,
-                        (const char *)0);
-    u_emit_json_testcase(id, UTEST_TYPE_CORRECTNESS, 3, 0, reason,
-                         (const struct u_report *)0);
+    u_publish_never_ran(id, reason, tap_point, counters, rt);
 }
 
 /* Untrusted-identity refusal: the raw bytes get the synthesized,
- * sanitized identity. This is every enumeration refusal and every
- * fail-closed aggregate. */
+ * sanitized identity. This is every enumeration refusal of a NAME. The
+ * fail-closed aggregates used to come through here too and no longer do
+ * -- see u_emit_aggregate. */
 static void u_emit_refusal(const char *reason, uint32_t ordinal,
                            const char *raw, uint32_t digest,
                            uint32_t *tap_point, uint32_t *counters,
@@ -5674,6 +5857,32 @@ static void u_emit_refusal(const char *reason, uint32_t ordinal,
 {
     u_emit_refusal_named(reason, ordinal, raw, digest, 0,
                          tap_point, counters, rt);
+}
+
+/* Fail-closed aggregate: no name was refused, so the record carries the
+ * aggregate identity rather than a synthesized one. It moves the same
+ * counters as a refusal -- one failed binary that never ran and submitted
+ * no report -- because the plan reserved exactly one slot for it and both
+ * artifact formats reconcile record count against the summary total. */
+static void u_emit_aggregate(const char *reason, utest_agg_kind_t kind,
+                             uint32_t value,
+                             uint32_t *tap_point, uint32_t *counters,
+                             struct u_report_totals *rt)
+{
+    char id[UTEST_MAX_BINARY_NAME + 1u];
+
+    /* Build before counting, for the reason u_emit_refusal_named states:
+     * a counted-but-unpublished record makes the artifact contradict
+     * itself, where an unbuilt one merely leaves it a record short. */
+    if (!u_build_aggregate_id(id, sizeof(id), kind, value)) {
+        /* Unreachable while the per-label static asserts hold. Reported
+         * on the marker channel the host already fails the run on. */
+        utest_record_log(LOG_ERROR,
+             "[UTEST-RECORD-OVERFLOW] aggregate identity for kind %u could "
+             "not be built", (uint64_t)kind);
+        return;
+    }
+    u_publish_never_ran(id, reason, tap_point, counters, rt);
 }
 
 /* ---- Per-binary run: spawn, wait, log, cleanup --------------------- *
@@ -6281,6 +6490,10 @@ void test_usermode_run(void)
      * alone can only make collisions unlikely, and an operator who cannot
      * tell two refused binaries apart cannot act on either. */
     uint32_t              refusal_ordinal = 0;
+    /* plan.count as it stood BEFORE u_plan_drop_runs rewrites it on the
+     * overflow path -- the number of entries the plan RETAINED before the
+     * cap bit, which is what the plan-full aggregate publishes. */
+    uint32_t              plan_kept_at_overflow = 0;
     /* The single enumeration this run executes from. Built once below,
      * consumed unchanged by the execution loop -- the two can no longer
      * describe different sets of binaries. */
@@ -6504,6 +6717,16 @@ void test_usermode_run(void)
      * takes, and for the same reason. */
     if (plan.overflowed) {
         total_planned++;                /* the plan-full aggregate */
+        /* Snapshot BEFORE the drop. u_plan_drop_runs removes every
+         * runnable entry and rewrites plan.count, so the aggregate's
+         * `_kept` value has to be read here or it reports the
+         * post-discard count -- a full 256-entry plan would publish
+         * `agg_plan_kept_0.exe`, which is precisely the "0 reads as
+         * nothing was lost" misstatement this identity kind exists to
+         * remove, on the one path it exists to describe. The POST-drop
+         * count is still what total_planned reconciles against below,
+         * because that counts records the run will actually publish. */
+        plan_kept_at_overflow = plan.count;
         u_plan_drop_runs(&plan);
     }
 
@@ -6655,18 +6878,17 @@ void test_usermode_run(void)
          * reconcile, and the run fails on this record instead of taking
          * the zero-planned path that publishes a successful empty suite. */
         total_ran++;
-        u_emit_refusal(UTEST_RSN_PLAN_ALLOC, ++refusal_ordinal,
-                       "enumeration_plan", (uint32_t)UTEST_PLAN_PAGES,
-                       &tap_point, counters, &rt);
+        u_emit_aggregate(UTEST_RSN_PLAN_ALLOC, UTEST_AGG_PLAN_PAGES,
+                         (uint32_t)UTEST_PLAN_PAGES,
+                         &tap_point, counters, &rt);
     }
     if (plan.overflowed) {
         /* More entries than one run can enumerate. Past the cap the plan
          * is not the complete enumeration, so nothing ran (see above) and
          * the aggregate is what the run reconciles and fails on. */
         total_ran++;
-        u_emit_refusal(UTEST_RSN_PLAN_FULL, ++refusal_ordinal,
-                       "enumeration_plan_full", plan.count,
-                       &tap_point, counters, &rt);
+        u_emit_aggregate(UTEST_RSN_PLAN_FULL, UTEST_AGG_PLAN_KEPT,
+                         plan_kept_at_overflow, &tap_point, counters, &rt);
     }
     if (manifest.refused_overflowed) {
         /* More malformed manifest entries than the run can publish
@@ -6684,9 +6906,9 @@ void test_usermode_run(void)
          * phantom unrun binary -- not_run=1 and an [UTEST-RUN-INCOMPLETE]
          * on a run where every refusal, aggregate included, WAS published. */
         total_ran++;
-        u_emit_refusal(UTEST_RSN_ARRAY_FULL, ++refusal_ordinal,
-                       "manifest_refusal_overflow",
-                       manifest.refused_count, &tap_point, counters, &rt);
+        u_emit_aggregate(UTEST_RSN_ARRAY_FULL, UTEST_AGG_MANIFEST_KEPT,
+                         manifest.refused_count,
+                         &tap_point, counters, &rt);
     }
     if (manifest.unreadable) {
         /* A manifest that EXISTS but could not be parsed at all: every
@@ -6695,16 +6917,20 @@ void test_usermode_run(void)
          * reserved slot with no record is an artifact a JUnit consumer
          * reads as an empty successful suite -- so it publishes like any
          * other refusal rather than leaving only a generic marker. */
+        /* No value: the manifest did not parse, so how many entries it
+         * held -- and therefore how many were lost -- is not knowable
+         * from anything the launcher still has. The old shape published
+         * `0` here, which reads as "nothing was lost" for the one path
+         * where the loss is total. */
         total_ran++;
-        u_emit_refusal(UTEST_RSN_UNREADABLE, ++refusal_ordinal,
-                       "manifest_unparseable", 0u,
-                       &tap_point, counters, &rt);
+        u_emit_aggregate(UTEST_RSN_UNREADABLE, UTEST_AGG_MANIFEST_BAD,
+                         0u, &tap_point, counters, &rt);
     }
     if (glob_refusal_overflowed) {
         total_ran++;
-        u_emit_refusal(UTEST_RSN_ARRAY_FULL, ++refusal_ordinal,
-                       "glob_refusal_overflow", glob_refusal_count,
-                       &tap_point, counters, &rt);
+        u_emit_aggregate(UTEST_RSN_ARRAY_FULL, UTEST_AGG_GLOB_KEPT,
+                         glob_refusal_count,
+                         &tap_point, counters, &rt);
     }
 
     /* EXECUTE THE PLAN.
@@ -6992,6 +7218,37 @@ int test_usermode_build_refusal_id(char *dst, uint32_t cap, uint32_t ordinal,
     return u_build_refusal_id(dst, cap, ordinal, raw, digest);
 }
 
+/* The aggregate table, exported so the tests can walk EVERY kind rather
+ * than a hand-copied list of five. A test that enumerates 0 ..
+ * test_usermode_aggregate_count() - 1 fails the moment a new aggregate is
+ * added without a conforming identity, which a mirrored list in the test
+ * would not. */
+uint32_t test_usermode_aggregate_count(void);
+uint32_t test_usermode_aggregate_count(void)
+{
+    return (uint32_t)UTEST_AGG_COUNT;
+}
+
+const char *test_usermode_aggregate_label(uint32_t kind);
+const char *test_usermode_aggregate_label(uint32_t kind)
+{
+    return u_aggregate_label((utest_agg_kind_t)kind);
+}
+
+int test_usermode_build_aggregate_id(char *dst, uint32_t cap, uint32_t kind,
+                                     uint32_t value);
+int test_usermode_build_aggregate_id(char *dst, uint32_t cap, uint32_t kind,
+                                     uint32_t value)
+{
+    return u_build_aggregate_id(dst, cap, (utest_agg_kind_t)kind, value);
+}
+
+int test_usermode_aggregate_has_value(uint32_t kind);
+int test_usermode_aggregate_has_value(uint32_t kind)
+{
+    return u_aggregate_has_value((utest_agg_kind_t)kind);
+}
+
 uint64_t test_usermode_clamp_time_ms(uint64_t ms);
 uint64_t test_usermode_clamp_time_ms(uint64_t ms)
 {
@@ -7125,10 +7382,17 @@ int test_usermode_plan_dedup(const char *a_name, int a_type,
  * launcher applies. Reports whether the plan flagged the exhaustion and
  * how many runnable entries survived it -- which must be zero, because an
  * incomplete enumeration may not execute a partial plan. */
+/* `out_kept_before_drop` is the value the plan-full aggregate publishes:
+ * plan.count as it stands BEFORE u_plan_drop_runs rewrites it. It is
+ * reported separately from the post-drop count precisely because the two
+ * differ on this path, and publishing the post-drop one would report a
+ * full plan as `agg_plan_kept_0.exe`. */
 int test_usermode_plan_overflow(uint32_t *out_overflowed,
-                                uint32_t *out_runs_after);
+                                uint32_t *out_runs_after,
+                                uint32_t *out_kept_before_drop);
 int test_usermode_plan_overflow(uint32_t *out_overflowed,
-                                uint32_t *out_runs_after)
+                                uint32_t *out_runs_after,
+                                uint32_t *out_kept_before_drop)
 {
     struct plan_state ps;
     uint32_t i, runs = 0;
@@ -7151,6 +7415,7 @@ int test_usermode_plan_overflow(uint32_t *out_overflowed,
     }
     s_filter = saved_filter;
     if (out_overflowed) *out_overflowed = (uint32_t)ps.overflowed;
+    if (out_kept_before_drop) *out_kept_before_drop = ps.count;
     u_plan_drop_runs(&ps);
     for (i = 0; i < ps.count; i++)
         if (ps.entries[i].kind == (uint8_t)UTEST_PLAN_RUN) runs++;

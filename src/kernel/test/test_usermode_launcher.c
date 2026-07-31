@@ -44,6 +44,11 @@ uint32_t test_usermode_name_room(uint32_t kind);
 uint32_t test_usermode_name_digest(const char *p, uint32_t len);
 int test_usermode_build_refusal_id(char *dst, uint32_t cap, uint32_t ordinal,
                                    const char *raw, uint32_t digest);
+uint32_t test_usermode_aggregate_count(void);
+const char *test_usermode_aggregate_label(uint32_t kind);
+int test_usermode_build_aggregate_id(char *dst, uint32_t cap, uint32_t kind,
+                                     uint32_t value);
+int test_usermode_aggregate_has_value(uint32_t kind);
 uint64_t test_usermode_clamp_time_ms(uint64_t ms);
 uint32_t test_usermode_reason_max(void);
 int test_usermode_format_xml_testcase(char *dst, uint32_t cap,
@@ -65,7 +70,8 @@ int test_usermode_plan_dedup(const char *a_name, int a_type,
                              uint32_t *out_runs, uint32_t *out_refusals,
                              uint32_t *out_smoke_refused);
 int test_usermode_plan_overflow(uint32_t *out_overflowed,
-                                uint32_t *out_runs_after);
+                                uint32_t *out_runs_after,
+                                uint32_t *out_kept_before_drop);
 int test_usermode_binary_present(const char *name);
 int test_usermode_digest_binary(const char *name,
                                 uint8_t out[SHA256_DIGEST_LEN]);
@@ -525,14 +531,15 @@ static void test_plan_refuses_a_conflicting_duplicate(void)
 
 static void test_plan_overflow_runs_nothing(void)
 {
-    uint32_t overflowed = 99, runs_after = 99;
+    uint32_t overflowed = 99, runs_after = 99, kept_before_drop = 99;
 
     /* Past its capacity the plan is no longer the complete enumeration,
      * so it cannot certify what it did not enumerate. Executing the
      * retained prefix would produce an internally consistent run that
      * silently omitted binaries -- exactly the false green this section
      * removes -- so the run publishes an aggregate and launches nothing. */
-    if (!test_usermode_plan_overflow(&overflowed, &runs_after)) {
+    if (!test_usermode_plan_overflow(&overflowed, &runs_after,
+                                     &kept_before_drop)) {
         TEST_SKIP("plan allocation unavailable");
         return;
     }
@@ -540,6 +547,17 @@ static void test_plan_overflow_runs_nothing(void)
                    "filling past the capacity must flag the plan incomplete");
     TEST_ASSERT_EQ(runs_after, 0u,
                    "an incomplete plan executes no binary at all");
+
+    /* The VALUE the plan-full aggregate publishes, at the runtime path
+     * rather than through the builder. u_plan_drop_runs rewrites
+     * plan.count to zero here, so reading it after the drop would report
+     * a completely full plan as `agg_plan_kept_0.exe` -- a zero on the
+     * one path whose whole subject is loss. The published number is the
+     * count as it stood BEFORE the drop, which is the plan's capacity. */
+    TEST_ASSERT_EQ(kept_before_drop, test_usermode_plan_capacity(),
+                   "the plan-full aggregate publishes the pre-drop count");
+    TEST_ASSERT(kept_before_drop != runs_after,
+                "the published value is not the post-discard count");
 }
 
 static void test_manifest_parses_past_the_old_runnable_cap(void)
@@ -1370,6 +1388,186 @@ static void test_refusal_id_is_bound_conforming_and_unique(void)
     TEST_ASSERT(test_usermode_build_refusal_id(id1, 8u, 1u, "test_x.exe",
                                                0u) == 0,
                 "a buffer too small for a conforming identity is refused");
+}
+
+/* Every aggregate kind, walked from the kernel's own table rather than a
+ * list copied into the test: a new aggregate added without a conforming
+ * identity has to fail here, and a mirrored list would simply not see it.
+ *
+ * `strn`-style helpers are not available in this translation unit, so the
+ * comparisons below are open-coded against the exported label. */
+static uint32_t utest_len(const char *s)
+{
+    uint32_t n = 0;
+    while (s[n]) n++;
+    return n;
+}
+
+static int u_labels_equal(const char *a, const char *b)
+{
+    uint32_t i = 0;
+
+    while (a[i] && a[i] == b[i]) i++;
+    return a[i] == b[i];
+}
+
+static void test_every_aggregate_identity_conforms(void)
+{
+    uint32_t bound = test_usermode_max_binary_name();
+    uint32_t kinds = test_usermode_aggregate_count();
+    uint32_t k, i;
+
+    TEST_ASSERT(kinds == 5u,
+                "the launcher publishes exactly five fail-closed aggregates");
+
+    for (k = 0; k < kinds; k++) {
+        const char *label = test_usermode_aggregate_label(k);
+        char id[128];
+        uint32_t len, lab_len, j;
+
+        TEST_ASSERT(label != (const char *)0,
+                    "every enumerated aggregate kind has a label");
+        lab_len = utest_len(label);
+        TEST_ASSERT(lab_len > 0u, "an aggregate label is not empty");
+
+        /* A representative value, and the widest one the field reserves,
+         * so the bound is proven at the worst case rather than a small
+         * number that happens to fit. */
+        TEST_ASSERT(test_usermode_build_aggregate_id(id, sizeof(id), k,
+                                                     4294967295u) == 1,
+                    "an aggregate identity builds at the widest value");
+        len = utest_len(id);
+        TEST_ASSERT(len <= bound,
+                    "the aggregate identity obeys the derived name bound");
+
+        /* Structurally distinguishable: it leads with `agg_`, which the
+         * refusal shape never does and no accepted binary can, because
+         * u_is_test_binary demands a `test_` prefix. */
+        TEST_ASSERT(id[0] == 'a' && id[1] == 'g' && id[2] == 'g' &&
+                    id[3] == '_',
+                    "an aggregate identity leads with agg_, not refused_");
+        TEST_ASSERT(id[len - 4] == '.' && id[len - 3] == 'e' &&
+                    id[len - 2] == 'x' && id[len - 1] == 'e',
+                    "aggregate identity ends in .exe for the host recount");
+
+        /* The label is present WHOLE. Unlike the refusal prefix there is
+         * no truncation arm, so a label that no longer named its path
+         * would be a build failure, not a silent rename. */
+        for (j = 0; j < lab_len; j++)
+            TEST_ASSERT(id[4u + j] == label[j],
+                        "the aggregate label is published untruncated");
+        TEST_ASSERT(id[4u + lab_len] == '_',
+                    "the label is followed by the value separator");
+
+        for (j = 0; j < len; j++) {
+            char c = id[j];
+            int ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+                     (c >= '0' && c <= '9') || c == '.' || c == '_' ||
+                     c == '-';
+            TEST_ASSERT(ok, "every aggregate identity byte is in the "
+                            "accepted charset");
+        }
+
+        /* Distinct from every other kind: the label is the whole of the
+         * run-uniqueness claim now that there is no ordinal. */
+        for (i = 0; i < k; i++) {
+            const char *other = test_usermode_aggregate_label(i);
+            TEST_ASSERT(utest_len(other) != lab_len ||
+                        !u_labels_equal(other, label),
+                        "no two aggregate kinds share a label");
+        }
+    }
+}
+
+static void test_aggregate_unknown_value_is_not_zero(void)
+{
+    char known[128], unknown[128];
+    uint32_t bound = test_usermode_max_binary_name();
+    uint32_t kinds = test_usermode_aggregate_count();
+    uint32_t len, i, k, valued = 0, unvalued = 0;
+
+    /* Whether a kind carries a number is a property of the KIND, read
+     * from the launcher's own table -- no publication site passes it, so
+     * no site can pass the wrong one. Exactly one kind is value-less:
+     * the unparseable manifest, which cannot know its loss on any path. */
+    for (k = 0; k < kinds; k++) {
+        if (test_usermode_aggregate_has_value(k))
+            valued++;
+        else
+            unvalued++;
+    }
+    TEST_ASSERT_EQ(unvalued, 1u,
+                   "exactly one aggregate kind publishes no number");
+    TEST_ASSERT_EQ(valued, kinds - 1u,
+                   "every other aggregate kind publishes a number");
+    /* An unenumerated kind answers 0 rather than reading off the end of
+     * the table. */
+    TEST_ASSERT(test_usermode_aggregate_has_value(kinds) == 0,
+                "an unenumerated kind claims no value");
+
+    /* Find the value-less kind by its property, not by a hardcoded index
+     * -- a table reorder must not quietly retarget this test. */
+    for (k = 0; k < kinds; k++)
+        if (!test_usermode_aggregate_has_value(k))
+            break;
+    TEST_ASSERT(k < kinds, "the value-less aggregate kind is enumerated");
+
+    /* The unparseable-manifest path cannot know how many entries were
+     * lost. It must say so, not publish a zero that reads as "nothing
+     * was lost" on the one path where the loss is total. */
+    TEST_ASSERT(test_usermode_build_aggregate_id(unknown, sizeof(unknown),
+                                                 k, 0u) == 1,
+                "an aggregate identity builds with no knowable value");
+    /* A value-BEARING kind at value zero is a different identity: zero is
+     * a fact there, and `unknown` is the absence of one. */
+    TEST_ASSERT(test_usermode_build_aggregate_id(known, sizeof(known),
+                                                 (k + 1u) % kinds, 0u) == 1,
+                "a value-bearing kind builds with a value of zero");
+    len = utest_len(unknown);
+    TEST_ASSERT(len <= test_usermode_max_binary_name(),
+                "the unknown-value identity obeys the bound too");
+    TEST_ASSERT(!u_labels_equal(known, unknown),
+                "an unknown value is not published as a zero");
+    /* The token, spelled out, so a consumer cannot read a count off it.
+     * Compared as a SUFFIX rather than by counting back from the end one
+     * index at a time -- the first draft of this assertion was off by one
+     * and passed review as arithmetic nobody re-derived. */
+    {
+        static const char want[] = "_unknown.exe";
+        uint32_t want_len = utest_len(want);
+
+        TEST_ASSERT(len > want_len,
+                    "the identity is longer than the value token it ends in");
+        TEST_ASSERT(u_labels_equal(unknown + (len - want_len), want),
+                    "the unknown value publishes the literal `unknown`");
+    }
+    for (i = 0; i < len; i++)
+        TEST_ASSERT(unknown[i] != ' ', "no spaces reach the identity");
+
+    /* An unenumerated kind has no label and must fail closed rather than
+     * publish a record naming no path at all. */
+    TEST_ASSERT(test_usermode_build_aggregate_id(known, sizeof(known),
+                                                 kinds, 0u) == 0,
+                "an unenumerated aggregate kind is refused, not blank");
+    TEST_ASSERT(test_usermode_build_aggregate_id(known, 8u, 0u, 1u) == 0,
+                "a buffer too small for a conforming identity is refused");
+
+    /* The exact cap boundary, on both sides. The builder demands room for
+     * a bound-conforming identity plus its terminator, so `bound` bytes
+     * is one short and `bound + 1` is the smallest buffer that works --
+     * asserted rather than assumed, because an off-by-one here would
+     * either refuse every identity or write one byte past a caller's
+     * buffer. */
+    for (k = 0; k < kinds; k++) {
+        TEST_ASSERT(test_usermode_build_aggregate_id(known, bound, k,
+                                                     4294967295u) == 0,
+                    "a buffer of exactly the bound has no room for the NUL");
+        TEST_ASSERT(test_usermode_build_aggregate_id(known, bound + 1u, k,
+                                                     4294967295u) == 1,
+                    "a buffer of bound + 1 builds the widest identity");
+        TEST_ASSERT(utest_len(known) <= bound,
+                    "the identity built at the exact cap obeys the bound");
+    }
 }
 
 static void test_refusal_id_survives_ordinal_digit_growth(void)
@@ -4310,6 +4508,12 @@ void test_register_usermode_launcher(void)
                             TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: refusal identity is bounded and unique",
                             test_refusal_id_is_bound_conforming_and_unique,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: every aggregate identity conforms",
+                            test_every_aggregate_identity_conforms,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: aggregate unknown value is not a zero",
+                            test_aggregate_unknown_value_is_not_zero,
                             TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: time_ms clamp makes its digit width provable",
                             test_time_ms_clamp_makes_the_digit_width_provable,
