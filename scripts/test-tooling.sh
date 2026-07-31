@@ -10407,12 +10407,25 @@ for _fn in utest_xml_identity_attrs utest_json_identity utest_xml_identity_props
     UAR_FNS="$UAR_FNS
 $_body"
 done
-# The extracted span STARTS at the XML_SRC assignment, not at
-# XML_SLICE_FAILED=0. Hardcoding XML_SRC in the harness would let production
-# drift back to a shared run-slice path -- the exact shared-state shape this
-# section removed -- while this test kept passing against its own private one.
-UAR_REGION="$(sed -n '/^    XML_SRC="\$RECORD_DIR\/runslice"$/,/^    fi  # XML_SLICE_FAILED guard/p' \
+# TWO spans, both taken from production, because section 36 split this work in
+# two: the shared step that decides WHERE the slice lives and whether slicing
+# failed, and the XML step that consumes that decision. Each span is extracted
+# whole so it stays balanced shell; concatenating them reproduces the real
+# control flow without the harness restating any of it.
+#
+# Hardcoding the slice path in the harness would let production drift back to a
+# shared run-slice path -- the exact shared-state shape section 30 removed --
+# while this test kept passing against its own private one. So both anchors are
+# the production assignments themselves.
+UAR_SHARED="$(sed -n '/^RUNSLICE="\$RECORD_DIR\/runslice"$/,/^fi$/p' \
               "$REPO_ROOT/scripts/test.sh")"
+UAR_REGION="$(sed -n '/^    XML_SRC="\$RUNSLICE"$/,/^    fi  # XML_SLICE_FAILED guard/p' \
+              "$REPO_ROOT/scripts/test.sh")"
+if [ -z "$UAR_SHARED" ] || ! printf '%s' "$UAR_SHARED" | grep -q 'utest-capture.py'; then
+    t_fail "artifact record: extracted the shared slice/capture step from scripts/test.sh" \
+        "anchors not found -- RUNSLICE assignment .. closing fi"
+    UAR_REGION=""
+fi
 if [ -z "$UAR_REGION" ]; then
     t_fail "artifact record: extracted the slice-failure region from scripts/test.sh" \
         "anchors not found -- XML_SRC assignment .. 'fi  # XML_SLICE_FAILED guard'"
@@ -10453,7 +10466,11 @@ CI_PARITY=0
 UTEST_FAIL=0; XML_PUBLISHED=0; XML_SUMMARY_OK=1; UTEST_FINALIZED=0
 UF="UTEST-deadbeef: "
 FRAME_COMPLETE_RUN="1"
+# The extracted span now begins in the shared slice/capture step, which is
+# reached by an XML run OR a JSON run; both flags must exist under `set -u`.
+HAS_XML=1; JSON_MODE=0
 '"$UAR_FNS"'
+'"$UAR_SHARED"'
 '"$UAR_REGION"'
 utest_finalize_record complete
 # XML_SRC comes from the extracted production span, never from this harness:
@@ -11223,6 +11240,504 @@ if grep -qF '^[a-z0-9][a-z0-9-]{0,31}$' "$LEGSH" &&
 else
     t_fail "identity: the documented leg grammar matches the one the runner enforces"
 fi
+
+# ============================================================================
+# Per-binary captured output (scripts/utest-capture.py)
+# ============================================================================
+#
+# Section 33 frames ring-3 stdout at the SOURCE, so the kernel's declared byte
+# count and the host's decoded count cover the identical byte range. That is
+# what makes reconciliation fail-closed rather than advisory: a mismatch is
+# corruption, not the ordinary klog interleaving the older delimiter design
+# could never rule out. These assertions pin every refusal reason, because a
+# reconciliation that silently accepts a damaged payload is worse than none --
+# it puts a plausible-looking artifact over bytes nobody can vouch for.
+
+if [ "$QUIET" = "0" ]; then
+    echo ""
+    echo -e "${CYAN}Per-binary captured output (host reassembly)${NC}"
+fi
+
+CAP_TMP=$(mktemp -d)
+CAPTURE="$REPO_ROOT/scripts/utest-capture.py"
+CAP_NONCE="1a2b3c4d"
+CAP_PREFIX="UTEST-${CAP_NONCE}: "
+
+# Emit one framed capture record. Physical ORDER of the calls is the caller's
+# choice on purpose: several assertions below deliberately write records to the
+# file in an order that does not match seq.
+cap_line() {
+    echo "[  1.000] [cpu:0] [ OK ] ${CAP_PREFIX}$1"
+}
+
+cap_model() {  # <log> <out.json> -> exit code of the model build
+    python3 "$CAPTURE" model "$1" "$2" --prefix "$CAP_PREFIX" >/dev/null 2>&1
+}
+
+cap_field() {  # <json> <python-expr over `m`>
+    python3 -c 'import json,sys
+m = json.load(open(sys.argv[1]))
+print(eval(sys.argv[2]))' "$1" "$2" 2>/dev/null
+}
+
+# c1. Baseline: a well-formed two-chunk payload reassembles byte-exactly.
+{
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=5 final=0 hello"
+    cap_line "[UTEST-CAPTURE] owner=7 seq=1 len=7 final=1  world\x0a"
+} > "$CAP_TMP/good.log"
+if cap_model "$CAP_TMP/good.log" "$CAP_TMP/good.json" &&
+   [ "$(cap_field "$CAP_TMP/good.json" 'm["binaries"][0]["text"]')" = 'hello world' ] &&
+   [ "$(cap_field "$CAP_TMP/good.json" 'm["binaries"][0]["total_bytes"]')" = "12" ]; then
+    t_pass "capture: a well-formed payload reassembles byte-exactly"
+else
+    t_fail "capture: a well-formed payload reassembles byte-exactly"
+fi
+
+# c2. Records are ordered by seq, NEVER by physical position. klog releases its
+#     ring lock before the serial write, so two concurrent writers' records can
+#     land on the wire in either order -- this is the whole reason section 33
+#     carries a seq at all.
+{
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 seq=1 len=7 final=1  world\x0a"
+    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=5 final=0 hello"
+} > "$CAP_TMP/ooo.log"
+if cap_model "$CAP_TMP/ooo.log" "$CAP_TMP/ooo.json" &&
+   [ "$(cap_field "$CAP_TMP/ooo.json" 'm["binaries"][0]["text"]')" = 'hello world' ]; then
+    t_pass "capture: chunks reassemble by seq, not by physical stream order"
+else
+    t_fail "capture: chunks reassemble by seq, not by physical stream order"
+fi
+
+# c3. final=1 terminates ONE write() call, not the owner's lifetime
+#     (include/kernel/sched/task.h: "each call gets its own final=1 terminator,
+#     never coalesced with a later call"). A binary calling write() three times
+#     emits three final records; refusing that would fail every real binary.
+{
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=1 final=1 a"
+    cap_line "[UTEST-CAPTURE] owner=7 seq=1 len=1 final=1 b"
+    cap_line "[UTEST-CAPTURE] owner=7 seq=2 len=1 final=1 c"
+} > "$CAP_TMP/multi.log"
+if cap_model "$CAP_TMP/multi.log" "$CAP_TMP/multi.json" &&
+   [ "$(cap_field "$CAP_TMP/multi.json" 'm["binaries"][0]["text"]')" = "abc" ]; then
+    t_pass "capture: multiple final=1 records (one per write) are accepted"
+else
+    t_fail "capture: multiple final=1 records (one per write) are accepted"
+fi
+
+# c4. A binary that writes nothing is not a corrupt binary.
+cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_silent.exe" > "$CAP_TMP/silent.log"
+if cap_model "$CAP_TMP/silent.log" "$CAP_TMP/silent.json" &&
+   [ "$(cap_field "$CAP_TMP/silent.json" 'm["binaries"][0]["total_bytes"]')" = "0" ]; then
+    t_pass "capture: a BEGIN with zero chunks is valid"
+else
+    t_fail "capture: a BEGIN with zero chunks is valid"
+fi
+
+# c5. seq starts at 0 by construction (TASK_UTEST_CAPTURE_RESET on every owner
+#     constructor), so accepting the first OBSERVED seq as the base would let a
+#     lost leading record pass as a complete payload.
+{
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 seq=1 len=1 final=1 b"
+} > "$CAP_TMP/head.log"
+if ! cap_model "$CAP_TMP/head.log" "$CAP_TMP/head.json" &&
+   [ "$(cap_field "$CAP_TMP/head.json" 'm["refusal"]["reason"]')" = "capture_missing_head" ]; then
+    t_pass "capture: a payload not starting at seq=0 is refused"
+else
+    t_fail "capture: a payload not starting at seq=0 is refused"
+fi
+
+# c6-c10. Every other corruption shape gets its own named refusal.
+{
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=1 final=0 a"
+    cap_line "[UTEST-CAPTURE] owner=7 seq=2 len=1 final=1 c"
+} > "$CAP_TMP/gap.log"
+if ! cap_model "$CAP_TMP/gap.log" "$CAP_TMP/gap.json" &&
+   [ "$(cap_field "$CAP_TMP/gap.json" 'm["refusal"]["reason"]')" = "capture_seq_gap" ]; then
+    t_pass "capture: a seq gap is refused"
+else
+    t_fail "capture: a seq gap is refused"
+fi
+
+{
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=1 final=0 a"
+} > "$CAP_TMP/unterm.log"
+if ! cap_model "$CAP_TMP/unterm.log" "$CAP_TMP/unterm.json" &&
+   [ "$(cap_field "$CAP_TMP/unterm.json" 'm["refusal"]["reason"]')" = "capture_unterminated" ]; then
+    t_pass "capture: a payload whose highest seq is not final is refused"
+else
+    t_fail "capture: a payload whose highest seq is not final is refused"
+fi
+
+{
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=9 final=1 abc"
+} > "$CAP_TMP/mismatch.log"
+if ! cap_model "$CAP_TMP/mismatch.log" "$CAP_TMP/mismatch.json" &&
+   [ "$(cap_field "$CAP_TMP/mismatch.json" 'm["refusal"]["reason"]')" = "capture_byte_mismatch" ]; then
+    t_pass "capture: declared-vs-decoded byte mismatch fails closed"
+else
+    t_fail "capture: declared-vs-decoded byte mismatch fails closed"
+fi
+
+{
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=1 final=1 a"
+    cap_line "[UTEST-CAPTURE-LOST] owner=7 len=unknown"
+} > "$CAP_TMP/lost.log"
+if ! cap_model "$CAP_TMP/lost.log" "$CAP_TMP/lost.json" &&
+   [ "$(cap_field "$CAP_TMP/lost.json" 'm["refusal"]["reason"]')" = "capture_lost" ]; then
+    t_pass "capture: a producer-declared loss record fails the run"
+else
+    t_fail "capture: a producer-declared loss record fails the run"
+fi
+
+cap_line "[UTEST-CAPTURE] owner=9 seq=0 len=1 final=1 a" > "$CAP_TMP/unbound.log"
+if ! cap_model "$CAP_TMP/unbound.log" "$CAP_TMP/unbound.json" &&
+   [ "$(cap_field "$CAP_TMP/unbound.json" 'm["refusal"]["reason"]')" = "capture_unbound_owner" ]; then
+    t_pass "capture: chunks with no owner binding are refused"
+else
+    t_fail "capture: chunks with no owner binding are refused"
+fi
+
+# c11. The nonce prefix is what makes a record non-forgeable. A capture-shaped
+#      line WITHOUT it is a ring-3 binary echoing text, not a launcher record.
+cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe" > "$CAP_TMP/forge.log"
+echo "[  1.000] [cpu:0] [UTEST-CAPTURE] owner=7 seq=0 len=99 final=1 forged" \
+    >> "$CAP_TMP/forge.log"
+if cap_model "$CAP_TMP/forge.log" "$CAP_TMP/forge.json" &&
+   [ "$(cap_field "$CAP_TMP/forge.json" 'm["binaries"][0]["total_bytes"]')" = "0" ]; then
+    t_pass "capture: an unframed capture-shaped line is ignored"
+else
+    t_fail "capture: an unframed capture-shaped line is ignored"
+fi
+
+# c12. An unescaped marker byte cannot appear in a real payload: the producer
+#      always rewrites '[' as \x5b precisely so a payload cannot impersonate a
+#      record kind. Seeing one raw means the line was damaged.
+{
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=1 final=1 ["
+} > "$CAP_TMP/marker.log"
+if ! cap_model "$CAP_TMP/marker.log" "$CAP_TMP/marker.json" &&
+   [ "$(cap_field "$CAP_TMP/marker.json" 'm["refusal"]["reason"]')" = "capture_unescaped_marker" ]; then
+    t_pass "capture: an unescaped marker byte in a payload is refused"
+else
+    t_fail "capture: an unescaped marker byte in a payload is refused"
+fi
+
+# c13. Truncation is bounded AND declared. Reconciliation still ran over the
+#      whole payload -- total_bytes proves it -- so the artifact never disagrees
+#      with its own byte count the way a silent cut would.
+python3 - "$CAP_TMP/big.log" "$CAP_PREFIX" <<'PYEOF'
+import sys
+path, prefix = sys.argv[1], sys.argv[2]
+chunk = "x" * 128
+with open(path, "w") as fh:
+    fh.write("[  1.000] [cpu:0] [ OK ] %s[UTEST-CAPTURE-BEGIN] owner=7 name=test_big.exe\n" % prefix)
+    total = (64 * 1024) // 128 + 8          # deliberately past PER_BINARY_CAP
+    for seq in range(total):
+        final = 1 if seq == total - 1 else 0
+        fh.write("[  1.000] [cpu:0] [ OK ] %s[UTEST-CAPTURE] owner=7 seq=%d len=128 final=%d %s\n"
+                 % (prefix, seq, final, chunk))
+PYEOF
+if cap_model "$CAP_TMP/big.log" "$CAP_TMP/big.json" &&
+   [ "$(cap_field "$CAP_TMP/big.json" 'm["binaries"][0]["truncated"]')" = "True" ] &&
+   [ "$(cap_field "$CAP_TMP/big.json" 'm["binaries"][0]["retained_bytes"]')" = "65536" ] &&
+   [ "$(cap_field "$CAP_TMP/big.json" 'int(m["binaries"][0]["total_bytes"]) > 65536')" = "True" ] &&
+   [ "$(cap_field "$CAP_TMP/big.json" 'm["binaries"][0]["truncated_bytes"] == m["binaries"][0]["total_bytes"] - m["binaries"][0]["retained_bytes"]')" = "True" ]; then
+    t_pass "capture: an oversized payload is bounded with an explicit truncation field"
+else
+    t_fail "capture: an oversized payload is bounded with an explicit truncation field"
+fi
+
+# c14. The splice is STRUCTURAL. A self-closing <testcase/> must become a
+#      container, payload metacharacters must be escaped by the XML writer, and
+#      the document must still parse. Textual splicing cannot do this: the
+#      assembler keeps only physical lines starting with `<testcase`.
+{
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=5 final=1 a&b<c"
+} > "$CAP_TMP/meta.log"
+cap_model "$CAP_TMP/meta.log" "$CAP_TMP/meta.json"
+cat > "$CAP_TMP/in.xml" <<'XEOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="t" tests="3">
+  <testcase name="test_cap.exe" classname="correctness" time="0.001"/>
+  <testcase name="test_fail.exe" classname="correctness" time="0.002"><failure message="exit=-1"/></testcase>
+  <testcase name="suite-abort" classname="infrastructure"><error message="aborted"/></testcase>
+</testsuite>
+XEOF
+if python3 "$CAPTURE" splice-xml "$CAP_TMP/in.xml" "$CAP_TMP/meta.json" "$CAP_TMP/out.xml" >/dev/null 2>&1 &&
+   python3 -c 'import sys,xml.etree.ElementTree as ET
+r = ET.parse(sys.argv[1]).getroot()
+by = {c.get("name"): c for c in r.iter("testcase")}
+cap = by["test_cap.exe"].find("system-out")
+assert cap is not None and cap.text == "a&b<c", cap.text if cap is not None else "missing"
+assert by["test_fail.exe"].find("system-err").text == "exit=-1"
+assert by["suite-abort"].find("system-out") is None
+assert by["suite-abort"].find("system-err") is None' "$CAP_TMP/out.xml" 2>/dev/null; then
+    t_pass "capture: splice adds system-out/system-err structurally and skips infrastructure cases"
+else
+    t_fail "capture: splice adds system-out/system-err structurally and skips infrastructure cases"
+fi
+
+# c15. A refused model must never be spliced: publishing captured bytes from a
+#      run whose reconciliation failed is the exact false artifact this pipeline
+#      refuses everywhere else.
+if ! python3 "$CAPTURE" splice-xml "$CAP_TMP/in.xml" "$CAP_TMP/lost.json" "$CAP_TMP/never.xml" >/dev/null 2>&1 &&
+   [ ! -f "$CAP_TMP/never.xml" ]; then
+    t_pass "capture: an unreconciled model is never spliced into an artifact"
+else
+    t_fail "capture: an unreconciled model is never spliced into an artifact"
+fi
+
+# c16. The JSON side consumes the SAME model, so both artifacts carry the same
+#      bytes and the same verdict. A model that was requested but is unreadable
+#      is a refusal, not a silently clean artifact.
+if python3 "$HARVEST" "$FRAME_TMP/good.log" "$CAP_TMP/h.json" \
+        --capture "$CAP_TMP/nonexistent.json" >/dev/null 2>&1; then
+    t_fail "capture: an unreadable capture model refuses the JSON artifact"
+elif python3 -c 'import json,sys
+m = json.load(open(sys.argv[1]))
+assert m["summary"] is None and "capture" in m.get("summary_error", "")' "$CAP_TMP/h.json" 2>/dev/null; then
+    t_pass "capture: an unreadable capture model refuses the JSON artifact"
+else
+    t_fail "capture: an unreadable capture model refuses the JSON artifact"
+fi
+
+# c19-c24. Every remaining refusal reason gets a fixture. The first version of
+#      this group claimed to pin them all and pinned two-thirds; a refusal
+#      branch with no fixture is a branch that can silently invert.
+cap_refuses() {  # <label> <expected-reason> <log-body-writer-fn>
+    local label="$1" want="$2" fn="$3" log="$CAP_TMP/$2.log" out="$CAP_TMP/$2.json"
+    "$fn" > "$log"
+    if ! cap_model "$log" "$out" &&
+       [ "$(cap_field "$out" 'm["refusal"]["reason"]')" = "$want" ]; then
+        t_pass "capture: $label"
+    else
+        t_fail "capture: $label" "expected $want, got $(cap_field "$out" 'm["refusal"]["reason"]')"
+    fi
+}
+
+_cap_dup() {
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=1 final=1 a"
+    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=1 final=1 b"
+}
+cap_refuses "a duplicate seq is refused" capture_duplicate_seq _cap_dup
+
+_cap_rebind() {
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_one.exe"
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_two.exe"
+}
+cap_refuses "an owner rebound to a second binary is refused" capture_owner_rebound _cap_rebind
+
+# The producer returns before consuming a seq when a write stages no bytes, so
+# a len=0 record cannot have come from the kernel escaper.
+_cap_empty() {
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=0 final=1 "
+}
+cap_refuses "a len=0 chunk is refused" capture_empty_chunk _cap_empty
+
+# The kernel indexes UTEST_HEX_DIGITS = "0123456789abcdef": uppercase is a shape
+# it cannot emit, and accepting it would normalize a corrupted record.
+_cap_upper() {
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=1 final=1 \x0A"
+}
+cap_refuses "an uppercase-hex escape is refused" capture_bad_escape _cap_upper
+
+# 0x41 ('A') is printable: the producer emits it literally, never escaped.
+_cap_noncanon() {
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=1 final=1 \x41"
+}
+cap_refuses "an escape of a byte the producer emits literally is refused" \
+    capture_noncanonical_escape _cap_noncanon
+
+# THE false-silence case: a malformed but AUTHENTICATED record used to be
+# skipped, so a BEGIN plus one damaged chunk reconciled as a binary that simply
+# wrote nothing -- a corrupt run certified clean.
+_cap_malformed() {
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=3 final=2 abc"
+}
+cap_refuses "a malformed authenticated capture record is refused, not read as silence" \
+    capture_malformed_record _cap_malformed
+
+# c25. The run-wide cap must report truncation only when bytes were actually
+#      dropped. Keying the flag on "budget reached" marked a run truncated when
+#      the last owner was a silent binary with nothing to drop.
+python3 - "$CAP_TMP/agg.log" "$CAP_PREFIX" <<'PYEOF'
+import sys
+path, prefix = sys.argv[1], sys.argv[2]
+chunk = "y" * 128
+per_owner = (64 * 1024) // 128          # exactly PER_BINARY_CAP per owner
+owners = (1024 * 1024) // (64 * 1024)   # exactly RUN_AGGREGATE_CAP in total
+with open(path, "w") as fh:
+    for pid in range(owners):
+        fh.write("[  1.000] [cpu:0] [ OK ] %s[UTEST-CAPTURE-BEGIN] owner=%d name=test_a%d.exe\n"
+                 % (prefix, pid, pid))
+        for seq in range(per_owner):
+            fh.write("[  1.000] [cpu:0] [ OK ] %s[UTEST-CAPTURE] owner=%d seq=%d len=128 final=%d %s\n"
+                     % (prefix, pid, seq, 1 if seq == per_owner - 1 else 0, chunk))
+    # A silent binary AFTER the budget is exactly full: nothing to drop.
+    fh.write("[  1.000] [cpu:0] [ OK ] %s[UTEST-CAPTURE-BEGIN] owner=99 name=test_silent.exe\n" % prefix)
+PYEOF
+if cap_model "$CAP_TMP/agg.log" "$CAP_TMP/agg.json" &&
+   [ "$(cap_field "$CAP_TMP/agg.json" 'm["aggregate_bytes"]')" = "1048576" ] &&
+   [ "$(cap_field "$CAP_TMP/agg.json" 'm["aggregate_truncated"]')" = "False" ]; then
+    t_pass "capture: an exactly-full run budget is not reported as truncated"
+else
+    t_fail "capture: an exactly-full run budget is not reported as truncated" \
+        "aggregate=$(cap_field "$CAP_TMP/agg.json" 'm["aggregate_bytes"]') truncated=$(cap_field "$CAP_TMP/agg.json" 'm["aggregate_truncated"]')"
+fi
+
+# c26. An I/O failure while RECORDING a refusal must exit 2 (tool fault), not 1
+#      (reconciliation failure) -- test.sh classifies the two differently, and
+#      blaming the run's bytes for a disk problem sends triage the wrong way.
+if python3 "$CAPTURE" model "$CAP_TMP/good.log" "$CAP_TMP/no-such-dir/x.json" \
+        >/dev/null 2>"$CAP_TMP/err.txt"; then
+    t_fail "capture: an unwritable model path exits 2, not 1"
+elif [ "$?" -eq 2 ] || [ "$(python3 -c 'import subprocess,sys
+r = subprocess.run([sys.executable, sys.argv[1], "model", sys.argv[2], sys.argv[3]],
+                   capture_output=True)
+print(r.returncode)' "$CAPTURE" "$CAP_TMP/good.log" "$CAP_TMP/no-such-dir/x.json")" = "2" ]; then
+    t_pass "capture: an unwritable model path exits 2, not 1"
+else
+    t_fail "capture: an unwritable model path exits 2, not 1"
+fi
+
+# c27. A capture model naming a binary with no testcase means a verdict went
+#      missing between two views of ONE run. Both renderers must refuse it, and
+#      refuse it identically.
+cat > "$CAP_TMP/orphan.xml" <<'XEOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="t" tests="1">
+  <testcase name="test_other.exe" classname="correctness" time="0.001"/>
+</testsuite>
+XEOF
+if ! python3 "$CAPTURE" splice-xml "$CAP_TMP/orphan.xml" "$CAP_TMP/good.json" \
+        "$CAP_TMP/orphan-out.xml" >/dev/null 2>&1 &&
+   [ ! -f "$CAP_TMP/orphan-out.xml" ]; then
+    t_pass "capture: an orphan capture entry refuses the XML splice"
+else
+    t_fail "capture: an orphan capture entry refuses the XML splice"
+fi
+
+if ! python3 "$HARVEST" "$FRAME_TMP/good.log" "$CAP_TMP/orphan.json" \
+        --capture "$CAP_TMP/good.json" >/dev/null 2>&1 &&
+   python3 -c 'import json,sys
+m = json.load(open(sys.argv[1]))
+assert m["summary"] is None
+assert "capture_population_drift" in m.get("summary_error", "")' "$CAP_TMP/orphan.json" 2>/dev/null; then
+    t_pass "capture: an orphan capture entry refuses the JSON artifact identically"
+else
+    t_fail "capture: an orphan capture entry refuses the JSON artifact identically"
+fi
+
+# c28. A document the splicer cannot PARSE must not be published: the failure
+#      was detected, and publishing the input anyway ships known-invalid JUnit.
+printf '<?xml version="1.0"?>\n<testsuite><testcase name="x"\n' > "$CAP_TMP/bad.xml"
+python3 "$CAPTURE" splice-xml "$CAP_TMP/bad.xml" "$CAP_TMP/good.json" "$CAP_TMP/bad-out.xml" \
+    >/dev/null 2>&1
+if [ "$?" -eq 2 ] && [ ! -f "$CAP_TMP/bad-out.xml" ]; then
+    t_pass "capture: an unparseable assembled document exits 2 and writes nothing"
+else
+    t_fail "capture: an unparseable assembled document exits 2 and writes nothing"
+fi
+
+# c29. ... and test.sh must treat that exit-2 as a refusal rather than
+#      publishing the malformed input it just proved invalid.
+if sed -n '/^utest_splice_capture() {/,/^}/p' "$REPO_ROOT/scripts/test.sh" |
+       grep -q 'utest_publish_xml_refusal'; then
+    t_pass "capture: an unparseable assembled document publishes a refusal, not itself"
+else
+    t_fail "capture: an unparseable assembled document publishes a refusal, not itself"
+fi
+
+# c29b. INTEGRATION, not a direct splicer call: population drift must stop the
+#       `utest_splice_capture && utest_publish` chain. Testing the splicer alone
+#       missed this -- the helper turned the splicer's refusal into a warning
+#       and returned 0, so JUnit published green while JSON refused the same
+#       run. The production helper is extracted and driven for real.
+CAP_INT="$CAP_TMP/integration"
+mkdir -p "$CAP_INT/record"
+cat > "$CAP_INT/doc.xml" <<'XEOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="t" tests="1">
+  <testcase name="test_other.exe" classname="correctness" time="0.001"/>
+</testsuite>
+XEOF
+CAP_INT_OUT="$(bash -c '
+set -euo pipefail
+RED=""; YELLOW=""; RESET=""
+PROJECT="'"$REPO_ROOT"'"
+RECORD_DIR="'"$CAP_INT"'/record"
+XML_RECORD="$RECORD_DIR/test-results.xml"
+XML_PUBLISHED=0
+UTEST_FAIL=0
+CAPTURE_ATTACH=1
+CAPTURE_MODEL="'"$CAP_TMP"'/good.json"
+'"$(sed -n '/^utest_xml_refusal_doc() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")"'
+'"$(sed -n '/^utest_publish() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")"'
+'"$(sed -n '/^utest_publish_xml_refusal() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")"'
+'"$(sed -n '/^utest_splice_capture() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")"'
+PUBLISHED_NORMAL=0
+utest_splice_capture "'"$CAP_INT"'/doc.xml" && { PUBLISHED_NORMAL=1; }
+echo "RESULT normal=$PUBLISHED_NORMAL fail=$UTEST_FAIL published=$XML_PUBLISHED"
+' 2>&1)"
+if printf '%s' "$CAP_INT_OUT" | grep -q 'RESULT normal=0 fail=1 published=1' &&
+   grep -q 'errors="1"' "$CAP_INT/record/test-results.xml" 2>/dev/null &&
+   ! grep -q 'test_other.exe' "$CAP_INT/record/test-results.xml" 2>/dev/null; then
+    t_pass "capture: population drift stops the XML publish chain and refuses instead"
+else
+    t_fail "capture: population drift stops the XML publish chain and refuses instead" "$CAP_INT_OUT"
+fi
+
+# c30. A refused model must reach the JSON harvester too. Gating --capture on
+#      the ATTACH flag withheld it, so a run whose reconciliation failed still
+#      published a green JSON envelope while the XML side refused.
+if sed -n '/JSON_CAPTURE_ARGS=""/,/fi/p' "$REPO_ROOT/scripts/test.sh" |
+       grep -q 'if \[ -s "${CAPTURE_MODEL:-}" \]'; then
+    t_pass "capture: a refused model is still passed to the JSON harvester"
+else
+    t_fail "capture: a refused model is still passed to the JSON harvester"
+fi
+
+# c17. The capture model must be built for a JSON-only run too. It first lived
+#      inside the `if [ "$HAS_XML" -eq 1 ]` step, so `JSON=1` without `XML=1`
+#      built no slice, attached no captured output, and published testcases the
+#      XML artifact of the same run would have carried output for -- the two
+#      artifacts disagreeing about what the run contained. Structural rather
+#      than behavioural because the behaviour needs a full QEMU boot; the
+#      end-to-end proof is that a JSON-only run publishes captured_output on
+#      every testcase (verified in-session on the 17-binary default suite).
+if awk '/^RUNSLICE=/,/^XML_SUMMARY_OK=/' "$REPO_ROOT/scripts/test.sh" |
+       grep -q 'JSON_MODE.*-eq 1'; then
+    t_pass "capture: the shared slice/model step covers a JSON-only run"
+else
+    t_fail "capture: the shared slice/model step covers a JSON-only run"
+fi
+
+# c18. The XML fallbacks must never write into the shared slice: the capture
+#      model is reconciled against that exact file, and an artifact step
+#      overwriting it would leave the model describing bytes no longer there.
+if ! awk '/^XML_SUMMARY_OK=/,/Extract the summary numbers/' "$REPO_ROOT/scripts/test.sh" |
+        grep -qE '> *"\$RUNSLICE"'; then
+    t_pass "capture: the XML fallbacks never overwrite the shared run slice"
+else
+    t_fail "capture: the XML fallbacks never overwrite the shared run slice"
+fi
+
+rm -rf "$CAP_TMP"
 
 # ============================================================================
 # Orphaned-QEMU recovery (see docs/testing/usermode-output-formats.md)

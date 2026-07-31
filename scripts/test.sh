@@ -919,6 +919,53 @@ utest_publish_xml_refusal() {
     return 0
 }
 
+# Add each binary's captured stdout to the assembled document as <system-out>,
+# and its launcher diagnostic as <system-err> (section 36). STRUCTURAL, not
+# textual: utest-capture.py parses and re-serializes the document, because the
+# assembler above keeps only physical lines beginning with `<testcase` -- a
+# hand-spliced multi-line child would be silently dropped by the very next run,
+# and hand-escaping a payload that may contain `&` or `<` is a second way to
+# emit an invalid artifact.
+#
+# Returns 0 in every degraded case so the `&&` publish chain still runs: by the
+# time this is called the payload has ALREADY been reconciled (a corrupt one
+# took the refusal branch and never reached assembly), so a tool fault here
+# costs the artifact its captured-output field, not its validity.
+utest_splice_capture() {
+    local doc="$1" staged="$RECORD_DIR/.spliced.xml" rc=0
+    [ "${CAPTURE_ATTACH:-0}" -eq 1 ] || return 0
+    [ -s "$CAPTURE_MODEL" ] || return 0
+    python3 "$PROJECT/scripts/utest-capture.py" splice-xml \
+        "$doc" "$CAPTURE_MODEL" "$staged" >/dev/null 2>&1 || rc=$?
+    if [ "$rc" -eq 0 ] && [ -s "$staged" ]; then
+        mv -f "$staged" "$doc"
+        return 0
+    fi
+    rm -f "$staged"
+    if [ "$rc" -eq 2 ]; then
+        # exit 2 means the splicer could not PARSE the document this script just
+        # assembled, or could not write its output. Publishing the input anyway
+        # would ship an artifact already proven to be invalid JUnit -- the
+        # failure was detected and then discarded. Refuse instead.
+        echo -e "  ${RED}[UTEST]${RESET} assembled XML is not parseable -- refusing to publish it"
+        UTEST_FAIL=$(( ${UTEST_FAIL:-0} + 1 ))
+        utest_publish_xml_refusal "artifact-pipeline" \
+            "assembled JUnit document failed to parse during captured-output splice"
+        return 1
+    fi
+    # exit 1 is a population disagreement: the capture model names a binary the
+    # testcase set does not contain, so a VERDICT went missing between two views
+    # of one run. That makes the document untrustworthy, not merely
+    # capture-less -- publishing it "without <system-out>" would leave JUnit
+    # green while the JSON side refuses the same run, which is exactly the
+    # divergence the shared model exists to prevent. Refuse both.
+    echo -e "  ${RED}[UTEST]${RESET} captured-output population drift -- refusing to publish the XML artifact"
+    UTEST_FAIL=$(( ${UTEST_FAIL:-0} + 1 ))
+    utest_publish_xml_refusal "capture-population" \
+        "capture model names binaries with no testcase -- a verdict is missing from this run"
+    return 1
+}
+
 # Tracked PER FORMAT. One flag for both would let a signal landing between the
 # XML publication and the JSON assembly suppress the JSON refusal, leaving a
 # requested artifact simply absent with nothing saying why.
@@ -2075,6 +2122,83 @@ if [ "$XML_MODE" -eq 1 ] && [ "$HAS_XML" -eq 0 ]; then
     UTEST_FAIL=$(( ${UTEST_FAIL:-0} + 1 ))
 fi
 
+# --- Canonical run slice + captured-output model (shared by BOTH artifacts) ---
+#
+# Produced ONCE, here, ahead of either artifact step, because the JUnit XML and
+# the JSON record must describe the same run. The slice used to be built inside
+# the XML step, which meant a JSON-only run (`JSON=1` without `XML=1`) never
+# built it at all and silently published testcases with no captured output --
+# the artifacts disagreeing about what the run contained, which is exactly the
+# divergence a single shared model exists to prevent.
+RUNSLICE="$RECORD_DIR/runslice"
+SLICE_FAILED=0
+CAPTURE_MODEL="$RECORD_DIR/capture.json"
+CAPTURE_OK=1
+CAPTURE_ATTACH=0
+rm -f "$RUNSLICE"
+if [ "$HAS_XML" -eq 1 ] || [ "$JSON_MODE" -eq 1 ]; then
+    if [ -n "$FRAME_COMPLETE_RUN" ]; then
+        if ! python3 "$PROJECT/scripts/utest-frame.py" \
+                --emit-run "$RUNSLICE" "$TEST_LOG" >/dev/null 2>&1; then
+            SLICE_FAILED=1
+        fi
+        [ -s "$RUNSLICE" ] || SLICE_FAILED=1
+    fi
+
+    # Captured per-binary output (section 36). Runs ONLY for a complete framed
+    # run whose slice succeeded: without one there is no canonical population
+    # to attribute bytes to, and the JSON harvester already refuses to read
+    # results from an unreconciled stream. No complete run therefore means no
+    # captured output in either artifact -- a degraded artifact, not a refusal.
+    if [ -n "$FRAME_COMPLETE_RUN" ] && [ "$SLICE_FAILED" -eq 0 ] && [ -s "$RUNSLICE" ]; then
+        if python3 "$PROJECT/scripts/utest-capture.py" model \
+                "$RUNSLICE" "$CAPTURE_MODEL" --prefix "$UF" >/dev/null 2>&1; then
+            CAPTURE_ATTACH=1
+        else
+            rc=$?
+            # Only exit 2 is a considered "the tool could not run" verdict. Any
+            # OTHER non-zero status -- a crash, or the OOM kill an abusive
+            # payload can provoke (rc 137) -- is NOT evidence that the run's
+            # bytes are fine; treating it as a degrade would let resource
+            # exhaustion silently downgrade into a clean artifact.
+            if [ "$rc" -ne 2 ]; then
+                # Reconciliation failed. Under source framing the kernel's
+                # declared byte count and the host's decoded count cover the
+                # identical byte range, so a mismatch is corruption rather than
+                # ordinary interleaving: fail the run and publish a refusal,
+                # the same stance the failed-slice and unparseable-summary
+                # branches take. A plausible-looking artifact built over
+                # known-corrupt bytes is worse than no artifact.
+                CAPTURE_REASON=$(python3 -c 'import json,sys
+try:
+    m = json.load(open(sys.argv[1]))
+    r = m.get("refusal") or {}
+    print("{0}: {1}".format(r.get("reason", "unknown"), r.get("detail", "")))
+except Exception:
+    print("unknown: capture model unreadable")' "$CAPTURE_MODEL" 2>/dev/null)
+                echo -e "  ${RED}[UTEST]${RESET} captured-output reconciliation FAILED -- ${CAPTURE_REASON}"
+                UTEST_FAIL=$(( ${UTEST_FAIL:-0} + 1 ))
+                CAPTURE_OK=0
+                # A crash leaves no model behind, and the JSON side refuses only
+                # on a model it can READ. Without this the XML artifact would
+                # refuse while the JSON artifact published a green envelope for
+                # the same run -- the divergence the shared model exists to make
+                # impossible.
+                if ! grep -q '"ok": false' "$CAPTURE_MODEL" 2>/dev/null; then
+                    printf '{"schema": "utest-capture-v1", "ok": false, "refusal": {"reason": "capture_tool_failed", "detail": "capture model build exited %s"}, "binaries": []}\n' \
+                        "$rc" > "$CAPTURE_MODEL" 2>/dev/null || true
+                fi
+            else
+                # A usage/IO fault in the capture tool is an infrastructure
+                # problem, not evidence about the run's bytes. Degrade to no
+                # captured output rather than condemning a payload that was
+                # never actually examined.
+                echo -e "  ${YELLOW}[UTEST]${RESET} capture model unavailable (tool error) -- artifacts omit captured output"
+            fi
+        fi
+    fi
+fi
+
 XML_SUMMARY_OK=1
 if [ "$HAS_XML" -eq 1 ]; then
     # Any artifact from a previous run goes first: a death partway through
@@ -2101,16 +2225,12 @@ if [ "$HAS_XML" -eq 1 ]; then
     # under one run's summary.
     # Inside the run record: it was a fixed `$TEST_LOG.runslice`, which is
     # shared state between any two invocations that overlap.
-    XML_SRC="$RECORD_DIR/runslice"
-    rm -f "$XML_SRC"
-    XML_SLICE_FAILED=0
-    if [ -n "$FRAME_COMPLETE_RUN" ]; then
-        if ! python3 "$PROJECT/scripts/utest-frame.py" \
-                --emit-run "$XML_SRC" "$TEST_LOG" >/dev/null 2>&1; then
-            XML_SLICE_FAILED=1
-        fi
-        [ -s "$XML_SRC" ] || XML_SLICE_FAILED=1
-    fi
+    # The slice is built once, above, and SHARED with the capture model so both
+    # artifacts describe the same run. This step only consumes it -- and never
+    # writes to it, because the fallback below would otherwise overwrite the
+    # very file the capture model was reconciled against.
+    XML_SRC="$RUNSLICE"
+    XML_SLICE_FAILED=$SLICE_FAILED
     if [ "$XML_SLICE_FAILED" -eq 1 ]; then
         # A complete run EXISTS but could not be sliced out. Falling back to
         # the whole capture here would publish exactly the artifact the
@@ -2126,15 +2246,19 @@ if [ "$HAS_XML" -eq 1 ]; then
             "run slice failed for a complete framed run -- artifact would mix runs"
         # The payload greps below still run; give them an EMPTY source rather
         # than a missing file (set -e would abort on the read) and rather than
-        # the whole capture (that is the mixing this branch refuses).
+        # the whole capture (that is the mixing this branch refuses). It is a
+        # SEPARATE file: the shared slice must stay exactly what the capture
+        # model was reconciled against.
+        XML_SRC="$RECORD_DIR/xmlsrc"
         : > "$XML_SRC"
     fi
     # No complete run at all: the whole capture, ANSI-stripped, still as a
     # file. This is not the failure case above -- with no complete run there
     # is no slice to prefer, and the framing gates have already decided
     # whether this run is publishable; this only controls what the payload
-    # greps see.
+    # greps see. Also a separate file, for the same reason.
     if [ ! -s "$XML_SRC" ] && [ "$XML_SLICE_FAILED" -eq 0 ]; then
+        XML_SRC="$RECORD_DIR/xmlsrc"
         sed -E 's/\x1b\[[0-9;]*m//g' "$TEST_LOG" > "$XML_SRC" || true
     fi
 
@@ -2226,7 +2350,7 @@ fi
 # above has already published its own error document, and re-entering here
 # would overwrite it with the zeros-around-real-testcases artifact it exists
 # to avoid.
-if [ "$HAS_XML" -eq 1 ] && [ "$XML_SUMMARY_OK" -eq 1 ]; then
+if [ "$HAS_XML" -eq 1 ] && [ "$XML_SUMMARY_OK" -eq 1 ] && [ "${CAPTURE_OK:-1}" -eq 1 ]; then
     {
         echo '<?xml version="1.0" encoding="UTF-8"?>'
         printf '<testsuite name="impossible-os-usermode" tests="%s" failures="%s" skipped="%s" errors="%s" time="%s"%s>\n' \
@@ -2265,6 +2389,7 @@ if [ "$HAS_XML" -eq 1 ] && [ "$XML_SUMMARY_OK" -eq 1 ]; then
             grep -E '^<testcase' || true
         echo '</testsuite>'
     } > "$RECORD_DIR/.assembled.xml" &&
+        utest_splice_capture "$RECORD_DIR/.assembled.xml" &&
         utest_publish "$RECORD_DIR/.assembled.xml" "$XML_RECORD" && XML_PUBLISHED=1
     if [ "${XML_ABORTED:-0}" -ne 0 ]; then
         echo -e "${CYAN}[TEST]${RESET} JUnit XML written: $XML_RECORD (tests=${XML_TESTS} failures=${XML_FAIL} skipped=${XML_SKIP} ABORTED, not_run=${XML_NOT_RUN})"
@@ -2327,8 +2452,20 @@ if [ "$JSON_MODE" -eq 1 ] || [ "$HAS_JSON" -eq 1 ]; then
         # JSON_PUBLISHED at 0, so the EXIT guard treated an already-landed
         # record as unpublished and overwrote it with a run_incomplete
         # refusal. One publication path is what makes the contract testable.
+        # --capture is passed whenever a model EXISTS -- reconciled or refused.
+        # Gating on CAPTURE_ATTACH alone withheld the refusal model from the
+        # harvester, so a run whose reconciliation FAILED still published a
+        # normal JSON envelope with a green summary and no captured fields,
+        # and JSON_PUBLISHED then stopped finalization from replacing it. The
+        # flag is omitted only when capture was never attempted at all.
+        JSON_CAPTURE_ARGS=""
+        if [ -s "${CAPTURE_MODEL:-}" ]; then
+            JSON_CAPTURE_ARGS="--capture $CAPTURE_MODEL"
+        fi
+        # shellcheck disable=SC2086 # deliberate word-split: empty means no flag
         JSON_ERR=$(python3 "$PROJECT/scripts/utest-json-harvest.py" \
-                       "$TEST_LOG" "$RECORD_DIR/.harvest.json" --identity "$IDENTITY_RECORD" 2>&1) &&
+                       "$TEST_LOG" "$RECORD_DIR/.harvest.json" --identity "$IDENTITY_RECORD" \
+                       $JSON_CAPTURE_ARGS 2>&1) &&
             JSON_RC=0 || JSON_RC=$?
         if [ -f "$RECORD_DIR/.harvest.json" ]; then
             utest_publish "$RECORD_DIR/.harvest.json" "$JSON_RECORD" && JSON_PUBLISHED=1

@@ -145,6 +145,49 @@ def _load_identity(path):
     return value
 
 
+# Captured per-binary output model, produced by scripts/utest-capture.py from
+# the same canonical run slice the XML assembler consumes (section 36).
+_CAPTURE = None
+
+# The model is bounded at the source (a per-binary and a run-wide retention cap)
+# but it is still read under a cap here, because this process must not be the
+# one that turns a corrupted or mistaken path into an OOM.
+CAPTURE_MAX_BYTES = 8 * 1024 * 1024
+
+
+def _load_capture(path):
+    """Return the capture model, or None when no capture was attached.
+
+    UNLIKE identity, an unreadable model is NOT silently dropped when the caller
+    asked for one: the model carries a fail-closed VERDICT about whether the
+    run's captured bytes reconcile, so treating "cannot read it" as "nothing to
+    attach" would convert a refusal into a clean artifact. A path that was
+    passed but cannot be parsed therefore yields a synthetic refusal model.
+    """
+    if not path:
+        return None
+
+    def _unreadable(why):
+        sys.stderr.write("utest-json-harvest: capture model %s at %s\n"
+                         % (why, path))
+        return {"schema": "utest-capture-v1", "ok": False,
+                "refusal": {"reason": "capture_model_unreadable", "detail": why},
+                "binaries": []}
+
+    try:
+        if not os.path.isfile(path):
+            return _unreadable("is not a regular file")
+        if os.path.getsize(path) > CAPTURE_MAX_BYTES:
+            return _unreadable("exceeds %d bytes" % CAPTURE_MAX_BYTES)
+        with open(path, "r", encoding="utf-8") as handle:
+            value = json.loads(handle.read(CAPTURE_MAX_BYTES + 1))
+    except (OSError, ValueError, RecursionError):
+        return _unreadable("is unreadable")
+    if not isinstance(value, dict):
+        return _unreadable("is not a JSON object")
+    return value
+
+
 def _refuse(out_path, reason, detail=None):
     """Write the error envelope and report the reason on stderr.
 
@@ -407,6 +450,48 @@ def harvest(log_path, out_path):
     summary["aborted"] = aborted
     summary["not_run"] = not_run
 
+    # Captured per-binary stdout (section 36). The model is built ONCE by
+    # scripts/utest-capture.py from the canonical run slice and shared with the
+    # XML assembler, so both artifacts carry the same bytes and the same verdict
+    # -- a second reconciliation here could disagree with the XML side about
+    # whether the run is corrupt, which is the one thing a fail-closed check
+    # must never do.
+    if _CAPTURE is not None:
+        if not _CAPTURE.get("ok"):
+            refusal = _CAPTURE.get("refusal") or {}
+            _refuse(out_path, "capture_reconciliation",
+                    "%s: %s" % (refusal.get("reason", "unknown"),
+                                refusal.get("detail", "")))
+            return 1
+        by_name = {}
+        for entry in _CAPTURE.get("binaries", []):
+            if entry.get("name"):
+                by_name[entry["name"]] = entry
+        # Identical population policy to the XML splicer: a captured binary with
+        # no testcase means a verdict went missing between two views of ONE run,
+        # and publishing anyway would put a plausible artifact over a
+        # known-incomplete result set. The reverse (a testcase with no capture)
+        # is legal -- skip blocks and binaries that never spawned have none.
+        present = set()
+        for case in testcases:
+            if case.get("name"):
+                present.add(case["name"])
+        orphans = sorted(n for n in by_name if n not in present)
+        if orphans:
+            _refuse(out_path, "capture_population_drift",
+                    "capture model names binaries with no testcase: %s"
+                    % ", ".join(orphans))
+            return 1
+        for case in testcases:
+            entry = by_name.get(case.get("name"))
+            if entry is None:
+                continue
+            case["captured_output"] = entry.get("text", "")
+            case["captured_bytes"] = entry.get("total_bytes", 0)
+            case["captured_retained_bytes"] = entry.get("retained_bytes", 0)
+            case["captured_truncated"] = bool(entry.get("truncated"))
+            case["captured_truncated_bytes"] = entry.get("truncated_bytes", 0)
+
     _write_atomic(out_path, {
         "schema": SCHEMA,
         "testcases": testcases,
@@ -418,8 +503,9 @@ def harvest(log_path, out_path):
 
 
 def main(argv):
-    global _IDENTITY
+    global _IDENTITY, _CAPTURE
     identity_path = None
+    capture_path = None
     positional = []
     i = 0
     while i < len(argv):
@@ -430,13 +516,21 @@ def main(argv):
             identity_path = argv[i + 1]
             i += 2
             continue
+        if argv[i] == "--capture":
+            if i + 1 >= len(argv):
+                sys.stderr.write("utest-json-harvest: --capture needs a path\n")
+                return 2
+            capture_path = argv[i + 1]
+            i += 2
+            continue
         positional.append(argv[i])
         i += 1
     if len(positional) != 2:
         sys.stderr.write("usage: utest-json-harvest.py <test-log> <out.json> "
-                         "[--identity <identity.json>]\n")
+                         "[--identity <identity.json>] [--capture <capture.json>]\n")
         return 2
     _IDENTITY = _load_identity(identity_path)
+    _CAPTURE = _load_capture(capture_path)
     return harvest(positional[0], positional[1])
 
 
