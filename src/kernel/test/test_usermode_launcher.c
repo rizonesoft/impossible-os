@@ -109,13 +109,18 @@ uint32_t test_usermode_skip_records_allowed(uint32_t already, uint32_t want);
 uint32_t test_usermode_skip_record_budget(void);
 int test_usermode_build_skip_record_name(char *dst, uint32_t cap,
                                          const char *base, uint32_t k);
+int test_usermode_format_xml_overflow(char *dst, uint32_t cap, int verdict,
+                                      const char *classname);
+int test_usermode_format_json_overflow(char *dst, uint32_t cap, int verdict);
+uint32_t test_usermode_record_verdict(int verdict, int loader_stage_fault,
+                                      int timed_out, int reached_exec);
 int test_usermode_format_xml_summary(char *dst, uint32_t cap, uint32_t tests,
                                      uint32_t failures, uint32_t skipped,
                                      uint64_t total_ms, int aborted,
-                                     uint32_t not_run);
+                                     uint32_t not_run, uint32_t errors);
 int test_usermode_format_json_summary(char *dst, uint32_t cap, uint32_t passed,
                                       uint32_t failed, uint32_t skipped,
-                                      uint64_t total_ms);
+                                      uint64_t total_ms, uint32_t errors);
 int test_usermode_format_json_run_report(char *dst, uint32_t cap,
                                          uint32_t a_pass, uint32_t a_fail,
                                          uint32_t blocks, uint32_t records,
@@ -1039,6 +1044,21 @@ static void test_taxonomy_edge_names(void)
                    "a 255-byte test-shaped name refuses on length");
 }
 
+/* Substring search over NUL-terminated strings. Pure helper: the test
+ * policy bans calling live infrastructure, and the formatters under test
+ * are the only thing this file is allowed to exercise. */
+static int u_test_contains(const char *hay, const char *needle)
+{
+    uint32_t i, j;
+    for (i = 0; hay[i]; i++) {
+        for (j = 0; needle[j] && hay[i + j] == needle[j]; j++)
+            ;
+        if (!needle[j])
+            return 1;
+    }
+    return needle[0] ? 0 : 1;
+}
+
 static void test_worst_case_record_fits_at_the_derived_bound(void)
 {
     /* The derivation's fixed-cost macros are a SECOND copy of the format
@@ -1072,6 +1092,37 @@ static void test_worst_case_record_fits_at_the_derived_bound(void)
                                                    1, 0xFFFFFFFFFFFFFFFFull,
                                                    reason, 1) == 1,
                 "a uint64 uptime cannot widen the record past the bound");
+    /* The never-ran verdict is a THIRD shape through the same formatters,
+     * and its JSON status is one byte wider than PASS. Covering only
+     * FAIL/SKIP would leave the widest status string unmeasured against
+     * the very bound its literal now feeds.
+     *
+     * Asserted WITHOUT a report, which is the only shape that can occur: a
+     * binary that never ran submitted none, and the formatter drops the
+     * report fields for verdict 3 precisely so the derivation can reserve
+     * the two reachable shapes separately instead of charging one record
+     * for both. Passing report_valid=1 here would test a record no run can
+     * produce -- and would quietly re-justify a name bound one byte
+     * shorter than the transport actually requires. */
+    TEST_ASSERT(test_usermode_format_xml_testcase(line, sizeof(line), name,
+                                                  3, 0xFFFFFFFFull,
+                                                  reason) == 1,
+                "worst-case XML error record fits at the bound");
+    TEST_ASSERT(test_usermode_format_json_testcase(line, sizeof(line), name,
+                                                   3, 0xFFFFFFFFull,
+                                                   reason, 0) == 1,
+                "worst-case JSON ERROR record fits at the bound");
+    /* And the precondition the derivation rests on, asserted directly: an
+     * ERROR record never carries the report triple even when a caller
+     * supplies one. */
+    TEST_ASSERT(test_usermode_format_json_testcase(line, sizeof(line),
+                                                   "test_x.exe", 3, 0,
+                                                   "name refused: charset",
+                                                   1) == 1,
+                "an ERROR record formats when a report is supplied anyway");
+    TEST_ASSERT(!u_test_contains(line, "asserts_passed"),
+                "a never-ran record drops the report fields the derivation "
+                "does not reserve for it");
 
     /* The BINDING kind. The skip_block carries the name twice, so it is
      * the record the bound is derived FROM -- covering only the two
@@ -1091,6 +1142,104 @@ static void test_worst_case_record_fits_at_the_derived_bound(void)
                                                    "SKIP reported by binary") == 1,
                     "worst-case TAP skip point fits at the bound");
     }
+}
+
+/* The fallback records, which only run when a real record did not fit.
+ * Their whole job is to keep the VERDICT legible after the name is lost,
+ * and the host reconciles the errors= count against the <error> elements
+ * it harvests -- so a fallback that demoted an ERROR would refuse a run
+ * over a mismatch it caused itself. */
+static void test_overflow_fallbacks_preserve_the_verdict(void)
+{
+    char line[256];
+
+    TEST_ASSERT(test_usermode_format_xml_overflow(line, sizeof(line), 3,
+                                                  "correctness") == 1,
+                "the XML error fallback formats");
+    TEST_ASSERT(u_test_contains(line, "<error message=\"record name too long\"/>"),
+                "an overflowing ERROR stays an <error> element");
+    TEST_ASSERT(!u_test_contains(line, "<failure"),
+                "the ERROR fallback never degrades into a failure element");
+    TEST_ASSERT(u_test_contains(line, "name=\"overflow\""),
+                "the name is the only part the fallback drops");
+
+    TEST_ASSERT(test_usermode_format_xml_overflow(line, sizeof(line), 1,
+                                                  "correctness") == 1,
+                "the XML failure fallback formats");
+    TEST_ASSERT(u_test_contains(line, "<failure message=\"record name too long\"/>"),
+                "an overflowing FAIL stays a <failure> element");
+    TEST_ASSERT(test_usermode_format_xml_overflow(line, sizeof(line), 2,
+                                                  "skip-block") == 1,
+                "the XML skip fallback formats");
+    TEST_ASSERT(u_test_contains(line, "<skipped message=\"record name too long\"/>") &&
+                u_test_contains(line, "classname=\"skip-block\""),
+                "an overflowing SKIP keeps both its element and its classname");
+    TEST_ASSERT(test_usermode_format_xml_overflow(line, sizeof(line), 0,
+                                                  "correctness") == 1,
+                "the XML pass fallback formats");
+    TEST_ASSERT(u_test_contains(line, "time=\"0\"/>") &&
+                !u_test_contains(line, "</testcase>"),
+                "an overflowing PASS stays the self-closing shape");
+
+    TEST_ASSERT(test_usermode_format_json_overflow(line, sizeof(line), 3) == 1,
+                "the JSON error fallback formats");
+    TEST_ASSERT(u_test_contains(line, "\"status\":\"ERROR\"") &&
+                u_test_contains(line, "\"record_kind\":\"binary\""),
+                "an overflowing ERROR keeps both its status and its record_kind");
+    TEST_ASSERT(test_usermode_format_json_overflow(line, sizeof(line), 1) == 1,
+                "the JSON failure fallback formats");
+    TEST_ASSERT(u_test_contains(line, "\"status\":\"FAIL\""),
+                "every other overflowing verdict keeps the FAIL it always published");
+
+    /* Refuses rather than truncating, like every other formatter here: a
+     * cut fallback is an unparseable record, not a shorter one. */
+    {
+        char tight[24];
+        TEST_ASSERT(test_usermode_format_xml_overflow(tight, sizeof(tight), 3,
+                                                      "correctness") == 0,
+                    "the XML fallback refuses a buffer it cannot fill");
+        TEST_ASSERT(test_usermode_format_json_overflow(tight, sizeof(tight), 3) == 0,
+                    "the JSON fallback refuses a buffer it cannot fill");
+    }
+}
+
+/* The launcher aggregates pass/fail/skip; the artifacts additionally say
+ * whether the binary RAN. This is the rule that maps one to the other, and
+ * it is a pure function precisely so it can be asserted without driving a
+ * loader failure through live infrastructure. */
+static void test_record_verdict_maps_never_ran_onto_the_artifacts(void)
+{
+    /* Arguments: (verdict, loader_stage_fault, timed_out, reached_exec). */
+
+    /* A binary that ran and failed stays a failure -- the common case, and
+     * the one a wrong rule would most damage. */
+    TEST_ASSERT_EQ(test_usermode_record_verdict(1, 0, 0, 1), 1u,
+                   "a FAIL with no loader fault stays a FAIL in the artifacts");
+    /* A loader that EXITED before ring 3 becomes the never-ran verdict. */
+    TEST_ASSERT_EQ(test_usermode_record_verdict(1, 1, 0, 0), 3u,
+                   "a FAIL whose loader never reached ring 3 becomes an ERROR");
+
+    /* A TIMEOUT leans on the weaker signal. Nothing published means the
+     * loader stalled on its way to ring 3: provably never ran. */
+    TEST_ASSERT_EQ(test_usermode_record_verdict(1, 0, 1, 0), 3u,
+                   "a timeout that never reached exec is a never-ran ERROR");
+    /* Reached exec then timed out is AMBIGUOUS -- an adopted frame hanging
+     * in ring 3 looks identical to one never adopted -- so it stays a FAIL.
+     * Calling it never-ran would hide a genuine ring-3 hang, and the marker
+     * is set BEFORE the exec call precisely so a task carried into ring 3
+     * by a tick mid-call still lands in this arm. */
+    TEST_ASSERT_EQ(test_usermode_record_verdict(1, 0, 1, 1), 1u,
+                   "a timeout after the exec attempt stays a FAIL, not a guess");
+
+    /* PASS and SKIP are untouched: neither can follow a loader that never
+     * reached ring 3, and the rule must not invent one if a caller
+     * disagrees. */
+    TEST_ASSERT_EQ(test_usermode_record_verdict(0, 0, 0, 1), 0u,
+                   "a PASS is carried through unchanged");
+    TEST_ASSERT_EQ(test_usermode_record_verdict(0, 1, 0, 0), 0u,
+                   "a PASS is never reclassified by a stale loader fault");
+    TEST_ASSERT_EQ(test_usermode_record_verdict(2, 1, 1, 0), 2u,
+                   "a SKIP is never reclassified by a stale loader fault");
 }
 
 static void test_name_digest_covers_bytes_past_a_nul(void)
@@ -1581,20 +1730,6 @@ static void test_skip_budget_never_underflows(void)
 
 /* ---- Ring-3 self-report: artifact formatting ------------------------ */
 
-/* Substring search over NUL-terminated strings. Pure helper: the test
- * policy bans calling live infrastructure, and the formatters under test
- * are the only thing this file is allowed to exercise. */
-static int u_test_contains(const char *hay, const char *needle)
-{
-    uint32_t i, j;
-    for (i = 0; hay[i]; i++) {
-        for (j = 0; needle[j] && hay[i + j] == needle[j]; j++)
-            ;
-        if (!needle[j])
-            return 1;
-    }
-    return needle[0] ? 0 : 1;
-}
 
 /* Exact string equality. The formatters emit a wire contract that host
  * tooling parses positionally, so a substring assertion would accept a
@@ -1670,26 +1805,110 @@ static void test_skip_record_name_refuses_overflow(void)
                 "skip-record name refuses to truncate into a short buffer");
 }
 
+/* A binary that never RAN carries JUnit's <error> element and the JSON
+ * ERROR status; one that ran and failed keeps <failure>/FAIL. The host
+ * reconciles its errors= against the number of <error> elements it
+ * harvests, so this classification is what those two numbers agree on --
+ * a formatter that emitted the wrong element would refuse the run. */
+static void test_never_ran_records_carry_the_error_classification(void)
+{
+    char line[256];
+
+    TEST_ASSERT(test_usermode_format_xml_testcase(line, sizeof(line),
+                                                  "refused_1_test_x_deadbeef.exe",
+                                                  3, 0,
+                                                  "name refused: charset") == 1,
+                "an error testcase formats");
+    TEST_ASSERT(u_test_contains(line,
+                    "<error message=\"name refused: charset\"/></testcase>"),
+                "a never-ran binary carries <error>, not <failure>");
+    TEST_ASSERT(!u_test_contains(line, "<failure"),
+                "the error record carries no failure element at all");
+
+    TEST_ASSERT(test_usermode_format_xml_testcase(line, sizeof(line),
+                                                  "test_x.exe", 1, 0,
+                                                  "exit=-1") == 1,
+                "a failure testcase still formats");
+    TEST_ASSERT(u_test_contains(line, "<failure message=\"exit=-1\"/>"),
+                "a binary that RAN and failed keeps <failure>");
+
+    /* Reason is optional on both elements: the element itself is the
+     * classification, so a record without a message must still be an
+     * <error> rather than degrade into a self-closing (passing) testcase. */
+    TEST_ASSERT(test_usermode_format_xml_testcase(line, sizeof(line),
+                                                  "refused_2_ab_cafebabe.exe",
+                                                  3, 0, "") == 1,
+                "a reasonless error testcase formats");
+    TEST_ASSERT(u_test_contains(line, "<error/></testcase>"),
+                "a reasonless never-ran record is still an error element");
+
+    TEST_ASSERT(test_usermode_format_json_testcase(line, sizeof(line),
+                                                   "refused_1_test_x_deadbeef.exe",
+                                                   3, 0, "name refused: charset",
+                                                   0) == 1,
+                "an ERROR JSON record formats");
+    TEST_ASSERT(u_test_contains(line, "\"status\":\"ERROR\""),
+                "the JSON side spells the same distinction as a status");
+    TEST_ASSERT(u_test_contains(line, "\"record_kind\":\"binary\""),
+                "an ERROR record is still an ordinary binary record");
+    TEST_ASSERT(test_usermode_format_json_testcase(line, sizeof(line),
+                                                   "test_x.exe", 1, 0,
+                                                   "exit=-1", 0) == 1,
+                "a FAIL JSON record still formats");
+    TEST_ASSERT(u_test_contains(line, "\"status\":\"FAIL\""),
+                "a binary that ran and failed keeps status FAIL");
+}
+
 static void test_xml_summary_counts_records(void)
 {
     char line[192];
 
     TEST_ASSERT(test_usermode_format_xml_summary(line, sizeof(line),
-                                                 12, 2, 5, 1500, 0, 0) == 1,
+                                                 12, 2, 5, 1500, 0, 0, 0) == 1,
                 "XML summary formats at realistic widths");
     TEST_ASSERT(u_test_streq(line,
                     "[UTEST-XML-SUMMARY] tests=12 failures=2 skipped=5 time=1.500 "
-                    "aborted=0 not_run=0"),
+                    "aborted=0 not_run=0 errors=0"),
                 "XML summary is EXACTLY the contract the host post-processor parses");
     /* An all-zero run is the empty-suite artifact contract: it must still
      * produce a complete, patchable summary rather than a degenerate one. */
     TEST_ASSERT(test_usermode_format_xml_summary(line, sizeof(line),
-                                                 0, 0, 0, 0, 0, 0) == 1,
+                                                 0, 0, 0, 0, 0, 0, 0) == 1,
                 "an empty suite still formats a summary");
     TEST_ASSERT(u_test_streq(line,
                     "[UTEST-XML-SUMMARY] tests=0 failures=0 skipped=0 time=0.000 "
-                    "aborted=0 not_run=0"),
+                    "aborted=0 not_run=0 errors=0"),
                 "empty-suite summary carries explicit zeros");
+}
+
+/* `errors` is a SUBSET of `failures` on the wire: the host is what
+ * projects the pair into JUnit's disjoint attributes. A producer that
+ * subtracted here instead would leave the legacy `=== N failed` line, the
+ * serial recount and this record disagreeing about the same run. */
+static void test_xml_summary_reports_errors_as_failure_subset(void)
+{
+    char line[192];
+
+    TEST_ASSERT(test_usermode_format_xml_summary(line, sizeof(line),
+                                                 12, 4, 5, 1500, 0, 0, 3) == 1,
+                "XML summary formats with a never-ran subset");
+    TEST_ASSERT(u_test_streq(line,
+                    "[UTEST-XML-SUMMARY] tests=12 failures=4 skipped=5 time=1.500 "
+                    "aborted=0 not_run=0 errors=3"),
+                "errors= trails not_run= and reports the SUBSET, not a difference");
+    /* Trailing position, same rationale as aborted=/not_run=: the host's
+     * not_run extraction is a greedy `.* not_run=([0-9]+).*` sed, so a
+     * field appended after it must not disturb the match. */
+    TEST_ASSERT(u_test_contains(line, "not_run=0 errors=3"),
+                "not_run= keeps a numeric value immediately after it");
+    /* Every failure never ran: legal, and the projection the host derives
+     * from it is failures=0 errors=4 -- a suite where nothing executed. */
+    TEST_ASSERT(test_usermode_format_xml_summary(line, sizeof(line),
+                                                 4, 4, 0, 90, 0, 0, 4) == 1,
+                "an all-refusal run formats");
+    TEST_ASSERT(u_test_contains(line, "failures=4 skipped=0 time=0.090 "
+                                      "aborted=0 not_run=0 errors=4"),
+                "errors may equal failures when no binary ran at all");
 }
 
 static void test_xml_summary_carries_abort_state(void)
@@ -1701,11 +1920,11 @@ static void test_xml_summary_carries_abort_state(void)
      * internally consistent -- the run reads as a small, clean, complete
      * suite unless the completeness dimension says otherwise. */
     TEST_ASSERT(test_usermode_format_xml_summary(line, sizeof(line),
-                                                 1, 0, 1, 90, 1, 11) == 1,
+                                                 1, 0, 1, 90, 1, 11, 0) == 1,
                 "aborted XML summary formats");
     TEST_ASSERT(u_test_streq(line,
                     "[UTEST-XML-SUMMARY] tests=1 failures=0 skipped=1 time=0.090 "
-                    "aborted=1 not_run=11"),
+                    "aborted=1 not_run=11 errors=0"),
                 "abort state rides as trailing fields, after time=");
     /* The trailing position is load-bearing, not cosmetic: scripts/test.sh
      * extracts time with a greedy `.*time=([0-9.]+).*` sed, so anything
@@ -1715,7 +1934,7 @@ static void test_xml_summary_carries_abort_state(void)
     /* `aborted` is a flag, never a count: any nonzero must normalise to 1
      * so the host can compare it as a literal. */
     TEST_ASSERT(test_usermode_format_xml_summary(line, sizeof(line),
-                                                 1, 0, 1, 90, 7, 11) == 1,
+                                                 1, 0, 1, 90, 7, 11, 0) == 1,
                 "a nonzero abort flag formats");
     TEST_ASSERT(u_test_contains(line, "aborted=1 not_run=11"),
                 "any nonzero abort flag normalises to exactly 1");
@@ -1729,7 +1948,7 @@ static void test_xml_summary_refuses_truncation(void)
      * publish `[UTEST-XML-SUM` as if it were a summary; the host
      * post-processor then read a truncated `tests=` as a real number. */
     TEST_ASSERT(test_usermode_format_xml_summary(line, sizeof(line),
-                                                 12, 2, 5, 1500, 0, 0) == 0,
+                                                 12, 2, 5, 1500, 0, 0, 0) == 0,
                 "XML summary reports failure instead of truncating");
     /* The completeness fields are appended LAST, so a buffer that fits
      * everything through `time=` and nothing more is the exact width at
@@ -1738,8 +1957,19 @@ static void test_xml_summary_refuses_truncation(void)
     {
         char tight[61];
         TEST_ASSERT(test_usermode_format_xml_summary(tight, sizeof(tight),
-                                                     12, 2, 5, 1500, 1, 9) == 0,
+                                                     12, 2, 5, 1500, 1, 9, 2) == 0,
                     "a buffer that fits only through time= is refused, not truncated");
+    }
+    /* And the same boundary one field further out: errors= is now the last
+     * field, so a buffer that fits everything through not_run= would drop
+     * exactly the count the host reconciles its <error> elements against --
+     * leaving a summary that still parses and a run that would be refused
+     * for a mismatch the truncation caused. */
+    {
+        char tight[81];
+        TEST_ASSERT(test_usermode_format_xml_summary(tight, sizeof(tight),
+                                                     12, 2, 5, 1500, 1, 9, 2) == 0,
+                    "a buffer that fits only through not_run= is refused too");
     }
 }
 
@@ -1748,12 +1978,22 @@ static void test_json_summary_separates_dimensions(void)
     char line[384];
 
     TEST_ASSERT(test_usermode_format_json_summary(line, sizeof(line),
-                                                  9, 1, 2, 2500) == 1,
+                                                  9, 1, 2, 2500, 0) == 1,
                 "JSON summary formats at realistic widths");
     TEST_ASSERT(u_test_streq(line,
                     "[UTEST-JSON] {\"summary\":{\"passed\":9,\"failed\":1,"
-                    "\"skipped\":2,\"total\":12,\"time_ms\":2500}}"),
+                    "\"errors\":0,\"skipped\":2,\"total\":12,"
+                    "\"time_ms\":2500}}"),
                 "JSON summary is EXACTLY the documented record, every field in order");
+    /* `errors` never leaves `total` -- it is drawn from `failed`, so the
+     * three-way partition the total is computed from is untouched. A
+     * consumer summing passed+failed+skipped must still get total. */
+    TEST_ASSERT(test_usermode_format_json_summary(line, sizeof(line),
+                                                  9, 4, 2, 2500, 3) == 1,
+                "JSON summary formats with a never-ran subset");
+    TEST_ASSERT(u_test_contains(line,
+                    "\"failed\":4,\"errors\":3,\"skipped\":2,\"total\":15"),
+                "errors is a subset of failed and never enters the total");
     /* The summary carries BINARY counts only. Assertion counts travel in
      * their own record and are nested under `summary.reported` by the host
      * assembler, so a consumer can never read one unit as the other -- but
@@ -1794,7 +2034,8 @@ static void test_json_records_fit_klog_transport(void)
     TEST_ASSERT(test_usermode_format_json_summary(line, cap,
                                                   4294967295u, 4294967295u,
                                                   4294967295u,
-                                                  18446744073709551615ull) == 1,
+                                                  18446744073709551615ull,
+                                                  4294967295u) == 1,
                 "the summary fits the transport at every field's maximum");
     TEST_ASSERT(test_usermode_format_json_run_report(line, cap,
                                                      4294967295u, 4294967295u,
@@ -1927,11 +2168,11 @@ static void test_json_summary_zero_run(void)
     char line[384];
 
     TEST_ASSERT(test_usermode_format_json_summary(line, sizeof(line),
-                                                  0, 0, 0, 0) == 1,
+                                                  0, 0, 0, 0, 0) == 1,
                 "an all-zero JSON summary formats");
     TEST_ASSERT(u_test_streq(line,
                     "[UTEST-JSON] {\"summary\":{\"passed\":0,\"failed\":0,"
-                    "\"skipped\":0,\"total\":0,\"time_ms\":0}}"),
+                    "\"errors\":0,\"skipped\":0,\"total\":0,\"time_ms\":0}}"),
                 "zero counts serialize as explicit zeros, not omitted fields");
     TEST_ASSERT(test_usermode_format_json_run_report(line, sizeof(line),
                                                      0, 0, 0, 0, 0, 0, 0) == 1,
@@ -1948,7 +2189,7 @@ static void test_json_summary_refuses_truncation(void)
      * so the formatter must refuse and let the emitter publish a valid
      * error record instead. */
     TEST_ASSERT(test_usermode_format_json_summary(line, sizeof(line),
-                                                  9, 1, 2, 2500) == 0,
+                                                  9, 1, 2, 2500, 0) == 0,
                 "JSON summary reports failure instead of truncating");
 }
 
@@ -3314,6 +3555,18 @@ void test_register_usermode_launcher(void)
                             TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: XML summary counts records",
                             test_xml_summary_counts_records, TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: XML summary reports errors as failure subset",
+                            test_xml_summary_reports_errors_as_failure_subset,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: never-ran records carry error classification",
+                            test_never_ran_records_carry_the_error_classification,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: overflow fallbacks preserve the verdict",
+                            test_overflow_fallbacks_preserve_the_verdict,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: record verdict maps never-ran onto artifacts",
+                            test_record_verdict_maps_never_ran_onto_the_artifacts,
+                            TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: XML summary refuses truncation",
                             test_xml_summary_refuses_truncation, TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: XML summary carries abort state",

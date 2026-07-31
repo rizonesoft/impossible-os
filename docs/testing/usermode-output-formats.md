@@ -228,7 +228,8 @@ harvests both streams and regenerates a valid file at
 [UTEST-XML] <testcase name="test_harness_smoke.exe" classname="correctness" time="0.080"/>
 [UTEST-XML] <testcase name="test_leaky.exe" classname="correctness" time="0.090"><failure message="1 handle(s) leaked"/></testcase>
 [UTEST-XML] <testcase name="test_skip_me.exe" classname="correctness" time="0.010"><skipped message="exit=77"/></testcase>
-[UTEST-XML-SUMMARY] tests=3 failures=1 skipped=1 time=0.180 aborted=0 not_run=0
+[UTEST-XML] <testcase name="refused_1_test_a_b.exe_dd94b2b6.exe" classname="correctness" time="0.000"><error message="name refused: charset"/></testcase>
+[UTEST-XML-SUMMARY] tests=4 failures=2 skipped=1 time=0.180 aborted=0 not_run=0 errors=1
 [UTEST-XML] </testsuite>
 ```
 
@@ -243,16 +244,46 @@ one: it boots the kernel it just built, so a summary without them is
 producer drift, not an old artifact, and a document asserting
 `aborted="false"` would be a claim the stream never made.
 
+`errors=` is the never-ran dimension and is trailing for the same reason.
+It counts the binaries that never EXECUTED -- a refused name, or a launch
+that produced no task -- and it is an overlapping **subset** of `failures=`
+on this line, not a sibling of it: the producer counts such a binary in
+both, so the legacy `=== N failed` summary, the serial fail-closed recount
+and the TAP stream all keep describing one failure population. The host is
+what projects the pair into JUnit's disjoint attributes, and it reconciles
+before it projects (below). Absence is a refusal, exactly like the two
+completeness fields.
+
 ### Element schema
 
 ```xml
 <testsuite
     name="impossible-os-usermode"
-    tests="N"              <!-- RECORDS: binaries that ran + skip-block records
-                                 + the synthetic abort record when aborted -->
-    failures="N"           <!-- verdict == FAIL (incl. leaks/timeouts/isolation) -->
+    tests="N"              <!-- every binary testcase record, INCLUDING the
+                                 never-ran ones, plus skip-block records and
+                                 the synthetic abort record when aborted -->
+    failures="N"           <!-- binaries that RAN and failed: assertions,
+                                 leaks, isolation, and a timeout that had
+                                 already reached the exec attempt. Projected:
+                                 the producer's failures= minus its errors= -->
     skipped="N"            <!-- binaries that exited 77 + skip-block records -->
-    errors="N"             <!-- 1 when the smoke gate aborted the suite, else 0 -->
+    errors="N"             <!-- binaries that never RAN, plus 1 when the smoke
+                                 gate aborted the suite. DISJOINT from
+                                 failures= here, even though the producer
+                                 reports it as a subset. FOUR sources:
+                                 (1) an ingest refusal (name refused, not
+                                     test-shaped, unusable attribute, absent
+                                     planned binary, fail-closed aggregate),
+                                 (2) task_create failure -- no task existed,
+                                 (3) a loader exit before ring 3 (missing
+                                     file, staging allocation, short read,
+                                     task_exec refusal or destroyed image),
+                                 (4) a timeout that never reached the exec
+                                     call at all.
+                                 A timeout AFTER the exec attempt stays a
+                                 FAILURE: an adopted frame hanging in ring 3
+                                 cannot be told apart from one never adopted
+                                 until the scheduler records ring-3 entry -->
     time="S.MMM"           <!-- wall-clock seconds for the whole suite -->
     timestamp="..."        <!-- ISO-8601 UTC, xs:dateTime with the trailing Z -->
     hostname="...">        <!-- uname -n, filtered to [A-Za-z0-9._-] -->
@@ -292,8 +323,15 @@ producer drift, not an old artifact, and a document asserting
       classname="correctness"     <!-- test-type taxonomy label -->
       time="S.MMM">               <!-- per-binary wall-clock seconds -->
     <!-- PASS: self-closing <testcase ... /> -->
-    <failure message="..."/>      <!-- FAIL: launcher-formatted reason -->
+    <failure message="..."/>      <!-- FAIL: the binary RAN and failed -->
     <skipped message="..."/>      <!-- SKIP (exit=77): optional reason -->
+    <error message="..."/>        <!-- the binary never RAN: an ingest refusal,
+                                       a launch that produced no task, a loader
+                                       exit before ring 3, or a timeout that
+                                       never reached the exec call (the four
+                                       sources listed on errors= above). Same
+                                       convention as the suite-abort record,
+                                       and the reason JUnit has two elements -->
   </testcase>
   <!-- One synthetic record per skip BLOCK a binary reported. classname is
        always "skip-block", which is how a consumer separates these from
@@ -357,8 +395,9 @@ it.
 [UTEST-JSON] {"record_kind":"skip_block","name":"test_harness_smoke.exe::skipped-block-1","parent":"test_harness_smoke.exe","skip_index":1,"status":"SKIP","reason":"sub-test block skipped (reason on serial log)"}
 [UTEST-JSON] {"record_kind":"binary","name":"test_leaky.exe","type":"correctness","status":"FAIL","time_ms":90,"reason":"1 handle(s) leaked"}
 [UTEST-JSON] {"record_kind":"binary","name":"test_skip_me.exe","type":"correctness","status":"SKIP","time_ms":10,"reason":"exit=77"}
+[UTEST-JSON] {"record_kind":"binary","name":"refused_1_test_a_b.exe_dd94b2b6.exe","type":"correctness","status":"ERROR","time_ms":0,"reason":"name refused: charset"}
 [UTEST-JSON] {"record_kind":"run_report","asserts_passed":3,"asserts_failed":0,"skip_blocks":1,"skip_records":1,"binaries_reported":1,"binaries_invalid":0,"binaries_unreported":2}
-[UTEST-JSON] {"summary":{"passed":1,"failed":1,"skipped":1,"total":3,"time_ms":180}}
+[UTEST-JSON] {"summary":{"passed":1,"failed":2,"errors":1,"skipped":1,"total":4,"time_ms":180}}
 [UTEST-JSON] {"record_kind":"run_meta","aborted":false,"not_run":0}
 ```
 
@@ -416,7 +455,7 @@ Per-binary record:
 | `record_kind`     | string   | Always `"binary"`; discriminates from `"skip_block"` records          |
 | `name`            | string   | Binary filename (validated to test_*.exe prefix/suffix at ingest)     |
 | `type`            | string   | Test-type taxonomy label                                              |
-| `status`          | string   | `"PASS"` / `"FAIL"` / `"SKIP"`                                        |
+| `status`          | string   | `"PASS"` / `"FAIL"` / `"SKIP"` / `"ERROR"`. `ERROR` means the binary never RAN (refused name, launch failure) and is a SUBSET of the `failed` population, not a fourth bucket -- `summary.failed` counts it too |
 | `time_ms`         | integer  | Wall-clock milliseconds from `task_create` to launcher verdict        |
 | `reason`          | string   | Optional; launcher-formatted fail/skip explanation                    |
 | `asserts_passed`  | integer  | Optional; present only when the binary submitted an ACCEPTED report   |
@@ -439,7 +478,8 @@ Summary record (wire) -- binary counts only:
 | Field                                 | Type     | Notes                                              |
 |---------------------------------------|----------|----------------------------------------------------|
 | `summary.passed`                      | integer  | binaries with verdict=PASS                         |
-| `summary.failed`                      | integer  | binaries with verdict=FAIL (all causes)            |
+| `summary.failed`                      | integer  | binaries with verdict=FAIL (all causes), INCLUDING the never-ran ones |
+| `summary.errors`                      | integer  | the subset of `failed` that never RAN (status=`ERROR`); reconciled against those records and refused on mismatch |
 | `summary.skipped`                     | integer  | binaries with verdict=SKIP (exit=77)               |
 | `summary.total`                       | integer  | `passed + failed + skipped` -- BINARIES only       |
 | `summary.time_ms`                     | integer  | Suite wall-clock milliseconds                      |
@@ -695,8 +735,9 @@ result. Every refusal reason it can emit:
 | `records_after_summary`     | the stream does not end `run_report`, `summary`, `run_meta`         |
 | `malformed_summary`         | the summary is not an object                                        |
 | `malformed_report`          | a `run_report` counter is not a non-negative integer                |
-| `unknown_status`            | a binary record carries a status outside `PASS`/`FAIL`/`SKIP`       |
-| `count_mismatch`            | binary count, per-status counts, or skip-record count disagree with the summary |
+| `unknown_status`            | a binary record carries a status outside `PASS`/`FAIL`/`SKIP`/`ERROR` |
+| `missing_errors`            | the summary carries no usable `errors` count -- absent is a refusal, never read as zero |
+| `count_mismatch`            | binary count, per-status counts, skip-record count, the `ERROR` record count vs `summary.errors`, or `errors` exceeding `failed`, disagree with the summary |
 | `report_partition_mismatch` | `binaries_reported + binaries_invalid + binaries_unreported` does not equal `summary.total`, although the launcher increments exactly one of them per binary |
 | `inconsistent_completeness` | a not-aborted run nevertheless reports binaries as not run          |
 | `no_python3`                | written by `scripts/test.sh` when the assembler cannot run at all   |
@@ -821,7 +862,8 @@ record kind, of `(UTEST_RECORD_LINE_MAX - 1 - fixed_k) / mult_k`:
 |---|:---:|:---:|
 | Human verdict line | 1x | 196 |
 | `[UTEST-XML] <testcase>` | 1x | 120 |
-| `[UTEST-JSON]` `record_kind:binary` | 1x | 39 |
+| `[UTEST-JSON]` `record_kind:binary` (ran, may report) | 1x | **37** |
+| `[UTEST-JSON]` `record_kind:binary` (never ran) | 1x | 108 |
 | `[UTEST-JSON]` `record_kind:skip_block` | **2x** | **37** |
 | TAP point (skip-record shape) | 1x | 182 |
 | `[UTEST-REPORT]` line | 1x | 160 |
@@ -829,9 +871,20 @@ record kind, of `(UTEST_RECORD_LINE_MAX - 1 - fixed_k) / mult_k`:
 Each `fixed_k` is summed from that kind's own format literals through
 `UTEST_LIT(s)`, so editing a format string moves the bound with it.
 The skip_block binds at **37** because it carries the name twice (as
-`name` and again as `parent`); the JSON binary record is two bytes
-behind it, which is why the derivation takes the minimum instead of
-assuming the twice-carried kind is worst. Digit widths come from each
+`name` and again as `parent`), and the binary record's report-bearing
+shape ties it at 37 -- which is why the derivation takes the minimum
+instead of assuming the twice-carried kind is worst.
+
+The binary record is measured as TWO shapes rather than one. A record
+carries the assertion-report fields only for a binary that submitted a
+valid self-report, and a never-ran `ERROR` submitted none, so the wide
+status token and the report triple can never appear together;
+`u_format_json_testcase` drops the report fields for an ERROR to keep
+that true by construction. Charging one record for both would reserve a
+shape no run can emit and pay for it in filename budget -- the bound
+comes out a byte short, and names that ran yesterday get refused today.
+
+Digit widths come from each
 value's own cap, and `time_ms` is clamped at emit (`u_clamp_time_ms`)
 so its width is a fact rather than an assumption about run length.
 
@@ -857,16 +910,28 @@ Two outcomes that used to look the same are now distinct:
 - **Test-shaped but refused.** A manifest entry, or a discovered
   `test_*.exe`, that fails the length, charset, traversal or
   embedded-NUL gate is a binary somebody intended to run. It is
-  counted into `total_planned`, never launched, and published as a
-  FAIL through the *existing* record kinds -- so no consumer needs a
-  new shape:
+  counted into `total_planned`, never launched, and published through
+  the *existing* record kinds -- so no consumer needs a new shape:
 
 ```
 refused_1_test_a_b.exe_9f2c41ab.exe: FAIL (name refused: charset)
 not ok 4 - refused_1_test_a_b.exe_9f2c41ab.exe # name refused: charset
-[UTEST-XML] <testcase name="refused_1_..." classname="correctness" time="0.000"><failure message="name refused: charset"/></testcase>
-[UTEST-JSON] {"record_kind":"binary","name":"refused_1_...","type":"correctness","status":"FAIL","time_ms":0,"reason":"name refused: charset"}
+[UTEST-XML] <testcase name="refused_1_..." classname="correctness" time="0.000"><error message="name refused: charset"/></testcase>
+[UTEST-JSON] {"record_kind":"binary","name":"refused_1_...","type":"correctness","status":"ERROR","time_ms":0,"reason":"name refused: charset"}
 ```
+
+**Why the machine artifacts say ERROR and the human channels say FAIL.**
+JUnit's convention is that `<failure>` is an assertion the test failed and
+`<error>` is something that stopped it from running; this pipeline already
+used `<error>` for the structurally identical suite-abort record. A refused
+binary never ran, so it is an `<error>` (and a JSON `status:"ERROR"`), and
+the same applies to a launch whose `task_create` produced no task. The
+human verdict line, the TAP point and the legacy `=== N failed` summary
+keep the FAIL vocabulary they always had, because the host's fail-closed
+recount counts those very lines against that summary -- re-spelling them
+would make the two disagree about a run neither got wrong. `<failure>` is
+now exactly "the binary ran and failed", which is what a dashboard's
+failures column should mean.
 
 The identity is `refused_<ordinal>_<sanitized prefix>_<8 hex>.exe`.
 The raw name never reaches serial, an artifact or a log line. Within
@@ -878,8 +943,35 @@ embedded NUL and correlates the same bad name across runs. The
 identity ends in `.exe` because the host's recount greps for a `.exe`
 name followed by a verdict token.
 
+**Mapping an identity back to a filename.** The identity deliberately
+never echoes the raw name, and a charset refusal has the very byte that
+caused it rendered `_` in the prefix -- so the digest is the only
+correlator, and `scripts/utest-refusal-id.py` is what computes it:
+
+```bash
+# Which manifest entry produced this identity?
+python3 scripts/utest-refusal-id.py match refused_1_test_a_b.exe_dd94b2b6.exe \
+    --manifest build/system/test-manifest.txt
+# What digest would this candidate name produce?
+python3 scripts/utest-refusal-id.py digest --name 'test_a#b.exe'
+python3 scripts/utest-refusal-id.py digest --hex 746573745f00782e657865   # bytes with a NUL
+```
+
+Which inputs to try, and why the tool takes several: the manifest path
+hashes the entry's exact first-token span (embedded NUL included, comment
+tail and attribute tokens excluded), while the directory-glob path hashes
+the readdir basename. `--manifest` reproduces the first exactly;
+`--names-from`/`--nul-from` cover the second; `--hex` is the canonical
+form for a name carrying a NUL or a control byte, which no argv string
+and no NUL-delimited list can represent. Matching compares the WHOLE
+identity -- digest *and* sanitized prefix -- reports every candidate that
+matches, and exits `4` (AMBIGUOUS) rather than naming one when several do,
+because a 32-bit FNV-1a cannot promise a unique reverse mapping. Exit `0`
+is one match, `3` no match, `2` a usage error.
+
 Three counters move together with each refusal or an artifact would
-contradict itself: `counters[1]` (failed binaries), the TAP point,
+contradict itself: `counters[1]` (failed binaries, with `counters[3]`
+recording the never-ran subset of it), the TAP point,
 and `rt.unreported` -- the JSON harvester requires
 `reported + invalid + unreported == summary.total`, and a refused
 binary submitted no self-report. The caller adds `total_ran`, so

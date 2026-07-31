@@ -213,7 +213,20 @@ def _refuse(out_path, reason, detail=None):
 # Status vocabulary of a binary record, mapped to the summary counter it must
 # agree with. A record carrying anything else is a producer bug, not a new
 # outcome to tolerate.
-STATUS_TO_COUNTER = {"PASS": "passed", "FAIL": "failed", "SKIP": "skipped"}
+#
+# ERROR is a binary that never RAN -- a refused name, or a launch that
+# produced no task. It maps to `failed` because the producer counts it there
+# too: `errors` is an overlapping SUBSET of `failed`, not a fourth disjoint
+# bucket, so `passed + failed + skipped` stays the run total and a consumer
+# that only ever read `failed` sees exactly the number it always did. The
+# subset itself is reconciled separately, against summary.errors.
+STATUS_TO_COUNTER = {"PASS": "passed", "FAIL": "failed", "SKIP": "skipped",
+                     "ERROR": "failed"}
+
+# The statuses that mean "this binary never executed". Kept as its own set
+# rather than inferred from STATUS_TO_COUNTER, which cannot express it: FAIL
+# and ERROR share a counter and differ only here.
+NEVER_RAN_STATUSES = frozenset(("ERROR",))
 
 # Framing is parsed by the CANONICAL parser (scripts/utest-frame.py), not by
 # a copy living here. Ring-3 stdout shares the serial stream with the
@@ -401,20 +414,51 @@ def harvest(log_path, out_path):
         return 1
 
     observed = {"passed": 0, "failed": 0, "skipped": 0}
+    observed_errors = 0
     for record in testcases:
-        counter = STATUS_TO_COUNTER.get(record.get("status"))
+        status = record.get("status")
+        counter = STATUS_TO_COUNTER.get(status)
         if counter is None:
             _refuse(out_path, "unknown_status",
                     "binary record %r carries status=%r"
-                    % (record.get("name"), record.get("status")))
+                    % (record.get("name"), status))
             return 1
         observed[counter] += 1
+        if status in NEVER_RAN_STATUSES:
+            observed_errors += 1
     for counter, seen in observed.items():
         if seen != summary.get(counter):
             _refuse(out_path, "count_mismatch",
                     "%d record(s) with status for %s but summary.%s=%r"
                     % (seen, counter, counter, summary.get(counter)))
             return 1
+
+    # The never-ran subset, reconciled exactly like the three counters above
+    # and for the same reason: the field and the records it describes are
+    # produced by different code paths, so agreement between them is the
+    # evidence. Absent rather than zero is a REFUSAL -- an artifact whose
+    # producer predates the dimension cannot state that no binary was
+    # refused, and silently reading it as "none" is how a refusal-carrying
+    # run would publish as an ordinary set of assertion failures.
+    errors = summary.get("errors")
+    if not isinstance(errors, int) or isinstance(errors, bool) or errors < 0:
+        _refuse(out_path, "missing_errors",
+                "summary carries no usable errors count (got %r)" % (errors,))
+        return 1
+    if observed_errors != errors:
+        _refuse(out_path, "count_mismatch",
+                "%d record(s) with a never-ran status but summary.errors=%r"
+                % (observed_errors, errors))
+        return 1
+    # A subset can never exceed the population it is drawn from. Checked
+    # explicitly because both numbers come from the same producer: a counter
+    # bug that inflated only `errors` would otherwise reconcile against its
+    # own records and publish a JUnit projection with negative failures.
+    if errors > summary.get("failed", 0):
+        _refuse(out_path, "count_mismatch",
+                "summary.errors=%r exceeds summary.failed=%r"
+                % (errors, summary.get("failed")))
+        return 1
 
     if len(skip_blocks) != reported.get("skip_records"):
         _refuse(out_path, "count_mismatch",

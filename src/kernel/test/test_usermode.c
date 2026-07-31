@@ -55,6 +55,53 @@
  * Volatile because the loader runs in a different scheduling slot. */
 static volatile const char *s_pending_test_path;
 
+/* Did the loader fail BEFORE the binary reached ring 3?
+ *
+ * The artifacts distinguish a binary that ran and failed from one that
+ * never ran, and every pre-user-mode loader failure belongs to the second
+ * class: a missing file, a staging allocation that failed, a short read,
+ * or a task_exec that never dispatched. The exit status alone cannot say
+ * so -- the loader's own -1..-5 codes sit inside the -(signum) range that
+ * a signalled ring-3 binary reports, which is a documented ambiguity a few
+ * lines below -- so the STAGE records itself here rather than being
+ * guessed from the number.
+ *
+ * Written by the loader task, read by the launcher after it has waited for
+ * that task to exit. Atomics rather than a bare volatile because the two
+ * run in different scheduling slots and may sit on different CPUs; the
+ * release/acquire pair is what makes the store visible to the wait. */
+static uint32_t s_loader_stage_fault;
+
+/* Did the loader get as far as ATTEMPTING the exec?
+ *
+ * The fault flag above covers every way the loader EXITS early, but not a
+ * loader that never exits at all -- a stall in vfs_open, the staging
+ * allocation or vfs_read, which the launcher sees only as a timeout. A
+ * timeout that never reached the exec call is provably a binary that never
+ * ran, so it is classified with the refusals rather than reported as an
+ * assertion failure by a binary that never executed one.
+ *
+ * Set BEFORE the call, and that ordering is the whole correctness
+ * argument. task_exec publishes the ring-3 frame and re-enables interrupts
+ * BEFORE returning, so a timer tick can carry this task into the new image
+ * and the store after the call would never execute -- the same
+ * publish-then-tick window the SYS_EXEC handoff incident was paid for.
+ * Marking beforehand can only OVER-report reaching exec, which pushes the
+ * ambiguous cases toward FAIL; marking afterwards would under-report it
+ * and label a genuine ring-3 hang as never-ran. Reaching this call is a
+ * precondition for ever entering ring 3, so no binary that ran can be
+ * misclassified.
+ *
+ * The converse -- a timeout AFTER the attempt -- stays a FAIL, because an
+ * adopted frame hanging in ring 3 is indistinguishable from one never
+ * adopted. `exec_pending` cannot separate them either: task.c force-clears
+ * it after EXEC_PENDING_STUCK_TICKS (10 ticks) against a 10-second test
+ * timeout, so by the time the launcher looks, a never-adopted frame reads
+ * exactly like an adopted one. Closing that half needs positive
+ * ring-3-entry evidence recorded by the scheduler at the adoption point;
+ * tracked as its own item. */
+static uint32_t s_loader_reached_exec;
+
 /* Filter set by -- NULL means "run every test_*.exe". */
 static const char *s_filter;
 
@@ -1568,6 +1615,46 @@ static void utest_staging_free_frames(struct task_exec_staging *st)
     pmm_free_contiguous(st->phys, n);
 }
 
+/* Record that this loader invocation is exiting BEFORE ring 3. Release
+ * ordering pairs with the launcher's acquire load after it has waited for
+ * the task, which is the only reader. */
+static void u_loader_stage_fault(void)
+{
+    __atomic_store_n(&s_loader_stage_fault, 1u, __ATOMIC_RELEASE);
+}
+
+/* Map the launcher's aggregated verdict onto the one the ARTIFACTS carry.
+ * The two vocabularies differ in exactly one place: a binary that failed
+ * before reaching ring 3 never ran, so it is an <error>/ERROR rather than
+ * an assertion failure. PASS and SKIP pass through untouched -- neither
+ * outcome can follow a loader that never reached ring 3, and reclassifying
+ * one on a stale flag would turn a green binary red.
+ *
+ * TWO ways to be sure a binary never ran, and they are not the same
+ * evidence. `loader_stage_fault` is a loader that EXITED before ring 3 --
+ * exact, recorded at each exit. `reached_exec` is the weaker signal a TIMEOUT
+ * has to lean on: a loader that never reached the exec call provably never
+ * reached ring 3, while one that did may have been adopted (a real ring-3
+ * hang) or not (never ran), and nothing surviving to timeout can tell
+ * those apart. So a timeout is ERROR only when the exec was never
+ * attempted, and stays FAIL otherwise -- the conservative direction, since calling a real
+ * hang "never ran" would hide a genuine test failure.
+ *
+ * A pure function, deliberately: its only alternative was an inline
+ * conditional that no test could reach without driving a real loader
+ * failure through live infrastructure the test policy forbids. */
+static int u_record_verdict(int verdict, int loader_stage_fault,
+                            int timed_out, int reached_exec)
+{
+    if (verdict != 1)
+        return verdict;
+    if (loader_stage_fault)
+        return 3;
+    if (timed_out && !reached_exec)
+        return 3;
+    return 1;
+}
+
 static void utest_loader_func(void)
 {
     const char *path = (const char *)s_pending_test_path;
@@ -1579,12 +1666,14 @@ static void utest_loader_func(void)
 
     if (!path || !path[0]) {
         klog(LOG_ERROR, "UTEST", "loader: NULL pending path");
+        u_loader_stage_fault();
         task_exit(-1);
     }
 
     file = vfs_open(path, VFS_O_READ);
     if (!file) {
         klog(LOG_ERROR, "UTEST", "%s: vfs_open failed", path);
+        u_loader_stage_fault();
         task_exit(-2);
     }
 
@@ -1596,6 +1685,7 @@ static void utest_loader_func(void)
              "%s: pmm_alloc_contiguous(%u pages) failed",
              path, (uint64_t)pages);
         vfs_close(file);
+        u_loader_stage_fault();
         task_exit(-3);
     }
     buf = (uint8_t *)buf_phys;
@@ -1607,6 +1697,7 @@ static void utest_loader_func(void)
              path, (int64_t)n, (uint64_t)size);
         for (p = 0; p < pages; p++)
             pmm_free_frame(buf_phys + (uintptr_t)p * 4096u);
+        u_loader_stage_fault();
         task_exit(-4);
     }
 
@@ -1619,6 +1710,10 @@ static void utest_loader_func(void)
      * through the ownership token: on success task_exec drops these frames
      * before publication, because a tick can carry this task into the new image
      * before the call returns and the loop below would never run. */
+    /* Marked BEFORE the call: task_exec re-enables interrupts once the
+     * frame is published, so a tick can carry this task into ring 3 and
+     * nothing after the call is guaranteed to run. */
+    __atomic_store_n(&s_loader_reached_exec, 1u, __ATOMIC_RELEASE);
     {
         struct task_exec_staging st = {
             .release = utest_staging_free_frames,
@@ -1640,8 +1735,11 @@ static void utest_loader_func(void)
          * own -1..-5 codes sit inside the -(signum) range, so reporting one of
          * those here would be indistinguishable from a signal death to the same
          * oracle the exec lifecycle test relies on. */
-        if (rc == TASK_EXEC_IMAGE_DESTROYED)
+        if (rc == TASK_EXEC_IMAGE_DESTROYED) {
+            u_loader_stage_fault();
             task_exit(TASK_EXIT_EXEC_IMAGE_DESTROYED);   /* no return */
+        }
+        u_loader_stage_fault();
         task_exit(-5);
     }
 
@@ -2231,21 +2329,55 @@ _Static_assert(UTEST_REASON_MAX < UTEST_REASON_BUF,
 #define UTEST_FIXED_VERDICT                                                \
     (UTEST_LIT(": FAIL (") + UTEST_DIGITS_U32 +                            \
      UTEST_LIT(" handle(s) leaked -- escalated from PASS)"))
+/* A non-PASS binary testcase carries ONE of two elements, and the wider of
+ * the two is what the bound must reserve. `<failure` binds today; naming
+ * both keeps the derivation honest if either literal ever changes, which
+ * is the same reason every reason string is enumerated above rather than
+ * one being used as a proxy for the set. */
+#define UTEST_XML_ELEMENT_MAX                                              \
+    UTEST_MAX2(UTEST_LIT("<failure message=\""),                           \
+               UTEST_LIT("<error message=\""))
 #define UTEST_FIXED_XML                                                    \
     (UTEST_LIT("[UTEST-XML] <testcase name=\"") +                          \
      UTEST_LIT("\" classname=\"") + UTEST_LABEL_MAX +                      \
      UTEST_LIT("\" time=\"") + UTEST_SECONDS_MAX + UTEST_LIT("\">") +      \
-     UTEST_LIT("<failure message=\"") + UTEST_REASON_MAX +                 \
+     UTEST_XML_ELEMENT_MAX + UTEST_REASON_MAX +                            \
      UTEST_LIT("\"/>") + UTEST_LIT("</testcase>"))
-#define UTEST_FIXED_JSON_BINARY                                            \
+/* The status vocabulary is PASS / FAIL / SKIP / ERROR. ERROR is the
+ * never-ran discriminator (see u_format_json_testcase) and it rides the
+ * EXISTING status field rather than a new one: the derived name bound has
+ * one byte of margin, so an added field would shrink it and newly refuse
+ * names that run today.
+ *
+ * The two shapes below are derived SEPARATELY because the widest one is
+ * not the sum of the widest parts. A record carries the assertion-report
+ * fields only for a binary that submitted a valid self-report, and a
+ * never-ran ERROR by definition submitted none -- u_format_json_testcase
+ * enforces exactly that, so "ERROR plus report fields" cannot be emitted.
+ * Charging both at once made the derivation reserve a record no run can
+ * produce, and paid for it in filename budget: the bound came out one byte
+ * short and names that ran yesterday would have been refused today. The
+ * maximum over REACHABLE shapes is the honest reservation. */
+#define UTEST_FIXED_JSON_HEAD                                              \
     (UTEST_LIT("[UTEST-JSON] {\"record_kind\":\"binary\",\"name\":\"") +    \
      UTEST_LIT("\",\"type\":\"") + UTEST_LABEL_MAX +                       \
-     UTEST_LIT("\",\"status\":\"") + UTEST_LIT("PASS") +                   \
+     UTEST_LIT("\",\"status\":\"") +                                       \
      UTEST_LIT("\",\"time_ms\":") + UTEST_DIGITS_TIME +                    \
      UTEST_LIT(",\"reason\":\"") + UTEST_REASON_MAX + UTEST_LIT("\"") +    \
+     UTEST_LIT("}"))
+/* Reachable shape 1: a binary that RAN, so its status is one of the
+ * four-byte tokens, and it may carry the report triple. */
+#define UTEST_FIXED_JSON_REPORTED                                          \
+    (UTEST_FIXED_JSON_HEAD + UTEST_LIT("PASS") +                           \
      UTEST_LIT(",\"asserts_passed\":") + UTEST_DIGITS_REPORT +             \
      UTEST_LIT(",\"asserts_failed\":") + UTEST_DIGITS_REPORT +             \
-     UTEST_LIT(",\"skip_blocks\":") + UTEST_DIGITS_REPORT + UTEST_LIT("}"))
+     UTEST_LIT(",\"skip_blocks\":") + UTEST_DIGITS_REPORT)
+/* Reachable shape 2: a binary that never RAN -- the widest status token,
+ * and no report fields at all. */
+#define UTEST_FIXED_JSON_NEVER_RAN                                         \
+    (UTEST_FIXED_JSON_HEAD + UTEST_LIT("ERROR"))
+#define UTEST_FIXED_JSON_BINARY                                            \
+    UTEST_MAX2(UTEST_FIXED_JSON_REPORTED, UTEST_FIXED_JSON_NEVER_RAN)
 /* The synthetic skip-record name the kinds below carry in place of the
  * bare binary name: `<binary>::skipped-block-<k>`. */
 #define UTEST_FIXED_SKIP_SUFFIX                                            \
@@ -2349,7 +2481,17 @@ _Static_assert(UTEST_REFUSAL_PREFIX_STORE <= UTEST_PLAN_NAME_SLOT,
  * 22 bytes). Shrinking the bound now requires deliberately lowering this
  * number, which is exactly the decision that should be explicit. It lives
  * here alone rather than being mirrored into the unit test, so there is
- * one ratchet to move rather than two that can disagree. */
+ * one ratchet to move rather than two that can disagree.
+ *
+ * It held through the never-ran status added on 2026-07-31. "ERROR" is one
+ * byte wider than the "PASS" the status field used to reserve, and a first
+ * cut of that work charged the wide status and the assertion-report triple
+ * to the SAME record -- which lowered this floor to 36 and would have
+ * started refusing 37-byte names. That combination is unreachable (a
+ * never-ran binary submits no report), so the JSON derivation now takes
+ * the maximum over the two REACHABLE shapes and the floor stays where it
+ * was. The episode is why the ratchet exists: the cost was visible only
+ * because lowering it had to be deliberate. */
 #define UTEST_NAME_BOUND_RATCHET 37u
 _Static_assert(UTEST_MAX_BINARY_NAME >= UTEST_NAME_BOUND_RATCHET,
                "a record format grew and shrank the derived name bound: "
@@ -3219,7 +3361,7 @@ static void u_emit_xml_suite_open(void)
 static int u_format_xml_summary(char *dst, uint32_t cap, uint32_t tests,
                                 uint32_t failures, uint32_t skipped,
                                 uint64_t total_ms, int aborted,
-                                uint32_t not_run)
+                                uint32_t not_run, uint32_t errors)
 {
     uint32_t pos = 0;
     char time_buf[24];
@@ -3238,13 +3380,26 @@ static int u_format_xml_summary(char *dst, uint32_t cap, uint32_t tests,
     if (!u_append_uint(dst, &pos, cap, aborted ? 1u : 0u)) return 0;
     if (!u_append(dst, &pos, cap, " not_run=")) return 0;
     if (!u_append_uint(dst, &pos, cap, not_run)) return 0;
+    /* `errors` is a SUBSET of `failures`, not a sibling of it: every
+     * never-ran binary is counted in both, so the legacy summary line, the
+     * serial recount and the TAP stream keep describing the same failure
+     * population they always did. The host is what projects the pair into
+     * the JUnit attributes (failures = failures - errors, errors = errors),
+     * because that projection belongs where the document is assembled --
+     * and the host reconciles this number against the <error> elements it
+     * actually harvests before trusting it. Trailing, for the same reason
+     * aborted=/not_run= are: every host parser is a greedy `.*<key>=`
+     * sed plus an end-unanchored grep, so appending extends the line
+     * without disturbing any existing extraction. */
+    if (!u_append(dst, &pos, cap, " errors=")) return 0;
+    if (!u_append_uint(dst, &pos, cap, errors)) return 0;
     return 1;
 }
 
 static void u_emit_xml_suite_close(uint32_t passed, uint32_t failed,
                                    uint32_t skipped, uint32_t skip_records,
                                    uint64_t total_ms, int aborted,
-                                   uint32_t not_run)
+                                   uint32_t not_run, uint32_t errors)
 {
     char line[UTEST_RECORD_LINE_MAX];
 
@@ -3257,7 +3412,7 @@ static void u_emit_xml_suite_close(uint32_t passed, uint32_t failed,
     if (u_format_xml_summary(line, sizeof(line),
                              passed + failed + skipped + skip_records,
                              failed, skipped + skip_records, total_ms,
-                             aborted, not_run)) {
+                             aborted, not_run, errors)) {
         utest_record_log(LOG_INFO, "%s", line);
     } else {
         /* Never publish a truncated summary: a short `tests=` reads as a
@@ -3271,7 +3426,7 @@ static void u_emit_xml_suite_close(uint32_t passed, uint32_t failed,
 }
 
 /* Emit one `<testcase>` element for a binary. `verdict` is 0=PASS,
- * 1=FAIL, 2=SKIP. `reason` may be NULL; otherwise it's the
+ * 1=FAIL, 2=SKIP, 3=ERROR. `reason` may be NULL; otherwise it's the
  * launcher-formatted reason string for FAIL/SKIP. `type` is the
  * taxonomy value that maps to the XML `classname` attribute (and
  * the JSON `type` field in the sibling emitter).
@@ -3321,23 +3476,26 @@ static int u_format_xml_testcase(char *line, uint32_t cap, const char *name,
         APP("/>");
     } else {
         APP(">");
+        /* JUnit's element convention, which this pipeline already follows
+         * for the suite-abort testcase scripts/test.sh synthesizes: an
+         * assertion the binary failed is a <failure>, and something that
+         * stopped the binary from RUNNING AT ALL is an <error>. A refused
+         * name and a launch that never produced a task belong to the
+         * second class, so a consumer's errors= column reports exactly
+         * the binaries that never executed. */
         if (verdict == 2) {
             APP("<skipped");
-            if (reason && reason[0]) {
-                APP(" message=\"");
-                APP_XML(reason);
-                APP("\"");
-            }
-            APP("/>");
+        } else if (verdict == 3) {
+            APP("<error");
         } else {
             APP("<failure");
-            if (reason && reason[0]) {
-                APP(" message=\"");
-                APP_XML(reason);
-                APP("\"");
-            }
-            APP("/>");
         }
+        if (reason && reason[0]) {
+            APP(" message=\"");
+            APP_XML(reason);
+            APP("\"");
+        }
+        APP("/>");
         APP("</testcase>");
     }
     #undef APP
@@ -3346,6 +3504,49 @@ static int u_format_xml_testcase(char *line, uint32_t cap, const char *name,
 
 overflow:
     return 0;
+}
+
+/* The XML record published when the real one did not fit.
+ *
+ * It must preserve the VERDICT and the classname, not merely stay
+ * well-formed. A self-closing <testcase/> reads as PASSED, so an
+ * overflowing skip record used to vanish from the failures/skipped
+ * accounting while the suite header still counted it -- a record that
+ * silently became a pass. The name is the only part dropped, because the
+ * name is what did not fit.
+ *
+ * ERROR is preserved for the same reason one step further: the host
+ * reconciles the producer's errors= against the number of <error> elements
+ * it harvests, so a fallback that demoted an ERROR to a <failure> would
+ * refuse the whole run for a count mismatch the fallback itself
+ * introduced.
+ *
+ * Built rather than logged so it is TESTABLE. Its own emitter can only be
+ * reached by overflowing a record, and the test policy forbids driving
+ * live klog from a test -- so a fallback that quietly demoted a verdict
+ * would have gone unnoticed until it refused somebody's real run. */
+static int u_format_xml_overflow(char *dst, uint32_t cap, int verdict,
+                                 const char *classname)
+{
+    uint32_t pos = 0;
+
+    if (cap == 0) return 0;
+    dst[0] = '\0';
+    #define OAPP(s) do { if (!u_append(dst, &pos, cap, (s))) return 0; } while (0)
+    OAPP("[UTEST-XML] <testcase name=\"overflow\" classname=\"");
+    OAPP(classname);
+    OAPP("\" time=\"0\"");
+    if (verdict == 0) {
+        OAPP("/>");
+        return 1;
+    }
+    OAPP(">");
+    OAPP(verdict == 2 ? "<skipped message=\"record name too long\"/>"
+       : verdict == 3 ? "<error message=\"record name too long\"/>"
+                      : "<failure message=\"record name too long\"/>");
+    OAPP("</testcase>");
+    #undef OAPP
+    return 1;
 }
 
 static void u_emit_xml_testcase(const char *name, utest_type_t type,
@@ -3361,27 +3562,13 @@ static void u_emit_xml_testcase(const char *name, utest_type_t type,
         utest_record_log(LOG_INFO, "%s", line);
         return;
     }
-    /* The fallback must preserve the VERDICT and the classname, not just
-     * stay well-formed. A self-closing <testcase/> reads as PASSED, so an
-     * overflowing skip record used to vanish from the failures/skipped
-     * accounting while the suite header still counted it -- a record that
-     * silently became a pass. The name is the only part we drop, because
-     * the name is what did not fit. */
     utest_record_log(LOG_ERROR,
          "[UTEST-RECORD-OVERFLOW] XML record for '%s' exceeded its buffer",
          name);
-    if (verdict == 0) {
-        utest_record_log(LOG_INFO,
-             "[UTEST-XML] <testcase name=\"overflow\" classname=\"%s\" time=\"0\"/>",
-             classname_override ? classname_override : u_type_label(type));
-    } else {
-        utest_record_log(LOG_INFO,
-             "[UTEST-XML] <testcase name=\"overflow\" classname=\"%s\" time=\"0\">"
-             "%s</testcase>",
-             classname_override ? classname_override : u_type_label(type),
-             verdict == 2 ? "<skipped message=\"record name too long\"/>"
-                          : "<failure message=\"record name too long\"/>");
-    }
+    if (u_format_xml_overflow(line, sizeof(line), verdict,
+                              classname_override ? classname_override
+                                                 : u_type_label(type)))
+        utest_record_log(LOG_INFO, "%s", line);
 }
 
 /* Build one `[UTEST-JSON] {...}` per binary. Split from its emitter for
@@ -3399,9 +3586,16 @@ static int u_format_json_testcase(char *line, uint32_t cap, const char *name,
 
     if (cap == 0) return 0;
     line[0] = '\0';
+    /* ERROR is the JSON side of the same never-ran distinction the XML
+     * side draws with <error>: the binary never executed, so no assertion
+     * of its own failed. It is a SUBSET of the FAIL population, not a
+     * replacement for it -- summary.failed still counts these records, and
+     * summary.errors states how many of them never ran, so a consumer
+     * reading only `failed` sees the same number it always did. */
     switch (verdict) {
     case 0: status = "PASS"; break;
     case 2: status = "SKIP"; break;
+    case 3: status = "ERROR"; break;
     default: status = "FAIL"; break;
     }
 
@@ -3433,7 +3627,14 @@ static int u_format_json_testcase(char *line, uint32_t cap, const char *name,
      * kernel just refused to believe. JSON has no schema to violate here,
      * so the three-way outcome rides as named fields; XML gets it as
      * standard <skipped/> testcases instead. */
-    if (rep && rep->state == TASK_UTEST_REPORT_VALID) {
+    /* Never for an ERROR record. This is not defensive coding, it is the
+     * precondition UTEST_FIXED_JSON_NEVER_RAN is derived from: a never-ran
+     * binary submitted no report, so the wide status and the report triple
+     * can never appear in one record. Enforcing it HERE rather than
+     * trusting every call site keeps the derivation true by construction
+     * -- a future caller that passed a report with verdict 3 would
+     * otherwise silently outgrow the reserved width. */
+    if (verdict != 3 && rep && rep->state == TASK_UTEST_REPORT_VALID) {
         APP(",\"asserts_passed\":");
         APP_UINT(rep->asserts_passed);
         APP(",\"asserts_failed\":");
@@ -3451,6 +3652,37 @@ overflow:
     return 0;
 }
 
+/* The JSON record published when the real one did not fit.
+ *
+ * `record_kind` is kept because it is the stream's discriminator, and a
+ * consumer following the documented contract drops any record without it
+ * -- which would make an overflowing binary disappear entirely rather than
+ * surface as the failure it is. The STATUS is preserved for the same
+ * reason the XML fallback preserves its element: the harvester reconciles
+ * the ERROR record count against summary.errors, so a fallback that
+ * demoted ERROR to FAIL would refuse the run over a mismatch it created
+ * itself. Every other verdict keeps the FAIL this fallback has always
+ * published -- an overflowing PASS or SKIP is a record whose identity was
+ * lost, and the resulting disagreement with the summary is what makes the
+ * host refuse rather than publish it.
+ *
+ * Built rather than logged, for the same testability reason as the XML
+ * fallback above. */
+static int u_format_json_overflow(char *dst, uint32_t cap, int verdict)
+{
+    uint32_t pos = 0;
+
+    if (cap == 0) return 0;
+    dst[0] = '\0';
+    #define JOAPP(s) do { if (!u_append(dst, &pos, cap, (s))) return 0; } while (0)
+    JOAPP("[UTEST-JSON] {\"record_kind\":\"binary\",\"name\":\"overflow\",");
+    JOAPP("\"status\":\"");
+    JOAPP(verdict == 3 ? "ERROR" : "FAIL");
+    JOAPP("\",\"time_ms\":0,\"reason\":\"record name too long\"}");
+    #undef JOAPP
+    return 1;
+}
+
 static void u_emit_json_testcase(const char *name, utest_type_t type,
                                   int verdict, uint64_t time_ms,
                                   const char *reason,
@@ -3464,16 +3696,11 @@ static void u_emit_json_testcase(const char *name, utest_type_t type,
         utest_record_log(LOG_INFO, "%s", line);
         return;
     }
-    /* Keep record_kind: it is the stream's discriminator, and a consumer
-     * following the documented contract drops any record without it --
-     * which would make an overflowing binary disappear entirely rather
-     * than surface as the failure it is. */
     utest_record_log(LOG_ERROR,
          "[UTEST-RECORD-OVERFLOW] JSON record for '%s' exceeded its buffer",
          name);
-    utest_record_log(LOG_INFO,
-         "[UTEST-JSON] {\"record_kind\":\"binary\",\"name\":\"overflow\","
-         "\"status\":\"FAIL\",\"time_ms\":0,\"reason\":\"record name too long\"}");
+    if (u_format_json_overflow(line, sizeof(line), verdict))
+        utest_record_log(LOG_INFO, "%s", line);
 }
 
 /* Build the [UTEST-JSON] summary body. Returns 1 on success, 0 if the
@@ -3488,7 +3715,7 @@ static void u_emit_json_testcase(const char *name, utest_type_t type,
  * shape is unchanged. */
 static int u_format_json_summary(char *dst, uint32_t cap, uint32_t passed,
                                  uint32_t failed, uint32_t skipped,
-                                 uint64_t total_ms)
+                                 uint64_t total_ms, uint32_t errors)
 {
     uint32_t pos = 0;
 
@@ -3500,6 +3727,13 @@ static int u_format_json_summary(char *dst, uint32_t cap, uint32_t passed,
     JNUM(passed);
     JAPP(",\"failed\":");
     JNUM(failed);
+    /* How many of `failed` never RAN. Emitted next to it rather than in
+     * place of it: `failed` stays the whole non-pass-non-skip population,
+     * so a consumer that only ever read `failed` sees no change, and the
+     * harvester reconciles this number against the status=ERROR records
+     * in the same stream. */
+    JAPP(",\"errors\":");
+    JNUM(errors);
     JAPP(",\"skipped\":");
     JNUM(skipped);
     JAPP(",\"total\":");
@@ -3591,7 +3825,7 @@ static int u_format_json_run_meta(char *dst, uint32_t cap, int aborted,
 static void u_emit_json_summary(uint32_t passed, uint32_t failed,
                                 uint32_t skipped,
                                 const struct u_report_totals *rt,
-                                uint64_t total_ms)
+                                uint64_t total_ms, uint32_t errors)
 {
     char line[UTEST_RECORD_LINE_MAX];
 
@@ -3610,7 +3844,7 @@ static void u_emit_json_summary(uint32_t passed, uint32_t failed,
         return;
     }
     if (u_format_json_summary(line, sizeof(line), passed, failed, skipped,
-                              total_ms)) {
+                              total_ms, errors)) {
         utest_record_log(LOG_INFO, "%s", line);
     } else {
         /* Syntactically valid JSON that cannot be mistaken for a run
@@ -4550,13 +4784,20 @@ static void u_emit_refusal_named(const char *reason, uint32_t ordinal,
     }
 
     counters[1]++;      /* a refusal is a FAILED binary ...             */
-    rt->unreported++;   /* ... that could not submit a self-report      */
+    counters[3]++;      /* ... that never RAN, so it is also an error   */
+    rt->unreported++;   /* ... and could not submit a self-report       */
     point = ++(*tap_point);
+    /* The human verdict line, the TAP point and the legacy `=== N failed`
+     * summary all keep the FAIL vocabulary they have always used: the
+     * host's fail-closed recount counts these very lines against that
+     * summary, so re-spelling them would make the two disagree about a run
+     * neither of them got wrong. Only the machine artifacts, which have an
+     * element/status for "never ran", draw the finer distinction. */
     utest_record_log(LOG_ERROR, "%s: FAIL (%s)", id, reason);
     u_emit_tap_point(0, point, id, reason);
-    u_emit_xml_testcase(id, UTEST_TYPE_CORRECTNESS, 1, 0, reason,
+    u_emit_xml_testcase(id, UTEST_TYPE_CORRECTNESS, 3, 0, reason,
                         (const char *)0);
-    u_emit_json_testcase(id, UTEST_TYPE_CORRECTNESS, 1, 0, reason,
+    u_emit_json_testcase(id, UTEST_TYPE_CORRECTNESS, 3, 0, reason,
                          (const struct u_report *)0);
 }
 
@@ -4592,6 +4833,11 @@ static void u_spawn_one(const char *name_copy, const char *path,
     int pid;
 
     s_pending_test_path = path;
+    /* Cleared per SPAWN, not per run: the flag describes this invocation's
+     * loader, and a stale 1 from the previous binary would classify a
+     * perfectly ordinary assertion failure as never-ran. */
+    __atomic_store_n(&s_loader_stage_fault, 0u, __ATOMIC_RELEASE);
+    __atomic_store_n(&s_loader_reached_exec, 0u, __ATOMIC_RELEASE);
 
     out_report->asserts_passed = 0;
     out_report->asserts_failed = 0;
@@ -4693,6 +4939,12 @@ static void u_run_one(const char *name, utest_type_t type,
     struct u_report report;
     uint64_t start_ms;
     uint64_t end_ms;
+    /* The verdict the ARTIFACTS carry, which is not always the verdict the
+     * launcher aggregates: a loader that never reached ring 3 is a FAIL to
+     * the pass/fail/skip counters and the smoke gate, and an <error> /
+     * ERROR to a consumer asking which binaries actually executed. -1
+     * means "no override -- use the aggregated verdict". */
+    int record_verdict = -1;
 
     reason[0] = '\0';
     (void)type; /* used below for XML/JSON classname only */
@@ -4746,13 +4998,19 @@ static void u_run_one(const char *name, utest_type_t type,
     if (pid < 0) {
         klog(LOG_ERROR, "UTEST", "%s: task_create failed", name_copy);
         counters[1]++;
+        /* Same class as a refusal in the artifacts: no task was ever
+         * created, so nothing this binary could assert ever executed. The
+         * verdict the CALLER sees stays 1 -- `out_verdict` drives the
+         * launcher's own aggregation and the smoke gate, which classify by
+         * pass/fail/skip and have no never-ran dimension. */
+        counters[3]++;
         rt->unreported++;   /* never ran, so it never reported */
         *out_verdict = 1;
         test_num = ++(*tap_point);
         u_emit_tap_point(0, test_num, name_copy, "task_create failed");
-        u_emit_xml_testcase(name_copy, type, 1, 0, "task_create failed",
+        u_emit_xml_testcase(name_copy, type, 3, 0, "task_create failed",
                             (const char *)0);
-        u_emit_json_testcase(name_copy, type, 1, 0, "task_create failed",
+        u_emit_json_testcase(name_copy, type, 3, 0, "task_create failed",
                              (const struct u_report *)0);
         s_utest_color_active = 0;
         if (have_stem) {
@@ -4798,6 +5056,13 @@ static void u_run_one(const char *name, utest_type_t type,
         *out_verdict = 2;
     } else if (timed_out) {
         counters[1]++;  /* failed (timeout) */
+        /* A timeout with nothing published never reached ring 3 -- the
+         * loader stalled on its way there. Same class as a refusal. */
+        record_verdict = u_record_verdict(
+            1, (int)__atomic_load_n(&s_loader_stage_fault, __ATOMIC_ACQUIRE),
+            1, (int)__atomic_load_n(&s_loader_reached_exec, __ATOMIC_ACQUIRE));
+        if (record_verdict == 3)
+            counters[3]++;
         *out_verdict = 1;
         {
             uint32_t rp = 0;
@@ -4809,6 +5074,19 @@ static void u_run_one(const char *name, utest_type_t type,
         }
     } else {
         counters[1]++;  /* failed */
+        /* A loader that never reached ring 3 is the same class as a
+         * refused name: nothing this binary could assert ever executed, so
+         * the artifacts report it as an ERROR rather than an assertion
+         * failure. The STAGE says so; the exit status cannot, because the
+         * loader's own -1..-5 codes are indistinguishable from a signalled
+         * ring-3 death by number alone. `out_verdict` stays 1 -- it feeds
+         * the launcher's pass/fail/skip aggregation and the smoke gate,
+         * which have no never-ran dimension. */
+        record_verdict = u_record_verdict(
+            1, (int)__atomic_load_n(&s_loader_stage_fault, __ATOMIC_ACQUIRE),
+            0, (int)__atomic_load_n(&s_loader_reached_exec, __ATOMIC_ACQUIRE));
+        if (record_verdict == 3)
+            counters[3]++;
         *out_verdict = 1;
         {
             uint32_t rp = 0;
@@ -5004,13 +5282,22 @@ static void u_run_one(const char *name, utest_type_t type,
     /* XML + JSON per-binary emit: one pair per run, reason string
      * reflects the final verdict including any escalations. time_ms
      * is the wall-clock elapsed from task_create to just before this
-     * emit. */
+     * emit.
+     *
+     * `record_verdict` overrides only where the two vocabularies differ
+     * (a pre-ring-3 loader failure); everywhere else the artifacts carry
+     * exactly what the launcher aggregated. Escalations can only move a
+     * verdict from PASS to FAIL, and a loader-stage fault is never a PASS,
+     * so the override cannot mask one. */
     end_ms = u_uptime_ms();
-    u_emit_xml_testcase(name_copy, type, *out_verdict, end_ms - start_ms,
-                        reason[0] ? reason : (const char *)0,
-                        (const char *)0);
-    u_emit_json_testcase(name_copy, type, *out_verdict, end_ms - start_ms,
-                         reason[0] ? reason : (const char *)0, &report);
+    {
+        int rv = record_verdict >= 0 ? record_verdict : *out_verdict;
+        u_emit_xml_testcase(name_copy, type, rv, end_ms - start_ms,
+                            reason[0] ? reason : (const char *)0,
+                            (const char *)0);
+        u_emit_json_testcase(name_copy, type, rv, end_ms - start_ms,
+                             reason[0] ? reason : (const char *)0, &report);
+    }
 
     /* Report dimension, emitted last so the binary's own records are
      * already on the wire: the diagnostic line the host cross-check
@@ -5076,7 +5363,12 @@ void test_usermode_run(void)
 {
     struct manifest_state manifest;
     struct vfs_node      *root;
-    uint32_t              counters[3] = { 0, 0, 0 }; /* pass, fail, skip */
+    /* [3] is an OVERLAPPING SUBSET of [1], never a fourth disjoint bucket:
+     * a binary that never ran is counted once as failed and again as an
+     * error, so `passed + failed + skipped` remains the run total and no
+     * existing consumer of the first three changes meaning. */
+    uint32_t              counters[4] = { 0, 0, 0, 0 }; /* pass, fail,
+                                                         * skip, error */
     /* Report dimension, kept strictly separate from `counters` above:
      * those count BINARIES (what the exit codes said), these count what
      * the binaries reported about their own assertions and skip blocks.
@@ -5346,8 +5638,8 @@ void test_usermode_run(void)
          * and tooling doesn't fail on missing artifact. Codex quality
          * M1 2026-04-20. */
         u_emit_xml_suite_open();
-        u_emit_xml_suite_close(0, 0, 0, 0, 0, 0, 0);
-        u_emit_json_summary(0, 0, 0, &rt, 0);
+        u_emit_xml_suite_close(0, 0, 0, 0, 0, 0, 0, 0);
+        u_emit_json_summary(0, 0, 0, &rt, 0, 0);
         u_emit_json_run_meta(0, 0);
         /* Empty suite still gets a plan (`1..0`) and a report summary, so
          * a consumer can tell "ran nothing" from "the launcher died before
@@ -5685,7 +5977,11 @@ void test_usermode_run(void)
 
     run_end_ms = u_uptime_ms();
 
-    /* Summary. Counters: [0]=pass, [1]=fail, [2]=skip(exit=77). */
+    /* Summary. Counters: [0]=pass, [1]=fail, [2]=skip(exit=77),
+     * [3]=error (the subset of [1] that never ran). The legacy line below
+     * reports the first three only -- it is what the host recount and the
+     * boot-completion poll key on, and the never-ran split rides the
+     * machine artifacts instead. */
     if (skipped_by_filter > 0) {
         utest_record_log(LOG_INFO,
              "=== %u passed, %u failed, %u skipped of %u total "
@@ -5720,9 +6016,9 @@ void test_usermode_run(void)
      * host cross-check needs it whenever any binary reported. */
     u_emit_xml_suite_close(counters[0], counters[1], counters[2],
                            rt.skip_records, run_end_ms - run_start_ms,
-                           suite_aborted, not_run);
+                           suite_aborted, not_run, counters[3]);
     u_emit_json_summary(counters[0], counters[1], counters[2], &rt,
-                        run_end_ms - run_start_ms);
+                        run_end_ms - run_start_ms, counters[3]);
     /* Emitted AFTER the summary so the host assembler sees the completeness
      * record as the stream's terminator and can reject anything that
      * follows it as a cut-and-resumed stream. */
@@ -6330,29 +6626,61 @@ int test_usermode_build_skip_record_name(char *dst, uint32_t cap,
     return u_build_skip_record_name(dst, cap, base, k);
 }
 
+/* The two overflow fallbacks. Exposed because they are otherwise
+ * unreachable from a test: their emitters run only when a real record did
+ * not fit, and driving that through klog is exactly what the test policy
+ * forbids. A fallback that demoted a verdict would then stay invisible
+ * until it refused a real run for a mismatch it caused itself. */
+int test_usermode_format_xml_overflow(char *dst, uint32_t cap, int verdict,
+                                      const char *classname);
+int test_usermode_format_xml_overflow(char *dst, uint32_t cap, int verdict,
+                                      const char *classname)
+{
+    return u_format_xml_overflow(dst, cap, verdict, classname);
+}
+
+int test_usermode_format_json_overflow(char *dst, uint32_t cap, int verdict);
+int test_usermode_format_json_overflow(char *dst, uint32_t cap, int verdict)
+{
+    return u_format_json_overflow(dst, cap, verdict);
+}
+
+/* The never-ran classification rule. Pure, so the artifacts' half of the
+ * verdict can be asserted without driving a loader failure through live
+ * infrastructure. */
+uint32_t test_usermode_record_verdict(int verdict, int loader_stage_fault,
+                                      int timed_out, int reached_exec);
+uint32_t test_usermode_record_verdict(int verdict, int loader_stage_fault,
+                                      int timed_out, int reached_exec)
+{
+    return (uint32_t)u_record_verdict(verdict, loader_stage_fault, timed_out,
+                                      reached_exec);
+}
+
 int test_usermode_format_xml_summary(char *dst, uint32_t cap, uint32_t tests,
                                      uint32_t failures, uint32_t skipped,
                                      uint64_t total_ms, int aborted,
-                                     uint32_t not_run);
+                                     uint32_t not_run, uint32_t errors);
 int test_usermode_format_xml_summary(char *dst, uint32_t cap, uint32_t tests,
                                      uint32_t failures, uint32_t skipped,
                                      uint64_t total_ms, int aborted,
-                                     uint32_t not_run)
+                                     uint32_t not_run, uint32_t errors)
 {
     if (cap == 0) return 0;
     return u_format_xml_summary(dst, cap, tests, failures, skipped, total_ms,
-                                aborted, not_run);
+                                aborted, not_run, errors);
 }
 
 int test_usermode_format_json_summary(char *dst, uint32_t cap, uint32_t passed,
                                       uint32_t failed, uint32_t skipped,
-                                      uint64_t total_ms);
+                                      uint64_t total_ms, uint32_t errors);
 int test_usermode_format_json_summary(char *dst, uint32_t cap, uint32_t passed,
                                       uint32_t failed, uint32_t skipped,
-                                      uint64_t total_ms)
+                                      uint64_t total_ms, uint32_t errors)
 {
     if (cap == 0) return 0;
-    return u_format_json_summary(dst, cap, passed, failed, skipped, total_ms);
+    return u_format_json_summary(dst, cap, passed, failed, skipped, total_ms,
+                                 errors);
 }
 
 /* The report totals are passed as a flat argument list rather than the

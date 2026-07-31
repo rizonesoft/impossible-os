@@ -9981,7 +9981,7 @@ frame_log() {
         echo "[  1.000] [cpu:0] [ OK ] UTEST-${nonce}: [UTEST-FRAME] v=1 run=1"
         echo "[  1.010] [cpu:0] [ OK ] UTEST-${nonce}: [UTEST-JSON] {\"record_kind\":\"binary\",\"name\":\"test_real.exe\",\"type\":\"correctness\",\"status\":\"PASS\",\"time_ms\":5}"
         echo "[  1.020] [cpu:0] [ OK ] UTEST-${nonce}: [UTEST-JSON] {\"record_kind\":\"run_report\",\"asserts_passed\":1,\"asserts_failed\":0,\"skip_blocks\":0,\"skip_records\":0,\"binaries_reported\":1,\"binaries_invalid\":0,\"binaries_unreported\":0}"
-        echo "[  1.030] [cpu:0] [ OK ] UTEST-${nonce}: [UTEST-JSON] {\"summary\":{\"passed\":1,\"failed\":0,\"skipped\":0,\"total\":1,\"time_ms\":5}}"
+        echo "[  1.030] [cpu:0] [ OK ] UTEST-${nonce}: [UTEST-JSON] {\"summary\":{\"passed\":1,\"failed\":0,\"errors\":0,\"skipped\":0,\"total\":1,\"time_ms\":5}}"
         echo "[  1.040] [cpu:0] [ OK ] UTEST-${nonce}: [UTEST-JSON] {\"record_kind\":\"run_meta\",\"aborted\":false,\"not_run\":0}"
         echo "[  1.050] [cpu:0] [ OK ] UTEST-${nonce}: === 1 passed, 0 failed, 0 skipped of 1 total ==="
         echo "[  1.060] [cpu:0] [ OK ] UTEST-${nonce}: [UTEST-FRAME-END] run=1 records=6"
@@ -10202,9 +10202,9 @@ refusal_log() {
     local nonce="$1" out="$2" total="$3"
     {
         echo "[  1.000] [cpu:0] [ OK ] UTEST-${nonce}: [UTEST-FRAME] v=1 run=1"
-        echo "[  1.010] [cpu:0] [ OK ] UTEST-${nonce}: [UTEST-JSON] {\"record_kind\":\"binary\",\"name\":\"refused_1_test_a_b.exe_9f2c41ab.exe\",\"type\":\"correctness\",\"status\":\"FAIL\",\"time_ms\":0,\"reason\":\"name refused: charset\"}"
+        echo "[  1.010] [cpu:0] [ OK ] UTEST-${nonce}: [UTEST-JSON] {\"record_kind\":\"binary\",\"name\":\"refused_1_test_a_b.exe_9f2c41ab.exe\",\"type\":\"correctness\",\"status\":\"ERROR\",\"time_ms\":0,\"reason\":\"name refused: charset\"}"
         echo "[  1.020] [cpu:0] [ OK ] UTEST-${nonce}: [UTEST-JSON] {\"record_kind\":\"run_report\",\"asserts_passed\":0,\"asserts_failed\":0,\"skip_blocks\":0,\"skip_records\":0,\"binaries_reported\":0,\"binaries_invalid\":0,\"binaries_unreported\":${total}}"
-        echo "[  1.030] [cpu:0] [ OK ] UTEST-${nonce}: [UTEST-JSON] {\"summary\":{\"passed\":0,\"failed\":${total},\"skipped\":0,\"total\":${total},\"time_ms\":0}}"
+        echo "[  1.030] [cpu:0] [ OK ] UTEST-${nonce}: [UTEST-JSON] {\"summary\":{\"passed\":0,\"failed\":${total},\"errors\":${total},\"skipped\":0,\"total\":${total},\"time_ms\":0}}"
         echo "[  1.040] [cpu:0] [ OK ] UTEST-${nonce}: [UTEST-JSON] {\"record_kind\":\"run_meta\",\"aborted\":false,\"not_run\":0}"
         echo "[  1.050] [cpu:0] [ OK ] UTEST-${nonce}: === 0 passed, ${total} failed, 0 skipped of ${total} total ==="
         echo "[  1.060] [cpu:0] [ OK ] UTEST-${nonce}: [UTEST-FRAME-END] run=1 records=6"
@@ -10218,13 +10218,14 @@ import json,sys
 d = json.load(open('$FRAME_TMP/refusal.json'))
 tc = d['testcases']
 ok = (d['summary']['total'] == 1 and d['summary']['failed'] == 1
-      and len(tc) == 1 and tc[0]['status'] == 'FAIL'
+      and d['summary']['errors'] == 1
+      and len(tc) == 1 and tc[0]['status'] == 'ERROR'
       and tc[0]['name'].startswith('refused_')
       and d['summary']['reported']['binaries_unreported'] == 1)
 sys.exit(0 if ok else 1)"; then
-    t_pass "utest refusal: a refused binary harvests as a named FAIL testcase"
+    t_pass "utest refusal: a refused binary harvests as a named ERROR testcase inside failed"
 else
-    t_fail "utest refusal: a refused binary harvests as a named FAIL testcase"
+    t_fail "utest refusal: a refused binary harvests as a named ERROR testcase inside failed"
 fi
 
 # 6r2. The invariant the refusal accounting DEPENDS on. Bumping the failed
@@ -10253,6 +10254,784 @@ sys.exit(0 if d['summary'] is None
 else
     t_fail "utest refusal: a counted refusal with no record refuses the artifact" \
            "harvester rc=$SHORTRC (expected refusal reason count_mismatch)"
+fi
+
+# 6r2b. The never-ran dimension is reconciled, not trusted. `errors` and the
+#       ERROR records are produced by different code paths in the launcher,
+#       so each of the three ways they can disagree must refuse the artifact
+#       rather than publish a JUnit projection the elements contradict.
+#
+#       ABSENT is a refusal too, deliberately: an artifact whose producer
+#       predates the dimension cannot state that no binary was refused, and
+#       reading a missing field as zero is exactly how a refusal-carrying run
+#       would publish as an ordinary set of assertion failures.
+sed 's/,"errors":1,/,/' "$FRAME_TMP/refusal.log" > "$FRAME_TMP/no_errors.log"
+python3 "$HARVEST" "$FRAME_TMP/no_errors.log" "$FRAME_TMP/no_errors.json" \
+    >/dev/null 2>&1 && NOERRC=0 || NOERRC=$?
+if [ "$NOERRC" != "0" ] &&
+   python3 -c "
+import json,sys
+d = json.load(open('$FRAME_TMP/no_errors.json'))
+sys.exit(0 if d['summary'] is None
+         and d.get('summary_error') == 'missing_errors' else 1)"; then
+    t_pass "utest errors: a summary without errors= is refused, never read as zero"
+else
+    t_fail "utest errors: a summary without errors= is refused, never read as zero" \
+           "harvester rc=$NOERRC (expected refusal reason missing_errors)"
+fi
+
+# A count that does not match the records it describes.
+sed 's/"status":"ERROR"/"status":"FAIL"/' "$FRAME_TMP/refusal.log" \
+    > "$FRAME_TMP/errors_drift.log"
+python3 "$HARVEST" "$FRAME_TMP/errors_drift.log" "$FRAME_TMP/errors_drift.json" \
+    >/dev/null 2>&1 && DRIFTRC=0 || DRIFTRC=$?
+if [ "$DRIFTRC" != "0" ] &&
+   python3 -c "
+import json,sys
+d = json.load(open('$FRAME_TMP/errors_drift.json'))
+sys.exit(0 if d['summary'] is None
+         and d.get('summary_error') == 'count_mismatch' else 1)"; then
+    t_pass "utest errors: errors= disagreeing with the ERROR records refuses the artifact"
+else
+    t_fail "utest errors: errors= disagreeing with the ERROR records refuses the artifact" \
+           "harvester rc=$DRIFTRC (expected refusal reason count_mismatch)"
+fi
+
+# A subset larger than the population it is drawn from. Both numbers come
+# from one producer, so a counter bug that inflated only `errors` would
+# otherwise reconcile against its own records and project negative failures.
+sed 's/"failed":1,"errors":1,/"failed":0,"errors":1,/; s/"total":1,/"total":1,/' \
+    "$FRAME_TMP/refusal.log" > "$FRAME_TMP/errors_exceed.log"
+python3 "$HARVEST" "$FRAME_TMP/errors_exceed.log" "$FRAME_TMP/errors_exceed.json" \
+    >/dev/null 2>&1 && EXCRC=0 || EXCRC=$?
+if [ "$EXCRC" != "0" ] &&
+   python3 -c "
+import json,sys
+d = json.load(open('$FRAME_TMP/errors_exceed.json'))
+sys.exit(0 if d['summary'] is None
+         and d.get('summary_error') == 'count_mismatch' else 1)"; then
+    t_pass "utest errors: errors exceeding failed refuses the artifact"
+else
+    t_fail "utest errors: errors exceeding failed refuses the artifact" \
+           "harvester rc=$EXCRC (expected refusal reason count_mismatch)"
+fi
+
+# 6r2b2. Both dimensions in ONE run. `errors` and the completeness fields
+#        travel in different records (summary versus run_meta) and are
+#        folded together by the harvester, so a regression there could
+#        preserve one and drop the other while every isolated test still
+#        passed. This is the fixture where all four values must survive.
+sed 's/"aborted":false,"not_run":0/"aborted":true,"not_run":4/' \
+    "$FRAME_TMP/refusal.log" > "$FRAME_TMP/refusal_aborted.log"
+if python3 "$HARVEST" "$FRAME_TMP/refusal_aborted.log" \
+        "$FRAME_TMP/refusal_aborted.json" >/dev/null 2>&1 &&
+   python3 -c "
+import json,sys
+d = json.load(open('$FRAME_TMP/refusal_aborted.json'))
+s = d['summary']
+ok = (s['errors'] == 1 and s['failed'] == 1 and s['aborted'] is True
+      and s['not_run'] == 4
+      and [t['status'] for t in d['testcases']] == ['ERROR'])
+sys.exit(0 if ok else 1)"; then
+    t_pass "utest errors: a refusal inside an ABORTED run keeps both dimensions in the artifact"
+else
+    t_fail "utest errors: a refusal inside an ABORTED run keeps both dimensions in the artifact"
+fi
+
+# 6r2c. The XML side of the same reconciliation, driven through the PRODUCTION
+#       span of scripts/test.sh rather than a restatement of it. JUnit's two
+#       failure columns are disjoint while the producer reports errors as a
+#       subset of failures, so this span is where the projection happens --
+#       and it must refuse rather than project whenever the producer's count
+#       and the elements it harvests disagree.
+XERR_REGION="$(sed -n '/^    # Extract the summary numbers (tests=N failures=N skipped=N time=S.MMM)\./,/^fi$/p' \
+               "$REPO_ROOT/scripts/test.sh")"
+if [ -z "$XERR_REGION" ] || ! printf '%s' "$XERR_REGION" | grep -q 'XML_ERROR_ELEMS'; then
+    t_fail "utest errors: extracted the XML summary/projection span from scripts/test.sh" \
+        "anchors not found -- summary-extract comment .. closing fi"
+else
+    xerr_run() {
+        # $1 = summary tail after `time=1.000 `, $2 = extra testcase lines,
+        # $3 = failures= value (default 1, so a caller can drive the
+        # out-of-range case on the counter the projection subtracts FROM).
+        # Emits `verdict <utest_fail> <summary_ok> <xml_fail> <xml_errors>`.
+        local tail_fields="$1" extra="$2" fails="${3:-1}"
+        local dir="$FRAME_TMP/xerr"
+        rm -rf "$dir"; mkdir -p "$dir"
+        {
+            printf 'UTEST-deadbeef: [UTEST-XML] <testcase name="test_ok.exe" classname="correctness" time="0"/>\n'
+            printf '%s' "$extra"
+            printf 'UTEST-deadbeef: [UTEST-XML-SUMMARY] tests=2 failures=%s skipped=0 time=1.000 %s\n' \
+                "$fails" "$tail_fields"
+        } > "$dir/slice"
+        bash -c '
+set -euo pipefail
+RED=""; YELLOW=""; CYAN=""; RESET=""
+UF="UTEST-deadbeef: "
+RECORD_DIR="'"$dir"'"
+XML_SRC="'"$dir"'/slice"
+TEST_LOG="'"$dir"'/slice"
+XML_SLICE_FAILED=0
+XML_SUMMARY_OK=1
+UTEST_FAIL=0
+HAS_XML=1
+# The refusal publisher is stubbed: this span is being tested for its
+# VERDICT and its projection, and the publisher has its own sub-test.
+utest_publish_xml_refusal() { REFUSED="$2"; }
+# The span is the BODY of production'"'"'s `if [ "$HAS_XML" -eq 1 ]` block and
+# ends with that block'"'"'s closing `fi`, so the harness supplies the opener
+# rather than the span restating it -- an extracted region that had to be
+# edited to run would no longer be the code under test.
+if [ "$HAS_XML" -eq 1 ]; then
+'"$XERR_REGION"'
+echo "verdict $UTEST_FAIL $XML_SUMMARY_OK ${XML_FAIL:-unset} ${XML_ERRORS:-unset}"
+' 2>&1
+    }
+
+    # A run whose single failure never ran: the projection must move it out of
+    # failures= and into errors=, leaving a document whose attributes match
+    # the elements beneath them.
+    XERR_OUT="$(xerr_run 'aborted=0 not_run=0 errors=1' \
+        'UTEST-deadbeef: [UTEST-XML] <testcase name="refused_1_a_deadbeef.exe" classname="correctness" time="0"><error message="name refused: charset"/></testcase>
+')"
+    if printf '%s' "$XERR_OUT" | grep -q 'verdict 0 1 0 1'; then
+        t_pass "utest errors: a never-ran binary projects into errors=, out of failures="
+    else
+        t_fail "utest errors: a never-ran binary projects into errors=, out of failures=" "$XERR_OUT"
+    fi
+
+    # An ordinary assertion failure stays a failure: the projection must not
+    # reclassify a binary that actually ran.
+    XERR_OUT="$(xerr_run 'aborted=0 not_run=0 errors=0' \
+        'UTEST-deadbeef: [UTEST-XML] <testcase name="test_bad.exe" classname="correctness" time="0"><failure message="exit=-1"/></testcase>
+')"
+    if printf '%s' "$XERR_OUT" | grep -q 'verdict 0 1 1 0'; then
+        t_pass "utest errors: a binary that ran and failed stays in failures="
+    else
+        t_fail "utest errors: a binary that ran and failed stays in failures=" "$XERR_OUT"
+    fi
+
+    # errors= claimed but no <error> element harvested: producer counter drift,
+    # which must refuse rather than publish attributes the elements contradict.
+    XERR_OUT="$(xerr_run 'aborted=0 not_run=0 errors=1' \
+        'UTEST-deadbeef: [UTEST-XML] <testcase name="test_bad.exe" classname="correctness" time="0"><failure message="exit=-1"/></testcase>
+')"
+    if printf '%s' "$XERR_OUT" | grep -qE 'verdict [1-9][0-9]* 0 '; then
+        t_pass "utest errors: errors= without matching <error> elements refuses assembly"
+    else
+        t_fail "utest errors: errors= without matching <error> elements refuses assembly" "$XERR_OUT"
+    fi
+
+    # A subset larger than its population would project a NEGATIVE failures=.
+    XERR_OUT="$(xerr_run 'aborted=0 not_run=0 errors=2' \
+        'UTEST-deadbeef: [UTEST-XML] <testcase name="refused_1_a_deadbeef.exe" classname="correctness" time="0"><error message="x"/></testcase>
+UTEST-deadbeef: [UTEST-XML] <testcase name="refused_2_b_deadbeef.exe" classname="correctness" time="0"><error message="y"/></testcase>
+')"
+    if printf '%s' "$XERR_OUT" | grep -qE 'verdict [1-9][0-9]* 0 '; then
+        t_pass "utest errors: errors= exceeding failures= refuses assembly"
+    else
+        t_fail "utest errors: errors= exceeding failures= refuses assembly" "$XERR_OUT"
+    fi
+
+    # Absent entirely: fail-CLOSED, exactly like aborted=/not_run=. This
+    # script boots the kernel it just built, so a summary without the field
+    # is producer/host drift rather than an older artifact.
+    XERR_OUT="$(xerr_run 'aborted=0 not_run=0' '')"
+    if printf '%s' "$XERR_OUT" | grep -qE 'verdict [1-9][0-9]* 0 '; then
+        t_pass "utest errors: a summary without errors= refuses, never defaults to zero"
+    else
+        t_fail "utest errors: a summary without errors= refuses, never defaults to zero" "$XERR_OUT"
+    fi
+
+    # An oversized decimal must REFUSE, not fail open. `[ "$a" -gt "$b" ]`
+    # prints "integer expression expected" and evaluates FALSE for a value
+    # outside bash's integer range, so an unbounded field would slip past
+    # both reconciliation guards and then wrap the subtraction negative.
+    XERR_OUT="$(xerr_run 'aborted=0 not_run=0 errors=99999999999999999999999999' \
+        'UTEST-deadbeef: [UTEST-XML] <testcase name="refused_1_a_deadbeef.exe" classname="correctness" time="0"><error message="x"/></testcase>
+')"
+    if printf '%s' "$XERR_OUT" | grep -qE 'verdict [1-9][0-9]* 0 ' &&
+       ! printf '%s' "$XERR_OUT" | grep -q 'integer expression expected'; then
+        t_pass "utest errors: an out-of-range errors= refuses instead of failing open"
+    else
+        t_fail "utest errors: an out-of-range errors= refuses instead of failing open" "$XERR_OUT"
+    fi
+
+    # Same bound on the counters the projection subtracts FROM.
+    XERR_OUT="$(xerr_run 'aborted=0 not_run=0 errors=0' '' '99999999999999999999999999')"
+    if printf '%s' "$XERR_OUT" | grep -qE 'verdict [1-9][0-9]* 0 '; then
+        t_pass "utest errors: an out-of-range failures= refuses instead of wrapping the projection"
+    else
+        t_fail "utest errors: an out-of-range failures= refuses instead of wrapping the projection" "$XERR_OUT"
+    fi
+
+    # A LEADING ZERO is the other shape a digits-only guard lets through:
+    # `[` compares in base 10 but `$(( ))` reads `08` as octal (an error) and
+    # `010` as 8 (silently wrong). The producer's %u emits neither.
+    XERR_OUT="$(xerr_run 'aborted=0 not_run=0 errors=08' \
+        'UTEST-deadbeef: [UTEST-XML] <testcase name="refused_1_a_deadbeef.exe" classname="correctness" time="0"><error message="x"/></testcase>
+')"
+    if printf '%s' "$XERR_OUT" | grep -qE 'verdict [1-9][0-9]* 0 ' &&
+       ! printf '%s' "$XERR_OUT" | grep -q 'value too great for base'; then
+        t_pass "utest errors: a leading-zero errors= refuses before the projection reads it as octal"
+    else
+        t_fail "utest errors: a leading-zero errors= refuses before the projection reads it as octal" "$XERR_OUT"
+    fi
+
+    # `010` is the silent half of the same shape: valid octal for 8.
+    XERR_OUT="$(xerr_run 'aborted=0 not_run=0 errors=0' '' '010')"
+    if printf '%s' "$XERR_OUT" | grep -qE 'verdict [1-9][0-9]* 0 '; then
+        t_pass "utest errors: a leading-zero failures= refuses rather than silently meaning 8"
+    else
+        t_fail "utest errors: a leading-zero failures= refuses rather than silently meaning 8" "$XERR_OUT"
+    fi
+
+    # An <error> inside a SKIP-BLOCK record is not evidence of a refused
+    # binary: those records carry classname="skip-block" and have no
+    # never-ran dimension. Counting them would let a corrupted skip record
+    # satisfy errors= while no binary ERROR record exists, publishing suite
+    # attributes that contradict the children beneath them.
+    XERR_OUT="$(xerr_run 'aborted=0 not_run=0 errors=1' \
+        'UTEST-deadbeef: [UTEST-XML] <testcase name="test_ok.exe::skipped-block-1" classname="skip-block" time="0"><error message="forged"/></testcase>
+')"
+    if printf '%s' "$XERR_OUT" | grep -qE 'verdict [1-9][0-9]* 0 '; then
+        t_pass "utest errors: an <error> in a skip-block record does not satisfy errors="
+    else
+        t_fail "utest errors: an <error> in a skip-block record does not satisfy errors=" "$XERR_OUT"
+    fi
+
+    # A LEGITIMATE binary error alongside a malformed skip-block: excluding
+    # the skip population from the count is only half a check, because the
+    # malformed record still reaches the document. Without the shape check
+    # the counts reconcile (one binary error, errors=1) while the artifact
+    # carries TWO <error> elements under errors="1".
+    XERR_OUT="$(xerr_run 'aborted=0 not_run=0 errors=1' \
+        'UTEST-deadbeef: [UTEST-XML] <testcase name="refused_1_a_deadbeef.exe" classname="correctness" time="0"><error message="name refused: charset"/></testcase>
+UTEST-deadbeef: [UTEST-XML] <testcase name="test_ok.exe::skipped-block-1" classname="skip-block" time="0"><error message="malformed"/></testcase>
+')"
+    if printf '%s' "$XERR_OUT" | grep -qE 'verdict [1-9][0-9]* 0 '; then
+        t_pass "utest errors: a malformed skip-block beside a real ERROR still refuses"
+    else
+        t_fail "utest errors: a malformed skip-block beside a real ERROR still refuses" "$XERR_OUT"
+    fi
+
+    # And a WELL-FORMED skip-block alongside a real ERROR must still pass:
+    # the shape check must not red an ordinary run carrying skip records.
+    XERR_OUT="$(xerr_run 'aborted=0 not_run=0 errors=1' \
+        'UTEST-deadbeef: [UTEST-XML] <testcase name="refused_1_a_deadbeef.exe" classname="correctness" time="0"><error message="name refused: charset"/></testcase>
+UTEST-deadbeef: [UTEST-XML] <testcase name="test_ok.exe::skipped-block-1" classname="skip-block" time="0"><skipped message="sub-test block skipped (reason on serial log)"/></testcase>
+')"
+    if printf '%s' "$XERR_OUT" | grep -q 'verdict 0 1 0 1'; then
+        t_pass "utest errors: a well-formed skip-block beside a real ERROR reconciles"
+    else
+        t_fail "utest errors: a well-formed skip-block beside a real ERROR reconciles" "$XERR_OUT"
+    fi
+
+    # The abort error is counted ON TOP of the producer's, not instead of it:
+    # a suite that aborted AND refused a name owes two error elements.
+    XERR_OUT="$(xerr_run 'aborted=1 not_run=5 errors=1' \
+        'UTEST-deadbeef: [UTEST-XML] <testcase name="refused_1_a_deadbeef.exe" classname="correctness" time="0"><error message="x"/></testcase>
+')"
+    if printf '%s' "$XERR_OUT" | grep -q 'verdict 0 1 0 2'; then
+        t_pass "utest errors: the synthetic abort error adds to the producer's count"
+    else
+        t_fail "utest errors: the synthetic abort error adds to the producer's count" "$XERR_OUT"
+    fi
+fi
+
+# 6r2c2. EVERY loader exit path must record the never-ran stage. The
+#        classification rule itself is unit-tested (pure function), but the
+#        rule only helps if the flag is actually set on each way out of the
+#        loader -- and a new task_exit added there without its mark would
+#        report a binary that never ran as an ordinary assertion failure.
+#        Structural, not tautological: it compares two independent edits.
+LOADER_BODY="$(sed -n '/^static void utest_loader_func(void)$/,/^}/p' \
+               "$REPO_ROOT/src/kernel/test/test_usermode.c")"
+if [ -z "$LOADER_BODY" ]; then
+    t_fail "utest errors: extracted utest_loader_func from the kernel source" "anchors not found"
+else
+    LOADER_EXITS="$(printf '%s\n' "$LOADER_BODY" | grep -c 'task_exit(' || true)"
+    LOADER_MARKS="$(printf '%s\n' "$LOADER_BODY" | grep -c 'u_loader_stage_fault();' || true)"
+    if [ "$LOADER_EXITS" -gt 0 ] && [ "$LOADER_EXITS" = "$LOADER_MARKS" ]; then
+        t_pass "utest errors: every loader exit records the never-ran stage ($LOADER_MARKS/$LOADER_EXITS)"
+    else
+        t_fail "utest errors: every loader exit records the never-ran stage" \
+            "$LOADER_MARKS mark(s) for $LOADER_EXITS task_exit call(s) -- a loader exit without its mark reports a binary that never ran as an assertion failure"
+    fi
+fi
+
+# 6r2d. The refusal-name correlator. It reimplements two kernel rules -- the
+#       FNV-1a constants and the accepted charset -- so the binding that keeps
+#       it honest is these GOLDEN VECTORS, which are the same values the kernel
+#       unit test asserts against u_name_digest. A change to either side breaks
+#       a test rather than silently producing digests that no longer map back.
+RID="$REPO_ROOT/scripts/utest-refusal-id.py"
+rid_digest() { python3 "$RID" digest "$@" 2>/dev/null | awk '{print $1}'; }
+
+RID_OK=1
+# The four vectors pinned in src/kernel/test/test_usermode_launcher.c: the
+# published FNV-1a basis for the empty span, two reference strings, and a
+# high byte that a signed-char implementation would hash differently.
+[ "$(rid_digest --name '')" = "811c9dc5" ] || RID_OK=0
+[ "$(rid_digest --name a)" = "e40c292c" ] || RID_OK=0
+[ "$(rid_digest --name foobar)" = "bf9cf968" ] || RID_OK=0
+[ "$(rid_digest --hex ff)" = "7a0b824e" ] || RID_OK=0
+if [ "$RID_OK" = "1" ]; then
+    t_pass "refusal correlator: reproduces the kernel's FNV-1a golden vectors"
+else
+    t_fail "refusal correlator: reproduces the kernel's FNV-1a golden vectors" \
+        "empty=$(rid_digest --name '') a=$(rid_digest --name a) foobar=$(rid_digest --name foobar) ff=$(rid_digest --hex ff)"
+fi
+
+# The vectors are only a binding if BOTH sides carry them. A kernel test that
+# dropped them would leave the tool free to drift with nothing to catch it.
+if grep -q '0x811c9dc5u' "$REPO_ROOT/src/kernel/test/test_usermode_launcher.c" &&
+   grep -q '0xe40c292cu' "$REPO_ROOT/src/kernel/test/test_usermode_launcher.c" &&
+   grep -q '0xbf9cf968u' "$REPO_ROOT/src/kernel/test/test_usermode_launcher.c" &&
+   grep -q '0x7a0b824eu' "$REPO_ROOT/src/kernel/test/test_usermode_launcher.c"; then
+    t_pass "refusal correlator: the same vectors are asserted kernel-side"
+else
+    t_fail "refusal correlator: the same vectors are asserted kernel-side" \
+        "the kernel unit test no longer pins the vectors this tool is bound to"
+fi
+
+# The bytes past a NUL are inside the manifest's name span, which is the whole
+# reason the digest exists: a C string stops early and the identity would then
+# describe a name nobody wrote.
+RID_TMP="$FRAME_TMP/rid"
+mkdir -p "$RID_TMP"
+printf 'test_x.exe\0aaa\n' > "$RID_TMP/nul.man"
+RID_NUL="$(python3 "$RID" digest --manifest "$RID_TMP/nul.man" 2>/dev/null | awk '{print $1}')"
+RID_PLAIN="$(rid_digest --name 'test_x.exe')"
+if [ -n "$RID_NUL" ] && [ "$RID_NUL" != "$RID_PLAIN" ]; then
+    t_pass "refusal correlator: a manifest span covers the bytes past an embedded NUL"
+else
+    t_fail "refusal correlator: a manifest span covers the bytes past an embedded NUL" \
+        "span=$RID_NUL cstring=$RID_PLAIN"
+fi
+
+# Manifest tokenization must be the kernel's, byte for byte: `#` introduces a
+# comment only after whitespace, so `test_a#b.exe` is ONE name that earns a
+# charset refusal, and attribute tokens are outside the span.
+printf 'test_a#b.exe\n# whole-line comment\ntest_ok.exe type=smoke  # trailing\n' \
+    > "$RID_TMP/tok.man"
+RID_SPANS="$(python3 "$RID" digest --manifest "$RID_TMP/tok.man" 2>/dev/null | sed "s/.*'\\(.*\\)'.*/\\1/")"
+if [ "$(printf '%s\n' "$RID_SPANS" | wc -l)" = "2" ] &&
+   printf '%s\n' "$RID_SPANS" | grep -qx 'test_a#b.exe' &&
+   printf '%s\n' "$RID_SPANS" | grep -qx 'test_ok.exe'; then
+    t_pass "refusal correlator: manifest tokenization matches the kernel enumerator"
+else
+    t_fail "refusal correlator: manifest tokenization matches the kernel enumerator" \
+        "spans=[$RID_SPANS]"
+fi
+
+# Tokenizer parity across the shapes a hand-written manifest actually
+# takes. The tool claims a byte-exact mirror of u_manifest_parse, and drift
+# on any of these attributes a refusal to the wrong byte span.
+{
+    printf 'test_crlf.exe\r\n'                  # CRLF line ending
+    printf '# comment only\n'                   # whole-line comment
+    printf '   \t \n'                           # whitespace-only line
+    printf 'type=smoke\n'                       # attribute-shaped first token
+    printf 'test_trail.exe   \t\n'              # trailing whitespace
+    printf 'test_last.exe'                      # final name, NO newline
+} > "$RID_TMP/shapes.man"
+RID_SPANS="$(python3 "$RID" digest --manifest "$RID_TMP/shapes.man" 2>/dev/null | sed "s/.*'\\(.*\\)'.*/\\1/")"
+RID_WANT='test_crlf.exe
+type=smoke
+test_trail.exe
+test_last.exe'
+if [ "$RID_SPANS" = "$RID_WANT" ]; then
+    t_pass "refusal correlator: tokenizer parity holds across CRLF, comment, blank, attribute-only and unterminated shapes"
+else
+    t_fail "refusal correlator: tokenizer parity holds across CRLF, comment, blank, attribute-only and unterminated shapes" \
+        "got=[$RID_SPANS] want=[$RID_WANT]"
+fi
+
+# A file of nothing but comments and blanks yields no candidates at all,
+# which must be a clean "nothing to offer" rather than a crash.
+printf '# only comments\n\n   \n# and more\n' > "$RID_TMP/empty.man"
+python3 "$RID" digest --manifest "$RID_TMP/empty.man" >/dev/null 2>&1 && RID_RC=0 || RID_RC=$?
+if [ "$RID_RC" = "2" ]; then
+    t_pass "refusal correlator: a comment-only manifest offers no candidates and says so"
+else
+    t_fail "refusal correlator: a comment-only manifest offers no candidates and says so" "rc=$RID_RC"
+fi
+
+# Malformed --hex is a usage error, not a traceback or a silent partial.
+for RID_BAD in 'abc' 'zz' '0x41'; do
+    python3 "$RID" digest --hex "$RID_BAD" >/dev/null 2>&1 && RID_RC=0 || RID_RC=$?
+    if [ "$RID_RC" = "2" ]; then
+        t_pass "refusal correlator: malformed --hex '$RID_BAD' is a usage error"
+    else
+        t_fail "refusal correlator: malformed --hex '$RID_BAD' is a usage error" "rc=$RID_RC"
+    fi
+done
+
+# Matching is on the WHOLE identity and reports EVERY candidate: a 32-bit
+# FNV-1a is not collision-resistant, and the kernel says so -- uniqueness
+# within a run comes from the ordinal, not the digest.
+RID_D="$(rid_digest --name 'test_a#b.exe')"
+python3 "$RID" match "refused_1_test_a_b.exe_${RID_D}.exe" \
+    --manifest "$RID_TMP/tok.man" >/dev/null 2>&1 && RID_RC=0 || RID_RC=$?
+if [ "$RID_RC" = "0" ]; then
+    t_pass "refusal correlator: a charset-refused name is recovered from the manifest"
+else
+    t_fail "refusal correlator: a charset-refused name is recovered from the manifest" "rc=$RID_RC"
+fi
+
+# The prefix is checked too, not just the digest: an identity whose prefix
+# cannot be this candidate's sanitization is not this candidate's identity.
+python3 "$RID" match "refused_1_zzzz_${RID_D}.exe" \
+    --manifest "$RID_TMP/tok.man" >/dev/null 2>&1 && RID_RC=0 || RID_RC=$?
+if [ "$RID_RC" = "3" ]; then
+    t_pass "refusal correlator: a digest match with the wrong prefix does not match"
+else
+    t_fail "refusal correlator: a digest match with the wrong prefix does not match" "rc=$RID_RC (expected 3)"
+fi
+
+# Two identical candidates are AMBIGUOUS rather than resolved to the first.
+printf 'test_dup.exe\ntest_dup.exe\n' > "$RID_TMP/dup.man"
+RID_DUPD="$(rid_digest --name 'test_dup.exe')"
+python3 "$RID" match "refused_1_test_dup.exe_${RID_DUPD}.exe" \
+    --manifest "$RID_TMP/dup.man" >/dev/null 2>&1 && RID_RC=0 || RID_RC=$?
+if [ "$RID_RC" = "4" ]; then
+    t_pass "refusal correlator: more than one match exits AMBIGUOUS, never picks one"
+else
+    t_fail "refusal correlator: more than one match exits AMBIGUOUS, never picks one" "rc=$RID_RC (expected 4)"
+fi
+
+# A malformed identity is a usage error, not a silent no-match.
+python3 "$RID" match "not-an-identity" --name a >/dev/null 2>&1 && RID_RC=0 || RID_RC=$?
+if [ "$RID_RC" = "2" ]; then
+    t_pass "refusal correlator: a malformed identity is refused as a usage error"
+else
+    t_fail "refusal correlator: a malformed identity is refused as a usage error" "rc=$RID_RC (expected 2)"
+fi
+
+# An EMPTY prefix would make the prefix half of the match vacuous, leaving a
+# 32-bit digest the kernel explicitly does not treat as unique as the whole
+# test. u_build_refusal_id never emits one (a static assert reserves a
+# readable minimum), so the identity is refused rather than matched loosely.
+python3 "$RID" match "refused_1__${RID_D}.exe" --manifest "$RID_TMP/tok.man" \
+    >/dev/null 2>&1 && RID_RC=0 || RID_RC=$?
+if [ "$RID_RC" = "2" ]; then
+    t_pass "refusal correlator: an empty-prefix identity is refused, not matched on digest alone"
+else
+    t_fail "refusal correlator: an empty-prefix identity is refused, not matched on digest alone" "rc=$RID_RC (expected 2)"
+fi
+
+# A prefix carrying a byte the sanitizer would have replaced cannot have come
+# from u_build_refusal_id either.
+python3 "$RID" match "refused_1_test_a#b.exe_${RID_D}.exe" --manifest "$RID_TMP/tok.man" \
+    >/dev/null 2>&1 && RID_RC=0 || RID_RC=$?
+if [ "$RID_RC" = "2" ]; then
+    t_pass "refusal correlator: a prefix outside the accepted charset is refused"
+else
+    t_fail "refusal correlator: a prefix outside the accepted charset is refused" "rc=$RID_RC (expected 2)"
+fi
+
+# A truncated prefix still matches (a long name legitimately outruns the
+# budget the ordinal leaves) but is REPORTED as truncated, because only an
+# exact prefix accounts for the whole candidate.
+printf 'test_a_very_long_binary_name_here.exe\n' > "$RID_TMP/long.man"
+RID_LONGD="$(rid_digest --name 'test_a_very_long_binary_name_here.exe')"
+RID_OUT="$(python3 "$RID" match "refused_1_test_a_very_${RID_LONGD}.exe" \
+           --manifest "$RID_TMP/long.man" 2>&1 || true)"
+if printf '%s' "$RID_OUT" | grep -q 'MATCH (truncated prefix)'; then
+    t_pass "refusal correlator: a truncated prefix match is reported as truncated"
+else
+    t_fail "refusal correlator: a truncated prefix match is reported as truncated" "$RID_OUT"
+fi
+
+# The launcher DISCARDS a manifest at or above UTEST_MANIFEST_ARENA_BYTES
+# whole -- it never parses one entry -- so no identity in any artifact can
+# have come from a larger file. Reading the cap from the kernel source is
+# what keeps this from becoming a mirrored constant that drifts.
+python3 -c "
+import sys
+size = int(sys.argv[1])
+open(sys.argv[2], 'wb').write(b'test_pad.exe\n' * (size // 13 + 1))
+" 9000 "$RID_TMP/oversize.man"
+RID_OUT="$(python3 "$RID" digest --manifest "$RID_TMP/oversize.man" 2>&1 || true)"
+python3 "$RID" digest --manifest "$RID_TMP/oversize.man" >/dev/null 2>&1 && RID_RC=0 || RID_RC=$?
+if [ "$RID_RC" = "2" ] && printf '%s' "$RID_OUT" | grep -q 'discards a manifest at or above 8192'; then
+    t_pass "refusal correlator: an oversized manifest is refused, not tokenized past the kernel's cap"
+else
+    t_fail "refusal correlator: an oversized manifest is refused, not tokenized past the kernel's cap" \
+        "rc=$RID_RC out=$RID_OUT"
+fi
+
+# And the cap is READ from the kernel source, not hardcoded: point the tool
+# at a source declaring a different arena and the boundary moves with it.
+printf '#define UTEST_MANIFEST_ARENA_BYTES 64u\n' > "$RID_TMP/fake-kernel.c"
+printf 'test_ok.exe\ntest_two.exe\ntest_three.exe\ntest_four.exe\ntest_five.exe\ntest_six.exe\n' \
+    > "$RID_TMP/small.man"
+RID_OUT="$(python3 "$RID" digest --manifest "$RID_TMP/small.man" \
+           --kernel-source "$RID_TMP/fake-kernel.c" 2>&1 || true)"
+if printf '%s' "$RID_OUT" | grep -q 'at or above 64'; then
+    t_pass "refusal correlator: the manifest cap is read from the kernel source, never mirrored"
+else
+    t_fail "refusal correlator: the manifest cap is read from the kernel source, never mirrored" "$RID_OUT"
+fi
+
+# The kernel source is an operator-supplied path too, so it goes through the
+# SAME bounded reader as the candidate inputs -- otherwise it is the one door
+# left open onto a FIFO or /dev/zero. An EXPLICIT source that cannot be read
+# is an error; only the DEFAULT being absent falls back to the constant.
+RID_OUT="$(python3 "$RID" digest --manifest "$RID_TMP/tok.man" \
+           --kernel-source /dev/zero 2>&1 || true)"
+python3 "$RID" digest --manifest "$RID_TMP/tok.man" --kernel-source /dev/zero \
+    >/dev/null 2>&1 && RID_RC=0 || RID_RC=$?
+if [ "$RID_RC" = "2" ] && printf '%s' "$RID_OUT" | grep -q 'not a regular file'; then
+    t_pass "refusal correlator: --kernel-source obeys the same input bounds as every other file"
+else
+    t_fail "refusal correlator: --kernel-source obeys the same input bounds as every other file" \
+        "rc=$RID_RC out=$RID_OUT"
+fi
+
+# A source that is PRESENT but declares no arena macro is an extraction
+# ERROR, not a quiet fallback: reconciling a manifest against a cap the
+# kernel never stated would attribute (or refuse) it on a number nobody
+# chose. The fallback exists for ABSENCE only.
+printf '/* a kernel source with no arena declaration */\n' > "$RID_TMP/no-macro.c"
+RID_OUT="$(python3 "$RID" digest --manifest "$RID_TMP/tok.man" \
+           --kernel-source "$RID_TMP/no-macro.c" 2>&1 || true)"
+python3 "$RID" digest --manifest "$RID_TMP/tok.man" \
+    --kernel-source "$RID_TMP/no-macro.c" >/dev/null 2>&1 && RID_RC=0 || RID_RC=$?
+if [ "$RID_RC" = "2" ] && printf '%s' "$RID_OUT" | grep -q 'declares no UTEST_MANIFEST_ARENA_BYTES'; then
+    t_pass "refusal correlator: a source without the arena macro is an error, not a silent default"
+else
+    t_fail "refusal correlator: a source without the arena macro is an error, not a silent default" \
+        "rc=$RID_RC out=$RID_OUT"
+fi
+
+# And the fallback DOES apply when there is genuinely no kernel source --
+# the tool copied out of the tree stays usable, and SAYS which cap it used
+# rather than reconciling silently against a constant that may have drifted.
+mkdir -p "$RID_TMP/offtree/scripts" "$RID_TMP/offtree/src/kernel/test"
+cp "$RID" "$RID_TMP/offtree/scripts/utest-refusal-id.py"
+RID_OUT="$(python3 "$RID_TMP/offtree/scripts/utest-refusal-id.py" digest \
+           --manifest "$RID_TMP/tok.man" 2>&1 || true)"
+if printf '%s' "$RID_OUT" | grep -q 'manifest cap 8192 taken from the documented default'; then
+    t_pass "refusal correlator: an absent kernel source falls back and announces the cap it used"
+else
+    t_fail "refusal correlator: an absent kernel source falls back and announces the cap it used" "$RID_OUT"
+fi
+
+# The IMPLICIT source present but unusable must NOT fall back: that is the
+# path where a wrong cap would silently decide a refusal attribution. A
+# dangling symlink is the sharp case -- it opens as ENOENT while being a
+# directory entry somebody pointed somewhere.
+ln -sf "$RID_TMP/definitely-absent" \
+    "$RID_TMP/offtree/src/kernel/test/test_usermode.c"
+RID_OUT="$(python3 "$RID_TMP/offtree/scripts/utest-refusal-id.py" digest \
+           --manifest "$RID_TMP/tok.man" 2>&1 || true)"
+python3 "$RID_TMP/offtree/scripts/utest-refusal-id.py" digest \
+    --manifest "$RID_TMP/tok.man" >/dev/null 2>&1 && RID_RC=0 || RID_RC=$?
+if [ "$RID_RC" = "2" ] && printf '%s' "$RID_OUT" | grep -q 'is a broken link'; then
+    t_pass "refusal correlator: a present-but-unusable implicit source errors instead of falling back"
+else
+    t_fail "refusal correlator: a present-but-unusable implicit source errors instead of falling back" \
+        "rc=$RID_RC out=$RID_OUT"
+fi
+rm -f "$RID_TMP/offtree/src/kernel/test/test_usermode.c"
+
+# Per-FILE and per-COUNT limits do not bound the total: one 16 MiB
+# single-line file repeated stays inside both while retaining gigabytes.
+# A candidate is a NAME, so an over-long one is refused outright, and the
+# run-wide byte budget bounds a repeated or expanded input set.
+python3 -c "open('$RID_TMP/oneline.txt','wb').write(b'a' * 200000)"
+RID_OUT="$(python3 "$RID" digest --names-from "$RID_TMP/oneline.txt" 2>&1 || true)"
+python3 "$RID" digest --names-from "$RID_TMP/oneline.txt" >/dev/null 2>&1 && RID_RC=0 || RID_RC=$?
+if [ "$RID_RC" = "2" ] && printf '%s' "$RID_OUT" | grep -q 'no discovery path produces a name past'; then
+    t_pass "refusal correlator: a candidate longer than any filename is refused"
+else
+    t_fail "refusal correlator: a candidate longer than any filename is refused" \
+        "rc=$RID_RC out=$RID_OUT"
+fi
+
+python3 -c "open('$RID_TMP/many.txt','wb').write((b'n' * 60000 + b'\n') * 200)"
+RID_ARGS=""
+for _ in 1 2 3 4 5 6 7 8; do RID_ARGS="$RID_ARGS --names-from $RID_TMP/many.txt"; done
+# shellcheck disable=SC2086
+RID_OUT="$(python3 "$RID" digest $RID_ARGS 2>&1 || true)"
+# shellcheck disable=SC2086
+python3 "$RID" digest $RID_ARGS >/dev/null 2>&1 && RID_RC=0 || RID_RC=$?
+if [ "$RID_RC" = "2" ] && printf '%s' "$RID_OUT" | grep -q 'candidate inputs total more than'; then
+    t_pass "refusal correlator: a repeated input set is bounded in AGGREGATE, not only per file"
+else
+    t_fail "refusal correlator: a repeated input set is bounded in AGGREGATE, not only per file" \
+        "rc=$RID_RC out=$RID_OUT"
+fi
+
+# A FIFO must be REFUSED, not blocked on: the type check happens on the
+# descriptor after a non-blocking open, so a reader-less FIFO cannot hang
+# the tool in open() before its type is even known.
+if [ ! -e "$RID_TMP/fifo" ]; then mkfifo "$RID_TMP/fifo" 2>/dev/null || true; fi
+if [ -p "$RID_TMP/fifo" ]; then
+    RID_OUT="$(timeout 10 python3 "$RID" digest --names-from "$RID_TMP/fifo" 2>&1 || true)"
+    timeout 10 python3 "$RID" digest --names-from "$RID_TMP/fifo" >/dev/null 2>&1 && RID_RC=0 || RID_RC=$?
+    if [ "$RID_RC" = "2" ] && printf '%s' "$RID_OUT" | grep -q 'not a regular file'; then
+        t_pass "refusal correlator: a reader-less FIFO input is refused, never blocked on"
+    else
+        t_fail "refusal correlator: a reader-less FIFO input is refused, never blocked on" \
+            "rc=$RID_RC out=$RID_OUT"
+    fi
+else
+    t_pass "refusal correlator: FIFO refusal not exercised (mkfifo unavailable on this host)"
+fi
+
+# 6r2e. The reason-tree lint. UTEST_REASON_REFUSAL feeds the derived name
+#       bound, so a reason defined without being added to it silently widens
+#       what the formatters accept -- the failure this check exists to fail on.
+RLINT="$REPO_ROOT/scripts/utest-reason-lint.py"
+if python3 "$RLINT" --check >/dev/null 2>&1; then
+    t_pass "utest reason lint: the shipped reason set is measured by the tree"
+else
+    t_fail "utest reason lint: the shipped reason set is measured by the tree" \
+        "$(python3 "$RLINT" --check 2>&1 | head -3)"
+fi
+
+RLINT_TMP="$FRAME_TMP/rlint"
+mkdir -p "$RLINT_TMP"
+sed 's|#define UTEST_RSN_ABSENT     "planned binary absent"|#define UTEST_RSN_ABSENT     "planned binary absent"\n#define UTEST_RSN_UNMEASURED "a reason nobody measured"|' \
+    "$REPO_ROOT/src/kernel/test/test_usermode.c" > "$RLINT_TMP/unmeasured.c"
+python3 "$RLINT" --check "$RLINT_TMP/unmeasured.c" >/dev/null 2>&1 && RL_RC=0 || RL_RC=$?
+if [ "$RL_RC" = "1" ]; then
+    t_pass "utest reason lint: a reason absent from the tree is an error"
+else
+    t_fail "utest reason lint: a reason absent from the tree is an error" "rc=$RL_RC (expected 1)"
+fi
+
+# A mention in a COMMENT is not membership: the tree is what the compiler
+# measures, and accepting prose would make the lint agree with a build that is
+# already wrong.
+sed 's|#define UTEST_RSN_ABSENT     "planned binary absent"|#define UTEST_RSN_ABSENT     "planned binary absent"\n/* UTEST_LIT(UTEST_RSN_COMMENTED) is mentioned only here */\n#define UTEST_RSN_COMMENTED  "commented only"|' \
+    "$REPO_ROOT/src/kernel/test/test_usermode.c" > "$RLINT_TMP/commented.c"
+python3 "$RLINT" --check "$RLINT_TMP/commented.c" >/dev/null 2>&1 && RL_RC=0 || RL_RC=$?
+if [ "$RL_RC" = "1" ]; then
+    t_pass "utest reason lint: a leaf mentioned only in a comment is not membership"
+else
+    t_fail "utest reason lint: a leaf mentioned only in a comment is not membership" "rc=$RL_RC (expected 1)"
+fi
+
+# A tree leaf whose macro no longer exists is reported from the other side.
+sed 's|#define UTEST_RSN_UNREADABLE "manifest unparseable"|#define UTEST_RSN_GONE       "renamed away"|' \
+    "$REPO_ROOT/src/kernel/test/test_usermode.c" > "$RLINT_TMP/renamed.c"
+# Captured, not piped: the checker exits 1 when it reports violations, and
+# under `pipefail` that status is the PIPELINE's however well grep matched.
+RL_OUT="$(python3 "$RLINT" --check "$RLINT_TMP/renamed.c" 2>/dev/null || true)"
+if printf '%s' "$RL_OUT" | grep -q 'UTEST_RSN_UNREADABLE is a leaf'; then
+    t_pass "utest reason lint: a tree leaf naming a deleted reason is reported"
+else
+    t_fail "utest reason lint: a tree leaf naming a deleted reason is reported" "$RL_OUT"
+fi
+
+# Extraction failure is a HARD error, never a clean pass: a check that cannot
+# find its subject has verified nothing.
+printf '#define UTEST_RSN_X "x"\n' > "$RLINT_TMP/notree.c"
+python3 "$RLINT" --check "$RLINT_TMP/notree.c" >/dev/null 2>&1 && RL_RC=0 || RL_RC=$?
+if [ "$RL_RC" = "2" ]; then
+    t_pass "utest reason lint: a missing tree fails closed instead of passing"
+else
+    t_fail "utest reason lint: a missing tree fails closed instead of passing" "rc=$RL_RC (expected 2)"
+fi
+
+# An UNTERMINATED continuation means the file was cut: a partial macro body
+# under-reports its leaves, so extraction must fail rather than measure half
+# a tree and report clean.
+python3 - "$REPO_ROOT/src/kernel/test/test_usermode.c" "$RLINT_TMP/cut.c" <<'PY'
+import sys
+src, dst = sys.argv[1], sys.argv[2]
+lines = open(src, encoding="utf-8").read().split("\n")
+for i, line in enumerate(lines):
+    if line.startswith("#define UTEST_REASON_REFUSAL"):
+        # Keep the opening line (which ends in a backslash) and drop the
+        # continuation lines that complete the tree.
+        j = i + 1
+        while j < len(lines) and lines[j - 1].rstrip().endswith("\\"):
+            j += 1
+        open(dst, "w", encoding="utf-8").write("\n".join(lines[:i + 1]))
+        break
+PY
+python3 "$RLINT" --check "$RLINT_TMP/cut.c" >/dev/null 2>&1 && RL_RC=0 || RL_RC=$?
+if [ "$RL_RC" = "2" ]; then
+    t_pass "utest reason lint: an unterminated continuation fails closed"
+else
+    t_fail "utest reason lint: an unterminated continuation fails closed" "rc=$RL_RC (expected 2)"
+fi
+
+# A DEFINE inside a comment is not a definition -- comments are stripped
+# before either side of the set is built, so this must stay clean.
+sed 's|#define UTEST_RSN_ABSENT     "planned binary absent"|#define UTEST_RSN_ABSENT     "planned binary absent"\n/* #define UTEST_RSN_COMMENTED_OUT "not real" */\n// #define UTEST_RSN_LINE_COMMENT "not real either"|' \
+    "$REPO_ROOT/src/kernel/test/test_usermode.c" > "$RLINT_TMP/commented-define.c"
+python3 "$RLINT" --check "$RLINT_TMP/commented-define.c" >/dev/null 2>&1 && RL_RC=0 || RL_RC=$?
+if [ "$RL_RC" = "0" ]; then
+    t_pass "utest reason lint: a commented-out define is not a definition"
+else
+    t_fail "utest reason lint: a commented-out define is not a definition" "rc=$RL_RC (expected 0)"
+fi
+
+# MULTIPLE files: one violating file must fail the run and be NAMED, in
+# either argument order, so a clean file cannot mask a dirty one.
+for RL_ORDER in "clean-first" "dirty-first"; do
+    if [ "$RL_ORDER" = "clean-first" ]; then
+        RL_OUT="$(python3 "$RLINT" --check "$REPO_ROOT/src/kernel/test/test_usermode.c" "$RLINT_TMP/unmeasured.c" 2>&1 || true)"
+        python3 "$RLINT" --check "$REPO_ROOT/src/kernel/test/test_usermode.c" "$RLINT_TMP/unmeasured.c" >/dev/null 2>&1 && RL_RC=0 || RL_RC=$?
+    else
+        RL_OUT="$(python3 "$RLINT" --check "$RLINT_TMP/unmeasured.c" "$REPO_ROOT/src/kernel/test/test_usermode.c" 2>&1 || true)"
+        python3 "$RLINT" --check "$RLINT_TMP/unmeasured.c" "$REPO_ROOT/src/kernel/test/test_usermode.c" >/dev/null 2>&1 && RL_RC=0 || RL_RC=$?
+    fi
+    if [ "$RL_RC" = "1" ] && printf '%s' "$RL_OUT" | grep -q 'unmeasured.c: UTEST_RSN_UNMEASURED'; then
+        t_pass "utest reason lint: a violating file among several fails and is named ($RL_ORDER)"
+    else
+        t_fail "utest reason lint: a violating file among several fails and is named ($RL_ORDER)" \
+            "rc=$RL_RC out=$RL_OUT"
+    fi
+done
+
+# And it is wired into lint.sh, not merely callable -- the same
+# gates-in-production check the rest of this file makes.
+if grep -q 'utest-reason-lint.py --check' "$REPO_ROOT/scripts/lint.sh"; then
+    t_pass "utest reason lint: wired into scripts/lint.sh as a check"
+else
+    t_fail "utest reason lint: wired into scripts/lint.sh as a check" \
+        "lint.sh does not call the checker"
+fi
+
+# The INTEGRATED failure path, driven through the production Check 24 span
+# with a stand-in checker. lint.sh runs under `set -euo pipefail`, so a
+# failing checker in a bare command substitution would exit the script at
+# the assignment: the gate would still block, but with no diagnostic naming
+# what went wrong -- which is the difference between a lint and a wall.
+# Ends at the Summary block, then drops its two banner lines: the obvious
+# `# ====` end anchor matches the header's OWN underline, one line in.
+LINT24_REGION="$(sed -n '/^# Check 24: every UTEST_RSN_\* reason must be measured/,/^# Summary$/p' \
+                 "$REPO_ROOT/scripts/lint.sh" | sed '$d' | sed '$d')"
+if [ -z "$LINT24_REGION" ] || ! printf '%s' "$LINT24_REGION" | grep -q 'utest-reason-lint.py'; then
+    t_fail "utest reason lint: extracted the Check 24 span from scripts/lint.sh" \
+        "anchors not found"
+else
+    LINT23_TMP="$RLINT_TMP/lint23"
+    rm -rf "$LINT23_TMP"; mkdir -p "$LINT23_TMP/scripts"
+    printf '#!/usr/bin/env python3\nimport sys\nprint("FAKE.c: UTEST_RSN_X is defined but is not a leaf")\nsys.exit(1)\n' \
+        > "$LINT23_TMP/scripts/utest-reason-lint.py"
+    LINT23_OUT="$(bash -c '
+set -euo pipefail
+RED=""; YELLOW=""; NC=""
+REPO_ROOT="'"$LINT23_TMP"'"
+ERRORS=0; WARNINGS=0
+'"$LINT24_REGION"'
+echo "SURVIVED errors=$ERRORS"
+' 2>&1 || true)"
+    if printf '%s' "$LINT23_OUT" | grep -q 'SURVIVED errors=1' &&
+       printf '%s' "$LINT23_OUT" | grep -q 'UTEST_RSN_X is defined but is not a leaf'; then
+        t_pass "utest reason lint: a failing checker reports its diagnostic instead of killing lint.sh"
+    else
+        t_fail "utest reason lint: a failing checker reports its diagnostic instead of killing lint.sh" \
+            "$LINT23_OUT"
+    fi
 fi
 
 # 6r3. Producer and consumer must spell the incomplete-run marker identically.

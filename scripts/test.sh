@@ -2281,6 +2281,35 @@ if [ "$HAS_XML" -eq 1 ]; then
         XML_FAIL=$(echo "$SUM_LINE" | sed -E 's/.*failures=([0-9]+).*/\1/')
         XML_SKIP=$(echo "$SUM_LINE" | sed -E 's/.*skipped=([0-9]+).*/\1/')
         XML_TIME=$(echo "$SUM_LINE" | sed -E 's/.*time=([0-9.]+).*/\1/')
+        # Every counter is BOUNDED before it is compared or added. The
+        # extraction above accepts `[0-9]+` of any length, and an oversized
+        # decimal here is not merely wrong -- it FAILS OPEN: `[ "$a" -gt "$b" ]`
+        # prints "integer expression expected" and evaluates FALSE, so the
+        # reconciliation guards below would silently pass, and the projection
+        # `$(( failures - errors ))` then wraps through bash's signed 64-bit
+        # arithmetic to a negative. Every field the producer emits is a
+        # uint32, so anything wider is drift or forgery and the run refuses.
+        #
+        # CANONICAL decimal, not merely digits: bash's `[` compares in base
+        # 10 but `$(( ))` reads a leading zero as OCTAL, so `failures=08`
+        # passes a digits-only guard and then aborts the projection with
+        # "value too great for base", while `failures=010` silently becomes
+        # 8. The producer formats with %u and cannot emit either shape.
+        XML_COUNTS_OK=1
+        for _xml_field in "$XML_TESTS" "$XML_FAIL" "$XML_SKIP"; do
+            if printf '%s' "$_xml_field" | grep -qE '^(0|[1-9][0-9]{0,9})$'; then
+                [ "$_xml_field" -le 4294967295 ] || XML_COUNTS_OK=0
+            else
+                XML_COUNTS_OK=0
+            fi
+        done
+        if [ "$XML_COUNTS_OK" -ne 1 ]; then
+            echo -e "  ${RED}[UTEST]${RESET} [UTEST-XML-SUMMARY] carries a count outside the uint32 range the producer can emit -- refusing to assemble from it"
+            UTEST_FAIL=$(( UTEST_FAIL + 1 ))
+            utest_publish_xml_refusal "artifact-pipeline" \
+                "[UTEST-XML-SUMMARY] carries a count outside the uint32 range"
+            XML_SUMMARY_OK=0
+        fi
         # Run-completeness fields. Fail-CLOSED on absence, matching the
         # stance taken on an unparseable summary below and the JSON
         # harvester's `missing_completeness` refusal: test.sh boots the
@@ -2290,11 +2319,34 @@ if [ "$HAS_XML" -eq 1 ]; then
         # as a finished one.
         XML_ABORTED=0
         XML_NOT_RUN=0
-        if echo "$SUM_LINE" | grep -qE ' aborted=[0-9]+ not_run=[0-9]+'; then
+        XML_NEVER_RAN=0
+        if echo "$SUM_LINE" | grep -qE ' aborted=[0-9]+ not_run=[0-9]+ errors=[0-9]+'; then
             XML_ABORTED=$(echo "$SUM_LINE" | sed -E 's/.* aborted=([0-9]+).*/\1/')
             XML_NOT_RUN=$(echo "$SUM_LINE" | sed -E 's/.* not_run=([0-9]+).*/\1/')
+            # The never-ran subset of `failures`. Fail-CLOSED on absence for
+            # the same reason as aborted=/not_run=: this script boots the
+            # kernel it just built, so a summary without the field is
+            # producer/host drift, and defaulting it to zero would publish
+            # every refusal as an ordinary assertion failure.
+            XML_NEVER_RAN=$(echo "$SUM_LINE" | sed -E 's/.* errors=([0-9]+).*/\1/')
+            # Same uint32 bound as the three counters above, for the same
+            # fail-open reason: this value is BOTH compared and subtracted.
+            for _xml_field in "$XML_ABORTED" "$XML_NOT_RUN" "$XML_NEVER_RAN"; do
+                if printf '%s' "$_xml_field" | grep -qE '^(0|[1-9][0-9]{0,9})$'; then
+                    [ "$_xml_field" -le 4294967295 ] || XML_COUNTS_OK=0
+                else
+                    XML_COUNTS_OK=0
+                fi
+            done
+            if [ "$XML_COUNTS_OK" -ne 1 ] && [ "$XML_SUMMARY_OK" -eq 1 ]; then
+                echo -e "  ${RED}[UTEST]${RESET} [UTEST-XML-SUMMARY] carries an aborted=/not_run=/errors= value outside the uint32 range -- refusing to assemble from it"
+                UTEST_FAIL=$(( UTEST_FAIL + 1 ))
+                utest_publish_xml_refusal "artifact-pipeline" \
+                    "[UTEST-XML-SUMMARY] carries a completeness value outside the uint32 range"
+                XML_SUMMARY_OK=0
+            fi
         else
-            echo -e "  ${RED}[UTEST]${RESET} [UTEST-XML-SUMMARY] carries no aborted=/not_run= fields -- cannot tell a complete run from an aborted one"
+            echo -e "  ${RED}[UTEST]${RESET} [UTEST-XML-SUMMARY] carries no aborted=/not_run=/errors= fields -- cannot tell a complete run from an aborted one"
             UTEST_FAIL=$(( UTEST_FAIL + 1 ))
             # Same refusal as an unparseable summary, for the same reason:
             # continuing would publish a normal document asserting
@@ -2302,7 +2354,7 @@ if [ "$HAS_XML" -eq 1 ]; then
             # artifact-only consumer would read a version-skewed or truncated
             # run as a completed green suite.
             utest_publish_xml_refusal "artifact-pipeline" \
-                "[UTEST-XML-SUMMARY] carries no aborted=/not_run= fields -- run completeness unknown"
+                "[UTEST-XML-SUMMARY] carries no aborted=/not_run=/errors= fields -- run completeness unknown"
             XML_SUMMARY_OK=0
         fi
     else
@@ -2328,8 +2380,69 @@ if [ "$HAS_XML" -eq 1 ]; then
     fi
     fi  # XML_SLICE_FAILED guard: the slice-failure refusal stands alone
 
-    # An aborted suite gets a synthetic infrastructure <testcase> carrying an
-    # <error>, and errors="1" to match it.
+    # JUnit's two failure columns are DISJOINT -- `failures` counts
+    # <failure> elements, `errors` counts <error> ones -- while the producer
+    # reports `errors` as an overlapping SUBSET of `failures` so its own
+    # summary line, the serial recount and the TAP stream keep describing
+    # one failure population. This is where the two models meet: the
+    # projection happens at assembly, next to the document it describes.
+    #
+    # It is reconciled before it is trusted. The producer's count and the
+    # elements actually harvested from the canonical run slice are two
+    # independent pieces of evidence, and every other count in this
+    # assembler is cross-checked the same way. Trusting the field alone
+    # would let producer counter drift publish a <testsuite errors="N">
+    # whose N contradicts the elements underneath it.
+    if [ "$XML_SUMMARY_OK" -eq 1 ]; then
+        # Counted over the BINARY testcase population only. A synthetic
+        # skip-block record carries classname="skip-block" and has no
+        # never-ran dimension, so an <error> inside one is not evidence of
+        # a refused binary -- counting it would let a corrupted skip record
+        # satisfy errors= while no binary ERROR record exists at all, and
+        # the suite attributes would then contradict the children beneath
+        # them. Excluded here, so that shape reconciles to a MISMATCH and
+        # the run refuses, which is what it is.
+        XML_ERROR_ELEMS=$({ sed -n "s/.*${UF}\[UTEST-XML\] //p" "$XML_SRC" |
+                            grep -E '^<testcase' |
+                            grep -v 'classname="skip-block"' |
+                            grep -cE '<error( |/>)' || true; } | head -1)
+        XML_ERROR_ELEMS=${XML_ERROR_ELEMS:-0}
+        # Excluding the skip-block population from the count is only half a
+        # check. Nothing above verifies those records are SKIPPED-only, so a
+        # malformed one carrying <error> would be silently dropped from the
+        # count while still reaching the document: the artifact would then
+        # hold two <error> elements under errors="1". A skip record has no
+        # failure or never-ran dimension by construction, so any other
+        # element in one is producer drift and the run refuses.
+        XML_BAD_SKIP=$({ sed -n "s/.*${UF}\[UTEST-XML\] //p" "$XML_SRC" |
+                         grep -E '^<testcase' |
+                         grep 'classname="skip-block"' |
+                         grep -cE '<(error|failure)( |/>)' || true; } | head -1)
+        XML_BAD_SKIP=${XML_BAD_SKIP:-0}
+        if [ "$XML_BAD_SKIP" -gt 0 ]; then
+            echo -e "  ${RED}[UTEST]${RESET} ${XML_BAD_SKIP} skip-block record(s) carry an <error>/<failure> element -- a skip record has neither dimension, so the counts and the document would disagree"
+            UTEST_FAIL=$(( UTEST_FAIL + 1 ))
+            utest_publish_xml_refusal "artifact-pipeline" \
+                "${XML_BAD_SKIP} skip-block record(s) carry a non-skipped element"
+            XML_SUMMARY_OK=0
+        fi
+        if [ "${XML_NEVER_RAN:-0}" -gt "${XML_FAIL:-0}" ]; then
+            echo -e "  ${RED}[UTEST]${RESET} [UTEST-XML-SUMMARY] errors=${XML_NEVER_RAN} exceeds failures=${XML_FAIL} -- the never-ran count is not a subset of the failures it is drawn from"
+            UTEST_FAIL=$(( UTEST_FAIL + 1 ))
+            utest_publish_xml_refusal "artifact-pipeline" \
+                "[UTEST-XML-SUMMARY] errors=${XML_NEVER_RAN} exceeds failures=${XML_FAIL}"
+            XML_SUMMARY_OK=0
+        elif [ "$XML_ERROR_ELEMS" -ne "${XML_NEVER_RAN:-0}" ]; then
+            echo -e "  ${RED}[UTEST]${RESET} [UTEST-XML-SUMMARY] errors=${XML_NEVER_RAN} but ${XML_ERROR_ELEMS} <error> element(s) on serial -- producer counts disagree with the records they describe"
+            UTEST_FAIL=$(( UTEST_FAIL + 1 ))
+            utest_publish_xml_refusal "artifact-pipeline" \
+                "[UTEST-XML-SUMMARY] errors=${XML_NEVER_RAN} but ${XML_ERROR_ELEMS} <error> element(s) harvested"
+            XML_SUMMARY_OK=0
+        fi
+    fi
+
+    # An aborted suite ADDITIONALLY gets a synthetic infrastructure
+    # <testcase> carrying an <error>, counted on top of the producer's own.
     #
     # <properties> alone would not be enough. The smoke gate aborts on ANY
     # non-PASS verdict including SKIP, and a skipped smoke leaves failures=0
@@ -2339,10 +2452,21 @@ if [ "$HAS_XML" -eq 1 ]; then
     # properties carry the queryable numbers; the error element is what makes
     # the document itself red. `tests` is incremented to match, because it
     # counts elements in the file.
+    #
+    # Projected ONLY over values that survived the checks above. A refused
+    # summary has already published its diagnosis and stopped assembly, so
+    # projecting anyway computes nothing anyone reads -- and does it on the
+    # very values just judged untrustworthy, which is how a refused
+    # `errors=08` still reached `$(( ))` and printed a raw bash arithmetic
+    # error after the refusal it had correctly triggered.
     XML_ERRORS=0
-    if [ "${XML_ABORTED:-0}" -ne 0 ]; then
-        XML_ERRORS=1
-        XML_TESTS=$(( XML_TESTS + 1 ))
+    if [ "$XML_SUMMARY_OK" -eq 1 ]; then
+        XML_ERRORS=${XML_NEVER_RAN:-0}
+        XML_FAIL=$(( ${XML_FAIL:-0} - ${XML_NEVER_RAN:-0} ))
+        if [ "${XML_ABORTED:-0}" -ne 0 ]; then
+            XML_ERRORS=$(( XML_ERRORS + 1 ))
+            XML_TESTS=$(( XML_TESTS + 1 ))
+        fi
     fi
 fi
 
@@ -2392,9 +2516,9 @@ if [ "$HAS_XML" -eq 1 ] && [ "$XML_SUMMARY_OK" -eq 1 ] && [ "${CAPTURE_OK:-1}" -
         utest_splice_capture "$RECORD_DIR/.assembled.xml" &&
         utest_publish "$RECORD_DIR/.assembled.xml" "$XML_RECORD" && XML_PUBLISHED=1
     if [ "${XML_ABORTED:-0}" -ne 0 ]; then
-        echo -e "${CYAN}[TEST]${RESET} JUnit XML written: $XML_RECORD (tests=${XML_TESTS} failures=${XML_FAIL} skipped=${XML_SKIP} ABORTED, not_run=${XML_NOT_RUN})"
+        echo -e "${CYAN}[TEST]${RESET} JUnit XML written: $XML_RECORD (tests=${XML_TESTS} failures=${XML_FAIL} errors=${XML_ERRORS} skipped=${XML_SKIP} ABORTED, not_run=${XML_NOT_RUN})"
     else
-        echo -e "${CYAN}[TEST]${RESET} JUnit XML written: $XML_RECORD (tests=${XML_TESTS} failures=${XML_FAIL} skipped=${XML_SKIP})"
+        echo -e "${CYAN}[TEST]${RESET} JUnit XML written: $XML_RECORD (tests=${XML_TESTS} failures=${XML_FAIL} errors=${XML_ERRORS} skipped=${XML_SKIP})"
     fi
 fi
 

@@ -1548,6 +1548,41 @@ elif [ -f "$REPO_ROOT/scripts/todo-orphan-check.py" ]; then
 fi
 
 # ============================================================================
+# Check 24: every UTEST_RSN_* reason must be measured by UTEST_REASON_REFUSAL
+# ============================================================================
+# The tree is not documentation. It feeds UTEST_REASON_MAX, which every record
+# format subtracts from UTEST_RECORD_LINE_MAX to derive UTEST_MAX_BINARY_NAME
+# -- so a reason string that is defined but never added to the tree understates
+# the maximum, leaves the derived name bound too generous, and sends the record
+# formatters to their truncation fallback on inputs the build proved could not
+# overflow. Nothing failed; only a comment guarded the relationship.
+#
+# ERROR, not warn: the set is equal today, so any hit is a fresh regression --
+# and the whole point is to fail the build the day a reason is added without
+# being measured, which is precisely when it is cheap to fix.
+if [ "${SKIP_LINT_UTEST_REASONS:-}" = "1" ]; then
+    echo -e "${YELLOW}warn${NC}: Check 24 (utest-reason tree) skipped via SKIP_LINT_UTEST_REASONS=1"
+    WARNINGS=$((WARNINGS + 1))
+elif [ -f "$REPO_ROOT/scripts/utest-reason-lint.py" ]; then
+    # `|| true` INSIDE the substitution, matching Check 22. This script runs
+    # under `set -euo pipefail`, so a bare failing command substitution in an
+    # assignment exits the whole lint immediately -- the checker's own
+    # diagnostic would be discarded and the summary never printed, leaving a
+    # blocked commit with nothing naming the unmeasured reason. Both streams
+    # are captured because violations go to stdout and extraction failures to
+    # stderr; any output at all is a problem to report.
+    LINT24_OUT="$(cd "$REPO_ROOT" && python3 scripts/utest-reason-lint.py --check 2>&1 || true)"
+    if [ -n "$LINT24_OUT" ]; then
+        while IFS= read -r line; do
+            [ -n "$line" ] || continue
+            echo -e "${RED}error${NC}: Check 24 (utest-reason tree) $line"
+            ERRORS=$((ERRORS + 1))
+        done <<< "$LINT24_OUT"
+    fi
+fi
+
+
+# ============================================================================
 # Summary
 # ============================================================================
 echo ""

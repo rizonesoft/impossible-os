@@ -99,3 +99,12 @@ src/boot/uefi/*.o
 
 # Local serial-capture scratch (any suffix, not just *.log)
 debug-tmp/
+
+# Compiler dependency sidecars leaked into the repo root by ad-hoc probes.
+# `*.d` (line 9) already ignores them, but they are DEBRIS, not build output:
+# a probe that compiles a temp TU from /tmp, or a bare header, with -MMD/-MD
+# while cwd is the repo root writes `<target>.d` HERE. Cleaned 2026-07-31
+# (10 files dating to 07-29/07-30); the current tools do not reproduce them --
+# gen-user-abi.py filters DEP_ONLY_FLAGS and test-tooling.sh strips -MMD/-MP.
+# If one reappears, find the probe that forgot to strip rather than widening
+# this ignore: a .d in the root always means a compile ran with the wrong cwd.
