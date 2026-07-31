@@ -91,6 +91,49 @@ def _is_subagent_transcript(path: str) -> bool:
     return base.startswith("agent-") or "/subagents/" in path
 
 
+# Payload-level identity fields, added 2026-07-31 after a MEASURED
+# misclassification: a real `parity-research-analyst` dispatch had both its
+# WebSearch and WebFetch calls classified as MAIN-session and blocked by R4
+# (run-20260731-095007 log:218-240, 10:48:40 dispatch -> 10:48:48 block), the
+# third such loss in three sections. Subagent transcripts DO exist on disk as
+# `<session>/subagents/agent-<id>.jsonl` -- matching both path heuristics -- so
+# the naming is fine; what fails is that the PreToolUse payload delivered
+# INSIDE a subagent carries the parent session's `transcript_path`. The harness
+# names the agent's own transcript separately (`agent_transcript_path`, already
+# consumed by subagent_audit.py:167 and agent_result_cache.py:330), so identity
+# is read from any positive agent marker rather than from that one path.
+#
+# Every field here is a POSITIVE marker: its presence proves a subagent, its
+# absence proves nothing (which is why the two callers treat a negative
+# differently -- see is_subagent_payload's docstring).
+_AGENT_ID_FIELDS = ("agent_transcript_path", "agent_id", "agent_type",
+                    "subagent_type")
+
+
+def is_subagent_payload(d: dict) -> bool:
+    """True when the hook payload positively identifies a SUBAGENT caller.
+
+    A False is NOT evidence of a main-session caller -- it means "no marker
+    present", which a subagent payload can also produce. Callers must choose
+    their failure direction accordingly:
+
+      - runner_bash_guard BLOCKs on True, so a missed subagent leaves the
+        backstop inert (a gap, filed) but can never block the main session.
+      - websearch_offload_gate must NOT hard-block on False, because the cost
+        of a false block is the destruction of the very research capability
+        the rule reroutes work TO.
+    """
+    if not isinstance(d, dict):
+        return False
+    if _is_subagent_transcript(str(d.get("transcript_path") or "")):
+        return True
+    for f in _AGENT_ID_FIELDS:
+        v = d.get(f)
+        if isinstance(v, str) and v.strip():
+            return True
+    return False
+
+
 def _base(tok: str) -> str:
     return os.path.basename(tok.rstrip("/"))
 
@@ -238,7 +281,7 @@ def main() -> int:
         return 0
     if d.get("tool_name") != "Bash":
         return 0
-    if not _is_subagent_transcript(str(d.get("transcript_path") or "")):
+    if not is_subagent_payload(d):
         return 0
     ti = d.get("tool_input")
     if not isinstance(ti, dict):

@@ -35,6 +35,23 @@ _MSG = (
 )
 
 
+def _is_subagent_caller(d: dict) -> bool:
+    """Positive subagent identity from the payload (2026-07-31 fix).
+
+    Was keyed on `transcript_path` alone, which a subagent payload fills with
+    the PARENT session's transcript -- so every researcher dispatch read as
+    main-session and was blocked by the rule that exists to route work TO it
+    (measured 3 consecutive sections; run-20260731-095007 log:218-240).
+    """
+    path = str(d.get("transcript_path") or "")
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import runner_bash_guard
+        return runner_bash_guard.is_subagent_payload(d)
+    except Exception:
+        return _is_subagent_transcript(path)
+
+
 def _is_subagent_transcript(path: str) -> bool:
     # Single source of truth: runner_bash_guard's battle-tested detector
     # (review 2026-07-19 reuse finding -- a copy here would silently diverge
@@ -64,7 +81,7 @@ def main() -> int:
     tool = d.get("tool_name")
     if tool not in ("WebSearch", "WebFetch"):
         return 0
-    if _is_subagent_transcript(str(d.get("transcript_path") or "")):
+    if _is_subagent_caller(d):
         return 0
     sys.stderr.write(_MSG.format(tool=tool) + "\n")
     try:
