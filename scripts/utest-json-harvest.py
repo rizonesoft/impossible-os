@@ -228,6 +228,15 @@ STATUS_TO_COUNTER = {"PASS": "passed", "FAIL": "failed", "SKIP": "skipped",
 # and ERROR share a counter and differ only here.
 NEVER_RAN_STATUSES = frozenset(("ERROR",))
 
+# The per-binary report triple. A binary that never ran submitted no report,
+# so a record carrying any of these alongside a never-ran status describes
+# assertions that no execution could have produced. The producer already
+# makes that unrepresentable -- u_format_json_testcase emits the triple only
+# for verdict != 3 (src/kernel/test/test_usermode.c), which is the
+# precondition UTEST_FIXED_JSON_NEVER_RAN is derived from -- so the check
+# here is the host half of a two-sided invariant, not defensive padding.
+REPORT_TRIPLE = ("asserts_passed", "asserts_failed", "skip_blocks")
+
 # Framing is parsed by the CANONICAL parser (scripts/utest-frame.py), not by
 # a copy living here. Ring-3 stdout shares the serial stream with the
 # launcher, so a bare `[UTEST-JSON]` line proves nothing about who wrote it;
@@ -415,6 +424,16 @@ def harvest(log_path, out_path):
 
     observed = {"passed": 0, "failed": 0, "skipped": 0}
     observed_errors = 0
+    # The per-binary side of the assertion dimension. The launcher emits the
+    # report triple on a record under exactly one condition -- an ACCEPTED
+    # report (u_format_json_testcase: verdict != 3 and state == VALID) -- and
+    # increments binaries_reported plus the three running sums under that
+    # same condition (src/kernel/test/test_usermode.c). So the records
+    # carrying a complete triple ARE binaries_reported, and their sums ARE
+    # the run_report totals. Reconciling both here is what stops a stream
+    # from claiming an accepted report that no testcase carries.
+    observed_reported = 0
+    triple_sums = {f: 0 for f in REPORT_TRIPLE}
     for record in testcases:
         status = record.get("status")
         counter = STATUS_TO_COUNTER.get(status)
@@ -426,6 +445,45 @@ def harvest(log_path, out_path):
         observed[counter] += 1
         if status in NEVER_RAN_STATUSES:
             observed_errors += 1
+            # A never-ran binary cannot have self-reported. Refusing the
+            # record here rather than dropping the fields keeps the two
+            # sides honest: the producer cannot emit this shape, so a
+            # stream that carries it was not produced by the launcher
+            # this harvester is reconciling, and publishing it would put
+            # assertion counts on a testcase the same artifact declares
+            # never executed.
+            carried = [f for f in REPORT_TRIPLE if f in record]
+            if carried:
+                _refuse(out_path, "error_self_report",
+                        "binary record %r has status=%r but carries %s"
+                        % (record.get("name"), status, ", ".join(carried)))
+                return 1
+        else:
+            # All-or-none, because the producer writes the three fields in
+            # one block or not at all. A PARTIAL triple is a record whose
+            # assertion dimension cannot be summed, and summing it as if the
+            # absent fields were zero is how a truncated record would read
+            # as a binary that simply asserted nothing.
+            carried = [f for f in REPORT_TRIPLE if f in record]
+            if carried and len(carried) != len(REPORT_TRIPLE):
+                _refuse(out_path, "partial_report",
+                        "binary record %r carries %s but not %s"
+                        % (record.get("name"), ", ".join(carried),
+                           ", ".join(f for f in REPORT_TRIPLE
+                                     if f not in carried)))
+                return 1
+            if carried:
+                for field in REPORT_TRIPLE:
+                    value = record.get(field)
+                    if (isinstance(value, bool)
+                            or not isinstance(value, int) or value < 0):
+                        _refuse(out_path, "malformed_report",
+                                "binary record %r has %s=%r, expected a "
+                                "non-negative integer"
+                                % (record.get("name"), field, value))
+                        return 1
+                    triple_sums[field] += value
+                observed_reported += 1
     for counter, seen in observed.items():
         if seen != summary.get(counter):
             _refuse(out_path, "count_mismatch",
@@ -459,6 +517,40 @@ def harvest(log_path, out_path):
                 "summary.errors=%r exceeds summary.failed=%r"
                 % (errors, summary.get("failed")))
         return 1
+    # The never-ran subset is also a subset of the UNREPORTED partition:
+    # every launcher path that counts a binary as never-ran increments
+    # rt->unreported in the same breath (src/kernel/test/test_usermode.c --
+    # the refusal path and the task_create-failure path), because a binary
+    # that never ran had nothing to report. Without this the two dimensions
+    # never meet: a stream could carry one ERROR record and simultaneously
+    # claim binaries_reported=1/binaries_unreported=0, satisfying the
+    # partition check, the status counters and the errors<=failed bound
+    # while publishing an artifact that says the same binary both never ran
+    # and submitted an accepted report.
+    if errors > reported["binaries_unreported"]:
+        _refuse(out_path, "count_mismatch",
+                "summary.errors=%r exceeds "
+                "summary.reported.binaries_unreported=%r"
+                % (errors, reported["binaries_unreported"]))
+        return 1
+    # The accepted-report population, reconciled from both directions: how
+    # many records carry a triple, and what those triples sum to. Checking
+    # only the count would accept a record whose numbers were rewritten;
+    # checking only the sums would accept the totals spread over the wrong
+    # number of binaries.
+    if observed_reported != reported["binaries_reported"]:
+        _refuse(out_path, "count_mismatch",
+                "%d record(s) carry an accepted report but "
+                "summary.reported.binaries_reported=%r"
+                % (observed_reported, reported["binaries_reported"]))
+        return 1
+    for field in REPORT_TRIPLE:
+        if triple_sums[field] != reported[field]:
+            _refuse(out_path, "count_mismatch",
+                    "binary records sum to %s=%d but "
+                    "summary.reported.%s=%r"
+                    % (field, triple_sums[field], field, reported[field]))
+            return 1
 
     if len(skip_blocks) != reported.get("skip_records"):
         _refuse(out_path, "count_mismatch",

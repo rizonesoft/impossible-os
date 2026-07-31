@@ -734,10 +734,12 @@ result. Every refusal reason it can emit:
 | `duplicate_run_meta`        | more than one `run_meta` record                                     |
 | `records_after_summary`     | the stream does not end `run_report`, `summary`, `run_meta`         |
 | `malformed_summary`         | the summary is not an object                                        |
-| `malformed_report`          | a `run_report` counter is not a non-negative integer                |
+| `malformed_report`          | a `run_report` counter, or a value in a binary record's assertion triple, is not a non-negative integer |
 | `unknown_status`            | a binary record carries a status outside `PASS`/`FAIL`/`SKIP`/`ERROR` |
 | `missing_errors`            | the summary carries no usable `errors` count -- absent is a refusal, never read as zero |
-| `count_mismatch`            | binary count, per-status counts, skip-record count, the `ERROR` record count vs `summary.errors`, or `errors` exceeding `failed`, disagree with the summary |
+| `count_mismatch`            | binary count, per-status counts, skip-record count, the `ERROR` record count vs `summary.errors`, `errors` exceeding either `failed` or `binaries_unreported`, the number of records carrying an assertion triple vs `binaries_reported`, or those triples' sums vs the `run_report` totals, disagree with the summary |
+| `error_self_report`         | a never-ran (`ERROR`) binary record carries `asserts_passed`/`asserts_failed`/`skip_blocks` -- a shape the producer cannot emit, since a binary that never ran submitted no report |
+| `partial_report`            | a binary record carries some but not all of `asserts_passed`/`asserts_failed`/`skip_blocks` -- the launcher writes the three as one block, so a partial triple cannot be summed |
 | `report_partition_mismatch` | `binaries_reported + binaries_invalid + binaries_unreported` does not equal `summary.total`, although the launcher increments exactly one of them per binary |
 | `inconsistent_completeness` | a not-aborted run nevertheless reports binaries as not run          |
 | `no_python3`                | written by `scripts/test.sh` when the assembler cannot run at all   |
@@ -968,6 +970,27 @@ identity -- digest *and* sanitized prefix -- reports every candidate that
 matches, and exits `4` (AMBIGUOUS) rather than naming one when several do,
 because a 32-bit FNV-1a cannot promise a unique reverse mapping. Exit `0`
 is one match, `3` no match, `2` a usage error.
+
+One identity shape carries no prefix at all: a manifest token whose FIRST
+byte is NUL is refused for the NUL (a NUL anywhere in the span means
+`len != span_len`), and its stored C string is the truncation at that byte
+-- empty -- so the launcher emits `refused_<ordinal>__<digest>.exe`. The
+correlator accepts it and matches on the digest, because refusing it would
+break the embedded-NUL case the tool exists to cover; it prints an explicit
+`NOTE: this identity carries NO prefix` line so a digest-only match is never
+mistaken for a prefix-confirmed one. Pass the span with `--hex`, since no
+argv string can carry the leading NUL.
+
+**Aggregate refusals are NOT correlatable, by construction.** The
+fail-closed aggregates -- `enumeration_plan`, `enumeration_plan_full`,
+`manifest_refusal_overflow`, `manifest_unparseable`, `glob_refusal_overflow`
+-- publish through the same `refused_<n>_<prefix>_<8hex>.exe` shape, but
+their digest field carries a COUNT (how many entries were lost), not
+`fnv1a32` of the label. No filename produced them, so there is nothing to
+correlate back to; `match` on one of these will not find the aggregate and
+may, in principle, name an unrelated candidate that happens to hash to the
+count. Giving aggregates an identity kind the tool can recognize
+structurally is tracked separately.
 
 Three counters move together with each refusal or an artifact would
 contradict itself: `counters[1]` (failed binaries, with `counters[3]`

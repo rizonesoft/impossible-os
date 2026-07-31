@@ -10006,11 +10006,20 @@ trap 'rm -rf "$FRAME_TMP"' EXIT
 # A minimal well-formed framed stream: announcement, one JSON binary record,
 # the three run-level records, and the terminator. records= counts every
 # framed record before the terminator (6), so a whole stream is 7 lines.
+#
+# The binary record carries the assertion triple because the run_report below
+# claims binaries_reported=1, and the launcher emits those two under exactly
+# the same condition -- an ACCEPTED report increments binaries_reported and
+# makes u_format_json_testcase write the three fields. A PASS record without
+# the triple beside binaries_reported=1 is a stream no launcher can produce,
+# and the harvester now reconciles the pair; this fixture exercises framing
+# and identity, so its report dimension has to be faithful rather than
+# incidental.
 frame_log() {
     local nonce="$1" out="$2"
     {
         echo "[  1.000] [cpu:0] [ OK ] UTEST-${nonce}: [UTEST-FRAME] v=1 run=1"
-        echo "[  1.010] [cpu:0] [ OK ] UTEST-${nonce}: [UTEST-JSON] {\"record_kind\":\"binary\",\"name\":\"test_real.exe\",\"type\":\"correctness\",\"status\":\"PASS\",\"time_ms\":5}"
+        echo "[  1.010] [cpu:0] [ OK ] UTEST-${nonce}: [UTEST-JSON] {\"record_kind\":\"binary\",\"name\":\"test_real.exe\",\"type\":\"correctness\",\"status\":\"PASS\",\"time_ms\":5,\"asserts_passed\":1,\"asserts_failed\":0,\"skip_blocks\":0}"
         echo "[  1.020] [cpu:0] [ OK ] UTEST-${nonce}: [UTEST-JSON] {\"record_kind\":\"run_report\",\"asserts_passed\":1,\"asserts_failed\":0,\"skip_blocks\":0,\"skip_records\":0,\"binaries_reported\":1,\"binaries_invalid\":0,\"binaries_unreported\":0}"
         echo "[  1.030] [cpu:0] [ OK ] UTEST-${nonce}: [UTEST-JSON] {\"summary\":{\"passed\":1,\"failed\":0,\"errors\":0,\"skipped\":0,\"total\":1,\"time_ms\":5}}"
         echo "[  1.040] [cpu:0] [ OK ] UTEST-${nonce}: [UTEST-JSON] {\"record_kind\":\"run_meta\",\"aborted\":false,\"not_run\":0}"
@@ -10396,6 +10405,127 @@ else
            "harvester rc=$SELFRC (expected refusal reason error_self_report)"
 fi
 
+# 6r2b5. The ACCEPTED-report population, reconciled from both directions.
+#        The launcher emits the assertion triple on a record under exactly
+#        one condition -- an accepted report -- and increments
+#        binaries_reported plus the three running sums under that same
+#        condition, so the records carrying a triple ARE binaries_reported
+#        and their sums ARE the run_report totals. Until these checks
+#        existed the two dimensions never met: a stream could claim an
+#        accepted report that no testcase carried, or spread real totals
+#        over the wrong number of binaries, and publish as verified
+#        coverage.
+reported_log() {
+    local nonce="$1" out="$2"
+    {
+        echo "[  1.000] [cpu:0] [ OK ] UTEST-${nonce}: [UTEST-FRAME] v=1 run=1"
+        echo "[  1.010] [cpu:0] [ OK ] UTEST-${nonce}: [UTEST-JSON] {\"record_kind\":\"binary\",\"name\":\"test_a.exe\",\"type\":\"correctness\",\"status\":\"PASS\",\"time_ms\":1,\"asserts_passed\":5,\"asserts_failed\":0,\"skip_blocks\":2}"
+        echo "[  1.020] [cpu:0] [ OK ] UTEST-${nonce}: [UTEST-JSON] {\"record_kind\":\"run_report\",\"asserts_passed\":5,\"asserts_failed\":0,\"skip_blocks\":2,\"skip_records\":0,\"binaries_reported\":1,\"binaries_invalid\":0,\"binaries_unreported\":0}"
+        echo "[  1.030] [cpu:0] [ OK ] UTEST-${nonce}: [UTEST-JSON] {\"summary\":{\"passed\":1,\"failed\":0,\"errors\":0,\"skipped\":0,\"total\":1,\"time_ms\":1}}"
+        echo "[  1.040] [cpu:0] [ OK ] UTEST-${nonce}: [UTEST-JSON] {\"record_kind\":\"run_meta\",\"aborted\":false,\"not_run\":0}"
+        echo "[  1.050] [cpu:0] [ OK ] UTEST-${nonce}: === 1 passed, 0 failed, 0 skipped of 1 total ==="
+        echo "[  1.060] [cpu:0] [ OK ] UTEST-${nonce}: [UTEST-FRAME-END] run=1 records=6"
+    } > "$out"
+}
+
+# The baseline first: a run whose triple, count and sums all agree must
+# still PUBLISH. A reconciliation that refuses the valid case is worse than
+# the gap it closes, and nothing else in this group would notice.
+reported_log "1a2b3c4d" "$FRAME_TMP/reported.log"
+if python3 "$HARVEST" "$FRAME_TMP/reported.log" "$FRAME_TMP/reported.json" \
+        >/dev/null 2>&1 &&
+   python3 -c "
+import json,sys
+d = json.load(open('$FRAME_TMP/reported.json'))
+r = d['summary']['reported']
+tc = d['testcases']
+ok = (r['binaries_reported'] == 1 and r['asserts_passed'] == 5
+      and r['skip_blocks'] == 2 and len(tc) == 1
+      and tc[0]['asserts_passed'] == 5)
+sys.exit(0 if ok else 1)"; then
+    t_pass "utest report: a run whose triple, count and sums agree publishes"
+else
+    t_fail "utest report: a run whose triple, count and sums agree publishes"
+fi
+
+# A PARTIAL triple cannot be summed, and summing it as if the absent
+# fields were zero is how a truncated record reads as a binary that
+# asserted nothing.
+sed 's/,"skip_blocks":2}/}/' "$FRAME_TMP/reported.log" \
+    > "$FRAME_TMP/partial_triple.log"
+python3 "$HARVEST" "$FRAME_TMP/partial_triple.log" \
+    "$FRAME_TMP/partial_triple.json" >/dev/null 2>&1 && PARTRC=0 || PARTRC=$?
+if [ "$PARTRC" != "0" ] &&
+   python3 -c "
+import json,sys
+d = json.load(open('$FRAME_TMP/partial_triple.json'))
+sys.exit(0 if d['summary'] is None
+         and d.get('summary_error') == 'partial_report' else 1)"; then
+    t_pass "utest report: a partial assertion triple refuses the artifact"
+else
+    t_fail "utest report: a partial assertion triple refuses the artifact" \
+           "harvester rc=$PARTRC (expected refusal reason partial_report)"
+fi
+
+# A triple whose values are not countable. Checked separately from
+# presence: a negative or non-integer count would otherwise be summed
+# into the reconciliation it is supposed to fail.
+sed 's/"asserts_passed":5,"asserts_failed":0,"skip_blocks":2}/"asserts_passed":-1,"asserts_failed":0,"skip_blocks":2}/' \
+    "$FRAME_TMP/reported.log" > "$FRAME_TMP/neg_triple.log"
+python3 "$HARVEST" "$FRAME_TMP/neg_triple.log" "$FRAME_TMP/neg_triple.json" \
+    >/dev/null 2>&1 && NEGRC=0 || NEGRC=$?
+if [ "$NEGRC" != "0" ] &&
+   python3 -c "
+import json,sys
+d = json.load(open('$FRAME_TMP/neg_triple.json'))
+sys.exit(0 if d['summary'] is None
+         and d.get('summary_error') == 'malformed_report' else 1)"; then
+    t_pass "utest report: a negative assertion count refuses the artifact"
+else
+    t_fail "utest report: a negative assertion count refuses the artifact" \
+           "harvester rc=$NEGRC (expected refusal reason malformed_report)"
+fi
+
+# The COUNT direction: an accepted report claimed by the summary that no
+# testcase carries. The partition still reconciles (0+0+1 == total), so
+# only the triple count can catch it.
+sed 's/"binaries_reported":1,"binaries_invalid":0,"binaries_unreported":0/"binaries_reported":0,"binaries_invalid":0,"binaries_unreported":1/' \
+    "$FRAME_TMP/reported.log" > "$FRAME_TMP/triple_count.log"
+python3 "$HARVEST" "$FRAME_TMP/triple_count.log" \
+    "$FRAME_TMP/triple_count.json" >/dev/null 2>&1 && TCNTRC=0 || TCNTRC=$?
+if [ "$TCNTRC" != "0" ] &&
+   python3 -c "
+import json,sys
+d = json.load(open('$FRAME_TMP/triple_count.json'))
+sys.exit(0 if d['summary'] is None
+         and d.get('summary_error') == 'count_mismatch'
+         and 'binaries_reported' in d.get('detail', '') else 1)"; then
+    t_pass "utest report: a claimed accepted report no testcase carries refuses"
+else
+    t_fail "utest report: a claimed accepted report no testcase carries refuses" \
+           "harvester rc=$TCNTRC (expected count_mismatch naming binaries_reported)"
+fi
+
+# The SUM direction: the right NUMBER of reporting binaries carrying the
+# wrong totals. Anchored on the run_report record so the per-binary triple
+# keeps its original value and the two genuinely disagree.
+sed 's/"record_kind":"run_report","asserts_passed":5/"record_kind":"run_report","asserts_passed":9/' \
+    "$FRAME_TMP/reported.log" > "$FRAME_TMP/triple_sum.log"
+python3 "$HARVEST" "$FRAME_TMP/triple_sum.log" "$FRAME_TMP/triple_sum.json" \
+    >/dev/null 2>&1 && TSUMRC=0 || TSUMRC=$?
+if [ "$TSUMRC" != "0" ] &&
+   python3 -c "
+import json,sys
+d = json.load(open('$FRAME_TMP/triple_sum.json'))
+sys.exit(0 if d['summary'] is None
+         and d.get('summary_error') == 'count_mismatch'
+         and 'asserts_passed' in d.get('detail', '') else 1)"; then
+    t_pass "utest report: per-binary triples disagreeing with run_report refuses"
+else
+    t_fail "utest report: per-binary triples disagreeing with run_report refuses" \
+           "harvester rc=$TSUMRC (expected count_mismatch naming asserts_passed)"
+fi
+
 # 6r2b2. Both dimensions in ONE run. `errors` and the completeness fields
 #        travel in different records (summary versus run_meta) and are
 #        folded together by the harvester, so a regression there could
@@ -10770,6 +10900,26 @@ else
     t_fail "refusal correlator: a digest match with the wrong prefix does not match" "rc=$RID_RC (expected 3)"
 fi
 
+# A LEADING NUL is the shape that has no readable prefix at all. The kernel
+# classifies the span REFUSE_NUL (a NUL anywhere makes len != span_len), and
+# the stored C string is empty, so u_build_refusal_id's prefix loop stops at
+# raw[0] and emits `refused_<ordinal>__<digest>.exe`. The parser used to
+# reject that as impossible, with an error message asserting the kernel never
+# emits it -- so the correlator failed on the embedded-NUL shape it exists to
+# support. The digest carries the whole identity here, and the all-candidate
+# ambiguity handling is unchanged.
+# The candidate is passed as --hex because a span carrying a NUL is exactly
+# the name no argv string and no NUL-separated list can express.
+RID_NULD="$(rid_digest --hex '006162632e657865')"
+python3 "$RID" match "refused_1__${RID_NULD}.exe" \
+    --hex '006162632e657865' >/dev/null 2>&1 && RID_RC=0 || RID_RC=$?
+if [ "$RID_RC" = "0" ]; then
+    t_pass "refusal correlator: a leading-NUL refusal correlates on its digest"
+else
+    t_fail "refusal correlator: a leading-NUL refusal correlates on its digest" \
+           "rc=$RID_RC (expected 0)"
+fi
+
 # Two identical candidates are AMBIGUOUS rather than resolved to the first.
 printf 'test_dup.exe\ntest_dup.exe\n' > "$RID_TMP/dup.man"
 RID_DUPD="$(rid_digest --name 'test_dup.exe')"
@@ -10789,16 +10939,41 @@ else
     t_fail "refusal correlator: a malformed identity is refused as a usage error" "rc=$RID_RC (expected 2)"
 fi
 
-# An EMPTY prefix would make the prefix half of the match vacuous, leaving a
+# An EMPTY prefix makes the prefix half of the match vacuous, leaving a
 # 32-bit digest the kernel explicitly does not treat as unique as the whole
-# test. u_build_refusal_id never emits one (a static assert reserves a
-# readable minimum), so the identity is refused rather than matched loosely.
+# test. This used to REFUSE the identity, on the stated grounds that
+# u_build_refusal_id never emits one -- but it does: a manifest token whose
+# first byte is NUL classifies REFUSE_NUL, its stored C string is the
+# truncation at that NUL (empty), and the prefix loop writes nothing. There
+# is no static assert reserving a readable minimum; the only minimum-prefix
+# reasoning in the launcher is about fitting the derived bound. So the
+# identity is accepted -- refusing it broke the embedded-NUL case the tool
+# promises to correlate -- and the vacuous-prefix concern is answered by
+# SAYING so, rather than by rejecting a shape the kernel really produces.
+# The identity PARSES, and says so, rather than being a usage error.
 python3 "$RID" match "refused_1__${RID_D}.exe" --manifest "$RID_TMP/tok.man" \
-    >/dev/null 2>&1 && RID_RC=0 || RID_RC=$?
-if [ "$RID_RC" = "2" ]; then
-    t_pass "refusal correlator: an empty-prefix identity is refused, not matched on digest alone"
+    > "$RID_TMP/empty_prefix.out" 2>&1 && RID_RC=0 || RID_RC=$?
+if [ "$RID_RC" != "2" ] && grep -q "carries NO prefix" "$RID_TMP/empty_prefix.out"; then
+    t_pass "refusal correlator: an empty-prefix identity is accepted but flagged digest-only"
 else
-    t_fail "refusal correlator: an empty-prefix identity is refused, not matched on digest alone" "rc=$RID_RC (expected 2)"
+    t_fail "refusal correlator: an empty-prefix identity is accepted but flagged digest-only" \
+           "rc=$RID_RC, output: $(cat "$RID_TMP/empty_prefix.out" 2>/dev/null)"
+fi
+
+# ...and an EMPTY prefix is not a wildcard. The launcher reaches an empty
+# prefix only by stopping at raw[0], so the bytes began with a NUL; an
+# ordinary filename could not have produced this identity whatever its
+# digest says. Accepting it on the digest alone -- which the first cut of
+# this relaxation did, because `sanitized[:0] == b""` is true for
+# everything -- would report a 32-bit collision as a confident attribution.
+RID_ORD="$(rid_digest --name 'test_real.exe')"
+python3 "$RID" match "refused_1__${RID_ORD}.exe" --name 'test_real.exe' \
+    >/dev/null 2>&1 && RID_RC=0 || RID_RC=$?
+if [ "$RID_RC" = "3" ]; then
+    t_pass "refusal correlator: an ordinary name never matches an empty-prefix identity"
+else
+    t_fail "refusal correlator: an ordinary name never matches an empty-prefix identity" \
+           "rc=$RID_RC (expected 3 -- only NUL-leading bytes can produce an empty prefix)"
 fi
 
 # A prefix carrying a byte the sanitizer would have replaced cannot have come

@@ -267,13 +267,18 @@ static void test_name_bound_is_the_minimum_across_formatters(void)
     /* The property the derivation exists for: the bound is the MINIMUM
      * over every record kind, not the one kind that looks worst. The
      * JSON binary record and the JSON skip_block land on the same byte
-     * today, so assuming either would be right only by luck. */
-    for (k = 0; k < 6u; k++) {
+     * today, so assuming either would be right only by luck.
+     *
+     * SEVEN kinds, not six: UTEST_MAX_BINARY_NAME minimizes over seven
+     * UTEST_NAME_ROOM terms, and this loop stopped at six until
+     * 2026-07-31 -- so the XML skip record was outside the completeness
+     * claim this test makes. */
+    for (k = 0; k < 7u; k++) {
         uint32_t room = test_usermode_name_room(k);
         if (room < min) min = room;
     }
     TEST_ASSERT_EQ(bound, min,
-                   "derived bound equals the min room across all 6 kinds");
+                   "derived bound equals the min room across all 7 kinds");
     TEST_ASSERT(bound >= 24u,
                 "bound still admits the longest name this repo builds (22)");
     TEST_ASSERT(test_usermode_name_room(3) * 2u + 24u <= 256u,

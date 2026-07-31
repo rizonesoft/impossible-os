@@ -137,12 +137,16 @@ def parse_identity(text):
             "not a refusal identity: expected "
             "refused_<ordinal>_<prefix>_<8 hex digits>.exe, got %r" % (text,))
     prefix = match.group("prefix").encode("utf-8", "surrogateescape")
-    if not prefix:
-        raise ValueError(
-            "refusal identity carries an EMPTY prefix, which u_build_refusal_id "
-            "never emits (its static assert reserves a readable minimum): %r"
-            % (text,))
-    if sanitize(prefix) != prefix:
+    # An EMPTY prefix is legal, and refusing it used to reject a shape the
+    # kernel demonstrably emits. A manifest token whose FIRST byte is NUL
+    # classifies REFUSE_NUL (the span carries a NUL, so len != span_len --
+    # src/kernel/test/test_usermode.c), and its stored C string is empty, so
+    # u_build_refusal_id's readable-prefix loop stops at raw[0] and produces
+    # `refused_<ordinal>__<digest>.exe`. That is precisely the embedded-NUL
+    # shape this tool promises to correlate, so the digest carries the whole
+    # identity for it: every candidate whose digest matches is reported, and
+    # the caller's existing ambiguity handling decides what that means.
+    if prefix and sanitize(prefix) != prefix:
         raise ValueError(
             "refusal identity prefix carries a byte outside the accepted "
             "charset, which u_build_refusal_id renders `_`: %r" % (text,))
@@ -160,6 +164,17 @@ def candidate_matches(raw, prefix, digest):
     not the whole of it -- and the caller is told WHICH of the two it was,
     because only an exact prefix accounts for the whole candidate.
     """
+    # An EMPTY prefix is not a wildcard, it is a fact about the candidate.
+    # u_build_refusal_id's prefix loop writes nothing only when it stops at
+    # raw[0], and that is the ONLY way to reach an empty prefix: a NULL name
+    # is excluded by the caller, and the guard above the loop returns before
+    # `budget` can reach 0. So an empty-prefix identity was produced by bytes
+    # beginning with a NUL, and no ordinary filename could have produced it
+    # whatever its digest says. Without this the prefix half of the match
+    # goes vacuous -- `sanitized[:0] == b""` is true for everything -- and a
+    # 32-bit collision would be reported as a confident attribution.
+    if not prefix and raw[:1] != b"\x00":
+        return None
     if fnv1a32(raw) != digest:
         return None
     sanitized = sanitize(raw)
@@ -423,6 +438,17 @@ def cmd_match(args):
           % (ordinal, _render(prefix), digest))
     print("  %d candidate(s) examined, %d matched" % (len(candidates),
                                                       len(hits)))
+    if not prefix:
+        # The leading-NUL shape: the kernel's readable-prefix loop stopped at
+        # raw[0], so the identity carries no prefix and the 32-bit digest --
+        # which the kernel explicitly does not treat as unique -- is the whole
+        # of the match. Said out loud rather than folded into the exit code:
+        # refusing the identity outright would break the embedded-NUL case
+        # this tool promises to correlate, but letting a digest-only hit read
+        # like a prefix-confirmed one would overstate what was proved.
+        print("  NOTE: this identity carries NO prefix (its raw bytes begin "
+              "with a NUL), so the 32-bit digest alone decided every match "
+              "above -- confirm the candidate independently")
     for source, raw, kind in hits:
         # `truncated` means the identity's prefix is a proper prefix of this
         # candidate's sanitization -- normal for a name longer than the

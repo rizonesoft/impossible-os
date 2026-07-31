@@ -2216,11 +2216,21 @@ _Static_assert((uint64_t)UTEST_SKIP_RECORD_BUDGET *
  * as much as the fixed cost -- the JSON skip_block carries it twice (as
  * `rec_name` and again as `parent`), so it costs 2N there -- and the
  * answer is the MINIMUM across every kind, not the skip_block's. Checking
- * that assumption is what this block is for: the skip_block leaves 37
- * bytes and the JSON binary record 39, so they are two bytes apart --
- * close enough that one edit to either format string reverses which one
- * binds, and far too close to settle by inspection. The unit test asserts
- * the bound equals the minimum rather than any particular kind's room.
+ * that assumption is what this block is for: the JSON skip_block and the
+ * JSON binary record both leave exactly 37 bytes today -- they are TIED,
+ * not merely close. They do NOT move together, though, and the asymmetry
+ * is the multiplicity: room divides by it, so one byte added to the JSON
+ * binary record's format (mult 1, 255-218=37) drops it straight to 36 and
+ * makes it bind, while one byte added to the skip_block's (mult 2,
+ * (255-180)/2=37) is absorbed by the integer division -- (255-181)/2 is
+ * still 37 -- and it takes two. So a single edit CAN move the binding
+ * kind, in one direction only, which is far too subtle to settle by
+ * inspection; that is why the unit test asserts the bound equals the
+ * minimum over every kind rather than any particular kind's room.
+ * (This comment said "37 and 39, two bytes apart" until 2026-07-31; the
+ * figure was stale, and it was the stated justification for taking the
+ * MIN, so a reader re-deriving the bound from it picked the wrong binding
+ * kind. The first correction then overshot by calling the two symmetric.)
  *
  * Scope: the kinds below are the ones a host consumer PARSES -- the
  * verdict line, the XML testcase, both JSON record kinds, the TAP point
@@ -6076,6 +6086,14 @@ uint32_t test_usermode_name_room(uint32_t kind)
     case 3:  return UTEST_NAME_ROOM(UTEST_FIXED_JSON_SKIP, 2u);
     case 4:  return UTEST_NAME_ROOM(UTEST_FIXED_TAP, 1u);
     case 5:  return UTEST_NAME_ROOM(UTEST_FIXED_REPORT, 1u);
+    /* The SEVENTH kind. UTEST_MAX_BINARY_NAME minimizes over seven
+     * UTEST_NAME_ROOM terms, but this switch exported only six, so the
+     * test that claims to prove "the minimum was taken across EVERY
+     * formatter" could not see the XML skip record at all. It leaves 80
+     * bytes today and is nowhere near binding -- which is exactly why the
+     * omission was invisible, and exactly what a completeness claim must
+     * not rest on. */
+    case 6:  return UTEST_NAME_ROOM(UTEST_FIXED_XML_SKIP, 1u);
     default: return 0u;
     }
 }
