@@ -18,7 +18,15 @@ The template names files, sections, and adversarial angles only.
    to `last-review-stamps.json`. Without the marker, the bash invocation
    `codex-companion.mjs adversarial-review "..."` is identical across all
    three dispatches and the §4 commit gate cannot tell them apart.
-3. **TODO path attribution.** The first `todo/<domain>/TODO-XX-<slug>.md`
+3. **SECTION attribution.** The section number in `Target:` is parsed into
+   `<kind>_section`, and the commit gate checks that stamp against the section
+   being committed. Omit it and the dispatch records section-LESS, the stamp
+   keeps the PREVIOUS section's number, and the gate reports
+   `"<kind> (source changed since dispatch)"` -- staleness language for what is
+   actually misattribution. Measured 2026-07-31 on TODO-04 section 39: three
+   correct dispatches, three refused commits, ~15 minutes lost. Whitespace,
+   hyphen, underscore, colon or the section glyph all parse.
+4. **TODO path attribution.** The first `todo/<domain>/TODO-XX-<slug>.md`
    match in the prompt is recorded as the dispatch target. Multiple TODO
    paths in one prompt -> ambiguous, first wins, stderr WARN.
 

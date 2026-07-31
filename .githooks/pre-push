@@ -149,6 +149,23 @@ _run_owns_tree() {
 # Opt-out stays available for a genuine emergency and is logged like every other
 # skip: SKIP_CI_PARITY=1 git push ...
 if [ "${SKIP_CI_PARITY:-}" = "1" ]; then
+  # UNATTENDED: a REASON is mandatory (2026-07-31). Interactively the operator
+  # is present and accountable, so the reason stays optional and the log entry
+  # is enough. In the headless run nobody is present, "(none given)" is the
+  # value that actually gets recorded, and a skip nobody can later justify is
+  # indistinguishable from a gate that silently stopped working. Refusing the
+  # PUSH rather than ignoring the skip is deliberate: silently running the gate
+  # the run asked to skip would surprise it at 03:00 with a compile it did not
+  # budget for.
+  if [ "${OVERNIGHT_SEQUENCER_RUN:-}" = "1" ] && [ -z "${SKIP_CI_PARITY_REASON:-}" ]; then
+    {
+      echo "[pre-push] REFUSED: SKIP_CI_PARITY=1 requires SKIP_CI_PARITY_REASON in the unattended run."
+      echo "  An unattended skip with no stated reason cannot be audited later."
+      echo "  Re-run as: SKIP_CI_PARITY=1 SKIP_CI_PARITY_REASON='<why>' git push ..."
+      echo "  Or drop the skip and let the CI-parity gate run."
+    } >&2
+    exit 1
+  fi
   echo -e "\033[33m[pre-push] SKIP_CI_PARITY=1 -- CI-parity gate skipped\033[0m"
   # Logged, not silent. An override that leaves no trace is indistinguishable
   # from a gate that never ran, and this repo has a standing problem with
