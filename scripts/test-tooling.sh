@@ -13186,7 +13186,7 @@ fi
 # mid-write and still ship a green run. Authentication proves it came from the
 # kernel; every assertion below proves it came from the kernel's BUDGET path.
 # The owner budget is 1425 records (64 KiB / 46-byte chunks) and the run budget
-# 22795 -- the fixtures use the SMALL limits the record itself declares, since
+# 22796 -- the fixtures use the SMALL limits the record itself declares, since
 # every check is against the declared value, not a mirrored constant.
 # ---------------------------------------------------------------------------
 

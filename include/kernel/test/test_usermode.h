@@ -102,6 +102,17 @@ struct utest_capture_ctx {
     void    *_owner;
     uint32_t _len;
     uint8_t  _active;
+    /* Discard mode: this owner has already spent its emission budget, so
+     * bytes are swallowed without being staged, escaped, or charged. It is
+     * SEPARATE from _active because the two say different things: _active=0
+     * means "not captured, caller must fall back to raw serial", while
+     * discard means "captured and deliberately dropped" -- taking the
+     * fallback here would put the very payload the budget stopped back on
+     * the wire unframed. Without it, a binary that keeps writing after its
+     * stop still pays a full escape pass and a global-lock acquisition per
+     * write forever, so the budget would bound serial traffic while leaving
+     * producer CPU and lock contention unbounded. */
+    uint8_t  _discard;
     char     _buf[192];
 };
 
@@ -191,11 +202,20 @@ void test_usermode_capture_start(struct utest_capture_ctx *ctx);
 /* One byte of a ring-3 write(). Called from the caller's single read of
  * the raw user buffer (never a second dereference of the same byte) so it
  * cannot observe a value the caller's own NUL-check or terminal echo did
- * not also observe. Returns 1 if this byte was consumed into the framed
- * capture pipeline (the caller must NOT also serial_putchar() it -- the
- * payload crosses serial exactly once, either raw or framed, never
- * both); returns 0 if this ctx is not capture-owned, in which case the
- * caller falls back to its existing raw serial_putchar() path unchanged.
+ * not also observe. Returns 1 if this byte was consumed by the capture
+ * pipeline (the caller must NOT also serial_putchar() it); returns 0 if
+ * this ctx is not capture-owned, in which case the caller falls back to
+ * its existing raw serial_putchar() path unchanged.
+ *
+ * "Consumed" means AT MOST once on serial, not exactly once. A captured
+ * byte normally crosses framed, and an uncaptured one crosses raw -- never
+ * both. But once the owner has spent its producer emission budget the byte
+ * is consumed and DROPPED, crossing zero times, and the return value is
+ * still 1. That is the point: returning 0 there would send the caller to
+ * its raw fallback and put the very payload the budget stopped straight
+ * back on the wire unframed, so the budget would bound nothing. Both
+ * callers (sys_write, NtWriteFile) need only the never-both guarantee,
+ * which still holds.
  * Internally escapes and chunks into one or more "[UTEST-CAPTURE] ..."
  * records emitted through the same frame-nonce mechanism the non-
  * forgeable launcher record framing uses, so the new record type is

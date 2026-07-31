@@ -89,10 +89,14 @@ that suppresses a refusal and is therefore worth forging:
     budget verdict and the run charge under one lock precisely so this holds;
   * a `scope=owner` marker must sit at EXACTLY the limit it declares, so an
     early stop cannot claim a budget it never reached;
-  * every `scope=run` marker in a run must declare the SAME limit, and the run
-    must actually have charged at least that many chunk records across all
-    owners -- an owner stopped by the aggregate can be far below its own limit,
-    so nothing about its own stream proves the run budget was reached.
+  * a `scope=run` marker is proven against the RUN, in three equalities: every
+    run-scope marker declares the same limit, each declares `charged` equal to
+    it, and the run carries exactly that many chunk records across all owners.
+    An owner stopped by the aggregate can be far below its own limit, so
+    nothing about its own stream proves the run budget was reached. All three
+    are equalities on purpose -- the producer freezes the aggregate at the
+    limit under one lock, so nothing can be charged afterwards, and an earlier
+    "at least" formulation of this rule admitted a forged early terminator.
 
 `budget_stop` is reported as its OWN field rather than folded into
 `truncated`. The producer cannot know how many bytes the binary went on to

@@ -3422,12 +3422,13 @@ static void test_capture_emits_exactly_one_owner_marker_then_stops(void)
     saved_active  = self->utest_capture_active;
     saved_owner   = self->utest_capture_owner_pid;
     saved_seq     = atomic_read(&self->utest_capture_seq);
-    saved_stopped = self->utest_capture_stopped;
+    saved_stopped = __atomic_load_n(&self->utest_capture_stopped,
+                                   __ATOMIC_ACQUIRE);
     test_usermode_capture_run_state_get(&saved_run_records, &saved_run_over);
 
     self->utest_capture_active = 1;
     self->utest_capture_owner_pid = self->pid;
-    self->utest_capture_stopped = 0;
+    __atomic_store_n(&self->utest_capture_stopped, 0, __ATOMIC_RELEASE);
     /* One record short of the budget: the next write is the last permitted
      * chunk, and the one after it must be the terminator. */
     atomic_set(&self->utest_capture_seq, (int32_t)(budget - 1u));
@@ -3473,7 +3474,8 @@ static void test_capture_emits_exactly_one_owner_marker_then_stops(void)
     TEST_ASSERT_EQ(u_test_field_u32(last->message, " charged="), budget,
                    "and reports the run aggregate a real single-owner run "
                    "would be carrying, not a value only a seeded test sees");
-    TEST_ASSERT_EQ((uint32_t)self->utest_capture_stopped, 1u,
+    TEST_ASSERT_EQ((uint32_t)__atomic_load_n(&self->utest_capture_stopped,
+                                             __ATOMIC_ACQUIRE), 1u,
                    "and the owner is latched by the real emitter, not just "
                    "by the pure transition");
 
@@ -3490,10 +3492,28 @@ static void test_capture_emits_exactly_one_owner_marker_then_stops(void)
                    "a latched owner emits NOTHING further -- not a chunk, "
                    "and above all not a second terminator");
 
+    /* And it must reach that state through the DISCARD fast path, not by
+     * escaping and locking its way to a DROP on every later write. The
+     * budget bounds serial traffic; without this it would leave producer
+     * CPU and global-lock contention unbounded for an abusive binary that
+     * keeps writing after its stop. `_discard` is the observable proof
+     * that capture_start recognised the latch before staging a byte. */
+    test_usermode_capture_start(&ctx);
+    TEST_ASSERT_EQ((uint32_t)ctx._discard, 1u,
+                   "a write opened AFTER the stop enters discard mode up "
+                   "front, so it never escapes or takes the budget lock");
+    TEST_ASSERT_EQ((uint32_t)test_usermode_capture_byte(&ctx, 'w'), 1u,
+                   "a discarded byte is still CONSUMED -- returning 0 would "
+                   "send the caller to raw serial and undo the budget");
+    TEST_ASSERT_EQ(ctx._len, 0u,
+                   "and it is not staged: discard mode does no per-byte work");
+    test_usermode_capture_end(&ctx);
+
     self->utest_capture_active = saved_active;
     self->utest_capture_owner_pid = saved_owner;
     atomic_set(&self->utest_capture_seq, saved_seq);
-    self->utest_capture_stopped = saved_stopped;
+    __atomic_store_n(&self->utest_capture_stopped, saved_stopped,
+                     __ATOMIC_RELEASE);
     test_usermode_capture_run_state_set(saved_run_records, saved_run_over);
 }
 
@@ -3634,8 +3654,9 @@ static void test_capture_byte_and_flush_produce_the_wire_record(void)
     /* The emission-budget latch is restored with the rest of the capture
      * state: a test that ever ran the owner past its budget would otherwise
      * leave this task permanently latched for every later emitter. */
-    saved_stopped = self->utest_capture_stopped;
-    self->utest_capture_stopped = 0;
+    saved_stopped = __atomic_load_n(&self->utest_capture_stopped,
+                                   __ATOMIC_ACQUIRE);
+    __atomic_store_n(&self->utest_capture_stopped, 0, __ATOMIC_RELEASE);
 
     self->utest_capture_active = 1;
     self->utest_capture_owner_pid = self->pid;
@@ -3665,7 +3686,8 @@ static void test_capture_byte_and_flush_produce_the_wire_record(void)
     self->utest_capture_active = saved_active;
     self->utest_capture_owner_pid = saved_owner;
     atomic_set(&self->utest_capture_seq, saved_seq);
-    self->utest_capture_stopped = saved_stopped;
+    __atomic_store_n(&self->utest_capture_stopped, saved_stopped,
+                     __ATOMIC_RELEASE);
 }
 
 /* Regression for TWO adversarial-round-found bugs at the exact chunk
@@ -3703,8 +3725,9 @@ static void test_capture_exact_chunk_boundary_emits_one_final_record(void)
     /* The emission-budget latch is restored with the rest of the capture
      * state: a test that ever ran the owner past its budget would otherwise
      * leave this task permanently latched for every later emitter. */
-    saved_stopped = self->utest_capture_stopped;
-    self->utest_capture_stopped = 0;
+    saved_stopped = __atomic_load_n(&self->utest_capture_stopped,
+                                   __ATOMIC_ACQUIRE);
+    __atomic_store_n(&self->utest_capture_stopped, 0, __ATOMIC_RELEASE);
 
     self->utest_capture_active = 1;
     self->utest_capture_owner_pid = self->pid;
@@ -3737,7 +3760,8 @@ static void test_capture_exact_chunk_boundary_emits_one_final_record(void)
     self->utest_capture_active = saved_active;
     self->utest_capture_owner_pid = saved_owner;
     atomic_set(&self->utest_capture_seq, saved_seq);
-    self->utest_capture_stopped = saved_stopped;
+    __atomic_store_n(&self->utest_capture_stopped, saved_stopped,
+                     __ATOMIC_RELEASE);
 }
 
 /* One byte OVER the chunk boundary: the (chunk_max+1)-th byte's mid-loop
@@ -3770,8 +3794,9 @@ static void test_capture_chunk_boundary_plus_one_emits_two_records(void)
     /* The emission-budget latch is restored with the rest of the capture
      * state: a test that ever ran the owner past its budget would otherwise
      * leave this task permanently latched for every later emitter. */
-    saved_stopped = self->utest_capture_stopped;
-    self->utest_capture_stopped = 0;
+    saved_stopped = __atomic_load_n(&self->utest_capture_stopped,
+                                   __ATOMIC_ACQUIRE);
+    __atomic_store_n(&self->utest_capture_stopped, 0, __ATOMIC_RELEASE);
 
     self->utest_capture_active = 1;
     self->utest_capture_owner_pid = self->pid;
@@ -3799,7 +3824,8 @@ static void test_capture_chunk_boundary_plus_one_emits_two_records(void)
     self->utest_capture_active = saved_active;
     self->utest_capture_owner_pid = saved_owner;
     atomic_set(&self->utest_capture_seq, saved_seq);
-    self->utest_capture_stopped = saved_stopped;
+    __atomic_store_n(&self->utest_capture_stopped, saved_stopped,
+                     __ATOMIC_RELEASE);
 }
 
 /* A parent that is NOT itself captured (the common case: most tasks are

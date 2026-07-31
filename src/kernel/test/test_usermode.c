@@ -3119,10 +3119,12 @@ static void u_frame_end(void)
 #define UTEST_CAPTURE_CHUNK_MAX                                            \
     (((UTEST_RECORD_LINE_MAX - 1u) - UTEST_CAPTURE_FIXED) /                \
      UTEST_CAPTURE_ESCAPE_EXPANSION)
-_Static_assert(UTEST_CAPTURE_CHUNK_MAX > 0u && UTEST_CAPTURE_CHUNK_MAX <= 192u,
+_Static_assert(UTEST_CAPTURE_CHUNK_MAX > 0u &&
+                   UTEST_CAPTURE_CHUNK_MAX <=
+                       sizeof(((struct utest_capture_ctx *)0)->_buf),
                "the capture chunk size must fit the per-write staging "
-               "buffer (test_usermode.h utest_capture_ctx._buf[192]) and "
-               "leave room for the record's own fixed literal cost");
+               "buffer (test_usermode.h utest_capture_ctx._buf) and leave "
+               "room for the record's own fixed literal cost");
 
 /* [UTEST-CAPTURE-BEGIN]'s own fixed cost, same derivation style. It
  * carries the binary name at the SAME UTEST_MAX_BINARY_NAME bound every
@@ -3468,13 +3470,22 @@ static enum utest_capture_verdict u_capture_claim(struct task *owner,
      * the transition the unit tests actually exercise. */
     st.owner_seq = (uint32_t)atomic_read(&owner->utest_capture_seq);
     st.run_records = s_capture_run_records;
-    st.owner_stopped = owner->utest_capture_stopped;
+    /* Relaxed is enough HERE -- the lock already orders this against every
+     * other claim. The access is atomic rather than plain only so it pairs
+     * legally with the lock-free fast-path load in capture_start; a plain
+     * read racing a plain write is undefined regardless of how benign the
+     * values are. */
+    st.owner_stopped = __atomic_load_n(&owner->utest_capture_stopped,
+                                       __ATOMIC_RELAXED);
     st.run_over = s_capture_run_over;
 
     verdict = u_capture_apply(&st, seq_out, charged_out);
 
     atomic_set(&owner->utest_capture_seq, (int32_t)st.owner_seq);
-    owner->utest_capture_stopped = st.owner_stopped;
+    /* RELEASE: the fast path reads this without the lock, so the latch must
+     * not become visible before the state that justifies it. */
+    __atomic_store_n(&owner->utest_capture_stopped, st.owner_stopped,
+                     __ATOMIC_RELEASE);
     s_capture_run_records = st.run_records;
     s_capture_run_over = st.run_over;
 
@@ -3494,7 +3505,10 @@ static const char UTEST_HEX_DIGITS[] = "0123456789abcdef";
  * each ending its own chunk sequence with final=1). seq is drawn from the
  * OWNER task's slot regardless of which task in a fork tree is actually
  * emitting, giving an O(1) unique sequence number across the whole tree
- * with no parentage walk and no lock (atomic_fetch_add on that one slot). */
+ * with no parentage walk. The draw is made under s_capture_budget_lock
+ * (u_capture_claim), NOT by the bare atomic_fetch_add this used before the
+ * emission budget shipped: the number, the budget verdict and the run
+ * charge have to be one decision. */
 /* Pure escaping: `\` and `[` (marker-forgery hazards) plus every byte
  * outside safe printable ASCII (< 0x20 or >= 0x7F) become "\xHH"; every
  * other byte -- printable ASCII minus those two -- passes through
@@ -3539,11 +3553,14 @@ static uint32_t u_capture_escape(const char *raw, uint32_t raw_len,
 }
 
 /* Escapes+emits one chunk from ctx's own (call-local, never shared)
- * staging buffer. seq is assigned via atomic_fetch_add on the OWNER's
- * slot -- the only genuinely shared state left -- giving an O(1) unique,
- * monotonically-assigned sequence VALUE per chunk (no two chunks ever
- * collide or skip a number), which for one thread's own successive
- * chunks always matches the order those chunks were actually filled.
+ * staging buffer. seq is assigned inside u_capture_claim, under
+ * s_capture_budget_lock, together with the budget verdict and the run
+ * charge -- it was a bare atomic_fetch_add on the OWNER's slot until the
+ * emission budget shipped, and the run-wide counters are now shared state
+ * alongside it. The value is still O(1), unique and monotonically
+ * assigned per chunk (no two chunks ever collide or skip a number), which
+ * for one thread's own successive chunks always matches the order those
+ * chunks were actually filled.
  *
  * That value does NOT additionally guarantee the physical wire (serial)
  * order across DIFFERENT threads matches seq order -- and neither does
@@ -3560,8 +3577,11 @@ static uint32_t u_capture_escape(const char *raw, uint32_t raw_len,
  * Scope: multi-threaded test binaries only (none shipped today) --
  * the host-side artifact/reconciliation work should treat seq as the
  * authoritative ordering key, not physical log position. */
-static void u_capture_emit_chunk(struct task *owner, const char *raw,
-                                 uint32_t raw_len, int is_final)
+/* Returns 1 while this owner may keep capturing, 0 once it has spent its
+ * budget. The caller latches that into its own ctx so the NEXT chunk skips
+ * the escape pass and the lock entirely -- see utest_capture_ctx._discard. */
+static int u_capture_emit_chunk(struct task *owner, const char *raw,
+                                uint32_t raw_len, int is_final)
 {
     char escaped[UTEST_CAPTURE_CHUNK_MAX * UTEST_CAPTURE_ESCAPE_EXPANSION + 1u];
     enum utest_capture_verdict verdict;
@@ -3574,7 +3594,7 @@ static void u_capture_emit_chunk(struct task *owner, const char *raw,
      * test_usermode_capture_end() call would emit a SECOND, spurious
      * len=0 final=1 record for the same write(). */
     if (raw_len == 0)
-        return;
+        return 1;
 
     /* Escape BEFORE claiming a sequence number. sizeof(escaped) is exactly
      * the worst case for UTEST_CAPTURE_CHUNK_MAX raw bytes, so this can
@@ -3587,15 +3607,30 @@ static void u_capture_emit_chunk(struct task *owner, const char *raw,
      * very corruption verdict it exists to avoid. */
     if (u_capture_escape(raw, raw_len, escaped, (uint32_t)sizeof(escaped)) ==
         0xFFFFFFFFu)
-        return;
+        return 1;
 
     verdict = u_capture_claim(owner, &seq, &charged, &gen);
 
     /* A claim charged to a PREVIOUS framed run must not reach the wire in
      * this one -- see u_capture_generation_current. Checked once here rather
-     * than per branch: it applies to a chunk and to a terminator alike. */
+     * than per branch: it applies to a chunk and to a terminator alike.
+     *
+     * This refusal DOES consume a sequence number without emitting a
+     * record, which is the one place the claim's "every number drawn maps
+     * to a record" contract does not hold. It is the lesser of the two
+     * available behaviours, not an oversight: the alternative is emitting
+     * the stale record into the current run, where it has no
+     * [UTEST-CAPTURE-BEGIN] binding it and reconciles as
+     * capture_unbound_owner -- failing a run that did nothing wrong. The
+     * number spent here lands past the end of a slice that is already
+     * closed by its own frame-end record, so no consumer can observe the
+     * hole. Rolling it back is not available either: another emitter may
+     * already have drawn the next number, so a give-back would hand out a
+     * duplicate. The real repair is the drain protocol that stops stale
+     * emitters existing at all, which the run-boundary fence section
+     * owns. */
     if (verdict != UTEST_CAP_DROP && !u_capture_generation_current(gen))
-        return;
+        return 0;
 
     switch (verdict) {
     case UTEST_CAP_EMIT:
@@ -3633,14 +3668,18 @@ static void u_capture_emit_chunk(struct task *owner, const char *raw,
          * unframed, so the budget would bound nothing at all. */
         break;
     }
+
+    /* Anything but a plain chunk means this owner is finished: the caller
+     * latches it and stops paying the escape pass and the lock. */
+    return verdict == UTEST_CAP_EMIT;
 }
 
 /* Resolves task_current() and its capture ownership ONCE per write() --
  * not per byte, unlike an earlier design that re-resolved task_current()
  * and re-acquired a per-task lock on every single byte. ctx->_owner
  * resolves the OWNER task (task_get_by_pid on utest_capture_owner_pid),
- * not task_current() itself, so u_capture_emit_chunk's atomic_fetch_add
- * always targets the right slot even from a fork() descendant. */
+ * not task_current() itself, so u_capture_claim's sequence draw always
+ * targets the right slot even from a fork() descendant. */
 void test_usermode_capture_start(struct utest_capture_ctx *ctx)
 {
     struct task *self = task_current();
@@ -3648,6 +3687,7 @@ void test_usermode_capture_start(struct utest_capture_ctx *ctx)
 
     ctx->_len = 0;
     ctx->_active = 0;
+    ctx->_discard = 0;
     ctx->_owner = (void *)0;
 
     if (!self || !self->utest_capture_active)
@@ -3671,6 +3711,27 @@ void test_usermode_capture_start(struct utest_capture_ctx *ctx)
     }
     ctx->_owner = (void *)owner;
     ctx->_active = 1;
+
+    /* Already-spent owners enter discard mode HERE, before a single byte is
+     * staged, so a binary that keeps writing after its stop costs one plain
+     * byte read per write() instead of an escape pass plus a global-lock
+     * acquisition per chunk, forever.
+     *
+     * Read WITHOUT the budget lock on purpose, but ATOMICALLY -- the two
+     * are separate requirements and only the first is a design choice. The
+     * latch is monotonic within a run (set under the lock, cleared only
+     * when a task slot is constructed, which happens before that task is
+     * published), so the only possible stale answer is a 0 that should have
+     * been 1, costing exactly one more trip through the locked claim, which
+     * then returns DROP and latches the ctx anyway. Taking the lock here to
+     * remove that harmless one-shot slow path would put an acquisition on
+     * EVERY write, including every well-behaved one, which is the cost this
+     * fast path exists to avoid. The access is atomic because a plain read
+     * racing the claim's plain write is undefined behavior no matter how
+     * benign the observable values are -- monotonicity is an argument about
+     * VALUES, and it cannot license a data race. */
+    if (__atomic_load_n(&owner->utest_capture_stopped, __ATOMIC_ACQUIRE))
+        ctx->_discard = 1;
 }
 
 /* One byte of a ring-3 write(). ctx is a LOCAL variable on the caller's
@@ -3697,9 +3758,19 @@ int test_usermode_capture_byte(struct utest_capture_ctx *ctx, char c)
     if (!ctx->_active)
         return 0;
 
+    /* Consumed and dropped: still 1, never 0. Returning 0 would send the
+     * caller to its raw serial_putchar fallback and put the payload the
+     * budget just stopped straight back on the wire. */
+    if (ctx->_discard)
+        return 1;
+
     if (ctx->_len >= UTEST_CAPTURE_CHUNK_MAX) {
-        u_capture_emit_chunk((struct task *)ctx->_owner, ctx->_buf,
-                             ctx->_len, 0);
+        if (!u_capture_emit_chunk((struct task *)ctx->_owner, ctx->_buf,
+                                  ctx->_len, 0)) {
+            ctx->_discard = 1;
+            ctx->_len = 0;
+            return 1;
+        }
         ctx->_len = 0;
     }
     ctx->_buf[ctx->_len++] = c;
@@ -3708,9 +3779,11 @@ int test_usermode_capture_byte(struct utest_capture_ctx *ctx, char c)
 
 void test_usermode_capture_end(struct utest_capture_ctx *ctx)
 {
-    if (!ctx->_active)
+    if (!ctx->_active || ctx->_discard)
         return;
-    u_capture_emit_chunk((struct task *)ctx->_owner, ctx->_buf, ctx->_len, 1);
+    if (!u_capture_emit_chunk((struct task *)ctx->_owner, ctx->_buf,
+                              ctx->_len, 1))
+        ctx->_discard = 1;
     ctx->_len = 0;
 }
 

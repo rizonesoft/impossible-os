@@ -122,8 +122,12 @@ static NTSTATUS sys_write(uint64_t fd, uint64_t buf, uint64_t len,
              * framed, escaped, non-forgeable record when this write is
              * capture-owned; it returns 0 (release builds always;
              * KERNEL_TESTS builds when not capture-owned) for the
-             * untouched raw serial echo below. The payload crosses
-             * serial exactly once either way -- never both. */
+             * untouched raw serial echo below. The payload crosses serial
+             * AT MOST once -- never both ways, and zero times once the
+             * owner has spent its producer emission budget, where the byte
+             * is consumed and dropped. That case must NOT reach the raw
+             * fallback: echoing it here would put the very payload the
+             * budget stopped back on the wire unframed. */
             if (!test_usermode_capture_byte(&cap_ctx, c))
                 serial_putchar(c);
         }

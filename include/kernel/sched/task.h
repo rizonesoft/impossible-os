@@ -803,14 +803,23 @@ struct task {
      * has emitted its one [UTEST-CAPTURE-OVER] marker and every later
      * chunk is dropped, so an abusive binary's wire cost stops growing.
      *
-     * Plain uint8_t rather than atomic_t because it is read AND written
-     * only inside s_capture_budget_lock (test_usermode.c), together with
-     * the sequence draw and the run-wide charge. That is the whole point
-     * of the lock: latch, seq and charge are ONE linearized decision, so
-     * the marker is always the owner's highest emitted sequence number and
-     * no sequence number is ever consumed without a record reaching the
-     * wire. An atomic here would make each field individually safe and the
-     * DECISION still racy, which is the failure the lock exists to close. */
+     * The COMPOUND decision is what s_capture_budget_lock (test_usermode.c)
+     * protects: latch, sequence draw and run-wide charge are linearized
+     * together, so the overflow marker is always the owner's highest
+     * emitted sequence number. Making the field atomic alone would leave
+     * each access individually safe and the DECISION racy -- which is the
+     * failure the lock exists to close, and why the lock is not optional.
+     *
+     * EVERY access is nonetheless atomic, because the lock does not
+     * synchronize the one reader that runs outside it: the emitter's fast
+     * path loads this in test_usermode_capture_start to enter discard mode
+     * without paying an acquisition on every well-behaved write. That read
+     * is deliberately lock-free -- the value is monotonic within a run, so
+     * a stale 0 only costs one more trip through the locked claim -- but
+     * monotonicity is an argument about VALUES and cannot license a data
+     * race, so the load pairs with a release store rather than reading a
+     * plain byte another CPU may be writing. The remaining access,
+     * task_utest_capture_reset, runs before the slot is published. */
     uint8_t  utest_capture_stopped;
 #endif
     /* --- User-mode section-view VA bump allocator ---
@@ -894,8 +903,14 @@ static inline void task_utest_capture_reset(struct task *t)
     /* Cleared for the same reason the sequence counter is: a recycled slot
      * whose prior tenant had exhausted its budget would otherwise start
      * already latched and emit nothing at all, which reaches the host as a
-     * binary that never wrote -- a silent false green, not a bounded stop. */
-    t->utest_capture_stopped = 0;
+     * binary that never wrote -- a silent false green, not a bounded stop.
+     *
+     * Atomic like every other access to this field. This one runs before
+     * the slot is published, so nothing can observe it concurrently today;
+     * it is written this way because slot reuse is planned, and 1 -> 0 is
+     * the ONE transition that could let the lock-free fast path observe a
+     * stale latch and silently discard a new tenant's output. */
+    __atomic_store_n(&t->utest_capture_stopped, 0, __ATOMIC_RELEASE);
 }
 #define TASK_UTEST_CAPTURE_RESET(tp) task_utest_capture_reset(tp)
 
