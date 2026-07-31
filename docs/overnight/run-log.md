@@ -118,3 +118,39 @@
 - 2026-07-31 | 00-infrastructure/TODO-01 (start of pass 1) -> TODO-04 | 0 sections shipped, 1 DEFERRED, file closed | §13 (duplicate `run-test`/`run-debug` recipes in the root Makefile) is unreachable unattended: every item resolves to a root-`Makefile` edit, which `receipt_surface_guard.py` BLOCKs (Makefile is a `receipts.py` BUILD_INPUT_PATHS entry, so the run's own receipts are computed over it), and items 2-3 are gated on item 1 because their gates fail against the un-reconciled tree. Defect confirmed live: `make --dry-run all` emits 4 warnings; `run-test` at `Makefile:1271`+`1642`, `run-debug` at `1265`+`1687`. Deferred `[/]` + stamp + reciprocal XREF (`86b6e15a`), and filed v05 §2 on the classification gap it exposed -- an operator-only deferral is today indistinguishable from a temporal one a later fixpoint pass may clear, and `collect-questions.py` harvests `awaiting-answer` only, so the work reaches no human punch-list. Then a sweep-only close-out (`95e8c795`): the `[!IMPORTANT]` Current-state block still described the pre-work problem as present fact though §1-§12 had shipped; `build.yml` line citations re-anchored after an inserted step shifted them; test-tooling 393/393 -> 876/876; `test.sh QUIET=1` 1534 -> 27546 kernel + 17 user-mode; §6 Notes mis-pointed the legacy-XREF owner at §7 (it is §9) and still called lint.sh "deliberately NOT a CI gate yet". One auditor finding rejected as dated history. Gates: build OK, 27546 kernel + 17 user-mode, tooling 876/876, tooling-doctor HEALTHY 31 checks, lint 0 errors, graph 8/8.
 - 2026-07-31 | 00-infrastructure/TODO-04 §40 (Producer-Side Capture Emission Budget) | SHIPPED `4d97587b` + review `9645049f` | Split first: the section arrived with 8 open items and a SPLIT-RECOMMENDED verdict, so the three publish-a-fact-on-the-wire items moved verbatim to a new §48 and the four budget items stayed under a structured waiver. The budget is a RECORD budget because the derivation showed a raw-byte cap could not bound the wire (a 1-byte-per-write binary pays a full ~350-byte klog record per raw byte); both budgets are ceiling divisions of a declared raw allowance, asserted at build time and pinned tight by unit test. Verdict, sequence draw, run charge and stop latch are ONE decision under `s_capture_budget_lock` with emission outside it; a run generation scopes the budget to the framed run; a discard fast path stops a latched writer escaping or locking, so the budget bounds producer COST as well as serial traffic. Host accepts `[UTEST-CAPTURE-OVER]` as a bounded stop, proven by equalities it can check (owner seq == limit, all run markers agreeing, charged == limit, observed chunks == limit) and reported through its own `budget_stop` fields rather than the exact-valued `truncated` pair. Codex 13x + Opus kernel-quality auditor + concurrency-evidence mapper: 22 findings fixed, 3 accepted with XREFs, 1 rejected with evidence. The reviews earned their cost -- they caught a boot-lifetime run counter the kernel's own regressions were charging, a fail-open `charged` field that let two chunks plus `limit=1 charged=0` reconcile green, a zero-limit marker that published an empty testcase as a bounded stop, a wire-cost model that proved a ceiling BELOW the traffic actually emitted, and a plain/atomic data race in my own fast path. New §49 filed for the cross-run fence. Gates: build OK, 27664 kernel + 17 user-mode, 1041/1041 tooling, CI-parity 27640, smoke matrix 4/4 legs, lint 0 errors, graph 8/8.
 - 2026-07-31 | 00-infrastructure/TODO-04 §43 (Aggregate Refusal Identity Kind) | SHIPPED `1168751c` + review `7abcf7ef` | agg_<label>_<value>.exe as a second identity kind from one X-macro table; 14 Codex [medium] fixed across 9 dispatches; filed TODO-11 §28 for an intermittent TEB/kernel_gs_base halt
+
+## 2026-08-01 -- 24h canary: pre-registered acceptance criteria
+
+Recorded BEFORE arming, deliberately. A criterion written after the evidence is
+a rationalisation; these decide whether the repair stop of 2026-07-31 worked.
+Judge each on measurement, not impression.
+
+1. **Sections ship.** >= 8 sections shipped over the run, with zero gate refusals
+   that cannot be explained in one read.
+2. **The rotation fires, VISIBLY.** `grep -c "context-rotation hint"` over each
+   segment log is non-zero. A zero means the observability half regressed and
+   every cost number below is untrustworthy. (Before the fix: fired every
+   segment, logged never.)
+3. **The rotation ACTS.** >= 1 verified `rollover-wip` mid-section. Before the
+   fix: 0 attempts across every segment of 2026-07-31.
+4. **It does not overfire.** More than one rotation per section is an ABORT, not
+   a saving.
+5. **Cost falls.** Per-segment end-of-segment context and cache-read share below
+   the 2026-07-31 baselines (142-335 countable events/segment; 492K-798K context;
+   one segment at $179.27 with cache-read 85.3% of spend). This run either
+   measures the modelled 31-41% saving or kills it.
+6. **The clean stop works.** The run stops itself at the deadline after a
+   verified rollover -- not mid-section, and not by a human noticing.
+7. **Coexistence holds.** Every attended repair landed from the repair worktree
+   causes ZERO rollover refusals. (Before: four in one evening, all self-inflicted.)
+8. **Research is cited.** Researcher dispatches return real citations, not
+   recalled background flagged as uncited.
+9. **Green means green.** Zero control-plane test assertions that fail once and
+   pass on re-run with no intervening edit.
+
+**Abort early on:** breaker trip (now stops the run automatically), two
+consecutive segments shipping nothing (automatic), a rotation loop, or a gate
+refusal I cannot explain within one read.
+
+**Checkpoints:** +2h, +8h, +24h, from deterministic reports only
+(`cost-summary.py`, `metrics-report.py`, `run-status.py`, the failure ledger).
