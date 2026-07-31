@@ -45,6 +45,7 @@
 #include "kernel/test/test_usermode.h"
 #include "kernel/csprng.h"
 #include "kernel/crypto/sha256.h"
+#include "kernel/exec.h"
 #include "kernel/time/mono_clock.h"
 #include "registry.h"
 
@@ -61,13 +62,18 @@ static volatile const char *s_pending_test_path;
  *
  * Points INTO the plan block, which is allocated before the first spawn and
  * freed after the last one, so the pointee outlives every loader that reads
- * it. Published RELEASE before task_create and read ACQUIRE by the loader:
- * the digest bytes are written during the freeze pass on the launcher's CPU
- * and read by a loader task the scheduler may place on another one, so the
- * pointer store is what orders those 32 bytes against the reader. Same
- * reasoning as s_loader_stage_fault below, and the same single-spawn,
- * launcher-waits contract documented at the top of this file bounds it to
- * one live loader at a time.
+ * it. Published RELEASE before task_create and read ACQUIRE by the loader,
+ * which is the message-passing pair that orders the 32 digest bytes (written
+ * during the freeze pass) against the reader.
+ *
+ * Deliberately NOT justified by "the loader may run on another CPU". This
+ * file's operative model is the opposite one and it is load-bearing
+ * elsewhere: dispatch goes through a single global current_task and APs do
+ * not run scheduled tasks (see the force-kill argument further down), which
+ * is why the neighbouring s_pending_test_path is a plain volatile pointer.
+ * The atomics here are the conservative choice for a publish-across-task-
+ * creation handoff, matching s_loader_stage_fault / s_loader_reached_exec
+ * rather than asserting a second, contradictory SMP model.
  *
  * A frozen identity is NOT optional for a RUN entry: u_plan_freeze_identities
  * converts every entry it cannot digest into a REFUSAL, so an entry that
@@ -1643,6 +1649,12 @@ static void u_manifest_free(struct manifest_state *ms)
  *   -3: pmm_alloc_contiguous failed
  *   -4: vfs_read short / size mismatch
  *   -5: task_exec failed
+ *   -6: UTEST_EXIT_TIMEOUT -- assigned by the LAUNCHER, never by this
+ *       loader, when the binary outran its wall clock
+ *   TASK_EXIT_UTEST_IDENTITY (task.h, reserved block below -SIG_MAX):
+ *       the bytes read did not match the identity the plan froze, so the
+ *       binary was refused instead of executed. NOT a small negative --
+ *       those are indistinguishable from -(signum)
  * The launcher renders any negative exit code as `[UTEST] <name>: FAIL
  * (exit=N)` so loader failures surface even though the binary itself
  * never produced output.
@@ -1728,7 +1740,20 @@ static void utest_loader_func(void)
         task_exit(-2);
     }
 
-    size  = file->size;
+    /* Bounded BEFORE the page rounding, which is where an unbounded size
+     * would overflow: `size + 4095` wraps for a size near UINT32_MAX and
+     * yields a page count far too small for the read that follows. The
+     * bound is the executor's own contract, so a file this loader would
+     * refuse never gets read or hashed first. */
+    if (file->size == 0 || file->size > (uint64_t)EXEC_MAX_IMAGE_SIZE) {
+        klog(LOG_ERROR, "UTEST",
+             "%s: image size %u outside the loadable range -- refusing",
+             path, file->size);
+        vfs_close(file);
+        u_loader_stage_fault();
+        task_exit(-2);
+    }
+    size  = (uint32_t)file->size;
     pages = (size + 4095u) / 4096u;
     buf_phys = pmm_alloc_contiguous(pages);
     if (!buf_phys) {
@@ -1777,10 +1802,9 @@ static void utest_loader_func(void)
                  "-- refusing to execute it", path);
             __atomic_store_n(&s_loader_identity_mismatch, 1u,
                              __ATOMIC_RELEASE);
-            for (p = 0; p < pages; p++)
-                pmm_free_frame(buf_phys + (uintptr_t)p * 4096u);
+            pmm_free_contiguous(buf_phys, pages);
             u_loader_stage_fault();
-            task_exit(-6);
+            task_exit(TASK_EXIT_UTEST_IDENTITY);
         }
     }
 
@@ -2396,6 +2420,15 @@ _Static_assert(UTEST_SKIP_RECORD_BUDGET <= 9999999u,
  * enumerated is free to grow past the reservation without tripping the
  * assert, which is the exact failure the enumeration exists to prevent. */
 #define UTEST_RSN_MISMATCH   "planned binary replaced"
+/* The plan could not establish an identity for this entry at all -- the file
+ * did not resolve, its size was outside what the executor will load, a read
+ * came up short, it changed underneath the walk, or the launcher had no
+ * scratch buffer. Deliberately NOT the same string as a replacement: no
+ * comparison happened, so reporting these as "replaced" would put a
+ * tampering claim in the machine artifacts for what is usually a missing
+ * file or an allocation failure. 22 bytes, inside the same pre-existing
+ * UTEST_RSN_SHAPE maximum. */
+#define UTEST_RSN_UNVERIFIED "identity freeze failed"
 #define UTEST_REASON_REFUSAL                                               \
     UTEST_MAX2(UTEST_MAX2(UTEST_MAX2(UTEST_LIT(UTEST_RSN_LENGTH),          \
                                      UTEST_MAX2(UTEST_LIT(UTEST_RSN_CHARSET), \
@@ -2410,7 +2443,8 @@ _Static_assert(UTEST_SKIP_RECORD_BUDGET <= 9999999u,
                           UTEST_MAX2(UTEST_MAX2(UTEST_LIT(UTEST_RSN_ARRAY_FULL), \
                                                 UTEST_LIT(UTEST_RSN_PLAN_ALLOC)), \
                                      UTEST_MAX2(UTEST_LIT(UTEST_RSN_UNREADABLE), \
-                                                UTEST_LIT(UTEST_RSN_MISMATCH)))))
+                                                UTEST_MAX2(UTEST_LIT(UTEST_RSN_MISMATCH), \
+                                                           UTEST_LIT(UTEST_RSN_UNVERIFIED))))))
 #define UTEST_REASON_MAX                                                   \
     UTEST_MAX2(UTEST_MAX2(UTEST_MAX2(UTEST_REASON_TIMEOUT,                 \
                                      UTEST_REASON_EXIT),                   \
@@ -4752,14 +4786,41 @@ static int u_identity_matches(const uint8_t *expect,
     return diff == 0;
 }
 
-/* Bytes streamed per vfs_read while digesting a planned binary. One page,
- * allocated once for the whole freeze pass and reused across every entry:
+/* Pages in the buffer streamed through while digesting a planned binary.
+ *
+ * Allocated once for the whole freeze pass and reused across every entry:
  * the alternative is a buffer the size of the largest binary, which is the
  * kind of allocation CLAUDE.md's freestanding rules push onto
  * pmm_alloc_contiguous anyway, and which would scale with a file whose size
  * the launcher does not control. Streaming keeps the cost of freezing N
- * binaries at one page regardless of N or of how large any of them is. */
-#define UTEST_DIGEST_CHUNK 4096u
+ * binaries bounded by this buffer regardless of N or of any file's size.
+ *
+ * SIXTEEN pages and not one, because a vfs_read is far from free on the
+ * path this actually runs: ixfs_file_read (src/kernel/fs/ixfs/ixfs_ops.c)
+ * kmallocs and frees an IXFS_BLOCK_SIZE bounce buffer on EVERY call, and
+ * then stamps i_atime and writes the inode back to disk on every call too.
+ * Per-page slices therefore turn one freeze pass over today's 17 binaries
+ * into ~147 reads, so ~147 kmalloc/kfree pairs and ~147 inode writebacks,
+ * which is per-call overhead the chunk size alone controls. At 64 KiB the
+ * same pass is ~18 reads. SHA-256 sees no difference either way: the digest
+ * is over the byte stream, and every chunk but the tail is a whole number
+ * of 64-byte blocks. */
+#define UTEST_DIGEST_PAGES     16u
+#define UTEST_DIGEST_CHUNK     (UTEST_DIGEST_PAGES * 4096u)
+/* Fallback when the contiguous 64 KiB cannot be had. Correctness is
+ * identical -- only the number of vfs_read calls changes -- so a fragmented
+ * heap costs speed, never the identity guarantee. */
+#define UTEST_DIGEST_PAGES_MIN 1u
+/* The read cap and the allocation must be the SAME number of pages. They
+ * are derived from one constant above, so this asserts the derivation was
+ * not later broken by reintroducing an independent byte limit -- a chunk
+ * larger than the buffer would let vfs_read run off the scratch page and
+ * corrupt whatever follows it. */
+_Static_assert(UTEST_DIGEST_CHUNK == UTEST_DIGEST_PAGES * 4096u,
+               "the digest read cap must equal the scratch allocation it "
+               "indexes, or a read overruns the buffer");
+_Static_assert(UTEST_DIGEST_PAGES_MIN <= UTEST_DIGEST_PAGES,
+               "the fallback digest buffer must not exceed the preferred one");
 
 /* Freeze one planned binary's content identity into `out`.
  *
@@ -4776,6 +4837,7 @@ static int u_identity_matches(const uint8_t *expect,
  * which is the same outcome the mismatch check produces later and for the
  * same reason. */
 static int u_digest_binary(const char *name, uint8_t *scratch,
+                           uint32_t scratch_bytes,
                            uint8_t out[SHA256_DIGEST_LEN],
                            uint64_t *out_bytes)
 {
@@ -4797,11 +4859,16 @@ static int u_digest_binary(const char *name, uint8_t *scratch,
         return 0;
 
     size = f->size;
-    /* vfs_read takes a uint32_t length, and the loader's own size handling
-     * is uint32_t throughout -- a file past that is one this launcher will
-     * not execute either, so refusing here matches what would happen at
-     * load time instead of silently digesting a truncation. */
-    if (size > 0xFFFFFFFFull) {
+    /* Bound by what the EXECUTOR will actually load, not by what vfs_read
+     * can express. Hashing is synchronous and happens during PLANNING, before
+     * any spawn exists for u_wait_with_timeout to bound, so an oversized
+     * entry -- a corrupted directory entry, a stale artifact, a hostile file
+     * -- would stall the boot rather than become a counted refusal. Reading
+     * up to 4 GiB to then hand it to a loader that rejects it above 16 MiB is
+     * work with no possible outcome. Zero is refused for the same reason:
+     * an empty file cannot be an executable, and admitting it would let two
+     * different empty entries share one identity. */
+    if (size == 0 || size > (uint64_t)EXEC_MAX_IMAGE_SIZE) {
         vfs_close(f);
         return 0;
     }
@@ -4811,8 +4878,8 @@ static int u_digest_binary(const char *name, uint8_t *scratch,
         uint64_t want = size - done;
         int n;
 
-        if (want > UTEST_DIGEST_CHUNK)
-            want = UTEST_DIGEST_CHUNK;
+        if (want > scratch_bytes)
+            want = scratch_bytes;
         n = vfs_read(f, (uint32_t)done, (uint32_t)want, scratch);
         if (n <= 0 || (uint64_t)n != want) {
             vfs_close(f);
@@ -4860,13 +4927,22 @@ static void u_plan_freeze_identities(struct plan_state *ps)
     uint8_t  *scratch;
     uint64_t  started_ms;
     uint32_t  i, frozen = 0, refused = 0;
+    uint32_t  scratch_pages = UTEST_DIGEST_PAGES;
     uint64_t  bytes = 0;
 
     if (!ps->entries)
         return;
 
     started_ms = u_uptime_ms();
-    scratch_phys = pmm_alloc_contiguous(1);
+    scratch_phys = pmm_alloc_contiguous(scratch_pages);
+    if (!scratch_phys) {
+        /* Speed, not correctness: a smaller buffer only means more
+         * vfs_read calls over the same bytes. Degrade before refusing. */
+        scratch_pages = UTEST_DIGEST_PAGES_MIN;
+        scratch_phys  = pmm_alloc_contiguous(scratch_pages);
+        if (!scratch_phys)
+            scratch_pages = 0u;     /* report what we HAVE, not what we tried */
+    }
     if (!scratch_phys) {
         /* No buffer means no identity for ANY entry, so every runnable one
          * becomes a refusal. Fail-closed is the only honest response: the
@@ -4887,8 +4963,8 @@ static void u_plan_freeze_identities(struct plan_state *ps)
         if (scratch) {
             uint64_t this_bytes = 0;
 
-            if (u_digest_binary(e->name, scratch, e->content_digest,
-                                &this_bytes)) {
+            if (u_digest_binary(e->name, scratch, scratch_pages * 4096u,
+                                e->content_digest, &this_bytes)) {
                 bytes += this_bytes;
                 frozen++;
                 continue;
@@ -4913,23 +4989,24 @@ static void u_plan_freeze_identities(struct plan_state *ps)
         if (e->type == UTEST_TYPE_SMOKE)
             e->smoke_selected = 1u;
         e->kind    = (uint8_t)UTEST_PLAN_REFUSAL;
-        e->reason  = UTEST_RSN_MISMATCH;
+        e->reason  = UTEST_RSN_UNVERIFIED;
         e->verdict = (uint8_t)UTEST_NAME_ACCEPT;
         e->digest  = 0;
         refused++;
     }
 
     if (scratch_phys)
-        pmm_free_frame(scratch_phys);
+        pmm_free_contiguous(scratch_phys, scratch_pages);
 
     /* The measurement the section's own decision rests on: freezing content
      * identity costs one extra read of every planned binary on the walk
      * every boot takes. Logged as a fact per run rather than asserted once
      * in a comment, so a future binary set that changes the cost says so. */
     klog(LOG_INFO, "UTEST",
-         "identity freeze: %u binaries, %u bytes, %ums (%u refused)",
+         "identity freeze: %u binaries, %u bytes, %ums (%u refused, "
+         "%uKiB buffer)",
          (uint64_t)frozen, bytes, u_uptime_ms() - started_ms,
-         (uint64_t)refused);
+         (uint64_t)refused, (uint64_t)(scratch_pages * 4u));
 }
 
 /* Derive the smoke gate from the plan, once, after every refusal has been
@@ -5145,10 +5222,10 @@ static void u_spawn_one(const char *name_copy, const char *path,
     __atomic_store_n(&s_loader_stage_fault, 0u, __ATOMIC_RELEASE);
     __atomic_store_n(&s_loader_reached_exec, 0u, __ATOMIC_RELEASE);
     __atomic_store_n(&s_loader_identity_mismatch, 0u, __ATOMIC_RELEASE);
-    /* Published RELEASE so the plan's digest bytes are visible to a loader
-     * the scheduler may start on another CPU. Stored BEFORE the task is
-     * created for the same reason the capture binding is: once
-     * task_create_captured returns, the loader may already be running. */
+    /* Published RELEASE so the plan's digest bytes are ordered against the
+     * loader's acquire load. Stored BEFORE the task is created for the same
+     * reason the capture binding is: once task_create_captured returns, the
+     * loader may already be running. */
     __atomic_store_n(&s_pending_expect_digest, expect_digest,
                      __ATOMIC_RELEASE);
 
@@ -6841,8 +6918,10 @@ int test_usermode_plan_intern_and_compaction(uint32_t *out_overflowed,
 /* Freeze one binary's content identity exactly as the planning walk does.
  * Owns the scratch page the launcher's freeze pass reuses across entries,
  * so a test can digest a single file without standing up a plan. */
-int test_usermode_digest_binary(const char *name, uint8_t out[32]);
-int test_usermode_digest_binary(const char *name, uint8_t out[32])
+int test_usermode_digest_binary(const char *name,
+                                uint8_t out[SHA256_DIGEST_LEN]);
+int test_usermode_digest_binary(const char *name,
+                                uint8_t out[SHA256_DIGEST_LEN])
 {
     uintptr_t phys;
     int rc;
@@ -6850,8 +6929,11 @@ int test_usermode_digest_binary(const char *name, uint8_t out[32])
     phys = pmm_alloc_contiguous(1);
     if (!phys)
         return 0;
-    rc = u_digest_binary(name, (uint8_t *)phys, out, (uint64_t *)0);
-    pmm_free_frame(phys);
+    /* One page deliberately: the shim exercises the MULTI-chunk path for
+     * any binary over 4 KiB, which is the loop the freeze pass would
+     * otherwise only reach on a file larger than its 64 KiB buffer. */
+    rc = u_digest_binary(name, (uint8_t *)phys, 4096u, out, (uint64_t *)0);
+    pmm_free_contiguous(phys, 1);
     return rc;
 }
 

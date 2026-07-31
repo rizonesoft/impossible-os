@@ -1242,6 +1242,14 @@ _Static_assert(TASK_EXIT_REASON_BASE < -(int)SIG_MAX,
  * distinction the post-commit lifecycle test depends on for an honest oracle. */
 #define TASK_EXIT_EXEC_IMAGE_DESTROYED  (TASK_EXIT_REASON_BASE - 1)
 
+/* The usermode test launcher's loader refused to execute a planned binary
+ * because the bytes it read no longer matched the content identity the
+ * enumeration plan froze for that entry. Named here rather than in the test
+ * header for the reason this block exists: the first version used -7, which
+ * is exactly -(SIGBUS-range signum), so a replaced binary and a signal death
+ * were indistinguishable to any consumer classifying by status value. */
+#define TASK_EXIT_UTEST_IDENTITY        (TASK_EXIT_REASON_BASE - 2)
+
 #ifdef KERNEL_TESTS
 /* Test seam over the internal kernel-stack free helper, so the reclamation
  * test exercises the production allocator discrimination and the

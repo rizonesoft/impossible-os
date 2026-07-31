@@ -76,6 +76,15 @@ _Static_assert(UTEST_EXIT_SKIP == 77,
 _Static_assert(UTEST_EXIT_TIMEOUT < 0 && UTEST_EXIT_TIMEOUT != UTEST_EXIT_SKIP,
                "the timeout marker must not collide with a real exit status");
 
+/* The identity-refusal status is NOT defined here. It is
+ * TASK_EXIT_UTEST_IDENTITY in include/kernel/sched/task.h, allocated from
+ * the reserved kernel exit-reason block below -SIG_MAX, because a status in
+ * the small-negative range is indistinguishable from -(signum): the first
+ * version used -7 and collided with a signal death exactly as that block's
+ * own comment warns. UTEST_EXIT_TIMEOUT above predates the block and still
+ * sits inside the signal range -- tracked, not fixed here, because the host
+ * artifact parsers key on its current value. */
+
 /* Per-write source-level stdout capture context. Callers (sys_write in
  * syscall.c, the stdout branch of NtWriteFile in nt_syscall.c) declare
  * ONE of these as a LOCAL (stack) variable before their write() loop, in

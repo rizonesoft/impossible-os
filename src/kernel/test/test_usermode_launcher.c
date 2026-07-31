@@ -26,6 +26,8 @@
 #include "kernel/mm/pmm.h"       /* pmm_get_free_frames + ordinal countdown */
 #include "kernel/mm/vmm.h"       /* vmm_create_user_pml4 (the fork site)    */
 #include "kernel/fs/vfs.h"       /* VFS_MAX_NAME (the executor's path bound) */
+#include "kernel/crypto/sha256.h" /* SHA256_DIGEST_LEN -- pins the digest bufs */
+#include "kernel/exec.h"        /* EXEC_MAX_IMAGE_SIZE -- the freeze ceiling */
 #include "kernel/boot_info.h"
 #include "kernel/klog.h"         /* KLOG_SUBSYSTEM_MAX (frame-tag bound)    */
 #include "registry.h"
@@ -65,7 +67,8 @@ int test_usermode_plan_dedup(const char *a_name, int a_type,
 int test_usermode_plan_overflow(uint32_t *out_overflowed,
                                 uint32_t *out_runs_after);
 int test_usermode_binary_present(const char *name);
-int test_usermode_digest_binary(const char *name, uint8_t out[32]);
+int test_usermode_digest_binary(const char *name,
+                                uint8_t out[SHA256_DIGEST_LEN]);
 int test_usermode_identity_matches(const uint8_t *expect,
                                    const uint8_t *actual);
 int test_usermode_freeze_refuses(const char *name, int as_smoke,
@@ -3504,7 +3507,7 @@ void test_register_usermode_launcher(void);
 
 static void test_identity_digest_is_stable_and_content_bound(void)
 {
-    uint8_t a[32], b[32];
+    uint8_t a[SHA256_DIGEST_LEN], b[SHA256_DIGEST_LEN];
     struct vfs_node *f;
     uint32_t i;
     int same;
@@ -3541,10 +3544,16 @@ static void test_identity_digest_is_stable_and_content_bound(void)
                 "a freshly written scratch file must freeze");
 
     f = vfs_open(victim, VFS_O_READ | VFS_O_WRITE);
-    if (f) {
-        vfs_write(f, 0, 8, (const uint8_t *)"BBBBBBBB");
-        vfs_close(f);
+    if (!f) {
+        /* Infrastructure failure, not a product failure: without the
+         * rewrite the two digests are trivially equal and the assertion
+         * below would blame the identity check for a VFS problem. */
+        vfs_unlink(victim);
+        TEST_SKIP("cannot reopen the scratch file for rewrite");
+        return;
     }
+    vfs_write(f, 0, 8, (const uint8_t *)"BBBBBBBB");
+    vfs_close(f);
     TEST_ASSERT(test_usermode_digest_binary("utest_ident_probe.bin", b) == 1,
                 "the rewritten scratch file must still freeze");
     same = test_usermode_identity_matches(a, b);
@@ -3552,21 +3561,52 @@ static void test_identity_digest_is_stable_and_content_bound(void)
                    "replacing the bytes under a name must change its identity");
 
     /* A single differing byte must be caught, not just a wholesale rewrite. */
-    for (i = 0; i < 32; i++)
+    for (i = 0; i < SHA256_DIGEST_LEN; i++)
         b[i] = a[i];
-    b[31] ^= 0x01u;
+    b[SHA256_DIGEST_LEN - 1u] ^= 0x01u;
     TEST_ASSERT_EQ(test_usermode_identity_matches(a, b), 0,
                    "a one-bit difference in the last byte must not match");
 
     vfs_unlink(victim);
 }
 
+static void test_identity_freeze_refuses_unloadable_sizes(void)
+{
+    uint8_t d[SHA256_DIGEST_LEN];
+    struct vfs_node *f;
+    static const char *empty = "C:\\utest_ident_empty.bin";
+
+    /* An empty file cannot be an executable, and admitting it would let two
+     * different empty entries share one identity. Refused BEFORE any read,
+     * so this also covers "the freeze does not hash what the loader would
+     * reject anyway". */
+    f = vfs_open(empty, VFS_O_READ | VFS_O_WRITE | VFS_O_CREATE);
+    if (!f) {
+        TEST_SKIP("cannot create a scratch file on C:\\");
+        return;
+    }
+    vfs_close(f);
+    TEST_ASSERT_EQ(test_usermode_digest_binary("utest_ident_empty.bin", d), 0,
+                   "a zero-length file must not produce a frozen identity");
+    vfs_unlink(empty);
+
+    /* The upper bound is the executor's own contract. A file past it is one
+     * the loader refuses, so hashing it during PLANNING -- before any spawn
+     * exists for the watchdog to bound -- would be unbounded work with no
+     * possible outcome. Asserted on the constant rather than by staging a
+     * 16 MiB file, which the image cannot carry. */
+    TEST_ASSERT(EXEC_MAX_IMAGE_SIZE > 0u &&
+                (uint64_t)EXEC_MAX_IMAGE_SIZE < 0xFFFFFFFFull,
+                "the freeze bound must be a real ceiling below the uint32 "
+                "range the page rounding would overflow at");
+}
+
 static void test_identity_verifier_is_fail_closed(void)
 {
-    uint8_t d[32];
+    uint8_t d[SHA256_DIGEST_LEN];
     uint32_t i;
 
-    for (i = 0; i < 32; i++)
+    for (i = 0; i < SHA256_DIGEST_LEN; i++)
         d[i] = (uint8_t)i;
 
     TEST_ASSERT_EQ(test_usermode_identity_matches(d, d), 1,
@@ -3938,6 +3978,9 @@ void test_register_usermode_launcher(void)
                             TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: frozen identity is stable and content-bound",
                             test_identity_digest_is_stable_and_content_bound,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: identity freeze refuses unloadable sizes",
+                            test_identity_freeze_refuses_unloadable_sizes,
                             TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: identity verifier is fail-closed",
                             test_identity_verifier_is_fail_closed,
