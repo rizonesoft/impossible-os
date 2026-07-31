@@ -25,6 +25,15 @@ blocked in the attended session. Explicit paths (`git add path/a path/b`,
 `git add -u todo/`) always pass -- they are the prescribed shape, not a
 grudging exception.
 
+STAGING EXPLICIT PATHS IS NOT ENOUGH, and this hook's first version wrongly
+implied it was. The INDEX is shared too: on 2026-07-31 an attended commit that
+had `git add`-ed only its own four files still swept the run's already-staged
+TODO-04 section deferral into an unrelated commit, because `git commit` takes
+the whole index and nothing in `git add a b c` un-stages what another session
+put there. The immune shape is a PATH-LIMITED commit (`git commit -m ... --
+<paths>`), which ignores the index for every path it does not name, so that is
+what this hook requires while a run is live.
+
 Scope, deliberately narrow:
   - INTERACTIVE ONLY. `OVERNIGHT_SEQUENCER_RUN=1` returns 0 immediately, so this
     hook is structurally incapable of wedging the unattended run it protects.
@@ -115,6 +124,20 @@ def _git_verdict(seg: list[str]) -> str:
                 and "a" in r.lstrip("-") and "=" not in r
             ):
                 return "git commit -a (commits the run's unstaged work)"
+        # A commit takes whatever is in the INDEX, and the index is shared. On
+        # 2026-07-31 an attended commit that had `git add`-ed only its own four
+        # files still swept the run's already-staged TODO-04 edit (a section
+        # deferral: an IO-table [ ]->[/] flip plus a Deferred stamp) into an
+        # unrelated commit message. Staging explicit paths is NOT sufficient
+        # protection -- the run may have staged its own work first, and nothing
+        # in `git add a b c` un-stages it.
+        #
+        # The shape that IS immune is a path-limited commit: `git commit -m ...
+        # -- <paths>` ignores the index for every path not named. So while a run
+        # is live, require it.
+        if "--" not in rest:
+            return ("git commit without a `-- <paths>` limiter (commits whatever "
+                    "the run has staged, not just your files)")
         return ""
 
     if sub == "stash":
@@ -233,8 +256,11 @@ def _selftest() -> int:
         ("git add -- todo/a.md", False),
         ("git commit -am 'x'", True),
         ("git commit -a", True),
-        ("git commit -m 'x'", False),
-        ("git commit --amend -m 'x'", False),
+        # index-sweep: a commit with no path limiter takes the run's staged work
+        ("git commit -m 'x'", True),
+        ("git commit --amend -m 'x'", True),
+        ("git commit -m 'x' -- a.py b.py", False),
+        ("git commit -F - -- .claude/hooks/x.py", False),
         ("git stash", True),
         ("git stash push -m wip", True),
         ("git stash list", False),
