@@ -548,6 +548,7 @@ than merely improbable.
 | `build/test-runs/<run_id>/record-complete.json` | the commit marker (`utest-run-record-v1`) |
 | `build/test-results.{xml,json}` | alias: THIS invocation. Cleared in Step 0a before anything can fail |
 | `build/test-results-<leg>.{xml,json}` | alias: the latest COMPLETED run of that leg |
+| `build/test-results-<leg>.run` | **the resolution path**: a pointer (`utest-leg-pointer-v1`) naming the record that leg currently resolves to |
 | `build/test-run-identity.json` | alias for the record's identity document |
 
 Publication is **settle -> commit marker -> aliases**, in that order, and each
@@ -573,6 +574,79 @@ published after the documents, so a consumer that resolves through
 `run_id` inside the document it read either sees one coherent generation or
 detects the skew. The record plus its marker remains the authoritative pair;
 the aliases are a compatibility surface.
+
+### Resolving one leg's documents (`build/test-results-<leg>.run`)
+
+The per-leg alias set is republished as a set: the old files are removed and
+the new ones renamed in, so **every member is briefly absent by construction**.
+Absence is fail-closed and sends a consumer to the record, but it is the wrong
+contract for the thing you resolve THROUGH. So the leg carries a pointer as
+well, and that is the supported way to read a leg's results:
+
+```json
+{ "schema": "utest-leg-pointer-v1", "leg": "tcg-2cpu",
+  "run_id": "20260731T104512Z-4711-9f2c1a0b",
+  "record": "test-runs/20260731T104512Z-4711-9f2c1a0b",
+  "marker": "record-complete.json" }
+```
+
+The pointer is replaced by ONE rename per completed run, and it is never a
+member of the cleared alias set. It therefore always names a **complete,
+immutable, marker-committed** record: the only two states a reader can observe
+are the previous generation and the new one, both internally coherent, and
+there is no window in which the leg resolves to nothing. A run whose alias set
+published only partially does NOT advance it -- the pointer stays on the last
+wholly-published generation and the run is failed.
+
+The pointer is deliberately minimal. `record-complete.json` is the
+authoritative statement of what a record holds, so the pointer restates none
+of it and `record` is derived from `run_id` rather than carried separately;
+there is nothing here that can drift out of agreement with the marker.
+
+**Resolution algorithm (fail-closed; never fall back to the aliases):**
+
+1. Read `build/test-results-<leg>.run`. Absent -> that leg has no completed
+   run: **stop**.
+2. Resolve `build/<record>` and read `<record>/record-complete.json`. Absent,
+   unparseable, `schema != utest-run-record-v1`, `run_id` not equal to the
+   pointer's, or `status != complete` -> re-read the pointer ONCE (a
+   concurrent run may have advanced it mid-resolution) and retry from step 2.
+   Still bad -> report the generation unavailable or corrupt: **stop**.
+3. **Open** the documents the marker NAMES, out of the record directory, not
+   out of the aliases -- and open both before processing either. A record is
+   never rewritten, so once you hold the descriptors the pair you read is one
+   run's no matter how many runs publish while you read.
+4. If any open fails with `ENOENT`, go back to step 1. Do not treat it as an
+   error and do not reach for the aliases.
+
+Step 3 is what makes the whole thing work, and step 2's "never fall back" is
+what keeps it honest: falling back to `build/test-results-<leg>.{xml,json}`
+after a failed resolution would silently hand back a different generation --
+the exact mixed-generation read the pointer exists to prevent.
+
+**What step 4 is for.** Immutability protects the bytes behind a descriptor you
+already hold; it does not protect a record you have merely *resolved*. In the
+window between reading the pointer and opening the documents, the leg can
+publish a new generation -- which unpins the one you resolved -- and a later
+prune can then remove it once it falls past the retention cutoff. That is the
+one race the pointer does not close on the writer side, and no rename scheme
+can: it is a lifetime question, not an atomicity one. Re-resolving is a
+terminating answer rather than a spin, because the record the CURRENT pointer
+names is always pinned. (`UTEST_POINTER_PIN_MAX=0` disables pinning entirely
+and with it this guarantee; a consumer that sets it is opting out of the
+resolution contract.) Giving a resolved generation an explicit reader lease, so
+retention cannot remove it out from under a reader at all, is tracked as
+[Reader Leases for a Resolved Generation](../../todo/00-infrastructure/TODO-04-usermode-test-framework.md#45-reader-leases-for-a-resolved-generation).
+
+Retention understands the pointer. `utest_prune_records` keeps the newest
+`UTEST_RECORD_KEEP` (20) records and additionally **pins** any record a live
+pointer resolves to, so the documented path cannot dangle after twenty
+unrelated runs of another leg. The pin is bounded by `UTEST_POINTER_PIN_MAX`
+(64 most recently published pointers) because `UTEST_LEG` can mint unboundedly
+many distinct leg names, and an unconditional exemption would nullify the disk
+bound. Any pointer left naming an absent record -- pruned past the cap, or
+removed by hand -- is deleted by the same pass, so a consumer sees "no
+pointer" rather than "a pointer to nothing".
 
 Both formats go through that one path. An alias that cannot be written fails
 the run rather than going silently missing, and finalization happens before
@@ -643,12 +717,13 @@ A reader that already holds an open descriptor keeps reading its bytes
 regardless; no rename-or-pointer scheme can revoke that. **For a
 generation-coherent view, resolve through the record directory and its
 marker**, not by enumerating the leg pathnames; that is what the record is
-for. A per-leg pointer naming the record each leg resolves to is tracked in
-§34.
+for. `build/test-results-<leg>.run` is the one file that names it -- see
+"Resolving one leg's documents" above for the resolution algorithm.
 
 Records are durable but BOUNDED: the newest `UTEST_RECORD_KEEP` (default 20)
 survive, pruned at the START of a run so an investigation's evidence is never
-removed by the run still writing it.
+removed by the run still writing it -- plus any record a live per-leg pointer
+resolves to, bounded by `UTEST_POINTER_PIN_MAX` (default 64).
 
 `scripts/test.sh` derives identity before the build and writes it to the
 record, aliased to `build/test-run-identity.json` (`utest-run-identity-v1`),

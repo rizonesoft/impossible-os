@@ -11429,6 +11429,7 @@ fi
 UAR_FNS=""
 for _fn in utest_xml_identity_attrs utest_json_identity utest_xml_identity_props \
            utest_publish utest_alias_record utest_publish_leg_set \
+           utest_leg_pointer_doc utest_publish_leg_pointer \
            utest_commit_record utest_reap_qemu \
            utest_publish_missing_refusals utest_finalize_record \
            utest_xml_refusal_doc utest_publish_xml_refusal; do
@@ -11491,6 +11492,7 @@ IDENTITY_RECORD="$RECORD_DIR/test-run-identity.json"
 RECORD_MARKER="$RECORD_DIR/record-complete.json"
 XML_LEG_OUT="'"$UAR_TMP"'/build/test-results-leg.xml"
 XML_OUT="'"$UAR_TMP"'/build/test-results.xml"
+RUN_POINTER_OUT="'"$UAR_TMP"'/build/test-results-leg.run"
 JSON_LEG_OUT="'"$UAR_TMP"'/build/test-results-leg.json"
 JSON_OUT="'"$UAR_TMP"'/build/test-results.json"
 IDENTITY_OUT="'"$UAR_TMP"'/build/test-run-identity.json"
@@ -11603,6 +11605,7 @@ IDENTITY_RECORD="$RECORD_DIR/test-run-identity.json"
 RECORD_MARKER="$RECORD_DIR/record-complete.json"
 XML_LEG_OUT="'"$UAR_TMP"'/fi/test-results-leg.xml"
 JSON_LEG_OUT="'"$UAR_TMP"'/fi/test-results-leg.json"
+RUN_POINTER_OUT="'"$UAR_TMP"'/fi/test-results-leg.run"
 XML_OUT="'"$UAR_TMP"'/fi/test-results.xml"
 JSON_OUT="'"$UAR_TMP"'/fi/test-results.json"
 IDENTITY_OUT="'"$UAR_TMP"'/fi/test-run-identity.json"
@@ -11828,22 +11831,44 @@ echo "UTEST_FAIL=$UTEST_FAIL"
     # Durability must be BOUNDED: every invocation leaves a record directory,
     # so an unpruned build/test-runs grows for as long as anyone runs tests.
     # The newest N survive and the run in progress is never a candidate.
-    UAR_PRUNE="$(sed -n '/^utest_prune_records() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")"
+    UAR_PRUNE="$(sed -n '/^utest_norm_bound() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
+$(sed -n '/^utest_pointer_run_id() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
+$(sed -n '/^utest_prune_records() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")"
     if [ -z "$UAR_PRUNE" ]; then
         t_fail "run record: retention prunes to the newest N" "utest_prune_records not found"
     else
         UAR_PDIR="$UAR_TMP/prune"
-        mkdir -p "$UAR_PDIR"
-        for _i in 1 2 3 4 5; do mkdir -p "$UAR_PDIR/2026010${_i}T000000Z-1-aaaa"; done
-        UAR_PRES="$(bash -c '
+        rm -rf "$UAR_PDIR"
+        # The real layout, because retention now reads the per-leg pointers in
+        # $PROJECT/build as well as the record directories: a harness that
+        # invented its own paths would exercise neither half honestly.
+        mkdir -p "$UAR_PDIR/build/test-runs"
+        for _i in 1 2 3 4 5; do mkdir -p "$UAR_PDIR/build/test-runs/2026010${_i}T000000Z-1-aaaa"; done
+        # $1 = extra setup (pointer files, env overrides), echoes the survivors.
+        # It prints an explicit HARNESS-OK sentinel LAST, so an assertion made
+        # only of negative greps cannot pass by the fixture never existing:
+        # a setup or listing failure loses the sentinel and every caller
+        # requires it. (Codex reproduced exactly that on p9 under a read-only
+        # environment -- mkdir failed, `ls` found nothing, the two `! grep`
+        # conditions both held, and the test reported PASS.)
+        uar_prune_run() {
+            bash -c '
 set -euo pipefail
-RUNS_DIR="'"$UAR_PDIR"'"
+RED=""; YELLOW=""; CYAN=""; RESET=""
+PROJECT="'"$UAR_PDIR"'"
+RUNS_DIR="$PROJECT/build/test-runs"
 RUN_ID="20260101T000000Z-1-aaaa"
 UTEST_RECORD_KEEP=2
 '"$UAR_PRUNE"'
+'"${1:-true}"'
 utest_prune_records
 ls -1 "$RUNS_DIR" | sort | tr "\n" " "
-' 2>&1)"
+printf "| pointers: "
+{ ls -1 "$PROJECT/build" 2>/dev/null | grep "\.run$" | sort | tr "\n" " "; } || true
+printf "| HARNESS-OK\n"
+' 2>&1
+        }
+        UAR_PRES="$(uar_prune_run)"
         # keep=2 retains the two newest (…04, …05); …01 is the current RUN_ID
         # and must survive even though it is older than the cut.
         if printf '%s' "$UAR_PRES" | grep -q '20260101T000000Z-1-aaaa' &&
@@ -11854,6 +11879,482 @@ ls -1 "$RUNS_DIR" | sort | tr "\n" " "
         else
             t_fail "run record: retention prunes to the newest N and spares the running one" "$UAR_PRES"
         fi
+
+        # (p7) a record a live per-leg pointer still resolves to is PINNED.
+        #      Retention by age alone would delete it after N unrelated runs of
+        #      any other leg, which turns the published resolution path into a
+        #      dangling one.
+        uar_prune_reset() {
+            rm -rf "$UAR_PDIR"
+            mkdir -p "$UAR_PDIR/build/test-runs"
+            for _i in 1 2 3 4 5; do mkdir -p "$UAR_PDIR/build/test-runs/2026010${_i}T000000Z-1-aaaa"; done
+        }
+        uar_prune_ptr() {
+            # $1 = leg label, $2 = run id it names
+            printf '{ "schema": "utest-leg-pointer-v1", "leg": "%s", "run_id": "%s", "record": "test-runs/%s" }\n' \
+                "$1" "$2" "$2" > "$UAR_PDIR/build/test-results-$1.run"
+        }
+        uar_prune_reset
+        uar_prune_ptr other 20260102T000000Z-1-aaaa
+        UAR_PP7="$(uar_prune_run)"
+        if printf '%s' "$UAR_PP7" | grep -q 'HARNESS-OK' &&
+           printf '%s' "$UAR_PP7" | grep -q '20260102T000000Z-1-aaaa' &&
+           printf '%s' "$UAR_PP7" | grep -q 'test-results-other.run' &&
+           ! printf '%s' "$UAR_PP7" | grep -q '20260103T000000Z-1-aaaa'; then
+            t_pass "run record: retention pins the record a live leg pointer resolves to"
+        else
+            t_fail "run record: retention pins the record a live leg pointer resolves to" "$UAR_PP7"
+        fi
+
+        # (p8) and the pin is BOUNDED, because UTEST_LEG can mint unboundedly
+        #      many distinct leg names: an unconditional exemption would pin an
+        #      unbounded number of records and nullify the disk bound the
+        #      pruner exists to enforce. Only the most recently PUBLISHED
+        #      pin_max pointers win; the loser's record is pruned normally and
+        #      its now-dangling pointer is swept with it.
+        uar_prune_reset
+        uar_prune_ptr older 20260102T000000Z-1-aaaa
+        uar_prune_ptr newer 20260103T000000Z-1-aaaa
+        touch -d '2020-01-01' "$UAR_PDIR/build/test-results-older.run"
+        UAR_PP8="$(uar_prune_run 'UTEST_POINTER_PIN_MAX=1')"
+        if printf '%s' "$UAR_PP8" | grep -q 'HARNESS-OK' &&
+           printf '%s' "$UAR_PP8" | grep -q '20260103T000000Z-1-aaaa' &&
+           ! printf '%s' "$UAR_PP8" | grep -q '20260102T000000Z-1-aaaa' &&
+           printf '%s' "$UAR_PP8" | grep -q 'test-results-newer.run' &&
+           ! printf '%s' "$UAR_PP8" | grep -q 'test-results-older.run'; then
+            t_pass "run record: the pointer pin is bounded and the loser's dangling pointer is swept"
+        else
+            t_fail "run record: the pointer pin is bounded and the loser's dangling pointer is swept" "$UAR_PP8"
+        fi
+
+        # (p8b) losing the PIN is not the same event as being DANGLING, and the
+        #       sweep must not conflate them. An unpinned pointer whose record
+        #       is still retained on age is a perfectly good resolution path --
+        #       an implementation that swept every unpinned pointer would pass
+        #       p7-p9 while deleting it. Here the losing pointer names the
+        #       NEWEST record, which survives the age cut on its own.
+        uar_prune_reset
+        uar_prune_ptr unpinned 20260105T000000Z-1-aaaa
+        uar_prune_ptr winner 20260104T000000Z-1-aaaa
+        touch -d '2020-01-01' "$UAR_PDIR/build/test-results-unpinned.run"
+        UAR_PP8B="$(uar_prune_run 'UTEST_POINTER_PIN_MAX=1')"
+        if printf '%s' "$UAR_PP8B" | grep -q 'HARNESS-OK' &&
+           printf '%s' "$UAR_PP8B" | grep -q '20260105T000000Z-1-aaaa' &&
+           printf '%s' "$UAR_PP8B" | grep -q 'test-results-unpinned.run'; then
+            t_pass "run record: an unpinned pointer whose record is still retained survives the sweep"
+        else
+            t_fail "run record: an unpinned pointer whose record is still retained survives the sweep" "$UAR_PP8B"
+        fi
+
+        # (p8c) pinning off (UTEST_POINTER_PIN_MAX=0) is a supported opt-out,
+        #       not an error: the pointed-at record then prunes on age like any
+        #       other and its pointer is swept with it, while a pointer to a
+        #       RETAINED record still survives.
+        uar_prune_reset
+        uar_prune_ptr off 20260102T000000Z-1-aaaa
+        uar_prune_ptr kept 20260105T000000Z-1-aaaa
+        UAR_PP8C="$(uar_prune_run 'UTEST_POINTER_PIN_MAX=0')"
+        if printf '%s' "$UAR_PP8C" | grep -q 'HARNESS-OK' &&
+           ! printf '%s' "$UAR_PP8C" | grep -q '20260102T000000Z-1-aaaa' &&
+           ! printf '%s' "$UAR_PP8C" | grep -q 'test-results-off.run' &&
+           printf '%s' "$UAR_PP8C" | grep -q 'test-results-kept.run'; then
+            t_pass "run record: UTEST_POINTER_PIN_MAX=0 disables pinning without breaking the sweep"
+        else
+            t_fail "run record: UTEST_POINTER_PIN_MAX=0 disables pinning without breaking the sweep" "$UAR_PP8C"
+        fi
+
+        # (p9) a pointer naming no record at all -- hand-removed, or a
+        #      malformed file with no readable run_id -- is removed rather than
+        #      left to resolve to an absent directory forever. The assertion
+        #      requires the HARNESS-OK sentinel AND proves the fixtures existed
+        #      before the prune, so it cannot pass by never having run.
+        uar_prune_reset
+        uar_prune_ptr gone 20260101T999999Z-9-zzzz
+        printf 'not json at all\n' > "$UAR_PDIR/build/test-results-junk.run"
+        UAR_PP9_PRE="$([ -f "$UAR_PDIR/build/test-results-gone.run" ] &&
+                       [ -f "$UAR_PDIR/build/test-results-junk.run" ] && echo FIXTURES-OK || echo MISSING)"
+        UAR_PP9="$(uar_prune_run)"
+        if [ "$UAR_PP9_PRE" = FIXTURES-OK ] &&
+           printf '%s' "$UAR_PP9" | grep -q 'HARNESS-OK' &&
+           printf '%s' "$UAR_PP9" | grep -q '20260105T000000Z-1-aaaa' &&
+           ! printf '%s' "$UAR_PP9" | grep -q 'test-results-gone.run' &&
+           ! printf '%s' "$UAR_PP9" | grep -q 'test-results-junk.run'; then
+            t_pass "run record: a dangling or unreadable leg pointer is swept, never left resolving to nothing"
+        else
+            t_fail "run record: a dangling or unreadable leg pointer is swept, never left resolving to nothing" \
+                "pre=$UAR_PP9_PRE $UAR_PP9"
+        fi
+
+        # (p10) CONTAINMENT. The run-id charset admits `.` and `..`, and
+        #       $RUNS_DIR/.. is a directory that exists -- so an unvalidated
+        #       extractor reads such a pointer as LIVE and keeps it forever,
+        #       while a resolver deriving a path from it climbs out of
+        #       test-runs/ entirely. A symlinked pointer is the same class from
+        #       the other direction: a regular-file-only scan neither pins nor
+        #       sweeps it, so it sits there resolving through a target this
+        #       script never wrote.
+        uar_prune_reset
+        printf '{ "schema": "utest-leg-pointer-v1", "run_id": ".." }\n' \
+            > "$UAR_PDIR/build/test-results-dotdot.run"
+        printf '{ "schema": "utest-leg-pointer-v1", "run_id": "." }\n' \
+            > "$UAR_PDIR/build/test-results-dot.run"
+        uar_prune_ptr real 20260105T000000Z-1-aaaa
+        ln -sf "$UAR_PDIR/build/test-results-real.run" "$UAR_PDIR/build/test-results-link.run"
+        UAR_PP10="$(uar_prune_run)"
+        if printf '%s' "$UAR_PP10" | grep -q 'HARNESS-OK' &&
+           ! printf '%s' "$UAR_PP10" | grep -q 'test-results-dotdot.run' &&
+           ! printf '%s' "$UAR_PP10" | grep -q 'test-results-dot.run' &&
+           ! printf '%s' "$UAR_PP10" | grep -q 'test-results-link.run' &&
+           printf '%s' "$UAR_PP10" | grep -q 'test-results-real.run'; then
+            t_pass "run record: dot, dot-dot and symlinked leg pointers are swept, never treated as live"
+        else
+            t_fail "run record: dot, dot-dot and symlinked leg pointers are swept, never treated as live" "$UAR_PP10"
+        fi
+
+        # (p11) UTEST_RECORD_KEEP is NORMALISED, not trusted -- and the
+        #       assertion has to DISCRIMINATE. "the newest record survived" is
+        #       true under every possible normalisation outcome, so it proves
+        #       nothing; the observable that separates them is HOW MANY of the
+        #       five survive. keep=2 above retains 3 (two newest + the running
+        #       one); a value that falls back to the default 20, or is clamped
+        #       to the 10000 ceiling, retains all 5. A fallback to 1 or a value
+        #       passed through raw would not.
+        #
+        #       `08` is the one that actually bites: it passes a digits-only
+        #       check and `-ge`, then aborts the whole run inside $(( )) where
+        #       bash reads a leading zero as octal -- under `set -e`. Its
+        #       HARNESS-OK is therefore load-bearing on its own.
+        for _kv in 08 notanumber 0 99999 9223372036854775808; do
+            uar_prune_reset
+            UAR_PP11="$(uar_prune_run "UTEST_RECORD_KEEP=$_kv; UTEST_POINTER_PIN_MAX=0")"
+            UAR_PP11_N="$(printf '%s' "$UAR_PP11" | grep -o '2026010[0-9]T000000Z-1-aaaa' | sort -u | wc -l)"
+            if printf '%s' "$UAR_PP11" | grep -q 'HARNESS-OK' && [ "$UAR_PP11_N" -eq 5 ]; then
+                t_pass "run record: UTEST_RECORD_KEEP='$_kv' normalises to a permissive bound, keeping all 5"
+            else
+                t_fail "run record: UTEST_RECORD_KEEP='$_kv' normalises to a permissive bound, keeping all 5" \
+                    "survivors=$UAR_PP11_N $UAR_PP11"
+            fi
+        done
+
+        # (p12) UTEST_POINTER_PIN_MAX is normalised INDEPENDENTLY, and its
+        #       failure mode is the opposite one: a bad value must fall back to
+        #       the default (pinning ON), never to the zero opt-out. The
+        #       overflow cases are the point -- `$(( 10#9223372036854775808 ))`
+        #       wraps NEGATIVE in bash, a negative satisfies a `-le 10000`
+        #       ceiling test, and it then fails `-gt 0` and silently disables
+        #       pinning, unpinning every record a live pointer names. The
+        #       fixture discriminates: record ...02 is past the keep=2 cut and
+        #       survives ONLY if its pointer's pin is active.
+        for _pv in notanumber 99999 9223372036854775808 18446744073709551615; do
+            uar_prune_reset
+            uar_prune_ptr pinned 20260102T000000Z-1-aaaa
+            UAR_PP12="$(uar_prune_run "UTEST_POINTER_PIN_MAX=$_pv")"
+            if printf '%s' "$UAR_PP12" | grep -q 'HARNESS-OK' &&
+               printf '%s' "$UAR_PP12" | grep -q '20260102T000000Z-1-aaaa' &&
+               printf '%s' "$UAR_PP12" | grep -q 'test-results-pinned.run'; then
+                t_pass "run record: UTEST_POINTER_PIN_MAX='$_pv' falls back to pinning ON, never to the zero opt-out"
+            else
+                t_fail "run record: UTEST_POINTER_PIN_MAX='$_pv' falls back to pinning ON, never to the zero opt-out" \
+                    "$UAR_PP12"
+            fi
+        done
+
+        # (p12b) LEADING ZEROS are a spelling, not a magnitude. A length-based
+        #        clamp reads `000005` as six digits and clamps a request for
+        #        five records up to the ceiling, and reads `0000000` as the
+        #        ceiling rather than the supported zero-pin opt-out -- both
+        #        silently changing a documented knob. `000005` must therefore
+        #        behave EXACTLY like `2`-style small keep (3 survivors: the two
+        #        newest plus the running one... here 5 newest of 5, so use the
+        #        discriminating small value 000002), and `0000000` exactly like
+        #        the zero opt-out proven in p8c.
+        uar_prune_reset
+        UAR_PP12B="$(uar_prune_run 'UTEST_RECORD_KEEP=000002; UTEST_POINTER_PIN_MAX=0')"
+        UAR_PP12B_N="$(printf '%s' "$UAR_PP12B" | grep -o '2026010[0-9]T000000Z-1-aaaa' | sort -u | wc -l)"
+        if printf '%s' "$UAR_PP12B" | grep -q 'HARNESS-OK' && [ "$UAR_PP12B_N" -eq 3 ]; then
+            t_pass "run record: UTEST_RECORD_KEEP='000002' means 2, not a six-digit clamp to the ceiling"
+        else
+            t_fail "run record: UTEST_RECORD_KEEP='000002' means 2, not a six-digit clamp to the ceiling" \
+                "survivors=$UAR_PP12B_N $UAR_PP12B"
+        fi
+
+        uar_prune_reset
+        uar_prune_ptr zeroed 20260102T000000Z-1-aaaa
+        UAR_PP12C="$(uar_prune_run 'UTEST_POINTER_PIN_MAX=0000000')"
+        if printf '%s' "$UAR_PP12C" | grep -q 'HARNESS-OK' &&
+           ! printf '%s' "$UAR_PP12C" | grep -q '20260102T000000Z-1-aaaa' &&
+           ! printf '%s' "$UAR_PP12C" | grep -q 'test-results-zeroed.run'; then
+            t_pass "run record: UTEST_POINTER_PIN_MAX='0000000' is the zero opt-out, not a clamp to the ceiling"
+        else
+            t_fail "run record: UTEST_POINTER_PIN_MAX='0000000' is the zero opt-out, not a clamp to the ceiling" \
+                "$UAR_PP12C"
+        fi
+
+        # (p13) a SPECIAL FILE under the pointer name must be classified, never
+        #       read. Widening the sweep past regular files to catch symlinks
+        #       also admits FIFOs, and reading a FIFO with no writer blocks
+        #       FOREVER -- at startup, wedging every later invocation of
+        #       scripts/test.sh rather than sweeping the thing that wedged it.
+        #       The whole assertion is that this completes at all, so it runs
+        #       under an external timeout: a regression here HANGS, and a hung
+        #       test that is not bounded takes the suite with it.
+        uar_prune_reset
+        if mkfifo "$UAR_PDIR/build/test-results-fifo.run" 2>/dev/null; then
+            UAR_PP13="$(UAR_PDIR="$UAR_PDIR" UAR_PRUNE="$UAR_PRUNE" timeout 20 bash -c '
+set -uo pipefail
+PROJECT="$UAR_PDIR"
+RUNS_DIR="$PROJECT/build/test-runs"
+RUN_ID="20260101T000000Z-1-aaaa"
+UTEST_RECORD_KEEP=2
+eval "$UAR_PRUNE"
+utest_prune_records
+ls -1 "$RUNS_DIR" | sort | tr "\n" " "
+printf "| pointers: "
+{ ls -1 "$PROJECT/build" 2>/dev/null | grep "\.run$" | sort | tr "\n" " "; } || true
+printf "| HARNESS-OK\n"
+' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
+            if printf '%s' "$UAR_PP13" | grep -q 'HARNESS-OK' &&
+               ! printf '%s' "$UAR_PP13" | grep -q 'test-results-fifo.run' &&
+               [ ! -e "$UAR_PDIR/build/test-results-fifo.run" ]; then
+                t_pass "run record: a FIFO under the pointer name is swept without ever being opened"
+            else
+                t_fail "run record: a FIFO under the pointer name is swept without ever being opened" "$UAR_PP13"
+            fi
+            rm -f "$UAR_PDIR/build/test-results-fifo.run"
+        else
+            t_fail "run record: a FIFO under the pointer name is swept without ever being opened" \
+                "mkfifo unavailable -- the hang this guards against would be undetected"
+        fi
+    fi
+
+    # 6h-ptr. The per-leg GENERATION POINTER. The two leg aliases are a
+    #     compatibility surface a consumer must enumerate, and enumeration is
+    #     exactly what cannot be made atomic: the set is cleared and rewritten,
+    #     so every member is briefly absent by construction. The pointer is the
+    #     resolution path, and it is replaced by ONE rename over a file that
+    #     already names a complete, immutable, marker-committed record -- so it
+    #     is never absent and never names a torn generation.
+    #
+    #     This harness uses the REAL layout ($PROJECT/build/test-runs/<run_id>)
+    #     rather than the flat fault-injection one, because the whole property
+    #     under test is that a consumer can walk pointer -> record -> both
+    #     documents.
+    UAR_PTR="$UAR_TMP/ptr"
+    rm -rf "$UAR_PTR"
+    mkdir -p "$UAR_PTR/build/test-runs"
+    uar_ptr_gen() {
+        # $1 = run id, $2 = generation tag, $3 = extra setup (fault injection)
+        bash -c '
+set -euo pipefail
+RED=""; YELLOW=""; CYAN=""; RESET=""
+PROJECT="'"$UAR_PTR"'"
+RUN_ID="'"$1"'"
+RECORD_DIR="$PROJECT/build/test-runs/$RUN_ID"
+mkdir -p "$RECORD_DIR"
+XML_RECORD="$RECORD_DIR/test-results.xml"
+JSON_RECORD="$RECORD_DIR/test-results.json"
+IDENTITY_RECORD="$RECORD_DIR/test-run-identity.json"
+RECORD_MARKER="$RECORD_DIR/record-complete.json"
+XML_LEG_OUT="$PROJECT/build/test-results-leg.xml"
+JSON_LEG_OUT="$PROJECT/build/test-results-leg.json"
+RUN_POINTER_OUT="$PROJECT/build/test-results-leg.run"
+XML_OUT="$PROJECT/build/test-results.xml"
+JSON_OUT="$PROJECT/build/test-results.json"
+IDENTITY_OUT="$PROJECT/build/test-run-identity.json"
+RUN_TS="t"; RUN_COMMIT="c"; RUN_LEG="leg"; RUN_LEG_SOURCE="d"
+RUN_ACCEL="tcg"; RUN_HOST="h"; RUN_HOSTNAME="hn"; RUN_QEMU="q"; SMP_CPUS_SAFE="1"
+CI_PARITY=0; XML_MODE=0; JSON_MODE=0; HAS_XML=0; HAS_JSON=0
+UTEST_FAIL=0; XML_PUBLISHED=1; JSON_PUBLISHED=1; UTEST_FINALIZED=0
+printf "GEN-'"$2"'-XML\n" > "$XML_RECORD"
+printf "GEN-'"$2"'-JSON\n" > "$JSON_RECORD"
+printf "{}\n" > "$IDENTITY_RECORD"
+'"$UAR_FNS"'
+'"${3:-true}"'
+utest_finalize_record complete || echo "FINALIZE_RC=$?"
+echo "UTEST_FAIL=$UTEST_FAIL"
+' 2>&1
+    }
+
+    # (p1) the pointer is published, minimal, and names THIS run's record. It
+    #      deliberately does NOT restate the document inventory: the marker is
+    #      the authoritative statement of what a record holds, and a second
+    #      copy is a second thing that can disagree.
+    UAR_P1="$(uar_ptr_gen run1 1)"
+    # PARSED, not grepped. Independent greps for three substrings would accept
+    # invalid JSON, duplicate keys, a missing `leg` or `marker`, or extra keys
+    # that quietly re-introduce the document inventory the pointer exists to
+    # NOT duplicate. The exact key set is the contract, so assert the exact key
+    # set.
+    UAR_P1J="$(python3 - "$UAR_PTR/build/test-results-leg.run" <<'PY' 2>&1
+import json, sys
+
+def no_dupes(pairs):
+    # json.load() SILENTLY collapses a duplicate key to its last occurrence,
+    # so plain dict equality cannot see one. A pointer carrying `run_id` twice
+    # is parser-dependent -- a consumer in another language may resolve the
+    # OTHER generation -- so reject it here rather than call the document
+    # exact.
+    seen = [k for k, _ in pairs]
+    if len(seen) != len(set(seen)):
+        raise ValueError("duplicate key(s): %r" % seen)
+    return dict(pairs)
+
+try:
+    with open(sys.argv[1]) as fh:
+        d = json.load(fh, object_pairs_hook=no_dupes)
+except Exception as e:
+    print("UNPARSEABLE", e); raise SystemExit(0)
+want = {"schema": "utest-leg-pointer-v1", "leg": "leg", "run_id": "run1",
+        "record": "test-runs/run1", "marker": "record-complete.json"}
+print("EXACT" if d == want else "MISMATCH %r" % (d,))
+PY
+)"
+    if [ "$UAR_P1J" = EXACT ]; then
+        t_pass "leg pointer: a complete run publishes exactly the minimal pointer document"
+    else
+        t_fail "leg pointer: a complete run publishes exactly the minimal pointer document" \
+            "$UAR_P1J -- $UAR_P1"
+    fi
+
+    # (p2) THE test checkpoint. A reader resolves the pointer, PAUSES while a
+    #      second run publishes a whole new generation, and only then opens
+    #      both documents from the record it resolved. It must see one run's
+    #      XML and JSON -- never a pair drawn from two runs, which is exactly
+    #      what enumerating the two alias paths across the same window can
+    #      hand it.
+    UAR_RESOLVED="$(sed -n 's/.*"record"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+                    "$UAR_PTR/build/test-results-leg.run" 2>/dev/null | head -1)"
+    UAR_P2="$(uar_ptr_gen run2 2)"
+    if [ "$UAR_RESOLVED" = "test-runs/run1" ] &&
+       grep -q 'GEN-1-XML' "$UAR_PTR/build/$UAR_RESOLVED/test-results.xml" 2>/dev/null &&
+       grep -q 'GEN-1-JSON' "$UAR_PTR/build/$UAR_RESOLVED/test-results.json" 2>/dev/null &&
+       grep -q '"run_id": "run2"' "$UAR_PTR/build/test-results-leg.run" &&
+       grep -q 'GEN-2-XML' "$UAR_PTR/build/test-results-leg.xml"; then
+        t_pass "leg pointer: a reader paused across a full republish still reads ONE run's document set"
+    else
+        t_fail "leg pointer: a reader paused across a full republish still reads ONE run's document set" \
+            "$UAR_P2 -- resolved: $UAR_RESOLVED"
+    fi
+
+    # (p3) TRANSITION-sensitive, and the reason the pointer is not a member of
+    #      the cleared alias set. At the instant the first new document is
+    #      published, the pointer must STILL name the previous run's record --
+    #      a complete, immutable one. A pointer cleared with the set would be
+    #      absent here, and a death in that window would leave the leg
+    #      resolving to nothing permanently.
+    rm -f "$UAR_PTR/build/.ptrprobe"
+    UAR_P3="$(uar_ptr_gen run3 3 'mv() {
+  for _a in "$@"; do
+    case "$_a" in
+      *test-results-leg.xml|*test-results-leg.json)
+        if [ ! -f "'"$UAR_PTR"'/build/.ptrprobe" ]; then
+          cat "'"$UAR_PTR"'/build/test-results-leg.run" > "'"$UAR_PTR"'/build/.ptrprobe" 2>/dev/null ||
+            printf ABSENT > "'"$UAR_PTR"'/build/.ptrprobe"
+        fi ;;
+    esac
+  done
+  command mv "$@"
+}')"
+    if grep -q '"run_id": "run2"' "$UAR_PTR/build/.ptrprobe" 2>/dev/null &&
+       grep -q '"run_id": "run3"' "$UAR_PTR/build/test-results-leg.run"; then
+        t_pass "leg pointer: it still names the previous record while the new alias set is being published"
+    else
+        t_fail "leg pointer: it still names the previous record while the new alias set is being published" \
+            "$UAR_P3 -- at first publish: $(cat "$UAR_PTR/build/.ptrprobe" 2>&1)"
+    fi
+
+    # (p4) a TORN alias set must not advance the pointer. The tear is already a
+    #      counted failure; advancing the resolution path over it would also
+    #      point every consumer at a generation whose compatibility surface
+    #      disagrees with it.
+    UAR_P4="$(uar_ptr_gen run4 4 'mv() { for _a in "$@"; do case "$_a" in *test-results-leg.xml) return 1 ;; esac; done; command mv "$@"; }')"
+    if grep -q '"run_id": "run3"' "$UAR_PTR/build/test-results-leg.run" &&
+       printf '%s' "$UAR_P4" | grep -qE 'UTEST_FAIL=[1-9]'; then
+        t_pass "leg pointer: a torn alias set leaves the pointer on the previous complete generation"
+    else
+        t_fail "leg pointer: a torn alias set leaves the pointer on the previous complete generation" \
+            "$UAR_P4 -- pointer: $(cat "$UAR_PTR/build/test-results-leg.run" 2>&1)"
+    fi
+
+    # (p5) a pointer that cannot be advanced is a COUNTED failure -- the leg's
+    #      documents then describe a run the resolution path does not name --
+    #      and it must leak no staging file into the retained record.
+    UAR_P5="$(uar_ptr_gen run5 5 'mv() { for _a in "$@"; do case "$_a" in *test-results-leg.run) return 1 ;; esac; done; command mv "$@"; }')"
+    if grep -q '"run_id": "run3"' "$UAR_PTR/build/test-results-leg.run" &&
+       printf '%s' "$UAR_P5" | grep -qE 'UTEST_FAIL=[1-9]' &&
+       [ ! -e "$UAR_PTR/build/test-runs/run5/.legptr.tmp" ]; then
+        t_pass "leg pointer: a failed pointer advance counts a failure and leaks no staging file"
+    else
+        t_fail "leg pointer: a failed pointer advance counts a failure and leaks no staging file" \
+            "$UAR_P5 -- record: $(ls -a "$UAR_PTR/build/test-runs/run5" 2>&1)"
+    fi
+
+    # (p5b) the AT-RENAME checkpoint, which is the only instant that proves
+    #       the forbidden interval never opens. p3 observes the pointer while
+    #       the ALIASES are being published, and p4/p5 observe final state --
+    #       an implementation that unlinked the published pointer immediately
+    #       before renaming over it, and restored it on failure, would satisfy
+    #       all three while creating a window in which the leg resolves to
+    #       nothing. So look at the pointer at the moment its own rename is
+    #       issued: it must still be there, holding the previous generation.
+    rm -f "$UAR_PTR/build/.rnprobe"
+    UAR_P5B="$(uar_ptr_gen run6 6 'mv() {
+  for _a in "$@"; do
+    case "$_a" in
+      *test-results-leg.run)
+        if [ -f "'"$UAR_PTR"'/build/test-results-leg.run" ]; then
+          cat "'"$UAR_PTR"'/build/test-results-leg.run" > "'"$UAR_PTR"'/build/.rnprobe"
+        else
+          printf ABSENT > "'"$UAR_PTR"'/build/.rnprobe"
+        fi ;;
+    esac
+  done
+  command mv "$@"
+}')"
+    if grep -q '"run_id": "run3"' "$UAR_PTR/build/.rnprobe" 2>/dev/null &&
+       grep -q '"run_id": "run6"' "$UAR_PTR/build/test-results-leg.run"; then
+        t_pass "leg pointer: the previous pointer is still present at the instant its replacement is renamed in"
+    else
+        t_fail "leg pointer: the previous pointer is still present at the instant its replacement is renamed in" \
+            "$UAR_P5B -- at rename: $(cat "$UAR_PTR/build/.rnprobe" 2>&1)"
+    fi
+
+    # (p5c) the document-WRITE failure branch, distinct from the rename branch
+    #       p5 covers: it must also count exactly one failure, leave the
+    #       previous pointer untouched, and leak no temp into the record.
+    UAR_P5C="$(uar_ptr_gen run7 7 'utest_leg_pointer_doc() { return 1; }')"
+    if grep -q '"run_id": "run6"' "$UAR_PTR/build/test-results-leg.run" &&
+       printf '%s' "$UAR_P5C" | grep -qE 'UTEST_FAIL=[1-9]' &&
+       [ ! -e "$UAR_PTR/build/test-runs/run7/.legptr.tmp" ]; then
+        t_pass "leg pointer: a failed pointer WRITE is counted and leaves the previous generation named"
+    else
+        t_fail "leg pointer: a failed pointer WRITE is counted and leaves the previous generation named" \
+            "$UAR_P5C -- record: $(ls -a "$UAR_PTR/build/test-runs/run7" 2>&1)"
+    fi
+
+    # (p5d) the no-op branch. Before the accelerator is chosen the leg has no
+    #       name, so there is no pointer to publish -- and that must be silent,
+    #       not a counted failure, or every early refusal would report one.
+    UAR_P5D="$(uar_ptr_gen run8 8 'RUN_POINTER_OUT=""')"
+    if printf '%s' "$UAR_P5D" | grep -q 'UTEST_FAIL=0' &&
+       grep -q '"run_id": "run6"' "$UAR_PTR/build/test-results-leg.run"; then
+        t_pass "leg pointer: an unnamed leg publishes no pointer and counts no failure"
+    else
+        t_fail "leg pointer: an unnamed leg publishes no pointer and counts no failure" "$UAR_P5D"
+    fi
+
+    # (p6) an INCOMPLETE record may not advance the pointer, for the same
+    #      reason it may not replace the leg aliases: both mean "the latest
+    #      COMPLETED run of this leg".
+    uar_reset_fi
+    printf '{ "schema": "utest-leg-pointer-v1", "run_id": "previous", "record": "test-runs/previous" }\n' \
+        > "$UAR_TMP/fi/test-results-leg.run"
+    UAR_P6="$(uar_drive 'true' incomplete)"
+    if grep -q '"run_id": "previous"' "$UAR_TMP/fi/test-results-leg.run"; then
+        t_pass "leg pointer: an incomplete record cannot advance it"
+    else
+        t_fail "leg pointer: an incomplete record cannot advance it" \
+            "$UAR_P6 -- pointer: $(cat "$UAR_TMP/fi/test-results-leg.run" 2>&1)"
     fi
 fi
 
@@ -12181,14 +12682,34 @@ else
     t_fail "identity: a record whose commit marker fails to land fails the run" "$COMMITFN"
 fi
 
-# i12e. UTEST_RECORD_KEEP must be normalised in BASE 10. `08` passes a
-#       digits-only check and `-ge`, then aborts the run in $(( )) under
-#       set -e, where bash reads a leading zero as octal.
-if grep -q 'keep=\$(( 10#\$keep ))' "$LEGSH"; then
-    t_pass "run record: the retention bound is normalised in base 10"
+# i12e. A leading zero must not be read as octal. `08` passes a digits-only
+#       check and `-ge`, then aborts the run in $(( )) under set -e, where
+#       bash reads a leading zero as octal and 8 is not an octal digit.
+#
+#       Asserted BEHAVIOURALLY against the extracted normaliser rather than by
+#       grepping for one spelling of the guard. The original form was a grep
+#       for `keep=$(( 10#$keep ))`, which broke the moment the guard moved into
+#       the shared `utest_norm_bound` -- and moved because stripping the
+#       leading zero is the stronger fix: the value never reaches arithmetic
+#       expansion wearing a zero at all, which also stops a length-based clamp
+#       reading `000005` as a six-digit number.
+UAR_NORMFN="$(sed -n '/^utest_norm_bound() {/,/^}/p' "$LEGSH")"
+if [ -z "$UAR_NORMFN" ]; then
+    t_fail "run record: a leading-zero retention bound is normalised, not read as octal" \
+        "utest_norm_bound not found in $LEGSH"
 else
-    t_fail "run record: the retention bound is normalised in base 10" \
-        "UTEST_RECORD_KEEP=08 would abort the run in arithmetic expansion"
+    UAR_NORM_OUT="$(bash -c 'set -euo pipefail
+'"$UAR_NORMFN"'
+printf "08=%s 000005=%s 0000000=%s 20=%s\n" \
+    "$(utest_norm_bound 08 20 10000)" \
+    "$(utest_norm_bound 000005 20 10000)" \
+    "$(utest_norm_bound 0000000 64 10000)" \
+    "$(utest_norm_bound 20 20 10000)"' 2>&1)"
+    if [ "$UAR_NORM_OUT" = "08=8 000005=5 0000000=0 20=20" ]; then
+        t_pass "run record: a leading-zero retention bound is normalised, not read as octal"
+    else
+        t_fail "run record: a leading-zero retention bound is normalised, not read as octal" "$UAR_NORM_OUT"
+    fi
 fi
 
 # i13. XML and JSON must project the SAME identity field set. A field in one

@@ -376,14 +376,115 @@ fi
 # canonical aliases are cleared and the EXIT trap is armed, so even an abort
 # in here cannot leave a previous run's documents sitting under the names that
 # claim to describe this one.
-utest_prune_records() {
-    local keep="${UTEST_RECORD_KEEP:-20}" old
-    case "$keep" in
-        ''|*[!0-9]*) keep=20 ;;
-        *) keep=$(( 10#$keep )) ;;
+# Normalise one numeric retention bound: $1 raw, $2 fallback for anything that
+# is not digits-only, $3 ceiling. Echoes the value to use.
+#
+# The ORDER of the three steps is the whole content of this function.
+#
+# Leading zeros are stripped FIRST, because both later steps mis-read them.
+# `$(( ))` reads `08` as octal and ABORTS the run under `set -e` (8 is not an
+# octal digit), and a length-based magnitude test reads `000005` as a six-digit
+# number and clamps a request for 5 up to the ceiling -- silently changing a
+# documented knob, and turning `0000000` into the ceiling rather than the
+# supported zero opt-out.
+#
+# The LENGTH clamp comes second, before any arithmetic, because bash evaluates
+# `$(( 10#9223372036854775808 ))` to a NEGATIVE number and a negative sails
+# through a `-le` ceiling test -- so a range check placed after the conversion
+# is validating a value that already wrapped. With leading zeros gone, more
+# than five digits means above 10000 by construction, so the clamp is exact.
+utest_norm_bound() {
+    local v="$1"
+    case "$v" in
+        ''|*[!0-9]*) printf '%s\n' "$2"; return 0 ;;
     esac
+    while :; do
+        case "$v" in
+            0?*) v="${v#0}" ;;
+            *)   break ;;
+        esac
+    done
+    case "$v" in
+        ??????*) printf '%s\n' "$3"; return 0 ;;
+    esac
+    v=$(( v ))
+    [ "$v" -le "$3" ] 2>/dev/null || v="$3"
+    printf '%s\n' "$v"
+    return 0
+}
+
+# Extract the run id a per-leg pointer names, or NOTHING if it names no record
+# this script could ever have written.
+#
+# The charset filter alone is not containment. It admits `.` and `..`, and
+# `$RUNS_DIR/..` is a directory that exists -- so a hand-written pointer
+# carrying `"run_id": ".."` would have been read as LIVE by the sweep below and
+# kept forever, while a resolver deriving its path from that value would climb
+# straight out of test-runs/. Every id this script generates begins with a UTC
+# timestamp digit, so rejecting a leading dot rejects `.`, `..` and every
+# hidden name in one test without excluding anything real.
+#
+# The read is TIME-BOUNDED. The caller checks the entry's type before opening
+# it, but a check and an open are two syscalls: something could replace a
+# regular file with a FIFO in between and the open would block forever, at
+# startup, wedging every later invocation. Bash cannot open with
+# `O_NONBLOCK|O_NOFOLLOW`, so it cannot make that pair atomic -- but it can
+# refuse to wait, which turns a permanent wedge into a few seconds and a
+# pointer treated as unreadable (and therefore swept). Closing the window
+# properly needs a non-bash primitive on a path that must still work when
+# python3 is absent; that is tracked in section 46.
+utest_pointer_run_id() {
+    local id
+    id="$(timeout 5 sed -n 's/.*"run_id"[[:space:]]*:[[:space:]]*"\([A-Za-z0-9._-]\{1,\}\)".*/\1/p' \
+          "$1" 2>/dev/null | head -1)"
+    case "$id" in
+        ''|.*) return 0 ;;
+    esac
+    printf '%s\n' "$id"
+    return 0
+}
+
+utest_prune_records() {
+    local keep="${UTEST_RECORD_KEEP:-20}" pin_max="${UTEST_POINTER_PIN_MAX:-64}" old pinned ptr
+    keep="$(utest_norm_bound "$keep" 20 10000)"
+    # Zero records kept is nonsense, so the floor is applied here and not in
+    # the shared normaliser -- the pin cap deliberately does NOT have one.
     [ "$keep" -ge 1 ] 2>/dev/null || keep=20
-    [ "$keep" -le 10000 ] 2>/dev/null || keep=10000
+    pin_max="$(utest_norm_bound "$pin_max" 64 10000)"
+
+    # PIN the records the live per-leg pointers still resolve to. Age alone
+    # would delete the record a `.run` pointer names, and that pointer is the
+    # documented resolution path: pruning its target turns a published contract
+    # into a dangling one after twenty unrelated runs of any other leg.
+    #
+    # BOUNDED, because a pin must not defeat the disk bound it sits inside.
+    # `UTEST_LEG` appends any `[a-z0-9-]{1,32}` label to the derived leg name,
+    # so the number of DISTINCT stable leg names -- and therefore of pointer
+    # files -- is unbounded, and an unconditional exemption would pin an
+    # unbounded number of record directories. Only the most recently PUBLISHED
+    # pin_max pointers win a pin. Mtime is the right ordering because a pointer
+    # is rewritten by every completed run of its leg, so it ranks legs by how
+    # recently they actually ran; the losers become ordinary age candidates and
+    # are swept below.
+    pinned=""
+    if [ "$pin_max" -gt 0 ]; then
+        pinned="$(
+            {
+                find "$PROJECT/build" -maxdepth 1 -type f -name 'test-results-*.run' \
+                    -printf '%T@\t%p\n' 2>/dev/null | sort -rn | head -n "$pin_max" |
+                    while IFS="$(printf '\t')" read -r _mtime ptr; do
+                        [ -n "$ptr" ] || continue
+                        # Validated, not merely filtered -- see
+                        # utest_pointer_run_id. Nothing that fails validation
+                        # pins anything, so a malformed pointer can only ever
+                        # cost its own record its pin, never protect something
+                        # outside RUNS_DIR.
+                        utest_pointer_run_id "$ptr"
+                    done
+            } || true
+        )"
+    fi
+
     {
         find "$RUNS_DIR" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null |
             sort -r | tail -n +$(( keep + 1 )) |
@@ -392,7 +493,49 @@ utest_prune_records() {
                 # and the run now in progress is never a candidate.
                 [ -n "$old" ] || continue
                 [ "$old" = "$RUN_ID" ] && continue
+                if [ -n "$pinned" ] && printf '%s\n' "$pinned" | grep -Fxq -- "$old"; then
+                    continue
+                fi
                 rm -rf -- "$RUNS_DIR/$old"
+            done
+    } || true
+
+    # SELF-HEALING second half. A pointer whose record is gone -- pruned past
+    # the pin cap, or removed by hand -- would otherwise resolve to an absent
+    # directory forever. A consumer must fail closed on that either way, but
+    # "the pointer is absent" is a far clearer answer than "the pointer names
+    # nothing", so the dangling pointer is removed rather than left to be
+    # diagnosed. This half is deliberately UNBOUNDED where the pin is bounded:
+    # it only ever removes, so it cannot grow anything.
+    #
+    # `! -type d` rather than `-type f`, because a SYMLINK named
+    # test-results-<leg>.run is neither pinned by the scan above nor swept by a
+    # regular-file-only scan here -- it would sit there resolving through an
+    # arbitrary target that no part of this script controls. Nothing in
+    # production ever creates one (the pointer arrives by `mv` of a regular
+    # file), so its presence is hand-made and it is removed on sight.
+    #
+    # CLASSIFY BEFORE OPENING. Widening the scan past regular files also admits
+    # FIFOs, sockets and devices, and reading a FIFO with no writer BLOCKS --
+    # forever, at startup, wedging every later invocation of this script rather
+    # than sweeping the thing that wedged it. So the type test decides the fate
+    # of an entry entirely on its own; only a plain regular file is ever opened.
+    {
+        find "$PROJECT/build" -maxdepth 1 ! -type d -name 'test-results-*.run' 2>/dev/null |
+            while IFS= read -r ptr; do
+                [ -n "$ptr" ] || continue
+                # -L first: `-f` follows a symlink, so a link to a regular file
+                # would otherwise be parsed rather than removed.
+                if [ -L "$ptr" ] || [ ! -f "$ptr" ]; then
+                    rm -f -- "$ptr"
+                    continue
+                fi
+                # A pointer with no VALID run_id names no record by definition,
+                # so it is dangling too.
+                old="$(utest_pointer_run_id "$ptr")"
+                if [ -z "$old" ] || [ ! -d "$RUNS_DIR/$old" ]; then
+                    rm -f -- "$ptr"
+                fi
             done
     } || true
     return 0
@@ -419,9 +562,12 @@ XML_OUT="$PROJECT/build/test-results.xml"
 JSON_OUT="$PROJECT/build/test-results.json"
 IDENTITY_OUT="$PROJECT/build/test-run-identity.json"
 # The leg-suffixed destinations cannot be named until the accelerator is
-# chosen; until then the guard publishes to the canonical paths alone.
+# chosen; until then the guard publishes to the canonical paths alone. The
+# per-leg generation POINTER shares that fate -- it names a leg, so it cannot
+# exist before the leg does.
 XML_LEG_OUT=""
 JSON_LEG_OUT=""
+RUN_POINTER_OUT=""
 
 rm -f "$XML_OUT" "$JSON_OUT" "$IDENTITY_OUT"
 
@@ -526,6 +672,63 @@ utest_alias_record() {
     return 0
 }
 
+# The per-leg GENERATION POINTER document.
+#
+# Deliberately MINIMAL. `record-complete.json` is already the authoritative
+# statement of what a record holds, and a pointer that restated the document
+# inventory would be a second source of truth that can disagree with the first
+# -- so this file answers exactly one question ("which record does this leg
+# resolve to right now") and defers every other question to the marker it
+# names. `record` is derived from `run_id` rather than carried independently,
+# so the two fields cannot drift apart either.
+#
+# Both interpolated values are generated under a charset filter (RUN_ID is
+# `tr -cd 'A-Za-z0-9._-'`, RUN_LEG is a derived accelerator/CPU name optionally
+# suffixed with a `^[a-z0-9][a-z0-9-]{0,31}$` label), so there is nothing here
+# for JSON escaping to escape. That is a property of the filters, not luck --
+# do not widen one without adding the escaping it removes the need for.
+utest_leg_pointer_doc() {
+    printf '{\n'
+    printf '  "schema": "utest-leg-pointer-v1",\n'
+    printf '  "leg": "%s",\n' "$RUN_LEG"
+    printf '  "run_id": "%s",\n' "$RUN_ID"
+    printf '  "record": "test-runs/%s",\n' "$RUN_ID"
+    printf '  "marker": "record-complete.json"\n'
+    printf '}\n'
+}
+
+# Replace the pointer in ONE rename, and never as a member of the alias set.
+#
+# The set above is cleared and rewritten, which means every member is briefly
+# absent by construction. That is the right trade for a compatibility surface
+# -- absence is fail-closed and sends a consumer to the record -- but it is the
+# wrong one for the resolution path itself: a consumer that finds no pointer
+# has nowhere to resolve TO, and a death between the clear and the rewrite
+# would leave it that way permanently.
+#
+# Outside the clear, the pointer is only ever replaced by a rename over a file
+# that already names a COMPLETE, immutable, marker-committed record. So the
+# only two states a reader can observe are "the previous generation" and "this
+# generation", both internally coherent, and there is no window in which the
+# leg resolves to nothing. A staged temp inside the record keeps the rename
+# same-filesystem and keeps a partial write out of the published name.
+utest_publish_leg_pointer() {
+    local tmp="$RECORD_DIR/.legptr.tmp"
+    [ -n "$RUN_POINTER_OUT" ] || return 0
+    if { utest_leg_pointer_doc > "$tmp"; } 2>/dev/null && mv -f "$tmp" "$RUN_POINTER_OUT"; then
+        return 0
+    fi
+    rm -f "$tmp"
+    # A pointer that cannot be advanced is a counted failure, not a silent
+    # one: the leg's documents now describe a run the resolution path does not
+    # name, and a consumer resolving through it would read the PREVIOUS run and
+    # be correct to. Saying so is what lets the operator tell that apart from
+    # "this leg has not run yet".
+    echo -e "  ${RED}[UTEST]${RESET} leg pointer $RUN_POINTER_OUT could not be advanced -- it still names the previous run"
+    UTEST_FAIL=$(( ${UTEST_FAIL:-0} + 1 ))
+    return 1
+}
+
 # Publish the per-leg alias SET as ONE generation, in two phases.
 #
 # The leg pair means "the latest COMPLETED run of this leg", so its two files
@@ -546,10 +749,10 @@ utest_alias_record() {
 # A reader that already holds an open descriptor keeps reading its bytes
 # regardless, and no scheme here can revoke that. That is why the record
 # directory plus its marker -- not these aliases -- is the generation-coherent
-# artifact; a per-leg pointer letting a consumer resolve the set in one atomic
-# step is tracked in section 34.
+# artifact, and why the per-leg POINTER published below resolves a consumer to
+# that record rather than to these two paths.
 utest_publish_leg_set() {
-    local staged_x="" staged_j=""
+    local staged_x="" staged_j="" failed=0
     [ -n "$XML_LEG_OUT" ] || return 0
 
     if [ -f "$XML_RECORD" ]; then
@@ -597,11 +800,28 @@ utest_publish_leg_set() {
         rm -f "$staged_x" "$XML_LEG_OUT"
         echo -e "  ${RED}[UTEST]${RESET} leg alias $XML_LEG_OUT could not be written"
         UTEST_FAIL=$(( ${UTEST_FAIL:-0} + 1 ))
+        failed=1
     fi
     if [ -n "$staged_j" ] && ! mv -f "$staged_j" "$JSON_LEG_OUT"; then
         rm -f "$staged_j" "$JSON_LEG_OUT"
         echo -e "  ${RED}[UTEST]${RESET} leg alias $JSON_LEG_OUT could not be written"
         UTEST_FAIL=$(( ${UTEST_FAIL:-0} + 1 ))
+        failed=1
+    fi
+
+    # The pointer moves to this generation only if the generation actually
+    # landed. A torn alias set is already a counted failure; advancing the
+    # resolution path over it would additionally point every consumer at a
+    # generation whose compatibility surface disagrees with it. Left alone,
+    # the pointer keeps naming the PREVIOUS run's record -- which is complete,
+    # immutable and marker-committed, so it is a coherent answer rather than a
+    # stale one.
+    # Written as a full `if` with an explicit `|| true`: the regressions extract
+    # this function and run it under `set -euo`, where a bare trailing call that
+    # returns non-zero would abort the caller rather than report a counted
+    # failure.
+    if [ "$failed" -eq 0 ]; then
+        utest_publish_leg_pointer || true
     fi
     return 0
 }
@@ -1219,6 +1439,11 @@ fi
 # and an incomplete run publishes its refusal there and nowhere else.
 XML_LEG_OUT="$PROJECT/build/test-results-${RUN_LEG}.xml"
 JSON_LEG_OUT="$PROJECT/build/test-results-${RUN_LEG}.json"
+# The per-leg GENERATION POINTER. The two aliases above are a compatibility
+# surface a consumer must enumerate; this one file is the resolution path,
+# replaced by a single rename per completed run and naming the immutable
+# record that run committed. See utest_publish_leg_pointer.
+RUN_POINTER_OUT="$PROJECT/build/test-results-${RUN_LEG}.run"
 
 # The identity file lands in the RECORD now; its alias is published by
 # utest_finalize_record() along with the documents, after the commit marker.
