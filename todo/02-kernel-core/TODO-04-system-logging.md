@@ -154,7 +154,7 @@ Allow silencing verbose subsystems in release builds without recompiling.
 > - Review fixes: replaced a lock-free count-publish (then a hand-rolled gen) with `seqlock_t`; added `ioapic`/`blk` registry tags; validated REG_DWORD `val_size`.
 > - Sub-threshold drops never enter the ring buffer (filtered before store), bounding disk-log volume; `s_global_min` is a separate atomic for the `klog_set_level(NULL, ...)` default.
 > **Verified:** 2026-06-21 | ship `3bc86ce1` + review fixes | 6/6 items | build OK | smoke PASS (TCG 2.69s); 3212 kernel + 16 user PASS
-> **Accepted:** [M] override table stores raw `const char*` tag pointers (no copy) -- a caller passing a non-static tag could dangle (reason: all current callers pass string literals) -> XREF: 02-kernel-core/TODO-04-system-logging.md §9 (item: "Copy the verbosity override-table tag into a bounded `char[16]`" at line 156)
+> **Accepted:** [M] override table stores raw `const char*` tag pointers (no copy) -- a caller passing a non-static tag could dangle (reason: all current callers pass string literals) -> XREF: 02-kernel-core/TODO-04-system-logging.md §9 (item: "Copy the verbosity override-table tag into a bounded `char[16]`" at line 157)
 > **Quality reviewed:** 2026-06-21 | Codex 6x (adversarial, consistency, perf, re-adversarial x2) | 1H+3M fixed, 1M accepted | scope: kernel-code-quality
 
 ---

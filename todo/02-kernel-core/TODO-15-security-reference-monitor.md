@@ -636,7 +636,7 @@ Register all token and access control NtXxx entry points in the SSDT. Most imple
 > - Accepted (systemic): ring-3 pointer probe + ClientToken TOKEN_QUERY rights + unref'd token lifetime = the shared NT trust-boundary gap -> XREF: 02-kernel-core/TODO-12 §29 (item: "lifetime-pinned + access-mask token resolution" at line 1226).
 > - Scope boundary: §12 owns SSDT wiring to existing engines; NtQuery/NtSetSecurityObject need the §3 self-relative SD marshaller + §5 SeAccessCheck (the full DACL walk).
 > **Verified:** 2026-07-05 | commit `993bcd60` | 9/20 items | build OK | tests compile (security + ob; runtime on WHPX)
-> **Accepted:** [H] NtPrivilegeCheck reads an unref'd token pointer (concurrent NtClose UAF) -- shared by all token handlers via resolve_token_handle, not a §12 regression -> XREF: 02-kernel-core/TODO-12 §29 (item: "lifetime-pinned + access-mask token resolution" at line 1239)
+> **Accepted:** [H] NtPrivilegeCheck reads an unref'd token pointer (concurrent NtClose UAF) -- shared by all token handlers via resolve_token_handle, not a §12 regression -> XREF: 02-kernel-core/TODO-12 §29 (item: "lifetime-pinned + access-mask token resolution" at line 1235)
 > **Deferred:** [H] SeAccessCheck-dependent + token-lifecycle §12 rows stay [ ] until their engines ship -> XREF: 02-kernel-core/TODO-15 §5 (item: "Implement `SeAccessCheck(sd, ctx, ...)`" at line 364)
 > **Quality reviewed:** 2026-07-05 | Codex 5x (design, adversarial, re-adversarial, consistency, perf) | 2H+4M fixed, 1H accepted-XREF | scope: kernel-code-quality
 

@@ -204,12 +204,12 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 > - Scope boundary: section 7 owns the early read + descriptor consumption; FAT32-safe atomic-replace primitive stays `05-storage-filesystems/TODO-04 section 16`; TPM NV token fallback tracked in `04-drivers-hardware/TODO-13`.
 
 > **Verified:** 2026-06-12 | commit `08340720` | 5/5 items | build OK | smoke PASS (KVM 2.690s), tests 4565+16 PASS, live 2-boot carryover (seed=ok class=good)
-> **Accepted:** [H] FAT32 vol->lock cli-spinlock spans device I/O on writes while reads scan the cache unlocked -> XREF: 05-storage-filesystems/TODO-04 §15 (item: "FAT32 vol->lock concurrency overhaul" at line 365)
+> **Accepted:** [H] FAT32 vol->lock cli-spinlock spans device I/O on writes while reads scan the cache unlocked -> XREF: 05-storage-filesystems/TODO-04 §15 (item: "FAT32 vol->lock concurrency overhaul" at line 446)
 > **Accepted:** [H] dir-cache rebuilds can reassign a slot a live open handle aims at -> XREF: 05-storage-filesystems/TODO-04 §15 (item: "FAT32 cache-slot stability for live handles" at line 356)
-> **Accepted:** [H] scache_evict discards failed writes + void FAT2 repair reports repaired (false durability) -> XREF: 05-storage-filesystems/TODO-04 §6 (item: "Repair-write remainder" at line 205)
+> **Accepted:** [H] scache_evict discards failed writes + void FAT2 repair reports repaired (false durability) -> XREF: 05-storage-filesystems/TODO-04 §6 (item: "Repair-write remainder" at line 206)
 > **Accepted:** [H] boot_audit/health writers ack NVRAM state on write+close alone -> XREF: 01-boot-platform/TODO-24 §5 (item: "Durable-write retrofit for boot-state X:\ writers" at line 138)
-> **Accepted:** [M] vfs_unmount never clean-marks FAT32 -> XREF: 05-storage-filesystems/TODO-04 §15 (item: "vfs_unmount filesystem hook" at line 366)
-> **Accepted:** [M] LFN lookups (finddir/stat/read_dir) lack checksum/sequence run validation (delete validates) -> XREF: 05-storage-filesystems/TODO-04 §4 (item: "LFN run validation in lookups" at line 156)
+> **Accepted:** [M] vfs_unmount never clean-marks FAT32 -> XREF: 05-storage-filesystems/TODO-04 §15 (item: "vfs_unmount filesystem hook" at line 447)
+> **Accepted:** [M] LFN lookups (finddir/stat/read_dir) lack checksum/sequence run validation (delete validates) -> XREF: 05-storage-filesystems/TODO-04 §4 (item: "LFN run validation in lookups" at line 157)
 > **Quality reviewed:** 2026-06-12 | Codex 16x (design, test-coverage, adversarial x2, adversarial-impl x5, re-adversarial x5, consistency, perf) | 1C+10H+9M+2L fixed, 4H+2M accepted-XREF, 2 rejected, 0 open | scope: kernel-code-quality + boot-code-quality
 
 ---

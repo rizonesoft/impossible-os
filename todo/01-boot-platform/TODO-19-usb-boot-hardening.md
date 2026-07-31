@@ -374,7 +374,7 @@ For hardware without xHCI, detect legacy USB controllers (EHCI/UHCI/OHCI) and de
 > - Deferred: active EHCI/UHCI HCD + shared BOT + HCD-agnostic recovery -> TODO-10 §1 (`usb_hcd_ops_t` vtable) + §10 (EHCI HCD); standalone EHCI-MSC copy rejected. Codex adoptions in the ship commit.
 > - Scope boundary: §11 owns boot-time legacy-controller detection + graceful skip + multi-controller MSC keying; TODO-10 §1/§10 own the transport abstraction + the EHCI host-controller driver.
 > **Verified:** 2026-06-15 | commit `5b924aa0` | 5/8 items | build OK | smoke PASS (KVM 2.02s)
-> **Accepted:** [H] xHCI event-ring completion-stealing + non-atomic `cbw_tag` under concurrent MSC I/O (reason: pre-existing, not introduced by §11) -> XREF: 01-boot-platform/TODO-19 §16 (item: "Serialize command ring + correlate events ... match each ... Transfer Event to its submitted TRB pointer" at line 376)
+> **Accepted:** [H] xHCI event-ring completion-stealing + non-atomic `cbw_tag` under concurrent MSC I/O (reason: pre-existing, not introduced by §11) -> XREF: 01-boot-platform/TODO-19 §16 (item: "Serialize command ring + correlate events ... match each ... Transfer Event to its submitted TRB pointer" at line 377)
 > **Deferred:** [M] EHCI/UHCI HCD driver + shared BOT layer + HCD-agnostic recovery (reason: needs usb_core abstraction) -> XREF: 04-drivers-hardware/TODO-10 §1 (item: "Refactor `xhci_bulk_transfer()`/`xhci_control_transfer()` to `usb_hcd_ops_t`; `usb_msc.c` migrates to `usb_submit_bulk()`") + §10 (EHCI HCD)
 > **Quality reviewed:** 2026-06-15 | Codex 7x (design, test-coverage, adversarial x2, consistency, perf, re-adversarial) | 1H+5M+2L fixed, 1H accepted-XREF | scope: kernel-code-quality
 

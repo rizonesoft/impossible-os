@@ -225,8 +225,8 @@ Move the per-boot numbered session logs to `X:\Boot\`. (`boot-timeline.json` ori
 > - `boot-timeline.json` now warns (not silently drops) when its target dir is missing, matching `boot-profile.log`'s open-failure behavior.
 > - Serial session logs stay at `X:\Logs\Serial\` (owned by §5); `boot-trend.json` C:\ fallback + O(N^2) linearization are deferred to TODO-29 §3 (Accepted below).
 > **Verified:** 2026-06-17 | commit `994e9794` | 5/5 items | build OK | smoke PASS (TCG 2.66s)
-> **Accepted:** [M] `boot-trend.json` has no C:\ fallback (always `X:\Perf` even when `klog_using_blackbox`=0) -> XREF: 01-boot-platform/TODO-29 §3 (item: "C:\ fallback for `boot-trend.json`" at line 162)
-> **Accepted:** [M] `boot_trend_publish_json` O(N^2) `json_array_get` traversal on the boot path -> XREF: 01-boot-platform/TODO-29 §3 (item: "Linearize `boot_trend_publish_json()` traversal" at line 161)
+> **Accepted:** [M] `boot-trend.json` has no C:\ fallback (always `X:\Perf` even when `klog_using_blackbox`=0) -> XREF: 01-boot-platform/TODO-29 §3 (item: "C:\ fallback for `boot-trend.json`" at line 468)
+> **Accepted:** [M] `boot_trend_publish_json` O(N^2) `json_array_get` traversal on the boot path -> XREF: 01-boot-platform/TODO-29 §3 (item: "Linearize `boot_trend_publish_json()` traversal" at line 467)
 > **Quality reviewed:** 2026-06-17 | Codex 3x (adversarial, consistency, perf; re-adversarial skipped -- 9-line warn+comment fix) | 1M+1L fixed, 2M accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -276,7 +276,7 @@ Move performance and diagnostic outputs to their BlackBox directories.
 > - Fixed a parent-directory handle leak in the hwdump create-via-dir path (the `dir` node was never `vfs_close`'d).
 > - `firmware-tables.json` C:\ fallback gap accepted to TODO-29 §11 (below).
 > **Verified:** 2026-06-17 | commit `fb846f65` | 5/5 items | build OK | smoke PASS (TCG 2.61s)
-> **Accepted:** [M] `firmware-tables.json` hardcodes `X:\Diag` with no C:\ fallback -> XREF: 01-boot-platform/TODO-29 §11 (item: "`firmware-tables.json` C:\ fallback" at line 338)
+> **Accepted:** [M] `firmware-tables.json` hardcodes `X:\Diag` with no C:\ fallback -> XREF: 01-boot-platform/TODO-29 §11 (item: "`firmware-tables.json` C:\ fallback" at line 335)
 > **Quality reviewed:** 2026-06-17 | Codex 5x (adversarial, consistency, perf, re-adversarial x2) | 3H+2M fixed, 1M accepted-XREF | scope: kernel-code-quality
 
 ---

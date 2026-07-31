@@ -424,7 +424,7 @@ Ensure CPU security features (NX, SMEP, SMAP) are activated in the correct order
 > - NX policy now hard-fails (LOG_ERROR + `boot_halt`) instead of silently leaving a text-overlapping huge page executable on a split OOM -- NX is REQUIRED and verify only reads EFER.
 > - Verified on KVM serial: `NX enabled`, `SMEP/SMAP skipped (needs KPTI)`, `UMIP enabled`, CR4=0x40e68 (SMEP/SMAP bits clear).
 > **Verified:** 2026-06-08 | commit `e194e646` | 5/5 items | build OK | security 79+16 PASS, smoke PASS (KVM 2.6s; NX enabled + SMEP/SMAP skipped confirmed in serial)
-> **Accepted:** [M] `cpu_enable_pku` publishes per-CPU PKU as global `pku_enabled` -- an AP lacking PKU/XCR0.9 could run PKRU without CR4.PKE -> XREF: 01-boot-platform/TODO-09 §6 (item: "PKU global skew" at line 265)
+> **Accepted:** [M] `cpu_enable_pku` publishes per-CPU PKU as global `pku_enabled` -- an AP lacking PKU/XCR0.9 could run PKRU without CR4.PKE -> XREF: 01-boot-platform/TODO-09 §6 (item: "PKU global skew" at line 426)
 > **Quality reviewed:** 2026-06-08 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 2H+2M+1L fixed, 1M accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -557,7 +557,7 @@ Define the hardware platforms to test on, expected boot timings per phase, and a
 > - re-adversarial skipped: docs-only fixes, no C/H lines changed.
 > **Verified:** 2026-06-10 | commit `d524d572` | 5/5 items | build OK | docs-only (lint 0 err, todo-graph 8/8)
 > **Accepted:** [H] `boot_trend_publish_json` cJSON RMW + sync VFS I/O runs pre-userland, unbudgeted boot cost -> XREF: 01-boot-platform/TODO-29 §3 (item: "Defer `boot_trend_publish_json()` ... to a post-DESKTOP_READY work item" at line 156)
-> **Accepted:** [M] full `PERF`/timeline serial dump runs pre-cmd.exe outside the `boot_perf_total_check` window -> XREF: 01-boot-platform/TODO-29 §1 (item: "Gate the full `PERF`/timeline serial tables behind debug/test builds" at line 99)
+> **Accepted:** [M] full `PERF`/timeline serial dump runs pre-cmd.exe outside the `boot_perf_total_check` window -> XREF: 01-boot-platform/TODO-29 §1 (item: "Gate the full `PERF`/timeline serial tables behind debug/test builds" at line 464)
 > **Deferred:** [H] bare-metal per-process PT run never recorded (BM Test 4 bare-metal row TBD) -> XREF: 01-boot-platform/TODO-10 BM Test 5 (item: "Per-process PT on bare metal" at line 669)
 > **Deferred:** [M] per-phase bare-metal timing artifact not captured -> XREF: 01-boot-platform/TODO-10 BM Test 5 (item: "Boot time within thresholds for ALL phases" at line 668)
 > **Quality reviewed:** 2026-06-10 | Codex 3x (adversarial, consistency, perf) | 4H+3M fixed, 1H+1M accepted-XREF | scope: N/A (docs-only)
