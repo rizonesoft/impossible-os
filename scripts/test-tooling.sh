@@ -4008,6 +4008,11 @@ if python3 "$REPO_ROOT/.claude/hooks/read_offload_reminder.py" --selftest >/dev/
 else
     t_fail "read_offload_reminder_selftest  embedded selftest failed"
 fi
+if python3 "$REPO_ROOT/.claude/hooks/websearch_offload_gate.py" --selftest >/dev/null 2>&1; then
+    t_pass "websearch_offload_gate_selftest  20-case identity + anti-wedge-valve suite green"
+else
+    t_fail "websearch_offload_gate_selftest  embedded selftest failed"
+fi
 if python3 "$REPO_ROOT/.claude/hooks/attended_repair_guard.py" --selftest >/dev/null 2>&1; then
     t_pass "attended_repair_guard_selftest  28-case whole-tree-git fixture suite green"
 else
