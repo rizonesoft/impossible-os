@@ -44,6 +44,7 @@
 #include "kernel/timer.h"
 #include "kernel/test/test_usermode.h"
 #include "kernel/csprng.h"
+#include "kernel/crypto/sha256.h"
 #include "kernel/time/mono_clock.h"
 #include "registry.h"
 
@@ -54,6 +55,34 @@
  * read by utest_loader_func() once the new task is scheduled in.
  * Volatile because the loader runs in a different scheduling slot. */
 static volatile const char *s_pending_test_path;
+
+/* SHA-256 of the bytes the PLAN froze for the binary s_pending_test_path
+ * names, or NULL when the entry carries no frozen identity.
+ *
+ * Points INTO the plan block, which is allocated before the first spawn and
+ * freed after the last one, so the pointee outlives every loader that reads
+ * it. Published RELEASE before task_create and read ACQUIRE by the loader:
+ * the digest bytes are written during the freeze pass on the launcher's CPU
+ * and read by a loader task the scheduler may place on another one, so the
+ * pointer store is what orders those 32 bytes against the reader. Same
+ * reasoning as s_loader_stage_fault below, and the same single-spawn,
+ * launcher-waits contract documented at the top of this file bounds it to
+ * one live loader at a time.
+ *
+ * A frozen identity is NOT optional for a RUN entry: u_plan_freeze_identities
+ * converts every entry it cannot digest into a REFUSAL, so an entry that
+ * reaches u_run_one always has one. NULL here therefore means "the launcher
+ * lost the plan's identity", which the loader treats as fail-closed rather
+ * than as permission to execute. */
+static const uint8_t *s_pending_expect_digest;
+
+/* Did the loader refuse to exec because the bytes on disk stopped matching
+ * the identity the plan froze? Distinct from s_loader_stage_fault (which
+ * says only "never reached ring 3"): this names WHY, so u_run_one can
+ * publish a counted, NAMED infrastructure failure instead of a bare exit
+ * code. Cleared per SPAWN for the same reason the stage flags are -- a
+ * stale 1 from the previous binary would misreport this one. */
+static uint32_t s_loader_identity_mismatch;
 
 /* Did the loader fail BEFORE the binary reached ring 3?
  *
@@ -343,6 +372,9 @@ static utest_name_verdict_t u_classify_name_span(const char *name,
                                                  uint32_t span_len);
 static utest_name_verdict_t u_classify_name(const char *name);
 static uint32_t u_name_digest(const char *p, uint32_t len);
+/* Defined beside the plan's identity freeze, used by the loader far above
+ * it -- forward-declared here for the same reason u_name_digest is. */
+static int u_identity_matches(const uint8_t *expect, const uint8_t *actual);
 
 /* Stricter gate used for manifest entries: the file is user-provided
  * text and u_run_one concatenates `C:\<name>` before vfs_open+task_exec,
@@ -1090,6 +1122,25 @@ struct plan_entry {
      * among identities the launcher can trust), while an abort is a
      * statement about the run the operator actually asked for. */
     uint8_t      smoke_selected;
+    /* RUN only: SHA-256 of the binary's bytes as the planning walk saw
+     * them. The plan freezes WHICH names run; this freezes WHAT runs under
+     * each name, which the name alone cannot say -- a child that replaces a
+     * planned binary before its turn would otherwise have its replacement
+     * launched, reported and attributed to the planned entry with every
+     * count reconciling.
+     *
+     * SHA-256 rather than the 32-bit FNV-1a `digest` above, and the two are
+     * deliberately separate fields: `digest` correlates a REFUSED NAME
+     * across runs, where u_name_digest's own comment records that collision
+     * resistance is not claimed because the ORDINAL supplies uniqueness.
+     * Nothing supplies uniqueness here -- this value alone decides whether
+     * adversary-influenced bytes may execute -- so a width an attacker
+     * could search is not an identity.
+     *
+     * Meaningful only for UTEST_PLAN_RUN. u_plan_freeze_identities converts
+     * any entry it cannot digest into a REFUSAL, so "a RUN entry carries a
+     * frozen identity" is structural rather than a flag anyone must test. */
+    uint8_t      content_digest[SHA256_DIGEST_LEN];
 };
 
 #define UTEST_PLAN_BLOCK_BYTES                                             \
@@ -1701,6 +1752,38 @@ static void utest_loader_func(void)
         task_exit(-4);
     }
 
+    /* Verify the bytes about to execute against the identity the plan
+     * froze, HERE and not in the launcher.
+     *
+     * This is the whole reason the check reads `buf` rather than re-opening
+     * the path: `buf` is the exact object task_exec consumes, so there is
+     * no window between what was verified and what runs. A launcher-side
+     * check before the spawn would leave precisely the gap this section
+     * exists to close -- a replacement landing between that check and this
+     * read would verify one file and execute another.
+     *
+     * The expected digest is loaded ACQUIRE against the RELEASE store in
+     * u_spawn_one, which is what makes the plan's 32 bytes visible to a
+     * loader the scheduler may have placed on another CPU. */
+    {
+        const uint8_t *expect =
+            __atomic_load_n(&s_pending_expect_digest, __ATOMIC_ACQUIRE);
+        uint8_t actual[SHA256_DIGEST_LEN];
+
+        sha256(buf, size, actual);
+        if (!u_identity_matches(expect, actual)) {
+            klog(LOG_ERROR, "UTEST",
+                 "%s: content does not match the identity the plan froze "
+                 "-- refusing to execute it", path);
+            __atomic_store_n(&s_loader_identity_mismatch, 1u,
+                             __ATOMIC_RELEASE);
+            for (p = 0; p < pages; p++)
+                pmm_free_frame(buf_phys + (uintptr_t)p * 4096u);
+            u_loader_stage_fault();
+            task_exit(-6);
+        }
+    }
+
     /* task_exec stages an iretq frame for user mode (consumed on the
      * next scheduling switch). It DOES NOT take ownership of `buf` --
      * exec_load() inside copies the binary into user pages, so once
@@ -2306,6 +2389,13 @@ _Static_assert(UTEST_SKIP_RECORD_BUDGET <= 9999999u,
 #define UTEST_RSN_PLAN_ALLOC "plan alloc failed"
 #define UTEST_RSN_DUP_POLICY "manifest duplicate conflict"
 #define UTEST_RSN_ABSENT     "planned binary absent"
+/* The planned name still resolves, but not to the bytes the plan froze.
+ * 23 bytes, inside the pre-existing UTEST_RSN_SHAPE maximum (29), so the
+ * derived name budget every record kind gets is unchanged by this section
+ * -- enumerated in the tree below regardless, because a reason that is not
+ * enumerated is free to grow past the reservation without tripping the
+ * assert, which is the exact failure the enumeration exists to prevent. */
+#define UTEST_RSN_MISMATCH   "planned binary replaced"
 #define UTEST_REASON_REFUSAL                                               \
     UTEST_MAX2(UTEST_MAX2(UTEST_MAX2(UTEST_LIT(UTEST_RSN_LENGTH),          \
                                      UTEST_MAX2(UTEST_LIT(UTEST_RSN_CHARSET), \
@@ -2319,7 +2409,8 @@ _Static_assert(UTEST_SKIP_RECORD_BUDGET <= 9999999u,
                                                 UTEST_LIT(UTEST_RSN_DUP_POLICY))), \
                           UTEST_MAX2(UTEST_MAX2(UTEST_LIT(UTEST_RSN_ARRAY_FULL), \
                                                 UTEST_LIT(UTEST_RSN_PLAN_ALLOC)), \
-                                     UTEST_LIT(UTEST_RSN_UNREADABLE))))
+                                     UTEST_MAX2(UTEST_LIT(UTEST_RSN_UNREADABLE), \
+                                                UTEST_LIT(UTEST_RSN_MISMATCH)))))
 #define UTEST_REASON_MAX                                                   \
     UTEST_MAX2(UTEST_MAX2(UTEST_MAX2(UTEST_REASON_TIMEOUT,                 \
                                      UTEST_REASON_EXIT),                   \
@@ -4637,6 +4728,210 @@ static void u_plan_suppress_refused(struct plan_state *ps,
     ps->count = out;
 }
 
+/* Does a freshly computed identity match the one the plan froze?
+ *
+ * NULL `expect` is a MISMATCH, not a pass. A RUN entry always carries a
+ * frozen identity (u_plan_freeze_identities refuses the ones it cannot
+ * freeze), so a NULL here means the launcher lost the plan's identity
+ * between freezing it and spawning -- and "we no longer know what was
+ * supposed to run" must never be the branch that lets bytes execute.
+ *
+ * The compare is constant-time over the whole digest. A byte-at-a-time
+ * compare that returns on the first difference leaks how many leading
+ * bytes matched, which turns the verifier into a search oracle for the
+ * very collision the digest width exists to make infeasible. */
+static int u_identity_matches(const uint8_t *expect,
+                              const uint8_t *actual)
+{
+    uint32_t d, diff = 0;
+
+    if (!expect)
+        return 0;
+    for (d = 0; d < SHA256_DIGEST_LEN; d++)
+        diff |= (uint32_t)(expect[d] ^ actual[d]);
+    return diff == 0;
+}
+
+/* Bytes streamed per vfs_read while digesting a planned binary. One page,
+ * allocated once for the whole freeze pass and reused across every entry:
+ * the alternative is a buffer the size of the largest binary, which is the
+ * kind of allocation CLAUDE.md's freestanding rules push onto
+ * pmm_alloc_contiguous anyway, and which would scale with a file whose size
+ * the launcher does not control. Streaming keeps the cost of freezing N
+ * binaries at one page regardless of N or of how large any of them is. */
+#define UTEST_DIGEST_CHUNK 4096u
+
+/* Freeze one planned binary's content identity into `out`.
+ *
+ * Returns 1 on success. Returns 0 -- leaving `out` undefined -- for every
+ * reason the bytes could not be established: the path did not resolve, the
+ * file reported a size the launcher will not read, a read came up short, or
+ * the size changed underneath the walk. The caller must treat 0 as
+ * fail-closed; see u_plan_freeze_identities.
+ *
+ * The size is re-checked against the node AFTER the last read rather than
+ * trusted from before the first: a file rewritten mid-walk would otherwise
+ * produce a digest over a mix of old and new bytes and freeze an identity
+ * that never existed on disk. Catching it here turns that into a refusal,
+ * which is the same outcome the mismatch check produces later and for the
+ * same reason. */
+static int u_digest_binary(const char *name, uint8_t *scratch,
+                           uint8_t out[SHA256_DIGEST_LEN],
+                           uint64_t *out_bytes)
+{
+    char path[VFS_MAX_NAME + 4];
+    struct vfs_node *f;
+    struct sha256_ctx ctx;
+    uint64_t size, done = 0;
+    uint32_t ni = 0, pi = 3;
+
+    path[0] = 'C'; path[1] = ':'; path[2] = '\\';
+    while (name[ni] && ni + 1u < VFS_MAX_NAME && pi + 1u < sizeof(path))
+        path[pi++] = name[ni++];
+    path[pi] = '\0';
+    if (name[ni])
+        return 0;                   /* same bound u_binary_present applies */
+
+    f = vfs_open(path, VFS_O_READ);
+    if (!f)
+        return 0;
+
+    size = f->size;
+    /* vfs_read takes a uint32_t length, and the loader's own size handling
+     * is uint32_t throughout -- a file past that is one this launcher will
+     * not execute either, so refusing here matches what would happen at
+     * load time instead of silently digesting a truncation. */
+    if (size > 0xFFFFFFFFull) {
+        vfs_close(f);
+        return 0;
+    }
+
+    sha256_init(&ctx);
+    while (done < size) {
+        uint64_t want = size - done;
+        int n;
+
+        if (want > UTEST_DIGEST_CHUNK)
+            want = UTEST_DIGEST_CHUNK;
+        n = vfs_read(f, (uint32_t)done, (uint32_t)want, scratch);
+        if (n <= 0 || (uint64_t)n != want) {
+            vfs_close(f);
+            return 0;
+        }
+        sha256_update(&ctx, scratch, (uint32_t)want);
+        done += want;
+    }
+
+    if (f->size != size) {          /* rewritten while we walked it */
+        vfs_close(f);
+        return 0;
+    }
+    vfs_close(f);
+    sha256_final(&ctx, out);
+    if (out_bytes)
+        *out_bytes = size;
+    return 1;
+}
+
+/* Freeze the content identity of every runnable entry, converting the ones
+ * that cannot be frozen into counted refusals.
+ *
+ * Runs after the plan is complete and BEFORE u_plan_derive_smoke_gate, so a
+ * smoke binary demoted here still reaches the gate as a refused smoke
+ * prerequisite rather than vanishing from it -- the same ordering every
+ * other refusal route depends on.
+ *
+ * The conversion is what makes the identity contract structural. A flag
+ * saying "this entry has no valid digest" would leave an entry that the
+ * presence probe still accepts sitting in the plan as runnable, and the
+ * execution loop would launch content whose identity was never frozen --
+ * exactly the hole this section exists to close, reintroduced one level
+ * down. Dropping the entry instead is not an option either: a planned slot
+ * that produces no record breaks the artifact reconciliation. A REFUSAL is
+ * the shape that already means "planned, counted, never runs".
+ *
+ * `smoke_selected` is preserved across the conversion for the same reason
+ * the duplicate-policy conflict preserves it: the identity was declared a
+ * smoke prerequisite, and refusing it is a smoke non-PASS regardless of why
+ * it was refused. */
+static void u_plan_freeze_identities(struct plan_state *ps)
+{
+    uintptr_t scratch_phys;
+    uint8_t  *scratch;
+    uint64_t  started_ms;
+    uint32_t  i, frozen = 0, refused = 0;
+    uint64_t  bytes = 0;
+
+    if (!ps->entries)
+        return;
+
+    started_ms = u_uptime_ms();
+    scratch_phys = pmm_alloc_contiguous(1);
+    if (!scratch_phys) {
+        /* No buffer means no identity for ANY entry, so every runnable one
+         * becomes a refusal. Fail-closed is the only honest response: the
+         * alternative is running the whole suite with the guarantee this
+         * section adds silently switched off. */
+        klog(LOG_ERROR, "UTEST",
+             "identity freeze: no scratch page -- refusing every planned "
+             "binary rather than running them unverified");
+    }
+    scratch = (uint8_t *)scratch_phys;
+
+    for (i = 0; i < ps->count; i++) {
+        struct plan_entry *e = &ps->entries[i];
+
+        if (e->kind != (uint8_t)UTEST_PLAN_RUN)
+            continue;
+
+        if (scratch) {
+            uint64_t this_bytes = 0;
+
+            if (u_digest_binary(e->name, scratch, e->content_digest,
+                                &this_bytes)) {
+                bytes += this_bytes;
+                frozen++;
+                continue;
+            }
+        }
+
+        /* Derive the smoke provenance the gate reads, rather than
+         * preserving a bit that was never set. smoke_selected is written
+         * only on the paths that convert an ALREADY-REFUSED identity;
+         * a fresh RUN entry carries 0 from u_plan_alloc regardless of its
+         * type, because until this section a declared smoke binary tripped
+         * the gate through its VERDICT after running. An entry refused
+         * here never runs, so it has no verdict, and leaving the bit at 0
+         * would let the suite continue past a smoke prerequisite whose
+         * bytes could not be verified -- the exact abort bypass
+         * u_plan_derive_smoke_gate exists to prevent.
+         *
+         * Reading it off `type` is sound because a RUN entry is
+         * filter-SELECTED by construction: u_plan_add_run applies
+         * `utest_filter=` before allocating, so an excluded identity never
+         * becomes a plan entry at all. */
+        if (e->type == UTEST_TYPE_SMOKE)
+            e->smoke_selected = 1u;
+        e->kind    = (uint8_t)UTEST_PLAN_REFUSAL;
+        e->reason  = UTEST_RSN_MISMATCH;
+        e->verdict = (uint8_t)UTEST_NAME_ACCEPT;
+        e->digest  = 0;
+        refused++;
+    }
+
+    if (scratch_phys)
+        pmm_free_frame(scratch_phys);
+
+    /* The measurement the section's own decision rests on: freezing content
+     * identity costs one extra read of every planned binary on the walk
+     * every boot takes. Logged as a fact per run rather than asserted once
+     * in a comment, so a future binary set that changes the cost says so. */
+    klog(LOG_INFO, "UTEST",
+         "identity freeze: %u binaries, %u bytes, %ums (%u refused)",
+         (uint64_t)frozen, bytes, u_uptime_ms() - started_ms,
+         (uint64_t)refused);
+}
+
 /* Derive the smoke gate from the plan, once, after every refusal has been
  * staged.
  *
@@ -4838,7 +5133,8 @@ static void u_emit_refusal(const char *reason, uint32_t ordinal,
 static void u_spawn_one(const char *name_copy, const char *path,
                         int *out_pid, int32_t *out_exit_status,
                         int *out_timed_out, uint32_t *out_leaked,
-                        struct u_report *out_report, int have_stem)
+                        struct u_report *out_report, int have_stem,
+                        const uint8_t *expect_digest)
 {
     int pid;
 
@@ -4848,6 +5144,13 @@ static void u_spawn_one(const char *name_copy, const char *path,
      * perfectly ordinary assertion failure as never-ran. */
     __atomic_store_n(&s_loader_stage_fault, 0u, __ATOMIC_RELEASE);
     __atomic_store_n(&s_loader_reached_exec, 0u, __ATOMIC_RELEASE);
+    __atomic_store_n(&s_loader_identity_mismatch, 0u, __ATOMIC_RELEASE);
+    /* Published RELEASE so the plan's digest bytes are visible to a loader
+     * the scheduler may start on another CPU. Stored BEFORE the task is
+     * created for the same reason the capture binding is: once
+     * task_create_captured returns, the loader may already be running. */
+    __atomic_store_n(&s_pending_expect_digest, expect_digest,
+                     __ATOMIC_RELEASE);
 
     out_report->asserts_passed = 0;
     out_report->asserts_failed = 0;
@@ -4929,7 +5232,8 @@ static int u_binary_present(const char *name)
 
 static void u_run_one(const char *name, utest_type_t type,
                       uint32_t *tap_point, uint32_t *counters,
-                      struct u_report_totals *rt, int *out_verdict)
+                      struct u_report_totals *rt, int *out_verdict,
+                      const uint8_t *expect_digest)
 {
     char name_copy[VFS_MAX_NAME];
     char path[VFS_MAX_NAME + 4];
@@ -5003,7 +5307,7 @@ static void u_run_one(const char *name, utest_type_t type,
      * env-passing syscall that lets stress binaries query the desired
      * iteration count at runtime. */
     u_spawn_one(name_copy, path, &pid, &exit_status,
-                &timed_out, &leaked, &report, have_stem);
+                &timed_out, &leaked, &report, have_stem, expect_digest);
 
     if (pid < 0) {
         klog(LOG_ERROR, "UTEST", "%s: task_create failed", name_copy);
@@ -5098,7 +5402,18 @@ static void u_run_one(const char *name, utest_type_t type,
         if (record_verdict == 3)
             counters[3]++;
         *out_verdict = 1;
-        {
+        if (__atomic_load_n(&s_loader_identity_mismatch, __ATOMIC_ACQUIRE)) {
+            /* The binary the plan named still resolved, but not to the
+             * bytes the plan froze. Reported by NAME as a counted
+             * infrastructure failure rather than as `exit=-6`: the exit
+             * code says only that the loader gave up, and the whole point
+             * of freezing identity is to be able to say WHY. The record
+             * class is already ERROR here (the loader never reached ring
+             * 3), which is the same class a refused name gets, and for the
+             * same reason -- nothing this binary could assert ever ran. */
+            uint32_t rp = 0;
+            u_append(reason, &rp, sizeof(reason), UTEST_RSN_MISMATCH);
+        } else {
             uint32_t rp = 0;
             u_append(reason, &rp, sizeof(reason), "exit=");
             if (exit_status < 0) {
@@ -5610,6 +5925,13 @@ void test_usermode_run(void)
         }
     }
 
+    /* Freeze WHAT runs under each planned name, not just which names run.
+     * Ordered BEFORE the gate derivation because it can itself refuse an
+     * entry: a smoke binary whose identity cannot be frozen has to reach
+     * the gate as a refused smoke prerequisite, exactly as every other
+     * refusal route does. */
+    u_plan_freeze_identities(&plan);
+
     /* Every refusal is staged by now, so the gate can be read off the
      * plan in one pass. */
     u_plan_derive_smoke_gate(&plan);
@@ -5888,7 +6210,7 @@ void test_usermode_run(void)
                 }
                 total_ran++;
                 u_run_one(e->name, e->type, &tap_point, counters, &rt,
-                          &verdict);
+                          &verdict, e->content_digest);
                 if (want_smoke && verdict != 0) {
                     /* Fast-fail is IMMEDIATE, per the gate's own spec:
                      * stop right here rather than after the rest of the
@@ -6513,6 +6835,77 @@ int test_usermode_plan_intern_and_compaction(uint32_t *out_overflowed,
     u_plan_free(&ps);
     if (out_refusals_kept) *out_refusals_kept = refusals;
     if (out_order_kept)    *out_order_kept = order_kept;
+    return 1;
+}
+
+/* Freeze one binary's content identity exactly as the planning walk does.
+ * Owns the scratch page the launcher's freeze pass reuses across entries,
+ * so a test can digest a single file without standing up a plan. */
+int test_usermode_digest_binary(const char *name, uint8_t out[32]);
+int test_usermode_digest_binary(const char *name, uint8_t out[32])
+{
+    uintptr_t phys;
+    int rc;
+
+    phys = pmm_alloc_contiguous(1);
+    if (!phys)
+        return 0;
+    rc = u_digest_binary(name, (uint8_t *)phys, out, (uint64_t *)0);
+    pmm_free_frame(phys);
+    return rc;
+}
+
+/* The verifier the loader gates task_exec on. Exported so the fail-closed
+ * NULL case and the all-bytes compare are assertable without a spawn. */
+int test_usermode_identity_matches(const uint8_t *expect,
+                                   const uint8_t *actual);
+int test_usermode_identity_matches(const uint8_t *expect,
+                                   const uint8_t *actual)
+{
+    return u_identity_matches(expect, actual);
+}
+
+/* Plan one runnable name, freeze identities over it, and report what the
+ * freeze did. Answers the question the section turns on: an entry whose
+ * bytes cannot be established must leave the plan as a counted REFUSAL --
+ * never as a runnable the execution loop would launch unverified -- and it
+ * must keep its smoke provenance so the gate still sees it.
+ *
+ * out_kind receives the entry's kind, out_smoke_refused the gate the plan
+ * derives afterwards. Returns 0 if the plan could not be built. */
+int test_usermode_freeze_refuses(const char *name, int as_smoke,
+                                 uint32_t *out_kind,
+                                 uint32_t *out_smoke_refused,
+                                 const char **out_reason);
+int test_usermode_freeze_refuses(const char *name, int as_smoke,
+                                 uint32_t *out_kind,
+                                 uint32_t *out_smoke_refused,
+                                 const char **out_reason)
+{
+    struct plan_state ps;
+
+    if (!u_plan_init(&ps))
+        return 0;
+    if (!u_plan_add_run(&ps, name,
+                        as_smoke ? UTEST_TYPE_SMOKE : UTEST_TYPE_CORRECTNESS,
+                        1u, 1)) {
+        u_plan_free(&ps);
+        return 0;
+    }
+    /* Deliberately does NOT set smoke_selected: deriving it is the
+     * production behaviour under test. Setting it here would have made
+     * this probe pass against a freeze that dropped the provenance. */
+    u_plan_freeze_identities(&ps);
+    u_plan_derive_smoke_gate(&ps);
+
+    if (ps.count == 0) {
+        u_plan_free(&ps);
+        return 0;
+    }
+    if (out_kind)          *out_kind = ps.entries[0].kind;
+    if (out_reason)        *out_reason = ps.entries[0].reason;
+    if (out_smoke_refused) *out_smoke_refused = (uint32_t)ps.smoke_refused;
+    u_plan_free(&ps);
     return 1;
 }
 

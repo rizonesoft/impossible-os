@@ -96,7 +96,7 @@ title: "TODO-04 -- User-Mode Test Framework"
 | 💎   |  36   | Per-binary output artifacts + fail-closed reconciliation | §24, §27, §33            |  [x]   |
 | 💎   |  37   | Refusal-name correlator + JUnit error/failure classification | §31                  |  [x]   |
 | 💎   |  38   | Per-leg generation pointer for coherent resolution  | §30                           |  [x]   |
-| ⭐   |  39   | Executable identity for a planned entry             | §35                           |  [ ]   |
+| ⭐   |  39   | Executable identity for a planned entry             | §35                           |  [x]   |
 | 💎   |  40   | Producer-side capture emission budget               | §33, §36                      |  [ ]   |
 | 💎   | 41 | Post-ship follow-up backfill (2026-07-31 cohort) | -- | [ ] |
 | 💎   |  42   | Ring-3 entry evidence + structural reap-grace assertions | §34, §37                 |  [ ]   |
@@ -104,6 +104,7 @@ title: "TODO-04 -- User-Mode Test Framework"
 | 💎   |  44   | Close the residual completeness gaps §37's review found | §37                       |  [ ]   |
 | ⭐   |  45   | Reader leases for a resolved generation             | §38                           |  [ ]   |
 | 💎   |  46   | Inode-safe classification in the pointer sweep      | §38                           |  [ ]   |
+| 💎   |  47   | End-to-end proof of the loader's identity-mismatch branch | §39                     |  [ ]   |
 
 > 💎 = parity: Linux kselftest and Windows HLK both use user-mode test binaries, TAP/JUnit XML, machine-readable test orchestration, per-test isolation, and stress/perf categorisation. §17 brings the fast-path transports (TEB/KUSD/syscall) up to the same "no silent drift, no silent hang" stability floor both competitors offer at their stable ABIs.
 > ⭐ = exclusive: testing the Win32 API surface from user mode on a non-Windows kernel (§14); user-mode fault-injection bridge that reaches kernel allocator countdowns under a single `test=1` gate (§5); §18 versioned ABI fingerprint + self-describing KUSD + invariant-guarded ring transitions + transition ring buffer -- capabilities neither Windows 11 nor Linux 6.x exposes to user code today.
@@ -1599,13 +1600,22 @@ The enumeration plan §35 shipped freezes WHICH names a run will execute, and th
 > [!NOTE]
 > Filed 2026-07-30 from §35's design review, which rated this [high] against §35's own "immutable plan" claim. It is deliberately NOT §35's scope: closing it needs a mechanism §35 does not have, and both candidates carry costs that belong in their own section. Content identity means digesting every planned binary during the planning walk -- a full extra read of every test binary on the no-manifest path, which is the path every boot takes -- and comparing it against the bytes the loader actually reads before `task_exec`. File-object pinning means holding an open handle across execution, which needs IXFS unlink-vs-open semantics the VFS does not define today, plus a bound on simultaneously-open handles.
 
-- [ ] Decide between content-digest identity and VFS file-object pinning, measuring the planning-walk read cost of the
-      digest option against the live no-manifest path before committing to it
-- [ ] Verify the chosen identity immediately before `task_exec`, and publish a mismatch as a counted, NAMED infrastructure
-      failure using the existing refusal record shape rather than a bare diagnostic -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §35 (item: "Execute the snapshot rather than re-walking" at line 1226)
-- [ ] Add a regression proving a binary replaced between planning and execution is reported as a mismatch rather than run
-      and attributed to the planned entry
-- [ ] Commit: `"test: pin executable identity, not just the name, for a planned entry"`
+- [x] Chose CONTENT DIGEST over file-object pinning, and measured rather than estimated the cost that decided it
+      - Measured on the live no-manifest path (the one every boot takes): `identity freeze: 17 binaries, 561302 bytes, 26ms (0 refused)`, matching the host-side `build/sysroot/test_*.exe` total byte-for-byte. Cost is ONE extra read pass, not the two the filing assumed -- verification runs over the buffer the loader already read, so that half is free
+      - Pinning was rejected on a verified defect, not on cost: `vfs_rename_ex` (`src/kernel/fs/vfs.c:833-836`) gates `ref_count` only on the DESTINATION and only under `VFS_RENAME_REPLACE_EXISTING`, never on the source, so a pin is defeated by rename-away-then-create even though `vfs_unlink` (`vfs.c:749`) does refuse an open file
+      - A design-review claim of mine was wrong and is corrected here: `vfs_open` defaults `share == 0` to share-ALL (`vfs.c:507-509`), so a pin would NOT have forced the loader open to weaken its share mode. The rename gap is the real disqualifier
+      - SHA-256 (`include/kernel/crypto/sha256.h`), not the 32-bit FNV-1a beside it: `u_name_digest`'s own comment records that it does not claim collision resistance because the ORDINAL supplies uniqueness for a refused NAME. Nothing supplies uniqueness when the value alone decides whether adversary-influenced bytes may execute
+- [x] Verified the identity over the exact bytes `task_exec` consumes, closing the window rather than narrowing it
+      - The check lives in `utest_loader_func` between `vfs_read` and `task_exec` (`src/kernel/test/test_usermode.c`), NOT in the launcher before the spawn: `task_exec` takes a BUFFER, so hashing that buffer leaves no gap between what was verified and what runs. A launcher-side check would have left exactly the window this section exists to close
+      - `u_identity_matches` compares all 32 bytes in constant time and treats a NULL expected identity as a MISMATCH, so "the launcher lost what was supposed to run" can never be the branch that lets bytes execute
+      - A mismatch publishes the named, counted reason `UTEST_RSN_MISMATCH` ("planned binary replaced", 23 bytes, inside the pre-existing 29-byte `UTEST_RSN_SHAPE` maximum so the derived name budget is unchanged) through `u_run_one`'s existing reason/record-verdict path, in the same ERROR class a refused name gets -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §35 (item: "Execute the snapshot rather than re-walking" at line 1441)
+      - Fail-closed at plan time too: `u_plan_freeze_identities` converts every entry it cannot digest into a counted REFUSAL before `u_plan_derive_smoke_gate` runs, preserving `smoke_selected`, so "a RUN entry carries a frozen identity" is structural rather than a flag anyone must remember to test
+- [x] Added 3 `TEST_CAT_EXEC` regressions in `src/kernel/test/test_usermode_launcher.c` covering the mechanism over the real VFS
+      - Identity is stable and content-bound: the same binary digests identically twice, an unresolvable name fails closed rather than returning a comparable zero digest, and rewriting a scratch file's bytes under an unchanged name changes its identity (plus a one-bit change in the last byte)
+      - The verifier is fail-closed: a digest matches itself, and a NULL expected identity does not match
+      - An unfreezable entry becomes a counted REFUSAL rather than staying runnable, and an unfreezable SMOKE entry still trips the smoke gate
+      - What these do NOT prove is the in-loader integration -- that the production `utest_loader_func` takes the mismatch branch during a real spawn. Raised by the design review and NOT closable by this run: the fixture needs a sacrificial planned binary staged onto the image, and staging one is a `Makefile` edit, which `receipt_surface_guard.py` BLOCKS for the unattended runner -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §47 (item: "Stage a sacrificial planned binary and prove the loader's mismatch branch fires end-to-end" at line 1873)
+- [x] Commit: `"test: pin executable identity, not just the name, for a planned entry"`
 
 **Test checkpoint:** with a fixture that replaces a planned `test_*.exe` with different contents after the planning walk, the run publishes a named identity-mismatch failure, does not execute the replacement, and the host fails the run; an unchanged directory produces the same artifacts as before the change. Test on: QEMU TCG, QEMU KVM.
 
@@ -1850,3 +1860,24 @@ The retention sweep §38 shipped decides an entry's fate from its pathname: `[ -
 **Test runner:** `bash scripts/test.sh` | 2184 kernel + 16 user-mode PASS on KVM 2026-04-23 (exit=0); 2166 + 16 PASS on TCG via `FORCE_TCG=1`; per-binary bat files under `scripts/debug/usermode/` for targeted runs.
 
 ---
+
+---
+
+## 47. End-to-End Proof of the Loader's Identity-Mismatch Branch
+
+§39 froze executable identity and verifies it over the exact buffer `task_exec` consumes, and its unit tests prove the mechanism -- the digest is content-bound, the verifier is fail-closed, and an unfreezable entry becomes a counted refusal. What none of them can prove is the INTEGRATION property the §39 test checkpoint actually asks for: that the production `utest_loader_func` hashes the staging buffer, takes the mismatch branch, never reaches `task_exec`, and emits exactly one reconciled record for the planned entry. A helper-only test stays green if that call is moved below `task_exec` or dropped from the loader entirely, which is precisely the regression worth catching.
+
+> [!NOTE]
+> Filed 2026-07-31 from §39's design review, which rated the gap [medium] and recommended an end-to-end launcher fixture. It is deliberately NOT §39's scope, and not because of effort: staging a sacrificial binary onto the image is a `Makefile` edit, and `receipt_surface_guard.py` BLOCKS the receipt surface (`Makefile*`, the build script, the ABI generator) for the unattended runner. An attended session is the only thing that can land it. Two hazards the design must clear, both established while rejecting the reviewer's original in-place-overwrite fixture: ring 3 has no unlink or rename syscall (`user/include/syscall.h` exposes READFILE/READDIR/OPENFILE/WRITEHANDLE only), so the replacement has to be an in-place write; and `test-smoke-matrix.sh` boots ONE image four times, so a fixture that mutates a binary must stay idempotent across those boots rather than passing on leg 1 and diverging on legs 2-4.
+
+- [ ] Stage a sacrificial planned binary and prove the loader's mismatch branch fires end-to-end, with the payload's side
+      effect asserted ABSENT so the test fails if the replacement ever executes -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §39 (item: "Added 3 `TEST_CAT_EXEC` regressions in `src/kernel/test/test_usermode_launcher.c` covering the mechanism over the real VFS" at line 1613)
+      - Idempotence across the 4-leg matrix is the constraint that shapes the fixture: a fixed payload makes boot 1 mismatch and boot 2 MATCH (the freeze then digests the already-replaced bytes), silently inverting the test. Deriving each write from the current content instead keeps every boot a genuine mismatch
+- [ ] Assert the host side of the same event: exactly one record for the planned entry carrying the named
+      `planned binary replaced` reason, `not_run` still reconciling, and a red run on both TCG and KVM
+- [ ] Bind the loader's per-spawn state to the spawned task rather than to file-scope globals, covering
+      `s_pending_test_path`, the two stage flags and `s_pending_expect_digest` together
+      - Raised as [medium] against §39, which took the release/acquire half and pushed back on the rest: `s_pending_expect_digest` carries the identical contract the pre-existing `s_pending_test_path` already had (documented at `src/kernel/test/test_usermode.c:27-33`), so binding one of the three in isolation buys no invariant. Not live today -- one boot-time caller, spawn-one-wait-one -- but the launcher is the only thing serialising it
+- [ ] Commit: `"test: prove the identity-mismatch branch end-to-end and bind loader state per spawn"`
+
+**Test checkpoint:** a planned binary whose bytes are replaced before its turn produces a named `planned binary replaced` record, its payload's side effect is absent from the run, `not_run` reconciles, and the host fails the run identically on the first and fourth boot of the same image. Test on: QEMU TCG, QEMU KVM.

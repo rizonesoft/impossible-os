@@ -65,6 +65,13 @@ int test_usermode_plan_dedup(const char *a_name, int a_type,
 int test_usermode_plan_overflow(uint32_t *out_overflowed,
                                 uint32_t *out_runs_after);
 int test_usermode_binary_present(const char *name);
+int test_usermode_digest_binary(const char *name, uint8_t out[32]);
+int test_usermode_identity_matches(const uint8_t *expect,
+                                   const uint8_t *actual);
+int test_usermode_freeze_refuses(const char *name, int as_smoke,
+                                 uint32_t *out_kind,
+                                 uint32_t *out_smoke_refused,
+                                 const char **out_reason);
 int test_usermode_manifest_parse(char *buf, uint32_t len, const char *filter,
                                  uint32_t *out_runs,
                                  uint32_t *out_refusals,
@@ -3486,6 +3493,123 @@ static void test_frame_nonce_fold_never_zero(void)
 }
 
 void test_register_usermode_launcher(void);
+/* ---- Section 39: executable identity for a planned entry ------------- */
+
+/* The plan freezes WHICH names run; without a content identity it does not
+ * freeze WHAT runs under each name. These cover the three load-bearing
+ * pieces: the digest actually distinguishes content, the verifier the
+ * loader gates task_exec on is fail-closed, and an entry whose identity
+ * cannot be frozen leaves the plan as a counted refusal rather than as a
+ * runnable nobody verified. */
+
+static void test_identity_digest_is_stable_and_content_bound(void)
+{
+    uint8_t a[32], b[32];
+    struct vfs_node *f;
+    uint32_t i;
+    int same;
+    static const char *victim = "C:\\utest_ident_probe.bin";
+
+    /* Same file, two walks -> the same identity. Uses a real staged test
+     * binary so the digest runs over the same class of object the launcher
+     * freezes, not a synthetic fixture. */
+    if (!test_usermode_digest_binary("test_libc.exe", a)) {
+        TEST_SKIP("test_libc.exe not present on this image");
+        return;
+    }
+    TEST_ASSERT(test_usermode_digest_binary("test_libc.exe", b) == 1,
+                "digesting a present binary twice must both succeed");
+    TEST_ASSERT(test_usermode_identity_matches(a, b) == 1,
+                "the same bytes must produce the same frozen identity");
+
+    /* A name that does not resolve is fail-closed, not a zero digest that
+     * would compare equal to another failure. */
+    TEST_ASSERT(test_usermode_digest_binary("test_no_such_binary.exe", b) == 0,
+                "an unresolvable name must fail to freeze, not return a digest");
+
+    /* Content change -> identity change. This is the property the whole
+     * section rests on, asserted over the real VFS rather than assumed
+     * from SHA-256's reputation. */
+    f = vfs_open(victim, VFS_O_READ | VFS_O_WRITE | VFS_O_CREATE);
+    if (!f) {
+        TEST_SKIP("cannot create a scratch file on C:\\");
+        return;
+    }
+    vfs_write(f, 0, 8, (const uint8_t *)"AAAAAAAA");
+    vfs_close(f);
+    TEST_ASSERT(test_usermode_digest_binary("utest_ident_probe.bin", a) == 1,
+                "a freshly written scratch file must freeze");
+
+    f = vfs_open(victim, VFS_O_READ | VFS_O_WRITE);
+    if (f) {
+        vfs_write(f, 0, 8, (const uint8_t *)"BBBBBBBB");
+        vfs_close(f);
+    }
+    TEST_ASSERT(test_usermode_digest_binary("utest_ident_probe.bin", b) == 1,
+                "the rewritten scratch file must still freeze");
+    same = test_usermode_identity_matches(a, b);
+    TEST_ASSERT_EQ(same, 0,
+                   "replacing the bytes under a name must change its identity");
+
+    /* A single differing byte must be caught, not just a wholesale rewrite. */
+    for (i = 0; i < 32; i++)
+        b[i] = a[i];
+    b[31] ^= 0x01u;
+    TEST_ASSERT_EQ(test_usermode_identity_matches(a, b), 0,
+                   "a one-bit difference in the last byte must not match");
+
+    vfs_unlink(victim);
+}
+
+static void test_identity_verifier_is_fail_closed(void)
+{
+    uint8_t d[32];
+    uint32_t i;
+
+    for (i = 0; i < 32; i++)
+        d[i] = (uint8_t)i;
+
+    TEST_ASSERT_EQ(test_usermode_identity_matches(d, d), 1,
+                   "a digest must match itself");
+    /* NULL expected identity means the launcher lost what was supposed to
+     * run. That must refuse, never wave the bytes through. */
+    TEST_ASSERT_EQ(test_usermode_identity_matches((const uint8_t *)0, d), 0,
+                   "a missing frozen identity must be treated as a mismatch");
+}
+
+static void test_unfreezable_entry_becomes_a_counted_refusal(void)
+{
+    uint32_t kind = 0xFFu, smoke_refused = 0xFFu;
+    const char *reason = (const char *)0;
+
+    /* A planned name whose bytes cannot be established must NOT stay
+     * runnable: the execution loop would launch content whose identity was
+     * never frozen, which is the hole this section closes. */
+    TEST_ASSERT(test_usermode_freeze_refuses("test_no_such_binary.exe", 0,
+                                             &kind, &smoke_refused,
+                                             &reason) == 1,
+                "the freeze probe must build its plan");
+    TEST_ASSERT_EQ((int)kind, 1,
+                   "an entry that cannot be frozen must become a REFUSAL");
+    TEST_ASSERT(reason != (const char *)0,
+                "a refused-for-identity entry must carry a named reason");
+    TEST_ASSERT_EQ((int)smoke_refused, 0,
+                   "a non-smoke identity refusal must not abort the suite");
+
+    /* Smoke provenance has to survive the conversion, or a smoke
+     * prerequisite that cannot be verified would quietly demote to an
+     * ordinary counted failure and let the rest of the suite run on. */
+    kind = 0xFFu; smoke_refused = 0xFFu;
+    TEST_ASSERT(test_usermode_freeze_refuses("test_no_such_binary.exe", 1,
+                                             &kind, &smoke_refused,
+                                             &reason) == 1,
+                "the smoke freeze probe must build its plan");
+    TEST_ASSERT_EQ((int)kind, 1,
+                   "an unfreezable smoke entry must become a REFUSAL too");
+    TEST_ASSERT_EQ((int)smoke_refused, 1,
+                   "an unfreezable smoke prerequisite must abort the suite");
+}
+
 void test_register_usermode_launcher(void)
 {
     test_suite_register_cat("UTEST: glob NULL matches everything",
@@ -3808,8 +3932,18 @@ void test_register_usermode_launcher(void)
     test_suite_register_cat("UTEST: plan alloc failure is its own state",
                             test_plan_alloc_failure_is_a_distinct_state,
                             TEST_CAT_EXEC);
+
     test_suite_register_cat("UTEST: name-arena exhaustion rolls back and compacts",
                             test_plan_intern_exhaustion_and_compaction,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: frozen identity is stable and content-bound",
+                            test_identity_digest_is_stable_and_content_bound,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: identity verifier is fail-closed",
+                            test_identity_verifier_is_fail_closed,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: an unfreezable entry is a counted refusal",
+                            test_unfreezable_entry_becomes_a_counted_refusal,
                             TEST_CAT_EXEC);
 }
 
