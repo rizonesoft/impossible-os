@@ -179,12 +179,18 @@ def test_shipped_default_is_enabled():
     measurement: three consecutive segments ran 334 / 420 / 768 tool-events, and
     the 334 one shipped a SINGLE section at $179.27 with cache-read 85.3% of
     spend. Pin the shipped values so a silent revert is caught -- flipping either
-    back is a deliberate decision that must update the doctrine with it."""
+    back is a deliberate decision that must update the doctrine with it.
+
+    The THRESHOLD was re-derived 2026-07-31 (200 -> 90) after the first live
+    segment showed the old number was computed in the wrong units: it counts
+    SECTIONS-phase matcher events, which run 0.65 per turn, so 200 landed at
+    turn ~307 of a 308-turn segment -- the hint fired at event 201 of 201, with
+    no runway left to act on it."""
     spec = importlib.util.spec_from_file_location("rh_shipped", HOOK)
     m = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(m)
     assert m.ROTATE_HINT_ENABLED is True, "mid-section rotation must stay enabled"
-    assert m.ROTATE_HINT_TURNS == 200, "threshold is derived, not a free knob"
+    assert m.ROTATE_HINT_TURNS == 90, "threshold is derived, not a free knob"
     skill = (HOOK.parents[1] / "skills/overnight-sequencer/SKILL.md"
              ).read_text(encoding="utf-8")
     assert "Mid-section context-cap rotation -- ACTIVE" in skill, \

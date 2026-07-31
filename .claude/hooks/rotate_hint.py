@@ -59,24 +59,32 @@ from pathlib import Path
 #   4. this flag + the SECTIONS-phase doctrine    -- DONE
 ROTATE_HINT_ENABLED = True
 
-# Tool-event proxy for the doctrine context band, RE-DERIVED 2026-07-30 from the
-# measured accumulation rather than left at the retired guess.
+# Countable SECTIONS-phase tool-events before the hint fires. RE-DERIVED
+# 2026-07-31 from the FIRST live segment after the re-enable, which exposed an
+# arithmetic error in the previous derivation.
 #
-# Measured: base ~57.5K, accumulation ~1,123 tok/turn, and tool-events track turns
-# about 1:1 on these segments (334 events / 335 turns). Context at turn T is
-# therefore ~57.5K + 1.123K*T, so the ~300K band lands at T ~= 215.
+# WHAT WENT WRONG AT 200. The old number came from "the ~300K context band lands
+# at turn ~215", then used 215 as an EVENT threshold. But this hook counts only
+# the matcher set (Bash|Read|Grep|Glob|Agent|Task) and only while phase ==
+# SECTIONS -- measured on segment run-20260731-000502 that is 201 events across
+# 308 turns, i.e. **0.65 countable events per turn**. So 200 events corresponds
+# to turn ~307 of a 308-turn segment: the hint fired at event 201 of 201, one
+# event before the section shipped. It was not dead -- it was correct and
+# useless, with no runway left to reach a WIP boundary and rotate.
 #
-# Cost check, using the quadratic model cache-read ~ base*T + d*T^2/2 against the
-# 330-turn segment that cost $152.96 of cache-read:
-#     one 330-turn segment   ~80.1M   (measured 99.5M -- the model is conservative)
-#     two 165-turn segments  ~49.6M   62%
-#     three 110-turn segments ~39.4M  49%
-# Splitting keeps paying, but each rotation costs a re-orientation, so this is not
-# a "lower is always better" dial. 200 puts a typical 330-turn section at 2
-# segments and the observed 768-event outlier at 4, while staying above the ~132
-# events that Canary #2's genuinely-short sections reached -- so a section that
-# really does fit one context is still never nudged.
-ROTATE_HINT_TURNS = 200
+# THE DERIVATION, done in the right units this time. Same segment: start context
+# ~117K, end 520,582, accumulation 1,311 tok/turn over 308 turns.
+#     250K -> turn 102 (33% in) -> ~66 events
+#     300K -> turn 140 (45% in) -> ~91 events
+#     350K -> turn 178 (58% in) -> ~116 events
+# 90 targets the ~300K band while leaving over half the segment as runway, which
+# is the whole point: a hint with nowhere left to act is not a trigger.
+#
+# WHY AN EARLY HINT IS SAFE. It is advisory and P4.6 acts only at a WIP-clean
+# boundary; a section that ships first simply rolls over normally and the ship
+# rollover clears the counter. The cost of firing early is zero, the cost of
+# firing late is the entire feature -- so the asymmetry says bias low.
+ROTATE_HINT_TURNS = 90
 
 # Once the hint is set, re-surface it every N further tool-events until a verified
 # rollover clears the file -- the crossing-turn message can scroll far out of view

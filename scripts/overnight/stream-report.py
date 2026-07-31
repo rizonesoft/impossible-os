@@ -79,6 +79,15 @@ def emit(text: str) -> None:
     sys.stdout.flush()
 
 
+# Advisory (non-blocking) hook output worth putting in the run log. Keyed on
+# the bracketed tag every such hook already prints, so a new advisory hook is
+# picked up without touching this list as long as it follows the convention.
+_ADVISORY_RE = re.compile(
+    r"\[(?:sequencer|todo-wrap|build-offload|receipt-surface|cd-prefix|"
+    r"inline-churn|slice-read|codex-[a-z-]+|[a-z-]*reminder)[^\]]*\]",
+    re.I)
+
+
 def _clip(value, limit: int = 200) -> str:
     """Collapse whitespace/newlines to one line and cap the length (ASCII only)."""
     s = " ".join(str(value).split())
@@ -91,6 +100,12 @@ def _bash(inp: dict) -> str:
     # prompt bodies from the run log entirely.
     desc = (inp.get("description") or "").strip()
     cmd = " ".join((inp.get("command") or "").split())
+    # 200 chars truncated mid-word on any compound command, so a verb in the
+    # TAIL vanished from the log entirely -- `run_phase_guard.py rollover`
+    # grepped as 0 hits on a segment that demonstrably rolled over, making
+    # every log-based diagnostic quietly unreliable. The runner routinely
+    # chains 3-5 statements; 600 covers them without turning the log into a
+    # transcript.
     parts = []
     if desc:
         parts.append(desc)
@@ -647,13 +662,23 @@ def handle(event: dict, metrics: "SectionMetrics") -> None:
     elif kind == "user":
         # surface failed tool results so overnight logs flag errors inline.
         for block in (event.get("message") or {}).get("content") or []:
-            if (
-                isinstance(block, dict)
-                and block.get("type") == "tool_result"
-                and block.get("is_error")
-            ):
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") == "tool_result" and block.get("is_error"):
                 msg = _result_text(block.get("content"))
                 emit(f"tool error: {_clip(msg)}" if msg else "tool error")
+                continue
+            # ADVISORY HOOK OUTPUT (2026-07-31). Only is_error results were
+            # surfaced, so a hook that emits a systemMessage instead of blocking
+            # was INVISIBLE in the run log. That cost a full forensic pass: the
+            # context-rotation hint fired at event 201/201 of segment
+            # run-20260731-000502 and `grep -c "context-rotation hint"` returned
+            # 0, which read as "the mechanism is dead" when it had actually
+            # worked. An advisory gate you cannot see is one you cannot tune.
+            txt = _result_text(block.get("content")) if block.get(
+                "type") == "tool_result" else ""
+            if txt and _ADVISORY_RE.search(txt):
+                emit(f"hook: {_clip(txt, 400)}")
     elif kind == "result":
         metrics.flush("final")
         emit("=== final ===")

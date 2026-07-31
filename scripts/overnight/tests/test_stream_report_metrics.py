@@ -385,6 +385,63 @@ def test_live_snapshot_removed_on_clean_finish():
         assert not pathlib.Path(str(mp) + ".live").exists(), "orphan .live not cleaned"
 
 
+
+def test_advisory_hook_output_is_surfaced():
+    """2026-07-31: only `is_error` tool results were logged, so a hook that
+    emits a systemMessage instead of blocking was INVISIBLE in the run log.
+    The context-rotation hint fired at event 201/201 of run-20260731-000502 and
+    grepping the log for it returned 0 -- which read as a dead mechanism when
+    it had actually worked. An advisory gate you cannot see cannot be tuned."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("stream_report", SCRIPT)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    class _M:
+        def note_session(self, *a):
+            pass
+
+        def flush(self, *a):
+            pass
+
+    def run(ev):
+        import contextlib, io
+        b = io.StringIO()
+        with contextlib.redirect_stdout(b):
+            mod.handle(ev, _M())
+        return b.getvalue().strip()
+
+    def user(text, err=False):
+        blk = {"type": "tool_result", "content": [{"type": "text", "text": text}]}
+        if err:
+            blk["is_error"] = True
+        return {"type": "user", "message": {"content": [blk]}}
+
+    out = run(user("[sequencer] context-rotation hint set (90 tool-events)"))
+    assert "hook:" in out and "context-rotation hint" in out, out
+    assert "hook:" in run(user("[todo-wrap -- not a block] long continuation line"))
+    # Errors must STILL surface, and ordinary output must stay silent -- the
+    # log is only useful while it remains a signal rather than a transcript.
+    assert "tool error: boom" in run(user("boom", err=True))
+    assert run(user("ordinary command output")) == ""
+
+
+def test_bash_command_clip_survives_a_compound_command():
+    """The 200-char clip truncated mid-word on any chained command, so a verb in
+    the TAIL vanished: `run_phase_guard.py rollover` grepped as 0 hits on a
+    segment that demonstrably rolled over, making log-based diagnosis unreliable."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("stream_report", SCRIPT)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    cmd = ("python3 .claude/hooks/run_phase_guard.py progress; "
+           "python3 scripts/overnight/review-envelope.py --check; "
+           "bash scripts/overnight/run-artifact.sh lbl -- bash scripts/test.sh; "
+           "python3 .claude/hooks/run_phase_guard.py rollover")
+    line = mod._bash({"description": "Record progress and attempt rollover",
+                      "command": cmd})
+    assert "rollover" in line, line
+
 if __name__ == "__main__":
     test_two_sections_split_on_progress()
     test_model_confirmed_matches_expected_no_warning()
@@ -407,4 +464,6 @@ if __name__ == "__main__":
     test_reconcile_per_section_attribution()
     test_reconcile_fail_open_without_transcript()
     test_live_snapshot_removed_on_clean_finish()
+    test_advisory_hook_output_is_surfaced()
+    test_bash_command_clip_survives_a_compound_command()
     print("PASS: stream-report metrics")
