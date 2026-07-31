@@ -1762,14 +1762,18 @@ The five fail-closed aggregates publish through the SAME `refused_<n>_<prefix>_<
 
 **Test checkpoint:** each of the five aggregate refusal paths publishes an identity the correlator classifies as an aggregate (naming the label and a unit-aware reading of its value) rather than attempting a filename correlation; a per-name refusal is unaffected and still correlates exactly as §37 shipped it; the derived name bound is recomputed from the reachable shapes and its per-label static asserts still hold. Test on: QEMU TCG, QEMU KVM.
 
-> **Test runner:** `scripts/debug/kernel/run-exec-tests.bat` -- expect `UTEST: every aggregate identity conforms` and `UTEST: aggregate unknown value is not a zero` to pass in TEST_CAT_EXEC; host side via `bash scripts/test-tooling.sh` (block 6r2d-agg, 10 assertions).
+> **Test runner:** `scripts/debug/kernel/run-exec-tests.bat` -- expect `UTEST: every aggregate identity conforms`, `UTEST: aggregate unknown value is not a zero` and `UTEST: an overflowing plan runs nothing` to pass in TEST_CAT_EXEC; host side via `bash scripts/test-tooling.sh` (block 6r2d-agg, 17 assertions).
 
 > **Notes:**
 > - Shipped `agg_<label>_<value>.exe` (`u_build_aggregate_id`) as a second, structurally distinct identity kind alongside `refused_<n>_<prefix>_<8hex>.exe`, driven by one `UTEST_AGG_KINDS` X-macro table.
 > - The table generates the enum, the label mapping, the value-bearing column, and a `_Static_assert` per label, so a new aggregate cannot be added to some lists and omitted from others.
-> - `scripts/utest-refusal-id.py match` classifies an aggregate and exits 5 without correlating; the numeric grammar is canonical ASCII uint32 so corrupted identities are not authenticated.
-> - Canonical doc: [docs/testing/usermode-output-formats.md](../../docs/testing/usermode-output-formats.md) now carries the aggregate grammar, the per-label value semantics table, and exit code 5.
+> - `scripts/utest-refusal-id.py match` classifies an aggregate and exits 5 without correlating; it reads the kernel table to reject a label or value form the launcher cannot emit.
+> - The plan-full value is captured in `plan_state.kept_at_overflow` at the FIRST overflow, because `u_plan_drop_runs` mutates `count` before the aggregate is emitted.
+> - Canonical doc: [docs/testing/usermode-output-formats.md](../../docs/testing/usermode-output-formats.md) carries the exact grammar, the per-label value semantics, and the 0/2/3/4/5 exit codes.
 > - Scope boundary: this section changes the IDENTITY of the five aggregates only; the conditions that publish them, and the counter reconciliation behind them, are unchanged.
+
+> **Verified:** 2026-07-31 | commit `1168751c` | 4/4 items | build OK | 27965 kernel + 17 user-mode tests, 1059/1059 tooling, lint 0 errors
+> **Quality reviewed:** 2026-07-31 | Codex 9x (design, adversarial, test-coverage, re-adversarial, consistency, perf) | 0H+14M+0L fixed, 0 open | scope: kernel-code-quality
 
 ---
 

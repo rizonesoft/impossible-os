@@ -744,18 +744,38 @@ def add_input_args(parser):
 
 
 def main(argv):
+    # The exit codes are the CLI's contract with automation, so they belong
+    # on the authoritative help surface and not only in the module
+    # docstring: a caller that cannot tell a usage error from a no-match
+    # from an ambiguity has to guess, and guessing here means mis-reporting
+    # which binary was refused.
+    exit_codes = (
+        "exit codes:\n"
+        "  0  digest printed / exactly one candidate matched\n"
+        "  2  usage error (including an identity the launcher cannot emit)\n"
+        "  3  no candidate matched\n"
+        "  4  more than one candidate matched (AMBIGUOUS)\n"
+        "  5  the identity is a fail-closed AGGREGATE -- no filename "
+        "produced it,\n     so no correlation was attempted\n")
     parser = argparse.ArgumentParser(
         prog="utest-refusal-id",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=exit_codes,
         description="Correlate a refused_<n>_<prefix>_<8hex>.exe identity "
-                    "back to the filename that produced it.")
+                    "back to the filename that produced it, or classify an "
+                    "agg_<label>_<value>.exe aggregate.")
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_digest = sub.add_parser("digest",
+                              formatter_class=argparse.RawDescriptionHelpFormatter,
+                              epilog=exit_codes,
                               help="print the 8-hex digest of each input")
     add_input_args(p_digest)
     p_digest.set_defaults(func=cmd_digest)
 
     p_match = sub.add_parser("match",
+                             formatter_class=argparse.RawDescriptionHelpFormatter,
+                             epilog=exit_codes,
                              help="report which candidates produce an identity")
     p_match.add_argument("identity",
                          help="the refused_<n>_<prefix>_<8hex>.exe name from "

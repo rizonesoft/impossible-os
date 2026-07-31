@@ -11166,6 +11166,18 @@ if len(rows) != declared:
 # Every publication site, and the kind each one passes.
 sites = re.findall(r"u_emit_aggregate\(\s*[A-Z0-9_]+\s*,\s*UTEST_AGG_([A-Z0-9_]+)",
                    src)
+# The GRAMMAR, read from the producer rather than hardcoded here: a test
+# that spells `agg_`/`_`/`.exe`/`unknown` itself keeps validating the old
+# grammar after the kernel changes, and every newly emitted identity would
+# then be rejected by the correlator with nothing red.
+gram = {}
+for key in ("PREFIX", "SEP", "SUFFIX", "VALUE_UNKNOWN"):
+    g = re.search(r'#define\s+UTEST_AGG_%s\s+"([^"]*)"' % key, src)
+    if not g:
+        print("ERR no UTEST_AGG_%s" % key); raise SystemExit(0)
+    gram[key] = g.group(1)
+print("GRAMMAR %s %s %s %s" % (gram["PREFIX"], gram["SEP"], gram["SUFFIX"],
+                               gram["VALUE_UNKNOWN"]))
 print("COUNT %d" % len(rows))
 print("SITES %d" % len(sites))
 print("SITEKINDS %s" % ",".join(sorted(sites)))
@@ -11179,6 +11191,19 @@ if printf '%s' "$RID_TABLE" | grep -q '^ERR '; then
     t_fail "refusal correlator: the kernel aggregate table parses exhaustively" "$RID_TABLE"
 else
     t_pass "refusal correlator: the kernel aggregate table parses exhaustively"
+fi
+
+RID_GRAMMAR="$(printf '%s\n' "$RID_TABLE" | sed -n 's/^GRAMMAR //p')"
+RID_PREFIX="$(printf '%s' "$RID_GRAMMAR" | awk '{print $1}')"
+RID_SEP="$(printf '%s' "$RID_GRAMMAR" | awk '{print $2}')"
+RID_SUFFIX="$(printf '%s' "$RID_GRAMMAR" | awk '{print $3}')"
+RID_UNKNOWN="$(printf '%s' "$RID_GRAMMAR" | awk '{print $4}')"
+if [ -n "$RID_PREFIX" ] && [ -n "$RID_SEP" ] && [ -n "$RID_SUFFIX" ] && \
+   [ -n "$RID_UNKNOWN" ]; then
+    t_pass "refusal correlator: the aggregate grammar is read from the producer"
+else
+    t_fail "refusal correlator: the aggregate grammar is read from the producer" \
+        "grammar=[$RID_GRAMMAR]"
 fi
 
 RID_NLABELS="$(printf '%s\n' "$RID_TABLE" | awk '/^COUNT /{print $2}')"
@@ -11216,8 +11241,8 @@ while read -r RID_TAG RID_NAME RID_LABEL RID_HASVAL; do
     # The value the KERNEL would publish for this kind -- taken from the
     # table's own column, so the host cannot test a shape the launcher
     # never emits (nor miss the one it does).
-    if [ "$RID_HASVAL" = "1" ]; then RID_VAL=7; else RID_VAL=unknown; fi
-    RID_ID="agg_${RID_LABEL}_${RID_VAL}.exe"
+    if [ "$RID_HASVAL" = "1" ]; then RID_VAL=7; else RID_VAL="$RID_UNKNOWN"; fi
+    RID_ID="${RID_PREFIX}${RID_LABEL}${RID_SEP}${RID_VAL}${RID_SUFFIX}"
     RID_OUT="$(python3 "$RID" match "$RID_ID" 2>&1 || true)"
     python3 "$RID" match "$RID_ID" >/dev/null 2>&1 && RID_RC=0 || RID_RC=$?
     if [ "$RID_RC" != "5" ]; then
@@ -11324,8 +11349,8 @@ RID_INV_OK=1
 RID_INV_WHY=""
 while read -r RID_TAG RID_NAME RID_LABEL RID_HASVAL; do
     [ "$RID_TAG" = "ROW" ] || continue
-    if [ "$RID_HASVAL" = "1" ]; then RID_BADVAL=unknown; else RID_BADVAL=7; fi
-    RID_ID="agg_${RID_LABEL}_${RID_BADVAL}.exe"
+    if [ "$RID_HASVAL" = "1" ]; then RID_BADVAL="$RID_UNKNOWN"; else RID_BADVAL=7; fi
+    RID_ID="${RID_PREFIX}${RID_LABEL}${RID_SEP}${RID_BADVAL}${RID_SUFFIX}"
     python3 "$RID" match "$RID_ID" >/dev/null 2>&1 && RID_RC=0 || RID_RC=$?
     if [ "$RID_RC" = "5" ]; then
         RID_INV_OK=0
@@ -11339,6 +11364,31 @@ if [ "$RID_INV_OK" = "1" ]; then
     t_pass "refusal correlator: the wrong value form for a kind is refused"
 else
     t_fail "refusal correlator: the wrong value form for a kind is refused" "$RID_INV_WHY"
+fi
+
+# GRAMMAR MUTATIONS. Each perturbs ONE element of the producer-derived
+# grammar; the host parser must reject every one. This is what makes the
+# regression notice producer/consumer drift instead of validating whichever
+# grammar it happened to hardcode.
+RID_GRAM_OK=1
+RID_GRAM_WHY=""
+for RID_MUT_ID in \
+    "agGX_plan_kept${RID_SEP}7${RID_SUFFIX}" \
+    "${RID_PREFIX}plan_kept${RID_SEP}7.EXE" \
+    "${RID_PREFIX}plan_kept${RID_SEP}7" \
+    "${RID_PREFIX}plan_kept-7${RID_SUFFIX}" \
+    "plan_kept${RID_SEP}7${RID_SUFFIX}"; do
+    python3 "$RID" match "$RID_MUT_ID" >/dev/null 2>&1 && RID_RC=0 || RID_RC=$?
+    if [ "$RID_RC" = "5" ]; then
+        RID_GRAM_OK=0
+        RID_GRAM_WHY="$RID_MUT_ID (grammar mutation) was accepted as an aggregate"
+        break
+    fi
+done
+if [ "$RID_GRAM_OK" = "1" ]; then
+    t_pass "refusal correlator: a mutation of any grammar element is refused"
+else
+    t_fail "refusal correlator: a mutation of any grammar element is refused" "$RID_GRAM_WHY"
 fi
 
 # A label the launcher's table does not contain is not an aggregate at all.

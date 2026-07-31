@@ -1109,6 +1109,23 @@ python3 scripts/utest-refusal-id.py match agg_manifest_bad_unknown.exe
 # -> AGGREGATE ... label 'manifest_bad' ... no correlation attempted   (exit 5)
 ```
 
+The grammar is exact, and the correlator enforces all of it -- a shape that
+merely *looks* like an aggregate is a usage error (exit 2), not a record:
+
+```
+identity := "agg_" label "_" value ".exe"
+label    := [A-Za-z0-9._-]+          and must appear in the launcher's table
+value    := "unknown" | "0" | [1-9][0-9]*        ASCII only, no leading zeros,
+                                                 inclusive range 0..4294967295
+```
+
+So `agg_plan_kept_007.exe` (leading zero), `agg_plan_kept_4294967296.exe`
+(past uint32), a value written with non-ASCII decimal digits, and any label
+the table does not carry are all rejected rather than reported. The
+launcher emits canonical ASCII decimal from a `uint32_t`, so each of those
+is corruption, and authenticating one would present a damaged identity as
+genuine launcher output.
+
 The value's **unit lives in the label**, because it is not one semantic
 type across the five paths:
 

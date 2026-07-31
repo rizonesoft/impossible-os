@@ -1172,6 +1172,15 @@ struct plan_state {
     /* 1 = the entry array or the name arena filled. The plan is then no
      * longer the complete enumeration, so nothing may run off it. */
     int                overflowed;
+    /* `count` as it stood at the FIRST transition to `overflowed` -- the
+     * entries the plan RETAINED when the cap bit, which is what the
+     * plan-full aggregate publishes. Captured here rather than read off
+     * `count` at publication time because `count` is mutated afterwards:
+     * u_plan_drop_runs rewrites it, and on a manifest that overflows BOTH
+     * the plan cap and the refusal cap it is dropped once BEFORE the
+     * plan-full aggregate is ever emitted. Reading it late reported the
+     * staged-refusal count as the retained count. */
+    uint32_t           kept_at_overflow;
     /* 1 = the backing block could not be allocated at all. Distinct from
      * `overflowed` because it must not be reported as a capacity problem
      * with a directory. */
@@ -2686,6 +2695,15 @@ _Static_assert(UTEST_REFUSAL_ID_FIXED + UTEST_REFUSAL_PREFIX_MIN <=
  * manifest that would not parse leaves the number of lost entries
  * genuinely unknowable. Publishing `0` for it, as the old shape did, is a
  * false statement about an unknown quantity. */
+/* The aggregate grammar, named once and used by the builder, by the
+ * bound derivation, and by the host regressions that read them back out
+ * of this file. They were literals in three places; a host test that
+ * hardcodes the same three can keep validating the OLD grammar after the
+ * producer changes, and then every newly emitted identity is rejected by
+ * the correlator with nothing red. */
+#define UTEST_AGG_PREFIX        "agg_"
+#define UTEST_AGG_SEP           "_"
+#define UTEST_AGG_SUFFIX        ".exe"
 #define UTEST_AGG_VALUE_UNKNOWN "unknown"
 
 /* ONE authoritative table. The enum, the label mapping and the per-label
@@ -2727,8 +2745,8 @@ typedef enum {
 #define UTEST_AGG_VALUE_MAX                                                \
     UTEST_MAX2(UTEST_DIGITS_U32, UTEST_LIT(UTEST_AGG_VALUE_UNKNOWN))
 #define UTEST_AGGREGATE_ID_FIXED                                           \
-    (UTEST_LIT("agg_") + UTEST_LIT("_") + UTEST_AGG_VALUE_MAX +            \
-     UTEST_LIT(".exe"))
+    (UTEST_LIT(UTEST_AGG_PREFIX) + UTEST_LIT(UTEST_AGG_SEP) +              \
+     UTEST_AGG_VALUE_MAX + UTEST_LIT(UTEST_AGG_SUFFIX))
 #define UTEST_AGG_FITS(name, label, has_value)                             \
     _Static_assert(UTEST_AGGREGATE_ID_FIXED + UTEST_LIT(label) <=          \
                        UTEST_MAX_BINARY_NAME,                              \
@@ -2965,11 +2983,11 @@ static int u_build_aggregate_id(char *dst, uint32_t cap,
     if (!dst || cap < UTEST_MAX_BINARY_NAME + 1u || !label)
         return 0;
     dst[0] = '\0';
-    if (!u_append(dst, &pos, cap, "agg_"))
+    if (!u_append(dst, &pos, cap, UTEST_AGG_PREFIX))
         return 0;
     if (!u_append(dst, &pos, cap, label))
         return 0;
-    if (!u_append(dst, &pos, cap, "_"))
+    if (!u_append(dst, &pos, cap, UTEST_AGG_SEP))
         return 0;
     if (has_value) {
         if (!u_append_uint(dst, &pos, cap, (uint64_t)value))
@@ -2977,7 +2995,7 @@ static int u_build_aggregate_id(char *dst, uint32_t cap,
     } else if (!u_append(dst, &pos, cap, UTEST_AGG_VALUE_UNKNOWN)) {
         return 0;
     }
-    if (!u_append(dst, &pos, cap, ".exe"))
+    if (!u_append(dst, &pos, cap, UTEST_AGG_SUFFIX))
         return 0;
     /* The per-label static asserts prove the shape fits; this catches a
      * caller that passed a buffer smaller than the bound demands, which
@@ -5052,6 +5070,7 @@ static int u_plan_init(struct plan_state *ps)
     ps->smoke_refused     = 0;
     ps->block_phys        = 0;
     ps->overflowed   = 0;
+    ps->kept_at_overflow = 0;
     ps->alloc_failed = 0;
 
     /* Well past kmalloc's 4 KiB ceiling, so PMM per CLAUDE.md's
@@ -5118,6 +5137,8 @@ static const char *u_plan_intern(struct plan_state *ps, const char *name)
     if (!ps->entries)
         return (const char *)0;
     if (ps->names_used + UTEST_PLAN_NAME_SLOT > UTEST_PLAN_NAME_BYTES) {
+        if (!ps->overflowed)
+            ps->kept_at_overflow = ps->count;
         ps->overflowed = 1;
         return (const char *)0;
     }
@@ -5140,6 +5161,8 @@ static struct plan_entry *u_plan_alloc(struct plan_state *ps)
     if (ps->alloc_failed)
         return (struct plan_entry *)0;
     if (!ps->entries || ps->count >= UTEST_PLAN_MAX) {
+        if (!ps->overflowed)
+            ps->kept_at_overflow = ps->count;
         ps->overflowed = 1;
         return (struct plan_entry *)0;
     }
@@ -6490,10 +6513,6 @@ void test_usermode_run(void)
      * alone can only make collisions unlikely, and an operator who cannot
      * tell two refused binaries apart cannot act on either. */
     uint32_t              refusal_ordinal = 0;
-    /* plan.count as it stood BEFORE u_plan_drop_runs rewrites it on the
-     * overflow path -- the number of entries the plan RETAINED before the
-     * cap bit, which is what the plan-full aggregate publishes. */
-    uint32_t              plan_kept_at_overflow = 0;
     /* The single enumeration this run executes from. Built once below,
      * consumed unchanged by the execution loop -- the two can no longer
      * describe different sets of binaries. */
@@ -6717,16 +6736,6 @@ void test_usermode_run(void)
      * takes, and for the same reason. */
     if (plan.overflowed) {
         total_planned++;                /* the plan-full aggregate */
-        /* Snapshot BEFORE the drop. u_plan_drop_runs removes every
-         * runnable entry and rewrites plan.count, so the aggregate's
-         * `_kept` value has to be read here or it reports the
-         * post-discard count -- a full 256-entry plan would publish
-         * `agg_plan_kept_0.exe`, which is precisely the "0 reads as
-         * nothing was lost" misstatement this identity kind exists to
-         * remove, on the one path it exists to describe. The POST-drop
-         * count is still what total_planned reconciles against below,
-         * because that counts records the run will actually publish. */
-        plan_kept_at_overflow = plan.count;
         u_plan_drop_runs(&plan);
     }
 
@@ -6888,7 +6897,7 @@ void test_usermode_run(void)
          * the aggregate is what the run reconciles and fails on. */
         total_ran++;
         u_emit_aggregate(UTEST_RSN_PLAN_FULL, UTEST_AGG_PLAN_KEPT,
-                         plan_kept_at_overflow, &tap_point, counters, &rt);
+                         plan.kept_at_overflow, &tap_point, counters, &rt);
     }
     if (manifest.refused_overflowed) {
         /* More malformed manifest entries than the run can publish
@@ -7415,8 +7424,17 @@ int test_usermode_plan_overflow(uint32_t *out_overflowed,
     }
     s_filter = saved_filter;
     if (out_overflowed) *out_overflowed = (uint32_t)ps.overflowed;
-    if (out_kept_before_drop) *out_kept_before_drop = ps.count;
+    /* The IMMUTABLE capture, not ps.count: the point of the field is that
+     * it survives every later compaction. */
+    if (out_kept_before_drop) *out_kept_before_drop = ps.kept_at_overflow;
+    /* Drop TWICE, the way a manifest that overflows both the plan cap and
+     * the refusal cap does -- the early drop at the refusal-overflow site
+     * runs before the plan-full aggregate is emitted, and reading the
+     * count late reported the staged-refusal count as the retained one. */
     u_plan_drop_runs(&ps);
+    u_plan_drop_runs(&ps);
+    if (out_kept_before_drop && *out_kept_before_drop != ps.kept_at_overflow)
+        *out_kept_before_drop = 0;   /* mutated by a drop -- fail the test */
     for (i = 0; i < ps.count; i++)
         if (ps.entries[i].kind == (uint8_t)UTEST_PLAN_RUN) runs++;
     u_plan_free(&ps);

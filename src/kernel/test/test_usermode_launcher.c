@@ -549,11 +549,16 @@ static void test_plan_overflow_runs_nothing(void)
                    "an incomplete plan executes no binary at all");
 
     /* The VALUE the plan-full aggregate publishes, at the runtime path
-     * rather than through the builder. u_plan_drop_runs rewrites
-     * plan.count to zero here, so reading it after the drop would report
-     * a completely full plan as `agg_plan_kept_0.exe` -- a zero on the
-     * one path whose whole subject is loss. The published number is the
-     * count as it stood BEFORE the drop, which is the plan's capacity. */
+     * rather than through the builder. It is captured at the FIRST
+     * transition to overflowed and must survive every later compaction:
+     * u_plan_drop_runs rewrites plan.count, and a manifest that overflows
+     * BOTH the plan cap and the refusal cap drops the plan once BEFORE
+     * this aggregate is emitted. Reading the count late reported a
+     * completely full plan as `agg_plan_kept_0.exe`, or worse the staged
+     * refusal count -- a wrong number on the one path whose whole subject
+     * is loss. The shim drops twice and zeroes the result if the capture
+     * moved, so a regression fails here rather than shipping a plausible
+     * number. */
     TEST_ASSERT_EQ(kept_before_drop, test_usermode_plan_capacity(),
                    "the plan-full aggregate publishes the pre-drop count");
     TEST_ASSERT(kept_before_drop != runs_after,
