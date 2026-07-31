@@ -30,6 +30,25 @@ MARKER=".claude/state/sequencer-armed"
 # gate below and `--record-canary`.
 CANARY_STAMP=".claude/state/sequencer-canary-ok"
 
+# ARM FROM THE PRIMARY WORKTREE ONLY (2026-07-31). REPO_ROOT is resolved from
+# BASH_SOURCE, so invoking this script from the repair worktree would arm a run
+# whose PROJECT_DIR, marker, canary stamp and drop-ins all point at the WRONG
+# checkout -- and nothing downstream would say so, because every one of those
+# paths would exist and look plausible. The run belongs in the primary
+# worktree on main; the repair worktree exists only so an operator can fix the
+# control plane without sharing the run's tree, index and build dir.
+_PRIMARY_ROOT="$(dirname "$(git -C "$REPO_ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)")"
+if [ -n "$_PRIMARY_ROOT" ] && [ "$_PRIMARY_ROOT" != "/" ] && [ "$(cd "$REPO_ROOT" && pwd -P)" != "$(cd "$_PRIMARY_ROOT" && pwd -P)" ]; then
+  {
+    echo "REFUSED to arm: this is not the PRIMARY worktree."
+    echo "  invoked from : $REPO_ROOT"
+    echo "  primary is   : $_PRIMARY_ROOT"
+    echo "  The run must be armed from the primary checkout on main. Re-run:"
+    echo "    bash $_PRIMARY_ROOT/.claude/skills/overnight-sequencer/arm-sequencer.sh $*"
+  } >&2
+  exit 1
+fi
+
 LOCAL_ARM="$REPO_ROOT/scripts/overnight/overnight-arm.sh"
 [ -x "$LOCAL_ARM" ] || { echo "FATAL: vendored scheduler missing/not executable: $LOCAL_ARM" >&2; exit 127; }
 

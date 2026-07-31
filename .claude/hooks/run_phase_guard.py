@@ -34,6 +34,7 @@ within-section hooks -- this guard does not micro-manage it.
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -152,6 +153,47 @@ def _is_self_teardown(cmd):
         return True
     return False
 
+
+_WORKTREE_READONLY = {"list"}
+
+
+def _is_worktree_mutation(cmd):
+    """True for any mutating `git worktree` subcommand.
+
+    The run executes the PRIMARY worktree and has no legitimate reason to make
+    another: the ONE sanctioned repair worktree is created by the operator, in
+    an interactive session, where this guard is inert. Blocking every
+    subcommand except read-only `list` is tighter than allowlisting a path --
+    there is no path the run should be adding.
+
+    Tokenized, and walks git's global options first, so `git -C /elsewhere
+    worktree add` is seen rather than pattern-dodged.
+    """
+    try:
+        toks = shlex.split(cmd or "")
+    except ValueError:
+        toks = (cmd or "").split()
+    for i, tok in enumerate(toks):
+        if os.path.basename(tok) != "git":
+            continue
+        j = i + 1
+        while j < len(toks):
+            t = toks[j]
+            if t in ("-C", "-c", "--git-dir", "--work-tree", "--namespace",
+                     "--exec-path", "--config-env"):
+                j += 2
+                continue
+            if t.startswith("-"):
+                j += 1
+                continue
+            break
+        if j < len(toks) and toks[j] == "worktree":
+            sub = toks[j + 1] if j + 1 < len(toks) else ""
+            if sub not in _WORKTREE_READONLY:
+                return True
+    return False
+
+
 # Ordered phases of the per-file pipeline.
 PHASES = ["PREFLIGHT", "TRIAGE", "VALIDATE", "GAP_AUDIT", "SECTIONS",
           "FILE_CLOSE", "ADVANCE", "FIXPOINT"]
@@ -268,6 +310,15 @@ def evaluate(tool_name, tool_input, state, armed=False, headless=False,
             "[SEQ-TEARDOWN] blocked: disarm/clear/stop is human-only. Keep "
             "going -- continue the pipeline. "
             "Details: docs/infrastructure/hook-codes.md#seq-teardown")
+
+    # The ONE repair worktree is operator-created; the run makes none.
+    if tool_name == "Bash" and _is_worktree_mutation(tool_input.get("command", "")):
+        return False, (
+            "[SEQ-WORKTREE] blocked: `git worktree` mutation is operator-only. "
+            "The run works in the PRIMARY worktree on main; the single repair "
+            "worktree is created interactively by a human. Read-only `git "
+            "worktree list` is allowed. "
+            "Details: docs/infrastructure/hook-codes.md#seq-worktree")
 
     # Codex WRITE is interactive-only (Option A, 2026-07-11). The unattended
     # run dispatches READ-ONLY reviews; a write-capable Codex mutating the

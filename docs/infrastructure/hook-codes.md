@@ -67,6 +67,17 @@ is separately pinned read-only in `codex-companion.mjs`, and
 `codex_review_completed.py` firewalls a write dispatch out of the review
 receipt state so it can never satisfy or queue a review gate.
 
+### SEQ-WORKTREE
+
+**Emitted by:** `run_phase_guard.py` (PreToolUse Bash), unattended run only.
+
+**Means:** the run attempted a mutating `git worktree` subcommand (`add`, `remove`, `move`, `prune`, `lock`, ...). Read-only `git worktree list` is allowed.
+
+**Why:** the run executes the PRIMARY worktree on `main` and has no legitimate reason to create another. The ONE sanctioned repair worktree exists so an operator can fix the control plane WITHOUT sharing the run's tree, index and `build/` -- the collision class measured on 2026-07-31 (four refused rollovers, one swept index, one invalidated smoke receipt in a single evening). It is created interactively by a human, where this guard is inert. Letting the run add worktrees of its own would reintroduce exactly the ambiguity the single-worktree rule removes, and a worktree the operator did not create is one nobody is watching.
+
+**What to do:** nothing -- continue the pipeline in the primary worktree. If a change genuinely seems to need an isolated checkout, that is an operator decision: file it in the newest `todo/overnight-runner-improvements/` capture file and advance.
+
+
 ## CACHE-* (agent_result_cache.py)
 
 ### CACHE-HIT
