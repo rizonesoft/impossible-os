@@ -99,7 +99,7 @@ title: "TODO-04 -- User-Mode Test Framework"
 | ⭐   |  39   | Executable identity for a planned entry             | §35                           |  [x]   |
 | 💎   |  40   | Producer-side capture emission budget               | §33, §36                      |  [x]   |
 | 💎   |  41   | Post-ship follow-up backfill (2026-07-31 cohort)    | --                            |  [/]   |
-| 💎   |  42   | Structural reap-grace assertions (no wall-clock margin) | §34                      |  [ ]   |
+| 💎   |  42   | Structural reap-grace assertions (no wall-clock margin) | §34                      |  [x]   |
 | 💎   |  43   | Distinguishable identity kind for aggregate refusals | §35, §37                     |  [ ]   |
 | 💎   |  44   | Close the residual completeness gaps §37's review found | §37                       |  [ ]   |
 | ⭐   |  45   | Reader leases for a resolved generation             | §38                           |  [ ]   |
@@ -1712,13 +1712,26 @@ The four zero-grace regressions in `scripts/test-tooling.sh` (`a zero grace ('0'
 > [!NOTE]
 > Observed live 2026-07-31 during §37's fix loop, TWICE and on DIFFERENT assertions: first `.0` with `elapsed=3: state=reaped elapsed=3`, then `utest_reap_qemu force-ends a SIGTERM-resistant VM on a deadline` in a later run -- each passing on the immediately following run with no code change in between. Two distinct members of the same group failing the same way is why the second item below is a sweep rather than a fix to the four zero-grace cases alone. Filed rather than fixed inline because it belongs to §34's QEMU reap work, not to §37's classification work, and a timing-bound test wants a structural replacement rather than a widened bound -- widening `>= 4` to `>= 3` would make the assertion accept the instant kill it exists to detect. A dated hazard line is in `.claude/state/live-gotchas.md` until this ships.
 
-- [ ] Replace the elapsed-seconds bound with a structural invariant that cannot be shed by truncation
-      The assertion's real claim is "the zero grace was REJECTED and the default substituted", which the code can state directly -- e.g. have the reap path expose the grace it resolved (or observe the SIGTERM-to-SIGKILL gap from the recorded signal log rather than from `$SECONDS`), so the test reads a decision rather than a duration -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §34 (item: "Commit: `\"test: detect and reap orphaned QEMU processes before a run\"`")
-- [ ] Sweep the sibling reap regressions in the same group for the same shape, and state the bound each one actually needs
-      The escalation and cancel tests around it read signal LOGS rather than clocks and are sound; the sweep is to confirm no other assertion in the group depends on a wall-clock margin, so the fix does not leave one flaky case behind while claiming the class is closed
-- [ ] Commit: `"test: assert the reap-grace decision structurally instead of by wall-clock margin"`
+- [x] Replace the elapsed-seconds bound with a structural invariant that cannot be shed by truncation
+      Every reap assertion now reads a DECISION the code recorded, never a duration. `utest_reap_qemu` publishes `UTEST_REAP_GRACE_RESOLVED` (`scripts/test.sh`), which the eight zero-grace and bad-grace cases assert as `resolved=5`; the deadline cases wrap `kill` and `sleep` in the extracted subshell so the watchdog's own arm/completion/escalation records are observable -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §34 (item: "Commit: `\"test: detect and reap orphaned QEMU processes before a run\"`")
+      - `force-ends a SIGTERM-resistant VM on a deadline` traded `elapsed >= 2 && elapsed < 15` for `sleep-begin 2` + `sleep-end 2 rc=0` + `kill -9 <pid>`: the watchdog armed on the CONFIGURED grace, that delay ran to completion, and the escalation hit the right target. The exit status is the code's own cancellation discriminator (`sleep "$grace" || exit 0`), so the test reads the same fact the implementation branches on.
+      - Strictly stronger than what it replaced, and measured: a mutant whose deadline ignores `UTEST_REAP_GRACE` and hardcodes 7 is now caught, where `elapsed >= 2 && elapsed < 15` accepted it.
+- [x] Sweep the sibling reap regressions in the same group for the same shape, and state the bound each one actually needs
+      Swept all 13 assertions in the group. Eight (zero-grace x4, bad-grace x4) already read `resolved=5`; the cancel and escalation pair already read the signal log; the 120s clamp reads its warning message, and stays that way because it runs the reap in a BACKGROUND subshell where `UTEST_REAP_GRACE_RESOLVED` cannot be read back. Two needed work, and one of those was worse than flaky.
+      - `an already-exited VM is reaped immediately, not after the grace` was NOT a flaky assertion but a VACUOUS one: `sleep 0 &` + `sleep 1` leaves the pid GONE rather than a zombie, so `kill -0` fails at the top of `utest_reap_qemu` and control falls to the already-collected tail path, which arms no watchdog at all. There was no timer for `elapsed < 5` to be prompt about; it would have passed against any implementation. Split into two honest cases: the tail path (exactly the two internal `kill -0` probes, bound to our pid, and nothing else signalled) and a new live-at-entry case.
+      - The new `a VM that exits on SIGTERM is reaped without waiting out the grace` covers the path the old NAME claimed. It uses a 100-second grace inside a 30-second bound, so returning at all is arithmetically incompatible with having waited -- causal rather than inferred, with no clock and no race.
+      - The sweep also found a fail-OPEN detector outside the reap group and fixed it: the host `grep` is ugrep, whose exit status under `-v` does not follow the GNU rule, so `grep -qv` at the Makefile print-channel contract check reported the contract intact while an off-shape record sat in the file. Both that site and the new tail-path assertion now compare COUNTS. A gotcha line records the hazard repo-wide.
+- [x] Commit: `"test: assert the reap-grace decision structurally instead of by wall-clock margin"`
 
-**Test checkpoint:** the four zero-grace regressions pass 20 consecutive runs of `bash scripts/test-tooling.sh` on a host under parallel build load, and an artificially instant grace (the behaviour they exist to catch) still fails them. Test on: host tooling only (no QEMU dependency).
+**Test checkpoint:** every assertion in the reap group is satisfied by recorded evidence rather than elapsed time, and each new one is MUTATION-PROVEN: a deadline that ignores the configured grace, a neutered cancellation that parks for the full grace, a tail path that signals a released pid, and a tail path that skips its own probes are each rejected, while the unmodified function passes. `bash scripts/test-tooling.sh` reports 1042/1042. Test on: host tooling only (no QEMU dependency).
+
+> **Test runner:** `bash scripts/overnight/run-artifact.sh <label> -- bash scripts/test-tooling.sh` -- expect `PASS 1042/1042 tooling tests passed`; the reap group is 13 assertions under the `test.sh: utest_reap_qemu` / `test.sh: a zero grace` / `test.sh: an invalid reap grace` names.
+
+> **Notes:**
+> - Shipped: the last two wall-clock bounds in `scripts/test-tooling.sh` now read observed watchdog records, the vacuous already-exited case split into two honest ones, and a fail-open `grep -qv` detector counted instead.
+> - Integrates via `kill`/`sleep` wrappers in the subshells that already extract `utest_reap_qemu`; both delegate to the real thing, so they observe without altering behaviour. `scripts/test.sh` is unchanged.
+> - Downstream: the suite gained one assertion (1041 -> 1042) and the group no longer reds on a loaded host; a new gotcha records the repo-wide ugrep `-v` exit-status hazard.
+> - Scope boundary: the kernel half of the original section (ring-3 entry evidence, per-child loader flags) is §50 and is untouched here.
 
 ---
 
