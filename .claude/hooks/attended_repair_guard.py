@@ -52,6 +52,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -69,9 +70,40 @@ def _repo_root() -> str:
     return os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
 
 
+def _canonical_run_root() -> str:
+    """The PRIMARY worktree, which is where the run always lives.
+
+    Required once a second worktree exists (2026-07-31). `.claude/state/*` is
+    gitignored and therefore PER-WORKTREE, so an operator session working from
+    a repair worktree would find no `sequencer-run.json` in its own root, this
+    guard would silently conclude "no run is active", and it would go inert
+    exactly when it is needed. Resolving the primary worktree instead keeps the
+    guard bound to the run wherever the operator happens to be standing.
+
+    `--git-common-dir` is the shared `.git` of the primary worktree (a linked
+    worktree's own `.git` is a FILE pointing there), so its parent is the
+    primary checkout. Falls back to this root on any error -- the pre-worktree
+    behaviour, which is correct when there is only one worktree.
+    """
+    try:
+        out = subprocess.run(
+            ["git", "-C", _repo_root(), "rev-parse", "--path-format=absolute",
+             "--git-common-dir"],
+            capture_output=True, text=True, timeout=5)
+        common = (out.stdout or "").strip()
+        if out.returncode == 0 and common:
+            root = os.path.dirname(common.rstrip("/"))
+            if root and os.path.isdir(root):
+                return root
+    except Exception:
+        pass
+    return _repo_root()
+
+
 def _run_state() -> dict | None:
     """The live run's phase-guard state, or None when no run is active."""
-    p = os.path.join(_repo_root(), ".claude", "state", "sequencer-run.json")
+    p = os.path.join(_canonical_run_root(), ".claude", "state",
+                     "sequencer-run.json")
     try:
         with open(p, "r", encoding="utf-8") as fh:
             d = json.load(fh)
