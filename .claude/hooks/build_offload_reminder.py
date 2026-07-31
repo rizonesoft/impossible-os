@@ -344,9 +344,23 @@ def _match_suite_invocation(cmd: str):
             return _Hit(hit)
     return None
 
+# `{matched}` carries the SEGMENT the matcher actually fired on, not just the
+# script name. WHY (2026-07-31): a run filed this hook for blocking a heredoc
+# whose body merely mentions the build script in prose. Three of the four cited
+# blocks turned out to be genuine bare builds ("... and rebuild"); the fourth
+# could not be judged either way, because the message named only `scripts/build.sh`
+# and the run log clips the command -- so there was no way to tell a real
+# invocation from a prose mention after the fact. Seven candidate prose shapes
+# were tested against this hook and NONE reproduced a false block, so the
+# matching is not being changed on unreproducible evidence; what is being fixed
+# is the observability gap that made the report unfalsifiable. Same lesson as
+# the R4 defect, which hid for three sections because nothing recorded what the
+# gate matched.
 _MSG = (
     "[build-offload BLOCK -- reroute] Overnight SECTIONS phase ran `{script}` "
-    "BARE in the MAIN context. Re-issue it through the DETERMINISTIC "
+    "BARE in the MAIN context (matched segment: `{matched}`). If that segment "
+    "is NOT a real invocation (e.g. prose inside a heredoc body), this is a "
+    "false positive worth filing WITH the segment text. Re-issue it through the DETERMINISTIC "
     "wrapper (NO model): `bash scripts/overnight/run-artifact.sh <label> -- "
     "{script}` returns a compact JSON envelope (verdict + error lines + "
     "artifact path) and tees full output to disk; you quote the tail "
@@ -563,7 +577,10 @@ def main() -> int:
             _offload_log.log_event(root, "fire", "build_offload_reminder", m.group(0))
         except Exception:
             pass
-    sys.stderr.write(_MSG.format(script=m.group(0)) + "\n")
+    _seg = (m.string[max(0, m.start() - 20):m.end() + 40]
+            if getattr(m, "string", None) else m.group(0))
+    _seg = " ".join(_seg.split())[:120]
+    sys.stderr.write(_MSG.format(script=m.group(0), matched=_seg) + "\n")
     return 2
 
 
