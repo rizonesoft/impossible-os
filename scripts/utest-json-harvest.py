@@ -627,6 +627,17 @@ def harvest(log_path, out_path):
             case["captured_retained_bytes"] = entry.get("retained_bytes", 0)
             case["captured_truncated"] = bool(entry.get("truncated"))
             case["captured_truncated_bytes"] = entry.get("truncated_bytes", 0)
+            # The producer's own emission budget, carried as its own pair of
+            # fields rather than folded into captured_truncated: that flag is
+            # paired with an EXACT captured_truncated_bytes count, and a binary
+            # the kernel stopped wrote an unknown number of further bytes that
+            # never reached this host at all. Both artifacts must describe the
+            # same event the same way, so this mirrors the XML's
+            # capture.budget_stop property rather than inventing a third shape.
+            case["captured_budget_stop"] = bool(entry.get("budget_stop"))
+            if entry.get("budget_stop"):
+                case["captured_budget_scope"] = entry.get("budget_scope", "")
+                case["captured_budget_limit"] = entry.get("budget_limit", 0)
 
     _write_atomic(out_path, {
         "schema": SCHEMA,

@@ -148,6 +148,20 @@ uint32_t test_usermode_frame_tag_cap(void);
 int test_usermode_capture_escape(const char *raw, uint32_t raw_len,
                                  char *out, uint32_t out_cap);
 uint32_t test_usermode_capture_chunk_max(void);
+int test_usermode_capture_decide(uint32_t owner_seq, uint32_t run_records,
+                                 int owner_stopped, int run_over);
+int test_usermode_capture_apply(uint32_t *owner_seq, uint32_t *run_records,
+                                int *owner_stopped, int *run_over,
+                                uint32_t *seq_out, uint32_t *charged_out);
+void test_usermode_capture_run_state_get(uint32_t *records, int *over);
+void test_usermode_capture_run_state_set(uint32_t records, int over);
+uint32_t test_usermode_capture_owner_budget(void);
+uint32_t test_usermode_capture_run_budget(void);
+uint32_t test_usermode_capture_wire_max(void);
+uint32_t test_usermode_capture_owner_wire_allowance(void);
+uint32_t test_usermode_capture_run_wire_allowance(void);
+uint32_t test_usermode_capture_owner_raw_max(void);
+uint32_t test_usermode_capture_run_raw_max(void);
 int test_usermode_format_report_summary(char *dst, uint32_t cap,
                                         uint32_t a_pass, uint32_t a_fail,
                                         uint32_t blocks, uint32_t records,
@@ -1072,6 +1086,32 @@ static int u_test_contains(const char *hay, const char *needle)
             return 1;
     }
     return needle[0] ? 0 : 1;
+}
+
+/* Reads the decimal value of a `<key>=<digits>` field out of a formatted
+ * record. Lets an assertion pin a record's EXACT numeric fields instead of
+ * only its shape -- a marker carrying the wrong seq or limit still contains
+ * every substring a `contains` check looks for, while failing the equality
+ * the host actually reconciles against. Returns UINT32_MAX when the key is
+ * absent or carries no digits, so a missing field fails loudly rather than
+ * reading as zero. Pass the key WITH its separators (" seq="). */
+static uint32_t u_test_field_u32(const char *msg, const char *key)
+{
+    uint32_t i, j, value = 0;
+    int digits = 0;
+
+    for (i = 0; msg[i]; i++) {
+        for (j = 0; key[j] && msg[i + j] == key[j]; j++)
+            ;
+        if (key[j])
+            continue;
+        for (i += j; msg[i] >= '0' && msg[i] <= '9'; i++) {
+            value = value * 10u + (uint32_t)(msg[i] - '0');
+            digits++;
+        }
+        return digits ? value : 0xFFFFFFFFu;
+    }
+    return 0xFFFFFFFFu;
 }
 
 static void test_worst_case_record_fits_at_the_derived_bound(void)
@@ -3173,6 +3213,350 @@ static void test_capture_chunk_max_is_positive_and_bounded(void)
                 "the per-write staging buffer");
 }
 
+/* ---- Producer-side emission budget ----------------------------------- *
+ *
+ * The budget's arithmetic is pinned by _Static_asserts in test_usermode.c.
+ * These tests deliberately assert what those asserts CANNOT: the state
+ * machine's behavior at each transition, and the two derivation intents
+ * (an honest binary is never clipped; the budget is the TIGHT count for
+ * that, not a generous round number) which the build-time asserts do not
+ * express and a future retune could satisfy while destroying. */
+
+static void test_capture_budget_permits_up_to_the_owner_limit(void)
+{
+    uint32_t budget = test_usermode_capture_owner_budget();
+
+    TEST_ASSERT_EQ((uint32_t)test_usermode_capture_decide(0u, 0u, 0, 0),
+                   (uint32_t)UTEST_CAP_EMIT,
+                   "a fresh owner's first record is charged, not refused");
+    TEST_ASSERT_EQ((uint32_t)test_usermode_capture_decide(budget - 1u, 0u, 0, 0),
+                   (uint32_t)UTEST_CAP_EMIT,
+                   "the LAST record inside the budget must still be emitted -- "
+                   "an off-by-one here silently clips one honest record");
+    TEST_ASSERT_EQ((uint32_t)test_usermode_capture_decide(budget, 0u, 0, 0),
+                   (uint32_t)UTEST_CAP_OVER_OWNER,
+                   "the claim that finds the counter AT the limit is the one "
+                   "that terminates the owner");
+}
+
+/* The host demands over.seq == limit for an owner-scope stop, which only
+ * holds because the verdict flips at EXACTLY the budget. A latch that
+ * somehow missed would still never re-open the stream into EMIT. */
+static void test_capture_budget_never_reopens_past_the_limit(void)
+{
+    uint32_t budget = test_usermode_capture_owner_budget();
+
+    TEST_ASSERT_EQ((uint32_t)test_usermode_capture_decide(budget + 1u, 0u, 0, 0),
+                   (uint32_t)UTEST_CAP_OVER_OWNER,
+                   "a counter already past the limit must never resolve to "
+                   "EMIT, whatever moved it there");
+    TEST_ASSERT_EQ((uint32_t)test_usermode_capture_decide(0xFFFFFFFFu, 0u, 0, 0),
+                   (uint32_t)UTEST_CAP_OVER_OWNER,
+                   "a saturated sequence counter still refuses rather than "
+                   "wrapping into a fresh budget");
+}
+
+/* A latched owner emits NOTHING further -- not even a second terminator.
+ * The host refuses a duplicate marker, so a second one would turn a
+ * correctly bounded run red. */
+static void test_capture_budget_latched_owner_drops_everything(void)
+{
+    uint32_t budget = test_usermode_capture_owner_budget();
+    uint32_t run_budget = test_usermode_capture_run_budget();
+
+    TEST_ASSERT_EQ((uint32_t)test_usermode_capture_decide(0u, 0u, 1, 0),
+                   (uint32_t)UTEST_CAP_DROP,
+                   "a latched owner drops even a record that would otherwise "
+                   "have been well inside every budget");
+    TEST_ASSERT_EQ((uint32_t)test_usermode_capture_decide(budget, run_budget, 1, 1),
+                   (uint32_t)UTEST_CAP_DROP,
+                   "the latch wins over both exhausted budgets -- exactly one "
+                   "terminator per owner, never a second");
+}
+
+/* Scope attribution: a binary that exhausted its OWN budget must be
+ * reported against its own limit even when the run is also exhausted, or
+ * the host's owner-scope equality check would be applied to a run stop. */
+static void test_capture_budget_owner_scope_wins_over_run(void)
+{
+    uint32_t budget = test_usermode_capture_owner_budget();
+    uint32_t run_budget = test_usermode_capture_run_budget();
+
+    TEST_ASSERT_EQ((uint32_t)test_usermode_capture_decide(budget, run_budget, 0, 0),
+                   (uint32_t)UTEST_CAP_OVER_OWNER,
+                   "an owner over its own budget is an owner-scope stop even "
+                   "when the aggregate is exhausted too");
+    TEST_ASSERT_EQ((uint32_t)test_usermode_capture_decide(0u, run_budget, 0, 0),
+                   (uint32_t)UTEST_CAP_OVER_RUN,
+                   "an owner well inside its own budget stopped by the "
+                   "aggregate is a run-scope stop");
+    TEST_ASSERT_EQ((uint32_t)test_usermode_capture_decide(0u, 0u, 0, 1),
+                   (uint32_t)UTEST_CAP_OVER_RUN,
+                   "the latched run stop terminates later owners without "
+                   "re-deciding against the charge count");
+}
+
+/* ---- The claim's state TRANSITION ----------------------------------- *
+ *
+ * The decision helper above says what SHOULD happen; these drive what
+ * actually changes. Every host invariant rests on this half: charge the
+ * run only for a chunk, latch on both stops, consume a sequence number for
+ * every record and for nothing else. A regression in any of them leaves
+ * the decision-level assertions above completely green. */
+
+static void test_capture_claim_charges_the_run_only_for_a_chunk(void)
+{
+    uint32_t seq = 0, run = 0, drawn = 0, charged = 0;
+    int stopped = 0, over = 0;
+    uint32_t budget = test_usermode_capture_owner_budget();
+
+    TEST_ASSERT_EQ((uint32_t)test_usermode_capture_apply(&seq, &run, &stopped,
+                                                         &over, &drawn, &charged),
+                   (uint32_t)UTEST_CAP_EMIT, "a fresh claim emits");
+    TEST_ASSERT_EQ(drawn, 0u, "the first chunk is drawn at seq 0");
+    TEST_ASSERT_EQ(seq, 1u, "an emitted chunk consumes its sequence number");
+    TEST_ASSERT_EQ(run, 1u, "and charges the run exactly once");
+    TEST_ASSERT_EQ(charged, 1u, "the reported charge is the post-charge total");
+
+    /* The terminator consumes a seq (that is what makes it the highest)
+     * but must NOT charge the run: the run allowance reserves marker
+     * traffic separately, and charging here would make the host's
+     * observed-chunks == limit equality unsatisfiable. */
+    seq = budget;
+    run = 5u;
+    stopped = 0;
+    TEST_ASSERT_EQ((uint32_t)test_usermode_capture_apply(&seq, &run, &stopped,
+                                                         &over, &drawn, &charged),
+                   (uint32_t)UTEST_CAP_OVER_OWNER, "at the limit it terminates");
+    TEST_ASSERT_EQ(drawn, budget, "the terminator is drawn AT the limit, "
+                                  "which is the equality the host demands");
+    TEST_ASSERT_EQ(seq, budget + 1u, "the terminator consumes its sequence "
+                                     "number so it is the stream's highest");
+    TEST_ASSERT_EQ(run, 5u, "a terminator must never charge the run budget");
+    TEST_ASSERT_EQ((uint32_t)stopped, 1u, "and it latches the owner");
+}
+
+static void test_capture_claim_latches_and_then_consumes_nothing(void)
+{
+    uint32_t seq = 4u, run = 9u, drawn = 0, charged = 0;
+    int stopped = 1, over = 0;
+
+    TEST_ASSERT_EQ((uint32_t)test_usermode_capture_apply(&seq, &run, &stopped,
+                                                         &over, &drawn, &charged),
+                   (uint32_t)UTEST_CAP_DROP, "a latched owner drops");
+    TEST_ASSERT_EQ(seq, 4u, "a DROP must consume NO sequence number -- one "
+                            "spent here is a hole the host reads as lost output");
+    TEST_ASSERT_EQ(run, 9u, "and must not charge the run");
+    TEST_ASSERT_EQ((uint32_t)stopped, 1u, "the latch stays set");
+}
+
+static void test_capture_claim_run_stop_latches_both(void)
+{
+    uint32_t run_budget = test_usermode_capture_run_budget();
+    uint32_t seq = 3u, run = run_budget, drawn = 0, charged = 0;
+    int stopped = 0, over = 0;
+
+    TEST_ASSERT_EQ((uint32_t)test_usermode_capture_apply(&seq, &run, &stopped,
+                                                         &over, &drawn, &charged),
+                   (uint32_t)UTEST_CAP_OVER_RUN, "an exhausted run terminates");
+    TEST_ASSERT_EQ((uint32_t)over, 1u, "the run latch is set so LATER owners "
+                                       "stop without re-deciding");
+    TEST_ASSERT_EQ((uint32_t)stopped, 1u, "and this owner is latched too");
+    TEST_ASSERT_EQ(seq, 4u, "the run terminator consumes a sequence number");
+    TEST_ASSERT_EQ(run, run_budget, "but charges nothing further");
+    TEST_ASSERT_EQ(charged, run_budget,
+                   "and reports the aggregate frozen AT the limit -- the host "
+                   "requires charged == limit for a run-scope marker");
+
+    /* A SECOND owner meeting the latch takes the same branch, and its own
+     * marker must report the identical frozen aggregate: the host refuses
+     * run-scope markers that disagree. */
+    seq = 0u;
+    stopped = 0;
+    TEST_ASSERT_EQ((uint32_t)test_usermode_capture_apply(&seq, &run, &stopped,
+                                                         &over, &drawn, &charged),
+                   (uint32_t)UTEST_CAP_OVER_RUN, "a later owner meets the latch");
+    TEST_ASSERT_EQ(charged, run_budget,
+                   "every run-scope marker in one run reports the same frozen "
+                   "aggregate, or the host refuses them as a limit conflict");
+}
+
+/* ---- The EMISSION seam ---------------------------------------------- *
+ *
+ * The transition tests above prove the arithmetic and the state changes;
+ * nothing yet proves the switch that turns a verdict into an actual wire
+ * record. A wrong scope/limit/charged field, a missing marker, or an
+ * emission that keeps going after the latch would leave every assertion
+ * above green while defeating the whole feature. This drives the REAL
+ * emitter -- test_usermode_capture_start/_byte/_end on a live ctx -- and
+ * reads the records back out of the klog ring.
+ *
+ * Reaching the budget honestly would take 1425 records of serial, so the
+ * counters are seeded one short of it instead -- BOTH of them. Seeding only
+ * the owner's sequence would leave the terminator reporting a `charged`
+ * value the real single-owner path can never produce (every one of those
+ * 1425 chunks also charged the run), so the probe would assert a marker
+ * shape the host would never actually receive. The run accounting is
+ * snapshotted and restored around the probe for the same reason: it is
+ * global state, and a test that charges it without putting it back makes
+ * every later capture test order-dependent. */
+static void test_capture_emits_exactly_one_owner_marker_then_stops(void)
+{
+    struct task *self = task_current();
+    struct utest_capture_ctx ctx;
+    uint8_t  saved_active;
+    uint32_t saved_owner;
+    int32_t  saved_seq;
+    uint8_t  saved_stopped;
+    uint32_t saved_run_records;
+    int      saved_run_over;
+    uint32_t count_before, count_after, head;
+    uint32_t budget = test_usermode_capture_owner_budget();
+    const klog_entry_t *ring;
+    const klog_entry_t *last;
+
+    if (!self) {
+        TEST_SKIP("no current task available in this test context");
+        return;
+    }
+    saved_active  = self->utest_capture_active;
+    saved_owner   = self->utest_capture_owner_pid;
+    saved_seq     = atomic_read(&self->utest_capture_seq);
+    saved_stopped = self->utest_capture_stopped;
+    test_usermode_capture_run_state_get(&saved_run_records, &saved_run_over);
+
+    self->utest_capture_active = 1;
+    self->utest_capture_owner_pid = self->pid;
+    self->utest_capture_stopped = 0;
+    /* One record short of the budget: the next write is the last permitted
+     * chunk, and the one after it must be the terminator. */
+    atomic_set(&self->utest_capture_seq, (int32_t)(budget - 1u));
+    /* The run aggregate a real single-owner run would be carrying here. */
+    test_usermode_capture_run_state_set(budget - 1u, 0);
+
+    test_usermode_capture_start(&ctx);
+    (void)test_usermode_capture_byte(&ctx, 'x');
+    (void)klog_get_ring(&count_before, &head);
+    test_usermode_capture_end(&ctx);
+    ring = klog_get_ring(&count_after, &head);
+    last = &ring[(head + KLOG_RING_SIZE - 1u) % KLOG_RING_SIZE];
+
+    TEST_ASSERT_EQ((uint64_t)(count_after - count_before), 1u,
+                   "the last permitted write still emits its chunk");
+    TEST_ASSERT(u_test_contains(last->message, "[UTEST-CAPTURE]"),
+                "and it is an ordinary chunk record, not a marker");
+
+    /* The NEXT write crosses the budget: exactly one terminator, carrying
+     * the owner scope and the limit the host checks for equality. */
+    test_usermode_capture_start(&ctx);
+    (void)test_usermode_capture_byte(&ctx, 'y');
+    (void)klog_get_ring(&count_before, &head);
+    test_usermode_capture_end(&ctx);
+    ring = klog_get_ring(&count_after, &head);
+    last = &ring[(head + KLOG_RING_SIZE - 1u) % KLOG_RING_SIZE];
+
+    TEST_ASSERT_EQ((uint64_t)(count_after - count_before), 1u,
+                   "crossing the budget emits exactly ONE record");
+    TEST_ASSERT(u_test_contains(last->message, "[UTEST-CAPTURE-OVER]"),
+                "and that record is the overflow terminator, not a chunk");
+    TEST_ASSERT(u_test_contains(last->message, "scope=owner"),
+                "an owner exhausting its OWN budget is an owner-scope stop");
+    /* The exact numeric fields the host reconciles against: it demands
+     * seq == limit for an owner-scope stop and charged >= that owner's own
+     * chunk count, so a marker carrying the wrong ones fails a real run
+     * while every structural assertion above still passes. */
+    TEST_ASSERT_EQ(u_test_field_u32(last->message, " seq="), budget,
+                   "the terminator is drawn AT the budget, which is the "
+                   "equality the host checks for an owner-scope stop");
+    TEST_ASSERT_EQ(u_test_field_u32(last->message, " limit="), budget,
+                   "and declares the same limit it stopped at");
+    TEST_ASSERT_EQ(u_test_field_u32(last->message, " charged="), budget,
+                   "and reports the run aggregate a real single-owner run "
+                   "would be carrying, not a value only a seeded test sees");
+    TEST_ASSERT_EQ((uint32_t)self->utest_capture_stopped, 1u,
+                   "and the owner is latched by the real emitter, not just "
+                   "by the pure transition");
+
+    /* A THIRD write must produce nothing at all: the host refuses a second
+     * marker, so an emitter that kept going would turn a correctly bounded
+     * run red. */
+    test_usermode_capture_start(&ctx);
+    (void)test_usermode_capture_byte(&ctx, 'z');
+    (void)klog_get_ring(&count_before, &head);
+    test_usermode_capture_end(&ctx);
+    (void)klog_get_ring(&count_after, &head);
+
+    TEST_ASSERT_EQ((uint64_t)(count_after - count_before), 0u,
+                   "a latched owner emits NOTHING further -- not a chunk, "
+                   "and above all not a second terminator");
+
+    self->utest_capture_active = saved_active;
+    self->utest_capture_owner_pid = saved_owner;
+    atomic_set(&self->utest_capture_seq, saved_seq);
+    self->utest_capture_stopped = saved_stopped;
+    test_usermode_capture_run_state_set(saved_run_records, saved_run_over);
+}
+
+/* The derivation's PURPOSE: a binary that fills every chunk must be able
+ * to spend its whole declared raw allowance. The build-time assert proves
+ * the wire cost fits; only this proves the payload does. */
+static void test_capture_owner_budget_covers_its_raw_allowance(void)
+{
+    uint32_t budget = test_usermode_capture_owner_budget();
+    uint32_t chunk = test_usermode_capture_chunk_max();
+    uint32_t raw_max = test_usermode_capture_owner_raw_max();
+
+    TEST_ASSERT(budget * chunk >= raw_max,
+                "the per-owner record budget must carry the whole per-owner "
+                "raw allowance at worst-case chunk fill, or an honest binary "
+                "is clipped below what a consumer would have retained");
+    TEST_ASSERT((budget - 1u) * chunk < raw_max,
+                "and it must be the TIGHT count for that: a budget larger "
+                "than the ceiling division buys wire time no consumer keeps");
+}
+
+static void test_capture_run_budget_covers_owner_and_run_allowance(void)
+{
+    uint32_t run_budget = test_usermode_capture_run_budget();
+    uint32_t owner_budget = test_usermode_capture_owner_budget();
+    uint32_t chunk = test_usermode_capture_chunk_max();
+    uint32_t run_raw = test_usermode_capture_run_raw_max();
+
+    TEST_ASSERT(run_budget >= owner_budget,
+                "a run ceiling below the per-binary one would turn an "
+                "aggregate abuse stop into a truncation of the first honest "
+                "binary to run");
+    TEST_ASSERT(run_budget * chunk >= run_raw,
+                "the run budget must carry the whole run raw allowance at "
+                "worst-case chunk fill");
+    TEST_ASSERT((run_budget - 1u) * chunk < run_raw,
+                "and must be the tight count for it");
+}
+
+/* The wire model is the reason the budgets bound anything. It must
+ * dominate the plain-path cost the skip markers use (capture records take
+ * klog's color branch, which is more expensive), and both allowances must
+ * hold their own worst case. */
+static void test_capture_wire_model_bounds_both_allowances(void)
+{
+    uint32_t wire = test_usermode_capture_wire_max();
+    uint32_t owner_budget = test_usermode_capture_owner_budget();
+    uint32_t run_budget = test_usermode_capture_run_budget();
+
+    TEST_ASSERT(wire > test_usermode_json_line_max(),
+                "one record's WIRE cost must exceed the record's own text "
+                "bound -- a model that lost klog's framing would under-count "
+                "every budget derived from it");
+    TEST_ASSERT((owner_budget + 1u) * wire <=
+                    test_usermode_capture_owner_wire_allowance(),
+                "the per-owner burst plus its own terminator must fit the "
+                "per-owner serialized-byte allowance");
+    TEST_ASSERT(run_budget * wire <=
+                    test_usermode_capture_run_wire_allowance(),
+                "the run-wide burst must fit the run allowance with room "
+                "left for the per-owner terminators it reserves");
+}
+
 /* The kernel test suite itself runs as an ordinary task, never spawned
  * through task_create_captured -- so its capture_active is the same
  * zeroed baseline every constructor gives a fresh slot. This proves the
@@ -3235,6 +3619,7 @@ static void test_capture_byte_and_flush_produce_the_wire_record(void)
     uint8_t  saved_active;
     uint32_t saved_owner;
     int32_t  saved_seq;
+    uint8_t  saved_stopped;
     uint32_t count, head;
     const klog_entry_t *ring;
     const klog_entry_t *last;
@@ -3246,6 +3631,11 @@ static void test_capture_byte_and_flush_produce_the_wire_record(void)
     saved_active = self->utest_capture_active;
     saved_owner  = self->utest_capture_owner_pid;
     saved_seq    = atomic_read(&self->utest_capture_seq);
+    /* The emission-budget latch is restored with the rest of the capture
+     * state: a test that ever ran the owner past its budget would otherwise
+     * leave this task permanently latched for every later emitter. */
+    saved_stopped = self->utest_capture_stopped;
+    self->utest_capture_stopped = 0;
 
     self->utest_capture_active = 1;
     self->utest_capture_owner_pid = self->pid;
@@ -3275,6 +3665,7 @@ static void test_capture_byte_and_flush_produce_the_wire_record(void)
     self->utest_capture_active = saved_active;
     self->utest_capture_owner_pid = saved_owner;
     atomic_set(&self->utest_capture_seq, saved_seq);
+    self->utest_capture_stopped = saved_stopped;
 }
 
 /* Regression for TWO adversarial-round-found bugs at the exact chunk
@@ -3295,6 +3686,7 @@ static void test_capture_exact_chunk_boundary_emits_one_final_record(void)
     uint8_t  saved_active;
     uint32_t saved_owner;
     int32_t  saved_seq;
+    uint8_t  saved_stopped;
     uint32_t count_before, count_after, head;
     uint32_t chunk_max = test_usermode_capture_chunk_max();
     uint32_t i;
@@ -3308,6 +3700,11 @@ static void test_capture_exact_chunk_boundary_emits_one_final_record(void)
     saved_active = self->utest_capture_active;
     saved_owner  = self->utest_capture_owner_pid;
     saved_seq    = atomic_read(&self->utest_capture_seq);
+    /* The emission-budget latch is restored with the rest of the capture
+     * state: a test that ever ran the owner past its budget would otherwise
+     * leave this task permanently latched for every later emitter. */
+    saved_stopped = self->utest_capture_stopped;
+    self->utest_capture_stopped = 0;
 
     self->utest_capture_active = 1;
     self->utest_capture_owner_pid = self->pid;
@@ -3340,6 +3737,7 @@ static void test_capture_exact_chunk_boundary_emits_one_final_record(void)
     self->utest_capture_active = saved_active;
     self->utest_capture_owner_pid = saved_owner;
     atomic_set(&self->utest_capture_seq, saved_seq);
+    self->utest_capture_stopped = saved_stopped;
 }
 
 /* One byte OVER the chunk boundary: the (chunk_max+1)-th byte's mid-loop
@@ -3355,6 +3753,7 @@ static void test_capture_chunk_boundary_plus_one_emits_two_records(void)
     uint8_t  saved_active;
     uint32_t saved_owner;
     int32_t  saved_seq;
+    uint8_t  saved_stopped;
     uint32_t count_before, count_after, head;
     uint32_t chunk_max = test_usermode_capture_chunk_max();
     uint32_t i;
@@ -3368,6 +3767,11 @@ static void test_capture_chunk_boundary_plus_one_emits_two_records(void)
     saved_active = self->utest_capture_active;
     saved_owner  = self->utest_capture_owner_pid;
     saved_seq    = atomic_read(&self->utest_capture_seq);
+    /* The emission-budget latch is restored with the rest of the capture
+     * state: a test that ever ran the owner past its budget would otherwise
+     * leave this task permanently latched for every later emitter. */
+    saved_stopped = self->utest_capture_stopped;
+    self->utest_capture_stopped = 0;
 
     self->utest_capture_active = 1;
     self->utest_capture_owner_pid = self->pid;
@@ -3395,6 +3799,7 @@ static void test_capture_chunk_boundary_plus_one_emits_two_records(void)
     self->utest_capture_active = saved_active;
     self->utest_capture_owner_pid = saved_owner;
     atomic_set(&self->utest_capture_seq, saved_seq);
+    self->utest_capture_stopped = saved_stopped;
 }
 
 /* A parent that is NOT itself captured (the common case: most tasks are
@@ -3907,6 +4312,39 @@ void test_register_usermode_launcher(void)
                             test_capture_escape_empty_input, TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: capture chunk size is positive and buffer-bounded",
                             test_capture_chunk_max_is_positive_and_bounded,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: capture budget permits up to the owner limit",
+                            test_capture_budget_permits_up_to_the_owner_limit,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: capture budget never reopens past the limit",
+                            test_capture_budget_never_reopens_past_the_limit,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: latched capture owner drops every later record",
+                            test_capture_budget_latched_owner_drops_everything,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: capture owner-scope stop outranks the run stop",
+                            test_capture_budget_owner_scope_wins_over_run,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: capture claim charges the run only for a chunk",
+                            test_capture_claim_charges_the_run_only_for_a_chunk,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: a latched capture claim consumes no sequence",
+                            test_capture_claim_latches_and_then_consumes_nothing,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: capture run stop latches run and owner alike",
+                            test_capture_claim_run_stop_latches_both,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: capture emits one owner marker then stops",
+                            test_capture_emits_exactly_one_owner_marker_then_stops,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: capture owner budget covers its raw allowance",
+                            test_capture_owner_budget_covers_its_raw_allowance,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: capture run budget covers owner + run allowance",
+                            test_capture_run_budget_covers_owner_and_run_allowance,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: capture wire model bounds both allowances",
+                            test_capture_wire_model_bounds_both_allowances,
                             TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: capture_byte is a no-op for an uncaptured task",
                             test_capture_byte_uncaptured_task_returns_zero,

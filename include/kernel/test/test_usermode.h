@@ -105,6 +105,19 @@ struct utest_capture_ctx {
     char     _buf[192];
 };
 
+/* What one claim on the capture wire resolved to -- the producer-side
+ * emission budget's verdict. Declared in the header rather than privately
+ * in test_usermode.c because the decision function is exported for unit
+ * test: a test comparing against bare 0/1/2/3 would pass just as happily
+ * after someone reordered the enum, which is the kind of assertion that
+ * verifies nothing. */
+enum utest_capture_verdict {
+    UTEST_CAP_EMIT = 0,       /* charge accepted: emit this chunk        */
+    UTEST_CAP_OVER_OWNER = 1, /* this owner just exhausted its budget    */
+    UTEST_CAP_OVER_RUN = 2,   /* the run-wide budget went first          */
+    UTEST_CAP_DROP = 3        /* already terminated: emit nothing        */
+};
+
 #ifdef KERNEL_TESTS
 
 /* Run every test_*.exe found at C:\ root sequentially and collect

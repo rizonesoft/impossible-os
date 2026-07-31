@@ -748,10 +748,17 @@ struct task {
      * the OPPOSITE of utest_report above, which is per-process and reset
      * on every constructor. utest_capture_seq is meaningful ONLY in the
      * OWNER's own slot (tasks[utest_capture_owner_pid]): every task in a
-     * fork tree sharing one owner increments THAT slot's counter via
-     * atomic_fetch_add rather than its own, giving an O(1) lock-free
-     * unique sequence number across the whole tree with no parentage
-     * walk.
+     * fork tree sharing one owner draws from THAT slot's counter rather
+     * than its own, giving an O(1) unique sequence number across the
+     * whole tree with no parentage walk.
+     *
+     * The draw is made under s_capture_budget_lock (test_usermode.c), not
+     * by a bare atomic_fetch_add as it was before the producer emission
+     * budget shipped: the sequence number, the budget verdict and the
+     * run-wide charge have to be ONE decision, or a descendant can draw a
+     * number after another CPU has already published the stream's
+     * terminator. It stays an atomic_t because readers outside that lock
+     * (tests, diagnostics) still load it without taking it.
      *
      * IT IS NOT A PHYSICAL-ORDER GUARANTEE. The values are unique and
      * monotonically ASSIGNED, but two tasks sharing one owner (a fork
@@ -790,6 +797,21 @@ struct task {
     uint8_t  utest_capture_active;
     uint32_t utest_capture_owner_pid;
     atomic_t utest_capture_seq;
+    /* Producer-side emission-budget latch. Like utest_capture_seq it is
+     * meaningful ONLY in the OWNER's slot, and like it, a fork descendant
+     * charges the OWNER's latch rather than its own. Once set, this owner
+     * has emitted its one [UTEST-CAPTURE-OVER] marker and every later
+     * chunk is dropped, so an abusive binary's wire cost stops growing.
+     *
+     * Plain uint8_t rather than atomic_t because it is read AND written
+     * only inside s_capture_budget_lock (test_usermode.c), together with
+     * the sequence draw and the run-wide charge. That is the whole point
+     * of the lock: latch, seq and charge are ONE linearized decision, so
+     * the marker is always the owner's highest emitted sequence number and
+     * no sequence number is ever consumed without a record reaching the
+     * wire. An atomic here would make each field individually safe and the
+     * DECISION still racy, which is the failure the lock exists to close. */
+    uint8_t  utest_capture_stopped;
 #endif
     /* --- User-mode section-view VA bump allocator ---
      * Per-task bump pointer for MapViewOfSection / sys_shmem_map. The
@@ -869,6 +891,11 @@ static inline void task_utest_capture_reset(struct task *t)
     t->utest_capture_active = 0;
     t->utest_capture_owner_pid = 0;
     atomic_set(&t->utest_capture_seq, 0);
+    /* Cleared for the same reason the sequence counter is: a recycled slot
+     * whose prior tenant had exhausted its budget would otherwise start
+     * already latched and emit nothing at all, which reaches the host as a
+     * binary that never wrote -- a silent false green, not a bounded stop. */
+    t->utest_capture_stopped = 0;
 }
 #define TASK_UTEST_CAPTURE_RESET(tp) task_utest_capture_reset(tp)
 

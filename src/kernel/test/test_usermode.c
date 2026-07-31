@@ -39,6 +39,7 @@
 #include "kernel/mm/pmm.h"
 #include "kernel/fs/vfs.h"
 #include "kernel/sched/task.h"
+#include "kernel/sched/spinlock.h"
 #include "kernel/ipc/signal.h"
 #include "kernel/ob/ob_process.h"
 #include "kernel/timer.h"
@@ -2975,6 +2976,12 @@ static uint32_t u_frame_nonce_new(void)
  * boot-phase singleton driven from boot_tests_run) and fails closed if
  * attempted: the loser's records are counted but unframed, so the host's
  * reconciliation refuses the run. */
+/* Defined with the rest of the capture budget, far below: the budget's
+ * constants derive from UTEST_CAPTURE_CHUNK_MAX, which is not defined until
+ * after the framing block, and splitting the derivation away from the
+ * enforcement it feeds would be worse than one forward declaration. */
+static void u_capture_budget_reset(void);
+
 static void u_frame_begin(void)
 {
     uint32_t expected = 0;
@@ -3027,6 +3034,20 @@ static void u_frame_begin(void)
      * reconciles against, and the public header documents
      * test_usermode_run() as safe to call repeatedly. */
     (void)__atomic_add_fetch(&s_frame_run, 1u, __ATOMIC_RELAXED);
+
+    /* The capture emission budget is scoped to the FRAMED RUN, for exactly
+     * the reason s_frame_records is: the host proves a run-scope stop by
+     * counting the chunk records in the canonical run SLICE, so a producer
+     * counter spanning boot lifetime would measure a different population
+     * than the check it has to satisfy. Both consequences were live, not
+     * theoretical: the kernel's own capture regressions
+     * (test_usermode_launcher.c:3467) drive the real emit path BEFORE any
+     * framed run and charged this counter permanently, and a second
+     * test_usermode_run() -- supported per the comment above -- would
+     * inherit every earlier charge plus a latched stop, terminating capture
+     * for a run that had emitted nothing. Under the lock so a concurrent
+     * claim cannot straddle the reset. */
+    u_capture_budget_reset();
 
     /* The body deliberately does NOT restate the nonce. The TAG carries it,
      * and a body copy would survive the disk alias below -- putting the
@@ -3120,6 +3141,351 @@ _Static_assert(UTEST_CAPTURE_BEGIN_FIXED + UTEST_MAX_BINARY_NAME <=
                "too, not just the 7 kinds UTEST_MAX_BINARY_NAME was "
                "originally derived from");
 
+/* ---- Producer-side emission budget ---------------------------------- *
+ *
+ * The host bounds what reaches an ARTIFACT; nothing bounded what reaches
+ * the WIRE. A ring-3 binary can emit unlimited perfectly well-formed
+ * capture records, and every one costs serial time and log disk before
+ * any host code runs, so a chatty or hostile binary could stretch a run's
+ * wall-clock or fill the log device without ever producing a malformed
+ * byte. These budgets stop the EMISSION; the host deadline stays the
+ * host's to enforce, exactly as it is for the skip-record budget above.
+ *
+ * The budget is a RECORD budget, not a raw-byte one, and the distinction
+ * is the whole derivation. A binary calling write() one byte at a time
+ * pays a FULL record -- a ~350-byte klog line -- per raw byte, so a cap
+ * expressed in raw bytes would let 64 KiB of payload cost 22 MB of wire.
+ * Counting the records is what actually bounds the serial cost. */
+
+/* Wire cost of ONE capture record.
+ *
+ * UTEST_RECORD_WIRE_MAX is deliberately NOT reused: it models the plain
+ * LOG_ERROR path taken by the two skip markers, which fire AFTER the
+ * launcher's color scope is cleared. Capture records are emitted DURING a
+ * binary's run, while test_usermode_color_active() is true, and klog's
+ * color-scope fallback (klog.c:1305-1308) sets test_color for ANY
+ * subsystem in that window -- so these records take the test_color branch
+ * instead: one level-ANSI badge, the truecolor sequence, and three
+ * resets, where the skip path pays two level-ANSI and no truecolor.
+ * Reusing the skip macro would prove a ceiling BELOW the traffic actually
+ * emitted, which is a budget that does not bound. Taking the MAX over
+ * both branches keeps the bound honest whichever branch klog picks for a
+ * given record (the scope is not active for every possible emitter). */
+#define KLOG_WIRE_TEST_COLOR_MAX 19u  /* "\033[38;2;132;178;233m"          */
+#define UTEST_CAPTURE_WIRE_COLOR                                           \
+    (UTEST_RECORD_LINE_MAX + KLOG_WIRE_TIMESTAMP_MAX +                     \
+     KLOG_WIRE_CPUTAG_MAX + KLOG_WIRE_LEVEL_ANSI_MAX +                     \
+     KLOG_WIRE_LEVEL_PREFIX + KLOG_WIRE_TEST_COLOR_MAX +                   \
+     (3u * KLOG_WIRE_ANSI_RESET) + KLOG_WIRE_SUBSYSTEM_MAX +               \
+     KLOG_WIRE_TRUNC_MARK + KLOG_WIRE_CRLF)
+#define UTEST_CAPTURE_WIRE_MAX                                             \
+    UTEST_MAX2(UTEST_CAPTURE_WIRE_COLOR, UTEST_RECORD_WIRE_MAX)
+_Static_assert(UTEST_CAPTURE_WIRE_MAX >= UTEST_RECORD_WIRE_MAX,
+               "the capture wire cost must dominate the plain-path cost or "
+               "the budgets below bound less traffic than they advertise");
+
+/* Raw captured bytes ONE binary may put on the wire. Anchored to what a
+ * consumer keeps: scripts/utest-capture.py retains PER_BINARY_CAP = 64 KiB
+ * per binary and declares everything past it truncated, so a producer
+ * emitting more would spend serial time on bytes no artifact can ever
+ * carry. Stated as a kernel-side allowance rather than read from the host
+ * because a silently mirrored constant is its own failure mode -- see the
+ * chunk-bound item this file's section 48 owns. */
+#define UTEST_CAPTURE_OWNER_RAW_MAX (64u * 1024u)
+
+/* Records needed to deliver that allowance at the worst-case chunk FILL,
+ * rounded UP. Deriving from the fill (rather than picking a count) is what
+ * keeps an honest binary from being clipped: a binary that fills every
+ * chunk must be able to spend its whole raw allowance, and this is exactly
+ * the record count that takes. A binary that wastes its records on one-byte
+ * writes gets the same count and simply delivers less payload -- which is
+ * the abuse the budget exists to bound, not a case to help finish. */
+#define UTEST_CAPTURE_OWNER_RECORD_BUDGET                                  \
+    ((UTEST_CAPTURE_OWNER_RAW_MAX + UTEST_CAPTURE_CHUNK_MAX - 1u) /        \
+     UTEST_CAPTURE_CHUNK_MAX)
+
+/* The serialized-byte ceiling that record count implies, declared so the
+ * assert below has something to prove the derivation against -- the same
+ * shape UTEST_SKIP_BURST_WIRE_MAX plays for the skip budget. The "+ 1u"
+ * is the owner's own [UTEST-CAPTURE-OVER] marker: enforcement emits too,
+ * and budgeting only the permitted records would leave the marker outside
+ * the allowance the ceiling advertises. */
+#define UTEST_CAPTURE_OWNER_WIRE_MAX (512u * 1024u)
+_Static_assert((uint64_t)(UTEST_CAPTURE_OWNER_RECORD_BUDGET + 1u) *
+                   UTEST_CAPTURE_WIRE_MAX <=
+                   UTEST_CAPTURE_OWNER_WIRE_MAX,
+               "a binary's worst-case capture burst plus its own overflow "
+               "marker must fit the per-owner serialized-byte allowance");
+
+/* Run-wide allowance, derived the same way from the aggregate a consumer
+ * keeps (RUN_AGGREGATE_CAP = 1 MiB in scripts/utest-capture.py). N binaries
+ * each individually under the per-owner cap can still sum past what the run
+ * as a whole should ever put on the wire, which is the gap this closes. */
+#define UTEST_CAPTURE_RUN_RAW_MAX (1024u * 1024u)
+#define UTEST_CAPTURE_RUN_RECORD_BUDGET                                    \
+    ((UTEST_CAPTURE_RUN_RAW_MAX + UTEST_CAPTURE_CHUNK_MAX - 1u) /          \
+     UTEST_CAPTURE_CHUNK_MAX)
+
+/* Every owner may pay one marker when the RUN budget trips, so the run
+ * reservation is TASK_MAX markers rather than one -- the same reasoning
+ * (and the same TASK_MAX caveat about slot reuse) as
+ * UTEST_SKIP_REFUSAL_WIRE_MAX. */
+#define UTEST_CAPTURE_RUN_WIRE_MAX (16u * 1024u * 1024u)
+_Static_assert((uint64_t)UTEST_CAPTURE_RUN_RECORD_BUDGET *
+                       UTEST_CAPTURE_WIRE_MAX +
+                   ((uint64_t)TASK_MAX * UTEST_CAPTURE_WIRE_MAX) <=
+                   UTEST_CAPTURE_RUN_WIRE_MAX,
+               "the worst-case run-wide capture burst plus one overflow "
+               "marker per task slot must fit the run allowance");
+
+/* The floor, load-bearing exactly as the skip budget's is: a run-wide
+ * ceiling below the per-binary one would turn an AGGREGATE abuse stop into
+ * a per-binary truncation of the very first honest binary to run. Any
+ * future retune that breaches it fails the build instead of silently
+ * clipping. */
+_Static_assert(UTEST_CAPTURE_RUN_RECORD_BUDGET >=
+                   UTEST_CAPTURE_OWNER_RECORD_BUDGET,
+               "the run-wide capture budget must cover a single binary's "
+               "per-owner budget or one honest binary is clipped by the "
+               "aggregate ceiling");
+
+/* Both budgets ride the record's own uint32 seq field, whose digit width
+ * the record bound reserves. */
+_Static_assert(UTEST_CAPTURE_RUN_RECORD_BUDGET <= 9999999u,
+               "the capture budgets bound the seq and limit fields' digits");
+
+/* [UTEST-CAPTURE-OVER]'s fixed cost, derived from its own format literals
+ * exactly like the two record kinds above. "scope=owner" is the longer of
+ * the two scope tokens, so it is the worst case. */
+#define UTEST_CAPTURE_OVER_FIXED                                           \
+    (UTEST_LIT("[UTEST-CAPTURE-OVER] owner=") + UTEST_DIGITS_U32 +         \
+     UTEST_LIT(" seq=") + UTEST_DIGITS_U32 +                               \
+     UTEST_LIT(" scope=owner limit=") + UTEST_DIGITS_U32 +                 \
+     UTEST_LIT(" charged=") + UTEST_DIGITS_U32)
+_Static_assert(UTEST_CAPTURE_OVER_FIXED <= UTEST_RECORD_LINE_MAX - 1u,
+               "the overflow marker must fit the record wire cap -- a "
+               "truncated terminator would reach the host as corruption "
+               "instead of the bounded stop it reports");
+
+/* The budget arithmetic, as a PURE function of the four state values --
+ * no task, no globals, no lock. Split out so the state machine is unit-
+ * testable on plain numbers (the caller below is the only thing that
+ * needs a live owner), and so the ordering between the two budgets is
+ * stated once in one place rather than implied by the call sequence.
+ *
+ * Order matters: the owner's own budget is checked FIRST so a single
+ * abusive binary is reported against ITS OWN limit rather than against
+ * whichever aggregate it happened to exhaust on the way there. */
+static enum utest_capture_verdict u_capture_decide(uint32_t owner_seq,
+                                               uint32_t run_records,
+                                               int owner_stopped,
+                                               int run_over)
+{
+    if (owner_stopped)
+        return UTEST_CAP_DROP;
+    if (owner_seq >= UTEST_CAPTURE_OWNER_RECORD_BUDGET)
+        return UTEST_CAP_OVER_OWNER;
+    if (run_over || run_records >= UTEST_CAPTURE_RUN_RECORD_BUDGET)
+        return UTEST_CAP_OVER_RUN;
+    return UTEST_CAP_EMIT;
+}
+
+/* The claim's state, as a snapshot the transition below operates on. */
+struct u_capture_state {
+    uint32_t owner_seq;
+    uint32_t run_records;
+    uint8_t  owner_stopped;
+    uint8_t  run_over;
+};
+
+/* The claim's FULL state transition, pure over that snapshot: it decides,
+ * mutates, and reports, with no task, no globals and no lock. The live
+ * wrapper below keeps only the locking and the task-field load/store.
+ *
+ * Split out because the decision alone is not the part that can break the
+ * host's invariants -- the MUTATION is. A regression that charged the run
+ * on a terminator, forgot to latch, consumed a sequence number on DROP, or
+ * reported the wrong charge would leave every decision-level assertion
+ * green while breaking marker uniqueness and run reconciliation. Pure, it
+ * is drivable from a unit test over synthetic state; inline in the locked
+ * wrapper, it was reachable only from a live multi-threaded emitter this
+ * kernel cannot spawn from a test. */
+static enum utest_capture_verdict u_capture_apply(struct u_capture_state *st,
+                                                  uint32_t *seq_out,
+                                                  uint32_t *charged_out)
+{
+    enum utest_capture_verdict verdict =
+        u_capture_decide(st->owner_seq, st->run_records, st->owner_stopped,
+                         st->run_over);
+
+    *seq_out = st->owner_seq;
+
+    switch (verdict) {
+    case UTEST_CAP_EMIT:
+        st->run_records++;
+        break;
+    case UTEST_CAP_OVER_RUN:
+        /* Latch the run stop so every LATER owner takes this branch on its
+         * next claim instead of re-deciding against a count that only ever
+         * grows. Idempotent by construction. */
+        st->run_over = 1;
+        st->owner_stopped = 1;
+        break;
+    case UTEST_CAP_OVER_OWNER:
+        st->owner_stopped = 1;
+        break;
+    case UTEST_CAP_DROP:
+        break;
+    }
+
+    /* A terminator consumes a sequence number exactly as a chunk does --
+     * that is what makes it the stream's highest and leaves no hole. A
+     * DROP consumes nothing: it emits no record, so a number spent here
+     * would be a hole the host reads as output lost on the wire. */
+    if (verdict != UTEST_CAP_DROP)
+        st->owner_seq++;
+
+    *charged_out = st->run_records;
+    return verdict;
+}
+
+/* Run-wide capture state. Guarded by s_capture_budget_lock, never touched
+ * outside it, so the run charge cannot be claimed by one CPU while another
+ * is deciding against a stale count. */
+static DEFINE_SPINLOCK(s_capture_budget_lock);
+static uint32_t s_capture_run_records;
+static uint8_t  s_capture_run_over;
+
+/* Which framed run the counters above describe. Bumped on every reset so a
+ * claim can be checked against the run it was actually charged to.
+ *
+ * The claim is linearized under the lock but the EMISSION deliberately is
+ * not -- klog's serial write is milliseconds, and holding a spinlock across
+ * it is the hazard that split exists to avoid. That leaves a real window: a
+ * fork descendant inherits capture ownership (task.c:2459) while the
+ * launcher waits only on the top-level pid (u_run_one), so a descendant
+ * outliving its binary can claim under one run's aggregate and reach klog
+ * after the next run has reset it. Its record would then land in a run whose
+ * budget never charged for it, and the run-scope equality would refuse a run
+ * that did nothing wrong. Two shipped binaries fork (user/test/
+ * test_process.c, user/test/test_faultinject.c), so the shape is reachable
+ * rather than theoretical. */
+static uint32_t s_capture_run_generation;
+
+/* Scopes the run budget to ONE framed run. Called from u_frame_begin
+ * beside the s_frame_records reset -- see the rationale there. */
+static void u_capture_budget_reset(void)
+{
+    uint64_t irq_flags;
+
+    spin_lock_irqsave(&s_capture_budget_lock, &irq_flags);
+    s_capture_run_records = 0;
+    s_capture_run_over = 0;
+    s_capture_run_generation++;
+    spin_unlock_irqrestore(&s_capture_budget_lock, irq_flags);
+}
+
+/* Is the run this claim was charged against still the current one?
+ *
+ * Checked immediately before emitting, so a record claimed in an earlier run
+ * is DROPPED rather than attributed to the new one. Dropping is strictly
+ * better than emitting: the previous run's slice is already closed by its
+ * frame-end record, and the new slice carries no [UTEST-CAPTURE-BEGIN]
+ * binding that owner, so the record could only ever have reconciled as
+ * capture_unbound_owner -- a refusal caused by a stale emitter rather than
+ * by anything the new run did.
+ *
+ * THIS NARROWS THE WINDOW; IT DOES NOT CLOSE IT, and the distinction is
+ * recorded here rather than left for a reader to discover. The comparison
+ * happens under the lock but the emission does not, so a stale emitter can
+ * still pass this check, be preempted, and reach klog after another CPU has
+ * run u_frame_begin -- check-then-log, with a genuine TOCTOU between. Two
+ * independent review rounds rated it [high] and both recommended the same
+ * real fix: track in-flight emission reservations per generation and hold
+ * the next frame's publication until that generation drains, or reap the
+ * whole captured descendant tree before u_frame_end.
+ *
+ * That fix is deliberately NOT made here. The race is not the budget's: a
+ * descendant outliving its run perturbs the frame record count and owner
+ * reconciliation identically, for record kinds this mechanism never touches,
+ * and closing it is a framing-layer lifetime change. Building a drain
+ * protocol inside a budget section would couple two unrelated mechanisms and
+ * put the fix where nobody maintaining the framing layer would look for it.
+ * Owned by the run-boundary fence section of the usermode test-framework
+ * roadmap. */
+static int u_capture_generation_current(uint32_t claimed)
+{
+    uint64_t irq_flags;
+    int current;
+
+    spin_lock_irqsave(&s_capture_budget_lock, &irq_flags);
+    current = (s_capture_run_generation == claimed);
+    spin_unlock_irqrestore(&s_capture_budget_lock, irq_flags);
+    return current;
+}
+
+/* Claims one record's worth of capture wire for `owner`, linearizing the
+ * budget decision, the sequence draw, the run-wide charge and the owner's
+ * stop latch into ONE critical section.
+ *
+ * That is the point of the lock, and it is what a pile of individually
+ * atomic fields cannot buy. Two descendants sharing an owner could
+ * otherwise both read a seq below the budget and both reserve past it; a
+ * delayed emitter could draw a seq AFTER another CPU had already published
+ * the terminator, putting a chunk above the marker; and a two-counter
+ * claim (owner, then run) that wins the first and loses the second would
+ * consume a sequence number no record ever fills -- a permanent gap the
+ * host reads as lost output. Linearized, three invariants hold by
+ * construction and the host can rely on all of them:
+ *
+ *   1. Every sequence number drawn maps to exactly one record on the wire
+ *      (a chunk, or the one terminator).
+ *   2. The terminator is the owner's HIGHEST drawn sequence number, so the
+ *      host's "is this stream terminated" question has a positional answer
+ *      as well as a semantic one.
+ *   3. An owner-scope stop is drawn at exactly UTEST_CAPTURE_OWNER_RECORD_
+ *      BUDGET -- the host can therefore demand equality rather than trust
+ *      an authenticated marker's word that a budget was reached.
+ *
+ * The lock does NOT span emission: klog's serial write is milliseconds of
+ * hold time, and the kernel-code-quality gate on lock hold time is a hard
+ * rule. The caller emits AFTER the unlock. Physical wire order can
+ * therefore still differ from seq order -- which is already true of every
+ * klog record in this kernel, and already how the host reassembles. */
+static enum utest_capture_verdict u_capture_claim(struct task *owner,
+                                              uint32_t *seq_out,
+                                              uint32_t *charged_out,
+                                              uint32_t *gen_out)
+{
+    enum utest_capture_verdict verdict;
+    struct u_capture_state st;
+    uint64_t irq_flags;
+
+    spin_lock_irqsave(&s_capture_budget_lock, &irq_flags);
+
+    /* Load, transition, store back. Everything BETWEEN those two edges is
+     * u_capture_apply's pure business, so this wrapper cannot drift from
+     * the transition the unit tests actually exercise. */
+    st.owner_seq = (uint32_t)atomic_read(&owner->utest_capture_seq);
+    st.run_records = s_capture_run_records;
+    st.owner_stopped = owner->utest_capture_stopped;
+    st.run_over = s_capture_run_over;
+
+    verdict = u_capture_apply(&st, seq_out, charged_out);
+
+    atomic_set(&owner->utest_capture_seq, (int32_t)st.owner_seq);
+    owner->utest_capture_stopped = st.owner_stopped;
+    s_capture_run_records = st.run_records;
+    s_capture_run_over = st.run_over;
+
+    /* Read INSIDE the critical section: the generation the caller checks
+     * against must be the one this claim was actually charged to. */
+    *gen_out = s_capture_run_generation;
+
+    spin_unlock_irqrestore(&s_capture_budget_lock, irq_flags);
+    return verdict;
+}
+
 static const char UTEST_HEX_DIGITS[] = "0123456789abcdef";
 
 /* Emits the currently staged bytes (if any) as one capture record, then
@@ -3198,7 +3564,8 @@ static void u_capture_emit_chunk(struct task *owner, const char *raw,
                                  uint32_t raw_len, int is_final)
 {
     char escaped[UTEST_CAPTURE_CHUNK_MAX * UTEST_CAPTURE_ESCAPE_EXPANSION + 1u];
-    uint32_t seq;
+    enum utest_capture_verdict verdict;
+    uint32_t seq = 0, charged = 0, gen = 0;
 
     /* Unconditional: a flush call (mid-loop chunk-full OR end-of-write
      * "final") with nothing staged is always a no-op. Without this a
@@ -3209,22 +3576,63 @@ static void u_capture_emit_chunk(struct task *owner, const char *raw,
     if (raw_len == 0)
         return;
 
-    seq = (uint32_t)atomic_fetch_add(&owner->utest_capture_seq, 1);
-
-    /* sizeof(escaped) is exactly the worst case for UTEST_CAPTURE_CHUNK_MAX
-     * raw bytes, so this call can only return 0xFFFFFFFFu if raw_len itself
-     * somehow exceeded UTEST_CAPTURE_CHUNK_MAX (a caller bug, since the
-     * ctx buffer is flushed at that exact bound) -- fail closed rather
-     * than emit a truncated, unaccounted record. */
+    /* Escape BEFORE claiming a sequence number. sizeof(escaped) is exactly
+     * the worst case for UTEST_CAPTURE_CHUNK_MAX raw bytes, so this can
+     * only refuse if raw_len itself exceeded that bound (a caller bug --
+     * the ctx buffer is flushed at exactly that fill) -- but the ORDER is
+     * load-bearing regardless of how unreachable the refusal is. Claiming
+     * first and refusing second would consume a sequence number that no
+     * record ever fills, and the host reads a hole in the sequence as
+     * output lost on the wire: a defensive backstop would manufacture the
+     * very corruption verdict it exists to avoid. */
     if (u_capture_escape(raw, raw_len, escaped, (uint32_t)sizeof(escaped)) ==
         0xFFFFFFFFu)
         return;
 
-    utest_record_log(LOG_INFO,
-                     "[UTEST-CAPTURE] owner=%u seq=%u len=%u final=%u %s",
-                     (uint64_t)owner->pid, (uint64_t)seq,
-                     (uint64_t)raw_len, (uint64_t)(is_final ? 1u : 0u),
-                     escaped);
+    verdict = u_capture_claim(owner, &seq, &charged, &gen);
+
+    /* A claim charged to a PREVIOUS framed run must not reach the wire in
+     * this one -- see u_capture_generation_current. Checked once here rather
+     * than per branch: it applies to a chunk and to a terminator alike. */
+    if (verdict != UTEST_CAP_DROP && !u_capture_generation_current(gen))
+        return;
+
+    switch (verdict) {
+    case UTEST_CAP_EMIT:
+        utest_record_log(LOG_INFO,
+                         "[UTEST-CAPTURE] owner=%u seq=%u len=%u final=%u %s",
+                         (uint64_t)owner->pid, (uint64_t)seq,
+                         (uint64_t)raw_len, (uint64_t)(is_final ? 1u : 0u),
+                         escaped);
+        break;
+    case UTEST_CAP_OVER_OWNER:
+        /* LOG_WARN, not LOG_ERROR: a budget stop is the EXPECTED outcome
+         * under an abusive binary, so it must stay distinguishable from
+         * [UTEST-CAPTURE-LOST], which reports a defensive ownership
+         * failure. Conflating them would make a policy stop read as
+         * corruption on the host. */
+        utest_record_log(LOG_WARN,
+                         "[UTEST-CAPTURE-OVER] owner=%u seq=%u "
+                         "scope=owner limit=%u charged=%u",
+                         (uint64_t)owner->pid, (uint64_t)seq,
+                         (uint64_t)UTEST_CAPTURE_OWNER_RECORD_BUDGET,
+                         (uint64_t)charged);
+        break;
+    case UTEST_CAP_OVER_RUN:
+        utest_record_log(LOG_WARN,
+                         "[UTEST-CAPTURE-OVER] owner=%u seq=%u "
+                         "scope=run limit=%u charged=%u",
+                         (uint64_t)owner->pid, (uint64_t)seq,
+                         (uint64_t)UTEST_CAPTURE_RUN_RECORD_BUDGET,
+                         (uint64_t)charged);
+        break;
+    case UTEST_CAP_DROP:
+        /* Terminated owner. The bytes are deliberately swallowed rather
+         * than handed back to the caller's raw serial_putchar fallback:
+         * falling back would put the identical payload on the wire
+         * unframed, so the budget would bound nothing at all. */
+        break;
+    }
 }
 
 /* Resolves task_current() and its capture ownership ONCE per write() --
@@ -7042,6 +7450,138 @@ uint32_t test_usermode_capture_chunk_max(void);
 uint32_t test_usermode_capture_chunk_max(void)
 {
     return (uint32_t)UTEST_CAPTURE_CHUNK_MAX;
+}
+
+/* The emission-budget state machine, exported as the PURE function it is:
+ * four state values in, one verdict out, no task and no globals. A test
+ * can therefore drive every transition -- including the exhaustion
+ * boundaries, which a live binary would take megabytes of serial to reach
+ * -- without touching the run-wide counters a concurrently running suite
+ * depends on. The locked wrapper around it (u_capture_claim) is the only
+ * thing that needs a live owner. */
+int test_usermode_capture_decide(uint32_t owner_seq, uint32_t run_records,
+                                 int owner_stopped, int run_over);
+int test_usermode_capture_decide(uint32_t owner_seq, uint32_t run_records,
+                                 int owner_stopped, int run_over)
+{
+    return (int)u_capture_decide(owner_seq, run_records, owner_stopped,
+                                 run_over);
+}
+
+/* The claim's full state TRANSITION, over caller-owned state. The decision
+ * helper above says what should happen; this says what actually changes,
+ * which is the half the host's invariants rest on -- the run charge, both
+ * latches, and whether a sequence number was consumed at all. */
+int test_usermode_capture_apply(uint32_t *owner_seq, uint32_t *run_records,
+                                int *owner_stopped, int *run_over,
+                                uint32_t *seq_out, uint32_t *charged_out);
+int test_usermode_capture_apply(uint32_t *owner_seq, uint32_t *run_records,
+                                int *owner_stopped, int *run_over,
+                                uint32_t *seq_out, uint32_t *charged_out)
+{
+    struct u_capture_state st;
+    enum utest_capture_verdict verdict;
+
+    st.owner_seq = *owner_seq;
+    st.run_records = *run_records;
+    st.owner_stopped = (uint8_t)(*owner_stopped ? 1 : 0);
+    st.run_over = (uint8_t)(*run_over ? 1 : 0);
+
+    verdict = u_capture_apply(&st, seq_out, charged_out);
+
+    *owner_seq = st.owner_seq;
+    *run_records = st.run_records;
+    *owner_stopped = (int)st.owner_stopped;
+    *run_over = (int)st.run_over;
+    return (int)verdict;
+}
+
+/* Test-only snapshot/install of the RUN-wide capture accounting, taken
+ * under the same lock the emitter uses.
+ *
+ * A regression that drives the real emitter necessarily charges these
+ * globals, and one that seeded only the OWNER's sequence would make the
+ * terminator report a `charged` value the real path can never produce --
+ * proving nothing about whether that marker would satisfy host
+ * reconciliation. Both are the same problem: run accounting is state, so a
+ * probe has to seed it coherently and put back what it found.
+ *
+ * s_frame_records is deliberately NOT exposed here. It belongs to the
+ * framing layer, is reset by u_frame_begin before any run is published, and
+ * a capture-budget test reaching into it would cross a boundary this
+ * mechanism does not own. */
+void test_usermode_capture_run_state_get(uint32_t *records, int *over);
+void test_usermode_capture_run_state_get(uint32_t *records, int *over)
+{
+    uint64_t irq_flags;
+
+    spin_lock_irqsave(&s_capture_budget_lock, &irq_flags);
+    *records = s_capture_run_records;
+    *over = (int)s_capture_run_over;
+    spin_unlock_irqrestore(&s_capture_budget_lock, irq_flags);
+}
+
+void test_usermode_capture_run_state_set(uint32_t records, int over);
+void test_usermode_capture_run_state_set(uint32_t records, int over)
+{
+    uint64_t irq_flags;
+
+    spin_lock_irqsave(&s_capture_budget_lock, &irq_flags);
+    s_capture_run_records = records;
+    s_capture_run_over = (uint8_t)(over ? 1 : 0);
+    spin_unlock_irqrestore(&s_capture_budget_lock, irq_flags);
+}
+
+uint32_t test_usermode_capture_owner_budget(void);
+uint32_t test_usermode_capture_owner_budget(void)
+{
+    return (uint32_t)UTEST_CAPTURE_OWNER_RECORD_BUDGET;
+}
+
+uint32_t test_usermode_capture_run_budget(void);
+uint32_t test_usermode_capture_run_budget(void)
+{
+    return (uint32_t)UTEST_CAPTURE_RUN_RECORD_BUDGET;
+}
+
+/* The derived per-record wire cost and the two allowances it is proven
+ * against. Exported so a test can re-derive the worst-case-fits
+ * relationship at RUNTIME rather than only trusting the _Static_asserts:
+ * the asserts catch a broken derivation at build time, the test states
+ * what the relationship IS, so a future retune that satisfies the
+ * arithmetic while destroying the intent still has something to fail. */
+uint32_t test_usermode_capture_wire_max(void);
+uint32_t test_usermode_capture_wire_max(void)
+{
+    return (uint32_t)UTEST_CAPTURE_WIRE_MAX;
+}
+
+uint32_t test_usermode_capture_owner_wire_allowance(void);
+uint32_t test_usermode_capture_owner_wire_allowance(void)
+{
+    return (uint32_t)UTEST_CAPTURE_OWNER_WIRE_MAX;
+}
+
+uint32_t test_usermode_capture_run_wire_allowance(void);
+uint32_t test_usermode_capture_run_wire_allowance(void)
+{
+    return (uint32_t)UTEST_CAPTURE_RUN_WIRE_MAX;
+}
+
+/* The raw allowance each record budget was derived FROM. A test can then
+ * assert the property the derivation exists to guarantee -- that a binary
+ * filling every chunk can spend its whole raw allowance without being
+ * clipped -- rather than re-stating the arithmetic that produced it. */
+uint32_t test_usermode_capture_owner_raw_max(void);
+uint32_t test_usermode_capture_owner_raw_max(void)
+{
+    return (uint32_t)UTEST_CAPTURE_OWNER_RAW_MAX;
+}
+
+uint32_t test_usermode_capture_run_raw_max(void);
+uint32_t test_usermode_capture_run_raw_max(void)
+{
+    return (uint32_t)UTEST_CAPTURE_RUN_RAW_MAX;
 }
 
 int test_usermode_derive_test_name(const char *name_in,

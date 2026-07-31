@@ -13178,6 +13178,385 @@ else
     t_fail "capture: chunks with no owner binding are refused"
 fi
 
+# ---------------------------------------------------------------------------
+# Producer-side emission budget: the [UTEST-CAPTURE-OVER] terminator.
+#
+# This record SUPPRESSES capture_unterminated, which makes it the one record
+# kind worth forging: an early marker would let a binary cut its own stream
+# mid-write and still ship a green run. Authentication proves it came from the
+# kernel; every assertion below proves it came from the kernel's BUDGET path.
+# The owner budget is 1425 records (64 KiB / 46-byte chunks) and the run budget
+# 22795 -- the fixtures use the SMALL limits the record itself declares, since
+# every check is against the declared value, not a mirrored constant.
+# ---------------------------------------------------------------------------
+
+# A budgeted stop is a BOUNDED payload, not a corrupt one: the run stays green
+# and the binary carries the producer-declared scope and limit.
+{
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=5 final=0 hello"
+    cap_line "[UTEST-CAPTURE-OVER] owner=7 seq=1 scope=owner limit=1 charged=1"
+} > "$CAP_TMP/over_ok.log"
+if cap_model "$CAP_TMP/over_ok.log" "$CAP_TMP/over_ok.json" &&
+   [ "$(cap_field "$CAP_TMP/over_ok.json" 'm["binaries"][0]["budget_stop"]')" = "True" ] &&
+   [ "$(cap_field "$CAP_TMP/over_ok.json" 'm["binaries"][0]["budget_scope"]')" = "owner" ] &&
+   [ "$(cap_field "$CAP_TMP/over_ok.json" 'm["binaries"][0]["text"]')" = "hello" ]; then
+    t_pass "capture: a budgeted stop is a bounded payload, not a refusal"
+else
+    t_fail "capture: a budgeted stop is a bounded payload, not a refusal"
+fi
+
+# ... and it must NOT be reported through `truncated`, whose companion
+# truncated_bytes is an exact host-retention count the producer cannot supply.
+if [ "$(cap_field "$CAP_TMP/over_ok.json" 'm["binaries"][0]["truncated"]')" = "False" ] &&
+   [ "$(cap_field "$CAP_TMP/over_ok.json" 'm["binaries"][0]["truncated_bytes"]')" = "0" ]; then
+    t_pass "capture: a budget stop does not masquerade as host-side truncation"
+else
+    t_fail "capture: a budget stop does not masquerade as host-side truncation"
+fi
+
+# The equality check: an owner-scope stop is drawn at EXACTLY the limit,
+# because the producer latches on the claim that finds the counter at it.
+# A marker claiming a limit it never reached is the forgery this closes.
+{
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=5 final=0 hello"
+    cap_line "[UTEST-CAPTURE-OVER] owner=7 seq=1 scope=owner limit=900 charged=1"
+} > "$CAP_TMP/over_early.log"
+if ! cap_model "$CAP_TMP/over_early.log" "$CAP_TMP/over_early.json" &&
+   [ "$(cap_field "$CAP_TMP/over_early.json" 'm["refusal"]["reason"]')" = "capture_budget_unreached" ]; then
+    t_pass "capture: an owner-scope stop below its declared limit is refused"
+else
+    t_fail "capture: an owner-scope stop below its declared limit is refused"
+fi
+
+# The terminator must be the owner's HIGHEST seq. A chunk above it means the
+# producer's one-lock invariant broke -- or the marker was injected mid-stream
+# to hide the tail that follows it.
+{
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=1 final=0 a"
+    cap_line "[UTEST-CAPTURE-OVER] owner=7 seq=1 scope=owner limit=1 charged=1"
+    cap_line "[UTEST-CAPTURE] owner=7 seq=2 len=1 final=0 b"
+} > "$CAP_TMP/over_low.log"
+if ! cap_model "$CAP_TMP/over_low.log" "$CAP_TMP/over_low.json" &&
+   [ "$(cap_field "$CAP_TMP/over_low.json" 'm["refusal"]["reason"]')" = "capture_over_not_highest" ]; then
+    t_pass "capture: a terminator below a later chunk is refused"
+else
+    t_fail "capture: a terminator below a later chunk is refused"
+fi
+
+# A terminator that skips a sequence number hides a lost chunk behind an
+# otherwise-valid stop.
+{
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=1 final=0 a"
+    cap_line "[UTEST-CAPTURE-OVER] owner=7 seq=5 scope=owner limit=5 charged=5"
+} > "$CAP_TMP/over_hole.log"
+if ! cap_model "$CAP_TMP/over_hole.log" "$CAP_TMP/over_hole.json" &&
+   [ "$(cap_field "$CAP_TMP/over_hole.json" 'm["refusal"]["reason"]')" = "capture_over_seq_gap" ]; then
+    t_pass "capture: a terminator leaving a sequence hole is refused"
+else
+    t_fail "capture: a terminator leaving a sequence hole is refused"
+fi
+
+# The producer latches the owner before emitting, so two markers cannot come
+# from the kernel -- and a second, weaker one must not overwrite the checks
+# the first had to satisfy.
+{
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=1 final=0 a"
+    cap_line "[UTEST-CAPTURE-OVER] owner=7 seq=1 scope=owner limit=1 charged=1"
+    cap_line "[UTEST-CAPTURE-OVER] owner=7 seq=1 scope=owner limit=1 charged=1"
+} > "$CAP_TMP/over_dup.log"
+if ! cap_model "$CAP_TMP/over_dup.log" "$CAP_TMP/over_dup.json" &&
+   [ "$(cap_field "$CAP_TMP/over_dup.json" 'm["refusal"]["reason"]')" = "capture_duplicate_over" ]; then
+    t_pass "capture: a second overflow marker for one owner is refused"
+else
+    t_fail "capture: a second overflow marker for one owner is refused"
+fi
+
+# A run-scope stop cannot be proven from one owner's stream -- an owner the
+# AGGREGATE stopped is legitimately far below its own limit. The proof is the
+# run's own charged-chunk count, which no single binary controls.
+{
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=1 final=0 a"
+    cap_line "[UTEST-CAPTURE-OVER] owner=7 seq=1 scope=run limit=99 charged=99"
+} > "$CAP_TMP/over_run_early.log"
+if ! cap_model "$CAP_TMP/over_run_early.log" "$CAP_TMP/over_run_early.json" &&
+   [ "$(cap_field "$CAP_TMP/over_run_early.json" 'm["refusal"]["reason"]')" = "capture_budget_unreached" ]; then
+    t_pass "capture: a run-scope stop the run never charged for is refused"
+else
+    t_fail "capture: a run-scope stop the run never charged for is refused"
+fi
+
+# ... and the same marker IS accepted once the run really charged that many
+# chunks, with the owner still well below its own limit. This is the case the
+# equality check deliberately does not apply to.
+{
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=1 final=0 a"
+    cap_line "[UTEST-CAPTURE] owner=7 seq=1 len=1 final=0 b"
+    cap_line "[UTEST-CAPTURE-OVER] owner=7 seq=2 scope=run limit=2 charged=2"
+} > "$CAP_TMP/over_run_ok.log"
+if cap_model "$CAP_TMP/over_run_ok.log" "$CAP_TMP/over_run_ok.json" &&
+   [ "$(cap_field "$CAP_TMP/over_run_ok.json" 'm["binaries"][0]["budget_scope"]')" = "run" ] &&
+   [ "$(cap_field "$CAP_TMP/over_run_ok.json" 'm["binaries"][0]["text"]')" = "ab" ]; then
+    t_pass "capture: a run-scope stop is accepted below the owner's own limit"
+else
+    t_fail "capture: a run-scope stop is accepted below the owner's own limit"
+fi
+
+# Run-scope markers that disagree on the aggregate limit mean two producers,
+# a version skew, or an injected record -- never one run's own emitter.
+{
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=1 final=0 a"
+    cap_line "[UTEST-CAPTURE-OVER] owner=7 seq=1 scope=run limit=1 charged=1"
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=8 name=test_cap2.exe"
+    cap_line "[UTEST-CAPTURE] owner=8 seq=0 len=1 final=0 c"
+    cap_line "[UTEST-CAPTURE-OVER] owner=8 seq=1 scope=run limit=2 charged=2"
+} > "$CAP_TMP/over_run_conflict.log"
+if ! cap_model "$CAP_TMP/over_run_conflict.log" "$CAP_TMP/over_run_conflict.json" &&
+   [ "$(cap_field "$CAP_TMP/over_run_conflict.json" 'm["refusal"]["reason"]')" = "capture_run_limit_conflict" ]; then
+    t_pass "capture: run-scope markers disagreeing on the limit are refused"
+else
+    t_fail "capture: run-scope markers disagreeing on the limit are refused"
+fi
+
+# An unknown scope is a version skew the host must refuse rather than pass
+# through into an artifact field consumers branch on. The record is
+# capture-family and authenticated, so it hits the malformed detector.
+{
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=1 final=1 a"
+    cap_line "[UTEST-CAPTURE-OVER] owner=7 seq=1 scope=galaxy limit=1 charged=1"
+} > "$CAP_TMP/over_scope.log"
+if ! cap_model "$CAP_TMP/over_scope.log" "$CAP_TMP/over_scope.json" &&
+   [ "$(cap_field "$CAP_TMP/over_scope.json" 'm["refusal"]["reason"]')" = "capture_malformed_record" ]; then
+    t_pass "capture: an unknown overflow scope is refused, not passed through"
+else
+    t_fail "capture: an unknown overflow scope is refused, not passed through"
+fi
+
+# The fail-open shape the test-coverage review caught: a run-scope marker
+# whose `charged` field contradicts its own limit. The producer freezes the
+# aggregate AT the limit under one lock and reports that value, so the two
+# can never differ -- and accepting the mismatch let two chunks plus
+# `limit=1 charged=0` reconcile green, suppressing capture_unterminated on a
+# budget the run never reached.
+{
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=1 final=0 a"
+    cap_line "[UTEST-CAPTURE] owner=7 seq=1 len=1 final=0 b"
+    cap_line "[UTEST-CAPTURE-OVER] owner=7 seq=2 scope=run limit=1 charged=0"
+} > "$CAP_TMP/over_run_charged.log"
+if ! cap_model "$CAP_TMP/over_run_charged.log" "$CAP_TMP/over_run_charged.json" &&
+   [ "$(cap_field "$CAP_TMP/over_run_charged.json" 'm["refusal"]["reason"]')" = "capture_budget_unreached" ]; then
+    t_pass "capture: a run-scope marker whose charged count contradicts its limit is refused"
+else
+    t_fail "capture: a run-scope marker whose charged count contradicts its limit is refused"
+fi
+
+# The equality binds in BOTH directions: more chunks than the declared limit
+# means the run kept charging past a latch that should have stopped it.
+{
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=1 final=0 a"
+    cap_line "[UTEST-CAPTURE] owner=7 seq=1 len=1 final=0 b"
+    cap_line "[UTEST-CAPTURE] owner=7 seq=2 len=1 final=0 c"
+    cap_line "[UTEST-CAPTURE-OVER] owner=7 seq=3 scope=run limit=2 charged=2"
+} > "$CAP_TMP/over_run_excess.log"
+if ! cap_model "$CAP_TMP/over_run_excess.log" "$CAP_TMP/over_run_excess.json" &&
+   [ "$(cap_field "$CAP_TMP/over_run_excess.json" 'm["refusal"]["reason"]')" = "capture_budget_unreached" ]; then
+    t_pass "capture: a run carrying more chunks than its declared limit is refused"
+else
+    t_fail "capture: a run carrying more chunks than its declared limit is refused"
+fi
+
+# An owner-scope marker's `charged` is the RUN aggregate at its stop, so it
+# has a feasible floor: this binary's own chunks were each charged against
+# that same aggregate.
+{
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=1 final=0 a"
+    cap_line "[UTEST-CAPTURE] owner=7 seq=1 len=1 final=0 b"
+    cap_line "[UTEST-CAPTURE-OVER] owner=7 seq=2 scope=owner limit=2 charged=1"
+} > "$CAP_TMP/over_charged_floor.log"
+if ! cap_model "$CAP_TMP/over_charged_floor.log" "$CAP_TMP/over_charged_floor.json" &&
+   [ "$(cap_field "$CAP_TMP/over_charged_floor.json" 'm["refusal"]["reason"]')" = "capture_budget_unreached" ]; then
+    t_pass "capture: an owner-scope marker charged below its own chunk count is refused"
+else
+    t_fail "capture: an owner-scope marker charged below its own chunk count is refused"
+fi
+
+# The DEFINING run-wide behavior: chunks from peer owners contribute to the
+# aggregate. Every other run fixture reaches its limit from one owner, so a
+# reconciler that counted only the STOPPED owner would pass them all. Here a
+# peer completes normally and the stopped owner is far below its own limit;
+# their combined chunks are what meets the run limit.
+{
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_peer.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=1 final=1 a"
+    cap_line "[UTEST-CAPTURE] owner=7 seq=1 len=1 final=1 b"
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=8 name=test_stopped.exe"
+    cap_line "[UTEST-CAPTURE] owner=8 seq=0 len=1 final=0 c"
+    cap_line "[UTEST-CAPTURE-OVER] owner=8 seq=1 scope=run limit=3 charged=3"
+} > "$CAP_TMP/over_run_multi.log"
+if cap_model "$CAP_TMP/over_run_multi.log" "$CAP_TMP/over_run_multi.json" &&
+   [ "$(cap_field "$CAP_TMP/over_run_multi.json" 'm["binaries"][0]["budget_stop"]')" = "False" ] &&
+   [ "$(cap_field "$CAP_TMP/over_run_multi.json" 'm["binaries"][1]["budget_stop"]')" = "True" ] &&
+   [ "$(cap_field "$CAP_TMP/over_run_multi.json" 'm["binaries"][1]["budget_scope"]')" = "run" ]; then
+    t_pass "capture: a peer owner's chunks count toward the run aggregate"
+else
+    t_fail "capture: a peer owner's chunks count toward the run aggregate"
+fi
+
+# The adjacent boundaries of that same aggregate: one chunk short and one
+# chunk over must both refuse, or the equality is not actually binding.
+{
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_peer.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=1 final=1 a"
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=8 name=test_stopped.exe"
+    cap_line "[UTEST-CAPTURE] owner=8 seq=0 len=1 final=0 c"
+    cap_line "[UTEST-CAPTURE-OVER] owner=8 seq=1 scope=run limit=3 charged=3"
+} > "$CAP_TMP/over_run_short.log"
+if ! cap_model "$CAP_TMP/over_run_short.log" "$CAP_TMP/over_run_short.json" &&
+   [ "$(cap_field "$CAP_TMP/over_run_short.json" 'm["refusal"]["reason"]')" = "capture_budget_unreached" ]; then
+    t_pass "capture: a multi-owner run one chunk short of its limit is refused"
+else
+    t_fail "capture: a multi-owner run one chunk short of its limit is refused"
+fi
+
+{
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_peer.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=1 final=1 a"
+    cap_line "[UTEST-CAPTURE] owner=7 seq=1 len=1 final=1 b"
+    cap_line "[UTEST-CAPTURE] owner=7 seq=2 len=1 final=1 c"
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=8 name=test_stopped.exe"
+    cap_line "[UTEST-CAPTURE] owner=8 seq=0 len=1 final=0 d"
+    cap_line "[UTEST-CAPTURE-OVER] owner=8 seq=1 scope=run limit=3 charged=3"
+} > "$CAP_TMP/over_run_long.log"
+if ! cap_model "$CAP_TMP/over_run_long.log" "$CAP_TMP/over_run_long.json" &&
+   [ "$(cap_field "$CAP_TMP/over_run_long.json" 'm["refusal"]["reason"]')" = "capture_budget_unreached" ]; then
+    t_pass "capture: a multi-owner run one chunk past its limit is refused"
+else
+    t_fail "capture: a multi-owner run one chunk past its limit is refused"
+fi
+
+# A zero limit cannot come from a producer whose budgets are both ceiling
+# divisions of a non-zero allowance. It reconciled GREEN before this guard:
+# a BEGIN plus a bare marker published an empty testcase as a bounded stop,
+# suppressing capture_unterminated on a budget nothing ever reached.
+{
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE-OVER] owner=7 seq=0 scope=owner limit=0 charged=0"
+} > "$CAP_TMP/over_zero_owner.log"
+if ! cap_model "$CAP_TMP/over_zero_owner.log" "$CAP_TMP/over_zero_owner.json" &&
+   [ "$(cap_field "$CAP_TMP/over_zero_owner.json" 'm["refusal"]["reason"]')" = "capture_budget_unreached" ]; then
+    t_pass "capture: a zero-limit owner-scope stop is refused"
+else
+    t_fail "capture: a zero-limit owner-scope stop is refused"
+fi
+
+{
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE-OVER] owner=7 seq=0 scope=run limit=0 charged=0"
+} > "$CAP_TMP/over_zero_run.log"
+if ! cap_model "$CAP_TMP/over_zero_run.log" "$CAP_TMP/over_zero_run.json" &&
+   [ "$(cap_field "$CAP_TMP/over_zero_run.json" 'm["refusal"]["reason"]')" = "capture_budget_unreached" ]; then
+    t_pass "capture: a zero-limit run-scope stop is refused"
+else
+    t_fail "capture: a zero-limit run-scope stop is refused"
+fi
+
+# The PUBLIC artifacts, end to end. Every assertion above stops at the
+# internal model, so a budget stop could be reconciled perfectly and still
+# reach consumers as nothing at all -- or, worse, as truncation metadata,
+# whose byte counts mean something a producer stop cannot supply.
+cat > "$CAP_TMP/budget.xml" <<'XEOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="t" tests="1">
+  <testcase name="test_cap.exe" classname="correctness" time="0.001"/>
+</testsuite>
+XEOF
+if python3 "$CAPTURE" splice-xml "$CAP_TMP/budget.xml" "$CAP_TMP/over_ok.json" \
+       "$CAP_TMP/budget-out.xml" >/dev/null 2>&1 &&
+   python3 -c 'import sys,xml.etree.ElementTree as ET
+root = ET.parse(sys.argv[1]).getroot()
+props = {p.get("name"): p.get("value") for p in root.iter("property")}
+assert props.get("capture.budget_stop") == "test_cap.exe:owner@1", props
+# A producer stop must NEVER surface as host-retention truncation: that
+# property states an exact retained/total pair the producer cannot supply.
+assert "capture.truncated" not in props, props
+so = root.find(".//testcase/system-out")
+assert so.text == "hello", repr(so.text)
+assert not so.attrib, so.attrib' "$CAP_TMP/budget-out.xml" 2>/dev/null; then
+    t_pass "capture: a budget stop reaches the JUnit XML as its own property"
+else
+    t_fail "capture: a budget stop reaches the JUnit XML as its own property"
+fi
+
+# ... and the same event, in the same shape, in the public JSON artifact --
+# driven through the real harvester, not a re-statement of its mapping.
+{
+    echo "[  1.000] [cpu:0] [ OK ] ${CAP_PREFIX}[UTEST-FRAME] v=1 run=1"
+    echo "[  1.010] [cpu:0] [ OK ] ${CAP_PREFIX}[UTEST-JSON] {\"record_kind\":\"binary\",\"name\":\"test_cap.exe\",\"type\":\"correctness\",\"status\":\"PASS\",\"time_ms\":5,\"asserts_passed\":1,\"asserts_failed\":0,\"skip_blocks\":0}"
+    echo "[  1.020] [cpu:0] [ OK ] ${CAP_PREFIX}[UTEST-JSON] {\"record_kind\":\"run_report\",\"asserts_passed\":1,\"asserts_failed\":0,\"skip_blocks\":0,\"skip_records\":0,\"binaries_reported\":1,\"binaries_invalid\":0,\"binaries_unreported\":0}"
+    echo "[  1.030] [cpu:0] [ OK ] ${CAP_PREFIX}[UTEST-JSON] {\"summary\":{\"passed\":1,\"failed\":0,\"errors\":0,\"skipped\":0,\"total\":1,\"time_ms\":5}}"
+    echo "[  1.040] [cpu:0] [ OK ] ${CAP_PREFIX}[UTEST-JSON] {\"record_kind\":\"run_meta\",\"aborted\":false,\"not_run\":0}"
+    echo "[  1.050] [cpu:0] [ OK ] ${CAP_PREFIX}=== 1 passed, 0 failed, 0 skipped of 1 total ==="
+    echo "[  1.060] [cpu:0] [ OK ] ${CAP_PREFIX}[UTEST-FRAME-END] run=1 records=6"
+} > "$CAP_TMP/budget-harvest.log"
+if python3 "$HARVEST" "$CAP_TMP/budget-harvest.log" "$CAP_TMP/budget-harvest.json" \
+        --capture "$CAP_TMP/over_ok.json" >/dev/null 2>&1 &&
+   python3 -c 'import json,sys
+d = json.load(open(sys.argv[1]))
+case = [c for c in d["testcases"] if c.get("name") == "test_cap.exe"][0]
+assert case["captured_budget_stop"] is True, case
+assert case["captured_budget_scope"] == "owner", case
+assert case["captured_budget_limit"] == 1, case
+assert case["captured_output"] == "hello", case
+# The producer stop must not borrow the host-retention fields, whose counts
+# are exact and describe a different event entirely.
+assert case["captured_truncated"] is False, case
+assert case["captured_truncated_bytes"] == 0, case' "$CAP_TMP/budget-harvest.json" 2>/dev/null; then
+    t_pass "capture: a budget stop reaches the JSON artifact without truncation metadata"
+else
+    t_fail "capture: a budget stop reaches the JSON artifact without truncation metadata"
+fi
+
+# A NORMAL run must not gain the budget property, exactly as it must not gain
+# the truncation one -- the new branch must be invisible when nothing stopped.
+if python3 "$CAPTURE" splice-xml "$CAP_TMP/budget.xml" "$CAP_TMP/good.json" \
+       "$CAP_TMP/nobudget.xml" >/dev/null 2>&1 &&
+   python3 -c 'import sys,xml.etree.ElementTree as ET
+root = ET.parse(sys.argv[1]).getroot()
+assert not [p for p in root.iter("property")
+            if p.get("name") == "capture.budget_stop"]' "$CAP_TMP/nobudget.xml" 2>/dev/null; then
+    t_pass "capture: a run with no budget stop gains no budget property"
+else
+    t_fail "capture: a run with no budget stop gains no budget property"
+fi
+
+# The suppression must be NARROW: a stream with no marker at all still fails
+# on an unterminated tail exactly as before. Without this, the new branch
+# could quietly disable the check for every run.
+{
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=1 final=0 a"
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=8 name=test_cap2.exe"
+    cap_line "[UTEST-CAPTURE] owner=8 seq=0 len=1 final=0 b"
+    cap_line "[UTEST-CAPTURE-OVER] owner=8 seq=1 scope=owner limit=1 charged=1"
+} > "$CAP_TMP/over_narrow.log"
+if ! cap_model "$CAP_TMP/over_narrow.log" "$CAP_TMP/over_narrow.json" &&
+   [ "$(cap_field "$CAP_TMP/over_narrow.json" 'm["refusal"]["reason"]')" = "capture_unterminated" ]; then
+    t_pass "capture: one owner's stop does not terminate another owner's stream"
+else
+    t_fail "capture: one owner's stop does not terminate another owner's stream"
+fi
+
 # c11. The nonce prefix is what makes a record non-forgeable. A capture-shaped
 #      line WITHOUT it is a ring-3 binary echoing text, not a launcher record.
 cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe" > "$CAP_TMP/forge.log"

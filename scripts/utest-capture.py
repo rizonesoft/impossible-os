@@ -57,23 +57,48 @@ Truncation is reported in THREE representations, which are deliberately named
 differently and must not be confused:
 
   * this module's MODEL (the JSON written by `model`), per binary:
-    `total_bytes`, `retained_bytes`, `truncated`, `truncated_bytes`;
+    `total_bytes`, `retained_bytes`, `truncated`, `truncated_bytes`, plus
+    `budget_stop` (and `budget_scope`/`budget_limit` when it is set);
   * the public JSON test artifact (scripts/utest-json-harvest.py), per testcase:
     `captured_output`, `captured_bytes` (= total), `captured_retained_bytes`,
-    `captured_truncated`, `captured_truncated_bytes`;
+    `captured_truncated`, `captured_truncated_bytes`, `captured_budget_stop`
+    (and `captured_budget_scope`/`captured_budget_limit`);
   * the JUnit XML: `<system-out>` carries the TEXT ONLY -- byte-identical to
     `captured_output` -- and truncation rides as a SUITE-level property
     `capture.truncated` whose value is a comma-separated list of
-    `<binary>:<retained>/<total>`, present only when something was truncated.
+    `<binary>:<retained>/<total>`, present only when something was truncated;
+    a producer budget stop rides the separate `capture.budget_stop` property
+    as `<binary>:<scope>@<limit>`.
     It is not on `<system-out>` because the Jenkins/xunit junit-10.xsd models
     that element as string-only, so attributes there can make a validating
     consumer reject the whole report.
 
-This module bounds the HOST. It cannot bound the producer: a binary can still
-put unlimited valid sub-256-byte records on the serial wire, which costs wire
-time and log disk before any host code runs. That budget belongs in the kernel
-emitter -> XREF: the usermode test framework's "Producer-Side Capture Emission
-Budget" section.
+This module bounds the HOST; the kernel emitter bounds the PRODUCER, and the
+two are reported separately on purpose. When a binary exhausts its per-owner
+record budget -- or the run exhausts the aggregate one -- the emitter publishes
+exactly one authenticated [UTEST-CAPTURE-OVER] record and stops capturing for
+that owner. That is a BOUNDED payload, not a corrupt one: without the marker
+the stream would simply stop mid-write and reconcile as `capture_unterminated`,
+turning a deliberate policy stop into a corruption verdict and a red run.
+
+The marker is TRUSTED ONLY AS FAR AS IT CAN BE CHECKED, because it is a record
+that suppresses a refusal and is therefore worth forging:
+
+  * it must be the owner's HIGHEST sequence number, and the chunk sequences
+    below it must be contiguous from 0 -- the producer draws the seq, the
+    budget verdict and the run charge under one lock precisely so this holds;
+  * a `scope=owner` marker must sit at EXACTLY the limit it declares, so an
+    early stop cannot claim a budget it never reached;
+  * every `scope=run` marker in a run must declare the SAME limit, and the run
+    must actually have charged at least that many chunk records across all
+    owners -- an owner stopped by the aggregate can be far below its own limit,
+    so nothing about its own stream proves the run budget was reached.
+
+`budget_stop` is reported as its OWN field rather than folded into
+`truncated`. The producer cannot know how many bytes the binary went on to
+write after the stop, and `truncated_bytes` is an exact contract
+(`total_bytes - retained_bytes`); publishing a producer stop through it would
+put a false exact number in a field consumers do arithmetic on.
 
 Exit codes (both subcommands):
     0  model written / splice written -- capture is reconciled and trustworthy
@@ -146,6 +171,13 @@ _CHUNK_RE = re.compile(
     + r" final=([01]) (.*)"
 )
 _LOST_RE = re.compile(r"\[UTEST-CAPTURE-LOST\] owner=" + _U32 + r" len=unknown")
+# The producer's emission-budget terminator. `scope` is an exact alternation
+# rather than \w+: an unknown scope is a version skew the host must refuse, not
+# a value to pass through into an artifact field consumers branch on.
+_OVER_RE = re.compile(
+    r"\[UTEST-CAPTURE-OVER\] owner=" + _U32 + r" seq=" + _U32
+    + r" scope=(owner|run) limit=" + _U32 + r" charged=" + _U32
+)
 
 _UINT32_MAX = 0xFFFFFFFF
 
@@ -252,7 +284,7 @@ def _artifact_text(payload: bytes) -> str:
 
 
 class _Owner:
-    __slots__ = ("pid", "name", "chunks", "lost", "declared", "records")
+    __slots__ = ("pid", "name", "chunks", "lost", "declared", "records", "over")
 
     def __init__(self, pid: int) -> None:
         self.pid = pid
@@ -261,6 +293,7 @@ class _Owner:
         self.lost = False
         self.declared = 0
         self.records = 0
+        self.over = None  # (seq, scope, limit, charged) once terminated
 
 
 def _scan(lines, prefix):
@@ -378,6 +411,32 @@ def _scan(lines, prefix):
             _own(pid).lost = True
             continue
 
+        m = _OVER_RE.fullmatch(body)
+        if m:
+            pid, seq = int(m.group(1)), int(m.group(2))
+            scope = m.group(3)
+            limit, charged = int(m.group(4)), int(m.group(5))
+            _count(0)
+            if seq > _UINT32_MAX or limit > _UINT32_MAX or charged > _UINT32_MAX:
+                raise Refusal(
+                    "capture_field_out_of_range",
+                    f"owner={pid} overflow marker carries a value wider than "
+                    "the producer's uint32 fields",
+                )
+            owner = _own(pid)
+            # The producer latches the owner before emitting, so a second
+            # marker cannot come from the kernel -- and accepting one would
+            # let a later, weaker marker overwrite the checks the first must
+            # satisfy.
+            if owner.over is not None:
+                raise Refusal(
+                    "capture_duplicate_over",
+                    f"owner={pid} emitted two overflow markers "
+                    f"(seq={owner.over[0]} then seq={seq})",
+                )
+            owner.over = (seq, scope, limit, charged)
+            continue
+
         # An AUTHENTICATED capture-family line that parses as none of the above
         # is corruption, and it must never be skipped. Skipping it made a
         # damaged record indistinguishable from silence: a BEGIN followed only
@@ -399,6 +458,72 @@ def _scan(lines, prefix):
     return owners
 
 
+def _check_over(owner):
+    """Validate one owner's producer-budget terminator.
+
+    This record SUPPRESSES the `capture_unterminated` refusal, so it is the one
+    record kind a forger gains something by emitting. Authentication (the frame
+    nonce) proves it came from the kernel; these checks prove it came from the
+    kernel's BUDGET path, at the point that path can actually be reached.
+    """
+    seq, scope, limit, charged = owner.over
+    highest_chunk = max(owner.chunks) if owner.chunks else None
+
+    # Both derived budgets are necessarily positive (each is a ceiling division
+    # of a non-zero raw allowance), so a zero limit cannot come from the
+    # producer at all. Checked FIRST because every rule below is relative to
+    # the limit: with limit=0 an owner-scope marker at seq=0 satisfies the
+    # equality vacuously, and a BEGIN plus a bare marker reconciled green as a
+    # bounded stop with an empty payload -- a malformed or version-skewed
+    # producer suppressing capture_unterminated on a budget nothing reached.
+    if limit == 0:
+        raise Refusal(
+            "capture_budget_unreached",
+            f"owner={owner.pid} ({owner.name}) declares a {scope}-scope stop "
+            "at limit=0, which no derived producer budget can be",
+        )
+
+    # The producer draws the seq, the verdict and the run charge under one
+    # lock, so the terminator is always the owner's highest drawn number and
+    # the chunks below it are contiguous from 0. A marker sitting below a
+    # chunk means either a forgery or that invariant breaking; both refuse.
+    if highest_chunk is not None and seq <= highest_chunk:
+        raise Refusal(
+            "capture_over_not_highest",
+            f"owner={owner.pid} ({owner.name}) overflow marker at seq={seq} is "
+            f"not above its highest chunk seq={highest_chunk}",
+        )
+    expected = 0 if highest_chunk is None else highest_chunk + 1
+    if seq != expected:
+        raise Refusal(
+            "capture_over_seq_gap",
+            f"owner={owner.pid} ({owner.name}) overflow marker at seq={seq} "
+            f"leaves a hole: the chunks end at seq={expected - 1}",
+        )
+    # An owner-scope stop is drawn at exactly the budget, never above it: the
+    # latch fires on the first claim that finds the counter AT the limit.
+    # Equality is what makes "the budget was really reached" checkable rather
+    # than merely asserted by the record that benefits from the claim.
+    if scope == "owner" and seq != limit:
+        raise Refusal(
+            "capture_budget_unreached",
+            f"owner={owner.pid} ({owner.name}) declares an owner-scope stop at "
+            f"limit={limit} but terminated at seq={seq}",
+        )
+    # `charged` is the RUN's aggregate at the moment this owner stopped, so it
+    # has a feasible floor even for an owner-scope stop: this owner's own
+    # chunks were each charged against that aggregate before the stop, so the
+    # run cannot have charged fewer records than this one binary emitted. A
+    # marker below its own floor is contradicting itself.
+    if charged < len(owner.chunks):
+        raise Refusal(
+            "capture_budget_unreached",
+            f"owner={owner.pid} ({owner.name}) declares charged={charged} for "
+            f"the run but emitted {len(owner.chunks)} chunk(s) of its own, "
+            "each of which was charged against that same aggregate",
+        )
+
+
 def _reconcile(owner):
     """Validate one owner's records and return (retained_prefix, total_bytes).
 
@@ -417,6 +542,8 @@ def _reconcile(owner):
             f"owner={owner.pid} produced {owner.records} capture record(s) with "
             "no [UTEST-CAPTURE-BEGIN] binding it to a binary",
         )
+    if owner.over is not None:
+        _check_over(owner)
     if not owner.chunks:
         return b"", 0
 
@@ -433,7 +560,10 @@ def _reconcile(owner):
                 "capture_seq_gap",
                 f"owner={owner.pid} ({owner.name}) jumps seq={prev} -> seq={cur}",
             )
-    if owner.chunks[seqs[-1]][1] != 1:
+    if owner.over is None and owner.chunks[seqs[-1]][1] != 1:
+        # Only meaningful for a stream the producer did NOT terminate itself:
+        # a budget stop legitimately cuts a write mid-sequence, and the marker
+        # (already validated above) is that stream's terminator.
         raise Refusal(
             "capture_unterminated",
             f"owner={owner.pid} ({owner.name}) highest record seq={seqs[-1]} is "
@@ -469,6 +599,55 @@ def _refusal_model(exc):
     }
 
 
+def _check_run_budget(owners):
+    """Prove a run-scope stop against the whole run, not one owner's stream.
+
+    An owner stopped by the AGGREGATE budget can be arbitrarily far below its
+    own limit, so nothing in its own sequence shows the run budget was reached
+    -- `_check_over`'s equality test does not apply and cannot. The proof has
+    to come from the run: every run-scope marker must agree on the limit, must
+    declare a `charged` count equal to it, and the run must carry exactly that
+    many chunk records across all owners. An early or forged run stop then
+    fails on a count no single binary controls.
+
+    All three are EQUALITIES, deliberately. The producer charges the aggregate
+    under one lock and latches at exactly the limit, so a real run stop has
+    `charged == limit` and leaves exactly `limit` chunks on the wire; nothing
+    can be charged afterwards, because the latch is what the next claim reads.
+    An earlier version of this check accepted `observed >= limit` and ignored
+    `charged` entirely, which let two chunks plus a `limit=1 charged=0` marker
+    reconcile green -- a terminator that suppresses `capture_unterminated` on
+    a budget the run never reached is exactly the forgery this exists to stop.
+    """
+    run_overs = [o.over for o in owners.values()
+                 if o.over is not None and o.over[1] == "run"]
+    if not run_overs:
+        return
+    limits = {over[2] for over in run_overs}
+    if len(limits) > 1:
+        raise Refusal(
+            "capture_run_limit_conflict",
+            "run-scope overflow markers disagree on the aggregate limit: "
+            + ", ".join(str(v) for v in sorted(limits)),
+        )
+    limit = limits.pop()
+    for seq, _scope, _limit, charged in run_overs:
+        if charged != limit:
+            raise Refusal(
+                "capture_budget_unreached",
+                f"a run-scope stop at seq={seq} declares limit={limit} but "
+                f"charged={charged} -- the producer latches at exactly the "
+                "limit, so the two cannot differ",
+            )
+    observed = sum(len(o.chunks) for o in owners.values())
+    if observed != limit:
+        raise Refusal(
+            "capture_budget_unreached",
+            f"a run-scope stop declares limit={limit} but the run carries "
+            f"{observed} capture chunk record(s)",
+        )
+
+
 def build_model(lines, prefix):
     """Parse + reconcile the whole run. Never raises Refusal; records it."""
     try:
@@ -480,6 +659,7 @@ def build_model(lines, prefix):
     aggregate = 0
     aggregate_truncated = False
     try:
+        _check_run_budget(owners)
         for pid in sorted(owners):
             owner = owners[pid]
             retained, total = _reconcile(owner)
@@ -495,18 +675,25 @@ def build_model(lines, prefix):
             if len(kept) < len(retained):
                 aggregate_truncated = True
             aggregate += len(kept)
-            binaries.append(
-                {
-                    "name": owner.name,
-                    "owner_pid": owner.pid,
-                    "records": owner.records,
-                    "total_bytes": total,
-                    "retained_bytes": len(kept),
-                    "truncated": len(kept) < total,
-                    "truncated_bytes": total - len(kept),
-                    "text": _artifact_text(kept),
-                }
-            )
+            record = {
+                "name": owner.name,
+                "owner_pid": owner.pid,
+                "records": owner.records,
+                "total_bytes": total,
+                "retained_bytes": len(kept),
+                # HOST-side retention truncation only. A producer budget stop
+                # is reported through budget_stop below, never here: the
+                # producer cannot know how many bytes the binary wrote after
+                # it stopped listening, and this pair is an exact contract.
+                "truncated": len(kept) < total,
+                "truncated_bytes": total - len(kept),
+                "budget_stop": owner.over is not None,
+                "text": _artifact_text(kept),
+            }
+            if owner.over is not None:
+                record["budget_scope"] = owner.over[1]
+                record["budget_limit"] = owner.over[2]
+            binaries.append(record)
     except Refusal as exc:
         return _refusal_model(exc)
 
@@ -664,6 +851,7 @@ def cmd_splice_xml(argv):
         return 1
 
     truncated = []
+    budget_stopped = []
     for case in root.iter("testcase"):
         if case.get("classname") in _SYNTHETIC_CLASSNAMES:
             continue
@@ -703,20 +891,37 @@ def cmd_splice_xml(argv):
                 "%s:%d/%d"
                 % (name, record.get("retained_bytes", 0), record.get("total_bytes", 0))
             )
+        if record.get("budget_stop"):
+            budget_stopped.append(
+                "%s:%s@%d"
+                % (name, record.get("budget_scope", "unknown"),
+                   record.get("budget_limit", 0))
+            )
 
     # A truncated payload must never be a SILENT cut in either artifact. The JSON
     # record carries the per-binary counts; the XML says so here, at SUITE level,
     # where <properties> is schema-legal and where this document already reports
     # aborted/not_run and run identity. Absent when nothing was truncated, so a
     # normal run's document is exactly what it was before.
-    if truncated:
+    #
+    # A producer budget stop rides its OWN property for the same reason it has
+    # its own model field: `capture.truncated` states an exact retained/total
+    # pair, and a budget-stopped binary's totals are the bytes that REACHED the
+    # host, not the bytes the binary wrote. Folding the two together would put
+    # a number in that list which does not mean what every other entry means.
+    if truncated or budget_stopped:
         props = root.find("properties")
         if props is None:
             props = ET.Element("properties")
             root.insert(0, props)
-        prop = ET.SubElement(props, "property")
-        prop.set("name", "capture.truncated")
-        prop.set("value", ",".join(truncated))
+        if truncated:
+            prop = ET.SubElement(props, "property")
+            prop.set("name", "capture.truncated")
+            prop.set("value", ",".join(truncated))
+        if budget_stopped:
+            prop = ET.SubElement(props, "property")
+            prop.set("name", "capture.budget_stop")
+            prop.set("value", ",".join(budget_stopped))
 
     try:
         body = ET.tostring(root, encoding="unicode")
