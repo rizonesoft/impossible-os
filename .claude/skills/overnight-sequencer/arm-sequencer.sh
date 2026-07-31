@@ -268,6 +268,8 @@ except FileNotFoundError:
 except (ValueError, OSError) as e:
     print(f"  WARN: could not reset overnight-runner.json: {e}")
 PY
+  remove_runtime_file .claude/state/run-deadline "run deadline"
+  remove_runtime_file .claude/overnight/noship-streak "no-ship streak"
   remove_runtime_file .claude/overnight/launch.lock "launch.lock"
   remove_runtime_file .claude/state/sequencer-fixpoint "stale fixpoint sentinel"
 }
@@ -322,6 +324,11 @@ ARM_EFFORT=""              # empty = inherit the CLI's saved default (High on th
                            # inherit-High until quality holds on medium.
 ARM_FORCE=0                # --force: arm despite an unproven control-plane change
 ARM_SKIP_PREFLIGHT=0       # --skip-preflight: skip the pre-arm health gate
+# --hours N: bound the run. Written to .claude/state/run-deadline and enforced
+# by deadline-check.sh at SPAWN time, so the run stops after its last segment's
+# verified rollover -- a clean stop, not a kill. Empty means "run to fixpoint",
+# the historical behaviour.
+ARM_HOURS=""
 FORWARD_ARGS=()
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -336,6 +343,10 @@ while [ $# -gt 0 ]; do
     --skip-preflight)
       ARM_SKIP_PREFLIGHT=1
       shift
+      ;;
+    --hours)
+      ARM_HOURS="${2:?--hours needs a number}"
+      shift 2
       ;;
     --model)
       ARM_PRIMARY="${2:?--model needs a value}"
@@ -434,6 +445,13 @@ fi
 # daemon-reload makes them effective for the scheduled start.
 mkdir -p .claude/state
 : > "$MARKER"
+DEADLINE_FILE=".claude/state/run-deadline"
+rm -f "$DEADLINE_FILE"
+if [ -n "$ARM_HOURS" ]; then
+  _deadline=$(( $(date +%s) + ARM_HOURS * 3600 ))
+  echo "$_deadline" > "$DEADLINE_FILE"
+  echo "run deadline: $(date -d "@$_deadline" -Is 2>/dev/null || echo "$_deadline") (${ARM_HOURS}h) -- stops after the last segment's verified rollover"
+fi
 
 # ---- Tail-completion guard ---------------------------------------------------
 #

@@ -102,6 +102,27 @@ disarm_timers() {  # stop future fires; the current oneshot service still exits 
   local unit="overnight-$(basename "$PROJECT_DIR")"
   systemctl --user stop "${unit}.timer" "${unit}-watchdog.timer" 2>/dev/null || true
 }
+# DEADLINE / ABORT (2026-07-31). Checked BEFORE the oracle and before any
+# spawn: a bounded run ("arm it for 24h and judge the evidence") had no way to
+# express itself, so every bounded experiment was a manual vigil. Enforcing it
+# at SPAWN time is what makes the stop clean -- the previous segment already
+# exited at a verified rollover, so nothing is interrupted. A systemd timer
+# firing --disarm would instead land wherever it happened to land, mid-section
+# as often as not. Mirrors the fixpoint disarm below, including the notify.
+if [ "${OVERNIGHT_SEQUENCER_DRYRUN:-}" != "1" ] && [ -f "$SCRIPT_DIR/deadline-check.sh" ]; then
+  DEADLINE_OUT="$(bash "$SCRIPT_DIR/deadline-check.sh" "$PROJECT_DIR" 2>&1)"
+  DEADLINE_RC=$?
+  echo "$DEADLINE_OUT"
+  if [ "$DEADLINE_RC" = "10" ]; then
+    python3 "$SCRIPT_DIR/run-status.py" "$PROJECT_DIR" --stamp "$(date -Is)" >/dev/null 2>&1 || true
+    python3 "$SCRIPT_DIR/collect-questions.py" "$PROJECT_DIR" --stamp "$(date -Is)" >/dev/null 2>&1 || true
+    bash "$SCRIPT_DIR/notify.sh" "$PROJECT_DIR" fixpoint "Overnight run stopped: ${DEADLINE_OUT}" 2>/dev/null || true
+    rm -f "$ARMED_MARKER_FILE" 2>/dev/null || true
+    disarm_timers
+    exit 0
+  fi
+fi
+
 if [ "${OVERNIGHT_SEQUENCER_DRYRUN:-}" != "1" ] && [ "${OVERNIGHT_SEQUENCER_FORCE:-}" != "1" ] \
    && [ -f "$ORACLE" ]; then
   LIFECYCLE_STATE="$(cd "$PROJECT_DIR" && python3 "$ORACLE" --next 2>/dev/null \
@@ -437,10 +458,33 @@ OUTCOME_JSON="$(python3 "$SCRIPT_DIR/run-outcome.py" "$PROJECT_DIR" \
   --run-secs "$(( $(date +%s) - RUN_START_EPOCH ))" \
   ${SNOOZED_ARG[@]+"${SNOOZED_ARG[@]}"} 2>>"$REPORT" || true)"
 echo "run outcome: ${OUTCOME_JSON:-unavailable}" >> "$REPORT"
+# NO-SHIP STREAK (2026-07-31). Feeds deadline-check.sh's abort condition. HEAD
+# movement is the test rather than the outcome label: a segment that commits
+# nothing produced nothing, whatever it called itself. Reset on any movement so
+# a single slow segment cannot trip the abort.
+NOSHIP_FILE="$RUNTIME_BASE/noship-streak"
+END_HEAD="$(git -C "$PROJECT_DIR" rev-parse HEAD 2>/dev/null || echo "")"
+if [ -n "$END_HEAD" ] && [ "$END_HEAD" != "${START_HEAD:-}" ]; then
+  rm -f "$NOSHIP_FILE" 2>/dev/null || true
+else
+  PREV_NOSHIP="$(awk 'NR==1{print $1+0}' "$NOSHIP_FILE" 2>/dev/null || echo 0)"
+  echo "$(( ${PREV_NOSHIP:-0} + 1 ))" > "$NOSHIP_FILE" 2>/dev/null || true
+  echo "no-ship streak: $(( ${PREV_NOSHIP:-0} + 1 )) (HEAD unmoved this segment)" >> "$REPORT"
+fi
+
 if printf '%s' "$OUTCOME_JSON" | grep -q '"breaker": true'; then
   python3 "$SCRIPT_DIR/collect-questions.py" "$PROJECT_DIR" --stamp "$(date -Is)" >/dev/null 2>&1 || true
+  # ABORT, not just back off (2026-07-31). The breaker previously slowed the
+  # watchdog and stayed armed, which is right for a transient host problem and
+  # wrong for a bounded canary: it burns the remaining hours re-confirming the
+  # same failure at a slower cadence. A tripped breaker means consecutive
+  # unproductive segments -- an operator needs to look, and the run should stop
+  # at the clean boundary it is already sitting on.
   bash "$SCRIPT_DIR/notify.sh" "$PROJECT_DIR" critical \
-    "Circuit breaker tripped: consecutive unproductive runs; watchdog backing off (still armed). Check $REPORT" 2>/dev/null || true
+    "Circuit breaker tripped: consecutive unproductive runs -- STOPPING and disarming. Check $REPORT" 2>/dev/null || true
+  rm -f "$PROJECT_DIR/.claude/state/sequencer-armed" 2>/dev/null || true
+  unit="overnight-$(basename "$PROJECT_DIR")"
+  systemctl --user stop "${unit}.timer" "${unit}-watchdog.timer" 2>/dev/null || true
 fi
 
 echo "overnight-sequencer unattended run finished $(date -Is)" >> "$REPORT"

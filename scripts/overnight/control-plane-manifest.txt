@@ -92,3 +92,4 @@ scripts/overnight/
 .claude/hooks/websearch_offload_gate.py
 scripts/overnight/run-liveness.sh
 scripts/overnight/segment-sync.sh
+scripts/overnight/deadline-check.sh
