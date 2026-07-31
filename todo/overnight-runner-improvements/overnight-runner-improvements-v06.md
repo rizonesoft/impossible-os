@@ -1,5 +1,8 @@
 # Overnight Runner Improvements v06 -- Month-Run Findings (armed 2026-07-31)
 
+> **CLOSED 2026-07-31.** This file is the historical record of the run armed 2026-07-31; do NOT file new findings here. The current capture surface is [`overnight-runner-improvements-v07.md`](overnight-runner-improvements-v07.md). Items still open at close-out are carried forward there with back-pointers.
+
+
 Findings from the long-horizon unattended run armed 2026-07-31 (month-scale target; the arm itself is an attended canary first). This file is a CAPTURE surface, not a work queue: it sits outside the sequencer's traversal, so nothing here is implemented by the run. It is the CURRENT capture file -- the sequencer files to the NEWEST `overnight-runner-improvements-vNN.md` in this directory, which is this one until an operator opens v07.
 
 **Why findings land here instead of being fixed.** The run is explicitly NOT permitted to modify its own control plane while unattended -- `.claude/hooks/**`, `.claude/skills/**`, `scripts/overnight/**`, `.githooks/**`, `.claude/settings.json` -- nor the RECEIPT SURFACE (`Makefile*`, `scripts/build.sh`, the ABI generator), which `receipt_surface_guard.py` enforces: build/verification machinery whose content the run's own receipts are computed over must not drift while nobody is watching, because a subtly wrong `build.sh` keeps producing green receipts that no longer mean what they say. Ordinary work is unaffected: kernel code, tests, docs and TODO files are fixed in place as normal.
