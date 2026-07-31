@@ -364,6 +364,14 @@ if [ -n "${OVERNIGHT_EFFORT:-}" ] && [ "$OVERNIGHT_EFFORT" != "inherit" ]; then
 fi
 echo "model: ${OVERNIGHT_MODEL_EFFECTIVE} primary, ${OVERNIGHT_FALLBACK_MODEL:-sonnet} fallback, effort ${OVERNIGHT_EFFORT:-inherit}" >> "$REPORT"
 
+# SEGMENT-START SYNC (2026-07-31): pull operator repairs landed on main from
+# the repair worktree. Extracted into segment-sync.sh so the behaviour is
+# TESTABLE -- this point sits after the DRYRUN exit, so nothing in the existing
+# harness reaches it, and an untested git operation at every segment start is
+# not something to run unattended. Contract (always exit 0, skip on dirt,
+# --ff-only only) lives in that script's header.
+bash "$SCRIPT_DIR/segment-sync.sh" "$PROJECT_DIR" >> "$REPORT" 2>&1 || true
+
 # Snapshot for the post-run circuit breaker: a run that ends with HEAD
 # unmoved, a nonzero exit, or a sub-15-min zero-commit session counts as
 # unproductive (run-outcome.py classifies; Codex-runner lesson 2026-07-04).

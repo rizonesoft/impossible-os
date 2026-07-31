@@ -361,6 +361,7 @@ information or judgment; none of this weakens a gate):**
   items, `Skill(implement-todo-item)` is allowed.
 - **Commit AND push after every section** (one atomic act). After a section
   ships+reviews+pushes, `run_phase_guard.py progress`.
+- **REBASE BEFORE EVERY PUSH -- `main` can now move underneath you.** Attended control-plane repairs land on `main` from the operator's repair worktree while you are mid-section, so a ship push can be rejected as non-fast-forward through no fault of your own (observed 2026-07-31: `! [remote rejected] main -> main (cannot lock ref ...)`). The ship sequence is therefore `git pull --rebase origin main` and THEN `git push origin main`. Your tree is clean at ship time, so the rebase is safe and normally a no-op. If the rebase reports a CONFLICT, do NOT resolve it blind and do NOT force-push: the conflicting file is almost always a capture file or doctrine the operator just edited. Take their side for control-plane and doctrine files, keep yours for section work, re-run the affected verification, and if it is not obviously separable, leave the section unshipped and file the collision -- a forced push over an operator's repair is unrecoverable.
 - **Verified session rollover after every fully-shipped section.** ENFORCED
   (R1, 2026-07-19): when a ship-stamp commit landed after the last verified
   rotation, the guard BLOCKS the next section-starter skill
