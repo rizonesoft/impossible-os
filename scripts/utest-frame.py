@@ -96,9 +96,29 @@ import tempfile
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 ANNOUNCE_RE = re.compile(
     r"UTEST-([0-9a-f]{8}): \[UTEST-FRAME\] v=1 run=([0-9]{1,10})(?![0-9])")
+# `spawned=` is REQUIRED, not optional. The producer publishes the run's own
+# count of capture-armed spawns on this line (test_usermode.c u_frame_end), and
+# scripts/utest-capture.py reconciles the expectation set against it. Stopping
+# at `records=` accepted the obsolete two-field form as a COMPLETE run, so a
+# truncated or version-skewed terminator satisfied the completion poll -- and in
+# a TAP-only run, where the capture model never runs, nothing downstream applied
+# the stricter check either. A terminator the current producer cannot emit is
+# not a run this parser should certify.
+#
+# The terminator's grammar is CANONICAL and ANCHORED: every field is the
+# producer's `%u` shape (no leading zeros), bounded to uint32 below, and the
+# record must END after the census. A trailing-garbage or out-of-range
+# terminator is a shape the producer cannot emit, and accepting one certified
+# the run complete on the TAP-only path where nothing downstream re-checks it
+# -- `spawned=4294967296`, `spawned=0junk` and `spawned=0 extra=1` all passed.
+_END_U32 = r"(0|[1-9][0-9]{0,9})"
 END_RE = re.compile(
-    r"UTEST-([0-9a-f]{8}): \[UTEST-FRAME-END\] run=([0-9]{1,10})(?![0-9])"
-    r" records=([0-9]{1,10})(?![0-9])")
+    r"UTEST-([0-9a-f]{8}): \[UTEST-FRAME-END\] run=" + _END_U32
+    + r" records=" + _END_U32
+    + r" spawned=" + _END_U32 + r"\s*$")
+# 10 digits still admits values above 2^32 that the producer's uint32 cannot
+# hold, so the width bound alone is not a range bound.
+END_UINT32_MAX = 0xFFFFFFFF
 
 # A recovered crash log replays the PREVIOUS boot's entries to serial,
 # subsystem tag and all -- see klog_crash_recover() in src/kernel/klog.c. That
@@ -291,6 +311,11 @@ class FrameParser:
                 self.open_lines.append(line)
 
         end = END_RE.search(line)
+        if end and any(int(end.group(i)) > END_UINT32_MAX for i in (2, 3, 4)):
+            # Wider than the producer's own field. Treated as NOT a terminator
+            # rather than as a valid one: the open run stays open and fails to
+            # reconcile, which is the fail-closed direction.
+            end = None
         if end and end.group(1) == self.nonce:
             if self.open_run is None or end.group(2) != self.open_run:
                 self.unpaired += 1

@@ -157,6 +157,7 @@ int test_usermode_capture_escape(const char *raw, uint32_t raw_len,
                                  char *out, uint32_t out_cap);
 uint32_t test_usermode_capture_chunk_max(void);
 int test_usermode_capture_armed_for(const struct task *child, uint32_t pid);
+int test_usermode_frame_run_is_open(void);
 int test_usermode_capture_decide(uint32_t owner_seq, uint32_t run_records,
                                  int owner_stopped, int run_over);
 int test_usermode_capture_apply(uint32_t *owner_seq, uint32_t *run_records,
@@ -4194,6 +4195,50 @@ static void test_capture_chunk_boundary_plus_one_emits_two_records(void)
                      __ATOMIC_RELEASE);
 }
 
+/* Count the capture chunk records containing `want` among the entries written
+ * between the `head_before` snapshot and `head_after`.
+ *
+ * Two failure modes to avoid at once. Fixed head-relative offsets are not
+ * usable: klog is a shared ring, so a line from another CPU between the flush
+ * and the read shifts head and a fixed offset asserts against a foreign
+ * record. But an UNBOUNDED backwards scan is worse than the flake it fixes --
+ * the preceding registered test drives the same task through the same `seq`
+ * reset and emits `wr=0 seq=0` and `wr=0 seq=1` of its own, so a whole-ring
+ * search would let those STALE records satisfy assertions about records this
+ * test never emitted. Bounding to the entries added since a pre-emission
+ * snapshot is what makes the search both position-independent and honest.
+ *
+ * The window is derived from HEAD, not from klog_get_ring's count. That count
+ * saturates at KLOG_RING_SIZE (klog.c: `if (klog_ring_count < KLOG_RING_SIZE)
+ * klog_ring_count++`) while head keeps advancing, so a count difference
+ * silently shrinks to zero once the ring fills -- which would make every
+ * assertion below fail as a function of how much the boot happened to log
+ * before this test ran. Head wraps every KLOG_RING_SIZE entries, so the
+ * modular difference is exact for any window smaller than the ring, which a
+ * three-record emission always is.
+ *
+ * Returns the match count so a caller can assert exactly-once rather than
+ * at-least-once. */
+static uint32_t u_test_count_capture_records(const klog_entry_t *ring,
+                                             uint32_t head_before,
+                                             uint32_t head_after,
+                                             const char *want)
+{
+    uint32_t added = (head_after + KLOG_RING_SIZE - head_before) %
+                     KLOG_RING_SIZE;
+    uint32_t i, found = 0;
+
+    for (i = 1; i <= added; i++) {
+        const klog_entry_t *e =
+            &ring[(head_after + KLOG_RING_SIZE - i) % KLOG_RING_SIZE];
+
+        if (u_test_contains(e->message, "[UTEST-CAPTURE] ") &&
+            u_test_contains(e->message, want))
+            found++;
+    }
+    return found;
+}
+
 /* Write identity on the wire. Every record of ONE write() must carry the
  * same `wr`, and it must be the sequence number of that write's FIRST
  * chunk; the NEXT write must name itself, not inherit the previous one.
@@ -4213,11 +4258,10 @@ static void test_capture_write_identity_spans_one_write_only(void)
     uint32_t saved_owner;
     int32_t  saved_seq;
     uint8_t  saved_stopped;
-    uint32_t count, head;
+    uint32_t count, head_before, head_after;
     uint32_t chunk_max = test_usermode_capture_chunk_max();
     uint32_t i;
     const klog_entry_t *ring;
-    const klog_entry_t *first_new, *last;
 
     if (!self) {
         TEST_SKIP("no current task available in this test context");
@@ -4234,6 +4278,11 @@ static void test_capture_write_identity_spans_one_write_only(void)
     self->utest_capture_owner_pid = self->pid;
     atomic_set(&self->utest_capture_seq, 0);
 
+    /* Snapshot the ring head BEFORE emitting. Every assertion below is scoped
+     * to the entries added after this point, so the preceding test's identical
+     * `wr=0 seq=0` / `wr=0 seq=1` records cannot satisfy them. */
+    (void)klog_get_ring(&count, &head_before);
+
     /* Write one: chunk_max + 1 bytes, so it spans two records drawing
      * seq=0 and seq=1. Both must be stamped wr=0. */
     test_usermode_capture_start(&ctx);
@@ -4241,28 +4290,32 @@ static void test_capture_write_identity_spans_one_write_only(void)
         (void)test_usermode_capture_byte(&ctx, 'y');
     test_usermode_capture_end(&ctx);
 
-    ring = klog_get_ring(&count, &head);
-    (void)count;
-    first_new = &ring[(head + KLOG_RING_SIZE - 2u) % KLOG_RING_SIZE];
-    last      = &ring[(head + KLOG_RING_SIZE - 1u) % KLOG_RING_SIZE];
-    TEST_ASSERT(u_test_contains(first_new->message, "wr=0 seq=0 "),
-                "the first chunk of a write names itself as the write");
-    TEST_ASSERT(u_test_contains(last->message, "wr=0 seq=1 "),
-                "the write's SECOND chunk carries the same write identity, "
-                "not its own sequence number");
+    ring = klog_get_ring(&count, &head_after);
+    TEST_ASSERT_EQ((uint64_t)u_test_count_capture_records(
+                       ring, head_before, head_after, "wr=0 seq=0 "),
+                   1u,
+                   "the first chunk of a write names itself as the write, "
+                   "exactly once");
+    TEST_ASSERT_EQ((uint64_t)u_test_count_capture_records(
+                       ring, head_before, head_after, "wr=0 seq=1 "),
+                   1u,
+                   "the write's SECOND chunk carries the same write identity, "
+                   "not its own sequence number");
 
     /* Write two, same owner and same ctx-free entry point. It draws the
      * next sequence number and must name ITSELF -- inheriting wr=0 would
      * merge two writes into one group and re-open the masking hole. */
+    (void)klog_get_ring(&count, &head_before);
     test_usermode_capture_start(&ctx);
     (void)test_usermode_capture_byte(&ctx, 'z');
     test_usermode_capture_end(&ctx);
 
-    ring = klog_get_ring(&count, &head);
-    last = &ring[(head + KLOG_RING_SIZE - 1u) % KLOG_RING_SIZE];
-    TEST_ASSERT(u_test_contains(last->message, "wr=2 seq=2 "),
-                "a second write() starts a new write identity rather than "
-                "inheriting the previous write's");
+    ring = klog_get_ring(&count, &head_after);
+    TEST_ASSERT_EQ((uint64_t)u_test_count_capture_records(
+                       ring, head_before, head_after, "wr=2 seq=2 "),
+                   1u,
+                   "a second write() starts a new write identity rather than "
+                   "inheriting the previous write's");
 
     self->utest_capture_active = saved_active;
     self->utest_capture_owner_pid = saved_owner;
@@ -4285,6 +4338,21 @@ static void test_capture_begin_announces_the_enforced_chunk_bound(void)
     uint32_t pos = 0;
     uint32_t chunk_max = test_usermode_capture_chunk_max();
     uint32_t v, div;
+
+    /* This emits a REAL binding record for an owner pid the launcher never
+     * spawned. That is inert only while the framing tag is unpublished: the
+     * record then rides the plain "UTEST" subsystem and falls outside every
+     * framed slice. Once the tag is published the same record would be
+     * authenticated INTO an open run, where the host refuses it as
+     * capture_unexpected_channel -- a synthetic test binding failing a real
+     * run. Guarded on a run being OPEN rather than on the boot-sticky
+     * publication flag: the latter would skip this test forever after the
+     * first run completes, masking the very regression it exists to catch. */
+    if (test_usermode_frame_run_is_open()) {
+        TEST_SKIP("a framed run is open -- a synthetic binding would be "
+                  "authenticated into its slice");
+        return;
+    }
 
     test_usermode_capture_begin(4242u, "test_announce.exe");
 

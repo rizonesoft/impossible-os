@@ -10035,7 +10035,7 @@ frame_log() {
         echo "[  1.030] [cpu:0] [ OK ] UTEST-${nonce}: [UTEST-JSON] {\"summary\":{\"passed\":1,\"failed\":0,\"errors\":0,\"skipped\":0,\"total\":1,\"time_ms\":5}}"
         echo "[  1.040] [cpu:0] [ OK ] UTEST-${nonce}: [UTEST-JSON] {\"record_kind\":\"run_meta\",\"aborted\":false,\"not_run\":0}"
         echo "[  1.050] [cpu:0] [ OK ] UTEST-${nonce}: === 1 passed, 0 failed, 0 skipped of 1 total ==="
-        echo "[  1.060] [cpu:0] [ OK ] UTEST-${nonce}: [UTEST-FRAME-END] run=1 records=6"
+        echo "[  1.060] [cpu:0] [ OK ] UTEST-${nonce}: [UTEST-FRAME-END] run=1 records=6 spawned=0"
     } > "$out"
 }
 
@@ -10190,7 +10190,7 @@ fi
 {
     echo "[CRASH-PREV] UTEST-99999999: [UTEST-FRAME] v=1 run=1"
     echo "[CRASH-PREV] UTEST-99999999: [UTEST-JSON] {\"record_kind\":\"binary\",\"name\":\"stale.exe\",\"type\":\"correctness\",\"status\":\"PASS\",\"time_ms\":1}"
-    echo "[CRASH-PREV] UTEST-99999999: [UTEST-FRAME-END] run=1 records=2"
+    echo "[CRASH-PREV] UTEST-99999999: [UTEST-FRAME-END] run=1 records=2 spawned=0"
 } > "$FRAME_TMP/crash.log"
 frame_log "1a2b3c4d" "$FRAME_TMP/live.log"
 cat "$FRAME_TMP/live.log" >> "$FRAME_TMP/crash.log"
@@ -10227,6 +10227,46 @@ if ! python3 "$FRAME_PARSER" "$FRAME_TMP/one.log" >/dev/null 2>&1; then
 else
     t_fail "framing: a single foreign announcement fails the frame"
 fi
+
+# 6h-bis. The run terminator must carry the spawn census (section 48). The
+#     producer publishes it on every FRAME-END and scripts/utest-capture.py
+#     reconciles the expectation set against it -- but this parser stopped at
+#     `records=`, so the obsolete two-field form still certified a run COMPLETE.
+#     That is the false green: in a TAP-only run the capture model never runs,
+#     so nothing downstream would have applied the stricter check either.
+frame_log "1a2b3c4d" "$FRAME_TMP/oldform.log"
+python3 - "$FRAME_TMP/oldform.log" <<'PYEOF'
+import re, sys
+path = sys.argv[1]
+body = open(path).read()
+open(path, "w").write(re.sub(r"(\[UTEST-FRAME-END\][^\n]*) spawned=[0-9]+", r"\1", body))
+PYEOF
+if ! python3 "$FRAME_PARSER" "$FRAME_TMP/oldform.log" >/dev/null 2>&1; then
+    t_pass "framing: a terminator without the spawn census does not complete a run"
+else
+    t_fail "framing: a terminator without the spawn census does not complete a run"
+fi
+
+# 6h-ter. The census field must be CANONICAL and TERMINAL, not merely present.
+#     A width bound alone admits values above 2^32, and an unanchored match
+#     admits trailing garbage -- shapes the producer cannot emit, certifying a
+#     run complete on the TAP-only path where utest-capture.py never runs to
+#     apply its own stricter grammar.
+for BADEND in "spawned=4294967296" "spawned=0junk" "spawned=0 extra=1" "spawned=00"; do
+    frame_log "1a2b3c4d" "$FRAME_TMP/badend.log"
+    python3 - "$FRAME_TMP/badend.log" "$BADEND" <<'PYEOF'
+import re, sys
+path, bad = sys.argv[1], sys.argv[2]
+body = open(path).read()
+open(path, "w").write(
+    re.sub(r"(\[UTEST-FRAME-END\][^\n]*) spawned=[0-9]+", r"\1 " + bad, body))
+PYEOF
+    if ! python3 "$FRAME_PARSER" "$FRAME_TMP/badend.log" >/dev/null 2>&1; then
+        t_pass "framing: a non-producer spawn census ($BADEND) does not complete a run"
+    else
+        t_fail "framing: a non-producer spawn census ($BADEND) does not complete a run"
+    fi
+done
 
 # 6i. A malformed numeric field must be refused, not crash the parser: an
 #     unbounded digit run reaches int() and, past CPython's integer-string
@@ -10380,7 +10420,7 @@ refusal_log() {
         echo "[  1.030] [cpu:0] [ OK ] UTEST-${nonce}: [UTEST-JSON] {\"summary\":{\"passed\":0,\"failed\":${total},\"errors\":${total},\"skipped\":0,\"total\":${total},\"time_ms\":0}}"
         echo "[  1.040] [cpu:0] [ OK ] UTEST-${nonce}: [UTEST-JSON] {\"record_kind\":\"run_meta\",\"aborted\":false,\"not_run\":0}"
         echo "[  1.050] [cpu:0] [ OK ] UTEST-${nonce}: === 0 passed, ${total} failed, 0 skipped of ${total} total ==="
-        echo "[  1.060] [cpu:0] [ OK ] UTEST-${nonce}: [UTEST-FRAME-END] run=1 records=6"
+        echo "[  1.060] [cpu:0] [ OK ] UTEST-${nonce}: [UTEST-FRAME-END] run=1 records=6 spawned=0"
     } > "$out"
 }
 
@@ -10557,7 +10597,7 @@ reported_log() {
         echo "[  1.030] [cpu:0] [ OK ] UTEST-${nonce}: [UTEST-JSON] {\"summary\":{\"passed\":1,\"failed\":0,\"errors\":0,\"skipped\":0,\"total\":1,\"time_ms\":1}}"
         echo "[  1.040] [cpu:0] [ OK ] UTEST-${nonce}: [UTEST-JSON] {\"record_kind\":\"run_meta\",\"aborted\":false,\"not_run\":0}"
         echo "[  1.050] [cpu:0] [ OK ] UTEST-${nonce}: === 1 passed, 0 failed, 0 skipped of 1 total ==="
-        echo "[  1.060] [cpu:0] [ OK ] UTEST-${nonce}: [UTEST-FRAME-END] run=1 records=6"
+        echo "[  1.060] [cpu:0] [ OK ] UTEST-${nonce}: [UTEST-FRAME-END] run=1 records=6 spawned=0"
     } > "$out"
 }
 
@@ -15575,6 +15615,8 @@ cap_refuses "an extra capture channel beside an announced one is refused" \
 _cap_oldform_terminator() {
     cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
     cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=1 final=1 a"
+    # Deliberately the OBSOLETE two-field shape -- the whole point of this
+    # fixture. Do not "repair" it by adding the census.
     cap_line "[UTEST-FRAME-END] run=1 records=3"
 }
 cap_refuses "a run terminator carrying no spawn census is refused" \
@@ -15973,7 +16015,7 @@ fi
     echo "[  1.030] [cpu:0] [ OK ] ${CAP_PREFIX}[UTEST-JSON] {\"summary\":{\"passed\":1,\"failed\":0,\"errors\":0,\"skipped\":0,\"total\":1,\"time_ms\":5}}"
     echo "[  1.040] [cpu:0] [ OK ] ${CAP_PREFIX}[UTEST-JSON] {\"record_kind\":\"run_meta\",\"aborted\":false,\"not_run\":0}"
     echo "[  1.050] [cpu:0] [ OK ] ${CAP_PREFIX}=== 1 passed, 0 failed, 0 skipped of 1 total ==="
-    echo "[  1.060] [cpu:0] [ OK ] ${CAP_PREFIX}[UTEST-FRAME-END] run=1 records=6"
+    echo "[  1.060] [cpu:0] [ OK ] ${CAP_PREFIX}[UTEST-FRAME-END] run=1 records=6 spawned=0"
 } > "$CAP_TMP/budget-harvest.log"
 if python3 "$HARVEST" "$CAP_TMP/budget-harvest.log" "$CAP_TMP/budget-harvest.json" \
         --capture "$CAP_TMP/over_ok.json" >/dev/null 2>&1 &&

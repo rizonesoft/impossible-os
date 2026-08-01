@@ -43,12 +43,12 @@ STREAM = [
     L(P + "[UTEST-XML] <testcase name=\"a\"/>"),
     L(P + "[UTEST-JSON] {\"n\":\"a\"}"),
     "raw ring-3 stdout with no klog prefix",
-    L(P + "[UTEST-FRAME-END] run=1 records=3"),
+    L(P + "[UTEST-FRAME-END] run=1 records=3 spawned=0"),
     L("UTEST-deadbeef: [UTEST-FRAME] v=1 run=9"),   # foreign imitator
     L(P + "[UTEST-FRAME] v=1 run=2"),
     L(P + "[UTEST-XML] <testcase name=\"b\"/>"),
-    L(P + "[UTEST-FRAME-END] run=2 records=2"),
-    L("[CRASH-PREV] " + P + "[UTEST-FRAME-END] run=7 records=1"),
+    L(P + "[UTEST-FRAME-END] run=2 records=2 spawned=0"),
+    L("[CRASH-PREV] " + P + "[UTEST-FRAME-END] run=7 records=1 spawned=0"),
 ]
 
 def strip_state(r):
@@ -195,7 +195,7 @@ with tempfile.TemporaryDirectory() as d:
     os.unlink(log)
     P2 = "UTEST-99887766: "
     body2 = ("\r\n".join([L(P2 + "[UTEST-FRAME] v=1 run=1"),
-                          L(P2 + "[UTEST-FRAME-END] run=1 records=1")]) + "\r\n").encode()
+                          L(P2 + "[UTEST-FRAME-END] run=1 records=1 spawned=0")]) + "\r\n").encode()
     with open(log, "wb") as h: h.write(body2)
     r2 = uf.parse_file(log, state=r1["state"])
     check("recreation learns the NEW nonce", r2["nonce"], "99887766")
@@ -205,7 +205,7 @@ with tempfile.TemporaryDirectory() as d:
 with tempfile.TemporaryDirectory() as d:
     log = os.path.join(d, "serial.log")
     ansi_body = ("\x1b[32m" + L(P + "[UTEST-FRAME] v=1 run=1") + "\x1b[0m\r\n"
-                 + "\x1b[32m" + L(P + "[UTEST-FRAME-END] run=1 records=1")
+                 + "\x1b[32m" + L(P + "[UTEST-FRAME-END] run=1 records=1 spawned=0")
                  + "\x1b[0m\r\n").encode()
     state = None; sel = 0; fg = 0
     for cut in range(0, len(ansi_body) + 1):
@@ -223,7 +223,7 @@ with tempfile.TemporaryDirectory() as d:
 # 6. unterminated trailing line is never parsed
 with tempfile.TemporaryDirectory() as d:
     log = os.path.join(d, "serial.log")
-    partial = ("\r\n".join(STREAM[:5]) + "\r\n" + L(P + "[UTEST-FRAME-END] run=1 records=3")).encode()
+    partial = ("\r\n".join(STREAM[:5]) + "\r\n" + L(P + "[UTEST-FRAME-END] run=1 records=3 spawned=0")).encode()
     with open(log, "wb") as h: h.write(partial)
     check("unterminated terminator not accepted", uf.parse_file(log)["last_complete"], None)
     with open(log, "ab") as h: h.write(b"\r\n")
@@ -234,9 +234,9 @@ with tempfile.TemporaryDirectory() as d:
 with tempfile.TemporaryDirectory() as d:
     log = os.path.join(d, "serial.log")
     bad = [L(P + "[UTEST-FRAME] v=1 run=1"),
-           L(P + "[UTEST-FRAME-END] run=1 records=99")]
+           L(P + "[UTEST-FRAME-END] run=1 records=99 spawned=0")]
     good = [L(P + "[UTEST-FRAME] v=1 run=2"),
-            L(P + "[UTEST-FRAME-END] run=2 records=1")]
+            L(P + "[UTEST-FRAME-END] run=2 records=1 spawned=0")]
     with open(log, "wb") as h: h.write(("\r\n".join(bad) + "\r\n").encode())
     r1 = uf.parse_file(log)
     check("bad close seen", r1["bad_close"], 1)
@@ -312,7 +312,7 @@ with tempfile.TemporaryDirectory() as d:
     check("[A1] every hostile state file degrades to a full reparse", bad, 0)
 
 good_run = ("\r\n".join([L(P + "[UTEST-FRAME] v=1 run=1"),
-                          L(P + "[UTEST-FRAME-END] run=1 records=1")]) + "\r\n").encode()
+                          L(P + "[UTEST-FRAME-END] run=1 records=1 spawned=0")]) + "\r\n").encode()
 
 # 12. [A2] an unterminated FOREIGN announcement must still be refused.
 #     This is the false green the fragment scan exists to prevent: a complete
@@ -332,7 +332,7 @@ with tempfile.TemporaryDirectory() as d:
 with tempfile.TemporaryDirectory() as d:
     log = os.path.join(d, "serial.log")
     partial = (L(P + "[UTEST-FRAME] v=1 run=1") + "\r\n"
-               + L(P + "[UTEST-FRAME-END] run=1 records=1")).encode()  # no newline
+               + L(P + "[UTEST-FRAME-END] run=1 records=1 spawned=0")).encode()  # no newline
     with open(log, "wb") as h: h.write(partial)
     check("[A2] fragment cannot complete a run", uf.parse_file(log)["last_complete"], None)
 
@@ -354,7 +354,7 @@ with tempfile.TemporaryDirectory() as d:
     for n_conf, label in ((uf.MAX_TRACKED_CONFLICTS, "at bound"),
                           (uf.MAX_TRACKED_CONFLICTS + 1, "past bound")):
         lines = [L(P + "[UTEST-FRAME] v=1 run=1"),
-                 L(P + "[UTEST-FRAME-END] run=1 records=1")]
+                 L(P + "[UTEST-FRAME-END] run=1 records=1 spawned=0")]
         for k in range(n_conf):
             lines.append(L("UTEST-%08x: [UTEST-FRAME] v=1 run=9" % (k + 1)))
         blob = ("\r\n".join(lines) + "\r\n").encode()
@@ -376,7 +376,7 @@ with tempfile.TemporaryDirectory() as d:
         lines = []
         for k in range(1, n_runs + 1):
             lines.append(L(P + "[UTEST-FRAME] v=1 run=%d" % k))
-            lines.append(L(P + "[UTEST-FRAME-END] run=%d records=1" % k))
+            lines.append(L(P + "[UTEST-FRAME-END] run=%d records=1 spawned=0" % k))
         blob = ("\r\n".join(lines) + "\r\n").encode()
         with open(log, "wb") as h: h.write(blob[:len(blob)//2])
         s1 = uf.parse_file(log, retain_lines=False)["state"]
@@ -506,7 +506,7 @@ with tempfile.TemporaryDirectory() as d:
     assert len(replacement) == len(original)
     with open(log, "wb") as h: h.write(replacement)
     with open(log, "ab") as h:
-        h.write((L(P + "[UTEST-FRAME-END] run=1 records=2") + "\r\n").encode())
+        h.write((L(P + "[UTEST-FRAME-END] run=1 records=2 spawned=0") + "\r\n").encode())
     r = uf.parse_file(log, state=s1)
     o = full(log)
     check("[R2] replaced prefix cannot close a stale run",
@@ -643,9 +643,9 @@ with tempfile.TemporaryDirectory() as d:
 with tempfile.TemporaryDirectory() as d:
     log = os.path.join(d, "serial.log")
     part1 = (L(P + "[UTEST-FRAME] v=1 run=1") + "\r\n").encode()
-    replay = (L("[CRASH-PREV] " + P + "[UTEST-FRAME-END] run=1 records=1")
+    replay = (L("[CRASH-PREV] " + P + "[UTEST-FRAME-END] run=1 records=1 spawned=0")
               + "\r\n").encode()
-    part2 = (L(P + "[UTEST-FRAME-END] run=1 records=1") + "\r\n").encode()
+    part2 = (L(P + "[UTEST-FRAME-END] run=1 records=1 spawned=0") + "\r\n").encode()
     with open(log, "wb") as h: h.write(part1)
     st = uf.parse_file(log)["state"]
     with open(log, "ab") as h: h.write(replay)

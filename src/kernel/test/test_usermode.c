@@ -3229,6 +3229,12 @@ _Static_assert(UTEST_FRAME_TAG_MAX <= KLOG_SUBSYSTEM_MAX,
 static char     s_frame_tag[UTEST_FRAME_TAG_MAX];
 static uint32_t s_frame_nonce;    /* 0 = not generated yet (the sentinel) */
 static uint32_t s_frame_ready;    /* 1 = s_frame_tag is filled and stable */
+/* 1 between u_frame_begin and u_frame_end -- a framed run is OPEN, so any
+ * record emitted now is authenticated INTO that run's slice. Distinct from
+ * s_frame_ready, which is sticky for the whole boot: "the tag exists" and "a
+ * run is currently collecting records" are different facts, and only the
+ * second one makes a stray emission dangerous. */
+static uint32_t s_frame_open;
 static uint32_t s_frame_records;  /* framed records emitted in THIS run */
 static uint32_t s_frame_run;      /* run ordinal, 1-based */
 /* Binaries THIS run spawned with capture armed. Declared beside the frame
@@ -3398,6 +3404,11 @@ static void u_frame_begin(void)
      * tag-vs-body cross-check only ever caught producer drift, which the
      * record-count reconciliation now covers, and it was never a barrier to
      * a forger who can write both fields. */
+    /* Published BEFORE the announcement: from this record onward every framed
+     * line belongs to the run's slice, so the flag must already be true when
+     * the first one is emitted. */
+    __atomic_store_n(&s_frame_open, 1u, __ATOMIC_RELEASE);
+
     utest_record_log(LOG_INFO, "[UTEST-FRAME] v=1 run=%u",
                      (uint64_t)__atomic_load_n(&s_frame_run, __ATOMIC_RELAXED));
 }
@@ -3423,6 +3434,10 @@ static void u_frame_end(void)
                      (uint64_t)n,
                      (uint64_t)__atomic_load_n(&s_capture_spawned,
                                                __ATOMIC_RELAXED));
+
+    /* Cleared AFTER the terminator: that record is itself part of the slice
+     * it closes. */
+    __atomic_store_n(&s_frame_open, 0u, __ATOMIC_RELEASE);
 }
 
 /* ---- Source-level per-binary stdout capture -------------------------- *
@@ -3751,16 +3766,22 @@ static void u_capture_budget_reset(void)
 {
     uint64_t irq_flags;
 
-    /* Run-scoped for exactly the reason the record counters are: the host
-     * reconciles the expectation set against the count carried by THIS
-     * run's terminator, so a counter spanning boot lifetime would measure
-     * a different population than the check it has to satisfy. */
-    __atomic_store_n(&s_capture_spawned, 0u, __ATOMIC_RELAXED);
-
     spin_lock_irqsave(&s_capture_budget_lock, &irq_flags);
     s_capture_run_records = 0;
     s_capture_run_over = 0;
     s_capture_run_generation++;
+    /* Run-scoped for exactly the reason the record counters are: the host
+     * reconciles the expectation set against the count carried by THIS
+     * run's terminator, so a counter spanning boot lifetime would measure a
+     * different population than the check it has to satisfy.
+     *
+     * Reset INSIDE the lock with its siblings even though no claim path
+     * touches it. The caller's comment states that this whole function runs
+     * under the lock so a concurrent claim cannot straddle the reset;
+     * leaving one of the four resets outside would make that guarantee
+     * two-thirds true, and the next counter to join here would be added
+     * against a promise the code no longer keeps. */
+    __atomic_store_n(&s_capture_spawned, 0u, __ATOMIC_RELAXED);
     spin_unlock_irqrestore(&s_capture_budget_lock, irq_flags);
 }
 
@@ -8125,6 +8146,23 @@ int test_usermode_frame_tag_format(char *dst, uint32_t cap, uint32_t nonce)
 uint32_t test_usermode_frame_nonce_fold(uint64_t mixed)
 {
     return u_frame_nonce_fold(mixed);
+}
+
+/* Is a framed run OPEN right now? A test that emits a REAL launcher record
+ * needs this: while a run is open the record is authenticated INTO that run's
+ * slice and counted in its reconciliation, which for a synthetic owner pid the
+ * launcher never spawned is precisely the population drift
+ * `capture_unexpected_channel` refuses. Outside an open run the same emission
+ * lands between slices, where utest-frame.py retains nothing.
+ *
+ * Deliberately NOT `s_frame_ready`: that flag is sticky for the whole boot, so
+ * a guard on it would permanently disable the caller after the first run ever
+ * completes -- masking the regression the test exists to catch instead of
+ * avoiding a side effect. */
+int test_usermode_frame_run_is_open(void);
+int test_usermode_frame_run_is_open(void)
+{
+    return __atomic_load_n(&s_frame_open, __ATOMIC_ACQUIRE) ? 1 : 0;
 }
 
 uint32_t test_usermode_frame_tag_cap(void)
