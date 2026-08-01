@@ -516,6 +516,78 @@ utest_ptr_sweepable() {
     return 1
 }
 
+# Does identity document $1 bind record $2 to leg $3? 0 = yes.
+#
+# POSITIONAL, never a substring search over the whole document, and the
+# difference is the entire soundness argument. A document-wide test for
+# `"leg": "<leg>"` reads a VALUE as if it were a key: `hostname` and `qemu` are
+# charset-filtered but otherwise free, and both are emitted AFTER `leg`, so a
+# host actually named `leg` makes an occurrence-counting duplicate check see a
+# second `"leg"` and silently deny a valid record its pin. It is too weak in
+# the other direction as well -- a nested `{ "wrapper": { "leg": ... } }`, or a
+# `"leg"` escape that a real parser folds back to `leg`, satisfies every
+# substring test while the documented resolver, which parses, reads something
+# else entirely.
+#
+# utest_identity_doc_for emits a FIXED layout, so the shape itself is the test:
+# fourteen lines, `{` and `}` alone at the ends, twelve two-space-indented keys
+# in a fixed order, each with its comma. A duplicate key, an extra key, a
+# nested object and an escaped spelling all fail either the line count or the
+# key at that position, and each value is checked where it sits rather than
+# wherever it happens to appear.
+#
+# The nine values this does not bind are still constrained to a SCALAR -- a
+# quoted string in the charset every emitted field is already filtered to, a
+# bare integer, or a bare boolean. "Some value, do not care" is exactly what
+# would let an object back in on one of the lines nobody checks.
+utest_identity_binds() {
+    local body="$1" want_id="$2" want_leg="$3"
+    local keys='schema run_id timestamp commit leg leg_source host hostname accel cpus qemu ci_parity'
+    local line key sep val n=0
+    while IFS= read -r line; do
+        n=$(( n + 1 ))
+        case "$n" in
+            1)  [ "$line" = '{' ] || return 1 ; continue ;;
+            14) [ "$line" = '}' ] || return 1 ; continue ;;
+        esac
+        [ "$n" -lt 14 ] || return 1
+        key="${keys%% *}"
+        keys="${keys#"$key"}"
+        keys="${keys# }"
+        # The trailing comma is CHECKED, and the last field's absence of one
+        # equally so: accepting either would accept a document no parser would.
+        case "$n" in 13) sep="" ;; *) sep="," ;; esac
+        case "$line" in
+            "  \"$key\": "*"$sep") ;;
+            *) return 1 ;;
+        esac
+        val="${line#  \"$key\": }"
+        val="${val%"$sep"}"
+        case "$key" in
+            schema) [ "$val" = '"utest-run-identity-v1"' ] || return 1 ; continue ;;
+            run_id) [ "$val" = "\"$want_id\"" ] || return 1 ; continue ;;
+            leg)    [ "$val" = "\"$want_leg\"" ] || return 1 ; continue ;;
+        esac
+        case "$val" in
+            true|false) ;;
+            '"'*'"')
+                val="${val#\"}"
+                val="${val%\"}"
+                case "$val" in *[!A-Za-z0-9._:+-]*) return 1 ;; esac ;;
+            *)
+                # JSON integer grammar, which is NOT "digits-only": a leading
+                # zero is a parse error, so `"cpus": 02` would be a document
+                # this validator called bound and a real resolver could not
+                # read. Accepting it would pin a generation no consumer can
+                # resolve, which is the exact waste the pin exists to avoid.
+                case "$val" in ''|*[!0-9]*) return 1 ;; esac
+                case "$val" in 0?*) return 1 ;; esac ;;
+        esac
+    done <<< "$body"
+    [ "$n" -eq 14 ] || return 1
+    return 0
+}
+
 # Decide whether one pointer may PIN, and echo the run id if it may.
 #
 # Stricter than utest_pointer_run_id on purpose, because the two questions are
@@ -533,7 +605,7 @@ utest_ptr_sweepable() {
 # field-by-field `grep` would spawn a dozen processes per pointer on the
 # startup path for no added strictness.
 utest_pointer_pin_id() {
-    local ptr="$1" body mbody id leg sz rest
+    local ptr="$1" body mbody ibody id leg sz rest
     # BOUNDED, and bounded by SIZE FIRST. `timeout` bounds elapsed time, not
     # bytes: a huge regular file would be pulled wholly into a shell variable
     # before the clock ran out. And a byte-capped read alone is not enough
@@ -585,9 +657,30 @@ utest_pointer_pin_id() {
     case "$sz" in ''|*[!0-9]*) return 0 ;; esac
     [ "$sz" -le 4096 ] || return 0
     mbody="$(timeout 5 head -c 4096 -- "$RUNS_DIR/$id/record-complete.json" 2>/dev/null)" || return 0
+    # NO BACKSLASH ANYWHERE, and this one line is what makes the field tests
+    # below mean what they say. Every value this marker carries is generated
+    # or charset-filtered -- a run id, a fixed status word, an integer, a
+    # contained basename -- so a legitimate marker has no escape in it at all.
+    # A hand-written one does: `"identity": null` placed after the
+    # required literal field is invisible to a positive substring test AND to
+    # the literal duplicate loop below, while a parser decodes it as a second
+    # `identity` key and takes the LAST value. Rejecting the escape character
+    # outright closes that for every key here at once, where teaching the
+    # duplicate loop one more spelling would only close it for one.
+    case "$mbody" in *\\*) return 0 ;; esac
     case "$mbody" in *"\"schema\": \"utest-run-record-v1\""*) ;;  *) return 0 ;; esac
     case "$mbody" in *"\"run_id\": \"$id\""*) ;;                  *) return 0 ;; esac
     case "$mbody" in *"\"status\": \"complete\""*) ;;             *) return 0 ;; esac
+    # The marker is the authoritative inventory of what the record CONTAINS,
+    # and `"identity": null` is a shape it legitimately emits. So the identity
+    # document is read only where the marker says the record has one, and only
+    # under the one basename `utest-run-record-v1` is allowed to name: reading
+    # a hardcoded path regardless would let a stray or planted
+    # test-run-identity.json speak for a record whose own marker disclaims it,
+    # and accepting an arbitrary filename from the marker would hand a
+    # corrupted marker a path to join. A later filename belongs to a later
+    # marker schema, not to a wildcard here.
+    case "$mbody" in *"\"identity\": \"test-run-identity.json\""*) ;; *) return 0 ;; esac
     # EXACTLY ONE of each load-bearing key. A positive substring test alone
     # cannot see a contradictory duplicate: a marker carrying the required
     # `"status": "complete"` AND a later `"status":"incomplete"` satisfies
@@ -597,9 +690,27 @@ utest_pointer_pin_id() {
     # wasted-budget failure this validator exists to prevent. Counting
     # occurrences is whitespace-independent, where matching a second spelling
     # of the negative case would not be.
-    for rest in schema run_id status; do
+    for rest in schema run_id status identity; do
         case "${mbody#*\"$rest\"}" in *"\"$rest\""*) return 0 ;; esac
     done
+    # LAST, and the only check that asks who PRODUCED the record. Everything
+    # above proves the pointer is byte-canonical for this leg and that the
+    # record exists and is committed complete -- none of it asks whether that
+    # record came from this leg. A byte-canonical `test-results-<A>.run` naming
+    # a completed run of leg B therefore passed every test there was, so leg A
+    # pinned B's record and, since the reader lease, held it durably; a
+    # consumer resolving A then read B's documents. The record answers the
+    # question itself, in a document written before any other and never
+    # rewritten.
+    sz="$(timeout 5 wc -c -- "$RUNS_DIR/$id/test-run-identity.json" 2>/dev/null | awk '{print $1; exit}')" || return 0
+    case "$sz" in ''|*[!0-9]*) return 0 ;; esac
+    [ "$sz" -le 4096 ] || return 0
+    ibody="$(timeout 5 head -c 4096 -- "$RUNS_DIR/$id/test-run-identity.json" 2>/dev/null)" || return 0
+    # Field-tested against the canonical LAYOUT rather than byte-compared like
+    # the pointer: identity carries what the run observed -- timestamp, commit,
+    # host, hostname, accelerator, cpu count, QEMU build -- and none of it is
+    # derivable from a pointer. utest_identity_binds is where that stays sound.
+    utest_identity_binds "$ibody" "$id" "$leg" || return 0
     printf '%s\n' "$id"
     return 0
 }
@@ -1655,21 +1766,40 @@ utest_xml_identity_attrs() {
     printf ' timestamp="%s" hostname="%s"' "$RUN_TS" "$RUN_HOSTNAME"
 }
 
-utest_json_identity() {
+# The identity document for an EXPLICIT field set, split out of the emitter
+# below for the same reason utest_leg_pointer_doc_for is split out of
+# utest_leg_pointer_doc: it became a document somebody else has to reproduce.
+# utest_identity_binds validates this exact shape line by line, and the
+# regressions build their fixture records from THIS function -- a hand-written
+# fixture would be a second spelling of the contract, free to drift into
+# passing tests that production would reject.
+#
+# The LAYOUT is part of the contract now, not just the field set: twelve keys,
+# in this order, one per line, each indented two spaces, between a bare `{` and
+# a bare `}`. See utest_identity_binds for why position rather than a
+# document-wide substring search is what makes the binding sound.
+utest_identity_doc_for() {
     printf '{\n'
     printf '  "schema": "utest-run-identity-v1",\n'
-    printf '  "run_id": "%s",\n' "$RUN_ID"
-    printf '  "timestamp": "%s",\n' "$RUN_TS"
-    printf '  "commit": "%s",\n' "$RUN_COMMIT"
-    printf '  "leg": "%s",\n' "$RUN_LEG"
-    printf '  "leg_source": "%s",\n' "$RUN_LEG_SOURCE"
-    printf '  "host": "%s",\n' "$RUN_HOST"
-    printf '  "hostname": "%s",\n' "$RUN_HOSTNAME"
-    printf '  "accel": "%s",\n' "$RUN_ACCEL"
-    printf '  "cpus": %s,\n' "$SMP_CPUS_SAFE"
-    printf '  "qemu": "%s",\n' "$RUN_QEMU"
-    printf '  "ci_parity": %s\n' "$([ "${CI_PARITY:-0}" = "1" ] && echo true || echo false)"
+    printf '  "run_id": "%s",\n' "$1"
+    printf '  "timestamp": "%s",\n' "$2"
+    printf '  "commit": "%s",\n' "$3"
+    printf '  "leg": "%s",\n' "$4"
+    printf '  "leg_source": "%s",\n' "$5"
+    printf '  "host": "%s",\n' "$6"
+    printf '  "hostname": "%s",\n' "$7"
+    printf '  "accel": "%s",\n' "$8"
+    printf '  "cpus": %s,\n' "$9"
+    printf '  "qemu": "%s",\n' "${10}"
+    printf '  "ci_parity": %s\n' "${11}"
     printf '}'
+}
+
+utest_json_identity() {
+    utest_identity_doc_for "$RUN_ID" "$RUN_TS" "$RUN_COMMIT" "$RUN_LEG" \
+        "$RUN_LEG_SOURCE" "$RUN_HOST" "$RUN_HOSTNAME" "$RUN_ACCEL" \
+        "$SMP_CPUS_SAFE" "$RUN_QEMU" \
+        "$([ "${CI_PARITY:-0}" = "1" ] && echo true || echo false)"
 }
 
 # The XML projection carries the SAME field set as the JSON object. A field in
@@ -2449,7 +2579,13 @@ case "$SMP_CPUS" in
     *)           SMP_CPUS_VALID=1 ;;
 esac
 if [ "$SMP_CPUS_VALID" -eq 1 ] && [ "$SMP_CPUS" -ge 1 ] && [ "$SMP_CPUS" -le 256 ]; then
-    SMP_CPUS_SAFE="$SMP_CPUS"
+    # NORMALISED to canonical base-10, because this value is emitted UNQUOTED
+    # as a JSON number. `SMP_CPUS=02` is digits-only and compares `-ge 1`
+    # perfectly well, and would publish `"cpus": 02` -- which is not JSON, so
+    # every consumer that actually parses would reject an identity this script
+    # itself wrote. Same leading-zero class utest_norm_bound already strips
+    # from the retention bounds.
+    SMP_CPUS_SAFE="$(( 10#$SMP_CPUS ))"
 else
     echo -e "${RED}[TEST]${RESET} SMP_CPUS='$SMP_CPUS' is not a CPU count (expected 1-256)."
     exit 1
@@ -2525,8 +2661,23 @@ RUN_POINTER_OUT="$PROJECT/build/test-results-${RUN_LEG}.run"
 # utest_finalize_record() along with the documents, after the commit marker.
 # The staging path is inside the record, so it is not shared with any other
 # invocation.
-{ utest_json_identity; printf '\n'; } > "$RECORD_DIR/.identity.tmp" &&
-    mv -f "$RECORD_DIR/.identity.tmp" "$IDENTITY_RECORD"
+#
+# CHECKED, and the check is load-bearing rather than tidy. Written as a bare
+# `a && b` list this was exempt from `set -e` on its LEFT operand -- errexit
+# spares every command in an `&&` list but the last -- so a failed write
+# skipped the `mv`, returned non-zero, and the run carried on to publish a
+# complete record whose marker said `"identity": null` and a leg pointer naming
+# it. That is precisely the record the pin below now refuses to bind, so the
+# script would have been minting pointers it would itself later reject and
+# retention would eventually destroy. A run that cannot say which leg produced
+# it has nothing downstream can bind: refuse here, before the build.
+if ! { { utest_json_identity; printf '\n'; } > "$RECORD_DIR/.identity.tmp" &&
+       mv -f "$RECORD_DIR/.identity.tmp" "$IDENTITY_RECORD"; }; then
+    rm -f "$RECORD_DIR/.identity.tmp"
+    echo -e "${RED}[TEST]${RESET} run identity $IDENTITY_RECORD could not be written -- refusing to run."
+    echo -e "${YELLOW}       Every artifact this run would publish binds to it; without it the record cannot name its own leg.${RESET}"
+    exit 1
+fi
 
 # --- Step 1: Build ---
 echo -e "${CYAN}${BOLD}[TEST]${RESET} Building kernel..."

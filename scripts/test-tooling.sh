@@ -12733,6 +12733,12 @@ echo "UTEST_FAIL=$UTEST_FAIL"
     # so an unpruned build/test-runs grows for as long as anyone runs tests.
     # The newest N survive and the run in progress is never a candidate.
     UAR_PTRDOC="$(sed -n '/^utest_leg_pointer_doc_for() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")"
+    # The identity emitter, extracted for the same reason as the pointer and
+    # lease emitters: a pin now validates the identity document's exact LAYOUT,
+    # so a fixture that spelled that document itself would be a second
+    # definition of the contract and free to drift into passing what production
+    # rejects.
+    UAR_IDDOC="$(sed -n '/^utest_identity_doc_for() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")"
     # The reader-lease half, extracted the same way and for the same reason: a
     # lease is validated by BYTE-COMPARING against utest_lease_doc_for's output,
     # so a fixture that spelled the document itself would be a second definition
@@ -12757,6 +12763,7 @@ $(sed -n '/^utest_lease_release() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")"
 $(sed -n '/^utest_pointer_run_id() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
 $(sed -n '/^utest_ptr_sweepable() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
 $UAR_PTRDOC
+$(sed -n '/^utest_identity_binds() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
 $(sed -n '/^utest_pointer_pin_id() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
 $UAR_LEASEFN
 $(sed -n '/^utest_prune_records() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")"
@@ -12820,7 +12827,10 @@ printf "| HARNESS-OK\n"
             for _i in 1 2 3 4 5; do
                 _r="$UAR_PDIR/build/test-runs/2026010${_i}T000000Z-1-aaaa"
                 mkdir -p "$_r"
-                printf '{ "schema": "utest-run-record-v1", "run_id": "2026010%sT000000Z-1-aaaa", "status": "complete" }\n' \
+                # `identity` is part of the marker because the pin reads the
+                # identity document only where the marker's own inventory says
+                # the record has one.
+                printf '{ "schema": "utest-run-record-v1", "run_id": "2026010%sT000000Z-1-aaaa", "status": "complete", "identity": "test-run-identity.json" }\n' \
                     "$_i" > "$_r/record-complete.json"
             done
         }
@@ -12832,6 +12842,20 @@ printf "| HARNESS-OK\n"
             # that production would reject.
             bash -c "$UAR_PTRDOC"'
 utest_leg_pointer_doc_for "$1" "$2"' _ "$1" "$2" > "$UAR_PDIR/build/test-results-$1.run"
+            # And BIND the record to that leg, which is what production does:
+            # the identity document is written in Step 0b at the same moment the
+            # leg name is derived, so a record a leg published a pointer for
+            # always names that leg. A fixture that skipped it would be testing
+            # the cross-leg refusal on every record by accident.
+            uar_prune_ident "$2" "$1"
+        }
+        # $1 = run id, $2 = leg. No-op for a run id with no record, which is
+        # exactly the dangling-pointer fixture.
+        uar_prune_ident() {
+            [ -d "$UAR_PDIR/build/test-runs/$1" ] || return 0
+            bash -c "$UAR_IDDOC"'
+utest_identity_doc_for "$1" 2026-01-01T00:00:00Z abc123 "$2" derived wsl2 fixture kvm 2 qemu-system-x86_64 false
+printf "\n"' _ "$1" "$2" > "$UAR_PDIR/build/test-runs/$1/test-run-identity.json"
         }
         uar_prune_reset
         uar_prune_ptr other 20260102T000000Z-1-aaaa
@@ -12992,7 +13016,7 @@ open(p, "wb").write(canon + pad + b'{"junk":"beyond the read cap"}\n')
 PY
                     ;;
                 dup-status)
-                    printf '{ "schema": "utest-run-record-v1", "run_id": "20260103T000000Z-1-aaaa", "status": "complete", "status":"incomplete" }\n' \
+                    printf '{ "schema": "utest-run-record-v1", "run_id": "20260103T000000Z-1-aaaa", "status": "complete", "identity": "test-run-identity.json", "status":"incomplete" }\n' \
                         > "$UAR_PDIR/build/test-runs/20260103T000000Z-1-aaaa/record-complete.json" ;;
             esac
             UAR_PP8F="$(uar_prune_run 'UTEST_POINTER_PIN_MAX=1')"
@@ -13906,23 +13930,37 @@ utest_lease_holder_state "$2"' _ "$1" "$2" 2>&1
         #       10s and before the admission scan, so under contention the grant
         #       could be past its deadline before the caller ever saw it. Here a
         #       holder sits on the retention lock for longer than the TTL.
+        #
+        #       The MARGINS are load-bearing, and a 3s hold against TTL=1 did
+        #       not have them: `expires_at` has one-second granularity, so a
+        #       grant whose acquisition crossed a second boundary landed on
+        #       `expires == now` and the test failed on the clock rather than on
+        #       the property (observed 2026-08-02). A 5s hold against TTL=2
+        #       keeps the discrimination -- the bug this guards sampled `now`
+        #       BEFORE the wait, so it would still hand back `now+2` at `now+4`
+        #       and fail -- while leaving the correct implementation two whole
+        #       seconds of margin. `now` is also sampled the instant the
+        #       acquisition RETURNS, not after reaping the lock holder, because
+        #       the question is whether the grant was live when its caller got
+        #       it.
         uar_lease_reset
         uar_prune_ptr slow 20260102T000000Z-1-aaaa
-        ( flock -x 8; sleep 3; ) 8>>"$UAR_PDIR/build/.test-retention.lock" &
+        ( flock -x 8; sleep 5; ) 8>>"$UAR_PDIR/build/.test-retention.lock" &
         UAR_L16LOCK=$!
         sleep 1
-        UAR_L16="$(uar_lease_acquire slow 'UTEST_LEASE_TTL=1')"
+        UAR_L16="$(uar_lease_acquire slow 'UTEST_LEASE_TTL=2')"
+        UAR_L16NOW="$(date -u +%s)"
         wait "$UAR_L16LOCK" 2>/dev/null || true
         UAR_L16EXP=""
         if [ -n "$UAR_L16" ]; then
             UAR_L16EXP="$(sed -n 's/.*"expires_at": \([0-9]*\).*/\1/p' "${UAR_L16#* }" 2>/dev/null)"
         fi
         if [ -n "$UAR_L16" ] && [ -n "$UAR_L16EXP" ] &&
-           [ "$UAR_L16EXP" -gt "$(date -u +%s)" ]; then
+           [ "$UAR_L16EXP" -gt "$UAR_L16NOW" ]; then
             t_pass "reader lease: a grant issued after lock contention is still live when it is returned"
         else
             t_fail "reader lease: a grant issued after lock contention is still live when it is returned" \
-                "acquire=[$UAR_L16] expires=[$UAR_L16EXP] now=$(date -u +%s)"
+                "acquire=[$UAR_L16] expires=[$UAR_L16EXP] now=$UAR_L16NOW"
         fi
 
         # (L17) The DOCUMENTED example must be byte-identical to what the
@@ -14467,6 +14505,146 @@ printf "| HARNESS-OK\n"
         else
             t_fail "run record: a leading-zero UTEST_SWEEP_SEQ is normalised, never an octal abort mid-sweep" \
                 "$UAR_L31"
+        fi
+
+        # (L33) A CANONICAL pointer for one leg naming a complete record that
+        #     ANOTHER leg produced binds nothing -- no pin, and no lease. Every
+        #     check that existed before this one passes on that file: the bytes
+        #     are exactly what this script writes for the leg the FILENAME
+        #     names, the record exists, and its marker commits it complete.
+        #     None of them asks who produced the record, so leg A pinned B's
+        #     record and, once the lease shipped, held it durably -- and a
+        #     consumer resolving A read B's documents. The record's own identity
+        #     document is the answer, and it is checked here.
+        #     Both halves need the POSITIVE control beside them: an assertion
+        #     made only of refusals passes just as well when the harness never
+        #     built a resolvable fixture at all.
+        uar_lease_reset
+        uar_prune_ptr xleg 20260102T000000Z-1-aaaa
+        UAR_L33OK="$(uar_lease_acquire xleg)"
+        uar_prune_ident 20260102T000000Z-1-aaaa producedbyanotherleg
+        UAR_L33NO="$(uar_lease_acquire xleg)"
+        if [ -n "$UAR_L33OK" ] && [ -z "$UAR_L33NO" ]; then
+            t_pass "reader lease: a pointer naming another leg's record is refused a lease"
+        else
+            t_fail "reader lease: a pointer naming another leg's record is refused a lease" \
+                "bound=[$UAR_L33OK] cross-leg=[$UAR_L33NO]"
+        fi
+
+        # The pin half, and it asserts the SECOND failure mode too: a cross-leg
+        # pointer must not spend the pin budget a correctly-bound one needs,
+        # for the same reason p8d/p8e assert it of a corrupt or wrong-leg file.
+        uar_prune_reset
+        uar_prune_ptr valid 20260102T000000Z-1-aaaa
+        touch -d '2020-01-01' "$UAR_PDIR/build/test-results-valid.run"
+        uar_prune_ptr cross 20260103T000000Z-1-aaaa
+        uar_prune_ident 20260103T000000Z-1-aaaa producedbyanotherleg
+        UAR_L33P="$(uar_prune_run 'UTEST_POINTER_PIN_MAX=1')"
+        if printf '%s' "$UAR_L33P" | grep -q 'HARNESS-OK' &&
+           printf '%s' "$UAR_L33P" | grep -q '20260102T000000Z-1-aaaa' &&
+           printf '%s' "$UAR_L33P" | grep -q 'test-results-valid.run' &&
+           ! printf '%s' "$UAR_L33P" | grep -q '20260103T000000Z-1-aaaa'; then
+            t_pass "run record: a cross-leg pointer pins nothing and does not spend the pin budget"
+        else
+            t_fail "run record: a cross-leg pointer pins nothing and does not spend the pin budget" "$UAR_L33P"
+        fi
+
+        # (L34) and the binding must not be satisfiable by a document the
+        #     marker disclaims. A record whose marker says it carries no
+        #     identity cannot be bound by a test-run-identity.json somebody
+        #     dropped beside it -- the marker is the record's inventory, so a
+        #     file it does not name is not part of the record.
+        uar_prune_reset
+        uar_prune_ptr valid 20260102T000000Z-1-aaaa
+        touch -d '2020-01-01' "$UAR_PDIR/build/test-results-valid.run"
+        uar_prune_ptr planted 20260103T000000Z-1-aaaa
+        printf '{ "schema": "utest-run-record-v1", "run_id": "20260103T000000Z-1-aaaa", "status": "complete", "identity": null }\n' \
+            > "$UAR_PDIR/build/test-runs/20260103T000000Z-1-aaaa/record-complete.json"
+        UAR_L34="$(uar_prune_run 'UTEST_POINTER_PIN_MAX=1')"
+        if printf '%s' "$UAR_L34" | grep -q 'HARNESS-OK' &&
+           printf '%s' "$UAR_L34" | grep -q '20260102T000000Z-1-aaaa' &&
+           printf '%s' "$UAR_L34" | grep -q 'test-results-valid.run' &&
+           ! printf '%s' "$UAR_L34" | grep -q '20260103T000000Z-1-aaaa'; then
+            t_pass "run record: an identity the marker disclaims cannot bind a record to a leg"
+        else
+            t_fail "run record: an identity the marker disclaims cannot bind a record to a leg" "$UAR_L34"
+        fi
+
+        # (L35) the marker's identity field is only as strong as the duplicate
+        #     check behind it, and a LITERAL duplicate check cannot see an
+        #     escaped key. A marker carrying the required `"identity":
+        #     "test-run-identity.json"` and then `"identity": null` passes
+        #     every positive substring test and the literal duplicate loop,
+        #     while a parser decodes the second key and takes its value -- so
+        #     the record wins a pin that the documented resolver would refuse.
+        #     Every value a real marker carries is generated or charset-filtered,
+        #     so no legitimate marker contains a backslash at all.
+        uar_prune_reset
+        uar_prune_ptr valid 20260102T000000Z-1-aaaa
+        touch -d '2020-01-01' "$UAR_PDIR/build/test-results-valid.run"
+        uar_prune_ptr escaped 20260103T000000Z-1-aaaa
+        printf '{ "schema": "utest-run-record-v1", "run_id": "20260103T000000Z-1-aaaa", "status": "complete", "identity": "test-run-identity.json", "\\u0069dentity": null }\n' \
+            > "$UAR_PDIR/build/test-runs/20260103T000000Z-1-aaaa/record-complete.json"
+        # The parser reads the marker BEFORE the prune runs: an unpinned record
+        # is deleted by that pass, so reading afterwards finds no file and the
+        # assertion would report a FileNotFoundError instead of the verdict.
+        UAR_L35J="$(python3 -c '
+import json, sys
+d = json.load(open(sys.argv[1]))
+print("PARSER-SEES-NULL" if d.get("identity") is None else "PARSER-SEES-%r" % d.get("identity"))
+' "$UAR_PDIR/build/test-runs/20260103T000000Z-1-aaaa/record-complete.json" 2>&1)"
+        UAR_L35="$(uar_prune_run 'UTEST_POINTER_PIN_MAX=1')"
+        if printf '%s' "$UAR_L35" | grep -q 'HARNESS-OK' &&
+           [ "$UAR_L35J" = PARSER-SEES-NULL ] &&
+           printf '%s' "$UAR_L35" | grep -q '20260102T000000Z-1-aaaa' &&
+           printf '%s' "$UAR_L35" | grep -q 'test-results-valid.run' &&
+           ! printf '%s' "$UAR_L35" | grep -q '20260103T000000Z-1-aaaa'; then
+            t_pass "run record: an escaped duplicate identity key in a marker binds nothing"
+        else
+            t_fail "run record: an escaped duplicate identity key in a marker binds nothing" \
+                "prune=$UAR_L35 parser=$UAR_L35J"
+        fi
+
+        # (L36) and the identity document must be rejected on anything a real
+        #     JSON parser rejects, or the pin holds a generation no consumer
+        #     can read. `cpus` is emitted UNQUOTED, so a leading zero is a
+        #     parse error rather than a cosmetic difference -- and `SMP_CPUS=02`
+        #     reaches the emitter through a digits-only check and a `-ge 1`
+        #     comparison that both accept it. The producer normalises it now;
+        #     this asserts the validator refuses it regardless.
+        uar_prune_reset
+        uar_prune_ptr valid 20260102T000000Z-1-aaaa
+        touch -d '2020-01-01' "$UAR_PDIR/build/test-results-valid.run"
+        uar_prune_ptr zerocpu 20260103T000000Z-1-aaaa
+        bash -c "$UAR_IDDOC"'
+utest_identity_doc_for "$1" 2026-01-01T00:00:00Z abc123 zerocpu derived wsl2 fixture kvm 02 qemu-system-x86_64 false
+printf "\n"' _ 20260103T000000Z-1-aaaa \
+            > "$UAR_PDIR/build/test-runs/20260103T000000Z-1-aaaa/test-run-identity.json"
+        # BEFORE the prune, for the reason L35 states -- and here it matters
+        # even more: an absent file raises inside this `try`, so reading after
+        # the prune would print UNPARSEABLE for a document the parser never
+        # saw, and the test would pass without ever testing anything. `FileNotFoundError`
+        # is therefore excluded from the verdict rather than folded into it.
+        UAR_L36J="$(python3 -c '
+import json, sys
+try:
+    json.load(open(sys.argv[1]))
+    print("PARSES")
+except FileNotFoundError:
+    print("FIXTURE-MISSING")
+except ValueError:
+    print("UNPARSEABLE")
+' "$UAR_PDIR/build/test-runs/20260103T000000Z-1-aaaa/test-run-identity.json" 2>&1)"
+        UAR_L36="$(uar_prune_run 'UTEST_POINTER_PIN_MAX=1')"
+        if printf '%s' "$UAR_L36" | grep -q 'HARNESS-OK' &&
+           [ "$UAR_L36J" = UNPARSEABLE ] &&
+           printf '%s' "$UAR_L36" | grep -q '20260102T000000Z-1-aaaa' &&
+           printf '%s' "$UAR_L36" | grep -q 'test-results-valid.run' &&
+           ! printf '%s' "$UAR_L36" | grep -q '20260103T000000Z-1-aaaa'; then
+            t_pass "run record: an identity a JSON parser rejects binds nothing"
+        else
+            t_fail "run record: an identity a JSON parser rejects binds nothing" \
+                "prune=$UAR_L36 parser=$UAR_L36J"
         fi
 
         rm -rf "$UAR_TMP/fakeproc"
@@ -15151,14 +15329,53 @@ printf "08=%s 000005=%s 0000000=%s 20=%s\n" \
     fi
 fi
 
+# i12f. `cpus` is the one identity field emitted UNQUOTED, so it must be a JSON
+#       number and not merely digits. `SMP_CPUS=02` passes the digits-only
+#       check AND compares `-ge 1`, so it reached the emitter and published
+#       `"cpus": 02` -- a parse error, in a document whose whole purpose is to
+#       be read by a consumer. Asserted BEHAVIOURALLY against the extracted
+#       guard, and paired with a real parser over the emitted document so the
+#       assertion is about JSON validity rather than about one spelling of the
+#       normalisation.
+UAR_CPUFN="$(awk '/^SMP_CPUS="\$\{SMP_CPUS:-2\}"/{f=1} f{print} f&&/^fi$/{exit}' "$LEGSH")"
+UAR_IDDOCFN="$(sed -n '/^utest_identity_doc_for() {/,/^}/p' "$LEGSH")"
+if [ -z "$UAR_CPUFN" ] || [ -z "$UAR_IDDOCFN" ]; then
+    t_fail "identity: a leading-zero SMP_CPUS is normalised, never published as invalid JSON" \
+        "guard or emitter not found in $LEGSH"
+else
+    UAR_CPU_OUT="$(SMP_CPUS=02 bash -c 'set -euo pipefail
+RED=""; YELLOW=""; RESET=""
+'"$UAR_CPUFN"'
+'"$UAR_IDDOCFN"'
+utest_identity_doc_for rid ts commit leg derived host hn kvm "$SMP_CPUS_SAFE" q false' 2>&1 |
+        python3 -c '
+import json, sys
+raw = sys.stdin.read()
+try:
+    d = json.loads(raw)
+except Exception as e:
+    print("UNPARSEABLE %s" % e); raise SystemExit(0)
+print("cpus=%r %s" % (d.get("cpus"), type(d.get("cpus")).__name__))
+' 2>&1)"
+    if [ "$UAR_CPU_OUT" = "cpus=2 int" ]; then
+        t_pass "identity: a leading-zero SMP_CPUS is normalised, never published as invalid JSON"
+    else
+        t_fail "identity: a leading-zero SMP_CPUS is normalised, never published as invalid JSON" \
+            "$UAR_CPU_OUT"
+    fi
+fi
+
 # i13. XML and JSON must project the SAME identity field set. A field in one
 #      and not the other hands two consumers two different contracts for one
 #      run. `schema` is the JSON envelope's own version marker, and
-#      timestamp/hostname ride as <testsuite> attributes.
+#      timestamp/hostname ride as <testsuite> attributes. The JSON side is
+#      scraped from utest_identity_doc_for, which is where the field list
+#      actually lives -- utest_json_identity is now the thin binding of the
+#      run's globals onto it.
 XML_FIELDS=$(awk '/^utest_xml_identity_props\(\)/{f=1} f&&/name="/{ \
     match($0, /name="[a-z_]+"/); print substr($0, RSTART+6, RLENGTH-7)} \
     f&&/^\}/{exit}' "$LEGSH" | sort)
-JSON_FIELDS=$(awk '/^utest_json_identity\(\)/{f=1} f&&/printf/{ \
+JSON_FIELDS=$(awk '/^utest_identity_doc_for\(\)/{f=1} f&&/printf/{ \
     if (match($0, /"[a-z_]+":/)) print substr($0, RSTART+1, RLENGTH-3)} \
     f&&/^\}/{exit}' "$LEGSH" | grep -vE '^(timestamp|hostname)$' | sort)
 if [ -n "$XML_FIELDS" ] && [ "$XML_FIELDS" = "$JSON_FIELDS" ]; then

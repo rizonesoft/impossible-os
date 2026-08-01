@@ -136,7 +136,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 > - **Canonical doc** -- [`include/kernel/env.h`](../../include/kernel/env.h) header contract (lock + reader-lifetime rules).
 > - **Scope boundary** -- §1 owns kernel storage + the C API only; `%VAR%` expansion is §3, Nt syscalls §5, Win32 wrappers §6, argv/exec handoff §4, sorting/size-block §10.
 > **Verified:** 2026-07-13 | commit `49335ede` | 10/10 items | build OK | tests 1193/1193 PASS
-> **Accepted:** [H] task_cleanup reap barrier lacks all-CPU quiescence for env_free (single-CPU scheduler today) -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md (item: "task_cleanup reap barrier" at line 125)
+> **Accepted:** [H] task_cleanup reap barrier lacks all-CPU quiescence for env_free (single-CPU scheduler today) -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md (item: "task_cleanup reap barrier" at line 126)
 > **Accepted:** [M] environ_lock inherits the mutex_t waiter-queue SMP race (unreachable on single-CPU) -> XREF: 03-memory-concurrency/TODO-08-advanced-sync.md §11 (item: "Wait-queue protection" at line 275)
 > **Accepted:** [M] env names case-folded ASCII-only; non-ASCII compared case-sensitively -> XREF: 02-kernel-core/TODO-22-environment-variables.md §10 (item: "Upgrade env name case-folding" at line 141)
 > **Accepted:** [L] env_copy has no live caller yet (§1 is storage+API only) -> XREF: 02-kernel-core/TODO-12-native-api-ssdt.md §7 (item: "wire env_copy() into every child-creation path" at line 383)
@@ -250,7 +250,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 > - Canonical doc: [include/kernel/env.h](../../include/kernel/env.h) (argv/env API) + the `task.c` frame builder.
 > - Scope boundary: §6 owns `GetCommandLineW/A`; §15 owns `CommandLineToArgvW` decode + round-trip; envp -> PEB Environment PAGE owned by TODO-11 §21; the non-recoverable `copy_from_user` gap by TODO-02 §4.
 > **Verified:** 2026-07-13 | commit `bda8324f` | 8/9 items | build OK | 20644 kernel + 16 user tests PASS, smoke PASS
-> **Accepted:** [H] SYS_EXEC signature change is invisible to the ABI fingerprint (hashes SYS_* numbers, not signatures; theoretical stale-binary handshake bypass in the monolithic build) -> XREF: 00-infrastructure/TODO-04 §18 (item: "Fold syscall arg counts into the ABI fingerprint" at line 1708)
+> **Accepted:** [H] SYS_EXEC signature change is invisible to the ABI fingerprint (hashes SYS_* numbers, not signatures; theoretical stale-binary handshake bypass in the monolithic build) -> XREF: 00-infrastructure/TODO-04 §18 (item: "Fold syscall arg counts into the ABI fingerprint" at line 1710)
 > **Accepted:** [H] fork does not copy the parent environ, so exec(envp==NULL) inherits empty; race-safe env_copy needs atomic slot publication -> XREF: 02-kernel-core/TODO-12-native-api-ssdt.md §7 (item: "Wire `env_copy()` into every child path")
 > **Accepted:** [M] PEB CommandLine truncates a >~2 KiB full-argv command line + UTF-8 argv mojibakes (single-page RTLPP, byte-widening) -> XREF: 02-kernel-core/TODO-11 §5 (item: "`CommandLine` fidelity" at line 198)
 > **Accepted:** [M] `copy_from_user` is not fault-recoverable (in-range unmapped page faults in kernel) -> XREF: 03-memory-concurrency/TODO-02 §4 (item: "Audit all syscall handlers" at line 132)

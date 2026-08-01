@@ -603,6 +603,7 @@ than merely improbable.
 |---|---|
 | `build/test-runs/<run_id>/test-results.{xml,json}` | the RECORD: immutable, never rewritten by another run |
 | `build/test-runs/<run_id>/record-complete.json` | the commit marker (`utest-run-record-v1`) |
+| `build/test-runs/<run_id>/test-run-identity.json` | the record's identity (`utest-run-identity-v1`): which leg, commit and environment PRODUCED it |
 | `build/test-results.{xml,json}` | alias: THIS invocation. Cleared in Step 0a before anything can fail |
 | `build/test-results-<leg>.{xml,json}` | alias: the latest COMPLETED run of that leg |
 | `build/test-results-<leg>.run` | **the resolution path**: a pointer (`utest-leg-pointer-v1`) naming the record that leg currently resolves to |
@@ -690,6 +691,24 @@ validates what it reads, not what the writer intended.
    complete` -> re-read the pointer ONCE (a concurrent run may have advanced it
    mid-resolution) and retry from step 2. Still bad -> report the generation
    unavailable or corrupt: **stop**.
+   **Then bind the record to the leg you asked for**, because nothing so far
+   has. Steps 1-3 prove the pointer is well-formed *for that leg's filename*
+   and that the record it names exists and is committed complete -- they never
+   ask whether that record was PRODUCED by that leg, so a pointer holding leg
+   `<A>`'s exact document while naming a completed run of leg `<B>` satisfies
+   every one of them, and you would read `<B>`'s results believing them to be
+   `<A>`'s. Reject unless the marker carries `identity ==
+   "test-run-identity.json"` (the marker is the record's inventory, and
+   `identity` is legitimately `null` for a record that has none -- such a
+   record cannot be bound, and a `test-run-identity.json` the marker does not
+   name is not part of the record), and that document parses as
+   `utest-run-identity-v1` with NO duplicate keys, `run_id` equal to the
+   pointer's, and `leg` equal to the leg you asked for. Anything else ->
+   report the generation unavailable: **stop**. Do not fall back to the
+   aliases, and do not resolve to the record anyway -- silently reading
+   another leg's results is the failure this check exists to make impossible.
+   Retention enforces the same binding (`utest_pointer_pin_id`), so a pointer
+   that fails it is one whose record is not being held for you either.
 4. **Open** the documents the marker NAMES -- and take the names from the
    MARKER, not from your own assumptions -- out of the record directory, not
    out of the aliases, opening both before processing either. The payload
@@ -758,7 +777,10 @@ Nothing in that sequence establishes a happens-before. So acquisition runs under
 one mutex, `build/.test-retention.lock`, which `utest_prune_records` also holds
 for its entire body. Take it exclusively (`flock`), then:
 
-1. Resolve the pointer as in steps 1-2.
+1. Resolve the pointer as in steps 1-3, binding included. A lease is a durable
+   hold, so acquiring one over an unbound pointer would make a cross-leg
+   mis-resolution permanent rather than momentary; `utest_lease_acquire`
+   refuses on exactly the check retention pins on.
 2. If `<record>/leases/` is absent, **refuse** -- the record is gone or was never
    completed. Never create it: retention counts directories, so a resurrected
    leases-only skeleton would take a slot in the newest-`UTEST_RECORD_KEEP` set
@@ -833,7 +855,8 @@ Retention understands the pointer. `utest_prune_records` keeps the newest
 `UTEST_RECORD_KEEP` (20) records and additionally **pins** the record a live
 pointer resolves to, so the documented path does not dangle after twenty
 unrelated runs of another leg. The pin is bounded by `UTEST_POINTER_PIN_MAX`
-(the 64 most recently published pointers that actually validate) because
+(the 64 most recently published pointers that actually validate -- the whole
+contract of step 2 plus the marker and the leg binding of step 3) because
 `UTEST_LEG` can mint unboundedly many distinct leg names, and an unconditional
 exemption would nullify the disk bound. **Only pointers inside that ranking are
 protected:** past 64 live legs, the least recently published leg's current
