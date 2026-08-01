@@ -753,6 +753,11 @@ static uint64_t syscall_handler(struct interrupt_frame *frame)
     int64_t ret = -1;
     KIRQL entry_irql = syscall_lower_entry_irql();
 
+    /* Ring-3 execution evidence for the user-mode test launcher. Recorded
+     * from the saved CS rather than from the gate's DPL: the selector is
+     * the CPU's own record of where the caller was executing. */
+    TASK_UTEST_NOTE_USER_ENTRY(frame->cs);
+
     /* pledge gate for the legacy INT 0x80 ABI. Without this, a pledged process
      * could bypass pledge/unveil entirely by using this second ring-3 entry
      * path instead of the SSDT. INT 0x80 is a user-only gate (DPL 3; the kernel
@@ -1300,6 +1305,10 @@ static uint64_t syscall_handler_2e(struct interrupt_frame *frame)
      * the fault-injection hooks from firing on NT-mediated
      * allocator calls. (Codex quality review 2026-04-20.) */
     KIRQL entry_irql = syscall_lower_entry_irql();
+    /* Same ring-3 evidence as the INT 0x80 path; the saved CS is checked
+     * here too rather than trusting the always-from-ring-3 property, so
+     * the evidence stays unforgeable if that ever stops holding. */
+    TASK_UTEST_NOTE_USER_ENTRY(frame->cs);
     ssdt_syscall_enter();       /* UserMode + in_system_service (INT 0x2E always from ring 3) */
     result = ssdt_dispatch(
         (uint32_t)frame->rax,   /* service number */

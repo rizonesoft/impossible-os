@@ -22,6 +22,7 @@
 #include "kernel/test/test_usermode.h"
 #include "kernel/sched/syscall.h"
 #include "kernel/sched/task.h"   /* fault_site_* helpers + FI_ALLOC_* tags */
+#include "kernel/gdt.h"          /* GDT_*_CODE -- the ring-3 evidence RPL rule */
 #include "kernel/mm/heap.h"
 #include "kernel/mm/pmm.h"       /* pmm_get_free_frames + ordinal countdown */
 #include "kernel/mm/vmm.h"       /* vmm_create_user_pml4 (the fork site)    */
@@ -131,7 +132,14 @@ int test_usermode_format_xml_overflow(char *dst, uint32_t cap, int verdict,
                                       const char *classname);
 int test_usermode_format_json_overflow(char *dst, uint32_t cap, int verdict);
 uint32_t test_usermode_record_verdict(int verdict, int loader_stage_fault,
-                                      int timed_out, int reached_exec);
+                                      int timed_out, int reached_exec,
+                                      int frame_adopted, int entered_user);
+void test_usermode_loader_evidence_from_task(const struct task *t,
+                                             uint32_t *stage_fault,
+                                             uint32_t *reached_exec,
+                                             uint32_t *identity_mismatch,
+                                             uint32_t *frame_adopted,
+                                             uint32_t *entered_user);
 int test_usermode_format_xml_summary(char *dst, uint32_t cap, uint32_t tests,
                                      uint32_t failures, uint32_t skipped,
                                      uint64_t total_ms, int aborted,
@@ -1303,36 +1311,54 @@ static void test_overflow_fallbacks_preserve_the_verdict(void)
  * loader failure through live infrastructure. */
 static void test_record_verdict_maps_never_ran_onto_the_artifacts(void)
 {
-    /* Arguments: (verdict, loader_stage_fault, timed_out, reached_exec). */
+    /* Arguments: (verdict, loader_stage_fault, timed_out, reached_exec,
+     *             frame_adopted, entered_user). */
 
     /* A binary that ran and failed stays a failure -- the common case, and
      * the one a wrong rule would most damage. */
-    TEST_ASSERT_EQ(test_usermode_record_verdict(1, 0, 0, 1), 1u,
+    TEST_ASSERT_EQ(test_usermode_record_verdict(1, 0, 0, 1, 1, 1), 1u,
                    "a FAIL with no loader fault stays a FAIL in the artifacts");
     /* A loader that EXITED before ring 3 becomes the never-ran verdict. */
-    TEST_ASSERT_EQ(test_usermode_record_verdict(1, 1, 0, 0), 3u,
+    TEST_ASSERT_EQ(test_usermode_record_verdict(1, 1, 0, 0, 0, 0), 3u,
                    "a FAIL whose loader never reached ring 3 becomes an ERROR");
 
-    /* A TIMEOUT leans on the weaker signal. Nothing published means the
+    /* A TIMEOUT leans on the weaker signals. Nothing published means the
      * loader stalled on its way to ring 3: provably never ran. */
-    TEST_ASSERT_EQ(test_usermode_record_verdict(1, 0, 1, 0), 3u,
+    TEST_ASSERT_EQ(test_usermode_record_verdict(1, 0, 1, 0, 0, 0), 3u,
                    "a timeout that never reached exec is a never-ran ERROR");
-    /* Reached exec then timed out is AMBIGUOUS -- an adopted frame hanging
-     * in ring 3 looks identical to one never adopted -- so it stays a FAIL.
-     * Calling it never-ran would hide a genuine ring-3 hang, and the marker
-     * is set BEFORE the exec call precisely so a task carried into ring 3
-     * by a tick mid-call still lands in this arm. */
-    TEST_ASSERT_EQ(test_usermode_record_verdict(1, 0, 1, 1), 1u,
-                   "a timeout after the exec attempt stays a FAIL, not a guess");
+
+    /* The case this section exists to split. Both of these reached the exec
+     * call and then timed out, which before per-child adoption evidence was
+     * ONE indistinguishable bucket reported as a FAIL. */
+    TEST_ASSERT_EQ(test_usermode_record_verdict(1, 0, 1, 1, 0, 0), 3u,
+                   "a timeout whose frame was published but never adopted is "
+                   "a never-ran ERROR, not a guessed FAIL");
+    TEST_ASSERT_EQ(test_usermode_record_verdict(1, 0, 1, 1, 1, 0), 1u,
+                   "a timeout whose frame WAS adopted stays a FAIL");
+
+    /* Proven ring-3 execution outranks every never-ran signal: if a syscall
+     * arrived from CPL 3 the binary demonstrably ran, so a later timeout is
+     * a hang in its own code. Asserted with reached_exec and frame_adopted
+     * both clear -- the combination cannot occur in a live run, and that is
+     * the point: the rule must not depend on the weaker evidence agreeing. */
+    TEST_ASSERT_EQ(test_usermode_record_verdict(1, 0, 1, 0, 0, 1), 1u,
+                   "proven ring-3 entry keeps a timeout a FAIL even when the "
+                   "weaker never-ran signals would have called it an ERROR");
+
+    /* A loader that exited before ring 3 stays an ERROR no matter what the
+     * timeout-only evidence says -- an exact signal outranks the inferred
+     * ones in the other direction too. */
+    TEST_ASSERT_EQ(test_usermode_record_verdict(1, 1, 1, 1, 1, 1), 3u,
+                   "an exact loader stage fault outranks adoption and entry");
 
     /* PASS and SKIP are untouched: neither can follow a loader that never
      * reached ring 3, and the rule must not invent one if a caller
      * disagrees. */
-    TEST_ASSERT_EQ(test_usermode_record_verdict(0, 0, 0, 1), 0u,
+    TEST_ASSERT_EQ(test_usermode_record_verdict(0, 0, 0, 1, 1, 1), 0u,
                    "a PASS is carried through unchanged");
-    TEST_ASSERT_EQ(test_usermode_record_verdict(0, 1, 0, 0), 0u,
+    TEST_ASSERT_EQ(test_usermode_record_verdict(0, 1, 0, 0, 0, 0), 0u,
                    "a PASS is never reclassified by a stale loader fault");
-    TEST_ASSERT_EQ(test_usermode_record_verdict(2, 1, 1, 0), 2u,
+    TEST_ASSERT_EQ(test_usermode_record_verdict(2, 1, 1, 0, 0, 0), 2u,
                    "a SKIP is never reclassified by a stale loader fault");
 }
 
@@ -1982,6 +2008,11 @@ static void test_report_reconcile_timeout_keeps_counts(void)
 static struct task s_report_scratch;
 static struct task s_capture_parent_scratch;
 static struct task s_capture_child_scratch;
+/* Two loader-evidence scratch TCBs standing in for consecutive spawns:
+ * s_loader_killed_scratch is the timed-out loader the launcher force-kills,
+ * s_loader_next_scratch is the binary launched after it. */
+static struct task s_loader_killed_scratch;
+static struct task s_loader_next_scratch;
 
 static void u_reset_report_scratch(void)
 {
@@ -4418,6 +4449,183 @@ static void test_capture_inherit_copies_active_and_owner_unchanged(void)
                    99u, "inherit must not touch the child's own seq field");
 }
 
+/* The regression this section exists for, at the level the fix lives.
+ *
+ * The old evidence was four file-scope statics that the launcher cleared
+ * per spawn and read back after the wait. A loader force-killed on timeout
+ * could store into them AFTER that reset, so the NEXT binary's ERROR-versus-
+ * FAIL classification was decided by a task that had nothing to do with it.
+ * The whole defence was the single-dispatch invariant (one global
+ * current_task, APs do not run scheduled tasks) -- an argument about the
+ * SCHEDULER, holding up a claim about EVIDENCE, and stated only in comments.
+ *
+ * Binding the record to the child makes the isolation structural instead:
+ * the killed loader's store cannot reach the next binary's fields because
+ * they are not the same fields, on any CPU, under any dispatch model. That
+ * is what this asserts -- two zeroed scratch TCBs, no task_create, no
+ * scheduler, nothing live. */
+static void test_loader_evidence_cannot_outlive_its_own_invocation(void)
+{
+    task_utest_loader_reset(&s_loader_killed_scratch.utest_loader);
+    task_utest_loader_reset(&s_loader_next_scratch.utest_loader);
+
+    /* The next binary is spawned and its slot armed. */
+    s_loader_next_scratch.utest_loader.test_path = "test_next.exe";
+
+    /* NOW the previously force-killed loader gets its dying stores in --
+     * every flag the classification reads, in the order a real loader
+     * would have set them. Under the old file-scope statics this is
+     * exactly the sequence that rewrote the next binary's verdict. */
+    __atomic_store_n(&s_loader_killed_scratch.utest_loader.stage_fault, 1u,
+                     __ATOMIC_RELEASE);
+    __atomic_store_n(&s_loader_killed_scratch.utest_loader.reached_exec, 1u,
+                     __ATOMIC_RELEASE);
+    __atomic_store_n(&s_loader_killed_scratch.utest_loader.identity_mismatch,
+                     1u, __ATOMIC_RELEASE);
+    TASK_UTEST_LOADER_MARK_ADOPTED(&s_loader_killed_scratch);
+    TASK_UTEST_LOADER_MARK_ENTERED_USER(&s_loader_killed_scratch);
+
+    TEST_ASSERT_EQ((uint64_t)s_loader_next_scratch.utest_loader.stage_fault,
+                   0u, "a killed loader's stage fault cannot reach the next "
+                   "binary's record");
+    TEST_ASSERT_EQ((uint64_t)s_loader_next_scratch.utest_loader.reached_exec,
+                   0u, "a killed loader's reached_exec cannot reach the next "
+                   "binary's record");
+    TEST_ASSERT_EQ((uint64_t)s_loader_next_scratch.utest_loader.identity_mismatch,
+                   0u, "a killed loader's identity mismatch cannot reach the "
+                   "next binary's record");
+    TEST_ASSERT_EQ((uint64_t)s_loader_next_scratch.utest_loader.frame_adopted,
+                   0u, "a killed loader's frame adoption cannot reach the "
+                   "next binary's record");
+    TEST_ASSERT_EQ((uint64_t)s_loader_next_scratch.utest_loader.entered_user,
+                   0u, "a killed loader's ring-3 entry cannot reach the next "
+                   "binary's record");
+
+    /* And the killed loader's own record is intact -- the isolation must run
+     * both ways, or the fix would be "lose the evidence" rather than "bind
+     * it". Its verdict is still the never-ran ERROR its stage fault earns. */
+    TEST_ASSERT_EQ((uint64_t)s_loader_killed_scratch.utest_loader.stage_fault,
+                   1u, "the killed loader still carries its own evidence");
+    TEST_ASSERT_EQ(test_usermode_record_verdict(
+                       1,
+                       (int)s_loader_killed_scratch.utest_loader.stage_fault,
+                       1,
+                       (int)s_loader_killed_scratch.utest_loader.reached_exec,
+                       (int)s_loader_killed_scratch.utest_loader.frame_adopted,
+                       (int)s_loader_killed_scratch.utest_loader.entered_user),
+                   3u, "the killed loader's own verdict is unchanged by the "
+                   "next binary's spawn");
+}
+
+/* The snapshot is the production code that carries one child's evidence
+ * out of its slot, and a field it swapped or dropped would still reconcile
+ * cleanly in the artifacts while publishing the wrong verdict. Asserted on
+ * a fixture carrying a UNIQUE sentinel per field, so that ANY permutation
+ * of the five copies fails. An alternating 1/0 pattern is not enough and
+ * was the first version of this test: it leaves a snapshot that swaps
+ * stage_fault with identity_mismatch, or reached_exec with frame_adopted,
+ * perfectly green -- and those pairs carry different verdict semantics.
+ * The production field values are only ever 0 or 1; the sentinels exist to
+ * make the COPY falsifiable, not to model a real record. */
+static void test_loader_evidence_snapshot_copies_every_field(void)
+{
+    uint32_t stage_fault, reached_exec, identity_mismatch;
+    uint32_t frame_adopted, entered_user;
+
+    task_utest_loader_reset(&s_loader_killed_scratch.utest_loader);
+    s_loader_killed_scratch.utest_loader.stage_fault       = 0x11u;
+    s_loader_killed_scratch.utest_loader.reached_exec      = 0x22u;
+    s_loader_killed_scratch.utest_loader.identity_mismatch = 0x33u;
+    s_loader_killed_scratch.utest_loader.frame_adopted     = 0x44u;
+    s_loader_killed_scratch.utest_loader.entered_user      = 0x55u;
+
+    test_usermode_loader_evidence_from_task(&s_loader_killed_scratch,
+                                            &stage_fault, &reached_exec,
+                                            &identity_mismatch,
+                                            &frame_adopted, &entered_user);
+
+    TEST_ASSERT_EQ((uint64_t)stage_fault, 0x11u,
+                   "snapshot carries stage_fault, from the stage_fault field");
+    TEST_ASSERT_EQ((uint64_t)reached_exec, 0x22u,
+                   "snapshot carries reached_exec, from the reached_exec field");
+    TEST_ASSERT_EQ((uint64_t)identity_mismatch, 0x33u,
+                   "snapshot carries identity_mismatch, from the "
+                   "identity_mismatch field");
+    TEST_ASSERT_EQ((uint64_t)frame_adopted, 0x44u,
+                   "snapshot carries frame_adopted, from the frame_adopted "
+                   "field");
+    TEST_ASSERT_EQ((uint64_t)entered_user, 0x55u,
+                   "snapshot carries entered_user, from the entered_user field");
+
+    /* A child whose slot cannot be resolved must read as nothing observed.
+     * The launcher takes this snapshot after the child is dead, so the
+     * unresolvable case is reachable in production and must never present
+     * a flag the child did not set. */
+    test_usermode_loader_evidence_from_task((const struct task *)0,
+                                            &stage_fault, &reached_exec,
+                                            &identity_mismatch,
+                                            &frame_adopted, &entered_user);
+    TEST_ASSERT_EQ((uint64_t)(stage_fault | reached_exec | identity_mismatch |
+                              frame_adopted | entered_user), 0u,
+                   "an unresolvable child snapshots as all-zero, never as a "
+                   "flag it did not set");
+}
+
+/* The RPL rule that decides whether ring-3 evidence is recorded at all.
+ * Wrong in either direction it changes a verdict, and until it was split
+ * out of the syscall path it could not be asserted without issuing a
+ * syscall -- which a kernel test may not do. */
+static void test_loader_entry_evidence_requires_ring3_selector(void)
+{
+    TEST_ASSERT_EQ((uint64_t)task_utest_cs_is_user(GDT_KERNEL_CODE), 0u,
+                   "a ring-0 kernel CS is not ring-3 evidence");
+    TEST_ASSERT_EQ((uint64_t)task_utest_cs_is_user(GDT_KERNEL_CODE | 1u), 0u,
+                   "RPL 1 is not ring-3 evidence");
+    TEST_ASSERT_EQ((uint64_t)task_utest_cs_is_user(GDT_KERNEL_CODE | 2u), 0u,
+                   "RPL 2 is not ring-3 evidence");
+    TEST_ASSERT_EQ((uint64_t)task_utest_cs_is_user(GDT_USER_CODE | 3u), 1u,
+                   "the user code selector at RPL 3 IS ring-3 evidence");
+    /* Only the RPL carries privilege; index and table bits do not. A rule
+     * that compared whole selectors would reject a legitimate ring-3
+     * caller from any other code segment. */
+    TEST_ASSERT_EQ((uint64_t)task_utest_cs_is_user(0xDEAD0000ULL | 3u), 1u,
+                   "high selector bits do not affect the ring-3 decision");
+    TEST_ASSERT_EQ((uint64_t)task_utest_cs_is_user(0xDEAD0000ULL), 0u,
+                   "high selector bits alone are not ring-3 evidence");
+}
+
+/* The reset is what makes a recycled or forked slot safe, so assert it
+ * clears EVERY field rather than the two the classification reads most
+ * often: a field left behind is a verdict inherited from another binary. */
+static void test_loader_evidence_reset_clears_every_field(void)
+{
+    s_loader_killed_scratch.utest_loader.test_path         = "stale.exe";
+    s_loader_killed_scratch.utest_loader.expect_digest     =
+        (const uint8_t *)&s_loader_next_scratch;
+    s_loader_killed_scratch.utest_loader.stage_fault       = 1u;
+    s_loader_killed_scratch.utest_loader.reached_exec      = 1u;
+    s_loader_killed_scratch.utest_loader.identity_mismatch = 1u;
+    s_loader_killed_scratch.utest_loader.frame_adopted     = 1u;
+    s_loader_killed_scratch.utest_loader.entered_user      = 1u;
+
+    task_utest_loader_reset(&s_loader_killed_scratch.utest_loader);
+
+    TEST_ASSERT(s_loader_killed_scratch.utest_loader.test_path == (const char *)0,
+                "reset clears the armed path");
+    TEST_ASSERT(s_loader_killed_scratch.utest_loader.expect_digest == (const uint8_t *)0,
+                "reset clears the armed digest");
+    TEST_ASSERT_EQ((uint64_t)s_loader_killed_scratch.utest_loader.stage_fault,
+                   0u, "reset clears stage_fault");
+    TEST_ASSERT_EQ((uint64_t)s_loader_killed_scratch.utest_loader.reached_exec,
+                   0u, "reset clears reached_exec");
+    TEST_ASSERT_EQ((uint64_t)s_loader_killed_scratch.utest_loader.identity_mismatch,
+                   0u, "reset clears identity_mismatch");
+    TEST_ASSERT_EQ((uint64_t)s_loader_killed_scratch.utest_loader.frame_adopted,
+                   0u, "reset clears frame_adopted");
+    TEST_ASSERT_EQ((uint64_t)s_loader_killed_scratch.utest_loader.entered_user,
+                   0u, "reset clears entered_user");
+}
+
 /* Positive path, end to end: temporarily arm the CURRENT (running,
  * KERNEL_TESTS test-runner) task as its own capture owner, drive real
  * bytes through the public test_usermode_capture_start/_byte/_end entry
@@ -5564,6 +5772,18 @@ void test_register_usermode_launcher(void)
                             TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: capture inherit copies active+owner unchanged",
                             test_capture_inherit_copies_active_and_owner_unchanged,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: loader evidence cannot outlive its invocation",
+                            test_loader_evidence_cannot_outlive_its_own_invocation,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: loader evidence reset clears every field",
+                            test_loader_evidence_reset_clears_every_field,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: loader evidence snapshot copies every field",
+                            test_loader_evidence_snapshot_copies_every_field,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: ring-3 entry evidence requires an RPL-3 selector",
+                            test_loader_entry_evidence_requires_ring3_selector,
                             TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: capture inherit: uncaptured parent stays uncaptured",
                             test_capture_inherit_uncaptured_parent_stays_uncaptured,

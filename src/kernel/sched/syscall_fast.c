@@ -124,6 +124,12 @@ NTSTATUS syscall_dispatch_fast(uint64_t number,
                                uint64_t a5)
 {
     NTSTATUS result;
+    /* Ring-3 execution evidence for the user-mode test launcher. This path
+     * has no saved frame to inspect, but SYSCALL reaches it only from ring
+     * 3 (the same property ssdt_syscall_enter() below relies on to set
+     * previous_mode unconditionally), and SYSRET returns to GDT_USER_CODE
+     * with RPL 3 -- so that selector IS the caller's CS. */
+    TASK_UTEST_NOTE_USER_ENTRY(GDT_USER_CODE | SEL_RPL_USER);
     ssdt_syscall_enter();   /* previous_mode=UserMode + in_system_service, one lookup */
     result = ssdt_dispatch((uint32_t)number, a1, a2, a3, a4, a5, 0);
     ssdt_syscall_leave();   /* previous_mode=KernelMode + clear in_system_service */

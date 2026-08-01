@@ -98,6 +98,107 @@ _Static_assert(RLIMIT_AS < RLIM_NLIMITS, "every RLIMIT_* index must fit rlimits[
  * Force-clear and log error so the task doesn't block forever. */
 #define EXEC_PENDING_STUCK_TICKS 10
 
+#ifdef KERNEL_TESTS
+/* Witness the scheduler adopting a task's published exec frame, and check
+ * -- once per boot, not once per switch -- that dispatch really is
+ * BSP-only.
+ *
+ * The launcher's per-child loader evidence is bound to the child's slot
+ * rather than to file-scope globals precisely so a late store cannot be
+ * attributed to the next binary. That binding is sound on its own, but the
+ * ORDERING of the inputs armed before publication still rests on the
+ * single-dispatch invariant (one global current_task, APs do not run
+ * scheduled tasks) -- num_tasks is a plain global that the scheduler reads
+ * without an acquire, so placing the arming before the increment orders
+ * nothing by the C memory model. That invariant is stated in comments at
+ * several load-bearing sites and asserted at none, which is what makes it
+ * dangerous: the day an AP dispatches, everything keeps working and the
+ * evidence quietly starts lying.
+ *
+ * Checked HERE rather than on every context switch because this is where
+ * the claim is actually made -- once per exec adoption -- so the guard
+ * costs the scheduler nothing on the ordinary switch path. Reports rather
+ * than halts: an unexpected dispatch CPU invalidates test evidence, which
+ * is a loud diagnostic, not a reason to take the machine down inside an
+ * interrupt handler. Latched so a broken invariant cannot flood the shared
+ * klog budget and suppress the diagnostics around it.
+ *
+ * It is a DETECTOR, not a barrier, and the difference is deliberate: it
+ * cannot make the arming ordering correct on an AP, only make its failure
+ * visible instead of silent. Nothing here should be read as licensing the
+ * plain-store publication above. */
+static uint32_t s_utest_nonbsp_dispatch_reported;
+
+/* Returns non-zero when the caller IS on the BSP, so a caller whose target
+ * is only valid there can suppress its write instead of making one that
+ * may land in another child's slot. */
+int task_utest_report_nonbsp_dispatch(uint32_t pid, const char *where)
+{
+    struct per_cpu_data *cpu = smp_this_cpu();
+
+    if (!cpu || cpu->cpu_id == 0)
+        return 1;
+    if (!__atomic_exchange_n(&s_utest_nonbsp_dispatch_reported, 1u,
+                             __ATOMIC_ACQ_REL)) {
+        klog(LOG_ERROR, "sched",
+             "PID %u: %s ran on CPU %u, not the BSP -- per-child loader "
+             "evidence ordering is no longer guaranteed",
+             (uint64_t)pid, where, (uint64_t)cpu->cpu_id);
+    }
+    return 0;
+}
+
+static void task_utest_note_frame_adopted(struct task *t)
+{
+    /* Reported but NOT suppressed, and the difference from the syscall
+     * path below is the whole point: this site is handed its target
+     * explicitly (&tasks[next_task]), so it marks the right slot on any
+     * CPU. Only the report is at risk off-BSP, not the attribution. */
+    (void)task_utest_report_nonbsp_dispatch(t->pid, "exec frame adoption");
+    TASK_UTEST_LOADER_MARK_ADOPTED(t);
+}
+#define TASK_UTEST_NOTE_FRAME_ADOPTED(tp) task_utest_note_frame_adopted(tp)
+
+/* PROVEN ring-3 execution, as opposed to the frame adoption above: the CPU
+ * saved this CS when it took the syscall, so an RPL of 3 is its own record
+ * that the interrupted instruction ran at user privilege. That closes the
+ * half of the never-ran question adoption cannot: a binary that reached a
+ * syscall demonstrably executed, so a later timeout is a hang in ITS code
+ * rather than a loader or scheduler fault. */
+int task_utest_cs_is_user(uint64_t cs)
+{
+    return (cs & SEL_RPL_MASK) == SEL_RPL_USER;
+}
+
+void task_utest_note_user_entry(uint64_t cs)
+{
+    struct task *t;
+
+    if (!task_utest_cs_is_user(cs))
+        return;
+    /* Checked BEFORE resolving the cursor, and the write is SUPPRESSED
+     * rather than merely reported when it fails.
+     *
+     * Unlike frame adoption, this site has no explicit target: it resolves
+     * through the global current_task cursor, so a child syscalling on an
+     * AP would read the BSP's cursor and set ANOTHER child's entered_user
+     * -- reintroducing exactly the cross-invocation contamination this
+     * section removes, through a write this section adds. Declining to
+     * record leaves the field at its conservative zero (never-ran-leaning,
+     * see u_record_verdict), which is a missing observation rather than a
+     * false one attributed to an innocent binary. Binding this evidence
+     * properly needs a per-CPU current-task identity, owned by the
+     * per-CPU run-queue work in 03-memory-concurrency/TODO-07. */
+    if (!task_utest_report_nonbsp_dispatch(0, "ring-3 syscall entry"))
+        return;
+    t = task_current();
+    if (t)
+        TASK_UTEST_LOADER_MARK_ENTERED_USER(t);
+}
+#else
+#define TASK_UTEST_NOTE_FRAME_ADOPTED(tp) ((void)0)
+#endif /* KERNEL_TESTS */
+
 /* --- Task wrapper ---
  * New tasks start execution here. When the entry function returns,
  * we mark the task as dead and halt forever (scheduler will skip us). */
@@ -668,8 +769,13 @@ static void stack_run_release_after_guard_failure(uintptr_t base, uint32_t pages
  * task selected by the scheduler on another CPU the instant it becomes
  * runnable can never observe capture_active still unset. task_create()
  * and task_create_captured() are thin wrappers over this. */
+/* test_path / expect_digest are the KERNEL_TESTS loader inputs armed into
+ * the new slot before publication; both are NULL for every non-launcher
+ * caller and ignored entirely in the release flavor. */
 static int task_create_internal(task_entry_t entry, const char *name,
-                                int arm_capture)
+                                int arm_capture,
+                                const char *test_path,
+                                const uint8_t *expect_digest)
 {
     uint32_t pid;
     uint8_t *stack;
@@ -913,10 +1019,34 @@ static int task_create_internal(task_entry_t entry, const char *name,
      * per-process-lifetime, not per-loaded-image, so it survives the
      * kernel-task-to-ring-3 self-transition this loader performs. */
     TASK_UTEST_CAPTURE_RESET(&tasks[pid]);
+    /* Loader evidence: reset here with the rest, then armed with THIS
+     * invocation's inputs below -- both before num_tasks++, for the same
+     * reason the capture arming is. */
+    TASK_UTEST_LOADER_RESET(&tasks[pid]);
 #ifdef KERNEL_TESTS
     if (arm_capture) {
         tasks[pid].utest_capture_active = 1;
         tasks[pid].utest_capture_owner_pid = pid;
+        /* The loader reads these once it is scheduled in; publishing them
+         * here rather than after the spawn call returns is what binds them
+         * to THIS child.
+         *
+         * Be precise about what that ordering rests on, because the whole
+         * point of this record is to stop crediting guarantees nothing
+         * provides. It is NOT a C memory-model edge: num_tasks is a plain
+         * global the scheduler reads without an acquire, so placement
+         * before the increment orders nothing by itself. It is the
+         * single-dispatch invariant -- one global current_task, APs park
+         * in ap_entry() without ever calling schedule(). That invariant is
+         * CHECKED, not asserted: task_utest_note_frame_adopted() reports
+         * once if a frame is ever adopted off the BSP, and the loader
+         * reports once if it starts on one. Neither is a barrier and
+         * neither runs on the ordinary switch path; they turn a silent
+         * wrong answer into a loud one. The release/acquire publication
+         * protocol that would make this ordering real belongs to the
+         * per-CPU run-queue work in 03-memory-concurrency/TODO-07. */
+        tasks[pid].utest_loader.test_path     = test_path;
+        tasks[pid].utest_loader.expect_digest = expect_digest;
         /* The owner-to-name binding MUST reach the wire before num_tasks++
          * below makes this task schedulable -- an already-published task
          * selected by another CPU could otherwise emit a capture chunk
@@ -952,13 +1082,16 @@ static int task_create_internal(task_entry_t entry, const char *name,
 
 int task_create(task_entry_t entry, const char *name)
 {
-    return task_create_internal(entry, name, 0);
+    return task_create_internal(entry, name, 0,
+                                (const char *)0, (const uint8_t *)0);
 }
 
 #ifdef KERNEL_TESTS
-int task_create_captured(task_entry_t entry, const char *name)
+int task_create_captured(task_entry_t entry, const char *name,
+                         const char *test_path,
+                         const uint8_t *expect_digest)
 {
-    return task_create_internal(entry, name, 1);
+    return task_create_internal(entry, name, 1, test_path, expect_digest);
 }
 #endif
 
@@ -1123,6 +1256,10 @@ int task_create_user(task_entry_t entry, const char *name)
      * invariant this function's own precedents document must hold
      * unconditionally, not "except here". */
     TASK_UTEST_CAPTURE_RESET(&tasks[pid]);
+    /* Same reasoning one line up, for the loader evidence: a ring-3 task
+     * created here is never a launcher child, so it must present no
+     * loader verdict at all rather than a recycled slot's. */
+    TASK_UTEST_LOADER_RESET(&tasks[pid]);
     task_init_accounting(&tasks[pid]);
     task_rlimit_inherit(&tasks[pid], &tasks[current_task]); /* inherit creator's limits */
 
@@ -1318,13 +1455,28 @@ uint64_t schedule_now(struct interrupt_frame *frame)
     tasks[next_task].state = TASK_RUNNING;
     tasks[next_task].threads[next_thread].state = THREAD_RUNNING;
 
-    /* exec_pending stuck detection: if set for too long, frame was never consumed */
-    if (tasks[next_task].exec_pending &&
-        tasks[next_task].exec_pending_tick &&
-        (uptime() - tasks[next_task].exec_pending_tick) > EXEC_PENDING_STUCK_TICKS) {
-        klog(LOG_WARN, "sched", "PID %u: exec_pending stuck for %u ticks -- force-clearing",
-             (uint64_t)next_task,
-             (uint64_t)(uptime() - tasks[next_task].exec_pending_tick));
+    /* exec_pending stuck detection: if set for too long, frame was never consumed.
+     * Read ONCE and reused for the adoption evidence below: a non-zero value
+     * here means this switch-in is the moment the frame task_exec published
+     * gets consumed, which is the only thing the scheduler can honestly
+     * witness about a task's passage into ring 3. */
+    {
+        /* ACQUIRE, pairing with the RELEASE store in task_exec, and
+         * matching the save-gate's load earlier in this function. A plain
+         * read here could observe a stale zero, clear exec_pending without
+         * marking, and report a genuinely adopted frame as never-ran. */
+        uint32_t adopting = __atomic_load_n(&tasks[next_task].exec_pending,
+                                            __ATOMIC_ACQUIRE);
+
+        if (adopting &&
+            tasks[next_task].exec_pending_tick &&
+            (uptime() - tasks[next_task].exec_pending_tick) > EXEC_PENDING_STUCK_TICKS) {
+            klog(LOG_WARN, "sched", "PID %u: exec_pending stuck for %u ticks -- force-clearing",
+                 (uint64_t)next_task,
+                 (uint64_t)(uptime() - tasks[next_task].exec_pending_tick));
+        }
+        if (adopting)
+            TASK_UTEST_NOTE_FRAME_ADOPTED(&tasks[next_task]);
     }
     /* Release-store so a future cross-CPU acquirer in the save-gate
      * above sees the zero together with every write that preceded
@@ -1601,13 +1753,21 @@ uint64_t schedule(struct interrupt_frame *frame)
     tasks[next_task].state = TASK_RUNNING;
     tasks[next_task].threads[next_thread].state = THREAD_RUNNING;
 
-    /* exec_pending stuck detection (same as yield path) */
-    if (tasks[next_task].exec_pending &&
-        tasks[next_task].exec_pending_tick &&
-        (uptime() - tasks[next_task].exec_pending_tick) > EXEC_PENDING_STUCK_TICKS) {
-        klog(LOG_WARN, "sched", "PID %u: exec_pending stuck for %u ticks -- force-clearing",
-             (uint64_t)next_task,
-             (uint64_t)(uptime() - tasks[next_task].exec_pending_tick));
+    /* exec_pending stuck detection + adoption evidence (same as yield path) */
+    {
+        /* ACQUIRE for the same reason as the yield path above. */
+        uint32_t adopting = __atomic_load_n(&tasks[next_task].exec_pending,
+                                            __ATOMIC_ACQUIRE);
+
+        if (adopting &&
+            tasks[next_task].exec_pending_tick &&
+            (uptime() - tasks[next_task].exec_pending_tick) > EXEC_PENDING_STUCK_TICKS) {
+            klog(LOG_WARN, "sched", "PID %u: exec_pending stuck for %u ticks -- force-clearing",
+                 (uint64_t)next_task,
+                 (uint64_t)(uptime() - tasks[next_task].exec_pending_tick));
+        }
+        if (adopting)
+            TASK_UTEST_NOTE_FRAME_ADOPTED(&tasks[next_task]);
     }
     __atomic_store_n(&tasks[next_task].exec_pending, 0u, __ATOMIC_RELEASE);
     tasks[next_task].exec_pending_tick = 0;
@@ -2207,6 +2367,11 @@ int task_fork(struct interrupt_frame *frame)
      * OPPOSITE of the self-report reset just above, because a captured
      * binary's descendant output still belongs to the same binary. */
     TASK_UTEST_CAPTURE_RESET(&tasks[child_pid]);
+    /* Loader evidence follows the self-report, not the capture ownership:
+     * the record describes ONE loader invocation, and a fork descendant
+     * did not perform it. Inheriting it would let a child that never
+     * loaded anything present its parent's reached_exec to the launcher. */
+    TASK_UTEST_LOADER_RESET(&tasks[child_pid]);
 
     /* Inherit the parent's Job Object membership BEFORE num_tasks++ publishes
      * the child, so a fork can never be used to escape a job's active-process
@@ -3979,6 +4144,14 @@ uint64_t task_exec_take_pending_frame(struct interrupt_frame *frame)
             }
         }
     }
+
+    /* Adoption evidence, on the syscall-return arm of the handoff. Reaching
+     * here means the entry guard observed exec_pending set AND a real frame
+     * was found, so the frame is being consumed now. Deliberately not marked
+     * on the "set with no frame" bail-out above: that path clears the flag
+     * and keeps the PRE-exec frame, which is the opposite of an adoption and
+     * would report a lost frame as a binary that ran. */
+    TASK_UTEST_NOTE_FRAME_ADOPTED(&tasks[pid]);
 
     /* RELEASE so the next scheduler save-gate sees the cleared flag together
      * with the TSS/MSR updates above, and resumes saving frames normally. */

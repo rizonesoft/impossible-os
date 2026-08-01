@@ -142,6 +142,46 @@ struct task_utest_report {
     uint32_t skip_blocks;     /* UTEST_SKIP sites taken          */
     uint32_t state;           /* TASK_UTEST_REPORT_*             */
 };
+
+/* Per-invocation loader evidence, bound to the CHILD that produced it.
+ *
+ * Every field here was a file-scope static in test_usermode.c, cleared by
+ * the launcher before each spawn and read back after the wait. That pairing
+ * carried no invocation identity, so the whole never-ran-versus-failed
+ * classification rested on it holding -- and it held only because of the
+ * single-dispatch invariant (one global current_task, APs do not run
+ * scheduled tasks), never because of the atomics the old comments credited
+ * for it. A late store from a force-killed loader therefore landed after
+ * the launcher had already reset the flags for the NEXT binary, changing
+ * THAT binary's verdict. Living in the child's own slot, the evidence
+ * cannot outlive its invocation no matter which CPU stored it.
+ *
+ * The two INPUTS are armed by the constructor before the task is published
+ * (num_tasks++), matching the capture fields beside them: once the spawn
+ * call returns, the loader may already be running.
+ *
+ * frame_adopted and entered_user are NOT the same claim and must not be
+ * collapsed into one bit. The scheduler can only witness that it SELECTED
+ * the published exec frame; TSS, CR3, GS, swapgs and the iretq itself all
+ * still follow, so a failure anywhere in that remaining return path would
+ * leave an "entered ring 3" bit set for an image that never executed a
+ * single CPL3 instruction -- reporting a loader or scheduler fault as a
+ * hung user test. entered_user is therefore recorded where ring-3
+ * execution is PROVEN rather than predicted (a syscall arriving with CS
+ * RPL 3), and frame_adopted is named for exactly what it observes. */
+struct task_utest_loader {
+    /* Armed before publication; read by the loader once scheduled in. */
+    const char    *test_path;         /* binary this invocation must load   */
+    const uint8_t *expect_digest;     /* frozen SHA-256, NULL = plan lost   */
+    /* Written by the loader task into its OWN slot; read by the launcher
+     * after the child is dead and before task_cleanup. */
+    uint32_t       stage_fault;       /* exited before reaching ring 3      */
+    uint32_t       reached_exec;      /* got as far as the task_exec call   */
+    uint32_t       identity_mismatch; /* on-disk bytes left the plan behind */
+    /* Written by the kernel about the child, not by the child. */
+    uint32_t       frame_adopted;     /* scheduler took the published frame */
+    uint32_t       entered_user;      /* a syscall arrived from CPL 3       */
+};
 #endif /* KERNEL_TESTS */
 
 /* Load-bearing coupling, not a restatement of the value: a fresh or recycled
@@ -821,6 +861,15 @@ struct task {
      * plain byte another CPU may be writing. The remaining access,
      * task_utest_capture_reset, runs before the slot is published. */
     uint8_t  utest_capture_stopped;
+    /* Per-invocation loader evidence for THIS task. Reset by every
+     * CONSTRUCTOR, so a fork descendant never presents its parent's
+     * verdict -- but deliberately NOT by task_exec, which is where
+     * utest_report above is reset and where this record must survive:
+     * the loader sets reached_exec and then calls task_exec on itself,
+     * so resetting there would erase the evidence at the exact moment it
+     * becomes load-bearing. Same lifetime as the capture fields, for the
+     * same self-transition reason. */
+    struct task_utest_loader utest_loader;
 #endif
     /* --- User-mode section-view VA bump allocator ---
      * Per-task bump pointer for MapViewOfSection / sys_shmem_map. The
@@ -961,12 +1010,101 @@ static inline void task_utest_capture_unlink(struct task *t)
 }
 #define TASK_UTEST_CAPTURE_UNLINK(tp) task_utest_capture_unlink(tp)
 
+/* Reset the loader evidence to "nothing observed" -- called by EVERY task
+ * constructor, exactly like TASK_UTEST_REPORT_RESET, so a fresh or recycled
+ * slot never presents a prior tenant's verdict. The all-zero state is the
+ * meaningful one: no input armed, no stage reached, no frame adopted, no
+ * ring-3 entry witnessed, which is what an uninitialized slot must read as
+ * for the launcher to classify it as never-ran rather than believe it. */
+static inline void task_utest_loader_reset(struct task_utest_loader *l)
+{
+    l->test_path         = (const char *)0;
+    l->expect_digest     = (const uint8_t *)0;
+    l->stage_fault       = 0;
+    l->reached_exec      = 0;
+    l->identity_mismatch = 0;
+    l->frame_adopted     = 0;
+    l->entered_user      = 0;
+}
+#define TASK_UTEST_LOADER_RESET(tp) task_utest_loader_reset(&(tp)->utest_loader)
+
+/* Record that the scheduler ADOPTED this task's published exec frame.
+ *
+ * Called from the exec-frame adoption points, which are the only places
+ * exec_pending transitions 1 -> 0 with a frame actually being consumed.
+ * Deliberately NOT called "entered user": see the struct comment -- the
+ * iretq and everything before it still have to succeed. This is the
+ * evidence that separates "a frame was published but never adopted"
+ * (provably never ran) from "adopted, then stopped reporting", which is
+ * the ambiguity a bare timeout could not resolve. exec_pending itself
+ * cannot serve: it is force-cleared after EXEC_PENDING_STUCK_TICKS, so by
+ * the time a 10-second test timeout expires a never-adopted frame reads
+ * exactly like an adopted one. */
+#define TASK_UTEST_LOADER_MARK_ADOPTED(tp) \
+    __atomic_store_n(&(tp)->utest_loader.frame_adopted, 1u, __ATOMIC_RELEASE)
+
+/* Record PROVEN ring-3 execution: a syscall arrived from CPL 3, so this
+ * task demonstrably executed user-mode instructions. Set on every ring-3
+ * syscall entry (INT 0x80, INT 0x2E, SYSCALL fast path) rather than at the
+ * first one only -- the store is unconditional and idempotent, which costs
+ * one release store per syscall in the KERNEL_TESTS flavor and avoids a
+ * load-then-branch on the hot path. The release flavor compiles it out. */
+#define TASK_UTEST_LOADER_MARK_ENTERED_USER(tp) \
+    __atomic_store_n(&(tp)->utest_loader.entered_user, 1u, __ATOMIC_RELEASE)
+
+/* Does this saved CS say the caller was executing at ring 3?
+ *
+ * Split out as a pure predicate so the rule deciding whether ring-3
+ * evidence is recorded can be asserted on plain values -- no task, no
+ * syscall, no scheduler. It is verdict-changing in BOTH directions: a
+ * false negative reports a binary hanging in ring 3 before its first
+ * syscall as never-ran, and a false positive hides a never-adopted frame
+ * as an ordinary failure. A rule that dangerous should not be reachable
+ * only through a live syscall path. Only the RPL is consulted -- index and
+ * table bits carry no privilege information, so a selector with high bits
+ * set and RPL 3 is still a ring-3 caller.
+ *
+ * Declared here but DEFINED in task.c rather than written inline, because
+ * the selector constants live in the x86-only gdt.h and task.h is included
+ * almost everywhere -- including by the user-ABI certifier, which compiles
+ * this header standalone. Keeping the arch dependency on the .c side is
+ * also what Gate 7 (architecture neutrality) asks for. */
+int task_utest_cs_is_user(uint64_t cs);
+
+/* Note a syscall arriving from ring 3 against the CURRENT task, given the
+ * saved CS of the code that issued it. Marks nothing when the selector's
+ * RPL is not 3, so a kernel-issued call through the same gate can never
+ * manufacture ring-3 evidence. Every ring-3 syscall entry calls this (INT
+ * 0x80, INT 0x2E, SYSCALL fast path); keeping the RPL rule in ONE place is
+ * why it takes the selector rather than each caller testing it. */
+void task_utest_note_user_entry(uint64_t cs);
+#define TASK_UTEST_NOTE_USER_ENTRY(cs) task_utest_note_user_entry(cs)
+
+/* Report ONCE if the caller is running anywhere but the BSP, and return
+ * non-zero when it IS on the BSP. A detector for the single-dispatch
+ * invariant the loader-evidence ordering leans on, not a barrier that makes
+ * it hold -- see the comment at the definition.
+ *
+ * Callers whose target is resolved through the global current_task cursor
+ * must use the return value to SUPPRESS their write off-BSP, because that
+ * write would otherwise land in another child's slot. Callers handed an
+ * explicit task pointer mark unconditionally; their attribution is correct
+ * on any CPU and only the report is at stake. */
+int task_utest_report_nonbsp_dispatch(uint32_t pid, const char *where);
+
 /* KERNEL_TESTS-only spawn entry point: identical to task_create() except
- * the new task's capture fields are armed (active=1, owner=own pid) BEFORE
- * the task is published, closing the publish-before-arm race a plain
- * task_create() plus a post-hoc field-set would leave open. The only
- * caller is the user-mode test launcher (test_usermode.c u_spawn_one()). */
-int task_create_captured(task_entry_t entry, const char *name);
+ * the new task's capture fields are armed (active=1, owner=own pid) and its
+ * loader inputs published BEFORE the task itself is, closing the
+ * publish-before-arm race a plain task_create() plus a post-hoc field-set
+ * would leave open. The only caller is the user-mode test launcher
+ * (test_usermode.c u_spawn_one()).
+ *
+ * test_path and expect_digest are the binary this invocation must load and
+ * the identity its plan froze; both may be NULL, which the loader treats as
+ * fail-closed rather than as permission to execute. */
+int task_create_captured(task_entry_t entry, const char *name,
+                         const char *test_path,
+                         const uint8_t *expect_digest);
 #else
 #define TASK_UTEST_CAPTURE_RESET(tp) ((void)0)
 #define TASK_UTEST_CAPTURE_INHERIT(childp, parentp) ((void)0)
@@ -974,6 +1112,15 @@ int task_create_captured(task_entry_t entry, const char *name);
  * no-op arm exactly as the other two do -- the capture fields do not exist
  * in a build with the launcher pruned out. */
 #define TASK_UTEST_CAPTURE_UNLINK(tp) ((void)0)
+/* Same reason as the capture no-ops: the constructors and the two kernel
+ * evidence sites (scheduler adoption, ring-3 syscall entry) call these
+ * unconditionally, and the record does not exist in a build with the
+ * launcher pruned out -- so the release flavor pays nothing, which is the
+ * whole reason the record is KERNEL_TESTS-gated. */
+#define TASK_UTEST_LOADER_RESET(tp) ((void)0)
+#define TASK_UTEST_LOADER_MARK_ADOPTED(tp) ((void)0)
+#define TASK_UTEST_LOADER_MARK_ENTERED_USER(tp) ((void)0)
+#define TASK_UTEST_NOTE_USER_ENTRY(cs) ((void)(cs))
 #endif /* KERNEL_TESTS */
 
 /* --- API --- */

@@ -118,14 +118,17 @@ Replace the single global run queue with one `struct rq` per logical CPU. `sched
 - [ ] `task_create()`: pick `cpu = argmin(g_rq[cpu].nr_running)` across online CPUs; enqueue into `g_rq[cpu].q`; respect `affinity_mask`
 - [ ] Per-CPU idle task: created during `sched_init_cpu(cpu_id)` at priority 39, `SCHED_NORMAL`
 - [ ] Per-CPU current-thread cursor: `thread_current()` from `g_rq[this_cpu()]`, not global `current_task`/`current_thread`; closes probe-gating for TODO-12 §12 (`ssdt_previous_mode`), TODO-23 §4 (`in_system_service`) + §16 telemetry attribution
+      - Also unblocks the usermode launcher's ring-3 evidence, which today SUPPRESSES its write off-BSP rather than binding it to the wrong child -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §50 (item: "Fail the RUN closed, not just loudly, when non-BSP dispatch is detected while loader evidence is being recorded")
 - [ ] Once the cursor above is per-CPU, move the ORDINAL fault-injection arm records (`kmalloc`/`pmm_alloc`/`vmm_map`/`copy_user`
       4-field groups in `per_cpu_data`, `include/kernel/smp.h`) into task-owned storage so an arm survives migration, and make claim/decrement/reload ONE synchronized transaction -- the four allocator gates do plain read-modify-write today, which a sibling thread can interleave under preemption. Blocked until then because a task-owned record reached through a global cursor is not migration-safe. -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §21 (item: "Make the ORDINAL selectors migration-safe")
 - [ ] Boot log per AP: `[SCHED] CPU%u: run queue initialised`
 - [ ] Commit: `"sched: per-CPU run queues -- struct rq[MAX_CPUS], local dequeue, task placement"`
 - [ ] task_cleanup reap barrier: a TASK_DEAD task must be off-CPU on ALL CPUs before its lock-free frees (pml4, per-thread/TEB frames, handle table, unveil, `env_free` -> T22 §1); local-CR3 guard covers only the reaper.
+      - The usermode launcher reads per-child loader evidence out of the TCB in exactly this pre-cleanup window -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §50 (item: "Bind the loader-stage evidence to the CHILD rather than to two process-wide globals, so it cannot outlive its invocation")
 - [ ] thread_join / thread_free_stacks off-CPU barrier: prove a joined thread is off-CPU on ALL CPUs before its kernel stack is freed -- a KI_TRY victim can still run on it after THREAD_DEAD publish -> XREF: 02-kernel-core/TODO-23 §14
 - [ ] `thread_reap_kernel_slot` publishes `THREAD_FREE` before `apc_rundown_thread` + field cleanup finish; a lockless `kthread_create` scan can claim the slot mid-reap and corrupt it. Make FREE the final store after teardown. (TODO-12 §12)
 - [ ] Tasks-publication lock: serialize `num_tasks++`/slot-publish vs scheduler enumeration + `job_kill_all_members`; reconcile an AP-refused timer-resolution release (-> XREF `02-kernel-core/TODO-21-process-model-extensions.md §14`)
+      - The same plain `num_tasks` increment is what leaves the launcher's constructor-armed loader inputs without a memory-model edge -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §50 (item: "Bind the loader-stage evidence to the CHILD rather than to two process-wide globals, so it cannot outlive its invocation")
 
 ## 4. Work-Stealing Load Balancer `[Opus]`
 

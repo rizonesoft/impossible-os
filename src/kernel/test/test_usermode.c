@@ -23,14 +23,20 @@
  * boot_desktop.c:86.
  *
  * The path-passing trick:
- *   task_create(loader_func, name) launches a kernel task that runs
- *   loader_func once. The loader function reads `s_pending_test_path`
- *   (a file-scope volatile pointer the launcher set just before the
- *   task_create call), opens the file, kmalloc's a buffer, and then
- *   calls task_exec(buf, size) to morph the kernel task into a user
- *   task running the binary. Same pattern as exec_loader_func in
- *   src/kernel/main/test_threads.c. Single-threaded launch + polled
- *   wait means there is no race on s_pending_test_path.
+ *   task_create_captured(loader_func, name, path, digest) launches a
+ *   kernel task that runs loader_func once. The constructor arms the path
+ *   and the frozen identity into the new task's OWN slot before publishing
+ *   it to the scheduler; the loader reads them back out of that slot,
+ *   opens the file, stages a buffer, and calls task_exec(buf, size) to
+ *   morph the kernel task into a user task running the binary. Same
+ *   pattern as exec_loader_func in src/kernel/main/test_threads.c.
+ *
+ *   The inputs AND the loader's verdict live in the child's TCB rather
+ *   than in file-scope statics, so neither can outlive the invocation that
+ *   produced them. The statics they replaced were cleared per spawn and
+ *   read back after the wait, a pairing that held only because dispatch
+ *   goes through one global current_task -- so a late store from a
+ *   force-killed loader could be read as the NEXT binary's evidence.
  * ============================================================================ */
 
 #include "kernel/types.h"
@@ -52,91 +58,93 @@
 
 /* ---- Internal state -------------------------------------------------- */
 
-/* Path of the binary the next utest_loader_func() invocation will load.
- * Set by test_usermode_run() immediately before each task_create call;
- * read by utest_loader_func() once the new task is scheduled in.
- * Volatile because the loader runs in a different scheduling slot. */
-static volatile const char *s_pending_test_path;
+/* One child's loader evidence, copied out of its TCB while the slot is
+ * still valid (after the child is dead, before task_cleanup -- the same
+ * window u_report_snapshot and u_isolation_snapshot_leaks already use).
+ *
+ * Copied rather than read through a retained pointer so the verdict
+ * computation downstream cannot be reading a slot the reap has begun to
+ * tear down, and so every field of one invocation's verdict is taken at a
+ * single point rather than field-by-field across the classification.
+ *
+ * WHAT THE FIVE FLAGS MEAN, and why no two of them are interchangeable:
+ *
+ *   stage_fault       The loader EXITED before ring 3 -- exact, recorded at
+ *                     each exit. Needed because the exit status alone cannot
+ *                     say so: the loader's own -1..-5 codes sit inside the
+ *                     -(signum) range a signalled ring-3 binary reports.
+ *   reached_exec      The loader got as far as ATTEMPTING task_exec. Set
+ *                     BEFORE the call, and that ordering is the whole
+ *                     correctness argument: task_exec publishes the frame
+ *                     and re-enables interrupts before returning, so a tick
+ *                     can carry the task into the new image and nothing
+ *                     after the call is guaranteed to run. Marking
+ *                     beforehand can only OVER-report, which pushes
+ *                     ambiguous cases toward FAIL; marking afterwards would
+ *                     label a genuine ring-3 hang as never-ran.
+ *   identity_mismatch The bytes on disk stopped matching the identity the
+ *                     plan froze. Names WHY a refusal happened, so the run
+ *                     can publish a counted, NAMED infrastructure failure
+ *                     rather than a bare exit code.
+ *   frame_adopted     The SCHEDULER took the published exec frame. This is
+ *                     what closes the half a timeout could not: a frame
+ *                     published but never adopted is provably a binary that
+ *                     never ran. exec_pending cannot serve -- task.c
+ *                     force-clears it after EXEC_PENDING_STUCK_TICKS (10
+ *                     ticks) against a 10-second timeout, so by the time the
+ *                     launcher looks a never-adopted frame reads exactly
+ *                     like an adopted one.
+ *   entered_user      A syscall arrived from CPL 3. Unlike frame_adopted
+ *                     this is PROOF the image executed, not a prediction
+ *                     that it would: adoption still leaves TSS, CR3, GS,
+ *                     swapgs and the iretq ahead of the first user
+ *                     instruction. */
+struct u_loader_evidence {
+    uint32_t stage_fault;
+    uint32_t reached_exec;
+    uint32_t identity_mismatch;
+    uint32_t frame_adopted;
+    uint32_t entered_user;
+};
 
-/* SHA-256 of the bytes the PLAN froze for the binary s_pending_test_path
- * names, or NULL when the entry carries no frozen identity.
+/* Copy one task's loader evidence out of its slot.
  *
- * Points INTO the plan block, which is allocated before the first spawn and
- * freed after the last one, so the pointee outlives every loader that reads
- * it. Published RELEASE before task_create and read ACQUIRE by the loader,
- * which is the message-passing pair that orders the 32 digest bytes (written
- * during the freeze pass) against the reader.
+ * Split from the pid resolution below so the FIELD COPY is assertable on a
+ * plain struct task fixture. A snapshot that swapped two fields or dropped
+ * one would reconcile cleanly in the artifacts and still publish the wrong
+ * ERROR-versus-FAIL verdict, and nothing about that failure is visible
+ * from the outside -- so it needs an assertion of its own rather than only
+ * being covered incidentally by the binaries the launcher spawns.
  *
- * Deliberately NOT justified by "the loader may run on another CPU". This
- * file's operative model is the opposite one and it is load-bearing
- * elsewhere: dispatch goes through a single global current_task and APs do
- * not run scheduled tasks (see the force-kill argument further down), which
- * is why the neighbouring s_pending_test_path is a plain volatile pointer.
- * The atomics here are the conservative choice for a publish-across-task-
- * creation handoff, matching s_loader_stage_fault / s_loader_reached_exec
- * rather than asserting a second, contradictory SMP model.
- *
- * A frozen identity is NOT optional for a RUN entry: u_plan_freeze_identities
- * converts every entry it cannot digest into a REFUSAL, so an entry that
- * reaches u_run_one always has one. NULL here therefore means "the launcher
- * lost the plan's identity", which the loader treats as fail-closed rather
- * than as permission to execute. */
-static const uint8_t *s_pending_expect_digest;
+ * A NULL task yields an all-zero record, which reads as "nothing observed"
+ * -- the same conservative never-ran-leaning shape a fresh slot has, and
+ * never a fabricated success. */
+static void u_loader_evidence_from_task(const struct task *t,
+                                        struct u_loader_evidence *out)
+{
+    if (!t) {
+        out->stage_fault = out->reached_exec = out->identity_mismatch = 0;
+        out->frame_adopted = out->entered_user = 0;
+        return;
+    }
+    out->stage_fault =
+        __atomic_load_n(&t->utest_loader.stage_fault, __ATOMIC_ACQUIRE);
+    out->reached_exec =
+        __atomic_load_n(&t->utest_loader.reached_exec, __ATOMIC_ACQUIRE);
+    out->identity_mismatch =
+        __atomic_load_n(&t->utest_loader.identity_mismatch, __ATOMIC_ACQUIRE);
+    out->frame_adopted =
+        __atomic_load_n(&t->utest_loader.frame_adopted, __ATOMIC_ACQUIRE);
+    out->entered_user =
+        __atomic_load_n(&t->utest_loader.entered_user, __ATOMIC_ACQUIRE);
+}
 
-/* Did the loader refuse to exec because the bytes on disk stopped matching
- * the identity the plan froze? Distinct from s_loader_stage_fault (which
- * says only "never reached ring 3"): this names WHY, so u_run_one can
- * publish a counted, NAMED infrastructure failure instead of a bare exit
- * code. Cleared per SPAWN for the same reason the stage flags are -- a
- * stale 1 from the previous binary would misreport this one. */
-static uint32_t s_loader_identity_mismatch;
+/* Resolve the reaped child and take that copy. */
+static void u_loader_snapshot(uint32_t pid, struct u_loader_evidence *out)
+{
+    u_loader_evidence_from_task(task_get_by_pid(pid), out);
+}
 
-/* Did the loader fail BEFORE the binary reached ring 3?
- *
- * The artifacts distinguish a binary that ran and failed from one that
- * never ran, and every pre-user-mode loader failure belongs to the second
- * class: a missing file, a staging allocation that failed, a short read,
- * or a task_exec that never dispatched. The exit status alone cannot say
- * so -- the loader's own -1..-5 codes sit inside the -(signum) range that
- * a signalled ring-3 binary reports, which is a documented ambiguity a few
- * lines below -- so the STAGE records itself here rather than being
- * guessed from the number.
- *
- * Written by the loader task, read by the launcher after it has waited for
- * that task to exit. Atomics rather than a bare volatile because the two
- * run in different scheduling slots and may sit on different CPUs; the
- * release/acquire pair is what makes the store visible to the wait. */
-static uint32_t s_loader_stage_fault;
-
-/* Did the loader get as far as ATTEMPTING the exec?
- *
- * The fault flag above covers every way the loader EXITS early, but not a
- * loader that never exits at all -- a stall in vfs_open, the staging
- * allocation or vfs_read, which the launcher sees only as a timeout. A
- * timeout that never reached the exec call is provably a binary that never
- * ran, so it is classified with the refusals rather than reported as an
- * assertion failure by a binary that never executed one.
- *
- * Set BEFORE the call, and that ordering is the whole correctness
- * argument. task_exec publishes the ring-3 frame and re-enables interrupts
- * BEFORE returning, so a timer tick can carry this task into the new image
- * and the store after the call would never execute -- the same
- * publish-then-tick window the SYS_EXEC handoff incident was paid for.
- * Marking beforehand can only OVER-report reaching exec, which pushes the
- * ambiguous cases toward FAIL; marking afterwards would under-report it
- * and label a genuine ring-3 hang as never-ran. Reaching this call is a
- * precondition for ever entering ring 3, so no binary that ran can be
- * misclassified.
- *
- * The converse -- a timeout AFTER the attempt -- stays a FAIL, because an
- * adopted frame hanging in ring 3 is indistinguishable from one never
- * adopted. `exec_pending` cannot separate them either: task.c force-clears
- * it after EXEC_PENDING_STUCK_TICKS (10 ticks) against a 10-second test
- * timeout, so by the time the launcher looks, a never-adopted frame reads
- * exactly like an adopted one. Closing that half needs positive
- * ring-3-entry evidence recorded by the scheduler at the adoption point;
- * tracked as its own item. */
-static uint32_t s_loader_reached_exec;
 
 /* Filter set by -- NULL means "run every test_*.exe". */
 static const char *s_filter;
@@ -1690,12 +1698,20 @@ static void utest_staging_free_frames(struct task_exec_staging *st)
     pmm_free_contiguous(st->phys, n);
 }
 
-/* Record that this loader invocation is exiting BEFORE ring 3. Release
- * ordering pairs with the launcher's acquire load after it has waited for
- * the task, which is the only reader. */
-static void u_loader_stage_fault(void)
+/* Record that this loader invocation is exiting BEFORE ring 3, into the
+ * slot of the task that IS this invocation. Release ordering pairs with the
+ * launcher's acquire load after it has waited for the task, which is the
+ * only reader.
+ *
+ * `self` is threaded in from utest_loader_func rather than re-resolved here
+ * so every exit path records against the same slot the entry path read its
+ * inputs from -- one resolution per invocation, and no exit can be
+ * attributed to a task other than the one taking it. */
+static void u_loader_stage_fault(struct task *self)
 {
-    __atomic_store_n(&s_loader_stage_fault, 1u, __ATOMIC_RELEASE);
+    if (self)
+        __atomic_store_n(&self->utest_loader.stage_fault, 1u,
+                         __ATOMIC_RELEASE);
 }
 
 /* Map the launcher's aggregated verdict onto the one the ARTIFACTS carry.
@@ -1705,50 +1721,97 @@ static void u_loader_stage_fault(void)
  * outcome can follow a loader that never reached ring 3, and reclassifying
  * one on a stale flag would turn a green binary red.
  *
- * TWO ways to be sure a binary never ran, and they are not the same
- * evidence. `loader_stage_fault` is a loader that EXITED before ring 3 --
- * exact, recorded at each exit. `reached_exec` is the weaker signal a TIMEOUT
- * has to lean on: a loader that never reached the exec call provably never
- * reached ring 3, while one that did may have been adopted (a real ring-3
- * hang) or not (never ran), and nothing surviving to timeout can tell
- * those apart. So a timeout is ERROR only when the exec was never
- * attempted, and stays FAIL otherwise -- the conservative direction, since calling a real
- * hang "never ran" would hide a genuine test failure.
+ * FOUR ways to be sure about a binary, and they are not the same evidence.
+ * `loader_stage_fault` is a loader that EXITED before ring 3 -- exact,
+ * recorded at each exit. The other three matter only for a TIMEOUT, where
+ * the loader is still alive and cannot report anything itself:
+ *
+ *   entered_user   PROOF the image executed: a syscall arrived from CPL 3.
+ *                  A timeout after that is a hang in the binary's OWN code,
+ *                  so it stays a FAIL no matter what else is set.
+ *   reached_exec   The loader attempted task_exec. Never reaching it is
+ *                  proof the binary never ran.
+ *   frame_adopted  The scheduler took the published frame. This is what
+ *                  used to be missing: a loader that reached the exec call
+ *                  but whose frame was never adopted ALSO never ran, and
+ *                  before this evidence existed that case was
+ *                  indistinguishable from a real ring-3 hang and had to be
+ *                  reported as a FAIL. `exec_pending` could not stand in
+ *                  for it -- task.c force-clears it after ten ticks against
+ *                  a ten-second timeout, so by the time the launcher looks
+ *                  a never-adopted frame reads exactly like an adopted one.
+ *
+ * Adoption is checked only AFTER entered_user has been ruled out, because
+ * adoption is the weaker claim: it witnesses the frame being selected, not
+ * a user instruction retiring. Every remaining ambiguity resolves toward
+ * FAIL, which is still the conservative direction -- calling a real hang
+ * "never ran" would hide a genuine test failure.
  *
  * A pure function, deliberately: its only alternative was an inline
  * conditional that no test could reach without driving a real loader
  * failure through live infrastructure the test policy forbids. */
 static int u_record_verdict(int verdict, int loader_stage_fault,
-                            int timed_out, int reached_exec)
+                            int timed_out, int reached_exec,
+                            int frame_adopted, int entered_user)
 {
     if (verdict != 1)
         return verdict;
     if (loader_stage_fault)
         return 3;
-    if (timed_out && !reached_exec)
+    if (!timed_out)
+        return 1;
+    if (entered_user)
+        return 1;
+    if (!reached_exec)
+        return 3;
+    if (!frame_adopted)
         return 3;
     return 1;
 }
 
 static void utest_loader_func(void)
 {
-    const char *path = (const char *)s_pending_test_path;
+    /* This invocation's identity. Every input below comes out of THIS
+     * slot and every verdict goes back into it, so nothing the loader
+     * records can be attributed to another binary -- which is exactly what
+     * the file-scope statics this replaced could not guarantee. The
+     * constructor armed the inputs before the task was published, so they
+     * are already in place the first time this task is scheduled in. */
+    struct task *self = task_current();
+    const char *path = self ? self->utest_loader.test_path : (const char *)0;
     struct vfs_node *file;
     uint32_t size, pages, p;
     uintptr_t buf_phys;
     uint8_t *buf;
     int n, rc;
 
+    /* A loader with no slot cannot record a verdict anywhere the launcher
+     * would find it, so it must not proceed to execute a binary whose
+     * outcome would then be unattributable. */
+    if (!self) {
+        klog(LOG_ERROR, "UTEST", "loader: no current task -- refusing");
+        task_exit(-1);
+    }
+
+    /* The other half of the dispatch-CPU detector (the first is at exec
+     * frame adoption). It matters HERE too, and earlier: task_current()
+     * resolves through the single global cursor, so a loader running on an
+     * AP could bind every field below to the wrong slot before any frame
+     * is ever adopted. Reports once; it cannot prevent the mis-binding,
+     * only stop it from being silent -- the loader cannot decline to run
+     * the way the syscall-entry site can decline to record. */
+    (void)task_utest_report_nonbsp_dispatch(self->pid, "utest loader entry");
+
     if (!path || !path[0]) {
         klog(LOG_ERROR, "UTEST", "loader: NULL pending path");
-        u_loader_stage_fault();
+        u_loader_stage_fault(self);
         task_exit(-1);
     }
 
     file = vfs_open(path, VFS_O_READ);
     if (!file) {
         klog(LOG_ERROR, "UTEST", "%s: vfs_open failed", path);
-        u_loader_stage_fault();
+        u_loader_stage_fault(self);
         task_exit(-2);
     }
 
@@ -1762,7 +1825,7 @@ static void utest_loader_func(void)
              "%s: image size %u outside the loadable range -- refusing",
              path, file->size);
         vfs_close(file);
-        u_loader_stage_fault();
+        u_loader_stage_fault(self);
         task_exit(-2);
     }
     size  = (uint32_t)file->size;
@@ -1773,7 +1836,7 @@ static void utest_loader_func(void)
              "%s: pmm_alloc_contiguous(%u pages) failed",
              path, (uint64_t)pages);
         vfs_close(file);
-        u_loader_stage_fault();
+        u_loader_stage_fault(self);
         task_exit(-3);
     }
     buf = (uint8_t *)buf_phys;
@@ -1785,7 +1848,7 @@ static void utest_loader_func(void)
              path, (int64_t)n, (uint64_t)size);
         for (p = 0; p < pages; p++)
             pmm_free_frame(buf_phys + (uintptr_t)p * 4096u);
-        u_loader_stage_fault();
+        u_loader_stage_fault(self);
         task_exit(-4);
     }
 
@@ -1799,12 +1862,17 @@ static void utest_loader_func(void)
      * exists to close -- a replacement landing between that check and this
      * read would verify one file and execute another.
      *
-     * The expected digest is loaded ACQUIRE against the RELEASE store in
-     * u_spawn_one, which is what makes the plan's 32 bytes visible to a
-     * loader the scheduler may have placed on another CPU. */
+     * The expected digest comes out of this task's own slot, armed by the
+     * constructor before the task was published. That is a PLAIN store
+     * read by a plain load: it carries no acquire/release edge and none is
+     * claimed, because the ordering rests on BSP-only dispatch (checked at
+     * loader entry, not enforced) exactly as task.c states. An earlier
+     * version of this comment described a release/acquire publication that
+     * the per-child refactor removed -- a stale guarantee is worse than
+     * none on a security-sensitive identity check, since it invites future
+     * SMP work to rely on it. */
     {
-        const uint8_t *expect =
-            __atomic_load_n(&s_pending_expect_digest, __ATOMIC_ACQUIRE);
+        const uint8_t *expect = self->utest_loader.expect_digest;
         uint8_t actual[SHA256_DIGEST_LEN];
 
         sha256(buf, size, actual);
@@ -1812,10 +1880,10 @@ static void utest_loader_func(void)
             klog(LOG_ERROR, "UTEST",
                  "%s: content does not match the identity the plan froze "
                  "-- refusing to execute it", path);
-            __atomic_store_n(&s_loader_identity_mismatch, 1u,
+            __atomic_store_n(&self->utest_loader.identity_mismatch, 1u,
                              __ATOMIC_RELEASE);
             pmm_free_contiguous(buf_phys, pages);
-            u_loader_stage_fault();
+            u_loader_stage_fault(self);
             task_exit(TASK_EXIT_UTEST_IDENTITY);
         }
     }
@@ -1832,7 +1900,7 @@ static void utest_loader_func(void)
     /* Marked BEFORE the call: task_exec re-enables interrupts once the
      * frame is published, so a tick can carry this task into ring 3 and
      * nothing after the call is guaranteed to run. */
-    __atomic_store_n(&s_loader_reached_exec, 1u, __ATOMIC_RELEASE);
+    __atomic_store_n(&self->utest_loader.reached_exec, 1u, __ATOMIC_RELEASE);
     {
         struct task_exec_staging st = {
             .release = utest_staging_free_frames,
@@ -1855,10 +1923,10 @@ static void utest_loader_func(void)
          * those here would be indistinguishable from a signal death to the same
          * oracle the exec lifecycle test relies on. */
         if (rc == TASK_EXEC_IMAGE_DESTROYED) {
-            u_loader_stage_fault();
+            u_loader_stage_fault(self);
             task_exit(TASK_EXIT_EXEC_IMAGE_DESTROYED);   /* no return */
         }
-        u_loader_stage_fault();
+        u_loader_stage_fault(self);
         task_exit(-5);
     }
 
@@ -6871,23 +6939,22 @@ static void u_spawn_one(const char *name_copy, const char *path,
                         int *out_pid, int32_t *out_exit_status,
                         int *out_timed_out, uint32_t *out_leaked,
                         struct u_report *out_report, int have_stem,
-                        const uint8_t *expect_digest)
+                        const uint8_t *expect_digest,
+                        struct u_loader_evidence *out_loader)
 {
     int pid;
 
-    s_pending_test_path = path;
-    /* Cleared per SPAWN, not per run: the flag describes this invocation's
-     * loader, and a stale 1 from the previous binary would classify a
-     * perfectly ordinary assertion failure as never-ran. */
-    __atomic_store_n(&s_loader_stage_fault, 0u, __ATOMIC_RELEASE);
-    __atomic_store_n(&s_loader_reached_exec, 0u, __ATOMIC_RELEASE);
-    __atomic_store_n(&s_loader_identity_mismatch, 0u, __ATOMIC_RELEASE);
-    /* Published RELEASE so the plan's digest bytes are ordered against the
-     * loader's acquire load. Stored BEFORE the task is created for the same
-     * reason the capture binding is: once task_create_captured returns, the
-     * loader may already be running. */
-    __atomic_store_n(&s_pending_expect_digest, expect_digest,
-                     __ATOMIC_RELEASE);
+    /* No per-spawn clearing here any more, and its absence is the point.
+     * These flags used to be file-scope statics that the launcher reset
+     * before each spawn and read back after the wait -- a pairing with no
+     * invocation identity in it, so a late store from a force-killed
+     * loader landed after the reset for the NEXT binary and changed THAT
+     * binary's classification. The evidence now lives in the child's own
+     * slot, zeroed by its constructor, and is read back below from the
+     * specific child being reaped. */
+    out_loader->stage_fault = out_loader->reached_exec = 0;
+    out_loader->identity_mismatch = 0;
+    out_loader->frame_adopted = out_loader->entered_user = 0;
 
     out_report->asserts_passed = 0;
     out_report->asserts_failed = 0;
@@ -6902,8 +6969,18 @@ static void u_spawn_one(const char *name_copy, const char *path,
      * returns -- an already-published, immediately-scheduled task on
      * another CPU could otherwise emit capture chunk records before
      * their owner binding reaches the wire). See task_create_internal
-     * in task.c and test_usermode_capture_begin(). */
-    pid = task_create_captured(utest_loader_func, name_copy);
+     * in task.c and test_usermode_capture_begin().
+     *
+     * The loader inputs are passed to the constructor for the same
+     * ordering reason, so they are armed in the child's slot before it can
+     * be selected, where handing them over after this call returned would
+     * race a loader that is already running. Not called a publication
+     * barrier, because it is not one: num_tasks is a plain global and
+     * supplies no memory-model edge (task_create_internal says so at the
+     * arming site). What it buys is program order on the BSP, which is
+     * where dispatch happens today. */
+    pid = task_create_captured(utest_loader_func, name_copy,
+                               path, expect_digest);
     *out_pid = pid;
     if (pid < 0) {
         *out_exit_status = -1;
@@ -6950,6 +7027,13 @@ static void u_spawn_one(const char *name_copy, const char *path,
      * that task_cleanup is about to release. Taken unconditionally --
      * unlike leaks it does not depend on per-test isolation being on. */
     u_report_snapshot((uint32_t)pid, out_report);
+    /* Same window and the same reason once more, and this one is what
+     * binds the verdict to its producer: the loader evidence is read out
+     * of THIS child's slot, after it is dead and before task_cleanup
+     * releases it. Nothing another invocation stores can reach these
+     * fields, which is precisely what the file-scope statics could not
+     * promise. */
+    u_loader_snapshot((uint32_t)pid, out_loader);
 }
 
 /* Is a planned binary still on disk?
@@ -7016,6 +7100,7 @@ static void u_run_one(const char *name, utest_type_t type,
     uint32_t leaked = 0;
     uint32_t test_num;
     struct u_report report;
+    struct u_loader_evidence loader;
     uint64_t start_ms;
     uint64_t end_ms;
     /* The verdict the ARTIFACTS carry, which is not always the verdict the
@@ -7072,7 +7157,8 @@ static void u_run_one(const char *name, utest_type_t type,
      * env-passing syscall that lets stress binaries query the desired
      * iteration count at runtime. */
     u_spawn_one(name_copy, path, &pid, &exit_status,
-                &timed_out, &leaked, &report, have_stem, expect_digest);
+                &timed_out, &leaked, &report, have_stem, expect_digest,
+                &loader);
 
     /* The run's own count of spawned binaries, published on the frame
      * terminator and reconciled against the expectation records u_spawn_one
@@ -7150,8 +7236,9 @@ static void u_run_one(const char *name, utest_type_t type,
         /* A timeout with nothing published never reached ring 3 -- the
          * loader stalled on its way there. Same class as a refusal. */
         record_verdict = u_record_verdict(
-            1, (int)__atomic_load_n(&s_loader_stage_fault, __ATOMIC_ACQUIRE),
-            1, (int)__atomic_load_n(&s_loader_reached_exec, __ATOMIC_ACQUIRE));
+            1, (int)loader.stage_fault,
+            1, (int)loader.reached_exec,
+            (int)loader.frame_adopted, (int)loader.entered_user);
         if (record_verdict == 3)
             counters[3]++;
         *out_verdict = 1;
@@ -7168,12 +7255,13 @@ static void u_run_one(const char *name, utest_type_t type,
          * the launcher's pass/fail/skip aggregation and the smoke gate,
          * which have no never-ran dimension. */
         record_verdict = u_record_verdict(
-            1, (int)__atomic_load_n(&s_loader_stage_fault, __ATOMIC_ACQUIRE),
-            0, (int)__atomic_load_n(&s_loader_reached_exec, __ATOMIC_ACQUIRE));
+            1, (int)loader.stage_fault,
+            0, (int)loader.reached_exec,
+            (int)loader.frame_adopted, (int)loader.entered_user);
         if (record_verdict == 3)
             counters[3]++;
         *out_verdict = 1;
-        if (__atomic_load_n(&s_loader_identity_mismatch, __ATOMIC_ACQUIRE)) {
+        if (loader.identity_mismatch) {
             /* The binary the plan named still resolved, but not to the
              * bytes the plan froze. Reported by NAME as a counted
              * infrastructure failure rather than as a bare `exit=N`: the exit
@@ -9189,16 +9277,46 @@ int test_usermode_format_json_overflow(char *dst, uint32_t cap, int verdict)
     return u_format_json_overflow(dst, cap, verdict);
 }
 
+/* The evidence field copy, exposed so a fixture can prove every field
+ * lands where it belongs. Takes and returns the five flags positionally
+ * rather than the internal struct, so the test file needs no view of
+ * u_loader_evidence and a reordered struct cannot silently re-map them. */
+void test_usermode_loader_evidence_from_task(const struct task *t,
+                                             uint32_t *stage_fault,
+                                             uint32_t *reached_exec,
+                                             uint32_t *identity_mismatch,
+                                             uint32_t *frame_adopted,
+                                             uint32_t *entered_user);
+void test_usermode_loader_evidence_from_task(const struct task *t,
+                                             uint32_t *stage_fault,
+                                             uint32_t *reached_exec,
+                                             uint32_t *identity_mismatch,
+                                             uint32_t *frame_adopted,
+                                             uint32_t *entered_user)
+{
+    struct u_loader_evidence ev;
+
+    u_loader_evidence_from_task(t, &ev);
+    *stage_fault       = ev.stage_fault;
+    *reached_exec      = ev.reached_exec;
+    *identity_mismatch = ev.identity_mismatch;
+    *frame_adopted     = ev.frame_adopted;
+    *entered_user      = ev.entered_user;
+}
+
 /* The never-ran classification rule. Pure, so the artifacts' half of the
  * verdict can be asserted without driving a loader failure through live
  * infrastructure. */
 uint32_t test_usermode_record_verdict(int verdict, int loader_stage_fault,
-                                      int timed_out, int reached_exec);
+                                      int timed_out, int reached_exec,
+                                      int frame_adopted, int entered_user);
 uint32_t test_usermode_record_verdict(int verdict, int loader_stage_fault,
-                                      int timed_out, int reached_exec)
+                                      int timed_out, int reached_exec,
+                                      int frame_adopted, int entered_user)
 {
     return (uint32_t)u_record_verdict(verdict, loader_stage_fault, timed_out,
-                                      reached_exec);
+                                      reached_exec, frame_adopted,
+                                      entered_user);
 }
 
 int test_usermode_format_xml_summary(char *dst, uint32_t cap, uint32_t tests,

@@ -31,6 +31,13 @@
 #define GDT_USER_CODE    0x20    /* Ring 3 code -- MUST be after data */
 #define GDT_TSS_SEG      0x28    /* TSS (16 bytes -- two GDT slots) */
 
+/* Requested Privilege Level, the low 2 bits of any segment selector. A
+ * saved CS with RPL 3 is the CPU's own record that the interrupted code was
+ * executing at ring 3, which is the only unforgeable proof of user-mode
+ * execution available to a handler. */
+#define SEL_RPL_MASK     0x3u
+#define SEL_RPL_USER     0x3u
+
 /* Compile-time enforcement of SYSRET GDT ordering constraint */
 _Static_assert(GDT_USER_CODE == GDT_USER_DATA + 8,
     "SYSRET requires GDT_USER_CODE == GDT_USER_DATA + 8 "
