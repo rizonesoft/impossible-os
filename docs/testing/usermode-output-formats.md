@@ -692,9 +692,12 @@ validates what it reads, not what the writer intended.
    unavailable or corrupt: **stop**.
 4. **Open** the documents the marker NAMES -- and take the names from the
    MARKER, not from your own assumptions -- out of the record directory, not
-   out of the aliases, opening both before processing either. A record is never
-   rewritten, so once you hold the descriptors the pair you read is one run's
-   no matter how many runs publish while you read.
+   out of the aliases, opening both before processing either. The payload
+   documents and the marker are never rewritten, so once you hold the
+   descriptors the pair you read is one run's no matter how many runs publish
+   while you read. (`leases/` inside the record is the one exception and is an
+   explicitly mutable control namespace -- see below. Nothing the marker names
+   ever lives in it.)
    **The marker's `xml` and `json` fields are independently nullable**: `XML=1`
    and `JSON=1` are separate switches, so `null` means "this run did not carry
    that format" and is not an error -- a resolver that demands both rejects
@@ -705,6 +708,10 @@ validates what it reads, not what the writer intended.
 5. If any open fails with `ENOENT`, go back to step 1, up to a small fixed
    number of restarts (3 is plenty). Do not treat it as an error before the
    bound is exhausted, do not retry forever, and do not reach for the aliases.
+   **This is the fallback for an UNLEASED reader.** A reader that took a lease
+   in step 2b has already been promised the record will not be removed, so an
+   `ENOENT` there is a defect rather than a race and should be reported, not
+   retried.
 
 Step 4 is what makes the whole thing work, and step 3's "never fall back" is
 what keeps it honest: falling back to `build/test-results-<leg>.{xml,json}`
@@ -724,9 +731,87 @@ retry loop must not be written as though it were "always". Two things break the
 guarantee: a leg outside the `UTEST_POINTER_PIN_MAX` ranking is not pinned at
 all, and sustained publish-then-prune traffic can invalidate each successive
 resolution in turn. Hence a finite bound and an honest "generation
-unavailable". Giving a resolved generation an explicit reader lease, so
-retention cannot remove it out from under a reader at all, is tracked as
-[Reader Leases for a Resolved Generation](../../todo/00-infrastructure/TODO-04-usermode-test-framework.md#45-reader-leases-for-a-resolved-generation).
+unavailable" -- for a reader that did not take a lease.
+
+### Step 2b: taking a reader lease (`<record>/leases/`)
+
+A retry loop is no answer for a reader that cannot restart -- a one-shot CI
+step, a pipeline reading over a mount. Such a reader takes a **lease** on the
+generation it resolved, and retention then may not remove that record while the
+lease is live:
+
+```json
+{ "schema": "utest-reader-lease-v1", "run_id": "20260731T104512Z-4711-9f2c1a0b",
+  "holder": "4711.81368387.4026531836.07fa53da-a126-427f-a676-abe29dee42c9",
+  "lease_id": "44ba3df21fd76d24", "acquired_at": 1785549033, "expires_at": 1785549333 }
+```
+
+**Ordering is the whole mechanism, and the obvious construction does not work.**
+Writing a lease and then re-checking the record only NARROWS the window: a prune
+can classify the record as unleased, you can publish your lease and verify it,
+and the prune can then remove the record it had already decided to remove.
+Nothing in that sequence establishes a happens-before. So acquisition runs under
+one mutex, `build/.test-retention.lock`, which `utest_prune_records` also holds
+for its entire body. Take it exclusively (`flock`), then:
+
+1. Resolve the pointer as in steps 1-2.
+2. If `<record>/leases/` is absent, **refuse** -- the record is gone or was never
+   completed. Never create it: retention counts directories, so a resurrected
+   leases-only skeleton would take a slot in the newest-`UTEST_RECORD_KEEP` set
+   and push a complete record past the cutoff.
+3. Count the records already holding a live lease. At `UTEST_LEASE_MAX` (8),
+   **refuse explicitly** and use the unleased fallback -- a lease that can be
+   revoked without telling its holder is not a lease, so the cap is enforced
+   here rather than by discarding grants later.
+4. Write the document above to `<record>/leases/<holder>.<lease_id>.lease` by
+   staging a sibling and `mv -fT`. `holder` is
+   `<pid>.<starttime>.<pid_ns_inode>.<boot_id>` -- all four, because a pid means
+   nothing outside its PID namespace and a start time means nothing outside its
+   boot. `lease_id` is a fresh nonce **per acquisition, not per process**: the
+   pathname must identify the acquisition, or two overlapping reads in one
+   process share a filename and the first release unlinks the second's grant.
+   Both timestamps must be JSON integers (no leading zeros) of at most 12
+   digits; a lease that is not is treated as malformed and swept.
+5. Re-check that the record and its marker are still present. Under the lock a
+   prune cannot have run inside this sequence, so absence means one completed
+   *before* you took the lock: unlink your lease and refuse.
+6. Release the lock, then open both documents. Every later prune must take the
+   same lock to run at all, so the lease is already visible to it -- which is
+   why the lock is held for microseconds and never for the length of a read.
+7. `unlink` your own lease when done. No lock is needed: a prune either counted
+   it (and keeps the record one more pass) or finds it gone and treats the
+   record as unleased, which is exactly what releasing means.
+
+**A lease is bounded in three independent ways, because it must not turn
+`UTEST_RECORD_KEEP` back into a suggestion.** It expires at
+`UTEST_LEASE_TTL` (300s) after `acquired_at` -- the pruner applies that ceiling
+itself rather than trusting `expires_at`, since a bound only the writer enforces
+is not a bound. A holder that is *provably* gone (readable `/proc`, matching PID
+namespace, matching boot id, and the pid absent or carrying a different start
+time) is reclaimed before the TTL; every failure to *observe* is treated as
+UNKNOWN and waits out the TTL instead, because a wrong "dead" verdict deletes a
+record a live reader is using. UNKNOWN specifically covers: no `/proc`; an
+unreadable or unparseable stat; a holder from a **different PID namespace** (a
+container sharing `build/` records a namespace-local pid, commonly 1, and
+reading that against the host's `/proc/1` would find a different start time and
+conclude the reader had died); a holder carrying a **degraded sentinel**
+(`start=0` or `ns=0`, written when the acquirer could not observe its own
+identity -- comparing an absence against a real value is how "I could not see"
+becomes "it was recycled"); and an absent pid under a procfs that is **hiding
+processes** (`hidepid=2` makes another user's live process invisible, and a
+plain existence test cannot tell that from the process being gone -- so absence
+is only taken as evidence when `/proc/1` is visible, which is exactly the
+question "would this procfs have shown it to me?"). And the count of
+leased records is capped at acquisition. The lease is meant to cover
+resolve-to-open, which is milliseconds; the TTL is a leak-catcher, not a working
+lifetime.
+
+**What it does not do.** Byte-validating a lease against the canonical document
+proves its GRAMMAR, never its provenance -- anything running as this user can
+write a well-formed lease, exactly as it can write a pointer. The cap and the
+TTL are what make that harmless. On a host with no `flock`, the mutex is
+unavailable, leases degrade to cooperative best-effort, and the step 5 fallback
+stays load-bearing.
 
 Retention understands the pointer. `utest_prune_records` keeps the newest
 `UTEST_RECORD_KEEP` (20) records and additionally **pins** the record a live
@@ -741,6 +826,23 @@ unavailable -- which is why step 5 is bounded rather than infinite.
 `UTEST_POINTER_PIN_MAX=0` disables pinning outright. Any pointer left naming an
 absent record -- pruned past the cap, or removed by hand -- is deleted by the
 same pass, so a consumer sees "no pointer" rather than "a pointer to nothing".
+
+Retention also honours reader leases, and the two exemptions answer different
+questions: the pin protects the record the CURRENT pointer names, the lease
+protects one a reader has ALREADY resolved and therefore survives the leg
+publishing again. The same pass reclaims every lease that is malformed, past its
+TTL ceiling, or whose holder is provably gone, in every record rather than only
+in the age candidates -- otherwise `leases/` would only ever grow. **The
+worst-case directory size is therefore `UTEST_RECORD_KEEP` +
+`UTEST_POINTER_PIN_MAX` + `UTEST_LEASE_MAX` records** (20 + 64 + 8 by default,
+less any overlap), not `UTEST_RECORD_KEEP` alone. `UTEST_LEASE_MAX=0` disables
+leases outright. Should a non-conforming reader exceed the cap anyway, the
+newest `UTEST_LEASE_MAX` leased records are held and the pruner SAYS how many it
+did not hold -- a disk bound that silently discarded grants would be the same
+mistake the pin came close to making. If a reader holds the retention lock when
+a run starts, that run skips retention and says so rather than deleting records
+it cannot safely classify; `flock` releases on process death, so a wedged reader
+bounds itself.
 
 Both formats go through that one path. An alias that cannot be written fails
 the run rather than going silently missing, and finalization happens before
@@ -817,7 +919,8 @@ for. `build/test-results-<leg>.run` is the one file that names it -- see
 Records are durable but BOUNDED: the newest `UTEST_RECORD_KEEP` (default 20)
 survive, pruned at the START of a run so an investigation's evidence is never
 removed by the run still writing it -- plus any record a live per-leg pointer
-resolves to, bounded by `UTEST_POINTER_PIN_MAX` (default 64).
+resolves to, bounded by `UTEST_POINTER_PIN_MAX` (default 64), plus any record a
+reader still holds a lease on, bounded by `UTEST_LEASE_MAX` (default 8).
 
 `scripts/test.sh` derives identity before the build and writes it to the
 record, aliased to `build/test-run-identity.json` (`utest-run-identity-v1`),

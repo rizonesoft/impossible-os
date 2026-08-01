@@ -12659,10 +12659,27 @@ echo "UTEST_FAIL=$UTEST_FAIL"
     # so an unpruned build/test-runs grows for as long as anyone runs tests.
     # The newest N survive and the run in progress is never a candidate.
     UAR_PTRDOC="$(sed -n '/^utest_leg_pointer_doc_for() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")"
+    # The reader-lease half, extracted the same way and for the same reason: a
+    # lease is validated by BYTE-COMPARING against utest_lease_doc_for's output,
+    # so a fixture that spelled the document itself would be a second definition
+    # of the contract, free to drift into passing tests production would reject.
+    UAR_LEASEFN="$(sed -n '/^utest_retention_lock() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
+$(sed -n '/^utest_retention_unlock() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
+$(sed -n '/^utest_proc_starttime() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
+$(sed -n '/^utest_boot_id() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
+$(sed -n '/^utest_pid_ns_id() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
+$(sed -n '/^utest_lease_holder_state() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
+$(sed -n '/^utest_is_json_uint() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
+$(sed -n '/^utest_lease_doc_for() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
+$(sed -n '/^utest_lease_fields() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
+$(sed -n '/^utest_record_live_leases() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
+$(sed -n '/^utest_lease_acquire() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
+$(sed -n '/^utest_lease_release() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")"
     UAR_PRUNE="$(sed -n '/^utest_norm_bound() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
 $(sed -n '/^utest_pointer_run_id() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
 $UAR_PTRDOC
 $(sed -n '/^utest_pointer_pin_id() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
+$UAR_LEASEFN
 $(sed -n '/^utest_prune_records() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")"
     if [ -z "$UAR_PRUNE" ]; then
         t_fail "run record: retention prunes to the newest N" "utest_prune_records not found"
@@ -13071,6 +13088,403 @@ printf "| HARNESS-OK\n"
             t_fail "run record: a FIFO under the pointer name is swept without ever being opened" \
                 "mkfifo unavailable -- the hang this guards against would be undetected"
         fi
+
+        # (L1-L7) READER LEASES. The pin above protects the record the CURRENT
+        #     pointer names; it cannot protect one a reader has already
+        #     resolved, because publishing again unpins the previous target
+        #     while the reader is still walking up to its first open. Every
+        #     test below therefore ADVANCES the pointer after acquiring, which
+        #     is precisely the step the paused-reader test in the pointer block
+        #     cannot take: its own prune still sees and pins the old target.
+        uar_lease_reset() {
+            local _r _i
+            uar_prune_reset
+            for _i in 1 2 3 4 5; do
+                _r="$UAR_PDIR/build/test-runs/2026010${_i}T000000Z-1-aaaa"
+                mkdir -p "$_r/leases"
+                printf '<x/>\n' > "$_r/test-results.xml"
+                printf '{}\n'   > "$_r/test-results.json"
+            done
+        }
+        # Emit a lease through the PRODUCTION emitter, for the same reason
+        # uar_prune_ptr uses the production pointer emitter: validation is a
+        # byte-for-byte comparison against exactly this output, so a fixture
+        # spelling the document itself would be a second definition of the
+        # contract, free to drift into passing what production rejects.
+        # $1 run_id  $2 holder  $3 lease_id  $4 acquired_at  $5 expires_at  [$6 dest run_id]
+        uar_lease_put() {
+            local _d="$UAR_PDIR/build/test-runs/${6:-$1}/leases"
+            mkdir -p "$_d"
+            bash -c "$UAR_LEASEFN"'
+utest_lease_doc_for "$1" "$2" "$3" "$4" "$5"' _ "$1" "$2" "$3" "$4" "$5" > "$_d/$2.$3.lease"
+        }
+        # A reader: resolves $1 and takes a lease, in its own process, exactly
+        # as an external consumer would. Echoes "<record_dir> <lease_path>", or
+        # nothing when the acquisition is REFUSED -- which is the distinction
+        # the admission-control test turns on.
+        # A `( )` SUBSHELL, deliberately not `bash -c`: bash keeps `$$` as the
+        # invoking shell's pid inside a subshell, so the holder recorded in the
+        # lease is THIS script -- a process still running while the prune below
+        # executes. A `bash -c` reader exits the instant it returns, and its
+        # lease is then correctly reclaimed as a dead holder's, which would
+        # exercise the reclaim path while claiming to test the hold.
+        uar_lease_acquire() {
+            (
+                set -euo pipefail
+                RED=""; YELLOW=""; CYAN=""; RESET=""
+                PROJECT="$UAR_PDIR"
+                RUNS_DIR="$PROJECT/build/test-runs"
+                eval "$UAR_PRUNE"
+                eval "${2:-true}"
+                utest_lease_acquire "$1" || true
+            ) 2>/dev/null
+        }
+        UAR_LBID="$(cat /proc/sys/kernel/random/boot_id 2>/dev/null | tr -cd 'a-f0-9-' || true)"
+        # This shell's own triple -- a provably LIVE holder, which is what makes
+        # the expiry tests mean something: the only thing that may reclaim these
+        # is the clock, never a liveness verdict.
+        UAR_LST="$(sed 's/.*) //' "/proc/$$/stat" 2>/dev/null | awk '{print $20}' || true)"
+        UAR_LNS="$(readlink /proc/self/ns/pid 2>/dev/null | tr -cd '0-9' || true)"
+        UAR_LHOLD="$$.${UAR_LST:-0}.${UAR_LNS:-0}.${UAR_LBID:-nobootid}"
+        UAR_LNOW="$(date -u +%s)"
+
+        # (L1) THE SECTION'S HEADLINE. Resolve a pointer, take a lease, let the
+        #      leg publish again, drive the record past the cutoff, prune --
+        #      and both documents are still open-able. The negative half of the
+        #      assertion matters as much: …03 must be GONE, or a prune that
+        #      silently did nothing would pass this test.
+        uar_lease_reset
+        uar_prune_ptr held 20260102T000000Z-1-aaaa
+        UAR_L1A="$(uar_lease_acquire held)"
+        uar_prune_ptr held 20260105T000000Z-1-aaaa
+        UAR_L1="$(uar_prune_run)"
+        if [ -n "$UAR_L1A" ] &&
+           printf '%s' "$UAR_L1" | grep -q 'HARNESS-OK' &&
+           printf '%s' "$UAR_L1" | grep -q '20260102T000000Z-1-aaaa' &&
+           ! printf '%s' "$UAR_L1" | grep -q '20260103T000000Z-1-aaaa' &&
+           [ -r "$UAR_PDIR/build/test-runs/20260102T000000Z-1-aaaa/test-results.xml" ] &&
+           [ -r "$UAR_PDIR/build/test-runs/20260102T000000Z-1-aaaa/test-results.json" ]; then
+            t_pass "reader lease: a leased generation survives republish + prune with BOTH documents readable"
+        else
+            t_fail "reader lease: a leased generation survives republish + prune with BOTH documents readable" \
+                "acquire=[$UAR_L1A] prune=$UAR_L1"
+        fi
+
+        # (L2) A lease whose HOLDER IS GONE is reclaimed without operator
+        #      action. This is the only path that reclaims before the TTL, and
+        #      it needs readable evidence: /proc present, the boot id matching
+        #      (so the starttime is even comparable), and the pid absent.
+        if [ -n "$UAR_LBID" ] && [ -d /proc ]; then
+            uar_lease_reset
+            ( exit 0 ) & UAR_LDEAD=$!
+            wait "$UAR_LDEAD" 2>/dev/null || true
+            uar_lease_put 20260102T000000Z-1-aaaa "$UAR_LDEAD.1.${UAR_LNS:-0}.$UAR_LBID" dead01 \
+                "$UAR_LNOW" "$(( UAR_LNOW + 3600 ))"
+            UAR_L2="$(uar_prune_run)"
+            if printf '%s' "$UAR_L2" | grep -q 'HARNESS-OK' &&
+               ! printf '%s' "$UAR_L2" | grep -q '20260102T000000Z-1-aaaa' &&
+               [ ! -d "$UAR_PDIR/build/test-runs/20260102T000000Z-1-aaaa" ]; then
+                t_pass "reader lease: a dead holder's lease is reclaimed and its record prunes normally"
+            else
+                t_fail "reader lease: a dead holder's lease is reclaimed and its record prunes normally" "$UAR_L2"
+            fi
+        else
+            t_fail "reader lease: a dead holder's lease is reclaimed and its record prunes normally" \
+                "no /proc or no boot_id -- early reclaim cannot be observed on this host"
+        fi
+
+        # (L3) An EXPIRED lease is reclaimed even though its holder is alive, so
+        #      UTEST_RECORD_KEEP still bounds the directory in the presence of
+        #      leases. A live process that simply never releases must not be
+        #      able to hold a record forever.
+        uar_lease_reset
+        uar_lease_put 20260102T000000Z-1-aaaa "$UAR_LHOLD" exp01 \
+            "$(( UAR_LNOW - 7200 ))" "$(( UAR_LNOW - 3600 ))"
+        UAR_L3="$(uar_prune_run)"
+        if printf '%s' "$UAR_L3" | grep -q 'HARNESS-OK' &&
+           ! printf '%s' "$UAR_L3" | grep -q '20260102T000000Z-1-aaaa'; then
+            t_pass "reader lease: an expired lease is reclaimed and KEEP still bounds the directory"
+        else
+            t_fail "reader lease: an expired lease is reclaimed and KEEP still bounds the directory" "$UAR_L3"
+        fi
+
+        # (L4) The TTL is a CEILING enforced by the pruner, not a value trusted
+        #      from the document. `expires_at` is written by the acquirer, and a
+        #      bound only the writer enforces is not a bound: this lease claims
+        #      an expiry years out and is still reclaimed at acquired_at + TTL.
+        uar_lease_reset
+        uar_lease_put 20260102T000000Z-1-aaaa "$UAR_LHOLD" ttl01 \
+            "$(( UAR_LNOW - 60 ))" "999999999999"
+        UAR_L4="$(uar_prune_run 'UTEST_LEASE_TTL=1')"
+        if printf '%s' "$UAR_L4" | grep -q 'HARNESS-OK' &&
+           ! printf '%s' "$UAR_L4" | grep -q '20260102T000000Z-1-aaaa'; then
+            t_pass "reader lease: a self-declared far-future expiry is clamped to the TTL ceiling"
+        else
+            t_fail "reader lease: a self-declared far-future expiry is clamped to the TTL ceiling" "$UAR_L4"
+        fi
+
+        # (L5) ADMISSION CONTROL, and the reason the cap lives at acquisition:
+        #      an over-capacity reader is REFUSED and knows it is unprotected.
+        #      Ranking leases at prune time instead would hand out a grant,
+        #      report success, and delete the record anyway -- a lease that can
+        #      be revoked without telling the holder is not a lease.
+        uar_lease_reset
+        uar_prune_ptr cap 20260102T000000Z-1-aaaa
+        UAR_L5A="$(uar_lease_acquire cap 'UTEST_LEASE_MAX=1')"
+        uar_prune_ptr cap 20260103T000000Z-1-aaaa
+        UAR_L5B="$(uar_lease_acquire cap 'UTEST_LEASE_MAX=1')"
+        uar_prune_ptr cap 20260105T000000Z-1-aaaa
+        UAR_L5="$(uar_prune_run 'UTEST_LEASE_MAX=1')"
+        if [ -n "$UAR_L5A" ] && [ -z "$UAR_L5B" ] &&
+           printf '%s' "$UAR_L5" | grep -q 'HARNESS-OK' &&
+           printf '%s' "$UAR_L5" | grep -q '20260102T000000Z-1-aaaa' &&
+           ! printf '%s' "$UAR_L5" | grep -q '20260103T000000Z-1-aaaa'; then
+            t_pass "reader lease: an over-capacity acquisition is refused outright, never silently revoked"
+        else
+            t_fail "reader lease: an over-capacity acquisition is refused outright, never silently revoked" \
+                "first=[$UAR_L5A] second=[$UAR_L5B] prune=$UAR_L5"
+        fi
+
+        # (L6) A hand-made lease PINS NOTHING and is swept. Byte-identity against
+        #      the production emitter proves the grammar, never the provenance --
+        #      so the honest guarantee is that junk cannot buy protection, and
+        #      that it does not accumulate in a record that IS retained.
+        uar_lease_reset
+        printf 'not a lease\n' > "$UAR_PDIR/build/test-runs/20260102T000000Z-1-aaaa/leases/junk.lease"
+        printf 'not a lease\n' > "$UAR_PDIR/build/test-runs/20260105T000000Z-1-aaaa/leases/junk.lease"
+        UAR_L6="$(uar_prune_run)"
+        if printf '%s' "$UAR_L6" | grep -q 'HARNESS-OK' &&
+           ! printf '%s' "$UAR_L6" | grep -q '20260102T000000Z-1-aaaa' &&
+           printf '%s' "$UAR_L6" | grep -q '20260105T000000Z-1-aaaa' &&
+           [ ! -e "$UAR_PDIR/build/test-runs/20260105T000000Z-1-aaaa/leases/junk.lease" ]; then
+            t_pass "reader lease: a malformed lease protects nothing and is swept from a retained record"
+        else
+            t_fail "reader lease: a malformed lease protects nothing and is swept from a retained record" "$UAR_L6"
+        fi
+
+        # (L7) The lease is bound to BOTH the record it sits in and the filename
+        #      it sits under. A well-formed lease for one record dropped into
+        #      another's directory must not protect its host, and a lease
+        #      renamed away from `<holder>.<lease_id>.lease` must not protect
+        #      anything -- that binding is what stops one reader's release from
+        #      unlinking a different reader's live grant.
+        uar_lease_reset
+        uar_lease_put 20260102T000000Z-1-aaaa "$UAR_LHOLD" xrec01 \
+            "$UAR_LNOW" "$(( UAR_LNOW + 3600 ))" 20260103T000000Z-1-aaaa
+        uar_lease_put 20260102T000000Z-1-aaaa "$UAR_LHOLD" name01 \
+            "$UAR_LNOW" "$(( UAR_LNOW + 3600 ))"
+        mv -f "$UAR_PDIR/build/test-runs/20260102T000000Z-1-aaaa/leases/$UAR_LHOLD.name01.lease" \
+              "$UAR_PDIR/build/test-runs/20260102T000000Z-1-aaaa/leases/$UAR_LHOLD.other01.lease"
+        UAR_L7="$(uar_prune_run)"
+        if printf '%s' "$UAR_L7" | grep -q 'HARNESS-OK' &&
+           ! printf '%s' "$UAR_L7" | grep -q '20260102T000000Z-1-aaaa' &&
+           ! printf '%s' "$UAR_L7" | grep -q '20260103T000000Z-1-aaaa'; then
+            t_pass "reader lease: a lease is bound to its record AND its filename, so neither is transferable"
+        else
+            t_fail "reader lease: a lease is bound to its record AND its filename, so neither is transferable" "$UAR_L7"
+        fi
+
+        # (L8) A LEADING-ZERO timestamp must be rejected by the GRAMMAR, before
+        #      it reaches `$(( ))`. `08` is digits-only, within the length cap,
+        #      and byte-identical to what the emitter would produce -- and bash
+        #      reads it as octal and ABORTS under `set -e`, mid-prune, holding
+        #      the mutex. The abort empties the live-lease count, an empty count
+        #      is not the string "0", and the record then reads as permanently
+        #      leased: a retention bypass triggered by a file anyone can write.
+        #      The same trap that `UTEST_RECORD_KEEP=08` taught utest_norm_bound.
+        uar_lease_reset
+        uar_lease_put 20260102T000000Z-1-aaaa "$UAR_LHOLD" oct01 \
+            "000000000008" "999999999999"
+        UAR_L8="$(uar_prune_run)"
+        if printf '%s' "$UAR_L8" | grep -q 'HARNESS-OK' &&
+           ! printf '%s' "$UAR_L8" | grep -q '20260102T000000Z-1-aaaa'; then
+            t_pass "reader lease: a leading-zero timestamp is rejected as malformed, never arithmetic'd as octal"
+        else
+            t_fail "reader lease: a leading-zero timestamp is rejected as malformed, never arithmetic'd as octal" "$UAR_L8"
+        fi
+
+        # (L9) A FIFO under a lease name is CLASSIFIED, never opened. The type
+        #      test and the open are two syscalls, and `wc -c < "$f"` performs
+        #      the redirection in the calling shell BEFORE `timeout` is exec'd,
+        #      so the bound never covers the open that needs bounding. Blocking
+        #      here holds the retention mutex forever and wedges every later
+        #      run, so the whole assertion is that this completes at all -- and
+        #      it runs under an external timeout, because a regression HANGS.
+        uar_lease_reset
+        if mkfifo "$UAR_PDIR/build/test-runs/20260102T000000Z-1-aaaa/leases/x.y.lease" 2>/dev/null; then
+            UAR_L9="$(UAR_PDIR="$UAR_PDIR" UAR_PRUNE="$UAR_PRUNE" timeout 25 bash -c '
+set -uo pipefail
+RED=""; YELLOW=""; CYAN=""; RESET=""
+PROJECT="$UAR_PDIR"
+RUNS_DIR="$PROJECT/build/test-runs"
+RUN_ID="20260101T000000Z-1-aaaa"
+UTEST_RECORD_KEEP=2
+eval "$UAR_PRUNE"
+utest_prune_records
+ls -1 "$RUNS_DIR" | sort | tr "\n" " "
+printf "| HARNESS-OK\n"
+' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
+            if printf '%s' "$UAR_L9" | grep -q 'HARNESS-OK' &&
+               ! printf '%s' "$UAR_L9" | grep -q 'TIMED-OUT-OR-FAILED'; then
+                t_pass "reader lease: a FIFO under a lease name never blocks the pruner holding the mutex"
+            else
+                t_fail "reader lease: a FIFO under a lease name never blocks the pruner holding the mutex" "$UAR_L9"
+            fi
+            rm -f "$UAR_PDIR/build/test-runs/20260102T000000Z-1-aaaa/leases/x.y.lease"
+        else
+            t_fail "reader lease: a FIFO under a lease name never blocks the pruner holding the mutex" \
+                "mkfifo unavailable -- the wedge this guards against would be undetected"
+        fi
+
+        # (L9b) and the assertion above is NOT sufficient on its own, because
+        #       the type test removes that FIFO without ever opening it. The
+        #       defect is the RACE: a regular file that passes the type test and
+        #       is replaced before the read. Reproducing that interleaving in
+        #       bash is not deterministic, so the VALIDATOR is driven directly
+        #       against a FIFO -- which is exactly the state the race delivers
+        #       it. `wc -c < "$f"` performs the redirection in the calling shell
+        #       BEFORE `timeout` is exec'd, so the bound never covers the open;
+        #       measured 2026-08-01, that form runs to the OUTER bound (6s of a
+        #       6s cap) while `wc -c -- "$f"` returns at its own (2s of 2s).
+        if mkfifo "$UAR_PDIR/racefifo" 2>/dev/null; then
+            UAR_L9B_T0="$(date +%s)"
+            UAR_L9B="$(UAR_PDIR="$UAR_PDIR" UAR_PRUNE="$UAR_PRUNE" timeout 30 bash -c '
+set -uo pipefail
+PROJECT="$UAR_PDIR"
+RUNS_DIR="$PROJECT/build/test-runs"
+eval "$UAR_PRUNE"
+utest_lease_fields "$PROJECT/racefifo" 20260102T000000Z-1-aaaa
+printf "VALIDATOR-RETURNED\n"
+' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
+            UAR_L9B_EL=$(( $(date +%s) - UAR_L9B_T0 ))
+            if printf '%s' "$UAR_L9B" | grep -q 'VALIDATOR-RETURNED' &&
+               ! printf '%s' "$UAR_L9B" | grep -q 'TIMED-OUT-OR-FAILED' &&
+               [ "$UAR_L9B_EL" -lt 20 ]; then
+                t_pass "reader lease: the validator's own open is time-bounded, so a swapped-in FIFO cannot wedge it"
+            else
+                t_fail "reader lease: the validator's own open is time-bounded, so a swapped-in FIFO cannot wedge it" \
+                    "elapsed=${UAR_L9B_EL}s out=$UAR_L9B"
+            fi
+            rm -f "$UAR_PDIR/racefifo"
+        else
+            t_fail "reader lease: the validator's own open is time-bounded, so a swapped-in FIFO cannot wedge it" \
+                "mkfifo unavailable -- the wedge this guards against would be undetected"
+        fi
+
+        # (L10) An acquisition killed between staging and rename leaves a
+        #       `.<lease_id>.tmp` that matches neither `*.lease` nor `*`, so
+        #       nothing would ever see it. On a record that stays current it
+        #       accumulates forever, past both the TTL and the lease cap.
+        uar_lease_reset
+        printf 'abandoned\n' > "$UAR_PDIR/build/test-runs/20260105T000000Z-1-aaaa/leases/.deadbeef.tmp"
+        UAR_L10="$(uar_prune_run)"
+        if printf '%s' "$UAR_L10" | grep -q 'HARNESS-OK' &&
+           printf '%s' "$UAR_L10" | grep -q '20260105T000000Z-1-aaaa' &&
+           [ ! -e "$UAR_PDIR/build/test-runs/20260105T000000Z-1-aaaa/leases/.deadbeef.tmp" ]; then
+            t_pass "reader lease: an abandoned staging file is reclaimed from a retained record"
+        else
+            t_fail "reader lease: an abandoned staging file is reclaimed from a retained record" "$UAR_L10"
+        fi
+
+        # (L11) A lease from ANOTHER PID NAMESPACE is UNKNOWN, never DEAD. A
+        #       container sharing build/ records a namespace-local pid -- pid 1
+        #       is the common case -- and interpreting that against the host's
+        #       /proc/1 finds a different start time and concludes the holder is
+        #       gone. Retaining until the TTL is the only safe reading, and it
+        #       is the documented read-over-a-mount use case that depends on it.
+        uar_lease_reset
+        uar_lease_put 20260102T000000Z-1-aaaa "1.1.4026500000.${UAR_LBID:-nobootid}" ns01 \
+            "$UAR_LNOW" "$(( UAR_LNOW + 3600 ))"
+        UAR_L11="$(uar_prune_run)"
+        if printf '%s' "$UAR_L11" | grep -q 'HARNESS-OK' &&
+           printf '%s' "$UAR_L11" | grep -q '20260102T000000Z-1-aaaa'; then
+            t_pass "reader lease: a holder in another PID namespace is UNKNOWN and held to its TTL, not reclaimed"
+        else
+            t_fail "reader lease: a holder in another PID namespace is UNKNOWN and held to its TTL, not reclaimed" "$UAR_L11"
+        fi
+
+        # (L12-L14) The LIVENESS VERDICT decides whether a record is deleted, so
+        #     it is driven against a FIXTURE procfs rather than the host's --
+        #     `hidepid=2` and a failed stat read cannot be staged on the real
+        #     one, and those are precisely the states where a wrong answer is
+        #     destructive. `UTEST_PROC` exists for this, mirroring the PROC
+        #     constant scripts/qemu-orphan.py already carries.
+        # $1 = "hasinit" | "noinit" (procfs visibility), $2 = pid to populate
+        #      ("" for none), $3 = that pid's start time. Echoes the proc root.
+        uar_fakeproc() {
+            local root="$UAR_TMP/fakeproc"
+            rm -rf "$root"
+            mkdir -p "$root/self/ns" "$root/sys/kernel/random"
+            printf 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee\n' > "$root/sys/kernel/random/boot_id"
+            ln -s 'pid:[4026531836]' "$root/self/ns/pid"
+            [ "$1" = "hasinit" ] && mkdir -p "$root/1"
+            if [ -n "${2:-}" ]; then
+                mkdir -p "$root/$2"
+                # A comm containing spaces AND parentheses, because that is the
+                # shape that makes a whitespace-split read the wrong field.
+                # starttime is /proc field 22, i.e. the 20th token AFTER the
+                # closing paren, so there are exactly 19 placeholders in front
+                # of it -- state through itrealvalue.
+                printf '%s (a b) S 1 1 1 0 -1 0 0 0 0 0 0 0 0 20 0 1 0 0 %s 0 0\n' \
+                    "$2" "$3" > "$root/$2/stat"
+            fi
+            printf '%s\n' "$root"
+        }
+        uar_holder_state() {
+            # $1 = proc root, $2 = holder triple. Echoes LIVE/DEAD/UNKNOWN.
+            bash -c '
+set -uo pipefail
+UTEST_PROC="$1"
+'"$UAR_LEASEFN"'
+utest_lease_holder_state "$2"' _ "$1" "$2" 2>&1
+        }
+        UAR_FPBID=aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee
+        UAR_FPNS=4026531836
+
+        # (L12) A live pid whose start time was recorded as the DEGRADED
+        #       SENTINEL `0` must be UNKNOWN, never DEAD. The acquirer writes 0
+        #       when its own /proc read fails; comparing that against the real
+        #       start time turns "I could not observe" into "it was recycled"
+        #       and revokes a live reader's grant.
+        UAR_FP="$(uar_fakeproc hasinit 4242 81368387)"
+        UAR_L12="$(uar_holder_state "$UAR_FP" "4242.0.$UAR_FPNS.$UAR_FPBID")"
+        if [ "$UAR_L12" = "UNKNOWN" ]; then
+            t_pass "reader lease: a degraded start-time sentinel is UNKNOWN, not a start-time mismatch"
+        else
+            t_fail "reader lease: a degraded start-time sentinel is UNKNOWN, not a start-time mismatch" \
+                "expected UNKNOWN, got [$UAR_L12]"
+        fi
+
+        # (L13) An absent pid under a procfs that is HIDING processes (hidepid=2
+        #       -- modelled by /proc/1 being invisible) is UNKNOWN, because `-e`
+        #       cannot tell ESRCH from a live process the kernel refuses to
+        #       show. The documented contract says a permission denial is
+        #       UNKNOWN; this is that contract under test.
+        UAR_FP="$(uar_fakeproc noinit "" "")"
+        UAR_L13="$(uar_holder_state "$UAR_FP" "4242.81368387.$UAR_FPNS.$UAR_FPBID")"
+        if [ "$UAR_L13" = "UNKNOWN" ]; then
+            t_pass "reader lease: an absent pid under a hiding procfs is UNKNOWN, not proof the holder died"
+        else
+            t_fail "reader lease: an absent pid under a hiding procfs is UNKNOWN, not proof the holder died" \
+                "expected UNKNOWN, got [$UAR_L13]"
+        fi
+
+        # (L14) and the verdict is not merely UNKNOWN-for-everything: with a
+        #       fully visible procfs the three provable cases still resolve, or
+        #       the reclaim half of the mechanism would be dead code.
+        UAR_FP="$(uar_fakeproc hasinit 4242 81368387)"
+        UAR_L14A="$(uar_holder_state "$UAR_FP" "4242.81368387.$UAR_FPNS.$UAR_FPBID")"
+        UAR_L14B="$(uar_holder_state "$UAR_FP" "4242.99999999.$UAR_FPNS.$UAR_FPBID")"
+        UAR_L14C="$(uar_holder_state "$UAR_FP" "9999.81368387.$UAR_FPNS.$UAR_FPBID")"
+        UAR_L14D="$(uar_holder_state "$UAR_FP" "4242.81368387.$UAR_FPNS.ffffffff-0000-0000-0000-000000000000")"
+        if [ "$UAR_L14A" = "LIVE" ] && [ "$UAR_L14B" = "DEAD" ] &&
+           [ "$UAR_L14C" = "DEAD" ] && [ "$UAR_L14D" = "DEAD" ]; then
+            t_pass "reader lease: matching triple is LIVE; recycled pid, absent pid and prior boot are DEAD"
+        else
+            t_fail "reader lease: matching triple is LIVE; recycled pid, absent pid and prior boot are DEAD" \
+                "live=[$UAR_L14A] recycled=[$UAR_L14B] absent=[$UAR_L14C] reboot=[$UAR_L14D]"
+        fi
+        rm -rf "$UAR_TMP/fakeproc"
     fi
 
     # 6h-ptr. The per-leg GENERATION POINTER. The two leg aliases are a

@@ -361,6 +361,14 @@ if ! mkdir "$RECORD_DIR" 2>/dev/null; then
     echo -e "${RED}[TEST]${RESET} run record $RECORD_DIR already exists -- refusing to overwrite a prior run."
     exit 1
 fi
+# The reader-lease namespace is created HERE, with the record, and NEVER by a
+# reader. An acquirer that `mkdir -p`ed its way in could resurrect an
+# already-pruned record as a leases-only skeleton -- and retention counts
+# DIRECTORIES (`find ... -type d` in utest_prune_records), so that skeleton
+# would take a slot in the newest-KEEP set and push a complete record past the
+# cutoff. An acquirer therefore reads an absent `leases/` as "this record is
+# gone" and refuses, which is both true and the safe direction to be wrong in.
+mkdir -p "$RECORD_DIR/leases" 2>/dev/null || true
 
 # Durable does not mean unbounded: every invocation leaves a directory, so
 # without a retention bound `build/` grows for as long as anyone runs tests.
@@ -479,7 +487,14 @@ utest_pointer_pin_id() {
     # holding the canonical document, newline padding out to the cap, and then
     # arbitrary contradictory bytes captures IDENTICALLY to the real thing.
     # Establishing the size first means the snapshot below is the whole file.
-    sz="$(timeout 5 wc -c < "$ptr" 2>/dev/null)" || return 0
+    # `-- "$ptr"`, not `< "$ptr"`: a redirection is performed by THIS shell
+    # before `timeout` is exec'd, so the open it was meant to bound happens
+    # outside it and a FIFO swapped in after the caller's type test blocks
+    # forever. Letting `wc` open the pathname puts the open under the timeout.
+    # (Section 45 made this load-bearing: utest_lease_acquire calls this while
+    # holding the retention mutex, so an unbounded block here wedges retention
+    # for every later run rather than costing one run five seconds.)
+    sz="$(timeout 5 wc -c -- "$ptr" 2>/dev/null | awk '{print $1; exit}')" || return 0
     case "$sz" in ''|*[!0-9]*) return 0 ;; esac
     [ "$sz" -le 4096 ] || return 0
     body="$(timeout 5 head -c 4096 -- "$ptr" 2>/dev/null)" || return 0
@@ -511,7 +526,7 @@ utest_pointer_pin_id() {
     # document names legitimately vary -- so it is field-tested, with the
     # negative check that a substring test needs: a document carrying BOTH
     # statuses must not read as complete.
-    sz="$(timeout 5 wc -c < "$RUNS_DIR/$id/record-complete.json" 2>/dev/null)" || return 0
+    sz="$(timeout 5 wc -c -- "$RUNS_DIR/$id/record-complete.json" 2>/dev/null | awk '{print $1; exit}')" || return 0
     case "$sz" in ''|*[!0-9]*) return 0 ;; esac
     [ "$sz" -le 4096 ] || return 0
     mbody="$(timeout 5 head -c 4096 -- "$RUNS_DIR/$id/record-complete.json" 2>/dev/null)" || return 0
@@ -534,13 +549,469 @@ utest_pointer_pin_id() {
     return 0
 }
 
+# --- Reader leases ---------------------------------------------------------
+#
+# The pin above protects the record a CURRENT pointer names. It cannot protect
+# one a reader has ALREADY resolved: the instant that leg publishes again the
+# previous target is unpinned, and a later prune may remove it while the reader
+# is still walking up to its first `open`. A reader can be told to restart --
+# that is what the bounded ENOENT loop in docs/testing/usermode-output-formats.md
+# is for -- but a one-shot consumer (a CI step, a pipeline reading over a mount)
+# has no restart to give. A lease is the grant that closes it.
+#
+# ORDERING is the entire mechanism, and the obvious construction does not work.
+# Writing a lease and then re-checking the record only NARROWS the window:
+# prune can classify a record as unleased, the reader can publish its lease and
+# verify successfully, and prune can then remove the record it had already
+# decided to remove. Nothing in that sequence establishes a happens-before, so
+# it buys probability rather than correctness. One mutex does: prune holds it
+# for its whole body, an acquirer holds it from resolving the pointer to having
+# PUBLISHED and verified its lease, and the two therefore cannot interleave.
+# Once the lease is visible under the lock, every later prune must take the same
+# lock to run at all, so the acquirer can drop it before it opens anything --
+# the critical section is microseconds and a prune never waits on a whole read.
+#
+# It is deliberately NOT the run lock at the top of this script. That one is
+# `flock -n` and REFUSES the entire run on contention, because two runs corrupt
+# each other's shared boot state; a consumer must never be able to fail somebody
+# else's test run merely by reading its output.
+UTEST_RETENTION_FD=8
+
+# Take the retention mutex. 0 = held, 1 = timed out, 2 = no flock on this host.
+#
+# The three outcomes are distinguished because they mean different things. A
+# TIMEOUT is a live reader holding a grant, so retention defers to the next run
+# rather than deleting what it cannot see. A MISSING flock is a static property
+# of the host, already announced where the run lock is taken; leases then still
+# work cooperatively but the guarantee is downgraded to best-effort, and the
+# documented ENOENT fallback stays load-bearing for consumers on such a host.
+utest_retention_lock() {
+    local lock="$PROJECT/build/.test-retention.lock" wait_s="${1:-10}"
+    command -v flock >/dev/null 2>&1 || return 2
+    mkdir -p "$PROJECT/build" 2>/dev/null || true
+    # `>>`, never `>`: opening for truncation would zero the file out from under
+    # a concurrent holder. Harmless while the file stays empty, and precisely
+    # the kind of thing that stops being harmless the day it does not.
+    eval "exec ${UTEST_RETENTION_FD:-8}>>\"\$lock\"" 2>/dev/null || return 1
+    if ! flock -w "$wait_s" -x "${UTEST_RETENTION_FD:-8}" 2>/dev/null; then
+        utest_retention_unlock
+        return 1
+    fi
+    return 0
+}
+
+utest_retention_unlock() {
+    eval "exec ${UTEST_RETENTION_FD:-8}>&-" 2>/dev/null || true
+    return 0
+}
+
+# Ticks-since-boot at which pid $1 started, or NOTHING when that cannot be read.
+#
+# Parsed after the LAST ')' because field 2 of /proc/<pid>/stat is `comm`, which
+# may itself contain spaces and parentheses -- splitting the whole line is the
+# classic way to read the wrong field for a process named `(a b)`. This mirrors
+# scripts/qemu-orphan.py:62-81, which learned it first; the two must agree,
+# because they are answering the same question about the same triple.
+utest_proc_starttime() {
+    local raw
+    # `$UTEST_PROC` rather than a hardcoded /proc, for the same reason
+    # scripts/qemu-orphan.py carries a PROC constant: the liveness rules below
+    # decide whether a record is deleted, and they are only testable against a
+    # fixture procfs. Production never sets it.
+    raw="$(timeout 5 cat "${UTEST_PROC:-/proc}/$1/stat" 2>/dev/null)" || return 0
+    [ -n "$raw" ] || return 0
+    case "$raw" in *')'*) ;; *) return 0 ;; esac
+    # After `comm`, state is the first remaining field (field 3), so starttime
+    # (field 22) is the 20th of the remainder.
+    printf '%s' "${raw##*)}" | awk '{ if (NF >= 20 && $20 ~ /^[0-9]+$/) print $20 }'
+}
+
+utest_boot_id() {
+    timeout 5 cat "${UTEST_PROC:-/proc}/sys/kernel/random/boot_id" 2>/dev/null | tr -cd 'a-f0-9-' | head -c 64
+}
+
+# The inode number behind /proc/self/ns/pid ("pid:[4026531836]"), which is the
+# only thing that makes a recorded pid comparable at all. Empty when it cannot
+# be read, which the caller must treat as UNKNOWN rather than as a mismatch.
+utest_pid_ns_id() {
+    local raw
+    raw="$(readlink "${UTEST_PROC:-/proc}/self/ns/pid" 2>/dev/null)" || return 0
+    raw="${raw##*[}"
+    raw="${raw%]}"
+    case "$raw" in ''|*[!0-9]*) return 0 ;; esac
+    printf '%s\n' "$raw"
+}
+
+# LIVE, DEAD or UNKNOWN for a `<pid>.<starttime>.<boot_id>` holder triple.
+#
+# THREE states, and the asymmetry is the whole reason. A wrong LIVE verdict
+# costs a delayed reclaim, bounded by the TTL. A wrong DEAD verdict DELETES a
+# record a live reader is reading. So every failure to OBSERVE -- no /proc, an
+# unreadable stat, a permission denial, a malformed field -- is UNKNOWN and the
+# lease is retained until it expires. Only readable evidence reclaims early:
+# the pid is absent from a /proc we could read, its starttime differs (so the
+# pid was recycled), or the boot id differs (no process survives a reboot).
+#
+# The triple, rather than the pid alone, is what makes any of those provable:
+# a starttime is only comparable WITHIN one boot, and `build/` outlives reboots.
+utest_lease_holder_state() {
+    local holder="$1" pid rest start ns bid now_bid now_ns cur
+    pid="${holder%%.*}";  rest="${holder#*.}"
+    start="${rest%%.*}";  rest="${rest#*.}"
+    ns="${rest%%.*}";     bid="${rest#*.}"
+    case "$pid"   in ''|*[!0-9]*) printf 'UNKNOWN\n'; return 0 ;; esac
+    case "$start" in ''|*[!0-9]*) printf 'UNKNOWN\n'; return 0 ;; esac
+    case "$ns"    in ''|*[!0-9]*) printf 'UNKNOWN\n'; return 0 ;; esac
+    case "$bid"   in ''|*[!a-f0-9-]*) printf 'UNKNOWN\n'; return 0 ;; esac
+    # The DEGRADED SENTINELS the acquirer writes when it could not observe its
+    # own identity (`start=0`, `ns=0`, `bid=nobootid`). They are absences, not
+    # values, and comparing them is how "I could not see" silently becomes "it
+    # is dead": a live reader whose one `/proc/self/stat` read failed records
+    # `start=0`, and a later comparison against its REAL start time then reads
+    # as a recycled pid and revokes the grant mid-read.
+    [ "$start" != "0" ] || { printf 'UNKNOWN\n'; return 0; }
+    [ "$ns" != "0" ]    || { printf 'UNKNOWN\n'; return 0; }
+    [ -d "${UTEST_PROC:-/proc}" ] || { printf 'UNKNOWN\n'; return 0; }
+    # A pid is only meaningful inside its PID NAMESPACE, and `build/` is exactly
+    # the kind of thing a container shares with its host (this repo ships a
+    # devcontainer profile, and the lease's whole reason for existing is a
+    # consumer reading over a mount). A reader in its own namespace records pid
+    # 1; interpreting that against the host's /proc/1 finds a different start
+    # time, concludes DEAD, and deletes the record out from under a live reader.
+    # So a lease from another namespace is UNKNOWN -- retained until its TTL --
+    # rather than something we pretend to be able to evaluate.
+    now_ns="$(utest_pid_ns_id)"
+    [ -n "$now_ns" ] || { printf 'UNKNOWN\n'; return 0; }
+    if [ "$now_ns" != "$ns" ]; then
+        printf 'UNKNOWN\n'
+        return 0
+    fi
+    now_bid="$(utest_boot_id)"
+    [ -n "$now_bid" ] || { printf 'UNKNOWN\n'; return 0; }
+    if [ "$now_bid" != "$bid" ]; then
+        printf 'DEAD\n'
+        return 0
+    fi
+    if [ ! -e "${UTEST_PROC:-/proc}/$pid" ]; then
+        # ABSENCE IS ONLY EVIDENCE IF PROCFS IS NOT HIDING THINGS FROM US.
+        # `-e` cannot tell ESRCH from a process the kernel refuses to show:
+        # under `hidepid=2`, another user's LIVE process is simply invisible,
+        # and concluding DEAD there deletes a record that reader is mid-way
+        # through opening. `/proc/1` is init and root-owned -- present under a
+        # normal procfs, hidden under hidepid=2 for any non-root reader, and
+        # visible to root, who could have seen the holder too. So it answers
+        # exactly the question being asked: "would I have been shown it?"
+        if [ -e "${UTEST_PROC:-/proc}/1" ]; then
+            printf 'DEAD\n'
+        else
+            printf 'UNKNOWN\n'
+        fi
+        return 0
+    fi
+    cur="$(utest_proc_starttime "$pid")"
+    [ -n "$cur" ] || { printf 'UNKNOWN\n'; return 0; }
+    if [ "$cur" = "$start" ]; then printf 'LIVE\n'; else printf 'DEAD\n'; fi
+    return 0
+}
+
+# The canonical lease document, and the ONLY spelling of it.
+#
+# A lease is validated by regenerating this from the fields read out of the file
+# and comparing byte for byte, exactly as utest_pointer_pin_id validates a
+# pointer -- and with exactly the same honest limit: byte-identity proves the
+# GRAMMAR, never the provenance. Anything running as this user can write a
+# well-formed lease. What it cannot do is exceed the admission cap or outlive
+# the TTL, which is where the actual bound lives.
+# A JSON integer, not merely a digit string.
+#
+# `08` passes every digits-only test ever written and then ABORTS the shell in
+# `$(( ))`, where bash reads a leading zero as octal and 8 is not octal -- under
+# `set -e`, mid-prune, holding the retention mutex. It is the identical trap
+# utest_norm_bound was written for after `UTEST_RECORD_KEEP=08`, and a lease
+# document is far more hostile input than an environment variable: the abort
+# empties the live-lease count, an empty count is not "0", and the record then
+# reads as permanently leased. The length cap is part of the grammar for the
+# same reason -- `$(( ))` wraps a 40-digit literal into a plausible 64-bit value.
+utest_is_json_uint() {
+    case "$1" in
+        ''|*[!0-9]*) return 1 ;;
+        0)           return 0 ;;
+        0*)          return 1 ;;
+    esac
+    [ "${#1}" -le 12 ]
+}
+
+utest_lease_doc_for() {
+    # $1 run_id  $2 holder  $3 lease_id  $4 acquired_at  $5 expires_at
+    printf '{ "schema": "utest-reader-lease-v1", "run_id": "%s", "holder": "%s", "lease_id": "%s", "acquired_at": %s, "expires_at": %s }\n' \
+        "$1" "$2" "$3" "$4" "$5"
+}
+
+# Echo "<expires_at> <acquired_at> <holder>" when $1 is a well-formed lease for
+# record $2; nothing otherwise. Size- and time-bounded for the same reasons the
+# pointer validator is, and numeric fields are LENGTH-capped as well as
+# digits-only: `$(( ))` reads a 40-digit literal as a wrapped 64-bit value, so a
+# document claiming an astronomically distant expiry must be rejected as
+# malformed rather than arithmetic'd into something plausible.
+utest_lease_fields() {
+    local path="$1" want_run="$2" body sz base id holder lid acq exp
+    # `wc -c -- "$path"`, NEVER `wc -c < "$path"`. The redirection is performed
+    # by THIS shell before `timeout` is ever exec'd, so a FIFO swapped in after
+    # the caller's type test blocks on open() forever, outside the supervision
+    # that was supposed to bound it -- while the retention mutex is held, which
+    # wedges retention for every later run rather than costing five seconds.
+    # Letting `wc` open the pathname itself puts the open inside the timeout.
+    sz="$(timeout 5 wc -c -- "$path" 2>/dev/null | awk '{print $1; exit}')" || return 0
+    case "$sz" in ''|*[!0-9]*) return 0 ;; esac
+    [ "$sz" -le 4096 ] || return 0
+    body="$(timeout 5 head -c 4096 -- "$path" 2>/dev/null)" || return 0
+    [ -n "$body" ] || return 0
+    case "$body" in
+        *'"run_id": "'*'"holder": "'*'"lease_id": "'*'"acquired_at": '*'"expires_at": '*) ;;
+        *) return 0 ;;
+    esac
+    id="${body#*\"run_id\": \"}";      id="${id%%\"*}"
+    holder="${body#*\"holder\": \"}";  holder="${holder%%\"*}"
+    lid="${body#*\"lease_id\": \"}";   lid="${lid%%\"*}"
+    acq="${body#*\"acquired_at\": }";  acq="${acq%%[!0-9]*}"
+    exp="${body#*\"expires_at\": }";   exp="${exp%%[!0-9]*}"
+    case "$id"     in ''|.*|*[!A-Za-z0-9._-]*) return 0 ;; esac
+    case "$holder" in ''|*[!A-Za-z0-9.-]*)     return 0 ;; esac
+    case "$lid"    in ''|*[!A-Za-z0-9]*)       return 0 ;; esac
+    utest_is_json_uint "$acq" || return 0
+    utest_is_json_uint "$exp" || return 0
+    [ "$id" = "$want_run" ] || return 0
+    # The FILENAME is part of the contract, exactly as a pointer's leg is: a
+    # lease copied under another acquisition's name would otherwise let one
+    # reader's release unlink a different reader's live grant.
+    base="${path##*/}"
+    [ "$base" = "$holder.$lid.lease" ] || return 0
+    [ "$body" = "$(utest_lease_doc_for "$id" "$holder" "$lid" "$acq" "$exp")" ] || return 0
+    printf '%s %s %s\n' "$exp" "$acq" "$holder"
+    return 0
+}
+
+# How many LIVE leases record $1 holds, RECLAIMING the rest as it goes.
+# $2 = now (epoch seconds), $3 = the TTL ceiling.
+#
+# Reclaim is self-healing, matching the dangling-pointer sweep below: a lease
+# that is malformed, expired, or whose holder is provably gone is UNLINKED
+# rather than merely ignored, or `leases/` becomes a directory that only grows.
+# It is safe to unlink here precisely BECAUSE the caller holds the retention
+# lock -- an unsynchronised check-then-unlink could delete a grant made between
+# the two syscalls, which is the same class of race the lock exists to remove.
+#
+# This WRITES inside a record, so `leases/` is an explicitly MUTABLE control
+# namespace. The payload documents and the marker stay immutable, and that -- not
+# the directory as a whole -- is the property the documented resolver depends on.
+#
+# The TTL is applied HERE and not merely trusted from the document, because
+# `expires_at` is written by the ACQUIRER: a bound that only the writer enforces
+# is not a bound. An `acquired_at` in the future (a clock that jumped backwards
+# between acquisition and now) is clamped to now, so the worst a skewed clock
+# can buy is one more TTL, never an unbounded hold.
+utest_record_live_leases() {
+    local rec="$1" now="$2" ttl="$3" dir f fields exp acq holder eff state live=0
+    dir="$RUNS_DIR/$rec/leases"
+    [ -d "$dir" ] || { printf '0\n'; return 0; }
+    # ABANDONED STAGING first. An acquisition killed between writing
+    # `.<lease_id>.tmp` and renaming it leaves a file that matches neither
+    # `*.lease` nor `*`, so nothing below would ever see it -- and on a record
+    # that stays current and pinned, repeated interrupted acquisitions
+    # accumulate hidden files forever, past both the TTL and the lease cap. The
+    # mutex is what makes removing them safe: a live acquirer's staging file
+    # cannot exist while this runs.
+    for f in "$dir"/.*.tmp; do
+        [ -e "$f" ] || continue
+        [ -f "$f" ] || continue
+        rm -f -- "$f" 2>/dev/null || true
+    done
+    for f in "$dir"/*.lease; do
+        [ -e "$f" ] || continue
+        # -L first: `-f` follows a symlink, so a link to a valid lease elsewhere
+        # would otherwise be parsed instead of removed.
+        if [ -L "$f" ] || [ ! -f "$f" ]; then
+            rm -f -- "$f" 2>/dev/null || true
+            continue
+        fi
+        fields="$(utest_lease_fields "$f" "$rec")"
+        if [ -z "$fields" ]; then
+            rm -f -- "$f" 2>/dev/null || true
+            continue
+        fi
+        exp="${fields%% *}"; acq="${fields#* }"; holder="${acq#* }"; acq="${acq%% *}"
+        # `10#` on every value that reached here from a FILE, belt-and-braces
+        # behind utest_is_json_uint: the grammar already rejects a leading zero,
+        # and forcing base 10 means a future relaxation of it cannot resurrect
+        # the octal abort as a silent retention bypass.
+        acq="$(( 10#$acq ))"; exp="$(( 10#$exp ))"
+        [ "$acq" -le "$now" ] || acq="$now"
+        eff="$exp"
+        if [ "$(( acq + ttl ))" -lt "$eff" ]; then eff="$(( acq + ttl ))"; fi
+        if [ "$now" -ge "$eff" ]; then
+            rm -f -- "$f" 2>/dev/null || true
+            continue
+        fi
+        state="$(utest_lease_holder_state "$holder")"
+        if [ "$state" = "DEAD" ]; then
+            rm -f -- "$f" 2>/dev/null || true
+            continue
+        fi
+        live=$(( live + 1 ))
+    done
+    printf '%s\n' "$live"
+    return 0
+}
+
+# Acquire a reader lease on whatever leg $1 currently resolves to. Echoes
+# "<record_dir> <lease_path>" and returns 0 on success; echoes nothing and
+# returns 1 on refusal, which is the caller's signal to fall back to the bounded
+# ENOENT re-resolve rather than to assume protection it was never granted.
+#
+# This script is the PRODUCER and never reads a record, so nothing here calls
+# it. It ships anyway because it is the reference implementation of the reader
+# half, and shipping one spelling of the grammar is what keeps a consumer and
+# the pruner from drifting apart -- the same argument that makes
+# utest_leg_pointer_doc_for the only emitter of a pointer document.
+#
+# ADMISSION CONTROL, not revocation. The cap is enforced HERE, at acquisition,
+# so an over-capacity reader is refused explicitly and knows it is unprotected.
+# Ranking leases at prune time instead would hand out a grant, report success,
+# and then silently delete the record anyway -- a lease that can be revoked
+# without telling the holder is not a lease.
+utest_lease_acquire() {
+    local leg="$1" ptr rec run_id now ttl lease_max leased holder lid path tmp acq exp lockrc bid start ns n
+    ptr="$PROJECT/build/test-results-${leg}.run"
+    ttl="$(utest_norm_bound "${UTEST_LEASE_TTL:-300}" 300 86400)"
+    lease_max="$(utest_norm_bound "${UTEST_LEASE_MAX:-8}" 8 10000)"
+    [ "$lease_max" -gt 0 ] || return 1
+    now="$(date -u +%s 2>/dev/null)"
+    case "$now" in ''|*[!0-9]*) return 1 ;; esac
+
+    # `|| lockrc=$?`, never `cmd; lockrc=$?`: this script runs under `set -e`,
+    # where a bare non-zero command aborts before the assignment is reached.
+    lockrc=0; utest_retention_lock 10 || lockrc=$?
+    if [ "$lockrc" -eq 1 ]; then return 1; fi
+
+    [ -f "$ptr" ] || { utest_retention_unlock; return 1; }
+    run_id="$(utest_pointer_pin_id "$ptr")"
+    if [ -z "$run_id" ]; then utest_retention_unlock; return 1; fi
+    rec="$RUNS_DIR/$run_id"
+    # Never `mkdir -p`: see the record-creation comment. An absent leases/ means
+    # the record is gone or was never completed, and both are refusals.
+    if [ ! -d "$rec/leases" ]; then utest_retention_unlock; return 1; fi
+
+    # Admit against the number of DISTINCT leased records: a second lease on a
+    # record already held costs no additional retention, so it must not consume
+    # a slot the cap exists to ration.
+    # The count is VALIDATED, never used raw. An empty or non-numeric answer
+    # means the counter itself failed, and "not the string 0" would otherwise
+    # read as "already leased" -- which skips the cap entirely and hands out a
+    # grant above capacity. Admission refuses on anything it cannot read.
+    n="$(utest_record_live_leases "$run_id" "$now" "$ttl")" || n=""
+    case "$n" in ''|*[!0-9]*) utest_retention_unlock; return 1 ;; esac
+    if [ "$n" = "0" ]; then
+        leased=0
+        for path in "$RUNS_DIR"/*/; do
+            [ -d "$path" ] || continue
+            path="${path%/}"
+            n="$(utest_record_live_leases "${path##*/}" "$now" "$ttl")" || n=""
+            case "$n" in ''|*[!0-9]*) utest_retention_unlock; return 1 ;; esac
+            if [ "$n" != "0" ]; then
+                leased=$(( leased + 1 ))
+            fi
+        done
+        if [ "$leased" -ge "$lease_max" ]; then utest_retention_unlock; return 1; fi
+    fi
+
+    start="$(utest_proc_starttime $$)"; [ -n "$start" ] || start=0
+    ns="$(utest_pid_ns_id)"; [ -n "$ns" ] || ns=0
+    bid="$(utest_boot_id)"; [ -n "$bid" ] || bid=nobootid
+    holder="$$.$start.$ns.$bid"
+    # A NONCE per acquisition, not per process. The pathname has to identify the
+    # ACQUISITION: two overlapping reads in one process would otherwise share
+    # one filename, and the first release would unlink the second's live grant.
+    lid="$(od -An -N8 -tx1 /dev/urandom 2>/dev/null | tr -cd 'a-f0-9' || true)"
+    [ -n "$lid" ] || lid="$(date -u +%s%N 2>/dev/null | tr -cd '0-9')"
+    [ -n "$lid" ] || lid="0"
+    acq="$now"; exp="$(( now + ttl ))"
+    path="$rec/leases/$holder.$lid.lease"
+    tmp="$rec/leases/.$lid.tmp"
+    if ! utest_lease_doc_for "$run_id" "$holder" "$lid" "$acq" "$exp" > "$tmp" 2>/dev/null; then
+        rm -f -- "$tmp" 2>/dev/null || true
+        utest_retention_unlock
+        return 1
+    fi
+    # `-T` for the same reason utest_publish_leg_pointer needs it: without it a
+    # target that is unexpectedly a directory turns the rename into a move
+    # INSIDE it, and the lease lands somewhere nothing will ever look.
+    if ! mv -fT -- "$tmp" "$path" 2>/dev/null; then
+        rm -f -- "$tmp" 2>/dev/null || true
+        utest_retention_unlock
+        return 1
+    fi
+    # VERIFY the record is still whole after publishing. Under the lock a prune
+    # cannot have run inside this sequence, so the only way it is gone is that
+    # one COMPLETED before the lock was taken -- in which case the pointer named
+    # a corpse and the honest answer is a refusal, not a grant over nothing.
+    if [ ! -d "$rec" ] || [ ! -f "$rec/record-complete.json" ]; then
+        rm -f -- "$path" 2>/dev/null || true
+        utest_retention_unlock
+        return 1
+    fi
+    utest_retention_unlock
+    printf '%s %s\n' "$rec" "$path"
+    return 0
+}
+
+# Release a lease taken by utest_lease_acquire.
+#
+# Deliberately NEEDS NO LOCK. Unlinking a lease a prune is concurrently reading
+# is safe in both orderings: prune either counted it (and keeps the record for
+# one more pass, which is merely conservative) or finds it gone and treats the
+# record as unleased -- which is exactly what the release means. The reader's
+# descriptors keep the bytes alive regardless, so the record may be removed the
+# moment it stops being wanted.
+utest_lease_release() {
+    case "${1:-}" in
+        ''|*[!A-Za-z0-9./_-]*) return 0 ;;
+        */leases/*.lease) rm -f -- "$1" 2>/dev/null || true ;;
+    esac
+    return 0
+}
+
 utest_prune_records() {
     local keep="${UTEST_RECORD_KEEP:-20}" pin_max="${UTEST_POINTER_PIN_MAX:-64}" old pinned ptr
+    local lease_max="${UTEST_LEASE_MAX:-8}" ttl="${UTEST_LEASE_TTL:-300}"
+    local now leased leased_all lockrc n_all n_kept n
     keep="$(utest_norm_bound "$keep" 20 10000)"
     # Zero records kept is nonsense, so the floor is applied here and not in
     # the shared normaliser -- the pin cap deliberately does NOT have one.
     [ "$keep" -ge 1 ] 2>/dev/null || keep=20
     pin_max="$(utest_norm_bound "$pin_max" 64 10000)"
+    lease_max="$(utest_norm_bound "$lease_max" 8 10000)"
+    ttl="$(utest_norm_bound "$ttl" 300 86400)"
+    now="$(date -u +%s 2>/dev/null)"
+    case "$now" in ''|*[!0-9]*) now=0 ;; esac
+
+    # EVERYTHING below runs under the retention mutex, which is what turns a
+    # reader's lease from a hint into a guarantee: an acquirer publishes and
+    # verifies its lease while holding this same lock, so no prune can be part
+    # way through classifying the record it is about to lease.
+    #
+    # A TIMEOUT defers retention to the next run rather than deleting records it
+    # cannot safely classify. That is the correct direction to fail -- retention
+    # has always been best-effort-per-run (it only happens when this script
+    # runs), whereas a record deleted out from under a reader is unrecoverable.
+    # A lock held forever is bounded by the holder's own lifetime, because
+    # `flock` releases on descriptor close and therefore on process death.
+    # `|| lockrc=$?`, never `cmd; lockrc=$?`: under `set -e` a bare non-zero
+    # command aborts the run before the assignment is ever reached.
+    lockrc=0; utest_retention_lock 10 || lockrc=$?
+    if [ "$lockrc" -eq 1 ]; then
+        echo -e "${YELLOW}[TEST]${RESET} retention SKIPPED this run -- a reader holds build/.test-retention.lock."
+        return 0
+    fi
 
     # PIN the records the live per-leg pointers still resolve to. Age alone
     # would delete the record a `.run` pointer names, and that pointer is the
@@ -586,6 +1057,46 @@ utest_prune_records() {
         )"
     fi
 
+    # HOLD what a reader has resolved, and reclaim what no reader can still be
+    # using. This sweeps EVERY record, not just the age candidates: a lease on a
+    # record young enough to survive on age would otherwise never be revisited,
+    # and `leases/` would only ever grow.
+    #
+    # The cap here is a BACKSTOP, not the mechanism. A conforming reader is
+    # rationed at acquisition (utest_lease_acquire refuses over capacity and
+    # says so), so it is never revoked after being told it was safe. This cap
+    # exists for the non-conforming case -- anything running as this user can
+    # write a lease document -- and it ANNOUNCES itself when it bites, because a
+    # disk bound that silently discards grants is how the pointer pin was nearly
+    # got wrong too.
+    leased=""
+    if [ "$lease_max" -gt 0 ]; then
+        leased_all="$(
+            {
+                find "$RUNS_DIR" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null |
+                    sort -r |
+                    while IFS= read -r old; do
+                        [ -n "$old" ] || continue
+                        # Validated, not used raw. "Anything but the string 0"
+                        # would let a counter failure read as LEASED and hold a
+                        # record against retention forever; an unreadable count
+                        # is treated as unleased, which is recoverable.
+                        n="$(utest_record_live_leases "$old" "$now" "$ttl")" || n=""
+                        case "$n" in ''|*[!0-9]*) n=0 ;; esac
+                        if [ "$n" != "0" ]; then
+                            printf '%s\n' "$old"
+                        fi
+                    done
+            } || true
+        )"
+        leased="$(printf '%s' "$leased_all" | head -n "$lease_max")"
+        n_all="$(printf '%s' "$leased_all" | grep -c . || true)"
+        n_kept="$(printf '%s' "$leased" | grep -c . || true)"
+        if [ "${n_all:-0}" -gt "${n_kept:-0}" ] 2>/dev/null; then
+            echo -e "${YELLOW}[TEST]${RESET} $(( n_all - n_kept )) leased record(s) over UTEST_LEASE_MAX=$lease_max are NOT held."
+        fi
+    fi
+
     {
         find "$RUNS_DIR" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null |
             sort -r | tail -n +$(( keep + 1 )) |
@@ -595,6 +1106,13 @@ utest_prune_records() {
                 [ -n "$old" ] || continue
                 [ "$old" = "$RUN_ID" ] && continue
                 if [ -n "$pinned" ] && printf '%s\n' "$pinned" | grep -Fxq -- "$old"; then
+                    continue
+                fi
+                # A resolved generation a reader still holds. Unlike the pin,
+                # this survives the leg publishing again -- that is the entire
+                # point: the pin protects what the CURRENT pointer names, the
+                # lease protects what a reader ALREADY resolved.
+                if [ -n "$leased" ] && printf '%s\n' "$leased" | grep -Fxq -- "$old"; then
                     continue
                 fi
                 rm -rf -- "$RUNS_DIR/$old"
@@ -639,6 +1157,7 @@ utest_prune_records() {
                 fi
             done
     } || true
+    utest_retention_unlock
     return 0
 }
 
