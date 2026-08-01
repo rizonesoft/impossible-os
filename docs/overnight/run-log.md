@@ -154,3 +154,4 @@ refusal I cannot explain within one read.
 
 **Checkpoints:** +2h, +8h, +24h, from deterministic reports only
 (`cost-summary.py`, `metrics-report.py`, `run-status.py`, the failure ledger).
+- 2026-08-01 | 00-infrastructure/TODO-04 section 50 (Per-Child Loader Evidence) | SHIPPED `3dbd281b` + review `0760f059` | 5 per-spawn statics moved into a per-task record; frame_adopted at the 3 exec-frame adoption sites + entered_user at ring-3 syscall entry; the never-ran classification now splits the old ambiguous timeout bucket. Review found the section had shipped a kernel that does not build with KERNEL_TESTS=off (3 legs, independently) plus a false rationale for the field itself; 13 Codex dispatches, converged round 7. 4 accepted -> TODO-07 section 3, 1 deferred. 28109 kernel + 17 user-mode PASS, smoke 4/4.
