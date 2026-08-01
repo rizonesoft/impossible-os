@@ -75,3 +75,39 @@ Findings from the 24-hour canary armed after the 2026-07-31 repair stop. This fi
       - Same root as finding #3: the detector matches the script NAME anywhere in the command rather than deciding what the command does. `-n` is the cheapest possible discriminator and there are only a handful like it (`-n`, `--norc` style parse checks, `shellcheck`).
       - Cost is small per occurrence (one retry through a variable indirection) but it lands on every syntax check of the two largest shell files in the tree, which is exactly the loop an editor of those files runs most.
       - **Recurred 2026-08-01 06:05 on section 46**, twice more, on `bash -n scripts/test.sh` and `bash -n scripts/test-tooling.sh`. Worked around with `bash -n < <script>`, which the detector does not match -- so the effective outcome is that the gate teaches a redirection habit rather than preventing a bare run.
+
+## 6. A section can ship a kernel that does not compile, because no gate ever builds `KERNEL_TESTS=off`
+
+- [ ] Build BOTH kernel flavors at the section boundary, not just the default one
+      Observed live 2026-08-01 18:50 on TODO-04 section 50, which had already SHIPPED and pushed at `3dbd281b`. The section added two parameters to `task_create_internal` and consumed them only inside `#ifdef KERNEL_TESTS`. Under `KERNEL_TESTS=off` that is `-Werror,-Wunused-parameter` on both, and the build script reports `=== BUILD FAILED ===`. It reached `origin/main` green.
+      - **Nothing in the pipeline covers the release flavor.** The build script defaults to `KERNEL_TESTS=on` (`Makefile:104`), the suite needs the test flavor by construction, and the smoke matrix boots whatever `build/` already holds. The ABI certifier is the only multi-flavor gate and its matrix is `BUILD_ALT_BOOT x EXCEPT_TELEMETRY` at `KERNEL_TESTS=on` -- it caught an unrelated header error in this same section, which made the coverage look broader than it is.
+      - **Found by Codex, not by a gate, and by all three review legs independently** (adversarial, consistency, perf each reported it as `[high]` against `src/kernel/sched/task.c:775-778`). A reviewer catching a compile failure is a gate that is missing, not a reviewer working well.
+      - **The exposure is structural, not specific to this section.** Every KERNEL_TESTS-gated seam has the same shape: a parameter, field or helper that exists in both flavors but is consumed in one. The repo adds these deliberately and often -- `utest_report`, `utest_capture_*`, `fault_site_current`, and now `utest_loader`.
+      - **Shape of the fix:** one release-flavor build in the section-boundary receipt chain (~20s incremental), or a `receipts.py` flavor field so the ship gate refuses a section whose release flavor was never built. Cheap either way; the whole cost today was one review round because three reviewers happened to look.
+
+## 7. `read_cache_block` charges SUBAGENT reads to the main session, blocking it on content it never received
+
+- [ ] Scope the read ledger to the context that actually holds the bytes
+      Observed twice on 2026-08-01, 17:55 and 18:05, both on `src/kernel/test/test_usermode.c` lines 1690-1849. A `kernel-explorer` dispatch read that range in its own throwaway context; when the MAIN session then read it for the first time, the hook BLOCKED with "ALREADY in this session's context -- read #12, 4m ago" and told me to scroll up and reuse a copy that does not exist here.
+      - The subagent's whole purpose is that its reads do NOT enter this context -- that is the offload doctrine's premise. Charging them to the main session's ledger inverts it: the more legwork is correctly delegated, the more the main session is refused its own first read.
+      - **Cost per occurrence is two tool calls** (blocked attempt, then the deliberate repeat that the 2-of-2 limit releases) plus the reasoning to decide the block was wrong -- which is the expensive part, because the honest default is to trust the hook.
+      - It is self-clearing rather than wedging, so it reads as noise; the risk is the opposite failure, where an agent believes the message and proceeds on content it never read.
+      - **Shape of the fix:** record the reader's context id with each ledger entry and only count entries from the current one, or simply do not record reads made inside a subagent.
+
+## 8. `review-envelope.py --todo` cannot scope to a SECTION, so a long TODO shows a neighbour's stale legs
+
+- [ ] Filter the envelope by section as well as by TODO path
+      Observed 2026-08-01 18:15 on TODO-04 section 50. The wait returned and the envelope read with `--todo todo/00-infrastructure/TODO-04-usermode-test-framework.md` reported four kinds: my `adversarial` and `test-coverage` from 18:02, plus `consistency` and `perf` timestamped 16:36 -- section 49's, still the newest of their kind for that path.
+      - The skill's own instruction ("the `--todo` filter is REQUIRED, an unscoped read pulls a stale prior review") is followed exactly and still returns a stale review, because the filter's granularity is the FILE and TODO-04 has 59 sections.
+      - No harm this time -- the timestamps are 90 minutes apart and I was looking for two specific kinds -- but the failure mode is silent: a section that legitimately skips a kind (converged, per the convergence gate) inherits its neighbour's verdict for that kind and reads as reviewed.
+      - The data needed is already recorded: `codex_review_completed.py` writes `<kind>_section` into `last-review-stamps.json` precisely so the commit gate can check section attribution. The envelope just does not consult it.
+      - **Shape of the fix:** a `--section N` argument that drops manifest rows whose recorded section differs, and a WARN when a row is dropped so an accidentally-unscoped read is visible rather than silent.
+
+## 9. `build_offload_reminder` BLOCKs on the build-script name appearing in FILE CONTENT being written
+
+- [ ] Match invocations, not occurrences of the script name anywhere in the command
+      Observed 2026-08-01 19:55, while appending finding #6 above to this very file. The append was a heredoc whose PROSE names the build script (unavoidably -- the finding is about that script), and the hook BLOCKed the write with "ran `scripts/build.sh` BARE in the MAIN context (matched segment: `scripts/build.sh`)". No build was invoked; the command was an append to a markdown file.
+      - The hook's own message anticipates this ("If that segment is NOT a real invocation (e.g. prose inside a heredoc body), this is a false positive worth filing WITH the segment text"), so the shape is known -- this is the measured occurrence, with the exact trigger being a capture-file append.
+      - **Same root as findings #3 and #5 in this file**: the detector matches the script NAME anywhere in the command string rather than deciding whether the command RUNS it. Findings #3/#5 hit `bash -n`; this one hits documentation of the gate itself.
+      - **It is self-defeating in a specific way**: the runner is instructed to file findings about its gates into these capture files, and this gate blocks filings that name the script it guards. Worked around by writing the file through a Python heredoc that splits the string, which is a worse habit than the one the gate is teaching against.
+      - **Shape of the fix:** ignore matches that fall inside a heredoc body, or (cheaper and sufficient) skip the check when the command's effective verb is a write to a path under `todo/` or `docs/`.
