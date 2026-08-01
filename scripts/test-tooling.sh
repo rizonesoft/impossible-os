@@ -14192,6 +14192,7 @@ printf "| HARNESS-OK\n"
         #     observation that is not monotone.
         uar_lease_reset
         uar_lease_put 20260102T000000Z-1-aaaa "$UAR_LHOLD" bind01 1000000000 1000000010
+        uar_lease_put 20260102T000000Z-1-aaaa "$UAR_LHOLD" bind02 1000000050 1000000900
         UAR_L28="$(UAR_PDIR="$UAR_PDIR" UAR_PRUNE="$UAR_PRUNE" UAR_LHOLD="$UAR_LHOLD" timeout 25 bash -c '
 set -uo pipefail
 PROJECT="$UAR_PDIR"
@@ -14199,6 +14200,8 @@ RUNS_DIR="$PROJECT/build/test-runs"
 eval "$UAR_PRUNE"
 L="$RUNS_DIR/20260102T000000Z-1-aaaa/leases/$UAR_LHOLD.bind01.lease"
 B="$UAR_LHOLD.bind01.lease"
+LIVE="$RUNS_DIR/20260102T000000Z-1-aaaa/leases/$UAR_LHOLD.bind02.lease"
+BLIVE="$UAR_LHOLD.bind02.lease"
 # Unbound: an expired lease is reclaimable, and the snapshot it publishes is
 # what a caller hands back.
 if utest_lease_reclaimable "$L" "$B" 20260102T000000Z-1-aaaa 1000000100 300; then
@@ -14211,13 +14214,26 @@ if utest_lease_reclaimable "$L" "$B" 20260102T000000Z-1-aaaa 1000000100 300 "$SE
 # Bound to a DIFFERENT snapshot: this is not the object that was judged.
 if utest_lease_reclaimable "$L" "$B" 20260102T000000Z-1-aaaa 1000000100 300 "999 999 someoneelse"; then
     printf "| changed: RECLAIM"; else printf "| changed: KEEP"; fi
+# A LIVE, unexpired lease -- one the SELECTION would keep. Bound to its own
+# snapshot the answer must still be RECLAIM: the recheck is only ever reached
+# because the selection already ruled the entry reclaimable, so identity IS
+# the answer and re-deriving it here would reopen the UNKNOWN -> LIVE flip
+# (utest_lease_holder_state answers UNKNOWN on a transient procfs failure and
+# LIVE on the retry) that would relink a lease a lock-free release had removed.
+if utest_lease_reclaimable "$LIVE" "$BLIVE" 20260102T000000Z-1-aaaa 1000000100 300; then
+    printf "| live-unbound: RECLAIM"; else printf "| live-unbound: KEEP"; fi
+LSEEN="${UTEST_LEASE_SEEN:-}"
+if utest_lease_reclaimable "$LIVE" "$BLIVE" 20260102T000000Z-1-aaaa 1000000100 300 "$LSEEN"; then
+    printf "| live-bound: RECLAIM"; else printf "| live-bound: KEEP"; fi
 printf "| HARNESS-OK\n"
 ' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
         if printf '%s' "$UAR_L28" | grep -q 'HARNESS-OK' &&
            printf '%s' "$UAR_L28" | grep -q 'unbound: RECLAIM' &&
            printf '%s' "$UAR_L28" | grep -q 'snapshot: PUBLISHED' &&
            printf '%s' "$UAR_L28" | grep -q 'same: RECLAIM' &&
-           printf '%s' "$UAR_L28" | grep -q 'changed: KEEP'; then
+           printf '%s' "$UAR_L28" | grep -q 'changed: KEEP' &&
+           printf '%s' "$UAR_L28" | grep -q 'live-unbound: KEEP' &&
+           printf '%s' "$UAR_L28" | grep -q 'live-bound: RECLAIM'; then
             t_pass "reader lease: the recheck is bound to the selection snapshot, so a changed object is kept not judged"
         else
             t_fail "reader lease: the recheck is bound to the selection snapshot, so a changed object is kept not judged" \
@@ -14269,8 +14285,10 @@ printf "| HARNESS-OK\n"
         #     `*.lease` glob, so a reap that merely WARNED left the next pass
         #     counting zero live leases -- and retention then deleted the
         #     record and the preserved object with it, one pass after the
-        #     preservation that was supposed to save it. The reap returns a
-        #     count and the record is held until a human resolves it.
+        #     preservation that was supposed to save it. The claim count is
+        #     taken by the PRUNER, separately from the admitted-lease count
+        #     (which stays leases-only, hence `live: 0` here -- a claim is not
+        #     a lease), and holds the record until a human resolves it.
         uar_lease_reset
         mkdir -p "$UAR_PDIR/build/test-runs/20260102T000000Z-1-aaaa/leases/.utest-sweep.held.d"
         printf 'unresolved\n' \
@@ -14278,6 +14296,7 @@ printf "| HARNESS-OK\n"
         uar_prune_ptr keeper 20260102T000000Z-1-aaaa
         UAR_L30="$(UAR_PDIR="$UAR_PDIR" UAR_PRUNE="$UAR_PRUNE" timeout 30 bash -c '
 set -uo pipefail
+RED=""; YELLOW=""; CYAN=""; RESET=""
 PROJECT="$UAR_PDIR"
 RUNS_DIR="$PROJECT/build/test-runs"
 RUN_ID="20260105T000000Z-1-aaaa"
@@ -14295,8 +14314,8 @@ if [ -f "$D/.utest-sweep.held.d/obj" ]; then printf "PRESERVED"; else printf "DE
 printf "| HARNESS-OK\n"
 ' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
         if printf '%s' "$UAR_L30" | grep -q 'HARNESS-OK' &&
-           printf '%s' "$UAR_L30" | grep -q 'p1-live: 1' &&
-           printf '%s' "$UAR_L30" | grep -q 'p2-live: 1' &&
+           printf '%s' "$UAR_L30" | grep -q 'p1-live: 0' &&
+           printf '%s' "$UAR_L30" | grep -q 'p2-live: 0' &&
            printf '%s' "$UAR_L30" | grep -q 'record: HELD' &&
            printf '%s' "$UAR_L30" | grep -q 'object: PRESERVED'; then
             t_pass "reader lease: an unresolved staging claim holds its record across passes, never just a warning"
@@ -14304,6 +14323,49 @@ printf "| HARNESS-OK\n"
             t_fail "reader lease: an unresolved staging claim holds its record across passes, never just a warning" \
                 "$UAR_L30"
         fi
+
+        # (L32) an unresolved claim must not SPEND a capped lease slot. The
+        #     leased list is truncated to UTEST_LEASE_MAX over records sorted
+        #     newest-first, so folding claims into the same count let a NEWER
+        #     record whose only holder was a crash-left claim take the last
+        #     slot and evict an OLDER record holding a genuine admitted lease:
+        #     a reader losing its record to someone else's crash artefact.
+        #     Both are held, on separate terms, so both must survive.
+        uar_lease_reset
+        mkdir -p "$UAR_PDIR/build/test-runs/20260105T000000Z-1-aaaa/leases/.utest-sweep.evict.d"
+        printf 'unresolved\n' \
+            > "$UAR_PDIR/build/test-runs/20260105T000000Z-1-aaaa/leases/.utest-sweep.evict.d/obj"
+        # Real-clock timestamps: utest_prune_records samples the clock itself,
+        # unlike the direct utest_record_live_leases calls above, so a
+        # synthetic epoch would simply read as expired and reclaim the lease
+        # this test needs alive.
+        uar_lease_put 20260101T000000Z-1-aaaa "$UAR_LHOLD" cap01 \
+            "$UAR_LNOW" "$(( UAR_LNOW + 3600 ))"
+        UAR_L32="$(UAR_PDIR="$UAR_PDIR" UAR_PRUNE="$UAR_PRUNE" timeout 30 bash -c '
+set -uo pipefail
+RED=""; YELLOW=""; CYAN=""; RESET=""
+PROJECT="$UAR_PDIR"
+RUNS_DIR="$PROJECT/build/test-runs"
+RUN_ID="20260103T000000Z-1-aaaa"
+UTEST_RECORD_KEEP=1
+UTEST_LEASE_MAX=1
+UTEST_LEASE_TTL=86400
+eval "$UAR_PRUNE"
+utest_prune_records >/dev/null 2>&1
+printf "| leased-old: "
+if [ -d "$RUNS_DIR/20260101T000000Z-1-aaaa" ]; then printf "HELD"; else printf "EVICTED"; fi
+printf "| claim-new: "
+if [ -d "$RUNS_DIR/20260105T000000Z-1-aaaa" ]; then printf "HELD"; else printf "EVICTED"; fi
+printf "| HARNESS-OK\n"
+' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
+        if printf '%s' "$UAR_L32" | grep -q 'HARNESS-OK' &&
+           printf '%s' "$UAR_L32" | grep -q 'leased-old: HELD' &&
+           printf '%s' "$UAR_L32" | grep -q 'claim-new: HELD'; then
+            t_pass "reader lease: an unresolved claim is held without spending a capped lease slot"
+        else
+            t_fail "reader lease: an unresolved claim is held without spending a capped lease slot" "$UAR_L32"
+        fi
+        rm -rf "$UAR_PDIR/build/test-runs/20260105T000000Z-1-aaaa/leases/.utest-sweep.evict.d"
 
         # (L31) the sweep counter is an ENVIRONMENT-INHERITABLE name, and
         #     `$(( 08 + 1 ))` is not a wrong answer but a shell ABORT ("value

@@ -110,6 +110,7 @@ title: "TODO-04 -- User-Mode Test Framework"
 | 💎   |  50   | Per-child loader evidence (ring-3 entry + stage flags) | §37, §42                   |  [ ]   |
 | ⭐   |  51   | Reproducible kernel assertion total + the intermittent TEB halt | §44             |  [ ]   |
 | ⭐   |  52   | Bind a leg pointer to the record's own identity      | §38, §45                      |  [ ]   |
+| 💎   |  53   | A directory occupying a pointer or lease name       | §46                           |  [ ]   |
 
 > 💎 = parity: Linux kselftest and Windows HLK both use user-mode test binaries, TAP/JUnit XML, machine-readable test orchestration, per-test isolation, and stress/perf categorisation. §17 brings the fast-path transports (TEB/KUSD/syscall) up to the same "no silent drift, no silent hang" stability floor both competitors offer at their stable ABIs.
 > ⭐ = exclusive: testing the Win32 API surface from user mode on a non-Windows kernel (§14); user-mode fault-injection bridge that reaches kernel allocator countdowns under a single `test=1` gate (§5); §18 versioned ABI fingerprint + self-describing KUSD + invariant-guarded ring transitions + transition ring buffer -- capabilities neither Windows 11 nor Linux 6.x exposes to user code today.
@@ -1882,14 +1883,16 @@ The retention sweep §38 shipped decides an entry's fate from its pathname: `[ -
       - Shipped: the by-name test is now only a CANDIDATE SELECTOR, and the binding verdict is re-taken on the detached inode. One verdict function per namespace serves both calls (`utest_ptr_sweepable`, `utest_lease_reclaimable`), so selection and destruction cannot drift into disagreeing about what is dangling.
       - `<record>/leases/*.lease` goes through the SAME helper, as required. §45's per-lease classification was extracted into `utest_lease_reclaimable` to make that possible, and `utest_lease_fields` grew an optional third argument: it binds holder and lease_id to the FILENAME, so a recheck reading the staging name would have called every detached lease malformed and unlinked the legitimate replacement it exists to protect.
       - Adjacent leak fixed while in there: `[ -e "$f" ] || continue` follows the link, so a DANGLING SYMLINK named `*.lease` (or `.<id>.tmp` staging) was skipped before any type test saw it and never reclaimed -- `leases/` grew by one per entry, the exact growth the reclaim pass exists to prevent. Now `[ -e ] || [ -L ]`.
-      - A relink that fails is not assumed to be `EEXIST`: a non-directory at the name is the ordinary newcomer and wins, but a free name or a DIRECTORY is unexplained, so the object is left on disk with a line naming it rather than destroyed on an `ENOSPC`/`EPERM` guess.
+      - A relink that fails is not assumed to be `EEXIST`: a non-directory at the name is the ordinary newcomer and wins, but a free name or a DIRECTORY is unexplained, so the object is left in its staging claim with a line naming it rather than destroyed on an `ENOSPC`/`EPERM` guess. Nothing ever deletes a preserved object -- the reap is `rmdir`, which collects empty claims only -- and an unresolved claim HOLDS its record, unioned in uncapped so it can never evict a record with a real lease from a saturated `UTEST_LEASE_MAX`.
+      - Directory policy sits UPSTREAM of both verdict functions, in both namespaces, and is deliberately unchanged here: the verdicts define what is DESTROYABLE, and removing a directory the harness never created is new destruction, which is the opposite of this section's discipline. Filed rather than widened.
+      -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §53 (item: "Decide the policy, and say it in one place rather than in two upstream filters")
       -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §45 (item: "Implemented in `scripts/test.sh`: `utest_prune_records` honours live leases, and `utest_lease_acquire`/`utest_lease_release` ship the reader half")
       -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §38 (item: "Gave the per-leg alias set a generation pointer, so a concurrent reader cannot pair two runs' documents")
-- [x] Seventeen regressions in `scripts/test-tooling.sh` (1103 -> 1120), both directions on both namespaces
+- [x] Eighteen regressions in `scripts/test-tooling.sh` (1103 -> 1121), both directions on both namespaces
       - The seam is the verdict callback itself: `utest_sweep_verified` invokes it with the STAGED path, which IS the instant between the detach and the unlink, so a wrapper racing the original name from inside it reproduces the window deterministically. The wrappers WRAP the production function via `declare -f` rather than replacing it, so the real verdict still decides every fate; starting a background writer and hoping it lands in a microsecond gap is a test that passes by not reproducing the bug.
       - p14/L22 special-replaced-by-newcomer, p15 regular-replaced-by-FIFO-mid-parse, p16 relink-restores-a-kept-entry, p17 directory-at-the-destination, p18 all four refusal/recovery branches with their outcome codes, p19 the same relink through the real selector plus reap ordering.
       - L21 published-name-not-staging-name, L23 dangling-symlink-reclaimed, L24 lock-free-release-inside-the-detach-window, L25 dangling staging symlink, L26 directory-under-a-lease-name, L27/L29 a retained outcome is restored AND counted live, L28 the snapshot binding itself.
-      - L30 an unresolved staging claim holds its record across TWO passes (reporting alone is not protection: the object is invisible to the `*.lease` glob, so a warn-only reap let the next pass count zero and prune the record and the object together), L31 a leading-zero `UTEST_SWEEP_SEQ` normalises rather than aborting the shell mid-sweep.
+      - L30 an unresolved staging claim holds its record across TWO passes (reporting alone is not protection: the object is invisible to the `*.lease` glob, so a warn-only reap let the next pass count zero and prune the record and the object together), L31 a leading-zero `UTEST_SWEEP_SEQ` normalises rather than aborting the shell mid-sweep, L32 an unresolved claim is held WITHOUT spending a capped lease slot.
       - Mutation-verified, because a regression test that cannot fail proves nothing. Round 1: restoring the old check-then-act fails 5 tests and NO pre-existing one, so the mechanism is behaviourally identical on every non-racing path; dropping the basename pass-through fails L21 alone; restoring `[ -e ]`-only fails L23 alone.
       - Round 2 found a REAL hole the same way: mutating the caller to ignore the retained outcome failed nothing, because L27 asserts the helper's return code and not what the loop does with it. L29 was written to close that, and now fails. Dropping the snapshot binding fails L28, the glob reap fails p19, the directory gate fails L26.
       - Round 3 likewise: reverting the reap's count fails L30, dropping the replacement-present branch fails L22 (whose predicate printed `live` but never asserted it -- the reviewer caught the dead assertion, not just the bug behind it), and un-guarding the counter fails L31.
@@ -1901,7 +1904,7 @@ The retention sweep §38 shipped decides an entry's fate from its pathname: `[ -
 > [!NOTE]
 > Invariant boundary, narrowed deliberately at the design review and worth stating so a later reader does not read more into this than shipped. What is guaranteed is that **nothing is destroyed that was not itself verified**. What is NOT guaranteed is that a replacement always loses: a FIFO swapped onto the name AFTER `sed` has already opened the original inode is parsed as its predecessor, so the pointer survives that pass and is classified normally by the next one. Closing that too means detaching every entry, which buys the stricter property at the cost of a transient ENOENT on every published pointer on every startup -- a real robustness loss on the normal path, traded for a window unreachable while the harness holds its exclusive `flock`. A late replacement is bounded, non-wedging and self-healing; a wrongful delete is none of those, which is why only the second one is treated as a defect.
 
-> **Test runner:** `bash scripts/overnight/run-artifact.sh tooling -- bash scripts/test-tooling.sh` -- expect `1120/1120 tooling tests passed`. Host tooling only; no QEMU or kernel-side surface.
+> **Test runner:** `bash scripts/overnight/run-artifact.sh tooling -- bash scripts/test-tooling.sh` -- expect `1121/1121 tooling tests passed`. Host tooling only; no QEMU or kernel-side surface.
 
 > **Notes:**
 > - Shipped `utest_sweep_verified` in `scripts/test.sh`: `mv -fT` detaches a destroy-candidate, the verdict is re-taken on the detached inode, `ln -PT` restores it if that verdict flips.
@@ -1909,6 +1912,9 @@ The retention sweep §38 shipped decides an entry's fate from its pathname: `[ -
 > - Downstream: `utest_lease_fields` gained an optional published-basename argument, `utest_record_live_leases` delegates its per-lease classification, and dangling-symlink entries are now reclaimed.
 > - Canonical doc: this section plus the block comment on `utest_sweep_verified`; the invariant boundary is the NOTE above.
 > - Scope boundary: the DESTRUCTIVE half only -- a replacement arriving after the parse opened the original inode survives to the next sweep, bounded by §38's `timeout`.
+> **Verified:** 2026-08-01 | commit `4c7fa974` | 4/4 items | build OK | 1121/1121 tooling, 27965 kernel + 17 user-mode
+> **Accepted:** [M] a DIRECTORY at a pointer or lease name is inert to the sweep and permanently blocks that leg's `mv -fT` publication (reason: predates section 46; removing a directory the harness never created is new destruction, the opposite of this section's discipline) -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §53 (item: "Decide the policy, and say it in one place rather than in two upstream filters")
+> **Quality reviewed:** 2026-08-01 | Codex 6x (design, adversarial x3, consistency, perf) | 6H+4M+0L fixed, 1 open | scope: N/A (host bash tooling -- no kernel/boot/desktop/shell/userland surface)
 
 
 ---
@@ -2134,3 +2140,24 @@ The suite's headline number is not reproducible: the SAME tree reports `PASS: 27
 **Test runner:** `bash scripts/test.sh` | 2184 kernel + 16 user-mode PASS on KVM 2026-04-23 (exit=0); 2166 + 16 PASS on TCG via `FORCE_TCG=1`; per-binary bat files under `scripts/debug/usermode/` for targeted runs.
 
 ---
+
+---
+
+## 53. A Directory Occupying a Pointer or Lease Name
+
+A directory standing where a file belongs is inert to every sweep and fatal to the writer. The pointer sweep enumerates with `find ... ! -type d`, so a directory named `test-results-<leg>.run` is never even a candidate; and `utest_publish_leg_pointer` finishes with `mv -fT`, which -- correctly, and for exactly the reason `-T` is there -- REFUSES rather than moving the pointer inside it. So that leg can never publish again, and nothing removes the thing blocking it. The lease reclaim has the same shape on `<record>/leases/*.lease`: section 46 gates directories out explicitly, because `rm` cannot remove one and detaching it into staging would only hide it.
+
+> [!NOTE]
+> Filed 2026-08-01 from section 46's consistency review, rated [medium]. It predates section 46 -- the `! -type d` filter and the `mv -fT` publication are both older -- and section 46 deliberately did not widen into it: that section's whole discipline was to close the DESTRUCTIVE half of a check-then-act race without inventing new destruction, and "remove a directory the harness did not create" is new destruction. The reviewer's framing is worth keeping: the two canonical verdict functions define what is DESTROYABLE, and directory policy sits upstream of them in BOTH namespaces, which is consistent but is a policy nobody has actually decided. Not reachable by accident today (nothing in the tree creates one), so it is robustness, not a live defect.
+
+- [ ] Decide the policy, and say it in one place rather than in two upstream filters
+      - The candidates are: leave it and REPORT it once per run so an operator sees why a leg stopped publishing; remove it only when empty (`rmdir`, type-safe and never recursive); or refuse the run outright, since a leg that cannot publish will fail its assertions later anyway with a far worse message.
+      - `rm -rf` is not on that list. Nothing here knows what a hand-made directory contains, and section 46 exists precisely because this sweep used to destroy things it had not verified.
+- [ ] Make the diagnosis reach the operator, wherever the policy lands
+      - Today the failure is silent twice over: the sweep skips it without a word, and the `mv -fT` refusal is swallowed by `2>/dev/null` in the publisher. Whichever policy is chosen, a run that cannot publish a leg pointer must say so and name the path.
+      -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §46 (item: "Classify, parse and unlink through ONE verified object, so a replacement between the check and the action cannot be parsed or deleted in place of what was checked")
+- [ ] Cover both namespaces with one regression each: a directory at `test-results-<leg>.run` and one at `<record>/leases/<holder>.<id>.lease`
+      - Section 46's L26 already pins the lease-side status quo (published, uncounted, never hidden in staging); it is the assertion to CHANGE when the policy changes, not a second definition to leave behind.
+- [ ] Commit: `"test: decide what a directory occupying a pointer or lease name means"`
+
+**Test checkpoint:** a directory at a leg-pointer name produces a named diagnostic rather than silence, and the chosen policy is observable in a regression; a directory under `leases/` behaves identically to the pointer case; neither is ever removed recursively. Test on: host tooling only (no QEMU dependency).

@@ -974,21 +974,25 @@ utest_sweep_verified() {
 # refuses a non-empty one, so a claim still holding an object -- a crash
 # between the detach and the verdict, or a restore that could not be made --
 # survives and gets named instead of being destroyed by a pattern match.
-# ECHOES the number of claims it could NOT resolve, because reporting alone is
+# REPORTS the number of claims it could NOT resolve, because reporting alone is
 # not protection. A preserved object lives inside its claim and matches no
 # `*.lease` glob, so a later pass that merely printed a warning would count
 # zero live leases and let retention delete the record -- and the preserved
 # object with it, one pass after the preservation. The count is what makes the
 # unresolved case FAIL CLOSED: its record is held until a human resolves it.
 utest_sweep_reap() {
-    local dir="$1" d n=0
+    local dir="$1" d
+    # Sets UTEST_SWEEP_STUCK rather than echoing it: the only consumer runs
+    # once per RETAINED RECORD inside the retention mutex, and a command
+    # substitution there would fork a subshell per record purely to discover
+    # that no claim exists -- which is the common case on every startup.
+    UTEST_SWEEP_STUCK=0
     for d in "$dir"/.utest-sweep.*.d; do
         [ -d "$d" ] || continue
         rmdir -- "$d" 2>/dev/null && continue
-        n=$(( n + 1 ))
+        UTEST_SWEEP_STUCK=$(( UTEST_SWEEP_STUCK + 1 ))
         printf 'test.sh: unresolved swept object under %s (needs manual review)\n' "$d" >&2
     done
-    printf '%s\n' "$n"
     return 0
 }
 
@@ -1023,7 +1027,7 @@ utest_lease_reclaimable() {
     # the same object"; anything else is a replacement and must be put back,
     # not judged afresh.
     #
-    # Re-deriving the verdict instead would NOT be monotone, which is the
+    # Re-deriving the verdict on a match would NOT be monotone, which is the
     # subtle way this loses a live reader's record: utest_lease_holder_state
     # answers UNKNOWN on a transient procfs failure (an unreadable
     # /proc/<pid>/stat, a momentarily missing /proc/1) and LIVE on the retry,
@@ -1034,7 +1038,17 @@ utest_lease_reclaimable() {
     # inside the detach window. Comparing the snapshot removes both, without
     # making release take the retention mutex (it is deliberately lock-free;
     # see its own comment).
-    if [ -n "$want" ] && [ "$fields" != "$want" ]; then return 1; fi
+    if [ -n "$want" ]; then
+        # DIFFERENT object: a replacement, to be put back rather than judged.
+        if [ "$fields" != "$want" ]; then return 1; fi
+        # SAME object, and the caller only reaches the recheck because the
+        # selection already ruled it reclaimable -- so identity IS the answer
+        # and re-deriving here is not merely wasted work, it REOPENS the flip
+        # this binding exists to close: utest_lease_holder_state below would be
+        # observed a second time, and an UNKNOWN -> LIVE transition on an
+        # unchanged inode would relink a lease a lock-free release had removed.
+        return 0
+    fi
     exp="${fields%% *}"; acq="${fields#* }"; holder="${acq#* }"; acq="${acq%% *}"
     # `10#` on every value that reached here from a FILE, belt-and-braces
     # behind utest_is_json_uint: the grammar already rejects a leading zero,
@@ -1088,7 +1102,7 @@ utest_lease_reclaimable() {
 # rather than by arithmetic -- see the branch below for why neither clamping it
 # nor deleting it outright is safe.
 utest_record_live_leases() {
-    local rec="$1" now="$2" ttl="$3" dir f seen stuck live=0
+    local rec="$1" now="$2" ttl="$3" dir f seen live=0
     dir="$RUNS_DIR/$rec/leases"
     [ -d "$dir" ] || { printf '0\n'; return 0; }
     # ABANDONED STAGING first. An acquisition killed between writing
@@ -1109,13 +1123,6 @@ utest_record_live_leases() {
         [ -e "$f" ] || [ -L "$f" ] || continue
         rm -f -- "$f" 2>/dev/null || true
     done
-    # Unresolved claims hold the record. See utest_sweep_reap: an object it
-    # could not resolve is invisible to the `*.lease` glob below, so counting
-    # it here is the only thing standing between a preserved lease and the
-    # `rm -rf` that prunes its record on the very next pass.
-    stuck="$(utest_sweep_reap "$dir")"
-    case "$stuck" in ''|*[!0-9]*) stuck=0 ;; esac
-    live=$(( live + stuck ))
     for f in "$dir"/*.lease; do
         [ -e "$f" ] || [ -L "$f" ] || continue
         # A DIRECTORY under a lease name is not a lease, and not something `rm`
@@ -1149,6 +1156,11 @@ utest_record_live_leases() {
             live=$(( live + 1 ))
         fi
     done
+    # ADMITTED LEASES ONLY, one number, because utest_lease_acquire reads this
+    # to enforce the admission cap. Unresolved sweep claims also hold a record,
+    # but they are NOT leases and are counted by the pruner separately -- see
+    # the tagged `L`/`U` emission there for why conflating them evicts a real
+    # lease from a saturated cap.
     printf '%s\n' "$live"
     return 0
 }
@@ -1300,7 +1312,7 @@ utest_lease_release() {
 utest_prune_records() {
     local keep="${UTEST_RECORD_KEEP:-20}" pin_max="${UTEST_POINTER_PIN_MAX:-64}" old pinned ptr
     local lease_max="${UTEST_LEASE_MAX:-8}" ttl="${UTEST_LEASE_TTL:-300}"
-    local now leased leased_all lockrc n_all n_kept n all_records
+    local now leased leased_all leased_l stuck_u n_stuck nu lockrc n_all n_kept n all_records
     keep="$(utest_norm_bound "$keep" 20 10000)"
     # Zero records kept is nonsense, so the floor is applied here and not in
     # the shared normaliser -- the pin cap deliberately does NOT have one.
@@ -1415,19 +1427,46 @@ utest_prune_records() {
                     # would let a counter failure read as LEASED and hold a
                     # record against retention forever; an unreadable count
                     # is treated as unleased, which is recoverable.
+                    # Two fields: admitted leases, then unresolved sweep
+                    # claims. TAGGED on the way out because they are held on
+                    # different terms -- `L` competes for UTEST_LEASE_MAX, `U`
+                    # is a fail-closed hold that must never consume a capped
+                    # slot (an unresolved claim taking the last one evicts a
+                    # record with a real lease, which is a reader losing its
+                    # record to a crash artefact).
                     n="$(utest_record_live_leases "$old" "$now" "$ttl")" || n=""
-                    case "$n" in ''|*[!0-9]*) n=0 ;; esac
+                    case "$n"  in ''|*[!0-9]*) n=0 ;; esac
+                    # The claim count is taken HERE, not folded into the count
+                    # above, because utest_lease_acquire reads that one for the
+                    # admission cap and a claim is not an admitted lease. The
+                    # reap reports through a variable, so this costs no fork.
+                    utest_sweep_reap "$RUNS_DIR/$old/leases"
+                    nu="${UTEST_SWEEP_STUCK:-0}"
+                    case "$nu" in ''|*[!0-9]*) nu=0 ;; esac
                     if [ "$n" != "0" ]; then
-                        printf '%s\n' "$old"
+                        printf 'L %s\n' "$old"
+                    fi
+                    if [ "$nu" != "0" ]; then
+                        printf 'U %s\n' "$old"
                     fi
                 done <<< "$all_records"
             } || true
         )"
-        leased="$(printf '%s' "$leased_all" | head -n "$lease_max")"
-        n_all="$(printf '%s' "$leased_all" | grep -c . || true)"
+        # The CAP applies to admitted leases only.
+        leased_l="$(printf '%s' "$leased_all" | sed -n 's/^L //p')"
+        stuck_u="$(printf '%s' "$leased_all" | sed -n 's/^U //p')"
+        leased="$(printf '%s' "$leased_l" | head -n "$lease_max")"
+        n_all="$(printf '%s' "$leased_l" | grep -c . || true)"
         n_kept="$(printf '%s' "$leased" | grep -c . || true)"
         if [ "${n_all:-0}" -gt "${n_kept:-0}" ] 2>/dev/null; then
             echo -e "${YELLOW}[TEST]${RESET} $(( n_all - n_kept )) leased record(s) over UTEST_LEASE_MAX=$lease_max are NOT held."
+        fi
+        # Unresolved claims are unioned in AFTER the truncation, so they are
+        # held without ever costing an admitted lease its slot.
+        if [ -n "$stuck_u" ]; then
+            n_stuck="$(printf '%s' "$stuck_u" | grep -c . || true)"
+            echo -e "${YELLOW:-}[TEST]${RESET:-} ${n_stuck:-0} record(s) held by an unresolved sweep claim (see the paths reported above)."
+            if [ -n "$leased" ]; then leased="$leased"$'\n'"$stuck_u"; else leased="$stuck_u"; fi
         fi
     fi
 
@@ -1504,7 +1543,7 @@ utest_prune_records() {
     {
         # No count is consulted here: `build/` holds no record to protect,
         # and an unresolved claim is reported by the reap itself.
-        utest_sweep_reap "$PROJECT/build" >/dev/null
+        utest_sweep_reap "$PROJECT/build"
         find "$PROJECT/build" -maxdepth 1 ! -type d -name 'test-results-*.run' 2>/dev/null |
             while IFS= read -r ptr; do
                 [ -n "$ptr" ] || continue
@@ -1514,6 +1553,14 @@ utest_prune_records() {
                 # Spelling the selection out inline instead would be a second
                 # definition of "dangling", free to drift from the one that
                 # actually destroys things.
+                #
+                # It defines what is DESTROYABLE, not what is a candidate.
+                # DIRECTORIES are excluded upstream by `! -type d` and never
+                # reach it -- deliberately, and symmetrically with the lease
+                # loop, because `rm` cannot remove one and detaching it would
+                # only hide it. A directory left at a pointer name is inert to
+                # this sweep and blocks that leg's publication; that gap is
+                # older than this mechanism and is owned by section 53.
                 if utest_ptr_sweepable "$ptr" "${ptr##*/}"; then
                     utest_sweep_verified "$ptr" utest_ptr_sweepable
                 fi
