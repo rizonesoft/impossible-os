@@ -626,20 +626,54 @@ utest_proc_starttime() {
     printf '%s' "${raw##*)}" | awk '{ if (NF >= 20 && $20 ~ /^[0-9]+$/) print $20 }'
 }
 
+# MEMOISED, because both of these are invariant for the life of the process and
+# were being re-read once per lease examined. Retention runs at the start of
+# every invocation, and each uncached read costs 4-5 forks: at the default
+# UTEST_RECORD_KEEP=20 that is a measurable startup tax paid entirely inside the
+# mutex that blocks the run. `$UTEST_PROC` is part of the cache key in effect,
+# since a test that changes proc roots runs in its own process.
+# Populate the two identity caches IN THE CALLING SHELL.
+#
+# This exists because caching inside utest_boot_id / utest_pid_ns_id does
+# NOTHING on its own: every caller reads them as `$(utest_boot_id)`, and a
+# command substitution is a subshell, so the assignment is made in a child and
+# discarded -- both functions then re-read procfs on every single call, which is
+# exactly the per-lease fork cost the cache was added to remove. A value can
+# only be cached where it is READ from, so it is primed here from a plain
+# command call and the subshells below inherit it.
+#
+# Keyed by proc root, so a test pointing UTEST_PROC at a fixture is never served
+# a value primed from the real /proc.
+utest_prime_ident() {
+    if [ "${UTEST_IDENT_CACHE_ROOT:-}" = "${UTEST_PROC:-/proc}" ] \
+       && [ -n "${UTEST_BOOT_ID_CACHE:-}" ] && [ -n "${UTEST_PID_NS_CACHE:-}" ]; then
+        return 0
+    fi
+    UTEST_IDENT_CACHE_ROOT="${UTEST_PROC:-/proc}"
+    UTEST_BOOT_ID_CACHE="$(timeout 5 cat "${UTEST_PROC:-/proc}/sys/kernel/random/boot_id" 2>/dev/null | tr -cd 'a-f0-9-' | head -c 64 || true)"
+    UTEST_BOOT_ID_CACHE="${UTEST_BOOT_ID_CACHE:-none}"
+    UTEST_PID_NS_CACHE="$(readlink "${UTEST_PROC:-/proc}/self/ns/pid" 2>/dev/null || true)"
+    UTEST_PID_NS_CACHE="${UTEST_PID_NS_CACHE##*[}"
+    UTEST_PID_NS_CACHE="${UTEST_PID_NS_CACHE%]}"
+    case "$UTEST_PID_NS_CACHE" in ''|*[!0-9]*) UTEST_PID_NS_CACHE="none" ;; esac
+    return 0
+}
+
 utest_boot_id() {
-    timeout 5 cat "${UTEST_PROC:-/proc}/sys/kernel/random/boot_id" 2>/dev/null | tr -cd 'a-f0-9-' | head -c 64
+    if [ "${UTEST_IDENT_CACHE_ROOT:-}" != "${UTEST_PROC:-/proc}" ] || [ -z "${UTEST_BOOT_ID_CACHE:-}" ]; then
+        utest_prime_ident
+    fi
+    [ "$UTEST_BOOT_ID_CACHE" = "none" ] || printf '%s\n' "$UTEST_BOOT_ID_CACHE"
 }
 
 # The inode number behind /proc/self/ns/pid ("pid:[4026531836]"), which is the
 # only thing that makes a recorded pid comparable at all. Empty when it cannot
 # be read, which the caller must treat as UNKNOWN rather than as a mismatch.
 utest_pid_ns_id() {
-    local raw
-    raw="$(readlink "${UTEST_PROC:-/proc}/self/ns/pid" 2>/dev/null)" || return 0
-    raw="${raw##*[}"
-    raw="${raw%]}"
-    case "$raw" in ''|*[!0-9]*) return 0 ;; esac
-    printf '%s\n' "$raw"
+    if [ "${UTEST_IDENT_CACHE_ROOT:-}" != "${UTEST_PROC:-/proc}" ] || [ -z "${UTEST_PID_NS_CACHE:-}" ]; then
+        utest_prime_ident
+    fi
+    [ "$UTEST_PID_NS_CACHE" = "none" ] || printf '%s\n' "$UTEST_PID_NS_CACHE"
 }
 
 # LIVE, DEAD or UNKNOWN for a `<pid>.<starttime>.<boot_id>` holder triple.
@@ -807,9 +841,9 @@ utest_lease_fields() {
 #
 # The TTL is applied HERE and not merely trusted from the document, because
 # `expires_at` is written by the ACQUIRER: a bound that only the writer enforces
-# is not a bound. An `acquired_at` in the future (a clock that jumped backwards
-# between acquisition and now) is clamped to now, so the worst a skewed clock
-# can buy is one more TTL, never an unbounded hold.
+# is not a bound. A future `acquired_at` is resolved by the holder's LIVENESS
+# rather than by arithmetic -- see the branch below for why neither clamping it
+# nor deleting it outright is safe.
 utest_record_live_leases() {
     local rec="$1" now="$2" ttl="$3" dir f fields exp acq holder eff state live=0
     dir="$RUNS_DIR/$rec/leases"
@@ -845,15 +879,37 @@ utest_record_live_leases() {
         # and forcing base 10 means a future relaxation of it cannot resurrect
         # the octal abort as a silent retention bypass.
         acq="$(( 10#$acq ))"; exp="$(( 10#$exp ))"
-        [ "$acq" -le "$now" ] || acq="$now"
-        eff="$exp"
-        if [ "$(( acq + ttl ))" -lt "$eff" ]; then eff="$(( acq + ttl ))"; fi
-        if [ "$now" -ge "$eff" ]; then
+        state="$(utest_lease_holder_state "$holder")"
+        if [ "$state" = "DEAD" ]; then
             rm -f -- "$f" 2>/dev/null || true
             continue
         fi
-        state="$(utest_lease_holder_state "$holder")"
-        if [ "$state" = "DEAD" ]; then
+        # A FUTURE acquired_at, and why neither obvious answer is right.
+        # Clamping it up to `now` and computing `acq + ttl` recomputes the
+        # deadline from a MOVING origin, so a document claiming
+        # acquired_at=999999999999 is renewed by every pass and never expires.
+        # Deleting it unconditionally is the mirror hazard: an NTP correction, a
+        # VM restore, or an operator moving the clock backwards makes a
+        # perfectly valid lease look future-dated, and revoking it mid-read is
+        # precisely what the lease promises will not happen.
+        #
+        # So the LIVENESS evidence decides, since that is the thing a clock
+        # cannot corrupt. A live holder is honoured whatever its timestamps say
+        # (it is bounded by the admission cap regardless); an unobservable
+        # holder carrying a timestamp it could not honestly have written buys
+        # nothing. `now` is sampled AFTER the mutex is held, so an acquirer that
+        # published while this prune waited is not mistaken for either case.
+        if [ "$acq" -gt "$now" ]; then
+            if [ "$state" = "LIVE" ]; then
+                live=$(( live + 1 ))
+                continue
+            fi
+            rm -f -- "$f" 2>/dev/null || true
+            continue
+        fi
+        eff="$exp"
+        if [ "$(( acq + ttl ))" -lt "$eff" ]; then eff="$(( acq + ttl ))"; fi
+        if [ "$now" -ge "$eff" ]; then
             rm -f -- "$f" 2>/dev/null || true
             continue
         fi
@@ -885,13 +941,20 @@ utest_lease_acquire() {
     ttl="$(utest_norm_bound "${UTEST_LEASE_TTL:-300}" 300 86400)"
     lease_max="$(utest_norm_bound "${UTEST_LEASE_MAX:-8}" 8 10000)"
     [ "$lease_max" -gt 0 ] || return 1
-    now="$(date -u +%s 2>/dev/null)"
-    case "$now" in ''|*[!0-9]*) return 1 ;; esac
+    # Same one-second floor the pruner applies, so the two cannot disagree about
+    # what a lease's lifetime is.
+    [ "$ttl" -ge 1 ] 2>/dev/null || ttl=300
 
     # `|| lockrc=$?`, never `cmd; lockrc=$?`: this script runs under `set -e`,
     # where a bare non-zero command aborts before the assignment is reached.
     lockrc=0; utest_retention_lock 10 || lockrc=$?
     if [ "$lockrc" -eq 1 ]; then return 1; fi
+    # AFTER the lock, for the same reason the pruner does it: the admission scan
+    # below classifies leases by age, and a `now` sampled before a ten-second
+    # wait would read a lease published during that wait as future-dated.
+    now="$(date -u +%s 2>/dev/null)"
+    case "$now" in ''|*[!0-9]*) utest_retention_unlock; return 1 ;; esac
+    utest_prime_ident
 
     [ -f "$ptr" ] || { utest_retention_unlock; return 1; }
     run_id="$(utest_pointer_pin_id "$ptr")"
@@ -915,10 +978,18 @@ utest_lease_acquire() {
         for path in "$RUNS_DIR"/*/; do
             [ -d "$path" ] || continue
             path="${path%/}"
+            # The target was counted above and is known to hold none; counting
+            # it a second time here re-walks its whole leases directory inside
+            # the mutex for an answer already in hand.
+            [ "${path##*/}" != "$run_id" ] || continue
             n="$(utest_record_live_leases "${path##*/}" "$now" "$ttl")" || n=""
             case "$n" in ''|*[!0-9]*) utest_retention_unlock; return 1 ;; esac
             if [ "$n" != "0" ]; then
                 leased=$(( leased + 1 ))
+                # The cap is a threshold, not a census: once it is reached the
+                # answer cannot change, and every further record scanned is
+                # pure latency on the lock that blocks retention.
+                [ "$leased" -lt "$lease_max" ] || break
             fi
         done
         if [ "$leased" -ge "$lease_max" ]; then utest_retention_unlock; return 1; fi
@@ -934,7 +1005,19 @@ utest_lease_acquire() {
     lid="$(od -An -N8 -tx1 /dev/urandom 2>/dev/null | tr -cd 'a-f0-9' || true)"
     [ -n "$lid" ] || lid="$(date -u +%s%N 2>/dev/null | tr -cd '0-9')"
     [ -n "$lid" ] || lid="0"
-    acq="$now"; exp="$(( now + ttl ))"
+    # RE-SAMPLE the clock here, not at entry. `now` was taken before a lock
+    # wait bounded at 10s and before an admission scan over every record, so
+    # publishing `entry_now + ttl` can hand back a lease that is ALREADY past
+    # its deadline -- with UTEST_LEASE_TTL=1 and two seconds of contention, the
+    # grant is expired before the caller sees it, and the next prune reclaims a
+    # record the reader was told it had.
+    acq="$(date -u +%s 2>/dev/null)"
+    case "$acq" in ''|*[!0-9]*) utest_retention_unlock; return 1 ;; esac
+    exp="$(( acq + ttl ))"
+    # A grant with no remaining lifetime is not a grant. Refusing sends the
+    # caller to the unleased fallback, which is honest; returning it would
+    # claim a protection that expires on the same tick.
+    if [ "$exp" -le "$acq" ]; then utest_retention_unlock; return 1; fi
     path="$rec/leases/$holder.$lid.lease"
     tmp="$rec/leases/.$lid.tmp"
     if ! utest_lease_doc_for "$run_id" "$holder" "$lid" "$acq" "$exp" > "$tmp" 2>/dev/null; then
@@ -983,7 +1066,7 @@ utest_lease_release() {
 utest_prune_records() {
     local keep="${UTEST_RECORD_KEEP:-20}" pin_max="${UTEST_POINTER_PIN_MAX:-64}" old pinned ptr
     local lease_max="${UTEST_LEASE_MAX:-8}" ttl="${UTEST_LEASE_TTL:-300}"
-    local now leased leased_all lockrc n_all n_kept n
+    local now leased leased_all lockrc n_all n_kept n all_records
     keep="$(utest_norm_bound "$keep" 20 10000)"
     # Zero records kept is nonsense, so the floor is applied here and not in
     # the shared normaliser -- the pin cap deliberately does NOT have one.
@@ -991,8 +1074,13 @@ utest_prune_records() {
     pin_max="$(utest_norm_bound "$pin_max" 64 10000)"
     lease_max="$(utest_norm_bound "$lease_max" 8 10000)"
     ttl="$(utest_norm_bound "$ttl" 300 86400)"
-    now="$(date -u +%s 2>/dev/null)"
-    case "$now" in ''|*[!0-9]*) now=0 ;; esac
+    # A ONE-SECOND FLOOR, matching what the doc promises. The shared normaliser
+    # deliberately has no floor (UTEST_POINTER_PIN_MAX=0 is a real opt-out), but
+    # a zero TTL here does not disable leases -- it expires every lease the
+    # instant it is written and makes acquisition refuse outright, so an
+    # operator reading "normalised into 1..86400" would silently switch the
+    # protection off. UTEST_LEASE_MAX=0 is the documented disable switch.
+    [ "$ttl" -ge 1 ] 2>/dev/null || ttl=300
 
     # EVERYTHING below runs under the retention mutex, which is what turns a
     # reader's lease from a hint into a guarantee: an acquirer publishes and
@@ -1012,6 +1100,15 @@ utest_prune_records() {
         echo -e "${YELLOW}[TEST]${RESET} retention SKIPPED this run -- a reader holds build/.test-retention.lock."
         return 0
     fi
+    # SAMPLE THE CLOCK AFTER THE LOCK, never before. The wait above is bounded
+    # at ten seconds, and an acquirer holding the lock publishes leases during
+    # it: a pre-lock `now` would see those perfectly valid, just-written leases
+    # as future-dated and unlink them, then prune the record a live reader had
+    # just been granted. Priming the identity cache here likewise happens once
+    # per prune, in THIS shell, so the per-lease scans below inherit it.
+    now="$(date -u +%s 2>/dev/null)"
+    case "$now" in ''|*[!0-9]*) now=0 ;; esac
+    utest_prime_ident
 
     # PIN the records the live per-leg pointers still resolve to. Age alone
     # would delete the record a `.run` pointer names, and that pointer is the
@@ -1069,24 +1166,27 @@ utest_prune_records() {
     # write a lease document -- and it ANNOUNCES itself when it bites, because a
     # disk bound that silently discards grants is how the pointer pin was nearly
     # got wrong too.
+    # ONE enumeration, reused by both passes below. It was walked and sorted
+    # twice -- once for lease classification and again for the age cut -- on the
+    # startup path, inside the mutex.
+    all_records="$(find "$RUNS_DIR" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | sort -r || true)"
+
     leased=""
     if [ "$lease_max" -gt 0 ]; then
         leased_all="$(
             {
-                find "$RUNS_DIR" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null |
-                    sort -r |
-                    while IFS= read -r old; do
-                        [ -n "$old" ] || continue
-                        # Validated, not used raw. "Anything but the string 0"
-                        # would let a counter failure read as LEASED and hold a
-                        # record against retention forever; an unreadable count
-                        # is treated as unleased, which is recoverable.
-                        n="$(utest_record_live_leases "$old" "$now" "$ttl")" || n=""
-                        case "$n" in ''|*[!0-9]*) n=0 ;; esac
-                        if [ "$n" != "0" ]; then
-                            printf '%s\n' "$old"
-                        fi
-                    done
+                while IFS= read -r old; do
+                    [ -n "$old" ] || continue
+                    # Validated, not used raw. "Anything but the string 0"
+                    # would let a counter failure read as LEASED and hold a
+                    # record against retention forever; an unreadable count
+                    # is treated as unleased, which is recoverable.
+                    n="$(utest_record_live_leases "$old" "$now" "$ttl")" || n=""
+                    case "$n" in ''|*[!0-9]*) n=0 ;; esac
+                    if [ "$n" != "0" ]; then
+                        printf '%s\n' "$old"
+                    fi
+                done <<< "$all_records"
             } || true
         )"
         leased="$(printf '%s' "$leased_all" | head -n "$lease_max")"
@@ -1097,22 +1197,40 @@ utest_prune_records() {
         fi
     fi
 
+    # Membership as SETS, not as a `grep` per candidate. The exemption lists are
+    # bounded by pin_max (64) and lease_max, and the candidate list by however
+    # many records have accumulated, so the old form spawned one grep per
+    # candidate on the startup path to answer a question bash can answer in
+    # process.
+    local -A pinned_set=() leased_set=()
+    if [ -n "$pinned" ]; then
+        while IFS= read -r old; do
+            [ -n "$old" ] || continue
+            pinned_set["$old"]=1
+        done <<< "$pinned"
+    fi
+    if [ -n "$leased" ]; then
+        while IFS= read -r old; do
+            [ -n "$old" ] || continue
+            leased_set["$old"]=1
+        done <<< "$leased"
+    fi
+
     {
-        find "$RUNS_DIR" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null |
-            sort -r | tail -n +$(( keep + 1 )) |
+        printf '%s\n' "$all_records" | tail -n +$(( keep + 1 )) |
             while IFS= read -r old; do
                 # %f yields a bare basename, so this can never escape RUNS_DIR,
                 # and the run now in progress is never a candidate.
                 [ -n "$old" ] || continue
                 [ "$old" = "$RUN_ID" ] && continue
-                if [ -n "$pinned" ] && printf '%s\n' "$pinned" | grep -Fxq -- "$old"; then
+                if [ -n "${pinned_set["$old"]+x}" ]; then
                     continue
                 fi
                 # A resolved generation a reader still holds. Unlike the pin,
                 # this survives the leg publishing again -- that is the entire
                 # point: the pin protects what the CURRENT pointer names, the
                 # lease protects what a reader ALREADY resolved.
-                if [ -n "$leased" ] && printf '%s\n' "$leased" | grep -Fxq -- "$old"; then
+                if [ -n "${leased_set["$old"]+x}" ]; then
                     continue
                 fi
                 rm -rf -- "$RUNS_DIR/$old"

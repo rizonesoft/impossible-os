@@ -12666,6 +12666,7 @@ echo "UTEST_FAIL=$UTEST_FAIL"
     UAR_LEASEFN="$(sed -n '/^utest_retention_lock() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
 $(sed -n '/^utest_retention_unlock() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
 $(sed -n '/^utest_proc_starttime() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
+$(sed -n '/^utest_prime_ident() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
 $(sed -n '/^utest_boot_id() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
 $(sed -n '/^utest_pid_ns_id() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
 $(sed -n '/^utest_lease_holder_state() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
@@ -13483,6 +13484,138 @@ utest_lease_holder_state "$2"' _ "$1" "$2" 2>&1
         else
             t_fail "reader lease: matching triple is LIVE; recycled pid, absent pid and prior boot are DEAD" \
                 "live=[$UAR_L14A] recycled=[$UAR_L14B] absent=[$UAR_L14C] reboot=[$UAR_L14D]"
+        fi
+        rm -rf "$UAR_TMP/fakeproc"
+
+        # (L15) A FUTURE acquired_at must be rejected, not clamped. Clamping it
+        #       up to each prune's own `now` and then computing `acq + ttl`
+        #       recomputes the deadline from a MOVING origin, so the lease is
+        #       renewed by every pass and never expires -- an immortal hold on a
+        #       record and on an admission slot, from a file anyone can write.
+        #       Pruning twice at increasing clock values is what distinguishes a
+        #       real bound from one that merely looks bounded on a single pass.
+        #       The holder is deliberately UNOBSERVABLE (a foreign PID
+        #       namespace), which is the actual attack: a file anyone can write,
+        #       naming a holder the pruner cannot evaluate. A future-dated lease
+        #       whose holder is provably LIVE is a different case and is
+        #       honoured -- see L19.
+        uar_lease_reset
+        uar_lease_put 20260102T000000Z-1-aaaa "1.1.4026500000.${UAR_LBID:-nobootid}" fut01 \
+            "999999999999" "999999999999"
+        UAR_L15A="$(uar_prune_run)"
+        UAR_L15B="$(uar_prune_run)"
+        if printf '%s' "$UAR_L15B" | grep -q 'HARNESS-OK' &&
+           ! printf '%s' "$UAR_L15A" | grep -q '20260102T000000Z-1-aaaa' &&
+           ! printf '%s' "$UAR_L15B" | grep -q '20260102T000000Z-1-aaaa'; then
+            t_pass "reader lease: a future acquired_at is rejected, so the TTL cannot be renewed by each prune"
+        else
+            t_fail "reader lease: a future acquired_at is rejected, so the TTL cannot be renewed by each prune" \
+                "pass1=$UAR_L15A pass2=$UAR_L15B"
+        fi
+
+        # (L16) Acquisition must not hand back a lease that is ALREADY expired.
+        #       `now` used to be sampled at entry, before a lock wait bounded at
+        #       10s and before the admission scan, so under contention the grant
+        #       could be past its deadline before the caller ever saw it. Here a
+        #       holder sits on the retention lock for longer than the TTL.
+        uar_lease_reset
+        uar_prune_ptr slow 20260102T000000Z-1-aaaa
+        ( flock -x 8; sleep 3; ) 8>>"$UAR_PDIR/build/.test-retention.lock" &
+        UAR_L16LOCK=$!
+        sleep 1
+        UAR_L16="$(uar_lease_acquire slow 'UTEST_LEASE_TTL=1')"
+        wait "$UAR_L16LOCK" 2>/dev/null || true
+        UAR_L16EXP=""
+        if [ -n "$UAR_L16" ]; then
+            UAR_L16EXP="$(sed -n 's/.*"expires_at": \([0-9]*\).*/\1/p' "${UAR_L16#* }" 2>/dev/null)"
+        fi
+        if [ -n "$UAR_L16" ] && [ -n "$UAR_L16EXP" ] &&
+           [ "$UAR_L16EXP" -gt "$(date -u +%s)" ]; then
+            t_pass "reader lease: a grant issued after lock contention is still live when it is returned"
+        else
+            t_fail "reader lease: a grant issued after lock contention is still live when it is returned" \
+                "acquire=[$UAR_L16] expires=[$UAR_L16EXP] now=$(date -u +%s)"
+        fi
+
+        # (L17) The DOCUMENTED example must be byte-identical to what the
+        #       emitter produces, because the validator regenerates and compares
+        #       byte for byte. The doc tells a consumer to write "the document
+        #       above", so a prettified example silently produces leases every
+        #       prune discards -- the reader believes it is protected and is not.
+        UAR_L17DOC="$(grep -h '"schema": "utest-reader-lease-v1"' \
+            "$REPO_ROOT/docs/testing/usermode-output-formats.md" | head -1)"
+        UAR_L17GEN="$(bash -c "$UAR_LEASEFN"'
+utest_lease_doc_for 20260731T104512Z-4711-9f2c1a0b \
+    4711.81368387.4026531836.07fa53da-a126-427f-a676-abe29dee42c9 \
+    44ba3df21fd76d24 1785549033 1785549333')"
+        if [ -n "$UAR_L17DOC" ] && [ "$UAR_L17DOC" = "$UAR_L17GEN" ]; then
+            t_pass "reader lease: the documented example is byte-identical to the production emitter"
+        else
+            t_fail "reader lease: the documented example is byte-identical to the production emitter" \
+                "doc=[$UAR_L17DOC] gen=[$UAR_L17GEN]"
+        fi
+
+        # (L18) A lease published WHILE the pruner waited for the lock must
+        #       survive. The pruner used to sample `now` before a wait bounded
+        #       at ten seconds, so a lease written a second later read as
+        #       future-dated and was unlinked -- the pruner destroying a grant
+        #       an acquirer had just been given, with both of them behaving
+        #       correctly. The lock holder here publishes a lease dated after
+        #       the waiter's entry, which is exactly that interleaving.
+        uar_lease_reset
+        ( flock -x 8; sleep 3; ) 8>>"$UAR_PDIR/build/.test-retention.lock" &
+        UAR_L18LOCK=$!
+        sleep 1
+        uar_lease_put 20260102T000000Z-1-aaaa "$UAR_LHOLD" late01 \
+            "$(date -u +%s)" "$(( $(date -u +%s) + 3600 ))"
+        UAR_L18="$(uar_prune_run)"
+        wait "$UAR_L18LOCK" 2>/dev/null || true
+        if printf '%s' "$UAR_L18" | grep -q 'HARNESS-OK' &&
+           printf '%s' "$UAR_L18" | grep -q '20260102T000000Z-1-aaaa'; then
+            t_pass "reader lease: a lease published while the pruner waited for the lock is not read as future-dated"
+        else
+            t_fail "reader lease: a lease published while the pruner waited for the lock is not read as future-dated" "$UAR_L18"
+        fi
+
+        # (L19) and a genuinely future-dated lease held by a LIVE process still
+        #       survives, because the clock is the thing that moved, not the
+        #       reader. Rejecting every future timestamp closed the immortal
+        #       -lease hole (L15) and opened its mirror: after an NTP
+        #       correction or a VM restore a valid lease looks future-dated,
+        #       and revoking it mid-read is the one outcome the lease exists to
+        #       prevent. Liveness decides, since a clock cannot corrupt that.
+        uar_lease_reset
+        uar_lease_put 20260102T000000Z-1-aaaa "$UAR_LHOLD" skew01 \
+            "$(( UAR_LNOW + 86400 ))" "$(( UAR_LNOW + 90000 ))"
+        UAR_L19="$(uar_prune_run)"
+        if printf '%s' "$UAR_L19" | grep -q 'HARNESS-OK' &&
+           printf '%s' "$UAR_L19" | grep -q '20260102T000000Z-1-aaaa'; then
+            t_pass "reader lease: a future-dated lease with a LIVE holder survives a backwards clock"
+        else
+            t_fail "reader lease: a future-dated lease with a LIVE holder survives a backwards clock" "$UAR_L19"
+        fi
+
+        # (L20) The identity memoisation must actually PERSIST. Caching inside
+        #       utest_boot_id does nothing on its own: every caller reads it as
+        #       `$(utest_boot_id)`, a subshell, so the assignment is discarded
+        #       and procfs is re-read on every call -- 4-5 forks per lease, the
+        #       exact cost the cache was added to remove. Priming in the calling
+        #       shell is the fix, and deleting the fixture's boot_id after the
+        #       prime proves the value is being served from the cache rather
+        #       than re-read.
+        UAR_FP="$(uar_fakeproc hasinit 4242 81368387)"
+        UAR_L20="$(UAR_FP="$UAR_FP" bash -c '
+set -uo pipefail
+UTEST_PROC="$UAR_FP"
+'"$UAR_LEASEFN"'
+utest_prime_ident
+rm -f "$UTEST_PROC/sys/kernel/random/boot_id" "$UTEST_PROC/self/ns/pid"
+printf "boot=%s ns=%s\n" "$(utest_boot_id)" "$(utest_pid_ns_id)"' 2>&1)"
+        if printf '%s' "$UAR_L20" | grep -q 'boot=aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee ns=4026531836'; then
+            t_pass "reader lease: the identity cache is primed in the calling shell, so subshell reads are served from it"
+        else
+            t_fail "reader lease: the identity cache is primed in the calling shell, so subshell reads are served from it" \
+                "$UAR_L20"
         fi
         rm -rf "$UAR_TMP/fakeproc"
     fi

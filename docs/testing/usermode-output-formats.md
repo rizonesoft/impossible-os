@@ -740,10 +740,14 @@ step, a pipeline reading over a mount. Such a reader takes a **lease** on the
 generation it resolved, and retention then may not remove that record while the
 lease is live:
 
+**One line, and the line breaks are not cosmetic.** The validator regenerates
+this document from the fields it reads and compares it byte for byte, so a
+consumer that copies a prettified version writes a lease the next prune treats
+as malformed and removes -- silently losing the protection it thinks it has.
+This is the exact byte sequence, wrapped here only by your viewer:
+
 ```json
-{ "schema": "utest-reader-lease-v1", "run_id": "20260731T104512Z-4711-9f2c1a0b",
-  "holder": "4711.81368387.4026531836.07fa53da-a126-427f-a676-abe29dee42c9",
-  "lease_id": "44ba3df21fd76d24", "acquired_at": 1785549033, "expires_at": 1785549333 }
+{ "schema": "utest-reader-lease-v1", "run_id": "20260731T104512Z-4711-9f2c1a0b", "holder": "4711.81368387.4026531836.07fa53da-a126-427f-a676-abe29dee42c9", "lease_id": "44ba3df21fd76d24", "acquired_at": 1785549033, "expires_at": 1785549333 }
 ```
 
 **Ordering is the whole mechanism, and the obvious construction does not work.**
@@ -784,14 +788,24 @@ for its entire body. Take it exclusively (`flock`), then:
 
 **A lease is bounded in three independent ways, because it must not turn
 `UTEST_RECORD_KEEP` back into a suggestion.** It expires at
-`UTEST_LEASE_TTL` (300s) after `acquired_at` -- the pruner applies that ceiling
-itself rather than trusting `expires_at`, since a bound only the writer enforces
-is not a bound. A holder that is *provably* gone (readable `/proc`, matching PID
+`UTEST_LEASE_TTL` (300s, normalised into 1..86400) after `acquired_at` -- the
+pruner applies that ceiling itself rather than trusting `expires_at`, since a
+bound only the writer enforces is not a bound. An `acquired_at` in the FUTURE is
+resolved by the holder's LIVENESS, because neither obvious answer is safe:
+clamping it forward on each pass recomputes the deadline from a moving origin
+and renews the lease forever, while deleting it outright revokes a valid lease
+after an NTP correction or a VM restore -- mid-read, which is the one thing the
+lease promises will not happen. A future-dated lease whose holder is provably
+LIVE is honoured; one whose holder cannot be observed is swept. The pruner also
+samples its clock only after taking the mutex, so a lease published by an
+acquirer while the pruner was waiting is never mistaken for a future one. A holder that is *provably* gone (readable `/proc`, matching PID
 namespace, matching boot id, and the pid absent or carrying a different start
 time) is reclaimed before the TTL; every failure to *observe* is treated as
 UNKNOWN and waits out the TTL instead, because a wrong "dead" verdict deletes a
-record a live reader is using. UNKNOWN specifically covers: no `/proc`; an
-unreadable or unparseable stat; a holder from a **different PID namespace** (a
+record a live reader is using. **The rule is that only positive, readable evidence yields a verdict; anything
+else is UNKNOWN.** Concretely that covers: no `/proc`; an unreadable or
+unparseable `stat`; an unreadable boot id or PID-namespace id; a holder whose
+own fields do not parse; a holder from a **different PID namespace** (a
 container sharing `build/` records a namespace-local pid, commonly 1, and
 reading that against the host's `/proc/1` would find a different start time and
 conclude the reader had died); a holder carrying a **degraded sentinel**
@@ -802,7 +816,9 @@ processes** (`hidepid=2` makes another user's live process invisible, and a
 plain existence test cannot tell that from the process being gone -- so absence
 is only taken as evidence when `/proc/1` is visible, which is exactly the
 question "would this procfs have shown it to me?"). And the count of
-leased records is capped at acquisition. The lease is meant to cover
+leased records is capped at acquisition by `UTEST_LEASE_MAX` (8, normalised into
+0..10000, where 0 disables leases outright -- the same shape as
+`UTEST_POINTER_PIN_MAX`). The lease is meant to cover
 resolve-to-open, which is milliseconds; the TTL is a leak-catcher, not a working
 lifetime.
 
