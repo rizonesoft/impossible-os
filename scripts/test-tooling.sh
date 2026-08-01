@@ -11802,7 +11802,7 @@ UMODE_C="$REPO_ROOT/src/kernel/test/test_usermode.c"
 # A helper that appends one fragment TWICE builds a string wider than its
 # size macro measures, while every membership rule still holds -- the exact
 # hole a set check cannot see.
-sed 's|    u_append(dst, \&rp, cap, UTEST_RSNC_ISOLATE);|    u_append(dst, \&rp, cap, UTEST_RSNC_ISOLATE);\n    u_append(dst, \&rp, cap, UTEST_RSNC_ISOLATE);|' \
+sed 's|    u_append(\*dst, \&rp, UTEST_REASON_BUF, UTEST_RSNC_ISOLATE);|    u_append(*dst, \&rp, UTEST_REASON_BUF, UTEST_RSNC_ISOLATE);\n    u_append(*dst, \&rp, UTEST_REASON_BUF, UTEST_RSNC_ISOLATE);|' \
     "$UMODE_C" > "$RLINT_TMP/dup-fragment.c"
 RL_OUT="$(python3 "$RLINT" --check "$RLINT_TMP/dup-fragment.c" 2>&1 || true)"
 python3 "$RLINT" --check "$RLINT_TMP/dup-fragment.c" >/dev/null 2>&1 && RL_RC=0 || RL_RC=$?
@@ -11815,7 +11815,7 @@ fi
 
 # A bare literal at the call site is the ORIGINAL failure shape: it can be
 # widened without the size macro following it.
-sed 's|    u_append(dst, \&rp, cap, UTEST_RSNC_INVALID);|    u_append(dst, \&rp, cap, "invalid test report");|' \
+sed 's|    u_append(\*dst, \&rp, UTEST_REASON_BUF, UTEST_RSNC_INVALID);|    u_append(*dst, \&rp, UTEST_REASON_BUF, "invalid test report");|' \
     "$UMODE_C" > "$RLINT_TMP/bare-literal.c"
 RL_OUT="$(python3 "$RLINT" --check "$RLINT_TMP/bare-literal.c" 2>&1 || true)"
 python3 "$RLINT" --check "$RLINT_TMP/bare-literal.c" >/dev/null 2>&1 && RL_RC=0 || RL_RC=$?
@@ -11863,8 +11863,8 @@ s = open(src, encoding="utf-8").read()
 s = s.replace('#define UTEST_RSNC_ISOLATE      "isolation failed"',
               '#define UTEST_RSNC_ISOLATE      "isolation failed"\n'
               '#define SNEAK_APPEND(d,p,c) u_append((d),(p),(c),UTEST_RSNC_ISOLATE)')
-s = s.replace("    u_append(dst, &rp, cap, UTEST_RSNC_ISOLATE);\n}",
-              "    u_append(dst, &rp, cap, UTEST_RSNC_ISOLATE);\n"
+s = s.replace("    u_append(*dst, &rp, UTEST_REASON_BUF, UTEST_RSNC_ISOLATE);\n}",
+              "    u_append(*dst, &rp, UTEST_REASON_BUF, UTEST_RSNC_ISOLATE);\n"
               "    SNEAK_APPEND(dst, &rp, cap);\n}")
 open(dst, "w", encoding="utf-8").write(s)
 PY
@@ -11883,9 +11883,9 @@ python3 - "$UMODE_C" "$RLINT_TMP/loop-append.c" <<'PY'
 import sys
 src, dst = sys.argv[1], sys.argv[2]
 s = open(src, encoding="utf-8").read()
-s = s.replace("    u_append(dst, &rp, cap, UTEST_RSNC_ISOLATE);\n}",
+s = s.replace("    u_append(*dst, &rp, UTEST_REASON_BUF, UTEST_RSNC_ISOLATE);\n}",
               "    for (int i = 0; i < 3; i++)\n"
-              "        u_append(dst, &rp, cap, UTEST_RSNC_ISOLATE);\n}")
+              "        u_append(*dst, &rp, UTEST_REASON_BUF, UTEST_RSNC_ISOLATE);\n}")
 open(dst, "w", encoding="utf-8").write(s)
 PY
 RL_OUT="$(python3 "$RLINT" --check "$RLINT_TMP/loop-append.c" 2>&1 || true)"
@@ -11935,8 +11935,8 @@ s = open(src, encoding="utf-8").read()
 s = s.replace('#define UTEST_RSNC_ISOLATE      "isolation failed"',
               '#define UTEST_RSNC_ISOLATE      "isolation failed"\n'
               '#define HIDDEN(d,p,c) u_append((d),(p),(c),UTEST_RSNC_ISOLATE)')
-s = s.replace("    u_append(dst, &rp, cap, UTEST_RSNC_ISOLATE);\n}",
-              "    u_append(dst, &rp, cap, UTEST_RSNC_ISOLATE);\n"
+s = s.replace("    u_append(*dst, &rp, UTEST_REASON_BUF, UTEST_RSNC_ISOLATE);\n}",
+              "    u_append(*dst, &rp, UTEST_REASON_BUF, UTEST_RSNC_ISOLATE);\n"
               "    (void)'}';\n    HIDDEN(dst, &rp, cap);\n}")
 open(dst, "w", encoding="utf-8").write(s)
 PY
@@ -11956,10 +11956,10 @@ python3 - "$UMODE_C" "$RLINT_TMP/comment-strip.c" <<'PY'
 import sys
 src, dst = sys.argv[1], sys.argv[2]
 s = open(src, encoding="utf-8").read()
-s = s.replace("    u_append(dst, &rp, cap, UTEST_RSNC_ISOLATE);\n}",
-              "    u_append(dst, &rp, cap, UTEST_RSNC_ISOLATE);\n"
+s = s.replace("    u_append(*dst, &rp, UTEST_REASON_BUF, UTEST_RSNC_ISOLATE);\n}",
+              "    u_append(*dst, &rp, UTEST_REASON_BUF, UTEST_RSNC_ISOLATE);\n"
               '    const char *open = "/*";\n'
-              "    u_append(dst, &rp, cap, UTEST_RSNC_ISOLATE);\n"
+              "    u_append(*dst, &rp, UTEST_REASON_BUF, UTEST_RSNC_ISOLATE);\n"
               '    const char *close = "*/";\n'
               "    (void)open; (void)close;\n}")
 open(dst, "w", encoding="utf-8").write(s)
@@ -11977,7 +11977,7 @@ fi
 # cannot see the VALUE, so the parameter TYPE is what pins it to the ten
 # digits UTEST_DIGITS_U32 reserves. Widening one must trip the check rather
 # than silently making the derived name bound false.
-sed 's|static void u_reason_leak(char \*dst, uint32_t cap, uint32_t leaked)|static void u_reason_leak(char *dst, uint32_t cap, uint64_t leaked)|' \
+sed 's|static void u_reason_leak(char (\*dst)\[UTEST_REASON_BUF\], uint32_t leaked)|static void u_reason_leak(char (*dst)[UTEST_REASON_BUF], uint64_t leaked)|' \
     "$UMODE_C" > "$RLINT_TMP/wide-param.c"
 RL_OUT="$(python3 "$RLINT" --check "$RLINT_TMP/wide-param.c" 2>&1 || true)"
 python3 "$RLINT" --check "$RLINT_TMP/wide-param.c" >/dev/null 2>&1 && RL_RC=0 || RL_RC=$?
@@ -11985,6 +11985,22 @@ if [ "$RL_RC" = "1" ] && printf '%s' "$RL_OUT" | grep -q 'reserves UTEST_DIGITS_
     t_pass "utest reason lint: a helper parameter wider than its digit term is refused"
 else
     t_fail "utest reason lint: a helper parameter wider than its digit term is refused" \
+        "rc=$RL_RC out=$RL_OUT"
+fi
+
+# A `%` inside a fragment. Harmless while fragments were only ever appended as
+# DATA; the moment they are also concatenated into printf-style format strings
+# -- which this section made them -- a `%` becomes a conversion specifier
+# consuming an argument nobody passed, and klog carries no format attribute to
+# diagnose it.
+sed 's|#define UTEST_RSNC_ISOLATE      "isolation failed"|#define UTEST_RSNC_ISOLATE      "isolation %s failed"|' \
+    "$UMODE_C" > "$RLINT_TMP/percent-fragment.c"
+RL_OUT="$(python3 "$RLINT" --check "$RLINT_TMP/percent-fragment.c" 2>&1 || true)"
+python3 "$RLINT" --check "$RLINT_TMP/percent-fragment.c" >/dev/null 2>&1 && RL_RC=0 || RL_RC=$?
+if [ "$RL_RC" = "1" ] && printf '%s' "$RL_OUT" | grep -q 'contains a `%`'; then
+    t_pass "utest reason lint: a percent sign inside a fragment is refused"
+else
+    t_fail "utest reason lint: a percent sign inside a fragment is refused" \
         "rc=$RL_RC out=$RL_OUT"
 fi
 
@@ -12024,6 +12040,80 @@ if grep -q '#define UTEST_RSN_TASK_CREATE "task_create failed"' "$UMODE_C" &&
 else
     t_fail "utest task_create: the reason is measured and the caller verdict stays explicit" \
         "the reason is unmeasured, or *out_verdict is no longer set on that path"
+fi
+
+# 6r2h. TAP and the machine artifacts must publish ONE reason per verdict
+#       (section 44 review). The TAP branch used to re-derive a reason from
+#       the flags while XML/JSON carried the finalized `reason`, and the two
+#       disagreed on every case where the flags do not pick what the
+#       escalation chain stored -- both reachable:
+#         * a PASS that leaked AND failed isolation stores the LEAK reason,
+#           but the `!isolation_failed` guard sent TAP to the isolation branch;
+#         * an invalid self-report escalating a PASS or SKIP stores
+#           "invalid test report" while the fallback emitted exit=0 / exit=77.
+#       Asserted structurally: exactly one failing TAP emit, fed by `reason`,
+#       and no per-branch re-derivation buffer left behind.
+UMODE_TAPBLOCK="$(sed -n '/Single verdict emit: exactly one \[UTEST\] line/,/^    \/\* Extra WARN context/p'                   "$REPO_ROOT/src/kernel/test/test_usermode.c")"
+TAP_FAIL_EMITS="$(printf '%s' "$UMODE_TAPBLOCK" | grep -c 'u_emit_tap_point(0,' || true)"
+if [ "$TAP_FAIL_EMITS" = "1" ] &&
+   printf '%s' "$UMODE_TAPBLOCK" | grep -q 'u_emit_tap_point(0, test_num, name_copy, reason)' &&
+   ! printf '%s' "$UMODE_TAPBLOCK" | grep -q 'char d\[' ; then
+    t_pass "utest verdict: TAP publishes the same finalized reason the records carry"
+else
+    t_fail "utest verdict: TAP publishes the same finalized reason the records carry" \
+        "failing-TAP emits=$TAP_FAIL_EMITS (expected 1 fed by \`reason\`, no per-branch buffer)"
+fi
+
+# The compound and invalid-report paths are the two that used to disagree, so
+# assert the escalation chain still STORES a reason on both -- a single TAP
+# emit fed by an empty `reason` would be a different silent regression.
+if grep -q 'reason\[0\] == .\\0. && leaked > 0 && \*out_verdict == 1' \
+        "$REPO_ROOT/src/kernel/test/test_usermode.c" &&
+   grep -q 'if (!was_failing && reason\[0\] == .\\0.)' \
+        "$REPO_ROOT/src/kernel/test/test_usermode.c"; then
+    t_pass "utest verdict: the leak and invalid-report escalations still populate reason"
+else
+    t_fail "utest verdict: the leak and invalid-report escalations still populate reason" \
+        "an escalation path no longer stores a reason for TAP to publish"
+fi
+
+# 6r2i. The composing helpers' capacity must be enforced by the TYPE, not by a
+#       comment. `char dst[UTEST_REASON_BUF]` as a parameter is adjusted to
+#       `char *` (C11 6.7.6.3p7), so it documents an intent the compiler never
+#       checks -- a short caller buffer would still be accepted while the
+#       helper writes 96 bytes into it. Pointer-to-array keeps the extent in
+#       the type. Proven by COMPILING both shapes rather than asserting the
+#       spelling: the short-buffer call must be rejected.
+if [ "$(grep -c 'static void u_reason_[a-z]*(char (\*dst)\[UTEST_REASON_BUF\]' \
+        "$REPO_ROOT/src/kernel/test/test_usermode.c")" = "5" ]; then
+    t_pass "utest reason helpers: all five pin their capacity in the parameter type"
+else
+    t_fail "utest reason helpers: all five pin their capacity in the parameter type" \
+        "a helper takes a decaying array or pointer parameter instead"
+fi
+
+if command -v clang-19 >/dev/null 2>&1; then
+    PTRARR_TMP="$RLINT_TMP/ptrarray"
+    mkdir -p "$PTRARR_TMP"
+    cat > "$PTRARR_TMP/ok.c" <<'CEOF'
+#define UTEST_REASON_BUF 96u
+static void u_reason_isolate(char (*dst)[UTEST_REASON_BUF]) { (*dst)[0] = 0; }
+void caller(void) { char reason[UTEST_REASON_BUF]; u_reason_isolate(&reason); }
+CEOF
+    sed 's/char reason\[UTEST_REASON_BUF\]/char reason[48]/' \
+        "$PTRARR_TMP/ok.c" > "$PTRARR_TMP/short.c"
+    clang-19 --target=x86_64-elf -ffreestanding -nostdlib -nostdinc -c \
+        -o /dev/null "$PTRARR_TMP/ok.c" >/dev/null 2>&1 && PA_OK=0 || PA_OK=$?
+    clang-19 --target=x86_64-elf -ffreestanding -nostdlib -nostdinc -Werror -c \
+        -o /dev/null "$PTRARR_TMP/short.c" >/dev/null 2>&1 && PA_SHORT=0 || PA_SHORT=$?
+    if [ "$PA_OK" = "0" ] && [ "$PA_SHORT" != "0" ]; then
+        t_pass "utest reason helpers: a short caller buffer is a COMPILE error, not a comment"
+    else
+        t_fail "utest reason helpers: a short caller buffer is a COMPILE error, not a comment" \
+            "correctly-sized rc=$PA_OK (want 0), short-buffer rc=$PA_SHORT (want nonzero)"
+    fi
+else
+    t_pass "utest reason helpers: short-buffer compile check skipped (clang-19 absent)"
 fi
 
 # 6r3. Producer and consumer must spell the incomplete-run marker identically.

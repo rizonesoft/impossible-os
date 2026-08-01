@@ -1790,9 +1790,8 @@ Three findings from §37's review round 10 that are real but out of that section
       - Shipped: `utest-json-harvest.py` appends one `record_kind:"infrastructure"` / `synthetic:true` / `status:"ERROR"` record named `suite-abort` after ALL producer reconciliation, so a `.testcases[]`-only walk reds a cut-short run.
       - The design review rejected the first shape: bumping `summary.total` and `reported.binaries_unreported` would publish a binary that never existed. Producer counters are untouched; the host dimension is stated as `summary.synthetic_errors` + `summary.testcase_total` (`== total + synthetic_errors`), written on every run so absent means "predates the dimension", never zero.
       - Appended AFTER the capture-model orphan reconciliation, so `suite-abort` never enters capture matching as a captureless binary.
-      - **The consequence is the exact false-completeness class this whole subsystem exists to close**: a consumer following the doc's own worked recipe (`jq -c '.testcases[] | {name, status, time_ms}'`) sees a smaller but internally consistent, apparently-green set on an aborted run, and every count reconciles because the binaries that never ran were never published as records.
-      - **JSON's stated audience makes it worse, not better** -- the doc names dashboards, trend analysis and regression bisect, which are precisely the generic consumers least likely to special-case a boolean.
-      - **Shape**: emit a synthetic `record_kind:"binary"` ERROR record mirroring the XML `suite-abort` one, and reconcile it on both sides like every other record; keep `summary.aborted` as well, since a structured consumer should not have to pattern-match a name.
+      - The class it closed (as filed): a consumer following the doc's own worked recipe (`jq -c '.testcases[] | {name, status, time_ms}'`) SAW a smaller but internally consistent, apparently-green set on an aborted run, because the binaries that never ran were never published as records -- and JSON's stated audience is dashboards, trend analysis and bisect, the consumers least likely to special-case a boolean.
+      - The originally FILED shape was a `record_kind:"binary"` record reconciled like any other. That is NOT what shipped and must not be revived: design review showed it would move producer counters to describe a binary that never existed. Superseded by the `infrastructure` + `synthetic_errors`/`testcase_total` decision recorded above.
       -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §37 (item: "Decided: a refusal belongs in JUnit `<error>`, and the accounting was extended to match")
 - [x] Extend the reason-width lint to the five LAUNCHER-COMPOSED reasons, not just the refusal set -- by ORDERED composition, not membership
       `scripts/utest-reason-lint.py` (§37) bound the `UTEST_RSN_*` refusal literals to their size tree, which is 9 of the 14 reason widths. The other five -- `UTEST_REASON_TIMEOUT`/`EXIT`/`LEAK`/`ISOLATE`/`INVALID` -- were composed from literals hand-duplicated at their call sites with no macro and no lint tying the two copies together.
@@ -1811,15 +1810,18 @@ Three findings from §37's review round 10 that are real but out of that section
 
 **Test checkpoint:** an aborted run's JSON artifact carries a synthetic never-ran ERROR record that a consumer walking `testcases[]` alone reads as red, published OUTSIDE the producer's counters and declared by `synthetic_errors`/`testcase_total`; the reason lint fails when any of the five composed reason literals is widened, duplicated, or written bare at a call site without its size term following; the `task_create` failure path publishes a framed verdict line and the host's fail-closed recount agrees with the summary on that path. Test on: QEMU TCG, QEMU KVM.
 
-> **Test runner:** `bash scripts/test-tooling.sh` | 1077/1077 tooling tests pass (16 new: 3 JSON abort/schema + 11 composed-reason lint + 2 task_create structural); `bash scripts/test.sh QUIET=1` | 27965 kernel + 17 user-mode PASS.
+> **Test runner:** `bash scripts/test-tooling.sh` | 1082/1082 tooling tests pass (20 new: 3 JSON abort/schema + 11 composed-reason lint + 2 task_create + 2 TAP-reason + 2 buffer-contract, incl. a clang compile fixture); `bash scripts/test.sh QUIET=1` | 27965 kernel + 17 user-mode PASS.
 
 > **Notes:**
 > - Shipped: a host-synthesized `suite-abort` ERROR record in the JSON artifact, `UTEST_RSNC_*` fragments composed by five single-purpose `u_reason_*()` helpers, and the `task_create` failure path routed through `u_publish_never_ran`.
 > - Integrates by keeping host projection and producer accounting in separate dimensions: `summary.synthetic_errors`/`testcase_total` beside untouched `total`/`errors`/`reported.*`.
-> - Downstream: `scripts/utest-reason-lint.py` now fails CLOSED on a renamed composing helper, and `docs/testing/usermode-output-formats.md` gains the `infrastructure` record kind plus a producer-only `jq` recipe.
+> - Downstream: review also unified the failing TAP point onto the finalized `reason` (it re-derived one from flags and disagreed with the artifacts on compound-leak and invalid-report verdicts), and `docs/testing/usermode-output-formats.md` gains the `infrastructure` record kind, the v2 schema, and explicit array invariants.
 > - Canonical doc: [docs/testing/usermode-output-formats.md](../../docs/testing/usermode-output-formats.md).
-> - Scope boundary: the derived `UTEST_MAX_BINARY_NAME` is unchanged -- every new literal fits inside the pre-existing `UTEST_RSN_SHAPE` maximum.
+> - Scope boundary: the derived `UTEST_MAX_BINARY_NAME` is unchanged -- every new literal fits inside the pre-existing `UTEST_RSN_SHAPE` maximum, and the helpers pin their buffer via `char (*dst)[UTEST_REASON_BUF]` so a short caller is a compile error.
 > - Verification surfaced two HEAD-side defects outside this scope, filed rather than fixed here -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §51 (item: "Find which assertions vary and make the total a fact about the code rather than about the host's heap state").
+
+> **Verified:** 2026-08-01 | commit `0d91139e` | 4/4 items | build OK | 27965 kernel + 17 user-mode PASS, 1082/1082 tooling, lint 0 errors
+> **Quality reviewed:** 2026-08-01 | Codex 9x (design, adversarial x3, re-adversarial x2, consistency, perf x2) | 2H+9M+4L fixed, 0 open | scope: kernel-code-quality (kernel-quality-auditor + concurrency-evidence-mapper); final adversarial + perf both approve, 0 findings
 
 ---
 

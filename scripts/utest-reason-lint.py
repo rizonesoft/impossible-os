@@ -111,7 +111,10 @@ _APPEND_RE = re.compile(r"\bu_append\s*\([^;]*?,\s*"
                         r"|\b(u_append_uint)\s*\(")
 _BARE_APPEND_RE = re.compile(r"\bu_append\s*\([^;]*?,\s*(\"(?:[^\"\\]|\\.)*\")"
                              r"\s*\)")
-_HELPER_RE_TMPL = r"^static\s+void\s+%s\s*\([^)]*\)\s*\n\{"
+# The parameter list contains nested parens (`char (*dst)[N]`), so the scan
+# allows ONE level rather than stopping at the first `)`.
+_PARAMS = r"(?:[^()]|\([^()]*\))*"
+_HELPER_RE_TMPL = r"^static\s+void\s+%s\s*\(" + _PARAMS + r"\)\s*\n\{"
 
 # The ordered check reads the helper body as TEXT: it does not preprocess, so
 # an append reaching u_append through a MACRO is invisible to it. That hole
@@ -143,6 +146,13 @@ _FORBIDDEN_KEYWORD_RE = re.compile(r"\b(while|for|do|goto|switch)\b")
 _FRAG_BODY_RE = re.compile(
     r"^\s*#\s*define\s+(UTEST_RSNC_[A-Z0-9_]+)\s+(.*)$")
 _STRING_SEQ_RE = re.compile(r'^(?:"(?:[^"\\]|\\.)*"\s*)+$')
+# A fragment is now spliced into printf-style FORMAT strings as well as
+# appended as data (the human verdict lines concatenate it), and klog carries
+# no `__attribute__((format(printf, ...)))`, so a `%` inside one would become
+# an undiagnosed conversion specifier consuming a vararg that was never
+# passed. Harmless while fragments were only ever u_append'ed; a real hazard
+# the moment they reached a format string.
+_FRAG_PERCENT_RE = re.compile(r"%")
 # The append primitives must be FUNCTIONS, not macros. A `#define u_append(...)`
 # expanding to two real appends leaves the helper body spelling only the
 # allowed token, so every check above passes while the composed string is
@@ -245,17 +255,19 @@ def helper_numeric_params(text, name):
     body extractor does: a check that cannot find its subject has verified
     nothing.
     """
-    match = re.search(r"^static\s+void\s+%s\s*\(([^)]*)\)" % re.escape(name),
+    match = re.search(r"^static\s+void\s+%s\s*\((%s)\)" % (re.escape(name), _PARAMS),
                       text, re.MULTILINE)
     if match is None:
         raise LookupError("no `static void %s(...)` signature found" % name)
     types = []
     for param in match.group(1).split(","):
         param = param.strip()
-        if not param or "*" in param:
-            continue          # the destination buffer, not a numeric term
+        # The destination buffer is not a numeric term, in either spelling:
+        # `char *dst` or the sized `char dst[UTEST_REASON_BUF]`.
+        if not param or "*" in param or "[" in param:
+            continue
         words = param.split()
-        if len(words) >= 2 and words[-1] != "cap":
+        if len(words) >= 2:
             types.append((words[-1], " ".join(words[:-1])))
     return types
 
@@ -329,12 +341,21 @@ def check_composed(path, text, fragments):
                 "over a string wider than its bound"
                 % (path, match.group(1)))
         match = _FRAG_BODY_RE.match(line)
-        if match and not _STRING_SEQ_RE.match(match.group(2).strip()):
-            violations.append(
-                "%s: %s is not a plain string literal (%s) -- UTEST_LIT is "
-                "sizeof(s)-1, so anything that decays is measured as a "
-                "pointer while the full text is still appended"
-                % (path, match.group(1), match.group(2).strip()[:40]))
+        if match:
+            body = match.group(2).strip()
+            if not _STRING_SEQ_RE.match(body):
+                violations.append(
+                    "%s: %s is not a plain string literal (%s) -- UTEST_LIT "
+                    "is sizeof(s)-1, so anything that decays is measured as a "
+                    "pointer while the full text is still appended"
+                    % (path, match.group(1), body[:40]))
+            elif _FRAG_PERCENT_RE.search(body):
+                violations.append(
+                    "%s: %s contains a `%%` -- fragments are spliced into "
+                    "printf-style format strings as well as appended as data, "
+                    "and klog has no format attribute, so it would be read as "
+                    "a conversion specifier consuming an absent argument"
+                    % (path, match.group(1)))
     for macro, helper in COMPOSED:
         macro_body = extract_macro_body(text, macro)
         helper_body = extract_function_body(text, helper)

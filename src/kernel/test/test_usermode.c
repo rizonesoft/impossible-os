@@ -2510,56 +2510,74 @@ _Static_assert(UTEST_REASON_MAX < UTEST_REASON_BUF,
  * binding by name cannot drift without the lint losing its subject, which it
  * reports as a hard error rather than a pass.
  *
- * Every write starts at offset 0 and the appends are individually bounds
- * checked, so a caller passing its own `reason[UTEST_REASON_BUF]` gets the
- * same overwrite-from-empty behaviour the inline blocks had. The static
- * assert above proves none of these compositions can reach that bound. */
-static void u_reason_timeout(char *dst, uint32_t cap, uint32_t ms)
+ * There is deliberately NO `cap` parameter. `u_append` returns 0 on overflow
+ * WITHOUT terminating (it checks `p + 1 >= cap` before each byte and returns
+ * having already written the ones that fit), so a helper handed a short
+ * buffer would leave it unterminated -- and these five discard that return,
+ * because the static assert above proves no composition can reach the bound.
+ * That proof is about UTEST_REASON_BUF specifically, so the capacity is
+ * pinned by the PARAMETER TYPE.
+ *
+ * The type is `char (*dst)[UTEST_REASON_BUF]`, pointer-to-array, and callers
+ * pass `&reason`. A plain `char dst[UTEST_REASON_BUF]` would NOT do it: a
+ * sized array parameter is adjusted to `char *` (C11 6.7.6.3p7), so it
+ * documents an intent the compiler never checks and a short buffer would
+ * still be accepted while the helper wrote 96 bytes into it -- turning what
+ * had been bounded truncation into memory corruption. Pointer-to-array keeps
+ * the extent in the type, so passing a `char d[48]` is a constraint
+ * violation the build rejects. Each helper still writes a terminator FIRST,
+ * so the buffer is a valid empty string before any append runs. */
+static void u_reason_timeout(char (*dst)[UTEST_REASON_BUF], uint32_t ms)
 {
     uint32_t rp = 0;
 
-    u_append(dst, &rp, cap, UTEST_RSNC_TIMEOUT_PRE);
-    u_append_uint(dst, &rp, cap, ms);
-    u_append(dst, &rp, cap, UTEST_RSNC_TIMEOUT_POST);
+    (*dst)[0] = '\0';
+    u_append(*dst, &rp, UTEST_REASON_BUF, UTEST_RSNC_TIMEOUT_PRE);
+    u_append_uint(*dst, &rp, UTEST_REASON_BUF, ms);
+    u_append(*dst, &rp, UTEST_REASON_BUF, UTEST_RSNC_TIMEOUT_POST);
 }
 
-static void u_reason_exit(char *dst, uint32_t cap, int32_t status)
+static void u_reason_exit(char (*dst)[UTEST_REASON_BUF], int32_t status)
 {
     uint32_t rp = 0;
 
+    (*dst)[0] = '\0';
     /* u_append_uint is the only numeric appender, so the sign is carried
      * separately -- which is why the size macro counts it unconditionally. */
-    u_append(dst, &rp, cap, UTEST_RSNC_EXIT);
+    u_append(*dst, &rp, UTEST_REASON_BUF, UTEST_RSNC_EXIT);
     if (status < 0)
-        u_append(dst, &rp, cap, UTEST_RSNC_NEG);
+        u_append(*dst, &rp, UTEST_REASON_BUF, UTEST_RSNC_NEG);
     /* Widened BEFORE the negation: -INT32_MIN is not representable in
      * int32_t, so negating in the parameter's own width would be signed
      * overflow on the one input that most wants to render correctly. */
-    u_append_uint(dst, &rp, cap,
+    u_append_uint(*dst, &rp, UTEST_REASON_BUF,
                   status < 0 ? (uint64_t)(-(int64_t)status)
                              : (uint64_t)status);
 }
 
-static void u_reason_leak(char *dst, uint32_t cap, uint32_t leaked)
+static void u_reason_leak(char (*dst)[UTEST_REASON_BUF], uint32_t leaked)
 {
     uint32_t rp = 0;
 
-    u_append_uint(dst, &rp, cap, leaked);
-    u_append(dst, &rp, cap, UTEST_RSNC_LEAK);
+    (*dst)[0] = '\0';
+    u_append_uint(*dst, &rp, UTEST_REASON_BUF, leaked);
+    u_append(*dst, &rp, UTEST_REASON_BUF, UTEST_RSNC_LEAK);
 }
 
-static void u_reason_isolate(char *dst, uint32_t cap)
+static void u_reason_isolate(char (*dst)[UTEST_REASON_BUF])
 {
     uint32_t rp = 0;
 
-    u_append(dst, &rp, cap, UTEST_RSNC_ISOLATE);
+    (*dst)[0] = '\0';
+    u_append(*dst, &rp, UTEST_REASON_BUF, UTEST_RSNC_ISOLATE);
 }
 
-static void u_reason_invalid(char *dst, uint32_t cap)
+static void u_reason_invalid(char (*dst)[UTEST_REASON_BUF])
 {
     uint32_t rp = 0;
 
-    u_append(dst, &rp, cap, UTEST_RSNC_INVALID);
+    (*dst)[0] = '\0';
+    u_append(*dst, &rp, UTEST_REASON_BUF, UTEST_RSNC_INVALID);
 }
 
 /* The longest `classname` / `type` label either testcase emitter can put
@@ -6270,9 +6288,8 @@ static void u_run_one(const char *name, utest_type_t type,
         if (record_verdict == 3)
             counters[3]++;
         *out_verdict = 1;
-        u_reason_timeout(reason, sizeof(reason),
-                         s_timeout_ms ? s_timeout_ms
-                                      : UTEST_DEFAULT_TIMEOUT_MS);
+        u_reason_timeout(&reason, s_timeout_ms ? s_timeout_ms
+                                              : UTEST_DEFAULT_TIMEOUT_MS);
     } else {
         counters[1]++;  /* failed */
         /* A loader that never reached ring 3 is the same class as a
@@ -6301,7 +6318,7 @@ static void u_run_one(const char *name, utest_type_t type,
             uint32_t rp = 0;
             u_append(reason, &rp, sizeof(reason), UTEST_RSN_MISMATCH);
         } else {
-            u_reason_exit(reason, sizeof(reason), exit_status);
+            u_reason_exit(&reason, exit_status);
         }
     }
 
@@ -6353,7 +6370,7 @@ static void u_run_one(const char *name, utest_type_t type,
         *out_verdict = 1;
         counters[0]--;
         counters[1]++;
-        u_reason_isolate(reason, sizeof(reason));
+        u_reason_isolate(&reason);
     }
 
     /* Handle-leak reason: only fill `reason` when we escalated from
@@ -6362,7 +6379,7 @@ static void u_run_one(const char *name, utest_type_t type,
      * but would require a structured reason schema and is a
      * nice-to-have, not a correctness issue. */
     if (reason[0] == '\0' && leaked > 0 && *out_verdict == 1) {
-        u_reason_leak(reason, sizeof(reason), leaked);
+        u_reason_leak(&reason, leaked);
     }
 
     /* Ring-3 self-report reconciliation. The counts are the binary's own
@@ -6383,7 +6400,7 @@ static void u_run_one(const char *name, utest_type_t type,
         rt->invalid++;
         *out_verdict = u_report_apply_invalid(*out_verdict, counters);
         if (!was_failing && reason[0] == '\0') {
-            u_reason_invalid(reason, sizeof(reason));
+            u_reason_invalid(&reason);
         }
         klog(LOG_WARN, "UTEST",
              "%s: self-report contradicts outcome (exit=%d, reported "
@@ -6420,35 +6437,36 @@ static void u_run_one(const char *name, utest_type_t type,
         utest_record_log(LOG_ERROR,
              "%s: FAIL (%u" UTEST_RSNC_LEAK " -- escalated from PASS)",
              name_copy, (uint64_t)leaked);
-        {
-            /* The TAP detail is the SAME composition the reason buffer
-             * carries, so it goes through the same helper rather than a
-             * third hand-rolled copy of the fragments. */
-            char d[UTEST_REASON_BUF];
-            u_reason_leak(d, sizeof(d), leaked);
-            u_emit_tap_point(0, test_num, name_copy, d);
-        }
     } else if (isolation_failed && exit_status == 0 && !timed_out) {
         /* Escalated from PASS by isolation failure only. */
         utest_record_log(LOG_ERROR,
              "%s: FAIL (" UTEST_RSNC_ISOLATE " -- escalated from PASS)",
              name_copy);
-        u_emit_tap_point(0, test_num, name_copy, UTEST_RSNC_ISOLATE);
     } else if (timed_out) {
         utest_record_log(LOG_ERROR,
              "%s: FAIL (" UTEST_RSNC_TIMEOUT_PRE "%u" UTEST_RSNC_TIMEOUT_POST ")",
              name_copy, (uint64_t)(s_timeout_ms ? s_timeout_ms
                                                 : UTEST_DEFAULT_TIMEOUT_MS));
-        u_emit_tap_point(0, test_num, name_copy, "timeout");
     } else {
         utest_record_log(LOG_ERROR, "%s: FAIL (" UTEST_RSNC_EXIT "%d)",
              name_copy, (int64_t)exit_status);
-        {
-            char d[UTEST_REASON_BUF];
-            u_reason_exit(d, sizeof(d), exit_status);
-            u_emit_tap_point(0, test_num, name_copy, d);
-        }
     }
+    /* ONE reason, published to every consumer.
+     *
+     * The failing TAP point carries the SAME finalized `reason` the XML and
+     * JSON records carry, instead of re-deriving one from the flags. The
+     * re-derivation disagreed with the artifacts on every case where the
+     * flags do not pick the reason the escalation chain stored: a PASS that
+     * both leaked AND failed isolation stores the LEAK reason but the
+     * `!isolation_failed` guard sent TAP down the isolation branch, and an
+     * invalid self-report that escalates a PASS or SKIP stores "invalid
+     * test report" while the fallback emitted `exit=0` / `exit=77`. Both are
+     * reachable, and both hand two consumers of one verdict different
+     * explanations for it. The human klog lines above still name the
+     * DOMINANT escalation, which is what a person reading serial wants;
+     * machine records get the single finalized string. */
+    if (*out_verdict == 1)
+        u_emit_tap_point(0, test_num, name_copy, reason);
 
     /* Extra WARN context for leaks / isolation failures that ride on
      * top of an already-FAIL/SKIP verdict (exit_status != 0). The

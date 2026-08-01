@@ -428,8 +428,20 @@ accepted only the two name-bearing kinds would reject the run-level
 records the harvester requires. Key on `record_kind`, never on the
 presence of `name`.
 
-`summary.total` counts BINARIES. The skip records are counted separately as
-`summary.reported.skip_records`, so `records == total + skip_records`.
+`summary.total` counts BINARIES, and the skip records are counted separately
+as `summary.reported.skip_records`. State the relation as explicit array
+invariants rather than one `records ==` equation, which was ambiguous about
+whether it meant wire records or published arrays and became false outright
+once an aborted run gained a host record:
+
+```
+len(testcases)   == summary.testcase_total == summary.total + summary.synthetic_errors
+len(skip_blocks) == summary.reported.skip_records
+```
+
+On the WIRE (the raw `[UTEST-JSON]` stream, which carries no host record) the
+producer's own count is `total + skip_records` binary and skip_block records,
+plus the three run-level records `run_report`, `summary` and `run_meta`.
 
 **An aborted run carries a `suite-abort` record, and it is NOT a binary.**
 The XML side injects a synthetic `<testcase name="suite-abort">` carrying an
