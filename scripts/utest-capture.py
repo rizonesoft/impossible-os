@@ -5,8 +5,9 @@ The host half of the usermode test framework's per-binary output artifacts and
 fail-closed byte reconciliation. The kernel's source-level output framing wraps
 ring-3 stdout where it is PRODUCED and emits it as authenticated klog records:
 
-    [UTEST-CAPTURE-BEGIN] owner=<pid> name=<binary.exe>
-    [UTEST-CAPTURE] owner=<pid> seq=<n> len=<raw> final=<0|1> <escaped>
+    [UTEST-CAPTURE-EXPECT] owner=<pid> name=<binary.exe>
+    [UTEST-CAPTURE-BEGIN] owner=<pid> chunk_max=<n> name=<binary.exe>
+    [UTEST-CAPTURE] owner=<pid> wr=<id> seq=<n> len=<raw> final=<0|1> <escaped>
     [UTEST-CAPTURE-LOST] owner=<pid> len=unknown
 
 `len` counts RAW (pre-escape) bytes. `<escaped>` rewrites `\\`, `[`, and every
@@ -35,14 +36,41 @@ delimiter design unprovable. Per owner:
     as the base would let a lost seq=0 record pass as a complete payload;
   * `final=1` terminates ONE write() call, not the owner's lifetime, so a
     binary calling write() five times legitimately emits five final records.
-    The requirement is that the HIGHEST-seq record is final -- anything else
-    means the last write's tail never reached the wire;
+    EVERY write is reconciled independently, keyed by the `wr` identity the
+    producer stamps on each record (the sequence number of that write's first
+    chunk, so `wr` is always its group's lowest seq). Checking only that the
+    owner's HIGHEST record was final let a second writer sharing the owner --
+    a fork descendant, or a second thread -- MASK an earlier truncated write:
+    A emits `seq=0 final=0` and dies, B emits `seq=1 final=1`, and the owner
+    looked contiguous and terminated. Now A's group has no final record and
+    the run refuses;
   * a BEGIN with zero chunks is VALID: a binary that writes nothing is not a
     corrupt binary. (`u_capture_emit_chunk` returns before consuming a seq when
     raw_len == 0, so an empty write leaves no gap either.);
-  * each chunk's decoded length must equal its declared `len`;
+  * each chunk's decoded length must equal its declared `len`, and neither may
+    exceed the `chunk_max` the producer ANNOUNCED on that owner's BEGIN. The
+    bound is derived kernel-side (the record line cap, minus the record's own
+    fixed literal cost, over the worst-case escape expansion), so mirroring
+    today's value as a host constant would refuse EVERY run the day any of
+    those three inputs moved -- a worse failure than the over-long chunk the
+    check exists to reject. Every announcement in one run must agree;
   * an explicit [UTEST-CAPTURE-LOST] record for an owner is a producer-declared
     loss -- bytes went out unframed -- so the payload is known-incomplete.
+
+CAPTURE MUST BE PROVEN ARMED, NOT ASSUMED. A BEGIN record is emitted by the
+arming path itself, so a producer regression that stops arming capture removes
+the binding too, leaving an EMPTY model that both artifacts happily read as a
+run of ordinary output-free testcases -- and the frame record count still
+reconciles, because those records were never produced. Inferring the
+expectation host-side cannot close it either: that would refuse legitimate
+launch-failure rows, which have no capture channel by construction.
+
+So the LAUNCHER publishes [UTEST-CAPTURE-EXPECT] per spawned binary, and this
+module requires every expected owner to have a BEGIN bound to the same name.
+The expectation set is itself falsifiable: [UTEST-FRAME-END] carries the run's
+own `spawned=` count, raised at a DIFFERENT call site than the one that emits
+the records, and the two must agree exactly. Deleting either half alone is a
+mismatch that refuses the run rather than a silently empty expected set.
 
 BOUNDING IS SEPARATE FROM RECONCILIATION, AND HAPPENS AFTER IT. Reconciliation
 validates the ENTIRE payload; only the artifact COPY is bounded, and never
@@ -169,12 +197,33 @@ MAX_OWNERS = 4096
 # one-byte capture -- which let a malformed authenticated record slip past the
 # malformed-family detector by parsing successfully.
 _U32 = r"(0|[1-9][0-9]{0,9})"
-_BEGIN_RE = re.compile(r"\[UTEST-CAPTURE-BEGIN\] owner=" + _U32 + r" name=(\S+)")
+_BEGIN_RE = re.compile(
+    r"\[UTEST-CAPTURE-BEGIN\] owner=" + _U32 + r" chunk_max=" + _U32
+    + r" name=(\S+)"
+)
+# The launcher's spawn announcement. Same owner+name pair BEGIN carries, from a
+# different producer call site on purpose -- see the module docstring.
+_EXPECT_RE = re.compile(
+    r"\[UTEST-CAPTURE-EXPECT\] owner=" + _U32 + r" name=(\S+)")
 _CHUNK_RE = re.compile(
-    r"\[UTEST-CAPTURE\] owner=" + _U32 + r" seq=" + _U32 + r" len=" + _U32
-    + r" final=([01]) (.*)"
+    r"\[UTEST-CAPTURE\] owner=" + _U32 + r" wr=" + _U32 + r" seq=" + _U32
+    + r" len=" + _U32 + r" final=([01]) (.*)"
 )
 _LOST_RE = re.compile(r"\[UTEST-CAPTURE-LOST\] owner=" + _U32 + r" len=unknown")
+# The run terminator, read ONLY for its `spawned=` count. Everything else about
+# framing belongs to scripts/utest-frame.py and is not re-derived here.
+_FRAME_END_RE = re.compile(
+    r"\[UTEST-FRAME-END\] run=" + _U32 + r" records=" + _U32
+    + r" spawned=" + _U32
+)
+# A terminator that does not carry the census MUST refuse rather than read as
+# "no terminator". Matching only the strict form left the two states
+# indistinguishable, so an old-form or field-stripped terminator silently
+# dropped `spawned` to None -- and with no expectation records surviving
+# either, the whole census evaporated and the stream reconciled green. This is
+# the shape that recognises the record kind, so its absence of the field is
+# reportable instead of invisible.
+_FRAME_END_ANY = "[UTEST-FRAME-END]"
 # The producer's emission-budget terminator. `scope` is an exact alternation
 # rather than \w+: an unknown scope is a version skew the host must refuse, not
 # a value to pass through into an artifact field consumers branch on.
@@ -288,16 +337,19 @@ def _artifact_text(payload: bytes) -> str:
 
 
 class _Owner:
-    __slots__ = ("pid", "name", "chunks", "lost", "declared", "records", "over")
+    __slots__ = ("pid", "name", "chunks", "lost", "declared", "records", "over",
+                 "chunk_max", "expect_name")
 
     def __init__(self, pid: int) -> None:
         self.pid = pid
         self.name = None
-        self.chunks = {}  # seq -> (declared_len, final, escaped_payload)
+        self.chunks = {}  # seq -> (declared_len, final, escaped_payload, wr)
         self.lost = False
         self.declared = 0
         self.records = 0
         self.over = None  # (seq, scope, limit, charged) once terminated
+        self.chunk_max = None    # raw-byte bound this owner's BEGIN announced
+        self.expect_name = None  # name the launcher said it spawned
 
 
 def _scan(lines, prefix):
@@ -306,10 +358,16 @@ def _scan(lines, prefix):
     When `prefix` is given (the framed "UTEST-<nonce>: " marker), a line must
     carry it to be considered: the nonce is what makes a record non-forgeable,
     and this module must not weaken that by matching on the marker alone.
+
+    Returns (owners, spawned), where `spawned` is the run terminator's own
+    count of launched binaries, or None when the slice carries no terminator
+    (an aborted run: there is then nothing to reconcile the expectation set
+    against, and inventing a count would be worse than not checking one).
     """
     owners = {}
     records = 0
     escaped_bytes = 0
+    spawned = None
 
     def _own(pid):
         """Resolve an owner slot under the distinct-owner bound.
@@ -363,17 +421,27 @@ def _scan(lines, prefix):
 
         m = _CHUNK_RE.fullmatch(body)
         if m:
-            pid, seq, dlen, final = (int(m.group(i)) for i in (1, 2, 3, 4))
-            payload = m.group(5)
+            pid, wr, seq, dlen = (int(m.group(i)) for i in (1, 2, 3, 4))
+            final = int(m.group(5))
+            payload = m.group(6)
             _count(len(payload))
             # The regex bounds each field to 10 digits; this rejects the values
             # in [10^9, 2^32) that 10 digits still admits but a uint32 cannot
             # hold, so no field can arrive wider than the producer's own type.
-            if seq > _UINT32_MAX or dlen > _UINT32_MAX:
+            if seq > _UINT32_MAX or dlen > _UINT32_MAX or wr > _UINT32_MAX:
                 raise Refusal(
                     "capture_field_out_of_range",
-                    f"owner={pid} seq={seq} len={dlen} carries a value wider "
-                    "than the producer's uint32 fields",
+                    f"owner={pid} wr={wr} seq={seq} len={dlen} carries a value "
+                    "wider than the producer's uint32 fields",
+                )
+            # `wr` is the seq of its own write's first chunk, so a record can
+            # never name a write that starts after it. Checked at scan time
+            # because it is a property of the single record, not of the group.
+            if wr > seq:
+                raise Refusal(
+                    "capture_write_identity",
+                    f"owner={pid} seq={seq} claims write wr={wr}, which is "
+                    "above its own sequence number",
                 )
             # The producer returns BEFORE consuming a seq when a write stages no
             # bytes (test_usermode.c: "if (raw_len == 0) return"), so a len=0
@@ -390,22 +458,67 @@ def _scan(lines, prefix):
                     "capture_duplicate_seq",
                     f"owner={pid} emitted seq={seq} twice",
                 )
-            owner.chunks[seq] = (dlen, final, payload)
+            owner.chunks[seq] = (dlen, final, payload, wr)
             owner.declared += dlen
             owner.records += 1
             continue
 
         m = _BEGIN_RE.fullmatch(body)
         if m:
+            pid, chunk_max, name = int(m.group(1)), int(m.group(2)), m.group(3)
+            _count(0)
+            if chunk_max > _UINT32_MAX:
+                raise Refusal(
+                    "capture_field_out_of_range",
+                    f"owner={pid} announces chunk_max={chunk_max}, wider than "
+                    "the producer's uint32 field",
+                )
+            # A zero bound admits nothing, so no derived producer value can be
+            # one -- and accepting it would make every chunk oversize, turning
+            # a version skew into a flood of misattributed refusals.
+            if chunk_max == 0:
+                raise Refusal(
+                    "capture_chunk_max_invalid",
+                    f"owner={pid} announces chunk_max=0, which no derived "
+                    "producer bound can be",
+                )
+            owner = _own(pid)
+            # ANY second binding for one owner is refused, not just one that
+            # renames it. The producer emits exactly one BEGIN per owner, at
+            # task construction, and pids are monotonic within a boot and never
+            # reused -- a fork descendant inherits ownership without a binding
+            # of its own -- so a duplicate cannot come from the kernel at all.
+            # Accepting a same-name repeat let the LAST record win the owner's
+            # announced chunk bound: `chunk_max=1` then `chunk_max=42` followed
+            # by a two-byte chunk reconciled green, with the bound check seeing
+            # only the value the stream chose to leave last.
+            if owner.name is not None:
+                detail = (
+                    f"owner={pid} bound to '{owner.name}' then to '{name}'"
+                    if owner.name != name else
+                    f"owner={pid} ('{name}') was bound twice, announcing "
+                    f"chunk_max={owner.chunk_max} then chunk_max={chunk_max}"
+                )
+                raise Refusal("capture_owner_rebound", detail)
+            owner.name = name
+            owner.chunk_max = chunk_max
+            continue
+
+        m = _EXPECT_RE.fullmatch(body)
+        if m:
             pid, name = int(m.group(1)), m.group(2)
             _count(0)
             owner = _own(pid)
-            if owner.name is not None and owner.name != name:
+            # One spawn, one announcement. A second one would inflate the
+            # expectation set against the run's own spawn count, so it is a
+            # producer contradiction rather than a harmless repeat.
+            if owner.expect_name is not None:
                 raise Refusal(
-                    "capture_owner_rebound",
-                    f"owner={pid} bound to '{owner.name}' then to '{name}'",
+                    "capture_duplicate_expect",
+                    f"owner={pid} was announced as spawned twice "
+                    f"('{owner.expect_name}' then '{name}')",
                 )
-            owner.name = name
+            owner.expect_name = name
             continue
 
         m = _LOST_RE.fullmatch(body)
@@ -441,6 +554,39 @@ def _scan(lines, prefix):
             owner.over = (seq, scope, limit, charged)
             continue
 
+        # The run terminator is NOT capture-family, so a slice without one is
+        # not corruption here -- it simply leaves `spawned` unknown. A
+        # terminator that IS present must carry the census, though: without
+        # this branch an old-form or field-stripped one parsed as silence.
+        if _FRAME_END_ANY in body and not _FRAME_END_RE.fullmatch(body):
+            raise Refusal(
+                "capture_spawn_count_missing",
+                "the run terminator carries no spawn census: "
+                f"{body[:120]!r}",
+            )
+
+        m = _FRAME_END_RE.fullmatch(body)
+        if m:
+            count = int(m.group(3))
+            if count > _UINT32_MAX:
+                raise Refusal(
+                    "capture_field_out_of_range",
+                    f"the run terminator declares spawned={count}, wider than "
+                    "the producer's uint32 field",
+                )
+            # utest-frame.py already refuses a run that re-announces without
+            # terminating, so two terminators in one slice cannot both belong
+            # to this run -- and a second, smaller count would be exactly the
+            # forgery the expectation check exists to catch.
+            if spawned is not None and spawned != count:
+                raise Refusal(
+                    "capture_spawn_count_conflict",
+                    f"the run slice carries two terminators declaring "
+                    f"spawned={spawned} and spawned={count}",
+                )
+            spawned = count
+            continue
+
         # An AUTHENTICATED capture-family line that parses as none of the above
         # is corruption, and it must never be skipped. Skipping it made a
         # damaged record indistinguishable from silence: a BEGIN followed only
@@ -459,7 +605,7 @@ def _scan(lines, prefix):
                 "capture_malformed_record",
                 f"authenticated capture-family record does not parse: {body[:120]!r}",
             )
-    return owners
+    return owners, spawned
 
 
 def _check_over(owner):
@@ -528,11 +674,199 @@ def _check_over(owner):
         )
 
 
-def _reconcile(owner):
+def _check_writes(owner, seqs):
+    """Reconcile each write() of one owner independently.
+
+    Chunks are grouped by the `wr` identity the producer stamps on them, and
+    every group must be a whole write: exactly one `final=1` record, and that
+    record the group's LAST. Checking only the owner's highest record (which
+    the caller still does, for its more precise message) let a concurrent
+    writer sharing the owner mask an earlier truncated write.
+
+    A validated [UTEST-CAPTURE-OVER] marker exempts an owner from TERMINATION
+    only, exactly as it always has. The producer latches the whole owner when
+    a budget trips, so every write open at that instant stops mid-stream --
+    not just the one that tripped it -- and the payload is already published
+    as bounded rather than complete (`budget_stop`). Demanding per-write
+    termination there would turn section 40's deliberate policy stop back into
+    the corruption verdict it exists to prevent, which is the exact regression
+    that section paid for. The grouping checks below still apply.
+    """
+    writes = {}
+    for seq in seqs:
+        writes.setdefault(owner.chunks[seq][3], []).append(seq)
+
+    for wr in sorted(writes):
+        members = writes[wr]
+        # `wr` is the seq of the write's own first chunk, so it is always the
+        # group's lowest member. Without this a stream could label unrelated
+        # records into one group and present a single trailing final as
+        # closure for all of them.
+        if wr != members[0]:
+            raise Refusal(
+                "capture_write_identity",
+                f"owner={owner.pid} ({owner.name}) write wr={wr} starts at "
+                f"seq={members[0]} -- the identity must be the write's own "
+                "first chunk",
+            )
+        finals = [seq for seq in members if owner.chunks[seq][1] == 1]
+        if len(finals) > 1:
+            raise Refusal(
+                "capture_write_multi_final",
+                f"owner={owner.pid} ({owner.name}) write wr={wr} carries "
+                f"{len(finals)} final records (seq="
+                + ", ".join(str(s) for s in finals) + ")",
+            )
+        if finals and finals[0] != members[-1]:
+            raise Refusal(
+                "capture_write_multi_final",
+                f"owner={owner.pid} ({owner.name}) write wr={wr} terminates at "
+                f"seq={finals[0]} but continues to seq={members[-1]}",
+            )
+        if not finals and owner.over is None:
+            raise Refusal(
+                "capture_unterminated",
+                f"owner={owner.pid} ({owner.name}) write wr={wr} ends at "
+                f"seq={members[-1]} with no final record -- that write's tail "
+                "is missing",
+            )
+
+
+def _check_expectations(owners, spawned):
+    """Prove the run's capture channels were armed, not merely absent.
+
+    Two independent producer facts have to agree: the per-spawn
+    [UTEST-CAPTURE-EXPECT] records, and the run terminator's own `spawned=`
+    count, which is raised at a different call site. A regression that stops
+    arming capture takes the BEGIN binding with it and would otherwise leave
+    an empty, perfectly reconcilable model.
+    """
+    expected = [o for o in owners.values() if o.expect_name is not None]
+
+    if spawned is None:
+        # No terminator in the slice. In production this is not a state a
+        # stream can choose: test.sh only builds a model for a run
+        # utest-frame.py already certified COMPLETE, and a run missing its
+        # terminator is incomplete and fails upstream -- so the census cannot
+        # be evaded by dropping the LINE, only by dropping the FIELD, which
+        # _scan refuses. What is left here is the fixture and aborted-slice
+        # case: with no count the population cannot be reconciled, so an
+        # expectation set that cannot be checked is refused rather than
+        # assumed whole.
+        if expected:
+            raise Refusal(
+                "capture_spawn_count_missing",
+                f"{len(expected)} binaries announced a capture channel but the "
+                "run terminator declares no spawn count to reconcile them "
+                "against",
+            )
+        return
+    if len(expected) != spawned:
+        raise Refusal(
+            "capture_spawn_count_mismatch",
+            f"the run declares spawned={spawned} but {len(expected)} binaries "
+            "announced a capture channel",
+        )
+
+
+def _check_owner_expectation(owner, spawned):
+    """The per-owner half of the expectation contract.
+
+    Called from _reconcile at its established precedence -- AFTER the
+    producer-declared loss check, which is the stronger signal about the same
+    owner -- so adding these verdicts cannot demote an older, more precise
+    diagnosis to a newer, vaguer one.
+    """
+    if owner.expect_name is not None:
+        if owner.name is None:
+            raise Refusal(
+                "capture_channel_missing",
+                f"owner={owner.pid} was spawned as '{owner.expect_name}' but "
+                "no [UTEST-CAPTURE-BEGIN] armed a capture channel for it",
+            )
+        if owner.name != owner.expect_name:
+            raise Refusal(
+                "capture_expect_mismatch",
+                f"owner={owner.pid} was spawned as '{owner.expect_name}' but "
+                f"its capture channel is bound to '{owner.name}'",
+            )
+        return
+
+    # The REVERSE invariant. EXPECT -> BEGIN alone is fail-open: a regression
+    # that drops an owner's expectation AND its spawn increment together
+    # leaves a SELF-CONSISTENT census -- `spawned=0` beside one bound owner
+    # still publishing its capture as trustworthy -- which is population drift
+    # no count can see. Gated on the census being present, because a slice
+    # with no terminator carries no population statement to check a binding
+    # against and refusing there would refuse the aborted-run shape too.
+    if spawned is not None and owner.name is not None:
+        raise Refusal(
+            "capture_unexpected_channel",
+            f"owner={owner.pid} ('{owner.name}') armed a capture channel that "
+            "the run never announced as spawned",
+        )
+
+
+def _check_chunk_max_agreement(owners):
+    """One run, one derivation.
+
+    Every BEGIN in a slice carries the same compile-time constant, so a
+    disagreement is a mixed or forged stream. Run-level, and evaluated after
+    every owner's own reconciliation, so it cannot pre-empt a per-owner loss
+    or corruption verdict.
+    """
+    announced = {o.chunk_max for o in owners.values() if o.chunk_max is not None}
+    if len(announced) > 1:
+        raise Refusal(
+            "capture_chunk_max_conflict",
+            "capture channels announce different chunk bounds: "
+            + ", ".join(str(v) for v in sorted(announced)),
+        )
+
+
+def _check_owner_chunk_bound(owner):
+    """Enforce the raw-byte chunk bound this owner's BEGIN announced."""
+    if owner.chunk_max is None:
+        # No BEGIN: _reconcile already refused the owner as unbound, which is
+        # the more precise verdict. Nothing to bound here.
+        return
+    for seq in sorted(owner.chunks):
+        declared = owner.chunks[seq][0]
+        if declared > owner.chunk_max:
+            raise Refusal(
+                "capture_chunk_oversize",
+                f"owner={owner.pid} ({owner.name}) seq={seq} declares "
+                f"{declared} raw byte(s), above the {owner.chunk_max} the "
+                "producer announced",
+            )
+
+
+def _reconcile(owner, spawned):
     """Validate one owner's records and return (retained_prefix, total_bytes).
 
     Streaming by construction: the full payload is decoded and counted chunk by
     chunk, but only the bounded prefix is retained.
+
+    The ORDER of the checks below is the diagnosis contract, not an accident:
+    a producer-declared loss outranks the expectation contract, then
+    ownership, then the budget terminator, then sequence integrity, then
+    per-write closure, then the announced chunk bound, and only then the
+    payload decode. Verdicts added later slot into that order rather than in
+    front of it -- a newer, vaguer reason must never displace an older, more
+    precise one on the same owner.
+
+    That contract governs RECONCILIATION, and deliberately does not extend
+    backwards over _scan. A record whose SHAPE the producer cannot emit is
+    rejected while reading, before any owner-level reasoning exists to have a
+    precedence -- which is why `capture_malformed_record`, `capture_
+    empty_chunk`, `capture_duplicate_seq`, `capture_field_out_of_range` and
+    `capture_owner_rebound` have always outranked an owner's own loss record,
+    and why the shape checks added since (an out-of-range `wr`, a zero
+    `chunk_max`, a repeated binding or expectation, a terminator with no
+    census) sit beside them rather than here. Naming the one record that
+    cannot have come from the kernel is the more precise diagnosis, and
+    splitting that class across two phases would make the module report two
+    identical malformed-record faults at two different precedences.
     """
     if owner.lost:
         raise Refusal(
@@ -540,6 +874,7 @@ def _reconcile(owner):
             f"owner={owner.pid} ({owner.name or 'unbound'}) emitted an explicit "
             "loss record -- part of its output went to serial unframed",
         )
+    _check_owner_expectation(owner, spawned)
     if owner.name is None:
         raise Refusal(
             "capture_unbound_owner",
@@ -573,11 +908,13 @@ def _reconcile(owner):
             f"owner={owner.pid} ({owner.name}) highest record seq={seqs[-1]} is "
             "not final -- the last write's tail is missing",
         )
+    _check_writes(owner, seqs)
+    _check_owner_chunk_bound(owner)
 
     retained = bytearray()
     total = 0
     for seq in seqs:
-        declared, _final, escaped = owner.chunks[seq]
+        declared, _final, escaped, _wr = owner.chunks[seq]
         raw = _decode_payload(escaped, owner.pid, seq)
         if len(raw) != declared:
             raise Refusal(
@@ -655,7 +992,7 @@ def _check_run_budget(owners):
 def build_model(lines, prefix):
     """Parse + reconcile the whole run. Never raises Refusal; records it."""
     try:
-        owners = _scan(lines, prefix)
+        owners, spawned = _scan(lines, prefix)
     except Refusal as exc:
         return _refusal_model(exc)
 
@@ -666,7 +1003,7 @@ def build_model(lines, prefix):
         _check_run_budget(owners)
         for pid in sorted(owners):
             owner = owners[pid]
-            retained, total = _reconcile(owner)
+            retained, total = _reconcile(owner, spawned)
             # The aggregate cap bounds the ARTIFACT, never the verdict: the
             # payload above was fully validated before anything was dropped.
             #
@@ -698,6 +1035,12 @@ def build_model(lines, prefix):
                 record["budget_scope"] = owner.over[1]
                 record["budget_limit"] = owner.over[2]
             binaries.append(record)
+        # Run-level, and deliberately LAST: both statements are about the run
+        # as a whole, so letting either pre-empt a per-owner loss or
+        # corruption verdict would replace a precise diagnosis with a vaguer
+        # one about a different subject.
+        _check_chunk_max_agreement(owners)
+        _check_expectations(owners, spawned)
     except Refusal as exc:
         return _refusal_model(exc)
 

@@ -156,6 +156,7 @@ uint32_t test_usermode_frame_tag_cap(void);
 int test_usermode_capture_escape(const char *raw, uint32_t raw_len,
                                  char *out, uint32_t out_cap);
 uint32_t test_usermode_capture_chunk_max(void);
+int test_usermode_capture_armed_for(const struct task *child, uint32_t pid);
 int test_usermode_capture_decide(uint32_t owner_seq, uint32_t run_records,
                                  int owner_stopped, int run_over);
 int test_usermode_capture_apply(uint32_t *owner_seq, uint32_t *run_records,
@@ -4193,6 +4194,171 @@ static void test_capture_chunk_boundary_plus_one_emits_two_records(void)
                      __ATOMIC_RELEASE);
 }
 
+/* Write identity on the wire. Every record of ONE write() must carry the
+ * same `wr`, and it must be the sequence number of that write's FIRST
+ * chunk; the NEXT write must name itself, not inherit the previous one.
+ * That relation is what lets the host reconcile each write separately
+ * instead of only checking the owner's highest record, which is how a
+ * second writer sharing the owner used to mask a truncated one.
+ *
+ * Driven through the real per-byte entry point rather than asserted
+ * against the format string, because the identity is assigned inside the
+ * emit path (on the first ACCEPTED chunk) and a test over the literal
+ * would pass just as happily if that assignment moved or never ran. */
+static void test_capture_write_identity_spans_one_write_only(void)
+{
+    struct task *self = task_current();
+    struct utest_capture_ctx ctx;
+    uint8_t  saved_active;
+    uint32_t saved_owner;
+    int32_t  saved_seq;
+    uint8_t  saved_stopped;
+    uint32_t count, head;
+    uint32_t chunk_max = test_usermode_capture_chunk_max();
+    uint32_t i;
+    const klog_entry_t *ring;
+    const klog_entry_t *first_new, *last;
+
+    if (!self) {
+        TEST_SKIP("no current task available in this test context");
+        return;
+    }
+    saved_active = self->utest_capture_active;
+    saved_owner  = self->utest_capture_owner_pid;
+    saved_seq    = atomic_read(&self->utest_capture_seq);
+    saved_stopped = __atomic_load_n(&self->utest_capture_stopped,
+                                   __ATOMIC_ACQUIRE);
+    __atomic_store_n(&self->utest_capture_stopped, 0, __ATOMIC_RELEASE);
+
+    self->utest_capture_active = 1;
+    self->utest_capture_owner_pid = self->pid;
+    atomic_set(&self->utest_capture_seq, 0);
+
+    /* Write one: chunk_max + 1 bytes, so it spans two records drawing
+     * seq=0 and seq=1. Both must be stamped wr=0. */
+    test_usermode_capture_start(&ctx);
+    for (i = 0; i < chunk_max + 1u; i++)
+        (void)test_usermode_capture_byte(&ctx, 'y');
+    test_usermode_capture_end(&ctx);
+
+    ring = klog_get_ring(&count, &head);
+    (void)count;
+    first_new = &ring[(head + KLOG_RING_SIZE - 2u) % KLOG_RING_SIZE];
+    last      = &ring[(head + KLOG_RING_SIZE - 1u) % KLOG_RING_SIZE];
+    TEST_ASSERT(u_test_contains(first_new->message, "wr=0 seq=0 "),
+                "the first chunk of a write names itself as the write");
+    TEST_ASSERT(u_test_contains(last->message, "wr=0 seq=1 "),
+                "the write's SECOND chunk carries the same write identity, "
+                "not its own sequence number");
+
+    /* Write two, same owner and same ctx-free entry point. It draws the
+     * next sequence number and must name ITSELF -- inheriting wr=0 would
+     * merge two writes into one group and re-open the masking hole. */
+    test_usermode_capture_start(&ctx);
+    (void)test_usermode_capture_byte(&ctx, 'z');
+    test_usermode_capture_end(&ctx);
+
+    ring = klog_get_ring(&count, &head);
+    last = &ring[(head + KLOG_RING_SIZE - 1u) % KLOG_RING_SIZE];
+    TEST_ASSERT(u_test_contains(last->message, "wr=2 seq=2 "),
+                "a second write() starts a new write identity rather than "
+                "inheriting the previous write's");
+
+    self->utest_capture_active = saved_active;
+    self->utest_capture_owner_pid = saved_owner;
+    atomic_set(&self->utest_capture_seq, saved_seq);
+    __atomic_store_n(&self->utest_capture_stopped, saved_stopped,
+                     __ATOMIC_RELEASE);
+}
+
+/* The chunk bound the producer PUBLISHES must be the bound it actually
+ * enforces. A binding record announcing a value the emitter does not
+ * honour would let the host accept over-long chunks (or refuse honest
+ * ones) while every derivation assert still passed, which is precisely the
+ * mirrored-constant failure publishing the bound exists to remove. */
+static void test_capture_begin_announces_the_enforced_chunk_bound(void)
+{
+    uint32_t count, head;
+    const klog_entry_t *ring;
+    const klog_entry_t *last;
+    char expect[64];
+    uint32_t pos = 0;
+    uint32_t chunk_max = test_usermode_capture_chunk_max();
+    uint32_t v, div;
+
+    test_usermode_capture_begin(4242u, "test_announce.exe");
+
+    ring = klog_get_ring(&count, &head);
+    (void)count;
+    last = &ring[(head + KLOG_RING_SIZE - 1u) % KLOG_RING_SIZE];
+
+    /* Built from the accessor, never from a literal: a hardcoded "42"
+     * here would keep passing on the day the derivation moves, which is
+     * the same drift the host side refuses to carry. */
+    expect[pos++] = 'c'; expect[pos++] = 'h'; expect[pos++] = 'u';
+    expect[pos++] = 'n'; expect[pos++] = 'k'; expect[pos++] = '_';
+    expect[pos++] = 'm'; expect[pos++] = 'a'; expect[pos++] = 'x';
+    expect[pos++] = '=';
+    for (div = 1000000000u; div > 1u; div /= 10u) {
+        if (chunk_max >= div)
+            break;
+    }
+    v = chunk_max;
+    for (; div > 0u; div /= 10u) {
+        expect[pos++] = (char)('0' + (v / div) % 10u);
+        if (div == 1u)
+            break;
+    }
+    expect[pos] = '\0';
+
+    TEST_ASSERT(u_test_contains(last->message, expect),
+                "the capture binding announces the same chunk bound the "
+                "emitter enforces");
+}
+
+/* The launcher reads the freshly created child's capture fields back before
+ * it waits, and publishes [UTEST-CAPTURE-LOST] when they are not armed --
+ * because a regression that drops either assignment while keeping the BEGIN
+ * binding would publish a capture channel that captures nothing, and the run
+ * would look like a binary that legitimately wrote no output.
+ *
+ * A healthy spawn only ever hands that predicate a correctly armed child, so
+ * these are the only assertions that reach its refusal branches. Driven over
+ * scratch task slots: no task creation, no live boot infrastructure. */
+static void test_capture_arming_postcondition_covers_every_branch(void)
+{
+    task_utest_capture_reset(&s_capture_child_scratch);
+
+    TEST_ASSERT(test_usermode_capture_armed_for((const struct task *)0, 7u)
+                    == 0,
+                "a missing task slot is never armed -- the postcondition must "
+                "not dereference it to find out");
+
+    /* Reset leaves the fields cleared: capture off, owner 0. That IS the
+     * shape a lost `utest_capture_active = 1` assignment leaves behind. */
+    TEST_ASSERT(test_usermode_capture_armed_for(&s_capture_child_scratch, 7u)
+                    == 0,
+                "a child whose capture was never activated is not armed");
+
+    /* Active, but owned by somebody else: the shape a lost
+     * `utest_capture_owner_pid = pid` assignment leaves, where the sequence
+     * draw would target a slot bound to a different binary. */
+    s_capture_child_scratch.utest_capture_active = 1;
+    s_capture_child_scratch.utest_capture_owner_pid = 9u;
+    TEST_ASSERT(test_usermode_capture_armed_for(&s_capture_child_scratch, 7u)
+                    == 0,
+                "an active child owned by a DIFFERENT pid is not armed for "
+                "this one");
+
+    s_capture_child_scratch.utest_capture_owner_pid = 7u;
+    TEST_ASSERT(test_usermode_capture_armed_for(&s_capture_child_scratch, 7u)
+                    == 1,
+                "active and self-owned is the only combination that counts "
+                "as armed");
+
+    task_utest_capture_reset(&s_capture_child_scratch);
+}
+
 /* A parent that is NOT itself captured (the common case: most tasks are
  * never test binaries) must produce an equally uncaptured child -- fork
  * must never MANUFACTURE ownership. */
@@ -4763,6 +4929,15 @@ void test_register_usermode_launcher(void)
                             TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: chunk boundary plus one emits two records",
                             test_capture_chunk_boundary_plus_one_emits_two_records,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: write identity spans one write only",
+                            test_capture_write_identity_spans_one_write_only,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: capture BEGIN announces the enforced chunk bound",
+                            test_capture_begin_announces_the_enforced_chunk_bound,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: arming postcondition covers every branch",
+                            test_capture_arming_postcondition_covers_every_branch,
                             TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: capture inherit copies active+owner unchanged",
                             test_capture_inherit_copies_active_and_owner_unchanged,

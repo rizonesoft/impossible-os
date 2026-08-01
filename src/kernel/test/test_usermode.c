@@ -3231,6 +3231,12 @@ static uint32_t s_frame_nonce;    /* 0 = not generated yet (the sentinel) */
 static uint32_t s_frame_ready;    /* 1 = s_frame_tag is filled and stable */
 static uint32_t s_frame_records;  /* framed records emitted in THIS run */
 static uint32_t s_frame_run;      /* run ordinal, 1-based */
+/* Binaries THIS run spawned with capture armed. Declared beside the frame
+ * counters because the run terminator publishes it; written by u_run_one
+ * and reset by u_capture_budget_reset, both far below -- see the block
+ * above u_capture_expect for why the count and the expectation records
+ * come from deliberately different call sites. */
+static uint32_t s_capture_spawned;
 
 /* Format "UTEST-<8 lowercase hex>" into dst. Pure: touches no globals and
  * logs nothing, so a unit test can exercise it directly. Returns 1 on
@@ -3402,19 +3408,27 @@ static void u_frame_begin(void)
  * summary and then hangs cannot produce this line, and a stream cut short
  * cannot reconcile -- which is what makes the terminator, not the summary,
  * the run's completion signal. */
+/* `spawned=` is the run's own count of binaries launched with capture
+ * armed, and it is what makes the expectation set falsifiable: the host
+ * requires exactly this many distinct [UTEST-CAPTURE-EXPECT] owners, so a
+ * vanished expectation record is a mismatch rather than a silently smaller
+ * set. Read here, after every u_run_one has returned. */
 static void u_frame_end(void)
 {
     uint32_t n = __atomic_load_n(&s_frame_records, __ATOMIC_RELAXED);
 
-    utest_record_log(LOG_INFO, "[UTEST-FRAME-END] run=%u records=%u",
+    utest_record_log(LOG_INFO,
+                     "[UTEST-FRAME-END] run=%u records=%u spawned=%u",
                      (uint64_t)__atomic_load_n(&s_frame_run, __ATOMIC_RELAXED),
-                     (uint64_t)n);
+                     (uint64_t)n,
+                     (uint64_t)__atomic_load_n(&s_capture_spawned,
+                                               __ATOMIC_RELAXED));
 }
 
 /* ---- Source-level per-binary stdout capture -------------------------- *
  *
  * Every ring-3 write() byte that reaches this pipeline is escaped and
- * chunked into "[UTEST-CAPTURE] owner=<pid> seq=<n> len=<raw-bytes>
+ * chunked into "[UTEST-CAPTURE] owner=<pid> wr=<id> seq=<n> len=<raw-bytes>
  * final=<0|1> <escaped>" records, riding the SAME frame-nonce mechanism
  * every other launcher record uses (utest_record_log), so the new record
  * type is non-forgeable for free and counted in the existing
@@ -3446,6 +3460,7 @@ static void u_frame_end(void)
  * instead of silently overrunning UTEST_RECORD_LINE_MAX. */
 #define UTEST_CAPTURE_FIXED                                                \
     (UTEST_LIT("[UTEST-CAPTURE] owner=") + UTEST_DIGITS_U32 +              \
+     UTEST_LIT(" wr=") + UTEST_DIGITS_U32 +                                \
      UTEST_LIT(" seq=") + UTEST_DIGITS_U32 +                               \
      UTEST_LIT(" len=") + UTEST_DIGITS_U32 +                               \
      UTEST_LIT(" final=1 "))
@@ -3473,12 +3488,23 @@ _Static_assert(UTEST_CAPTURE_CHUNK_MAX > 0u &&
  * record before it ships. */
 #define UTEST_CAPTURE_BEGIN_FIXED \
     (UTEST_LIT("[UTEST-CAPTURE-BEGIN] owner=") + UTEST_DIGITS_U32 + \
+     UTEST_LIT(" chunk_max=") + UTEST_DIGITS_U32 + \
      UTEST_LIT(" name="))
 _Static_assert(UTEST_CAPTURE_BEGIN_FIXED + UTEST_MAX_BINARY_NAME <=
                    UTEST_RECORD_LINE_MAX - 1u,
                "a name at the derived bound must fit UTEST-CAPTURE-BEGIN "
                "too, not just the 7 kinds UTEST_MAX_BINARY_NAME was "
                "originally derived from");
+
+/* [UTEST-CAPTURE-EXPECT]'s fixed cost. It carries the same owner+name pair
+ * BEGIN does, so it is bounded by the same name allowance and asserted the
+ * same way. */
+#define UTEST_CAPTURE_EXPECT_FIXED \
+    (UTEST_LIT("[UTEST-CAPTURE-EXPECT] owner=") + UTEST_DIGITS_U32 + \
+     UTEST_LIT(" name="))
+_Static_assert(UTEST_CAPTURE_EXPECT_FIXED + UTEST_MAX_BINARY_NAME <=
+                   UTEST_RECORD_LINE_MAX - 1u,
+               "a name at the derived bound must fit UTEST-CAPTURE-EXPECT");
 
 /* ---- Producer-side emission budget ---------------------------------- *
  *
@@ -3549,7 +3575,15 @@ _Static_assert(UTEST_CAPTURE_WIRE_MAX >= UTEST_RECORD_WIRE_MAX,
  * is the owner's own [UTEST-CAPTURE-OVER] marker: enforcement emits too,
  * and budgeting only the permitted records would leave the marker outside
  * the allowance the ceiling advertises. */
-#define UTEST_CAPTURE_OWNER_WIRE_MAX (512u * 1024u)
+/* Raised from 512 KiB when the chunk record gained its `wr=` write
+ * identity. The ceiling is a CONSEQUENCE of the derivation, not a cap
+ * being widened to hide a violation: the raw allowance and the wire cost
+ * per record are both unchanged, but a wider fixed field leaves less room
+ * for payload (UTEST_CAPTURE_CHUNK_MAX 46 -> 42), so delivering the same
+ * 64 KiB takes more records. Pinning the old number would have clipped an
+ * honest binary's raw allowance instead -- the one outcome the record
+ * budget's own derivation comment rules out. */
+#define UTEST_CAPTURE_OWNER_WIRE_MAX (640u * 1024u)
 _Static_assert((uint64_t)(UTEST_CAPTURE_OWNER_RECORD_BUDGET + 1u) *
                    UTEST_CAPTURE_WIRE_MAX <=
                    UTEST_CAPTURE_OWNER_WIRE_MAX,
@@ -3717,11 +3751,57 @@ static void u_capture_budget_reset(void)
 {
     uint64_t irq_flags;
 
+    /* Run-scoped for exactly the reason the record counters are: the host
+     * reconciles the expectation set against the count carried by THIS
+     * run's terminator, so a counter spanning boot lifetime would measure
+     * a different population than the check it has to satisfy. */
+    __atomic_store_n(&s_capture_spawned, 0u, __ATOMIC_RELAXED);
+
     spin_lock_irqsave(&s_capture_budget_lock, &irq_flags);
     s_capture_run_records = 0;
     s_capture_run_over = 0;
     s_capture_run_generation++;
     spin_unlock_irqrestore(&s_capture_budget_lock, irq_flags);
+}
+
+/* Announce that this run SPAWNED a capture-owning binary.
+ *
+ * The [UTEST-CAPTURE-BEGIN] binding alone cannot carry this: it is emitted
+ * by the arming path itself (task_create_internal), so a producer
+ * regression that stops arming capture removes the announcement too, and
+ * the host then sees an EMPTY capture model that both artifacts accept as
+ * ordinary output-free testcases -- the frame count reconciles because
+ * those records were never produced. Inferring the expectation host-side
+ * is not available either: it would refuse legitimate launch-failure rows,
+ * which have no capture channel by construction and are not a defect.
+ *
+ * So the expectation is published from the LAUNCHER, on the spawn path,
+ * and the host requires every expected owner to have a BEGIN. */
+static void u_capture_expect(uint32_t owner_pid, const char *name)
+{
+    utest_record_log(LOG_INFO, "[UTEST-CAPTURE-EXPECT] owner=%u name=%s",
+                     (uint64_t)owner_pid, name);
+}
+
+/* Is `child` really the armed capture owner for `pid`?
+ *
+ * The arming postcondition, as a PURE predicate over a task slot -- no
+ * globals, no task lookup, no emission -- so every branch is drivable from a
+ * scratch struct instead of only by a healthy live spawn. That matters
+ * because this is the safeguard for a producer regression: an end-to-end run
+ * always hands it a correctly armed child, so without a seam the NULL,
+ * inactive and wrong-owner branches would never execute and the guard could
+ * rot without a single assertion failing.
+ *
+ * All three conditions are load-bearing. `utest_capture_active` alone is the
+ * flag the write path gates on, and `utest_capture_owner_pid` is the slot the
+ * sequence draw targets: a task armed with someone else's owner pid would
+ * capture into a channel bound to a different binary. */
+static int u_capture_armed_for(const struct task *child, uint32_t pid)
+{
+    return child != (const struct task *)0 &&
+           child->utest_capture_active != 0 &&
+           child->utest_capture_owner_pid == pid;
 }
 
 /* Is the run this claim was charged against still the current one?
@@ -3914,13 +3994,36 @@ static uint32_t u_capture_escape(const char *raw, uint32_t raw_len,
  * Scope: multi-threaded test binaries only (none shipped today) --
  * the host-side artifact/reconciliation work should treat seq as the
  * authoritative ordering key, not physical log position. */
-/* Returns 1 while this owner may keep capturing, 0 once it has spent its
+/* WRITE IDENTITY (`wr=`). Every record of ONE write() call carries the
+ * same `wr`, which is the sequence number drawn for that write's FIRST
+ * emitted chunk. It needs no counter of its own and no new task field:
+ * seq is already unique per owner (drawn under s_capture_budget_lock), so
+ * the first number a write draws is an identity no other write can also
+ * hold. Without it the host could only check that the owner's HIGHEST seq
+ * was final, and a second writer sharing the owner -- a fork descendant or
+ * a second thread -- masked an earlier truncated write: A emits
+ * `seq=0 final=0` and dies, B emits `seq=1 final=1`, and the sequence is
+ * contiguous with a final highest record. With `wr` the host reconciles
+ * each write independently and A's unterminated group refuses the run.
+ *
+ * The identity is assigned on the first EMITted chunk, not at
+ * test_usermode_capture_start(): a write that stages nothing must not
+ * consume a number (the host reads a hole in the sequence as output lost
+ * on the wire), and a write that is refused outright never creates a group
+ * for the host to close. The residual is a write killed mid-syscall before
+ * its first chunk ever flushed -- under one chunk of payload, so nothing
+ * reached the wire to be identified. Closing that needs an emitted
+ * write-start event, which section 54 owns.
+ *
+ * Returns 1 while this owner may keep capturing, 0 once it has spent its
  * budget. The caller latches that into its own ctx so the NEXT chunk skips
  * the escape pass and the lock entirely -- see utest_capture_ctx._discard. */
-static int u_capture_emit_chunk(struct task *owner, const char *raw,
-                                uint32_t raw_len, int is_final)
+static int u_capture_emit_chunk(struct utest_capture_ctx *ctx, int is_final)
 {
     char escaped[UTEST_CAPTURE_CHUNK_MAX * UTEST_CAPTURE_ESCAPE_EXPANSION + 1u];
+    struct task *owner = (struct task *)ctx->_owner;
+    const char *raw = ctx->_buf;
+    uint32_t raw_len = ctx->_len;
     enum utest_capture_verdict verdict;
     uint32_t seq = 0, charged = 0, gen = 0;
 
@@ -3971,11 +4074,19 @@ static int u_capture_emit_chunk(struct task *owner, const char *raw,
 
     switch (verdict) {
     case UTEST_CAP_EMIT:
+        /* First accepted chunk of this write() names the write. Assigned
+         * here rather than before the claim so a number is never spent on
+         * a write that produced no record. */
+        if (!ctx->_has_wid) {
+            ctx->_wid = seq;
+            ctx->_has_wid = 1;
+        }
         utest_record_log(LOG_INFO,
-                         "[UTEST-CAPTURE] owner=%u seq=%u len=%u final=%u %s",
-                         (uint64_t)owner->pid, (uint64_t)seq,
-                         (uint64_t)raw_len, (uint64_t)(is_final ? 1u : 0u),
-                         escaped);
+                         "[UTEST-CAPTURE] owner=%u wr=%u seq=%u len=%u "
+                         "final=%u %s",
+                         (uint64_t)owner->pid, (uint64_t)ctx->_wid,
+                         (uint64_t)seq, (uint64_t)raw_len,
+                         (uint64_t)(is_final ? 1u : 0u), escaped);
         break;
     case UTEST_CAP_OVER_OWNER:
         /* LOG_WARN, not LOG_ERROR: a budget stop is the EXPECTED outcome
@@ -4025,6 +4136,8 @@ void test_usermode_capture_start(struct utest_capture_ctx *ctx)
     ctx->_len = 0;
     ctx->_active = 0;
     ctx->_discard = 0;
+    ctx->_has_wid = 0;
+    ctx->_wid = 0;
     ctx->_owner = (void *)0;
 
     if (!self || !self->utest_capture_active)
@@ -4102,8 +4215,7 @@ int test_usermode_capture_byte(struct utest_capture_ctx *ctx, char c)
         return 1;
 
     if (ctx->_len >= UTEST_CAPTURE_CHUNK_MAX) {
-        if (!u_capture_emit_chunk((struct task *)ctx->_owner, ctx->_buf,
-                                  ctx->_len, 0)) {
+        if (!u_capture_emit_chunk(ctx, 0)) {
             ctx->_discard = 1;
             ctx->_len = 0;
             return 1;
@@ -4118,8 +4230,7 @@ void test_usermode_capture_end(struct utest_capture_ctx *ctx)
 {
     if (!ctx->_active || ctx->_discard)
         return;
-    if (!u_capture_emit_chunk((struct task *)ctx->_owner, ctx->_buf,
-                              ctx->_len, 1))
+    if (!u_capture_emit_chunk(ctx, 1))
         ctx->_discard = 1;
     ctx->_len = 0;
 }
@@ -4129,10 +4240,22 @@ void test_usermode_capture_end(struct utest_capture_ctx *ctx)
  * timing is load-bearing: emitting this any later would let an
  * immediately-scheduled task on another CPU emit capture chunk records
  * before their owner binding reaches the wire. */
+/* `chunk_max` PUBLISHES the producer's per-record raw payload bound so the
+ * host can enforce it. It is a derived value (UTEST_RECORD_LINE_MAX minus
+ * the record's own fixed literal cost, divided by the worst-case escape
+ * expansion), so a host that hardcoded today's number would refuse EVERY
+ * run the day any of those three inputs moved -- a worse failure than the
+ * over-long chunk the check exists to reject. Carried on BEGIN rather than
+ * the run's [UTEST-FRAME] line because scripts/utest-frame.py owns the
+ * framing records, and because a chunk record is only reconcilable at all
+ * when its owner has a BEGIN: declaration and use then have exactly the
+ * same lifetime. */
 void test_usermode_capture_begin(uint32_t owner_pid, const char *name)
 {
-    utest_record_log(LOG_INFO, "[UTEST-CAPTURE-BEGIN] owner=%u name=%s",
-                     (uint64_t)owner_pid, name);
+    utest_record_log(LOG_INFO,
+                     "[UTEST-CAPTURE-BEGIN] owner=%u chunk_max=%u name=%s",
+                     (uint64_t)owner_pid,
+                     (uint64_t)UTEST_CAPTURE_CHUNK_MAX, name);
 }
 
 struct u_report {
@@ -6117,6 +6240,34 @@ static void u_spawn_one(const char *name_copy, const char *path,
         *out_leaked      = 0;
         return;
     }
+
+    {
+        struct task *child = task_get_by_pid((uint32_t)pid);
+
+        /* ARMING POSTCONDITION, checked from the LAUNCHER rather than
+         * trusted from the arming site. task_create_internal sets
+         * utest_capture_active, sets utest_capture_owner_pid and emits the
+         * BEGIN binding as three separate statements, so losing either
+         * assignment while keeping the binding would publish a capture
+         * channel that captures nothing -- the run would then look like a
+         * binary that legitimately wrote no output. Reading the fields back
+         * here is what makes the arming itself falsifiable.
+         *
+         * Safe in this window: the slot cannot be recycled before the
+         * launcher's own task_cleanup, which is the same guarantee
+         * u_report_snapshot and u_isolation_snapshot_leaks already rely on.
+         *
+         * Published as [UTEST-CAPTURE-LOST] because that is exactly what an
+         * unarmed channel means on the wire -- this binary's stdout reaches
+         * serial unframed -- and the host already refuses a run carrying
+         * one. */
+        if (!u_capture_armed_for(child, (uint32_t)pid))
+            utest_record_log(LOG_ERROR,
+                             "[UTEST-CAPTURE-LOST] owner=%u len=unknown",
+                             (uint64_t)pid);
+
+        u_capture_expect((uint32_t)pid, name_copy);
+    }
     *out_exit_status = u_wait_with_timeout((uint32_t)pid,
                                            s_timeout_ms, out_timed_out);
     /* Snapshot leaks BEFORE task_cleanup destroys the handle table.
@@ -6251,6 +6402,15 @@ static void u_run_one(const char *name, utest_type_t type,
      * iteration count at runtime. */
     u_spawn_one(name_copy, path, &pid, &exit_status,
                 &timed_out, &leaked, &report, have_stem, expect_digest);
+
+    /* The run's own count of spawned binaries, published on the frame
+     * terminator and reconciled against the expectation records u_spawn_one
+     * emits. Raised HERE, in a different function from the record it is
+     * checked against, so that deleting either half alone is a mismatch the
+     * host refuses -- a single site would take both away together and leave
+     * an empty expected set that reads as a legitimately silent run. */
+    if (pid >= 0)
+        (void)__atomic_add_fetch(&s_capture_spawned, 1u, __ATOMIC_RELAXED);
 
     if (pid < 0) {
         /* Same class as a refusal in the artifacts: no task was ever
@@ -7985,6 +8145,15 @@ uint32_t test_usermode_capture_chunk_max(void);
 uint32_t test_usermode_capture_chunk_max(void)
 {
     return (uint32_t)UTEST_CAPTURE_CHUNK_MAX;
+}
+
+/* The arming postcondition, exported as the pure predicate it is: a task
+ * slot and a pid in, one verdict out. A live spawn only ever exercises the
+ * armed branch, so this is the only way the refusal branches get covered. */
+int test_usermode_capture_armed_for(const struct task *child, uint32_t pid);
+int test_usermode_capture_armed_for(const struct task *child, uint32_t pid)
+{
+    return u_capture_armed_for(child, pid);
 }
 
 /* The emission-budget state machine, exported as the PURE function it is:

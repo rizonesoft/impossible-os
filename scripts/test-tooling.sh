@@ -15181,6 +15181,7 @@ fi
 CAP_TMP=$(mktemp -d)
 CAPTURE="$REPO_ROOT/scripts/utest-capture.py"
 CAP_NONCE="1a2b3c4d"
+CAP_CHUNK_MAX=128
 CAP_PREFIX="UTEST-${CAP_NONCE}: "
 
 # Emit one framed capture record. Physical ORDER of the calls is the caller's
@@ -15200,11 +15201,22 @@ m = json.load(open(sys.argv[1]))
 print(eval(sys.argv[2]))' "$1" "$2" 2>/dev/null
 }
 
+cap_refuses() {  # <label> <expected-reason> <log-body-writer-fn>
+    local label="$1" want="$2" fn="$3" log="$CAP_TMP/$2.log" out="$CAP_TMP/$2.json"
+    "$fn" > "$log"
+    if ! cap_model "$log" "$out" &&
+       [ "$(cap_field "$out" 'm["refusal"]["reason"]')" = "$want" ]; then
+        t_pass "capture: $label"
+    else
+        t_fail "capture: $label" "expected $want, got $(cap_field "$out" 'm["refusal"]["reason"]')"
+    fi
+}
+
 # c1. Baseline: a well-formed two-chunk payload reassembles byte-exactly.
 {
-    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
-    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=5 final=0 hello"
-    cap_line "[UTEST-CAPTURE] owner=7 seq=1 len=7 final=1  world\x0a"
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=5 final=0 hello"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=1 len=7 final=1  world\x0a"
 } > "$CAP_TMP/good.log"
 if cap_model "$CAP_TMP/good.log" "$CAP_TMP/good.json" &&
    [ "$(cap_field "$CAP_TMP/good.json" 'm["binaries"][0]["text"]')" = 'hello world' ] &&
@@ -15219,9 +15231,9 @@ fi
 #     land on the wire in either order -- this is the whole reason section 33
 #     carries a seq at all.
 {
-    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
-    cap_line "[UTEST-CAPTURE] owner=7 seq=1 len=7 final=1  world\x0a"
-    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=5 final=0 hello"
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=1 len=7 final=1  world\x0a"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=5 final=0 hello"
 } > "$CAP_TMP/ooo.log"
 if cap_model "$CAP_TMP/ooo.log" "$CAP_TMP/ooo.json" &&
    [ "$(cap_field "$CAP_TMP/ooo.json" 'm["binaries"][0]["text"]')" = 'hello world' ]; then
@@ -15235,10 +15247,10 @@ fi
 #     never coalesced with a later call"). A binary calling write() three times
 #     emits three final records; refusing that would fail every real binary.
 {
-    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
-    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=1 final=1 a"
-    cap_line "[UTEST-CAPTURE] owner=7 seq=1 len=1 final=1 b"
-    cap_line "[UTEST-CAPTURE] owner=7 seq=2 len=1 final=1 c"
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=1 final=1 a"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=1 seq=1 len=1 final=1 b"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=2 seq=2 len=1 final=1 c"
 } > "$CAP_TMP/multi.log"
 if cap_model "$CAP_TMP/multi.log" "$CAP_TMP/multi.json" &&
    [ "$(cap_field "$CAP_TMP/multi.json" 'm["binaries"][0]["text"]')" = "abc" ]; then
@@ -15248,7 +15260,7 @@ else
 fi
 
 # c4. A binary that writes nothing is not a corrupt binary.
-cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_silent.exe" > "$CAP_TMP/silent.log"
+cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_silent.exe" > "$CAP_TMP/silent.log"
 if cap_model "$CAP_TMP/silent.log" "$CAP_TMP/silent.json" &&
    [ "$(cap_field "$CAP_TMP/silent.json" 'm["binaries"][0]["total_bytes"]')" = "0" ]; then
     t_pass "capture: a BEGIN with zero chunks is valid"
@@ -15260,8 +15272,8 @@ fi
 #     constructor), so accepting the first OBSERVED seq as the base would let a
 #     lost leading record pass as a complete payload.
 {
-    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
-    cap_line "[UTEST-CAPTURE] owner=7 seq=1 len=1 final=1 b"
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=1 seq=1 len=1 final=1 b"
 } > "$CAP_TMP/head.log"
 if ! cap_model "$CAP_TMP/head.log" "$CAP_TMP/head.json" &&
    [ "$(cap_field "$CAP_TMP/head.json" 'm["refusal"]["reason"]')" = "capture_missing_head" ]; then
@@ -15272,9 +15284,9 @@ fi
 
 # c6-c10. Every other corruption shape gets its own named refusal.
 {
-    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
-    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=1 final=0 a"
-    cap_line "[UTEST-CAPTURE] owner=7 seq=2 len=1 final=1 c"
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=1 final=0 a"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=2 len=1 final=1 c"
 } > "$CAP_TMP/gap.log"
 if ! cap_model "$CAP_TMP/gap.log" "$CAP_TMP/gap.json" &&
    [ "$(cap_field "$CAP_TMP/gap.json" 'm["refusal"]["reason"]')" = "capture_seq_gap" ]; then
@@ -15284,8 +15296,8 @@ else
 fi
 
 {
-    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
-    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=1 final=0 a"
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=1 final=0 a"
 } > "$CAP_TMP/unterm.log"
 if ! cap_model "$CAP_TMP/unterm.log" "$CAP_TMP/unterm.json" &&
    [ "$(cap_field "$CAP_TMP/unterm.json" 'm["refusal"]["reason"]')" = "capture_unterminated" ]; then
@@ -15295,8 +15307,8 @@ else
 fi
 
 {
-    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
-    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=9 final=1 abc"
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=9 final=1 abc"
 } > "$CAP_TMP/mismatch.log"
 if ! cap_model "$CAP_TMP/mismatch.log" "$CAP_TMP/mismatch.json" &&
    [ "$(cap_field "$CAP_TMP/mismatch.json" 'm["refusal"]["reason"]')" = "capture_byte_mismatch" ]; then
@@ -15306,8 +15318,8 @@ else
 fi
 
 {
-    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
-    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=1 final=1 a"
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=1 final=1 a"
     cap_line "[UTEST-CAPTURE-LOST] owner=7 len=unknown"
 } > "$CAP_TMP/lost.log"
 if ! cap_model "$CAP_TMP/lost.log" "$CAP_TMP/lost.json" &&
@@ -15317,12 +15329,319 @@ else
     t_fail "capture: a producer-declared loss record fails the run"
 fi
 
-cap_line "[UTEST-CAPTURE] owner=9 seq=0 len=1 final=1 a" > "$CAP_TMP/unbound.log"
+cap_line "[UTEST-CAPTURE] owner=9 wr=0 seq=0 len=1 final=1 a" > "$CAP_TMP/unbound.log"
 if ! cap_model "$CAP_TMP/unbound.log" "$CAP_TMP/unbound.json" &&
    [ "$(cap_field "$CAP_TMP/unbound.json" 'm["refusal"]["reason"]')" = "capture_unbound_owner" ]; then
     t_pass "capture: chunks with no owner binding are refused"
 else
     t_fail "capture: chunks with no owner binding are refused"
+fi
+
+# ---------------------------------------------------------------------------
+# Per-write reconciliation (section 48). Checking only that the owner's HIGHEST
+# record was final let a SECOND writer sharing the owner mask a truncated one:
+# a fork descendant or a second thread emits its own final record, the sequence
+# stays contiguous, and the run certifies an owner whose first write lost its
+# tail. No record is missing, so frame-level record counting cannot see it
+# either. `wr` -- the sequence number of each write's first chunk -- is what
+# makes every write independently terminable.
+# ---------------------------------------------------------------------------
+
+# THE case the section exists to close. Writer A abandons its write mid-stream;
+# writer B, sharing the owner, completes normally and holds the highest seq.
+{
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_two_writers.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=1 final=0 a"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=1 seq=1 len=1 final=1 b"
+} > "$CAP_TMP/mask.log"
+if ! cap_model "$CAP_TMP/mask.log" "$CAP_TMP/mask.json" &&
+   [ "$(cap_field "$CAP_TMP/mask.json" 'm["refusal"]["reason"]')" = "capture_unterminated" ]; then
+    t_pass "capture: a concurrent writer cannot mask an earlier unterminated write"
+else
+    t_fail "capture: a concurrent writer cannot mask an earlier unterminated write" \
+        "$(cap_field "$CAP_TMP/mask.json" 'm["refusal"]["reason"]')"
+fi
+
+# The same two writers, both complete: interleaving is LEGAL and must stay
+# green, or the check above would just be a ban on concurrent writers.
+{
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_two_writers.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=1 final=0 a"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=1 seq=1 len=1 final=1 b"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=2 len=1 final=1 c"
+} > "$CAP_TMP/interleave.log"
+if cap_model "$CAP_TMP/interleave.log" "$CAP_TMP/interleave.json" &&
+   [ "$(cap_field "$CAP_TMP/interleave.json" 'm["binaries"][0]["total_bytes"]')" = "3" ]; then
+    t_pass "capture: two interleaved writes that both terminate reconcile green"
+else
+    t_fail "capture: two interleaved writes that both terminate reconcile green"
+fi
+
+_cap_wr_ahead() {
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=4 seq=0 len=1 final=1 a"
+}
+cap_refuses "a write identity above its own sequence number is refused" \
+    capture_write_identity _cap_wr_ahead
+
+# `wr` is the write's FIRST chunk, so a group whose lowest member is not its
+# own identity names a first chunk that belongs to a different write -- a
+# stream relabelling records into groups the producer never emitted.
+_cap_wr_orphan() {
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=1 final=0 a"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=1 len=1 final=1 b"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=1 seq=2 len=1 final=1 c"
+}
+cap_refuses "a write group that does not start at its own identity is refused" \
+    capture_write_identity _cap_wr_orphan
+
+_cap_wr_two_finals() {
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=1 final=1 a"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=1 len=1 final=1 b"
+}
+cap_refuses "one write carrying two final records is refused" \
+    capture_write_multi_final _cap_wr_two_finals
+
+_cap_wr_past_final() {
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=1 final=1 a"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=1 len=1 final=0 b"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=2 seq=2 len=1 final=1 c"
+}
+cap_refuses "a write that continues past its own final record is refused" \
+    capture_write_multi_final _cap_wr_past_final
+
+# A budget stop must stay GREEN with an open write. The producer latches the
+# whole OWNER when a budget trips, so every write in flight stops mid-stream --
+# demanding per-write termination here would turn section 40's deliberate
+# policy stop back into the corruption verdict it exists to prevent.
+{
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=1 final=0 a"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=1 seq=1 len=1 final=0 b"
+    cap_line "[UTEST-CAPTURE-OVER] owner=7 seq=2 scope=owner limit=2 charged=2"
+} > "$CAP_TMP/over_two_open.log"
+if cap_model "$CAP_TMP/over_two_open.log" "$CAP_TMP/over_two_open.json" &&
+   [ "$(cap_field "$CAP_TMP/over_two_open.json" 'm["binaries"][0]["budget_stop"]')" = "True" ]; then
+    t_pass "capture: a budget stop with two writes open stays a bounded stop, not a refusal"
+else
+    t_fail "capture: a budget stop with two writes open stays a bounded stop, not a refusal"
+fi
+
+# ---------------------------------------------------------------------------
+# The producer-announced chunk bound (section 48). A host-side mirror of the
+# kernel's derived UTEST_CAPTURE_CHUNK_MAX would refuse EVERY run the day that
+# derivation moved, which is a worse failure than the over-long chunk it
+# rejects -- so the producer publishes it and the host enforces what it was
+# told.
+# ---------------------------------------------------------------------------
+
+_cap_oversize() {
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=4 name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=5 final=1 abcde"
+}
+cap_refuses "a chunk above the announced bound is refused" \
+    capture_chunk_oversize _cap_oversize
+
+_cap_chunkmax_conflict() {
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=42 name=test_a.exe"
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=8 chunk_max=64 name=test_b.exe"
+}
+cap_refuses "capture channels announcing different chunk bounds are refused" \
+    capture_chunk_max_conflict _cap_chunkmax_conflict
+
+# A SECOND binding for one owner used to be accepted whenever it kept the same
+# name, so the last record won the announced bound: a stream could announce a
+# tight bound, re-announce a loose one, and land a chunk legal only under the
+# second. The producer emits exactly one binding per owner, so any repeat is a
+# forgery -- refused whether or not it renames the binary.
+_cap_chunkmax_rebound() {
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=1 name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=42 name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=2 final=1 ab"
+}
+cap_refuses "a re-announced chunk bound for one owner is refused" \
+    capture_owner_rebound _cap_chunkmax_rebound
+
+_cap_chunkmax_zero() {
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=0 name=test_cap.exe"
+}
+cap_refuses "a zero chunk bound is refused" \
+    capture_chunk_max_invalid _cap_chunkmax_zero
+
+# The point of publishing the bound: re-deriving it kernel-side changes the
+# announced value and NOTHING host-side has to change. A stream announcing a
+# completely different bound reconciles exactly as green as the one above.
+{
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=7 name=test_rederived.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=7 final=1 abcdefg"
+} > "$CAP_TMP/rederived.log"
+if cap_model "$CAP_TMP/rederived.log" "$CAP_TMP/rederived.json" &&
+   [ "$(cap_field "$CAP_TMP/rederived.json" 'm["binaries"][0]["total_bytes"]')" = "7" ]; then
+    t_pass "capture: a re-derived chunk bound needs no host edit"
+else
+    t_fail "capture: a re-derived chunk bound needs no host edit"
+fi
+
+# ---------------------------------------------------------------------------
+# Spawn expectation (section 48). A regression that stops ARMING capture takes
+# the BEGIN binding with it, so the model comes out empty and both artifacts
+# read it as a run of ordinary output-free testcases -- and the frame record
+# count still reconciles, because those records were never produced.
+# ---------------------------------------------------------------------------
+
+_cap_channel_missing() {
+    cap_line "[UTEST-CAPTURE-EXPECT] owner=7 name=test_cap.exe"
+    cap_line "[UTEST-FRAME-END] run=1 records=2 spawned=1"
+}
+cap_refuses "a spawned binary with no capture channel is refused" \
+    capture_channel_missing _cap_channel_missing
+
+_cap_expect_mismatch() {
+    cap_line "[UTEST-CAPTURE-EXPECT] owner=7 name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_other.exe"
+    cap_line "[UTEST-FRAME-END] run=1 records=3 spawned=1"
+}
+cap_refuses "a capture channel bound to a different binary is refused" \
+    capture_expect_mismatch _cap_expect_mismatch
+
+_cap_expect_dup() {
+    cap_line "[UTEST-CAPTURE-EXPECT] owner=7 name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE-EXPECT] owner=7 name=test_cap.exe"
+}
+cap_refuses "a binary announced as spawned twice is refused" \
+    capture_duplicate_expect _cap_expect_dup
+
+# The regression the census exists to catch: the expectation records vanish
+# wholesale while the bound channels remain. Caught PER OWNER (which names the
+# binary) rather than only by the count, because the reverse invariant runs
+# during that owner's own reconciliation.
+_cap_expect_gone() {
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=1 final=1 a"
+    cap_line "[UTEST-FRAME-END] run=1 records=3 spawned=1"
+}
+cap_refuses "a vanished expectation set is caught per owner, naming the binary" \
+    capture_unexpected_channel _cap_expect_gone
+
+# The count is still load-bearing on its own: every surviving channel can be
+# correctly announced and the run still claim to have spawned more than it
+# announced, which no per-owner check can see.
+_cap_count_high() {
+    cap_line "[UTEST-CAPTURE-EXPECT] owner=7 name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-FRAME-END] run=1 records=3 spawned=2"
+}
+cap_refuses "a spawn count above the announced channels is refused" \
+    capture_spawn_count_mismatch _cap_count_high
+
+# ... and the mirror image: the count vanishes while the records remain.
+_cap_count_gone() {
+    cap_line "[UTEST-CAPTURE-EXPECT] owner=7 name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+}
+cap_refuses "an expectation set with no spawn count to reconcile is refused" \
+    capture_spawn_count_missing _cap_count_gone
+
+# The REVERSE invariant. EXPECT -> BEGIN alone is fail-open: dropping an
+# owner's expectation AND its spawn increment together leaves a
+# self-consistent census, and that owner's capture would still be published as
+# trustworthy. Population drift no count can see.
+_cap_unexpected_channel() {
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=1 final=1 a"
+    cap_line "[UTEST-FRAME-END] run=1 records=3 spawned=0"
+}
+cap_refuses "a capture channel the run never announced is refused" \
+    capture_unexpected_channel _cap_unexpected_channel
+
+# ... and the same drift hiding beside a correctly announced owner, where the
+# count alone still balances for the owner that IS announced.
+_cap_extra_channel() {
+    cap_line "[UTEST-CAPTURE-EXPECT] owner=7 name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=8 chunk_max=$CAP_CHUNK_MAX name=test_extra.exe"
+    cap_line "[UTEST-FRAME-END] run=1 records=4 spawned=1"
+}
+cap_refuses "an extra capture channel beside an announced one is refused" \
+    capture_unexpected_channel _cap_extra_channel
+
+# A terminator that omits the census must REFUSE, not read as "no terminator".
+# Matching only the strict shape left the two indistinguishable, so an
+# old-form line dropped `spawned` to None and -- with the expectation records
+# gone too -- the entire census evaporated and the stream reconciled green.
+_cap_oldform_terminator() {
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=1 final=1 a"
+    cap_line "[UTEST-FRAME-END] run=1 records=3"
+}
+cap_refuses "a run terminator carrying no spawn census is refused" \
+    capture_spawn_count_missing _cap_oldform_terminator
+
+# PRECEDENCE. The verdicts added here slot into the established order rather
+# than in front of it: a producer-declared loss is the strongest statement
+# about an owner, so neither the expectation contract nor the announced chunk
+# bound may report ahead of it and demote the diagnosis an operator acts on.
+_cap_lost_outranks_expect() {
+    cap_line "[UTEST-CAPTURE-EXPECT] owner=7 name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE-LOST] owner=7 len=unknown"
+    cap_line "[UTEST-FRAME-END] run=1 records=3 spawned=1"
+}
+cap_refuses "a declared loss outranks the missing-channel verdict" \
+    capture_lost _cap_lost_outranks_expect
+
+# ... and the boundary of that rule, pinned so it cannot drift silently: a
+# record whose SHAPE the producer cannot emit is rejected while READING, before
+# any owner-level reasoning exists to have a precedence. That is pre-existing
+# behaviour (capture_malformed_record and capture_empty_chunk have always
+# outranked an owner's own loss record), and the shape checks added with the
+# write identity sit in the same phase rather than splitting one class of fault
+# across two precedences.
+_cap_shape_outranks_lost() {
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE-LOST] owner=7 len=unknown"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=1 seq=0 len=1 final=1 a"
+}
+cap_refuses "an unemittable record shape is named ahead of a declared loss" \
+    capture_write_identity _cap_shape_outranks_lost
+
+_cap_lost_outranks_oversize() {
+    cap_line "[UTEST-CAPTURE-EXPECT] owner=7 name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=1 name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=2 final=1 ab"
+    cap_line "[UTEST-CAPTURE-LOST] owner=7 len=unknown"
+    cap_line "[UTEST-FRAME-END] run=1 records=5 spawned=1"
+}
+cap_refuses "a declared loss outranks the oversize-chunk verdict" \
+    capture_lost _cap_lost_outranks_oversize
+
+# The whole shape, green: spawned, announced, armed, and reconciled.
+{
+    cap_line "[UTEST-CAPTURE-EXPECT] owner=7 name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=5 final=1 hello"
+    cap_line "[UTEST-FRAME-END] run=1 records=4 spawned=1"
+} > "$CAP_TMP/expect_ok.log"
+if cap_model "$CAP_TMP/expect_ok.log" "$CAP_TMP/expect_ok.json" &&
+   [ "$(cap_field "$CAP_TMP/expect_ok.json" 'm["binaries"][0]["text"]')" = "hello" ]; then
+    t_pass "capture: an announced, armed and reconciled channel is green"
+else
+    t_fail "capture: an announced, armed and reconciled channel is green"
+fi
+
+# A run that spawned NOTHING is not a defect: no expectation, no count to
+# reconcile, no refusal. Inferring the expectation host-side instead would
+# refuse exactly this shape.
+{
+    cap_line "[UTEST-FRAME-END] run=1 records=1 spawned=0"
+} > "$CAP_TMP/expect_none.log"
+if cap_model "$CAP_TMP/expect_none.log" "$CAP_TMP/expect_none.json" &&
+   [ "$(cap_field "$CAP_TMP/expect_none.json" 'len(m["binaries"])')" = "0" ]; then
+    t_pass "capture: a run that spawned nothing reconciles green"
+else
+    t_fail "capture: a run that spawned nothing reconciles green"
 fi
 
 # ---------------------------------------------------------------------------
@@ -15340,8 +15659,8 @@ fi
 # A budgeted stop is a BOUNDED payload, not a corrupt one: the run stays green
 # and the binary carries the producer-declared scope and limit.
 {
-    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
-    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=5 final=0 hello"
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=5 final=0 hello"
     cap_line "[UTEST-CAPTURE-OVER] owner=7 seq=1 scope=owner limit=1 charged=1"
 } > "$CAP_TMP/over_ok.log"
 if cap_model "$CAP_TMP/over_ok.log" "$CAP_TMP/over_ok.json" &&
@@ -15366,8 +15685,8 @@ fi
 # because the producer latches on the claim that finds the counter at it.
 # A marker claiming a limit it never reached is the forgery this closes.
 {
-    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
-    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=5 final=0 hello"
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=5 final=0 hello"
     cap_line "[UTEST-CAPTURE-OVER] owner=7 seq=1 scope=owner limit=900 charged=1"
 } > "$CAP_TMP/over_early.log"
 if ! cap_model "$CAP_TMP/over_early.log" "$CAP_TMP/over_early.json" &&
@@ -15381,10 +15700,10 @@ fi
 # producer's one-lock invariant broke -- or the marker was injected mid-stream
 # to hide the tail that follows it.
 {
-    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
-    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=1 final=0 a"
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=1 final=0 a"
     cap_line "[UTEST-CAPTURE-OVER] owner=7 seq=1 scope=owner limit=1 charged=1"
-    cap_line "[UTEST-CAPTURE] owner=7 seq=2 len=1 final=0 b"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=2 len=1 final=0 b"
 } > "$CAP_TMP/over_low.log"
 if ! cap_model "$CAP_TMP/over_low.log" "$CAP_TMP/over_low.json" &&
    [ "$(cap_field "$CAP_TMP/over_low.json" 'm["refusal"]["reason"]')" = "capture_over_not_highest" ]; then
@@ -15396,8 +15715,8 @@ fi
 # A terminator that skips a sequence number hides a lost chunk behind an
 # otherwise-valid stop.
 {
-    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
-    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=1 final=0 a"
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=1 final=0 a"
     cap_line "[UTEST-CAPTURE-OVER] owner=7 seq=5 scope=owner limit=5 charged=5"
 } > "$CAP_TMP/over_hole.log"
 if ! cap_model "$CAP_TMP/over_hole.log" "$CAP_TMP/over_hole.json" &&
@@ -15411,8 +15730,8 @@ fi
 # from the kernel -- and a second, weaker one must not overwrite the checks
 # the first had to satisfy.
 {
-    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
-    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=1 final=0 a"
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=1 final=0 a"
     cap_line "[UTEST-CAPTURE-OVER] owner=7 seq=1 scope=owner limit=1 charged=1"
     cap_line "[UTEST-CAPTURE-OVER] owner=7 seq=1 scope=owner limit=1 charged=1"
 } > "$CAP_TMP/over_dup.log"
@@ -15427,8 +15746,8 @@ fi
 # AGGREGATE stopped is legitimately far below its own limit. The proof is the
 # run's own charged-chunk count, which no single binary controls.
 {
-    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
-    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=1 final=0 a"
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=1 final=0 a"
     cap_line "[UTEST-CAPTURE-OVER] owner=7 seq=1 scope=run limit=99 charged=99"
 } > "$CAP_TMP/over_run_early.log"
 if ! cap_model "$CAP_TMP/over_run_early.log" "$CAP_TMP/over_run_early.json" &&
@@ -15442,9 +15761,9 @@ fi
 # chunks, with the owner still well below its own limit. This is the case the
 # equality check deliberately does not apply to.
 {
-    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
-    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=1 final=0 a"
-    cap_line "[UTEST-CAPTURE] owner=7 seq=1 len=1 final=0 b"
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=1 final=0 a"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=1 len=1 final=0 b"
     cap_line "[UTEST-CAPTURE-OVER] owner=7 seq=2 scope=run limit=2 charged=2"
 } > "$CAP_TMP/over_run_ok.log"
 if cap_model "$CAP_TMP/over_run_ok.log" "$CAP_TMP/over_run_ok.json" &&
@@ -15458,11 +15777,11 @@ fi
 # Run-scope markers that disagree on the aggregate limit mean two producers,
 # a version skew, or an injected record -- never one run's own emitter.
 {
-    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
-    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=1 final=0 a"
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=1 final=0 a"
     cap_line "[UTEST-CAPTURE-OVER] owner=7 seq=1 scope=run limit=1 charged=1"
-    cap_line "[UTEST-CAPTURE-BEGIN] owner=8 name=test_cap2.exe"
-    cap_line "[UTEST-CAPTURE] owner=8 seq=0 len=1 final=0 c"
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=8 chunk_max=$CAP_CHUNK_MAX name=test_cap2.exe"
+    cap_line "[UTEST-CAPTURE] owner=8 wr=0 seq=0 len=1 final=0 c"
     cap_line "[UTEST-CAPTURE-OVER] owner=8 seq=1 scope=run limit=2 charged=2"
 } > "$CAP_TMP/over_run_conflict.log"
 if ! cap_model "$CAP_TMP/over_run_conflict.log" "$CAP_TMP/over_run_conflict.json" &&
@@ -15476,8 +15795,8 @@ fi
 # through into an artifact field consumers branch on. The record is
 # capture-family and authenticated, so it hits the malformed detector.
 {
-    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
-    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=1 final=1 a"
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=1 final=1 a"
     cap_line "[UTEST-CAPTURE-OVER] owner=7 seq=1 scope=galaxy limit=1 charged=1"
 } > "$CAP_TMP/over_scope.log"
 if ! cap_model "$CAP_TMP/over_scope.log" "$CAP_TMP/over_scope.json" &&
@@ -15494,9 +15813,9 @@ fi
 # `limit=1 charged=0` reconcile green, suppressing capture_unterminated on a
 # budget the run never reached.
 {
-    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
-    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=1 final=0 a"
-    cap_line "[UTEST-CAPTURE] owner=7 seq=1 len=1 final=0 b"
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=1 final=0 a"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=1 len=1 final=0 b"
     cap_line "[UTEST-CAPTURE-OVER] owner=7 seq=2 scope=run limit=1 charged=0"
 } > "$CAP_TMP/over_run_charged.log"
 if ! cap_model "$CAP_TMP/over_run_charged.log" "$CAP_TMP/over_run_charged.json" &&
@@ -15509,10 +15828,10 @@ fi
 # The equality binds in BOTH directions: more chunks than the declared limit
 # means the run kept charging past a latch that should have stopped it.
 {
-    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
-    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=1 final=0 a"
-    cap_line "[UTEST-CAPTURE] owner=7 seq=1 len=1 final=0 b"
-    cap_line "[UTEST-CAPTURE] owner=7 seq=2 len=1 final=0 c"
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=1 final=0 a"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=1 len=1 final=0 b"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=2 len=1 final=0 c"
     cap_line "[UTEST-CAPTURE-OVER] owner=7 seq=3 scope=run limit=2 charged=2"
 } > "$CAP_TMP/over_run_excess.log"
 if ! cap_model "$CAP_TMP/over_run_excess.log" "$CAP_TMP/over_run_excess.json" &&
@@ -15526,9 +15845,9 @@ fi
 # has a feasible floor: this binary's own chunks were each charged against
 # that same aggregate.
 {
-    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
-    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=1 final=0 a"
-    cap_line "[UTEST-CAPTURE] owner=7 seq=1 len=1 final=0 b"
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=1 final=0 a"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=1 len=1 final=0 b"
     cap_line "[UTEST-CAPTURE-OVER] owner=7 seq=2 scope=owner limit=2 charged=1"
 } > "$CAP_TMP/over_charged_floor.log"
 if ! cap_model "$CAP_TMP/over_charged_floor.log" "$CAP_TMP/over_charged_floor.json" &&
@@ -15544,11 +15863,11 @@ fi
 # peer completes normally and the stopped owner is far below its own limit;
 # their combined chunks are what meets the run limit.
 {
-    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_peer.exe"
-    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=1 final=1 a"
-    cap_line "[UTEST-CAPTURE] owner=7 seq=1 len=1 final=1 b"
-    cap_line "[UTEST-CAPTURE-BEGIN] owner=8 name=test_stopped.exe"
-    cap_line "[UTEST-CAPTURE] owner=8 seq=0 len=1 final=0 c"
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_peer.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=1 final=1 a"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=1 seq=1 len=1 final=1 b"
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=8 chunk_max=$CAP_CHUNK_MAX name=test_stopped.exe"
+    cap_line "[UTEST-CAPTURE] owner=8 wr=0 seq=0 len=1 final=0 c"
     cap_line "[UTEST-CAPTURE-OVER] owner=8 seq=1 scope=run limit=3 charged=3"
 } > "$CAP_TMP/over_run_multi.log"
 if cap_model "$CAP_TMP/over_run_multi.log" "$CAP_TMP/over_run_multi.json" &&
@@ -15563,10 +15882,10 @@ fi
 # The adjacent boundaries of that same aggregate: one chunk short and one
 # chunk over must both refuse, or the equality is not actually binding.
 {
-    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_peer.exe"
-    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=1 final=1 a"
-    cap_line "[UTEST-CAPTURE-BEGIN] owner=8 name=test_stopped.exe"
-    cap_line "[UTEST-CAPTURE] owner=8 seq=0 len=1 final=0 c"
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_peer.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=1 final=1 a"
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=8 chunk_max=$CAP_CHUNK_MAX name=test_stopped.exe"
+    cap_line "[UTEST-CAPTURE] owner=8 wr=0 seq=0 len=1 final=0 c"
     cap_line "[UTEST-CAPTURE-OVER] owner=8 seq=1 scope=run limit=3 charged=3"
 } > "$CAP_TMP/over_run_short.log"
 if ! cap_model "$CAP_TMP/over_run_short.log" "$CAP_TMP/over_run_short.json" &&
@@ -15577,12 +15896,12 @@ else
 fi
 
 {
-    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_peer.exe"
-    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=1 final=1 a"
-    cap_line "[UTEST-CAPTURE] owner=7 seq=1 len=1 final=1 b"
-    cap_line "[UTEST-CAPTURE] owner=7 seq=2 len=1 final=1 c"
-    cap_line "[UTEST-CAPTURE-BEGIN] owner=8 name=test_stopped.exe"
-    cap_line "[UTEST-CAPTURE] owner=8 seq=0 len=1 final=0 d"
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_peer.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=1 final=1 a"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=1 seq=1 len=1 final=1 b"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=2 seq=2 len=1 final=1 c"
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=8 chunk_max=$CAP_CHUNK_MAX name=test_stopped.exe"
+    cap_line "[UTEST-CAPTURE] owner=8 wr=0 seq=0 len=1 final=0 d"
     cap_line "[UTEST-CAPTURE-OVER] owner=8 seq=1 scope=run limit=3 charged=3"
 } > "$CAP_TMP/over_run_long.log"
 if ! cap_model "$CAP_TMP/over_run_long.log" "$CAP_TMP/over_run_long.json" &&
@@ -15597,7 +15916,7 @@ fi
 # a BEGIN plus a bare marker published an empty testcase as a bounded stop,
 # suppressing capture_unterminated on a budget nothing ever reached.
 {
-    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
     cap_line "[UTEST-CAPTURE-OVER] owner=7 seq=0 scope=owner limit=0 charged=0"
 } > "$CAP_TMP/over_zero_owner.log"
 if ! cap_model "$CAP_TMP/over_zero_owner.log" "$CAP_TMP/over_zero_owner.json" &&
@@ -15608,7 +15927,7 @@ else
 fi
 
 {
-    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
     cap_line "[UTEST-CAPTURE-OVER] owner=7 seq=0 scope=run limit=0 charged=0"
 } > "$CAP_TMP/over_zero_run.log"
 if ! cap_model "$CAP_TMP/over_zero_run.log" "$CAP_TMP/over_zero_run.json" &&
@@ -15691,10 +16010,10 @@ fi
 # on an unterminated tail exactly as before. Without this, the new branch
 # could quietly disable the check for every run.
 {
-    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
-    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=1 final=0 a"
-    cap_line "[UTEST-CAPTURE-BEGIN] owner=8 name=test_cap2.exe"
-    cap_line "[UTEST-CAPTURE] owner=8 seq=0 len=1 final=0 b"
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=1 final=0 a"
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=8 chunk_max=$CAP_CHUNK_MAX name=test_cap2.exe"
+    cap_line "[UTEST-CAPTURE] owner=8 wr=0 seq=0 len=1 final=0 b"
     cap_line "[UTEST-CAPTURE-OVER] owner=8 seq=1 scope=owner limit=1 charged=1"
 } > "$CAP_TMP/over_narrow.log"
 if ! cap_model "$CAP_TMP/over_narrow.log" "$CAP_TMP/over_narrow.json" &&
@@ -15706,8 +16025,8 @@ fi
 
 # c11. The nonce prefix is what makes a record non-forgeable. A capture-shaped
 #      line WITHOUT it is a ring-3 binary echoing text, not a launcher record.
-cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe" > "$CAP_TMP/forge.log"
-echo "[  1.000] [cpu:0] [UTEST-CAPTURE] owner=7 seq=0 len=99 final=1 forged" \
+cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe" > "$CAP_TMP/forge.log"
+echo "[  1.000] [cpu:0] [UTEST-CAPTURE] owner=7 wr=0 seq=0 len=99 final=1 forged" \
     >> "$CAP_TMP/forge.log"
 if cap_model "$CAP_TMP/forge.log" "$CAP_TMP/forge.json" &&
    [ "$(cap_field "$CAP_TMP/forge.json" 'm["binaries"][0]["total_bytes"]')" = "0" ]; then
@@ -15720,8 +16039,8 @@ fi
 #      always rewrites '[' as \x5b precisely so a payload cannot impersonate a
 #      record kind. Seeing one raw means the line was damaged.
 {
-    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
-    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=1 final=1 ["
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=1 final=1 ["
 } > "$CAP_TMP/marker.log"
 if ! cap_model "$CAP_TMP/marker.log" "$CAP_TMP/marker.json" &&
    [ "$(cap_field "$CAP_TMP/marker.json" 'm["refusal"]["reason"]')" = "capture_unescaped_marker" ]; then
@@ -15738,11 +16057,11 @@ import sys
 path, prefix = sys.argv[1], sys.argv[2]
 chunk = "x" * 128
 with open(path, "w") as fh:
-    fh.write("[  1.000] [cpu:0] [ OK ] %s[UTEST-CAPTURE-BEGIN] owner=7 name=test_big.exe\n" % prefix)
+    fh.write("[  1.000] [cpu:0] [ OK ] %s[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=128 name=test_big.exe\n" % prefix)
     total = (64 * 1024) // 128 + 8          # deliberately past PER_BINARY_CAP
     for seq in range(total):
         final = 1 if seq == total - 1 else 0
-        fh.write("[  1.000] [cpu:0] [ OK ] %s[UTEST-CAPTURE] owner=7 seq=%d len=128 final=%d %s\n"
+        fh.write("[  1.000] [cpu:0] [ OK ] %s[UTEST-CAPTURE] owner=7 wr=0 seq=%d len=128 final=%d %s\n"
                  % (prefix, seq, final, chunk))
 PYEOF
 if cap_model "$CAP_TMP/big.log" "$CAP_TMP/big.json" &&
@@ -15760,8 +16079,8 @@ fi
 #      the document must still parse. Textual splicing cannot do this: the
 #      assembler keeps only physical lines starting with `<testcase`.
 {
-    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
-    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=5 final=1 a&b<c"
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=5 final=1 a&b<c"
 } > "$CAP_TMP/meta.log"
 cap_model "$CAP_TMP/meta.log" "$CAP_TMP/meta.json"
 cat > "$CAP_TMP/in.xml" <<'XEOF'
@@ -15813,50 +16132,39 @@ fi
 # c19-c24. Every remaining refusal reason gets a fixture. The first version of
 #      this group claimed to pin them all and pinned two-thirds; a refusal
 #      branch with no fixture is a branch that can silently invert.
-cap_refuses() {  # <label> <expected-reason> <log-body-writer-fn>
-    local label="$1" want="$2" fn="$3" log="$CAP_TMP/$2.log" out="$CAP_TMP/$2.json"
-    "$fn" > "$log"
-    if ! cap_model "$log" "$out" &&
-       [ "$(cap_field "$out" 'm["refusal"]["reason"]')" = "$want" ]; then
-        t_pass "capture: $label"
-    else
-        t_fail "capture: $label" "expected $want, got $(cap_field "$out" 'm["refusal"]["reason"]')"
-    fi
-}
-
 _cap_dup() {
-    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
-    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=1 final=1 a"
-    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=1 final=1 b"
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=1 final=1 a"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=1 final=1 b"
 }
 cap_refuses "a duplicate seq is refused" capture_duplicate_seq _cap_dup
 
 _cap_rebind() {
-    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_one.exe"
-    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_two.exe"
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_one.exe"
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_two.exe"
 }
 cap_refuses "an owner rebound to a second binary is refused" capture_owner_rebound _cap_rebind
 
 # The producer returns before consuming a seq when a write stages no bytes, so
 # a len=0 record cannot have come from the kernel escaper.
 _cap_empty() {
-    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
-    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=0 final=1 "
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=0 final=1 "
 }
 cap_refuses "a len=0 chunk is refused" capture_empty_chunk _cap_empty
 
 # The kernel indexes UTEST_HEX_DIGITS = "0123456789abcdef": uppercase is a shape
 # it cannot emit, and accepting it would normalize a corrupted record.
 _cap_upper() {
-    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
-    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=1 final=1 \x0A"
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=1 final=1 \x0A"
 }
 cap_refuses "an uppercase-hex escape is refused" capture_bad_escape _cap_upper
 
 # 0x41 ('A') is printable: the producer emits it literally, never escaped.
 _cap_noncanon() {
-    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
-    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=1 final=1 \x41"
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=1 final=1 \x41"
 }
 cap_refuses "an escape of a byte the producer emits literally is refused" \
     capture_noncanonical_escape _cap_noncanon
@@ -15865,8 +16173,8 @@ cap_refuses "an escape of a byte the producer emits literally is refused" \
 # skipped, so a BEGIN plus one damaged chunk reconciled as a binary that simply
 # wrote nothing -- a corrupt run certified clean.
 _cap_malformed() {
-    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
-    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=3 final=2 abc"
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=3 final=2 abc"
 }
 cap_refuses "a malformed authenticated capture record is refused, not read as silence" \
     capture_malformed_record _cap_malformed
@@ -15882,13 +16190,13 @@ per_owner = (64 * 1024) // 128          # exactly PER_BINARY_CAP per owner
 owners = (1024 * 1024) // (64 * 1024)   # exactly RUN_AGGREGATE_CAP in total
 with open(path, "w") as fh:
     for pid in range(owners):
-        fh.write("[  1.000] [cpu:0] [ OK ] %s[UTEST-CAPTURE-BEGIN] owner=%d name=test_a%d.exe\n"
+        fh.write("[  1.000] [cpu:0] [ OK ] %s[UTEST-CAPTURE-BEGIN] owner=%d chunk_max=128 name=test_a%d.exe\n"
                  % (prefix, pid, pid))
         for seq in range(per_owner):
-            fh.write("[  1.000] [cpu:0] [ OK ] %s[UTEST-CAPTURE] owner=%d seq=%d len=128 final=%d %s\n"
+            fh.write("[  1.000] [cpu:0] [ OK ] %s[UTEST-CAPTURE] owner=%d wr=0 seq=%d len=128 final=%d %s\n"
                      % (prefix, pid, seq, 1 if seq == per_owner - 1 else 0, chunk))
     # A silent binary AFTER the budget is exactly full: nothing to drop.
-    fh.write("[  1.000] [cpu:0] [ OK ] %s[UTEST-CAPTURE-BEGIN] owner=99 name=test_silent.exe\n" % prefix)
+    fh.write("[  1.000] [cpu:0] [ OK ] %s[UTEST-CAPTURE-BEGIN] owner=99 chunk_max=128 name=test_silent.exe\n" % prefix)
 PYEOF
 if cap_model "$CAP_TMP/agg.log" "$CAP_TMP/agg.json" &&
    [ "$(cap_field "$CAP_TMP/agg.json" 'm["aggregate_bytes"]')" = "1048576" ] &&
@@ -16016,21 +16324,21 @@ fi
 #      shapes the kernel cannot emit -- `final=1abc` parsed with "abc" as the
 #      payload, silently reinterpreting the first byte of a damaged record.
 _cap_nosep() {
-    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
-    cap_line "[UTEST-CAPTURE] owner=7 seq=0 len=3 final=1abc"
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=3 final=1abc"
 }
 cap_refuses "a chunk with no payload separator is refused" \
     capture_malformed_record _cap_nosep
 
 _cap_garbage() {
-    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
-    cap_line "junk [UTEST-CAPTURE] owner=7 seq=0 len=1 final=1 a"
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "junk [UTEST-CAPTURE] owner=7 wr=0 seq=0 len=1 final=1 a"
 }
 cap_refuses "a chunk with leading garbage is refused" \
     capture_malformed_record _cap_garbage
 
 _cap_lostsuffix() {
-    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
     cap_line "[UTEST-CAPTURE-LOST] owner=7"
 }
 cap_refuses "a loss record missing its len=unknown suffix is refused" \
@@ -16039,24 +16347,24 @@ cap_refuses "a loss record missing its len=unknown suffix is refused" \
 # The producer formats every numeric field with %u, so a leading zero is a shape
 # it cannot emit. `\d+` plus int() used to NORMALIZE it into a valid record.
 _cap_leadzero() {
-    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
-    cap_line "[UTEST-CAPTURE] owner=07 seq=00 len=01 final=1 a"
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=07 wr=0 seq=00 len=01 final=1 a"
 }
 cap_refuses "a record with leading-zero numeric fields is refused" \
     capture_malformed_record _cap_leadzero
 
 # Python's \d also matches Unicode digits; the producer emits ASCII only.
 _cap_unicodedigit() {
-    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
-    printf '[  1.000] [cpu:0] [ OK ] %s[UTEST-CAPTURE] owner=\xd9\xa7 seq=0 len=1 final=1 a\n' "$CAP_PREFIX"
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    printf '[  1.000] [cpu:0] [ OK ] %s[UTEST-CAPTURE] owner=\xd9\xa7 wr=0 seq=0 len=1 final=1 a\n' "$CAP_PREFIX"
 }
 cap_refuses "a record with a Unicode-digit field is refused" \
     capture_malformed_record _cap_unicodedigit
 
 # 10 digits still admits values above 2^32 that the producer's uint32 cannot.
 _cap_overrange() {
-    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 name=test_cap.exe"
-    cap_line "[UTEST-CAPTURE] owner=4294967296 seq=0 len=1 final=1 a"
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=4294967296 wr=0 seq=0 len=1 final=1 a"
 }
 cap_refuses "a numeric field wider than uint32 is refused" \
     capture_field_out_of_range _cap_overrange
@@ -16064,7 +16372,7 @@ cap_refuses "a numeric field wider than uint32 is refused" \
 # The range check must cover BEGIN too, not only chunks: it used to live in the
 # chunk branch, so an over-range owner arrived as a perfectly fine empty binary.
 _cap_beginrange() {
-    cap_line "[UTEST-CAPTURE-BEGIN] owner=4294967296 name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=4294967296 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
 }
 cap_refuses "an over-range owner in a BEGIN record is refused" \
     capture_field_out_of_range _cap_beginrange
@@ -16077,7 +16385,7 @@ import sys
 path, prefix = sys.argv[1], sys.argv[2]
 with open(path, "w") as fh:
     for pid in range(5000):            # past MAX_OWNERS = 4096
-        fh.write("[  1.000] [cpu:0] [ OK ] %s[UTEST-CAPTURE-BEGIN] owner=%d name=test_f%d.exe\n"
+        fh.write("[  1.000] [cpu:0] [ OK ] %s[UTEST-CAPTURE-BEGIN] owner=%d chunk_max=128 name=test_f%d.exe\n"
                  % (prefix, pid, pid))
 PYEOF
 if ! cap_model "$CAP_TMP/flood.log" "$CAP_TMP/flood.json" &&
@@ -16102,9 +16410,10 @@ SIZE = 8
 chunk = "z" * SIZE
 total = (64 * 1024) // SIZE + 4        # deliberately past PER_BINARY_CAP
 with open(path, "w") as fh:
-    fh.write("[  1.000] [cpu:0] [ OK ] %s[UTEST-CAPTURE-BEGIN] owner=7 name=test_trunc.exe\n" % prefix)
+    fh.write("[  1.000] [cpu:0] [ OK ] %s[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=%d name=test_trunc.exe\n"
+             % (prefix, SIZE))
     for seq in range(total):
-        fh.write("[  1.000] [cpu:0] [ OK ] %s[UTEST-CAPTURE] owner=7 seq=%d len=%d final=%d %s\n"
+        fh.write("[  1.000] [cpu:0] [ OK ] %s[UTEST-CAPTURE] owner=7 wr=0 seq=%d len=%d final=%d %s\n"
                  % (prefix, seq, SIZE, 1 if seq == total - 1 else 0, chunk))
 PYEOF
 cat > "$CAP_TMP/trunc.xml" <<'XEOF'

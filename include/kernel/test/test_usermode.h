@@ -118,6 +118,14 @@ struct utest_capture_ctx {
      * write forever, so the budget would bound serial traffic while leaving
      * producer CPU and lock contention unbounded. */
     uint8_t  _discard;
+    /* Identity of the write() this ctx is staging, published as `wr=` on
+     * every record the write emits so the host can reconcile each write
+     * independently instead of only the owner's highest sequence number.
+     * It is the sequence number of this write's FIRST emitted chunk, so
+     * _has_wid stays 0 for a write that never reached the wire -- see the
+     * WRITE IDENTITY block above u_capture_emit_chunk (test_usermode.c). */
+    uint8_t  _has_wid;
+    uint32_t _wid;
     char     _buf[192];
 };
 
