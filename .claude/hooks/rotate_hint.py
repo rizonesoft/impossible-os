@@ -99,10 +99,14 @@ HINT_REL = ".claude/state/rotate-hint.json"
 # inline_churn_monitor). The full mechanics live in the SKILL; this is the pointer.
 _MSG = (
     "[sequencer] context-rotation hint set ({n} tool-events since the last "
-    "rollover). At the NEXT WIP-clean boundary in THIS section -- work committed "
-    "but NOT yet pushed (there must be local unshipped WIP; push is not required "
-    "mid-section), any open Codex review fully resolved (findings triaged + fixed "
-    "+ green, not merely received), no background job -- run `python3 "
+    "rollover). CREATE the boundary -- do NOT wait for one. Finish the unit of "
+    "work in hand, then at the FIRST green build/test point commit what you have "
+    "LOCALLY and do NOT push (`git commit -m \"wip: ...\" -- <paths>`): that "
+    "commit IS the precondition, and nothing in the normal flow produces one "
+    "(measured 2026-07-31: this hint fired every segment and rollover-wip was "
+    "attempted ZERO times, because every run commit is pushed). Then, with any "
+    "open Codex review fully resolved (findings triaged + fixed "
+    "+ green, not merely received) and no background job -- run `python3 "
     ".claude/hooks/run_phase_guard.py review-resolved` (records a green+bound "
     "receipt), then `... rollover-wip`. VERIFIED -> final-answer + "
     "END the turn (mid-section context rotation: the watchdog relaunches a fresh "
@@ -205,6 +209,29 @@ def main() -> int:
         if newly_set or (since > 0 and since % ROTATE_RENUDGE_TURNS == 0):
             try:
                 print(json.dumps({"systemMessage": _MSG.format(n=data["count"])}))
+            except Exception:
+                pass
+            # DURABLE RECORD (2026-08-01). A PostToolUse systemMessage reaches
+            # the run's TRANSCRIPT but NOT the stream-json stdout that
+            # stream-report.py parses, so the run log shows nothing: the
+            # canary's first segment carried 8 hint occurrences in its
+            # transcript and 0 in its log. Teaching stream-report to decode
+            # `attachment` events was verified by REPLAYING transcript lines --
+            # which proves it handles them if they arrive, not that they do.
+            # Writing our own line removes the dependency on what the stream
+            # happens to carry, and it survives the rollover that unlinks the
+            # counter, so "did the rotation fire?" is a grep instead of a
+            # forensic reconstruction.
+            try:
+                rec = root / ".claude/overnight/advisories.jsonl"
+                rec.parent.mkdir(parents=True, exist_ok=True)
+                with rec.open("a", encoding="utf-8") as fh:
+                    fh.write(json.dumps({
+                        "ts": time.time(), "hook": "rotate_hint",
+                        "event": "context-rotation hint",
+                        "count": data["count"],
+                        "threshold": ROTATE_HINT_TURNS,
+                    }) + "\n")
             except Exception:
                 pass
     return 0
