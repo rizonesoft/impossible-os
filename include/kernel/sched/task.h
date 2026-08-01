@@ -1292,6 +1292,38 @@ _Static_assert(TASK_EXIT_REASON_BASE < -(int)SIG_MAX,
  * were indistinguishable to any consumer classifying by status value. */
 #define TASK_EXIT_UTEST_IDENTITY        (TASK_EXIT_REASON_BASE - 2)
 
+/* The usermode test launcher killed a binary for outrunning its wall clock.
+ * Assigned by the LAUNCHER (u_wait_with_timeout), never by the binary or by
+ * the loader, and it deliberately OVERWRITES SIGKILL's -9 so the reported
+ * reason is "ran out of time" rather than "was signalled" -- which is exactly
+ * why the marker itself must not live in the signal range. It spent its first
+ * life as -6 in include/kernel/test/test_usermode.h, indistinguishable from a
+ * SIGABRT-range death; the move here was deferred once on the belief that host
+ * artifact parsers keyed on the number, which they do not -- scripts/test.sh
+ * keys on the named TIMEOUT verdict token, not on exit=N. */
+#define TASK_EXIT_UTEST_TIMEOUT         (TASK_EXIT_REASON_BASE - 3)
+
+/* Layer 1 for the reasons THEMSELVES, not just the block base. The assert
+ * above proves the BLOCK clears the signal range; it says nothing about any
+ * individual reason, and a reason written as a bare literal (or derived from
+ * the wrong base) would sit back inside -(signum) exactly as the timeout
+ * marker did for its whole first life. Assert each one where it is allocated,
+ * so the next reason cannot repeat that history silently. */
+_Static_assert(TASK_EXIT_EXEC_IMAGE_DESTROYED < -(int)SIG_MAX
+               && TASK_EXIT_UTEST_IDENTITY < -(int)SIG_MAX
+               && TASK_EXIT_UTEST_TIMEOUT < -(int)SIG_MAX,
+               "a reserved exit reason overlaps the -(signum) range");
+
+/* Distinctness is a SEPARATE property from range: two reasons both below
+ * -SIG_MAX but equal to each other are indistinguishable to every consumer
+ * that classifies by status value, which is the entire point of naming them.
+ * Pairwise, so a future reason copy-pasted with an unchanged offset fails the
+ * build instead of silently aliasing an existing cause. */
+_Static_assert(TASK_EXIT_EXEC_IMAGE_DESTROYED != TASK_EXIT_UTEST_IDENTITY
+               && TASK_EXIT_EXEC_IMAGE_DESTROYED != TASK_EXIT_UTEST_TIMEOUT
+               && TASK_EXIT_UTEST_IDENTITY != TASK_EXIT_UTEST_TIMEOUT,
+               "two reserved exit reasons collide on the same value");
+
 #ifdef KERNEL_TESTS
 /* Test seam over the internal kernel-stack free helper, so the reclamation
  * test exercises the production allocator discrimination and the

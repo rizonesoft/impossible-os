@@ -59,9 +59,6 @@ typedef enum {
  * The launcher counts it as SKIPPED, not FAIL. Any other non-zero
  * exit is FAIL. */
 #define UTEST_EXIT_SKIP    77
-/* Synthetic exit the launcher assigns when a binary is killed for
- * exceeding its wall-clock timeout. */
-#define UTEST_EXIT_TIMEOUT (-6)
 
 /* Layer 1 of the constant's defence, at COMPILE time. 77 is an external
  * contract -- the GNU automake / kselftest "skipped" status -- so drift
@@ -73,17 +70,25 @@ typedef enum {
  * actually wanted. */
 _Static_assert(UTEST_EXIT_SKIP == 77,
                "UTEST_EXIT_SKIP must stay the kselftest/automake skip status");
-_Static_assert(UTEST_EXIT_TIMEOUT < 0 && UTEST_EXIT_TIMEOUT != UTEST_EXIT_SKIP,
-               "the timeout marker must not collide with a real exit status");
 
-/* The identity-refusal status is NOT defined here. It is
- * TASK_EXIT_UTEST_IDENTITY in include/kernel/sched/task.h, allocated from
- * the reserved kernel exit-reason block below -SIG_MAX, because a status in
- * the small-negative range is indistinguishable from -(signum): the first
- * version used -7 and collided with a signal death exactly as that block's
- * own comment warns. UTEST_EXIT_TIMEOUT above predates the block and still
- * sits inside the signal range -- tracked, not fixed here, because the host
- * artifact parsers key on its current value. */
+/* Neither kernel-originated refusal status is defined here. Both live in
+ * include/kernel/sched/task.h, allocated from the reserved exit-reason block
+ * below -SIG_MAX, because a status in the small-negative range is
+ * indistinguishable from -(signum):
+ *
+ *   TASK_EXIT_UTEST_IDENTITY  the bytes read did not match the identity the
+ *                             plan froze. Its first version used -7 and
+ *                             collided with a signal death exactly as that
+ *                             block's own comment warns.
+ *   TASK_EXIT_UTEST_TIMEOUT   the binary outran its wall clock. Was -6 here
+ *                             until 2026-08-01, so a timed-out binary and a
+ *                             SIGABRT-range death reported identically.
+ *
+ * The move was deferred once on the belief that host artifact parsers keyed
+ * on the -6 value. They do not: scripts/test.sh reads the named TIMEOUT
+ * verdict token, and no shell or Python consumer in the tree compares the
+ * number. Only UTEST_EXIT_SKIP stays here, because 77 is an EXTERNAL contract
+ * a ring-3 binary produces, not a kernel-assigned cause. */
 
 /* Per-write source-level stdout capture context. Callers (sys_write in
  * syscall.c, the stdout branch of NtWriteFile in nt_syscall.c) declare

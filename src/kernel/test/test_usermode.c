@@ -1659,9 +1659,11 @@ static void u_manifest_free(struct manifest_state *ms)
  *   -3: pmm_alloc_contiguous failed
  *   -4: vfs_read short / size mismatch
  *   -5: task_exec failed
- *   -6: UTEST_EXIT_TIMEOUT -- assigned by the LAUNCHER, never by this
- *       loader, when the binary outran its wall clock
- *   TASK_EXIT_UTEST_IDENTITY (task.h, reserved block below -SIG_MAX):
+ *   TASK_EXIT_UTEST_TIMEOUT (task.h, reserved block below -SIG_MAX):
+ *       assigned by the LAUNCHER, never by this loader, when the binary
+ *       outran its wall clock. Was -6 until 2026-08-01, which made it
+ *       indistinguishable from a SIGABRT-range death
+ *   TASK_EXIT_UTEST_IDENTITY (task.h, same reserved block):
  *       the bytes read did not match the identity the plan froze, so the
  *       binary was refused instead of executed. NOT a small negative --
  *       those are indistinguishable from -(signum)
@@ -1870,6 +1872,25 @@ static void utest_loader_func(void)
         yield();
 }
 
+/* Stamp the timeout cause onto a child the launcher gave up waiting for.
+ *
+ * One line, and deliberately a named function anyway. The value assigned here
+ * is the ONLY thing that distinguishes "outran its clock" from "was killed by
+ * a signal" once the child is reaped, and it is assigned on a path a kernel
+ * unit test cannot drive: u_wait_with_timeout needs live scheduling, signals,
+ * a clock and remote termination, all of which the test policy forbids a
+ * test_*.c from touching. Factoring the assignment out gives that path a
+ * POSTCONDITION a test CAN assert against a zeroed scratch TCB -- outside the
+ * -(signum) range and not SIGKILL's -9 -- so reintroducing a signal-range
+ * marker fails a test rather than silently restoring the ambiguity this
+ * section removed. What it deliberately does NOT prove is that
+ * u_wait_with_timeout still calls it; that regression class needs the
+ * end-to-end fixture parked in this section's items 1-2. */
+static void u_stamp_timeout_status(struct task *t)
+{
+    t->exit_status = TASK_EXIT_UTEST_TIMEOUT;
+}
+
 /* ---- Polled wait with timeout -------------------------------------- *
  *
  * Replaces task_waitpid in the path. Semantics:
@@ -1877,7 +1898,7 @@ static void utest_loader_func(void)
  *    reaches TASK_DEAD before the deadline.
  *  - On timeout: send SIGKILL, wait KILL_GRACE_MS for cooperative
  *    tear-down, then force state=TASK_DEAD + exit_status=TIMEOUT.
- *    The exit_status the caller sees is always UTEST_EXIT_TIMEOUT
+ *    The exit_status the caller sees is always TASK_EXIT_UTEST_TIMEOUT
  *    on the timeout path (overwrites SIGKILL's -9).
  *  - Caller still owns task_cleanup() for the child pid afterward.
  *
@@ -1940,10 +1961,10 @@ static int32_t u_wait_with_timeout(uint32_t pid, uint32_t timeout_ms,
          * Defensive guard: refuse to force-kill ourselves; would
          * leave the running task DEAD and trip a cascading crash. */
         if (t->state != TASK_DEAD && t != task_current())
-            task_terminate_remote(t, UTEST_EXIT_TIMEOUT);
+            task_terminate_remote(t, TASK_EXIT_UTEST_TIMEOUT);
         /* Either way, surface TIMEOUT so the launcher log / TAP / bat
          * output names the actual reason rather than SIGKILL's -9. */
-        t->exit_status = UTEST_EXIT_TIMEOUT;
+        u_stamp_timeout_status(t);
     }
 
     return t->exit_status;
@@ -7399,6 +7420,53 @@ uint32_t test_usermode_reason_max(void);
 uint32_t test_usermode_reason_max(void)
 {
     return (uint32_t)UTEST_REASON_MAX;
+}
+
+/* Seam over the PRODUCTION exit-reason renderer, so a test observes what the
+ * launcher actually composes for a given status rather than a copy of it.
+ *
+ * Exists because moving the timeout marker into the reserved exit-reason
+ * block widened the status values this renderer must carry: every previous
+ * kernel-assigned cause it saw was a single digit, and a reserved reason is
+ * four plus a sign. The width proof (UTEST_REASON_MAX, asserted below
+ * UTEST_REASON_BUF) is derived from UTEST_DIGITS_U32 and so already covers
+ * it, but "the assert covers it" and "the renderer emits it" are different
+ * claims, and only the second one is what a consumer reads.
+ *
+ * Renders into a correctly-extended local rather than into the caller's
+ * buffer: u_reason_exit takes `char (*)[UTEST_REASON_BUF]` precisely so a
+ * short buffer is a constraint violation the build rejects, and forwarding a
+ * caller pointer would throw that guarantee away at the seam. Copies out
+ * under the caller's cap and returns 0 if it does not fit, so a mis-sized
+ * test buffer fails the assertion instead of truncating silently. */
+/* Seam over the timeout path's status stamp, so a test asserts the
+ * postcondition the PRODUCTION helper establishes rather than a copy of the
+ * constant. Takes the scratch TCB the caller owns; touches only exit_status,
+ * so it is safe against a zeroed struct with no live subsystems behind it. */
+void test_usermode_stamp_timeout_status(struct task *t);
+void test_usermode_stamp_timeout_status(struct task *t)
+{
+    if (t)
+        u_stamp_timeout_status(t);
+}
+
+uint32_t test_usermode_reason_exit(char *dst, uint32_t cap, int32_t status);
+uint32_t test_usermode_reason_exit(char *dst, uint32_t cap, int32_t status)
+{
+    char     buf[UTEST_REASON_BUF];
+    uint32_t n = 0;
+
+    if (!dst || !cap)
+        return 0;
+    dst[0] = '\0';
+    u_reason_exit(&buf, status);
+    while (buf[n] != '\0')
+        n++;
+    if (n + 1u > cap)
+        return 0;
+    for (uint32_t i = 0; i <= n; i++)
+        dst[i] = buf[i];
+    return n;
 }
 
 /* Filesystem-identity comparison. Exported because getting it wrong does

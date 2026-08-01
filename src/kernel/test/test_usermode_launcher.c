@@ -51,6 +51,8 @@ int test_usermode_build_aggregate_id(char *dst, uint32_t cap, uint32_t kind,
 int test_usermode_aggregate_has_value(uint32_t kind);
 uint64_t test_usermode_clamp_time_ms(uint64_t ms);
 uint32_t test_usermode_reason_max(void);
+uint32_t test_usermode_reason_exit(char *dst, uint32_t cap, int32_t status);
+void test_usermode_stamp_timeout_status(struct task *t);
 int test_usermode_format_xml_testcase(char *dst, uint32_t cap,
                                       const char *name, int verdict,
                                       uint64_t time_ms, const char *reason);
@@ -1765,6 +1767,101 @@ static void test_report_reconcile_rejects_contradictions(void)
                    "a report alongside exit 77 is INVALID");
 }
 
+/* The PRODUCTION timeout path's postcondition, asserted where a test can
+ * reach it. u_wait_with_timeout itself needs live scheduling, signals, a
+ * clock and remote termination, so a test_*.c may not drive it; the status
+ * stamp it performs is factored into u_stamp_timeout_status precisely so the
+ * property that matters survives into something testable.
+ *
+ * The properties asserted are the ones a regression would actually break --
+ * that the reaped status is outside the -(signum) range and is not SIGKILL's
+ * own -9 -- rather than the constant's value, which the _Static_asserts in
+ * task.h already refuse to build wrong. */
+static struct task s_timeout_stamp_scratch;
+
+static void test_timeout_stamp_leaves_the_signal_range(void)
+{
+    s_timeout_stamp_scratch.exit_status = -9;   /* what SIGKILL would leave */
+
+    test_usermode_stamp_timeout_status(&s_timeout_stamp_scratch);
+
+    TEST_ASSERT_EQ((uint64_t)(s_timeout_stamp_scratch.exit_status
+                              < -(int32_t)SIG_MAX), 1ull,
+                   "a timed-out child's status must clear the signal range");
+    TEST_ASSERT_EQ((uint64_t)(s_timeout_stamp_scratch.exit_status != -9), 1ull,
+                   "the timeout stamp must overwrite SIGKILL's own -9");
+    TEST_ASSERT_EQ((uint64_t)(s_timeout_stamp_scratch.exit_status
+                              != TASK_EXIT_UTEST_IDENTITY), 1ull,
+                   "a timeout must not report the identity-refusal cause");
+
+    /* A NULL child must not be stamped through -- the launcher reaps by
+     * pointer and a missing one is a bug to survive, not to dereference. */
+    test_usermode_stamp_timeout_status((struct task *)0);
+}
+
+/* The timeout marker's move into the reserved block widened the status
+ * values the exit-reason renderer has to carry: every kernel-assigned cause
+ * it saw before was one digit, and a reserved reason is four plus a sign.
+ *
+ * Deliberately NOT a comparison of the constant against a literal -- that
+ * would restate the _Static_assert in task.h and prove only that someone
+ * typed the number twice (scripts/lint.sh Check: tautological-test). What is
+ * checked here is the RENDERER's behavior over the newly-reachable value
+ * class: that the composed reason is the full signed number, terminated, and
+ * inside the derived bound rather than truncated at it. */
+static void test_reason_exit_renders_reserved_block_status(void)
+{
+    char     buf[128];
+    uint32_t n;
+    uint32_t i;
+
+    n = test_usermode_reason_exit(buf, (uint32_t)sizeof(buf),
+                                  TASK_EXIT_UTEST_TIMEOUT);
+    TEST_ASSERT_EQ((uint64_t)(n > 0u), 1ull,
+                   "the reserved-block timeout status must render at all");
+    TEST_ASSERT_EQ((uint64_t)(n <= test_usermode_reason_max()), 1ull,
+                   "a reserved-block reason must fit the derived bound");
+    TEST_ASSERT_EQ((uint64_t)buf[n], 0ull,
+                   "the rendered reason must be terminated at its length");
+
+    /* `exit=` then a minus then digits: the sign must survive, because a
+     * dropped one turns a reserved reason into a plausible ring-3 status. */
+    TEST_ASSERT_EQ((uint64_t)(buf[0] == 'e' && buf[1] == 'x' && buf[2] == 'i'
+                              && buf[3] == 't' && buf[4] == '='), 1ull,
+                   "the exit reason must keep its exit= prefix");
+    TEST_ASSERT_EQ((uint64_t)buf[5], (uint64_t)'-',
+                   "a negative reserved reason must render its sign");
+    for (i = 6u; i < n; i++)
+        TEST_ASSERT_EQ((uint64_t)(buf[i] >= '0' && buf[i] <= '9'), 1ull,
+                       "every byte after the sign must be a digit");
+
+    /* Four digits is the property that matters: the pre-move marker was a
+     * single digit, so a renderer that still truncated at the old width
+     * would pass every check above and fail this one. */
+    TEST_ASSERT_EQ((uint64_t)(n - 6u), 4ull,
+                   "a reserved-block reason renders all four of its digits");
+
+    /* The other two reserved reasons travel the same renderer, so a width
+     * regression cannot hide behind the one value the section moved. */
+    n = test_usermode_reason_exit(buf, (uint32_t)sizeof(buf),
+                                  TASK_EXIT_UTEST_IDENTITY);
+    TEST_ASSERT_EQ((uint64_t)(n - 6u), 4ull,
+                   "the identity reason renders all four of its digits");
+    n = test_usermode_reason_exit(buf, (uint32_t)sizeof(buf),
+                                  TASK_EXIT_EXEC_IMAGE_DESTROYED);
+    TEST_ASSERT_EQ((uint64_t)(n - 6u), 4ull,
+                   "the image-destroyed reason renders all four digits");
+
+    /* A buffer that cannot hold the reason must refuse, not truncate: the
+     * seam returns 0 and leaves an empty string rather than a short number
+     * that would read as a different exit status entirely. */
+    n = test_usermode_reason_exit(buf, 4u, TASK_EXIT_UTEST_TIMEOUT);
+    TEST_ASSERT_EQ((uint64_t)n, 0ull,
+                   "a too-small reason buffer must refuse rather than clip");
+    TEST_ASSERT_EQ((uint64_t)buf[0], 0ull,
+                   "a refused reason must leave an empty string");
+}
+
 static void test_report_reconcile_timeout_keeps_counts(void)
 {
     /* On timeout the launcher OVERWROTE exit_status with its own marker,
@@ -1772,7 +1869,7 @@ static void test_report_reconcile_timeout_keeps_counts(void)
      * invent a contradiction out of the launcher's own bookkeeping -- the
      * timeout already fails the binary on its own, more specifically. */
     TEST_ASSERT_EQ((uint64_t)test_usermode_report_reconcile(
-                       TASK_UTEST_REPORT_VALID, 0, UTEST_EXIT_TIMEOUT, 1),
+                       TASK_UTEST_REPORT_VALID, 0, TASK_EXIT_UTEST_TIMEOUT, 1),
                    (uint64_t)TASK_UTEST_REPORT_VALID,
                    "a timed-out binary's counts are not called contradictory");
 }
@@ -4311,6 +4408,12 @@ void test_register_usermode_launcher(void)
                             TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: timed-out binary keeps its report",
                             test_report_reconcile_timeout_keeps_counts,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: reserved-block status renders in full",
+                            test_reason_exit_renders_reserved_block_status,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: timeout stamp clears the signal range",
+                            test_timeout_stamp_leaves_the_signal_range,
                             TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: report dispatch refuses NULL task",
                             test_report_dispatch_rejects_null_task,
