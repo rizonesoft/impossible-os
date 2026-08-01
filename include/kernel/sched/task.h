@@ -1036,10 +1036,28 @@ static inline void task_utest_loader_reset(struct task_utest_loader *l)
  * iretq and everything before it still have to succeed. This is the
  * evidence that separates "a frame was published but never adopted"
  * (provably never ran) from "adopted, then stopped reporting", which is
- * the ambiguity a bare timeout could not resolve. exec_pending itself
- * cannot serve: it is force-cleared after EXEC_PENDING_STUCK_TICKS, so by
- * the time a 10-second test timeout expires a never-adopted frame reads
- * exactly like an adopted one. */
+ * the ambiguity a bare timeout could not resolve.
+ *
+ * Why a dedicated flag rather than reading exec_pending. NOT because
+ * exec_pending is swept on a timeout -- it is not, and an earlier version
+ * of this comment claimed it was. EXEC_PENDING_STUCK_TICKS only gates a
+ * WARN; every store of 0 is a constructor, a switch-in, or the
+ * syscall-return path. The real reason is that a ZERO is ambiguous: it
+ * means "adopted" AND "no frame was ever published", which are opposite
+ * verdicts. frame_adopted only ever rises where a publication was
+ * consumed, so it answers the question exec_pending conflates -- and it
+ * does so without the launcher reading a live scheduler field whose
+ * clearing rules belong to the scheduler.
+ *
+ * Precisely: it records that a switch-in or the syscall-return path
+ * CONSUMED this task's publication, which for a single-threaded task --
+ * the only shape the launcher spawns -- is the same event as running the
+ * exec frame. A multi-threaded exec can separate the two, and the
+ * scheduler's clear-versus-consume semantics there are an open design
+ * question, owned by the per-CPU run-queue work in
+ * 03-memory-concurrency/TODO-07. Where they diverge
+ * this flag over-reports rather than under-reports, sending the ambiguous
+ * case to FAIL instead of hiding a binary that ran. */
 #define TASK_UTEST_LOADER_MARK_ADOPTED(tp) \
     __atomic_store_n(&(tp)->utest_loader.frame_adopted, 1u, __ATOMIC_RELEASE)
 
@@ -1090,6 +1108,11 @@ void task_utest_note_user_entry(uint64_t cs);
  * write would otherwise land in another child's slot. Callers handed an
  * explicit task pointer mark unconditionally; their attribution is correct
  * on any CPU and only the report is at stake. */
+/* Passed as `pid` by the one caller that genuinely cannot name a task --
+ * ring-3 syscall entry, whose only route to a pid is the cursor it is
+ * checking the trustworthiness of. UINT32_MAX is never a valid slot index
+ * (TASK_MAX bounds every real pid), so it cannot collide with one. */
+#define TASK_UTEST_PID_UNKNOWN 0xFFFFFFFFu
 int task_utest_report_nonbsp_dispatch(uint32_t pid, const char *where);
 
 /* KERNEL_TESTS-only spawn entry point: identical to task_create() except
@@ -1117,9 +1140,16 @@ int task_create_captured(task_entry_t entry, const char *name,
  * unconditionally, and the record does not exist in a build with the
  * launcher pruned out -- so the release flavor pays nothing, which is the
  * whole reason the record is KERNEL_TESTS-gated. */
-#define TASK_UTEST_LOADER_RESET(tp) ((void)0)
-#define TASK_UTEST_LOADER_MARK_ADOPTED(tp) ((void)0)
-#define TASK_UTEST_LOADER_MARK_ENTERED_USER(tp) ((void)0)
+/* Each discards its ARGUMENT rather than expanding to a bare ((void)0), so
+ * the release flavor evaluates exactly what the test flavor does. Every
+ * current call site passes a side-effect-free expression, so the two shapes
+ * are equivalent today -- but a future site passing `&tasks[next++]` would
+ * silently behave differently between flavors, which is the kind of
+ * divergence a release-only build failure has already been paid for once
+ * in this section. */
+#define TASK_UTEST_LOADER_RESET(tp) ((void)(tp))
+#define TASK_UTEST_LOADER_MARK_ADOPTED(tp) ((void)(tp))
+#define TASK_UTEST_LOADER_MARK_ENTERED_USER(tp) ((void)(tp))
 #define TASK_UTEST_NOTE_USER_ENTRY(cs) ((void)(cs))
 #endif /* KERNEL_TESTS */
 

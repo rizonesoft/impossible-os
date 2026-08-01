@@ -138,26 +138,58 @@ int task_utest_report_nonbsp_dispatch(uint32_t pid, const char *where)
 
     if (!cpu || cpu->cpu_id == 0)
         return 1;
+    /* RELAXED is sufficient and honest: the latch publishes no data beyond
+     * itself, so the exchange only needs to be indivisible, not ordered
+     * against anything. A stronger order here would be exactly the kind of
+     * unearned guarantee this section removed from the code it replaced. */
     if (!__atomic_exchange_n(&s_utest_nonbsp_dispatch_reported, 1u,
-                             __ATOMIC_ACQ_REL)) {
-        klog(LOG_ERROR, "sched",
-             "PID %u: %s ran on CPU %u, not the BSP -- per-child loader "
-             "evidence ordering is no longer guaranteed",
-             (uint64_t)pid, where, (uint64_t)cpu->cpu_id);
+                             __ATOMIC_RELAXED)) {
+        /* TASK_UTEST_PID_UNKNOWN rather than a fabricated 0: the one caller
+         * that cannot name a pid is the one whose whole problem is that the
+         * cursor it would have to ask is untrustworthy here. */
+        if (pid == TASK_UTEST_PID_UNKNOWN)
+            klog(LOG_ERROR, "sched",
+                 "%s ran on CPU %u, not the BSP -- per-child loader "
+                 "evidence ordering is no longer guaranteed",
+                 where, (uint64_t)cpu->cpu_id);
+        else
+            klog(LOG_ERROR, "sched",
+                 "PID %u: %s ran on CPU %u, not the BSP -- per-child loader "
+                 "evidence ordering is no longer guaranteed",
+                 (uint64_t)pid, where, (uint64_t)cpu->cpu_id);
     }
     return 0;
 }
 
 static void task_utest_note_frame_adopted(struct task *t)
 {
-    /* Reported but NOT suppressed, and the difference from the syscall
-     * path below is the whole point: this site is handed its target
-     * explicitly (&tasks[next_task]), so it marks the right slot on any
-     * CPU. Only the report is at risk off-BSP, not the attribution. */
+    /* Reported but NOT suppressed, and the difference from the two
+     * cursor-resolved sites is the whole point: this one is handed its
+     * target explicitly (&tasks[next_task] from the scheduler), so it
+     * marks the right slot on any CPU. Only the report is at risk
+     * off-BSP, not the attribution. */
     (void)task_utest_report_nonbsp_dispatch(t->pid, "exec frame adoption");
     TASK_UTEST_LOADER_MARK_ADOPTED(t);
 }
 #define TASK_UTEST_NOTE_FRAME_ADOPTED(tp) task_utest_note_frame_adopted(tp)
+
+/* The syscall-return adoption site, which resolves its task through the
+ * GLOBAL cursor (`pid = current_task`) rather than being handed a pointer.
+ * That puts it on the same side of the asymmetry as ring-3 syscall entry,
+ * NOT with the two scheduler sites it otherwise resembles -- so it
+ * suppresses off-BSP instead of marking a slot the cursor may have
+ * misidentified. Kept as its own helper precisely so the two shapes cannot
+ * be confused again: the distinction is which side resolves the target,
+ * never which subsystem the call sits in. */
+static void task_utest_note_frame_adopted_cursor(uint32_t pid)
+{
+    if (!task_utest_report_nonbsp_dispatch(pid,
+                                           "exec frame adoption (syscall return)"))
+        return;
+    TASK_UTEST_LOADER_MARK_ADOPTED(&tasks[pid]);
+}
+#define TASK_UTEST_NOTE_FRAME_ADOPTED_CURSOR(pid) \
+    task_utest_note_frame_adopted_cursor(pid)
 
 /* PROVEN ring-3 execution, as opposed to the frame adoption above: the CPU
  * saved this CS when it took the syscall, so an RPL of 3 is its own record
@@ -189,14 +221,16 @@ void task_utest_note_user_entry(uint64_t cs)
      * false one attributed to an innocent binary. Binding this evidence
      * properly needs a per-CPU current-task identity, owned by the
      * per-CPU run-queue work in 03-memory-concurrency/TODO-07. */
-    if (!task_utest_report_nonbsp_dispatch(0, "ring-3 syscall entry"))
+    if (!task_utest_report_nonbsp_dispatch(TASK_UTEST_PID_UNKNOWN,
+                                           "ring-3 syscall entry"))
         return;
     t = task_current();
     if (t)
         TASK_UTEST_LOADER_MARK_ENTERED_USER(t);
 }
 #else
-#define TASK_UTEST_NOTE_FRAME_ADOPTED(tp) ((void)0)
+#define TASK_UTEST_NOTE_FRAME_ADOPTED(tp) ((void)(tp))
+#define TASK_UTEST_NOTE_FRAME_ADOPTED_CURSOR(pid) ((void)(pid))
 #endif /* KERNEL_TESTS */
 
 /* --- Task wrapper ---
@@ -1056,6 +1090,13 @@ static int task_create_internal(task_entry_t entry, const char *name,
     }
 #else
     (void)arm_capture;
+    /* Same reason as arm_capture above: the loader inputs stay in the
+     * signature for BOTH flavors so the wrapper contract does not change,
+     * but nothing consumes them when the record does not exist. -Werror
+     * -Wunused-parameter turns the omission into a release-build failure
+     * that the default KERNEL_TESTS=on build cannot see. */
+    (void)test_path;
+    (void)expect_digest;
 #endif
     /* Inherit the creator's process group + session AND publish the child in one
      * job-control critical section: a concurrent setsid group-reuse scan then
@@ -1475,6 +1516,29 @@ uint64_t schedule_now(struct interrupt_frame *frame)
                  (uint64_t)next_task,
                  (uint64_t)(uptime() - tasks[next_task].exec_pending_tick));
         }
+        /* Marked whenever a publication is CONSUMED here, deliberately
+         * without a next_thread == 0 gate.
+         *
+         * Such a gate is locally more precise -- the switch-in returns
+         * threads[next_thread].rsp for a secondary thread and
+         * tasks[next_task].rsp only for thread 0 -- but it is wrong
+         * overall, because the clear below is unconditional. Gating only
+         * the mark means a sibling switch-in consumes the flag while
+         * skipping the mark, and the later thread-0 switch-in that really
+         * does run the exec frame finds nothing left to mark: a binary
+         * that RAN would then be reported as never-ran, hiding a genuine
+         * failure. Erring the other way (marking a publication whose
+         * frame a sibling switch-in swallowed) pushes the ambiguous case
+         * toward FAIL, which is the direction u_record_verdict is
+         * explicitly built to prefer.
+         *
+         * For the launcher's own children the two readings coincide:
+         * task_create_captured makes a single-threaded task and the
+         * loader execs itself, so next_thread is always 0 at this point.
+         * The divergence is only reachable for a multi-threaded exec,
+         * whose clear-versus-consume semantics are a scheduler design
+         * question filed rather than settled here -> see
+         * the per-CPU run-queue work in 03-memory-concurrency/TODO-07. */
         if (adopting)
             TASK_UTEST_NOTE_FRAME_ADOPTED(&tasks[next_task]);
     }
@@ -1766,6 +1830,29 @@ uint64_t schedule(struct interrupt_frame *frame)
                  (uint64_t)next_task,
                  (uint64_t)(uptime() - tasks[next_task].exec_pending_tick));
         }
+        /* Marked whenever a publication is CONSUMED here, deliberately
+         * without a next_thread == 0 gate.
+         *
+         * Such a gate is locally more precise -- the switch-in returns
+         * threads[next_thread].rsp for a secondary thread and
+         * tasks[next_task].rsp only for thread 0 -- but it is wrong
+         * overall, because the clear below is unconditional. Gating only
+         * the mark means a sibling switch-in consumes the flag while
+         * skipping the mark, and the later thread-0 switch-in that really
+         * does run the exec frame finds nothing left to mark: a binary
+         * that RAN would then be reported as never-ran, hiding a genuine
+         * failure. Erring the other way (marking a publication whose
+         * frame a sibling switch-in swallowed) pushes the ambiguous case
+         * toward FAIL, which is the direction u_record_verdict is
+         * explicitly built to prefer.
+         *
+         * For the launcher's own children the two readings coincide:
+         * task_create_captured makes a single-threaded task and the
+         * loader execs itself, so next_thread is always 0 at this point.
+         * The divergence is only reachable for a multi-threaded exec,
+         * whose clear-versus-consume semantics are a scheduler design
+         * question filed rather than settled here -> see
+         * the per-CPU run-queue work in 03-memory-concurrency/TODO-07. */
         if (adopting)
             TASK_UTEST_NOTE_FRAME_ADOPTED(&tasks[next_task]);
     }
@@ -4151,7 +4238,7 @@ uint64_t task_exec_take_pending_frame(struct interrupt_frame *frame)
      * on the "set with no frame" bail-out above: that path clears the flag
      * and keeps the PRE-exec frame, which is the opposite of an adoption and
      * would report a lost frame as a binary that ran. */
-    TASK_UTEST_NOTE_FRAME_ADOPTED(&tasks[pid]);
+    TASK_UTEST_NOTE_FRAME_ADOPTED_CURSOR(pid);
 
     /* RELEASE so the next scheduler save-gate sees the cleared flag together
      * with the TSS/MSR updates above, and resumes saving frames normally. */

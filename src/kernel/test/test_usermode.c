@@ -89,11 +89,12 @@
  *   frame_adopted     The SCHEDULER took the published exec frame. This is
  *                     what closes the half a timeout could not: a frame
  *                     published but never adopted is provably a binary that
- *                     never ran. exec_pending cannot serve -- task.c
- *                     force-clears it after EXEC_PENDING_STUCK_TICKS (10
- *                     ticks) against a 10-second timeout, so by the time the
- *                     launcher looks a never-adopted frame reads exactly
- *                     like an adopted one.
+ *                     never ran. exec_pending cannot stand in for it: a
+ *                     ZERO there means "adopted" AND "no frame was ever
+ *                     published", which are opposite verdicts. (It is NOT
+ *                     swept on a timeout -- an earlier comment here said so
+ *                     and was wrong; EXEC_PENDING_STUCK_TICKS only gates a
+ *                     WARN.)
  *   entered_user      A syscall arrived from CPL 3. Unlike frame_adopted
  *                     this is PROOF the image executed, not a prediction
  *                     that it would: adoption still leaves TSS, CR3, GS,
@@ -1737,9 +1738,11 @@ static void u_loader_stage_fault(struct task *self)
  *                  before this evidence existed that case was
  *                  indistinguishable from a real ring-3 hang and had to be
  *                  reported as a FAIL. `exec_pending` could not stand in
- *                  for it -- task.c force-clears it after ten ticks against
- *                  a ten-second timeout, so by the time the launcher looks
- *                  a never-adopted frame reads exactly like an adopted one.
+ *                  for it: zero there conflates "adopted" with "no frame
+ *                  ever published". It is not swept on a timeout -- the
+ *                  stuck-tick threshold only gates a WARN -- so the
+ *                  distinction it cannot draw is between the two ZERO
+ *                  cases, not between a stale and a fresh flag.
  *
  * Adoption is checked only AFTER entered_user has been ruled out, because
  * adoption is the weaker claim: it witnesses the frame being selected, not
@@ -1777,14 +1780,61 @@ static void utest_loader_func(void)
      * the file-scope statics this replaced could not guarantee. The
      * constructor armed the inputs before the task was published, so they
      * are already in place the first time this task is scheduled in. */
-    struct task *self = task_current();
-    const char *path = self ? self->utest_loader.test_path : (const char *)0;
+    struct task *self;
+    const char *path;
     struct vfs_node *file;
     uint32_t size, pages, p;
     uintptr_t buf_phys;
     uint8_t *buf;
     int n, rc;
 
+    /* The CPU check comes BEFORE task_current(), and it FAILS CLOSED --
+     * this is the third cursor-resolved evidence producer, and it is the
+     * most dangerous of them.
+     *
+     * The syscall-entry site can decline to record one flag and carry on.
+     * This one cannot: every field below -- the path it loads, the digest
+     * it verifies against, and each verdict it stores -- is reached
+     * through a pointer the global cursor hands it. Resolving that pointer
+     * on an AP would make this loader read ANOTHER child's path and write
+     * ANOTHER child's verdict, which is the whole failure this section
+     * exists to make structurally impossible. So it refuses to run at all
+     * rather than run misattributed, and it refuses before touching any
+     * record, because the record it would mark is the one it cannot
+     * trust it owns. Unreachable today (APs park in ap_entry without
+     * calling schedule) and unblocked by the per-CPU cursor work in
+     * the per-CPU run-queue work in 03-memory-concurrency/TODO-07. */
+    if (!task_utest_report_nonbsp_dispatch(TASK_UTEST_PID_UNKNOWN,
+                                           "utest loader entry")) {
+        klog(LOG_ERROR, "UTEST",
+             "loader: refusing to run off the BSP -- evidence would be "
+             "attributed to whichever child the global cursor names");
+        /* CONTAIN THIS CPU. Nothing here may re-enter the scheduler, and
+         * the two obvious exits both do:
+         *   - task_exit() opens with `pid = current_task`
+         *     (src/kernel/sched/task.c) and marks THAT slot dead, so a
+         *     refusal could kill an unrelated child and pin a failure on it.
+         *   - yield() enters schedule_now(), which derives prev_task from
+         *     the same cursor and writes its saved RSP, states and switch
+         *     count -- so even "just parking" would mutate a slot this
+         *     branch has declared it cannot identify.
+         * A refusal that re-enters the untrusted cursor is not
+         * fail-closed, and both of those do.
+         *
+         * `cli; hlt` is the repo's existing containment idiom for a CPU
+         * that must stop participating (src/kernel/smp/smp.c:95). It
+         * touches no TCB, dispatches nothing and kills nobody. The
+         * launcher then reaps this binary through its OWN timeout path,
+         * resolving the pid it holds rather than one this CPU read, and
+         * the binary is classified from an all-zero record -- the
+         * conservative never-ran-leaning shape. One contained CPU and one
+         * stalled binary, correctly attributed, beats a fast exit charged
+         * to the wrong child. */
+        for (;;)
+            __asm__ volatile("cli; hlt");
+    }
+
+    self = task_current();
     /* A loader with no slot cannot record a verdict anywhere the launcher
      * would find it, so it must not proceed to execute a binary whose
      * outcome would then be unattributable. */
@@ -1792,15 +1842,7 @@ static void utest_loader_func(void)
         klog(LOG_ERROR, "UTEST", "loader: no current task -- refusing");
         task_exit(-1);
     }
-
-    /* The other half of the dispatch-CPU detector (the first is at exec
-     * frame adoption). It matters HERE too, and earlier: task_current()
-     * resolves through the single global cursor, so a loader running on an
-     * AP could bind every field below to the wrong slot before any frame
-     * is ever adopted. Reports once; it cannot prevent the mis-binding,
-     * only stop it from being silent -- the loader cannot decline to run
-     * the way the syscall-entry site can decline to record. */
-    (void)task_utest_report_nonbsp_dispatch(self->pid, "utest loader entry");
+    path = self->utest_loader.test_path;
 
     if (!path || !path[0]) {
         klog(LOG_ERROR, "UTEST", "loader: NULL pending path");
