@@ -1303,12 +1303,30 @@ _Static_assert(TASK_EXIT_REASON_BASE < -(int)SIG_MAX,
  * keys on the named TIMEOUT verdict token, not on exit=N. */
 #define TASK_EXIT_UTEST_TIMEOUT         (TASK_EXIT_REASON_BASE - 3)
 
+/* How many reasons the block has handed out, and the lowest value in use.
+ * Allocate the next reason as TASK_EXIT_REASON_LAST - 1, then bump BOTH of
+ * these and add the name to the two asserts below. The pair is what catches
+ * the half-done edit: bumping one without the other fails the build. */
+#define TASK_EXIT_REASON_COUNT          3
+#define TASK_EXIT_REASON_LAST           TASK_EXIT_UTEST_TIMEOUT
+
+_Static_assert(TASK_EXIT_REASON_LAST
+                   == TASK_EXIT_REASON_BASE - TASK_EXIT_REASON_COUNT,
+               "TASK_EXIT_REASON_COUNT and _LAST disagree: a reason was added "
+               "or removed without updating both");
+
 /* Layer 1 for the reasons THEMSELVES, not just the block base. The assert
  * above proves the BLOCK clears the signal range; it says nothing about any
  * individual reason, and a reason written as a bare literal (or derived from
  * the wrong base) would sit back inside -(signum) exactly as the timeout
- * marker did for its whole first life. Assert each one where it is allocated,
- * so the next reason cannot repeat that history silently. */
+ * marker did for its whole first life.
+ *
+ * Scope, stated honestly because the previous wording overstated it: these
+ * are HAND-ENUMERATED lists, so they defend the three names written in them,
+ * not "every reason automatically". A fourth reason that is defined but never
+ * added here is unprotected by the range and distinctness checks -- the
+ * COUNT/_LAST pair above is what makes that omission loud, since a new reason
+ * allocated below _LAST without bumping both fails to build. */
 _Static_assert(TASK_EXIT_EXEC_IMAGE_DESTROYED < -(int)SIG_MAX
                && TASK_EXIT_UTEST_IDENTITY < -(int)SIG_MAX
                && TASK_EXIT_UTEST_TIMEOUT < -(int)SIG_MAX,
@@ -1319,6 +1337,51 @@ _Static_assert(TASK_EXIT_EXEC_IMAGE_DESTROYED < -(int)SIG_MAX
  * that classifies by status value, which is the entire point of naming them.
  * Pairwise, so a future reason copy-pasted with an unchanged offset fails the
  * build instead of silently aliasing an existing cause. */
+/* Classify a raw waitpid status, so a consumer never hand-rebuilds the
+ * boundary. Linux's real answer to this problem is not its bit layout but the
+ * WIFEXITED / WIFSIGNALED / WEXITSTATUS macro API on top of it; this kernel
+ * hands the parent one raw int32 shared by application codes, -(signum), and
+ * the reserved block, so the predicate belongs HERE and exactly once. It is
+ * not decoration: the boundary has been re-derived by hand twice and got it
+ * wrong both times -- the first reason used -2 (SIGINT) and the usermode
+ * timeout marker spent its whole first life at -6, inside the SIGABRT range.
+ *
+ * FUNCTIONS, not macros, and that is the point rather than a style choice.
+ * As macros each predicate evaluates its argument twice and the app-status
+ * one up to four times, so the natural-looking
+ * task_exit_is_app_status(task_waitpid(pid)) would reap the child
+ * repeatedly -- the second call onward returning -1, which then classifies
+ * as an ordinary application exit. Taking a plain
+ * int32_t makes single evaluation the compiler's problem, not the caller's.
+ *
+ * The three cases are exhaustive and disjoint over int32_t: a kernel reason
+ * sits in [LAST, BASE-1], a signal death in [-(SIG_MAX-1), -1], and anything
+ * else is the application's own status. */
+static inline int task_exit_is_kernel_reason(int32_t status)
+{
+    return status <= (int32_t)(TASK_EXIT_REASON_BASE - 1)
+           && status >= (int32_t)TASK_EXIT_REASON_LAST;
+}
+
+static inline int task_exit_is_signal(int32_t status)
+{
+    return status < 0 && status > -(int32_t)SIG_MAX;
+}
+
+static inline int task_exit_is_app_status(int32_t status)
+{
+    return !task_exit_is_kernel_reason(status) && !task_exit_is_signal(status);
+}
+
+/* The two kernel classes must not overlap, or the predicates above are worse
+ * than nothing -- a status answering yes to both would be classified by
+ * whichever test a given caller happened to run first. Checked at both block
+ * endpoints, which are the only places the ranges could meet. */
+_Static_assert((int)TASK_EXIT_REASON_LAST < -(int)SIG_MAX
+                   && (int)(TASK_EXIT_REASON_BASE - 1) < -(int)SIG_MAX,
+               "the reserved block overlaps the -(signum) range at an "
+               "endpoint, so a status would classify as both");
+
 _Static_assert(TASK_EXIT_EXEC_IMAGE_DESTROYED != TASK_EXIT_UTEST_IDENTITY
                && TASK_EXIT_EXEC_IMAGE_DESTROYED != TASK_EXIT_UTEST_TIMEOUT
                && TASK_EXIT_UTEST_IDENTITY != TASK_EXIT_UTEST_TIMEOUT,

@@ -1767,6 +1767,65 @@ static void test_report_reconcile_rejects_contradictions(void)
                    "a report alongside exit 77 is INVALID");
 }
 
+/* The classification predicates, over the three-way partition they claim to
+ * be exhaustive and disjoint across. The static assert beside them only pins
+ * the two block ENDPOINTS; this walks the actual boundary values a consumer
+ * will meet -- every reserved reason, both edges of the signal range, and the
+ * application statuses on either side of them.
+ *
+ * Non-tautological by construction: none of these compares a constant to its
+ * own literal. Each asserts which CLASS a value falls into, which is the
+ * property a caller depends on and the one that was got wrong twice by hand. */
+static void test_exit_status_classes_partition_the_space(void)
+{
+    /* Every reserved reason classifies as a kernel reason, and as nothing
+     * else. -9 is the case the timeout marker itself used to be confused
+     * with, so it is checked explicitly rather than left to the range. */
+    TEST_ASSERT_EQ((uint64_t)task_exit_is_kernel_reason(
+                       TASK_EXIT_EXEC_IMAGE_DESTROYED), 1ull,
+                   "the image-destroyed reason must classify as kernel");
+    TEST_ASSERT_EQ((uint64_t)task_exit_is_kernel_reason(
+                       TASK_EXIT_UTEST_IDENTITY), 1ull,
+                   "the identity reason must classify as kernel");
+    TEST_ASSERT_EQ((uint64_t)task_exit_is_kernel_reason(
+                       TASK_EXIT_UTEST_TIMEOUT), 1ull,
+                   "the timeout reason must classify as kernel");
+    TEST_ASSERT_EQ((uint64_t)task_exit_is_signal(TASK_EXIT_UTEST_TIMEOUT),
+                   0ull,
+                   "the timeout reason must NOT classify as a signal death");
+
+    /* The signal range, at both edges. -1 and -(SIG_MAX-1) are signals; the
+     * value at exactly -SIG_MAX is not, which is the boundary the reserved
+     * block is asserted to clear. */
+    TEST_ASSERT_EQ((uint64_t)task_exit_is_signal(-1), 1ull,
+                   "-1 is a signal death");
+    TEST_ASSERT_EQ((uint64_t)task_exit_is_signal(-9), 1ull,
+                   "SIGKILL's -9 is a signal death");
+    TEST_ASSERT_EQ((uint64_t)task_exit_is_signal(-((int32_t)SIG_MAX - 1)),
+                   1ull, "the widest real signum is still a signal death");
+    TEST_ASSERT_EQ((uint64_t)task_exit_is_signal(-(int32_t)SIG_MAX), 0ull,
+                   "the value at exactly -SIG_MAX is outside the signal range");
+    TEST_ASSERT_EQ((uint64_t)task_exit_is_kernel_reason(-9), 0ull,
+                   "a signal death must not classify as a kernel reason");
+
+    /* Application statuses: 0, a small success code, and the kselftest skip
+     * contract, none of which may be captured by either kernel class. */
+    TEST_ASSERT_EQ((uint64_t)task_exit_is_app_status(0), 1ull,
+                   "a clean exit is an application status");
+    TEST_ASSERT_EQ((uint64_t)task_exit_is_app_status(UTEST_EXIT_SKIP), 1ull,
+                   "the skip contract 77 is an application status");
+    TEST_ASSERT_EQ((uint64_t)task_exit_is_app_status(TASK_EXIT_UTEST_TIMEOUT),
+                   0ull,
+                   "a kernel reason must not read as an application status");
+
+    /* A value BELOW the allocated block is not a reason that exists. It must
+     * not be claimed by the kernel class, or a future block extension would
+     * silently reclassify statuses that already shipped. */
+    TEST_ASSERT_EQ((uint64_t)task_exit_is_kernel_reason(
+                       TASK_EXIT_REASON_LAST - 1), 0ull,
+                   "an unallocated value below the block is not a reason");
+}
+
 /* The PRODUCTION timeout path's postcondition, asserted where a test can
  * reach it. u_wait_with_timeout itself needs live scheduling, signals, a
  * clock and remote termination, so a test_*.c may not drive it; the status
@@ -1794,9 +1853,15 @@ static void test_timeout_stamp_leaves_the_signal_range(void)
                               != TASK_EXIT_UTEST_IDENTITY), 1ull,
                    "a timeout must not report the identity-refusal cause");
 
-    /* A NULL child must not be stamped through -- the launcher reaps by
-     * pointer and a missing one is a bug to survive, not to dereference. */
+    /* The seam tolerates NULL so this suite cannot fault on a mis-written
+     * test. It does NOT model production, which dereferences unconditionally
+     * and is protected instead by u_wait_with_timeout's early return when the
+     * pid does not resolve. Asserted only as "does not fault, and does not
+     * touch the scratch we already checked". */
     test_usermode_stamp_timeout_status((struct task *)0);
+    TEST_ASSERT_EQ((uint64_t)s_timeout_stamp_scratch.exit_status,
+                   (uint64_t)(int32_t)TASK_EXIT_UTEST_TIMEOUT,
+                   "a NULL stamp must not disturb the previous child's status");
 }
 
 /* The timeout marker's move into the reserved block widened the status
@@ -4414,6 +4479,9 @@ void test_register_usermode_launcher(void)
                             TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: timeout stamp clears the signal range",
                             test_timeout_stamp_leaves_the_signal_range,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: exit-status classes partition the space",
+                            test_exit_status_classes_partition_the_space,
                             TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: report dispatch refuses NULL task",
                             test_report_dispatch_rejects_null_task,

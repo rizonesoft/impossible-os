@@ -1962,8 +1962,23 @@ static int32_t u_wait_with_timeout(uint32_t pid, uint32_t timeout_ms,
          * leave the running task DEAD and trip a cascading crash. */
         if (t->state != TASK_DEAD && t != task_current())
             task_terminate_remote(t, TASK_EXIT_UTEST_TIMEOUT);
-        /* Either way, surface TIMEOUT so the launcher log / TAP / bat
-         * output names the actual reason rather than SIGKILL's -9. */
+        /* Stamped UNCONDITIONALLY, on both branches, and that is load-bearing
+         * rather than belt-and-braces. On the cooperative branch the child
+         * already died from SIGKILL and signal_default_action left -9 behind;
+         * task_terminate_remote is SKIPPED there precisely because the child
+         * is already DEAD, so this call is the ONLY thing that converts that
+         * -9 into a named timeout. On the force-kill branch it merely rewrites
+         * the value terminate_remote was already handed, which is why the call
+         * reads as redundant if only that branch is considered.
+         *
+         * It is also a store AFTER task_terminate_remote published
+         * state = TASK_DEAD and ran the death teardown. Benign today: no
+         * DEAD-transition consumer latches exit_status (neither
+         * task_death_teardown nor ob_process_mark_dead reads it), and the
+         * launcher -- the same task that stores here -- is its only reader,
+         * immediately below with no intervening yield. It stops being benign
+         * the day a teardown path starts recording an exit status, so anyone
+         * adding such a consumer needs to reorder this first. */
         u_stamp_timeout_status(t);
     }
 
@@ -6330,7 +6345,7 @@ static void u_run_one(const char *name, utest_type_t type,
         if (__atomic_load_n(&s_loader_identity_mismatch, __ATOMIC_ACQUIRE)) {
             /* The binary the plan named still resolved, but not to the
              * bytes the plan froze. Reported by NAME as a counted
-             * infrastructure failure rather than as `exit=-6`: the exit
+             * infrastructure failure rather than as a bare `exit=N`: the exit
              * code says only that the loader gave up, and the whole point
              * of freezing identity is to be able to say WHY. The record
              * class is already ERROR here (the loader never reached ring
@@ -7442,7 +7457,14 @@ uint32_t test_usermode_reason_max(void)
 /* Seam over the timeout path's status stamp, so a test asserts the
  * postcondition the PRODUCTION helper establishes rather than a copy of the
  * constant. Takes the scratch TCB the caller owns; touches only exit_status,
- * so it is safe against a zeroed struct with no live subsystems behind it. */
+ * so it is safe against a zeroed struct with no live subsystems behind it.
+ *
+ * The NULL guard is the SEAM's own, and production does not have it: the
+ * helper dereferences unconditionally, and u_wait_with_timeout is safe only
+ * because it returns early when task_get_by_pid finds nothing. So this guard
+ * says "a test may pass NULL without faulting the suite", NOT "production
+ * survives a NULL child" -- the difference matters, because the second claim
+ * would be false. */
 void test_usermode_stamp_timeout_status(struct task *t);
 void test_usermode_stamp_timeout_status(struct task *t)
 {
