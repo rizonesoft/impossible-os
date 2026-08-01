@@ -447,9 +447,13 @@ utest_norm_bound() {
 # startup, wedging every later invocation. Bash cannot open with
 # `O_NONBLOCK|O_NOFOLLOW`, so it cannot make that pair atomic -- but it can
 # refuse to wait, which turns a permanent wedge into a few seconds and a
-# pointer treated as unreadable (and therefore swept). Closing the window
-# properly needs a non-bash primitive on a path that must still work when
-# python3 is absent; that is tracked in section 46.
+# pointer treated as unreadable (and therefore swept).
+#
+# The bound stays load-bearing after section 46: the DESTRUCTIVE half of that
+# race is closed (nothing is unlinked that was not itself detached and
+# re-verified), but a replacement arriving while this parse is in flight is
+# still parsed as its predecessor. The cost of losing that race is seconds and
+# a sweep on the next pass, which is what the timeout guarantees.
 utest_pointer_run_id() {
     local id
     id="$(timeout 5 sed -n 's/.*"run_id"[[:space:]]*:[[:space:]]*"\([A-Za-z0-9._-]\{1,\}\)".*/\1/p' \
@@ -459,6 +463,26 @@ utest_pointer_run_id() {
     esac
     printf '%s\n' "$id"
     return 0
+}
+
+# Sweep verdict for one leg pointer: 0 = destroy it, 1 = leave it alone.
+#
+# $1 = the path to READ, $2 = the basename it was published under, unused. A
+# pointer's leg IS part of the contract, but only for the PIN, which is a
+# separate and deliberately stricter question (see utest_pointer_pin_id): the
+# sweep asks merely "does this name a record that still exists", because
+# deleting a pointer for not matching this script's spelling destroys something
+# a human may have put there. utest_sweep_verified passes the basename to every
+# verdict uniformly, and this one has no use for it.
+#
+# Same code runs for selection and for the binding recheck on the detached
+# object, so the two cannot drift into disagreeing about what is dangling.
+utest_ptr_sweepable() {
+    local path="$1" id
+    if [ -L "$path" ] || [ ! -f "$path" ]; then return 0; fi
+    id="$(utest_pointer_run_id "$path")"
+    if [ -z "$id" ] || [ ! -d "$RUNS_DIR/$id" ]; then return 0; fi
+    return 1
 }
 
 # Decide whether one pointer may PIN, and echo the run id if it may.
@@ -788,7 +812,7 @@ utest_lease_doc_for() {
 # document claiming an astronomically distant expiry must be rejected as
 # malformed rather than arithmetic'd into something plausible.
 utest_lease_fields() {
-    local path="$1" want_run="$2" body sz base id holder lid acq exp
+    local path="$1" want_run="$2" want_base="${3:-}" body sz base id holder lid acq exp
     # `wc -c -- "$path"`, NEVER `wc -c < "$path"`. The redirection is performed
     # by THIS shell before `timeout` is ever exec'd, so a FIFO swapped in after
     # the caller's type test blocks on open() forever, outside the supervision
@@ -818,11 +842,230 @@ utest_lease_fields() {
     # The FILENAME is part of the contract, exactly as a pointer's leg is: a
     # lease copied under another acquisition's name would otherwise let one
     # reader's release unlink a different reader's live grant.
-    base="${path##*/}"
+    #
+    # WHICH filename is a separate question from which BYTES to read, which is
+    # why $3 exists. Section 46's sweep reads a detached candidate under a
+    # private staging name while its contract is still the name it was
+    # published under; deriving the expectation from the path there would
+    # classify every lease as malformed -- including the legitimate replacement
+    # the detach exists to protect. Callers holding the published path pass
+    # nothing and get the old behaviour.
+    base="${want_base:-${path##*/}}"
     [ "$base" = "$holder.$lid.lease" ] || return 0
     [ "$body" = "$(utest_lease_doc_for "$id" "$holder" "$lid" "$acq" "$exp")" ] || return 0
     printf '%s %s %s\n' "$exp" "$acq" "$holder"
     return 0
+}
+
+# Destroy one swept entry through ONE verified object.
+#
+# $1 = the pathname to remove, $2 = a verdict function, $3.. = its extra args.
+# The verdict is invoked as `$2 <staged-path> <original-basename> $3..` and
+# returns 0 when the DETACHED object must be destroyed, 1 when it must be kept.
+#
+# WHY detach at all. A classification and the `rm` that follows it are two
+# syscalls against a NAME, so the thing removed need not be the thing checked:
+# a writer that drops a legitimate new pointer onto that name in between has it
+# deleted by a verdict passed on its predecessor. `rename(2)` is the one
+# primitive bash does have that acts atomically on the directory entry without
+# ever opening the object, so detaching first turns "remove whatever is at this
+# name" into "remove exactly this inode", and whatever arrives afterwards lands
+# on a free name this pass no longer touches.
+#
+# WHY only destroy-candidates are detached. Detaching every entry would bind
+# the SURVIVOR verdict to one inode too, but it also makes every published
+# pointer briefly ENOENT on every startup for every leg, to close a window that
+# is unreachable while scripts/test.sh holds its exclusive retention flock. The
+# invariant bought instead is the one that matters: nothing is ever destroyed
+# that was not itself verified. A replacement arriving after the candidate
+# parse survives to the NEXT sweep, which classifies it normally -- bounded,
+# non-wedging and self-healing, none of which a wrongful delete is.
+#
+# `mv -fT` / `ln -PT`, never the bare forms: without `-T` a destination that is
+# unexpectedly a DIRECTORY turns the rename into a move INSIDE it (the same
+# reason utest_lease_acquire and utest_publish_leg_pointer need it), and `-P`
+# stops `ln` dereferencing a symlink source.
+# RETURNS 0 when the object was DESTROYED, 1 when it was RETAINED (put back,
+# left untouched, or preserved because it could not be put back). The caller
+# MUST honour that: a lease the recheck votes to keep is restored, and counting
+# it reclaimed anyway drops the record from the leased set and deletes it out
+# from under a live reader.
+utest_sweep_verified() {
+    local path="$1" verdict="$2" dir base sdir staged n
+    shift 2
+    dir="${path%/*}"; [ "$dir" != "$path" ] || dir="."
+    base="${path##*/}"
+    # `mkdir` is the atomic no-clobber claim bash actually has -- it FAILS when
+    # the name exists -- so the staging destination INSIDE it cannot be
+    # occupied by anyone between the check and the rename. An `rm -f` plus an
+    # `[ -e ]` test ahead of a `mv -fT` cannot promise that: a creator landing
+    # in the gap has its object overwritten and unlinked without either verdict
+    # ever seeing it, which is this helper's own wrongful delete, merely moved
+    # into the staging namespace. `$$` is no ownership token either (bash keeps
+    # the parent's pid inside a subshell), which is precisely why the claim has
+    # to be atomic rather than merely unlikely.
+    #
+    # Self-initialising counter rather than an assignment above this function:
+    # the tooling suite extracts these helpers one
+    # `sed -n '/^name() {/,/^}/p'` at a time, so a global declared OUTSIDE a
+    # body never reaches the fixture and `set -u` would abort there alone.
+    sdir=""
+    for n in 1 2 3 4 5; do
+        # Sanitise then force base 10, the same belt-and-braces this file
+        # applies to every value that could arrive from outside: this is an
+        # ENVIRONMENT-INHERITABLE name, and `$(( 08 + 1 ))` is not a wrong
+        # answer but a shell ABORT ("value too great for base") under
+        # `set -e`, mid-sweep, with the retention mutex held.
+        case "${UTEST_SWEEP_SEQ:-}" in ''|*[!0-9]*) UTEST_SWEEP_SEQ=0 ;; esac
+        UTEST_SWEEP_SEQ=$(( 10#$UTEST_SWEEP_SEQ + 1 ))
+        if mkdir -- "$dir/.utest-sweep.$$.$UTEST_SWEEP_SEQ.d" 2>/dev/null; then
+            sdir="$dir/.utest-sweep.$$.$UTEST_SWEEP_SEQ.d"
+            break
+        fi
+    done
+    # No claim means nothing was detached and the entry is untouched.
+    [ -n "$sdir" ] || return 1
+    staged="$sdir/obj"
+    if ! mv -fT -- "$path" "$staged" 2>/dev/null; then
+        rmdir -- "$sdir" 2>/dev/null || true
+        # Gone under us: another remover got there first, which IS the outcome
+        # asked for. Still present means the detach simply failed.
+        if [ -e "$path" ] || [ -L "$path" ]; then return 1; fi
+        return 0
+    fi
+    if "$verdict" "$staged" "$base" "$@"; then
+        rm -f -- "$staged" 2>/dev/null || true
+        if [ ! -e "$staged" ] && [ ! -L "$staged" ]; then
+            rmdir -- "$sdir" 2>/dev/null || true
+            return 0
+        fi
+        # `rm` did not actually remove it -- a DIRECTORY is the reachable case.
+        # Fall through and put it back, rather than report a destruction that
+        # did not happen and leave the thing hidden under a staging name.
+    fi
+    # The object changed between selection and detach, or could not be
+    # destroyed. Put it back: `ln` fails atomically when the name is occupied,
+    # so a newcomer is never clobbered.
+    if ln -PT -- "$staged" "$path" 2>/dev/null; then
+        rm -f -- "$staged" 2>/dev/null || true
+        rmdir -- "$sdir" 2>/dev/null || true
+        return 1
+    fi
+    # A failed relink is NOT self-evidently EEXIST -- ENOSPC, EPERM, a
+    # directory source, and a filesystem without hard links all land here. A
+    # NON-DIRECTORY now at the name is the ordinary newcomer: it wins, and this
+    # copy is dropped.
+    if { [ -e "$path" ] || [ -L "$path" ]; } && [ ! -d "$path" ]; then
+        rm -f -- "$staged" 2>/dev/null || true
+        rmdir -- "$sdir" 2>/dev/null || true
+        return 0
+    fi
+    # Anything else is unexplained, so the object STAYS in its staging claim
+    # and is reported. Nothing ever deletes it: the reap is `rmdir`, which
+    # collects empty claims only. A glob-and-`rm` reap would turn every
+    # preserved object into a delayed wrongful delete on the next sweep --
+    # exactly the failure this helper exists to prevent, deferred by one run.
+    printf 'test.sh: could not restore %s -- object left at %s\n' "$path" "$staged" >&2
+    return 1
+}
+
+# Collect the staging claims an earlier sweep finished with, and REPORT the
+# ones it did not. `rmdir` is the entire policy: it removes an empty claim and
+# refuses a non-empty one, so a claim still holding an object -- a crash
+# between the detach and the verdict, or a restore that could not be made --
+# survives and gets named instead of being destroyed by a pattern match.
+# ECHOES the number of claims it could NOT resolve, because reporting alone is
+# not protection. A preserved object lives inside its claim and matches no
+# `*.lease` glob, so a later pass that merely printed a warning would count
+# zero live leases and let retention delete the record -- and the preserved
+# object with it, one pass after the preservation. The count is what makes the
+# unresolved case FAIL CLOSED: its record is held until a human resolves it.
+utest_sweep_reap() {
+    local dir="$1" d n=0
+    for d in "$dir"/.utest-sweep.*.d; do
+        [ -d "$d" ] || continue
+        rmdir -- "$d" 2>/dev/null && continue
+        n=$(( n + 1 ))
+        printf 'test.sh: unresolved swept object under %s (needs manual review)\n' "$d" >&2
+    done
+    printf '%s\n' "$n"
+    return 0
+}
+
+# Reclaim verdict for one lease: 0 = destroy it, 1 = count it live.
+#
+# $1 = the path to READ, $2 = the basename its grammar must validate against,
+# $3 = record id, $4 = now, $5 = the TTL ceiling. The two names are separate
+# arguments for the reason utest_lease_fields documents: a detached candidate
+# is read under a staging name while its contract is still its published one.
+#
+# Extracted from the loop below so that the selection pass and the binding
+# recheck inside utest_sweep_verified are the SAME code. That is also what
+# makes the recheck safe: for an unchanged object every input here is either a
+# loop constant (`now`, `ttl`, the record id) or monotone toward reclaim (a
+# holder only ever goes LIVE -> DEAD), so a KEEP verdict after the detach is
+# proof the object at that name changed, never a lease resurrected behind a
+# concurrent lock-free utest_lease_release.
+utest_lease_reclaimable() {
+    local path="$1" base="$2" rec="$3" now="$4" ttl="$5" want="${6:-}" fields exp acq holder eff state
+    # What this call READ, published for the caller to hand back as $6 on the
+    # binding recheck. Cleared first so no path can leave a previous call's
+    # snapshot standing.
+    UTEST_LEASE_SEEN=""
+    # -L first: `-f` follows a symlink, so a link to a valid lease elsewhere
+    # would otherwise be parsed instead of removed.
+    if [ -L "$path" ] || [ ! -f "$path" ]; then return 0; fi
+    fields="$(utest_lease_fields "$path" "$rec" "$base")"
+    UTEST_LEASE_SEEN="$fields"
+    [ -n "$fields" ] || return 0
+    # THE BINDING RECHECK ASKS A DIFFERENT QUESTION. Given what the selection
+    # read, the question is no longer "is this reclaimable" but "is this still
+    # the same object"; anything else is a replacement and must be put back,
+    # not judged afresh.
+    #
+    # Re-deriving the verdict instead would NOT be monotone, which is the
+    # subtle way this loses a live reader's record: utest_lease_holder_state
+    # answers UNKNOWN on a transient procfs failure (an unreadable
+    # /proc/<pid>/stat, a momentarily missing /proc/1) and LIVE on the retry,
+    # and the future-dated branch below maps UNKNOWN to reclaim and LIVE to
+    # keep. So a future-dated lease could be SELECTED as reclaimable and then
+    # flip to keep on an inode that never changed -- and the same flip is what
+    # would let a relink undo a lock-free utest_lease_release that landed
+    # inside the detach window. Comparing the snapshot removes both, without
+    # making release take the retention mutex (it is deliberately lock-free;
+    # see its own comment).
+    if [ -n "$want" ] && [ "$fields" != "$want" ]; then return 1; fi
+    exp="${fields%% *}"; acq="${fields#* }"; holder="${acq#* }"; acq="${acq%% *}"
+    # `10#` on every value that reached here from a FILE, belt-and-braces
+    # behind utest_is_json_uint: the grammar already rejects a leading zero,
+    # and forcing base 10 means a future relaxation of it cannot resurrect
+    # the octal abort as a silent retention bypass.
+    acq="$(( 10#$acq ))"; exp="$(( 10#$exp ))"
+    state="$(utest_lease_holder_state "$holder")"
+    if [ "$state" = "DEAD" ]; then return 0; fi
+    # A FUTURE acquired_at, and why neither obvious answer is right.
+    # Clamping it up to `now` and computing `acq + ttl` recomputes the
+    # deadline from a MOVING origin, so a document claiming
+    # acquired_at=999999999999 is renewed by every pass and never expires.
+    # Deleting it unconditionally is the mirror hazard: an NTP correction, a
+    # VM restore, or an operator moving the clock backwards makes a
+    # perfectly valid lease look future-dated, and revoking it mid-read is
+    # precisely what the lease promises will not happen.
+    #
+    # So the LIVENESS evidence decides, since that is the thing a clock
+    # cannot corrupt. A live holder is honoured whatever its timestamps say
+    # (it is bounded by the admission cap regardless); an unobservable
+    # holder carrying a timestamp it could not honestly have written buys
+    # nothing. `now` is sampled AFTER the mutex is held, so an acquirer that
+    # published while this prune waited is not mistaken for either case.
+    if [ "$acq" -gt "$now" ]; then
+        if [ "$state" = "LIVE" ]; then return 1; fi
+        return 0
+    fi
+    eff="$exp"
+    if [ "$(( acq + ttl ))" -lt "$eff" ]; then eff="$(( acq + ttl ))"; fi
+    if [ "$now" -ge "$eff" ]; then return 0; fi
+    return 1
 }
 
 # How many LIVE leases record $1 holds, RECLAIMING the rest as it goes.
@@ -845,7 +1088,7 @@ utest_lease_fields() {
 # rather than by arithmetic -- see the branch below for why neither clamping it
 # nor deleting it outright is safe.
 utest_record_live_leases() {
-    local rec="$1" now="$2" ttl="$3" dir f fields exp acq holder eff state live=0
+    local rec="$1" now="$2" ttl="$3" dir f seen stuck live=0
     dir="$RUNS_DIR/$rec/leases"
     [ -d "$dir" ] || { printf '0\n'; return 0; }
     # ABANDONED STAGING first. An acquisition killed between writing
@@ -855,65 +1098,56 @@ utest_record_live_leases() {
     # accumulate hidden files forever, past both the TTL and the lease cap. The
     # mutex is what makes removing them safe: a live acquirer's staging file
     # cannot exist while this runs.
+    # `-L` beside `-e`, or a DANGLING symlink named `.<id>.tmp` fails the
+    # existence test while still occupying the namespace, and staging that
+    # nothing can reap is the leak this loop exists to prevent. The type test
+    # the old spelling carried is dropped for the same reason: everything
+    # matching this private pattern is ours by contract, and `rm` never opens
+    # what it unlinks, so there is nothing to be cautious about. It also reaps
+    # any `.utest-sweep.*.tmp` a detach below could not put back.
     for f in "$dir"/.*.tmp; do
-        [ -e "$f" ] || continue
-        [ -f "$f" ] || continue
+        [ -e "$f" ] || [ -L "$f" ] || continue
         rm -f -- "$f" 2>/dev/null || true
     done
+    # Unresolved claims hold the record. See utest_sweep_reap: an object it
+    # could not resolve is invisible to the `*.lease` glob below, so counting
+    # it here is the only thing standing between a preserved lease and the
+    # `rm -rf` that prunes its record on the very next pass.
+    stuck="$(utest_sweep_reap "$dir")"
+    case "$stuck" in ''|*[!0-9]*) stuck=0 ;; esac
+    live=$(( live + stuck ))
     for f in "$dir"/*.lease; do
-        [ -e "$f" ] || continue
-        # -L first: `-f` follows a symlink, so a link to a valid lease elsewhere
-        # would otherwise be parsed instead of removed.
-        if [ -L "$f" ] || [ ! -f "$f" ]; then
-            rm -f -- "$f" 2>/dev/null || true
-            continue
-        fi
-        fields="$(utest_lease_fields "$f" "$rec")"
-        if [ -z "$fields" ]; then
-            rm -f -- "$f" 2>/dev/null || true
-            continue
-        fi
-        exp="${fields%% *}"; acq="${fields#* }"; holder="${acq#* }"; acq="${acq%% *}"
-        # `10#` on every value that reached here from a FILE, belt-and-braces
-        # behind utest_is_json_uint: the grammar already rejects a leading zero,
-        # and forcing base 10 means a future relaxation of it cannot resurrect
-        # the octal abort as a silent retention bypass.
-        acq="$(( 10#$acq ))"; exp="$(( 10#$exp ))"
-        state="$(utest_lease_holder_state "$holder")"
-        if [ "$state" = "DEAD" ]; then
-            rm -f -- "$f" 2>/dev/null || true
-            continue
-        fi
-        # A FUTURE acquired_at, and why neither obvious answer is right.
-        # Clamping it up to `now` and computing `acq + ttl` recomputes the
-        # deadline from a MOVING origin, so a document claiming
-        # acquired_at=999999999999 is renewed by every pass and never expires.
-        # Deleting it unconditionally is the mirror hazard: an NTP correction, a
-        # VM restore, or an operator moving the clock backwards makes a
-        # perfectly valid lease look future-dated, and revoking it mid-read is
-        # precisely what the lease promises will not happen.
-        #
-        # So the LIVENESS evidence decides, since that is the thing a clock
-        # cannot corrupt. A live holder is honoured whatever its timestamps say
-        # (it is bounded by the admission cap regardless); an unobservable
-        # holder carrying a timestamp it could not honestly have written buys
-        # nothing. `now` is sampled AFTER the mutex is held, so an acquirer that
-        # published while this prune waited is not mistaken for either case.
-        if [ "$acq" -gt "$now" ]; then
-            if [ "$state" = "LIVE" ]; then
+        [ -e "$f" ] || [ -L "$f" ] || continue
+        # A DIRECTORY under a lease name is not a lease, and not something `rm`
+        # can remove. The pre-46 loop's `rm -f` failed silently and left it
+        # published and uncounted; detaching it instead would merely hide it
+        # under a staging name, which is strictly worse. Same outcome as
+        # before, now on purpose.
+        if [ -d "$f" ] && [ ! -L "$f" ]; then continue; fi
+        # SELECTION by name, then DESTRUCTION through the detached object: the
+        # same verdict runs twice, and only the second one -- taken on an inode
+        # nothing else can reach, and BOUND to what the first one read -- is
+        # allowed to unlink.
+        if utest_lease_reclaimable "$f" "${f##*/}" "$rec" "$now" "$ttl"; then
+            seen="${UTEST_LEASE_SEEN:-}"
+            # RETAINED counts as live. The recheck can vote keep (the object
+            # was replaced between selection and detach), in which case the
+            # lease is back at its name and a record dropped from the leased
+            # set here would be deleted under a reader still holding it.
+            if ! utest_sweep_verified "$f" utest_lease_reclaimable "$rec" "$now" "$ttl" "$seen"; then
                 live=$(( live + 1 ))
-                continue
+            elif [ -e "$f" ] || [ -L "$f" ]; then
+                # DESTROYED the detached predecessor, and a replacement took
+                # the published name while it was gone. The glob above was
+                # expanded before the loop began, so this entry is never
+                # revisited -- reporting the record unleased while a fresh
+                # grant sits on disk is how it gets deleted under its reader.
+                # Counted conservatively; the next pass classifies it properly.
+                live=$(( live + 1 ))
             fi
-            rm -f -- "$f" 2>/dev/null || true
-            continue
+        else
+            live=$(( live + 1 ))
         fi
-        eff="$exp"
-        if [ "$(( acq + ttl ))" -lt "$eff" ]; then eff="$(( acq + ttl ))"; fi
-        if [ "$now" -ge "$eff" ]; then
-            rm -f -- "$f" 2>/dev/null || true
-            continue
-        fi
-        live=$(( live + 1 ))
     done
     printf '%s\n' "$live"
     return 0
@@ -1257,21 +1491,31 @@ utest_prune_records() {
     # forever, at startup, wedging every later invocation of this script rather
     # than sweeping the thing that wedged it. So the type test decides the fate
     # of an entry entirely on its own; only a plain regular file is ever opened.
+    #
+    # And the type test alone decides only what is WORTH removing, never what
+    # is removed: every unlink goes through utest_sweep_verified, which detaches
+    # the name and re-takes the verdict on the detached inode, so a legitimate
+    # pointer published onto that name mid-sweep cannot be deleted in place of
+    # the thing that was classified.
+    #
+    # Reap the previous pass's staging claims first, so a claim this pass makes
+    # can never be collected by its own reap. The reap only ever `rmdir`s, so
+    # an unresolved object inside a claim is reported and kept, never deleted.
     {
+        # No count is consulted here: `build/` holds no record to protect,
+        # and an unresolved claim is reported by the reap itself.
+        utest_sweep_reap "$PROJECT/build" >/dev/null
         find "$PROJECT/build" -maxdepth 1 ! -type d -name 'test-results-*.run' 2>/dev/null |
             while IFS= read -r ptr; do
                 [ -n "$ptr" ] || continue
-                # -L first: `-f` follows a symlink, so a link to a regular file
-                # would otherwise be parsed rather than removed.
-                if [ -L "$ptr" ] || [ ! -f "$ptr" ]; then
-                    rm -f -- "$ptr"
-                    continue
-                fi
-                # A pointer with no VALID run_id names no record by definition,
-                # so it is dangling too.
-                old="$(utest_pointer_run_id "$ptr")"
-                if [ -z "$old" ] || [ ! -d "$RUNS_DIR/$old" ]; then
-                    rm -f -- "$ptr"
+                # ONE verdict function, called twice: here to select a
+                # candidate by name, and again inside utest_sweep_verified on
+                # the detached inode, which is the only call allowed to unlink.
+                # Spelling the selection out inline instead would be a second
+                # definition of "dangling", free to drift from the one that
+                # actually destroys things.
+                if utest_ptr_sweepable "$ptr" "${ptr##*/}"; then
+                    utest_sweep_verified "$ptr" utest_ptr_sweepable
                 fi
             done
     } || true

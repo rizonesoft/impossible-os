@@ -12673,11 +12673,15 @@ $(sed -n '/^utest_lease_holder_state() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
 $(sed -n '/^utest_is_json_uint() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
 $(sed -n '/^utest_lease_doc_for() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
 $(sed -n '/^utest_lease_fields() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
+$(sed -n '/^utest_sweep_verified() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
+$(sed -n '/^utest_sweep_reap() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
+$(sed -n '/^utest_lease_reclaimable() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
 $(sed -n '/^utest_record_live_leases() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
 $(sed -n '/^utest_lease_acquire() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
 $(sed -n '/^utest_lease_release() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")"
     UAR_PRUNE="$(sed -n '/^utest_norm_bound() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
 $(sed -n '/^utest_pointer_run_id() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
+$(sed -n '/^utest_ptr_sweepable() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
 $UAR_PTRDOC
 $(sed -n '/^utest_pointer_pin_id() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
 $UAR_LEASEFN
@@ -13089,6 +13093,316 @@ printf "| HARNESS-OK\n"
             t_fail "run record: a FIFO under the pointer name is swept without ever being opened" \
                 "mkfifo unavailable -- the hang this guards against would be undetected"
         fi
+
+        # (p14-p17) SECTION 46. A classification and the `rm` that follows it
+        #       are two syscalls against a NAME, so the sweep must destroy the
+        #       object it VERIFIED, not whatever the name resolves to at the
+        #       moment of the unlink. Every removal therefore detaches first
+        #       (rename(2), which never opens the object) and re-takes the
+        #       verdict on the detached inode.
+        #
+        #       The seam is the verdict callback itself. utest_sweep_verified
+        #       invokes it with the STAGED path, which is precisely the instant
+        #       between the detach and the unlink, so a wrapper that races the
+        #       original name from inside it reproduces the window
+        #       DETERMINISTICALLY -- rather than starting a background writer
+        #       and hoping it lands in a microsecond-wide gap, which is a test
+        #       that passes by not reproducing the bug. The wrappers below WRAP
+        #       the production function (via `declare -f`) instead of replacing
+        #       it, so the real verdict still decides every fate; the wrapper
+        #       only supplies the racer.
+
+        # (p14) direction ONE: a special entry replaced by a legitimate NEW
+        #       pointer between the classification and the unlink. The old code
+        #       ran `rm -f -- "$ptr"` on the name and would have deleted the
+        #       newcomer on a verdict passed on the FIFO it replaced.
+        uar_prune_reset
+        if mkfifo "$UAR_PDIR/build/test-results-raceb.run" 2>/dev/null; then
+            UAR_PP14="$(UAR_PDIR="$UAR_PDIR" UAR_PRUNE="$UAR_PRUNE" timeout 25 bash -c '
+set -uo pipefail
+PROJECT="$UAR_PDIR"
+RUNS_DIR="$PROJECT/build/test-runs"
+RUN_ID="20260101T000000Z-1-aaaa"
+UTEST_RECORD_KEEP=2
+eval "$UAR_PRUNE"
+eval "$(declare -f utest_ptr_sweepable | sed "1s/^utest_ptr_sweepable/uar_real_ptr_verdict/")"
+utest_ptr_sweepable() {
+    case "$1" in
+        *".utest-sweep."*)
+            utest_leg_pointer_doc_for raceb 20260105T000000Z-1-aaaa \
+                > "$PROJECT/build/test-results-raceb.run" 2>/dev/null || true
+            ;;
+    esac
+    uar_real_ptr_verdict "$@"
+}
+utest_prune_records
+printf "| newcomer: "
+if [ -p "$PROJECT/build/test-results-raceb.run" ]; then printf "STILL-FIFO"
+elif [ -f "$PROJECT/build/test-results-raceb.run" ]; then
+    { tr -d " \n" < "$PROJECT/build/test-results-raceb.run"; } || true
+elif [ -e "$PROJECT/build/test-results-raceb.run" ] || [ -L "$PROJECT/build/test-results-raceb.run" ]; then
+    printf "OTHER"
+else printf "DELETED-THE-NEWCOMER"; fi
+printf "| staging-left: "
+{ ls -1a "$PROJECT/build" 2>/dev/null | grep -c "utest-sweep" | tr -d "\n"; } || true
+printf "| HARNESS-OK\n"
+' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
+            if printf '%s' "$UAR_PP14" | grep -q 'HARNESS-OK' &&
+               printf '%s' "$UAR_PP14" | grep -q '"run_id":"20260105T000000Z-1-aaaa"' &&
+               printf '%s' "$UAR_PP14" | grep -q 'staging-left: 0'; then
+                t_pass "run record: a pointer published during the sweep survives the unlink of what it replaced"
+            else
+                t_fail "run record: a pointer published during the sweep survives the unlink of what it replaced" \
+                    "$UAR_PP14"
+            fi
+            rm -f "$UAR_PDIR/build/test-results-raceb.run"
+        else
+            t_fail "run record: a pointer published during the sweep survives the unlink of what it replaced" \
+                "mkfifo unavailable -- the replacement race cannot be staged"
+        fi
+
+        # (p15) direction TWO: a regular pointer replaced by a FIFO between the
+        #       classification and the parse. The `timeout` bound section 38
+        #       shipped is what keeps a LOST race cheap, and it stays load
+        #       bearing after section 46 -- so the assertion is that the sweep
+        #       still COMPLETES (external timeout) and still sweeps the thing
+        #       that raced it, never that the race was prevented.
+        uar_prune_reset
+        uar_prune_ptr racea 20260105T000000Z-1-aaaa
+        UAR_PP15="$(UAR_PDIR="$UAR_PDIR" UAR_PRUNE="$UAR_PRUNE" timeout 40 bash -c '
+set -uo pipefail
+PROJECT="$UAR_PDIR"
+RUNS_DIR="$PROJECT/build/test-runs"
+RUN_ID="20260101T000000Z-1-aaaa"
+UTEST_RECORD_KEEP=2
+eval "$UAR_PRUNE"
+eval "$(declare -f utest_pointer_run_id | sed "1s/^utest_pointer_run_id/uar_real_run_id/")"
+utest_pointer_run_id() {
+    # Swap ONLY the published name, and only once: the recheck reads the
+    # detached staging path, which no racer can reach by construction.
+    if [ "$1" = "$PROJECT/build/test-results-racea.run" ]; then
+        rm -f -- "$1" 2>/dev/null || true
+        mkfifo "$1" 2>/dev/null || true
+    fi
+    uar_real_run_id "$@"
+}
+utest_prune_records
+printf "| racea: "
+if [ -e "$PROJECT/build/test-results-racea.run" ] || [ -L "$PROJECT/build/test-results-racea.run" ]; then
+    printf "STILL-THERE"
+else printf "SWEPT"; fi
+printf "| staging-left: "
+{ ls -1a "$PROJECT/build" 2>/dev/null | grep -c "utest-sweep" | tr -d "\n"; } || true
+printf "| HARNESS-OK\n"
+' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
+        if printf '%s' "$UAR_PP15" | grep -q 'HARNESS-OK' &&
+           printf '%s' "$UAR_PP15" | grep -q 'racea: SWEPT' &&
+           printf '%s' "$UAR_PP15" | grep -q 'staging-left: 0'; then
+            t_pass "run record: a FIFO swapped in mid-parse is swept under the timeout bound, never wedging the sweep"
+        else
+            t_fail "run record: a FIFO swapped in mid-parse is swept under the timeout bound, never wedging the sweep" \
+                "$UAR_PP15"
+        fi
+
+        # (p16) the RESTORE half. A verdict that flips to KEEP on the detached
+        #       object is the mechanism admitting it selected the wrong thing,
+        #       and the entry must come back at its published name. Without the
+        #       `ln` the detach would be a silent delete of exactly what the
+        #       verdict said to preserve -- strictly worse than the check-then-
+        #       act it replaced.
+        uar_prune_reset
+        uar_prune_ptr restore 20260105T000000Z-1-aaaa
+        UAR_PP16="$(UAR_PDIR="$UAR_PDIR" UAR_PRUNE="$UAR_PRUNE" timeout 25 bash -c '
+set -uo pipefail
+PROJECT="$UAR_PDIR"
+RUNS_DIR="$PROJECT/build/test-runs"
+eval "$UAR_PRUNE"
+# A verdict that selects everything and then keeps everything: the exact
+# shape of losing a race between selection and detach.
+uar_keep() { return 1; }
+utest_sweep_verified "$PROJECT/build/test-results-restore.run" uar_keep
+printf "| restored: "
+if [ -f "$PROJECT/build/test-results-restore.run" ]; then
+    { tr -d " \n" < "$PROJECT/build/test-results-restore.run"; } || true
+else printf "LOST"; fi
+printf "| staging-left: "
+{ ls -1a "$PROJECT/build" 2>/dev/null | grep -c "utest-sweep" | tr -d "\n"; } || true
+printf "| HARNESS-OK\n"
+' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
+        if printf '%s' "$UAR_PP16" | grep -q 'HARNESS-OK' &&
+           printf '%s' "$UAR_PP16" | grep -q '"run_id":"20260105T000000Z-1-aaaa"' &&
+           printf '%s' "$UAR_PP16" | grep -q 'staging-left: 0'; then
+            t_pass "run record: an entry the recheck votes to keep is relinked at its published name"
+        else
+            t_fail "run record: an entry the recheck votes to keep is relinked at its published name" "$UAR_PP16"
+        fi
+
+        # (p17) `-T` and the unexplained-failure rule. Without `-T` a DIRECTORY
+        #       at the destination turns the rename into a move INSIDE it (the
+        #       hazard utest_lease_acquire already documents), and an `ln`
+        #       failure that is not EEXIST -- ENOSPC, EPERM, a filesystem with
+        #       no hard links -- must never be treated as "the newcomer won"
+        #       and answered by deleting the only remaining copy. Both are
+        #       staged here by putting a directory in the way.
+        uar_prune_reset
+        uar_prune_ptr dirtrap 20260105T000000Z-1-aaaa
+        UAR_PP17="$(UAR_PDIR="$UAR_PDIR" UAR_PRUNE="$UAR_PRUNE" timeout 25 bash -c '
+set -uo pipefail
+PROJECT="$UAR_PDIR"
+RUNS_DIR="$PROJECT/build/test-runs"
+eval "$UAR_PRUNE"
+# A racer that replaces the vacated name with a DIRECTORY. `ln -PT` must
+# refuse it rather than linking INSIDE it, and the staged object must be
+# left on disk rather than destroyed on a failure that is not EEXIST.
+uar_dirtrap() {
+    mkdir -p "$PROJECT/build/test-results-dirtrap.run" 2>/dev/null || true
+    return 1
+}
+utest_sweep_verified "$PROJECT/build/test-results-dirtrap.run" uar_dirtrap
+printf "| name: "
+if [ -d "$PROJECT/build/test-results-dirtrap.run" ]; then printf "DIR"; else printf "NOT-DIR"; fi
+printf "| linked-inside: "
+{ ls -1a "$PROJECT/build/test-results-dirtrap.run" 2>/dev/null | grep -c "utest-sweep" | tr -d "\n"; } || true
+printf "| preserved: "
+{ ls -1a "$PROJECT/build" 2>/dev/null | grep -c "utest-sweep" | tr -d "\n"; } || true
+printf "| HARNESS-OK\n"
+' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
+        if printf '%s' "$UAR_PP17" | grep -q 'HARNESS-OK' &&
+           printf '%s' "$UAR_PP17" | grep -q 'name: DIR' &&
+           printf '%s' "$UAR_PP17" | grep -q 'linked-inside: 0' &&
+           printf '%s' "$UAR_PP17" | grep -q 'preserved: 1'; then
+            t_pass "run record: a directory at the destination neither swallows the relink nor destroys the staged object"
+        else
+            t_fail "run record: a directory at the destination neither swallows the relink nor destroys the staged object" \
+                "$UAR_PP17"
+        fi
+
+        # (p18) every REFUSAL and RECOVERY branch of the helper, one fixture per
+        #       outcome. p14-p17 cover the two happy paths and the directory
+        #       trap; without these four a regression could abort the prune,
+        #       discard a staged copy, or drop a newcomer with all 1111 tests
+        #       still green. Each asserts the OUTCOME CODE too, because the
+        #       lease caller counts live leases off it -- a branch that returns
+        #       "destroyed" for an object it retained deletes a record out from
+        #       under a live reader.
+        uar_prune_reset
+        uar_prune_ptr branch 20260105T000000Z-1-aaaa
+        UAR_PP18="$(UAR_PDIR="$UAR_PDIR" UAR_PRUNE="$UAR_PRUNE" timeout 30 bash -c '
+set -uo pipefail
+PROJECT="$UAR_PDIR"
+RUNS_DIR="$PROJECT/build/test-runs"
+eval "$UAR_PRUNE"
+P="$PROJECT/build/test-results-branch.run"
+uar_calls=0
+uar_keep()    { uar_calls=$(( uar_calls + 1 )); return 1; }
+uar_destroy() { uar_calls=$(( uar_calls + 1 )); return 0; }
+
+# (a) the staging claim cannot be made. `mkdir` is the atomic claim and it
+#     tries five names, so occupying all five is the deterministic refusal.
+for i in 1 2 3 4 5; do mkdir -p "$PROJECT/build/.utest-sweep.$$.$i.d"; done
+uar_calls=0
+utest_sweep_verified "$P" uar_destroy; printf "| a-rc: %s" "$?"
+printf " a-calls: %s" "$uar_calls"
+printf " a-entry: "; if [ -f "$P" ]; then printf "INTACT"; else printf "TOUCHED"; fi
+for i in 1 2 3 4 5; do rmdir "$PROJECT/build/.utest-sweep.$$.$i.d"; done
+
+# (b) the entry vanished before the detach: nothing to destroy, and the
+#     verdict must never be consulted about an object nobody holds.
+uar_calls=0
+utest_sweep_verified "$PROJECT/build/test-results-absent.run" uar_destroy; printf "| b-rc: %s" "$?"
+printf " b-calls: %s" "$uar_calls"
+
+# (c) relink refused because an ordinary NEWCOMER took the name. It wins and
+#     the staged copy is dropped -- the one case where discarding is right.
+uar_newcomer() {
+    utest_leg_pointer_doc_for branch 20260104T000000Z-1-aaaa > "$P" 2>/dev/null || true
+    return 1
+}
+utest_sweep_verified "$P" uar_newcomer; printf "| c-rc: %s" "$?"
+printf " c-name: "; { tr -d " \\n" < "$P" 2>/dev/null | grep -o "20260104T000000Z-1-aaaa"; } || printf "GONE"
+printf " c-staging: "; { ls -1a "$PROJECT/build" | grep -c "utest-sweep" | tr -d "\\n"; } || true
+
+# (d) relink fails on a FREE name -- ENOSPC, EPERM, a filesystem with no hard
+#     links. Indistinguishable from EEXIST at the exit status, so the object
+#     must be PRESERVED and reported, never guessed away.
+ln() { return 1; }
+utest_sweep_verified "$P" uar_keep; printf "| d-rc: %s" "$?"
+unset -f ln
+printf " d-name: "; if [ -e "$P" ] || [ -L "$P" ]; then printf "PRESENT"; else printf "FREE"; fi
+printf " d-preserved: "; { find "$PROJECT/build" -name obj -path "*utest-sweep*" | wc -l | tr -d "\\n"; } || true
+printf "| HARNESS-OK\n"
+' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
+        if printf '%s' "$UAR_PP18" | grep -q 'HARNESS-OK' &&
+           printf '%s' "$UAR_PP18" | grep -q 'a-rc: 1 a-calls: 0 a-entry: INTACT' &&
+           printf '%s' "$UAR_PP18" | grep -q 'b-rc: 0 b-calls: 0' &&
+           printf '%s' "$UAR_PP18" | grep -q 'c-rc: 0' &&
+           printf '%s' "$UAR_PP18" | grep -q 'c-name: 20260104T000000Z-1-aaaa' &&
+           printf '%s' "$UAR_PP18" | grep -q 'c-staging: 0' &&
+           printf '%s' "$UAR_PP18" | grep -q 'd-rc: 1' &&
+           printf '%s' "$UAR_PP18" | grep -q 'd-name: FREE' &&
+           printf '%s' "$UAR_PP18" | grep -q 'd-preserved: 1'; then
+            t_pass "run record: every sweep refusal and recovery branch reports the outcome it actually produced"
+        else
+            t_fail "run record: every sweep refusal and recovery branch reports the outcome it actually produced" \
+                "$UAR_PP18"
+        fi
+
+        # (p19) the same relink, but driven through the REAL selector inside a
+        #       full utest_prune_records -- pin scan, record prune, stale-claim
+        #       reap, pointer sweep, in that order. p16 and p18 call the helper
+        #       directly, so neither would notice the production selector being
+        #       rewired or the reap being moved AFTER the sweep, which would
+        #       delete a claim the same pass had just preserved.
+        uar_prune_reset
+        ln -s /nonexistent/elsewhere "$UAR_PDIR/build/test-results-order.run" 2>/dev/null || true
+        mkdir -p "$UAR_PDIR/build/.utest-sweep.stale-empty.d"
+        mkdir -p "$UAR_PDIR/build/.utest-sweep.stale-held.d"
+        printf 'unresolved\n' > "$UAR_PDIR/build/.utest-sweep.stale-held.d/obj"
+        UAR_PP19="$(UAR_PDIR="$UAR_PDIR" UAR_PRUNE="$UAR_PRUNE" timeout 30 bash -c '
+set -uo pipefail
+PROJECT="$UAR_PDIR"
+RUNS_DIR="$PROJECT/build/test-runs"
+RUN_ID="20260101T000000Z-1-aaaa"
+UTEST_RECORD_KEEP=2
+eval "$UAR_PRUNE"
+eval "$(declare -f utest_ptr_sweepable | sed "1s/^utest_ptr_sweepable/uar_real_ptr_verdict/")"
+utest_ptr_sweepable() {
+    local rc
+    uar_real_ptr_verdict "$@"; rc=$?
+    # On the PUBLISHED-path call only -- i.e. after selection has judged the
+    # symlink and before the helper detaches it -- swap in a valid pointer.
+    case "$1" in
+        *".utest-sweep."*) : ;;
+        # unlink-then-create, which is what a racer does and what a bare `>`
+        # cannot: the redirection FOLLOWS the dangling symlink standing here
+        # and fails on its absent target instead of replacing it.
+        *) rm -f -- "$PROJECT/build/test-results-order.run" 2>/dev/null || true
+           utest_leg_pointer_doc_for order 20260105T000000Z-1-aaaa \
+               > "$PROJECT/build/test-results-order.run" 2>/dev/null || true ;;
+    esac
+    return $rc
+}
+utest_prune_records
+printf "| order: "
+if [ -f "$PROJECT/build/test-results-order.run" ] && [ ! -L "$PROJECT/build/test-results-order.run" ]; then
+    { tr -d " \\n" < "$PROJECT/build/test-results-order.run" | grep -o "20260105T000000Z-1-aaaa"; } || printf "WRONG"
+else printf "LOST"; fi
+printf "| stale-empty: "
+if [ -d "$PROJECT/build/.utest-sweep.stale-empty.d" ]; then printf "KEPT"; else printf "REAPED"; fi
+printf "| stale-held: "
+if [ -f "$PROJECT/build/.utest-sweep.stale-held.d/obj" ]; then printf "PRESERVED"; else printf "DESTROYED"; fi
+printf "| HARNESS-OK\n"
+' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
+        if printf '%s' "$UAR_PP19" | grep -q 'HARNESS-OK' &&
+           printf '%s' "$UAR_PP19" | grep -q 'order: 20260105T000000Z-1-aaaa' &&
+           printf '%s' "$UAR_PP19" | grep -q 'stale-empty: REAPED' &&
+           printf '%s' "$UAR_PP19" | grep -q 'stale-held: PRESERVED'; then
+            t_pass "run record: the full prune relinks through the real selector and reaps only empty staging claims"
+        else
+            t_fail "run record: the full prune relinks through the real selector and reaps only empty staging claims" \
+                "$UAR_PP19"
+        fi
+        rm -rf "$UAR_PDIR/build/.utest-sweep.stale-held.d"
 
         # (L1-L7) READER LEASES. The pin above protects the record the CURRENT
         #     pointer names; it cannot protect one a reader has already
@@ -13617,6 +13931,408 @@ printf "boot=%s ns=%s\n" "$(utest_boot_id)" "$(utest_pid_ns_id)"' 2>&1)"
             t_fail "reader lease: the identity cache is primed in the calling shell, so subshell reads are served from it" \
                 "$UAR_L20"
         fi
+        # (L21-L24) SECTION 46 on the SECOND namespace. `<record>/leases/*.lease`
+        #     is the identical check-then-act shape as the leg pointers, so it
+        #     goes through the SAME utest_sweep_verified rather than growing a
+        #     second answer. Every timestamp below is a literal, never a clock
+        #     read: the verdict is a pure function of (acquired_at, expires_at,
+        #     now, ttl, holder liveness), and a fixture that sampled the clock
+        #     would make its own arithmetic the thing under test.
+
+        # (L21) the detach must not turn a VALID lease into a malformed one.
+        #     utest_lease_fields binds holder and lease_id to the FILENAME, so
+        #     a recheck that read the staging name would classify every
+        #     detached lease as malformed and unlink it -- destroying exactly
+        #     the legitimate replacement the mechanism exists to protect. The
+        #     published basename therefore travels as its own argument.
+        uar_lease_reset
+        uar_lease_put 20260102T000000Z-1-aaaa "$UAR_LHOLD" keep01 1000000000 1000000900
+        UAR_L21="$(UAR_PDIR="$UAR_PDIR" UAR_PRUNE="$UAR_PRUNE" UAR_LHOLD="$UAR_LHOLD" timeout 25 bash -c '
+set -uo pipefail
+PROJECT="$UAR_PDIR"
+RUNS_DIR="$PROJECT/build/test-runs"
+eval "$UAR_PRUNE"
+L="$RUNS_DIR/20260102T000000Z-1-aaaa/leases/$UAR_LHOLD.keep01.lease"
+# Force the detach on a lease the verdict will vote to KEEP -- the shape of
+# losing a race between selection and detach.
+utest_sweep_verified "$L" utest_lease_reclaimable 20260102T000000Z-1-aaaa 1000000100 300
+printf "| lease: "
+if [ -f "$L" ]; then printf "RESTORED"; else printf "DESTROYED"; fi
+printf "| live: %s" "$(utest_record_live_leases 20260102T000000Z-1-aaaa 1000000100 300)"
+printf "| staging-left: "
+{ ls -1a "$RUNS_DIR/20260102T000000Z-1-aaaa/leases" 2>/dev/null | grep -c "utest-sweep" | tr -d "\n"; } || true
+printf "| HARNESS-OK\n"
+' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
+        if printf '%s' "$UAR_L21" | grep -q 'HARNESS-OK' &&
+           printf '%s' "$UAR_L21" | grep -q 'lease: RESTORED' &&
+           printf '%s' "$UAR_L21" | grep -q 'live: 1' &&
+           printf '%s' "$UAR_L21" | grep -q 'staging-left: 0'; then
+            t_pass "reader lease: a detached lease is validated against its published name, not its staging name"
+        else
+            t_fail "reader lease: a detached lease is validated against its published name, not its staging name" \
+                "$UAR_L21"
+        fi
+
+        # (L22) the replacement race, lease side: an EXPIRED lease is selected,
+        #     and a fresh valid grant lands on that name while it is detached.
+        #     The reclaim must take the expired object it verified and leave
+        #     the newcomer alone.
+        uar_lease_reset
+        uar_lease_put 20260102T000000Z-1-aaaa "$UAR_LHOLD" old01 1000000000 1000000010
+        UAR_L22="$(UAR_PDIR="$UAR_PDIR" UAR_PRUNE="$UAR_PRUNE" UAR_LHOLD="$UAR_LHOLD" timeout 25 bash -c '
+set -uo pipefail
+PROJECT="$UAR_PDIR"
+RUNS_DIR="$PROJECT/build/test-runs"
+eval "$UAR_PRUNE"
+D="$RUNS_DIR/20260102T000000Z-1-aaaa/leases"
+eval "$(declare -f utest_lease_reclaimable | sed "1s/^utest_lease_reclaimable/uar_real_lease_verdict/")"
+utest_lease_reclaimable() {
+    case "$1" in
+        *".utest-sweep."*)
+            utest_lease_doc_for 20260102T000000Z-1-aaaa "$UAR_LHOLD" old01 1000000090 1000000900 \
+                > "$D/$UAR_LHOLD.old01.lease" 2>/dev/null || true
+            ;;
+    esac
+    uar_real_lease_verdict "$@"
+}
+printf "| live: %s" "$(utest_record_live_leases 20260102T000000Z-1-aaaa 1000000100 300)"
+printf "| newcomer: "
+if [ -f "$D/$UAR_LHOLD.old01.lease" ]; then
+    { grep -o "\"acquired_at\": [0-9]*" "$D/$UAR_LHOLD.old01.lease" | tr -d " \n"; } || true
+else printf "DELETED-THE-NEWCOMER"; fi
+printf "| staging-left: "
+{ ls -1a "$D" 2>/dev/null | grep -c "utest-sweep" | tr -d "\n"; } || true
+printf "| HARNESS-OK\n"
+' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
+        if printf '%s' "$UAR_L22" | grep -q 'HARNESS-OK' &&
+           printf '%s' "$UAR_L22" | grep -q 'live: 1' &&
+           printf '%s' "$UAR_L22" | grep -q '"acquired_at":1000000090' &&
+           printf '%s' "$UAR_L22" | grep -q 'staging-left: 0'; then
+            t_pass "reader lease: a grant published during the reclaim survives the unlink of the lease it replaced"
+        else
+            t_fail "reader lease: a grant published during the reclaim survives the unlink of the lease it replaced" \
+                "$UAR_L22"
+        fi
+
+        # (L23) a DANGLING SYMLINK named *.lease. `[ -e ]` follows the link, so
+        #     the old spelling skipped it before any type test could see it --
+        #     it was never reclaimed, and `leases/` grew by one for every such
+        #     entry, which is the leak the reclaim pass exists to prevent.
+        uar_lease_reset
+        ln -s /nonexistent/target/nowhere \
+            "$UAR_PDIR/build/test-runs/20260102T000000Z-1-aaaa/leases/$UAR_LHOLD.dang01.lease" 2>/dev/null || true
+        UAR_L23="$(UAR_PDIR="$UAR_PDIR" UAR_PRUNE="$UAR_PRUNE" UAR_LHOLD="$UAR_LHOLD" timeout 25 bash -c '
+set -uo pipefail
+PROJECT="$UAR_PDIR"
+RUNS_DIR="$PROJECT/build/test-runs"
+eval "$UAR_PRUNE"
+D="$RUNS_DIR/20260102T000000Z-1-aaaa/leases"
+printf "| live: %s" "$(utest_record_live_leases 20260102T000000Z-1-aaaa 1000000100 300)"
+printf "| dangling: "
+if [ -e "$D/$UAR_LHOLD.dang01.lease" ] || [ -L "$D/$UAR_LHOLD.dang01.lease" ]; then
+    printf "STILL-THERE"
+else printf "RECLAIMED"; fi
+printf "| HARNESS-OK\n"
+' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
+        if printf '%s' "$UAR_L23" | grep -q 'HARNESS-OK' &&
+           printf '%s' "$UAR_L23" | grep -q 'live: 0' &&
+           printf '%s' "$UAR_L23" | grep -q 'dangling: RECLAIMED'; then
+            t_pass "reader lease: a dangling symlink under a lease name is reclaimed, not skipped forever"
+        else
+            t_fail "reader lease: a dangling symlink under a lease name is reclaimed, not skipped forever" "$UAR_L23"
+        fi
+
+        # (L24) release DURING the detach window. utest_lease_release is
+        #     deliberately lock-free, so it can land while a reclaim holds the
+        #     candidate detached -- its `rm` then hits a free name and returns
+        #     success. The property that must hold is that nothing is put back:
+        #     only reclaim-candidates are ever detached, and for an unchanged
+        #     object the verdict is monotone toward reclaim, so the recheck
+        #     cannot vote KEEP and resurrect a grant its holder has released.
+        uar_lease_reset
+        uar_lease_put 20260102T000000Z-1-aaaa "$UAR_LHOLD" rel01 1000000000 1000000010
+        UAR_L24="$(UAR_PDIR="$UAR_PDIR" UAR_PRUNE="$UAR_PRUNE" UAR_LHOLD="$UAR_LHOLD" timeout 25 bash -c '
+set -uo pipefail
+PROJECT="$UAR_PDIR"
+RUNS_DIR="$PROJECT/build/test-runs"
+eval "$UAR_PRUNE"
+D="$RUNS_DIR/20260102T000000Z-1-aaaa/leases"
+eval "$(declare -f utest_lease_reclaimable | sed "1s/^utest_lease_reclaimable/uar_real_lease_verdict/")"
+utest_lease_reclaimable() {
+    case "$1" in
+        *".utest-sweep."*) utest_lease_release "$D/$UAR_LHOLD.rel01.lease" ;;
+    esac
+    uar_real_lease_verdict "$@"
+}
+printf "| live: %s" "$(utest_record_live_leases 20260102T000000Z-1-aaaa 1000000100 300)"
+printf "| lease: "
+if [ -e "$D/$UAR_LHOLD.rel01.lease" ] || [ -L "$D/$UAR_LHOLD.rel01.lease" ]; then
+    printf "RESURRECTED"
+else printf "GONE"; fi
+printf "| staging-left: "
+{ ls -1a "$D" 2>/dev/null | grep -c "utest-sweep" | tr -d "\n"; } || true
+printf "| HARNESS-OK\n"
+' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
+        if printf '%s' "$UAR_L24" | grep -q 'HARNESS-OK' &&
+           printf '%s' "$UAR_L24" | grep -q 'live: 0' &&
+           printf '%s' "$UAR_L24" | grep -q 'lease: GONE' &&
+           printf '%s' "$UAR_L24" | grep -q 'staging-left: 0'; then
+            t_pass "reader lease: a lock-free release landing inside the detach window is never undone by the recheck"
+        else
+            t_fail "reader lease: a lock-free release landing inside the detach window is never undone by the recheck" \
+                "$UAR_L24"
+        fi
+
+        # (L25) the widened guard on the ABANDONED-STAGING pass, which is a
+        #     separate line from L23's `*.lease` one. A dangling symlink named
+        #     `.<lease-id>.tmp` failed `[ -e ]` and was skipped before any type
+        #     test saw it, so it accumulated forever in a retained record.
+        #     Reverting that one line alone must fail something.
+        uar_lease_reset
+        uar_lease_put 20260102T000000Z-1-aaaa "$UAR_LHOLD" keep02 1000000000 1000000900
+        ln -s /nonexistent/staging/target \
+            "$UAR_PDIR/build/test-runs/20260102T000000Z-1-aaaa/leases/.dang02.tmp" 2>/dev/null || true
+        UAR_L25="$(UAR_PDIR="$UAR_PDIR" UAR_PRUNE="$UAR_PRUNE" UAR_LHOLD="$UAR_LHOLD" timeout 25 bash -c '
+set -uo pipefail
+PROJECT="$UAR_PDIR"
+RUNS_DIR="$PROJECT/build/test-runs"
+eval "$UAR_PRUNE"
+D="$RUNS_DIR/20260102T000000Z-1-aaaa/leases"
+printf "| live: %s" "$(utest_record_live_leases 20260102T000000Z-1-aaaa 1000000100 300)"
+printf "| staging: "
+if [ -e "$D/.dang02.tmp" ] || [ -L "$D/.dang02.tmp" ]; then printf "STILL-THERE"; else printf "REAPED"; fi
+printf "| lease: "
+if [ -f "$D/$UAR_LHOLD.keep02.lease" ]; then printf "INTACT"; else printf "COLLATERAL-DAMAGE"; fi
+printf "| HARNESS-OK\n"
+' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
+        if printf '%s' "$UAR_L25" | grep -q 'HARNESS-OK' &&
+           printf '%s' "$UAR_L25" | grep -q 'live: 1' &&
+           printf '%s' "$UAR_L25" | grep -q 'staging: REAPED' &&
+           printf '%s' "$UAR_L25" | grep -q 'lease: INTACT'; then
+            t_pass "reader lease: a dangling symlink under an abandoned-staging name is reaped, not skipped forever"
+        else
+            t_fail "reader lease: a dangling symlink under an abandoned-staging name is reaped, not skipped forever" \
+                "$UAR_L25"
+        fi
+
+        # (L26) a DIRECTORY named *.lease. The widened `[ -e ] || [ -L ]` guard
+        #     admits it, and `rm` cannot remove it -- so detaching it would
+        #     move it under a hidden staging name and report a destruction that
+        #     never happened, turning a visible oddity into an unbounded hidden
+        #     leak. It stays published and uncounted, exactly as before 46.
+        uar_lease_reset
+        uar_lease_put 20260102T000000Z-1-aaaa "$UAR_LHOLD" keep03 1000000000 1000000900
+        mkdir -p "$UAR_PDIR/build/test-runs/20260102T000000Z-1-aaaa/leases/$UAR_LHOLD.dir01.lease"
+        UAR_L26="$(UAR_PDIR="$UAR_PDIR" UAR_PRUNE="$UAR_PRUNE" UAR_LHOLD="$UAR_LHOLD" timeout 25 bash -c '
+set -uo pipefail
+PROJECT="$UAR_PDIR"
+RUNS_DIR="$PROJECT/build/test-runs"
+eval "$UAR_PRUNE"
+D="$RUNS_DIR/20260102T000000Z-1-aaaa/leases"
+printf "| live: %s" "$(utest_record_live_leases 20260102T000000Z-1-aaaa 1000000100 300)"
+printf "| dir: "
+if [ -d "$D/$UAR_LHOLD.dir01.lease" ]; then printf "IN-PLACE"; else printf "MOVED-OR-GONE"; fi
+printf "| hidden: "
+{ ls -1a "$D" | grep -c "utest-sweep" | tr -d "\\n"; } || true
+printf "| HARNESS-OK\n"
+' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
+        if printf '%s' "$UAR_L26" | grep -q 'HARNESS-OK' &&
+           printf '%s' "$UAR_L26" | grep -q 'live: 1' &&
+           printf '%s' "$UAR_L26" | grep -q 'dir: IN-PLACE' &&
+           printf '%s' "$UAR_L26" | grep -q 'hidden: 0'; then
+            t_pass "reader lease: a directory under a lease name stays published and uncounted, never hidden in staging"
+        else
+            t_fail "reader lease: a directory under a lease name stays published and uncounted, never hidden in staging" \
+                "$UAR_L26"
+        fi
+
+        # (L27) the non-monotone liveness flip. utest_lease_holder_state answers
+        #     UNKNOWN on a transient procfs failure and LIVE on the retry, and
+        #     the future-dated branch maps UNKNOWN to reclaim and LIVE to keep.
+        #     A re-derived recheck could therefore vote KEEP on an inode that
+        #     never changed -- restoring the lease while the caller counted it
+        #     reclaimed, so the record is deleted under a live reader. The
+        #     recheck is bound to the SELECTION SNAPSHOT instead, so the flip
+        #     cannot happen; and a restored lease is counted live regardless.
+        uar_lease_reset
+        uar_lease_put 20260102T000000Z-1-aaaa "$UAR_LHOLD" flip01 1000000000 1000000900
+        UAR_L27="$(UAR_PDIR="$UAR_PDIR" UAR_PRUNE="$UAR_PRUNE" UAR_LHOLD="$UAR_LHOLD" timeout 25 bash -c '
+set -uo pipefail
+PROJECT="$UAR_PDIR"
+RUNS_DIR="$PROJECT/build/test-runs"
+eval "$UAR_PRUNE"
+D="$RUNS_DIR/20260102T000000Z-1-aaaa/leases"
+L="$D/$UAR_LHOLD.flip01.lease"
+# A verdict that says RECLAIM on the published name and KEEP on the detached
+# object -- the exact asymmetry a flapping liveness observation produces.
+uar_flip() { case "$1" in *".utest-sweep."*) return 1 ;; *) return 0 ;; esac; }
+if utest_sweep_verified "$L" uar_flip; then printf "| rc: DESTROYED"; else printf "| rc: RETAINED"; fi
+printf "| lease: "
+if [ -f "$L" ]; then printf "RESTORED"; else printf "LOST"; fi
+printf "| staging: "
+{ ls -1a "$D" | grep -c "utest-sweep" | tr -d "\\n"; } || true
+printf "| HARNESS-OK\n"
+' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
+        if printf '%s' "$UAR_L27" | grep -q 'HARNESS-OK' &&
+           printf '%s' "$UAR_L27" | grep -q 'rc: RETAINED' &&
+           printf '%s' "$UAR_L27" | grep -q 'lease: RESTORED' &&
+           printf '%s' "$UAR_L27" | grep -q 'staging: 0'; then
+            t_pass "reader lease: a lease the recheck votes to keep is restored AND reported retained, never counted reclaimed"
+        else
+            t_fail "reader lease: a lease the recheck votes to keep is restored AND reported retained, never counted reclaimed" \
+                "$UAR_L27"
+        fi
+
+        # (L28) the snapshot binding itself, tested at the contract rather than
+        #     through a staged race, because nothing can reach the detached
+        #     path to mutate it -- which is the point. Given what the selection
+        #     read, the recheck asks "is this still the same object", so a
+        #     mismatch must be KEEP no matter how reclaimable the bytes look.
+        #     Without it the recheck re-derives the verdict from a liveness
+        #     observation that is not monotone.
+        uar_lease_reset
+        uar_lease_put 20260102T000000Z-1-aaaa "$UAR_LHOLD" bind01 1000000000 1000000010
+        UAR_L28="$(UAR_PDIR="$UAR_PDIR" UAR_PRUNE="$UAR_PRUNE" UAR_LHOLD="$UAR_LHOLD" timeout 25 bash -c '
+set -uo pipefail
+PROJECT="$UAR_PDIR"
+RUNS_DIR="$PROJECT/build/test-runs"
+eval "$UAR_PRUNE"
+L="$RUNS_DIR/20260102T000000Z-1-aaaa/leases/$UAR_LHOLD.bind01.lease"
+B="$UAR_LHOLD.bind01.lease"
+# Unbound: an expired lease is reclaimable, and the snapshot it publishes is
+# what a caller hands back.
+if utest_lease_reclaimable "$L" "$B" 20260102T000000Z-1-aaaa 1000000100 300; then
+    printf "| unbound: RECLAIM"; else printf "| unbound: KEEP"; fi
+SEEN="${UTEST_LEASE_SEEN:-}"
+printf "| snapshot: "; if [ -n "$SEEN" ]; then printf "PUBLISHED"; else printf "EMPTY"; fi
+# Bound to the SAME snapshot: unchanged object, same answer.
+if utest_lease_reclaimable "$L" "$B" 20260102T000000Z-1-aaaa 1000000100 300 "$SEEN"; then
+    printf "| same: RECLAIM"; else printf "| same: KEEP"; fi
+# Bound to a DIFFERENT snapshot: this is not the object that was judged.
+if utest_lease_reclaimable "$L" "$B" 20260102T000000Z-1-aaaa 1000000100 300 "999 999 someoneelse"; then
+    printf "| changed: RECLAIM"; else printf "| changed: KEEP"; fi
+printf "| HARNESS-OK\n"
+' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
+        if printf '%s' "$UAR_L28" | grep -q 'HARNESS-OK' &&
+           printf '%s' "$UAR_L28" | grep -q 'unbound: RECLAIM' &&
+           printf '%s' "$UAR_L28" | grep -q 'snapshot: PUBLISHED' &&
+           printf '%s' "$UAR_L28" | grep -q 'same: RECLAIM' &&
+           printf '%s' "$UAR_L28" | grep -q 'changed: KEEP'; then
+            t_pass "reader lease: the recheck is bound to the selection snapshot, so a changed object is kept not judged"
+        else
+            t_fail "reader lease: the recheck is bound to the selection snapshot, so a changed object is kept not judged" \
+                "$UAR_L28"
+        fi
+
+        # (L29) the same retained outcome, but through the CALLER. L27 proves
+        #     the helper reports RETAINED; only this proves utest_record_live_
+        #     leases acts on it. Drop the caller's `if !` and the lease is
+        #     restored to its name while the record is reported unleased --
+        #     deleted out from under the reader still holding it, with the
+        #     helper's own test still green. That gap was live until this test.
+        uar_lease_reset
+        uar_lease_put 20260102T000000Z-1-aaaa "$UAR_LHOLD" cnt01 1000000000 1000000900
+        UAR_L29="$(UAR_PDIR="$UAR_PDIR" UAR_PRUNE="$UAR_PRUNE" UAR_LHOLD="$UAR_LHOLD" timeout 25 bash -c '
+set -uo pipefail
+PROJECT="$UAR_PDIR"
+RUNS_DIR="$PROJECT/build/test-runs"
+eval "$UAR_PRUNE"
+D="$RUNS_DIR/20260102T000000Z-1-aaaa/leases"
+# RECLAIM on the published name, KEEP on the detached object: the asymmetry a
+# flapping liveness observation produces, driven through the real loop.
+eval "$(declare -f utest_lease_reclaimable | sed "1s/^utest_lease_reclaimable/uar_real_lease_verdict/")"
+utest_lease_reclaimable() {
+    uar_real_lease_verdict "$@" || true
+    case "$1" in *".utest-sweep."*) return 1 ;; esac
+    return 0
+}
+printf "| live: %s" "$(utest_record_live_leases 20260102T000000Z-1-aaaa 1000000100 300)"
+printf "| lease: "
+if [ -f "$D/$UAR_LHOLD.cnt01.lease" ]; then printf "RESTORED"; else printf "LOST"; fi
+printf "| staging: "
+{ ls -1a "$D" | grep -c "utest-sweep" | tr -d "\\n"; } || true
+printf "| HARNESS-OK\n"
+' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
+        if printf '%s' "$UAR_L29" | grep -q 'HARNESS-OK' &&
+           printf '%s' "$UAR_L29" | grep -q 'live: 1' &&
+           printf '%s' "$UAR_L29" | grep -q 'lease: RESTORED' &&
+           printf '%s' "$UAR_L29" | grep -q 'staging: 0'; then
+            t_pass "reader lease: the reclaim loop counts a restored lease as live, so its record is not pruned"
+        else
+            t_fail "reader lease: the reclaim loop counts a restored lease as live, so its record is not pruned" \
+                "$UAR_L29"
+        fi
+
+        # (L30) TWO PASSES over a preserved object, which is where reporting
+        #     alone stops being protection. An object the helper could not put
+        #     back lives inside its `.utest-sweep.*.d` claim and matches no
+        #     `*.lease` glob, so a reap that merely WARNED left the next pass
+        #     counting zero live leases -- and retention then deleted the
+        #     record and the preserved object with it, one pass after the
+        #     preservation that was supposed to save it. The reap returns a
+        #     count and the record is held until a human resolves it.
+        uar_lease_reset
+        mkdir -p "$UAR_PDIR/build/test-runs/20260102T000000Z-1-aaaa/leases/.utest-sweep.held.d"
+        printf 'unresolved\n' \
+            > "$UAR_PDIR/build/test-runs/20260102T000000Z-1-aaaa/leases/.utest-sweep.held.d/obj"
+        uar_prune_ptr keeper 20260102T000000Z-1-aaaa
+        UAR_L30="$(UAR_PDIR="$UAR_PDIR" UAR_PRUNE="$UAR_PRUNE" timeout 30 bash -c '
+set -uo pipefail
+PROJECT="$UAR_PDIR"
+RUNS_DIR="$PROJECT/build/test-runs"
+RUN_ID="20260105T000000Z-1-aaaa"
+UTEST_RECORD_KEEP=1
+D="$RUNS_DIR/20260102T000000Z-1-aaaa/leases"
+eval "$UAR_PRUNE"
+printf "| p1-live: %s" "$(utest_record_live_leases 20260102T000000Z-1-aaaa 1000000100 300)"
+utest_prune_records
+printf "| p2-live: %s" "$(utest_record_live_leases 20260102T000000Z-1-aaaa 1000000100 300)"
+utest_prune_records
+printf "| record: "
+if [ -d "$RUNS_DIR/20260102T000000Z-1-aaaa" ]; then printf "HELD"; else printf "PRUNED"; fi
+printf "| object: "
+if [ -f "$D/.utest-sweep.held.d/obj" ]; then printf "PRESERVED"; else printf "DESTROYED"; fi
+printf "| HARNESS-OK\n"
+' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
+        if printf '%s' "$UAR_L30" | grep -q 'HARNESS-OK' &&
+           printf '%s' "$UAR_L30" | grep -q 'p1-live: 1' &&
+           printf '%s' "$UAR_L30" | grep -q 'p2-live: 1' &&
+           printf '%s' "$UAR_L30" | grep -q 'record: HELD' &&
+           printf '%s' "$UAR_L30" | grep -q 'object: PRESERVED'; then
+            t_pass "reader lease: an unresolved staging claim holds its record across passes, never just a warning"
+        else
+            t_fail "reader lease: an unresolved staging claim holds its record across passes, never just a warning" \
+                "$UAR_L30"
+        fi
+
+        # (L31) the sweep counter is an ENVIRONMENT-INHERITABLE name, and
+        #     `$(( 08 + 1 ))` is not a wrong answer but a shell ABORT ("value
+        #     too great for base") -- mid-sweep, with the retention mutex held.
+        #     Same octal trap this file already guards on every file-sourced
+        #     number; found by the round-2 reviewer probing it directly.
+        uar_lease_reset
+        uar_lease_put 20260102T000000Z-1-aaaa "$UAR_LHOLD" oct01 1000000000 1000000010
+        UAR_L31="$(UAR_PDIR="$UAR_PDIR" UAR_PRUNE="$UAR_PRUNE" UAR_LHOLD="$UAR_LHOLD" \
+                   UTEST_SWEEP_SEQ=08 timeout 25 bash -c '
+set -euo pipefail
+PROJECT="$UAR_PDIR"
+RUNS_DIR="$PROJECT/build/test-runs"
+eval "$UAR_PRUNE"
+D="$RUNS_DIR/20260102T000000Z-1-aaaa/leases"
+printf "| live: %s" "$(utest_record_live_leases 20260102T000000Z-1-aaaa 1000000100 300)"
+printf "| lease: "
+if [ -e "$D/$UAR_LHOLD.oct01.lease" ]; then printf "STILL-THERE"; else printf "RECLAIMED"; fi
+printf "| HARNESS-OK\n"
+' 2>&1 || echo "ABORTED-OR-FAILED")"
+        if printf '%s' "$UAR_L31" | grep -q 'HARNESS-OK' &&
+           printf '%s' "$UAR_L31" | grep -q 'live: 0' &&
+           printf '%s' "$UAR_L31" | grep -q 'lease: RECLAIMED'; then
+            t_pass "run record: a leading-zero UTEST_SWEEP_SEQ is normalised, never an octal abort mid-sweep"
+        else
+            t_fail "run record: a leading-zero UTEST_SWEEP_SEQ is normalised, never an octal abort mid-sweep" \
+                "$UAR_L31"
+        fi
+
         rm -rf "$UAR_TMP/fakeproc"
     fi
 

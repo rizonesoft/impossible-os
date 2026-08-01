@@ -103,7 +103,7 @@ title: "TODO-04 -- User-Mode Test Framework"
 | 💎   |  43   | Distinguishable identity kind for aggregate refusals | §35, §37                     |  [x]   |
 | 💎   |  44   | Close the residual completeness gaps §37's review found | §37                       |  [x]   |
 | ⭐   |  45   | Reader leases for a resolved generation             | §38                           |  [x]   |
-| 💎   |  46   | Inode-safe classification in the pointer sweep      | §38                           |  [ ]   |
+| 💎   |  46   | Inode-safe classification in the pointer sweep      | §38                           |  [x]   |
 | 💎   |  47   | End-to-end proof of the loader's identity-mismatch branch | §39                     |  [ ]   |
 | 💎   |  48   | Wire-published facts the host enforces (write id, spawn, chunk) | §33, §36, §40      |  [ ]   |
 | 💎   |  49   | Run-boundary fence for emitters that outlive their binary | §33, §35, §40           |  [ ]   |
@@ -1874,17 +1874,41 @@ The retention sweep §38 shipped decides an entry's fate from its pathname: `[ -
 > [!NOTE]
 > Filed 2026-07-31 from §38's review round 3, rated [medium]. §38 fixed the CONSEQUENCE portably -- the parse is `timeout`-bounded, so a FIFO swapped in after the type check costs seconds and gets the pointer swept, rather than blocking at startup and wedging every later invocation forever. What it cannot do is make the pair atomic: bash has no `O_NOFOLLOW|O_NONBLOCK` open and no way to compare an inode against the object it already opened. Two residual windows remain, both requiring a writer racing the sweep: a regular file replaced by a special file between check and parse, and a special file replaced by a legitimate new pointer between check and `rm`, which would delete the newcomer. Neither is reachable from a second harness invocation -- `scripts/test.sh` holds an exclusive `flock` and nothing else in the tree writes `build/test-results-*.run` -- so this is a robustness item, not a live defect, and it is filed rather than fixed because the fix needs a non-bash primitive on a path that must still work when python3 is absent (the harness has a documented no-`python3` artifact fallback).
 
-- [ ] Decide the mechanism, weighing a small helper against dropping the sweep's tolerance for non-regular entries entirely
-      - A helper must not become a hard `python3` dependency on the startup path; if it would, the honest alternative is to sweep by type without ever parsing, and accept that a hand-made pointer is removed rather than diagnosed.
-- [ ] Classify, parse and unlink through ONE verified object, so a replacement between the check and the action cannot be parsed or deleted in place of what was checked
-      - Cover `<record>/leases/*.lease` with the same mechanism, not a second one: §45's reclaim sweep type-tests each lease before opening it and unlinks the malformed ones, which is the identical check-then-act shape on a second namespace. It is strictly less exposed (the retention mutex serialises every writer that follows the contract), so §45 deliberately did not invent a separate answer.
+- [x] Decided: a small pure-bash helper, `utest_sweep_verified` in `scripts/test.sh`. No `python3`, no new dependency, so the documented no-`python3` fallback is untouched.
+      - `rename(2)` and `link(2)` are the two primitives bash does have that act atomically on a directory ENTRY without ever opening the object, which is exactly the pair the hazard needs: `mv -fT` detaches the candidate so the unlink can only reach the inode that was verified, and `ln -PT` puts it back only if the name is still free. `-T` on both is load-bearing for the reason `utest_lease_acquire` already documents -- without it a directory at the destination swallows the operation.
+      - Rejected the type-only alternative: it removes the parse but not the race (a dangling REGULAR pointer still needs its `run_id` read to be recognised), so it would have paid a real diagnosis loss for no correctness gain.
+      - Rejected detaching EVERY entry, which is the reading that binds the survivor verdict to one inode too. It makes every published pointer briefly ENOENT on every startup for every leg, to close a window unreachable while `scripts/test.sh` holds its exclusive retention `flock`. Only destroy-candidates are detached.
+- [x] Classify, parse and unlink through ONE verified object, so a replacement between the check and the action cannot be parsed or deleted in place of what was checked
+      - Shipped: the by-name test is now only a CANDIDATE SELECTOR, and the binding verdict is re-taken on the detached inode. One verdict function per namespace serves both calls (`utest_ptr_sweepable`, `utest_lease_reclaimable`), so selection and destruction cannot drift into disagreeing about what is dangling.
+      - `<record>/leases/*.lease` goes through the SAME helper, as required. §45's per-lease classification was extracted into `utest_lease_reclaimable` to make that possible, and `utest_lease_fields` grew an optional third argument: it binds holder and lease_id to the FILENAME, so a recheck reading the staging name would have called every detached lease malformed and unlinked the legitimate replacement it exists to protect.
+      - Adjacent leak fixed while in there: `[ -e "$f" ] || continue` follows the link, so a DANGLING SYMLINK named `*.lease` (or `.<id>.tmp` staging) was skipped before any type test saw it and never reclaimed -- `leases/` grew by one per entry, the exact growth the reclaim pass exists to prevent. Now `[ -e ] || [ -L ]`.
+      - A relink that fails is not assumed to be `EEXIST`: a non-directory at the name is the ordinary newcomer and wins, but a free name or a DIRECTORY is unexplained, so the object is left on disk with a line naming it rather than destroyed on an `ENOSPC`/`EPERM` guess.
       -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §45 (item: "Implemented in `scripts/test.sh`: `utest_prune_records` honours live leases, and `utest_lease_acquire`/`utest_lease_release` ship the reader half")
       -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §38 (item: "Gave the per-leg alias set a generation pointer, so a concurrent reader cannot pair two runs' documents")
-- [ ] Add a replacement-race regression that swaps a checked entry between the classification and the action, in both directions
-      - The `timeout` bound stays regardless: it is the thing that keeps a lost race cheap, and a regression should prove the sweep still completes when it loses.
-- [ ] Commit: `"test: classify and sweep leg pointers through one verified object"`
+- [x] Seventeen regressions in `scripts/test-tooling.sh` (1103 -> 1120), both directions on both namespaces
+      - The seam is the verdict callback itself: `utest_sweep_verified` invokes it with the STAGED path, which IS the instant between the detach and the unlink, so a wrapper racing the original name from inside it reproduces the window deterministically. The wrappers WRAP the production function via `declare -f` rather than replacing it, so the real verdict still decides every fate; starting a background writer and hoping it lands in a microsecond gap is a test that passes by not reproducing the bug.
+      - p14/L22 special-replaced-by-newcomer, p15 regular-replaced-by-FIFO-mid-parse, p16 relink-restores-a-kept-entry, p17 directory-at-the-destination, p18 all four refusal/recovery branches with their outcome codes, p19 the same relink through the real selector plus reap ordering.
+      - L21 published-name-not-staging-name, L23 dangling-symlink-reclaimed, L24 lock-free-release-inside-the-detach-window, L25 dangling staging symlink, L26 directory-under-a-lease-name, L27/L29 a retained outcome is restored AND counted live, L28 the snapshot binding itself.
+      - L30 an unresolved staging claim holds its record across TWO passes (reporting alone is not protection: the object is invisible to the `*.lease` glob, so a warn-only reap let the next pass count zero and prune the record and the object together), L31 a leading-zero `UTEST_SWEEP_SEQ` normalises rather than aborting the shell mid-sweep.
+      - Mutation-verified, because a regression test that cannot fail proves nothing. Round 1: restoring the old check-then-act fails 5 tests and NO pre-existing one, so the mechanism is behaviourally identical on every non-racing path; dropping the basename pass-through fails L21 alone; restoring `[ -e ]`-only fails L23 alone.
+      - Round 2 found a REAL hole the same way: mutating the caller to ignore the retained outcome failed nothing, because L27 asserts the helper's return code and not what the loop does with it. L29 was written to close that, and now fails. Dropping the snapshot binding fails L28, the glob reap fails p19, the directory gate fails L26.
+      - Round 3 likewise: reverting the reap's count fails L30, dropping the replacement-present branch fails L22 (whose predicate printed `live` but never asserted it -- the reviewer caught the dead assertion, not just the bug behind it), and un-guarding the counter fails L31.
+      - The `timeout` bound stays load-bearing and p15 asserts it: the sweep must still COMPLETE and still sweep the thing that raced it, never that the race was prevented.
+- [x] Commit: `"test: classify and sweep leg pointers through one verified object"`
 
 **Test checkpoint:** a regular pointer replaced by a FIFO between classification and parse leaves the sweep completing and the pointer swept, never blocked; a special entry replaced by a valid new pointer between classification and unlink leaves the NEW pointer in place; the sweep still completes under the `timeout` bound when it loses either race. Test on: host tooling only (no QEMU dependency).
+
+> [!NOTE]
+> Invariant boundary, narrowed deliberately at the design review and worth stating so a later reader does not read more into this than shipped. What is guaranteed is that **nothing is destroyed that was not itself verified**. What is NOT guaranteed is that a replacement always loses: a FIFO swapped onto the name AFTER `sed` has already opened the original inode is parsed as its predecessor, so the pointer survives that pass and is classified normally by the next one. Closing that too means detaching every entry, which buys the stricter property at the cost of a transient ENOENT on every published pointer on every startup -- a real robustness loss on the normal path, traded for a window unreachable while the harness holds its exclusive `flock`. A late replacement is bounded, non-wedging and self-healing; a wrongful delete is none of those, which is why only the second one is treated as a defect.
+
+> **Test runner:** `bash scripts/overnight/run-artifact.sh tooling -- bash scripts/test-tooling.sh` -- expect `1120/1120 tooling tests passed`. Host tooling only; no QEMU or kernel-side surface.
+
+> **Notes:**
+> - Shipped `utest_sweep_verified` in `scripts/test.sh`: `mv -fT` detaches a destroy-candidate, the verdict is re-taken on the detached inode, `ln -PT` restores it if that verdict flips.
+> - Both namespaces route through it: `utest_ptr_sweepable` and `utest_lease_reclaimable` each serve as their namespace's selector AND its binding recheck.
+> - Downstream: `utest_lease_fields` gained an optional published-basename argument, `utest_record_live_leases` delegates its per-lease classification, and dangling-symlink entries are now reclaimed.
+> - Canonical doc: this section plus the block comment on `utest_sweep_verified`; the invariant boundary is the NOTE above.
+> - Scope boundary: the DESTRUCTIVE half only -- a replacement arriving after the parse opened the original inode survives to the next sweep, bounded by §38's `timeout`.
 
 
 ---
@@ -2076,6 +2100,7 @@ The suite's headline number is not reproducible: the SAME tree reports `PASS: 27
 | 💎   | Never-ran is an error, not a failure | ❓ TRX Aborted vs Failed outcome | ❓ TAP `not ok` covers both | ✅ §37 `<error>`+ERROR, reconciled |
 | ⭐   | Refusal identity is reversible | ❓ no synthesized identity | ❓ no synthesized identity | ✅ §37 correlator + golden vectors |
 | ⭐   | Aggregate loss is a distinct record kind | ❌ folded into the run's error text | ❌ folded into the run's error text | ✅ §43 `agg_` shape, unit-bearing label |
+| ⭐   | Retention sweep unlinks a verified object | ❓ deletes by pathname | ❓ deletes by pathname | ✅ §46 detach, recheck, atomic relink |
 | ⭐   | One-file generation resolution | ❓ enumerate result dir | ❓ enumerate result files | ✅ §38 `.run` pointer + pinned record |
 | ⭐   | Reader lease on a resolved generation | ❓ no known lifetime hold | ❓ no known lifetime hold | ✅ §45 TTL + liveness lease, retention honours it |
 | 💎   | Abort reds a generic artifact walk | ❓ TRX RunAborted is an attribute | ❓ TAP bail-out is a line | ✅ §44 `suite-abort` in BOTH artifacts |
