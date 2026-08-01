@@ -3331,6 +3331,13 @@ static uint32_t u_frame_nonce_new(void)
  * enforcement it feeds would be worse than one forward declaration. */
 static void u_capture_budget_reset(void);
 
+/* The run boundary's other two halves, forward-declared for the same reason
+ * the reset is: they belong beside the budget state they operate on, and the
+ * frame terminator below is the only caller. */
+static void u_capture_seal(void);
+static uint64_t u_capture_drain(void);
+static uint64_t u_capture_close_epoch(void);
+
 static void u_frame_begin(void)
 {
     uint32_t expected = 0;
@@ -3424,9 +3431,60 @@ static void u_frame_begin(void)
  * requires exactly this many distinct [UTEST-CAPTURE-EXPECT] owners, so a
  * vanished expectation record is a mismatch rather than a silently smaller
  * set. Read here, after every u_run_one has returned. */
+/* `[UTEST-CAPTURE-PENDING]` -- what the run boundary could not deliver.
+ *
+ * Emitted only when the drain ends with claims still outstanding, INSIDE the
+ * originating run and BEFORE its terminator, and both of those placements are
+ * the finding this record exists to answer. A stale arrival reported in the
+ * run that INHERITS it cannot make the guilty run fail: that run has closed,
+ * so the report either contaminates an innocent successor or is ignored. And
+ * a diagnostic emitted from u_frame_begin's pre-announcement window (records
+ * reset and generation bumped, but s_frame_open and [UTEST-FRAME] not yet
+ * published) would count toward the new run's census while sitting outside
+ * the parser's slice for it -- a guaranteed frame-count refusal manufactured
+ * by the diagnosis itself.
+ *
+ * Emitted before the terminator, it is counted in that terminator's
+ * `records=` like any other framed line, so nothing about frame
+ * reconciliation changes; the host reads it as a SEMANTIC refusal of this
+ * run -- records were claimed, a sequence number was drawn for each, and
+ * they never reached the wire, so the run's capture stream has holes it can
+ * name rather than corruption it has to guess at. */
 static void u_frame_end(void)
 {
-    uint32_t n = __atomic_load_n(&s_frame_records, __ATOMIC_RELAXED);
+    uint32_t n;
+    uint64_t pending;
+
+    /* Seal, THEN drain, THEN close, and the order is the whole protocol.
+     *
+     * An unsealed drain is a check-then-act: a new claim can be admitted
+     * between its last zero reading and the terminator below. Sealed, the
+     * outstanding count can only fall, so a zero reading is final.
+     *
+     * The close is what the drain's RESULT is not: the drain merely observed
+     * a count, while the close re-reads it under the lock, writes off what
+     * is still outstanding and ends the epoch in one act. Reporting the
+     * drain's number instead would over-report a straggler that finished in
+     * between, and writing off without ending the epoch would let that
+     * straggler settle a claim already forgiven. */
+    u_capture_seal();
+    (void)u_capture_drain();
+    pending = u_capture_close_epoch();
+    if (pending) {
+        /* Narrowed deliberately, and safe by construction: a run cannot admit
+         * more than UTEST_CAPTURE_RUN_RECORD_BUDGET claims, so what is
+         * outstanding at its close is bounded far below a uint32. The
+         * counters are 64-bit because they span a BOOT; this field describes
+         * ONE run, and the record's width assert budgets it as a uint32. */
+        utest_record_log(LOG_WARN,
+                         "[UTEST-CAPTURE-PENDING] run=%u pending=%u",
+                         (uint64_t)__atomic_load_n(&s_frame_run,
+                                                   __ATOMIC_RELAXED),
+                         (uint64_t)(uint32_t)pending);
+    }
+
+    /* Loaded AFTER the pending report so the census counts it. */
+    n = __atomic_load_n(&s_frame_records, __ATOMIC_RELAXED);
 
     utest_record_log(LOG_INFO,
                      "[UTEST-FRAME-END] run=%u records=%u spawned=%u",
@@ -3655,6 +3713,30 @@ _Static_assert(UTEST_CAPTURE_OVER_FIXED <= UTEST_RECORD_LINE_MAX - 1u,
                "truncated terminator would reach the host as corruption "
                "instead of the bounded stop it reports");
 
+/* [UTEST-CAPTURE-PENDING]'s fixed cost, derived from its own format literals
+ * for the same reason every record above is: the record has no variable
+ * field, so a future edit that adds one has to come through here. Both
+ * values are whole uint32s, so the worst case is two full digit runs. */
+#define UTEST_CAPTURE_PENDING_FIXED                                        \
+    (UTEST_LIT("[UTEST-CAPTURE-PENDING] run=") + UTEST_DIGITS_U32 +        \
+     UTEST_LIT(" pending=") + UTEST_DIGITS_U32)
+_Static_assert(UTEST_CAPTURE_PENDING_FIXED <= UTEST_RECORD_LINE_MAX - 1u,
+               "the run-boundary pending report must fit the record wire "
+               "cap -- a truncated one would reach the host as a malformed "
+               "capture-family record and refuse the run for the wrong "
+               "reason");
+
+/* [UTEST-CAPTURE-UNREAPED]'s fixed cost, derived and asserted identically.
+ * `live` counts task slots, so it cannot exceed TASK_MAX, but it is budgeted
+ * as a full uint32 anyway: the bound belongs to the scheduler, not to this
+ * record, and pinning the record's width to it would make a future TASK_MAX
+ * change a silent truncation here instead of a build failure. */
+#define UTEST_CAPTURE_UNREAPED_FIXED                                       \
+    (UTEST_LIT("[UTEST-CAPTURE-UNREAPED] owner=") + UTEST_DIGITS_U32 +     \
+     UTEST_LIT(" live=") + UTEST_DIGITS_U32)
+_Static_assert(UTEST_CAPTURE_UNREAPED_FIXED <= UTEST_RECORD_LINE_MAX - 1u,
+               "the unreaped-descendant report must fit the record wire cap");
+
 /* The budget arithmetic, as a PURE function of the four state values --
  * no task, no globals, no lock. Split out so the state machine is unit-
  * testable on plain numbers (the caller below is the only thing that
@@ -3663,12 +3745,22 @@ _Static_assert(UTEST_CAPTURE_OVER_FIXED <= UTEST_RECORD_LINE_MAX - 1u,
  *
  * Order matters: the owner's own budget is checked FIRST so a single
  * abusive binary is reported against ITS OWN limit rather than against
- * whichever aggregate it happened to exhaust on the way there. */
+ * whichever aggregate it happened to exhaust on the way there.
+ *
+ * The SEAL is checked before all of them, and its position is the whole
+ * run-boundary fence. A sealed run has stopped admitting claims, so there
+ * is nothing left to decide about budgets or latches: answering "which
+ * limit did you hit" for a claim the run will not carry would attribute a
+ * boundary refusal to a binary that did nothing wrong, and would latch that
+ * binary's owner-stop flag for a reason the next run cannot see. */
 static enum utest_capture_verdict u_capture_decide(uint32_t owner_seq,
                                                uint32_t run_records,
                                                int owner_stopped,
-                                               int run_over)
+                                               int run_over,
+                                               int run_sealed)
 {
+    if (run_sealed)
+        return UTEST_CAP_SEALED;
     if (owner_stopped)
         return UTEST_CAP_DROP;
     if (owner_seq >= UTEST_CAPTURE_OWNER_RECORD_BUDGET)
@@ -3678,12 +3770,29 @@ static enum utest_capture_verdict u_capture_decide(uint32_t owner_seq,
     return UTEST_CAP_EMIT;
 }
 
-/* The claim's state, as a snapshot the transition below operates on. */
+/* The claim's state, as a snapshot the transition below operates on.
+ *
+ * `admitted` is the run's count of claims that RESERVED a record -- the
+ * emitter has drawn its sequence number and will reach klog unless it dies
+ * on the way. It is the drain's other half (see u_capture_pending): a claim
+ * that consumes a sequence number and one that owes the wire a record are
+ * the SAME event, so the reservation is not a second counter kept in step
+ * with the sequence draw -- it is the same decision counted once more. */
 struct u_capture_state {
     uint32_t owner_seq;
     uint32_t run_records;
     uint8_t  owner_stopped;
     uint8_t  run_over;
+    uint8_t  run_sealed;
+    /* uint64 to MATCH the lifetime counter it is loaded from and stored back
+     * to. A uint32 here silently undid the widening: the global is 64-bit,
+     * but every claim round-tripped it through 32 bits, so past UINT32_MAX
+     * the high bits were discarded on the very next claim and `completed +
+     * forgiven` would then exceed a truncated `admitted` forever -- pending
+     * reads zero, the drain stops waiting, and nothing is ever reported
+     * again. A field narrower than the state it carries is not a smaller
+     * version of that state. */
+    uint64_t admitted;
 };
 
 /* The claim's FULL state transition, pure over that snapshot: it decides,
@@ -3704,7 +3813,7 @@ static enum utest_capture_verdict u_capture_apply(struct u_capture_state *st,
 {
     enum utest_capture_verdict verdict =
         u_capture_decide(st->owner_seq, st->run_records, st->owner_stopped,
-                         st->run_over);
+                         st->run_over, st->run_sealed);
 
     *seq_out = st->owner_seq;
 
@@ -3724,14 +3833,29 @@ static enum utest_capture_verdict u_capture_apply(struct u_capture_state *st,
         break;
     case UTEST_CAP_DROP:
         break;
+    case UTEST_CAP_SEALED:
+        /* Deliberately mutates NOTHING. The run has closed and the owner is
+         * not at fault, so latching its stop flag would carry a boundary
+         * refusal into a slot whose next reader is a different run. */
+        break;
     }
 
     /* A terminator consumes a sequence number exactly as a chunk does --
      * that is what makes it the stream's highest and leaves no hole. A
      * DROP consumes nothing: it emits no record, so a number spent here
-     * would be a hole the host reads as output lost on the wire. */
-    if (verdict != UTEST_CAP_DROP)
+     * would be a hole the host reads as output lost on the wire. A SEALED
+     * claim consumes nothing for the same reason and one more: the hole it
+     * would leave belongs to a run that has already published its census. */
+    if (verdict != UTEST_CAP_DROP && verdict != UTEST_CAP_SEALED) {
         st->owner_seq++;
+        /* Reserved in the same breath as the sequence number, because they
+         * are the same promise seen from two sides: a number is drawn, so a
+         * record is owed. The drain's whole guarantee rests on this pairing
+         * -- an increment placed anywhere else could describe a claim the
+         * sequence stream does not, and the pending count would then bound
+         * something other than the records still in flight. */
+        st->admitted++;
+    }
 
     *charged_out = st->run_records;
     return verdict;
@@ -3744,21 +3868,197 @@ static DEFINE_SPINLOCK(s_capture_budget_lock);
 static uint32_t s_capture_run_records;
 static uint8_t  s_capture_run_over;
 
+/* Has this run CLOSED ADMISSION? Set once, at the run boundary, before the
+ * drain below waits on anything; cleared wholesale by the next frame's
+ * budget reset.
+ *
+ * This is the run-boundary fence, and the reason it lives HERE rather than
+ * in the launcher's task walk is that u_capture_claim is the one point every
+ * emitter must pass. A per-task pass cannot be a fence: a write already past
+ * test_usermode_capture_start has latched ctx->_active and ctx->_owner and
+ * never consults the task's capture fields again, and the grace waits below
+ * yield, so a descendant can fork a NEW capture-inheriting task while the
+ * walk is in progress. Both shapes still have to claim, so both are stopped
+ * by one flag read under the lock that already linearizes every claim. */
+static uint8_t  s_capture_sealed;
+
+/* The drain's counters, and they are deliberately MONOTONIC -- never reset,
+ * only ever incremented.
+ *
+ * `admitted` counts claims that reserved a record; `completed` counts
+ * records that reached klog. In-flight is their difference. A per-run reset
+ * looks tidier and is a correctness bug: a claim admitted in run N whose
+ * emitter is preempted past the boundary would decrement a counter that run
+ * N+1 had already zeroed, and an unsigned difference underflows into a
+ * pending count of four billion. Monotonic counters cannot be made to
+ * disagree by a late arrival, whatever run it belonged to.
+ *
+ * `forgiven` is how a run still gets a pending count of its own without a
+ * reset: a reservation the close below proved abandoned is added here, so
+ * the NEXT run's pending starts at zero while the abandoned claim stays
+ * permanently accounted rather than deleted.
+ *
+ * uint64 precisely BECAUSE they are lifetime counters. A run may admit up to
+ * UTEST_CAPTURE_RUN_RECORD_BUDGET records, so a uint32 would need on the
+ * order of 170,000 framed runs in one boot to wrap -- unreachable today, and
+ * exactly the kind of bound that stops being unreachable without anyone
+ * revisiting the type. At 64 bits the wrap is not a scenario to reason
+ * about, which is worth more than the four bytes. */
+static uint64_t s_capture_admitted;
+static uint64_t s_capture_completed;
+static uint64_t s_capture_forgiven;
+
+/* WHICH DIRECTION THE UNAVOIDABLE AMBIGUITY FALLS, decided here once.
+ *
+ * `completed` is credited AFTER utest_record_log returns, and there is no
+ * placement that is exactly simultaneous with a record reaching the host:
+ * klog reserves its ring slot and formats and writes to serial in separate
+ * steps (src/kernel/klog.c), releasing its own lock in between, so a
+ * producer-side counter is either too early or too late. The two choices are
+ * therefore not "correct vs incorrect" but which way a killed emitter is
+ * misreported:
+ *
+ *   credited BEFORE the log  -- an emitter killed anywhere inside the
+ *                               emission counts as delivered. A lost record
+ *                               produces a GREEN run.
+ *   credited AFTER the log   -- an emitter killed inside the emission counts
+ *                               as lost. A delivered record produces a
+ *                               REFUSED run.
+ *
+ * After is chosen, and the reason is the DIRECTION, not the size. The two
+ * windows are very nearly the same: klog_emit writes serial, then renders to
+ * the framebuffer, then -- when the live disk log is active -- appends and
+ * synchronously FLUSHES it (src/kernel/klog.c), so both placements straddle
+ * that same tail. What differs is which way an interrupted emitter is
+ * misreported, and a refused run gets looked at while a silently green one
+ * does not. That is the direction every other check in this pipeline takes.
+ *
+ * In practice the window is not binding, for a reason outside this counter:
+ * the only thing that kills a capture emitter is the run boundary's own
+ * reap, and it signals first and waits UTEST_CAPTURE_REAP_GRACE_MS before
+ * forcing. A cooperative kill lands at a kernel entry, so an emitter inside
+ * klog finishes its sinks and returns here to credit itself. Stranding a
+ * credit takes an emitter that is unschedulable for that whole grace -- one
+ * that is stuck, not merely slow.
+ *
+ * Making the report EXACT rather than merely fail-closed needs the credit to
+ * happen at klog's own delivery point, between serial_write and the
+ * secondary sinks. That is a change to a core kernel service every subsystem
+ * uses, and it is owned separately.
+ *
+ * This was briefly implemented the other way, with a `committed` mark taken
+ * before the log, to stop a reaped emitter's delivered record being reported
+ * lost. It was withdrawn: it bought no narrower a window, it inverted the
+ * direction to fail-open, and carrying two settlement baselines against one
+ * forgiveness counter let a committed-but-uncredited record in one run
+ * silently cancel a genuinely lost one in the next. */
+
+/* Records claimed but not yet on the wire, as a PURE function of the three
+ * counters -- no lock, no globals, so the arithmetic the whole drain rests
+ * on is drivable from a unit test over synthetic values.
+ *
+ * The `delivered >= admitted` floor is DEFENSIVE, and saying which it is
+ * matters. With the close below advancing the generation in the same breath
+ * as the write-off, a written-off claim's epoch is over and it can never
+ * settle again, so deliveries can no longer exceed admissions on any real
+ * path. The floor stays because the alternative failure is silent and
+ * total: an unsigned subtraction in that state answers with a number near
+ * UINT64_MAX and turns a fully delivered run into a drain that always times
+ * out. */
+static uint64_t u_capture_pending(uint64_t admitted, uint64_t completed,
+                                  uint64_t forgiven)
+{
+    uint64_t delivered = completed + forgiven;
+
+    if (delivered >= admitted)
+        return 0;
+    return admitted - delivered;
+}
+
+/* The run's accounting, as the snapshot the close below transitions. */
+struct u_capture_boundary {
+    uint64_t admitted;
+    uint64_t completed;
+    uint64_t forgiven;
+    uint32_t generation;
+};
+
+/* CLOSE a run's capture epoch: write off whatever is still outstanding and
+ * advance the generation, as ONE transition. Returns what was written off.
+ *
+ * The two halves are inseparable, and separating them was a real defect
+ * rather than an aesthetic lapse. Writing off alone leaves the run's
+ * generation current until the NEXT u_frame_begin, so an emitter resuming in
+ * that window still passes its generation check and credits `completed` for
+ * a claim already counted in `forgiven`. That double settlement then cancels
+ * a LATER run's live reservation: admitted 2, completed 1, forgiven 1 reads
+ * as nothing outstanding while the new run's record is genuinely still in
+ * flight, so its drain returns immediately and its pending report never
+ * names the record it lost. Advancing the generation in the same breath is
+ * what makes the write-off FINAL -- a written-off claim's epoch is over, so
+ * it can never settle against anything again.
+ *
+ * Pure over the snapshot for the same reason the claim's transition is: the
+ * schedule that produces the collision (an emitter preempted across a run
+ * boundary) is not constructible from a kernel test, but every state it
+ * passes through is one call over plain numbers. */
+static uint64_t u_capture_close(struct u_capture_boundary *b)
+{
+    uint64_t pending = u_capture_pending(b->admitted, b->completed,
+                                         b->forgiven);
+
+    b->forgiven += pending;
+    b->generation++;
+    return pending;
+}
+
 /* Which framed run the counters above describe. Bumped on every reset so a
  * claim can be checked against the run it was actually charged to.
  *
  * The claim is linearized under the lock but the EMISSION deliberately is
  * not -- klog's serial write is milliseconds, and holding a spinlock across
- * it is the hazard that split exists to avoid. That leaves a real window: a
+ * it is the hazard that split exists to avoid. That left a real window: a
  * fork descendant inherits capture ownership (task.c:2459) while the
  * launcher waits only on the top-level pid (u_run_one), so a descendant
- * outliving its binary can claim under one run's aggregate and reach klog
- * after the next run has reset it. Its record would then land in a run whose
- * budget never charged for it, and the run-scope equality would refuse a run
- * that did nothing wrong. Two shipped binaries fork (user/test/
+ * outliving its binary could claim under one run's aggregate and reach klog
+ * after the next run had reset it. Two shipped binaries fork (user/test/
  * test_process.c, user/test/test_faultinject.c), so the shape is reachable
- * rather than theoretical. */
+ * rather than theoretical.
+ *
+ * The generation check is now the LAST of three lines rather than the only
+ * one: the run seals admission so no further claim is created, drains the
+ * claims already outstanding, and reaps the descendant tree -- and this
+ * comparison catches only what survives all three, which is an emitter that
+ * was already past its claim and could not be scheduled inside the drain
+ * budget. It stays because that residual is real: no fence can make a
+ * preempted task's klog write atomic with the frame rollover. */
 static uint32_t s_capture_run_generation;
+
+/* How long the run boundary waits for outstanding claims to reach the wire.
+ *
+ * Sized against what it is actually waiting for -- one preempted emitter
+ * finishing an escape pass and a klog line, on a kernel whose task dispatch
+ * is a single global current_task, so the launcher yielding IS the only
+ * thing that lets the emitter run. Generous enough that a healthy emitter is
+ * never cut off, short enough that a dead one cannot stall the boundary: the
+ * abandoned case is REPORTED, not waited out, so nothing is bought by
+ * waiting longer. Deliberately below UTEST_KILL_GRACE_MS, which bounds a
+ * whole cooperative process teardown rather than one record. */
+#define UTEST_CAPTURE_DRAIN_MS 200u
+
+/* How long the descendant reap waits for one kill round to take effect. The
+ * same bound the top-level wait already uses, because it is the same
+ * question asked of a smaller task: how long does a cooperative SIGKILL
+ * teardown get before the forceful path runs. */
+#define UTEST_CAPTURE_REAP_GRACE_MS UTEST_KILL_GRACE_MS
+
+/* How many times the reap re-scans before it declares the descendant set
+ * stable. A descendant can fork WHILE the walk yields, so a single pass is a
+ * snapshot, not a fence -- the scan repeats until a full pass finds nothing
+ * live. The cap exists so a fork bomb cannot hold the boundary open forever;
+ * it is a bound on a pathological producer, not a tuning knob, which is why
+ * exhausting it is reported rather than retried. */
+#define UTEST_CAPTURE_REAP_ROUNDS 8u
 
 /* Scopes the run budget to ONE framed run. Called from u_frame_begin
  * beside the s_frame_records reset -- see the rationale there. */
@@ -3770,6 +4070,13 @@ static void u_capture_budget_reset(void)
     s_capture_run_records = 0;
     s_capture_run_over = 0;
     s_capture_run_generation++;
+    /* Admission REOPENS here, with the generation bump and under the same
+     * lock, so no window exists in which the new run's generation is live
+     * but its gate is still shut (or the reverse). The pair is what a claim
+     * reads to decide whether it belongs to this run at all, and reading one
+     * half of it from the previous run would be exactly the cross-run
+     * accounting this section removes. */
+    s_capture_sealed = 0;
     /* Run-scoped for exactly the reason the record counters are: the host
      * reconciles the expectation set against the count carried by THIS
      * run's terminator, so a counter spanning boot lifetime would measure a
@@ -3783,6 +4090,274 @@ static void u_capture_budget_reset(void)
      * against a promise the code no longer keeps. */
     __atomic_store_n(&s_capture_spawned, 0u, __ATOMIC_RELAXED);
     spin_unlock_irqrestore(&s_capture_budget_lock, irq_flags);
+}
+
+/* Close admission for the current run. Idempotent, and deliberately so: the
+ * boundary may seal, drain, discover a straggler and seal again without the
+ * second call meaning anything different from the first. */
+static void u_capture_seal(void)
+{
+    uint64_t irq_flags;
+
+    spin_lock_irqsave(&s_capture_budget_lock, &irq_flags);
+    s_capture_sealed = 1;
+    spin_unlock_irqrestore(&s_capture_budget_lock, irq_flags);
+}
+
+/* A reserved record reached klog. Called AFTER the emission returns, never
+ * before: the counter's meaning is "records still owed to the wire", and
+ * crediting one at claim time would make the drain wait for nothing while
+ * the record it was waiting for was still unwritten.
+ *
+ * Takes the claim's GENERATION and settles only against the epoch that
+ * admitted it. A claim whose epoch has closed was written off by the close
+ * that ended it, so crediting it here would settle one reservation twice --
+ * and the surplus credit does not vanish, it cancels some LATER run's live
+ * reservation and lets that run's drain roll over with a record still in
+ * flight. Refusing here is not discarding information: the loss was already
+ * reported, against the run that actually suffered it. */
+/* The settlement DECISION and mutation, pure over the two generations and
+ * the counter -- no lock, no globals. Returns whether the claim settled.
+ *
+ * Split out because the generation guard is the load-bearing half and it is
+ * the half a test cannot otherwise reach: driving it through the live
+ * emitter needs a claim that survives a frame rollover, which no kernel test
+ * can construct. Inline in the locked wrapper, a regression that deleted the
+ * guard would leave every accounting assertion green -- a stale claim would
+ * simply credit `completed` again, and the surplus would silently cancel a
+ * LATER run's live reservation rather than failing anything locally. */
+static int u_capture_settle(uint32_t claim_gen, uint32_t current_gen,
+                            uint64_t *completed)
+{
+    if (claim_gen != current_gen)
+        return 0;
+    (*completed)++;
+    return 1;
+}
+
+static void u_capture_complete(uint32_t gen)
+{
+    uint64_t irq_flags;
+
+    spin_lock_irqsave(&s_capture_budget_lock, &irq_flags);
+    (void)u_capture_settle(gen, s_capture_run_generation, &s_capture_completed);
+    spin_unlock_irqrestore(&s_capture_budget_lock, irq_flags);
+}
+
+/* Close the current epoch: write off everything still outstanding, advance
+ * the generation, and report what was written off. The transition itself is
+ * u_capture_close; this is only the locking and the load/store around it, so
+ * the wrapper cannot drift from the transition the unit tests drive.
+ *
+ * ONE caller -- the run boundary -- and the exclusivity is load-bearing.
+ * Only the boundary can know a reservation is dead rather than slow, and
+ * only the epoch that admitted it may write it off. */
+static uint64_t u_capture_close_epoch(void)
+{
+    struct u_capture_boundary b;
+    uint64_t irq_flags;
+    uint64_t pending;
+
+    spin_lock_irqsave(&s_capture_budget_lock, &irq_flags);
+    b.admitted   = s_capture_admitted;
+    b.completed  = s_capture_completed;
+    b.forgiven   = s_capture_forgiven;
+    b.generation = s_capture_run_generation;
+
+    pending = u_capture_close(&b);
+
+    s_capture_forgiven = b.forgiven;
+    s_capture_run_generation = b.generation;
+    spin_unlock_irqrestore(&s_capture_budget_lock, irq_flags);
+
+    return pending;
+}
+
+/* Records this run has claimed but not yet put on the wire. */
+static uint64_t u_capture_inflight(void)
+{
+    uint64_t irq_flags;
+    uint64_t admitted, completed, forgiven;
+
+    spin_lock_irqsave(&s_capture_budget_lock, &irq_flags);
+    admitted  = s_capture_admitted;
+    completed = s_capture_completed;
+    forgiven  = s_capture_forgiven;
+    spin_unlock_irqrestore(&s_capture_budget_lock, irq_flags);
+
+    return u_capture_pending(admitted, completed, forgiven);
+}
+
+/* Wait, bounded, for every claim admitted by this run to reach the wire, and
+ * return what was still outstanding when the wait ended.
+ *
+ * The caller must have SEALED first, and the order is the whole protocol: a
+ * drain over an open run is a check-then-act with nothing stopping a new
+ * claim from being admitted between the last zero reading and the caller's
+ * next action, which is the same TOCTOU shape the fence exists to remove.
+ * Sealed first, the count can only fall, so a single zero reading is final.
+ *
+ * Yielding is what makes progress possible at all: task dispatch here uses a
+ * single global current_task, so the outstanding emitter cannot run until
+ * this launcher thread gives up the CPU. */
+static uint64_t u_capture_drain(void)
+{
+    uint64_t deadline = u_uptime_ms() + (uint64_t)UTEST_CAPTURE_DRAIN_MS;
+    uint64_t pending;
+
+    for (;;) {
+        pending = u_capture_inflight();
+        if (pending == 0)
+            return 0;
+        if (u_uptime_ms() >= deadline)
+            return pending;
+        yield();
+    }
+}
+
+/* Is `t` a capture-owning DESCENDANT of `owner_pid` -- a task that inherited
+ * this binary's capture channel through fork() rather than the binary
+ * itself?
+ *
+ * Pure over a task slot for the same reason u_capture_armed_for is: the only
+ * way to exercise the branches is a live fork tree, which a kernel test
+ * cannot build, so without a seam the owner-exclusion and the
+ * different-owner rejection would never execute.
+ *
+ * Excluding the owner is not bookkeeping tidiness. The owner is the pid the
+ * launcher has already waited on and is about to clean up itself; a reap
+ * that included it would kill and free a task out from under u_run_one's own
+ * teardown, and would do it while the launcher still holds pointers into
+ * that slot's report and leak snapshots. */
+static int u_capture_descendant_of(const struct task *t, uint32_t owner_pid)
+{
+    return t != (const struct task *)0 &&
+           t->utest_capture_active != 0 &&
+           t->utest_capture_owner_pid == owner_pid &&
+           t->pid != owner_pid;
+}
+
+/* Fence and reap one binary's capture-owning descendant tree.
+ *
+ * Called once per binary, after the launcher's wait on the TOP-LEVEL pid has
+ * returned and before that pid is cleaned up. The wait is what makes this
+ * necessary: it observes one task, while fork() hands the same capture
+ * channel to every descendant (task.c, TASK_UTEST_CAPTURE_INHERIT), so a
+ * descendant can outlive the binary it belongs to and keep emitting into
+ * whatever run is current when it next reaches klog.
+ *
+ * Two mechanisms, and the ORDER between them is the design:
+ *
+ *   1. Latch the OWNER's stop flag first. The claim path reads that latch
+ *      from the owner's slot regardless of which task in the tree is
+ *      emitting (u_capture_claim takes `owner`), so one store fences the
+ *      whole tree at once -- including a descendant already past
+ *      test_usermode_capture_start, whose ctx has latched _active and
+ *      _owner and will never look at its own task fields again. Every later
+ *      claim from any of them decides DROP: no sequence number, no record,
+ *      bytes swallowed rather than handed to the unframed serial fallback.
+ *      Doing this AFTER the kills would leave exactly the window the fence
+ *      exists to remove, because the kills below yield.
+ *   2. Then kill, to a FIXED POINT. A descendant can fork another
+ *      capture-inheriting task while this walk yields, so one pass is a
+ *      snapshot and not a fence; the scan repeats until a whole pass finds
+ *      nothing live. Step 1 means the newcomers cannot emit even in the
+ *      rounds before they are reached.
+ *
+ * Returns the number of descendants still live when the round cap ran out,
+ * which is zero for every honest binary and non-zero only for a producer
+ * forking faster than the launcher can reap.
+ *
+ * Reaping is not only about the wire. task_terminate_remote marks a task
+ * DEAD and runs the shared death-transition teardown, but stacks, CR3,
+ * PEB/TEB and the handle table are freed by task_cleanup at the off-CPU reap
+ * barrier -- and the launcher cleaned up only the top-level pid, so repeated
+ * runs with outliving descendants leaked kernel resources whose framing was
+ * otherwise perfectly healthy. */
+static uint32_t u_capture_reap_tree(uint32_t owner_pid)
+{
+    struct task *owner = task_get_by_pid(owner_pid);
+    uint32_t round;
+    uint32_t live = 0;
+    uint32_t pid;
+    struct task *t;
+
+    /* Latched UNDER the budget lock, not beside it. The claim path reads
+     * this same field inside that lock, so an unlocked store here races the
+     * claim's own view of it -- and the claim's set-only store-back is the
+     * other half of the same fix. Together they make the latch monotonic
+     * from both writers, which is what lets the fence be stated as "set once
+     * and every later claim in the tree decides DROP". */
+    if (owner) {
+        uint64_t irq_flags;
+
+        spin_lock_irqsave(&s_capture_budget_lock, &irq_flags);
+        __atomic_store_n(&owner->utest_capture_stopped, 1u, __ATOMIC_RELEASE);
+        spin_unlock_irqrestore(&s_capture_budget_lock, irq_flags);
+    }
+
+    for (round = 0; round < UTEST_CAPTURE_REAP_ROUNDS; round++) {
+        uint64_t grace;
+
+        live = 0;
+        for (pid = 0; (t = task_get_by_pid(pid)) != (struct task *)0; pid++) {
+            if (!u_capture_descendant_of(t, owner_pid) ||
+                t->state == TASK_DEAD)
+                continue;
+            /* Cooperative first, exactly as the top-level wait does: a
+             * descendant that reaches a kernel entry runs its own unwind and
+             * sets its own exit status. */
+            signal_send(pid, SIGKILL);
+            live++;
+        }
+        if (live == 0)
+            break;
+
+        grace = u_uptime_ms() + (uint64_t)UTEST_CAPTURE_REAP_GRACE_MS;
+        while (u_uptime_ms() < grace)
+            yield();
+
+        /* Forceful fallback for whatever the signal could not land on -- a
+         * ring-3 spinloop never runs signal_check. Safe here for the same
+         * reason the top-level path states: task dispatch uses a single
+         * global current_task, so no other CPU can be dispatching these
+         * tasks while this launcher thread is the one running. */
+        for (pid = 0; (t = task_get_by_pid(pid)) != (struct task *)0; pid++) {
+            if (!u_capture_descendant_of(t, owner_pid) ||
+                t->state == TASK_DEAD)
+                continue;
+            task_terminate_remote(t, TASK_EXIT_UTEST_REAPED);
+        }
+    }
+
+    /* FINAL CENSUS, and it is not the same number the loop was tracking.
+     * `live` above counts what each KILL pass found, so it describes the
+     * state before that pass's kills and grace -- reporting it would name
+     * survivors that are now dead, and, worse, a descendant published just
+     * after the terminal pass walked past its slot would be missed entirely
+     * while `live == 0` suppressed the report. Re-counting once, after the
+     * last round, is what makes the returned number an actual statement
+     * about the tree rather than about the loop. */
+    live = 0;
+    for (pid = 0; (t = task_get_by_pid(pid)) != (struct task *)0; pid++) {
+        if (u_capture_descendant_of(t, owner_pid) && t->state != TASK_DEAD)
+            live++;
+    }
+
+    /* Reap highest pid first. Task slots are allocated monotonically, so a
+     * child always holds a higher pid than the parent it forked from, and
+     * descending order is therefore children-first -- the direction a tree
+     * teardown has to run in for a parent's release not to precede a child
+     * that still refers to it. */
+    for (pid = 0; task_get_by_pid(pid) != (struct task *)0; pid++)
+        ;
+    while (pid-- > 0) {
+        t = task_get_by_pid(pid);
+        if (u_capture_descendant_of(t, owner_pid) && t->state == TASK_DEAD)
+            task_cleanup(pid);
+    }
+
+    return live;
 }
 
 /* Announce that this run SPAWNED a capture-owning binary.
@@ -3916,16 +4491,32 @@ static enum utest_capture_verdict u_capture_claim(struct task *owner,
     st.owner_stopped = __atomic_load_n(&owner->utest_capture_stopped,
                                        __ATOMIC_RELAXED);
     st.run_over = s_capture_run_over;
+    st.run_sealed = s_capture_sealed;
+    st.admitted = s_capture_admitted;
 
     verdict = u_capture_apply(&st, seq_out, charged_out);
 
     atomic_set(&owner->utest_capture_seq, (int32_t)st.owner_seq);
-    /* RELEASE: the fast path reads this without the lock, so the latch must
+    /* SET-ONLY, never store-back. The transition only ever SETS this latch,
+     * so writing the snapshot back unconditionally could only ever write a
+     * zero -- and that zero is a lost update: the run boundary's fence sets
+     * the same latch on the owner slot, so a claim that read 0, was
+     * overtaken by the fence, and then stored its stale 0 back would silently
+     * UNFENCE the whole descendant tree. Writing only on the set edge makes
+     * the latch monotonic from every writer's side, which is the property
+     * the fence relies on and the snapshot alone could not give it.
+     *
+     * RELEASE: the fast path reads this without the lock, so the latch must
      * not become visible before the state that justifies it. */
-    __atomic_store_n(&owner->utest_capture_stopped, st.owner_stopped,
-                     __ATOMIC_RELEASE);
+    if (st.owner_stopped)
+        __atomic_store_n(&owner->utest_capture_stopped, 1u, __ATOMIC_RELEASE);
     s_capture_run_records = st.run_records;
     s_capture_run_over = st.run_over;
+    /* The reservation is published in the SAME critical section that drew
+     * the sequence number, so a drain reading zero has genuinely seen every
+     * claim: there is no instant at which a number exists on an owner's slot
+     * without the run knowing a record is owed for it. */
+    s_capture_admitted = st.admitted;
 
     /* Read INSIDE the critical section: the generation the caller checks
      * against must be the one this claim was actually charged to. */
@@ -4087,10 +4678,24 @@ static int u_capture_emit_chunk(struct utest_capture_ctx *ctx, int is_final)
      * closed by its own frame-end record, so no consumer can observe the
      * hole. Rolling it back is not available either: another emitter may
      * already have drawn the next number, so a give-back would hand out a
-     * duplicate. The real repair is the drain protocol that stops stale
-     * emitters existing at all, which the run-boundary fence section
-     * owns. */
-    if (verdict != UTEST_CAP_DROP && !u_capture_generation_current(gen))
+     * duplicate.
+     *
+     * The reservation this claim took is NOT written off here, and that is
+     * deliberate: it already was, by the boundary that made this claim
+     * stale. Reaching this branch means the generation moved, which only
+     * u_frame_begin does, and the u_frame_end before it sealed the run and
+     * drained it -- a claim outstanding at that moment is exactly what the
+     * drain counts and forgives. Writing it off a second time here would
+     * make `forgiven` overstate what the run actually lost, and `forgiven`
+     * is the number the pending report is derived from.
+     *
+     * The one claim that can be admitted with no boundary behind it is the
+     * launcher's own pre-frame capture regression, which drives this path
+     * directly before any framed run exists. Those cannot reach this branch:
+     * claim, check and emission happen in this one call with nothing between
+     * them that could run u_frame_begin. */
+    if (verdict != UTEST_CAP_DROP && verdict != UTEST_CAP_SEALED &&
+        !u_capture_generation_current(gen))
         return 0;
 
     switch (verdict) {
@@ -4136,7 +4741,24 @@ static int u_capture_emit_chunk(struct utest_capture_ctx *ctx, int is_final)
          * falling back would put the identical payload on the wire
          * unframed, so the budget would bound nothing at all. */
         break;
+    case UTEST_CAP_SEALED:
+        /* The run closed before this claim arrived. Swallowed for the same
+         * reason a DROP is -- an unframed fallback would put the payload on
+         * the wire between two runs' slices, where no consumer can attribute
+         * it -- but reported nowhere, because there is nothing to report: no
+         * number was drawn, no record is owed, and the emitter belongs to a
+         * binary the launcher has already finished with. */
+        break;
     }
+
+    /* A reservation is settled exactly once, and only the branches that
+     * actually emitted have one to settle. Placed after the switch rather
+     * than inside each emitting branch so a future record kind added to the
+     * switch cannot forget it -- an unsettled reservation does not fail
+     * anything visibly, it just makes the next run boundary wait out its
+     * whole drain budget. */
+    if (verdict != UTEST_CAP_DROP && verdict != UTEST_CAP_SEALED)
+        u_capture_complete(gen);
 
     /* Anything but a plain chunk means this owner is finished: the caller
      * latches it and stops paying the escape pass and the lock. */
@@ -6556,6 +7178,31 @@ static void u_run_one(const char *name, utest_type_t type,
         counters[1]++;  /* record FAIL */
     }
 
+    /* Fence and reap the descendant tree BEFORE the owner's own cleanup.
+     * The launcher waited on one pid; fork() handed the same capture channel
+     * to every descendant, so this is the point at which "the binary is
+     * finished" stops being true of only the task that was waited on.
+     *
+     * Before task_cleanup rather than after, because the fence latches the
+     * stop flag on the OWNER's slot -- that is the slot every descendant's
+     * claim reads -- and task_cleanup is what releases that slot's
+     * resources. Ordering it the other way would fence a tree against a
+     * task record already being torn down.
+     *
+     * A non-zero return means a producer forked faster than the reap could
+     * keep up, which is a bounded, reported condition rather than a silent
+     * one: the records those survivors go on to claim are already fenced by
+     * the owner's stop latch, so what is at stake is kernel resources, not
+     * the wire. */
+    {
+        uint32_t unreaped = u_capture_reap_tree((uint32_t)pid);
+
+        if (unreaped)
+            utest_record_log(LOG_WARN,
+                             "[UTEST-CAPTURE-UNREAPED] owner=%u live=%u",
+                             (uint64_t)pid, (uint64_t)unreaped);
+    }
+
     task_cleanup((uint32_t)pid);
 
     /* Close color scope: subsequent klog lines (the launcher's own
@@ -8202,12 +8849,14 @@ int test_usermode_capture_armed_for(const struct task *child, uint32_t pid)
  * depends on. The locked wrapper around it (u_capture_claim) is the only
  * thing that needs a live owner. */
 int test_usermode_capture_decide(uint32_t owner_seq, uint32_t run_records,
-                                 int owner_stopped, int run_over);
+                                 int owner_stopped, int run_over,
+                                 int run_sealed);
 int test_usermode_capture_decide(uint32_t owner_seq, uint32_t run_records,
-                                 int owner_stopped, int run_over)
+                                 int owner_stopped, int run_over,
+                                 int run_sealed)
 {
     return (int)u_capture_decide(owner_seq, run_records, owner_stopped,
-                                 run_over);
+                                 run_over, run_sealed);
 }
 
 /* The claim's full state TRANSITION, over caller-owned state. The decision
@@ -8216,10 +8865,12 @@ int test_usermode_capture_decide(uint32_t owner_seq, uint32_t run_records,
  * latches, and whether a sequence number was consumed at all. */
 int test_usermode_capture_apply(uint32_t *owner_seq, uint32_t *run_records,
                                 int *owner_stopped, int *run_over,
-                                uint32_t *seq_out, uint32_t *charged_out);
+                                uint32_t *seq_out, uint32_t *charged_out,
+                                int run_sealed, uint64_t *admitted);
 int test_usermode_capture_apply(uint32_t *owner_seq, uint32_t *run_records,
                                 int *owner_stopped, int *run_over,
-                                uint32_t *seq_out, uint32_t *charged_out)
+                                uint32_t *seq_out, uint32_t *charged_out,
+                                int run_sealed, uint64_t *admitted)
 {
     struct u_capture_state st;
     enum utest_capture_verdict verdict;
@@ -8228,6 +8879,8 @@ int test_usermode_capture_apply(uint32_t *owner_seq, uint32_t *run_records,
     st.run_records = *run_records;
     st.owner_stopped = (uint8_t)(*owner_stopped ? 1 : 0);
     st.run_over = (uint8_t)(*run_over ? 1 : 0);
+    st.run_sealed = (uint8_t)(run_sealed ? 1 : 0);
+    st.admitted = admitted ? *admitted : 0u;
 
     verdict = u_capture_apply(&st, seq_out, charged_out);
 
@@ -8235,7 +8888,81 @@ int test_usermode_capture_apply(uint32_t *owner_seq, uint32_t *run_records,
     *run_records = st.run_records;
     *owner_stopped = (int)st.owner_stopped;
     *run_over = (int)st.run_over;
+    if (admitted)
+        *admitted = st.admitted;
     return (int)verdict;
+}
+
+/* The drain's arithmetic, exported as the pure saturating function it is.
+ *
+ * This is the half of the run-boundary fence a live run can never be made to
+ * exercise: reaching the interesting states needs a completion that arrives
+ * after its own reservation was written off, which requires an emitter
+ * preempted across a frame rollover -- a schedule the kernel test surface
+ * cannot construct. Over plain numbers, every one of them is one call. */
+uint64_t test_usermode_capture_pending(uint64_t admitted, uint64_t completed,
+                                       uint64_t forgiven);
+uint64_t test_usermode_capture_pending(uint64_t admitted, uint64_t completed,
+                                       uint64_t forgiven)
+{
+    return u_capture_pending(admitted, completed, forgiven);
+}
+
+/* The settlement transition, exported as the pure decision it is: a claim's
+ * generation, the run's current generation, and the counter it would credit.
+ *
+ * This is the guard that stops a written-off claim settling a second time,
+ * and a test that only re-reads an unchanged pending value does NOT pin it
+ * -- deleting the guard leaves such a test green. Driving the transition
+ * itself is the only way to assert that a stale claim is refused and a
+ * current one is not. */
+int test_usermode_capture_settle(uint32_t claim_gen, uint32_t current_gen,
+                                 uint64_t *completed);
+int test_usermode_capture_settle(uint32_t claim_gen, uint32_t current_gen,
+                                 uint64_t *completed)
+{
+    return u_capture_settle(claim_gen, current_gen, completed);
+}
+
+/* The run boundary's CLOSE transition, over caller-owned accounting.
+ *
+ * Exported separately from the pending arithmetic because the two answer
+ * different questions, and only the second one is the fix for the
+ * double-settlement defect: pending says how much is outstanding, close says
+ * that the write-off and the epoch's end are ONE act. A regression that
+ * forgave without advancing the generation would leave every pending
+ * assertion green while letting a written-off claim settle again. */
+uint64_t test_usermode_capture_close(uint64_t *admitted, uint64_t *completed,
+                                     uint64_t *forgiven, uint32_t *generation);
+uint64_t test_usermode_capture_close(uint64_t *admitted, uint64_t *completed,
+                                     uint64_t *forgiven, uint32_t *generation)
+{
+    struct u_capture_boundary b;
+    uint64_t pending;
+
+    b.admitted   = *admitted;
+    b.completed  = *completed;
+    b.forgiven   = *forgiven;
+    b.generation = *generation;
+
+    pending = u_capture_close(&b);
+
+    *forgiven   = b.forgiven;
+    *generation = b.generation;
+    return pending;
+}
+
+/* The reap's selection predicate, exported for the same reason the arming
+ * postcondition is: a live run only ever hands it healthy input, so the
+ * owner-exclusion and wrong-owner branches would otherwise never execute --
+ * and those two branches are the difference between reaping a binary's
+ * descendants and reaping the task the launcher is still working with. */
+int test_usermode_capture_descendant_of(const struct task *t,
+                                        uint32_t owner_pid);
+int test_usermode_capture_descendant_of(const struct task *t,
+                                        uint32_t owner_pid)
+{
+    return u_capture_descendant_of(t, owner_pid);
 }
 
 /* Test-only snapshot/install of the RUN-wide capture accounting, taken

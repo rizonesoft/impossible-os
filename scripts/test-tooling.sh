@@ -16419,6 +16419,71 @@ _cap_beginrange() {
 cap_refuses "an over-range owner in a BEGIN record is refused" \
     capture_field_out_of_range _cap_beginrange
 
+# c37-c40. The RUN BOUNDARY's two reports. The launcher waits on one pid per
+#      binary while fork() hands the same capture channel to every descendant,
+#      so at the end of a run it seals capture admission, drains the claims
+#      still outstanding, and reaps the descendant tree. Both records refuse
+#      the run they appear in -- and the fact that they PARSE at all is half
+#      the test: any authenticated capture-family line the host does not
+#      recognize refuses as capture_malformed_record, which would report a
+#      producer that is working correctly as corruption.
+_cap_pending() {
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=1 final=1 a"
+    cap_line "[UTEST-CAPTURE-PENDING] run=3 pending=2"
+}
+cap_refuses "a run that sealed with undelivered capture records is refused" \
+    capture_pending_records _cap_pending
+
+# The count is a producer uint32, checked like every other numeric field --
+# an over-range one is version skew, not a large-but-valid loss.
+_cap_pendingrange() {
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE-PENDING] run=3 pending=4294967296"
+}
+cap_refuses "an over-range pending count is refused as a field, not a loss" \
+    capture_field_out_of_range _cap_pendingrange
+
+# The producer guards BOTH reports on a nonzero count, so a zero is a record
+# it cannot have written -- a SHAPE fault, not a semantic one. Accepting it
+# would report an impossible authenticated record as a real run failure.
+_cap_pendingzero() {
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE-PENDING] run=3 pending=0"
+}
+cap_refuses "a pending report of zero is a shape the producer cannot emit" \
+    capture_malformed_record _cap_pendingzero
+
+_cap_unreapedzero() {
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE-UNREAPED] owner=7 live=0"
+}
+cap_refuses "an unreaped report of zero is a shape the producer cannot emit" \
+    capture_malformed_record _cap_unreapedzero
+
+_cap_unreaped() {
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=1 final=1 a"
+    cap_line "[UTEST-CAPTURE-UNREAPED] owner=7 live=2"
+}
+cap_refuses "a run leaving capture-owning descendants alive is refused" \
+    capture_unreaped_descendants _cap_unreaped
+
+# A clean run emits NEITHER record, and must stay clean. Without this the two
+# refusals above would be satisfied by a parser that refused every run.
+_cap_boundary_clean() {
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=1 final=1 a"
+}
+_cap_boundary_clean > "$CAP_TMP/bclean.log"
+if cap_model "$CAP_TMP/bclean.log" "$CAP_TMP/bclean.json" &&
+   [ "$(cap_field "$CAP_TMP/bclean.json" 'm["binaries"][0]["text"]')" = 'a' ]; then
+    t_pass "capture: a run boundary with nothing pending or unreaped stays clean"
+else
+    t_fail "capture: a run boundary with nothing pending or unreaped stays clean" \
+        "$(cap_field "$CAP_TMP/bclean.json" 'm["refusal"]["reason"]')"
+fi
+
 # c36. BEGIN and LOST carry no payload, so they cost nothing against the byte
 #      bound -- but each DISTINCT pid retained an _Owner with nothing counting
 #      it. Measured 400k BEGIN records at ~127 MiB RSS before this bound.

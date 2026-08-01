@@ -139,7 +139,15 @@ enum utest_capture_verdict {
     UTEST_CAP_EMIT = 0,       /* charge accepted: emit this chunk        */
     UTEST_CAP_OVER_OWNER = 1, /* this owner just exhausted its budget    */
     UTEST_CAP_OVER_RUN = 2,   /* the run-wide budget went first          */
-    UTEST_CAP_DROP = 3        /* already terminated: emit nothing        */
+    UTEST_CAP_DROP = 3,       /* already terminated: emit nothing        */
+    /* The RUN closed admission before this claim arrived. Distinct from
+     * DROP even though both emit nothing: DROP is a per-owner policy stop
+     * that the owner's own latch remembers, while SEALED is a run-boundary
+     * refusal that says nothing about the owner and is lifted wholesale by
+     * the next frame. Conflating the two would let a boundary refusal latch
+     * an owner permanently, and would leave the run-boundary fence with no
+     * verdict of its own for a test to assert against. */
+    UTEST_CAP_SEALED = 4
 };
 
 #ifdef KERNEL_TESTS

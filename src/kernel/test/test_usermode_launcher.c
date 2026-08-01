@@ -159,10 +159,20 @@ uint32_t test_usermode_capture_chunk_max(void);
 int test_usermode_capture_armed_for(const struct task *child, uint32_t pid);
 int test_usermode_frame_run_is_open(void);
 int test_usermode_capture_decide(uint32_t owner_seq, uint32_t run_records,
-                                 int owner_stopped, int run_over);
+                                 int owner_stopped, int run_over,
+                                 int run_sealed);
 int test_usermode_capture_apply(uint32_t *owner_seq, uint32_t *run_records,
                                 int *owner_stopped, int *run_over,
-                                uint32_t *seq_out, uint32_t *charged_out);
+                                uint32_t *seq_out, uint32_t *charged_out,
+                                int run_sealed, uint64_t *admitted);
+uint64_t test_usermode_capture_pending(uint64_t admitted, uint64_t completed,
+                                       uint64_t forgiven);
+uint64_t test_usermode_capture_close(uint64_t *admitted, uint64_t *completed,
+                                     uint64_t *forgiven, uint32_t *generation);
+int test_usermode_capture_settle(uint32_t claim_gen, uint32_t current_gen,
+                                 uint64_t *completed);
+int test_usermode_capture_descendant_of(const struct task *t,
+                                        uint32_t owner_pid);
 void test_usermode_capture_run_state_get(uint32_t *records, int *over);
 void test_usermode_capture_run_state_set(uint32_t records, int over);
 uint32_t test_usermode_capture_owner_budget(void);
@@ -3593,14 +3603,14 @@ static void test_capture_budget_permits_up_to_the_owner_limit(void)
 {
     uint32_t budget = test_usermode_capture_owner_budget();
 
-    TEST_ASSERT_EQ((uint32_t)test_usermode_capture_decide(0u, 0u, 0, 0),
+    TEST_ASSERT_EQ((uint32_t)test_usermode_capture_decide(0u, 0u, 0, 0, 0),
                    (uint32_t)UTEST_CAP_EMIT,
                    "a fresh owner's first record is charged, not refused");
-    TEST_ASSERT_EQ((uint32_t)test_usermode_capture_decide(budget - 1u, 0u, 0, 0),
+    TEST_ASSERT_EQ((uint32_t)test_usermode_capture_decide(budget - 1u, 0u, 0, 0, 0),
                    (uint32_t)UTEST_CAP_EMIT,
                    "the LAST record inside the budget must still be emitted -- "
                    "an off-by-one here silently clips one honest record");
-    TEST_ASSERT_EQ((uint32_t)test_usermode_capture_decide(budget, 0u, 0, 0),
+    TEST_ASSERT_EQ((uint32_t)test_usermode_capture_decide(budget, 0u, 0, 0, 0),
                    (uint32_t)UTEST_CAP_OVER_OWNER,
                    "the claim that finds the counter AT the limit is the one "
                    "that terminates the owner");
@@ -3613,11 +3623,11 @@ static void test_capture_budget_never_reopens_past_the_limit(void)
 {
     uint32_t budget = test_usermode_capture_owner_budget();
 
-    TEST_ASSERT_EQ((uint32_t)test_usermode_capture_decide(budget + 1u, 0u, 0, 0),
+    TEST_ASSERT_EQ((uint32_t)test_usermode_capture_decide(budget + 1u, 0u, 0, 0, 0),
                    (uint32_t)UTEST_CAP_OVER_OWNER,
                    "a counter already past the limit must never resolve to "
                    "EMIT, whatever moved it there");
-    TEST_ASSERT_EQ((uint32_t)test_usermode_capture_decide(0xFFFFFFFFu, 0u, 0, 0),
+    TEST_ASSERT_EQ((uint32_t)test_usermode_capture_decide(0xFFFFFFFFu, 0u, 0, 0, 0),
                    (uint32_t)UTEST_CAP_OVER_OWNER,
                    "a saturated sequence counter still refuses rather than "
                    "wrapping into a fresh budget");
@@ -3631,11 +3641,12 @@ static void test_capture_budget_latched_owner_drops_everything(void)
     uint32_t budget = test_usermode_capture_owner_budget();
     uint32_t run_budget = test_usermode_capture_run_budget();
 
-    TEST_ASSERT_EQ((uint32_t)test_usermode_capture_decide(0u, 0u, 1, 0),
+    TEST_ASSERT_EQ((uint32_t)test_usermode_capture_decide(0u, 0u, 1, 0, 0),
                    (uint32_t)UTEST_CAP_DROP,
                    "a latched owner drops even a record that would otherwise "
                    "have been well inside every budget");
-    TEST_ASSERT_EQ((uint32_t)test_usermode_capture_decide(budget, run_budget, 1, 1),
+    TEST_ASSERT_EQ((uint32_t)test_usermode_capture_decide(budget, run_budget, 1, 1,
+                                                          0),
                    (uint32_t)UTEST_CAP_DROP,
                    "the latch wins over both exhausted budgets -- exactly one "
                    "terminator per owner, never a second");
@@ -3649,18 +3660,403 @@ static void test_capture_budget_owner_scope_wins_over_run(void)
     uint32_t budget = test_usermode_capture_owner_budget();
     uint32_t run_budget = test_usermode_capture_run_budget();
 
-    TEST_ASSERT_EQ((uint32_t)test_usermode_capture_decide(budget, run_budget, 0, 0),
+    TEST_ASSERT_EQ((uint32_t)test_usermode_capture_decide(budget, run_budget, 0, 0,
+                                                          0),
                    (uint32_t)UTEST_CAP_OVER_OWNER,
                    "an owner over its own budget is an owner-scope stop even "
                    "when the aggregate is exhausted too");
-    TEST_ASSERT_EQ((uint32_t)test_usermode_capture_decide(0u, run_budget, 0, 0),
+    TEST_ASSERT_EQ((uint32_t)test_usermode_capture_decide(0u, run_budget, 0, 0, 0),
                    (uint32_t)UTEST_CAP_OVER_RUN,
                    "an owner well inside its own budget stopped by the "
                    "aggregate is a run-scope stop");
-    TEST_ASSERT_EQ((uint32_t)test_usermode_capture_decide(0u, 0u, 0, 1),
+    TEST_ASSERT_EQ((uint32_t)test_usermode_capture_decide(0u, 0u, 0, 1, 0),
                    (uint32_t)UTEST_CAP_OVER_RUN,
                    "the latched run stop terminates later owners without "
                    "re-deciding against the charge count");
+}
+
+/* ---- The run-boundary SEAL ------------------------------------------ *
+ *
+ * The seal is the admission fence: once a run closes, no further claim may
+ * be created, whatever else is true of the owner or the budgets. These
+ * assert the two properties the drain depends on -- that the seal outranks
+ * every other input, and that it changes NOTHING about the owner it
+ * refused. */
+
+static void test_capture_seal_outranks_every_other_verdict(void)
+{
+    uint32_t budget = test_usermode_capture_owner_budget();
+    uint32_t run_budget = test_usermode_capture_run_budget();
+
+    TEST_ASSERT_EQ((uint32_t)test_usermode_capture_decide(0u, 0u, 0, 0, 1),
+                   (uint32_t)UTEST_CAP_SEALED,
+                   "a sealed run refuses even a claim that every budget would "
+                   "have accepted -- that refusal IS the fence");
+    TEST_ASSERT_EQ((uint32_t)test_usermode_capture_decide(0u, 0u, 1, 0, 1),
+                   (uint32_t)UTEST_CAP_SEALED,
+                   "the seal outranks a latched owner: a boundary refusal must "
+                   "not be reported as that binary's own policy stop");
+    TEST_ASSERT_EQ((uint32_t)test_usermode_capture_decide(budget, run_budget, 0, 1,
+                                                          1),
+                   (uint32_t)UTEST_CAP_SEALED,
+                   "and it outranks both exhausted budgets, so a closed run "
+                   "never emits one last overflow marker after its census");
+}
+
+/* A SEALED claim is the only verdict that mutates nothing at all. Drawing a
+ * sequence number would leave a hole in a stream whose run has already
+ * published its record count, and latching the owner would carry a
+ * boundary refusal into a slot the NEXT run reads. */
+static void test_capture_seal_consumes_nothing_and_latches_nothing(void)
+{
+    uint32_t seq = 7u, run = 3u, drawn = 0, charged = 0;
+    uint64_t admitted = 11u;
+    int stopped = 0, over = 0;
+
+    TEST_ASSERT_EQ((uint32_t)test_usermode_capture_apply(&seq, &run, &stopped,
+                                                         &over, &drawn, &charged,
+                                                         1, &admitted),
+                   (uint32_t)UTEST_CAP_SEALED, "a sealed run refuses the claim");
+    TEST_ASSERT_EQ(seq, 7u, "a SEALED claim consumes no sequence number -- the "
+                            "hole would land past a published census");
+    TEST_ASSERT_EQ(run, 3u, "and charges the run nothing");
+    TEST_ASSERT_EQ((uint32_t)stopped, 0u,
+                   "and must NOT latch the owner: the binary did nothing wrong "
+                   "and the latch outlives the boundary that set it");
+    TEST_ASSERT_EQ((uint32_t)over, 0u, "and must not latch the run stop either");
+    TEST_ASSERT_EQ(admitted, 11u,
+                   "and reserves no record -- a reservation here would make the "
+                   "next boundary drain wait for a claim that never existed");
+}
+
+/* Every claim that draws a sequence number also reserves a record, and the
+ * pairing is what the drain's guarantee rests on: pending counts exactly the
+ * numbers drawn whose records have not yet reached the wire. */
+static void test_capture_claim_reserves_exactly_when_it_draws(void)
+{
+    uint32_t run_budget = test_usermode_capture_run_budget();
+    uint32_t seq = 0, run = 0, drawn = 0, charged = 0;
+    uint64_t admitted = 0;
+    int stopped = 0, over = 0;
+
+    TEST_ASSERT_EQ((uint32_t)test_usermode_capture_apply(&seq, &run, &stopped,
+                                                         &over, &drawn, &charged,
+                                                         0, &admitted),
+                   (uint32_t)UTEST_CAP_EMIT, "a fresh claim emits");
+    TEST_ASSERT_EQ(admitted, 1u, "an emitted chunk reserves one record");
+
+    /* A run-scope terminator draws a number too, so it owes the wire a
+     * record exactly as a chunk does. */
+    run = run_budget;
+    stopped = 0;
+    TEST_ASSERT_EQ((uint32_t)test_usermode_capture_apply(&seq, &run, &stopped,
+                                                         &over, &drawn, &charged,
+                                                         0, &admitted),
+                   (uint32_t)UTEST_CAP_OVER_RUN, "an exhausted run terminates");
+    TEST_ASSERT_EQ(admitted, 2u,
+                   "a terminator reserves a record too -- it draws a sequence "
+                   "number, so the drain must wait for it like any other");
+
+    /* A DROP draws nothing, so it must reserve nothing: a reservation with
+     * no record behind it stalls the next boundary for its whole budget. */
+    TEST_ASSERT_EQ((uint32_t)test_usermode_capture_apply(&seq, &run, &stopped,
+                                                         &over, &drawn, &charged,
+                                                         0, &admitted),
+                   (uint32_t)UTEST_CAP_DROP, "the latched owner now drops");
+    TEST_ASSERT_EQ(admitted, 2u, "a DROP reserves nothing");
+}
+
+/* ---- The drain's arithmetic ----------------------------------------- *
+ *
+ * These are the states a live run cannot be driven into: a completion that
+ * arrives after its own reservation was written off needs an emitter
+ * preempted across a frame rollover. Over plain numbers each is one call,
+ * and the property that matters is that NONE of them ever reports a
+ * pending count larger than what was admitted. */
+
+static void test_capture_pending_counts_records_still_owed(void)
+{
+    TEST_ASSERT_EQ(test_usermode_capture_pending(0u, 0u, 0u), 0u,
+                   "a run that admitted nothing owes nothing");
+    TEST_ASSERT_EQ(test_usermode_capture_pending(5u, 5u, 0u), 0u,
+                   "a fully delivered run has nothing in flight");
+    TEST_ASSERT_EQ(test_usermode_capture_pending(5u, 3u, 0u), 2u,
+                   "two admitted claims that have not reached the wire are the "
+                   "two records the boundary must wait for");
+    TEST_ASSERT_EQ(test_usermode_capture_pending(5u, 3u, 2u), 0u,
+                   "written off, those two stop being owed -- that is what lets "
+                   "the NEXT run start its drain at zero");
+}
+
+/* The floor is DEFENSIVE, and the test says so rather than pretending to
+ * exercise a reachable state. Once the close advances the generation with
+ * the write-off, a forgiven claim's epoch is over and it can never settle
+ * again, so deliveries cannot exceed admissions on any real path. The floor
+ * stays because the alternative failure is silent and total: an unsigned
+ * subtraction in that state answers near UINT64_MAX and turns a fully
+ * delivered run into a drain that always times out. */
+static void test_capture_pending_never_underflows(void)
+{
+    TEST_ASSERT_EQ(test_usermode_capture_pending(1u, 1u, 1u), 0u,
+                   "double settlement must floor at nothing owed, not wrap to "
+                   "an astronomically large outstanding count");
+    TEST_ASSERT_EQ(test_usermode_capture_pending(0u, 7u, 3u), 0u,
+                   "deliveries in excess of admissions still report zero owed");
+    TEST_ASSERT_EQ(test_usermode_capture_pending(10u, 0xFFFFFFFFull, 5u), 0u,
+                   "and a delivered count past the old uint32 ceiling is still "
+                   "just a large delivered count, not an outstanding record");
+}
+
+/* The close is ONE transition: write off what is outstanding AND end the
+ * epoch. Splitting them is what let a written-off claim settle a second time
+ * -- the generation stayed current until the next frame began, so an emitter
+ * resuming in that window passed its generation check and credited a claim
+ * already counted in `forgiven`. */
+static void test_capture_close_writes_off_and_ends_the_epoch(void)
+{
+    uint64_t admitted = 3u, completed = 1u, forgiven = 0u;
+    uint32_t gen = 41u;
+
+    TEST_ASSERT_EQ(test_usermode_capture_close(&admitted, &completed,
+                                               &forgiven, &gen), 2u,
+                   "the close writes off exactly what was still outstanding");
+    TEST_ASSERT_EQ(forgiven, 2u, "and records it as forgiven, not delivered");
+    TEST_ASSERT_EQ((uint64_t)gen, 42u,
+                   "and ADVANCES the generation in the same act -- a write-off "
+                   "that left the epoch open is how a forgiven claim settles "
+                   "a second time");
+    TEST_ASSERT_EQ(test_usermode_capture_pending(admitted, completed, forgiven),
+                   0u, "so the closed run leaves nothing owed behind it");
+
+    /* Idempotent over an already-settled run: nothing outstanding means
+     * nothing written off, but the epoch still ends. */
+    TEST_ASSERT_EQ(test_usermode_capture_close(&admitted, &completed,
+                                               &forgiven, &gen), 0u,
+                   "closing a settled run writes nothing off");
+    TEST_ASSERT_EQ(forgiven, 2u, "and does not inflate the loss it reported");
+    TEST_ASSERT_EQ((uint64_t)gen, 43u, "while still ending that epoch");
+}
+
+/* An UNSETTLED claim is reported, whether it never reached klog or reached
+ * it and lost its emitter before the credit. That conflation is a decision,
+ * not an omission, and this test is where the decision is pinned.
+ *
+ * No producer-side counter can be simultaneous with a record reaching the
+ * host -- klog writes serial, then renders to the framebuffer, then appends
+ * and synchronously flushes the disk log -- so a killed emitter is
+ * necessarily misreported one way or the other, and BOTH placements straddle
+ * that same tail. The choice is therefore about DIRECTION, not width:
+ * crediting before the emission turns a lost record into a GREEN run, while
+ * crediting after turns a delivered one into a REFUSED run, and a refused
+ * run gets looked at. What makes the ambiguity practically non-binding is
+ * outside this counter -- the reap signals first and waits
+ * UTEST_CAPTURE_REAP_GRACE_MS, so an emitter inside klog finishes and
+ * credits itself. See s_capture_completed in test_usermode.c for the full
+ * argument this test pins. */
+static void test_capture_close_reports_an_unsettled_claim_fail_closed(void)
+{
+    uint64_t admitted = 1u, completed = 0u, forgiven = 0u;
+    uint32_t gen = 5u;
+
+    TEST_ASSERT_EQ(test_usermode_capture_close(&admitted, &completed,
+                                               &forgiven, &gen), 1u,
+                   "an uncredited claim is REPORTED, not assumed delivered -- "
+                   "the run is refused rather than passed while a record it "
+                   "drew a sequence number for may never have reached the host");
+    TEST_ASSERT_EQ(forgiven, 1u,
+                   "and is written off in the same act, so the refusal lands on "
+                   "this run and the next one starts from zero");
+}
+
+/* The lifetime counters are 64-bit, and the claim transition must carry them
+ * at that width. A uint32 field in the middle of the path silently discarded
+ * the high bits on the very next claim, which is worse than never widening:
+ * completed + forgiven then exceeds a truncated admitted forever, pending
+ * reads zero, and the drain stops waiting for anything at all. */
+static void test_capture_admission_survives_past_the_uint32_ceiling(void)
+{
+    uint64_t admitted = 0x1FFFFFFFFull;   /* well past UINT32_MAX */
+    uint32_t seq = 0, run = 0, drawn = 0, charged = 0;
+    int stopped = 0, over = 0;
+
+    TEST_ASSERT_EQ((uint32_t)test_usermode_capture_apply(&seq, &run, &stopped,
+                                                         &over, &drawn, &charged,
+                                                         0, &admitted),
+                   (uint32_t)UTEST_CAP_EMIT, "the claim is charged normally");
+    TEST_ASSERT_EQ(admitted, 0x200000000ull,
+                   "and the admission count keeps its high bits -- a 32-bit "
+                   "field here would drop them and strand the drain");
+    TEST_ASSERT_EQ(test_usermode_capture_pending(admitted, 0x1FFFFFFFFull, 0u),
+                   1u,
+                   "so a lifetime past the uint32 ceiling still reports the "
+                   "one record actually outstanding");
+}
+
+/* The exact collision both review legs named, as a regression: forgive run
+ * N's claim, admit an unfinished run N+1 claim, then deliver run N's late
+ * completion. N+1 must STILL report one pending record.
+ *
+ * The delivery is refused by generation, not by arithmetic, which is why
+ * this test drives the close rather than hand-adding to `completed`: after
+ * the close, run N's claim carries a generation that is no longer current,
+ * and u_capture_complete settles only against the current one. Modelling the
+ * late completion as a bare increment is precisely the mistake the earlier
+ * version of this test made -- it asserted the collision was harmless. */
+static void test_capture_late_completion_cannot_cancel_a_live_reservation(void)
+{
+    uint64_t admitted = 0u, completed = 0u, forgiven = 0u;
+    uint32_t gen = 7u;
+    uint32_t stale_claim_gen;
+    uint32_t seq = 0, run = 0, drawn = 0, charged = 0;
+    int stopped = 0, over = 0;
+
+    /* Run N admits one claim; its emitter is preempted before emitting, so
+     * it never reaches the log call and never commits. */
+    TEST_ASSERT_EQ((uint32_t)test_usermode_capture_apply(&seq, &run, &stopped,
+                                                         &over, &drawn, &charged,
+                                                         0, &admitted),
+                   (uint32_t)UTEST_CAP_EMIT, "run N's claim is charged");
+    stale_claim_gen = gen;
+
+    /* Run N's boundary writes it off and ends the epoch. */
+    TEST_ASSERT_EQ(test_usermode_capture_close(&admitted, &completed,
+                                               &forgiven, &gen), 1u,
+                   "run N reports the record it could not deliver");
+    TEST_ASSERT(stale_claim_gen != gen,
+                "and the stale claim's epoch is now closed, which is what "
+                "stops its late completion from settling anything");
+
+    /* Run N+1 admits a claim of its own, still unfinished. */
+    admitted++;
+    TEST_ASSERT_EQ(test_usermode_capture_pending(admitted, completed, forgiven),
+                   1u, "run N+1's own record is outstanding");
+
+    /* Run N's emitter finally resumes and ACTUALLY ATTEMPTS to settle. This
+     * is the step that pins the guard: asserting an unchanged pending value
+     * here would stay green with the guard deleted, because the damage of a
+     * stale settlement is not local -- it is a surplus credit that cancels
+     * somebody else's live reservation. */
+    TEST_ASSERT_EQ((uint64_t)test_usermode_capture_settle(stale_claim_gen, gen,
+                                                          &completed),
+                   0u,
+                   "a claim from a closed epoch is REFUSED settlement");
+    TEST_ASSERT_EQ(completed, 0u,
+                   "so it does not credit the counter run N+1's own claim is "
+                   "measured against");
+    TEST_ASSERT_EQ(test_usermode_capture_pending(admitted, completed, forgiven),
+                   1u,
+                   "and run N+1's record STAYS outstanding -- a late completion "
+                   "crediting a forgiven claim would cancel a live reservation "
+                   "and let this run roll over losing it");
+
+    /* The guard is not a blanket refusal: a claim of the CURRENT epoch still
+     * settles, or the drain would never reach zero on a healthy run. */
+    TEST_ASSERT_EQ((uint64_t)test_usermode_capture_settle(gen, gen, &completed),
+                   1u, "a current-epoch claim settles normally");
+    TEST_ASSERT_EQ(completed, 1u, "and credits exactly one record");
+    TEST_ASSERT_EQ(test_usermode_capture_pending(admitted, completed, forgiven),
+                   0u, "which is what lets run N+1's drain reach zero");
+}
+
+/* Three consecutive runs, each leaving something unsettled, and each stale
+ * emitter arriving one run late. No write-off may leak forward: the run that
+ * admitted a claim is the run that reports it, and a later run's own loss
+ * must still be visible underneath every accumulated forgiveness. */
+static void test_capture_write_offs_do_not_leak_across_three_runs(void)
+{
+    uint64_t admitted = 0u, completed = 0u, forgiven = 0u;
+    uint32_t gen = 1u;
+    uint32_t claim_a, claim_b, claim_c;
+    uint32_t i;
+
+    for (i = 0; i < 3u; i++) {
+        uint32_t before = gen;
+
+        admitted++;                       /* one claim, never settled */
+        TEST_ASSERT_EQ(test_usermode_capture_close(&admitted, &completed,
+                                                   &forgiven, &gen), 1u,
+                       "every run reports exactly its OWN unsettled record, "
+                       "never a predecessor's already-written-off one");
+        TEST_ASSERT(before != gen, "and ends its own epoch");
+        if (i == 0u) claim_a = before;
+        else if (i == 1u) claim_b = before;
+        else claim_c = before;
+    }
+
+    TEST_ASSERT_EQ(forgiven, 3u, "three runs wrote off three records");
+    TEST_ASSERT_EQ(test_usermode_capture_pending(admitted, completed, forgiven),
+                   0u, "and left nothing owed to a fourth");
+
+    /* Every one of those emitters now arrives late. None may settle. */
+    TEST_ASSERT_EQ((uint64_t)test_usermode_capture_settle(claim_a, gen,
+                                                          &completed), 0u,
+                   "the oldest stale claim is refused");
+    TEST_ASSERT_EQ((uint64_t)test_usermode_capture_settle(claim_b, gen,
+                                                          &completed), 0u,
+                   "and so is the middle one");
+    TEST_ASSERT_EQ((uint64_t)test_usermode_capture_settle(claim_c, gen,
+                                                          &completed), 0u,
+                   "and so is the most recent -- one epoch back is still back");
+    TEST_ASSERT_EQ(completed, 0u,
+                   "no accumulated credit exists to cancel a future claim");
+
+    /* A fourth run's genuine loss is still visible under all of it. */
+    admitted++;
+    TEST_ASSERT_EQ(test_usermode_capture_close(&admitted, &completed,
+                                               &forgiven, &gen), 1u,
+                   "so a fourth run's own lost record is still reported, not "
+                   "absorbed by three runs' worth of forgiveness");
+}
+
+/* The regression the section exists for, at the seam the kernel can drive:
+ * a descendant that claims in run N, pauses, and resumes across a second
+ * u_frame_begin() must leave run N+1's counts exactly as if it had never
+ * existed.
+ *
+ * Sequenced here as the three accounting events that shape really is --
+ * run N admits the claim; run N's boundary drains, finds it outstanding and
+ * writes it off; run N+1 starts -- because the live schedule that produces
+ * it (an emitter preempted between its claim and its klog write, across a
+ * frame rollover) is not constructible from a kernel test. */
+static void test_capture_stale_emitter_leaves_the_next_run_untouched(void)
+{
+    uint64_t admitted = 0, completed = 0, forgiven = 0;
+    uint32_t gen = 3u;
+    uint32_t seq = 0, run = 0, drawn = 0, charged = 0;
+    int stopped = 0, over = 0;
+
+    /* Run N: the descendant claims and is preempted before emitting. */
+    TEST_ASSERT_EQ((uint32_t)test_usermode_capture_apply(&seq, &run, &stopped,
+                                                         &over, &drawn, &charged,
+                                                         0, &admitted),
+                   (uint32_t)UTEST_CAP_EMIT, "the descendant's claim is charged");
+    TEST_ASSERT_EQ(test_usermode_capture_pending(admitted, completed, forgiven),
+                   1u,
+                   "run N's boundary sees the claim outstanding -- which is what "
+                   "makes the drain wait for it rather than roll over");
+
+    /* Run N's boundary writes it off and ends its epoch in one act. */
+    TEST_ASSERT_EQ(test_usermode_capture_close(&admitted, &completed,
+                                               &forgiven, &gen), 1u,
+                   "run N owns the loss and reports it against itself");
+    TEST_ASSERT_EQ(test_usermode_capture_pending(admitted, completed, forgiven),
+                   0u, "so run N+1 begins with nothing owed");
+
+    /* Run N+1: a fresh claim from a NEW binary sees pristine run state --
+     * the stale descendant perturbed neither the record charge nor the run
+     * stop latch. */
+    run = 0u;
+    over = 0;
+    stopped = 0;
+    seq = 0u;
+    TEST_ASSERT_EQ((uint32_t)test_usermode_capture_apply(&seq, &run, &stopped,
+                                                         &over, &drawn, &charged,
+                                                         0, &admitted),
+                   (uint32_t)UTEST_CAP_EMIT,
+                   "run N+1's first claim is charged normally");
+    TEST_ASSERT_EQ(charged, 1u,
+                   "and is the run's FIRST charge -- a stale emitter must not "
+                   "leave its predecessor's charge in the new run's aggregate");
 }
 
 /* ---- The claim's state TRANSITION ----------------------------------- *
@@ -3678,7 +4074,8 @@ static void test_capture_claim_charges_the_run_only_for_a_chunk(void)
     uint32_t budget = test_usermode_capture_owner_budget();
 
     TEST_ASSERT_EQ((uint32_t)test_usermode_capture_apply(&seq, &run, &stopped,
-                                                         &over, &drawn, &charged),
+                                                         &over, &drawn, &charged,
+                                                         0, (uint64_t *)0),
                    (uint32_t)UTEST_CAP_EMIT, "a fresh claim emits");
     TEST_ASSERT_EQ(drawn, 0u, "the first chunk is drawn at seq 0");
     TEST_ASSERT_EQ(seq, 1u, "an emitted chunk consumes its sequence number");
@@ -3693,7 +4090,8 @@ static void test_capture_claim_charges_the_run_only_for_a_chunk(void)
     run = 5u;
     stopped = 0;
     TEST_ASSERT_EQ((uint32_t)test_usermode_capture_apply(&seq, &run, &stopped,
-                                                         &over, &drawn, &charged),
+                                                         &over, &drawn, &charged,
+                                                         0, (uint64_t *)0),
                    (uint32_t)UTEST_CAP_OVER_OWNER, "at the limit it terminates");
     TEST_ASSERT_EQ(drawn, budget, "the terminator is drawn AT the limit, "
                                   "which is the equality the host demands");
@@ -3709,7 +4107,8 @@ static void test_capture_claim_latches_and_then_consumes_nothing(void)
     int stopped = 1, over = 0;
 
     TEST_ASSERT_EQ((uint32_t)test_usermode_capture_apply(&seq, &run, &stopped,
-                                                         &over, &drawn, &charged),
+                                                         &over, &drawn, &charged,
+                                                         0, (uint64_t *)0),
                    (uint32_t)UTEST_CAP_DROP, "a latched owner drops");
     TEST_ASSERT_EQ(seq, 4u, "a DROP must consume NO sequence number -- one "
                             "spent here is a hole the host reads as lost output");
@@ -3724,7 +4123,8 @@ static void test_capture_claim_run_stop_latches_both(void)
     int stopped = 0, over = 0;
 
     TEST_ASSERT_EQ((uint32_t)test_usermode_capture_apply(&seq, &run, &stopped,
-                                                         &over, &drawn, &charged),
+                                                         &over, &drawn, &charged,
+                                                         0, (uint64_t *)0),
                    (uint32_t)UTEST_CAP_OVER_RUN, "an exhausted run terminates");
     TEST_ASSERT_EQ((uint32_t)over, 1u, "the run latch is set so LATER owners "
                                        "stop without re-deciding");
@@ -3741,7 +4141,8 @@ static void test_capture_claim_run_stop_latches_both(void)
     seq = 0u;
     stopped = 0;
     TEST_ASSERT_EQ((uint32_t)test_usermode_capture_apply(&seq, &run, &stopped,
-                                                         &over, &drawn, &charged),
+                                                         &over, &drawn, &charged,
+                                                         0, (uint64_t *)0),
                    (uint32_t)UTEST_CAP_OVER_RUN, "a later owner meets the latch");
     TEST_ASSERT_EQ(charged, run_budget,
                    "every run-scope marker in one run reports the same frozen "
@@ -4427,6 +4828,53 @@ static void test_capture_arming_postcondition_covers_every_branch(void)
     task_utest_capture_reset(&s_capture_child_scratch);
 }
 
+/* The run-boundary reap's SELECTION predicate, over the same scratch slots.
+ *
+ * A live fork tree only ever hands it descendants, so these are the only
+ * assertions that reach the two refusal branches -- and both of them are
+ * safety branches rather than tidiness. Selecting the OWNER would make the
+ * reap kill and free the very task u_run_one is still holding report and
+ * leak snapshots into; selecting another binary's descendant would reap a
+ * task belonging to a run that has not finished. */
+static void test_capture_reap_selects_only_this_owners_descendants(void)
+{
+    task_utest_capture_reset(&s_capture_child_scratch);
+
+    TEST_ASSERT(test_usermode_capture_descendant_of((const struct task *)0, 7u)
+                    == 0,
+                "a missing task slot is never a descendant -- the predicate "
+                "must not dereference it to find out");
+
+    s_capture_child_scratch.pid = 12u;
+    TEST_ASSERT(test_usermode_capture_descendant_of(&s_capture_child_scratch, 7u)
+                    == 0,
+                "an uncaptured task is not part of any binary's capture tree, "
+                "whatever its parentage");
+
+    s_capture_child_scratch.utest_capture_active = 1;
+    s_capture_child_scratch.utest_capture_owner_pid = 9u;
+    TEST_ASSERT(test_usermode_capture_descendant_of(&s_capture_child_scratch, 7u)
+                    == 0,
+                "a captured task owned by a DIFFERENT binary belongs to that "
+                "binary's run, not to this reap");
+
+    s_capture_child_scratch.utest_capture_owner_pid = 7u;
+    s_capture_child_scratch.pid = 7u;
+    TEST_ASSERT(test_usermode_capture_descendant_of(&s_capture_child_scratch, 7u)
+                    == 0,
+                "the OWNER is never its own descendant -- reaping it would tear "
+                "down the task the launcher is still finishing with");
+
+    s_capture_child_scratch.pid = 12u;
+    TEST_ASSERT(test_usermode_capture_descendant_of(&s_capture_child_scratch, 7u)
+                    == 1,
+                "a captured task that is not the owner but carries the owner's "
+                "pid is exactly what fork() inheritance produces");
+
+    task_utest_capture_reset(&s_capture_child_scratch);
+    s_capture_child_scratch.pid = 0u;
+}
+
 /* A parent that is NOT itself captured (the common case: most tasks are
  * never test binaries) must produce an equally uncaptured child -- fork
  * must never MANUFACTURE ownership. */
@@ -4973,6 +5421,42 @@ void test_register_usermode_launcher(void)
                             TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: capture run stop latches run and owner alike",
                             test_capture_claim_run_stop_latches_both,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: run seal outranks every other capture verdict",
+                            test_capture_seal_outranks_every_other_verdict,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: a sealed claim consumes and latches nothing",
+                            test_capture_seal_consumes_nothing_and_latches_nothing,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: a capture claim reserves exactly when it draws",
+                            test_capture_claim_reserves_exactly_when_it_draws,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: pending counts capture records still owed",
+                            test_capture_pending_counts_records_still_owed,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: pending never underflows on a late completion",
+                            test_capture_pending_never_underflows,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: a stale emitter leaves the next run untouched",
+                            test_capture_stale_emitter_leaves_the_next_run_untouched,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: closing a run writes off and ends its epoch",
+                            test_capture_close_writes_off_and_ends_the_epoch,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: an unsettled claim is reported fail-closed",
+                            test_capture_close_reports_an_unsettled_claim_fail_closed,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: write-offs do not leak across three runs",
+                            test_capture_write_offs_do_not_leak_across_three_runs,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: admission survives past the uint32 ceiling",
+                            test_capture_admission_survives_past_the_uint32_ceiling,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: a late completion cannot cancel a live claim",
+                            test_capture_late_completion_cannot_cancel_a_live_reservation,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: reap selects only this owner's descendants",
+                            test_capture_reap_selects_only_this_owners_descendants,
                             TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: capture emits one owner marker then stops",
                             test_capture_emits_exactly_one_owner_marker_then_stops,

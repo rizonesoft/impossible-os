@@ -1303,12 +1303,21 @@ _Static_assert(TASK_EXIT_REASON_BASE < -(int)SIG_MAX,
  * keys on the named TIMEOUT verdict token, not on exit=N. */
 #define TASK_EXIT_UTEST_TIMEOUT         (TASK_EXIT_REASON_BASE - 3)
 
+/* The usermode test launcher reaped a task that INHERITED a binary's output
+ * capture through fork() and was still alive when the launcher finished
+ * waiting on that binary. Assigned by the launcher's run-boundary fence, and
+ * deliberately NOT the timeout reason above: a descendant has no wall clock
+ * of its own -- the launcher never waited on it -- so reporting it as one
+ * that ran out of time would name a deadline that never existed. What
+ * actually happened is that its parent's run ended underneath it. */
+#define TASK_EXIT_UTEST_REAPED          (TASK_EXIT_REASON_BASE - 4)
+
 /* How many reasons the block has handed out, and the lowest value in use.
  * Allocate the next reason as TASK_EXIT_REASON_LAST - 1, then bump BOTH of
  * these and add the name to the two asserts below. The pair is what catches
  * the half-done edit: bumping one without the other fails the build. */
-#define TASK_EXIT_REASON_COUNT          3
-#define TASK_EXIT_REASON_LAST           TASK_EXIT_UTEST_TIMEOUT
+#define TASK_EXIT_REASON_COUNT          4
+#define TASK_EXIT_REASON_LAST           TASK_EXIT_UTEST_REAPED
 
 _Static_assert(TASK_EXIT_REASON_LAST
                    == TASK_EXIT_REASON_BASE - TASK_EXIT_REASON_COUNT,
@@ -1329,7 +1338,8 @@ _Static_assert(TASK_EXIT_REASON_LAST
  * allocated below _LAST without bumping both fails to build. */
 _Static_assert(TASK_EXIT_EXEC_IMAGE_DESTROYED < -(int)SIG_MAX
                && TASK_EXIT_UTEST_IDENTITY < -(int)SIG_MAX
-               && TASK_EXIT_UTEST_TIMEOUT < -(int)SIG_MAX,
+               && TASK_EXIT_UTEST_TIMEOUT < -(int)SIG_MAX
+               && TASK_EXIT_UTEST_REAPED < -(int)SIG_MAX,
                "a reserved exit reason overlaps the -(signum) range");
 
 /* Distinctness is a SEPARATE property from range: two reasons both below
@@ -1384,7 +1394,10 @@ _Static_assert((int)TASK_EXIT_REASON_LAST < -(int)SIG_MAX
 
 _Static_assert(TASK_EXIT_EXEC_IMAGE_DESTROYED != TASK_EXIT_UTEST_IDENTITY
                && TASK_EXIT_EXEC_IMAGE_DESTROYED != TASK_EXIT_UTEST_TIMEOUT
-               && TASK_EXIT_UTEST_IDENTITY != TASK_EXIT_UTEST_TIMEOUT,
+               && TASK_EXIT_UTEST_IDENTITY != TASK_EXIT_UTEST_TIMEOUT
+               && TASK_EXIT_EXEC_IMAGE_DESTROYED != TASK_EXIT_UTEST_REAPED
+               && TASK_EXIT_UTEST_IDENTITY != TASK_EXIT_UTEST_REAPED
+               && TASK_EXIT_UTEST_TIMEOUT != TASK_EXIT_UTEST_REAPED,
                "two reserved exit reasons collide on the same value");
 
 #ifdef KERNEL_TESTS

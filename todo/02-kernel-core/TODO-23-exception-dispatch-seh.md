@@ -84,6 +84,7 @@ title: "TODO-23 -- Exception Dispatch & SEH"
 | 💎   |  15   | POSIX signal delivery from exceptions (Linux compat)               | §3, §5, D10T10 §8          |  [/]   |
 | ⭐   |  16   | Exception dispatch telemetry                                       | §4, TODO-04 §6             |  [/]   |
 | 💎   |  17   | Guard-page stack auto-grow (split from §2; land right after §2)    | §5, TODO-07 §3, TODO-01 §3 |  [/]   |
+| ⭐   |  18   | Unwind fixtures independent of where the linker put real code      | §7                         |  [ ]   |
 
 > 💎 = parity -- Windows implements this feature; Impossible OS must match.
 > ⭐ = exclusive -- not present in either Windows or Linux at the kernel level.
@@ -170,7 +171,7 @@ Extract the CONTEXT (§1) and fault address before deciding. Mark the old behavi
 > - **Scope boundary** -- §2 owns triage + record build + dispatch routing; ring-3 delivery is §5, kernel SEH is §14, stack auto-grow is §17, safe probing is §13.
 >
 > **Verified:** 2026-07-18 | ship `eda0aea7` + review fixes | 4/4 items | build OK | smoke PASS (KVM 2.64s)
-> **Accepted:** [H] §14 `ki_raise_kernel_exception` IRQL check must be fault-safe (non-`klog`) -- a #PF at elevated IRQL inside klog would deadlock on `s_klog_lock` -> XREF: 02-kernel-core/TODO-23 §14 (item: "replace the §2 UNHANDLED stub with the real `ki_raise_kernel_exception(rec, ctx, frame)` body; fault-safe (non-`klog`) IRQL check" at line 173)
+> **Accepted:** [H] §14 `ki_raise_kernel_exception` IRQL check must be fault-safe (non-`klog`) -- a #PF at elevated IRQL inside klog would deadlock on `s_klog_lock` -> XREF: 02-kernel-core/TODO-23 §14 (item: "replace the §2 UNHANDLED stub with the real `ki_raise_kernel_exception(rec, ctx, frame)` body; fault-safe (non-`klog`) IRQL check" at line 174)
 > **Quality reviewed:** 2026-07-18 | Codex 7x (adversarial, consistency, perf, re-adversarial) | 2H+4M fixed, 1H accepted-XREF, 1H rejected (long-mode always pushes SS:RSP) | scope: kernel-code-quality
 
 
@@ -219,7 +220,7 @@ Each handler builds an `EXCEPTION_RECORD` (§1) and, for the recoverable paths, 
 > - **ABI decision** -- #CP uses `STATUS_STACK_BUFFER_OVERRUN` + subcode 0x39, not `STATUS_CONTROL_STACK_VIOLATION` (a different path); matches real Windows. `STATUS_STACK_BUFFER_OVERRUN` now canonical in `ntstatus.h` (deduped from `stack_canary.c`).
 > - **Scope boundary** -- general fault vectors only; #PF stays with the VMM triage (section 2), #NM with lazy-FPU, NMI/#DF/#MC keep dedicated handlers. Ring-3 delivery is §5; kernel SEH §8/§14; three refinements stay open above (#CP SHSTK/IBT decode, cause-aware #GP, #MF/#XM).
 > **Verified:** 2026-07-18 | commit `bfdfe36e` + review fixes | 5/8 items | build OK | smoke PASS (TCG 2.54s)
-> **Accepted:** [M] user-mode unhandled fault -> `panic_screen()` is interim (no per-process termination yet) -> XREF: 02-kernel-core/TODO-23 §5 (item: "Delivery failure ... terminate the process, never `panic_screen()`" at line 222)
+> **Accepted:** [M] user-mode unhandled fault -> `panic_screen()` is interim (no per-process termination yet) -> XREF: 02-kernel-core/TODO-23 §5 (item: "Delivery failure ... terminate the process, never `panic_screen()`" at line 223)
 > **Deferred:** [M] #CP delivers the SHSTK subcode for IBT violations too (dormant until CET enables) -> XREF: 02-kernel-core/TODO-23 §3 (item: "`#CP` error-code decode" at line 204)
 > **Deferred:** [M] cause-aware #GP decode (privileged-instruction / invalid-LOCK sub-cases) -> XREF: 02-kernel-core/TODO-23 §3 (item: "Cause-aware `#GP`" at line 208)
 > **Deferred:** [M] #MF/#XM FP-exception delivery is ownerless -> XREF: 02-kernel-core/TODO-23 §3 (item: "FP-exception delivery" at line 209)
@@ -456,7 +457,7 @@ It iterates from the current RSP upward via `RtlVirtualUnwind` (§6), calling ea
 > **Accepted:** [H] full stack-safety hardening (guard-page-aware bounds + asm entry-trampoline check before the C prologue + emergency stack + near-guard test); best-effort entry headroom check + compact snapshot + noinline preflight shipped, no ring-0 caller yet -> XREF: 02-kernel-core/TODO-23 §9 (item: "Stack-safety hardening (full)" at line 443)
 > **Accepted:** [H] leaf convention for metadata-free frames + whole-stack EXIT unwind (both fail safe today) -> XREF: 02-kernel-core/TODO-23 §9 (item: "Leaf-convention step for a metadata-free frame" at line 441)
 > **Accepted:** [M] RtlUnwindEx exact ms_abi/winnt.h ABI types (kernel-internal SysV today, like the §6 Rtl* engine) -> XREF: 02-kernel-core/TODO-23 §6 (item: "Exact winnt.h ABI types on the public unwind prototypes" at line 342)
-> **Deferred:** [H] full nested/multi-scope collided-unwind recovery + fault-safe untrusted-context reads + precise finally-funclet tracking -> XREF: 02-kernel-core/TODO-23 §14 (item: "Full `EXCEPTION_COLLIDED_UNWIND` protocol" at line 459)
+> **Deferred:** [H] full nested/multi-scope collided-unwind recovery + fault-safe untrusted-context reads + precise finally-funclet tracking -> XREF: 02-kernel-core/TODO-23 §14 (item: "Full `EXCEPTION_COLLIDED_UNWIND` protocol" at line 460)
 > **Deferred:** [M] CET shadow-stack INCSSP during unwind (kernel CET disabled) -> XREF: 02-kernel-core/TODO-23 §9 (item: "CET: advance the shadow-stack pointer" at line 442)
 > **Quality reviewed:** 2026-07-19 | Codex 18x (design, adversarial, consistency, perf, re-adversarial) | 18H+7M+3L fixed, 0 open, 5 accepted/deferred-XREF | scope: kernel-code-quality
 
@@ -748,6 +749,25 @@ This section is gated on the Linux compat layer existing -- stub it out with a c
 > **Deferred:** [H] growable stacks need a reserved-VA window backed on demand + a per-process frame-map primitive (stacks are contiguous identity-mapped today, no headroom) -> XREF: `03-memory-concurrency/TODO-01-vmm-memory-protection.md §3` (item: "`MEM_COMMIT` path: mark region committed; zero-fill backing frames on first access" at line 124)
 > **Deferred:** [M] reserve-exhausted terminal must deliver `STATUS_STACK_OVERFLOW` without touching the exhausted stack; ring-3 delivery/termination is itself deferred -> XREF: `02-kernel-core/TODO-23 §5` (item: "clear the per-CPU scratch slot THEN hand to a guaranteed idle-frame terminate primitive" at line 309)
 > **Deferred:** [M] COMMIT (`pmm_alloc_frame` + `vmm_map_page`) is unlocked and cannot run under a short spinlock; needs PMM + per-process PML4 locking -> XREF: `03-memory-concurrency/TODO-01-vmm-memory-protection.md §3` (item: "Per-process PML4 spinlock" at line 129)
+
+
+---
+
+## 18. Unwind Fixtures Independent of Where the Linker Put Real Code
+
+The RtlUnwindEx fixtures in `src/kernel/test/test_unwind.c` register a synthetic function table at `base = min(&img, &handler)`. Because `handler` is real kernel `.text`, `base` is a real code address, so any address the fixtures derive as a small offset from it can land inside a real function that carries its own `.pdata` entry -- and `RtlLookupFunctionEntry` may then answer with the kernel's own unwind info instead of the fixture's. Whether that happens is decided by the linker, not by the behavior under test.
+
+> [!NOTE]
+> Filed 2026-08-01 from TODO-04 §49, which hit it live: growing `src/kernel/test/test_usermode_launcher.c` (test code in a DIFFERENT category, which does not execute in the `except` suite) moved `test_register_kworker` to exactly `base+0x10` for `tu_continue_execution_handler`, and `test_rtlunwind_continue_execution_invalid` began returning `STATUS_SUCCESS` instead of `STATUS_INVALID_DISPOSITION` -- a red suite caused by an unrelated section's code size. §49 fixed the CODE RANGE half at source by anchoring it inside the `img` buffer (static storage no `.pdata` can cover) rather than at a fixed RVA from `base`; see `tu_register_handler_fn`. The SENTINEL half is untouched and is the same hazard. -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §49 (item: "Reap or fence the whole CAPTURED DESCENDANT TREE at the run boundary, not just the top-level pid")
+
+- [ ] Anchor the fixtures' stop-sentinel to the metadata image, not to `base + 0x1000`
+      - Ten call sites in `src/kernel/test/test_unwind.c` declare `const uint64_t SENTINEL = base + 0x1000;` with the comment "outside the table -> lookup NULL". That address is real kernel `.text` whenever the handler sits below the image buffer, so a real function there makes the lookup SUCCEED and the walk continue past the frame the fixture meant to stop at.
+      - The fix shape that needs no per-caller arithmetic: have `tu_register_handler_fn` return the sentinel alongside `base` and `body_pc`, pointing inside `img` but outside the synthetic code range.
+- [ ] Prove the independence rather than asserting it
+      - A fixture that only passes today is what this section is about. Add a check that the addresses the fixtures rely on carry no static unwind entry -- a `RtlLookupFunctionEntry` on the sentinel returning NULL is exactly the property the comment already claims.
+- [ ] Commit: `"test: anchor unwind fixtures to their own image, not to linker layout"`
+
+**Test checkpoint:** every RtlUnwindEx fixture produces the same verdict after an unrelated translation unit grows by several KB; a lookup on the stop-sentinel returns NULL by construction rather than by luck. Test on: QEMU TCG, QEMU KVM.
 
 
 ---

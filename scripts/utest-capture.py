@@ -9,6 +9,19 @@ ring-3 stdout where it is PRODUCED and emits it as authenticated klog records:
     [UTEST-CAPTURE-BEGIN] owner=<pid> chunk_max=<n> name=<binary.exe>
     [UTEST-CAPTURE] owner=<pid> wr=<id> seq=<n> len=<raw> final=<0|1> <escaped>
     [UTEST-CAPTURE-LOST] owner=<pid> len=unknown
+    [UTEST-CAPTURE-PENDING] run=<n> pending=<n>
+    [UTEST-CAPTURE-UNREAPED] owner=<pid> live=<n>
+
+The last two are the RUN BOUNDARY's own reports, and both refuse the run they
+appear in rather than annotating it. The launcher waits on one pid per binary
+while fork() hands the same capture channel to every descendant, so at the end
+of a run it seals capture admission, drains the claims already outstanding,
+and reaps the descendant tree. PENDING says the drain ended with records
+claimed but never emitted -- holes in an owner's sequence, named and charged
+to the run that drew them instead of surfacing as corruption in whichever run
+follows. UNREAPED says descendants outlived the reap's round cap; their future
+records are already fenced by the owner's stop latch, so it is a resource
+signal rather than a wire one, and still not a clean run.
 
 `len` counts RAW (pre-escape) bytes. `<escaped>` rewrites `\\`, `[`, and every
 byte < 0x20 or >= 0x7F as `\\xHH` (src/kernel/test/test_usermode.c, the
@@ -197,6 +210,18 @@ MAX_OWNERS = 4096
 # one-byte capture -- which let a malformed authenticated record slip past the
 # malformed-family detector by parsing successfully.
 _U32 = r"(0|[1-9][0-9]{0,9})"
+# The same canonical shape for a field the producer only ever emits NONZERO.
+# It is a grammar rather than a range check on purpose: a zero there is a
+# record the kernel cannot have written, which is a SHAPE fault, and shape
+# faults outrank semantic ones in this module's refusal precedence.
+#
+# What this deliberately does NOT do is bound the value by a kernel constant
+# (the run record budget, TASK_MAX). Mirroring a producer bound host-side is
+# the drift this module refuses everywhere else -- the host learns the
+# producer's bounds from records like `chunk_max=`, it does not hardcode
+# them -- so a count above what the kernel can currently reach is left to the
+# uint32 range check alongside every other numeric field.
+_U32_POS = r"([1-9][0-9]{0,9})"
 _BEGIN_RE = re.compile(
     r"\[UTEST-CAPTURE-BEGIN\] owner=" + _U32 + r" chunk_max=" + _U32
     + r" name=(\S+)"
@@ -231,6 +256,27 @@ _OVER_RE = re.compile(
     r"\[UTEST-CAPTURE-OVER\] owner=" + _U32 + r" seq=" + _U32
     + r" scope=(owner|run) limit=" + _U32 + r" charged=" + _U32
 )
+# The run boundary's report of capture records it could not deliver. The
+# producer seals admission, drains the claims already outstanding, and emits
+# this INSIDE the originating run when any of them never reached the wire --
+# so a hole in an owner's sequence has a named cause attributed to the run
+# that drew it, instead of surfacing as unexplained corruption in whichever
+# run happens to follow.
+# `pending` uses the POSITIVE grammar, not the general one: the producer emits
+# this record only when the close wrote something off (`if (pending)`), so
+# `pending=0` is a shape it cannot produce. Accepting it would classify an
+# impossible authenticated record as a semantic run failure instead of the
+# malformed producer output it is -- the same inverse-of-the-printf rule the
+# `_U32` block above exists to state.
+_PENDING_RE = re.compile(
+    r"\[UTEST-CAPTURE-PENDING\] run=" + _U32 + r" pending=" + _U32_POS)
+# The run boundary's report of capture-owning descendants it could not reap
+# within its round cap -- a producer forking faster than the launcher kills.
+# Their FUTURE records are already fenced by the owner's stop latch, so this
+# is a resource-leak signal rather than a wire-integrity one, but it is still
+# a refusal: a run that leaves live tasks behind is not a clean run.
+_UNREAPED_RE = re.compile(
+    r"\[UTEST-CAPTURE-UNREAPED\] owner=" + _U32 + r" live=" + _U32_POS)
 
 _UINT32_MAX = 0xFFFFFFFF
 
@@ -553,6 +599,49 @@ def _scan(lines, prefix):
                 )
             owner.over = (seq, scope, limit, charged)
             continue
+
+        m = _PENDING_RE.fullmatch(body)
+        if m:
+            run, count = int(m.group(1)), int(m.group(2))
+            _count(0)
+            # Both fields, not just the interesting one: the grammar admits 10
+            # digits, which reaches past a producer uint32, and an over-range
+            # RUN would name a run ordinal the producer cannot have emitted
+            # just as surely as an over-range count would.
+            if run > _UINT32_MAX or count > _UINT32_MAX:
+                raise Refusal(
+                    "capture_field_out_of_range",
+                    f"the pending report declares run={run} pending={count}, "
+                    "wider than the producer's uint32 fields",
+                )
+            # Refused rather than recorded, and refused against THIS run --
+            # which is the whole reason the producer emits it here instead of
+            # letting the stale records surface in the next run. Each pending
+            # record is a sequence number drawn for a chunk that never
+            # arrived, so this owner's stream has holes; accepting it would
+            # publish a capture artifact that silently omits output the
+            # binary produced.
+            raise Refusal(
+                "capture_pending_records",
+                f"run={run} sealed with {count} capture record(s) claimed but "
+                "never emitted -- the run's capture streams are incomplete",
+            )
+
+        m = _UNREAPED_RE.fullmatch(body)
+        if m:
+            pid, live = int(m.group(1)), int(m.group(2))
+            _count(0)
+            if pid > _UINT32_MAX or live > _UINT32_MAX:
+                raise Refusal(
+                    "capture_field_out_of_range",
+                    f"the unreaped report declares owner={pid} live={live}, "
+                    "wider than the producer's uint32 fields",
+                )
+            raise Refusal(
+                "capture_unreaped_descendants",
+                f"owner={pid} left {live} capture-owning descendant(s) alive "
+                "at the run boundary",
+            )
 
         # The run terminator is NOT capture-family, so a slice without one is
         # not corruption here -- it simply leaves `spawned` unknown. A

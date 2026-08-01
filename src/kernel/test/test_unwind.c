@@ -1375,11 +1375,40 @@ static void tu_build_uhandler_uinfo(uint8_t *u, uint32_t handler_rva, int has_ha
     u[11] = (uint8_t)((handler_rva >> 24) & 0xFFu);
 }
 
-/* Register one synthetic function [base+0x10, base+0x30) whose UHANDLER points at
- * `handler`. base is chosen below both the metadata image and the handler so the
- * handler RVA (handler - base) and UnwindInfoAddress (img - base) both fit u32
- * and RtlVirtualUnwind reconstructs the real handler VA (base + handler_rva).
- * Returns base via *out_base and body PC (base+0x18) via *out_body_pc. */
+/* Byte offset, inside the metadata image, of the SYNTHETIC function's code
+ * range. It sits above the UNWIND_INFO at 0x40 and well inside img_buf_t's
+ * 256 bytes, so the range and the metadata never overlap. */
+#define TU_SYN_CODE_OFF  0x80u
+#define TU_SYN_CODE_LEN  0x20u
+/* Where inside that range a control PC sits: past the UNWIND_INFO's
+ * SizeOfProlog (5), so a lookup lands in the body rather than the prolog. */
+#define TU_SYN_BODY_OFF  0x08u
+
+/* Register one synthetic function whose UHANDLER points at `handler`. base is
+ * chosen below both the metadata image and the handler so the handler RVA
+ * (handler - base) and UnwindInfoAddress (img - base) both fit u32 and
+ * RtlVirtualUnwind reconstructs the real handler VA (base + handler_rva).
+ * Returns base via *out_base and the body PC via *out_body_pc.
+ *
+ * THE CODE RANGE LIVES INSIDE `img`, NOT AT A FIXED SMALL RVA FROM `base`.
+ * That is a correctness requirement, not tidiness. `base` is the LOWER of the
+ * metadata image and the handler, and the handler is real kernel .text, so
+ * `base` is normally a real code address -- which made the old fixed range
+ * [base+0x10, base+0x30) alias whatever kernel function happened to be laid
+ * out just after the handler. When a real function starts inside that window
+ * it carries its own .pdata entry covering the body PC, so
+ * RtlLookupFunctionEntry could resolve REAL unwind info instead of this
+ * table's, and the test then measured the kernel's own frame layout.
+ *
+ * That is a coin flip decided by the linker: measured 2026-08-01, an
+ * unrelated growth of src/kernel/test/test_usermode_launcher.c (test code in
+ * a different category, which does not even execute in this suite) moved
+ * test_register_kworker to exactly base+0x10 for tu_continue_execution_
+ * handler, and test_rtlunwind_continue_execution_invalid began reporting
+ * STATUS_SUCCESS instead of STATUS_INVALID_DISPOSITION. Anchoring the range
+ * to the img buffer -- static storage that no .pdata entry can cover --
+ * removes the aliasing entirely rather than moving the window somewhere
+ * currently-empty. */
 static void tu_register_handler_fn(img_buf_t *img, RUNTIME_FUNCTION *rf, void *handler,
                                    uint64_t *out_base, uint64_t *out_body_pc)
 {
@@ -1389,14 +1418,12 @@ static void tu_register_handler_fn(img_buf_t *img, RUNTIME_FUNCTION *rf, void *h
     uint32_t handler_rva = (uint32_t)(uh - base);
     uint32_t uinfo_rva   = (uint32_t)((uimg + 0x40) - base);
     tu_build_uhandler_uinfo(&img->b[0x40], handler_rva, 1);
-    /* Fixed small RVAs for the code range so control PCs are simple; the
-     * metadata + handler live at their real (large) RVAs from base. */
-    rf->BeginAddress = 0x10;
-    rf->EndAddress = 0x30;
+    rf->BeginAddress = (uint32_t)((uimg + TU_SYN_CODE_OFF) - base);
+    rf->EndAddress = (uint32_t)((uimg + TU_SYN_CODE_OFF + TU_SYN_CODE_LEN) - base);
     rf->UnwindInfoAddress = uinfo_rva;
     RtlAddFunctionTable(rf, 1, base);
     *out_base = base;
-    *out_body_pc = base + 0x18;
+    *out_body_pc = uimg + TU_SYN_CODE_OFF + TU_SYN_BODY_OFF;
 }
 
 /* ---- RtlUnwindEx: __finally chain + flags + target resume ---- */
