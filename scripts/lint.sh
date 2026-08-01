@@ -1510,6 +1510,27 @@ elif [ -f "$REPO_ROOT/scripts/todo-section-order.py" ]; then
     fi
 fi
 
+# Check 22b: a `## N.` body must not sit AFTER the closing matter.
+# Check 22 tests that section numbers ASCEND; it is silent when sections are
+# appended past `## OS Comparison` / `## Unit Tests` / `## Verification` /
+# `## History`, because those sections are still numerically ordered among
+# themselves. Measured 2026-08-01: TODO-04 carried sections 53-59 after all
+# three closing blocks and lint reported 0 errors -- the exact TODO-06 shape
+# CLAUDE.md already names, invisible to the checker that exists to catch it.
+# WARNING, not ERROR, on purpose: promoting a pre-existing violation to
+# blocking would wedge the commit of whatever run is mid-section in that file.
+# Repair with `--fix` at a boundary (it is a pure block move, and the script
+# refuses anything else), then promote.
+if [ -f "$REPO_ROOT/scripts/todo-section-order.py" ]; then
+    LINT22B_OUT="$(cd "$REPO_ROOT" && python3 scripts/todo-section-order.py --check-placement 2>/dev/null || true)"
+    if [ -n "$LINT22B_OUT" ]; then
+        while IFS= read -r line; do
+            [ -n "$line" ] && echo -e "${YELLOW}warn${NC}: Check 22b (todo-section-placement) $line"
+            WARNINGS=$((WARNINGS + 1))
+        done <<< "$LINT22B_OUT"
+    fi
+fi
+
 # ============================================================================
 # Check 23: no open `- [ ]` item orphaned behind a stamped (DONE) TODO section
 # ============================================================================

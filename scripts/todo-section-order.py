@@ -93,6 +93,40 @@ def is_ordered(text: str) -> bool:
     return nums == sorted(nums)
 
 
+def sections_after_closing(text: str):
+    """`## N.` sections that sit AFTER the closing matter, in file order.
+
+    A SEPARATE predicate from `is_ordered` on purpose. Sections appended past
+    `## OS Comparison` / `## Unit Tests` / `## Verification` / `## History` are
+    still NUMERICALLY ordered among themselves, so the sorted-numbers test is
+    silent about them -- measured 2026-08-01 on TODO-04, where sections 53-59
+    sat after all three closing blocks and `lint.sh` reported 0 errors. This is
+    the exact shape CLAUDE.md cites from TODO-06 ("sections 12-13 appended
+    AFTER its OS Comparison / Unit Tests / Verification / History blocks"), so
+    the doctrine named it while the checker could not see it.
+
+    Kept out of `--check` deliberately: that mode is wired to a lint ERROR that
+    blocks commits, and promoting a pre-existing violation to blocking would
+    wedge whatever run is mid-section in that file. Report first, repair at a
+    boundary, promote after.
+    """
+    lines = text.split("\n")
+    first_closing = None
+    for i, l in enumerate(lines):
+        if ANY_H2_RE.match(l) and not SECTION_RE.match(l):
+            if l[3:].strip() in CLOSING_MATTER:
+                first_closing = i
+                break
+    if first_closing is None:
+        return []
+    out = []
+    for i in range(first_closing, len(lines)):
+        m = SECTION_RE.match(lines[i])
+        if m:
+            out.append((int(m.group(1)), i + 1, lines[i].strip()))
+    return out
+
+
 def reorder(text: str):
     """Reordered text, or None if unsafe / already ordered."""
     p = parse(text)
@@ -128,7 +162,25 @@ def _targets(argv):
     return [Path(p) for p in sorted(glob.glob("todo/**/*.md", recursive=True))]
 
 
+def _check_placement(paths) -> int:
+    hits = 0
+    for path in paths:
+        try:
+            text = Path(path).read_text(encoding="utf-8")
+        except Exception:
+            continue
+        bad = sections_after_closing(text)
+        if bad:
+            hits += 1
+            names = ", ".join(f"section {n} (line {ln})" for n, ln, _ in bad[:6])
+            more = "" if len(bad) <= 6 else f" +{len(bad) - 6} more"
+            print(f"{path}: {len(bad)} section(s) after the closing matter: {names}{more}")
+    return 1 if hits else 0
+
+
 def main(argv) -> int:
+    if "--check-placement" in argv:
+        return _check_placement(_targets(argv))
     mode = ("fix" if "--fix" in argv else
             "diff" if "--diff" in argv else "check")
     rc = 0
