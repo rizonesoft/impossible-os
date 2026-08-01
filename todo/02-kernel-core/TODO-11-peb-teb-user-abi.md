@@ -698,6 +698,9 @@ A 2-CPU `SUITE=exec` run halted at the FIRST user-mode binary with `[CRIT] sched
 
 - [ ] Reproduce deterministically before changing anything: identify what orders the TEB publish against the `KERNEL_GS_BASE` write on the AP path, and whether a tick landing between them is the window
       The single observed instance was `[cpu:0]` at the ring-3 entry of the first binary, on a 2-CPU TCG run. Both `task.teb` and `thread.teb` were already set, which narrows it to the MSR write rather than TEB allocation.
+      - **Rate measurement 2026-08-01 (TODO-04 §51):** 0 occurrences in 6 consecutive 2-CPU `SUITE=exec` runs, all exit 0, plus 0 across ~20 further 2-CPU full-suite runs on the same tree. The live-gotcha file recorded roughly 1 in 3 on 2026-07-31, so the rate has dropped sharply without anyone fixing this -- which makes a single-shot gate even less able to see it, and makes an unreproduced run weaker evidence of absence than it looks.
+      - A repeat sweep of BARE boots measures the wrong thing: the three 2026-08-01 sightings all fired inside a full `SUITE=exec` run or a matrix leg, while 10 consecutive plain `SMOKE_SMP=1` boots passed. Whatever the trigger is, it correlates with state the suite leaves behind.
+      -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §51 (item: "Reproduce and root-cause the intermittent boot halt observed in the same window, or prove it cannot recur")
 - [ ] Close the window at the source rather than by retrying or by relaxing the check -- the check is the net that caught this and must keep halting
       -> XREF: `02-kernel-core/TODO-11-peb-teb-user-abi.md` §4 (item: "KERNEL_GS_BASE written at task_exec / fork")
 - [ ] Add an SMP regression test that fails when the TEB is published without its paired `kernel_gs_base`, so the ordering cannot silently regress again

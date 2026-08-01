@@ -1091,7 +1091,13 @@ struct boot_config {
     /* Test mode */
     uint8_t  test;             /* 1 = run unit tests only, then shutdown */
     uint8_t  test_suite;       /* category filter: 0..TEST_CAT_COUNT-1 = specific, 0xFF = all (default) */
-    uint8_t  test_quiet;       /* 1 = suppress PASS lines, show FAIL + summary only */
+    uint8_t  test_quiet;       /* 0 = verbose, 1 = suppress PASS lines (FAIL +
+                                * summary only), 2 = quiet PASS lines PLUS the
+                                * per-suite [COUNT] trace. Read with ascii_atoi
+                                * since it was introduced, so widening it from a
+                                * flag to this enum adds no field and needs no
+                                * BOOT_INFO_VERSION bump. TEST_QUIET_* in
+                                * include/kernel/test/test.h names the values. */
     /* Debug diagnostics */
     uint8_t  diag_delay;       /* seconds to pause on each diag screen (0 = skip) */
     uint8_t  diag_splash;      /* 1 = show diag on splash (bare metal, no serial) */

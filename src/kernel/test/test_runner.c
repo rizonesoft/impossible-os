@@ -125,6 +125,172 @@ int64_t test_runner_last_leak_delta(void)
 static test_category_t g_filter = TEST_CAT_ALL;
 static int             g_quiet  = 0;
 
+/* [COUNT] trace switch -- OFF unless boot.conf asked for it
+ * (test_quiet=TEST_QUIET_COUNT_TRACE). Opt-in rather than tied to verbosity;
+ * the reasoning is at TEST_QUIET_* in include/kernel/test/test.h. */
+static int             g_count_trace = 0;
+
+/* ---- Per-suite assertion accounting: the [COUNT] trace ----
+ *
+ * The runner's headline "=== N tests passed" is what every reader treats as
+ * the regression signal, and it has been observed MOVING on an unchanged tree
+ * (a 6-assertion swing, zero failures either way). The delta was
+ * unattributable: the suite loop computed each suite's pass count and threw it
+ * away on the next line, so the only artifact of a drifting total was the
+ * total. These records make each suite's contribution a readable fact, so two
+ * runs diff to the SUITE that moved instead of to a number nobody can place.
+ *
+ * Three properties are load-bearing; none are decoration.
+ *
+ *  - LOSSLESS. Emitted through klog_unrated(), never plain klog(). The shared
+ *    per-subsystem limiter drops above KLOG_RATE_DEFAULT (100) messages per
+ *    KLOG_RATE_WINDOW_MS (1000 ms) window, and a dropped record is INVISIBLE
+ *    to a consumer -- a host-side comparison would then compare the same
+ *    truncated subset across runs and report "identical" precisely when the
+ *    varying suite's record was the one discarded. The TEST tag escapes the
+ *    limiter today only by accident: klog.c sizes the table at 32 rate slots,
+ *    the boot path burns all of them before the first TEST message, and
+ *    rate_slot() returns NULL so rate_check() is never consulted. That is a
+ *    property of tag ordering, not a contract, and it is the kind of thing a
+ *    later subsystem rename revokes silently.
+ *
+ *  - COMPLETENESS-CHECKABLE. Every record carries a monotonic ordinal from 1,
+ *    and the trailer announces how many were emitted alongside the run totals.
+ *    A consumer seeing a gap, a duplicate, or a trailer that disagrees with
+ *    what it counted knows its input is truncated rather than stable, which is
+ *    the difference between "the totals match" and "I could not tell".
+ *
+ *  - OFF BY DEFAULT, on its own switch. Enabled only by boot.conf
+ *    test_quiet=TEST_QUIET_COUNT_TRACE (2), never implied by verbosity. This
+ *    is not caution, it is two measurements. Emitting unconditionally on the
+ *    QUIET path -- the one every automated gate runs -- took the suite from a
+ *    3.8-4.6s baseline to 10.7s, 2704 extra records of real serial I/O pushed
+ *    into the very timing environment whose stability is under measurement.
+ *    Riding VERBOSE instead was worse: a verbose run emits ~28k per-assertion
+ *    PASS lines and does not finish inside scripts/test.sh's 60s window at all
+ *    (measured still mid-run at suite 2188 after 54.2s), so the only mode that
+ *    could attribute a drift would have been the one mode that cannot
+ *    complete. Quiet-plus-trace keeps both properties: no PASS-line flood, and
+ *    every suite's contribution on the wire.
+ *
+ *    Enabling it does cost ring history: klog's ring holds 1000 entries, and a
+ *    traced run reports ~5275 early entries lost against ~2573 for the same
+ *    untraced quiet suite. The ring already overflows by 2.5x without the
+ *    trace, the loss is confined to a diagnostic mode nothing gates on, and
+ *    the alternative -- a second sink with deferred export -- buys back log
+ *    history the trace run is not there to read. Measured, not overlooked.
+ *
+ * The record body is built by a PURE formatter rather than handed to klog's
+ * varargs directly, for the same reason test_usermode.c builds its wire
+ * records by hand: klog's ring entry is `message[256]` and a longer line is
+ * cut SILENTLY, which for a completeness-checked format turns a load-bearing
+ * field into a parse failure with no fault. Building it here bounds the width
+ * at the source, makes truncation an explicit marked outcome instead of an
+ * invisible one, and leaves every branch reachable from a unit test with
+ * synthetic inputs (the seam quota_sweep_classify uses for the same reason). */
+
+/* Append `src` to `dst[*pos]`, bounded by `cap`. Returns 1 on success, 0 if
+ * `src` would overflow. Leaves dst NUL-terminated either way. */
+static int tc_append(char *dst, uint32_t *pos, uint32_t cap, const char *src)
+{
+    uint32_t p = *pos;
+    while (*src) {
+        if (p + 1 >= cap) { dst[p] = '\0'; *pos = p; return 0; }
+        dst[p++] = *src++;
+    }
+    dst[p] = '\0';
+    *pos = p;
+    return 1;
+}
+
+/* Append `v` in decimal. Same contract as tc_append(). */
+static int tc_append_u32(char *dst, uint32_t *pos, uint32_t cap, uint32_t v)
+{
+    char     tmp[11];               /* 4294967295 + NUL */
+    uint32_t n = 0;
+
+    if (v == 0) {
+        tmp[n++] = '0';
+    } else {
+        char rev[10];
+        uint32_t r = 0;
+        while (v > 0) { rev[r++] = (char)('0' + (v % 10u)); v /= 10u; }
+        while (r > 0) tmp[n++] = rev[--r];
+    }
+    tmp[n] = '\0';
+    return tc_append(dst, pos, cap, tmp);
+}
+
+/* Append one `<key>=<value>` field preceded by a space. */
+static int tc_append_field(char *dst, uint32_t *pos, uint32_t cap,
+                           const char *key, uint32_t v)
+{
+    if (!tc_append(dst, pos, cap, " ")) return 0;
+    if (!tc_append(dst, pos, cap, key)) return 0;
+    return tc_append_u32(dst, pos, cap, v);
+}
+
+int test_count_record_format(char *dst, uint32_t cap, uint32_t ordinal,
+                             const char *cat, const char *suite,
+                             uint32_t passed, uint32_t failed,
+                             uint32_t skipped, uint32_t pending)
+{
+    uint32_t pos = 0;
+    int      ok  = 1;
+
+    if (!dst || cap == 0) return 0;
+    dst[0] = '\0';
+
+    /* The suite NAME is the only unbounded field, and it is also the
+     * comparison KEY -- two suites truncated to the same prefix would compare
+     * equal and hide exactly the drift this record exists to expose. So a
+     * truncated record is marked rather than quietly shortened: the host
+     * parser treats `trunc=1` as an unusable key, not as a name. */
+    if (!tc_append(dst, &pos, cap, "[COUNT] #"))        ok = 0;
+    if (ok && !tc_append_u32(dst, &pos, cap, ordinal))  ok = 0;
+    if (ok && !tc_append(dst, &pos, cap, " "))          ok = 0;
+    if (ok && !tc_append(dst, &pos, cap, cat ? cat : "?")) ok = 0;
+    if (ok && !tc_append(dst, &pos, cap, " "))          ok = 0;
+    if (ok && !tc_append(dst, &pos, cap, suite ? suite : "?")) ok = 0;
+    if (ok && !tc_append_field(dst, &pos, cap, "p=", passed))  ok = 0;
+    if (ok && !tc_append_field(dst, &pos, cap, "f=", failed))  ok = 0;
+    if (ok && !tc_append_field(dst, &pos, cap, "s=", skipped)) ok = 0;
+    if (ok && !tc_append_field(dst, &pos, cap, "P=", pending)) ok = 0;
+
+    if (!ok) {
+        /* Overwrite the tail with the marker. Reserving room for it up front
+         * would shorten every record for a case that the 224-byte budget puts
+         * out of reach anyway (the longest registered suite name is 85 bytes);
+         * rewinding here keeps the common record full-width and still makes
+         * the rare one self-describing. */
+        uint32_t back = (cap > TEST_COUNT_TRUNC_MARK_LEN)
+                            ? cap - 1u - TEST_COUNT_TRUNC_MARK_LEN
+                            : 0u;
+        if (back < pos) pos = back;
+        dst[pos] = '\0';
+        (void)tc_append(dst, &pos, cap, " trunc=1");
+        return 0;
+    }
+    return 1;
+}
+
+int test_count_trailer_format(char *dst, uint32_t cap, uint32_t records,
+                              uint32_t passed, uint32_t failed,
+                              uint32_t skipped, uint32_t pending)
+{
+    uint32_t pos = 0;
+
+    if (!dst || cap == 0) return 0;
+    dst[0] = '\0';
+
+    if (!tc_append(dst, &pos, cap, "[COUNT-END]"))                 return 0;
+    if (!tc_append_field(dst, &pos, cap, "records=", records))     return 0;
+    if (!tc_append_field(dst, &pos, cap, "p=", passed))            return 0;
+    if (!tc_append_field(dst, &pos, cap, "f=", failed))            return 0;
+    if (!tc_append_field(dst, &pos, cap, "s=", skipped))           return 0;
+    return tc_append_field(dst, &pos, cap, "P=", pending);
+}
+
 /* ---- Category helpers ---- */
 
 const char *test_category_name(test_category_t cat)
@@ -187,6 +353,11 @@ void test_runner_set_filter(test_category_t cat)
 void test_runner_set_quiet(int quiet)
 {
     g_quiet = quiet;
+}
+
+void test_runner_set_count_trace(int on)
+{
+    g_count_trace = on ? 1 : 0;
 }
 
 /* ---- Assert implementations ---- */
@@ -822,6 +993,12 @@ void test_runner_run(void)
 
     test_category_t current_cat = TEST_CAT_COUNT; /* sentinel: no category printed yet */
 
+    /* [COUNT] trace ordinal. A LOCAL, not a static: the suite loop is walked
+     * once by the BSP, so a file-scope counter would add a mutable global to a
+     * kernel that must be SMP-safe by default and would carry stale state into
+     * a second test_runner_run() call. Scoped here it is neither. */
+    uint32_t count_records = 0;
+
     /* Per-CATEGORY quota leak sweep. Suite granularity is deliberately NOT
      * used: a quota block is a shared, refcounted, cross-suite object (a
      * canonical USER block is created once and reused by every later suite
@@ -886,6 +1063,8 @@ void test_runner_run(void)
 
         uint32_t pre_pass = g_test_state.passed;
         uint32_t pre_fail = g_test_state.failed;
+        uint32_t pre_skip = g_test_state.skipped;
+        uint32_t pre_pend = g_test_state.pending;
 
         /* Start each suite with an empty action stack. */
         test_actions_reset();
@@ -997,7 +1176,39 @@ void test_runner_run(void)
         copy_user_fail_max_injections_clear();
 
         uint32_t suite_fails = g_test_state.failed - pre_fail;
-        (void)(g_test_state.passed - pre_pass);
+
+        /* The [COUNT] record. This delta used to be computed and discarded on
+         * the very next line, which is why a drifting headline total had no
+         * attribution anywhere in the log. Emitted AFTER the action drain and
+         * the leak check so it reports what the suite finally accounted for,
+         * not a mid-teardown reading. */
+        if (g_count_trace) {
+            char     rec[TEST_COUNT_RECORD_MAX];
+            uint32_t ord = ++count_records;
+            (void)test_count_record_format(rec, sizeof(rec), ord,
+                                           (s->cat < TEST_CAT_COUNT)
+                                               ? cat_names[s->cat] : "all",
+                                           s->name,
+                                           g_test_state.passed  - pre_pass,
+                                           suite_fails,
+                                           g_test_state.skipped - pre_skip,
+                                           g_test_state.pending - pre_pend);
+            /* Unrated: a record the shared limiter dropped is invisible, and a
+             * consumer comparing two runs would then read the same truncated
+             * subset as "identical" -- silently, and most likely for the one
+             * suite that moved. The `trunc=1` return is deliberately ignored:
+             * the formatter always leaves a well-formed, self-describing line,
+             * and SKIPPING the emission would open the ordinal gap that the
+             * completeness check is there to catch.
+             *
+             * Tagged "TEST" unconditionally rather than test_tag(): the tag is
+             * flipped to "DTEST" while a desktop suite runs, which would split
+             * these records across two subsystems and hand every consumer a
+             * second pattern to remember. Measured while building the host
+             * comparison -- a single-tag grep silently returned 2656 of 2704
+             * records, and only the trailer's count caught it. */
+            klog_unrated(LOG_INFO, TEST_COUNT_TAG, "%s", rec);
+        }
 
         if (suite_fails > 0)
             g_test_state.suites_failed++;
@@ -1019,6 +1230,23 @@ void test_runner_run(void)
     /* Restore default tag so the final summary renders in the kernel
      * test color even after the last-run suite was a desktop suite. */
     s_current_tag = "TEST";
+
+    /* [COUNT] trailer. Announcing how many records were emitted is what makes
+     * the trace completeness-CHECKABLE rather than merely present: a consumer
+     * that counted a different number is looking at truncated input and must
+     * report that, instead of comparing a subset across runs and calling the
+     * result stable. The run totals ride along so a consumer can also confirm
+     * the per-suite records sum to the headline it is trying to explain. */
+    if (g_count_trace) {
+        char trailer[TEST_COUNT_RECORD_MAX];
+        (void)test_count_trailer_format(trailer, sizeof(trailer),
+                                        count_records,
+                                        g_test_state.passed,
+                                        g_test_state.failed,
+                                        g_test_state.skipped,
+                                        g_test_state.pending);
+        klog_unrated(LOG_INFO, TEST_COUNT_TAG, "%s", trailer);
+    }
 
     /* ---- Summary ---- */
     uint64_t run_ms   = (system_get_ticks() - run_start) * 10;

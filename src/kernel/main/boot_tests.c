@@ -58,8 +58,16 @@ void boot_tests_run(void)
         if (suite_val < TEST_CAT_COUNT)
             test_runner_set_filter((test_category_t)suite_val);
 
-        if (g_boot_info.config.test_quiet)
+        /* test_quiet is a small enum, not a flag -- the bootloader has always
+         * read it with ascii_atoi(), so TEST_QUIET_COUNT_TRACE (2) adds a mode
+         * without adding a field or touching BOOT_INFO_VERSION. 2 means "quiet
+         * PASS lines AND emit the per-suite [COUNT] trace": the trace costs
+         * real serial I/O, so it is opt-in, and it rides the QUIET path
+         * because a verbose run does not finish inside the harness timeout. */
+        if (g_boot_info.config.test_quiet >= TEST_QUIET_ON)
             test_runner_set_quiet(1);
+        if (g_boot_info.config.test_quiet >= TEST_QUIET_COUNT_TRACE)
+            test_runner_set_count_trace(1);
 
         /* Surface skip decisions BEFORE the LOG_WARN filter clamps
          * non-TEST output -- otherwise the LOG_INFO klog below is

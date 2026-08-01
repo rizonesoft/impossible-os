@@ -13,6 +13,8 @@
  * ============================================================================ */
 
 #include "kernel/test/test.h"
+#include "kernel/test/scratch.h"   /* TEST_SCRATCH_KBUF: a heap buffer whose
+                                    * address does not move with guest RAM */
 #include "kernel/types.h"
 #include "kernel/csprng.h"
 #include "kernel/entropy.h"
@@ -600,6 +602,14 @@ static void test_nt_get_random(void)
     uint8_t buf[64];
     uint32_t saved_mode = ssdt_previous_mode();
 
+    /* Declared HERE, before the previous-mode switch below, and not beside the
+     * user-mode block that uses it: TEST_SCRATCH_KBUF returns early on an
+     * allocation or action-registry failure, and an early return taken while
+     * previous-mode was still SSDT_USER_MODE would leave every later suite
+     * running as user mode. Allocating first means the only paths that can
+     * return early are ones that never touched the mode. */
+    TEST_SCRATCH_KBUF(user_buf, 64);
+
     /* Parameter validation. */
     TEST_ASSERT_EQ((uint32_t)NtGetRandom(buf, 0, 0),
                    (uint32_t)STATUS_INVALID_PARAMETER,
@@ -638,15 +648,34 @@ static void test_nt_get_random(void)
                    "NtGetRandom probes user buffers in user mode");
 
     /* User-mode POSITIVE path: exercises probe-accept + copy_to_user end to
-     * end. The buffer sits below MM_USER_PROBE_ADDRESS, which is all the
-     * current NT user-range contract checks (per-process User-PTE
-     * validation is the systemic SMAP/KPTI work, not this handler -- see
-     * the NtGetRandom header XREF). This asserts the success path runs, NOT
-     * that kernel memory is a legitimate user buffer. */
-    memset(buf, 0, sizeof(buf));
-    TEST_ASSERT_EQ((uint32_t)NtGetRandom(buf, sizeof(buf), 0),
-                   (uint32_t)STATUS_SUCCESS,
-                   "NtGetRandom probe-accept + copy_to_user success path");
+     * end. ProbeForWrite is range-only here, so all this needs is a mapped
+     * buffer below MM_USER_PROBE_ADDRESS (per-process User-PTE validation is
+     * the systemic SMAP/KPTI work, not this handler -- see the NtGetRandom
+     * header XREF). It asserts the success path RUNS, not that kernel memory
+     * is a legitimate user buffer.
+     *
+     * The buffer is deliberately NOT the `buf` stack array the rest of this
+     * suite uses. Kernel task stacks are placed high in RAM, so whether one
+     * lands below MM_USER_PROBE_ADDRESS (0x7FFF0000, ~2 GiB) is a fact about
+     * how much memory the HOST gave the VM: measured 2026-08-01, this exact
+     * assertion passed at -m 2G and failed with STATUS_ACCESS_VIOLATION at
+     * -m 3G and -m 4G on one unchanged tree, moving the run's headline
+     * assertion total from 28125 to 28124. The heap is allocated at boot from
+     * the first contiguous run above the reserved windows (mm/heap.c), a few
+     * MiB up, so a scratch buffer is below the boundary at any RAM size.
+     *
+     * The precondition is ASSERTED rather than assumed, so if the heap ever
+     * moves above the boundary this fails saying exactly that, instead of
+     * silently changing what the suite verified. */
+    {
+        TEST_ASSERT((uintptr_t)user_buf < MM_USER_PROBE_ADDRESS,
+                    "scratch buffer is below MM_USER_PROBE_ADDRESS, which is "
+                    "what makes this probe-accept path testable at all");
+        memset(user_buf, 0, 64);
+        TEST_ASSERT_EQ((uint32_t)NtGetRandom(user_buf, 64, 0),
+                       (uint32_t)STATUS_SUCCESS,
+                       "NtGetRandom probe-accept + copy_to_user success path");
+    }
     ssdt_set_previous_mode(saved_mode);
 }
 

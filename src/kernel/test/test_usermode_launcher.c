@@ -4200,6 +4200,117 @@ static void test_capture_claim_run_stop_latches_both(void)
                    "aggregate, or the host refuses them as a limit conflict");
 }
 
+/* How many ring entries were appended between two HEAD snapshots.
+ *
+ * The obvious spelling -- differencing klog_get_ring()'s count -- is wrong,
+ * and wrong in the direction that VACATES an assertion instead of failing it.
+ * `klog_ring_count` saturates (klog.c: `if (klog_ring_count < KLOG_RING_SIZE)
+ * klog_ring_count++`), so once the ring has filled every later difference is
+ * exactly 0, and `TEST_ASSERT_EQ(count_after - count_before, 1)` stops asking
+ * anything about the emitter and starts asking how much the boot logged before
+ * this test ran. The comment on u_test_count_capture_records() below already
+ * spelled this out; the emission tests were written against the count anyway,
+ * and they passed only because they happen to run before saturation.
+ *
+ * Found 2026-08-01 by adding one log line per suite elsewhere in the runner:
+ * three of these tests went red at once, having silently measured nothing for
+ * as long as they had existed. HEAD is monotonic-with-wrap, so the modular
+ * difference is exact for any window shorter than the ring -- which a
+ * one-to-three record emission always is. */
+/* Sentinel: the window was too wide to inspect. Distinct from 0, which is a
+ * legitimate answer meaning "nothing was appended". */
+#define U_TEST_WINDOW_OVERRUN  0xFFFFFFFFu
+
+/* Appends between two snapshots, from the MONOTONIC klog sequence.
+ *
+ * Deriving this from the two head positions alone is fail-OPEN: head is
+ * modulo KLOG_RING_SIZE, so exactly one ring's worth of intervening entries
+ * reads as 0 appends -- which an "emits NOTHING further" assertion accepts as
+ * success -- and beyond that the window only covers the post-wrap remainder,
+ * by which point the records being looked for have been overwritten. The
+ * sequence counter does not wrap in any run this kernel will see, so the delta
+ * is exact and an over-wide window is DETECTABLE rather than silently
+ * truncated. Callers fail closed on the sentinel. */
+static uint32_t u_test_ring_added(uint64_t seq_before, uint64_t seq_after)
+{
+    uint64_t added = seq_after - seq_before;
+
+    if (added >= (uint64_t)KLOG_RING_SIZE)
+        return U_TEST_WINDOW_OVERRUN;
+    return (uint32_t)added;
+}
+
+/* Count entries in the (head_before, head_after] window whose message contains
+ * `want`, and hand back the LAST one.
+ *
+ * Counting raw appends is not good enough, and neither is indexing a fixed
+ * offset back from head. Both assume this CPU was the only thing that logged
+ * during the window, which on an SMP kernel is a scheduling accident: an AP or
+ * a background worker emitting one line turns "exactly one record" into two
+ * and makes head_after-1 point at somebody else's message. The window itself
+ * is still the right bound -- it excludes the identical stale records earlier
+ * suites left in the ring -- but the PREDICATE has to be the record's own
+ * content. u_test_count_capture_records() below already works this way for
+ * chunk records; this is the same idea with the marker text as a parameter and
+ * the matching entry returned. */
+/* The OLDEST match in the window, or NULL. Same predicate discipline as
+ * u_test_scan_window(): position within the ring is not evidence of identity
+ * once any other CPU can append between the two snapshots. */
+static const klog_entry_t *u_test_first_match(const klog_entry_t *ring,
+                                              uint64_t seq_before,
+                                              uint64_t seq_after,
+                                              uint32_t head_after,
+                                              const char *want)
+{
+    uint32_t added = u_test_ring_added(seq_before, seq_after);
+    uint32_t i;
+
+    if (added == U_TEST_WINDOW_OVERRUN)
+        return (const klog_entry_t *)0;
+
+    for (i = added; i >= 1u; i--) {
+        const klog_entry_t *e =
+            &ring[(head_after + KLOG_RING_SIZE - i) % KLOG_RING_SIZE];
+
+        if (u_test_contains(e->message, want))
+            return e;
+    }
+    return (const klog_entry_t *)0;
+}
+
+static uint32_t u_test_scan_window(const klog_entry_t *ring,
+                                   uint64_t seq_before, uint64_t seq_after,
+                                   uint32_t head_after,
+                                   const char *want,
+                                   const klog_entry_t **last_match)
+{
+    uint32_t added = u_test_ring_added(seq_before, seq_after);
+    uint32_t i, found = 0;
+
+    if (last_match)
+        *last_match = (const klog_entry_t *)0;
+
+    /* Fail CLOSED on an unreadable window: returning the sentinel makes every
+     * caller's TEST_ASSERT_EQ fail loudly instead of accepting a count that
+     * was never actually measured. */
+    if (added == U_TEST_WINDOW_OVERRUN)
+        return U_TEST_WINDOW_OVERRUN;
+
+    /* Oldest-to-newest across the window, so `last_match` ends on the newest
+     * match rather than whichever the loop saw first. */
+    for (i = added; i >= 1u; i--) {
+        const klog_entry_t *e =
+            &ring[(head_after + KLOG_RING_SIZE - i) % KLOG_RING_SIZE];
+
+        if (u_test_contains(e->message, want)) {
+            found++;
+            if (last_match)
+                *last_match = e;
+        }
+    }
+    return found;
+}
+
 /* ---- The EMISSION seam ---------------------------------------------- *
  *
  * The transition tests above prove the arithmetic and the state changes;
@@ -4230,7 +4341,8 @@ static void test_capture_emits_exactly_one_owner_marker_then_stops(void)
     uint32_t saved_run_records;
     int      saved_run_over;
     int      saved_sealed;
-    uint32_t count_before, count_after, head;
+    uint32_t head_before, head_after;
+    uint64_t seq_before, seq_after;
     uint32_t budget = test_usermode_capture_owner_budget();
     const klog_entry_t *ring;
     const klog_entry_t *last;
@@ -4261,29 +4373,40 @@ static void test_capture_emits_exactly_one_owner_marker_then_stops(void)
 
     test_usermode_capture_start(&ctx);
     (void)test_usermode_capture_byte(&ctx, 'x');
-    (void)klog_get_ring(&count_before, &head);
+    seq_before = klog_get_seq();
+    (void)klog_get_ring((uint32_t *)0, &head_before);
     test_usermode_capture_end(&ctx);
-    ring = klog_get_ring(&count_after, &head);
-    last = &ring[(head + KLOG_RING_SIZE - 1u) % KLOG_RING_SIZE];
+    ring = klog_get_ring((uint32_t *)0, &head_after);
+    seq_after = klog_get_seq();
 
-    TEST_ASSERT_EQ((uint64_t)(count_after - count_before), 1u,
+    TEST_ASSERT_EQ((uint64_t)u_test_scan_window(ring, seq_before, seq_after, head_after,
+                                                "[UTEST-CAPTURE] ", &last), 1u,
                    "the last permitted write still emits its chunk");
-    TEST_ASSERT(u_test_contains(last->message, "[UTEST-CAPTURE]"),
-                "and it is an ordinary chunk record, not a marker");
+    TEST_ASSERT_NOT_NULL(last, "and that chunk record is in the window");
+    TEST_ASSERT_EQ((uint64_t)u_test_scan_window(ring, seq_before, seq_after, head_after,
+                                                "[UTEST-CAPTURE-OVER]",
+                                                (const klog_entry_t **)0), 0u,
+                   "and it is an ordinary chunk record, not a marker");
 
     /* The NEXT write crosses the budget: exactly one terminator, carrying
      * the owner scope and the limit the host checks for equality. */
     test_usermode_capture_start(&ctx);
     (void)test_usermode_capture_byte(&ctx, 'y');
-    (void)klog_get_ring(&count_before, &head);
+    seq_before = klog_get_seq();
+    (void)klog_get_ring((uint32_t *)0, &head_before);
     test_usermode_capture_end(&ctx);
-    ring = klog_get_ring(&count_after, &head);
-    last = &ring[(head + KLOG_RING_SIZE - 1u) % KLOG_RING_SIZE];
+    ring = klog_get_ring((uint32_t *)0, &head_after);
+    seq_after = klog_get_seq();
 
-    TEST_ASSERT_EQ((uint64_t)(count_after - count_before), 1u,
+    TEST_ASSERT_EQ((uint64_t)u_test_scan_window(ring, seq_before, seq_after, head_after,
+                                                "[UTEST-CAPTURE-OVER]",
+                                                &last), 1u,
                    "crossing the budget emits exactly ONE record");
-    TEST_ASSERT(u_test_contains(last->message, "[UTEST-CAPTURE-OVER]"),
-                "and that record is the overflow terminator, not a chunk");
+    TEST_ASSERT_NOT_NULL(last, "and the terminator is in the window");
+    TEST_ASSERT_EQ((uint64_t)u_test_scan_window(ring, seq_before, seq_after, head_after,
+                                                "[UTEST-CAPTURE] ",
+                                                (const klog_entry_t **)0), 0u,
+                   "and that record is the overflow terminator, not a chunk");
     TEST_ASSERT(u_test_contains(last->message, "scope=owner"),
                 "an owner exhausting its OWN budget is an owner-scope stop");
     /* The exact numeric fields the host reconciles against: it demands
@@ -4308,11 +4431,15 @@ static void test_capture_emits_exactly_one_owner_marker_then_stops(void)
      * run red. */
     test_usermode_capture_start(&ctx);
     (void)test_usermode_capture_byte(&ctx, 'z');
-    (void)klog_get_ring(&count_before, &head);
+    seq_before = klog_get_seq();
+    (void)klog_get_ring((uint32_t *)0, &head_before);
     test_usermode_capture_end(&ctx);
-    (void)klog_get_ring(&count_after, &head);
+    ring = klog_get_ring((uint32_t *)0, &head_after);
+    seq_after = klog_get_seq();
 
-    TEST_ASSERT_EQ((uint64_t)(count_after - count_before), 0u,
+    TEST_ASSERT_EQ((uint64_t)u_test_scan_window(ring, seq_before, seq_after, head_after,
+                                                "[UTEST-CAPTURE",
+                                                (const klog_entry_t **)0), 0u,
                    "a latched owner emits NOTHING further -- not a chunk, "
                    "and above all not a second terminator");
 
@@ -4711,7 +4838,8 @@ static void test_capture_exact_chunk_boundary_emits_one_final_record(void)
     uint32_t saved_owner;
     int32_t  saved_seq;
     uint8_t  saved_stopped;
-    uint32_t count_before, count_after, head;
+    uint32_t head_before, head_after;
+    uint64_t seq_before, seq_after;
     uint32_t chunk_max = test_usermode_capture_chunk_max();
     uint32_t i;
     const klog_entry_t *ring;
@@ -4736,7 +4864,8 @@ static void test_capture_exact_chunk_boundary_emits_one_final_record(void)
     atomic_set(&self->utest_capture_seq, 0);
     test_usermode_capture_start(&ctx);
 
-    (void)klog_get_ring(&count_before, &head);
+    seq_before = klog_get_seq();
+    (void)klog_get_ring((uint32_t *)0, &head_before);
     for (i = 0; i < chunk_max; i++)
         (void)test_usermode_capture_byte(&ctx, 'x');
     /* Deferred-flush design: ctx's len reaches chunk_max only AFTER
@@ -4744,10 +4873,11 @@ static void test_capture_exact_chunk_boundary_emits_one_final_record(void)
      * so no mid-loop flush ever fires for an exact-multiple write -- the
      * whole chunk is still staged here, waiting for this call. */
     test_usermode_capture_end(&ctx);
-    ring = klog_get_ring(&count_after, &head);
-    last = &ring[(head + KLOG_RING_SIZE - 1u) % KLOG_RING_SIZE];
+    ring = klog_get_ring((uint32_t *)0, &head_after);
+    seq_after = klog_get_seq();
 
-    TEST_ASSERT_EQ((uint64_t)(count_after - count_before), 1u,
+    TEST_ASSERT_EQ((uint64_t)u_test_scan_window(ring, seq_before, seq_after, head_after,
+                                                "[UTEST-CAPTURE] ", &last), 1u,
                    "exactly one record for an exact-chunk-multiple write "
                    "-- neither a spurious empty second record (round 1 "
                    "bug) nor a premature non-final mid-loop one (round 2 "
@@ -4780,7 +4910,8 @@ static void test_capture_chunk_boundary_plus_one_emits_two_records(void)
     uint32_t saved_owner;
     int32_t  saved_seq;
     uint8_t  saved_stopped;
-    uint32_t count_before, count_after, head;
+    uint32_t head_before, head_after;
+    uint64_t seq_before, seq_after;
     uint32_t chunk_max = test_usermode_capture_chunk_max();
     uint32_t i;
     const klog_entry_t *ring;
@@ -4805,18 +4936,26 @@ static void test_capture_chunk_boundary_plus_one_emits_two_records(void)
     atomic_set(&self->utest_capture_seq, 0);
     test_usermode_capture_start(&ctx);
 
-    (void)klog_get_ring(&count_before, &head);
+    seq_before = klog_get_seq();
+    (void)klog_get_ring((uint32_t *)0, &head_before);
     for (i = 0; i < chunk_max + 1u; i++)
         (void)test_usermode_capture_byte(&ctx, 'y');
     test_usermode_capture_end(&ctx);
-    ring = klog_get_ring(&count_after, &head);
+    ring = klog_get_ring((uint32_t *)0, &head_after);
+    seq_after = klog_get_seq();
 
-    TEST_ASSERT_EQ((uint64_t)(count_after - count_before), 2u,
+    TEST_ASSERT_EQ((uint64_t)u_test_scan_window(ring, seq_before, seq_after, head_after,
+                                                "[UTEST-CAPTURE] ", &last), 2u,
                    "chunk_max+1 bytes must produce exactly two records: "
                    "the full chunk (mid-loop, non-final) plus the one "
                    "leftover byte (post-loop, final)");
-    first_new = &ring[(head + KLOG_RING_SIZE - 2u) % KLOG_RING_SIZE];
-    last      = &ring[(head + KLOG_RING_SIZE - 1u) % KLOG_RING_SIZE];
+    /* The FIRST of the two: found by matching content within the window, not
+     * by stepping two slots back from head, which would land on an unrelated
+     * message the moment another CPU logged during the window. */
+    first_new = u_test_first_match(ring, seq_before, seq_after, head_after,
+                                   "[UTEST-CAPTURE] ");
+    TEST_ASSERT_NOT_NULL(first_new, "both chunk records are in the window");
+    TEST_ASSERT_NOT_NULL(last, "and the second is the newer of the two");
     TEST_ASSERT(u_test_contains(first_new->message, "final=0"),
                 "the full first chunk is NOT the write's last chunk");
     TEST_ASSERT(u_test_ends_with(last->message, "final=1 y"),

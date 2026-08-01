@@ -25,6 +25,7 @@
 #include "kernel/mm/heap.h"     /* heap_get_used for delta checks */
 #include "kernel/mm/pmm.h"      /* pmm_get_used_frames for pmm delta checks */
 #include "kernel/klog.h"        /* klog_get_level / klog_set_level for suppress tests */
+#include "libc/string.h"        /* strcmp for the [COUNT] record shape assertions */
 
 /* ---------------------------------------------------------------------------
  * LIFO drain observation -- suite A registers, suite B verifies.
@@ -561,6 +562,100 @@ static void test_harness_leak_detect_ignore_verify(void)
     }
 }
 
+/* ---------------------------------------------------------------------------
+ * [COUNT] trace formatters.
+ *
+ * The records are how a moving headline assertion total gets attributed to a
+ * SUITE, so their shape is a contract with the host-side comparison in
+ * scripts/test-count-stability.sh, not a debug convenience. Both formatters
+ * are pure, which is the whole reason they were split out of the runner loop:
+ * the overflow branch is unreachable from a real run (the longest registered
+ * suite name is 85 bytes against a 224-byte budget) and would otherwise never
+ * be exercised until the day a long name made it load-bearing.
+ * ------------------------------------------------------------------------ */
+
+static void test_harness_count_record_format(void)
+{
+    char rec[TEST_COUNT_RECORD_MAX];
+
+    TEST_ASSERT_EQ(test_count_record_format(rec, sizeof(rec), 1, "mm",
+                                            "PMM: alloc", 12, 0, 3, 1), 1,
+                   "record formats within budget");
+    TEST_ASSERT_EQ(strcmp(rec, "[COUNT] #1 mm PMM: alloc p=12 f=0 s=3 P=1"), 0,
+                   "record carries ordinal, category, suite and all four deltas");
+
+    /* Zero is a real value, not an absent field: a suite that ran and asserted
+     * nothing must be distinguishable from a suite that never emitted. */
+    TEST_ASSERT_EQ(test_count_record_format(rec, sizeof(rec), 2703, "boot",
+                                            "x", 0, 0, 0, 0), 1,
+                   "all-zero record still formats");
+    TEST_ASSERT_EQ(strcmp(rec, "[COUNT] #2703 boot x p=0 f=0 s=0 P=0"), 0,
+                   "zero deltas render as 0 rather than being omitted");
+
+    /* NULL category or suite must not fault -- the runner passes s->name
+     * straight through and a registration bug should surface as a readable
+     * record, not a page fault inside the test runner itself. */
+    TEST_ASSERT_EQ(test_count_record_format(rec, sizeof(rec), 4, (void *)0,
+                                            (void *)0, 1, 2, 3, 4), 1,
+                   "NULL category and suite format without faulting");
+    TEST_ASSERT_EQ(strcmp(rec, "[COUNT] #4 ? ? p=1 f=2 s=3 P=4"), 0,
+                   "NULL fields render as ? placeholders");
+}
+
+static void test_harness_count_record_overflow(void)
+{
+    char     small[24];
+    uint32_t len = 0;
+
+    /* A record that does not fit returns 0 AND self-describes: the suite name
+     * is the comparison KEY, so a quietly shortened one would let two distinct
+     * suites compare equal and hide exactly the drift the trace exists to
+     * expose. The consumer must be able to see that this key is unusable. */
+    TEST_ASSERT_EQ(test_count_record_format(small, sizeof(small), 7, "sched",
+                                            "a suite name far past the budget",
+                                            1, 0, 0, 0), 0,
+                   "over-budget record reports failure");
+    while (small[len]) len++;
+    TEST_ASSERT(len < sizeof(small),
+                "over-budget record stays NUL-terminated inside the buffer");
+    TEST_ASSERT_EQ(strcmp(small + (len - TEST_COUNT_TRUNC_MARK_LEN),
+                          " trunc=1"), 0,
+                   "over-budget record ends with the trunc=1 marker");
+
+    /* Degenerate buffers are refused rather than written through. */
+    TEST_ASSERT_EQ(test_count_record_format(small, 0, 1, "mm", "s", 0, 0, 0, 0), 0,
+                   "zero-capacity buffer is refused");
+    TEST_ASSERT_EQ(test_count_record_format((void *)0, sizeof(small), 1, "mm",
+                                            "s", 0, 0, 0, 0), 0,
+                   "NULL destination is refused");
+}
+
+static void test_harness_count_trailer_format(void)
+{
+    char trailer[TEST_COUNT_RECORD_MAX];
+    char small[8];
+
+    TEST_ASSERT_EQ(test_count_trailer_format(trailer, sizeof(trailer),
+                                             2703, 28109, 0, 41, 7), 1,
+                   "trailer formats within budget");
+    TEST_ASSERT_EQ(strcmp(trailer,
+                          "[COUNT-END] records=2703 p=28109 f=0 s=41 P=7"), 0,
+                   "trailer announces the record count and the run totals");
+
+    /* `records` is what makes the trace completeness-checkable: a consumer
+     * that counted a different number is reading truncated input. It must
+     * therefore survive as its own field even when everything else is zero. */
+    TEST_ASSERT_EQ(test_count_trailer_format(trailer, sizeof(trailer),
+                                             0, 0, 0, 0, 0), 1,
+                   "empty-run trailer formats");
+    TEST_ASSERT_EQ(strcmp(trailer, "[COUNT-END] records=0 p=0 f=0 s=0 P=0"), 0,
+                   "empty run still announces records=0 rather than nothing");
+
+    TEST_ASSERT_EQ(test_count_trailer_format(small, sizeof(small),
+                                             1, 1, 0, 0, 0), 0,
+                   "over-budget trailer reports failure");
+}
+
 /* Registration */
 void test_register_harness(void)
 {
@@ -618,6 +713,14 @@ void test_register_harness(void)
                             test_harness_leak_detect_ignore, TEST_CAT_BOOT);
     test_suite_register_cat("Harness: leaked counter unchanged after TEST_LEAK_IGNORE",
                             test_harness_leak_detect_ignore_verify, TEST_CAT_BOOT);
+
+    /* [COUNT] trace formatters -- order-independent (pure functions). */
+    test_suite_register_cat("Harness: count-trace record format",
+                            test_harness_count_record_format, TEST_CAT_BOOT);
+    test_suite_register_cat("Harness: count-trace record overflow is marked, not silent",
+                            test_harness_count_record_overflow, TEST_CAT_BOOT);
+    test_suite_register_cat("Harness: count-trace trailer format",
+                            test_harness_count_trailer_format, TEST_CAT_BOOT);
 }
 
 #endif /* KERNEL_TESTS */

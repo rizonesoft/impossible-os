@@ -59,8 +59,18 @@ void simd_blur_accum_sse2(const uint32_t *src, uint32_t count,
 
 /* ---- AVX2 accelerated operations (8 pixels per iteration) ---- */
 
-/* Runtime flag: set to 1 at boot if AVX2 is available and enabled */
+/* DISPATCH flag: 1 when the memops/blit dispatcher should choose AVX2. Set at
+ * boot by the feature probe, and CLEARED again by the hw_profile auto-tune when
+ * the measured AVX2 gain over SSE2 is too small to be worth the transition
+ * cost. Mutable by design -- do not use it to ask what the CPU can execute. */
 extern int simd_avx2_ok;
+
+/* CAPABILITY flag: 1 when this CPU + XCR0 can execute AVX2 at all. Set once by
+ * the feature probe, never cleared by tuning. This is the flag a correctness
+ * test must gate on: gating such a test on simd_avx2_ok made four suites skip
+ * or run according to a boot-time micro-benchmark, which moved the run's
+ * headline assertion total by 6 across identical runs. */
+extern int simd_avx2_capable;
 
 /* Enable AVX (CR4.OSXSAVE + XCR0 bits 0,1,2).
  * Must be called before any AVX2 function. */

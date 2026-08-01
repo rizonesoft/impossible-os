@@ -297,6 +297,27 @@ void simd_blur_accum_sse2(const uint32_t *src, uint32_t count,
 int simd_avx2_ok = 0;   /* Set to 1 at boot if AVX2 is available and enabled */
 int simd_avx512_ok = 0; /* Set to 1 at boot if AVX-512 passes throttle check */
 
+/* CAN this CPU execute AVX2, as opposed to SHOULD the dispatcher choose it.
+ *
+ * simd_avx2_ok answers the second question and is deliberately mutable: the
+ * boot-time auto-tune in hw_profile.c clears it when the measured AVX2 gain
+ * over SSE2 falls under HW_PROFILE_SIMD_GAIN_PCT, which is exactly the right
+ * behaviour for a dispatch flag. It is the WRONG question for anything asking
+ * whether the AVX2 code paths execute correctly, because the auto-tune's input
+ * is a wall-clock micro-benchmark: on a loaded host the same machine answers
+ * differently run to run.
+ *
+ * That difference was measured, not theorised. Four AVX2 correctness suites
+ * gated on simd_avx2_ok, so on 9 of 10 identical runs they skipped and on the
+ * 10th they ran -- moving the suite's headline assertion total by exactly 6
+ * (and its skip count by 4) with no code change at all -- a headline number
+ * that moves on its own cannot be used as the regression signal every reader
+ * treats it as.
+ *
+ * Set once by the feature probe and never cleared, so a correctness test can
+ * ask the question it actually means. */
+int simd_avx2_capable = 0;
+
 void simd_enable_avx(void)
 {
     /* XCR0 is now configured by cpu_configure_xcr0() in cpuid_init().
@@ -312,6 +333,7 @@ void simd_enable_avx(void)
     }
 
     simd_avx2_ok = 1;
+    simd_avx2_capable = 1;
 }
 
 /* ---- AVX-512 opt-in with MPERF/APERF throttle guard ----

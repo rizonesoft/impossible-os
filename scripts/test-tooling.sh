@@ -10942,13 +10942,47 @@ LOADER_BODY="$(sed -n '/^static void utest_loader_func(void)$/,/^}/p' \
 if [ -z "$LOADER_BODY" ]; then
     t_fail "utest errors: extracted utest_loader_func from the kernel source" "anchors not found"
 else
-    LOADER_EXITS="$(printf '%s\n' "$LOADER_BODY" | grep -c 'task_exit(' || true)"
-    LOADER_MARKS="$(printf '%s\n' "$LOADER_BODY" | grep -c 'u_loader_stage_fault();' || true)"
-    if [ "$LOADER_EXITS" -gt 0 ] && [ "$LOADER_EXITS" = "$LOADER_MARKS" ]; then
-        t_pass "utest errors: every loader exit records the never-ran stage ($LOADER_MARKS/$LOADER_EXITS)"
+    # Checked PER EXIT, not by comparing three whole-function totals. Totals
+    # are offsettable: a stray waiver token in any comment, or a second
+    # u_loader_stage_fault() on a path that already had one, silently pays for
+    # a genuinely unmarked exit somewhere else and the equality still holds --
+    # so the guarantee this check claims to make would not actually be made.
+    # Walking the branches binds each exit to its own evidence.
+    LOADER_VERDICT="$(printf '%s\n' "$LOADER_BODY" | awk '
+        # Strip comment-body lines EXCEPT the waiver token, which lives in one.
+        {
+            line = $0
+            is_comment = (line ~ /^[[:space:]]*\*/ || line ~ /^[[:space:]]*\/\*/)
+            if (line ~ /NO-LOADER-STAGE-MARK/) { waiver_pending = 1; next }
+            if (is_comment) next
+            if (line ~ /u_loader_stage_fault\(/) { mark_pending = 1; next }
+            if (line ~ /task_exit\(/) {
+                exits++
+                if (mark_pending) marked++
+                else if (waiver_pending) waived++
+                else { bare++; if (sample == "") sample = line }
+            }
+            # Any other statement clears the pending evidence: the mark or the
+            # waiver has to be the thing immediately before the exit, or it is
+            # evidence about some other path.
+            if (line ~ /[^[:space:]]/) { mark_pending = 0; waiver_pending = 0 }
+        }
+        END {
+            printf "exits=%d marked=%d waived=%d bare=%d sample=%s",
+                   exits, marked, waived, bare, sample
+        }')"
+    LOADER_EXITS="$(printf '%s' "$LOADER_VERDICT" | sed -n 's/.*exits=\([0-9]*\).*/\1/p')"
+    LOADER_BARE="$(printf '%s' "$LOADER_VERDICT" | sed -n 's/.*bare=\([0-9]*\).*/\1/p')"
+    # Exactly ONE waiver is legitimate: the exit taken because there is no task
+    # to record the never-ran stage on. More than one means the token is being
+    # used to silence real gaps.
+    LOADER_WAIVED="$(printf '%s' "$LOADER_VERDICT" | sed -n 's/.*waived=\([0-9]*\).*/\1/p')"
+    if [ "${LOADER_EXITS:-0}" -gt 0 ] && [ "${LOADER_BARE:-1}" = "0" ] && \
+       [ "${LOADER_WAIVED:-0}" -le 1 ]; then
+        t_pass "utest errors: every loader exit records the never-ran stage ($LOADER_VERDICT)"
     else
         t_fail "utest errors: every loader exit records the never-ran stage" \
-            "$LOADER_MARKS mark(s) for $LOADER_EXITS task_exit call(s) -- a loader exit without its mark reports a binary that never ran as an assertion failure"
+            "$LOADER_VERDICT -- every task_exit in the loader needs u_loader_stage_fault() immediately before it, or a single NO-LOADER-STAGE-MARK waiver on the one exit with no task to record against"
     fi
 fi
 
@@ -17810,6 +17844,144 @@ else
 fi
 
 rm -rf "$QO_TMP"
+
+# ---------------------------------------------------------------------------
+# test-count-stability.sh -- the completeness checker must FAIL CLOSED
+#
+# This script's only value is that it refuses to call a trace stable when it
+# cannot vouch for it. Every case below was a way to get a bad trace blessed:
+# the ordinal-zero and f/s/P cases were found by adversarial review AFTER the
+# first version shipped a checker that reconciled only the `passed` column --
+# which is the exact column the AVX2 drift did NOT move (it traded 6 passes for
+# 4 skips). A checker blind to the skip column is blind to the bug it was
+# written for.
+# ---------------------------------------------------------------------------
+
+CS_TMP="$(mktemp -d)"
+
+# One helper so each fixture is only its own delta from a valid trace.
+cs_write() {
+    # $1 = path, $2 = body (records), $3 = trailer line
+    printf '%s\n%s\n' "$2" "$3" > "$1"
+}
+
+CS_GOOD_BODY='[  1.000] [cpu:0] [ OK ] TEST: [COUNT] #1 mm PMM: alloc p=3 f=0 s=1 P=0
+[  1.010] [cpu:0] [ OK ] TEST: [COUNT] #2 boot Boot: init p=2 f=1 s=0 P=2'
+CS_GOOD_END='[  1.020] [cpu:0] [ OK ] TEST: [COUNT-END] records=2 p=5 f=1 s=1 P=2'
+
+cs_write "$CS_TMP/good.log" "$CS_GOOD_BODY" "$CS_GOOD_END"
+cs_write "$CS_TMP/good2.log" "$CS_GOOD_BODY" "$CS_GOOD_END"
+
+CS_OUT=$(bash "$REPO_ROOT/scripts/test-count-stability.sh" --parse-only \
+         "$CS_TMP/good.log" "$CS_TMP/good2.log" 2>&1)
+if [ $? -eq 0 ] && echo "$CS_OUT" | grep -q "STABLE"; then
+    t_pass "count-stability: two identical complete traces compare STABLE"
+else
+    t_fail "count-stability: two identical complete traces compare STABLE" "$CS_OUT"
+fi
+
+# Ordinal 0 is out of contract even when the record COUNT still matches.
+cs_write "$CS_TMP/zero.log" '[  1.000] [cpu:0] [ OK ] TEST: [COUNT] #0 mm PMM: alloc p=3 f=0 s=1 P=0
+[  1.010] [cpu:0] [ OK ] TEST: [COUNT] #1 boot Boot: init p=2 f=1 s=0 P=2' "$CS_GOOD_END"
+CS_OUT=$(bash "$REPO_ROOT/scripts/test-count-stability.sh" --parse-only \
+         "$CS_TMP/zero.log" 2>&1)
+if [ $? -ne 0 ] && echo "$CS_OUT" | grep -q "out-of-contract ordinal"; then
+    t_pass "count-stability: ordinal #0 is rejected, not counted as a record"
+else
+    t_fail "count-stability: ordinal #0 is rejected, not counted as a record" "$CS_OUT"
+fi
+
+# The skip column must reconcile -- this is the AVX2 shape.
+cs_write "$CS_TMP/skew.log" "$CS_GOOD_BODY" \
+    '[  1.020] [cpu:0] [ OK ] TEST: [COUNT-END] records=2 p=5 f=1 s=99 P=2'
+CS_OUT=$(bash "$REPO_ROOT/scripts/test-count-stability.sh" --parse-only \
+         "$CS_TMP/skew.log" 2>&1)
+if [ $? -ne 0 ] && echo "$CS_OUT" | grep -q "per-suite skipped sums to"; then
+    t_pass "count-stability: a trailer whose SKIPPED total disagrees is rejected"
+else
+    t_fail "count-stability: a trailer whose SKIPPED total disagrees is rejected" "$CS_OUT"
+fi
+
+cs_write "$CS_TMP/fskew.log" "$CS_GOOD_BODY" \
+    '[  1.020] [cpu:0] [ OK ] TEST: [COUNT-END] records=2 p=5 f=7 s=1 P=2'
+CS_OUT=$(bash "$REPO_ROOT/scripts/test-count-stability.sh" --parse-only \
+         "$CS_TMP/fskew.log" 2>&1)
+if [ $? -ne 0 ] && echo "$CS_OUT" | grep -q "per-suite failed sums to"; then
+    t_pass "count-stability: a trailer whose FAILED total disagrees is rejected"
+else
+    t_fail "count-stability: a trailer whose FAILED total disagrees is rejected" "$CS_OUT"
+fi
+
+# A duplicate (category, suite) key cannot be compared across runs.
+cs_write "$CS_TMP/dupe.log" '[  1.000] [cpu:0] [ OK ] TEST: [COUNT] #1 mm PMM: alloc p=3 f=0 s=1 P=0
+[  1.010] [cpu:0] [ OK ] TEST: [COUNT] #2 mm PMM: alloc p=2 f=1 s=0 P=2' "$CS_GOOD_END"
+CS_OUT=$(bash "$REPO_ROOT/scripts/test-count-stability.sh" --parse-only \
+         "$CS_TMP/dupe.log" 2>&1)
+if [ $? -ne 0 ] && echo "$CS_OUT" | grep -q "duplicate (category, suite) key"; then
+    t_pass "count-stability: a duplicate suite key is rejected as uncomparable"
+else
+    t_fail "count-stability: a duplicate suite key is rejected as uncomparable" "$CS_OUT"
+fi
+
+# A missing record is TRUNCATION, which must never read as stability.
+cs_write "$CS_TMP/short.log" '[  1.000] [cpu:0] [ OK ] TEST: [COUNT] #1 mm PMM: alloc p=3 f=0 s=1 P=0' \
+    "$CS_GOOD_END"
+CS_OUT=$(bash "$REPO_ROOT/scripts/test-count-stability.sh" --parse-only \
+         "$CS_TMP/short.log" 2>&1)
+if [ $? -ne 0 ] && echo "$CS_OUT" | grep -q "TRUNCATED"; then
+    t_pass "count-stability: a missing record is reported as truncation"
+else
+    t_fail "count-stability: a missing record is reported as truncation" "$CS_OUT"
+fi
+
+# No trailer at all -- the run died, or the trace was never enabled.
+printf '%s\n' "$CS_GOOD_BODY" > "$CS_TMP/notrailer.log"
+CS_OUT=$(bash "$REPO_ROOT/scripts/test-count-stability.sh" --parse-only \
+         "$CS_TMP/notrailer.log" 2>&1)
+if [ $? -ne 0 ] && echo "$CS_OUT" | grep -q "no \[COUNT-END\] trailer"; then
+    t_pass "count-stability: a trace with no trailer is refused"
+else
+    t_fail "count-stability: a trace with no trailer is refused" "$CS_OUT"
+fi
+
+# A trunc=1 record carries an unusable comparison key.
+cs_write "$CS_TMP/trunc.log" '[  1.000] [cpu:0] [ OK ] TEST: [COUNT] #1 mm PMM: al trunc=1
+[  1.010] [cpu:0] [ OK ] TEST: [COUNT] #2 boot Boot: init p=2 f=1 s=0 P=2' "$CS_GOOD_END"
+CS_OUT=$(bash "$REPO_ROOT/scripts/test-count-stability.sh" --parse-only \
+         "$CS_TMP/trunc.log" 2>&1)
+if [ $? -ne 0 ] && echo "$CS_OUT" | grep -q "trunc=1"; then
+    t_pass "count-stability: a trunc=1 record is refused as a comparison key"
+else
+    t_fail "count-stability: a trunc=1 record is refused as a comparison key" "$CS_OUT"
+fi
+
+# A suite NAMED after the markers must not be mistaken for one. This is not
+# hypothetical: the harness suites that test the format are named this way, and
+# the first version of the parser reported them all as malformed records.
+cs_write "$CS_TMP/named.log" '[  1.000] [cpu:0] [ OK ] TEST: Harness: count-trace record format :: [COUNT] #9 is not a record
+[  1.005] [cpu:0] [ OK ] TEST: [COUNT] #1 mm PMM: alloc p=3 f=0 s=1 P=0
+[  1.010] [cpu:0] [ OK ] TEST: [COUNT] #2 boot Boot: init p=2 f=1 s=0 P=2' "$CS_GOOD_END"
+CS_OUT=$(bash "$REPO_ROOT/scripts/test-count-stability.sh" --parse-only \
+         "$CS_TMP/named.log" 2>&1)
+if [ $? -eq 0 ] && echo "$CS_OUT" | grep -q "2 suites"; then
+    t_pass "count-stability: a PASS line mentioning the marker is not a record"
+else
+    t_fail "count-stability: a PASS line mentioning the marker is not a record" "$CS_OUT"
+fi
+
+# Two complete traces that DISAGREE must be reported, with the suite named.
+cs_write "$CS_TMP/moved.log" '[  1.000] [cpu:0] [ OK ] TEST: [COUNT] #1 mm PMM: alloc p=3 f=0 s=1 P=0
+[  1.010] [cpu:0] [ OK ] TEST: [COUNT] #2 boot Boot: init p=8 f=1 s=0 P=2' \
+    '[  1.020] [cpu:0] [ OK ] TEST: [COUNT-END] records=2 p=11 f=1 s=1 P=2'
+CS_OUT=$(bash "$REPO_ROOT/scripts/test-count-stability.sh" --parse-only \
+         "$CS_TMP/good.log" "$CS_TMP/moved.log" 2>&1)
+if [ $? -ne 0 ] && echo "$CS_OUT" | grep -q "boot / Boot: init"; then
+    t_pass "count-stability: a moved count is reported UNSTABLE and names the suite"
+else
+    t_fail "count-stability: a moved count is reported UNSTABLE and names the suite" "$CS_OUT"
+fi
+
+rm -rf "$CS_TMP"
 
 # ============================================================================
 # Summary

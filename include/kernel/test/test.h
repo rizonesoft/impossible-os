@@ -76,6 +76,28 @@ typedef struct {
     test_category_t cat;
 } test_suite_t;
 
+/* Values of boot.conf `test_quiet`. It has always been read with ascii_atoi()
+ * (src/boot/uefi/bootx64.c) rather than as a flag, so widening it from a
+ * boolean to this small enum adds no field, no struct change, and no
+ * BOOT_INFO_VERSION bump -- 0 and 1 keep the exact meanings they had.
+ *
+ * The trace needs its OWN switch rather than riding verbosity, because the two
+ * costs are unrelated: a verbose run emits ~28k per-assertion PASS lines and
+ * does not finish inside scripts/test.sh's 60s window at all (measured: still
+ * mid-run at suite 2188 after 54s), while quiet-plus-trace lands at 10.7s
+ * against a 3.8-4.6s quiet baseline. Tying attribution to verbosity would have
+ * made the one mode that can attribute a drift the one mode that cannot
+ * complete. */
+#define TEST_QUIET_OFF           0u  /* verbose: every PASS line, no trace   */
+#define TEST_QUIET_ON            1u  /* what every automated gate runs       */
+#define TEST_QUIET_COUNT_TRACE   2u  /* quiet PASS lines + the [COUNT] trace */
+
+/* NOTE: deliberately OUTSIDE the KERNEL_TESTS guard below. boot_tests.c
+ * compares g_boot_info.config.test_quiet against these in both flavors, and
+ * the release flavor prunes the test surface -- putting them behind the guard
+ * makes KERNEL_TESTS=off fail to compile, which is precisely the break the
+ * previous section shipped and CI caught. */
+
 /* ---- Test state (global, used by TEST_ASSERT / TEST_PENDING) ---- */
 typedef struct {
     uint32_t passed;
@@ -129,6 +151,48 @@ typedef enum {
 quota_sweep_verdict_t quota_sweep_classify(const quota_leak_snapshot_t *open,
                                            const quota_leak_snapshot_t *close,
                                            uint32_t *leaked_types);
+
+/* ---- Per-suite assertion accounting: the [COUNT] trace ----
+ *
+ * One record per suite plus a trailer, so a moving headline total diffs to the
+ * SUITE that moved. Format and the reasons behind each property are documented
+ * at the definitions in test_runner.c; the contract a consumer relies on is:
+ *
+ *   [COUNT] #<ordinal> <category> <suite name> p=<n> f=<n> s=<n> P=<n>
+ *   [COUNT-END] records=<n> p=<n> f=<n> s=<n> P=<n>
+ *
+ * Ordinals are monotonic from 1 with no gaps, and `records` in the trailer is
+ * how many records were emitted -- a consumer that counts a different number
+ * has a TRUNCATED input and must say so rather than compare it. A record whose
+ * fields did not fit ends in ` trunc=1` and carries an unusable suite name.
+ *
+ * Both formatters are pure (no logging, no counters, no locks) so every
+ * branch, including the overflow branch, is reachable from a unit test with
+ * synthetic inputs. They return 1 on success and 0 on overflow. */
+
+/* Record buffer budget. Sized against klog's `message[256]` ring field, which
+ * CUTS a longer message silently -- for a completeness-checked format that
+ * turns a load-bearing field into an unparseable line with no fault. The
+ * longest registered suite name is 85 bytes, so this leaves ample headroom. */
+#define TEST_COUNT_RECORD_MAX    224u
+
+/* Length of the " trunc=1" overflow marker, excluding its NUL. */
+#define TEST_COUNT_TRUNC_MARK_LEN 8u
+
+/* klog subsystem tag every [COUNT] record carries. Fixed, NOT the runner's
+ * current tag: that one flips to "DTEST" for desktop suites, which would split
+ * the trace across two subsystems and give every consumer a second pattern to
+ * remember or silently miss. */
+#define TEST_COUNT_TAG           "TEST"
+
+int test_count_record_format(char *dst, uint32_t cap, uint32_t ordinal,
+                             const char *cat, const char *suite,
+                             uint32_t passed, uint32_t failed,
+                             uint32_t skipped, uint32_t pending);
+
+int test_count_trailer_format(char *dst, uint32_t cap, uint32_t records,
+                              uint32_t passed, uint32_t failed,
+                              uint32_t skipped, uint32_t pending);
 #endif /* KERNEL_TESTS -- defined in test_runner.c, which the release flavor
         * prunes entirely; declaring it unconditionally left a prototype with
         * no possible definition in that build. */
@@ -149,6 +213,9 @@ void test_runner_set_filter(test_category_t cat);
 
 /* Set quiet mode: suppress [PASS] lines, only show [FAIL] + summary */
 void test_runner_set_quiet(int quiet);
+
+/* Enable the per-suite [COUNT] trace (off by default -- see TEST_QUIET_* ). */
+void test_runner_set_count_trace(int on);
 
 /* Run all registered test suites and print summary */
 void test_runner_run(void);
@@ -277,6 +344,7 @@ static inline void test_suite_register(const char *name __attribute__((unused)),
                                         test_fn_t fn __attribute__((unused))) {}
 static inline void test_runner_set_filter(test_category_t cat __attribute__((unused))) {}
 static inline void test_runner_set_quiet(int quiet __attribute__((unused))) {}
+static inline void test_runner_set_count_trace(int on __attribute__((unused))) {}
 static inline void test_runner_run(void) {}
 static inline void test_runner_init(void) {}
 

@@ -1840,6 +1840,11 @@ static void utest_loader_func(void)
      * outcome would then be unattributable. */
     if (!self) {
         klog(LOG_ERROR, "UTEST", "loader: no current task -- refusing");
+        /* NO-LOADER-STAGE-MARK: u_loader_stage_fault() records the never-ran
+         * stage ON a task, and this is the one exit taken because there is no
+         * task to record it on. The structural check in scripts/test-tooling.sh
+         * counts this waiver rather than tolerating an off-by-one, so a REAL
+         * unmarked exit added later still fails it. */
         task_exit(-1);
     }
     path = self->utest_loader.test_path;

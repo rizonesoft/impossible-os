@@ -294,8 +294,8 @@ static void test_cr4_pins_held(void)
 
 static void test_memcpy_avx_correctness(void)
 {
-    if (!simd_avx2_ok) {
-        TEST_SKIP("AVX2 not enabled (XCR0 bit 2 not set)");
+    if (!simd_avx2_capable) {
+        TEST_SKIP("CPU cannot execute AVX2 (no CPUID AVX2, or XCR0 bit 2 clear)");
         return;
     }
 
@@ -330,8 +330,8 @@ static void test_memcpy_avx_correctness(void)
 
 static void test_memcpy_avx_tail(void)
 {
-    if (!simd_avx2_ok) {
-        TEST_SKIP("AVX2 not enabled (XCR0 bit 2 not set)");
+    if (!simd_avx2_capable) {
+        TEST_SKIP("CPU cannot execute AVX2 (no CPUID AVX2, or XCR0 bit 2 clear)");
         return;
     }
 
@@ -365,8 +365,8 @@ static void test_memcpy_avx_tail(void)
 
 static void test_memset_avx_correctness(void)
 {
-    if (!simd_avx2_ok) {
-        TEST_SKIP("AVX2 not enabled (XCR0 bit 2 not set)");
+    if (!simd_avx2_capable) {
+        TEST_SKIP("CPU cannot execute AVX2 (no CPUID AVX2, or XCR0 bit 2 clear)");
         return;
     }
 
@@ -393,8 +393,8 @@ static void test_memset_avx_correctness(void)
 
 static void test_memset_avx_tail(void)
 {
-    if (!simd_avx2_ok) {
-        TEST_SKIP("AVX2 not enabled (XCR0 bit 2 not set)");
+    if (!simd_avx2_capable) {
+        TEST_SKIP("CPU cannot execute AVX2 (no CPUID AVX2, or XCR0 bit 2 clear)");
         return;
     }
 

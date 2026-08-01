@@ -96,6 +96,35 @@ TAP_MODE=0
 # not be exercised without hand-editing boot.conf. It is the only way to
 # reach that path on demand, so the contract needs it to be testable.
 UTEST_FILTER=""
+
+# Per-suite [COUNT] trace, off unless asked for: it costs ~7s of extra serial
+# on a ~4s suite, which is why no ordinary run pays it.
+COUNT_TRACE=0
+
+# Guest RAM for the test VM. 2G is the value every run used when this was a
+# literal, and it stays the default so nothing about an ordinary run changes.
+#
+# It is a knob because the kernel assertion total has been observed drifting on
+# an unchanged tree, and the suspected mechanism is host state rather than code
+# -- the same runs carried allocator-exhaustion messages, and the firmware
+# memory map itself varies boot to boot (133 vs 135 descriptors on two runs of
+# one tree). Waiting for that variance to recur is weak evidence; VARYING the
+# guest's memory forces it, so a suite whose assertion count is a function of
+# available memory can be found deliberately. scripts/test-count-stability.sh
+# --mem is the consumer.
+#
+# Validated rather than interpolated raw: this value lands in the QEMU argv, so
+# an unchecked string is an argument-injection seam on a script that several
+# harnesses invoke.
+TEST_MEM="${TEST_MEM:-2G}"
+case "$TEST_MEM" in
+    [1-9]*[MG]) ;;
+    *) echo "TEST_MEM must look like 512M or 2G, got '$TEST_MEM'" >&2; exit 2 ;;
+esac
+case "$TEST_MEM" in
+    *[!0-9MG]*) echo "TEST_MEM must look like 512M or 2G, got '$TEST_MEM'" >&2; exit 2 ;;
+esac
+
 for arg in "$@"; do
     case "$arg" in
         -h|--help) print_help; exit 0 ;;
@@ -103,6 +132,8 @@ for arg in "$@"; do
                   SUITE_CATEGORY="$SUITE_FILTER" ;;
         QUIET=1)  QUIET_MODE=1 ;;
         QUIET=0)  QUIET_MODE=0 ;;
+        COUNT_TRACE=1) COUNT_TRACE=1 ;;
+        COUNT_TRACE=0) COUNT_TRACE=0 ;;
         XML=1)    XML_MODE=1 ;;
         JSON=1)   JSON_MODE=1 ;;
         TAP=1)    TAP_MODE=1 ;;
@@ -2517,7 +2548,13 @@ PATCH_ARGS=(test 1)
 if [ -n "$SUITE_CATEGORY" ]; then
     PATCH_ARGS+=(test_suite "$SUITE_CATEGORY")
 fi
-if [ "$QUIET_MODE" -eq 1 ]; then
+# test_quiet is a small enum (include/kernel/test/test.h TEST_QUIET_*), not a
+# flag: 1 suppresses PASS lines, 2 additionally emits the per-suite [COUNT]
+# trace that scripts/test-count-stability.sh consumes. The trace implies quiet
+# because a verbose run does not finish inside the timeout below.
+if [ "$COUNT_TRACE" -eq 1 ]; then
+    PATCH_ARGS+=(test_quiet 2)
+elif [ "$QUIET_MODE" -eq 1 ]; then
     PATCH_ARGS+=(test_quiet 1)
 fi
 if [ "$XML_MODE" -eq 1 ]; then
@@ -2616,7 +2653,7 @@ QEMU_ARGV=("$QEMU_BIN"
     -drive id=disk0,file="$DISK",format=raw,if=none
     -device ich9-ahci,id=ahci0
     -device ide-hd,drive=disk0,bus=ahci0.0
-    -m 2G
+    -m "$TEST_MEM"
     -serial file:"$TEST_LOG"
     -display none
     -device rtl8139,netdev=net0
