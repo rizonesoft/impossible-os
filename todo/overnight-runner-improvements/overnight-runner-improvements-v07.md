@@ -119,3 +119,15 @@ Findings from the 24-hour canary armed after the 2026-07-31 repair stop. This fi
       - **Cost is readability, not correctness** (the Implementation Order table stays right and `section_slice.py` matches by number), which is precisely why it survived: nothing breaks, so nothing complains. The doctrine states the real cost -- a reader scrolls for a section, walks past it, and concludes it is missing.
       - **Detector shipped as a WARNING, deliberately not an error.** `--check-placement` reports it and `lint.sh` Check 22b warns. Making it blocking today would have wedged the commit of the run that is mid-section in that very file. Tree-wide scan: TODO-04 is the ONLY affected file, so this is one repair, not a campaign.
       - **Repair is `python3 scripts/todo-section-order.py --fix todo/00-infrastructure/TODO-04-usermode-test-framework.md` at a boundary when the run is not holding that file** -- a pure block move which the script refuses to perform if it would be anything else. Promote Check 22b to an ERROR once it is clean.
+
+---
+
+## 10. The build-offload gate does not recognise its OWN wrapper once anything precedes it
+
+- [ ] Recognise the deterministic wrapper wherever it appears in a segment, not only when the segment starts with it
+      Observed 2026-08-01 during TODO-04 section 51, twice, in shapes distinct from findings 3/5/9 in this file. Those three are "the script NAME matched in something that is not an invocation". This one is the opposite and worse: the command DID route through `run-artifact.sh` exactly as instructed, and the gate blocked it anyway.
+      - **Shape A, loop body.** `for i in 1 2 3; do bash scripts/overnight/run-artifact.sh s51-run$i -- <runner> >out; done` was BLOCKed, and the reported segment was the bare runner. The segment splitter hands the checker `do bash scripts/overnight/run-artifact.sh ...`, which does not START with the wrapper, so the wrapper is not credited -- while the runner name inside it still matches.
+      - **Shape B, env prefix.** `TEST_MEM=2G bash scripts/overnight/run-artifact.sh s51-memguard -- <runner> ...` was BLOCKed the same way. This is the documented `skill_step_block` env-prefix quirk reappearing in a second hook, so it is a pattern across the gate family rather than one script's bug.
+      - **Measured cost, this section alone:** the loop form was abandoned and replaced by ten separate single-run tool calls, and a validation test of a new `TEST_MEM` knob could not be run through the wrapper at all -- it was verified by re-implementing the validation logic inline in `bash -c` instead, which is strictly worse evidence than running the real script.
+      - **Why it matters more than a nuisance:** every workaround it forces is a step AWAY from the wrapper the gate exists to promote. A gate that blocks correct usage teaches avoidance of the gate.
+      - **Shape of the fix:** credit the wrapper if it appears anywhere in the segment before the guarded runner (scan tokens rather than anchoring at position 0), and strip a leading `do`/`then`/`else` keyword and any `VAR=value` prefixes before deciding what the segment's effective command is.
