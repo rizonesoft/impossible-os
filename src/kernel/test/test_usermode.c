@@ -4046,10 +4046,12 @@ static uint32_t s_capture_run_generation;
  * whole cooperative process teardown rather than one record. */
 #define UTEST_CAPTURE_DRAIN_MS 200u
 
-/* How long the descendant reap waits for one kill round to take effect. The
- * same bound the top-level wait already uses, because it is the same
- * question asked of a smaller task: how long does a cooperative SIGKILL
- * teardown get before the forceful path runs. */
+/* The BOUND on how long one kill round waits for its signalled descendants
+ * to die -- not the duration it waits. The same number the top-level wait
+ * uses, because it is the same question asked of a smaller task: how long
+ * does a cooperative SIGKILL teardown get before the forceful path runs. The
+ * wait itself re-checks liveness and leaves early, exactly as that one does;
+ * sharing the bound is not the same as sharing the shape. */
 #define UTEST_CAPTURE_REAP_GRACE_MS UTEST_KILL_GRACE_MS
 
 /* How many times the reap re-scans before it declares the descendant set
@@ -4282,12 +4284,19 @@ static uint32_t u_capture_reap_tree(uint32_t owner_pid)
     uint32_t pid;
     struct task *t;
 
-    /* Latched UNDER the budget lock, not beside it. The claim path reads
-     * this same field inside that lock, so an unlocked store here races the
-     * claim's own view of it -- and the claim's set-only store-back is the
-     * other half of the same fix. Together they make the latch monotonic
-     * from both writers, which is what lets the fence be stated as "set once
-     * and every later claim in the tree decides DROP". */
+    /* MONOTONICITY COMES FROM THE STORES, NOT FROM THE LOCK, and the
+     * distinction matters: a reader who believes the lock is the protection
+     * may later "simplify" the claim path's set-only store back into an
+     * unconditional store-back of its snapshot, which is exactly the lost
+     * update that unfences the whole tree. Both writers store only 1 -- here
+     * and in u_capture_claim -- so no interleaving of the two can produce a
+     * 1 -> 0 transition, with or without this lock. The only 0-store is the
+     * slot constructor, which runs before the task is published.
+     *
+     * The lock is still taken, because the claim path reads this field
+     * inside it and keeping the write under the same lock costs nothing on a
+     * once-per-binary path and leaves no reader observing a value the lock
+     * was supposed to order. */
     if (owner) {
         uint64_t irq_flags;
 
@@ -4313,9 +4322,27 @@ static uint32_t u_capture_reap_tree(uint32_t owner_pid)
         if (live == 0)
             break;
 
+        /* Wait for the signalled descendants to actually die, and STOP as
+         * soon as they have. The deadline is the bound, not the duration:
+         * an unconditional sleep would burn the full grace on every round
+         * even when every descendant died on the first yield, which at
+         * UTEST_CAPTURE_REAP_ROUNDS rounds is seconds of wall clock added
+         * to each binary for nothing. This is the shape the top-level wait
+         * already uses -- re-check the condition, then the clock. */
         grace = u_uptime_ms() + (uint64_t)UTEST_CAPTURE_REAP_GRACE_MS;
-        while (u_uptime_ms() < grace)
+        for (;;) {
+            uint32_t still = 0;
+
+            for (pid = 0; (t = task_get_by_pid(pid)) != (struct task *)0;
+                 pid++) {
+                if (u_capture_descendant_of(t, owner_pid) &&
+                    t->state != TASK_DEAD)
+                    still++;
+            }
+            if (still == 0 || u_uptime_ms() >= grace)
+                break;
             yield();
+        }
 
         /* Forceful fallback for whatever the signal could not land on -- a
          * ring-3 spinloop never runs signal_check. Safe here for the same
@@ -4410,24 +4437,25 @@ static int u_capture_armed_for(const struct task *child, uint32_t pid)
  * capture_unbound_owner -- a refusal caused by a stale emitter rather than
  * by anything the new run did.
  *
- * THIS NARROWS THE WINDOW; IT DOES NOT CLOSE IT, and the distinction is
- * recorded here rather than left for a reader to discover. The comparison
+ * THIS CHECK ALONE NARROWS THE WINDOW RATHER THAN CLOSING IT: the comparison
  * happens under the lock but the emission does not, so a stale emitter can
- * still pass this check, be preempted, and reach klog after another CPU has
- * run u_frame_begin -- check-then-log, with a genuine TOCTOU between. Two
- * independent review rounds rated it [high] and both recommended the same
- * real fix: track in-flight emission reservations per generation and hold
- * the next frame's publication until that generation drains, or reap the
- * whole captured descendant tree before u_frame_end.
+ * pass here, be preempted, and reach klog after u_frame_begin has moved the
+ * generation -- check-then-log, with a genuine TOCTOU between.
  *
- * That fix is deliberately NOT made here. The race is not the budget's: a
- * descendant outliving its run perturbs the frame record count and owner
- * reconciliation identically, for record kinds this mechanism never touches,
- * and closing it is a framing-layer lifetime change. Building a drain
- * protocol inside a budget section would couple two unrelated mechanisms and
- * put the fix where nobody maintaining the framing layer would look for it.
- * Owned by the run-boundary fence section of the usermode test-framework
- * roadmap. */
+ * It is no longer alone. Both fixes the reviews named for that TOCTOU now
+ * exist, in this file, and this comparison runs LAST of three: the run seals
+ * admission (u_capture_seal) so no further claim is created, drains the
+ * claims already outstanding (u_capture_drain) and ends the epoch in the
+ * same transition that writes them off (u_capture_close), and the launcher
+ * reaps each binary's captured descendant tree before that binary's own
+ * cleanup (u_capture_reap_tree). What reaches this check is therefore only
+ * what survived all three -- an emitter already past its claim that could
+ * not be scheduled inside the drain budget -- and dropping it here is the
+ * last line rather than the only one.
+ *
+ * The residual it cannot close is a preempted task's klog write racing the
+ * frame rollover, which no producer-side check can make atomic; the run
+ * boundary reports what that costs instead of hiding it. */
 static int u_capture_generation_current(uint32_t claimed)
 {
     uint64_t irq_flags;
@@ -8979,25 +9007,39 @@ int test_usermode_capture_descendant_of(const struct task *t,
  * framing layer, is reset by u_frame_begin before any run is published, and
  * a capture-budget test reaching into it would cross a boundary this
  * mechanism does not own. */
-void test_usermode_capture_run_state_get(uint32_t *records, int *over);
-void test_usermode_capture_run_state_get(uint32_t *records, int *over)
+/* The SEAL is part of this state, not a separate concern. It is set at
+ * u_frame_end and cleared only by the NEXT u_frame_begin, so after the last
+ * framed run it stays set for the rest of the boot -- and a probe that drives
+ * the real emitter without restoring it would be silently refused. That the
+ * live-emitter tests pass today is an accident of ordering (boot_tests runs
+ * the kernel suite before test_usermode_run), which is precisely the kind of
+ * undeclared dependency this save/restore pair exists to remove. */
+void test_usermode_capture_run_state_get(uint32_t *records, int *over,
+                                         int *sealed);
+void test_usermode_capture_run_state_get(uint32_t *records, int *over,
+                                         int *sealed)
 {
     uint64_t irq_flags;
 
     spin_lock_irqsave(&s_capture_budget_lock, &irq_flags);
     *records = s_capture_run_records;
     *over = (int)s_capture_run_over;
+    if (sealed)
+        *sealed = (int)s_capture_sealed;
     spin_unlock_irqrestore(&s_capture_budget_lock, irq_flags);
 }
 
-void test_usermode_capture_run_state_set(uint32_t records, int over);
-void test_usermode_capture_run_state_set(uint32_t records, int over)
+void test_usermode_capture_run_state_set(uint32_t records, int over,
+                                         int sealed);
+void test_usermode_capture_run_state_set(uint32_t records, int over,
+                                         int sealed)
 {
     uint64_t irq_flags;
 
     spin_lock_irqsave(&s_capture_budget_lock, &irq_flags);
     s_capture_run_records = records;
     s_capture_run_over = (uint8_t)(over ? 1 : 0);
+    s_capture_sealed = (uint8_t)(sealed ? 1 : 0);
     spin_unlock_irqrestore(&s_capture_budget_lock, irq_flags);
 }
 

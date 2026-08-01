@@ -4197,10 +4197,17 @@ void task_cleanup(uint32_t pid)
      * carries the allocator discrimination and the uninstall-guard-before-PMM
      * -free rule (see its comment for the two 2026-04-20 incidents).
      *
-     * The parked stack is safe to free here: task_cleanup runs only after the
-     * parent observed TASK_DEAD in task_waitpid, so the task is off-CPU. If it
-     * exited before reaching another exec, this is where its last stale stack
-     * goes back. */
+     * The parked stack is safe to free here because the task is OFF-CPU, and
+     * that property now rests on the dispatcher rather than on the caller:
+     * dispatch uses the single global current_task (APs never run scheduled
+     * tasks), so a TASK_DEAD task cannot be executing anywhere while this
+     * runs. It used to be stated as "task_cleanup runs only after the parent
+     * observed TASK_DEAD in task_waitpid", which stopped being true of every
+     * caller when the usermode launcher's run-boundary reap began cleaning
+     * capture-owning descendants it had terminated itself
+     * (u_capture_reap_tree, src/kernel/test/test_usermode.c) with no waitpid
+     * anywhere in that chain. If the task exited before reaching another
+     * exec, this is where its last stale stack goes back. */
     if (tasks[pid].stack_base) {
         task_free_kernel_stack(tasks[pid].stack_base);
         tasks[pid].stack_base = (uint8_t *)0;
@@ -4402,6 +4409,27 @@ void task_cleanup(uint32_t pid)
         vmm_destroy_user_pml4(tasks[pid].cr3);
         tasks[pid].cr3 = 0;
     }
+
+    /* A reaped slot is no longer a member of anybody's output-capture tree.
+     *
+     * Unlinked HERE, at the reap barrier, because these are the fields every
+     * capture tree walk selects on and nothing else clears them on the death
+     * path -- neither task_exit nor task_terminate_remote touches them, so a
+     * cleaned-up child kept advertising itself as live and the usermode
+     * launcher's run-boundary reap selected it and called task_cleanup on a
+     * slot the ring-3 parent's own waitpid had already cleaned. That is
+     * survivable only while every sub-teardown above happens to be
+     * idempotent, which none of them declares.
+     *
+     * UNLINK, not reset: the full reset would also clear the stop latch and
+     * the sequence counter, and this runs on the OWNER too. See
+     * task_utest_capture_unlink for why that would un-fence a descendant
+     * that outlived the reap and restart its record numbering.
+     *
+     * Safe at this point: every reader of these fields runs while the task is
+     * alive (the write path) or before cleanup (the launcher's report and
+     * leak snapshots, which are taken from the live TCB). */
+    TASK_UTEST_CAPTURE_UNLINK(&tasks[pid]);
 
     tasks[pid].kernel_rsp = 0;
     tasks[pid].rsp = 0;

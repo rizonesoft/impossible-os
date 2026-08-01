@@ -173,8 +173,10 @@ int test_usermode_capture_settle(uint32_t claim_gen, uint32_t current_gen,
                                  uint64_t *completed);
 int test_usermode_capture_descendant_of(const struct task *t,
                                         uint32_t owner_pid);
-void test_usermode_capture_run_state_get(uint32_t *records, int *over);
-void test_usermode_capture_run_state_set(uint32_t records, int over);
+void test_usermode_capture_run_state_get(uint32_t *records, int *over,
+                                         int *sealed);
+void test_usermode_capture_run_state_set(uint32_t records, int over,
+                                         int sealed);
 uint32_t test_usermode_capture_owner_budget(void);
 uint32_t test_usermode_capture_run_budget(void);
 uint32_t test_usermode_capture_wire_max(void);
@@ -1805,6 +1807,18 @@ static void test_exit_status_classes_partition_the_space(void)
     TEST_ASSERT_EQ((uint64_t)task_exit_is_signal(TASK_EXIT_UTEST_TIMEOUT),
                    0ull,
                    "the timeout reason must NOT classify as a signal death");
+    TEST_ASSERT_EQ((uint64_t)task_exit_is_kernel_reason(
+                       TASK_EXIT_UTEST_REAPED), 1ull,
+                   "the reaped reason must classify as kernel -- the comment "
+                   "above claims EVERY reserved reason, so one that is never "
+                   "enumerated makes the claim untrue in silence");
+    TEST_ASSERT_EQ((uint64_t)task_exit_is_signal(TASK_EXIT_UTEST_REAPED),
+                   0ull,
+                   "and must NOT classify as a signal death -- a reaped "
+                   "descendant was killed BY the launcher, which is the exact "
+                   "confusion the reserved block exists to prevent");
+    TEST_ASSERT_EQ((uint64_t)task_exit_is_app_status(TASK_EXIT_UTEST_REAPED),
+                   0ull, "nor as an application status");
 
     /* The signal range, at both edges. -1 and -(SIG_MAX-1) are signals; the
      * value at exactly -SIG_MAX is not, which is the boundary the reserved
@@ -1928,6 +1942,12 @@ static void test_reason_exit_renders_reserved_block_status(void)
                                   TASK_EXIT_EXEC_IMAGE_DESTROYED);
     TEST_ASSERT_EQ((uint64_t)(n - 6u), 4ull,
                    "the image-destroyed reason renders all four digits");
+    n = test_usermode_reason_exit(buf, (uint32_t)sizeof(buf),
+                                  TASK_EXIT_UTEST_REAPED);
+    TEST_ASSERT_EQ((uint64_t)(n - 6u), 4ull,
+                   "and so does the reaped reason -- a renderer that covers "
+                   "only the reasons that existed when it was written stops "
+                   "being the width net it claims to be");
 
     /* A buffer that cannot hold the reason must refuse, not truncate: the
      * seam returns 0 and leaves an empty string rather than a short number
@@ -4178,6 +4198,7 @@ static void test_capture_emits_exactly_one_owner_marker_then_stops(void)
     uint8_t  saved_stopped;
     uint32_t saved_run_records;
     int      saved_run_over;
+    int      saved_sealed;
     uint32_t count_before, count_after, head;
     uint32_t budget = test_usermode_capture_owner_budget();
     const klog_entry_t *ring;
@@ -4192,7 +4213,8 @@ static void test_capture_emits_exactly_one_owner_marker_then_stops(void)
     saved_seq     = atomic_read(&self->utest_capture_seq);
     saved_stopped = __atomic_load_n(&self->utest_capture_stopped,
                                    __ATOMIC_ACQUIRE);
-    test_usermode_capture_run_state_get(&saved_run_records, &saved_run_over);
+    test_usermode_capture_run_state_get(&saved_run_records, &saved_run_over,
+                                        &saved_sealed);
 
     self->utest_capture_active = 1;
     self->utest_capture_owner_pid = self->pid;
@@ -4201,7 +4223,10 @@ static void test_capture_emits_exactly_one_owner_marker_then_stops(void)
      * chunk, and the one after it must be the terminator. */
     atomic_set(&self->utest_capture_seq, (int32_t)(budget - 1u));
     /* The run aggregate a real single-owner run would be carrying here. */
-    test_usermode_capture_run_state_set(budget - 1u, 0);
+    /* Unsealed explicitly: the seal survives the last framed run, so a
+     * probe that drove the real emitter without clearing it would be
+     * refused for a reason that has nothing to do with what it asserts. */
+    test_usermode_capture_run_state_set(budget - 1u, 0, 0);
 
     test_usermode_capture_start(&ctx);
     (void)test_usermode_capture_byte(&ctx, 'x');
@@ -4282,7 +4307,8 @@ static void test_capture_emits_exactly_one_owner_marker_then_stops(void)
     atomic_set(&self->utest_capture_seq, saved_seq);
     __atomic_store_n(&self->utest_capture_stopped, saved_stopped,
                      __ATOMIC_RELEASE);
-    test_usermode_capture_run_state_set(saved_run_records, saved_run_over);
+    test_usermode_capture_run_state_set(saved_run_records, saved_run_over,
+                                        saved_sealed);
 }
 
 /* The derivation's PURPOSE: a binary that fills every chunk must be able
@@ -4875,6 +4901,48 @@ static void test_capture_reap_selects_only_this_owners_descendants(void)
     s_capture_child_scratch.pid = 0u;
 }
 
+/* UNLINKING a reaped slot must clear what SELECTS it and nothing else.
+ *
+ * The distinction is the whole test. task_cleanup runs on the OWNER at the
+ * end of every binary, and a descendant that outlived the reap still carries
+ * that owner's pid -- its next claim resolves the owner's slot to read the
+ * stop latch the reap set there. Substituting the full reset (which also
+ * clears the latch and the sequence counter) un-fences that descendant and
+ * restarts its numbering at 0, so the run it lands in receives authenticated
+ * records with duplicate sequence numbers: the exact failure the fence
+ * exists to prevent, reintroduced by its own cleanup. Nothing else in the
+ * kernel would notice -- the build stays green and every other capture
+ * assertion still passes -- which is why the difference is pinned here. */
+static void test_capture_unlink_keeps_the_fence_the_reap_set(void)
+{
+    task_utest_capture_reset(&s_capture_parent_scratch);
+    s_capture_parent_scratch.utest_capture_active = 1;
+    s_capture_parent_scratch.utest_capture_owner_pid = 7u;
+    atomic_set(&s_capture_parent_scratch.utest_capture_seq, 5);
+    __atomic_store_n(&s_capture_parent_scratch.utest_capture_stopped, 1u,
+                     __ATOMIC_RELEASE);
+
+    task_utest_capture_unlink(&s_capture_parent_scratch);
+
+    TEST_ASSERT_EQ((uint64_t)s_capture_parent_scratch.utest_capture_active, 0u,
+                   "the unlink clears the active flag, so a tree walk stops "
+                   "finding this slot and cannot clean it twice");
+    TEST_ASSERT_EQ((uint64_t)s_capture_parent_scratch.utest_capture_owner_pid,
+                   0u, "and clears the owner pid it was matched on");
+    TEST_ASSERT_EQ((uint64_t)__atomic_load_n(
+                       &s_capture_parent_scratch.utest_capture_stopped,
+                       __ATOMIC_ACQUIRE), 1u,
+                   "but must LEAVE the stop latch set -- clearing it here "
+                   "un-fences every descendant that outlived the reap, because "
+                   "their claims read the latch from this very slot");
+    TEST_ASSERT_EQ((uint64_t)(uint32_t)atomic_read(
+                       &s_capture_parent_scratch.utest_capture_seq), 5u,
+                   "and must leave the sequence counter alone -- restarting it "
+                   "hands a late descendant numbers the run has already seen");
+
+    task_utest_capture_reset(&s_capture_parent_scratch);
+}
+
 /* A parent that is NOT itself captured (the common case: most tasks are
  * never test binaries) must produce an equally uncaptured child -- fork
  * must never MANUFACTURE ownership. */
@@ -5457,6 +5525,9 @@ void test_register_usermode_launcher(void)
                             TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: reap selects only this owner's descendants",
                             test_capture_reap_selects_only_this_owners_descendants,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: unlink keeps the fence the reap set",
+                            test_capture_unlink_keeps_the_fence_the_reap_set,
                             TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: capture emits one owner marker then stops",
                             test_capture_emits_exactly_one_owner_marker_then_stops,

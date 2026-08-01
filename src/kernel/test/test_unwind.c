@@ -1407,8 +1407,17 @@ static void tu_build_uhandler_uinfo(uint8_t *u, uint32_t handler_rva, int has_ha
  * handler, and test_rtlunwind_continue_execution_invalid began reporting
  * STATUS_SUCCESS instead of STATUS_INVALID_DISPOSITION. Anchoring the range
  * to the img buffer -- static storage that no .pdata entry can cover --
- * removes the aliasing entirely rather than moving the window somewhere
- * currently-empty. */
+ * removes the aliasing for the CODE RANGE by construction, rather than by
+ * moving the window somewhere currently empty.
+ *
+ * It does NOT remove it everywhere, and claiming otherwise would hide the
+ * half that is left. Each caller still derives its chain-terminating
+ * sentinel as `base + 0x1000` and relies on a lookup there returning NULL;
+ * that address is real kernel .text under exactly the same condition, so the
+ * same coin flip survives at a different offset. Closing it needs the
+ * sentinel to come from this helper too, which changes every call site --
+ * owned by the exception-dispatch roadmap's unwind-fixture section rather
+ * than smuggled into a fix for something else. */
 static void tu_register_handler_fn(img_buf_t *img, RUNTIME_FUNCTION *rf, void *handler,
                                    uint64_t *out_base, uint64_t *out_body_pc)
 {

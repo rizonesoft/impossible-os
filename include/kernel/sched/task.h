@@ -932,6 +932,35 @@ static inline void task_utest_capture_inherit(struct task *child,
 #define TASK_UTEST_CAPTURE_INHERIT(childp, parentp) \
     task_utest_capture_inherit(childp, parentp)
 
+/* UNLINK a reaped slot from its capture tree -- clear what SELECTS it, and
+ * nothing else. Called from task_cleanup, at the reap barrier.
+ *
+ * The two fields cleared here are the ones every tree walk matches on, so a
+ * slot that has been cleaned up stops being found. That is the whole job: a
+ * child already reaped by its ring-3 parent otherwise still advertised
+ * itself as a live member of its binary's tree, and the launcher's
+ * run-boundary reap selected it and cleaned it a second time.
+ *
+ * WHAT IT MUST NOT TOUCH is the more important half, and using
+ * task_utest_capture_reset here instead would be a silent regression rather
+ * than a tidier call. That function also clears `utest_capture_stopped` and
+ * `utest_capture_seq` -- and the launcher cleans up the OWNER at the end of
+ * every binary. A descendant that outlived the reap still carries
+ * owner_pid = that owner, and its next claim resolves the owner's slot to
+ * read the stop latch the reap set. Clearing the latch would un-fence it,
+ * and zeroing the sequence would restart its numbering at 0, so the run it
+ * lands in receives authenticated records with duplicate sequence numbers --
+ * which is precisely the failure the fence exists to prevent, reintroduced
+ * by its own cleanup. The latch and the counter therefore outlive the slot's
+ * membership deliberately; nothing reuses a pid within a boot, so nothing
+ * can inherit them. */
+static inline void task_utest_capture_unlink(struct task *t)
+{
+    t->utest_capture_active = 0;
+    t->utest_capture_owner_pid = 0;
+}
+#define TASK_UTEST_CAPTURE_UNLINK(tp) task_utest_capture_unlink(tp)
+
 /* KERNEL_TESTS-only spawn entry point: identical to task_create() except
  * the new task's capture fields are armed (active=1, owner=own pid) BEFORE
  * the task is published, closing the publish-before-arm race a plain
@@ -941,6 +970,10 @@ int task_create_captured(task_entry_t entry, const char *name);
 #else
 #define TASK_UTEST_CAPTURE_RESET(tp) ((void)0)
 #define TASK_UTEST_CAPTURE_INHERIT(childp, parentp) ((void)0)
+/* task_cleanup calls this unconditionally, so the release flavor needs the
+ * no-op arm exactly as the other two do -- the capture fields do not exist
+ * in a build with the launcher pruned out. */
+#define TASK_UTEST_CAPTURE_UNLINK(tp) ((void)0)
 #endif /* KERNEL_TESTS */
 
 /* --- API --- */
