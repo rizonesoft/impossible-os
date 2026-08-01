@@ -1,6 +1,6 @@
 {
-  "total_suites": 2704,
-  "total_assertions": 11060,
+  "total_suites": 2705,
+  "total_assertions": 11077,
   "files": [
     {"file": "test_ab_boot.c", "suites": 38, "assertions": 66},
     {"file": "test_acpi_power.c", "suites": 8, "assertions": 11},
@@ -42,7 +42,7 @@
     {"file": "test_firmware_advisor.c", "suites": 5, "assertions": 17},
     {"file": "test_firmware_platform.c", "suites": 15, "assertions": 35},
     {"file": "test_firmware_tables.c", "suites": 41, "assertions": 72},
-    {"file": "test_harness.c", "suites": 29, "assertions": 64},
+    {"file": "test_harness.c", "suites": 30, "assertions": 75},
     {"file": "test_heap.c", "suites": 16, "assertions": 42},
     {"file": "test_ipc.c", "suites": 5, "assertions": 12},
     {"file": "test_irq_timer.c", "suites": 21, "assertions": 83},
@@ -105,7 +105,7 @@
     {"file": "test_usb_boot.c", "suites": 10, "assertions": 98},
     {"file": "test_usb_hid.c", "suites": 5, "assertions": 68},
     {"file": "test_usermode.c", "suites": 0, "assertions": 1},
-    {"file": "test_usermode_launcher.c", "suites": 163, "assertions": 724},
+    {"file": "test_usermode_launcher.c", "suites": 163, "assertions": 730},
     {"file": "test_vfs.c", "suites": 13, "assertions": 40},
     {"file": "test_vmm.c", "suites": 23, "assertions": 125},
     {"file": "test_vpd.c", "suites": 2, "assertions": 19},

@@ -656,6 +656,49 @@ static void test_harness_count_trailer_format(void)
                    "over-budget trailer reports failure");
 }
 
+static void test_harness_count_name_is_safe(void)
+{
+    TEST_ASSERT_EQ(test_count_name_is_safe("Harness: register 3 actions"), 1,
+                   "an ordinary name with spaces and a colon is a usable key");
+    TEST_ASSERT_EQ(test_count_name_is_safe(""), 1, "an empty name is usable");
+    TEST_ASSERT_EQ(test_count_name_is_safe((void *)0), 0, "NULL is refused");
+
+    /* The reserved token, which every consumer reads as "truncated record". */
+    TEST_ASSERT_EQ(test_count_name_is_safe("Harness: trunc=1 behavior"), 0,
+                   "' trunc=1' is refused -- a name carrying it would make "
+                   "every sweep refuse its own trace");
+    TEST_ASSERT_EQ(test_count_name_is_safe("ends with trunc=1"), 0,
+                   "the reserved token is refused at the very end too");
+
+    /* The shape no source grep can see: C concatenates these into ONE string,
+     * so the resolved name carries the token even though neither literal does.
+     * This case is the entire reason the check lives at registration. */
+    TEST_ASSERT_EQ(test_count_name_is_safe("safe" " trunc=1"), 0,
+                   "adjacent string literals concatenating into the reserved "
+                   "token are refused, which no source-level grep can see");
+
+    /* The four FIELD delimiters are explicitly NOT banned. The consumer parses
+     * the numeric fields right-anchored, so a name containing them is
+     * unambiguous -- verified against the host regex, which resolves even
+     * `evil p=9 f=9 s=9 P=9 tail` to the correct name and numbers. Rejecting
+     * these would LOG_ERROR on names that work, and a validator that cries
+     * wolf gets switched off. */
+    TEST_ASSERT_EQ(test_count_name_is_safe("suite with p=5 inside"), 1,
+                   "a field delimiter in the name is fine: the parse is "
+                   "right-anchored");
+    TEST_ASSERT_EQ(test_count_name_is_safe("evil p=9 f=9 s=9 P=9 tail"), 1,
+                   "even a complete fake field tail is fine, because only the "
+                   "trailing group can satisfy the parser's anchor");
+
+    /* Near-misses on the reserved token stay usable. */
+    TEST_ASSERT_EQ(test_count_name_is_safe("trunc=1"), 1,
+                   "the token without its leading space is not the token");
+    TEST_ASSERT_EQ(test_count_name_is_safe("about trunc=2"), 1,
+                   "a different value is not the reserved token");
+    TEST_ASSERT_EQ(test_count_name_is_safe("about trunc="), 1,
+                   "a prefix of the reserved token is not the token");
+}
+
 /* Registration */
 void test_register_harness(void)
 {
@@ -721,6 +764,8 @@ void test_register_harness(void)
                             test_harness_count_record_overflow, TEST_CAT_BOOT);
     test_suite_register_cat("Harness: count-trace trailer format",
                             test_harness_count_trailer_format, TEST_CAT_BOOT);
+    test_suite_register_cat("Harness: count-trace suite-name key validation",
+                            test_harness_count_name_is_safe, TEST_CAT_BOOT);
 }
 
 #endif /* KERNEL_TESTS */

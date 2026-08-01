@@ -166,6 +166,12 @@ static int             g_count_trace = 0;
  *    QUIET path -- the one every automated gate runs -- took the suite from a
  *    3.8-4.6s baseline to 10.7s, 2704 extra records of real serial I/O pushed
  *    into the very timing environment whose stability is under measurement.
+ *    Those are EMULATED-serial seconds and the bare-metal cost is worse, not
+ *    better: serial_write() holds the port lock with interrupts DISABLED while
+ *    polling the UART for each line, so on a real 115200 port a record is
+ *    milliseconds of interrupts-off. That is inherent to klog rather than new
+ *    here (verbose mode is an order of magnitude more of it), which is exactly
+ *    why this rides an explicit opt-in instead of any default path.
  *    Riding VERBOSE instead was worse: a verbose run emits ~28k per-assertion
  *    PASS lines and does not finish inside scripts/test.sh's 60s window at all
  *    (measured still mid-run at suite 2188 after 54.2s), so the only mode that
@@ -325,6 +331,49 @@ test_category_t test_category_from_string(const char *str)
 
 /* ---- Registration ---- */
 
+/* Does this suite name survive the [COUNT] record format?
+ *
+ * The rule is narrower than it first looks, and getting it wrong in the SAFE
+ * direction is still a bug. The first version of this rejected any name
+ * containing " p=", " f=", " s=" or " P=", on the theory that those are the
+ * record's field delimiters. They are -- but the consumer parses the four
+ * numeric fields RIGHT-ANCHORED, so a name containing them is unambiguous and
+ * parses correctly. Verified against the host regex: a name as adversarial as
+ * `evil p=9 f=9 s=9 P=9 tail` still yields the right name and the right four
+ * numbers, because only the trailing group can satisfy the anchor. Banning
+ * those names would have produced a LOG_ERROR for names that work fine, and a
+ * validator that cries wolf is one that gets switched off.
+ *
+ * What the consumer genuinely cannot survive is ` trunc=1`. That is the marker
+ * an over-budget record ends with, and the parser treats its presence anywhere
+ * in a [COUNT] line as proof the record was truncated -- so a suite named
+ * "Harness: trunc=1 behavior" would make every sweep refuse its own trace, and
+ * refuse it for a reason that has nothing to do with the run.
+ *
+ * Checked on the RESOLVED runtime string rather than by grepping the source: a
+ * grep cannot see through adjacent string literals (this tree already splits
+ * names that way, e.g. test_quota_ledger.c:2926), macro-built names, or
+ * escapes, and a check that misses those reports the invariant holding when it
+ * does not.
+ *
+ * Pure and side-effect free, so the harness can drive every branch. */
+int test_count_name_is_safe(const char *name)
+{
+    static const char reserved[] = " trunc=1";
+    uint32_t i, j;
+
+    if (!name)
+        return 0;
+
+    for (i = 0; name[i]; i++) {
+        for (j = 0; reserved[j] && name[i + j] == reserved[j]; j++)
+            ;
+        if (!reserved[j])
+            return 0;
+    }
+    return 1;
+}
+
 void test_suite_register_cat(const char *name, test_fn_t fn, test_category_t cat)
 {
     if (g_test_state.suite_count >= TEST_MAX_SUITES) {
@@ -332,6 +381,15 @@ void test_suite_register_cat(const char *name, test_fn_t fn, test_category_t cat
              (uint64_t)TEST_MAX_SUITES);
         return;
     }
+    /* Loud at boot rather than silently unparseable later. The suite is still
+     * registered and still runs -- refusing it would turn a naming slip into
+     * missing coverage -- but anyone reading a [COUNT] trace built from this
+     * name has been told it cannot be trusted as a key. */
+    if (!test_count_name_is_safe(name))
+        klog(LOG_ERROR, "TEST",
+             "suite name contains the reserved [COUNT] token ' trunc=1', which "
+             "makes every consumer treat its record as truncated: %s",
+             name ? name : "(null)");
     test_suite_t *s = &g_test_state.suites[g_test_state.suite_count++];
     s->name = name;
     s->fn   = fn;

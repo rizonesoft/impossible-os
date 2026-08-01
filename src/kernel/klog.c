@@ -1077,7 +1077,34 @@ const klog_entry_t *klog_get_ring(uint32_t *out_count, uint32_t *out_head)
 
 uint64_t klog_get_seq(void)
 {
-    return klog_ring_seq;
+    /* ACQUIRE, not a plain load: klog_emit() advances klog_ring_seq under
+     * s_klog_lock from any CPU and from interrupt context, and the sibling
+     * accessor above takes the lock for exactly that reason. A torn or stale
+     * read here is not cosmetic -- test windows are derived from this value. */
+    return __atomic_load_n(&klog_ring_seq, __ATOMIC_ACQUIRE);
+}
+
+const klog_entry_t *klog_get_ring_snapshot(uint32_t *out_count,
+                                           uint32_t *out_head,
+                                           uint64_t *out_seq)
+{
+    /* head AND seq from ONE lock acquisition.
+     *
+     * Sampling them separately -- klog_get_ring() under the lock, then
+     * klog_get_seq() after it -- looks equivalent and is not: an append
+     * landing between the two calls advances seq without advancing the head
+     * the caller already captured, so a window derived from (head, seq) is one
+     * entry wider than the head anchor warrants. A consumer walking back from
+     * head then reaches one slot too far, into whatever was there before the
+     * window opened. The runner runs with interrupts enabled, so the timer ISR
+     * alone is enough to hit it on a single CPU. */
+    unsigned long flags;
+    spin_lock_irqsave(&s_klog_lock, &flags);
+    if (out_count) *out_count = klog_ring_count;
+    if (out_head)  *out_head  = klog_ring_head;
+    if (out_seq)   *out_seq   = klog_ring_seq;
+    spin_unlock_irqrestore(&s_klog_lock, flags);
+    return klog_ring;
 }
 
 uint32_t klog_panic_snapshot(klog_entry_t *out, uint32_t max)

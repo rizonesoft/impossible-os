@@ -102,6 +102,17 @@ typedef struct {
 const klog_entry_t *klog_get_ring(uint32_t *out_count, uint32_t *out_head);
 uint64_t klog_get_seq(void);
 
+/* ring + count + head + monotonic seq, all from ONE lock acquisition.
+ *
+ * Use this instead of pairing klog_get_ring() with klog_get_seq() whenever the
+ * (head, seq) pair is load-bearing: an append landing between two separate
+ * calls advances seq past the captured head, so a window derived from the pair
+ * is wider than its own anchor and a consumer walking back from head reads an
+ * entry from before the window. */
+const klog_entry_t *klog_get_ring_snapshot(uint32_t *out_count,
+                                           uint32_t *out_head,
+                                           uint64_t *out_seq);
+
 /* Lock-free best-effort snapshot of the last `max` ring entries into `out`
  * (oldest-first); returns the number copied. For the panic path ONLY: takes no
  * lock (the faulting CPU may already hold s_klog_lock) and tolerates a torn

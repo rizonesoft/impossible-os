@@ -193,6 +193,15 @@ int test_count_record_format(char *dst, uint32_t cap, uint32_t ordinal,
 int test_count_trailer_format(char *dst, uint32_t cap, uint32_t records,
                               uint32_t passed, uint32_t failed,
                               uint32_t skipped, uint32_t pending);
+
+/* 1 when `name` can serve as a [COUNT] comparison key, 0 when it contains the
+ * reserved token " trunc=1" -- which every consumer reads as "this record was
+ * truncated", so a suite named with it poisons its own trace. The four field
+ * delimiters are deliberately NOT banned: the numeric fields are parsed
+ * right-anchored, so a name containing them is unambiguous. Checked on the
+ * RESOLVED string at registration, because adjacent string literals and
+ * macro-built names are invisible to any source-level grep. */
+int test_count_name_is_safe(const char *name);
 #endif /* KERNEL_TESTS -- defined in test_runner.c, which the release flavor
         * prunes entirely; declaring it unconditionally left a prototype with
         * no possible definition in that build. */

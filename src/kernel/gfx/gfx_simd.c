@@ -315,7 +315,16 @@ int simd_avx512_ok = 0; /* Set to 1 at boot if AVX-512 passes throttle check */
  * treats it as.
  *
  * Set once by the feature probe and never cleared, so a correctness test can
- * ask the question it actually means. */
+ * ask the question it actually means.
+ *
+ * CONCURRENCY: plain access is correct and deliberate. The single write is in
+ * simd_enable_avx(), which runs in boot_phase0 BEFORE any AP is brought up,
+ * and every reader is a BSP-side test suite. It is NOT the same shape as
+ * simd_avx2_ok one line above, which is accessed with __ATOMIC_ACQUIRE/RELEASE
+ * precisely because the auto-tune rewrites it after boot and the memops
+ * dispatcher reads it from other CPUs. Stated rather than left to inference:
+ * anything that starts writing this after AP bringup, or reads it off the BSP,
+ * has to convert BOTH sides to atomics rather than copying the plain read. */
 int simd_avx2_capable = 0;
 
 void simd_enable_avx(void)

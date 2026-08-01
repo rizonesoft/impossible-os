@@ -17846,6 +17846,34 @@ fi
 rm -rf "$QO_TMP"
 
 # ---------------------------------------------------------------------------
+# The suite-name key rule is enforced at RUNTIME, and must stay that way.
+#
+# The first version of this check grepped the source for a delimiter inside the
+# first string literal after test_suite_register_cat(. That is a false-pass
+# machine: C concatenates adjacent literals, and this tree already splits suite
+# names that way (src/kernel/test/test_quota_ledger.c:2926), so a delimiter in
+# the SECOND literal was invisible -- the check would report the invariant
+# holding when it did not, which is worse than not checking. Macro-built names
+# and escapes have the same hole.
+#
+# So the real net is test_count_name_is_safe() applied to the RESOLVED string
+# inside test_suite_register_cat(), and what is verified here is that the net is
+# still wired in. A structural check that the runtime check exists is honest;
+# a source grep pretending to be the runtime check is not.
+# ---------------------------------------------------------------------------
+NAMESAFE_DEF="$(grep -c 'int test_count_name_is_safe(const char \*name)' \
+                "$REPO_ROOT/src/kernel/test/test_runner.c" || true)"
+NAMESAFE_CALL="$(sed -n '/^void test_suite_register_cat(/,/^}/p' \
+                 "$REPO_ROOT/src/kernel/test/test_runner.c" \
+                 | grep -c 'test_count_name_is_safe(name)' || true)"
+if [ "${NAMESAFE_DEF:-0}" -ge 1 ] && [ "${NAMESAFE_CALL:-0}" -ge 1 ]; then
+    t_pass "count-trace: suite-name key rule is enforced on the resolved name at registration"
+else
+    t_fail "count-trace: suite-name key rule is enforced on the resolved name at registration" \
+        "definition=$NAMESAFE_DEF call-in-register=$NAMESAFE_CALL -- test_suite_register_cat must call test_count_name_is_safe(name); a source grep over suite names cannot replace it (adjacent string literals)"
+fi
+
+# ---------------------------------------------------------------------------
 # test-count-stability.sh -- the completeness checker must FAIL CLOSED
 #
 # This script's only value is that it refuses to call a trace stable when it

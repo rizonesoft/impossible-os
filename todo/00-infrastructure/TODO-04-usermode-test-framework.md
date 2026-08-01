@@ -108,7 +108,7 @@ title: "TODO-04 -- User-Mode Test Framework"
 | 💎   |  48   | Wire-published facts the host enforces (write id, spawn, chunk) | §33, §36, §40      |  [x]   |
 | 💎   |  49   | Run-boundary fence for emitters that outlive their binary | §33, §35, §40           |  [x]   |
 | 💎   |  50   | Per-child loader evidence (ring-3 entry + stage flags) | §37, §42                   |  [x]   |
-| ⭐   |  51   | Reproducible kernel assertion total + the intermittent TEB halt | §44             |  [ ]   |
+| ⭐   |  51   | Reproducible kernel assertion total + the intermittent TEB halt | §44             |  [x]   |
 | ⭐   |  52   | Bind a leg pointer to the record's own identity      | §38, §45                      |  [ ]   |
 | 💎   |  53   | A directory occupying a pointer or lease name       | §46                           |  [ ]   |
 | ⭐   |  54   | A write abandoned before its first chunk reached the wire | §48                     |  [ ]   |
@@ -2160,6 +2160,10 @@ The suite's headline number is not reproducible: the SAME tree reports `PASS: 27
       - That points the hunt at allocator/task-slot pressure rather than at a pure SMP timing window, and it means a repeat-count sweep of BARE boots would measure the wrong thing -- the sweep has to run the suite first, or run the matrix repeatedly. It also ties this item to the assertion-total item above: both suspects are the same exhaustion paths
       - The §47 attribution check is worth keeping as the method: stash the section, build, boot N times, restore, build, boot N times. It is what separates "my diff broke the boot" from "I reproduced the filed bug" -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §47 (item: "Moved the timeout marker out of the `-(signum)` range: `UTEST_EXIT_TIMEOUT` (-6) is DELETED and replaced by `TASK_EXIT_UTEST_TIMEOUT`")
 - [x] Commit: `"test: make the kernel assertion total reproducible and chase the intermittent TEB halt"`
+
+> **Verified:** 2026-08-02 | commit `c56c93dd` | 2/3 items | build OK | 10-run + 4-RAM-size count sweep STABLE at 28151, cross-mode agrees on all four counters, 28151 kernel + 17 user-mode, 1169/1169 tooling, smoke 2.8s, lint 0 errors, KERNEL_TESTS=off builds
+> **Deferred:** [M] the intermittent `ring-3 task has TEB but kernel_gs_base=0` halt is measured (0 in 6 consecutive 2-CPU `SUITE=exec` runs, 0 in ~20 further 2-CPU full-suite runs, against ~1-in-3 on 2026-07-31) but not root-caused; the fix is an operator-reserved ABI ordering call (reason: owner exists, evidence recorded there) -> XREF: `02-kernel-core/TODO-11-peb-teb-user-abi.md` §28 (item: "Reproduce deterministically before changing anything: identify what orders the TEB publish against the `KERNEL_GS_BASE` write, and whether a tick landing between them is the window" at line 699)
+> **Quality reviewed:** 2026-08-02 | Codex 10x (design, adversarial, consistency, perf, re-adversarial x2, post-ship adversarial x2/consistency/perf) + Opus kernel audit | 1H+12M+6L fixed, 0 open | scope: kernel-code-quality
 
 **Test checkpoint:** ten consecutive `bash scripts/test.sh QUIET=1` runs on an unchanged tree report the SAME kernel assertion total; a repeat-count boot sweep across TCG and KVM at 1 and 2 CPUs either reproduces the `kernel_gs_base=0` halt (which then gets a root cause) or bounds how often it can occur. Test on: QEMU TCG, QEMU KVM.
 

@@ -337,6 +337,25 @@ source_digest() {
         git rev-parse HEAD 2>/dev/null || echo "no-head"
         git diff HEAD 2>/dev/null
         git status --porcelain 2>/dev/null
+        # UNTRACKED CONTENT, not just untracked NAMES. `git status --porcelain`
+        # lists an untracked file once and says nothing about what is inside
+        # it, so an untracked build input edited mid-sweep -- a scratch header,
+        # a generated table, a not-yet-added generator -- would rebuild the
+        # kernel while this digest sat perfectly still.
+        #
+        # EVERY non-ignored untracked file, not a hand-picked list of roots.
+        # The first version enumerated src/include/user/resources/tools only,
+        # which silently omitted scripts/ -- where the build's own entry points
+        # live, so an untracked generator invoked by a modified Makefile was
+        # exactly the case it could not see. --exclude-standard already honours
+        # .gitignore, so build/ and the artifact directories are out by
+        # construction; an allowlist can only ever be missing an entry.
+        # -z plus a NUL-delimited read so a filename containing whitespace or a
+        # newline is hashed rather than skipped.
+        git ls-files --others --exclude-standard -z 2>/dev/null \
+            | sort -z | while IFS= read -r -d '' f; do
+                [ -f "$f" ] && sha256sum "$f" 2>/dev/null
+            done
     } | sha256sum 2>/dev/null | cut -d' ' -f1
 }
 BASE_DIGEST="$(source_digest)"
