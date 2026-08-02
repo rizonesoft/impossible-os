@@ -50,6 +50,8 @@ OPEN_ITEM_RE = re.compile(r"^\s*- \[ \]")
 PARKED_ITEM_RE = re.compile(r"^\s*- \[/\]")
 VERIFIED_RE = re.compile(r"^> \*\*Verified:")
 DEFERRED_RE = re.compile(r"^> \*\*Deferred:")
+QUALITY_RE = re.compile(r"^> \*\*Quality reviewed:")
+AWAITING_RE = re.compile(r"awaiting-[a-z]+")
 IO_ROW_RE = re.compile(r"^\|[^|]*\|\s*(\d+)\s*\|")
 
 # An owner is anything a later pass can act on: an XREF, a named TODO, an
@@ -61,11 +63,28 @@ OWNER_RE = re.compile(
     re.IGNORECASE)
 
 
+ANY_H2_RE = re.compile(r"^## ")
+
+
 def _sections(lines):
+    """(number, line, body) with the body ending at the next `## ` of ANY kind.
+
+    Ending only at the next NUMBERED section is wrong and was caught on
+    2026-08-02 before it caused a bad edit: the LAST numbered section's body
+    then runs to EOF, swallowing `## OS Comparison`, `## Unit Tests`,
+    `## Verification` and `## History` -- all of which legitimately contain
+    `- [ ]` items. That made every file's final section look like it held
+    unreachable open work, and produced 11 confident findings that evaporated
+    on inspection (each section actually had 0 open items of its own).
+    """
     starts = [(i, int(m.group(1))) for i, l in enumerate(lines)
               if (m := SECTION_RE.match(l))]
     for idx, (ln, num) in enumerate(starts):
-        end = starts[idx + 1][0] if idx + 1 < len(starts) else len(lines)
+        end = len(lines)
+        for j in range(ln + 1, len(lines)):
+            if ANY_H2_RE.match(lines[j]):
+                end = j
+                break
         yield num, ln, lines[ln:end]
 
 
@@ -95,18 +114,61 @@ def _io_rows(lines):
     return rows
 
 
-def _oracle_done(path, root):
-    """Sections the triage oracle calls DONE, or None when unavailable."""
-    tri = Path(root) / ".claude/hooks/sequencer_triage.py"
-    if not tri.exists():
-        return None
+_CACHE = {}
+
+
+def _load_cache(root):
+    """Section status straight from the todo-graph cache: {path: {n: status}}.
+
+    Spawning `sequencer_triage --classify` per file cost 232 subprocesses and
+    made this unusable from lint (it silently timed out on 2026-08-02 and the
+    check emitted nothing at all). The cache already carries what is needed --
+    `sections[].status` is the Implementation Order marker the classifier reads
+    -- so one JSON load replaces the whole fan-out.
+    """
+    if _CACHE:
+        return _CACHE
+    cache_path = Path(root) / "build" / "todo-cache.json"
     try:
-        r = subprocess.run([sys.executable, str(tri), "--classify", str(path)],
-                           capture_output=True, text=True, timeout=60, cwd=root)
-        d = json.loads(r.stdout)
+        data = json.loads(cache_path.read_text(encoding="utf-8"))
     except Exception:
+        _CACHE["__missing__"] = True
+        return _CACHE
+    for node in data:
+        fp = node.get("file_path")
+        if not fp:
+            continue
+        _CACHE[fp] = {sec.get("n"): (sec.get("status") or "").strip()
+                      for sec in node.get("sections", []) if isinstance(sec, dict)}
+    return _CACHE
+
+
+def _io_status(path, root):
+    """{section: IO-table status} from the cache, or None when unavailable."""
+    cache = _load_cache(root)
+    if cache.get("__missing__"):
         return None
-    return {s.get("n") for s in d.get("sections", []) if s.get("class") == "DONE"}
+    return cache.get(str(path))
+
+
+def _is_done(status, verified, quality, deferred, awaiting):
+    """Mirror of sequencer_triage's DONE rule -- deliberately, not approximately.
+
+    From its own docstring: DONE is a shipped `[x]`/`[/]` carrying BOTH
+    Verified AND Quality-reviewed, OR an `[x]`/`[/]` carrying a TERMINAL
+    Deferred stamp. A Deferred stamp bearing an `awaiting-*` token is BLOCKED,
+    not DONE -- the run stays armed and fixpoint refuses -- so those sections
+    ARE revisited and their items are reachable.
+
+    Approximating this cost a wrong answer once already: keying on `[x]` alone
+    reported 23 findings where the real rule gives a different set, and keying
+    on the Verified stamp alone (the pre-cache fallback) gave 350.
+    """
+    if status not in ("x", "/"):
+        return False
+    if deferred:
+        return not awaiting          # awaiting-* => BLOCKED => still revisited
+    return verified and quality
 
 
 def audit(path, root="."):
@@ -116,13 +178,15 @@ def audit(path, root="."):
     except OSError:
         return []
     rows = _io_rows(lines)
-    done = _oracle_done(path, root)
+    status_map = _io_status(path, root)
     out = []
     for num, ln, body in _sections(lines):
         opens = [b.strip()[:90] for b in body if OPEN_ITEM_RE.match(b)]
         parked = [b.strip() for b in body if PARKED_ITEM_RE.match(b)]
         deferred = any(DEFERRED_RE.match(b) for b in body)
         stamped = any(VERIFIED_RE.match(b) for b in body)
+        quality = any(QUALITY_RE.match(b) for b in body)
+        awaiting = any(DEFERRED_RE.match(b) and AWAITING_RE.search(b) for b in body)
 
         # 1. body with no Implementation Order row -- invisible to the oracle
         if num not in rows and (opens or parked):
@@ -132,7 +196,9 @@ def audit(path, root="."):
                         f"row and never reads the body"))
             continue
 
-        is_done = (num in done) if done is not None else stamped
+        status = (status_map or {}).get(num, "")
+        is_done = (_is_done(status, stamped, quality, deferred, awaiting)
+                   if status_map is not None else (stamped and quality))
 
         # 2. open items in a DONE section that is not a recorded deferral
         if is_done and opens and not deferred:
@@ -194,7 +260,13 @@ def _selftest() -> int:
         p.write_text(
             "# X\n\n## Implementation Order\n\n| 💎 | 1 | a | -- | [x] |\n\n"
             "## 1. Stamped and done\n\n- [x] done\n- [ ] sneaked in\n"
-            "> **Verified:** 2026-01-01 | commit `x`\n\n"
+            "> **Verified:** 2026-01-01 | commit `x`\n"
+            # BOTH stamps are required for DONE -- a shipped-but-unreviewed
+            # section is NEEDS_WORK, so a fixture with Verified alone is
+            # correctly NOT flagged (this fixture originally omitted the
+            # Quality-reviewed line and the selftest failed for the right
+            # reason).
+            "> **Quality reviewed:** 2026-01-01 | Codex\n\n"
             "## 2. No IO row at all\n\n- [ ] invisible work\n")
         hits = {k for k, _, _ in audit(str(p), root=td)}
         for want in ("open-in-done", "no-io-row"):

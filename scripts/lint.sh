@@ -1510,6 +1510,55 @@ elif [ -f "$REPO_ROOT/scripts/todo-section-order.py" ]; then
     fi
 fi
 
+# Check 24: reachability -- can a future pass still SEE this item?
+# ============================================================================
+# One question, replacing three partial views (orphan-check, validate's
+# dangling/orphan rows, and the classifier they police). Split by severity
+# because the two classes differ in kind, not degree:
+#
+#   open-in-done      ERROR. A bare `- [ ]` in a section the ORACLE calls DONE
+#                     and which carries no Deferred stamp is unreachable
+#                     outright -- nothing will ever look at it again. Currently
+#                     ZERO, so gating costs nothing and keeps it that way.
+#   open-in-deferred  WARN. 333 exist (2026-08-02). The section is parked with
+#                     a recorded blocker, so the work is not lost, but a bare
+#                     `- [ ]` there is seen by NOTHING: the oracle skips DONE
+#                     sections, orphan-check exempts Deferred ones by design,
+#                     and stranded_deferrals tracks `[/]` ITEMS rather than
+#                     items inside a Deferred SECTION. The repair is per-item
+#                     (`- [/]` naming the blocker), so this cannot be a blocking
+#                     gate until the backlog is triaged -- blocking on 333
+#                     pre-existing findings would just teach everyone the
+#                     opt-out.
+if [ -f "$REPO_ROOT/scripts/todo-reachability.py" ]; then
+    # NO `|| echo '{}'` HERE. The tool exits 1 when findings EXIST, so that
+    # fallback fired precisely when there was something to report, appending
+    # `{}` to valid JSON and breaking the parse -- the check then silently
+    # emitted nothing (2026-08-02). Capture the output and ignore the status.
+    LINT24_OUT="$(cd "$REPO_ROOT" && timeout 600 python3 scripts/todo-reachability.py --json 2>/dev/null)" || true
+    [ -n "$LINT24_OUT" ] || LINT24_OUT='{}'
+    LINT24_ERR="$(printf '%s' "$LINT24_OUT" | python3 -c "
+import json,sys
+try: d=json.load(sys.stdin)
+except Exception: d={}
+n=sum(1 for v in d.values() for k,_,_ in v if k=='open-in-done')
+print(n)" 2>/dev/null || echo 0)"
+    LINT24_WARN="$(printf '%s' "$LINT24_OUT" | python3 -c "
+import json,sys
+try: d=json.load(sys.stdin)
+except Exception: d={}
+n=sum(1 for v in d.values() for k,_,_ in v if k=='open-in-deferred')
+print(n)" 2>/dev/null || echo 0)"
+    if [ "${LINT24_ERR:-0}" -gt 0 ] 2>/dev/null; then
+        echo -e "${RED}error${NC}: Check 24 (reachability) ${LINT24_ERR} open item(s) in DONE sections are unreachable -- nothing will revisit them. Run: python3 scripts/todo-reachability.py"
+        ERRORS=$((ERRORS + LINT24_ERR))
+    fi
+    if [ "${LINT24_WARN:-0}" -gt 0 ] 2>/dev/null; then
+        echo -e "${YELLOW}warn${NC}: Check 24 (reachability) ${LINT24_WARN} open \`- [ ]\` item(s) sit inside Deferred sections; repair shape is \`- [/]\` naming the blocker"
+        WARNINGS=$((WARNINGS + 1))
+    fi
+fi
+
 # Check 22b: a `## N.` body must not sit AFTER the closing matter.
 # Check 22 tests that section numbers ASCEND; it is silent when sections are
 # appended past `## OS Comparison` / `## Unit Tests` / `## Verification` /
