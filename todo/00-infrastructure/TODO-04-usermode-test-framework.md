@@ -111,7 +111,7 @@ title: "TODO-04 -- User-Mode Test Framework"
 | ⭐   |  51   | Reproducible kernel assertion total + the intermittent TEB halt | §44             |  [x]   |
 | ⭐   |  52   | Bind a leg pointer to the record's own identity      | §38, §45                      |  [x]   |
 | 💎   |  53   | A directory occupying a pointer or lease name       | §46                           |  [x]   |
-| ⭐   |  54   | A write abandoned before its first chunk reached the wire | §48                     |  [ ]   |
+| ⭐   |  54   | A write abandoned before its first chunk reached the wire | §48                     |  [x]   |
 | 💎   |  55   | Klog-ring assertions bounded by saturating occupancy | §48                        |  [ ]   |
 | ⭐   |  56   | Fork publication interlocked with the capture-tree reap | §49                       |  [ ]   |
 | ⭐   |  57   | A klog delivery receipt, so a record's settlement is exact | §49                    |  [ ]   |
