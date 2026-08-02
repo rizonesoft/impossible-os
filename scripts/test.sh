@@ -23,9 +23,60 @@ set -euo pipefail
 # `*[!a-z0-9-]*`, which is a validation hole opened entirely from the caller's
 # environment. (`env BASHOPTS=nocasematch bash -c` reproduces it; assigning
 # BASHOPTS from within bash does not, because bash marks it readonly.)
-shopt -u nocasematch
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# PATTERN MATCHING AND PATHNAME EXPANSION both mean what they say here, for the
+# reason above: they are settable by whoever launched us. A NAMED routine rather
+# than a bare run of commands, so the regressions bind to production code
+# instead of to a line range, and so its call site -- the very next line, before
+# anything reads a path -- is something a test can point at.
+#
+# Every retention loop enumerates with an unquoted glob (`*.lease`, `.*.tmp`,
+# `.utest-sweep.*.d`, `test-results-*.run`), so ambient glob state decides what
+# those loops can SEE, and the failure is fail-OPEN in the worst place: a
+# directory blocking a lease name goes invisible to the hold that protects it,
+# and the age cut then removes its record recursively.
+#
+# Measured 2026-08-02, each against the same fixture:
+#   `SHELLOPTS=noglob`     1 blocker -> 0; patterns stay literal.
+#   `BASHOPTS=failglob`    a healthy no-match EXITS 1, taking retention down on
+#                          a tree that has simply never held a lease.
+#   `BASHOPTS=nocaseglob`  `*.lease` also matches `B.LEASE`, so names outside
+#                          the declared namespace enter the reclaim and the hold.
+#   `GLOBIGNORE`           suppresses matching entirely (`*` -> 0 matches). Plain
+#                          environment inheritance does NOT arm it -- bash
+#                          imports the variable but the filter activates on
+#                          ASSIGNMENT, so the live vector is `BASH_ENV` sourcing
+#                          a file that assigns it. Verified both ways; `unset`
+#                          closes it either way.
+# `nullglob` and `dotglob` are normalised beside them so every loop sees one
+# defined expansion no matter what environment it was launched from.
+# IFS is here for the same reason and is the sharpest of the set: the retention
+# helpers expand `$glob` UNQUOTED, and word splitting runs BEFORE pathname
+# expansion, so IFS decides what the pattern even IS. Measured: under `IFS=e`,
+# `*.lease` splits into `*.l` and `as` -- the blocker is invisible to the hold
+# protecting it and its record is deleted recursively -- while `IFS=.` made the
+# same helper count 16 unrelated directories, a false hold. Bash resets IFS to
+# the default at startup, so plain environment inheritance is inert; `BASH_ENV`
+# sourcing an assignment is the live vector, exactly as for GLOBIGNORE.
+utest_normalize_shell_modes() {
+    set +f
+    shopt -u nocasematch failglob nullglob dotglob nocaseglob
+    unset GLOBIGNORE
+    IFS=$' \t\n'
+    return 0
+}
+utest_normalize_shell_modes
+
+# `CDPATH=` on the `cd`, because CDPATH is an ordinary exported variable and a
+# relative `cd` CONSULTS it -- then PRINTS the directory it selected, which lands
+# inside this command substitution. Measured 2026-08-02 with CDPATH pointing at
+# another tree: SCRIPT_DIR came back as that tree's path, twice, newline
+# separated. PROJECT is derived from it and every destructive retention path
+# hangs off PROJECT, so the failure is not a broken path -- it is this script
+# pruning `build/test-runs` in a DIFFERENT checkout. `-P` resolves symlinks so
+# the root has one canonical spelling, and `--` keeps a leading-dash directory
+# from being read as an option.
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 PROJECT="$(dirname "$SCRIPT_DIR")"
 BUILD_DIR="$PROJECT/build"
 DISK="$BUILD_DIR/system-disk.img"
@@ -1136,7 +1187,14 @@ utest_sweep_verified() {
     # directory source, and a filesystem without hard links all land here. A
     # NON-DIRECTORY now at the name is the ordinary newcomer: it wins, and this
     # copy is dropped.
-    if { [ -e "$path" ] || [ -L "$path" ]; } && [ ! -d "$path" ]; then
+    #
+    # Through utest_blocking_dir rather than a bare `[ ! -d ]`, because the two
+    # disagree on a SYMLINK to a directory and the bare test is wrong: `-d`
+    # follows the link, so such a newcomer read as an unremovable blocker, this
+    # copy fell through to the unexplained branch below, and its staging claim
+    # then held the record forever through the uncapped `U` path -- over an
+    # entry the sweep removes on sight. One predicate, one answer, everywhere.
+    if { [ -e "$path" ] || [ -L "$path" ]; } && ! utest_blocking_dir "$path"; then
         rm -f -- "$staged" 2>/dev/null || true
         rmdir -- "$sdir" 2>/dev/null || true
         return 0
@@ -1242,7 +1300,13 @@ utest_blocking_dir() {
 # unquoted on expansion; a pattern that matches nothing stays literal and fails
 # utest_blocking_dir's own `-d` test, so no `nullglob` assumption is made.
 utest_hold_blocking_dirs() {
-    local dir="${1:-}" why="${2:-}" glob f
+    # `local IFS` beside the entry-time normalisation, not instead of it. The
+    # glob below is expanded unquoted, so word splitting decides what the
+    # pattern is before pathname expansion ever runs, and this function must
+    # hold that property on its own -- anything that mutates IFS after startup
+    # would otherwise silently redefine the namespaces it protects. `local`
+    # restores the caller's value on return.
+    local dir="${1:-}" why="${2:-}" glob f IFS=$' \t\n'
     UTEST_DIRBLOCK_N=0
     [ -d "$dir" ] || return 0
     shift 2 || return 0
@@ -1751,8 +1815,12 @@ utest_prune_records() {
                 # declined to remove the directory by name. `.*.tmp` is here
                 # beside `*.lease` because the staging reaper above unlinks with
                 # `rm -f`, which fails just as silently on a directory.
+                # The reason covers BOTH namespaces this scan walks. Saying "a
+                # lease is a FILE" over a `.tmp` blocker is simply false, and it
+                # hides WHICH recovery namespace failed -- from the very change
+                # whose point was operator attribution.
                 utest_hold_blocking_dirs "$RUNS_DIR/$old/leases" \
-                    "a lease is a FILE, so this is never counted, reclaimed or removed" \
+                    "a lease and its staging sibling are both FILES, so this is never counted, reclaimed or removed" \
                     '*.lease' '.*.tmp'
                 nd="${UTEST_DIRBLOCK_N:-0}"
                 case "$nd" in ''|*[!0-9]*) nd=0 ;; esac
@@ -1781,7 +1849,7 @@ utest_prune_records() {
     fi
     if [ -n "$blocked_d" ]; then
         n_blocked="$(printf '%s' "$blocked_d" | grep -c . || true)"
-        echo -e "${YELLOW:-}[TEST]${RESET:-} ${n_blocked:-0} record(s) held by a directory at a lease name (see the paths reported above)."
+        echo -e "${YELLOW:-}[TEST]${RESET:-} ${n_blocked:-0} record(s) held by a directory at a lease or lease-staging name (see the paths reported above)."
         if [ -n "$leased" ]; then leased="$leased"$'\n'"$blocked_d"; else leased="$blocked_d"; fi
     fi
 

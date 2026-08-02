@@ -63,6 +63,7 @@ title: "TODO-07 -- LSP to MCP Bridge (C, NASM, shell, Python, PowerShell)"
 | ⭐   |  17   | Background warm-start mode (MCP launcher compatibility)                    | §16                               |  [x]   |
 | 💎   |  18   | Type hierarchy tools (supertypes / subtypes, read-only)                    | §1, §7, §11                       |  [x]   |
 | 💎   |  19   | Scale Roadmap (DEFERRED -- trigger-gated, no code today)                   | --                                |  [/]   |
+| ⭐   |  20   | The bridge intermittently leaks the clangd it started                      | §1, §18                           |  [ ]   |
 
 > 💎 = parity -- matches the existing LSP stacks Win11/Linux devs already use, wrapped in an MCP transport.
 > ⭐ = exclusive -- neither Win11 nor Linux ships a repo-tracked cross-language LSP-MCP bridge with read-only boundary compliance baked in.
@@ -733,3 +734,23 @@ Current repo is ~215k core LOC (~189k kernel + ~24k tooling per [COUNT.md](../..
 - [x] Commit: `"scripts/lsp-mcp: bridge complete"`
 
 **Test runner:** N/A (host-side Python tooling, no `TEST_CAT_*` surface) | validation: `bash scripts/lsp-mcp/tests/test_bridge.sh` 99/99 sub-tests PASS on a host with `clangd-19` (2026-06-13); `bash scripts/lsp-mcp/tests/test_boundary.sh` 0 write-capable methods.
+
+---
+
+## 20. The Bridge Intermittently Leaks the clangd It Started
+
+`test_bridge.sh` sub-test 9a asserts that no LSP process outlives the run, and it INTERMITTENTLY fails on its own clangd. Observed 2026-08-02 during unrelated work on TODO-04 section 53: two failures in fifteen consecutive `scripts/test-tooling.sh` runs, both reporting `leaked LSP PIDs`, both naming a `clangd-19 --compile-commands-dir=<repo> --background-index` whose start time fell INSIDE the failing run and whose parent had already exited. Killing the orphan by hand made the next run green with no other change, so the leak is the whole failure -- not a stale process from some earlier session.
+
+> [!NOTE]
+> Filed from a section that touched none of this code. It is recorded here rather than fixed there because the owner is the bridge's shutdown path, and because an intermittent leak that the suite already detects is exactly the kind of finding that gets re-diagnosed from scratch every time it fires. The test is RIGHT and should stay; 9a is the only thing standing between a leaked language server per invocation and nobody noticing.
+
+- [ ] Find why shutdown races the reap, given the same run reaps it successfully most of the time
+      - The detector already prints the offending PID and its command line, so the next occurrence should capture the bridge-side state beside it: whether the subprocess was ever recorded, whether the terminate was sent, and whether the wait timed out.
+      - `--background-index` means clangd can be busy well after the last request, so a terminate that assumes idleness is a plausible shape.
+- [ ] Make the reap deterministic rather than best-effort, and prove it under load
+      - A leaked language server is not a test-only cost: every leak holds a background indexer against the repo, and the fleet dispatches these from short-lived agent sessions.
+- [ ] Re-run `bash scripts/lsp-mcp/tests/test_bridge.sh` enough times to bound the rate before and after
+      - Two in fifteen is the only measurement so far, and it is too coarse to call a fix verified.
+- [ ] Commit: `"scripts/lsp-mcp: reap the language server deterministically"`
+
+**Test checkpoint:** `bash scripts/lsp-mcp/tests/test_bridge.sh` reports 99/99 with sub-test 9a passing across a repeated run count that would have caught a two-in-fifteen rate; no `clangd` remains after the suite exits. Test on: host tooling only (no QEMU dependency).

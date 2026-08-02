@@ -12757,7 +12757,6 @@ $(sed -n '/^utest_lease_fields() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
 $(sed -n '/^utest_sweep_verified() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
 $(sed -n '/^utest_sweep_reap() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
 $(sed -n '/^utest_blocking_dir() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
-$(sed -n '/^utest_hold_blocking_dirs() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
 $(sed -n '/^utest_lease_reclaimable() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
 $(sed -n '/^utest_record_live_leases() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
 $(sed -n '/^utest_lease_acquire() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
@@ -12769,6 +12768,7 @@ $UAR_PTRDOC
 $(sed -n '/^utest_identity_binds() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
 $(sed -n '/^utest_pointer_pin_id() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
 $UAR_LEASEFN
+$(sed -n '/^utest_hold_blocking_dirs() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
 $(sed -n '/^utest_prune_records() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")"
     if [ -z "$UAR_PRUNE" ]; then
         t_fail "run record: retention prunes to the newest N" "utest_prune_records not found"
@@ -14343,7 +14343,7 @@ printf "| HARNESS-OK\n"
            printf '%s' "$UAR_L26B" | grep -q 'record: HELD' &&
            printf '%s' "$UAR_L26B" | grep -q 'content: PRESERVED' &&
            printf '%s' "$UAR_L26B" | grep -q 'unblocked-aged: PRUNED' &&
-           printf '%s' "$UAR_L26B" | grep -q 'held by a directory at a lease name'; then
+           printf '%s' "$UAR_L26B" | grep -q 'held by a directory at a lease or lease-staging name'; then
             t_pass "reader lease: a directory at a lease name holds its record against the age cut, contents intact, and is announced"
         else
             t_fail "reader lease: a directory at a lease name holds its record against the age cut, contents intact, and is announced" \
@@ -14600,6 +14600,120 @@ printf "| HARNESS-OK\n"
                 "$UAR_L26H"
         fi
         rm -rf "$UAR_PDIR/hb"
+
+        # (L26i) INHERITED GLOB MODE, which decides what every retention loop
+        #     can SEE. `noglob` (a `set -f` option carried in the read-only
+        #     $SHELLOPTS) leaves `*.lease` literal, so the blocker becomes
+        #     invisible to the hold that protects it and the age cut deletes its
+        #     record recursively -- fail-OPEN, from the caller's environment
+        #     alone, exactly the class scripts/test.sh already normalises
+        #     `nocasematch` for. `failglob` is the mirror: a healthy no-match
+        #     ABORTS the shell, taking retention down on a tree that has simply
+        #     never held a lease. Two more ambient inputs sit in the same class
+        #     and are covered here: `nocaseglob`, under which `*.lease` also
+        #     matches `B.LEASE` and pulls names outside the declared namespace
+        #     into both the reclaim and the hold, and `GLOBIGNORE`, which
+        #     suppresses matching outright. (Plain env inheritance does NOT arm
+        #     GLOBIGNORE -- bash imports the variable but the filter activates on
+        #     ASSIGNMENT -- so the live vector is `BASH_ENV` sourcing a file that
+        #     assigns it, and that is the shape exercised below.)
+        #
+        #     Bound to the PRODUCTION routine `utest_normalize_shell_modes`,
+        #     extracted by name like every other function this suite tests, and
+        #     to its CALL SITE. A fixture that re-implemented the normalisation,
+        #     or that eval-ed a line range, would stay green if the real call
+        #     moved below the prune or stopped executing -- which is the wiring
+        #     this pair exists to protect.
+        uar_lease_reset
+        mkdir -p "$UAR_PDIR/build/test-runs/20260102T000000Z-1-aaaa/leases/$UAR_LHOLD.glob01.lease"
+        printf 'handmade\n' > "$UAR_PDIR/build/test-runs/20260102T000000Z-1-aaaa/leases/$UAR_LHOLD.glob01.lease/inside"
+        UAR_NORMFN="$(sed -n '/^utest_normalize_shell_modes() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")"
+        # The REAL FILE PREFIX, up to and including the normalisation call, is
+        # what gets evaluated -- not the routine alone. Textual ordering greps
+        # prove only that a line SITS between two others: wrap that same line in
+        # `if false; then ... fi`, or move it inside a function nobody calls, and
+        # every anchor still holds while nothing executes. Evaluating the prefix
+        # reproduces whatever the file actually does, so an unexecuted call
+        # leaves the hostile modes standing and the assertions below fail. The
+        # prefix stops before path discovery, so no side effect is incurred.
+        UAR_PREFIX_END="$(grep -n '^utest_normalize_shell_modes$' "$REPO_ROOT/scripts/test.sh" | head -1 | cut -d: -f1)"
+        UAR_PREFIX="$(sed -n "1,${UAR_PREFIX_END:-0}p" "$REPO_ROOT/scripts/test.sh")"
+        UAR_L26I="$(UAR_PREFIX="$UAR_PREFIX" UAR_IFSENV="$UAR_TMP/ifsenv.sh" timeout 30 env SHELLOPTS=noglob BASHOPTS=failglob,nocaseglob,dotglob,nullglob bash -c '
+set -uo pipefail
+# The BASH_ENV-equivalent assignments, which are the live vector for the two
+# inputs plain inheritance cannot arm.
+GLOBIGNORE="*"
+IFS="e"
+printf "| inherited: "
+case "${SHELLOPTS:-}" in *noglob*) printf "NOGLOB" ;; *) printf "NOT-SET" ;; esac
+eval "$UAR_PREFIX"
+printf "| noglob: "
+case "$-" in *f*) printf "STILL-SET" ;; *) printf "CLEARED" ;; esac
+for _o in failglob nullglob dotglob nocaseglob nocasematch; do
+    printf "| %s: " "$_o"
+    if shopt -q "$_o"; then printf "STILL-SET"; else printf "CLEARED"; fi
+done
+printf "| globignore: "
+if [ -n "${GLOBIGNORE+x}" ]; then printf "STILL-SET"; else printf "CLEARED"; fi
+printf "| ifs: "
+# `$'"'"' \t\n'"'"'` and NOT `$(printf ...)`: command substitution strips trailing
+# newlines, so the printf spelling compares against space+tab and reports a
+# correctly-restored IFS as STILL-SET.
+if [ "$IFS" = $'"'"' \t\n'"'"' ]; then printf "CLEARED"; else printf "STILL-SET"; fi
+printf "| HARNESS-OK\n"
+' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
+        if printf '%s' "$UAR_L26I" | grep -q 'HARNESS-OK' &&
+           printf '%s' "$UAR_L26I" | grep -q 'inherited: NOGLOB' &&
+           printf '%s' "$UAR_L26I" | grep -q 'noglob: CLEARED' &&
+           printf '%s' "$UAR_L26I" | grep -q 'failglob: CLEARED' &&
+           printf '%s' "$UAR_L26I" | grep -q 'nullglob: CLEARED' &&
+           printf '%s' "$UAR_L26I" | grep -q 'dotglob: CLEARED' &&
+           printf '%s' "$UAR_L26I" | grep -q 'nocaseglob: CLEARED' &&
+           printf '%s' "$UAR_L26I" | grep -q 'nocasematch: CLEARED' &&
+           printf '%s' "$UAR_L26I" | grep -q 'globignore: CLEARED' &&
+           printf '%s' "$UAR_L26I" | grep -q 'ifs: CLEARED'; then
+            t_pass "reader lease: executing scripts/test.sh's real prefix clears every ambient glob, match and splitting input"
+        else
+            t_fail "reader lease: executing scripts/test.sh's real prefix clears every ambient glob, match and splitting input" \
+                "$UAR_L26I"
+        fi
+
+        # (L26j) the END-TO-END half of L26i: the real script, launched under
+        #     both inherited modes, must still hold a blocked record and must
+        #     not abort on a record whose leases/ is empty. This is what would
+        #     actually have been lost -- L26i proves the switches are flipped,
+        #     this proves the outcome they exist for.
+        UAR_L26J="$(UAR_PDIR="$UAR_PDIR" UAR_PRUNE="$UAR_PRUNE" UAR_NORMFN="$UAR_NORMFN" UAR_LHOLD="$UAR_LHOLD" timeout 30 env SHELLOPTS=noglob BASHOPTS=failglob,nocaseglob bash -c '
+set -uo pipefail
+PROJECT="$UAR_PDIR"
+RUNS_DIR="$PROJECT/build/test-runs"
+RUN_ID="20260101T000000Z-1-aaaa"
+UTEST_RECORD_KEEP=2
+GLOBIGNORE="*"
+# The PRODUCTION routine, not a hand-written copy: if it stops clearing a mode,
+# this fixture fails on the outcome rather than passing over its own setup.
+eval "$UAR_NORMFN"
+utest_normalize_shell_modes
+eval "$UAR_PRUNE"
+utest_prune_records
+D="$RUNS_DIR/20260102T000000Z-1-aaaa"
+printf "| record: "
+if [ -d "$D" ]; then printf "HELD"; else printf "PRUNED"; fi
+printf "| content: "
+if [ -f "$D/leases/$UAR_LHOLD.glob01.lease/inside" ]; then printf "PRESERVED"; else printf "DESTROYED"; fi
+printf "| empty-record: "
+if [ -d "$RUNS_DIR/20260103T000000Z-1-aaaa" ]; then printf "KEPT"; else printf "PRUNED"; fi
+printf "| HARNESS-OK\n"
+' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
+        if printf '%s' "$UAR_L26J" | grep -q 'HARNESS-OK' &&
+           printf '%s' "$UAR_L26J" | grep -q 'record: HELD' &&
+           printf '%s' "$UAR_L26J" | grep -q 'content: PRESERVED' &&
+           printf '%s' "$UAR_L26J" | grep -q 'empty-record: PRUNED'; then
+            t_pass "reader lease: with glob modes normalised, a blocked record survives and an empty leases/ does not abort retention"
+        else
+            t_fail "reader lease: with glob modes normalised, a blocked record survives and an empty leases/ does not abort retention" \
+                "$UAR_L26J"
+        fi
 
         # (L26d) the NEGATIVE. Every artifact a healthy run writes under
         #     leases/ -- a real `<holder>.<id>.lease`, its `.<id>.tmp` staging
