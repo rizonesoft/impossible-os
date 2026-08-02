@@ -1212,6 +1212,56 @@ void task_utest_cap_note_thread_death(struct task *t, struct thread *thr);
 /* Snapshot every OPEN thread of a task at a task-wide death transition. */
 void task_utest_cap_note_task_death(struct task *t);
 
+/* The admission DECISION, as a pure function of the four state values it
+ * actually depends on -- no task array, no lock, no globals.
+ *
+ * Split out for the reason the capture machinery splits out every other
+ * decision it makes (u_capture_decide, u_capture_settle, the arming
+ * postcondition): the live function operates on tasks[] under
+ * pgroup_jobctl_lock, so its branches are only reachable from a real fork by
+ * a real captured task on a real reaping tree -- which means the branches
+ * that MATTER, the fail-closed ones, are exactly the ones a healthy run never
+ * executes. A test that cannot reach them proves nothing about them, and the
+ * kernel test surface may not touch live scheduler state to try.
+ *
+ * Returns 1 to admit (and, when `out_register` is non-NULL, whether this
+ * admission takes a registration), 0 to refuse.
+ */
+static inline int task_utest_fork_admit_decide(int parent_captured,
+                                               uint32_t owner_pid,
+                                               int owner_reaping,
+                                               uint32_t inflight,
+                                               int *out_register)
+{
+    if (out_register)
+        *out_register = 0;
+
+    /* Not part of any capture tree: admit, register nothing. This is every
+     * fork in a release-shaped workload. */
+    if (!parent_captured)
+        return 1;
+
+    /* An owner that cannot exist. FAIL CLOSED -- admitting would publish a
+     * child carrying the same unresolvable ownership, which no valid owner's
+     * latch could refuse and no valid owner's census could see. */
+    if (owner_pid >= TASK_MAX)
+        return 0;
+
+    /* The tree is being reaped: refuse, so it stops growing under the walk. */
+    if (owner_reaping)
+        return 0;
+
+    /* Saturation. Refusing is the only safe direction: wrapping to zero would
+     * report a tree frozen while a constructor is running, which is the one
+     * outcome the whole interlock exists to prevent. */
+    if (inflight == 0xFFFFFFFFu)
+        return 0;
+
+    if (out_register)
+        *out_register = 1;
+    return 1;
+}
+
 /* --- Run-boundary reap interlock (see utest_capture_reaping above) ---
  *
  * The reap lives in the test framework (test_usermode.c) but the state it has
@@ -1246,6 +1296,11 @@ void task_utest_capture_reap_latch(uint32_t owner_pid);
  * other. */
 uint32_t task_utest_capture_fork_pending_count(uint32_t owner_pid,
                                                uint32_t *stranded);
+
+/* Test shim over the pure admission decision above. */
+int test_usermode_fork_admit_decide(int parent_captured, uint32_t owner_pid,
+                                    int owner_reaping, uint32_t inflight,
+                                    int *out_register);
 #endif
 
 /* Inherit capture ownership from parent to child unchanged -- the OPPOSITE

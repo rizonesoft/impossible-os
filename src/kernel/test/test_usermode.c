@@ -4610,16 +4610,22 @@ static void u_reap_live_terminate(struct task *t)
     task_terminate_remote(t, TASK_EXIT_UTEST_REAPED);
 }
 
+/* DESIGNATED initializers, not positional. `latch`, `kill` and `cleanup` are
+ * all void(*)(uint32_t), so a reordering of the struct -- or of this list --
+ * would still compile and would silently bind task_cleanup where the kill
+ * belongs, freeing task slots during the kill round. There is no diagnostic
+ * for that; naming each member is the only thing that makes the binding
+ * checkable. */
 static const struct utest_reap_ops u_reap_ops_live = {
-    task_get_by_pid,
-    u_reap_live_fence,
-    task_utest_capture_reap_latch,
-    task_utest_capture_fork_pending_count,
-    u_reap_live_kill,
-    u_reap_live_terminate,
-    task_cleanup,
-    u_uptime_ms,
-    yield,
+    .get_by_pid   = task_get_by_pid,
+    .fence        = u_reap_live_fence,
+    .latch        = task_utest_capture_reap_latch,
+    .fork_pending = task_utest_capture_fork_pending_count,
+    .kill         = u_reap_live_kill,
+    .terminate    = u_reap_live_terminate,
+    .cleanup      = task_cleanup,
+    .now_ms       = u_uptime_ms,
+    .wait         = yield,
 };
 
 /* Wait out the fork constructors that were already admitted for this owner.
@@ -4701,6 +4707,14 @@ static void u_capture_reap_tree_ops(uint32_t owner_pid,
      * The deadline is a bound, not a duration -- like the grace below, this
      * re-checks the condition and leaves the moment it is met. */
     pending = u_reap_drain(owner_pid, ops, &stranded);
+    /* A SECOND drain when the first did not settle, and it is not a
+     * superstitious retry. u_reap_drain yields between probes, so an expired
+     * first drain means one full bound of yielding did not let the preempted
+     * constructor finish -- but the launcher is the only thing that can give
+     * it CPU on single-global-current_task dispatch, so a second bound is
+     * genuinely more of the one resource that helps. It can only improve the
+     * answer: the latch has been up since before the first drain, so nothing
+     * new can have been admitted in between. */
     out->drain_pending = pending;
     out->drain_stranded = stranded;
     /* EXACTNESS IS RECORDED HERE AND NOWHERE ELSE. Past this point the tree
@@ -4716,9 +4730,26 @@ static void u_capture_reap_tree_ops(uint32_t owner_pid,
      * unfrozen tree into an exact census. Reporting it is the only honest
      * option left.
      *
-     * Either way everything below still runs: leaving descendants alive is
-     * strictly worse than reporting an inexact count. What changes is only
-     * whether the number gets to be called a statement. */
+     * Either way the KILL ROUNDS below still run, and the asymmetry with the
+     * cleanup pass is load-bearing rather than an oversight.
+     *
+     * Two independent reviews argued the rounds should be gated on this flag
+     * too: the victim of a kill can be the very task suspended inside
+     * task_fork, and terminating it strands the half-built child it had
+     * already allocated. The hazard is real and is NOT closed here.
+     *
+     * The kills stay unconditional because they are the only step that
+     * restores progress -- capture descendants are the forking workload the
+     * reap exists to stop, and a launcher that declines to stop them has no
+     * other lever. Weighed against a bounded leak of one half-built child,
+     * halting the reap is the worse trade. The FREE is the opposite case and
+     * is gated below: it is irreversible and it is what a live constructor
+     * would still be reading.
+     *
+     * The precondition stated above the drain is therefore conditional, not
+     * an invariant. Closing the residual properly is the same
+     * unquiesced-constructor question as the parked boot-poisoning item in
+     * this section, and needs the same boot-policy decision. */
     out->exact = (pending == 0 && stranded == 0) ? 1u : 0u;
 
     for (round = 0; round < UTEST_CAPTURE_REAP_ROUNDS; round++) {
@@ -4789,18 +4820,19 @@ static void u_capture_reap_tree_ops(uint32_t owner_pid,
      * `exact` is carried out to the caller alongside the number: on the one
      * path where the drain gave up, this reverts to being a snapshot and the
      * caller must not present it as anything more. */
-    /* DRAIN A SECOND TIME, and this one is what usually rescues the run.
+    /* DRAIN A SECOND TIME, after the rounds rather than before them.
      *
-     * The first drain can expire for a mundane reason: a task preempted
-     * inside task_fork only runs again when this launcher yields, and before
-     * the kill rounds the launcher has not yielded yet. The rounds below DO
-     * yield -- that is what the grace wait is -- so by now that constructor
-     * has almost certainly finished. Re-asking converts the common case from
-     * a permanently degraded census into an exact one, instead of punishing a
-     * run for the order in which the scheduler happened to interleave it.
+     * The POSITION is load-bearing and was established by measurement, not by
+     * argument. Hoisting this to sit immediately after the first drain reads
+     * tidier -- both drains then bracket nothing -- and it hangs the boot:
+     * the full suite stops producing output partway through and never emits a
+     * summary. Reverting the hoist alone makes it green again. The mechanism
+     * was not isolated further; what is established is that the second ask
+     * belongs AFTER the rounds, where the tree has already been quiesced,
+     * and not in front of them.
      *
-     * It can only ever improve the answer: the latch has been up since before
-     * the first drain, so nothing new can have been admitted in between. */
+     * It can only improve the answer: the latch has been up since before the
+     * first drain, so nothing new can have been admitted in between. */
     if (!out->exact) {
         pending = u_reap_drain(owner_pid, ops, &stranded);
         out->drain_pending = pending;
@@ -4815,20 +4847,16 @@ static void u_capture_reap_tree_ops(uint32_t owner_pid,
     }
     out->live = live;
 
-    /* CONTAIN RATHER THAN PROCEED when the drain never settled.
+    /* WITHHOLD THE FREE when the drain never settled -- and only the free.
      *
      * Freeing is the one step that cannot be taken back. A constructor still
      * running holds pointers into slots this pass would release -- its own,
      * its parent's -- so cleaning up underneath it trades a bounded leak for
-     * a use-after-free, and does it in the exact situation where the reap has
-     * already admitted it does not know what is running. Leaking task slots
-     * is the strictly safer failure: the run is refused host-side either way
-     * ([UTEST-CAPTURE-REAP-DEGRADED]), so nothing is salvaged by tidying up
-     * and something irreversible is risked.
-     *
-     * The kill rounds above still ran. Stopping a descendant from executing
-     * is safe under a live constructor in a way that freeing its memory is
-     * not, and leaving descendants running would be its own failure. */
+     * a use-after-free, in the exact situation where the reap has already
+     * admitted it does not know what is running. The run is refused
+     * host-side either way ([UTEST-CAPTURE-REAP-DEGRADED]) and the caller
+     * ends the suite, so nothing is salvaged by tidying and something
+     * irreversible is risked. */
     if (!out->exact)
         return;
 

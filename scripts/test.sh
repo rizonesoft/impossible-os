@@ -3693,7 +3693,14 @@ if [ "$HAS_UTEST" -eq 1 ]; then
         # asserting "smoke gate" here named the wrong one whenever the abort
         # came from the reap. The grep above matches the MARKER, not the
         # cause; echo back whatever the launcher itself named.
-        UTEST_ABORT_CAUSE=$({ grep -oE "suite ABORT \(([^)]*)\)" "$TEST_LOG" 2>/dev/null || true; } | head -1 | sed -E 's/.*\((.*)\)/\1/')
+        # ANCHORED to the authenticated frame prefix, exactly as the count
+        # grep above is. Unanchored, any test binary that merely PRINTS the
+        # words "suite ABORT (...)" would have its own text lifted out and
+        # reported as the launcher's cause -- captured ring-3 output is
+        # untrusted by construction, and the frame prefix is the only thing
+        # that distinguishes a launcher record from a payload that looks like
+        # one.
+        UTEST_ABORT_CAUSE=$({ grep -oE "${UF}suite ABORT \(([^)]*)\)" "$TEST_LOG" 2>/dev/null || true; } | head -1 | sed -E 's/.*\((.*)\)/\1/')
         [ -n "$UTEST_ABORT_CAUSE" ] || UTEST_ABORT_CAUSE="cause not named"
         echo -e "  ${RED}[UTEST]${RESET} suite ABORTED (${UTEST_ABORT_CAUSE}) -- the remaining binaries never ran; failing the run"
         # RAISE to one, never ADD: the smoke binary that triggered the

@@ -2411,10 +2411,25 @@ static int task_utest_fork_admit(uint32_t parent_pid, int *registered)
 
     *registered = 0;
 
+    /* Bounds-check the PARENT too, for the same reason the owner is checked
+     * below. The only caller passes current_task, so this cannot fire today;
+     * a function whose entire argument is defensive indexing should not have
+     * one unguarded index in it. */
+    if (parent_pid >= TASK_MAX)
+        return 1;
+
     /* Non-captured parents -- every fork in a release-shaped workload -- pay
-     * exactly this predicate. Capture ownership is assigned before a task is
-     * published and never changes afterwards, so this read has no concurrent
-     * writer to race. */
+     * exactly this predicate, and nothing more.
+     *
+     * The read is unlocked. It is NOT true that capture ownership never
+     * changes after publication -- task_utest_capture_unlink clears both
+     * utest_capture_active and utest_capture_owner_pid from task_cleanup,
+     * post-publication -- so the honest justification is narrower: that
+     * unlink runs only on a task already in TASK_DEAD, and a task executing
+     * its own task_fork is by definition not dead. That argument rests on the
+     * single-global-current_task dispatch invariant, and is exactly what the
+     * per-CPU run-queue work removes; when 03-memory-concurrency/TODO-07
+     * lands, this read needs the lock. */
     if (!tasks[parent_pid].utest_capture_active)
         return 1;
 
@@ -2441,28 +2456,26 @@ static int task_utest_fork_admit(uint32_t parent_pid, int *registered)
      * zeroed at construction and pid 0 is a VALID task, so zero is not an
      * "invalid" sentinel -- it is simply never consulted, because the census
      * reads the owner only when the count is non-zero.) */
-    if (owner >= TASK_MAX || tasks[owner].utest_capture_reaping) {
-        admitted = 0;
-    } else {
-        /* Saturate rather than wrap. The count is bounded by THREAD_MAX in
-         * practice, so this cannot be reached; wrapping to 0 would be the one
-         * failure that reports a tree frozen while a constructor is running,
-         * which is precisely what this whole path exists to prevent. */
-        if (tasks[parent_pid].utest_capture_fork_inflight != 0xFFFFFFFFu) {
-            /* The owner is recorded ALONGSIDE the count, under the same lock,
-             * because the count alone is unattributable once this task dies:
-             * the reap's cleanup unlinks utest_capture_owner_pid while the
-             * registration necessarily stays. Every registration on a slot
-             * shares one owner -- a task's capture ownership is fixed before
-             * it is published and never changes -- so a plain assignment is
-             * correct even for a second concurrent fork by a sibling
-             * thread. */
-            tasks[parent_pid].utest_capture_fork_owner = owner;
-            tasks[parent_pid].utest_capture_fork_inflight++;
-            *registered = 1;
-        } else {
-            admitted = 0;
-        }
+    /* The decision itself is the pure predicate in task.h, so the branches
+     * that only a fault reaches -- an impossible owner, a saturated count --
+     * are drivable by assertion instead of only by a broken system. This
+     * function keeps what genuinely needs the lock: reading the owner's latch
+     * and committing the registration. */
+    admitted = task_utest_fork_admit_decide(
+        1, owner,
+        (owner < TASK_MAX) ? (int)tasks[owner].utest_capture_reaping : 0,
+        tasks[parent_pid].utest_capture_fork_inflight, registered);
+
+    if (*registered) {
+        /* The owner is recorded ALONGSIDE the count, under the same lock,
+         * because the count alone is unattributable once this task dies: the
+         * reap's cleanup unlinks utest_capture_owner_pid while the
+         * registration necessarily stays. Every registration on a slot shares
+         * one owner -- a task's capture ownership is fixed before it is
+         * published -- so a plain assignment is correct even for a second
+         * concurrent fork by a sibling thread. */
+        tasks[parent_pid].utest_capture_fork_owner = owner;
+        tasks[parent_pid].utest_capture_fork_inflight++;
     }
     pgroup_jobctl_unlock(jf);
     return admitted;
@@ -2486,6 +2499,15 @@ static void task_utest_fork_done(uint32_t parent_pid, int registered)
     if (tasks[parent_pid].utest_capture_fork_inflight != 0)
         tasks[parent_pid].utest_capture_fork_inflight--;
     pgroup_jobctl_unlock(jf);
+}
+
+/* Test shim over the pure admission decision -- see the header. */
+int test_usermode_fork_admit_decide(int parent_captured, uint32_t owner_pid,
+                                    int owner_reaping, uint32_t inflight,
+                                    int *out_register)
+{
+    return task_utest_fork_admit_decide(parent_captured, owner_pid,
+                                        owner_reaping, inflight, out_register);
 }
 
 void task_utest_capture_reap_latch(uint32_t owner_pid)
@@ -2528,7 +2550,16 @@ uint32_t task_utest_capture_fork_pending_count(uint32_t owner_pid,
          * not nothing either: that constructor may still publish, so the tree
          * is not frozen and the census is not exact. Reporting the two
          * separately lets the reap wait on what waiting can fix and downgrade
-         * on what it cannot, instead of choosing one failure or the other. */
+         * on what it cannot, instead of choosing one failure or the other.
+         *
+         * `state` is the one input here NOT covered by this lock -- it is
+         * written with a plain store by task_terminate_remote and the exit
+         * paths. That is sound only because the transition this reads is
+         * monotonic (a slot goes to TASK_DEAD once and is never reused within
+         * a boot), so a stale read can only mis-classify in the safe
+         * direction: counting a just-died forker as LIVE costs one more drain
+         * round, never a false exact. It is not lock-ordered, and it should
+         * not be described as if it were. */
         if (tasks[pid].state == TASK_DEAD)
             dead += tasks[pid].utest_capture_fork_inflight;
         else
@@ -2547,8 +2578,8 @@ uint32_t task_utest_capture_fork_pending_count(uint32_t owner_pid,
 /* The release flavor still WRITES through `regp` and consumes `reg`, so the
  * caller's local stays used in both flavors rather than needing a `(void)`
  * cast that a later reader would have to decode. */
-#define TASK_UTEST_FORK_ADMIT(p, regp) (*(regp) = 0, 1)
-#define TASK_UTEST_FORK_DONE(p, reg)   ((void)(reg))
+#define TASK_UTEST_FORK_ADMIT(p, regp) ((void)(p), *(regp) = 0, 1)
+#define TASK_UTEST_FORK_DONE(p, reg)   ((void)(p), (void)(reg))
 #endif
 
 int task_fork(struct interrupt_frame *frame)

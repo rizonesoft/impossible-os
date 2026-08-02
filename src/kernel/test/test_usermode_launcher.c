@@ -181,6 +181,9 @@ int test_usermode_capture_settle(uint32_t claim_gen, uint32_t current_gen,
                                  uint64_t *completed);
 int test_usermode_capture_descendant_of(const struct task *t,
                                         uint32_t owner_pid);
+int test_usermode_fork_admit_decide(int parent_captured, uint32_t owner_pid,
+                                    int owner_reaping, uint32_t inflight,
+                                    int *out_register);
 void test_usermode_capture_run_state_get(uint32_t *records, int *over,
                                          int *sealed);
 void test_usermode_capture_run_state_set(uint32_t records, int over,
@@ -6084,16 +6087,20 @@ static void ureap_wait(void)
         ureap_publish(UREAP_OWNER_PID);
 }
 
+/* Designated, for the same reason the live binding is: three members share
+ * the void(*)(uint32_t) signature, so a positional list can bind the wrong
+ * one and still compile -- and a synthetic world that silently cleaned up
+ * where it meant to kill would assert the wrong behaviour green. */
 static const struct utest_reap_ops s_ureap_ops = {
-    ureap_get_by_pid,
-    ureap_fence,
-    ureap_latch,
-    ureap_fork_pending,
-    ureap_kill,
-    ureap_terminate,
-    ureap_cleanup,
-    ureap_now_ms,
-    ureap_wait
+    .get_by_pid   = ureap_get_by_pid,
+    .fence        = ureap_fence,
+    .latch        = ureap_latch,
+    .fork_pending = ureap_fork_pending,
+    .kill         = ureap_kill,
+    .terminate    = ureap_terminate,
+    .cleanup      = ureap_cleanup,
+    .now_ms       = ureap_now_ms,
+    .wait         = ureap_wait
 };
 
 /* Build a tree of `descendants` capture-owning children under pid 0. */
@@ -6127,6 +6134,90 @@ static void ureap_reset(uint32_t descendants)
 
     for (i = 0; i < descendants; i++)
         ureap_publish(UREAP_OWNER_PID);
+}
+
+/* The fork ADMISSION decision, over plain values.
+ *
+ * Every branch that matters here is one a healthy system never executes: an
+ * owner pid that cannot exist, a saturated in-flight count, a tree already
+ * being reaped. The live function reads tasks[] under pgroup_jobctl_lock, so
+ * reaching those branches for real would mean corrupting the scheduler -- and
+ * the kernel test surface may not touch live scheduler state to try. The
+ * decision is therefore a pure predicate and this is where its fail-closed
+ * behaviour is actually pinned. */
+static void test_fork_admission_admits_the_ordinary_case(void)
+{
+    int reg = 99;
+
+    TEST_ASSERT_EQ((uint32_t)test_usermode_fork_admit_decide(0, 0u, 0, 0u, &reg),
+                   1u,
+                   "a parent carrying no capture is admitted -- this is every "
+                   "fork in a release-shaped workload");
+    TEST_ASSERT_EQ((uint32_t)reg, 0u,
+                   "and it registers nothing, so it never touches the lock");
+
+    TEST_ASSERT_EQ((uint32_t)test_usermode_fork_admit_decide(1, 3u, 0, 0u, &reg),
+                   1u,
+                   "a captured parent whose tree is not being reaped is "
+                   "admitted");
+    TEST_ASSERT_EQ((uint32_t)reg, 1u,
+                   "and it DOES register: the reap's drain has to be able to "
+                   "wait for this constructor");
+}
+
+static void test_fork_admission_refuses_a_reaping_tree(void)
+{
+    int reg = 99;
+
+    TEST_ASSERT_EQ((uint32_t)test_usermode_fork_admit_decide(1, 3u, 1, 0u, &reg),
+                   0u,
+                   "a fork into a tree already being reaped is refused -- this "
+                   "is the whole interlock: the tree stops growing under the "
+                   "reap's walk");
+    TEST_ASSERT_EQ((uint32_t)reg, 0u,
+                   "a refused fork registers nothing, so nothing is left for "
+                   "the drain to wait on");
+}
+
+static void test_fork_admission_fails_closed_on_an_impossible_owner(void)
+{
+    int reg = 99;
+
+    TEST_ASSERT_EQ((uint32_t)test_usermode_fork_admit_decide(1, TASK_MAX, 0,
+                                                             0u, &reg),
+                   0u,
+                   "an owner pid that cannot exist FAILS CLOSED. Admitting "
+                   "would publish a child carrying the same unresolvable "
+                   "ownership -- refusable by no valid owner's latch, visible "
+                   "to no valid owner's census");
+    TEST_ASSERT_EQ((uint32_t)reg, 0u, "and registers nothing");
+
+    TEST_ASSERT_EQ((uint32_t)test_usermode_fork_admit_decide(1, 0xFFFFFFFFu, 0,
+                                                             0u, &reg),
+                   0u,
+                   "the same for a wildly out-of-range owner, which is what a "
+                   "corrupted slot inherited down a fork chain looks like");
+}
+
+static void test_fork_admission_refuses_a_saturated_count(void)
+{
+    int reg = 99;
+
+    TEST_ASSERT_EQ((uint32_t)test_usermode_fork_admit_decide(1, 3u, 0,
+                                                             0xFFFFFFFEu, &reg),
+                   1u,
+                   "one below the ceiling still admits");
+    TEST_ASSERT_EQ((uint32_t)reg, 1u, "and registers");
+
+    TEST_ASSERT_EQ((uint32_t)test_usermode_fork_admit_decide(1, 3u, 0,
+                                                             0xFFFFFFFFu, &reg),
+                   0u,
+                   "at the ceiling it refuses rather than incrementing: "
+                   "wrapping to zero would report a tree frozen while a "
+                   "constructor was still running, which is the one outcome "
+                   "the interlock exists to prevent");
+    TEST_ASSERT_EQ((uint32_t)reg, 0u,
+                   "and a refusal never leaves a registration behind");
 }
 
 static void test_reap_empty_tree_is_exact_and_touches_nothing(void)
@@ -7210,6 +7301,18 @@ void test_register_usermode_launcher(void)
                             TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: capture settlement is claimed exactly once",
                             test_capture_settlement_is_claimed_exactly_once,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: fork admission admits the ordinary case",
+                            test_fork_admission_admits_the_ordinary_case,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: fork admission refuses a reaping tree",
+                            test_fork_admission_refuses_a_reaping_tree,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: fork admission fails closed on a bad owner",
+                            test_fork_admission_fails_closed_on_an_impossible_owner,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: fork admission refuses a saturated count",
+                            test_fork_admission_refuses_a_saturated_count,
                             TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: reap of an empty tree is exact",
                             test_reap_empty_tree_is_exact_and_touches_nothing,
