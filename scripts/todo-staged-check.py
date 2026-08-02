@@ -119,6 +119,49 @@ def wrapped_block(added):
     return 0
 
 
+
+# SECTION-COUNT CAP (2026-08-02). Enforced on GROWTH past the cap, not on
+# existence above it, so a file already oversized can finish its outstanding
+# work while being forbidden to absorb more.
+#
+# WHY THESE NUMBERS, measured across all 232 TODO files: median 9 sections,
+# p90 16, and 32 for the largest file other than TODO-04 -- which had reached
+# 63, roughly double the next and 7x the median. A cap of 99 was considered and
+# rejected because it sits above every file in the repo, so it would never bind
+# and the growth it exists to stop would continue unchecked.
+#
+# WHAT THIS MUST NOT DO. It must never tempt the run to SWALLOW a discovered
+# gap to stay under a number. "Finishing the listed checklist items is not
+# enough if the feature is still obviously incomplete" is the rule that makes
+# this runner produce real completeness instead of checklist theatre; a cap
+# that suppressed filing would trade a visible large file for invisible missing
+# work, which is strictly worse. So the cap changes the DESTINATION of a new
+# section, never the decision to file one: at the cap, the gap goes to the
+# domain-correct TODO with a reciprocal XREF.
+SECTION_SOFT_CAP = 40
+SECTION_HARD_CAP = 60
+_SECTION_RE = re.compile(r"^## (\d+)\.")
+
+
+def _section_total(path):
+    try:
+        with open(path, "r", encoding="utf-8") as fh:
+            return sum(1 for line in fh if _SECTION_RE.match(line))
+    except OSError:
+        return 0
+
+
+def added_sections(added):
+    """New `## N.` headings this commit introduces.
+
+    `_added_lines` yields (lineno, text) pairs -- NOT the (n, len, text) triples
+    that `over_cap` produces. Getting that wrong is why the first version of
+    this raised IndexError on every call.
+    """
+    return [(lineno, text.strip()) for lineno, text in added
+            if _SECTION_RE.match(text)]
+
+
 def main(argv) -> int:
     if "--selftest" in argv:
         return _selftest()
@@ -135,11 +178,56 @@ def main(argv) -> int:
         col = wrapped_block(added)
         if col:
             wrapped.append((f, col))
+    # section-count cap: judged per file, on files this commit GROWS
+    capped_hard, capped_soft = [], []
+    for f in files:
+        new_secs = added_sections(_added_lines(f))
+        if not new_secs:
+            continue
+        total = _section_total(f)
+        if total > SECTION_HARD_CAP:
+            capped_hard.append((f, total, new_secs))
+        elif total >= SECTION_SOFT_CAP:
+            capped_soft.append((f, total, new_secs))
+    for f, total, new_secs in capped_soft:
+        sys.stderr.write(
+            "[todo-staged-check WARN] %s now has %d sections (soft cap %d). "
+            "Before adding more, ask whether the new work belongs in the "
+            "domain-correct TODO rather than here -- a section about kernel "
+            "logging or process lifecycle usually does, even when discovered "
+            "while working this file.\n" % (f, total, SECTION_SOFT_CAP))
+
     for f, col in wrapped:
         sys.stderr.write(
             "[todo-staged-check WARN] %s: this commit adds prose hard-wrapped at "
             "~%d columns. todo/ prose is one paragraph per physical line. Repair: "
             "python3 scripts/todo-reflow.py --write %s\n" % (f, col, f))
+    if capped_hard:
+        for f, total, new_secs in capped_hard:
+            sys.stderr.write(
+                "\n[todo-staged-check] %s has %d sections (hard cap %d) and this "
+                "commit adds %d more.\n" % (f, total, SECTION_HARD_CAP, len(new_secs)))
+            for n, text in new_secs[:5]:
+                sys.stderr.write("      + %s\n" % text[:110])
+            sys.stderr.write(
+                "\nDO NOT DROP THE WORK. Completion-first still applies: a gap you\n"
+                "found is real and must be filed. What changes at the cap is WHERE.\n"
+                "File it in the domain-correct TODO (the one a reader would look in\n"
+                "for that capability) with a reciprocal XREF back to this section,\n"
+                "exactly as the CLAUDE.md 'file it immediately in the owning TODO'\n"
+                "rule already prescribes. A `-part-2` file is NOT the answer: it\n"
+                "recreates the same unbounded bucket under a new name.\n"
+                "\nADD THE IMPLEMENTATION ORDER ROW, NOT JUST THE SECTION BODY.\n"
+                "The triage oracle classifies from the IO table row and never reads\n"
+                "the body. MEASURED 2026-08-02 against a real completed file: a new\n"
+                "`## N.` body alone left TODO-05 classified DONE, so the work was\n"
+                "invisible to every later pass; the SAME section with an IO row\n"
+                "flipped the file to NEEDS_WORK and the oracle listed it as open.\n"
+                "Filing into a completed TODO without the row is a black hole --\n"
+                "the file-level twin of the stamped-section trap CLAUDE.md warns\n"
+                "about. Row + body + reciprocal XREF, every time.\n"
+                "Override (last resort): SKIP_TODO_STAGED_CHECK=1 git commit ...\n\n")
+        return 1
     if not bad:
         return 0
     sys.stderr.write(

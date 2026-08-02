@@ -74,6 +74,7 @@ title: "TODO-04 -- System Logging"
 | 💎   |  13   | Rotated-log compression (LZ4)                  | §4, T03 §3       |  [x]   |
 | ⭐   |  14   | Serial timestamp render bound                  | §1               |  [ ]   |
 | ⭐   | 15 | Post-ship follow-up backfill (2026-07-31 cohort) | -- | [ ] |
+| 💎   | 16 | Klog assertions and scans that depend on nothing else having logged | §1 | [ ] |
 
 > 💎 = parity -- Windows Event Log and Linux journald/syslog both have these capabilities.
 > ⭐ = exclusive -- HMAC-chained JSON Lines is human-readable AND cryptographically verifiable; beats Windows XML and Linux binary journal.
@@ -580,3 +581,26 @@ These items are implemented and verified. Kept here for future correctness check
 - _Syslog verification moved to `07-networking/TODO-11-syslog-forwarding.md`_
 - [ ] Bare metal: log files written correctly to IXFS on SATA/NVMe -- (manual: requires physical hardware)
 - [ ] Commit: `"kernel: system-logging verified -- splitting, rotation, JSON events, syslog"`
+
+---
+
+## 16. Klog Assertions and Scans That Depend on Nothing Else Having Logged
+
+Two related defects in how this subsystem's own tests read the ring. First, `test_klog.c` decides whether an entry landed by comparing two ring HEAD positions -- `head_after != head_before` for a delivery, `head_after == head_before` for a drop. Head is a shared cursor that every accepted entry from any CPU advances, so a positive assertion passes on somebody else's line and a NEGATIVE assertion ("this was filtered, so head did not move") FAILS the moment an AP logs anything inside the window. Second, and underneath it, `klog_get_ring`/`klog_get_ring_snapshot` lock only the head/count/seq metadata and hand back the LIVE array: `src/kernel/klog.c:1065-1069` states plainly that entry contents race concurrent logging, and records the copying API as deliberately deferred because no production caller needed it. Every window scan in the test tree is a caller that does.
+
+> [!NOTE]
+> Filed 2026-08-02 from `00-infrastructure/TODO-04-usermode-test-framework.md` §55, which converted the usermode launcher's window scans to a monotonic-sequence bound with content matching and could only buy a MARGIN against the live-array race: it refuses a window of exactly `KLOG_RING_SIZE` because at that width the oldest entry sits on `head` and one concurrent append destroys it, but a window of N-1 still dies after two. That margin is documented as a margin at its definition. This section owns the cure. The "Ring flush reads live entries without lock" row already Accepted in this file's Codex review table is the same underlying issue seen from the flush side.
+
+- [ ] Give klog a snapshot API that copies a selected window under the lock
+      - The shape §55 needs is "copy the entries between two monotonic sequence values into caller storage while holding `s_klog_lock`", so a consumer scans an immutable copy rather than the live array. Bound the copy so a caller cannot ask for more than the ring holds.
+      - Convert the existing live scans to it: `u_test_scan_window` / `u_test_first_match` in `src/kernel/test/test_usermode_launcher.c` and the marker scan in `test_klog_ring_write`. Once they consume a stable copy, §55's exact-capacity refusal can be relaxed back to the true arithmetic bound.
+      -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §55 (item: "Prove the fix at the boundary the current tests cannot reach: a saturated ring")
+- [ ] Replace head-position equality with a content-matched sequence window in the klog suite
+      - `test_klog_level_drop`, `test_klog_level_pass` and `test_klog_global_level` (`src/kernel/test/test_klog.c`) all decide delivery from `head_before` vs `head_after`. The claim each wants is "an entry matching X did / did not land in the window this test opened", which a sequence bound plus a content match expresses exactly and a head comparison only approximates. `test_klog_ring_write` in the same file is the reference shape after §55.
+      - The negative assertions are the load-bearing ones: an unrelated line from another CPU turns "suppressed by the global LOG_ERROR override" into a failure, so the drop tests flake first under `-smp 2`.
+      - `test_klog_ctx_tid_populated` and `test_klog_ctx_subsystem_populated` read a fixed `head - 1` offset, which is the same defect in its sharpest form -- they assert against whatever entry happens to sit there.
+- [ ] Prove the negative case cannot be satisfied by an unrelated line
+      - A fixture that logs an unrelated entry inside the measured window must leave every drop verdict unchanged; under the current head comparison it would flip them.
+- [ ] Commit: `"kernel: bound klog suite assertions by content in a locked window snapshot"`
+
+**Test checkpoint:** every klog delivery and suppression verdict is unchanged when an unrelated entry lands inside the measured window, the converted scans read an immutable copy rather than the live ring, and the drop tests stay green on a 2-CPU boot. Test on: QEMU TCG, QEMU KVM (2 CPUs).

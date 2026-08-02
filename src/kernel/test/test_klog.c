@@ -19,17 +19,72 @@
 
 static void test_klog_ring_write(void)
 {
-    uint32_t count_before, head_before;
-    uint32_t count_after, head_after;
+    static const char *const marker = "klog_ring_write test entry";
+    const klog_entry_t *ring;
+    uint32_t head_after, added, i, found = 0;
+    uint64_t seq_before, seq_after;
 
-    klog_get_ring(&count_before, &head_before);
-    klog(LOG_INFO, "TEST", "klog_ring_write test entry");
-    klog_get_ring(&count_after, &head_after);
+    /* Bounded by the MONOTONIC sequence and matched on CONTENT.
+     *
+     * Two weaker shapes were tried here and both could pass while proving
+     * nothing. `count_after >= count_before` is true for every possible
+     * execution -- klog_ring_count only ever rises and then pins at
+     * KLOG_RING_SIZE -- so it held even if klog() dropped the entry. Replacing
+     * it with a sequence delta was no better: klog_ring_seq is GLOBAL, so an
+     * AP logging anything inside the window satisfies "the sequence advanced"
+     * without this call having landed at all. Only finding this test's own
+     * uniquely identifiable record inside the window it opened is a claim
+     * about the emitter.
+     *
+     * The subsystem is this test's OWN tag, not the shared "TEST" one. klog()
+     * applies a per-subsystem cap of KLOG_RATE_DEFAULT messages per window, and
+     * the test runner emits its own suite and assertion lines under "TEST" --
+     * so on a fast run the budget can already be spent when this marker is
+     * emitted, klog legitimately drops it, and the guard below would fail over
+     * the rate-window phase rather than over ring insertion. A private tag
+     * starts with an unused rate slot. It still goes through klog(), not
+     * klog_unrated(), because klog() is what is under test here.
+     *
+     * The LOG_DEBUG override is required, not cosmetic: test mode pins the
+     * global minimum at LOG_WARN, so a LOG_INFO line under an un-overridden tag
+     * is filtered out before it ever reaches the ring. Nothing restores it
+     * afterwards because the tag exists only for this test -- the override
+     * cannot affect any other subsystem's verbosity. */
+    klog_set_level("TESTRING", LOG_DEBUG);
+    seq_before = klog_get_seq();
+    klog(LOG_INFO, "TESTRING", "%s", marker);
+    ring = klog_get_ring_snapshot((uint32_t *)0, &head_after, &seq_after);
 
-    TEST_ASSERT(head_after != head_before,
-                "klog() advances ring head");
-    TEST_ASSERT(count_after >= count_before,
-                "klog() increments ring count");
+    /* Refuse at exactly KLOG_RING_SIZE, not just past it, and refuse in
+     * 64-bit before narrowing. At exactly one ring the oldest entry of the
+     * window sits on `head` -- the next write slot -- and klog hands back the
+     * LIVE array, so one concurrent append destroys that slot before the scan
+     * reaches it and this test would report its own marker as dropped. The
+     * guard is explicit control flow because TEST_ASSERT records a failure and
+     * then returns NORMALLY; without the early return the scan below would run
+     * over a window already declared unusable. */
+    if (seq_after - seq_before == 0u ||
+        seq_after - seq_before >= (uint64_t)KLOG_RING_SIZE) {
+        TEST_ASSERT(0, "the measured klog window is unusable (empty, or wide "
+                       "enough that a concurrent append can overwrite its "
+                       "oldest entry)");
+        return;
+    }
+    added = (uint32_t)(seq_after - seq_before);
+
+    for (i = 1u; i <= added && i <= KLOG_RING_SIZE; i++) {
+        const klog_entry_t *e =
+            &ring[(head_after + KLOG_RING_SIZE - i) % KLOG_RING_SIZE];
+        uint32_t k = 0;
+
+        while (marker[k] && e->message[k] == marker[k])
+            k++;
+        if (!marker[k])
+            found++;
+    }
+
+    TEST_ASSERT_EQ((uint64_t)found, (uint64_t)1,
+                   "klog() landed exactly this entry in the ring");
 }
 
 /* ---- Per-subsystem level filtering: dropped below threshold ---- */
