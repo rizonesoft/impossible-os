@@ -363,6 +363,37 @@ _UNREAPED_RE = re.compile(
 _REAP_DEGRADED_RE = re.compile(
     r"\[UTEST-CAPTURE-REAP-DEGRADED\] owner=" + _U32 + r" pending=" + _U32 +
     r" stranded=" + _U32)
+# The launcher's admission that a bounded wait gave up without its clock ever
+# advancing -- it stopped being able to MEASURE time, which is a different
+# investigation from a producer that hung. Section 58 emits it in-kernel and
+# aborts the suite; section 59 makes the HOST refuse on it too, for the one
+# case the in-kernel abort cannot reach: a stall in a stream read after the
+# fact, or by a leg whose exit status was lost.
+#
+# `site` is an ALLOWLIST rather than a free-form token, and that is the point:
+# the four waits fail for unrelated reasons, so a reader needs to know which
+# one gave up. Matching `\S+` would admit a version-skewed or forged site name
+# as a valid record and send the reader to a wait that does not exist. An
+# authenticated line carrying this marker but not this grammar is malformed
+# producer output and is refused as such, exactly like every other record
+# whose shape the kernel cannot emit.
+#
+# `detail` uses the plain u32 grammar (not _U32_POS): it carries a pid at
+# `binary-wait`/`binary-kill-grace`/`capture-reap` and a pending COUNT at
+# `capture-drain`, and the producer emits the record unconditionally once the
+# wait gives up, so zero is a shape it can write.
+_STALL_SITES = ("binary-wait", "binary-kill-grace", "capture-drain",
+                "capture-reap")
+_STALLED_RE = re.compile(
+    r"\[UTEST-WAIT-STALLED\] site=(" + "|".join(_STALL_SITES) +
+    r") detail=" + _U32)
+# The malformed-marker fallback for the stall record. Unlike the refusals
+# above, this marker is NOT capture-family, so the `_CAPTURE_FAMILY` sweep at
+# the end of _scan does not cover it: without this constant an authenticated
+# but version-skewed `[UTEST-WAIT-STALLED]` line would parse as none of the
+# branches and be silently skipped -- the exact "damaged record is
+# indistinguishable from silence" failure that sweep exists to prevent.
+_STALL_ANY = "[UTEST-WAIT-STALLED]"
 
 _UINT32_MAX = 0xFFFFFFFF
 
@@ -502,6 +533,14 @@ def _scan(lines, prefix):
     records = 0
     escaped_bytes = 0
     spawned = None
+    # Run-boundary verdicts collected during the scan and decided afterwards
+    # by _decide_boundary. Keyed by reason so a repeated marker does not
+    # displace the first instance's detail; see _BOUNDARY_PRECEDENCE.
+    boundary = {}
+
+    def _defer(reason, detail):
+        """Record a run-boundary verdict without deciding it yet."""
+        boundary.setdefault(reason, detail)
 
     def _own(pid):
         """Resolve an owner slot under the distinct-owner bound.
@@ -774,18 +813,23 @@ def _scan(lines, prefix):
                     f"the pending report declares run={run} pending={count}, "
                     "wider than the producer's uint32 fields",
                 )
-            # Refused rather than recorded, and refused against THIS run --
-            # which is the whole reason the producer emits it here instead of
-            # letting the stale records surface in the next run. Each pending
-            # record is a sequence number drawn for a chunk that never
-            # arrived, so this owner's stream has holes; accepting it would
-            # publish a capture artifact that silently omits output the
-            # binary produced.
-            raise Refusal(
-                "capture_pending_records",
-                f"run={run} sealed with {count} capture record(s) claimed but "
-                "never emitted -- the run's capture streams are incomplete",
-            )
+            # Refused against THIS run -- which is the whole reason the
+            # producer emits it here instead of letting the stale records
+            # surface in the next run. Each pending record is a sequence
+            # number drawn for a chunk that never arrived, so this owner's
+            # stream has holes; accepting it would publish a capture artifact
+            # that silently omits output the binary produced.
+            #
+            # DEFERRED rather than raised (section 59). A stalled launcher
+            # clock CAUSES pending records, so raising here would let physical
+            # line order publish the symptom while the cause sat later in the
+            # same slice. `_boundary` collects it and _decide_boundary picks
+            # the precedence.
+            _defer("capture_pending_records",
+                   f"run={run} sealed with {count} capture record(s) claimed "
+                   "but never emitted -- the run's capture streams are "
+                   "incomplete")
+            continue
 
         m = _UNDELIVERED_RE.fullmatch(body)
         if m:
@@ -797,12 +841,15 @@ def _scan(lines, prefix):
                     f"the undelivered report declares run={run} count={count}, "
                     "wider than the producer's uint32 fields",
                 )
-            raise Refusal(
-                "capture_undelivered_records",
-                f"run={run} settled {count} capture record(s) that klog "
-                "declined to emit -- the run's capture streams are incomplete "
-                "and the cause is producer-side filtering, not a lost emitter",
-            )
+            # Deferred like the rest of the boundary family, so that a shape
+            # fault later in the same slice still outranks it. It leads
+            # _BOUNDARY_PRECEDENCE among the semantic verdicts.
+            _defer("capture_undelivered_records",
+                   f"run={run} settled {count} capture record(s) that klog "
+                   "declined to emit -- the run's capture streams are "
+                   "incomplete and the cause is producer-side filtering, not "
+                   "a lost emitter")
+            continue
 
         m = _UNREAPED_RE.fullmatch(body)
         if m:
@@ -814,11 +861,13 @@ def _scan(lines, prefix):
                     f"the unreaped report declares owner={pid} live={live}, "
                     "wider than the producer's uint32 fields",
                 )
-            raise Refusal(
-                "capture_unreaped_descendants",
-                f"owner={pid} left {live} capture-owning descendant(s) alive "
-                "at the run boundary",
-            )
+            # Deferred for the same reason as PENDING above: a reap that gave
+            # up because the clock stopped advancing leaves descendants alive,
+            # so the stall is the more precise diagnosis when both are present.
+            _defer("capture_unreaped_descendants",
+                   f"owner={pid} left {live} capture-owning descendant(s) "
+                   "alive at the run boundary")
+            continue
 
         m = _REAP_DEGRADED_RE.fullmatch(body)
         if m:
@@ -845,12 +894,16 @@ def _scan(lines, prefix):
                     "shape the producer cannot emit: "
                     f"{body[:120]!r}",
                 )
-            raise Refusal(
-                "capture_reap_drain_degraded",
-                f"owner={pid} ended its reap with {pending} fork(s) still in "
-                f"flight and {stranded} stranded on dead tasks -- the "
-                "survivor census for this run is a snapshot, not a statement",
-            )
+            # Deferred: `pending` here is literally "the drain expired with
+            # forks still in flight", which is the direct consequence of a
+            # `capture-drain` stall. Reporting the degraded census over the
+            # stalled clock that produced it would name the symptom.
+            _defer("capture_reap_drain_degraded",
+                   f"owner={pid} ended its reap with {pending} fork(s) still "
+                   f"in flight and {stranded} stranded on dead tasks -- the "
+                   "survivor census for this run is a snapshot, not a "
+                   "statement")
+            continue
 
         # The run terminator is NOT capture-family, so a slice without one is
         # not corruption here -- it simply leaves `spawned` unknown. A
@@ -885,6 +938,37 @@ def _scan(lines, prefix):
             spawned = count
             continue
 
+        # The launcher's stalled-clock admission (section 58 emits it, section
+        # 59 refuses on it). Matched BEFORE the capture-family sweep below
+        # because it is not capture-family and would otherwise fall through to
+        # the silent skip that sweep exists to prevent.
+        m = _STALLED_RE.fullmatch(body)
+        if m:
+            site, detail = m.group(1), int(m.group(2))
+            _count(0)
+            if detail > _UINT32_MAX:
+                raise Refusal(
+                    "capture_field_out_of_range",
+                    f"the stall report declares detail={detail}, wider than "
+                    "the producer's uint32 field",
+                )
+            _defer("capture_wait_stalled",
+                   f"the launcher's {site} wait gave up without its clock "
+                   f"advancing (detail={detail}) -- the run's timing is "
+                   "unmeasured, so every bounded wait in it is unproven")
+            continue
+
+        # An authenticated line carrying the stall marker that did NOT match
+        # the grammar above: an unknown site, a malformed detail, or a version
+        # skew. Refused rather than skipped, for the same reason the
+        # capture-family sweep below refuses -- a record whose shape the
+        # producer cannot emit must never read as silence.
+        if _STALL_ANY in body:
+            raise Refusal(
+                "capture_malformed_record",
+                f"authenticated stall record does not parse: {body[:120]!r}",
+            )
+
         # An AUTHENTICATED capture-family line that parses as none of the above
         # is corruption, and it must never be skipped. Skipping it made a
         # damaged record indistinguishable from silence: a BEGIN followed only
@@ -903,7 +987,63 @@ def _scan(lines, prefix):
                 "capture_malformed_record",
                 f"authenticated capture-family record does not parse: {body[:120]!r}",
             )
-    return owners, spawned
+    return owners, spawned, boundary
+
+
+# The order run-boundary verdicts are decided in WHEN THE RUN RECORDED A
+# STALL, most precise first.
+#
+# `capture_undelivered_records` leads because it is direct capture-loss
+# evidence with a KNOWN cause: klog declined to emit, which no clock stall can
+# explain away. The stall comes next: it is a statement about the launcher's
+# ability to measure time at all, and it CAUSES the three below it -- a drain
+# that gives up leaves records pending, descendants unreaped and the reap
+# census degraded. Publishing one of those over the stall that produced it
+# would name the symptom and send the reader to the wrong investigation.
+_BOUNDARY_PRECEDENCE = (
+    "capture_undelivered_records",
+    "capture_wait_stalled",
+    "capture_pending_records",
+    "capture_unreaped_descendants",
+    "capture_reap_drain_degraded",
+)
+
+
+def _decide_boundary(boundary):
+    """Raise the run-boundary verdict for this run, if any.
+
+    Called after _scan returns -- so every SHAPE fault (malformed record,
+    out-of-range field, owner rebound, duplicate sequence) has already raised
+    from inside the scan and still outranks all of these, which is the
+    precedence the module's docstring has always documented.
+
+    The tuple above is applied ONLY when the run recorded a stall, and that
+    restriction is the whole point. These verdicts used to raise inline while
+    scanning, so the first one on the WIRE won -- and the producer's emission
+    order is not arbitrary: UNREAPED and REAP-DEGRADED are emitted per binary
+    from u_run_one (test_usermode.c:8685, :8715), while UNDELIVERED and
+    PENDING come from the run terminator u_frame_end (:3916, :3928), which
+    runs after every binary has finished. So a blanket precedence tuple does
+    not merely place the new stall marker: it silently RE-DIAGNOSES runs that
+    have nothing to do with stalls, hiding live descendants or an inexact reap
+    census behind a stream-loss reason and sending the investigation away from
+    leaked tasks. That is a strictly worse error than the one this section set
+    out to fix.
+
+    So: no stall recorded, no change -- the first verdict recorded wins,
+    exactly as inline raising made it (`boundary` is insertion-ordered and
+    _defer keeps the first instance of each reason, so "first recorded" IS
+    "first on the wire"). Section 59 changes the outcome only for the runs it
+    exists to diagnose.
+    """
+    if not boundary:
+        return
+    if "capture_wait_stalled" in boundary:
+        for reason in _BOUNDARY_PRECEDENCE:
+            if reason in boundary:
+                raise Refusal(reason, boundary[reason])
+    reason = next(iter(boundary))
+    raise Refusal(reason, boundary[reason])
 
 
 def _check_over(owner):
@@ -1398,7 +1538,13 @@ def _check_run_budget(owners):
 def build_model(lines, prefix):
     """Parse + reconcile the whole run. Never raises Refusal; records it."""
     try:
-        owners, spawned = _scan(lines, prefix)
+        owners, spawned, boundary = _scan(lines, prefix)
+        # Run-boundary verdicts are decided HERE: after every shape fault the
+        # scan can raise (those still win, as the precedence contract says),
+        # and before any owner-level reasoning (a statement about the whole
+        # run outranks a detail about one binary in it, which is the ordering
+        # inline raising already gave them).
+        _decide_boundary(boundary)
     except Refusal as exc:
         return _refusal_model(exc)
 

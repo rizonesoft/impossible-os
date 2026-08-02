@@ -17605,6 +17605,250 @@ else
         "$(cap_field "$CAP_TMP/bclean.json" 'm["refusal"]["reason"]')"
 fi
 
+# c41. Section 59. The launcher's STALLED-clock admission, and the precedence
+#      the run-boundary verdicts are decided in.
+#
+#      Section 58 makes a stalled clock abort the suite in-kernel, so the
+#      launcher's own exit already carries it. The HOST had no gate on the
+#      marker at all, which matters for the one case the in-kernel abort
+#      cannot reach: a stall in a stream read after the fact, or by a leg
+#      whose exit status was lost.
+_cap_stalled() {
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=1 final=1 a"
+    cap_line "[UTEST-WAIT-STALLED] site=capture-drain detail=3"
+}
+cap_refuses "a run whose launcher clock stalled is refused" \
+    capture_wait_stalled _cap_stalled
+
+# Every site the PRODUCER can emit must parse here. This is a cross-file
+# consistency assertion, not a restatement: the host grammar is an allowlist,
+# so a site added to test_usermode.c without being added to utest-capture.py
+# would arrive as capture_malformed_record -- reporting a launcher that is
+# working correctly as corruption, which is exactly the failure the allowlist
+# was chosen over `\S+` to make loud rather than silent.
+S59_SITES_OK=1
+S59_SITES_SEEN=0
+for s59_site in $(grep -oE 'u_wait_report_stall\("[a-z-]+"' \
+        "$REPO_ROOT/src/kernel/test/test_usermode.c" |
+        sed 's/.*"\(.*\)"/\1/' | sort -u); do
+    S59_SITES_SEEN=$(( S59_SITES_SEEN + 1 ))
+    {
+        cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+        cap_line "[UTEST-WAIT-STALLED] site=${s59_site} detail=0"
+    } > "$CAP_TMP/stallsite.log"
+    cap_model "$CAP_TMP/stallsite.log" "$CAP_TMP/stallsite.json"
+    if [ "$(cap_field "$CAP_TMP/stallsite.json" 'm["refusal"]["reason"]')" \
+            != "capture_wait_stalled" ]; then
+        S59_SITES_OK=0
+    fi
+done
+if [ "$S59_SITES_OK" = "1" ] && [ "$S59_SITES_SEEN" -ge 4 ]; then
+    t_pass "capture: every producer stall site parses against the host allowlist"
+else
+    t_fail "capture: every producer stall site parses against the host allowlist" \
+        "sites=$S59_SITES_SEEN all-parsed=$S59_SITES_OK (host allowlist and test_usermode.c call sites disagree)"
+fi
+
+# A site the allowlist does not carry is version skew. Refused as a SHAPE
+# fault rather than skipped: the marker is not capture-family, so without its
+# own fallback it would fall through to silence -- the "damaged record reads
+# as no record" failure the capture-family sweep exists to prevent.
+_cap_stallskew() {
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-WAIT-STALLED] site=not-a-real-wait detail=3"
+}
+cap_refuses "an unknown stall site is refused as malformed, not skipped" \
+    capture_malformed_record _cap_stallskew
+
+_cap_stallnodetail() {
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-WAIT-STALLED] site=capture-drain"
+}
+cap_refuses "a stall record missing its detail field is refused" \
+    capture_malformed_record _cap_stallnodetail
+
+_cap_stallrange() {
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-WAIT-STALLED] site=capture-drain detail=4294967296"
+}
+cap_refuses "an over-range stall detail is refused as a field fault" \
+    capture_field_out_of_range _cap_stallrange
+
+# PRECEDENCE. A stalled clock CAUSES pending records, unreaped descendants and
+# a degraded reap census, so the stall is the more precise diagnosis whenever
+# both appear. Before section 59 these verdicts raised inline while scanning,
+# which made PHYSICAL LINE ORDER decide -- so the same run reported the cause
+# or the symptom depending on which record the producer happened to emit
+# first. Both orders are asserted for exactly that reason: an implementation
+# that still decides inline passes one of these and fails the other.
+_cap_stall_after_pending() {
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE-PENDING] run=3 pending=2"
+    cap_line "[UTEST-WAIT-STALLED] site=capture-drain detail=2"
+}
+cap_refuses "a stall outranks a pending record that appears BEFORE it" \
+    capture_wait_stalled _cap_stall_after_pending
+
+_cap_stall_before_pending() {
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-WAIT-STALLED] site=capture-drain detail=2"
+    cap_line "[UTEST-CAPTURE-PENDING] run=3 pending=2"
+}
+cap_refuses "a stall outranks a pending record that appears AFTER it" \
+    capture_wait_stalled _cap_stall_before_pending
+
+_cap_stall_vs_unreaped() {
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE-UNREAPED] owner=7 live=2"
+    cap_line "[UTEST-WAIT-STALLED] site=capture-reap detail=7"
+}
+cap_refuses "a stall outranks the unreaped descendants it explains" \
+    capture_wait_stalled _cap_stall_vs_unreaped
+
+# UNDELIVERED leads the semantic order: klog DECLINED to emit, which is direct
+# capture-loss evidence with a known cause that no clock stall explains away.
+_cap_undelivered_vs_stall() {
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-WAIT-STALLED] site=capture-drain detail=2"
+    cap_line "[UTEST-CAPTURE-UNDELIVERED] run=3 count=2"
+}
+cap_refuses "a producer-side drop outranks a stall that appears before it" \
+    capture_undelivered_records _cap_undelivered_vs_stall
+
+# SCAN-TIME shape faults still outrank every semantic verdict, which is the
+# module's oldest precedence contract. Deferring the boundary verdicts must not
+# have quietly inverted it: a record whose SHAPE the producer cannot emit,
+# appearing LATER in the slice, still wins.
+#
+# `final=2` is the fault used deliberately: it fails the record grammar during
+# _scan. A payload fault such as a `len` that disagrees with the bytes is NOT
+# equivalent -- that is caught per-owner in _reconcile, which has always run
+# after the boundary verdicts (inline raising put them ahead of it too), so it
+# would assert an ordering neither version of the module ever had.
+_cap_malformed_vs_stall() {
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-WAIT-STALLED] site=capture-drain detail=2"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=1 final=2 a"
+}
+cap_refuses "a shape fault still outranks a stall recorded before it" \
+    capture_malformed_record _cap_malformed_vs_stall
+
+# NO STALL, NO CHANGE. The precedence tuple applies ONLY to a run that
+# recorded a stall; every other pairing keeps the verdict it had before
+# section 59, which is the FIRST one on the wire.
+#
+# That restriction is load-bearing rather than conservatism. The producer's
+# emission order is structural: UNREAPED and REAP-DEGRADED are emitted per
+# binary from u_run_one (test_usermode.c:8685, :8715), while UNDELIVERED and
+# PENDING come from the run terminator u_frame_end (:3916, :3928), after every
+# binary has run. A blanket tuple therefore re-diagnosed runs that have no
+# stall in them at all -- reporting a stream-loss reason for a run whose real
+# evidence was live descendants or an inexact reap census, which sends the
+# reader away from leaked tasks. These three pairings are asserted in PRODUCER
+# order for exactly that reason.
+_cap_unreaped_then_pending() {
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE-UNREAPED] owner=7 live=2"
+    cap_line "[UTEST-CAPTURE-PENDING] run=3 pending=2"
+}
+cap_refuses "unreaped descendants still outrank a later pending report" \
+    capture_unreaped_descendants _cap_unreaped_then_pending
+
+_cap_reapdeg_then_pending() {
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE-REAP-DEGRADED] owner=7 pending=1 stranded=0"
+    cap_line "[UTEST-CAPTURE-PENDING] run=3 pending=2"
+}
+cap_refuses "a degraded reap still outranks a later pending report" \
+    capture_reap_drain_degraded _cap_reapdeg_then_pending
+
+_cap_unreaped_then_undelivered() {
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE-UNREAPED] owner=7 live=2"
+    cap_line "[UTEST-CAPTURE-UNDELIVERED] run=3 count=2"
+}
+cap_refuses "unreaped descendants still outrank a later undelivered report" \
+    capture_unreaped_descendants _cap_unreaped_then_undelivered
+
+# And a run with no stall must stay clean, or every assertion above is
+# satisfied by a parser that simply refuses everything.
+_cap_stall_clean() {
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=1 final=1 a"
+}
+_cap_stall_clean > "$CAP_TMP/sclean.log"
+if cap_model "$CAP_TMP/sclean.log" "$CAP_TMP/sclean.json" &&
+   [ "$(cap_field "$CAP_TMP/sclean.json" 'm["binaries"][0]["text"]')" = 'a' ]; then
+    t_pass "capture: a run whose clock never stalled stays clean"
+else
+    t_fail "capture: a run whose clock never stalled stays clean" \
+        "$(cap_field "$CAP_TMP/sclean.json" 'm["refusal"]["reason"]')"
+fi
+
+# c42. Section 59: the reconciliation must run on the DEFAULT test path.
+#
+#      Every assertion above tests the CHECKER. None of them prove the checker
+#      is reached: until section 59 the whole slice + model block sat inside
+#      `if [ "$HAS_XML" -eq 1 ] || [ "$JSON_MODE" -eq 1 ]`, both default 0, so
+#      a plain `bash scripts/test.sh` never built the model and every refusal
+#      above was unread on the repository's primary gate. These are structural
+#      because the behavioural proof costs a full QEMU boot per marker; they
+#      pin the exact shapes that regressed, and the end-to-end evidence is the
+#      `runslice` + `capture.json` a plain run now leaves in build/test-runs/.
+#      COMMENTS ARE STRIPPED before the mode greps below. The block's own
+#      commentary explains what it replaced, and naming the old guard there is
+#      the clearest way to say it -- so grepping the raw text would match the
+#      explanation and report the regression it is describing.
+S59_BLOCK="$(awk '/--- Canonical run slice \+ captured-output model/,/^XML_SUMMARY_OK=1/' \
+    "$REPO_ROOT/scripts/test.sh" | sed 's/[[:space:]]*#.*$//')"
+if [ -n "$S59_BLOCK" ] &&
+   printf '%s' "$S59_BLOCK" | grep -q 'if \[ -n "\$FRAME_COMPLETE_RUN" \]; then' &&
+   ! printf '%s' "$S59_BLOCK" | grep -q 'HAS_XML' &&
+   ! printf '%s' "$S59_BLOCK" | grep -q 'JSON_MODE'; then
+    t_pass "test.sh: capture reconciliation is gated on a complete framed run, not on an artifact mode"
+else
+    t_fail "test.sh: capture reconciliation is gated on a complete framed run, not on an artifact mode" \
+        "the slice/model block references an artifact mode again -- a plain 'bash scripts/test.sh' would stop reading capture refusals"
+fi
+
+# A gate that cannot run must not pass. Both tooling-failure paths -- the slice
+# that could not be produced for a run the frame parser called COMPLETE, and
+# the capture tool that could not examine the payload (rc 2) -- were degrades
+# while this block was artifact-only. Once reconciliation is part of the
+# primary gate, either one means the required check did not run, which would
+# make every refusal above suppressible by breaking the checker.
+if printf '%s' "$S59_BLOCK" | grep -q 'capture reconciliation could not run' &&
+   [ "$(printf '%s' "$S59_BLOCK" | grep -c 'capture reconciliation could not run')" = "2" ] &&
+   [ "$(printf '%s' "$S59_BLOCK" | grep -c 'UTEST_FAIL=$(( ${UTEST_FAIL:-0} + 1 ))')" -ge 3 ]; then
+    t_pass "test.sh: a slice failure and a capture-tool error both fail the run"
+else
+    t_fail "test.sh: a slice failure and a capture-tool error both fail the run" \
+        "a tooling failure on the mandatory capture gate still degrades to green"
+fi
+
+# One fault, one failure. The XML branch publishes its own refusal artifact for
+# a failed slice, but the shared path above has already charged UTEST_FAIL for
+# it -- counting it twice would report two user-mode failures for one fault on
+# every XML run.
+if grep -q 'SLICE_CHARGED=1' "$REPO_ROOT/scripts/test.sh" &&
+   grep -q 'if \[ "${SLICE_CHARGED:-0}" -eq 0 \]; then' "$REPO_ROOT/scripts/test.sh"; then
+    t_pass "test.sh: a failed slice is charged once, not once per consumer"
+else
+    t_fail "test.sh: a failed slice is charged once, not once per consumer" \
+        "the XML branch re-charges UTEST_FAIL for a slice failure the shared path already counted"
+fi
+
+# The fold is what makes any of the above fatal: a refusal that increments
+# UTEST_FAIL but never reaches the exit status is a warning wearing a
+# failure's clothes, which is precisely the state section 59 found.
+if grep -q 'TOTAL_FAIL=$((${FAILED:-0} + ${UTEST_FAIL:-0}))' "$REPO_ROOT/scripts/test.sh"; then
+    t_pass "test.sh: user-mode failures fold into the run's exit status"
+else
+    t_fail "test.sh: user-mode failures fold into the run's exit status" \
+        "UTEST_FAIL no longer reaches TOTAL_FAIL -- capture refusals would not fail the run"
+fi
+
 # c36. BEGIN and LOST carry no payload, so they cost nothing against the byte
 #      bound -- but each DISTINCT pid retained an _Owner with nothing counting
 #      it. Measured 400k BEGIN records at ~127 MiB RSS before this bound.
@@ -17695,11 +17939,21 @@ fi
 #      than behavioural because the behaviour needs a full QEMU boot; the
 #      end-to-end proof is that a JSON-only run publishes captured_output on
 #      every testcase (verified in-session on the 17-binary default suite).
-if awk '/^RUNSLICE=/,/^XML_SUMMARY_OK=/' "$REPO_ROOT/scripts/test.sh" |
-       grep -q 'JSON_MODE.*-eq 1'; then
+#
+#      The assertion USED to be `grep -q 'JSON_MODE.*-eq 1'` over this block --
+#      it pinned the presence of the `HAS_XML || JSON_MODE` guard as its proof
+#      that a JSON-only run was covered. Section 59 removed that guard
+#      entirely, which makes JSON-only coverage strictly STRONGER (the block
+#      now runs for every complete framed run, artifact mode or not), so the
+#      old grep would report the improvement as a regression. Asserting the
+#      absence of ANY mode gate is the same claim against the shipped shape.
+if [ -n "$(awk '/^RUNSLICE=/,/^XML_SUMMARY_OK=/' "$REPO_ROOT/scripts/test.sh")" ] &&
+   ! awk '/^RUNSLICE=/,/^XML_SUMMARY_OK=/' "$REPO_ROOT/scripts/test.sh" |
+       sed 's/[[:space:]]*#.*$//' | grep -qE 'HAS_XML|JSON_MODE'; then
     t_pass "capture: the shared slice/model step covers a JSON-only run"
 else
-    t_fail "capture: the shared slice/model step covers a JSON-only run"
+    t_fail "capture: the shared slice/model step covers a JSON-only run" \
+        "the slice/model step is gated on an artifact mode again -- a JSON-only run would build no capture model"
 fi
 
 # c18. The XML fallbacks must never write into the shared slice: the capture

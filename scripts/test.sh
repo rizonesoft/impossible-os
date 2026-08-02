@@ -3896,27 +3896,56 @@ fi
 # built it at all and silently published testcases with no captured output --
 # the artifacts disagreeing about what the run contained, which is exactly the
 # divergence a single shared model exists to prevent.
+#
+# UNCONDITIONAL since section 59. This whole block used to sit inside
+# `if [ "$HAS_XML" -eq 1 ] || [ "$JSON_MODE" -eq 1 ]`, and both default to 0 --
+# so a plain `bash scripts/test.sh` (and the post-commit hook path, and CI)
+# never built the capture model at all. Every host-side capture refusal this
+# module can raise -- lost records, unbound owners, undelivered claims,
+# unreaped descendants, a stalled launcher clock -- was therefore unread on the
+# repository's PRIMARY test gate: the producer's records reached serial and
+# nothing looked at them, so a run could lose captured output or leave
+# capture-owning descendants alive and still exit 0.
+#
+# Only the ATTACHMENT of captured output to an artifact stays mode-conditional
+# (CAPTURE_ATTACH, consumed by the splice helper); RECONCILIATION is now part
+# of the primary gate. Refusals become fatal by construction: UTEST_FAIL folds
+# into TOTAL_FAIL below, which is what the exit status is computed from.
 RUNSLICE="$RECORD_DIR/runslice"
 SLICE_FAILED=0
 CAPTURE_MODEL="$RECORD_DIR/capture.json"
 CAPTURE_OK=1
 CAPTURE_ATTACH=0
+# Set when the shared path has ALREADY charged UTEST_FAIL for a failed slice,
+# so the XML branch can publish its refusal artifact without counting the same
+# failure twice.
+SLICE_CHARGED=0
 rm -f "$RUNSLICE"
-if [ "$HAS_XML" -eq 1 ] || [ "$JSON_MODE" -eq 1 ]; then
-    if [ -n "$FRAME_COMPLETE_RUN" ]; then
-        if ! python3 "$PROJECT/scripts/utest-frame.py" \
-                --emit-run "$RUNSLICE" "$TEST_LOG" >/dev/null 2>&1; then
-            SLICE_FAILED=1
-        fi
-        [ -s "$RUNSLICE" ] || SLICE_FAILED=1
+if [ -n "$FRAME_COMPLETE_RUN" ]; then
+    if ! python3 "$PROJECT/scripts/utest-frame.py" \
+            --emit-run "$RUNSLICE" "$TEST_LOG" >/dev/null 2>&1; then
+        SLICE_FAILED=1
+    fi
+    [ -s "$RUNSLICE" ] || SLICE_FAILED=1
+
+    # A COMPLETE framed run whose slice could not be produced is a failure of
+    # the gate itself, not a degrade. The frame parser already told us the run
+    # reconciled its record count, so the bytes are there to slice; failing
+    # here means the extraction broke, and with reconciliation now mandatory
+    # "the required safety check did not run" must not exit green. This used to
+    # be fatal only inside the XML branch, which a default run never enters.
+    if [ "$SLICE_FAILED" -eq 1 ]; then
+        echo -e "  ${RED}[UTEST]${RESET} run slice failed for a COMPLETE framed run -- capture reconciliation could not run"
+        UTEST_FAIL=$(( ${UTEST_FAIL:-0} + 1 ))
+        CAPTURE_OK=0
+        SLICE_CHARGED=1
     fi
 
     # Captured per-binary output (section 36). Runs ONLY for a complete framed
     # run whose slice succeeded: without one there is no canonical population
     # to attribute bytes to, and the JSON harvester already refuses to read
-    # results from an unreconciled stream. No complete run therefore means no
-    # captured output in either artifact -- a degraded artifact, not a refusal.
-    if [ -n "$FRAME_COMPLETE_RUN" ] && [ "$SLICE_FAILED" -eq 0 ] && [ -s "$RUNSLICE" ]; then
+    # results from an unreconciled stream.
+    if [ "$SLICE_FAILED" -eq 0 ] && [ -s "$RUNSLICE" ]; then
         if python3 "$PROJECT/scripts/utest-capture.py" model \
                 "$RUNSLICE" "$CAPTURE_MODEL" --prefix "$UF" >/dev/null 2>&1; then
             CAPTURE_ATTACH=1
@@ -3956,10 +3985,18 @@ except Exception:
                 fi
             else
                 # A usage/IO fault in the capture tool is an infrastructure
-                # problem, not evidence about the run's bytes. Degrade to no
-                # captured output rather than condemning a payload that was
-                # never actually examined.
-                echo -e "  ${YELLOW}[UTEST]${RESET} capture model unavailable (tool error) -- artifacts omit captured output"
+                # problem rather than evidence about the run's bytes -- which
+                # is why it does not publish a corruption refusal. It is still
+                # FATAL since section 59: with reconciliation part of the
+                # primary gate, "the tool could not examine the payload" means
+                # the required check did not run, and letting that exit green
+                # would make every capture refusal suppressible by breaking the
+                # checker (a bad interpreter, a missing file, a version skew).
+                # Degrading here was correct only while this block was
+                # artifact-only and a degraded artifact was the whole cost.
+                echo -e "  ${RED}[UTEST]${RESET} capture model unavailable (tool error rc=$rc) -- capture reconciliation could not run"
+                UTEST_FAIL=$(( ${UTEST_FAIL:-0} + 1 ))
+                CAPTURE_OK=0
             fi
         fi
     fi
@@ -4006,7 +4043,15 @@ if [ "$HAS_XML" -eq 1 ]; then
         # so the run FAILS instead, matching the stance every other refusal on
         # this path takes.
         echo -e "  ${RED}[UTEST]${RESET} run slice failed for a COMPLETE framed run -- refusing to assemble from the whole capture"
-        UTEST_FAIL=$(( ${UTEST_FAIL:-0} + 1 ))
+        # Charged ONCE. Since section 59 the shared path above already failed
+        # the run for this exact slice failure (it has to: reconciliation is
+        # mandatory and a default run never reaches this branch). Counting it
+        # again here would report two failures for one fault and inflate the
+        # user-mode failure total on any XML run. The XML-side refusal ARTIFACT
+        # below still publishes -- that is this branch's own job.
+        if [ "${SLICE_CHARGED:-0}" -eq 0 ]; then
+            UTEST_FAIL=$(( ${UTEST_FAIL:-0} + 1 ))
+        fi
         XML_SUMMARY_OK=0
         utest_publish_xml_refusal "artifact-pipeline" \
             "run slice failed for a complete framed run -- artifact would mix runs"
