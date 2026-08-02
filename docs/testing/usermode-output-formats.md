@@ -707,8 +707,37 @@ validates what it reads, not what the writer intended.
    report the generation unavailable: **stop**. Do not fall back to the
    aliases, and do not resolve to the record anyway -- silently reading
    another leg's results is the failure this check exists to make impossible.
-   Retention enforces the same binding (`utest_pointer_pin_id`), so a pointer
-   that fails it is one whose record is not being held for you either.
+
+   **The identity document's LAYOUT is part of its contract, exactly as the
+   lease document's is** (see "Step 2b" below for the same rule and the same
+   reason). `utest_pointer_pin_id` validates it positionally -- fourteen lines,
+   `{` and `}` alone at the ends, these twelve keys in this order, two-space
+   indented, the first eleven carrying a trailing comma and `ci_parity`
+   carrying none (it is the last member, so a comma there would not be JSON at
+   all), `cpus` an unquoted JSON integer and `ci_parity` an unquoted boolean:
+
+   ```json
+   {
+     "schema": "utest-run-identity-v1",
+     "run_id": "20260731T104512Z-4711-9f2c1a0b",
+     "timestamp": "2026-07-31T10:45:12Z",
+     "commit": "9f2c1a0b",
+     "leg": "wsl2-tcg-2cpu",
+     "leg_source": "derived",
+     "host": "wsl2",
+     "hostname": "devbox",
+     "accel": "tcg",
+     "cpus": 2,
+     "qemu": "qemu-system-x86_64",
+     "ci_parity": false
+   }
+   ```
+
+   A consumer may parse it however it likes, but it must not treat a
+   semantically-equal document in a DIFFERENT shape as resolvable: retention
+   would not pin such a record, so the generation it names can be pruned out
+   from under the reader and a lease over it is refused. The producer emits
+   only this shape; anything else came from somewhere else.
 4. **Open** the documents the marker NAMES -- and take the names from the
    MARKER, not from your own assumptions -- out of the record directory, not
    out of the aliases, opening both before processing either. The payload

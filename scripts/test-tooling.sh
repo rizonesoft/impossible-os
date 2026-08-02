@@ -13937,15 +13937,17 @@ utest_lease_holder_state "$2"' _ "$1" "$2" 2>&1
         #       `expires == now` and the test failed on the clock rather than on
         #       the property (observed 2026-08-02). A 5s hold against TTL=2
         #       keeps the discrimination -- the bug this guards sampled `now`
-        #       BEFORE the wait, so it would still hand back `now+2` at `now+4`
+        #       BEFORE the wait, so it would still hand back `now+2` at `now+3`
         #       and fail -- while leaving the correct implementation two whole
         #       seconds of margin. `now` is also sampled the instant the
         #       acquisition RETURNS, not after reaping the lock holder, because
         #       the question is whether the grant was live when its caller got
-        #       it.
+        #       it. Four seconds, not five: the hold only has to outlast the TTL
+        #       for the old bug to be caught, and every second here is a second
+        #       on every run of the whole suite.
         uar_lease_reset
         uar_prune_ptr slow 20260102T000000Z-1-aaaa
-        ( flock -x 8; sleep 5; ) 8>>"$UAR_PDIR/build/.test-retention.lock" &
+        ( flock -x 8; sleep 4; ) 8>>"$UAR_PDIR/build/.test-retention.lock" &
         UAR_L16LOCK=$!
         sleep 1
         UAR_L16="$(uar_lease_acquire slow 'UTEST_LEASE_TTL=2')"
@@ -14645,6 +14647,66 @@ except ValueError:
         else
             t_fail "run record: an identity a JSON parser rejects binds nothing" \
                 "prune=$UAR_L36 parser=$UAR_L36J"
+        fi
+
+        # (L37) the leg is taken from a FILENAME, and a filename is not a
+        #     grammar. A pointer named `test-results-a","leg":"b.run` makes the
+        #     canonical emitters reconstruct `"leg": "a","leg":"b"` in BOTH the
+        #     pointer and the identity document, so a hand-written pair is
+        #     byte-equal to what this script would write for that "leg" and
+        #     passes every comparison -- while a real parser sees a DUPLICATE
+        #     `leg` key and takes the second value. The pin must refuse a leg
+        #     the producer could never have emitted. Includes a glob-bearing
+        #     name, because the leg reaches `case` patterns as well.
+        for _inj in 'a","leg":"b' 'a*b' 'UPPER'; do
+            uar_prune_reset
+            uar_prune_ptr valid 20260102T000000Z-1-aaaa
+            touch -d '2020-01-01' "$UAR_PDIR/build/test-results-valid.run"
+            bash -c "$UAR_PTRDOC"'
+utest_leg_pointer_doc_for "$1" "$2"' _ "$_inj" 20260103T000000Z-1-aaaa \
+                > "$UAR_PDIR/build/test-results-$_inj.run"
+            uar_prune_ident 20260103T000000Z-1-aaaa "$_inj"
+            UAR_L37="$(uar_prune_run 'UTEST_POINTER_PIN_MAX=1')"
+            if printf '%s' "$UAR_L37" | grep -q 'HARNESS-OK' &&
+               printf '%s' "$UAR_L37" | grep -q '20260102T000000Z-1-aaaa' &&
+               printf '%s' "$UAR_L37" | grep -q 'test-results-valid.run' &&
+               ! printf '%s' "$UAR_L37" | grep -q '20260103T000000Z-1-aaaa'; then
+                t_pass "run record: a pointer whose filename encodes leg '$_inj' pins nothing"
+            else
+                t_fail "run record: a pointer whose filename encodes leg '$_inj' pins nothing" "$UAR_L37"
+            fi
+        done
+
+        # (L38) and that guard must not depend on the CALLER's shell options.
+        #     `nocasematch` is inheritable: bash applies whatever `$BASHOPTS`
+        #     lists at startup, and it makes `*[!a-z0-9-]*` match
+        #     case-INSENSITIVELY, so an uppercase leg stops being rejected --
+        #     a validation hole opened entirely from the environment. Verified
+        #     directly: `env BASHOPTS=nocasematch bash -c` accepts `UPPER`
+        #     without the explicit `shopt -u`. The harness asserts nocasematch
+        #     really WAS inherited, or it would prove nothing.
+        uar_prune_reset
+        bash -c "$UAR_PTRDOC"'
+utest_leg_pointer_doc_for "$1" "$2"' _ UPPER 20260103T000000Z-1-aaaa \
+            > "$UAR_PDIR/build/test-results-UPPER.run"
+        uar_prune_ident 20260103T000000Z-1-aaaa UPPER
+        UAR_L38="$(UAR_PDIR="$UAR_PDIR" UAR_PRUNE="$UAR_PRUNE" \
+                   env BASHOPTS=nocasematch bash -c '
+set -euo pipefail
+RED=""; YELLOW=""; CYAN=""; RESET=""
+PROJECT="$UAR_PDIR"
+RUNS_DIR="$PROJECT/build/test-runs"
+eval "$UAR_PRUNE"
+shopt -q nocasematch && printf "inherited: ON" || printf "inherited: OFF"
+printf "| pin: [%s]" "$(utest_pointer_pin_id "$PROJECT/build/test-results-UPPER.run")"
+printf "| HARNESS-OK\n"
+' 2>&1)"
+        if printf '%s' "$UAR_L38" | grep -q 'HARNESS-OK' &&
+           printf '%s' "$UAR_L38" | grep -q 'inherited: ON' &&
+           printf '%s' "$UAR_L38" | grep -q 'pin: \[\]'; then
+            t_pass "run record: the leg alphabet guard survives an inherited nocasematch"
+        else
+            t_fail "run record: the leg alphabet guard survives an inherited nocasematch" "$UAR_L38"
         fi
 
         rm -rf "$UAR_TMP/fakeproc"
@@ -15362,6 +15424,33 @@ print("cpus=%r %s" % (d.get("cpus"), type(d.get("cpus")).__name__))
     else
         t_fail "identity: a leading-zero SMP_CPUS is normalised, never published as invalid JSON" \
             "$UAR_CPU_OUT"
+    fi
+fi
+
+# i12g. The identity example in docs/testing/usermode-output-formats.md is
+#       NORMATIVE now -- resolution step 3 tells a consumer the layout is part
+#       of the contract -- so it must be the production emitter's own output
+#       with the values substituted, not a hand-typed approximation. The exact
+#       failure this catches: prose stating all twelve keys carry a trailing
+#       comma while the emitter omits it after the last one, which sends a
+#       consumer implementing the stated contract to reject every real
+#       document. Compared STRUCTURALLY (values blanked) so the example stays
+#       free to carry illustrative values.
+UAR_DOCEX="$(awk '/^   \{$/{f=1} f{print} f&&/^   \}$/{exit}' \
+    "$REPO_ROOT/docs/testing/usermode-output-formats.md" | sed 's/^   //')"
+if [ -z "$UAR_DOCEX" ] || [ -z "$UAR_IDDOCFN" ]; then
+    t_fail "identity: the documented canonical example matches the production emitter" \
+        "example or emitter not found"
+else
+    UAR_DOCSHAPE="$(printf '%s\n' "$UAR_DOCEX" | sed 's/: .*\(,\)$/: X\1/; s/: [^,]*$/: X/')"
+    UAR_EMITSHAPE="$(bash -c 'set -euo pipefail
+'"$UAR_IDDOCFN"'
+utest_identity_doc_for a b c d e f g h 1 i false' | sed 's/: .*\(,\)$/: X\1/; s/: [^,]*$/: X/')"
+    if [ "$UAR_DOCSHAPE" = "$UAR_EMITSHAPE" ]; then
+        t_pass "identity: the documented canonical example matches the production emitter"
+    else
+        t_fail "identity: the documented canonical example matches the production emitter" \
+            "doc=[$UAR_DOCSHAPE] emitter=[$UAR_EMITSHAPE]"
     fi
 fi
 

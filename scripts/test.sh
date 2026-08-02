@@ -15,6 +15,15 @@
 # =============================================================================
 
 set -euo pipefail
+# Pattern matching means what it says here regardless of who invoked us.
+# `nocasematch` is INHERITABLE -- bash applies the options listed in `$BASHOPTS`
+# at startup -- so a parent that set it turns every `case` in this file
+# case-insensitive, including the charset guards that decide whether a pointer
+# may pin a record. An uppercase leg then stops being rejected by
+# `*[!a-z0-9-]*`, which is a validation hole opened entirely from the caller's
+# environment. (`env BASHOPTS=nocasematch bash -c` reproduces it; assigning
+# BASHOPTS from within bash does not, because bash marks it readonly.)
+shopt -u nocasematch
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT="$(dirname "$SCRIPT_DIR")"
@@ -606,6 +615,11 @@ utest_identity_binds() {
 # startup path for no added strictness.
 utest_pointer_pin_id() {
     local ptr="$1" body mbody ibody id leg sz rest
+    # Repeated from the top of the script ON PURPOSE. This function is the
+    # reference validator: it is extracted and run standalone by the
+    # regressions, and its leg guard is the one asymmetric charset test in the
+    # file, so it must not depend on a matching option its caller chose.
+    shopt -u nocasematch
     # BOUNDED, and bounded by SIZE FIRST. `timeout` bounds elapsed time, not
     # bytes: a huge regular file would be pulled wholly into a shell variable
     # before the clock ran out. And a byte-capped read alone is not enough
@@ -636,6 +650,20 @@ utest_pointer_pin_id() {
     # the shape that would let one leg pin another's record -- fails here.
     leg="${ptr##*/test-results-}"
     leg="${leg%.run}"
+    # And the leg must be one the PRODUCER could have emitted, because it is
+    # about to be interpolated into two JSON documents that are then compared
+    # against files somebody else wrote. A filename is not a grammar: it may
+    # carry quotes and commas, so `test-results-a","leg":"b.run` reconstructs a
+    # pointer AND an identity line holding `"leg": "a","leg":"b"` -- byte-equal
+    # to what a hand-written file can contain, while a real parser sees a
+    # DUPLICATE `leg` and takes the second one. Every leg this script derives is
+    # `<host>-<accel>-<n>cpu` with an optional `-ciparity` and an optional
+    # `^[a-z0-9][a-z0-9-]{0,31}$` label, all of it charset-filtered, so
+    # restricting the pin to that alphabet closes quoting, commas, globs and key
+    # injection at once. The SWEEP deliberately does NOT get this check:
+    # refusing a pin costs a record its protection, while deleting a pointer
+    # destroys something a human may have put there.
+    case "$leg" in ''|-*|*[!a-z0-9-]*) return 0 ;; esac
     # WHOLE-DOCUMENT comparison against what this script would have written for
     # that leg and run id. Field-by-field substring tests were the wrong tool:
     # they accept a document carrying every expected snippet PLUS a duplicate
@@ -653,6 +681,16 @@ utest_pointer_pin_id() {
     # document names legitimately vary -- so it is field-tested, with the
     # negative check that a substring test needs: a document carrying BOTH
     # statuses must not read as complete.
+    # REGULAR FILE FIRST, as a fast path rather than as a safety claim. The
+    # reads below are each bounded at five seconds, which is the right bound for
+    # a file swapped underneath them -- but a FIFO planted at this pathname
+    # burns the whole five seconds on every pass, and the pin loop validates
+    # every candidate pointer, so a directory of them multiplies that by N while
+    # the retention mutex is held. `-f` is a stat and therefore not atomic with
+    # the open; it does not replace the timeout, it just stops the static
+    # hostile case from costing anything. (The aggregate bound the loop still
+    # lacks is section 60.)
+    [ -f "$RUNS_DIR/$id/record-complete.json" ] || return 0
     sz="$(timeout 5 wc -c -- "$RUNS_DIR/$id/record-complete.json" 2>/dev/null | awk '{print $1; exit}')" || return 0
     case "$sz" in ''|*[!0-9]*) return 0 ;; esac
     [ "$sz" -le 4096 ] || return 0
@@ -702,6 +740,7 @@ utest_pointer_pin_id() {
     # consumer resolving A then read B's documents. The record answers the
     # question itself, in a document written before any other and never
     # rewritten.
+    [ -f "$RUNS_DIR/$id/test-run-identity.json" ] || return 0
     sz="$(timeout 5 wc -c -- "$RUNS_DIR/$id/test-run-identity.json" 2>/dev/null | awk '{print $1; exit}')" || return 0
     case "$sz" in ''|*[!0-9]*) return 0 ;; esac
     [ "$sz" -le 4096 ] || return 0
