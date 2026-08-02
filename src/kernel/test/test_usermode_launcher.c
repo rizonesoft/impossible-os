@@ -4516,8 +4516,8 @@ static void test_ring_window_fails_closed_at_the_overrun_boundary(void)
  * than by construction -- and a regression that dropped the `+ ring_size` term
  * would underflow to a WRONG BUT IN-BOUNDS index, which reads as a plausible
  * record rather than as a crash. A small synthetic ring makes the wrap
- * deliberate: with head_after = 1 over a 4-slot ring, a 3-wide window walks
- * indices 2, 3, 0 -- oldest to newest, crossing zero on the last step. */
+ * deliberate: with head_after = 1 over the 5-slot ring below, a 3-wide window
+ * walks indices 3, 4, 0 -- oldest to newest, crossing zero on the last step. */
 #define U_TEST_FAKE_RING_SIZE 5u
 /* FIVE slots, not four, and the count is load-bearing rather than arbitrary.
  * The regression this fixture exists to catch is dropping the `+ ring_size`
@@ -4538,7 +4538,16 @@ static void u_test_fake_ring_set(uint32_t idx, const char *msg)
 {
     uint32_t i = 0;
 
-    while (msg[i] && i < sizeof(s_u_test_fake_ring[idx].message) - 1u) {
+    /* Bound the SLOT as well as the copy. Every caller passes a literal in
+     * range, but a helper that bounds one of its two indices and not the other
+     * invites the next caller to assume both are checked. */
+    if (idx >= U_TEST_FAKE_RING_SIZE)
+        return;
+
+    /* Bound BEFORE dereferencing: reading msg[i] first is safe only because
+     * every caller passes a NUL-terminated literal, which makes the guarantee
+     * depend on the call site rather than on this loop. */
+    while (i < sizeof(s_u_test_fake_ring[idx].message) - 1u && msg[i]) {
         s_u_test_fake_ring[idx].message[i] = msg[i];
         i++;
     }
@@ -4565,8 +4574,9 @@ static void test_ring_window_indexes_across_the_wrap(void)
                                                       U_TEST_FAKE_RING_SIZE,
                                                       0, 3, 1u, "MARK", &last),
                    (uint64_t)2,
-                   "a window crossing index zero counts exactly its own two "
-                   "matches and never reads the head slot");
+                   "a wrapped window sees its own two matches and neither "
+                   "poisoned slot outside it (a count alone does not "
+                   "discriminate the wrap bug -- the two assertions below do)");
     TEST_ASSERT(last == &s_u_test_fake_ring[0],
                 "last_match ends on the NEWEST match across the wrap");
 
@@ -5260,7 +5270,7 @@ static void test_capture_byte_and_flush_produce_the_wire_record(void)
     uint32_t saved_owner;
     int32_t  saved_seq;
     uint8_t  saved_stopped;
-    uint32_t count, head_after;
+    uint32_t head_after;
     uint64_t seq_before, seq_after;
     const klog_entry_t *ring;
     const klog_entry_t *last;
@@ -5296,8 +5306,7 @@ static void test_capture_byte_and_flush_produce_the_wire_record(void)
                 "capture stays active across multiple bytes of one write()");
     test_usermode_capture_end(&ctx);
 
-    ring = klog_get_ring_snapshot(&count, &head_after, &seq_after);
-    (void)count;
+    ring = klog_get_ring_snapshot((uint32_t *)0, &head_after, &seq_after);
 
     /* Sequence-bounded and content-matched, like every other emission
      * assertion in this file. Indexing head-1 assumes this CPU was the only
@@ -5483,8 +5492,7 @@ static void test_capture_chunk_boundary_plus_one_emits_two_records(void)
                      __ATOMIC_RELEASE);
 }
 
-/* The saturated ring: the boundary every window assertion above depends on,
- * and the one none of them could reach on their own.
+/* The saturated ring, observed rather than manufactured.
  *
  * klog pins klog_ring_count at KLOG_RING_SIZE while klog_ring_head and
  * klog_ring_seq keep advancing (klog.c, the ring append). A window derived
@@ -5494,11 +5502,26 @@ static void test_capture_chunk_boundary_plus_one_emits_two_records(void)
  * logged first, not of the behaviour under test. Three tests in this file sat
  * in that state undetected for as long as they existed.
  *
- * Saturation is made DELIBERATE here rather than left incidental, so the
- * comparison is decided rather than observed: in ONE window this proves the
- * condemned measure reads zero while the shipped measure still finds the
- * record exactly once. A regression to either rejected mechanism fails here
- * instead of going quiet.
+ * An earlier shape of this test SATURATED the ring itself, by emitting the
+ * shortfall. That was withdrawn on measurement, and the measurement is worth
+ * keeping: a full suite run reached this point 367 entries short, so the
+ * filler ran every time rather than never, costing 1.09 s of guest time and
+ * 33,397 serial bytes in the harness -- and far worse on real hardware, where
+ * the UART is rate-bound (about 8.8 s at 38400 baud, and roughly 24 s for a
+ * full 1000-entry shortfall against a 60 s harness deadline). It was also
+ * unsafe on the acceptance platform: on SLOW boot media klog batches to RAM
+ * (klog_set_deferred, boot_media.c) and driving the ring to saturation evicts
+ * entries the deferred flusher has not written yet, trading kernel.log content
+ * for filler.
+ *
+ * What is NOT lost by dropping it: the window ARITHMETIC is proven exhaustively
+ * and at zero cost by the synthetic-ring tests above, and klog's own saturation
+ * accounting is pinned by test_klog_lost_count. What this test still adds is the
+ * INTEGRATION claim against the real ring, which it makes whenever the run has
+ * genuinely saturated it and skips honestly when it has not -- a skip states
+ * that nothing was measured, which is precisely what the condemned count delta
+ * failed to do. Making saturation cheap and deterministic needs a
+ * sink-suppressed seam in klog itself; that is filed with the logging owner.
  *
  * What is deliberately NOT asserted is an exact global sequence delta.
  * klog_ring_seq is global and every accepted entry from any CPU advances it,
@@ -5517,7 +5540,6 @@ static void test_capture_window_is_exact_under_a_saturated_ring(void)
     uint64_t seq_before, seq_after;
     const klog_entry_t *ring;
     const klog_entry_t *last;
-    uint32_t i;
 
     if (!self) {
         TEST_SKIP("no current task available in this test context");
@@ -5525,32 +5547,12 @@ static void test_capture_window_is_exact_under_a_saturated_ring(void)
     }
 
     klog_get_ring(&count_before, (uint32_t *)0);
-    if (count_before < KLOG_RING_SIZE) {
-        /* Live disk logging appends AND flushes every accepted entry to the
-         * log volume, so filling the ring under it would turn this test into
-         * up to KLOG_RING_SIZE synchronous disk flushes. That sink is only on
-         * in a DEBUG-flag boot; there, keep whatever saturation the run
-         * already has rather than paying for it. */
-        if (klog_disk_live_active()) {
-            TEST_SKIP("live disk logging is on -- refusing to fill the ring "
-                      "through a per-entry disk flush");
-            return;
-        }
-        /* klog_unrated bypasses the shared per-subsystem rate cap that would
-         * otherwise drop this filler long before the ring filled. "TEST" is
-         * the tag test mode grants a LOG_DEBUG override, so these lines clear
-         * the global LOG_WARN ceiling; LOG_DEBUG keeps them under the
-         * framebuffer's threshold, so the cost is serial bytes only. The text
-         * carries no host-protocol prefix, so the serial reconciler ignores
-         * it. On a full suite run the ring is already saturated here and this
-         * loop emits nothing at all. */
-        for (i = count_before; i < (uint32_t)KLOG_RING_SIZE; i++)
-            klog_unrated(LOG_DEBUG, "TEST", "ring saturation filler");
-        klog_get_ring(&count_before, (uint32_t *)0);
+    if (count_before < (uint32_t)KLOG_RING_SIZE) {
+        TEST_SKIP("the ring is not saturated in this run -- the integration "
+                  "claim is not measurable here (the window arithmetic is "
+                  "proven unconditionally by the synthetic-ring tests)");
+        return;
     }
-
-    TEST_ASSERT_EQ((uint64_t)count_before, (uint64_t)KLOG_RING_SIZE,
-                   "the ring is saturated before the window is opened");
 
     saved_active = self->utest_capture_active;
     saved_owner  = self->utest_capture_owner_pid;
@@ -5695,9 +5697,10 @@ static void test_capture_write_identity_spans_one_write_only(void)
     self->utest_capture_owner_pid = self->pid;
     atomic_set(&self->utest_capture_seq, 0);
 
-    /* Snapshot the ring head BEFORE emitting. Every assertion below is scoped
-     * to the entries added after this point, so the preceding test's identical
-     * `wr=0 seq=0` / `wr=0 seq=1` records cannot satisfy them. */
+    /* Snapshot the monotonic SEQUENCE before emitting -- not the ring head,
+     * which wraps. Every assertion below is scoped to the entries added after
+     * this point, so the preceding test's identical `wr=0 seq=0` /
+     * `wr=0 seq=1` records cannot satisfy them. */
     seq_before = klog_get_seq();
 
     /* Write one: chunk_max + 1 bytes, so it spans two records drawing
@@ -5748,7 +5751,7 @@ static void test_capture_write_identity_spans_one_write_only(void)
  * mirrored-constant failure publishing the bound exists to remove. */
 static void test_capture_begin_announces_the_enforced_chunk_bound(void)
 {
-    uint32_t count, head_after;
+    uint32_t head_after;
     uint64_t seq_before, seq_after;
     const klog_entry_t *ring;
     const klog_entry_t *last;
@@ -5775,8 +5778,7 @@ static void test_capture_begin_announces_the_enforced_chunk_bound(void)
     seq_before = klog_get_seq();
     test_usermode_capture_begin(4242u, "test_announce.exe");
 
-    ring = klog_get_ring_snapshot(&count, &head_after, &seq_after);
-    (void)count;
+    ring = klog_get_ring_snapshot((uint32_t *)0, &head_after, &seq_after);
 
     /* Same discipline as the other emission assertions: the announce record is
      * found by CONTENT inside the window this test opened, not by trusting

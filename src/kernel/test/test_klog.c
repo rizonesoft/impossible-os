@@ -47,9 +47,15 @@ static void test_klog_ring_write(void)
      *
      * The LOG_DEBUG override is required, not cosmetic: test mode pins the
      * global minimum at LOG_WARN, so a LOG_INFO line under an un-overridden tag
-     * is filtered out before it ever reaches the ring. Nothing restores it
-     * afterwards because the tag exists only for this test -- the override
-     * cannot affect any other subsystem's verbosity. */
+     * is filtered out before it ever reaches the ring. It is REMOVED again at
+     * the end: the override table holds only 32 slots, so leaving one behind is
+     * a leak of a bounded global resource even though the tag itself is
+     * private, and this file's own doctrine restores exactly (klog_suppress.c
+     * removes; test_harness.c asserts no test leaves a lingering override).
+     * Asserting the tag is un-overridden first keeps the restore EXACT rather
+     * than merely tidy. */
+    TEST_ASSERT(!klog_has_override("TESTRING"),
+                "the private ring-write tag starts without an override");
     klog_set_level("TESTRING", LOG_DEBUG);
     seq_before = klog_get_seq();
     klog(LOG_INFO, "TESTRING", "%s", marker);
@@ -68,6 +74,7 @@ static void test_klog_ring_write(void)
         TEST_ASSERT(0, "the measured klog window is unusable (empty, or wide "
                        "enough that a concurrent append can overwrite its "
                        "oldest entry)");
+        klog_remove_override("TESTRING");
         return;
     }
     added = (uint32_t)(seq_after - seq_before);
@@ -85,6 +92,8 @@ static void test_klog_ring_write(void)
 
     TEST_ASSERT_EQ((uint64_t)found, (uint64_t)1,
                    "klog() landed exactly this entry in the ring");
+
+    klog_remove_override("TESTRING");
 }
 
 /* ---- Per-subsystem level filtering: dropped below threshold ---- */

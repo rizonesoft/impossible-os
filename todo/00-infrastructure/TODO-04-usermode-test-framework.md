@@ -112,7 +112,7 @@ title: "TODO-04 -- User-Mode Test Framework"
 | ⭐   |  52   | Bind a leg pointer to the record's own identity      | §38, §45                      |  [x]   |
 | 💎   |  53   | A directory occupying a pointer or lease name       | §46                           |  [x]   |
 | ⭐   |  54   | A write abandoned before its first chunk reached the wire | §48                     |  [x]   |
-| 💎   |  55   | Klog-ring assertions bounded by saturating occupancy | §48                        |  [x]   |
+| 💎   |  55   | Klog-ring assertions bounded by saturating occupancy | §48                        |  [/]   |
 | ⭐   |  56   | Fork publication interlocked with the capture-tree reap | §49                       |  [ ]   |
 | ⭐   |  57   | A klog delivery receipt, so a record's settlement is exact | §49                    |  [ ]   |
 | ⭐   |  58   | Launcher waits bounded independently of the monotonic clock | §3, §49               |  [ ]   |
@@ -2420,11 +2420,12 @@ Three launcher tests bound their search of the klog ring with `count_after - cou
 - [x] Bound every ring window by the monotonic klog sequence, not by saturating occupancy
       - `test_capture_byte_and_flush_produce_the_wire_record`, `test_capture_exact_chunk_boundary_emits_one_final_record` and `test_capture_chunk_boundary_plus_one_emits_two_records` (`src/kernel/test/test_usermode_launcher.c`) are bounded by `u_test_scan_window` / `u_test_first_match` over a `klog_get_seq()` window and match on record CONTENT, so no assertion reads a fixed `head - N` offset that another CPU's line could shift.
       - `head_before` was the last residue of the rejected head-delta shape: it was written by six snapshot calls and read by none. Removed, and each site now takes the cheaper `klog_get_seq()` for the window's lower bound.
-- [x] Prove the fix at the boundary the current tests cannot reach: a saturated ring
-      - `test_capture_window_is_exact_under_a_saturated_ring` saturates the ring deliberately, then proves in ONE window that the condemned count delta reads 0 while the sequence-bounded scan still finds the record exactly once. Measured: the ring is NOT naturally saturated at these tests even in a full run, so the boundary is genuinely unreachable without this.
+- [/] Prove the fix at the boundary the current tests cannot reach: a saturated ring
+      - PARTIAL, and the partiality is the honest result. `test_capture_window_is_exact_under_a_saturated_ring` makes the claim whenever the run has genuinely saturated the ring and SKIPS explicitly when it has not. It originally saturated the ring itself; that was withdrawn on measurement (see the cost bullet below) and the remainder is owned by `02-kernel-core/TODO-04-system-logging.md` §16.
       - `test_ring_window_fails_closed_at_the_overrun_boundary` pins BOTH bounds where they diverge: the sized bound accepts an exactly-resident `KLOG_RING_SIZE` window (the kernel agrees -- `klog_lost_count()` reports 0 lost there), while the live bound refuses it because at that width the oldest entry sits on `head` and one concurrent append destroys it. Pure arithmetic, no emissions.
       - `test_ring_window_indexes_across_the_wrap` drives both scan helpers over a FIVE-slot synthetic ring with `head_after = 1`, so the modulo indexing is proven crossing index zero by construction rather than by whatever the run happened to log; slots outside the window are poisoned with matching payloads so reading one fails the test.
       - Five slots, not four, because 4 divides 2^32: with a power-of-two ring the wrapped subtraction a dropped `+ ring_size` produces lands on the SAME index, so a 4-slot fixture passes with the bug in place. Mutation-verified -- removing the term fails exactly the oldest-ordering and oldest-slot-read assertions.
+      - The window ARITHMETIC is therefore proven exhaustively and at zero cost by the synthetic ring, which is what makes the live-ring proof affordable to leave opportunistic rather than forced.
       - `u_test_first_match` gained an `out_unreadable` out-param: it answered NULL for both a refused window and an honest absence, so a future negative assertion could have read "not emitted" off entries that had already been overwritten.
       - The exact global sequence delta is deliberately NOT asserted: `klog_ring_seq` is global, so `seq_after - seq_before == 1` would be a two-CPU flake -- the same defect class this section removes.
 - [x] Repair the vacuous ring-count assertion this defect class left in the klog suite
@@ -2434,15 +2435,19 @@ Three launcher tests bound their search of the klog ring with `count_after - cou
 
 **Test checkpoint:** with the klog ring pre-saturated, every converted test still observes exactly the records its own emission produced; a record emitted by another CPU between the flush and the read does not change any verdict. Test on: QEMU TCG, QEMU KVM (2 CPUs).
 
-> **Test runner:** `bash scripts/test.sh SUITE=exec` (TEST_CAT_EXEC) -- 2046 kernel + 17 user-mode PASS; full `bash scripts/test.sh` 28201 kernel + 17 user-mode PASS.
+> **Test runner:** `bash scripts/test.sh SUITE=exec` (TEST_CAT_EXEC) -- 2037 kernel + 17 user-mode PASS, 1 skipped (the saturated-ring claim, unmeasurable on an unsaturated run); full `bash scripts/test.sh` 28193 kernel + 17 user-mode PASS.
 
 > **Notes:**
 > - Shipped three TEST_CAT_EXEC tests (saturated-ring proof, overrun-refusal proof, synthetic cross-wrap indexing proof), removed the dead `head_before` state at six sites, and repaired the vacuous count assertion in `test_klog.c`.
 > - All three drive the existing `u_test_ring_added` / `u_test_scan_window` / `u_test_first_match` helpers rather than adding a second window mechanism, so what is proven is the mechanism the other assertions actually use.
-> - Deliberate saturation costs 367 filler lines / 33,397 bytes / 6.6% of a full run's serial log, and is skipped entirely when the ring is already full or live disk logging is on.
-> - Corrected premise: the ring is NOT naturally saturated when these tests run, even in a full suite, so the boundary is unreachable without saturating it on purpose.
-> - The prescribed head delta was rejected at design review; the live bound now sits one entry tighter than the arithmetic allows because klog hands out the ring LIVE, and the copy-under-lock cure is filed to section 63.
+> - Deliberate saturation was MEASURED and withdrawn: 367 filler lines / 33,397 bytes / 1.09 s guest time on a full run, about 8.8 s on a real 38400-baud UART and ~24 s at a full shortfall against a 60 s harness deadline, and on SLOW boot media it evicts entries klog has batched but not yet flushed.
+> - Corrected premise: the ring is NOT naturally saturated when these tests run, even in a full suite, so the live integration claim currently SKIPS rather than being manufactured; a sink-suppressed klog seam is what would make it cheap and deterministic.
+> - The prescribed head delta was rejected at design review; the live bound now sits one entry tighter than the arithmetic allows because klog hands out the ring LIVE, and the copy-under-lock cure is filed as `02-kernel-core/TODO-04-system-logging.md` §16.
 > - Scope boundary: the `test_klog.c` head-equality shape and the copy-under-lock klog snapshot API are filed as `02-kernel-core/TODO-04-system-logging.md` §16, the domain owner of that file, not widened into here.
+> **Verified:** 2026-08-02 | commit `48d17008` + review fixes | 3/4 items | build OK | 28193 kernel + 17 user PASS, exec 2037 + 17 (1 skipped), lint 0 errors | wrap indexing mutation-verified
+> **Deferred:** [M] the saturated-ring integration claim skips instead of being manufactured (reason: measured 367 filler lines / 1.09 s guest, ~8.8 s at 38400 baud, and it evicts entries klog batches unflushed on SLOW media) -> XREF: 02-kernel-core/TODO-04-system-logging.md §16 (item: "Give the test suite a sink-suppressed way to saturate the ring" at line 599)
+> **Accepted:** [M] live-ring scans stay racy in general -- a width check at snapshot time closes neither the between-snapshot nor the during-scan window -> XREF: 02-kernel-core/TODO-04-system-logging.md §16 (item: "Give klog a snapshot API that copies a selected window under the lock" at line 594)
+> **Quality reviewed:** 2026-08-02 | Codex 13x (design, adversarial x4, test-coverage x2, re-adversarial x3, consistency x2, perf x2) + kernel-quality-auditor + concurrency-evidence-mapper | 3H+15M+7L fixed, 0 open | scope: kernel-code-quality
 
 
 ---
