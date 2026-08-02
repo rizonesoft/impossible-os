@@ -1616,6 +1616,22 @@ uint64_t schedule_now(struct interrupt_frame *frame)
      *     diagnostic surface. Cost: one RDMSR per context switch (~30
      *     cycles). Always-on, no debug-build gate. */
     if (prev_task != next_task || prev_thread != next_thread) {
+        /* ACQUIRE the TEB publication BEFORE loading the GS slot. task_exec
+         * release-stores `teb` AFTER `kernel_gs_base` (see the publication
+         * window there), so this order guarantees that a reader observing a
+         * non-NULL TEB also observes the matching gs_base.
+         *
+         * The previous order -- gs_base first, TEB tested later -- could not be
+         * fixed by the writer alone: cpu B read gs_base==0, cpu A then stored
+         * gs_base and released the TEB, and cpu B went on to observe the fresh
+         * TEB and fatal on its STALE zero snapshot. A release store cannot
+         * retroactively order a load that already happened, so the ordering
+         * must be fixed on BOTH sides. Both switch paths use this order and
+         * are kept textually identical for that reason. */
+        void *next_thread_teb = __atomic_load_n(
+            &tasks[next_task].threads[next_thread].teb, __ATOMIC_ACQUIRE);
+        void *next_task_teb = __atomic_load_n(
+            &tasks[next_task].teb, __ATOMIC_ACQUIRE);
         uint64_t new_gs = tasks[next_task].threads[next_thread].kernel_gs_base;
         /* Atomic-load exec_pending: Impossible OS's scheduler today is
          * single-CPU (global `current_task` cursor, no per-CPU run
@@ -1642,8 +1658,7 @@ uint64_t schedule_now(struct interrupt_frame *frame)
                      "wrote=0x%X read=0x%X (task=%u thread=%u)",
                      new_gs, rb,
                      (uint64_t)next_task, (uint64_t)next_thread);
-        } else if (tasks[next_task].teb ||
-                   tasks[next_task].threads[next_thread].teb) {
+        } else if (next_task_teb || next_thread_teb) {
             /* TEB exists on the task OR on the specific thread but its
              * kernel_gs_base slot is 0. This is FAIL-CLOSED: returning
              * to ring 3 with GS_BASE=0 guarantees a user-mode page
@@ -1657,8 +1672,8 @@ uint64_t schedule_now(struct interrupt_frame *frame)
                  "ring-3 task %u thread %u has TEB but kernel_gs_base=0 "
                  "(task.teb=%p thread.teb=%p)",
                  (uint64_t)next_task, (uint64_t)next_thread,
-                 (uint64_t)(uintptr_t)tasks[next_task].teb,
-                 (uint64_t)(uintptr_t)tasks[next_task].threads[next_thread].teb);
+                 (uint64_t)(uintptr_t)next_task_teb,
+                 (uint64_t)(uintptr_t)next_thread_teb);
         }
     }
 
@@ -1905,6 +1920,22 @@ uint64_t schedule(struct interrupt_frame *frame)
     /* KERNEL_GS_BASE switch -- same two -17 hardening pieces as
      * schedule_now(): exec_pending save-gate + MSR readback invariant. */
     if (prev_task != next_task || prev_thread != next_thread) {
+        /* ACQUIRE the TEB publication BEFORE loading the GS slot. task_exec
+         * release-stores `teb` AFTER `kernel_gs_base` (see the publication
+         * window there), so this order guarantees that a reader observing a
+         * non-NULL TEB also observes the matching gs_base.
+         *
+         * The previous order -- gs_base first, TEB tested later -- could not be
+         * fixed by the writer alone: cpu B read gs_base==0, cpu A then stored
+         * gs_base and released the TEB, and cpu B went on to observe the fresh
+         * TEB and fatal on its STALE zero snapshot. A release store cannot
+         * retroactively order a load that already happened, so the ordering
+         * must be fixed on BOTH sides. Both switch paths use this order and
+         * are kept textually identical for that reason. */
+        void *next_thread_teb = __atomic_load_n(
+            &tasks[next_task].threads[next_thread].teb, __ATOMIC_ACQUIRE);
+        void *next_task_teb = __atomic_load_n(
+            &tasks[next_task].teb, __ATOMIC_ACQUIRE);
         uint64_t new_gs = tasks[next_task].threads[next_thread].kernel_gs_base;
         /* Atomic-load exec_pending: Impossible OS's scheduler today is
          * single-CPU (global `current_task` cursor, no per-CPU run
@@ -1929,8 +1960,7 @@ uint64_t schedule(struct interrupt_frame *frame)
                      "wrote=0x%X read=0x%X (task=%u thread=%u)",
                      new_gs, rb,
                      (uint64_t)next_task, (uint64_t)next_thread);
-        } else if (tasks[next_task].teb ||
-                   tasks[next_task].threads[next_thread].teb) {
+        } else if (next_task_teb || next_thread_teb) {
             /* Fail-closed matching the preemptive path above.
              * Codex HF 2026-04-22: this site was previously LOG_ERROR +
              * continue, which meant a `GetCurrentProcessId` caller
@@ -1941,8 +1971,8 @@ uint64_t schedule(struct interrupt_frame *frame)
                  "ring-3 task %u thread %u has TEB but kernel_gs_base=0 "
                  "(task.teb=%p thread.teb=%p)",
                  (uint64_t)next_task, (uint64_t)next_thread,
-                 (uint64_t)(uintptr_t)tasks[next_task].teb,
-                 (uint64_t)(uintptr_t)tasks[next_task].threads[next_thread].teb);
+                 (uint64_t)(uintptr_t)next_task_teb,
+                 (uint64_t)(uintptr_t)next_thread_teb);
         }
     }
 
@@ -4023,9 +4053,31 @@ int task_exec(const uint8_t *data, uint64_t size,
         if (!teb)
             return exec_commit_failure(pid, "TEB allocation failed",
                                        new_kstack, argv_addrs);
-        tasks[pid].teb = (void *)teb;
-        tasks[pid].threads[0].teb = (void *)teb;
-        new_teb = teb;      /* GS wiring happens under local_irq_save below */
+        /* DO NOT publish the TEB here. Both `tasks[pid].teb` and
+         * `threads[0].teb` are published together with `kernel_gs_base`
+         * inside the local_irq_save window below, gs_base FIRST.
+         *
+         * WHY (2026-08-02, intermittent 2-CPU boot halt). Publishing the TEB
+         * here left a ~120-line window in which the task had a non-NULL TEB
+         * and a ZERO kernel_gs_base. The fail-closed guard in the switch path
+         * ("ring-3 task N thread M has TEB but kernel_gs_base=0") tests only
+         * `teb != NULL && new_gs == 0`; it has no exec_pending exemption, so
+         * it fatals on a state task_exec deliberately created. The old comment
+         * here argued the early publish was harmless because "exec_pending is
+         * still clear, so the save-gates behave exactly as before" -- true for
+         * the SAVE-GATES, which do test exec_pending, and false for that guard.
+         *
+         * `local_irq_save` hid it at -smp 1 by making the window unobservable
+         * locally; at -smp 2 the OTHER cpu's scheduler selects this task and
+         * sees the half-published pair. Signature: kvm-2cpu halts while
+         * kvm-1cpu / tcg-1cpu / tcg-2cpu pass, ~1 leg per 4-8 matrix runs.
+         *
+         * Priming gs_base HERE instead would reintroduce the bug the window
+         * exists to prevent: a tick before the window would let the GS
+         * save-gate store the outgoing image's MSR over the primed TEB. So the
+         * pair must be published together, inside, and gs_base must go first.
+         * `fork` already orders it that way (kernel_gs_base then teb). */
+        new_teb = teb;
     }
 
     if (tasks[pid].peb) {
@@ -4034,7 +4086,7 @@ int task_exec(const uint8_t *data, uint64_t size,
              "PID %u: PEB=%p TEB=%p (Win %u.%u.%u, %u CPUs)",
              (uint64_t)pid,
              (uint64_t)(uintptr_t)tasks[pid].peb,
-             (uint64_t)(uintptr_t)tasks[pid].teb,
+             (uint64_t)(uintptr_t)new_teb,   /* not yet published; see above */
              (uint64_t)p->OSMajorVersion,
              (uint64_t)p->OSMinorVersion,
              (uint64_t)p->OSBuildNumber,
@@ -4068,8 +4120,8 @@ int task_exec(const uint8_t *data, uint64_t size,
                  * These are raw pointers -- the OB body IS the PEB/TEB. */
                 if (tasks[pid].peb)
                     ObInsertObject(tasks[pid].peb, "Peb", proc_dir);
-                if (tasks[pid].teb)
-                    ObInsertObject(tasks[pid].teb, "Teb", proc_dir);
+                if (new_teb)   /* local: publication happens in the window below */
+                    ObInsertObject((void *)new_teb, "Teb", proc_dir);
             }
             ObDereferenceObject(ko_dir);
         }
@@ -4146,6 +4198,15 @@ int task_exec(const uint8_t *data, uint64_t size,
          * entirely, so the value is stable from here on. */
         tasks[pid].kernel_gs_base = (uint64_t)(uintptr_t)new_teb;
         tasks[pid].threads[0].kernel_gs_base = tasks[pid].kernel_gs_base;
+
+        /* TEB published AFTER gs_base, with release ordering: the switch-path
+         * guard reads teb first and then gs_base, so any cpu that observes a
+         * non-NULL TEB is guaranteed to observe the matching gs_base. Ordered
+         * stores, not a lock -- the guard is a read-only observer and needs
+         * only that the pair never appears half-written. */
+        __atomic_store_n(&tasks[pid].threads[0].teb, (void *)new_teb,
+                         __ATOMIC_RELEASE);
+        __atomic_store_n(&tasks[pid].teb, (void *)new_teb, __ATOMIC_RELEASE);
 
         /* Park the superseded kernel stack. task_exec's caller is still
          * running on it, so it cannot be freed here; the next task_exec for
