@@ -55,9 +55,33 @@ void klog_unrated(log_level_t level, const char *subsystem, const char *fmt, ...
  * rate-limited exit too, so the guarantee belongs to that function's exits
  * rather than to the current set of wrappers. Exactly one call per klog_receipted()
  * invocation, always before that call returns, so a caller that settles an
- * obligation against the receipt cannot be beaten by its own death: no window
- * exists between the record reaching serial and the acknowledgement in which
- * the caller has to still be alive to credit it.
+ * obligation against the receipt is no longer beaten by its own death across
+ * the whole remainder of its life -- only across the single call between
+ * serial_write returning and the acknowledgement. That residue is NOT zero
+ * and the difference matters: an emitter preempted inside that call and then
+ * reaped never runs the callback at all. Narrowing it further is not
+ * available here (the alternatives are publishing inside serial's own
+ * critical section, which couples the UART driver to its consumers, or
+ * holding a consumer lock across serial output, which the kernel forbids);
+ * closing it belongs to whatever reconciles the resulting stream.
+ *
+ * `delivered=1` means serial_write RETURNED, which is not the same as bytes
+ * having left a UART: serial_putchar_raw returns silently when no port was
+ * detected (src/kernel/drivers/serial.c), so on a machine with no serial the
+ * receipt still reports delivery. That is the honest boundary klog can offer
+ * -- it owns the write, not the wire -- and a consumer whose whole channel is
+ * the serial log is unaffected by the case, because a host reading that log
+ * does not exist in the configuration that produces it.
+ *
+ * It is also a statement about ONE sink. The receipt fires after serial and
+ * BEFORE the framebuffer draw and the synchronous disk append, so `delivered`
+ * says nothing about either -- including the disk sink, which is the one that
+ * can actually fail (short write, flush failure, unwritable media). Early is
+ * the point for the consumer this exists for, whose channel IS serial and
+ * which must not wait behind a disk flush; it is spelled out because a later
+ * consumer reading `delivered=1` as "this record is durable" would be wrong.
+ * Per-sink delivery is a different mechanism, and this is not a down payment
+ * on one.
  *
  * CONTRACT -- the callback runs in the emitter's own context at the delivery
  * boundary, holding no klog lock, so it must be:
@@ -66,19 +90,63 @@ void klog_unrated(log_level_t level, const char *subsystem, const char *fmt, ...
  *     and the irqsave locks restore the CALLER's prior IRQ state, so the
  *     callback inherits whatever the caller had rather than a known state;
  *   - safe to run concurrently on several CPUs;
+ *   - frugal with STACK, not just with time. It is invoked with klog_emit's
+ *     whole frame live -- the ring-entry snapshot plus the 512-byte serial
+ *     line buffer -- so roughly 800 bytes are already spent on whatever stack
+ *     the emitter was using, and klog is reachable from the IST stacks;
  *   - free of any klog call, receipted or not. A nested record would complete
  *     its framebuffer and disk output before the outer record reaches those
  *     sinks, reversing sink order against serial and the ring, and a nested
  *     RECEIPTED record can recurse without bound.
  * A spin_lock_irqsave-guarded counter update -- what the user-mode capture
- * accounting does -- fits this contract exactly. */
+ * accounting does -- fits this contract exactly.
+ *
+ * The CALLER carries the mirror obligation: never emit a receipted record
+ * while holding a lock the callback itself takes. The receipt fires in the
+ * emitter's own context, so that is a plain self-deadlock -- these spinlocks
+ * are non-recursive and the CPU is already spinning with interrupts off, so
+ * it hangs with no diagnostic at all. The shape is one careless edit away
+ * wherever a lock guards the decision to log AND the callback settles under
+ * the same lock, which is exactly the capture accounting's arrangement: it
+ * reserves under s_capture_budget_lock, RELEASES, and only then emits.
+ *
+ * NOT usable from a panic or fault funnel. Those paths forbid spinlocks
+ * outright, because the faulting CPU may already hold the very lock a
+ * callback would take (klog_panic_snapshot exists for exactly that reason),
+ * so the counter-update shape sanctioned above is illegal there. No receipted
+ * record is emitted from such a path today; keep it that way. */
 typedef void (*klog_receipt_fn)(uint64_t cookie, int delivered);
+
+/* The callback and its cookie travel as ONE pointer, and that packaging is a
+ * measured cost decision rather than a style choice. klog_emit takes the level,
+ * subsystem, rate-bypass flag, receipt, format and va_list; passing the
+ * callback and cookie separately makes seven integer arguments, which pushes
+ * the va_list past r9 and onto the stack. Measured on the release -O2 build:
+ * every klog() and klog_unrated() call in the kernel grew an outgoing stack
+ * store (`mov %rcx,(%rsp)`) and 16 bytes of frame, on the emitted, filtered
+ * AND rate-dropped paths alike. Collapsed into one pointer the argument list
+ * fits the six registers again, and an ordinary caller passes a NULL it never
+ * dereferences.
+ *
+ * What that does NOT buy, stated because the obvious reading is wrong: the
+ * receipt is not free INSIDE klog_emit. It has to stay live from entry to the
+ * delivery boundary several hundred lines later, so the register allocator
+ * spills it once into the frame and reloads it before each of the three
+ * tests; klog_emit's frame is 856 bytes against 840 before. The residual is
+ * accepted rather than engineered away: the only way to compile the ordinary
+ * path without a live receipt value is a second copy of klog_emit, which
+ * duplicates the hottest function in the kernel to save one store, one
+ * reload and 16 bytes of stack. */
+struct klog_receipt {
+    klog_receipt_fn fn;
+    uint64_t        cookie;
+};
 
 /* Like klog_unrated() plus a per-record delivery receipt (see above).
  *
  * The receipt is opt-in PER CALL rather than a registered sink so the ordinary
- * path pays one register-resident NULL test and nothing else: no global load,
- * no per-thread state, no extra lock on the line that every subsystem in the
+ * path pays one pointer test per exit and nothing else: no global load, no
+ * per-thread state, no extra lock on the line that every subsystem in the
  * kernel emits. `ack` may be NULL, which makes this identical to
  * klog_unrated(). */
 void klog_receipted(log_level_t level, const char *subsystem,

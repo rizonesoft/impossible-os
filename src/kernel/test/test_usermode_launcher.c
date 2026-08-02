@@ -179,9 +179,9 @@ uint64_t test_usermode_capture_close(uint64_t *admitted, uint64_t *completed,
                                      uint64_t *forgiven, uint32_t *generation);
 int test_usermode_capture_settle(uint32_t claim_gen, uint32_t current_gen,
                                  uint64_t *completed);
-void test_usermode_capture_receipt(uint32_t claim_gen, uint32_t current_gen,
-                                   int delivered, uint64_t *completed,
-                                   uint64_t *undelivered);
+int test_usermode_capture_receipt(uint32_t claim_gen, uint32_t current_gen,
+                                  int delivered, uint64_t *completed,
+                                  uint64_t *undelivered);
 void test_usermode_capture_live_counters(uint64_t *admitted,
                                          uint64_t *completed,
                                          uint64_t *undelivered);
@@ -3998,9 +3998,12 @@ static void test_capture_receipt_refuses_a_claim_from_a_closed_epoch(void)
     uint64_t completed = 0u, undelivered = 0u;
     uint32_t gen = 9u, stale = 8u;
 
-    test_usermode_capture_receipt(stale, gen, 0 /*declined*/, &completed,
-                                  &undelivered);
-
+    TEST_ASSERT_EQ((uint64_t)test_usermode_capture_receipt(stale, gen,
+                                                           0 /*declined*/,
+                                                           &completed,
+                                                           &undelivered), 0u,
+                   "a stale receipt reports itself stale, which is what "
+                   "keeps it out of the live frame census");
     TEST_ASSERT_EQ(completed, 0u,
                    "a stale receipt credits nothing -- its reservation was "
                    "already written off by the close that ended its epoch");
@@ -4008,8 +4011,28 @@ static void test_capture_receipt_refuses_a_claim_from_a_closed_epoch(void)
                    "and does not bill this run for a drop the previous run "
                    "already reported");
 
-    test_usermode_capture_receipt(gen, gen, 1 /*delivered*/, &completed,
-                                  &undelivered);
+    /* The DELIVERED stale case is the one that bills an innocent run. Its
+     * record is on the wire in the PREVIOUS run's slice, so crediting the
+     * live census would make this run declare one more record than it
+     * emitted -- and the host reads `records=` as an exact count, so the
+     * successor is refused for a stream it produced correctly. The verdict
+     * below is what u_capture_receipt gates the increment on. */
+    TEST_ASSERT_EQ((uint64_t)test_usermode_capture_receipt(stale, gen,
+                                                           1 /*delivered*/,
+                                                           &completed,
+                                                           &undelivered), 0u,
+                   "a stale DELIVERED receipt is stale too -- the record "
+                   "belongs to the slice its own epoch published, so it must "
+                   "not be counted into the successor run's census");
+    TEST_ASSERT_EQ(completed, 0u,
+                   "and it settles nothing, exactly as the declined one");
+
+    TEST_ASSERT_EQ((uint64_t)test_usermode_capture_receipt(gen, gen,
+                                                           1 /*delivered*/,
+                                                           &completed,
+                                                           &undelivered), 1u,
+                   "while a current claim reports live, so the census gate "
+                   "admits the ordinary path");
     TEST_ASSERT_EQ(completed, 1u,
                    "while a current claim still settles, so the guard rejects "
                    "by epoch rather than rejecting everything");
@@ -5447,6 +5470,9 @@ static void test_capture_emission_settles_through_the_live_receipt(void)
     uint32_t saved_owner;
     int32_t  saved_seq;
     uint8_t  saved_stopped;
+    uint32_t saved_run_records;
+    int      saved_run_over;
+    int      saved_sealed;
     uint64_t admitted_before, completed_before, undelivered_before;
     uint64_t admitted_after, completed_after, undelivered_after;
 
@@ -5459,11 +5485,22 @@ static void test_capture_emission_settles_through_the_live_receipt(void)
     saved_seq     = atomic_read(&self->utest_capture_seq);
     saved_stopped = __atomic_load_n(&self->utest_capture_stopped,
                                     __ATOMIC_ACQUIRE);
+    test_usermode_capture_run_state_get(&saved_run_records, &saved_run_over,
+                                        &saved_sealed);
     __atomic_store_n(&self->utest_capture_stopped, 0, __ATOMIC_RELEASE);
 
     self->utest_capture_active = 1;
     self->utest_capture_owner_pid = self->pid;
     atomic_set(&self->utest_capture_seq, 0);
+    /* Unsealed explicitly, and the run aggregate restored below. The seal is
+     * set at u_frame_end and cleared only by the NEXT u_frame_begin, so after
+     * the last framed run it stays set for the rest of the boot -- a probe
+     * driving the real emitter without clearing it is refused with
+     * UTEST_CAP_SEALED, admitted never moves, and this test then fails on an
+     * assertion about the receipt for a reason that has nothing to do with
+     * the receipt. That it passes today is an accident of suite ordering,
+     * which is the undeclared dependency this pair exists to remove. */
+    test_usermode_capture_run_state_set(saved_run_records, saved_run_over, 0);
 
     test_usermode_capture_live_counters(&admitted_before, &completed_before,
                                         &undelivered_before);
@@ -5481,6 +5518,11 @@ static void test_capture_emission_settles_through_the_live_receipt(void)
     atomic_set(&self->utest_capture_seq, saved_seq);
     __atomic_store_n(&self->utest_capture_stopped, saved_stopped,
                      __ATOMIC_RELEASE);
+    /* Restores the seal AND the run record charge: the emission above spent
+     * one of the run budget, and leaving it spent would shorten the allowance
+     * of whatever runs next. */
+    test_usermode_capture_run_state_set(saved_run_records, saved_run_over,
+                                        saved_sealed);
 
     TEST_ASSERT_EQ(admitted_after - admitted_before, 1u,
                    "one write drew exactly one capture claim");

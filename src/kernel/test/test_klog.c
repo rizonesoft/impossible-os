@@ -235,6 +235,78 @@ static void test_klog_receipt_acknowledges_a_declined_record(void)
                    "delivering one would, so a caller needs no second path");
 }
 
+/* A NULL ack is a supported argument, not merely an untaken branch.
+ *
+ * klog_receipted builds its receipt struct on the stack and passes it through
+ * CONDITIONALLY, so that a caller which decides per-call whether to settle
+ * lands on exactly the ordinary path rather than on a receipt whose fn would
+ * be dereferenced. Nothing else covers that ternary: the two tests above both
+ * pass a callback, so a regression that dropped the condition and always
+ * passed the struct would call through a NULL fn on the very first ordinary
+ * klog line -- and would ship green. Reaching the record on the wire is the
+ * assertion; the test failing means the machine faulted inside klog. */
+static void test_klog_receipt_null_ack_is_the_ordinary_path(void)
+{
+    static const char marker[] = "(receipt NULL-ack probe -- expected)";
+    const klog_entry_t *ring;
+    uint64_t seq_before, seq_after;
+    uint32_t head_after, added, i, found = 0;
+
+    s_klog_receipt_probe.calls = 0;
+
+    /* Matched on CONTENT inside a bounded window, not on a sequence delta.
+     * klog_ring_seq is GLOBAL, so "the sequence advanced by one" is satisfied
+     * by any AP or interrupt-context logger and says nothing about THIS call
+     * -- the same trap the ring-write test above documents having fallen into.
+     * Here it would be worse than useless in both directions: an unrelated
+     * record could stand in for a target klog dropped by the regression, and
+     * a correct emission alongside one unrelated record would fail a suite
+     * that is working. */
+    seq_before = klog_get_seq();
+    klog_receipted(LOG_INFO, "TEST", (klog_receipt_fn)0,
+                   0xDEADBEEFULL, "%s", marker);
+    ring = klog_get_ring_snapshot((uint32_t *)0, &head_after, &seq_after);
+
+    /* Same window guard, same reason: at exactly one ring the oldest entry of
+     * the window sits on the next write slot, and the snapshot hands back the
+     * LIVE array, so a concurrent append would destroy it before the scan
+     * reaches it and the marker would read as dropped.
+     *
+     * It is a MARGIN, not a cure, and the same one the reference shape above
+     * carries: the guard bounds appends before the snapshot, not during the
+     * scan, so a window of width N-1 still dies after two concurrent appends.
+     * The cure is a snapshot API that copies the window under s_klog_lock,
+     * owned by the kernel system-logging roadmap's "klog assertions and scans
+     * that depend on nothing else having logged" work, which lists this test
+     * among the scans to convert. */
+    if (seq_after - seq_before == 0u ||
+        seq_after - seq_before >= (uint64_t)KLOG_RING_SIZE) {
+        TEST_ASSERT(0, "the measured klog window is unusable (empty, or wide "
+                       "enough that a concurrent append can overwrite its "
+                       "oldest entry)");
+        return;
+    }
+    added = (uint32_t)(seq_after - seq_before);
+
+    for (i = 1u; i <= added && i <= KLOG_RING_SIZE; i++) {
+        const klog_entry_t *e =
+            &ring[(head_after + KLOG_RING_SIZE - i) % KLOG_RING_SIZE];
+        uint32_t k = 0;
+
+        while (marker[k] && e->message[k] == marker[k])
+            k++;
+        if (!marker[k])
+            found++;
+    }
+
+    TEST_ASSERT_EQ((uint64_t)found, (uint64_t)1,
+                   "a NULL ack emits the record exactly as klog_unrated "
+                   "would -- the receipt is opt-in, not required");
+    TEST_ASSERT_EQ((uint64_t)s_klog_receipt_probe.calls, 0u,
+                   "and acknowledges nobody, so a conditional caller passing "
+                   "NULL cannot be charged another caller's settlement");
+}
+
 /* ---- Global level override ---- */
 
 static void test_klog_global_level(void)
@@ -847,6 +919,9 @@ void test_register_klog(void)
                             TEST_CAT_BOOT);
     test_suite_register_cat("Klog: receipt acknowledges a declined record",
                             test_klog_receipt_acknowledges_a_declined_record,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("Klog: a NULL ack is the ordinary path",
+                            test_klog_receipt_null_ack_is_the_ordinary_path,
                             TEST_CAT_BOOT);
     test_suite_register_cat("Klog: global level", test_klog_global_level, TEST_CAT_BOOT);
     test_suite_register_cat("Klog: rate limit API", test_klog_rate_limit_api, TEST_CAT_BOOT);

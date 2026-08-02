@@ -1136,14 +1136,23 @@ uint32_t klog_panic_snapshot(klog_entry_t *out, uint32_t max)
  * and the unified sink without one process's flood clipping another's budget.
  * `ap` is owned by the caller (va_start/va_end live in the thin wrappers).
  *
- * `ack`/`cookie` are the optional per-record delivery receipt (klog.h). The
- * receipt fires EXACTLY ONCE on every exit from this function -- both drops
- * and the delivering path -- because its meaning is "this record is no longer
- * owed", and an exit that fired nothing would strand whatever obligation the
- * caller settles against it. `delivered` is what distinguishes the outcomes.
- * A NULL `ack` is the ordinary path and costs one register-resident test. */
+ * `rcpt` is the optional per-record delivery receipt (klog.h). It fires
+ * EXACTLY ONCE on every exit from this function -- both drops and the
+ * delivering path -- because its meaning is "this record is no longer owed",
+ * and an exit that fired nothing would strand whatever obligation the caller
+ * settles against it. `delivered` is what distinguishes the outcomes. A NULL
+ * `rcpt` is the ordinary path and costs one pointer test per exit -- the
+ * value is spilled once and reloaded before each test, because it has to
+ * stay live from here to the delivery boundary below (see klog.h for the
+ * measurement and why the residual is accepted rather than split away).
+ *
+ * ONE pointer rather than a callback/cookie pair, because the sixth integer
+ * argument is the last one that fits a register: as a pair this function took
+ * seven, the va_list spilled to the stack, and EVERY klog line in the kernel
+ * paid an outgoing store plus 16 bytes of frame (measured on release -O2).
+ * See struct klog_receipt in klog.h. */
 static void klog_emit(log_level_t level, const char *subsystem, int bypass_rate,
-                      klog_receipt_fn ack, uint64_t cookie,
+                      const struct klog_receipt *rcpt,
                       const char *fmt, va_list ap)
 {
     klog_entry_t snapshot;   /* local copy for output outside the lock */
@@ -1160,8 +1169,8 @@ static void klog_emit(log_level_t level, const char *subsystem, int bypass_rate,
          * never handed to serial, so a caller counting what the host must
          * have seen learns that from `delivered`, while its outstanding
          * obligation is discharged either way. */
-        if (ack)
-            ack(cookie, 0);
+        if (rcpt)
+            rcpt->fn(rcpt->cookie, 0);
         return;
     }
 
@@ -1193,8 +1202,8 @@ static void klog_emit(log_level_t level, const char *subsystem, int bypass_rate,
          * is an unrelated record that pays a whole serial write, and ordering
          * this caller's settlement behind it would hand the receipt exactly
          * the latency the receipt exists to remove. */
-        if (ack)
-            ack(cookie, 0);
+        if (rcpt)
+            rcpt->fn(rcpt->cookie, 0);
         if (first_drop) {
             /* Emit summary outside lock -- NULL subsystem bypasses rate check */
             klog(LOG_WARN, (const char *)0,
@@ -1417,8 +1426,8 @@ static void klog_emit(log_level_t level, const char *subsystem, int bypass_rate,
          * record whose level halts the machine still reached the wire, and a
          * receipt that never fired would leave its caller's obligation
          * outstanding forever. */
-        if (ack)
-            ack(cookie, 1);
+        if (rcpt)
+            rcpt->fn(rcpt->cookie, 1);
     }
 
     /* ---- Output to framebuffer if level >= screen threshold ---- */
@@ -1481,7 +1490,7 @@ void klog(log_level_t level, const char *subsystem, const char *fmt, ...)
     va_list ap;
     va_start(ap, fmt);
     klog_emit(level, subsystem, 0 /*bypass_rate*/,
-              (klog_receipt_fn)0, 0 /*cookie*/, fmt, ap);
+              (const struct klog_receipt *)0, fmt, ap);
     va_end(ap);
 }
 
@@ -1494,7 +1503,7 @@ void klog_unrated(log_level_t level, const char *subsystem, const char *fmt, ...
     va_list ap;
     va_start(ap, fmt);
     klog_emit(level, subsystem, 1 /*bypass_rate*/,
-              (klog_receipt_fn)0, 0 /*cookie*/, fmt, ap);
+              (const struct klog_receipt *)0, fmt, ap);
     va_end(ap);
 }
 
@@ -1508,8 +1517,17 @@ void klog_receipted(log_level_t level, const char *subsystem,
                     klog_receipt_fn ack, uint64_t cookie,
                     const char *fmt, ...)
 {
+    struct klog_receipt rcpt;
     va_list ap;
+
+    rcpt.fn     = ack;
+    rcpt.cookie = cookie;
+
     va_start(ap, fmt);
-    klog_emit(level, subsystem, 1 /*bypass_rate*/, ack, cookie, fmt, ap);
+    /* NULL through when there is no callback, so a caller that passes one
+     * conditionally lands on exactly the ordinary path rather than a receipt
+     * whose fn would be dereferenced. */
+    klog_emit(level, subsystem, 1 /*bypass_rate*/,
+              ack ? &rcpt : (const struct klog_receipt *)0, fmt, ap);
     va_end(ap);
 }

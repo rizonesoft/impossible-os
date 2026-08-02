@@ -75,6 +75,7 @@ title: "TODO-04 -- System Logging"
 | ⭐   |  14   | Serial timestamp render bound                                       | §1               |  [ ]   |
 | ⭐   |  15   | Post-ship follow-up backfill (2026-07-31 cohort)                    | --               |  [ ]   |
 | 💎   |  16   | Klog assertions and scans that depend on nothing else having logged | §1               |  [ ]   |
+| ⭐   |  17   | Bounded wait until the sinks have caught up to a given sequence     | §1, §2           |  [ ]   |
 
 > 💎 = parity -- Windows Event Log and Linux journald/syslog both have these capabilities.
 > ⭐ = exclusive -- HMAC-chained JSON Lines is human-readable AND cryptographically verifiable; beats Windows XML and Linux binary journal.
@@ -155,7 +156,7 @@ Allow silencing verbose subsystems in release builds without recompiling.
 > - Review fixes: replaced a lock-free count-publish (then a hand-rolled gen) with `seqlock_t`; added `ioapic`/`blk` registry tags; validated REG_DWORD `val_size`.
 > - Sub-threshold drops never enter the ring buffer (filtered before store), bounding disk-log volume; `s_global_min` is a separate atomic for the `klog_set_level(NULL, ...)` default.
 > **Verified:** 2026-06-21 | ship `3bc86ce1` + review fixes | 6/6 items | build OK | smoke PASS (TCG 2.69s); 3212 kernel + 16 user PASS
-> **Accepted:** [M] override table stores raw `const char*` tag pointers (no copy) -- a caller passing a non-static tag could dangle (reason: all current callers pass string literals) -> XREF: 02-kernel-core/TODO-04-system-logging.md §9 (item: "Copy the verbosity override-table tag into a bounded `char[16]`" at line 158)
+> **Accepted:** [M] override table stores raw `const char*` tag pointers (no copy) -- a caller passing a non-static tag could dangle (reason: all current callers pass string literals) -> XREF: 02-kernel-core/TODO-04-system-logging.md §9 (item: "Copy the verbosity override-table tag into a bounded `char[16]`" at line 159)
 > **Quality reviewed:** 2026-06-21 | Codex 6x (adversarial, consistency, perf, re-adversarial x2) | 1H+3M fixed, 1M accepted | scope: kernel-code-quality
 
 ---
@@ -467,7 +468,7 @@ Two related defects in how this subsystem's own tests read the ring. First, `tes
 
 - [ ] Give klog a snapshot API that copies a selected window under the lock
       - The shape §55 needs is "copy the entries between two monotonic sequence values into caller storage while holding `s_klog_lock`", so a consumer scans an immutable copy rather than the live array. Bound the copy so a caller cannot ask for more than the ring holds.
-      - Convert the existing live scans to it: `u_test_scan_window` / `u_test_first_match` in `src/kernel/test/test_usermode_launcher.c` and the marker scan in `test_klog_ring_write`. Once they consume a stable copy, §55's exact-capacity refusal can be relaxed back to the true arithmetic bound.
+      - Convert the existing live scans to it: `u_test_scan_window` / `u_test_first_match` in `src/kernel/test/test_usermode_launcher.c`, the marker scan in `test_klog_ring_write`, and `test_klog_receipt_null_ack_is_the_ordinary_path` in the same file (added by `00-infrastructure/TODO-04` §57, which copied the reference shape and inherited the same exposure -- its own review round re-derived this defect independently). Once they consume a stable copy, §55's exact-capacity refusal can be relaxed back to the true arithmetic bound.
       - The window can also be invalidated DURING a scan, not only between the snapshot and the scan: a copy under the lock closes both, whereas a width check at snapshot time closes neither.
       - The exposure is WIDTH-DEPENDENT, which is why a single refusal width is not a fix. A window of width W has its oldest entry at `head - W`, and appends land at `head` outward, so that entry survives exactly `KLOG_RING_SIZE - W + 1` appends: one at `W = N`, two at `W = N-1`, and on the order of a full ring only for the small windows the tests actually open. Section 55 refuses `W = N` for that reason and leaves every wider window still exposed.
       -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §55 (item: "Prove the fix at the boundary the current tests cannot reach: a saturated ring")
@@ -485,6 +486,28 @@ Two related defects in how this subsystem's own tests read the ring. First, `tes
 - [ ] Commit: `"kernel: bound klog suite assertions by content in a locked window snapshot"`
 
 **Test checkpoint:** every klog delivery and suppression verdict is unchanged when an unrelated entry lands inside the measured window, the converted scans read an immutable copy rather than the live ring, and the drop tests stay green on a 2-CPU boot. Test on: QEMU TCG, QEMU KVM (2 CPUs).
+
+---
+
+## 17. Bounded Wait Until the Sinks Have Caught Up to a Given Sequence
+
+A caller can ask klog what the current sequence is (`klog_get_seq`), how much of it is unflushed (`klog_flush_window`), and how much the ring already lost (`klog_lost_count`), but it cannot ask to WAIT until a particular record is out. `klog_disk_flush_all()` is the closest thing and is not the same shape: it forces one flush and clears deferred mode, takes no target sequence and no timeout, and covers only the disk sink. So a subsystem that must not proceed until its last record is externally visible -- a shutdown path, a pre-reset diagnostic, a test that has to read back what it just emitted -- has no primitive to say so and instead sleeps a guessed interval or proceeds blind.
+
+> [!NOTE]
+> Filed 2026-08-02 from the `00-infrastructure/TODO-04-usermode-test-framework.md` section 57 review, where the parity pass identified it against Linux `pr_flush(seq, timeout_ms, reset_on_progress)` -- which blocks until every registered console's own cursor reaches a target sequence, with a timeout and an optional reset-on-progress so a slow-but-advancing console is not cut off. Section 57 shipped a per-record delivery RECEIPT, which is the complementary producer-side mechanism and deliberately NOT this one: the receipt tells one caller about one record at one sink, whereas this is a caller waiting on the whole pipeline reaching a point. Neither substitutes for the other, and the receipt's own header says so. -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` section 57 (item: "Publish a delivery acknowledgement from klog at the point a record is actually on the wire")
+
+- [ ] Add a bounded wait for a target sequence across the sinks that have a cursor
+      - Shape: `int klog_flush_until(uint64_t target_seq, uint32_t timeout_ms)`, returning which condition ended the wait (reached, timed out, or no progress) rather than a bare success flag -- a caller that cannot tell a timeout from a completion will treat a stalled sink as a flushed one.
+      - Per-sink, not one global verdict: the disk sink has a real cursor and can genuinely lag, serial is synchronous inside `klog_emit`, and the framebuffer has no durability meaning at all. Say which sinks the answer covers instead of implying all of them.
+      - Reset-on-progress, as Linux does: a fixed deadline cuts off a slow-but-advancing drain, which on USB boot media is the normal case rather than the pathological one (see the USB boot hardening XREF at the top of this file for the bounded-loop work on that same path).
+- [ ] Do not let the wait itself lose records
+      - `klog_set_deferred(1)` batches to RAM until `klog_disk_flush_all()` (`src/kernel/main/boot_media.c` sets it for slow media). A wait that forces a drain has to leave deferred mode exactly as it found it, or it silently changes the logging policy of every subsystem that runs after it.
+      - The wait must not hold `s_klog_lock` while it yields, and must not be callable from a panic or fault funnel -- both are the existing constraints on this path, not new ones.
+- [ ] Regression: a target sequence that never arrives ends the wait and says so
+      - Pin all three outcomes: a target already reached returns immediately, a target reached mid-wait returns reached, and a sink pinned with no progress returns the no-progress verdict within the timeout rather than spinning.
+- [ ] Commit: `"klog: bounded wait until the sinks reach a target sequence"`
+
+**Test checkpoint:** a caller that emits a record and then waits for its sequence observes the record in `kernel.log` when the wait returns reached; a wait against a sequence no one will emit returns its timeout verdict within the stated bound; and deferred-flush mode is unchanged across both. Test on: QEMU TCG, QEMU KVM.
 
 ## OS Comparison
 

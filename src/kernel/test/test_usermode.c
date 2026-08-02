@@ -4208,16 +4208,23 @@ static uint64_t s_capture_undelivered;
  * re-making it: neither misreport is reachable through the emitter's own
  * death any more.
  *
- * WHAT REMAINS INEXACT, stated rather than implied. The receipt fires from
- * the emitter's context, so it must still acquire s_capture_budget_lock to
- * settle, and on another CPU the run boundary can close the epoch in that
- * interval -- after which u_capture_settle refuses the claim by generation
- * and the run reports it pending. Reaching it takes an emitter preempted for
- * the whole UTEST_CAPTURE_DRAIN_MS between serial_write returning and one
- * uncontended lock acquisition, against a window that was previously the
- * entire remainder of that emitter's life. Closing it exactly is not
- * available on this side: the only producer-local linearization would hold
- * this lock across serial output, which the kernel forbids. It is owned by
+ * WHAT REMAINS INEXACT, stated rather than implied. The receipt runs in the
+ * emitter's context, so it is still one call away from the serial write, and
+ * two things can happen in that gap. The emitter can be preempted and then
+ * reaped, so the callback never runs at all; or the run boundary can close
+ * the epoch on another CPU, after which u_capture_settle refuses the claim by
+ * generation. Either way a record that IS on the wire is reported pending.
+ *
+ * The window is not eliminated, it is reduced from the entire remainder of
+ * the emitter's life -- klog's framebuffer render, its synchronous disk
+ * append and flush, the return path, and then the emitter's next statement --
+ * to a single call, and reaching it now takes a preemption landing inside
+ * that call AND lasting the whole UTEST_CAPTURE_DRAIN_MS. Closing it exactly
+ * is not available on this side: publishing delivery inside serial's own
+ * critical section would couple the UART driver to this test framework and
+ * nest this lock under the serial lock, and the only other producer-local
+ * linearization would hold this lock across serial output, which the kernel
+ * forbids outright. It is owned by
  * the host reconciliation, which HAS the stream and can tell a claimed-but-
  * absent record from a claimed-and-present one.
  * Owned by the host-side "capture reconciliation on the default test path"
@@ -4493,20 +4500,30 @@ static void u_capture_complete(uint32_t gen)
  * verbosity filter to reject a tag the launcher publishes, and a stale
  * receipt needs an emitter preempted across a frame rollover; neither is a
  * schedule the kernel test surface can construct. Over plain numbers each is
- * one call. */
-static void u_capture_receipt_apply(uint32_t claim_gen, uint32_t current_gen,
-                                    int delivered, uint64_t *completed,
-                                    uint64_t *undelivered)
+ * one call.
+ *
+ * Returns whether the claim belonged to the LIVE epoch, which is also the
+ * caller's authority to move the frame census. */
+static int u_capture_receipt_apply(uint32_t claim_gen, uint32_t current_gen,
+                                   int delivered, uint64_t *completed,
+                                   uint64_t *undelivered)
 {
-    if (u_capture_settle(claim_gen, current_gen, completed) && !delivered)
+    if (!u_capture_settle(claim_gen, current_gen, completed))
+        return 0;
+    if (!delivered)
         (*undelivered)++;
+    return 1;
 }
 
 static void u_capture_receipt(uint64_t cookie, int delivered)
 {
     uint64_t irq_flags;
+    int      live;
 
     spin_lock_irqsave(&s_capture_budget_lock, &irq_flags);
+    live = u_capture_receipt_apply((uint32_t)cookie, s_capture_run_generation,
+                                   delivered, &s_capture_completed,
+                                   &s_capture_undelivered);
     /* The frame census, counted HERE rather than at the call site so
      * `records=` states what the host will actually find in the slice -- and
      * counted INSIDE this critical section, in the same act as the
@@ -4521,19 +4538,20 @@ static void u_capture_receipt(uint64_t cookie, int delivered)
      * a counter nothing else locks, which is the kind of reasoning that stops
      * being true the first time someone reorders this function.
      *
-     * Unconditional on the generation, unlike the settlement, and the
-     * asymmetry is deliberate: the census is a statement about the WIRE, and
-     * a delivered record sits in whatever slice it landed in whichever
-     * epoch's claim paid for it, while a settlement belongs only to the epoch
-     * that admitted it. The one case where the two diverge -- a claim whose
-     * epoch closed between the emitting path's generation check and this
-     * receipt -- is reachable only through the drain-timeout window described
-     * above, and is owned with the rest of that window by section 59. */
-    if (delivered)
+     * Guarded by the SETTLEMENT, not by `delivered` alone. A straggler whose
+     * epoch closed while it sat between serial_write and this callback has
+     * already been written off by that close, and its own run has already
+     * published its census -- so there is no counter left that crediting it
+     * could correct. What crediting the LIVE counter would do instead is
+     * charge the NEXT run for a record that is not in its slice, and the host
+     * reads `records=` as an exact count, so that run gets refused for a
+     * stream it emitted correctly. Dropping the increment leaves the
+     * straggler's own run short by one, which is the run that actually
+     * suffered the anomaly and is already reporting it as pending; billing an
+     * innocent successor is the strictly worse of the two. The window that
+     * produces the straggler is owned by the host-side reconciliation. */
+    if (live && delivered)
         __atomic_fetch_add(&s_frame_records, 1u, __ATOMIC_RELAXED);
-    u_capture_receipt_apply((uint32_t)cookie, s_capture_run_generation,
-                            delivered, &s_capture_completed,
-                            &s_capture_undelivered);
     spin_unlock_irqrestore(&s_capture_budget_lock, irq_flags);
 }
 
@@ -10078,16 +10096,22 @@ int test_usermode_capture_settle(uint32_t claim_gen, uint32_t current_gen,
  * a record already on the wire settles WITHOUT the emitter running again --
  * cannot be observed from the live path, because observing it requires the
  * emitter to not run again, and a test that lets it run proves the opposite
- * of what it set out to. */
-void test_usermode_capture_receipt(uint32_t claim_gen, uint32_t current_gen,
-                                   int delivered, uint64_t *completed,
-                                   uint64_t *undelivered);
-void test_usermode_capture_receipt(uint32_t claim_gen, uint32_t current_gen,
-                                   int delivered, uint64_t *completed,
-                                   uint64_t *undelivered)
+ * of what it set out to.
+ *
+ * Returns the live-epoch verdict, which is what the caller of the real
+ * receipt uses to decide whether the frame census may move. Exporting it
+ * rather than only the two counters is what lets a test pin that a STALE
+ * delivered record is kept out of the census -- the state that would
+ * otherwise bill an innocent successor run. */
+int test_usermode_capture_receipt(uint32_t claim_gen, uint32_t current_gen,
+                                  int delivered, uint64_t *completed,
+                                  uint64_t *undelivered);
+int test_usermode_capture_receipt(uint32_t claim_gen, uint32_t current_gen,
+                                  int delivered, uint64_t *completed,
+                                  uint64_t *undelivered)
 {
-    u_capture_receipt_apply(claim_gen, current_gen, delivered, completed,
-                            undelivered);
+    return u_capture_receipt_apply(claim_gen, current_gen, delivered,
+                                   completed, undelivered);
 }
 
 /* The LIVE run accounting, read under its own lock.
