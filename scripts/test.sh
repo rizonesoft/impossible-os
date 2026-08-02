@@ -1177,6 +1177,100 @@ utest_sweep_reap() {
     return 0
 }
 
+# THE policy for a directory standing where this harness requires a FILE.
+#
+# Stated ONCE, here, because it used to be decided by two upstream filters that
+# merely skipped: `! -type d` in the pointer sweep and an inline `[ -d ]` in the
+# lease loop. Both were right to refuse to destroy, and neither said anything,
+# so a leg that could no longer publish looked exactly like a leg that had not
+# run yet.
+#
+# THE POLICY IS REPORT AND KEEP, and its one honest limit is stated here rather
+# than left to be discovered: nothing UNLINKS such a directory by name, and a
+# record containing one is HELD against the age cut, but classification and that
+# cut's `rm -rf` are still two operations. A writer that creates one between them
+# -- and such a writer is by definition not taking the retention mutex -- is
+# still destroyed recursively. The pre-delete recheck narrows that to a syscall
+# pair; closing it means detaching the record before classifying it, which
+# changes the destructive path for EVERY record and is section 62. Before
+# section 53 there was no hold at all, so the window was the entire run.
+#
+# Not `rm -rf`: section 46 exists precisely
+# because this sweep used to destroy what it had not verified. Not `rmdir`
+# either -- an empty directory this harness did not create is still an object of
+# unknown provenance, and "empty" is a moment, not a property. And not refusing
+# the run outright: a directory under `leases/` blocks nothing at all, and one at
+# a pointer name already produces a counted failure in utest_publish_leg_pointer,
+# so refusing would trade a precise diagnosis for a blunter one.
+#
+# $1 = path. $2 = what it blocks, phrased for an operator; OMIT it for the
+# SILENT predicate form. Silence is not an optimisation: utest_record_live_leases
+# returns its count on STDOUT through a command substitution, so a report written
+# there would be read back as the lease count, and the pre-`rm -rf` recheck
+# re-asks a question the classification pass has already reported once.
+#
+# `! -L` beside `-d`, because `-d` follows a symlink: a link pointing at a
+# directory is the sweep's business (it removes one on sight) and not this
+# policy's, which is about an object that no unlink can move out of the way.
+utest_blocking_dir() {
+    local path="${1:-}" why="${2:-}"
+    [ -n "$path" ] || return 1
+    [ -d "$path" ] && [ ! -L "$path" ] || return 1
+    [ -n "$why" ] || return 0
+    # ONCE per path per shell. The dedup cannot span a subshell, which is why
+    # the REPORTING call sites are the ones that see each path once per run and
+    # the rechecks inside per-record loops use the silent form. A path spelled
+    # with a `|` only ever loses its dedup, never its report.
+    case "${UTEST_DIRBLOCK_SEEN:-}" in
+        *"|$path|"*) return 0 ;;
+    esac
+    UTEST_DIRBLOCK_SEEN="${UTEST_DIRBLOCK_SEEN:-|}$path|"
+    printf 'test.sh: a DIRECTORY occupies %s -- %s. It is left exactly as it is; remove it by hand if it is not wanted.\n' \
+        "$path" "$why" >&2
+    return 0
+}
+
+# How many blocking directories $1 holds, reporting each one.
+#
+# Sets UTEST_DIRBLOCK_N rather than echoing it, for the reason utest_sweep_reap
+# gives above: the caller runs once per record inside the retention mutex, and a
+# command substitution there would fork a subshell per record purely to discover
+# the common case of none.
+#
+# $1 = directory, $2 = the consequence for the operator ("" = silent),
+# $3.. = the name globs at which a FILE is required. The globs are deliberately
+# unquoted on expansion; a pattern that matches nothing stays literal and fails
+# utest_blocking_dir's own `-d` test, so no `nullglob` assumption is made.
+utest_hold_blocking_dirs() {
+    local dir="${1:-}" why="${2:-}" glob f
+    UTEST_DIRBLOCK_N=0
+    [ -d "$dir" ] || return 0
+    shift 2 || return 0
+    for glob in "$@"; do
+        # The glob must be a BARE NAME PATTERN, and this is a grammar rather
+        # than a non-empty test because the expansion below is deliberately
+        # unquoted and several spellings collapse onto the scanned directory
+        # itself -- which passes `-d` and `! -L`, so every record would take a
+        # permanent hold and a fail-closed protection would become a fail-open
+        # one. EMPTY expands to `$dir/`; whitespace-only word-splits to the same
+        # thing, and a pattern merely CONTAINING whitespace splits into `$dir/`
+        # plus a second pattern resolved against the working directory; `.` and
+        # `..` name the directory and its parent; and a pattern carrying `/` can
+        # leave $dir altogether. No caller passes any of these -- refusing them
+        # here means none ever can.
+        case "$glob" in
+            ''|.|..) continue ;;
+            */*) continue ;;
+            *[[:space:]]*) continue ;;
+        esac
+        for f in "$dir"/$glob; do
+            utest_blocking_dir "$f" "$why" || continue
+            UTEST_DIRBLOCK_N=$(( UTEST_DIRBLOCK_N + 1 ))
+        done
+    done
+    return 0
+}
+
 # Reclaim verdict for one lease: 0 = destroy it, 1 = count it live.
 #
 # $1 = the path to READ, $2 = the basename its grammar must validate against,
@@ -1300,6 +1394,10 @@ utest_record_live_leases() {
     # matching this private pattern is ours by contract, and `rm` never opens
     # what it unlinks, so there is nothing to be cautious about. It also reaps
     # any `.utest-sweep.*.tmp` a detach below could not put back.
+    #
+    # `rm -f` fails silently on a DIRECTORY at one of these names, exactly as it
+    # did at a lease name before section 53. It is reported and held by the same
+    # policy, from utest_prune_records, which passes `.*.tmp` beside `*.lease`.
     for f in "$dir"/.*.tmp; do
         [ -e "$f" ] || [ -L "$f" ] || continue
         rm -f -- "$f" 2>/dev/null || true
@@ -1310,8 +1408,13 @@ utest_record_live_leases() {
         # can remove. The pre-46 loop's `rm -f` failed silently and left it
         # published and uncounted; detaching it instead would merely hide it
         # under a staging name, which is strictly worse. Same outcome as
-        # before, now on purpose.
-        if [ -d "$f" ] && [ ! -L "$f" ]; then continue; fi
+        # before, now on purpose -- and through utest_blocking_dir, so the type
+        # test is not a second definition of the policy stated there.
+        #
+        # The SILENT form: this function's stdout IS its count, read back
+        # through a command substitution. Reporting and the retention hold both
+        # belong to utest_prune_records, which sees each record once per run.
+        if utest_blocking_dir "$f"; then continue; fi
         # SELECTION by name, then DESTRUCTION through the detached object: the
         # same verdict runs twice, and only the second one -- taken on an inode
         # nothing else can reach, and BOUND to what the first one read -- is
@@ -1494,6 +1597,7 @@ utest_prune_records() {
     local keep="${UTEST_RECORD_KEEP:-20}" pin_max="${UTEST_POINTER_PIN_MAX:-64}" old pinned ptr
     local lease_max="${UTEST_LEASE_MAX:-8}" ttl="${UTEST_LEASE_TTL:-300}"
     local now leased leased_all leased_l stuck_u n_stuck nu lockrc n_all n_kept n all_records
+    local blocked_d nd n_blocked
     keep="$(utest_norm_bound "$keep" 20 10000)"
     # Zero records kept is nonsense, so the floor is applied here and not in
     # the shared normaliser -- the pin cap deliberately does NOT have one.
@@ -1598,57 +1702,87 @@ utest_prune_records() {
     # startup path, inside the mutex.
     all_records="$(find "$RUNS_DIR" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | sort -r || true)"
 
+    # The FAIL-CLOSED half of this pass runs UNCONDITIONALLY; only the lease
+    # COUNTING inside it answers to UTEST_LEASE_MAX.
+    #
+    # It used to sit wholly inside `if [ "$lease_max" -gt 0 ]`, which made the
+    # documented `UTEST_LEASE_MAX=0` disable switch silently switch off the `U`
+    # hold as well -- a hold whose entire justification, three lines below, is
+    # that it must never be subject to that cap. Zero disables ADMISSION and
+    # COUNTING, which is what it is documented to do; it does not disable
+    # recovery of things nobody can classify.
     leased=""
-    if [ "$lease_max" -gt 0 ]; then
-        leased_all="$(
-            {
-                while IFS= read -r old; do
-                    [ -n "$old" ] || continue
+    leased_all="$(
+        {
+            while IFS= read -r old; do
+                [ -n "$old" ] || continue
+                # Three fields, TAGGED on the way out because they are held on
+                # different terms -- `L` competes for UTEST_LEASE_MAX, while
+                # `U` (an unresolved sweep claim) and `D` (a directory at a
+                # name that must be a file) are fail-closed holds that must
+                # never consume a capped slot: one of them taking the last one
+                # evicts a record with a real lease, which is a reader losing
+                # its record to a crash artefact.
+                if [ "$lease_max" -gt 0 ]; then
                     # Validated, not used raw. "Anything but the string 0"
                     # would let a counter failure read as LEASED and hold a
                     # record against retention forever; an unreadable count
                     # is treated as unleased, which is recoverable.
-                    # Two fields: admitted leases, then unresolved sweep
-                    # claims. TAGGED on the way out because they are held on
-                    # different terms -- `L` competes for UTEST_LEASE_MAX, `U`
-                    # is a fail-closed hold that must never consume a capped
-                    # slot (an unresolved claim taking the last one evicts a
-                    # record with a real lease, which is a reader losing its
-                    # record to a crash artefact).
                     n="$(utest_record_live_leases "$old" "$now" "$ttl")" || n=""
                     case "$n"  in ''|*[!0-9]*) n=0 ;; esac
-                    # The claim count is taken HERE, not folded into the count
-                    # above, because utest_lease_acquire reads that one for the
-                    # admission cap and a claim is not an admitted lease. The
-                    # reap reports through a variable, so this costs no fork.
-                    utest_sweep_reap "$RUNS_DIR/$old/leases"
-                    nu="${UTEST_SWEEP_STUCK:-0}"
-                    case "$nu" in ''|*[!0-9]*) nu=0 ;; esac
                     if [ "$n" != "0" ]; then
                         printf 'L %s\n' "$old"
                     fi
-                    if [ "$nu" != "0" ]; then
-                        printf 'U %s\n' "$old"
-                    fi
-                done <<< "$all_records"
-            } || true
-        )"
-        # The CAP applies to admitted leases only.
-        leased_l="$(printf '%s' "$leased_all" | sed -n 's/^L //p')"
-        stuck_u="$(printf '%s' "$leased_all" | sed -n 's/^U //p')"
-        leased="$(printf '%s' "$leased_l" | head -n "$lease_max")"
-        n_all="$(printf '%s' "$leased_l" | grep -c . || true)"
-        n_kept="$(printf '%s' "$leased" | grep -c . || true)"
-        if [ "${n_all:-0}" -gt "${n_kept:-0}" ] 2>/dev/null; then
-            echo -e "${YELLOW}[TEST]${RESET} $(( n_all - n_kept )) leased record(s) over UTEST_LEASE_MAX=$lease_max are NOT held."
-        fi
-        # Unresolved claims are unioned in AFTER the truncation, so they are
-        # held without ever costing an admitted lease its slot.
-        if [ -n "$stuck_u" ]; then
-            n_stuck="$(printf '%s' "$stuck_u" | grep -c . || true)"
-            echo -e "${YELLOW:-}[TEST]${RESET:-} ${n_stuck:-0} record(s) held by an unresolved sweep claim (see the paths reported above)."
-            if [ -n "$leased" ]; then leased="$leased"$'\n'"$stuck_u"; else leased="$stuck_u"; fi
-        fi
+                fi
+                # The claim count is taken HERE, not folded into the count
+                # above, because utest_lease_acquire reads that one for the
+                # admission cap and a claim is not an admitted lease. The
+                # reap reports through a variable, so this costs no fork.
+                utest_sweep_reap "$RUNS_DIR/$old/leases"
+                nu="${UTEST_SWEEP_STUCK:-0}"
+                case "$nu" in ''|*[!0-9]*) nu=0 ;; esac
+                if [ "$nu" != "0" ]; then
+                    printf 'U %s\n' "$old"
+                fi
+                # A blocking directory HOLDS its record. Reporting it while the
+                # age cut below deleted the record out from under it would be a
+                # run announcing it had kept something and destroying it in the
+                # same breath -- `rm -rf` does not care that the harness
+                # declined to remove the directory by name. `.*.tmp` is here
+                # beside `*.lease` because the staging reaper above unlinks with
+                # `rm -f`, which fails just as silently on a directory.
+                utest_hold_blocking_dirs "$RUNS_DIR/$old/leases" \
+                    "a lease is a FILE, so this is never counted, reclaimed or removed" \
+                    '*.lease' '.*.tmp'
+                nd="${UTEST_DIRBLOCK_N:-0}"
+                case "$nd" in ''|*[!0-9]*) nd=0 ;; esac
+                if [ "$nd" != "0" ]; then
+                    printf 'D %s\n' "$old"
+                fi
+            done <<< "$all_records"
+        } || true
+    )"
+    # The CAP applies to admitted leases only.
+    leased_l="$(printf '%s' "$leased_all" | sed -n 's/^L //p')"
+    stuck_u="$(printf '%s' "$leased_all" | sed -n 's/^U //p')"
+    blocked_d="$(printf '%s' "$leased_all" | sed -n 's/^D //p')"
+    leased="$(printf '%s' "$leased_l" | head -n "$lease_max")"
+    n_all="$(printf '%s' "$leased_l" | grep -c . || true)"
+    n_kept="$(printf '%s' "$leased" | grep -c . || true)"
+    if [ "${n_all:-0}" -gt "${n_kept:-0}" ] 2>/dev/null; then
+        echo -e "${YELLOW}[TEST]${RESET} $(( n_all - n_kept )) leased record(s) over UTEST_LEASE_MAX=$lease_max are NOT held."
+    fi
+    # Both fail-closed holds are unioned in AFTER the truncation, so neither
+    # ever costs an admitted lease its slot.
+    if [ -n "$stuck_u" ]; then
+        n_stuck="$(printf '%s' "$stuck_u" | grep -c . || true)"
+        echo -e "${YELLOW:-}[TEST]${RESET:-} ${n_stuck:-0} record(s) held by an unresolved sweep claim (see the paths reported above)."
+        if [ -n "$leased" ]; then leased="$leased"$'\n'"$stuck_u"; else leased="$stuck_u"; fi
+    fi
+    if [ -n "$blocked_d" ]; then
+        n_blocked="$(printf '%s' "$blocked_d" | grep -c . || true)"
+        echo -e "${YELLOW:-}[TEST]${RESET:-} ${n_blocked:-0} record(s) held by a directory at a lease name (see the paths reported above)."
+        if [ -n "$leased" ]; then leased="$leased"$'\n'"$blocked_d"; else leased="$blocked_d"; fi
     fi
 
     # Membership as SETS, not as a `grep` per candidate. The exemption lists are
@@ -1687,6 +1821,24 @@ utest_prune_records() {
                 if [ -n "${leased_set["$old"]+x}" ]; then
                     continue
                 fi
+                # RE-ASK immediately before destroying, because classification
+                # and destruction are two loops and the writer of a blocking
+                # directory is by definition non-conforming -- it holds no
+                # lease and takes no mutex, so it can appear between them and
+                # be `rm -rf`'d whole while the run has already announced that
+                # such a thing is never removed. The recheck does not make the
+                # sequence atomic; it narrows the window from a whole
+                # classification pass to a syscall pair. Closing it properly
+                # means detaching the record before classifying it, which
+                # changes the destructive path for EVERY record -- section 62.
+                #
+                # SILENT: the classification pass reported these paths already,
+                # and this loop runs in its own subshell where the dedup that
+                # would suppress a second report cannot reach.
+                utest_hold_blocking_dirs "$RUNS_DIR/$old/leases" "" '*.lease' '.*.tmp'
+                if [ "${UTEST_DIRBLOCK_N:-0}" != "0" ]; then
+                    continue
+                fi
                 rm -rf -- "$RUNS_DIR/$old"
             done
     } || true
@@ -1699,12 +1851,19 @@ utest_prune_records() {
     # diagnosed. This half is deliberately UNBOUNDED where the pin is bounded:
     # it only ever removes, so it cannot grow anything.
     #
-    # `! -type d` rather than `-type f`, because a SYMLINK named
-    # test-results-<leg>.run is neither pinned by the scan above nor swept by a
-    # regular-file-only scan here -- it would sit there resolving through an
-    # arbitrary target that no part of this script controls. Nothing in
-    # production ever creates one (the pointer arrives by `mv` of a regular
+    # UNFILTERED by type, and the fate of each entry decided in the loop.
+    # A SYMLINK named test-results-<leg>.run is neither pinned by the scan above
+    # nor swept by a regular-file-only scan -- it would sit there resolving
+    # through an arbitrary target that no part of this script controls. Nothing
+    # in production ever creates one (the pointer arrives by `mv` of a regular
     # file), so its presence is hand-made and it is removed on sight.
+    #
+    # The scan carried `! -type d` until section 53. That was correct about the
+    # outcome and silent about it: a directory here is not a candidate, is not a
+    # thing `rm` can remove, and blocks that leg's publication forever, and the
+    # run said nothing. The type test now happens in the loop through
+    # utest_blocking_dir, which is where the policy is stated, so the two
+    # namespaces share one definition instead of one filter each.
     #
     # CLASSIFY BEFORE OPENING. Widening the scan past regular files also admits
     # FIFOs, sockets and devices, and reading a FIFO with no writer BLOCKS --
@@ -1725,9 +1884,18 @@ utest_prune_records() {
         # No count is consulted here: `build/` holds no record to protect,
         # and an unresolved claim is reported by the reap itself.
         utest_sweep_reap "$PROJECT/build"
-        find "$PROJECT/build" -maxdepth 1 ! -type d -name 'test-results-*.run' 2>/dev/null |
+        find "$PROJECT/build" -maxdepth 1 -name 'test-results-*.run' 2>/dev/null |
             while IFS= read -r ptr; do
                 [ -n "$ptr" ] || continue
+                # A DIRECTORY at a pointer name: reported and left alone. It is
+                # the half the sweep cannot help with -- utest_publish_leg_pointer
+                # reports the other half when its `mv -fT` refuses -- and between
+                # them a leg that has stopped publishing now says why at both
+                # ends instead of at neither.
+                if utest_blocking_dir "$ptr" \
+                    "this leg cannot publish its pointer and the sweep cannot clear it"; then
+                    continue
+                fi
                 # ONE verdict function, called twice: here to select a
                 # candidate by name, and again inside utest_sweep_verified on
                 # the detached inode, which is the only call allowed to unlink.
@@ -1736,12 +1904,11 @@ utest_prune_records() {
                 # actually destroys things.
                 #
                 # It defines what is DESTROYABLE, not what is a candidate.
-                # DIRECTORIES are excluded upstream by `! -type d` and never
-                # reach it -- deliberately, and symmetrically with the lease
-                # loop, because `rm` cannot remove one and detaching it would
-                # only hide it. A directory left at a pointer name is inert to
-                # this sweep and blocks that leg's publication; that gap is
-                # older than this mechanism and is owned by section 53.
+                # DIRECTORIES never reach it -- deliberately, and symmetrically
+                # with the lease loop, because `rm` cannot remove one and
+                # detaching it would only hide it. Section 53 kept that outcome
+                # and gave it a voice: the `continue` above is the policy in
+                # utest_blocking_dir, not an unexplained gap in a find filter.
                 if utest_ptr_sweepable "$ptr" "${ptr##*/}"; then
                     utest_sweep_verified "$ptr" utest_ptr_sweepable
                 fi
@@ -1964,6 +2131,14 @@ utest_publish_leg_pointer() {
         return 0
     fi
     rm -f "$tmp"
+    # NAME THE CAUSE when it is the one cause this path cannot recover from.
+    # `mv -fT` prints its own refusal, but a raw `mv: cannot overwrite
+    # directory` line beside a message about a pointer "still naming the
+    # previous run" leaves the operator to connect them; and the sweep that
+    # would normally clear an obstruction deliberately will not clear this one.
+    # Reported through the shared policy, so both namespaces say the same thing.
+    utest_blocking_dir "$RUN_POINTER_OUT" \
+        "this leg cannot publish its pointer and the sweep cannot clear it" || true
     # A pointer that cannot be advanced is a counted failure, not a silent
     # one: the leg's documents now describe a run the resolution path does not
     # name, and a consumer resolving through it would read the PREVIOUS run and

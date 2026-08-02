@@ -12330,6 +12330,7 @@ fi
 UAR_FNS=""
 for _fn in utest_xml_identity_attrs utest_json_identity utest_xml_identity_props \
            utest_publish utest_alias_record utest_publish_leg_set \
+           utest_blocking_dir \
            utest_leg_pointer_doc_for utest_leg_pointer_doc utest_publish_leg_pointer \
            utest_commit_record utest_reap_qemu \
            utest_publish_missing_refusals utest_finalize_record \
@@ -12755,6 +12756,8 @@ $(sed -n '/^utest_lease_doc_for() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
 $(sed -n '/^utest_lease_fields() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
 $(sed -n '/^utest_sweep_verified() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
 $(sed -n '/^utest_sweep_reap() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
+$(sed -n '/^utest_blocking_dir() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
+$(sed -n '/^utest_hold_blocking_dirs() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
 $(sed -n '/^utest_lease_reclaimable() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
 $(sed -n '/^utest_record_live_leases() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
 $(sed -n '/^utest_lease_acquire() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
@@ -13502,6 +13505,47 @@ printf "| HARNESS-OK\n"
         fi
         rm -rf "$UAR_PDIR/build/.utest-sweep.stale-held.d"
 
+        # (p20) a DIRECTORY at a pointer name. The scan dropped its `! -type d`
+        #     filter in section 53, so the entry now REACHES the loop and is
+        #     turned away by utest_blocking_dir with a named diagnostic instead
+        #     of never being enumerated. Three things are asserted together
+        #     because any one alone is satisfiable by the wrong implementation:
+        #     the directory survives WITH its contents (nothing recursive ran),
+        #     the run SAYS SO by path, and a genuinely dangling pointer sitting
+        #     beside it is still swept -- which is what proves widening the scan
+        #     did not cost the destructive half its candidates.
+        uar_prune_reset
+        mkdir -p "$UAR_PDIR/build/test-results-blocked.run"
+        printf 'handmade\n' > "$UAR_PDIR/build/test-results-blocked.run/inside"
+        UAR_PP20="$(UAR_PDIR="$UAR_PDIR" UAR_PRUNE="$UAR_PRUNE" timeout 30 bash -c '
+set -uo pipefail
+PROJECT="$UAR_PDIR"
+RUNS_DIR="$PROJECT/build/test-runs"
+RUN_ID="20260101T000000Z-1-aaaa"
+UTEST_RECORD_KEEP=2
+eval "$UAR_PRUNE"
+utest_leg_pointer_doc_for gone 20269999T000000Z-1-zzzz > "$PROJECT/build/test-results-gone.run" 2>/dev/null || true
+utest_prune_records
+printf "| blocked: "
+if [ -d "$PROJECT/build/test-results-blocked.run" ]; then printf "IN-PLACE"; else printf "GONE"; fi
+printf "| content: "
+if [ -f "$PROJECT/build/test-results-blocked.run/inside" ]; then printf "PRESERVED"; else printf "DESTROYED"; fi
+printf "| dangling: "
+if [ -e "$PROJECT/build/test-results-gone.run" ]; then printf "KEPT"; else printf "SWEPT"; fi
+printf "| HARNESS-OK\n"
+' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
+        if printf '%s' "$UAR_PP20" | grep -q 'HARNESS-OK' &&
+           printf '%s' "$UAR_PP20" | grep -q 'blocked: IN-PLACE' &&
+           printf '%s' "$UAR_PP20" | grep -q 'content: PRESERVED' &&
+           printf '%s' "$UAR_PP20" | grep -q 'dangling: SWEPT' &&
+           printf '%s' "$UAR_PP20" | grep -q 'a DIRECTORY occupies .*test-results-blocked.run'; then
+            t_pass "run record: a directory at a pointer name is named in a diagnostic and left whole, and the sweep still works around it"
+        else
+            t_fail "run record: a directory at a pointer name is named in a diagnostic and left whole, and the sweep still works around it" \
+                "$UAR_PP20"
+        fi
+        rm -rf "$UAR_PDIR/build/test-results-blocked.run"
+
         # (L1-L7) READER LEASES. The pin above protects the record the CURRENT
         #     pointer names; it cannot protect one a reader has already
         #     resolved, because publishing again unpins the previous target
@@ -14234,6 +14278,11 @@ printf "| HARNESS-OK\n"
         #     move it under a hidden staging name and report a destruction that
         #     never happened, turning a visible oddity into an unbounded hidden
         #     leak. It stays published and uncounted, exactly as before 46.
+        #     Section 53 kept the outcome and changed the mechanism: the type
+        #     test is now utest_blocking_dir, called in its SILENT form here
+        #     because this function returns its count on stdout. The count is
+        #     therefore still exactly 1 -- a blocker must never inflate the
+        #     number utest_lease_acquire reads for its admission cap.
         uar_lease_reset
         uar_lease_put 20260102T000000Z-1-aaaa "$UAR_LHOLD" keep03 1000000000 1000000900
         mkdir -p "$UAR_PDIR/build/test-runs/20260102T000000Z-1-aaaa/leases/$UAR_LHOLD.dir01.lease"
@@ -14258,6 +14307,329 @@ printf "| HARNESS-OK\n"
         else
             t_fail "reader lease: a directory under a lease name stays published and uncounted, never hidden in staging" \
                 "$UAR_L26"
+        fi
+
+        # (L26b) the AGE-OUT path, which is where "report and keep" was a lie
+        #     until section 53. L26 proves the lease loop does not destroy the
+        #     directory; it says nothing about the record CONTAINING it, and a
+        #     record past UTEST_RECORD_KEEP is removed by a plain `rm -rf` that
+        #     does not care what the lease loop declined to unlink. So the run
+        #     could announce it was keeping the blocker and recursively delete
+        #     it in the same pass. The blocker now HOLDS its record, uncapped,
+        #     exactly as an unresolved sweep claim does. Deliberately NONEMPTY:
+        #     an assertion that only the directory survives would pass against
+        #     an implementation that emptied it first.
+        uar_lease_reset
+        mkdir -p "$UAR_PDIR/build/test-runs/20260102T000000Z-1-aaaa/leases/$UAR_LHOLD.dir02.lease"
+        printf 'handmade\n' > "$UAR_PDIR/build/test-runs/20260102T000000Z-1-aaaa/leases/$UAR_LHOLD.dir02.lease/inside"
+        UAR_L26B="$(UAR_PDIR="$UAR_PDIR" UAR_PRUNE="$UAR_PRUNE" UAR_LHOLD="$UAR_LHOLD" timeout 30 bash -c '
+set -uo pipefail
+PROJECT="$UAR_PDIR"
+RUNS_DIR="$PROJECT/build/test-runs"
+RUN_ID="20260101T000000Z-1-aaaa"
+UTEST_RECORD_KEEP=2
+eval "$UAR_PRUNE"
+utest_prune_records
+D="$RUNS_DIR/20260102T000000Z-1-aaaa"
+printf "| record: "
+if [ -d "$D" ]; then printf "HELD"; else printf "PRUNED"; fi
+printf "| content: "
+if [ -f "$D/leases/$UAR_LHOLD.dir02.lease/inside" ]; then printf "PRESERVED"; else printf "DESTROYED"; fi
+printf "| unblocked-aged: "
+if [ -d "$RUNS_DIR/20260103T000000Z-1-aaaa" ]; then printf "KEPT"; else printf "PRUNED"; fi
+printf "| HARNESS-OK\n"
+' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
+        if printf '%s' "$UAR_L26B" | grep -q 'HARNESS-OK' &&
+           printf '%s' "$UAR_L26B" | grep -q 'record: HELD' &&
+           printf '%s' "$UAR_L26B" | grep -q 'content: PRESERVED' &&
+           printf '%s' "$UAR_L26B" | grep -q 'unblocked-aged: PRUNED' &&
+           printf '%s' "$UAR_L26B" | grep -q 'held by a directory at a lease name'; then
+            t_pass "reader lease: a directory at a lease name holds its record against the age cut, contents intact, and is announced"
+        else
+            t_fail "reader lease: a directory at a lease name holds its record against the age cut, contents intact, and is announced" \
+                "$UAR_L26B"
+        fi
+
+        # (L26c) the same, with UTEST_LEASE_MAX=0. Zero is the documented
+        #     disable switch for lease ADMISSION and counting, and the whole
+        #     classification loop used to sit inside `if [ "$lease_max" -gt 0 ]`
+        #     -- so setting it also silently switched off the fail-closed holds,
+        #     including the `U` hold whose own comment says it must never answer
+        #     to that cap. A supported configuration therefore bypassed the
+        #     protection entirely. The counting is still disabled here (that is
+        #     what zero means); the recovery holds are not.
+        uar_lease_reset
+        mkdir -p "$UAR_PDIR/build/test-runs/20260102T000000Z-1-aaaa/leases/$UAR_LHOLD.dir03.lease"
+        printf 'handmade\n' > "$UAR_PDIR/build/test-runs/20260102T000000Z-1-aaaa/leases/$UAR_LHOLD.dir03.lease/inside"
+        mkdir -p "$UAR_PDIR/build/test-runs/20260103T000000Z-1-aaaa/leases/.utest-sweep.stuck.d"
+        printf 'unresolved\n' > "$UAR_PDIR/build/test-runs/20260103T000000Z-1-aaaa/leases/.utest-sweep.stuck.d/obj"
+        UAR_L26C="$(UAR_PDIR="$UAR_PDIR" UAR_PRUNE="$UAR_PRUNE" UAR_LHOLD="$UAR_LHOLD" timeout 30 bash -c '
+set -uo pipefail
+PROJECT="$UAR_PDIR"
+RUNS_DIR="$PROJECT/build/test-runs"
+RUN_ID="20260101T000000Z-1-aaaa"
+UTEST_RECORD_KEEP=2
+UTEST_LEASE_MAX=0
+eval "$UAR_PRUNE"
+utest_prune_records
+printf "| blocked-record: "
+if [ -f "$RUNS_DIR/20260102T000000Z-1-aaaa/leases/$UAR_LHOLD.dir03.lease/inside" ]; then printf "PRESERVED"; else printf "DESTROYED"; fi
+printf "| stuck-record: "
+if [ -f "$RUNS_DIR/20260103T000000Z-1-aaaa/leases/.utest-sweep.stuck.d/obj" ]; then printf "PRESERVED"; else printf "DESTROYED"; fi
+printf "| HARNESS-OK\n"
+' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
+        if printf '%s' "$UAR_L26C" | grep -q 'HARNESS-OK' &&
+           printf '%s' "$UAR_L26C" | grep -q 'blocked-record: PRESERVED' &&
+           printf '%s' "$UAR_L26C" | grep -q 'stuck-record: PRESERVED'; then
+            t_pass "reader lease: UTEST_LEASE_MAX=0 disables lease admission, not the fail-closed directory and sweep-claim holds"
+        else
+            t_fail "reader lease: UTEST_LEASE_MAX=0 disables lease admission, not the fail-closed directory and sweep-claim holds" \
+                "$UAR_L26C"
+        fi
+
+        # (L26e) the PRE-DELETE RECHECK, which L26b and L26c cannot reach. Both
+        #     place the blocker before classification, so the `D` hold puts the
+        #     record in leased_set and the age loop skips it long before the
+        #     recheck runs -- delete the recheck and both still pass. The window
+        #     it narrows belongs to a writer that takes no mutex, so the only
+        #     honest way to test it is to BE that writer: wrap the production
+        #     verdict the age loop calls just before destroying, and create the
+        #     directory from inside it. Section 46's p19 uses the same technique
+        #     on the pointer selector for the same reason.
+        uar_lease_reset
+        UAR_L26E="$(UAR_PDIR="$UAR_PDIR" UAR_PRUNE="$UAR_PRUNE" UAR_LHOLD="$UAR_LHOLD" timeout 30 bash -c '
+set -uo pipefail
+PROJECT="$UAR_PDIR"
+RUNS_DIR="$PROJECT/build/test-runs"
+RUN_ID="20260101T000000Z-1-aaaa"
+UTEST_RECORD_KEEP=2
+eval "$UAR_PRUNE"
+eval "$(declare -f utest_hold_blocking_dirs | sed "1s/^utest_hold_blocking_dirs/uar_real_hold/")"
+utest_hold_blocking_dirs() {
+    # Only on the AGE-LOOP call, which is the silent one ($2 empty): plant the
+    # blocker just before the verdict that decides whether rm -rf runs.
+    if [ -z "${2:-}" ]; then
+        mkdir -p "$RUNS_DIR/20260102T000000Z-1-aaaa/leases/$UAR_LHOLD.race01.lease" 2>/dev/null || true
+        printf "handmade\n" > "$RUNS_DIR/20260102T000000Z-1-aaaa/leases/$UAR_LHOLD.race01.lease/inside" 2>/dev/null || true
+    fi
+    uar_real_hold "$@"
+}
+utest_prune_records
+D="$RUNS_DIR/20260102T000000Z-1-aaaa"
+printf "| record: "
+if [ -d "$D" ]; then printf "HELD"; else printf "PRUNED"; fi
+printf "| content: "
+if [ -f "$D/leases/$UAR_LHOLD.race01.lease/inside" ]; then printf "PRESERVED"; else printf "DESTROYED"; fi
+printf "| HARNESS-OK\n"
+' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
+        if printf '%s' "$UAR_L26E" | grep -q 'HARNESS-OK' &&
+           printf '%s' "$UAR_L26E" | grep -q 'record: HELD' &&
+           printf '%s' "$UAR_L26E" | grep -q 'content: PRESERVED'; then
+            t_pass "reader lease: a blocker appearing only at the pre-delete recheck still stops the recursive delete"
+        else
+            t_fail "reader lease: a blocker appearing only at the pre-delete recheck still stops the recursive delete" \
+                "$UAR_L26E"
+        fi
+
+        # (L26f) the STAGING namespace, positively. L26d's `.abcd.tmp` is a
+        #     regular FILE, and the staging reaper unlinks it before the hold
+        #     pass ever looks -- so every positive fixture used `*.lease` and
+        #     dropping `.*.tmp` from both production calls would have passed the
+        #     whole suite while an aged record holding a staging-name DIRECTORY
+        #     was destroyed recursively. Run at UTEST_LEASE_MAX=0 as well, so
+        #     the glob and the unconditional pass are pinned together.
+        uar_lease_reset
+        mkdir -p "$UAR_PDIR/build/test-runs/20260102T000000Z-1-aaaa/leases/.stg01.tmp"
+        printf 'handmade\n' > "$UAR_PDIR/build/test-runs/20260102T000000Z-1-aaaa/leases/.stg01.tmp/inside"
+        UAR_L26F="$(UAR_PDIR="$UAR_PDIR" UAR_PRUNE="$UAR_PRUNE" timeout 30 bash -c '
+set -uo pipefail
+PROJECT="$UAR_PDIR"
+RUNS_DIR="$PROJECT/build/test-runs"
+RUN_ID="20260101T000000Z-1-aaaa"
+UTEST_RECORD_KEEP=2
+UTEST_LEASE_MAX=0
+eval "$UAR_PRUNE"
+utest_prune_records
+D="$RUNS_DIR/20260102T000000Z-1-aaaa"
+printf "| record: "
+if [ -d "$D" ]; then printf "HELD"; else printf "PRUNED"; fi
+printf "| content: "
+if [ -f "$D/leases/.stg01.tmp/inside" ]; then printf "PRESERVED"; else printf "DESTROYED"; fi
+printf "| HARNESS-OK\n"
+' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
+        if printf '%s' "$UAR_L26F" | grep -q 'HARNESS-OK' &&
+           printf '%s' "$UAR_L26F" | grep -q 'record: HELD' &&
+           printf '%s' "$UAR_L26F" | grep -q 'content: PRESERVED' &&
+           printf '%s' "$UAR_L26F" | grep -q 'a DIRECTORY occupies .*stg01.tmp'; then
+            t_pass "reader lease: a directory at a staging name is held and announced, at UTEST_LEASE_MAX=0 too"
+        else
+            t_fail "reader lease: a directory at a staging name is held and announced, at UTEST_LEASE_MAX=0 too" \
+                "$UAR_L26F"
+        fi
+
+        # (L26g) the `! -L` half of the type test, which nothing reached. `-d`
+        #     FOLLOWS a symlink, so a link to a real directory satisfies it --
+        #     and if `! -L` were dropped, such a link would be treated as an
+        #     unremovable blocker and HELD instead of swept, while a pointer
+        #     symlink to a directory would survive the sweep that exists to
+        #     remove it. Both namespaces, and the link TARGET must be untouched
+        #     either way: unlinking a link is not licence to recurse through it.
+        uar_lease_reset
+        mkdir -p "$UAR_PDIR/elsewhere"
+        printf 'target\n' > "$UAR_PDIR/elsewhere/inside"
+        # NOT `|| true`. Every assertion below is satisfiable by the links never
+        # having existed -- an absent pointer already reads SWEPT, an unleased
+        # aged record already reads PRUNED, and a standalone target is
+        # trivially UNTOUCHED -- so a fixture that tolerated a failed `ln -s`
+        # would report the `! -L` branch covered while never reaching it. The
+        # links are asserted present INSIDE the harness, before the prune, so
+        # setup failure is a failure rather than a green vacuous pass.
+        ln -s "$UAR_PDIR/elsewhere" "$UAR_PDIR/build/test-results-linked.run"
+        ln -s "$UAR_PDIR/elsewhere" "$UAR_PDIR/build/test-runs/20260102T000000Z-1-aaaa/leases/$UAR_LHOLD.lnk01.lease"
+        UAR_L26G="$(UAR_PDIR="$UAR_PDIR" UAR_PRUNE="$UAR_PRUNE" UAR_LHOLD="$UAR_LHOLD" timeout 30 bash -c '
+set -uo pipefail
+PROJECT="$UAR_PDIR"
+RUNS_DIR="$PROJECT/build/test-runs"
+RUN_ID="20260101T000000Z-1-aaaa"
+UTEST_RECORD_KEEP=2
+eval "$UAR_PRUNE"
+printf "| setup: "
+if [ -L "$PROJECT/build/test-results-linked.run" ] &&
+   [ -L "$RUNS_DIR/20260102T000000Z-1-aaaa/leases/$UAR_LHOLD.lnk01.lease" ]; then
+    printf "LINKED"
+else
+    printf "NO-LINKS"
+fi
+utest_prune_records
+printf "| ptr-link: "
+if [ -L "$PROJECT/build/test-results-linked.run" ]; then printf "KEPT"; else printf "SWEPT"; fi
+printf "| lease-link-record: "
+if [ -d "$RUNS_DIR/20260102T000000Z-1-aaaa" ]; then printf "HELD"; else printf "PRUNED"; fi
+printf "| target: "
+if [ -f "$PROJECT/elsewhere/inside" ]; then printf "UNTOUCHED"; else printf "DESTROYED"; fi
+printf "| HARNESS-OK\n"
+' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
+        if printf '%s' "$UAR_L26G" | grep -q 'HARNESS-OK' &&
+           printf '%s' "$UAR_L26G" | grep -q 'setup: LINKED' &&
+           printf '%s' "$UAR_L26G" | grep -q 'ptr-link: SWEPT' &&
+           printf '%s' "$UAR_L26G" | grep -q 'lease-link-record: PRUNED' &&
+           printf '%s' "$UAR_L26G" | grep -q 'target: UNTOUCHED' &&
+           ! printf '%s' "$UAR_L26G" | grep -q 'a DIRECTORY occupies'; then
+            t_pass "reader lease: a symlink to a directory is swept, never mistaken for a blocker, and its target is untouched"
+        else
+            t_fail "reader lease: a symlink to a directory is swept, never mistaken for a blocker, and its target is untouched" \
+                "$UAR_L26G"
+        fi
+        rm -rf "$UAR_PDIR/elsewhere"
+
+        # (L26h) the two helpers directly, at the boundaries the production
+        #     call sites never reach: the dedup return (same path reported
+        #     twice), the silent form, a regular file, a glob that matches
+        #     nothing, and every spelling that collapses onto the scanned
+        #     directory itself and would otherwise make each record hold itself
+        #     forever: EMPTY (`$dir/`), whitespace-only, a pattern CONTAINING
+        #     whitespace (which word-splits into `$dir/` plus a pattern resolved
+        #     against the working directory), `.`, `..`, and one carrying a
+        #     slash. Plus a call with no globs at all.
+        uar_lease_reset
+        mkdir -p "$UAR_PDIR/hb/adir"
+        printf 'x\n' > "$UAR_PDIR/hb/afile"
+        # stderr to /dev/null, uniquely among these fixtures: this is the only
+        # one that REPORTS between two markers, so the report lands inside
+        # `dir-yes: ` and its value. The others report from inside
+        # utest_prune_records, before any marker is printed. The HARNESS-OK
+        # sentinel is what keeps a lost inner failure from reading as a pass.
+        UAR_L26H="$(UAR_PDIR="$UAR_PDIR" UAR_PRUNE="$UAR_PRUNE" timeout 25 bash -c '
+set -uo pipefail
+PROJECT="$UAR_PDIR"
+RUNS_DIR="$PROJECT/build/test-runs"
+eval "$UAR_PRUNE"
+H="$PROJECT/hb"
+printf "| dir-yes: "; if utest_blocking_dir "$H/adir" "first"; then printf "1"; else printf "0"; fi
+printf "| file-no: "; if utest_blocking_dir "$H/afile" "why"; then printf "1"; else printf "0"; fi
+printf "| absent-no: "; if utest_blocking_dir "$H/nothing" "why"; then printf "1"; else printf "0"; fi
+printf "| empty-arg-no: "; if utest_blocking_dir "" "why"; then printf "1"; else printf "0"; fi
+printf "| reports: "; { printf "%s" "$UTEST_DIRBLOCK_SEEN" | grep -c "adir" | tr -d "\\n"; } || true
+utest_blocking_dir "$H/adir" "second" || true
+printf "| silent-ok: "; if utest_blocking_dir "$H/adir"; then printf "1"; else printf "0"; fi
+utest_hold_blocking_dirs "$H" "" "*"
+printf "| star: %s" "${UTEST_DIRBLOCK_N:-X}"
+utest_hold_blocking_dirs "$H" "" "nomatch*"
+printf "| nomatch: %s" "${UTEST_DIRBLOCK_N:-X}"
+utest_hold_blocking_dirs "$H" "" ""
+printf "| emptyglob: %s" "${UTEST_DIRBLOCK_N:-X}"
+utest_hold_blocking_dirs "$H" "" " "
+printf "| wsglob: %s" "${UTEST_DIRBLOCK_N:-X}"
+utest_hold_blocking_dirs "$H" "" "* *"
+printf "| splitglob: %s" "${UTEST_DIRBLOCK_N:-X}"
+utest_hold_blocking_dirs "$H" "" "."
+printf "| dotglob: %s" "${UTEST_DIRBLOCK_N:-X}"
+utest_hold_blocking_dirs "$H" "" ".."
+printf "| dotdotglob: %s" "${UTEST_DIRBLOCK_N:-X}"
+utest_hold_blocking_dirs "$H" "" "../*"
+printf "| slashglob: %s" "${UTEST_DIRBLOCK_N:-X}"
+utest_hold_blocking_dirs "$H" ""
+printf "| noglob: %s" "${UTEST_DIRBLOCK_N:-X}"
+utest_hold_blocking_dirs "$H/absent" "" "*"
+printf "| absentdir: %s" "${UTEST_DIRBLOCK_N:-X}"
+printf "| HARNESS-OK\n"
+' 2>/dev/null || echo "TIMED-OUT-OR-FAILED")"
+        # `reports: 1` is the dedup: the path is recorded once even though it is
+        # reported twice, so a second announcement of the same path cannot spam
+        # a run whose sweep and publisher both meet it.
+        if printf '%s' "$UAR_L26H" | grep -q 'HARNESS-OK' &&
+           printf '%s' "$UAR_L26H" | grep -q 'dir-yes: 1' &&
+           printf '%s' "$UAR_L26H" | grep -q 'file-no: 0' &&
+           printf '%s' "$UAR_L26H" | grep -q 'absent-no: 0' &&
+           printf '%s' "$UAR_L26H" | grep -q 'empty-arg-no: 0' &&
+           printf '%s' "$UAR_L26H" | grep -q 'reports: 1' &&
+           printf '%s' "$UAR_L26H" | grep -q 'silent-ok: 1' &&
+           printf '%s' "$UAR_L26H" | grep -q 'star: 1' &&
+           printf '%s' "$UAR_L26H" | grep -q 'nomatch: 0' &&
+           printf '%s' "$UAR_L26H" | grep -q 'emptyglob: 0' &&
+           printf '%s' "$UAR_L26H" | grep -q 'wsglob: 0' &&
+           printf '%s' "$UAR_L26H" | grep -q 'splitglob: 0' &&
+           printf '%s' "$UAR_L26H" | grep -q 'dotglob: 0' &&
+           printf '%s' "$UAR_L26H" | grep -q 'dotdotglob: 0' &&
+           printf '%s' "$UAR_L26H" | grep -q 'slashglob: 0' &&
+           printf '%s' "$UAR_L26H" | grep -q 'noglob: 0' &&
+           printf '%s' "$UAR_L26H" | grep -q 'absentdir: 0'; then
+            t_pass "reader lease: the blocking-directory helpers hold at every boundary, and an empty glob never counts the scanned directory"
+        else
+            t_fail "reader lease: the blocking-directory helpers hold at every boundary, and an empty glob never counts the scanned directory" \
+                "$UAR_L26H"
+        fi
+        rm -rf "$UAR_PDIR/hb"
+
+        # (L26d) the NEGATIVE. Every artifact a healthy run writes under
+        #     leases/ -- a real `<holder>.<id>.lease`, its `.<id>.tmp` staging
+        #     sibling, and an empty `.utest-sweep.*.d` claim -- must produce no
+        #     hold at all, or the harness pins its own records forever and the
+        #     disk bound is defeated by normal operation. This is the assertion
+        #     that keeps the fail-closed hold from being a fail-open one.
+        uar_lease_reset
+        printf '{}\n' > "$UAR_PDIR/build/test-runs/20260102T000000Z-1-aaaa/leases/.abcd.tmp"
+        mkdir -p "$UAR_PDIR/build/test-runs/20260102T000000Z-1-aaaa/leases/.utest-sweep.empty.d"
+        uar_lease_put 20260102T000000Z-1-aaaa "$UAR_LHOLD" dead01 1000000000 1000000010
+        UAR_L26D="$(UAR_PDIR="$UAR_PDIR" UAR_PRUNE="$UAR_PRUNE" timeout 30 bash -c '
+set -uo pipefail
+PROJECT="$UAR_PDIR"
+RUNS_DIR="$PROJECT/build/test-runs"
+RUN_ID="20260101T000000Z-1-aaaa"
+UTEST_RECORD_KEEP=2
+eval "$UAR_PRUNE"
+utest_prune_records
+printf "| aged: "
+if [ -d "$RUNS_DIR/20260102T000000Z-1-aaaa" ]; then printf "HELD"; else printf "PRUNED"; fi
+printf "| HARNESS-OK\n"
+' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
+        if printf '%s' "$UAR_L26D" | grep -q 'HARNESS-OK' &&
+           printf '%s' "$UAR_L26D" | grep -q 'aged: PRUNED' &&
+           ! printf '%s' "$UAR_L26D" | grep -q 'a DIRECTORY occupies'; then
+            t_pass "reader lease: the artifacts a healthy run writes under leases/ never take a directory hold"
+        else
+            t_fail "reader lease: the artifacts a healthy run writes under leases/ never take a directory hold" \
+                "$UAR_L26D"
         fi
 
         # (L27) the non-monotone liveness flip. utest_lease_holder_state answers
@@ -15008,16 +15380,24 @@ PY
     #       the sweep cannot clean up either -- it excludes directories by
     #       design so it can never `rm -rf` anything in build/. Run after run,
     #       green.
+    #
+    #       Section 53 added the ATTRIBUTION, and it is asserted here because
+    #       nothing else can see it: p20 covers the sweep-side diagnostic, so
+    #       deleting the publisher's own utest_blocking_dir call left every
+    #       other assertion green while the operator got a bare `mv:` line with
+    #       nothing connecting it to the pointer message beneath it.
     rm -f "$UAR_PTR/build/test-results-leg.run"
     mkdir -p "$UAR_PTR/build/test-results-leg.run"
-    UAR_P5E="$(uar_ptr_gen run9 9)"
+    UAR_P5E="$(uar_ptr_gen run9 9 2>&1)"
     if [ -d "$UAR_PTR/build/test-results-leg.run" ] &&
        [ -z "$(ls -A "$UAR_PTR/build/test-results-leg.run" 2>/dev/null)" ] &&
        printf '%s' "$UAR_P5E" | grep -qE 'UTEST_FAIL=[1-9]' &&
+       printf '%s' "$UAR_P5E" | grep -q 'a DIRECTORY occupies .*test-results-leg.run' &&
+       printf '%s' "$UAR_P5E" | grep -q 'cannot publish its pointer' &&
        [ ! -e "$UAR_PTR/build/test-runs/run9/.legptr.tmp" ]; then
-        t_pass "leg pointer: a directory at the pointer pathname is a counted failure, never a silent success"
+        t_pass "leg pointer: a directory at the pointer pathname is a counted failure that names its cause, never a silent success"
     else
-        t_fail "leg pointer: a directory at the pointer pathname is a counted failure, never a silent success" \
+        t_fail "leg pointer: a directory at the pointer pathname is a counted failure that names its cause, never a silent success" \
             "$UAR_P5E -- dir: $(ls -A "$UAR_PTR/build/test-results-leg.run" 2>&1)"
     fi
     rmdir "$UAR_PTR/build/test-results-leg.run" 2>/dev/null || true

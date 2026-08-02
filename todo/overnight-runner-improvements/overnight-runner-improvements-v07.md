@@ -77,6 +77,8 @@ Findings from the 24-hour canary armed after the 2026-07-31 repair stop. This fi
       - Same root as finding #3: the detector matches the script NAME anywhere in the command rather than deciding what the command does. `-n` is the cheapest possible discriminator and there are only a handful like it (`-n`, `--norc` style parse checks, `shellcheck`).
       - Cost is small per occurrence (one retry through a variable indirection) but it lands on every syntax check of the two largest shell files in the tree, which is exactly the loop an editor of those files runs most.
       - **Recurred 2026-08-01 06:05 on section 46**, twice more, on `bash -n scripts/test.sh` and `bash -n scripts/test-tooling.sh`. Worked around with `bash -n < <script>`, which the detector does not match -- so the effective outcome is that the gate teaches a redirection habit rather than preventing a bare run.
+      - **Recurred 2026-08-02 02:57 on section 53**, on `bash -n scripts/test.sh` and then on `bash -n ./scripts/test.sh` -- the `./` prefix is normalised away, so the obvious second attempt is matched too and the operator learns nothing from the first refusal.
+      - **CORRECTION to the lead above, measured this occurrence.** The claim that the suggested reroute "would actually RUN the suite the check was trying to avoid running" is WRONG: `bash scripts/overnight/run-artifact.sh syntax-check -- bash -n ./scripts/test.sh` passes `-n` through untouched and returned `{"exit": 0, "lines": 0}` in about a second, where a real suite run is ~24s and thousands of lines. The reroute is therefore a harmless (if absurd) escape for this shape -- which weakens the cost argument but not the finding: a parse-only check is still not a run, and routing one through a build-offload wrapper to prove it spends a tool call on nothing.
 
 ## 6. A section can ship a kernel that does not compile, because no gate ever builds `KERNEL_TESTS=off`
 
@@ -123,6 +125,14 @@ Findings from the 24-hour canary armed after the 2026-07-31 repair stop. This fi
       - **Repair is `python3 scripts/todo-section-order.py --fix todo/00-infrastructure/TODO-04-usermode-test-framework.md` at a boundary when the run is not holding that file** -- a pure block move which the script refuses to perform if it would be anything else. Promote Check 22b to an ERROR once it is clean.
 
 ---
+
+## 10a. `run-artifact.sh` reports `errors: 8` on a green build, because `-Werror` is in every compile command line
+
+- [ ] Extract errors from diagnostic lines, not from any line containing the substring `error`
+      Observed 2026-08-02 03:52 on TODO-04 section 53. `run-artifact.sh s53-build2 -- bash scripts/build.sh` returned `{"exit": 0, ..., "errors": 8}` while `tail -1 build/build.log` said `=== BUILD OK ===`. Every one of the eight was a compiler INVOCATION line carrying `-Werror` in its flags, plus the `ld.lld` link line.
+      - **Why it costs more than a wrong number:** the envelope exists so the model does not read the log, and a nonzero `errors` on a green build is precisely the signal that makes it read the log anyway. Confirming these eight were noise meant grepping the artifact and pulling a single ~40 KB link command line into context -- the exact flood the wrapper was built to prevent, caused by the wrapper's own summary.
+      - **Mechanism:** the extractor matches `error` case-insensitively anywhere in a line. `-Werror` appears in every kernel and user compile command, so the count scales with how many files the incremental build happened to touch (8 here; a clean build would report hundreds).
+      - **Shape of the fix:** match the compiler's diagnostic grammar (`<file>:<line>:<col>: error:`) and the linker's (`ld.lld: error:`), or simply ignore any line beginning with a compiler/linker executable name. Cheaper still: when `exit == 0`, report `errors: 0` and keep the extracted lines under a separate key.
 
 ## 10. The build-offload gate does not recognise its OWN wrapper once anything precedes it
 
