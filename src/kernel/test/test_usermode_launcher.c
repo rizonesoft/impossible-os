@@ -4539,6 +4539,67 @@ static void test_capture_byte_uncaptured_task_returns_zero(void)
                 "serial fallback");
 }
 
+/* The comparison DIRECTION, which the whole per-write narrowing rests on. A
+ * write is cut only by a stop that landed AFTER it armed; a write armed after
+ * the stop was never capturing and is owed nothing. Getting this backwards
+ * would settle every abandoned write as an exempt budget cut -- a missing
+ * refusal, which produces no wrong record and builds green. */
+static void test_capture_budget_cut_only_for_a_later_stop(void)
+{
+    task_utest_capture_reset(&s_capture_parent_scratch);
+    thread_utest_cap_reset(&s_capture_thread_scratch);
+
+    /* Owner never stopped: nothing is a cut. */
+    s_capture_parent_scratch.utest_capture_stop_epoch = 0u;
+    s_capture_thread_scratch.utest_cap_stop_epoch = 0u;
+    TEST_ASSERT_EQ((uint64_t)test_usermode_capture_was_budget_cut(
+                       &s_capture_parent_scratch, &s_capture_thread_scratch),
+                   0u, "an owner that never stopped cuts no write");
+
+    /* Stop landed AFTER this write armed -- the cut case. */
+    s_capture_thread_scratch.utest_cap_stop_epoch = 3u;
+    s_capture_parent_scratch.utest_capture_stop_epoch = 4u;
+    TEST_ASSERT_EQ((uint64_t)test_usermode_capture_was_budget_cut(
+                       &s_capture_parent_scratch, &s_capture_thread_scratch),
+                   1u, "a stop newer than the write's arm snapshot cut it");
+
+    /* Write armed AFTER the stop: it was never capturing, so never cut. */
+    s_capture_thread_scratch.utest_cap_stop_epoch = 4u;
+    s_capture_parent_scratch.utest_capture_stop_epoch = 4u;
+    TEST_ASSERT_EQ((uint64_t)test_usermode_capture_was_budget_cut(
+                       &s_capture_parent_scratch, &s_capture_thread_scratch),
+                   0u, "a write armed at or after the stop is not cut by it");
+
+    TEST_ASSERT_EQ((uint64_t)test_usermode_capture_was_budget_cut(
+                       (const struct task *)0, &s_capture_thread_scratch),
+                   0u, "an unresolvable owner cuts nothing");
+}
+
+/* Settled EXACTLY once. The claim is what keeps a capture_end racing a reap
+ * from both emitting a terminal record for one write, which the host refuses
+ * as a duplicate. */
+static void test_capture_settlement_is_claimed_exactly_once(void)
+{
+    thread_utest_cap_reset(&s_capture_thread_scratch);
+    s_capture_thread_scratch.utest_cap_state = (uint8_t)UTEST_CAP_THREAD_OPEN;
+
+    TEST_ASSERT_EQ((uint64_t)test_usermode_capture_claim_settlement(
+                       &s_capture_thread_scratch),
+                   1u, "the first claimant takes the settlement");
+    TEST_ASSERT_EQ((uint64_t)s_capture_thread_scratch.utest_cap_state,
+                   (uint64_t)UTEST_CAP_THREAD_SETTLED,
+                   "a won claim leaves the write settled");
+    TEST_ASSERT_EQ((uint64_t)test_usermode_capture_claim_settlement(
+                       &s_capture_thread_scratch),
+                   0u, "a second claimant is refused, so no duplicate record");
+
+    /* A slot that was never armed owes nothing and cannot be claimed. */
+    thread_utest_cap_reset(&s_capture_thread_scratch);
+    TEST_ASSERT_EQ((uint64_t)test_usermode_capture_claim_settlement(
+                       &s_capture_thread_scratch),
+                   0u, "an unarmed slot cannot be claimed for settlement");
+}
+
 /* Driven against two zeroed scratch TCBs -- no task_create, no task_fork,
  * no subsystem init, nothing live: task_utest_capture_inherit touches
  * only the two named fields of the structs it is handed. This is the
@@ -6153,6 +6214,12 @@ void test_register_usermode_launcher(void)
                             TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: capture death snapshot covers every thread",
                             test_capture_death_snapshot_covers_every_thread,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: capture budget cut needs a later stop",
+                            test_capture_budget_cut_only_for_a_later_stop,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: capture settlement is claimed exactly once",
+                            test_capture_settlement_is_claimed_exactly_once,
                             TEST_CAT_EXEC);
 }
 

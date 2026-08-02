@@ -4308,29 +4308,55 @@ void task_utest_cap_note_thread_death(struct task *t, struct thread *thr)
 {
     struct task *owner;
     uint8_t      fenced;
+    uint8_t      expected;
 
     if (!t || !thr)
         return;
     /* Only an ARMED write is owed an explanation. A thread that never
      * captured, or whose write already settled through capture_end or a
      * budget CUT, has nothing outstanding. */
-    if (thr->utest_cap_state != (uint8_t)UTEST_CAP_THREAD_OPEN)
+    /* ACQUIRE, because this is a REMOTE read of a field the owning thread
+     * publishes with release, and because the fields it gates -- the write
+     * identity and the previous death reason -- are only meaningful behind
+     * that edge. A plain read here would also be a data race against the CAS
+     * and the release store, which no argument about the benignness of the
+     * values can license. */
+    if (__atomic_load_n(&thr->utest_cap_state, __ATOMIC_ACQUIRE) !=
+        (uint8_t)UTEST_CAP_THREAD_OPEN)
         return;
-    /* First snapshot wins. Death paths are deliberately idempotent and can
-     * overlap (a racing self-exit and a remote kill both reach a transition),
-     * and the EARLIEST reading is the true one: a later one could observe a
-     * reap fence that was latched after this thread had already died, which
-     * is the exact mislabel that would hand a lost write the fence's
-     * exemption. */
-    if (thr->utest_cap_death != (uint8_t)UTEST_CAP_DEATH_NONE)
-        return;
-
     owner = task_get_by_pid(t->utest_capture_owner_pid);
     fenced = owner ? __atomic_load_n(&owner->utest_capture_fenced,
                                      __ATOMIC_ACQUIRE)
                    : (uint8_t)0;
-    thr->utest_cap_death = fenced ? (uint8_t)UTEST_CAP_DEATH_FENCED
-                                  : (uint8_t)UTEST_CAP_DEATH_KILLED;
+
+    /* FIRST SNAPSHOT WINS, claimed by exchange rather than observed by a
+     * check-then-store. Death paths are deliberately idempotent and can
+     * overlap -- a racing self-exit and a remote kill both reach a transition
+     * -- so two callers can read NONE and the LATER store would win, which is
+     * the wrong one: the earliest reading is the true one, and a later one can
+     * see a reap fence latched after this thread had already died. Since the
+     * host EXEMPTS a fenced abandon, losing that race certifies genuinely lost
+     * output as a deliberate teardown, which is precisely the masking this
+     * evidence exists to remove. */
+    expected = (uint8_t)UTEST_CAP_DEATH_NONE;
+    if (!__atomic_compare_exchange_n(&thr->utest_cap_death, &expected,
+                                     fenced ? (uint8_t)UTEST_CAP_DEATH_FENCED
+                                            : (uint8_t)UTEST_CAP_DEATH_KILLED,
+                                     0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
+        return;
+
+    /* The owner's stop epoch AS OF THIS DEATH. Recorded here and never
+     * re-read at reap, because the reap barrier runs arbitrarily later: a peer
+     * sharing this owner can exhaust the budget after this thread has already
+     * died, and a reap comparing the epoch it finds THEN would report a killed
+     * write as an intentional budget cut -- handing a lost payload the very
+     * exemption the per-write narrowing was introduced to withdraw. Only the
+     * exchange winner writes it, so the value belongs to the reading that won.
+     */
+    thr->utest_cap_death_epoch =
+        owner ? __atomic_load_n(&owner->utest_capture_stop_epoch,
+                                __ATOMIC_ACQUIRE)
+              : 0u;
 }
 
 void task_utest_cap_note_task_death(struct task *t)
@@ -4572,9 +4598,11 @@ void task_cleanup(uint32_t pid)
      * write() -- producing no record at all, which is the exact silence this
      * evidence exists to break.
      *
-     * Ordered here for two reasons: before any stack is freed, and before
-     * TASK_UTEST_CAPTURE_UNLINK clears owner_pid further down, which is what
-     * the settlement resolves the owner slot through. The death outcome each
+     * Ordered before TASK_UTEST_CAPTURE_UNLINK clears owner_pid further down,
+     * which is what the settlement resolves the owner slot through. It is NOT
+     * before every stack free -- thread 0's task-owned stack is released
+     * above -- and settlement must therefore never read stack-resident state:
+     * the evidence lives in the TCB precisely so it outlives the stack. The death outcome each
      * thread carries was snapshotted at its real death transition, so nothing
      * here re-reads the reap fence. */
     {

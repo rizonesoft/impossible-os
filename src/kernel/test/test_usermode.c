@@ -4774,7 +4774,14 @@ static enum utest_capture_verdict u_capture_claim(struct task *owner,
          * enumerate. Set-only: a second stop cannot occur (the latch is
          * one-shot), so the first epoch is the one that matters. */
         if (owner->utest_capture_stop_epoch == 0u) {
-            s_capture_stop_epoch_next++;
+            /* SATURATE, never wrap. On wrap the counter returns to 0, the
+             * `epoch != 0` guard goes false, and every later comparison
+             * inverts -- so armed writes silently stop settling as budget
+             * cut, which is the fail-OPEN direction. Unreachable in practice
+             * (one increment per owner budget stop), but a saturating counter
+             * costs one compare and removes the question. */
+            if (s_capture_stop_epoch_next < 0xFFFFFFFFu)
+                s_capture_stop_epoch_next++;
             __atomic_store_n(&owner->utest_capture_stop_epoch,
                              s_capture_stop_epoch_next, __ATOMIC_RELEASE);
         }
@@ -5045,10 +5052,19 @@ static int u_capture_emit_chunk(struct utest_capture_ctx *ctx, int is_final)
              * that outlives the frame. Guarded on OPEN so a write that was
              * never armed (it entered discard before staging a byte) cannot
              * plant an identity on a slot that owes no record. */
-            thr = thread_current();
-            if (thr && thr->utest_cap_state == (uint8_t)UTEST_CAP_THREAD_OPEN) {
+            thr = (struct thread *)ctx->_thr;
+            if (thr &&
+                __atomic_load_n(&thr->utest_cap_state, __ATOMIC_ACQUIRE) ==
+                    (uint8_t)UTEST_CAP_THREAD_OPEN) {
+                /* wid FIRST, then has_wid with RELEASE. A settling reader
+                 * keys on has_wid to decide whether this write has a group to
+                 * name, so publishing the flag before the value it describes
+                 * would let a teardown emit an identity it cannot yet see.
+                 * The ordering is the same shape the arm block uses for
+                 * utest_cap_state. */
                 thr->utest_cap_wid = seq;
-                thr->utest_cap_has_wid = 1;
+                __atomic_store_n(&thr->utest_cap_has_wid, (uint8_t)1,
+                                 __ATOMIC_RELEASE);
             }
         }
         utest_record_log(LOG_INFO,
@@ -5231,6 +5247,8 @@ void test_usermode_capture_start(struct utest_capture_ctx *ctx)
     ctx->_has_wid = 0;
     ctx->_wid = 0;
     ctx->_owner = (void *)0;
+    ctx->_thr = (void *)0;
+    ctx->_cut_fenced = 0;
 
     if (!self || !self->utest_capture_active)
         return;
@@ -5284,8 +5302,9 @@ void test_usermode_capture_start(struct utest_capture_ctx *ctx)
      * later: if the owner is stopped after this point, its epoch will exceed
      * the value captured here, and this write settles as budget-cut at its own
      * capture_end or at teardown without ever having seen a verdict itself. */
+    ctx->_thr = (void *)thread_current();
     if (ctx->_active && !ctx->_discard) {
-        struct thread *thr = thread_current();
+        struct thread *thr = (struct thread *)ctx->_thr;
 
         if (thr) {
             /* Evidence FIRST, OPEN published LAST, with release. The state is
@@ -5329,6 +5348,26 @@ void test_usermode_capture_start(struct utest_capture_ctx *ctx)
  * a byte genuinely needs the room; if the loop ends with the buffer
  * sitting exactly full, the caller's end-of-loop test_usermode_capture_
  * end() call flushes it as final=1 instead. */
+/* Record why this write's payload stopped, AT the moment it stopped.
+ *
+ * The owner's reap fence can latch at any time after a write is dropped for an
+ * unrelated reason (a stale-generation claim at a run boundary, say), and a
+ * settle path that re-read the fence then would report that write as a
+ * deliberate teardown -- which the host EXEMPTS. That is the same re-derivation
+ * error the death path avoids by snapshotting at the transition, so this path
+ * avoids it the same way. */
+static void u_capture_note_stop(struct utest_capture_ctx *ctx)
+{
+    struct task *owner = (struct task *)ctx->_owner;
+
+    ctx->_discard = 1;
+    ctx->_cut_fenced =
+        (owner && __atomic_load_n(&owner->utest_capture_fenced,
+                                  __ATOMIC_ACQUIRE))
+            ? (uint8_t)1
+            : (uint8_t)0;
+}
+
 int test_usermode_capture_byte(struct utest_capture_ctx *ctx, char c)
 {
     if (!ctx->_active)
@@ -5342,7 +5381,7 @@ int test_usermode_capture_byte(struct utest_capture_ctx *ctx, char c)
 
     if (ctx->_len >= UTEST_CAPTURE_CHUNK_MAX) {
         if (!u_capture_emit_chunk(ctx, 0)) {
-            ctx->_discard = 1;
+            u_capture_note_stop(ctx);
             ctx->_len = 0;
             return 1;
         }
@@ -5362,7 +5401,7 @@ void test_usermode_capture_end(struct utest_capture_ctx *ctx)
 
     if (!ctx->_discard) {
         if (!u_capture_emit_chunk(ctx, 1))
-            ctx->_discard = 1;
+            u_capture_note_stop(ctx);
         ctx->_len = 0;
     }
 
@@ -5378,7 +5417,7 @@ void test_usermode_capture_end(struct utest_capture_ctx *ctx)
      * write happened to receive -- a peer thread's claim can stop this owner
      * while this write is parked between bytes, so the write that gets the
      * verdict is very often not the only write that was cut. */
-    thr = thread_current();
+    thr = (struct thread *)ctx->_thr;
     if (!thr ||
         __atomic_load_n(&thr->utest_cap_state, __ATOMIC_ACQUIRE) !=
             (uint8_t)UTEST_CAP_THREAD_OPEN)
@@ -5387,18 +5426,27 @@ void test_usermode_capture_end(struct utest_capture_ctx *ctx)
     if (!ctx->_discard || !thr->utest_cap_has_wid) {
         /* Nothing reached the wire under this write's name, or the final
          * chunk closed it. Either way no group is left open for a terminal
-         * record to close, so settling silently is the whole obligation --
-         * still through the exchange, so a racing death path cannot also
-         * decide this write is its to report. */
-        (void)u_capture_claim_settlement(thr);
+         * record to close, so settling silently is the whole obligation.
+         *
+         * A PLAIN RELEASE STORE, not the exchange -- and this is the common
+         * case, every ordinary write in the suite. Nothing can be racing it:
+         * the only other party that ever settles a write is the reap barrier,
+         * which by construction runs after this thread is dead AND off-CPU,
+         * whereas this code is running on that very thread. Paying a locked
+         * read-modify-write here would put exclusive cache-line ownership on
+         * the hot path of every captured write and contradict the whole
+         * reason this shape was chosen over write-start records. The exchange
+         * stays where two parties genuinely can contend: exceptional
+         * settlement in u_capture_settle_terminal. */
+        __atomic_store_n(&thr->utest_cap_state,
+                         (uint8_t)UTEST_CAP_THREAD_SETTLED, __ATOMIC_RELEASE);
         return;
     }
 
     if (u_capture_write_was_budget_cut(owner, thr)) {
         u_capture_settle_terminal(thr, owner ? owner->pid : 0u, 0u,
                                   (const char *)0);
-    } else if (owner && __atomic_load_n(&owner->utest_capture_fenced,
-                                        __ATOMIC_ACQUIRE)) {
+    } else if (ctx->_cut_fenced) {
         /* The launcher's end-of-binary fence: a deliberate teardown of a
          * descendant that outlived its binary, and it must be SAID -- an
          * unexplained open group refuses the run, which would turn an orderly
@@ -9459,6 +9507,29 @@ int test_usermode_capture_decide(uint32_t owner_seq, uint32_t run_records,
 {
     return (int)u_capture_decide(owner_seq, run_records, owner_stopped,
                                  run_over, run_sealed);
+}
+
+/* The budget-cut predicate, over two caller-owned scratch structs. Exported
+ * because the whole per-write narrowing rests on its comparison DIRECTION: if
+ * it ever answered "cut" for a write armed AFTER the stop, every abandoned
+ * write in the run would settle as an exempt budget cut and the loss this
+ * evidence exists to surface would go silent again. That regression builds
+ * green and produces no wrong record -- only a missing refusal -- so a test is
+ * the only thing that catches it. */
+int test_usermode_capture_was_budget_cut(const struct task *owner,
+                                         const struct thread *thr);
+int test_usermode_capture_was_budget_cut(const struct task *owner,
+                                         const struct thread *thr)
+{
+    return u_capture_write_was_budget_cut(owner, thr);
+}
+
+/* The settle-once claim. Exported so the exactly-once property is checkable
+ * directly rather than inferred from the absence of duplicate records. */
+int test_usermode_capture_claim_settlement(struct thread *thr);
+int test_usermode_capture_claim_settlement(struct thread *thr)
+{
+    return u_capture_claim_settlement(thr);
 }
 
 /* The claim's full state TRANSITION, over caller-owned state. The decision

@@ -429,6 +429,7 @@ struct thread {
     uint32_t    utest_cap_wid;        /* the write's `wr` identity, when it has one */
     uint32_t    utest_cap_gen;        /* capture run generation at arm time */
     uint32_t    utest_cap_stop_epoch; /* owner's stop epoch at arm time */
+    uint32_t    utest_cap_death_epoch; /* owner's stop epoch AT DEATH, not at reap */
 #endif
     uint8_t     in_knf_trace;       /* 1 while this thread is running the KNF publish
                                      * observability bridge; recursion guard so a klog/ETW
@@ -1080,6 +1081,7 @@ static inline void thread_utest_cap_reset(struct thread *thr)
     thr->utest_cap_wid = 0;
     thr->utest_cap_gen = 0;
     thr->utest_cap_stop_epoch = 0;
+    thr->utest_cap_death_epoch = 0;
 }
 
 /* Snapshot HOW a thread holding an OPEN capture write stopped existing, at

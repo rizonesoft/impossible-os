@@ -686,15 +686,19 @@ def _scan(lines, prefix):
                     f"wr={wr}",
                 )
             owner = _own(pid)
-            # The producer settles each write exactly once, through a
-            # compare-exchange on the thread's own evidence, so two abandons
-            # for one thread cannot come from the kernel -- and a second could
-            # exempt a group the first did not.
-            if any(a[0] == task and a[1] == thr for a in owner.abandons):
+            # Uniqueness is keyed on the WRITE, not on (task, thread). A thread
+            # slot is reused within its task -- kthread_create takes a
+            # THREAD_FREE slot and thread_reap_kernel_slot republishes it -- so
+            # one (task, thread) pair can legitimately abandon more than one
+            # write over a run, and refusing the second would fail a run that
+            # reported itself correctly. Only a write that reached the wire has
+            # an identity to collide on; a write that never did names no group
+            # and cannot exempt one, so it needs no uniqueness rule.
+            if haswr and any(a[2] and a[3] == wr for a in owner.abandons):
                 raise Refusal(
                     "capture_duplicate_abandon",
-                    f"owner={pid} emitted two abandon records for "
-                    f"task={task} thread={thr}",
+                    f"owner={pid} emitted two abandon records for write "
+                    f"wr={wr}",
                 )
             owner.abandons.append((task, thr, haswr, wr, reason))
             continue
@@ -923,6 +927,16 @@ def _check_writes(owner, seqs):
                 f"owner={owner.pid} ({owner.name}) declares write wr={wr} cut, "
                 "but no chunk carries that write identity",
             )
+        # A cut write is one that STOPPED mid-stream. Naming a group that
+        # already carries its own final record contradicts that record, and
+        # the producer cannot emit both: a write that flushed its final chunk
+        # settles silently and never reaches the terminal path.
+        if any(owner.chunks[seq][1] == 1 for seq in writes[wr]):
+            raise Refusal(
+                "capture_cut_finalized",
+                f"owner={owner.pid} ({owner.name}) declares write wr={wr} cut, "
+                "but that write carries its own final record",
+            )
         cut_wr.add(wr)
 
     # Writes an abandon record explains as a deliberate teardown rather than a
@@ -937,6 +951,12 @@ def _check_writes(owner, seqs):
                 "capture_abandon_orphan",
                 f"owner={owner.pid} ({owner.name}) declares write wr={wr} "
                 "abandoned, but no chunk carries that write identity",
+            )
+        if any(owner.chunks[seq][1] == 1 for seq in writes[wr]):
+            raise Refusal(
+                "capture_abandon_finalized",
+                f"owner={owner.pid} ({owner.name}) declares write wr={wr} "
+                "abandoned, but that write carries its own final record",
             )
         exempt_wr.add(wr)
 

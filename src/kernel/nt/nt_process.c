@@ -413,7 +413,7 @@ static NTSTATUS NtTerminateThread_handler(uint64_t a1, uint64_t a2, uint64_t a3,
     if (owner)
         task_utest_cap_note_thread_death(owner, thr);
 #endif
-    thr->state = TASK_DEAD;
+    thr->state = THREAD_DEAD;
     thr->exit_status = (int32_t)exit_code;
     if (owner)
         ob_thread_mark_dead(owner->pid, thr->id);

@@ -126,6 +126,19 @@ struct utest_capture_ctx {
      * WRITE IDENTITY block above u_capture_emit_chunk (test_usermode.c). */
     uint8_t  _has_wid;
     uint32_t _wid;
+    /* The thread that owns this write, resolved ONCE at capture_start.
+     * Cached because the arm, the identity mirror on the first emitted
+     * chunk, and the settle at capture_end each need it, and resolving it
+     * three times per write is three lookups on the hottest path the
+     * capture machinery has. Opaque for the same reason `_owner` is: this
+     * header must not pull in task.h. */
+    void    *_thr;
+    /* Why this write stopped, recorded AT the moment it stopped rather
+     * than re-derived at settle time. The owner's fence can latch between
+     * the stop and capture_end, and re-reading it then would label a write
+     * dropped for an unrelated reason as a deliberate teardown -- the same
+     * error the death path avoids by snapshotting at the transition. */
+    uint8_t  _cut_fenced;
     char     _buf[192];
 };
 
@@ -255,6 +268,11 @@ void test_usermode_capture_end(struct utest_capture_ctx *ctx);
 struct task;
 struct thread;
 void test_usermode_cap_settle_dead_thread(struct task *t, struct thread *thr);
+
+/* Test shims over the two predicates the per-write narrowing rests on. */
+int test_usermode_capture_was_budget_cut(const struct task *owner,
+                                         const struct thread *thr);
+int test_usermode_capture_claim_settlement(struct thread *thr);
 
 /* Emits the one-time "[UTEST-CAPTURE-BEGIN] owner=<pid> name=<name>"
  * announcement binding a capture owner pid to its binary name. The ONLY
