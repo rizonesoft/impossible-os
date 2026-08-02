@@ -226,6 +226,14 @@ def main(argv) -> int:
                 "Filing into a completed TODO without the row is a black hole --\n"
                 "the file-level twin of the stamped-section trap CLAUDE.md warns\n"
                 "about. Row + body + reciprocal XREF, every time.\n"
+                "\nAND SEARCH FIRST -- unreachable is not the same as absent.\n"
+                "If this work already exists anywhere (a stamped section, a\n"
+                "Deferred park, a section in the wrong place, another domain's\n"
+                "TODO), REOPEN or REFERENCE it. Do NOT write a second section\n"
+                "covering the same ground because the first one could not be\n"
+                "reached: that doubles the review surface, splits one piece of\n"
+                "work across two owners, and every counter will read as if the\n"
+                "corpus improved. `grep -rn <capability> todo/` before filing.\n"
                 "Override (last resort): SKIP_TODO_STAGED_CHECK=1 git commit ...\n\n")
         return 1
     if not bad:

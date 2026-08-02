@@ -1432,7 +1432,12 @@ def cli(argv):
                   "item's SHAPE -- `- [/]` naming its blocker, or move it to a "
                   "section that is still open -- then re-run fixpoint. "
                   "Completion means nothing is left behind, not that the "
-                  "checklist stopped growing.", file=sys.stderr)
+                  "checklist stopped growing. "
+                  "REPAIR THE EXISTING ITEM; do NOT create a new section "
+                  "covering the same work because this one is unreachable -- "
+                  "unreachable is not absent, and a duplicate makes the corpus "
+                  "worse while every counter reads as improvement.",
+                  file=sys.stderr)
             return 1
 
         state["phase"] = "FIXPOINT"

@@ -33,4 +33,8 @@ Findings from the run armed after the 2026-08-02 repair stop. This file is a CAP
 
 ---
 
-_No findings yet._
+- [ ] Verify TODO-11 §6 and §15 are not the same TEB-allocation work filed twice
+      Surfaced 2026-08-02 by a within-file section-similarity scan run to test whether the runner had been creating duplicates. Of 55 near-duplicate pairs, 54 are legitimate siblings (USB HID keyboard vs mouse, GPT vs MBR partition write, Registry syscalls core vs advanced). This is the one that reads as a genuine overlap and needs a human eye:
+      - `02-kernel-core/TODO-11-peb-teb-user-abi.md` **§6 "TEB Allocation and Population at Thread Create"** vs **§15 "Per-thread TEB Allocation at uthread_create()"** (similarity 0.73).
+      - **If they ARE the same work**, the repair is NOT to delete one: reconcile into whichever section owns the capability, leave the other as a stub XREF pointing at it, and state in the survivor what it now covers. Deleting a section silently orphans every XREF that names it.
+      - **A fuzzy duplicate DETECTOR was deliberately NOT built.** Title similarity is a bad signal here: sibling sections are supposed to have parallel names, so the scan produced 54 false positives to 1 candidate, and shipping it would repeat the cry-wolf failure removed from `todo-reachability.py` the same morning. The durable control is doctrine at the two moments the run is tempted -- the section-cap block message and the fixpoint reachability refusal both now say "unreachable is not absent; reopen or reference, never re-create".
