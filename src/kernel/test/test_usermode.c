@@ -166,10 +166,31 @@ static uint32_t s_timeout_ms;
  * decline to free things: the host-side refusal happens after the guest has
  * already run, and cannot contain anything.
  *
- * Sticky for the rest of the run. There is no re-quiescing here -- the reap
- * gave up precisely because it could not prove the constructor had
- * finished -- so nothing later in the suite is entitled to clear it. */
+ * Sticky for the rest of the BOOT, and deliberately NOT reset at the framed-run
+ * boundary the way struct utest_run_latches is. The distinction is what the two
+ * latches MEAN. A stalled clock is a statement about a run's measurements: the
+ * next run re-measures, so carrying it forward would abort a healthy run over
+ * someone else's fault. This one is a statement about the TASK TABLE -- an
+ * unfinished fork constructor still owns the slot the next task_create_internal
+ * would claim -- and nothing about starting a new run settles that constructor.
+ * Resetting it would hand back a corruption guard in exchange for tidiness. */
 static int s_reap_degraded;
+
+/* Per-RUN infrastructure latches. See struct utest_run_latches for why these
+ * are separated from the boot-sticky poison above. */
+static struct utest_run_latches s_run_latches;
+
+/* Clear the whole set, by ASSIGNING a zeroed struct rather than by clearing
+ * each member. A latch added later is then cleared by construction; a list of
+ * per-member assignments is a list someone has to remember to extend, and the
+ * cost of forgetting is a run aborted over another run's fault. */
+static void u_run_latches_reset(struct utest_run_latches *l)
+{
+    struct utest_run_latches cleared;
+
+    cleared.wait_stalled = 0;
+    *l = cleared;
+}
 
 static int s_tap_mode;
 
@@ -431,6 +452,186 @@ static uint64_t u_uptime_ms(void)
 {
     return uptime_ns() / 1000000ULL;
 }
+
+/* ---- The one bounded wait ------------------------------------------------ *
+ *
+ * struct utest_wait_ops / enum utest_wait_end (include/kernel/test/
+ * test_usermode.h) carry the full rationale for why a millisecond deadline is
+ * not a bound and why the escape is a watchdog on an independent counter rather
+ * than an iteration count. What follows is the loop and the LIVE binding.
+ * ------------------------------------------------------------------------- */
+
+/* The fallback rate must cover every TSC this kernel will accept, and the two
+ * constants live in different subsystems, so the relation is pinned rather than
+ * documented. A raised qualification ceiling with an unchanged launcher bound
+ * would leave the watchdog burning its budget faster than real time on exactly
+ * the fast virtual TSCs the ceiling was raised to admit -- and the symptom
+ * would be healthy waits reported as stalled, on the platforms hardest to
+ * reproduce. */
+_Static_assert(UTEST_WAIT_TICKS_PER_MS_MAX * 1000ULL >= MONO_TSC_HZ_MAX,
+               "the launcher's fallback watchdog rate is below the fastest TSC "
+               "mono_source_qualify() accepts, so the watchdog could fire on a "
+               "healthy wait");
+
+/* The live rate for the watchdog's conversion: the MEASURED TSC frequency when
+ * the kernel has one, with a safety factor, and the qualification ceiling when
+ * it does not. Never a guess -- see UTEST_WAIT_TICKS_PER_MS_MAX for why a
+ * plausible-sounding constant is the failure mode here. */
+static uint64_t u_wait_ticks_per_ms_live(void)
+{
+    uint64_t hz = mono_tsc_hz();
+
+    /* Used AS MEASURED, with no safety factor on top. The budget is already a
+     * multiple of the caller's own timeout, so a healthy wait reaches its
+     * deadline at half the watchdog's mark and calibration error of a fraction
+     * of a percent cannot close that gap. A second multiplier here would only
+     * push the escape past the harness's boot bound, which is where an escape
+     * stops being one. */
+    if (hz == 0)
+        return UTEST_WAIT_TICKS_PER_MS_MAX;
+    /* Integer division floors, which biases the rate DOWN and the escape
+     * EARLY -- the unsafe direction. It cannot matter here: the qualification
+     * floor is 100 MHz, so the quotient is at least 100000 and the discarded
+     * remainder is under one part in 100000 of it. */
+    return hz / 1000ULL;
+}
+
+static const struct utest_wait_ops u_wait_ops_live = {
+    .now_ms       = u_uptime_ms,
+    .now_ticks    = mono_tsc_raw,
+    .ticks_per_ms = u_wait_ticks_per_ms_live,
+    .wait         = yield,
+};
+
+/* Ticks the watchdog will let pass before it ends the wait.
+ *
+ * Kept separate from the loop so the arithmetic is checkable on its own, and
+ * computed in 64-bit throughout. The widest product it can form is the capped
+ * budget against the qualification ceiling -- 300000 ms x 1e8 ticks/ms = 3e13
+ * -- well inside a uint64, and the cap is what keeps it that way rather than a
+ * claim about what callers pass.
+ *
+ * The cap is deliberately ABOVE anything utest_timeout_ms can express, so it
+ * can never pull the budget below the caller's own deadline. That ordering is
+ * the invariant the whole escape rests on: a watchdog that expires first ends
+ * healthy waits. */
+static uint64_t u_wait_watchdog_ticks(uint32_t timeout_ms,
+                                      const struct utest_wait_ops *ops)
+{
+    uint64_t budget_ms = (uint64_t)timeout_ms * UTEST_WAIT_WATCHDOG_MULT;
+    uint64_t rate = ops->ticks_per_ms ? ops->ticks_per_ms()
+                                      : UTEST_WAIT_TICKS_PER_MS_MAX;
+
+    if (budget_ms < (uint64_t)UTEST_WAIT_WATCHDOG_FLOOR_MS)
+        budget_ms = (uint64_t)UTEST_WAIT_WATCHDOG_FLOOR_MS;
+    if (budget_ms > (uint64_t)UTEST_WAIT_WATCHDOG_CAP_MS)
+        budget_ms = (uint64_t)UTEST_WAIT_WATCHDOG_CAP_MS;
+    /* A world that reports a zero rate would otherwise produce a zero budget,
+     * which is an immediately-expired watchdog: the one failure this whole
+     * design exists to avoid. Fall back rather than trust it. */
+    if (rate == 0)
+        rate = UTEST_WAIT_TICKS_PER_MS_MAX;
+    return budget_ms * rate;
+}
+
+/* THREE termination conditions, and the order between them is the design.
+ *
+ *   1. `ready` is polled FIRST, every iteration. A condition that became true
+ *      in the same instant the deadline passed is a satisfied wait, not a
+ *      timeout, and reporting it as a timeout would manufacture failures out of
+ *      waits that succeeded.
+ *   2. The millisecond DEADLINE is the ordinary bound and stays the ordinary
+ *      answer. On a live clock it is always reached before the watchdog,
+ *      because the watchdog's budget is a multiple of the same timeout.
+ *   3. The WATCHDOG is the escape, and only the escape. It measures elapsed
+ *      counter ticks against a budget converted at a deliberately overstated
+ *      rate, so on any real part it fires later than nominal -- never earlier.
+ *
+ * The counter delta is taken as an unsigned subtraction from the value sampled
+ * at entry, which is correct across the counter's own wrap. A counter that goes
+ * BACKWARD (no per-CPU offset correction is applied to a raw read) yields a
+ * huge unsigned delta and would end the wait early, so the sample is clamped to
+ * a high-water mark: the launcher is not migrated between CPUs while it waits
+ * (task dispatch uses a single global current_task), and the clamp makes that
+ * an enforced property of this loop rather than an assumption about the caller.
+ *
+ * The iteration ceiling below all three is the termination PROOF: reachable
+ * only when the deadline clock and the watchdog counter are BOTH frozen, and
+ * reported as a stall because that is what it is. */
+static int u_bounded_wait(int (*ready)(void *ctx), void *ctx,
+                          uint32_t timeout_ms,
+                          const struct utest_wait_ops *ops)
+{
+    uint64_t deadline;
+    uint64_t wd_budget;
+    uint64_t wd_start;
+    uint64_t wd_high;
+    uint32_t iters;
+    int have_watchdog;
+
+    if (!ready || !ops || !ops->now_ms || !ops->wait)
+        return UTEST_WAIT_STALLED;
+
+    deadline  = ops->now_ms() + (uint64_t)timeout_ms;
+    wd_budget = u_wait_watchdog_ticks(timeout_ms, ops);
+    /* A world without a counter still terminates, on the ceiling alone. Stated
+     * as an explicit branch rather than left to a NULL call, because the whole
+     * promise of this helper is that no binding of it can spin forever. */
+    have_watchdog = (ops->now_ticks != (uint64_t (*)(void))0);
+    wd_start = have_watchdog ? ops->now_ticks() : 0;
+    wd_high  = wd_start;
+
+    for (iters = 0; iters < UTEST_WAIT_ITER_CEIL; iters++) {
+        if (ready(ctx))
+            return UTEST_WAIT_READY;
+        if (ops->now_ms() >= deadline)
+            return UTEST_WAIT_TIMEOUT;
+        if (have_watchdog) {
+            uint64_t now = ops->now_ticks();
+            /* RE-DERIVED EVERY ITERATION, and only ever allowed to GROW.
+             *
+             * A budget snapshotted at entry goes stale: the rate behind it can
+             * change under a live wait -- a drift demotion moves timekeeping
+             * off the TSC, and the rate the wait is still holding was measured
+             * for a counter the kernel has since stopped trusting. Recomputing
+             * closes that, but recomputing alone would let the budget SHRINK
+             * mid-wait, which retroactively expires a watchdog that had not
+             * expired. Keeping the maximum makes every transition safe in one
+             * direction: a rate that rises (or falls back to the ceiling)
+             * extends the escape, and a rate that falls never shortens it. */
+            uint64_t budget_now = u_wait_watchdog_ticks(timeout_ms, ops);
+
+            if (budget_now > wd_budget)
+                wd_budget = budget_now;
+            if (now > wd_high)
+                wd_high = now;
+            if (wd_high - wd_start >= wd_budget)
+                return UTEST_WAIT_STALLED;
+        }
+        ops->wait();
+    }
+    return UTEST_WAIT_STALLED;
+}
+
+int test_usermode_bounded_wait(int (*ready)(void *ctx), void *ctx,
+                               uint32_t timeout_ms,
+                               const struct utest_wait_ops *ops)
+{
+    return u_bounded_wait(ready, ctx, timeout_ms, ops);
+}
+
+uint64_t test_usermode_wait_watchdog_ticks(uint32_t timeout_ms,
+                                           const struct utest_wait_ops *ops)
+{
+    if (!ops)
+        return 0;
+    return u_wait_watchdog_ticks(timeout_ms, ops);
+}
+
+/* Name the stall on the wire, once per site that suffers one. Defined after the
+ * record-framing macro it uses; declared here because the first caller is the
+ * per-binary wait, which sits above that macro. */
+static void u_wait_report_stall(const char *site, uint64_t detail);
 
 /* ---- test-type taxonomy ----------------------------------------- *
  *
@@ -2023,6 +2224,24 @@ static void u_stamp_timeout_status(struct task *t)
     t->exit_status = TASK_EXIT_UTEST_TIMEOUT;
 }
 
+/* The stall twin of the stamp above, and a SEPARATE function rather than a
+ * parameter on it, for the same reason the two reasons are separate values: the
+ * only postcondition worth asserting is that these two paths cannot converge on
+ * one marker. A shared setter taking the status as an argument would let a
+ * caller pass either at either site and no test could tell. */
+static void u_stamp_stalled_status(struct task *t)
+{
+    t->exit_status = TASK_EXIT_UTEST_STALLED;
+}
+
+/* The per-binary wait's condition, as a predicate over the task slot. */
+static int u_task_is_dead(void *ctx)
+{
+    const struct task *t = (const struct task *)ctx;
+
+    return t->state == TASK_DEAD;
+}
+
 /* ---- Polled wait with timeout -------------------------------------- *
  *
  * Replaces task_waitpid in the path. Semantics:
@@ -2041,12 +2260,13 @@ static void u_stamp_timeout_status(struct task *t)
  * ------------------------------------------------------------------ */
 
 static int32_t u_wait_with_timeout(uint32_t pid, uint32_t timeout_ms,
-                                   int *out_timed_out)
+                                   int *out_timed_out, int *out_stalled)
 {
     struct task *t = task_get_by_pid(pid);
-    uint64_t deadline, grace_deadline;
+    int ended;
 
     *out_timed_out = 0;
+    *out_stalled   = 0;
 
     if (!t)
         return -1;
@@ -2054,14 +2274,25 @@ static int32_t u_wait_with_timeout(uint32_t pid, uint32_t timeout_ms,
     if (timeout_ms == 0)
         timeout_ms = UTEST_DEFAULT_TIMEOUT_MS;
 
-    deadline = u_uptime_ms() + (uint64_t)timeout_ms;
-
-    while (t->state != TASK_DEAD) {
-        if (u_uptime_ms() >= deadline) {
-            *out_timed_out = 1;
-            break;
-        }
-        yield();
+    ended = u_bounded_wait(u_task_is_dead, t, timeout_ms, &u_wait_ops_live);
+    /* A STALL TAKES THE TIMEOUT'S SAFETY ACTIONS AND KEEPS ITS OWN NAME, and
+     * splitting the two is what makes the outcome reportable at all.
+     *
+     * The tempting shapes are both wrong. Reporting a stall as an ordinary
+     * timeout gets the safety right and destroys the distinction the wait was
+     * extended to make -- the caller then blames a binary that was never slow.
+     * Reporting it as neither keeps the distinction and drops the safety: the
+     * launcher would walk on to snapshot this child's TCB and free its slot
+     * without ever having established that it is dead, which is the one thing
+     * the kill path exists to establish. So `timed_out` continues to mean
+     * "the launcher stopped waiting and must now prove the child dead", and
+     * `stalled` carries WHY on top of it. */
+    if (ended == UTEST_WAIT_STALLED) {
+        *out_stalled   = 1;
+        *out_timed_out = 1;
+        u_wait_report_stall("binary-wait", (uint64_t)pid);
+    } else if (ended == UTEST_WAIT_TIMEOUT) {
+        *out_timed_out = 1;
     }
 
     if (*out_timed_out) {
@@ -2069,9 +2300,26 @@ static int32_t u_wait_with_timeout(uint32_t pid, uint32_t timeout_ms,
          * its signal_check on the next kernel entry, unwind cleanly,
          * and set its own exit_status. */
         signal_send(pid, SIGKILL);
-        grace_deadline = u_uptime_ms() + (uint64_t)UTEST_KILL_GRACE_MS;
-        while (t->state != TASK_DEAD && u_uptime_ms() < grace_deadline)
-            yield();
+        /* The grace is the SECOND wait on this path and needs the escape as
+         * much as the first: reached after a stall it would be waiting on the
+         * same stopped clock, so a wait that escaped its own hang would hang
+         * here instead.
+         *
+         * ITS OUTCOME IS NOT DISCARDABLE, and the tempting reasoning for
+         * discarding it -- "the run is already marked, the first wait named the
+         * site" -- is only true on the branch where the FIRST wait stalled. The
+         * other branch is the dangerous one: the binary times out normally on a
+         * live clock, the clock stops during the grace, and a discarded result
+         * would leave out_stalled false, no record on the wire, the child
+         * stamped as an ordinary timeout, and the suite carrying on measuring
+         * later binaries against a clock that had already stopped. So the
+         * grace reports its OWN site and promotes the outcome. */
+        if (u_bounded_wait(u_task_is_dead, t, UTEST_KILL_GRACE_MS,
+                           &u_wait_ops_live) == UTEST_WAIT_STALLED &&
+            !*out_stalled) {
+            *out_stalled = 1;
+            u_wait_report_stall("binary-kill-grace", (uint64_t)pid);
+        }
         /* Forceful fallback: a user-mode spinloop with no syscall
          * never runs signal_check, so SIGKILL alone cannot land. We
          * have to mark the task DEAD ourselves.
@@ -2093,7 +2341,8 @@ static int32_t u_wait_with_timeout(uint32_t pid, uint32_t timeout_ms,
          * Defensive guard: refuse to force-kill ourselves; would
          * leave the running task DEAD and trip a cascading crash. */
         if (t->state != TASK_DEAD && t != task_current())
-            task_terminate_remote(t, TASK_EXIT_UTEST_TIMEOUT);
+            task_terminate_remote(t, *out_stalled ? TASK_EXIT_UTEST_STALLED
+                                                  : TASK_EXIT_UTEST_TIMEOUT);
         /* Stamped UNCONDITIONALLY, on both branches, and that is load-bearing
          * rather than belt-and-braces. On the cooperative branch the child
          * already died from SIGKILL and signal_default_action left -9 behind;
@@ -2111,7 +2360,10 @@ static int32_t u_wait_with_timeout(uint32_t pid, uint32_t timeout_ms,
          * immediately below with no intervening yield. It stops being benign
          * the day a teardown path starts recording an exit status, so anyone
          * adding such a consumer needs to reorder this first. */
-        u_stamp_timeout_status(t);
+        if (*out_stalled)
+            u_stamp_stalled_status(t);
+        else
+            u_stamp_timeout_status(t);
     }
 
     return t->exit_status;
@@ -2583,9 +2835,14 @@ _Static_assert(UTEST_SKIP_RECORD_BUDGET <= 9999999u,
 #define UTEST_RSNC_LEAK         " handle(s) leaked"
 #define UTEST_RSNC_ISOLATE      "isolation failed"
 #define UTEST_RSNC_INVALID      "invalid test report"
+/* The launcher stopped waiting because the monotonic clock stopped, so the one
+ * number a timeout reason carries -- the deadline it passed -- is exactly the
+ * thing this reason must NOT claim. It names the fault and nothing else. */
+#define UTEST_RSNC_STALL        "monotonic clock stalled"
 #define UTEST_REASON_TIMEOUT (UTEST_LIT(UTEST_RSNC_TIMEOUT_PRE)             \
                               + UTEST_DIGITS_U32                            \
                               + UTEST_LIT(UTEST_RSNC_TIMEOUT_POST))
+#define UTEST_REASON_STALL   UTEST_LIT(UTEST_RSNC_STALL)
 #define UTEST_REASON_EXIT    (UTEST_LIT(UTEST_RSNC_EXIT)                    \
                               + UTEST_LIT(UTEST_RSNC_NEG)                   \
                               + UTEST_DIGITS_U32)
@@ -2663,7 +2920,9 @@ _Static_assert(UTEST_SKIP_RECORD_BUDGET <= 9999999u,
                                      UTEST_REASON_EXIT),                   \
                           UTEST_MAX2(UTEST_REASON_LEAK,                    \
                                      UTEST_REASON_ISOLATE)),               \
-               UTEST_MAX2(UTEST_REASON_INVALID, UTEST_REASON_REFUSAL))
+               UTEST_MAX2(UTEST_MAX2(UTEST_REASON_INVALID,                 \
+                                     UTEST_REASON_STALL),                  \
+                          UTEST_REASON_REFUSAL))
 _Static_assert(UTEST_REASON_MAX < UTEST_REASON_BUF,
                "the widest reason the launcher composes must fit the buffer "
                "u_run_one writes it into");
@@ -2703,6 +2962,14 @@ static void u_reason_timeout(char (*dst)[UTEST_REASON_BUF], uint32_t ms)
     u_append(*dst, &rp, UTEST_REASON_BUF, UTEST_RSNC_TIMEOUT_PRE);
     u_append_uint(*dst, &rp, UTEST_REASON_BUF, ms);
     u_append(*dst, &rp, UTEST_REASON_BUF, UTEST_RSNC_TIMEOUT_POST);
+}
+
+static void u_reason_stall(char (*dst)[UTEST_REASON_BUF])
+{
+    uint32_t rp = 0;
+
+    (*dst)[0] = '\0';
+    u_append(*dst, &rp, UTEST_REASON_BUF, UTEST_RSNC_STALL);
 }
 
 static void u_reason_exit(char (*dst)[UTEST_REASON_BUF], int32_t status)
@@ -3447,6 +3714,21 @@ static uint32_t u_frame_nonce_fold(uint64_t mixed)
     uint32_t nonce = (uint32_t)(mixed ^ (mixed >> 32));
 
     return nonce ? nonce : 1u;
+}
+
+/* A framed record rather than a bare klog line, so it is counted in the run's
+ * terminator like every other launcher record, and kept SEPARATE from any
+ * timeout reporting: a reader who sees this knows the launcher stopped being
+ * able to measure time, which is a different investigation from a producer that
+ * hung. `site` names WHICH wait gave up, because the five of them fail for
+ * unrelated reasons and one undifferentiated record would send a reader to the
+ * wrong one. Setting the sticky flag here rather than at each call site is what
+ * makes it impossible to report a stall without also failing the run. */
+static void u_wait_report_stall(const char *site, uint64_t detail)
+{
+    s_run_latches.wait_stalled = 1;
+    utest_record_log(LOG_WARN, "[UTEST-WAIT-STALLED] site=%s detail=%u",
+                     site, detail);
 }
 
 static uint32_t u_frame_nonce_new(void)
@@ -4620,19 +4902,31 @@ static uint64_t u_capture_inflight(void)
  * Yielding is what makes progress possible at all: task dispatch here uses a
  * single global current_task, so the outstanding emitter cannot run until
  * this launcher thread gives up the CPU. */
+static int u_capture_drained(void *ctx)
+{
+    (void)ctx;
+    return u_capture_inflight() == 0;
+}
+
 static uint64_t u_capture_drain(void)
 {
-    uint64_t deadline = u_uptime_ms() + (uint64_t)UTEST_CAPTURE_DRAIN_MS;
+    int ended = u_bounded_wait(u_capture_drained, (void *)0,
+                               UTEST_CAPTURE_DRAIN_MS, &u_wait_ops_live);
     uint64_t pending;
 
-    for (;;) {
-        pending = u_capture_inflight();
-        if (pending == 0)
-            return 0;
-        if (u_uptime_ms() >= deadline)
-            return pending;
-        yield();
-    }
+    /* Re-read rather than carry a count out of the loop: the predicate answers
+     * a yes/no, and the caller needs the NUMBER still outstanding at the moment
+     * the wait ended. */
+    pending = u_capture_inflight();
+    /* A stall needs no separate conservative action here, and that is a
+     * property of what this function returns rather than an omission. The
+     * caller acts on the outstanding count, which a stalled wait leaves
+     * non-zero by construction -- the condition was never met -- so the run is
+     * already reported as having claims that never reached the wire. The stall
+     * record adds WHY they did not. */
+    if (ended == UTEST_WAIT_STALLED)
+        u_wait_report_stall("capture-drain", pending);
+    return pending;
 }
 
 /* Is `t` a capture-owning DESCENDANT of `owner_pid` -- a task that inherited
@@ -4777,6 +5071,8 @@ static const struct utest_reap_ops u_reap_ops_live = {
     .terminate    = u_reap_live_terminate,
     .cleanup      = task_cleanup,
     .now_ms       = u_uptime_ms,
+    .now_ticks    = mono_tsc_raw,
+    .ticks_per_ms = u_wait_ticks_per_ms_live,
     .wait         = yield,
 };
 
@@ -4789,20 +5085,80 @@ static const struct utest_reap_ops u_reap_ops_live = {
  *
  * The deadline is a bound, not a duration: it re-checks the condition first
  * and leaves the moment it is met, the same shape the grace wait uses. */
+/* Project the wait's world out of the reap's. Both waits below run over the
+ * SAME seams the rest of the reap uses, so a synthetic tree that freezes the
+ * reap's clock freezes its waits with it. */
+static struct utest_wait_ops u_reap_wait_ops(const struct utest_reap_ops *ops)
+{
+    struct utest_wait_ops w;
+
+    w.now_ms       = ops->now_ms;
+    w.now_ticks    = ops->now_ticks;
+    w.ticks_per_ms = ops->ticks_per_ms;
+    w.wait         = ops->wait;
+    return w;
+}
+
+struct u_reap_wait_ctx {
+    const struct utest_reap_ops *ops;
+    uint32_t owner_pid;
+    uint32_t stranded;
+};
+
+static int u_reap_forks_settled(void *ctx)
+{
+    struct u_reap_wait_ctx *c = (struct u_reap_wait_ctx *)ctx;
+
+    return c->ops->fork_pending(c->owner_pid, &c->stranded) == 0;
+}
+
 static uint32_t u_reap_drain(uint32_t owner_pid,
                              const struct utest_reap_ops *ops,
-                             uint32_t *stranded)
+                             uint32_t *stranded, int *stalled)
 {
-    uint64_t deadline = ops->now_ms() + (uint64_t)UTEST_CAPTURE_REAP_DRAIN_MS;
-    uint32_t pending;
+    struct u_reap_wait_ctx c;
+    struct utest_wait_ops w = u_reap_wait_ops(ops);
+    int ended;
 
-    for (;;) {
-        pending = ops->fork_pending(owner_pid, stranded);
-        if (pending == 0 || ops->now_ms() >= deadline)
-            break;
-        ops->wait();
+    c.ops       = ops;
+    c.owner_pid = owner_pid;
+    c.stranded  = 0;
+
+    ended = u_bounded_wait(u_reap_forks_settled, &c,
+                           UTEST_CAPTURE_REAP_DRAIN_MS, &w);
+    /* THE STALL IS CARRIED OUT, not inferred from the count, and the
+     * difference is a real hole rather than a stylistic one. A wait that gave
+     * up on a stopped clock had a non-zero count at its last probe, but the
+     * re-read below can still return zero if the constructor happened to
+     * finish in between -- and a zero would then be presented as a settled
+     * drain by a launcher that had just admitted it cannot measure time. The
+     * caller uses this flag to refuse exactness regardless of the number.
+     *
+     * SET-ONLY, never cleared, and the asymmetry is the whole contract. The
+     * reap drains TWICE over one flag, so a plain assignment would let the
+     * second attempt ERASE a stall the first one suffered: the retry can settle
+     * on its own condition even while the clock is dead, and the reap would
+     * then report a clean run for a launcher that had already lost its clock --
+     * no record, no suite abort, and every later bound in the run measured
+     * against nothing. The caller zeroes it once, before the first drain. */
+    if (ended == UTEST_WAIT_STALLED)
+        *stalled = 1;
+    return ops->fork_pending(owner_pid, stranded);
+}
+
+/* The kill grace's condition: no capture-owning descendant of this owner is
+ * still alive. */
+static int u_reap_tree_quiet(void *ctx)
+{
+    struct u_reap_wait_ctx *c = (struct u_reap_wait_ctx *)ctx;
+    struct task *t;
+    uint32_t pid;
+
+    for (pid = 0; (t = c->ops->get_by_pid(pid)) != (struct task *)0; pid++) {
+        if (u_capture_descendant_of(t, c->owner_pid) && t->state != TASK_DEAD)
+            return 0;
     }
-    return pending;
+    return 1;
 }
 
 /* Fence and reap one binary's capture-owning descendant tree, over an
@@ -4819,12 +5175,21 @@ static void u_capture_reap_tree_ops(uint32_t owner_pid,
     struct task *t;
     uint32_t pending = 0;
     uint32_t stranded = 0;
+    struct utest_wait_ops wait_ops = u_reap_wait_ops(ops);
+    struct u_reap_wait_ctx wait_ctx;
+    int drain_stalled = 0;
+    int grace_stalled = 0;
+
+    wait_ctx.ops       = ops;
+    wait_ctx.owner_pid = owner_pid;
+    wait_ctx.stranded  = 0;
 
     out->live = 0;
     out->rounds = 0;
     out->drain_pending = 0;
     out->drain_stranded = 0;
     out->exact = 0;
+    out->stalled = 0;
 
     if (owner)
         ops->fence(owner);
@@ -4858,7 +5223,7 @@ static void u_capture_reap_tree_ops(uint32_t owner_pid,
      *
      * The deadline is a bound, not a duration -- like the grace below, this
      * re-checks the condition and leaves the moment it is met. */
-    pending = u_reap_drain(owner_pid, ops, &stranded);
+    pending = u_reap_drain(owner_pid, ops, &stranded, &drain_stalled);
     /* A SECOND drain when the first did not settle, and it is not a
      * superstitious retry. u_reap_drain yields between probes, so an expired
      * first drain means one full bound of yielding did not let the preempted
@@ -4902,11 +5267,9 @@ static void u_capture_reap_tree_ops(uint32_t owner_pid,
      * an invariant. Closing the residual properly is the same
      * unquiesced-constructor question as the parked boot-poisoning item in
      * this section, and needs the same boot-policy decision. */
-    out->exact = (pending == 0 && stranded == 0) ? 1u : 0u;
+    out->exact = (pending == 0 && stranded == 0 && !drain_stalled) ? 1u : 0u;
 
     for (round = 0; round < UTEST_CAPTURE_REAP_ROUNDS; round++) {
-        uint64_t grace;
-
         out->rounds = round + 1u;
         live = 0;
         for (pid = 0; (t = ops->get_by_pid(pid)) != (struct task *)0; pid++) {
@@ -4929,20 +5292,10 @@ static void u_capture_reap_tree_ops(uint32_t owner_pid,
          * UTEST_CAPTURE_REAP_ROUNDS rounds is seconds of wall clock added
          * to each binary for nothing. This is the shape the top-level wait
          * already uses -- re-check the condition, then the clock. */
-        grace = ops->now_ms() + (uint64_t)UTEST_CAPTURE_REAP_GRACE_MS;
-        for (;;) {
-            uint32_t still = 0;
-
-            for (pid = 0; (t = ops->get_by_pid(pid)) != (struct task *)0;
-                 pid++) {
-                if (u_capture_descendant_of(t, owner_pid) &&
-                    t->state != TASK_DEAD)
-                    still++;
-            }
-            if (still == 0 || ops->now_ms() >= grace)
-                break;
-            ops->wait();
-        }
+        if (u_bounded_wait(u_reap_tree_quiet, &wait_ctx,
+                           UTEST_CAPTURE_REAP_GRACE_MS,
+                           &wait_ops) == UTEST_WAIT_STALLED)
+            grace_stalled = 1;
 
         /* Forceful fallback for whatever the signal could not land on -- a
          * ring-3 spinloop never runs signal_check. Safe here for the same
@@ -4955,6 +5308,14 @@ static void u_capture_reap_tree_ops(uint32_t owner_pid,
                 continue;
             ops->terminate(t);
         }
+
+        /* STOP AFTER the terminate pass, not instead of it. A stalled grace
+         * means the clock died mid-reap, so every later round would spend its
+         * own watchdog budget learning the same thing -- but the kills and the
+         * force-terminate above are the only things that restore progress, so
+         * this round finishes them first and the loop ends after. */
+        if (grace_stalled)
+            break;
     }
 
     /* FINAL CENSUS, and it is not the same number the loop was tracking.
@@ -4986,11 +5347,32 @@ static void u_capture_reap_tree_ops(uint32_t owner_pid,
      * It can only improve the answer: the latch has been up since before the
      * first drain, so nothing new can have been admitted in between. */
     if (!out->exact) {
-        pending = u_reap_drain(owner_pid, ops, &stranded);
+        pending = u_reap_drain(owner_pid, ops, &stranded, &drain_stalled);
         out->drain_pending = pending;
         out->drain_stranded = stranded;
-        out->exact = (pending == 0 && stranded == 0) ? 1u : 0u;
+        /* RECOVERED EXACTNESS IS DELIBERATELY NOT GRANTED. A retry that
+         * settles proves the tree is quiesced, so the census here really is a
+         * statement -- and it is still refused, because `exact` is not only a
+         * description: it is the gate on the irreversible free. Once a wait in
+         * this reap has stalled, the run is being abandoned anyway (the sticky
+         * stall aborts the suite), so granting exactness would buy nothing but
+         * the one step that cannot be undone, taken by a launcher that has
+         * just reported it can no longer measure time. */
+        out->exact = (pending == 0 && stranded == 0 && !drain_stalled)
+                         ? 1u : 0u;
     }
+
+    /* A STALLED GRACE REFUSES EXACTNESS TOO, and for a reason the drain flags
+     * do not already cover. Exactness is a claim that the census below
+     * enumerates the tree that exists; the grace is what quiesces that tree
+     * before the census runs, so a grace that gave up on a stopped clock leaves
+     * the walk describing a tree that was still moving. Withholding exactness
+     * withholds the irreversible free and refuses the run host-side, which is
+     * the same conservative answer the drain's own failure gets. */
+    if (grace_stalled)
+        out->exact = 0;
+
+    out->stalled = (drain_stalled || grace_stalled) ? 1u : 0u;
 
     live = 0;
     for (pid = 0; (t = ops->get_by_pid(pid)) != (struct task *)0; pid++) {
@@ -5030,6 +5412,10 @@ static void u_capture_reap_tree_ops(uint32_t owner_pid,
 static void u_capture_reap_tree(uint32_t owner_pid, struct utest_reap_result *out)
 {
     u_capture_reap_tree_ops(owner_pid, &u_reap_ops_live, out);
+    /* The reporting lives HERE and not in the loop above, which is the only
+     * place that knows the world it just ran over was the real kernel. */
+    if (out->stalled)
+        u_wait_report_stall("capture-reap", (uint64_t)owner_pid);
 }
 
 /* Announce that this run SPAWNED a capture-owning binary.
@@ -7904,7 +8290,8 @@ static void u_emit_aggregate(const char *reason, utest_agg_kind_t kind,
  * + isolation contract live around it. */
 static void u_spawn_one(const char *name_copy, const char *path,
                         int *out_pid, int32_t *out_exit_status,
-                        int *out_timed_out, uint32_t *out_leaked,
+                        int *out_timed_out, int *out_stalled,
+                        uint32_t *out_leaked,
                         struct u_report *out_report, int have_stem,
                         const uint8_t *expect_digest,
                         struct u_loader_evidence *out_loader)
@@ -7952,6 +8339,7 @@ static void u_spawn_one(const char *name_copy, const char *path,
     if (pid < 0) {
         *out_exit_status = -1;
         *out_timed_out   = 0;
+        *out_stalled     = 0;
         *out_leaked      = 0;
         return;
     }
@@ -7983,8 +8371,8 @@ static void u_spawn_one(const char *name_copy, const char *path,
 
         u_capture_expect((uint32_t)pid, name_copy);
     }
-    *out_exit_status = u_wait_with_timeout((uint32_t)pid,
-                                           s_timeout_ms, out_timed_out);
+    *out_exit_status = u_wait_with_timeout((uint32_t)pid, s_timeout_ms,
+                                           out_timed_out, out_stalled);
     /* Snapshot leaks BEFORE task_cleanup destroys the handle table.
      * Callers must then run task_cleanup; the destructive reap happens
      * even later (contract: vfs_unlink needs the child's handles
@@ -8064,6 +8452,7 @@ static void u_run_one(const char *name, utest_type_t type,
     int pid = -1;
     int32_t exit_status = 0;
     int timed_out = 0;
+    int stalled = 0;
     uint32_t leaked = 0;
     uint32_t test_num;
     struct u_report report;
@@ -8124,7 +8513,7 @@ static void u_run_one(const char *name, utest_type_t type,
      * env-passing syscall that lets stress binaries query the desired
      * iteration count at runtime. */
     u_spawn_one(name_copy, path, &pid, &exit_status,
-                &timed_out, &leaked, &report, have_stem, expect_digest,
+                &timed_out, &stalled, &leaked, &report, have_stem, expect_digest,
                 &loader);
 
     /* The run's own count of spawned binaries, published on the frame
@@ -8209,8 +8598,17 @@ static void u_run_one(const char *name, utest_type_t type,
         if (record_verdict == 3)
             counters[3]++;
         *out_verdict = 1;
-        u_reason_timeout(&reason, s_timeout_ms ? s_timeout_ms
-                                              : UTEST_DEFAULT_TIMEOUT_MS);
+        /* A stall names the CLOCK, never a deadline. The two arrive through
+         * the same `timed_out` gate because they take the same safety actions,
+         * and this is the point at which they stop being the same thing: a
+         * reason reading "timeout after 10000ms" for a wait that never had a
+         * working clock is a fabricated measurement, and it is the one line a
+         * reader triages from. */
+        if (stalled)
+            u_reason_stall(&reason);
+        else
+            u_reason_timeout(&reason, s_timeout_ms ? s_timeout_ms
+                                                  : UTEST_DEFAULT_TIMEOUT_MS);
     } else {
         counters[1]++;  /* failed */
         /* A loader that never reached ring 3 is the same class as a
@@ -8299,10 +8697,20 @@ static void u_run_one(const char *name, utest_type_t type,
          * run's survivor accounting is unverifiable, and a run whose
          * accounting is unverifiable is not a clean run. */
         if (!reap.exact) {
-            /* Sticky, and it stops the SUITE rather than only this binary --
-             * see s_reap_degraded: the unfinished constructor already owns
-             * the slot the next task_create_internal would take. */
-            s_reap_degraded = 1;
+            /* THE BOOT-STICKY LATCH NEEDS CONSTRUCTOR EVIDENCE, not merely an
+             * inexact census, and the two stopped being the same thing once a
+             * stalled wait could also withhold exactness.
+             *
+             * What this latch means is that an unfinished fork constructor
+             * already owns the slot the next task_create_internal would take,
+             * which is why it survives the run that observed it. A grace that
+             * gave up on a stopped CLOCK is not that: nothing is half-built,
+             * and the run-scoped stall latch already aborts this suite. Setting
+             * it here anyway would poison the next run -- which clears the
+             * stall latch, keeps this one, and aborts a healthy binary as `reap
+             * degraded` with no collision to point at. */
+            if (reap.drain_pending || reap.drain_stranded)
+                s_reap_degraded = 1;
             utest_record_log(LOG_WARN,
                              "[UTEST-CAPTURE-REAP-DEGRADED] owner=%u pending=%u "
                              "stranded=%u",
@@ -8422,6 +8830,17 @@ static void u_run_one(const char *name, utest_type_t type,
         utest_record_log(LOG_ERROR,
              "%s: FAIL (" UTEST_RSNC_ISOLATE " -- escalated from PASS)",
              name_copy);
+    } else if (timed_out && stalled) {
+        /* SERIAL AGREES WITH THE ARTIFACTS. This branch re-derives its text
+         * from the flags rather than using the finalized `reason` below, which
+         * is fine while the flags pick one cause -- and stops being fine the
+         * moment two causes arrive through the same flag. A stall reaches here
+         * with `timed_out` set, because it takes the timeout's safety actions,
+         * so without this branch the human-readable verdict would blame the
+         * binary and quote a duration the launcher just said it could not
+         * measure, while TAP, XML and JSON all named the clock. */
+        utest_record_log(LOG_ERROR, "%s: FAIL (" UTEST_RSNC_STALL ")",
+                         name_copy);
     } else if (timed_out) {
         utest_record_log(LOG_ERROR,
              "%s: FAIL (" UTEST_RSNC_TIMEOUT_PRE "%u" UTEST_RSNC_TIMEOUT_POST ")",
@@ -8617,6 +9036,18 @@ void test_usermode_run(void)
      * unterminated frame is a stronger signal than no frame at all and
      * neither of those paths emits a single record. */
     u_frame_begin();
+
+    /* CLEAR THE RUN LATCHES AT THE FRAMED BOUNDARY, before any wait or record.
+     *
+     * They are sticky WITHIN a run, and this function is documented as safe to
+     * call repeatedly -- so a latch left set by an earlier invocation would
+     * abort this one, skip its remaining binaries, and serialize aborted
+     * artifacts carrying no record of the fault that caused the abort, because
+     * that record belongs to the previous run's frame. Placed after
+     * u_frame_begin so a fault raised by this run's very first wait is
+     * retained, and after the two early returns above, which emit nothing and
+     * are not runs. */
+    u_run_latches_reset(&s_run_latches);
 
     /* Enable preemptive scheduler for the timeout watchdog. Pair with
      * scheduler_disable before returning so boot_phase3 continues in
@@ -9074,6 +9505,17 @@ void test_usermode_run(void)
                 total_ran++;
                 u_run_one(e->name, e->type, &tap_point, counters, &rt,
                           &verdict, e->content_digest);
+                if (s_run_latches.wait_stalled) {
+                    /* Infrastructure-fatal for the same reason a degraded reap
+                     * is, one step earlier in the chain: every remaining bound
+                     * in this run -- the next binary's timeout, the next
+                     * drain, the next reap grace -- is measured against the
+                     * clock that just stopped. Continuing would produce
+                     * verdicts with nothing behind them, and would do it while
+                     * each of those waits burns its full watchdog budget. */
+                    infra_fatal = 1;
+                    break;
+                }
                 if (s_reap_degraded) {
                     /* Infrastructure-fatal, and it fast-fails for a STRONGER
                      * reason than the smoke gate below. A smoke failure means
@@ -9110,7 +9552,32 @@ void test_usermode_run(void)
                 break;
             }
         }
-        suite_aborted = smoke_failed || infra_fatal;
+        /* QUIESCE THE CAPTURE EPOCH HERE, before the verdict below reads the
+         * stall state, and NOT only at the terminator.
+         *
+         * The seal and the drain also run in u_frame_end, which is the
+         * protocol's home for them -- but u_frame_end is the LAST thing this
+         * function does, long after `suite_aborted` is fixed and after both
+         * machine artifacts have been serialized. A drain that stalled there
+         * could set the sticky flag and put its record on the wire while the
+         * run's own metadata had already been written as a clean, completed
+         * suite: a framed stall record inside an artifact claiming success,
+         * which is the false-green shape the flag exists to prevent.
+         *
+         * Safe to hoist because both halves are idempotent and neither can
+         * lose information: the seal is a flag store, and the drain re-run at
+         * the terminator finds the count already at zero (nothing can be
+         * admitted once sealed, and no binary is running at this point). The
+         * epoch CLOSE deliberately stays at the terminator, where its
+         * write-off and its two records are counted like every other framed
+         * line. */
+        u_capture_seal();
+        (void)u_capture_drain();
+
+        /* A stalled clock aborts on the same footing as a degraded reap. The
+         * in-loop check catches a stall suffered by a binary; this catches one
+         * suffered by the run-boundary drain, which has no later reader. */
+        suite_aborted = smoke_failed || infra_fatal || s_run_latches.wait_stalled;
     }
 
     /* Completeness reconciliation, for EVERY run and not only aborted
@@ -9166,7 +9633,8 @@ void test_usermode_run(void)
          * scheduler), so the artifacts must not blur them. The host matches
          * on `suite ABORT` / `Bail out!` and never on the cause text, so
          * naming it costs nothing downstream. */
-        const char *abort_cause = s_reap_degraded ? "reap degraded"
+        const char *abort_cause = s_run_latches.wait_stalled  ? "clock stalled"
+                                : s_reap_degraded ? "reap degraded"
                                                   : "smoke failed";
 
         utest_record_log(LOG_ERROR,
@@ -9439,6 +9907,28 @@ void test_usermode_stamp_timeout_status(struct task *t)
 {
     if (t)
         u_stamp_timeout_status(t);
+}
+
+/* The stall stamp's seam, on the same contract as the timeout one above and a
+ * SEPARATE entry point for the same reason the two stamps are separate
+ * functions: the property worth asserting is that these two causes cannot
+ * converge, and a shim taking the status as an argument could not tell. */
+void test_usermode_stamp_stalled_status(struct task *t);
+void test_usermode_stamp_stalled_status(struct task *t)
+{
+    if (t)
+        u_stamp_stalled_status(t);
+}
+
+/* The run-boundary latch clear, over the CALLER's struct rather than the
+ * launcher's own. The property that matters -- a run does not inherit the
+ * previous run's abort -- is otherwise reachable only by running the launcher
+ * twice, which needs live scheduling, signals, a clock and a mounted C:, all
+ * of which a test_*.c is forbidden from touching. */
+void test_usermode_run_latches_reset(struct utest_run_latches *l)
+{
+    if (l)
+        u_run_latches_reset(l);
 }
 
 uint32_t test_usermode_reason_exit(char *dst, uint32_t cap, int32_t status);

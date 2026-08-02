@@ -257,6 +257,42 @@ static void test_filetime_leap_second_policy(void)
  * ISR has been publishing, so the coarse values are live. The cache is updated
  * concurrently by the ISR, so assert only ISR-race-robust relations: coarse
  * never leads the precise live read, and coarse interrupt time is monotonic. */
+/* The raw counter exposed as a WATCHDOG source.
+ *
+ * The property it is exported for is the one asserted: it keeps moving while
+ * the selected monotonic source may not. That is why the comparison is against
+ * mono_ns_coarse() rather than a value of its own -- a watchdog whose reads
+ * could return the same number twice while the CPU retires instructions would
+ * be as stuck as the clock it is supposed to outlive, and every bounded wait
+ * built on it would lose its escape without any of them failing.
+ *
+ * Deliberately NOT a claim about rate, scale or per-CPU coherence: the accessor
+ * promises none of those, and asserting one here would invite a caller to
+ * convert it to a duration, which is exactly what its header forbids. */
+static void test_mono_tsc_raw_advances(void)
+{
+    uint64_t a = mono_tsc_raw();
+    uint64_t coarse_a = mono_ns_coarse();
+    uint64_t b;
+    uint32_t spins = 0;
+
+    /* Bounded: a counter that never moves fails the assertion below rather
+     * than hanging the suite, which is the same discipline the waits this
+     * source backs are held to. */
+    do {
+        b = mono_tsc_raw();
+        spins++;
+    } while (b == a && spins < 4096u);
+
+    TEST_ASSERT(b > a,
+                "the watchdog counter must advance while the CPU is retiring "
+                "instructions -- a source that can plateau here cannot bound "
+                "a wait whose deadline clock has stopped");
+    TEST_ASSERT(mono_ns_coarse() >= coarse_a,
+                "and the coarse monotonic read it backstops stays "
+                "non-decreasing across the same window");
+}
+
 static void test_coarse_time(void)
 {
     /* Coarse interrupt time is non-decreasing across reads (ISR only advances
@@ -563,6 +599,8 @@ void test_register_time(void)
                             test_filetime_leap_second_policy, TEST_CAT_SCHED);
     test_suite_register_cat("time: coarse time fast path",
                             test_coarse_time, TEST_CAT_SCHED);
+    test_suite_register_cat("time: raw watchdog counter advances",
+                            test_mono_tsc_raw_advances, TEST_CAT_SCHED);
     test_suite_register_cat("time: NTP tick adjustment math",
                             test_ntp_tick_adjust, TEST_CAT_SCHED);
     test_suite_register_cat("time: NTP step-target validation",

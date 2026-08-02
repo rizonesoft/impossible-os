@@ -95,6 +95,7 @@ COMPOSED = (
     ("UTEST_REASON_LEAK",    "u_reason_leak"),
     ("UTEST_REASON_ISOLATE", "u_reason_isolate"),
     ("UTEST_REASON_INVALID", "u_reason_invalid"),
+    ("UTEST_REASON_STALL",   "u_reason_stall"),
 )
 
 _FRAG_DEFINE_RE = re.compile(r"^\s*#\s*define\s+(UTEST_RSNC_[A-Z0-9_]+)\b")

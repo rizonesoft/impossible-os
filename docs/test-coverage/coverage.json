@@ -1,6 +1,6 @@
 {
-  "total_suites": 2738,
-  "total_assertions": 11212,
+  "total_suites": 2755,
+  "total_assertions": 11255,
   "files": [
     {"file": "test_ab_boot.c", "suites": 38, "assertions": 66},
     {"file": "test_acpi_power.c", "suites": 8, "assertions": 11},
@@ -87,7 +87,7 @@
     {"file": "test_storage.c", "suites": 2, "assertions": 2},
     {"file": "test_swap.c", "suites": 1, "assertions": 4},
     {"file": "test_syscall_filter.c", "suites": 8, "assertions": 42},
-    {"file": "test_time.c", "suites": 20, "assertions": 99},
+    {"file": "test_time.c", "suites": 21, "assertions": 101},
     {"file": "test_timer_tick_cb.c", "suites": 2, "assertions": 4},
     {"file": "test_tpm_attest.c", "suites": 11, "assertions": 114},
     {"file": "test_tpm_attest_report.c", "suites": 3, "assertions": 63},
@@ -105,7 +105,7 @@
     {"file": "test_usb_boot.c", "suites": 10, "assertions": 98},
     {"file": "test_usb_hid.c", "suites": 5, "assertions": 68},
     {"file": "test_usermode.c", "suites": 0, "assertions": 1},
-    {"file": "test_usermode_launcher.c", "suites": 193, "assertions": 854},
+    {"file": "test_usermode_launcher.c", "suites": 209, "assertions": 895},
     {"file": "test_vfs.c", "suites": 13, "assertions": 40},
     {"file": "test_vmm.c", "suites": 23, "assertions": 125},
     {"file": "test_vpd.c", "suites": 2, "assertions": 19},

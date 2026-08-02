@@ -283,6 +283,156 @@ int test_usermode_capture_claim_settlement(struct thread *thr);
  * before their owner binding exists on the wire. */
 void test_usermode_capture_begin(uint32_t owner_pid, const char *name);
 
+/* --- The launcher's per-run infrastructure latches --------------------------
+ *
+ * A condition that is sticky for the rest of a run and aborts it, where "the
+ * run" means ONE test_usermode_run() invocation -- documented above as safe to
+ * call repeatedly. Left as a bare file static such a latch would outlive its
+ * run and abort the NEXT one, which would then serialize aborted artifacts
+ * carrying no record of the fault they name, because that record belongs to the
+ * previous run's frame.
+ *
+ * SCOPE IS THE MEMBERSHIP TEST, and it is not obvious from severity. The
+ * launcher's other sticky latch, s_reap_degraded, is deliberately NOT here: it
+ * says an unfinished fork constructor still owns a task slot, which starting a
+ * new run does not settle, so resetting it would trade a corruption guard for
+ * tidiness. A latch belongs here only when the next run genuinely re-measures
+ * the thing it describes.
+ *
+ * A struct rather than a bare flag so the boundary reset is one act over the
+ * whole set: a per-run latch added later is cleared by construction rather than
+ * by whoever remembers to extend a list of assignments. */
+struct utest_run_latches {
+    uint8_t wait_stalled;   /* a bounded wait ended on the clock watchdog */
+};
+
+/* Clear every latch. Pure over the caller's struct so the run-boundary
+ * behaviour is assertable without driving a live run, which a kernel test may
+ * not do (it needs scheduling, signals, a clock and a mounted C:). */
+void test_usermode_run_latches_reset(struct utest_run_latches *l);
+
+/* --- The launcher's one bounded wait ---------------------------------------
+ *
+ * Every wait in the launcher yields until a condition holds, and every one of
+ * them used to terminate ONLY on u_uptime_ms(). That reads like a bound and is
+ * not one: uptime_ns() resolves through the driver's read_ns to
+ * mono_ns_coarse(), which for PMTMR hands back an epoch the timer ISR banks
+ * every PMTMR_ADVANCE_TICKS ticks and for the LAPIC/PIT source is derived from
+ * system_get_ticks(). Both stop dead if the tick stops -- and a deadline
+ * compared against a stopped clock is never reached, so each `bounded` wait
+ * yielded forever and the boot hung with no diagnostic at all.
+ *
+ * The escape is a WATCHDOG on an independent counter (mono_tsc_raw), NOT an
+ * inference from how fast the loop is spinning. Rate inference cannot be made
+ * safe here: a HEALTHY coarse clock plateaus for a full ISR advance interval,
+ * nothing in this tree bounds how many yields fit inside one plateau, and a
+ * wait cut short on a healthy machine reports capture records as lost when they
+ * were merely slow -- a false refusal is strictly worse than the hang, because
+ * it fires on runs that had nothing wrong with them. */
+
+/* Why the wait ended. Distinguishing the last two is the point: a producer that
+ * hung and a clock that stopped need opposite investigations, and before this
+ * enum existed neither was distinguishable from the other or from a clean
+ * exit. */
+enum utest_wait_end {
+    UTEST_WAIT_READY   = 0,  /* the condition became true */
+    UTEST_WAIT_TIMEOUT = 1,  /* the deadline passed on an ADVANCING clock */
+    UTEST_WAIT_STALLED = 2   /* the clock stopped; the watchdog ended the wait */
+};
+
+/* The wait's world, injectable for the same reason the reap's is: the shapes
+ * that matter (a frozen ms clock, a frozen watchdog, a coarse clock that
+ * plateaus and then advances) cannot be produced on demand by a live run.
+ *
+ * `now_ticks` is a free-running counter that must NOT be derived from `now_ms`
+ * -- deriving it would reproduce the very coupling the watchdog exists to
+ * break. The live binding is mono_tsc_raw(). */
+struct utest_wait_ops {
+    uint64_t (*now_ms)(void);
+    uint64_t (*now_ticks)(void);
+    /* Ticks the counter may accumulate in one millisecond, used to turn the
+     * watchdog's budget into a tick count. NULL means "no measured rate" and
+     * selects UTEST_WAIT_TICKS_PER_MS_MAX below. */
+    uint64_t (*ticks_per_ms)(void);
+    void     (*wait)(void);
+};
+
+/* The FALLBACK rate, in ticks per millisecond, used only when no measured one
+ * is available -- and it is the CEILING mono_source_qualify() will accept for a
+ * TSC (100 GHz, src/kernel/time/mono_clock.c), not a guess about hardware.
+ *
+ * The pessimism is the safety property, and the direction is easy to get
+ * backwards: real elapsed time to accumulate N ticks is N / real_rate, so only
+ * a rate at or ABOVE the real one makes the watchdog fire LATE. A constant
+ * chosen from "the fastest shipping part" is not an upper bound at all -- this
+ * kernel accepts a scaled or virtual TSC an order of magnitude past that, and
+ * on such a part a too-low constant burns the budget proportionally faster and
+ * declares a HEALTHY advancing wait stalled. Anchoring to the qualification
+ * ceiling makes the bound true for every clock this kernel will run on.
+ *
+ * THE FALLBACK'S LATENCY IS A KNOWN LIMITATION, stated rather than papered
+ * over: assuming 100 GHz on a 3 GHz part stretches the escape ~33x, past the
+ * harness's own 60 s boot bound, so on a platform whose TSC never qualified a
+ * stall surfaces as the runner's generic timeout instead of as a named record.
+ * Narrowing it would require a rate, which is exactly what that platform does
+ * not have -- and firing early on a healthy fast TSC is the worse error, so the
+ * bound stays true rather than convenient. mono_tsc_hz() supplies the measured
+ * rate in every other case, which is every platform this kernel is validated
+ * on. */
+#define UTEST_WAIT_TICKS_PER_MS_MAX  100000000ULL
+
+/* Overflow hygiene, and NOTHING ELSE -- in particular NOT a harness-fit bound.
+ *
+ * The invariant that outranks every other consideration here is that the
+ * watchdog must expire LATER than the caller's own deadline. Break it and the
+ * escape stops being an escape and becomes a killer of healthy tests: a cap
+ * below the configured timeout ends a wait whose millisecond clock is advancing
+ * perfectly, kills its child, and aborts the suite. `utest_timeout_ms` is a
+ * UINT16, so a caller may legitimately configure up to 65535 ms, and
+ * docs/testing/usermode-env-matrix.md recommends 30000 for storage-heavy
+ * binaries on WHPX -- a cap chosen to fit the harness would fire in the middle
+ * of exactly the runs that setting exists for.
+ *
+ * So this sits ABOVE anything the boot contract can express (65535 x the
+ * multiplier), and the relation to the harness is an operator contract stated
+ * in that doc instead: the escape lands at roughly twice the configured
+ * per-binary timeout, so a run raising the timeout raises scripts/test.sh's
+ * TIMEOUT with it. */
+#define UTEST_WAIT_WATCHDOG_CAP_MS   300000u
+
+/* The watchdog's budget, as a multiple of the caller's own timeout plus a
+ * floor. A wait whose deadline is honoured on a live clock must reach TIMEOUT
+ * first, so the watchdog has to sit clear of it; the floor keeps a very short
+ * timeout (the 200 ms drains) from producing a budget so tight that ordinary
+ * scheduling jitter could reach it. */
+#define UTEST_WAIT_WATCHDOG_MULT     2u
+#define UTEST_WAIT_WATCHDOG_FLOOR_MS 1000u
+
+/* Last-resort TERMINATION PROOF, not the mechanism. It is reachable only when
+ * BOTH the millisecond clock and the watchdog counter are frozen, which on real
+ * hardware means the CPU is retiring instructions while its TSC does not
+ * advance. It exists so "every wait terminates" is a property of the code
+ * rather than of the platform. Sized far above any count a healthy wait can
+ * reach, because on a healthy clock the deadline or the watchdog always ends
+ * the wait long before this does. */
+#define UTEST_WAIT_ITER_CEIL         (1u << 24)
+
+/* Drive the shared bounded wait over a caller-supplied world. Returns one of
+ * enum utest_wait_end. `ready` is polled BEFORE every termination check, so a
+ * condition that became true in the same instant the deadline passed reports
+ * READY rather than a timeout it did not suffer. */
+int test_usermode_bounded_wait(int (*ready)(void *ctx), void *ctx,
+                               uint32_t timeout_ms,
+                               const struct utest_wait_ops *ops);
+
+/* The watchdog's budget in ticks, exposed so the CONVERSION is assertable
+ * without a wait around it. The floor, the cap and the measured-versus-fallback
+ * rate are four decisions whose product is one number, and a wrong one is
+ * invisible from the outside: too large and the escape lands after the harness
+ * has killed the machine, too small and it ends healthy waits. */
+uint64_t test_usermode_wait_watchdog_ticks(uint32_t timeout_ms,
+                                           const struct utest_wait_ops *ops);
+
 /* --- The run-boundary reap's injectable world ------------------------------
  *
  * These two types are declared in the HEADER rather than kept private to
@@ -310,6 +460,18 @@ struct utest_reap_ops {
     void         (*terminate)(struct task *t);
     void         (*cleanup)(uint32_t pid);
     uint64_t     (*now_ms)(void);
+    /* The reap's two waits run through the shared bounded wait, so its world
+     * has to carry the watchdog counter too. It is a member of THIS struct,
+     * and the wait-ops view handed to the helper is projected from these two
+     * members rather than supplied separately -- a synthetic tree then sets
+     * one clock pair and cannot accidentally leave the reap and its waits
+     * reading different time. */
+    uint64_t     (*now_ticks)(void);
+    /* Paired with now_ticks for the same reason: the reap's waits convert its
+     * counter to a duration, and a synthetic tree that supplied a counter but
+     * not its rate would be measured against the production fallback instead
+     * of against its own clock. */
+    uint64_t     (*ticks_per_ms)(void);
     void         (*wait)(void);
 };
 
@@ -327,6 +489,12 @@ struct utest_reap_result {
     uint32_t drain_pending;  /* forks still in flight when the drain gave up */
     uint32_t drain_stranded; /* registrations on tasks that died mid-constructor */
     uint8_t  exact;          /* 1 iff nothing outstanding: `live` is a statement */
+    /* 1 iff a wait inside the reap ended on the clock watchdog rather than on
+     * its deadline. Carried OUT rather than reported from inside the loop: the
+     * loop runs over a synthetic world in the assertions, and a record emitted
+     * from there would put a fabricated stall on a healthy run's wire and mark
+     * the suite failed. The live entry point is the only thing that reports. */
+    uint8_t  stalled;
 };
 
 /* Drive the reap loop over a caller-supplied world. The live binding is

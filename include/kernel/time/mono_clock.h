@@ -78,6 +78,62 @@ uint32_t mono_clock_source_id(void);
  * Applies per-CPU TSC offset for SMP coherence. Only valid when source is TSC. */
 uint64_t rdtsc_ns(void);
 
+/* The RAW, UNSCALED time-stamp counter, with no source selection, no epoch and
+ * no frequency implied by the value.
+ *
+ * Exposed for exactly one purpose: a WATCHDOG that has to stay useful when the
+ * selected monotonic source has stopped. Every other read in this kernel goes
+ * through mono_ns() / uptime_ns(), and those are the correct calls -- they are
+ * monotonic, scaled, and demotion-safe. This one is none of those.
+ *
+ * Its value is that it is INDEPENDENT of the machinery mono_ns() depends on.
+ * uptime_ns() resolves through the driver's read_ns to mono_ns_coarse(), which
+ * for PMTMR returns an epoch banked by the timer ISR every PMTMR_ADVANCE_TICKS
+ * ticks, and for the LAPIC/PIT source is derived from system_get_ticks(): both
+ * stop advancing if the tick stops, and a caller waiting on either then has no
+ * bound at all. The TSC needs no interrupt, no port I/O and no epoch -- it
+ * advances whenever the CPU retires instructions -- so a loop that is executing
+ * can always observe it move.
+ *
+ * Callers must NOT convert it to a duration with a measured frequency: it is
+ * unscaled by design, may vary with P-states on an unstable-TSC part, and
+ * carries no per-CPU offset correction. A watchdog converts with a deliberately
+ * PESSIMISTIC upper-bound frequency so it can only ever fire LATE. */
+uint64_t mono_tsc_raw(void);
+
+/* The TRUSTED TSC frequency in Hz, or 0 when there is not one.
+ *
+ * Companion to mono_tsc_raw(): a watchdog holding a bound against the raw
+ * counter needs some rate to turn ticks into a duration, and guessing one is
+ * the failure mode -- boot qualification accepts anything from MONO_TSC_HZ_MIN
+ * to MONO_TSC_HZ_MAX, so a constant picked from "the fastest CPU I can think
+ * of" is not an upper bound at all. This returns the measured value when the
+ * kernel still believes it.
+ *
+ * ZERO IS RETURNED IN THREE CASES, and a caller must not tell them apart: the
+ * TSC was never measured, it failed boot qualification, or the drift watchdog
+ * later DEMOTED it for running off its measured rate. The last one is why the
+ * answer is gated on TSC being the ACTIVE source rather than on the boot
+ * descriptor alone: qualification range-checks the descriptor once and never
+ * revisits it, so a demoted TSC still passes, and handing out a rate the kernel
+ * has stopped believing is worse than handing out none -- the caller gets a
+ * confidently wrong duration instead of a known-unknown.
+ *
+ * So zero means "no trusted rate; fall back to a bound that holds for any
+ * qualified TSC (MONO_TSC_HZ_MAX)", never "no counter". mono_tsc_raw() keeps
+ * working and keeps advancing in every one of those cases. */
+uint64_t mono_tsc_hz(void);
+
+/* The band boot qualification will accept for a TSC. Named rather than left as
+ * literals inside mono_source_qualify() because the CEILING is load-bearing
+ * outside this subsystem: anything converting raw TSC ticks to a duration
+ * without a measured rate has to assume a rate at or above it, and a bound
+ * derived from "the fastest shipping part" is far below what this kernel
+ * accepts from a scaled or virtual TSC. Raising the ceiling here without
+ * revisiting those callers makes their bounds silently wrong. */
+#define MONO_TSC_HZ_MIN  100000000ULL      /* 100 MHz */
+#define MONO_TSC_HZ_MAX  100000000000ULL   /* 100 GHz */
+
 /* ---- Clocksource quality watchdog (drift demotion) ----------------------- *
  * Continuously cross-checks the active monotonic source against an independent
  * reference (HPET or PMTMR) and demotes a drifting source (an unstable TSC) to

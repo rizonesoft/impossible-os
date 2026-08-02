@@ -29,6 +29,8 @@
 #include "kernel/fs/vfs.h"       /* VFS_MAX_NAME (the executor's path bound) */
 #include "kernel/crypto/sha256.h" /* SHA256_DIGEST_LEN -- pins the digest bufs */
 #include "kernel/exec.h"        /* EXEC_MAX_IMAGE_SIZE -- the freeze ceiling */
+#include "kernel/time/mono_clock.h" /* MONO_TSC_HZ_MAX -- the qualification ceiling
+                                     * the watchdog's rate bound must cover     */
 #include "kernel/boot_info.h"
 #include "kernel/klog.h"         /* KLOG_SUBSYSTEM_MAX (frame-tag bound)    */
 #include "registry.h"
@@ -54,6 +56,7 @@ uint64_t test_usermode_clamp_time_ms(uint64_t ms);
 uint32_t test_usermode_reason_max(void);
 uint32_t test_usermode_reason_exit(char *dst, uint32_t cap, int32_t status);
 void test_usermode_stamp_timeout_status(struct task *t);
+void test_usermode_stamp_stalled_status(struct task *t);
 int test_usermode_format_xml_testcase(char *dst, uint32_t cap,
                                       const char *name, int verdict,
                                       uint64_t time_ms, const char *reason);
@@ -1923,6 +1926,72 @@ static void test_timeout_stamp_leaves_the_signal_range(void)
     TEST_ASSERT_EQ((uint64_t)s_timeout_stamp_scratch.exit_status,
                    (uint64_t)(int32_t)TASK_EXIT_UTEST_TIMEOUT,
                    "a NULL stamp must not disturb the previous child's status");
+}
+
+/* The STALL stamp, held to the timeout stamp's contract and to one more.
+ *
+ * It carries the same hazard the timeout marker spent its whole first life
+ * inside -- a value in the -(signum) range makes "the clock stopped" and "the
+ * child was signalled" the same number to every consumer that classifies by
+ * status. It also carries a hazard the timeout marker does not: the two causes
+ * arrive through the SAME `timed_out` gate in the launcher, because they take
+ * the same safety actions, so a stall stamped with the timeout's own value
+ * would be indistinguishable from an ordinary timeout at every reporting site
+ * while every other part of the distinction still looked implemented. */
+static void test_stall_stamp_is_distinct_from_a_timeout(void)
+{
+    s_timeout_stamp_scratch.exit_status = -9;   /* what SIGKILL would leave */
+
+    test_usermode_stamp_stalled_status(&s_timeout_stamp_scratch);
+
+    TEST_ASSERT_EQ((uint64_t)(s_timeout_stamp_scratch.exit_status
+                              < -(int32_t)SIG_MAX), 1ull,
+                   "a stalled child's status must clear the signal range");
+    TEST_ASSERT_EQ((uint64_t)(s_timeout_stamp_scratch.exit_status != -9), 1ull,
+                   "the stall stamp must overwrite SIGKILL's own -9");
+    TEST_ASSERT_EQ((uint64_t)(s_timeout_stamp_scratch.exit_status
+                              != TASK_EXIT_UTEST_TIMEOUT), 1ull,
+                   "and must NOT be the timeout cause: a stopped clock is a "
+                   "statement about the machine, a timeout one about the "
+                   "binary, and they reach this stamp through one gate");
+    TEST_ASSERT_EQ((uint64_t)task_exit_is_kernel_reason(
+                       s_timeout_stamp_scratch.exit_status), 1ull,
+                   "it is an allocated kernel reason, not a value below the "
+                   "block that a later extension would reclassify");
+}
+
+/* A run does not inherit the previous run's abort.
+ *
+ * Both infrastructure latches are sticky WITHIN a run and neither is
+ * re-quiescible, which is correct -- and which is exactly why the boundary
+ * clear has to exist: test_usermode_run() is documented safe to call
+ * repeatedly, so a latch that outlived its run would abort the next one,
+ * skip its binaries, and serialize aborted artifacts naming a fault whose
+ * record sits in a DIFFERENT run's frame. Driving two live runs is not
+ * available to a kernel test (scheduling, signals, a clock, a mounted C:),
+ * so the boundary act itself is what is pinned.
+ *
+ * The launcher's OTHER sticky latch, s_reap_degraded, is deliberately absent
+ * from this struct and from this assertion: it says an unfinished fork
+ * constructor still owns a task slot, which a new run does not settle, so it
+ * stays boot-sticky and its absence here is the design rather than an
+ * oversight. */
+static void test_run_latches_clear_at_the_run_boundary(void)
+{
+    struct utest_run_latches l;
+
+    l.wait_stalled = 1u;
+
+    test_usermode_run_latches_reset(&l);
+
+    TEST_ASSERT_EQ((uint64_t)l.wait_stalled, 0ull,
+                   "a stalled clock latched by an earlier run must not abort "
+                   "the next one: the next run re-measures, so the fault it "
+                   "describes is not one this run has evidence of");
+
+    /* The seam tolerates NULL so a mis-written test cannot fault the suite.
+     * Production passes the launcher's own struct unconditionally. */
+    test_usermode_run_latches_reset((struct utest_run_latches *)0);
 }
 
 /* The timeout marker's move into the reserved block widened the status
@@ -6138,6 +6207,11 @@ static void test_capture_reap_selects_only_this_owners_descendants(void)
  * half the kill grace (500 ms), so a drain expires in one wait and a grace in
  * two -- small enough to assert exact wait counts against. */
 #define UREAP_WAIT_MS   250u
+/* Waits the reap's drain spends before its WATCHDOG ends it on a frozen
+ * millisecond clock. Every reap wait bound (200 ms drain, 500 ms grace) is
+ * below UTEST_WAIT_WATCHDOG_FLOOR_MS once doubled, so the floor is the budget
+ * for all of them and this is the same number for every site. */
+#define UREAP_STALL_WAITS (UTEST_WAIT_WATCHDOG_FLOOR_MS / UREAP_WAIT_MS)
 
 enum ureap_ev {
     UREAP_EV_NONE = 0,
@@ -6153,6 +6227,16 @@ enum ureap_ev {
 static struct task s_ureap_slot[UREAP_SLOTS];
 static uint32_t    s_ureap_count;
 static uint64_t    s_ureap_now_ms;
+/* The synthetic watchdog counter. Advanced by every wait AT THE SAME RATE the
+ * millisecond clock nominally runs, so a healthy synthetic world always reaches
+ * its deadline before its watchdog -- exactly the ordering the live world has,
+ * and the property every pre-existing reap assertion silently depends on. */
+static uint64_t    s_ureap_now_ticks;
+/* Freeze the MILLISECOND clock only. The counter keeps running, which is the
+ * real fault this seam reproduces: uptime_ns() stops advancing because the
+ * epoch it reads is banked from the timer ISR, while the CPU carries on
+ * retiring instructions. */
+static int         s_ureap_clock_frozen;
 static uint32_t    s_ureap_waits;
 static uint32_t    s_ureap_pending;       /* what fork_pending() answers */
 static uint32_t    s_ureap_pending_waits; /* pending clears after this many waits */
@@ -6280,11 +6364,29 @@ static uint64_t ureap_now_ms(void)
     return s_ureap_now_ms;
 }
 
+static uint64_t ureap_now_ticks(void)
+{
+    return s_ureap_now_ticks;
+}
+
+/* The synthetic tree declares the same rate its counter runs at, so its wait
+ * budgets are the production ones expressed in synthetic waits. */
+static uint64_t ureap_ticks_per_ms(void)
+{
+    return UTEST_WAIT_TICKS_PER_MS_MAX;
+}
+
 static void ureap_wait(void)
 {
     ureap_note(UREAP_EV_WAIT, 0u);
     s_ureap_waits++;
-    s_ureap_now_ms += UREAP_WAIT_MS;
+    /* The counter advances UNCONDITIONALLY and the millisecond clock does not.
+     * That asymmetry IS the seam: with the clock frozen the watchdog is the
+     * only thing left that can end a wait, which is precisely what the live
+     * launcher relies on. */
+    s_ureap_now_ticks += (uint64_t)UREAP_WAIT_MS * UTEST_WAIT_TICKS_PER_MS_MAX;
+    if (!s_ureap_clock_frozen)
+        s_ureap_now_ms += UREAP_WAIT_MS;
     if (s_ureap_pending_waits && s_ureap_waits >= s_ureap_pending_waits)
         s_ureap_pending = 0;
     if (s_ureap_spawn_at_wait && s_ureap_waits == s_ureap_spawn_at_wait)
@@ -6304,8 +6406,423 @@ static const struct utest_reap_ops s_ureap_ops = {
     .terminate    = ureap_terminate,
     .cleanup      = ureap_cleanup,
     .now_ms       = ureap_now_ms,
+    .now_ticks    = ureap_now_ticks,
+    .ticks_per_ms = ureap_ticks_per_ms,
     .wait         = ureap_wait
 };
+
+/* ==========================================================================
+ * The shared bounded wait, over a synthetic clock pair
+ *
+ * Four worlds, and between them they cover every way a wait can end. The one
+ * that matters is FROZEN_MS: the millisecond clock stops while the counter
+ * keeps running, which is what a stopped timer ISR looks like from inside a
+ * launcher wait, and is the shape that used to yield forever.
+ *
+ * The COARSE world is the false-positive guard and is the reason the escape is
+ * a watchdog rather than an iteration count: it plateaus the millisecond clock
+ * for a stretch of waits before advancing it, exactly as a healthy PMTMR epoch
+ * banked every eighth tick does, and the wait must NOT call that a stall.
+ * ========================================================================== */
+
+#define UWAIT_TIMEOUT_MS      200u
+/* Default: one synthetic wait spends one millisecond of counter budget. The
+ * watchdog floor is UTEST_WAIT_WATCHDOG_FLOOR_MS, so a frozen clock trips it in
+ * that many waits -- bounded, countable, and far past the deadline this timeout
+ * would have reached on a live clock. */
+#define UWAIT_TICKS_PER_WAIT  UTEST_WAIT_TICKS_PER_MS_MAX
+/* A realistic yield against a realistic plateau: a yield costs tens of
+ * microseconds and a healthy epoch is banked every few tens of milliseconds, so
+ * thousands of yields fit inside ONE plateau while consuming a small fraction
+ * of the watchdog's budget. Those are the numbers that make the watchdog safe
+ * and a yield-streak count unsafe, so the coarse case uses them. */
+#define UWAIT_COARSE_TICKS    (UTEST_WAIT_TICKS_PER_MS_MAX / 100u)
+#define UWAIT_COARSE_PLATEAU  4000u
+
+static uint64_t s_uwait_ms;
+static uint64_t s_uwait_ticks;
+static uint64_t s_uwait_ticks_per_wait;
+static uint32_t s_uwait_waits;
+static uint32_t s_uwait_ms_frozen;      /* the millisecond clock does not move */
+static uint32_t s_uwait_ticks_frozen;   /* nor does the counter */
+static uint32_t s_uwait_plateau;        /* waits per millisecond-clock advance */
+static uint32_t s_uwait_ready_at_wait;  /* the condition holds from this wait on */
+static uint32_t s_uwait_freeze_at_wait; /* the ms clock stops from this wait on */
+
+static uint64_t uwait_now_ms(void)   { return s_uwait_ms; }
+static uint64_t uwait_now_ticks(void) { return s_uwait_ticks; }
+/* The rate the synthetic world DECLARES, which a test can set apart from the
+ * rate its counter actually runs at -- the two being different is the whole
+ * hazard the watchdog's conversion has to survive. */
+static uint64_t s_uwait_declared_rate;
+static uint64_t uwait_ticks_per_ms(void) { return s_uwait_declared_rate; }
+
+static void uwait_tick(void)
+{
+    s_uwait_waits++;
+    if (!s_uwait_ticks_frozen)
+        s_uwait_ticks += s_uwait_ticks_per_wait;
+    if (s_uwait_ms_frozen)
+        return;
+    /* A plateau of 1 is an ordinary fine-grained clock. */
+    if (s_uwait_plateau <= 1u || (s_uwait_waits % s_uwait_plateau) == 0u)
+        s_uwait_ms += 1u;
+}
+
+static const struct utest_wait_ops s_uwait_ops = {
+    .now_ms       = uwait_now_ms,
+    .now_ticks    = uwait_now_ticks,
+    .ticks_per_ms = uwait_ticks_per_ms,
+    .wait         = uwait_tick
+};
+
+static void uwait_reset(void)
+{
+    s_uwait_ms = 0;
+    s_uwait_ticks = 0;
+    s_uwait_ticks_per_wait = UWAIT_TICKS_PER_WAIT;
+    s_uwait_declared_rate = UTEST_WAIT_TICKS_PER_MS_MAX;
+    s_uwait_waits = 0;
+    s_uwait_ms_frozen = 0;
+    s_uwait_ticks_frozen = 0;
+    s_uwait_plateau = 1u;
+    s_uwait_ready_at_wait = 0;
+    s_uwait_freeze_at_wait = 0;
+}
+
+/* A clock that runs, then STOPS -- the shape a second wait inherits when the
+ * first one ended honestly.
+ *
+ * The launcher's per-binary path waits twice: once for the child, then once for
+ * its SIGKILL grace. The dangerous case is not the one where both waits see a
+ * dead clock; it is the one where the FIRST wait times out normally on a live
+ * clock and the clock stops before the second begins. A grace that discarded
+ * its own outcome would then leave the run unmarked, the child stamped as an
+ * ordinary timeout, and every later binary measured against nothing. */
+static void uwait_tick_freezing(void)
+{
+    s_uwait_waits++;
+    s_uwait_ticks += s_uwait_ticks_per_wait;
+    if (s_uwait_freeze_at_wait && s_uwait_waits >= s_uwait_freeze_at_wait)
+        return;
+    s_uwait_ms += 1u;
+}
+
+static const struct utest_wait_ops s_uwait_ops_freezing = {
+    .now_ms       = uwait_now_ms,
+    .now_ticks    = uwait_now_ticks,
+    .ticks_per_ms = uwait_ticks_per_ms,
+    .wait         = uwait_tick_freezing
+};
+
+/* Never satisfied: the producer this wait is waiting on has hung. */
+static int uwait_never(void *ctx)
+{
+    (void)ctx;
+    return 0;
+}
+
+/* Satisfied from the first poll: the wait had nothing to wait for. */
+static int uwait_always(void *ctx)
+{
+    (void)ctx;
+    return 1;
+}
+
+/* Satisfied once enough waits have elapsed. */
+static int uwait_ready_after(void *ctx)
+{
+    (void)ctx;
+    return s_uwait_waits >= s_uwait_ready_at_wait;
+}
+
+static void test_wait_returns_ready_without_yielding_when_already_true(void)
+{
+    uwait_reset();
+
+    TEST_ASSERT_EQ((uint64_t)test_usermode_bounded_wait(uwait_always,
+                                                        (void *)0,
+                                                        UWAIT_TIMEOUT_MS,
+                                                        &s_uwait_ops),
+                   (uint64_t)UTEST_WAIT_READY,
+                   "a condition already true is a satisfied wait");
+    TEST_ASSERT_EQ((uint64_t)s_uwait_waits, 0ull,
+                   "and it costs no yield at all -- the condition is polled "
+                   "before either bound is consulted, so a wait with nothing "
+                   "to wait for never gives up the CPU");
+}
+
+static void test_wait_reports_timeout_on_a_live_clock(void)
+{
+    uwait_reset();
+
+    TEST_ASSERT_EQ((uint64_t)test_usermode_bounded_wait(uwait_never,
+                                                        (void *)0,
+                                                        UWAIT_TIMEOUT_MS,
+                                                        &s_uwait_ops),
+                   (uint64_t)UTEST_WAIT_TIMEOUT,
+                   "an advancing clock reaches the deadline, and a deadline "
+                   "reached is an ordinary timeout -- the watchdog must not "
+                   "claim a stall that did not happen");
+    TEST_ASSERT_EQ((uint64_t)s_uwait_ms, (uint64_t)UWAIT_TIMEOUT_MS,
+                   "and it left at the deadline rather than past it");
+}
+
+static void test_wait_escapes_a_frozen_millisecond_clock(void)
+{
+    uwait_reset();
+    s_uwait_ms_frozen = 1u;
+
+    TEST_ASSERT_EQ((uint64_t)test_usermode_bounded_wait(uwait_never,
+                                                        (void *)0,
+                                                        UWAIT_TIMEOUT_MS,
+                                                        &s_uwait_ops),
+                   (uint64_t)UTEST_WAIT_STALLED,
+                   "a deadline compared against a stopped clock is never "
+                   "reached, so the watchdog is the only thing that can end "
+                   "this wait -- and before it existed the launcher yielded "
+                   "here forever with no diagnostic");
+    /* The budget is the FLOOR here (2 x 200 ms is below it), and one wait
+     * spends one millisecond of it, so the count is exact rather than merely
+     * bounded. Asserting the number is what proves the escape is the watchdog
+     * and not the iteration ceiling far above it. */
+    TEST_ASSERT_EQ((uint64_t)s_uwait_waits,
+                   (uint64_t)UTEST_WAIT_WATCHDOG_FLOOR_MS,
+                   "and it escaped on the watchdog budget, not on the "
+                   "last-resort iteration ceiling");
+}
+
+static void test_wait_escapes_when_both_clocks_are_frozen(void)
+{
+    uwait_reset();
+    s_uwait_ms_frozen = 1u;
+    s_uwait_ticks_frozen = 1u;
+
+    TEST_ASSERT_EQ((uint64_t)test_usermode_bounded_wait(uwait_never,
+                                                        (void *)0,
+                                                        UWAIT_TIMEOUT_MS,
+                                                        &s_uwait_ops),
+                   (uint64_t)UTEST_WAIT_STALLED,
+                   "with no time source left the iteration ceiling is what "
+                   "terminates the wait -- it exists so `every wait ends` is "
+                   "a property of the code and not of the platform");
+    TEST_ASSERT_EQ((uint64_t)s_uwait_waits, (uint64_t)UTEST_WAIT_ITER_CEIL,
+                   "and the ceiling is where it ended");
+}
+
+static void test_wait_does_not_call_a_coarse_clock_a_stall(void)
+{
+    uwait_reset();
+    s_uwait_ticks_per_wait = UWAIT_COARSE_TICKS;
+    s_uwait_plateau = UWAIT_COARSE_PLATEAU;
+    /* Ready while the clock is still inside its FIRST plateau, which is the
+     * window an adaptive yield-streak detector cannot have trained on. */
+    s_uwait_ready_at_wait = UWAIT_COARSE_PLATEAU - 1u;
+
+    TEST_ASSERT_EQ((uint64_t)test_usermode_bounded_wait(uwait_ready_after,
+                                                        (void *)0,
+                                                        UWAIT_TIMEOUT_MS,
+                                                        &s_uwait_ops),
+                   (uint64_t)UTEST_WAIT_READY,
+                   "a healthy clock that plateaus for thousands of yields is "
+                   "a COARSE clock, not a stopped one -- cutting this wait "
+                   "short would report records as lost that were merely slow, "
+                   "which is a worse failure than the hang the escape removes");
+    TEST_ASSERT_EQ((uint64_t)s_uwait_ms, 0ull,
+                   "and it succeeded without the millisecond clock ever "
+                   "having advanced, which is the whole point of the case");
+}
+
+/* A wait that inherits a clock which stopped AFTER an earlier wait succeeded.
+ *
+ * This is the per-binary path's second wait -- the SIGKILL grace -- and the
+ * reason its outcome may not be discarded. The first wait ended honestly on a
+ * live clock, so nothing about the run is marked yet; if this one's stall were
+ * dropped, the fault would leave no trace at all. */
+static void test_wait_escapes_a_clock_that_stops_mid_wait(void)
+{
+    uwait_reset();
+    s_uwait_freeze_at_wait = 10u;
+
+    TEST_ASSERT_EQ((uint64_t)test_usermode_bounded_wait(uwait_never,
+                                                        (void *)0,
+                                                        UWAIT_TIMEOUT_MS,
+                                                        &s_uwait_ops_freezing),
+                   (uint64_t)UTEST_WAIT_STALLED,
+                   "a clock that stops PART WAY through a wait is still a "
+                   "stopped clock -- the deadline it was heading for is now "
+                   "unreachable, and only the watchdog can say so");
+    TEST_ASSERT_EQ((uint64_t)s_uwait_ms, (uint64_t)(10u - 1u),
+                   "and it stalled at the value the clock froze on, well "
+                   "short of the deadline it would otherwise have reached");
+}
+
+/* The fastest clock this kernel will ACCEPT, not the fastest one it is likely
+ * to meet.
+ *
+ * mono_source_qualify() admits a TSC up to MONO_TSC_HZ_MAX, an order of
+ * magnitude past any shipping part, because a scaled or virtual TSC on the
+ * supported hypervisors can report one. The watchdog turns ticks into a
+ * duration, so an assumed rate BELOW the real one burns the budget faster than
+ * real time and ends a perfectly healthy wait -- the false refusal that is
+ * worse than the hang the watchdog removes. This drives a wait whose counter
+ * really does run at that ceiling and requires the ordinary deadline to win. */
+static void test_wait_rate_bound_covers_the_fastest_qualified_clock(void)
+{
+    uwait_reset();
+    /* One wait = one millisecond of wall time at the ceiling rate. */
+    s_uwait_ticks_per_wait = MONO_TSC_HZ_MAX / 1000ULL;
+
+    TEST_ASSERT_EQ((uint64_t)test_usermode_bounded_wait(uwait_never,
+                                                        (void *)0,
+                                                        UWAIT_TIMEOUT_MS,
+                                                        &s_uwait_ops),
+                   (uint64_t)UTEST_WAIT_TIMEOUT,
+                   "a healthy wait on the fastest TSC boot qualification "
+                   "accepts must still end as an ordinary TIMEOUT -- if the "
+                   "assumed rate sat below the real one this would come back "
+                   "STALLED and kill a child that was never late");
+    TEST_ASSERT_EQ((uint64_t)s_uwait_ms, (uint64_t)UWAIT_TIMEOUT_MS,
+                   "and it ended at its deadline, not before it");
+}
+
+/* The budget arithmetic, on its own.
+ *
+ * Four decisions -- the multiple of the caller's timeout, the floor, the cap,
+ * and measured-versus-fallback rate -- collapse into one tick count, and a
+ * wrong one is invisible from outside a wait: too large and the escape lands
+ * after the harness has already killed the machine, too small and it ends
+ * waits that were healthy. */
+/* A LONG but supported deadline must outlive the watchdog, not the reverse.
+ *
+ * `utest_timeout_ms` is a UINT16 and the env matrix recommends 30000 for
+ * storage-heavy binaries on WHPX. A watchdog capped below that would expire
+ * mid-test on a perfectly advancing clock, kill the child and abort the suite
+ * -- turning the escape into a killer of exactly the slow-but-healthy runs the
+ * override exists for. The ordering, not the constant, is what this pins. */
+static void test_wait_long_supported_timeout_outlives_the_watchdog(void)
+{
+    uwait_reset();
+
+    TEST_ASSERT_EQ((uint64_t)test_usermode_bounded_wait(uwait_never,
+                                                        (void *)0,
+                                                        30000u,
+                                                        &s_uwait_ops),
+                   (uint64_t)UTEST_WAIT_TIMEOUT,
+                   "a 30 s timeout -- the documented WHPX setting -- must end "
+                   "as an ordinary TIMEOUT on an advancing clock, never as a "
+                   "stall manufactured by a bound below its own deadline");
+    TEST_ASSERT_EQ((uint64_t)s_uwait_ms, 30000ull,
+                   "and it ran its full deadline");
+}
+
+/* A DECLARED rate below the counter's real one is the hazard a stale TSC
+ * frequency creates: the budget is spent faster than real time and a healthy
+ * wait is called stalled. Both halves are pinned -- that the mismatch really
+ * does cause it, and that the conservative fallback the demotion path selects
+ * does not. */
+static void test_wait_rate_mismatch_is_why_a_demoted_tsc_falls_back(void)
+{
+    uwait_reset();
+    /* Declared 3 GHz, actually running an order of magnitude faster: the shape
+     * left behind when a TSC is demoted for drifting off its measured rate. */
+    s_uwait_declared_rate = 3000000ULL;
+    s_uwait_ticks_per_wait = 30000000ULL;
+
+    TEST_ASSERT_EQ((uint64_t)test_usermode_bounded_wait(uwait_never,
+                                                        (void *)0,
+                                                        UWAIT_TIMEOUT_MS,
+                                                        &s_uwait_ops),
+                   (uint64_t)UTEST_WAIT_STALLED,
+                   "a counter outrunning its declared rate exhausts the budget "
+                   "before the deadline -- which is exactly why mono_tsc_hz "
+                   "refuses to report a rate once the TSC is no longer the "
+                   "active source");
+
+    /* The same counter against the fallback the refusal selects. */
+    uwait_reset();
+    s_uwait_declared_rate = UTEST_WAIT_TICKS_PER_MS_MAX;
+    s_uwait_ticks_per_wait = 30000000ULL;
+
+    TEST_ASSERT_EQ((uint64_t)test_usermode_bounded_wait(uwait_never,
+                                                        (void *)0,
+                                                        UWAIT_TIMEOUT_MS,
+                                                        &s_uwait_ops),
+                   (uint64_t)UTEST_WAIT_TIMEOUT,
+                   "and under the qualification-ceiling fallback the same "
+                   "counter leaves the deadline winning, which is the whole "
+                   "value of refusing an untrusted rate");
+}
+
+static void test_wait_watchdog_budget_arithmetic(void)
+{
+    struct utest_wait_ops ops = s_uwait_ops;
+    const uint64_t measured_3ghz = 3000000ULL;   /* ticks per ms at 3 GHz */
+
+    uwait_reset();
+
+    /* No declared rate: the fallback is the qualification ceiling, and a short
+     * timeout is lifted to the floor rather than left proportionally tiny. */
+    ops.ticks_per_ms = (uint64_t (*)(void))0;
+    TEST_ASSERT_EQ(test_usermode_wait_watchdog_ticks(200u, &ops),
+                   (uint64_t)UTEST_WAIT_WATCHDOG_FLOOR_MS
+                       * UTEST_WAIT_TICKS_PER_MS_MAX,
+                   "a wait shorter than the floor gets the floor, converted at "
+                   "the fallback rate");
+
+    /* A measured rate is used AS MEASURED, with no second multiplier. */
+    s_uwait_declared_rate = measured_3ghz;
+    ops.ticks_per_ms = uwait_ticks_per_ms;
+    TEST_ASSERT_EQ(test_usermode_wait_watchdog_ticks(10000u, &ops),
+                   (uint64_t)10000u * UTEST_WAIT_WATCHDOG_MULT * measured_3ghz,
+                   "the default binary timeout converts at the measured rate "
+                   "with no second multiplier stacked on it");
+
+    /* THE ORDERING, at the widest deadline the boot contract can express. The
+     * cap is overflow hygiene and must never pull the budget below the
+     * caller's own deadline -- a watchdog that expires first kills healthy
+     * tests, which is worse than any latency it would have bought. */
+    TEST_ASSERT((uint64_t)test_usermode_wait_watchdog_ticks(65535u, &ops)
+                    > (uint64_t)65535u * measured_3ghz,
+                "the widest configurable timeout must still expire before its "
+                "own watchdog does");
+
+    /* A world reporting a zero rate must not produce a zero budget -- that is
+     * an immediately-expired watchdog, the exact failure this design exists to
+     * avoid. */
+    s_uwait_declared_rate = 0;
+    TEST_ASSERT_EQ(test_usermode_wait_watchdog_ticks(200u, &ops),
+                   (uint64_t)UTEST_WAIT_WATCHDOG_FLOOR_MS
+                       * UTEST_WAIT_TICKS_PER_MS_MAX,
+                   "a zero rate falls back rather than expiring the watchdog "
+                   "before the first yield");
+    s_uwait_declared_rate = UTEST_WAIT_TICKS_PER_MS_MAX;
+
+    TEST_ASSERT_EQ(test_usermode_wait_watchdog_ticks(200u,
+                       (const struct utest_wait_ops *)0), 0ull,
+                   "and the seam tolerates a NULL world without faulting the "
+                   "suite");
+}
+
+static void test_wait_terminates_without_a_watchdog_source(void)
+{
+    struct utest_wait_ops ops = s_uwait_ops;
+
+    uwait_reset();
+    s_uwait_ms_frozen = 1u;
+    ops.now_ticks = (uint64_t (*)(void))0;
+
+    TEST_ASSERT_EQ((uint64_t)test_usermode_bounded_wait(uwait_never,
+                                                        (void *)0,
+                                                        UWAIT_TIMEOUT_MS,
+                                                        &ops),
+                   (uint64_t)UTEST_WAIT_STALLED,
+                   "a world with no counter still ends: no binding of this "
+                   "helper may spin forever, including one that forgot to "
+                   "supply the watchdog");
+    TEST_ASSERT_EQ((uint64_t)s_uwait_waits, (uint64_t)UTEST_WAIT_ITER_CEIL,
+                   "on the ceiling, since nothing else was left to end it");
+}
 
 /* Build a tree of `descendants` capture-owning children under pid 0. */
 static void ureap_reset(uint32_t descendants)
@@ -6319,6 +6836,8 @@ static void ureap_reset(uint32_t descendants)
     }
     s_ureap_count = 0;
     s_ureap_now_ms = 0;
+    s_ureap_now_ticks = 0;
+    s_ureap_clock_frozen = 0;
     s_ureap_waits = 0;
     s_ureap_pending = 0;
     s_ureap_pending_waits = 0;
@@ -6515,6 +7034,108 @@ static void test_reap_reports_an_inexact_census_when_the_drain_expires(void)
                    "release, so cleaning up underneath it trades a bounded "
                    "leak for a use-after-free -- and the run is refused "
                    "host-side either way, so tidying buys nothing");
+}
+
+/* The reap over a stopped millisecond clock.
+ *
+ * Both of the reap's waits -- the fork-constructor drain and the per-round kill
+ * grace -- used to terminate only on that clock, so a tree with a permanently
+ * pending constructor and an unkillable descendant pinned the launcher forever
+ * at the run boundary. The escape must end BOTH of them, and the reap must then
+ * refuse exactness: a census taken over a tree it could not quiesce is a
+ * snapshot, and the irreversible free is withheld on exactly that grounds. */
+static void test_reap_escapes_a_frozen_clock_and_refuses_exactness(void)
+{
+    struct utest_reap_result r;
+
+    ureap_reset(1);
+    s_ureap_clock_frozen = 1;
+    s_ureap_pending = 1;        /* a constructor that never finishes ... */
+    s_ureap_pending_waits = 0;  /* ... and never will */
+    s_ureap_immortal = 1;       /* SIGKILL never lands: a ring-3 spinloop */
+    s_ureap_unterminable = 1;   /* nor does the forceful fallback */
+
+    test_usermode_capture_reap_tree_ops(UREAP_OWNER_PID, &s_ureap_ops, &r);
+
+    TEST_ASSERT_EQ((uint64_t)r.stalled, 1ull,
+                   "the reap names the stall it suffered, and carries it OUT "
+                   "rather than reporting it: this world is synthetic, and a "
+                   "record emitted from the loop would put a fabricated stall "
+                   "on a healthy run's wire");
+    TEST_ASSERT_EQ((uint64_t)r.exact, 0ull,
+                   "and refuses exactness -- the grace it gave up on is what "
+                   "quiesces the tree the census then walks, so the count is a "
+                   "snapshot and the free must be withheld");
+    TEST_ASSERT_EQ(ureap_count_of(UREAP_EV_CLEANUP), 0u,
+                   "nothing is freed underneath a tree the reap has just "
+                   "admitted it could not account for");
+    TEST_ASSERT(ureap_count_of(UREAP_EV_KILL) > 0u,
+                "the kills still run: stopping a task is the only step that "
+                "restores progress, and it is safe under a live constructor "
+                "in a way that releasing its memory is not");
+}
+
+/* A stall the RETRY drain could erase.
+ *
+ * The reap drains twice over one flag: once before the kill rounds and once
+ * after, when the first did not settle. With the clock stopped the first drain
+ * can only end on its watchdog, and the retry can then settle on its own
+ * condition -- the constructor finishes -- and report a perfectly clean drain.
+ * If the flag were assigned rather than accumulated, that clean retry would
+ * overwrite the stall: no record, no suite abort, and every later bound in the
+ * run measured against a clock that had already stopped. The count recovers;
+ * the stall does not. */
+static void test_reap_retry_drain_does_not_erase_an_earlier_stall(void)
+{
+    struct utest_reap_result r;
+
+    ureap_reset(1);
+    s_ureap_clock_frozen = 1;
+    s_ureap_pending = 1;
+    /* Past the first drain's watchdog (which the frozen clock forces) and
+     * inside the retry's, so the first stalls and the second settles. */
+    s_ureap_pending_waits = UREAP_STALL_WAITS + 2u;
+
+    test_usermode_capture_reap_tree_ops(UREAP_OWNER_PID, &s_ureap_ops, &r);
+
+    TEST_ASSERT_EQ((uint64_t)r.drain_pending, 0ull,
+                   "the retry really did settle -- without that this case "
+                   "would not be the one it is meant to pin");
+    TEST_ASSERT_EQ((uint64_t)r.stalled, 1ull,
+                   "and the stall the FIRST drain suffered survives it: a "
+                   "later attempt succeeding says nothing about the clock "
+                   "that stopped, so the flag accumulates rather than being "
+                   "reassigned");
+    TEST_ASSERT_EQ((uint64_t)r.exact, 0ull,
+                   "exactness is refused even though the census is now a "
+                   "statement, because `exact` also gates the irreversible "
+                   "free -- and the run is being abandoned either way");
+    TEST_ASSERT_EQ(ureap_count_of(UREAP_EV_CLEANUP), 0u,
+                   "so nothing is freed");
+}
+
+/* The same frozen clock, with the tree healthy. The stall must not manufacture
+ * survivors or leak the descendants it did reach. */
+static void test_reap_over_a_frozen_clock_still_reaps_a_healthy_tree(void)
+{
+    struct utest_reap_result r;
+
+    ureap_reset(2);
+    s_ureap_clock_frozen = 1;
+
+    test_usermode_capture_reap_tree_ops(UREAP_OWNER_PID, &s_ureap_ops, &r);
+
+    TEST_ASSERT_EQ((uint64_t)r.live, 0ull,
+                   "every descendant died on the first kill round, so the "
+                   "census is empty -- a stopped clock is not a reason to "
+                   "report survivors that do not exist");
+    TEST_ASSERT_EQ((uint64_t)r.stalled, 0ull,
+                   "and no wait ever had to escape: the drain settled and the "
+                   "grace's condition was already met, both of which are "
+                   "checked BEFORE either bound is consulted");
+    TEST_ASSERT_EQ((uint64_t)r.exact, 1ull,
+                   "so exactness survives -- the frozen clock costs nothing "
+                   "when no wait needed it");
 }
 
 static void test_reap_is_inexact_when_a_forker_died_mid_constructor(void)
@@ -7064,6 +7685,12 @@ void test_register_usermode_launcher(void)
     test_suite_register_cat("UTEST: timeout stamp clears the signal range",
                             test_timeout_stamp_leaves_the_signal_range,
                             TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: stall stamp is distinct from a timeout",
+                            test_stall_stamp_is_distinct_from_a_timeout,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: run latches clear at the run boundary",
+                            test_run_latches_clear_at_the_run_boundary,
+                            TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: exit-status classes partition the space",
                             test_exit_status_classes_partition_the_space,
                             TEST_CAT_EXEC);
@@ -7565,6 +8192,48 @@ void test_register_usermode_launcher(void)
                             TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: reap ignores another binary's descendants",
                             test_reap_ignores_another_binarys_descendants,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: a satisfied wait yields not at all",
+                            test_wait_returns_ready_without_yielding_when_already_true,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: a live clock ends a wait as a timeout",
+                            test_wait_reports_timeout_on_a_live_clock,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: a frozen clock ends a wait on the watchdog",
+                            test_wait_escapes_a_frozen_millisecond_clock,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: a wait with no time source still ends",
+                            test_wait_escapes_when_both_clocks_are_frozen,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: a coarse clock is not a stalled clock",
+                            test_wait_does_not_call_a_coarse_clock_a_stall,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: a wait without a watchdog source still ends",
+                            test_wait_terminates_without_a_watchdog_source,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: a clock stopping mid-wait still ends it",
+                            test_wait_escapes_a_clock_that_stops_mid_wait,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: the rate bound covers the fastest qualified TSC",
+                            test_wait_rate_bound_covers_the_fastest_qualified_clock,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: watchdog budget floor, cap and rate arithmetic",
+                            test_wait_watchdog_budget_arithmetic,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: a long supported timeout outlives its watchdog",
+                            test_wait_long_supported_timeout_outlives_the_watchdog,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: a rate mismatch is why an untrusted TSC falls back",
+                            test_wait_rate_mismatch_is_why_a_demoted_tsc_falls_back,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: the reap escapes a frozen clock, inexactly",
+                            test_reap_escapes_a_frozen_clock_and_refuses_exactness,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: a frozen clock still reaps a healthy tree",
+                            test_reap_over_a_frozen_clock_still_reaps_a_healthy_tree,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: a retry drain never erases an earlier stall",
+                            test_reap_retry_drain_does_not_erase_an_earlier_stall,
                             TEST_CAT_EXEC);
 }
 

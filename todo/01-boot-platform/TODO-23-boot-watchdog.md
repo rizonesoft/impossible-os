@@ -195,6 +195,12 @@ From the stamped section 5:
 - [ ] DEFERRED follow-up: direct Intel iTCO PCI fallback (PCH-generation chipset allowlist, LPC/PMC TCO base, GCS NO_REBOOT, SMI_EN, two-stage timeout, readback verify, verified-disarm)
 - [ ] DEFERRED follow-up: MEM-space GAS support -- validate the firmware register address against the memory map (reject RAM) + cache a UC mapping at init (no per-pet remap); first cut is I/O-space only
 
+From TODO-04 section 58's re-adversarial review (2026-08-02), filed here because section 1 owns the mechanism and is parked:
+- [ ] The usermode-test launcher needs a preemption source the dead TIMER cannot take with it
+      - Section 58 gave every launcher wait a TSC watchdog, which escapes any stall where the launcher still gets CPU back -- the mono-epoch and clock-derivation failures, and every wait that yields to a cooperative or absent peer. It cannot escape the one mode where the periodic TICK ITSELF is dead AND the launcher has yielded to a non-cooperative ring-3 child: preemption dies with the clock, so the launcher never runs again to sample its own watchdog. No user-mode-visible mechanism closes that; it needs the LAPIC NMI timer this file's section 1 owns, or an equivalent source unaffected by the failed timer path.
+      - Acceptance: with the periodic tick disabled and a spinning ring-3 child, the launcher regains control and reports the stall. Synthetic ops cannot prove this -- a callback that returns is exactly the assumption under test -- so it needs the end-to-end fixture.
+      -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §58 (item: "Give every launcher wait a clock-independent escape, not just a deadline")
+
 **Test checkpoint:** per moved item; each carries its original acceptance text.
 
 ---

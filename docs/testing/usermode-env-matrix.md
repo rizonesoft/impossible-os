@@ -62,6 +62,33 @@ headroom, set `utest_timeout_ms=30000` in boot.conf and document the
 reason in its source file. Canonical write-up: [CLAUDE.md](../../CLAUDE.md)
 -> *NVMe I/O unreliable on QEMU WHPX*.
 
+**Raising `utest_timeout_ms` means raising the harness bound too.** Every
+launcher wait carries a clock watchdog that escapes when the monotonic
+clock stops advancing, and it is deliberately set to expire LATER than
+the deadline it backs. It is NOT clamped to fit the harness, and must not
+be: a bound below the configured deadline would end healthy tests on
+exactly the slow configurations the override exists for.
+
+How late it lands depends on whether the kernel has a trusted TSC rate,
+and the two cases differ by more than an order of magnitude:
+
+| TSC rate | Conversion | Default 10 s timeout | 30 s timeout |
+|---|---|---|---|
+| Trusted (`mono_tsc_hz()` non-zero) | measured, as measured; ~2x the timeout | ~20 s | ~60 s |
+| Untrusted (never qualified, or drift-demoted) | `MONO_TSC_HZ_MAX` = 100 GHz; ~2x the timeout scaled by (100 GHz / real rate) | ~660 s on a 3 GHz part | ~2000 s |
+
+`scripts/test.sh` bounds the whole boot at 60 s by default. So on the
+trusted path, pair a 30 s per-binary timeout with `TIMEOUT=120 bash
+scripts/test.sh`. **On the untrusted path the escape is always later than
+any reasonable harness bound**, and a stall there surfaces as the runner's
+generic no-summary timeout rather than as the named `[UTEST-WAIT-STALLED]`
+record. The escape still terminates the guest-side wait; its diagnosis is
+what does not reach the artifacts. Narrowing that would require the rate
+the platform does not have, and firing early on a healthy fast TSC is the
+worse error, so the bound stays true rather than convenient. A run that
+demotes its clocksource is therefore also a run whose stall diagnosis is
+degraded.
+
 ### 2. Timer-sensitive tests on TCG
 TCG is ~10x slower than real hardware. Wall-clock assertions like
 "sleep 100 ms should return in [99, 110] ms" will miss the upper

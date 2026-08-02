@@ -118,6 +118,19 @@ static inline uint64_t rdtsc_ordered(void)
     return ((uint64_t)hi << 32) | lo;
 }
 
+/* The raw counter, published. See mono_clock.h for why this is exposed at all
+ * and why it is NOT a substitute for mono_ns(): it is the one time source in
+ * this kernel that keeps advancing when the tick does, so a bounded wait can
+ * hold a watchdog against it. Routed through rdtsc_ordered() rather than a
+ * second inline rdtsc so there is still exactly one TSC read shape in the
+ * tree -- an unordered read here would let a watchdog sample land before the
+ * loop iteration it is supposed to be timing. */
+uint64_t mono_tsc_raw(void)
+{
+    return rdtsc_ordered();
+}
+
+
 /* ---- Init ---------------------------------------------------------------- */
 
 /* Record an immutable scale descriptor for one available source. */
@@ -143,12 +156,38 @@ static int mono_source_qualify(uint32_t src)
         return 0;
     f = s_desc[src].freq_hz;
     switch (src) {
-    case MONO_SRC_TSC:   return f >= 100000000ULL && f <= 100000000000ULL;
+    case MONO_SRC_TSC:   return f >= MONO_TSC_HZ_MIN && f <= MONO_TSC_HZ_MAX;
     case MONO_SRC_HPET:  return f >=   1000000ULL && f <=   1000000000ULL;
     case MONO_SRC_PMTMR: return f == PMTMR_FREQ_HZ;
     case MONO_SRC_LAPIC: return f > 0;
     default:             return 0;
     }
+}
+
+/* The measured rate behind mono_tsc_raw(), or 0 when there is none.
+ *
+ * Gated on QUALIFICATION rather than on availability alone: an unqualified
+ * frequency is one this file already refused to build a clocksource on, so
+ * handing it out as a conversion rate would launder a value rejected here into
+ * a bound somewhere else. Gated on the descriptor rather than on the ACTIVE
+ * source, because the TSC's rate does not stop being the TSC's rate when a
+ * drift demotion moves timekeeping to HPET. */
+uint64_t mono_tsc_hz(void)
+{
+    /* ACTIVE, not merely qualified, and that is the whole guard rather than
+     * belt-and-braces. Boot qualification range-checks the descriptor once and
+     * never revisits it, so a TSC the drift watchdog LATER demoted for running
+     * off its measured rate still passes -- and handing that rate out is worse
+     * than handing out nothing, because a caller converting raw ticks with a
+     * rate the kernel has already stopped believing gets a confidently wrong
+     * duration. A demotion moves the active source away from TSC and never back
+     * to it, so this one test covers "never qualified" and "no longer trusted"
+     * alike. Same gate rdtsc_ns() uses, for the same reason. */
+    if (__atomic_load_n(&s_active_src, __ATOMIC_ACQUIRE) != MONO_SRC_TSC)
+        return 0;
+    if (!mono_source_qualify(MONO_SRC_TSC))
+        return 0;
+    return s_desc[MONO_SRC_TSC].freq_hz;
 }
 
 void mono_clock_init(void)
