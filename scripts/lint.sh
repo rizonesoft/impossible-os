@@ -1517,16 +1517,20 @@ fi
 # themselves. Measured 2026-08-01: TODO-04 carried sections 53-59 after all
 # three closing blocks and lint reported 0 errors -- the exact TODO-06 shape
 # CLAUDE.md already names, invisible to the checker that exists to catch it.
-# WARNING, not ERROR, on purpose: promoting a pre-existing violation to
-# blocking would wedge the commit of whatever run is mid-section in that file.
-# Repair with `--fix` at a boundary (it is a pure block move, and the script
-# refuses anything else), then promote.
+# PROMOTED TO ERROR 2026-08-02, once the tree was clean. It shipped as a
+# warning because promoting a pre-existing violation would have wedged the
+# commit of the run that was mid-section in the offending file; all three
+# affected files (TODO-04 usermode x10, TODO-07 lsp-mcp x1, TODO-04
+# system-logging x1) were then repaired by `--fix` as verified pure block moves
+# -- identical line count, byte count and sorted content -- and the tree-wide
+# scan returns clean. The 60-section hard cap prevents the condition from being
+# reintroduced at scale, so blocking is now safe rather than merely correct.
 if [ -f "$REPO_ROOT/scripts/todo-section-order.py" ]; then
     LINT22B_OUT="$(cd "$REPO_ROOT" && python3 scripts/todo-section-order.py --check-placement 2>/dev/null || true)"
     if [ -n "$LINT22B_OUT" ]; then
         while IFS= read -r line; do
-            [ -n "$line" ] && echo -e "${YELLOW}warn${NC}: Check 22b (todo-section-placement) $line"
-            WARNINGS=$((WARNINGS + 1))
+            [ -n "$line" ] && echo -e "${RED}error${NC}: Check 22b (todo-section-placement) $line"
+            ERRORS=$((ERRORS + 1))
         done <<< "$LINT22B_OUT"
     fi
 fi

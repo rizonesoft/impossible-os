@@ -45,7 +45,17 @@ ANY_H2_RE = re.compile(r"^## ")
 # 2026-07-30 across todo/**: 219 "OS Comparison", 209 "Verification", 90 "Unit
 # Tests", 24 "History", and a handful of one-off headings that must NOT be
 # treated as movable boundaries.
-CLOSING_MATTER = {"OS Comparison", "Unit Tests", "Verification", "History"}
+# Measured across todo/** (2026-08-02): the four canonical blocks plus the
+# reference/appendix headings real files actually use after their sections.
+# parse() REFUSES a file carrying an unrecognised `## ` heading between the
+# first and last numbered section -- a deliberate "I cannot model this shape"
+# guard -- so an unlisted appendix silently made `--fix` a no-op on files that
+# genuinely needed repair (TODO-07 lsp-mcp, TODO-04 system-logging). Extend
+# this set only with headings that are genuinely trailing matter; the pure-move
+# proof in reorder() is the backstop, not this list.
+CLOSING_MATTER = {"OS Comparison", "Unit Tests", "Verification", "History",
+                  "Completed (Reference)", "Codex Adversarial Review",
+                  "Format Quick Reference"}
 
 
 def parse(text: str):
@@ -111,8 +121,17 @@ def sections_after_closing(text: str):
     boundary, promote after.
     """
     lines = text.split("\n")
+    starts = [i for i, l in enumerate(lines) if SECTION_RE.match(l)]
+    if not starts:
+        return []
+    # Only a recognised heading that FOLLOWS the first numbered section is
+    # closing matter. Anchoring this wrongly flagged 8 files where a heading
+    # like `## Important Notes` sits in the FRONT matter: every section then
+    # looks "after the closing matter" (measured 2026-08-02, immediately after
+    # widening the vocabulary -- the scan caught the error on its next run).
     first_closing = None
-    for i, l in enumerate(lines):
+    for i in range(starts[0] + 1, len(lines)):
+        l = lines[i]
         if ANY_H2_RE.match(l) and not SECTION_RE.match(l):
             if l[3:].strip() in CLOSING_MATTER:
                 first_closing = i
@@ -134,7 +153,14 @@ def reorder(text: str):
         return None
     head, blocks, tail = p
     nums = [n for n, _ in blocks]
-    if nums == sorted(nums):
+    # "Already ordered" must mean ORDER **and** PLACEMENT. Numeric ascent alone
+    # short-circuited the rebuild for a file whose sections were appended past
+    # the closing matter -- they ascend among themselves, so `--fix` reported
+    # nothing to do and silently left the defect in place. Measured 2026-08-02
+    # on three files (TODO-04 usermode x10, TODO-07 lsp-mcp x1, TODO-04
+    # system-logging x1). The rebuild below always emits head + sorted sections
+    # + tail, so it repairs placement for free once it is allowed to run.
+    if nums == sorted(nums) and not sections_after_closing(text):
         return None
     ordered = sorted(blocks, key=lambda nb: nb[0])
     out_lines = list(head)
