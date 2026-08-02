@@ -12158,12 +12158,22 @@ fi
 #       helper writes 96 bytes into it. Pointer-to-array keeps the extent in
 #       the type. Proven by COMPILING both shapes rather than asserting the
 #       spelling: the short-buffer call must be rejected.
-if [ "$(grep -c 'static void u_reason_[a-z]*(char (\*dst)\[UTEST_REASON_BUF\]' \
-        "$REPO_ROOT/src/kernel/test/test_usermode.c")" = "5" ]; then
-    t_pass "utest reason helpers: all five pin their capacity in the parameter type"
+#
+#       Counted against the helper SET, not a frozen literal. The assertion
+#       used to demand exactly 5, so adding a legitimate sixth helper
+#       (u_reason_stall, 7a597be8) turned a correct change into a CI failure
+#       while asserting nothing new about the contract. Every u_reason_*
+#       definition must use the pointer-to-array form; the floor keeps a
+#       deleted-helpers regression from passing vacuously.
+UREASON_TOTAL="$(grep -c 'static void u_reason_[a-z]*(' \
+    "$REPO_ROOT/src/kernel/test/test_usermode.c")"
+UREASON_PINNED="$(grep -c 'static void u_reason_[a-z]*(char (\*dst)\[UTEST_REASON_BUF\]' \
+    "$REPO_ROOT/src/kernel/test/test_usermode.c")"
+if [ "$UREASON_PINNED" = "$UREASON_TOTAL" ] && [ "$UREASON_TOTAL" -ge 5 ]; then
+    t_pass "utest reason helpers: every helper pins its capacity in the parameter type"
 else
-    t_fail "utest reason helpers: all five pin their capacity in the parameter type" \
-        "a helper takes a decaying array or pointer parameter instead"
+    t_fail "utest reason helpers: every helper pins its capacity in the parameter type" \
+        "pinned=$UREASON_PINNED of total=$UREASON_TOTAL (want equal, total >= 5): a helper takes a decaying array or pointer parameter instead"
 fi
 
 if command -v clang-19 >/dev/null 2>&1; then
