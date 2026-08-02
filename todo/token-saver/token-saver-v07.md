@@ -1,5 +1,8 @@
 # Token Saver v07 -- 24h Canary Cost Findings (armed 2026-08-01)
 
+> **CLOSED 2026-08-02.** Historical record of the 34.4h canary armed 2026-08-01; do NOT file new findings here. Current capture surface: [`token-saver-v08.md`](token-saver-v08.md).
+
+
 Cost and token findings from the 24-hour canary armed after the 2026-07-31 repair stop. CAPTURE surface, not a work queue: it sits outside the sequencer's traversal, so nothing here is implemented by the run. It is the CURRENT capture file -- the sequencer files to the NEWEST `token-saver-vNN.md` in this directory, which is this one until an operator opens v08.
 
 **Why findings land here instead of being fixed.** Cost machinery is control plane (`.claude/hooks/**`, `scripts/overnight/**`) or receipt surface, both off-limits unattended. Record the finding in the same turn it is observed, then continue; a finding carried in-context to "report later" dies with the segment.
