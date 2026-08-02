@@ -340,9 +340,24 @@ fi
 
 [ "${COUNT_ONLY:-}" = "1" ] && exit 0
 
-# Amend the commit to include the updated COUNT.md + README badge
-# Use SKIP_COUNT to prevent infinite recursion
-SKIP_COUNT=1 git add "$COUNT_FILE" "$README_FILE" 2>/dev/null
-SKIP_COUNT=1 git commit --amend --no-edit --no-verify 2>/dev/null
+# Amend the commit to include the updated COUNT.md + README badge.
+#
+# `--only <paths>` IS LOAD-BEARING (2026-08-02). A bare `--amend` commits the
+# WHOLE INDEX, so this hook silently converted every path-limited commit in the
+# repo into a full-index commit -- defeating `git commit -- <paths>`, which is
+# the documented protection for working alongside a live unattended run.
+#
+# MEASURED TWICE, both times mistaken for something else: on 2026-07-31 an
+# attended commit that staged only its own four files still shipped the run's
+# staged section deferral, and on 2026-08-02 a path-limited 3-file commit
+# shipped 13 files including 527 lines of the run's in-flight
+# test_usermode_launcher.c under an unrelated message. Both were attributed to
+# "the index is shared"; the actual mechanism is this amend, and it is fixable
+# rather than inherent. It is also the real mechanism behind the 2026-07-28
+# live-gotcha about the RUN sweeping an operator's files.
+#
+# Use SKIP_COUNT to prevent infinite recursion.
+SKIP_COUNT=1 git commit --amend --only --no-edit --no-verify \
+  -- "$COUNT_FILE" "$README_FILE" 2>/dev/null
 
 exit 0
