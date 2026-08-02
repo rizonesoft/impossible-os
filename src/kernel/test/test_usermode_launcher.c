@@ -179,6 +179,12 @@ uint64_t test_usermode_capture_close(uint64_t *admitted, uint64_t *completed,
                                      uint64_t *forgiven, uint32_t *generation);
 int test_usermode_capture_settle(uint32_t claim_gen, uint32_t current_gen,
                                  uint64_t *completed);
+void test_usermode_capture_receipt(uint32_t claim_gen, uint32_t current_gen,
+                                   int delivered, uint64_t *completed,
+                                   uint64_t *undelivered);
+void test_usermode_capture_live_counters(uint64_t *admitted,
+                                         uint64_t *completed,
+                                         uint64_t *undelivered);
 int test_usermode_capture_descendant_of(const struct task *t,
                                         uint32_t owner_pid);
 int test_usermode_fork_admit_decide(int parent_captured, uint32_t owner_pid,
@@ -3892,22 +3898,19 @@ static void test_capture_close_writes_off_and_ends_the_epoch(void)
     TEST_ASSERT_EQ((uint64_t)gen, 43u, "while still ending that epoch");
 }
 
-/* An UNSETTLED claim is reported, whether it never reached klog or reached
- * it and lost its emitter before the credit. That conflation is a decision,
- * not an omission, and this test is where the decision is pinned.
+/* An UNSETTLED claim is reported. Still true, and still the fail-closed
+ * direction -- but it no longer conflates two outcomes the way it did when
+ * this test was written.
  *
- * No producer-side counter can be simultaneous with a record reaching the
- * host -- klog writes serial, then renders to the framebuffer, then appends
- * and synchronously flushes the disk log -- so a killed emitter is
- * necessarily misreported one way or the other, and BOTH placements straddle
- * that same tail. The choice is therefore about DIRECTION, not width:
- * crediting before the emission turns a lost record into a GREEN run, while
- * crediting after turns a delivered one into a REFUSED run, and a refused
- * run gets looked at. What makes the ambiguity practically non-binding is
- * outside this counter -- the reap signals first and waits
- * UTEST_CAPTURE_REAP_GRACE_MS, so an emitter inside klog finishes and
- * credits itself. See s_capture_completed in test_usermode.c for the full
- * argument this test pins. */
+ * The conflation it used to pin was between a record that never reached klog
+ * and one that reached the wire and lost its emitter before the credit, which
+ * was unavoidable while the credit was a step the emitter had to survive to
+ * reach. It is not unavoidable any more: klog acknowledges each receipted
+ * record at its own delivery point, so a record on the wire is settled by the
+ * receipt with no further participation from the emitter (the receipt tests
+ * below). What reaches this close as unsettled is a claim whose record klog
+ * never acknowledged at all, which is a genuine loss, and reporting it is
+ * simply correct rather than a chosen direction. */
 static void test_capture_close_reports_an_unsettled_claim_fail_closed(void)
 {
     uint64_t admitted = 1u, completed = 0u, forgiven = 0u;
@@ -3921,6 +3924,95 @@ static void test_capture_close_reports_an_unsettled_claim_fail_closed(void)
     TEST_ASSERT_EQ(forgiven, 1u,
                    "and is written off in the same act, so the refusal lands on "
                    "this run and the next one starts from zero");
+}
+
+/* THE SECTION 57 REGRESSION: an emitter terminated between the log call and
+ * its credit leaves the run GREEN, not refused.
+ *
+ * The receipt call below is what klog performs the instant the record's
+ * serial write returns; everything after it stands for an emitter that never
+ * ran again. Under the arrangement this replaced, the credit was the
+ * emitter's own next statement, so this same sequence produced pending=1 and
+ * a [UTEST-CAPTURE-PENDING] refusing a run whose output the host had. */
+static void test_capture_receipt_settles_a_delivered_record_without_its_emitter(void)
+{
+    uint64_t admitted = 1u, completed = 0u, forgiven = 0u, undelivered = 0u;
+    uint32_t gen = 5u;
+
+    test_usermode_capture_receipt(gen, gen, 1 /*delivered*/, &completed,
+                                  &undelivered);
+
+    TEST_ASSERT_EQ(completed, 1u,
+                   "the claim is settled by the delivery itself, not by a "
+                   "later step the emitter has to be alive to reach");
+    TEST_ASSERT_EQ(undelivered, 0u,
+                   "and a delivered record is not counted as a drop");
+    TEST_ASSERT_EQ(test_usermode_capture_close(&admitted, &completed,
+                                               &forgiven, &gen), 0u,
+                   "so the boundary has nothing outstanding to write off and "
+                   "the run is GREEN -- the refusal this removes named a "
+                   "record the host actually received");
+    TEST_ASSERT_EQ(forgiven, 0u,
+                   "and nothing is written off, so the next run's accounting "
+                   "inherits no phantom loss");
+}
+
+/* A record klog DECLINED discharges the same debt but is counted apart from
+ * one that reached the wire.
+ *
+ * Both halves matter and they pull in opposite directions. Leaving the claim
+ * outstanding would make the drain wait out its whole budget for a record
+ * that is never coming, so the debt must clear; folding it into `completed`
+ * alone would make a producer-side drop read exactly like a delivery, so the
+ * run boundary could report a hole in the stream without being able to name
+ * its cause. */
+static void test_capture_receipt_counts_a_declined_record_apart(void)
+{
+    uint64_t admitted = 1u, completed = 0u, forgiven = 0u, undelivered = 0u;
+    uint32_t gen = 7u;
+
+    test_usermode_capture_receipt(gen, gen, 0 /*declined*/, &completed,
+                                  &undelivered);
+
+    TEST_ASSERT_EQ(completed, 1u,
+                   "a record klog declined still discharges its claim -- the "
+                   "drain must not wait for a record that will never be sent");
+    TEST_ASSERT_EQ(undelivered, 1u,
+                   "and is counted apart, so the boundary reports the CAUSE "
+                   "of the hole instead of only its existence");
+    TEST_ASSERT_EQ(test_usermode_capture_close(&admitted, &completed,
+                                               &forgiven, &gen), 0u,
+                   "nothing is left outstanding at the close");
+}
+
+/* A receipt whose epoch has already closed settles nothing and bills nobody.
+ *
+ * The generation guard is what stops a late acknowledgement crediting the
+ * CURRENT run for the previous one's record -- a surplus credit does not
+ * vanish, it cancels a live reservation and lets a run roll over with a
+ * record still in flight. The undelivered tally is guarded by the same test
+ * for the matching reason: a drop belongs to the run that suffered it, and
+ * that run has already reported what it lost. */
+static void test_capture_receipt_refuses_a_claim_from_a_closed_epoch(void)
+{
+    uint64_t completed = 0u, undelivered = 0u;
+    uint32_t gen = 9u, stale = 8u;
+
+    test_usermode_capture_receipt(stale, gen, 0 /*declined*/, &completed,
+                                  &undelivered);
+
+    TEST_ASSERT_EQ(completed, 0u,
+                   "a stale receipt credits nothing -- its reservation was "
+                   "already written off by the close that ended its epoch");
+    TEST_ASSERT_EQ(undelivered, 0u,
+                   "and does not bill this run for a drop the previous run "
+                   "already reported");
+
+    test_usermode_capture_receipt(gen, gen, 1 /*delivered*/, &completed,
+                                  &undelivered);
+    TEST_ASSERT_EQ(completed, 1u,
+                   "while a current claim still settles, so the guard rejects "
+                   "by epoch rather than rejecting everything");
 }
 
 /* The lifetime counters are 64-bit, and the claim transition must carry them
@@ -5329,6 +5421,76 @@ static void test_capture_byte_and_flush_produce_the_wire_record(void)
     atomic_set(&self->utest_capture_seq, saved_seq);
     __atomic_store_n(&self->utest_capture_stopped, saved_stopped,
                      __ATOMIC_RELEASE);
+}
+
+/* The PRODUCTION path carries the receipt -- not just the helper.
+ *
+ * The three receipt tests further up drive u_capture_receipt_apply over
+ * caller-owned numbers, which pins the decision and nothing about who calls
+ * it. This one drives a real capture write through the same entry points the
+ * launcher uses and watches the LIVE run counters, so it fails if an emitting
+ * call site stops carrying u_capture_receipt -- the regression the helper
+ * tests cannot see, and the one that would put false [UTEST-CAPTURE-PENDING]
+ * refusals back on real runs.
+ *
+ * What it does NOT pin, stated rather than implied: the ORDER, that the credit
+ * lands at klog's delivery boundary rather than after the emitter returns. A
+ * sample taken between those two points is not available from here -- the
+ * emission is one call -- so the ordering is pinned separately, over klog
+ * itself, by "Klog: receipt acknowledges a delivered record" in test_klog.c.
+ * Together they cover the wiring and the mechanism; neither alone does. */
+static void test_capture_emission_settles_through_the_live_receipt(void)
+{
+    struct task *self = task_current();
+    struct utest_capture_ctx ctx;
+    uint8_t  saved_active;
+    uint32_t saved_owner;
+    int32_t  saved_seq;
+    uint8_t  saved_stopped;
+    uint64_t admitted_before, completed_before, undelivered_before;
+    uint64_t admitted_after, completed_after, undelivered_after;
+
+    if (!self) {
+        TEST_SKIP("no current task available in this test context");
+        return;
+    }
+    saved_active  = self->utest_capture_active;
+    saved_owner   = self->utest_capture_owner_pid;
+    saved_seq     = atomic_read(&self->utest_capture_seq);
+    saved_stopped = __atomic_load_n(&self->utest_capture_stopped,
+                                    __ATOMIC_ACQUIRE);
+    __atomic_store_n(&self->utest_capture_stopped, 0, __ATOMIC_RELEASE);
+
+    self->utest_capture_active = 1;
+    self->utest_capture_owner_pid = self->pid;
+    atomic_set(&self->utest_capture_seq, 0);
+
+    test_usermode_capture_live_counters(&admitted_before, &completed_before,
+                                        &undelivered_before);
+
+    test_usermode_capture_start(&ctx);
+    TEST_ASSERT(test_usermode_capture_byte(&ctx, 'R') == 1,
+                "the captured byte is consumed by the real capture path");
+    test_usermode_capture_end(&ctx);
+
+    test_usermode_capture_live_counters(&admitted_after, &completed_after,
+                                        &undelivered_after);
+
+    self->utest_capture_active = saved_active;
+    self->utest_capture_owner_pid = saved_owner;
+    atomic_set(&self->utest_capture_seq, saved_seq);
+    __atomic_store_n(&self->utest_capture_stopped, saved_stopped,
+                     __ATOMIC_RELEASE);
+
+    TEST_ASSERT_EQ(admitted_after - admitted_before, 1u,
+                   "one write drew exactly one capture claim");
+    TEST_ASSERT_EQ(completed_after - completed_before, 1u,
+                   "and the emission settled it -- the production record "
+                   "carries u_capture_receipt, so the claim is credited "
+                   "without a separate post-call step");
+    TEST_ASSERT_EQ(undelivered_after - undelivered_before, 0u,
+                   "the record reached the wire, so nothing is counted as a "
+                   "producer-side drop");
 }
 
 /* Regression for TWO adversarial-round-found bugs at the exact chunk
@@ -7144,6 +7306,15 @@ void test_register_usermode_launcher(void)
     test_suite_register_cat("UTEST: an unsettled claim is reported fail-closed",
                             test_capture_close_reports_an_unsettled_claim_fail_closed,
                             TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: a delivered record settles without its emitter",
+                            test_capture_receipt_settles_a_delivered_record_without_its_emitter,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: a declined record is counted apart",
+                            test_capture_receipt_counts_a_declined_record_apart,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: a receipt from a closed epoch settles nothing",
+                            test_capture_receipt_refuses_a_claim_from_a_closed_epoch,
+                            TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: write-offs do not leak across three runs",
                             test_capture_write_offs_do_not_leak_across_three_runs,
                             TEST_CAT_EXEC);
@@ -7173,6 +7344,9 @@ void test_register_usermode_launcher(void)
                             TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: capture_byte is a no-op for an uncaptured task",
                             test_capture_byte_uncaptured_task_returns_zero,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: a real emission settles through the live receipt",
+                            test_capture_emission_settles_through_the_live_receipt,
                             TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: capture_byte/flush produce the wire record",
                             test_capture_byte_and_flush_produce_the_wire_record,

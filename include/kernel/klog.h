@@ -45,6 +45,46 @@ void klog(log_level_t level, const char *subsystem, const char *fmt, ...);
  * verbosity filter, ring/disk/serial sink, and lock discipline as klog(). */
 void klog_unrated(log_level_t level, const char *subsystem, const char *fmt, ...);
 
+/* Delivery receipt for ONE record: the acknowledgement klog publishes at the
+ * point that record has either reached the wire or been declined.
+ *
+ * `cookie` is the value handed to klog_receipted(); `delivered` is 1 once the
+ * record's serial write has returned and 0 when klog declined to emit it. The
+ * only decline a receipted caller can meet TODAY is the verbosity filter,
+ * because klog_receipted bypasses the rate limiter; klog_emit acknowledges its
+ * rate-limited exit too, so the guarantee belongs to that function's exits
+ * rather than to the current set of wrappers. Exactly one call per klog_receipted()
+ * invocation, always before that call returns, so a caller that settles an
+ * obligation against the receipt cannot be beaten by its own death: no window
+ * exists between the record reaching serial and the acknowledgement in which
+ * the caller has to still be alive to credit it.
+ *
+ * CONTRACT -- the callback runs in the emitter's own context at the delivery
+ * boundary, holding no klog lock, so it must be:
+ *   - synchronous and bounded: no sleeping, no blocking, no yielding;
+ *   - safe with interrupts DISABLED. klog is callable from interrupt context
+ *     and the irqsave locks restore the CALLER's prior IRQ state, so the
+ *     callback inherits whatever the caller had rather than a known state;
+ *   - safe to run concurrently on several CPUs;
+ *   - free of any klog call, receipted or not. A nested record would complete
+ *     its framebuffer and disk output before the outer record reaches those
+ *     sinks, reversing sink order against serial and the ring, and a nested
+ *     RECEIPTED record can recurse without bound.
+ * A spin_lock_irqsave-guarded counter update -- what the user-mode capture
+ * accounting does -- fits this contract exactly. */
+typedef void (*klog_receipt_fn)(uint64_t cookie, int delivered);
+
+/* Like klog_unrated() plus a per-record delivery receipt (see above).
+ *
+ * The receipt is opt-in PER CALL rather than a registered sink so the ordinary
+ * path pays one register-resident NULL test and nothing else: no global load,
+ * no per-thread state, no extra lock on the line that every subsystem in the
+ * kernel emits. `ack` may be NULL, which makes this identical to
+ * klog_unrated(). */
+void klog_receipted(log_level_t level, const char *subsystem,
+                    klog_receipt_fn ack, uint64_t cookie,
+                    const char *fmt, ...);
+
 /* Capacity of the SERIALIZED subsystem tag, including its NUL.
  *
  * The ring entry below stores the tag as a `const char *` and never copies

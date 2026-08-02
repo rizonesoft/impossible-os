@@ -10,6 +10,7 @@ ring-3 stdout where it is PRODUCED and emits it as authenticated klog records:
     [UTEST-CAPTURE] owner=<pid> wr=<id> seq=<n> len=<raw> final=<0|1> <escaped>
     [UTEST-CAPTURE-LOST] owner=<pid> len=unknown
     [UTEST-CAPTURE-PENDING] run=<n> pending=<n>
+    [UTEST-CAPTURE-UNDELIVERED] run=<n> count=<n>
     [UTEST-CAPTURE-UNREAPED] owner=<pid> live=<n>
     [UTEST-CAPTURE-REAP-DEGRADED] owner=<pid> pending=<n> stranded=<n>
 
@@ -316,6 +317,21 @@ _TERMINAL_OVER_RE = re.compile(
 # `_U32` block above exists to state.
 _PENDING_RE = re.compile(
     r"\[UTEST-CAPTURE-PENDING\] run=" + _U32 + r" pending=" + _U32_POS)
+# The run boundary's report of records klog DECLINED to put on the wire -- the
+# verbosity filter or the rate limiter dropped them, so their claims settled
+# without anything reaching serial.
+#
+# It is a refusal for the same reason PENDING is: the stream this run publishes
+# has holes. What it adds is the CAUSE. A claim settled by a delivery receipt
+# carrying delivered=0 is a producer-side drop, which is a configuration or
+# budget fault in the kernel; a claim never settled at all is a lost emitter.
+# Before the receipt existed the two were the same number, and a reader could
+# only guess which had happened.
+# `count` uses the POSITIVE grammar, like PENDING and UNREAPED and for the same
+# reason: the producer emits this record only under `if (undelivered)`, so
+# `count=0` is a shape it cannot write.
+_UNDELIVERED_RE = re.compile(
+    r"\[UTEST-CAPTURE-UNDELIVERED\] run=" + _U32 + r" count=" + _U32_POS)
 # The run boundary's report of capture-owning descendants it could not reap
 # within its round cap -- a producer forking faster than the launcher kills.
 # Their FUTURE records are already fenced by the owner's stop latch, so this
@@ -769,6 +785,23 @@ def _scan(lines, prefix):
                 "capture_pending_records",
                 f"run={run} sealed with {count} capture record(s) claimed but "
                 "never emitted -- the run's capture streams are incomplete",
+            )
+
+        m = _UNDELIVERED_RE.fullmatch(body)
+        if m:
+            run, count = int(m.group(1)), int(m.group(2))
+            _count(0)
+            if run > _UINT32_MAX or count > _UINT32_MAX:
+                raise Refusal(
+                    "capture_field_out_of_range",
+                    f"the undelivered report declares run={run} count={count}, "
+                    "wider than the producer's uint32 fields",
+                )
+            raise Refusal(
+                "capture_undelivered_records",
+                f"run={run} settled {count} capture record(s) that klog "
+                "declined to emit -- the run's capture streams are incomplete "
+                "and the cause is producer-side filtering, not a lost emitter",
             )
 
         m = _UNREAPED_RE.fullmatch(body)

@@ -17472,6 +17472,53 @@ _cap_pendingzero() {
 cap_refuses "a pending report of zero is a shape the producer cannot emit" \
     capture_malformed_record _cap_pendingzero
 
+# The UNDELIVERED report. A capture claim settles from klog's delivery
+# receipt, which also says whether the record reached the wire; a record klog
+# DECLINED discharges its claim without arriving, so the run's stream has a
+# hole that PENDING would never name. The two are different causes with
+# different fixes -- a producer-side filter versus a lost emitter -- and
+# telling them apart on the wire is the only reason this record exists.
+_cap_undelivered() {
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=1 final=1 a"
+    cap_line "[UTEST-CAPTURE-UNDELIVERED] run=3 count=2"
+}
+cap_refuses "a run whose records klog declined to emit is refused" \
+    capture_undelivered_records _cap_undelivered
+
+# Both fields are producer uint32s, checked like every other numeric field.
+_cap_undeliveredrange() {
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE-UNDELIVERED] run=3 count=4294967296"
+}
+cap_refuses "an over-range undelivered count is refused as a field, not a loss" \
+    capture_field_out_of_range _cap_undeliveredrange
+
+_cap_undeliveredrunrange() {
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE-UNDELIVERED] run=4294967296 count=1"
+}
+cap_refuses "an over-range undelivered run ordinal is refused as a field" \
+    capture_field_out_of_range _cap_undeliveredrunrange
+
+# Guarded on a nonzero count at the producer, exactly like PENDING, so a zero
+# is a shape it cannot write.
+_cap_undeliveredzero() {
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE-UNDELIVERED] run=3 count=0"
+}
+cap_refuses "an undelivered report of zero is a shape the producer cannot emit" \
+    capture_malformed_record _cap_undeliveredzero
+
+# A missing field is corruption, not a smaller record: the host must not
+# silently accept a truncated boundary report as a well-formed one.
+_cap_undeliveredshort() {
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE-UNDELIVERED] run=3"
+}
+cap_refuses "an undelivered report missing its count is malformed" \
+    capture_malformed_record _cap_undeliveredshort
+
 _cap_unreapedzero() {
     cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
     cap_line "[UTEST-CAPTURE-UNREAPED] owner=7 live=0"

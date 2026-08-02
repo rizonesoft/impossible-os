@@ -1134,8 +1134,16 @@ uint32_t klog_panic_snapshot(klog_entry_t *out, uint32_t max)
  * lock discipline are identical) so an already-prelimited caller -- e.g. the
  * per-process exception-dispatch telemetry (except.c) -- keeps its subsystem tag
  * and the unified sink without one process's flood clipping another's budget.
- * `ap` is owned by the caller (va_start/va_end live in the thin wrappers). */
+ * `ap` is owned by the caller (va_start/va_end live in the thin wrappers).
+ *
+ * `ack`/`cookie` are the optional per-record delivery receipt (klog.h). The
+ * receipt fires EXACTLY ONCE on every exit from this function -- both drops
+ * and the delivering path -- because its meaning is "this record is no longer
+ * owed", and an exit that fired nothing would strand whatever obligation the
+ * caller settles against it. `delivered` is what distinguishes the outcomes.
+ * A NULL `ack` is the ordinary path and costs one register-resident test. */
 static void klog_emit(log_level_t level, const char *subsystem, int bypass_rate,
+                      klog_receipt_fn ack, uint64_t cookie,
                       const char *fmt, va_list ap)
 {
     klog_entry_t snapshot;   /* local copy for output outside the lock */
@@ -1147,8 +1155,15 @@ static void klog_emit(log_level_t level, const char *subsystem, int bypass_rate,
      * Read-only check on s_overrides -- safe without lock (overrides are
      * append-only and only modified during single-threaded boot or with
      * explicit klog_set_level calls). */
-    if (level < subsys_min_level(subsystem))
+    if (level < subsys_min_level(subsystem)) {
+        /* Declined, not delivered -- but still acknowledged. The record was
+         * never handed to serial, so a caller counting what the host must
+         * have seen learns that from `delivered`, while its outstanding
+         * obligation is discharged either way. */
+        if (ack)
+            ack(cookie, 0);
         return;
+    }
 
     /* ---- Lock: protect ring buffer + rate-limit mutations ---- */
     spin_lock_irqsave(&s_klog_lock, &irq_flags);
@@ -1164,6 +1179,22 @@ static void klog_emit(log_level_t level, const char *subsystem, int bypass_rate,
 
     if (rate_dropped) {
         spin_unlock_irqrestore(&s_klog_lock, irq_flags);
+        /* UNREACHABLE for every receipted caller that exists today, and kept
+         * anyway. The only wrapper passing a non-NULL ack is klog_receipted,
+         * which passes bypass_rate=1, so this branch cannot run with an ack in
+         * hand. It stays because the acknowledgement is a property of THIS
+         * function's exits rather than of the current wrapper set: a rated
+         * receipted wrapper added later without it would strand its caller's
+         * obligation permanently, and there is no diagnostic for that -- the
+         * run simply waits out its drain budget and reports a loss that never
+         * happened.
+         *
+         * Acknowledged BEFORE the summary line below, not after: the summary
+         * is an unrelated record that pays a whole serial write, and ordering
+         * this caller's settlement behind it would hand the receipt exactly
+         * the latency the receipt exists to remove. */
+        if (ack)
+            ack(cookie, 0);
         if (first_drop) {
             /* Emit summary outside lock -- NULL subsystem bypasses rate check */
             klog(LOG_WARN, (const char *)0,
@@ -1373,6 +1404,21 @@ static void klog_emit(log_level_t level, const char *subsystem, int bypass_rate,
         #undef KLOG_LINE_USABLE
 
         serial_write(line);
+
+        /* THE DELIVERY BOUNDARY. serial_write has returned, so this record is
+         * on the wire a host reading serial will see -- and the receipt fires
+         * here rather than after the framebuffer and disk sinks below because
+         * serial is the stream the host reconciles. Waiting for the other
+         * sinks would delay the acknowledgement past work no consumer of the
+         * receipt is waiting on, and the disk sink in particular performs a
+         * synchronous append+flush.
+         *
+         * Before the LOG_FATAL halt at the bottom for the same reason: a
+         * record whose level halts the machine still reached the wire, and a
+         * receipt that never fired would leave its caller's obligation
+         * outstanding forever. */
+        if (ack)
+            ack(cookie, 1);
     }
 
     /* ---- Output to framebuffer if level >= screen threshold ---- */
@@ -1434,7 +1480,8 @@ void klog(log_level_t level, const char *subsystem, const char *fmt, ...)
 {
     va_list ap;
     va_start(ap, fmt);
-    klog_emit(level, subsystem, 0 /*bypass_rate*/, fmt, ap);
+    klog_emit(level, subsystem, 0 /*bypass_rate*/,
+              (klog_receipt_fn)0, 0 /*cookie*/, fmt, ap);
     va_end(ap);
 }
 
@@ -1446,6 +1493,23 @@ void klog_unrated(log_level_t level, const char *subsystem, const char *fmt, ...
 {
     va_list ap;
     va_start(ap, fmt);
-    klog_emit(level, subsystem, 1 /*bypass_rate*/, fmt, ap);
+    klog_emit(level, subsystem, 1 /*bypass_rate*/,
+              (klog_receipt_fn)0, 0 /*cookie*/, fmt, ap);
+    va_end(ap);
+}
+
+/* Like klog_unrated() plus a delivery receipt. The rate limiter is bypassed
+ * for the same reason klog_unrated bypasses it and for one more: a receipted
+ * record is emitted by a caller that is ACCOUNTING for it, so letting an
+ * unrelated subsystem's flood clip it would turn another caller's noise into
+ * this caller's missing record. The contract the `ack` must satisfy is stated
+ * on klog_receipt_fn in klog.h. */
+void klog_receipted(log_level_t level, const char *subsystem,
+                    klog_receipt_fn ack, uint64_t cookie,
+                    const char *fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    klog_emit(level, subsystem, 1 /*bypass_rate*/, ack, cookie, fmt, ap);
     va_end(ap);
 }

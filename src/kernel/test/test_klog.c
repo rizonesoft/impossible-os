@@ -9,6 +9,7 @@
 #ifdef KERNEL_TESTS
 
 #include "kernel/test/test.h"
+#include "kernel/test/klog_suppress.h"
 #include "kernel/klog.h"
 #include "kernel/boot_init.h"
 #include "kernel/etw.h"
@@ -136,6 +137,102 @@ static void test_klog_level_pass(void)
 
     /* Restore default */
     klog_set_level("TEST", LOG_DEBUG);
+}
+
+/* ---- Delivery receipts ----
+ *
+ * klog_receipted acknowledges each record at the point that record has either
+ * reached the wire or been declined, so a caller accounting for its own
+ * records settles AT the delivery instead of after the log call returns. What
+ * these tests pin is the property that makes the acknowledgement worth having:
+ * it lands before klog_receipted returns, on every exit, whether or not the
+ * record was emitted. A receipt that fired only on the delivering path would
+ * strand its caller's obligation on a filtered record; one that fired after
+ * the call returned would be worth exactly as much as the credit it replaced.
+ *
+ * The probe below is a plain static because only these tests ever hand this
+ * ack to klog, so this thread is its only caller -- the SMP clause of the
+ * klog_receipt_fn contract is satisfied by there being no second writer, not
+ * by a lock this test would have to hold. */
+
+struct klog_receipt_probe {
+    uint32_t calls;
+    uint32_t delivered;
+    uint64_t cookie;
+};
+
+static struct klog_receipt_probe s_klog_receipt_probe;
+
+static void klog_receipt_probe_ack(uint64_t cookie, int delivered)
+{
+    s_klog_receipt_probe.calls++;
+    s_klog_receipt_probe.cookie = cookie;
+    s_klog_receipt_probe.delivered = (uint32_t)(delivered ? 1u : 0u);
+}
+
+static void test_klog_receipt_acknowledges_a_delivered_record(void)
+{
+    s_klog_receipt_probe.calls = 0;
+    s_klog_receipt_probe.delivered = 0;
+    s_klog_receipt_probe.cookie = 0;
+
+    /* The "TEST" tag, NOT a private one, and the choice is load-bearing.
+     * boot_tests.c raises the GLOBAL ceiling to LOG_WARN for the duration of
+     * the kernel test run and grants LOG_DEBUG to exactly three tags --
+     * "TEST", "UTEST", "DTEST" -- matched in full by str_eq, so any other tag
+     * has its LOG_INFO records legitimately declined in this window. A
+     * private tag here does not test delivery, it tests the filter: the first
+     * draft used one and this assertion caught it, reporting delivered=0 for
+     * a record klog was right to drop.
+     *
+     * The reason the ring-write test above avoids the shared "TEST" tag --
+     * its per-subsystem rate budget may already be spent by the runner's own
+     * lines -- does not apply, because klog_receipted bypasses the rate
+     * limiter for exactly this class of caller. */
+    klog_receipted(LOG_INFO, "TEST", klog_receipt_probe_ack,
+                   0xA5A5A5A5ULL, "(receipt delivery probe -- expected)");
+
+    /* The counter is written ONLY by the ack, so reading 1 here is the claim
+     * that the acknowledgement landed before klog_receipted returned. That
+     * ordering is the whole point: a caller settling an obligation against
+     * this receipt never has to be alive for a later step. */
+    TEST_ASSERT_EQ((uint64_t)s_klog_receipt_probe.calls, 1u,
+                   "a receipted record is acknowledged exactly once, before "
+                   "klog_receipted returns");
+    TEST_ASSERT_EQ(s_klog_receipt_probe.cookie, 0xA5A5A5A5ULL,
+                   "the acknowledgement carries the caller's own cookie, "
+                   "which is what lets one obligation be settled among many");
+    TEST_ASSERT_EQ((uint64_t)s_klog_receipt_probe.delivered, 1u,
+                   "a record whose serial write returned is acknowledged as "
+                   "delivered");
+}
+
+static void test_klog_receipt_acknowledges_a_declined_record(void)
+{
+    /* Demote a tag nothing else uses to LOG_FATAL, so the verbosity filter
+     * rejects the LOG_INFO below before the ring lock is ever taken -- the
+     * earliest of klog_emit's exits. Restored by the suite-exit action
+     * drain. */
+    TEST_KLOG_SUPPRESS("klogrcptd");
+
+    s_klog_receipt_probe.calls = 0;
+    s_klog_receipt_probe.delivered = 1;
+    s_klog_receipt_probe.cookie = 0;
+
+    klog_receipted(LOG_INFO, "klogrcptd", klog_receipt_probe_ack,
+                   0x5A5A5A5AULL, "(receipt decline probe -- never emitted)");
+
+    TEST_ASSERT_EQ((uint64_t)s_klog_receipt_probe.calls, 1u,
+                   "a record klog DECLINED is acknowledged too -- an exit "
+                   "that fired nothing would leave the caller's obligation "
+                   "outstanding forever, which is worse than the late credit "
+                   "the receipt replaced");
+    TEST_ASSERT_EQ((uint64_t)s_klog_receipt_probe.delivered, 0u,
+                   "and is acknowledged as NOT delivered, so a producer-side "
+                   "drop stays distinguishable from a record the host has");
+    TEST_ASSERT_EQ(s_klog_receipt_probe.cookie, 0x5A5A5A5AULL,
+                   "the declined acknowledgement carries the same cookie the "
+                   "delivering one would, so a caller needs no second path");
 }
 
 /* ---- Global level override ---- */
@@ -745,6 +842,12 @@ void test_register_klog(void)
     test_suite_register_cat("Klog: ring write", test_klog_ring_write, TEST_CAT_BOOT);
     test_suite_register_cat("Klog: level drop", test_klog_level_drop, TEST_CAT_BOOT);
     test_suite_register_cat("Klog: level pass", test_klog_level_pass, TEST_CAT_BOOT);
+    test_suite_register_cat("Klog: receipt acknowledges a delivered record",
+                            test_klog_receipt_acknowledges_a_delivered_record,
+                            TEST_CAT_BOOT);
+    test_suite_register_cat("Klog: receipt acknowledges a declined record",
+                            test_klog_receipt_acknowledges_a_declined_record,
+                            TEST_CAT_BOOT);
     test_suite_register_cat("Klog: global level", test_klog_global_level, TEST_CAT_BOOT);
     test_suite_register_cat("Klog: rate limit API", test_klog_rate_limit_api, TEST_CAT_BOOT);
     test_suite_register_cat("Klog: ring wrap", test_klog_ring_wrap, TEST_CAT_BOOT);

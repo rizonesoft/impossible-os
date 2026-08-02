@@ -3418,6 +3418,26 @@ static const char *u_frame_tag(void)
         klog_unrated((level), u_frame_tag(), __VA_ARGS__);             \
     } while (0)
 
+/* The same record, carrying a klog delivery receipt (klog.h). The receipt is
+ * what makes a capture claim settle AT the wire instead of after the emitter
+ * returns from the log call, so an emitter that dies in between has already
+ * been credited for output the host actually has.
+ *
+ * Declared here beside the plain record macro, but only the capture emitter
+ * uses it: every other framed record is the launcher's own, emitted on a
+ * thread whose survival across the call is not in question. */
+/* The census increment is NOT here, unlike the plain macro above, and the
+ * difference is the whole reason a receipted record is worth having. The
+ * terminator's `records=` is what the host reconciles its slice against, so it
+ * has to count what klog PUT ON THE WIRE -- and a receipted caller is exactly
+ * the one that finds out which. Counting the ATTEMPT instead would declare a
+ * record the host never received: frame reconciliation would fail first, and
+ * the run's own [UTEST-CAPTURE-UNDELIVERED] diagnosis would be unreachable
+ * behind generic corruption, for precisely the drop it exists to name. The
+ * receipt does the counting, on delivery. */
+#define utest_record_log_receipted(level, ack, cookie, ...)            \
+    klog_receipted((level), u_frame_tag(), (ack), (cookie), __VA_ARGS__)
+
 /* Derive this boot's nonce. csprng is seeded in Phase 1, long before the
  * launcher runs in Phase 3; the TSC mix is a defence-in-depth salt, not a
  * substitute, since a monotonic counter is approximable from outside. 0 is
@@ -3468,7 +3488,7 @@ static void u_capture_budget_reset(void);
  * frame terminator below is the only caller. */
 static void u_capture_seal(void);
 static uint64_t u_capture_drain(void);
-static uint64_t u_capture_close_epoch(void);
+static uint64_t u_capture_close_epoch(uint64_t *undelivered_out);
 
 static void u_frame_begin(void)
 {
@@ -3586,6 +3606,7 @@ static void u_frame_end(void)
 {
     uint32_t n;
     uint64_t pending;
+    uint64_t undelivered;
 
     /* Seal, THEN drain, THEN close, and the order is the whole protocol.
      *
@@ -3601,7 +3622,20 @@ static void u_frame_end(void)
      * straggler settle a claim already forgiven. */
     u_capture_seal();
     (void)u_capture_drain();
-    pending = u_capture_close_epoch();
+    /* One transition returns both facts: what was still outstanding, and what
+     * this run settled without klog putting it on the wire. */
+    pending = u_capture_close_epoch(&undelivered);
+    /* Reported ahead of the pending record so a run that suffered both reads
+     * cause-then-consequence on the wire: a record klog declined is a reason
+     * the host's stream has a hole, and a reader hitting the refusal first
+     * would go looking for a lost emitter instead. */
+    if (undelivered) {
+        utest_record_log(LOG_ERROR,
+                         "[UTEST-CAPTURE-UNDELIVERED] run=%u count=%u",
+                         (uint64_t)__atomic_load_n(&s_frame_run,
+                                                   __ATOMIC_RELAXED),
+                         (uint64_t)(uint32_t)undelivered);
+    }
     if (pending) {
         /* Narrowed deliberately, and safe by construction: a run cannot admit
          * more than UTEST_CAPTURE_RUN_RECORD_BUDGET claims, so what is
@@ -3929,6 +3963,20 @@ _Static_assert(UTEST_CAPTURE_PENDING_FIXED <= UTEST_RECORD_LINE_MAX - 1u,
                "capture-family record and refuse the run for the wrong "
                "reason");
 
+/* [UTEST-CAPTURE-UNDELIVERED]'s fixed cost, derived and asserted identically.
+ * Both fields are whole uint32s on the wire for the same reason the pending
+ * report's are: the counters behind them are 64-bit because they span a boot,
+ * while the record describes ONE run, which cannot admit more than
+ * UTEST_CAPTURE_RUN_RECORD_BUDGET claims. */
+#define UTEST_CAPTURE_UNDELIVERED_FIXED                                    \
+    (UTEST_LIT("[UTEST-CAPTURE-UNDELIVERED] run=") + UTEST_DIGITS_U32 +    \
+     UTEST_LIT(" count=") + UTEST_DIGITS_U32)
+_Static_assert(UTEST_CAPTURE_UNDELIVERED_FIXED <= UTEST_RECORD_LINE_MAX - 1u,
+               "the undelivered-record report must fit the record wire cap "
+               "-- a truncated one would reach the host as a malformed "
+               "capture-family record and refuse the run for the wrong "
+               "reason");
+
 /* [UTEST-CAPTURE-UNREAPED]'s fixed cost, derived and asserted identically.
  * `live` counts task slots, so it cannot exceed TASK_MAX, but it is budgeted
  * as a full uint32 anyway: the bound belongs to the scheduler, not to this
@@ -4132,50 +4180,49 @@ static uint64_t s_capture_admitted;
 static uint64_t s_capture_completed;
 static uint64_t s_capture_forgiven;
 
-/* WHICH DIRECTION THE UNAVOIDABLE AMBIGUITY FALLS, decided here once.
+/* Records THIS run settled that klog declined to put on the wire. Run-scoped
+ * and lock-guarded like its siblings, and separate from `completed` on
+ * purpose: both outcomes discharge the same debt, so folding them together
+ * would drain correctly while making a producer-side drop indistinguishable
+ * from a delivered record locally. The debt and the delivery are two facts,
+ * and the run boundary reports them as two. */
+static uint64_t s_capture_undelivered;
+
+/* SETTLEMENT HAPPENS AT KLOG'S DELIVERY POINT, not after the log call.
  *
- * `completed` is credited AFTER utest_record_log returns, and there is no
- * placement that is exactly simultaneous with a record reaching the host:
- * klog reserves its ring slot and formats and writes to serial in separate
- * steps (src/kernel/klog.c), releasing its own lock in between, so a
- * producer-side counter is either too early or too late. The two choices are
- * therefore not "correct vs incorrect" but which way a killed emitter is
- * misreported:
+ * A capture claim is credited by u_capture_receipt below, which klog invokes
+ * from klog_emit the instant serial_write returns and before the framebuffer
+ * and disk sinks (src/kernel/klog.c, contract on klog_receipt_fn in
+ * include/kernel/klog.h). The credit is therefore simultaneous with the
+ * record reaching the stream the host reconciles, and an emitter that dies
+ * anywhere after the log call has already been credited for output the host
+ * actually has.
  *
- *   credited BEFORE the log  -- an emitter killed anywhere inside the
- *                               emission counts as delivered. A lost record
- *                               produces a GREEN run.
- *   credited AFTER the log   -- an emitter killed inside the emission counts
- *                               as lost. A delivered record produces a
- *                               REFUSED run.
+ * The earlier arrangement credited the claim AFTER utest_record_log returned,
+ * which had no placement simultaneous with delivery and so had to CHOOSE a
+ * direction for a killed emitter: crediting before the log called a lost
+ * record delivered (a GREEN run for real data loss), crediting after called a
+ * delivered record lost (a REFUSED run whose output the host has). It chose
+ * the refusing side, deliberately, because a refused run gets looked at and a
+ * silently green one does not. The receipt removes the choice rather than
+ * re-making it: neither misreport is reachable through the emitter's own
+ * death any more.
  *
- * After is chosen, and the reason is the DIRECTION, not the size. The two
- * windows are very nearly the same: klog_emit writes serial, then renders to
- * the framebuffer, then -- when the live disk log is active -- appends and
- * synchronously FLUSHES it (src/kernel/klog.c), so both placements straddle
- * that same tail. What differs is which way an interrupted emitter is
- * misreported, and a refused run gets looked at while a silently green one
- * does not. That is the direction every other check in this pipeline takes.
- *
- * In practice the window is not binding, for a reason outside this counter:
- * the only thing that kills a capture emitter is the run boundary's own
- * reap, and it signals first and waits UTEST_CAPTURE_REAP_GRACE_MS before
- * forcing. A cooperative kill lands at a kernel entry, so an emitter inside
- * klog finishes its sinks and returns here to credit itself. Stranding a
- * credit takes an emitter that is unschedulable for that whole grace -- one
- * that is stuck, not merely slow.
- *
- * Making the report EXACT rather than merely fail-closed needs the credit to
- * happen at klog's own delivery point, between serial_write and the
- * secondary sinks. That is a change to a core kernel service every subsystem
- * uses, and it is owned separately.
- *
- * This was briefly implemented the other way, with a `committed` mark taken
- * before the log, to stop a reaped emitter's delivered record being reported
- * lost. It was withdrawn: it bought no narrower a window, it inverted the
- * direction to fail-open, and carrying two settlement baselines against one
- * forgiveness counter let a committed-but-uncredited record in one run
- * silently cancel a genuinely lost one in the next. */
+ * WHAT REMAINS INEXACT, stated rather than implied. The receipt fires from
+ * the emitter's context, so it must still acquire s_capture_budget_lock to
+ * settle, and on another CPU the run boundary can close the epoch in that
+ * interval -- after which u_capture_settle refuses the claim by generation
+ * and the run reports it pending. Reaching it takes an emitter preempted for
+ * the whole UTEST_CAPTURE_DRAIN_MS between serial_write returning and one
+ * uncontended lock acquisition, against a window that was previously the
+ * entire remainder of that emitter's life. Closing it exactly is not
+ * available on this side: the only producer-local linearization would hold
+ * this lock across serial output, which the kernel forbids. It is owned by
+ * the host reconciliation, which HAS the stream and can tell a claimed-but-
+ * absent record from a claimed-and-present one.
+ * Owned by the host-side "capture reconciliation on the default test path"
+ * work, whose item is to reconcile a provisional pending report against the
+ * authenticated record census before refusing the run. */
 
 /* Records claimed but not yet on the wire, as a PURE function of the three
  * counters -- no lock, no globals, so the arithmetic the whole drain rests
@@ -4356,6 +4403,11 @@ static void u_capture_budget_reset(void)
      * two-thirds true, and the next counter to join here would be added
      * against a promise the code no longer keeps. */
     __atomic_store_n(&s_capture_spawned, 0u, __ATOMIC_RELAXED);
+    /* Run-scoped for the same reason, and reset here rather than at the
+     * boundary that reads it: the read happens BEFORE this reset in a run's
+     * life, so clearing it at the report would race the next run's first
+     * declined record. */
+    s_capture_undelivered = 0;
     spin_unlock_irqrestore(&s_capture_budget_lock, irq_flags);
 }
 
@@ -4411,6 +4463,81 @@ static void u_capture_complete(uint32_t gen)
     spin_unlock_irqrestore(&s_capture_budget_lock, irq_flags);
 }
 
+/* The klog delivery receipt for a capture record: klog calls this at the
+ * point the record has reached serial (delivered=1) or been declined by the
+ * verbosity filter or rate limiter (delivered=0), with the claim's generation
+ * as the cookie.
+ *
+ * Satisfies klog_receipt_fn's contract by construction (klog.h): one lock
+ * acquisition and two counter updates -- no sleeping, no yielding, no
+ * faulting, safe with interrupts disabled because the lock is irqsave, safe
+ * concurrently because the lock is what serialises it, and it emits NO klog
+ * record of any kind, which the contract forbids outright.
+ *
+ * BOTH outcomes settle. `delivered` says whether the host has the record, not
+ * whether the run still owes it: a record klog declined is not going to
+ * arrive later, so leaving the claim outstanding would make the drain wait
+ * out its whole budget for something that no longer exists. The declined case
+ * is counted separately so the boundary can name it instead of it hiding
+ * inside a delivery count.
+ *
+ * The undelivered tally is bumped only when the settle SUCCEEDED, i.e. only
+ * for a claim belonging to the live epoch. A stale claim's run has already
+ * closed and already reported what it lost; adding to this run's tally would
+ * bill one run for another's drop. */
+/* The receipt's DECISION and mutation, pure over the two generations, the
+ * delivered flag and the two counters -- no lock, no globals.
+ *
+ * Split out for the same reason u_capture_settle is: the interesting states
+ * are the ones a live run cannot be driven into. A declined record needs the
+ * verbosity filter to reject a tag the launcher publishes, and a stale
+ * receipt needs an emitter preempted across a frame rollover; neither is a
+ * schedule the kernel test surface can construct. Over plain numbers each is
+ * one call. */
+static void u_capture_receipt_apply(uint32_t claim_gen, uint32_t current_gen,
+                                    int delivered, uint64_t *completed,
+                                    uint64_t *undelivered)
+{
+    if (u_capture_settle(claim_gen, current_gen, completed) && !delivered)
+        (*undelivered)++;
+}
+
+static void u_capture_receipt(uint64_t cookie, int delivered)
+{
+    uint64_t irq_flags;
+
+    spin_lock_irqsave(&s_capture_budget_lock, &irq_flags);
+    /* The frame census, counted HERE rather than at the call site so
+     * `records=` states what the host will actually find in the slice -- and
+     * counted INSIDE this critical section, in the same act as the
+     * settlement, which is what makes the drain cover it.
+     *
+     * The two have to move together or the terminator can publish a count
+     * that disagrees with the wire. Sealed, the drain waits for every
+     * admitted claim to settle, and a record still mid-emission is admitted
+     * and not yet completed -- so a drain that reaches zero has, by
+     * construction, already seen this increment. Split across two operations
+     * the same conclusion holds only through a release/acquire argument about
+     * a counter nothing else locks, which is the kind of reasoning that stops
+     * being true the first time someone reorders this function.
+     *
+     * Unconditional on the generation, unlike the settlement, and the
+     * asymmetry is deliberate: the census is a statement about the WIRE, and
+     * a delivered record sits in whatever slice it landed in whichever
+     * epoch's claim paid for it, while a settlement belongs only to the epoch
+     * that admitted it. The one case where the two diverge -- a claim whose
+     * epoch closed between the emitting path's generation check and this
+     * receipt -- is reachable only through the drain-timeout window described
+     * above, and is owned with the rest of that window by section 59. */
+    if (delivered)
+        __atomic_fetch_add(&s_frame_records, 1u, __ATOMIC_RELAXED);
+    u_capture_receipt_apply((uint32_t)cookie, s_capture_run_generation,
+                            delivered, &s_capture_completed,
+                            &s_capture_undelivered);
+    spin_unlock_irqrestore(&s_capture_budget_lock, irq_flags);
+}
+
+
 /* Close the current epoch: write off everything still outstanding, advance
  * the generation, and report what was written off. The transition itself is
  * u_capture_close; this is only the locking and the load/store around it, so
@@ -4419,13 +4546,20 @@ static void u_capture_complete(uint32_t gen)
  * ONE caller -- the run boundary -- and the exclusivity is load-bearing.
  * Only the boundary can know a reservation is dead rather than slow, and
  * only the epoch that admitted it may write it off. */
-static uint64_t u_capture_close_epoch(void)
+static uint64_t u_capture_close_epoch(uint64_t *undelivered_out)
 {
     struct u_capture_boundary b;
     uint64_t irq_flags;
     uint64_t pending;
 
     spin_lock_irqsave(&s_capture_budget_lock, &irq_flags);
+    /* Read INSIDE the close's critical section, not by a separate accessor
+     * before it. A declined receipt landing between an earlier read and this
+     * lock would be reported by neither run: this run has already published
+     * its tally, and the next run's reset clears the counter before its own
+     * boundary reads it. One transition, one lock, both facts. */
+    if (undelivered_out)
+        *undelivered_out = s_capture_undelivered;
     b.admitted   = s_capture_admitted;
     b.completed  = s_capture_completed;
     b.forgiven   = s_capture_forgiven;
@@ -5335,7 +5469,7 @@ static int u_capture_emit_chunk(struct utest_capture_ctx *ctx, int is_final)
                                  __ATOMIC_RELEASE);
             }
         }
-        utest_record_log(LOG_INFO,
+        utest_record_log_receipted(LOG_INFO, u_capture_receipt, gen,
                          "[UTEST-CAPTURE] owner=%u wr=%u seq=%u len=%u "
                          "final=%u %s",
                          (uint64_t)owner->pid, (uint64_t)ctx->_wid,
@@ -5348,7 +5482,7 @@ static int u_capture_emit_chunk(struct utest_capture_ctx *ctx, int is_final)
          * [UTEST-CAPTURE-LOST], which reports a defensive ownership
          * failure. Conflating them would make a policy stop read as
          * corruption on the host. */
-        utest_record_log(LOG_WARN,
+        utest_record_log_receipted(LOG_WARN, u_capture_receipt, gen,
                          "[UTEST-CAPTURE-OVER] owner=%u seq=%u "
                          "scope=owner limit=%u charged=%u",
                          (uint64_t)owner->pid, (uint64_t)seq,
@@ -5356,7 +5490,7 @@ static int u_capture_emit_chunk(struct utest_capture_ctx *ctx, int is_final)
                          (uint64_t)charged);
         break;
     case UTEST_CAP_OVER_RUN:
-        utest_record_log(LOG_WARN,
+        utest_record_log_receipted(LOG_WARN, u_capture_receipt, gen,
                          "[UTEST-CAPTURE-OVER] owner=%u seq=%u "
                          "scope=run limit=%u charged=%u",
                          (uint64_t)owner->pid, (uint64_t)seq,
@@ -5379,16 +5513,22 @@ static int u_capture_emit_chunk(struct utest_capture_ctx *ctx, int is_final)
         break;
     }
 
-    /* A reservation is settled exactly once, and only the branches that
-     * actually emitted have one to settle. Placed after the switch rather
-     * than inside each emitting branch so a future record kind added to the
-     * switch cannot forget it -- an unsettled reservation does not fail
-     * anything visibly, it just makes the next run boundary wait out its
-     * whole drain budget. */
-    if (verdict != UTEST_CAP_DROP && verdict != UTEST_CAP_SEALED)
-        u_capture_complete(gen);
-
-    /* Anything but a plain chunk means this owner is finished: the caller
+    /* A reservation is settled exactly once, by the klog delivery receipt the
+     * emitting branch above attached to its record -- so settlement is now a
+     * property of the EMISSION rather than of this function being reached
+     * again afterwards, which is the whole of section 57. The two non-emitting
+     * verdicts settle nothing here for the reasons stated in their branches:
+     * DROP and SEALED never drew a record to acknowledge.
+     *
+     * The old post-switch credit is gone rather than kept as a belt: with the
+     * receipt already crediting, a second credit here would settle one
+     * reservation twice, and the surplus does not vanish -- it cancels a later
+     * run's live reservation and lets that run's drain roll over with a record
+     * still in flight. A record kind added to the switch without a receipt
+     * fails the opposite way: its claim stays outstanding and the next
+     * boundary waits out its whole drain budget, which the drain reports.
+     *
+     * Anything but a plain chunk means this owner is finished: the caller
      * latches it and stops paying the escape pass and the lock. */
     return verdict == UTEST_CAP_EMIT;
 }
@@ -5466,16 +5606,24 @@ static void u_capture_settle_terminal(struct thread *thr, uint32_t owner_pid,
         return;
     }
 
+    /* Each branch carries the receipt, replacing the single credit that used
+     * to follow the whole if-chain. It matters MORE here than on the chunk
+     * path: this function frequently runs on behalf of a thread that is
+     * already dead, from a reap or a task teardown, so the credit that used
+     * to sit below is executed by a settler whose own survival across the
+     * emission is exactly what a teardown does not guarantee. The generation
+     * this write armed with travels as the cookie, so the record and its
+     * settlement name the same epoch even when the emitting thread is gone. */
     if (verdict == UTEST_CAP_TERM_OVERFLOW) {
-        utest_record_log(LOG_ERROR,
+        utest_record_log_receipted(LOG_ERROR, u_capture_receipt, gen,
                          "[UTEST-CAPTURE-TERMINAL-OVER] limit=%u",
                          (uint64_t)UTEST_CAPTURE_TERMINAL_BUDGET);
     } else if (!reason) {
-        utest_record_log(LOG_WARN,
+        utest_record_log_receipted(LOG_WARN, u_capture_receipt, gen,
                          "[UTEST-CAPTURE-CUT] owner=%u wr=%u",
                          (uint64_t)owner_pid, (uint64_t)thr->utest_cap_wid);
     } else {
-        utest_record_log(LOG_ERROR,
+        utest_record_log_receipted(LOG_ERROR, u_capture_receipt, gen,
                          "[UTEST-CAPTURE-ABANDON] owner=%u task=%u thr=%u "
                          "haswr=%u wr=%u reason=%s",
                          (uint64_t)owner_pid, (uint64_t)task_pid,
@@ -5484,7 +5632,6 @@ static void u_capture_settle_terminal(struct thread *thr, uint32_t owner_pid,
                          (uint64_t)thr->utest_cap_wid,
                          reason);
     }
-    u_capture_complete(gen);
 }
 
 /* Was this write cut by an owner budget stop that landed after it armed?
@@ -9921,6 +10068,49 @@ int test_usermode_capture_settle(uint32_t claim_gen, uint32_t current_gen,
                                  uint64_t *completed)
 {
     return u_capture_settle(claim_gen, current_gen, completed);
+}
+
+/* The delivery receipt's transition, exported as the pure decision it is: the
+ * claim's generation, the run's, whether klog put the record on the wire, and
+ * the two counters it may move.
+ *
+ * This is the seam that makes section 57 checkable. The behavior it pins --
+ * a record already on the wire settles WITHOUT the emitter running again --
+ * cannot be observed from the live path, because observing it requires the
+ * emitter to not run again, and a test that lets it run proves the opposite
+ * of what it set out to. */
+void test_usermode_capture_receipt(uint32_t claim_gen, uint32_t current_gen,
+                                   int delivered, uint64_t *completed,
+                                   uint64_t *undelivered);
+void test_usermode_capture_receipt(uint32_t claim_gen, uint32_t current_gen,
+                                   int delivered, uint64_t *completed,
+                                   uint64_t *undelivered)
+{
+    u_capture_receipt_apply(claim_gen, current_gen, delivered, completed,
+                            undelivered);
+}
+
+/* The LIVE run accounting, read under its own lock.
+ *
+ * Read-only, and it exists so a test can bind the production emission path to
+ * the receipt rather than only exercising the pure helper above: a test that
+ * drives a real capture write and watches THESE counters move is one that
+ * fails if the emitting call sites stop carrying u_capture_receipt, which no
+ * amount of testing the helper in isolation can catch. */
+void test_usermode_capture_live_counters(uint64_t *admitted,
+                                         uint64_t *completed,
+                                         uint64_t *undelivered);
+void test_usermode_capture_live_counters(uint64_t *admitted,
+                                         uint64_t *completed,
+                                         uint64_t *undelivered)
+{
+    uint64_t irq_flags;
+
+    spin_lock_irqsave(&s_capture_budget_lock, &irq_flags);
+    if (admitted)    *admitted    = s_capture_admitted;
+    if (completed)   *completed   = s_capture_completed;
+    if (undelivered) *undelivered = s_capture_undelivered;
+    spin_unlock_irqrestore(&s_capture_budget_lock, irq_flags);
 }
 
 /* The run boundary's CLOSE transition, over caller-owned accounting.
