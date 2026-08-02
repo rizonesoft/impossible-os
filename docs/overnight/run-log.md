@@ -194,3 +194,4 @@ identity repair worked on first contact, and the coexistence work let an
 operator repair the control plane through the whole run. The one sweep that did
 occur exposed its true root cause -- a bare `git commit --amend` in the
 post-commit hook, widening every path-limited commit in the repo.
+- 2026-08-02 | 00-infrastructure/TODO-04 §56 (fork publication interlocked with the capture-tree reap) | SHIPPED `05db7997` + review `e673f5ad` | 2 items parked with named blockers (boot-poisoning policy call; abort cause into JUnit/JSON, §36 owns) | 8 Codex dispatches, 9H+3M+6L fixed, one recommendation pushed back with bisect evidence (gating the kill rounds hangs the boot) | 28257 kernel + 17 user-mode, 1205/1205 tooling, smoke matrix 4/4
