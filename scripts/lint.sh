@@ -1162,8 +1162,15 @@ else
     # spam here would drown out every other check on every future commit.
     TABLE_ALIGN_COUNT=$( { python3 "$REPO_ROOT/scripts/format-md-tables.py" --check "$REPO_ROOT/todo" 2>/dev/null || true; } | wc -l | tr -d ' ')
     if [ "${TABLE_ALIGN_COUNT:-0}" -gt 0 ]; then
-        echo -e "${YELLOW}warn${NC}: Check 17 (table-column-align) $TABLE_ALIGN_COUNT todo/*.md file(s) have unaligned table columns (cosmetic; fix with: python3 scripts/format-md-tables.py todo/)"
-        WARNINGS=$((WARNINGS + 1))
+        # PROMOTED TO ERROR 2026-08-02. It sat as a cosmetic warning and 22
+        # files drifted, which is a real daily cost for anyone who READS these
+        # files raw -- the rendering is unaffected, the source skim is not.
+        # Warnings do not stop drift; the whole corpus was aligned in one pass
+        # (whitespace-only inside table rows; the tool refuses prose tables
+        # with cells over --max-cell) and gating is what keeps it aligned.
+        # One command fixes it, and the message says so.
+        echo -e "${RED}error${NC}: Check 17 (table-column-align) $TABLE_ALIGN_COUNT todo/*.md file(s) have unaligned table columns -- fix with: python3 scripts/format-md-tables.py todo/"
+        ERRORS=$((ERRORS + 1))
     fi
 fi
 

@@ -91,7 +91,7 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 | 💎   |  18   | Anti-rollback in version fault diagnostics         | §13, §17                           |  [x]   |
 | ⭐   |  19   | Stale-ABI QEMU fixture harness                     | §7                                 |  [x]   |
 | 💎   |  20   | Bootloader build identity in handoff               | §1, §2, §17                        |  [x]   |
-| 💎   | 21 | Post-ship follow-up backfill (2026-07-31 cohort) | -- | [ ] |
+| 💎   |  21   | Post-ship follow-up backfill (2026-07-31 cohort)   | --                                 |  [ ]   |
 
 ---
 

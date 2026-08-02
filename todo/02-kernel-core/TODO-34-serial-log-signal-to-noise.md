@@ -46,13 +46,13 @@ title: "TODO-34 -- Serial Log Signal-to-Noise and Log-Cleanliness Gate"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                                         | Depends On | Status |
-| --- | :---: | --------------------------------------------------- | ---------- | :----: |
-| ⭐   |   1   | Mark expected test-path log output at emission      | --         |  [ ]   |
-| 💎   |   2   | Log-cleanliness gate in the kernel test runner      | §1         |  [ ]   |
-| 💎   |   3   | Smoke test fails on any `[FAIL]` in its own log     | --         |  [ ]   |
-| ⭐   |   4   | Surface the platform blind spots in the run summary | §2         |  [ ]   |
-| 💎   |   5   | Rate-limit the repeat-offender warnings (86% of vol)| --         |  [/]   |
+| ⭐   | Order | Deliverable                                          | Depends On | Status |
+| --- | :---: | ---------------------------------------------------- | ---------- | :----: |
+| ⭐   |   1   | Mark expected test-path log output at emission       | --         |  [ ]   |
+| 💎   |   2   | Log-cleanliness gate in the kernel test runner       | §1         |  [ ]   |
+| 💎   |   3   | Smoke test fails on any `[FAIL]` in its own log      | --         |  [ ]   |
+| ⭐   |   4   | Surface the platform blind spots in the run summary  | §2         |  [ ]   |
+| 💎   |   5   | Rate-limit the repeat-offender warnings (86% of vol) | --         |  [/]   |
 
 > 💎 = parity -- Linux kernel selftests and Windows WHQL both gate on unexpected log output.
 > ⭐ = exclusive -- neither treats "expected diagnostic output" as a declared, asserted property of a test.

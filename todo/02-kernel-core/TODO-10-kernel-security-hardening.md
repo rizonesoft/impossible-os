@@ -95,7 +95,7 @@ title: "TODO-10 -- Kernel Security Hardening"
 | 💎   |  29   | Guard unguarded test-only helpers in production TUs             | §27, §28                   |  [x]   |
 | 💎   |  30   | Signed CI attestation for the release-flavor proof gate         | §27, §29                   |  [/]   |
 | 💎   |  31   | Legacy-syscall user-pointer validation (`sys_write`, `sys_log`) | (none)                     |  [ ]   |
-| 💎   | 32 | Post-ship follow-up backfill (2026-07-31 cohort) | -- | [ ] |
+| 💎   |  32   | Post-ship follow-up backfill (2026-07-31 cohort)                | --                         |  [ ]   |
 
 > 💎 = parity work: matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work: Impossible OS is superior or first.

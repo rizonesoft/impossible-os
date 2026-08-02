@@ -82,7 +82,7 @@ implements_after: TODO-04
 | ⭐   |  16   | TSC frequency variability under hypervisor                  | --                                              |  [/]   |
 | ⭐   |  17   | PAT WC -> WT hypervisor trap quirk                          | §2 (consumer)                                   |  [/]   |
 | 💎   |  18   | Boot critical-path / dependency / resource-wait attribution | §1, §2                                          |  [/]   |
-| 💎   | 19 | Post-ship follow-up backfill (2026-07-31 cohort) | -- | [ ] |
+| 💎   |  19   | Post-ship follow-up backfill (2026-07-31 cohort)            | --                                              |  [ ]   |
 
 ---
 

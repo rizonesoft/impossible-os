@@ -86,7 +86,7 @@ title: "TODO-02 -- UEFI Bootloader Hardening & Secure Boot"
 | 💎   |  17   | SBAT revocation metadata in boot artifacts               | §9, §11        |  [x]   |
 | 🛠️  |  18   | Build idempotency: UKI SBAT survives incremental rebuild | §11, §17       |  [/]   |
 | 🛠️  |  19   | Bootloader `ReadBlocks` IoAlign compliance               | §13            |  [/]   |
-| 🛠️  | 20 | Post-ship follow-up backfill (2026-07-31 cohort) | -- | [ ] |
+| 🛠️  |  20   | Post-ship follow-up backfill (2026-07-31 cohort)         | --             |  [ ]   |
 
 ---
 

@@ -78,7 +78,7 @@ title: "TODO-24 -- ALPC / Message Ports"
 | 💎   |  10   | CSRSS ApiPort bootstrap                                  | §3-§9         |  [/]   |
 | 💎   |  11   | Message zones (pre-allocated message buffers)            | §4, §8-§9     |  [/]   |
 | ⭐   |  12   | Live port monitor & IPC latency profiler                 | §8-§9         |  [/]   |
-| ⭐   | 13 | Post-ship follow-up backfill (2026-07-31 cohort) | -- | [ ] |
+| ⭐   |  13   | Post-ship follow-up backfill (2026-07-31 cohort)         | --            |  [ ]   |
 
 > 💎 = parity work; matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work; Impossible OS is superior or first.

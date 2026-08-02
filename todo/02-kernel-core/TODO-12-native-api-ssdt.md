@@ -94,7 +94,7 @@ title: "TODO-12 -- Native API Layer (Nt/Zw)"
 | 💎   |  29   | Token lifecycle + SRM access check syscalls                    | §16, TODO-15 §7,§8 |  [/]   |
 | 💎   |  30   | Generic object management (make-temp/perm, set-info, compare)  | §17, TODO-05 §1,§9 |  [/]   |
 | 💎   |  31   | Modern ALPC port syscalls                                      | §20, TODO-24 §8-§9 |  [x]   |
-| 💎   | 32 | Post-ship follow-up backfill (2026-07-31 cohort) | -- | [ ] |
+| 💎   |  32   | Post-ship follow-up backfill (2026-07-31 cohort)               | --                 |  [ ]   |
 
 > 💎 = parity -- Windows NT and Linux both have equivalents for these categories.
 > ⭐ = exclusive -- the ZwXxx privilege layer, the audit hook, SSDT integrity protection, and the IOSB/LastError unified path go beyond what Linux offers.

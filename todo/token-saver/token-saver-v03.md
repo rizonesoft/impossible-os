@@ -6,12 +6,12 @@ Successor to [`token-saver-v02.md`](token-saver-v02.md), which is bounded to the
 
 **Evidence base -- the 13:59 attended canary of 2026-07-28**, three segments, sections §20/§21/§22 of `todo/00-infrastructure/TODO-04-usermode-test-framework.md`:
 
-| segment | turns | avg context/turn | end-of-segment | accum/turn | cost |
-|---|---|---|---|---|---|
-| 13:59 | 289 | 247,853 | 393,341 | 1,006 | $127.46 |
-| 16:10 | 223 | 248,243 | 380,962 | 1,190 | $121.61 |
-| 17:36 | 381 | 346,536 | 532,376 | 1,069 | $256.29 |
-| **total** | **893** | | | | **$505.36** |
+| segment   | turns   | avg context/turn | end-of-segment | accum/turn | cost        |
+| --------- | ------- | ---------------- | -------------- | ---------- | ----------- |
+| 13:59     | 289     | 247,853          | 393,341        | 1,006      | $127.46     |
+| 16:10     | 223     | 248,243          | 380,962        | 1,190      | $121.61     |
+| 17:36     | 381     | 346,536          | 532,376        | 1,069      | $256.29     |
+| **total** | **893** |                  |                |            | **$505.36** |
 
 Cache-read is 68-84% of every segment. The cost model was validated to 0.4% against the morning run: `cache-read = base x T + sum(delta_i x (T - i))` -- quadratic in segment length, because a token added at turn `i` is re-read on each remaining turn.
 

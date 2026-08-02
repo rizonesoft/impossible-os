@@ -76,7 +76,7 @@ title: "TODO-01 -- Developer Tooling Stack"
 | 💎   |  10   | Smoke-test POST16 assertions (boot-phase manifest)    | §3             |  [x]   |
 | ⭐   |  11   | Bare section-ref sweep (lint Check 5 zero-allowlist)  | §9             |  [x]   |
 | 💎   |  12   | Enforce required-tool version floors in `--verify`    | §1, §2         |  [x]   |
-| 💎   |  13   | Duplicate-recipe sweep in the root Makefile          | §3             |  [/]   |
+| 💎   |  13   | Duplicate-recipe sweep in the root Makefile           | §3             |  [/]   |
 
 > 💎 = parity work: Windows and Linux projects both rely on stable setup/build/test/CI contracts.
 > ⭐ = exclusive work: Impossible OS can provide a single operator-facing developer workflow with self-diagnosis instead of scattered scripts and tribal knowledge.

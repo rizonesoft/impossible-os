@@ -50,20 +50,20 @@ title: "TODO-02 -- Kernel Configuration & Policy Plane"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                                  | Depends On                       | Status |
-| --- | :---: | -------------------------------------------- | -------------------------------- | :----: |
-| 💎   |   1   | Boot argument schema and parser              | D01 T07 §3, §5                   |  [x]   |
-| 💎   |   2   | `kernel_config_t` immutable Phase 0 snapshot | §1, T01 §2, §6                   |  [x]   |
-| 💎   |   3   | Registry-backed policy merge                 | §2, §4, T14 §8, §12, §13         |  [/]   |
-| 💎   |   4   | ControlSet and LastKnownGood selection       | §2, §10, T14 §12, D01 T21 §4, §5 |  [/]   |
-| 💎   |   5   | Safe Mode and recovery policy object         | §2, §4, D01 T07 §5               |  [/]   |
-| 💎   |   6   | Runtime tunable registry                     | §2                               |  [/]   |
-| ⭐   |   7   | Feature flag gates and experiment cohorts    | §6                               |  [/]   |
-| 💎   |   8   | Native query/set config syscalls             | §2, §6, T12 §10, T15 §8          |  [/]   |
-| ⭐   |   9   | Policy lock phases and tamper audit          | §2, §3                           |  [/]   |
-| 💎   |  10   | Boot status policy and boot success ledger   | §4, §5, D01 T21 §5, T30 §7       |  [/]   |
-| 💎   |  11   | Config dump, tests, and docs                 | §1-10, T11 §11, T31 §2           |  [/]   |
-| 💎   | 12 | Post-ship follow-up backfill (2026-07-31 cohort) | -- | [ ] |
+| ⭐   | Order | Deliverable                                      | Depends On                       | Status |
+| --- | :---: | ------------------------------------------------ | -------------------------------- | :----: |
+| 💎   |   1   | Boot argument schema and parser                  | D01 T07 §3, §5                   |  [x]   |
+| 💎   |   2   | `kernel_config_t` immutable Phase 0 snapshot     | §1, T01 §2, §6                   |  [x]   |
+| 💎   |   3   | Registry-backed policy merge                     | §2, §4, T14 §8, §12, §13         |  [/]   |
+| 💎   |   4   | ControlSet and LastKnownGood selection           | §2, §10, T14 §12, D01 T21 §4, §5 |  [/]   |
+| 💎   |   5   | Safe Mode and recovery policy object             | §2, §4, D01 T07 §5               |  [/]   |
+| 💎   |   6   | Runtime tunable registry                         | §2                               |  [/]   |
+| ⭐   |   7   | Feature flag gates and experiment cohorts        | §6                               |  [/]   |
+| 💎   |   8   | Native query/set config syscalls                 | §2, §6, T12 §10, T15 §8          |  [/]   |
+| ⭐   |   9   | Policy lock phases and tamper audit              | §2, §3                           |  [/]   |
+| 💎   |  10   | Boot status policy and boot success ledger       | §4, §5, D01 T21 §5, T30 §7       |  [/]   |
+| 💎   |  11   | Config dump, tests, and docs                     | §1-10, T11 §11, T31 §2           |  [/]   |
+| 💎   |  12   | Post-ship follow-up backfill (2026-07-31 cohort) | --                               |  [ ]   |
 
 > 💎 = parity work: matches what Windows 11 and Linux already ship.
 > ⭐ = exclusive work: Impossible OS adds provenance, rollout, and tamper semantics neither platform exposes as one kernel-owned plane.

@@ -578,11 +578,11 @@ one of these, the item is wrong and gets re-scoped, not the floor.
 
 T4-3 required this published "with the raw numbers, whatever they say". They are not good.
 
-| | pre-T1 (2026-07-25/26, 4 runs, 984 turns) | post-T1 (2026-07-28 canary, 3 segments, 897 turns) | predicted |
-|---|---|---|---|
-| avg context/turn | 311,479 | 299,988 (**-3.7%**) | 180,000 (-42%) |
-| re-read ratio | 132/206 = **64%** | 106/170 = **62%** (-2pp) | 20% (-44pp) |
-| hook fires / segment | ~1,609 (2026-07-10 measurement) | 12 / 26 / 73 | <= 400 |
+|                      | pre-T1 (2026-07-25/26, 4 runs, 984 turns) | post-T1 (2026-07-28 canary, 3 segments, 897 turns) | predicted      |
+| -------------------- | ----------------------------------------- | -------------------------------------------------- | -------------- |
+| avg context/turn     | 311,479                                   | 299,988 (**-3.7%**)                                | 180,000 (-42%) |
+| re-read ratio        | 132/206 = **64%**                         | 106/170 = **62%** (-2pp)                           | 20% (-44pp)    |
+| hook fires / segment | ~1,609 (2026-07-10 measurement)           | 12 / 26 / 73                                       | <= 400         |
 
 **Prediction error: ~11x on context per turn, ~26x on re-read ratio.** T4-3's threshold was 2x, so its verdict clause applies without argument: the model of where cost goes is wrong, and the remaining items in this file must be re-derived before any more of them land.
 
@@ -598,12 +598,12 @@ T4-3 required this published "with the raw numbers, whatever they say". They are
 
 **DID IT ACTUALLY SAVE MONEY? Per turn yes, per unit of work shipped no -- and the second number is the one that matters.**
 
-| | pre-T1 (2026-07-25/26) | post-T1 (2026-07-28) |
-|---|---|---|
-| total | $906.94 over 1,373 turns | $509.01 over 897 turns |
-| cost per turn | $0.661 | **$0.567 (-14.1%)** |
-| commits flipping an IO row to `[x]` | 4 | 1 |
-| cost per section shipped | **~$227** | **~$509 (+124%)** |
+|                                     | pre-T1 (2026-07-25/26)   | post-T1 (2026-07-28)   |
+| ----------------------------------- | ------------------------ | ---------------------- |
+| total                               | $906.94 over 1,373 turns | $509.01 over 897 turns |
+| cost per turn                       | $0.661                   | **$0.567 (-14.1%)**    |
+| commits flipping an IO row to `[x]` | 4                        | 1                      |
+| cost per section shipped            | **~$227**                | **~$509 (+124%)**      |
 
 The per-turn improvement is real and reasonably sampled. The per-section figure is NOT a safe conclusion and is recorded with its confounds rather than as a result: n=1 on the post side; section 20 consumed most of segment 3 (~$220) and shipped nothing, so the post window is charged for work-in-progress the pre window is not; sections 19 and 20 are unusually hard SMP-lifetime bugs (7 and 9+ Codex dispatches) rather than average sections; and an operator was working in the same tree, causing four index cross-sweeps plus turns the runner spent diagnosing HEAD movement.
 

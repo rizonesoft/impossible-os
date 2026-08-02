@@ -82,7 +82,7 @@ title: "TODO-14 -- Registry System Completion"
 | ⭐   |  13   | Schema-validated registry keys                    | §3, §4                    |  [/]   |
 | 💎   |  14   | Registry SMP synchronization                      | TODO-12 §14               |  [/]   |
 | 💎   |  15   | Value size expansion (16 KiB names, 1 MiB data)   | §1, §14                   |  [/]   |
-| 💎   | 16 | Post-ship follow-up backfill (2026-07-31 cohort) | -- | [ ] |
+| 💎   |  16   | Post-ship follow-up backfill (2026-07-31 cohort)  | --                        |  [ ]   |
 
 > 💎 = parity work -- matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work -- Impossible OS is superior or first.

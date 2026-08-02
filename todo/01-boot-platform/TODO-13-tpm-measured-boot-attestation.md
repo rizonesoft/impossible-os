@@ -51,7 +51,7 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 | 💎   |  11   | TPM tests and event-log fixtures                             | §1-§10, §12, §13                                          |  [x]   |
 | 💎   |  12   | PCR allocation table and policy masks                        | (foundational; consumed by §6/§8/§13)                     |  [x]   |
 | 💎   |  13   | Attestation key provisioning and TPM2 quote                  | §3, §7, §12                                               |  [x]   |
-| 💎   | 14 | Post-ship follow-up backfill (2026-07-31 cohort) | -- | [ ] |
+| 💎   |  14   | Post-ship follow-up backfill (2026-07-31 cohort)             | --                                                        |  [ ]   |
 
 ## 1. Harden TCG Event-Log Parser
 

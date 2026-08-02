@@ -50,7 +50,7 @@ title: "TODO-23 -- Boot Watchdog & Hang Detection"
 | 💎   |   4   | Watchdog-triggered reboot with diagnostics              | §3, T21 §4                                |  [/]   |
 | 💎   |   5   | ACPI WDAT hardware watchdog (WDAT-first; iTCO deferred) | --                                        |  [x]   |
 | ⭐   |   6   | Watchdog status in VPD display                          | §1-§5                                     |  [/]   |
-| ⭐   | 7 | Post-ship follow-up backfill (2026-07-31 cohort) | -- | [ ] |
+| ⭐   |   7   | Post-ship follow-up backfill (2026-07-31 cohort)        | --                                        |  [ ]   |
 
 > 💎 = parity -- Windows boot watchdog and Linux systemd watchdog both detect hung boots.
 > ⭐ = exclusive -- watchdog countdown visible in VPD during boot.

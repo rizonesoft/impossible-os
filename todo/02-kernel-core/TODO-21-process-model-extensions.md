@@ -73,7 +73,7 @@ title: "TODO-21 -- Process Model Extensions"
 | 💎   |  18   | Rich wait variants + NT multi-waiter wake + dumpable      | §15, §17           |  [/]   |
 | 💎   |  19   | `task_exec` commit point + kernel-stack reclamation       | §14, §15           |  [x]   |
 | 💎   |  20   | Page-table lifetime across reap + fork/exec               | §15, §19           |  [ ]   |
-| 💎   | 21 | Post-ship follow-up backfill (2026-07-31 cohort) | -- | [ ] |
+| 💎   |  21   | Post-ship follow-up backfill (2026-07-31 cohort)          | --                 |  [ ]   |
 
 > 💎 = parity -- Windows NT (tokens + priority classes + accounting + rlimits) and Linux (capabilities + scheduling + getrusage + rlimits) both provide these.
 > ⭐ = exclusive -- strict drop-only inheritance and pledge/unveil-style restriction are more auditable than both Windows token elevation and Linux `setcap`.

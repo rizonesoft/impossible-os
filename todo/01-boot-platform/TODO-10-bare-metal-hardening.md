@@ -92,7 +92,7 @@ title: "TODO-10 -- Bare Metal Boot Hardening"
 | 💎   |  13   | CPU feature minimum requirements and verification | §4, §9     |  [x]   |
 | 💎   |  14   | Bare-metal test matrix and validation plan        | §3         |  [x]   |
 | 💎   |  15   | Boot splash spinner bare-metal fix                | §3, §10    |  [x]   |
-| 💎   | 16 | Post-ship follow-up backfill (2026-07-31 cohort) | -- | [ ] |
+| 💎   |  16   | Post-ship follow-up backfill (2026-07-31 cohort)  | --         |  [ ]   |
 
 > 💎 = parity -- Windows and Linux both handle bare-metal quirks, IST, ACPI gating, and graceful degradation.
 > ⭐ = exclusive -- dense 4-digit POST codes in every boot function are not standard in any OS kernel.

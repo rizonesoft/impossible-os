@@ -86,7 +86,7 @@ title: "TODO-09 -- x86-64 Architecture Enhancements"
 | 💎   |  17   | AMX tile state + XFD dynamic XSAVE                     | §1, §4     |  [/]   |
 | 💎   |  18   | Split-lock (#AC) + bus-lock (#DB) detection            | §4         |  [/]   |
 | 💎   |  19   | WAITPKG + SERIALIZE + RDPID adoption                   | §4, §11    |  [/]   |
-| 💎   | 20 | Post-ship follow-up backfill (2026-07-31 cohort) | -- | [ ] |
+| 💎   |  20   | Post-ship follow-up backfill (2026-07-31 cohort)       | --         |  [ ]   |
 
 > 💎 = parity work: matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work: Impossible OS is superior or first.

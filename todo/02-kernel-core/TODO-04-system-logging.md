@@ -57,24 +57,24 @@ title: "TODO-04 -- System Logging"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                                    | Depends On       | Status |
-| --- | :---: | ---------------------------------------------- | ---------------- | :----: |
-| 💎   |   1   | Boot-phase aware klog init                     | T01 §1           |  [x]   |
-| 💎   |   2   | Per-subsystem log splitting                    | §1               |  [/]   |
-| 💎   |   3   | Per-subsystem verbosity control                | §2               |  [x]   |
-| 💎   |   4   | Log rotation                                   | §2               |  [x]   |
-| 💎   |   5   | Rate limiting                                  | §2               |  [x]   |
-| ⭐   |   6   | Structured JSON log events                     | §4               |  [x]   |
-| 💎   |   7   | ETW tracing syscalls wired to SSDT             | §4, T12 §4       |  [x]   |
-| 💎   |   8   | Crash-persistent log capture                   | §1               |  [x]   |
-| 💎   |   9   | Per-entry context metadata                     | §2               |  [x]   |
-| ⭐   |  10   | Log integrity verification (HMAC)              | §6, T03 §5       |  [/]   |
-| 💎   |  11   | ETW provider registration + filtering          | §7, T12 §5       |  [/]   |
-| 💎   |  12   | ETW advanced capture (stack/autologger/schema) | §11, T23, T18 §4 |  [/]   |
-| 💎   |  13   | Rotated-log compression (LZ4)                  | §4, T03 §3       |  [x]   |
-| ⭐   |  14   | Serial timestamp render bound                  | §1               |  [ ]   |
-| ⭐   | 15 | Post-ship follow-up backfill (2026-07-31 cohort) | -- | [ ] |
-| 💎   | 16 | Klog assertions and scans that depend on nothing else having logged | §1 | [ ] |
+| ⭐   | Order | Deliverable                                                         | Depends On       | Status |
+| --- | :---: | ------------------------------------------------------------------- | ---------------- | :----: |
+| 💎   |   1   | Boot-phase aware klog init                                          | T01 §1           |  [x]   |
+| 💎   |   2   | Per-subsystem log splitting                                         | §1               |  [/]   |
+| 💎   |   3   | Per-subsystem verbosity control                                     | §2               |  [x]   |
+| 💎   |   4   | Log rotation                                                        | §2               |  [x]   |
+| 💎   |   5   | Rate limiting                                                       | §2               |  [x]   |
+| ⭐   |   6   | Structured JSON log events                                          | §4               |  [x]   |
+| 💎   |   7   | ETW tracing syscalls wired to SSDT                                  | §4, T12 §4       |  [x]   |
+| 💎   |   8   | Crash-persistent log capture                                        | §1               |  [x]   |
+| 💎   |   9   | Per-entry context metadata                                          | §2               |  [x]   |
+| ⭐   |  10   | Log integrity verification (HMAC)                                   | §6, T03 §5       |  [/]   |
+| 💎   |  11   | ETW provider registration + filtering                               | §7, T12 §5       |  [/]   |
+| 💎   |  12   | ETW advanced capture (stack/autologger/schema)                      | §11, T23, T18 §4 |  [/]   |
+| 💎   |  13   | Rotated-log compression (LZ4)                                       | §4, T03 §3       |  [x]   |
+| ⭐   |  14   | Serial timestamp render bound                                       | §1               |  [ ]   |
+| ⭐   |  15   | Post-ship follow-up backfill (2026-07-31 cohort)                    | --               |  [ ]   |
+| 💎   |  16   | Klog assertions and scans that depend on nothing else having logged | §1               |  [ ]   |
 
 > 💎 = parity -- Windows Event Log and Linux journald/syslog both have these capabilities.
 > ⭐ = exclusive -- HMAC-chained JSON Lines is human-readable AND cryptographically verifiable; beats Windows XML and Linux binary journal.
@@ -155,7 +155,7 @@ Allow silencing verbose subsystems in release builds without recompiling.
 > - Review fixes: replaced a lock-free count-publish (then a hand-rolled gen) with `seqlock_t`; added `ioapic`/`blk` registry tags; validated REG_DWORD `val_size`.
 > - Sub-threshold drops never enter the ring buffer (filtered before store), bounding disk-log volume; `s_global_min` is a separate atomic for the `klog_set_level(NULL, ...)` default.
 > **Verified:** 2026-06-21 | ship `3bc86ce1` + review fixes | 6/6 items | build OK | smoke PASS (TCG 2.69s); 3212 kernel + 16 user PASS
-> **Accepted:** [M] override table stores raw `const char*` tag pointers (no copy) -- a caller passing a non-static tag could dangle (reason: all current callers pass string literals) -> XREF: 02-kernel-core/TODO-04-system-logging.md §9 (item: "Copy the verbosity override-table tag into a bounded `char[16]`" at line 157)
+> **Accepted:** [M] override table stores raw `const char*` tag pointers (no copy) -- a caller passing a non-static tag could dangle (reason: all current callers pass string literals) -> XREF: 02-kernel-core/TODO-04-system-logging.md §9 (item: "Copy the verbosity override-table tag into a bounded `char[16]`" at line 158)
 > **Quality reviewed:** 2026-06-21 | Codex 6x (adversarial, consistency, perf, re-adversarial x2) | 1H+3M fixed, 1M accepted | scope: kernel-code-quality
 
 ---
