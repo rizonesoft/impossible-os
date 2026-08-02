@@ -16296,6 +16296,8 @@ cap_refuses "a write that continues past its own final record is refused" \
     cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=1 final=0 a"
     cap_line "[UTEST-CAPTURE] owner=7 wr=1 seq=1 len=1 final=0 b"
     cap_line "[UTEST-CAPTURE-OVER] owner=7 seq=2 scope=owner limit=2 charged=2"
+    cap_line "[UTEST-CAPTURE-CUT] owner=7 wr=0"
+    cap_line "[UTEST-CAPTURE-CUT] owner=7 wr=1"
 } > "$CAP_TMP/over_two_open.log"
 if cap_model "$CAP_TMP/over_two_open.log" "$CAP_TMP/over_two_open.json" &&
    [ "$(cap_field "$CAP_TMP/over_two_open.json" 'm["binaries"][0]["budget_stop"]')" = "True" ]; then
@@ -16538,6 +16540,7 @@ fi
     cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
     cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=5 final=0 hello"
     cap_line "[UTEST-CAPTURE-OVER] owner=7 seq=1 scope=owner limit=1 charged=1"
+    cap_line "[UTEST-CAPTURE-CUT] owner=7 wr=0"
 } > "$CAP_TMP/over_ok.log"
 if cap_model "$CAP_TMP/over_ok.log" "$CAP_TMP/over_ok.json" &&
    [ "$(cap_field "$CAP_TMP/over_ok.json" 'm["binaries"][0]["budget_stop"]')" = "True" ] &&
@@ -16641,6 +16644,7 @@ fi
     cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=1 final=0 a"
     cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=1 len=1 final=0 b"
     cap_line "[UTEST-CAPTURE-OVER] owner=7 seq=2 scope=run limit=2 charged=2"
+    cap_line "[UTEST-CAPTURE-CUT] owner=7 wr=0"
 } > "$CAP_TMP/over_run_ok.log"
 if cap_model "$CAP_TMP/over_run_ok.log" "$CAP_TMP/over_run_ok.json" &&
    [ "$(cap_field "$CAP_TMP/over_run_ok.json" 'm["binaries"][0]["budget_scope"]')" = "run" ] &&
@@ -16745,6 +16749,7 @@ fi
     cap_line "[UTEST-CAPTURE-BEGIN] owner=8 chunk_max=$CAP_CHUNK_MAX name=test_stopped.exe"
     cap_line "[UTEST-CAPTURE] owner=8 wr=0 seq=0 len=1 final=0 c"
     cap_line "[UTEST-CAPTURE-OVER] owner=8 seq=1 scope=run limit=3 charged=3"
+    cap_line "[UTEST-CAPTURE-CUT] owner=8 wr=0"
 } > "$CAP_TMP/over_run_multi.log"
 if cap_model "$CAP_TMP/over_run_multi.log" "$CAP_TMP/over_run_multi.json" &&
    [ "$(cap_field "$CAP_TMP/over_run_multi.json" 'm["binaries"][0]["budget_stop"]')" = "False" ] &&
@@ -16753,6 +16758,185 @@ if cap_model "$CAP_TMP/over_run_multi.log" "$CAP_TMP/over_run_multi.json" &&
     t_pass "capture: a peer owner's chunks count toward the run aggregate"
 else
     t_fail "capture: a peer owner's chunks count toward the run aggregate"
+fi
+
+# ---------------------------------------------------------------------------
+# Per-write settlement: [UTEST-CAPTURE-CUT] and [UTEST-CAPTURE-ABANDON].
+#
+# The OVER marker carries no `wr`, so it used to exempt EVERY unterminated
+# write of an owner once any budget stop fired -- including one truncated for
+# an unrelated reason. These fixtures pin the narrowing: an exemption now has
+# to NAME the write it covers, and a write whose thread was killed is reported
+# rather than excused.
+# ---------------------------------------------------------------------------
+
+# The narrowing itself. Two writes open, a validated stop, but only ONE named:
+# the unnamed group is exactly the masking case and must still refuse.
+{
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=1 final=0 a"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=1 seq=1 len=1 final=0 b"
+    cap_line "[UTEST-CAPTURE-OVER] owner=7 seq=2 scope=owner limit=2 charged=2"
+    cap_line "[UTEST-CAPTURE-CUT] owner=7 wr=0"
+} > "$CAP_TMP/cut_partial.log"
+if ! cap_model "$CAP_TMP/cut_partial.log" "$CAP_TMP/cut_partial.json" &&
+   [ "$(cap_field "$CAP_TMP/cut_partial.json" 'm["refusal"]["reason"]')" = "capture_unterminated" ]; then
+    t_pass "capture: a budget stop no longer excuses a write it never named"
+else
+    t_fail "capture: a budget stop no longer excuses a write it never named"
+fi
+
+# The headline case section 54 exists for: a write killed before its first
+# chunk ever reached the wire. It leaves NO group, NO hole and NO unterminated
+# tail, so without the abandon record the stream reconciles clean and the
+# artifact claims byte-exactness for output that is simply gone.
+{
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=2 final=1 hi"
+    cap_line "[UTEST-CAPTURE-ABANDON] owner=7 task=9 thr=1 haswr=0 wr=0 reason=killed"
+} > "$CAP_TMP/abandon_killed.log"
+if ! cap_model "$CAP_TMP/abandon_killed.log" "$CAP_TMP/abandon_killed.json" &&
+   [ "$(cap_field "$CAP_TMP/abandon_killed.json" 'm["refusal"]["reason"]')" = "capture_abandoned_write" ]; then
+    t_pass "capture: a write killed before its first chunk is REFUSED, not reconciled"
+else
+    t_fail "capture: a write killed before its first chunk is REFUSED, not reconciled"
+fi
+
+# ... and the same record for a write that HAD reached the wire refuses too,
+# rather than being absorbed by the unterminated-group check it would also
+# trip -- the loss is the finding, and it names the thread that suffered it.
+{
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=1 final=0 a"
+    cap_line "[UTEST-CAPTURE-ABANDON] owner=7 task=9 thr=2 haswr=1 wr=0 reason=killed"
+} > "$CAP_TMP/abandon_killed_wr.log"
+if ! cap_model "$CAP_TMP/abandon_killed_wr.log" "$CAP_TMP/abandon_killed_wr.json" &&
+   [ "$(cap_field "$CAP_TMP/abandon_killed_wr.json" 'm["refusal"]["reason"]')" = "capture_abandoned_write" ]; then
+    t_pass "capture: an abandoned write that did reach the wire is refused by name"
+else
+    t_fail "capture: an abandoned write that did reach the wire is refused by name"
+fi
+
+# A deliberate end-of-binary teardown is NOT a loss: the launcher fences the
+# descendant tree on purpose, and refusing it would turn an orderly reap into
+# a corruption verdict -- the same regression the budget stop already paid for.
+{
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=1 final=0 a"
+    cap_line "[UTEST-CAPTURE-ABANDON] owner=7 task=9 thr=3 haswr=1 wr=0 reason=fenced"
+} > "$CAP_TMP/abandon_fenced.log"
+if cap_model "$CAP_TMP/abandon_fenced.log" "$CAP_TMP/abandon_fenced.json" &&
+   [ "$(cap_field "$CAP_TMP/abandon_fenced.json" 'm["binaries"][0]["text"]')" = "a" ]; then
+    t_pass "capture: a fenced descendant's open write is a teardown, not a refusal"
+else
+    t_fail "capture: a fenced descendant's open write is a teardown, not a refusal"
+fi
+
+# Exhausting the terminal allowance must not become silence: the producer says
+# so once, and the run refuses, because past that point an unknown number of
+# writes went unexplained.
+{
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=1 final=1 a"
+    cap_line "[UTEST-CAPTURE-TERMINAL-OVER] limit=512"
+} > "$CAP_TMP/terminal_over.log"
+if ! cap_model "$CAP_TMP/terminal_over.log" "$CAP_TMP/terminal_over.json" &&
+   [ "$(cap_field "$CAP_TMP/terminal_over.json" 'm["refusal"]["reason"]')" = "capture_terminal_budget_exhausted" ]; then
+    t_pass "capture: an exhausted terminal allowance refuses rather than falls silent"
+else
+    t_fail "capture: an exhausted terminal allowance refuses rather than falls silent"
+fi
+
+# The producer settles each write exactly once, so two cuts naming one write
+# mean a forgery or a broken invariant -- and the second would excuse a group
+# the first already accounted for.
+{
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=1 final=0 a"
+    cap_line "[UTEST-CAPTURE-OVER] owner=7 seq=1 scope=owner limit=1 charged=1"
+    cap_line "[UTEST-CAPTURE-CUT] owner=7 wr=0"
+    cap_line "[UTEST-CAPTURE-CUT] owner=7 wr=0"
+} > "$CAP_TMP/cut_dup.log"
+if ! cap_model "$CAP_TMP/cut_dup.log" "$CAP_TMP/cut_dup.json" &&
+   [ "$(cap_field "$CAP_TMP/cut_dup.json" 'm["refusal"]["reason"]')" = "capture_duplicate_cut" ]; then
+    t_pass "capture: two cut records for one write are refused"
+else
+    t_fail "capture: two cut records for one write are refused"
+fi
+
+# An unknown reason is version skew the host must refuse, not a value to pass
+# through into a verdict consumers branch on -- the same rule `scope` follows.
+# It does not match the record grammar at all, so it lands as an unrecognised
+# authenticated record rather than an accepted abandon.
+{
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=1 final=1 a"
+    cap_line "[UTEST-CAPTURE-ABANDON] owner=7 task=9 thr=1 haswr=0 wr=0 reason=vanished"
+} > "$CAP_TMP/abandon_skew.log"
+# A standalone CUT must not excuse anything: it asserts a budget stop ended
+# this write, so the owner has to carry the validated marker that says one
+# happened. Without this check a single forged line suppresses the very
+# integrity failure it claims to explain.
+{
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=1 final=0 a"
+    cap_line "[UTEST-CAPTURE-CUT] owner=7 wr=0"
+} > "$CAP_TMP/cut_unbacked.log"
+if ! cap_model "$CAP_TMP/cut_unbacked.log" "$CAP_TMP/cut_unbacked.json" &&
+   [ "$(cap_field "$CAP_TMP/cut_unbacked.json" 'm["refusal"]["reason"]')" = "capture_cut_unbacked" ]; then
+    t_pass "capture: a cut with no budget marker behind it excuses nothing"
+else
+    t_fail "capture: a cut with no budget marker behind it excuses nothing"
+fi
+
+# A cut naming a write that does not exist is an orphan whose only possible
+# effect is to excuse something it never described.
+{
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=1 final=0 a"
+    cap_line "[UTEST-CAPTURE-OVER] owner=7 seq=1 scope=owner limit=1 charged=1"
+    cap_line "[UTEST-CAPTURE-CUT] owner=7 wr=0"
+    cap_line "[UTEST-CAPTURE-CUT] owner=7 wr=9"
+} > "$CAP_TMP/cut_orphan.log"
+if ! cap_model "$CAP_TMP/cut_orphan.log" "$CAP_TMP/cut_orphan.json" &&
+   [ "$(cap_field "$CAP_TMP/cut_orphan.json" 'm["refusal"]["reason"]')" = "capture_cut_orphan" ]; then
+    t_pass "capture: a cut naming no existing write is refused as an orphan"
+else
+    t_fail "capture: a cut naming no existing write is refused as an orphan"
+fi
+
+# haswr=0 means nothing reached the wire under this write, so a non-zero wr
+# beside it contradicts itself.
+{
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=1 final=1 a"
+    cap_line "[UTEST-CAPTURE-ABANDON] owner=7 task=9 thr=1 haswr=0 wr=4 reason=fenced"
+} > "$CAP_TMP/abandon_identity.log"
+if ! cap_model "$CAP_TMP/abandon_identity.log" "$CAP_TMP/abandon_identity.json" &&
+   [ "$(cap_field "$CAP_TMP/abandon_identity.json" 'm["refusal"]["reason"]')" = "capture_abandon_identity" ]; then
+    t_pass "capture: an abandon claiming no identity may not name one"
+else
+    t_fail "capture: an abandon claiming no identity may not name one"
+fi
+
+# reason=sealed is a shape the producer cannot emit -- its terminal claim
+# refuses once admission is sealed -- so accepting it would put a vocabulary in
+# the grammar that only a forgery could produce, and hand it an exemption.
+{
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=1 final=0 a"
+    cap_line "[UTEST-CAPTURE-ABANDON] owner=7 task=9 thr=1 haswr=1 wr=0 reason=sealed"
+} > "$CAP_TMP/abandon_sealed.log"
+if ! cap_model "$CAP_TMP/abandon_sealed.log" "$CAP_TMP/abandon_sealed.json"; then
+    t_pass "capture: an abandon reason the producer cannot emit is refused"
+else
+    t_fail "capture: an abandon reason the producer cannot emit is refused"
+fi
+
+if ! cap_model "$CAP_TMP/abandon_skew.log" "$CAP_TMP/abandon_skew.json"; then
+    t_pass "capture: an unknown abandon reason is refused as version skew"
+else
+    t_fail "capture: an unknown abandon reason is refused as version skew"
 fi
 
 # The adjacent boundaries of that same aggregate: one chunk short and one

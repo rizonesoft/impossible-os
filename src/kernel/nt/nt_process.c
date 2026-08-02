@@ -404,6 +404,15 @@ static NTSTATUS NtTerminateThread_handler(uint64_t a1, uint64_t a2, uint64_t a3,
         return STATUS_SUCCESS;
     }
 
+#ifdef KERNEL_TESTS
+    /* This path publishes THREAD_DEAD directly rather than routing through
+     * thread_exit or task_terminate_remote, so it is its own death transition
+     * and owes the same capture snapshot they take. Without it a sibling could
+     * terminate a thread parked inside a sub-chunk write and the abandoned
+     * payload would carry no reason at reap. */
+    if (owner)
+        task_utest_cap_note_thread_death(owner, thr);
+#endif
     thr->state = TASK_DEAD;
     thr->exit_status = (int32_t)exit_code;
     if (owner)

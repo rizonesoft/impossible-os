@@ -2008,6 +2008,7 @@ static void test_report_reconcile_timeout_keeps_counts(void)
 static struct task s_report_scratch;
 static struct task s_capture_parent_scratch;
 static struct task s_capture_child_scratch;
+static struct thread s_capture_thread_scratch;
 /* Two loader-evidence scratch TCBs standing in for consecutive spawns:
  * s_loader_killed_scratch is the timed-out loader the launcher force-kills,
  * s_loader_next_scratch is the binary launched after it. */
@@ -4545,6 +4546,125 @@ static void test_capture_byte_uncaptured_task_returns_zero(void)
  * pass here proves the inheritance CONTRACT independent of the live
  * fork() path (which the ring-3 test_process.exe suite exercises
  * end-to-end). */
+/* The open-write evidence, driven against a zeroed scratch TCB pair. Nothing
+ * live is touched: the snapshot reads one field of the owner slot and writes
+ * three on the thread, which is the whole contract the reap barrier later
+ * depends on. */
+static void test_capture_open_write_reset_clears_every_field(void)
+{
+    struct thread *thr = &s_capture_thread_scratch;
+
+    thr->utest_cap_state = (uint8_t)UTEST_CAP_THREAD_OPEN;
+    thr->utest_cap_has_wid = 1;
+    thr->utest_cap_death = (uint8_t)UTEST_CAP_DEATH_KILLED;
+    thr->utest_cap_wid = 41u;
+    thr->utest_cap_gen = 7u;
+    thr->utest_cap_stop_epoch = 3u;
+
+    thread_utest_cap_reset(thr);
+
+    TEST_ASSERT_EQ((uint64_t)thr->utest_cap_state,
+                   (uint64_t)UTEST_CAP_THREAD_IDLE,
+                   "a reset slot owes no record");
+    TEST_ASSERT_EQ((uint64_t)thr->utest_cap_has_wid, 0u,
+                   "a reset slot carries no write identity");
+    TEST_ASSERT_EQ((uint64_t)thr->utest_cap_death,
+                   (uint64_t)UTEST_CAP_DEATH_NONE,
+                   "a reset slot carries no death outcome");
+    TEST_ASSERT_EQ((uint64_t)thr->utest_cap_wid, 0u,
+                   "a reset slot carries no wr");
+    TEST_ASSERT_EQ((uint64_t)thr->utest_cap_gen, 0u,
+                   "a reset slot is bound to no generation");
+    TEST_ASSERT_EQ((uint64_t)thr->utest_cap_stop_epoch, 0u,
+                   "a reset slot snapshots no stop epoch");
+}
+
+/* A thread that owes nothing must not acquire a death outcome: only an ARMED
+ * write is owed an explanation, and manufacturing one for an idle slot would
+ * refuse a run in which nothing was lost. */
+static void test_capture_death_snapshot_ignores_unarmed_thread(void)
+{
+    task_utest_capture_reset(&s_capture_parent_scratch);
+    thread_utest_cap_reset(&s_capture_thread_scratch);
+    s_capture_thread_scratch.utest_cap_state = (uint8_t)UTEST_CAP_THREAD_IDLE;
+
+    task_utest_cap_note_thread_death(&s_capture_parent_scratch,
+                                     &s_capture_thread_scratch);
+
+    TEST_ASSERT_EQ((uint64_t)s_capture_thread_scratch.utest_cap_death,
+                   (uint64_t)UTEST_CAP_DEATH_NONE,
+                   "an unarmed thread records no death outcome");
+}
+
+/* With no reachable owner slot the fence cannot be read, and the fail-CLOSED
+ * reading is KILLED: an open write nobody can account for is exactly the
+ * silence the record exists to break, so it must never default to the
+ * exempting outcome. */
+static void test_capture_death_snapshot_defaults_to_killed(void)
+{
+    task_utest_capture_reset(&s_capture_parent_scratch);
+    thread_utest_cap_reset(&s_capture_thread_scratch);
+    /* A pid no slot can resolve, so the fence read finds nothing. */
+    s_capture_parent_scratch.utest_capture_owner_pid = 0xFFFFFFFFu;
+    s_capture_thread_scratch.utest_cap_state = (uint8_t)UTEST_CAP_THREAD_OPEN;
+
+    task_utest_cap_note_thread_death(&s_capture_parent_scratch,
+                                     &s_capture_thread_scratch);
+
+    TEST_ASSERT_EQ((uint64_t)s_capture_thread_scratch.utest_cap_death,
+                   (uint64_t)UTEST_CAP_DEATH_KILLED,
+                   "an unresolvable owner fails closed to killed, never to "
+                   "the exempting fenced outcome");
+}
+
+/* FIRST SNAPSHOT WINS, and this is the invariant that keeps a lost write from
+ * being excused. Death paths are idempotent and can overlap, and the launcher
+ * latches the reap fence BEFORE it kills -- so a second reading taken later
+ * would see a fence that was not in force when this thread actually died, and
+ * would relabel a genuine loss as a deliberate teardown. */
+static void test_capture_death_snapshot_is_not_overwritten(void)
+{
+    task_utest_capture_reset(&s_capture_parent_scratch);
+    thread_utest_cap_reset(&s_capture_thread_scratch);
+    s_capture_parent_scratch.utest_capture_owner_pid = 0xFFFFFFFFu;
+    s_capture_thread_scratch.utest_cap_state = (uint8_t)UTEST_CAP_THREAD_OPEN;
+
+    task_utest_cap_note_thread_death(&s_capture_parent_scratch,
+                                     &s_capture_thread_scratch);
+    /* A later pass over the same still-OPEN thread must change nothing. */
+    task_utest_cap_note_thread_death(&s_capture_parent_scratch,
+                                     &s_capture_thread_scratch);
+
+    TEST_ASSERT_EQ((uint64_t)s_capture_thread_scratch.utest_cap_death,
+                   (uint64_t)UTEST_CAP_DEATH_KILLED,
+                   "a second death pass does not relabel the first reading");
+}
+
+/* A task killed wholesale takes every thread with it, and each carries its own
+ * write on its own stack -- so the task-wide snapshot must cover the whole
+ * thread pool, not just thread 0. */
+static void test_capture_death_snapshot_covers_every_thread(void)
+{
+    uint32_t i;
+
+    task_utest_capture_reset(&s_capture_parent_scratch);
+    s_capture_parent_scratch.utest_capture_owner_pid = 0xFFFFFFFFu;
+    s_capture_parent_scratch.num_threads = 3u;
+    for (i = 0; i < 3u; i++) {
+        thread_utest_cap_reset(&s_capture_parent_scratch.threads[i]);
+        s_capture_parent_scratch.threads[i].utest_cap_state =
+            (uint8_t)UTEST_CAP_THREAD_OPEN;
+    }
+
+    task_utest_cap_note_task_death(&s_capture_parent_scratch);
+
+    for (i = 0; i < 3u; i++)
+        TEST_ASSERT_EQ(
+            (uint64_t)s_capture_parent_scratch.threads[i].utest_cap_death,
+            (uint64_t)UTEST_CAP_DEATH_KILLED,
+            "every thread of a wholesale-killed task records its own death");
+}
+
 static void test_capture_inherit_copies_active_and_owner_unchanged(void)
 {
     task_utest_capture_reset(&s_capture_parent_scratch);
@@ -6018,6 +6138,21 @@ void test_register_usermode_launcher(void)
                             TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: an unfreezable entry is a counted refusal",
                             test_unfreezable_entry_becomes_a_counted_refusal,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: capture open-write reset clears every field",
+                            test_capture_open_write_reset_clears_every_field,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: capture death snapshot ignores unarmed thread",
+                            test_capture_death_snapshot_ignores_unarmed_thread,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: capture death snapshot fails closed to killed",
+                            test_capture_death_snapshot_defaults_to_killed,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: capture death snapshot is not overwritten",
+                            test_capture_death_snapshot_is_not_overwritten,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: capture death snapshot covers every thread",
+                            test_capture_death_snapshot_covers_every_thread,
                             TEST_CAT_EXEC);
 }
 

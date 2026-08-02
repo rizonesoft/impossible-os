@@ -76,6 +76,16 @@ signal_handler_t signal_handler(int sig, signal_handler_t handler)
 /* Default signal actions */
 static void signal_default_action(struct task *t, int sig)
 {
+#ifdef KERNEL_TESTS
+    /* Every fatal action below publishes TASK_DEAD directly instead of
+     * routing through task_terminate_remote, so this is their shared death
+     * transition and it owes the capture snapshot. It matters more here than
+     * anywhere else: the launcher's descendant reap kills cooperatively with
+     * SIGKILL, so this is the ordinary way a captured task dies. SIGCHLD is
+     * the one default that is not fatal and must not take the snapshot. */
+    if (sig != SIGCHLD)
+        task_utest_cap_note_task_death(t);
+#endif
     switch (sig) {
     case SIGKILL:
         printk("[SIG] PID %u killed (SIGKILL)\n", (uint64_t)t->pid);

@@ -248,6 +248,14 @@ int test_usermode_capture_byte(struct utest_capture_ctx *ctx, char c);
  * when nothing was staged (or when this ctx was never capture-owned). */
 void test_usermode_capture_end(struct utest_capture_ctx *ctx);
 
+/* Settle a DEAD thread's open capture write and emit its evidence, called
+ * from the reap barrier. Declared here rather than kept
+ * private because the reap points that know a thread has stopped existing
+ * live in the scheduler, while the capture wire lives here. */
+struct task;
+struct thread;
+void test_usermode_cap_settle_dead_thread(struct task *t, struct thread *thr);
+
 /* Emits the one-time "[UTEST-CAPTURE-BEGIN] owner=<pid> name=<name>"
  * announcement binding a capture owner pid to its binary name. The ONLY
  * caller is task_create_internal() (task.c), which calls this BEFORE the

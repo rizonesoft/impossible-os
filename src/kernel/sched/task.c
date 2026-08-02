@@ -245,6 +245,12 @@ static void task_wrapper(void)
 
     entry();
 
+#ifdef KERNEL_TESTS
+    /* A task whose entry returns normally dies HERE rather than through
+     * task_exit, so this is its own death transition and takes the capture
+     * snapshot before anything is published dead. */
+    task_utest_cap_note_task_death(&tasks[current_task]);
+#endif
     /* Task finished. Main thread DEAD under its APC lock FIRST (before
      * TASK_DEAD is visible) so no cross-thread KeInsertQueueApc can enqueue
      * onto a dead process's thread-0 in the window between the stores. */
@@ -563,6 +569,9 @@ boot_result_t task_init(void)
             tasks[i].threads[j].id = 0;
             tasks[i].threads[j].state = THREAD_DEAD;
             tasks[i].threads[j].pledge_pending = 0;
+#ifdef KERNEL_TESTS
+            thread_utest_cap_reset(&tasks[i].threads[j]);
+#endif
             tasks[i].threads[j].rsp = 0;
             tasks[i].threads[j].stack_base = (uint8_t *)0;
             tasks[i].threads[j].stack_size = 0;
@@ -1021,6 +1030,9 @@ static int task_create_internal(task_entry_t entry, const char *name,
     tasks[pid].threads[0].previous_mode = 0;  /* KernelMode on slot reuse */
     fault_site_reset_thread(&tasks[pid].threads[0]);  /* no stale site marker */
     tasks[pid].threads[0].in_system_service = 0;  /* no syscall in flight on a reused slot */
+#ifdef KERNEL_TESTS
+    thread_utest_cap_reset(&tasks[pid].threads[0]);  /* no open capture write on a reused slot */
+#endif
     tasks[pid].threads[0].impersonation_token = (void *)0;  /* no stale impersonation on slot reuse */
     tasks[pid].threads[0].kernel_exception_list = (struct ki_exception_registration *)0;  /* no stale KI_TRY chain */
     tasks[pid].threads[0].teb = (void *)0;
@@ -1349,6 +1361,9 @@ int task_create_user(task_entry_t entry, const char *name)
     tasks[pid].threads[0].previous_mode = 0;  /* KernelMode on slot reuse */
     fault_site_reset_thread(&tasks[pid].threads[0]);  /* no stale site marker */
     tasks[pid].threads[0].in_system_service = 0;  /* no syscall in flight on a reused slot */
+#ifdef KERNEL_TESTS
+    thread_utest_cap_reset(&tasks[pid].threads[0]);  /* no open capture write on a reused slot */
+#endif
     tasks[pid].threads[0].impersonation_token = (void *)0;  /* no stale impersonation on slot reuse */
     tasks[pid].threads[0].kernel_exception_list = (struct ki_exception_registration *)0;  /* no stale KI_TRY chain */
     tasks[pid].threads[0].teb = (void *)0;
@@ -2688,6 +2703,9 @@ int task_fork(struct interrupt_frame *frame)
     tasks[child_pid].threads[0].previous_mode = 0;  /* KernelMode on slot reuse */
     fault_site_reset_thread(&tasks[child_pid].threads[0]);  /* no stale site marker */
     tasks[child_pid].threads[0].in_system_service = 0;  /* no syscall in flight on a reused slot */
+#ifdef KERNEL_TESTS
+    thread_utest_cap_reset(&tasks[child_pid].threads[0]);  /* no open capture write on a reused slot */
+#endif
     tasks[child_pid].threads[0].kernel_exception_list =
         (struct ki_exception_registration *)0;  /* no stale KI_TRY chain */
     tasks[child_pid].threads[0].kernel_rsp = tasks[child_pid].kernel_rsp;
@@ -4285,6 +4303,50 @@ void task_death_teardown(struct task *t)
     timer_resolution_release_process(t->pid);
 }
 
+#ifdef KERNEL_TESTS
+void task_utest_cap_note_thread_death(struct task *t, struct thread *thr)
+{
+    struct task *owner;
+    uint8_t      fenced;
+
+    if (!t || !thr)
+        return;
+    /* Only an ARMED write is owed an explanation. A thread that never
+     * captured, or whose write already settled through capture_end or a
+     * budget CUT, has nothing outstanding. */
+    if (thr->utest_cap_state != (uint8_t)UTEST_CAP_THREAD_OPEN)
+        return;
+    /* First snapshot wins. Death paths are deliberately idempotent and can
+     * overlap (a racing self-exit and a remote kill both reach a transition),
+     * and the EARLIEST reading is the true one: a later one could observe a
+     * reap fence that was latched after this thread had already died, which
+     * is the exact mislabel that would hand a lost write the fence's
+     * exemption. */
+    if (thr->utest_cap_death != (uint8_t)UTEST_CAP_DEATH_NONE)
+        return;
+
+    owner = task_get_by_pid(t->utest_capture_owner_pid);
+    fenced = owner ? __atomic_load_n(&owner->utest_capture_fenced,
+                                     __ATOMIC_ACQUIRE)
+                   : (uint8_t)0;
+    thr->utest_cap_death = fenced ? (uint8_t)UTEST_CAP_DEATH_FENCED
+                                  : (uint8_t)UTEST_CAP_DEATH_KILLED;
+}
+
+void task_utest_cap_note_task_death(struct task *t)
+{
+    uint32_t tid;
+
+    if (!t)
+        return;
+    /* Every thread, not just thread 0: a task killed wholesale takes its
+     * secondary threads down with it, and each of them may hold its own open
+     * write on its own stack. */
+    for (tid = 0; tid < t->num_threads && tid < THREAD_MAX; tid++)
+        task_utest_cap_note_thread_death(t, &t->threads[tid]);
+}
+#endif
+
 /* Centralized remote-death transition (see task.h). Idempotent: returns
  * immediately if the target is already dead, so concurrent kill paths and a
  * racing self-exit never double-teardown. Mirrors task_exit's TASK_DEAD-side
@@ -4293,6 +4355,11 @@ void task_terminate_remote(struct task *t, int32_t exit_code)
 {
     if (!t || t->state == TASK_DEAD)
         return;
+#ifdef KERNEL_TESTS
+    /* BEFORE the DEAD publish: the reap fence must be read while this
+     * thread's death is still the current event. */
+    task_utest_cap_note_task_death(t);
+#endif
     t->state = TASK_DEAD;
     t->exit_status = exit_code;
     task_death_teardown(t);
@@ -4303,6 +4370,12 @@ void task_exit(int32_t status)
     uint32_t pid = current_task;
     uint32_t i;
 
+#ifdef KERNEL_TESTS
+    /* Capture evidence first, while no death has been published yet: every
+     * thread of this task is about to stop existing, and any of them may be
+     * holding an open capture write on its own stack. */
+    task_utest_cap_note_task_death(&tasks[pid]);
+#endif
     /* Mark the process main thread DEAD under its APC lock FIRST -- before
      * TASK_DEAD is externally visible -- so a cross-thread KeInsertQueueApc
      * cannot enqueue onto a dead process's thread-0 in the window between the
@@ -4488,6 +4561,31 @@ void task_cleanup(uint32_t pid)
      * on this path too -- upholds "no KI_TRY chain head outlives its stack" for
      * thread 0. */
     tasks[pid].threads[0].kernel_exception_list = (struct ki_exception_registration *)0;
+
+#ifdef KERNEL_TESTS
+    /* Emit any open-write capture evidence for EVERY thread of this task, and
+     * thread 0 above all: a task killed wholesale never runs any of its
+     * threads again, so none of them reach thread_reap_kernel_slot, and the
+     * MAIN thread is where an ordinary test binary does its writing. Scoping
+     * this to the secondary-thread loop below would have left the common case
+     * -- a binary killed by timeout or by the descendant reap while inside
+     * write() -- producing no record at all, which is the exact silence this
+     * evidence exists to break.
+     *
+     * Ordered here for two reasons: before any stack is freed, and before
+     * TASK_UTEST_CAPTURE_UNLINK clears owner_pid further down, which is what
+     * the settlement resolves the owner slot through. The death outcome each
+     * thread carries was snapshotted at its real death transition, so nothing
+     * here re-reads the reap fence. */
+    {
+        uint32_t ti;
+        for (ti = 0; ti < tasks[pid].num_threads && ti < THREAD_MAX; ti++) {
+            test_usermode_cap_settle_dead_thread(&tasks[pid],
+                                                 &tasks[pid].threads[ti]);
+            thread_utest_cap_reset(&tasks[pid].threads[ti]);
+        }
+    }
+#endif
 
     /* Free per-thread kernel + user stacks + TEBs for secondary threads */
     {
@@ -5014,6 +5112,9 @@ int kthread_create(thread_entry_t entry, void *arg, uint32_t stack_size)
     t->threads[tid].base_priority = THREAD_PRIO_NORMAL;
     t->threads[tid].previous_mode = 0;  /* KernelMode: reused slot must not inherit a stale NT probe-gating flag */
     t->threads[tid].in_system_service = 0;  /* reused slot must not inherit a stale system-service flag */
+#ifdef KERNEL_TESTS
+    thread_utest_cap_reset(&t->threads[tid]);  /* nor a stale open capture write */
+#endif
     t->threads[tid].impersonation_token = (void *)0;  /* no stale impersonation on slot reuse */
     fault_site_reset_thread(&t->threads[tid]);  /* no stale site marker on slot reuse */
     t->threads[tid].kernel_exception_list = (struct ki_exception_registration *)0;  /* no stale KI_TRY chain */
@@ -5268,6 +5369,9 @@ int uthread_create(thread_entry_t entry, void *arg, uint32_t user_stack_size)
     t->threads[tid].base_priority = THREAD_PRIO_NORMAL;
     t->threads[tid].previous_mode = 0;  /* KernelMode: reused slot must not inherit a stale NT probe-gating flag */
     t->threads[tid].in_system_service = 0;  /* reused slot must not inherit a stale system-service flag */
+#ifdef KERNEL_TESTS
+    thread_utest_cap_reset(&t->threads[tid]);  /* nor a stale open capture write */
+#endif
     t->threads[tid].impersonation_token = (void *)0;  /* no stale impersonation on slot reuse */
     fault_site_reset_thread(&t->threads[tid]);  /* no stale site marker on slot reuse */
     t->threads[tid].kernel_exception_list = (struct ki_exception_registration *)0;  /* no stale KI_TRY chain */
@@ -5329,6 +5433,12 @@ void thread_exit(int32_t status)
     /* Store exit_status BEFORE publishing DEAD so a reader that observes DEAD
      * also observes the final status (a joiner reads status after seeing DEAD). */
     thr->exit_status = status;
+#ifdef KERNEL_TESTS
+    /* Same ordering rule as the status store, for the same reason: the
+     * capture evidence is read while this thread's death is the current
+     * event, not reconstructed later from a fence that may move. */
+    task_utest_cap_note_thread_death(t, thr);
+#endif
     /* Mark DEAD under the APC lock so the transition is atomic vs an in-flight
      * cross-thread KeInsertQueueApc (which rejects DEAD/FREE under the same
      * lock) -- no APC can be enqueued onto an exiting thread. (Rundown of any
@@ -5414,6 +5524,15 @@ static void thread_reap_kernel_slot(struct task *t, uint32_t thread_id)
 {
     struct thread *thr = &t->threads[thread_id];
 
+#ifdef KERNEL_TESTS
+    /* Emit any open-write evidence BEFORE the slot is advertised THREAD_FREE
+     * below, for the same reason previous_mode and the KI_TRY chain are
+     * cleared here: kthread_create scans locklessly for a FREE slot, so a new
+     * tenant can take this one the instant it is published. Evidence read
+     * after that point would be the next thread's, or gone. */
+    test_usermode_cap_settle_dead_thread(t, thr);
+    thread_utest_cap_reset(thr);
+#endif
     thread_free_stacks(thr);
     /* Clear the NT probe-gating flag BEFORE publishing THREAD_FREE: a creator
      * (kthread_create) scans locklessly for THREAD_FREE, so any reusable-

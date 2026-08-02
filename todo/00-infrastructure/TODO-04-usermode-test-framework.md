@@ -2383,17 +2383,23 @@ Section 48 made every write() that reached the wire independently terminable, an
 > [!NOTE]
 > Filed 2026-08-01 from section 48's design review, rated [high] there and accepted as a residual with this owner. The reviewer's fix -- emit an authenticated write-start record for every non-empty write -- is correct and is the only shape that makes a zero-record write visible, because visibility requires an emitted record. It was not taken inside section 48 because it roughly DOUBLES capture record traffic for the whole suite (each record is a ~350-byte klog line, and small writes dominate), which is a cost decision this section should make on measurements rather than one section 48 should make in passing. Section 48's item explicitly permitted either shape ("a per-write identifier (or explicit write-start/end records)").
 
-- [ ] Detect a write abandoned before its first chunk ever reached the wire
+- [x] Detect a write abandoned before its first chunk ever reached the wire
       - Measure first: the suite's current capture record count and serial wall-clock, against the same run with a write-start record per non-empty write. A cheaper alternative to weigh is a per-TASK "write open" flag set in `test_usermode_capture_start` and cleared in `test_usermode_capture_end`, with the abandoned case published once at reap instead of once per write -- it costs two plain stores per write and one record only when a write was actually abandoned.
       - Whichever shape wins, the host verdict already exists: an unclosed write is `capture_unterminated`, and an unarmed or lost channel is `capture_lost`. This is about producing the evidence, not about a new refusal vocabulary.
       -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §48 (item: "Carry a per-write identifier (or explicit write-start/end records) so every write() call is INDEPENDENTLY terminable, and reconcile each write rather than only the owner")
-- [ ] Narrow the budget terminator's exemption from the OWNER to the write it actually cut
+- [x] Narrow the budget terminator's exemption from the OWNER to the write it actually cut
       - `[UTEST-CAPTURE-OVER]` carries owner/seq/scope/limit/charged but no `wr`, so `scripts/utest-capture.py` exempts EVERY unterminated write group of that owner once any budget stop fires -- including one truncated for an unrelated reason, which is exactly the masking `wr` was added to catch. Reachable: a captured fork descendant killed mid-write leaves an open group, and a later owner-budget stop on the same owner retroactively silences it. Found by section 48's kernel-quality audit, rated [medium].
       - Naming the cut write on the marker alone is NOT sufficient and was rejected during section 48's design review with evidence: the producer latches the whole owner, so a SECOND write open at that instant is neither named nor terminable and the run would refuse -- section 40's bounded stop turning back into a corruption verdict. The shape that closes both is one authenticated cut record per write open at the stop, which is the same machinery the item above needs; budget the wire reservation for it (TASK_MAX per owner) in one pass.
       -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §48 (item: "Carry a per-write identifier (or explicit write-start/end records) so every write() call is INDEPENDENTLY terminable, and reconcile each write rather than only the owner")
-- [ ] Commit: `"test: make a write abandoned before its first chunk visible on the wire"`
+- [x] Commit: `"test: make a write abandoned before its first chunk visible on the wire"`
 
 **Test checkpoint:** a fixture in which a task dies inside its write loop with under one chunk staged is REFUSED rather than reconciled as a complete payload, and a run of ordinary short writes shows no regression in capture record count beyond the chosen design's stated cost. Test on: QEMU TCG, QEMU KVM.
+
+> **Design note (the measurement the section demanded, taken before choosing):** one suite run emits **1,531** `[UTEST-CAPTURE]` chunk records across **1,427** distinct writes, mean **143.5** bytes/line, **219,745** of the log's 465,217 bytes. 1,330 of 1,427 writes (93.2%) emit exactly one chunk.
+> - The reviewer's write-start-record shape therefore costs **+1,427 records (+93.2% capture traffic, +44% total serial bytes)** -- "roughly doubles" was right.
+> - The per-thread evidence shape shipped here costs **zero records on the normal path** (two plain stores per write) and emits one only when a write was genuinely abandoned. Verified after the change: chunk records 1,531 and write groups 1,427, both unchanged, with 0 CUT and 0 ABANDON on a healthy run.
+> - The section's own `~350-byte klog line` estimate was **2.4x over** the measured 143.5 bytes; the conclusion is unaffected, the figure is corrected here.
+> **Verified:** 2026-08-02 | build OK | tooling 1201/1201, 28163 kernel + 17 user PASS | capture wire byte-identical on the normal path
 
 ---
 

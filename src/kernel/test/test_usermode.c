@@ -3815,6 +3815,77 @@ _Static_assert(UTEST_CAPTURE_RUN_RECORD_BUDGET >=
 _Static_assert(UTEST_CAPTURE_RUN_RECORD_BUDGET <= 9999999u,
                "the capture budgets bound the seq and limit fields' digits");
 
+/* TERMINAL RECORDS -- the run-scoped allowance for [UTEST-CAPTURE-CUT] and
+ * [UTEST-CAPTURE-ABANDON].
+ *
+ * These explain what happened to a write whose PAYLOAD stopped, so they must
+ * survive the very latches that stopped it: a budget stop and the reap fence
+ * both suppress chunks, and a terminal record suppressed alongside them would
+ * leave exactly the silence it exists to break. They are therefore exempt
+ * from the owner budget and the fence -- and that exemption is precisely why
+ * they need a bound of their own.
+ *
+ * The bound is an EXPLICIT RUN COUNTER, not a slot-cardinality proof, and the
+ * difference is load-bearing. THREAD_MAX bounds how many threads exist at
+ * once, not how many ever live: kthread_create reuses a THREAD_FREE slot and
+ * thread_reap_kernel_slot republishes dead slots, so a task can create a
+ * thread, have it killed inside a sub-chunk write, join it, and reuse the
+ * slot without limit. TASK_MAX * THREAD_MAX would have been a ceiling on
+ * simultaneous open writes mistaken for a ceiling on records.
+ *
+ * The allowance is deliberately generous relative to any honest run (an
+ * honest binary abandons NO writes) because exhausting it is a diagnostic
+ * event, not a routine one. On exhaustion the run does not fall silent: one
+ * reserved [UTEST-CAPTURE-TERMINAL-OVER] record is emitted and the host
+ * refuses the run, so the wire stays bounded AND the loss stays visible --
+ * fail-closed in both directions. */
+#define UTEST_CAPTURE_TERMINAL_BUDGET ((uint32_t)TASK_MAX * (uint32_t)THREAD_MAX)
+
+/* The "+ 1u" is the terminal-overflow record itself, on the same principle
+ * the owner budget reserves its own [UTEST-CAPTURE-OVER] marker: enforcement
+ * emits too, and budgeting only the permitted records would leave the marker
+ * outside the allowance the ceiling advertises. */
+#define UTEST_CAPTURE_TERMINAL_WIRE_MAX                                    \
+    (((uint64_t)UTEST_CAPTURE_TERMINAL_BUDGET + 1u) * UTEST_CAPTURE_WIRE_MAX)
+
+_Static_assert(UTEST_CAPTURE_TERMINAL_WIRE_MAX + UTEST_CAPTURE_RUN_WIRE_MAX <=
+                   (uint64_t)64u * 1024u * 1024u,
+               "the terminal allowance plus the run-wide capture allowance "
+               "must stay inside the serial budget a run may spend");
+
+/* A terminal record is a fixed-shape metadata line with no escaped payload,
+ * so unlike a chunk it cannot approach the line cap through its variable
+ * part -- but it still has to fit, and these asserts are what keep a later
+ * field addition from silently truncating one.
+ *
+ * DERIVED from the same format literals the emitters use, exactly as
+ * UTEST_CAPTURE_OVER_FIXED is: a hand-written ceiling proves only that some
+ * number fits, and stays green while the record it is supposed to bound grows
+ * past it. `reason=` uses the longest alternative the grammar admits. */
+#define UTEST_CAPTURE_CUT_FIXED                                            \
+    (UTEST_LIT("[UTEST-CAPTURE-CUT] owner=") + UTEST_DIGITS_U32 +          \
+     UTEST_LIT(" wr=") + UTEST_DIGITS_U32)
+_Static_assert(UTEST_CAPTURE_CUT_FIXED <= UTEST_RECORD_LINE_MAX - 1u,
+               "the per-write cut record must fit the record wire cap -- a "
+               "truncated cut would reach the host as an unexplained open "
+               "write instead of the bounded stop it reports");
+
+#define UTEST_CAPTURE_ABANDON_FIXED                                        \
+    (UTEST_LIT("[UTEST-CAPTURE-ABANDON] owner=") + UTEST_DIGITS_U32 +      \
+     UTEST_LIT(" task=") + UTEST_DIGITS_U32 +                              \
+     UTEST_LIT(" thr=") + UTEST_DIGITS_U32 +                               \
+     UTEST_LIT(" haswr=") + 1u +                                           \
+     UTEST_LIT(" wr=") + UTEST_DIGITS_U32 +                                \
+     UTEST_LIT(" reason=") + UTEST_LIT("killed"))
+_Static_assert(UTEST_CAPTURE_ABANDON_FIXED <= UTEST_RECORD_LINE_MAX - 1u,
+               "the abandoned-write record must fit the record wire cap -- a "
+               "truncated abandon would lose the very evidence it carries");
+
+#define UTEST_CAPTURE_TERMINAL_OVER_FIXED                                  \
+    (UTEST_LIT("[UTEST-CAPTURE-TERMINAL-OVER] limit=") + UTEST_DIGITS_U32)
+_Static_assert(UTEST_CAPTURE_TERMINAL_OVER_FIXED <= UTEST_RECORD_LINE_MAX - 1u,
+               "the terminal-allowance marker must fit the record wire cap");
+
 /* [UTEST-CAPTURE-OVER]'s fixed cost, derived from its own format literals
  * exactly like the two record kinds above. "scope=owner" is the longer of
  * the two scope tokens, so it is the worst case. */
@@ -4019,6 +4090,13 @@ static uint8_t  s_capture_sealed;
  * exactly the kind of bound that stops being unreachable without anyone
  * revisiting the type. At 64 bits the wrap is not a scenario to reason
  * about, which is worth more than the four bytes. */
+/* Run-scoped terminal accounting, both guarded by s_capture_budget_lock for
+ * the same reason the payload budget is: the charge, the ceiling test and the
+ * one-shot overflow latch are ONE decision, and three individually atomic
+ * fields would leave each access safe while the decision raced. */
+static uint32_t s_capture_terminal_records;
+static uint8_t  s_capture_terminal_over;
+
 static uint64_t s_capture_admitted;
 static uint64_t s_capture_completed;
 static uint64_t s_capture_forgiven;
@@ -4149,6 +4227,14 @@ static uint64_t u_capture_close(struct u_capture_boundary *b)
  * preempted task's klog write atomic with the frame rollover. */
 static uint32_t s_capture_run_generation;
 
+/* Monotonic source for owner stop epochs, guarded by s_capture_budget_lock.
+ * It never resets across runs: an epoch only has to be COMPARABLE against the
+ * snapshot an armed write took, and restarting the count would let a write
+ * armed in an earlier run compare as older than a later run's stop and settle
+ * as cut by a stop it never saw. Monotonic-forever is the cheap way to make
+ * every comparison mean what it says. */
+static uint32_t s_capture_stop_epoch_next;
+
 /* How long the run boundary waits for outstanding claims to reach the wire.
  *
  * Sized against what it is actually waiting for -- one preempted emitter
@@ -4186,7 +4272,19 @@ static void u_capture_budget_reset(void)
     spin_lock_irqsave(&s_capture_budget_lock, &irq_flags);
     s_capture_run_records = 0;
     s_capture_run_over = 0;
-    s_capture_run_generation++;
+    /* The terminal allowance is per-RUN like the record budget beside it: a
+     * binary that abandoned writes must not spend the next binary's evidence
+     * allowance, and a run that exhausted it must not start the next one
+     * already silent. */
+    s_capture_terminal_records = 0;
+    s_capture_terminal_over = 0;
+    /* RELEASE, and atomic like the stop latch beside it: an armed capture
+     * write snapshots this value LOCK-FREE at capture_start (the fast path
+     * cannot afford an acquisition per write), so the write must not become
+     * visible before the state that justifies it, and a plain store racing
+     * that plain load would be a data race however benign the values. */
+    __atomic_store_n(&s_capture_run_generation,
+                     s_capture_run_generation + 1u, __ATOMIC_RELEASE);
     /* Admission REOPENS here, with the generation bump and under the same
      * lock, so no window exists in which the new run's generation is live
      * but its gate is still shut (or the reverse). The pair is what a claim
@@ -4284,7 +4382,8 @@ static uint64_t u_capture_close_epoch(void)
     pending = u_capture_close(&b);
 
     s_capture_forgiven = b.forgiven;
-    s_capture_run_generation = b.generation;
+    __atomic_store_n(&s_capture_run_generation, b.generation,
+                     __ATOMIC_RELEASE);
     spin_unlock_irqrestore(&s_capture_budget_lock, irq_flags);
 
     return pending;
@@ -4417,6 +4516,17 @@ static uint32_t u_capture_reap_tree(uint32_t owner_pid)
 
         spin_lock_irqsave(&s_capture_budget_lock, &irq_flags);
         __atomic_store_n(&owner->utest_capture_stopped, 1u, __ATOMIC_RELEASE);
+        /* The fence is latched ALONGSIDE the stop, not instead of it: the
+         * stop latch is what the claim fast path already reads to suppress
+         * payload, and that suppression is still exactly what the fence
+         * wants. The separate flag records WHY, which the stop latch alone
+         * could not say -- and the terminal path is the only reader that
+         * needs the distinction, to avoid handing a write silenced by an
+         * end-of-binary teardown a CUT record claiming it hit a budget it
+         * never reached. Deliberately does NOT stamp a stop epoch: a fence is
+         * not a budget stop, and stamping one would make every write open at
+         * teardown settle as budget-cut. */
+        __atomic_store_n(&owner->utest_capture_fenced, 1u, __ATOMIC_RELEASE);
         spin_unlock_irqrestore(&s_capture_budget_lock, irq_flags);
     }
 
@@ -4651,8 +4761,24 @@ static enum utest_capture_verdict u_capture_claim(struct task *owner,
      *
      * RELEASE: the fast path reads this without the lock, so the latch must
      * not become visible before the state that justifies it. */
-    if (st.owner_stopped)
+    if (st.owner_stopped) {
         __atomic_store_n(&owner->utest_capture_stopped, 1u, __ATOMIC_RELEASE);
+        /* Stamp the stop epoch in the SAME critical section that latched the
+         * stop, and only on the set edge, so it inherits the latch's
+         * monotonicity. Every write armed before this epoch was cut by this
+         * stop, whether or not it was the write whose claim tripped it -- the
+         * budget stops the whole OWNER, so a peer thread mid-write is cut
+         * without ever seeing a verdict. Publishing the epoch lets each write
+         * reach that conclusion for itself at its own settlement point,
+         * instead of requiring the tripping thread to name threads it cannot
+         * enumerate. Set-only: a second stop cannot occur (the latch is
+         * one-shot), so the first epoch is the one that matters. */
+        if (owner->utest_capture_stop_epoch == 0u) {
+            s_capture_stop_epoch_next++;
+            __atomic_store_n(&owner->utest_capture_stop_epoch,
+                             s_capture_stop_epoch_next, __ATOMIC_RELEASE);
+        }
+    }
     s_capture_run_records = st.run_records;
     s_capture_run_over = st.run_over;
     /* The reservation is published in the SAME critical section that drew
@@ -4663,6 +4789,68 @@ static enum utest_capture_verdict u_capture_claim(struct task *owner,
 
     /* Read INSIDE the critical section: the generation the caller checks
      * against must be the one this claim was actually charged to. */
+    *gen_out = s_capture_run_generation;
+
+    spin_unlock_irqrestore(&s_capture_budget_lock, irq_flags);
+    return verdict;
+}
+
+/* What a terminal claim resolved to. */
+#define UTEST_CAP_TERM_REFUSE   0  /* admission closed, or allowance already spent */
+#define UTEST_CAP_TERM_EMIT     1  /* emit the terminal record */
+#define UTEST_CAP_TERM_OVERFLOW 2  /* emit the one overflow marker, then never again */
+
+/* Claim one terminal record's worth of wire.
+ *
+ * This is the payload claim's sibling, and the differences are exactly three.
+ * It draws NO sequence number: a terminal record carries the `wr` its write
+ * was already given, so it needs no identity of its own, and taking one from
+ * the shared counter would break the two properties the host authenticates an
+ * owner stop with -- that the overflow marker sits at seq == limit, and that
+ * the chunk sequence has no hole. It is EXEMPT from the owner budget latch
+ * and from the reap fence, because a record whose whole job is to explain a
+ * stop cannot be suppressed by that stop. And it charges its own run-scoped
+ * allowance instead of the owner and run record budgets.
+ *
+ * What it does NOT change is its coverage by the run boundary. It takes the
+ * same lock, refuses once admission is SEALED, and reserves against the same
+ * `admitted` counter the drain waits on -- so a terminal record in flight
+ * holds the boundary open exactly as a chunk does. Without that reservation
+ * the generation check would be a bare check-then-log: this call could pass
+ * it, be preempted across a frame rollover, and land an authenticated record
+ * in a run it does not belong to, refusing a binary that did nothing wrong.
+ * The caller credits the reservation with u_capture_complete once the record
+ * has actually reached klog. */
+static int u_capture_claim_terminal(uint32_t *gen_out)
+{
+    uint64_t irq_flags;
+    int      verdict;
+
+    spin_lock_irqsave(&s_capture_budget_lock, &irq_flags);
+
+    if (s_capture_sealed) {
+        /* The run has stopped admitting. Refusing is right rather than
+         * regrettable: the boundary that sealed has already accounted for
+         * everything still owed, and emitting past it would attribute this
+         * record to a run that never admitted it. */
+        verdict = UTEST_CAP_TERM_REFUSE;
+    } else if (s_capture_terminal_over) {
+        verdict = UTEST_CAP_TERM_REFUSE;
+    } else if (s_capture_terminal_records >= UTEST_CAPTURE_TERMINAL_BUDGET) {
+        /* One marker, once, then silence -- and the host refuses a run that
+         * carries it, so bounding the wire never becomes hiding the loss. */
+        s_capture_terminal_over = 1;
+        s_capture_admitted++;
+        verdict = UTEST_CAP_TERM_OVERFLOW;
+    } else {
+        s_capture_terminal_records++;
+        s_capture_admitted++;
+        verdict = UTEST_CAP_TERM_EMIT;
+    }
+
+    /* Read INSIDE the critical section, exactly as the payload claim does:
+     * the generation the caller checks against must be the one this claim was
+     * charged to. */
     *gen_out = s_capture_run_generation;
 
     spin_unlock_irqrestore(&s_capture_budget_lock, irq_flags);
@@ -4847,8 +5035,21 @@ static int u_capture_emit_chunk(struct utest_capture_ctx *ctx, int is_final)
          * here rather than before the claim so a number is never spent on
          * a write that produced no record. */
         if (!ctx->_has_wid) {
+            struct thread *thr;
+
             ctx->_wid = seq;
             ctx->_has_wid = 1;
+            /* Mirror the identity onto the thread's open-write evidence. The
+             * ctx lives on this thread's stack and dies with it, so a
+             * teardown that has to name this write can only do so from state
+             * that outlives the frame. Guarded on OPEN so a write that was
+             * never armed (it entered discard before staging a byte) cannot
+             * plant an identity on a slot that owes no record. */
+            thr = thread_current();
+            if (thr && thr->utest_cap_state == (uint8_t)UTEST_CAP_THREAD_OPEN) {
+                thr->utest_cap_wid = seq;
+                thr->utest_cap_has_wid = 1;
+            }
         }
         utest_record_log(LOG_INFO,
                          "[UTEST-CAPTURE] owner=%u wr=%u seq=%u len=%u "
@@ -4914,6 +5115,111 @@ static int u_capture_emit_chunk(struct utest_capture_ctx *ctx, int is_final)
  * resolves the OWNER task (task_get_by_pid on utest_capture_owner_pid),
  * not task_current() itself, so u_capture_claim's sequence draw always
  * targets the right slot even from a fork() descendant. */
+/* The generation an arming write records, read lock-free.
+ *
+ * The payload fast path deliberately refuses to take the budget lock on every
+ * write, and arming inherits that constraint: 1427 writes in one suite run
+ * would each pay an acquisition for a value only ever used in a later
+ * equality test. A stale read can only compare UNEQUAL at emission, which
+ * suppresses the terminal record -- the fail-closed direction. */
+static uint32_t u_capture_generation_now(void)
+{
+    return __atomic_load_n(&s_capture_run_generation, __ATOMIC_ACQUIRE);
+}
+
+/* Take exclusive responsibility for settling this thread's open write.
+ *
+ * Returns 1 to exactly one caller per armed write and 0 to every other, so a
+ * capture_end racing a remote death cannot both emit. */
+static int u_capture_claim_settlement(struct thread *thr)
+{
+    uint8_t expected = (uint8_t)UTEST_CAP_THREAD_OPEN;
+
+    return __atomic_compare_exchange_n(&thr->utest_cap_state, &expected,
+                                       (uint8_t)UTEST_CAP_THREAD_SETTLED,
+                                       0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
+}
+
+/* Emit one terminal record for a write that stopped without a final chunk,
+ * and mark the thread's evidence settled.
+ *
+ * `reason` is NULL for a budget CUT and names the death otherwise. Settlement
+ * happens on EVERY path out of here, including the refusals: the state means
+ * "a record is still owed for this write", and a write the run has declined
+ * to record is no longer owed one. Leaving it OPEN would let a later
+ * settlement point try again and, in the reap case, emit a duplicate.
+ *
+ * The generation check is the same last-of-three the chunk path applies, and
+ * it matters more here: a descendant that outlived the reap round cap is
+ * cleaned up whenever it is cleaned up, which may be after the originating
+ * run's frame-end. Dropping in that case is not lost information -- the
+ * originating run already reported the descendant as unreaped, against the
+ * run that actually suffered it. */
+static void u_capture_settle_terminal(struct thread *thr, uint32_t owner_pid,
+                                      uint32_t task_pid, const char *reason)
+{
+    uint32_t gen = 0;
+    int      verdict;
+
+    if (!thr)
+        return;
+
+    /* CLAIM the settlement, do not merely observe it. capture_end and a remote
+     * death path can both reach a write, and "check then store" would let both
+     * pass the check and emit two records for one write -- which the host
+     * refuses as a duplicate. The exchange is what makes settled-exactly-once
+     * a property of the code rather than of the scheduling. ACQUIRE pairs with
+     * the release publication in capture_start, so the winner reads the
+     * generation and identity this write actually armed with. */
+    if (!u_capture_claim_settlement(thr))
+        return;
+
+    verdict = u_capture_claim_terminal(&gen);
+    if (verdict == UTEST_CAP_TERM_REFUSE)
+        return;
+    if (gen != thr->utest_cap_gen || !u_capture_generation_current(gen)) {
+        u_capture_complete(gen);
+        return;
+    }
+
+    if (verdict == UTEST_CAP_TERM_OVERFLOW) {
+        utest_record_log(LOG_ERROR,
+                         "[UTEST-CAPTURE-TERMINAL-OVER] limit=%u",
+                         (uint64_t)UTEST_CAPTURE_TERMINAL_BUDGET);
+    } else if (!reason) {
+        utest_record_log(LOG_WARN,
+                         "[UTEST-CAPTURE-CUT] owner=%u wr=%u",
+                         (uint64_t)owner_pid, (uint64_t)thr->utest_cap_wid);
+    } else {
+        utest_record_log(LOG_ERROR,
+                         "[UTEST-CAPTURE-ABANDON] owner=%u task=%u thr=%u "
+                         "haswr=%u wr=%u reason=%s",
+                         (uint64_t)owner_pid, (uint64_t)task_pid,
+                         (uint64_t)thr->id,
+                         (uint64_t)thr->utest_cap_has_wid,
+                         (uint64_t)thr->utest_cap_wid,
+                         reason);
+    }
+    u_capture_complete(gen);
+}
+
+/* Was this write cut by an owner budget stop that landed after it armed?
+ *
+ * Compared against the write's own arm-time snapshot rather than asked of the
+ * verdict it received, because the owner budget stops every write the owner
+ * has open, not just the one whose claim tripped it. A peer parked mid-write
+ * never sees a verdict at all, and this comparison is how it learns. */
+static int u_capture_write_was_budget_cut(const struct task *owner,
+                                          const struct thread *thr)
+{
+    uint32_t epoch;
+
+    if (!owner || !thr)
+        return 0;
+    epoch = __atomic_load_n(&owner->utest_capture_stop_epoch, __ATOMIC_ACQUIRE);
+    return epoch != 0u && epoch > thr->utest_cap_stop_epoch;
+}
+
 void test_usermode_capture_start(struct utest_capture_ctx *ctx)
 {
     struct task *self = task_current();
@@ -4968,6 +5274,40 @@ void test_usermode_capture_start(struct utest_capture_ctx *ctx)
      * VALUES, and it cannot license a data race. */
     if (__atomic_load_n(&owner->utest_capture_stopped, __ATOMIC_ACQUIRE))
         ctx->_discard = 1;
+
+    /* ARM the open-write evidence, and ONLY for a write that is genuinely
+     * capturing. A write entering discard mode never reaches the wire and is
+     * owed no explanation if its thread dies -- arming it would manufacture an
+     * ABANDON for a write that was already, correctly, silent.
+     *
+     * The epoch snapshot is what makes a peer's stop visible to this write
+     * later: if the owner is stopped after this point, its epoch will exceed
+     * the value captured here, and this write settles as budget-cut at its own
+     * capture_end or at teardown without ever having seen a verdict itself. */
+    if (ctx->_active && !ctx->_discard) {
+        struct thread *thr = thread_current();
+
+        if (thr) {
+            /* Evidence FIRST, OPEN published LAST, with release. The state is
+             * what a remote reader keys on: a death or reap path that sees
+             * OPEN will read the generation and write identity beside it and
+             * emit a record from them. Storing OPEN first leaves a window in
+             * which this thread can be remotely terminated and its evidence
+             * read while still stale -- and the terminal path settles before
+             * it discovers the mismatch, so the record is lost rather than
+             * retried. Publishing last means OPEN is never visible without
+             * the fields that give it meaning. */
+            thr->utest_cap_has_wid = 0;
+            thr->utest_cap_wid = 0;
+            thr->utest_cap_death = (uint8_t)UTEST_CAP_DEATH_NONE;
+            thr->utest_cap_gen = u_capture_generation_now();
+            thr->utest_cap_stop_epoch =
+                __atomic_load_n(&owner->utest_capture_stop_epoch,
+                                __ATOMIC_ACQUIRE);
+            __atomic_store_n(&thr->utest_cap_state,
+                             (uint8_t)UTEST_CAP_THREAD_OPEN, __ATOMIC_RELEASE);
+        }
+    }
 }
 
 /* One byte of a ring-3 write(). ctx is a LOCAL variable on the caller's
@@ -5014,11 +5354,110 @@ int test_usermode_capture_byte(struct utest_capture_ctx *ctx, char c)
 
 void test_usermode_capture_end(struct utest_capture_ctx *ctx)
 {
-    if (!ctx->_active || ctx->_discard)
+    struct task   *owner = (struct task *)ctx->_owner;
+    struct thread *thr;
+
+    if (!ctx->_active)
         return;
-    if (!u_capture_emit_chunk(ctx, 1))
-        ctx->_discard = 1;
-    ctx->_len = 0;
+
+    if (!ctx->_discard) {
+        if (!u_capture_emit_chunk(ctx, 1))
+            ctx->_discard = 1;
+        ctx->_len = 0;
+    }
+
+    /* SETTLE. Reaching here means this write is over, so the evidence armed
+     * for it must not survive into the thread's next write or its teardown.
+     *
+     * A write that flushed its final chunk owes nothing: the host closes its
+     * `wr` group on the final=1 record. A write that discarded owes an
+     * explanation, because the host would otherwise see a group that opened
+     * and never closed and could not tell a policy stop from a truncated
+     * stream. Which explanation depends on what stopped it, and the answer is
+     * derived from the owner's own latches rather than from the verdict this
+     * write happened to receive -- a peer thread's claim can stop this owner
+     * while this write is parked between bytes, so the write that gets the
+     * verdict is very often not the only write that was cut. */
+    thr = thread_current();
+    if (!thr ||
+        __atomic_load_n(&thr->utest_cap_state, __ATOMIC_ACQUIRE) !=
+            (uint8_t)UTEST_CAP_THREAD_OPEN)
+        return;
+
+    if (!ctx->_discard || !thr->utest_cap_has_wid) {
+        /* Nothing reached the wire under this write's name, or the final
+         * chunk closed it. Either way no group is left open for a terminal
+         * record to close, so settling silently is the whole obligation --
+         * still through the exchange, so a racing death path cannot also
+         * decide this write is its to report. */
+        (void)u_capture_claim_settlement(thr);
+        return;
+    }
+
+    if (u_capture_write_was_budget_cut(owner, thr)) {
+        u_capture_settle_terminal(thr, owner ? owner->pid : 0u, 0u,
+                                  (const char *)0);
+    } else if (owner && __atomic_load_n(&owner->utest_capture_fenced,
+                                        __ATOMIC_ACQUIRE)) {
+        /* The launcher's end-of-binary fence: a deliberate teardown of a
+         * descendant that outlived its binary, and it must be SAID -- an
+         * unexplained open group refuses the run, which would turn an orderly
+         * reap into a corruption verdict. */
+        u_capture_settle_terminal(thr, owner->pid, owner->pid, "fenced");
+    } else {
+        /* Stopped by neither a budget this owner reached nor the fence, which
+         * leaves only the run boundary sealing admission underneath an
+         * in-flight write. There is deliberately NO record for it: the
+         * terminal claim refuses once sealed, so any record named here could
+         * never reach the wire, and inventing a vocabulary the producer
+         * cannot emit would put a shape in the host grammar that only a
+         * forgery could ever produce. The boundary reports its own losses
+         * through the pending record, against the run that suffered them. */
+        (void)u_capture_claim_settlement(thr);
+    }
+}
+
+/* Settle a DEAD thread's open capture write, at the reap barrier where
+ * logging is safe.
+ *
+ * The reason was snapshotted at the death transition itself and is only READ
+ * here. Re-deriving it now would be wrong in the one case that matters: the
+ * launcher latches the reap fence before it starts killing, so by the time a
+ * reap runs, the fence is set for every descendant -- including one killed
+ * long before it, whose lost payload would then be granted the fence's
+ * exemption. A thread that reaches reap OPEN with no recorded death is
+ * treated as killed, which is the fail-closed reading: an open write nobody
+ * accounted for is exactly the silence this record exists to break. */
+void test_usermode_cap_settle_dead_thread(struct task *t, struct thread *thr)
+{
+    struct task *owner;
+
+    if (!t || !thr ||
+        __atomic_load_n(&thr->utest_cap_state, __ATOMIC_ACQUIRE) !=
+            (uint8_t)UTEST_CAP_THREAD_OPEN)
+        return;
+
+    owner = task_get_by_pid(t->utest_capture_owner_pid);
+
+    /* The stop epoch is consulted BEFORE the death outcome, because a write
+     * cut by the owner's budget was already truncated by policy before its
+     * thread died -- the death is how it failed to reach capture_end, not what
+     * ended its payload. Reporting it as abandoned would refuse an intentional
+     * bounded stop; reporting it as fenced would credit the teardown with a
+     * truncation the budget had already caused. Only a write with a named
+     * group can carry a cut: a write that never reached the wire has no group
+     * to close, and naming wr=0 there would exempt an unrelated write. */
+    if (thr->utest_cap_has_wid && u_capture_write_was_budget_cut(owner, thr)) {
+        u_capture_settle_terminal(
+            thr, owner ? owner->pid : t->utest_capture_owner_pid, t->pid,
+            (const char *)0);
+        return;
+    }
+
+    u_capture_settle_terminal(
+        thr, owner ? owner->pid : t->utest_capture_owner_pid, t->pid,
+        thr->utest_cap_death == (uint8_t)UTEST_CAP_DEATH_FENCED ? "fenced"
+                                                                : "killed");
 }
 
 /* Called from task_create_internal() (task.c), BEFORE the new task is

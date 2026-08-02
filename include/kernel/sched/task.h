@@ -73,6 +73,28 @@ struct ki_exception_registration;
  * _Static_assert in task.c so cwd strings never truncate at the VFS boundary. */
 #define TASK_CWD_MAX     512
 #define THREAD_STACK_SIZE 8192       /* 8 KiB per thread stack */
+
+/* Usermode-capture open-write lifecycle, stored in
+ * struct thread's utest_cap_state. A write is ARMED to OPEN only when it is
+ * genuinely capturing, and every write settles EXACTLY ONCE -- by its own
+ * capture_end, by a budget CUT, or by an ABANDON at teardown. The three-state
+ * shape (rather than a bare flag) is what makes "settled exactly once"
+ * checkable: a settle path that finds a state other than OPEN knows another
+ * path already claimed the write and must not emit a second record for it. */
+#define UTEST_CAP_THREAD_IDLE    0u  /* no capture write in flight */
+#define UTEST_CAP_THREAD_OPEN    1u  /* armed: a capturing write() is in flight */
+#define UTEST_CAP_THREAD_SETTLED 2u  /* accounted for; no further record is owed */
+
+/* How a thread carrying an OPEN capture write stopped existing, snapshotted
+ * at the death transition itself. FENCED means the launcher's end-of-binary
+ * reap fence was already latched, which is a deliberate teardown of an
+ * outliving descendant and is exempt on the host exactly as today's
+ * owner-wide reap behavior is. KILLED means it died with no fence in force --
+ * the payload is genuinely lost, and that is the case section 54 exists to
+ * surface, so the host REFUSES it. */
+#define UTEST_CAP_DEATH_NONE     0u
+#define UTEST_CAP_DEATH_KILLED   1u
+#define UTEST_CAP_DEATH_FENCED   2u
 #define TASK_STACK_SIZE  8192        /* 8 KiB per kernel task stack */
 #define USER_STACK_SIZE  16384       /* 16 KiB per user task stack */
 #define SCHED_QUANTUM    5           /* ticks per time slice (50ms at 100Hz) */
@@ -373,6 +395,40 @@ struct thread {
                                      * (same hazard pledge_pending above is per-thread for).
                                      * Follows the thread across CPU migration by
                                      * construction. Zero-init. KERNEL_TESTS-only. */
+    /* --- Usermode-capture open-write evidence ---
+     *
+     * A write() staging fewer than one chunk emits NOTHING until its final
+     * flush, so a thread killed inside the write loop used to leave no
+     * record at all: no `wr` group for the host to leave open, and an
+     * artifact that still claimed byte-exactness for that owner. These
+     * fields are the evidence that makes such a write visible.
+     *
+     * PER-THREAD, not per-task, and that is load-bearing: the capture ctx
+     * lives on the writing thread's own stack precisely so two threads of
+     * one task can be inside their own write() concurrently
+     * (include/kernel/test/test_usermode.h). A task-wide flag would let one
+     * thread's capture_end settle a sibling's open write.
+     *
+     * The normal path writes these ONLY from the owning thread (arm at
+     * test_usermode_capture_start, settle at test_usermode_capture_end), so
+     * two plain stores per write buy the whole feature and no record is
+     * emitted unless a write was genuinely abandoned. Measured on one suite
+     * run before choosing: the alternative shape -- a write-start record per
+     * non-empty write -- costs +1427 records against 1531 emitted (+93.2%)
+     * and +44% total serial bytes, which is what ruled it out.
+     *
+     * `utest_cap_death` is snapshotted at the ACTUAL death transition
+     * rather than derived at reap: the launcher latches the owner's reap
+     * fence BEFORE it kills, so any later teardown that re-read the fence
+     * would label a thread killed long before the fence as `fenced` and
+     * hand it the very owner-wide exemption section 54 exists to remove.
+     * Zero-init. KERNEL_TESTS-only. */
+    uint8_t     utest_cap_state;      /* UTEST_CAP_THREAD_* below */
+    uint8_t     utest_cap_has_wid;    /* 1 once this write reached the wire */
+    uint8_t     utest_cap_death;      /* UTEST_CAP_DEATH_* below */
+    uint32_t    utest_cap_wid;        /* the write's `wr` identity, when it has one */
+    uint32_t    utest_cap_gen;        /* capture run generation at arm time */
+    uint32_t    utest_cap_stop_epoch; /* owner's stop epoch at arm time */
 #endif
     uint8_t     in_knf_trace;       /* 1 while this thread is running the KNF publish
                                      * observability bridge; recursion guard so a klog/ETW
@@ -861,6 +917,39 @@ struct task {
      * plain byte another CPU may be writing. The remaining access,
      * task_utest_capture_reset, runs before the slot is published. */
     uint8_t  utest_capture_stopped;
+    /* The launcher's end-of-binary REAP FENCE, kept separate from the budget
+     * latch above even though both suppress payload.
+     *
+     * They mean different things and the wire has to say which happened. A
+     * budget stop is this owner spending its emission allowance, and every
+     * write it truncates is owed an authenticated CUT so the host can tell a
+     * policy stop from a corrupted stream. The reap fence is the launcher
+     * tearing down a descendant that outlived its binary, where truncation is
+     * intended and needs no per-write explanation.
+     *
+     * With one field they were indistinguishable: u_capture_emit_chunk
+     * returns the same 0 for both, callers collapse both into ctx._discard,
+     * and a write silenced by the reap fence would have been handed a CUT
+     * claiming its payload stopped for a budget it never reached.
+     *
+     * PRECEDENCE, because both latches set is the NORMAL end state of a
+     * budgeted binary rather than an error: the fence wins for PAYLOAD, since
+     * suppressing payload past the fence is the fence's entire purpose. It
+     * does not win for terminal metadata -- see u_capture_claim_terminal. */
+    uint8_t  utest_capture_fenced;
+    /* Monotonic stop epoch, 0 while this owner has never been stopped, and
+     * set under s_capture_budget_lock in the same critical section that
+     * latches utest_capture_stopped.
+     *
+     * The budget latch stops the WHOLE owner, so naming only the write whose
+     * claim happened to trip it settles one write and silently strands every
+     * peer open at that instant -- the masking `wr` was added to catch. Each
+     * armed write instead snapshots this epoch, and any write whose snapshot
+     * is OLDER than a later non-zero epoch knows it was cut by that stop,
+     * whether it learns this at its own capture_end or only at teardown. That
+     * makes settlement a property each write evaluates for itself rather than
+     * something the tripping thread must do for threads it cannot see. */
+    uint32_t utest_capture_stop_epoch;
     /* Per-invocation loader evidence for THIS task. Reset by every
      * CONSTRUCTOR, so a fork descendant never presents its parent's
      * verdict -- but deliberately NOT by task_exec, which is where
@@ -960,8 +1049,58 @@ static inline void task_utest_capture_reset(struct task *t)
      * the ONE transition that could let the lock-free fast path observe a
      * stale latch and silently discard a new tenant's output. */
     __atomic_store_n(&t->utest_capture_stopped, 0, __ATOMIC_RELEASE);
+    /* The reap fence and the stop epoch clear here for exactly the reason
+     * above, and ONLY here. A recycled slot inheriting a prior tenant's fence
+     * would emit nothing and read as a binary that never wrote; one
+     * inheriting a non-zero stop epoch would make every write it arms look
+     * older than a stop that belongs to a different tenant, so each would
+     * settle as budget-cut and the host would be told a policy stop happened
+     * in a run that never had one. Both are false-green shapes, which is why
+     * the constructor is the one place they are zeroed -- the UNLINK path
+     * deliberately leaves the capture latches alone (see below). */
+    __atomic_store_n(&t->utest_capture_fenced, 0, __ATOMIC_RELEASE);
+    __atomic_store_n(&t->utest_capture_stop_epoch, 0u, __ATOMIC_RELEASE);
 }
 #define TASK_UTEST_CAPTURE_RESET(tp) task_utest_capture_reset(tp)
+
+#ifdef KERNEL_TESTS
+/* Return a thread slot's capture evidence to "no write in flight"
+ *. Called at slot construction AND after a slot's
+ * evidence has been emitted at reap, so a reused slot never presents a prior
+ * tenant's open write. That is a reachable shape, not a theoretical one: a
+ * thread can die with a write open, be joined, and have its slot handed to a
+ * new thread before the owner tree is reaped. Emission always runs BEFORE the
+ * slot is published THREAD_FREE, so no window exists in which the evidence is
+ * both still owed and already reachable by a new tenant. */
+static inline void thread_utest_cap_reset(struct thread *thr)
+{
+    thr->utest_cap_state = (uint8_t)UTEST_CAP_THREAD_IDLE;
+    thr->utest_cap_has_wid = 0;
+    thr->utest_cap_death = (uint8_t)UTEST_CAP_DEATH_NONE;
+    thr->utest_cap_wid = 0;
+    thr->utest_cap_gen = 0;
+    thr->utest_cap_stop_epoch = 0;
+}
+
+/* Snapshot HOW a thread holding an OPEN capture write stopped existing, at
+ * the death transition itself.
+ *
+ * This must run at the real transition and not at reap. The launcher latches
+ * the owner's reap fence BEFORE it starts killing, so a teardown that read
+ * the fence later would see it set even for a thread killed long beforehand,
+ * label that write `fenced`, and hand it the owner-wide exemption this
+ * section exists to remove. Reading the fence HERE is the only point at which
+ * the answer is still true.
+ *
+ * No logging and no allocation: this runs on the death path, which reaches it
+ * at the elevated IRQL a syscall entry raised (task_death_teardown is
+ * deliberately log-free for the same reason). The record itself is emitted
+ * later, at the reap barrier, where logging is safe. */
+void task_utest_cap_note_thread_death(struct task *t, struct thread *thr);
+
+/* Snapshot every OPEN thread of a task at a task-wide death transition. */
+void task_utest_cap_note_task_death(struct task *t);
+#endif
 
 /* Inherit capture ownership from parent to child unchanged -- the OPPOSITE
  * of task_utest_capture_reset above (which the child's slot already got

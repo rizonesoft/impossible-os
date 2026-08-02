@@ -256,6 +256,45 @@ _OVER_RE = re.compile(
     r"\[UTEST-CAPTURE-OVER\] owner=" + _U32 + r" seq=" + _U32
     + r" scope=(owner|run) limit=" + _U32 + r" charged=" + _U32
 )
+# One write that the owner's budget stop cut mid-stream. The OVER marker above
+# says a stop happened; this says WHICH write it ended, and the distinction is
+# the whole point: the producer latches the whole OWNER, so a single marker
+# used to exempt every unterminated write that owner had open -- including one
+# truncated for an unrelated reason, which is the masking `wr` was added to
+# catch. Each cut write now names itself.
+_CUT_RE = re.compile(
+    r"\[UTEST-CAPTURE-CUT\] owner=" + _U32 + r" wr=" + _U32
+)
+# A write whose thread stopped existing while it was still open. `haswr=0` is
+# the case this record exists for: a write killed before its first chunk ever
+# reached the wire leaves no chunk, so no `wr` group exists for the host to
+# find open, and without this record the artifact would claim byte-exactness
+# for an owner whose payload is simply gone.
+#
+# `reason` is an exact alternation for the same reason `scope` is above: an
+# unknown reason is version skew the host must refuse, not a value to pass
+# through into a verdict consumers branch on. `killed` is a genuine loss and
+# REFUSES; `fenced` is the launcher deliberately tearing down a descendant
+# that outlived its binary, and exempts the write exactly as the reap
+# behaviour always has.
+#
+# There is deliberately NO `sealed` reason. A write stopped by the run
+# boundary sealing admission cannot produce a record at all -- the producer's
+# terminal claim refuses once sealed -- so accepting the shape would put a
+# vocabulary in this grammar that only a forgery could ever emit, and hand it
+# an exemption. The boundary reports its own losses through the pending
+# record instead.
+_ABANDON_RE = re.compile(
+    r"\[UTEST-CAPTURE-ABANDON\] owner=" + _U32 + r" task=" + _U32
+    + r" thr=" + _U32 + r" haswr=([01]) wr=" + _U32
+    + r" reason=(killed|fenced)"
+)
+# The run spent its whole terminal-record allowance. Bounding that wire cost
+# must never become hiding the loss, so the producer emits this once and the
+# host refuses the run: after it, an unknown number of writes went unexplained.
+_TERMINAL_OVER_RE = re.compile(
+    r"\[UTEST-CAPTURE-TERMINAL-OVER\] limit=" + _U32
+)
 # The run boundary's report of capture records it could not deliver. The
 # producer seals admission, drains the claims already outstanding, and emits
 # this INSIDE the originating run when any of them never reached the wire --
@@ -384,7 +423,7 @@ def _artifact_text(payload: bytes) -> str:
 
 class _Owner:
     __slots__ = ("pid", "name", "chunks", "lost", "declared", "records", "over",
-                 "chunk_max", "expect_name")
+                 "chunk_max", "expect_name", "cuts", "abandons")
 
     def __init__(self, pid: int) -> None:
         self.pid = pid
@@ -396,6 +435,8 @@ class _Owner:
         self.over = None  # (seq, scope, limit, charged) once terminated
         self.chunk_max = None    # raw-byte bound this owner's BEGIN announced
         self.expect_name = None  # name the launcher said it spawned
+        self.cuts = set()        # wr values a budget stop cut mid-stream
+        self.abandons = []       # (task, thr, haswr, wr, reason) per abandoned write
 
 
 def _scan(lines, prefix):
@@ -600,6 +641,74 @@ def _scan(lines, prefix):
             owner.over = (seq, scope, limit, charged)
             continue
 
+        m = _CUT_RE.fullmatch(body)
+        if m:
+            pid, wr = int(m.group(1)), int(m.group(2))
+            _count(0)
+            if wr > _UINT32_MAX:
+                raise Refusal(
+                    "capture_field_out_of_range",
+                    f"owner={pid} cut record carries a wr wider than the "
+                    "producer's uint32 field",
+                )
+            # A duplicate is not merely redundant: the producer settles a
+            # write's evidence exactly once, so two cuts naming one write mean
+            # either a forgery or that the settle-once invariant broke, and the
+            # second would exempt a group the first already accounted for.
+            owner = _own(pid)
+            if wr in owner.cuts:
+                raise Refusal(
+                    "capture_duplicate_cut",
+                    f"owner={pid} emitted two cut records for write wr={wr}",
+                )
+            owner.cuts.add(wr)
+            continue
+
+        m = _ABANDON_RE.fullmatch(body)
+        if m:
+            pid, task, thr = int(m.group(1)), int(m.group(2)), int(m.group(3))
+            haswr, wr, reason = int(m.group(4)), int(m.group(5)), m.group(6)
+            _count(0)
+            if task > _UINT32_MAX or thr > _UINT32_MAX or wr > _UINT32_MAX:
+                raise Refusal(
+                    "capture_field_out_of_range",
+                    f"owner={pid} abandon record carries a value wider than "
+                    "the producer's uint32 fields",
+                )
+            # A write with no identity cannot also name one: `haswr=0` means
+            # nothing reached the wire under this write, so a non-zero `wr`
+            # beside it is a contradiction, and a zero one must not be read as
+            # naming the group that legitimately holds wr=0.
+            if not haswr and wr != 0:
+                raise Refusal(
+                    "capture_abandon_identity",
+                    f"owner={pid} abandon record declares haswr=0 but names "
+                    f"wr={wr}",
+                )
+            owner = _own(pid)
+            # The producer settles each write exactly once, through a
+            # compare-exchange on the thread's own evidence, so two abandons
+            # for one thread cannot come from the kernel -- and a second could
+            # exempt a group the first did not.
+            if any(a[0] == task and a[1] == thr for a in owner.abandons):
+                raise Refusal(
+                    "capture_duplicate_abandon",
+                    f"owner={pid} emitted two abandon records for "
+                    f"task={task} thread={thr}",
+                )
+            owner.abandons.append((task, thr, haswr, wr, reason))
+            continue
+
+        m = _TERMINAL_OVER_RE.fullmatch(body)
+        if m:
+            _count(0)
+            raise Refusal(
+                "capture_terminal_budget_exhausted",
+                f"the run spent its whole terminal-record allowance "
+                f"(limit={int(m.group(1))}), so an unknown number of "
+                "abandoned or cut writes went unexplained",
+            )
+
         m = _PENDING_RE.fullmatch(body)
         if m:
             run, count = int(m.group(1)), int(m.group(2))
@@ -772,18 +881,64 @@ def _check_writes(owner, seqs):
     the caller still does, for its more precise message) let a concurrent
     writer sharing the owner mask an earlier truncated write.
 
-    A validated [UTEST-CAPTURE-OVER] marker exempts an owner from TERMINATION
-    only, exactly as it always has. The producer latches the whole owner when
-    a budget trips, so every write open at that instant stops mid-stream --
-    not just the one that tripped it -- and the payload is already published
-    as bounded rather than complete (`budget_stop`). Demanding per-write
-    termination there would turn section 40's deliberate policy stop back into
-    the corruption verdict it exists to prevent, which is the exact regression
-    that section paid for. The grouping checks below still apply.
+    An unterminated write is exempt only when the producer NAMED it: a
+    [UTEST-CAPTURE-CUT] for a write the owner's budget stop ended, or an
+    [UTEST-CAPTURE-ABANDON] whose reason is a deliberate harness teardown.
+
+    That per-write evidence replaces an owner-wide exemption on the
+    [UTEST-CAPTURE-OVER] marker. The marker carries no `wr`, so once any
+    budget stop fired for an owner it silenced EVERY unterminated write that
+    owner had open -- including one truncated for an entirely unrelated
+    reason. A captured fork descendant killed mid-write left an open group,
+    and a later owner-budget stop retroactively excused it: exactly the
+    masking that per-write identity was introduced to catch, reintroduced by
+    the exemption. Naming each cut write keeps the deliberate policy stop from
+    reading as corruption without extending its cover to anything else.
+
+    An abandon with reason=killed is NOT an exemption -- it is the loss being
+    reported -- and is refused by the caller whether or not the write it names
+    ever reached the wire.
     """
     writes = {}
     for seq in seqs:
         writes.setdefault(owner.chunks[seq][3], []).append(seq)
+
+    # An exemption must PROVE its cause, not merely assert it.
+    #
+    # A CUT says "the owner's budget stop ended this write", so the owner must
+    # actually carry a validated [UTEST-CAPTURE-OVER]: without that check a
+    # single standalone CUT -- one line -- suppresses the integrity failure it
+    # claims to explain, and a stream with no budget stop at all reconciles
+    # green. The marker is validated by _check_over before this runs.
+    #
+    # A CUT must also name a write that EXISTS and is genuinely open. One
+    # naming a closed group is contradicting the final record beside it, and
+    # one naming no group at all is an orphan whose only effect could be to
+    # excuse something later.
+    cut_wr = set()
+    for wr in sorted(owner.cuts):
+        if wr not in writes:
+            raise Refusal(
+                "capture_cut_orphan",
+                f"owner={owner.pid} ({owner.name}) declares write wr={wr} cut, "
+                "but no chunk carries that write identity",
+            )
+        cut_wr.add(wr)
+
+    # Writes an abandon record explains as a deliberate teardown rather than a
+    # loss. `haswr=0` entries name no group (the caller reports them), and a
+    # named one must correspond to a real write for the same reason a CUT must.
+    exempt_wr = set()
+    for (_task, _thr, haswr, wr, reason) in owner.abandons:
+        if not haswr or reason != "fenced":
+            continue
+        if wr not in writes:
+            raise Refusal(
+                "capture_abandon_orphan",
+                f"owner={owner.pid} ({owner.name}) declares write wr={wr} "
+                "abandoned, but no chunk carries that write identity",
+            )
+        exempt_wr.add(wr)
 
     for wr in sorted(writes):
         members = writes[wr]
@@ -812,12 +967,12 @@ def _check_writes(owner, seqs):
                 f"owner={owner.pid} ({owner.name}) write wr={wr} terminates at "
                 f"seq={finals[0]} but continues to seq={members[-1]}",
             )
-        if not finals and owner.over is None:
+        if not finals and wr not in cut_wr and wr not in exempt_wr:
             raise Refusal(
                 "capture_unterminated",
                 f"owner={owner.pid} ({owner.name}) write wr={wr} ends at "
-                f"seq={members[-1]} with no final record -- that write's tail "
-                "is missing",
+                f"seq={members[-1]} with no final record and no record "
+                "explaining what stopped it -- that write's tail is missing",
             )
 
 
@@ -963,6 +1118,28 @@ def _reconcile(owner, spawned):
             f"owner={owner.pid} ({owner.name or 'unbound'}) emitted an explicit "
             "loss record -- part of its output went to serial unframed",
         )
+    # A write whose thread was KILLED while it was still open. Checked before
+    # the payload reconciliation below because it is a fact ABOUT the payload:
+    # every check that follows reasons over the records that reached the wire,
+    # and this record's whole purpose is to report bytes that never did. A
+    # write killed before its first chunk flushed leaves no group, no hole and
+    # no unterminated tail, so without this the stream reconciles clean and the
+    # artifact claims byte-exactness for an owner whose output is simply gone.
+    #
+    # `fenced` and `sealed` are excluded on purpose: those are the launcher's
+    # end-of-binary descendant reap and the run boundary sealing admission,
+    # both deliberate, and both already reported by the mechanisms that own
+    # them.
+    killed = [a for a in owner.abandons if a[4] == "killed"]
+    if killed:
+        task, thr, haswr, wr, _reason = killed[0]
+        where = f"write wr={wr}" if haswr else "a write that never reached the wire"
+        raise Refusal(
+            "capture_abandoned_write",
+            f"owner={owner.pid} ({owner.name or 'unbound'}) abandoned "
+            f"{where}: task={task} thread={thr} died with the write still "
+            f"open ({len(killed)} abandoned write(s) in total)",
+        )
     _check_owner_expectation(owner, spawned)
     if owner.name is None:
         raise Refusal(
@@ -972,6 +1149,19 @@ def _reconcile(owner, spawned):
         )
     if owner.over is not None:
         _check_over(owner)
+    # A CUT asserts "this owner's budget stop ended that write", so the owner
+    # must actually carry the validated marker saying a stop happened. Checked
+    # HERE, ahead of every payload rule below, because an unbacked cut is a
+    # record that cannot have come from the producer at all -- the same class
+    # as a malformed record, and a more precise finding than the unterminated
+    # write it would otherwise be reported as.
+    if owner.cuts and owner.over is None:
+        raise Refusal(
+            "capture_cut_unbacked",
+            f"owner={owner.pid} ({owner.name}) declares write "
+            f"wr={min(owner.cuts)} cut by a budget stop, but emitted no "
+            "overflow marker",
+        )
     if not owner.chunks:
         return b"", 0
 
@@ -988,10 +1178,21 @@ def _reconcile(owner, spawned):
                 "capture_seq_gap",
                 f"owner={owner.pid} ({owner.name}) jumps seq={prev} -> seq={cur}",
             )
-    if owner.over is None and owner.chunks[seqs[-1]][1] != 1:
+    _last_wr = owner.chunks[seqs[-1]][3]
+    _last_explained = (
+        (_last_wr in owner.cuts and owner.over is not None)
+        or any(haswr and wr == _last_wr and reason == "fenced"
+               for (_t, _h, haswr, wr, reason) in owner.abandons)
+    )
+    if owner.over is None and not _last_explained \
+            and owner.chunks[seqs[-1]][1] != 1:
         # Only meaningful for a stream the producer did NOT terminate itself:
         # a budget stop legitimately cuts a write mid-sequence, and the marker
-        # (already validated above) is that stream's terminator.
+        # (already validated above) is that stream's terminator. A per-write
+        # cut or a deliberate-teardown abandon terminates this owner's LAST
+        # write just as surely, and without them a fenced descendant's final
+        # partial write would refuse a run that was torn down exactly as
+        # designed.
         raise Refusal(
             "capture_unterminated",
             f"owner={owner.pid} ({owner.name}) highest record seq={seqs[-1]} is "
