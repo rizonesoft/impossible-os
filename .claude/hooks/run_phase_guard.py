@@ -1404,6 +1404,37 @@ def cli(argv):
                   "re-run fixpoint. The run is NOT done.", file=sys.stderr)
             return 1
 
+        # REACHABILITY GATE (2026-08-02). Completion must also mean "no filed
+        # work is invisible". The stranded gate above covers `[/]` items whose
+        # OWNER shipped; it does not see a bare `- [ ]` sitting in a section
+        # the oracle calls DONE -- nothing revisits those, and 333 of them were
+        # counted the day this gate was added. Without this, a run could report
+        # the repo complete over work that is merely unreachable rather than
+        # finished, which is the exact failure the whole capture-and-file
+        # discipline exists to prevent.
+        #
+        # Same fail-OPEN discipline as the audit above: a broken detector must
+        # never strand a genuinely-complete run. Only a clean exit 1 refuses.
+        try:
+            reach = subprocess.run(
+                [sys.executable,
+                 str(repo_root() / "scripts/todo-reachability.py")],
+                cwd=str(repo_root()), capture_output=True, text=True, timeout=120)
+            reach_rc = reach.returncode
+        except Exception as e:  # noqa: BLE001
+            sys.stderr.write(f"[sequencer] reachability gate could not run "
+                             f"({e}) -- failing OPEN, completion not blocked\n")
+            reach_rc = 0
+        if reach_rc == 1:
+            sys.stderr.write((reach.stdout or "")[-4000:])
+            print("[sequencer] fixpoint REFUSED: filed work exists that no "
+                  "future pass will revisit (reachability gate). Repair each "
+                  "item's SHAPE -- `- [/]` naming its blocker, or move it to a "
+                  "section that is still open -- then re-run fixpoint. "
+                  "Completion means nothing is left behind, not that the "
+                  "checklist stopped growing.", file=sys.stderr)
+            return 1
+
         state["phase"] = "FIXPOINT"
         state["active"] = False
         save_state(state)
