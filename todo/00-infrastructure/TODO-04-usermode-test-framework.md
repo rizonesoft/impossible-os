@@ -113,7 +113,7 @@ title: "TODO-04 -- User-Mode Test Framework"
 | 💎   |  53   | A directory occupying a pointer or lease name                                | §46                           |  [x]   |
 | ⭐   |  54   | A write abandoned before its first chunk reached the wire                    | §48                           |  [x]   |
 | 💎   |  55   | Klog-ring assertions bounded by saturating occupancy                         | §48                           |  [/]   |
-| ⭐   |  56   | Fork publication interlocked with the capture-tree reap                      | §49                           |  [ ]   |
+| ⭐   |  56   | Fork publication interlocked with the capture-tree reap                      | §49                           |  [/]   |
 | ⭐   |  57   | A klog delivery receipt, so a record's settlement is exact                   | §49                           |  [ ]   |
 | ⭐   |  58   | Launcher waits bounded independently of the monotonic clock                  | §3, §49                       |  [ ]   |
 | 💎   |  59   | Capture reconciliation runs on the default test path, not only for artifacts | §36, §49                      |  [ ]   |
@@ -2355,20 +2355,40 @@ The run-boundary reap enumerates capture-owning descendants by walking `task_get
 > [!NOTE]
 > Filed 2026-08-01 from §49's adversarial review, rated [medium] there. §49 closed what it could without reaching into fork: the OWNER stop latch is set BEFORE any kill round, so a descendant published mid-reap inherits a latched channel and every claim it makes decides DROP -- its OUTPUT is fenced whether or not the reap ever sees it. What survives is a resource question, not a wire one, and §49 reports it (`[UTEST-CAPTURE-UNREAPED]`, which the host refuses on) rather than silently leaking. Closing it properly means an interlock in scheduler fork publication for a test-framework concern, which is a scheduler change and wants its own review. -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §49 (item: "Reap or fence the whole CAPTURED DESCENDANT TREE at the run boundary, not just the top-level pid")
 
-- [ ] Give the reap a state that fork publication honours, so a descendant cannot be published into a tree already being reaped
+- [x] Give the reap a state that fork publication honours, so a descendant cannot be published into a tree already being reaped
       - The shape to evaluate: a per-owner "reaping" flag consulted by `task_create_internal` (`src/kernel/sched/task.c`) at the point it would inherit capture ownership, so a fork whose parent belongs to a tree under reap either fails or is published already latched and already counted. The alternative -- having the reap re-scan forever -- is what the round cap exists to refuse.
       - Whichever shape wins must not put a test-framework check on the general fork fast path for non-captured tasks; the inherit site is already conditional on the parent carrying capture, which is where the cost belongs.
-- [ ] Make the final census's survivor count exact rather than best-effort once the interlock exists
+- [x] Make the final census's survivor count exact rather than best-effort once the interlock exists
       - With publication interlocked, the count `u_capture_reap_tree` returns stops being a snapshot and becomes a statement, so `[UTEST-CAPTURE-UNREAPED]` can be tightened from "these were alive when we last looked" to "these are alive".
-- [ ] Regression: a descendant that forks during the reap's grace window is reaped or reported, never silently missed
+- [x] Regression: a descendant that forks during the reap's grace window is reaped or reported, never silently missed
       - Needs a fault-injection seam rather than a unit test: the kernel test surface cannot fork, and the window is one publication against one census.
-- [ ] Give the reap LOOP a seam, not just its selection predicate
+- [x] Give the reap LOOP a seam, not just its selection predicate
       - §49 exported the pure helpers (`u_capture_decide`/`_apply`/`_pending`/`_close`/`_settle`/`_descendant_of`) and they are all driven, but `u_capture_reap_tree`, `u_capture_drain`, `u_capture_seal`, `u_capture_close_epoch` and `u_capture_inflight` have zero assertions -- each is reachable only from a live run. That is where the round cap, the grace shape, the kill/terminate ordering, the final census and the descending cleanup order all live.
       - This is not a theoretical gap: §49's own post-commit kernel audit found two defects (a grace wait that burned its full budget with no liveness re-check, and a cleanup pass that re-selected already-reaped descendants) and BOTH were inside that untested loop while every pure-helper assertion stayed green. Fixing them without a seam means the next regression there is equally invisible.
       - The shape to evaluate: lift the loop body over an injectable task-table view (enumerate / signal / terminate / cleanup as function pointers or a small vtable) so a test can drive a synthetic tree, or extend the fault-injection surface the framework already has.
-- [ ] Commit: `"sched: interlock fork publication with the usermode capture-tree reap"`
+- [/] Poison the rest of the BOOT after a degraded reap, not just the test-plan loop -- BLOCKED on a boot-policy decision (does a test-framework condition halt the machine?), owner: this section's follow-up, needs an attended call
+      - Filed 2026-08-02 from §56's round-4 adversarial review, rated [high] there. `s_reap_degraded` aborts the plan loop, which closes the case the review named (the next `u_run_one` spawning into the contested slot). It does NOT cover what happens after `test_usermode_run()` RETURNS: `boot_phase3` goes on to `task_create(shell_loader_func, "cmd.exe")` (`src/kernel/main/boot_desktop.c:786`), and `task_create_internal` takes `pid = num_tasks` (`src/kernel/sched/task.c:833`) -- the same slot an unfinished `task_fork` chose at `child_pid = num_tasks` without publishing.
+      - Why it is parked rather than fixed here: both available shapes are boot-policy changes, not test-framework changes. Returning a fatal from `test_usermode_run()` and halting means a test-infrastructure condition stops the machine before the desktop shell; making `task_create_internal` fail closed while poisoned means a test flag changes scheduler behaviour system-wide and refuses `cmd.exe`. Either is a deliberate, hard-to-reverse call that CLAUDE.md reserves for an attended decision.
+      - Reachability, so the priority is honest: the path requires a task to still be inside `task_fork` after TWO 200 ms drains during which the launcher yields throughout. On single-global-`current_task` dispatch that means a forker preempted and never rescheduled across ~400 ms of yields. It is a forward-looking SMP guard, not an observed failure.
+- [/] Carry the abort CAUSE into the machine artifacts, not only the human lines -- BLOCKED on the artifact-schema owner (§36 emission surface), reciprocal XREF below
+      - Filed 2026-08-02 from the same review, rated [medium]. The guest announcement and TAP bail-out now name `reap degraded` vs `smoke failed`, and `scripts/test.sh` echoes the producer's cause instead of asserting "smoke gate". The JUnit `<error>` and the synthetic JSON error record still describe every abort with one fixed cause, so a degraded reap reaches CI's structured output looking like a smoke-gate failure.
+      - XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §36 (the artifact-emission and byte-reconciliation section that owns the XML/JSON record shapes)
+- [x] Commit: `"sched: interlock fork publication with the usermode capture-tree reap"`
 
 **Test checkpoint:** a binary forking continuously through its own teardown leaves no capture-owning descendant alive and unreported after `u_run_one` returns; the survivor count on `[UTEST-CAPTURE-UNREAPED]` matches the tasks actually still live. Test on: QEMU TCG, QEMU KVM (2 CPUs).
+
+> **Notes:** the interlock is a lock-ORDERING statement, not a new lock: `pgroup_jobctl_lock` already covers `num_tasks++` at all three publication sites, so admission and publication order against the reap's latch for free.
+> - Order is fence -> latch -> drain -> kill rounds -> exact census -> cleanup. Latch before drain (a growing tree never drains); drain before the FIRST kill (after one, a forker can die mid-constructor and be freed underneath).
+> - Registration is a per-task `utest_capture_fork_inflight` COUNT the drain derives by scanning slots. A global counter strands on a killed forker; a per-task flag loses a second thread's fork (nothing gates `SYS_FORK` to thread 0).
+> - Exactness needs both drained and unstranded: a registration on a task that died mid-constructor cannot be waited on but can still publish, so it downgrades the census rather than being ignored.
+> - The census is scoped by a separate `utest_capture_fork_owner` that `task_utest_capture_unlink` does NOT clear. Slots are never reused within a boot, so an unscoped count would charge one mid-fork death to every later binary.
+> - Either shortfall emits `[UTEST-CAPTURE-REAP-DEGRADED]` (new capture-family record; host refuses on it) rather than presenting a snapshot as a statement. Emitted even at `live=0`: an inexact zero reads identically to an exact one.
+> - A degraded reap still KILLS but frees NOTHING -- not descendants, not the owner. A constructor the reap cannot account for holds pointers into those slots, so a bounded leak beats a use-after-free and the run is refused regardless.
+> - It also ABORTS the suite (`s_reap_degraded`, sticky). An unfinished `task_fork` already claimed `child_pid = num_tasks` without publishing it, and the next `task_create_internal` takes that same slot -- so continuing is corruption, not a reporting gap.
+> - The drain runs TWICE: once before the kills and once before the census. A task preempted inside `task_fork` only runs when the launcher yields, which it first does in the grace wait, so the second ask recovers the common case to exact.
+> - Two items are PARKED, not done: poisoning the rest of the boot after a degraded reap (a boot-policy call), and carrying the abort cause into the JUnit/JSON records (§36 owns those shapes). Both are forward-looking SMP guards on an unreachable-today path.
+> - The reap loop now takes its world as `struct utest_reap_ops`, so the round cap, grace shape, drain and cleanup order are driven by 10 assertions over a synthetic tree instead of only by a live run.
+> - Non-captured forks pay one predicate on the parent's `utest_capture_active`; the whole interlock compiles out with `KERNEL_TESTS`.
 
 
 ---

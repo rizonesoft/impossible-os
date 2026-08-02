@@ -5903,6 +5903,543 @@ static void test_capture_reap_selects_only_this_owners_descendants(void)
     s_capture_child_scratch.pid = 0u;
 }
 
+/* ===========================================================================
+ * The run-boundary reap LOOP, over a synthetic task table.
+ *
+ * Everything above drives the reap's PURE helpers. This block drives the loop
+ * that calls them -- the round cap, the publication latch, the in-flight-fork
+ * drain, the grace shape, the kill-then-terminate ordering, the final census
+ * and the descending cleanup. None of it was reachable by assertion before,
+ * because each piece is defined by what it does to a LIVE task table under
+ * timing a test cannot arrange: a descendant published inside the grace
+ * window, a fork still mid-constructor when the tree is latched, a producer
+ * that outlasts the cap. Section 49 shipped two defects into exactly this
+ * loop (a grace wait that burned its full budget with no liveness re-check,
+ * and a cleanup pass that re-selected already-reaped descendants) while every
+ * pure-helper assertion stayed green -- so the loop now takes its world as a
+ * parameter and this is that world.
+ *
+ * Nothing here touches the real scheduler: every op is a local function over
+ * the arrays below, which is also what keeps this inside the test policy (no
+ * live boot infrastructure, no signal_send, no task_cleanup).
+ * ========================================================================= */
+
+#define UREAP_SLOTS       6u
+#define UREAP_EVENTS     96u
+#define UREAP_OWNER_PID   0u
+/* One synthetic wait advances the clock past the drain bound (200 ms) and
+ * half the kill grace (500 ms), so a drain expires in one wait and a grace in
+ * two -- small enough to assert exact wait counts against. */
+#define UREAP_WAIT_MS   250u
+
+enum ureap_ev {
+    UREAP_EV_NONE = 0,
+    UREAP_EV_FENCE,
+    UREAP_EV_LATCH,
+    UREAP_EV_DRAIN,
+    UREAP_EV_KILL,
+    UREAP_EV_TERMINATE,
+    UREAP_EV_CLEANUP,
+    UREAP_EV_WAIT
+};
+
+static struct task s_ureap_slot[UREAP_SLOTS];
+static uint32_t    s_ureap_count;
+static uint64_t    s_ureap_now_ms;
+static uint32_t    s_ureap_waits;
+static uint32_t    s_ureap_pending;       /* what fork_pending() answers */
+static uint32_t    s_ureap_pending_waits; /* pending clears after this many waits */
+static uint32_t    s_ureap_stranded;      /* registrations on tasks that died mid-fork */
+static uint32_t    s_ureap_pending_owner; /* which owner the in-flight forks belong to */
+static uint32_t    s_ureap_stranded_owner;/* ... and which owner the stranded ones do */
+static uint32_t    s_ureap_spawn_at_wait; /* publish a descendant at this wait (0 = never) */
+static int         s_ureap_immortal;      /* SIGKILL never lands: a ring-3 spinloop */
+static int         s_ureap_unterminable;  /* nor does the forceful fallback */
+static uint8_t     s_ureap_ev[UREAP_EVENTS];
+static uint32_t    s_ureap_ev_pid[UREAP_EVENTS];
+static uint32_t    s_ureap_ev_n;
+
+static void ureap_note(enum ureap_ev ev, uint32_t pid)
+{
+    if (s_ureap_ev_n >= UREAP_EVENTS)
+        return;
+    s_ureap_ev[s_ureap_ev_n] = (uint8_t)ev;
+    s_ureap_ev_pid[s_ureap_ev_n] = pid;
+    s_ureap_ev_n++;
+}
+
+/* Index of the FIRST event of a kind, or UREAP_EVENTS when it never happened.
+ * Ordering assertions compare these rather than counting, because what the
+ * reap guarantees is an order ("the fence is up before anything is killed"),
+ * not a tally. */
+static uint32_t ureap_first(enum ureap_ev ev)
+{
+    uint32_t i;
+    for (i = 0; i < s_ureap_ev_n; i++)
+        if (s_ureap_ev[i] == (uint8_t)ev)
+            return i;
+    return UREAP_EVENTS;
+}
+
+static uint32_t ureap_count_of(enum ureap_ev ev)
+{
+    uint32_t i, n = 0;
+    for (i = 0; i < s_ureap_ev_n; i++)
+        if (s_ureap_ev[i] == (uint8_t)ev)
+            n++;
+    return n;
+}
+
+/* Publish one synthetic slot. Mirrors what task_fork leaves behind: a
+ * TASK_READY task carrying the owner's capture ownership. */
+static void ureap_publish(uint32_t owner_pid)
+{
+    struct task *t;
+
+    if (s_ureap_count >= UREAP_SLOTS)
+        return;
+    t = &s_ureap_slot[s_ureap_count];
+    task_utest_capture_reset(t);
+    t->pid = s_ureap_count;
+    t->state = TASK_READY;
+    t->utest_capture_active = 1;
+    t->utest_capture_owner_pid = owner_pid;
+    s_ureap_count++;
+}
+
+static struct task *ureap_get_by_pid(uint32_t pid)
+{
+    return pid < s_ureap_count ? &s_ureap_slot[pid] : (struct task *)0;
+}
+
+static void ureap_fence(struct task *owner)
+{
+    ureap_note(UREAP_EV_FENCE, owner ? owner->pid : 0u);
+}
+
+static void ureap_latch(uint32_t owner_pid)
+{
+    ureap_note(UREAP_EV_LATCH, owner_pid);
+}
+
+static uint32_t ureap_fork_pending(uint32_t owner_pid, uint32_t *stranded)
+{
+    ureap_note(UREAP_EV_DRAIN, s_ureap_pending);
+    /* Mirrors the real census: registrations belonging to a DIFFERENT owner
+     * are invisible here, which is what stops one binary's mid-fork death
+     * degrading every binary that runs after it. */
+    if (stranded)
+        *stranded = (owner_pid == s_ureap_stranded_owner) ? s_ureap_stranded
+                                                          : 0u;
+    return (owner_pid == s_ureap_pending_owner) ? s_ureap_pending : 0u;
+}
+
+static void ureap_kill(uint32_t pid)
+{
+    ureap_note(UREAP_EV_KILL, pid);
+    /* A cooperative SIGKILL lands on the next scheduling opportunity for
+     * every honest descendant; `immortal` is the ring-3 spinloop that never
+     * reaches signal_check, which is the case the forceful fallback and the
+     * round cap exist for. */
+    if (!s_ureap_immortal && pid < s_ureap_count)
+        s_ureap_slot[pid].state = TASK_DEAD;
+}
+
+static void ureap_terminate(struct task *t)
+{
+    ureap_note(UREAP_EV_TERMINATE, t ? t->pid : 0u);
+    /* `unterminable` is the ONLY way to reach the round cap from here. With
+     * the forceful fallback landing, every tree dies in its first round --
+     * which is the healthy case and is covered elsewhere. A producer the
+     * launcher genuinely cannot keep up with is one neither mechanism
+     * settles, and the cap is what bounds the run boundary against it. */
+    if (t && !s_ureap_unterminable)
+        t->state = TASK_DEAD;
+}
+
+static void ureap_cleanup(uint32_t pid)
+{
+    ureap_note(UREAP_EV_CLEANUP, pid);
+    /* task_cleanup UNLINKS the slot from its capture tree
+     * (task_utest_capture_unlink), which is what stops a later pass
+     * re-selecting a slot that has already been freed. The synthetic world
+     * has to do the same or it would prove the opposite of the real one. */
+    if (pid < s_ureap_count)
+        task_utest_capture_unlink(&s_ureap_slot[pid]);
+}
+
+static uint64_t ureap_now_ms(void)
+{
+    return s_ureap_now_ms;
+}
+
+static void ureap_wait(void)
+{
+    ureap_note(UREAP_EV_WAIT, 0u);
+    s_ureap_waits++;
+    s_ureap_now_ms += UREAP_WAIT_MS;
+    if (s_ureap_pending_waits && s_ureap_waits >= s_ureap_pending_waits)
+        s_ureap_pending = 0;
+    if (s_ureap_spawn_at_wait && s_ureap_waits == s_ureap_spawn_at_wait)
+        ureap_publish(UREAP_OWNER_PID);
+}
+
+static const struct utest_reap_ops s_ureap_ops = {
+    ureap_get_by_pid,
+    ureap_fence,
+    ureap_latch,
+    ureap_fork_pending,
+    ureap_kill,
+    ureap_terminate,
+    ureap_cleanup,
+    ureap_now_ms,
+    ureap_wait
+};
+
+/* Build a tree of `descendants` capture-owning children under pid 0. */
+static void ureap_reset(uint32_t descendants)
+{
+    uint32_t i;
+
+    for (i = 0; i < UREAP_SLOTS; i++) {
+        task_utest_capture_reset(&s_ureap_slot[i]);
+        s_ureap_slot[i].pid = 0u;
+        s_ureap_slot[i].state = 0u;
+    }
+    s_ureap_count = 0;
+    s_ureap_now_ms = 0;
+    s_ureap_waits = 0;
+    s_ureap_pending = 0;
+    s_ureap_pending_waits = 0;
+    s_ureap_stranded = 0;
+    s_ureap_pending_owner = UREAP_OWNER_PID;
+    s_ureap_stranded_owner = UREAP_OWNER_PID;
+    s_ureap_spawn_at_wait = 0;
+    s_ureap_immortal = 0;
+    s_ureap_unterminable = 0;
+    s_ureap_ev_n = 0;
+
+    /* Slot 0 is the OWNER: captured and self-owned, exactly what
+     * task_create_captured arms, so the selection predicate has to exclude it
+     * on the pid test rather than on ownership. */
+    ureap_publish(UREAP_OWNER_PID);
+    s_ureap_slot[0].utest_capture_owner_pid = UREAP_OWNER_PID;
+
+    for (i = 0; i < descendants; i++)
+        ureap_publish(UREAP_OWNER_PID);
+}
+
+static void test_reap_empty_tree_is_exact_and_touches_nothing(void)
+{
+    struct utest_reap_result r;
+
+    ureap_reset(0);
+    test_usermode_capture_reap_tree_ops(UREAP_OWNER_PID, &s_ureap_ops, &r);
+
+    TEST_ASSERT_EQ(r.live, 0u,
+                   "a binary that forked nothing leaves no descendant alive");
+    TEST_ASSERT_EQ((uint32_t)r.exact, 1u,
+                   "with no fork in flight the drain settles immediately, so "
+                   "the census is a statement and not a snapshot");
+    TEST_ASSERT_EQ(r.rounds, 1u,
+                   "one pass finding nothing live ends the loop -- the round "
+                   "cap is a backstop, not the mechanism");
+    TEST_ASSERT_EQ(ureap_count_of(UREAP_EV_KILL), 0u,
+                   "an empty tree is signalled zero times");
+    TEST_ASSERT_EQ(ureap_count_of(UREAP_EV_CLEANUP), 0u,
+                   "and nothing is freed");
+}
+
+static void test_reap_fences_and_latches_before_it_kills(void)
+{
+    struct utest_reap_result r;
+
+    ureap_reset(2);
+    test_usermode_capture_reap_tree_ops(UREAP_OWNER_PID, &s_ureap_ops, &r);
+
+    TEST_ASSERT(ureap_first(UREAP_EV_FENCE) < ureap_first(UREAP_EV_KILL),
+                "the wire fence is up before the first kill: the kills yield, "
+                "so fencing after them would leave exactly the window the "
+                "fence exists to remove");
+    TEST_ASSERT(ureap_first(UREAP_EV_LATCH) < ureap_first(UREAP_EV_KILL),
+                "publication is latched before the first kill, so a "
+                "descendant cannot fork a replacement while the walk yields");
+    TEST_ASSERT(ureap_first(UREAP_EV_DRAIN) < ureap_first(UREAP_EV_KILL),
+                "the in-flight forks are drained BEFORE any kill -- after "
+                "one, a forker can be terminated mid-constructor and its "
+                "half-built child freed underneath it");
+    TEST_ASSERT(ureap_first(UREAP_EV_LATCH) < ureap_first(UREAP_EV_DRAIN),
+                "latch precedes drain: draining a tree still allowed to grow "
+                "never terminates against a producer that forks in a loop");
+}
+
+static void test_reap_census_is_exact_once_the_drain_settles(void)
+{
+    struct utest_reap_result r;
+
+    ureap_reset(1);
+    s_ureap_pending = 1;        /* one fork admitted before the latch */
+    s_ureap_pending_waits = 1;  /* it publishes on the first yield */
+
+    test_usermode_capture_reap_tree_ops(UREAP_OWNER_PID, &s_ureap_ops, &r);
+
+    TEST_ASSERT_EQ(r.drain_pending, 0u,
+                   "the drain waited out the fork that was already in flight");
+    TEST_ASSERT_EQ(r.drain_stranded, 0u,
+                   "and nothing was left registered on a dead task");
+    TEST_ASSERT_EQ((uint32_t)r.exact, 1u,
+                   "a drain that reached zero freezes the tree: no fork can "
+                   "be admitted after the latch and none is in flight");
+    TEST_ASSERT_EQ(r.live, 0u,
+                   "and every descendant was reaped");
+}
+
+static void test_reap_reports_an_inexact_census_when_the_drain_expires(void)
+{
+    struct utest_reap_result r;
+
+    ureap_reset(1);
+    s_ureap_pending = 1;        /* a fork that never finishes its constructor */
+    s_ureap_pending_waits = 0;  /* ... and never will */
+
+    test_usermode_capture_reap_tree_ops(UREAP_OWNER_PID, &s_ureap_ops, &r);
+
+    TEST_ASSERT_EQ((uint32_t)r.exact, 0u,
+                   "an expired drain means a descendant may still publish "
+                   "after the census -- the count reverts to a snapshot and "
+                   "the reap must say so rather than let a zero read as proof");
+    TEST_ASSERT_EQ(r.drain_pending, 1u,
+                   "and it reports how many forks it gave up waiting for");
+    TEST_ASSERT(ureap_count_of(UREAP_EV_KILL) > 0u,
+                "the reap still KILLS: leaving descendants running would be "
+                "its own failure, and stopping a task is safe under a live "
+                "constructor in a way that freeing its memory is not");
+    TEST_ASSERT_EQ(ureap_count_of(UREAP_EV_CLEANUP), 0u,
+                   "but it frees NOTHING. A constructor the reap cannot "
+                   "account for holds pointers into the slots this pass would "
+                   "release, so cleaning up underneath it trades a bounded "
+                   "leak for a use-after-free -- and the run is refused "
+                   "host-side either way, so tidying buys nothing");
+}
+
+static void test_reap_is_inexact_when_a_forker_died_mid_constructor(void)
+{
+    struct utest_reap_result r;
+
+    ureap_reset(1);
+    s_ureap_pending = 0;   /* nothing LIVE is still constructing ... */
+    s_ureap_stranded = 1;  /* ... but one registration is on a dead task */
+
+    test_usermode_capture_reap_tree_ops(UREAP_OWNER_PID, &s_ureap_ops, &r);
+
+    /* The case the drain cannot fix and must not launder. A task terminated
+     * between its fork admission and its release never reaches the decrement,
+     * so the drain correctly stops waiting on it -- waiting would burn the
+     * whole bound and change nothing. But that constructor may still publish,
+     * which is exactly what the interlock exists to rule out, so an empty
+     * LIVE count is not the same as a frozen tree. */
+    TEST_ASSERT_EQ(r.drain_pending, 0u,
+                   "there is nothing left to wait for ...");
+    TEST_ASSERT_EQ(r.drain_stranded, 1u,
+                   "... but a registration outlived the task holding it");
+    TEST_ASSERT_EQ((uint32_t)r.exact, 0u,
+                   "so the census is NOT exact: a drain that empties because "
+                   "the forker died proves nothing about whether it published");
+    TEST_ASSERT_EQ(s_ureap_waits, 0u,
+                   "and the reap does not burn the drain bound waiting for a "
+                   "thread that can never run again");
+    TEST_ASSERT_EQ(ureap_count_of(UREAP_EV_CLEANUP), 0u,
+                   "a stranded constructor withholds cleanup exactly as an "
+                   "un-drained one does -- it is the same hazard reached by a "
+                   "different route");
+}
+
+static void test_reap_ignores_another_owners_stranded_registration(void)
+{
+    struct utest_reap_result r;
+
+    ureap_reset(1);
+    /* A PREVIOUS binary left a registration stranded on a task that died
+     * inside its own fork. That slot keeps its count forever -- nothing may
+     * clear a registration whose constructor might still be running, and task
+     * slots are not reused within a boot -- so the only thing standing
+     * between it and every later binary is the owner scoping. */
+    s_ureap_stranded = 1;
+    s_ureap_stranded_owner = 4u;   /* belongs to a different, finished binary */
+
+    test_usermode_capture_reap_tree_ops(UREAP_OWNER_PID, &s_ureap_ops, &r);
+
+    TEST_ASSERT_EQ(r.drain_stranded, 0u,
+                   "another owner's stranded fork is not this owner's: an "
+                   "unscoped census would charge one binary's mid-fork death "
+                   "to every binary that ran after it");
+    TEST_ASSERT_EQ((uint32_t)r.exact, 1u,
+                   "so this run's census stays EXACT -- otherwise a single "
+                   "mid-fork death would refuse the rest of the suite until "
+                   "reboot, over runs that were themselves clean");
+    TEST_ASSERT_EQ(r.live, 0u, "and its own tree is fully reaped");
+}
+
+static void test_reap_grace_stops_when_its_descendants_die(void)
+{
+    struct utest_reap_result r;
+
+    ureap_reset(3);
+    test_usermode_capture_reap_tree_ops(UREAP_OWNER_PID, &s_ureap_ops, &r);
+
+    /* The defect this pins: an unconditional sleep burns the full grace on
+     * every round even when every descendant died on the first yield, which
+     * at the round cap is seconds of wall clock per binary for nothing. With
+     * a 500 ms grace and a 250 ms synthetic wait, burning it would cost two
+     * waits per round; re-checking liveness first costs none, because the
+     * kills above already landed. */
+    TEST_ASSERT_EQ(s_ureap_waits, 0u,
+                   "the grace re-checks liveness BEFORE the clock, so a round "
+                   "whose descendants are already dead waits not at all");
+    TEST_ASSERT_EQ(r.live, 0u, "and all three were reaped");
+    TEST_ASSERT_EQ(r.rounds, 2u,
+                   "one round to kill, one to confirm nothing is left");
+}
+
+static void test_reap_catches_a_descendant_published_in_the_grace_window(void)
+{
+    struct utest_reap_result r;
+
+    ureap_reset(1);
+    s_ureap_immortal = 1;       /* round 1's descendant needs the forceful path */
+    s_ureap_spawn_at_wait = 1;  /* a new descendant appears while we wait */
+
+    test_usermode_capture_reap_tree_ops(UREAP_OWNER_PID, &s_ureap_ops, &r);
+
+    /* This is the shape the whole section is about. A descendant published
+     * after the walk passed its slot used to be invisible: the round it
+     * appeared in had already counted, and if the loop ended there `live == 0`
+     * suppressed the report entirely.
+     *
+     * What catches it here is the SAME round's forceful pass, not a later
+     * kill round -- the grace loop re-scans the table, so the newcomer is
+     * already in the set by the time the fallback walks it. That is worth
+     * pinning explicitly, because "a later round will get it" is the
+     * plausible-sounding assumption a future simplification of the fallback
+     * would quietly break. */
+    TEST_ASSERT_EQ(s_ureap_count, 3u,
+                   "the synthetic producer really did publish a second "
+                   "descendant mid-reap");
+    TEST_ASSERT_EQ(s_ureap_slot[2].state, (uint32_t)TASK_DEAD,
+                   "the descendant that appeared inside the grace window is "
+                   "reaped by the round it appeared in, not skipped because "
+                   "that round's kill pass had already walked past its slot");
+    TEST_ASSERT(ureap_count_of(UREAP_EV_CLEANUP) == 2u,
+                "and both descendants are freed -- the resource half of the "
+                "reap, which is what a missed slot actually leaks");
+    TEST_ASSERT_EQ(r.live, 0u,
+                   "so the fixed point is reached and the census has nothing "
+                   "left to miss");
+}
+
+static void test_reap_reports_a_producer_that_outlasts_the_round_cap(void)
+{
+    struct utest_reap_result r;
+
+    ureap_reset(2);
+    /* Neither mechanism lands: the cooperative signal is never checked (a
+     * ring-3 spinloop) and the forceful path does not settle either. This is
+     * the only shape that reaches the round cap, and the cap is what stops it
+     * holding the run boundary open forever. */
+    s_ureap_immortal = 1;
+    s_ureap_unterminable = 1;
+
+    test_usermode_capture_reap_tree_ops(UREAP_OWNER_PID, &s_ureap_ops, &r);
+
+    TEST_ASSERT_EQ(r.rounds, 8u,
+                   "the loop stops at UTEST_CAPTURE_REAP_ROUNDS rather than "
+                   "spinning: the cap is a bound on a pathological producer, "
+                   "and exhausting it is reported rather than retried");
+    TEST_ASSERT_EQ(r.live, 2u,
+                   "and the survivors are COUNTED -- this is the case "
+                   "[UTEST-CAPTURE-UNREAPED] exists to refuse the run over");
+    TEST_ASSERT_EQ((uint32_t)r.exact, 1u,
+                   "the count is still exact: nothing was in flight and "
+                   "publication is latched, so these two are the tree. An "
+                   "unreaped producer is a resource failure, not an "
+                   "accounting one");
+    TEST_ASSERT_EQ(ureap_count_of(UREAP_EV_CLEANUP), 0u,
+                   "nothing is freed while it is still alive");
+}
+
+static void test_reap_cleans_children_first_and_never_twice(void)
+{
+    struct utest_reap_result r;
+    uint32_t i;
+    uint32_t prev = 0;
+    int seen_any = 0;
+
+    ureap_reset(4);
+    test_usermode_capture_reap_tree_ops(UREAP_OWNER_PID, &s_ureap_ops, &r);
+
+    TEST_ASSERT_EQ(ureap_count_of(UREAP_EV_CLEANUP), 4u,
+                   "every reaped descendant is freed exactly once -- a "
+                   "cleanup pass that re-selected an already-reaped slot was "
+                   "a real defect in this loop");
+
+    for (i = 0; i < s_ureap_ev_n; i++) {
+        if (s_ureap_ev[i] != (uint8_t)UREAP_EV_CLEANUP)
+            continue;
+        if (seen_any)
+            TEST_ASSERT(s_ureap_ev_pid[i] < prev,
+                        "cleanup runs highest pid first: slots are allocated "
+                        "monotonically, so descending order is children-first "
+                        "and a parent is never released before a child that "
+                        "still refers to it");
+        prev = s_ureap_ev_pid[i];
+        seen_any = 1;
+    }
+    TEST_ASSERT(seen_any, "the cleanup pass ran at all");
+}
+
+static void test_reap_never_touches_the_owner(void)
+{
+    struct utest_reap_result r;
+    uint32_t i;
+
+    ureap_reset(3);
+    test_usermode_capture_reap_tree_ops(UREAP_OWNER_PID, &s_ureap_ops, &r);
+
+    for (i = 0; i < s_ureap_ev_n; i++) {
+        if (s_ureap_ev[i] != (uint8_t)UREAP_EV_KILL &&
+            s_ureap_ev[i] != (uint8_t)UREAP_EV_TERMINATE &&
+            s_ureap_ev[i] != (uint8_t)UREAP_EV_CLEANUP)
+            continue;
+        TEST_ASSERT(s_ureap_ev_pid[i] != UREAP_OWNER_PID,
+                    "the OWNER is the pid the launcher has already waited on "
+                    "and is about to clean up itself -- reaping it would free "
+                    "a slot u_run_one still holds report and leak snapshots "
+                    "into");
+    }
+    TEST_ASSERT_EQ(s_ureap_slot[UREAP_OWNER_PID].state, (uint32_t)TASK_READY,
+                   "and the owner is still alive when the reap returns");
+}
+
+static void test_reap_ignores_another_binarys_descendants(void)
+{
+    struct utest_reap_result r;
+
+    ureap_reset(2);
+    /* Re-home the last descendant onto a DIFFERENT owner: a task belonging to
+     * a run that has not finished. The reap must walk straight past it. */
+    s_ureap_slot[2].utest_capture_owner_pid = 4u;
+
+    test_usermode_capture_reap_tree_ops(UREAP_OWNER_PID, &s_ureap_ops, &r);
+
+    TEST_ASSERT_EQ(ureap_count_of(UREAP_EV_KILL), 1u,
+                   "only this owner's descendant is signalled");
+    TEST_ASSERT_EQ(s_ureap_slot[2].state, (uint32_t)TASK_READY,
+                   "another binary's descendant is left running -- reaping it "
+                   "would tear down a task whose own run is still going");
+    TEST_ASSERT_EQ(r.live, 0u,
+                   "and it is not counted against this owner's census either");
+}
+
 /* UNLINKING a reaped slot must clear what SELECTS it and nothing else.
  *
  * The distinction is the whole test. task_cleanup runs on the OWNER at the
@@ -6673,6 +7210,42 @@ void test_register_usermode_launcher(void)
                             TEST_CAT_EXEC);
     test_suite_register_cat("UTEST: capture settlement is claimed exactly once",
                             test_capture_settlement_is_claimed_exactly_once,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: reap of an empty tree is exact",
+                            test_reap_empty_tree_is_exact_and_touches_nothing,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: reap fences and latches before it kills",
+                            test_reap_fences_and_latches_before_it_kills,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: reap census is exact once the drain settles",
+                            test_reap_census_is_exact_once_the_drain_settles,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: an expired drain reports an inexact census",
+                            test_reap_reports_an_inexact_census_when_the_drain_expires,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: a forker dying mid-constructor is not an exact census",
+                            test_reap_is_inexact_when_a_forker_died_mid_constructor,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: another owner's stranded fork is not this census",
+                            test_reap_ignores_another_owners_stranded_registration,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: reap grace stops when its descendants die",
+                            test_reap_grace_stops_when_its_descendants_die,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: a descendant forked in the grace window is reaped",
+                            test_reap_catches_a_descendant_published_in_the_grace_window,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: a producer outlasting the round cap is bounded",
+                            test_reap_reports_a_producer_that_outlasts_the_round_cap,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: reap cleans children first and never twice",
+                            test_reap_cleans_children_first_and_never_twice,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: reap never touches the owner",
+                            test_reap_never_touches_the_owner,
+                            TEST_CAT_EXEC);
+    test_suite_register_cat("UTEST: reap ignores another binary's descendants",
+                            test_reap_ignores_another_binarys_descendants,
                             TEST_CAT_EXEC);
 }
 

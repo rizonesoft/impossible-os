@@ -2376,6 +2376,181 @@ static void task_memcpy(uint8_t *dst, const uint8_t *src, uint64_t n)
         dst[i] = src[i];
 }
 
+#ifdef KERNEL_TESTS
+/* --- Run-boundary reap interlock, fork side ---------------------------------
+ *
+ * The launcher's reap (u_capture_reap_tree, test_usermode.c) tears down the
+ * capture-owning descendant tree of a finished test binary. It enumerates that
+ * tree by walking the task table, and until this interlock existed nothing
+ * stopped a descendant publishing a NEW forked child in the instant after the
+ * walk passed its slot: the reap observes num_tasks while task_fork advances
+ * it, so the reap's survivor count described the walk rather than the tree.
+ *
+ * The fix is not another walk. It is to make the two operations take the SAME
+ * lock -- pgroup_jobctl_lock, which every publication site already holds
+ * across num_tasks++ -- so admission and publication are ordered with respect
+ * to the reap's latch, and to bound the forks that were already in flight when
+ * the latch went up. Two halves, and both are needed:
+ *
+ *   ADMIT  refuses outright if the parent's capture OWNER is latched, and
+ *          otherwise records that this task is now constructing a
+ *          capture-inheriting child.
+ *   DONE   clears that record -- and is called from every failure return AND
+ *          from the successful tail, after the Object Manager registrations
+ *          rather than at num_tasks++, because publication is not the end of
+ *          the constructor.
+ *
+ * The cost stays off the general fork path: a parent that carries no capture
+ * takes neither the lock nor the scan, which is the one place a test-framework
+ * concern is allowed to touch fork at all. */
+static int task_utest_fork_admit(uint32_t parent_pid, int *registered)
+{
+    uint64_t jf;
+    uint32_t owner;
+    int admitted = 1;
+
+    *registered = 0;
+
+    /* Non-captured parents -- every fork in a release-shaped workload -- pay
+     * exactly this predicate. Capture ownership is assigned before a task is
+     * published and never changes afterwards, so this read has no concurrent
+     * writer to race. */
+    if (!tasks[parent_pid].utest_capture_active)
+        return 1;
+
+    jf = pgroup_jobctl_lock();
+    owner = tasks[parent_pid].utest_capture_owner_pid;
+    /* Bounds-check before indexing: utest_capture_owner_pid is inherited
+     * across an unbounded fork chain, and a slot corrupted anywhere along it
+     * would otherwise index the task array out of range from inside a
+     * spinlock.
+     *
+     * Out of range FAILS CLOSED. Treating it as "no owner to latch" and
+     * admitting the fork looks like the conservative choice and is the exact
+     * opposite: the parent still carries utest_capture_active, so the child
+     * inherits the same unresolvable ownership, no valid owner's latch can
+     * ever refuse it, and no valid owner's census can ever see it. The
+     * defensive check would have turned corrupt capture metadata into a
+     * silent publication invisible to the machinery built to account for it.
+     * A parent claiming capture under an owner that cannot exist is not a
+     * fork worth completing.
+     *
+     * This is also what lets utest_capture_fork_owner be trusted downstream:
+     * it is written only on the branch below, so whenever the count is
+     * non-zero the recorded owner is a real in-range pid. (The field is
+     * zeroed at construction and pid 0 is a VALID task, so zero is not an
+     * "invalid" sentinel -- it is simply never consulted, because the census
+     * reads the owner only when the count is non-zero.) */
+    if (owner >= TASK_MAX || tasks[owner].utest_capture_reaping) {
+        admitted = 0;
+    } else {
+        /* Saturate rather than wrap. The count is bounded by THREAD_MAX in
+         * practice, so this cannot be reached; wrapping to 0 would be the one
+         * failure that reports a tree frozen while a constructor is running,
+         * which is precisely what this whole path exists to prevent. */
+        if (tasks[parent_pid].utest_capture_fork_inflight != 0xFFFFFFFFu) {
+            /* The owner is recorded ALONGSIDE the count, under the same lock,
+             * because the count alone is unattributable once this task dies:
+             * the reap's cleanup unlinks utest_capture_owner_pid while the
+             * registration necessarily stays. Every registration on a slot
+             * shares one owner -- a task's capture ownership is fixed before
+             * it is published and never changes -- so a plain assignment is
+             * correct even for a second concurrent fork by a sibling
+             * thread. */
+            tasks[parent_pid].utest_capture_fork_owner = owner;
+            tasks[parent_pid].utest_capture_fork_inflight++;
+            *registered = 1;
+        } else {
+            admitted = 0;
+        }
+    }
+    pgroup_jobctl_unlock(jf);
+    return admitted;
+}
+
+/* Release a registration taken by task_utest_fork_admit.
+ *
+ * Driven by the CALLER's local flag rather than by re-reading the count, and
+ * that is not a micro-optimisation. With a count there are up to THREAD_MAX
+ * writers per task, so an unlocked read would be a genuine data race, and a
+ * locked read still could not tell whether THIS invocation was one of the
+ * registrations it sees. The local flag is the only thing that knows. */
+static void task_utest_fork_done(uint32_t parent_pid, int registered)
+{
+    uint64_t jf;
+
+    if (!registered)
+        return;
+
+    jf = pgroup_jobctl_lock();
+    if (tasks[parent_pid].utest_capture_fork_inflight != 0)
+        tasks[parent_pid].utest_capture_fork_inflight--;
+    pgroup_jobctl_unlock(jf);
+}
+
+void task_utest_capture_reap_latch(uint32_t owner_pid)
+{
+    uint64_t jf;
+
+    if (owner_pid >= TASK_MAX)
+        return;
+
+    jf = pgroup_jobctl_lock();
+    tasks[owner_pid].utest_capture_reaping = 1;
+    pgroup_jobctl_unlock(jf);
+}
+
+uint32_t task_utest_capture_fork_pending_count(uint32_t owner_pid,
+                                              uint32_t *stranded)
+{
+    uint64_t jf;
+    uint32_t pid;
+    uint32_t limit;
+    uint32_t live = 0;
+    uint32_t dead = 0;
+
+    jf = pgroup_jobctl_lock();
+    limit = num_tasks < TASK_MAX ? num_tasks : TASK_MAX;
+    for (pid = 0; pid < limit; pid++) {
+        if (tasks[pid].utest_capture_fork_inflight == 0)
+            continue;
+        /* Scoped by the recorded owner, NOT by utest_capture_owner_pid: the
+         * latter is cleared by task_cleanup's unlink, and a stranded
+         * registration outlives exactly that. An unscoped count would charge
+         * one binary's mid-fork death to every binary after it, for the rest
+         * of the boot, because slots are never reused. */
+        if (tasks[pid].utest_capture_fork_owner != owner_pid)
+            continue;
+        /* The DEAD split is the honest half of the answer. A forker
+         * terminated between admission and its release never reaches the
+         * decrement, so waiting on it would burn the whole drain bound and
+         * change nothing -- which is why it is not counted as LIVE. But it is
+         * not nothing either: that constructor may still publish, so the tree
+         * is not frozen and the census is not exact. Reporting the two
+         * separately lets the reap wait on what waiting can fix and downgrade
+         * on what it cannot, instead of choosing one failure or the other. */
+        if (tasks[pid].state == TASK_DEAD)
+            dead += tasks[pid].utest_capture_fork_inflight;
+        else
+            live += tasks[pid].utest_capture_fork_inflight;
+    }
+    pgroup_jobctl_unlock(jf);
+    if (stranded)
+        *stranded = dead;
+    return live;
+}
+#define TASK_UTEST_FORK_ADMIT(p, regp) \
+    task_utest_fork_admit((uint32_t)(p), (regp))
+#define TASK_UTEST_FORK_DONE(p, reg) \
+    task_utest_fork_done((uint32_t)(p), (reg))
+#else
+/* The release flavor still WRITES through `regp` and consumes `reg`, so the
+ * caller's local stays used in both flavors rather than needing a `(void)`
+ * cast that a later reader would have to decode. */
+#define TASK_UTEST_FORK_ADMIT(p, regp) (*(regp) = 0, 1)
+#define TASK_UTEST_FORK_DONE(p, reg)   ((void)(reg))
+#endif
+
 int task_fork(struct interrupt_frame *frame)
 {
     uint32_t child_pid;
@@ -2385,6 +2560,10 @@ int task_fork(struct interrupt_frame *frame)
     struct syscall_filter *inherited_filter = (struct syscall_filter *)0;
     ACCESS_TOKEN *inherited_token = (ACCESS_TOKEN *)0;
     uint64_t parent_mit;
+    /* Set by the reap-interlock admission below; every exit past it releases
+     * the registration it names. Declared with the other fork-wide state
+     * because the release sites are spread across all nine of them. */
+    int fork_registered;
 
     /* Single parent mitigation snapshot used for BOTH the NO_CHILD reject and
      * child inheritance, so an in-flight parent policy change linearizes at
@@ -2405,6 +2584,25 @@ int task_fork(struct interrupt_frame *frame)
 
     child_pid = num_tasks;
 
+    /* Reap-interlock admission, and its PLACEMENT is the load-bearing part.
+     *
+     * It sits after the capacity check and before the filter clone because
+     * this is the last point at which a refusal owns nothing: one block later
+     * this function holds a cloned syscall filter, then a duplicated primary
+     * token, then a deep copy of the parent's unveil set, and a bare return
+     * from any of those points would leak all three. Refusing here is a plain
+     * return, exactly like the MIT_NO_CHILD_PROCESS reject above -- and
+     * SILENT for the same reason: a ring-3 loop forking through its own
+     * teardown is precisely the workload that trips this, and logging it would
+     * hand that loop the global klog lock once per iteration.
+     *
+     * The other half of that placement is an obligation: every failure return
+     * BELOW must now release what this took. They all do -- see the
+     * TASK_UTEST_FORK_DONE call added to each unwind ladder, and the one on
+     * the success tail after the Object Manager registrations. */
+    if (!TASK_UTEST_FORK_ADMIT(parent_pid_val, &fork_registered))
+        return -1;
+
     /* Syscall filter: a fork is "become a copy of me", so the child MUST
      * inherit the parent's filter unconditionally -- a sandbox a child could
      * escape via fork is no sandbox (seccomp semantics). This differs from
@@ -2422,6 +2620,7 @@ int task_fork(struct interrupt_frame *frame)
             if (!inherited_filter) {
                 klog(LOG_ERROR, "sched",
                      "task_fork: filter clone failed; failing fork closed");
+                TASK_UTEST_FORK_DONE(parent_pid_val, fork_registered);
                 return -1;
             }
         }
@@ -2439,6 +2638,7 @@ int task_fork(struct interrupt_frame *frame)
              "task_fork: primary-token inheritance failed; failing fork closed");
         if (inherited_filter)
             kfree(inherited_filter);
+        TASK_UTEST_FORK_DONE(parent_pid_val, fork_registered);
         return -1;
     }
 
@@ -2454,6 +2654,7 @@ int task_fork(struct interrupt_frame *frame)
             PsDereferencePrimaryToken(inherited_token);
         if (inherited_filter)
             kfree(inherited_filter);
+        TASK_UTEST_FORK_DONE(parent_pid_val, fork_registered);
         return -1;
     }
 
@@ -2519,6 +2720,7 @@ int task_fork(struct interrupt_frame *frame)
             PsDereferencePrimaryToken(inherited_token);
         if (inherited_filter)
             kfree(inherited_filter);
+        TASK_UTEST_FORK_DONE(parent_pid_val, fork_registered);
         return -1;
     }
 
@@ -2533,6 +2735,7 @@ int task_fork(struct interrupt_frame *frame)
             PsDereferencePrimaryToken(inherited_token);
         if (inherited_filter)
             kfree(inherited_filter);
+        TASK_UTEST_FORK_DONE(parent_pid_val, fork_registered);
         return -1;
     }
 
@@ -2547,6 +2750,7 @@ int task_fork(struct interrupt_frame *frame)
             kfree(inherited_filter);
         ob_job_detach_task(&tasks[child_pid]);
         pledge_unveil_teardown(&tasks[child_pid]);
+        TASK_UTEST_FORK_DONE(parent_pid_val, fork_registered);
         return -1;
     }
 
@@ -2562,6 +2766,7 @@ int task_fork(struct interrupt_frame *frame)
             kfree(inherited_filter);
         ob_job_detach_task(&tasks[child_pid]);
         pledge_unveil_teardown(&tasks[child_pid]);
+        TASK_UTEST_FORK_DONE(parent_pid_val, fork_registered);
         return -1;
     }
 
@@ -2611,6 +2816,7 @@ int task_fork(struct interrupt_frame *frame)
                 kfree(inherited_filter);
             ob_job_detach_task(&tasks[child_pid]);
             pledge_unveil_teardown(&tasks[child_pid]);
+            TASK_UTEST_FORK_DONE(parent_pid_val, fork_registered);
             return -1;
         }
 
@@ -2839,6 +3045,19 @@ int task_fork(struct interrupt_frame *frame)
     /* Register forked process and main thread with Object Manager */
     ob_process_create(&tasks[child_pid]);
     ob_thread_create(&tasks[child_pid].threads[0], child_pid);
+
+    /* Reap-interlock release, and it belongs HERE rather than beside
+     * num_tasks++ above. Publication makes the child FINDABLE; it does not
+     * make the constructor finished. The two Object Manager registrations
+     * immediately above still read tasks[child_pid] (its pid, and its main
+     * thread's id), so a reap that treated publication as completion could
+     * observe an empty drain, terminate the child and run task_cleanup on it
+     * while this CPU was still inside those calls -- a use-after-cleanup that
+     * has nothing to do with the census the interlock was built for. Holding
+     * the registration until every access to the child's slot is behind us
+     * makes the drain mean "no constructor is running", which is the property
+     * the reap actually needs. */
+    TASK_UTEST_FORK_DONE(parent_pid_val, fork_registered);
 
     klog(LOG_DEBUG, "sched", "PID %u forked -> child PID %u",
            (uint64_t)parent_pid_val, (uint64_t)child_pid);

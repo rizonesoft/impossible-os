@@ -11,8 +11,9 @@ ring-3 stdout where it is PRODUCED and emits it as authenticated klog records:
     [UTEST-CAPTURE-LOST] owner=<pid> len=unknown
     [UTEST-CAPTURE-PENDING] run=<n> pending=<n>
     [UTEST-CAPTURE-UNREAPED] owner=<pid> live=<n>
+    [UTEST-CAPTURE-REAP-DEGRADED] owner=<pid> pending=<n> stranded=<n>
 
-The last two are the RUN BOUNDARY's own reports, and both refuse the run they
+The last three are the RUN BOUNDARY's own reports, and all refuse the run they
 appear in rather than annotating it. The launcher waits on one pid per binary
 while fork() hands the same capture channel to every descendant, so at the end
 of a run it seals capture admission, drains the claims already outstanding,
@@ -21,7 +22,13 @@ claimed but never emitted -- holes in an owner's sequence, named and charged
 to the run that drew them instead of surfacing as corruption in whichever run
 follows. UNREAPED says descendants outlived the reap's round cap; their future
 records are already fenced by the owner's stop latch, so it is a resource
-signal rather than a wire one, and still not a clean run.
+signal rather than a wire one, and still not a clean run. REAP-DEGRADED says
+something weaker and more corrosive: not that anything leaked, but that the
+reap could not establish whether anything did. Fork publication is interlocked
+with the reap (task.c), so the survivor census is normally EXACT; when a fork
+admitted before the latch outlasts the drain, the count silently reverts to a
+snapshot, and an inexact zero reads identically to an exact one. The record
+exists so that ambiguity is stated rather than assumed away.
 
 `len` counts RAW (pre-escape) bytes. `<escaped>` rewrites `\\`, `[`, and every
 byte < 0x20 or >= 0x7F as `\\xHH` (src/kernel/test/test_usermode.c, the
@@ -316,6 +323,30 @@ _PENDING_RE = re.compile(
 # a refusal: a run that leaves live tasks behind is not a clean run.
 _UNREAPED_RE = re.compile(
     r"\[UTEST-CAPTURE-UNREAPED\] owner=" + _U32 + r" live=" + _U32_POS)
+# The run boundary's admission that its survivor census is NOT exact: a fork
+# admitted before the reap latched the tree was still in flight when the drain
+# gave up waiting for it, so a descendant may have been published after the
+# census walked past its slot.
+#
+# It is a refusal even though nothing is known to have leaked, and that is the
+# point of having it at all. Every other capture refusal names damage; this one
+# names the loss of the guarantee that damage would have been detected. Without
+# it the degraded run reports `live=0` -- indistinguishable on the wire from an
+# exact zero, which is precisely the best-effort ambiguity the interlock was
+# built to remove.
+# NEITHER count uses the POSITIVE grammar here, unlike PENDING and UNREAPED
+# above, and the difference is real rather than an oversight. Those records are
+# emitted under `if (count)`, so a zero is a shape their producer cannot write.
+# This one is emitted under `if (!exact)`, and inexactness has TWO independent
+# causes -- a drain that expired with constructors still running (`pending`),
+# and constructors stranded on tasks that died mid-flight (`stranded`). Either
+# alone triggers the record, so `pending=0 stranded=2` and `pending=1
+# stranded=0` are both shapes the producer emits. Refusing a zero in either
+# field would reject a legitimate record; what the producer cannot emit is
+# BOTH zero, and that is checked below rather than in the grammar.
+_REAP_DEGRADED_RE = re.compile(
+    r"\[UTEST-CAPTURE-REAP-DEGRADED\] owner=" + _U32 + r" pending=" + _U32 +
+    r" stranded=" + _U32)
 
 _UINT32_MAX = 0xFFFFFFFF
 
@@ -754,6 +785,38 @@ def _scan(lines, prefix):
                 "capture_unreaped_descendants",
                 f"owner={pid} left {live} capture-owning descendant(s) alive "
                 "at the run boundary",
+            )
+
+        m = _REAP_DEGRADED_RE.fullmatch(body)
+        if m:
+            pid = int(m.group(1))
+            pending, stranded = int(m.group(2)), int(m.group(3))
+            _count(0)
+            if (pid > _UINT32_MAX or pending > _UINT32_MAX
+                    or stranded > _UINT32_MAX):
+                raise Refusal(
+                    "capture_field_out_of_range",
+                    f"the degraded-reap report declares owner={pid} "
+                    f"pending={pending} stranded={stranded}, wider than the "
+                    "producer's uint32 fields",
+                )
+            if pending == 0 and stranded == 0:
+                # The producer emits this record only when the census is NOT
+                # exact, and exact is precisely `pending == 0 and stranded ==
+                # 0`. Both zero is therefore a record it cannot have written --
+                # a shape fault, not a run failure, and reporting it as the
+                # latter would name a degraded reap that never happened.
+                raise Refusal(
+                    "capture_malformed_record",
+                    "a degraded-reap report with nothing outstanding is a "
+                    "shape the producer cannot emit: "
+                    f"{body[:120]!r}",
+                )
+            raise Refusal(
+                "capture_reap_drain_degraded",
+                f"owner={pid} ended its reap with {pending} fork(s) still in "
+                f"flight and {stranded} stranded on dead tasks -- the "
+                "survivor census for this run is a snapshot, not a statement",
             )
 
         # The run terminator is NOT capture-family, so a slice without one is

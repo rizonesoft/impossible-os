@@ -3687,7 +3687,15 @@ if [ "$HAS_UTEST" -eq 1 ]; then
     UTEST_ABORT=$({ grep -cE "${UF}(Bail out!|suite ABORT)" "$TEST_LOG" 2>/dev/null || true; } | head -1)
     UTEST_ABORT=${UTEST_ABORT:-0}
     if [ "$UTEST_ABORT" -gt 0 ]; then
-        echo -e "  ${RED}[UTEST]${RESET} suite ABORTED (smoke gate) -- the remaining binaries never ran; failing the run"
+        # The CAUSE comes from the producer, not from this script. Two
+        # different conditions abort a run -- a smoke-gate failure and a
+        # degraded capture reap -- and they want opposite responses, so
+        # asserting "smoke gate" here named the wrong one whenever the abort
+        # came from the reap. The grep above matches the MARKER, not the
+        # cause; echo back whatever the launcher itself named.
+        UTEST_ABORT_CAUSE=$({ grep -oE "suite ABORT \(([^)]*)\)" "$TEST_LOG" 2>/dev/null || true; } | head -1 | sed -E 's/.*\((.*)\)/\1/')
+        [ -n "$UTEST_ABORT_CAUSE" ] || UTEST_ABORT_CAUSE="cause not named"
+        echo -e "  ${RED}[UTEST]${RESET} suite ABORTED (${UTEST_ABORT_CAUSE}) -- the remaining binaries never ran; failing the run"
         # RAISE to one, never ADD: the smoke binary that triggered the
         # abort is usually already in the parsed failure count, and adding
         # an abort event on top would report two failed binaries when one

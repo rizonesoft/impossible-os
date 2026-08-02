@@ -951,6 +951,95 @@ struct task {
      * makes settlement a property each write evaluates for itself rather than
      * something the tripping thread must do for threads it cannot see. */
     uint32_t utest_capture_stop_epoch;
+    /* The run-boundary reap's PUBLICATION latch, meaningful ONLY in the
+     * OWNER's slot, and the one capture field that is not about the wire.
+     *
+     * Every other latch above suppresses OUTPUT. This one suppresses
+     * EXISTENCE: while it is set, task_fork refuses to publish a new child
+     * that would inherit this owner's capture channel, so the reap's tree
+     * stops growing under it. Without that refusal the reap can only take a
+     * census -- it observes the task table while task_fork publishes into it
+     * with num_tasks++ under a protocol the reap does not participate in, so
+     * a descendant published just after the terminal walk passed its slot is
+     * missed entirely and the survivor count is best-effort by construction.
+     *
+     * Written ONLY under pgroup_jobctl_lock, which is the lock all three
+     * publication sites (task_create_internal, task_create_process,
+     * task_fork) already take around num_tasks++. That is the whole
+     * interlock: the admission check and the publication are ordered by the
+     * same lock, so a fork either sees the latch and is refused, or is
+     * already published where every later walk finds it. A different lock --
+     * including s_capture_budget_lock, which orders the wire latches above --
+     * would leave exactly the Dekker window the latch exists to close.
+     *
+     * MONOTONIC FOR THE SLOT'S LIFE, and deliberately so: there is no
+     * unlatch. The reap runs once per binary, at the end of that binary, and
+     * an owner whose tree has been reaped must never accept a new descendant
+     * again -- clearing the latch would reopen the race for anything that
+     * forked after the final census. It is zeroed only by
+     * task_utest_capture_reset, i.e. by the constructor of whatever task next
+     * occupies the slot. */
+    uint8_t  utest_capture_reaping;
+    /* How many of this task's threads are INSIDE task_fork right now,
+     * constructing a capture-inheriting child.
+     *
+     * Incremented at admission (before any allocation) and decremented only
+     * after the child's constructor has fully finished -- past num_tasks++,
+     * past ob_process_create/ob_thread_create -- both under
+     * pgroup_jobctl_lock. The reap drains this to zero across every live task
+     * before it kills anything, which is what makes the census a statement
+     * rather than a snapshot: after the drain no capture-inheriting fork is
+     * in flight and the latch above refuses every new one, so the tree is
+     * frozen.
+     *
+     * A COUNT, not a flag, and per TASK rather than global. Both halves were
+     * wrong in the first shape, and each failed in a different direction:
+     *
+     *   - A GLOBAL counter accumulates across tasks, so a forker terminated
+     *     between its increment and its decrement strands the total for the
+     *     rest of the boot and every later reap drains to a timeout. Per-task
+     *     state is DERIVABLE instead -- the reap scans slots, so a dead
+     *     forker's registration stops being waited on (see the stranded
+     *     accounting in task_utest_capture_fork_pending_count).
+     *   - A per-task FLAG is lossy the other way. task_fork keys its
+     *     registration on current_task, and a task owns threads[THREAD_MAX];
+     *     two of its threads forking concurrently on separate CPUs would both
+     *     set one byte, and the FIRST to finish would clear it while the
+     *     second constructor was still running -- the drain then reads zero
+     *     and declares frozen a tree that is not. Single-global-current_task
+     *     dispatch makes that unreachable today, which is precisely why it is
+     *     fixed here rather than relied upon: nothing gates SYS_FORK to the
+     *     main thread, so the shape has to be right before the scheduler is.
+     *
+     * The decrement is placed after the Object Manager registrations, not at
+     * num_tasks++, because publication is not the end of the constructor:
+     * task_fork keeps writing tasks[child_pid] afterwards, and a reap that
+     * considered the fork finished at publication could terminate and
+     * task_cleanup that child while its constructor was still running. */
+    uint32_t utest_capture_fork_inflight;
+    /* WHICH capture owner the in-flight constructors above belong to.
+     *
+     * A second copy of information utest_capture_owner_pid already holds, and
+     * it exists because that field does not survive long enough. A forker
+     * that dies mid-constructor leaves its registration behind; the reap then
+     * task_cleanup()s it, and task_utest_capture_unlink clears
+     * utest_capture_active and utest_capture_owner_pid -- deliberately, so
+     * the slot stops being SELECTED -- while the count itself remains, since
+     * nothing may clear a registration whose constructor could still be
+     * running. The slot is left holding an ownerless registration.
+     *
+     * That is not merely untidy. Task slots are not reused within a boot, so
+     * task_utest_capture_reset never runs on that slot again and the
+     * registration is permanent; and if the census counted every nonzero slot
+     * it would attribute one binary's stranded fork to EVERY later binary,
+     * each of which would then emit [UTEST-CAPTURE-REAP-DEGRADED] and be
+     * refused by the host despite having a perfectly exact census. One
+     * mid-fork death would invalidate the rest of the suite until reboot.
+     *
+     * So the owner is recorded separately, at admission, and unlink does not
+     * touch it: the census scopes to its own owner and a stranded
+     * registration degrades exactly the one run it belongs to. */
+    uint32_t utest_capture_fork_owner;
     /* Per-invocation loader evidence for THIS task. Reset by every
      * CONSTRUCTOR, so a fork descendant never presents its parent's
      * verdict -- but deliberately NOT by task_exec, which is where
@@ -1061,6 +1150,26 @@ static inline void task_utest_capture_reset(struct task *t)
      * deliberately leaves the capture latches alone (see below). */
     __atomic_store_n(&t->utest_capture_fenced, 0, __ATOMIC_RELEASE);
     __atomic_store_n(&t->utest_capture_stop_epoch, 0u, __ATOMIC_RELEASE);
+    /* The publication latch and the in-flight-fork flag clear HERE and
+     * nowhere else, for a stronger reason than the wire latches above.
+     *
+     * They are the only capture fields whose stale value fails CLOSED in a
+     * way that is invisible: a recycled slot inheriting utest_capture_reaping
+     * would have every fork by its descendants silently refused for the rest
+     * of the boot, and one inheriting utest_capture_fork_inflight would make
+     * the next reap's drain count a fork that is not running -- draining to a
+     * timeout and downgrading an otherwise exact census. Neither shows up on
+     * the wire, so neither would be caught by the framing assertions the
+     * other latches are covered by; the constructor is the one place the
+     * slot's history ends.
+     *
+     * Not atomic, unlike the latches above, because neither field is read
+     * outside pgroup_jobctl_lock -- the constructor runs before publication,
+     * so there is no concurrent reader to order against, and adding an
+     * atomic here would suggest a lock-free reader that must never exist. */
+    t->utest_capture_reaping = 0;
+    t->utest_capture_fork_inflight = 0;
+    t->utest_capture_fork_owner = 0;
 }
 #define TASK_UTEST_CAPTURE_RESET(tp) task_utest_capture_reset(tp)
 
@@ -1102,6 +1211,41 @@ void task_utest_cap_note_thread_death(struct task *t, struct thread *thr);
 
 /* Snapshot every OPEN thread of a task at a task-wide death transition. */
 void task_utest_cap_note_task_death(struct task *t);
+
+/* --- Run-boundary reap interlock (see utest_capture_reaping above) ---
+ *
+ * The reap lives in the test framework (test_usermode.c) but the state it has
+ * to interlock with is the scheduler's publication protocol, so these two
+ * calls are the seam: the launcher says WHEN, task.c owns the lock and the
+ * fields. Neither is callable from a release build.
+ *
+ * Latch a capture tree against further publication. Idempotent, monotonic,
+ * and taken under the publication lock, so on return every task_fork that
+ * has not already published a descendant of `owner_pid` is guaranteed to be
+ * refused. Does NOT wait -- forks already in flight are drained separately,
+ * because the two are different questions and only the caller knows how long
+ * it is willing to wait for the second. */
+void task_utest_capture_reap_latch(uint32_t owner_pid);
+
+/* How many capture-inheriting fork constructors are outstanding, split by
+ * whether they can still be waited on. Derived by scanning published slots
+ * under the publication lock rather than accumulated in a global, so no
+ * arithmetic survives a task's death to be stranded.
+ *
+ * Returns the LIVE count -- constructors on tasks that are still running, and
+ * therefore still going to finish. This is what the reap's drain waits for.
+ *
+ * `*stranded` (optional) receives the count on DEAD tasks. These cannot be
+ * waited on: their thread will never reach the decrement, so waiting would
+ * burn the whole bound and change nothing. They are reported rather than
+ * ignored because the distinction they destroy is the point of the interlock
+ * -- a registration on a task killed mid-constructor means a child may yet be
+ * published, so the tree is NOT frozen and the census is not exact, even
+ * though the drain has nothing left to wait on. Because the count is scoped
+ * by utest_capture_fork_owner, that degrades the ONE run it belongs to and no
+ * other. */
+uint32_t task_utest_capture_fork_pending_count(uint32_t owner_pid,
+                                               uint32_t *stranded);
 #endif
 
 /* Inherit capture ownership from parent to child unchanged -- the OPPOSITE

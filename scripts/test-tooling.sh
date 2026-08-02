@@ -17487,6 +17487,52 @@ _cap_unreaped() {
 cap_refuses "a run leaving capture-owning descendants alive is refused" \
     capture_unreaped_descendants _cap_unreaped
 
+# The degraded-drain report. Fork publication is interlocked with the reap
+# (task.c), so the survivor census is normally EXACT; this record says the
+# reap could not establish that for this run -- a fork admitted before the
+# latch was still in its constructor when the drain expired, so a descendant
+# may have published after the census walked past its slot.
+#
+# It is refused even though `live` may be zero, and THAT is the case worth
+# pinning: an inexact zero reads identically to an exact one at every
+# reporting site, which is the ambiguity the interlock exists to remove.
+_cap_reapdegraded() {
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=1 final=1 a"
+    cap_line "[UTEST-CAPTURE-REAP-DEGRADED] owner=7 pending=1 stranded=0"
+}
+cap_refuses "a reap whose publication drain expired refuses the run" \
+    capture_reap_drain_degraded _cap_reapdegraded
+
+# The STRANDED-only shape, and it is the one that must not be grammared away.
+# Inexactness has two independent causes, so `pending=0` is a perfectly legal
+# record here -- unlike PENDING and UNREAPED, whose producers guard on a
+# nonzero count. A constructor left registered on a task that died mid-fork
+# cannot be waited on, but it can still publish, so the census is not exact
+# even though the drain has nothing left to wait for.
+_cap_reapstranded() {
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE-REAP-DEGRADED] owner=7 pending=0 stranded=2"
+}
+cap_refuses "a fork stranded on a dead task refuses the run on its own" \
+    capture_reap_drain_degraded _cap_reapstranded
+
+# BOTH zero is the shape the producer cannot emit: it emits this record only
+# when the census is not exact, and exact IS pending==0 and stranded==0.
+_cap_reapdegradedzero() {
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE-REAP-DEGRADED] owner=7 pending=0 stranded=0"
+}
+cap_refuses "a degraded-reap report with nothing outstanding cannot be emitted" \
+    capture_malformed_record _cap_reapdegradedzero
+
+_cap_reapdegradedrange() {
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE-REAP-DEGRADED] owner=7 pending=4294967296 stranded=0"
+}
+cap_refuses "an over-range degraded-reap count is refused as a field, not a loss" \
+    capture_field_out_of_range _cap_reapdegradedrange
+
 # A clean run emits NEITHER record, and must stay clean. Without this the two
 # refusals above would be satisfied by a parser that refused every run.
 _cap_boundary_clean() {

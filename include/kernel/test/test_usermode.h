@@ -283,6 +283,58 @@ int test_usermode_capture_claim_settlement(struct thread *thr);
  * before their owner binding exists on the wire. */
 void test_usermode_capture_begin(uint32_t owner_pid, const char *name);
 
+/* --- The run-boundary reap's injectable world ------------------------------
+ *
+ * These two types are declared in the HEADER rather than kept private to
+ * test_usermode.c for one reason: the reap loop is otherwise undrivable. Its
+ * pure helpers were exported by section 49 and are all asserted, but the loop
+ * around them -- round cap, grace shape, publication drain, kill/terminate
+ * ordering, final census, descending cleanup -- was reachable only from a
+ * live run, and a live run cannot be made to produce the shapes that matter
+ * on demand (a descendant published inside the grace window, a fork still in
+ * flight when the tree is latched). Section 49's own post-commit audit found
+ * two real defects in that loop while every pure-helper assertion stayed
+ * green, which is what settled it: the loop takes its world as a parameter.
+ *
+ * Every member is a seam a synthetic tree substitutes. `kill` and
+ * `terminate` deliberately carry no signal number or exit code -- both are
+ * fixed by the reap and are not the loop's decision, so routing them through
+ * the seam would only let a test drive a combination the reap cannot
+ * produce. */
+struct utest_reap_ops {
+    struct task *(*get_by_pid)(uint32_t pid);
+    void         (*fence)(struct task *owner);
+    void         (*latch)(uint32_t owner_pid);
+    uint32_t     (*fork_pending)(uint32_t owner_pid, uint32_t *stranded);
+    void         (*kill)(uint32_t pid);
+    void         (*terminate)(struct task *t);
+    void         (*cleanup)(uint32_t pid);
+    uint64_t     (*now_ms)(void);
+    void         (*wait)(void);
+};
+
+/* What the reap learned, rather than only how many survived.
+ *
+ * `live` alone stopped being able to carry the answer once fork publication
+ * was interlocked with the reap: the count is normally EXACT -- a statement
+ * about the tree rather than about the walk -- but only while the drain
+ * reaches zero, and an exact zero is indistinguishable from a best-effort
+ * zero at every reporting site. Separating them is the whole point of the
+ * interlock, so the flag travels with the number. */
+struct utest_reap_result {
+    uint32_t live;           /* capture-owning descendants alive at the census */
+    uint32_t rounds;         /* kill rounds consumed (<= the reap's round cap) */
+    uint32_t drain_pending;  /* forks still in flight when the drain gave up */
+    uint32_t drain_stranded; /* registrations on tasks that died mid-constructor */
+    uint8_t  exact;          /* 1 iff nothing outstanding: `live` is a statement */
+};
+
+/* Drive the reap loop over a caller-supplied world. The live binding is
+ * internal; this shim exists for assertions only. */
+void test_usermode_capture_reap_tree_ops(uint32_t owner_pid,
+                                         const struct utest_reap_ops *ops,
+                                         struct utest_reap_result *out);
+
 #else /* !KERNEL_TESTS */
 
 /* Release flavor: src/kernel/test/ is pruned from the build, so the launcher

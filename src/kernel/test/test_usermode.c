@@ -154,6 +154,23 @@ static const char *s_filter;
 static uint32_t s_timeout_ms;
 
 /* TAP mode: 1 = emit `ok N - name` / `not ok N - name` / `1..N` plan. */
+/* A reap ended without being able to account for an in-flight fork
+ * constructor, so no further task may be CREATED in this boot's suite.
+ *
+ * Withholding cleanup contains the memory, but containment is only half the
+ * problem. An unfinished task_fork has already chosen its child slot --
+ * `child_pid = num_tasks` -- WITHOUT having published it, and the very next
+ * task_create_internal chooses `pid = num_tasks` too. Launching the next
+ * binary would hand a second constructor the same slot the first one is
+ * still writing, so a degraded reap has to stop the suite rather than merely
+ * decline to free things: the host-side refusal happens after the guest has
+ * already run, and cannot contain anything.
+ *
+ * Sticky for the rest of the run. There is no re-quiescing here -- the reap
+ * gave up precisely because it could not prove the constructor had
+ * finished -- so nothing later in the suite is entitled to clear it. */
+static int s_reap_degraded;
+
 static int s_tap_mode;
 
 /* per-test isolation: 1 = scratch dir + Registry wipe + handle-leak
@@ -3923,6 +3940,20 @@ _Static_assert(UTEST_CAPTURE_PENDING_FIXED <= UTEST_RECORD_LINE_MAX - 1u,
 _Static_assert(UTEST_CAPTURE_UNREAPED_FIXED <= UTEST_RECORD_LINE_MAX - 1u,
                "the unreaped-descendant report must fit the record wire cap");
 
+/* [UTEST-CAPTURE-REAP-DEGRADED]'s fixed cost, budgeted identically. Both
+ * counts are constructors in flight, bounded in practice by TASK_MAX threads
+ * apiece, and both are budgeted as full uint32s anyway for the same reason
+ * `live` above is: the bound belongs to the scheduler, not to this record. */
+#define UTEST_CAPTURE_REAP_DEGRADED_FIXED                                  \
+    (UTEST_LIT("[UTEST-CAPTURE-REAP-DEGRADED] owner=") + UTEST_DIGITS_U32 + \
+     UTEST_LIT(" pending=") + UTEST_DIGITS_U32 +                            \
+     UTEST_LIT(" stranded=") + UTEST_DIGITS_U32)
+_Static_assert(UTEST_CAPTURE_REAP_DEGRADED_FIXED <= UTEST_RECORD_LINE_MAX - 1u,
+               "the degraded-reap report must fit the record wire cap -- a "
+               "truncated one would reach the host as a malformed "
+               "capture-family record and refuse the run for the wrong "
+               "reason");
+
 /* The budget arithmetic, as a PURE function of the four state values --
  * no task, no globals, no lock. Split out so the state machine is unit-
  * testable on plain numbers (the caller below is the only thing that
@@ -4263,6 +4294,27 @@ static uint32_t s_capture_stop_epoch_next;
  * exhausting it is reported rather than retried. */
 #define UTEST_CAPTURE_REAP_ROUNDS 8u
 
+/* The BOUND on the publication drain -- how long the reap waits for forks
+ * that were ALREADY in flight when it latched the tree to finish their
+ * constructors (task_utest_capture_fork_pending_count, task.c).
+ *
+ * It is a different question from the grace above and gets its own number.
+ * The grace waits for a task to DIE, which is a whole cooperative teardown;
+ * this waits for a task_fork already past its admission check to reach its
+ * last line, which is a bounded stretch of straight-line kernel code with no
+ * blocking call in it. On a kernel whose dispatch is a single global
+ * current_task, the launcher yielding is the only thing that lets that
+ * forker run at all, so the number has to cover scheduling latency rather
+ * than any real work -- the same reason UTEST_CAPTURE_DRAIN_MS is sized the
+ * way it is, and the same value for the same reason.
+ *
+ * Exhausting it is NOT a timeout that proceeds anyway. It is a distinct,
+ * reported state: the census stops being exact the moment an in-flight fork
+ * may still publish, so the reap says so on the wire
+ * ([UTEST-CAPTURE-REAP-DEGRADED]) and the host refuses the run rather than
+ * accepting a survivor count that quietly went back to being best-effort. */
+#define UTEST_CAPTURE_REAP_DRAIN_MS 200u
+
 /* Scopes the run budget to ONE framed run. Called from u_frame_begin
  * beside the s_frame_records reset -- see the rationale there. */
 static void u_capture_budget_reset(void)
@@ -4462,7 +4514,7 @@ static int u_capture_descendant_of(const struct task *t, uint32_t owner_pid)
  * descendant can outlive the binary it belongs to and keep emitting into
  * whatever run is current when it next reaches klog.
  *
- * Two mechanisms, and the ORDER between them is the design:
+ * FOUR mechanisms, and the ORDER between them is the design:
  *
  *   1. Latch the OWNER's stop flag first. The claim path reads that latch
  *      from the owner's slot regardless of which task in the tree is
@@ -4474,15 +4526,28 @@ static int u_capture_descendant_of(const struct task *t, uint32_t owner_pid)
  *      bytes swallowed rather than handed to the unframed serial fallback.
  *      Doing this AFTER the kills would leave exactly the window the fence
  *      exists to remove, because the kills below yield.
- *   2. Then kill, to a FIXED POINT. A descendant can fork another
- *      capture-inheriting task while this walk yields, so one pass is a
- *      snapshot and not a fence; the scan repeats until a whole pass finds
- *      nothing live. Step 1 means the newcomers cannot emit even in the
- *      rounds before they are reached.
+ *   2. Latch PUBLICATION, which is step 1 for existence rather than for the
+ *      wire (task_utest_capture_reap_latch, task.c). While it is set, a fork
+ *      by any member of this tree is refused at admission, before it
+ *      allocates anything -- so the tree stops growing under the walk. This
+ *      is what steps 3 and 4 rest on; without it neither of them can be more
+ *      than best-effort, because task_fork publishes with num_tasks++ under
+ *      a protocol this walk does not participate in.
+ *   3. DRAIN the forks that were already in flight when step 2 landed. They
+ *      were admitted legitimately and will publish, so the reap has to wait
+ *      for them -- and has to do it BEFORE the first kill, because after
+ *      that a forker can be terminated inside its own constructor and a
+ *      later cleanup would free a slot that is still being written.
+ *   4. Then kill, to a FIXED POINT. The fixed point is now reached in one or
+ *      two rounds rather than defended against a producer racing it: nothing
+ *      new can appear. The round cap survives as a backstop, not as the
+ *      mechanism.
  *
- * Returns the number of descendants still live when the round cap ran out,
- * which is zero for every honest binary and non-zero only for a producer
- * forking faster than the launcher can reap.
+ * Reports the number of descendants still live after the last round -- zero
+ * for every honest binary -- and, separately, whether that number is EXACT.
+ * It is exact whenever the drain reached zero, which is every case except a
+ * fork that outlasted UTEST_CAPTURE_REAP_DRAIN_MS; there the reap says so
+ * rather than presenting a snapshot as a statement.
  *
  * Reaping is not only about the wire. task_terminate_remote marks a task
  * DEAD and runs the shared death-transition teardown, but stacks, CR3,
@@ -4490,13 +4555,19 @@ static int u_capture_descendant_of(const struct task *t, uint32_t owner_pid)
  * barrier -- and the launcher cleaned up only the top-level pid, so repeated
  * runs with outliving descendants leaked kernel resources whose framing was
  * otherwise perfectly healthy. */
-static uint32_t u_capture_reap_tree(uint32_t owner_pid)
+
+/* The loop's world is a PARAMETER, not the kernel it happens to run on.
+ * struct utest_reap_ops / struct utest_reap_result (include/kernel/test/
+ * test_usermode.h) carry the full rationale and are declared there because
+ * the assertions that drive a synthetic tree need them too; what follows is
+ * the LIVE binding of that world. */
+
+/* Latch the owner's wire fence. Kept as an op rather than inlined so a test
+ * can assert the ORDER that matters -- the fence is set before any kill, so a
+ * descendant reached in a later round was already unable to emit. */
+static void u_reap_live_fence(struct task *owner)
 {
-    struct task *owner = task_get_by_pid(owner_pid);
-    uint32_t round;
-    uint32_t live = 0;
-    uint32_t pid;
-    struct task *t;
+    uint64_t irq_flags;
 
     /* MONOTONICITY COMES FROM THE STORES, NOT FROM THE LOCK, and the
      * distinction matters: a reader who believes the lock is the protection
@@ -4511,9 +4582,7 @@ static uint32_t u_capture_reap_tree(uint32_t owner_pid)
      * inside it and keeping the write under the same lock costs nothing on a
      * once-per-binary path and leaves no reader observing a value the lock
      * was supposed to order. */
-    if (owner) {
-        uint64_t irq_flags;
-
+    {
         spin_lock_irqsave(&s_capture_budget_lock, &irq_flags);
         __atomic_store_n(&owner->utest_capture_stopped, 1u, __ATOMIC_RELEASE);
         /* The fence is latched ALONGSIDE the stop, not instead of it: the
@@ -4529,19 +4598,142 @@ static uint32_t u_capture_reap_tree(uint32_t owner_pid)
         __atomic_store_n(&owner->utest_capture_fenced, 1u, __ATOMIC_RELEASE);
         spin_unlock_irqrestore(&s_capture_budget_lock, irq_flags);
     }
+}
+
+static void u_reap_live_kill(uint32_t pid)
+{
+    (void)signal_send(pid, SIGKILL);
+}
+
+static void u_reap_live_terminate(struct task *t)
+{
+    task_terminate_remote(t, TASK_EXIT_UTEST_REAPED);
+}
+
+static const struct utest_reap_ops u_reap_ops_live = {
+    task_get_by_pid,
+    u_reap_live_fence,
+    task_utest_capture_reap_latch,
+    task_utest_capture_fork_pending_count,
+    u_reap_live_kill,
+    u_reap_live_terminate,
+    task_cleanup,
+    u_uptime_ms,
+    yield,
+};
+
+/* Wait out the fork constructors that were already admitted for this owner.
+ *
+ * Returns the count still LIVE when it gave up (0 on a clean drain) and, via
+ * `stranded`, the registrations on tasks that died mid-constructor -- those
+ * can never reach their release, so waiting on them would burn the whole
+ * bound and change nothing.
+ *
+ * The deadline is a bound, not a duration: it re-checks the condition first
+ * and leaves the moment it is met, the same shape the grace wait uses. */
+static uint32_t u_reap_drain(uint32_t owner_pid,
+                             const struct utest_reap_ops *ops,
+                             uint32_t *stranded)
+{
+    uint64_t deadline = ops->now_ms() + (uint64_t)UTEST_CAPTURE_REAP_DRAIN_MS;
+    uint32_t pending;
+
+    for (;;) {
+        pending = ops->fork_pending(owner_pid, stranded);
+        if (pending == 0 || ops->now_ms() >= deadline)
+            break;
+        ops->wait();
+    }
+    return pending;
+}
+
+/* Fence and reap one binary's capture-owning descendant tree, over an
+ * injectable world. See u_capture_reap_tree below for the live entry point
+ * and struct utest_reap_ops above for why the world is a parameter. */
+static void u_capture_reap_tree_ops(uint32_t owner_pid,
+                                    const struct utest_reap_ops *ops,
+                                    struct utest_reap_result *out)
+{
+    struct task *owner = ops->get_by_pid(owner_pid);
+    uint32_t round;
+    uint32_t live = 0;
+    uint32_t pid;
+    struct task *t;
+    uint32_t pending = 0;
+    uint32_t stranded = 0;
+
+    out->live = 0;
+    out->rounds = 0;
+    out->drain_pending = 0;
+    out->drain_stranded = 0;
+    out->exact = 0;
+
+    if (owner)
+        ops->fence(owner);
+
+    /* PUBLICATION LATCH, and it is a different fence from the one above.
+     *
+     * The fence stops the tree TALKING; this stops it GROWING. Until it
+     * existed the reap could only ever take a census: it walks the task table
+     * while task_fork publishes into that table with num_tasks++ under a
+     * protocol the reap did not participate in, so a descendant published in
+     * the instant after the terminal walk passed its slot was missed
+     * entirely -- and missed while `live == 0` suppressed the report, which
+     * is the worst shape the miss could take. Latching first means every
+     * later fork by any member of this tree is refused at admission
+     * (task_utest_fork_admit, task.c) before it allocates anything.
+     *
+     * Ordered before the drain, not after: draining first would be draining
+     * against a tree that is still allowed to add to itself, which never
+     * terminates on a producer that forks in a loop. */
+    ops->latch(owner_pid);
+
+    /* DRAIN, and it runs BEFORE the first kill rather than before the census.
+     *
+     * The forks it waits for were admitted before the latch went up, so they
+     * are entitled to publish and the reap must see them. Waiting here rather
+     * than just before the census is what keeps that safe: after the kills
+     * begin, a forker can be terminated in the middle of its own constructor,
+     * and a reap that then cleaned up the half-built child would be freeing a
+     * slot another CPU is still writing. Before any kill, every in-flight
+     * fork is guaranteed to finish on its own.
+     *
+     * The deadline is a bound, not a duration -- like the grace below, this
+     * re-checks the condition and leaves the moment it is met. */
+    pending = u_reap_drain(owner_pid, ops, &stranded);
+    out->drain_pending = pending;
+    out->drain_stranded = stranded;
+    /* EXACTNESS IS RECORDED HERE AND NOWHERE ELSE. Past this point the tree
+     * is frozen if and only if NOTHING is outstanding: no new fork can be
+     * admitted (the latch), none is still running (the drain), and none was
+     * left registered on a task that died inside its constructor.
+     *
+     * The third term is not the same as the second and cannot be waited out.
+     * A constructor whose task is already DEAD will never reach its release,
+     * so the drain rightly stops waiting on it -- but it may still publish,
+     * which is exactly the thing the interlock exists to rule out. Waiting
+     * would burn the bound and prove nothing; ignoring it would launder an
+     * unfrozen tree into an exact census. Reporting it is the only honest
+     * option left.
+     *
+     * Either way everything below still runs: leaving descendants alive is
+     * strictly worse than reporting an inexact count. What changes is only
+     * whether the number gets to be called a statement. */
+    out->exact = (pending == 0 && stranded == 0) ? 1u : 0u;
 
     for (round = 0; round < UTEST_CAPTURE_REAP_ROUNDS; round++) {
         uint64_t grace;
 
+        out->rounds = round + 1u;
         live = 0;
-        for (pid = 0; (t = task_get_by_pid(pid)) != (struct task *)0; pid++) {
+        for (pid = 0; (t = ops->get_by_pid(pid)) != (struct task *)0; pid++) {
             if (!u_capture_descendant_of(t, owner_pid) ||
                 t->state == TASK_DEAD)
                 continue;
             /* Cooperative first, exactly as the top-level wait does: a
              * descendant that reaches a kernel entry runs its own unwind and
              * sets its own exit status. */
-            signal_send(pid, SIGKILL);
+            ops->kill(pid);
             live++;
         }
         if (live == 0)
@@ -4554,19 +4746,19 @@ static uint32_t u_capture_reap_tree(uint32_t owner_pid)
          * UTEST_CAPTURE_REAP_ROUNDS rounds is seconds of wall clock added
          * to each binary for nothing. This is the shape the top-level wait
          * already uses -- re-check the condition, then the clock. */
-        grace = u_uptime_ms() + (uint64_t)UTEST_CAPTURE_REAP_GRACE_MS;
+        grace = ops->now_ms() + (uint64_t)UTEST_CAPTURE_REAP_GRACE_MS;
         for (;;) {
             uint32_t still = 0;
 
-            for (pid = 0; (t = task_get_by_pid(pid)) != (struct task *)0;
+            for (pid = 0; (t = ops->get_by_pid(pid)) != (struct task *)0;
                  pid++) {
                 if (u_capture_descendant_of(t, owner_pid) &&
                     t->state != TASK_DEAD)
                     still++;
             }
-            if (still == 0 || u_uptime_ms() >= grace)
+            if (still == 0 || ops->now_ms() >= grace)
                 break;
-            yield();
+            ops->wait();
         }
 
         /* Forceful fallback for whatever the signal could not land on -- a
@@ -4574,42 +4766,90 @@ static uint32_t u_capture_reap_tree(uint32_t owner_pid)
          * reason the top-level path states: task dispatch uses a single
          * global current_task, so no other CPU can be dispatching these
          * tasks while this launcher thread is the one running. */
-        for (pid = 0; (t = task_get_by_pid(pid)) != (struct task *)0; pid++) {
+        for (pid = 0; (t = ops->get_by_pid(pid)) != (struct task *)0; pid++) {
             if (!u_capture_descendant_of(t, owner_pid) ||
                 t->state == TASK_DEAD)
                 continue;
-            task_terminate_remote(t, TASK_EXIT_UTEST_REAPED);
+            ops->terminate(t);
         }
     }
 
     /* FINAL CENSUS, and it is not the same number the loop was tracking.
      * `live` above counts what each KILL pass found, so it describes the
      * state before that pass's kills and grace -- reporting it would name
-     * survivors that are now dead, and, worse, a descendant published just
-     * after the terminal pass walked past its slot would be missed entirely
-     * while `live == 0` suppressed the report. Re-counting once, after the
-     * last round, is what makes the returned number an actual statement
-     * about the tree rather than about the loop. */
+     * survivors that are now dead. Re-counting once, after the last round, is
+     * what makes the returned number describe the tree rather than the loop.
+     *
+     * It is now also EXACT rather than best-effort, and that is the interlock
+     * above rather than anything in this walk. Before the latch and the
+     * drain, a descendant published just after this pass walked past its slot
+     * was missed entirely -- and missed silently, because `live == 0`
+     * suppressed the report. With publication refused and no fork in flight,
+     * the set this walk enumerates is the set that exists, which is why
+     * `exact` is carried out to the caller alongside the number: on the one
+     * path where the drain gave up, this reverts to being a snapshot and the
+     * caller must not present it as anything more. */
+    /* DRAIN A SECOND TIME, and this one is what usually rescues the run.
+     *
+     * The first drain can expire for a mundane reason: a task preempted
+     * inside task_fork only runs again when this launcher yields, and before
+     * the kill rounds the launcher has not yielded yet. The rounds below DO
+     * yield -- that is what the grace wait is -- so by now that constructor
+     * has almost certainly finished. Re-asking converts the common case from
+     * a permanently degraded census into an exact one, instead of punishing a
+     * run for the order in which the scheduler happened to interleave it.
+     *
+     * It can only ever improve the answer: the latch has been up since before
+     * the first drain, so nothing new can have been admitted in between. */
+    if (!out->exact) {
+        pending = u_reap_drain(owner_pid, ops, &stranded);
+        out->drain_pending = pending;
+        out->drain_stranded = stranded;
+        out->exact = (pending == 0 && stranded == 0) ? 1u : 0u;
+    }
+
     live = 0;
-    for (pid = 0; (t = task_get_by_pid(pid)) != (struct task *)0; pid++) {
+    for (pid = 0; (t = ops->get_by_pid(pid)) != (struct task *)0; pid++) {
         if (u_capture_descendant_of(t, owner_pid) && t->state != TASK_DEAD)
             live++;
     }
+    out->live = live;
+
+    /* CONTAIN RATHER THAN PROCEED when the drain never settled.
+     *
+     * Freeing is the one step that cannot be taken back. A constructor still
+     * running holds pointers into slots this pass would release -- its own,
+     * its parent's -- so cleaning up underneath it trades a bounded leak for
+     * a use-after-free, and does it in the exact situation where the reap has
+     * already admitted it does not know what is running. Leaking task slots
+     * is the strictly safer failure: the run is refused host-side either way
+     * ([UTEST-CAPTURE-REAP-DEGRADED]), so nothing is salvaged by tidying up
+     * and something irreversible is risked.
+     *
+     * The kill rounds above still ran. Stopping a descendant from executing
+     * is safe under a live constructor in a way that freeing its memory is
+     * not, and leaving descendants running would be its own failure. */
+    if (!out->exact)
+        return;
 
     /* Reap highest pid first. Task slots are allocated monotonically, so a
      * child always holds a higher pid than the parent it forked from, and
      * descending order is therefore children-first -- the direction a tree
      * teardown has to run in for a parent's release not to precede a child
      * that still refers to it. */
-    for (pid = 0; task_get_by_pid(pid) != (struct task *)0; pid++)
+    for (pid = 0; ops->get_by_pid(pid) != (struct task *)0; pid++)
         ;
     while (pid-- > 0) {
-        t = task_get_by_pid(pid);
+        t = ops->get_by_pid(pid);
         if (u_capture_descendant_of(t, owner_pid) && t->state == TASK_DEAD)
-            task_cleanup(pid);
+            ops->cleanup(pid);
     }
+}
 
-    return live;
+/* The live entry point: the same reap, bound to the real kernel. */
+static void u_capture_reap_tree(uint32_t owner_pid, struct utest_reap_result *out)
+{
+    u_capture_reap_tree_ops(owner_pid, &u_reap_ops_live, out);
 }
 
 /* Announce that this run SPAWNED a capture-owning binary.
@@ -7845,15 +8085,48 @@ static void u_run_one(const char *name, utest_type_t type,
      * the owner's stop latch, so what is at stake is kernel resources, not
      * the wire. */
     {
-        uint32_t unreaped = u_capture_reap_tree((uint32_t)pid);
+        struct utest_reap_result reap;
 
-        if (unreaped)
+        u_capture_reap_tree((uint32_t)pid, &reap);
+
+        if (reap.live)
             utest_record_log(LOG_WARN,
                              "[UTEST-CAPTURE-UNREAPED] owner=%u live=%u",
-                             (uint64_t)pid, (uint64_t)unreaped);
-    }
+                             (uint64_t)pid, (uint64_t)reap.live);
+        /* The degraded drain gets its OWN record rather than a field on the
+         * one above, and is emitted even when `live` is zero -- which is the
+         * whole point. An inexact zero is indistinguishable from an exact
+         * zero at the reporting site and means something entirely different:
+         * a fork was still in flight when the reap gave up waiting, so a
+         * descendant may have published after the census walked past its
+         * slot. Folding it into UNREAPED would suppress it in exactly that
+         * case, because UNREAPED is emitted only when the count is non-zero.
+         *
+         * The host refuses on it (utest-capture.py). That is deliberate: the
+         * run's survivor accounting is unverifiable, and a run whose
+         * accounting is unverifiable is not a clean run. */
+        if (!reap.exact) {
+            /* Sticky, and it stops the SUITE rather than only this binary --
+             * see s_reap_degraded: the unfinished constructor already owns
+             * the slot the next task_create_internal would take. */
+            s_reap_degraded = 1;
+            utest_record_log(LOG_WARN,
+                             "[UTEST-CAPTURE-REAP-DEGRADED] owner=%u pending=%u "
+                             "stranded=%u",
+                             (uint64_t)pid, (uint64_t)reap.drain_pending,
+                             (uint64_t)reap.drain_stranded);
+        }
 
-    task_cleanup((uint32_t)pid);
+        /* The OWNER's cleanup is withheld on the same grounds the reap
+         * withholds its descendants'. A fork constructor still in flight for
+         * this owner reads the parent slot it is copying from, and the reap
+         * has just said it cannot account for that constructor; freeing the
+         * owner underneath it is the one mistake that cannot be undone. The
+         * slot leaks, the run is refused, and nothing that is still running
+         * has the ground pulled out from under it. */
+        if (reap.exact)
+            task_cleanup((uint32_t)pid);
+    }
 
     /* Close color scope: subsequent klog lines (the launcher's own
      * `[UTEST] <name>: PASS/FAIL` and the cleanup WARNs) still route
@@ -8564,6 +8837,7 @@ void test_usermode_run(void)
          * Seeded before the phases so no RUN entry executes past it, which
          * is what a smoke non-PASS means everywhere else in this loop. */
         int smoke_failed = plan.smoke_refused;
+        int infra_fatal = 0;
         int phase;
         for (phase = 0; phase < 2 && !smoke_failed; phase++) {
             int want_smoke = (phase == 0);
@@ -8607,6 +8881,17 @@ void test_usermode_run(void)
                 total_ran++;
                 u_run_one(e->name, e->type, &tap_point, counters, &rt,
                           &verdict, e->content_digest);
+                if (s_reap_degraded) {
+                    /* Infrastructure-fatal, and it fast-fails for a STRONGER
+                     * reason than the smoke gate below. A smoke failure means
+                     * a prerequisite is broken; this means the launcher does
+                     * not know whether a fork constructor is still running,
+                     * and the next binary would be created into the slot that
+                     * constructor already claimed. Continuing is not a
+                     * reporting problem, it is a corruption. */
+                    infra_fatal = 1;
+                    break;
+                }
                 if (want_smoke && verdict != 0) {
                     /* Fast-fail is IMMEDIATE, per the gate's own spec:
                      * stop right here rather than after the rest of the
@@ -8619,6 +8904,8 @@ void test_usermode_run(void)
                     break;
                 }
             }
+            if (infra_fatal)
+                break;
             if (smoke_failed && want_smoke) {
                 /* One smoke non-PASS aborts the whole suite: skip phase 1.
                  * The abort is ANNOUNCED below, outside this loop, not in
@@ -8630,7 +8917,7 @@ void test_usermode_run(void)
                 break;
             }
         }
-        suite_aborted = smoke_failed;
+        suite_aborted = smoke_failed || infra_fatal;
     }
 
     /* Completeness reconciliation, for EVERY run and not only aborted
@@ -8678,9 +8965,20 @@ void test_usermode_run(void)
     /* Abort announcement -- unconditionally reachable, because it lives
      * outside the phase loop that every abort path breaks out of. */
     if (suite_aborted) {
+        /* NAME THE CAUSE. Both abort routes reach this one announcement, and
+         * hard-coding "smoke failed" made a degraded reap -- an unaccounted
+         * fork constructor, i.e. possible task-slot corruption -- arrive at
+         * CI as a smoke-gate failure that never happened. The two want
+         * opposite responses (fix the prerequisite vs. investigate the
+         * scheduler), so the artifacts must not blur them. The host matches
+         * on `suite ABORT` / `Bail out!` and never on the cause text, so
+         * naming it costs nothing downstream. */
+        const char *abort_cause = s_reap_degraded ? "reap degraded"
+                                                  : "smoke failed";
+
         utest_record_log(LOG_ERROR,
-             "suite ABORT (smoke failed) -- skipping %u non-smoke binaries",
-             (uint64_t)not_run);
+             "suite ABORT (%s) -- skipping %u remaining binaries",
+             abort_cause, (uint64_t)not_run);
         /* TAP contract: if the plan `1..N` was emitted but we will not
          * produce N results, emit a `Bail out!` record so TAP consumers
          * (scripts/test.sh, kselftest-style runners, CI parsers) treat the
@@ -8688,8 +8986,8 @@ void test_usermode_run(void)
          * Codex quality Phase-2, 2026-04-20. */
         if (s_tap_mode) {
             utest_record_log(LOG_INFO,
-                 "Bail out! smoke failed -- %u non-smoke binaries skipped",
-                 (uint64_t)not_run);
+                 "Bail out! %s -- %u remaining binaries skipped",
+                 abort_cause, (uint64_t)not_run);
             /* Bail-out is TERMINAL in TAP: no further points and no plan
              * may follow it. Recorded so the trailing plan at the bottom
              * of this function stays suppressed. */
@@ -9636,6 +9934,20 @@ int test_usermode_capture_descendant_of(const struct task *t,
                                         uint32_t owner_pid)
 {
     return u_capture_descendant_of(t, owner_pid);
+}
+
+/* The reap LOOP, exported for the reason its selection predicate was -- only
+ * more so. The predicate at least ran on every live reap; the loop's
+ * interesting states (a descendant appearing inside the grace window, a fork
+ * still in flight at the latch, a producer that outlasts the round cap) are
+ * ones a healthy run never reaches, so without this shim they were verified
+ * by inspection alone. Every call goes through the caller's ops, so nothing
+ * here can touch the real task table. */
+void test_usermode_capture_reap_tree_ops(uint32_t owner_pid,
+                                         const struct utest_reap_ops *ops,
+                                         struct utest_reap_result *out)
+{
+    u_capture_reap_tree_ops(owner_pid, ops, out);
 }
 
 /* Test-only snapshot/install of the RUN-wide capture accounting, taken
