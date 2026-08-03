@@ -2713,15 +2713,19 @@ Retention classifies every record and then destroys the losers in a second loop,
 
 **Test checkpoint:** a record whose blocker appears between classification and destruction survives with its contents intact; a detach interrupted mid-prune is restored or reported on the next pass and never silently dropped; every currently-passing retention fixture is unaffected. Test on: host tooling only (no QEMU dependency).
 
-> **Test runner:** `bash scripts/test-tooling.sh` -- 1275/1275 expected (12 added here: rewritten L26e, p34, p35, p35b, p36, seven p37 mutations, p37b). Host tooling only; no QEMU, no kernel build.
+> **Test runner:** `bash scripts/test-tooling.sh` -- 1282/1282 expected (19 added here: rewritten L26e, p34, p35, p35b, p36, seven p37 mutations, p37b, p38, p39, p40, p41, p42, p42b, p42c). Host tooling only; no QEMU, no kernel build.
 
 > **Notes:**
 > - Shipped `utest_prune_verified` (record detach-then-revalidate with rollback), `utest_prune_reap` (crash reaper, publishes `UTEST_PRUNE_CLAIMED`) and `utest_ptr_overflow` in `scripts/test.sh`.
 > - The age loop replaced its bare `rm -rf` with that helper, stopped being a pipeline subshell, and runs oldest-first with held records skipped before the quota is charged.
 > - Downstream: the pointer sweep gained an UNEXAMINED answer, `utest_lease_acquire` bounds its own write/rename/tests, and `utest_identity_binds` binds all twelve fields instead of three.
-> - Four Codex design rounds produced 15 [high] findings, all accepted; each item above records the alternative that was rejected and why.
+> - Four Codex design rounds produced 15 [high] findings and the review pipeline a further 12, all accepted; each item above records the alternative that was rejected and why.
+> - Destruction is marked fail-closed: `mkdir "$claim/.deleting"` gates the `rm -rf`, so a crash mid-delete is quarantined rather than republished as a whole record, and a symlinked claim root is never followed.
 > - Canonical doc: [docs/testing/usermode-output-formats.md](../../docs/testing/usermode-output-formats.md) retention section.
-> - Scope boundary: the retained-directory-descriptor residual is documented, not closed; no rename closes it in bash.
+> - Scope boundary: the retained-directory-descriptor residual is documented, not closed; no rename closes it in bash, and the extra processes a detach costs over a bare `rm -rf` are the deliberate price of rollback.
+> **Verified:** 2026-08-03 | commit `670678a2` + review fixes | 8/9 items (1 parked) | build OK | 28326 kernel + 17 user-mode tests pass | 1282/1282 tooling | lint 0 errors | 11 mechanisms mutation-verified, each caught by exactly its regression
+> **Deferred:** [M] a record whose lease census can NEVER complete is held uncapped forever (reason: converging it means destroying a record the pass could not classify, which is an operator policy decision, not an implementation) -> XREF: 00-infrastructure/TODO-04-usermode-test-framework.md §62 (item: "PARKED -- converge the `C` hold, so a record whose lease census can NEVER complete stops holding disk forever" at line 2708)
+> **Quality reviewed:** 2026-08-03 | Codex 12x (design x4, adversarial x2, consistency, perf, re-adversarial x4) | 23H+9M+0L fixed, 1 open | scope: N/A (host bash tooling -- no kernel, boot, desktop, shell or user-mode surface)
 
 
 ## OS Comparison

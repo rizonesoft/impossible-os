@@ -15517,6 +15517,81 @@ RUN_ID=20260105T000000Z-1-aaaa' 2>&1)"
                 "$UAR_P41 | leg1=$([ -f "$UAR_PDIR/build/test-results-leg1.run" ] && echo kept || echo gone) leg2=$([ -f "$UAR_PDIR/build/test-results-leg2.run" ] && echo kept || echo gone)"
         fi
 
+        # (p42) a claim interrupted DURING the recursive delete is quarantined,
+        #       never restored. `rm -rf` is not atomic, so a run killed part way
+        #       through leaves a claim holding exactly one grammar-conforming
+        #       directory -- byte-identical in SHAPE to a clean detach that never
+        #       started deleting, and utterly different in CONTENT: the record may
+        #       now carry a complete marker naming result artifacts that are
+        #       already gone. Restoring that republishes a torn record under its
+        #       own name, which is worse than either outcome this section chooses
+        #       between. The `.deleting` sibling is what tells the two apart, and
+        #       it is written before the first byte goes.
+        uar_prune_reset
+        uar_prune_ptr valid 20260102T000000Z-1-aaaa
+        rm -rf "$UAR_PDIR/build/test-runs/20260102T000000Z-1-aaaa"
+        mkdir -p "$UAR_PDIR/build/test-runs/.utest-prune.999.4.d/20260102T000000Z-1-aaaa"
+        # A HALF-DELETED record: the marker survived, the payload did not.
+        printf '{}\n' > "$UAR_PDIR/build/test-runs/.utest-prune.999.4.d/20260102T000000Z-1-aaaa/record-complete.json"
+        : > "$UAR_PDIR/build/test-runs/.utest-prune.999.4.d/.deleting"
+        UAR_P42="$(uar_prune_run 'UTEST_RECORD_KEEP=20' 2>&1)"
+        if printf '%s' "$UAR_P42" | grep -q 'HARNESS-OK' &&
+           printf '%s' "$UAR_P42" | grep -q 'PARTIALLY DESTROYED' &&
+           [ -f "$UAR_PDIR/build/test-runs/.utest-prune.999.4.d/20260102T000000Z-1-aaaa/record-complete.json" ] &&
+           [ ! -d "$UAR_PDIR/build/test-runs/20260102T000000Z-1-aaaa" ] &&
+           [ -f "$UAR_PDIR/build/test-results-valid.run" ]; then
+            t_pass "run record: a claim interrupted mid-delete is quarantined, not republished as a whole record"
+        else
+            t_fail "run record: a claim interrupted mid-delete is quarantined, not republished as a whole record" "$UAR_P42"
+        fi
+
+        # (p42b) the OTHER side of the mark, and the one that decides whether it
+        #        is a safety mechanism or a permanent leak. A run can die -- or
+        #        its `rmdir` can fail -- in the window AFTER the record's last
+        #        byte is gone and BEFORE the mark is cleared, leaving a claim
+        #        whose only child is `.deleting`. Read as partial destruction
+        #        that state is unrecoverable: every later reap fails to rmdir the
+        #        non-empty claim, re-quarantines it, and prints a manual-review
+        #        warning forever about a record that no longer exists. The mark
+        #        says the delete STARTED; the missing record child says it
+        #        FINISHED, so the claim is simply collected.
+        uar_prune_reset
+        mkdir -p "$UAR_PDIR/build/test-runs/.utest-prune.999.5.d/.deleting"
+        UAR_P42B="$(uar_prune_run 'UTEST_RECORD_KEEP=20' 2>&1)"
+        if printf '%s' "$UAR_P42B" | grep -q 'HARNESS-OK' &&
+           [ ! -d "$UAR_PDIR/build/test-runs/.utest-prune.999.5.d" ] &&
+           ! printf '%s' "$UAR_P42B" | grep -q 'PARTIALLY DESTROYED'; then
+            t_pass "run record: a claim left holding only the deletion mark is collected, not quarantined forever"
+        else
+            t_fail "run record: a claim left holding only the deletion mark is collected, not quarantined forever" "$UAR_P42B"
+        fi
+
+        # (p42c) a SYMLINKED claim root is never followed. `[ -d ]` follows
+        #        symlinks, so a hand-made `.utest-prune.*.d` link satisfied the
+        #        claim test and every path built from it resolved through it --
+        #        the completed-deletion branch would `rmdir` an external
+        #        `.deleting` that no prune ever created, and the restore would
+        #        `mv` an external directory INTO RUNS_DIR and publish it as a run
+        #        record. The escape is the intermediate component, so checking
+        #        the leaf is not enough. The external fixture must survive
+        #        untouched and the claim must be reported.
+        uar_prune_reset
+        UAR_P42C_EXT="$UAR_TMP/outside-runs-dir"
+        rm -rf "$UAR_P42C_EXT"
+        mkdir -p "$UAR_P42C_EXT/.deleting"
+        ln -s "$UAR_P42C_EXT" "$UAR_PDIR/build/test-runs/.utest-prune.999.6.d"
+        UAR_P42D="$(uar_prune_run 'UTEST_RECORD_KEEP=20' 2>&1)"
+        if printf '%s' "$UAR_P42D" | grep -q 'HARNESS-OK' &&
+           printf '%s' "$UAR_P42D" | grep -q 'is a SYMLINK' &&
+           [ -d "$UAR_P42C_EXT/.deleting" ] &&
+           [ -L "$UAR_PDIR/build/test-runs/.utest-prune.999.6.d" ]; then
+            t_pass "run record: a symlinked prune claim is reported and never followed out of the runs directory"
+        else
+            t_fail "run record: a symlinked prune claim is reported and never followed out of the runs directory" \
+                "$UAR_P42D | external=$([ -d "$UAR_P42C_EXT/.deleting" ] && echo intact || echo DESTROYED)"
+        fi
+        rm -f "$UAR_PDIR/build/test-runs/.utest-prune.999.6.d"
+
         # (L26f) the STAGING namespace, positively. L26d's `.abcd.tmp` is a
         #     regular FILE, and the staging reaper unlinks it before the hold
         #     pass ever looks -- so every positive fixture used `*.lease` and

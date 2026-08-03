@@ -1702,13 +1702,48 @@ utest_prune_verified() {
     if [ "${UTEST_SWEEP_STUCK:-0}" = "0" ]; then
         utest_hold_blocking_dirs "$staged/leases" "" '*.lease' '.*.tmp'
         if [ "${UTEST_DIRBLOCK_N:-0}" = "0" ]; then
-            rm -rf -- "$staged" 2>/dev/null || true
-            if [ ! -e "$staged" ] && [ ! -L "$staged" ]; then
-                rmdir -- "$claim" 2>/dev/null || true
-                return 0
+            # MARK THE CLAIM AS DELETING BEFORE THE FIRST BYTE GOES, because
+            # `rm -rf` is NOT atomic and a crash part way through leaves exactly
+            # the shape utest_prune_reap treats as a detach to restore: one
+            # grammar-conforming directory inside a claim. The next run would
+            # then REPUBLISH a truncated record -- potentially a complete marker
+            # naming result artifacts that are already gone, which is worse than
+            # either outcome this section exists to choose between. The mark is a
+            # SIBLING of the record inside the claim, so the recursive delete
+            # cannot remove it, and it is cleared only once the record is provably
+            # gone. A claim still carrying it is quarantined, never restored.
+            #
+            # A DIRECTORY, created with `mkdir`, and THE DELETE DOES NOT RUN
+            # UNLESS IT SUCCEEDED. A `> file` redirection was the first cut and
+            # is wrong twice over: its failure was swallowed by `|| true`, so
+            # ENOSPC or a permission change left the recursive delete running
+            # UNMARKED and a later crash then republished the truncated record --
+            # exactly the corruption the mark exists to prevent -- and a
+            # redirection FOLLOWS a symlink, so a raced entry at that name could
+            # point the mark somewhere else entirely. `mkdir` is atomic, refuses
+            # an existing name, and never follows. Failing to mark is therefore a
+            # refusal to DELETE, not a reason to delete anyway: the record falls
+            # through to the restore path below and survives to the next pass.
+            if mkdir -- "$claim/.deleting" 2>/dev/null; then
+                rm -rf -- "$staged" 2>/dev/null || true
+                if [ ! -e "$staged" ] && [ ! -L "$staged" ]; then
+                    rmdir -- "$claim/.deleting" 2>/dev/null || true
+                    rmdir -- "$claim" 2>/dev/null || true
+                    return 0
+                fi
+                # `rm -rf` did not finish, so the record is PARTIAL. It must not
+                # be put back either: a torn record republished under its own
+                # name is what the mark exists to prevent, and restoring it here
+                # would do that immediately rather than one pass later. It stays
+                # quarantined, its id is published so its pointer survives, and a
+                # human decides.
+                UTEST_PRUNE_CLAIMED="${UTEST_PRUNE_CLAIMED:-} $old"
+                printf 'test.sh: record %s was PARTIALLY destroyed and is quarantined at %s (needs manual review)\n' \
+                    "$old" "$staged" >&2
+                return 1
             fi
-            # `rm -rf` did not actually finish. Fall through and put it back
-            # rather than report a destruction that did not happen.
+            printf 'test.sh: could not mark %s for deletion -- record %s is left intact\n' \
+                "$claim" "$old" >&2
         fi
     fi
     # KEEP: restore the record WHOLE, and refuse rather than clobber.
@@ -1765,10 +1800,25 @@ utest_prune_verified() {
 #
 # RUNS BEFORE pin discovery, so the pin and the sweep both see a settled set.
 utest_prune_reap() {
-    local dir="$1" d name child n
+    local dir="$1" d name recnames child n
     UTEST_PRUNE_STUCK=0
     UTEST_PRUNE_CLAIMED=""
     for d in "$dir"/.utest-prune.*.d; do
+        # A SYMLINKED CLAIM ROOT IS NEVER TRAVERSED. `[ -d ]` FOLLOWS symlinks,
+        # so a hand-made `.utest-prune.*.d` link pointing anywhere at all would
+        # satisfy it and every path built from `$d` below would then resolve
+        # through it: `rmdir "$d/.deleting"` would remove a directory OUTSIDE
+        # RUNS_DIR that no prune ever touched, and the restore's
+        # `mv -fT "$d/$name"` would move an external directory INTO RUNS_DIR and
+        # publish it as a run record. Checking the leaf is not enough -- the
+        # escape is the intermediate component. Nothing in production creates a
+        # symlink here (claims arrive by `mkdir`), so its presence is hand-made
+        # and it is reported and kept, never followed and never removed.
+        if [ -L "$d" ]; then
+            UTEST_PRUNE_STUCK=$(( UTEST_PRUNE_STUCK + 1 ))
+            printf 'test.sh: prune claim %s is a SYMLINK -- not followed, not collected (needs manual review)\n' "$d" >&2
+            continue
+        fi
         [ -d "$d" ] || continue
         # An empty claim is a crash between the `mkdir` and the `mv`, or a
         # completed destruction whose `rmdir` did not land. Either way there is
@@ -1779,13 +1829,67 @@ utest_prune_reap() {
         # counted too -- a claim holding a stray dotfile beside the record is not
         # the shape a detach leaves, and restoring from it would move a record
         # out from under an object nobody classified.
-        name=""; n=0
+        # Record names are tracked SEPARATELY from the last-seen child, because
+        # the two globs run in order and `"$d"/.*` comes second: with a
+        # `.deleting` mark present, a single `name` variable ends up holding THAT
+        # rather than the record, and the quarantine branch below then publishes
+        # no id -- so the record's pointer is swept as dangling by the very pass
+        # that just promised to preserve it. Counting stays over ALL children (a
+        # stray entry beside the record is not the shape a detach leaves).
+        #
+        # `recnames` collects EVERY grammar-conforming directory child, not the
+        # last one the glob happened to visit. A single variable was the first
+        # cut and picks one child by glob ORDER, with no evidence it is the
+        # detached record: a claim that somehow holds two record-shaped
+        # directories would then protect one arbitrary id while the pointer for
+        # the record that was actually being destroyed is swept as dangling. For
+        # an unresolvable claim the conservative answer is to protect every
+        # plausible id -- the cost is a pointer kept slightly too long, against a
+        # generation lost outright.
+        name=""; recnames=""; n=0
         for child in "$d"/* "$d"/.*; do
             case "${child##*/}" in '.'|'..'|'*'|'.*') continue ;; esac
             [ -e "$child" ] || [ -L "$child" ] || continue
             n=$(( n + 1 ))
             name="${child##*/}"
+            if [ -d "$child" ] && [ ! -L "$child" ]; then
+                case "$name" in
+                    .deleting|*[!A-Za-z0-9._-]*) ;;
+                    *) recnames="$recnames $name" ;;
+                esac
+            fi
         done
+        # A CLAIM MARKED `.deleting` IS NEVER RESTORED. Its record was part way
+        # through a non-atomic `rm -rf` when the run died, so the directory left
+        # behind has the exact shape of a clean detach while its CONTENTS are
+        # arbitrary -- a complete marker may now name result artifacts that are
+        # already gone. Republishing that is worse than either outcome this
+        # section chooses between, so it is quarantined and reported. The id is
+        # still published, so the record's pointer survives for the human who
+        # resolves it.
+        # A CLAIM WHOSE ONLY CHILD IS THE MARK IS A COMPLETED DELETION, not a
+        # partial one. The mark says the delete STARTED; the absence of the
+        # record child says it FINISHED. That state is reached whenever a run
+        # dies -- or its `rmdir` fails -- in the window between the last byte of
+        # the record going and the mark being cleared, and treating it as
+        # partial destruction leaked the claim permanently AND printed a
+        # manual-review warning on every later run about a record that was
+        # already gone. `rmdir` on the mark is what makes this safe rather than
+        # a guess: it refuses if anything is inside, so a mark that is somehow
+        # not empty falls through to the quarantine below instead.
+        if [ "$n" -eq 1 ] && [ "$name" = ".deleting" ] && \
+           [ -d "$d/.deleting" ] && [ ! -L "$d/.deleting" ]; then
+            if rmdir -- "$d/.deleting" 2>/dev/null; then
+                rmdir -- "$d" 2>/dev/null || true
+                continue
+            fi
+        fi
+        if [ -e "$d/.deleting" ] || [ -L "$d/.deleting" ]; then
+            UTEST_PRUNE_CLAIMED="$UTEST_PRUNE_CLAIMED$recnames"
+            UTEST_PRUNE_STUCK=$(( UTEST_PRUNE_STUCK + 1 ))
+            printf 'test.sh: PARTIALLY DESTROYED record quarantined at %s -- not restored (needs manual review)\n' "$d" >&2
+            continue
+        fi
         if [ "$n" -eq 1 ] && [ -d "$d/$name" ]; then
             case "$name" in
                 ''|.|..|*[!A-Za-z0-9._-]*) ;;
@@ -2025,7 +2129,7 @@ utest_lease_reclaimable() {
 # rather than by arithmetic -- see the branch below for why neither clamping it
 # nor deleting it outright is safe.
 utest_record_live_leases() {
-    local rec="$1" now="$2" ttl="$3" dir f seen live=0 rcl
+    local rec="$1" now="$2" ttl="$3" dir f seen live=0 rcl lease_tmo
     dir="$RUNS_DIR/$rec/leases"
     [ -d "$dir" ] || { printf '0\n'; return 0; }
     # ABANDONED STAGING first. An acquisition killed between writing
@@ -2046,9 +2150,40 @@ utest_record_live_leases() {
     # `rm -f` fails silently on a DIRECTORY at one of these names, exactly as it
     # did at a lease name before section 53. It is reported and held by the same
     # policy, from utest_prune_records, which passes `.*.tmp` beside `*.lease`.
+    # THE DEADLINE COVERS THIS LOOP TOO, and is checked BEFORE the enumeration
+    # rather than only inside the lease walk below. The staging reap runs first,
+    # so a record holding many `.*.tmp` entries -- or one `rm` stalled on an
+    # unresponsive mount -- used to consume unbounded time under the retention
+    # mutex before the first deadline test was ever reached, which left exactly
+    # the denial-of-service path the per-record bound was added to close. Each
+    # removal is bounded for the same reason: an unbounded `rm` inside a bounded
+    # loop is still unbounded. Returning non-zero gives the record the `C` hold,
+    # which is what an incomplete census is supposed to mean.
+    # Sets `lease_tmo` to what this operation may spend: min(5, remaining), or 5
+    # when no deadline is published. A FLAT five seconds was the first cut and
+    # reopened the very path it was added to close -- with one second of budget
+    # left it could hold the retention mutex four seconds PAST the deadline, and
+    # acquisition caps its own budget below the ten seconds the next acquirer
+    # waits precisely so that cannot happen.
+    utest_lease_deadline_ok() {
+        lease_tmo=5
+        case "${UTEST_ACQ_DEADLINE:-}" in
+            ''|*[!0-9]*) return 0 ;;
+        esac
+        lease_tmo=$(( UTEST_ACQ_DEADLINE - SECONDS ))
+        [ "$lease_tmo" -ge 1 ] || return 1
+        [ "$lease_tmo" -le 5 ] || lease_tmo=5
+        return 0
+    }
+    utest_lease_deadline_ok || return 1
     for f in "$dir"/.*.tmp; do
         [ -e "$f" ] || [ -L "$f" ] || continue
-        rm -f -- "$f" 2>/dev/null || true
+        utest_lease_deadline_ok || return 1
+        # A FAILED REAP IS AN INCOMPLETE CENSUS, not a silent pass. `|| true`
+        # here let a timed-out or refused removal be followed by a successful
+        # count, so a staging file that was never reclaimed produced a clean
+        # answer and the record was admitted to the age cut on it.
+        timeout "$lease_tmo" rm -f -- "$f" 2>/dev/null || return 1
     done
     for f in "$dir"/*.lease; do
         [ -e "$f" ] || [ -L "$f" ] || continue
@@ -2314,11 +2449,16 @@ utest_lease_acquire() {
     # which is the exact failure this bound was added to close, merely divided by
     # four. utest_acq_tmo derives a fresh bound and refuses at zero, so the
     # budget is consumed rather than replayed.
+    # ASSIGNS `acq_tmo` rather than echoing it, so the three call sites cost no
+    # forks. Echoing through `$( )` spawned a subshell per filesystem operation
+    # on the SUCCESS path -- the path every conforming reader pays while holding
+    # the retention mutex -- purely to hand back one integer the caller could
+    # have been given directly.
     utest_acq_tmo() {
-        local left=$(( UTEST_ACQ_DEADLINE - SECONDS ))
-        [ "$left" -ge 1 ] || return 1
-        [ "$left" -le 5 ] || left=5
-        printf '%s\n' "$left"
+        acq_tmo=$(( UTEST_ACQ_DEADLINE - SECONDS ))
+        [ "$acq_tmo" -ge 1 ] || return 1
+        [ "$acq_tmo" -le 5 ] || acq_tmo=5
+        return 0
     }
     # AND EVERY CLEANUP IS BOUNDED TOO, on the same filesystem that just failed to
     # respond. An unbounded `rm -f` on the refusal path is the same wedge as an
@@ -2350,7 +2490,7 @@ utest_lease_acquire() {
     # it, so a child inheriting fd 8 and outliving its parent keeps the retention
     # mutex held. `timeout` kills the child it spawned, not that child's own
     # descendants, so the inheritance matters precisely on the paths that time out.
-    acq_tmo="$(utest_acq_tmo)" || { utest_retention_unlock; return 1; }
+    utest_acq_tmo || { utest_retention_unlock; return 1; }
     # The document is built in-shell FIRST and only the write is bounded.
     # utest_lease_doc_for is a pure `printf` with no filesystem access, so
     # rendering it costs nothing that could stall; wrapping the function itself
@@ -2373,7 +2513,7 @@ utest_lease_acquire() {
     # reconciliation exists to make sure the refusal does not leave a PUBLISHED
     # lease behind. Withdrawing a lease that did land is the same act the
     # post-publication deadline check below performs for the same reason.
-    acq_tmo="$(utest_acq_tmo)" || { utest_acq_rm "$tmp"; utest_retention_unlock; return 1; }
+    utest_acq_tmo || { utest_acq_rm "$tmp"; utest_retention_unlock; return 1; }
     if ! timeout "$acq_tmo" mv -fT -- "$tmp" "$path" 2>/dev/null; then
         utest_acq_rm "$tmp"
         utest_acq_rm "$path"
@@ -2388,7 +2528,7 @@ utest_lease_acquire() {
     # BOUNDED for the reason the write and the rename are, and a bound that
     # expires is treated exactly as "not whole": both are refusals, which is the
     # direction this function already takes whenever it cannot establish a fact.
-    acq_tmo="$(utest_acq_tmo)" || { utest_acq_rm "$path"; utest_retention_unlock; return 1; }
+    utest_acq_tmo || { utest_acq_rm "$path"; utest_retention_unlock; return 1; }
     if ! timeout "$acq_tmo" bash -c 'exec 8>&-; [ -d "$1" ] && [ -f "$1/record-complete.json" ]' \
             _ "$rec" 2>/dev/null; then
         utest_acq_rm "$path"
@@ -3037,7 +3177,14 @@ utest_prune_records() {
         # disk bound most needs reclaimed are the oldest, so they are served
         # first and each pass makes monotonic progress without a persisted
         # cursor.
-        age_cands="$(printf '%s\n' "$all_records" | tail -n +$(( keep + 1 )) | tac)"
+        # NOTHING TO PRUNE COSTS NOTHING. The common startup has fewer records
+        # than `keep`, and materialising the candidate list anyway spent a `tail`
+        # and a `tac` on every single invocation to discover it was empty. The
+        # count is already in hand from the enumeration above.
+        age_cands=""
+        if [ "$(printf '%s' "$all_records" | grep -c . || true)" -gt "$keep" ] 2>/dev/null; then
+            age_cands="$(printf '%s\n' "$all_records" | tail -n +$(( keep + 1 )) | tac)"
+        fi
         # A POSITIVE QUANTUM PER ATTEMPT, and a per-pass cap derived from it.
         # `timeout 0` DISABLES the timeout in GNU coreutils, so a naive
         # remaining/remaining share silently becomes "no bound at all" the moment
@@ -3084,8 +3231,21 @@ utest_prune_records() {
             case " ${UTEST_PRUNE_CLAIMED:-} " in
                 *" $old "*) continue ;;
             esac
-            # The pass is bounded in COUNT and in TIME, and both are checked
-            # before an attempt starts rather than after one overruns.
+            # The pass is bounded in COUNT and in ELAPSED TIME, and the elapsed
+            # check is made BEFORE and AFTER each attempt.
+            #
+            # BEFORE-only was the shape this shipped with, and it does not bound
+            # what it claims: `utest_prune_verified` takes no deadline argument
+            # and its `mkdir`/`mv`/`rm -rf`/`rmdir` are not individually bounded,
+            # so a single attempt on a stalled mount runs as long as it runs and
+            # the loop simply never gets to test the clock again. The after-check
+            # cannot preempt an attempt already in flight -- nothing in bash can,
+            # short of running the whole detach under `timeout`, which would put
+            # the destructive half in a child that could be killed between the
+            # rename and the verdict -- so what is honestly bounded here is the
+            # number of ATTEMPTS and the elapsed time BETWEEN them. That is
+            # stated rather than implied, because "UTEST_AGE_BUDGET seconds" read
+            # as a wall-clock cap on the whole pass, and it is not one.
             [ "$age_n" -lt "$age_budget" ] || break
             [ $(( age_budget - ( SECONDS - age_t0 ) )) -ge 1 ] || break
             age_n=$(( age_n + 1 ))
@@ -3099,6 +3259,10 @@ utest_prune_records() {
             # holds on an object no longer reachable by that name, and restores
             # the record WHOLE when they fire.
             utest_prune_verified "$old"
+            # AFTER the attempt as well, for the reason the pin loop checks once
+            # more past its own loop: a prediction made before an operation is
+            # not evidence about the operation that followed it.
+            [ $(( age_budget - ( SECONDS - age_t0 ) )) -ge 1 ] || break
         done <<< "$age_cands"
     } || true
     fi

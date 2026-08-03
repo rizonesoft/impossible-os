@@ -961,7 +961,11 @@ in the age candidates -- otherwise `leases/` would only ever grow. **The
 worst-case directory size is therefore `UTEST_RECORD_KEEP` +
 `UTEST_POINTER_PIN_MAX` + `UTEST_LEASE_MAX` records** (20 + 64 + 8 by default,
 less any overlap), not `UTEST_RECORD_KEEP` alone. Those three are the CAPPED
-holds. Four further holds are uncapped by design and sit outside that sum: an
+holds. That sum is the STEADY state, not an instantaneous ceiling: the age cut
+attempts at most `UTEST_AGE_BUDGET` records per pass, so a corpus that grew
+faster than one run can reclaim sits above the sum until later passes drain it.
+Each pass takes the OLDEST candidates first, so the backlog shrinks
+monotonically rather than being reshuffled. Four further holds are uncapped by design and sit outside that sum: an
 unresolved sweep claim, a directory at a lease or lease-staging name, a record
 whose lease census could not be completed, and a record still held in an
 unresolved PRUNE claim. Each is fail-closed -- the
