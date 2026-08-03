@@ -639,12 +639,17 @@ utest_read_doc() {
     if [ "$rc" -eq 3 ]; then return 1; fi
     if [ "$rc" -ne 0 ]; then return 2; fi
     [ "${#raw}" -le "$cap" ] || return 1
-    # Trailing newlines go LAST, AFTER the length has been taken from the raw
-    # capture -- stripping first is what made the pair need a separate `wc -c`
-    # at all. One re-capture rather than a `${raw%$'\n'}` loop, which is
-    # quadratic on a document that is mostly newlines (the same shape
-    # utest_norm_bound bounds its own strip loop against).
-    case "$raw" in *$'\n') raw="$(printf '%s' "$raw")" ;; esac
+    # NO TRAILING-NEWLINE STRIP HERE, deliberately. The length was taken from
+    # the RAW capture above, which is the whole reason the sentinel exists; the
+    # normalisation itself is then free, because every caller reads this through
+    # a command substitution and `$( )` strips trailing newlines on its own.
+    # An earlier cut did the strip internally with a conditional re-capture,
+    # which cost one fork for EVERY canonical document -- every one of them ends
+    # in a newline -- to produce a result the caller's own substitution produced
+    # anyway. The perf review measured the shipped pipeline at 16-21% faster
+    # than the `wc`-then-`head` pair rather than the 6.7x a microbenchmark of
+    # the read alone suggested, and named this fork as the one avoidable part of
+    # the difference.
     printf '%s\n' "$raw"
     return 0
 }

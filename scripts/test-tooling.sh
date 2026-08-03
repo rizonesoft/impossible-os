@@ -12338,7 +12338,7 @@ fi
 #     counts a failure, still marks the format published, or is still
 #     protected from the later no-summary branch.
 UAR_FNS=""
-for _fn in utest_xml_identity_attrs utest_json_identity utest_xml_identity_props \
+for _fn in utest_xml_identity_attrs utest_identity_doc_for utest_json_identity utest_xml_identity_props \
            utest_publish utest_alias_record utest_publish_leg_set \
            utest_blocking_dir \
            utest_leg_pointer_doc_for utest_leg_pointer_doc utest_publish_leg_pointer \

@@ -929,7 +929,15 @@ TTL ceiling, or whose holder is provably gone, in every record rather than only
 in the age candidates -- otherwise `leases/` would only ever grow. **The
 worst-case directory size is therefore `UTEST_RECORD_KEEP` +
 `UTEST_POINTER_PIN_MAX` + `UTEST_LEASE_MAX` records** (20 + 64 + 8 by default,
-less any overlap), not `UTEST_RECORD_KEEP` alone. `UTEST_LEASE_MAX=0` disables
+less any overlap), not `UTEST_RECORD_KEEP` alone. Those three are the CAPPED
+holds. Three further holds are uncapped by design and sit outside that sum: an
+unresolved sweep claim, a directory at a lease or lease-staging name, and a
+record whose lease census could not be completed. Each is fail-closed -- the
+pass could not establish that the record is free, so it keeps it and says so on
+stdout -- and each is therefore bounded by how many such records exist rather
+than by a knob. A `build/` accumulating them is reporting a real problem
+(a stalled mount, or something writing directories where files belong), not
+drifting quietly. `UTEST_LEASE_MAX=0` disables
 leases outright. Should a non-conforming reader exceed the cap anyway, the
 newest `UTEST_LEASE_MAX` leased records are held and the pruner SAYS how many it
 did not hold -- a disk bound that silently discarded grants would be the same
@@ -949,11 +957,22 @@ and names exactly which documents the record contains; check it before
 trusting any of them:
 
 ```json
-{ "schema": "utest-run-record-v1", "run_id": "...", "status": "complete",
-  "qemu_pid": 12345, "qemu_state": "reaped",
-  "xml": "test-results.xml", "json": "test-results.json",
-  "identity": "test-run-identity.json" }
+{
+  "schema": "utest-run-record-v1",
+  "run_id": "...",
+  "status": "complete",
+  "qemu_pid": 12345,
+  "qemu_state": "reaped",
+  "xml": "test-results.xml",
+  "json": "test-results.json",
+  "identity": "test-run-identity.json"
+}
 ```
+
+That is the LAYOUT as written, not a pretty-printing of it: retention validates a
+marker against these exact ten lines before letting it pin a record, so a
+reformatted document with the same field set wins no pin. Consumers are
+unaffected -- step 3 above parses the marker and has never byte-matched it.
 
 `status` is `complete` once both formats have had their chance to assemble;
 an exit before that point records `incomplete`, and an absent marker means the
