@@ -546,12 +546,74 @@ utest_norm_bound() {
 # still parsed as its predecessor. The cost of losing that race is seconds and
 # a sweep on the next pass, which is what the timeout guarantees.
 utest_pointer_run_id() {
-    local id
-    id="$(timeout 5 sed -n 's/.*"run_id"[[:space:]]*:[[:space:]]*"\([A-Za-z0-9._-]\{1,\}\)".*/\1/p' \
-          "$1" 2>/dev/null | head -1)"
-    case "$id" in
-        ''|.*) return 0 ;;
-    esac
+    local body id rest rc tmo
+    # The SAME enumerated bound utest_pointer_pin_id takes, and for its reason:
+    # `[ 08 -ge 1 ]` is base 8 and aborts under `set -e`, and a value outside
+    # 1..5 is either a caller bug or an attempt to lengthen a bound that exists
+    # to be short. Defaulting keeps every existing one-argument caller unchanged.
+    tmo="${2:-5}"
+    case "$tmo" in 1|2|3|4|5) ;; *) tmo=5 ;; esac
+    # THROUGH utest_read_doc, so an UNEXAMINED read is TOLD APART from a document
+    # carrying no run id. This used to be `timeout 5 sed ... | head -1`, whose
+    # status is `head`'s: a killed or failed `sed` and a pointer with no `run_id`
+    # both yielded the empty string, utest_ptr_sweepable read that as "dangling"
+    # and AUTHORISED the unlink -- so the sweep destroyed precisely the pointer it
+    # could not examine, and the record that pointer would have pinned aged out on
+    # the pass after. A persistent EIO or an unreadable regular file failed the
+    # selection and the detached recheck alike, so section 46's detach-then-
+    # reverify did not save it either. Section 61 established the vocabulary
+    # (utest_read_doc returns 2 for UNEXAMINED and every consumer routes it
+    # conservatively); this is the same rule applied to the one remaining
+    # destructive path that still lacked it.
+    rc=0
+    body="$(utest_read_doc "$1" 4096 "$tmo")" || rc=$?
+    if [ "$rc" -eq 2 ]; then return 2; fi
+    # utest_read_doc's 1 COLLAPSES TWO CLASSIFICATIONS, and the sweep must treat
+    # them oppositely, so they are told apart here under a bound.
+    #
+    # "Not a regular file" is a real classification and has always authorised the
+    # sweep -- a FIFO or a directory swapped in mid-parse is removed on sight,
+    # which is the outcome section 52 added the type test for and section 46's
+    # detached recheck re-confirms before anything is unlinked.
+    #
+    # "Larger than the 4096-byte cap" is NOT. The documented JSON resolver has no
+    # such limit, and the `sed` pipeline this function replaces had none either,
+    # so an oversized but perfectly valid pointer naming a live record used to be
+    # KEPT. Reporting its read as "no run id" would sweep it and expose its
+    # record to the next age cut -- an existing destructive outcome silently
+    # changed by a refactor whose stated intent was to leave the sweep's
+    # tolerance exactly where it was.
+    #
+    # The discriminating test runs INSIDE a timeout for the reason section 61
+    # deleted the bare metadata tests: on the one actor a stat cannot be made
+    # cheap against -- a stalled mount -- an unbounded `[ -f ]` here would wedge
+    # the sweep while it holds the retention mutex. A test that cannot complete
+    # is not a classification either, so it keeps the pointer.
+    if [ "$rc" -ne 0 ]; then
+        if timeout "$tmo" bash -c '[ -f "$1" ] && [ ! -L "$1" ]' _ "$1" 2>/dev/null; then
+            return 2
+        fi
+        return 0
+    fi
+    [ -n "$body" ] || return 0
+    # DELIBERATELY TOLERANT of whitespace around the colon, matching the `sed`
+    # regex this replaces. The sweep is WEAKER than the pin on purpose -- it asks
+    # merely "does this name a record that still exists", because deleting a
+    # pointer destroys something a human may have put there -- so binding it to
+    # utest_pointer_pin_id's exact canonical spelling would make the sweep start
+    # DESTROYING hand-written pointers it has always kept. Extraction is in-shell
+    # from the ONE snapshot, never by re-opening the file, for the reason the pin
+    # states: re-reading validates one version and extracts from another.
+    case "$body" in *'"run_id"'*) ;; *) return 0 ;; esac
+    rest="${body#*\"run_id\"}"
+    rest="${rest#"${rest%%[![:space:]]*}"}"
+    case "$rest" in :*) ;; *) return 0 ;; esac
+    rest="${rest#:}"
+    rest="${rest#"${rest%%[![:space:]]*}"}"
+    case "$rest" in \"*) ;; *) return 0 ;; esac
+    rest="${rest#\"}"
+    id="${rest%%\"*}"
+    case "$id" in ''|.*|*[!A-Za-z0-9._-]*) return 0 ;; esac
     printf '%s\n' "$id"
     return 0
 }
@@ -569,11 +631,72 @@ utest_pointer_run_id() {
 # Same code runs for selection and for the binding recheck on the detached
 # object, so the two cannot drift into disagreeing about what is dangling.
 utest_ptr_sweepable() {
-    local path="$1" id
+    local path="$1" id rc
     if [ -L "$path" ] || [ ! -f "$path" ]; then return 0; fi
-    id="$(utest_pointer_run_id "$path")"
-    if [ -z "$id" ] || [ ! -d "$RUNS_DIR/$id" ]; then return 0; fi
+    # TRI-STATE, because two of the three answers used to be spelled the same
+    # way. 0 = destroy it, 1 = leave it alone, 2 = UNEXAMINED, which is neither a
+    # verdict nor a candidate: the read that would have classified this pointer
+    # never completed, so nothing is known about it and no caller may unlink it.
+    # Both consumers already route a non-zero the conservative way -- the
+    # selection at the sweep skips it, and utest_sweep_verified restores the
+    # detached object on any non-zero recheck -- so the preservation falls out of
+    # returning the third answer rather than out of new branches at each site.
+    rc=0
+    id="$(utest_pointer_run_id "$path")" || rc=$?
+    if [ "$rc" -eq 2 ]; then return 2; fi
+    [ -n "$id" ] || return 0
+    # A record awaiting restoration from a prune claim is PRESENT, not absent.
+    # Its canonical directory is legitimately gone while the claim holds it, and
+    # answering "dangling" here would delete the pointer to a record the reaper
+    # is about to put back -- so the record would return with no pointer and no
+    # pin, and the next age cut would take it. UTEST_PRUNE_CLAIMED carries the
+    # ids the claim reaper could not resolve; it is empty on every path that does
+    # not prune, so this costs nothing outside retention. Spelled with `:-`
+    # because the tooling suite extracts this function standalone under `set -u`,
+    # where a global declared outside a body never reaches the fixture -- the
+    # same reason utest_sweep_verified self-initialises UTEST_SWEEP_SEQ.
+    case " ${UTEST_PRUNE_CLAIMED:-} " in
+        *" $id "*) return 1 ;;
+    esac
+    [ -d "$RUNS_DIR/$id" ] || return 0
     return 1
+}
+
+# Overflow-convergence verdict for one leg pointer: 0 = destroy it, 1 = leave it.
+#
+# Deliberately does NOT ask whether the pointer resolves, which is the entire
+# difference from utest_ptr_sweepable and the reason it is a separate function
+# rather than a flag on that one. Convergence is invoked only when the pointer
+# NAMESPACE has outgrown its bound, and at that point a valid pointer is exactly
+# as much of a problem as an invalid one -- the bound is on the count. Folding
+# this into the sweep verdict would silently widen what the ORDINARY sweep
+# destroys, which is the policy this file is most careful about.
+#
+# It still refuses everything that is not a plain regular file: a directory
+# cannot be unlinked and is reported by utest_blocking_dir, and a symlink is the
+# ordinary sweep's business (it removes one on sight) rather than this one's.
+utest_ptr_overflow() {
+    local path="$1" id rc
+    if utest_blocking_dir "$path"; then return 1; fi
+    if [ -L "$path" ] || [ ! -f "$path" ]; then return 1; fi
+    # THE PRUNE-CLAIM PROTECTION APPLIES HERE TOO. Convergence is allowed to
+    # destroy a pointer that still resolves -- that is the whole point when the
+    # bound is on the count -- but a record awaiting restoration from a claim is
+    # a different case: its canonical directory is absent only because this
+    # harness moved it, and stripping its pointer means it returns with neither
+    # pointer nor pin and ages out. That is a permanent loss to satisfy a bound
+    # the record is not even responsible for, and it silently contradicts the
+    # fail-closed promise the claim is reported under. An UNEXAMINED read is
+    # non-authorising for the same reason it is in the ordinary sweep.
+    rc=0
+    id="$(utest_pointer_run_id "$path")" || rc=$?
+    if [ "$rc" -eq 2 ]; then return 1; fi
+    if [ -n "$id" ]; then
+        case " ${UTEST_PRUNE_CLAIMED:-} " in
+            *" $id "*) return 1 ;;
+        esac
+    fi
+    return 0
 }
 
 # ONE bounded read of document $1, capped at $2 bytes, under a $3-second bound.
@@ -701,26 +824,107 @@ utest_identity_binds() {
         esac
         val="${line#  \"$key\": }"
         val="${val%"$sep"}"
+        # EVERY FIELD IS BOUND TO ITS OWN CONTRACT, none to a shared "some
+        # scalar" grammar. The nine fields below used to fall through to a
+        # catch-all that accepted any quoted string in the emitted charset, any
+        # bare integer or any bare boolean -- "some value, do not care". Section
+        # 61 replaced exactly that shape in utest_marker_binds after the design
+        # review showed a shared scalar grammar admits `"xml": ".."`, a value the
+        # documented resolver must reject; the identity document had the same
+        # exposure, in the fields that say WHICH machine and WHICH configuration
+        # produced the record.
+        #
+        # RETROACTIVELY SAFE, which is the question that kept this out of section
+        # 61. Records written by earlier versions of the harness are still on disk
+        # and still pinned, so tightening a validator can refuse them after the
+        # fact. It does not here: the `schema` pin already gates the LAYOUT to
+        # `utest-run-identity-v1`, and every value below is emitted by
+        # utest_identity_doc_for from a source this file charset-filters at the
+        # point of capture (test.sh:3789-3845). So the only documents these
+        # grammars newly refuse are ones this harness would not have written --
+        # and the consequence of a refusal is losing a PIN, after which the record
+        # ages out on the ordinary path. That is the recoverable direction and
+        # exactly how a malformed identity already behaves; no migration is owed.
         case "$key" in
             schema) [ "$val" = '"utest-run-identity-v1"' ] || return 1 ; continue ;;
             run_id) [ "$val" = "\"$want_id\"" ] || return 1 ; continue ;;
             leg)    [ "$val" = "\"$want_leg\"" ] || return 1 ; continue ;;
+            # The EXACT shape `date -u +%Y-%m-%dT%H:%M:%SZ` emits (test.sh:440).
+            # A free string here would let a pinned record claim an unorderable
+            # timestamp, and the timestamp is how a human tells two generations
+            # of the same leg apart.
+            timestamp)
+                case "$val" in
+                    '"'[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]Z'"') ;;
+                    *) return 1 ;;
+                esac ; continue ;;
+            # `unknown`, or a lower-case hex SHA optionally marked `-dirty`
+            # (test.sh:3789-3798). Hex is asserted rather than assumed: this is
+            # the field a reader uses to map a record back to a tree.
+            commit)
+                case "$val" in
+                    '"unknown"') ;;
+                    '"'*'"')
+                        val="${val#\"}"; val="${val%\"}"
+                        val="${val%-dirty}"
+                        case "$val" in ''|*[!a-f0-9]*) return 1 ;; esac ;;
+                    *) return 1 ;;
+                esac ; continue ;;
+            # A CLOSED enumeration -- the three values test.sh:2962/3849/3859 can
+            # assign. It records how much to trust `leg`, so an unrecognised
+            # value is not a lesser answer, it is no answer.
+            leg_source)
+                case "$val" in
+                    '"underived"'|'"derived"'|'"derived+override"') ;;
+                    *) return 1 ;;
+                esac ; continue ;;
+            # `unknown`, `wsl2`, or the lower-cased `uname -s` filtered to
+            # [a-z0-9] at test.sh:3838-3841.
+            host)
+                case "$val" in
+                    '"'*'"')
+                        val="${val#\"}"; val="${val%\"}"
+                        case "$val" in ''|*[!a-z0-9]*) return 1 ;; esac ;;
+                    *) return 1 ;;
+                esac ; continue ;;
+            # `uname -n` filtered to [A-Za-z0-9._-] at test.sh:3844, and a
+            # basename filtered the same way at test.sh:3834. Deliberately the
+            # widest two, because both are genuinely open values -- but neither
+            # may be empty, and neither may carry the `:` or `+` the old shared
+            # charset allowed, which is what let a value impersonate a
+            # structured field.
+            hostname|qemu)
+                case "$val" in
+                    '"'*'"')
+                        val="${val#\"}"; val="${val%\"}"
+                        case "$val" in ''|*[!A-Za-z0-9._-]*) return 1 ;; esac ;;
+                    *) return 1 ;;
+                esac ; continue ;;
+            # The accelerators this file can assign (test.sh:3804-3805) plus the
+            # Windows-side one the matrix uses, and `unknown` before Step 0b has
+            # run. Closed, for leg_source's reason.
+            accel)
+                case "$val" in
+                    '"unknown"'|'"kvm"'|'"tcg"'|'"whpx"') ;;
+                    *) return 1 ;;
+                esac ; continue ;;
+            # JSON integer grammar, which is NOT "digits-only": a leading zero is
+            # a parse error, so `"cpus": 02` would be a document this validator
+            # called bound and a real resolver could not read. Accepting it would
+            # pin a generation no consumer can resolve, which is the exact waste
+            # the pin exists to avoid. A zero CPU count is not a run.
+            cpus)
+                case "$val" in
+                    ''|*[!0-9]*) return 1 ;;
+                    0|0?*) return 1 ;;
+                esac ; continue ;;
+            # A BARE boolean, never the strings "true"/"false": the emitter
+            # writes it unquoted (test.sh:3011) and a quoted spelling is a
+            # different JSON value to every real parser.
+            ci_parity)
+                case "$val" in true|false) ;; *) return 1 ;; esac ; continue ;;
         esac
-        case "$val" in
-            true|false) ;;
-            '"'*'"')
-                val="${val#\"}"
-                val="${val%\"}"
-                case "$val" in *[!A-Za-z0-9._:+-]*) return 1 ;; esac ;;
-            *)
-                # JSON integer grammar, which is NOT "digits-only": a leading
-                # zero is a parse error, so `"cpus": 02` would be a document
-                # this validator called bound and a real resolver could not
-                # read. Accepting it would pin a generation no consumer can
-                # resolve, which is the exact waste the pin exists to avoid.
-                case "$val" in ''|*[!0-9]*) return 1 ;; esac
-                case "$val" in 0?*) return 1 ;; esac ;;
-        esac
+        return 1
     done <<< "$body"
     [ "$n" -eq 14 ] || return 1
     return 0
@@ -1425,6 +1629,189 @@ utest_sweep_reap() {
     return 0
 }
 
+# Destroy age candidate $1 through a DETACHED directory, never through its
+# published name. 0 = the record is gone, 1 = it was kept.
+#
+# The RECORD-level twin of utest_sweep_verified, and it exists for that helper's
+# reason one level up. Retention classifies every record and then destroys the
+# losers in a second loop, so the two are not one operation: the writer of a
+# blocking directory is by definition not participating in the retention mutex,
+# so it can appear between the verdict and the `rm -rf` and be deleted
+# recursively by a run that has already announced such things are never removed.
+# Section 53 narrowed that window to a syscall pair with a pre-delete recheck; a
+# recheck DETECTS the race, it does not close it. Selecting by name and then
+# destroying through an object nothing else can reach by name is what closes it.
+#
+# THE CLAIM IS FIXED-LENGTH and the record keeps its OWN basename INSIDE it.
+# Encoding the record name into the claim component instead cannot fit: a record
+# name near NAME_MAX already fills a component under RUNS_DIR, so the prefix
+# would push it over and claim creation would fail persistently -- defeating the
+# recovery it was meant to enable. A side file naming the record would reintroduce
+# a crash window before that name is durable. An unchanged basename under a
+# fixed-length wrapper needs neither: utest_prune_reap recovers the name by
+# reading the sole child.
+#
+# ROLLBACK IS THE POINT, which is why this is a detach and not a forward unlink
+# loop over the entries a producer is known to write. Such a loop cannot restore:
+# once the marker and the documents are unlinked, an unexpected entry appearing
+# part way through leaves the blocker preserved and the RECORD destroyed, which
+# is precisely inverted from the policy -- and the inventory it would need is not
+# closed either (qemu.pid, runslice, capture.json, xmlsrc and the staging temps
+# all live in a record, and a future emitter adding one more would wedge
+# retention at ENOTEMPTY forever). Detaching first means the whole record is
+# still there to put back.
+#
+# ONE RESIDUAL, stated rather than papered over: a process that opened or `cd`'d
+# into the record BEFORE the rename keeps its descriptor afterwards and can
+# create a blocker through it after the recheck. No rename can close that, so the
+# guarantee here is PATHNAME replacement -- what is destroyed is the object this
+# function detached and re-examined, not whatever a retained descriptor added to
+# it afterwards. Closing it properly would require every writer to take the
+# retention mutex, which is exactly what a non-conforming writer does not do.
+utest_prune_verified() {
+    local old="$1" claim staged n
+    claim=""
+    for n in 1 2 3 4 5; do
+        # Sanitise then force base 10, and self-initialise, for the two reasons
+        # utest_sweep_verified spells out: this name is ENVIRONMENT-INHERITABLE
+        # and `$(( 08 + 1 ))` is a shell ABORT rather than a wrong answer, and a
+        # global declared outside a body never reaches the tooling fixture.
+        case "${UTEST_PRUNE_SEQ:-}" in ''|*[!0-9]*) UTEST_PRUNE_SEQ=0 ;; esac
+        UTEST_PRUNE_SEQ=$(( 10#$UTEST_PRUNE_SEQ + 1 ))
+        if mkdir -- "$RUNS_DIR/.utest-prune.$$.$UTEST_PRUNE_SEQ.d" 2>/dev/null; then
+            claim="$RUNS_DIR/.utest-prune.$$.$UTEST_PRUNE_SEQ.d"
+            break
+        fi
+    done
+    # No claim means nothing was detached and the record is untouched.
+    [ -n "$claim" ] || return 1
+    staged="$claim/$old"
+    if ! mv -fT -- "$RUNS_DIR/$old" "$staged" 2>/dev/null; then
+        rmdir -- "$claim" 2>/dev/null || true
+        # Gone under us IS the outcome asked for; still present means the detach
+        # simply failed and the record stays a candidate for a later pass.
+        if [ -e "$RUNS_DIR/$old" ] || [ -L "$RUNS_DIR/$old" ]; then return 1; fi
+        return 0
+    fi
+    # RE-TAKE the fail-closed holds on the DETACHED directory. These are the two
+    # a non-conforming writer can create, and therefore the two the mutex does
+    # not already cover -- a conforming acquirer cannot publish a lease mid-prune
+    # because utest_lease_acquire takes this same mutex. Both are the SILENT
+    # forms: the classification pass reported these paths already.
+    utest_sweep_reap "$staged/leases"
+    if [ "${UTEST_SWEEP_STUCK:-0}" = "0" ]; then
+        utest_hold_blocking_dirs "$staged/leases" "" '*.lease' '.*.tmp'
+        if [ "${UTEST_DIRBLOCK_N:-0}" = "0" ]; then
+            rm -rf -- "$staged" 2>/dev/null || true
+            if [ ! -e "$staged" ] && [ ! -L "$staged" ]; then
+                rmdir -- "$claim" 2>/dev/null || true
+                return 0
+            fi
+            # `rm -rf` did not actually finish. Fall through and put it back
+            # rather than report a destruction that did not happen.
+        fi
+    fi
+    # KEEP: restore the record WHOLE, and refuse rather than clobber.
+    #
+    # `mkdir` is the atomic no-clobber claim, exactly as in utest_sweep_verified:
+    # it FAILS when the name is occupied, so a record published onto that name
+    # while this one was detached is never replaced. Only once it succeeds does
+    # the rename run, and it is then replacing OUR OWN known-empty directory. A
+    # writer that lands entries in that directory first makes `mv -fT` refuse with
+    # ENOTEMPTY -- verified, `-f` does not override it -- so the newcomer's
+    # entries survive and this copy stays in its claim. An `[ -e ]` test ahead of
+    # the rename would promise none of that: a creator landing in the gap has its
+    # object replaced without either verdict seeing it.
+    if mkdir -- "$RUNS_DIR/$old" 2>/dev/null; then
+        if mv -fT -- "$staged" "$RUNS_DIR/$old" 2>/dev/null; then
+            rmdir -- "$claim" 2>/dev/null || true
+            return 1
+        fi
+        # Only ever removes the directory THIS call created, and only while it is
+        # still empty -- so a transient claim leaves no stray directory at a
+        # record name, and a newcomer that wrote into it is never touched.
+        rmdir -- "$RUNS_DIR/$old" 2>/dev/null || true
+    fi
+    # Anything else is unexplained, so the record STAYS in its claim and is
+    # reported. Nothing ever deletes it: utest_prune_reap only restores or
+    # `rmdir`s, for the reason utest_sweep_reap does -- a glob-and-`rm` reap
+    # would turn every preserved record into a delayed wrongful delete one pass
+    # later, which is the failure this whole path exists to prevent.
+    #
+    # AND ITS ID IS PUBLISHED, which is the half that makes moving this loop into
+    # the pruning shell worth anything. UTEST_PRUNE_CLAIMED was only ever written
+    # by utest_prune_reap, so a claim created THIS pass was invisible to the
+    # pointer sweep further down: the sweep found no canonical record directory
+    # and no claimed-id exemption, classified the pointer as dangling, and
+    # deleted it in the same pass -- so the record came back from its claim with
+    # neither pointer nor pin, for the next age cut to take. Exactly the cascade
+    # the claimed set exists to stop, reached by the one route the reaper-only
+    # publication could not cover.
+    UTEST_PRUNE_CLAIMED="${UTEST_PRUNE_CLAIMED:-} $old"
+    printf 'test.sh: could not restore record %s -- held at %s (needs manual review)\n' \
+        "$RUNS_DIR/$old" "$staged" >&2
+    return 1
+}
+
+# Collect the prune claims an earlier pass finished with, restore the records it
+# could not put back, and REPORT the ones that are still stuck.
+#
+# Publishes UTEST_PRUNE_CLAIMED, the space-delimited run ids still held in a
+# claim. That set is load-bearing for the pointer sweep: a record awaiting
+# restoration has no canonical directory, so utest_ptr_sweepable would read its
+# pointer as dangling and unlink it -- and the record would then come back with
+# no pointer and no pin, and the next age cut would take it. Retaining the id is
+# what stops one unresolved claim from cascading into the loss it was preventing.
+#
+# RUNS BEFORE pin discovery, so the pin and the sweep both see a settled set.
+utest_prune_reap() {
+    local dir="$1" d name child n
+    UTEST_PRUNE_STUCK=0
+    UTEST_PRUNE_CLAIMED=""
+    for d in "$dir"/.utest-prune.*.d; do
+        [ -d "$d" ] || continue
+        # An empty claim is a crash between the `mkdir` and the `mv`, or a
+        # completed destruction whose `rmdir` did not land. Either way there is
+        # nothing to recover and nothing to lose.
+        rmdir -- "$d" 2>/dev/null && continue
+        # EXACTLY ONE grammar-conforming child, or this claim is not something
+        # this harness wrote and nothing is moved out of it. Dot entries are
+        # counted too -- a claim holding a stray dotfile beside the record is not
+        # the shape a detach leaves, and restoring from it would move a record
+        # out from under an object nobody classified.
+        name=""; n=0
+        for child in "$d"/* "$d"/.*; do
+            case "${child##*/}" in '.'|'..'|'*'|'.*') continue ;; esac
+            [ -e "$child" ] || [ -L "$child" ] || continue
+            n=$(( n + 1 ))
+            name="${child##*/}"
+        done
+        if [ "$n" -eq 1 ] && [ -d "$d/$name" ]; then
+            case "$name" in
+                ''|.|..|*[!A-Za-z0-9._-]*) ;;
+                *)
+                    # The SAME atomic restore utest_prune_verified uses, and it
+                    # refuses for the same reasons rather than clobbering.
+                    if mkdir -- "$RUNS_DIR/$name" 2>/dev/null; then
+                        if mv -fT -- "$d/$name" "$RUNS_DIR/$name" 2>/dev/null; then
+                            rmdir -- "$d" 2>/dev/null || true
+                            continue
+                        fi
+                        rmdir -- "$RUNS_DIR/$name" 2>/dev/null || true
+                    fi
+                    # Still stuck, but the record IS identifiable, so its id is
+                    # retained and its pointer protected until a human resolves
+                    # the claim.
+                    UTEST_PRUNE_CLAIMED="$UTEST_PRUNE_CLAIMED $name"
+                    ;;
+            esac
+        fi
+        UTEST_PRUNE_STUCK=$(( UTEST_PRUNE_STUCK + 1 ))
+        printf 'test.sh: unresolved prune claim %s (needs manual review)\n' "$d" >&2
+    done
+    return 0
+}
+
 # THE policy for a directory standing where this harness requires a FILE.
 #
 # Stated ONCE, here, because it used to be decided by two upstream filters that
@@ -1912,16 +2299,84 @@ utest_lease_acquire() {
     if [ "$exp" -le "$acq" ]; then utest_retention_unlock; return 1; fi
     path="$rec/leases/$holder.$lid.lease"
     tmp="$rec/leases/.$lid.tmp"
-    if ! utest_lease_doc_for "$run_id" "$holder" "$lid" "$acq" "$exp" > "$tmp" 2>/dev/null; then
-        rm -f -- "$tmp" 2>/dev/null || true
+    # EVERY FILESYSTEM OPERATION FROM HERE IS BOUNDED, not merely followed by a
+    # deadline recheck. Section 61 gave this function an aggregate deadline over
+    # its document reads and the lease census and rechecked it after publication,
+    # but a recheck DETECTS an overrun -- it does not BOUND one: the staged write,
+    # the rename and the two existence tests below were plain builtins and
+    # utilities taking no timeout, so a stalled mount held the retention mutex
+    # indefinitely and the recheck never ran at all. The bound is derived from
+    # what is LEFT of the same aggregate deadline, so the two cannot disagree.
+    # RECOMPUTED BEFORE EVERY OPERATION, never sampled once and reused. A single
+    # `acq_tmo` handed to the write, the rename and both existence tests lets
+    # EACH of them spend the whole remainder, so the sequence can outlast the
+    # aggregate deadline several times over while holding the retention mutex --
+    # which is the exact failure this bound was added to close, merely divided by
+    # four. utest_acq_tmo derives a fresh bound and refuses at zero, so the
+    # budget is consumed rather than replayed.
+    utest_acq_tmo() {
+        local left=$(( UTEST_ACQ_DEADLINE - SECONDS ))
+        [ "$left" -ge 1 ] || return 1
+        [ "$left" -le 5 ] || left=5
+        printf '%s\n' "$left"
+    }
+    # AND EVERY CLEANUP IS BOUNDED TOO, on the same filesystem that just failed to
+    # respond. An unbounded `rm -f` on the refusal path is the same wedge as an
+    # unbounded write: the stall that made the operation time out is still there,
+    # and fd 8 still holds the retention flock, so a run that correctly refused a
+    # lease could then hang forever cleaning up after itself. If the cleanup
+    # cannot finish, the mutex is released and the residue reported -- a stray
+    # staging file is reclaimed by the next census, which is recoverable, while a
+    # held mutex is not.
+    # A ONE-SECOND FLOOR, and deliberately NOT gated on the deadline. The
+    # deadline governs whether this acquisition may still GRANT; it does not
+    # govern whether the run may tidy up after refusing. Deriving the cleanup
+    # bound from the remaining budget would skip the withdrawal exactly when it
+    # matters most -- the post-publication check below fires only once the
+    # deadline has ALREADY passed, so a deadline-derived bound would be zero
+    # there and leave a PUBLISHED lease with nobody to withdraw it, which is
+    # strictly worse than the stray staging file the bound was protecting
+    # against. Bounded and always attempted is the correct pair.
+    utest_acq_rm() {
+        local t=$(( UTEST_ACQ_DEADLINE - SECONDS ))
+        [ "$t" -ge 1 ] 2>/dev/null || t=1
+        [ "$t" -le 5 ] || t=5
+        timeout "$t" rm -f -- "$1" 2>/dev/null || \
+            printf 'test.sh: lease cleanup could not complete for %s (needs manual review)\n' "$1" >&2
+        return 0
+    }
+    # `exec 8>&-` in EVERY bounded child, for the reason the pin discovery needs
+    # it: `flock` releases on descriptor CLOSE, not on the death of whoever took
+    # it, so a child inheriting fd 8 and outliving its parent keeps the retention
+    # mutex held. `timeout` kills the child it spawned, not that child's own
+    # descendants, so the inheritance matters precisely on the paths that time out.
+    acq_tmo="$(utest_acq_tmo)" || { utest_retention_unlock; return 1; }
+    # The document is built in-shell FIRST and only the write is bounded.
+    # utest_lease_doc_for is a pure `printf` with no filesystem access, so
+    # rendering it costs nothing that could stall; wrapping the function itself
+    # in a `timeout` would need it exported into a child shell for no benefit.
+    if ! timeout "$acq_tmo" bash -c 'exec 8>&-; printf "%s\n" "$2" > "$1"' _ "$tmp" \
+            "$(utest_lease_doc_for "$run_id" "$holder" "$lid" "$acq" "$exp")" 2>/dev/null; then
+        utest_acq_rm "$tmp"
         utest_retention_unlock
         return 1
     fi
     # `-T` for the same reason utest_publish_leg_pointer needs it: without it a
     # target that is unexpectedly a directory turns the rename into a move
     # INSIDE it, and the lease lands somewhere nothing will ever look.
-    if ! mv -fT -- "$tmp" "$path" 2>/dev/null; then
-        rm -f -- "$tmp" 2>/dev/null || true
+    #
+    # AND A TIMED-OUT RENAME IS RECONCILED, not assumed. `timeout` killing `mv`
+    # says nothing about whether the rename landed: the syscall is atomic, so the
+    # lease is either fully published or not at all, but this shell cannot tell
+    # which from the exit status alone. Both outcomes end in a refusal here -- the
+    # bound was exceeded, so the next acquirer has stopped waiting -- and the
+    # reconciliation exists to make sure the refusal does not leave a PUBLISHED
+    # lease behind. Withdrawing a lease that did land is the same act the
+    # post-publication deadline check below performs for the same reason.
+    acq_tmo="$(utest_acq_tmo)" || { utest_acq_rm "$tmp"; utest_retention_unlock; return 1; }
+    if ! timeout "$acq_tmo" mv -fT -- "$tmp" "$path" 2>/dev/null; then
+        utest_acq_rm "$tmp"
+        utest_acq_rm "$path"
         utest_retention_unlock
         return 1
     fi
@@ -1929,8 +2384,14 @@ utest_lease_acquire() {
     # cannot have run inside this sequence, so the only way it is gone is that
     # one COMPLETED before the lock was taken -- in which case the pointer named
     # a corpse and the honest answer is a refusal, not a grant over nothing.
-    if [ ! -d "$rec" ] || [ ! -f "$rec/record-complete.json" ]; then
-        rm -f -- "$path" 2>/dev/null || true
+    #
+    # BOUNDED for the reason the write and the rename are, and a bound that
+    # expires is treated exactly as "not whole": both are refusals, which is the
+    # direction this function already takes whenever it cannot establish a fact.
+    acq_tmo="$(utest_acq_tmo)" || { utest_acq_rm "$path"; utest_retention_unlock; return 1; }
+    if ! timeout "$acq_tmo" bash -c 'exec 8>&-; [ -d "$1" ] && [ -f "$1/record-complete.json" ]' \
+            _ "$rec" 2>/dev/null; then
+        utest_acq_rm "$path"
         utest_retention_unlock
         return 1
     fi
@@ -1944,7 +2405,7 @@ utest_lease_acquire() {
     # next acquirer has by then stopped waiting and the honest answer is the
     # unleased fallback.
     if [ "$SECONDS" -ge "$UTEST_ACQ_DEADLINE" ]; then
-        rm -f -- "$path" 2>/dev/null || true
+        utest_acq_rm "$path"
         utest_retention_unlock
         return 1
     fi
@@ -1975,16 +2436,33 @@ utest_prune_records() {
     local now leased leased_all leased_l stuck_u n_stuck nu lockrc n_all n_kept n all_records n_odd
     local blocked_d nd n_blocked unread_c n_unread
     local pin_incomplete pin_budget cand_max pin_t0 disc_rc cands npin pin_left pin_tmo _mtime pin_why cand_n prc
-    # MASKED, not merely unset elsewhere. utest_lease_acquire publishes its
+    local age_cands age_budget age_t0 age_n
+    local conv conv_rc nconv conv_seen conv_excess
+    # MASKED HERE, RE-ARMED PER RECORD below. utest_lease_acquire publishes its
     # deadline as a `local`, and bash `local` RESTORES whatever was there before
     # -- it does not guarantee the name is unset afterwards -- so a stale or
     # hand-set global could reach the census below and make it report every
-    # leased record unreadable. The pruner converts an unreadable count to zero
-    # (the recoverable direction for a COUNTER failure), which here would mean
-    # admitting an actively leased record into the age cut. Retention owns no
-    # deadline of its own; it owns the pin budget, and the empty string is what
-    # says so to every callee.
-    local UTEST_ACQ_DEADLINE=""
+    # leased record unreadable. Masking at the top is what stops that; the
+    # classification loop then sets a fresh value for each record it censuses.
+    #
+    # PER RECORD, not per pass, and the difference is the whole design. Section
+    # 61 bounded acquisition end to end, but the pruner published nothing, so
+    # every lease document kept a flat five-second bound and the WALK over a
+    # record's leases was unbounded -- one record with many slow lease documents
+    # held the retention mutex for as long as it took. An AGGREGATE pass deadline
+    # would bound that, and would also starve: the census walks `all_records`,
+    # which is `sort -r` and therefore newest first, so a budget consumed part way
+    # through leaves the OLDEST records unclassified on every pass -- and those
+    # are precisely the ones the disk bound needs reclaimed. Re-arming per record
+    # bounds the walk that was actually unbounded and leaves every other record's
+    # classification unaffected by a slow neighbour.
+    local UTEST_ACQ_DEADLINE="" census_budget
+    census_budget="$(utest_norm_bound "${UTEST_CENSUS_BUDGET:-8}" 8 86400)"
+    # A one-second floor for the reason every other bound here has one: below it
+    # the census could never start a lease, so every record would report itself
+    # unreadable and be `C`-held, and a knob that reads as "be quick" would
+    # silently hold the entire corpus against retention.
+    [ "$census_budget" -ge 1 ] 2>/dev/null || census_budget=8
     keep="$(utest_norm_bound "$keep" 20 10000)"
     # Zero records kept is nonsense, so the floor is applied here and not in
     # the shared normaliser -- the pin cap deliberately does NOT have one.
@@ -2027,6 +2505,19 @@ utest_prune_records() {
     now="$(date -u +%s 2>/dev/null)"
     case "$now" in ''|*[!0-9]*) now=0 ;; esac
     utest_prime_ident
+
+    # REAP THE PREVIOUS PASS'S PRUNE CLAIMS FIRST, before pin discovery and long
+    # before the sweep, so both see a SETTLED set. A record still held in a claim
+    # has no canonical directory, so a sweep running against an unsettled set
+    # reads its pointer as dangling and unlinks it -- and the record then returns
+    # from the claim with neither pointer nor pin, to be taken by the next age
+    # cut. Reaping here is what makes utest_ptr_sweepable's UTEST_PRUNE_CLAIMED
+    # check meaningful; it is also why a claim this pass CREATES must be visible
+    # to the same shell, which is why the age loop below is no longer a pipeline.
+    utest_prune_reap "$RUNS_DIR"
+    if [ "${UTEST_PRUNE_STUCK:-0}" != "0" ]; then
+        echo -e "${YELLOW:-}[TEST]${RESET:-} ${UTEST_PRUNE_STUCK} prune claim(s) could not be resolved -- the record(s) they hold are retained and their pointers preserved (see the paths reported above)."
+    fi
 
     # PIN the records the live per-leg pointers still resolve to. Age alone
     # would delete the record a `.run` pointer names, and that pointer is the
@@ -2268,6 +2759,64 @@ utest_prune_records() {
             esac
             echo -e "${YELLOW:-}[TEST]${RESET:-} pointer pinning is INCOMPLETE ($pin_why) -- the age cut is deferred this run so an unexamined pointer cannot lose its record. Set UTEST_POINTER_PIN_MAX=0 to prune without pinning."
         fi
+        # AND AN OVERFLOW CONVERGES, rather than deferring retention until an
+        # operator intervenes. Every other `pin_incomplete` reason is transient --
+        # a slow disk, a spent budget -- and clears itself on a later pass. The
+        # `candidates` reason is a STEADY STATE: more than `cand_max` pointer
+        # files means every later pass is incomplete too, the age cut never runs
+        # again, and records accumulate without bound. `UTEST_POINTER_PIN_MAX=0`
+        # is a real escape but a manual one, so an unattended run stays wedged.
+        #
+        # Converging means DELETING A POINTER THE SWEEP DELIBERATELY KEEPS. The
+        # ordinary sweep is weaker than the pin on purpose -- it removes only
+        # what does not resolve, because deleting a pointer destroys something a
+        # human may have put there -- and that weakness is exactly why the
+        # namespace can grow past the bound. So this overturns a stated policy
+        # rather than tightening one, and it does so ANNOUNCED, in the oldest-
+        # first order, through the same detach-then-revalidate helper every other
+        # destructive path uses. The trade is deliberate: the deferral it replaces
+        # loses records permanently and silently, while this loses the least
+        # recently published pointers, says so, and is recoverable by re-running
+        # the leg. It is bounded per pass, so a large overflow converges over
+        # several runs instead of spending one run's whole budget here.
+        if [ "$pin_incomplete" = "candidates" ]; then
+            conv_rc=0
+            # ONLY THE PROVEN EXCESS, never a fixed batch. The pin discovery
+            # above stops at cand_max+1 lines, so it establishes "more than
+            # cand_max" and nothing else -- and removing pin_max pointers on the
+            # strength of that destroys up to pin_max-1 valid resolution paths
+            # that were never over any bound. At the defaults, 257 pointers
+            # exceed the 256 bound by ONE and would have cost 64 legs their
+            # pointer, whose records then lose their pins and age out.
+            #
+            # So convergence does its OWN bounded enumeration, oldest-first, with
+            # headroom above cand_max, and removes exactly `seen - cand_max`. If
+            # that enumeration is itself truncated the excess is still PROVEN --
+            # seen pointers really do exist -- so the pass removes what it proved
+            # and the next pass proves the rest. Monotonic, and never more than
+            # the namespace is actually over by.
+            conv="$(exec 8>&-; timeout "$pin_budget" bash -c '
+                set -o pipefail
+                find "$1/build" -maxdepth 1 -type f -name "test-results-*.run" \
+                    -printf "%T@\t%p\n" 2>/dev/null | sort -n | awk -v n="$2" "NR<=n"
+            ' _ "$PROJECT" "$(( cand_max + pin_max ))")" || conv_rc=$?
+            conv_seen="$(printf '%s' "$conv" | grep -c . || true)"
+            case "$conv_seen" in ''|*[!0-9]*) conv_seen=0 ;; esac
+            conv_excess=$(( conv_seen - cand_max ))
+            [ "$conv_excess" -gt 0 ] 2>/dev/null || conv_excess=0
+            if [ "$conv_rc" -eq 0 ] && [ "$conv_excess" -gt 0 ]; then
+                nconv=0
+                while IFS=$'\t' read -r _mtime ptr; do
+                    [ -n "$ptr" ] || continue
+                    [ "$nconv" -lt "$conv_excess" ] || break
+                    utest_sweep_verified "$ptr" utest_ptr_overflow || continue
+                    nconv=$(( nconv + 1 ))
+                done <<< "$conv"
+                if [ "$nconv" != "0" ]; then
+                    echo -e "${YELLOW:-}[TEST]${RESET:-} removed $nconv least-recently-published leg pointer(s) to bring the pointer namespace back under $cand_max -- retention resumes on the next run. Re-run a leg to republish its pointer."
+                fi
+            fi
+        fi
     fi
 
     # HOLD what a reader has resolved, and reclaim what no reader can still be
@@ -2300,8 +2849,16 @@ utest_prune_records() {
     # the same reason the blocking-directory and unresolved-claim holds are: a
     # thing this pass will never reclaim is an operator's problem, and saying
     # nothing about it is how it stays one forever.
-    all_records="$(find "$RUNS_DIR" -mindepth 1 -maxdepth 1 -type d ! -name '*[!A-Za-z0-9._-]*' -printf '%f\n' 2>/dev/null | sort -r || true)"
-    n_odd="$(find "$RUNS_DIR" -mindepth 1 -maxdepth 1 -type d -name '*[!A-Za-z0-9._-]*' -printf '.\n' 2>/dev/null | grep -c . || true)"
+    # `.utest-prune.*.d` is EXCLUDED from both halves, because a prune claim is
+    # grammar-conforming (dots and digits are legal in a run id) and would
+    # otherwise enumerate AS a record -- so the age cut would classify a claim,
+    # find no marker in it, and destroy the record it is holding through the very
+    # wrapper that exists to protect it. It is not "odd" either: it is this
+    # harness's own staging namespace, reported by utest_prune_reap when it is
+    # stuck, and counting it as an unclassifiable directory would tell an
+    # operator to review something the run already reports precisely.
+    all_records="$(find "$RUNS_DIR" -mindepth 1 -maxdepth 1 -type d ! -name '.utest-*' ! -name '*[!A-Za-z0-9._-]*' -printf '%f\n' 2>/dev/null | sort -r || true)"
+    n_odd="$(find "$RUNS_DIR" -mindepth 1 -maxdepth 1 -type d ! -name '.utest-*' -name '*[!A-Za-z0-9._-]*' -printf '.\n' 2>/dev/null | grep -c . || true)"
     case "$n_odd" in ''|*[!0-9]*) n_odd=0 ;; esac
     if [ "$n_odd" != "0" ]; then
         echo -e "${YELLOW:-}[TEST]${RESET:-} $n_odd record director(ies) whose name is outside the run-id grammar are HELD, never classified or pruned."
@@ -2351,7 +2908,17 @@ utest_prune_records() {
                     # classify must not compete for a capped slot with one that
                     # is genuinely leased, or an unreadable mount would evict a
                     # real reader's record.
+                    # RE-ARMED for THIS record, immediately before its census.
+                    # utest_record_live_leases consults this per lease, so the
+                    # bound covers the whole walk over one record's leases/
+                    # directory rather than only each document read inside it.
+                    # A record that exhausts it returns non-zero, which the `C`
+                    # branch below already routes to a fail-closed hold -- the
+                    # count is unknown, not zero, and the difference is a live
+                    # reader's generation.
+                    UTEST_ACQ_DEADLINE=$(( SECONDS + census_budget ))
                     n="$(utest_record_live_leases "$old" "$now" "$ttl")" || n=""
+                    UTEST_ACQ_DEADLINE=""
                     case "$n" in
                         ''|*[!0-9]*) printf 'C %s\n' "$old" ;;
                         0) ;;
@@ -2450,52 +3017,89 @@ utest_prune_records() {
     # record unconditionally -- so the deferral costs disk, never a hold.
     if [ -z "$pin_incomplete" ]; then
     {
-        printf '%s\n' "$all_records" | tail -n +$(( keep + 1 )) |
-            while IFS= read -r old; do
-                # %f yields a bare basename, so this can never escape RUNS_DIR,
-                # and the run now in progress is never a candidate.
-                [ -n "$old" ] || continue
-                # THE GRAMMAR AGAIN, immediately before the recursive delete.
-                # The enumeration above already excludes a non-conforming name,
-                # so this cannot fire today -- it is here because it guards the
-                # `rm -rf` itself rather than the list that feeds it, and the
-                # cost of the two ever disagreeing is a live record. `.` and
-                # `..` are spelled out because they ARE grammar-conforming and
-                # would escape RUNS_DIR entirely.
-                case "$old" in
-                    ''|.|..|*[!A-Za-z0-9._-]*) continue ;;
-                esac
-                [ "$old" = "$RUN_ID" ] && continue
-                if [ -n "${pinned_set["$old"]+x}" ]; then
-                    continue
-                fi
-                # A resolved generation a reader still holds. Unlike the pin,
-                # this survives the leg publishing again -- that is the entire
-                # point: the pin protects what the CURRENT pointer names, the
-                # lease protects what a reader ALREADY resolved.
-                if [ -n "${leased_set["$old"]+x}" ]; then
-                    continue
-                fi
-                # RE-ASK immediately before destroying, because classification
-                # and destruction are two loops and the writer of a blocking
-                # directory is by definition non-conforming -- it holds no
-                # lease and takes no mutex, so it can appear between them and
-                # be `rm -rf`'d whole while the run has already announced that
-                # such a thing is never removed. The recheck does not make the
-                # sequence atomic; it narrows the window from a whole
-                # classification pass to a syscall pair. Closing it properly
-                # means detaching the record before classifying it, which
-                # changes the destructive path for EVERY record -- section 62.
-                #
-                # SILENT: the classification pass reported these paths already,
-                # and this loop runs in its own subshell where the dedup that
-                # would suppress a second report cannot reach.
-                utest_hold_blocking_dirs "$RUNS_DIR/$old/leases" "" '*.lease' '.*.tmp'
-                if [ "${UTEST_DIRBLOCK_N:-0}" != "0" ]; then
-                    continue
-                fi
-                rm -rf -- "$RUNS_DIR/$old"
-            done
+        # OLDEST FIRST, and IN THIS SHELL.
+        #
+        # In this shell because the loop used to be the tail of a pipeline, so
+        # every variable it wrote was written in a subshell and discarded. That
+        # was harmless while the body only ran `rm -rf`; it is not harmless now
+        # that the body CREATES prune claims, because the pointer sweep further
+        # down consults UTEST_PRUNE_CLAIMED and would have seen only the set the
+        # reaper published before the loop ran -- so a record this pass detached
+        # and could not restore would have its pointer swept in the same pass.
+        # `done <<<` is the idiom the rest of this file already uses for exactly
+        # this reason.
+        #
+        # Oldest first because `all_records` is `sort -r` and `tail` preserves
+        # that, so candidates arrived NEWEST first -- and one repeatedly
+        # unreadable candidate at the head of the list then consumed the budget
+        # on every pass, leaving the genuinely old records behind it unreachable
+        # forever while the corpus grew past UTEST_RECORD_KEEP. The records the
+        # disk bound most needs reclaimed are the oldest, so they are served
+        # first and each pass makes monotonic progress without a persisted
+        # cursor.
+        age_cands="$(printf '%s\n' "$all_records" | tail -n +$(( keep + 1 )) | tac)"
+        # A POSITIVE QUANTUM PER ATTEMPT, and a per-pass cap derived from it.
+        # `timeout 0` DISABLES the timeout in GNU coreutils, so a naive
+        # remaining/remaining share silently becomes "no bound at all" the moment
+        # candidates outnumber whole seconds -- one unreadable record would then
+        # hold the retention mutex indefinitely. Flooring the quantum at one
+        # second and capping the attempts at the number of whole seconds
+        # available keeps every attempt bounded and the pass bounded, and the
+        # candidates past the cap are simply reached on the next pass.
+        age_budget="$(utest_norm_bound "${UTEST_AGE_BUDGET:-8}" 8 86400)"
+        [ "$age_budget" -ge 1 ] 2>/dev/null || age_budget=8
+        age_t0="$SECONDS"
+        age_n=0
+        while IFS= read -r old; do
+            # %f yields a bare basename, so this can never escape RUNS_DIR,
+            # and the run now in progress is never a candidate.
+            [ -n "$old" ] || continue
+            # THE GRAMMAR AGAIN, immediately before the destructive call. The
+            # enumeration above already excludes a non-conforming name, so this
+            # cannot fire today -- it is here because it guards the DESTRUCTION
+            # itself rather than the list that feeds it, and the cost of the two
+            # ever disagreeing is a live record. `.` and `..` are spelled out
+            # because they ARE grammar-conforming and would escape RUNS_DIR.
+            case "$old" in
+                ''|.|..|*[!A-Za-z0-9._-]*) continue ;;
+            esac
+            [ "$old" = "$RUN_ID" ] && continue
+            # HELD RECORDS ARE SKIPPED BEFORE THE QUOTA IS CHARGED, which is what
+            # keeps the cap from becoming its own starvation boundary. A pinned,
+            # leased or claim-held record never disappears, so if it consumed an
+            # attempt the same oldest prefix would be re-selected and re-skipped
+            # on every pass and the eligible records behind it would never be
+            # reached -- the persistent-hold steady state, merely relocated to
+            # the batching edge. Only a candidate actually ATTEMPTED costs a slot.
+            if [ -n "${pinned_set["$old"]+x}" ]; then
+                continue
+            fi
+            # A resolved generation a reader still holds. Unlike the pin,
+            # this survives the leg publishing again -- that is the entire
+            # point: the pin protects what the CURRENT pointer names, the
+            # lease protects what a reader ALREADY resolved.
+            if [ -n "${leased_set["$old"]+x}" ]; then
+                continue
+            fi
+            case " ${UTEST_PRUNE_CLAIMED:-} " in
+                *" $old "*) continue ;;
+            esac
+            # The pass is bounded in COUNT and in TIME, and both are checked
+            # before an attempt starts rather than after one overruns.
+            [ "$age_n" -lt "$age_budget" ] || break
+            [ $(( age_budget - ( SECONDS - age_t0 ) )) -ge 1 ] || break
+            age_n=$(( age_n + 1 ))
+            # SELECT BY NAME, DESTROY THROUGH A DETACHED OBJECT. The pre-delete
+            # recheck this replaces re-asked the blocking-directory question
+            # immediately before `rm -rf`, which narrowed the window to a syscall
+            # pair but could not close it: the writer of such a directory takes no
+            # mutex, so it could still land inside that pair and be deleted
+            # recursively by a run that had already announced such things are
+            # never removed. utest_prune_verified detaches first and re-takes the
+            # holds on an object no longer reachable by that name, and restores
+            # the record WHOLE when they fire.
+            utest_prune_verified "$old"
+        done <<< "$age_cands"
     } || true
     fi
 

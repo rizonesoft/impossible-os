@@ -12794,7 +12794,7 @@ $(sed -n '/^utest_lease_reclaimable() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
 $(sed -n '/^utest_record_live_leases() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
 $(sed -n '/^utest_lease_acquire() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
 $(sed -n '/^utest_lease_release() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")"
-    UAR_PRUNE="$(sed -n '/^utest_norm_bound() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
+    UAR_PRUNE_BODY="$(sed -n '/^utest_norm_bound() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
 $(sed -n '/^utest_pointer_run_id() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
 $(sed -n '/^utest_ptr_sweepable() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
 $(sed -n '/^utest_read_doc() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
@@ -12805,8 +12805,26 @@ $(sed -n '/^utest_marker_binds() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
 $(sed -n '/^utest_pointer_pin_id() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
 $UAR_LEASEFN
 $(sed -n '/^utest_hold_blocking_dirs() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
+$(sed -n '/^utest_ptr_overflow() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
+$(sed -n '/^utest_prune_verified() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
+$(sed -n '/^utest_prune_reap() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
 $(sed -n '/^utest_prune_records() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")"
-    if [ -z "$UAR_PRUNE" ]; then
+    # THROUGH A FILE, not as one giant string. Every retention fixture below
+    # reaches production by `eval "$UAR_PRUNE"` inside a `bash -c`, with the text
+    # arriving either embedded in the command or exported in the environment --
+    # and BOTH are subject to Linux's MAX_ARG_STRLEN, a hard 128 KiB per single
+    # argv/env STRING that `getconf ARG_MAX` (2 MiB here) does not describe. The
+    # extracted set reached ~129 KB when section 62 added the prune-claim
+    # helpers, and the whole retention block began failing at once with
+    # `/usr/bin/bash: Argument list too long` and rc=126 -- which reads as a
+    # broken fixture rather than as a size limit, and would have recurred on the
+    # next helper regardless of what it did. UAR_PRUNE now carries a `source`
+    # line instead of the bodies, so all 83 call sites are unchanged and the
+    # payload travels on the filesystem where it is not bounded.
+    UAR_PRUNE_FILE="$UAR_TMP/uar-prune-fixture.sh"
+    printf '%s\n' "$UAR_PRUNE_BODY" > "$UAR_PRUNE_FILE"
+    UAR_PRUNE="source '$UAR_PRUNE_FILE'"
+    if [ -z "$UAR_PRUNE_BODY" ]; then
         t_fail "run record: retention prunes to the newest N" "utest_prune_records not found"
     else
         UAR_PDIR="$UAR_TMP/prune"
@@ -12907,6 +12925,22 @@ utest_leg_pointer_doc_for "$1" "$2"' _ "$1" "$2" > "$UAR_PDIR/build/test-results
             bash -c "$UAR_IDDOC"'
 utest_identity_doc_for "$1" 2026-01-01T00:00:00Z abc123 "$2" derived wsl2 fixture kvm 2 qemu-system-x86_64 false
 printf "\n"' _ "$1" "$2" > "$UAR_PDIR/build/test-runs/$1/test-run-identity.json"
+        }
+        # The same document with ONE field overridden, so a negative fixture is a
+        # named MUTATION of the production emitter's output rather than a second
+        # spelling of the contract -- uar_prune_marker exists for the marker for
+        # exactly this reason. An empty argument takes the canonical default, so
+        # each caller names only the field it is mutating.
+        # $1 run_id $2 leg $3 timestamp $4 commit $5 leg_source $6 host
+        # $7 hostname $8 accel $9 cpus ${10} qemu ${11} ci_parity
+        uar_prune_ident_fields() {
+            [ -d "$UAR_PDIR/build/test-runs/$1" ] || return 0
+            bash -c "$UAR_IDDOC"'
+utest_identity_doc_for "$1" "$2" "$3" "$4" "$5" "$6" "$7" "$8" "$9" "${10}" "${11}"
+printf "\n"' _ "$1" "${3:-2026-01-01T00:00:00Z}" "${4:-abc123}" "$2" \
+                "${5:-derived}" "${6:-wsl2}" "${7:-fixture}" "${8:-kvm}" \
+                "${9:-2}" "${10:-qemu-system-x86_64}" "${11:-false}" \
+                > "$UAR_PDIR/build/test-runs/$1/test-run-identity.json"
         }
         uar_prune_reset
         uar_prune_ptr other 20260102T000000Z-1-aaaa
@@ -15088,15 +15122,30 @@ printf "| HARNESS-OK\n"
                 "$UAR_L26C"
         fi
 
-        # (L26e) the PRE-DELETE RECHECK, which L26b and L26c cannot reach. Both
-        #     place the blocker before classification, so the `D` hold puts the
-        #     record in leased_set and the age loop skips it long before the
-        #     recheck runs -- delete the recheck and both still pass. The window
-        #     it narrows belongs to a writer that takes no mutex, so the only
-        #     honest way to test it is to BE that writer: wrap the production
-        #     verdict the age loop calls just before destroying, and create the
-        #     directory from inside it. Section 46's p19 uses the same technique
-        #     on the pointer selector for the same reason.
+        # (L26e) the CLASSIFY-TO-DESTROY WINDOW, which L26b and L26c cannot
+        #     reach. Both place the blocker before classification, so the `D`
+        #     hold puts the record in leased_set and the age loop skips it long
+        #     before the destructive path runs -- delete that path's own verdict
+        #     and both still pass. The window belongs to a writer that takes no
+        #     mutex, so the only honest way to test it is to BE that writer: wrap
+        #     the production verdict and create the directory from inside it.
+        #     Section 46's p19 uses the same technique on the pointer selector.
+        #
+        #     PLANTED INTO THE PATH PRODUCTION HANDS THE VERDICT ($1), not into
+        #     the record's published name. Section 62 destroys through a DETACHED
+        #     directory, so by the time this verdict runs the record no longer
+        #     lives at its published path -- a fixture that planted there would
+        #     be creating a fresh directory tree of its own, and the assertions
+        #     below would then pass by observing the fixture's own handiwork
+        #     while the real record was destroyed inside its claim. Writing
+        #     through $1 is also the truthful model of the actor: a writer
+        #     holding a descriptor across the rename reaches the detached inode,
+        #     which is exactly the residual this mechanism does not close.
+        #
+        #     And the assertion is ROLLBACK, not merely survival: the record must
+        #     be back at its published name with its own contents intact, which
+        #     is what distinguishes a detach-and-restore from a forward unlink
+        #     loop that preserves the blocker and loses the record.
         uar_lease_reset
         UAR_L26E="$(UAR_PDIR="$UAR_PDIR" UAR_PRUNE="$UAR_PRUNE" UAR_LHOLD="$UAR_LHOLD" timeout 30 bash -c '
 set -uo pipefail
@@ -15107,12 +15156,16 @@ UTEST_RECORD_KEEP=2
 eval "$UAR_PRUNE"
 eval "$(declare -f utest_hold_blocking_dirs | sed "1s/^utest_hold_blocking_dirs/uar_real_hold/")"
 utest_hold_blocking_dirs() {
-    # Only on the AGE-LOOP call, which is the silent one ($2 empty): plant the
-    # blocker just before the verdict that decides whether rm -rf runs.
-    if [ -z "${2:-}" ]; then
-        mkdir -p "$RUNS_DIR/20260102T000000Z-1-aaaa/leases/$UAR_LHOLD.race01.lease" 2>/dev/null || true
-        printf "handmade\n" > "$RUNS_DIR/20260102T000000Z-1-aaaa/leases/$UAR_LHOLD.race01.lease/inside" 2>/dev/null || true
-    fi
+    # Only on the DESTRUCTIVE-PATH call, which is the silent one ($2 empty), and
+    # only for the record under test: plant the blocker into the directory this
+    # verdict is about to examine, just before it examines it.
+    case "${1:-}" in
+        *20260102T000000Z-1-aaaa/leases)
+            if [ -z "${2:-}" ]; then
+                mkdir -p "$1/$UAR_LHOLD.race01.lease" 2>/dev/null || true
+                printf "handmade\n" > "$1/$UAR_LHOLD.race01.lease/inside" 2>/dev/null || true
+            fi ;;
+    esac
     uar_real_hold "$@"
 }
 utest_prune_records
@@ -15120,16 +15173,348 @@ D="$RUNS_DIR/20260102T000000Z-1-aaaa"
 printf "| record: "
 if [ -d "$D" ]; then printf "HELD"; else printf "PRUNED"; fi
 printf "| content: "
+if [ -f "$D/test-results.xml" ]; then printf "PRESERVED"; else printf "DESTROYED"; fi
+printf "| blocker: "
 if [ -f "$D/leases/$UAR_LHOLD.race01.lease/inside" ]; then printf "PRESERVED"; else printf "DESTROYED"; fi
+printf "| claims: "
+printf "%s" "$(ls -1d "$RUNS_DIR"/.utest-prune.*.d 2>/dev/null | grep -c . || echo 0)"
 printf "| HARNESS-OK\n"
 ' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
         if printf '%s' "$UAR_L26E" | grep -q 'HARNESS-OK' &&
            printf '%s' "$UAR_L26E" | grep -q 'record: HELD' &&
-           printf '%s' "$UAR_L26E" | grep -q 'content: PRESERVED'; then
-            t_pass "reader lease: a blocker appearing only at the pre-delete recheck still stops the recursive delete"
+           printf '%s' "$UAR_L26E" | grep -q 'content: PRESERVED' &&
+           printf '%s' "$UAR_L26E" | grep -q 'blocker: PRESERVED' &&
+           printf '%s' "$UAR_L26E" | grep -q 'claims: 0'; then
+            t_pass "reader lease: a blocker appearing between classification and destruction restores the record whole"
         else
-            t_fail "reader lease: a blocker appearing only at the pre-delete recheck still stops the recursive delete" \
+            t_fail "reader lease: a blocker appearing between classification and destruction restores the record whole" \
                 "$UAR_L26E"
+        fi
+
+        # (p34) an UNEXAMINED pointer is PRESERVED, and so is the record it
+        #       pins -- across TWO passes, because the loss was deferred by one
+        #       run and a single-pass assertion would have gone green over it.
+        #       utest_pointer_run_id piped `timeout 5 sed` into `head`, so the
+        #       pipeline's status was `head`'s: a killed OR FAILED `sed` was
+        #       indistinguishable from a document carrying no run id, both
+        #       yielded the empty string, and utest_ptr_sweepable authorised the
+        #       unlink. The injection is a NON-TIMEOUT failure on purpose -- a
+        #       stall is the easy half and section 61's bound already covers it,
+        #       while a transient EIO or an unreadable regular file is the half
+        #       that made the sweep destroy precisely what it could not read.
+        uar_prune_reset
+        uar_prune_ptr valid 20260102T000000Z-1-aaaa
+        UAR_P34="$(UAR_PDIR="$UAR_PDIR" UAR_PRUNE="$UAR_PRUNE" timeout 60 bash -c '
+set -uo pipefail
+PROJECT="$UAR_PDIR"
+RUNS_DIR="$PROJECT/build/test-runs"
+RUN_ID="20260101T000000Z-1-aaaa"
+UTEST_RECORD_KEEP=2
+eval "$UAR_PRUNE"
+eval "$(declare -f utest_read_doc | sed "1s/^utest_read_doc/uar_real_read_doc/")"
+utest_read_doc() {
+    # UNEXAMINED, and NOT via a timeout: the read simply could not be completed.
+    #
+    # BOTH PATHNAMES the same inode is reachable through, because the failure
+    # being modelled belongs to the bytes, not to a name. utest_sweep_verified
+    # re-takes the verdict on the DETACHED object under its staging claim, so a
+    # shim bound to the published name alone would let the recheck read the file
+    # perfectly and vote keep -- the pointer would then survive on section 46s
+    # machinery rather than on the UNEXAMINED answer this test is about, and the
+    # test would pass with the tri-state removed. Verified: it did exactly that.
+    case "${1:-}" in
+        */test-results-valid.run|*/.utest-sweep.*/obj) return 2 ;;
+    esac
+    uar_real_read_doc "$@"
+}
+utest_prune_records >/dev/null 2>&1
+utest_prune_records >/dev/null 2>&1
+printf "| pointer: "
+if [ -f "$PROJECT/build/test-results-valid.run" ]; then printf "PRESERVED"; else printf "SWEPT"; fi
+printf "| record: "
+if [ -d "$RUNS_DIR/20260102T000000Z-1-aaaa" ]; then printf "HELD"; else printf "PRUNED"; fi
+printf "| HARNESS-OK\n"
+' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
+        if printf '%s' "$UAR_P34" | grep -q 'HARNESS-OK' &&
+           printf '%s' "$UAR_P34" | grep -q 'pointer: PRESERVED' &&
+           printf '%s' "$UAR_P34" | grep -q 'record: HELD'; then
+            t_pass "run record: a pointer that could not be READ is preserved, and so is its record, on the pass after"
+        else
+            t_fail "run record: a pointer that could not be READ is preserved, and so is its record, on the pass after" \
+                "$UAR_P34"
+        fi
+
+        # (p35) the CRASH REAPER. A prune killed between the detach and the
+        #       verdict leaves the record under a staging name, which is exactly
+        #       the shape section 46 needed a whole section for one level down.
+        #       Two halves, and the second is the one that matters: a claim whose
+        #       record can be put back IS put back, and a claim whose published
+        #       name is now OCCUPIED is reported and KEPT -- never deleted, and
+        #       never restored over the occupant. The reaper only ever restores
+        #       or `rmdir`s, for utest_sweep_reap's reason: a glob-and-`rm` reap
+        #       would turn every preserved record into a delayed wrongful delete
+        #       one pass later.
+        uar_prune_reset
+        # The published name must be FREE, which is what a crash mid-detach
+        # leaves behind: the record was renamed away and never put back. Leaving
+        # uar_prune_reset's own copy there would occupy it and exercise p35b's
+        # refusal path instead of this one's restore.
+        rm -rf "$UAR_PDIR/build/test-runs/20260102T000000Z-1-aaaa"
+        mkdir -p "$UAR_PDIR/build/test-runs/.utest-prune.999.1.d/20260102T000000Z-1-aaaa"
+        printf '<x/>\n' > "$UAR_PDIR/build/test-runs/.utest-prune.999.1.d/20260102T000000Z-1-aaaa/test-results.xml"
+        # KEEP=20 so the age cut retains everything: the reaper runs first and
+        # restores the record, and at keep=2 the very next loop would legitimately
+        # age it out again -- so the assertion would be measuring the age cut
+        # rather than the restore it is about.
+        UAR_P35="$(uar_prune_run 'UTEST_RECORD_KEEP=20')"
+        if printf '%s' "$UAR_P35" | grep -q 'HARNESS-OK' &&
+           [ -f "$UAR_PDIR/build/test-runs/20260102T000000Z-1-aaaa/test-results.xml" ] &&
+           [ ! -d "$UAR_PDIR/build/test-runs/.utest-prune.999.1.d" ]; then
+            t_pass "run record: a detach the previous pass could not finish is restored, claim and all"
+        else
+            t_fail "run record: a detach the previous pass could not finish is restored, claim and all" \
+                "$UAR_P35 | restored=$(ls -1 "$UAR_PDIR/build/test-runs/20260102T000000Z-1-aaaa" 2>&1 | tr '\n' ' ')"
+        fi
+
+        # (p35b) the OCCUPIED half: the published name is taken, so the record
+        #        cannot be restored. It must stay in its claim, be reported, and
+        #        -- the part that makes this more than a warning -- its POINTER
+        #        must survive, because the record's canonical directory is
+        #        legitimately absent and the sweep would otherwise read the
+        #        pointer as dangling and unlink it. The record would then come
+        #        back with neither pointer nor pin and the next age cut would
+        #        take it, which is the cascade UTEST_PRUNE_CLAIMED exists to stop.
+        uar_prune_reset
+        uar_prune_ptr valid 20260102T000000Z-1-aaaa
+        mkdir -p "$UAR_PDIR/build/test-runs/.utest-prune.999.2.d/20260102T000000Z-1-aaaa"
+        printf '<x/>\n' > "$UAR_PDIR/build/test-runs/.utest-prune.999.2.d/20260102T000000Z-1-aaaa/test-results.xml"
+        # The published name is occupied by a regular FILE, not a directory. A
+        # directory there would satisfy utest_ptr_sweepable's own `[ -d ]` test
+        # and the pointer would be kept for that reason alone -- so the
+        # UTEST_PRUNE_CLAIMED retention this case exists to prove could be
+        # deleted outright and the test would still pass. Verified: it did. A
+        # file fails `[ -d ]` while still defeating the atomic `mkdir` restore,
+        # which isolates the claimed-id path as the only thing keeping the
+        # pointer alive.
+        rm -rf "$UAR_PDIR/build/test-runs/20260102T000000Z-1-aaaa"
+        printf 'occupant\n' > "$UAR_PDIR/build/test-runs/20260102T000000Z-1-aaaa"
+        UAR_P35B="$(uar_prune_run 2>&1)"
+        if printf '%s' "$UAR_P35B" | grep -q 'HARNESS-OK' &&
+           printf '%s' "$UAR_P35B" | grep -q 'unresolved prune claim' &&
+           [ -f "$UAR_PDIR/build/test-runs/.utest-prune.999.2.d/20260102T000000Z-1-aaaa/test-results.xml" ] &&
+           [ -f "$UAR_PDIR/build/test-runs/20260102T000000Z-1-aaaa" ] &&
+           [ -f "$UAR_PDIR/build/test-results-valid.run" ]; then
+            t_pass "run record: an unrestorable claim is reported and kept, and its pointer is not swept"
+        else
+            t_fail "run record: an unrestorable claim is reported and kept, and its pointer is not swept" "$UAR_P35B"
+        fi
+
+        # (p36) the pointer-namespace OVERFLOW CONVERGES. Every other
+        #       `pin_incomplete` reason is transient and clears itself; this one
+        #       is a steady state -- more than cand_max pointers means every
+        #       later pass is incomplete too, so the age cut never runs again and
+        #       records accumulate without bound until an operator sets
+        #       UTEST_POINTER_PIN_MAX=0 by hand. pin_max=1 makes cand_max=4, so
+        #       six pointers overflow it. The assertion is that the namespace
+        #       SHRANK and the run said so -- convergence, not a silent deletion.
+        uar_prune_reset
+        for _i in 1 2 3 4 5 6; do
+            uar_prune_ptr "leg$_i" 20260102T000000Z-1-aaaa
+            touch -d "2020-01-0$_i" "$UAR_PDIR/build/test-results-leg$_i.run"
+        done
+        UAR_P36="$(uar_prune_run 'UTEST_POINTER_PIN_MAX=1' 2>&1)"
+        UAR_P36N="$(ls -1 "$UAR_PDIR/build" 2>/dev/null | grep -c '\.run$' || echo 0)"
+        if printf '%s' "$UAR_P36" | grep -q 'HARNESS-OK' &&
+           printf '%s' "$UAR_P36" | grep -q 'least-recently-published leg pointer' &&
+           [ "$UAR_P36N" -lt 6 ]; then
+            t_pass "run record: a pointer-namespace overflow converges instead of deferring retention forever"
+        else
+            t_fail "run record: a pointer-namespace overflow converges instead of deferring retention forever" \
+                "$UAR_P36 | pointers-left=$UAR_P36N"
+        fi
+
+        # (p37) the IDENTITY document's nine unchecked fields, bound to their own
+        #       grammars the way section 61 bound the marker's four. Each one is a
+        #       named MUTATION of the production emitter's output, for p29's
+        #       reason: a hand-written fixture is a second spelling of the
+        #       contract, free to drift into passing what production rejects.
+        #       These fields say WHICH machine and WHICH configuration produced a
+        #       record, and the shared "any scalar" grammar they used to fall
+        #       through to accepted a bare integer or a boolean in every one.
+        for _ifield in timestamp commit leg_source host accel cpus ci_parity; do
+            uar_prune_reset
+            uar_prune_ptr valid 20260102T000000Z-1-aaaa
+            touch -d '2020-01-01' "$UAR_PDIR/build/test-results-valid.run"
+            uar_prune_ptr fielded 20260103T000000Z-1-aaaa
+            case "$_ifield" in
+                timestamp)  uar_prune_ident_fields 20260103T000000Z-1-aaaa fielded 'not-a-timestamp' ;;
+                commit)     uar_prune_ident_fields 20260103T000000Z-1-aaaa fielded '' 'ZZZZ' ;;
+                leg_source) uar_prune_ident_fields 20260103T000000Z-1-aaaa fielded '' '' 'guessed' ;;
+                host)       uar_prune_ident_fields 20260103T000000Z-1-aaaa fielded '' '' '' 'WSL2' ;;
+                accel)      uar_prune_ident_fields 20260103T000000Z-1-aaaa fielded '' '' '' '' '' 'turbo' ;;
+                cpus)       uar_prune_ident_fields 20260103T000000Z-1-aaaa fielded '' '' '' '' '' '' '02' ;;
+                ci_parity)  uar_prune_ident_fields 20260103T000000Z-1-aaaa fielded '' '' '' '' '' '' '' '' '"false"' ;;
+            esac
+            UAR_P37="$(uar_prune_run 'UTEST_POINTER_PIN_MAX=1')"
+            if printf '%s' "$UAR_P37" | grep -q 'HARNESS-OK' &&
+               printf '%s' "$UAR_P37" | grep -q '20260102T000000Z-1-aaaa' &&
+               ! printf '%s' "$UAR_P37" | grep -q '20260103T000000Z-1-aaaa'; then
+                t_pass "run record: an identity field outside its own grammar ('$_ifield') wins no pin"
+            else
+                t_fail "run record: an identity field outside its own grammar ('$_ifield') wins no pin" "$UAR_P37"
+            fi
+        done
+
+        # (p37b) the POSITIVE case, for p30's reason: every negative above would
+        #        also pass against a validator that refused everything outright.
+        uar_prune_reset
+        uar_prune_ptr valid 20260102T000000Z-1-aaaa
+        UAR_P37B="$(uar_prune_run 'UTEST_POINTER_PIN_MAX=1')"
+        if printf '%s' "$UAR_P37B" | grep -q 'HARNESS-OK' &&
+           printf '%s' "$UAR_P37B" | grep -q '20260102T000000Z-1-aaaa' &&
+           printf '%s' "$UAR_P37B" | grep -q 'test-results-valid.run'; then
+            t_pass "run record: a canonical identity document still pins after the per-field grammars"
+        else
+            t_fail "run record: a canonical identity document still pins after the per-field grammars" "$UAR_P37B"
+        fi
+
+        # (p38) a claim created THIS pass publishes its id, so the sweep further
+        #       down the same run does not strip the pointer off a record that is
+        #       waiting to be restored. p35b covers a claim that already existed
+        #       when utest_prune_reap ran; this covers the one route the
+        #       reaper-only publication could not: the age loop detaches a record,
+        #       fails to restore it, and the sweep runs afterwards in the same
+        #       shell. Moving that loop out of its pipeline subshell is what makes
+        #       the publication reachable, and without the publication itself the
+        #       move bought nothing -- the adversarial round caught exactly that.
+        #       The blocker forces the KEEP verdict; occupying the published name
+        #       with a file forces the restore to fail.
+        uar_lease_reset
+        uar_prune_ptr valid 20260102T000000Z-1-aaaa
+        UAR_P38="$(UAR_PDIR="$UAR_PDIR" UAR_PRUNE="$UAR_PRUNE" UAR_LHOLD="$UAR_LHOLD" timeout 60 bash -c '
+set -uo pipefail
+PROJECT="$UAR_PDIR"
+RUNS_DIR="$PROJECT/build/test-runs"
+RUN_ID="20260101T000000Z-1-aaaa"
+UTEST_RECORD_KEEP=2
+# PINNING OFF, because the pointer this test needs is exactly what would
+# otherwise PIN its record: a pinned record is skipped before the age loop ever
+# charges the quota, so it is never detached, no claim is ever created, and the
+# test passes while proving nothing. The pointer still has to exist -- the whole
+# assertion is that the sweep spares it -- so the pin is what has to go.
+UTEST_POINTER_PIN_MAX=0
+eval "$UAR_PRUNE"
+eval "$(declare -f utest_hold_blocking_dirs | sed "1s/^utest_hold_blocking_dirs/uar_real_hold/")"
+utest_hold_blocking_dirs() {
+    case "${1:-}" in
+        *20260102T000000Z-1-aaaa/leases)
+            if [ -z "${2:-}" ]; then
+                # Force KEEP, then make the restore impossible: a regular file at
+                # the published name defeats the atomic mkdir and is not a
+                # directory, so nothing else can be keeping the pointer alive.
+                mkdir -p "$1/$UAR_LHOLD.race38.lease" 2>/dev/null || true
+                rm -rf "$RUNS_DIR/20260102T000000Z-1-aaaa" 2>/dev/null || true
+                printf "occupant\n" > "$RUNS_DIR/20260102T000000Z-1-aaaa" 2>/dev/null || true
+            fi ;;
+    esac
+    uar_real_hold "$@"
+}
+utest_prune_records >/dev/null 2>&1
+printf "| pointer: "
+if [ -f "$PROJECT/build/test-results-valid.run" ]; then printf "PRESERVED"; else printf "SWEPT"; fi
+printf "| claimed: "
+if ls -1d "$RUNS_DIR"/.utest-prune.*.d >/dev/null 2>&1; then printf "HELD"; else printf "NONE"; fi
+printf "| HARNESS-OK\n"
+' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
+        if printf '%s' "$UAR_P38" | grep -q 'HARNESS-OK' &&
+           printf '%s' "$UAR_P38" | grep -q 'pointer: PRESERVED' &&
+           printf '%s' "$UAR_P38" | grep -q 'claimed: HELD'; then
+            t_pass "run record: a claim created this pass protects its pointer from the sweep in the same pass"
+        else
+            t_fail "run record: a claim created this pass protects its pointer from the sweep in the same pass" "$UAR_P38"
+        fi
+
+        # (p39) convergence removes only the PROVEN excess. Pin discovery stops at
+        #       cand_max+1 lines, so it establishes "more than cand_max" and
+        #       nothing more -- and acting on that by deleting a whole pin_max
+        #       batch destroys resolution paths that were never over any bound. At
+        #       the defaults a namespace exceeding 256 by ONE would have cost 64
+        #       legs their pointer.
+        #       pin_max=2 puts cand_max at 8, so NINE pointers are an excess of
+        #       exactly one. The two numbers must DIFFER for this to bind: at
+        #       pin_max=1 the batch size and the proven excess are both 1, the
+        #       over-deletion is invisible, and the test passes with the fix
+        #       reverted -- verified by mutation, which is why the fixture is
+        #       sized this way rather than the smaller obvious way.
+        uar_prune_reset
+        for _i in 1 2 3 4 5 6 7 8 9; do
+            uar_prune_ptr "leg$_i" 20260102T000000Z-1-aaaa
+            touch -d "2020-01-0$_i" "$UAR_PDIR/build/test-results-leg$_i.run"
+        done
+        UAR_P39="$(uar_prune_run 'UTEST_POINTER_PIN_MAX=2' 2>&1)"
+        UAR_P39N="$(ls -1 "$UAR_PDIR/build" 2>/dev/null | grep -c '\.run$' || echo 0)"
+        if printf '%s' "$UAR_P39" | grep -q 'HARNESS-OK' && [ "$UAR_P39N" = "8" ] &&
+           [ ! -f "$UAR_PDIR/build/test-results-leg1.run" ] &&
+           [ -f "$UAR_PDIR/build/test-results-leg2.run" ]; then
+            t_pass "run record: an overflow of one removes exactly one pointer, the least recently published"
+        else
+            t_fail "run record: an overflow of one removes exactly one pointer, the least recently published" \
+                "$UAR_P39 | pointers-left=$UAR_P39N"
+        fi
+
+        # (p40) an OVERSIZED but otherwise valid pointer naming a live record is
+        #       KEPT. utest_read_doc reports "larger than the 4096-byte cap" with
+        #       the same 1 it reports "not a regular file", and the sweep must
+        #       treat those oppositely: the documented JSON resolver has no size
+        #       limit and the `sed` pipeline this replaced had none either, so
+        #       sweeping an oversize pointer would change an existing destructive
+        #       outcome under cover of a refactor. The FIFO case that must still
+        #       be swept is covered separately and stays green beside this.
+        uar_prune_reset
+        uar_prune_ptr valid 20260102T000000Z-1-aaaa
+        # Canonical document first, then padding past the cap: the run_id is still
+        # extractable and the record still exists, so nothing but the size differs.
+        { cat "$UAR_PDIR/build/test-results-valid.run"; head -c 8192 /dev/zero | tr '\0' ' '; } \
+            > "$UAR_PDIR/build/test-results-valid.run.big"
+        mv -f "$UAR_PDIR/build/test-results-valid.run.big" "$UAR_PDIR/build/test-results-valid.run"
+        UAR_P40="$(uar_prune_run 'UTEST_RECORD_KEEP=20')"
+        if printf '%s' "$UAR_P40" | grep -q 'HARNESS-OK' &&
+           [ -f "$UAR_PDIR/build/test-results-valid.run" ]; then
+            t_pass "run record: an oversized pointer that still names a live record is not swept"
+        else
+            t_fail "run record: an oversized pointer that still names a live record is not swept" "$UAR_P40"
+        fi
+
+        # (p41) OVERFLOW CONVERGENCE HONOURS THE CLAIM PROTECTION TOO. Convergence
+        #       is allowed to delete a pointer that still resolves -- when the
+        #       bound is on the count, a valid pointer is as much of a problem as
+        #       an invalid one -- but a record awaiting restoration from a claim is
+        #       a different case: its directory is absent only because this harness
+        #       moved it, so stripping its pointer means it comes back with neither
+        #       pointer nor pin and ages out. That is a permanent loss to satisfy a
+        #       bound the record is not responsible for. The excess is still met:
+        #       convergence simply takes the next-oldest unprotected pointer.
+        uar_prune_reset
+        for _i in 1 2 3 4 5; do
+            uar_prune_ptr "leg$_i" "2026010${_i}T000000Z-1-aaaa"
+            touch -d "2020-01-0$_i" "$UAR_PDIR/build/test-results-leg$_i.run"
+        done
+        # leg1's record goes into an UNRESTORABLE claim: a regular file at the
+        # published name defeats the atomic mkdir, so the reaper reports it and
+        # publishes its id.
+        rm -rf "$UAR_PDIR/build/test-runs/20260101T000000Z-1-aaaa"
+        mkdir -p "$UAR_PDIR/build/test-runs/.utest-prune.999.3.d/20260101T000000Z-1-aaaa"
+        printf '<x/>\n' > "$UAR_PDIR/build/test-runs/.utest-prune.999.3.d/20260101T000000Z-1-aaaa/test-results.xml"
+        printf 'occupant\n' > "$UAR_PDIR/build/test-runs/20260101T000000Z-1-aaaa"
+        UAR_P41="$(uar_prune_run 'UTEST_POINTER_PIN_MAX=1
+RUN_ID=20260105T000000Z-1-aaaa' 2>&1)"
+        if printf '%s' "$UAR_P41" | grep -q 'HARNESS-OK' &&
+           [ -f "$UAR_PDIR/build/test-results-leg1.run" ] &&
+           [ ! -f "$UAR_PDIR/build/test-results-leg2.run" ]; then
+            t_pass "run record: overflow convergence spares a pointer whose record is held in a claim"
+        else
+            t_fail "run record: overflow convergence spares a pointer whose record is held in a claim" \
+                "$UAR_P41 | leg1=$([ -f "$UAR_PDIR/build/test-results-leg1.run" ] && echo kept || echo gone) leg2=$([ -f "$UAR_PDIR/build/test-results-leg2.run" ] && echo kept || echo gone)"
         fi
 
         # (L26f) the STAGING namespace, positively. L26d's `.abcd.tmp` is a

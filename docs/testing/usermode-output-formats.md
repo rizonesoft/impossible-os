@@ -899,10 +899,25 @@ reordered keys wins no pin even though it satisfied the older substring tests.
 That strictness is deliberately one-sided: a pin protects a record against
 retention, and protecting a generation no compliant consumer could resolve is
 the wasted budget the validation exists to prevent. Step 3's own reader contract
-is unchanged -- consumers parse the marker, they do not byte-match it. Any
-pointer left naming an
+is unchanged -- consumers parse the marker, they do not byte-match it. The
+identity document is validated the same way and to the same depth: all twelve
+keys are bound to their own grammars (an ISO timestamp, a hex commit, closed
+enumerations for `leg_source` and `accel`, a non-zero JSON integer for `cpus`, a
+bare boolean for `ci_parity`), rather than the nine of them that used to be
+accepted as "any scalar". Any pointer left naming an
 absent record -- pruned past the cap, or removed by hand -- is deleted by the
 same pass, so a consumer sees "no pointer" rather than "a pointer to nothing".
+
+Two exceptions to that deletion, and both are cases where "absent" is not a
+fact the pass established. **A pointer the pass could not READ is preserved,
+not swept.** The extraction distinguishes a document carrying no `run_id` from
+a read that never completed -- a killed reader, a transient EIO, an unreadable
+regular file -- and only the first authorises the unlink; the second leaves the
+pointer exactly where it is. **A pointer whose record is held in a prune claim
+is likewise preserved**, because such a record's canonical directory is
+legitimately absent while the claim holds it, and sweeping the pointer would
+mean the record returns with neither pointer nor pin for the next age cut to
+take.
 
 The pin pass is also bounded in TIME, because validating a pointer reads
 documents and the whole pass holds the retention mutex that a reader waits ten
@@ -921,6 +936,22 @@ happens on a later run, which is the same direction a lock timeout already
 takes. A `build/` that keeps triggering this needs attention rather than
 patience: `UTEST_POINTER_PIN_MAX=0` prunes without pinning at all.
 
+**The candidate bound is the one that CONVERGES rather than merely deferring.**
+Every other reason above is transient and clears itself on a later pass, but an
+oversized pointer namespace is a steady state: more than four times
+`UTEST_POINTER_PIN_MAX` pointer files means every later pass is truncated too,
+so the age cut would never run again and records would accumulate without bound
+until an operator intervened. So a pass that hits it removes the
+least-recently-published pointers -- oldest first, bounded per pass, and
+ANNOUNCED with a count -- until the namespace fits, and retention resumes on its
+own. This deliberately overturns the sweep's usual weakness (it otherwise
+removes only what does not resolve, because deleting a pointer destroys
+something a human may have put there): when the bound is on the COUNT, a valid
+pointer is as much of a problem as an invalid one. The trade is stated rather
+than hidden -- the deferral it replaces loses records permanently and silently,
+while this loses the least recently published pointers, says so, and is undone
+by re-running that leg.
+
 Retention also honours reader leases, and the two exemptions answer different
 questions: the pin protects the record the CURRENT pointer names, the lease
 protects one a reader has ALREADY resolved and therefore survives the leg
@@ -930,12 +961,20 @@ in the age candidates -- otherwise `leases/` would only ever grow. **The
 worst-case directory size is therefore `UTEST_RECORD_KEEP` +
 `UTEST_POINTER_PIN_MAX` + `UTEST_LEASE_MAX` records** (20 + 64 + 8 by default,
 less any overlap), not `UTEST_RECORD_KEEP` alone. Those three are the CAPPED
-holds. Three further holds are uncapped by design and sit outside that sum: an
-unresolved sweep claim, a directory at a lease or lease-staging name, and a
-record whose lease census could not be completed. Each is fail-closed -- the
+holds. Four further holds are uncapped by design and sit outside that sum: an
+unresolved sweep claim, a directory at a lease or lease-staging name, a record
+whose lease census could not be completed, and a record still held in an
+unresolved PRUNE claim. Each is fail-closed -- the
 pass could not establish that the record is free, so it keeps it and says so on
 stdout -- and each is therefore bounded by how many such records exist rather
-than by a knob. A `build/` accumulating them is reporting a real problem
+than by a knob. The lease census carries a PER-RECORD bound
+(`UTEST_CENSUS_BUDGET`, 8 seconds, floored at 1) rather than a per-pass one, so
+one record with many slow lease documents can no longer hold the retention mutex
+for as long as it takes -- and, equally deliberately, cannot consume a budget
+that later records would need. A per-pass deadline was rejected precisely
+because records are censused newest-first, so exhausting it would leave the
+OLDEST records unclassified on every pass, which are the ones the disk bound
+most needs reclaimed. A `build/` accumulating them is reporting a real problem
 (a stalled mount, or something writing directories where files belong), not
 drifting quietly. `UTEST_LEASE_MAX=0` disables
 leases outright. Should a non-conforming reader exceed the cap anyway, the
@@ -945,6 +984,34 @@ mistake the pin came close to making. If a reader holds the retention lock when
 a run starts, that run skips retention and says so rather than deleting records
 it cannot safely classify; `flock` releases on process death, so a wedged reader
 bounds itself.
+
+**An aged record is destroyed through a DETACHED object, never through its
+published name.** Classification and destruction are two loops, so a writer that
+takes no retention mutex -- which is by definition the writer of a blocking
+directory -- could appear between them and be removed recursively by a run that
+had already announced such things are never removed. Re-asking the question
+immediately before the delete narrowed that window to a syscall pair; it did not
+close it. So the age cut now claims a private staging wrapper under
+`build/test-runs/` with an atomic `mkdir`, renames the record inside it under its
+own unchanged name, re-takes the fail-closed holds on the detached directory, and
+destroys only what it proved free of blockers. If a hold fires, the record is
+restored WHOLE -- atomic `mkdir` on the published name, then the rename, so a
+record published there meanwhile is never replaced and a writer that landed
+entries in the destination makes the rename refuse rather than clobber.
+
+A prune killed between the detach and the verdict leaves the record under the
+staging name, so the next pass reaps those claims BEFORE it does anything else:
+it restores what it can identify, and REPORTS and KEEPS what it cannot. Nothing
+ever deletes a claim's contents -- the reap only restores or `rmdir`s, for the
+reason the lease-level sweep reaper does: a glob-and-delete reap would turn every
+preserved record into a delayed wrongful delete one pass later.
+
+One residual is stated rather than closed: a process holding a directory
+descriptor or working directory inside the record across the rename can still
+create entries through that handle after the recheck. No rename closes that, so
+the guarantee is **pathname replacement**, not mutation-freedom; closing it would
+require every writer to participate in the retention mutex, which is exactly what
+a non-conforming writer does not do.
 
 Both formats go through that one path. An alias that cannot be written fails
 the run rather than going silently missing, and finalization happens before
