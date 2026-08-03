@@ -13562,6 +13562,191 @@ printf "| HARNESS-OK\n"
         fi
         rm -rf "$UAR_PDIR/build/test-results-blocked.run"
 
+        # (p21-p22) SECTION 60. The pin loop is bounded in COUNT and in TIME,
+        #     and either bound biting DEFERS the destructive age cut. That
+        #     coupling is the assertion, not a detail of it: ranking is by
+        #     mtime, so enough newer junk can push an older valid pointer past
+        #     any cutoff, and a pass that then pruned would destroy exactly the
+        #     published generation the pin exists to protect (the incident
+        #     recorded at scripts/test.sh, "with pin_max=1, one newer CORRUPT
+        #     pointer displaced a valid older one"). Both tests therefore check
+        #     that the run SAYS it was incomplete AND that the records the age
+        #     cut would otherwise have taken are still there.
+        #
+        #     Neither asserts ELAPSED TIME. scripts/test.sh already records why:
+        #     an `elapsed >= 4` assertion against the reap grace went red on a
+        #     saturated host and green on an immediate rerun with no change, so
+        #     the suite reported red on correct code. The DECISION the function
+        #     announces is exact and load-independent where a stopwatch is not;
+        #     the outer `timeout` is what proves the pass terminates at all.
+
+        # (p21) the CANDIDATE bound. cand_max is pin_max * 4, so pin_max=2
+        #       admits eight and a ninth makes the pass incomplete. The valid
+        #       pointer is the NEWEST, so it is examined and pins before the
+        #       junk is reached -- a bound that dropped it instead would be the
+        #       displacement incident with a new spelling.
+        uar_prune_reset
+        uar_prune_ptr valid 20260102T000000Z-1-aaaa
+        for _j in 01 02 03 04 05 06 07 08 09 10; do
+            printf 'not json at all\n' > "$UAR_PDIR/build/test-results-junk$_j.run"
+            touch -d '2020-01-01' "$UAR_PDIR/build/test-results-junk$_j.run"
+        done
+        UAR_PP21="$(uar_prune_run 'UTEST_POINTER_PIN_MAX=2')"
+        if printf '%s' "$UAR_PP21" | grep -q 'HARNESS-OK' &&
+           printf '%s' "$UAR_PP21" | grep -q 'pointer pinning is INCOMPLETE' &&
+           printf '%s' "$UAR_PP21" | grep -q 'more than 8 candidate pointer' &&
+           printf '%s' "$UAR_PP21" | grep -q 'test-results-valid.run' &&
+           printf '%s' "$UAR_PP21" | grep -q '20260102T000000Z-1-aaaa' &&
+           printf '%s' "$UAR_PP21" | grep -q '20260103T000000Z-1-aaaa'; then
+            t_pass "run record: more candidate pointers than the pin bound admits defers the age cut and says so"
+        else
+            t_fail "run record: more candidate pointers than the pin bound admits defers the age cut and says so" "$UAR_PP21"
+        fi
+        rm -f "$UAR_PDIR"/build/test-results-junk*.run
+
+        # (p22) the AGGREGATE deadline, made deterministic by a slow `wc` on
+        #       PATH rather than by a FIFO. A FIFO cannot reach this loop at
+        #       all: candidates come from `find -type f`, which excludes one by
+        #       type, and p13 above covers what the SWEEP does with it. The
+        #       shim is the honest reproduction -- production code runs
+        #       unmodified, and every bounded operation costs a fixed floor
+        #       rather than a hope.
+        #
+        #       BOTH `wc` and `head` are slowed, because the budget arithmetic
+        #       is per OPERATION and there are six of them per candidate, not
+        #       three: the first cut of this section sized the per-read cap
+        #       against three and let one candidate spend twice the remaining
+        #       budget. A shim on `wc` alone would have measured half the cost
+        #       and passed against that bug.
+        #       TWO valid pointers and the budget at its floor, so the pin
+        #       COUNT is the discriminator rather than a stopwatch. At
+        #       UTEST_POINTER_PIN_BUDGET=6 one validated candidate (1.8s of
+        #       shimmed operations) leaves under six seconds, so the loop must
+        #       refuse to start the second: exactly one pin. Sized against
+        #       three operations instead of six the remainder still clears the
+        #       old three-second floor, the second valid pointer IS validated,
+        #       and the announcement says two -- which is how this test fails
+        #       against the bug rather than merely passing against the fix.
+        uar_prune_reset
+        uar_prune_ptr valid 20260102T000000Z-1-aaaa
+        uar_prune_ptr valid2 20260103T000000Z-1-aaaa
+        for _j in 1 2 3 4 5 6 7 8; do
+            printf 'not json at all\n' > "$UAR_PDIR/build/test-results-slow$_j.run"
+            touch -d '2020-01-01' "$UAR_PDIR/build/test-results-slow$_j.run"
+        done
+        mkdir -p "$UAR_PDIR/slowbin"
+        UAR_REALWC="$(command -v wc || true)"
+        UAR_REALHEAD="$(command -v head || true)"
+        if [ -z "$UAR_REALWC" ] || [ -z "$UAR_REALHEAD" ]; then
+            t_fail "run record: an exhausted pin budget defers the age cut and says so" "wc or head not on PATH"
+        else
+            # 0.3s, not 1s: the per-operation cap at the default budget is ONE
+            # second, so a shim that slept a whole second would race its own
+            # timeout and the valid candidate would fail validation instead of
+            # pinning. Six operations at 0.3 is 1.8s per validated candidate --
+            # comfortably inside the cap, and still a hard floor that drives the
+            # budget down within three candidates.
+            printf '#!/bin/sh\nsleep 0.3\nexec %s "$@"\n' "$UAR_REALWC" > "$UAR_PDIR/slowbin/wc"
+            printf '#!/bin/sh\nsleep 0.3\nexec %s "$@"\n' "$UAR_REALHEAD" > "$UAR_PDIR/slowbin/head"
+            chmod +x "$UAR_PDIR/slowbin/wc" "$UAR_PDIR/slowbin/head"
+            # Its OWN harness rather than uar_prune_run, for the reason p13 and
+            # p20 have one: a regression here does not fail, it RUNS LONG, so
+            # the invocation needs an external timeout that a shell function
+            # cannot carry. UTEST_LEASE_MAX=0 keeps the shim's cost inside the
+            # pin loop -- the lease counter reads documents with `wc` too, and
+            # this test is about the pin budget, not about a lease scan.
+            UAR_PP22="$(UAR_PDIR="$UAR_PDIR" UAR_PRUNE="$UAR_PRUNE" timeout 90 bash -c '
+set -euo pipefail
+RED=""; YELLOW=""; CYAN=""; RESET=""
+PATH="$UAR_PDIR/slowbin:$PATH"
+PROJECT="$UAR_PDIR"
+RUNS_DIR="$PROJECT/build/test-runs"
+RUN_ID="20260101T000000Z-1-aaaa"
+UTEST_RECORD_KEEP=2
+UTEST_LEASE_MAX=0
+UTEST_POINTER_PIN_BUDGET=6
+eval "$UAR_PRUNE"
+utest_prune_records
+ls -1 "$RUNS_DIR" | sort | tr "\n" " "
+printf "| pointers: "
+{ ls -1 "$PROJECT/build" 2>/dev/null | grep "\.run$" | sort | tr "\n" " "; } || true
+printf "| HARNESS-OK\n"
+' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
+            if printf '%s' "$UAR_PP22" | grep -q 'HARNESS-OK' &&
+               printf '%s' "$UAR_PP22" | grep -q 'pointer pinning is INCOMPLETE' &&
+               printf '%s' "$UAR_PP22" | grep -q 'UTEST_POINTER_PIN_BUDGET=6s spent after 1 pin' &&
+               printf '%s' "$UAR_PP22" | grep -q 'test-results-valid.run' &&
+               printf '%s' "$UAR_PP22" | grep -q '20260102T000000Z-1-aaaa' &&
+               printf '%s' "$UAR_PP22" | grep -q '20260103T000000Z-1-aaaa'; then
+                t_pass "run record: an exhausted pin budget defers the age cut and says so"
+            else
+                t_fail "run record: an exhausted pin budget defers the age cut and says so" "$UAR_PP22"
+            fi
+        fi
+        rm -rf "$UAR_PDIR/slowbin"
+        rm -f "$UAR_PDIR"/build/test-results-slow*.run
+
+        # (p23) the per-operation ARITHMETIC on its own. p22 above cannot see a
+        #       divisor-only regression and it is worth saying why rather than
+        #       adding a third overlapping fixture by feel: a validated
+        #       candidate costs six delays under EITHER divisor, so the elapsed
+        #       clock advances identically and both implementations stop at the
+        #       same `pin_left < 6` guard with the same pin count. The two only
+        #       diverge when an operation is KILLED, so the discriminator has to
+        #       be a delay strictly between the correct cap and the wrong one.
+        #
+        #       At UTEST_POINTER_PIN_BUDGET=6 the correct cap is 6/6 = 1s and
+        #       the rejected one is 6/3 = 2s, so a 1.5s delay is killed by the
+        #       first and survives the second: correct code pins NOTHING and
+        #       says so, `/3` completes the candidate and reports a pin. The
+        #       margins are 0.5s either way, and a host slow enough to lose them
+        #       makes this test agree with correct code rather than contradict
+        #       it -- it can go blind, never red, which is the only acceptable
+        #       direction for a fixture that has a stopwatch anywhere near it.
+        #       A SECOND candidate is required for the loop to reach the guard
+        #       at all: the check happens before STARTING one, so a list that
+        #       simply ends is a COMPLETE classification and reports nothing.
+        #       The junk is older, so the valid pointer is still examined first.
+        uar_prune_reset
+        uar_prune_ptr valid 20260102T000000Z-1-aaaa
+        for _j in 1 2 3 4; do
+            printf 'not json at all\n' > "$UAR_PDIR/build/test-results-tail$_j.run"
+            touch -d '2020-01-01' "$UAR_PDIR/build/test-results-tail$_j.run"
+        done
+        mkdir -p "$UAR_PDIR/slowbin"
+        if [ -z "$UAR_REALWC" ] || [ -z "$UAR_REALHEAD" ]; then
+            t_fail "run record: the per-operation cap is sized against six operations, not three" "wc or head not on PATH"
+        else
+            printf '#!/bin/sh\nsleep 1.5\nexec %s "$@"\n' "$UAR_REALWC" > "$UAR_PDIR/slowbin/wc"
+            printf '#!/bin/sh\nsleep 1.5\nexec %s "$@"\n' "$UAR_REALHEAD" > "$UAR_PDIR/slowbin/head"
+            chmod +x "$UAR_PDIR/slowbin/wc" "$UAR_PDIR/slowbin/head"
+            UAR_PP23="$(UAR_PDIR="$UAR_PDIR" UAR_PRUNE="$UAR_PRUNE" timeout 90 bash -c '
+set -euo pipefail
+RED=""; YELLOW=""; CYAN=""; RESET=""
+PATH="$UAR_PDIR/slowbin:$PATH"
+PROJECT="$UAR_PDIR"
+RUNS_DIR="$PROJECT/build/test-runs"
+RUN_ID="20260101T000000Z-1-aaaa"
+UTEST_RECORD_KEEP=2
+UTEST_LEASE_MAX=0
+UTEST_POINTER_PIN_BUDGET=6
+eval "$UAR_PRUNE"
+utest_prune_records
+ls -1 "$RUNS_DIR" | sort | tr "\n" " "
+printf "| HARNESS-OK\n"
+' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
+            if printf '%s' "$UAR_PP23" | grep -q 'HARNESS-OK' &&
+               printf '%s' "$UAR_PP23" | grep -q 'UTEST_POINTER_PIN_BUDGET=6s spent after 0 pin' &&
+               printf '%s' "$UAR_PP23" | grep -q '20260102T000000Z-1-aaaa' &&
+               printf '%s' "$UAR_PP23" | grep -q '20260103T000000Z-1-aaaa'; then
+                t_pass "run record: the per-operation cap is sized against six operations, not three"
+            else
+                t_fail "run record: the per-operation cap is sized against six operations, not three" "$UAR_PP23"
+            fi
+        fi
+        rm -rf "$UAR_PDIR/slowbin"
+        rm -f "$UAR_PDIR"/build/test-results-tail*.run
+
         # (L1-L7) READER LEASES. The pin above protects the record the CURRENT
         #     pointer names; it cannot protect one a reader has already
         #     resolved, because publishing again unpins the previous target

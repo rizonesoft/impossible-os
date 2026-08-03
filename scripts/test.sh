@@ -665,12 +665,27 @@ utest_identity_binds() {
 # field-by-field `grep` would spawn a dozen processes per pointer on the
 # startup path for no added strictness.
 utest_pointer_pin_id() {
-    local ptr="$1" body mbody ibody id leg sz rest
+    local ptr="$1" body mbody ibody id leg sz rest tmo
     # Repeated from the top of the script ON PURPOSE. This function is the
     # reference validator: it is extracted and run standalone by the
     # regressions, and its leg guard is the one asymmetric charset test in the
     # file, so it must not depend on a matching option its caller chose.
     shopt -u nocasematch
+    # PER-READ BOUND, and the argument can only ever TIGHTEN it. Five seconds
+    # is what this validator has always used and stays the default, so every
+    # existing caller is unchanged; the pin loop passes a smaller one derived
+    # from what is left of its aggregate budget (section 60). A deadline
+    # checked only BETWEEN candidates is not a bound: one candidate makes SIX
+    # of these bounded operations -- `wc` and `head` for each of the pointer,
+    # the marker and the identity document -- so a fixed five seconds lets a
+    # single hostile pointer spend thirty while utest_lease_acquire waits ten
+    # for the same mutex and then refuses a reader entitled to its lease.
+    # An ENUMERATED case, not a numeric test: `[ 08 -ge 1 ]` is evaluated in
+    # base 8 and aborts the run under `set -e`, and anything outside 1..5 is
+    # either a caller bug or an attempt to lengthen a bound that exists to be
+    # short -- both take the default rather than the value.
+    tmo="${2:-5}"
+    case "$tmo" in 1|2|3|4|5) ;; *) tmo=5 ;; esac
     # BOUNDED, and bounded by SIZE FIRST. `timeout` bounds elapsed time, not
     # bytes: a huge regular file would be pulled wholly into a shell variable
     # before the clock ran out. And a byte-capped read alone is not enough
@@ -686,10 +701,10 @@ utest_pointer_pin_id() {
     # (Section 45 made this load-bearing: utest_lease_acquire calls this while
     # holding the retention mutex, so an unbounded block here wedges retention
     # for every later run rather than costing one run five seconds.)
-    sz="$(timeout 5 wc -c -- "$ptr" 2>/dev/null | awk '{print $1; exit}')" || return 0
+    sz="$(timeout "$tmo" wc -c -- "$ptr" 2>/dev/null | awk '{print $1; exit}')" || return 0
     case "$sz" in ''|*[!0-9]*) return 0 ;; esac
     [ "$sz" -le 4096 ] || return 0
-    body="$(timeout 5 head -c 4096 -- "$ptr" 2>/dev/null)" || return 0
+    body="$(timeout "$tmo" head -c 4096 -- "$ptr" 2>/dev/null)" || return 0
     [ -n "$body" ] || return 0
     # From the SNAPSHOT, never by re-opening the file -- re-reading would
     # validate one version and extract from another.
@@ -735,17 +750,18 @@ utest_pointer_pin_id() {
     # REGULAR FILE FIRST, as a fast path rather than as a safety claim. The
     # reads below are each bounded at five seconds, which is the right bound for
     # a file swapped underneath them -- but a FIFO planted at this pathname
-    # burns the whole five seconds on every pass, and the pin loop validates
-    # every candidate pointer, so a directory of them multiplies that by N while
-    # the retention mutex is held. `-f` is a stat and therefore not atomic with
-    # the open; it does not replace the timeout, it just stops the static
-    # hostile case from costing anything. (The aggregate bound the loop still
-    # lacks is section 60.)
+    # burns the whole timeout on every pass, and the pin loop validates every
+    # candidate pointer, so a directory of them multiplies that by N while the
+    # retention mutex is held. `-f` is a stat and therefore not atomic with the
+    # open; it does not replace the timeout, it just stops the static hostile
+    # case from costing anything. The multiplication by N is bounded by the
+    # loop's aggregate budget (section 60), which is what makes the residual
+    # race here cost one pass rather than the mutex.
     [ -f "$RUNS_DIR/$id/record-complete.json" ] || return 0
-    sz="$(timeout 5 wc -c -- "$RUNS_DIR/$id/record-complete.json" 2>/dev/null | awk '{print $1; exit}')" || return 0
+    sz="$(timeout "$tmo" wc -c -- "$RUNS_DIR/$id/record-complete.json" 2>/dev/null | awk '{print $1; exit}')" || return 0
     case "$sz" in ''|*[!0-9]*) return 0 ;; esac
     [ "$sz" -le 4096 ] || return 0
-    mbody="$(timeout 5 head -c 4096 -- "$RUNS_DIR/$id/record-complete.json" 2>/dev/null)" || return 0
+    mbody="$(timeout "$tmo" head -c 4096 -- "$RUNS_DIR/$id/record-complete.json" 2>/dev/null)" || return 0
     # NO BACKSLASH ANYWHERE, and this one line is what makes the field tests
     # below mean what they say. Every value this marker carries is generated
     # or charset-filtered -- a run id, a fixed status word, an integer, a
@@ -792,10 +808,10 @@ utest_pointer_pin_id() {
     # question itself, in a document written before any other and never
     # rewritten.
     [ -f "$RUNS_DIR/$id/test-run-identity.json" ] || return 0
-    sz="$(timeout 5 wc -c -- "$RUNS_DIR/$id/test-run-identity.json" 2>/dev/null | awk '{print $1; exit}')" || return 0
+    sz="$(timeout "$tmo" wc -c -- "$RUNS_DIR/$id/test-run-identity.json" 2>/dev/null | awk '{print $1; exit}')" || return 0
     case "$sz" in ''|*[!0-9]*) return 0 ;; esac
     [ "$sz" -le 4096 ] || return 0
-    ibody="$(timeout 5 head -c 4096 -- "$RUNS_DIR/$id/test-run-identity.json" 2>/dev/null)" || return 0
+    ibody="$(timeout "$tmo" head -c 4096 -- "$RUNS_DIR/$id/test-run-identity.json" 2>/dev/null)" || return 0
     # Field-tested against the canonical LAYOUT rather than byte-compared like
     # the pointer: identity carries what the run observed -- timestamp, commit,
     # host, hostname, accelerator, cpu count, QEMU build -- and none of it is
@@ -1662,6 +1678,7 @@ utest_prune_records() {
     local lease_max="${UTEST_LEASE_MAX:-8}" ttl="${UTEST_LEASE_TTL:-300}"
     local now leased leased_all leased_l stuck_u n_stuck nu lockrc n_all n_kept n all_records
     local blocked_d nd n_blocked
+    local pin_incomplete pin_budget cand_max pin_t0 disc_rc cands npin pin_left pin_tmo _mtime pin_why cand_n
     keep="$(utest_norm_bound "$keep" 20 10000)"
     # Zero records kept is nonsense, so the floor is applied here and not in
     # the shared normaliser -- the pin cap deliberately does NOT have one.
@@ -1727,26 +1744,167 @@ utest_prune_records() {
     # so self-healing one junk file destroyed an unrelated published
     # generation. Validating first and taking the cap afterwards means a
     # malformed pointer costs only its own pin.
+    # AND BOUNDED IN TIME as well as in count, because a cap on the ANSWER is
+    # not a cap on the WORK. `head -n "$pin_max"` truncated the output, and a
+    # pointer that fails validation prints nothing -- so a directory of invalid
+    # pointers was walked to the end, at up to three bounded document reads
+    # each, with the retention mutex held. utest_lease_acquire waits ten
+    # seconds for that same mutex and then refuses, so an unbounded pin pass
+    # denies a reader the lease it was entitled to by something about `build/`
+    # rather than anything about its own record.
+    #
+    # THREE bounds, one budget: discovery, the candidate set, and validation
+    # all answer to UTEST_POINTER_PIN_BUDGET, measured from before the `find`.
+    # Bounding validation alone would have left the enumeration unbounded --
+    # `sort` must drain `find` before the loop's clock can advance at all, so a
+    # large enough `build/` holds the mutex without ever spending a single unit
+    # of validation budget.
+    #
+    # WHAT THIS DOES NOT BOUND, stated because the difference matters: every
+    # READ is under the budget, but the three metadata tests inside
+    # utest_pointer_pin_id (`[ -d ]` on the record, `[ -f ]` on the marker and
+    # on the identity) are bash builtins and take no timeout. They cannot be
+    # made to block by anything writable in `build/` -- that needs a stalled
+    # mount, not a hostile file -- so the budget holds against the actor this
+    # section is about, and the residual is filed to section 61, which is
+    # already replacing those three sites with single bounded reads.
+    #
+    # AND ANY OF THEM BITING DEFERS THE AGE CUT, which is what makes the
+    # candidate bound safe at all. Ranking is by mtime, so enough newer invalid
+    # pointers can push an older VALID one past any cutoff; that record is then
+    # absent from `pinned`, deleted by the age cut below, and its pointer swept
+    # as dangling -- exactly the corruption-displaces-valid-generation incident
+    # recorded above, reached by a different route, and announcing it does not
+    # undo an `rm -rf`. So incomplete classification takes the same direction
+    # the lock timeout already takes: retention is best-effort-per-run and
+    # defers to the next one, where a record deleted out from under a reader is
+    # unrecoverable. UTEST_POINTER_PIN_MAX=0 remains the way to switch pinning
+    # off deliberately, and it leaves the age cut running because it classifies
+    # nothing rather than classifying partially.
     pinned=""
+    pin_incomplete=""
     if [ "$pin_max" -gt 0 ]; then
-        pinned="$(
-            {
-                find "$PROJECT/build" -maxdepth 1 -type f -name 'test-results-*.run' \
-                    -printf '%T@\t%p\n' 2>/dev/null | sort -rn |
-                    while IFS="$(printf '\t')" read -r _mtime ptr; do
-                        [ -n "$ptr" ] || continue
-                        # The WHOLE contract, not just an extractable run id --
-                        # see utest_pointer_pin_id. Nothing that fails
-                        # validation pins anything or consumes budget, so a
-                        # malformed pointer can only ever cost its own record
-                        # its pin, never protect something outside RUNS_DIR and
-                        # never deny a valid pointer the slot it needed.
-                        old="$(utest_pointer_pin_id "$ptr")"
-                        [ -n "$old" ] || continue
-                        printf '%s\n' "$old"
-                    done | head -n "$pin_max"
-            } || true
-        )"
+        # The default is chosen AGAINST the lease wait, not picked for looking
+        # round: the whole pin phase must finish inside the ten seconds
+        # utest_lease_acquire is willing to wait, and one second is shed to
+        # $SECONDS' integer truncation.
+        pin_budget="$(utest_norm_bound "${UTEST_POINTER_PIN_BUDGET:-8}" 8 86400)"
+        # A SIX-SECOND FLOOR, for the same reason the TTL has a one-second one:
+        # below six the loop can never start a candidate, so every pass would
+        # report itself incomplete and retention would never run again -- a
+        # knob that reads as "be quick" silently switching retention off.
+        # SIX and not three because a validation makes six bounded operations,
+        # not three: `wc` AND `head` for each of the pointer, the marker and
+        # the identity document. Sizing the per-read cap against three let one
+        # candidate spend twice what was left of the budget, which is the same
+        # overrun an aggregate deadline exists to remove.
+        [ "$pin_budget" -ge 6 ] 2>/dev/null || pin_budget=8
+        # A MULTIPLE of the cap, not a new tunable nobody sets. Candidates are
+        # already mtime-ordered newest-first, so the headroom is what absorbs
+        # junk ranked above the pointers that actually pin; past it the pass
+        # declares itself incomplete rather than guessing.
+        cand_max=$(( pin_max * 4 ))
+        pin_t0="$SECONDS"
+        # ONE bounded stage, and the line cap sits INSIDE it so `sort` cannot
+        # be handed an unbounded stream either. cand_max+1 lines is how the
+        # loop learns it was truncated: the extra line is never validated, it
+        # only ever answers "there was more".
+        # `pipefail` INSIDE the nested shell, which does not inherit it: bash
+        # starts a `-c` with pipefail off, so `find` or `sort` could fail after
+        # emitting a partial list, the limiter still exit 0, and this pass then
+        # treated a truncated enumeration as the whole of `build/` -- deleting
+        # a record whose pointer it never saw. The status of the stage has to
+        # be the status of the WEAKEST link in it.
+        #
+        # And a DRAINING limiter, not `head`. `head` closing the pipe kills
+        # `sort` with SIGPIPE, which under pipefail is indistinguishable from
+        # `sort` genuinely failing -- so the ordinary "more candidates than the
+        # bound admits" case would report itself as a discovery failure and the
+        # two bounds could never be told apart. `awk` reads to EOF, so the only
+        # non-zero status left is a real one. Draining costs nothing that is
+        # not already bounded: the whole stage runs under one timeout.
+        disc_rc=0
+        cands="$(timeout "$pin_budget" bash -c '
+            set -o pipefail
+            find "$1/build" -maxdepth 1 -type f -name "test-results-*.run" \
+                -printf "%T@\t%p\n" 2>/dev/null | sort -rn | awk -v n="$2" "NR<=n"
+        ' _ "$PROJECT" "$(( cand_max + 1 ))")" || disc_rc=$?
+        cand_n="$(printf '%s' "$cands" | grep -c . || true)"
+        if [ "$disc_rc" -ne 0 ]; then
+            pin_incomplete="discovery"
+            cands=""
+        else
+            # VALIDATED as a number before it is compared, because the compare
+            # is what authorises the destructive half. `grep -c . || true` can
+            # yield an empty or non-numeric answer when the counter itself
+            # fails, and `[ "" -gt N ]` is simply false -- so a counting
+            # failure would read as "the list is complete" and let the age cut
+            # run over an enumeration nobody measured.
+            case "$cand_n" in
+                ''|*[!0-9]*) pin_incomplete="discovery"; cands="" ;;
+                *) if [ "$cand_n" -gt "$cand_max" ]; then
+                       pin_incomplete="candidates"
+                       cands="$(printf '%s\n' "$cands" | head -n "$cand_max")"
+                   fi ;;
+            esac
+        fi
+        npin=0
+        if [ -n "$cands" ]; then
+            # `$'\t'`, not `"$(printf '\t')"`. The IFS assignment is part of the
+            # `read` command, so a command substitution here is re-evaluated
+            # EVERY iteration -- one fork per candidate, in the loop whose
+            # whole subject is how much work a candidate may cost.
+            while IFS=$'\t' read -r _mtime ptr; do
+                [ -n "$ptr" ] || continue
+                # CHECKED BEFORE STARTING one, and a candidate is not started
+                # unless the whole of its WORST CASE fits in what is left: six
+                # bounded operations at `pin_left / 6` each cost at most
+                # pin_left. That makes the bound arithmetic rather than
+                # observational -- there is no state in which a started
+                # candidate overruns, so no check after the validation can be
+                # the thing that catches one.
+                #
+                # A consequence worth stating: at the default budget the cap is
+                # ONE SECOND per operation, not the five this validator used to
+                # take. That is forced, not chosen -- six operations inside a
+                # phase that must finish before utest_lease_acquire's ten-second
+                # wait leaves no more -- and it is generous by orders of
+                # magnitude for a local read of a document capped at 4096 bytes.
+                pin_left=$(( pin_budget - ( SECONDS - pin_t0 ) ))
+                if [ "$pin_left" -lt 6 ]; then
+                    pin_incomplete="budget"
+                    break
+                fi
+                pin_tmo=$(( pin_left / 6 ))
+                [ "$pin_tmo" -le 5 ] || pin_tmo=5
+                # The WHOLE contract, not just an extractable run id --
+                # see utest_pointer_pin_id. Nothing that fails
+                # validation pins anything or consumes the cap, so a
+                # malformed pointer can only ever cost its own record
+                # its pin, never protect something outside RUNS_DIR and
+                # never deny a valid pointer the slot it needed.
+                old="$(utest_pointer_pin_id "$ptr" "$pin_tmo")"
+                [ -n "$old" ] || continue
+                if [ -n "$pinned" ]; then pinned="$pinned"$'\n'"$old"; else pinned="$old"; fi
+                # THE CAP COUNTS VALIDATED PINS, which is why it is counted
+                # here rather than piped through `head`: truncating the answer
+                # left the loop running, and truncating the candidates instead
+                # is the incident above.
+                npin=$(( npin + 1 ))
+                [ "$npin" -lt "$pin_max" ] || break
+            done <<< "$cands"
+        fi
+        if [ -n "$pin_incomplete" ]; then
+            # Its OWN variable, not the `n` the lease pass below reuses: this
+            # block happens to run first today, and a reader should not have to
+            # establish that to know the message is not describing a lease.
+            case "$pin_incomplete" in
+                discovery)  pin_why="enumerating build/ exceeded UTEST_POINTER_PIN_BUDGET=${pin_budget}s" ;;
+                candidates) pin_why="more than $cand_max candidate pointer(s) present" ;;
+                *)          pin_why="UTEST_POINTER_PIN_BUDGET=${pin_budget}s spent after $npin pin(s)" ;;
+            esac
+            echo -e "${YELLOW:-}[TEST]${RESET:-} pointer pinning is INCOMPLETE ($pin_why) -- the age cut is deferred this run so an unexamined pointer cannot lose its record. Set UTEST_POINTER_PIN_MAX=0 to prune without pinning."
+        fi
     fi
 
     # HOLD what a reader has resolved, and reclaim what no reader can still be
@@ -1872,6 +2030,13 @@ utest_prune_records() {
         done <<< "$leased"
     fi
 
+    # THE DESTRUCTIVE HALF, and the only part of this function that answers to
+    # the pin bounds. It runs on a COMPLETE classification or not at all: every
+    # record it deletes is one the pin pass decided was unprotected, and a pass
+    # that stopped early did not decide that about the pointers it never
+    # reached. The lease classification above is unaffected -- it walks every
+    # record unconditionally -- so the deferral costs disk, never a hold.
+    if [ -z "$pin_incomplete" ]; then
     {
         printf '%s\n' "$all_records" | tail -n +$(( keep + 1 )) |
             while IFS= read -r old; do
@@ -1910,6 +2075,7 @@ utest_prune_records() {
                 rm -rf -- "$RUNS_DIR/$old"
             done
     } || true
+    fi
 
     # SELF-HEALING second half. A pointer whose record is gone -- pruned past
     # the pin cap, or removed by hand -- would otherwise resolve to an absent
