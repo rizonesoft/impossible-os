@@ -1,56 +1,49 @@
 # scripts\debug\usermode -- User-mode test runners
 
-Empty until the user-mode test framework grows a way to run user-mode
-binaries WITHOUT also running the full kernel TEST_CAT_* suite.
+Windows-side launchers that boot QEMU and run the user-mode `test_*.exe`
+binaries WITHOUT also running the full kernel `TEST_CAT_*` sweep.
 
-## Why empty today
+## What is here
 
-The kernel test launcher (in [`src/kernel/test/test_usermode.c`](../../../src/kernel/test/test_usermode.c))
-is currently chained inside the `boot.conf test=1` flow: when test=1
-is set, the kernel test runner runs ALL TEST_CAT_* suites and THEN
-the user-mode launcher scans `C:\` for `test_*.exe`. There's no boot
-flag yet that runs ONLY the user-mode launcher. Every Windows-side
-bat that boots with `-TestOnly` therefore runs the full
-kernel + user-mode chain -- which is what
-[`scripts\debug\kernel\run-all-kernel-tests.bat`](../kernel/run-all-kernel-tests.bat)
-already does.
+- `run-test_<name>.bat` -- one per user-mode test binary. Boots with
+  `-TestOnly -NoKernelTests -UtestFilter "test_<name>.exe"`, so the scenario
+  launcher spawns only that binary.
+- `run-all-usermode-tests.bat` -- the full user-mode sweep: `-TestOnly
+  -NoKernelTests` with no `-UtestFilter`, so the launcher walks every
+  `test_*.exe` deployed at `C:\` via the deployment manifest (smoke phase
+  first, then correctness / stress / perf). Propagates the run's exit code.
+- `run-all-usermode-tests-tcg.bat` -- the same sweep under TCG instead of WHPX.
 
-A separate `run-all-usermode-tests.bat` here would just be a
-duplicate of the kernel runner with a misleading name. Removed for
-that reason on 2026-04-20 (incident: the file existed briefly and
-ran the same path as `run-all-kernel-tests.bat`).
+Kernel-side `TEST_CAT_*` suites are a separate surface:
+[`scripts\debug\kernel\run-all-kernel-tests.bat`](../kernel/run-all-kernel-tests.bat).
 
-## When this directory will fill up
+## How the isolation works
 
-Two prerequisites from the [user-mode test framework TODO](../../../todo/00-infrastructure/TODO-04-usermode-test-framework.md):
+The kernel test launcher lives in
+[`src/kernel/test/test_usermode.c`](../../../src/kernel/test/test_usermode.c).
+Under `boot.conf test=1` the kernel test runner and the user-mode launcher are
+two independently skippable phases, controlled by two boot.conf fields
+(documented in [`docs/boot/boot-info-fields.md`](../../../docs/boot/boot-info-fields.md)):
 
-1. **Launcher-manifest section** lands a `utest_filter=<name|glob>`
-   boot.conf parameter, AND a `usermode_only=1` (or equivalent) knob
-   that skips the kernel TEST_CAT_* runner so the launcher runs in
-   isolation.
-2. **Build-integration section** authors per-binary bat files here:
+| boot.conf field | Effect |
+|---|---|
+| `test_kernel_skip=1` | skip the kernel `TEST_CAT_*` sweep |
+| `test_usermode_skip=1` | skip the user-mode launcher |
+| `utest_filter=<name\|glob>` | launcher runs only the matching binaries |
 
-   ```bat
-   :: scripts\debug\usermode\run-test_syscall.bat (example, future)
-   powershell.exe -ExecutionPolicy Bypass -File ^
-       "%~dp0..\..\machines\run-qemu.ps1" ^
-       -Accel whpx -TestOnly -BootArg "utest_filter=test_syscall.exe usermode_only=1"
-   pause
-   ```
+[`scripts\machines\run-qemu.ps1`](../../machines/run-qemu.ps1) exposes these as
+`-NoKernelTests`, `-NoUsermodeTests` and `-UtestFilter`, which is what every bat
+in this directory passes.
 
-   Plus a `run-all-usermode-tests.bat` aggregate with `utest_filter`
-   unset and `usermode_only=1` set.
+## Adding a binary
 
-## What runs the user-mode launcher TODAY
+A new `user/test/test_<name>.c` gets one bat here alongside its `Makefile`
+`userland` row and its `tests/usermode.manifest` line. Copy an existing
+`run-test_<name>.bat` and change the two names in it.
 
-[`scripts\debug\kernel\run-all-kernel-tests.bat`](../kernel/run-all-kernel-tests.bat)
-boots with `test=1` -> kernel test runner runs first, then the user-mode
-launcher scans `C:\` for `test_*.exe` and runs each, emitting per-binary
-`[UTEST] <name>: PASS|FAIL (exit=N)` lines + a `[UTEST] === N passed,
-N failed of N total ===` summary on serial.
+## Output
 
-For the full user-mode sweep run
-[`run-all-usermode-tests.bat`](run-all-usermode-tests.bat) directly;
-for kernel-side suites run
-[`scripts\debug\kernel\run-all-kernel-tests.bat`](../kernel/run-all-kernel-tests.bat)
-separately.
+Each binary emits a framed `[UTEST] <name>: PASS|FAIL (exit=N)` record plus a
+run summary on serial; the host-side reconciliation and artifact formats are
+documented in
+[`docs/testing/usermode-output-formats.md`](../../../docs/testing/usermode-output-formats.md).
