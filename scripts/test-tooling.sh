@@ -12417,6 +12417,12 @@ FRAME_COMPLETE_RUN="1"
 # The extracted span now begins in the shared slice/capture step, which is
 # reached by an XML run OR a JSON run; both flags must exist under `set -u`.
 HAS_XML=1; JSON_MODE=0
+# The run slice is emitted by the authoritative frame scan, which sits ABOVE
+# the extracted span, so the span reads its verdict rather than producing it.
+# A nonzero value is what the injected failing utest-frame.py used to cause
+# from inside the span -- it forces the same slice-failure branch this
+# sub-test exists to exercise, and it must exist under `set -u`.
+FRAME_EMIT_RC=1
 '"$UAR_FNS"'
 '"$UAR_SHARED"'
 '"$UAR_REGION"'
@@ -17574,14 +17580,66 @@ _cap_reapstranded() {
 cap_refuses "a fork stranded on a dead task refuses the run on its own" \
     capture_reap_drain_degraded _cap_reapstranded
 
-# BOTH zero is the shape the producer cannot emit: it emits this record only
-# when the census is not exact, and exact IS pending==0 and stranded==0.
+# BOTH zero is the shape the producer cannot emit -- UNLESS a reap stall was
+# already reported. It emits this record when the census is not exact, and
+# exact IS pending==0 and stranded==0, so absent a stall a zero/zero report is
+# impossible.
 _cap_reapdegradedzero() {
     cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
     cap_line "[UTEST-CAPTURE-REAP-DEGRADED] owner=7 pending=0 stranded=0"
 }
 cap_refuses "a degraded-reap report with nothing outstanding cannot be emitted" \
     capture_malformed_record _cap_reapdegradedzero
+
+# ...and the exception, which is the producer's real contract rather than a
+# hedge. A grace that gives up on a stopped clock clears exactness by itself
+# (`if (grace_stalled) out->exact = 0;`, test_usermode.c:5372) while both drain
+# counters stay zero, and the emitter fires on `!reap.exact`
+# (test_usermode.c:8699) -- it guards only the boot-sticky latch on
+# `drain_pending || drain_stranded`, not the record. So this pair is EXACTLY
+# what a stalled reap grace puts on the wire, in this order (the stall is
+# emitted from u_capture_reap_tree, test_usermode.c:5417, before u_run_one
+# emits the degraded report). Refusing it as malformed sent the reader toward
+# version skew when the truth was the stalled clock the previous record named.
+_cap_reapdegradedzero_after_stall() {
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-WAIT-STALLED] site=capture-reap detail=7"
+    cap_line "[UTEST-CAPTURE-REAP-DEGRADED] owner=7 pending=0 stranded=0"
+}
+cap_refuses "a zero/zero degraded reap after a reap stall reports the stall" \
+    capture_wait_stalled _cap_reapdegradedzero_after_stall
+
+# The exception is bound to the OWNER that stalled, not to "a stall happened".
+# At site=capture-reap the detail field IS the owner pid
+# (u_capture_reap_tree, test_usermode.c:5418), so a reap stall on a DIFFERENT
+# owner leaves owner=7's zero/zero record as impossible as it ever was.
+# Without the binding, any unrelated stall anywhere in the run would excuse
+# genuine producer corruption and send the reader after a timing problem.
+_cap_reapzero_other_owner() {
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-WAIT-STALLED] site=capture-reap detail=9"
+    cap_line "[UTEST-CAPTURE-REAP-DEGRADED] owner=7 pending=0 stranded=0"
+}
+cap_refuses "another owner's reap stall does not excuse a zero/zero report" \
+    capture_malformed_record _cap_reapzero_other_owner
+
+# ...and neither does a stall at any of the three OTHER sites, none of which
+# can clear reap exactness.
+for s59_other in binary-wait binary-kill-grace capture-drain; do
+    {
+        cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+        cap_line "[UTEST-WAIT-STALLED] site=${s59_other} detail=7"
+        cap_line "[UTEST-CAPTURE-REAP-DEGRADED] owner=7 pending=0 stranded=0"
+    } > "$CAP_TMP/reapzero-$s59_other.log"
+    cap_model "$CAP_TMP/reapzero-$s59_other.log" "$CAP_TMP/reapzero-$s59_other.json"
+    if [ "$(cap_field "$CAP_TMP/reapzero-$s59_other.json" 'm["refusal"]["reason"]')" \
+            = "capture_malformed_record" ]; then
+        t_pass "capture: a ${s59_other} stall does not excuse a zero/zero degraded reap"
+    else
+        t_fail "capture: a ${s59_other} stall does not excuse a zero/zero degraded reap" \
+            "got $(cap_field "$CAP_TMP/reapzero-$s59_other.json" 'm["refusal"]["reason"]')"
+    fi
+done
 
 _cap_reapdegradedrange() {
     cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
@@ -17716,23 +17774,59 @@ _cap_undelivered_vs_stall() {
 cap_refuses "a producer-side drop outranks a stall that appears before it" \
     capture_undelivered_records _cap_undelivered_vs_stall
 
-# SCAN-TIME shape faults still outrank every semantic verdict, which is the
-# module's oldest precedence contract. Deferring the boundary verdicts must not
-# have quietly inverted it: a record whose SHAPE the producer cannot emit,
-# appearing LATER in the slice, still wins.
+# A boundary verdict already on the wire OUTRANKS a later scan-time shape
+# fault -- for the four verdicts that predate section 59. Inline raising gave
+# that for free (the marker raised where it appeared and nothing after it was
+# read), and deferring the verdicts broke it: the scan carried on and a later
+# malformed record raised out of _scan instead, so a live-descendant leak was
+# reported as wire corruption.
+#
+# The STALL is the deliberate exception, in the other direction: a shape fault
+# outranks it. The stall has no pre-59 behaviour to preserve (it was not
+# parsed at all), and a record the producer cannot emit says the stream itself
+# is untrustworthy -- a more urgent finding than a stopped clock. Without that
+# exception an unrelated stall would excuse an impossible degraded-reap record.
 #
 # `final=2` is the fault used deliberately: it fails the record grammar during
 # _scan. A payload fault such as a `len` that disagrees with the bytes is NOT
 # equivalent -- that is caught per-owner in _reconcile, which has always run
-# after the boundary verdicts (inline raising put them ahead of it too), so it
-# would assert an ordering neither version of the module ever had.
-_cap_malformed_vs_stall() {
+# after the boundary verdicts.
+_cap_malformed_after_stall() {
     cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
     cap_line "[UTEST-WAIT-STALLED] site=capture-drain detail=2"
     cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=1 final=2 a"
 }
-cap_refuses "a shape fault still outranks a stall recorded before it" \
-    capture_malformed_record _cap_malformed_vs_stall
+cap_refuses "a shape fault outranks a stall recorded before it" \
+    capture_malformed_record _cap_malformed_after_stall
+
+# The stall-free half of the same rule, and the one that regressed: UNREAPED
+# followed by a malformed chunk must stay UNREAPED. Reporting the malformed
+# record hides leaked descendants behind a wire-shape diagnosis.
+_cap_unreaped_then_malformed() {
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE-UNREAPED] owner=7 live=2"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=1 final=2 a"
+}
+cap_refuses "unreaped descendants outrank a malformed record found later" \
+    capture_unreaped_descendants _cap_unreaped_then_malformed
+
+_cap_pending_then_malformed() {
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE-PENDING] run=3 pending=2"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=1 final=2 a"
+}
+cap_refuses "a pending report outranks a malformed record found later" \
+    capture_pending_records _cap_pending_then_malformed
+
+# A shape fault BEFORE any boundary marker is still the verdict -- the rule is
+# "earlier wins", not "boundary markers always win".
+_cap_malformed_then_unreaped() {
+    cap_line "[UTEST-CAPTURE-BEGIN] owner=7 chunk_max=$CAP_CHUNK_MAX name=test_cap.exe"
+    cap_line "[UTEST-CAPTURE] owner=7 wr=0 seq=0 len=1 final=2 a"
+    cap_line "[UTEST-CAPTURE-UNREAPED] owner=7 live=2"
+}
+cap_refuses "a malformed record before any boundary marker still wins" \
+    capture_malformed_record _cap_malformed_then_unreaped
 
 # NO STALL, NO CHANGE. The precedence tuple applies ONLY to a run that
 # recorded a stall; every other pairing keeps the verdict it had before
@@ -17849,6 +17943,63 @@ else
         "UTEST_FAIL no longer reaches TOTAL_FAIL -- capture refusals would not fail the run"
 fi
 
+# ONE full parse of TEST_LOG per run. Making reconciliation mandatory put the
+# run-slice emission on every default run, and building it with a second
+# `--emit-run` invocation re-read the whole capture from byte zero -- a cost
+# that scales with TEST_LOG rather than with the ~170 KB slice, on a file this
+# repo documents reaching 25 MB. The slice is now emitted by the SAME parse
+# that answers the framing questions, so utest-frame.py must be invoked from
+# exactly one place in test.sh: the utest_frame_scan helper.
+# A slice-emission failure must NOT erase the structural verdict. utest-frame.py
+# returns 2 on an unwritable --emit-run target BEFORE printing the JSON it had
+# already computed, so a run that reconciled perfectly would report no nonce, no
+# complete run, and no user-mode tests at all -- and the mandatory capture gate
+# would conclude there was nothing to reconcile and pass. Behavioural, not
+# structural: the emit target is a real unwritable path.
+S59_EMITFAIL_LOG="$CAP_TMP/emitfail.log"
+{
+    printf 'UTEST-1a2b3c4d: [UTEST-FRAME-BEGIN] run=1\n'
+    printf 'UTEST-1a2b3c4d: [UTEST-CAPTURE-BEGIN] owner=7 chunk_max=128 name=t.exe\n'
+    printf 'UTEST-1a2b3c4d: [UTEST-FRAME-END] run=1 records=1 spawned=1\n'
+} > "$S59_EMITFAIL_LOG"
+S59_EMIT_JSON="$(python3 "$REPO_ROOT/scripts/utest-frame.py" \
+    --emit-run "$CAP_TMP/no-such-dir/slice" "$S59_EMITFAIL_LOG" 2>/dev/null)" \
+    && S59_EMIT_RC=0 || S59_EMIT_RC=$?
+S59_PLAIN_JSON="$(python3 "$REPO_ROOT/scripts/utest-frame.py" \
+    "$S59_EMITFAIL_LOG" 2>/dev/null || true)"
+if [ "$S59_EMIT_RC" -ne 0 ] && [ -z "$S59_EMIT_JSON" ] &&
+   [ -n "$S59_PLAIN_JSON" ] &&
+   grep -q 'FRAME_EMIT_RC" -ne 0 \] && \[ -z "\$UTEST_FRAME_JSON"' \
+        "$REPO_ROOT/scripts/test.sh"; then
+    t_pass "test.sh: a failed slice emission does not erase the framing verdict"
+else
+    t_fail "test.sh: a failed slice emission does not erase the framing verdict" \
+        "emit rc=$S59_EMIT_RC json_empty=$([ -z "$S59_EMIT_JSON" ] && echo yes || echo no); test.sh has no non-emitting fallback, so an unwritable slice path would exit the run green"
+fi
+
+if ! printf '%s' "$S59_BLOCK" | grep -q 'utest-frame\.py' &&
+   printf '%s' "$S59_BLOCK" | grep -q 'RUNSLICE="\$RECORD_DIR/runslice"' &&
+   awk '/^utest_frame_scan\(\)/,/^}/' "$REPO_ROOT/scripts/test.sh" |
+       grep -q '\-\-emit-run'; then
+    t_pass "test.sh: the run slice costs no second full parse of the capture"
+else
+    t_fail "test.sh: the run slice costs no second full parse of the capture" \
+        "the capture step parses the log again for its slice instead of reusing the authoritative frame scan's emit"
+fi
+
+# The rc-2 infrastructure fault must leave a refusal MODEL behind, not just a
+# red exit. The JSON step passes --capture only when the model file exists, so
+# without one the harvester treats capture as unattached and can publish a
+# green envelope for a run that exited red, while XML goes red via CAPTURE_OK
+# -- the two artifacts disagreeing about the same run.
+if printf '%s' "$S59_BLOCK" | grep -q 'capture_tool_unavailable' &&
+   [ "$(printf '%s' "$S59_BLOCK" | grep -c '"schema": "utest-capture-v1", "ok": false')" = "2" ]; then
+    t_pass "test.sh: a capture-tool failure publishes a refusal model for both artifacts"
+else
+    t_fail "test.sh: a capture-tool failure publishes a refusal model for both artifacts" \
+        "an rc-2 tool fault leaves no capture model, so the JSON artifact can stay green while the run exits red"
+fi
+
 # c36. BEGIN and LOST carry no payload, so they cost nothing against the byte
 #      bound -- but each DISTINCT pid retained an _Owner with nothing counting
 #      it. Measured 400k BEGIN records at ~127 MiB RSS before this bound.
@@ -17947,9 +18098,13 @@ fi
 #      now runs for every complete framed run, artifact mode or not), so the
 #      old grep would report the improvement as a regression. Asserting the
 #      absence of ANY mode gate is the same claim against the shipped shape.
-if [ -n "$(awk '/^RUNSLICE=/,/^XML_SUMMARY_OK=/' "$REPO_ROOT/scripts/test.sh")" ] &&
-   ! awk '/^RUNSLICE=/,/^XML_SUMMARY_OK=/' "$REPO_ROOT/scripts/test.sh" |
-       sed 's/[[:space:]]*#.*$//' | grep -qE 'HAS_XML|JSON_MODE'; then
+#      Anchored on the block's own banner rather than on `^RUNSLICE=`: the
+#      slice path moved up to the authoritative frame scan when the duplicate
+#      full-log parse was removed, so a `RUNSLICE=`-anchored range now spans
+#      unrelated code that legitimately mentions both artifact modes.
+C17_BLOCK="$(awk '/--- Canonical run slice \+ captured-output model/,/^XML_SUMMARY_OK=1/' \
+    "$REPO_ROOT/scripts/test.sh" | sed 's/[[:space:]]*#.*$//')"
+if [ -n "$C17_BLOCK" ] && ! printf '%s' "$C17_BLOCK" | grep -qE 'HAS_XML|JSON_MODE'; then
     t_pass "capture: the shared slice/model step covers a JSON-only run"
 else
     t_fail "capture: the shared slice/model step covers a JSON-only run" \

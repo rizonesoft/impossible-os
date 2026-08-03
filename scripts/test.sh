@@ -3148,9 +3148,37 @@ utest_record_qemu_pid
 # hypothetical: test_forge.exe prints `UTEST-deadbeef: [UTEST-FRAME-END]`,
 # and against a generic pattern that line ended the run early, reopening
 # the exact hole the framing closes.
+# The optional second argument asks the SAME parse to also write the selected
+# run's framed lines to that path. It exists so the run slice costs no extra
+# pass: capture reconciliation needs the slice, and since section 59 made
+# reconciliation mandatory, building it with a second `--emit-run` invocation
+# meant every default run re-parsed the whole capture from byte zero. That
+# cost scales with the entire TEST_LOG, not with the ~170 KB slice, and this
+# file already documents 25 MB captures where repeated full parsing is the
+# dominant host-side framing cost. One parse answers both questions.
+# The emit branch PROPAGATES the parser's exit status; the plain branch does
+# not. That asymmetry is deliberate and fail-closed. The scan alone is advisory
+# -- its JSON already carries every structural verdict, and a parser that
+# cannot speak yields `{}`, which reads downstream as "nothing reconciled". But
+# when it is also EMITTING, its status is the only report on whether the slice
+# was actually written: exit 2 means the atomic write failed before the JSON
+# was printed, and exit 1 means the parser REJECTED the stream (a foreign
+# nonce, say) even though a selected run may have been emitted anyway. The
+# separate `--emit-run` call this replaced set SLICE_FAILED from exactly that
+# status, and swallowing it here let a failed emission read as "no complete
+# run", which sends the XML path back to assembling from the whole log.
 utest_frame_scan() {
-    local log="$1"
+    local log="$1" emit="${2:-}" out rc
     [ -f "$log" ] || { echo '{}'; return 0; }
+    if [ -n "$emit" ]; then
+        # Captured rather than streamed so the status survives: the parser
+        # prints its JSON before some failures and after others, and the
+        # caller needs both halves of that answer.
+        out="$(python3 "$PROJECT/scripts/utest-frame.py" --emit-run "$emit" \
+               "$log" 2>/dev/null)" && rc=0 || rc=$?
+        printf '%s' "$out"
+        return "$rc"
+    fi
     python3 "$PROJECT/scripts/utest-frame.py" "$log" 2>/dev/null || true
 }
 
@@ -3495,7 +3523,40 @@ done
 # closed cleanly. The parser is shared with the poll above, with
 # test-swtpm.sh and with the JSON harvester -- three consumers used to carry
 # their own copies of these rules and had already drifted apart.
-UTEST_FRAME_JSON=$(utest_frame_scan "$TEST_LOG")
+#
+# It also emits the canonical run slice in the SAME pass (section 59). The
+# slice is what capture reconciliation reconciles against, and reconciliation
+# is no longer artifact-only, so producing it here costs one parse instead of
+# two on every default run. Emitting it is unconditional and harmless when no
+# run closed cleanly: the parser writes the selected run's lines, and with no
+# complete run there are none to write, which the SLICE_FAILED check below
+# reads as the absence it already handles.
+# The path is spelled literally here, and assigned to RUNSLICE in the capture
+# step below. That assignment is load-bearing as an ANCHOR: the artifact-record
+# sub-test extracts the shared slice/capture span from `^RUNSLICE=` to its
+# closing `fi` and RUNS it, deliberately anchoring on the production assignment
+# so a drift back to a shared run-slice path cannot hide behind a harness copy.
+rm -f "$RECORD_DIR/runslice"
+# The emission status is kept SEPARATELY from the JSON and consulted by the
+# capture step below. `|| FRAME_EMIT_RC=$?` also keeps `set -e` from aborting
+# the run on a parser that refused the stream: this script reports that
+# refusal itself, in its own words, rather than dying at the assignment.
+FRAME_EMIT_RC=0
+UTEST_FRAME_JSON=$(utest_frame_scan "$TEST_LOG" "$RECORD_DIR/runslice") \
+    || FRAME_EMIT_RC=$?
+# A slice WRITE failure returns 2 from utest-frame.py BEFORE it prints the
+# structural JSON it had already computed (utest-frame.py:1002 vs :1010).
+# Coupling the authoritative scan to the emission therefore lets a full disk
+# or a read-only record directory erase every framing verdict at once: no
+# nonce, no HAS_UTEST, no FRAME_COMPLETE_RUN. The gate this section made
+# mandatory would then not merely fail to reconcile -- it would conclude there
+# was no user-mode run to reconcile, and exit GREEN. That is the exact
+# fail-open the section exists to close, reintroduced by the optimisation that
+# removed the second parse. So on THAT path only, re-scan without emitting to
+# recover the structure; the healthy path still pays exactly one parse.
+if [ "$FRAME_EMIT_RC" -ne 0 ] && [ -z "$UTEST_FRAME_JSON" ]; then
+    UTEST_FRAME_JSON=$(utest_frame_scan "$TEST_LOG")
+fi
 UTEST_NONCE=$(utest_frame_field "$UTEST_FRAME_JSON" nonce)
 FRAME_UNPAIRED=$(utest_frame_field "$UTEST_FRAME_JSON" unpaired)
 FRAME_UNPAIRED=${FRAME_UNPAIRED:-0}
@@ -3911,6 +3972,8 @@ fi
 # (CAPTURE_ATTACH, consumed by the splice helper); RECONCILIATION is now part
 # of the primary gate. Refusals become fatal by construction: UTEST_FAIL folds
 # into TOTAL_FAIL below, which is what the exit status is computed from.
+# The file itself is written by the single authoritative frame scan above, not
+# by a second parse here -- see utest_frame_scan's emit argument.
 RUNSLICE="$RECORD_DIR/runslice"
 SLICE_FAILED=0
 CAPTURE_MODEL="$RECORD_DIR/capture.json"
@@ -3920,12 +3983,13 @@ CAPTURE_ATTACH=0
 # so the XML branch can publish its refusal artifact without counting the same
 # failure twice.
 SLICE_CHARGED=0
-rm -f "$RUNSLICE"
 if [ -n "$FRAME_COMPLETE_RUN" ]; then
-    if ! python3 "$PROJECT/scripts/utest-frame.py" \
-            --emit-run "$RUNSLICE" "$TEST_LOG" >/dev/null 2>&1; then
-        SLICE_FAILED=1
-    fi
+    # BOTH halves of the emitting scan's answer. The status covers a write
+    # that failed and a stream the parser rejected -- exit 1 can still leave a
+    # non-empty slice behind, so the file check alone would accept a slice cut
+    # from a stream the parser refused. The file check covers the converse: a
+    # parser that exits clean but wrote nothing.
+    [ "$FRAME_EMIT_RC" -eq 0 ] || SLICE_FAILED=1
     [ -s "$RUNSLICE" ] || SLICE_FAILED=1
 
     # A COMPLETE framed run whose slice could not be produced is a failure of
@@ -3997,6 +4061,19 @@ except Exception:
                 echo -e "  ${RED}[UTEST]${RESET} capture model unavailable (tool error rc=$rc) -- capture reconciliation could not run"
                 UTEST_FAIL=$(( ${UTEST_FAIL:-0} + 1 ))
                 CAPTURE_OK=0
+                # Leave a refusal model behind, exactly as the corruption
+                # branch above does. The JSON step passes `--capture` only
+                # when a model FILE exists (`[ -s "$CAPTURE_MODEL" ]`), and
+                # its own comment states the contract: passed whenever a
+                # model exists, reconciled OR refused. Without this an rc-2
+                # failure -- a missing python3, a missing utest-capture.py, a
+                # version skew -- left no model, so the harvester treated
+                # capture as simply unattached and published a green JSON
+                # envelope for a run that exits red, while XML went red via
+                # CAPTURE_OK. The two artifacts disagreeing about the same
+                # run is the divergence the shared model exists to prevent.
+                printf '{"schema": "utest-capture-v1", "ok": false, "refusal": {"reason": "capture_tool_unavailable", "detail": "capture model build exited %s (infrastructure fault, payload never examined)"}, "binaries": []}\n' \
+                    "$rc" > "$CAPTURE_MODEL" 2>/dev/null || true
             fi
         fi
     fi

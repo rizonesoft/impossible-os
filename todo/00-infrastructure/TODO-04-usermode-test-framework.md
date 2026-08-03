@@ -2519,14 +2519,16 @@ Every host-side capture refusal -- `capture_unterminated`, `capture_malformed_re
 > **Test runner:** `bash scripts/test-tooling.sh --quiet` -- expect `PASS 1225/1225`; the section's own vectors are the `capture:` stall/precedence group and the four `test.sh:` gate-wiring assertions.
 
 > **Notes:**
-> - Capture reconciliation moved off the artifact path onto the default one: `scripts/test.sh` builds the run slice + capture model for every complete framed run, and only artifact ATTACHMENT stays gated on `XML=1`/`JSON=1`.
+> - Capture reconciliation moved off the artifact path onto the default one: `scripts/test.sh` reconciles every complete framed run, and only artifact ATTACHMENT stays gated on `XML=1`/`JSON=1`.
 > - Refusals are fatal through the existing `UTEST_FAIL` -> `TOTAL_FAIL` fold rather than a new switch; a failed slice and a capture-tool error now fail there too, so the gate cannot pass by not running.
-> - `scripts/utest-capture.py` gained the `[UTEST-WAIT-STALLED]` grammar and refusal, and its run-boundary verdicts are decided by `_BOUNDARY_PRECEDENCE` instead of by physical line order.
-> - Downstream: a plain `bash scripts/test.sh` (and the post-commit hook and CI) now reads eight capture refusals it previously ignored; the full suite stayed green, so no latent backlog was surfaced.
-> - Canonical doc: this section; the marker grammars live beside their producers in `src/kernel/test/test_usermode.c`.
+> - The run slice is emitted by the SAME parse that answers the framing questions, so making reconciliation mandatory costs no second full read of the capture; an emit failure falls back to a non-emitting scan rather than erasing the framing verdict.
+> - `scripts/utest-capture.py` gained the `[UTEST-WAIT-STALLED]` grammar and refusal; run-boundary verdicts are deferred out of `_scan`, and `_BOUNDARY_PRECEDENCE` applies only when a stall was recorded so no stall-free run is re-diagnosed.
+> - Downstream: a default `scripts/test.sh` run (and the post-commit hook and CI) now reads eight capture refusals it previously ignored, and publishes a refusal model for both artifacts when the checker itself fails.
 > - Scope boundary: the `[UTEST-CAPTURE-PENDING]` census pardon is PARKED, not shipped -- it needs claim identities in the producer record and a straggler-aware frame census.
 
-> **Deferred:** the first item is parked as `[/]`: reconciling a `[UTEST-CAPTURE-PENDING]` against the record census is unreachable today. A straggler that would trigger it clears `last_complete` (`scripts/utest-frame.py:348`), so the model never runs on that run, and the record carries an aggregate count with no claim identity to correlate. The run is already refused by the frame gate (`scripts/test.sh:3769`, `:3788`) with a truer diagnosis. -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` section 57 (item: "Settle the capture claim against that acknowledgement instead of against the emitter's own credit")
+> **Verified:** 2026-08-03 | commit `7275ddfb` | 5/6 items | build OK | 1239/1239 tooling, 28326 kernel + 17 user-mode, lint 0
+> **Deferred:** [H] reconciling a `[UTEST-CAPTURE-PENDING]` against the record census is unreachable: a straggler clears `last_complete` (`scripts/utest-frame.py:348`) so the model never runs on that run, and the record carries an aggregate count with no claim identity to correlate (reason: needs a producer protocol change; section 57's own item is closed `[x]`, so the parked item below is the live owner and the `stranded_deferrals.py` sweep is its re-open path) -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` section 59 (item: "PARKED -- reconcile a `[UTEST-CAPTURE-PENDING]` against the record census before refusing, so a provisional report cannot refuse a run whose output the host has" at line 2495)
+> **Quality reviewed:** 2026-08-03 | Codex 8x (design, adversarial x2, consistency, perf, re-adversarial x3) | 3H+7M+0L fixed, 1 open | scope: N/A (host-side test harness; no kernel, boot, desktop, shell or userland surface)
 
 ---
 
@@ -2648,6 +2650,8 @@ Retention classifies every record and then destroys the losers in a second loop,
 | ⭐   | Per-write output reconciliation                            | ❌ stdout is one opaque blob                         | ❌ stdout is one opaque blob                         | ✅ §48 `wr=` group, each write terminable                         |
 | ⭐   | Producer publishes its own bounds                          | ❌ host mirrors or guesses                           | ❌ host mirrors or guesses                           | ✅ §48 `chunk_max=` + `spawned=` enforced                         |
 | ⭐   | Output channel closes with its binary                      | ❌ orphan writes land in the next test's log         | ❌ orphan writes land in the next test's log         | ✅ §49 seal + drain + descendant reap                             |
+| ⭐   | Capture loss fails the DEFAULT run                         | ❌ only when a TRX artifact is requested             | ❌ only when a TAP consumer reads the stream         | ✅ §59 reconciled on every framed run                             |
+| ⭐   | Stalled test clock is host-refusable                       | ❌ host trusts the harness's own timing              | ❌ host trusts the harness's own timing              | ✅ §59 `[UTEST-WAIT-STALLED]` refused by site                     |
 | ⭐   | Undelivered output is named, not silent                    | ❌ a lost write is indistinguishable from none       | ❌ a lost write is indistinguishable from none       | ✅ §49 `pending=` charged to its own run                          |
 | ⭐   | Orphaned-VM recovery                                       | ❓ harness does not own a VM                         | ❓ harness does not own a VM                         | ✅ §34 PDEATHSIG + fd-owner refusal                               |
 | 💎   | Enumeration fixed before execution                         | ✅ job list fixed at schedule                        | ✅ kselftest-list.txt fixed at build                 | ✅ §35 one plan, absentee named                                   |

@@ -517,8 +517,13 @@ class _Owner:
         self.abandons = []       # (task, thr, haswr, wr, reason) per abandoned write
 
 
-def _scan(lines, prefix):
+def _scan(lines, prefix, boundary=None):
     """Collect capture records from the canonical run slice.
+
+    `boundary` is the caller's dict for run-boundary verdicts. It is passed IN
+    rather than only returned so the caller still holds whatever was recorded
+    when this function raises a scan-time fault -- a verdict that reached the
+    wire BEFORE that fault must not be lost with it (see build_model).
 
     When `prefix` is given (the framed "UTEST-<nonce>: " marker), a line must
     carry it to be considered: the nonce is what makes a record non-forgeable,
@@ -536,7 +541,12 @@ def _scan(lines, prefix):
     # Run-boundary verdicts collected during the scan and decided afterwards
     # by _decide_boundary. Keyed by reason so a repeated marker does not
     # displace the first instance's detail; see _BOUNDARY_PRECEDENCE.
-    boundary = {}
+    if boundary is None:
+        boundary = {}
+    # Owners whose capture REAP stalled, by pid. Not derivable from `boundary`
+    # -- that is keyed by refusal reason, so one `capture_wait_stalled` entry
+    # covers all four wait sites and every owner at once.
+    reap_stalled = set()
 
     def _defer(reason, detail):
         """Record a run-boundary verdict without deciding it yet."""
@@ -882,12 +892,33 @@ def _scan(lines, prefix):
                     f"pending={pending} stranded={stranded}, wider than the "
                     "producer's uint32 fields",
                 )
-            if pending == 0 and stranded == 0:
-                # The producer emits this record only when the census is NOT
-                # exact, and exact is precisely `pending == 0 and stranded ==
-                # 0`. Both zero is therefore a record it cannot have written --
-                # a shape fault, not a run failure, and reporting it as the
-                # latter would name a degraded reap that never happened.
+            if pending == 0 and stranded == 0 and pid not in reap_stalled:
+                # Both zero is normally a record the producer cannot write:
+                # it emits this only when the census is NOT exact, and exact
+                # is `pending == 0 and stranded == 0`. Reporting it as a run
+                # failure would name a degraded reap that never happened.
+                #
+                # EXCEPT after THIS OWNER's reap stalled, and that exception
+                # is not a hedge -- it is the producer's actual contract. It
+                # is bound to the owner deliberately: keying it on "any stall
+                # was recorded" would let an unrelated `binary-wait` or
+                # `capture-drain` stall, or another owner's reap stall, excuse
+                # a genuinely impossible record and misreport producer
+                # corruption as a timing problem.
+                #
+                # A grace that gives up on a stopped clock clears exactness
+                # (`if (grace_stalled) out->exact = 0;`,
+                # test_usermode.c:5372), while the drain counters stay zero,
+                # and the emitter fires on `!reap.exact`
+                # (test_usermode.c:8699) -- it guards only the boot-sticky
+                # latch on `drain_pending || drain_stranded`, not the record.
+                # So a zero/zero report following a `capture-reap` stall is
+                # LEGITIMATE. Refusing it as malformed sent the reader toward
+                # wire corruption or version skew when the truth was the
+                # stalled clock the stall record already named, which is
+                # exactly the diagnosis section 59 exists to deliver. The
+                # stall is emitted first (u_capture_reap_tree,
+                # test_usermode.c:5417) so it is already recorded here.
                 raise Refusal(
                     "capture_malformed_record",
                     "a degraded-reap report with nothing outstanding is a "
@@ -952,6 +983,13 @@ def _scan(lines, prefix):
                     f"the stall report declares detail={detail}, wider than "
                     "the producer's uint32 field",
                 )
+            # At `capture-reap` the detail field IS the owner pid
+            # (u_capture_reap_tree passes `(uint64_t)owner_pid`,
+            # test_usermode.c:5418), which is what lets the zero/zero
+            # degraded-reap exception below be bound to the owner that
+            # actually stalled instead of to "some stall happened somewhere".
+            if site == "capture-reap":
+                reap_stalled.add(detail)
             _defer("capture_wait_stalled",
                    f"the launcher's {site} wait gave up without its clock "
                    f"advancing (detail={detail}) -- the run's timing is "
@@ -1537,16 +1575,47 @@ def _check_run_budget(owners):
 
 def build_model(lines, prefix):
     """Parse + reconcile the whole run. Never raises Refusal; records it."""
+    # A run-boundary verdict that reached the wire BEFORE a later scan-time
+    # fault must still be the one published. Inline raising gave that for
+    # free: the marker raised where it appeared and nothing after it was ever
+    # read. Deferring the verdicts (section 59) broke it -- the scan carried
+    # on and any later malformed record, duplicate seq, out-of-range field or
+    # flood bound raised out of _scan, so `capture_unreaped_descendants`
+    # became `capture_malformed_record` and a live-descendant leak was
+    # reported as wire corruption. So `boundary` is owned HERE and survives
+    # the exception, and the earlier verdict is preferred over the later
+    # fault. Runs with no boundary marker are untouched: an empty dict falls
+    # straight through to the scan fault.
+    boundary = {}
+    scan_fault = None
     try:
-        owners, spawned, boundary = _scan(lines, prefix)
-        # Run-boundary verdicts are decided HERE: after every shape fault the
-        # scan can raise (those still win, as the precedence contract says),
-        # and before any owner-level reasoning (a statement about the whole
-        # run outranks a detail about one binary in it, which is the ordering
-        # inline raising already gave them).
-        _decide_boundary(boundary)
+        owners, spawned, _ = _scan(lines, prefix, boundary)
+    except Refusal as exc:
+        scan_fault = exc
+    decided = boundary
+    if scan_fault is not None:
+        # A shape fault outranks a recorded STALL, but not the four verdicts
+        # that predate section 59. The asymmetry is about what there is to
+        # preserve: those four raised inline before this change, so a later
+        # fault could never displace them, and letting one displace them now
+        # would report wire corruption for a run whose real evidence was
+        # leaked descendants. The stall has no such history -- it was not
+        # parsed at all -- and a record the producer CANNOT emit says the
+        # stream itself is untrustworthy, which is the more urgent finding
+        # than a clock that stopped advancing. Concretely: an unrelated
+        # `binary-wait` stall must not excuse an impossible zero/zero
+        # degraded-reap record and send the reader after a timing problem.
+        decided = {k: v for k, v in boundary.items()
+                   if k != "capture_wait_stalled"}
+    try:
+        # Decided before any owner-level reasoning: a statement about the run
+        # as a whole outranks a detail about one binary in it, which is the
+        # ordering inline raising already gave these.
+        _decide_boundary(decided)
     except Refusal as exc:
         return _refusal_model(exc)
+    if scan_fault is not None:
+        return _refusal_model(scan_fault)
 
     binaries = []
     aggregate = 0
