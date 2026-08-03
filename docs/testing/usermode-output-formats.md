@@ -891,15 +891,28 @@ exemption would nullify the disk bound. **Only pointers inside that ranking are
 protected:** past 64 live legs, the least recently published leg's current
 record is an ordinary age candidate, and resolution for that leg can become
 unavailable -- which is why step 5 is bounded rather than infinite.
-`UTEST_POINTER_PIN_MAX=0` disables pinning outright. Any pointer left naming an
+`UTEST_POINTER_PIN_MAX=0` disables pinning outright. The marker in step 3 is
+checked against its CANONICAL LAYOUT for that purpose -- the exact ten-line,
+eight-key document `scripts/test.sh` writes, with each field bound to its own
+contract -- so a hand-written marker carrying every required token at nested or
+reordered keys wins no pin even though it satisfied the older substring tests.
+That strictness is deliberately one-sided: a pin protects a record against
+retention, and protecting a generation no compliant consumer could resolve is
+the wasted budget the validation exists to prevent. Step 3's own reader contract
+is unchanged -- consumers parse the marker, they do not byte-match it. Any
+pointer left naming an
 absent record -- pruned past the cap, or removed by hand -- is deleted by the
 same pass, so a consumer sees "no pointer" rather than "a pointer to nothing".
 
 The pin pass is also bounded in TIME, because validating a pointer reads
 documents and the whole pass holds the retention mutex that a reader waits ten
-seconds for. `UTEST_POINTER_PIN_BUDGET` (8 seconds, normalised into 6..86400)
+seconds for. `UTEST_POINTER_PIN_BUDGET` (8 seconds, normalised into 3..86400)
 covers the enumeration of `build/`, the sort, and every validation together, and
 the candidate set is separately bounded at four times `UTEST_POINTER_PIN_MAX`.
+The floor is the OPERATION COUNT: a validation makes three bounded reads -- one
+per document, since each is now read from a single snapshot rather than a size
+probe plus a read -- so below three seconds no candidate could ever be started
+and the knob would silently switch retention off instead of making it quick.
 **When any of those bounds is reached, the pass says so and DEFERS the age cut
 entirely** -- it keeps every record rather than deleting one whose pointer it
 never examined, because candidates are ranked newest-first and a truncated pass

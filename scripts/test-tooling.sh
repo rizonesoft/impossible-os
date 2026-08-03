@@ -12342,7 +12342,7 @@ for _fn in utest_xml_identity_attrs utest_json_identity utest_xml_identity_props
            utest_publish utest_alias_record utest_publish_leg_set \
            utest_blocking_dir \
            utest_leg_pointer_doc_for utest_leg_pointer_doc utest_publish_leg_pointer \
-           utest_commit_record utest_reap_qemu \
+           utest_marker_doc_for utest_commit_record utest_reap_qemu \
            utest_publish_missing_refusals utest_finalize_record \
            utest_xml_refusal_doc utest_publish_xml_refusal; do
     _body="$(sed -n "/^${_fn}() {/,/^}/p" "$REPO_ROOT/scripts/test.sh")"
@@ -12756,11 +12756,28 @@ echo "UTEST_FAIL=$UTEST_FAIL"
     # definition of the contract and free to drift into passing what production
     # rejects.
     UAR_IDDOC="$(sed -n '/^utest_identity_doc_for() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")"
+    # The COMMIT MARKER emitter, extracted for the same reason as the other
+    # three -- and it is the newest of them because until section 61 the marker
+    # had no emitter to extract. The fixtures below hand-wrote a four-field
+    # single-line marker while production emitted eight keys over ten lines, so
+    # the positive pin and lease tests ran against records a documented consumer
+    # could not open, and they would have stayed green through any drift in
+    # production's own inventory rules. Negative markers are now derived by
+    # MUTATING this output rather than by spelling a second contract.
+    UAR_MARKDOC="$(sed -n '/^utest_marker_doc_for() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")"
     # The reader-lease half, extracted the same way and for the same reason: a
     # lease is validated by BYTE-COMPARING against utest_lease_doc_for's output,
     # so a fixture that spelled the document itself would be a second definition
     # of the contract, free to drift into passing tests production would reject.
-    UAR_LEASEFN="$(sed -n '/^utest_retention_lock() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
+    # `utest_read_doc` rides here TOO, not only in UAR_PRUNE below: section 61
+    # put utest_lease_fields on the same single-snapshot reader as the pointer,
+    # marker and identity documents, and four harnesses eval UAR_LEASEFN on its
+    # own. A bash function re-defined from identical text costs nothing, and the
+    # alternative -- an implicit dependency on whichever bundle happened to
+    # include it -- is how a standalone lease harness starts failing on a change
+    # that has nothing to do with leases.
+    UAR_LEASEFN="$(sed -n '/^utest_read_doc() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
+$(sed -n '/^utest_retention_lock() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
 $(sed -n '/^utest_retention_unlock() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
 $(sed -n '/^utest_proc_starttime() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
 $(sed -n '/^utest_prime_ident() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
@@ -12780,8 +12797,11 @@ $(sed -n '/^utest_lease_release() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")"
     UAR_PRUNE="$(sed -n '/^utest_norm_bound() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
 $(sed -n '/^utest_pointer_run_id() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
 $(sed -n '/^utest_ptr_sweepable() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
+$(sed -n '/^utest_read_doc() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
 $UAR_PTRDOC
+$UAR_MARKDOC
 $(sed -n '/^utest_identity_binds() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
+$(sed -n '/^utest_marker_binds() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
 $(sed -n '/^utest_pointer_pin_id() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
 $UAR_LEASEFN
 $(sed -n '/^utest_hold_blocking_dirs() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")
@@ -12839,6 +12859,19 @@ printf "| HARNESS-OK\n"
         # Each record carries a COMPLETE commit marker, because a pin now
         # requires one: pinning a directory that merely exists would hold a
         # half-written or abandoned record against retention.
+        # $1 = run id, $2.. = optional emitter overrides (status, qemu_pid,
+        # qemu_state, xml, json, identity). Echoes a CANONICAL commit marker,
+        # from production's own emitter. Every fixture that needs a marker --
+        # positive or negative -- goes through here, so a negative case is a
+        # named MUTATION of the real document rather than a second, drift-prone
+        # spelling of the contract. Defaults mirror what a completed run emits.
+        uar_prune_marker() {
+            bash -c "$UAR_MARKDOC"'
+utest_marker_doc_for "$1" "$2" "$3" "$4" "$5" "$6" "$7"' _ \
+                "$1" "${2:-complete}" "${3:-null}" "${4:-reaped}" \
+                "${5:-\"test-results.xml\"}" "${6:-\"test-results.json\"}" \
+                "${7:-\"test-run-identity.json\"}"
+        }
         uar_prune_reset() {
             local _r
             rm -rf "$UAR_PDIR"
@@ -12849,8 +12882,7 @@ printf "| HARNESS-OK\n"
                 # `identity` is part of the marker because the pin reads the
                 # identity document only where the marker's own inventory says
                 # the record has one.
-                printf '{ "schema": "utest-run-record-v1", "run_id": "2026010%sT000000Z-1-aaaa", "status": "complete", "identity": "test-run-identity.json" }\n' \
-                    "$_i" > "$_r/record-complete.json"
+                uar_prune_marker "2026010${_i}T000000Z-1-aaaa" > "$_r/record-complete.json"
             done
         }
         uar_prune_ptr() {
@@ -13035,7 +13067,17 @@ open(p, "wb").write(canon + pad + b'{"junk":"beyond the read cap"}\n')
 PY
                     ;;
                 dup-status)
-                    printf '{ "schema": "utest-run-record-v1", "run_id": "20260103T000000Z-1-aaaa", "status": "complete", "identity": "test-run-identity.json", "status":"incomplete" }\n' \
+                    # A MUTATION of the canonical marker, not a second spelling
+                    # of it: the real document with one extra `"status"` line
+                    # spliced in before the closing brace. A duplicate is a
+                    # positional failure under utest_marker_binds (eleven lines
+                    # against ten) where it used to need an occurrence count.
+                    # `sed '$s/$/,/'` because the field the splice follows is the
+                    # LAST one and carries no comma: without it the mutation is
+                    # not JSON at all, and a fixture a parser cannot read proves
+                    # nothing about what a parser would do with the duplicate.
+                    { uar_prune_marker 20260103T000000Z-1-aaaa | head -n -1 | sed '$s/$/,/'
+                      printf '  "status":"incomplete"\n}\n'; } \
                         > "$UAR_PDIR/build/test-runs/20260103T000000Z-1-aaaa/record-complete.json" ;;
             esac
             UAR_PP8F="$(uar_prune_run 'UTEST_POINTER_PIN_MAX=1')"
@@ -13604,7 +13646,7 @@ printf "| HARNESS-OK\n"
         fi
         rm -f "$UAR_PDIR"/build/test-results-junk*.run
 
-        # (p22) the AGGREGATE deadline, made deterministic by a slow `wc` on
+        # (p22) the AGGREGATE deadline, made deterministic by a slow `head` on
         #       PATH rather than by a FIFO. A FIFO cannot reach this loop at
         #       all: candidates come from `find -type f`, which excludes one by
         #       type, and p13 above covers what the SWEEP does with it. The
@@ -13612,21 +13654,25 @@ printf "| HARNESS-OK\n"
         #       unmodified, and every bounded operation costs a fixed floor
         #       rather than a hope.
         #
-        #       BOTH `wc` and `head` are slowed, because the budget arithmetic
-        #       is per OPERATION and there are six of them per candidate, not
-        #       three: the first cut of this section sized the per-read cap
-        #       against three and let one candidate spend twice the remaining
-        #       budget. A shim on `wc` alone would have measured half the cost
-        #       and passed against that bug.
-        #       TWO valid pointers and the budget at its floor, so the pin
-        #       COUNT is the discriminator rather than a stopwatch. At
-        #       UTEST_POINTER_PIN_BUDGET=6 one validated candidate (1.8s of
-        #       shimmed operations) leaves under six seconds, so the loop must
-        #       refuse to start the second: exactly one pin. Sized against
-        #       three operations instead of six the remainder still clears the
-        #       old three-second floor, the second valid pointer IS validated,
-        #       and the announcement says two -- which is how this test fails
-        #       against the bug rather than merely passing against the fix.
+        #       `head` ALONE now, where this used to shim `wc` beside it: after
+        #       section 61 a validation is THREE bounded operations, one
+        #       utest_read_doc per document, and no `wc` runs at all. The `wc`
+        #       shim is kept in the tree for p27, which uses it to prove exactly
+        #       that -- a lying `wc` cannot change this validator's verdict.
+        #
+        #       ASSERTS THE SAFETY OUTCOME, not which bound bit. The budget is
+        #       sized so a started candidate's worst case EXACTLY fits what is
+        #       left (three operations at floor(left/3) each), which means
+        #       "exhausted after N candidates" always lands next to a cap
+        #       transition: one second of jitter before the loop turns a 2s cap
+        #       into a 1s one and the same fixture reports "budget spent" or
+        #       "a read ran out" run to run. That is not a flake to retry past
+        #       -- it is the arithmetic doing what section 60 designed -- so the
+        #       assertion is the property that does not move: work in excess of
+        #       the budget makes the pass INCOMPLETE and DEFERS the destructive
+        #       half, leaving every record standing. Which of the three bounds
+        #       announced itself belongs to p23 (the divisor) and p24 (the
+        #       timeout), each of which pins it down without a stopwatch.
         uar_prune_reset
         uar_prune_ptr valid 20260102T000000Z-1-aaaa
         uar_prune_ptr valid2 20260103T000000Z-1-aaaa
@@ -13640,15 +13686,8 @@ printf "| HARNESS-OK\n"
         if [ -z "$UAR_REALWC" ] || [ -z "$UAR_REALHEAD" ]; then
             t_fail "run record: an exhausted pin budget defers the age cut and says so" "wc or head not on PATH"
         else
-            # 0.3s, not 1s: the per-operation cap at the default budget is ONE
-            # second, so a shim that slept a whole second would race its own
-            # timeout and the valid candidate would fail validation instead of
-            # pinning. Six operations at 0.3 is 1.8s per validated candidate --
-            # comfortably inside the cap, and still a hard floor that drives the
-            # budget down within three candidates.
-            printf '#!/bin/sh\nsleep 0.3\nexec %s "$@"\n' "$UAR_REALWC" > "$UAR_PDIR/slowbin/wc"
-            printf '#!/bin/sh\nsleep 0.3\nexec %s "$@"\n' "$UAR_REALHEAD" > "$UAR_PDIR/slowbin/head"
-            chmod +x "$UAR_PDIR/slowbin/wc" "$UAR_PDIR/slowbin/head"
+            printf '#!/bin/sh\nsleep 2.5\nexec %s "$@"\n' "$UAR_REALHEAD" > "$UAR_PDIR/slowbin/head"
+            chmod +x "$UAR_PDIR/slowbin/head"
             # Its OWN harness rather than uar_prune_run, for the reason p13 and
             # p20 have one: a regression here does not fail, it RUNS LONG, so
             # the invocation needs an external timeout that a shell function
@@ -13674,7 +13713,7 @@ printf "| HARNESS-OK\n"
 ' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
             if printf '%s' "$UAR_PP22" | grep -q 'HARNESS-OK' &&
                printf '%s' "$UAR_PP22" | grep -q 'pointer pinning is INCOMPLETE' &&
-               printf '%s' "$UAR_PP22" | grep -q 'UTEST_POINTER_PIN_BUDGET=6s spent after 1 pin' &&
+               printf '%s' "$UAR_PP22" | grep -q 'the age cut is deferred this run' &&
                printf '%s' "$UAR_PP22" | grep -q 'test-results-valid.run' &&
                printf '%s' "$UAR_PP22" | grep -q '20260102T000000Z-1-aaaa' &&
                printf '%s' "$UAR_PP22" | grep -q '20260103T000000Z-1-aaaa'; then
@@ -13686,44 +13725,74 @@ printf "| HARNESS-OK\n"
         rm -rf "$UAR_PDIR/slowbin"
         rm -f "$UAR_PDIR"/build/test-results-slow*.run
 
-        # (p23) the per-operation ARITHMETIC on its own. p22 above cannot see a
-        #       divisor-only regression and it is worth saying why rather than
-        #       adding a third overlapping fixture by feel: a validated
-        #       candidate costs six delays under EITHER divisor, so the elapsed
-        #       clock advances identically and both implementations stop at the
-        #       same `pin_left < 6` guard with the same pin count. The two only
-        #       diverge when an operation is KILLED, so the discriminator has to
-        #       be a delay strictly between the correct cap and the wrong one.
+        # (p23) the per-operation ARITHMETIC on its own, and TWO-SIDED. p22
+        #       above cannot see a divisor-only regression and it is worth
+        #       saying why rather than adding an overlapping fixture by feel: a
+        #       validated candidate costs the same three delays under ANY
+        #       divisor, so the elapsed clock advances identically and both
+        #       implementations stop at the same guard with the same pin count.
+        #       The two only diverge when an operation is KILLED, so the
+        #       discriminator has to be a delay that lands between the correct
+        #       cap and the wrong one -- and since a divisor can be wrong in
+        #       both directions, one delay can only ever catch one of them.
         #
-        #       At UTEST_POINTER_PIN_BUDGET=6 the correct cap is 6/6 = 1s and
-        #       the rejected one is 6/3 = 2s, so a 1.5s delay is killed by the
-        #       first and survives the second: correct code pins NOTHING and
-        #       reports a read that ran out of its 1s bound, while `/3`
-        #       completes the candidate, pins it, and can only run out of the
-        #       aggregate BUDGET afterwards -- a different reason and a
-        #       different pin count, either of which fails this. The
-        #       margins are 0.5s either way, and a host slow enough to lose them
-        #       makes this test agree with correct code rather than contradict
-        #       it -- it can go blind, never red, which is the only acceptable
-        #       direction for a fixture that has a stopwatch anywhere near it.
-        #       A SECOND candidate is required for the loop to reach the guard
-        #       at all: the check happens before STARTING one, so a list that
-        #       simply ends is a COMPLETE classification and reports nothing.
-        #       The junk is older, so the valid pointer is still examined first.
-        uar_prune_reset
-        uar_prune_ptr valid 20260102T000000Z-1-aaaa
-        for _j in 1 2 3 4; do
-            printf 'not json at all\n' > "$UAR_PDIR/build/test-results-tail$_j.run"
-            touch -d '2020-01-01' "$UAR_PDIR/build/test-results-tail$_j.run"
-        done
-        mkdir -p "$UAR_PDIR/slowbin"
-        if [ -z "$UAR_REALWC" ] || [ -z "$UAR_REALHEAD" ]; then
-            t_fail "run record: the per-operation cap is sized against six operations, not three" "wc or head not on PATH"
-        else
-            printf '#!/bin/sh\nsleep 1.5\nexec %s "$@"\n' "$UAR_REALWC" > "$UAR_PDIR/slowbin/wc"
-            printf '#!/bin/sh\nsleep 1.5\nexec %s "$@"\n' "$UAR_REALHEAD" > "$UAR_PDIR/slowbin/head"
-            chmod +x "$UAR_PDIR/slowbin/wc" "$UAR_PDIR/slowbin/head"
-            UAR_PP23="$(UAR_PDIR="$UAR_PDIR" UAR_PRUNE="$UAR_PRUNE" timeout 90 bash -c '
+        #       UTEST_POINTER_PIN_BUDGET=12, chosen so the cap does not MOVE
+        #       under jitter. The cap is floor(pin_left / 3) and pin_left falls
+        #       as the pass spends time, so at a small budget one second of
+        #       scheduling noise before the first candidate turns a 2s cap into
+        #       a 1s one -- which is how the first cut of this test, written at
+        #       budget 6 with a 1.5s delay, passed standalone and failed inside
+        #       the suite. At 12 the cap is 4s at zero elapsed and stays 3s for
+        #       every elapsed value up to three seconds, so both legs keep their
+        #       margin against any plausible jitter.
+        #       Leg (a) uses a 2.5s delay, which the correct cap (>= 3s)
+        #       SURVIVES: the candidate is validated and PINS its record. A
+        #       divisor left at six -- the pre-section-61 count, when each
+        #       document cost a `wc` AND a `head` -- caps at 2s or less, kills
+        #       the first read, pins nothing and defers the age cut.
+        #       Leg (b) uses a 4.5s delay, which the correct cap (<= 4s) KILLS:
+        #       nothing pins and the age cut is deferred. A divisor of two caps
+        #       at 5s (the validator's own ceiling), survives the delay and pins
+        #       -- the direction that OVERRUNS the budget, which is the
+        #       dangerous one. The 0.5s margins are on the READ caps only, and a
+        #       host slow enough to lose one makes that leg agree with correct
+        #       code rather than contradict it.
+        #
+        #       EXACTLY ONE CANDIDATE, and the verdict is read off the AGE CUT
+        #       rather than off the budget announcement. The first cut of this
+        #       test asserted the announcement text, which put its discriminator
+        #       on the budget guard -- an INTEGER comparison (`pin_left < 3`)
+        #       against a truncated `$SECONDS`. A validated candidate costs
+        #       ~4.5s there, which lands one tick either side of the threshold
+        #       depending on where the sample fell, and the same fixture
+        #       reported "budget spent" standalone and "ran out of its bound"
+        #       inside the suite. Whether a record was PINNED is exact and
+        #       load-independent; with one candidate the loop ends because the
+        #       list ended, so correct code makes a COMPLETE classification, the
+        #       age cut runs, and 20260103 (unpinned, past keep=2) is pruned
+        #       while 20260102 survives on its pin. Every wrong divisor defers
+        #       the cut instead and leaves 20260103 standing -- which is the
+        #       same "announced DECISION over stopwatch" rule section 60 wrote
+        #       and this fixture had quietly broken.
+        for _p23 in a b; do
+            case "$_p23" in
+                a) _p23_delay=2.5
+                   _p23_pinned=yes
+                   _p23_name="a delay inside the per-operation cap is validated, not killed" ;;
+                b) _p23_delay=4.5
+                   _p23_pinned=no
+                   _p23_name="a delay past the per-operation cap is killed, not validated" ;;
+            esac
+            uar_prune_reset
+            uar_prune_ptr valid 20260102T000000Z-1-aaaa
+            mkdir -p "$UAR_PDIR/slowbin"
+            if [ -z "$UAR_REALHEAD" ]; then
+                t_fail "run record: $_p23_name" "head not on PATH"
+            else
+                printf '#!/bin/sh\nsleep %s\nexec %s "$@"\n' "$_p23_delay" "$UAR_REALHEAD" \
+                    > "$UAR_PDIR/slowbin/head"
+                chmod +x "$UAR_PDIR/slowbin/head"
+                UAR_PP23="$(UAR_PDIR="$UAR_PDIR" UAR_PRUNE="$UAR_PRUNE" timeout 90 bash -c '
 set -euo pipefail
 RED=""; YELLOW=""; CYAN=""; RESET=""
 PATH="$UAR_PDIR/slowbin:$PATH"
@@ -13732,23 +13801,32 @@ RUNS_DIR="$PROJECT/build/test-runs"
 RUN_ID="20260101T000000Z-1-aaaa"
 UTEST_RECORD_KEEP=2
 UTEST_LEASE_MAX=0
-UTEST_POINTER_PIN_BUDGET=6
+UTEST_POINTER_PIN_BUDGET=12
 eval "$UAR_PRUNE"
 utest_prune_records
 ls -1 "$RUNS_DIR" | sort | tr "\n" " "
 printf "| HARNESS-OK\n"
 ' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
-            if printf '%s' "$UAR_PP23" | grep -q 'HARNESS-OK' &&
-               printf '%s' "$UAR_PP23" | grep -q 'ran out of its 1s bound after 0 pin' &&
-               printf '%s' "$UAR_PP23" | grep -q '20260102T000000Z-1-aaaa' &&
-               printf '%s' "$UAR_PP23" | grep -q '20260103T000000Z-1-aaaa'; then
-                t_pass "run record: the per-operation cap is sized against six operations, not three"
-            else
-                t_fail "run record: the per-operation cap is sized against six operations, not three" "$UAR_PP23"
+                # The pin is read off what the AGE CUT did, which is exact:
+                # 20260102 is the pointer's target and 20260103 is the record
+                # just past keep=2. Pinned means one survived and the other did
+                # not; unpinned means the classification was incomplete, the cut
+                # was deferred, and BOTH stand.
+                if printf '%s' "$UAR_PP23" | grep -q '20260103T000000Z-1-aaaa'; then
+                    _p23_got=no
+                else
+                    _p23_got=yes
+                fi
+                if printf '%s' "$UAR_PP23" | grep -q 'HARNESS-OK' &&
+                   printf '%s' "$UAR_PP23" | grep -q '20260102T000000Z-1-aaaa' &&
+                   [ "$_p23_got" = "$_p23_pinned" ]; then
+                    t_pass "run record: $_p23_name"
+                else
+                    t_fail "run record: $_p23_name" "want pinned=$_p23_pinned got=$_p23_got -- $UAR_PP23"
+                fi
             fi
-        fi
-        rm -rf "$UAR_PDIR/slowbin"
-        rm -f "$UAR_PDIR"/build/test-results-tail*.run
+            rm -rf "$UAR_PDIR/slowbin"
+        done
 
         # (p24) the TIMED-OUT SOLE CANDIDATE, which is the hole a
         #       between-candidates budget check cannot see: the loop ends
@@ -13763,9 +13841,17 @@ printf "| HARNESS-OK\n"
         if [ -z "$UAR_REALWC" ] || [ -z "$UAR_REALHEAD" ]; then
             t_fail "run record: a read that runs out of its bound is not a classified pointer" "wc or head not on PATH"
         else
-            printf '#!/bin/sh\nsleep 1.5\nexec %s "$@"\n' "$UAR_REALWC" > "$UAR_PDIR/slowbin/wc"
-            printf '#!/bin/sh\nsleep 1.5\nexec %s "$@"\n' "$UAR_REALHEAD" > "$UAR_PDIR/slowbin/head"
-            chmod +x "$UAR_PDIR/slowbin/wc" "$UAR_PDIR/slowbin/head"
+            # 2.5s against a cap of at most 6/3 = 2s: the read must be KILLED
+            # for this test to be about a timed-out sole candidate at all. It
+            # was 1.5s while the cap was 6/6 = 1s, and section 61's operation
+            # count moved the cap out from under it -- a delay left at 1.5 would
+            # now be validated and this fixture would silently stop testing
+            # anything. The assertion below names the timeout REASON and not the
+            # number of seconds in it, because that number is floor(pin_left/3)
+            # and therefore falls as the pass spends time: pinning the exact
+            # bound is what made p22 and p23 flip between runs.
+            printf '#!/bin/sh\nsleep 2.5\nexec %s "$@"\n' "$UAR_REALHEAD" > "$UAR_PDIR/slowbin/head"
+            chmod +x "$UAR_PDIR/slowbin/head"
             UAR_PP24="$(UAR_PDIR="$UAR_PDIR" UAR_PRUNE="$UAR_PRUNE" timeout 90 bash -c '
 set -euo pipefail
 RED=""; YELLOW=""; CYAN=""; RESET=""
@@ -13782,7 +13868,7 @@ ls -1 "$RUNS_DIR" | sort | tr "\n" " "
 printf "| HARNESS-OK\n"
 ' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
             if printf '%s' "$UAR_PP24" | grep -q 'HARNESS-OK' &&
-               printf '%s' "$UAR_PP24" | grep -q 'ran out of its 1s bound' &&
+               printf '%s' "$UAR_PP24" | grep -q 'a pointer document read ran out of its' &&
                printf '%s' "$UAR_PP24" | grep -q '20260102T000000Z-1-aaaa' &&
                printf '%s' "$UAR_PP24" | grep -q '20260103T000000Z-1-aaaa'; then
                 t_pass "run record: a read that runs out of its bound is not a classified pointer"
@@ -13877,6 +13963,265 @@ wait
                 t_pass "run record: discovery does not leak the retention descriptor to any child"
             else
                 t_fail "run record: discovery does not leak the retention descriptor to any child" "$UAR_PP26"
+            fi
+        fi
+        rm -rf "$UAR_PDIR/slowbin"
+
+        # (p27) ONE SNAPSHOT per document, proved by a `wc` that LIES. The
+        #       two-open pair this replaced asked its size question of one open
+        #       and its content question of another, so a file swapped between
+        #       them was validated as its predecessor. The race itself is not
+        #       reproducible from outside the process -- both orderings are
+        #       legal -- so the assertion is on the property that CLOSES it: the
+        #       validator no longer consults `wc` at all. A shim reporting an
+        #       impossible 99999 bytes for every file leaves a canonical pointer
+        #       pinning normally here, and refuses it outright against the pair
+        #       (which read that size, compared it against the 4096 cap and
+        #       returned before opening anything). Mutation-verified against the
+        #       three utest_read_doc call sites: restoring any one `wc -c` size
+        #       probe turns this red.
+        uar_prune_reset
+        uar_prune_ptr valid 20260102T000000Z-1-aaaa
+        mkdir -p "$UAR_PDIR/slowbin"
+        if [ -z "$UAR_REALWC" ]; then
+            t_fail "run record: a validation reads each document from one snapshot, never a size probe plus a read" "wc not on PATH"
+        else
+            printf '#!/bin/sh\nprintf "99999 %%s\\n" "$*"\n' > "$UAR_PDIR/slowbin/wc"
+            chmod +x "$UAR_PDIR/slowbin/wc"
+            UAR_PP27="$(UAR_PDIR="$UAR_PDIR" UAR_PRUNE="$UAR_PRUNE" timeout 90 bash -c '
+set -euo pipefail
+RED=""; YELLOW=""; CYAN=""; RESET=""
+PATH="$UAR_PDIR/slowbin:$PATH"
+PROJECT="$UAR_PDIR"
+RUNS_DIR="$PROJECT/build/test-runs"
+RUN_ID="20260101T000000Z-1-aaaa"
+UTEST_RECORD_KEEP=2
+UTEST_LEASE_MAX=0
+eval "$UAR_PRUNE"
+utest_prune_records
+ls -1 "$RUNS_DIR" | sort | tr "\n" " "
+printf "| HARNESS-OK\n"
+' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
+            if printf '%s' "$UAR_PP27" | grep -q 'HARNESS-OK' &&
+               printf '%s' "$UAR_PP27" | grep -q '20260102T000000Z-1-aaaa' &&
+               ! printf '%s' "$UAR_PP27" | grep -q 'INCOMPLETE'; then
+                t_pass "run record: a validation reads each document from one snapshot, never a size probe plus a read"
+            else
+                t_fail "run record: a validation reads each document from one snapshot, never a size probe plus a read" "$UAR_PP27"
+            fi
+        fi
+        rm -rf "$UAR_PDIR/slowbin"
+
+        # (p28) the MARKER is validated by its canonical SHAPE. The nested
+        #       wrapper is the shape the retired substring tests could not see:
+        #       every required token is present and NONE of them is a top-level
+        #       key, so the shell called the record committed while a real
+        #       parser found no `status` and no `identity` at all. `reordered`
+        #       and `extra-key` are the two other shapes a positional walk
+        #       catches for free and an occurrence count never could. Each is a
+        #       MUTATION of production's own emitter output where that is
+        #       meaningful, so the fixture cannot drift into a second contract.
+        #       The valid pointer is older and pin_max is 1, so a bad marker
+        #       that wins the pin also DENIES the valid one -- which is what
+        #       makes the assertion "the valid record survived" load-bearing
+        #       rather than incidental.
+        for _mshape in nested reordered extra-key; do
+            uar_prune_reset
+            uar_prune_ptr valid 20260102T000000Z-1-aaaa
+            touch -d '2020-01-01' "$UAR_PDIR/build/test-results-valid.run"
+            uar_prune_ptr shaped 20260103T000000Z-1-aaaa
+            _mfile="$UAR_PDIR/build/test-runs/20260103T000000Z-1-aaaa/record-complete.json"
+            case "$_mshape" in
+                nested)
+                    printf '{\n  "wrapper": {\n    "schema": "utest-run-record-v1",\n    "run_id": "20260103T000000Z-1-aaaa",\n    "status": "complete",\n    "qemu_pid": null,\n    "qemu_state": "reaped",\n    "xml": "test-results.xml",\n    "json": "test-results.json",\n    "identity": "test-run-identity.json"\n  }\n}\n' \
+                        > "$_mfile" ;;
+                reordered)
+                    # Every key and value production emits, `status` and
+                    # `run_id` swapped. Byte-for-byte the same SET, and the
+                    # documented resolver reads it fine -- but the layout IS
+                    # the contract, and accepting a document this validator
+                    # cannot walk positionally is how a duplicate gets back in.
+                    # `awk`, not `sed -n '1p;2p;4p;3p;...'`: sed prints in FILE
+                    # order regardless of the order the addresses are written,
+                    # so that spelling emits the document UNCHANGED and the
+                    # fixture silently tests nothing. Caught by this test going
+                    # green against a marker it had not actually reordered.
+                    uar_prune_marker 20260103T000000Z-1-aaaa \
+                        | awk 'NR<=2{print} NR==3{a=$0} NR==4{print; print a} NR>=5{print}' \
+                        > "$_mfile" ;;
+                extra-key)
+                    { uar_prune_marker 20260103T000000Z-1-aaaa | head -n -1 | sed '$s/$/,/'
+                      printf '  "extra": "field"\n}\n'; } > "$_mfile" ;;
+            esac
+            UAR_PP28="$(uar_prune_run 'UTEST_POINTER_PIN_MAX=1')"
+            if printf '%s' "$UAR_PP28" | grep -q 'HARNESS-OK' &&
+               printf '%s' "$UAR_PP28" | grep -q '20260102T000000Z-1-aaaa' &&
+               printf '%s' "$UAR_PP28" | grep -q 'test-results-valid.run' &&
+               ! printf '%s' "$UAR_PP28" | grep -q '20260103T000000Z-1-aaaa'; then
+                t_pass "run record: a '$_mshape' commit marker wins no pin and does not deny a valid one"
+            else
+                t_fail "run record: a '$_mshape' commit marker wins no pin and does not deny a valid one" "$UAR_PP28"
+            fi
+        done
+
+        # (p29) and the marker's INVENTORY fields are bound to what a consumer
+        #       can actually open. `"xml": ".."` is a scalar and satisfied the
+        #       union grammar the first cut of section 61 wrote, while the
+        #       documented resolver must reject `.` and `..` as payload names --
+        #       so the pin would have protected a generation no consumer can
+        #       resolve, which is exactly the wasted budget it exists to
+        #       prevent. `qemu_state` gets the same treatment: an open charset
+        #       there admits a state nothing has a meaning for, in the one field
+        #       that says whether the VM was ever reaped.
+        #       `incomplete-status` and `padded-pid` are here for a reason the
+        #       test-coverage round named precisely: the duplicate-status marker
+        #       in p8f is rejected by its ELEVEN-line shape whatever its status
+        #       says, so nothing was exercising the `complete` guard itself, and
+        #       broadening or deleting it would have left the suite green while
+        #       an unfinished record consumed a bounded pin slot. `padded-pid`
+        #       covers the independent JSON-integer branch the same way -- `02`
+        #       is a parse error, so a marker carrying it pins a generation the
+        #       documented resolver cannot read.
+        for _mfield in 'dotdot-xml' 'bogus-state' 'incomplete-status' 'padded-pid'; do
+            uar_prune_reset
+            uar_prune_ptr valid 20260102T000000Z-1-aaaa
+            touch -d '2020-01-01' "$UAR_PDIR/build/test-results-valid.run"
+            uar_prune_ptr fielded 20260103T000000Z-1-aaaa
+            _mfile="$UAR_PDIR/build/test-runs/20260103T000000Z-1-aaaa/record-complete.json"
+            case "$_mfield" in
+                dotdot-xml)
+                    uar_prune_marker 20260103T000000Z-1-aaaa complete null reaped \
+                        '".."' '"test-results.json"' '"test-run-identity.json"' > "$_mfile" ;;
+                bogus-state)
+                    uar_prune_marker 20260103T000000Z-1-aaaa complete null 'somethingelse' \
+                        '"test-results.xml"' '"test-results.json"' '"test-run-identity.json"' > "$_mfile" ;;
+                incomplete-status)
+                    # A perfectly canonical marker for a record that did NOT
+                    # finish. Only a record whose own marker says it is complete
+                    # may hold anything against retention.
+                    uar_prune_marker 20260103T000000Z-1-aaaa incomplete null reaped \
+                        '"test-results.xml"' '"test-results.json"' '"test-run-identity.json"' > "$_mfile" ;;
+                padded-pid)
+                    uar_prune_marker 20260103T000000Z-1-aaaa complete '02' reaped \
+                        '"test-results.xml"' '"test-results.json"' '"test-run-identity.json"' > "$_mfile" ;;
+            esac
+            UAR_PP29="$(uar_prune_run 'UTEST_POINTER_PIN_MAX=1')"
+            if printf '%s' "$UAR_PP29" | grep -q 'HARNESS-OK' &&
+               printf '%s' "$UAR_PP29" | grep -q '20260102T000000Z-1-aaaa' &&
+               printf '%s' "$UAR_PP29" | grep -q 'test-results-valid.run' &&
+               ! printf '%s' "$UAR_PP29" | grep -q '20260103T000000Z-1-aaaa'; then
+                t_pass "run record: a marker field a consumer could not resolve ('$_mfield') wins no pin"
+            else
+                t_fail "run record: a marker field a consumer could not resolve ('$_mfield') wins no pin" "$UAR_PP29"
+            fi
+        done
+
+        # (p30) a POSITIVE case for the shape walk, and the reason it is here
+        #       rather than folded into p7: every negative above would also pass
+        #       against a validator that refused everything. The canonical
+        #       marker for a record with NO xml and NO json -- a real shape, an
+        #       aborted run that still committed -- must still pin, because the
+        #       inventory nulls are values the emitter legitimately writes and a
+        #       walk that bound them to a basename would refuse a valid record.
+        uar_prune_reset
+        uar_prune_ptr valid 20260102T000000Z-1-aaaa
+        uar_prune_marker 20260102T000000Z-1-aaaa complete 4321 unreaped null null \
+            '"test-run-identity.json"' \
+            > "$UAR_PDIR/build/test-runs/20260102T000000Z-1-aaaa/record-complete.json"
+        UAR_PP30="$(uar_prune_run)"
+        if printf '%s' "$UAR_PP30" | grep -q 'HARNESS-OK' &&
+           printf '%s' "$UAR_PP30" | grep -q '20260102T000000Z-1-aaaa' &&
+           printf '%s' "$UAR_PP30" | grep -q 'test-results-valid.run' &&
+           ! printf '%s' "$UAR_PP30" | grep -q '20260103T000000Z-1-aaaa'; then
+            t_pass "run record: a canonical marker whose inventory reports no documents still pins"
+        else
+            t_fail "run record: a canonical marker whose inventory reports no documents still pins" "$UAR_PP30"
+        fi
+
+        # (p31) the NUL twin of the hidden-suffix bypass, and the reason
+        #       utest_read_doc maps NUL rather than letting bash drop it. Bash
+        #       DISCARDS NUL bytes in a command substitution, so a marker made
+        #       of the canonical document, NUL padding out past the read cap and
+        #       then contradictory bytes captures as a short, byte-perfect
+        #       canonical marker -- and a length taken from that capture agrees.
+        #       The `wc -c` probe this replaced measured the real file and
+        #       refused it, so dropping the mapping would have been a silent
+        #       WEAKENING sold as a fix. `tr '\000' '\001'` keeps the length
+        #       honest, and \001 fails every charset test besides.
+        #       The ASCII-zero half of the same guard needs no fixture of its
+        #       own: every run id in this block is full of `0`, so the unquoted
+        #       `tr \0 \1` -- which bash collapses to `tr 0 1` -- turns the
+        #       whole positive suite red rather than this one test.
+        uar_prune_reset
+        uar_prune_ptr valid 20260102T000000Z-1-aaaa
+        touch -d '2020-01-01' "$UAR_PDIR/build/test-results-valid.run"
+        uar_prune_ptr nulpad 20260103T000000Z-1-aaaa
+        uar_prune_marker 20260103T000000Z-1-aaaa \
+            > "$UAR_PDIR/build/test-runs/20260103T000000Z-1-aaaa/.marker.canon"
+        python3 - "$UAR_PDIR/build/test-runs/20260103T000000Z-1-aaaa" <<'PY'
+import sys, os
+d = sys.argv[1]
+canon = open(os.path.join(d, ".marker.canon"), "rb").read()
+# Past the cap+1 the validator reads, so the junk is only reachable by a
+# consumer that opens the file for real -- which is the whole point.
+open(os.path.join(d, "record-complete.json"), "wb").write(
+    canon + b"\0" * (4097 - len(canon)) + b'{"junk":"beyond the read cap"}\n')
+os.unlink(os.path.join(d, ".marker.canon"))
+PY
+        UAR_PP31="$(uar_prune_run 'UTEST_POINTER_PIN_MAX=1')"
+        if printf '%s' "$UAR_PP31" | grep -q 'HARNESS-OK' &&
+           printf '%s' "$UAR_PP31" | grep -q '20260102T000000Z-1-aaaa' &&
+           printf '%s' "$UAR_PP31" | grep -q 'test-results-valid.run' &&
+           ! printf '%s' "$UAR_PP31" | grep -q '20260103T000000Z-1-aaaa'; then
+            t_pass "run record: a marker padded with NULs past the read cap wins no pin"
+        else
+            t_fail "run record: a marker padded with NULs past the read cap wins no pin" "$UAR_PP31"
+        fi
+
+        # (p33) the BUDGET FLOOR moved from six to three with the operation
+        #       count, and a floor is only real if a value at it is HONOURED
+        #       rather than quietly replaced by the default. Nothing covered
+        #       that: p22 and p24 use 6 and both p23 legs use 12, so restoring
+        #       the old six-second floor -- which sends 3 to the fallback 8 --
+        #       would have gone unnoticed. Named by the test-coverage round.
+        #
+        #       Decision-based, not a stopwatch. At an HONOURED budget of 3 the
+        #       per-operation cap is 3/3 = 1s, so a 1.5s read is killed, nothing
+        #       pins, and the age cut is deferred -- 20260103 survives. Under
+        #       the old floor the value falls back to 8, the cap is 2s, the same
+        #       read is validated, the pin lands and 20260103 is pruned. Jitter
+        #       only ever makes the honoured case refuse harder (at one second
+        #       elapsed the candidate is not started at all), so this goes
+        #       blind, never red.
+        uar_prune_reset
+        uar_prune_ptr valid 20260102T000000Z-1-aaaa
+        mkdir -p "$UAR_PDIR/slowbin"
+        if [ -z "$UAR_REALHEAD" ]; then
+            t_fail "run record: a pin budget at the three-second floor is honoured, not replaced by the default" "head not on PATH"
+        else
+            printf '#!/bin/sh\nsleep 1.5\nexec %s "$@"\n' "$UAR_REALHEAD" > "$UAR_PDIR/slowbin/head"
+            chmod +x "$UAR_PDIR/slowbin/head"
+            UAR_PP33="$(UAR_PDIR="$UAR_PDIR" UAR_PRUNE="$UAR_PRUNE" timeout 90 bash -c '
+set -euo pipefail
+RED=""; YELLOW=""; CYAN=""; RESET=""
+PATH="$UAR_PDIR/slowbin:$PATH"
+PROJECT="$UAR_PDIR"
+RUNS_DIR="$PROJECT/build/test-runs"
+RUN_ID="20260101T000000Z-1-aaaa"
+UTEST_RECORD_KEEP=2
+UTEST_LEASE_MAX=0
+UTEST_POINTER_PIN_BUDGET=3
+eval "$UAR_PRUNE"
+utest_prune_records
+ls -1 "$RUNS_DIR" | sort | tr "\n" " "
+printf "| HARNESS-OK\n"
+' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
+            if printf '%s' "$UAR_PP33" | grep -q 'HARNESS-OK' &&
+               printf '%s' "$UAR_PP33" | grep -q 'pointer pinning is INCOMPLETE' &&
+               printf '%s' "$UAR_PP33" | grep -q '20260103T000000Z-1-aaaa'; then
+                t_pass "run record: a pin budget at the three-second floor is honoured, not replaced by the default"
+            else
+                t_fail "run record: a pin budget at the three-second floor is honoured, not replaced by the default" "$UAR_PP33"
             fi
         fi
         rm -rf "$UAR_PDIR/slowbin"
@@ -14131,36 +14476,57 @@ printf "| HARNESS-OK\n"
         # (L9b) and the assertion above is NOT sufficient on its own, because
         #       the type test removes that FIFO without ever opening it. The
         #       defect is the RACE: a regular file that passes the type test and
-        #       is replaced before the read. Reproducing that interleaving in
-        #       bash is not deterministic, so the VALIDATOR is driven directly
-        #       against a FIFO -- which is exactly the state the race delivers
-        #       it. `wc -c < "$f"` performs the redirection in the calling shell
-        #       BEFORE `timeout` is exec'd, so the bound never covers the open;
-        #       measured 2026-08-01, that form runs to the OUTER bound (6s of a
-        #       6s cap) while `wc -c -- "$f"` returns at its own (2s of 2s).
-        if mkfifo "$UAR_PDIR/racefifo" 2>/dev/null; then
-            UAR_L9B_T0="$(date +%s)"
+        #       is replaced BEFORE the read.
+        #
+        #       This used to hand the validator a STATIC FIFO, on the argument
+        #       that a FIFO is the state the race delivers. Section 61 made that
+        #       argument false: utest_read_doc performs its own `[ -f ]` INSIDE
+        #       its timeout, so a static FIFO is now rejected without ever
+        #       opening anything -- which is L9's case, not this one, and left
+        #       this test passing while covering nothing. Caught by the
+        #       test-coverage round.
+        #
+        #       So the race is now BUILT rather than approximated: a REGULAR
+        #       file passes the type test, and a `head` shim replaces that exact
+        #       pathname with a FIFO immediately before opening it. That is the
+        #       interleaving, made deterministic, and the required answer is the
+        #       classified one utest_read_doc now has a code for -- 2, "this
+        #       read ran out of its bound" -- rather than a stopwatch. A
+        #       regression that moved the open outside `timeout` wedges here and
+        #       is caught by the external watchdog instead.
+        UAR_L9B_REALHEAD="$(command -v head || true)"
+        if [ -z "$UAR_L9B_REALHEAD" ] || ! mkfifo "$UAR_PDIR/racefifo.probe" 2>/dev/null; then
+            t_fail "reader lease: an open racing a FIFO swap is bounded and classified, never a wedge" \
+                "mkfifo or head unavailable -- the wedge this guards against would be undetected"
+        else
+            rm -f "$UAR_PDIR/racefifo.probe"
+            mkdir -p "$UAR_PDIR/racebin"
+            # `${!#}` is not portable to `sh`, so the last argument -- the
+            # pathname, after `-c <n> --` -- is taken the POSIX way.
+            printf '#!/bin/sh\neval _p=\\${$#}\nrm -f "$_p"\nmkfifo "$_p"\nexec %s "$@"\n' \
+                "$UAR_L9B_REALHEAD" > "$UAR_PDIR/racebin/head"
+            chmod +x "$UAR_PDIR/racebin/head"
+            printf 'a regular file, until head opens it\n' > "$UAR_PDIR/racefifo"
             UAR_L9B="$(UAR_PDIR="$UAR_PDIR" UAR_PRUNE="$UAR_PRUNE" timeout 30 bash -c '
 set -uo pipefail
+PATH="$UAR_PDIR/racebin:$PATH"
 PROJECT="$UAR_PDIR"
 RUNS_DIR="$PROJECT/build/test-runs"
 eval "$UAR_PRUNE"
-utest_lease_fields "$PROJECT/racefifo" 20260102T000000Z-1-aaaa
-printf "VALIDATOR-RETURNED\n"
+_rc=0
+utest_read_doc "$PROJECT/racefifo" 4096 2 >/dev/null || _rc=$?
+printf "RC=%s VALIDATOR-RETURNED\n" "$_rc"
 ' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
-            UAR_L9B_EL=$(( $(date +%s) - UAR_L9B_T0 ))
             if printf '%s' "$UAR_L9B" | grep -q 'VALIDATOR-RETURNED' &&
                ! printf '%s' "$UAR_L9B" | grep -q 'TIMED-OUT-OR-FAILED' &&
-               [ "$UAR_L9B_EL" -lt 20 ]; then
-                t_pass "reader lease: the validator's own open is time-bounded, so a swapped-in FIFO cannot wedge it"
+               printf '%s' "$UAR_L9B" | grep -q 'RC=2'; then
+                t_pass "reader lease: an open racing a FIFO swap is bounded and classified, never a wedge"
             else
-                t_fail "reader lease: the validator's own open is time-bounded, so a swapped-in FIFO cannot wedge it" \
-                    "elapsed=${UAR_L9B_EL}s out=$UAR_L9B"
+                t_fail "reader lease: an open racing a FIFO swap is bounded and classified, never a wedge" \
+                    "out=$UAR_L9B"
             fi
+            rm -rf "$UAR_PDIR/racebin"
             rm -f "$UAR_PDIR/racefifo"
-        else
-            t_fail "reader lease: the validator's own open is time-bounded, so a swapped-in FIFO cannot wedge it" \
-                "mkfifo unavailable -- the wedge this guards against would be undetected"
         fi
 
         # (L10) An acquisition killed between staging and rename leaves a
@@ -15381,7 +15747,13 @@ printf "| HARNESS-OK\n"
         uar_prune_ptr valid 20260102T000000Z-1-aaaa
         touch -d '2020-01-01' "$UAR_PDIR/build/test-results-valid.run"
         uar_prune_ptr planted 20260103T000000Z-1-aaaa
-        printf '{ "schema": "utest-run-record-v1", "run_id": "20260103T000000Z-1-aaaa", "status": "complete", "identity": null }\n' \
+        # The canonical marker with ONE field changed: an inventory that
+        # disclaims the identity document. Everything else about the record is
+        # exactly what a completed run writes, so the refusal can only be about
+        # that field -- a hand-written four-field marker would now be refused
+        # for its SHAPE and would prove nothing about the inventory rule.
+        uar_prune_marker 20260103T000000Z-1-aaaa complete null reaped \
+            '"test-results.xml"' '"test-results.json"' null \
             > "$UAR_PDIR/build/test-runs/20260103T000000Z-1-aaaa/record-complete.json"
         UAR_L34="$(uar_prune_run 'UTEST_POINTER_PIN_MAX=1')"
         if printf '%s' "$UAR_L34" | grep -q 'HARNESS-OK' &&
@@ -15406,7 +15778,13 @@ printf "| HARNESS-OK\n"
         uar_prune_ptr valid 20260102T000000Z-1-aaaa
         touch -d '2020-01-01' "$UAR_PDIR/build/test-results-valid.run"
         uar_prune_ptr escaped 20260103T000000Z-1-aaaa
-        printf '{ "schema": "utest-run-record-v1", "run_id": "20260103T000000Z-1-aaaa", "status": "complete", "identity": "test-run-identity.json", "\\u0069dentity": null }\n' \
+        # The canonical marker with an escaped duplicate key spliced in before
+        # the closing brace. Section 61 retired the blanket no-backslash guard
+        # this used to fail, so it now fails POSITIONALLY -- eleven lines where
+        # the layout has ten -- which is the stronger reason: the shape walk
+        # never had to learn this particular spelling.
+        { uar_prune_marker 20260103T000000Z-1-aaaa | head -n -1 | sed '$s/$/,/'
+          printf '  "\\u0069dentity": null\n}\n'; } \
             > "$UAR_PDIR/build/test-runs/20260103T000000Z-1-aaaa/record-complete.json"
         # The parser reads the marker BEFORE the prune runs: an unpinned record
         # is deleted by that pass, so reading afterwards finds no file and the
@@ -15529,6 +15907,238 @@ printf "| HARNESS-OK\n"
         else
             t_fail "run record: the leg alphabet guard survives an inherited nocasematch" "$UAR_L38"
         fi
+
+        # (L39) ACQUISITION carries the same aggregate deadline the pin loop
+        #     does. utest_lease_acquire validates one pointer while HOLDING the
+        #     retention mutex, and until section 61 it passed no bound at all --
+        #     the validator's default five seconds per read, three reads, is
+        #     fifteen seconds against the TEN the next acquirer waits for that
+        #     same mutex before refusing. So the reader denial section 60
+        #     removed from the prune side survived unchanged on the acquire side.
+        #
+        #     Two legs, and the (b) leg asserts the HOLD TIME rather than the
+        #     verdict, because the verdict alone does not distinguish the states:
+        #     an unbounded acquisition eventually refuses too -- after spending
+        #     twelve seconds inside the mutex. Verified by mutation: dropping the
+        #     cap argument entirely left an outcome-only assertion GREEN, because
+        #     the census deadline caught the overrun on the way out. So (b) runs
+        #     the whole acquisition under an external `timeout 9`, which is the
+        #     one number that matters (utest_retention_lock waits ten), and a
+        #     kill by that wrapper IS the failure. The margin is not a knife
+        #     edge: correct code refuses in about three seconds against a
+        #     nine-second bound, where an unbounded one needs twelve.
+        #     (a) a 1s read is inside the derived cap and the lease is GRANTED,
+        #     which is what keeps (b) from passing by refusing everything.
+        #     At the default UTEST_POINTER_PIN_BUDGET=8 the cap is
+        #     min(8/3, 3) = 2s, so (a) has 1s of margin and (b) has 2s.
+        #     Leg (c) is the CENSUS, and it exists because legs (a) and (b) were
+        #     proven insufficient: they leave the target's leases/ directory
+        #     EMPTY, so they exercise pointer validation and nothing else. In
+        #     production utest_record_live_leases runs on the target BEFORE any
+        #     between-records check, and every lease document it reads had its
+        #     own flat five-second bound -- so a record holding four slow leases
+        #     could blow the ten-second wait without the pointer being slow at
+        #     all. The adversarial and test-coverage rounds found the same hole
+        #     from opposite ends, and it was an implementation gap the fixture
+        #     was hiding, not merely missing coverage. Four canonical leases and
+        #     a 4s shim reproduce it; the deadline now reaches the census loop.
+        for _l39 in a b c; do
+            case "$_l39" in
+                a) _l39_delay=1; _l39_want=GRANTED; _l39_leases=0; _l39_only=''; _l39_env=''
+                   _l39_name="a read inside the acquisition deadline still grants a lease" ;;
+                b) _l39_delay=4; _l39_want=REFUSED; _l39_leases=0; _l39_only=''; _l39_env=''
+                   _l39_name="a read past the acquisition deadline refuses rather than holding the mutex" ;;
+                # The shim delays LEASE documents only. A blanket one kills the
+                # pointer read first -- the acquisition then refuses before the
+                # census is ever entered, and leg (c) silently tests leg (b)
+                # again. Measured: with a blanket 4s shim this leg passed
+                # against a deliberately unbounded census. A small budget is
+                # deliberate too: correct code refuses in about three seconds,
+                # far under the watchdog, where an unbounded census spends four
+                # seconds per lease and blows straight past it.
+                c) _l39_delay=4; _l39_want=REFUSED; _l39_leases=4; _l39_only='*.lease'
+                   _l39_env='UTEST_POINTER_PIN_BUDGET=3'
+                   _l39_name="a slow lease census cannot hold the mutex past the next acquirer's wait" ;;
+            esac
+            uar_prune_reset
+            uar_prune_ptr slowleg 20260102T000000Z-1-aaaa
+            mkdir -p "$UAR_PDIR/build/test-runs/20260102T000000Z-1-aaaa/leases"
+            _l39_i=0
+            while [ "$_l39_i" -lt "$_l39_leases" ]; do
+                _l39_i=$(( _l39_i + 1 ))
+                uar_lease_put 20260102T000000Z-1-aaaa "$UAR_LHOLD" "census0$_l39_i" \
+                    "$(( UAR_LNOW - 60 ))" "$(( UAR_LNOW + 3600 ))"
+            done
+            mkdir -p "$UAR_PDIR/slowbin"
+            if [ -z "$UAR_REALHEAD" ]; then
+                t_fail "reader lease: $_l39_name" "head not on PATH"
+            else
+                if [ -n "$_l39_only" ]; then
+                    printf '#!/bin/sh\neval _p=\\${$#}\ncase "$_p" in %s) sleep %s ;; esac\nexec %s "$@"\n' \
+                        "$_l39_only" "$_l39_delay" "$UAR_REALHEAD" > "$UAR_PDIR/slowbin/head"
+                else
+                    printf '#!/bin/sh\nsleep %s\nexec %s "$@"\n' "$_l39_delay" "$UAR_REALHEAD" \
+                        > "$UAR_PDIR/slowbin/head"
+                fi
+                chmod +x "$UAR_PDIR/slowbin/head"
+                _l39_rc=0
+                # TEN, because ten is the contract: utest_retention_lock waits
+                # exactly that long before the next acquirer refuses. An earlier
+                # cut used nine, which left a correct acquisition at the default
+                # budget (ceiled at 9) with no room at all.
+                UAR_L39="$(UAR_PDIR="$UAR_PDIR" UAR_PRUNE="$UAR_PRUNE" _L39ENV="$_l39_env" timeout 10 bash -c '
+set -uo pipefail
+RED=""; YELLOW=""; CYAN=""; RESET=""
+PATH="$UAR_PDIR/slowbin:$PATH"
+PROJECT="$UAR_PDIR"
+RUNS_DIR="$PROJECT/build/test-runs"
+eval "$UAR_PRUNE"
+eval "${_L39ENV:-true}"
+utest_lease_acquire slowleg || true
+' 2>/dev/null)" || _l39_rc=$?
+                if [ "$_l39_rc" = "124" ]; then
+                    _l39_got=OUTLIVED-THE-RETENTION-WAIT
+                elif [ -n "$UAR_L39" ]; then
+                    _l39_got=GRANTED
+                else
+                    _l39_got=REFUSED
+                fi
+                # AND THE CENSUS MUST NOT HAVE EATEN ANYTHING. A refusal is only
+                # the right answer if it left the record as it found it: the
+                # round-two adversarial pass found that an unexamined lease --
+                # one whose read the deadline killed -- fell through
+                # utest_lease_reclaimable's empty-fields path as RECLAIMABLE and
+                # was detached and unlinked, so a correct-looking refusal
+                # destroyed a live reader's grant on the way out. Counting the
+                # survivors is what makes leg (c) an assertion about safety
+                # rather than only about time.
+                # A GRANT legitimately adds one, so the expected survivor count
+                # is the fixture's leases plus the grant this leg was supposed
+                # to produce. Anything less means the census destroyed one.
+                _l39_left="$(find "$UAR_PDIR/build/test-runs/20260102T000000Z-1-aaaa/leases" \
+                             -maxdepth 1 -name '*.lease' 2>/dev/null | grep -c . || true)"
+                _l39_expect="$_l39_leases"
+                [ "$_l39_got" != GRANTED ] || _l39_expect=$(( _l39_leases + 1 ))
+                if [ "$_l39_got" = "$_l39_want" ] && [ "$_l39_left" = "$_l39_expect" ]; then
+                    t_pass "reader lease: $_l39_name"
+                else
+                    t_fail "reader lease: $_l39_name" \
+                        "want=$_l39_want got=$_l39_got rc=$_l39_rc leases want=$_l39_expect left=$_l39_left [$UAR_L39]"
+                fi
+            fi
+            rm -rf "$UAR_PDIR/slowbin"
+        done
+
+        # (L40) the LEASE document reads from one snapshot too, and it lives
+        #     here rather than beside p27 because it needs the lease fixtures.
+        #     p27 proves the property of the pointer, marker and identity, but
+        #     it runs with UTEST_LEASE_MAX=0 and therefore never enters
+        #     utest_lease_fields -- so restoring the old `wc`-then-`head` pair
+        #     for LEASES alone would leave p27 and the whole lease suite green
+        #     while a live lease became misreadable and its record was reclaimed
+        #     under a reader still holding it. Named by the test-coverage round.
+        #
+        #     Same lying `wc` shim, and the record survives ONLY on its lease:
+        #     20260102 is past keep=2 with no pointer naming it, so if the lease
+        #     cannot be read the age cut takes it. Under the two-open reader
+        #     `wc` reports 99999, the size test refuses, the record reads as
+        #     unleased and is destroyed -- which is the failure.
+        uar_lease_reset
+        uar_lease_put 20260102T000000Z-1-aaaa "$UAR_LHOLD" snap01 \
+            "$(( UAR_LNOW - 60 ))" "$(( UAR_LNOW + 3600 ))"
+        mkdir -p "$UAR_PDIR/slowbin"
+        UAR_L40WC="$(command -v wc || true)"
+        if [ -z "$UAR_L40WC" ]; then
+            t_fail "reader lease: a lease document is read from one snapshot, never a size probe plus a read" "wc not on PATH"
+        else
+            printf '#!/bin/sh\nprintf "99999 %%s\\n" "$*"\n' > "$UAR_PDIR/slowbin/wc"
+            chmod +x "$UAR_PDIR/slowbin/wc"
+            UAR_L40="$(uar_prune_run 'PATH="'"$UAR_PDIR"'/slowbin:$PATH"')"
+            if printf '%s' "$UAR_L40" | grep -q 'HARNESS-OK' &&
+               printf '%s' "$UAR_L40" | grep -q '20260102T000000Z-1-aaaa'; then
+                t_pass "reader lease: a lease document is read from one snapshot, never a size probe plus a read"
+            else
+                t_fail "reader lease: a lease document is read from one snapshot, never a size probe plus a read" "$UAR_L40"
+            fi
+        fi
+        rm -rf "$UAR_PDIR/slowbin"
+
+        # (L41) a lease census the PRUNER could not complete HOLDS its record.
+        #     The round-three adversarial pass caught the other half of L39c's
+        #     safety property: round two stopped an unexamined lease being
+        #     unlinked, but `utest_prune_records` still converted the census's
+        #     failure to a numeric zero, so the record took no hold and the age
+        #     cut deleted it -- lease file and all. The reader loses the
+        #     generation either way, so preserving only the FILE was no fix.
+        #
+        #     No acquisition deadline is involved and none is needed: the
+        #     pruner masks it, and a five-second read killed on a stalled mount
+        #     reaches the same path. The fixture is a valid canonical lease on
+        #     an OLD, unpinned record (20260102 is past keep=2 and no pointer
+        #     names it), with a `head` shim that stalls only `*.lease` reads --
+        #     so the record's ONLY protection is the hold, and the assertion is
+        #     that the whole record survives with its lease intact.
+        uar_lease_reset
+        uar_lease_put 20260102T000000Z-1-aaaa "$UAR_LHOLD" unread01 \
+            "$(( UAR_LNOW - 60 ))" "$(( UAR_LNOW + 3600 ))"
+        mkdir -p "$UAR_PDIR/slowbin"
+        UAR_L41HEAD="$(command -v head || true)"
+        if [ -z "$UAR_L41HEAD" ]; then
+            t_fail "reader lease: a census the pruner could not complete holds its record, never deletes it" "head not on PATH"
+        else
+            printf '#!/bin/sh\neval _p=\\${$#}\ncase "$_p" in *.lease) sleep 8 ;; esac\nexec %s "$@"\n' \
+                "$UAR_L41HEAD" > "$UAR_PDIR/slowbin/head"
+            chmod +x "$UAR_PDIR/slowbin/head"
+            UAR_L41="$(uar_prune_run 'PATH="'"$UAR_PDIR"'/slowbin:$PATH"')"
+            UAR_L41LEFT="$(find "$UAR_PDIR/build/test-runs/20260102T000000Z-1-aaaa/leases" \
+                           -maxdepth 1 -name '*.lease' 2>/dev/null | grep -c . || true)"
+            if printf '%s' "$UAR_L41" | grep -q 'HARNESS-OK' &&
+               printf '%s' "$UAR_L41" | grep -q '20260102T000000Z-1-aaaa' &&
+               printf '%s' "$UAR_L41" | grep -q 'lease census could not be completed' &&
+               [ "$UAR_L41LEFT" = "1" ]; then
+                t_pass "reader lease: a census the pruner could not complete holds its record, never deletes it"
+            else
+                t_fail "reader lease: a census the pruner could not complete holds its record, never deletes it" \
+                    "leases left=$UAR_L41LEFT -- $UAR_L41"
+            fi
+        fi
+        rm -rf "$UAR_PDIR/slowbin"
+
+        # (L42) and the hold must not depend on the failure being a TIMEOUT.
+        #     L41 stalls the lease read so `timeout` kills it; round four of the
+        #     review pointed out that every OTHER way a read can fail -- a
+        #     transient EIO out of `head`, a failure in `tr`, a fork that could
+        #     not happen -- was reported as a CLASSIFICATION rather than as
+        #     unexamined, so it read as "malformed", and a malformed lease is
+        #     detached and unlinked. One I/O error could therefore destroy a
+        #     live grant and then its record, with no timeout anywhere near it.
+        #     Same fixture as L41 with the shim failing IMMEDIATELY instead of
+        #     stalling, which also makes this the fast half of the pair.
+        uar_lease_reset
+        uar_lease_put 20260102T000000Z-1-aaaa "$UAR_LHOLD" ioerr01 \
+            "$(( UAR_LNOW - 60 ))" "$(( UAR_LNOW + 3600 ))"
+        mkdir -p "$UAR_PDIR/slowbin"
+        UAR_L42HEAD="$(command -v head || true)"
+        if [ -z "$UAR_L42HEAD" ]; then
+            t_fail "reader lease: a lease read that fails without timing out holds its record too" "head not on PATH"
+        else
+            printf '#!/bin/sh\neval _p=\\${$#}\ncase "$_p" in *.lease) exit 1 ;; esac\nexec %s "$@"\n' \
+                "$UAR_L42HEAD" > "$UAR_PDIR/slowbin/head"
+            chmod +x "$UAR_PDIR/slowbin/head"
+            UAR_L42="$(uar_prune_run 'PATH="'"$UAR_PDIR"'/slowbin:$PATH"')"
+            UAR_L42LEFT="$(find "$UAR_PDIR/build/test-runs/20260102T000000Z-1-aaaa/leases" \
+                           -maxdepth 1 -name '*.lease' 2>/dev/null | grep -c . || true)"
+            if printf '%s' "$UAR_L42" | grep -q 'HARNESS-OK' &&
+               printf '%s' "$UAR_L42" | grep -q '20260102T000000Z-1-aaaa' &&
+               printf '%s' "$UAR_L42" | grep -q 'lease census could not be completed' &&
+               [ "$UAR_L42LEFT" = "1" ]; then
+                t_pass "reader lease: a lease read that fails without timing out holds its record too"
+            else
+                t_fail "reader lease: a lease read that fails without timing out holds its record too" \
+                    "leases left=$UAR_L42LEFT -- $UAR_L42"
+            fi
+        fi
+        rm -rf "$UAR_PDIR/slowbin"
 
         rm -rf "$UAR_TMP/fakeproc"
     fi
@@ -19350,6 +19960,7 @@ RECORD_DIR="'"$QO_TMP"'/rec"; mkdir -p "$RECORD_DIR"
 RECORD_MARKER="$RECORD_DIR/record-complete.json"
 XML_RECORD="$RECORD_DIR/test-results.xml"; JSON_RECORD="$RECORD_DIR/j"; IDENTITY_RECORD="$RECORD_DIR/i"
 RUN_ID="run-marker"; UTEST_FAIL=0; QEMU_PID=""; QEMU_STATE=none
+'"$(sed -n '/^utest_marker_doc_for() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")"'
 '"$(sed -n '/^utest_commit_record() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")"'
 utest_commit_record complete >/dev/null 2>&1
 cat "$RECORD_MARKER"
@@ -19368,6 +19979,7 @@ RECORD_DIR="'"$QO_TMP"'/rec2"; mkdir -p "$RECORD_DIR"
 RECORD_MARKER="$RECORD_DIR/record-complete.json"
 XML_RECORD="$RECORD_DIR/test-results.xml"; JSON_RECORD="$RECORD_DIR/j"; IDENTITY_RECORD="$RECORD_DIR/i"
 RUN_ID="run-marker2"; UTEST_FAIL=0; QEMU_PID=4242; QEMU_STATE=reaped
+'"$(sed -n '/^utest_marker_doc_for() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")"'
 '"$(sed -n '/^utest_commit_record() {/,/^}/p' "$REPO_ROOT/scripts/test.sh")"'
 utest_commit_record complete >/dev/null 2>&1
 cat "$RECORD_MARKER"

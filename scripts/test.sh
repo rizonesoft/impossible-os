@@ -576,6 +576,79 @@ utest_ptr_sweepable() {
     return 1
 }
 
+# ONE bounded read of document $1, capped at $2 bytes, under a $3-second bound.
+# Echoes the bytes with trailing newlines stripped. 0 = read it, 1 = classified
+# refusal (not a regular file, unreadable, or larger than the cap), 2 = the read
+# ran out of its bound, so the caller learned NOTHING about this document.
+#
+# ONE OPEN is the whole point. The pair this replaces asked its two questions of
+# two different opens -- `wc -c` for the size, then `head -c` for the bytes -- so
+# a file swapped between them was validated as its predecessor: the size check
+# that exists to defeat a hidden suffix past the read cap did not bind to the
+# inode the read actually returned. Reading cap+1 bytes answers both from one
+# snapshot, because a cap+1st byte IS the oversize verdict.
+#
+# The `[ -f ]` runs INSIDE the timeout, which is what lets the three metadata
+# tests be DELETED rather than wrapped in three more timeouts. A planted FIFO
+# stays the cheap classified refusal section 52 added the stat for (exit 3, no
+# bound burnt), while a stalled mount -- the one actor a stat cannot be made
+# cheap against, and the residual section 60 shipped with named -- now costs the
+# bound and reports UNEXAMINED instead of holding the retention mutex.
+#
+# `tr '\000' '\001'` because bash DISCARDS NUL bytes in a command substitution.
+# Without it a file holding the canonical document, NUL padding out to the cap
+# and then contradictory bytes would measure SHORT in the shell and pass the
+# size test `wc -c` used to make against the real file length. Mapping NUL to a
+# byte that survives keeps the length honest and fails every charset test
+# downstream, which is the right answer for a NUL inside a JSON document either
+# way. The OCTAL spelling is explicit on purpose: `tr \0 \1` UNQUOTED is `tr 0 1`
+# after bash removes the backslashes, which would rewrite every ASCII zero in a
+# run id and refuse every legitimate document.
+#
+# The status rides back on the tail of the capture, after a newline, and that
+# digit is ALSO the non-newline sentinel the length test needs: `$( )` strips
+# trailing newlines, so a document padded with them would otherwise measure
+# short. `pipefail` inside the substitution is what keeps 124 visible past `tr`,
+# the same reason section 60 needed it visible past `awk`.
+utest_read_doc() {
+    local path="$1" cap="$2" tmo="$3" raw rc
+    # BYTE semantics for `${#raw}`. Under a UTF-8 locale bash counts CHARACTERS,
+    # so a multibyte sequence would undercount the very length being bounded.
+    local LC_ALL=C
+    raw="$( { set -o pipefail
+              timeout "$tmo" bash -c '[ -f "$1" ] || exit 3; exec head -c "$2" -- "$1"' \
+                  _ "$path" "$(( cap + 1 ))" 2>/dev/null | tr '\000' '\001'
+              printf '\n%s' "$?"; } )"
+    rc="${raw##*$'\n'}"
+    raw="${raw%$'\n'"$rc"}"
+    # THE TWO NON-ZERO ANSWERS MEAN DIFFERENT THINGS, and conflating them is how
+    # a destructive act gets authorised by accident. 1 is a CLASSIFICATION -- a
+    # fact established by looking: this pathname is not a regular file, or the
+    # document is larger than the cap. 2 is UNEXAMINED -- no snapshot was
+    # obtained, so nothing is known and no caller may act destructively on it.
+    #
+    # Round four of this section's review found 2 reserved for exit 124 alone,
+    # which left every OTHER transport failure -- a transient EIO out of `head`,
+    # a failure in `tr`, a fork that could not happen -- reported as a
+    # classification. On the lease path that reads as "malformed", and a
+    # malformed lease is detached and unlinked, so one I/O error could destroy a
+    # live reader's grant and then its record. A framing parse that did not
+    # yield a number is treated the same way: not knowing WHY is itself a reason
+    # to conclude nothing.
+    case "$rc" in ''|*[!0-9]*) return 2 ;; esac
+    if [ "$rc" -eq 3 ]; then return 1; fi
+    if [ "$rc" -ne 0 ]; then return 2; fi
+    [ "${#raw}" -le "$cap" ] || return 1
+    # Trailing newlines go LAST, AFTER the length has been taken from the raw
+    # capture -- stripping first is what made the pair need a separate `wc -c`
+    # at all. One re-capture rather than a `${raw%$'\n'}` loop, which is
+    # quadratic on a document that is mostly newlines (the same shape
+    # utest_norm_bound bounds its own strip loop against).
+    case "$raw" in *$'\n') raw="$(printf '%s' "$raw")" ;; esac
+    printf '%s\n' "$raw"
+    return 0
+}
+
 # Does identity document $1 bind record $2 to leg $3? 0 = yes.
 #
 # POSITIONAL, never a substring search over the whole document, and the
@@ -648,6 +721,92 @@ utest_identity_binds() {
     return 0
 }
 
+# Does commit marker $1 commit record $2, complete and with an identity? 0 = yes.
+#
+# The MARKER's twin of utest_identity_binds, positional for the same reason and
+# retiring the same class of test. A hand-written
+# `{"wrapper": {"schema": ..., "status": "complete", "identity": "..."}}`
+# carries every token the positive substring tests looked for, at no top-level
+# key at all -- so the shell called the record committed while the documented
+# resolver, which parses, found nothing and refused the generation. Ten lines,
+# `{` and `}` alone at the ends, eight two-space-indented keys in
+# utest_marker_doc_for's fixed order, each with its comma and the last one's
+# absence of one: a nested wrapper, a duplicate key, an extra key, a reordered
+# document and an escaped spelling all fail either the line count or the key at
+# that position. That retires the substring tests, the no-backslash guard and
+# the occurrence-counting duplicate loop TOGETHER, rather than adding a fourth
+# layer on top of them.
+#
+# EVERY field is bound to its OWN contract, never to a shared "some scalar"
+# grammar. `"xml": ".."` is a scalar and would satisfy one, while the documented
+# resolver must reject `.` and `..` as payload names -- so pinning it would
+# protect a generation no consumer can resolve, which is the exact wasted-budget
+# failure the pin exists to prevent.
+utest_marker_binds() {
+    local body="$1" want_id="$2"
+    local keys='schema run_id status qemu_pid qemu_state xml json identity'
+    local line key sep val n=0
+    while IFS= read -r line; do
+        n=$(( n + 1 ))
+        case "$n" in
+            1)  [ "$line" = '{' ] || return 1 ; continue ;;
+            10) [ "$line" = '}' ] || return 1 ; continue ;;
+        esac
+        [ "$n" -lt 10 ] || return 1
+        key="${keys%% *}"
+        keys="${keys#"$key"}"
+        keys="${keys# }"
+        case "$n" in 9) sep="" ;; *) sep="," ;; esac
+        case "$line" in
+            "  \"$key\": "*"$sep") ;;
+            *) return 1 ;;
+        esac
+        val="${line#  \"$key\": }"
+        val="${val%"$sep"}"
+        case "$key" in
+            schema) [ "$val" = '"utest-run-record-v1"' ] || return 1 ;;
+            run_id) [ "$val" = "\"$want_id\"" ] || return 1 ;;
+            # A PIN, not a generic shape test: only a record whose own marker
+            # says it is FINISHED may hold anything against retention.
+            status) [ "$val" = '"complete"' ] || return 1 ;;
+            # `null` is a shape production legitimately emits -- an exit before
+            # the launch has no pid to report -- and a JSON integer is never
+            # zero-padded, the same grammar utest_identity_binds applies to
+            # `cpus` and for the same reason: a document this validator called
+            # bound that a real parser cannot read pins nothing usable.
+            qemu_pid)
+                case "$val" in
+                    null) ;;
+                    ''|*[!0-9]*) return 1 ;;
+                    0?*) return 1 ;;
+                esac ;;
+            # The ENUMERATION utest_reap_qemu and the launch actually emit. An
+            # open charset here would admit a state no consumer has a meaning
+            # for, in the one field that says whether the VM this record
+            # describes was ever reaped.
+            qemu_state)
+                case "$val" in
+                    '"none"'|'"running"'|'"reaped"'|'"unreaped"') ;;
+                    *) return 1 ;;
+                esac ;;
+            # The EXACT basenames utest_finalize_record publishes, because this
+            # is an INVENTORY: a consumer opens what it names. Any other value
+            # is a path handed to a reader by a document nobody wrote.
+            xml)  case "$val" in null|'"test-results.xml"') ;;  *) return 1 ;; esac ;;
+            json) case "$val" in null|'"test-results.json"') ;; *) return 1 ;; esac ;;
+            # NOT `null`, which the marker legitimately emits for a record with
+            # no identity document: the pin READS that document to establish
+            # which leg produced the record, so a marker disclaiming one cannot
+            # be pinned at all. One basename, for the reason the substring test
+            # it replaces named one -- a wildcard would hand a corrupted marker
+            # a path to join.
+            identity) [ "$val" = '"test-run-identity.json"' ] || return 1 ;;
+        esac
+    done <<< "$body"
+    [ "$n" -eq 10 ] || return 1
+    return 0
+}
+
 # Decide whether one pointer may PIN, and echo the run id if it may.
 #
 # Stricter than utest_pointer_run_id on purpose, because the two questions are
@@ -665,7 +824,7 @@ utest_identity_binds() {
 # field-by-field `grep` would spawn a dozen processes per pointer on the
 # startup path for no added strictness.
 utest_pointer_pin_id() {
-    local ptr="$1" body mbody ibody id leg sz rest tmo rc
+    local ptr="$1" body mbody ibody id leg tmo rc
     # Repeated from the top of the script ON PURPOSE. This function is the
     # reference validator: it is extracted and run standalone by the
     # regressions, and its leg guard is the one asymmetric charset test in the
@@ -673,13 +832,17 @@ utest_pointer_pin_id() {
     shopt -u nocasematch
     # PER-READ BOUND, and the argument can only ever TIGHTEN it. Five seconds
     # is what this validator has always used and stays the default, so every
-    # existing caller is unchanged; the pin loop passes a smaller one derived
-    # from what is left of its aggregate budget (section 60). A deadline
-    # checked only BETWEEN candidates is not a bound: one candidate makes SIX
-    # of these bounded operations -- `wc` and `head` for each of the pointer,
-    # the marker and the identity document -- so a fixed five seconds lets a
-    # single hostile pointer spend thirty while utest_lease_acquire waits ten
-    # for the same mutex and then refuses a reader entitled to its lease.
+    # existing caller is unchanged; both callers pass a smaller one derived from
+    # what is left of an aggregate budget (the pin loop's, section 60; the
+    # acquisition's own, section 61). A deadline checked only BETWEEN candidates
+    # is not a bound: one candidate makes THREE of these bounded operations, one
+    # per document, so a fixed five seconds lets a single hostile pointer spend
+    # fifteen while utest_lease_acquire waits ten for the same mutex and then
+    # refuses a reader entitled to its lease.
+    # THREE and no longer six. Each document used to cost a `wc` AND a `head`;
+    # utest_read_doc collapses that pair into one snapshot, so every arithmetic
+    # derived from the operation count -- the caller's divisor, its start floor,
+    # and the floor under UTEST_POINTER_PIN_BUDGET -- moved with it.
     # An ENUMERATED case, not a numeric test: `[ 08 -ge 1 ]` is evaluated in
     # base 8 and aborts the run under `set -e`, and anything outside 1..5 is
     # either a caller bug or an attempt to lengthen a bound that exists to be
@@ -693,32 +856,23 @@ utest_pointer_pin_id() {
     # never did -- and only the second may not authorise the age cut to delete
     # the record that pointer would have pinned. A timed-out FINAL candidate
     # ends the loop normally, so the between-candidates budget check never
-    # fires and cannot be the thing that catches it.
-    #
-    # `set -o pipefail` inside the substitution is what makes 124 visible at
-    # all: the status of `timeout ... | awk` is AWK's, and awk exits 0 on the
-    # empty input a killed reader leaves behind, so the timeout was previously
-    # indistinguishable from a zero-byte file. The `head` reads need no
-    # pipeline and report `timeout`'s status directly.
-    # BOUNDED, and bounded by SIZE FIRST. `timeout` bounds elapsed time, not
-    # bytes: a huge regular file would be pulled wholly into a shell variable
-    # before the clock ran out. And a byte-capped read alone is not enough
-    # either -- `head -c` caps what is read but proves nothing about what
-    # follows, while command substitution strips trailing newlines, so a file
-    # holding the canonical document, newline padding out to the cap, and then
-    # arbitrary contradictory bytes captures IDENTICALLY to the real thing.
-    # Establishing the size first means the snapshot below is the whole file.
-    # `-- "$ptr"`, not `< "$ptr"`: a redirection is performed by THIS shell
-    # before `timeout` is exec'd, so the open it was meant to bound happens
-    # outside it and a FIFO swapped in after the caller's type test blocks
-    # forever. Letting `wc` open the pathname puts the open under the timeout.
-    # (Section 45 made this load-bearing: utest_lease_acquire calls this while
-    # holding the retention mutex, so an unbounded block here wedges retention
-    # for every later run rather than costing one run five seconds.)
-    sz="$(set -o pipefail; timeout "$tmo" wc -c -- "$ptr" 2>/dev/null | awk '{print $1; exit}')" || { rc=$?; if [ "$rc" -eq 124 ]; then return 2; fi; return 0; }
-    case "$sz" in ''|*[!0-9]*) return 0 ;; esac
-    [ "$sz" -le 4096 ] || return 0
-    body="$(timeout "$tmo" head -c 4096 -- "$ptr" 2>/dev/null)" || { rc=$?; if [ "$rc" -eq 124 ]; then return 2; fi; return 0; }
+    # fires and cannot be the thing that catches it. utest_read_doc reports that
+    # distinction with its own 2, and tells a stalled read apart from a FIFO or
+    # a missing file, which its `[ -f ]`-inside-the-timeout answers with a 3.
+    # BOUNDED, and read from ONE SNAPSHOT. The size and the bytes used to come
+    # from two separate opens -- `wc -c` and then `head -c` -- so a file swapped
+    # between them was validated as its predecessor and the size check that
+    # exists to defeat a hidden suffix past the read cap did not bind to the
+    # inode the read returned. utest_read_doc asks both questions of one open by
+    # reading cap+1 bytes; see its comment for why that is also the FASTER shape
+    # and how the length survives newline padding and NUL stripping.
+    # `-- "$path"` inside it, never `< "$path"`: a redirection is performed by
+    # the CALLING shell before `timeout` is exec'd, so the open it was meant to
+    # bound happens outside it and a FIFO swapped in after a type test blocks
+    # forever. (Section 45 made this load-bearing: utest_lease_acquire calls
+    # this while holding the retention mutex, so an unbounded block here wedges
+    # retention for every later run rather than costing one run five seconds.)
+    body="$(utest_read_doc "$ptr" 4096 "$tmo")" || { rc=$?; if [ "$rc" -eq 2 ]; then return 2; fi; return 0; }
     [ -n "$body" ] || return 0
     # From the SNAPSHOT, never by re-opening the file -- re-reading would
     # validate one version and extract from another.
@@ -756,62 +910,27 @@ utest_pointer_pin_id() {
     # which is why the sweep keeps the weaker utest_pointer_run_id and leaves
     # such a pointer alone rather than deleting it.
     [ "$body" = "$(utest_leg_pointer_doc_for "$leg" "$id")" ] || return 0
-    [ -d "$RUNS_DIR/$id" ] || return 0
-    # The marker cannot be canonicalised the same way -- its qemu fields and
-    # document names legitimately vary -- so it is field-tested, with the
-    # negative check that a substring test needs: a document carrying BOTH
-    # statuses must not read as complete.
-    # REGULAR FILE FIRST, as a fast path rather than as a safety claim. The
-    # reads below are each bounded at five seconds, which is the right bound for
-    # a file swapped underneath them -- but a FIFO planted at this pathname
-    # burns the whole timeout on every pass, and the pin loop validates every
-    # candidate pointer, so a directory of them multiplies that by N while the
-    # retention mutex is held. `-f` is a stat and therefore not atomic with the
-    # open; it does not replace the timeout, it just stops the static hostile
-    # case from costing anything. The multiplication by N is bounded by the
-    # loop's aggregate budget (section 60), which is what makes the residual
-    # race here cost one pass rather than the mutex.
-    [ -f "$RUNS_DIR/$id/record-complete.json" ] || return 0
-    sz="$(set -o pipefail; timeout "$tmo" wc -c -- "$RUNS_DIR/$id/record-complete.json" 2>/dev/null | awk '{print $1; exit}')" || { rc=$?; if [ "$rc" -eq 124 ]; then return 2; fi; return 0; }
-    case "$sz" in ''|*[!0-9]*) return 0 ;; esac
-    [ "$sz" -le 4096 ] || return 0
-    mbody="$(timeout "$tmo" head -c 4096 -- "$RUNS_DIR/$id/record-complete.json" 2>/dev/null)" || { rc=$?; if [ "$rc" -eq 124 ]; then return 2; fi; return 0; }
-    # NO BACKSLASH ANYWHERE, and this one line is what makes the field tests
-    # below mean what they say. Every value this marker carries is generated
-    # or charset-filtered -- a run id, a fixed status word, an integer, a
-    # contained basename -- so a legitimate marker has no escape in it at all.
-    # A hand-written one does: `"identity": null` placed after the
-    # required literal field is invisible to a positive substring test AND to
-    # the literal duplicate loop below, while a parser decodes it as a second
-    # `identity` key and takes the LAST value. Rejecting the escape character
-    # outright closes that for every key here at once, where teaching the
-    # duplicate loop one more spelling would only close it for one.
-    case "$mbody" in *\\*) return 0 ;; esac
-    case "$mbody" in *"\"schema\": \"utest-run-record-v1\""*) ;;  *) return 0 ;; esac
-    case "$mbody" in *"\"run_id\": \"$id\""*) ;;                  *) return 0 ;; esac
-    case "$mbody" in *"\"status\": \"complete\""*) ;;             *) return 0 ;; esac
-    # The marker is the authoritative inventory of what the record CONTAINS,
-    # and `"identity": null` is a shape it legitimately emits. So the identity
-    # document is read only where the marker says the record has one, and only
-    # under the one basename `utest-run-record-v1` is allowed to name: reading
-    # a hardcoded path regardless would let a stray or planted
-    # test-run-identity.json speak for a record whose own marker disclaims it,
-    # and accepting an arbitrary filename from the marker would hand a
-    # corrupted marker a path to join. A later filename belongs to a later
-    # marker schema, not to a wildcard here.
-    case "$mbody" in *"\"identity\": \"test-run-identity.json\""*) ;; *) return 0 ;; esac
-    # EXACTLY ONE of each load-bearing key. A positive substring test alone
-    # cannot see a contradictory duplicate: a marker carrying the required
-    # `"status": "complete"` AND a later `"status":"incomplete"` satisfies
-    # every check above, while a real JSON parser -- which is what the
-    # documented resolver uses -- takes the LAST occurrence and rejects the
-    # generation. Pinning something no consumer can resolve is exactly the
-    # wasted-budget failure this validator exists to prevent. Counting
-    # occurrences is whitespace-independent, where matching a second spelling
-    # of the negative case would not be.
-    for rest in schema run_id status identity; do
-        case "${mbody#*\"$rest\"}" in *"\"$rest\""*) return 0 ;; esac
-    done
+    # NO `[ -d "$RUNS_DIR/$id" ]` and no `[ -f ]` on the two documents below.
+    # Those three tests were bash builtins taking no timeout, so section 60's
+    # budget bounded every READ in a validation and none of its LOOKUPS, and a
+    # stalled mount under RUNS_DIR held the retention mutex regardless of the
+    # arithmetic. They are DELETED rather than wrapped, because a bounded read
+    # answers the same questions strictly better: a record that is absent or is
+    # not a directory has no readable marker under it, and utest_read_doc's own
+    # `[ -f ]` runs INSIDE its timeout -- so a planted FIFO stays the cheap
+    # classified refusal section 52 added the stat for, while the stalled mount
+    # now costs the bound and reports UNEXAMINED.
+    #
+    # The marker is validated by its canonical SHAPE, not by field tests. The
+    # positive-substring pair plus occurrence-counting duplicate loop that stood
+    # here admitted a nested `{"wrapper": {...}}` carrying every required token
+    # at no top-level key -- satisfying the shell while a real parser found none
+    # of them. utest_marker_binds walks the layout utest_marker_doc_for emits and
+    # rejects the wrapper, an extra key, a reordered document and an escaped
+    # spelling in ONE pass, which is why the separate no-backslash guard went
+    # with them.
+    mbody="$(utest_read_doc "$RUNS_DIR/$id/record-complete.json" 4096 "$tmo")" || { rc=$?; if [ "$rc" -eq 2 ]; then return 2; fi; return 0; }
+    utest_marker_binds "$mbody" "$id" || return 0
     # LAST, and the only check that asks who PRODUCED the record. Everything
     # above proves the pointer is byte-canonical for this leg and that the
     # record exists and is committed complete -- none of it asks whether that
@@ -821,11 +940,7 @@ utest_pointer_pin_id() {
     # consumer resolving A then read B's documents. The record answers the
     # question itself, in a document written before any other and never
     # rewritten.
-    [ -f "$RUNS_DIR/$id/test-run-identity.json" ] || return 0
-    sz="$(set -o pipefail; timeout "$tmo" wc -c -- "$RUNS_DIR/$id/test-run-identity.json" 2>/dev/null | awk '{print $1; exit}')" || { rc=$?; if [ "$rc" -eq 124 ]; then return 2; fi; return 0; }
-    case "$sz" in ''|*[!0-9]*) return 0 ;; esac
-    [ "$sz" -le 4096 ] || return 0
-    ibody="$(timeout "$tmo" head -c 4096 -- "$RUNS_DIR/$id/test-run-identity.json" 2>/dev/null)" || { rc=$?; if [ "$rc" -eq 124 ]; then return 2; fi; return 0; }
+    ibody="$(utest_read_doc "$RUNS_DIR/$id/test-run-identity.json" 4096 "$tmo")" || { rc=$?; if [ "$rc" -eq 2 ]; then return 2; fi; return 0; }
     # Field-tested against the canonical LAYOUT rather than byte-compared like
     # the pointer: identity carries what the run observed -- timestamp, commit,
     # host, hostname, accelerator, cpu count, QEMU build -- and none of it is
@@ -1074,17 +1189,57 @@ utest_lease_doc_for() {
 # document claiming an astronomically distant expiry must be rejected as
 # malformed rather than arithmetic'd into something plausible.
 utest_lease_fields() {
-    local path="$1" want_run="$2" want_base="${3:-}" body sz base id holder lid acq exp
-    # `wc -c -- "$path"`, NEVER `wc -c < "$path"`. The redirection is performed
-    # by THIS shell before `timeout` is ever exec'd, so a FIFO swapped in after
-    # the caller's type test blocks on open() forever, outside the supervision
-    # that was supposed to bound it -- while the retention mutex is held, which
-    # wedges retention for every later run rather than costing five seconds.
-    # Letting `wc` open the pathname itself puts the open inside the timeout.
-    sz="$(timeout 5 wc -c -- "$path" 2>/dev/null | awk '{print $1; exit}')" || return 0
-    case "$sz" in ''|*[!0-9]*) return 0 ;; esac
-    [ "$sz" -le 4096 ] || return 0
-    body="$(timeout 5 head -c 4096 -- "$path" 2>/dev/null)" || return 0
+    local path="$1" want_run="$2" want_base="${3:-}" body base id holder lid acq exp tmo rc
+    # ONE SNAPSHOT, through the same reader the pointer, marker and identity
+    # documents use. This was the FOURTH `wc`-then-`head` pair in the file and
+    # the last one: a lease read through two opens validates a size taken from
+    # one inode against bytes taken from another, exactly as the three in
+    # utest_pointer_pin_id did. Leaving it behind would have kept alive the
+    # shape utest_read_doc exists to delete, in the one function that reads a
+    # document written by somebody else while the retention mutex is held.
+    # The refusal contract is unchanged: this function has never distinguished a
+    # timed-out read from a malformed lease -- both mean "not a lease I can
+    # count" -- so both non-zero returns take the same silent path they did.
+    #
+    # THE BOUND IS DERIVED, not fixed at five, whenever an ACQUISITION published
+    # a deadline (see utest_lease_acquire; `local` there, so this sees it only
+    # while such a call is on the stack, and the pruner leaves it unset and keeps
+    # the flat five). A census walks an unbounded number of lease documents, so a
+    # per-read constant bounds each read and nothing at all about the walk --
+    # which is how a single record's leases/ directory could hold the retention
+    # mutex past the ten seconds the next acquirer waits.
+    tmo=5
+    case "${UTEST_ACQ_DEADLINE:-}" in
+        # VALIDATED as digits before any arithmetic, never trusted for merely
+        # being non-empty. `local` RESTORES a previous value on return, it does
+        # not unset, so a stale or hand-set global can reach here -- and
+        # `$(( "" - SECONDS ))` or a negative would silently decide how long a
+        # lease document may be read for.
+        ''|*[!0-9]*) ;;
+        *)
+            tmo=$(( UTEST_ACQ_DEADLINE - SECONDS ))
+            # No time left is UNEXAMINED, not a zero-second read: `timeout 0`
+            # means "no limit", which would turn an exhausted deadline into the
+            # unbounded read the deadline exists to prevent.
+            [ "$tmo" -ge 1 ] || return 2
+            [ "$tmo" -le 5 ] || tmo=5 ;;
+    esac
+    # AND A READ THAT RAN OUT OF CLOCK RETURNS 2, because "I could not examine
+    # this" and "this is not a lease" must not be the same answer. They were:
+    # every refusal here returned 0 with no output, and utest_lease_reclaimable
+    # reads an empty result as RECLAIMABLE -- so a perfectly valid lease whose
+    # read was killed was detached and unlinked, and the next prune could then
+    # remove the record while its reader was still using it. The round-two
+    # adversarial pass caught this on the new deadline path, but it was
+    # reachable BEFORE this section too, by a five-second read on a stalled
+    # mount: the deadline made an existing destructive path easier to reach, it
+    # did not create it. Incomplete classification must never authorise a
+    # destructive act -- the rule section 60 applied to the age cut, applied
+    # here to the lease sweep.
+    rc=0
+    body="$(utest_read_doc "$path" 4096 "$tmo")" || rc=$?
+    if [ "$rc" -eq 2 ]; then return 2; fi
+    [ "$rc" -eq 0 ] || return 0
     [ -n "$body" ] || return 0
     case "$body" in
         *'"run_id": "'*'"holder": "'*'"lease_id": "'*'"acquired_at": '*'"expires_at": '*) ;;
@@ -1380,7 +1535,7 @@ utest_hold_blocking_dirs() {
 # proof the object at that name changed, never a lease resurrected behind a
 # concurrent lock-free utest_lease_release.
 utest_lease_reclaimable() {
-    local path="$1" base="$2" rec="$3" now="$4" ttl="$5" want="${6:-}" fields exp acq holder eff state
+    local path="$1" base="$2" rec="$3" now="$4" ttl="$5" want="${6:-}" fields exp acq holder eff state lrc
     # What this call READ, published for the caller to hand back as $6 on the
     # binding recheck. Cleared first so no path can leave a previous call's
     # snapshot standing.
@@ -1388,7 +1543,14 @@ utest_lease_reclaimable() {
     # -L first: `-f` follows a symlink, so a link to a valid lease elsewhere
     # would otherwise be parsed instead of removed.
     if [ -L "$path" ] || [ ! -f "$path" ]; then return 0; fi
-    fields="$(utest_lease_fields "$path" "$rec" "$base")"
+    # 2 = UNEXAMINED, and it is NOT a reclaim verdict. `|| lrc=$?` rather than a
+    # bare assignment because the newly non-zero return would abort the run
+    # under `set -e`, the same shape utest_pointer_pin_id's callers already
+    # take -- see utest_lease_fields for why an unreadable lease must never be
+    # destroyed rather than merely not counted.
+    lrc=0
+    fields="$(utest_lease_fields "$path" "$rec" "$base")" || lrc=$?
+    if [ "$lrc" -eq 2 ]; then UTEST_LEASE_SEEN=""; return 2; fi
     UTEST_LEASE_SEEN="$fields"
     [ -n "$fields" ] || return 0
     # THE BINDING RECHECK ASKS A DIFFERENT QUESTION. Given what the selection
@@ -1471,7 +1633,7 @@ utest_lease_reclaimable() {
 # rather than by arithmetic -- see the branch below for why neither clamping it
 # nor deleting it outright is safe.
 utest_record_live_leases() {
-    local rec="$1" now="$2" ttl="$3" dir f seen live=0
+    local rec="$1" now="$2" ttl="$3" dir f seen live=0 rcl
     dir="$RUNS_DIR/$rec/leases"
     [ -d "$dir" ] || { printf '0\n'; return 0; }
     # ABANDONED STAGING first. An acquisition killed between writing
@@ -1498,6 +1660,24 @@ utest_record_live_leases() {
     done
     for f in "$dir"/*.lease; do
         [ -e "$f" ] || [ -L "$f" ] || continue
+        # THE ACQUISITION'S DEADLINE, checked per LEASE and not per record. A
+        # record may hold arbitrarily many lease documents, so a guard between
+        # records bounds the wrong loop: one saturated leases/ directory could
+        # outlast the ten seconds the next acquirer waits for this mutex all by
+        # itself. A non-zero return is the one signal this function has -- its
+        # stdout IS its count -- and utest_lease_acquire already refuses on a
+        # census it cannot read, which is the safe direction: the caller falls
+        # back to the unleased path rather than being handed a grant taken from
+        # an admission scan that never finished. Inert under the pruner, which
+        # never publishes a deadline.
+        case "${UTEST_ACQ_DEADLINE:-}" in
+            # Digits, not merely non-empty, for the reason utest_lease_fields
+            # states: `[ 5 -ge abc ]` is an ERROR that reads as false, so a
+            # malformed value would silently switch this check off rather than
+            # being rejected.
+            ''|*[!0-9]*) ;;
+            *) if [ "$SECONDS" -ge "$UTEST_ACQ_DEADLINE" ]; then return 1; fi ;;
+        esac
         # A DIRECTORY under a lease name is not a lease, and not something `rm`
         # can remove. The pre-46 loop's `rm -f` failed silently and left it
         # published and uncounted; detaching it instead would merely hide it
@@ -1509,11 +1689,23 @@ utest_record_live_leases() {
         # through a command substitution. Reporting and the retention hold both
         # belong to utest_prune_records, which sees each record once per run.
         if utest_blocking_dir "$f"; then continue; fi
+        # CLASSIFY BEFORE DESTROYING, and abort the whole census if this lease
+        # could not be classified at all. utest_lease_reclaimable returns 2 for
+        # a document it could not read -- a killed read, or an acquisition
+        # deadline that expired mid-walk -- and that is emphatically not a
+        # reclaim verdict: the selection below detaches and unlinks on 0, so
+        # letting an unexamined lease fall through destroyed a live reader's
+        # grant and left its record free to be aged out. Returning 1 here leaves
+        # the lease exactly where it is; both callers already treat an
+        # unreadable census as a refusal, which is the recoverable direction.
+        rcl=0
+        utest_lease_reclaimable "$f" "${f##*/}" "$rec" "$now" "$ttl" || rcl=$?
+        if [ "$rcl" -eq 2 ]; then return 1; fi
         # SELECTION by name, then DESTRUCTION through the detached object: the
         # same verdict runs twice, and only the second one -- taken on an inode
         # nothing else can reach, and BOUND to what the first one read -- is
         # allowed to unlink.
-        if utest_lease_reclaimable "$f" "${f##*/}" "$rec" "$now" "$ttl"; then
+        if [ "$rcl" -eq 0 ]; then
             seen="${UTEST_LEASE_SEEN:-}"
             # RETAINED counts as live. The recheck can vote keep (the object
             # was replaced between selection and detach), in which case the
@@ -1561,6 +1753,7 @@ utest_record_live_leases() {
 # without telling the holder is not a lease.
 utest_lease_acquire() {
     local leg="$1" ptr rec run_id now ttl lease_max leased holder lid path tmp acq exp lockrc bid start ns n
+    local acq_budget acq_t0 acq_left acq_tmo
     ptr="$PROJECT/build/test-results-${leg}.run"
     ttl="$(utest_norm_bound "${UTEST_LEASE_TTL:-300}" 300 86400)"
     lease_max="$(utest_norm_bound "${UTEST_LEASE_MAX:-8}" 8 10000)"
@@ -1573,6 +1766,47 @@ utest_lease_acquire() {
     # where a bare non-zero command aborts before the assignment is reached.
     lockrc=0; utest_retention_lock 10 || lockrc=$?
     if [ "$lockrc" -eq 1 ]; then return 1; fi
+
+    # AN AGGREGATE DEADLINE FOR THE ACQUISITION, sampled the INSTANT the lock is
+    # held -- before `date`, before utest_prime_ident, before anything -- for the
+    # same reason the pin loop has one, and the acquire side is where the
+    # argument is sharpest. This function does its whole job while HOLDING the
+    # retention mutex, and until section 61 it passed no bound at all: three
+    # bounded reads at the validator's default five seconds is fifteen, against
+    # the ten seconds the NEXT acquirer waits for this same mutex before
+    # refusing. So the reader denial section 60 removed from the prune side
+    # survived, unchanged, on the acquire side.
+    #
+    # SAMPLED FIRST because everything after the lock is inside the hold, and an
+    # earlier cut of this started the clock after identity priming -- which
+    # itself reads files. A deadline that excludes work it is meant to bound is
+    # a comment, not a bound.
+    #
+    # A PER-READ cap alone would not have fixed it either. Three independent 3s
+    # caps are not a 9s aggregate: the shape has to be ONE deadline with each
+    # read's cap derived from what is LEFT of it, which is the construction the
+    # pin loop already uses. The budget is CEILED at 9 regardless of the knob,
+    # so the arithmetic lands strictly under that ten-second wait no matter what
+    # UTEST_POINTER_PIN_BUDGET is set to. Refusing is the safe direction: the
+    # caller falls back to the bounded ENOENT re-resolve, where a lease granted
+    # over a record this pass could not classify would be a claim it cannot keep.
+    #
+    # UTEST_ACQ_DEADLINE is `local`, so bash's dynamic scope publishes it to
+    # every callee for exactly the duration of this call and to nobody
+    # afterwards. That is what carries the deadline into utest_record_live_leases
+    # and utest_lease_fields WITHOUT changing their signatures or the pruner's
+    # behaviour -- the pruner never sets it, so those checks are inert there and
+    # retention keeps the classification semantics section 60 shipped. The
+    # adversarial round is what forced this: the target record's census runs
+    # BEFORE the between-records check, reads an unbounded number of lease
+    # documents at five seconds each, and could therefore blow the ten-second
+    # wait on its own while the deadline above only ever bounded the pointer.
+    acq_t0="$SECONDS"
+    acq_budget="$(utest_norm_bound "${UTEST_POINTER_PIN_BUDGET:-8}" 8 86400)"
+    [ "$acq_budget" -ge 3 ] 2>/dev/null || acq_budget=8
+    [ "$acq_budget" -le 9 ] 2>/dev/null || acq_budget=9
+    local UTEST_ACQ_DEADLINE=$(( acq_t0 + acq_budget ))
+
     # AFTER the lock, for the same reason the pruner does it: the admission scan
     # below classifies leases by age, and a `now` sampled before a ten-second
     # wait would read a lease published during that wait as future-dated.
@@ -1580,13 +1814,21 @@ utest_lease_acquire() {
     case "$now" in ''|*[!0-9]*) utest_retention_unlock; return 1 ;; esac
     utest_prime_ident
 
-    [ -f "$ptr" ] || { utest_retention_unlock; return 1; }
+    # NO `[ -f "$ptr" ]` here. It was a bash builtin taking no timeout, on the
+    # one path that holds the retention mutex, so a stalled mount wedged
+    # retention for every later run -- and it is redundant besides: the
+    # validator's first read performs its own `[ -f ]` INSIDE its timeout and
+    # answers "not a regular file" as a refusal.
+    acq_left=$(( acq_budget - ( SECONDS - acq_t0 ) ))
+    if [ "$acq_left" -lt 3 ]; then utest_retention_unlock; return 1; fi
+    acq_tmo=$(( acq_left / 3 ))
+    [ "$acq_tmo" -le 3 ] || acq_tmo=3
     # `|| run_id=""`, because the validator returns 2 when a read runs out of
     # clock and a bare assignment would abort the whole run under `set -e`.
     # An acquisition that cannot read the pointer REFUSES, which is what an
     # empty run id already means here -- the distinction the pruner acts on
     # does not apply to a caller validating exactly one pointer.
-    run_id="$(utest_pointer_pin_id "$ptr")" || run_id=""
+    run_id="$(utest_pointer_pin_id "$ptr" "$acq_tmo")" || run_id=""
     if [ -z "$run_id" ]; then utest_retention_unlock; return 1; fi
     rec="$RUNS_DIR/$run_id"
     # Never `mkdir -p`: see the record-creation comment. An absent leases/ means
@@ -1607,6 +1849,16 @@ utest_lease_acquire() {
         for path in "$RUNS_DIR"/*/; do
             [ -d "$path" ] || continue
             path="${path%/}"
+            # THE SAME DEADLINE, checked between records. The census is a
+            # different mechanism from the document reads above -- it walks every
+            # record and every lease document under it -- and this check bounds
+            # how long it may KEEP GOING, not how long one hung read inside
+            # utest_record_live_leases may take. That residual is real and is
+            # named rather than papered over; section 62 owns it. Refusing here
+            # is the same safe direction the reads take.
+            if [ $(( acq_budget - ( SECONDS - acq_t0 ) )) -le 0 ]; then
+                utest_retention_unlock; return 1
+            fi
             # The target was counted above and is known to hold none; counting
             # it a second time here re-walks its whole leases directory inside
             # the mutex for an answer already in hand.
@@ -1642,6 +1894,12 @@ utest_lease_acquire() {
     # record the reader was told it had.
     acq="$(date -u +%s 2>/dev/null)"
     case "$acq" in ''|*[!0-9]*) utest_retention_unlock; return 1 ;; esac
+    # AND ONE LAST CHECK BEFORE PUBLISHING. Everything above ran inside the
+    # mutex, so an acquisition that has already outlived its deadline must not
+    # go on to write a lease: the grant would be issued on an admission scan
+    # that finished after the point at which the next acquirer had given up
+    # waiting, which is the state the deadline exists to make impossible.
+    if [ "$SECONDS" -ge "$UTEST_ACQ_DEADLINE" ]; then utest_retention_unlock; return 1; fi
     exp="$(( acq + ttl ))"
     # A grant with no remaining lifetime is not a grant. Refusing sends the
     # caller to the unleased fallback, which is honest; returning it would
@@ -1671,6 +1929,20 @@ utest_lease_acquire() {
         utest_retention_unlock
         return 1
     fi
+    # AND THE DEADLINE IS CHECKED ONCE MORE, AFTER PUBLICATION. The check before
+    # the write is not the last word: staging the document, the rename and the
+    # verification above are all filesystem operations that can stall, so the
+    # hold could cross the deadline between the last check and here and still
+    # return a grant -- which is exactly the state the bound exists to make
+    # impossible, and what the round-two adversarial pass called out. A lease
+    # published past the deadline is withdrawn rather than reported, because the
+    # next acquirer has by then stopped waiting and the honest answer is the
+    # unleased fallback.
+    if [ "$SECONDS" -ge "$UTEST_ACQ_DEADLINE" ]; then
+        rm -f -- "$path" 2>/dev/null || true
+        utest_retention_unlock
+        return 1
+    fi
     utest_retention_unlock
     printf '%s %s\n' "$rec" "$path"
     return 0
@@ -1696,8 +1968,18 @@ utest_prune_records() {
     local keep="${UTEST_RECORD_KEEP:-20}" pin_max="${UTEST_POINTER_PIN_MAX:-64}" old pinned ptr
     local lease_max="${UTEST_LEASE_MAX:-8}" ttl="${UTEST_LEASE_TTL:-300}"
     local now leased leased_all leased_l stuck_u n_stuck nu lockrc n_all n_kept n all_records n_odd
-    local blocked_d nd n_blocked
+    local blocked_d nd n_blocked unread_c n_unread
     local pin_incomplete pin_budget cand_max pin_t0 disc_rc cands npin pin_left pin_tmo _mtime pin_why cand_n prc
+    # MASKED, not merely unset elsewhere. utest_lease_acquire publishes its
+    # deadline as a `local`, and bash `local` RESTORES whatever was there before
+    # -- it does not guarantee the name is unset afterwards -- so a stale or
+    # hand-set global could reach the census below and make it report every
+    # leased record unreadable. The pruner converts an unreadable count to zero
+    # (the recoverable direction for a COUNTER failure), which here would mean
+    # admitting an actively leased record into the age cut. Retention owns no
+    # deadline of its own; it owns the pin budget, and the empty string is what
+    # says so to every callee.
+    local UTEST_ACQ_DEADLINE=""
     keep="$(utest_norm_bound "$keep" 20 10000)"
     # Zero records kept is nonsense, so the floor is applied here and not in
     # the shared normaliser -- the pin cap deliberately does NOT have one.
@@ -1779,14 +2061,17 @@ utest_prune_records() {
     # large enough `build/` holds the mutex without ever spending a single unit
     # of validation budget.
     #
-    # WHAT THIS DOES NOT BOUND, stated because the difference matters: every
-    # READ is under the budget, but the three metadata tests inside
+    # AND A CANDIDATE IS NOW BOUNDED END TO END, not read by read. Section 60
+    # shipped with a named residual: the three metadata tests inside
     # utest_pointer_pin_id (`[ -d ]` on the record, `[ -f ]` on the marker and
-    # on the identity) are bash builtins and take no timeout. They cannot be
-    # made to block by anything writable in `build/` -- that needs a stalled
-    # mount, not a hostile file -- so the budget holds against the actor this
-    # section is about, and the residual is filed to section 61, which is
-    # already replacing those three sites with single bounded reads.
+    # on the identity) were bash builtins taking no timeout, so the budget
+    # covered every READ in a validation and none of its LOOKUPS, and a stalled
+    # mount under RUNS_DIR held this mutex regardless of the arithmetic.
+    # Section 61 closed it by DELETING those three sites rather than wrapping
+    # three more timeouts around them: utest_read_doc performs its own `[ -f ]`
+    # INSIDE its timeout, so a lookup that cannot complete costs the bound and
+    # reports UNEXAMINED, while a planted FIFO stays the cheap classified
+    # refusal the stat was added for.
     #
     # AND ANY OF THEM BITING DEFERS THE AGE CUT, which is what makes the
     # candidate bound safe at all. Ranking is by mtime, so enough newer invalid
@@ -1808,16 +2093,17 @@ utest_prune_records() {
         # utest_lease_acquire is willing to wait, and one second is shed to
         # $SECONDS' integer truncation.
         pin_budget="$(utest_norm_bound "${UTEST_POINTER_PIN_BUDGET:-8}" 8 86400)"
-        # A SIX-SECOND FLOOR, for the same reason the TTL has a one-second one:
-        # below six the loop can never start a candidate, so every pass would
-        # report itself incomplete and retention would never run again -- a
-        # knob that reads as "be quick" silently switching retention off.
-        # SIX and not three because a validation makes six bounded operations,
-        # not three: `wc` AND `head` for each of the pointer, the marker and
-        # the identity document. Sizing the per-read cap against three let one
-        # candidate spend twice what was left of the budget, which is the same
-        # overrun an aggregate deadline exists to remove.
-        [ "$pin_budget" -ge 6 ] 2>/dev/null || pin_budget=8
+        # A THREE-SECOND FLOOR, for the same reason the TTL has a one-second
+        # one: below the operation count the loop can never start a candidate,
+        # so every pass would report itself incomplete and retention would never
+        # run again -- a knob that reads as "be quick" silently switching
+        # retention off. The number IS the operation count and must move with
+        # it: it was six while each document cost a `wc` AND a `head`, and
+        # section 61 collapsed that pair into utest_read_doc's single snapshot,
+        # so a validation now makes three bounded operations. Sizing the
+        # per-read cap against the wrong count is what let one candidate spend
+        # twice what was left of the budget -- section 60's round-one [high].
+        [ "$pin_budget" -ge 3 ] 2>/dev/null || pin_budget=8
         # A MULTIPLE of the cap, not a new tunable nobody sets. Candidates are
         # already mtime-ordered newest-first, so the headroom is what absorbs
         # junk ranked above the pointers that actually pin; past it the pass
@@ -1894,25 +2180,33 @@ utest_prune_records() {
             while IFS=$'\t' read -r _mtime ptr; do
                 [ -n "$ptr" ] || continue
                 # CHECKED BEFORE STARTING one, and a candidate is not started
-                # unless the whole of its WORST CASE fits in what is left: six
-                # bounded operations at `pin_left / 6` each cost at most
+                # unless the whole of its WORST CASE fits in what is left:
+                # THREE bounded operations at `pin_left / 3` each cost at most
                 # pin_left. That makes the bound arithmetic rather than
                 # observational -- there is no state in which a started
                 # candidate overruns, so no check after the validation can be
                 # the thing that catches one.
                 #
+                # THREE and no longer six: section 61 replaced each document's
+                # `wc`-then-`head` pair with utest_read_doc's single snapshot,
+                # so the divisor, this floor and the budget floor above all had
+                # to move together. A divisor left at six would merely be
+                # conservative; one left too SMALL is the round-one [high]
+                # section 60 paid for, which is why the three sites name the
+                # same count rather than each carrying a magic number.
+                #
                 # A consequence worth stating: at the default budget the cap is
-                # ONE SECOND per operation, not the five this validator used to
-                # take. That is forced, not chosen -- six operations inside a
+                # TWO SECONDS per operation, not the five this validator used to
+                # take. That is forced, not chosen -- three operations inside a
                 # phase that must finish before utest_lease_acquire's ten-second
                 # wait leaves no more -- and it is generous by orders of
                 # magnitude for a local read of a document capped at 4096 bytes.
                 pin_left=$(( pin_budget - ( SECONDS - pin_t0 ) ))
-                if [ "$pin_left" -lt 6 ]; then
+                if [ "$pin_left" -lt 3 ]; then
                     pin_incomplete="budget"
                     break
                 fi
-                pin_tmo=$(( pin_left / 6 ))
+                pin_tmo=$(( pin_left / 3 ))
                 [ "$pin_tmo" -le 5 ] || pin_tmo=5
                 # The WHOLE contract, not just an extractable run id --
                 # see utest_pointer_pin_id. Nothing that fails
@@ -1941,6 +2235,21 @@ utest_prune_records() {
                 npin=$(( npin + 1 ))
                 [ "$npin" -lt "$pin_max" ] || break
             done <<< "$cands"
+        fi
+        # AND CHECKED ONCE MORE AFTER THE LOOP, because the pre-start guard is
+        # an arithmetic prediction and the loop can exit past it without ever
+        # consulting it again. Three reads at floor(left/3) each may consume
+        # nearly all of `left`, and process startup, the framing parse, the two
+        # shape walks and $SECONDS' truncation all sit OUTSIDE those read
+        # bounds -- so a candidate that was the last one, or that filled
+        # `pin_max`, could overrun the budget and still leave the loop by the
+        # normal exit with pin_incomplete empty, authorising the age cut. The
+        # adversarial round caught exactly that path. A pass that spent more
+        # than its budget did not classify within it, and incomplete
+        # classification defers the destructive half -- the same direction every
+        # other bound here takes.
+        if [ -z "$pin_incomplete" ] && [ $(( SECONDS - pin_t0 )) -gt "$pin_budget" ]; then
+            pin_incomplete="budget"
         fi
         if [ -n "$pin_incomplete" ]; then
             # Its OWN variable, not the `n` the lease pass below reuses: this
@@ -2015,15 +2324,34 @@ utest_prune_records() {
                 # evicts a record with a real lease, which is a reader losing
                 # its record to a crash artefact.
                 if [ "$lease_max" -gt 0 ]; then
-                    # Validated, not used raw. "Anything but the string 0"
-                    # would let a counter failure read as LEASED and hold a
-                    # record against retention forever; an unreadable count
-                    # is treated as unleased, which is recoverable.
+                    # Validated, not used raw. "Anything but the string 0" would
+                    # let a counter failure read as LEASED and hold a record
+                    # against retention forever.
+                    #
+                    # AN UNREADABLE COUNT IS A FAIL-CLOSED HOLD, not a zero.
+                    # This line used to say an unreadable count "is treated as
+                    # unleased, which is recoverable", and that was false in the
+                    # one case that matters: the census returns non-zero when a
+                    # lease document could not be EXAMINED, so reading it as
+                    # zero denies the record its hold and the age cut below
+                    # deletes the record -- lease file and all. Round 2 of this
+                    # section stopped the census UNLINKING such a lease; round 3
+                    # caught that preserving the FILE while destroying its
+                    # RECORD leaves the reader exactly as badly off. Reachable
+                    # with no acquisition deadline anywhere near it: a
+                    # five-second read killed on a stalled mount is enough.
+                    #
+                    # So it takes the `C` tag -- uncapped and fail-closed like
+                    # `U` and `D`, for their reason: a record nobody could
+                    # classify must not compete for a capped slot with one that
+                    # is genuinely leased, or an unreadable mount would evict a
+                    # real reader's record.
                     n="$(utest_record_live_leases "$old" "$now" "$ttl")" || n=""
-                    case "$n"  in ''|*[!0-9]*) n=0 ;; esac
-                    if [ "$n" != "0" ]; then
-                        printf 'L %s\n' "$old"
-                    fi
+                    case "$n" in
+                        ''|*[!0-9]*) printf 'C %s\n' "$old" ;;
+                        0) ;;
+                        *) printf 'L %s\n' "$old" ;;
+                    esac
                 fi
                 # The claim count is taken HERE, not folded into the count
                 # above, because utest_lease_acquire reads that one for the
@@ -2061,6 +2389,7 @@ utest_prune_records() {
     leased_l="$(printf '%s' "$leased_all" | sed -n 's/^L //p')"
     stuck_u="$(printf '%s' "$leased_all" | sed -n 's/^U //p')"
     blocked_d="$(printf '%s' "$leased_all" | sed -n 's/^D //p')"
+    unread_c="$(printf '%s' "$leased_all" | sed -n 's/^C //p')"
     leased="$(printf '%s' "$leased_l" | head -n "$lease_max")"
     n_all="$(printf '%s' "$leased_l" | grep -c . || true)"
     n_kept="$(printf '%s' "$leased" | grep -c . || true)"
@@ -2078,6 +2407,15 @@ utest_prune_records() {
         n_blocked="$(printf '%s' "$blocked_d" | grep -c . || true)"
         echo -e "${YELLOW:-}[TEST]${RESET:-} ${n_blocked:-0} record(s) held by a directory at a lease or lease-staging name (see the paths reported above)."
         if [ -n "$leased" ]; then leased="$leased"$'\n'"$blocked_d"; else leased="$blocked_d"; fi
+    fi
+    # The third fail-closed hold, unioned in after the truncation for the same
+    # reason as the other two. A record whose lease census could not be
+    # completed is held rather than aged out: the count is unknown, not zero,
+    # and the difference is a live reader's generation.
+    if [ -n "$unread_c" ]; then
+        n_unread="$(printf '%s' "$unread_c" | grep -c . || true)"
+        echo -e "${YELLOW:-}[TEST]${RESET:-} ${n_unread:-0} record(s) held because their lease census could not be completed -- a lease document could not be read within its bound."
+        if [ -n "$leased" ]; then leased="$leased"$'\n'"$unread_c"; else leased="$unread_c"; fi
     fi
 
     # Membership as SETS, not as a `grep` per candidate. The exemption lists are
@@ -2568,6 +2906,33 @@ utest_publish_leg_set() {
 # actually contains, and is what a consumer must check before trusting any of
 # them. Its own write goes through a temp plus `mv`, so the marker can never
 # be observed partially written either.
+# The marker document itself, PARAMETERISED, for the same reason
+# utest_identity_doc_for and utest_leg_pointer_doc_for are: the retention path
+# validates a candidate against this exact layout, and the regressions build
+# their fixture markers from THIS function. A hand-written fixture would be a
+# second spelling of the contract, free to drift into passing tests production
+# would reject -- which is precisely what it had been doing, emitting a
+# four-field single-line marker against production's eight-key, ten-line one.
+#
+# The LAYOUT is the contract: eight keys, in this order, one per line, each
+# indented two spaces, between a bare `{` and a bare `}`. utest_marker_binds
+# validates exactly this shape and is where that stays sound. `xml`, `json` and
+# `identity` arrive already spelled as a quoted basename or the bare word
+# `null`, because the marker is an INVENTORY and the absence of a document is a
+# value it legitimately reports.
+utest_marker_doc_for() {
+    printf '{\n'
+    printf '  "schema": "utest-run-record-v1",\n'
+    printf '  "run_id": "%s",\n' "$1"
+    printf '  "status": "%s",\n' "$2"
+    printf '  "qemu_pid": %s,\n' "$3"
+    printf '  "qemu_state": "%s",\n' "$4"
+    printf '  "xml": %s,\n' "$5"
+    printf '  "json": %s,\n' "$6"
+    printf '  "identity": %s\n' "$7"
+    printf '}\n'
+}
+
 utest_commit_record() {
     local status="$1" tmp="$RECORD_DIR/.marker.tmp" qpid="null"
     # A JSON number or `null`, never a bare empty field: an exit before the
@@ -2577,18 +2942,11 @@ utest_commit_record() {
         ''|*[!0-9]*) qpid="null" ;;
         *) qpid="${QEMU_PID}" ;;
     esac
-    if {
-        printf '{\n'
-        printf '  "schema": "utest-run-record-v1",\n'
-        printf '  "run_id": "%s",\n' "$RUN_ID"
-        printf '  "status": "%s",\n' "$status"
-        printf '  "qemu_pid": %s,\n' "$qpid"
-        printf '  "qemu_state": "%s",\n' "${QEMU_STATE:-none}"
-        printf '  "xml": %s,\n' "$([ -f "$XML_RECORD" ] && echo '"test-results.xml"' || echo 'null')"
-        printf '  "json": %s,\n' "$([ -f "$JSON_RECORD" ] && echo '"test-results.json"' || echo 'null')"
-        printf '  "identity": %s\n' "$([ -f "$IDENTITY_RECORD" ] && echo '"test-run-identity.json"' || echo 'null')"
-        printf '}\n'
-    } > "$tmp" 2>/dev/null && mv -f "$tmp" "$RECORD_MARKER" 2>/dev/null; then
+    if utest_marker_doc_for "$RUN_ID" "$status" "$qpid" "${QEMU_STATE:-none}" \
+           "$([ -f "$XML_RECORD" ] && echo '"test-results.xml"' || echo 'null')" \
+           "$([ -f "$JSON_RECORD" ] && echo '"test-results.json"' || echo 'null')" \
+           "$([ -f "$IDENTITY_RECORD" ] && echo '"test-run-identity.json"' || echo 'null')" \
+           > "$tmp" 2>/dev/null && mv -f "$tmp" "$RECORD_MARKER" 2>/dev/null; then
         return 0
     fi
     # A marker that cannot land is NOT a cosmetic loss. It is the only thing
