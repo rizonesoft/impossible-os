@@ -895,6 +895,19 @@ unavailable -- which is why step 5 is bounded rather than infinite.
 absent record -- pruned past the cap, or removed by hand -- is deleted by the
 same pass, so a consumer sees "no pointer" rather than "a pointer to nothing".
 
+The pin pass is also bounded in TIME, because validating a pointer reads
+documents and the whole pass holds the retention mutex that a reader waits ten
+seconds for. `UTEST_POINTER_PIN_BUDGET` (8 seconds, normalised into 6..86400)
+covers the enumeration of `build/`, the sort, and every validation together, and
+the candidate set is separately bounded at four times `UTEST_POINTER_PIN_MAX`.
+**When any of those bounds is reached, the pass says so and DEFERS the age cut
+entirely** -- it keeps every record rather than deleting one whose pointer it
+never examined, because candidates are ranked newest-first and a truncated pass
+cannot know that what it did not reach was unprotected. Retention then simply
+happens on a later run, which is the same direction a lock timeout already
+takes. A `build/` that keeps triggering this needs attention rather than
+patience: `UTEST_POINTER_PIN_MAX=0` prunes without pinning at all.
+
 Retention also honours reader leases, and the two exemptions answer different
 questions: the pin protects the record the CURRENT pointer names, the lease
 protects one a reader has ALREADY resolved and therefore survives the leg
@@ -988,7 +1001,11 @@ Records are durable but BOUNDED: the newest `UTEST_RECORD_KEEP` (default 20)
 survive, pruned at the START of a run so an investigation's evidence is never
 removed by the run still writing it -- plus any record a live per-leg pointer
 resolves to, bounded by `UTEST_POINTER_PIN_MAX` (default 64), plus any record a
-reader still holds a lease on, bounded by `UTEST_LEASE_MAX` (default 8).
+reader still holds a lease on, bounded by `UTEST_LEASE_MAX` (default 8). The pin
+pass is bounded in time as well by `UTEST_POINTER_PIN_BUDGET` (default 8s), and
+reaching that bound -- or finding more than `4 * UTEST_POINTER_PIN_MAX`
+candidate pointers -- defers the age cut for that run rather than pruning on an
+incomplete picture.
 
 `scripts/test.sh` derives identity before the build and writes it to the
 record, aliased to `build/test-run-identity.json` (`utest-run-identity-v1`),

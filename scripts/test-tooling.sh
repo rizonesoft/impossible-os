@@ -13698,7 +13698,10 @@ printf "| HARNESS-OK\n"
         #       At UTEST_POINTER_PIN_BUDGET=6 the correct cap is 6/6 = 1s and
         #       the rejected one is 6/3 = 2s, so a 1.5s delay is killed by the
         #       first and survives the second: correct code pins NOTHING and
-        #       says so, `/3` completes the candidate and reports a pin. The
+        #       reports a read that ran out of its 1s bound, while `/3`
+        #       completes the candidate, pins it, and can only run out of the
+        #       aggregate BUDGET afterwards -- a different reason and a
+        #       different pin count, either of which fails this. The
         #       margins are 0.5s either way, and a host slow enough to lose them
         #       makes this test agree with correct code rather than contradict
         #       it -- it can go blind, never red, which is the only acceptable
@@ -13736,7 +13739,7 @@ ls -1 "$RUNS_DIR" | sort | tr "\n" " "
 printf "| HARNESS-OK\n"
 ' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
             if printf '%s' "$UAR_PP23" | grep -q 'HARNESS-OK' &&
-               printf '%s' "$UAR_PP23" | grep -q 'UTEST_POINTER_PIN_BUDGET=6s spent after 0 pin' &&
+               printf '%s' "$UAR_PP23" | grep -q 'ran out of its 1s bound after 0 pin' &&
                printf '%s' "$UAR_PP23" | grep -q '20260102T000000Z-1-aaaa' &&
                printf '%s' "$UAR_PP23" | grep -q '20260103T000000Z-1-aaaa'; then
                 t_pass "run record: the per-operation cap is sized against six operations, not three"
@@ -13746,6 +13749,137 @@ printf "| HARNESS-OK\n"
         fi
         rm -rf "$UAR_PDIR/slowbin"
         rm -f "$UAR_PDIR"/build/test-results-tail*.run
+
+        # (p24) the TIMED-OUT SOLE CANDIDATE, which is the hole a
+        #       between-candidates budget check cannot see: the loop ends
+        #       because the list ended, not because the clock ran out, so
+        #       nothing marks the pass incomplete and the age cut deletes the
+        #       record the unread pointer would have pinned. One pointer, one
+        #       shim slow enough to be killed, and the assertion is that the
+        #       record SURVIVES and the run says a read ran out of its bound.
+        uar_prune_reset
+        uar_prune_ptr valid 20260102T000000Z-1-aaaa
+        mkdir -p "$UAR_PDIR/slowbin"
+        if [ -z "$UAR_REALWC" ] || [ -z "$UAR_REALHEAD" ]; then
+            t_fail "run record: a read that runs out of its bound is not a classified pointer" "wc or head not on PATH"
+        else
+            printf '#!/bin/sh\nsleep 1.5\nexec %s "$@"\n' "$UAR_REALWC" > "$UAR_PDIR/slowbin/wc"
+            printf '#!/bin/sh\nsleep 1.5\nexec %s "$@"\n' "$UAR_REALHEAD" > "$UAR_PDIR/slowbin/head"
+            chmod +x "$UAR_PDIR/slowbin/wc" "$UAR_PDIR/slowbin/head"
+            UAR_PP24="$(UAR_PDIR="$UAR_PDIR" UAR_PRUNE="$UAR_PRUNE" timeout 90 bash -c '
+set -euo pipefail
+RED=""; YELLOW=""; CYAN=""; RESET=""
+PATH="$UAR_PDIR/slowbin:$PATH"
+PROJECT="$UAR_PDIR"
+RUNS_DIR="$PROJECT/build/test-runs"
+RUN_ID="20260101T000000Z-1-aaaa"
+UTEST_RECORD_KEEP=2
+UTEST_LEASE_MAX=0
+UTEST_POINTER_PIN_BUDGET=6
+eval "$UAR_PRUNE"
+utest_prune_records
+ls -1 "$RUNS_DIR" | sort | tr "\n" " "
+printf "| HARNESS-OK\n"
+' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
+            if printf '%s' "$UAR_PP24" | grep -q 'HARNESS-OK' &&
+               printf '%s' "$UAR_PP24" | grep -q 'ran out of its 1s bound' &&
+               printf '%s' "$UAR_PP24" | grep -q '20260102T000000Z-1-aaaa' &&
+               printf '%s' "$UAR_PP24" | grep -q '20260103T000000Z-1-aaaa'; then
+                t_pass "run record: a read that runs out of its bound is not a classified pointer"
+            else
+                t_fail "run record: a read that runs out of its bound is not a classified pointer" "$UAR_PP24"
+            fi
+        fi
+        rm -rf "$UAR_PDIR/slowbin"
+
+        # (p25) a record directory whose NAME is outside the run-id grammar is
+        #       held, never pruned. `all_records` transports basenames
+        #       newline-delimited and a newline is legal in a directory name,
+        #       so `a<newline><real record>` arrives as two entries and the
+        #       second is the basename of a record that exists -- which reached
+        #       `rm -rf` as that record. The fixture builds exactly that name
+        #       and requires the victim to survive.
+        #
+        #       A grammar check on the ENTRIES cannot fix this, and was tried
+        #       first: the newline splits the name into two halves that are
+        #       both grammar-VALID, so a per-entry guard passes both of them.
+        #       The defect is the delimiter, so the exclusion happens at `find`
+        #       and the per-entry check remains only as a guard on the `rm`.
+        #       The victim is the NEWEST record, which survives UTEST_RECORD_KEEP
+        #       on age -- so its loss can only be the injection. Picking one
+        #       that ages out anyway proves nothing, and the sorted duplicate is
+        #       precisely what pushes a surviving record into the candidate
+        #       range while naming it. Survival is asserted on the record's
+        #       MARKER, because `ls` renders the injected name across two lines
+        #       and its second line is the victim's own basename.
+        uar_prune_reset
+        UAR_PP25_VICTIM='20260105T000000Z-1-aaaa'
+        if mkdir "$UAR_PDIR/build/test-runs/$(printf 'aa\n%s' "$UAR_PP25_VICTIM")" 2>/dev/null; then
+            UAR_PP25="$(uar_prune_run)"
+            if printf '%s' "$UAR_PP25" | grep -q 'HARNESS-OK' &&
+               printf '%s' "$UAR_PP25" | grep -q 'outside the run-id grammar are HELD' &&
+               [ -f "$UAR_PDIR/build/test-runs/$UAR_PP25_VICTIM/record-complete.json" ]; then
+                t_pass "run record: a newline-bearing record name cannot redirect the age cut onto a real record"
+            else
+                t_fail "run record: a newline-bearing record name cannot redirect the age cut onto a real record" "$UAR_PP25"
+            fi
+            rm -rf "$UAR_PDIR/build/test-runs/$(printf 'aa\n%s' "$UAR_PP25_VICTIM")"
+        else
+            t_fail "run record: a newline-bearing record name cannot redirect the age cut onto a real record" \
+                "mkdir with an embedded newline failed -- the redirection this guards against would be untested"
+        fi
+
+        # (p26) NOBODY BUT THE LOCK HOLDER keeps the retention descriptor while
+        #       discovery runs. `flock` releases on descriptor CLOSE, not on the
+        #       death of whoever took it, so every process that inherits fd 8
+        #       is a process that can hold retention hostage after the run is
+        #       killed -- for the whole UTEST_POINTER_PIN_BUDGET, which reaches
+        #       86400.
+        #
+        #       The count is the assertion because the DIFFERENCE is exactly one
+        #       process: the intermediate shell bash forks for `$(...)`, which
+        #       a redirection on `timeout` does not reach (measured on bash 5.2:
+        #       a child under `timeout ... 8>&-` shows fds `0 1 2 3`, the
+        #       substitution shell shows `0 1 2 3 8`). A slow `sort` shim holds
+        #       discovery open long enough to count holders from outside.
+        uar_prune_reset
+        uar_prune_ptr valid 20260102T000000Z-1-aaaa
+        mkdir -p "$UAR_PDIR/slowbin"
+        UAR_REALSORT="$(command -v sort || true)"
+        if [ -z "$UAR_REALSORT" ] || ! command -v flock >/dev/null 2>&1; then
+            t_fail "run record: discovery does not leak the retention descriptor to any child" "sort or flock unavailable"
+        else
+            printf '#!/bin/sh\nsleep 3\nexec %s "$@"\n' "$UAR_REALSORT" > "$UAR_PDIR/slowbin/sort"
+            chmod +x "$UAR_PDIR/slowbin/sort"
+            UAR_PP26="$(UAR_PDIR="$UAR_PDIR" UAR_PRUNE="$UAR_PRUNE" timeout 60 bash -c '
+set -uo pipefail
+RED=""; YELLOW=""; CYAN=""; RESET=""
+PROJECT="$UAR_PDIR"
+RUNS_DIR="$PROJECT/build/test-runs"
+RUN_ID="20260101T000000Z-1-aaaa"
+UTEST_RECORD_KEEP=2
+eval "$UAR_PRUNE"
+# The slow sort is on PATH only for the prune, so the count below is taken
+# while discovery is provably still inside it.
+( PATH="$UAR_PDIR/slowbin:$PATH"; utest_prune_records >/dev/null 2>&1 ) &
+sleep 1
+_n=0
+for _f in /proc/[0-9]*/fd/8; do
+    case "$(readlink "$_f" 2>/dev/null)" in
+        */.test-retention.lock) _n=$(( _n + 1 )) ;;
+    esac
+done
+printf "holders: %s | HARNESS-OK\n" "$_n"
+wait
+' 2>&1 || echo "TIMED-OUT-OR-FAILED")"
+            if printf '%s' "$UAR_PP26" | grep -q 'HARNESS-OK' &&
+               printf '%s' "$UAR_PP26" | grep -q 'holders: 1 '; then
+                t_pass "run record: discovery does not leak the retention descriptor to any child"
+            else
+                t_fail "run record: discovery does not leak the retention descriptor to any child" "$UAR_PP26"
+            fi
+        fi
+        rm -rf "$UAR_PDIR/slowbin"
 
         # (L1-L7) READER LEASES. The pin above protects the record the CURRENT
         #     pointer names; it cannot protect one a reader has already
