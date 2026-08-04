@@ -64,7 +64,8 @@ title: "TODO-07 -- LSP to MCP Bridge (C, NASM, shell, Python, PowerShell)"
 | 💎   |  18   | Type hierarchy tools (supertypes / subtypes, read-only)                    | §1, §7, §11                       |  [x]   |
 | 💎   |  19   | Scale Roadmap (DEFERRED -- trigger-gated, no code today)                   | --                                |  [/]   |
 | ⭐   |  20   | Reap determinism + leak attribution for spawned language servers           | §1, §18                           |  [x]   |
-| 💎   |  21   | Thread-group edge cases in the language-server reap                        | §20                               |  [ ]   |
+| 💎   |  21   | Thread-group edge cases in the language-server reap (harness coverage)     | §20                               |  [ ]   |
+| ⭐   |  22   | Reap sweep internals: pidfd ownership, one-snapshot sweep, ledger reader   | §20                               |  [ ]   |
 
 > 💎 = parity -- matches the existing LSP stacks Win11/Linux devs already use, wrapped in an MCP transport.
 > ⭐ = exclusive -- neither Win11 nor Linux ships a repo-tracked cross-language LSP-MCP bridge with read-only boundary compliance baked in.
@@ -714,6 +715,9 @@ Section 20 made the reap identity-anchored and proved it with sub-tests 9b and 9
 > [!NOTE]
 > Filed rather than folded into section 20 because that section is stamped, and an item appended to a stamped section is invisible to every later pass. This is coverage debt, not a known defect: the behavior was reproduced working (leader `Z` with a live worker is classified alive, resolves as ours, and is collected by the group sweep), but a manual reproduction is not a regression net. -> XREF: 00-infrastructure/TODO-07 §20 (item: "Make the reap deterministic rather than best-effort" at line 672)
 
+> [!NOTE]
+> Scope boundary (split 2026-08-04, 8 open items -> SPLIT-RECOMMENDED): this section adds HARNESS COVERAGE ONLY and must not change `bridge.py` or `lsp_client.py`. The three fixes that mutate live reap code or the 9a ledger reader moved to §22. -> XREF: 00-infrastructure/TODO-07 §22 (item: "Close the pidfd retirement race: a sweep can hold a descriptor `_retire_spawn` closes underneath it")
+
 - [ ] Wire the pthread_exit thread-group shape into 9b as an end-to-end case, not just a manual reproduction
       - The child spawns with the owner stamp, starts a worker thread, then calls `pthread_exit` on its leader; the case must assert that `force_kill_spawned` collects it and that no task of it survives.
       - Cover both nets: the leader is reachable through its `_SPAWNED` record, and an UNRECORDED such child must still be found by `_own_live_children` -- the second is the one that has no coverage at all today.
@@ -726,6 +730,16 @@ Section 20 made the reap identity-anchored and proved it with sub-tests 9b and 9
       - Shape: wedge the graceful phase (patch `reap_all_live` to sleep past the budget) on each of the three exit paths and assert the recorded child is still collected within the total bound. Verified by hand for `atexit` at 1.53s with the child collected.
 - [ ] Re-check `_is_zombie` against a process whose last thread exits between the stat read and the task scan
       - The current order reads `/proc/PID/stat`, then enumerates `/proc/PID/task`; a task list that empties in between currently reads as ALIVE (fail-closed), which is the safe direction but is untested.
+- [ ] Commit: `"scripts/lsp-mcp: cover the thread-group reap shapes in 9b"`
+
+**Test checkpoint:** `bash scripts/lsp-mcp/tests/test_bridge.sh` passes with the new 9b cases, and each new case is mutation-checked -- reverting the thread-aware read in `_is_zombie` or `_carries_our_owner_id` must make it fail. Test on: host tooling only (no QEMU dependency).
+
+---
+
+## 22. Reap Sweep Internals: pidfd Ownership, One-Snapshot Enumeration, Ledger Reader
+
+Split out of §21 on 2026-08-04 because that section's eight open items tripped the SPLIT-RECOMMENDED predictor and the two halves have different risk profiles: §21 only ADDS harness cases, while these three change live reap code (`lsp_client.py`, `bridge.py`) and the 9a leak verifier. Each was raised during §20's review rounds and accepted rather than fixed, so each is a known defect with a named fix shape -- not coverage debt. -> XREF: 00-infrastructure/TODO-07 §21 (item: "Wire the pthread_exit thread-group shape into 9b as an end-to-end case, not just a manual reproduction")
+
 - [ ] Close the pidfd retirement race: a sweep can hold a descriptor `_retire_spawn` closes underneath it
       - The force sweep snapshots `(pid, fd, ticks)` from `_SPAWNED`, and a concurrent `shutdown()` can retire that record and close the fd before the sweep signals through it; the number can then name an unrelated open file.
       - Fix shape: make the pidfd single-owner -- hand ownership to whoever removes the record, and give the sweep a reference retirement cannot invalidate mid-signal -- rather than widening the window.
@@ -735,9 +749,9 @@ Section 20 made the reap identity-anchored and proved it with sub-tests 9b and 9
 - [ ] Harden the 9a ledger reader against records the writer can legitimately produce
       - A truncated final line (a bridge killed mid-append) is silently ignored, and a row whose start ticks are `-1` skips the PID-reuse guard entirely, so a recycled PID reads as a survivor and reports a leak that is not one.
       - Fix shape: treat a short row as a REPORTED parse error rather than a skip, and treat a tickless row as unverifiable -- neither silently clean nor silently a leak.
-- [ ] Commit: `"scripts/lsp-mcp: cover the thread-group reap shapes in 9b"`
+- [ ] Commit: `"scripts/lsp-mcp: single-owner pidfd, one-snapshot sweep, stricter ledger reader"`
 
-**Test checkpoint:** `bash scripts/lsp-mcp/tests/test_bridge.sh` passes with the new 9b cases, and each new case is mutation-checked -- reverting the thread-aware read in `_is_zombie` or `_carries_our_owner_id` must make it fail. Test on: host tooling only (no QEMU dependency).
+**Test checkpoint:** `bash scripts/lsp-mcp/tests/test_bridge.sh` exits 0 with the sweep rewritten, and the pidfd-ownership and ledger-reader changes each carry a sub-test that fails when the fix is reverted. Test on: host tooling only (no QEMU dependency).
 
 ## Format Quick Reference
 
