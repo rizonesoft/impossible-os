@@ -67,6 +67,7 @@ title: "TODO-07 -- LSP to MCP Bridge (C, NASM, shell, Python, PowerShell)"
 | 💎   |  21   | Thread-group edge cases in the language-server reap (harness coverage)     | §20                               |  [x]   |
 | ⭐   |  22   | Reap sweep internals: pidfd ownership, one-snapshot sweep, ledger reader   | §20                               |  [x]   |
 | 💎   |  23   | Injected-clock deadline coverage + the non-dumpable-child reap blind spot  | §22                               |  [ ]   |
+| 💎   |  24   | Restart-publish confirmed-dead gate + single-pass procfs cleanup           | §22, §23                          |  [ ]   |
 
 > 💎 = parity -- matches the existing LSP stacks Win11/Linux devs already use, wrapped in an MCP transport.
 > ⭐ = exclusive -- neither Win11 nor Linux ships a repo-tracked cross-language LSP-MCP bridge with read-only boundary compliance baked in.
@@ -697,7 +698,7 @@ Current repo is ~215k core LOC (~189k kernel + ~24k tooling per [COUNT.md](../..
 
 > **Verified:** 2026-08-04 | commit `ce4a798c` | 4/4 items | build OK | 101/101 test_bridge.sh, 1282/1282 test-tooling.sh, 28326 kernel + 17 user-mode tests, lint 0 errors
 > **Accepted:** [H] Concurrent `_retire_spawn` can close a pidfd the force sweep is holding (reason: single-owner descriptor handoff is a design change, not a patch); SHIPPED in §22 -> XREF: 00-infrastructure/TODO-07 §22 (item: "Closed the pidfd retirement race" at line 754)
-> **Accepted:** [H] Force sweep walks `/proc` once per recorded leader instead of sharing one enumeration (reason: needs a shared snapshot driving all three passes) -> XREF: 00-infrastructure/TODO-07 §21 (item: "Share ONE procfs enumeration across the force sweep" at line 700)
+> **Accepted:** [H] Force sweep walks `/proc` once per recorded leader instead of sharing one enumeration (reason: needs a shared snapshot driving all three passes) -> XREF: 00-infrastructure/TODO-07 §21 (item: "Share ONE procfs enumeration across the force sweep" at line 701)
 > **Accepted:** [M] 9a silently skips a truncated ledger row and a row with no start ticks (reason: reader hardening belongs with the harness coverage work); SHIPPED in §22 -> XREF: 00-infrastructure/TODO-07 §22 (item: "Hardened the 9a ledger reader" at line 761)
 > **Quality reviewed:** 2026-08-04 | Codex 26x (design, adversarial x23, consistency, perf) | 2H+2M fixed, 3 open | scope: N/A (host tooling; no kernel/boot domain skill applies)
 > **Notes:**
@@ -775,19 +776,19 @@ Split out of §21 on 2026-08-04 because that section's eight open items tripped 
 > - Integration: `force_kill_spawned` and `_signal_recorded` are the only changes `bridge.py` sees; the group/stamp helpers keep their signatures and gained an optional snapshot argument.
 > - Downstream: `force_kill_spawned` returns DISTINCT processes signalled (the old shape double-counted a leader), and a record with no start ticks now fails closed in `_signal_recorded`.
 > - Canonical doc: this section plus the `_SPAWNED` ownership comment in `scripts/lsp-mcp/lsp_client.py`.
-> - Scope boundary: no injected-clock deadline coverage, no non-dumpable-child fix, and the two pidfd-less bare-PID fallbacks stand. -> XREF: 00-infrastructure/TODO-07 §23 (item: "Give the reap an injectable monotonic clock" at line 786)
+> - Scope boundary: no injected-clock deadline coverage, no non-dumpable-child fix, and the two pidfd-less bare-PID fallbacks stand. -> XREF: 00-infrastructure/TODO-07 §23 (item: "Give the reap an injectable monotonic clock" at line 793)
 
 > **Verified:** 2026-08-04 | commit `7f23f57a` | 4/4 items | build OK | 109/109 lsp-mcp sub-tests, 1282/1282 tooling, 28326 kernel + 17 user-mode, lint exit 0
-> **Accepted:** [H] Health-restart publishes a replacement without confirming the old server died (reason: the reachable half was the descriptor-exhaustion refusal, fixed here; the publish gate is bridge.py flow) -> XREF: 00-infrastructure/TODO-07 §23 (item: "Gate the health-restart publish on the old server being confirmed dead" at line 795)
-> **Accepted:** [M] Owner and generation stamps cost up to four environment traversals per group candidate (reason: a single-read marker probe is a helper redesign, not section work) -> XREF: 00-infrastructure/TODO-07 §23 (item: "Read the owner and generation stamps in ONE pass per candidate" at line 798)
-> **Accepted:** [M] Per-instance group cleanup still nests procfs walks inside its loop (reason: the same collapse this section applied to the force sweep, owed to the shutdown path) -> XREF: 00-infrastructure/TODO-07 §23 (item: "Stop nesting a full procfs walk inside the per-instance group-cleanup loop" at line 801)
+> **Accepted:** [H] Health-restart publishes a replacement without confirming the old server died (reason: the reachable half was the descriptor-exhaustion refusal, fixed here; the publish gate is bridge.py flow) -> XREF: 00-infrastructure/TODO-07 §24 (item: "Gate the health-restart publish on the old server being confirmed dead" at line 812)
+> **Accepted:** [M] Owner and generation stamps cost up to four environment traversals per group candidate (reason: a single-read marker probe is a helper redesign, not section work) -> XREF: 00-infrastructure/TODO-07 §24 (item: "Read the owner and generation stamps in ONE pass per candidate" at line 815)
+> **Accepted:** [M] Per-instance group cleanup still nests procfs walks inside its loop (reason: the same collapse this section applied to the force sweep, owed to the shutdown path) -> XREF: 00-infrastructure/TODO-07 §24 (item: "Stop nesting a full procfs walk inside the per-instance group-cleanup loop" at line 818)
 > **Quality reviewed:** 2026-08-04 | Codex 17x (design, test-coverage, adversarial-impl x12, adversarial, consistency, perf) | 9H+18M+1L fixed, 0 open | scope: N/A (host tooling -- no kernel/boot/desktop/shell/user domain skill applies)
 
 ---
 
 ## 23. Injected-Clock Deadline Coverage and the Non-Dumpable-Child Reap Blind Spot
 
-Both items were raised while reviewing the sweep rewrite and accepted rather than fixed: the first is test infrastructure the reap has no seam for, and the second is a pre-existing reap gap the uid short-circuit made explicit rather than introduced. -> XREF: 00-infrastructure/TODO-07 §22 (item: "Shared ONE procfs enumeration across the force sweep" at line 757)
+Three items raised while reviewing the sweep rewrite and accepted rather than fixed, all about WHO the reap believes a process is and WHEN it decides: the clock seam is test infrastructure the reap has no seam for, the non-dumpable child is a pre-existing reap gap the uid short-circuit made explicit rather than introduced, and the bare-PID fallback is the last signalling path that names a target by number. The publish gate and the procfs-pass collapses raised in the same review are §24. -> XREF: 00-infrastructure/TODO-07 §22 (item: "Shared ONE procfs enumeration across the force sweep" at line 757)
 
 - [ ] Give the reap an injectable monotonic clock so every deadline break point is asserted separately
       - 9j asserts the sweep as a whole stays inside its budget, so deleting ONE of the five deadline checks (settle wait, pre-scan, ownership enumeration, pre-signal, post-target) can still pass under a wall-clock tolerance. The bound also scales with the host's process table, which is why the budget case skips on a thin one.
@@ -798,18 +799,28 @@ Both items were raised while reviewing the sweep rewrite and accepted rather tha
 - [ ] Decide whether destructive signalling may ever use a bare PID, or raise the supported python3 floor to 3.9
       - TWO call sites, not one: `_kill_verified` falls back to `os.kill(pid, SIGKILL)` and `_signal_recorded` falls back to `os.kill(pid, sig)`, each after re-verifying identity. In both the target can exit, be reaped and have its number reused between the check and the signal, so an unrelated process is killed. Both are reachable on the documented python3 3.8 floor in `scripts/setup.sh` (`os.pidfd_open` arrived in 3.9), and together they are what remains of signalling by NUMBER rather than by descriptor.
       - Shipped deliberately in §20 as the better of two bad trades -- the alternative was skipping the signal and leaking the child on every pidfd-less host -- and left alone in §22 because closing it means either raising the supported runtime floor or shipping a ctypes `pidfd_open`, both operator decisions rather than section work. -> XREF: 00-infrastructure/TODO-07 §22 (item: "Closed the pidfd retirement race" at line 754)
+- [ ] Commit: `"scripts/lsp-mcp: injectable reap clock + non-dumpable child ownership"`
+
+**Test checkpoint:** `bash scripts/lsp-mcp/tests/test_bridge.sh` exits 0; each of the five deadline break points has a sub-test that fails when that single check is deleted, and a `PR_SET_DUMPABLE 0` child carrying this run's stamp is collected by `force_kill_spawned`. Test on: host tooling only (no QEMU dependency).
+
+---
+
+## 24. Restart-Publish Confirmation and Single-Pass Procfs Cleanup
+
+Split out of §23 (2026-08-04) because that section carried six work items across two unrelated concerns. These three share one: the bridge does teardown work it never checks the result of, and does it more times than the process table needs to be read. -> XREF: 00-infrastructure/TODO-07 §23 (item: "Give the reap an injectable monotonic clock" at line 793)
+
 - [ ] Gate the health-restart publish on the old server being confirmed dead
       - `bridge.py` swallows the old instance's shutdown result and publishes the replacement without checking that the previous process exited. §22 removed the descriptor-exhaustion refusal that made this reachable (both signal paths now claim the record's own descriptor), but the publish itself is still unguarded, so any future path where disposal fails silently duplicates a language server.
       - Fix shape: have the dispose helper return a confirmed-dead verdict and refuse to publish the replacement without it, with a caller-level health-respawn regression under simulated descriptor exhaustion.
 - [ ] Read the owner and generation stamps in ONE pass per candidate
       - A group scan with a generation filter can traverse a candidate's environments four times: the owner probe, the generation pre-filter, and both again in the post-pidfd recheck. On a many-threaded unstamped process each traversal is one read per task, all charged to a teardown budget.
-      - Fix shape: one `/proc/<pid>/environ` read (falling back to the task walk once) answering both markers together, cached per `(pid, ticks)` under the same positives-only rule. -> XREF: 00-infrastructure/TODO-07 §22 (item: "Shared ONE procfs enumeration across the force sweep" at line 759)
+      - Fix shape: one `/proc/<pid>/environ` read (falling back to the task walk once) answering both markers together, cached per `(pid, ticks)` under the same positives-only rule. Must compose with the second ownership signal §23 adds rather than re-probing behind it. -> XREF: 00-infrastructure/TODO-07 §22 (item: "Shared ONE procfs enumeration across the force sweep" at line 759)
 - [ ] Stop nesting a full procfs walk inside the per-instance group-cleanup loop
       - `shutdown` alternates `_group_is_empty` and `_reap_group`, and `_reap_group` runs its own bounded loop of walks, so one shutdown nests walks inside walks. The deadline bounds the wall-clock but not the work.
       - Fix shape: drive the per-instance cleanup from ONE snapshot per round -- the same collapse §22 applied to `force_kill_spawned` -- and let the reap report whether the group emptied instead of asking separately. -> XREF: 00-infrastructure/TODO-07 §22 (item: "Shared ONE procfs enumeration across the force sweep" at line 759)
-- [ ] Commit: `"scripts/lsp-mcp: injectable reap clock + non-dumpable child ownership"`
+- [ ] Commit: `"scripts/lsp-mcp: confirmed-dead restart gate + single-pass procfs cleanup"`
 
-**Test checkpoint:** `bash scripts/lsp-mcp/tests/test_bridge.sh` exits 0; each of the five deadline break points has a sub-test that fails when that single check is deleted, and a `PR_SET_DUMPABLE 0` child carrying this run's stamp is collected by `force_kill_spawned`. Test on: host tooling only (no QEMU dependency).
+**Test checkpoint:** `bash scripts/lsp-mcp/tests/test_bridge.sh` exits 0; a health-respawn under simulated disposal failure refuses to publish the replacement, and a stamped-group teardown reads `/proc` once per round with both markers answered from that one pass. Test on: host tooling only (no QEMU dependency).
 
 ## Format Quick Reference
 
