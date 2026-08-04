@@ -102,8 +102,18 @@ _RUN_ARTIFACT = r"scripts/overnight/run-artifact\.sh\b"
 # claimed the exemption for the whole segment. Interpreter flags are allowed
 # before the script, but `-c` is NOT: with `-c` the next word is a program, not
 # this wrapper.
+#
+# The anchor also has to tolerate the shell KEYWORDS a segment can begin with.
+# The splitter cuts on `;`/`&`/`|`, so a wrapped route inside a loop arrives as
+# `do bash .../run-artifact.sh lbl -- bash scripts/test-tooling.sh` and the
+# `^\s*` anchor missed it -- the correctly-wrapped call was BLOCKED for sitting
+# in a `for` loop (v08, live 2026-08-03). `_tokens_invocation` already steps
+# over the same keyword set; the exemption regex simply had not been taught it.
+# NOTE the filed diagnosis blamed the loop's VARIABLE label ("stab$i"); it is
+# the `do` keyword. A variable label outside a loop was never blocked.
 _RUN_ARTIFACT_RE = re.compile(
-    r"^\s*" + _ENV_PREFIX
+    r"^\s*(?:(?:do|then|else|elif|time|exec|nohup|command|stdbuf)\s+)*"
+    + _ENV_PREFIX
     + "(?:"
     + r"(?:bash|sh)\s+(?:-(?!c\b)\S+\s+)*[\"']?(?:\S*/)?" + _RUN_ARTIFACT
     + "|"
@@ -143,6 +153,9 @@ class _Hit:
 _TRANSPARENT = {"time", "exec", "nohup", "command", "stdbuf",
                 "do", "then", "else", "elif", "if", "while", "until", "!"}
 _ENV_ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+# A non-executing interpreter option: `-n`/`--noexec`, including inside a short
+# cluster (`-nx`). `--` alone ends option parsing and is not one of these.
+_NOEXEC_RE = re.compile(r"^(?:--noexec$|-(?!-)[A-Za-z]*n[A-Za-z]*$)")
 _SUITE_TOKEN_RE = re.compile(
     r"(?:^|/)scripts/(?:build|test|test-smoke|test-tooling)\.sh$")
 _MAKE_TARGET_RE = re.compile(r"^test(?:-[A-Za-z0-9_-]+)?$")
@@ -153,12 +166,46 @@ def _substitution_bodies(cmd: str):
 
     Balanced-paren scan rather than a regex, because a nested backtick whose body
     contains `)` desynchronises any non-counting walk -- the exact shape the
-    tooling suite pins (`"$(echo \\`echo )\\`; bash scripts/test.sh)"`)."""
+    tooling suite pins (`"$(echo \\`echo )\\`; bash scripts/test.sh)"`).
+
+    QUOTE- AND ESCAPE-AWARE (v08 finding, 2026-08-03). The scan used to read the
+    raw string, so any backtick ANYWHERE read as a substitution -- including the
+    markdown code-quotes in a commit message. Live cost: `git commit -m "...a
+    plain \\`bash scripts/test.sh\\`..." -- <paths>` was BLOCKED while describing
+    the gate the section had just fixed, and the answer was to reword the commit
+    record to launder the vocabulary. That is the gate degrading the history it
+    cannot read.
+
+    The fix is not an exemption, it is accuracy about what bash EXECUTES:
+    inside single quotes nothing substitutes, and a backslash-escaped backtick
+    or `$(` does not substitute inside double quotes either. A substitution that
+    really runs is still followed -- see the `live backtick still runs` test.
+    """
     out = []
     n = len(cmd)
     i = 0
+    quote = None
     while i < n:
         ch = cmd[i]
+        # Single quotes suppress EVERY expansion, so their span cannot start a
+        # substitution. Skipping the whole span (rather than tracking a flag)
+        # also keeps an apostrophe inside a double-quoted body from opening one.
+        if quote == "'":
+            if ch == "'":
+                quote = None
+            i += 1
+            continue
+        if ch == "\\" and quote != "'":
+            i += 2                      # escaped char is literal, incl. ` and $
+            continue
+        if ch == "'" and quote is None:
+            quote = "'"
+            i += 1
+            continue
+        if ch == '"':
+            quote = None if quote == '"' else '"'
+            i += 1
+            continue
         if ch == "`":
             j = cmd.find("`", i + 1)
             if j < 0:
@@ -256,6 +303,20 @@ def _tokens_invocation(toks):
     if base in ("bash", "sh"):
         j = i + 1
         while j < len(toks) and toks[j].startswith("-"):
+            # `-n`/`--noexec` READS AND PARSES ONLY -- it cannot run the suite,
+            # by definition. Filed three separate times (v08), because a syntax
+            # check is the normal inner loop for a 7,000-line shell harness and
+            # the gate refused it after every edit. The sanctioned reroute
+            # (`run-artifact.sh syntax-check -- bash -n ...`) works but pays the
+            # artifact wrapper for a check that produces no output to flood, and
+            # the workaround actually reached for was to hide the path behind a
+            # shell variable -- an evasion that works for the wrong reason.
+            #
+            # The exemption is on the FLAG, not on the script name, so it cannot
+            # smuggle a real run past the gate: drop `-n` and the same command
+            # blocks again.
+            if _NOEXEC_RE.match(toks[j]):
+                return None
             if toks[j] == "-c":
                 # The `-c` body is a COMMAND STRING, so parse it as one. Treating
                 # it as a dead end re-opens a KNOWN bypass:

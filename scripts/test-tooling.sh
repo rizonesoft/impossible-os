@@ -2084,7 +2084,16 @@ CMOD2
         t_fail "section_commit_gate: --git-hook-mode wrong rc (got $GATE_RC)"
     fi
     _write_received_state "true" '["src/kernel/foo.c"]' "60"
-    touch "$GATE_REPO/build/build.log"
+    # Stamp build.log STRICTLY AFTER the staged source rather than at "now".
+    # `_build_evidence` requires the log to be no older than every staged file
+    # and carries only 1s of FS-rounding slop, so a fixture that touches both in
+    # the same second is relying on that slop rather than expressing the
+    # ordering it means. v08 filed this assertion as intermittently red (~1 run
+    # in 6) with mtime collision as the leading hypothesis; it did NOT reproduce
+    # here in 60 consecutive runs of this block, so this is PREVENTIVE and the
+    # finding stays open -- if it recurs, the cause is elsewhere and the ordering
+    # can be ruled out.
+    touch -d "+2 seconds" "$GATE_REPO/build/build.log"
     GATE_RC=$(cd "$GATE_REPO" && python3 .claude/hooks/section_commit_gate.py --git-hook-mode </dev/null >/dev/null 2>&1; echo $?)
     if [ "$GATE_RC" = "0" ]; then
         t_pass "section_commit_gate: --git-hook-mode allows with full evidence"
@@ -2342,6 +2351,36 @@ check("kind_semicolon_inside_prompt",
 check("kind_broker_wrapper",
       drk("bash scripts/overnight/review-broker-codex-dispatch.sh "
           "'[review-kind: adversarial] todo/x body'") == "adversarial")
+# v08: SEVERAL dispatches routinely share ONE Bash call, and the singular
+# detector stops at the first -- so the rest were invisible to step attribution.
+# MEASURED 2026-08-03: the step-5 adversarial and the two step-8 quality
+# dispatches went out together (all three broker artifacts carry the same
+# `20260803-101826` second-resolution stamp); only `adversarial` was attributed,
+# the commit was refused as "step(s) [8] were never observed", and the run took
+# a SKIP opt-out on a review it had FULLY performed. The filed cause -- that
+# step 8 did not recognise the BROKER shape -- does not reproduce: step 5 was
+# attributed from that same broker call.
+from _review_kind import detect_review_kinds_from_cmd as drks
+from skill_step_map import match_step
+_B = "bash scripts/overnight/review-broker-codex-dispatch.sh"
+_TRIPLE = (f"{_B} '[review-kind: adversarial] todo/x.md section 61 p' && "
+           f"{_B} '[review-kind: consistency] todo/x.md section 61 p' && "
+           f"{_B} '[review-kind: perf] todo/x.md section 61 p'")
+check("kind_all_kinds_in_one_call",
+      drks(_TRIPLE) == ["adversarial", "consistency", "perf"])
+check("kind_singular_still_returns_the_leading_kind",
+      drk(_TRIPLE) == "adversarial")
+check("kind_compound_call_attributes_step_5_and_8",
+      sorted(set(match_step("review-todo-section", "Bash", _TRIPLE))) == [5, 8])
+check("kind_single_dispatch_attribution_unchanged",
+      sorted(set(match_step("review-todo-section", "Bash",
+                            f"{_B} '[review-kind: consistency] todo/x.md s61 p'"))) == [8]
+      and sorted(set(match_step("review-todo-section", "Bash",
+                                f"{_B} '[review-kind: adversarial] todo/x.md s61 p'"))) == [5])
+# still argv-scoped: a review-kind named in commit PROSE is not a dispatch
+check("kind_prose_mention_is_not_a_dispatch",
+      sorted(set(match_step("review-todo-section", "Bash",
+                            "git commit -m 'mentions [review-kind: perf]' -- a.md"))) == [17])
 # Receipt binding must agree with detection on every shape above -- a dispatch
 # the gate recognizes but the receipt does not would leave the gate unsatisfiable.
 check("receipt_unspaced_semi", crc._is_codex_bash_trigger("cd /tmp;" + _D))
@@ -2394,11 +2433,11 @@ with tempfile.TemporaryDirectory() as tmp:
 PYGA
 )
 GA_OK=$(echo "$GA_OUT" | grep -c "^OK ")
-if [ "$GA_OK" = "20" ]; then
+if [ "$GA_OK" = "25" ]; then
     echo "$GA_OUT" | grep "^OK " | while IFS= read -r line; do
         t_pass "review_receipt: $line"
     done
-    PASS=$((PASS + 20))
+    PASS=$((PASS + 25))
 else
     t_fail "review_receipt: gap-audit / trusted run-id coverage incomplete" "ok=$GA_OK out=$GA_OUT"
 fi
@@ -6928,6 +6967,18 @@ cases = [
     ("node /x/codex-companion.mjs review", True,  "rpp_node_codex"),
     ("rm -rf /",                          False, "rpp_destructive_rejected"),
     ("rg '[review-kind: ...]'",           True,  "rpp_rg_search"),
+    # v08: the allowlist tested the raw leading TOKEN, so an allowlisted command
+    # behind a variable binding was refused -- 3x in one section-60 review. An
+    # assignment does not change which command runs, so it is stepped over; a
+    # substitution inside the skipped value RUNS, so it must itself be allowed.
+    ('L="$(ls -t a/*.log | head -1)"; grep -n x "$L"',
+                                          True,  "rpp_v08_assignment_skipped"),
+    ("T=scripts/x.sh; grep -n foo \"$T\"", True,  "rpp_v08_plain_assignment"),
+    ("L=`ls -t x`; grep n \"$L\"",         True,  "rpp_v08_backtick_value"),
+    ("L=x; rm -rf /",                     False, "rpp_v08_assignment_no_launder"),
+    ('L="$(rm -rf /tmp/x)"; grep n "$L"',  False, "rpp_v08_substitution_runs"),
+    ("L=`rm -rf /tmp/x`; grep n \"$L\"",   False, "rpp_v08_backtick_runs"),
+    ('L="$(ls ; grep n',                  False, "rpp_v08_unparseable_refused"),
 ]
 for cmd, want, name in cases:
     got = ok(cmd)
@@ -6938,7 +6989,7 @@ for cmd, want, name in cases:
 PYEOF
 )
 RPP_OK=$(echo "$RPP_OUT" | grep -c "^OK ")
-if [ "$RPP_OK" = "6" ]; then
+if [ "$RPP_OK" = "13" ]; then
     echo "$RPP_OUT" | grep "^OK " | while IFS= read -r line; do
         t_pass "review_pipeline_passthrough: $line"
     done

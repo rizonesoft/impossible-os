@@ -334,7 +334,7 @@ def test_v04_loop_and_conditional_bodies_still_caught():
     assert mod._match_suite_invocation(
         "cat > f.md <<'EOF'\n- ran bash scripts/test.sh green\nEOF") is None
 
-if __name__ == "__main__":
+def _main():
     test_two_script_paths_are_not_an_invocation()
     test_real_interpreter_forms_still_block()
     test_gate_is_scoped_to_the_headless_run()
@@ -351,5 +351,81 @@ if __name__ == "__main__":
     test_v04_substitution_and_dash_c_bodies_still_run()
     test_v04_loop_and_conditional_bodies_still_caught()
     test_r2_wrapped_route_logs_follow()
+    test_v08_non_executing_option_is_not_an_invocation()
+    test_v08_message_prose_is_not_a_command()
+    test_v08_wrapped_route_inside_a_loop_is_still_wrapped()
     print("PASS: build_offload_reminder exemption + P3.4 BLOCK + dedup + lint-exempt"
-          " + R2 bypass shapes + follow log")
+          " + R2 bypass shapes + follow log + v08 argv-attribution")
+
+
+def test_v08_non_executing_option_is_not_an_invocation():
+    """`bash -n` READS AND PARSES. It cannot run the suite, by definition.
+
+    Filed THREE separate times in v08 (2026-08-03 11:34, 2026-08-04 05:12, and
+    inside the composite wrapper item), because a syntax check is the normal
+    inner loop for a 7,000-line shell harness and the gate refused it after
+    every edit. The workaround actually reached for was hiding the path behind a
+    shell variable -- an evasion that works for the wrong reason.
+
+    The exemption is on the FLAG, not the script name: drop `-n` and the same
+    command blocks again.
+    """
+    mod = _load()
+    for cmd in ("bash -n scripts/test.sh",
+                "/bin/bash -n scripts/test-tooling.sh",
+                "bash --noexec scripts/test.sh",
+                "bash -nx scripts/build.sh"):
+        assert mod._blocking_match(cmd) is None, cmd
+    # and the flag cannot smuggle a real run past the gate
+    assert mod._blocking_match("bash -n scripts/lint.sh; bash scripts/test.sh")
+    assert mod._blocking_match("bash scripts/test.sh")
+
+
+def test_v08_message_prose_is_not_a_command():
+    """Markdown code-quotes in a commit message are not a substitution.
+
+    `git commit -m "...a plain \\`bash scripts/test.sh\\`..." -- <paths>` was
+    BLOCKED while DESCRIBING the gate its own section had just fixed, and the
+    answer was to reword the commit record. A gate that cannot read prose must
+    not be editing it.
+
+    The distinction is what bash actually executes: single quotes suppress every
+    expansion and an escaped backtick is literal, so neither runs -- but an
+    UNESCAPED backtick inside double quotes really does substitute and must
+    still block. That control is the whole point of the fix being accuracy
+    rather than an exemption.
+    """
+    mod = _load()
+    assert mod._blocking_match(
+        'git commit -m "a plain \\`bash scripts/test.sh\\` gate" -- a.md') is None
+    assert mod._blocking_match(
+        "git commit -m 'describes `bash scripts/test.sh` in prose' -- a.md") is None
+    # LIVE substitutions still run, and still block
+    assert mod._blocking_match('git commit -m "runs `bash scripts/test.sh`" -- a.md')
+    assert mod._blocking_match('echo "x $(bash scripts/test.sh) y"')
+    assert mod._blocking_match(
+        "git commit -m 'prose `bash scripts/test.sh`' && bash scripts/test.sh")
+
+
+def test_v08_wrapped_route_inside_a_loop_is_still_wrapped():
+    """The exemption anchor missed a segment beginning with a shell keyword.
+
+    A correctly-wrapped call was BLOCKED for sitting in a `for` loop: the
+    splitter cuts on `;`, so the segment arrives as `do bash .../run-artifact.sh
+    ... -- bash scripts/test-tooling.sh` and `^\\s*` no longer sat on the
+    wrapper. NOTE the filed diagnosis blamed the loop's VARIABLE label; it is
+    the `do` keyword -- a variable label outside a loop was never blocked.
+    """
+    mod = _load()
+    assert mod._blocking_match(
+        'for i in 1 2; do bash scripts/overnight/run-artifact.sh "stab$i" '
+        '-- bash scripts/test-tooling.sh; done') is None
+    assert mod._blocking_match(
+        "if x; then bash scripts/overnight/run-artifact.sh l "
+        "-- bash scripts/build.sh; fi") is None
+    # a BARE suite in a loop is still caught
+    assert mod._blocking_match("for i in 1 2; do bash scripts/test.sh; done")
+
+
+if __name__ == "__main__":
+    _main()

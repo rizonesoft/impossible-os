@@ -2677,6 +2677,27 @@ def _step13_impl_adversarial_check(
         return (False, "last-review-stamps.json is not a JSON object")
 
     now_ns = time.time_ns()
+    # LEGACY FALLBACK ONLY -- see the module header: "these wall-clock TTLs apply
+    # ONLY when the content binding is absent ... a slow review over unchanged
+    # content never expires". This check was the one that never adopted that
+    # rule; it aged out head-bound evidence unconditionally.
+    #
+    # MEASURED 2026-08-04 (v08, TODO-07 section 22): the step-13 stamp was
+    # recorded at 07:32, correctly section-bound and HEAD-bound, and the commit
+    # was refused at 08:05 -- because `implement-todo-section` step 16's OWN
+    # mandatory chain (build 2m + test.sh 5m + test-tooling.sh 18m = ~25 min,
+    # before TODO bookkeeping, the loose-end sweep and the todo-graph rebuild)
+    # does not fit inside 30 minutes. The gate was refusing evidence for getting
+    # old while the run did the work the skill told it to do, and the refusal
+    # named the SECTION BINDING, so it read as "you never dispatched". That
+    # misdirection cost a full re-dispatch (~6 min) carrying no new information,
+    # and was filed a second time as a review-KIND mismatch -- which does not
+    # reproduce: `adversarial` and `adversarial-impl` are both accepted here and
+    # have been since 2026-06-30.
+    #
+    # Adopting `_dispatch_content_fresh` STRENGTHENS this gate rather than
+    # relaxing it: age alone never invalidated the right thing, and a 5-minute
+    # stamp over DRIFTED source used to pass and now does not.
     cutoff_ns = now_ns - 30 * 60 * 1_000_000_000
 
     # Codex adversarial H2 fix: bind evidence to the flipped section
@@ -2726,7 +2747,7 @@ def _step13_impl_adversarial_check(
         # still apply per-tag.
         for tag in ("adversarial-impl", "adversarial"):
             ts = entry.get(tag)
-            if not (isinstance(ts, int) and ts >= cutoff_ns):
+            if not isinstance(ts, int):
                 continue
             # Section binding: the recorded per-kind section must match
             # the section being flipped. Legacy entries may only have a
@@ -2737,14 +2758,51 @@ def _step13_impl_adversarial_check(
             )
             if not recorded_section or recorded_section != required_section:
                 continue
-            # HEAD binding: the dispatch's `<tag>_head` must be an
-            # ancestor of the current HEAD.
+            # CONTENT binding where it exists, wall-clock only where it does
+            # not. `_dispatch_content_fresh` is the same rule the sibling
+            # dispatch checks use: ancestry AND no source drift since, age
+            # irrelevant. Without a recorded head there is nothing to bind to,
+            # so the legacy TTL still applies.
             rh = entry.get(f"{tag}_head", "")
             if isinstance(rh, str) and rh and current_head:
-                if not _git_is_ancestor(root, rh, current_head):
+                fresh, _why = _dispatch_content_fresh(root, rh, current_head)
+                if not fresh:
                     continue
+            elif ts < cutoff_ns:
+                continue
             return True
         return False
+
+    def _impl_adv_diagnosis(todo: str, required_section: str) -> str:
+        """Why this section's step-13 evidence was rejected, in the gate's words."""
+        entry = state.get(todo)
+        if not isinstance(entry, dict):
+            return "no dispatch entry recorded for this TODO"
+        seen = []
+        for tag in ("adversarial-impl", "adversarial"):
+            ts = entry.get(tag)
+            if not isinstance(ts, int):
+                continue
+            rec = _normalize_section_id(
+                entry.get(f"{tag}_section") or entry.get("section", ""))
+            if not rec:
+                seen.append(f"`{tag}` recorded with NO section binding")
+                continue
+            if rec != required_section:
+                seen.append(f"`{tag}` is bound to §{rec}, not §{required_section}")
+                continue
+            rh = entry.get(f"{tag}_head", "")
+            if isinstance(rh, str) and rh and current_head:
+                fresh, why = _dispatch_content_fresh(root, rh, current_head)
+                if not fresh:
+                    seen.append(f"`{tag}` §{rec} is content-STALE ({why})")
+                    continue
+            elif ts < cutoff_ns:
+                age = int((now_ns - ts) / 60_000_000_000)
+                seen.append(f"`{tag}` §{rec} has no recorded head and is "
+                            f"{age} min old (legacy wall-clock TTL)")
+                continue
+        return "; ".join(seen) if seen else "no adversarial dispatch recorded"
 
     if required_sections:
         missing = [
@@ -2754,12 +2812,23 @@ def _step13_impl_adversarial_check(
         ]
         if not missing:
             return (True, "")
+        # Name WHY, not just WHAT. The old text said "missing <todo> §N" for
+        # every rejection cause, so an expired-but-present stamp read as "you
+        # never dispatched" -- which sent the run re-dispatching a review whose
+        # findings were already closed, and produced a second, wrong filing that
+        # blamed the review-KIND name. The diagnosis below distinguishes absent
+        # from section-mismatched from drifted.
         return (False, (
             f"IO row [x] flip requires section-bound step-13 "
             f"`[review-kind: adversarial]` Codex evidence for each promoted "
-            f"section; missing {', '.join(missing)}. Run: "
-            f"`bash scripts/codex-dispatch.sh '[review-kind: adversarial] "
-            f"<todo-path> <section-N> <prompt>'`."
+            f"section; missing {', '.join(missing)}. "
+            + "; ".join(
+                f"{todo} §{section}: {_impl_adv_diagnosis(todo, section)}"
+                for todo, section in required_sections
+                if not _entry_has_matching_impl_adv(todo, section)
+            )
+            + f". Run: `bash scripts/codex-dispatch.sh "
+              f"'[review-kind: adversarial] <todo-path> <section-N> <prompt>'`."
         ))
 
     for todo in flipped_todos:
@@ -2768,12 +2837,15 @@ def _step13_impl_adversarial_check(
             continue
         for tag in ("adversarial-impl", "adversarial"):
             ts = entry.get(tag)
-            if not (isinstance(ts, int) and ts >= cutoff_ns):
+            if not isinstance(ts, int):
                 continue
             rh = entry.get(f"{tag}_head", "")
             if isinstance(rh, str) and rh and current_head:
-                if not _git_is_ancestor(root, rh, current_head):
+                fresh, _why = _dispatch_content_fresh(root, rh, current_head)
+                if not fresh:
                     continue
+            elif ts < cutoff_ns:
+                continue
             return (True, "")
     return (False, (
         f"IO row [x] flip on {flipped_todos[0]} requires step-13 "

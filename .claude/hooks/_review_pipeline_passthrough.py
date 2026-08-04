@@ -28,6 +28,7 @@ contract explicit: only gates that ARE review-pipeline gates may
 consume this helper.
 """
 
+import re
 # Canonical review-pipeline prefixes. Each entry is the literal prefix
 # string a Bash command must START with for the gate to short-circuit.
 # Trailing space is significant: `git ` matches `git commit` but NOT
@@ -105,8 +106,139 @@ def is_review_pipeline_passthrough(cmd: str) -> bool:
     """
     if not isinstance(cmd, str):
         return False
-    cmd_stripped = cmd.lstrip()
+    cmd_stripped = _skip_leading_assignments(cmd.lstrip())
+    if cmd_stripped is None:
+        return False
     for prefix in REVIEW_PIPELINE_PREFIXES:
         if cmd_stripped.startswith(prefix):
             return True
     return False
+
+
+# `NAME=` ... up to the unquoted whitespace that ends the assignment's VALUE.
+_ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+
+
+def _skip_leading_assignments(cmd: str):
+    """Step over leading `NAME=VALUE` assignments, or None if one may execute.
+
+    The allowlist tested the LEADING TOKEN of the raw string, so a command whose
+    every part is allowlisted was still refused for beginning with a variable
+    binding: `L="$(ls -t .claude/overnight/artifacts/*.log | head -1)"; grep -n
+    ... "$L"` (v08, three refusals in one TODO-04 section-60 review). The gate is
+    correct; only its tokenizer was too literal, and the effect was to push the
+    review pipeline into less readable one-liners that repeat a glob rather than
+    bind it once -- precisely when every call is on the critical path.
+
+    An assignment does not change WHICH command runs, so stepping over it is
+    faithful -- with one exception that would otherwise open a real hole: the
+    VALUE can contain a command substitution, and that substitution RUNS.
+    `L="$(rm -rf /)"; grep x` must not become "starts with grep". So any
+    substitution inside a skipped value is itself required to be passthrough,
+    and anything unparseable returns None (refuse, do not guess).
+    """
+    while True:
+        m = _ASSIGN_RE.match(cmd)
+        if not m:
+            return cmd
+        rest = cmd[m.end():]
+        try:
+            value, consumed = _read_word(rest)
+        except ValueError:
+            return None
+        for body in _substitution_bodies(value):
+            if not is_review_pipeline_passthrough(body.strip()):
+                return None
+        cmd = rest[consumed:].lstrip()
+        # A STANDALONE assignment (`L=...; grep ...`) is its own command, so the
+        # separator has to be stepped over too or the next head reads as `;`.
+        # This decomposes exactly one level and the new head is still tested, so
+        # `L=x; rm -rf /` stays blocked -- see the selftest.
+        m2 = re.match(r"^(?:;|&&|\|\||&)\s*", cmd)
+        if m2:
+            cmd = cmd[m2.end():]
+
+
+def _read_word(s: str):
+    """The first shell WORD of `s` and how many chars it spans. Quote-aware."""
+    quote, i, out = None, 0, []
+    while i < len(s):
+        ch = s[i]
+        if quote:
+            out.append(ch)
+            if ch == quote:
+                quote = None
+            elif ch == "\\" and quote == '"' and i + 1 < len(s):
+                i += 1
+                out.append(s[i])
+            i += 1
+            continue
+        if ch in "'\"":
+            quote = ch
+            out.append(ch)
+            i += 1
+            continue
+        # A substitution is one WORD even though it contains spaces, so it has
+        # to be spanned rather than split on -- otherwise `L=`ls -t x`` stops at
+        # the first space and its body never reaches the passthrough check.
+        if ch == "`":
+            j = s.find("`", i + 1)
+            if j < 0:
+                raise ValueError("unterminated backtick")
+            out.append(s[i:j + 1])
+            i = j + 1
+            continue
+        if s.startswith("$(", i):
+            depth, j = 1, i + 2
+            while j < len(s) and depth:
+                if s[j] == "(":
+                    depth += 1
+                elif s[j] == ")":
+                    depth -= 1
+                j += 1
+            if depth:
+                raise ValueError("unterminated substitution")
+            out.append(s[i:j])
+            i = j
+            continue
+        if ch == "\\" and i + 1 < len(s):
+            out.append(s[i + 1])
+            i += 2
+            continue
+        if ch.isspace() or ch in ";&|":
+            break
+        out.append(ch)
+        i += 1
+    if quote:
+        raise ValueError("unterminated quote")
+    return "".join(out), i
+
+
+def _substitution_bodies(s: str):
+    """Bodies of `$(...)` and `` `...` `` in a value, innermost included."""
+    out, n, i = [], len(s), 0
+    while i < n:
+        if s[i] == "\\":
+            i += 2
+            continue
+        if s[i] == "`":
+            j = s.find("`", i + 1)
+            if j < 0:
+                break
+            out.append(s[i + 1:j])
+            i = j + 1
+            continue
+        if s.startswith("$(", i):
+            depth, j = 1, i + 2
+            while j < n and depth:
+                if s[j] == "(":
+                    depth += 1
+                elif s[j] == ")":
+                    depth -= 1
+                j += 1
+            out.append(s[i + 2:j - 1])
+            out.extend(_substitution_bodies(s[i + 2:j - 1]))
+            i = j
+            continue
+        i += 1
+    return out

@@ -313,10 +313,13 @@ def match_step(skill: str, tool_name: str, signature: str) -> List[int]:
             continue
         if pattern.startswith(_SENTINEL_REVIEW_KIND_PREFIX):
             if detect_kind is None:
-                from _review_kind import detect_review_kind_from_cmd
-                detect_kind = detect_review_kind_from_cmd(signature)
+                # ALL kinds in the command, not just the leading one: several
+                # dispatches routinely share a single Bash call, and matching
+                # only the first meant a performed step read as never observed.
+                from _review_kind import detect_review_kinds_from_cmd
+                detect_kind = detect_review_kinds_from_cmd(signature)
             want = pattern[len(_SENTINEL_REVIEW_KIND_PREFIX):]
-            if detect_kind == want:
+            if want in detect_kind:
                 matched.append(step_n)
             continue
         if re.search(pattern, signature, re.S):

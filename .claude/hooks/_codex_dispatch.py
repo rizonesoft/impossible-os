@@ -889,17 +889,47 @@ def extract_dispatch_prompt(cmd):
     `[review-kind: ...]` from the heredoc body instead of seeing the
     literal `$VAR` token.
     """
+    prompts = extract_dispatch_prompts(cmd)
+    return prompts[0] if prompts else ""
+
+
+def extract_dispatch_prompts(cmd):
+    """EVERY Codex dispatch prompt in `cmd`, in order. Same parsing as the
+    singular form, which is now the first element of this list.
+
+    A compound Bash call can carry several dispatches, and the singular
+    extractor stopped at the first -- so the rest were invisible to every
+    consumer. MEASURED 2026-08-03: `review-todo-section` step 8's two quality
+    dispatches (consistency + perf) were issued in ONE Bash call alongside the
+    step-5 adversarial one -- all three broker artifacts carry the same
+    `20260803-101826` second-resolution stamp -- and only `adversarial` was
+    attributed. The commit was then refused with "step(s) [8] were never
+    observed" against recorded steps [4, 5, 17], and the run took a
+    `SKIP_SKILL_STEP_BLOCK` opt-out on a review it had FULLY performed: 15,714
+    bytes of consistency findings and 10,912 of perf, five findings triaged.
+    That is the worst outcome a gate can produce -- it trains the run to skip a
+    real check to get past a bookkeeping miss.
+
+    NOTE the filed diagnosis blamed step 8's matcher for recognising only the
+    direct `scripts/codex-dispatch.sh` shape and not the broker. It does not
+    reproduce: the broker resolves identically to the direct shape for all four
+    kinds (the basename-suffix contract in `_review_kind`), and step 5 was
+    attributed from that same broker in the same call. First-match truncation
+    is the mechanism; the shape was never the problem.
+    """
     if not isinstance(cmd, str) or not cmd.strip():
-        return ""
+        return []
     if "codex" not in cmd:
-        return ""
+        return []
     stripped, heredoc_vars = _harvest_heredoc_vars(cmd)
     toks = _tokenize(stripped)
     if not toks:
-        return ""
+        return []
+    out = []
     for seg in _segment_by_separators(toks):
         seg = _trim_heredoc_body(seg)
         if seg and _segment_is_codex_invocation(seg):
-            prompt = _segment_extract_prompt(seg)
-            return _resolve_var(prompt, heredoc_vars)
-    return ""
+            prompt = _resolve_var(_segment_extract_prompt(seg), heredoc_vars)
+            if prompt:
+                out.append(prompt)
+    return out

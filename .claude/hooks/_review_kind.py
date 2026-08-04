@@ -76,6 +76,37 @@ def detect_review_kind_from_cmd(cmd: str) -> str:
     return ""
 
 
+def detect_review_kinds_from_cmd(cmd: str) -> list:
+    """EVERY `[review-kind: X]` in a command, in order, de-duplicated.
+
+    `detect_review_kind_from_cmd` returns the FIRST only, which silently drops
+    the rest when several dispatches share one Bash call -- the shape that cost
+    a `SKIP_SKILL_STEP_BLOCK` opt-out on a fully-performed review (see
+    `extract_dispatch_prompts`). Consumers that ask "was kind K dispatched here"
+    must use this; consumers that legitimately want the leading kind (evidence
+    tokens, single-dispatch receipts) keep the singular form.
+    """
+    import sys
+    from pathlib import Path
+    _hook_dir = Path(__file__).resolve().parent
+    if str(_hook_dir) not in sys.path:
+        sys.path.insert(0, str(_hook_dir))
+    from _codex_dispatch import extract_dispatch_prompts
+    kinds = []
+    for body in extract_dispatch_prompts(cmd):
+        for ln in body.splitlines():
+            s = ln.strip()
+            if not s:
+                continue
+            m = _REVIEW_KIND_RE.search(s)
+            if m:
+                k = m.group(1).lower()
+                if k not in kinds:
+                    kinds.append(k)
+            break               # first non-blank line only, as above
+    return kinds
+
+
 def is_dispatch_of_kind(cmd: str, kind: str) -> bool:
-    """Convenience wrapper: detect_review_kind_from_cmd(cmd) == kind."""
-    return detect_review_kind_from_cmd(cmd) == kind
+    """True when `cmd` dispatches `kind` -- in ANY of its dispatch segments."""
+    return kind in detect_review_kinds_from_cmd(cmd)

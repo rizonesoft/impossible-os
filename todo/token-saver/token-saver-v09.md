@@ -1,20 +1,18 @@
-# Token Saver v08 -- Cost Findings (opened 2026-08-02)
+# Token Saver v09 -- Cost Findings (opened 2026-08-04)
 
-> **CLOSED 2026-08-04.** Successor: [`token-saver-v09.md`](token-saver-v09.md). **The run filed ZERO cost findings against this file.** That is a real result, not an omission: the >= 2% bar held for the whole canary and nothing cleared it. The standing rotation question below is carried to v09 UNANSWERED, with its baselines, because the run stopped on its deadline before producing the measurement it owed.
->
-> **What this cycle's savings actually came from** -- all filed as CORRECTNESS items in `overnight-runner-improvements-v08.md`, which is where a false-positive gate belongs even though its cost is measured in tokens: the `bash -n` refusals (3 filings, ~2-3 tool calls each on a per-edit inner loop), the commit-message false positives in two hooks (one of which cost a ~130-line message rewrite through a temp file), the assignment-prefixed grep (3 refusals in one review), and the step-13 TTL (one refused commit plus a ~6-minute re-dispatch carrying no new information). A gate that misfires is a cost defect wearing a correctness costume.
-
-Cost and token findings from the run armed after the 2026-08-02 repair stop. CAPTURE surface, not a work queue: it sits outside the sequencer's traversal, so nothing here is implemented by the run. It is the CURRENT capture file -- the sequencer files to the NEWEST `token-saver-vNN.md` in this directory, which is this one until an operator opens v09.
+Cost and token findings from the run armed after the 2026-08-04 close-out of [v08](token-saver-v08.md). CAPTURE surface, not a work queue: it sits outside the sequencer's traversal, so nothing here is implemented by the run. It is the CURRENT capture file -- the sequencer files to the NEWEST `token-saver-vNN.md` in this directory, which is this one until an operator opens v10.
 
 **Why findings land here instead of being fixed.** Cost machinery is control plane (`.claude/hooks/**`, `scripts/overnight/**`) or receipt surface, both off-limits unattended. Record the finding in the same turn it is observed, then continue; a finding carried in-context to "report later" dies with the segment.
 
 **What to write.** One item per finding: what was observed live (run id, segment, numbers), the mechanism confirmed at source, and the measured or bounded cost. **The >= 2% bar applies.** A projection is not a finding. Lead <= 250 chars; sub-bullet bodies <= 1,000.
 
-## THE standing question, unchanged and now three rounds old: does the mid-section rotation pay?
+**A misfiring gate is a COST defect -- file it in [`overnight-runner-improvements-v09.md`](../overnight-runner-improvements/overnight-runner-improvements-v09.md) anyway.** v08 collected zero findings here while its sibling collected several whose cost was measured purely in wasted tool calls: three separate filings of a `bash -n` refusal on a per-edit inner loop, a ~130-line commit message rewritten through a temp file to launder vocabulary a gate misread, three refusals in one review from an assignment-prefixed grep, and a ~6-minute re-dispatch that carried no new information. Keeping them together with their mechanism is right; just do not conclude from an empty token-saver file that nothing was wasted.
 
-The 34.4h canary of 2026-08-01 settled everything EXCEPT whether it works:
+## THE standing question, unanswered for a FOURTH cycle: does the mid-section rotation pay?
 
-- **It fires.** 65 records in `.claude/overnight/advisories.jsonl` across 12 segments -- the first canary in which this was observable at all.
+The 34.4h canary of 2026-08-01 settled everything EXCEPT whether it works, and the 2026-08-02 canary stopped on its deadline without producing the measurement.
+
+- **It fires.** 65 records in `.claude/overnight/advisories.jsonl` across 12 segments.
 - **It is delivered.** The systemMessage reaches the run's transcript.
 - **It never acts.** **0** `rollover-wip` attempts in 12 segments.
 - **The threshold is innocent.** Three rounds have adjusted or repaired this feature -- 200 (a mis-derived turn/event conversion), 90 (correct), then a transport defect (`attachment` events never reach the stream `stream-report` parses), then a message that still said "wait for a boundary" while the doctrine said "create one". Each time the NUMBER was blamed and each time it was not the cause.
@@ -30,6 +28,8 @@ The 34.4h canary of 2026-08-01 settled everything EXCEPT whether it works:
 If long segments turn out to be a small minority, the honest conclusion is that the rotation is a TAIL-RISK GUARD rather than a cost lever, and its threshold should RISE so it stops firing where it cannot pay. **Do not change `ROTATE_HINT_TURNS` on reasoning alone -- it has been wrong three times.**
 
 **Baselines (measured 2026-07-31 / 2026-08-01):** prior segments reached 492K / 542K / 798K end-of-segment context; one segment cost **$179.27** for a single section with cache-read at **85.3%** of spend.
+
+**A fourth unanswered cycle is itself worth noting.** If this run also ends without the measurement, the honest move is to stop treating it as a pending question and decide it on the evidence already in hand -- either raise the threshold so it stops firing where it cannot pay, or retire the feature and reclaim the hook.
 
 ---
 

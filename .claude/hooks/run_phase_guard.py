@@ -135,8 +135,65 @@ def _is_codex_write_dispatch(cmd):
     return False
 
 
+_HEREDOC_RE = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
+
+
+def _strip_git_message_bodies(cmd):
+    """Drop git COMMIT-MESSAGE text from a command line before scanning it.
+
+    A message body is DATA, not an instruction. `[SEQ-TEARDOWN]` substring-tested
+    the whole command, so a commit message that DESCRIBED a teardown path -- "the
+    breaker now stops the suite", "aborts" -- was refused as if it had performed
+    one (v08, live 2026-08-02 during TODO-04 section 56). The cost was not the
+    refusal: it was that the message got rewritten to launder the vocabulary,
+    replacing the accurate "aborts the suite" with "ends the suite early". A gate
+    that cannot read prose should not be editing it.
+
+    NARROW BY CONSTRUCTION -- only `git` commands, and only their message
+    arguments. A heredoc feeding `bash`/`sh`/`python3` is EXECUTABLE, so
+    stripping bodies wholesale would launder a real teardown through
+    `bash <<'EOF' ... systemctl stop overnight ... EOF`. That shape must keep
+    blocking, and the selftest pins it.
+    """
+    if not cmd or "git" not in cmd:
+        return cmd
+    out = cmd
+    # 1. Heredoc bodies, but only where the redirect belongs to a git command.
+    for m in list(_HEREDOC_RE.finditer(cmd)):
+        head = cmd[:m.start()]
+        # the command owning this redirect: last control operator to here
+        seg = re.split(r"[;&|]", head)[-1].strip()
+        first = seg.split()[0] if seg.split() else ""
+        if first.rsplit("/", 1)[-1] != "git":
+            continue                       # executable heredoc -- leave it alone
+        delim = m.group(2)
+        body = re.search(r"\n(.*?)(?:^|\n)" + re.escape(delim) + r"\s*(?:\n|$)",
+                         cmd[m.end():], re.S)
+        if body:
+            out = out.replace(body.group(1), " ")
+    # 2. `-m <text>` / `--message=<text>` / `-F <file>` arguments.
+    try:
+        toks = shlex.split(out)
+    except ValueError:
+        return out                          # unparseable -> scan it unchanged
+    if not any(t.rsplit("/", 1)[-1] == "git" for t in toks):
+        return out
+    keep, skip = [], False
+    for t in toks:
+        if skip:
+            skip = False
+            continue
+        if t in ("-m", "--message", "-F", "--file"):
+            skip = True
+            continue
+        if t.startswith("--message=") or t.startswith("--file="):
+            continue
+        keep.append(t)
+    return " ".join(keep)
+
+
 def _is_self_teardown(cmd):
-    c = " ".join((cmd or "").split())
+    c = " ".join(_strip_git_message_bodies(cmd or "").split())
     # Disarm via either wrapper.
     if ("arm-sequencer.sh" in c or "overnight-arm.sh" in c) and "--disarm" in c:
         return True
@@ -749,7 +806,83 @@ def _rollover_failures(root: Path, state: dict) -> list:
                          f"{', '.join(jobs[:4])}")
     except Exception:
         pass  # systemctl absent -> cannot enumerate; not a hard fail
+    # The run's own audit trail: a ship that never reached the run-log is
+    # invisible to the operator reconstructing the night.
+    unlogged = _unlogged_ships(root)
+    if unlogged:
+        fails.append(
+            f"{len(unlogged)} section ship(s) missing a docs/overnight/run-log.md "
+            f"entry: {', '.join(unlogged[:3])}"
+            + (f" (+{len(unlogged) - 3} more)" if len(unlogged) > 3 else "")
+            + ". Append the entry naming the ship commit, then re-run rollover.")
     return fails
+
+
+_SHIP_ROW_RE = re.compile(r"^\+.*\|\s*\[x\]\s*\|", re.M)
+_HASH_RE = re.compile(r"\b([0-9a-f]{7,40})\b")
+
+
+def _unlogged_ships(root: Path, limit: int = 40) -> list:
+    """SHIP commits that `docs/overnight/run-log.md` never recorded.
+
+    The run-log append is the ADVANCE step's only unguarded instruction, and
+    nothing verified it: MEASURED 2026-08-03, six consecutive section ships left
+    no entry at all, and commit `6e5a5a12` is subject-lined as writing the
+    section-61 entry while its diff touches exactly two files, neither of them
+    the log. The claim and the diff disagreed and nothing caught it.
+
+    It hid itself, too -- the gap is only visible if you grep the log for
+    sections you already know shipped. The cost is not tokens: the run-log is
+    what an operator reads to reconstruct a night, and that stretch has to be
+    rebuilt out of `git log` instead.
+
+    Keyed on the COMMIT HASH, which the log already records as `SHIPPED <hash>`
+    and which (unlike a section number) cannot drift or be spelled three ways.
+    Bounded to the commits after the newest hash the log mentions, so a repo
+    with a long pre-existing gap reports only what THIS run owes. Returns []
+    on any git/IO error -- an audit-trail check must never be the thing that
+    wedges a run.
+    """
+    log = root / "docs/overnight/run-log.md"
+    try:
+        text = log.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    logged = set(_HASH_RE.findall(text))
+    try:
+        out = subprocess.run(
+            ["git", "log", f"-{limit}", "--format=%H"],
+            cwd=str(root), capture_output=True, text=True, timeout=30)
+        if out.returncode != 0:
+            return []
+        commits = [c for c in out.stdout.split() if c]
+    except Exception:
+        return []
+    # Stop at the newest commit the log already names: everything older is
+    # either recorded or predates this run's obligation.
+    horizon = len(commits)
+    for i, c in enumerate(commits):
+        if any(c.startswith(h) for h in logged):
+            horizon = i
+            break
+    unlogged = []
+    for c in commits[:horizon]:
+        try:
+            d = subprocess.run(
+                ["git", "show", "--format=%s", "--unified=0", c, "--", "todo/"],
+                cwd=str(root), capture_output=True, text=True, timeout=30)
+            if d.returncode != 0:
+                continue
+            body = d.stdout
+            if not _SHIP_ROW_RE.search(body):
+                continue
+            subject = body.splitlines()[0][:60] if body.splitlines() else ""
+            if subject.lower().startswith(("review:", "revert")):
+                continue          # the review half of a ship pair, not a ship
+            unlogged.append(f"{c[:10]} ({subject})")
+        except Exception:
+            continue
+    return unlogged
 
 
 def _unpushed_count(root: Path):
@@ -1907,6 +2040,36 @@ def selftest():
                     {"active": True, "phase": "VALIDATE"}, headless=False,
                     stages_done=True)
     check(a, "interactive validate-todo-file blocked (must never trap operator)")
+
+    # v08: [SEQ-TEARDOWN] substring-tested the whole command, so a commit MESSAGE
+    # describing a teardown path was refused as if it had performed one -- and
+    # the message then got reworded to launder the vocabulary, replacing the
+    # accurate "aborts the suite" with "ends the suite early". A message body is
+    # DATA. The scope is deliberately narrow (git only): a heredoc feeding
+    # bash/python3 is EXECUTABLE and must keep blocking.
+    _teardown_body = ("review: the breaker now stops the suite\n\nIt aborts the "
+                      "suite and stops the task; systemctl stop overnight is\n"
+                      "left to the operator.\n")
+    for cmd, want, why in (
+        ("git commit -F - <<'EOF'\n" + _teardown_body + "EOF", False,
+         "git -F message body read as a teardown"),
+        ('git commit -m "the breaker stops the overnight systemctl unit" -- a.md',
+         False, "git -m message body read as a teardown"),
+        ('git commit --message="pkill claude when wedged" -- a.md', False,
+         "git --message= body read as a teardown"),
+        ("bash .claude/skills/overnight-sequencer/arm-sequencer.sh --disarm",
+         True, "real --disarm not blocked"),
+        ("systemctl --user stop overnight-impossible-os.service", True,
+         "real systemctl stop not blocked"),
+        ("pkill -f claude", True, "real pkill claude not blocked"),
+        ("bash <<'EOF'\nsystemctl --user stop overnight-impossible-os.service\nEOF",
+         True, "EXECUTABLE heredoc laundered a real teardown"),
+        ("python3 <<'EOF'\nimport os; os.system('pkill -f claude')\nEOF", True,
+         "executable python heredoc laundered a real teardown"),
+        ('git commit -m "notes" -- a.md && systemctl --user stop overnight-x',
+         True, "a real teardown beside a git message escaped"),
+    ):
+        check(_is_self_teardown(cmd) is want, why)
 
     if fails:
         for f in fails:
