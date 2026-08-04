@@ -792,14 +792,14 @@ Provides deep C code intelligence for editors.
 
 A FastMCP stdio server that proxies up to five language servers (clangd, asm-lsp, bash-language-server, pyright, PowerShellEditorServices) through 17 read-only MCP tools (6 core + 8 extended + 2 type-hierarchy + 1 `_health` meta tool), giving Claude Code (the primary AI client this repo supports) compiler-grade code intelligence across every language the repo uses. Resolves the LSP/MCP protocol incompatibility called out above. Other MCP-aware clients (Cursor, Aider) can also consume the surface technically -- the bridge is read-only by design -- but the repo's [autonomous-agent boundary](ai-system.md#autonomous-agent-boundary-policy) applies regardless of client: no MCP server in this repo, including the bridge, enables autonomous commit / push / PR workflows.
 
-Owner: [TODO-07 in 00-infrastructure](../../todo/00-infrastructure/TODO-07-lsp-mcp-bridge.md). Repo-tracked under [`scripts/lsp-mcp/`](../../scripts/lsp-mcp/) (~3500 LOC + 101-test harness).
+Owner: [TODO-07 in 00-infrastructure](../../todo/00-infrastructure/TODO-07-lsp-mcp-bridge.md). Repo-tracked under [`scripts/lsp-mcp/`](../../scripts/lsp-mcp/) (~3500 LOC + 109-test harness).
 
 #### Architecture
 
 | Component                                | File                                                          | Role                                                                                  |
 | ---------------------------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
 | FastMCP bridge                           | [`scripts/lsp-mcp/bridge.py`](../../scripts/lsp-mcp/bridge.py)| 17 typed MCP tools (6 core + 8 extended + 2 type-hierarchy + `_health` meta) + extension router + per-LSP serialization + crash/respawn watchdog |
-| LSP JSON-RPC client                      | [`scripts/lsp-mcp/lsp_client.py`](../../scripts/lsp-mcp/lsp_client.py) | Subprocess lifecycle + request/response demux + read-only deny gate + per-spawn ownership stamp (`LSP_BRIDGE_RUN_ID`, optional PID ledger) |
+| LSP JSON-RPC client                      | [`scripts/lsp-mcp/lsp_client.py`](../../scripts/lsp-mcp/lsp_client.py) | Subprocess lifecycle + request/response demux + read-only deny gate + three ownership stamps -- `LSP_BRIDGE_RUN_ID` (the whole harness tree), `LSP_BRIDGE_OWNER` (this bridge process), `LSP_BRIDGE_GEN` (this one spawn) -- plus an optional PID ledger |
 | Per-language spawn recipes               | [`scripts/lsp-mcp/servers/`](../../scripts/lsp-mcp/servers/)  | One module per LSP: `clangd_server`, `asm_server`, `bash_server`, `python_server`, `powershell_server` |
 | MCP manifest                             | [`scripts/lsp-mcp/mcp.json`](../../scripts/lsp-mcp/mcp.json) + [`.mcp.json`](../../.mcp.json) | stdio transport, registered alongside `todo-graph`              |
 | Self-test + boundary harness             | [`scripts/lsp-mcp/tests/test_bridge.sh`](../../scripts/lsp-mcp/tests/test_bridge.sh) + [`test_boundary.sh`](../../scripts/lsp-mcp/tests/test_boundary.sh) | 109 sub-tests + write-capable-method audit            |

@@ -7101,9 +7101,16 @@ else:
         lsp_client.force_kill_spawned(settle=0.0)
     finally:
         os.dup, os.pidfd_open, os.kill = real_dup2, real_open2, real_kill2
-    if sent_anyway or killed_by_number:
+    # The rule is not "no signal" -- it is "no signal by NUMBER". With
+    # the dup unavailable the sweep CLAIMS the record's own descriptor,
+    # which is exact; refusing outright would leave the server running
+    # for the health-restart path to publish a replacement over.
+    if killed_by_number:
         fails.append(f"a record holding a descriptor was signalled by NUMBER "
                      f"when the borrow failed: {killed_by_number}")
+    if not sent_anyway:
+        fails.append("the claim path did not signal a record whose "
+                     "descriptor was still open")
 lsp_client._retire_spawn(noborrow.pid)
 noborrow.kill()
 try:

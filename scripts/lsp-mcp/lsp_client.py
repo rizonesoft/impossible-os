@@ -637,13 +637,28 @@ def _signal_recorded(target, sig: int) -> bool:
                 except Exception:
                     pass
         if entry.fd is not None:
-            # The record HAS a descriptor and the borrow still failed --
-            # the dup itself can fail under the FD exhaustion that makes
-            # emergency teardown urgent. Falling through to a numeric
-            # signal here would hand back exactly the equal-tick recycle
-            # the descriptor exists to rule out, so this fails closed
-            # (Codex adversarial review, High).
-            return False
+            # The dup failed under FD exhaustion. A numeric fallback would
+            # hand back the equal-tick recycle the descriptor rules out,
+            # and refusing outright leaves the server running -- which the
+            # health-restart path then compounds by publishing a
+            # replacement over it (Codex adversarial review, High). So
+            # CLAIM the original: a successful remove transfers ownership
+            # from _retire_spawn to us, and needs no new descriptor.
+            try:
+                _SPAWNED.remove(entry)
+            except ValueError:
+                return False            # another thread owns it now
+            try:
+                signal.pidfd_send_signal(entry.fd, sig)
+                return True
+            except (ProcessLookupError, OSError):
+                return False
+            finally:
+                try:
+                    os.close(entry.fd)
+                except Exception:
+                    pass
+                entry.fd = None
         # FAIL CLOSED on absent identity. `ticks is None` means the start
         # time could not be read when the child was recorded, and nothing
         # else here identifies the NUMBER.
@@ -748,6 +763,8 @@ def _carries_our_owner_id(
     only the leader therefore disowned exactly the dead-leader,
     live-worker process the previous fix had just taught the scan to keep
     (Codex adversarial review, Medium, reproduced)."""
+    if deadline is not None and time.monotonic() >= deadline:
+        return None                     # budget spent before we even read
     marker = b"LSP_BRIDGE_OWNER=" + _OWNER_ID.encode()
     try:
         with open(f"/proc/{pid}/environ", "rb") as fh:
@@ -828,13 +845,21 @@ class _ProcSnapshot:
         # every round rather than dropped (Codex adversarial review,
         # High).
         key = (pid, ticks) if ticks is not None else None
-        if key is not None:
-            cached = self._ours.get(key)
-            if cached is not None:
-                return cached
+        if key is not None and self._ours.get(key):
+            return True
         answer = _carries_our_owner_id(pid, deadline=deadline)
-        if answer is not None and key is not None:
-            self._ours[key] = answer
+        # POSITIVES only. Ownership is not immutable for a (pid, ticks)
+        # pair the way it looks: the stamp reaches the child through the
+        # env passed to Popen, so a probe landing between fork and exec
+        # reads an UNSTAMPED environment for a process that is about to
+        # carry the stamp -- same pid, same start ticks. Caching that
+        # False meant every later round reused it and the newly exec'd
+        # server was never signalled (Codex adversarial review, Medium).
+        # A negative is therefore re-asked each round; it is also the
+        # cheap case, since an unreadable process answers None and was
+        # never cacheable anyway.
+        if answer is True and key is not None:
+            self._ours[key] = True
         return answer is True
 
 
@@ -909,6 +934,8 @@ def _carries_gen_id(pid: int, gen: str,
     not-killed. `deadline` bounds the task walk for the same reason it
     bounds the owner probe: one many-threaded replacement could otherwise
     hold a teardown open past its budget inside a single call."""
+    if deadline is not None and time.monotonic() >= deadline:
+        return False                    # budget spent before we even read
     marker = b"LSP_BRIDGE_GEN=" + gen.encode()
     try:
         with open(f"/proc/{pid}/environ", "rb") as fh:
@@ -2767,6 +2794,8 @@ class LspSubprocess:
         because their thread id will not match (Codex follow-up
         High: a global bool was bypassable by ordinary tool traffic;
         binding to threading.get_ident() closes the loophole)."""
+        # ONE absolute budget for the WHOLE shutdown, taken at entry.
+        shutdown_deadline = time.monotonic() + max(0.2, timeout)
         if self._shutdown_called:
             return
 
@@ -2853,7 +2882,12 @@ class LspSubprocess:
         # that helper takes up to twenty full procfs scans with sleeps --
         # spent before the collection deadline further down even existed
         # (Codex adversarial review, Medium).
-        group_deadline = time.monotonic() + max(0.2, timeout)
+        # Derived from the deadline taken at ENTRY, not from `timeout`
+        # again: recomputing it here re-allocates the caller's whole
+        # budget partway through, so a shutdown called with 0.5s could
+        # spend that on the polite exchange and another 0.5s on group
+        # collection (Codex perf review, Medium).
+        group_deadline = shutdown_deadline
         if proc.poll() is None:
             try:
                 # Signal the leader through its PINNED identity, not by
