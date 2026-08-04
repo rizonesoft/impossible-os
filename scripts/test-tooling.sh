@@ -594,7 +594,11 @@ else
     if [ -x "$LSP_MCP_TEST" ]; then
         LM_OUT=$("$LSP_MCP_TEST" 2>&1)
         LM_RC=$?
-        LM_SUMMARY=$(printf '%s\n' "$LM_OUT" | grep -E '^\[lsp-mcp-tests\] [0-9]+/[0-9]+ sub-tests PASS$' | tail -1)
+        # The harness appends ", N shape(s) SKIPPED" to this line when a
+        # host could not build a fixture. Match the suffix too, or the
+        # aggregate silently reports full coverage for a run that skipped
+        # required shapes (Codex consistency review, Medium).
+        LM_SUMMARY=$(printf '%s\n' "$LM_OUT" | grep -E '^\[lsp-mcp-tests\] [0-9]+/[0-9]+ sub-tests PASS(, [0-9]+ shape\(s\) SKIPPED)?$' | tail -1)
         if [ "$LM_RC" = "0" ]; then
             t_pass "scripts/lsp-mcp/tests/test_bridge.sh PASS (${LM_SUMMARY:-summary unavailable})"
         else

@@ -64,7 +64,7 @@ title: "TODO-07 -- LSP to MCP Bridge (C, NASM, shell, Python, PowerShell)"
 | 💎   |  18   | Type hierarchy tools (supertypes / subtypes, read-only)                    | §1, §7, §11                       |  [x]   |
 | 💎   |  19   | Scale Roadmap (DEFERRED -- trigger-gated, no code today)                   | --                                |  [/]   |
 | ⭐   |  20   | Reap determinism + leak attribution for spawned language servers           | §1, §18                           |  [x]   |
-| 💎   |  21   | Thread-group edge cases in the language-server reap (harness coverage)     | §20                               |  [ ]   |
+| 💎   |  21   | Thread-group edge cases in the language-server reap (harness coverage)     | §20                               |  [x]   |
 | ⭐   |  22   | Reap sweep internals: pidfd ownership, one-snapshot sweep, ledger reader   | §20                               |  [ ]   |
 
 > 💎 = parity -- matches the existing LSP stacks Win11/Linux devs already use, wrapped in an MCP transport.
@@ -718,21 +718,22 @@ Section 20 made the reap identity-anchored and proved it with sub-tests 9b and 9
 > [!NOTE]
 > Scope boundary (split 2026-08-04, 8 open items -> SPLIT-RECOMMENDED): this section adds HARNESS COVERAGE ONLY and must not change `bridge.py` or `lsp_client.py`. The three fixes that mutate live reap code or the 9a ledger reader moved to §22. -> XREF: 00-infrastructure/TODO-07 §22 (item: "Close the pidfd retirement race: a sweep can hold a descriptor `_retire_spawn` closes underneath it")
 
-- [ ] Wire the pthread_exit thread-group shape into 9b as an end-to-end case, not just a manual reproduction
+- [x] Wire the pthread_exit thread-group shape into 9b as an end-to-end case, not just a manual reproduction
       - The child spawns with the owner stamp, starts a worker thread, then calls `pthread_exit` on its leader; the case must assert that `force_kill_spawned` collects it and that no task of it survives.
-      - Cover both nets: the leader is reachable through its `_SPAWNED` record, and an UNRECORDED such child must still be found by `_own_live_children` -- the second is the one that has no coverage at all today.
-- [ ] Assert the shutdown budget end-to-end through the SIGNAL path, not by calling `force_kill_spawned` directly
+      - Cover both nets: the leader is reachable through its `_SPAWNED` record, and an UNRECORDED such child must still be found by `force_kill_spawned` pass 3 (`_stamped_processes`) -- the second is the one that has no coverage at all today.
+      - Only the UNRECORDED case discriminates the two task-aware reads. A recorded pid is signalled by pass 1 through its pinned record, whose sole predicate is the start-time re-check, so reverting either read leaves that case green; pass 3 is what gates on both.
+- [x] Assert the shutdown budget end-to-end through the SIGNAL path, not by calling `force_kill_spawned` directly
       - 9c's timing regression calls the sweep directly, so it cannot see the handler's control flow -- the split between the graceful join, the settle wait and the sweep is exactly where a reserved slice gets spent by the wrong phase, which is how the spawn-race case broke when the settle was given the whole remainder.
       - Shape: a driver holding several persistent stamped records, a small `LSP_BRIDGE_SHUTDOWN_BUDGET`, a TERM, and an assertion that the process is gone AND its children collected within the budget plus slack.
       - Include the saturated-stderr variant: a launcher that stops draining the pipe used to wedge teardown before it began, since a blocking write is not something an exception guard can catch. Verified by hand at 2.1s to exit with the child collected; `_diag` is what keeps it non-blocking.
-- [ ] Cover the deadline-ALLOCATION family in the harness, not just the deadline itself
+- [x] Cover the deadline-ALLOCATION family in the harness, not just the deadline itself
       - The same bug appeared three times in different phases: the settle wait, then the graceful join in `_shutdown_bounded`, then the graceful join at `atexit`, each consuming the whole budget and handing an expired one to the force sweep, which then declines every record. Each was found by review or by one existing test, never by a test aimed at the shape.
       - Shape: wedge the graceful phase (patch `reap_all_live` to sleep past the budget) on each of the three exit paths and assert the recorded child is still collected within the total bound. Verified by hand for `atexit` at 1.53s with the child collected.
-- [ ] Re-check `_is_zombie` against a process whose last thread exits between the stat read and the task scan
+- [x] Re-check `_is_zombie` against a process whose last thread exits between the stat read and the task scan
       - The current order reads `/proc/PID/stat`, then enumerates `/proc/PID/task`; a task list that empties in between currently reads as ALIVE (fail-closed), which is the safe direction but is untested.
-- [ ] Commit: `"scripts/lsp-mcp: cover the thread-group reap shapes in 9b"`
+- [x] Commit: `"scripts/lsp-mcp: cover the thread-group reap shapes in 9b"`
 
-**Test checkpoint:** `bash scripts/lsp-mcp/tests/test_bridge.sh` passes with the new 9b cases, and each new case is mutation-checked -- reverting the thread-aware read in `_is_zombie` or `_carries_our_owner_id` must make it fail. Test on: host tooling only (no QEMU dependency).
+**Test checkpoint:** `bash scripts/lsp-mcp/tests/test_bridge.sh` passes with the new 9b modes (`threadleader`, `threadleader_unrecorded`) and the new 9d / 9e / 9f sub-tests, and the coverage is mutation-checked: reverting the thread-aware read in `_is_zombie` or in `_carries_our_owner_id` must fail 9f AND the 9b unrecorded mode. A host that cannot build a fixture reports SKIP through the harness summary rather than PASS, so a green line never stands in for a shape that did not run. Test on: host tooling only (no QEMU dependency).
 
 ---
 

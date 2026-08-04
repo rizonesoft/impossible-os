@@ -300,6 +300,41 @@
 #         merely contains an LSP binary name, and a real LSP owned by
 #         a DIFFERENT run id, are both rejected -- while a genuine
 #         leak on either net (ledger, environ) is still caught.
+#   9d -- the shutdown budget bounds the SIGNAL path end-to-end: a real
+#         SIGTERM into a real handler holding several stamped records
+#         finishes inside the budget, and again with a saturated
+#         (undrained) stderr pipe, which is how teardown once wedged
+#         before it began.
+#   9e -- the deadline is ALLOCATED, not merely present: the settle
+#         wait, the _shutdown_bounded graceful join and the atexit
+#         graceful join are each wedged in turn, and a child only the
+#         deadline-gated pass can reach must still be collected.
+#   9f -- the two task-aware reads pinned directly: _is_zombie and
+#         _carries_our_owner_id against a Z thread-group leader with a
+#         live worker, plus the task-list race no live shape can
+#         produce on demand (empty / unreadable -> must read ALIVE).
+#
+#  15a -- workspace-root resolution priority chain.
+#  15b -- a file:// URI is rejected at the _dispatch_path entry.
+#  15c -- ../../ escape rejected at the parent-traversal gate.
+#  15d -- a symlink met during the walk is rejected by O_NOFOLLOW.
+#  15e -- race-free walk: a rename mid-walk never yields a wrong-file
+#         read; the walk fails instead.
+#  15f -- respawn replay still works after the absolute-path fix.
+#  15g -- a workspace root that is not a directory returns a structured
+#         envelope rather than an exception.
+#  15h -- the deep-path cap answers lsp-path-too-deep.
+#  15i -- a FIFO with a wired extension must not hang the bridge.
+#  15j -- an absolute path through an in-workspace symlink is rejected.
+#  15k -- a symlinked workspace root replays absolute paths on respawn.
+#
+#  18a -- type-hierarchy normalizers (pure, no LSP).
+#  18b -- type_hierarchy_supertypes round-trip against clangd (SKIP when
+#         clangd-19 is missing).
+#  18c -- capability-missing contract against a fake LSP that advertises
+#         no provider.
+#  18d -- supported-path walk against a fake LSP that does advertise it.
+#  18e -- per-anchor types cap and its truncation metadata.
 #
 #  16a -- --warm-start (no value) warms every registered LSP, exits 0,
 #         emits warm-begin + warm-complete (or warm-over-budget).
@@ -387,11 +422,42 @@ lsp_start_ticks() {
 
 pass=0
 fail=0
+skipped=0
+
+# Shapes a sub-test could not exercise on THIS host. An unavailable
+# fixture is not a pass: before this list existed, a host without a
+# loadable libc.so.6 skipped the whole thread-group family and the
+# harness still printed the success banner naming it, so an unsupported
+# host could mint a green section checkpoint for coverage that never ran
+# (Codex consistency review, Medium). Two mechanisms, because a skip can
+# be whole or partial: a sub-test whose entire fixture is missing returns
+# 77 and `run` counts it apart from pass and fail; a sub-test that ran
+# most of its modes and lost one calls lsp_note_skip and must not name
+# the missing one in its own banner.
+LSP_SKIPPED_SHAPES=""
+lsp_record_skip() {
+    # $1 sub-test tag, $2 shape, $3 reason. Appends only.
+    LSP_SKIPPED_SHAPES="${LSP_SKIPPED_SHAPES}${LSP_SKIPPED_SHAPES:+
+}  $1 $2 -- $3"
+}
+lsp_note_skip() {
+    lsp_record_skip "$1" "$2" "$3"
+    printf '[%s] SKIP: %s -- %s\n' "$1" "$2" "$3" >&2
+}
+
 run() {
-    local name="$1"; shift
-    if "$@"; then
+    local name="$1" rc=0; shift
+    "$@" || rc=$?
+    if [ "$rc" = "0" ]; then
         printf '[lsp-mcp-tests] PASS %s\n' "$name"
         pass=$((pass + 1))
+    elif [ "$rc" = "77" ]; then
+        # 77 = this host cannot build the fixture at all. Neither a pass
+        # nor a failure; counting it as a pass is the bug described above.
+        printf '[lsp-mcp-tests] SKIP %s\n' "$name" >&2
+        skipped=$((skipped + 1))
+        # Append only -- the sub-test has already printed its own reason.
+        lsp_record_skip "lsp-mcp-tests" "$name" "fixture unavailable on this host"
     else
         printf '[lsp-mcp-tests] FAIL %s\n' "$name" >&2
         fail=$((fail + 1))
@@ -5519,9 +5585,11 @@ PY
 # provably cannot self-exit makes the assertion discriminate, and step 0
 # below verifies that property instead of assuming it.
 LSP_STUBBORN_DRIVER='
-import os, sys, threading, time
+import ctypes, os, subprocess, sys, threading, time
+import ctypes.util
 sys.path.insert(0, "scripts/lsp-mcp")
 import bridge
+import lsp_client
 from lsp_client import LspSubprocess
 
 mode = sys.argv[1]
@@ -5529,6 +5597,20 @@ STUBBORN = (
     "import sys, time\n"
     "sys.stdin.close()\n"          # never observe EOF on the pipe
     "time.sleep(600)\n"
+)
+# A leader that exits its own THREAD while a worker runs on. pthread_exit
+# from the initial thread ends that thread only: the thread group lives
+# on, so /proc/PID/stat reports Z and /proc/PID/environ answers EACCES
+# while a worker task still carries the owner stamp. Section 20 had to
+# teach both _is_zombie and _carries_our_owner_id to read
+# /proc/PID/task/<tid>/ because of exactly this, and verified it BY HAND.
+# This is that shape, wired to a regression.
+THREAD_LEADER = (
+    "import ctypes, sys, threading, time\n"
+    "sys.stdin.close()\n"
+    "threading.Thread(target=time.sleep, args=(600,)).start()\n"
+    "time.sleep(0.2)\n"
+    "ctypes.CDLL(\"libc.so.6\").pthread_exit(None)\n"
 )
 # A leader that forks its own stubborn helper, the way a language server
 # with a worker process does. Killing only the leader leaves the helper --
@@ -5572,6 +5654,35 @@ STUBBORN_CLEAN = (
 )
 bridge._install_signal_handlers()
 
+if mode.startswith("threadleader"):
+    # The shape needs glibc-style pthread_exit. A host without a loadable
+    # libc.so.6 cannot produce it, and the honest answer there is SKIP.
+    # Once libc DOES load, failing to reach Z-with-a-live-task is a FAIL,
+    # not a skip -- the harness checks the shape itself before signalling
+    # rather than trusting this probe (Codex design review, next steps).
+    # Absence and breakage are split the same way saturate_stderr splits
+    # them: catching every loader error as "unsupported host" let a
+    # descriptor limit, a permission problem or a corrupt loader retire
+    # this coverage under a green run (Codex adversarial review, Medium).
+    _found = ctypes.util.find_library("c")
+    if _found != "libc.so.6":
+        sys.stdout.write("NOSHAPE no glibc-style libc.so.6 on this host "
+                         "(the loader offers %r)\n" % (_found,))
+        sys.stdout.flush()
+        sys.exit(0)
+    try:
+        _libc = ctypes.CDLL("libc.so.6")
+    except Exception as exc:
+        # The loader HAS it; failing to load it is ours to explain.
+        sys.stdout.write("SHAPEFAIL libc.so.6 is present but did not "
+                         "load: %s\n" % exc)
+        sys.stdout.flush()
+        sys.exit(0)
+    if not hasattr(_libc, "pthread_exit"):
+        sys.stdout.write("NOSHAPE libc.so.6 has no pthread_exit\n")
+        sys.stdout.flush()
+        sys.exit(0)
+
 if mode == "spawnrace_nopidfd":
     # Same race with pidfd support removed. The runtime floor in
     # scripts/setup.sh is python3 3.8 and os.pidfd_open arrived in 3.9, so
@@ -5613,7 +5724,67 @@ if mode in ("descendant", "cleanleader", "detached"):
                  "cleanleader": STUBBORN_CLEAN,
                  "detached": STUBBORN_DETACHED}[mode]
     os.environ["STUB_HELPER_FILE"] = sys.argv[2]
+if mode == "threadleader":
+    child_cmd = THREAD_LEADER
 lsp = LspSubprocess(cmd=[sys.executable, "-c", child_cmd], lang="stubborn")
+if mode == "threadleader_unrecorded":
+    # The SAME shape with every cheap handle removed: owner-stamped so the
+    # stamp walk can claim it, in its own session so no recorded leader
+    # group contains it, and never passed through _record_spawn so no
+    # _SPAWNED entry names it. force_kill_spawned pass 3 is then the only
+    # path that can reach it -- which is the net with no coverage at all
+    # before this section, and the one both task-aware reads gate.
+    _env = dict(os.environ)
+    _env["LSP_BRIDGE_OWNER"] = lsp_client._OWNER_ID
+    _u = subprocess.Popen([sys.executable, "-c", THREAD_LEADER],
+                          env=_env, start_new_session=True)
+    # Published IMMEDIATELY, before any check that could divert the flow.
+    # This child is in its own session and carries no _SPAWNED record, so
+    # the helper file is the ONLY handle the shell has on it -- writing it
+    # on the success path alone left every precondition branch depending
+    # on a best-effort collection inside a blanket except (Codex
+    # adversarial review, Medium). Same value, written earlier.
+    _hf = open(sys.argv[2], "w")
+    _hf.write(str(_u.pid)); _hf.flush(); _hf.close()
+    _recorded = [e[0] for e in list(lsp_client._SPAWNED)]
+    _precond = None
+    if _u.pid in _recorded:
+        _precond = "survivor %d is in _SPAWNED" % _u.pid
+    elif any(i.pid == _u.pid for i in list(lsp_client._LIVE_SUBPROCS)):
+        _precond = "survivor %d is in _LIVE_SUBPROCS" % _u.pid
+    elif os.getpgid(_u.pid) in {os.getpgid(0)} | {
+            os.getpgid(p) for p in _recorded}:
+        _precond = "survivor %d shares a swept group" % _u.pid
+    if _precond is not None:
+        # Collect it here, and report WHICH happened. PRECOND-FAIL means
+        # termination was confirmed; PRECOND-LEAK means it is still alive
+        # and carries its pid plus start ticks. The shell must not fall
+        # back onto a bare pid this driver may already have reaped -- that
+        # number can be recycled, and signalling by number alone is the
+        # exact hazard 9c asserts this harness never commits (Codex
+        # adversarial review, Medium).
+        _collected = False
+        for _ in range(50):
+            if _u.poll() is not None:
+                _collected = True
+                break
+            try:
+                _u.kill()
+            except Exception:
+                pass
+            time.sleep(0.1)
+        if _collected:
+            sys.stdout.write("PRECOND-FAIL %s\n" % _precond)
+        else:
+            _ticks = "0"
+            try:
+                with open("/proc/%d/stat" % _u.pid) as _sf:
+                    _ticks = _sf.read().rsplit(")", 1)[1].split()[19]
+            except Exception:
+                pass
+            sys.stdout.write("PRECOND-LEAK %d %s %s\n"
+                             % (_u.pid, _ticks, _precond))
+    sys.stdout.flush()
 if mode == "published":
     with bridge._LIVE_LSPS_LOCK:
         bridge._LIVE_LSPS[("stubborn", "stubborn")] = lsp
@@ -5644,25 +5815,81 @@ lsp_wait_gone() {
     return 1
 }
 
+lsp_stat_state() {
+    # State letter out of any /proc stat file -- a process's or a task's.
+    # comm sits in parens and may itself contain spaces or parens, so
+    # parse from the LAST ')', the same rule proc_start_ticks uses.
+    sed 's/^.*) //' "$1" 2>/dev/null | awk '{print $1}'
+}
+
+lsp_task_state() {
+    lsp_stat_state "/proc/$1/stat"
+}
+
+lsp_wait_thread_leader_shape() {
+    # Wait up to 10s for pid $1 to become a thread-group leader in Z with
+    # at least one non-Z task still running -- the state in which
+    # /proc/PID/stat lies about liveness and /proc/PID/environ answers
+    # EACCES. Asserted BEFORE the signal so a case that never reached the
+    # shape fails loudly instead of passing as an ordinary reap.
+    local pid="$1" ticks=100 taskdir live
+    while [ "$ticks" -gt 0 ]; do
+        if [ "$(lsp_task_state "$pid")" = "Z" ]; then
+            live=0
+            for taskdir in "/proc/$pid/task"/*; do
+                [ -d "$taskdir" ] || continue
+                case "$(lsp_stat_state "$taskdir/stat")" in
+                    Z|"") ;;
+                    *) live=1 ;;
+                esac
+            done
+            if [ "$live" = "1" ]; then return 0; fi
+        fi
+        sleep 0.1
+        ticks=$((ticks - 1))
+    done
+    return 1
+}
+
 # Everything 9b has spawned, so no exit path can leave one behind. The
 # stubborn children ignore pipe EOF by design and sleep for 600s, so a test
 # that returns early without killing them leaks for ten minutes -- and 9a
 # cannot catch them, since they are `python3` rather than a language-server
 # binary name.
 LSP_9B_PIDS=""
-lsp_9b_track() { LSP_9B_PIDS="$LSP_9B_PIDS $1"; }
+# $1 pid, $2 (optional) its /proc start ticks, captured here when the
+# caller does not supply them. EVERY record is identity-bound and there
+# is no bare-pid path: cleanup runs long after most of these have been
+# reaped, and a recycled number would carry an unrelated process off with
+# it (Codex adversarial review, High). Identity is re-checked IMMEDIATELY
+# BEFORE each signal rather than at tracking time, because the entries
+# ahead of it in the list are processed first and the window is exactly
+# there. `none` means the process was already gone when it was tracked;
+# such an entry is still waited for, never signalled. Fails closed in the
+# same direction the production reap does -- not-provably-ours is
+# not-killed (lsp_client.py:521-523).
+lsp_9b_track() {
+    local t="${2:-}"
+    [ -n "$t" ] || t="$(lsp_start_ticks "$1")"
+    LSP_9B_PIDS="$LSP_9B_PIDS ${1}:${t:-none}"
+}
 lsp_9b_cleanup() {
-    local p
+    local p pid ticks
     for p in $LSP_9B_PIDS; do
-        kill -9 "$p" 2>/dev/null || true
-        wait "$p" 2>/dev/null || true
+        pid="${p%%:*}"; ticks="${p#*:}"
+        if [ "$ticks" != "none" ] &&
+           [ "$(lsp_start_ticks "$pid")" = "$ticks" ]; then
+            kill -9 "$pid" 2>/dev/null || true
+        fi
+        wait "$pid" 2>/dev/null || true
     done
     LSP_9B_PIDS=""
     rm -f "$@" 2>/dev/null || true
 }
 
 t_signal_reap_deterministic() {
-    local drv out err hf pid child helper rc sig mode signum
+    local drv out err hf pid child helper rc sig mode signum tgpid tg_skipped=0
+    local leak lpid lticks
     drv="$(mktemp -t lsp-stubborn.XXXXXX.py)"
     out="$(mktemp -t lsp-stubborn-out.XXXXXX)"
     err="$(mktemp -t lsp-stubborn-err.XXXXXX)"
@@ -5701,7 +5928,8 @@ t_signal_reap_deterministic() {
         case "$sig" in
             TERM) signum=15 ;; INT) signum=2 ;; HUP) signum=1 ;;
         esac
-        for mode in published unpublished initializing descendant cleanleader detached; do
+        for mode in published unpublished initializing descendant cleanleader \
+                    detached threadleader threadleader_unrecorded; do
             : > "$out"; : > "$err"; : > "$hf"
             python3 "$drv" "$mode" "$hf" > "$out" 2> "$err" &
             pid=$!; lsp_9b_track "$pid"
@@ -5709,17 +5937,60 @@ t_signal_reap_deterministic() {
             for _ in $(seq 1 100); do
                 child="$(awk '/^READY/ {print $2; exit}' "$out" 2>/dev/null)"
                 [ -n "$child" ] && break
+                grep -q '^NOSHAPE\|^SHAPEFAIL' "$out" 2>/dev/null && break
                 sleep 0.1
             done
+            if grep -q '^SHAPEFAIL' "$out" 2>/dev/null; then
+                # The host HAS libc.so.6 and it did not load. That is a
+                # fixture or environment defect, never a host limit, so it
+                # fails rather than quietly retiring the coverage (Codex
+                # adversarial review, Medium).
+                printf '[9b] FAIL: %s/%s %s\n' "$sig" "$mode" \
+                    "$(sed -n 's/^SHAPEFAIL //p' "$out")" >&2
+                wait "$pid" 2>/dev/null || true
+                lsp_9b_cleanup "$drv" "$out" "$err" "$hf"; return 1
+            fi
+            if grep -q '^NOSHAPE' "$out" 2>/dev/null; then
+                # Only an absent libc reaches here; see the driver probe.
+                # Recorded, so the banner below drops its thread-group
+                # clause and the final summary names what did not run.
+                lsp_note_skip 9b "$sig/$mode" \
+                    "$(sed -n 's/^NOSHAPE //p' "$out")"
+                tg_skipped=1
+                wait "$pid" 2>/dev/null || true
+                continue
+            fi
             [ -n "$child" ] && lsp_9b_track "$child"
             if [ -z "$child" ]; then
                 printf '[9b] FAIL: %s/%s driver never reported READY\n' \
                     "$sig" "$mode" >&2
+                sed 's/^/     /' "$out" >&2
+                lsp_9b_cleanup "$drv" "$out" "$err" "$hf"; return 1
+            fi
+            if grep -q '^PRECOND-FAIL\|^PRECOND-LEAK' "$out" 2>/dev/null; then
+                # The unrecorded survivor was reachable by a cheap pass, so
+                # collecting it would have proved nothing about the one net
+                # this case exists to exercise. PRECOND-FAIL means the
+                # driver confirmed the child is gone and there is nothing
+                # to track; PRECOND-LEAK means it is still alive, and only
+                # then does the fallback take it -- after re-checking the
+                # start ticks, because a pid this driver may already have
+                # reaped can name somebody else entirely.
+                leak="$(sed -n 's/^PRECOND-LEAK //p' "$out")"
+                if [ -n "$leak" ]; then
+                    lpid="${leak%% *}"; leak="${leak#* }"
+                    lticks="${leak%% *}"; leak="${leak#* }"
+                    lsp_9b_track "$lpid" "$lticks"
+                else
+                    leak="$(sed -n 's/^PRECOND-FAIL //p' "$out")"
+                fi
+                printf '[9b] FAIL: %s/%s %s\n' "$sig" "$mode" "$leak" >&2
                 lsp_9b_cleanup "$drv" "$out" "$err" "$hf"; return 1
             fi
             helper=""
             if case "$mode" in
-                   descendant|cleanleader|detached) true ;;
+                   descendant|cleanleader|detached|threadleader_unrecorded)
+                       true ;;
                    *) false ;;
                esac
             then
@@ -5729,7 +6000,13 @@ t_signal_reap_deterministic() {
                 # helper is reparented and only its process group remains
                 # as a handle. In detached the helper calls setsid, so it
                 # is in NO group of ours and is not our child either --
-                # only the run-id stamp can still find it.
+                # only the per-process OWNER stamp can still find it --
+                # LSP_BRIDGE_OWNER, not the tree-wide run id, because a
+                # run id shared across a harness tree would make "ours"
+                # mean "any sibling" (lsp_client.py:518-523). In
+                # threadleader_unrecorded the driver itself spawns the
+                # survivor, so the announcement is the driver's, not a
+                # forked leader's.
                 for _ in $(seq 1 100); do
                     helper="$(cat "$hf" 2>/dev/null)"
                     [ -n "$helper" ] && break
@@ -5742,6 +6019,35 @@ t_signal_reap_deterministic() {
                     lsp_9b_cleanup "$drv" "$out" "$err" "$hf"; return 1
                 fi
             fi
+            # The thread-group cases must actually BE in the thread-group
+            # state when the signal lands, or they are ordinary reaps
+            # wearing the name. Once libc loaded, not reaching it is a
+            # FAIL: the shape is the entire content of these two cases.
+            #
+            # The two cases are NOT equivalent, and only one of them can
+            # discriminate the task-aware predicates (Codex adversarial
+            # review, Medium). `threadleader` is RECORDED, so
+            # force_kill_spawned pass 1 signals it through its pinned
+            # _SPAWNED record (lsp_client.py:760), whose only predicate is
+            # the start-time re-check -- neither _is_zombie nor
+            # _carries_our_owner_id is consulted, and reverting either one
+            # leaves this case green. It covers the pass-1 path over a
+            # Z-leader shape and nothing more. `threadleader_unrecorded`
+            # is reachable ONLY by pass 3 (_stamped_processes,
+            # lsp_client.py:704/711), which gates on BOTH predicates; that
+            # case and 9f are what the mutation check acts on.
+            case "$mode" in
+                threadleader|threadleader_unrecorded)
+                    tgpid="$child"
+                    [ "$mode" = "threadleader_unrecorded" ] && tgpid="$helper"
+                    if ! lsp_wait_thread_leader_shape "$tgpid"; then
+                        printf '[9b] FAIL: %s/%s pid %s never reached Z-leader\n' \
+                            "$sig" "$mode" "$tgpid" >&2
+                        printf '     with a live task, so the thread-group shape\n' >&2
+                        printf '     this case exists for was never produced\n' >&2
+                        lsp_9b_cleanup "$drv" "$out" "$err" "$hf"; return 1
+                    fi ;;
+            esac
             # READY is printed immediately before initialize() is entered, so
             # give the driver a moment to actually be inside it (and holding
             # _init_lock) before the signal lands.
@@ -5824,8 +6130,15 @@ t_signal_reap_deterministic() {
     done
     lsp_9b_cleanup "$drv" "$out" "$err" "$hf"
     printf '[9b] reap OK: TERM/INT/HUP x published/unpublished/initializing/\n'
-    printf '     descendant/cleanleader, storm during cleanup, spawn race\n'
-    printf '     with and without pidfd, tree collected, status preserved\n'
+    if [ "$tg_skipped" = "0" ]; then
+        printf '     descendant/cleanleader/detached/threadleader(+unrecorded),\n'
+    else
+        # The thread-group modes never ran on this host, so the banner
+        # must not name them -- see LSP_SKIPPED_SHAPES in the summary.
+        printf '     descendant/cleanleader/detached (thread-group SKIPPED),\n'
+    fi
+    printf '     storm during cleanup, spawn race with and without pidfd,\n'
+    printf '     tree collected, status preserved\n'
     return 0
 }
 
@@ -5995,6 +6308,572 @@ print("[9c] ownership OK: unstamped group rejected, no killpg in the tree")
 PY
     printf '[9c] attribution OK: foreign + text-match rejected, both nets catch ours\n'
     return 0
+}
+
+# --- 9d/9e: shutdown-budget and deadline-ALLOCATION shapes ----------------
+# One driver for both. 9d asserts the budget bounds the SIGNAL path
+# end-to-end; 9e wedges one phase at a time and asserts the force sweep
+# still got a slice to spend.
+LSP_BUDGET_DRIVER='
+import os, stat, subprocess, sys, threading, time
+sys.path.insert(0, "scripts/lsp-mcp")
+import bridge
+import lsp_client
+from lsp_client import LspSubprocess
+
+mode = sys.argv[1]
+STUBBORN = (
+    "import sys, time\n"
+    "sys.stdin.close()\n"
+    "time.sleep(600)\n"
+)
+# Without this the SIGTERM below takes the DEFAULT disposition: the driver
+# dies promptly, inside any ceiling, having reaped nothing -- a bound met
+# by never running the teardown that the bound applies to.
+bridge._install_signal_handlers()
+
+
+def announce(line):
+    sys.stdout.write(line + "\n")
+    sys.stdout.flush()
+
+
+def spawn_survivor():
+    """A child reachable ONLY through force_kill_spawned pass 3.
+
+    An allocation test needs an oracle that a MIS-allocated budget
+    actually fails, and a recorded LspSubprocess is not one: pass 1
+    signals every _SPAWNED record without consulting the deadline at all
+    (lsp_client.py -- "the cheap one, and it is NOT deadline-gated"), so
+    it disappears whether or not the force phase kept a slice. This child
+    carries the owner stamp, sits in its own session, and is never
+    recorded or published, so only the deadline-gated stamp walk can
+    collect it. Each precondition is ASSERTED, not assumed: a survivor
+    that leaked into a cheap pass would turn the whole case green for the
+    wrong reason (Codex design review, High)."""
+    env = dict(os.environ)
+    env["LSP_BRIDGE_OWNER"] = lsp_client._OWNER_ID
+    p = subprocess.Popen([sys.executable, "-c", STUBBORN], env=env,
+                         start_new_session=True)
+    recorded = [e[0] for e in list(lsp_client._SPAWNED)]
+    swept = {os.getpgid(0)}
+    for rp in recorded:
+        try:
+            swept.add(os.getpgid(rp))
+        except Exception:
+            pass
+    why = None
+    if p.pid in recorded:
+        why = "survivor %d is in _SPAWNED" % p.pid
+    elif any(i.pid == p.pid for i in list(lsp_client._LIVE_SUBPROCS)):
+        why = "survivor %d is in _LIVE_SUBPROCS" % p.pid
+    elif os.getpgid(p.pid) in swept:
+        why = "survivor %d shares a swept group" % p.pid
+    else:
+        return p
+    # Collect FIRST, announce second. The recorded children were created
+    # BEFORE this check and their pids have not been announced yet, so the
+    # shell cleanup knows only the driver -- and os._exit skips atexit, so
+    # nothing else would collect them. Announcing first is not enough
+    # either: PRECOND-FAIL ends the shell poll, and the shell then
+    # SIGKILLs the driver, which can cut this sweep off midway (Codex
+    # adversarial review, Medium, twice). The marker becoming observable
+    # must happen-after the cleanup it reports.
+    p.kill()
+    try:
+        p.wait(timeout=5)
+    except Exception:
+        pass
+    lsp_client.force_kill_spawned(settle=0.0)
+    announce("PRECOND-FAIL %s" % why)
+    os._exit(3)
+
+
+def saturate_stderr():
+    """Fill fd 2 until EAGAIN, through our OWN non-blocking description.
+
+    A launcher that stops draining the pipe is how teardown gets wedged
+    before it begins, and a blocking write is not something an exception
+    guard can catch. Saturation is PROVEN by EAGAIN rather than assumed
+    from a pipe capacity, which is host-tunable; and the fill goes
+    through a private re-open of /proc/self/fd/2 so the SHARED open-file
+    description keeps its blocking flags -- the same rule _diag follows,
+    and the reason neither can wedge the other (Codex design review,
+    Medium).
+
+    Returns (ok, kind, detail). `kind` separates the ONE condition that
+    earns a skip from every condition that does not: collapsing all of
+    them into a single false made a broken fixture indistinguishable
+    from an unsupported host, and once a skip stopped counting as a pass
+    that turned a real regression into a green run with the coverage
+    silently absent (Codex adversarial review, Medium)."""
+    # Host capability is probed SEPARATELY from the open, because the two
+    # failures mean opposite things and one except-clause cannot tell them
+    # apart: without procfs no rewrite of this test could build the
+    # fixture, whereas EMFILE, EACCES or a closed fd 2 are the harness
+    # breaking on a host that supports the shape perfectly well. Catching
+    # both as "unsupported" let a regression retire the coverage under a
+    # green run (Codex adversarial review, Medium, twice).
+    # os.path.isdir() is NOT the probe to use here: it answers false for
+    # EVERY stat failure, so an EACCES or EIO on a procfs that is present
+    # would read as "this host does not have procfs" and take the skip
+    # (Codex adversarial review, Medium). Only a confirmed ABSENCE --
+    # ENOENT / ENOTDIR -- is a host limit.
+    try:
+        _st = os.stat("/proc/self/fd")
+    except (FileNotFoundError, NotADirectoryError) as exc:
+        return (False, "unsupported",
+                "/proc/self/fd is absent, so fd 2 cannot be re-opened "
+                "through procfs on this host: %s" % exc)
+    except OSError as exc:
+        return (False, "error",
+                "probing /proc/self/fd failed with procfs present: %s" % exc)
+    if not stat.S_ISDIR(_st.st_mode):
+        return (False, "unsupported",
+                "/proc/self/fd is not a directory on this host")
+    try:
+        fd = os.open("/proc/self/fd/2",
+                     os.O_WRONLY | os.O_APPEND | os.O_NONBLOCK)
+    except Exception as exc:
+        # procfs IS here, so this is ours: a missing fd-2 entry, a
+        # descriptor limit, a permission problem. Fail, never skip.
+        return (False, "error",
+                "cannot re-open /proc/self/fd/2 though procfs is present: "
+                "%s" % exc)
+    blob = b"x" * 4096
+    try:
+        for _ in range(8192):          # 32 MiB ceiling; stops at EAGAIN
+            try:
+                os.write(fd, blob)
+            except BlockingIOError:
+                return (True, "", "")
+            except OSError as exc:
+                # EBADF / EPIPE / EINVAL mean the harness handed us the
+                # wrong descriptor or the reader end went away. That is a
+                # fixture defect and must FAIL 9d, not excuse it.
+                return (False, "error", "write to stderr failed: %s" % exc)
+        return (False, "error",
+                "32 MiB written without reaching EAGAIN -- stderr is not "
+                "the undrained pipe the harness set up")
+    finally:
+        os.close(fd)
+
+
+recorded = [LspSubprocess(cmd=[sys.executable, "-c", STUBBORN],
+                          lang="stubborn")
+            for _ in range(4 if mode.startswith("budget") else 1)]
+
+# Wedge exactly ONE phase, AFTER the spawns so the spawn path leaves the
+# counter it maintains alone. Each of these three phases consumed the
+# whole budget once and handed the force sweep an expired one; the bug is
+# the same one three times, and the bindings are NOT interchangeable --
+# bridge imported reap_all_live by name, so patching lsp_client alone
+# would not wedge the signal path (Codex design review, High).
+if mode == "alloc_settle":
+    lsp_client._SPAWN_INFLIGHT = 1        # the settle can never observe 0
+elif mode == "alloc_graceful":
+    bridge.reap_all_live = lambda *a, **kw: time.sleep(60)
+elif mode == "alloc_atexit":
+    lsp_client.reap_all_live = lambda *a, **kw: time.sleep(60)
+
+survivor = spawn_survivor() if mode.startswith("alloc") else None
+
+if mode == "budget_satstderr":
+    _sat_ok, _sat_kind, _sat_why = saturate_stderr()
+    if not _sat_ok:
+        # NOSAT is a skip; SATFAIL is a failure. Only the host-cannot-do-it
+        # case may take the skip, or a regression in the fixture would hide
+        # behind it.
+        announce(("NOSAT " if _sat_kind == "unsupported" else "SATFAIL ")
+                 + _sat_why)
+        lsp_client.force_kill_spawned(settle=0.0)
+        os._exit(0)
+
+if survivor is not None:
+    announce("SURVIVOR %d" % survivor.pid)
+announce("RECORDED " + " ".join(str(i.pid) for i in recorded))
+announce("READY")
+
+if mode == "alloc_atexit":
+    # The atexit hook IS the path under test, so exit normally and let it
+    # run -- and let nothing bounded precede it, which would short it out
+    # through _TEARDOWN_COMPLETE.
+    sys.exit(0)
+time.sleep(120)
+'
+
+lsp_wait_collected() {
+    # Gone, or a zombie awaiting a reap -- both mean the sweep signalled
+    # it. `kill -0` cannot tell a zombie from a live process, and an
+    # orphan stays a zombie until its new parent gets to it, so a
+    # gone-only check is a race against init. Valid ONLY for the
+    # single-threaded stubborn children: for a pthread_exit leader Z is
+    # the LIVE state, which is the whole point of the 9b cases.
+    local pid="$1" ticks="$2"
+    while [ "$ticks" -gt 0 ]; do
+        kill -0 "$pid" 2>/dev/null || return 0
+        [ "$(lsp_task_state "$pid")" = "Z" ] && return 0
+        sleep 0.1
+        ticks=$((ticks - 1))
+    done
+    return 1
+}
+
+lsp_budget_run() {
+    # $1 mode, $2 signal ("" = the driver exits on its own), $3 internal
+    # budget seconds, $4 wall-clock ceiling in ms. Asserts the teardown
+    # finished inside the ceiling, every recorded child was collected,
+    # and -- for the alloc modes -- the pass-3-only survivor was too.
+    local mode="$1" sig="$2" budget="$3" ceiling="$4"
+    local drv out err fifo pid survivor rc t0 t1 tstart elapsed waited p ok=0
+    local signum=0
+    # Diagnostics carry the tag of the sub-test that OWNS the mode, not
+    # of the runner they share: an alloc_* failure printed as [9d] sent a
+    # reader to the wrong sub-test (Codex consistency review, Low).
+    local tag=9d
+    case "$mode" in alloc_*) tag=9e ;; esac
+    drv="$(mktemp -t lsp-budget.XXXXXX.py)"
+    out="$(mktemp -t lsp-budget-out.XXXXXX)"
+    err="$(mktemp -t lsp-budget-err.XXXXXX)"
+    fifo=""
+    printf '%s' "$LSP_BUDGET_DRIVER" > "$drv"
+    tstart="$(date +%s%N)"
+    if [ "$mode" = "budget_satstderr" ]; then
+        # A pipe with a reader that never drains. Opened O_RDWR by the
+        # shell, so there is no FIFO open rendezvous for either side to
+        # block on, and never read from, so the driver can fill it. The
+        # shell never writes to it either, so the harness cannot wedge
+        # itself on its own fixture (Codex design review, Medium).
+        fifo="$(mktemp -u -t lsp-budget-fifo.XXXXXX)"
+        mkfifo "$fifo"
+        exec 9<>"$fifo"
+        LSP_BRIDGE_SHUTDOWN_BUDGET="$budget" python3 "$drv" "$mode" \
+            > "$out" 2>&9 &
+    else
+        LSP_BRIDGE_SHUTDOWN_BUDGET="$budget" python3 "$drv" "$mode" \
+            > "$out" 2> "$err" &
+    fi
+    pid=$!; lsp_9b_track "$pid"
+    for _ in $(seq 1 150); do
+        grep -q '^READY$\|^NOSAT\|^SATFAIL\|^PRECOND-FAIL' "$out" 2>/dev/null \
+            && break
+        sleep 0.1
+    done
+    for p in $(sed -n 's/^RECORDED //p;s/^SURVIVOR //p' "$out"); do
+        lsp_9b_track "$p"
+    done
+    survivor="$(sed -n 's/^SURVIVOR //p' "$out")"
+    if grep -q '^SATFAIL' "$out" 2>/dev/null; then
+        # The host CAN build the fixture and it came out wrong -- a bad
+        # descriptor, a vanished reader, or a stderr that is not the
+        # undrained pipe. A skip here would hide exactly the regression
+        # this mode exists to catch (Codex adversarial review, Medium).
+        printf '[%s] FAIL: %s fixture broken -- %s\n' "$tag" "$mode" \
+            "$(sed -n 's/^SATFAIL //p' "$out")" >&2
+        wait "$pid" 2>/dev/null || true
+    elif grep -q '^NOSAT' "$out" 2>/dev/null; then
+        # The narrow case: procfs cannot hand back fd 2, so the wedge
+        # cannot be built on this host at all. Recorded as a skip and
+        # surfaced at the end; the caller drops it from its banner rather
+        # than reporting a variant that did not run (Codex consistency
+        # review, Medium).
+        lsp_note_skip "$tag" "$mode" "$(sed -n 's/^NOSAT //p' "$out")"
+        wait "$pid" 2>/dev/null || true
+        ok=77
+    elif grep -q '^PRECOND-FAIL' "$out" 2>/dev/null; then
+        # The driver announces this only after it has collected its own
+        # children, and exits immediately afterwards -- so reaping it here
+        # is bounded, and it keeps the fallback cleanup below from racing
+        # a sweep that is still running.
+        wait "$pid" 2>/dev/null || true
+        printf '[%s] FAIL: %s %s\n' "$tag" "$mode" \
+            "$(sed -n 's/^PRECOND-FAIL //p' "$out")" >&2
+    elif ! grep -q '^READY$' "$out" 2>/dev/null; then
+        printf '[%s] FAIL: %s driver never reported READY\n' \
+            "$tag" "$mode" >&2
+        sed 's/^/     /' "$out" >&2
+        # The saturated variant deliberately has no readable stderr; every
+        # other mode keeps its own file so a startup failure is visible.
+        sed 's/^/     /' "$err" >&2
+    else
+        # A signalled mode is timed from the signal. A mode that exits on
+        # its own is timed from LAUNCH: it announces READY and exits in the
+        # same breath, so by the time the 0.1s poll observes READY the
+        # teardown is already under way, and timing from there measures
+        # the poll rather than the bound.
+        t0="$tstart"
+        if [ -n "$sig" ]; then
+            t0="$(date +%s%N)"
+            # A swallowed kill failure means the driver was already gone,
+            # and every assertion below would then be measuring a teardown
+            # that no signal caused (Codex adversarial review, Medium).
+            if ! kill -"$sig" "$pid" 2>/dev/null; then
+                printf '[%s] FAIL: %s could not be signalled with %s -- the\n' \
+                    "$tag" "$mode" "$sig" >&2
+                printf '     driver was already gone, so nothing below tests\n' >&2
+                printf '     the handler path\n' >&2
+                lsp_9b_cleanup "$drv" "$out" "$err"
+                if [ -n "$fifo" ]; then exec 9>&-; rm -f "$fifo"; fi
+                return 1
+            fi
+        fi
+        # Hard outer watchdog: 6s, so a re-introduced blocking write
+        # produces a bounded FAILURE rather than a wedged CI job.
+        waited=0
+        while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt 60 ]; do
+            sleep 0.1; waited=$((waited + 1))
+        done
+        t1="$(date +%s%N)"
+        elapsed=$(( (t1 - t0) / 1000000 ))
+        if kill -0 "$pid" 2>/dev/null; then
+            kill -9 "$pid" 2>/dev/null
+            printf '[%s] FAIL: %s never exited within the 6s watchdog\n' \
+                "$tag" "$mode" >&2
+        elif [ "$elapsed" -gt "$ceiling" ]; then
+            wait "$pid" 2>/dev/null || true
+            printf '[%s] FAIL: %s teardown took %sms against a %ss budget\n' \
+                "$tag" "$mode" "$elapsed" "$budget" >&2
+            printf '     (ceiling %sms) -- the bound did not bind\n' \
+                "$ceiling" >&2
+        else
+            rc=0; wait "$pid" 2>/dev/null || rc=$?
+            ok=1
+            # Death BY the signal, mirroring the 9b assertion. Without it a
+            # driver that raised after READY -- and whose children Python
+            # then reaped through atexit -- satisfies every timing and
+            # collection check below while the handler path was never
+            # entered (Codex adversarial review, Medium). A mode with no
+            # signal exits on its own and must do so cleanly.
+            if [ -n "$sig" ]; then
+                case "$sig" in
+                    TERM) signum=15 ;; INT) signum=2 ;; HUP) signum=1 ;;
+                    *) signum=0 ;;
+                esac
+                if [ "$rc" != "$((128 + signum))" ]; then
+                    printf '[%s] FAIL: %s exited rc=%s, expected %s (death by %s)\n' \
+                        "$tag" "$mode" "$rc" "$((128 + signum))" "$sig" >&2
+                    ok=0
+                fi
+            elif [ "$rc" != "0" ]; then
+                printf '[%s] FAIL: %s exited rc=%s, expected a clean self-exit\n' \
+                    "$tag" "$mode" "$rc" >&2
+                ok=0
+            fi
+            for p in $(sed -n 's/^RECORDED //p' "$out"); do
+                lsp_wait_collected "$p" 20 && continue
+                printf '[%s] FAIL: %s left recorded child %s alive\n' \
+                    "$tag" "$mode" "$p" >&2
+                ok=0
+            done
+            if [ -n "$survivor" ] && ! lsp_wait_collected "$survivor" 20; then
+                printf '[%s] FAIL: %s left survivor %s alive -- the force\n' \
+                    "$tag" "$mode" "$survivor" >&2
+                printf '     sweep got no slice of the budget to spend\n' >&2
+                ok=0
+            fi
+            if [ "$ok" = "1" ]; then
+                printf '[%s]   %s OK in %sms\n' "$tag" "$mode" "$elapsed"
+            fi
+        fi
+    fi
+    lsp_9b_cleanup "$drv" "$out" "$err"
+    if [ -n "$fifo" ]; then
+        exec 9>&-
+        rm -f "$fifo"
+    fi
+    if [ "$ok" = "0" ]; then return 1; fi
+    if [ "$ok" = "77" ]; then return 77; fi
+    return 0
+}
+
+# --- 9d: the shutdown budget bounds the SIGNAL path end-to-end ------------
+# 9c times the force sweep by calling it directly, which cannot see the
+# handler control flow -- and the split between the graceful join, the
+# settle wait and the sweep is exactly where a reserved slice gets spent
+# by the wrong phase. This drives a real SIGTERM into a real handler with
+# several persistent stamped records and asserts the whole teardown fits
+# the budget. The saturated-stderr variant proves the same holds when the
+# launcher has stopped draining the pipe, which is how teardown got
+# wedged before it began; _diag is what keeps that non-blocking.
+t_shutdown_budget_signal_path() {
+    local rc=0 satrc=0
+    lsp_budget_run budget TERM 2 3500 || rc=1
+    lsp_budget_run budget_satstderr TERM 2 3500 || satrc=$?
+    # 77 = the pipe could not be saturated on this host. Not a failure,
+    # and not a pass either: the banner below stops claiming it.
+    [ "$satrc" = "0" ] || [ "$satrc" = "77" ] || rc=1
+    [ "$rc" = "0" ] || return 1
+    if [ "$satrc" = "77" ]; then
+        printf '[9d] budget OK: TERM teardown bounded with 4 stamped records\n'
+        printf '     (the saturated-stderr variant was SKIPPED on this host)\n'
+    else
+        printf '[9d] budget OK: TERM teardown bounded with 4 stamped records,\n'
+        printf '     and again with a saturated (undrained) stderr pipe\n'
+    fi
+    return 0
+}
+
+# --- 9e: the deadline is ALLOCATED, not merely present --------------------
+# The same bug landed three times in three phases -- the settle wait, the
+# graceful join in _shutdown_bounded, and the graceful join at atexit --
+# each consuming the whole budget and handing the force sweep an expired
+# one, which then declines every record. Each was caught by review or by
+# one incidental test, never by a test aimed at the shape. Here each
+# phase is wedged in turn and the oracle is a child ONLY the deadline-
+# gated pass can collect, so consuming the reserve fails the case.
+t_deadline_allocation_family() {
+    local rc=0
+    lsp_budget_run alloc_settle   TERM 3 4500 || rc=1
+    lsp_budget_run alloc_graceful TERM 3 4500 || rc=1
+    # atexit carries its OWN 2.0s deadline and 0.6s reserve, so the env
+    # budget does not apply to it; the ceiling is that bound plus slack.
+    lsp_budget_run alloc_atexit   ""   3 3500 || rc=1
+    [ "$rc" = "0" ] || return 1
+    printf '[9e] allocation OK: settle wait, _shutdown_bounded graceful join\n'
+    printf '     and atexit graceful join each wedged; the force sweep still\n'
+    printf '     collected a child only its deadline-gated pass can reach\n'
+    return 0
+}
+
+# --- 9f: the two task-aware reads, asserted directly ----------------------
+# 9b proves the reap collects a thread-group leader end-to-end; this
+# pins the two predicates it rests on, including the case no live shape
+# can produce on demand -- a task list that empties BETWEEN the stat read
+# and the scan. The current order reads /proc/PID/stat first, so such a
+# process reads as ALIVE, which is the safe direction and was untested.
+t_task_aware_liveness() {
+    # 77 propagates the whole-fixture skip to `run`, which counts it apart
+    # from pass and fail. Exiting 0 on a host with no libc.so.6 reported
+    # this sub-test GREEN without running any of it (Codex consistency
+    # review, Medium).
+    local rc=0
+    python3 - <<'PY' || rc=$?
+import ctypes, os, subprocess, sys, time
+import ctypes.util
+sys.path.insert(0, "scripts/lsp-mcp")
+import lsp_client
+
+THREAD_LEADER = (
+    "import ctypes, sys, threading, time\n"
+    "sys.stdin.close()\n"
+    "threading.Thread(target=time.sleep, args=(600,)).start()\n"
+    "time.sleep(0.2)\n"
+    'ctypes.CDLL("libc.so.6").pthread_exit(None)\n'
+)
+
+# Same absence-versus-breakage split as the 9b driver: 77 is reserved for
+# a host that cannot offer the capability, and a libc.so.6 that IS on the
+# loader path but will not load is a failure (Codex adversarial review,
+# Medium).
+_found = ctypes.util.find_library("c")
+if _found != "libc.so.6":
+    print(f"[9f] SKIP: no glibc-style libc.so.6 on this host "
+          f"(the loader offers {_found!r})", file=sys.stderr)
+    sys.exit(77)
+try:
+    _libc = ctypes.CDLL("libc.so.6")
+except Exception as exc:
+    print(f"[9f] FAIL: libc.so.6 is present but did not load: {exc}",
+          file=sys.stderr)
+    sys.exit(1)
+if not hasattr(_libc, "pthread_exit"):
+    print("[9f] SKIP: libc.so.6 has no pthread_exit", file=sys.stderr)
+    sys.exit(77)
+
+fails = []
+live = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+tg = subprocess.Popen([sys.executable, "-c", THREAD_LEADER],
+                      env={**os.environ,
+                           "LSP_BRIDGE_OWNER": lsp_client._OWNER_ID})
+dead = subprocess.Popen([sys.executable, "-c", "raise SystemExit(0)"])
+try:
+    # Wait for both terminal states: the exited child must be a zombie,
+    # and the thread-group leader must be Z with its worker still on.
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        d = lsp_client._stat_fields(dead.pid)
+        g = lsp_client._stat_fields(tg.pid)
+        if d and d[0] == "Z" and g and g[0] == "Z":
+            break
+        time.sleep(0.1)
+    if not (d and d[0] == "Z"):
+        fails.append("fixture: the exited child never became a zombie")
+    if not (g and g[0] == "Z"):
+        fails.append("fixture: the pthread_exit leader never reached Z, so "
+                     "nothing below tests the thread-group shape")
+    else:
+        # The premise of both section-20 fixes, asserted rather than
+        # assumed: the LEADER lies about liveness and refuses its environ.
+        if lsp_client._stat_fields_at(f"/proc/{tg.pid}/task/{tg.pid}/stat") is None:
+            fails.append("fixture: the leader task stat was unreadable")
+        try:
+            open(f"/proc/{tg.pid}/environ", "rb").read()
+            fails.append("fixture: the leader environ was READABLE, so the "
+                         "per-task ownership fallback is not being exercised")
+        except OSError:
+            pass
+
+    if lsp_client._is_zombie(live.pid):
+        fails.append("a live single-threaded process read as a zombie")
+    if not lsp_client._is_zombie(dead.pid):
+        fails.append("an exited unwaited child did not read as a zombie")
+    if lsp_client._is_zombie(tg.pid):
+        fails.append("a Z leader with a live worker read as a zombie -- both "
+                     "sweeps would skip it and the process would leak")
+    if not lsp_client._carries_our_owner_id(tg.pid):
+        fails.append("a Z leader with a live worker did not resolve as ours; "
+                     "the per-task environ fallback is what proves ownership "
+                     "once /proc/PID/environ answers EACCES")
+
+    # The race the live shapes cannot produce: stat says Z, and the task
+    # list has emptied (or gone) by the time it is read. Both must answer
+    # ALIVE -- a redundant signal to a dead process costs nothing, and
+    # skipping a live one is the leak the whole mechanism exists to stop.
+    real_stat, real_listdir = lsp_client._stat_fields, os.listdir
+
+    def _empty(path, *a, **kw):
+        if str(path).endswith("/task"):
+            return []
+        return real_listdir(path, *a, **kw)
+
+    def _gone(path, *a, **kw):
+        if str(path).endswith("/task"):
+            raise OSError("task list vanished")
+        return real_listdir(path, *a, **kw)
+
+    try:
+        lsp_client._stat_fields = lambda pid: ["Z", "1", "1"]
+        os.listdir = _empty
+        if lsp_client._is_zombie(live.pid):
+            fails.append("an EMPTY task list read as a zombie; the check must "
+                         "fail closed when the scan races the last exit")
+        os.listdir = _gone
+        if lsp_client._is_zombie(live.pid):
+            fails.append("an unreadable task list read as a zombie; the check "
+                         "must fail closed when procfs answers an error")
+    finally:
+        lsp_client._stat_fields, os.listdir = real_stat, real_listdir
+finally:
+    for p in (live, tg, dead):
+        try:
+            p.kill()
+        except Exception:
+            pass
+        try:
+            p.wait(timeout=5)
+        except Exception:
+            pass
+
+if fails:
+    for f in fails:
+        print(f"[9f] FAIL: {f}", file=sys.stderr)
+    sys.exit(1)
+print("[9f] liveness OK: Z-leader-with-live-worker is alive and ours, an "
+      "exited child is a zombie, a racing task list fails closed")
+PY
+    [ "$rc" = "0" ] && return 0
+    [ "$rc" = "77" ] && return 77
+    return 1
 }
 
 lsp_survivors_of_this_run() {
@@ -6178,10 +7057,34 @@ run "18d type_hierarchy supported walk"   t_type_hierarchy_supported_walk
 run "18e type_hierarchy types cap"        t_type_hierarchy_types_cap
 run "9b deterministic signal reap"       t_signal_reap_deterministic
 run "9c leak attribution scoped"         t_leak_attribution_scoped
+run "9d shutdown budget via signal"      t_shutdown_budget_signal_path
+run "9e deadline allocation family"      t_deadline_allocation_family
+run "9f task-aware liveness + ownership" t_task_aware_liveness
 # 9a runs LAST so every prior sub-test has had a chance to clean up.
 run "9a no leaked LSP processes"         t_no_leaked_lsp_processes
 
-printf '[lsp-mcp-tests] %d/%d sub-tests PASS\n' "$pass" "$((pass + fail))"
+if [ -n "$LSP_SKIPPED_SHAPES" ]; then
+    # The aggregate runner (scripts/test-tooling.sh) extracts ONE line and
+    # discards the rest, so a plain "N/N sub-tests PASS" above a skip
+    # block is read downstream as full coverage. When anything was
+    # skipped the summary says so ON THE SUMMARY LINE (Codex consistency
+    # review, Medium).
+    printf '[lsp-mcp-tests] %d/%d sub-tests PASS, %d shape(s) SKIPPED\n' \
+        "$pass" "$((pass + fail))" \
+        "$(printf '%s\n' "$LSP_SKIPPED_SHAPES" | wc -l)"
+else
+    printf '[lsp-mcp-tests] %d/%d sub-tests PASS\n' "$pass" "$((pass + fail))"
+fi
+if [ -n "$LSP_SKIPPED_SHAPES" ]; then
+    # Printed unconditionally, including on a green run: the whole point
+    # is that "104/104 PASS" must never be read as "every shape ran".
+    # Shapes and whole sub-tests are counted separately -- a partial skip
+    # leaves its sub-test passing, so reporting only `skipped` here would
+    # print a zero above a non-empty list.
+    printf '[lsp-mcp-tests] %d shape(s) NOT exercised on this host (%d whole sub-test(s) skipped):\n' \
+        "$(printf '%s\n' "$LSP_SKIPPED_SHAPES" | wc -l)" "$skipped" >&2
+    printf '%s\n' "$LSP_SKIPPED_SHAPES" >&2
+fi
 if [ "$fail" -gt 0 ]; then
     exit 1
 fi
