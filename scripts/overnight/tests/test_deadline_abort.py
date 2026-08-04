@@ -19,6 +19,7 @@ import subprocess
 import tempfile
 import time
 
+REPO = pathlib.Path(__file__).resolve().parents[3]
 CHECK = pathlib.Path(__file__).resolve().parents[1] / "deadline-check.sh"
 
 CONTINUE, STOP = 0, 10
@@ -106,6 +107,31 @@ def test_deadline_takes_precedence_over_a_healthy_streak():
         assert "deadline reached" in out, out
 
 
+
+def test_launcher_handles_a_stop_verdict_instead_of_dying_on_it():
+    """The LAUNCHER's handling, not just the checker's verdict.
+
+    MEASURED 2026-08-04 on the first canary to actually reach its deadline: the
+    launcher runs under `set -euo pipefail`, and the stop verdict was captured
+    with a bare `OUT="$(deadline-check.sh)"` assignment. A non-zero status there
+    aborts the script instantly, so the disarm/notify/status block never ran.
+    The launcher exited status=10 and it LOOKED like a clean stop -- no segment
+    spawned -- while the timers stayed armed and the watchdog woke every ten
+    minutes to die identically. The checker's own tests all passed throughout,
+    because they never exercised the caller.
+
+    Pins the shape rather than the behaviour: the stop verdict must be consumed
+    by an `if`, which `set -e` does not apply to.
+    """
+    src = (REPO / "scripts" / "overnight" / "overnight-launch.sh").read_text(encoding="utf-8")
+    assert "if DEADLINE_OUT=" in src, (
+        "the deadline verdict must be captured inside an `if` -- a bare "
+        "assignment aborts the launcher under set -e before it can disarm")
+    # and the stop path must still do the three things a clean stop owes
+    stop_block = src.split("if DEADLINE_OUT=", 1)[1][:1600]
+    for owed in ("disarm_timers", "notify.sh", "run-status.py"):
+        assert owed in stop_block, f"stop path no longer performs {owed}"
+
 if __name__ == "__main__":
     test_no_deadline_runs_to_fixpoint()
     test_future_deadline_continues_and_reports_remaining()
@@ -115,4 +141,5 @@ if __name__ == "__main__":
     test_noship_below_the_limit_continues()
     test_noship_limit_is_configurable()
     test_deadline_takes_precedence_over_a_healthy_streak()
+    test_launcher_handles_a_stop_verdict_instead_of_dying_on_it()
     print("PASS: deadline + abort criteria")

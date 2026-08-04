@@ -110,8 +110,21 @@ disarm_timers() {  # stop future fires; the current oneshot service still exits 
 # firing --disarm would instead land wherever it happened to land, mid-section
 # as often as not. Mirrors the fixpoint disarm below, including the notify.
 if [ "${OVERNIGHT_SEQUENCER_DRYRUN:-}" != "1" ] && [ -f "$SCRIPT_DIR/deadline-check.sh" ]; then
-  DEADLINE_OUT="$(bash "$SCRIPT_DIR/deadline-check.sh" "$PROJECT_DIR" 2>&1)"
-  DEADLINE_RC=$?
+  # `if ...; then` form is LOAD-BEARING under `set -e` (line 14). A bare
+  # assignment from a command substitution that exits non-zero aborts the whole
+  # script immediately, so `DEADLINE_RC=$?` and the entire stop block below
+  # never ran. MEASURED 2026-08-04 on the first canary to actually reach its
+  # deadline: the launcher exited status=10 (deadline-check's STOP code leaking
+  # out as the launcher's own), which LOOKED like a working stop because a dead
+  # launcher spawns nothing -- but the timers were never disarmed, no
+  # notification was sent, no run-status stamp was written, and the watchdog
+  # went on waking every 10 minutes to die the same way. set -e does not apply
+  # to a command whose status is tested by `if`.
+  if DEADLINE_OUT="$(bash "$SCRIPT_DIR/deadline-check.sh" "$PROJECT_DIR" 2>&1)"; then
+    DEADLINE_RC=0
+  else
+    DEADLINE_RC=$?
+  fi
   echo "$DEADLINE_OUT"
   if [ "$DEADLINE_RC" = "10" ]; then
     python3 "$SCRIPT_DIR/run-status.py" "$PROJECT_DIR" --stamp "$(date -Is)" >/dev/null 2>&1 || true
