@@ -232,7 +232,40 @@ _LEDGER_LOCK = threading.Lock()
 # interrupting a thread that already holds those very locks -- cannot afford to
 # wait for one. list.append and list(...) are atomic under the GIL, so a
 # snapshot is always a consistent prefix of what has been spawned.
-_SPAWNED: list[tuple[int, Optional[int], Optional[int]]] = []
+#
+# THE RECORDED pidfd HAS EXACTLY ONE OWNER: _retire_spawn, the function that
+# removes the record. Nothing else may signal through it, close it, or even
+# assume it is still open. A lock-free snapshot hands out (pid, ticks, fd)
+# tuples that outlive the record they came from, so a sweep holding one can
+# have that descriptor closed underneath it by a concurrent retirement -- and
+# the number then names whatever unrelated file the process has since opened.
+# Every other consumer calls _own_pidfd() for a descriptor of its own.
+class _SpawnRecord:
+    """One spawned child, identified by OBJECT IDENTITY.
+
+    Deliberately not a tuple. Every membership and removal test here is
+    an ownership decision, and a tuple compares by VALUE: retirement
+    could remove `(pid, ticks, fd)` and close it, a replacement could be
+    handed the same PID inside the same 100 Hz tick and the same
+    descriptor number, and its freshly appended tuple would be equal to
+    the snapshot a sweep still holds. The sweep would then conclude its
+    record was untouched and signal the replacement -- a textbook ABA,
+    which the GIL does nothing about because it serializes each
+    operation and not the protocol (Codex adversarial review, High).
+
+    A plain object compares by identity, so `entry in _SPAWNED` and
+    `_SPAWNED.remove(entry)` mean THIS record and no other."""
+
+    __slots__ = ("pid", "ticks", "fd")
+
+    def __init__(self, pid: int, ticks: Optional[int],
+                 fd: Optional[int]) -> None:
+        self.pid = pid
+        self.ticks = ticks
+        self.fd = fd
+
+
+_SPAWNED: list = []
 
 # Spawns that have begun but are not yet recorded above. A signal can be
 # delivered between Popen returning and the append -- the handler freezes that
@@ -340,17 +373,30 @@ def reap_all_live(timeout: float = 0.5, deadline: Optional[float] = None) -> int
     return reaped
 
 
-def _record_spawn(pid: int) -> None:
-    """Pin a spawned child's identity as tightly as the OS allows."""
+def _record_spawn(pid: int) -> "_SpawnRecord":
+    """Pin a spawned child's identity as tightly as the OS allows.
+
+    The pidfd names the process exactly and can never retarget. It does
+    NOT reserve the number: free_pid() returns that to the allocator when
+    the task is reaped, however many struct pid references survive. The
+    record's start time, not its descriptor, is what identifies the
+    NUMBER later."""
     fd = None
     try:
         fd = os.pidfd_open(pid, 0)      # Linux 5.3+; never recycled
     except Exception:
         fd = None
-    _SPAWNED.append((pid, proc_start_ticks(pid), fd))
+    record = _SpawnRecord(pid, proc_start_ticks(pid), fd)
+    _SPAWNED.append(record)
+    # Handed back so the owner can retire THIS generation later. Retiring
+    # by number instead conflates generations: the respawn path creates
+    # the replacement before disposing the dead instance, so if the PID
+    # was reused, a by-number retirement removes and closes the LIVE
+    # replacement's record too (Codex adversarial review, High).
+    return record
 
 
-def _retire_spawn(pid: int) -> None:
+def _retire_spawn(target) -> None:
     """Drop a confirmed-dead child's record so its PID can never be
     matched again once the kernel reuses the number, and release the
     pidfd. Best-effort: a missing record is not an error.
@@ -361,17 +407,99 @@ def _retire_spawn(pid: int) -> None:
     second close lands on whatever unrelated file has since been handed
     that number (Codex adversarial review, Medium)."""
     for entry in list(_SPAWNED):
-        if entry[0] != pid:
+        if isinstance(target, _SpawnRecord):
+            if entry is not target:
+                continue
+        elif entry.pid != target:
             continue
         try:
             _SPAWNED.remove(entry)
         except ValueError:
             continue          # another thread retired it; its close, not ours
-        if entry[2] is not None:
+        if entry.fd is not None:
             try:
-                os.close(entry[2])
+                os.close(entry.fd)
             except Exception:
                 pass
+        # By NUMBER, retire exactly one generation. Sweeping every record
+        # sharing a PID is how a live replacement lost its descriptor.
+        if not isinstance(target, _SpawnRecord):
+            return
+
+
+def _borrow_pidfd(entry: tuple) -> Optional[int]:
+    """A private duplicate of a RECORD's own pidfd, or None.
+
+    This is the only exact identity available for a recorded child, and
+    it is exact in the way ticks are not: the descriptor is bound to the
+    process, so no PID recycle -- not even one that lands on the same
+    clock tick -- can redirect a signal sent through it.
+
+    The dup is race-safe against retirement by ORDERING, without a lock
+    the dying-process path could not afford. _retire_spawn removes the
+    record BEFORE it closes the descriptor, so if the entry is still in
+    _SPAWNED *after* the dup returned, the close had not begun when the
+    dup ran, and the dup therefore names the recorded descriptor rather
+    than whatever unrelated file has since been given that number. If the
+    entry is gone, another thread already confirmed this child dead and
+    this caller has nothing to signal.
+
+    The original stays owned by _retire_spawn; the caller closes only the
+    duplicate (Codex adversarial review, High)."""
+    fd = entry.fd
+    if fd is None:
+        return None
+    try:
+        borrowed = os.dup(fd)
+    except Exception:
+        return None
+    if entry in _SPAWNED:
+        return borrowed
+    try:
+        os.close(borrowed)
+    except Exception:
+        pass
+    return None
+
+
+def _own_pidfd(pid: int, still_ours) -> Optional[int]:
+    """A pidfd for `pid` that the CALLER owns outright, or None when one
+    cannot be proven to name the process we meant. The caller closes it.
+
+    This exists because the descriptor in a _SPAWNED record belongs to
+    _retire_spawn and to nobody else (see the _SPAWNED comment). A sweep
+    that snapshots the record and then signals through its fd can have
+    that fd closed by a concurrent retirement first, at which point the
+    number names an unrelated file -- and if that file happens to be
+    another pidfd, the signal lands on a stranger.
+
+    Verifying identity AFTER the open, rather than before, is what makes
+    this useful: the descriptor is bound to whatever process answered to
+    that number at open time and can never retarget, so a `still_ours`
+    that agrees afterwards is talking about the same process the signal
+    will reach. Checking first and opening second would leave exactly the
+    window this function exists to remove (Codex design review, pidfd
+    ownership).
+
+    It is NOT a claim that the number stopped moving -- an open pidfd
+    does not reserve one; free_pid() releases it at reap. If the number
+    was recycled before this open, the descriptor names the STRANGER, and
+    only `still_ours` stands between that and a signal. Give it real
+    evidence (Codex adversarial review, High)."""
+    try:
+        fd = os.pidfd_open(pid, 0)
+    except Exception:
+        return None                 # no pidfd support, or already gone
+    try:
+        if still_ours(pid):
+            return fd
+    except Exception:
+        pass
+    try:
+        os.close(fd)
+    except Exception:
+        pass
+    return None
 
 
 def _stat_fields_at(path: str) -> Optional[list[str]]:
@@ -447,7 +575,7 @@ def _pgrp_of(pid: int) -> Optional[int]:
         return None
 
 
-def _signal_recorded(pid: int, sig: int) -> bool:
+def _signal_recorded(target, sig: int) -> bool:
     """Send `sig` to a RECORDED child through its pinned identity.
 
     `Popen.terminate()` / `.kill()` look identity-safe and are not: on
@@ -458,24 +586,100 @@ def _signal_recorded(pid: int, sig: int) -> bool:
     adversarial review, High). Routing through the record fixes that:
     with a pidfd the signal is exact, and without one the start-time
     check is re-run immediately before signalling. Fails closed -- an
-    unrecorded pid gets no signal from here."""
-    for rec_pid, ticks, fd in list(_SPAWNED):
-        if rec_pid != pid:
-            continue
-        if fd is not None:
+    unrecorded pid gets no signal from here.
+
+    `target` is a _SpawnRecord whenever the caller has one, because a
+    PID does not name a generation: the respawn path can leave a stale
+    record ahead of a live replacement carrying the same number, and a
+    scan that stops at the first match then signals the dead one, reports
+    failure, and never reaches the replacement -- which survives the
+    shutdown that thought it had asked (Codex adversarial review, High).
+    A bare number is accepted only when exactly ONE record answers to it;
+    an ambiguous number fails closed."""
+    if isinstance(target, _SpawnRecord):
+        candidates = [e for e in list(_SPAWNED) if e is target]
+    else:
+        candidates = [e for e in list(_SPAWNED) if e.pid == target]
+        if len(candidates) > 1:
+            # Two generations share this number and the caller did not
+            # say which. Guessing is how the live one gets missed.
+            return False
+    for entry in candidates:
+        pid = entry.pid
+        ticks = entry.ticks
+        # FAIL CLOSED on absent identity. `ticks is None` means the start
+        # time could not be read when the child was recorded -- reachable
+        # under the FD exhaustion that also causes post-spawn setup
+        # failure -- and treating that as permission to signal a bare
+        # number is backwards: no evidence is a reason not to act (Codex
+        # adversarial review, High). The recorded pidfd is NOT a way
+        # around that: it belongs to _retire_spawn, which can close it
+        # between this snapshot and the send, so a graceful stop is the
+        # last place to reach for a descriptor somebody else may have
+        # just handed to an unrelated file.
+        # EXACT first. A duplicate of the record's own pidfd identifies
+        # the process itself, so it needs no start time and cannot be
+        # redirected by a recycle -- including one that lands on the same
+        # clock tick, which is a real shape rather than a theoretical
+        # one: field 22 has 100 Hz granularity here, and a reviewer
+        # measured 32 concurrent spawns sharing seven values (Codex
+        # adversarial review, High).
+        borrowed = _borrow_pidfd(entry)
+        if borrowed is not None:
             try:
-                signal.pidfd_send_signal(fd, sig)
+                signal.pidfd_send_signal(borrowed, sig)
                 return True
             except (ProcessLookupError, OSError):
                 return False
+            finally:
+                try:
+                    os.close(borrowed)
+                except Exception:
+                    pass
+        if entry.fd is not None:
+            # The record HAS a descriptor and the borrow still failed --
+            # the dup itself can fail under the FD exhaustion that makes
+            # emergency teardown urgent. Falling through to a numeric
+            # signal here would hand back exactly the equal-tick recycle
+            # the descriptor exists to rule out, so this fails closed
+            # (Codex adversarial review, High).
+            return False
+        # FAIL CLOSED on absent identity. `ticks is None` means the start
+        # time could not be read when the child was recorded, and nothing
+        # else here identifies the NUMBER.
+        #
+        # The recorded pidfd is emphatically not that evidence. It
+        # guarantees the DESCRIPTOR never retargets, which is a different
+        # claim: the kernel returns the number to its allocator in
+        # free_pid(), reached from detach_pid() when the task is reaped,
+        # however many struct pid references survive. So a record left
+        # behind after the reader thread reaped its child through
+        # Popen.poll() can name a number that now belongs to a stranger,
+        # and treating record-presence as proof would SIGTERM them (Codex
+        # adversarial review, High). A graceful stop of ONE named server
+        # has no safe fallback, so it refuses.
+        if ticks is None:
+            return False
+        # The record must STILL be present at signal time, checked after
+        # our own pidfd is open: retirement is what closes the recorded
+        # descriptor, so its absence means another thread already
+        # confirmed this child dead and nothing here should signal.
+        still = (lambda p, a=entry: (
+            a in _SPAWNED and proc_start_ticks(p) == ticks))
+        own = _own_pidfd(pid, still)
+        if own is not None:
+            try:
+                signal.pidfd_send_signal(own, sig)
+                return True
+            except (ProcessLookupError, OSError):
+                return False
+            finally:
+                try:
+                    os.close(own)
+                except Exception:
+                    pass
         try:
-            # FAIL CLOSED on absent identity. `ticks is None` means the
-            # start time could not be read when the child was recorded --
-            # reachable under the FD exhaustion that also causes
-            # post-spawn setup failure -- and treating that as permission
-            # to signal a bare number is backwards: no evidence is a
-            # reason not to act (Codex adversarial review, High).
-            if ticks is None or proc_start_ticks(pid) != ticks:
+            if not still(pid):
                 return False
             os.kill(pid, sig)
             return True
@@ -512,15 +716,30 @@ def _kill_verified(pid: int, fd: Optional[int], still_ours) -> bool:
         return False
 
 
-def _carries_our_owner_id(pid: int) -> bool:
-    """True if this process was started by THIS bridge process.
+def _carries_our_owner_id(
+    pid: int, deadline: Optional[float] = None,
+) -> Optional[bool]:
+    """True if this process was started by THIS bridge process, False if
+    an environment was read and did NOT carry the stamp, and None when no
+    environment could be read at all.
+
+    None and False are both falsy, so every caller still treats an
+    unreadable process as not-ours -- the distinction exists purely so a
+    CACHE never stores a transient read failure as an authoritative
+    negative. One racing read would otherwise suppress a live child of
+    ours in every later round of a sweep, and the loop would reach two
+    empty scans and exit over it (Codex adversarial review, Medium).
 
     Checks LSP_BRIDGE_OWNER, minted per process, NOT the inheritable
     LSP_BRIDGE_RUN_ID: a run id shared across a whole harness tree makes
     "ours" mean "anything in the tree", and a reap acting on that answer
-    kills its own siblings. Returns False when the environment cannot be
-    read anywhere, which is the safe answer: not-provably-ours is
-    not-killed.
+    kills its own siblings. Not-provably-ours is not-killed.
+
+    `deadline` bounds the task walk. Without it a single unstamped
+    thousand-thread process could spend a whole shutdown budget proving
+    something we were about to reject anyway (Codex adversarial review,
+    High); a walk cut short answers None, not False, because a partial
+    read has proven nothing.
 
     Read per-TASK as well as per-process, for the same reason the
     liveness check is thread-group-aware: once the thread-group leader
@@ -543,8 +762,167 @@ def _carries_our_owner_id(pid: int) -> bool:
     try:
         tids = os.listdir(f"/proc/{pid}/task")
     except Exception:
+        return None
+    read_any = False
+    for tid in tids:
+        if deadline is not None and time.monotonic() >= deadline:
+            return None             # budget spent, not an answer
+        try:
+            with open(f"/proc/{pid}/task/{tid}/environ", "rb") as fh:
+                data = fh.read()
+        except Exception:
+            continue
+        read_any = True
+        if marker in data.split(b"\0"):
+            return True
+    # Every task refused to be read: nothing was proven either way.
+    return False if read_any else None
+
+
+class _ProcSnapshot:
+    """One walk of /proc, reusable by every pass of a sweep.
+
+    The cheap facts -- state, ppid, pgrp, start ticks -- come from a
+    SINGLE read of each /proc/<pid>/stat. The expensive one, whether the
+    process carries this bridge's owner stamp, is read lazily and cached.
+
+    There is deliberately NO cheap pre-filter on the /proc directory's
+    owner. It looks like a free authoritative negative and is not one:
+    the kernel reassigns /proc/<pid> to root when a process calls
+    PR_SET_DUMPABLE(0) or execs a setuid binary, so a hardened child of
+    ours would be disowned before its stamp was ever read (Codex
+    adversarial review, High). Cost is bounded by the caller's deadline
+    and by caching, not by guessing.
+
+    Two rules keep the cache from ever becoming an authorization:
+
+    * It is keyed by (pid, start_ticks), NEVER by pid alone. A process
+      that exits between rounds can have its number handed to a stranger,
+      and a pid-keyed answer would let that stranger inherit the previous
+      occupant's ownership (Codex design review, High).
+    * Only an AUTHORITATIVE answer is stored. _carries_our_owner_id
+      returns None when nothing could be read, and caching that as a
+      negative would suppress a live child of ours for the rest of the
+      sweep on one racing read (Codex adversarial review, Medium).
+
+    And in every case the cache only NARROWS the candidate set --
+    authorization to signal is a live re-read after the pidfd is open."""
+
+    __slots__ = ("procs", "_ours")
+
+    def __init__(self, procs: list[tuple[int, int, int, int, int]],
+                 ours_cache: Optional[dict] = None) -> None:
+        self.procs = procs
+        # A caller looping over several snapshots shares one cache: the
+        # (pid, ticks) key pins identity, and a live process cannot gain
+        # a stamp it did not inherit at exec, so a stored answer stays
+        # true for as long as that process does.
+        self._ours: dict[tuple[int, int], bool] = (
+            ours_cache if ours_cache is not None else {})
+
+    def ours(self, pid: int, ticks: Optional[int],
+             deadline: Optional[float] = None) -> bool:
+        # No start time means no cache KEY -- the pair is what pins
+        # identity, and a bare pid would let a recycled number inherit
+        # the previous occupant's answer. Such a row is probed afresh
+        # every round rather than dropped (Codex adversarial review,
+        # High).
+        key = (pid, ticks) if ticks is not None else None
+        if key is not None:
+            cached = self._ours.get(key)
+            if cached is not None:
+                return cached
+        answer = _carries_our_owner_id(pid, deadline=deadline)
+        if answer is not None and key is not None:
+            self._ours[key] = answer
+        return answer is True
+
+
+def _proc_snapshot(deadline: Optional[float] = None,
+                   ours_cache: Optional[dict] = None) -> _ProcSnapshot:
+    """(pid, ppid, pgrp, start_ticks) for every live process on the host.
+
+    One listdir and one stat read per process, shared by every pass that
+    needs it. The sweep used to walk /proc once per recorded language
+    server -- inside _reap_group, itself looped -- and then once more for
+    the stamp-wide pass, and each candidate cost three separate reads of
+    the SAME stat file, because _pgrp_of, _is_zombie and
+    proc_start_ticks each opened it independently. On a host with a few
+    hundred processes that is O(records x processes x 3) charged to a
+    budget meant to bound the whole teardown.
+
+    Fully-zombie processes are dropped here, by the same task-aware rule
+    _is_zombie applies: a leader sitting in Z while its workers run is
+    ALIVE, and filtering on the leader's state alone would drop exactly
+    the pthread_exit shape the thread-group reap coverage exists for
+    (Codex design review, High). Anything unreadable or racing is kept,
+    for the same reason it is kept there -- a redundant signal costs
+    nothing and a skipped live process is the leak."""
+    procs: list[tuple[int, Optional[int], Optional[int], Optional[int]]] = []
+    try:
+        entries = os.listdir("/proc")
+    except Exception:
+        return _ProcSnapshot(procs, ours_cache)
+    for name in entries:
+        if deadline is not None and time.monotonic() >= deadline:
+            break
+        if not name.isdigit():
+            continue
+        pid = int(name)
+        fields = _stat_fields(pid)
+        state: Optional[str] = None
+        ppid: Optional[int] = None
+        pgrp: Optional[int] = None
+        ticks: Optional[int] = None
+        if fields:
+            try:
+                state = fields[0]
+                ppid = int(fields[1])
+                pgrp = int(fields[2])
+                ticks = int(fields[19])
+            except (IndexError, ValueError):
+                state = ppid = pgrp = ticks = None
+        # A pid whose stat could not be read or parsed is KEPT, with its
+        # fields left None. Dropping it silently removed an owner-stamped
+        # descendant from the only broad sweep there is now that the group
+        # and stamp passes are one -- and the read most likely to fail is
+        # the one taken during an emergency teardown under FD exhaustion
+        # (Codex adversarial review, High). Group filtering needs pgrp and
+        # the ownership cache needs ticks, so both simply decline to act
+        # on a degraded row; the stamp-wide pass still probes and signals
+        # it through a caller-owned pidfd.
+        if state == "Z" and _is_zombie(pid):
+            continue
+        procs.append((pid, ppid, pgrp, ticks))
+    return _ProcSnapshot(procs, ours_cache)
+
+
+def _carries_gen_id(pid: int, gen: str,
+                    deadline: Optional[float] = None) -> bool:
+    """True if this process was started by one specific SPAWN.
+
+    The owner stamp answers "did this bridge start it", which two
+    generations sharing a PID both satisfy. This narrower question is
+    what a group sweep needs, because a process group is addressed by a
+    number the replacement may now own (Codex adversarial review, High).
+    Unreadable is False, as everywhere else: not-provably-ours is
+    not-killed. `deadline` bounds the task walk for the same reason it
+    bounds the owner probe: one many-threaded replacement could otherwise
+    hold a teardown open past its budget inside a single call."""
+    marker = b"LSP_BRIDGE_GEN=" + gen.encode()
+    try:
+        with open(f"/proc/{pid}/environ", "rb") as fh:
+            if marker in fh.read().split(b"\0"):
+                return True
+    except Exception:
+        pass
+    try:
+        tids = os.listdir(f"/proc/{pid}/task")
+    except Exception:
         return False
     for tid in tids:
+        if deadline is not None and time.monotonic() >= deadline:
+            return False                # budget spent; not provably ours
         try:
             with open(f"/proc/{pid}/task/{tid}/environ", "rb") as fh:
                 if marker in fh.read().split(b"\0"):
@@ -556,6 +934,7 @@ def _carries_our_owner_id(pid: int) -> bool:
 
 def _group_members(
     pgid: int, exclude: int = -1, deadline: Optional[float] = None,
+    snapshot: Optional[_ProcSnapshot] = None, gen: Optional[str] = None,
 ) -> list[tuple[int, Optional[int], Optional[int]]]:
     """(pid, pidfd) for every live process in process group `pgid` that
     this bridge can prove it started.
@@ -577,24 +956,26 @@ def _group_members(
     guarantee without ever trusting the number.
 
     Identity is captured then re-verified, so an entry that changed
-    underneath the scan is dropped rather than signalled."""
+    underneath the scan is dropped rather than signalled.
+
+    `snapshot` lets a caller sweeping several groups pay for ONE /proc
+    walk instead of one per group; without it this takes its own."""
     members: list[tuple[int, Optional[int], Optional[int]]] = []
-    try:
-        entries = os.listdir("/proc")
-    except Exception:
-        return members
-    for name in entries:
+    snap = snapshot if snapshot is not None else _proc_snapshot(deadline)
+    me = os.getpid()
+    for pid, _ppid, pgrp, ticks in snap.procs:
         if deadline is not None and time.monotonic() >= deadline:
             break
-        if not name.isdigit():
+        if pid == exclude or pid == me:
             continue
-        pid = int(name)
-        if pid == exclude or pid == os.getpid():
+        if pgrp is None or pgrp != pgid:
+            continue        # unreadable stat: not groupable, but the
+                            # stamp-wide pass still sees it
+        if not snap.ours(pid, ticks, deadline=deadline):
             continue
-        if _pgrp_of(pid) != pgid or _is_zombie(pid):
-            continue
-        if not _carries_our_owner_id(pid):
-            continue
+        if gen is not None and not _carries_gen_id(pid, gen,
+                                                   deadline=deadline):
+            continue        # a namesake generation, not this one
         fd = None
         try:
             fd = os.pidfd_open(pid, 0)
@@ -604,7 +985,10 @@ def _group_members(
         # PID that was replaced between the stamp check and the open would
         # otherwise be captured with a valid pidfd pointing at a stranger.
         if fd is not None and (
-            _pgrp_of(pid) != pgid or not _carries_our_owner_id(pid)
+            _pgrp_of(pid) != pgid
+            or not _carries_our_owner_id(pid, deadline=deadline)
+            or (gen is not None and not _carries_gen_id(
+                pid, gen, deadline=deadline))
         ):
             try:
                 os.close(fd)
@@ -619,7 +1003,66 @@ def _group_members(
     return members
 
 
-def _reap_group(pgid: int, deadline: Optional[float] = None) -> int:
+def _reap_predicate(pgid: int, ticks: Optional[int], gen: Optional[str],
+                    deadline: Optional[float]):
+    """The pidfd-less authorization used by the group reaper.
+
+    Every probe it makes is bounded, and the budget is re-checked AFTER
+    the ownership read as well as before: that read walks every task when
+    the leader environment is unreadable -- the dead-leader/live-worker
+    shape this file goes out of its way to keep -- so the budget can
+    expire inside the one call whose answer then authorizes the signal
+    (Codex adversarial review, Medium)."""
+
+    def still_ours(p: int) -> bool:
+        if deadline is not None and time.monotonic() >= deadline:
+            return False
+        if ticks is None or proc_start_ticks(p) != ticks:
+            return False
+        if _pgrp_of(p) != pgid:
+            return False
+        if _carries_our_owner_id(p, deadline=deadline) is not True:
+            return False
+        if gen is not None and not _carries_gen_id(p, gen, deadline=deadline):
+            return False
+        return not (deadline is not None and time.monotonic() >= deadline)
+
+    return still_ours
+
+
+def _group_is_empty(pgid: int, exclude: int = -1,
+                    gen: Optional[str] = None,
+                    deadline: Optional[float] = None) -> bool:
+    """True when no live member of this group answers to `gen`.
+
+    A boolean question deserves a boolean answer. Asking _group_members
+    and reading its truthiness discards a list whose every entry may own
+    an open pidfd, and the caller that did so ran the question up to
+    twenty times per shutdown -- so a respawn loop accumulated
+    descriptors until EMFILE (Codex adversarial review, High)."""
+    members = _group_members(pgid, exclude=exclude, deadline=deadline,
+                             gen=gen)
+    for _pid, fd, _ticks in members:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except Exception:
+                pass
+    if members:
+        return False
+    # An empty result is not the same answer as an empty group. The scan
+    # stops where its deadline runs out, so a budget that expired partway
+    # returns nothing at all -- and the caller took that for "gone",
+    # retired the spawn record, and left the descendants it had not
+    # reached (Codex adversarial review, Medium). Incomplete means
+    # unknown, and unknown fails toward still-there.
+    if deadline is not None and time.monotonic() >= deadline:
+        return False
+    return True
+
+
+def _reap_group(pgid: int, deadline: Optional[float] = None,
+                gen: Optional[str] = None) -> int:
     """SIGKILL every live member of a process group we own, by verified
     identity rather than by killpg, REPEATEDLY until the group is empty.
     Returns how many were signalled.
@@ -636,7 +1079,7 @@ def _reap_group(pgid: int, deadline: Optional[float] = None) -> int:
     for _ in range(20):                     # ~ bounded; see deadline below
         if deadline is not None and time.monotonic() >= deadline:
             break                           # checked BEFORE the scan, not after
-        members = _group_members(pgid, deadline=deadline)
+        members = _group_members(pgid, deadline=deadline, gen=gen)
         if not members:
             # TWO consecutive empty scans, not one. A scan snapshots
             # /proc before examining it, so a helper forked after the
@@ -654,12 +1097,7 @@ def _reap_group(pgid: int, deadline: Optional[float] = None) -> int:
             if deadline is None or time.monotonic() < deadline:
                 if _kill_verified(
                     pid, fd,
-                    lambda p, t=ticks: (
-                        t is not None
-                        and proc_start_ticks(p) == t
-                        and _pgrp_of(p) == pgid
-                        and _carries_our_owner_id(p)
-                    ),
+                    _reap_predicate(pgid, ticks, gen, deadline),
                 ):
                     killed += 1
             if fd is not None:
@@ -675,6 +1113,7 @@ def _reap_group(pgid: int, deadline: Optional[float] = None) -> int:
 
 def _stamped_processes(
     deadline: Optional[float] = None,
+    snapshot: Optional[_ProcSnapshot] = None,
 ) -> list[tuple[int, Optional[int], Optional[int]]]:
     """(pid, pidfd, start_ticks) for every live process carrying THIS
     bridge run's stamp, regardless of parent or process group.
@@ -688,20 +1127,16 @@ def _stamped_processes(
     it in the child environment BEFORE Popen.
 
     Identity is captured during the scan and re-verified after the pidfd
-    is opened, so an entry that changed underneath is dropped."""
+    is opened, so an entry that changed underneath is dropped.
+
+    `snapshot` reuses a /proc walk a caller has already paid for."""
     me = os.getpid()
     found: list[tuple[int, Optional[int], Optional[int]]] = []
-    try:
-        entries = os.listdir("/proc")
-    except Exception:
-        return found
-    for name in entries:
+    snap = snapshot if snapshot is not None else _proc_snapshot(deadline)
+    for pid, _ppid, _pgrp, ticks in snap.procs:
         if deadline is not None and time.monotonic() >= deadline:
             break
-        if not name.isdigit():
-            continue
-        pid = int(name)
-        if pid == me or _is_zombie(pid) or not _carries_our_owner_id(pid):
+        if pid == me or not snap.ours(pid, ticks, deadline=deadline):
             continue
         fd = None
         try:
@@ -721,7 +1156,10 @@ def _stamped_processes(
 def force_kill_spawned(settle: float = 1.0,
                        deadline: Optional[float] = None) -> int:
     """SIGKILL every recorded language server still alive, taking no lock
-    that a wedged thread could be holding. Returns how many were killed.
+    that a wedged thread could be holding. Returns how many DISTINCT
+    processes were signalled -- a leader reached by both the recorded
+    pass and the stamp-wide sweep counts once, where the older two-pass
+    shape counted it twice and made the number unusable as a leak count.
 
     This is the last thing a dying bridge does, and the only reap whose
     success does not depend on the state of the process running it.
@@ -746,8 +1184,7 @@ def force_kill_spawned(settle: float = 1.0,
         time.sleep(0.02)
         waited += 0.02
 
-    killed = 0
-    handled: set[int] = set()
+    signalled: set[int] = set()
 
     # PASS 1 -- the cheap one, and it is NOT deadline-gated. Signalling a
     # recorded leader through its pinned identity is a couple of syscalls;
@@ -757,67 +1194,174 @@ def force_kill_spawned(settle: float = 1.0,
     # the FIRST record's /proc walks, and every later language server was
     # skipped and survived (Codex adversarial review, High). Cheap and
     # certain first; expensive and speculative with what is left.
-    for pid, ticks, fd in list(_SPAWNED):
-        handled.add(pid)
-        if _kill_verified(
-            pid, fd,
-            lambda p, t=ticks: t is not None and proc_start_ticks(p) == t,
-        ):
-            killed += 1
-
-    # PASS 2 -- descendants of each recorded leader. Bounded, because a
-    # group scan is a full /proc walk and a server can fork.
-    for pid, ticks, fd in list(_SPAWNED):
-        if deadline is not None and time.monotonic() >= deadline:
-            continue        # out of budget; record stays for the next caller
-        # The GROUP is swept whether or not the leader is still alive. A
-        # dead leader does not mean a clean tree: the reader thread may
-        # have reaped it through Popen.poll() while a helper it forked
-        # runs on, reparented and therefore invisible to any search for
-        # our own children. Skipping the group on a dead leader left
-        # exactly that helper behind (Codex adversarial review, High).
-        # Members are addressed by verified identity, never by killpg, so
-        # a recycled pgid number cannot take a stranger with it.
-        killed += _reap_group(pid, deadline=deadline)
-
-    # Last resort: anything the kernel still calls our child that no record
-    # covers -- a spawn interrupted before it could write one. These
-    # include short-lived availability probes, so identity is re-verified
-    # at the moment of signalling rather than trusted from the scan.
-    if deadline is not None and time.monotonic() >= deadline:
-        # Spent. Do not pay for a full /proc walk we could not act on.
-        return killed
-    # Final pass: every live process carrying THIS run's stamp, whatever
-    # its parent or process group. Searching only our own children and the
-    # leaders' groups missed a helper that called setsid -- it is in
-    # neither, and a detached background indexer accumulating across bridge
-    # restarts is precisely the cost this section exists to prevent (Codex
-    # adversarial review, High). The stamp is inherited by anything a
-    # server forks, so it survives both re-parenting and re-grouping, which
-    # is exactly what makes it the right question to ask last.
-    for pid, fd, ticks in _stamped_processes(deadline=deadline):
-        if pid not in handled and (
-            deadline is None or time.monotonic() < deadline
-        ):
-            # Parentage alone is not identity: a scanned child can exit and
-            # its number be reused by a NEWER child of ours, which passes
-            # the same ppid test. Require the start time we observed during
-            # the scan to still hold, and fail closed without one.
-            if _kill_verified(
-                pid, fd,
-                lambda p, t=ticks: (
-                    t is not None
-                    and proc_start_ticks(p) == t
-                    and _carries_our_owner_id(p)
-                ),
-            ):
-                killed += 1
-        if fd is not None:
+    for entry in list(_SPAWNED):
+        pid = entry.pid
+        ticks = entry.ticks
+        # `entry in _SPAWNED`, checked at SIGNAL time rather than scan
+        # time, means no retirement has run: nobody has yet confirmed
+        # this child dead, so the record is still worth acting on. It is
+        # a necessary condition and NOT an identity -- the recorded pidfd
+        # keeps the DESCRIPTOR from retargeting but does not reserve the
+        # NUMBER, which free_pid() returns to the allocator when the task
+        # is reaped no matter how many struct pid references remain
+        # (Codex adversarial review, High).
+        #
+        # Identity is therefore the start time, or -- when the record
+        # never got one -- the owner stamp, which is enough HERE and only
+        # here: this sweep kills everything this bridge started, so
+        # "provably one of ours" is exactly the authorization it needs.
+        # _signal_recorded, which stops ONE named server, fails closed.
+        # The owner-stamp fallback is NOT cheap -- it can read one
+        # environment per task -- so unlike the rest of this pass it is
+        # deadline-bound, checked before and after the probe exactly as
+        # the stamp-wide pass does. Leaving it ungated let a 200ms probe
+        # signal 150ms past a 50ms budget (Codex adversarial review,
+        # High).
+        def still(p, t=ticks, a=entry, _dl=deadline):
+            if a not in _SPAWNED:
+                return False
+            if t is not None and proc_start_ticks(p) == t:
+                return True
+            if _dl is not None and time.monotonic() >= _dl:
+                return False
+            ok = _carries_our_owner_id(p, deadline=_dl) is True
+            if _dl is not None and time.monotonic() >= _dl:
+                return False
+            return ok
+        # A duplicate of the record's own descriptor is exact; the
+        # predicate below is only for records that never got one.
+        # _borrow_pidfd already validated membership after its dup; a
+        # second check here could only drop the descriptor on the floor
+        # without closing it (Codex adversarial review, Medium).
+        own = _borrow_pidfd(entry)
+        claimed = False
+        if own is None and entry.fd is not None:
+            # The dup failed -- and it fails under exactly the FD
+            # exhaustion that makes this sweep urgent. Falling back to a
+            # numeric signal would restore the equal-tick recycle the
+            # descriptor rules out, and refusing outright would orphan
+            # the child at the worst possible moment (Codex adversarial
+            # review, High then Medium). So CLAIM it instead: a
+            # successful remove transfers ownership of the original
+            # descriptor from _retire_spawn to this caller, which is the
+            # one operation that needs no new file descriptor at all.
             try:
-                os.close(fd)
-            except Exception:
-                pass
-    return killed
+                _SPAWNED.remove(entry)
+            except ValueError:
+                continue            # another thread owns it now
+            own, claimed = entry.fd, True
+        elif own is None:
+            own = _own_pidfd(pid, still)
+        try:
+            if own is not None:
+                try:
+                    signal.pidfd_send_signal(own, signal.SIGKILL)
+                    signalled.add(pid)
+                except (ProcessLookupError, OSError):
+                    pass
+            elif _kill_verified(pid, None, still):
+                signalled.add(pid)
+        finally:
+            # Closed either way: a borrowed dup is ours by construction,
+            # and a CLAIMED original is ours because the remove that
+            # produced it took ownership from _retire_spawn.
+            if own is not None:
+                try:
+                    os.close(own)
+                except Exception:
+                    pass
+                if claimed:
+                    entry.fd = None     # nobody else may close it now
+
+    # PASS 2 -- every OTHER live process carrying this run's stamp:
+    # descendants of a recorded leader, a helper reparented away after its
+    # leader died, one that called setsid and left both the group and the
+    # child list, and a spawn interrupted before it could write a record.
+    #
+    # These used to be two passes -- one group sweep per recorded leader,
+    # then a stamp-wide walk -- and they were the same question asked
+    # twice: _group_members requires the owner stamp exactly as the
+    # stamp-wide scan does, and adds only a pgrp filter, so the group set
+    # is a strict SUBSET of the stamped set. Asking separately cost one
+    # full /proc walk per leader per round plus another for the stamp
+    # pass; asking once per round costs one, and hands the stamp-wide
+    # question the repeat-until-empty loop it never had.
+    #
+    # The loop is why one scan is not enough: the enumeration completes
+    # before the first signal is sent, so a server that forks a helper in
+    # between produces a helper no snapshot saw -- and once its leader
+    # dies that helper is reparented away, where no search for our own
+    # children can reach it (Codex adversarial review, High). Two
+    # CONSECUTIVE empty scans, not one, because a helper forked after the
+    # listdir is absent from a single scan that looks clean.
+    me = os.getpid()
+    owner_cache: dict = {}
+    empty_scans = 0
+    for _ in range(20):
+        if deadline is not None and time.monotonic() >= deadline:
+            break                           # checked BEFORE the scan
+        snap = _proc_snapshot(deadline=deadline, ours_cache=owner_cache)
+        # Deadline-checked, NOT a comprehension. Every snap.ours() miss
+        # can cost an environ read plus one per task, so a few hundred
+        # unstamped processes are enough to overrun the budget between
+        # the walk and the first signal -- the enumeration was bounded
+        # and the ownership probing behind it was not (Codex adversarial
+        # review, High).
+        targets: list[tuple[int, int]] = []
+        for pid, _ppid, _pgrp, ticks in snap.procs:
+            if deadline is not None and time.monotonic() >= deadline:
+                break
+            if pid != me and snap.ours(pid, ticks, deadline=deadline):
+                targets.append((pid, ticks))
+        if not targets:
+            empty_scans += 1
+            if empty_scans >= 2:
+                break
+            time.sleep(0.02)
+            continue
+        empty_scans = 0
+        for pid, _ticks in targets:
+            if deadline is not None and time.monotonic() >= deadline:
+                break
+            # The snapshot's ownership answer only NARROWED the candidate
+            # set. Authorization is this live re-read, taken after the
+            # pidfd pins the process, so a PID recycled between the walk
+            # and the signal cannot inherit the previous occupant's stamp
+            # (Codex design review, High).
+            #
+            # It carries the deadline itself, and re-checks it: the loop's
+            # check happens BEFORE _own_pidfd opens, and the predicate
+            # then runs twice -- once inside _own_pidfd and again on the
+            # pidfd-less fallback -- so a slow procfs read could authorize
+            # a signal well past a budget the caller is holding to (Codex
+            # adversarial review, High; a 200ms probe against a 50ms
+            # deadline still signalled).
+            def still(p, _dl=deadline):
+                if _dl is not None and time.monotonic() >= _dl:
+                    return False
+                ok = _carries_our_owner_id(p, deadline=_dl) is True
+                # Re-checked AFTER the probe as well. Checking only
+                # before it is what makes a slow read dangerous rather
+                # than merely slow: the leader's environ read is not
+                # interruptible, so the budget can expire inside the one
+                # call whose answer then authorizes the signal.
+                if _dl is not None and time.monotonic() >= _dl:
+                    return False
+                return ok
+            own = _own_pidfd(pid, still)
+            try:
+                if _kill_verified(pid, own, still):
+                    signalled.add(pid)
+            finally:
+                if own is not None:
+                    try:
+                        os.close(own)
+                    except Exception:
+                        pass
+        if deadline is not None and time.monotonic() >= deadline:
+            break
+        time.sleep(0.02)
+    return len(signalled)
 
 
 _TEARDOWN_COMPLETE = False
@@ -940,6 +1484,16 @@ class LspSubprocess:
         self._env = dict(env) if env is not None else None
 
         self._proc: Optional[subprocess.Popen] = None
+        # THIS instance's row in _SPAWNED. Retirement takes the object,
+        # not the number: the respawn path creates a replacement before
+        # disposing the dead instance, so a by-number retirement can
+        # remove and close a live replacement's record when the PID was
+        # reused (Codex adversarial review, High).
+        self._spawn_record: Optional[_SpawnRecord] = None
+        # Identifies THIS spawn generation in the child environment, so a
+        # group sweep can address descendants of this instance and not of
+        # a namesake that reused its PID.
+        self._gen_id = uuid.uuid4().hex
         # Buffered view of proc.stdout. bufsize=0 on Popen is required
         # so the LSP does not block waiting for its write to drain
         # through a 4 KiB Python buffer, but that makes readline() on
@@ -1118,6 +1672,15 @@ class LspSubprocess:
             child_env = dict(self._env if self._env is not None else os.environ)
             child_env["LSP_BRIDGE_RUN_ID"] = _RUN_ID
             child_env["LSP_BRIDGE_OWNER"] = _OWNER_ID
+            # Per-SPAWN, not per-process. The owner stamp says "this
+            # bridge started it", which stops being specific enough the
+            # moment two generations share a PID: the respawn path builds
+            # the replacement before disposing the dead instance, and
+            # both use start_new_session, so old-instance cleanup can
+            # find the REPLACEMENT in what it believes is its own process
+            # group and kill it -- a crash loop where each restart shoots
+            # its successor (Codex adversarial review, High).
+            child_env["LSP_BRIDGE_GEN"] = self._gen_id
             global _SPAWN_INFLIGHT
             with _SPAWN_INFLIGHT_LOCK:
                 _SPAWN_INFLIGHT += 1
@@ -1135,7 +1698,7 @@ class LspSubprocess:
                 # FIRST statement after Popen, before the attribute store
                 # and everything else: this is the window a termination can
                 # land in, so make it one bytecode wide.
-                _record_spawn(proc.pid)
+                self._spawn_record = _record_spawn(proc.pid)
             finally:
                 with _SPAWN_INFLIGHT_LOCK:
                     _SPAWN_INFLIGHT -= 1
@@ -1205,11 +1768,13 @@ class LspSubprocess:
                     # nothing can reap the child underneath us -- but
                     # "safe because of who else happens to be running" is
                     # the assumption that produced the bugs above.
-                    _signal_recorded(proc.pid, signal.SIGTERM)
+                    _signal_recorded(self._spawn_record or proc.pid,
+                                 signal.SIGTERM)
                     try:
                         proc.wait(timeout=1.0)
                     except subprocess.TimeoutExpired:
-                        _signal_recorded(proc.pid, signal.SIGKILL)
+                        _signal_recorded(self._spawn_record or proc.pid,
+                                     signal.SIGKILL)
                         try:
                             proc.wait(timeout=1.0)
                         except subprocess.TimeoutExpired:
@@ -1233,8 +1798,8 @@ class LspSubprocess:
                     # retire it later. We have already sent SIGKILL and
                     # taken the group with it below, so the record has no
                     # remaining job.
-                    _reap_group(proc.pid)
-                    _retire_spawn(proc.pid)
+                    _reap_group(proc.pid, gen=self._gen_id)
+                    _retire_spawn(self._spawn_record or proc.pid)
             except Exception:
                 pass
             raise
@@ -2282,6 +2847,13 @@ class LspSubprocess:
             if proc.poll() is not None:
                 break
             time.sleep(0.05)
+        # ONE absolute budget for every group sweep this shutdown runs.
+        # Created HERE, before the first one can fire: the stubborn
+        # escalation below reaped a group with no deadline at all, and
+        # that helper takes up to twenty full procfs scans with sleeps --
+        # spent before the collection deadline further down even existed
+        # (Codex adversarial review, Medium).
+        group_deadline = time.monotonic() + max(0.2, timeout)
         if proc.poll() is None:
             try:
                 # Signal the leader through its PINNED identity, not by
@@ -2292,16 +2864,19 @@ class LspSubprocess:
                 # somebody else (Codex adversarial review, High; the
                 # killpg pair this replaced had the same defect at the
                 # group level).
-                _signal_recorded(proc.pid, signal.SIGTERM)
+                _signal_recorded(self._spawn_record or proc.pid,
+                                 signal.SIGTERM)
             except Exception:
                 pass
             try:
                 proc.wait(timeout=min(timeout, 1.0))
             except subprocess.TimeoutExpired:
-                _signal_recorded(proc.pid, signal.SIGKILL)
+                _signal_recorded(self._spawn_record or proc.pid,
+                                 signal.SIGKILL)
                 # Anything the leader forked goes through the
                 # ownership-verified group sweep instead.
-                _reap_group(proc.pid)
+                _reap_group(proc.pid, gen=self._gen_id,
+                            deadline=group_deadline)
                 try:
                     proc.wait(timeout=1.0)
                 except subprocess.TimeoutExpired:
@@ -2355,17 +2930,35 @@ class LspSubprocess:
         # sweep can find it -- and retiring the record here would throw
         # away the pgid that is the only remaining handle on it (Codex
         # adversarial review, High). So signal the group while we still
-        # hold that handle, and keep the record until the group is empty.
+        # hold that handle.
         if proc.poll() is not None:
-            group_gone = False
+            # ONE absolute deadline for the whole collection, threaded
+            # into both scans. Without it a continuously forking
+            # descendant drove 20 outer rounds, each running _reap_group's
+            # own 20 scans and sleeps -- seconds of it, inside a shutdown
+            # the respawn path calls with a 0.5s timeout (Codex
+            # adversarial review, Medium).
             for _ in range(20):                 # ~1s, then give up
-                if not _group_members(proc.pid, exclude=proc.pid):
-                    group_gone = True
+                if _group_is_empty(proc.pid, exclude=proc.pid,
+                                   gen=self._gen_id,
+                                   deadline=group_deadline):
                     break
-                _reap_group(proc.pid)
+                _reap_group(proc.pid, gen=self._gen_id,
+                            deadline=group_deadline)
+                if time.monotonic() >= group_deadline:
+                    break
                 time.sleep(0.05)
-            if group_gone:
-                _retire_spawn(proc.pid)
+            _retire_spawn(self._spawn_record or proc.pid)
+            # Retired UNCONDITIONALLY once the leader is confirmed dead.
+            # Its descriptor can identify nothing further, and the group
+            # sweep addresses members by pgid plus the owner and
+            # generation stamps -- none of which live in this record. The
+            # earlier version kept it whenever the sweep had not finished,
+            # which on an expired deadline meant forever: shutdown is
+            # idempotent and the force sweep only ever borrows a
+            # duplicate, so a respawn loop on a loaded host accumulated
+            # one descriptor per dead generation until EMFILE (Codex
+            # adversarial review, Medium).
 
     # ------------------------------------------------------------------
     # Introspection

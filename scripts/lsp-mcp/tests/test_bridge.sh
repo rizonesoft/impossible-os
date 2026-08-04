@@ -313,6 +313,26 @@
 #         _carries_our_owner_id against a Z thread-group leader with a
 #         live worker, plus the task-list race no live shape can
 #         produce on demand (empty / unreadable -> must read ALIVE).
+#   9g -- the recorded pidfd has exactly one owner: neither the force
+#         sweep nor _signal_recorded may signal through the descriptor
+#         stored in a _SPAWNED record (retirement can close it mid-send)
+#         or close it themselves.
+#   9h -- the 9a ledger reader against rows the writer can legitimately
+#         produce: an unterminated final row, a torn short row, a
+#         non-numeric pid, a truncated run id, and the four tickless
+#         outcomes (foreign, same-run non-LSP, same-run LSP, clean).
+#   9i -- the force sweep enumerates /proc once per ROUND, not once per
+#         recorded leader: walk count must not grow with record count.
+#   9j -- the three injected races the ownership rewrite opened: a
+#         retirement landing between the record snapshot and the pidfd
+#         open must fail closed, ownership probing must honour the
+#         shutdown deadline, and a probe that fails once must be re-asked
+#         rather than cached as foreign.
+#   9k -- the reap helpers as injected unit tables: _own_pidfd leaks no
+#         descriptor when its predicate refuses or raises, ownership is
+#         tri-state, only an authoritative answer is cached (and never
+#         across a changed start time), and a degraded /proc row is
+#         skipped rather than guessed at.
 #
 #  15a -- workspace-root resolution priority chain.
 #  15b -- a file:// URI is rejected at the _dispatch_path entry.
@@ -5731,9 +5751,10 @@ if mode == "threadleader_unrecorded":
     # The SAME shape with every cheap handle removed: owner-stamped so the
     # stamp walk can claim it, in its own session so no recorded leader
     # group contains it, and never passed through _record_spawn so no
-    # _SPAWNED entry names it. force_kill_spawned pass 3 is then the only
-    # path that can reach it -- which is the net with no coverage at all
-    # before this section, and the one both task-aware reads gate.
+    # _SPAWNED entry names it. The stamp-wide pass of the force sweep is
+    # then the only path that can reach it -- the net with no coverage at all
+    # before the thread-group reap work, and the one both task-aware
+    # reads gate.
     _env = dict(os.environ)
     _env["LSP_BRIDGE_OWNER"] = lsp_client._OWNER_ID
     _u = subprocess.Popen([sys.executable, "-c", THREAD_LEADER],
@@ -5746,7 +5767,7 @@ if mode == "threadleader_unrecorded":
     # adversarial review, Medium). Same value, written earlier.
     _hf = open(sys.argv[2], "w")
     _hf.write(str(_u.pid)); _hf.flush(); _hf.close()
-    _recorded = [e[0] for e in list(lsp_client._SPAWNED)]
+    _recorded = [e.pid for e in list(lsp_client._SPAWNED)]
     _precond = None
     if _u.pid in _recorded:
         _precond = "survivor %d is in _SPAWNED" % _u.pid
@@ -6026,16 +6047,17 @@ t_signal_reap_deterministic() {
             #
             # The two cases are NOT equivalent, and only one of them can
             # discriminate the task-aware predicates (Codex adversarial
-            # review, Medium). `threadleader` is RECORDED, so
-            # force_kill_spawned pass 1 signals it through its pinned
-            # _SPAWNED record (lsp_client.py:760), whose only predicate is
-            # the start-time re-check -- neither _is_zombie nor
-            # _carries_our_owner_id is consulted, and reverting either one
-            # leaves this case green. It covers the pass-1 path over a
-            # Z-leader shape and nothing more. `threadleader_unrecorded`
-            # is reachable ONLY by pass 3 (_stamped_processes,
-            # lsp_client.py:704/711), which gates on BOTH predicates; that
-            # case and 9f are what the mutation check acts on.
+            # review, Medium). `threadleader` is RECORDED, so the force
+            # sweep's recorded pass signals it through its pinned
+            # _SPAWNED identity, whose only predicate is the start-time
+            # re-check -- neither _is_zombie nor _carries_our_owner_id is
+            # consulted, and reverting either one leaves this case green.
+            # It covers the recorded path over a Z-leader shape and
+            # nothing more. `threadleader_unrecorded` is reachable ONLY
+            # by the stamp-wide pass, which gates on BOTH predicates
+            # (_proc_snapshot drops a process only when EVERY task is Z,
+            # and ownership is re-read live at signal time); that case
+            # and 9f are what the mutation check acts on.
             case "$mode" in
                 threadleader|threadleader_unrecorded)
                     tgpid="$child"
@@ -6248,7 +6270,7 @@ sent = []
 real_kill = os.kill
 os.kill = lambda p, s: sent.append((p, s))
 try:
-    lsp_client._SPAWNED.append((999999, None, None))
+    lsp_client._SPAWNED.append(lsp_client._SpawnRecord(999999, None, None))
     if lsp_client._signal_recorded(999999, 15) or sent:
         print(f"[9c] FAIL: signalled a pid with no identity evidence: {sent}",
               file=sys.stderr)
@@ -6263,7 +6285,7 @@ try:
         sys.exit(1)
 finally:
     os.kill = real_kill
-    lsp_client._SPAWNED[:] = [e for e in lsp_client._SPAWNED if e[0] != 999999]
+    lsp_client._SPAWNED[:] = [e for e in lsp_client._SPAWNED if e.pid != 999999]
 
 # The deadline must bound the WHOLE force phase, not just its settle loop.
 # Several persistent records each drive a group sweep, and a sweep that
@@ -6276,8 +6298,8 @@ for _ in range(5):
         env={**os.environ, "LSP_BRIDGE_OWNER": lsp_client._OWNER_ID},
         start_new_session=True))
 for sp in stubborn:
-    lsp_client._SPAWNED.append(
-        (sp.pid, lsp_client.proc_start_ticks(sp.pid), None))
+    lsp_client._SPAWNED.append(lsp_client._SpawnRecord(
+        sp.pid, lsp_client.proc_start_ticks(sp.pid), None))
 try:
     t0 = time.monotonic()
     lsp_client.force_kill_spawned(settle=0.0, deadline=t0 + 0.3)
@@ -6294,7 +6316,7 @@ finally:
             pass
     lsp_client._SPAWNED[:] = [
         e for e in lsp_client._SPAWNED
-        if e[0] not in {sp.pid for sp in stubborn}]
+        if e.pid not in {sp.pid for sp in stubborn}]
 
 # No executable path may signal a group by number.
 for src in sorted(pathlib.Path("scripts/lsp-mcp").rglob("*.py")):
@@ -6339,12 +6361,12 @@ def announce(line):
 
 
 def spawn_survivor():
-    """A child reachable ONLY through force_kill_spawned pass 3.
+    """A child reachable ONLY through the stamp-wide pass of the sweep.
 
     An allocation test needs an oracle that a MIS-allocated budget
-    actually fails, and a recorded LspSubprocess is not one: pass 1
-    signals every _SPAWNED record without consulting the deadline at all
-    (lsp_client.py -- "the cheap one, and it is NOT deadline-gated"), so
+    actually fails, and a recorded LspSubprocess is not one: the recorded
+    pass signals every _SPAWNED entry without consulting the deadline at
+    all (lsp_client.py -- "the cheap one, and it is NOT deadline-gated"), so
     it disappears whether or not the force phase kept a slice. This child
     carries the owner stamp, sits in its own session, and is never
     recorded or published, so only the deadline-gated stamp walk can
@@ -6355,7 +6377,7 @@ def spawn_survivor():
     env["LSP_BRIDGE_OWNER"] = lsp_client._OWNER_ID
     p = subprocess.Popen([sys.executable, "-c", STUBBORN], env=env,
                          start_new_session=True)
-    recorded = [e[0] for e in list(lsp_client._SPAWNED)]
+    recorded = [e.pid for e in list(lsp_client._SPAWNED)]
     swept = {os.getpgid(0)}
     for rp in recorded:
         try:
@@ -6876,6 +6898,1224 @@ PY
     return 1
 }
 
+# --- 9g: the recorded pidfd has exactly one owner -------------------------
+# The sweep used to signal through the descriptor stored in the _SPAWNED
+# record, which _retire_spawn can close underneath it -- after which the
+# number names whatever unrelated file the process has since opened, and
+# if that file is another pidfd the signal lands on a stranger. The fix
+# is structural, so the assertion is structural: no reap path may pass
+# the RECORDED fd to pidfd_send_signal, and no reap path may close it.
+# Reverting to the recorded fd fails the first assertion immediately.
+t_pidfd_single_owner() {
+    local rc=0
+    python3 - <<'PY' || rc=$?
+import os, signal, subprocess, sys, time
+sys.path.insert(0, "scripts/lsp-mcp")
+import lsp_client
+
+if not hasattr(os, "pidfd_open"):
+    print("[9g] SKIP: os.pidfd_open unavailable (python3 < 3.9)",
+          file=sys.stderr)
+    sys.exit(77)
+
+STUBBORN = "import sys, time\nsys.stdin.close()\ntime.sleep(600)\n"
+env = dict(os.environ)
+env["LSP_BRIDGE_OWNER"] = lsp_client._OWNER_ID
+fails = []
+seen = []
+real_send = signal.pidfd_send_signal
+
+
+def spy(fd, sig, *a, **kw):
+    seen.append(fd)
+    return real_send(fd, sig, *a, **kw)
+
+
+def recorded_fd(pid):
+    for entry in list(lsp_client._SPAWNED):
+        if entry.pid == pid:
+            return entry.fd
+    return None
+
+
+def drop(pid):
+    lsp_client._SPAWNED[:] = [e for e in lsp_client._SPAWNED if e.pid != pid]
+
+
+# --- the force sweep -------------------------------------------------
+victim = subprocess.Popen([sys.executable, "-c", STUBBORN], env=env,
+                          start_new_session=True)
+time.sleep(0.3)
+lsp_client._record_spawn(victim.pid)
+rec_fd = recorded_fd(victim.pid)
+if rec_fd is None:
+    print("[9g] SKIP: no pidfd recorded for a live child on this host",
+          file=sys.stderr)
+    victim.kill(); victim.wait(timeout=5); drop(victim.pid)
+    sys.exit(77)
+signal.pidfd_send_signal = spy
+try:
+    lsp_client.force_kill_spawned(settle=0.0)
+finally:
+    signal.pidfd_send_signal = real_send
+if not seen:
+    # Without this the fd-identity assertion below is vacuous: a sweep
+    # that sent nothing through a pidfd trivially never sent through the
+    # recorded one.
+    fails.append("force sweep sent no signal through any pidfd")
+if rec_fd in seen:
+    fails.append(f"force sweep signalled through the RECORDED fd {rec_fd}; "
+                 f"a concurrent _retire_spawn could have closed it")
+try:
+    os.fstat(rec_fd)
+except OSError:
+    fails.append(f"force sweep closed the recorded fd {rec_fd}; only "
+                 f"_retire_spawn may")
+try:
+    if victim.wait(timeout=5) is None:
+        fails.append("victim survived the force sweep")
+except Exception:
+    fails.append("victim survived the force sweep (wait timed out)")
+lsp_client._retire_spawn(victim.pid)
+
+# --- the graceful stop -----------------------------------------------
+seen.clear()
+target = subprocess.Popen([sys.executable, "-c", STUBBORN], env=env,
+                          start_new_session=True)
+time.sleep(0.3)
+lsp_client._record_spawn(target.pid)
+rec_fd2 = recorded_fd(target.pid)
+signal.pidfd_send_signal = spy
+try:
+    sent = lsp_client._signal_recorded(target.pid, signal.SIGKILL)
+finally:
+    signal.pidfd_send_signal = real_send
+if not sent:
+    fails.append("_signal_recorded refused a live, correctly recorded child")
+if rec_fd2 is None:
+    fails.append("no pidfd recorded for the graceful case; the fd-identity "
+                 "assertions here would be vacuous")
+elif rec_fd2 in seen:
+    fails.append(f"_signal_recorded signalled through the RECORDED fd "
+                 f"{rec_fd2}")
+else:
+    # Not signalling through it is only half the rule. An implementation
+    # that opened its own descriptor and then CLOSED the record's would
+    # leave _retire_spawn free to double-close a number the kernel has
+    # since reissued -- the exact defect the single-owner rule exists to
+    # prevent (Codex test-coverage review, High).
+    try:
+        os.fstat(rec_fd2)
+    except OSError:
+        fails.append(f"_signal_recorded closed the recorded fd {rec_fd2}; "
+                     f"only _retire_spawn may")
+try:
+    target.wait(timeout=5)
+except Exception:
+    pass
+lsp_client._retire_spawn(target.pid)
+
+# --- a STALE record whose number now belongs to a stranger -----------
+# The reader thread can reap a child through Popen.poll() while its
+# record survives, and free_pid() releases the number at reap however
+# many pidfds still reference the old struct pid -- so a retained record
+# plus a live pidfd is NOT evidence about who answers to that number now.
+# Here the record is tickless and pinned, and the number names a process
+# this bridge never started: authorizing on record-presence alone would
+# SIGKILL a stranger (Codex adversarial review, High).
+# The pin is a descriptor for a child of OURS that has since died and
+# been reaped -- which is the only shape a real stale record can have,
+# because the descriptor was opened on our own child at spawn time. The
+# record's NUMBER is then given to an unrelated live process. Signalling
+# through the descriptor reaches the dead child and nobody else; only a
+# path that trusted the NUMBER could reach the stranger.
+ours_dead = subprocess.Popen([sys.executable, "-c", STUBBORN], env=env,
+                             start_new_session=True)
+time.sleep(0.3)
+pin = None
+try:
+    pin = os.pidfd_open(ours_dead.pid, 0)
+except Exception:
+    pin = None
+ours_dead.kill()
+ours_dead.wait(timeout=5)
+stranger = subprocess.Popen(
+    [sys.executable, "-c", STUBBORN],
+    env={k: v for k, v in os.environ.items()
+         if k not in ("LSP_BRIDGE_OWNER", "LSP_BRIDGE_RUN_ID")},
+    start_new_session=True)
+time.sleep(0.3)
+lsp_client._SPAWNED.append(lsp_client._SpawnRecord(stranger.pid, None, pin))
+if lsp_client._signal_recorded(stranger.pid, signal.SIGKILL):
+    fails.append("_signal_recorded signalled a stale tickless record whose "
+                 "number now names a process we never started")
+if lsp_client.force_kill_spawned(settle=0.0) and stranger.poll() is not None:
+    fails.append("the force sweep killed a stranger through a stale record")
+if stranger.poll() is not None:
+    fails.append("a process this bridge never started was killed by a "
+                 "record that carried no identity")
+lsp_client._SPAWNED[:] = [e for e in lsp_client._SPAWNED
+                          if e.pid != stranger.pid]
+if pin is not None:
+    try:
+        os.close(pin)
+    except Exception:
+        pass
+stranger.kill()
+try:
+    stranger.wait(timeout=5)
+except Exception:
+    pass
+
+# --- a record WITH a descriptor never falls back to a number ---------
+# os.dup can fail under the same FD exhaustion that makes an emergency
+# teardown urgent. Authorizing from the number instead would restore the
+# equal-tick recycle the descriptor exists to rule out, so it fails
+# closed (Codex adversarial review, High).
+# UNSTAMPED on purpose: the stamp-wide pass would otherwise target it
+# too, and that pass authorizes from a LIVE owner-stamp read rather than
+# from ticks, which is sound. Leaving the stamp off makes any numeric
+# signal here unambiguously pass 1's.
+noborrow = subprocess.Popen(
+    [sys.executable, "-c", STUBBORN],
+    env={k: v for k, v in os.environ.items() if k != "LSP_BRIDGE_OWNER"},
+    start_new_session=True)
+time.sleep(0.3)
+lsp_client._record_spawn(noborrow.pid)
+if recorded_fd(noborrow.pid) is None:
+    fails.append("the failed-borrow case lost its pin; it cannot discriminate")
+else:
+    killed_by_number = []
+    real_dup2, real_open2, real_kill2 = os.dup, os.pidfd_open, os.kill
+
+    def no_dup(fd):
+        raise OSError("EMFILE")
+
+    def no_open(pid, flags=0):
+        raise OSError("EMFILE")
+
+    os.dup, os.pidfd_open = no_dup, no_open
+    os.kill = lambda p, sg: killed_by_number.append((p, sg))
+    try:
+        sent_anyway = lsp_client._signal_recorded(noborrow.pid, signal.SIGKILL)
+        lsp_client.force_kill_spawned(settle=0.0)
+    finally:
+        os.dup, os.pidfd_open, os.kill = real_dup2, real_open2, real_kill2
+    if sent_anyway or killed_by_number:
+        fails.append(f"a record holding a descriptor was signalled by NUMBER "
+                     f"when the borrow failed: {killed_by_number}")
+lsp_client._retire_spawn(noborrow.pid)
+noborrow.kill()
+try:
+    noborrow.wait(timeout=5)
+except Exception:
+    pass
+
+# --- ABA: a value-equal replacement is NOT the record we snapshotted --
+# Retirement can remove a record and close it while a replacement is
+# handed the same PID inside the same 100 Hz tick and the same descriptor
+# number. Its fresh record is VALUE-equal to the snapshot a sweep holds,
+# so a membership test by value would say "untouched" and let the
+# borrowed descriptor signal the replacement (Codex adversarial review,
+# High).
+aba = subprocess.Popen([sys.executable, "-c", STUBBORN], env=env,
+                       start_new_session=True)
+time.sleep(0.3)
+lsp_client._record_spawn(aba.pid)
+aba_entry = None
+for e in list(lsp_client._SPAWNED):
+    if e.pid == aba.pid:
+        aba_entry = e
+if aba_entry is None:
+    fails.append("the ABA case never recorded its child")
+else:
+    real_dup3 = os.dup
+    swapped = {"done": False}
+
+    def swapping_dup(fd):
+        out = real_dup3(fd)
+        if not swapped["done"]:
+            swapped["done"] = True
+            # Same pid, same ticks, same fd NUMBER -- a different record.
+            try:
+                lsp_client._SPAWNED.remove(aba_entry)
+            except ValueError:
+                pass
+            lsp_client._SPAWNED.append(lsp_client._SpawnRecord(
+                aba_entry.pid, aba_entry.ticks, aba_entry.fd))
+        return out
+
+    os.dup = swapping_dup
+    try:
+        borrowed_aba = lsp_client._borrow_pidfd(aba_entry)
+    finally:
+        os.dup = real_dup3
+    if not swapped["done"]:
+        fails.append("the ABA swap never ran; the case is vacuous")
+    if borrowed_aba is not None:
+        fails.append("_borrow_pidfd accepted a VALUE-equal replacement "
+                     "record as the one it snapshotted")
+        try:
+            os.close(borrowed_aba)
+        except Exception:
+            pass
+lsp_client._SPAWNED[:] = [e for e in lsp_client._SPAWNED if e.pid != aba.pid]
+aba.kill()
+try:
+    aba.wait(timeout=5)
+except Exception:
+    pass
+
+# --- two generations sharing one PID -------------------------------
+# The respawn path builds the replacement before disposing the dead
+# instance, so two records can carry the same number. Retiring by number
+# removed and closed BOTH, taking the live replacement's only exact
+# handle with it (Codex adversarial review, High).
+gen_a = lsp_client._SpawnRecord(4194299, 4242, None)
+gen_b = lsp_client._SpawnRecord(4194299, 4242, None)
+lsp_client._SPAWNED.extend([gen_a, gen_b])
+lsp_client._retire_spawn(gen_a)
+present = [e for e in list(lsp_client._SPAWNED) if e.pid == 4194299]
+if not any(e is gen_b for e in present):
+    fails.append("retiring one generation by OBJECT removed the other too")
+if any(e is gen_a for e in present):
+    fails.append("retiring by object did not remove that object")
+# By NUMBER, exactly one generation goes -- never every record sharing it.
+gen_c = lsp_client._SpawnRecord(4194299, 4242, None)
+lsp_client._SPAWNED.append(gen_c)
+lsp_client._retire_spawn(4194299)
+left = [e for e in list(lsp_client._SPAWNED) if e.pid == 4194299]
+if len(left) != 1:
+    fails.append(f"retiring by NUMBER removed {2 - len(left)} generation(s); "
+                 f"exactly one must go")
+lsp_client._SPAWNED[:] = [e for e in lsp_client._SPAWNED if e.pid != 4194299]
+
+# --- a group sweep must not reach a namesake generation --------------
+# The respawn path builds the replacement before disposing the dead
+# instance, and both use start_new_session, so if the reaped leader's PID
+# is reused the two generations share a numeric PGID. Old-instance
+# cleanup then finds the REPLACEMENT in what it believes is its own group
+# and kills it -- a restart loop where each generation shoots its
+# successor (Codex adversarial review, High).
+gen_old = "gen-old-" + str(os.getpid())
+gen_new = "gen-new-" + str(os.getpid())
+replacement = subprocess.Popen(
+    [sys.executable, "-c", STUBBORN],
+    env={**env, "LSP_BRIDGE_GEN": gen_new},
+    start_new_session=True)
+time.sleep(0.3)
+members = lsp_client._group_members(replacement.pid, gen=gen_old)
+if members:
+    fails.append(f"a group sweep for the OLD generation claimed the "
+                 f"replacement: {members}")
+    for _m in members:
+        if _m[1] is not None:
+            try:
+                os.close(_m[1])
+            except Exception:
+                pass
+if lsp_client._reap_group(replacement.pid, gen=gen_old):
+    fails.append("the old generation reaped its replacement's group")
+try:
+    replacement.wait(timeout=1.0)
+    fails.append("a replacement generation was killed by its predecessor's "
+                 "group sweep")
+except Exception:
+    pass                                # still alive, which is correct
+# The replacement's OWN generation must still be able to reap it.
+if not lsp_client._reap_group(replacement.pid, gen=gen_new):
+    fails.append("a generation could not reap its own group")
+try:
+    replacement.wait(timeout=5)
+except Exception:
+    fails.append("a generation failed to reap its own group")
+reap_pid = replacement.pid
+
+# The boolean preflight must own no descriptor. Asking _group_members and
+# reading its truthiness threw away a list whose entries hold open pidfds,
+# up to twenty times per shutdown (Codex adversarial review, High).
+helper_holder = subprocess.Popen(
+    [sys.executable, "-c", STUBBORN],
+    env={**env, "LSP_BRIDGE_GEN": gen_new},
+    start_new_session=True)
+time.sleep(0.3)
+def _fd_count():
+    try:
+        return len(os.listdir("/proc/self/fd"))
+    except Exception:
+        return -1
+before_fds = _fd_count()
+for _ in range(20):
+    lsp_client._group_is_empty(helper_holder.pid, exclude=-1, gen=gen_new)
+after_fds = _fd_count()
+if before_fds > 0 and after_fds - before_fds > 2:
+    fails.append(f"the group preflight leaked descriptors: {before_fds} -> "
+                 f"{after_fds} over 20 calls")
+helper_holder.kill()
+try:
+    helper_holder.wait(timeout=5)
+except Exception:
+    pass
+
+# Group collection must stay inside the shutdown budget. A descendant
+# that keeps forking drove 20 outer rounds, each running the reap's own
+# 20 scans and sleeps, inside a shutdown respawn calls with 0.5s (Codex
+# adversarial review, Medium).
+FORKER = (
+    "import os, sys, time\n"
+    "sys.stdin.close()\n"
+    "while True:\n"
+    "    if os.fork() == 0:\n"
+    "        time.sleep(30)\n"
+    "        os._exit(0)\n"
+    "    time.sleep(0.02)\n"
+)
+forker = subprocess.Popen([sys.executable, "-c", FORKER],
+                          env={**env, "LSP_BRIDGE_GEN": gen_new},
+                          start_new_session=True)
+time.sleep(0.5)
+t_budget = time.monotonic()
+lsp_client._reap_group(forker.pid, deadline=t_budget + 0.3,
+                       gen=gen_new)
+spent_budget = time.monotonic() - t_budget
+if spent_budget > 2.0:
+    fails.append(f"group collection ran {spent_budget:.2f}s against a 0.3s "
+                 f"deadline while a descendant kept forking")
+try:
+    os.killpg(os.getpgid(forker.pid), 9)
+except Exception:
+    pass
+forker.kill()
+try:
+    forker.wait(timeout=5)
+except Exception:
+    pass
+
+# An INCOMPLETE scan is not an empty group. _group_members stops where
+# its deadline runs out, so an expired budget returns nothing -- and the
+# caller took that for "gone", retired the record, and left whatever it
+# had not reached (Codex adversarial review, Medium).
+probe_holder = subprocess.Popen(
+    [sys.executable, "-c", STUBBORN],
+    env={**env, "LSP_BRIDGE_GEN": gen_new},
+    start_new_session=True)
+time.sleep(0.3)
+if lsp_client._group_is_empty(probe_holder.pid, exclude=-1, gen=gen_new):
+    fails.append("a live group read as empty with a live deadline")
+if lsp_client._group_is_empty(probe_holder.pid, exclude=-1, gen=gen_new,
+                              deadline=time.monotonic() - 1.0):
+    fails.append("an EXPIRED deadline reported the group gone; an "
+                 "incomplete scan is not an empty group")
+probe_holder.kill()
+try:
+    probe_holder.wait(timeout=5)
+except Exception:
+    pass
+
+# The group reaper's pidfd-less authorization must be bounded too: its
+# ownership read walks every task when the leader environment is
+# unreadable, so the budget can expire inside the one call whose answer
+# authorizes the signal (Codex adversarial review, Medium).
+slow_member = subprocess.Popen(
+    [sys.executable, "-c", STUBBORN],
+    env={**env, "LSP_BRIDGE_GEN": gen_new},
+    start_new_session=True)
+time.sleep(0.3)
+real_owner_g = lsp_client._carries_our_owner_id
+
+
+def slow_true_owner(pid, deadline=None):
+    time.sleep(0.2)
+    return True
+
+
+# Asserted on the PREDICATE itself. Driving it through _reap_group would
+# pass for the wrong reason: the scan's own bound fires first and the
+# predicate never runs, so the assertion would hold with the fix
+# reverted.
+member_ticks = lsp_client.proc_start_ticks(slow_member.pid)
+expired = lsp_client._reap_predicate(
+    os.getpgid(slow_member.pid), member_ticks, gen_new,
+    time.monotonic() - 1.0)
+if expired(slow_member.pid):
+    fails.append("the reap predicate authorized a signal on an already "
+                 "expired deadline")
+lsp_client._carries_our_owner_id = slow_true_owner
+try:
+    t_reap = time.monotonic()
+    during = lsp_client._reap_predicate(
+        os.getpgid(slow_member.pid), member_ticks, gen_new, t_reap + 0.05)
+    authorized = during(slow_member.pid)
+    spent_reap = time.monotonic() - t_reap
+finally:
+    lsp_client._carries_our_owner_id = real_owner_g
+if authorized:
+    fails.append("the reap predicate authorized a signal from an ownership "
+                 "probe that returned after its deadline")
+if spent_reap > 2.0:
+    fails.append(f"the reap predicate ran {spent_reap:.2f}s against a 0.05s "
+                 f"deadline")
+slow_member.kill()
+try:
+    slow_member.wait(timeout=5)
+except Exception:
+    pass
+
+# A dead leader's record must go even when the group sweep did not
+# finish. Keeping it on an expired deadline meant keeping it forever --
+# shutdown is idempotent and the force sweep only borrows a duplicate --
+# so a respawn loop accumulated one descriptor per dead generation
+# (Codex adversarial review, Medium).
+retain_before_fds = _fd_count()
+retain_before_records = len(list(lsp_client._SPAWNED))
+for _round in range(8):
+    doomed = subprocess.Popen([sys.executable, "-c", STUBBORN], env=env,
+                              start_new_session=True)
+    inst = lsp_client.LspSubprocess.__new__(lsp_client.LspSubprocess)
+    inst._proc = doomed
+    inst._gen_id = "gen-retain-%d" % _round
+    inst._spawn_record = lsp_client._record_spawn(doomed.pid)
+    doomed.kill()
+    doomed.wait(timeout=5)
+    # An already-expired budget: every scan is incomplete by construction.
+    lsp_client._group_is_empty(doomed.pid, exclude=doomed.pid,
+                               gen=inst._gen_id,
+                               deadline=time.monotonic() - 1.0)
+    lsp_client._retire_spawn(inst._spawn_record)
+retain_after_records = len(list(lsp_client._SPAWNED))
+retain_after_fds = _fd_count()
+if retain_after_records > retain_before_records:
+    fails.append(f"dead generations accumulated in _SPAWNED: "
+                 f"{retain_before_records} -> {retain_after_records}")
+if retain_before_fds > 0 and retain_after_fds - retain_before_fds > 2:
+    fails.append(f"dead generations accumulated descriptors: "
+                 f"{retain_before_fds} -> {retain_after_fds}")
+
+# --- signalling must reach the LIVE generation, not the stale one ----
+# A stale record can sit ahead of a live replacement carrying the same
+# number. A scan that stops at the first match signals the dead one,
+# reports failure, and never reaches the replacement -- which then
+# survives the shutdown that thought it had asked (Codex adversarial
+# review, High).
+live = subprocess.Popen([sys.executable, "-c", STUBBORN], env=env,
+                        start_new_session=True)
+time.sleep(0.3)
+stale_first = lsp_client._SpawnRecord(
+    live.pid, (lsp_client.proc_start_ticks(live.pid) or 0) + 99, None)
+lsp_client._SPAWNED.append(stale_first)
+live_record = lsp_client._record_spawn(live.pid)
+if not lsp_client._signal_recorded(live_record, signal.SIGKILL):
+    fails.append("_signal_recorded refused the exact live record when a "
+                 "stale generation shared its number")
+try:
+    live.wait(timeout=5)
+except Exception:
+    fails.append("the live generation survived a signal aimed at its own "
+                 "record while a stale record shared the number")
+# And by NUMBER the same ambiguity must fail closed rather than guess.
+lsp_client._SPAWNED.append(lsp_client._SpawnRecord(live.pid, 4242, None))
+if lsp_client._signal_recorded(live.pid, signal.SIGKILL):
+    fails.append("_signal_recorded guessed a generation from an ambiguous "
+                 "number")
+lsp_client._SPAWNED[:] = [e for e in lsp_client._SPAWNED
+                          if e.pid != live.pid]
+
+# --- descriptor exhaustion must not orphan a recorded child ----------
+# With dup and pidfd_open both failing there is no way to obtain a NEW
+# descriptor, so the sweep claims the record's own: removing it transfers
+# ownership, and that operation needs no file descriptor at all. Refusing
+# instead left the child running at exactly the moment cleanup mattered
+# most (Codex adversarial review, Medium).
+emfile = subprocess.Popen([sys.executable, "-c", STUBBORN], env=env,
+                          start_new_session=True)
+time.sleep(0.3)
+lsp_client._record_spawn(emfile.pid)
+if recorded_fd(emfile.pid) is None:
+    fails.append("the EMFILE case lost its pin; it cannot discriminate")
+else:
+    real_dup4, real_open4 = os.dup, os.pidfd_open
+
+    def emfile_dup(fd):
+        raise OSError("EMFILE")
+
+    def emfile_open(pid, flags=0):
+        raise OSError("EMFILE")
+
+    def emfile_probe(pid, deadline=None):
+        return None                     # /proc reads fail under EMFILE too
+
+    os.dup, os.pidfd_open = emfile_dup, emfile_open
+    real_owner4 = lsp_client._carries_our_owner_id
+    lsp_client._carries_our_owner_id = emfile_probe
+    try:
+        # Exhaustion does not politely spare the stamp-wide pass: with no
+        # descriptor to open AND no environment to read, the record's own
+        # descriptor is the only handle left in the process.
+        lsp_client.force_kill_spawned(settle=0.0)
+    finally:
+        os.dup, os.pidfd_open = real_dup4, real_open4
+        lsp_client._carries_our_owner_id = real_owner4
+    try:
+        emfile.wait(timeout=5)
+    except Exception:
+        fails.append("a recorded child survived the sweep under simulated "
+                     "descriptor exhaustion")
+lsp_client._SPAWNED[:] = [e for e in lsp_client._SPAWNED
+                          if e.pid != emfile.pid]
+emfile.kill()
+try:
+    emfile.wait(timeout=5)
+except Exception:
+    pass
+
+if fails:
+    for f in fails:
+        print(f"[9g] FAIL: {f}", file=sys.stderr)
+    sys.exit(1)
+print("[9g] ownership OK: no reap path signals through or closes the "
+      "recorded descriptor")
+PY
+    [ "$rc" = "0" ] && return 0
+    [ "$rc" = "77" ] && return 77
+    return 1
+}
+
+# --- 9i: the force sweep enumerates /proc once per ROUND, not per record --
+# _group_members(pgid) requires the owner stamp exactly as the stamp-wide
+# scan does and only adds a pgrp filter, so the per-leader group sweep was
+# asking a subset of the question the final pass asked anyway -- at the
+# price of a full /proc walk per record per round. The invariant that
+# proves the collapse landed: enumeration cost does not grow with the
+# number of recorded leaders. Reverting restores 2 walks per record.
+t_force_sweep_one_snapshot() {
+    local rc=0
+    python3 - <<'PY' || rc=$?
+import os, sys
+sys.path.insert(0, "scripts/lsp-mcp")
+import lsp_client
+
+walks = []
+real_listdir = os.listdir
+
+
+def spy(path, *a, **kw):
+    if path == "/proc":
+        walks.append(path)
+    return real_listdir(path, *a, **kw)
+
+
+def measure(n):
+    # Records for pids that do not exist. Nothing is signalled, so the
+    # only cost the sweep pays is enumeration -- which is exactly the
+    # quantity under test, and it stays deterministic because no child
+    # has to reach the zombie state first.
+    fake = [4194300 - i for i in range(n)]
+    for pid in fake:
+        lsp_client._SPAWNED.append(lsp_client._SpawnRecord(pid, 4242, None))
+    walks.clear()
+    os.listdir = spy
+    try:
+        lsp_client.force_kill_spawned(settle=0.0)
+    finally:
+        os.listdir = real_listdir
+        lsp_client._SPAWNED[:] = [
+            e for e in lsp_client._SPAWNED if e.pid not in set(fake)]
+    return len(walks)
+
+
+one = measure(1)
+many = measure(8)
+fails = []
+# EXACTLY two, not "at least one". The loop must take a SECOND look
+# before believing an empty scan: a helper forked after the listdir is
+# absent from the first one, and an assertion of >= 1 walk would let a
+# regression to single-scan termination pass (Codex test-coverage
+# review, High).
+if one != 2:
+    fails.append(f"a sweep with nothing to kill took {one} /proc walk(s); "
+                 f"the two-consecutive-empty-scans rule requires exactly 2")
+if many > one + 1:
+    fails.append(f"/proc walks scale with the record count: {one} walk(s) "
+                 f"for 1 record, {many} for 8 -- the sweep is still "
+                 f"enumerating once per recorded leader")
+
+# And the loop bound itself: a target that never dies must not hold
+# shutdown open forever. Injected, because a genuinely unkillable
+# process cannot be asked for on demand.
+real_snapshot = lsp_client._proc_snapshot
+real_kill_verified = lsp_client._kill_verified
+
+
+class _Immortal:
+    procs = [(4194300, 1, 4194300, 4242)]
+
+    def ours(self, pid, ticks, deadline=None):
+        return True
+
+
+def immortal_snapshot(deadline=None, ours_cache=None):
+    walks.append("/proc")
+    return _Immortal()
+
+
+walks.clear()
+lsp_client._proc_snapshot = immortal_snapshot
+lsp_client._kill_verified = lambda pid, fd, still: False
+try:
+    lsp_client.force_kill_spawned(settle=0.0)
+finally:
+    lsp_client._proc_snapshot = real_snapshot
+    lsp_client._kill_verified = real_kill_verified
+rounds = len(walks)
+if rounds != 20:
+    fails.append(f"a permanently non-empty target set drove {rounds} "
+                 f"rounds; the bound is 20")
+
+if fails:
+    for f in fails:
+        print(f"[9i] FAIL: {f}", file=sys.stderr)
+    sys.exit(1)
+print(f"[9i] enumeration OK: {one} /proc walk(s) for 1 record, {many} "
+      f"for 8, and a never-emptying sweep stops at {rounds} rounds")
+PY
+    [ "$rc" = "0" ] && return 0
+    [ "$rc" = "77" ] && return 77
+    return 1
+}
+
+# --- 9j: the three races the ownership rewrite opened, pinned ------------
+# Each case injects a race the host cannot be asked to produce: a
+# retirement landing between the snapshot and the pidfd open, an
+# ownership probe slow enough to outlive the shutdown budget, and a probe
+# that fails once and succeeds after. All three were live defects in the
+# first cut of this work (Codex adversarial review, High/High/Medium).
+t_reap_race_regressions() {
+    local rc=0
+    python3 - <<'PY' || rc=$?
+import os, signal, subprocess, sys, time
+sys.path.insert(0, "scripts/lsp-mcp")
+import lsp_client
+
+STUBBORN = "import sys, time\nsys.stdin.close()\ntime.sleep(600)\n"
+env = dict(os.environ)
+env["LSP_BRIDGE_OWNER"] = lsp_client._OWNER_ID
+fails = []
+skipped_shapes = []
+
+
+def spawn(stamped=True):
+    e = env if stamped else {k: v for k, v in os.environ.items()
+                             if k not in ("LSP_BRIDGE_OWNER",)}
+    return subprocess.Popen([sys.executable, "-c", STUBBORN], env=e,
+                            start_new_session=True)
+
+
+def reap(p):
+    try:
+        p.kill(); p.wait(timeout=5)
+    except Exception:
+        pass
+
+
+def drop(pid):
+    lsp_client._SPAWNED[:] = [e for e in lsp_client._SPAWNED if e.pid != pid]
+
+
+# --- A: retirement wins the race between snapshot and open -----------
+# _signal_recorded took its record from a lock-free snapshot; by the time
+# it opens a descriptor the record may be gone, and with it the pidfd
+# that was keeping the kernel from reissuing the number. Start times are
+# clock ticks, so tick equality cannot rule out a fast recycle -- only
+# the record still being present can.
+if hasattr(os, "pidfd_open"):
+    victim = spawn()
+    time.sleep(0.3)
+    lsp_client._record_spawn(victim.pid)
+    sent = []
+    real_dup, real_open, real_kill = os.dup, os.pidfd_open, os.kill
+    state = {"raced": False}
+
+    # Retirement lands between reading the record's descriptor and the
+    # membership re-check that decides whether the duplicate is usable.
+    def racing_dup(fd):
+        out = real_dup(fd)
+        if not state["raced"]:
+            state["raced"] = True
+            lsp_client._retire_spawn(victim.pid)
+        return out
+
+    def racing_open(pid, flags=0):
+        if pid == victim.pid and not state["raced"]:
+            state["raced"] = True
+            lsp_client._retire_spawn(pid)
+        return real_open(pid, flags)
+
+    os.dup, os.pidfd_open = racing_dup, racing_open
+    os.kill = lambda p, s: sent.append((p, s))
+    try:
+        signalled = lsp_client._signal_recorded(victim.pid, signal.SIGTERM)
+    finally:
+        os.dup, os.pidfd_open, os.kill = real_dup, real_open, real_kill
+    if not state["raced"]:
+        fails.append("A: the injected retirement never ran; case is vacuous")
+    if signalled or sent:
+        fails.append(f"A: signalled a pid whose record was retired before "
+                     f"the open (returned {signalled}, sent {sent})")
+    drop(victim.pid)
+    reap(victim)
+
+# --- B: the ownership probe must respect the shutdown budget ---------
+# Enumeration was deadline-checked and the probing behind it was not, so
+# a host with many same-uid processes could spend the whole budget
+# proving ownership before the first signal.
+mine = os.geteuid()
+same_uid = 0
+for name in os.listdir("/proc"):
+    if not name.isdigit():
+        continue
+    try:
+        if os.stat("/proc/" + name).st_uid == mine:
+            same_uid += 1
+    except Exception:
+        pass
+real_owner = lsp_client._carries_our_owner_id
+# An unavailable fixture SKIPS ITS OWN CASE and nothing else. Exiting 77
+# from here aborted the driver mid-file, so a thin process table silently
+# suppressed case C as well -- one missing fixture hiding an injectable
+# regression, above a suite that still exited 0 (Codex test-coverage
+# review, High).
+if same_uid < 20:
+    print(f"[9j] SKIP(B): only {same_uid} same-uid processes; the budget "
+          f"case needs a populated process table", file=sys.stderr)
+    skipped_shapes.append("B budget-vs-ownership-probe")
+else:
+    def slow_probe(pid, deadline=None):
+        time.sleep(0.02)
+        return None
+
+    lsp_client._carries_our_owner_id = slow_probe
+    try:
+        t0 = time.monotonic()
+        lsp_client.force_kill_spawned(settle=0.0, deadline=t0 + 0.05)
+        spent = time.monotonic() - t0
+    finally:
+        lsp_client._carries_our_owner_id = real_owner
+    # 20ms per probe against a 50ms budget: honouring the deadline costs
+    # a couple of probes, ignoring it costs one per same-uid process.
+    ceiling = min(1.0, 0.02 * same_uid * 0.4)
+    if spent > ceiling:
+        fails.append(f"B: force sweep spent {spent:.2f}s probing ownership "
+                     f"past a 0.05s deadline, ceiling {ceiling:.2f}s "
+                     f"({same_uid} same-uid processes)")
+
+# --- C: a probe that fails ONCE must not be cached as foreign --------
+# The shared cache stored an unreadable probe exactly like an
+# authoritative negative, so one racing read suppressed a live child for
+# every later round and the sweep exited over it. The child here is
+# stamped but never recorded, so only the stamp-wide pass can reach it.
+survivor = spawn()
+time.sleep(0.3)
+seen = {}
+
+
+def flaky_probe(pid, deadline=None):
+    if pid == survivor.pid and not seen.get(pid):
+        seen[pid] = True
+        return None                 # transient: proves nothing
+    return real_owner(pid, deadline)
+
+
+lsp_client._carries_our_owner_id = flaky_probe
+try:
+    lsp_client.force_kill_spawned(settle=0.0)
+finally:
+    lsp_client._carries_our_owner_id = real_owner
+if not seen.get(survivor.pid):
+    fails.append("C: the transient probe failure never fired; case is vacuous")
+if survivor.poll() is None:
+    fails.append("C: a child whose ownership probe failed once survived the "
+                 "sweep -- the unreadable answer was cached as foreign")
+reap(survivor)
+
+# --- D: a probe that answers TRUE past the budget must not authorize --
+# Checking the deadline before the probe is not enough: the leader's
+# environ read is not interruptible, so the budget can expire inside the
+# one call whose answer then authorizes the signal (Codex adversarial
+# review, High -- a 200ms probe against a 50ms deadline still signalled).
+victim_d = spawn()
+time.sleep(0.3)
+real_snapshot = lsp_client._proc_snapshot
+
+
+class _OneTarget:
+    def __init__(self, pid):
+        self.procs = [(pid, 1, pid, 4242)]
+
+    def ours(self, pid, ticks, deadline=None):
+        return True                     # snapshot only NARROWS
+
+
+def one_target(deadline=None, ours_cache=None):
+    return _OneTarget(victim_d.pid)
+
+
+def slow_true(pid, deadline=None):
+    time.sleep(0.2)
+    return True
+
+
+lsp_client._proc_snapshot = one_target
+lsp_client._carries_our_owner_id = slow_true
+try:
+    t0 = time.monotonic()
+    signalled = lsp_client.force_kill_spawned(settle=0.0, deadline=t0 + 0.05)
+finally:
+    lsp_client._proc_snapshot = real_snapshot
+    lsp_client._carries_our_owner_id = real_owner
+if signalled:
+    fails.append(f"D: authorized {signalled} signal(s) from an ownership "
+                 f"probe that returned after the deadline had passed")
+# Waited, not polled: a SIGKILL takes a moment to land, so `poll()`
+# immediately after the sweep reads None whether or not the signal was
+# sent -- an assertion that cannot fail is not one.
+try:
+    victim_d.wait(timeout=1.0)
+    fails.append("D: a target was killed past the deadline")
+except Exception:
+    pass                                # still alive, which is correct
+reap(victim_d)
+
+# --- E: an unreadable /proc stat must not remove a candidate ---------
+# The collapsed sweep derives every stamp-wide target from the snapshot,
+# so a pid dropped for a failed stat read is a pid never probed and never
+# signalled -- and that read is likeliest to fail during exactly the
+# emergency teardown this sweep exists for.
+victim_e = spawn()
+time.sleep(0.3)
+real_fields = lsp_client._stat_fields
+
+
+def blind_stat(pid):
+    if pid == victim_e.pid:
+        return None                     # unreadable, as under FD exhaustion
+    return real_fields(pid)
+
+
+lsp_client._stat_fields = blind_stat
+try:
+    lsp_client.force_kill_spawned(settle=0.0)
+finally:
+    lsp_client._stat_fields = real_fields
+if victim_e.poll() is None:
+    fails.append("E: an owner-stamped child survived because its /proc "
+                 "stat could not be read")
+reap(victim_e)
+
+# --- F: pass 1's TICKLESS fallback is deadline-bound too -------------
+# Pass 1 is deliberately not deadline-gated -- signalling through a
+# pinned record is a couple of syscalls. Its fallback for a record with
+# neither a pin nor a start time is not cheap at all: it can read one
+# environment per task. Leaving that ungated let a 200ms probe signal
+# 150ms past a 50ms budget (Codex adversarial review, High).
+victim_f = spawn()
+time.sleep(0.3)
+lsp_client._SPAWNED.append(lsp_client._SpawnRecord(victim_f.pid, None, None))
+lsp_client._carries_our_owner_id = slow_true
+try:
+    t0 = time.monotonic()
+    lsp_client.force_kill_spawned(settle=0.0, deadline=t0 + 0.05)
+finally:
+    lsp_client._carries_our_owner_id = real_owner
+    lsp_client._SPAWNED[:] = [e for e in lsp_client._SPAWNED
+                              if e.pid != victim_f.pid]
+try:
+    victim_f.wait(timeout=1.0)
+    fails.append("F: pass 1 signalled a tickless record from an ownership "
+                 "probe that returned after the deadline had passed")
+except Exception:
+    pass                                # still alive, which is correct
+reap(victim_f)
+
+if fails:
+    for f in fails:
+        print(f"[9j] FAIL: {f}", file=sys.stderr)
+    sys.exit(1)
+if skipped_shapes:
+    print("[9j] shapes not exercised on this host: "
+          + ", ".join(skipped_shapes), file=sys.stderr)
+print("[9j] races OK: retirement-before-open fails closed, ownership "
+      "probing honours the deadline before AND after the probe, a "
+      "transient failure is re-asked, an unreadable stat keeps the "
+      "candidate")
+PY
+    [ "$rc" = "0" ] && return 0
+    [ "$rc" = "77" ] && return 77
+    return 1
+}
+
+# --- 9k: the reap helpers as unit tables, not through live procfs --------
+# The live sub-tests reach these through a whole sweep, so a degraded
+# branch -- a stat line the kernel truncated, a directory that vanished
+# between the read and the uid lookup, an environ that raced -- is
+# exercised only if the host happens to produce it. Injected here so each
+# contract is pinned on every run (Codex test-coverage review, Medium).
+t_reap_helper_tables() {
+    local rc=0
+    python3 - <<'PY' || rc=$?
+import os, sys, time
+sys.path.insert(0, "scripts/lsp-mcp")
+import lsp_client
+
+fails = []
+
+
+def check(cond, msg):
+    if not cond:
+        fails.append(msg)
+
+
+# --- _own_pidfd: the descriptor is never leaked on a refusal ---------
+closed = []
+real_open, real_close = os.pidfd_open, os.close
+os.close = lambda fd: (closed.append(fd), real_close(fd))[1]
+try:
+    me = os.getpid()
+    fd = lsp_client._own_pidfd(me, lambda p: True)
+    check(fd is not None, "_own_pidfd refused a live, accepted process")
+    if fd is not None:
+        real_close(fd)
+
+    closed.clear()
+    fd = lsp_client._own_pidfd(me, lambda p: False)
+    check(fd is None, "_own_pidfd returned a descriptor for a REFUSED process")
+    check(len(closed) == 1,
+          f"_own_pidfd closed the refused descriptor {len(closed)} time(s), "
+          f"not once")
+
+    closed.clear()
+
+    def boom(p):
+        raise RuntimeError("probe exploded")
+
+    try:
+        fd = lsp_client._own_pidfd(me, boom)
+    except Exception as exc:
+        fd = None
+        fails.append(f"_own_pidfd let a predicate exception escape: {exc!r}")
+    check(fd is None, "_own_pidfd returned a descriptor after the predicate "
+                      "raised")
+    check(len(closed) == 1,
+          f"_own_pidfd closed {len(closed)} descriptor(s) after the predicate "
+          f"raised, not one")
+
+    closed.clear()
+    os.pidfd_open = lambda *a, **kw: (_ for _ in ()).throw(OSError("no pidfd"))
+    check(lsp_client._own_pidfd(me, lambda p: True) is None,
+          "_own_pidfd did not answer None when pidfd_open failed")
+    check(not closed, "_own_pidfd closed something after failing to open")
+finally:
+    os.pidfd_open, os.close = real_open, real_close
+
+# --- _carries_our_owner_id: three answers, not two -------------------
+check(lsp_client._carries_our_owner_id(os.getpid()) is not True,
+      "this process is not one of its own spawned children")
+# A pid that cannot exist: nothing readable anywhere -> UNKNOWN, and
+# unknown must never be reported as an authoritative negative.
+check(lsp_client._carries_our_owner_id(4194301) is None,
+      "an unreadable process answered False (authoritative) instead of None")
+# init is readable as a directory but its environ is not ours to read.
+check(lsp_client._carries_our_owner_id(1) is not True,
+      "pid 1 was claimed as one of our children")
+
+# --- _ProcSnapshot.ours: what may and may not be cached --------------
+calls = []
+real_owner = lsp_client._carries_our_owner_id
+
+
+def scripted(answers):
+    seq = list(answers)
+
+    def probe(pid, deadline=None):
+        calls.append(pid)
+        return seq.pop(0) if seq else None
+    return probe
+
+
+snap = lsp_client._ProcSnapshot([])
+lsp_client._carries_our_owner_id = scripted([True, False])
+try:
+    check(snap.ours(1234, 42) is True, "a True probe was not reported")
+    check(snap.ours(1234, 42) is True, "a True answer was not cached")
+    check(len(calls) == 1, f"a cached (pid, ticks) was re-probed "
+                           f"({len(calls)} calls)")
+    check(snap.ours(1234, 99) is False,
+          "a CHANGED start time reused the previous occupant's answer")
+    check(len(calls) == 2, "a changed start time did not re-probe")
+
+    calls.clear()
+    lsp_client._carries_our_owner_id = scripted([None, None, True])
+    snap2 = lsp_client._ProcSnapshot([])
+    check(snap2.ours(555, 7) is False, "an unknown probe was reported "
+                                             "as ownership")
+    check(snap2.ours(555, 7) is False, "second unknown probe misread")
+    check(len(calls) == 2, "an UNKNOWN answer was cached; it must be re-asked")
+    check(snap2.ours(555, 7) is True,
+          "a probe that finally succeeded was suppressed by a cached unknown")
+
+    # There must be NO cheap pre-filter that answers "not ours" without
+    # asking: /proc/<pid> is reassigned to root when a process calls
+    # PR_SET_DUMPABLE(0) or execs a setuid binary, so an owner-based
+    # short-circuit disowns exactly the hardened child that most needs
+    # reaping (Codex adversarial review, High).
+    calls.clear()
+    lsp_client._carries_our_owner_id = scripted([True])
+    check(snap2.ours(777, 7) is True,
+          "a process was disowned without its stamp ever being read")
+    check(calls == [777], "the ownership probe was skipped by a pre-filter")
+
+    # A row with no start time has no cache KEY -- (pid, ticks) is what
+    # pins identity -- so it must be re-probed every round rather than
+    # dropped or answered from a bare pid.
+    calls.clear()
+    lsp_client._carries_our_owner_id = scripted([True, True])
+    check(snap2.ours(888, None) is True, "a tickless row was not probed")
+    check(snap2.ours(888, None) is True, "a tickless row was not re-probed")
+    check(calls == [888, 888],
+          f"a tickless row was cached under a bare pid: {calls}")
+finally:
+    lsp_client._carries_our_owner_id = real_owner
+
+# --- _proc_snapshot: degraded reads are skipped, never guessed -------
+real_stat_fields = lsp_client._stat_fields
+real_listdir = os.listdir
+# Each row is skipped by a DIFFERENT guard.
+FAKE = ["10", "11", "12", "13", "notapid"]
+
+
+def fake_listdir(path, *a, **kw):
+    if path == "/proc":
+        return list(FAKE)
+    return real_listdir(path, *a, **kw)
+
+
+def fake_fields(pid):
+    return {
+        10: ["S", "1", "10", "x"] + ["0"] * 20,   # well-formed -> kept
+        11: ["S", "1"],                           # truncated -> IndexError
+        12: ["S", "1", "notanint"] + ["0"] * 20,  # unparseable -> ValueError
+        13: None,                                 # vanished mid-walk
+    }.get(pid)
+
+
+os.listdir = fake_listdir
+lsp_client._stat_fields = fake_fields
+try:
+    got = lsp_client._proc_snapshot()
+    rows = {p[0]: p for p in got.procs}
+finally:
+    os.listdir = real_listdir
+    lsp_client._stat_fields = real_stat_fields
+# A degraded stat is NOT a reason to forget a pid. The collapsed sweep
+# derives every stamp-wide target from this snapshot, so dropping the row
+# is the difference between probing an owner-stamped descendant and
+# leaking it (Codex adversarial review, High). The fields go None; the
+# candidate stays.
+check(sorted(rows) == [10, 11, 12, 13],
+      f"a pid was dropped for an unreadable or unparsable stat: "
+      f"{sorted(rows)}")
+check(rows.get(10) == (10, 1, 10, 0),
+      f"a well-formed row did not parse: {rows.get(10)}")
+for degraded in (11, 12, 13):
+    check(rows.get(degraded) == (degraded, None, None, None),
+          f"a degraded row carried invented fields: {rows.get(degraded)}")
+
+if fails:
+    for f in fails:
+        print(f"[9k] FAIL: {f}", file=sys.stderr)
+    sys.exit(1)
+print("[9k] helper contracts OK: _own_pidfd leaks nothing on refusal, "
+      "ownership is tri-state, only authoritative answers are cached, "
+      "degraded /proc rows are skipped")
+PY
+    [ "$rc" = "0" ] && return 0
+    [ "$rc" = "77" ] && return 77
+    return 1
+}
+
+lsp_ledger_rows() {
+    # Emit the ledger as bounded, newline-terminated rows.
+    #
+    # ONE descriptor does all of it: opened O_NOFOLLOW, confirmed to be a
+    # regular file through fstat on that same fd, and read for at most
+    # cap+1 bytes. The shell pipeline this replaces opened the path three
+    # times -- `-s`, two `wc -c`, then `head` -- and a language server
+    # holds that path (LSP_BRIDGE_PID_LEDGER is exported to every one of
+    # them), so it could be swapped for a FIFO between the checks and the
+    # read, at which point `wc` blocks until EOF and the final leak check
+    # never finishes. Growth between the size check and the read had the
+    # quieter version of the same bug: `head` would drop the suffix rows
+    # without anything reporting it (Codex adversarial review, Medium).
+    #
+    # Oversize, an unreadable path and a non-regular file are all
+    # REPORTED as rows, never silently dropped -- the reader's whole
+    # contract is that evidence it cannot use still gets named.
+    python3 - "$1" <<'PYLEDGER'
+import os
+import stat
+import sys
+
+CAP = 4000000
+ROW = 4100
+path = sys.argv[1]
+flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+try:
+    fd = os.open(path, flags)
+except OSError as exc:
+    print("!!lsp-reader\tledger-unopenable:%s\t-\t-\t-" % exc.errno)
+    sys.exit(0)
+try:
+    if not stat.S_ISREG(os.fstat(fd).st_mode):
+        print("!!lsp-reader\tledger-not-a-regular-file\t-\t-\t-")
+        sys.exit(0)
+    chunks = []
+    want = CAP + 1
+    while want > 0:
+        block = os.read(fd, min(want, 1 << 20))
+        if not block:
+            break
+        chunks.append(block)
+        want -= len(block)
+    data = b"".join(chunks)
+finally:
+    os.close(fd)
+if len(data) > CAP:
+    print("!!lsp-reader\tledger-too-large:%d\t-\t-\t-" % len(data))
+    data = data[:CAP]
+text = data.decode("utf-8", "replace")
+for line in text.split("\n"):
+    if line == "":
+        continue
+    sys.stdout.write(line[:ROW] + "\n")
+PYLEDGER
+}
+
+lsp_comm_matches() {
+    # $1 = /proc/PID/comm, $2 = the binary name to match against.
+    # comm is truncated to 15 chars, so the kernel's value is a PREFIX of
+    # the real basename -- never the other way round.
+    case "$2" in "$1"*) return 0 ;; *) return 1 ;; esac
+}
+
+lsp_out_has_pid() {
+    # $1 = accumulated survivor lines, $2 = pid. Field-exact, because a
+    # `case " $out " in *" $pid "*)` substring test only ever matched the
+    # FIRST line (every later pid is preceded by a newline, not a space),
+    # so the environ net re-reported pids the ledger net had already
+    # named -- and a `1234` could match inside `21234`.
+    [ -n "$1" ] || return 1
+    printf '%s' "$1" | awk -v p="$2" '$1 == p {f = 1} END {exit !f}'
+}
+
 lsp_survivors_of_this_run() {
     # $1 (optional): ledger to read instead of the live harness one. 9c
     # passes a scratch file so it can plant a record without touching the
@@ -6896,32 +8136,144 @@ lsp_survivors_of_this_run() {
     # this replaced: when attribution is unavailable the honest result
     # is a narrower check, not a wider one that reports other people's
     # processes as our leaks (Codex design review, Medium).
-    local rid pid rec_ticks lang binname now_ticks comm out
-    out=""
-    if [ -s "$LSP_PID_LEDGER" ]; then
-        while IFS="$(printf '\t')" read -r rid pid rec_ticks lang binname; do
-            [ "$rid" = "$LSP_RUN_ID" ] || continue
-            [ -n "$pid" ] || continue
+    #
+    # A row this reader cannot parse, and a row it can parse but cannot
+    # VERIFY, are both reported rather than skipped. Silently dropping
+    # either is how a leak becomes a green run: the ledger is the only
+    # record of a child whose spawner has since died, so corrupt or
+    # unverifiable evidence is a finding about the cleanup invariant, not
+    # an absence of one (Codex design review, Medium). Four reasons are
+    # emitted -- ledger:, environ: (confirmed leaks), parse-error: and
+    # unverifiable: (evidence this reader will not silently discard).
+    local rid pid rec_ticks lang binname extra now_ticks comm env_txt out rows
+    # `extra` is initialised, not merely declared: `read` assigns it on
+    # every iteration, but `set -u` would abort the whole reader if any
+    # future edit reached it before the first read.
+    out=""; extra=""; rows=0
+    # Input is BOUNDED BEFORE `read` sees it, by lsp_ledger_rows: one
+    # no-follow descriptor, confirmed regular, read for at most cap+1
+    # bytes and emitted as rows capped in length. A row that reader
+    # truncated arrives short or extra-fielded and is REPORTED by the
+    # checks below, never silently dropped.
+    # Called UNCONDITIONALLY. Behind an existence test, a deleted ledger
+    # or a dangling symlink produced no row at all and 9a read clean --
+    # the reader reports an unopenable path precisely so that cannot
+    # happen (Codex adversarial review, Medium).
+    if true; then
+        # `|| [ -n "$rid" ]` runs the body one last time for a final line
+        # with no trailing newline. `read` assigns the fields and THEN
+        # returns non-zero at EOF, so the plain loop dropped exactly the
+        # row a bridge killed mid-append leaves behind -- the one most
+        # likely to name a leaked child.
+        # SIX variables for a five-field row. `read` assigns everything
+        # after the last named separator to the LAST variable, so with
+        # five it silently absorbed a whole following record into
+        # binname: a short os.write that loses the trailing newline lets
+        # the next append land on the same line, and the swallowed row
+        # then vanished from a reader whose whole promise is that it
+        # discards nothing (Codex adversarial review, Medium).
+        while IFS="$(printf '\t')" read -r rid pid rec_ticks lang binname extra \
+              || [ -n "$rid" ]; do
+            [ -n "$rid" ] || continue
+            # A row the bounded reader synthesised about the LEDGER
+            # itself rather than about a language server.
+            if [ "$rid" = "!!lsp-reader" ]; then
+                out="$out- parse-error:$pid
+"
+                continue
+            fi
+            rows=$((rows + 1))
+            if [ "$rows" -gt 5000 ]; then
+                out="$out- parse-error:too-many-rows:$rows
+"
+                break
+            fi
+            if [ -n "$extra" ]; then
+                out="$out- parse-error:extra-fields:pid=${pid:-?}
+"
+                continue
+            fi
+            # _ledger_record caps the record at 4000 characters before
+            # appending its newline, so anything longer is not a record
+            # this writer produced. Measured across the WHOLE row: capping
+            # two of the five fields left a corrupt middle field free to
+            # reach the interpolations below (Codex adversarial review,
+            # Medium). The four separators are counted back in.
+            if [ $(( ${#rid} + ${#pid} + ${#rec_ticks} + ${#lang} \
+                     + ${#binname} + 4 )) -gt 4000 ]; then
+                out="$out- parse-error:oversized-row:pid=${pid:-?}
+"
+                continue
+            fi
+            if [ "$rid" != "$LSP_RUN_ID" ]; then
+                # A run id that is a strict PREFIX of ours is our own row
+                # with its tail lost, not another run's row.
+                case "$LSP_RUN_ID" in
+                    "$rid"*) out="$out- parse-error:torn-run-id:$rid
+" ;;
+                esac
+                continue
+            fi
+            if [ -z "$pid" ] || [ -z "$rec_ticks" ] || [ -z "$lang" ] \
+               || [ -z "$binname" ]; then
+                out="$out- parse-error:short-row:pid=${pid:-?}
+"
+                continue
+            fi
+            case "$pid" in *[!0-9]*) out="$out- parse-error:pid-not-numeric:$pid
+"; continue ;; esac
+            case "$rec_ticks" in
+                -1) ;;
+                *[!0-9]*) out="$out- parse-error:ticks-not-numeric:$pid
+"; continue ;;
+            esac
             kill -0 "$pid" 2>/dev/null || continue
+            if [ "$rec_ticks" = "-1" ]; then
+                # No start time was recorded, so the PID-reuse guard
+                # cannot run on this row. Guessing either way is wrong:
+                # calling it clean hides a leak, calling it a leak blames
+                # whoever inherited the number. Ask the SECOND net
+                # instead -- and ask it in full. Run-id alone does not
+                # answer, because LSP_BRIDGE_RUN_ID is exported to the
+                # whole harness and every child of it inherits the value;
+                # the binary name is what makes the process this row's
+                # language server (Codex design review, Medium).
+                if ! env_txt="$(tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null)"
+                then
+                    kill -0 "$pid" 2>/dev/null || continue   # exited; clean
+                    out="$out$pid unverifiable:tickless-environ-unreadable:$binname
+"
+                    continue
+                fi
+                comm="$(cat "/proc/$pid/comm" 2>/dev/null || true)"
+                if printf '%s\n' "$env_txt" \
+                     | grep -qxF "LSP_BRIDGE_RUN_ID=$LSP_RUN_ID" \
+                   && [ -n "$comm" ] && lsp_comm_matches "$comm" "$binname"; then
+                    out="$out$pid ledger-tickless:$lang:$binname
+"
+                fi
+                # Otherwise the number now belongs to something that is
+                # not this row's language server: recycled, and clean.
+                continue
+            fi
             now_ticks="$(lsp_start_ticks "$pid")"
-            if [ -n "$now_ticks" ] && [ "$rec_ticks" != "-1" ] \
-               && [ "$now_ticks" != "$rec_ticks" ]; then
+            if [ -n "$now_ticks" ] && [ "$now_ticks" != "$rec_ticks" ]; then
                 continue   # PID recycled -- a different process now.
             fi
             out="$out$pid ledger:$lang:$binname
 "
-        done < "$LSP_PID_LEDGER"
+        done < <(lsp_ledger_rows "$LSP_PID_LEDGER")
     fi
     if [ -d /proc ]; then
         for d in /proc/[0-9]*; do
             pid="${d#/proc/}"
             comm="$(cat "$d/comm" 2>/dev/null || true)"
             [ -n "$comm" ] || continue
-            case " $out " in *" $pid "*) continue ;; esac
+            if lsp_out_has_pid "$out" "$pid"; then continue; fi
             for binname in $LSP_BIN_NAMES; do
-                # comm is truncated to 15 chars, so match on the prefix
-                # the kernel would have kept.
-                case "$binname" in "$comm"*) ;; *) continue ;; esac
+                # Same prefix rule the tickless ledger escalation uses;
+                # shared so the two nets cannot drift apart.
+                if ! lsp_comm_matches "$comm" "$binname"; then continue; fi
                 if tr '\0' '\n' < "$d/environ" 2>/dev/null \
                    | grep -qxF "LSP_BRIDGE_RUN_ID=$LSP_RUN_ID"; then
                     out="$out$pid environ:$comm
@@ -6934,6 +8286,192 @@ lsp_survivors_of_this_run() {
     printf '%s' "$out"
 }
 
+# --- 9h: the 9a ledger reader on rows the writer can really produce -------
+# Every shape here is producible by the bridge itself: os.write() can
+# return short on a full disk, and a bridge killed mid-append leaves a
+# final line with no newline; proc_start_ticks() returns None -- written
+# as -1 -- whenever the stat read fails at spawn. The old reader dropped
+# all of them silently, which turned a leaked child into a green 9a.
+# Each case asserts the REASON, not just presence: a reader that reports
+# everything as a leak would pass a presence-only assertion.
+t_ledger_reader_shapes() {
+    local dir fake scratch found rc=0 tab
+    tab="$(printf '\t')"
+    dir="$(mktemp -d -t lsp-ledger.XXXXXX)"
+    fake="$dir/clangd-19"
+    ln -s "$(command -v python3)" "$fake"
+
+    # One plain child (comm=python3, never an LSP name) for the parse
+    # shapes, one LSP-named child carrying our run id, and one LSP-named
+    # child carrying a FOREIGN one.
+    python3 -c 'import time; time.sleep(30)' & local plain=$!
+    "$fake" -c 'import time; time.sleep(30)' & local owned=$!
+    ( LSP_BRIDGE_RUN_ID="foreign-$$" exec "$fake" -c 'import time; time.sleep(30)' ) &
+    local foreign=$!
+    sleep 1
+
+    lsp_ledger_case() {
+        # $1 = case label, $2 = expected reason regex ('' = no line for
+        # that pid), $3 = pid to look for, rest = ledger body written raw.
+        local label="$1" want="$2" want_pid="$3" got
+        shift 3
+        scratch="$dir/$label.tsv"
+        printf '%s' "$*" > "$scratch"
+        found="$(lsp_survivors_of_this_run "$scratch")"
+        got="$(printf '%s' "$found" | awk -v p="$want_pid" '$1 == p {print $2}')"
+        if [ -z "$want" ]; then
+            [ -z "$got" ] && return 0
+            printf '[9h] FAIL: %s -- expected no report for %s, got %s\n' \
+                "$label" "$want_pid" "$got" >&2
+            return 1
+        fi
+        case "$got" in
+            $want) return 0 ;;
+        esac
+        printf '[9h] FAIL: %s -- expected reason matching %s for %s, got %s\n' \
+            "$label" "$want" "$want_pid" "${got:-<nothing>}" >&2
+        return 1
+    }
+
+    # 1. Final row with NO trailing newline, naming a live child. The
+    #    plain `while read` loop dropped this row entirely.
+    lsp_ledger_case unterminated 'ledger:*' "$plain" \
+        "$LSP_RUN_ID$tab$plain$tab$(lsp_start_ticks "$plain")${tab}stub${tab}clangd-19" \
+        || rc=1
+    # 2. Short row -- a torn write that lost its tail fields.
+    lsp_ledger_case short-row 'parse-error:short-row*' '-' \
+        "$LSP_RUN_ID$tab$plain$tab-1
+" || rc=1
+    # 3. Non-numeric pid.
+    lsp_ledger_case bad-pid 'parse-error:pid-not-numeric*' '-' \
+        "$LSP_RUN_ID${tab}12x4${tab}99${tab}stub${tab}clangd-19
+" || rc=1
+    # 4. Our own run id, cut short mid-field.
+    lsp_ledger_case torn-rid 'parse-error:torn-run-id*' '-' \
+        "$(printf '%s' "$LSP_RUN_ID" | cut -c1-6)$tab$plain${tab}99${tab}stub${tab}clangd-19
+" || rc=1
+    # 5. Tickless row whose pid now carries a FOREIGN run id: the number
+    #    was recycled, so this is clean, not a leak.
+    lsp_ledger_case tickless-foreign '' "$foreign" \
+        "$LSP_RUN_ID$tab$foreign$tab-1${tab}stub${tab}clangd-19
+" || rc=1
+    # 6. Tickless row whose pid carries OUR run id but is not this row's
+    #    language server. LSP_BRIDGE_RUN_ID is exported to the whole
+    #    harness, so run-id alone would blame every sibling process.
+    lsp_ledger_case tickless-same-run-not-lsp '' "$plain" \
+        "$LSP_RUN_ID$tab$plain$tab-1${tab}stub${tab}clangd-19
+" || rc=1
+    # 7. Tickless row whose pid carries our run id AND this row's binary
+    #    name: a real leak the PID-reuse guard could not confirm alone.
+    lsp_ledger_case tickless-confirmed 'ledger-tickless:*' "$owned" \
+        "$LSP_RUN_ID$tab$owned$tab-1${tab}stub${tab}clangd-19
+" || rc=1
+    # 8. A torn row whose missing newline let the NEXT append land on
+    #    the same line. Neither record may be silently dropped: the row
+    #    is reported, so 9a fails rather than reading clean.
+    lsp_ledger_case concatenated 'parse-error:extra-fields*' '-' \
+        "$LSP_RUN_ID$tab$plain${tab}99${tab}stub${tab}clangd-19$LSP_RUN_ID$tab$owned${tab}99${tab}stub${tab}clangd-19
+" || rc=1
+    # 9a. An oversized MIDDLE field: a cap that checked only the first
+    #     and last field let this one through to the interpolations.
+    lsp_ledger_case oversized-middle 'parse-error:oversized-row*' '-' \
+        "$LSP_RUN_ID$tab$plain${tab}99$tab$(printf 'y%.0s' $(seq 1 4100))${tab}clangd-19
+" || rc=1
+    # 9b. A row longer than anything _ledger_record can write.
+    lsp_ledger_case oversized 'parse-error:oversized-row*' '-' \
+        "$LSP_RUN_ID$tab$plain${tab}99${tab}stub$tab$(printf 'x%.0s' $(seq 1 4100))
+" || rc=1
+    # 9d. A ledger past the total-bytes cap. The reader bounds what it
+    #     consumes, and says so rather than quietly reading a prefix.
+    lsp_ledger_case ledger-too-large 'parse-error:ledger-too-large*' '-' \
+        "$(head -c 4000064 /dev/zero | tr '\0' 'q')
+" || rc=1
+    # A ledger that is gone, or a symlink pointing nowhere, must still
+    # produce a row: behind an existence test neither did, and 9a read
+    # clean over evidence it could not open.
+    found="$(lsp_survivors_of_this_run "$dir/no-such-ledger.tsv")"
+    if ! printf '%s' "$found" | grep -q 'parse-error:ledger-unopenable'; then
+        printf '[9h] FAIL: a missing ledger was not reported (got %s)\n' \
+            "${found:-<nothing>}" >&2
+        rc=1
+    fi
+    ln -sf "$dir/nowhere.tsv" "$dir/dangling.tsv"
+    found="$(lsp_survivors_of_this_run "$dir/dangling.tsv")"
+    if ! printf '%s' "$found" | grep -q 'parse-error:ledger-'; then
+        printf '[9h] FAIL: a dangling ledger symlink was not reported (got %s)\n' \
+            "${found:-<nothing>}" >&2
+        rc=1
+    fi
+    # A path swapped for a FIFO must be reported, not blocked on: the
+    # old pipeline read it until EOF and hung the final leak check.
+    mkfifo "$dir/fifo-ledger" 2>/dev/null || true
+    if [ -p "$dir/fifo-ledger" ]; then
+        found="$(lsp_survivors_of_this_run "$dir/fifo-ledger")"
+        if ! printf '%s' "$found" | grep -q 'parse-error:ledger-'; then
+            printf '[9h] FAIL: a FIFO in place of the ledger was not reported (got %s)\n' \
+                "${found:-<nothing>}" >&2
+            rc=1
+        fi
+    else
+        lsp_note_skip 9h "fifo-ledger" "mkfifo unavailable on this host"
+    fi
+    # 9c. An unterminated row far larger than the cap. The assertion is
+    #     as much about finishing as about the verdict: an unbounded read
+    #     would allocate the whole thing before any check ran.
+    lsp_ledger_case oversized-unterminated 'parse-error:*' '-' \
+        "$LSP_RUN_ID$tab$plain${tab}99${tab}stub$tab$(head -c 200000 /dev/zero | tr '\0' 'z')" \
+        || rc=1
+    # 10. A well-formed row belonging to a DIFFERENT run stays another
+    #     run's business, malformed-looking or not.
+    lsp_ledger_case foreign-run '' "$plain" \
+        "someone-elses-run$tab$plain${tab}99${tab}stub${tab}clangd-19
+" || rc=1
+
+    # 11. A tickless row whose process made its OWN environment
+    #     unreadable (PR_SET_DUMPABLE 0). Neither net can answer, so the
+    #     row is unverifiable -- reported, never silently clean.
+    local opaque
+    python3 -c '
+import ctypes, time
+ctypes.CDLL("libc.so.6", use_errno=True).prctl(4, 0, 0, 0, 0)  # PR_SET_DUMPABLE
+time.sleep(30)
+' & opaque=$!
+    sleep 1
+    if tr '\0' '\n' < "/proc/$opaque/environ" >/dev/null 2>&1; then
+        lsp_note_skip 9h "unreadable-environ" \
+            "PR_SET_DUMPABLE did not make /proc/PID/environ unreadable here"
+    else
+        lsp_ledger_case tickless-unverifiable 'unverifiable:tickless-*' \
+            "$opaque" \
+            "$LSP_RUN_ID$tab$opaque$tab-1${tab}stub${tab}clangd-19
+" || rc=1
+    fi
+    kill -9 "$opaque" 2>/dev/null || true
+    wait "$opaque" 2>/dev/null || true
+
+    # 12. The two pure helpers, at their boundaries. Both decide whether
+    #     a survivor is reported at all, and neither is reachable from a
+    #     live fixture at the shapes that matter.
+    lsp_out_has_pid "1234 ledger:a:b" 1234 || { printf '[9h] FAIL: helper missed a first-line pid\n' >&2; rc=1; }
+    lsp_out_has_pid "99 ledger:a:b
+1234 environ:x" 1234 || { printf '[9h] FAIL: helper missed a later-line pid\n' >&2; rc=1; }
+    ! lsp_out_has_pid "21234 ledger:a:b" 1234 || { printf '[9h] FAIL: helper matched 1234 inside 21234\n' >&2; rc=1; }
+    ! lsp_out_has_pid "" 1234 || { printf '[9h] FAIL: helper matched against empty output\n' >&2; rc=1; }
+    ! lsp_out_has_pid "- parse-error:short-row:pid=1234" 1234 || { printf '[9h] FAIL: helper matched a pid inside a parse-error reason\n' >&2; rc=1; }
+    lsp_comm_matches clangd-19 clangd-19 || { printf '[9h] FAIL: exact comm did not match\n' >&2; rc=1; }
+    lsp_comm_matches bash-language- bash-language-server || { printf '[9h] FAIL: 15-char truncated comm did not match\n' >&2; rc=1; }
+    ! lsp_comm_matches bash-language-server bash-language- || { printf '[9h] FAIL: comm matched the REVERSE prefix\n' >&2; rc=1; }
+    ! lsp_comm_matches python3 clangd-19 || { printf '[9h] FAIL: unrelated comm matched\n' >&2; rc=1; }
+
+    kill -9 "$plain" "$owned" "$foreign" 2>/dev/null || true
+    wait "$plain" "$owned" "$foreign" 2>/dev/null || true
+    rm -rf "$dir"
+    [ "$rc" = "0" ] || return 1
+    printf '[9h] ledger reader OK: unterminated row read, torn rows reported, '
+    printf 'tickless rows resolved by binary name and not by run id alone\n'
+    return 0
+}
+
 t_no_leaked_lsp_processes() {
     # Assert no language server started by THIS run outlived it.
     #
@@ -6942,18 +8480,32 @@ t_no_leaked_lsp_processes() {
     # away -- the old detector's third false-positive channel was
     # exactly this (it named a pid that had already exited by the time
     # it tried to describe it).
-    local survivors
+    local survivors leaks anomalies
     survivors="$(lsp_survivors_of_this_run)"
     if [ -n "$survivors" ]; then
         sleep 2
         survivors="$(lsp_survivors_of_this_run)"
     fi
     [ -n "$survivors" ] || return 0
-    printf '[lsp-mcp-tests] debug (9a): language servers this run leaked:\n' >&2
-    printf '%s' "$survivors" | while read -r pid why; do
-        printf '  pid=%s via=%s :: %s\n' "$pid" "$why" \
-            "$(ps -o args= -p "$pid" 2>/dev/null | cut -c1-100)" >&2
-    done
+    leaks="$(printf '%s' "$survivors" | awk '$2 ~ /^(ledger|ledger-tickless|environ):/')"
+    anomalies="$(printf '%s' "$survivors" | awk '$2 ~ /^(parse-error|unverifiable):/')"
+    if [ -n "$leaks" ]; then
+        printf '[lsp-mcp-tests] debug (9a): language servers this run leaked:\n' >&2
+        printf '%s' "$leaks" | while read -r pid why; do
+            printf '  pid=%s via=%s :: %s\n' "$pid" "$why" \
+                "$(ps -o args= -p "$pid" 2>/dev/null | cut -c1-100)" >&2
+        done
+    fi
+    if [ -n "$anomalies" ]; then
+        # NOT a SKIP. Exit 77 means this HOST cannot build the fixture at
+        # all; a torn ledger row or a process whose ownership cannot be
+        # read is corrupt evidence produced by the system under test, and
+        # routing it through the skip channel would let the aggregate
+        # suite exit 0 having lost the only proof a child was leaked
+        # (Codex design review, Medium).
+        printf '[lsp-mcp-tests] debug (9a): ledger evidence this run could not verify:\n' >&2
+        printf '%s' "$anomalies" | sed 's/^/  /' >&2
+    fi
     return 1
 }
 
@@ -7060,6 +8612,11 @@ run "9c leak attribution scoped"         t_leak_attribution_scoped
 run "9d shutdown budget via signal"      t_shutdown_budget_signal_path
 run "9e deadline allocation family"      t_deadline_allocation_family
 run "9f task-aware liveness + ownership" t_task_aware_liveness
+run "9g recorded pidfd single-owner"     t_pidfd_single_owner
+run "9h ledger reader row shapes"        t_ledger_reader_shapes
+run "9i force sweep one snapshot"        t_force_sweep_one_snapshot
+run "9j reap race regressions"           t_reap_race_regressions
+run "9k reap helper contract tables"     t_reap_helper_tables
 # 9a runs LAST so every prior sub-test has had a chance to clean up.
 run "9a no leaked LSP processes"         t_no_leaked_lsp_processes
 
@@ -7077,7 +8634,7 @@ else
 fi
 if [ -n "$LSP_SKIPPED_SHAPES" ]; then
     # Printed unconditionally, including on a green run: the whole point
-    # is that "104/104 PASS" must never be read as "every shape ran".
+    # is that "109/109 PASS" must never be read as "every shape ran".
     # Shapes and whole sub-tests are counted separately -- a partial skip
     # leaves its sub-test passing, so reporting only `skipped` here would
     # print a zero above a non-empty list.

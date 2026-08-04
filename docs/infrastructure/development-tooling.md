@@ -802,7 +802,7 @@ Owner: [TODO-07 in 00-infrastructure](../../todo/00-infrastructure/TODO-07-lsp-m
 | LSP JSON-RPC client                      | [`scripts/lsp-mcp/lsp_client.py`](../../scripts/lsp-mcp/lsp_client.py) | Subprocess lifecycle + request/response demux + read-only deny gate + per-spawn ownership stamp (`LSP_BRIDGE_RUN_ID`, optional PID ledger) |
 | Per-language spawn recipes               | [`scripts/lsp-mcp/servers/`](../../scripts/lsp-mcp/servers/)  | One module per LSP: `clangd_server`, `asm_server`, `bash_server`, `python_server`, `powershell_server` |
 | MCP manifest                             | [`scripts/lsp-mcp/mcp.json`](../../scripts/lsp-mcp/mcp.json) + [`.mcp.json`](../../.mcp.json) | stdio transport, registered alongside `todo-graph`              |
-| Self-test + boundary harness             | [`scripts/lsp-mcp/tests/test_bridge.sh`](../../scripts/lsp-mcp/tests/test_bridge.sh) + [`test_boundary.sh`](../../scripts/lsp-mcp/tests/test_boundary.sh) | 101 sub-tests + write-capable-method audit            |
+| Self-test + boundary harness             | [`scripts/lsp-mcp/tests/test_bridge.sh`](../../scripts/lsp-mcp/tests/test_bridge.sh) + [`test_boundary.sh`](../../scripts/lsp-mcp/tests/test_boundary.sh) | 109 sub-tests + write-capable-method audit            |
 
 #### Seventeen MCP tools (all read-only)
 
@@ -891,7 +891,7 @@ Locks are PER-INSTANCE, not global -- requests against different LSPs run in par
 | `python3 scripts/lsp-mcp/bridge.py --self-test --lang=c`         | End-to-end smoke against clangd (or other lang via `c`/`asm`/`sh`/`py`/`ps1`) |
 | `python3 scripts/lsp-mcp/bridge.py --self-test --stress`         | 100-concurrent-hover stress + Future-leak detection                   |
 | `make lsp-mcp` or `python3 scripts/lsp-mcp/bridge.py`            | Foreground stdio server for MCP-client-driven debugging               |
-| `bash scripts/lsp-mcp/tests/test_bridge.sh`                      | Full 99-sub-test harness                                              |
+| `bash scripts/lsp-mcp/tests/test_bridge.sh`                      | Full 109-sub-test harness                                             |
 | `bash scripts/lsp-mcp/tests/test_boundary.sh`                    | Standalone read-only boundary audit                                   |
 
 In normal operation Claude Code launches the bridge as a subprocess via the `lsp-bridge` entry in [`.mcp.json`](../../.mcp.json); users do not invoke it directly. `make lsp-mcp` is the foreground variant for ad-hoc testing or reproducing a bug.

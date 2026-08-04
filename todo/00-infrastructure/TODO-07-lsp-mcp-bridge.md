@@ -65,7 +65,8 @@ title: "TODO-07 -- LSP to MCP Bridge (C, NASM, shell, Python, PowerShell)"
 | 💎   |  19   | Scale Roadmap (DEFERRED -- trigger-gated, no code today)                   | --                                |  [/]   |
 | ⭐   |  20   | Reap determinism + leak attribution for spawned language servers           | §1, §18                           |  [x]   |
 | 💎   |  21   | Thread-group edge cases in the language-server reap (harness coverage)     | §20                               |  [x]   |
-| ⭐   |  22   | Reap sweep internals: pidfd ownership, one-snapshot sweep, ledger reader   | §20                               |  [ ]   |
+| ⭐   |  22   | Reap sweep internals: pidfd ownership, one-snapshot sweep, ledger reader   | §20                               |  [x]   |
+| 💎   |  23   | Injected-clock deadline coverage + the non-dumpable-child reap blind spot  | §22                               |  [ ]   |
 
 > 💎 = parity -- matches the existing LSP stacks Win11/Linux devs already use, wrapped in an MCP transport.
 > ⭐ = exclusive -- neither Win11 nor Linux ships a repo-tracked cross-language LSP-MCP bridge with read-only boundary compliance baked in.
@@ -695,9 +696,9 @@ Current repo is ~215k core LOC (~189k kernel + ~24k tooling per [COUNT.md](../..
 > **Test runner:** `bash scripts/lsp-mcp/tests/test_bridge.sh` (host tooling; also wrapped by `bash scripts/test-tooling.sh`) -- expect `101/101 sub-tests PASS`, including `9b deterministic signal reap` and `9c leak attribution scoped`.
 
 > **Verified:** 2026-08-04 | commit `ce4a798c` | 4/4 items | build OK | 101/101 test_bridge.sh, 1282/1282 test-tooling.sh, 28326 kernel + 17 user-mode tests, lint 0 errors
-> **Accepted:** [H] Concurrent `_retire_spawn` can close a pidfd the force sweep is holding (reason: single-owner descriptor handoff is a design change, not a patch) -> XREF: 00-infrastructure/TODO-07 §22 (item: "Close the pidfd retirement race" at line 753)
-> **Accepted:** [H] Force sweep walks `/proc` once per recorded leader instead of sharing one enumeration (reason: needs a shared snapshot driving all three passes) -> XREF: 00-infrastructure/TODO-07 §21 (item: "Share ONE procfs enumeration across the force sweep" at line 732)
-> **Accepted:** [M] 9a silently skips a truncated ledger row and a row with no start ticks (reason: reader hardening belongs with the harness coverage work) -> XREF: 00-infrastructure/TODO-07 §22 (item: "Harden the 9a ledger reader" at line 759)
+> **Accepted:** [H] Concurrent `_retire_spawn` can close a pidfd the force sweep is holding (reason: single-owner descriptor handoff is a design change, not a patch); SHIPPED in §22 -> XREF: 00-infrastructure/TODO-07 §22 (item: "Closed the pidfd retirement race" at line 754)
+> **Accepted:** [H] Force sweep walks `/proc` once per recorded leader instead of sharing one enumeration (reason: needs a shared snapshot driving all three passes) -> XREF: 00-infrastructure/TODO-07 §21 (item: "Share ONE procfs enumeration across the force sweep" at line 700)
+> **Accepted:** [M] 9a silently skips a truncated ledger row and a row with no start ticks (reason: reader hardening belongs with the harness coverage work); SHIPPED in §22 -> XREF: 00-infrastructure/TODO-07 §22 (item: "Hardened the 9a ledger reader" at line 761)
 > **Quality reviewed:** 2026-08-04 | Codex 26x (design, adversarial x23, consistency, perf) | 2H+2M fixed, 3 open | scope: N/A (host tooling; no kernel/boot domain skill applies)
 > **Notes:**
 > - Shipped: run-id + PID-ledger + lock-free spawned-PID ownership tracking in `lsp_client.py`, SIGTERM/SIGINT/SIGHUP handlers with off-thread cleanup, a single-owner deadline-bounded shutdown coordinator and a `force_kill_spawned()` floor in `bridge.py`, and a rewritten 9a with two new sub-tests (9b reap proof, 9c attribution control).
@@ -716,7 +717,7 @@ Section 20 made the reap identity-anchored and proved it with sub-tests 9b and 9
 > Filed rather than folded into section 20 because that section is stamped, and an item appended to a stamped section is invisible to every later pass. This is coverage debt, not a known defect: the behavior was reproduced working (leader `Z` with a live worker is classified alive, resolves as ours, and is collected by the group sweep), but a manual reproduction is not a regression net. -> XREF: 00-infrastructure/TODO-07 §20 (item: "Make the reap deterministic rather than best-effort" at line 672)
 
 > [!NOTE]
-> Scope boundary (split 2026-08-04, 8 open items -> SPLIT-RECOMMENDED): this section adds HARNESS COVERAGE ONLY and must not change `bridge.py` or `lsp_client.py`. The three fixes that mutate live reap code or the 9a ledger reader moved to §22. -> XREF: 00-infrastructure/TODO-07 §22 (item: "Close the pidfd retirement race: a sweep can hold a descriptor `_retire_spawn` closes underneath it")
+> Scope boundary (split 2026-08-04, 8 open items -> SPLIT-RECOMMENDED): this section adds HARNESS COVERAGE ONLY and must not change `bridge.py` or `lsp_client.py`. The three fixes that mutate live reap code or the 9a ledger reader moved to §22, where all three shipped. -> XREF: 00-infrastructure/TODO-07 §22 (item: "Closed the pidfd retirement race" at line 754)
 
 - [x] Wire the pthread_exit thread-group shape into 9b as an end-to-end case, not just a manual reproduction
       - The child spawns with the owner stamp, starts a worker thread, then calls `pthread_exit` on its leader; the case must assert that `force_kill_spawned` collects it and that no task of it survives.
@@ -742,7 +743,7 @@ Section 20 made the reap identity-anchored and proved it with sub-tests 9b and 9
 > - Mutation-checked: reverting the task-aware read in `_is_zombie` or `_carries_our_owner_id` fails 9f and the 9b UNRECORDED mode. The recorded mode stays green under both -- pass 1 signals a pinned record and consults neither predicate.
 > - Downstream: a skipped fixture is no longer a pass -- exit 77, a skip list, and the skip count on the summary line `scripts/test-tooling.sh` extracts; every capability probe now splits host-absence from broken-fixture.
 > - Canonical doc: this section plus the coverage preamble in `scripts/lsp-mcp/tests/test_bridge.sh`, whose index now matches the run block exactly (104 tags vs 104).
-> - Scope boundary: harness coverage only; no change to `lsp_client.py` or `bridge.py`. -> XREF: 00-infrastructure/TODO-07 §22 (item: "Close the pidfd retirement race" at line 753)
+> - Scope boundary: harness coverage only; no change to `lsp_client.py` or `bridge.py`. -> XREF: 00-infrastructure/TODO-07 §22 (item: "Closed the pidfd retirement race" at line 754)
 
 ---
 
@@ -750,18 +751,47 @@ Section 20 made the reap identity-anchored and proved it with sub-tests 9b and 9
 
 Split out of §21 on 2026-08-04 because that section's eight open items tripped the SPLIT-RECOMMENDED predictor and the two halves have different risk profiles: §21 only ADDS harness cases, while these three change live reap code (`lsp_client.py`, `bridge.py`) and the 9a leak verifier. Each was raised during §20's review rounds and accepted rather than fixed, so each is a known defect with a named fix shape -- not coverage debt. -> XREF: 00-infrastructure/TODO-07 §21 (item: "Wire the pthread_exit thread-group shape into 9b as an end-to-end case, not just a manual reproduction")
 
-- [ ] Close the pidfd retirement race: a sweep can hold a descriptor `_retire_spawn` closes underneath it
-      - The force sweep snapshots `(pid, fd, ticks)` from `_SPAWNED`, and a concurrent `shutdown()` can retire that record and close the fd before the sweep signals through it; the number can then name an unrelated open file.
-      - Fix shape: make the pidfd single-owner -- hand ownership to whoever removes the record, and give the sweep a reference retirement cannot invalidate mid-signal -- rather than widening the window.
-- [ ] Share ONE procfs enumeration across the force sweep instead of one walk per recorded leader
-      - `_reap_group` walks `/proc` per leader and repeats until two empty scans, then the stamp-wide pass walks it again; on a large host that is O(records x processes) inside a budget meant to bound the whole teardown.
-      - Fix shape: enumerate once into (pid, ppid, pgrp, stamp) tuples and drive every pass from that snapshot, re-verifying identity only at signal time.
-- [ ] Harden the 9a ledger reader against records the writer can legitimately produce
-      - A truncated final line (a bridge killed mid-append) is silently ignored, and a row whose start ticks are `-1` skips the PID-reuse guard entirely, so a recycled PID reads as a survivor and reports a leak that is not one.
-      - Fix shape: treat a short row as a REPORTED parse error rather than a skip, and treat a tickless row as unverifiable -- neither silently clean nor silently a leak.
-- [ ] Commit: `"scripts/lsp-mcp: single-owner pidfd, one-snapshot sweep, stricter ledger reader"`
+- [x] Closed the pidfd retirement race: the recorded descriptor has exactly ONE owner, `_retire_spawn`
+      - `_borrow_pidfd(entry)` hands a caller a PRIVATE DUPLICATE of the record's own descriptor, race-safe by ordering rather than by a lock the dying-process path could not take: `_retire_spawn` removes the record before it closes, so an entry still in `_SPAWNED` after the `dup` proves the `dup` saw the recorded descriptor. That is the only exact identity a recorded child has -- it names the process, so no PID recycle can redirect a signal through it, not even one landing on the same clock tick (field 22 is 100 Hz; a reviewer measured 32 concurrent spawns sharing seven values).
+      - `_own_pidfd(pid, still_ours)` remains the path for a record that never got a descriptor: it opens a caller-owned pidfd and verifies AFTER the open, so the predicate is talking about the process the signal will reach. It is NOT a claim the number stopped moving -- `free_pid()` releases that at reap however many `struct pid` references survive -- so `still_ours` is the whole guard: start-ticks match, or in the force sweep only, a live owner stamp (deadline-bound, since that probe can read one environment per task). Nothing reads or closes the record's own fd but `_retire_spawn` (Codex adversarial, High x4).
+- [x] Shared ONE procfs enumeration across the force sweep
+      - `_proc_snapshot()` / `_ProcSnapshot` read each `/proc/<pid>/stat` once for state+ppid+pgrp+ticks and drop only FULLY zombie processes (task-aware, so a Z leader with a live worker survives the filter). `_group_members` and `_stamped_processes` take an optional snapshot. There is deliberately no cheap pre-filter on the `/proc/<pid>` owner: the kernel reassigns it to root on `PR_SET_DUMPABLE(0)` or a setuid exec, so it is not the free authoritative negative it looks like. A pid whose stat cannot be read or parsed is KEPT with its fields `None` -- the collapsed sweep derives every stamp-wide target from this snapshot, and the read likeliest to fail is the one taken during the emergency teardown the sweep exists for.
+      - `force_kill_spawned` passes 2 and 3 collapsed into one repeat-until-two-empty-scans loop: `_group_members(pgid)` is a strict SUBSET of `_stamped_processes` (both require the owner stamp), so the per-leader group sweep was asking the same question at the price of a walk per record per round. The stamp-wide pass gains the retry loop it never had; the return value is now DISTINCT processes signalled.
+      - Ownership is cached by `(pid, start_ticks)` and only when AUTHORITATIVE -- `_carries_our_owner_id` is now tri-state, so a transient unreadable probe is re-asked instead of suppressing a live child for the rest of the sweep; a row with no start time has no cache key and is re-probed rather than answered from a bare pid. The cache only narrows candidates; authorization is a live re-read after the pidfd opens, deadline-checked BEFORE and AFTER the probe because a leader's environ read is not interruptible.
+- [x] Hardened the 9a ledger reader against records the writer can legitimately produce
+      - Reads the unterminated final line a mid-append kill leaves; reports `parse-error` for a short row, a non-numeric pid or ticks, a truncated run id, a row longer than `_ledger_record`'s 4000-char cap measured across the whole row, a row carrying extra fields (a torn row that swallowed the next append -- `read` assigns all remaining fields to the last variable). Input is bounded before `read` sees a row by `lsp_ledger_rows`: ONE descriptor, opened `O_NOFOLLOW` and confirmed regular by `fstat` on that same fd, read for at most cap+1 bytes. The path is exported to every spawned server, so it can be swapped for a FIFO between a size check and a read -- which is why the size check no longer happens on the path at all. Oversize, an unopenable path and a non-regular file are each REPORTED as rows.
+      - A `-1`-ticks row escalates to the environ net requiring BOTH this run's id and a `comm` matching the row's binary, because `LSP_BRIDGE_RUN_ID` is exported harness-wide and every sibling inherits it; unreadable means `unverifiable`, never clean. 9a FAILS on parse-error/unverifiable rather than returning the harness SKIP code, which is reserved for a host that cannot build a fixture at all.
+- [x] Commit: `"scripts/lsp-mcp: single-owner pidfd, one-snapshot sweep, stricter ledger reader"`
 
 **Test checkpoint:** `bash scripts/lsp-mcp/tests/test_bridge.sh` exits 0 with the sweep rewritten, and the pidfd-ownership and ledger-reader changes each carry a sub-test that fails when the fix is reverted. Test on: host tooling only (no QEMU dependency).
+
+> **Test runner:** `bash scripts/lsp-mcp/tests/test_bridge.sh` (sub-tests 9g-9k) | 109/109 sub-tests PASS, 0 fail; aggregate via `bash scripts/test-tooling.sh`. Host tooling only -- no kernel test surface and no QEMU dependency.
+
+> **Notes:**
+> - Shipped: `_own_pidfd` single-owner pidfd, `_proc_snapshot` one-walk enumeration, a collapsed force sweep, tri-state ownership, and a 9a reader that reports torn rows.
+> - Integration: `force_kill_spawned` and `_signal_recorded` are the only changes `bridge.py` sees; the group/stamp helpers keep their signatures and gained an optional snapshot argument.
+> - Downstream: `force_kill_spawned` returns DISTINCT processes signalled (the old shape double-counted a leader), and a record with no start ticks now fails closed in `_signal_recorded`.
+> - Canonical doc: this section plus the `_SPAWNED` ownership comment in `scripts/lsp-mcp/lsp_client.py`.
+> - Scope boundary: no injected-clock deadline coverage, no fix for the non-dumpable-child blind spot. -> XREF: 00-infrastructure/TODO-07 §23 (item: "Give the reap an injectable monotonic clock" at line 783)
+
+---
+
+## 23. Injected-Clock Deadline Coverage and the Non-Dumpable-Child Reap Blind Spot
+
+Both items were raised while reviewing the sweep rewrite and accepted rather than fixed: the first is test infrastructure the reap has no seam for, and the second is a pre-existing reap gap the uid short-circuit made explicit rather than introduced. -> XREF: 00-infrastructure/TODO-07 §22 (item: "Shared ONE procfs enumeration across the force sweep" at line 757)
+
+- [ ] Give the reap an injectable monotonic clock so every deadline break point is asserted separately
+      - 9j asserts the sweep as a whole stays inside its budget, so deleting ONE of the five deadline checks (settle wait, pre-scan, ownership enumeration, pre-signal, post-target) can still pass under a wall-clock tolerance. The bound also scales with the host's process table, which is why the budget case skips on a thin one.
+      - Fix shape: a module-level clock seam in `lsp_client.py` that tests replace with a scripted monotonic, then assert that no probe, signal, scan or sleep happens after each transition -- and pin the two-empty-scan and 20-round termination against it rather than against real time.
+- [ ] Reap a language server that made its own `/proc` entry unreadable (`PR_SET_DUMPABLE 0`)
+      - `_carries_our_owner_id` cannot read such a process's environ at any task, so it answers unknown forever and the stamp-wide pass never claims it: a hardened or setuid-exec'd DESCENDANT escapes the sweep and leaks. (A recorded child is safe -- §22's pin is proof without the environ.) An owner-based pre-filter was tried in §22 and removed: it reached the same wrong answer sooner, since the kernel reassigns `/proc/<pid>` to root in exactly this case.
+      - Fix shape: a second ownership signal that survives an unreadable environ -- the recorded pidfd for anything we spawned, and for detached descendants a marker the kernel still shows us (a dedicated process group, or `/proc/<pid>/status` `Uid:` plus session id) -- rather than widening the environ probe.
+- [ ] Decide whether destructive signalling may ever use a bare PID, or raise the supported python3 floor to 3.9
+      - TWO call sites, not one: `_kill_verified` falls back to `os.kill(pid, SIGKILL)` and `_signal_recorded` falls back to `os.kill(pid, sig)`, each after re-verifying identity. In both the target can exit, be reaped and have its number reused between the check and the signal, so an unrelated process is killed. Both are reachable on the documented python3 3.8 floor in `scripts/setup.sh` (`os.pidfd_open` arrived in 3.9), and together they are what remains of signalling by NUMBER rather than by descriptor.
+      - Shipped deliberately in §20 as the better of two bad trades -- the alternative was skipping the signal and leaking the child on every pidfd-less host -- and left alone in §22 because closing it means either raising the supported runtime floor or shipping a ctypes `pidfd_open`, both operator decisions rather than section work. -> XREF: 00-infrastructure/TODO-07 §22 (item: "Closed the pidfd retirement race" at line 754)
+- [ ] Commit: `"scripts/lsp-mcp: injectable reap clock + non-dumpable child ownership"`
+
+**Test checkpoint:** `bash scripts/lsp-mcp/tests/test_bridge.sh` exits 0; each of the five deadline break points has a sub-test that fails when that single check is deleted, and a `PR_SET_DUMPABLE 0` child carrying this run's stamp is collected by `force_kill_spawned`. Test on: host tooling only (no QEMU dependency).
 
 ## Format Quick Reference
 
@@ -803,11 +833,14 @@ Split out of §21 on 2026-08-04 because that section's eight open items tripped 
 | ⭐   | Background warm-start compatible with MCP launchers             | ❌ editor blocks on LSP cold start | ❌ editor blocks on LSP cold start   | ✅ §17 daemon thread + publish gate |
 | ⭐   | Language servers reaped on signal death (TERM / INT / HUP)      | ❌ orphans survive editor kill     | ❌ orphans survive editor kill       | ✅ §20 handlers + owner coordinator |
 | ⭐   | Spawned-server ownership stamp (owner id + run id + PID ledger) | ❌ no ownership concept            | ❌ no ownership concept              | ✅ §20 leak claims are attributable |
+| ⭐   | Reap identity survives PID reuse and descriptor retirement      | ❌ signals a bare pid              | ❌ signals a bare pid                | ✅ §22 single-owner pidfd + anchor  |
+| ⭐   | Teardown enumerates the process table once, under its budget    | ❌ no teardown budget              | ❌ no teardown budget                | ✅ §22 one snapshot, deadline-gated |
 
 > **After §1-§6:** Impossible OS reaches parity with a well-configured Win11/Linux developer workstation for every language the repo uses. Every human-facing LSP-capable editor (VS Code, Emacs, Neovim) already speaks these same servers directly; this TODO duplicates none of that.
 > **After §7-§8:** Impossible OS pulls ahead with a cross-language unified MCP surface. 3rd-party bridges (isaacphi/mcp-language-server -- single LSP at a time; jonrad/lsp-mcp -- Node, no multi-LSP; mickeyinfoshan/lsp-mcp -- Go/TS/JS/Py only; Tritlo/lsp-mcp -- Zig, high-perf but no NASM support) cover a subset of this surface but none ship the 5-language mix (NASM + PowerShell are the two painful ones) and none are repo-tracked with boundary compliance.
 > **After §9-§10:** Impossible OS ships the first repo-tracked cross-language LSP-MCP bridge with boundary audit baked in, auto-registered with Claude Code out-of-the-box via `.claude/mcp.json`. No 3rd-party bridge today bakes in the read-only boundary the [TODO-02 §8](./TODO-02-ai-development-system.md#8-autonomous-agent-boundary-policy) autonomous-agent policy requires; every existing bridge exposes write-capable LSP methods by default.
 > **After §20:** the bridge's language servers are reaped on every exit path, not merely on the ones that reach `atexit`. Editors on both platforms leak an LSP when their client is killed rather than closed; the bridge now handles SIGTERM/SIGINT/SIGHUP through the same coordinator its normal exit uses, and stamps each spawned server with an ownership record so a future "the bridge leaked one" claim can be settled by evidence instead of by a process-name match -- which is what the original report of this section turned out to be.
+> **After §21-§22:** the reap's own internals are held to the standard §20 set for its callers. The recorded pidfd has a single owner, so a retirement can no longer close a descriptor a sweep is signalling through; identity for a recorded child is the record's presence at signal time, which rules out the PID recycle that clock-tick equality cannot. The sweep enumerates `/proc` once per round instead of once per recorded server, and both the enumeration and the ownership probing behind it are bounded by the caller's deadline. The leak verifier reports torn and unverifiable ledger rows instead of dropping them, so a corrupted record can no longer read as a clean run.
 > **After §11-§18:** Impossible OS passes parity and moves into category-leading territory. §11 delivers the extended 14-tool surface that production 3rd-party bridges converged on. §12 closes the file-change-drift correctness gap every long-running bridge exhibits. §13 auto-restarts crashed LSPs -- no surveyed competitor ships this. §14 threads correlation IDs through every MCP->LSP->MCP round-trip (the 2026 observability baseline). §15 bounds path resolution to the workspace, closing a prompt-injection / supply-chain class every 3rd-party bridge leaves open. §16 bounds first-call latency with `--warm-start` (60s soft budget). §17 makes that bound MCP-launcher compatible by running warm-start on a daemon thread so `srv.run()` answers `initialize` immediately, with the `_SPAWN_EVENTS` gate ensuring concurrent tool calls attach to the in-flight warm spawn. §18 closes the call-hierarchy/type-hierarchy asymmetry with two read-only `typeHierarchy/*` tools, completing the navigation-primitive set no surveyed competitor pairs with a read-only boundary.
 
 ---
