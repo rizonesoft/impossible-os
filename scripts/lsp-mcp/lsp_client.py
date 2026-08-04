@@ -530,22 +530,27 @@ def _carries_our_owner_id(pid: int) -> bool:
     live-worker process the previous fix had just taught the scan to keep
     (Codex adversarial review, Medium, reproduced)."""
     marker = b"LSP_BRIDGE_OWNER=" + _OWNER_ID.encode()
-    paths = [f"/proc/{pid}/environ"]
     try:
-        paths += [
-            f"/proc/{pid}/task/{tid}/environ"
-            for tid in os.listdir(f"/proc/{pid}/task")
-        ]
+        with open(f"/proc/{pid}/environ", "rb") as fh:
+            return marker in fh.read().split(b"\0")
     except Exception:
         pass
-    for path in paths:
+    # Only now walk the threads. The leader environ answers for almost
+    # every process, and reading EVERY task environment before trusting it
+    # made an unstamped multithreaded process (a browser, a JVM, a build
+    # worker) cost one read per thread -- paid out of the shutdown budget,
+    # for a process we were about to reject anyway (Codex post-commit perf).
+    try:
+        tids = os.listdir(f"/proc/{pid}/task")
+    except Exception:
+        return False
+    for tid in tids:
         try:
-            with open(path, "rb") as fh:
-                raw = fh.read()
+            with open(f"/proc/{pid}/task/{tid}/environ", "rb") as fh:
+                if marker in fh.read().split(b"\0"):
+                    return True
         except Exception:
             continue
-        if marker in raw.split(b"\0"):
-            return True
     return False
 
 
@@ -711,68 +716,6 @@ def _stamped_processes(
             continue
         found.append((pid, fd, proc_start_ticks(pid)))
     return found
-
-
-def _own_live_children(
-    deadline: Optional[float] = None,
-) -> list[tuple[int, Optional[int], Optional[int]]]:
-    """(pid, pidfd) for every process the kernel still calls our child.
-
-    The in-process registries can always be out of date -- a signal
-    delivered between Popen returning and the record being written
-    suspends the very frame that would have written it, and no amount of
-    waiting brings that frame back if it was the main thread (Codex
-    adversarial review, High). procfs does not have that problem: it
-    reports what the kernel knows, and a language server keeps us as its
-    parent regardless of start_new_session.
-
-    Identity is captured HERE, not at signal time. A scan produces bare
-    numbers, and by the time a caller acts on them the process may have
-    exited and its number been reused -- the bridge's own availability
-    probes (`subprocess.run` in the bash / python / powershell spawner
-    modules) are exactly the short-lived direct children that make this
-    likely rather than theoretical. So: open a pidfd, then re-read the
-    parent. If it still says us, the pidfd provably refers to the child
-    we meant, and can never come to mean anything else.
-
-    Returns an empty list where procfs is unavailable, in which case the
-    recorded sweep stands alone."""
-    me = os.getpid()
-    kids: list[tuple[int, Optional[int], Optional[int]]] = []
-    try:
-        entries = os.listdir("/proc")
-    except Exception:
-        return kids
-    for name in entries:
-        # The ENUMERATION is the expensive part on a busy host, so the
-        # deadline is checked inside it, not only around it.
-        if deadline is not None and time.monotonic() >= deadline:
-            break
-        if not name.isdigit():
-            continue
-        pid = int(name)
-        if _ppid_of(pid) != me or _is_zombie(pid):
-            continue
-        fd = None
-        try:
-            fd = os.pidfd_open(pid, 0)
-        except Exception:
-            fd = None
-        if fd is not None and _ppid_of(pid) != me:
-            # Recycled between the scan and the open: the fd refers to a
-            # stranger. Drop it rather than signal it.
-            try:
-                os.close(fd)
-            except Exception:
-                pass
-            continue
-        # Keep the start time even when a pidfd was obtained: without a
-        # pidfd it is the ONLY identity the caller will have, and dropping
-        # it left the sweep authorising a SIGKILL on "this PID is my child
-        # right now" -- which a recycled PID also satisfies (Codex
-        # adversarial review, High).
-        kids.append((pid, fd, proc_start_ticks(pid)))
-    return kids
 
 
 def force_kill_spawned(settle: float = 1.0,

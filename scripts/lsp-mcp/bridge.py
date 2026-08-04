@@ -5059,7 +5059,14 @@ def _diag(msg: str) -> None:
     if not _DIAG_TRIED:
         _DIAG_TRIED = True
         try:
-            _DIAG_FD = os.open("/proc/self/fd/2", os.O_WRONLY | os.O_NONBLOCK)
+            # O_APPEND is load-bearing, not decoration: without it a
+            # regular-file stderr is re-opened at offset 0 and the first
+            # diagnostic OVERWRITES the launcher's existing log (Codex
+            # post-commit adversarial, reproduced -- a 35-byte line became
+            # "diag\nING LOG LINE..."). A pipe ignores the flag, so this
+            # costs nothing in the case the re-open exists for.
+            _DIAG_FD = os.open(
+                "/proc/self/fd/2", os.O_WRONLY | os.O_APPEND | os.O_NONBLOCK)
         except Exception:
             _DIAG_FD = None
     if _DIAG_FD is None:
