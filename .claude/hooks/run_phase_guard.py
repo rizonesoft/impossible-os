@@ -808,18 +808,49 @@ def _rollover_failures(root: Path, state: dict) -> list:
         pass  # systemctl absent -> cannot enumerate; not a hard fail
     # The run's own audit trail: a ship that never reached the run-log is
     # invisible to the operator reconstructing the night.
+    #
+    # BOUNDED, because `rollover` has NO override and tells the run to "repair
+    # and RE-RUN". A gate the run cannot clear is a WEDGE, and this one guards
+    # BOOKKEEPING -- stalling a multi-week unattended run over a missing log
+    # line would be a far worse outcome than the missing line. If the same set
+    # of ships is refused _RUNLOG_MAX_REFUSALS times the gate yields, loudly.
+    # The likeliest unclearable shape is a log entry written WITHOUT the commit
+    # hash, which is why the message demands the hash verbatim.
     unlogged = _unlogged_ships(root)
     if unlogged:
-        fails.append(
-            f"{len(unlogged)} section ship(s) missing a docs/overnight/run-log.md "
-            f"entry: {', '.join(unlogged[:3])}"
-            + (f" (+{len(unlogged) - 3} more)" if len(unlogged) > 3 else "")
-            + ". Append the entry naming the ship commit, then re-run rollover.")
+        key = "|".join(sorted(u.split(" ")[0] for u in unlogged))
+        prev = state.get("runlog_refusals") or {}
+        n = (prev.get("count", 0) + 1) if prev.get("key") == key else 1
+        state["runlog_refusals"] = {"key": key, "count": n}
+        hashes = ", ".join(u.split(" ")[0] for u in unlogged[:3])
+        if n < _RUNLOG_MAX_REFUSALS:
+            fails.append(
+                f"{len(unlogged)} section ship(s) missing a docs/overnight/run-log.md "
+                f"entry: {', '.join(unlogged[:3])}"
+                + (f" (+{len(unlogged) - 3} more)" if len(unlogged) > 3 else "")
+                + f". Append an entry that CONTAINS the commit hash verbatim "
+                  f"({hashes}) -- the check matches on the hash, not the section "
+                  f"number -- then commit, push, and re-run rollover. "
+                  f"(attempt {n}/{_RUNLOG_MAX_REFUSALS}; after that the rollover "
+                  f"proceeds and the gap is reported instead of blocking)")
+        else:
+            print(f"[sequencer] run-log gate YIELDING after {n} refusals -- "
+                  f"rollover proceeds with {len(unlogged)} unlogged ship(s): "
+                  f"{hashes}. The audit trail has a hole here; FILE THIS to the "
+                  f"newest todo/overnight-runner-improvements/ version.",
+                  file=sys.stderr)
+    else:
+        state.pop("runlog_refusals", None)
     return fails
 
 
 _SHIP_ROW_RE = re.compile(r"^\+.*\|\s*\[x\]\s*\|", re.M)
 _HASH_RE = re.compile(r"\b([0-9a-f]{7,40})\b")
+# How many consecutive rollover refusals the run-log gate is allowed before it
+# yields. Three is enough for the run to read the message, write the entry and
+# retry; beyond that the run is not going to clear it and blocking costs more
+# than the missing line.
+_RUNLOG_MAX_REFUSALS = 3
 
 
 def _unlogged_ships(root: Path, limit: int = 40) -> list:

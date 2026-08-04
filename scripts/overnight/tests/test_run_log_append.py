@@ -148,6 +148,64 @@ def test_it_never_wedges_a_run_on_io_error():
         assert mod._unlogged_ships(pathlib.Path(t) / "does-not-exist") == []
 
 
+def test_the_gate_yields_rather_than_wedging_the_run():
+    """`rollover` has NO override, so a gate the run cannot clear is a WEDGE.
+
+    This one guards BOOKKEEPING. Stalling a multi-week unattended run over a
+    missing log line is a far worse outcome than the missing line, and the
+    likeliest unclearable shape -- an entry written WITHOUT the commit hash --
+    is exactly the one a run would produce from a paraphrase. So the gate
+    counts consecutive refusals for the SAME set of ships and yields after
+    _RUNLOG_MAX_REFUSALS, reporting the hole instead of blocking on it.
+    """
+    mod = _load()
+    with tempfile.TemporaryDirectory() as t:
+        d, g = _repo(t)
+        _ship(d, g)
+        state = {}
+        seen = []
+        for _ in range(mod._RUNLOG_MAX_REFUSALS + 2):
+            fails = [f for f in mod._rollover_failures(d, state)
+                     if "run-log.md" in f]
+            seen.append(bool(fails))
+        assert seen[:mod._RUNLOG_MAX_REFUSALS - 1] == \
+            [True] * (mod._RUNLOG_MAX_REFUSALS - 1), seen
+        assert not any(seen[mod._RUNLOG_MAX_REFUSALS - 1:]), \
+            f"gate must yield after {mod._RUNLOG_MAX_REFUSALS} refusals: {seen}"
+        # the refusal text must demand the HASH, since that is what it matches on
+        state2 = {}
+        msg = [f for f in mod._rollover_failures(d, state2) if "run-log.md" in f][0]
+        assert "hash verbatim" in msg, msg
+
+
+def test_the_refusal_counter_resets_when_a_different_ship_appears():
+    """A stale count must not let an unrelated later gap through for free."""
+    mod = _load()
+    with tempfile.TemporaryDirectory() as t:
+        d, g = _repo(t)
+        _ship(d, g, n=1)
+        state = {}
+        mod._rollover_failures(d, state)
+        mod._rollover_failures(d, state)
+        assert state["runlog_refusals"]["count"] == 2, state
+        _ship(d, g, "feat: a different ship", n=2)      # new set -> recount
+        mod._rollover_failures(d, state)
+        assert state["runlog_refusals"]["count"] == 1, state
+
+
+def test_a_clean_trail_clears_the_counter():
+    mod = _load()
+    with tempfile.TemporaryDirectory() as t:
+        d, g = _repo(t)
+        sha = _ship(d, g)
+        state = {}
+        mod._rollover_failures(d, state)
+        assert "runlog_refusals" in state
+        _log(d, g, f"- 2026-08-04 | T | SHIPPED `{sha[:8]}` | done")
+        mod._rollover_failures(d, state)
+        assert "runlog_refusals" not in state, state
+
+
 if __name__ == "__main__":
     test_an_unlogged_ship_is_reported()
     test_a_logged_ship_is_not_reported()
@@ -155,4 +213,7 @@ if __name__ == "__main__":
     test_a_non_ship_commit_is_not_reported()
     test_the_horizon_bounds_the_obligation_to_this_run()
     test_it_never_wedges_a_run_on_io_error()
+    test_the_gate_yields_rather_than_wedging_the_run()
+    test_the_refusal_counter_resets_when_a_different_ship_appears()
+    test_a_clean_trail_clears_the_counter()
     print("PASS: a section ship owes a run-log entry before rollover")
