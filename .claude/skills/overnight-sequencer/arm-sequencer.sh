@@ -49,6 +49,32 @@ if [ -n "$_PRIMARY_ROOT" ] && [ "$_PRIMARY_ROOT" != "/" ] && [ "$(cd "$REPO_ROOT
   exit 1
 fi
 
+# CAPTURE SURFACE MUST BE OPEN (2026-08-04). The sequencer files findings to
+# the NEWEST `vNN` in each capture directory. If that newest file carries a
+# CLOSED banner, every finding the run records lands in a file nobody reads
+# again -- the run's whole self-observation for the night, lost silently.
+#
+# This is a real sequence, not a hypothetical: close-out marks vNN closed and
+# opens vNN+1, and the gap between those two steps is exactly when someone
+# re-arms. Checked here because arm time is the last moment it is cheap to fix.
+# Run `Skill(close-canary-run)` to close a finished run and open the next
+# versions properly.
+for _cap_dir in "$REPO_ROOT/todo/token-saver" "$REPO_ROOT/todo/overnight-runner-improvements"; do
+  [ -d "$_cap_dir" ] || continue
+  _newest="$(ls -1 "$_cap_dir" 2>/dev/null | grep -E 'v[0-9]+\.md$' | sort -V | tail -1)"
+  [ -n "$_newest" ] || continue
+  if head -5 "$_cap_dir/$_newest" 2>/dev/null | grep -q '\*\*CLOSED'; then
+    {
+      echo "REFUSED to arm: the newest capture file is CLOSED."
+      echo "  $_cap_dir/$_newest"
+      echo "  Findings the run records would land in a file nobody reads again."
+      echo "  Open the next version first: Skill(close-canary-run), or create"
+      echo "  the vNN+1 file by hand and repoint the live-gotchas ARMED card."
+    } >&2
+    exit 1
+  fi
+done
+
 LOCAL_ARM="$REPO_ROOT/scripts/overnight/overnight-arm.sh"
 [ -x "$LOCAL_ARM" ] || { echo "FATAL: vendored scheduler missing/not executable: $LOCAL_ARM" >&2; exit 127; }
 
