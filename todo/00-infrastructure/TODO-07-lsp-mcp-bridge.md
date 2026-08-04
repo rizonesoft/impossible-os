@@ -695,9 +695,9 @@ Current repo is ~215k core LOC (~189k kernel + ~24k tooling per [COUNT.md](../..
 > **Test runner:** `bash scripts/lsp-mcp/tests/test_bridge.sh` (host tooling; also wrapped by `bash scripts/test-tooling.sh`) -- expect `101/101 sub-tests PASS`, including `9b deterministic signal reap` and `9c leak attribution scoped`.
 
 > **Verified:** 2026-08-04 | commit `ce4a798c` | 4/4 items | build OK | 101/101 test_bridge.sh, 1282/1282 test-tooling.sh, 28326 kernel + 17 user-mode tests, lint 0 errors
-> **Accepted:** [H] Concurrent `_retire_spawn` can close a pidfd the force sweep is holding (reason: single-owner descriptor handoff is a design change, not a patch) -> XREF: 00-infrastructure/TODO-07 §21 (item: "Close the pidfd retirement race" at line 729)
+> **Accepted:** [H] Concurrent `_retire_spawn` can close a pidfd the force sweep is holding (reason: single-owner descriptor handoff is a design change, not a patch) -> XREF: 00-infrastructure/TODO-07 §22 (item: "Close the pidfd retirement race" at line 753)
 > **Accepted:** [H] Force sweep walks `/proc` once per recorded leader instead of sharing one enumeration (reason: needs a shared snapshot driving all three passes) -> XREF: 00-infrastructure/TODO-07 §21 (item: "Share ONE procfs enumeration across the force sweep" at line 732)
-> **Accepted:** [M] 9a silently skips a truncated ledger row and a row with no start ticks (reason: reader hardening belongs with the harness coverage work) -> XREF: 00-infrastructure/TODO-07 §21 (item: "Harden the 9a ledger reader" at line 735)
+> **Accepted:** [M] 9a silently skips a truncated ledger row and a row with no start ticks (reason: reader hardening belongs with the harness coverage work) -> XREF: 00-infrastructure/TODO-07 §22 (item: "Harden the 9a ledger reader" at line 759)
 > **Quality reviewed:** 2026-08-04 | Codex 26x (design, adversarial x23, consistency, perf) | 2H+2M fixed, 3 open | scope: N/A (host tooling; no kernel/boot domain skill applies)
 > **Notes:**
 > - Shipped: run-id + PID-ledger + lock-free spawned-PID ownership tracking in `lsp_client.py`, SIGTERM/SIGINT/SIGHUP handlers with off-thread cleanup, a single-owner deadline-bounded shutdown coordinator and a `force_kill_spawned()` floor in `bridge.py`, and a rewritten 9a with two new sub-tests (9b reap proof, 9c attribution control).
@@ -734,6 +734,15 @@ Section 20 made the reap identity-anchored and proved it with sub-tests 9b and 9
 - [x] Commit: `"scripts/lsp-mcp: cover the thread-group reap shapes in 9b"`
 
 **Test checkpoint:** `bash scripts/lsp-mcp/tests/test_bridge.sh` passes with the new 9b modes (`threadleader`, `threadleader_unrecorded`) and the new 9d / 9e / 9f sub-tests, and the coverage is mutation-checked: reverting the thread-aware read in `_is_zombie` or in `_carries_our_owner_id` must fail 9f AND the 9b unrecorded mode. A host that cannot build a fixture reports SKIP through the harness summary rather than PASS, so a green line never stands in for a shape that did not run. Test on: host tooling only (no QEMU dependency).
+
+> **Verified:** 2026-08-04 | commit `69f1081d` | 5/5 items | build OK | 104/104 lsp-mcp sub-tests, 1282/1282 tooling, 28326 kernel + 17 user-mode, lint exit 0
+> **Quality reviewed:** 2026-08-04 | Codex 14x (design, adversarial x11, consistency x2, perf) | 1H+9M+2L fixed, 0 open | scope: N/A (host tooling; no kernel/boot domain skill applies)
+> **Notes:**
+> - Shipped: 9b modes `threadleader` and `threadleader_unrecorded`, 9d the shutdown budget through the SIGNAL path, 9e the deadline-ALLOCATION family with each graceful phase wedged in turn, 9f the two task-aware predicates pinned directly.
+> - Mutation-checked: reverting the task-aware read in `_is_zombie` or `_carries_our_owner_id` fails 9f and the 9b UNRECORDED mode. The recorded mode stays green under both -- pass 1 signals a pinned record and consults neither predicate.
+> - Downstream: a skipped fixture is no longer a pass -- exit 77, a skip list, and the skip count on the summary line `scripts/test-tooling.sh` extracts; every capability probe now splits host-absence from broken-fixture.
+> - Canonical doc: this section plus the coverage preamble in `scripts/lsp-mcp/tests/test_bridge.sh`, whose index now matches the run block exactly (104 tags vs 104).
+> - Scope boundary: harness coverage only; no change to `lsp_client.py` or `bridge.py`. -> XREF: 00-infrastructure/TODO-07 §22 (item: "Close the pidfd retirement race" at line 753)
 
 ---
 
