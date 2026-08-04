@@ -283,13 +283,23 @@
 #          _teardown_thread_id rejects any thread != shutdown owner.
 #          Test runs 15 trials and asserts each post-apply_text
 #          request rejects with lsp-shutdown.
-#   9a -- LSP-process-leak detection: pgrep snapshots taken at harness
-#         entry vs harness exit. Any NEW PID matching the 5 LSP binary
-#         names (owned by this user) is a leak from a sub-test that
-#         failed to shut down its LSP. Last sub-test in the file so
-#         every prior sub-test has had a chance to clean up. Delta-
-#         based to avoid false positives on dev hosts running an
-#         editor's own clangd / pyright in parallel.
+#   9a -- LSP-process-leak detection: every language server THIS run
+#         started (bridge-written ledger, cross-checked by a run-id
+#         stamp in the child's environment) must be gone at harness
+#         exit. Last sub-test in the file so every prior sub-test has
+#         had a chance to clean up. Ownership comes from the spawner,
+#         never from a `pgrep -f` command-line match -- see the
+#         preamble for the three false positives that rule produced.
+#   9b -- deterministic reap: a bridge killed by SIGTERM / SIGINT /
+#         SIGHUP reaps its language servers, including one not yet
+#         published into _LIVE_LSPS and under a repeated-signal storm.
+#         Driven with a child that closes its own stdin and cannot
+#         self-exit, so the assertion cannot pass by accident; step 0
+#         verifies that property before relying on it.
+#   9c -- leak attribution is scoped: a process whose command line
+#         merely contains an LSP binary name, and a real LSP owned by
+#         a DIFFERENT run id, are both rejected -- while a genuine
+#         leak on either net (ledger, environ) is still caught.
 #
 #  16a -- --warm-start (no value) warms every registered LSP, exits 0,
 #         emits warm-begin + warm-complete (or warm-over-budget).
@@ -333,17 +343,47 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
 cd "$REPO_ROOT"
 
-# LSP-process-leak detection (sub-test 9a): capture the set of LSP
-# binary PIDs OWNED BY THIS USER at harness entry, diff against the
-# set at harness exit. Any new PID matching one of the 5 supported
-# LSP binaries is a leak from a sub-test that failed to clean up its
-# subprocess. Codex pre-implementation review of the harness layer
-# noted: comparing against ABSOLUTE counts gives false positives on
-# dev hosts where the user's editor is also running clangd / pyright;
-# delta-only is correct. Captured early so any sub-test that spawns
-# its own LSP can be observed.
-LSP_BIN_RE='clangd-19|asm-lsp|bash-language-server|pyright-langserver|pwsh'
-LSP_PIDS_BEFORE=$(pgrep -u "$(id -u)" -f "$LSP_BIN_RE" 2>/dev/null | sort -n | tr '\n' ' ' || true)
+# LSP-process-leak detection (sub-test 9a): identify the language
+# servers THIS harness started, and assert none of them outlives it.
+#
+# The identity comes from the spawner. Until 2026-08-03 it came from
+# `pgrep -u UID -f '<lsp binary names>'`, snapshotted at entry and
+# diffed at exit -- and that rule answers a different question than the
+# one 9a asks. Measured over 15 harness runs while the agent fleet ran
+# alongside (2 failures, 4 processes blamed, none of them ours):
+#
+#   * `pgrep -f` matches the whole COMMAND LINE, so a `node
+#     codex-companion.mjs` review process was reported as a leaked
+#     language server because the review prompt quoted the string
+#     "clangd-19" (run 2, pid 1373355);
+#   * it matches FOREIGN servers owned by this user -- one clangd from
+#     another session's bridge (pid 1374170, no run id, parent 1374079)
+#     lived across four consecutive harness runs and was blamed on the
+#     one whose window it happened to start in;
+#   * it matches processes that are already exiting: run 4's accused
+#     pid 1390938 was gone before `ps` could print its command line.
+#
+# So: the bridge stamps LSP_BRIDGE_RUN_ID into every language server it
+# spawns and appends an ownership record (run id, pid, /proc start
+# ticks, lang, binary) to LSP_BRIDGE_PID_LEDGER. 9a asks the precise
+# question -- "is a process WE recorded still alive?" -- and never the
+# pattern-matching one. Both variables are OVERWRITTEN unconditionally
+# so a stale value inherited from the caller's environment cannot make
+# this run adopt another run's children.
+LSP_BIN_NAMES='clangd-19 clangd asm-lsp bash-language-server pyright-langserver pwsh'
+LSP_RUN_ID="test-bridge-$$-$(date +%s%N)"
+LSP_PID_LEDGER="$(mktemp -t lsp-bridge-pids.XXXXXX)"
+export LSP_BRIDGE_RUN_ID="$LSP_RUN_ID"
+export LSP_BRIDGE_PID_LEDGER="$LSP_PID_LEDGER"
+trap 'rm -f "$LSP_PID_LEDGER"' EXIT
+
+# Start time (field 22 of /proc/PID/stat) for the PID-reuse guard: a
+# recycled PID is a different process and must not read as a survivor.
+# comm sits in parens and may itself contain spaces or parens, so parse
+# from the LAST ')'. Empty when procfs is unavailable.
+lsp_start_ticks() {
+    sed 's/^.*) //' "/proc/$1/stat" 2>/dev/null | awk '{print $20}'
+}
 
 pass=0
 fail=0
@@ -5465,34 +5505,577 @@ PY
 }
 
 # --- 9a: LSP-process-leak detection (run LAST) ----------------------------
-t_no_leaked_lsp_processes() {
-    # Capture the post-harness PID set of LSP binaries owned by this
-    # user. Any PID present here but NOT in LSP_PIDS_BEFORE was
-    # spawned during the harness AND not cleaned up. A clean run
-    # leaves the delta empty.
+# --- 9b: deterministic reap on every termination signal -------------------
+# Asserts: a bridge killed by SIGTERM / SIGINT / SIGHUP reaps the language
+# servers it started -- INCLUDING one spawned but not yet published into
+# _LIVE_LSPS, and including a repeated (storm) signal during cleanup.
+#
+# The child here is a stubborn stand-in that closes its own stdin and never
+# exits on its own. That is the whole point: a real clangd usually exits
+# when the pipe closes, so a test using clangd would pass with or without
+# the handler and would prove nothing about the reap. Rate measurement over
+# repeated harness runs has the same defect -- it can only show that the
+# flake stopped reproducing (Codex design review, Medium). A child that
+# provably cannot self-exit makes the assertion discriminate, and step 0
+# below verifies that property instead of assuming it.
+LSP_STUBBORN_DRIVER='
+import os, sys, threading, time
+sys.path.insert(0, "scripts/lsp-mcp")
+import bridge
+from lsp_client import LspSubprocess
+
+mode = sys.argv[1]
+STUBBORN = (
+    "import sys, time\n"
+    "sys.stdin.close()\n"          # never observe EOF on the pipe
+    "time.sleep(600)\n"
+)
+# A leader that forks its own stubborn helper, the way a language server
+# with a worker process does. Killing only the leader leaves the helper --
+# which is the same leak one level down.
+# Announces via a FILE, not stderr: the stderr of a language server is a
+# pipe to the bridge, so anything written there never reaches the shell
+# running the test.
+STUBBORN_PARENT = (
+    "import os, subprocess, sys, time\n"
+    "sys.stdin.close()\n"
+    "k = subprocess.Popen([sys.executable, \"-c\",\n"
+    "    \"import sys, time\\nsys.stdin.close()\\ntime.sleep(600)\"])\n"
+    "f = open(os.environ[\"STUB_HELPER_FILE\"], \"w\")\n"
+    "f.write(str(k.pid)); f.flush(); f.close()\n"
+    "time.sleep(600)\n"
+)
+# The POLITE leader, which is the harder case: it exits the moment its stdin
+# closes, so the reap succeeds and the record would normally be retired --
+# while the helper it forked ignores everything and is reparented away from
+# the bridge, out of reach of any later search for our own children. The
+# process group is the only remaining handle on it.
+STUBBORN_DETACHED = (
+    "import os, subprocess, sys, time\n"
+    "k = subprocess.Popen([sys.executable, \"-c\",\n"
+    "    \"import sys, time\\nsys.stdin.close()\\ntime.sleep(600)\"],\n"
+    "    start_new_session=True)\n"
+    "f = open(os.environ[\"STUB_HELPER_FILE\"], \"w\")\n"
+    "f.write(str(k.pid)); f.flush(); f.close()\n"
+    "time.sleep(600)\n"
+)
+STUBBORN_CLEAN = (
+    "import os, signal, subprocess, sys, time\n"
+    "k = subprocess.Popen([sys.executable, \"-c\",\n"
+    "    \"import signal, sys, time\\n\"\n"
+    "    \"signal.signal(signal.SIGTERM, signal.SIG_IGN)\\n\"\n"
+    "    \"sys.stdin.close()\\ntime.sleep(600)\"])\n"
+    "f = open(os.environ[\"STUB_HELPER_FILE\"], \"w\")\n"
+    "f.write(str(k.pid)); f.flush(); f.close()\n"
+    "sys.stdin.read()\n"
+    "sys.exit(0)\n"
+)
+bridge._install_signal_handlers()
+
+if mode == "spawnrace_nopidfd":
+    # Same race with pidfd support removed. The runtime floor in
+    # scripts/setup.sh is python3 3.8 and os.pidfd_open arrived in 3.9, so
+    # a host without it is supported configuration -- and the guarantee
+    # must not quietly depend on the reviewer host being newer.
+    def _no_pidfd(*a, **kw):
+        raise OSError("pidfd_open unavailable")
+    os.pidfd_open = _no_pidfd
+
+if mode.startswith("spawnrace"):
+    # Widen the Popen-to-record window to something a shell can aim at, by
+    # wrapping Popen so it sleeps AFTER the child exists but BEFORE
+    # _record_spawn runs. Patched in the DRIVER, so the production path
+    # carries no test hook.
     #
-    # Some sub-tests (8a/8b/8c) spawn fake stdio LSPs via `python3 -c
-    # ... cat`; those don't match the real-LSP binary regex so they
-    # don't show up here. The regex deliberately matches only the 5
-    # production LSP binary names from the install table.
-    local after delta
-    after=$(pgrep -u "$(id -u)" -f "$LSP_BIN_RE" 2>/dev/null | sort -n | tr '\n' ' ' || true)
-    delta=""
-    for pid in $after; do
-        case " $LSP_PIDS_BEFORE " in
-            *" $pid "*) ;;
-            *) delta="$delta $pid" ;;
-        esac
+    # Deliberately on the MAIN thread. A spawning WORKER thread keeps
+    # running while the handler executes and can still record the child, so
+    # it does not reproduce the real hazard: when the interrupted frame is
+    # the main thread it never resumes, the in-flight count never falls,
+    # and no amount of waiting produces a record. Only the procfs
+    # own-children sweep can find the child in that state.
+    import lsp_client as _lc
+    _real_popen = _lc.subprocess.Popen
+
+    class _SlowPopen(_real_popen):          # type: ignore[misc, valid-type]
+        def __init__(self, *a, **kw):
+            super().__init__(*a, **kw)
+            sys.stdout.write("SPAWNING %d\n" % self.pid)
+            sys.stdout.flush()
+            time.sleep(3)
+
+    _lc.subprocess.Popen = _SlowPopen
+    LspSubprocess(cmd=[sys.executable, "-c", STUBBORN], lang="stubborn")
+    time.sleep(120)
+
+child_cmd = STUBBORN
+if mode in ("descendant", "cleanleader", "detached"):
+    child_cmd = {"descendant": STUBBORN_PARENT,
+                 "cleanleader": STUBBORN_CLEAN,
+                 "detached": STUBBORN_DETACHED}[mode]
+    os.environ["STUB_HELPER_FILE"] = sys.argv[2]
+lsp = LspSubprocess(cmd=[sys.executable, "-c", child_cmd], lang="stubborn")
+if mode == "published":
+    with bridge._LIVE_LSPS_LOCK:
+        bridge._LIVE_LSPS[("stubborn", "stubborn")] = lsp
+# mode == "unpublished": deliberately NOT registered with the bridge,
+# exercising the window a _LIVE_LSPS walk cannot see.
+sys.stdout.write("READY %d\n" % lsp.pid)
+sys.stdout.flush()
+if mode == "initializing":
+    # Hold _init_lock the way a real handshake does, against a server that
+    # never answers, and take the signal there. This is the shape that
+    # deadlocked the first implementation: cleanup ran ON the interrupted
+    # thread and waited for a lock that same thread was holding.
+    try:
+        lsp.initialize("file:///tmp", {})
+    except Exception:
+        pass
+time.sleep(120)
+'
+
+lsp_wait_gone() {
+    # Wait up to $2 tenths of a second for pid $1 to disappear.
+    local pid="$1" ticks="$2"
+    while [ "$ticks" -gt 0 ]; do
+        kill -0 "$pid" 2>/dev/null || return 0
+        sleep 0.1
+        ticks=$((ticks - 1))
     done
-    if [ -n "$(echo "$delta" | tr -d ' ')" ]; then
-        printf '[lsp-mcp-tests] debug (9a): leaked LSP PIDs:%s\n' "$delta" >&2
-        # Show which binaries leaked so the error names them.
-        for pid in $delta; do
-            ps -o pid,comm,args -p "$pid" 2>/dev/null | tail -n +2 | sed 's/^/  /' >&2
+    return 1
+}
+
+# Everything 9b has spawned, so no exit path can leave one behind. The
+# stubborn children ignore pipe EOF by design and sleep for 600s, so a test
+# that returns early without killing them leaks for ten minutes -- and 9a
+# cannot catch them, since they are `python3` rather than a language-server
+# binary name.
+LSP_9B_PIDS=""
+lsp_9b_track() { LSP_9B_PIDS="$LSP_9B_PIDS $1"; }
+lsp_9b_cleanup() {
+    local p
+    for p in $LSP_9B_PIDS; do
+        kill -9 "$p" 2>/dev/null || true
+        wait "$p" 2>/dev/null || true
+    done
+    LSP_9B_PIDS=""
+    rm -f "$@" 2>/dev/null || true
+}
+
+t_signal_reap_deterministic() {
+    local drv out err hf pid child helper rc sig mode signum
+    drv="$(mktemp -t lsp-stubborn.XXXXXX.py)"
+    out="$(mktemp -t lsp-stubborn-out.XXXXXX)"
+    err="$(mktemp -t lsp-stubborn-err.XXXXXX)"
+    hf="$(mktemp -t lsp-stubborn-helper.XXXXXX)"
+    printf '%s' "$LSP_STUBBORN_DRIVER" > "$drv"
+
+    # Step 0 -- discrimination control. SIGKILL bypasses every handler, so
+    # the child MUST survive it. If it does not, the child self-exits and
+    # every assertion below would be vacuous.
+    python3 "$drv" published > "$out" 2>/dev/null &
+    pid=$!; lsp_9b_track "$pid"
+    child=""
+    for _ in $(seq 1 100); do
+        child="$(awk '/^READY/ {print $2; exit}' "$out" 2>/dev/null)"
+        [ -n "$child" ] && break
+        sleep 0.1
+    done
+    [ -n "$child" ] && lsp_9b_track "$child"
+    if [ -z "$child" ]; then
+        printf '[9b] FAIL: driver never reported READY\n' >&2
+        lsp_9b_cleanup "$drv" "$out" "$err" "$hf"; return 1
+    fi
+    kill -9 "$pid" 2>/dev/null; wait "$pid" 2>/dev/null || true
+    sleep 1
+    if ! kill -0 "$child" 2>/dev/null; then
+        printf '[9b] FAIL: control -- child %s died without being reaped, so\n' \
+            "$child" >&2
+        printf '     the signal assertions below would prove nothing\n' >&2
+        lsp_9b_cleanup "$drv" "$out" "$err" "$hf"; return 1
+    fi
+    kill -9 "$child" 2>/dev/null
+
+    # Steps 1..N -- every termination signal, at every phase barrier, plus a
+    # repeated signal delivered DURING cleanup.
+    for sig in TERM INT HUP; do
+        case "$sig" in
+            TERM) signum=15 ;; INT) signum=2 ;; HUP) signum=1 ;;
+        esac
+        for mode in published unpublished initializing descendant cleanleader detached; do
+            : > "$out"; : > "$err"; : > "$hf"
+            python3 "$drv" "$mode" "$hf" > "$out" 2> "$err" &
+            pid=$!; lsp_9b_track "$pid"
+            child=""
+            for _ in $(seq 1 100); do
+                child="$(awk '/^READY/ {print $2; exit}' "$out" 2>/dev/null)"
+                [ -n "$child" ] && break
+                sleep 0.1
+            done
+            [ -n "$child" ] && lsp_9b_track "$child"
+            if [ -z "$child" ]; then
+                printf '[9b] FAIL: %s/%s driver never reported READY\n' \
+                    "$sig" "$mode" >&2
+                lsp_9b_cleanup "$drv" "$out" "$err" "$hf"; return 1
+            fi
+            helper=""
+            if case "$mode" in
+                   descendant|cleanleader|detached) true ;;
+                   *) false ;;
+               esac
+            then
+                # The leader forks a helper that ignores EOF. Reaping only
+                # the leader leaves it -- the same leak, one level down.
+                # In cleanleader the leader then EXITS POLITELY, so the
+                # helper is reparented and only its process group remains
+                # as a handle. In detached the helper calls setsid, so it
+                # is in NO group of ours and is not our child either --
+                # only the run-id stamp can still find it.
+                for _ in $(seq 1 100); do
+                    helper="$(cat "$hf" 2>/dev/null)"
+                    [ -n "$helper" ] && break
+                    sleep 0.1
+                done
+                [ -n "$helper" ] && lsp_9b_track "$helper"
+                if [ -z "$helper" ]; then
+                    printf '[9b] FAIL: %s/%s never announced a helper\n' \
+                        "$sig" "$mode" >&2
+                    lsp_9b_cleanup "$drv" "$out" "$err" "$hf"; return 1
+                fi
+            fi
+            # READY is printed immediately before initialize() is entered, so
+            # give the driver a moment to actually be inside it (and holding
+            # _init_lock) before the signal lands.
+            [ "$mode" = "initializing" ] && sleep 0.5
+            if ! kill -"$sig" "$pid" 2>/dev/null; then
+                printf '[9b] FAIL: could not signal %s driver %s\n' \
+                    "$sig" "$pid" >&2
+                lsp_9b_cleanup "$drv" "$out" "$err" "$hf"; return 1
+            fi
+            if [ "$mode" = "published" ]; then
+                # Storm -- but only once cleanup has demonstrably STARTED.
+                # Two back-to-back kills prove nothing: pending standard
+                # signals coalesce, so the second can be absorbed before the
+                # handler ever runs, and the assertion passes without the
+                # behavior it claims to test ever occurring.
+                for _ in $(seq 1 100); do
+                    grep -q 'terminating: signal' "$err" 2>/dev/null && break
+                    sleep 0.1
+                done
+                if ! grep -q 'terminating: signal' "$err" 2>/dev/null; then
+                    printf '[9b] FAIL: %s handler never announced cleanup, so\n' \
+                        "$sig" >&2
+                    printf '     the storm case would not test a signal during it\n' >&2
+                    lsp_9b_cleanup "$drv" "$out" "$err" "$hf"; return 1
+                fi
+                kill -"$sig" "$pid" 2>/dev/null
+            fi
+            wait "$pid" 2>/dev/null; rc=$?
+            if ! lsp_wait_gone "$child" 150; then
+                printf '[9b] FAIL: %s/%s left child %s alive (driver rc=%s)\n' \
+                    "$sig" "$mode" "$child" "$rc" >&2
+                ps -o pid,args= -p "$child" 2>/dev/null | sed 's/^/     /' >&2
+                sed 's/^/     /' "$err" >&2
+                lsp_9b_cleanup "$drv" "$out" "$err" "$hf"; return 1
+            fi
+            if [ -n "$helper" ] && ! lsp_wait_gone "$helper" 150; then
+                printf '[9b] FAIL: %s/%s left helper %s alive -- the\n' \
+                    "$sig" "$mode" "$helper" >&2
+                printf '     leader was reaped but its process tree was not\n' >&2
+                lsp_9b_cleanup "$drv" "$out" "$err" "$hf"; return 1
+            fi
+            # Death BY the signal, not a synthesized status: the handler is
+            # required to restore the default disposition and re-raise.
+            if [ "$rc" != "$((128 + signum))" ]; then
+                printf '[9b] FAIL: %s/%s exited rc=%s, expected %s (death by signal)\n' \
+                    "$sig" "$mode" "$rc" "$((128 + signum))" >&2
+                lsp_9b_cleanup "$drv" "$out" "$err" "$hf"; return 1
+            fi
         done
+    done
+
+    # Final barrier -- the interval between Popen returning and the child
+    # being recorded, taken on the driver's MAIN thread so the interrupted
+    # frame never resumes to write the record.
+    for mode in spawnrace spawnrace_nopidfd; do
+        : > "$out"; : > "$err"
+        python3 "$drv" "$mode" > "$out" 2> "$err" &
+        pid=$!; lsp_9b_track "$pid"
+        child=""
+        for _ in $(seq 1 150); do
+            child="$(awk '/^SPAWNING/ {print $2; exit}' "$out" 2>/dev/null)"
+            [ -n "$child" ] && break
+            sleep 0.1
+        done
+        [ -n "$child" ] && lsp_9b_track "$child"
+        if [ -z "$child" ]; then
+            printf '[9b] FAIL: %s driver never announced a spawning child\n' \
+                "$mode" >&2
+            lsp_9b_cleanup "$drv" "$out" "$err" "$hf"; return 1
+        fi
+        kill -TERM "$pid" 2>/dev/null
+        wait "$pid" 2>/dev/null; rc=$?
+        if ! lsp_wait_gone "$child" 150; then
+            printf '[9b] FAIL: %s -- signal in the Popen-to-record window leaked %s\n' \
+                "$mode" "$child" >&2
+            ps -o pid,args= -p "$child" 2>/dev/null | sed 's/^/     /' >&2
+            sed 's/^/     /' "$err" >&2
+            lsp_9b_cleanup "$drv" "$out" "$err" "$hf"; return 1
+        fi
+    done
+    lsp_9b_cleanup "$drv" "$out" "$err" "$hf"
+    printf '[9b] reap OK: TERM/INT/HUP x published/unpublished/initializing/\n'
+    printf '     descendant/cleanleader, storm during cleanup, spawn race\n'
+    printf '     with and without pidfd, tree collected, status preserved\n'
+    return 0
+}
+
+# --- 9c: leak attribution rejects foreign and text-matching processes ------
+# Asserts the 9a detector answers "did WE leak one", not "is there anything
+# LSP-shaped on this host". Both decoys reproduce a measured 2026-08-03
+# false positive: a process whose command line merely CONTAINS an LSP binary
+# name, and a language server carrying a DIFFERENT run id. The third case is
+# the mutation guard -- a process carrying OUR run id and an LSP binary name
+# MUST still be reported, or the fix would have achieved a green test by
+# blinding the detector.
+t_leak_attribution_scoped() {
+    local dir fake decoy foreign owned ledgered found scratch rc=0
+    dir="$(mktemp -d -t lsp-attr.XXXXXX)"
+    fake="$dir/clangd-19"
+    # /proc/PID/comm follows the name the binary was exec'd under, so a
+    # symlink gives a process a genuine LSP binary NAME (not merely an
+    # argv string) without needing clangd installed.
+    ln -s "$(command -v python3)" "$fake"
+
+    # Decoy 1 -- command-line TEXT match only. This is the shape that
+    # failed baseline run 2: a node process whose argv quoted "clangd-19".
+    python3 -c 'import time; time.sleep(30)  # clangd-19 --background-index' &
+    decoy=$!
+    # Decoy 2 -- a real LSP binary name owned by this user under a
+    # DIFFERENT run id: another session's bridge.
+    ( LSP_BRIDGE_RUN_ID="foreign-$$" exec "$fake" -c 'import time; time.sleep(30)' ) &
+    foreign=$!
+    sleep 1
+    found="$(lsp_survivors_of_this_run)"
+    if [ -n "$found" ]; then
+        printf '[9c] FAIL: detector blamed a foreign/text-matching process:\n' >&2
+        printf '%s' "$found" | sed 's/^/     /' >&2
+        rc=1
+    fi
+    kill -9 "$decoy" "$foreign" 2>/dev/null
+    wait "$decoy" "$foreign" 2>/dev/null || true
+    if [ "$rc" -ne 0 ]; then rm -rf "$dir"; return 1; fi
+
+    # Mutation guard A -- an LSP binary carrying OUR run id (the environ
+    # net). Inherits LSP_BRIDGE_RUN_ID from the exported harness value.
+    "$fake" -c 'import time; time.sleep(30)' &
+    owned=$!
+    # Mutation guard B -- a process recorded in a ledger under OUR run id
+    # (the primary net the bridge itself populates). Planted in a SCRATCH
+    # ledger, never the live one: rewriting the shared ledger afterwards
+    # would be a read-modify-replace against a file concurrent bridges are
+    # appending to, and a record landing between the read and the replace
+    # would be silently dropped -- turning a real leak into a clean 9a.
+    scratch="$dir/scratch-ledger.tsv"
+    cp -f "$LSP_PID_LEDGER" "$scratch" 2>/dev/null || : > "$scratch"
+    python3 -c 'import time; time.sleep(30)' &
+    ledgered=$!
+    printf '%s\t%s\t%s\tstub\tclangd-19\n' \
+        "$LSP_RUN_ID" "$ledgered" "$(lsp_start_ticks "$ledgered")" \
+        >> "$scratch"
+    sleep 1
+    found="$(lsp_survivors_of_this_run "$scratch")"
+    kill -9 "$owned" "$ledgered" 2>/dev/null
+    wait "$owned" "$ledgered" 2>/dev/null || true
+    rm -rf "$dir"
+    if ! printf '%s' "$found" | awk -v p="$owned" '$1 == p {f=1} END {exit !f}'; then
+        printf '[9c] FAIL: environ net missed an LSP (pid %s) carrying our run id\n' \
+            "$owned" >&2
         return 1
     fi
+    if ! printf '%s' "$found" | awk -v p="$ledgered" '$1 == p {f=1} END {exit !f}'; then
+        printf '[9c] FAIL: ledger net missed a pid we recorded (%s) -- the\n' \
+            "$ledgered" >&2
+        printf '     detector was narrowed into uselessness, not fixed\n' >&2
+        return 1
+    fi
+    # Ownership is required for a GROUP sweep too, and no path may reach
+    # for killpg. Both are the same lesson at different layers: a process
+    # group is named by a bare number, so membership alone can never
+    # authorize a signal -- once a group empties, that number can be
+    # reused by a group this bridge never created.
+    python3 - <<'PY' || return 1
+import os, pathlib, subprocess, sys, time
+sys.path.insert(0, "scripts/lsp-mcp")
+import lsp_client
+
+# A process in its own group carrying NO run-id stamp stands in for a
+# foreign group that reused a stale numeric pgid.
+env = {k: v for k, v in os.environ.items()
+       if k not in ("LSP_BRIDGE_RUN_ID", "LSP_BRIDGE_OWNER")}
+foreign = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(20)"],
+                           env=env, start_new_session=True)
+time.sleep(0.5)
+try:
+    members = lsp_client._group_members(foreign.pid)
+    if members:
+        print(f"[9c] FAIL: unstamped foreign group {foreign.pid} reported as "
+              f"ours: {members}", file=sys.stderr)
+        sys.exit(1)
+    killed = lsp_client._reap_group(foreign.pid)
+    if killed or foreign.poll() is not None:
+        print(f"[9c] FAIL: reaped an unstamped foreign group "
+              f"(killed={killed})", file=sys.stderr)
+        sys.exit(1)
+finally:
+    foreign.kill()
+
+# With neither a pidfd nor a recorded start time there is no way to tell a
+# PID from a stranger who inherited the number, so nothing may be signalled.
+sent = []
+real_kill = os.kill
+os.kill = lambda p, s: sent.append((p, s))
+try:
+    lsp_client._SPAWNED.append((999999, None, None))
+    if lsp_client._signal_recorded(999999, 15) or sent:
+        print(f"[9c] FAIL: signalled a pid with no identity evidence: {sent}",
+              file=sys.stderr)
+        sys.exit(1)
+    # Either violation fails on its own: reporting a kill it never made, or
+    # making one it never reported. Joined with `and`, this passed whenever
+    # exactly one of the two happened.
+    killed = lsp_client.force_kill_spawned(settle=0.0)
+    if killed != 0 or sent:
+        print(f"[9c] FAIL: force swept a pid with no identity evidence "
+              f"(returned {killed}, signalled {sent})", file=sys.stderr)
+        sys.exit(1)
+finally:
+    os.kill = real_kill
+    lsp_client._SPAWNED[:] = [e for e in lsp_client._SPAWNED if e[0] != 999999]
+
+# The deadline must bound the WHOLE force phase, not just its settle loop.
+# Several persistent records each drive a group sweep, and a sweep that
+# ignores the deadline runs for seconds past a bound the caller is holding
+# to -- which is the wedged case an external kill-after is counting through.
+stubborn = []
+for _ in range(5):
+    stubborn.append(subprocess.Popen(
+        [sys.executable, "-c", "import sys,time\nsys.stdin.close()\ntime.sleep(20)"],
+        env={**os.environ, "LSP_BRIDGE_OWNER": lsp_client._OWNER_ID},
+        start_new_session=True))
+for sp in stubborn:
+    lsp_client._SPAWNED.append(
+        (sp.pid, lsp_client.proc_start_ticks(sp.pid), None))
+try:
+    t0 = time.monotonic()
+    lsp_client.force_kill_spawned(settle=0.0, deadline=t0 + 0.3)
+    spent = time.monotonic() - t0
+    if spent > 1.5:
+        print(f"[9c] FAIL: force sweep ran {spent:.2f}s past a 0.3s deadline",
+              file=sys.stderr)
+        sys.exit(1)
+finally:
+    for sp in stubborn:
+        try:
+            sp.kill(); sp.wait(timeout=2)
+        except Exception:
+            pass
+    lsp_client._SPAWNED[:] = [
+        e for e in lsp_client._SPAWNED
+        if e[0] not in {sp.pid for sp in stubborn}]
+
+# No executable path may signal a group by number.
+for src in sorted(pathlib.Path("scripts/lsp-mcp").rglob("*.py")):
+    for n, line in enumerate(src.read_text().splitlines(), 1):
+        code = line.split("#", 1)[0]
+        if "os.killpg(" in code:
+            print(f"[9c] FAIL: {src}:{n} signals a process group by number; "
+                  f"use _reap_group (ownership-verified)", file=sys.stderr)
+            sys.exit(1)
+print("[9c] ownership OK: unstamped group rejected, no killpg in the tree")
+PY
+    printf '[9c] attribution OK: foreign + text-match rejected, both nets catch ours\n'
     return 0
+}
+
+lsp_survivors_of_this_run() {
+    # $1 (optional): ledger to read instead of the live harness one. 9c
+    # passes a scratch file so it can plant a record without touching the
+    # ledger 9a depends on.
+    local LSP_PID_LEDGER="${1:-$LSP_PID_LEDGER}"
+    # Every language server THIS run started that is still alive, one
+    # "pid reason" per line. Two independent nets, neither of which can
+    # see a process this run did not spawn:
+    #
+    #   ledger -- the bridge recorded the pid at spawn time. Liveness by
+    #             kill -0; PID reuse rejected by comparing start ticks.
+    #   environ -- a process whose BINARY NAME (comm, not command-line
+    #             text) is a language server AND whose environment
+    #             carries this run's id. Catches a child the ledger
+    #             missed (ledger unwritable, spawner bypassed).
+    #
+    # There is deliberately NO fallback to the unscoped PID-delta rule
+    # this replaced: when attribution is unavailable the honest result
+    # is a narrower check, not a wider one that reports other people's
+    # processes as our leaks (Codex design review, Medium).
+    local rid pid rec_ticks lang binname now_ticks comm out
+    out=""
+    if [ -s "$LSP_PID_LEDGER" ]; then
+        while IFS="$(printf '\t')" read -r rid pid rec_ticks lang binname; do
+            [ "$rid" = "$LSP_RUN_ID" ] || continue
+            [ -n "$pid" ] || continue
+            kill -0 "$pid" 2>/dev/null || continue
+            now_ticks="$(lsp_start_ticks "$pid")"
+            if [ -n "$now_ticks" ] && [ "$rec_ticks" != "-1" ] \
+               && [ "$now_ticks" != "$rec_ticks" ]; then
+                continue   # PID recycled -- a different process now.
+            fi
+            out="$out$pid ledger:$lang:$binname
+"
+        done < "$LSP_PID_LEDGER"
+    fi
+    if [ -d /proc ]; then
+        for d in /proc/[0-9]*; do
+            pid="${d#/proc/}"
+            comm="$(cat "$d/comm" 2>/dev/null || true)"
+            [ -n "$comm" ] || continue
+            case " $out " in *" $pid "*) continue ;; esac
+            for binname in $LSP_BIN_NAMES; do
+                # comm is truncated to 15 chars, so match on the prefix
+                # the kernel would have kept.
+                case "$binname" in "$comm"*) ;; *) continue ;; esac
+                if tr '\0' '\n' < "$d/environ" 2>/dev/null \
+                   | grep -qxF "LSP_BRIDGE_RUN_ID=$LSP_RUN_ID"; then
+                    out="$out$pid environ:$comm
+"
+                fi
+                break
+            done
+        done
+    fi
+    printf '%s' "$out"
+}
+
+t_no_leaked_lsp_processes() {
+    # Assert no language server started by THIS run outlived it.
+    #
+    # A process caught mid-exit is not a leak, so a first hit is
+    # re-checked after a grace period rather than reported straight
+    # away -- the old detector's third false-positive channel was
+    # exactly this (it named a pid that had already exited by the time
+    # it tried to describe it).
+    local survivors
+    survivors="$(lsp_survivors_of_this_run)"
+    if [ -n "$survivors" ]; then
+        sleep 2
+        survivors="$(lsp_survivors_of_this_run)"
+    fi
+    [ -n "$survivors" ] || return 0
+    printf '[lsp-mcp-tests] debug (9a): language servers this run leaked:\n' >&2
+    printf '%s' "$survivors" | while read -r pid why; do
+        printf '  pid=%s via=%s :: %s\n' "$pid" "$why" \
+            "$(ps -o args= -p "$pid" 2>/dev/null | cut -c1-100)" >&2
+    done
+    return 1
 }
 
 run "1a --self-test banner"              t_selftest
@@ -5593,6 +6176,8 @@ run "18b type_hierarchy clangd round-trip" t_type_hierarchy_smoke_clangd
 run "18c type_hierarchy capability-missing" t_type_hierarchy_capability_missing
 run "18d type_hierarchy supported walk"   t_type_hierarchy_supported_walk
 run "18e type_hierarchy types cap"        t_type_hierarchy_types_cap
+run "9b deterministic signal reap"       t_signal_reap_deterministic
+run "9c leak attribution scoped"         t_leak_attribution_scoped
 # 9a runs LAST so every prior sub-test has had a chance to clean up.
 run "9a no leaked LSP processes"         t_no_leaked_lsp_processes
 

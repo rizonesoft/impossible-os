@@ -57,6 +57,8 @@ from __future__ import annotations
 import argparse
 import os
 import re
+import select
+import signal
 import sys
 import threading
 from pathlib import Path
@@ -68,7 +70,10 @@ _HERE = Path(__file__).resolve().parent
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
-from lsp_client import LspError, LspSubprocess  # noqa: E402
+from lsp_client import (  # noqa: E402
+    LspError, LspSubprocess, force_kill_spawned, mark_teardown_complete,
+    reap_all_live,
+)
 import logger as _lsplog  # noqa: E402
 
 # Initialize the logger BEFORE _autoregister_spawners runs so the
@@ -998,7 +1003,7 @@ def _workspace_root_from_argv(args: argparse.Namespace) -> Path:
     return Path.cwd()
 
 
-def _shutdown_all_lsps() -> None:
+def _shutdown_all_lsps(deadline: Optional[float] = None) -> None:
     """Clean shutdown of every live LSP. Called on --self-test exit
     and at bridge teardown. Idempotent; safe to call twice.
 
@@ -1014,8 +1019,18 @@ def _shutdown_all_lsps() -> None:
         insts = list(_LIVE_LSPS.values())
         _LIVE_LSPS.clear()
     for inst in insts:
+        # Share ONE budget across all of them: "2 seconds each" silently
+        # becomes ten for five language servers, which is how a caller's
+        # bound gets overrun by cleanup that is behaving perfectly. And
+        # once it is spent, STOP -- a 50ms floor per remaining instance is
+        # still unbounded work past a bound the caller is relying on.
+        budget = 2.0
+        if deadline is not None:
+            if _time.monotonic() >= deadline:
+                break
+            budget = min(2.0, max(0.05, deadline - _time.monotonic()))
         try:
-            inst.shutdown(timeout=2.0)
+            inst.shutdown(timeout=budget)
         except Exception:
             pass
 
@@ -4896,38 +4911,334 @@ def _hover_content_bytes(hover: Any) -> int:
 # _LAST_ACTIVITY on every tool call, so it is never reaped while serving.
 import time as _time  # module-level alias (functions re-import locally; harmless)
 
-_SHUTDOWN_LOCK = threading.Lock()
-_SHUTDOWN_DONE = False
+# RLock, not Lock: the owner-reentry check below lives inside this lock, and a
+# plain Lock made that check unreachable by the very thread it protects -- a
+# signal delivered while the main thread held it re-entered and blocked
+# forever (Codex adversarial review, High).
+_SHUTDOWN_LOCK = threading.RLock()
+# Two-state coordinator, not one bool: STARTED is claimed by exactly one
+# owner thread, COMPLETE is published only once the reap has finished, so a
+# caller that is about to terminate the process can wait for the difference.
+_SHUTDOWN_STARTED = False
+_SHUTDOWN_OWNER: Optional[int] = None
+_SHUTDOWN_COMPLETE = threading.Event()
+# ONE budget for the whole teardown, shared by every participant. Per-LSP
+# timeouts do not compose: five language servers at "2 seconds each" is not a
+# two-second shutdown, and a waiter bounded independently of the worker will
+# eventually cut a legitimate reap off mid-flight. The owner computes an
+# absolute deadline from this and passes the REMAINING time down; waiters wait
+# against the same deadline.
+def _budget_from_env() -> float:
+    """Shutdown budget in seconds. A malformed, non-finite or non-positive
+    value falls back to the default rather than propagating into deadline
+    arithmetic, where it would silently disable every bound."""
+    try:
+        value = float(os.environ.get("LSP_BRIDGE_SHUTDOWN_BUDGET", "10"))
+    except Exception:
+        return 10.0
+    if value != value or value in (float("inf"), float("-inf")) or value <= 0:
+        return 10.0
+    return value
+
+
+_SHUTDOWN_BUDGET_S = _budget_from_env()
+_SHUTDOWN_DEADLINE: Optional[float] = None
+# Set when a termination signal has begun teardown, so the cleanup worker can
+# be observed from outside (the test harness waits on the stderr marker below
+# before sending its second signal).
+_SIGNAL_CLEANUP_STARTED = threading.Event()
+# Signals that mean "stop": SIGTERM (launchers, `timeout`, systemd), SIGINT
+# (Ctrl-C), SIGHUP (terminal/session teardown).
+_TERM_SIGNALS = tuple(
+    s for s in (getattr(signal, n, None)
+                for n in ("SIGTERM", "SIGINT", "SIGHUP"))
+    if s is not None
+)
 _LAST_ACTIVITY = _time.monotonic()
 _IDLE_TIMEOUT_S = float(os.environ.get("LSP_BRIDGE_IDLE_TIMEOUT", "900"))  # 15 min
 # Check often enough to honor short timeouts promptly, but no more than every 30s.
 _WATCHDOG_TICK_S = max(1.0, min(30.0, _IDLE_TIMEOUT_S / 4))
 
 
-def _graceful_shutdown() -> None:
-    """Idempotent bridge teardown: cancel warm-start, join its worker, reap all
-    LSP subprocesses. Called by main()'s finally on normal exit AND by the idle
-    watchdog (which os._exit()s afterward, bypassing the finally), so it must be
-    safe to run more than once.
+def _graceful_shutdown(wait_timeout: float = 8.0) -> bool:
+    """Bridge teardown: cancel warm-start, join its worker, reap every LSP
+    subprocess -- including any spawned but not yet published. Returns True
+    when cleanup is COMPLETE (either this call did it, or it observed another
+    caller finish), False when it gave up waiting on another caller.
 
-    Cancel + drain warm-start workers BEFORE reaping LSPs: otherwise the per-worker
-    progress poll could call snapshot_progress() on an already-shut-down
-    LspSubprocess. _shutdown_all_lsps sets _BRIDGE_SHUTTING_DOWN under
-    _LIVE_LSPS_LOCK so any LSP a wedged warm worker has not yet published gets
-    reaped at the publish gate in _get_or_spawn instead of leaking; lsp_client's
-    _LIVE_SUBPROCS WeakSet + _atexit_kill_all backstop any subprocess still in
-    flight past process exit.
+    Called by main()'s finally on normal exit, by the idle watchdog (which
+    os._exit()s afterward, bypassing the finally), and by the termination
+    signal handler -- so "safe to run more than once" is not enough: callers
+    that are about to KILL the process must be able to tell "someone else
+    started cleanup" apart from "cleanup is finished".
+
+    The earlier revision could not. It committed a _SHUTDOWN_DONE flag inside
+    the lock and then reaped OUTSIDE it, so a second caller was told "already
+    done" while the first was still mid-reap -- and the idle watchdog's
+    os._exit(0) directly follows its call, which would terminate the process
+    through a partial cleanup and orphan whatever had not been reaped yet
+    (Codex design review, High). It was also a deadlock: a signal delivered to
+    the main thread while that thread held the plain, non-reentrant
+    _SHUTDOWN_LOCK re-entered here and blocked forever. So:
+
+      * one OWNER performs cleanup and sets _SHUTDOWN_COMPLETE at the end;
+      * a different thread WAITS (bounded) for that event and reports whether
+        it actually arrived;
+      * the owner thread re-entering itself (nested signal) returns
+        immediately rather than deadlocking on its own lock.
+
+    Cancel + drain warm-start workers BEFORE reaping LSPs: otherwise the
+    per-worker progress poll could call snapshot_progress() on an
+    already-shut-down LspSubprocess. _shutdown_all_lsps sets
+    _BRIDGE_SHUTTING_DOWN so an LSP a wedged warm worker has not yet published
+    is reaped at the publish gate in _get_or_spawn instead of leaking, and the
+    closing lsp_client.reap_all_live() sweep catches the remaining window --
+    between Popen returning and publication -- which the published-registry
+    walk cannot see and which atexit does not cover on a signal/os._exit path.
     """
-    global _SHUTDOWN_DONE
+    global _SHUTDOWN_STARTED, _SHUTDOWN_OWNER, _SHUTDOWN_DEADLINE
+    me = threading.get_ident()
+    if _SHUTDOWN_OWNER == me:
+        # Re-entered on the owner's own thread. Checked BEFORE taking the
+        # lock: the owner may be holding it right now, and waiting for
+        # ourselves is the deadlock this guard exists to prevent.
+        return _SHUTDOWN_COMPLETE.is_set()
     with _SHUTDOWN_LOCK:
-        if _SHUTDOWN_DONE:
-            return
-        _SHUTDOWN_DONE = True
-    _WARM_CANCEL.set()
-    bg_thread = _WARM_THREAD
-    if bg_thread is not None and bg_thread.is_alive():
-        bg_thread.join(timeout=2.0)
-    _shutdown_all_lsps()
+        if not _SHUTDOWN_STARTED:
+            _SHUTDOWN_STARTED = True
+            _SHUTDOWN_OWNER = me
+            _SHUTDOWN_DEADLINE = _time.monotonic() + _SHUTDOWN_BUDGET_S
+            owner = True
+        else:
+            owner = False
+    if not owner:
+        # Wait against the OWNER's deadline, never an independent one, so a
+        # waiter cannot conclude "gave up" while the owner is still inside
+        # its own budget doing legitimate work.
+        deadline = _SHUTDOWN_DEADLINE
+        remaining = wait_timeout if deadline is None else (deadline - _time.monotonic())
+        return _SHUTDOWN_COMPLETE.wait(timeout=max(remaining, 0.0))
+    deadline = _SHUTDOWN_DEADLINE or (_time.monotonic() + _SHUTDOWN_BUDGET_S)
+    try:
+        _WARM_CANCEL.set()
+        bg_thread = _WARM_THREAD
+        if bg_thread is not None and bg_thread.is_alive():
+            bg_thread.join(timeout=min(2.0, max(0.1, deadline - _time.monotonic())))
+        _shutdown_all_lsps(deadline=deadline)
+        try:
+            reap_all_live(timeout=1.0, deadline=deadline)
+        except Exception:
+            pass
+    finally:
+        _SHUTDOWN_COMPLETE.set()
+    return True
+
+
+_DIAG_FD: Optional[int] = None
+_DIAG_TRIED = False
+
+
+def _diag(msg: str) -> None:
+    """Best-effort diagnostic that CANNOT block, on ANY thread.
+
+    Two wrong answers were tried first and both are instructive. Setting
+    fd 2 non-blocking mutates the SHARED open-file description and made
+    the launcher's own writes fail with EAGAIN. Polling for writability
+    and then writing is a snapshot: another process sharing the pipe can
+    take the room between the poll and the write, and the write then
+    blocks -- on the signal or watchdog thread, before the reap.
+
+    So: open our OWN description for the same target, once, with
+    O_NONBLOCK. Re-opening /proc/self/fd/2 yields a new open-file
+    description whose flags are ours alone, so nothing we do reaches the
+    launcher and nothing anyone else does can make our write block. When
+    the target cannot be re-opened that way (a socket, no procfs), there
+    is no safe channel and the diagnostic is DROPPED -- a log line is
+    worth strictly less than a completed reap."""
+    global _DIAG_FD, _DIAG_TRIED
+    if not _DIAG_TRIED:
+        _DIAG_TRIED = True
+        try:
+            _DIAG_FD = os.open("/proc/self/fd/2", os.O_WRONLY | os.O_NONBLOCK)
+        except Exception:
+            _DIAG_FD = None
+    if _DIAG_FD is None:
+        return
+    try:
+        os.write(_DIAG_FD, msg.encode("utf-8", "replace")[:2048])
+    except Exception:
+        pass
+
+
+def _shutdown_bounded(reason: str, deadline: Optional[float] = None) -> int:
+    """Run teardown on a worker thread, wait out the budget, then force.
+
+    Every caller that is about to END the process goes through here, not
+    through _graceful_shutdown directly. The graceful path can block
+    indefinitely and does not answer to its own deadline: shutdown()
+    acquires _init_lock untimed, and a wedged handshake or I/O lock stalls
+    it forever. Called inline -- as the idle watchdog used to -- that stall
+    means the caller never reaches its own os._exit either, so the bridge
+    neither serves nor dies (Codex adversarial review, High). On a worker
+    it is just a thread we stop waiting for.
+
+    Returns the number of children that had to be force-killed."""
+    # ONE deadline for the WHOLE teardown, graceful and forced. The
+    # graceful phase gets most of it and the force phase keeps a reserved
+    # slice: letting graceful spend the entire budget and only then
+    # starting to force means the force runs entirely past the bound --
+    # measured at 2s beyond it with several records, in exactly the wedged
+    # case where an external `timeout --kill-after` is counting (Codex
+    # adversarial review, High).
+    # A caller that already started the clock (the signal handler, which
+    # must count its own masking and marker writes) passes its deadline in;
+    # everyone else gets a fresh one.
+    if deadline is None:
+        deadline = _time.monotonic() + _SHUTDOWN_BUDGET_S
+    # The reserve is a FRACTION of what is left, never a floor that can
+    # exceed it. A 0.5s minimum grace looked harmless and silently ate the
+    # entire budget whenever the budget was smaller, handing the sweep an
+    # expired deadline -- so the child survived (Codex adversarial review,
+    # High, reproduced at a 0.1s budget). Nothing here may allocate more
+    # time than exists.
+    _remaining = max(0.0, deadline - _time.monotonic())
+    graceful_budget = max(0.0, _remaining - max(0.05, _remaining * 0.3))
+    killed = 0
+    # EVERYTHING that can raise goes inside the try whose finally holds the
+    # force sweep. Thread creation fails under the resource exhaustion this
+    # path exists to survive, and a stderr write fails once the launcher has
+    # closed the pipe -- either one, raised before the sweep, skipped the
+    # sweep entirely while the signal handler suppressed its own fallback
+    # because it had "entered" bounded teardown (Codex adversarial review,
+    # High).
+    try:
+        worker = threading.Thread(
+            target=_graceful_shutdown, name=f"shutdown-{reason}", daemon=True,
+        )
+        worker.start()
+        worker.join(timeout=graceful_budget)
+        if worker.is_alive():
+            _diag(f"[lsp-mcp] WARN: graceful reap ({reason}) exceeded "
+                  f"its budget; forcing\n")
+    except Exception:
+        pass
+    try:
+        # Whatever is left of the ONE budget is what the force sweep may
+        # spend waiting for an in-flight spawn to record itself. A fixed
+        # settle here is either too short to cover a real spawn (the sweep
+        # then exits over a child that was mid-Popen) or an unbounded
+        # addition to a bound the caller was promised.
+        # HALF the remaining budget for the settle wait, not all of it.
+        # Handing the settle everything left is self-defeating: it waits
+        # out an in-flight spawn that may never record itself, hits the
+        # deadline, and the sweep it was preparing for is then skipped
+        # entirely -- which the spawn-race case caught immediately.
+        killed = force_kill_spawned(
+            settle=max(0.0, (deadline - _time.monotonic()) * 0.5),
+            deadline=deadline)
+        if killed:
+            _diag(f"[lsp-mcp] WARN: force-killed {killed} language "
+                  f"server(s) that survived graceful shutdown ({reason})\n")
+    except Exception:
+        pass
+    # Tell the atexit hook a bounded teardown finished, so a normal return
+    # does not pay for a second, unbounded one on top of the budget.
+    try:
+        mark_teardown_complete()
+    except Exception:
+        pass
+    return killed
+
+
+def _terminating_signal(signum: int, _frame: Any) -> None:
+    """Reap the language servers, then die of the signal we were sent.
+
+    Without this, a SIGTERM (how every MCP launcher, `timeout`, and systemd
+    stops a stdio server) kills the interpreter without running main()'s
+    finally or atexit, and the only thing left reaping clangd is clangd
+    itself noticing stdin EOF -- best-effort by construction, and least
+    reliable exactly when clangd is busy background-indexing.
+
+    Three rules, each paid for by a way this went wrong:
+
+    COALESCE -- ignore further termination signals while cleaning up, so an
+    impatient sender (a launcher that sends SIGTERM twice, a `timeout
+    --kill-after` pair) cannot terminate us THROUGH a half-finished reap and
+    orphan exactly the children this handler exists to collect.
+
+    DO NOT CLEAN UP ON THIS THREAD -- hand off to a worker and wait. A Python
+    signal handler runs on the main thread, interrupting whatever it was
+    doing, and cleanup takes locks that same thread may already hold: an
+    interrupted initialize() owns LspSubprocess._init_lock, which shutdown()
+    then waits for, forever (Codex adversarial review, High). The worker
+    cannot deadlock against the interrupted thread's own re-entry, and if it
+    blocks on a lock the interrupted thread holds, the deadline below still
+    fires.
+
+    ALWAYS REACH THE FORCE KILL -- whatever happened above, finish with the
+    lock-free SIGKILL sweep before dying. It is the only reap whose success
+    does not depend on the state of the process it runs in.
+
+    Then restore the default disposition and re-raise, so the exit status
+    still reports death-by-signal rather than a synthesized code."""
+    entered_bounded = False
+    deadline = _time.monotonic() + _SHUTDOWN_BUDGET_S
+    try:
+        for sig in _TERM_SIGNALS:
+            try:
+                signal.signal(sig, signal.SIG_IGN)
+            except Exception:
+                pass
+        # Observable marker: the harness waits for this before sending a
+        # second signal, so its storm case tests a signal arriving DURING
+        # cleanup rather than one that merely coalesced while pending.
+        _diag(f"[lsp-mcp] terminating: signal {signum}, reaping\n")
+        _SIGNAL_CLEANUP_STARTED.set()
+        entered_bounded = True
+        _shutdown_bounded(f"signal-{signum}", deadline=deadline)
+    except Exception:
+        pass
+    finally:
+        try:
+            # Belt and braces ONLY: if the try block raised before the
+            # bounded teardown was entered, this is the last chance to
+            # collect. Running it unconditionally re-opened the very hole
+            # the deadline closed -- the bounded sweep deliberately LEAVES
+            # records behind when its budget runs out, and this call then
+            # processed them past the bound with nothing stopping it
+            # (Codex adversarial review, High). settle=0 does not bound a
+            # sweep; only the deadline does.
+            if not entered_bounded:
+                force_kill_spawned(settle=0.0, deadline=deadline)
+        except Exception:
+            pass
+        for sig in _TERM_SIGNALS:
+            try:
+                signal.signal(sig, signal.SIG_DFL)
+            except Exception:
+                pass
+        try:
+            os.kill(os.getpid(), signum)
+        except Exception:
+            pass
+        # Only reachable if the signal is blocked; do not linger.
+        os._exit(128 + signum)
+
+
+def _install_signal_handlers() -> None:
+    """Best effort, main thread only (signal.signal raises elsewhere), and
+    never fatal: a bridge that cannot install a handler must still serve.
+    Handlers are installed as late as possible so we do not fight an
+    already-installed one, and SIGHUP is included because a bridge launched
+    from a terminal session outlives it otherwise."""
+    for sig in _TERM_SIGNALS:
+        try:
+            signal.signal(sig, _terminating_signal)
+        except Exception as exc:
+            sys.stderr.write(
+                f"[lsp-mcp] WARN: no handler for {sig!r}: "
+                f"{type(exc).__name__}: {exc}\n"
+            )
 
 
 def _idle_watchdog() -> None:
@@ -4942,8 +5253,25 @@ def _idle_watchdog() -> None:
         orphaned = (os.getppid() == 1)
         if idle > _IDLE_TIMEOUT_S or orphaned:
             reason = "orphaned" if orphaned else f"idle {idle:.0f}s > {_IDLE_TIMEOUT_S:.0f}s"
-            sys.stderr.write(f"[lsp-mcp] idle-watchdog: self-exit ({reason})\n")
-            _graceful_shutdown()
+            # Through _diag, like every other teardown-path write: this one
+            # sits immediately before the bounded reap, so a launcher that
+            # stopped draining stderr wedged the watchdog here and it never
+            # reached either the reap or its own os._exit (Codex adversarial
+            # review, High -- the same defect as the signal marker, in the
+            # one place the first fix did not look).
+            _diag(f"[lsp-mcp] idle-watchdog: self-exit ({reason})\n")
+            # os._exit is the point of this thread (a wedged serve loop must
+            # not be able to keep us alive), which makes it the one caller
+            # that MUST NOT race ahead of an in-flight reap: exiting through
+            # someone else's half-finished cleanup orphans whatever they had
+            # not reached yet. _graceful_shutdown returns False only if that
+            # other owner never finished, and then a leak is possible either
+            # way -- say so on the way out instead of exiting silently.
+            # Bounded, off-thread, force-killing: os._exit answers to
+            # nothing, so nothing that can block may be the last word
+            # before it. Calling the graceful path inline here was how a
+            # wedged handshake could stop the watchdog from ever exiting.
+            _shutdown_bounded("idle-watchdog")
             os._exit(0)
 
 
@@ -5071,6 +5399,11 @@ def main(argv=None) -> int:
                 f"{type(exc).__name__}: {exc}\n"
             )
 
+    # Every entry point below can end up owning language-server children, and
+    # --self-test is the one the test harness runs under `timeout N`, i.e. the
+    # one most likely to be SIGTERMed mid-warm-start. Install before the first
+    # spawn can happen, not just on the serving path.
+    _install_signal_handlers()
     try:
         if args.self_test:
             if args.tools:
@@ -5097,6 +5430,10 @@ def main(argv=None) -> int:
             return 2
 
         srv = _build_mcp(FastMCP, workspace_root)
+        # Re-assert after _build_mcp: the MCP SDK installs its own handlers in
+        # some transports, and ours must be the outermost so the LSP children
+        # are reaped before the process goes away.
+        _install_signal_handlers()
         _maybe_warm_start()
         # Arm the idle self-reaper so an abandoned/orphaned bridge exits on its
         # own (reaping its clangd/pyright) instead of leaking forever.
@@ -5107,10 +5444,20 @@ def main(argv=None) -> int:
         srv.run()
         return 0
     finally:
-        # All teardown lives in _graceful_shutdown so the normal-exit path here
-        # and the mcp-janitor SIGTERM handler run the exact same cleanup. The
-        # full warm-start-drain / wedged-worker rationale is documented there.
-        _graceful_shutdown()
+        # All teardown lives in _graceful_shutdown so this normal-exit path,
+        # the idle watchdog, and _terminating_signal run the exact same
+        # cleanup. The full warm-start-drain / wedged-worker rationale is
+        # documented there. (Until 2026-08-03 this comment named an
+        # "mcp-janitor SIGTERM handler" that did not exist anywhere in the
+        # file: signal death bypassed this finally entirely and the reap fell
+        # back to clangd noticing stdin EOF. _install_signal_handlers is what
+        # makes the claim true.)
+        #
+        # Bounded, like the other two: calling the graceful path directly
+        # meant a normal return -- stdin EOF, FastMCP returning -- could hang
+        # forever behind a wedged request thread's lock, never reaching
+        # atexit and never force-killing anything.
+        _shutdown_bounded("main-finally")
 
 
 if __name__ == "__main__":

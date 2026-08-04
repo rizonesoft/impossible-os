@@ -63,7 +63,8 @@ title: "TODO-07 -- LSP to MCP Bridge (C, NASM, shell, Python, PowerShell)"
 | ⭐   |  17   | Background warm-start mode (MCP launcher compatibility)                    | §16                               |  [x]   |
 | 💎   |  18   | Type hierarchy tools (supertypes / subtypes, read-only)                    | §1, §7, §11                       |  [x]   |
 | 💎   |  19   | Scale Roadmap (DEFERRED -- trigger-gated, no code today)                   | --                                |  [/]   |
-| ⭐   |  20   | The bridge intermittently leaks the clangd it started                      | §1, §18                           |  [ ]   |
+| ⭐   |  20   | Reap determinism + leak attribution for spawned language servers           | §1, §18                           |  [x]   |
+| 💎   |  21   | Thread-group edge cases in the language-server reap                        | §20                               |  [ ]   |
 
 > 💎 = parity -- matches the existing LSP stacks Win11/Linux devs already use, wrapped in an MCP transport.
 > ⭐ = exclusive -- neither Win11 nor Linux ships a repo-tracked cross-language LSP-MCP bridge with read-only boundary compliance baked in.
@@ -658,23 +659,71 @@ Current repo is ~215k core LOC (~189k kernel + ~24k tooling per [COUNT.md](../..
 
 ---
 
-## 20. The Bridge Intermittently Leaks the clangd It Started
+## 20. Reap Determinism and Leak Attribution for the Bridge's Language Servers
 
-`test_bridge.sh` sub-test 9a asserts that no LSP process outlives the run, and it INTERMITTENTLY fails on its own clangd. Observed 2026-08-02 during unrelated work on TODO-04 section 53: two failures in fifteen consecutive `scripts/test-tooling.sh` runs, both reporting `leaked LSP PIDs`, both naming a `clangd-19 --compile-commands-dir=<repo> --background-index` whose start time fell INSIDE the failing run and whose parent had already exited. Killing the orphan by hand made the next run green with no other change, so the leak is the whole failure -- not a stale process from some earlier session.
+`test_bridge.sh` sub-test 9a asserts that no LSP process outlives the run, and it INTERMITTENTLY failed. Filed 2026-08-02 as "the bridge leaks the clangd it started", on two failures in fifteen `scripts/test-tooling.sh` runs that each named a real `clangd-19 --compile-commands-dir=<repo> --background-index` whose start time fell inside the failing run and whose parent had already exited. **That premise did not survive measurement: the bridge was reaping its own clangd every time, and 9a was blaming processes the harness never started.** Reproduced 2026-08-03 under a per-second process sampler recording pid, ppid and an ownership stamp -- 2 failures in 6 clean runs, and across every one of them ZERO harness-owned language servers outlived their run.
 
 > [!NOTE]
-> Filed from a section that touched none of this code. It is recorded here rather than fixed there because the owner is the bridge's shutdown path, and because an intermittent leak that the suite already detects is exactly the kind of finding that gets re-diagnosed from scratch every time it fires. The test is RIGHT and should stay; 9a is the only thing standing between a leaked language server per invocation and nobody noticing.
+> The filing was right that this deserved a section and wrong about which side was broken, which is why the section is renamed rather than closed: the reported symptom was real, the accused was not. Both halves shipped -- the detector now attributes by ownership, and the reap that was genuinely best-effort on the signal path is now deterministic and proven by a discriminating test rather than by a failure rate.
 
-- [ ] Find why shutdown races the reap, given the same run reaps it successfully most of the time
-      - The detector already prints the offending PID and its command line, so the next occurrence should capture the bridge-side state beside it: whether the subprocess was ever recorded, whether the terminate was sent, and whether the wait timed out.
-      - `--background-index` means clangd can be busy well after the last request, so a terminate that assumes idleness is a plausible shape.
-- [ ] Make the reap deterministic rather than best-effort, and prove it under load
-      - A leaked language server is not a test-only cost: every leak holds a background indexer against the repo, and the fleet dispatches these from short-lived agent sessions.
-- [ ] Re-run `bash scripts/lsp-mcp/tests/test_bridge.sh` enough times to bound the rate before and after
-      - Two in fifteen is the only measurement so far, and it is too coarse to call a fix verified.
-- [ ] Commit: `"scripts/lsp-mcp: reap the language server deterministically"`
+- [x] Find why shutdown races the reap -- it does not: the detector's `pgrep -f` rule answers a different question than 9a asks, and misfires three ways
+      - Command-line TEXT match: baseline run 2 accused pid 1373355, the `node codex-companion.mjs` review process, because the review prompt quoted the string `clangd-19`.
+      - Foreign servers owned by the same user: run 2 also accused pid 1374170, a clangd with no run-id stamp and parent 1374079, which the sampler shows alive across four consecutive runs -- another session's bridge, blamed on whichever run its start time landed in.
+      - Already-exiting processes: run 4 accused pid 1390938, which never appears in a single one-second sample and was gone before `ps` could print its command line.
+- [x] Make the reap deterministic rather than best-effort -- SIGTERM/SIGINT/SIGHUP handlers plus a two-state shutdown coordinator in `bridge.py`
+      - The signal path had no handler at all: the `finally` comment claimed an "mcp-janitor SIGTERM handler" that existed nowhere in the file, so signal death bypassed both the `finally` and `atexit` and the reap fell back on clangd noticing stdin EOF.
+      - `_graceful_shutdown` committed its done-flag inside the lock and reaped outside it, so the idle watchdog's `os._exit(0)` could terminate the process through another caller's half-finished cleanup; one owner now publishes COMPLETE only after the reap and other callers wait for that difference.
+      - The closing `reap_all_live()` sweep covers the Popen-to-publication window a `_LIVE_LSPS` walk cannot see, and repeat signals are coalesced during cleanup so an impatient sender cannot kill the bridge mid-reap.
+      - Cleanup runs on a worker thread, never in the handler's own frame: adversarial review found that a signal arriving during `initialize()` deadlocked the process against the `_init_lock` its own interrupted thread held. Reproduced with the pre-fix shape (alive and wedged 8s after SIGTERM, child leaked) and covered by 9b's `initializing` case.
+      - One monotonic deadline (`LSP_BRIDGE_SHUTDOWN_BUDGET`, default 10s) bounds the whole teardown instead of per-LSP timeouts that multiply, and a lock-free `force_kill_spawned()` sweep is the last act on every forced-exit path -- signal, idle watchdog and normal return alike -- so no reap depends on a lock the dying process may already hold.
+      - Identity is pinned by pidfd (or `/proc` start ticks where unavailable) rather than by a bare PID, since a PID kept for the process lifetime eventually names a stranger and signalling it would be far worse than the leak it prevented.
+      - Every signal in the file goes through a pinned identity and FAILS CLOSED without one: `_signal_recorded` resolves a pid to its record and uses the pidfd, or re-checks the recorded start time immediately before `os.kill`, and refuses when neither exists -- absent evidence is a reason not to signal, not permission.
+      - No path signals a process group by number any more: `_reap_group` enumerates members from procfs, requires each to carry this bridge's ownership stamp before signalling it, and repeats until the group is empty -- so a server that forked a helper is collected even after the leader has exited and the helper been reparented, while a foreign group that reused a stale numeric pgid is not touched. A final stamp-wide pass then catches what neither the group nor the child list can see: a spawn interrupted before it could record itself, and a helper that called `setsid` and so belongs to no group of ours.
+      - **Attribution and ownership are separate identities, and conflating them is dangerous.** `LSP_BRIDGE_RUN_ID` is inheritable and answers "which RUN started this server" -- the harness exports it so every bridge it launches shares it. `LSP_BRIDGE_OWNER` is minted per bridge PROCESS, never read from the environment, and is the only stamp the reap may act on. Sweeping on the run id instead made "ours" mean "anything in the harness tree", so a bridge exiting normally SIGKILLed its own siblings and the test driver; the suite caught it as seven simultaneous failures.
+- [x] Bound the rate before and after -- rate is now the residual check, not the proof
+      - A rate can only show that a flake stopped reproducing, so sub-test 9b proves the reap directly: a child that closes its own stdin and cannot self-exit, killed by each of TERM/INT/HUP at four barriers (published, unpublished, mid-`initialize`, and one that forks its own stubborn helper), plus a storm delivered only after the handler announces cleanup, and a main-thread `Popen`-to-record race. Every case asserts death by the original signal.
+      - Each barrier is mutation-checked against the code it guards: without the handler the child survives SIGTERM; with a leader-only pidfd signal the forked helper survives; with a fixed 1s settle the spawn-race child leaks; with pidfd support removed the unrecorded child leaks.
+      - 9c additionally asserts the ownership rule at the group layer -- an unstamped process in a matching group is neither reported nor signalled, and a record with no identity evidence at all is refused by both the single-process and sweep paths -- and fails the build if any `os.killpg` reappears in the tree.
+      - Strengthening that last assertion from `and` to `or` immediately earned its keep: it caught the sweep reporting a kill it had not made, because a zombie still has a `/proc` entry and still answers `pidfd_open`. Both scans now skip exited-but-unreaped processes.
+      - Sub-test 9c proves the detector was scoped rather than blinded: a text-match decoy and a foreign-run-id language server are both rejected, while a planted leak is still caught on each net.
+      - Arms measured on the same busy host: 2 failures in 6 pre-fix runs (both false positives), 0 in 12 post-fix runs -- and each of those 12 also ran 9b's nine signal cases and 9c's decoys, so the residual arm is not merely an absence of the flake.
+- [x] Commit: `"scripts/lsp-mcp: reap the language server deterministically"`
 
-**Test checkpoint:** `bash scripts/lsp-mcp/tests/test_bridge.sh` reports 99/99 with sub-test 9a passing across a repeated run count that would have caught a two-in-fifteen rate; no `clangd` remains after the suite exits. Test on: host tooling only (no QEMU dependency).
+**Test checkpoint:** `bash scripts/lsp-mcp/tests/test_bridge.sh` reports 101/101 with 9a, 9b and 9c passing, across a repeated run count that would have caught the measured pre-fix rate; no language server carrying this run's ownership stamp remains after the suite exits. Test on: host tooling only (no QEMU dependency).
+
+> **Test runner:** `bash scripts/lsp-mcp/tests/test_bridge.sh` (host tooling; also wrapped by `bash scripts/test-tooling.sh`) -- expect `101/101 sub-tests PASS`, including `9b deterministic signal reap` and `9c leak attribution scoped`.
+
+> **Notes:**
+> - Shipped: run-id + PID-ledger + lock-free spawned-PID ownership tracking in `lsp_client.py`, SIGTERM/SIGINT/SIGHUP handlers with off-thread cleanup, a single-owner deadline-bounded shutdown coordinator and a `force_kill_spawned()` floor in `bridge.py`, and a rewritten 9a with two new sub-tests (9b reap proof, 9c attribution control).
+> - Integrates by replacing 9a's `pgrep -f` snapshot diff with the spawner's own records; `LSP_BRIDGE_RUN_ID` and `LSP_BRIDGE_PID_LEDGER` are optional everywhere else, so a bridge run without them behaves exactly as before.
+> - Downstream: any caller can now attribute a language server to a bridge run, and the reap collects the whole process tree by proven identity -- pidfd where available, run-id stamp for group members -- including a spawn interrupted before it could record itself.
+> - Canonical doc: this section plus the preamble comment in `scripts/lsp-mcp/tests/test_bridge.sh` (which records the three measured false-positive channels).
+> - Scope boundary: the filed premise ("the bridge leaks its clangd") was disproven, not fixed; no change was made to the LSP handshake, warm-start, or the `_LIVE_LSPS` publish gate, and harness coverage for the thread-group-leader-exited shape is owned by §21 (verified by hand here, not by a regression). -> XREF: 00-infrastructure/TODO-07 §21 (item: "Wire the pthread_exit thread-group shape into 9b" at line 733)
+
+---
+
+## 21. Thread-Group Edge Cases in the Language-Server Reap
+
+Section 20 made the reap identity-anchored and proved it with sub-tests 9b and 9c. Three of its late review rounds converged on the same shape -- a process whose thread-group LEADER has exited while a worker thread runs -- and each was verified by hand rather than by the harness. `/proc/PID/stat` reports `Z` for such a process and `/proc/PID/environ` answers EACCES, so both the liveness check and the ownership check had to be taught to read `/proc/PID/task/<tid>/` instead of trusting the leader. Both fixes shipped in section 20; what did not ship is harness coverage for the shape.
+
+> [!NOTE]
+> Filed rather than folded into section 20 because that section is stamped, and an item appended to a stamped section is invisible to every later pass. This is coverage debt, not a known defect: the behavior was reproduced working (leader `Z` with a live worker is classified alive, resolves as ours, and is collected by the group sweep), but a manual reproduction is not a regression net. -> XREF: 00-infrastructure/TODO-07 §20 (item: "Make the reap deterministic rather than best-effort" at line 672)
+
+- [ ] Wire the pthread_exit thread-group shape into 9b as an end-to-end case, not just a manual reproduction
+      - The child spawns with the run-id stamp, starts a worker thread, then calls `pthread_exit` on its leader; the case must assert that `force_kill_spawned` collects it and that no task of it survives.
+      - Cover both nets: the leader is reachable through its `_SPAWNED` record, and an UNRECORDED such child must still be found by `_own_live_children` -- the second is the one that has no coverage at all today.
+- [ ] Assert the shutdown budget end-to-end through the SIGNAL path, not by calling `force_kill_spawned` directly
+      - 9c's timing regression calls the sweep directly, so it cannot see the handler's control flow -- the split between the graceful join, the settle wait and the sweep is exactly where a reserved slice gets spent by the wrong phase, which is how the spawn-race case broke when the settle was given the whole remainder.
+      - Shape: a driver holding several persistent stamped records, a small `LSP_BRIDGE_SHUTDOWN_BUDGET`, a TERM, and an assertion that the process is gone AND its children collected within the budget plus slack.
+      - Include the saturated-stderr variant: a launcher that stops draining the pipe used to wedge teardown before it began, since a blocking write is not something an exception guard can catch. Verified by hand at 2.1s to exit with the child collected; `_diag` is what keeps it non-blocking.
+- [ ] Cover the deadline-ALLOCATION family in the harness, not just the deadline itself
+      - The same bug appeared three times in different phases: the settle wait, then the graceful join in `_shutdown_bounded`, then the graceful join at `atexit`, each consuming the whole budget and handing an expired one to the force sweep, which then declines every record. Each was found by review or by one existing test, never by a test aimed at the shape.
+      - Shape: wedge the graceful phase (patch `reap_all_live` to sleep past the budget) on each of the three exit paths and assert the recorded child is still collected within the total bound. Verified by hand for `atexit` at 1.53s with the child collected.
+- [ ] Re-check `_is_zombie` against a process whose last thread exits between the stat read and the task scan
+      - The current order reads `/proc/PID/stat`, then enumerates `/proc/PID/task`; a task list that empties in between currently reads as ALIVE (fail-closed), which is the safe direction but is untested.
+- [ ] Commit: `"scripts/lsp-mcp: cover the thread-group reap shapes in 9b"`
+
+**Test checkpoint:** `bash scripts/lsp-mcp/tests/test_bridge.sh` passes with the new 9b cases, and each new case is mutation-checked -- reverting the thread-aware read in `_is_zombie` or `_carries_our_run_id` must make it fail. Test on: host tooling only (no QEMU dependency).
 
 ## Format Quick Reference
 
@@ -714,10 +763,13 @@ Current repo is ~215k core LOC (~189k kernel + ~24k tooling per [COUNT.md](../..
 | ⭐   | Workspace-bound path sandboxing                                 | ❌ editor trusts every path        | ❌ editor trusts every path          | ✅ §15 resolve_in_workspace         |
 | ⭐   | `--warm-start` eager LSP spawn + first-call latency budget      | ❌ editor lazy-initiates           | ❌ editor lazy-initiates             | ✅ §16 60s budget WARN              |
 | ⭐   | Background warm-start compatible with MCP launchers             | ❌ editor blocks on LSP cold start | ❌ editor blocks on LSP cold start   | ✅ §17 daemon thread + publish gate |
+| ⭐   | Language servers reaped on signal death (TERM / INT / HUP)      | ❌ orphans survive editor kill     | ❌ orphans survive editor kill       | ✅ §20 handlers + owner coordinator |
+| ⭐   | Spawned-server ownership stamp (run id + PID ledger)            | ❌ no ownership concept            | ❌ no ownership concept              | ✅ §20 leak claims are attributable |
 
 > **After §1-§6:** Impossible OS reaches parity with a well-configured Win11/Linux developer workstation for every language the repo uses. Every human-facing LSP-capable editor (VS Code, Emacs, Neovim) already speaks these same servers directly; this TODO duplicates none of that.
 > **After §7-§8:** Impossible OS pulls ahead with a cross-language unified MCP surface. 3rd-party bridges (isaacphi/mcp-language-server -- single LSP at a time; jonrad/lsp-mcp -- Node, no multi-LSP; mickeyinfoshan/lsp-mcp -- Go/TS/JS/Py only; Tritlo/lsp-mcp -- Zig, high-perf but no NASM support) cover a subset of this surface but none ship the 5-language mix (NASM + PowerShell are the two painful ones) and none are repo-tracked with boundary compliance.
 > **After §9-§10:** Impossible OS ships the first repo-tracked cross-language LSP-MCP bridge with boundary audit baked in, auto-registered with Claude Code out-of-the-box via `.claude/mcp.json`. No 3rd-party bridge today bakes in the read-only boundary the [TODO-02 §8](./TODO-02-ai-development-system.md#8-autonomous-agent-boundary-policy) autonomous-agent policy requires; every existing bridge exposes write-capable LSP methods by default.
+> **After §20:** the bridge's language servers are reaped on every exit path, not merely on the ones that reach `atexit`. Editors on both platforms leak an LSP when their client is killed rather than closed; the bridge now handles SIGTERM/SIGINT/SIGHUP through the same coordinator its normal exit uses, and stamps each spawned server with an ownership record so a future "the bridge leaked one" claim can be settled by evidence instead of by a process-name match -- which is what the original report of this section turned out to be.
 > **After §11-§18:** Impossible OS passes parity and moves into category-leading territory. §11 delivers the extended 14-tool surface that production 3rd-party bridges converged on. §12 closes the file-change-drift correctness gap every long-running bridge exhibits. §13 auto-restarts crashed LSPs -- no surveyed competitor ships this. §14 threads correlation IDs through every MCP->LSP->MCP round-trip (the 2026 observability baseline). §15 bounds path resolution to the workspace, closing a prompt-injection / supply-chain class every 3rd-party bridge leaves open. §16 bounds first-call latency with `--warm-start` (60s soft budget). §17 makes that bound MCP-launcher compatible by running warm-start on a daemon thread so `srv.run()` answers `initialize` immediately, with the `_SPAWN_EVENTS` gate ensuring concurrent tool calls attach to the in-flight warm spawn. §18 closes the call-hierarchy/type-hierarchy asymmetry with two read-only `typeHierarchy/*` tools, completing the navigation-primitive set no surveyed competitor pairs with a read-only boundary.
 
 ---
