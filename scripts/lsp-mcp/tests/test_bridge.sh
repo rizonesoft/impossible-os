@@ -9829,6 +9829,655 @@ PY
     return 0
 }
 
+# --- 9p: the restart publish is gated on a CONFIRMED-dead old server -----
+# The respawn path used to spawn the replacement, dispose the old
+# instance without looking at the result, and publish. Anything that made
+# disposal fail silently therefore left TWO language servers on one
+# workspace -- and the case that makes disposal fail is descriptor
+# exhaustion, which is exactly when a duplicated clangd is least
+# affordable (section 25).
+#
+# Simulated by failing os.pidfd_open and os.dup, which is what a full
+# descriptor table does: _signal_recorded then has no handle, refuses to
+# name the target by number (section 23), and the leader survives its own
+# shutdown. Everything here is deterministic -- no host may pass by
+# happening not to exhaust anything.
+t_confirmed_dead_restart_gate() {
+    local rc=0
+    python3 - <<'PY' || rc=$?
+import os, subprocess, sys, threading, time
+sys.path.insert(0, "scripts/lsp-mcp")
+import lsp_client, bridge
+
+fails = []
+
+
+def check(cond, msg):
+    if not cond:
+        fails.append(msg)
+
+
+# The health-event stream and the restart backoff belong to 13a-13h; this
+# sub-test asserts the GATE, so silence the one and zero the other rather
+# than printing a JSON log line per case and sleeping through a backoff
+# nothing here is measuring.
+bridge._lsplog.log = lambda *a, **kw: None
+bridge._backoff_delay_s = lambda n: 0.0
+
+
+# --- the helper's three answers --------------------------------------
+class FakeInst:
+    def __init__(self, verdict):
+        self._verdict = verdict
+        self.calls = 0
+
+    def shutdown(self, timeout=0.5):
+        self.calls += 1
+        if isinstance(self._verdict, Exception):
+            raise self._verdict
+        return self._verdict
+
+
+check(bridge._force_dispose_dead_inst(None) is True,
+      "a missing instance is not confirmed dead (nothing is running)")
+check(bridge._force_dispose_dead_inst(FakeInst(True)) is True,
+      "a confirmed-dead shutdown was not reported as confirmed")
+check(bridge._force_dispose_dead_inst(FakeInst(False)) is False,
+      "an UNCONFIRMED shutdown was reported as confirmed")
+check(bridge._force_dispose_dead_inst(FakeInst(RuntimeError("boom"))) is False,
+      "a shutdown that RAISED was reported as confirmed -- an exception is "
+      "'we do not know', which must never publish a replacement")
+
+# --- the gate itself, at _respawn_locked ------------------------------
+ws = os.getcwd()
+key = ("c", ws + "/9p-unconfirmed")
+spawns = []
+
+
+def spawner(root):
+    spawns.append(root)
+    return FakeInst(True)
+
+
+old = FakeInst(False)
+bridge._LIVE_LSPS[key] = old
+try:
+    bridge._respawn_locked("c", __import__("pathlib").Path(ws), spawner, key,
+                           old)
+    fails.append("the respawn published a replacement over an old instance "
+                 "that was never confirmed dead")
+except lsp_client.LspError as exc:
+    check(exc.kind == "lsp-dispose-unconfirmed",
+          f"refusal raised the wrong kind: {exc.kind!r}")
+except Exception as exc:
+    fails.append(f"refusal raised {type(exc).__name__}, not LspError: {exc}")
+
+check(not spawns,
+      "the spawner RAN before the old instance was confirmed dead -- the "
+      "replacement must not exist while a duplicate is possible")
+check(bridge._LIVE_LSPS.get(key) is old,
+      "the refusal replaced the published instance anyway")
+h = bridge._LSP_HEALTH.get(key) or {}
+check(len(h.get("recent_crash_times") or []) >= 1,
+      "the refusal recorded no crash, so the key can retry forever instead "
+      "of reaching FAILED state")
+
+# --- the converse: a confirmed death publishes normally ---------------
+key2 = ("c", ws + "/9p-confirmed")
+spawns.clear()
+fresh = FakeInst(True)
+bridge._LIVE_LSPS[key2] = fresh
+new = None
+try:
+    new = bridge._respawn_locked("c", __import__("pathlib").Path(ws),
+                                 spawner, key2, FakeInst(True))
+except Exception as exc:
+    fails.append(f"a confirmed-dead disposal still refused: {exc!r}")
+check(len(spawns) == 1, "the spawner did not run after a confirmed death")
+check(new is not None and bridge._LIVE_LSPS.get(key2) is new,
+      "the replacement was not published after a confirmed death")
+for k in (key, key2):
+    bridge._LIVE_LSPS.pop(k, None)
+    bridge._LSP_HEALTH.pop(k, None)
+
+# --- shutdown()'s verdict under simulated descriptor exhaustion -------
+STUBBORN = ("import signal,time\n"
+            "signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+            "time.sleep(300)\n")
+env = dict(os.environ)
+env["LSP_BRIDGE_OWNER"] = lsp_client._OWNER_ID
+proc = subprocess.Popen([sys.executable, "-c", STUBBORN], env=env,
+                        start_new_session=True)
+inst = object.__new__(lsp_client.LspSubprocess)
+inst.lang = "c"
+inst._proc = proc
+inst._initialized = False          # skip the polite RPC exchange
+inst._shutdown_called = False
+inst._confirmed_dead = False
+inst._post_death_done = False
+inst._post_death_running = None
+inst._post_death_lock = threading.Lock()
+inst._init_lock = threading.Lock()
+inst._open_uris_lock = threading.Lock()
+inst._pending_lock = threading.Lock()
+inst._pending = {}
+inst._teardown_thread_id = None
+inst._reader_thread = None
+inst._stderr_thread = None
+inst.open_uris = set()
+inst.cleanup_paths = []
+inst._gen_id = "9p-gen"
+
+# Recorded the way an exhausted host records: _record_spawn's pidfd_open
+# fails, so the record carries a start time but NO descriptor. Every
+# later signal then has to open one -- which is what the exhaustion
+# denies, so the leader is never asked to die at all and the record stays
+# intact for a retry.
+real_pidfd_open, real_dup = os.pidfd_open, os.dup
+EMFILE = lambda *a, **kw: (_ for _ in ()).throw(
+    OSError(24, "Too many open files"))
+os.pidfd_open, os.dup = EMFILE, EMFILE
+try:
+    inst._spawn_record = lsp_client._record_spawn(proc.pid)
+    check(inst._spawn_record.fd is None,
+          "the fixture recorded a descriptor despite simulated exhaustion; "
+          "the shape under test was not built")
+    check(inst._spawn_record.ticks is not None,
+          "the fixture record has no start time, so _signal_recorded would "
+          "refuse for that reason instead of the descriptor one")
+    verdict = inst.shutdown(timeout=0.4)
+    check(verdict is False,
+          "shutdown() claimed a CONFIRMED death for a leader it could not "
+          "signal at all -- the descriptor-exhaustion shape this gate "
+          "exists for")
+    check(proc.poll() is None,
+          "the fixture died on its own; the unconfirmed shape was not "
+          "exercised")
+    # Asserted INSIDE the exhaustion window: outside it the idempotent
+    # retry succeeds, and the helper would then honestly answer True.
+    check(bridge._force_dispose_dead_inst(inst) is False,
+          "the caller-level helper still reported the unconfirmed leader "
+          "dead")
+finally:
+    os.pidfd_open, os.dup = real_pidfd_open, real_dup
+
+# --- and the verdict must stay RETRYABLE, signals included ------------
+# A False answer is 'not proven yet', not 'immortal'. Two ways to get it
+# wrong: replay the stale verdict from the idempotent early return, or
+# re-poll without ever re-sending the signal the exhausted descriptor
+# table swallowed -- the second polls a process nobody asked to die, so
+# the key walks into FAILED state over a server the retry could have
+# collected (Codex adversarial review, High).
+check(inst.shutdown(timeout=2.0) is True,
+      "a repeat shutdown() did not confirm the death: it either replayed "
+      "the stale UNCONFIRMED verdict or re-polled without retrying the "
+      "pinned signal the descriptor exhaustion swallowed")
+check(proc.poll() is not None,
+      "the repeat shutdown() reported a confirmed death for a process that "
+      "is still running")
+check(not any(e.pid == proc.pid for e in list(lsp_client._SPAWNED)),
+      "the late-confirmed death never ran the post-death retirement, so the "
+      "record outlives the process it names")
+lsp_client._retire_spawn(proc.pid)
+
+# --- the post-death collection is not 'done' until it IS --------------
+# The flag used to be set at CLAIM time, so a concurrent late confirmer
+# skipped the collection and reported a confirmed death while the first
+# thread was still sweeping descendants -- the respawn gate could then
+# publish over a live old-generation worker.
+inst2 = object.__new__(lsp_client.LspSubprocess)
+inst2.lang = "c"
+inst2._proc = type("P", (), {"pid": 4243, "poll": staticmethod(lambda: 0)})()
+inst2._confirmed_dead = False
+inst2._post_death_done = False
+inst2._post_death_running = None
+inst2._post_death_lock = threading.Lock()
+inst2._gen_id = "9p-gen2"
+inst2._spawn_record = None
+inst2._shutdown_called = True
+
+in_reap = threading.Event()
+let_reap = threading.Event()
+real_reap, real_retire = lsp_client._reap_group, lsp_client._retire_spawn
+
+
+def slow_reap(pgid, gen=None, deadline=None, **kw):
+    in_reap.set()
+    let_reap.wait(timeout=5.0)
+    return (0, True)            # (killed, emptied) -- the real contract
+
+
+lsp_client._reap_group = slow_reap
+lsp_client._retire_spawn = lambda target: None
+concurrent = {}
+try:
+    t = threading.Thread(
+        target=lambda: concurrent.setdefault(
+            "verdict", inst2._collect_after_death(inst2._proc,
+                                                  time.monotonic() + 5.0)))
+    t.start()
+    in_reap.wait(timeout=5.0)
+    early = inst2._collect_after_death(inst2._proc, time.monotonic() + 0.2)
+    check(early is False,
+          "a concurrent caller reported the post-death collection COMPLETE "
+          "while the first thread was still inside _reap_group")
+    let_reap.set()
+    t.join(timeout=5.0)
+    check(concurrent.get("verdict") is True,
+          "the collecting thread did not report completion")
+    check(inst2._collect_after_death(inst2._proc, time.monotonic() + 0.2)
+          is True,
+          "a finished collection was not memoised")
+finally:
+    lsp_client._reap_group, lsp_client._retire_spawn = real_reap, real_retire
+    let_reap.set()
+
+# A collection that RAISES must stay retryable, not poison the flag.
+inst3 = object.__new__(lsp_client.LspSubprocess)
+inst3._proc = inst2._proc
+inst3._post_death_done = False
+inst3._post_death_running = None
+inst3._post_death_lock = threading.Lock()
+inst3._gen_id = "9p-gen3"
+inst3._spawn_record = None
+lsp_client._reap_group = lambda *a, **kw: (_ for _ in ()).throw(
+    RuntimeError("procfs vanished"))
+try:
+    check(inst3._collect_after_death(inst3._proc, time.monotonic() + 0.2)
+          is False,
+          "a collection that RAISED was reported as complete")
+    check(inst3._post_death_done is False,
+          "a raised collection poisoned the flag, permanently suppressing "
+          "the retry and the retirement")
+    lsp_client._reap_group = lambda *a, **kw: (0, True)
+    lsp_client._retire_spawn = lambda target: None
+    check(inst3._collect_after_death(inst3._proc, time.monotonic() + 0.2)
+          is True,
+          "the collection did not retry after an earlier failure")
+finally:
+    lsp_client._reap_group, lsp_client._retire_spawn = real_reap, real_retire
+
+# --- an INCOMPLETE group reap is not a confirmed death ----------------
+# _reap_group answers (killed, emptied), and emptied is False whenever
+# its deadline or round cap stopped it short of the two-empty-scans
+# fixpoint. Discarding that verdict let the respawn gate publish a
+# replacement beside a surviving old-generation worker -- through the
+# gate built to prevent exactly that (Codex adversarial + consistency +
+# perf review, High).
+inst4 = object.__new__(lsp_client.LspSubprocess)
+inst4.lang = "c"
+inst4._proc = type("P", (), {"pid": 4244, "poll": staticmethod(lambda: 0)})()
+inst4._confirmed_dead = False
+inst4._shutdown_called = True
+inst4._post_death_done = False
+inst4._post_death_running = None
+inst4._post_death_lock = threading.Lock()
+inst4._gen_id = "9p-gen4"
+inst4._spawn_record = None
+retired = []
+lsp_client._retire_spawn = lambda target: retired.append(target)
+lsp_client._reap_group = lambda *a, **kw: (1, False)
+try:
+    check(inst4._collect_after_death(inst4._proc, time.monotonic() + 0.2)
+          is False,
+          "an INCOMPLETE group reap (emptied=False) was reported as a "
+          "completed collection")
+    check(inst4._post_death_done is False,
+          "an incomplete collection memoised itself as done, so it can "
+          "never be retried")
+    check(retired == [4244],
+          f"the leader record was not retired on the incomplete sweep: "
+          f"{retired!r} -- it pins a descriptor for a process already "
+          f"known dead, and the retry addresses the group by pgid and "
+          f"stamps, not by this record")
+    check(inst4.shutdown(timeout=0.2) is False,
+          "shutdown() confirmed the death while descendants of the old "
+          "generation are still unaccounted for")
+    # ... and the retry, once the group really is empty, confirms.
+    lsp_client._reap_group = lambda *a, **kw: (0, True)
+    check(inst4.shutdown(timeout=0.2) is True,
+          "the collection never recovered after an incomplete sweep")
+finally:
+    lsp_client._reap_group, lsp_client._retire_spawn = real_reap, real_retire
+
+# --- the refusal, driven through the CALLER path ----------------------
+# _respawn_locked is reached via _get_or_spawn, which owns the
+# _SPAWN_EVENTS gate. A refusal that failed to retire that gate would
+# block every later caller for the key -- invisible to a test that calls
+# the respawn helper directly (Codex test-coverage review, Medium).
+key3 = ("c", os.getcwd())
+bridge._LIVE_LSPS.pop(key3, None)
+bridge._LSP_HEALTH.pop(key3, None)
+bridge._SPAWN_EVENTS.pop(key3, None)
+
+
+class DeadCached:
+    """A published instance the bridge sees as crashed."""
+
+    def __init__(self, verdict):
+        self.alive = False
+        self.crashed = True
+        self._crashed = True
+        self._crash_reason = "9p-fixture"
+        self._reader_dead = True
+        self.open_uri_meta = {}
+        self._verdict = verdict
+
+    def shutdown(self, timeout=0.5):
+        return self._verdict
+
+
+built = []
+real_spawners = bridge._LSP_SPAWNERS.get("c")
+bridge._LSP_SPAWNERS["c"] = lambda root: built.append(root) or DeadCached(True)
+bridge._LIVE_LSPS[key3] = DeadCached(False)
+try:
+    bridge._get_or_spawn("c", __import__("pathlib").Path(os.getcwd()))
+    fails.append("_get_or_spawn published a replacement over an unconfirmed "
+                 "old instance")
+except lsp_client.LspError as exc:
+    check(exc.kind == "lsp-dispose-unconfirmed",
+          f"_get_or_spawn surfaced {exc.kind!r}, not the refusal")
+check(not built, "the spawner ran through the caller path despite the refusal")
+check(key3 not in bridge._SPAWN_EVENTS,
+      "the refusal left the _SPAWN_EVENTS gate armed; every later caller for "
+      "this key would block forever")
+
+# ... and a later call, once the old instance CAN be confirmed dead,
+# publishes exactly one replacement.
+bridge._LIVE_LSPS[key3] = DeadCached(True)
+recovered = None
+try:
+    recovered = bridge._get_or_spawn("c",
+                                     __import__("pathlib").Path(os.getcwd()))
+except Exception as exc:
+    fails.append(f"the key never recovered after the refusal: {exc!r}")
+check(len(built) == 1,
+      f"recovery spawned {len(built)} replacement(s), not exactly one")
+check(recovered is not None and bridge._LIVE_LSPS.get(key3) is recovered,
+      "the recovered replacement was not published")
+if real_spawners is not None:
+    bridge._LSP_SPAWNERS["c"] = real_spawners
+else:
+    bridge._LSP_SPAWNERS.pop("c", None)
+bridge._LIVE_LSPS.pop(key3, None)
+bridge._LSP_HEALTH.pop(key3, None)
+
+if fails:
+    for f in fails:
+        sys.stdout.write("[9p] FAIL: %s\n" % f)
+    sys.exit(1)
+sys.stdout.write("[9p] restart gate OK: an unconfirmed disposal refuses to "
+                 "spawn or publish a replacement, records a crash, and stays "
+                 "retryable once the leader really exits\n")
+PY
+    [ "$rc" = "0" ] || return 1
+    return 0
+}
+
+# --- 9q: the four teardown entry points run ONE sweep, not four ----------
+# The signal handler, the idle watchdog, main()'s finally and the atexit
+# hook can each reach force_kill_spawned concurrently. _FD_RESERVE_SIZE is
+# 2 because ONE scan holds exactly two handles at a time -- the session
+# proof and the target -- so two concurrent sweeps take one slot each and
+# neither can complete a pair; both then skip every opaque session
+# descendant until their deadlines expire (section 25).
+#
+# Asserted on the WRAPPER, with the sweep body stubbed: the contract under
+# test is who runs and who waits, and a real sweep would make the timing
+# assertions depend on the host's process table.
+t_teardown_single_flight() {
+    local rc=0
+    python3 - <<'PY' || rc=$?
+import sys, threading, time
+sys.path.insert(0, "scripts/lsp-mcp")
+import lsp_client
+
+fails = []
+
+
+def check(cond, msg):
+    if not cond:
+        fails.append(msg)
+
+
+real_sweep = lsp_client._force_kill_spawned_sweep
+entries = []
+release = threading.Event()
+entered = threading.Event()
+
+
+def slow_sweep(settle=1.0, deadline=None, clock=lsp_client._REAL_CLOCK):
+    entries.append(threading.get_ident())
+    entered.set()
+    release.wait(timeout=5.0)
+    return 3
+
+
+lsp_client._force_kill_spawned_sweep = slow_sweep
+results = {}
+try:
+    def owner():
+        results["owner"] = lsp_client.force_kill_spawned(
+            settle=0.0, deadline=time.monotonic() + 5.0)
+
+    def loser():
+        entered.wait(timeout=5.0)
+        # A DELIBERATELY shorter deadline than the owner's. A waiter that
+        # honoured its own would give up here and -- since every caller of
+        # this is about to end the process -- exit through the owner's
+        # half-finished sweep.
+        t0 = time.monotonic()
+        results["loser"] = lsp_client.force_kill_spawned(
+            settle=0.0, deadline=time.monotonic() + 0.05)
+        results["loser_waited"] = time.monotonic() - t0
+
+    to = threading.Thread(target=owner)
+    tl = threading.Thread(target=loser)
+    to.start()
+    tl.start()
+    entered.wait(timeout=5.0)
+    time.sleep(0.35)
+    check(tl.is_alive(),
+          "the losing caller returned while the owner's sweep was still "
+          "running -- it may now terminate the process through a partial "
+          "reap")
+    release.set()
+    to.join(timeout=5.0)
+    tl.join(timeout=5.0)
+finally:
+    lsp_client._force_kill_spawned_sweep = real_sweep
+    release.set()
+
+check(len(entries) == 1,
+      f"{len(entries)} concurrent sweeps ran, not 1 -- two of them split the "
+      f"{lsp_client._FD_RESERVE_SIZE}-slot descriptor reserve and neither "
+      f"completes a proof-plus-target pair")
+check(results.get("owner") == 3,
+      f"the owner did not report its own kill count: {results.get('owner')!r}")
+check(getattr(results.get("owner"), "completed", None) is True,
+      "the owner did not report a COMPLETED sweep")
+check(results.get("loser") == 0,
+      "the waiter reported kills it never made; the owner's count is the "
+      "owner's to report")
+check(getattr(results.get("loser"), "completed", None) is True,
+      "the waiter did not observe the owner's completion")
+check(results.get("loser_waited", 0.0) >= 0.25,
+      f"the waiter returned after {results.get('loser_waited', 0.0):.3f}s -- "
+      f"it honoured its OWN 0.05s deadline instead of the owner's")
+
+# --- a waiter whose owner blows the shared budget reports NOT complete -
+entries.clear()
+release.clear()
+entered.clear()
+lsp_client._force_kill_spawned_sweep = slow_sweep
+try:
+    def owner2():
+        lsp_client.force_kill_spawned(settle=0.0,
+                                      deadline=time.monotonic() + 0.2)
+
+    t2 = threading.Thread(target=owner2)
+    t2.start()
+    entered.wait(timeout=5.0)
+    late = lsp_client.force_kill_spawned(settle=0.0,
+                                         deadline=time.monotonic() + 5.0)
+    check(late.completed is False,
+          "a waiter that gave up on the owner's expired deadline still "
+          "reported the teardown COMPLETE -- which disarms the atexit "
+          "fallback on the strength of a sweep nobody finished")
+    release.set()
+    t2.join(timeout=5.0)
+finally:
+    lsp_client._force_kill_spawned_sweep = real_sweep
+    release.set()
+
+# --- an owner that RAISES must not look like a completed sweep --------
+# The owner wakes its waiters from a finally, so the event fires just as
+# surely when the sweep threw. A waiter reading the event as proof would
+# call mark_teardown_complete() and disarm the atexit fallback on the
+# strength of a sweep that failed (Codex adversarial + test-coverage
+# review, High).
+entries.clear()
+release.clear()
+entered.clear()
+
+
+def raising_sweep(settle=1.0, deadline=None, clock=lsp_client._REAL_CLOCK):
+    entries.append(threading.get_ident())
+    entered.set()
+    release.wait(timeout=5.0)
+    raise RuntimeError("procfs vanished mid-sweep")
+
+
+lsp_client._force_kill_spawned_sweep = raising_sweep
+owner_exc = {}
+try:
+    def owner3():
+        try:
+            lsp_client.force_kill_spawned(settle=0.0,
+                                          deadline=time.monotonic() + 5.0)
+        except Exception as exc:
+            owner_exc["exc"] = exc
+
+    t3 = threading.Thread(target=owner3)
+    t3.start()
+    entered.wait(timeout=5.0)
+    waiter_result = {}
+    t4 = threading.Thread(
+        target=lambda: waiter_result.setdefault(
+            "r", lsp_client.force_kill_spawned(
+                settle=0.0, deadline=time.monotonic() + 5.0)))
+    t4.start()
+    time.sleep(0.1)
+    release.set()
+    t3.join(timeout=5.0)
+    t4.join(timeout=5.0)
+    check(isinstance(owner_exc.get("exc"), RuntimeError),
+          "the owner swallowed the sweep exception instead of propagating it")
+    check(waiter_result.get("r") is not None
+          and waiter_result["r"].completed is False,
+          "a waiter reported a FAILED sweep as completed; mark_teardown_"
+          "complete would then disarm the atexit fallback")
+finally:
+    lsp_client._force_kill_spawned_sweep = real_sweep
+    release.set()
+
+# --- the state is released, so the next caller can own --------------
+check(lsp_client._SWEEP_OWNER is None,
+      "the sweep slot was still held after the owner returned")
+check(lsp_client._SWEEP_FLIGHT is None,
+      "a finished flight was left published, so the next waiter would read "
+      "its stale outcome")
+
+# --- ONE budget for the whole teardown, whoever arrives first ---------
+# Each of the four entry points used to mint `now + budget`, so an entry
+# arriving late in a teardown published a deadline that far in the
+# future -- and since waiters wait on the OWNER's, the first caller could
+# be held most of a second budget past its own, with the external
+# `timeout --kill-after` counting all along.
+import importlib
+bridge_mod = importlib.import_module("bridge")
+bridge_mod._TEARDOWN_DEADLINE = None
+first = bridge_mod._teardown_deadline(time.monotonic() + 1.0)
+later = bridge_mod._teardown_deadline(time.monotonic() + 30.0)
+check(later == first,
+      f"a later teardown entry point minted its own deadline ({later - first:+.1f}s "
+      f"from the first), extending every earlier caller past its budget")
+check(bridge_mod._teardown_deadline() == first,
+      "a caller with no proposal of its own did not inherit the shared "
+      "teardown deadline")
+bridge_mod._TEARDOWN_DEADLINE = None
+
+# --- a waiter on a DIFFERENT clock domain cannot read the owner's -----
+# The flight's deadline is a number in the owner's time domain. Compared
+# against an injected clock it either expires instantly or spins for a
+# fake eternity, so a waiter on another clock falls back to its own.
+class FakeClock:
+    """Fake time starting at 0.0 -- BELOW any real monotonic value on a
+    booted host, so an implementation that compares this clock against
+    the owner's real deadline visibly runs away instead of coinciding
+    with it."""
+
+    def __init__(self):
+        self.t = 0.0
+        self.sleeps = 0
+
+    def now(self):
+        return self.t
+
+    def sleep(self, s):
+        self.t += s
+        self.sleeps += 1
+
+
+entries.clear()
+release.clear()
+entered.clear()
+lsp_client._force_kill_spawned_sweep = slow_sweep
+try:
+    t5 = threading.Thread(
+        target=lambda: lsp_client.force_kill_spawned(
+            settle=0.0, deadline=time.monotonic() + 5.0))
+    t5.start()
+    entered.wait(timeout=5.0)
+    # Release the owner on a timer so nothing here can hang, whatever the
+    # waiter decides to do.
+    threading.Timer(1.0, release.set).start()
+    fake = FakeClock()
+    odd = lsp_client.force_kill_spawned(settle=0.0, deadline=fake.now() + 0.2,
+                                        clock=fake)
+    # Counted in the waiter's OWN units, not wall-clock: its bound is
+    # 0.2s plus the overrun grace, at 20ms a step. A waiter comparing
+    # fake time against a real monotonic deadline runs orders of
+    # magnitude more steps before it notices.
+    budget_steps = (0.2 + lsp_client._SWEEP_OVERRUN_GRACE_S) / 0.02
+    check(fake.sleeps <= budget_steps + 2,
+          f"a waiter on a foreign clock took {fake.sleeps} steps against a "
+          f"{budget_steps:.0f}-step bound -- it compared its own clock with "
+          f"the owner's real-monotonic deadline")
+    check(odd.completed is False,
+          "a waiter that gave up on its own bound reported completion")
+    release.set()
+    t5.join(timeout=5.0)
+finally:
+    lsp_client._force_kill_spawned_sweep = real_sweep
+    release.set()
+after = lsp_client.force_kill_spawned(settle=0.0,
+                                      deadline=time.monotonic() + 2.0)
+check(after.completed is True,
+      "a fresh caller after a finished sweep could not become the owner")
+
+if fails:
+    for f in fails:
+        sys.stdout.write("[9q] FAIL: %s\n" % f)
+    sys.exit(1)
+sys.stdout.write("[9q] single-flight OK: one owner sweeps, later callers wait "
+                 "on the OWNER's deadline and report completion honestly\n")
+PY
+    [ "$rc" = "0" ] || return 1
+    return 0
+}
+
 # --- 9h: the 9a ledger reader on rows the writer can really produce -------
 # Every shape here is producible by the bridge itself: os.write() can
 # return short on a full disk, and a bridge killed mid-append leaves a
@@ -10164,6 +10813,8 @@ run "9l deadline break points"           t_reap_deadline_break_points
 run "9m non-dumpable session ownership"  t_nondumpable_session_ownership
 run "9o late session descendant"         t_late_session_descendant
 run "9n no bare-PID destructive signal"  t_no_bare_pid_signal
+run "9p confirmed-dead restart gate"    t_confirmed_dead_restart_gate
+run "9q teardown single-flight"         t_teardown_single_flight
 # 9a runs LAST so every prior sub-test has had a chance to clean up.
 run "9a no leaked LSP processes"         t_no_leaked_lsp_processes
 
@@ -10181,7 +10832,7 @@ else
 fi
 if [ -n "$LSP_SKIPPED_SHAPES" ]; then
     # Printed unconditionally, including on a green run: the whole point
-    # is that "112/112 PASS" must never be read as "every shape ran".
+    # is that an "N/N PASS" line must never be read as "every shape ran".
     # Shapes and whole sub-tests are counted separately -- a partial skip
     # leaves its sub-test passing, so reporting only `skipped` here would
     # print a zero above a non-empty list.

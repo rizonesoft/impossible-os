@@ -710,10 +710,14 @@ def _record_spawn(pid: int) -> "_SpawnRecord":
         pass
 
     # Handed back so the owner can retire THIS generation later. Retiring
-    # by number instead conflates generations: the respawn path creates
-    # the replacement before disposing the dead instance, so if the PID
-    # was reused, a by-number retirement removes and closes the LIVE
-    # replacement's record too (Codex adversarial review, High).
+    # by number instead conflates generations: two of them can answer to
+    # one PID, and a by-number retirement then removes and closes the
+    # LIVE one's record (Codex adversarial review, High). The respawn
+    # path used to make that routine by creating the replacement before
+    # disposing the dead instance; since section 25 it disposes and
+    # confirms first, which narrows the overlap without removing it --
+    # the force sweep and the atexit hook still walk records for
+    # generations nobody is holding.
     return record
 
 
@@ -1766,14 +1770,20 @@ def _reap_group(pgid: int, deadline: Optional[float] = None,
     return killed, emptied
 
 
-def force_kill_spawned(settle: float = 1.0,
-                       deadline: Optional[float] = None,
-                       clock: _Clock = _REAL_CLOCK) -> int:
+def _force_kill_spawned_sweep(settle: float = 1.0,
+                              deadline: Optional[float] = None,
+                              clock: _Clock = _REAL_CLOCK) -> int:
     """SIGKILL every recorded language server still alive, taking no lock
     that a wedged thread could be holding. Returns how many DISTINCT
     processes were signalled -- a leader reached by both the recorded
     pass and the stamp-wide sweep counts once, where the older two-pass
     shape counted it twice and made the number unusable as a leak count.
+
+    THE SWEEP BODY, and never the entry point: every caller imports the
+    single-flight wrapper `force_kill_spawned` below. Two of these
+    running at once each take one slot of the two-descriptor reserve and
+    neither can complete the proof-plus-target pair one scan holds at
+    once (section 25).
 
     This is the last thing a dying bridge does, and the only reap whose
     success does not depend on the state of the process running it.
@@ -2200,6 +2210,192 @@ def force_kill_spawned(settle: float = 1.0,
     return len(signalled)
 
 
+class SweepCount(int):
+    """The sweep's kill count, carrying whether a sweep actually FINISHED.
+
+    An int subclass rather than a tuple because every existing caller and
+    sub-test treats the return value as a number (`if killed:`, `killed
+    == 1`, arithmetic) -- and because the completion verdict must travel
+    WITH the count instead of being read from module state afterwards. A
+    caller that is about to end the process needs its own answer, not the
+    last answer anybody got: `completed` is False only for a caller that
+    gave up waiting on another thread's in-flight sweep, which is exactly
+    the case where killing the process now would orphan whatever that
+    sweep had not yet reached (Codex design review, High)."""
+
+    completed: bool
+
+    def __new__(cls, killed: int, completed: bool) -> "SweepCount":
+        obj = super().__new__(cls, killed)
+        obj.completed = bool(completed)
+        return obj
+
+
+# Single-flight state for the sweep. Four independent entry points can
+# reach it -- the termination signal handler, the idle watchdog, main()'s
+# finally (all three through the bridge's bounded coordinator) and this
+# module's atexit hook -- and before section 25 nothing stopped two of
+# them running at once.
+_SWEEP_LOCK = threading.Lock()
+_SWEEP_OWNER: Optional[int] = None
+# The in-flight sweep, or None. A record rather than a bare Event because
+# the Event alone cannot tell "the sweep finished" apart from "the sweep
+# RAISED and the owner's finally woke you anyway" -- and a waiter that
+# reads the second as the first goes on to call mark_teardown_complete(),
+# disarming the atexit fallback on the strength of a sweep that failed
+# (Codex adversarial + test-coverage review, High). `ok` is published
+# under _SWEEP_LOCK before the event fires; the event only WAKES waiters.
+#
+# `deadline` is the OWNER's, which is what a waiter waits against.
+# Waiting on its own shorter one would let a loser conclude "gave up" --
+# and then terminate the process -- while the owner was still inside its
+# budget doing legitimate work (Codex design review, High). Same rule the
+# bridge's _graceful_shutdown already applies to its own coordinator.
+_SWEEP_FLIGHT: Optional[dict] = None
+# How long past the owner's deadline a waiter keeps waiting. Sized for
+# the sweep's ONE deliberately ungated step (the recorded-leader pass:
+# a couple of syscalls per record), not for a wedged owner.
+_SWEEP_OVERRUN_GRACE_S = 0.5
+
+
+def _mask_term_signals():
+    """Block SIGTERM/SIGINT/SIGHUP on THIS thread; return the old mask.
+
+    None when the platform has no pthread_sigmask (the call is then a
+    no-op and the owner-reentry guard below is the remaining net).
+
+    Why the owner masks at all: a Python signal handler runs on the main
+    thread, so a termination arriving while the main thread is sweeping
+    re-enters this sweep on the sweeping thread. Running it nested is not
+    an option -- the interrupted frame still holds its proof descriptor,
+    so the nested sweep competes for the remaining reserve slot and
+    reproduces the very split this single-flight exists to remove (Codex
+    design review, High). Masking makes that re-entry unreachable: the
+    signal stays pending and is delivered the moment the sweep finishes,
+    where it starts a fresh, uncontended sweep of its own."""
+    try:
+        blocked = [s for s in (getattr(signal, n, None)
+                               for n in ("SIGTERM", "SIGINT", "SIGHUP"))
+                   if s is not None]
+        return signal.pthread_sigmask(signal.SIG_BLOCK, blocked)
+    except Exception:
+        return None
+
+
+def force_kill_spawned(settle: float = 1.0,
+                       deadline: Optional[float] = None,
+                       clock: _Clock = _REAL_CLOCK) -> SweepCount:
+    """SINGLE-FLIGHT force sweep: one owner runs it, everybody else waits.
+
+    Returns a SweepCount -- the number of processes THIS call signalled,
+    plus `completed`, which says whether a sweep ran to its conclusion
+    from this caller's point of view. A waiter reports `completed` True
+    with a count of 0: it signalled nothing itself, and the owner's count
+    is the owner's to report.
+
+    The reserve is why this exists. `_FD_RESERVE_SIZE` is 2 because ONE
+    scan holds exactly two handles at once -- the session proof and the
+    target -- so two concurrent sweeps take one slot each and neither can
+    complete a pair. Both then skip every opaque session descendant until
+    their deadlines expire, which is a silent leak of precisely the
+    processes the sweep exists to collect.
+
+    Three arrival shapes, three answers:
+
+      * FIRST caller -- owns the sweep, masks the termination signals for
+        its duration, publishes completion on the way out.
+      * ANOTHER thread -- waits on the owner's completion against the
+        OWNER's deadline, then reports completed.
+      * THE OWNER re-entering itself -- returns not-completed immediately
+        rather than deadlocking on its own event or running a nested
+        sweep. Effectively unreachable while the mask holds; it is the
+        answer for a platform without pthread_sigmask."""
+    global _SWEEP_OWNER, _SWEEP_FLIGHT
+    me = threading.get_ident()
+    with _SWEEP_LOCK:
+        if _SWEEP_OWNER is None:
+            _SWEEP_OWNER = me
+            flight = {
+                "event": threading.Event(),
+                "ok": False,
+                # A caller with no deadline of its own still publishes
+                # one, so a waiter is never unbounded.
+                "deadline": (deadline if deadline is not None
+                             else clock.now() + max(settle, 1.0) + 10.0),
+                # The deadline is a number in the OWNER's time domain. A
+                # waiter on a different clock cannot compare against it
+                # -- mixed domains either expire instantly or spin for a
+                # fake eternity -- so it falls back to its own (Codex
+                # perf review, High).
+                "clock": clock,
+            }
+            _SWEEP_FLIGHT = flight
+            role = "owner"
+        elif _SWEEP_OWNER == me:
+            flight, role = None, "reentry"
+        else:
+            flight, role = _SWEEP_FLIGHT, "waiter"
+
+    if role == "reentry":
+        return SweepCount(0, False)
+
+    if role == "waiter":
+        done = flight["event"]
+        if flight["clock"] is clock:
+            owner_deadline = flight["deadline"]
+        else:
+            # Different time domain; the owner's number is meaningless
+            # here. Fall back to our own bound rather than comparing
+            # across clocks.
+            owner_deadline = deadline
+        if owner_deadline is not None:
+            # A bounded GRACE past the owner's deadline. Almost every
+            # operation in the sweep is deadline-checked, but the
+            # recorded-leader pass is deliberately ungated (cheap and
+            # certain first), so an owner can finish a little late. Since
+            # every caller here is about to end the process, cutting it
+            # at the exact deadline turns a 50ms overrun into an exit
+            # through a partial reap. This absorbs that without letting
+            # a waiter be held indefinitely: the alternative Codex asked
+            # for -- wait unconditionally on the event -- re-opens the
+            # unbounded stall _shutdown_bounded exists to close.
+            owner_deadline += _SWEEP_OVERRUN_GRACE_S
+        # Polled rather than Event.wait(timeout=...) so an INJECTED clock
+        # bounds the wait in the same units it bounds everything else in
+        # this module; a real-time wait against fake-time deadlines is a
+        # hang waiting to happen in the sub-tests.
+        while not done.is_set():
+            if owner_deadline is not None and clock.now() >= owner_deadline:
+                break
+            clock.sleep(0.02)
+        # `ok`, never `is_set()`: the owner wakes its waiters from a
+        # finally, so the event fires just as surely when the sweep threw.
+        with _SWEEP_LOCK:
+            return SweepCount(0, bool(flight["ok"]))
+
+    old_mask = _mask_term_signals()
+    killed = 0
+    try:
+        killed = _force_kill_spawned_sweep(settle=settle, deadline=deadline,
+                                           clock=clock)
+        with _SWEEP_LOCK:
+            flight["ok"] = True
+    finally:
+        with _SWEEP_LOCK:
+            _SWEEP_OWNER = None
+            _SWEEP_FLIGHT = None
+        # Set AFTER the ownership release, so a waiter that wakes on the
+        # event can immediately become the next owner rather than finding
+        # the slot still held by a finished sweep.
+        flight["event"].set()
+        if old_mask is not None:
+            try:
+                signal.pthread_sigmask(signal.SIG_SETMASK, old_mask)
+            except Exception:
+                pass
+    return SweepCount(killed, True)
+
+
 _TEARDOWN_COMPLETE = False
 
 
@@ -2321,10 +2517,12 @@ class LspSubprocess:
 
         self._proc: Optional[subprocess.Popen] = None
         # THIS instance's row in _SPAWNED. Retirement takes the object,
-        # not the number: the respawn path creates a replacement before
-        # disposing the dead instance, so a by-number retirement can
-        # remove and close a live replacement's record when the PID was
-        # reused (Codex adversarial review, High).
+        # not the number: a by-number retirement can remove and close a
+        # live generation's record when the PID was reused (Codex
+        # adversarial review, High). Section 25's dispose-confirm-spawn
+        # order narrows that overlap; it does not remove it, since
+        # unretired records for older generations outlive the instances
+        # that made them.
         self._spawn_record: Optional[_SpawnRecord] = None
         # Identifies THIS spawn generation in the child environment, so a
         # group sweep can address descendants of this instance and not of
@@ -2376,6 +2574,22 @@ class LspSubprocess:
         # _shutdown_called was committed, recreating the ordering
         # race the file-change-lifecycle fix claimed to close.
         self._teardown_thread_id: Optional[int] = None
+        # Confirmed-dead verdict for shutdown(). Memoised ONLY once True:
+        # a False answer means death was not confirmed BEFORE this call
+        # ran out of budget, not that the process is immortal, and
+        # replaying it forever from the idempotent early return would
+        # leave a since-exited server permanently un-retired and its key
+        # permanently unrespawnable (Codex design review, High).
+        self._confirmed_dead = False
+        # The post-death group collection runs exactly once per instance,
+        # whichever call first observes the leader dead -- the shutdown
+        # that killed it, or a later idempotent call that re-polls.
+        self._post_death_done = False
+        # Set while one thread is INSIDE the collection, so a concurrent
+        # late confirmer waits for the real answer instead of reading a
+        # claim as a completion.
+        self._post_death_running: Optional[threading.Event] = None
+        self._post_death_lock = threading.Lock()
         self.server_caps: dict[str, Any] = {}
         # SCAFFOLD (consumed by the per-language integration commits
         # and the diagnostics tool handler): diagnostics get pushed by
@@ -2510,9 +2724,10 @@ class LspSubprocess:
             child_env["LSP_BRIDGE_OWNER"] = _OWNER_ID
             # Per-SPAWN, not per-process. The owner stamp says "this
             # bridge started it", which stops being specific enough the
-            # moment two generations share a PID: the respawn path builds
-            # the replacement before disposing the dead instance, and
-            # both use start_new_session, so old-instance cleanup can
+            # moment two generations share a PID -- which section 25's
+            # dispose-confirm-spawn order makes rarer, not impossible,
+            # since a record outlives its instance. Both generations use
+            # start_new_session, so old-instance cleanup can
             # find the REPLACEMENT in what it believes is its own process
             # group and kill it -- a crash loop where each restart shoots
             # its successor (Codex adversarial review, High).
@@ -3581,14 +3796,168 @@ class LspSubprocess:
     # Shutdown
     # ------------------------------------------------------------------
 
-    def shutdown(self, timeout: float = 5.0) -> None:
+    def _collect_after_death(self, proc, deadline: Optional[float]) -> bool:
+        """Group collection + record retirement, once per instance.
+
+        Runs for whichever call first OBSERVES the leader dead. A polite
+        leader answers `shutdown`, exits, and leaves behind any worker it
+        forked that did not -- that orphan is reparented away from us, so
+        the pgid we still hold is the only remaining handle on it. Retire
+        the record only after the group has been swept, because
+        retirement throws that handle away.
+
+        Returns True only when the collection has FINISHED. Three states,
+        not a bool, because the two-state version answered "done" the
+        instant it claimed the work: a concurrent late confirmer saw the
+        flag, skipped the collection, and reported a confirmed death
+        while the first thread was still sweeping descendants -- so the
+        respawn gate could publish a replacement over a live
+        old-generation worker, which is the exact duplication section 25
+        exists to prevent. A raised collection also left the flag set
+        forever, permanently suppressing the retry and the retirement
+        (Codex adversarial + test-coverage review, High).
+
+        Never raises: shutdown() is reachable from atexit, where an
+        exception is swallowed by interpreter teardown anyway. A failure
+        is reported as "not collected" and stays retryable."""
+        with self._post_death_lock:
+            if self._post_death_done:
+                return True
+            running = self._post_death_running
+            if running is None:
+                running = self._post_death_running = threading.Event()
+                mine = True
+            else:
+                mine = False
+        if not mine:
+            # Wait for the thread that claimed it, bounded by OUR
+            # deadline -- an unbounded wait here would put a teardown
+            # path at the mercy of another thread's sweep.
+            while not running.is_set():
+                if deadline is not None and time.monotonic() >= deadline:
+                    return False
+                time.sleep(0.02)
+            return self._post_death_done
+        ok = False
+        try:
+            # `emptied` is the whole answer, and discarding it was the
+            # bug: _reap_group returns False when its deadline or round
+            # cap stopped it short of the two-consecutive-empty-scans
+            # fixpoint, so treating any non-raising return as success let
+            # the respawn gate publish a replacement beside a surviving
+            # old-generation worker -- the duplication section 25 exists
+            # to prevent, re-entered through the gate meant to close it
+            # (Codex adversarial + consistency + perf review, High).
+            _killed, emptied = _reap_group(proc.pid, gen=self._gen_id,
+                                           deadline=deadline)
+            # Retired UNCONDITIONALLY, incomplete sweep included. The
+            # record is a descriptor pinning the LEADER, which is already
+            # dead; the group sweep addresses members by pgid plus the
+            # owner and generation stamps, none of which live in it. So a
+            # retry loses nothing by retiring now, while KEEPING it is
+            # what accumulated one descriptor per dead generation until
+            # EMFILE (section 24, Codex adversarial review, Medium).
+            _retire_spawn(self._spawn_record or proc.pid)
+            ok = bool(emptied)
+        except Exception:
+            ok = False
+        finally:
+            with self._post_death_lock:
+                self._post_death_done = ok
+                self._post_death_running = None
+            running.set()
+        return ok
+        # Retired UNCONDITIONALLY once the leader is confirmed dead. Its
+        # descriptor can identify nothing further, and the group sweep
+        # addresses members by pgid plus the owner and generation stamps
+        # -- none of which live in this record. The earlier version kept
+        # it whenever the sweep had not finished, which on an expired
+        # deadline meant forever: shutdown is idempotent and the force
+        # sweep only ever borrows a duplicate, so a respawn loop on a
+        # loaded host accumulated one descriptor per dead generation
+        # until EMFILE (Codex adversarial review, Medium).
+
+    def _retry_pinned_kill(self, proc, deadline: float) -> None:
+        """Re-attempt the identity-pinned termination, nothing else.
+
+        The escalation in shutdown() runs once, and its two signals are
+        exactly what a full descriptor table defeats: `_signal_recorded`
+        fails CLOSED rather than naming the target by number (section
+        23), so under transient exhaustion the leader is never signalled
+        at all. Polling alone would then wait forever on a process
+        nobody ever asked to die, while the respawn gate records one
+        disposal failure after another and walks the key into FAILED
+        state (Codex adversarial review, High).
+
+        Deliberately does NOT repeat the LSP protocol exchange:
+        `shutdown`/`exit` were already sent and the transport is torn
+        down. Only the signal is retried.
+
+        ONE signal, and it is SIGKILL. Re-running the SIGTERM-then-
+        SIGKILL escalation looks more polite and is strictly worse:
+        under descriptor pressure `_signal_recorded` reaches its CLAIM
+        path, which removes the record from _SPAWNED and closes its
+        descriptor to send that one signal -- so a stubborn server
+        ignores the SIGTERM and the SIGKILL that follows finds no record
+        and fails closed, having spent the only identity we had (Codex
+        adversarial review, High, reproduced). Politeness has already
+        been spent anyway: the caller's first shutdown() sent `shutdown`,
+        `exit`, and a SIGTERM before this retry exists."""
+        if proc.poll() is not None:
+            return
+        try:
+            _signal_recorded(self._spawn_record or proc.pid, signal.SIGKILL)
+        except Exception:
+            pass
+        while proc.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.02)
+
+    def _confirm_dead_late(self, timeout: float) -> bool:
+        """Re-answer the confirmed-dead question on an idempotent call.
+
+        The verdict a shutdown() reaches is a snapshot of one bounded
+        attempt: a SIGKILL whose target had not yet been reaped inside
+        the budget, or a signal a full descriptor table stopped us
+        sending, both answer False while the process is either dying or
+        never asked to. So a repeat call retries the pinned signals,
+        re-polls, and -- when it is the first to see the death --
+        performs the collection the original call never reached (Codex
+        design review + adversarial review, High)."""
+        if self._confirmed_dead:
+            return True
+        proc = self._proc
+        if proc is None:
+            self._confirmed_dead = True
+            return True
+        deadline = time.monotonic() + max(0.2, timeout)
+        if proc.poll() is None:
+            self._retry_pinned_kill(proc, deadline)
+        if proc.poll() is None:
+            return False
+        # Confirmed dead means the LEADER exited AND its group has been
+        # collected: publishing a replacement over surviving descendants
+        # is the same duplication as publishing over a live leader.
+        self._confirmed_dead = self._collect_after_death(proc, deadline)
+        return self._confirmed_dead
+
+    def shutdown(self, timeout: float = 5.0) -> bool:
         """LSP shutdown + exit + process reap.
 
         Best-effort: if the LSP ignores `shutdown` we SIGTERM; if it
         ignores that we SIGKILL. Exits without raising so atexit-driven
         cleanup can't crash the interpreter.
 
-        Idempotent: safe to call twice. Second call returns immediately.
+        RETURNS the confirmed-dead verdict: True when this instance's
+        leader is known to have exited (or never existed), False when the
+        attempt finished without proving it. The caller that matters is
+        the bridge's respawn path, which must not publish a replacement
+        language server while the old one might still be running -- an
+        unconfirmed disposal that publishes anyway is how one crash turns
+        into two live servers on the same workspace (section 25).
+
+        Idempotent: safe to call twice. A second call re-polls the
+        process and returns the verdict; it does not repeat the teardown
+        traffic.
 
         Ordering matters: we set _shutdown_called BEFORE the teardown
         traffic so external request/notify/apply_text calls reject
@@ -3606,7 +3975,7 @@ class LspSubprocess:
         # ONE absolute budget for the WHOLE shutdown, taken at entry.
         shutdown_deadline = time.monotonic() + max(0.2, timeout)
         if self._shutdown_called:
-            return
+            return self._confirm_dead_late(timeout)
 
         # Serialize teardown against the first initialize() handshake by
         # HOLDING _init_lock across the entire decision AND commit --
@@ -3621,7 +3990,12 @@ class LspSubprocess:
             proc = self._proc
             if proc is None:
                 self._shutdown_called = True
-                return
+                # Nothing was ever spawned, so nothing can be alive. This
+                # is a CONFIRMED death, not an unknown one -- answering
+                # False here would make an instance that failed before
+                # Popen permanently unrespawnable.
+                self._confirmed_dead = True
+                return True
 
             # Commit-up-front: external callers (request, notify,
             # apply_text) all check `_shutdown_called and not
@@ -3783,19 +4157,9 @@ class LspSubprocess:
             # wall-clock but not the work (section 24). _reap_group
             # already loops to a two-consecutive-empty-scans fixpoint;
             # asking it separately was asking the same question twice.
-            _reap_group(proc.pid, gen=self._gen_id,
-                        deadline=group_deadline)
-            _retire_spawn(self._spawn_record or proc.pid)
-            # Retired UNCONDITIONALLY once the leader is confirmed dead.
-            # Its descriptor can identify nothing further, and the group
-            # sweep addresses members by pgid plus the owner and
-            # generation stamps -- none of which live in this record. The
-            # earlier version kept it whenever the sweep had not finished,
-            # which on an expired deadline meant forever: shutdown is
-            # idempotent and the force sweep only ever borrows a
-            # duplicate, so a respawn loop on a loaded host accumulated
-            # one descriptor per dead generation until EMFILE (Codex
-            # adversarial review, Medium).
+            self._confirmed_dead = self._collect_after_death(
+                proc, group_deadline)
+        return self._confirmed_dead
 
     # ------------------------------------------------------------------
     # Introspection
@@ -3826,8 +4190,15 @@ class LspSubprocess:
         # only matters if the bridge drops all refs without calling
         # shutdown (e.g. a test creates the instance, lets it fall
         # out of scope). Must be exception-free.
+        #
+        # Gated on _confirmed_dead, NOT _shutdown_called: an attempt that
+        # finished without proving the death has already set the latter,
+        # so gating on it meant finalization skipped the one path that
+        # can still retry the signal and collect the group -- the object
+        # simply disappeared with its child running (Codex consistency
+        # review, Medium).
         try:
-            if not self._shutdown_called:
+            if not self._confirmed_dead:
                 self.shutdown(timeout=0.2)
         except Exception:
             pass

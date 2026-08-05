@@ -355,21 +355,30 @@ def _inst_usable(inst: Optional[LspSubprocess]) -> bool:
     return True
 
 
-def _force_dispose_dead_inst(inst: Optional[LspSubprocess]) -> None:
+def _force_dispose_dead_inst(inst: Optional[LspSubprocess]) -> bool:
     """Walk an instance's cleanup_paths and reap a zombie
     subprocess (alive but reader dead). Idempotent: relies on
     LspSubprocess.shutdown's own early-exit when already closed.
 
-    Called by _respawn_locked before publishing the replacement
-    instance so spawner-owned tempdirs (PSES LogPath /
-    SessionDetailsPath) do not leak across respawn generations
-    (Codex post-implementation review Medium)."""
+    Called by _respawn_locked BEFORE spawning the replacement, so
+    spawner-owned tempdirs (PSES LogPath / SessionDetailsPath) do not
+    leak across respawn generations (Codex post-implementation review
+    Medium).
+
+    Returns the CONFIRMED-DEAD verdict: True when there is nothing left
+    running (no instance, or shutdown proved the leader exited), False
+    when the disposal finished without proving it. False is not a
+    formality -- a descriptor-exhausted host cannot signal the old
+    leader at all, and every caller of this helper is about to start a
+    second server on the same workspace (section 25). An exception is
+    the same answer as an unproven death: we do not know, so we must
+    not assume."""
     if inst is None:
-        return
+        return True
     try:
-        inst.shutdown(timeout=0.5)
+        return bool(inst.shutdown(timeout=0.5))
     except Exception:
-        pass
+        return False
 
 
 def _replay_open_uris(old: LspSubprocess, new: LspSubprocess,
@@ -457,6 +466,39 @@ def _respawn_locked(lang: str, workspace_root: Path,
                        restart_count=restart_count,
                        window_crash_count=window_count,
                        backoff_s=delay)
+
+    # DISPOSE FIRST, and refuse to spawn at all unless the old leader is
+    # confirmed dead. The order is the fix, not an ornament: disposing
+    # after a successful spawn means an unconfirmed disposal is
+    # discovered while holding a brand-new language server that must then
+    # be disposed itself -- under exactly the descriptor exhaustion that
+    # made the first disposal unprovable, so the replacement may not be
+    # confirmable either, and each retry accumulates one more (Codex
+    # design review, High). Nothing is spawned here until there is
+    # nothing left to duplicate.
+    #
+    # Replay still works against a shut-down instance: shutdown()
+    # didCloses the tracked URIs but deliberately does not clear
+    # open_uri_meta, which is what _replay_open_uris reads.
+    if not _force_dispose_dead_inst(old_inst):
+        kind = "lsp-dispose-unconfirmed"
+        with _LIVE_LSPS_LOCK:
+            entered_failed = _record_crash(key, kind)
+        _emit_health_event("failed" if entered_failed else "restart-failed",
+                           lang, str(workspace_root), reason=kind)
+        # The crashed instance stays published. That is deliberate: the
+        # next _get_or_spawn sees it unhealthy and comes back through
+        # here, where shutdown()'s idempotent re-poll can confirm a death
+        # that happened in the meantime -- and if it never does, the
+        # recorded crashes carry the key into FAILED state instead of
+        # retrying forever.
+        raise LspError(
+            kind,
+            f"{lang} LSP could not be confirmed dead; refusing to publish "
+            f"a replacement",
+            lang=lang,
+        )
+
     if delay > 0.0:
         _time.sleep(delay)
 
@@ -480,11 +522,8 @@ def _respawn_locked(lang: str, workspace_root: Path,
                                 reason=kind)
         raise
 
-    # Spawn succeeded; dispose of the old instance (walks its
-    # cleanup_paths -- e.g. PSES tempdir -- so spawner-owned scratch
-    # state does not leak across respawn generations) and replay
-    # tracked URIs on the new one.
-    _force_dispose_dead_inst(old_inst)
+    # Spawn succeeded and the old instance is already disposed; replay
+    # its tracked URIs on the new one.
     replayed = 0
     try:
         replayed = _replay_open_uris(old_inst, new_inst, workspace_root)
@@ -5077,6 +5116,34 @@ def _diag(msg: str) -> None:
         pass
 
 
+_TEARDOWN_DEADLINE: Optional[float] = None
+_TEARDOWN_DEADLINE_LOCK = threading.Lock()
+
+
+def _teardown_deadline(proposed: Optional[float] = None) -> float:
+    """ONE absolute budget for the WHOLE process teardown.
+
+    Claimed by whichever entry point arrives first; every later one gets
+    that same value back. Without this each of the four minted its own
+    `now + _SHUTDOWN_BUDGET_S`, so a watchdog arriving seven seconds into
+    a signal-driven teardown published a deadline seven seconds later --
+    and since the sweep is now single-flight, the earlier caller waits on
+    the OWNER's deadline and could be held most of a second budget past
+    its own, exposed to the external `timeout --kill-after` that was
+    counting all along (Codex perf review, High).
+
+    Real monotonic time, never an injected clock: this is the domain the
+    external killer is counting in."""
+    global _TEARDOWN_DEADLINE
+    with _TEARDOWN_DEADLINE_LOCK:
+        if _TEARDOWN_DEADLINE is None:
+            _TEARDOWN_DEADLINE = (
+                proposed if proposed is not None
+                else _time.monotonic() + _SHUTDOWN_BUDGET_S
+            )
+        return _TEARDOWN_DEADLINE
+
+
 def _shutdown_bounded(reason: str, deadline: Optional[float] = None) -> int:
     """Run teardown on a worker thread, wait out the budget, then force.
 
@@ -5099,9 +5166,10 @@ def _shutdown_bounded(reason: str, deadline: Optional[float] = None) -> int:
     # adversarial review, High).
     # A caller that already started the clock (the signal handler, which
     # must count its own masking and marker writes) passes its deadline in;
-    # everyone else gets a fresh one.
-    if deadline is None:
-        deadline = _time.monotonic() + _SHUTDOWN_BUDGET_S
+    # everyone else proposes a fresh one. Either way the FIRST entry point
+    # to arrive fixes the budget for the whole teardown and every later
+    # one inherits it.
+    deadline = _teardown_deadline(deadline)
     # The reserve is a FRACTION of what is left, never a floor that can
     # exceed it. A 0.5s minimum grace looked harmless and silently ate the
     # entire budget whenever the budget was smaller, handing the sweep an
@@ -5111,6 +5179,10 @@ def _shutdown_bounded(reason: str, deadline: Optional[float] = None) -> int:
     _remaining = max(0.0, deadline - _time.monotonic())
     graceful_budget = max(0.0, _remaining - max(0.05, _remaining * 0.3))
     killed = 0
+    # False until a sweep is known to have finished. Pre-set here rather
+    # than inside the try below, where a sweep that RAISED would leave the
+    # name unbound and the completion question answered by a NameError.
+    swept = False
     # EVERYTHING that can raise goes inside the try whose finally holds the
     # force sweep. Thread creation fails under the resource exhaustion this
     # path exists to survive, and a stderr write fails once the launcher has
@@ -5143,15 +5215,34 @@ def _shutdown_bounded(reason: str, deadline: Optional[float] = None) -> int:
         killed = force_kill_spawned(
             settle=max(0.0, (deadline - _time.monotonic()) * 0.5),
             deadline=deadline)
+        # The sweep is single-flight: this call either ran it or waited
+        # for the thread that did. `completed` is the difference between
+        # "a sweep finished" and "another one is still going and we
+        # stopped waiting" -- and every caller here is about to end the
+        # process, so that difference decides whether the exit is clean
+        # or steps through somebody else's half-finished reap.
+        swept = bool(getattr(killed, "completed", True))
         if killed:
             _diag(f"[lsp-mcp] WARN: force-killed {killed} language "
                   f"server(s) that survived graceful shutdown ({reason})\n")
+        if not swept:
+            _diag(f"[lsp-mcp] WARN: force sweep ({reason}) gave up waiting "
+                  f"on another in-flight teardown; children may be left\n")
     except Exception:
         pass
     # Tell the atexit hook a bounded teardown finished, so a normal return
     # does not pay for a second, unbounded one on top of the budget.
+    #
+    # ONLY when a sweep actually finished. Marking it unconditionally told
+    # the atexit hook the work was done on the strength of a sweep this
+    # process never completed, disarming the one reap that runs after
+    # everything else has given up (Codex design review, High). A sweep
+    # that ran to its own conclusion still counts even if its deadline
+    # left records behind -- that is the bound being enforced, not work
+    # owed.
     try:
-        mark_teardown_complete()
+        if swept:
+            mark_teardown_complete()
     except Exception:
         pass
     return killed
