@@ -425,6 +425,43 @@ information or judgment; none of this weakens a gate):**
 - When every section is DONE/DONE_UNSTAMPED-then-reviewed/deferred:
   `Skill(complete-todo-file)` for the loose-end sweep + closure commit.
 
+- **Repair this file's deferred-item SHAPE before the closure commit.** Enumerate
+  with `python3 scripts/todo-reachability.py --json <cursor-file>` (it accepts a
+  path, so this costs ONE file's output, not the corpus) and take the
+  `open-in-deferred` records. Measured 2026-08-05: **1,595
+  such items across 333 sections in 52 files** (~31 per affected file) -- a
+  backlog carried since v06 precisely because no phase owned it. You are the
+  cheapest place to fix it: you already have this file open and in context, and
+  the judgment is per-item.
+
+  An item sits in a section the oracle calls DONE **and** that carries a
+  `> **Deferred:**` stamp, so a bare `- [ ]` there is seen by NOTHING -- the
+  oracle skips DONE sections, orphan-check exempts Deferred ones by design, and
+  `stranded_deferrals.py` tracks `[/]` ITEMS rather than items inside a Deferred
+  SECTION. Decide each one on its own text:
+
+  - **Genuinely parked work** -> `- [/]` naming its blocker/owner IN THE TEXT
+    (the section's Deferred stamp is a section-level reason; it does not
+    automatically describe this item). Add a reciprocal XREF if it names another
+    TODO.
+  - **A standing or recurring task** -> LEAVE IT `- [ ]`. Real example that must
+    not be converted: *"Review this section's triggers once per calendar year"*.
+    That is not blocked work, and flipping it to `- [/]` with an invented
+    blocker manufactures a false park.
+  - **Already satisfied** by work that shipped since -> `- [x]` with the
+    evidence, same bar as any other completion claim.
+  - **Cannot decide from the file alone** -> leave it and say so in the closure
+    commit. An honest remainder beats a wrong flip.
+
+  **NEVER bulk-flip.** A blanket `- [ ]` -> `- [/]` across a file is the
+  "mass rewrite moves the problem" failure this repo forbids: it converts
+  standing tasks into fake parks and destroys the distinction the shape exists to
+  carry. There is deliberately NO script for this.
+
+  This is BEST-EFFORT and never blocks the close -- it is bookkeeping, and a
+  file you cannot fully repair still closes. Check 24 reports the remaining count
+  (items across sections), so progress is visible without a gate.
+
 ### 7. ADVANCE (`phase ADVANCE`)
 
 - Append a one-line Run Log entry to `docs/overnight/run-log.md` (date, cursor,
