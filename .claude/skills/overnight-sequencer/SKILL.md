@@ -536,6 +536,57 @@ information or judgment; none of this weakens a gate):**
   section ship. One file per advance; do not batch several, and never let it
   displace the actual section work.
 
+## Creating a section: record WHERE it came from
+
+**Every new section records its provenance** as the first line of its body:
+
+```
+> **Spawned-by:** §N (split)     <- decomposition at authoring time, before code
+> **Spawned-by:** §N (review)    <- created from section N's review findings
+```
+
+Omit it only for a genuinely independent section (a gap audit, a new capability,
+an operator filing) -- those are roots and need no marker.
+
+**Why the two kinds are not the same thing.** A `(split)` is the same work
+correctly partitioned and is healthy: TODO-06 sections 10/11 split because a
+parser fix and a lint-reporting change carry OPPOSITE failure modes, and the
+total work did not grow. A `(review)` spawn is how TODO-07 ran sections 20->26 --
+seven consecutive links, each created from the previous section's review finding
+another edge case in the same teardown path, on a DEV-TOOLING component whose
+founding premise had already been disproven. Branching factor 1.0 for days, and
+every counter read healthy the whole time: sections shipped, reviews passed, the
+IO table filled. Nothing could see that section N existed only because of N-1.
+
+**At a review-chain depth of 3 or more**, check before creating the section:
+
+```bash
+python3 scripts/overnight/section-manifest.py spawn-chain <todo-path>
+```
+
+At or past the limit, the new section must ALSO carry a structured continuation
+waiver -- same contract as the SPLIT-RECOMMENDED override, and for the same
+reason: it has to be an accountable prediction, not the word "needed".
+
+```json
+{"user_impact": "what a user hits if this is NOT done",
+ "not_parkable": "why it cannot be a `- [/]` park in the parent",
+ "severity_trend": "this round's finding severities vs the last",
+ "surface": "the file or subsystem it touches"}
+```
+
+`user_impact` and `not_parkable` are the two that bite. A link that cannot name
+what a user hits, or why parking would lose something, is refinement below the
+depth the component warrants -- and that is the shape to stop.
+
+**THIS DOES NOT WEAKEN COMPLETION-FIRST, and must never be used to.** The
+finding is filed either way. Without a waiver it becomes a `- [/]` item in the
+PARENT section naming its blocker -- still visible, still counted by Check 24,
+still swept. The sensor chooses a DESTINATION; it never chooses whether to
+record. If a TODO genuinely needs 30 more sections, it gets 30: section count is
+not the metric, and a deep chain that CAN name its user impact simply writes the
+waiver and continues.
+
 ## Self-improvement filing (standing rule -- record, then continue)
 
 The run is expected to be self-observing: every runner defect, cost pattern, or improvement it cannot apply unattended is FILED in the same turn it is observed, then the run continues. A finding carried in-context to "report later" dies with the segment. Two capture surfaces, both OUTSIDE the traversal (nothing filed there is implemented by the run):

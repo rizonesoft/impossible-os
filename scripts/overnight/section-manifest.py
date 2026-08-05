@@ -63,6 +63,104 @@ _WAIVER_FIELDS = {
 }
 
 
+# ---------------------------------------------------------------------------
+# SPAWN-CHAIN SENSOR (2026-08-05). The split predictor above scores a section's
+# SIZE. It has nothing to say about a section's ORIGIN, and origin is where the
+# expensive failure lives: TODO-07 ran sections 20->26, seven consecutive links,
+# each created from the PREVIOUS section's review finding another edge case in
+# the same teardown path. Branching factor 1.0 for days. Every counter the
+# runner has read healthy throughout -- sections shipped, reviews passed, the IO
+# table filled -- because none of them can see that section N exists only
+# because of section N-1.
+#
+# COMPLETION-FIRST IS NOT WEAKENED BY THIS AND MUST NOT BE. A discovered gap is
+# still ALWAYS filed. This sensor never decides WHETHER to record work, only
+# WHERE: a new section, or a parked `- [/]` item in the parent naming its
+# blocker. Both keep the work visible; only one grows the file.
+#
+# The load-bearing distinction is WHY a section was created:
+#   (split)  -- decomposition at AUTHORING time, before implementation. Healthy:
+#               the same work, correctly partitioned. TODO-06 sections 10/11 were
+#               split because a parse fix and a lint-reporting change carry
+#               opposite failure modes. Does NOT extend a chain.
+#   (review) -- created from the PREVIOUS section's review. This is the recursion
+#               shape, and consecutive review-spawns are what the chain counts.
+_SPAWN_RE = re.compile(
+    r"^>\s*\*\*Spawned-by:\*\*\s*(?:§|section\s*)(\d+)\s*\((split|review)\)",
+    re.I | re.M)
+
+# Depth at which a further review-spawn needs an accountable justification.
+# THREE, not two: a section reviewing into one successor is ordinary
+# completion-first, and two is a run of bad luck. Three consecutive links on one
+# surface is a pattern, and TODO-07 reached SEVEN before anything noticed.
+SPAWN_CHAIN_LIMIT = 3
+
+_CONTINUATION_FIELDS = {
+    "user_impact": str,     # what a user hits if this is NOT done
+    "not_parkable": str,    # why it cannot be a `- [/]` park in the parent
+    "severity_trend": str,  # this round's finding severities vs the last
+    "surface": str,         # the file/subsystem it touches
+}
+
+
+def validate_continuation_waiver(waiver: object) -> tuple:
+    """A review-spawn at or past SPAWN_CHAIN_LIMIT needs a STRUCTURED waiver,
+    exactly as a SPLIT-RECOMMENDED override does -- and for the same reason: the
+    override must be an accountable prediction, not the word "needed".
+
+    `user_impact` and `not_parkable` are the two that actually bite. A chain link
+    that cannot name what a user hits, or cannot say why a park in the parent
+    would lose something, is refinement below the depth the component warrants --
+    which is the TODO-07 shape. Returns (ok, missing)."""
+    if not isinstance(waiver, dict):
+        return (False, ["<waiver must be a JSON object with "
+                        + ", ".join(_CONTINUATION_FIELDS) + ">"])
+    missing = []
+    for key, typ in _CONTINUATION_FIELDS.items():
+        val = waiver.get(key)
+        ok = isinstance(val, typ) and not isinstance(val, bool)
+        if ok and isinstance(val, str) and not val.strip():
+            ok = False
+        if not ok:
+            missing.append(key)
+    return (not missing, missing)
+
+
+def spawn_chains(lines: list) -> dict:
+    """Map section number -> (parent, kind, review_chain_depth).
+
+    Depth counts CONSECUTIVE `(review)` links walking up the chain. A `(split)`
+    link contributes 0, because decomposition is not recursion. A section with no
+    marker is a root, so every pre-existing section is unaffected -- this sensor
+    is additive and silent until sections start declaring provenance.
+    """
+    parents = {}
+    cur = None
+    for ln in lines:
+        m = re.match(r"^## (\d+)\.", ln)
+        if m:
+            cur = int(m.group(1))
+            continue
+        if cur is None:
+            continue
+        sm = _SPAWN_RE.match(ln)
+        if sm:
+            parents[cur] = (int(sm.group(1)), sm.group(2).lower())
+
+    def _depth(n, seen):
+        # cycle-safe: a malformed self- or mutual-reference stops at 0 rather
+        # than recursing forever. A sensor must never be the thing that hangs.
+        if n in seen or n not in parents:
+            return 0
+        par, kind = parents[n]
+        if kind != "review":
+            return 0
+        return 1 + _depth(par, seen | {n})
+
+    return {n: (parents[n][0], parents[n][1], _depth(n, set()))
+            for n in parents}
+
+
 def validate_split_waiver(waiver: object) -> tuple:
     """P3.1: a SPLIT-RECOMMENDED verdict may be overridden ONLY by a STRUCTURED
     waiver, never a free-form "cohesive". Requires a concrete ESTIMATE for each
@@ -101,6 +199,48 @@ def main(argv) -> int:
                           "note": ("structured waiver accepted" if ok else
                                    "SPLIT-RECOMMENDED override needs a structured "
                                    "waiver; a free-form 'cohesive' is not enough")}))
+        return 0 if ok else 1
+    if len(argv) >= 1 and argv[0] == "spawn-chain":
+        # section-manifest.py spawn-chain <todo-path>
+        # Reports review-spawn chain depth per section. Exit 1 if any link is at
+        # or past the limit, so it can gate; exit 0 otherwise.
+        if len(argv) < 2:
+            print("usage: section-manifest.py spawn-chain <todo-path>",
+                  file=sys.stderr)
+            return 2
+        try:
+            lines = Path(argv[1]).read_text(encoding="utf-8").split("\n")
+        except Exception as exc:
+            print(json.dumps({"ok": False, "error": f"unreadable: {exc}"}))
+            return 2
+        chains = spawn_chains(lines)
+        deep = {n: v for n, v in chains.items()
+                if v[1] == "review" and v[2] >= SPAWN_CHAIN_LIMIT}
+        print(json.dumps({
+            "limit": SPAWN_CHAIN_LIMIT,
+            "sections": {str(n): {"parent": v[0], "kind": v[1], "depth": v[2]}
+                         for n, v in sorted(chains.items())},
+            "over_limit": sorted(deep),
+            "note": ("a review-spawn at or past the limit needs a structured "
+                     "continuation waiver, or the finding is PARKED in the "
+                     "parent as `- [/]` -- filed either way, never dropped"),
+        }, indent=1))
+        return 1 if deep else 0
+    if len(argv) >= 1 and argv[0] == "continuation-check":
+        if len(argv) < 2:
+            print("usage: section-manifest.py continuation-check <waiver.json>",
+                  file=sys.stderr)
+            return 2
+        try:
+            waiver = json.loads(Path(argv[1]).read_text(encoding="utf-8"))
+        except Exception as exc:
+            print(json.dumps({"ok": False, "error": f"unreadable waiver: {exc}"}))
+            return 1
+        ok, missing = validate_continuation_waiver(waiver)
+        print(json.dumps({"ok": ok, "missing": missing,
+                          "note": ("continuation accepted" if ok else
+                                   "a deep review-spawn needs user_impact + "
+                                   "not_parkable; 'needed' is not enough")}))
         return 0 if ok else 1
     if len(argv) < 2:
         print("usage: section-manifest.py <todo-path> <section-n> [--project DIR]",
