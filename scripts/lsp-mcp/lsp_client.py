@@ -457,8 +457,9 @@ def _with_fd_reserve(make):
     Shared by every exact-handle acquisition in the reap. It was first
     written into _pidfd_open alone, which left _borrow_pidfd's os.dup
     uncovered -- so at RLIMIT_NOFILE the LEADER duplication failed,
-    _session_marks_ours answered False, pass 0 rejected every opaque
-    descendant, and pass 1 then killed the only process that could still
+    _session_marks_ours answered False, the session scan rejected every
+    opaque descendant, and the leader signal then killed the one process
+    that could still
     prove them ours (Codex adversarial review, High).
 
     A descriptor SHORTAGE is a different thing from an absent capability:
@@ -667,7 +668,8 @@ def _record_spawn(pid: int) -> "_SpawnRecord":
     # the assignment of record.fd a few statements later, the record has
     # no descriptor -- on EVERY spawn -- so _borrow_pidfd fails closed and
     # the session proof cannot be made. A termination landing in that
-    # interval means pass 0 skips a hardened descendant before pass 1
+    # interval means the session scan skips a hardened descendant before
+    # the leader signal
     # kills its leader. Exhaustion only makes it worse, by denying the
     # fallback acquisition that would otherwise still work. Parked in the
     # section rather than papered over.
@@ -675,8 +677,8 @@ def _record_spawn(pid: int) -> "_SpawnRecord":
     _SPAWNED.append(record)
     # Marker published in the SAME breath as the record. It used to
     # wait until after the descriptor and start time were read, and a
-    # termination landing in that gap left pass 0 with no session
-    # marker at all while pass 1 killed the leader -- so a descendant
+    # termination landing in that gap left the session scan with no
+    # marker at all while the leader signal ran -- so a descendant
     # that had already hardened itself was unreachable. That window
     # needed no FD exhaustion to open (Codex adversarial review,
     # High). Publishing a record whose fd is still None is safe: the
@@ -1329,12 +1331,20 @@ def _carries_our_owner_id(
     an environment was read and did NOT carry the stamp, and None when no
     environment could be read at all.
 
-    None and False are both falsy, so every caller still treats an
-    unreadable process as not-ours -- the distinction exists purely so a
-    CACHE never stores a transient read failure as an authoritative
-    negative. One racing read would otherwise suppress a live child of
-    ours in every later round of a sweep, and the loop would reach two
-    empty scans and exit over it (Codex adversarial review, Medium).
+    The three answers are NOT two-plus-a-caching-detail. False is an
+    authoritative rejection: an environment was read and did not carry the
+    stamp, and nothing may override it. None is UNRESOLVED, and it is the
+    only answer that may go on to reach a separate proof -- _provably_ours
+    and _ProcSnapshot.markers consult session continuity on None and never
+    on False, which is what lets a child whose /proc entry became
+    unreadable still be collected. Neither answer authorizes destructive
+    signalling by itself; that always takes a live re-read behind a pidfd.
+
+    The distinction also keeps a CACHE from storing a transient read
+    failure as an authoritative negative: one racing read would otherwise
+    suppress a live child of ours in every later round of a sweep, and the
+    loop would reach two empty scans and exit over it (Codex adversarial
+    review, Medium).
 
     Checks LSP_BRIDGE_OWNER, minted per process, NOT the inheritable
     LSP_BRIDGE_RUN_ID: a run id shared across a whole harness tree makes
@@ -1793,7 +1803,8 @@ def force_kill_spawned(settle: float = 1.0,
     me0 = me
 
     def signal_recorded_leaders() -> None:
-        """PASS 1 -- the cheap one, and it is NOT deadline-gated.
+        """Signal every RECORDED leader -- the cheap pass, and the one
+        that is deliberately NOT deadline-gated.
         Signalling a recorded leader through its pinned identity is a
         couple of syscalls; there are at most a handful of records, and
         these are the processes we most certainly own. Doing this
@@ -1922,12 +1933,17 @@ def force_kill_spawned(settle: float = 1.0,
     #     otherwise kill the very handle every session proof depends on.
     #
     # If the deadline or the round cap arrives first, the leaders are
-    # signalled unconditionally after the loop, preserving pass 1's
-    # deliberately ungated behavior.
+    # signalled unconditionally between the two phases, preserving that
+    # pass's deliberately ungated behavior.
     owner_cache: dict = {}
     leaders_done = False
     session_empty = 0
-    stamped_empty = 0
+
+    def fire_leaders() -> None:
+        nonlocal leaders_done
+        if not leaders_done:
+            signal_recorded_leaders()
+            leaders_done = True
 
     def stamped_round(snap) -> bool:
         """Signal every OTHER live process carrying this run's stamp:
@@ -2007,22 +2023,44 @@ def force_kill_spawned(settle: float = 1.0,
                         pass
         return bool(targets)
 
+    # TWO fixpoint phases, each taking ONE /proc walk per round.
+    #
+    # They cannot share a fixpoint, and that is the whole ordering
+    # constraint. The session scan is only meaningful BEFORE the recorded
+    # leaders die -- their liveness is what stops the kernel recycling the
+    # session number, so once they are reaped the opaque descendants it
+    # collects can no longer be proven ours (Codex adversarial review,
+    # High, reproduced). The stamped scan is only conclusive AFTER they
+    # die, because a leader can fork an owner-stamped helper on its way
+    # out and no pre-leader snapshot can contain it.
+    #
+    # So: phase A runs the session scan to its own two-empty-round
+    # fixpoint and SHARES each round's snapshot with the stamped scan --
+    # sharing is the point of this section, and a detached owner-stamped
+    # helper must not have to wait for the session fixpoint to be
+    # considered at all. Phase B then runs the stamped fixpoint over
+    # post-leader snapshots only. Phase A's stamped results kill what they
+    # find but never count toward phase B's fixpoint; mixing the two
+    # accounting sets is what let a pre-leader empty scan plus one stale
+    # one reach the two-empty bound and exit over a helper the leader
+    # forked on its way out (Codex adversarial review, High).
+    #
+    # Every exit from phase A -- fixpoint, sessions retired underneath it,
+    # deadline, round cap -- funnels through the same fire_leaders() and
+    # on into phase B, so no path can signal the leaders and then skip the
+    # post-leader scans (Codex adversarial + perf review, High).
     if not _OWNED_SESSIONS:
-        # No recorded session owns a proof handle, so nothing has to hold
-        # the leaders back -- and signalling them BEFORE the first
-        # snapshot is what keeps EVERY stamped scan a post-leader one,
-        # which the separate pass 1 / pass 2 shape used to guarantee for
-        # free (Codex adversarial review, High).
-        signal_recorded_leaders()
-        leaders_done = True
+        fire_leaders()
 
-    for _ in range(20):
+    for _ in range(20):                     # PHASE A -- session fixpoint
+        if leaders_done or not _OWNED_SESSIONS:
+            break
         if deadline is not None and clock.now() >= deadline:
             break                           # checked BEFORE the scan
         snap = _proc_snapshot(deadline=deadline, ours_cache=owner_cache,
                               clock=clock)
 
-        # (a) Opaque descendants sitting in a session one of our recorded
+        # Opaque descendants sitting in a session one of our recorded
         # leaders owns, signalled through EXACT handles.
         #
         # Signalled HERE rather than handed on as a set of proven pids: a
@@ -2032,150 +2070,133 @@ def force_kill_spawned(settle: float = 1.0,
         # signalled through it (Codex adversarial review, High). A pidfd
         # opened while the proof holds IS an identity, so the proof and
         # the signal travel together.
-        if _OWNED_SESSIONS and not leaders_done:
-            hit = 0
-            for pid, _ppid, _pgrp, sid, _ticks in snap.procs:
+        hit = 0
+        for pid, _ppid, _pgrp, sid, _ticks in snap.procs:
+            if deadline is not None and clock.now() >= deadline:
+                break
+            # NEVER the leader itself. For a recorded leader sid ==
+            # pid, so it passes the session check and this scan used
+            # to kill it -- destroying the very handle every LATER row's
+            # ownership proof depends on, after which the reader
+            # reaps it and its remaining descendants survive (Codex
+            # adversarial review, High). The leaders belong to
+            # signal_recorded_leaders(), which fires once THIS scan
+            # has been empty twice.
+            if pid == me0 or pid == sid:
+                continue
+            # ONE proof handle, HELD across the target acquisition and
+            # the final re-check. Proving, closing, opening the target
+            # and proving again is three acquisitions against two
+            # descriptors, so at a full table the last one failed and
+            # the SIGKILL was skipped -- deterministically, without any
+            # concurrency (Codex adversarial review, High).
+            proof = _session_handle(sid)
+            if proof is None:
+                continue
+            # EVERYTHING from here to the close is inside the finally.
+            # The probe-refusal and expired-budget branches below used
+            # to `continue`/`break` BEFORE entering it, leaking one
+            # pidfd per scrubbed-environment candidate per scan -- in
+            # a teardown, which is precisely when descriptors are
+            # scarce enough for the leak to disable the reserve
+            # (Codex adversarial review, High).
+            try:
+                if not _leader_alive(proof):
+                    continue
+                # The environ probe gets first refusal, as everywhere
+                # else: a readable environment that does not carry our
+                # stamp is positive evidence the process is NOT ours,
+                # and the session marker must never override it.
+                if _carries_our_owner_id(pid, deadline=deadline,
+                                         clock=clock) is False:
+                    continue
+                # Re-checked AFTER the probe, for the reason the
+                # stamped scan re-checks: an environ read is not
+                # interruptible, so
+                # the budget can expire inside the one call whose
+                # answer then authorizes the signal (Codex adversarial
+                # review, Medium).
                 if deadline is not None and clock.now() >= deadline:
                     break
-                # NEVER the leader itself. For a recorded leader sid ==
-                # pid, so it passes the session check and pass 0 killed
-                # it -- destroying the very handle every LATER row's
-                # ownership proof depends on, after which the reader
-                # reaps it and its remaining descendants survive (Codex
-                # adversarial review, High). Leaders are pass 1's job,
-                # and pass 1 runs after this loop has emptied out.
-                if pid == me0 or pid == sid:
-                    continue
-                # ONE proof handle, HELD across the target acquisition and
-                # the final re-check. Proving, closing, opening the target
-                # and proving again is three acquisitions against two
-                # descriptors, so at a full table the last one failed and
-                # the SIGKILL was skipped -- deterministically, without any
-                # concurrency (Codex adversarial review, High).
-                proof = _session_handle(sid)
-                if proof is None:
-                    continue
-                # EVERYTHING from here to the close is inside the finally.
-                # The probe-refusal and expired-budget branches below used
-                # to `continue`/`break` BEFORE entering it, leaking one
-                # pidfd per scrubbed-environment candidate per scan -- in
-                # a teardown, which is precisely when descriptors are
-                # scarce enough for the leak to disable the reserve
-                # (Codex adversarial review, High).
+                fd = _pidfd_open(pid)
+                if fd is None:
+                    continue    # no exact handle, no signal
                 try:
-                    if not _leader_alive(proof):
-                        continue
-                    # The environ probe gets first refusal, as everywhere
-                    # else: a readable environment that does not carry our
-                    # stamp is positive evidence the process is NOT ours,
-                    # and the session marker must never override it.
-                    if _carries_our_owner_id(pid, deadline=deadline,
-                                             clock=clock) is False:
-                        continue
-                    # Re-checked AFTER the probe, for the reason pass 2
-                    # re-checks: the environ read is not interruptible, so
-                    # the budget can expire inside the one call whose
-                    # answer then authorizes the signal (Codex adversarial
-                    # review, Medium).
-                    if deadline is not None and clock.now() >= deadline:
-                        break
-                    fd = _pidfd_open(pid)
-                    if fd is None:
-                        continue    # no exact handle, no signal
-                    try:
-                        # Re-prove AFTER the descriptor pins the process,
-                        # so a PID recycled between the walk and the open
-                        # cannot inherit the previous occupant's session --
-                        # through the handle ALREADY held, which needs no
-                        # further descriptor. The session id is re-read
-                        # because the candidate may have left our session
-                        # in between; the leader is re-checked through the
-                        # same proof.
-                        if (_session_of(pid) == sid
-                                and _leader_alive(proof)
-                                and not (deadline is not None
-                                         and clock.now() >= deadline)):
-                            try:
-                                signal.pidfd_send_signal(fd, signal.SIGKILL)
-                                signalled.add(pid)
-                                hit += 1
-                            except (ProcessLookupError, OSError):
-                                pass
-                    finally:
+                    # Re-prove AFTER the descriptor pins the process,
+                    # so a PID recycled between the walk and the open
+                    # cannot inherit the previous occupant's session --
+                    # through the handle ALREADY held, which needs no
+                    # further descriptor. The session id is re-read
+                    # because the candidate may have left our session
+                    # in between; the leader is re-checked through the
+                    # same proof.
+                    if (_session_of(pid) == sid
+                            and _leader_alive(proof)
+                            and not (deadline is not None
+                                     and clock.now() >= deadline)):
                         try:
-                            os.close(fd)
-                        except Exception:
+                            signal.pidfd_send_signal(fd, signal.SIGKILL)
+                            signalled.add(pid)
+                            hit += 1
+                        except (ProcessLookupError, OSError):
                             pass
                 finally:
                     try:
-                        os.close(proof)
+                        os.close(fd)
                     except Exception:
                         pass
-            # To a FIXPOINT, not one shot: a descendant forked after this
-            # snapshot is in no round that saw it, and once the leaders
-            # die its session can no longer be proven. Two consecutive
-            # empty rounds, the same rule the other loops use.
-            if hit == 0:
-                session_empty += 1
-            else:
-                session_empty = 0
-            if session_empty >= 2:
-                # IMMEDIATELY -- before this round's stamped scan, which
-                # can read one environment per task and would leave the
-                # leader alive across all of it.
-                signal_recorded_leaders()
-                leaders_done = True
-                # This round's snapshot predates that signal, so it cannot
-                # show a helper the leader forked on its way out, and an
-                # empty stamped result read from it is not evidence. Drop
-                # the count and restart from a FRESH snapshot: the old
-                # separate stamped pass necessarily began post-leader, and
-                # without this the pre-leader empty scan plus one stale
-                # one reached the two-empty bound and the loop exited over
-                # the helper (Codex adversarial review, High).
-                stamped_empty = 0
-                if deadline is not None and clock.now() >= deadline:
-                    break
-                clock.sleep(0.02)
-                continue
-        elif not leaders_done:
-            # Nothing recorded owns a session, so there is no proof to
-            # preserve and no reason to hold the leaders back.
-            signal_recorded_leaders()
-            leaders_done = True
-
-        if not stamped_round(snap):
-            # TWO consecutive empty scans, not one, because a helper
-            # forked after the listdir is absent from a single scan that
-            # looks clean -- and never counted before the leaders have
-            # fired, or the sweep would finish with recorded children
-            # unsignalled.
-            stamped_empty += 1
-            if leaders_done and stamped_empty >= 2:
-                break
-            clock.sleep(0.02)
-            continue
-        stamped_empty = 0
+            finally:
+                try:
+                    os.close(proof)
+                except Exception:
+                    pass
+        # To a FIXPOINT, not one shot: a descendant forked after this
+        # snapshot is in no round that saw it, and once the leaders die
+        # its session can no longer be proven. Two consecutive empty
+        # rounds, the same rule the stamped phase uses.
+        if hit == 0:
+            session_empty += 1
+        else:
+            session_empty = 0
+        if session_empty >= 2:
+            break                           # the leaders fire below, now
+        # Shares THIS round's snapshot. Whatever it kills is real work --
+        # a detached owner-stamped helper reachable now rather than only
+        # after the session fixpoint -- but an EMPTY result here says
+        # nothing about the post-leader world, so it is not counted.
+        stamped_round(snap)
         if deadline is not None and clock.now() >= deadline:
             break
         clock.sleep(0.02)
-    # The loop can exit on its round cap with the session scan still short
-    # of a fixpoint. The recorded leaders are the processes this sweep is
-    # most certain it owns, and pass 1 has always been deliberately
-    # ungated, so they are signalled either way -- but nothing has yet
-    # scanned a post-leader /proc, which the old separate stamped pass
-    # always did. Give it the two scans the loop would have run, under the
-    # same deadline (Codex adversarial review, High).
-    if not leaders_done:
-        signal_recorded_leaders()
-        leaders_done = True
-        for _ in range(2):
-            if deadline is not None and clock.now() >= deadline:
+
+    # The single place the recorded leaders are signalled. That pass has
+    # always been deliberately ungated: these are a handful of processes
+    # this sweep is most certain it owns, and signalling one through its
+    # pinned identity is a couple of syscalls.
+    fire_leaders()
+
+    stamped_empty = 0
+    for _ in range(20):                     # PHASE B -- stamped fixpoint
+        if deadline is not None and clock.now() >= deadline:
+            break                           # checked BEFORE the scan
+        if stamped_round(_proc_snapshot(deadline=deadline,
+                                        ours_cache=owner_cache,
+                                        clock=clock)):
+            stamped_empty = 0
+        else:
+            # TWO consecutive empty scans, not one, because a helper
+            # forked after the listdir is absent from a single scan that
+            # looks clean.
+            stamped_empty += 1
+            if stamped_empty >= 2:
                 break
-            stamped_round(_proc_snapshot(deadline=deadline,
-                                         ours_cache=owner_cache,
-                                         clock=clock))
-            clock.sleep(0.02)
+        # Re-checked BEFORE the sleep, not only before the scan: the
+        # round's signalling can carry the budget past its end, and
+        # sleeping on top of that spends time the caller was promised
+        # (Codex adversarial review, Medium -- 9l break points).
+        if deadline is not None and clock.now() >= deadline:
+            break
+        clock.sleep(0.02)
     return len(signalled)
 
 

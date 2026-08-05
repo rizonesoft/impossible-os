@@ -7606,10 +7606,12 @@ senv["LSP_BRIDGE_OWNER"] = lsp_client._OWNER_ID
 # Asserted as walks-per-ROUND rather than against the sessionless walk
 # count, because the two workloads do not run the same number of rounds:
 # the session scan must reach its OWN two-empty-round fixpoint before the
-# recorded leaders may be signalled, which legitimately costs one extra
-# round. A magic "+1" tolerance would encode that as a tuning constant, so
-# the invariant is the structural one instead -- every round takes exactly
-# one enumeration, and the loop sleeps once per round except the last.
+# recorded leaders may be signalled, which legitimately costs extra
+# rounds. A magic tolerance would encode that as a tuning constant, so the
+# invariant is the structural one instead -- every round takes exactly one
+# enumeration, and each round sleeps once EXCEPT the one it breaks on.
+# A teardown owning a session runs BOTH fixpoint phases (session, then
+# stamped), so exactly two rounds break without sleeping.
 leader = subprocess.Popen([sys.executable, "-c", STUBBORN], env=senv,
                           start_new_session=True)
 time.sleep(0.3)
@@ -7635,11 +7637,12 @@ except Exception:
 if sessioned < 0:
     fails.append("no owned session was recorded for a setsid child, so the "
                  "session-sharing assertion would be vacuous")
-elif sessioned != len(slept) + 1:
+elif sessioned != len(slept) + 2:
     fails.append(f"a teardown owning a session took {sessioned} /proc "
-                 f"walk(s) across {len(slept) + 1} round(s); the session "
-                 f"scan is taking snapshots of its own instead of sharing "
-                 f"the round's")
+                 f"walk(s) across {len(slept) + 2} round(s); each round "
+                 f"owes exactly one enumeration and each of the two "
+                 f"fixpoint phases breaks on its last round without "
+                 f"sleeping")
 
 # And the loop bound itself: a target that never dies must not hold
 # shutdown open forever. Injected, because a genuinely unkillable
@@ -7681,8 +7684,9 @@ if fails:
         print(f"[9i] FAIL: {f}", file=sys.stderr)
     sys.exit(1)
 print(f"[9i] enumeration OK: {one} /proc walk(s) for 1 record, {many} "
-      f"for 8, {sessioned} for a production record owning a session, and "
-      f"a never-emptying sweep stops at {rounds} rounds")
+      f"for 8, {sessioned} across {len(slept) + 2} round(s) for a "
+      f"production record owning a session, and a never-emptying sweep "
+      f"stops at {rounds} rounds")
 PY
     [ "$rc" = "0" ] && return 0
     [ "$rc" = "77" ] && return 77
