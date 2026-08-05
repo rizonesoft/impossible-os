@@ -69,29 +69,29 @@ The boot-protocol foundations that were previously documented under `TODO-03` ar
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                              | Depends On                         | Status |
+| ⭐  | Order | Deliverable                              | Depends On                         | Status |
 | --- | :---: | ---------------------------------------- | ---------------------------------- | :----: |
-| 💎   |   1   | Canonical boot_info field ownership table | --                                 |  [/]   |
-| 💎   |   2   | Generated ABI manifest and offset fingerprint | §1                                 |  [x]   |
-| 💎   |   3   | Full bootloader/kernel mirror drift checker | §2                                 |  [x]   |
-| 💎   |   4   | Optional payload descriptor array        | §1                                 |  [x]   |
-| 💎   |   5   | Module and initrd handoff contract       | §4                                 |  [x]   |
-| 💎   |   6   | Handoff memory ownership and PMM reservation table | §4                                 |  [x]   |
-| 💎   |   7   | Version negotiation and stale-loader error path | §2, T03 §2                         |  [x]   |
-| 💎   |   8   | Boot protocol documentation and schema changelog | §1, §2, §3, §4, §5, §6, §7         |  [x]   |
-| ⭐   |   9   | ABI fuzz and compatibility tests         | §2, §7                             |  [x]   |
-| ⭐   |  10   | Cross-domain owner audit for every boot_info field | §1, §2, §3, §4, §5, §6, §7, §8, §9 |  [x]   |
-| 💎   |  11   | Capability negotiation and degraded-feature flags | §2, §3, §4                         |  [x]   |
-| 💎   |  12   | Common boot-path provenance and decision record | §1, §4, §7, §11                    |  [x]   |
-| 💎   |  13   | Anti-rollback and security-version binding | §1, §2, §7                         |  [x]   |
-| ⭐   |  14   | Warm-kernel-update handoff ABI           | §1, §2, §4                         |  [x]   |
-| 💎   |  15   | Capability-gated consumer retrofit       | §11                                |  [x]   |
-| 💎   |  16   | Anti-rollback raise timing hardening     | §13                                |  [x]   |
-| ⭐   |  17   | Bootloader pre-jump ABI mismatch screen  | §7                                 |  [x]   |
-| 💎   |  18   | Anti-rollback in version fault diagnostics | §13, §17                           |  [x]   |
-| ⭐   |  19   | Stale-ABI QEMU fixture harness           | §7                                 |  [x]   |
-| 💎   |  20   | Bootloader build identity in handoff     | §1, §2, §17                        |  [x]   |
-| 💎   |  21   | Post-ship follow-up backfill (2026-07-31 cohort) | --                                 |  [ ]   |
+| 💎  |   1   | Canonical boot_info field ownership table | --                                 |  [/]   |
+| 💎  |   2   | Generated ABI manifest and offset fingerprint | §1                                 |  [x]   |
+| 💎  |   3   | Full bootloader/kernel mirror drift checker | §2                                 |  [x]   |
+| 💎  |   4   | Optional payload descriptor array        | §1                                 |  [x]   |
+| 💎  |   5   | Module and initrd handoff contract       | §4                                 |  [x]   |
+| 💎  |   6   | Handoff memory ownership and PMM reservation table | §4                                 |  [x]   |
+| 💎  |   7   | Version negotiation and stale-loader error path | §2, T03 §2                         |  [x]   |
+| 💎  |   8   | Boot protocol documentation and schema changelog | §1, §2, §3, §4, §5, §6, §7         |  [x]   |
+| ⭐  |   9   | ABI fuzz and compatibility tests         | §2, §7                             |  [x]   |
+| ⭐  |  10   | Cross-domain owner audit for every boot_info field | §1, §2, §3, §4, §5, §6, §7, §8, §9 |  [x]   |
+| 💎  |  11   | Capability negotiation and degraded-feature flags | §2, §3, §4                         |  [x]   |
+| 💎  |  12   | Common boot-path provenance and decision record | §1, §4, §7, §11                    |  [x]   |
+| 💎  |  13   | Anti-rollback and security-version binding | §1, §2, §7                         |  [x]   |
+| ⭐  |  14   | Warm-kernel-update handoff ABI           | §1, §2, §4                         |  [x]   |
+| 💎  |  15   | Capability-gated consumer retrofit       | §11                                |  [x]   |
+| 💎  |  16   | Anti-rollback raise timing hardening     | §13                                |  [x]   |
+| ⭐  |  17   | Bootloader pre-jump ABI mismatch screen  | §7                                 |  [x]   |
+| 💎  |  18   | Anti-rollback in version fault diagnostics | §13, §17                           |  [x]   |
+| ⭐  |  19   | Stale-ABI QEMU fixture harness           | §7                                 |  [x]   |
+| 💎  |  20   | Bootloader build identity in handoff     | §1, §2, §17                        |  [x]   |
+| 💎  |  21   | Post-ship follow-up backfill (2026-07-31 cohort) | --                                 |  [ ]   |
 
 ---
 
@@ -741,25 +741,25 @@ From the stamped section 1:
 
 ## OS Comparison
 
-| ⭐   | Feature                         | 🪟 Win11                     | 🐧 Linux                         | 🚀 Impossible OS                          |
-| --- | ------------------------------- | --------------------------- | ------------------------------- | ---------------------------------------- |
-| 💎   | Versioned loader/kernel ABI     | ✅ LPB + extensions          | ✅ boot_params + kernel_info     | ✅ §1-§8 full: contract + manifest + drift detect |
-| 💎   | Typed initrd and module handoff | ✅ ramdisk + boot drivers    | ✅ initrd + initramfs            | ✅ §4 ABI + §5 producer/consumer shipped  |
-| ⭐   | Generated ABI manifest          | ⚠️ internal only            | ⚠️ docs + CI                    | ✅ §2 + §3 manifest + drift detector shipped |
-| ⭐   | Field-level ownership map       | ⚠️ internal ownership       | ⚠️ scattered docs               | ✅ §1 matrix + §10 audit shipped          |
-| 💎   | Capability negotiation          | ✅ loader extensions         | ✅ version + flags               | ✅ §11 required/present/degraded + validator |
-| 💎   | Boot provenance decision record | ✅ boot status + resume      | ⚠️ cmdline + logs               | ✅ §12 path/reason + validator + Registry |
-| ⭐   | Friendly stale-loader mismatch  | ✅ recovery codes            | ⚠️ log-driven failures          | ✅ §7 classifier + §17 pre-jump UCS-2 + NVRAM |
-| 💎   | Anti-rollback security version  | ✅ OsLoaderSecurityVersion   | ⚠️ shim SBAT revocation only    | ✅ §13 NVRAM counter + pre-jump refuse    |
-| ⭐   | Warm-kernel-update handoff ABI  | ⚠️ Hot Patch (closed)       | ✅ 6.16 Kexec Handover           | ⚠️ §14 ABI shipped; runtime owned by TODO-11 |
-| 💎   | Handoff memory ownership table  | ⚠️ MDL chains + LoaderBlock | ⚠️ memblock + NOMAP regions     | ✅ §6 single table + overlap check + JSON dump |
-| ⭐   | Authoritative capability gates  | ⚠️ advisory to drivers      | ⚠️ advisory to drivers          | ✅ §15 consumer retrofit to caps_present shipped |
-| ⭐   | Compositor-steady rollback gate | ❌                           | ❌                               | ✅ §16 withholds raise until first frame  |
-| ⭐   | Pre-jump ABI mismatch UI screen | ⚠️ BSOD after kernel load   | ⚠️ kernel panic text            | ✅ §17 UEFI console + ImpossibleBootProtoFault |
-| ⭐   | Rollback vs ABI drift split UX  | ❌                           | ❌                               | ✅ §18 hint helper + halt-preserve screen |
-| ⭐   | End-to-end stale-ABI CI gate    | ⚠️ manual HCK regression    | ⚠️ kunit / kselftests partial   | ✅ §19 KVM+TCG harness wired to CI        |
-| ⭐   | TPM-bound kernel ABI manifest   | ⚠️ Measured Boot generic    | ⚠️ shim+SBAT only (no manifest) | ⬜ §11 cap bit + TODO-13 §9 PCR extend    |
-| 💎   | Bootloader build identity       | ⚠️ HAL-internal             | ⚠️ kernel CONFIG only           | ✅ §20 git-sha + build-time in boot_info  |
+| ⭐  | Feature                         | 🪟 Win11                   | 🐧 Linux                       | 🚀 Impossible OS                         |
+| --- | ------------------------------- | -------------------------- | ------------------------------ | ---------------------------------------- |
+| 💎  | Versioned loader/kernel ABI     | ✅ LPB + extensions        | ✅ boot_params + kernel_info   | ✅ §1-§8 full: contract + manifest + drift detect |
+| 💎  | Typed initrd and module handoff | ✅ ramdisk + boot drivers  | ✅ initrd + initramfs          | ✅ §4 ABI + §5 producer/consumer shipped |
+| ⭐  | Generated ABI manifest          | ⚠️ internal only            | ⚠️ docs + CI                    | ✅ §2 + §3 manifest + drift detector shipped |
+| ⭐  | Field-level ownership map       | ⚠️ internal ownership       | ⚠️ scattered docs               | ✅ §1 matrix + §10 audit shipped         |
+| 💎  | Capability negotiation          | ✅ loader extensions       | ✅ version + flags             | ✅ §11 required/present/degraded + validator |
+| 💎  | Boot provenance decision record | ✅ boot status + resume    | ⚠️ cmdline + logs               | ✅ §12 path/reason + validator + Registry |
+| ⭐  | Friendly stale-loader mismatch  | ✅ recovery codes          | ⚠️ log-driven failures          | ✅ §7 classifier + §17 pre-jump UCS-2 + NVRAM |
+| 💎  | Anti-rollback security version  | ✅ OsLoaderSecurityVersion | ⚠️ shim SBAT revocation only    | ✅ §13 NVRAM counter + pre-jump refuse   |
+| ⭐  | Warm-kernel-update handoff ABI  | ⚠️ Hot Patch (closed)       | ✅ 6.16 Kexec Handover         | ⚠️ §14 ABI shipped; runtime owned by TODO-11 |
+| 💎  | Handoff memory ownership table  | ⚠️ MDL chains + LoaderBlock | ⚠️ memblock + NOMAP regions     | ✅ §6 single table + overlap check + JSON dump |
+| ⭐  | Authoritative capability gates  | ⚠️ advisory to drivers      | ⚠️ advisory to drivers          | ✅ §15 consumer retrofit to caps_present shipped |
+| ⭐  | Compositor-steady rollback gate | ❌                         | ❌                             | ✅ §16 withholds raise until first frame |
+| ⭐  | Pre-jump ABI mismatch UI screen | ⚠️ BSOD after kernel load   | ⚠️ kernel panic text            | ✅ §17 UEFI console + ImpossibleBootProtoFault |
+| ⭐  | Rollback vs ABI drift split UX  | ❌                         | ❌                             | ✅ §18 hint helper + halt-preserve screen |
+| ⭐  | End-to-end stale-ABI CI gate    | ⚠️ manual HCK regression    | ⚠️ kunit / kselftests partial   | ✅ §19 KVM+TCG harness wired to CI       |
+| ⭐  | TPM-bound kernel ABI manifest   | ⚠️ Measured Boot generic    | ⚠️ shim+SBAT only (no manifest) | ⬜ §11 cap bit + TODO-13 §9 PCR extend   |
+| 💎  | Bootloader build identity       | ⚠️ HAL-internal             | ⚠️ kernel CONFIG only           | ✅ §20 git-sha + build-time in boot_info |
 
 > Parity covers the contract itself (§1-§8), mirror drift detection (§2-§3), typed payload handoff (§4-§5), centralized PMM reservation (§6), structured version negotiation with friendly fatal + BlackBox transcript (§7), and the canonical protocol reference + schema changelog (§8). Explicit capability negotiation (§11), a shared boot decision record (§12), anti-rollback security-version binding (§13), and capability-gated consumer retrofit (§15) collectively make this handoff easier to debug and safer to evolve than either Windows' mostly internal loader state or Linux's split between versioned structs and scattered provenance channels. §14 warm-kernel-update handoff ABI positions Impossible OS for cloud/server parity with Linux 6.16's Kexec Handover surface at the ABI layer; the runtime live-update machinery is tracked as [warm-kernel-update runtime (03-memory-concurrency/TODO-11)](../03-memory-concurrency/TODO-11-warm-kernel-update-runtime.md). §16 + §18 together split the rollback UX from structural ABI drift (no Windows or Linux equivalent): a boot that dies before its first frame cannot strand the machine on a broken image, and a rollback refusal produces operator-actionable "boot a newer kernel" guidance distinct from "rebuild both halves". §17 pre-jump `.bootproto` screen + §19 stale-ABI KVM+TCG CI harness close the regression-gate loop end-to-end (Win11 has manual HCK tests; Linux has kunit/kselftests partial -- neither ships an automated stale-image fail-closed gate).
 

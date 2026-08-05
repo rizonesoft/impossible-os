@@ -28,13 +28,13 @@ title: "TODO-02 -- Compositor Optimization"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                              | Depends On | Status |
+| ⭐  | Order | Deliverable                              | Depends On | Status |
 | --- | :---: | ---------------------------------------- | ---------- | :----: |
-| 💎   |   1   | Dirty rect tracking infrastructure       | --         |  [ ]   |
-| 💎   |   2   | Partial wallpaper restore                | §1         |  [ ]   |
-| 💎   |   3   | Per-window damage and compositor loop    | §1, §2     |  [ ]   |
-| ⭐   |   4   | Frame timing and VSync                   | §3         |  [ ]   |
-| 💎   |   5   | Terminal render clipping (boot bleed fix) | §3         |  [ ]   |
+| 💎  |   1   | Dirty rect tracking infrastructure       | --         |  [ ]   |
+| 💎  |   2   | Partial wallpaper restore                | §1         |  [ ]   |
+| 💎  |   3   | Per-window damage and compositor loop    | §1, §2     |  [ ]   |
+| ⭐  |   4   | Frame timing and VSync                   | §3         |  [ ]   |
+| 💎  |   5   | Terminal render clipping (boot bleed fix) | §3         |  [ ]   |
 
 ---
 
@@ -113,8 +113,8 @@ Prevent terminal text from rendering outside its window bounds during compositor
 
 ## OS Comparison
 
-| ⭐   | Feature            | 🪟 Win11     | 🐧 Linux (Wayland) | 🚀 Impossible OS     |
-| --- | ------------------ | ----------- | ----------------- | ------------------- |
-| 💎   | Dirty rect compose | ✅ DWM       | ✅ Compositor      | ⬜ §1-§3             |
-| ⭐   | VSync              | ✅ D3D       | ✅ DRM             | ⬜ §4 Bochs VGA      |
-| ⭐   | <16ms frames       | ✅ GPU accel | ✅ GPU accel       | ⬜ §3 CPU compositor |
+| ⭐  | Feature            | 🪟 Win11     | 🐧 Linux (Wayland) | 🚀 Impossible OS     |
+| --- | ------------------ | ------------ | ------------------ | -------------------- |
+| 💎  | Dirty rect compose | ✅ DWM       | ✅ Compositor      | ⬜ §1-§3             |
+| ⭐  | VSync              | ✅ D3D       | ✅ DRM             | ⬜ §4 Bochs VGA      |
+| ⭐  | <16ms frames       | ✅ GPU accel | ✅ GPU accel       | ⬜ §3 CPU compositor |

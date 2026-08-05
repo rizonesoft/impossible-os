@@ -37,18 +37,18 @@ title: "TODO-12 -- I2C/SMBus Bus & Precision Touchpad"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                              | Depends On                               | Status |
+| ⭐  | Order | Deliverable                              | Depends On                               | Status |
 | --- | :---: | ---------------------------------------- | ---------------------------------------- | :----: |
-| 💎   |   1   | §1 I2C/SMBus host controller driver      | PCI scan (existing), ACPI base           |  [ ]   |
-| 💎   |   2   | §2 Synaptics PS/2 touchpad fallback      | §1 independent -- PS/2 path; `mouse.c` baseline |  [ ]   |
-| 💎   |   3   | §3 ACPI I2C device enumeration -- `i2c_device_db[]` | §1, ACPICA (TODO-03 §1)                  |  [ ]   |
-| 💎   |   4   | §4 HID-over-I2C transport -- descriptor fetch, `hoi2c_reset`, report read | §1, §5 (ACPI address + IRQ known)        |  [ ]   |
-| 💎   |   5   | §5 HID report descriptor parser -- `hid_field[]`, usage codes | §6 (transport delivers raw descriptor bytes) |  [ ]   |
-| 💎   |   6   | §6 Microsoft Precision Touchpad (PTP) multi-touch | §8 (fields parsed), §6 (reports arriving) |  [ ]   |
-| 💎   |   7   | §7 ELAN and Goodix I2C touchpad quirks   | §5 (ACPI HID strings), §1 (I2C bus)      |  [ ]   |
-| ⭐   |   8   | §8 PTP gesture engine -- scroll, pinch, swipe, tap, palm rejection | §7 (contact data flowing)                |  [ ]   |
-| 💎   |   9   | §9 Touchpad control panel (`mouse.cpl` Touchpad tab) | §2 (gestures configurable), Registry     |  [ ]   |
-| 💎   |  10   | §10 `xinput list` / `touchpad-info` shell command | §7 (PTP active), §3 (Synaptics active)   |  [ ]   |
+| 💎  |   1   | §1 I2C/SMBus host controller driver      | PCI scan (existing), ACPI base           |  [ ]   |
+| 💎  |   2   | §2 Synaptics PS/2 touchpad fallback      | §1 independent -- PS/2 path; `mouse.c` baseline |  [ ]   |
+| 💎  |   3   | §3 ACPI I2C device enumeration -- `i2c_device_db[]` | §1, ACPICA (TODO-03 §1)                  |  [ ]   |
+| 💎  |   4   | §4 HID-over-I2C transport -- descriptor fetch, `hoi2c_reset`, report read | §1, §5 (ACPI address + IRQ known)        |  [ ]   |
+| 💎  |   5   | §5 HID report descriptor parser -- `hid_field[]`, usage codes | §6 (transport delivers raw descriptor bytes) |  [ ]   |
+| 💎  |   6   | §6 Microsoft Precision Touchpad (PTP) multi-touch | §8 (fields parsed), §6 (reports arriving) |  [ ]   |
+| 💎  |   7   | §7 ELAN and Goodix I2C touchpad quirks   | §5 (ACPI HID strings), §1 (I2C bus)      |  [ ]   |
+| ⭐  |   8   | §8 PTP gesture engine -- scroll, pinch, swipe, tap, palm rejection | §7 (contact data flowing)                |  [ ]   |
+| 💎  |   9   | §9 Touchpad control panel (`mouse.cpl` Touchpad tab) | §2 (gestures configurable), Registry     |  [ ]   |
+| 💎  |  10   | §10 `xinput list` / `touchpad-info` shell command | §7 (PTP active), §3 (Synaptics active)   |  [ ]   |
 
 > §8 gesture engine is `⭐` exclusive: Windows PTP gestures run in `HIDCLASS.sys` + `precision touchpad.dll` (closed, user-mode); Linux `libinput` runs entirely in user space. Impossible OS implements the gesture engine in the kernel driver where it can fire `WM_GESTURE_*` messages directly into the compositor without a user-space daemon round-trip -- lower latency, no race between gesture recognition and window focus change.
 
@@ -229,19 +229,19 @@ Print connected input devices and detailed touchpad diagnostics from the shell. 
 ## OS Comparison
 
 
-| ⭐   | Feature                               | 🪟 Win11                                  | 🐧 Linux                                  | 🚀 Impossible OS                          |
+| ⭐  | Feature                               | 🪟 Win11                                 | 🐧 Linux                                 | 🚀 Impossible OS                         |
 | --- | ------------------------------------- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
-| 💎   | I2C/SMBus host controller driver      | ✅ `smbus.sys`; inbox ACPI-enumerated SMBus | ✅ `i2c-i801.c`; `i2c-piix4.c` (AMD); ACPI `_CRS` | ⬜ §1 -- PCI + ACPI `PNP0C50`, `bus_controller_t`, |
-| 💎   | ACPI I2C device enumeration from DSDT | ✅ ACPI PnP manager; `I2CSerialBusV2` resource | ✅ `i2c-acpi.c`; `acpi_i2c_register_devices()` | ⬜ §3 -- ACPICA walk, `I2CSerialBusV2` CRS parse, |
-| 💎   | HID-over-I2C transport                | ✅ `hidi2c.sys`; HID descriptor fetch; GPIO | ✅ `i2c-hid.c`; `_DSM` wHIDDescRegister; GPIO IRQ | ⬜ §4 -- HID descriptor read, `hoi2c_reset`, GPIO |
-| 💎   | HID report descriptor parser          | ✅ `HIDCLASS.sys`; full HID 1.11 parser;  | ✅ `hid-core.c`; full HID parser; `hid_field` | ⬜ §5 -- `hid_field_t[]`, `hid_get_field_value`, Digitizer + Desktop |
-| 💎   | Microsoft Precision Touchpad          | ✅ PTP inbox driver; all 10               | ✅ `libinput` PTP; `MT_TOOL_FINGER`; `ABS_MT_POSITION_X/Y` | ⬜ §6 -- `touch_contact_t[10]`, contact_id, tip, x/y, confidence, |
-| ⭐   | PTP gesture engine in kernel          | ⚠️ `precision touchpad.dll` in user space; | ❌ `libinput` entirely in user space;     | ⬜ §8 -- kernel gesture engine → `WM_GESTURE_*` |
-| 💎   | Synaptics PS/2 fallback               | ✅ `SynTP.sys` Synaptics driver; absolute mode, | ✅ `psmouse`; Synaptics protocol; `evdev` absolute | ⬜ §2 -- 6-byte absolute, EMA delta filter, |
-| 💎   | ELAN I2C touchpad quirks              | ✅ `ETD2003.sys` / `ETDTouchScreen.sys` inbox Elantech | ✅ `elan_i2c.c`; `elan_i2c_initialize()`; wake-up command | ⬜ §7 -- ACPI HID prefix `"ELAN"`, `{0x00, |
-| 💎   | Goodix I2C touchpad                   | ✅ Goodix inbox via generic HoI2C         | ✅ `goodix.c`; direct I2C registers; config | ⬜ §7 -- `0x8140` product ID, config checksum |
-| 💎   | Touchpad settings GUI                 | ✅ Settings → Bluetooth & Devices         | ✅ GNOME Settings → Mouse &               | ⬜ §9 -- `mouse.cpl` Touchpad tab, live contact |
-| 💎   | `xinput list` / `touchpad-info` CLI   | ❌ No inbox `xinput`; PowerShell `Get-PnpDevice` | ✅ `xinput`; `libinput debug-events`; standard diagnostic | ⬜ §10 -- `xinput list/list-props`, `touchpad-info --contacts` live |
+| 💎  | I2C/SMBus host controller driver      | ✅ `smbus.sys`; inbox ACPI-enumerated SMBus | ✅ `i2c-i801.c`; `i2c-piix4.c` (AMD); ACPI `_CRS` | ⬜ §1 -- PCI + ACPI `PNP0C50`, `bus_controller_t`, |
+| 💎  | ACPI I2C device enumeration from DSDT | ✅ ACPI PnP manager; `I2CSerialBusV2` resource | ✅ `i2c-acpi.c`; `acpi_i2c_register_devices()` | ⬜ §3 -- ACPICA walk, `I2CSerialBusV2` CRS parse, |
+| 💎  | HID-over-I2C transport                | ✅ `hidi2c.sys`; HID descriptor fetch; GPIO | ✅ `i2c-hid.c`; `_DSM` wHIDDescRegister; GPIO IRQ | ⬜ §4 -- HID descriptor read, `hoi2c_reset`, GPIO |
+| 💎  | HID report descriptor parser          | ✅ `HIDCLASS.sys`; full HID 1.11 parser; | ✅ `hid-core.c`; full HID parser; `hid_field` | ⬜ §5 -- `hid_field_t[]`, `hid_get_field_value`, Digitizer + Desktop |
+| 💎  | Microsoft Precision Touchpad          | ✅ PTP inbox driver; all 10              | ✅ `libinput` PTP; `MT_TOOL_FINGER`; `ABS_MT_POSITION_X/Y` | ⬜ §6 -- `touch_contact_t[10]`, contact_id, tip, x/y, confidence, |
+| ⭐  | PTP gesture engine in kernel          | ⚠️ `precision touchpad.dll` in user space; | ❌ `libinput` entirely in user space;    | ⬜ §8 -- kernel gesture engine → `WM_GESTURE_*` |
+| 💎  | Synaptics PS/2 fallback               | ✅ `SynTP.sys` Synaptics driver; absolute mode, | ✅ `psmouse`; Synaptics protocol; `evdev` absolute | ⬜ §2 -- 6-byte absolute, EMA delta filter, |
+| 💎  | ELAN I2C touchpad quirks              | ✅ `ETD2003.sys` / `ETDTouchScreen.sys` inbox Elantech | ✅ `elan_i2c.c`; `elan_i2c_initialize()`; wake-up command | ⬜ §7 -- ACPI HID prefix `"ELAN"`, `{0x00, |
+| 💎  | Goodix I2C touchpad                   | ✅ Goodix inbox via generic HoI2C        | ✅ `goodix.c`; direct I2C registers; config | ⬜ §7 -- `0x8140` product ID, config checksum |
+| 💎  | Touchpad settings GUI                 | ✅ Settings → Bluetooth & Devices        | ✅ GNOME Settings → Mouse &              | ⬜ §9 -- `mouse.cpl` Touchpad tab, live contact |
+| 💎  | `xinput list` / `touchpad-info` CLI   | ❌ No inbox `xinput`; PowerShell `Get-PnpDevice` | ✅ `xinput`; `libinput debug-events`; standard diagnostic | ⬜ §10 -- `xinput list/list-props`, `touchpad-info --contacts` live |
 
 > **After §1–10:** Impossible OS supports the full modern laptop touchpad stack -- I2C bus enumeration from ACPI DSDT, HID-over-I2C, PTP 10-touch, and a gesture engine that is architecturally superior to both Windows and Linux. The kernel-resident gesture engine (§8, `⭐`) fires `WM_GESTURE_*` messages directly into the compositor message queue without a user-space daemon round-trip -- eliminating the latency introduced by `precision touchpad.dll` (Windows) and `libinput` (Linux) when a gesture needs to change window focus or trigger a system-level action.
 

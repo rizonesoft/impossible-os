@@ -232,18 +232,18 @@ CRUD wrapper over the IXFS snapshot API. CLI: `snapshot create|list|restore|dele
 ## OS Comparison
 
 
-| ⭐   | Feature                                  | 🪟 Win11                                  | 🐧 Linux                                  | 🚀 Impossible OS                          |
+| ⭐  | Feature                                  | 🪟 Win11                                 | 🐧 Linux                                 | 🚀 Impossible OS                         |
 | --- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
-| 💎   | GPT partition write                      | ✅ `diskpart.exe`; kernel-level GPT write via | ✅ `fdisk`/`gdisk`/`parted`; GPT write via kernel | ⬜ §1 -- `gpt_partition_create/delete/resize` + atomic backup-first write |
-| 💎   | MBR partition write -- CHS saturation, active flag | ✅ `diskpart.exe`; `IOCTL_DISK_SET_DRIVE_LAYOUT_EX` | ✅ `fdisk`; direct MBR sector write       | ⬜ §2 -- saturated CHS for large disks    |
-| 💎   | `diskpart` interactive CLI               | ✅ `diskpart.exe`; full-featured; Win11-identical command set | ✅ `fdisk`, `parted`, `mkfs.*` (separate tools, | ⬜ §3 -- unified interactive sub-shell matching Win11 |
-| 💎   | `chkdsk` per-filesystem validation + repair + boot-schedule | ✅ `chkdsk.exe`; per-FS (NTFS, FAT32, exFAT); | ✅ `fsck` (separate per-FS tools); no     | ⬜ §4 -- unified dispatcher; GUI with boot-schedule |
-| 💎   | `defrag` + fragmentation analysis + TRIM + schedule | ✅ `defrag.exe` / Optimize Drives GUI;    | ✅ `e4defrag`, `btrfs fi defragment`; no  | ⬜ §5 -- journal-safe relocation; SCHED_IDLE thread; animated |
-| 💎   | `sfc` System File Checker                | ✅ `sfc /scannow`; WFP manifest embedded  | ✅ `debsums` / `rpm -V` (package-manager-level, | ⬜ §6 -- build-time CRC manifest; in-kernel verify |
-| ⭐   | In-kernel deleted file recovery          | ❌ No built-in recovery; requires third-party | ❌ No built-in recovery; `testdisk`/`photorec` are | ⬜ §7 -- IXFS inode table scan +          |
-| 💎   | Disk Management GUI                      | ✅ `diskmgmt.msc`; proportional partition bar; right-click | ✅ `gnome-disks`, `gparted`; SMART via `smartmontools` | ⬜ §8 -- two-panel; color-coded proportional bar; in-kernel |
-| ⭐   | `diskuse` squarified treemap             | ❌ No built-in treemap; `WinDirStat` /    | ❌ `du` CLI only; `baobab` is             | ⬜ §9 -- first-class in-kernel recursive walker; squarified |
-| ⭐   | Snapshot manager GUI                     | ✅ VSS Shadow Copies GUI (Previous        | ✅ Btrfs snapshots via `snapper`; no      | ⬜ §10 -- IXFS-native; timeline GUI; file-level diff |
+| 💎  | GPT partition write                      | ✅ `diskpart.exe`; kernel-level GPT write via | ✅ `fdisk`/`gdisk`/`parted`; GPT write via kernel | ⬜ §1 -- `gpt_partition_create/delete/resize` + atomic backup-first write |
+| 💎  | MBR partition write -- CHS saturation, active flag | ✅ `diskpart.exe`; `IOCTL_DISK_SET_DRIVE_LAYOUT_EX` | ✅ `fdisk`; direct MBR sector write      | ⬜ §2 -- saturated CHS for large disks   |
+| 💎  | `diskpart` interactive CLI               | ✅ `diskpart.exe`; full-featured; Win11-identical command set | ✅ `fdisk`, `parted`, `mkfs.*` (separate tools, | ⬜ §3 -- unified interactive sub-shell matching Win11 |
+| 💎  | `chkdsk` per-filesystem validation + repair + boot-schedule | ✅ `chkdsk.exe`; per-FS (NTFS, FAT32, exFAT); | ✅ `fsck` (separate per-FS tools); no    | ⬜ §4 -- unified dispatcher; GUI with boot-schedule |
+| 💎  | `defrag` + fragmentation analysis + TRIM + schedule | ✅ `defrag.exe` / Optimize Drives GUI;   | ✅ `e4defrag`, `btrfs fi defragment`; no | ⬜ §5 -- journal-safe relocation; SCHED_IDLE thread; animated |
+| 💎  | `sfc` System File Checker                | ✅ `sfc /scannow`; WFP manifest embedded | ✅ `debsums` / `rpm -V` (package-manager-level, | ⬜ §6 -- build-time CRC manifest; in-kernel verify |
+| ⭐  | In-kernel deleted file recovery          | ❌ No built-in recovery; requires third-party | ❌ No built-in recovery; `testdisk`/`photorec` are | ⬜ §7 -- IXFS inode table scan +         |
+| 💎  | Disk Management GUI                      | ✅ `diskmgmt.msc`; proportional partition bar; right-click | ✅ `gnome-disks`, `gparted`; SMART via `smartmontools` | ⬜ §8 -- two-panel; color-coded proportional bar; in-kernel |
+| ⭐  | `diskuse` squarified treemap             | ❌ No built-in treemap; `WinDirStat` /   | ❌ `du` CLI only; `baobab` is            | ⬜ §9 -- first-class in-kernel recursive walker; squarified |
+| ⭐  | Snapshot manager GUI                     | ✅ VSS Shadow Copies GUI (Previous       | ✅ Btrfs snapshots via `snapper`; no     | ⬜ §10 -- IXFS-native; timeline GUI; file-level diff |
 
 > **After §1–§10:** Impossible OS delivers a storage management suite that exceeds Windows 11 in three areas: (1) built-in deleted file recovery without third-party tools (§7); (2) a first-class in-kernel disk usage treemap GUI (§9); (3) a snapshot manager with file-level diff visibility integrated directly into the FS layer (§10). The `diskpart`/`chkdsk`/`defrag`/`sfc` commands achieve full parity with Windows 11 equivalents in a unified native implementation.
 

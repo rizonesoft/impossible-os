@@ -51,24 +51,24 @@ title: "TODO-19 -- USB Boot Hardening & Fail-Safe Pipeline"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                              | Depends On | Status |
+| ⭐  | Order | Deliverable                              | Depends On | Status |
 | --- | :---: | ---------------------------------------- | ---------- | :----: |
-| 💎   |   1   | SCSI REQUEST SENSE and error classification | --         |  [/]   |
-| 💎   |   2   | TEST UNIT READY poll loop after BOT init | §1         |  [x]   |
-| 💎   |   3   | MSC BOT retry on transient errors        | §1, §2, §4 |  [x]   |
-| 💎   |   4   | USB transport error recovery (stall/halt) | §1         |  [x]   |
-| 💎   |   5   | Bulk transfer timeouts                   | §4         |  [/]   |
-| 💎   |   6   | Remove sleep_ms(2000) hack               | §2-§5, §7  |  [/]   |
-| 💎   |   7   | XUSB2PR port-ready polling (Intel EHCI→xHCI) | §4         |  [/]   |
-| 💎   |   8   | klog_disk_flush bounded loop             | --         |  [/]   |
-| 💎   |   9   | klog deferred flush mode (batch to RAM)  | §8         |  [x]   |
-| 💎   |  10   | Boot media speed detection               | §8         |  [/]   |
-| 💎   |  11   | EHCI/UHCI companion controller fallback  | --         |  [/]   |
-| ⭐   |  12   | USB boot diagnostic report               | §1-§11     |  [x]   |
-| 💎   |  13   | Single-pass per-subsystem log routing    | §8         |  [x]   |
-| 💎   |  14   | IXFS boot tests: slow-media-aware        | §10        |  [x]   |
-| ⭐   |  15   | Flush progress on splash diagnostic line | §9         |  [/]   |
-| 💎   |  16   | xHCI command ring + BOT transport SMP serialization | §4         |  [/]   |
+| 💎  |   1   | SCSI REQUEST SENSE and error classification | --         |  [/]   |
+| 💎  |   2   | TEST UNIT READY poll loop after BOT init | §1         |  [x]   |
+| 💎  |   3   | MSC BOT retry on transient errors        | §1, §2, §4 |  [x]   |
+| 💎  |   4   | USB transport error recovery (stall/halt) | §1         |  [x]   |
+| 💎  |   5   | Bulk transfer timeouts                   | §4         |  [/]   |
+| 💎  |   6   | Remove sleep_ms(2000) hack               | §2-§5, §7  |  [/]   |
+| 💎  |   7   | XUSB2PR port-ready polling (Intel EHCI→xHCI) | §4         |  [/]   |
+| 💎  |   8   | klog_disk_flush bounded loop             | --         |  [/]   |
+| 💎  |   9   | klog deferred flush mode (batch to RAM)  | §8         |  [x]   |
+| 💎  |  10   | Boot media speed detection               | §8         |  [/]   |
+| 💎  |  11   | EHCI/UHCI companion controller fallback  | --         |  [/]   |
+| ⭐  |  12   | USB boot diagnostic report               | §1-§11     |  [x]   |
+| 💎  |  13   | Single-pass per-subsystem log routing    | §8         |  [x]   |
+| 💎  |  14   | IXFS boot tests: slow-media-aware        | §10        |  [x]   |
+| ⭐  |  15   | Flush progress on splash diagnostic line | §9         |  [/]   |
+| 💎  |  16   | xHCI command ring + BOT transport SMP serialization | §4         |  [/]   |
 
 > 💎 = parity -- Windows usbstor.sys and Linux usb-storage both handle SCSI retry, stall recovery, transfer timeouts, and EHCI fallback.
 > ⭐ = exclusive -- comprehensive USB boot diagnostic report and splash flush progress.
@@ -531,23 +531,23 @@ The xHCI command ring (`xhci_cmd_submit` / `xhci_wait_command`) and the MSC BOT 
 
 ## OS Comparison
 
-| ⭐   | Feature                       | 🪟 Win11                              | 🐧 Linux                     | 🚀 Impossible OS                   |
-| --- | ----------------------------- | ------------------------------------ | --------------------------- | --------------------------------- |
-| 💎   | SCSI error retry              | ✅ usbstor.sys retries                | ✅ usb-storage retries       | ✅ §1-§3 sense retry + residue     |
-| 💎   | Device readiness poll         | ✅ usbstor TUR wait                   | ✅ sd spin-up poll           | ✅ §2 TUR poll, 2s budget          |
-| 💎   | USB stall/halt recovery       | ✅ usbstor.sys auto-reset             | ✅ usb-storage ep reset      | ✅ §4 reset EP + BOT reset         |
-| 💎   | Bulk transfer timeouts        | ✅ USBD_DEFAULT_PIPE_TRANSFER_TIMEOUT | ✅ usb_submit_urb timeout    | ✅ §5 5s bound + Stop EP           |
-| 💎   | No sleep hacks                | ✅ Event-driven readiness             | ✅ SCSI start-stop           | ✅ No global xhci_init sleep       |
-| 💎   | Intel EHCI->xHCI port routing | ✅ USB stack routes ports             | ✅ xhci-pci Intel quirk      | ✅ §7 EHCI-gate + bounded settle   |
-| 💎   | EHCI/UHCI fallback            | ✅ Full USB stack                     | ✅ ehci-hcd + uhci-hcd       | 🔶 §11 detect + skip; HCD T10      |
-| 💎   | Multi-controller USB routing  | ✅ per-HCD device objects             | ✅ per-hcd usb_device        | ✅ §11 global dev idx + owner      |
-| 💎   | Bounded disk flush            | ✅ Async I/O                          | ✅ Writeback cache           | ✅ §8 seq-cursor + progress        |
-| 💎   | Deferred flush (slow media)   | ✅ Lazy writeback                     | ✅ dirty_writeback_centisecs | ✅ §9 RAM batch + boot-end flush   |
-| 💎   | Media speed detection         | ✅ Performance tier                   | ✅ readahead tuning          | ✅ §10 4KiB-probe classify         |
-| ⭐   | USB boot diagnostic report    | ❌ Hidden in Event Log                | ❌ dmesg only                | ✅ §12 consolidated report 🚀       |
-| 💎   | Single-pass log routing       | ✅ ETW channel                        | ✅ /dev/kmsg                 | ✅ §13 1 ring scan, no drops       |
-| 💎   | Media-aware boot tests        | ✅ WinPE adapts                       | ✅ initramfs skips           | ✅ §14 USB skips write-heavy       |
-| ⭐   | Flush progress display        | ❌ Not shown                          | ❌ Not shown                 | 🔶 §15 cb shipped; render deferred |
+| ⭐  | Feature                       | 🪟 Win11                              | 🐧 Linux                     | 🚀 Impossible OS                   |
+| --- | ----------------------------- | ------------------------------------- | ---------------------------- | ---------------------------------- |
+| 💎  | SCSI error retry              | ✅ usbstor.sys retries                | ✅ usb-storage retries       | ✅ §1-§3 sense retry + residue     |
+| 💎  | Device readiness poll         | ✅ usbstor TUR wait                   | ✅ sd spin-up poll           | ✅ §2 TUR poll, 2s budget          |
+| 💎  | USB stall/halt recovery       | ✅ usbstor.sys auto-reset             | ✅ usb-storage ep reset      | ✅ §4 reset EP + BOT reset         |
+| 💎  | Bulk transfer timeouts        | ✅ USBD_DEFAULT_PIPE_TRANSFER_TIMEOUT | ✅ usb_submit_urb timeout    | ✅ §5 5s bound + Stop EP           |
+| 💎  | No sleep hacks                | ✅ Event-driven readiness             | ✅ SCSI start-stop           | ✅ No global xhci_init sleep       |
+| 💎  | Intel EHCI->xHCI port routing | ✅ USB stack routes ports             | ✅ xhci-pci Intel quirk      | ✅ §7 EHCI-gate + bounded settle   |
+| 💎  | EHCI/UHCI fallback            | ✅ Full USB stack                     | ✅ ehci-hcd + uhci-hcd       | 🔶 §11 detect + skip; HCD T10      |
+| 💎  | Multi-controller USB routing  | ✅ per-HCD device objects             | ✅ per-hcd usb_device        | ✅ §11 global dev idx + owner      |
+| 💎  | Bounded disk flush            | ✅ Async I/O                          | ✅ Writeback cache           | ✅ §8 seq-cursor + progress        |
+| 💎  | Deferred flush (slow media)   | ✅ Lazy writeback                     | ✅ dirty_writeback_centisecs | ✅ §9 RAM batch + boot-end flush   |
+| 💎  | Media speed detection         | ✅ Performance tier                   | ✅ readahead tuning          | ✅ §10 4KiB-probe classify         |
+| ⭐  | USB boot diagnostic report    | ❌ Hidden in Event Log                | ❌ dmesg only                | ✅ §12 consolidated report 🚀      |
+| 💎  | Single-pass log routing       | ✅ ETW channel                        | ✅ /dev/kmsg                 | ✅ §13 1 ring scan, no drops       |
+| 💎  | Media-aware boot tests        | ✅ WinPE adapts                       | ✅ initramfs skips           | ✅ §14 USB skips write-heavy       |
+| ⭐  | Flush progress display        | ❌ Not shown                          | ❌ Not shown                 | 🔶 §15 cb shipped; render deferred |
 
 After §1-§10 plus §11's detection + graceful skip, USB boot is as reliable as Windows and Linux on xHCI hardware -- transport-level stall recovery and bounded timeouts prevent hangs on flaky hardware, and it degrades cleanly (no hang) on legacy controllers. Active EHCI/UHCI boot storage lands with the TODO-10 §1/§10 usb_core HCD. §12-§15 add diagnostic and I/O optimizations for slow media.
 

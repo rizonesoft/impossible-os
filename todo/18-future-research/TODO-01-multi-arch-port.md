@@ -62,14 +62,14 @@ the toolchain and UEFI boot path work.
 ## Implementation Order
 
 | Step | Section                                  | 💎/⭐ | Dependency                               |
-| ---- | ---------------------------------------- | --- | ---------------------------------------- |
-| 1    | x86-64 gap analysis (audit + LOC delta estimate) | ⭐   | All arch-specific source files above     |
-| 2    | Build system multi-arch (`ARCH=arm64/riscv64`) | ⭐   | §1 file inventory; `scripts/build.sh`; `linker.ld` |
-| 3    | AArch64 boot path (minimal UART kernel prototype) | ⭐   | §2 build system; `clang-19 --target=aarch64-elf` |
-| 4    | RISC-V gap analysis                      | ⭐   | §1 methodology; §3 ARM64 prototype for comparison |
-| 5    | ABI considerations (AAPCS64 vs Win64 MSABI) | ⭐   | §3 prototype; Win32 ABI docs             |
-| 6    | AArch64 port plan (`src/arch/arm64/` layer design) | ⭐   | §1 §2 §3 §5                              |
-| 7    | Research deliverables (`multi-arch-port-plan.md`) | ⭐   | §1–§6 complete                           |
+| ---- | ---------------------------------------- | ----- | ---------------------------------------- |
+| 1    | x86-64 gap analysis (audit + LOC delta estimate) | ⭐    | All arch-specific source files above     |
+| 2    | Build system multi-arch (`ARCH=arm64/riscv64`) | ⭐    | §1 file inventory; `scripts/build.sh`; `linker.ld` |
+| 3    | AArch64 boot path (minimal UART kernel prototype) | ⭐    | §2 build system; `clang-19 --target=aarch64-elf` |
+| 4    | RISC-V gap analysis                      | ⭐    | §1 methodology; §3 ARM64 prototype for comparison |
+| 5    | ABI considerations (AAPCS64 vs Win64 MSABI) | ⭐    | §3 prototype; Win32 ABI docs             |
+| 6    | AArch64 port plan (`src/arch/arm64/` layer design) | ⭐    | §1 §2 §3 §5                              |
+| 7    | Research deliverables (`multi-arch-port-plan.md`) | ⭐    | §1–§6 complete                           |
 
 ---
 
@@ -315,14 +315,14 @@ the toolchain and UEFI boot path work.
 ## OS Comparison
 
 
-| ⭐   | Feature                               | 🪟 Win11                              | 🐧 Linux                                  | 🚀 Impossible OS                          |
-| --- | ------------------------------------- | ------------------------------------ | ---------------------------------------- | ---------------------------------------- |
-| 💎   | ARM64 (AArch64) port                  | ✅ Windows 11 ARM runs natively       | ✅ Linux ARM64 is tier-1; ships           | ⬜ §3 -- §6; research spike first; ARM64  |
-| 💎   | RISC-V port                           | ✅ Windows on RISC-V: announced but   | ✅ Linux RISC-V is tier-2; mainline       | ⬜ §4 -- RV64GC second port; shared arch  |
-| ⭐   | Formal arch gap analysis document     | ❌ Not public                         | ✅ Linux `Documentation/arch/` per-arch docs | ⬜ §7 -- `x86-arch-inventory.md` + `multi-arch-port-plan.md` |
-| ⭐   | Multi-arch CI compile gate from day 1 | ❌ N/A (Windows is commercial)        | ✅ Linux CI builds on arm64,              | ⬜ §2 -- `multi-arch-build.yml`; compile-only initially, boot test |
-| 💎   | Arch abstraction layer                | ✅ Windows HAL; arch-specific drivers | ✅ `arch/` directory per ISA in           | ⬜ §6 -- `src/arch/x86_64/` + `src/arch/arm64/` + `src/arch/riscv64/` |
-| 💎   | PSCI / SBI SMP bringup                | ✅ Windows ARM64 uses PSCI            | ✅ Linux uses PSCI + SBI                  | ⬜ §6 -- PSCI `CPU_ON` replacing INIT-SIPI-SIPI; SBI |
+| ⭐  | Feature                               | 🪟 Win11                              | 🐧 Linux                                 | 🚀 Impossible OS                         |
+| --- | ------------------------------------- | ------------------------------------- | ---------------------------------------- | ---------------------------------------- |
+| 💎  | ARM64 (AArch64) port                  | ✅ Windows 11 ARM runs natively       | ✅ Linux ARM64 is tier-1; ships          | ⬜ §3 -- §6; research spike first; ARM64 |
+| 💎  | RISC-V port                           | ✅ Windows on RISC-V: announced but   | ✅ Linux RISC-V is tier-2; mainline      | ⬜ §4 -- RV64GC second port; shared arch |
+| ⭐  | Formal arch gap analysis document     | ❌ Not public                         | ✅ Linux `Documentation/arch/` per-arch docs | ⬜ §7 -- `x86-arch-inventory.md` + `multi-arch-port-plan.md` |
+| ⭐  | Multi-arch CI compile gate from day 1 | ❌ N/A (Windows is commercial)        | ✅ Linux CI builds on arm64,             | ⬜ §2 -- `multi-arch-build.yml`; compile-only initially, boot test |
+| 💎  | Arch abstraction layer                | ✅ Windows HAL; arch-specific drivers | ✅ `arch/` directory per ISA in          | ⬜ §6 -- `src/arch/x86_64/` + `src/arch/arm64/` + `src/arch/riscv64/` |
+| 💎  | PSCI / SBI SMP bringup                | ✅ Windows ARM64 uses PSCI            | ✅ Linux uses PSCI + SBI                 | ⬜ §6 -- PSCI `CPU_ON` replacing INIT-SIPI-SIPI; SBI |
 
 Impossible OS's `⭐` advantage: the arch abstraction layer design starts from a greenfield
 clean state -- all the x86 hardware cruft (i8259 PIC, PIT, real-mode trampoline) is

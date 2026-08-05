@@ -55,23 +55,23 @@ title: "TODO-05 -- Desktop & UI Test Framework"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                              | Depends On | Status |
+| ⭐  | Order | Deliverable                              | Depends On | Status |
 | --- | :---: | ---------------------------------------- | ---------- | :----: |
-| 💎   |   1   | Framebuffer snapshot API (kernel-side capture) | --         |  [x]   |
-| 💎   |   2   | QEMU framebuffer dump (screendump via monitor) | --         |  [x]   |
-| 💎   |   3   | Desktop smoke test (non-black screen after boot) | §1, §2     |  [x]   |
-| 💎   |   4   | Input event injection (key press, mouse click) | --         |  [x]   |
-| 💎   |   5   | Terminal output verification             | §4         |  [x]   |
-| ⭐   |   6   | Reference screenshot comparison          | §2         |  [x]   |
-| ⭐   |   7   | Visual regression CI pipeline            | §3, §6     |  [x]   |
-| ⭐   |   8   | Window manager state verification        | §4         |  [x]   |
-| ⭐   |   9   | Perceptual diff + structured screenshot needles | §6         |  [x]   |
-| 💎   |  10   | Frame timing + drop oracle (`wm_get_frame_stats`) | --         |  [x]   |
-| 💎   |  11   | Input record + replay (Unicode, IME)     | §4, §12    |  [x]   |
-| ⭐   |  12   | Headless compositor + frame-lock stepping | §1         |  [x]   |
-| 💎   |  13   | Multi-monitor + DPI test matrix          | §1         |  [/]   |
-| ⭐   |  14   | WCAG sweep over automation tree          | D08 T07 §6 |  [/]   |
-| 💎   |  15   | Test isolation + crash artifact capture  | §1, §10    |  [x]   |
+| 💎  |   1   | Framebuffer snapshot API (kernel-side capture) | --         |  [x]   |
+| 💎  |   2   | QEMU framebuffer dump (screendump via monitor) | --         |  [x]   |
+| 💎  |   3   | Desktop smoke test (non-black screen after boot) | §1, §2     |  [x]   |
+| 💎  |   4   | Input event injection (key press, mouse click) | --         |  [x]   |
+| 💎  |   5   | Terminal output verification             | §4         |  [x]   |
+| ⭐  |   6   | Reference screenshot comparison          | §2         |  [x]   |
+| ⭐  |   7   | Visual regression CI pipeline            | §3, §6     |  [x]   |
+| ⭐  |   8   | Window manager state verification        | §4         |  [x]   |
+| ⭐  |   9   | Perceptual diff + structured screenshot needles | §6         |  [x]   |
+| 💎  |  10   | Frame timing + drop oracle (`wm_get_frame_stats`) | --         |  [x]   |
+| 💎  |  11   | Input record + replay (Unicode, IME)     | §4, §12    |  [x]   |
+| ⭐  |  12   | Headless compositor + frame-lock stepping | §1         |  [x]   |
+| 💎  |  13   | Multi-monitor + DPI test matrix          | §1         |  [/]   |
+| ⭐  |  14   | WCAG sweep over automation tree          | D08 T07 §6 |  [/]   |
+| 💎  |  15   | Test isolation + crash artifact capture  | §1, §10    |  [x]   |
 
 > 💎 = parity -- Windows has the Windows App Certification Kit (WACK), UI Automation, DwmGetCompositionTimingInfo, SendInput; Linux has dogtail, LDTP, openQA, libinput record/replay, AT-SPI2.
 > ⭐ = exclusive -- pixel-level visual regression in CI for an OS-level compositor; perceptual diff; headless-with-virtual-clock compositor; WCAG gating in CI; Unicode/IME-correct record/replay.
@@ -537,20 +537,20 @@ Per-test fresh-desktop isolation and automatic artifact bundles on failure, so a
 
 ## OS Comparison
 
-| ⭐   | Feature                         | 🪟 Win11                       | 🐧 Linux                       | 🚀 Impossible OS                    |
-| --- | ------------------------------- | ----------------------------- | ----------------------------- | ---------------------------------- |
-| 💎   | UI automation framework         | ✅ UI Automation + WACK        | ⚠️ dogtail/LDTP               | ✅ §4 inject + §5 readback          |
-| 💎   | Automated boot UI test          | ✅ Internal CI                 | ⚠️ openQA (SUSE)              | ✅ D§3 smoke + GHA wired            |
-| ⭐   | Pixel-level visual CI           | ❌ Not in public CI            | ❌ Not standard                | ✅ §6 diff + §7 matrix              |
-| ⭐   | WM state introspection          | ⚠️ spy++ (manual)             | ⚠️ xdotool                    | ✅ §8 + Alt+F4 deferred close       |
-| 💎   | Frame timing + drop counters    | ✅ DwmGetCompositionTimingInfo | ⚠️ presentation-time protocol | ✅ §10 seqlock + ETW emit           |
-| 💎   | Structured screenshot needles   | ⚠️ ad hoc per team            | ✅ openQA needles              | ✅ §9 needles + OCR                 |
-| ⭐   | Perceptual diff (SSIM/SSIMv2)   | ❌ pixel or binary only        | ❌ pixel only                  | ✅ §9 SSIM + SSIMULACRA2            |
-| 💎   | Input record + replay           | ⚠️ PSR deprecated in 24H2     | ✅ libinput record/replay      | ✅ §11 JSONL + IME UTF-8            |
-| ⭐   | Headless compositor + vclock    | ❌ DWM display-coupled         | ⚠️ wlroots headless only      | ✅ §12 step_frames + seed           |
-| 💎   | Multi-monitor + DPI test matrix | ⚠️ manual                     | ✅ GNOME virtual monitors      | ⚠️ §13 partial (virtio-gpu prereq) |
-| ⭐   | WCAG sweep gated in CI          | ⚠️ A11y Insights external     | ⚠️ Orca partial               | ⚠️ §14 scaffold (provider prereq)  |
-| ⭐   | Crash artifact auto-capture     | ⚠️ ad hoc per team            | ⚠️ ad hoc per team            | ✅ §15 reset + CI artifact          |
+| ⭐  | Feature                         | 🪟 Win11                       | 🐧 Linux                     | 🚀 Impossible OS                  |
+| --- | ------------------------------- | ------------------------------ | ---------------------------- | --------------------------------- |
+| 💎  | UI automation framework         | ✅ UI Automation + WACK        | ⚠️ dogtail/LDTP               | ✅ §4 inject + §5 readback        |
+| 💎  | Automated boot UI test          | ✅ Internal CI                 | ⚠️ openQA (SUSE)              | ✅ D§3 smoke + GHA wired          |
+| ⭐  | Pixel-level visual CI           | ❌ Not in public CI            | ❌ Not standard              | ✅ §6 diff + §7 matrix            |
+| ⭐  | WM state introspection          | ⚠️ spy++ (manual)               | ⚠️ xdotool                    | ✅ §8 + Alt+F4 deferred close     |
+| 💎  | Frame timing + drop counters    | ✅ DwmGetCompositionTimingInfo | ⚠️ presentation-time protocol | ✅ §10 seqlock + ETW emit         |
+| 💎  | Structured screenshot needles   | ⚠️ ad hoc per team              | ✅ openQA needles            | ✅ §9 needles + OCR               |
+| ⭐  | Perceptual diff (SSIM/SSIMv2)   | ❌ pixel or binary only        | ❌ pixel only                | ✅ §9 SSIM + SSIMULACRA2          |
+| 💎  | Input record + replay           | ⚠️ PSR deprecated in 24H2       | ✅ libinput record/replay    | ✅ §11 JSONL + IME UTF-8          |
+| ⭐  | Headless compositor + vclock    | ❌ DWM display-coupled         | ⚠️ wlroots headless only      | ✅ §12 step_frames + seed         |
+| 💎  | Multi-monitor + DPI test matrix | ⚠️ manual                       | ✅ GNOME virtual monitors    | ⚠️ §13 partial (virtio-gpu prereq) |
+| ⭐  | WCAG sweep gated in CI          | ⚠️ A11y Insights external       | ⚠️ Orca partial               | ⚠️ §14 scaffold (provider prereq)  |
+| ⭐  | Crash artifact auto-capture     | ⚠️ ad hoc per team              | ⚠️ ad hoc per team            | ✅ §15 reset + CI artifact        |
 
 Sections 1 through 12 + §15 have shipped. Sections 1 through 5 give basic automated desktop testing (kernel-side fb snapshot, host-side QEMU screendump, smoke test, input injection, terminal-buffer readback). Sections 6 through 9 add visual + perceptual regression: pixel-percent comparator with sibling-needle auto-discovery (§6), GHA workflow + matrix runner (§7), kernel-side WM introspection + Alt+F4 deferred close (§8), and SSIM / SSIMULACRA2 + openQA-style needles with OCR (§9). Section 10 ships the DwmGetCompositionTimingInfo-equivalent frame-timing oracle (counters + ETW). Section 11 ships the Unicode- and IME-correct record/replay JSONL surface that beats both libinput and PSR. Section 12 ships the headless compositor + frame-lock stepping that no shipping OS offers in-tree. Section 15 ships per-test isolation (`test_desktop_reset()` auto-fired by the runner) + the GHA artifact-upload step. Section 13 is partial (`[/]`): the test-framework API surface + matrix runner shape land today; the actual multi-monitor scanout is owned by [`../09-desktop-shell/TODO-14 §5`](../09-desktop-shell/TODO-14-desktop-test-late-phase-harness.md) (virtio-gpu multi-output driver). Section 14 (WCAG sweep) remains partial pending the `D08 T07 §6` automation tree provider. All cross-section loose ends previously parked in §15 now live in [`../09-desktop-shell/TODO-14`](../09-desktop-shell/TODO-14-desktop-test-late-phase-harness.md) (late-phase harness, capture bundle, fb/terminal sync, virtio-gpu driver, Ob pseudo-file, QEMU monitor hardening, shared-session regression refactor).
 

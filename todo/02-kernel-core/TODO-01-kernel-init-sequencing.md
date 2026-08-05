@@ -53,21 +53,21 @@ title: "TODO-01 -- Kernel Init Sequencing"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                              | Depends On | Status |
+| ⭐  | Order | Deliverable                              | Depends On | Status |
 | --- | :---: | ---------------------------------------- | ---------- | :----: |
-| 💎   |   1   | Boot init infrastructure                 | --         |  [x]   |
-| 💎   |   2   | Phase 0 -- critical init                 | §1         |  [x]   |
-| 💎   |   3   | Phase 1 -- platform services             | §2         |  [/]   |
-| 💎   |   4   | Phase 2 -- system services               | §3         |  [/]   |
-| 💎   |   5   | Phase 3 -- user platform                 | §4         |  [x]   |
-| 💎   |   6   | Dependency gates                         | §1--§5     |  [/]   |
-| 💎   |   7   | Failure policy                           | §6         |  [/]   |
-| 💎   |   8   | Code cleanup                             | §2--§5     |  [/]   |
-| ⭐   |   9   | Degraded-boot recovery screen            | §7         |  [/]   |
-| ⭐   |  10   | POST code + UEFI variable log            | §1         |  [x]   |
-| 💎   |  11   | Deferred init for non-critical subsystems | §5         |  [/]   |
-| ⭐   |  12   | Boot performance regression detection    | §10        |  [/]   |
-| ⭐   |  13   | Async subsystem init (SMP parallel)      | §6, §11    |  [/]   |
+| 💎  |   1   | Boot init infrastructure                 | --         |  [x]   |
+| 💎  |   2   | Phase 0 -- critical init                 | §1         |  [x]   |
+| 💎  |   3   | Phase 1 -- platform services             | §2         |  [/]   |
+| 💎  |   4   | Phase 2 -- system services               | §3         |  [/]   |
+| 💎  |   5   | Phase 3 -- user platform                 | §4         |  [x]   |
+| 💎  |   6   | Dependency gates                         | §1--§5     |  [/]   |
+| 💎  |   7   | Failure policy                           | §6         |  [/]   |
+| 💎  |   8   | Code cleanup                             | §2--§5     |  [/]   |
+| ⭐  |   9   | Degraded-boot recovery screen            | §7         |  [/]   |
+| ⭐  |  10   | POST code + UEFI variable log            | §1         |  [x]   |
+| 💎  |  11   | Deferred init for non-critical subsystems | §5         |  [/]   |
+| ⭐  |  12   | Boot performance regression detection    | §10        |  [/]   |
+| ⭐  |  13   | Async subsystem init (SMP parallel)      | §6, §11    |  [/]   |
 
 > 💎 = parity -- Windows NT and Linux both have formal init phase models; Impossible OS must match them.
 > ⭐ = exclusive -- degraded-boot recovery UI, UEFI NVRAM POST log, boot perf regression detection, and SMP parallel init.
@@ -560,23 +560,23 @@ The default `async_init=0` path (sequential, shipped + tested) is unaffected; al
 
 ## OS Comparison
 
-| ⭐   | Feature              | 🪟 Win11             | 🐧 Linux              | 🚀 Impossible OS         |
-| --- | -------------------- | ------------------- | -------------------- | ----------------------- |
-| 💎   | Formal phase model   | ✅ Phase 0/1         | ✅ initcall levels    | ✅ §2--§5 4 phases       |
-| 💎   | Interrupts-off phase | ✅ Phase 0           | ✅ early start_kernel | ✅ §2 boot_phase0        |
-| 💎   | Dependency ordering  | ✅ Boot load groups  | ✅ initcall deps      | ✅ §6 gates done         |
-| 💎   | Typed init results   | ✅ NTSTATUS          | ✅ initcall_t         | ⚠️ §1 boot_result_t     |
-| 💎   | Halt on critical     | ✅ Bugcheck          | ✅ panic()            | ✅ §7 boot_halt          |
-| 💎   | Degraded boot        | ✅ Safe mode         | ✅ Emergency shell    | ✅ §7 BOOT_DEGRADED      |
-| 💎   | Boot serial log      | ✅ DebugPrint/ETW    | ✅ early_printk       | ✅ §2 [PHASE0] markers   |
-| 💎   | Boot config gating   | ✅ Registry          | ✅ cmdline            | ✅ §2 boot.conf          |
-| 💎   | Tests separated      | ✅ Separate env      | ✅ initcall_debug     | ✅ §5 debug/test gate    |
-| ⭐   | Recovery UI at boot  | ❌ Separate WinRE    | ❌ Text-only shell    | ✅ §9 graphical recovery |
-| ⭐   | POST to UEFI NVRAM   | ❌ Firmware-only     | ❌ Not implemented    | ✅ §10 ImpossiblePOST    |
-| ⭐   | Readiness oracle API | ⚠️ Private internal | ⚠️ system_state only | ✅ §1 public API         |
-| 💎   | Deferred init        | ✅ Delayed services  | ✅ deferred_initcall  | ✅ §11 boot_defer()      |
-| ⭐   | Boot perf regression | ❌ Manual ETW        | ❌ Manual bootchart   | ✅ §12 auto NVRAM diff   |
-| ⭐   | Parallel kernel init | ⚠️ DLL load only    | ⚠️ async_schedule    | ✅ §13 IPI async group   |
+| ⭐  | Feature              | 🪟 Win11            | 🐧 Linux              | 🚀 Impossible OS         |
+| --- | -------------------- | ------------------- | --------------------- | ------------------------ |
+| 💎  | Formal phase model   | ✅ Phase 0/1        | ✅ initcall levels    | ✅ §2--§5 4 phases       |
+| 💎  | Interrupts-off phase | ✅ Phase 0          | ✅ early start_kernel | ✅ §2 boot_phase0        |
+| 💎  | Dependency ordering  | ✅ Boot load groups | ✅ initcall deps      | ✅ §6 gates done         |
+| 💎  | Typed init results   | ✅ NTSTATUS         | ✅ initcall_t         | ⚠️ §1 boot_result_t       |
+| 💎  | Halt on critical     | ✅ Bugcheck         | ✅ panic()            | ✅ §7 boot_halt          |
+| 💎  | Degraded boot        | ✅ Safe mode        | ✅ Emergency shell    | ✅ §7 BOOT_DEGRADED      |
+| 💎  | Boot serial log      | ✅ DebugPrint/ETW   | ✅ early_printk       | ✅ §2 [PHASE0] markers   |
+| 💎  | Boot config gating   | ✅ Registry         | ✅ cmdline            | ✅ §2 boot.conf          |
+| 💎  | Tests separated      | ✅ Separate env     | ✅ initcall_debug     | ✅ §5 debug/test gate    |
+| ⭐  | Recovery UI at boot  | ❌ Separate WinRE   | ❌ Text-only shell    | ✅ §9 graphical recovery |
+| ⭐  | POST to UEFI NVRAM   | ❌ Firmware-only    | ❌ Not implemented    | ✅ §10 ImpossiblePOST    |
+| ⭐  | Readiness oracle API | ⚠️ Private internal  | ⚠️ system_state only   | ✅ §1 public API         |
+| 💎  | Deferred init        | ✅ Delayed services | ✅ deferred_initcall  | ✅ §11 boot_defer()      |
+| ⭐  | Boot perf regression | ❌ Manual ETW       | ❌ Manual bootchart   | ✅ §12 auto NVRAM diff   |
+| ⭐  | Parallel kernel init | ⚠️ DLL load only     | ⚠️ async_schedule      | ✅ §13 IPI async group   |
 
 > After parity items, Impossible OS matches Windows NT and Linux on phased init.
 > Exclusive: graphical recovery UI, UEFI NVRAM POST codes, public readiness oracle, auto boot perf regression, SMP parallel init.

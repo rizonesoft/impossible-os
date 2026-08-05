@@ -65,15 +65,15 @@ call stacks with symbol names. `scripts/release-sdk.sh` publishes a GitHub Relea
 ## Implementation Order
 
 | Step | Section                                  | 💎/⭐ | Dependency                               |
-| ---- | ---------------------------------------- | --- | ---------------------------------------- |
-| 1    | SDK packaging (`make sdk`, ZIP, SHA-256) | 💎   | `D10T08 §15`; `D10T09 §10`; miniz ZIP writer |
-| 2    | SDK documentation (`gendoc.c`, Markdown API ref) | ⭐   | §1 headers in place; `D10T09 §11` basic docs |
-| 3    | Code samples (7 projects)                | 💎   | §1 SDK installed; TCC compiles samples   |
-| 4    | Sampling profiler (`profile` command)    | ⭐   | PIT interrupt; `struct task` RIP access; symbol resolution |
-| 5    | Unit test framework (`itest.h`)          | ⭐   | §1 headers; `TODO-01 §8` host-side test pattern |
-| 6    | Debugger enhancements (call stack, disasm) | 💎   | `D10T12 §3` base debugger; ELF/PE symbol tables |
-| 7    | IxUI starter templates (`ixui-new`)      | ⭐   | §1 SDK; TCC (`D10T09 §5`); §4 samples as template basis |
-| 8    | SDK release pipeline (`release-sdk.sh`)  | ⭐   | §1 zip + SHA-256; GitHub CLI; Registry SDK version |
+| ---- | ---------------------------------------- | ----- | ---------------------------------------- |
+| 1    | SDK packaging (`make sdk`, ZIP, SHA-256) | 💎    | `D10T08 §15`; `D10T09 §10`; miniz ZIP writer |
+| 2    | SDK documentation (`gendoc.c`, Markdown API ref) | ⭐    | §1 headers in place; `D10T09 §11` basic docs |
+| 3    | Code samples (7 projects)                | 💎    | §1 SDK installed; TCC compiles samples   |
+| 4    | Sampling profiler (`profile` command)    | ⭐    | PIT interrupt; `struct task` RIP access; symbol resolution |
+| 5    | Unit test framework (`itest.h`)          | ⭐    | §1 headers; `TODO-01 §8` host-side test pattern |
+| 6    | Debugger enhancements (call stack, disasm) | 💎    | `D10T12 §3` base debugger; ELF/PE symbol tables |
+| 7    | IxUI starter templates (`ixui-new`)      | ⭐    | §1 SDK; TCC (`D10T09 §5`); §4 samples as template basis |
+| 8    | SDK release pipeline (`release-sdk.sh`)  | ⭐    | §1 zip + SHA-256; GitHub CLI; Registry SDK version |
 
 ---
 

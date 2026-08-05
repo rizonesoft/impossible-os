@@ -48,16 +48,16 @@ title: "TODO-21 -- A/B Dual-Slot Boot & Automatic Rollback"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                              | Depends On | Status |
+| ⭐  | Order | Deliverable                              | Depends On | Status |
 | --- | :---: | ---------------------------------------- | ---------- | :----: |
-| 💎   |   1   | Boot metadata structure (GPT/disk wire ABI) | --         |  [/]   |
-| 💎   |   2   | Dual-slot disk layout in build system    | §1         |  [/]   |
-| 💎   |   3   | Bootloader slot selection logic          | §1, §2     |  [/]   |
-| 💎   |   4   | Boot failure counting and rollback       | §3         |  [/]   |
-| 💎   |   5   | Kernel `mark_boot_successful()` syscall  | §4         |  [/]   |
-| ⭐   |   6   | Slot status in boot diagnostics          | §1-§5      |  [x]   |
-| 💎   |   7   | Boot metadata integrity + atomic writes  | §1         |  [x]   |
-| 💎   |   8   | Per-slot anti-rollback version floor     | §1, §7     |  [/]   |
+| 💎  |   1   | Boot metadata structure (GPT/disk wire ABI) | --         |  [/]   |
+| 💎  |   2   | Dual-slot disk layout in build system    | §1         |  [/]   |
+| 💎  |   3   | Bootloader slot selection logic          | §1, §2     |  [/]   |
+| 💎  |   4   | Boot failure counting and rollback       | §3         |  [/]   |
+| 💎  |   5   | Kernel `mark_boot_successful()` syscall  | §4         |  [/]   |
+| ⭐  |   6   | Slot status in boot diagnostics          | §1-§5      |  [x]   |
+| 💎  |   7   | Boot metadata integrity + atomic writes  | §1         |  [x]   |
+| 💎  |   8   | Per-slot anti-rollback version floor     | §1, §7     |  [/]   |
 
 > 💎 = parity -- Android/Chrome OS A/B and systemd-boot auto-assessment both provide this.
 > ⭐ = exclusive -- slot status integrated into VPD boot diagnostics.
@@ -327,15 +327,15 @@ Prevent a security update from being rolled back to an older, vulnerable slot. F
 
 ## OS Comparison
 
-| ⭐   | Feature                  | 🪟 Win11                   | 🐧 Linux                 | 🚀 Impossible OS            |
-| --- | ------------------------ | ------------------------- | ----------------------- | -------------------------- |
-| 💎   | Dual-slot boot           | ⚠️ Automatic Repair only  | ⚠️ systemd-boot assess  | 🟦 §1-§3 select+mount       |
-| 💎   | Boot failure counting    | ✅ 2-attempt detection     | ✅ systemd tries counter | 🟦 §4 pre-EBS tries++       |
-| 💎   | Automatic rollback       | ⚠️ Manual repair needed   | ⚠️ Manual or auto       | 🟦 §3+§4+§5 round-trip      |
-| 💎   | Mark boot successful     | ✅ Implicit (desktop OK)   | ✅ systemd boot-complete | 🟦 §5 first-frame mark-good |
-| 💎   | Metadata integrity (CRC) | ⚠️ BCD, no A/B redundancy | ✅ Android CRC-32 dual   | ✅ CRC-32 dual-copy atomic  |
-| 💎   | Anti-rollback floor      | ⚠️ WU rollback window     | ✅ Android stored index  | 🟦 §8 design-lock (TPM-NV)  |
-| ⭐   | Slot status in boot UI   | ❌ Hidden                  | ❌ journalctl only       | ✅ VPD per-slot + rollback  |
+| ⭐  | Feature                  | 🪟 Win11                 | 🐧 Linux                 | 🚀 Impossible OS            |
+| --- | ------------------------ | ------------------------ | ------------------------ | --------------------------- |
+| 💎  | Dual-slot boot           | ⚠️ Automatic Repair only  | ⚠️ systemd-boot assess    | 🟦 §1-§3 select+mount       |
+| 💎  | Boot failure counting    | ✅ 2-attempt detection   | ✅ systemd tries counter | 🟦 §4 pre-EBS tries++       |
+| 💎  | Automatic rollback       | ⚠️ Manual repair needed   | ⚠️ Manual or auto         | 🟦 §3+§4+§5 round-trip      |
+| 💎  | Mark boot successful     | ✅ Implicit (desktop OK) | ✅ systemd boot-complete | 🟦 §5 first-frame mark-good |
+| 💎  | Metadata integrity (CRC) | ⚠️ BCD, no A/B redundancy | ✅ Android CRC-32 dual   | ✅ CRC-32 dual-copy atomic  |
+| 💎  | Anti-rollback floor      | ⚠️ WU rollback window     | ✅ Android stored index  | 🟦 §8 design-lock (TPM-NV)  |
+| ⭐  | Slot status in boot UI   | ❌ Hidden                | ❌ journalctl only       | ✅ VPD per-slot + rollback  |
 
 After §1-§5, Impossible OS has stronger rollback than Windows (which requires manual Automatic Repair) and matches Chrome OS/Android A/B. §6 makes slot status visible during boot.
 

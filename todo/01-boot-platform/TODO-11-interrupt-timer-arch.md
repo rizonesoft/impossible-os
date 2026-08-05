@@ -55,18 +55,18 @@ title: "TODO-11 -- Interrupt Architecture & Unified Timer Subsystem"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                         | Depends On         | Status |
+| ⭐  | Order | Deliverable                         | Depends On         | Status |
 | --- | :---: | ----------------------------------- | ------------------ | :----: |
-| 💎   |   1   | ACPI MADT parsing                   | --                 |  [x]   |
-| 💎   |   2   | LAPIC / IOAPIC init before PIT      | §1                 |  [x]   |
-| 💎   |   3   | Conditional PIC disable             | §1, §2             |  [x]   |
-| 💎   |   4   | Full IDT coverage                   | §2, §3             |  [x]   |
-| 💎   |   5   | Dynamic IRQ registration API        | §2, §4             |  [x]   |
-| 💎   |   6   | Unified timer subsystem (UTS)       | §5, TODO-09 §4     |  [x]   |
-| 💎   |   7   | LAPIC timer calibration             | §6                 |  [/]   |
-| 💎   |   8   | Migrate boot splash spinner off PIT | §6, §7             |  [x]   |
-| ⭐   |   9   | Boot time visualization             | §7, TODO-14 §3, §6 |  [x]   |
-| 💎   |  10   | Remove Hyper-V debug workarounds    | §1--§7             |  [x]   |
+| 💎  |   1   | ACPI MADT parsing                   | --                 |  [x]   |
+| 💎  |   2   | LAPIC / IOAPIC init before PIT      | §1                 |  [x]   |
+| 💎  |   3   | Conditional PIC disable             | §1, §2             |  [x]   |
+| 💎  |   4   | Full IDT coverage                   | §2, §3             |  [x]   |
+| 💎  |   5   | Dynamic IRQ registration API        | §2, §4             |  [x]   |
+| 💎  |   6   | Unified timer subsystem (UTS)       | §5, TODO-09 §4     |  [x]   |
+| 💎  |   7   | LAPIC timer calibration             | §6                 |  [/]   |
+| 💎  |   8   | Migrate boot splash spinner off PIT | §6, §7             |  [x]   |
+| ⭐  |   9   | Boot time visualization             | §7, TODO-14 §3, §6 |  [x]   |
+| 💎  |  10   | Remove Hyper-V debug workarounds    | §1--§7             |  [x]   |
 
 > 💎 = parity -- Windows NT HAL and Linux interrupt subsystem both follow this init order and have equivalent abstractions.
 > ⭐ = exclusive -- on-disk JSON boot timeline (`boot-timeline.json`) for quick diff/review is not matched by either competitor's default tooling.
@@ -394,19 +394,19 @@ Clean up all `#ifdef HYPERV_WORKAROUND` blocks now that correct ACPI/LAPIC/IOAPI
 
 ## OS Comparison
 
-| ⭐   | Feature                      | 🪟 Win11                 | 🐧 Linux                 | 🚀 Impossible OS                  |
-| --- | ---------------------------- | ----------------------- | ----------------------- | -------------------------------- |
-| 💎   | MADT-driven topology         | ✅ HAL MADT first        | ✅ acpi MADT first       | ✅ §1 done                        |
-| 💎   | LAPIC/IOAPIC before PIT      | ✅ HAL APIC first        | ✅ APIC before IRQ       | ✅ §2 done                        |
-| 💎   | Conditional PIC disable      | ✅ PCAT gated            | ✅ mask 8259A            | ✅ §3 done                        |
-| 💎   | Full IDT coverage            | ✅ KiUnexpectedInterrupt | ✅ spurious path         | ✅ §4 IDT full                    |
-| 💎   | Dynamic IRQ registration     | ✅ IoConnectInterrupt    | ✅ request_irq           | ✅ §5 GSI + affinity              |
-| 💎   | Shared line IRQs (INTx)      | ✅ line-based sharing    | ✅ IRQF_SHARED           | ✅ §5 claim chains + storm guard  |
-| 💎   | Unified timer HAL            | ✅ QPC picks source      | ✅ clocksource framework | ✅ §6 mono_clock contract         |
-| 💎   | One-shot / TSC-deadline tick | ✅ dynamic tick          | ✅ NO_HZ tsc-deadline    | ✅ §6 mechanism (governor D02T26) |
-| 💎   | MSI / MSI-X (PCI)            | ✅ IoConnectInterruptEx  | ✅ pci MSI vectors       | ⬜ D04T02 §3                      |
-| 💎   | LAPIC timer calibration      | ✅ HAL per CPU cal       | ✅ calibrate delay       | [/] §7 BSP only                  |
-| ⭐   | Boot timeline JSON           | ❌ WPA offline trace     | ❌ systemd analyze post  | ✅ §9 JSON file                   |
+| ⭐  | Feature                      | 🪟 Win11                 | 🐧 Linux                 | 🚀 Impossible OS                  |
+| --- | ---------------------------- | ------------------------ | ------------------------ | --------------------------------- |
+| 💎  | MADT-driven topology         | ✅ HAL MADT first        | ✅ acpi MADT first       | ✅ §1 done                        |
+| 💎  | LAPIC/IOAPIC before PIT      | ✅ HAL APIC first        | ✅ APIC before IRQ       | ✅ §2 done                        |
+| 💎  | Conditional PIC disable      | ✅ PCAT gated            | ✅ mask 8259A            | ✅ §3 done                        |
+| 💎  | Full IDT coverage            | ✅ KiUnexpectedInterrupt | ✅ spurious path         | ✅ §4 IDT full                    |
+| 💎  | Dynamic IRQ registration     | ✅ IoConnectInterrupt    | ✅ request_irq           | ✅ §5 GSI + affinity              |
+| 💎  | Shared line IRQs (INTx)      | ✅ line-based sharing    | ✅ IRQF_SHARED           | ✅ §5 claim chains + storm guard  |
+| 💎  | Unified timer HAL            | ✅ QPC picks source      | ✅ clocksource framework | ✅ §6 mono_clock contract         |
+| 💎  | One-shot / TSC-deadline tick | ✅ dynamic tick          | ✅ NO_HZ tsc-deadline    | ✅ §6 mechanism (governor D02T26) |
+| 💎  | MSI / MSI-X (PCI)            | ✅ IoConnectInterruptEx  | ✅ pci MSI vectors       | ⬜ D04T02 §3                      |
+| 💎  | LAPIC timer calibration      | ✅ HAL per CPU cal       | ✅ calibrate delay       | [/] §7 BSP only                   |
+| ⭐  | Boot timeline JSON           | ❌ WPA offline trace     | ❌ systemd analyze post  | ✅ §9 JSON file                   |
 
 > **Parity:** §1--§6, §8, §10 match Windows/Linux for APIC/IDT/IRQ-registration/timer-HAL paths. **[/]** §7 (AP LAPIC timer) remains; §6's HV reference-TSC consumer is blocked on D02 T09 §15. **MSI/MSI-X** is parity owned by `04-drivers-hardware/TODO-02-apic-interrupt-routing.md` §3 (OS table row). Boot timeline JSON (§9) goes beyond both. Bare-metal LAPIC/PIT ISR crash fixed in TODO-10 §3 (`clac` removal).
 

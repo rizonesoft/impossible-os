@@ -28,12 +28,12 @@ title: "TODO-01 -- Window Manager Completion"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                             | Depends On | Status |
+| ⭐  | Order | Deliverable                             | Depends On | Status |
 | --- | :---: | --------------------------------------- | ---------- | :----: |
-| 💎   |   1   | Minimize, maximize, restore             | --         |  [ ]   |
-| 💎   |   2   | Resize by dragging window edges         | --         |  [ ]   |
-| 💎   |   3   | Snap to left/right half, top=maximize   | §1, §2     |  [ ]   |
-| 💎   |   4   | Global hotkeys (Alt+Tab, Alt+F4, Win+D) | §1         |  [ ]   |
+| 💎  |   1   | Minimize, maximize, restore             | --         |  [ ]   |
+| 💎  |   2   | Resize by dragging window edges         | --         |  [ ]   |
+| 💎  |   3   | Snap to left/right half, top=maximize   | §1, §2     |  [ ]   |
+| 💎  |   4   | Global hotkeys (Alt+Tab, Alt+F4, Win+D) | §1         |  [ ]   |
 
 ---
 
@@ -102,9 +102,9 @@ System-wide keyboard shortcuts that work regardless of focused window.
 
 ## OS Comparison
 
-| ⭐   | Feature         | 🪟 Win11    | 🐧 Linux (GNOME) | 🚀 Impossible OS     |
-| --- | --------------- | ---------- | --------------- | ------------------- |
-| 💎   | Min/Max/Restore | ✅ Built-in | ✅ Built-in      | ⬜ §1                |
-| 💎   | Edge resize     | ✅ Built-in | ✅ Built-in      | ⬜ §2                |
-| ⭐   | Snap layouts    | ✅ 6-zone   | ❌ Manual tiling | ⬜ §3 left/right/max |
-| 💎   | Alt+Tab         | ✅ Built-in | ✅ Built-in      | ⬜ §4                |
+| ⭐  | Feature         | 🪟 Win11    | 🐧 Linux (GNOME) | 🚀 Impossible OS     |
+| --- | --------------- | ----------- | ---------------- | -------------------- |
+| 💎  | Min/Max/Restore | ✅ Built-in | ✅ Built-in      | ⬜ §1                |
+| 💎  | Edge resize     | ✅ Built-in | ✅ Built-in      | ⬜ §2                |
+| ⭐  | Snap layouts    | ✅ 6-zone   | ❌ Manual tiling | ⬜ §3 left/right/max |
+| 💎  | Alt+Tab         | ✅ Built-in | ✅ Built-in      | ⬜ §4                |

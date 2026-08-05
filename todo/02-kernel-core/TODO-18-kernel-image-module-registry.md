@@ -41,18 +41,18 @@ title: "TODO-18 -- Kernel Image & Module Registry"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                             | Depends On        | Status |
+| ⭐  | Order | Deliverable                             | Depends On        | Status |
 | --- | :---: | --------------------------------------- | ----------------- | :----: |
-| 💎   |   1   | `KIMAGE_ENTRY` data model               | --                |  [x]   |
-| 💎   |   2   | Global and per-process image registries | T17, D04 T05      |  [/]   |
-| 💎   |   3   | Address range index                     | Ex generic table  |  [/]   |
-| 💎   |   4   | Symbol provider abstraction             | symtab            |  [/]   |
-| 💎   |   5   | Unwind metadata registry                | T23               |  [/]   |
-| 💎   |   6   | Loader integration                      | T17, T20, D04 T05 |  [/]   |
-| ⭐   |   7   | Image notifications and callbacks       | T06, T16          |  [/]   |
-| 💎   |   8   | KD/crash dump integration               | T27, T29          |  [/]   |
-| ⭐   |   9   | Provenance, CI, and hotpatch metadata   | T19               |  [/]   |
-| 💎   |  10   | Tests and consistency verifier          | §1..§9            |  [/]   |
+| 💎  |   1   | `KIMAGE_ENTRY` data model               | --                |  [x]   |
+| 💎  |   2   | Global and per-process image registries | T17, D04 T05      |  [/]   |
+| 💎  |   3   | Address range index                     | Ex generic table  |  [/]   |
+| 💎  |   4   | Symbol provider abstraction             | symtab            |  [/]   |
+| 💎  |   5   | Unwind metadata registry                | T23               |  [/]   |
+| 💎  |   6   | Loader integration                      | T17, T20, D04 T05 |  [/]   |
+| ⭐  |   7   | Image notifications and callbacks       | T06, T16          |  [/]   |
+| 💎  |   8   | KD/crash dump integration               | T27, T29          |  [/]   |
+| ⭐  |   9   | Provenance, CI, and hotpatch metadata   | T19               |  [/]   |
+| 💎  |  10   | Tests and consistency verifier          | §1..§9            |  [/]   |
 
 ## 1. `KIMAGE_ENTRY` Data Model
 
@@ -219,19 +219,19 @@ title: "TODO-18 -- Kernel Image & Module Registry"
 
 ## OS Comparison
 
-| ⭐   | Feature                    | 🪟 Win11                       | 🐧 Linux                    | 🚀 Impossible OS                     |
-| --- | -------------------------- | ----------------------------- | -------------------------- | ----------------------------------- |
-| 💎   | Loaded-image registry      | ✅ PsLoadedModuleList          | ✅ /proc/modules + vmap     | 🔄 §1-§2 KIMAGE_ENTRY registries     |
-| 💎   | Address-to-image lookup    | ✅ KLDR range tables           | ✅ __module_address         | 🔄 §3 interval index + per-CPU cache |
-| 💎   | Symbol resolution          | ✅ DbgHelp/PDB                 | ✅ kallsyms                 | 🔄 §4 provider abstraction           |
-| 💎   | Unwind metadata registry   | ✅ RtlLookupFunctionEntry      | ✅ ORC (kernel)             | 🔄 §5 normalized table; T23 executes |
-| 💎   | Dynamic/JIT unwind         | ✅ RtlAddFunctionTable         | ⚠️ no kernel JIT unwind    | 🔄 §5 growable table; T23 add/delete |
-| ⭐   | Format-agnostic image list | ⚠️ PE only                    | ⚠️ ELF only                | 🔄 §1-§6 PE + ELF + EIF + kmod       |
-| 💎   | Image load/unload notify   | ✅ PsSetLoadImageNotifyRoutine | ⚠️ module notifier chain   | 🔄 §7 Executive callbacks            |
-| 💎   | Crash-dump module stream   | ✅ MINIDUMP module list        | ✅ ELF core NT_FILE         | 🔄 §8 KIMAGE_ENTRY module stream     |
-| 💎   | Recently-unloaded history  | ✅ MmUnloadedDrivers           | ❌ none                     | 🔄 §8 bounded tombstone ring         |
-| ⭐   | Image provenance + CI      | ⚠️ CI.dll separate            | ⚠️ IMA/module sig separate | 🔄 §9 unified provenance record      |
-| ⭐   | Hotpatch metadata slot     | ✅ hotpatch pointers           | ⚠️ livepatch separate      | ⬜ §9 reserved fields                |
+| ⭐  | Feature                    | 🪟 Win11                       | 🐧 Linux                  | 🚀 Impossible OS                     |
+| --- | -------------------------- | ------------------------------ | ------------------------- | ------------------------------------ |
+| 💎  | Loaded-image registry      | ✅ PsLoadedModuleList          | ✅ /proc/modules + vmap   | 🔄 §1-§2 KIMAGE_ENTRY registries     |
+| 💎  | Address-to-image lookup    | ✅ KLDR range tables           | ✅ __module_address       | 🔄 §3 interval index + per-CPU cache |
+| 💎  | Symbol resolution          | ✅ DbgHelp/PDB                 | ✅ kallsyms               | 🔄 §4 provider abstraction           |
+| 💎  | Unwind metadata registry   | ✅ RtlLookupFunctionEntry      | ✅ ORC (kernel)           | 🔄 §5 normalized table; T23 executes |
+| 💎  | Dynamic/JIT unwind         | ✅ RtlAddFunctionTable         | ⚠️ no kernel JIT unwind    | 🔄 §5 growable table; T23 add/delete |
+| ⭐  | Format-agnostic image list | ⚠️ PE only                      | ⚠️ ELF only                | 🔄 §1-§6 PE + ELF + EIF + kmod       |
+| 💎  | Image load/unload notify   | ✅ PsSetLoadImageNotifyRoutine | ⚠️ module notifier chain   | 🔄 §7 Executive callbacks            |
+| 💎  | Crash-dump module stream   | ✅ MINIDUMP module list        | ✅ ELF core NT_FILE       | 🔄 §8 KIMAGE_ENTRY module stream     |
+| 💎  | Recently-unloaded history  | ✅ MmUnloadedDrivers           | ❌ none                   | 🔄 §8 bounded tombstone ring         |
+| ⭐  | Image provenance + CI      | ⚠️ CI.dll separate              | ⚠️ IMA/module sig separate | 🔄 §9 unified provenance record      |
+| ⭐  | Hotpatch metadata slot     | ✅ hotpatch pointers           | ⚠️ livepatch separate      | ⬜ §9 reserved fields                |
 
 > **After §1-§6:** a single loader-independent image registry (PE/ELF/EIF/kmod) with fast address/symbol/unwind lookup that every subsystem shares.
 > **After §7-§9:** load notifications, crash-dump/KD module streams, and unified provenance/CI/hotpatch metadata -- one source of truth Windows and Linux split across several subsystems.

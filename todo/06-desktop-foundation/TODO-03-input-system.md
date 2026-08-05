@@ -27,13 +27,13 @@ title: "TODO-03 -- Input System"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                           | Depends On | Status |
+| ⭐  | Order | Deliverable                           | Depends On | Status |
 | --- | :---: | ------------------------------------- | ---------- | :----: |
-| 💎   |   1   | Modifier key tracking                 | --         |  [ ]   |
-| 💎   |   2   | Key event struct + dispatch pipeline  | §1         |  [ ]   |
-| 💎   |   3   | Focus model and Tab navigation        | §2         |  [ ]   |
-| 💎   |   4   | Global hotkey dispatch table          | §2         |  [ ]   |
-| 💎   |   5   | Bare-metal input bugs (focus + mouse) | §2, §3     |  [ ]   |
+| 💎  |   1   | Modifier key tracking                 | --         |  [ ]   |
+| 💎  |   2   | Key event struct + dispatch pipeline  | §1         |  [ ]   |
+| 💎  |   3   | Focus model and Tab navigation        | §2         |  [ ]   |
+| 💎  |   4   | Global hotkey dispatch table          | §2         |  [ ]   |
+| 💎  |   5   | Bare-metal input bugs (focus + mouse) | §2, §3     |  [ ]   |
 
 ---
 
@@ -122,8 +122,8 @@ When the terminal window is visually focused, typing either appears after a 1-2 
 
 ## OS Comparison
 
-| ⭐   | Feature           | 🪟 Win11          | 🐧 Linux (Wayland) | 🚀 Impossible OS |
-| --- | ----------------- | ---------------- | ----------------- | --------------- |
-| 💎   | Modifier tracking | ✅ Full           | ✅ Full            | ⬜ §1            |
-| 💎   | Tab navigation    | ✅ Built-in       | ✅ Built-in        | ⬜ §3            |
-| 💎   | Global hotkeys    | ✅ RegisterHotKey | ✅ XGrabKey        | ⬜ §4            |
+| ⭐  | Feature           | 🪟 Win11          | 🐧 Linux (Wayland) | 🚀 Impossible OS |
+| --- | ----------------- | ----------------- | ------------------ | ---------------- |
+| 💎  | Modifier tracking | ✅ Full           | ✅ Full            | ⬜ §1            |
+| 💎  | Tab navigation    | ✅ Built-in       | ✅ Built-in        | ⬜ §3            |
+| 💎  | Global hotkeys    | ✅ RegisterHotKey | ✅ XGrabKey        | ⬜ §4            |

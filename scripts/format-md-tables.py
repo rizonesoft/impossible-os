@@ -26,11 +26,32 @@ from __future__ import annotations
 
 import argparse
 import re
+import unicodedata
 import sys
 from pathlib import Path
 
 _ROW_RE = re.compile(r"^\s*\|.*\|\s*$")
 _SEP_CELL_RE = re.compile(r"^\s*:?-+:?\s*$")
+
+
+def _dwidth(text: str) -> int:
+    """DISPLAY width, not len(). A wide character occupies two terminal columns
+    while len() reports one, so padding computed from len() renders one column
+    too wide per wide char -- visible as `| star   |` where `| star  |` was
+    meant. Reported by the operator 2026-08-05, immediately after the cap-40
+    sweep re-padded 194 files with this bug in it.
+
+    East Asian Width W/F are the two-column classes. AMBIGUOUS ('A') is
+    deliberately treated as ONE: it covers section-sign and arrow glyphs this
+    repo uses constantly, and they render single-width in the terminals and
+    editors this corpus is read in. Combining marks (Mn/Me) add no width.
+    """
+    w = 0
+    for ch in text:
+        if unicodedata.combining(ch) or unicodedata.category(ch) in ("Mn", "Me"):
+            continue
+        w += 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
+    return w
 
 
 def _split_row(line: str) -> list[str]:
@@ -100,7 +121,7 @@ def _render_table(lines: list[str], start: int, end: int, max_cell: int,
     ncols = len(rows[0])
     if any(len(r) != ncols for r in rows):
         return None  # ragged cell count (e.g. an escaped-pipe edge case) -- leave untouched
-    if any(len(cell) > max_cell for row in rows for cell in row):
+    if any(_dwidth(cell) > max_cell for row in rows for cell in row):
         return None  # prose table -- do not force-align
     aligns = [_alignment(c) for c in rows[1]]
     # PER-COLUMN CAP. Padding every cell to the column's WIDEST makes one long
@@ -123,12 +144,12 @@ def _render_table(lines: list[str], start: int, end: int, max_cell: int,
     # ~49% of over-160 rows are wide because their CONTENT is wide.
     widths = [
         min(max_pad,
-            max(3, max(len(rows[r][c]) for r in range(len(rows)) if r != 1)))
+            max(3, max(_dwidth(rows[r][c]) for r in range(len(rows)) if r != 1)))
         for c in range(ncols)
     ]
 
     def pad(cell: str, width: int, align: str) -> str:
-        gap = width - len(cell)
+        gap = width - _dwidth(cell)
         if gap <= 0:
             return cell
         if align == "right":

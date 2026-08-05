@@ -63,14 +63,14 @@ the ggml port and XSAVE context switch work end-to-end.
 ## Implementation Order
 
 | Step | Section                                  | 💎/⭐ | Dependency                               |
-| ---- | ---------------------------------------- | --- | ---------------------------------------- |
-| 1    | Runtime option survey (ggml vs. ONNX vs. custom) | ⭐   | `D10T09 §3` C++ assessment               |
-| 2    | SIMD enablement for user mode (XSAVE per-thread) | ⭐   | `D02T09 §1` + `TODO-04 §5` XSAVE foundations |
-| 3    | ggml C99 kernel port                     | ⭐   | §2 SIMD; `pmm_alloc_contiguous`; kernel threads |
-| 4    | GGUF model format & loading              | ⭐   | §3 ggml infrastructure; `vfs_read`; `vmm_map_page` |
-| 5    | OS integration points (`SYS_AI_INFER` + apps) | ⭐   | §3 §4 runtime + loader                   |
-| 6    | GPU inference research (stretch, post TODO-03) | ⭐   | `TODO-03` Vulkan driver; §5 ggml Vulkan backend |
-| 7    | Research deliverables (`ai-ml-runtime-plan.md`) | ⭐   | §1–§6 complete                           |
+| ---- | ---------------------------------------- | ----- | ---------------------------------------- |
+| 1    | Runtime option survey (ggml vs. ONNX vs. custom) | ⭐    | `D10T09 §3` C++ assessment               |
+| 2    | SIMD enablement for user mode (XSAVE per-thread) | ⭐    | `D02T09 §1` + `TODO-04 §5` XSAVE foundations |
+| 3    | ggml C99 kernel port                     | ⭐    | §2 SIMD; `pmm_alloc_contiguous`; kernel threads |
+| 4    | GGUF model format & loading              | ⭐    | §3 ggml infrastructure; `vfs_read`; `vmm_map_page` |
+| 5    | OS integration points (`SYS_AI_INFER` + apps) | ⭐    | §3 §4 runtime + loader                   |
+| 6    | GPU inference research (stretch, post TODO-03) | ⭐    | `TODO-03` Vulkan driver; §5 ggml Vulkan backend |
+| 7    | Research deliverables (`ai-ml-runtime-plan.md`) | ⭐    | §1–§6 complete                           |
 
 ---
 
@@ -165,7 +165,7 @@ the ggml port and XSAVE context switch work end-to-end.
 
 - [ ] **Dependency map** (what to replace):
 
-| ggml POSIX dependency                    | 🚀 Impossible OS replacement              | Notes                      |
+| ggml POSIX dependency                    | 🚀 Impossible OS replacement             | Notes                      |
 | ---------------------------------------- | ---------------------------------------- | -------------------------- |
 | `malloc(n)`                              | `kmalloc(n)` for < 4 KB; `pmm_alloc_contiguous(pages)` for tensors | Tensor allocation via PMM  |
 | `free(p)`                                | `kfree(p)` / `pmm_free_contiguous(p, pages)` | Match allocator            |
@@ -178,7 +178,7 @@ the ggml port and XSAVE context switch work end-to-end.
 | `clock_gettime(CLOCK_MONOTONIC)`         | `system_get_ticks()`                     | Timer shim                 |
 | `assert(x)`                              | `KERNEL_ASSERT(x, "ggml")`               | Debug mode only            |
 | `CPU_FEATURE_AVX2` via `__builtin_cpu_supports` | `cpu_data[0].cpuid_features & CPU_FEATURE_AVX2` | From `cpu_data`            |
-| `_mm256_*` intrinsics (AVX2)             | Unchanged -- user-mode inference threads have AVX2 after §2 | ✅ no change                |
+| `_mm256_*` intrinsics (AVX2)             | Unchanged -- user-mode inference threads have AVX2 after §2 | ✅ no change               |
 
 - [ ] **Thread pool implementation** (`src/libs/ggml/ggml_threadpool.c`):
   - `ggml_n_threads` → configurable via `HKLM\SYSTEM\AI\InferenceThreads` Registry key (default: `cpu_count / 2`)
@@ -327,14 +327,14 @@ the ggml port and XSAVE context switch work end-to-end.
 ## OS Comparison
 
 
-| ⭐   | Feature                                  | 🪟 Win11                                  | 🐧 Linux                                  | 🚀 Impossible OS                          |
+| ⭐  | Feature                                  | 🪟 Win11                                 | 🐧 Linux                                 | 🚀 Impossible OS                         |
 | --- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
-| ⭐   | Native on-device LLM inference           | ✅ Copilot+ (NPU/ONNX Runtime); DirectML; llama.cpp | ✅ llama.cpp natively; ONNX Runtime; CPU/GPU | ⬜ §3 -- ggml C99 port; AVX2 user-mode    |
-| ⭐   | AVX2 user-mode SIMD with per-thread XSAVE context | ✅ Windows handles XSAVE/XRSTOR automatically (FXSAVE | ✅ Linux XSAVE per-task (`task_struct.thread.fpu`) | ⬜ §2 -- `TEB.XSaveArea`; XSAVEOPT on context switch |
-| 💎   | GGUF model loading                       | ✅ llama.cpp + GGUF on Windows            | ✅ llama.cpp native GGUF on Linux         | ⬜ §4 -- `gguf_load()` via VFS; PMM large-alloc |
-| ⭐   | `SYS_AI_INFER` background inference syscall | ✅ WinRT `IntelligenceInterface`; ML.NET; no single | ✅ No dedicated kernel AI syscall;        | ⬜ §5 -- `SYS_AI_INFER=95`/`SYS_AI_MODEL_LOAD=96`; semaphore completion |
-| ⭐   | Start Menu semantic search               | ✅ Windows Search AI (Copilot+, NPU,      | ✅ GNOME/KDE: no on-device semantic search | ⬜ §5 -- `all-MiniLM-L6-v2` 25 MB resident; cosine |
-| 💎   | GPU inference via Vulkan compute         | ✅ DirectML Vulkan; CUDA; ROCm            | ✅ Vulkan compute (`kompute`, `ggml-vulkan`) | ⬜ §6 -- (stretch); `ggml-vulkan.c` backend; blocked by |
+| ⭐  | Native on-device LLM inference           | ✅ Copilot+ (NPU/ONNX Runtime); DirectML; llama.cpp | ✅ llama.cpp natively; ONNX Runtime; CPU/GPU | ⬜ §3 -- ggml C99 port; AVX2 user-mode   |
+| ⭐  | AVX2 user-mode SIMD with per-thread XSAVE context | ✅ Windows handles XSAVE/XRSTOR automatically (FXSAVE | ✅ Linux XSAVE per-task (`task_struct.thread.fpu`) | ⬜ §2 -- `TEB.XSaveArea`; XSAVEOPT on context switch |
+| 💎  | GGUF model loading                       | ✅ llama.cpp + GGUF on Windows           | ✅ llama.cpp native GGUF on Linux        | ⬜ §4 -- `gguf_load()` via VFS; PMM large-alloc |
+| ⭐  | `SYS_AI_INFER` background inference syscall | ✅ WinRT `IntelligenceInterface`; ML.NET; no single | ✅ No dedicated kernel AI syscall;       | ⬜ §5 -- `SYS_AI_INFER=95`/`SYS_AI_MODEL_LOAD=96`; semaphore completion |
+| ⭐  | Start Menu semantic search               | ✅ Windows Search AI (Copilot+, NPU,     | ✅ GNOME/KDE: no on-device semantic search | ⬜ §5 -- `all-MiniLM-L6-v2` 25 MB resident; cosine |
+| 💎  | GPU inference via Vulkan compute         | ✅ DirectML Vulkan; CUDA; ROCm           | ✅ Vulkan compute (`kompute`, `ggml-vulkan`) | ⬜ §6 -- (stretch); `ggml-vulkan.c` backend; blocked by |
 
 Impossible OS's `⭐` advantage: `SYS_AI_INFER` makes inference a first-class kernel
 primitive -- the OS schedules inference workloads alongside threads, applies power

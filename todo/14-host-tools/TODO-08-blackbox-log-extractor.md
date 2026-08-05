@@ -35,14 +35,14 @@ title: "TODO-08 -- BlackBox Log Extractor"
 
 | S   | Order | Deliverable                              | Depends On  | Status |
 | --- | :---: | ---------------------------------------- | ----------- | :----: |
-| 💎   |   1   | GPT parser -- find BlackBox partition by name | --          |  [ ]   |
-| 💎   |   2   | FAT32 reader -- traverse dirs, read files | S1          |  [ ]   |
-| 💎   |   3   | `blackbox extract` -- dump all logs to local dir | S1, S2      |  [ ]   |
-| 💎   |   4   | `blackbox cat` -- view a specific log file | S1, S2      |  [ ]   |
-| 💎   |   5   | `blackbox events` -- parse/filter events.jsonl | S1, S2      |  [ ]   |
-| 💎   |   6   | `blackbox boot` -- show boot timeline from JSON | S1, S2      |  [ ]   |
+| 💎  |   1   | GPT parser -- find BlackBox partition by name | --          |  [ ]   |
+| 💎  |   2   | FAT32 reader -- traverse dirs, read files | S1          |  [ ]   |
+| 💎  |   3   | `blackbox extract` -- dump all logs to local dir | S1, S2      |  [ ]   |
+| 💎  |   4   | `blackbox cat` -- view a specific log file | S1, S2      |  [ ]   |
+| 💎  |   5   | `blackbox events` -- parse/filter events.jsonl | S1, S2      |  [ ]   |
+| 💎  |   6   | `blackbox boot` -- show boot timeline from JSON | S1, S2      |  [ ]   |
 | S   |   7   | `blackbox verify` -- HMAC chain verification | S5, T02 S10 |  [ ]   |
-| 💎   |   8   | Windows build -- MSVC or MinGW cross-compile | S1-S6       |  [ ]   |
+| 💎  |   8   | Windows build -- MSVC or MinGW cross-compile | S1-S6       |  [ ]   |
 | S   |   9   | Shell wrapper scripts for Claude Code integration | S3          |  [ ]   |
 
 > 💎 = parity -- standard tooling expectation for OS development.
@@ -180,13 +180,13 @@ Helper scripts so Claude Code can invoke the tool after QEMU runs.
 ## OS Comparison
 
 | S   | Feature                    | 🪟 Win11                | 🐧 Linux               | 🚀 Impossible OS                |
-| --- | -------------------------- | ---------------------- | --------------------- | ------------------------------ |
-| 💎   | Host log viewer            | ✅ Event Viewer (GUI)   | ✅ journalctl          | ⬜ S4-S5 -- blackbox cat/events |
-| 💎   | Log extraction from image  | ⚠️ Mount + copy        | ✅ mount -o loop       | ⬜ S3 -- blackbox extract       |
-| 💎   | Structured event filtering | ✅ Event Viewer filters | ✅ journalctl -p/-u    | ⬜ S5 -- blackbox events        |
-| 💎   | Boot timing analysis       | ⚠️ xbootmgr (separate) | ✅ systemd-analyze     | ⬜ S6 -- blackbox boot          |
+| --- | -------------------------- | ----------------------- | ---------------------- | ------------------------------- |
+| 💎  | Host log viewer            | ✅ Event Viewer (GUI)   | ✅ journalctl          | ⬜ S4-S5 -- blackbox cat/events |
+| 💎  | Log extraction from image  | ⚠️ Mount + copy          | ✅ mount -o loop       | ⬜ S3 -- blackbox extract       |
+| 💎  | Structured event filtering | ✅ Event Viewer filters | ✅ journalctl -p/-u    | ⬜ S5 -- blackbox events        |
+| 💎  | Boot timing analysis       | ⚠️ xbootmgr (separate)   | ✅ systemd-analyze     | ⬜ S6 -- blackbox boot          |
 | S   | HMAC log verification      | ❌ Not available        | ❌ Not available       | ⬜ S7 -- blackbox verify        |
-| 💎   | Cross-platform tool        | ❌ Windows only         | ❌ Linux only          | ⬜ S8 -- Linux + Windows        |
+| 💎  | Cross-platform tool        | ❌ Windows only         | ❌ Linux only          | ⬜ S8 -- Linux + Windows        |
 | S   | AI-agent integration       | ❌ Not designed for AI  | ❌ Not designed for AI | ⬜ S9 -- Claude Code wrappers   |
 
 > After S1-S6, developers have complete host-side log inspection matching journalctl/Event Viewer capability.

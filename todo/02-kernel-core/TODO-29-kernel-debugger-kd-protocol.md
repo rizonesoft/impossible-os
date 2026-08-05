@@ -58,23 +58,23 @@ title: "TODO-29 -- Kernel Debugger (KD Protocol)"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                              | Depends On                  | Status |
+| ⭐  | Order | Deliverable                              | Depends On                  | Status |
 | --- | :---: | ---------------------------------------- | --------------------------- | :----: |
-| 💎   |   1   | Serial line: 115200 baud, 8N1, FIFO      | --                          |  [ ]   |
-| 💎   |   2   | IRQ RX ring + COM1/COM2 KD port selection | §1                          |  [ ]   |
-| 💎   |   3   | KD packet framing: send/receive, checksum, ACK/RESEND | §1, §2                      |  [ ]   |
-| 💎   |   4   | KD connection handshake & breakin detection | §3                          |  [ ]   |
-| 💎   |   5   | `#DB` / `#BP` exception routing to KD, AP freeze/thaw | §4, T07 §3                  |  [ ]   |
-| 💎   |   6   | Context get/set (DbgKdGetContextApi / SetContextApi) | §5, T27 §2                  |  [ ]   |
-| 💎   |   7   | Memory read/write (DbgKdReadVirtualMemoryApi / Write) | §5                          |  [ ]   |
-| 💎   |   8   | Software breakpoint management (Write / RestoreApi) | §5, §7                      |  [ ]   |
-| 💎   |   9   | Hardware breakpoints (DR0--DR3, DR7) + `#DB` reporting | §5, §6                      |  [ ]   |
-| 💎   |  10   | Single-step (RFLAGS.TF) + continue / continue-step | §5, §6                      |  [ ]   |
-| 💎   |  11   | DbgKdGetVersionApi + module list         | §4, T27 §3                  |  [ ]   |
-| 💎   |  12   | I/O port & MSR read/write (DbgKdReadIoSpace / MSR apis) | §5                          |  [ ]   |
-| ⭐   |  13   | `kd_break()` + keyboard F12 breakin + QEMU pipe guide | §4                          |  [ ]   |
-| 💎   |  14   | Debug syscalls wired to SSDT             | §1, §2, §5, T12 §4, T12 §21 |  [ ]   |
-| 💎   |  15   | KD transport roadmap + idle/BSOD coexistence | §3, §5, T26 §2, T28 §1      |  [ ]   |
+| 💎  |   1   | Serial line: 115200 baud, 8N1, FIFO      | --                          |  [ ]   |
+| 💎  |   2   | IRQ RX ring + COM1/COM2 KD port selection | §1                          |  [ ]   |
+| 💎  |   3   | KD packet framing: send/receive, checksum, ACK/RESEND | §1, §2                      |  [ ]   |
+| 💎  |   4   | KD connection handshake & breakin detection | §3                          |  [ ]   |
+| 💎  |   5   | `#DB` / `#BP` exception routing to KD, AP freeze/thaw | §4, T07 §3                  |  [ ]   |
+| 💎  |   6   | Context get/set (DbgKdGetContextApi / SetContextApi) | §5, T27 §2                  |  [ ]   |
+| 💎  |   7   | Memory read/write (DbgKdReadVirtualMemoryApi / Write) | §5                          |  [ ]   |
+| 💎  |   8   | Software breakpoint management (Write / RestoreApi) | §5, §7                      |  [ ]   |
+| 💎  |   9   | Hardware breakpoints (DR0--DR3, DR7) + `#DB` reporting | §5, §6                      |  [ ]   |
+| 💎  |  10   | Single-step (RFLAGS.TF) + continue / continue-step | §5, §6                      |  [ ]   |
+| 💎  |  11   | DbgKdGetVersionApi + module list         | §4, T27 §3                  |  [ ]   |
+| 💎  |  12   | I/O port & MSR read/write (DbgKdReadIoSpace / MSR apis) | §5                          |  [ ]   |
+| ⭐  |  13   | `kd_break()` + keyboard F12 breakin + QEMU pipe guide | §4                          |  [ ]   |
+| 💎  |  14   | Debug syscalls wired to SSDT             | §1, §2, §5, T12 §4, T12 §21 |  [ ]   |
+| 💎  |  15   | KD transport roadmap + idle/BSOD coexistence | §3, §5, T26 §2, T28 §1      |  [ ]   |
 
 > 💎 = parity work: matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work: Impossible OS is superior or first.
@@ -504,26 +504,26 @@ Register user-mode debug API entry points in the SSDT so debuggers can attach/de
 
 ## OS Comparison
 
-| ⭐   | Feature                  | 🪟 Win11    | 🐧 Linux        | 🚀 Impossible OS  |
-| --- | ------------------------ | ---------- | -------------- | ---------------- |
-| 💎   | KD serial stub           | ✅ kdcom    | ✅ KGDB serial  | ⬜ §1-§5          |
-| 💎   | WinDbg wire format       | ✅ Native   | ❌ GDB only     | ⬜ §3-§4          |
-| 💎   | Live SW breakpoints      | ✅ Full     | ✅ GDB break    | ⬜ §8             |
-| 💎   | HW DR breakpoints        | ✅ ba       | ✅ watch        | ⬜ §9             |
-| 💎   | Single step t p          | ✅ Full     | ✅ stepi        | ⬜ §10            |
-| 💎   | Live mem r w             | ✅ db eb    | ✅ x set        | ⬜ §7             |
-| 💎   | Register r w             | ✅ r        | ✅ info reg     | ⬜ §6             |
-| 💎   | Module list lm           | ✅ lm       | ✅ shared       | ⬜ §11            |
-| 💎   | MSR from debugger        | ✅ !msr     | ✅ msr sysfs    | ⬜ §12            |
-| 💎   | DbgBreak kd_break        | ✅ Yes      | ✅ KGDB BP      | ⬜ §13            |
-| 💎   | I/O from debugger        | ✅ ioctl    | ⚠️ driver      | ⬜ §12            |
-| ⭐   | F12 target breakin       | ❌ SysRq    | ⚠️ SysRq+g     | ⬜ §13            |
-| ⭐   | KD via Registry          | ⚠️ bcdedit | ⚠️ cmdline     | ⬜ §13            |
-| ⭐   | QEMU TCP pipe KD         | ⚠️ pipe    | ⚠️ gdb remote  | ⬜ §13            |
-| 💎   | KDNET Ethernet debug     | ✅ kdnet    | ❌ N/A          | ⬜ §15 defer      |
-| 💎   | USB3 kernel debug        | ✅ Yes      | ⚠️ platform    | ⬜ §15 defer      |
-| 💎   | kdb shell + kgdb gdbstub | ❌ WinDbg   | ✅ kdb + kgdb   | ⬜ WinDbg KD only |
-| 💎   | SMP freeze other CPUs    | ✅ Yes      | ✅ kgdb roundup | ⬜ §5 §15         |
+| ⭐  | Feature                  | 🪟 Win11  | 🐧 Linux        | 🚀 Impossible OS  |
+| --- | ------------------------ | --------- | --------------- | ----------------- |
+| 💎  | KD serial stub           | ✅ kdcom  | ✅ KGDB serial  | ⬜ §1-§5          |
+| 💎  | WinDbg wire format       | ✅ Native | ❌ GDB only     | ⬜ §3-§4          |
+| 💎  | Live SW breakpoints      | ✅ Full   | ✅ GDB break    | ⬜ §8             |
+| 💎  | HW DR breakpoints        | ✅ ba     | ✅ watch        | ⬜ §9             |
+| 💎  | Single step t p          | ✅ Full   | ✅ stepi        | ⬜ §10            |
+| 💎  | Live mem r w             | ✅ db eb  | ✅ x set        | ⬜ §7             |
+| 💎  | Register r w             | ✅ r      | ✅ info reg     | ⬜ §6             |
+| 💎  | Module list lm           | ✅ lm     | ✅ shared       | ⬜ §11            |
+| 💎  | MSR from debugger        | ✅ !msr   | ✅ msr sysfs    | ⬜ §12            |
+| 💎  | DbgBreak kd_break        | ✅ Yes    | ✅ KGDB BP      | ⬜ §13            |
+| 💎  | I/O from debugger        | ✅ ioctl  | ⚠️ driver        | ⬜ §12            |
+| ⭐  | F12 target breakin       | ❌ SysRq  | ⚠️ SysRq+g       | ⬜ §13            |
+| ⭐  | KD via Registry          | ⚠️ bcdedit | ⚠️ cmdline       | ⬜ §13            |
+| ⭐  | QEMU TCP pipe KD         | ⚠️ pipe    | ⚠️ gdb remote    | ⬜ §13            |
+| 💎  | KDNET Ethernet debug     | ✅ kdnet  | ❌ N/A          | ⬜ §15 defer      |
+| 💎  | USB3 kernel debug        | ✅ Yes    | ⚠️ platform      | ⬜ §15 defer      |
+| 💎  | kdb shell + kgdb gdbstub | ❌ WinDbg | ✅ kdb + kgdb   | ⬜ WinDbg KD only |
+| 💎  | SMP freeze other CPUs    | ✅ Yes    | ✅ kgdb roundup | ⬜ §5 §15         |
 
 After §1-§14, WinDbg-compatible KD on COM1 plus user-mode debug SSDT surface. KGDB stays GDB-only. §15 tracks KDNET/USB deferrals, idle/BSOD coexistence, and Linux kgdb operator cross-walk. Extras: Registry KD toggle, F12 breakin, QEMU pipe doc.
 

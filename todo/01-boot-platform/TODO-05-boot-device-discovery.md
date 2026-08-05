@@ -51,22 +51,22 @@ title: "TODO-05 -- Boot Device Discovery & Fallback Chain"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                              | Depends On     | Status |
+| ⭐  | Order | Deliverable                              | Depends On     | Status |
 | --- | :---: | ---------------------------------------- | -------------- | :----: |
-| 💎   |   1   | Boot device identification via LoadedImage | --             |  [x]   |
-| 💎   |   2   | Filesystem access scoped to boot device  | §1             |  [x]   |
-| 💎   |   3   | Boot device info in boot_info struct     | §1             |  [x]   |
-| 💎   |   4   | Boot device type detection (SATA/NVMe/USB/Net) | §3             |  [x]   |
-| 💎   |   5   | Device fallback chain (priority-based)   | §2, §4         |  [x]   |
-| 💎   |   6   | UEFI boot variable reading (BootOrder/Current/Next) | §1             |  [x]   |
-| 💎   |   7   | Partition GUID extraction and validation | §1             |  [x]   |
-| 💎   |   8   | Removable media detection                | §1, §4         |  [x]   |
-| 💎   |   9   | Boot device Registry population          | §3, §4, §7, §8 |  [x]   |
-| ⭐   |  10   | Boot device logging and diagnostics      | §1--§9, §12    |  [x]   |
-| ⭐   |  11   | Pre-boot device health check             | §1, §7         |  [x]   |
-| 💎   |  12   | Boot#### `EFI_LOAD_OPTION` decode (diagnostics) | §6             |  [x]   |
-| 💎   |  13   | Extended boot variable capability surface | §6, §9, §12    |  [x]   |
-| 💎   |  14   | Local boot device path detail capture    | §3, §4, §9     |  [x]   |
+| 💎  |   1   | Boot device identification via LoadedImage | --             |  [x]   |
+| 💎  |   2   | Filesystem access scoped to boot device  | §1             |  [x]   |
+| 💎  |   3   | Boot device info in boot_info struct     | §1             |  [x]   |
+| 💎  |   4   | Boot device type detection (SATA/NVMe/USB/Net) | §3             |  [x]   |
+| 💎  |   5   | Device fallback chain (priority-based)   | §2, §4         |  [x]   |
+| 💎  |   6   | UEFI boot variable reading (BootOrder/Current/Next) | §1             |  [x]   |
+| 💎  |   7   | Partition GUID extraction and validation | §1             |  [x]   |
+| 💎  |   8   | Removable media detection                | §1, §4         |  [x]   |
+| 💎  |   9   | Boot device Registry population          | §3, §4, §7, §8 |  [x]   |
+| ⭐  |  10   | Boot device logging and diagnostics      | §1--§9, §12    |  [x]   |
+| ⭐  |  11   | Pre-boot device health check             | §1, §7         |  [x]   |
+| 💎  |  12   | Boot#### `EFI_LOAD_OPTION` decode (diagnostics) | §6             |  [x]   |
+| 💎  |  13   | Extended boot variable capability surface | §6, §9, §12    |  [x]   |
+| 💎  |  14   | Local boot device path detail capture    | §3, §4, §9     |  [x]   |
 
 > 💎 = parity -- Windows (BCD + device path) and Linux (GRUB device search) both do this.
 > ⭐ = exclusive -- detailed boot device diagnostics with full enumeration, and proactive disk health check before kernel load.
@@ -442,21 +442,21 @@ Firmware boot entry **`Boot####`** variables hold an **`EFI_LOAD_OPTION`**: attr
 
 ## OS Comparison
 
-| ⭐   | Feature                     | 🪟 Win11                      | 🐧 Linux                   | 🚀 Impossible OS               |
-| --- | --------------------------- | ---------------------------- | ------------------------- | ----------------------------- |
-| 💎   | Boot device identification  | ✅ BCD + device path          | ✅ GRUB search command     | ✅ §1-§2 done                  |
-| 💎   | Multi-device fallback       | ⚠️ BCD recovery only         | ⚠️ GRUB menu only         | ✅ §5 cross-volume kernel scan |
-| 💎   | Boot device type in kernel  | ✅ HKLM Enum BusType          | ⚠️ sysfs (post-boot only) | ✅ §3-§4 done                  |
-| 💎   | Boot variable reading       | ✅ via UEFI Runtime API       | ✅ efibootmgr/efivarfs     | ✅ §6 done                     |
-| 💎   | Boot#### option decode      | ✅ BCD / bcdedit              | ✅ efibootmgr -v           | ✅ §12 done                    |
-| 💎   | BootNext one-shot boot      | ✅ SetFirmwareEnvVar          | ✅ efibootmgr -n           | ✅ §6 done                     |
-| 💎   | Partition GUID validation   | ✅ BCD disk signature         | ✅ root=PARTUUID=          | ✅ §7 done                     |
-| 💎   | Removable media detection   | ✅ DriveType removable        | ✅ sysfs removable flag    | ✅ §8 done                     |
-| 💎   | Boot device Registry        | ✅ HKLM Enum + MountedDevices | ✅ /sys/firmware/efi       | ✅ §9 done                     |
-| 💎   | Boot#### attrs + caps       | ✅ BCDEdit metadata           | ✅ efibootmgr -v           | ✅ §13 done                    |
-| 💎   | Boot device bus topology    | ✅ MSFT_Disk UniqueId/BusType | ✅ sysfs nsid + PCI BDF    | ✅ §14 done                    |
-| ⭐   | Full device enumeration log | ❌ Hidden in Event Log        | ❌ Not logged              | ✅ §10 done                    |
-| ⭐   | Pre-boot disk health check  | ❌ Post-boot SMART only       | ❌ Post-boot smartd only   | ✅ §11 done                    |
+| ⭐  | Feature                     | 🪟 Win11                      | 🐧 Linux                 | 🚀 Impossible OS               |
+| --- | --------------------------- | ----------------------------- | ------------------------ | ------------------------------ |
+| 💎  | Boot device identification  | ✅ BCD + device path          | ✅ GRUB search command   | ✅ §1-§2 done                  |
+| 💎  | Multi-device fallback       | ⚠️ BCD recovery only           | ⚠️ GRUB menu only         | ✅ §5 cross-volume kernel scan |
+| 💎  | Boot device type in kernel  | ✅ HKLM Enum BusType          | ⚠️ sysfs (post-boot only) | ✅ §3-§4 done                  |
+| 💎  | Boot variable reading       | ✅ via UEFI Runtime API       | ✅ efibootmgr/efivarfs   | ✅ §6 done                     |
+| 💎  | Boot#### option decode      | ✅ BCD / bcdedit              | ✅ efibootmgr -v         | ✅ §12 done                    |
+| 💎  | BootNext one-shot boot      | ✅ SetFirmwareEnvVar          | ✅ efibootmgr -n         | ✅ §6 done                     |
+| 💎  | Partition GUID validation   | ✅ BCD disk signature         | ✅ root=PARTUUID=        | ✅ §7 done                     |
+| 💎  | Removable media detection   | ✅ DriveType removable        | ✅ sysfs removable flag  | ✅ §8 done                     |
+| 💎  | Boot device Registry        | ✅ HKLM Enum + MountedDevices | ✅ /sys/firmware/efi     | ✅ §9 done                     |
+| 💎  | Boot#### attrs + caps       | ✅ BCDEdit metadata           | ✅ efibootmgr -v         | ✅ §13 done                    |
+| 💎  | Boot device bus topology    | ✅ MSFT_Disk UniqueId/BusType | ✅ sysfs nsid + PCI BDF  | ✅ §14 done                    |
+| ⭐  | Full device enumeration log | ❌ Hidden in Event Log        | ❌ Not logged            | ✅ §10 done                    |
+| ⭐  | Pre-boot disk health check  | ❌ Post-boot SMART only       | ❌ Post-boot smartd only | ✅ §11 done                    |
 
 > **After parity items:** Impossible OS matches Windows and Linux on all boot device discovery fundamentals: device identification via LoadedImage, UEFI boot variable reading, partition GUID validation, removable media detection, and Registry population. The exclusive items push beyond: comprehensive serial logging of the full device enumeration (neither competitor exposes this), and a pre-boot disk health check at the UEFI stage that gives users early warning of failing hardware before the kernel even loads.
 

@@ -40,18 +40,18 @@ title: "TODO-16 -- Kernel Notification Facility"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                           | Depends On | Status |
+| ⭐  | Order | Deliverable                           | Depends On | Status |
 | --- | :---: | ------------------------------------- | ---------- | :----: |
-| 💎   |   1   | Notification state object type        | T05        |  [x]   |
-| 💎   |   2   | Kernel publish/subscribe API          | §1         |  [x]   |
-| 💎   |   3   | Waitable user subscriptions           | T12, T07   |  [/]   |
-| 💎   |   4   | Security and namespace policy         | T15        |  [/]   |
-| ⭐   |   5   | Built-in state-name catalog           | §1..§4     |  [/]   |
-| 💎   |   6   | ETW/klog bridge                       | T04, T32   |  [x]   |
-| ⭐   |   7   | Coalescing and payload retention      | §2         |  [/]   |
-| 💎   |   8   | Native WNF-compatible syscall surface | T12        |  [/]   |
-| ⭐   |   9   | Diagnostics browser and counters      | §1..§8     |  [x]   |
-| 💎   |  10   | Unit/boot tests                       | §1..§9     |  [/]   |
+| 💎  |   1   | Notification state object type        | T05        |  [x]   |
+| 💎  |   2   | Kernel publish/subscribe API          | §1         |  [x]   |
+| 💎  |   3   | Waitable user subscriptions           | T12, T07   |  [/]   |
+| 💎  |   4   | Security and namespace policy         | T15        |  [/]   |
+| ⭐  |   5   | Built-in state-name catalog           | §1..§4     |  [/]   |
+| 💎  |   6   | ETW/klog bridge                       | T04, T32   |  [x]   |
+| ⭐  |   7   | Coalescing and payload retention      | §2         |  [/]   |
+| 💎  |   8   | Native WNF-compatible syscall surface | T12        |  [/]   |
+| ⭐  |   9   | Diagnostics browser and counters      | §1..§8     |  [x]   |
+| 💎  |  10   | Unit/boot tests                       | §1..§9     |  [/]   |
 
 ## 1. Notification State Object Type
 
@@ -277,16 +277,16 @@ title: "TODO-16 -- Kernel Notification Facility"
 
 ## OS Comparison
 
-| ⭐   | Feature                            | 🪟 Win11             | 🐧 Linux             | 🚀 Impossible OS                          |
-| --- | ---------------------------------- | ------------------- | ------------------- | ---------------------------------------- |
-| 💎   | Kernel state-change notify         | ✅ WNF               | ⚠️ netlink/inotify  | ✅ §1-§2: publish/subscribe + poll        |
-| 💎   | State object + lifetime/scope/type | ✅ WNF lifetimes     | ⚠️ no unified model | ✅ §1: NotificationState Ob type + \Notifications + 4 lifetime classes |
-| 💎   | Waitable user subscriptions        | ✅ WNF+Nt*           | ⚠️ epoll/poll       | ⬜ §3                                     |
-| 💎   | Per-state security descriptor      | ✅ Full              | ⚠️ DAC only         | ⬜ §4                                     |
-| 💎   | Lost-update sequence numbers       | ✅ WNF change stamp  | ❌ N/A               | ✅ §2: atomic64 stamp + CAS publish       |
-| 💎   | WNF-compatible syscalls            | ✅ Nt*WnfStateData   | ❌ N/A               | ⬜ §8                                     |
-| ⭐   | Named catalog + coalescing         | ⚠️ Undocumented WNF | ❌ ad-hoc            | ⬜ §5,§7                                  |
-| ⭐   | Live diagnostics counters          | ❌ Debugger only     | ⚠️ /proc scattered  | ⬜ §9                                     |
+| ⭐  | Feature                            | 🪟 Win11            | 🐧 Linux           | 🚀 Impossible OS                         |
+| --- | ---------------------------------- | ------------------- | ------------------ | ---------------------------------------- |
+| 💎  | Kernel state-change notify         | ✅ WNF              | ⚠️ netlink/inotify  | ✅ §1-§2: publish/subscribe + poll       |
+| 💎  | State object + lifetime/scope/type | ✅ WNF lifetimes    | ⚠️ no unified model | ✅ §1: NotificationState Ob type + \Notifications + 4 lifetime classes |
+| 💎  | Waitable user subscriptions        | ✅ WNF+Nt*          | ⚠️ epoll/poll       | ⬜ §3                                    |
+| 💎  | Per-state security descriptor      | ✅ Full             | ⚠️ DAC only         | ⬜ §4                                    |
+| 💎  | Lost-update sequence numbers       | ✅ WNF change stamp | ❌ N/A             | ✅ §2: atomic64 stamp + CAS publish      |
+| 💎  | WNF-compatible syscalls            | ✅ Nt*WnfStateData  | ❌ N/A             | ⬜ §8                                    |
+| ⭐  | Named catalog + coalescing         | ⚠️ Undocumented WNF  | ❌ ad-hoc          | ⬜ §5,§7                                 |
+| ⭐  | Live diagnostics counters          | ❌ Debugger only    | ⚠️ /proc scattered  | ⬜ §9                                    |
 
 > 💎 = parity work (Win11/Linux already do it). ⭐ = exclusive/superior work.
 

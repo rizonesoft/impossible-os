@@ -64,21 +64,21 @@ title: "TODO-24 -- ALPC / Message Ports"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                              | Depends On    | Status |
+| ⭐  | Order | Deliverable                              | Depends On    | Status |
 | --- | :---: | ---------------------------------------- | ------------- | :----: |
-| 💎   |   1   | Message header, port attributes, type codes | (none)        |  [x]   |
-| 💎   |   2   | ALPC_PORT object & Object Manager registration | §1, T05 §1-§4 |  [x]   |
-| 💎   |   3   | Connection state machine (create/connect/accept) | §2, T12 §4    |  [x]   |
-| 💎   |   4   | Synchronous send+wait+receive engine     | §3, T07 §3    |  [x]   |
-| 💎   |   5   | Asynchronous delivery & completion list  | §4            |  [x]   |
-| 💎   |   6   | Large data: port sections & view mapping | §2, T05 §3,§7 |  [/]   |
-| 💎   |   7   | Security: client token capture & impersonation | §4, T15 §4-§7 |  [/]   |
-| 💎   |   8   | NtAlpc* SSDT registration & stub retrofit | §1-§7, T12 §4 |  [/]   |
-| 💎   |   9   | NtAlpc QueryInformation / SetInformation / CancelMessage | §8, T12 §4    |  [/]   |
-| 💎   |  10   | CSRSS ApiPort bootstrap                  | §3-§9         |  [/]   |
-| 💎   |  11   | Message zones (pre-allocated message buffers) | §4, §8-§9     |  [/]   |
-| ⭐   |  12   | Live port monitor & IPC latency profiler | §8-§9         |  [/]   |
-| ⭐   |  13   | Post-ship follow-up backfill (2026-07-31 cohort) | --            |  [ ]   |
+| 💎  |   1   | Message header, port attributes, type codes | (none)        |  [x]   |
+| 💎  |   2   | ALPC_PORT object & Object Manager registration | §1, T05 §1-§4 |  [x]   |
+| 💎  |   3   | Connection state machine (create/connect/accept) | §2, T12 §4    |  [x]   |
+| 💎  |   4   | Synchronous send+wait+receive engine     | §3, T07 §3    |  [x]   |
+| 💎  |   5   | Asynchronous delivery & completion list  | §4            |  [x]   |
+| 💎  |   6   | Large data: port sections & view mapping | §2, T05 §3,§7 |  [/]   |
+| 💎  |   7   | Security: client token capture & impersonation | §4, T15 §4-§7 |  [/]   |
+| 💎  |   8   | NtAlpc* SSDT registration & stub retrofit | §1-§7, T12 §4 |  [/]   |
+| 💎  |   9   | NtAlpc QueryInformation / SetInformation / CancelMessage | §8, T12 §4    |  [/]   |
+| 💎  |  10   | CSRSS ApiPort bootstrap                  | §3-§9         |  [/]   |
+| 💎  |  11   | Message zones (pre-allocated message buffers) | §4, §8-§9     |  [/]   |
+| ⭐  |  12   | Live port monitor & IPC latency profiler | §8-§9         |  [/]   |
+| ⭐  |  13   | Post-ship follow-up backfill (2026-07-31 cohort) | --            |  [ ]   |
 
 > 💎 = parity work; matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work; Impossible OS is superior or first.
@@ -621,28 +621,28 @@ From the stamped section 5:
 
 ## OS Comparison
 
-| ⭐   | Feature                      | 🪟 Win11               | 🐧 Linux                 | 🚀 Impossible OS                     |
-| --- | ---------------------------- | --------------------- | ----------------------- | ----------------------------------- |
-| 💎   | Connection-oriented ports    | ✅ ALPC                | ⚠️ SOCK_SEQPACKET       | ⬜ §2-§3                             |
-| 💎   | Sync send+wait+reply         | ✅ Full                | ⚠️ No typed reply       | ✅ §4 done (datagram + sync + reply) |
-| 💎   | Async completion delivery    | ✅ Full                | ⚠️ io_uring (RFC 2026)  | ✅ §5 (IOCP notify + waitable port)  |
-| 💎   | Large data via section       | ✅ Port sections       | ⚠️ Manual mmap          | ⬜ §6                                |
-| 💎   | Client identity capture      | ✅ Full                | ⚠️ SCM_CREDENTIALS      | ✅ §7 (capture + QoS negotiation)    |
-| 💎   | Named port namespace         | ✅ `\\RPC Control\\`   | ⚠️ Abstract sockets     | ⬜ §2                                |
-| 💎   | CSRSS subsystem server       | ✅ Full                | ❌ N/A                   | ⬜ §10 (deferred; BSS + §8/§9)       |
-| 💎   | Handle dup across port       | ✅ ALPC_HANDLE_ATTR    | ⚠️ SCM_RIGHTS           | ⬜ D03 T09 §8                        |
-| 💎   | Connection SID verification  | ✅ Full                | ⚠️ SO_PEERPIDFD (2023+) | ⚠️ §7 kernel-side; ring 3 needs §8  |
-| 💎   | Server impersonate client    | ✅ NtAlpcImpersonate*  | ⚠️ SCM_CREDENTIALS only | ⚠️ §7 helper + gate; slot -> §8     |
-| 💎   | Per-message SID query        | ✅ Full                | ❌ N/A                   | ⬜ §9 (7 args > 6-word SSDT cap)     |
-| 💎   | Open sender proc/thread      | ✅ NtAlpcOpenSender*   | ⚠️ peer creds / pidfd   | ⬜ §8 gap items                      |
-| 💎   | Revoke security context      | ✅ NtAlpcRevoke*       | ❌ N/A                   | ⬜ §8 gap items                      |
-| 💎   | Message zones                | ✅ AlpcMessageZone     | ❌ Per-msg sk_buff       | ⬜ §11 (deferred; BSS-blocked)       |
-| 💎   | Completion list lifecycle    | ✅ Register/Unregister | ❌ N/A                   | ⬜ §9 not-impl (IOCP subst.)         |
-| 💎   | Message identity attrs       | ✅ TOKEN + WoB attr    | ⚠️ SCM_CREDENTIALS      | ⬜ §6 layout + §7 provenance         |
-| 💎   | Connection-msg negotiation   | ✅ Connect/accept msg  | ⚠️ connect() payload    | ⬜ §8 (full-width ABI)               |
-| 💎   | Resource reserves (per-msg)  | ✅ NtAlpcCreateReserve | ❌ N/A                   | ⬜ §11 (distinct from zones; BSS)    |
-| ⭐   | Per-port latency histogram   | ❌ ETW only            | ❌ ftrace only           | ⬜ §12 (deferred; BSS-blocked)       |
-| ⭐   | Live port monitor + profiler | ❌ WinObj read-only    | ❌ N/A                   | ⬜ §12 (alpcmon; BSS-blocked)        |
+| ⭐  | Feature                      | 🪟 Win11               | 🐧 Linux               | 🚀 Impossible OS                     |
+| --- | ---------------------------- | ---------------------- | ---------------------- | ------------------------------------ |
+| 💎  | Connection-oriented ports    | ✅ ALPC                | ⚠️ SOCK_SEQPACKET       | ⬜ §2-§3                             |
+| 💎  | Sync send+wait+reply         | ✅ Full                | ⚠️ No typed reply       | ✅ §4 done (datagram + sync + reply) |
+| 💎  | Async completion delivery    | ✅ Full                | ⚠️ io_uring (RFC 2026)  | ✅ §5 (IOCP notify + waitable port)  |
+| 💎  | Large data via section       | ✅ Port sections       | ⚠️ Manual mmap          | ⬜ §6                                |
+| 💎  | Client identity capture      | ✅ Full                | ⚠️ SCM_CREDENTIALS      | ✅ §7 (capture + QoS negotiation)    |
+| 💎  | Named port namespace         | ✅ `\\RPC Control\\`   | ⚠️ Abstract sockets     | ⬜ §2                                |
+| 💎  | CSRSS subsystem server       | ✅ Full                | ❌ N/A                 | ⬜ §10 (deferred; BSS + §8/§9)       |
+| 💎  | Handle dup across port       | ✅ ALPC_HANDLE_ATTR    | ⚠️ SCM_RIGHTS           | ⬜ D03 T09 §8                        |
+| 💎  | Connection SID verification  | ✅ Full                | ⚠️ SO_PEERPIDFD (2023+) | ⚠️ §7 kernel-side; ring 3 needs §8    |
+| 💎  | Server impersonate client    | ✅ NtAlpcImpersonate*  | ⚠️ SCM_CREDENTIALS only | ⚠️ §7 helper + gate; slot -> §8       |
+| 💎  | Per-message SID query        | ✅ Full                | ❌ N/A                 | ⬜ §9 (7 args > 6-word SSDT cap)     |
+| 💎  | Open sender proc/thread      | ✅ NtAlpcOpenSender*   | ⚠️ peer creds / pidfd   | ⬜ §8 gap items                      |
+| 💎  | Revoke security context      | ✅ NtAlpcRevoke*       | ❌ N/A                 | ⬜ §8 gap items                      |
+| 💎  | Message zones                | ✅ AlpcMessageZone     | ❌ Per-msg sk_buff     | ⬜ §11 (deferred; BSS-blocked)       |
+| 💎  | Completion list lifecycle    | ✅ Register/Unregister | ❌ N/A                 | ⬜ §9 not-impl (IOCP subst.)         |
+| 💎  | Message identity attrs       | ✅ TOKEN + WoB attr    | ⚠️ SCM_CREDENTIALS      | ⬜ §6 layout + §7 provenance         |
+| 💎  | Connection-msg negotiation   | ✅ Connect/accept msg  | ⚠️ connect() payload    | ⬜ §8 (full-width ABI)               |
+| 💎  | Resource reserves (per-msg)  | ✅ NtAlpcCreateReserve | ❌ N/A                 | ⬜ §11 (distinct from zones; BSS)    |
+| ⭐  | Per-port latency histogram   | ❌ ETW only            | ❌ ftrace only         | ⬜ §12 (deferred; BSS-blocked)       |
+| ⭐  | Live port monitor + profiler | ❌ WinObj read-only    | ❌ N/A                 | ⬜ §12 (alpcmon; BSS-blocked)        |
 
 > **Deferred features (→ other TODOs):**
 > - Handle attribute marshalling and direct/indirect mode → `03-memory-concurrency/TODO-09-win32-ipc-extensions.md §9`

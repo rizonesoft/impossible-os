@@ -82,9 +82,9 @@ Sets `explorer.exe` as the default shell on boot unless the installer override f
 
 ## OS Comparison
 
-| ⭐   | Feature            | 🪟 Win11                  | 🐧 Linux                                 | 🚀 Impossible OS                          |
+| ⭐  | Feature            | 🪟 Win11                 | 🐧 Linux                                | 🚀 Impossible OS                         |
 | --- | ------------------ | ------------------------ | --------------------------------------- | ---------------------------------------- |
-| 💎   | Shell host process | explorer.exe + DWM stack | DE-specific entry (`gnome-shell`, etc.) | explorer.exe PE + TODO-C Tier 1 export gates |
+| 💎  | Shell host process | explorer.exe + DWM stack | DE-specific entry (`gnome-shell`, etc.) | explorer.exe PE + TODO-C Tier 1 export gates |
 
 ## Unit Tests
 

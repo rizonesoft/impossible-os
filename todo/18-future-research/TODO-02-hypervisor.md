@@ -66,14 +66,14 @@ loop works end-to-end before committing to full implementation.
 ## Implementation Order
 
 | Step | Section                                  | 💎/⭐ | Dependency                               |
-| ---- | ---------------------------------------- | --- | ---------------------------------------- |
-| 1    | VT-x/AMD-V gap analysis (CPU feature + VMCS field audit) | ⭐   | Intel SDM Vol. 3C; `cpu_data.cpuid_features` (TODO-04 §3) |
-| 2    | Minimal hypervisor design (VMCS layout + VMX root setup) | ⭐   | §1; `pmm_alloc_contiguous`; `wrmsr`      |
-| 3    | Minimal Linux guest POC (`bzImage` VMLAUNCH + serial output) | ⭐   | §2; `vmm_map_page` for EPT; Linux boot protocol |
-| 4    | virtio device emulation design (host-side blk + net) | ⭐   | §3 VM I/O exits; guest-side virtio reference |
-| 5    | Snapshot & live migration research       | ⭐   | §3 running VM; EPT dirty tracking        |
-| 6    | GPU passthrough research (VT-d / AMD-Vi feasibility) | ⭐   | §2 design; IOMMU prerequisite analysis   |
-| 7    | Research deliverables (`hypervisor-design.md`) | ⭐   | §1–§6 complete                           |
+| ---- | ---------------------------------------- | ----- | ---------------------------------------- |
+| 1    | VT-x/AMD-V gap analysis (CPU feature + VMCS field audit) | ⭐    | Intel SDM Vol. 3C; `cpu_data.cpuid_features` (TODO-04 §3) |
+| 2    | Minimal hypervisor design (VMCS layout + VMX root setup) | ⭐    | §1; `pmm_alloc_contiguous`; `wrmsr`      |
+| 3    | Minimal Linux guest POC (`bzImage` VMLAUNCH + serial output) | ⭐    | §2; `vmm_map_page` for EPT; Linux boot protocol |
+| 4    | virtio device emulation design (host-side blk + net) | ⭐    | §3 VM I/O exits; guest-side virtio reference |
+| 5    | Snapshot & live migration research       | ⭐    | §3 running VM; EPT dirty tracking        |
+| 6    | GPU passthrough research (VT-d / AMD-Vi feasibility) | ⭐    | §2 design; IOMMU prerequisite analysis   |
+| 7    | Research deliverables (`hypervisor-design.md`) | ⭐    | §1–§6 complete                           |
 
 ---
 
@@ -313,11 +313,11 @@ loop works end-to-end before committing to full implementation.
   - **Device emulation plan** (from §4): virtio MMIO + split-ring; `virtio-blk` disk image backend; `virtio-net` packet forwarding; `virtio-gpu` stretch
   - **Guest OS support matrix**:
 
-| Guest OS                 | CPU mode         | Boot protocol             | Serial            | virtio-blk                         | Status  |
-| ------------------------ | ---------------- | ------------------------- | ----------------- | ---------------------------------- | ------- |
-| 🐧 Linux x64 (busybox)    | 64-bit long mode | `bzImage` + `boot_params` | COM1 via I/O exit | ✅ prototype                        | Phase 1 |
-| 🚀 Impossible OS (nested) | 64-bit long mode | ELF + boot_info struct    | Serial            | ✅ same                             | Phase 2 |
-| Windows 10 x64           | 64-bit long mode | UEFI boot                 | Hyper-V synthetic | Requires APIC virt + UEFI firmware | Phase 3 |
+| Guest OS                  | CPU mode         | Boot protocol             | Serial            | virtio-blk                         | Status  |
+| ------------------------- | ---------------- | ------------------------- | ----------------- | ---------------------------------- | ------- |
+| 🐧 Linux x64 (busybox)    | 64-bit long mode | `bzImage` + `boot_params` | COM1 via I/O exit | ✅ prototype                       | Phase 1 |
+| 🚀 Impossible OS (nested) | 64-bit long mode | ELF + boot_info struct    | Serial            | ✅ same                            | Phase 2 |
+| Windows 10 x64            | 64-bit long mode | UEFI boot                 | Hyper-V synthetic | Requires APIC virt + UEFI firmware | Phase 3 |
 
   - **Phased implementation plan**:
     - Phase 1: single vCPU, Intel VMX only, Linux busybox boot, COM1 serial, EPT identity map
@@ -334,15 +334,15 @@ loop works end-to-end before committing to full implementation.
 ## OS Comparison
 
 
-| ⭐   | Feature                                  | 🪟 Win11                                  | 🐧 Linux                                  | 🚀 Impossible OS                          |
+| ⭐  | Feature                                  | 🪟 Win11                                 | 🐧 Linux                                 | 🚀 Impossible OS                         |
 | --- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
-| 💎   | Type-1 / Type-1.5 hypervisor built into OS | ✅ Hyper-V (Type-1, HVCI, VBS, Hyper-V    | ✅ KVM (Type-2 module in Linux            | ⬜ §2 -- §3; Type-1.5 ImpossibleHV in `src/kernel/hypervisor/` |
-| 💎   | EPT (Extended Page Tables) nested paging | ✅ Hyper-V second-level address translation | ✅ KVM EPT + shadow page                  | ⬜ §3 -- 4-level EPT; 2 MiB large         |
-| 💎   | virtio device emulation for guests       | ✅ Hyper-V synthetic VMBus devices (no    | ✅ QEMU virtio-blk/net/gpu + KVM acceleration | ⬜ §4 -- host-side virtio MMIO + split-ring |
-| 💎   | VM snapshot + pause-and-copy             | ✅ Hyper-V checkpoints; VMMS snapshot API | ✅ QEMU savevm / libvirt snapshot         | ⬜ §5 -- VMCS + memory serialisation to   |
-| 💎   | Live migration research                  | ✅ Hyper-V live migration (RDMA or        | ✅ KVM live migration (iterative dirty    | ⬜ §5 -- research; EPT dirty bits; blocking: |
-| ⭐   | GPU passthrough                          | ✅ Hyper-V DDA (Discrete Device Assignment), | ✅ VFIO passthrough + IOMMU groups        | ⬜ §6 -- research only; blocking: IOMMU driver |
-| ⭐   | Public hypervisor design doc + phased plan | ✅ Hyper-V: architecture docs on Learn.microsoft.com; | ✅ KVM: open source; architecture in      | ⬜ §7 -- `hypervisor-design.md` with VMCS layout, guest |
+| 💎  | Type-1 / Type-1.5 hypervisor built into OS | ✅ Hyper-V (Type-1, HVCI, VBS, Hyper-V   | ✅ KVM (Type-2 module in Linux           | ⬜ §2 -- §3; Type-1.5 ImpossibleHV in `src/kernel/hypervisor/` |
+| 💎  | EPT (Extended Page Tables) nested paging | ✅ Hyper-V second-level address translation | ✅ KVM EPT + shadow page                 | ⬜ §3 -- 4-level EPT; 2 MiB large        |
+| 💎  | virtio device emulation for guests       | ✅ Hyper-V synthetic VMBus devices (no   | ✅ QEMU virtio-blk/net/gpu + KVM acceleration | ⬜ §4 -- host-side virtio MMIO + split-ring |
+| 💎  | VM snapshot + pause-and-copy             | ✅ Hyper-V checkpoints; VMMS snapshot API | ✅ QEMU savevm / libvirt snapshot        | ⬜ §5 -- VMCS + memory serialisation to  |
+| 💎  | Live migration research                  | ✅ Hyper-V live migration (RDMA or       | ✅ KVM live migration (iterative dirty   | ⬜ §5 -- research; EPT dirty bits; blocking: |
+| ⭐  | GPU passthrough                          | ✅ Hyper-V DDA (Discrete Device Assignment), | ✅ VFIO passthrough + IOMMU groups       | ⬜ §6 -- research only; blocking: IOMMU driver |
+| ⭐  | Public hypervisor design doc + phased plan | ✅ Hyper-V: architecture docs on Learn.microsoft.com; | ✅ KVM: open source; architecture in     | ⬜ §7 -- `hypervisor-design.md` with VMCS layout, guest |
 
 Impossible OS's `⭐` advantage: ImpossibleHV is designed as an integral kernel subsystem
 from the start -- not a separate binary (unlike Hyper-V), not a loadable module requiring

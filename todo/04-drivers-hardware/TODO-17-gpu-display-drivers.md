@@ -33,16 +33,16 @@ title: "TODO-17 -- GPU & Display Drivers"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                              | Depends On                              | Status |
+| ⭐  | Order | Deliverable                              | Depends On                              | Status |
 | --- | :---: | ---------------------------------------- | --------------------------------------- | :----: |
-| ⭐   |   1   | §1 `display_device_t` vtable + compositor hook | `gfx_core.c` interface point            |  [ ]   |
-| 💎   |   2   | §2 VBE/GOP fallback registers as lowest-priority display device | §1 (vtable defined)                     |  [ ]   |
-| 💎   |   3   | §3 Bochs/BGA module -- extract from `framebuffer.c`, add page-flip | §1, TODO-05 module loader               |  [ ]   |
-| 💎   |   4   | §4 VirtIO-GPU module -- resource pipeline, hardware cursor | §1, TODO-05, VirtIO core                |  [ ]   |
-| 💎   |   5   | §5 VMSVGA 2D module -- FIFO acceleration, hardware cursor | §1, TODO-05                             |  [ ]   |
-| 💎   |   6   | §6 Multi-head support -- `display_device_t[]`, compositor span | §1 (vtable), compositor (§1 integrated) |  [ ]   |
-| 💎   |   7   | §7 Intel HD/UHD iGPU modesetting stub (P3) | §1                                      |  [ ]   |
-| 💎   |   8   | §8 AMD APU Vega/RDNA modesetting stub (P4) | §1                                      |  [ ]   |
+| ⭐  |   1   | §1 `display_device_t` vtable + compositor hook | `gfx_core.c` interface point            |  [ ]   |
+| 💎  |   2   | §2 VBE/GOP fallback registers as lowest-priority display device | §1 (vtable defined)                     |  [ ]   |
+| 💎  |   3   | §3 Bochs/BGA module -- extract from `framebuffer.c`, add page-flip | §1, TODO-05 module loader               |  [ ]   |
+| 💎  |   4   | §4 VirtIO-GPU module -- resource pipeline, hardware cursor | §1, TODO-05, VirtIO core                |  [ ]   |
+| 💎  |   5   | §5 VMSVGA 2D module -- FIFO acceleration, hardware cursor | §1, TODO-05                             |  [ ]   |
+| 💎  |   6   | §6 Multi-head support -- `display_device_t[]`, compositor span | §1 (vtable), compositor (§1 integrated) |  [ ]   |
+| 💎  |   7   | §7 Intel HD/UHD iGPU modesetting stub (P3) | §1                                      |  [ ]   |
+| 💎  |   8   | §8 AMD APU Vega/RDNA modesetting stub (P4) | §1                                      |  [ ]   |
 
 > §1 `display_device_t` is `⭐` exclusive: Windows uses WDDM kernel-mode drivers with a fixed DDI; Linux uses DRM/KMS. Impossible OS defines a lean custom vtable that any module can register against -- simpler than DRM/KMS, more capable than a raw framebuffer pointer.
 

@@ -238,9 +238,9 @@ Microsoft does not publish one MSDN page per `comctl32.dll` export. Use two laye
 
 ## OS Comparison
 
-| ⭐   | Feature                          | 🪟 Win11                           | 🐧 Linux              | 🚀 Impossible OS                          |
+| ⭐  | Feature                          | 🪟 Win11                          | 🐧 Linux             | 🚀 Impossible OS                         |
 | --- | -------------------------------- | --------------------------------- | -------------------- | ---------------------------------------- |
-| 💎   | Common Controls (`comctl32.dll`) | comctl32 v6 + manifest activation | GTK/Qt widget stacks | Tier 1 init + Tier 3 rows; native `CTRL_*` where applicable |
+| 💎  | Common Controls (`comctl32.dll`) | comctl32 v6 + manifest activation | GTK/Qt widget stacks | Tier 1 init + Tier 3 rows; native `CTRL_*` where applicable |
 
 ## Unit Tests
 

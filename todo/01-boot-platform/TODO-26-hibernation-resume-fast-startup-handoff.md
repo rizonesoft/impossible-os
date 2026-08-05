@@ -34,17 +34,17 @@ title: "TODO-26 -- Hibernation Resume & Fast Startup Boot Handoff"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                            | Depends On  | Status |
+| ⭐  | Order | Deliverable                            | Depends On  | Status |
 | --- | :---: | -------------------------------------- | ----------- | :----: |
-| 💎   |   1   | Hibernation image metadata format      | D02T26 §4   |  [/]   |
-| 💎   |   2   | Bootloader image discovery             | §1          |  [/]   |
-| 💎   |   3   | Resume eligibility policy              | §1, T07 §10 |  [/]   |
-| 💎   |   4   | Integrity and version validation       | §1, T13 §4  |  [/]   |
-| 💎   |   5   | boot_info resume handoff               | T01 §4,§12  |  [/]   |
-| 💎   |   6   | Resume failure fallback                | §5, T21 §4  |  [/]   |
-| 💎   |   7   | Fast startup mode                      | §1-§6       |  [/]   |
-| 💎   |   8   | Diagnostics and BlackBox resume report | §2-§7       |  [/]   |
-| 💎   |   9   | Resume tests                           | §1-§8       |  [/]   |
+| 💎  |   1   | Hibernation image metadata format      | D02T26 §4   |  [/]   |
+| 💎  |   2   | Bootloader image discovery             | §1          |  [/]   |
+| 💎  |   3   | Resume eligibility policy              | §1, T07 §10 |  [/]   |
+| 💎  |   4   | Integrity and version validation       | §1, T13 §4  |  [/]   |
+| 💎  |   5   | boot_info resume handoff               | T01 §4,§12  |  [/]   |
+| 💎  |   6   | Resume failure fallback                | §5, T21 §4  |  [/]   |
+| 💎  |   7   | Fast startup mode                      | §1-§6       |  [/]   |
+| 💎  |   8   | Diagnostics and BlackBox resume report | §2-§7       |  [/]   |
+| 💎  |   9   | Resume tests                           | §1-§8       |  [/]   |
 
 ## 1. Hibernation Image Metadata Format
 
@@ -199,14 +199,14 @@ title: "TODO-26 -- Hibernation Resume & Fast Startup Boot Handoff"
 
 ## OS Comparison
 
-| ⭐   | Feature                  | 🪟 Win11                   | 🐧 Linux                   | 🚀 Impossible OS              |
-| --- | ------------------------ | ------------------------- | ------------------------- | ---------------------------- |
-| 💎   | S4 resume selection      | ✅ hiberfil.sys + winload  | ✅ `resume=` kernel param  | ⬜ Planned §1-§6              |
-| 💎   | Fast startup             | ✅ hybrid boot (hiberboot) | ⚠️ limited distro support | ⬜ Planned §7                 |
-| 💎   | Resume invalidation      | ✅ update/driver policy    | ⚠️ initramfs logic        | ⬜ Planned §3                 |
-| ⭐   | BlackBox resume report   | ❌ event logs only         | ❌ journal only            | ⭐ Planned §8 (X:\Diag + QR)  |
-| ⭐   | Resume image anti-replay | ❌ none                    | ❌ none                    | ⭐ Planned §4 (TPM-NV gen)    |
-| ⭐   | Resume image encryption  | ⚠️ only via BitLocker     | ⚠️ needs encrypted swap   | ⭐ Planned §4 + D02T26 (AEAD) |
+| ⭐  | Feature                  | 🪟 Win11                   | 🐧 Linux                  | 🚀 Impossible OS              |
+| --- | ------------------------ | -------------------------- | ------------------------- | ----------------------------- |
+| 💎  | S4 resume selection      | ✅ hiberfil.sys + winload  | ✅ `resume=` kernel param | ⬜ Planned §1-§6              |
+| 💎  | Fast startup             | ✅ hybrid boot (hiberboot) | ⚠️ limited distro support  | ⬜ Planned §7                 |
+| 💎  | Resume invalidation      | ✅ update/driver policy    | ⚠️ initramfs logic         | ⬜ Planned §3                 |
+| ⭐  | BlackBox resume report   | ❌ event logs only         | ❌ journal only           | ⭐ Planned §8 (X:\Diag + QR)  |
+| ⭐  | Resume image anti-replay | ❌ none                    | ❌ none                   | ⭐ Planned §4 (TPM-NV gen)    |
+| ⭐  | Resume image encryption  | ⚠️ only via BitLocker       | ⚠️ needs encrypted swap    | ⭐ Planned §4 + D02T26 (AEAD) |
 
 ---
 

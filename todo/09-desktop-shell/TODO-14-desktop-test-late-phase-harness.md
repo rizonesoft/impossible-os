@@ -195,16 +195,16 @@ TODO-05 §10 shipped the kernel-side counters + `wm_get_frame_stats()` reader. T
 
 ## OS Comparison
 
-| ⭐   | Feature                            | 🪟 Win11                                | 🐧 Linux                        | 🚀 Impossible OS                         |
-| --- | ---------------------------------- | -------------------------------------- | ------------------------------ | --------------------------------------- |
-| ⭐   | Late-phase kernel test hook        | ❌ Internal WTT only                    | ⚠️ KUnit late init only        | ⚠️ §1 planned                           |
-| ⭐   | Crash artifact bundle on test fail | ⚠️ ad hoc per team                     | ⚠️ ad hoc per team             | ⚠️ §2 planned (CI upload wired today)   |
-| ⭐   | Committed input traces per-fixture | ❌ PSR deprecated                       | ✅ libinput record samples      | ⚠️ §3 planned                           |
-| 💎   | Snapshot-time reader sync          | ✅ DWM quiesce                          | ✅ wlroots frame barrier        | ⚠️ §4 planned (single-threaded today)   |
-| 💎   | Virtio-GPU multi-output            | ⚠️ Hyper-V virtual display             | ✅ virtio-gpu + KMS             | ⚠️ §5 planned (matrix rows SKIPped)     |
-| ⭐   | OS-level frame-stats pseudo-file   | ❌ DwmGetCompositionTimingInfo API only | ❌ no pseudo-file               | ✅ Done §6 \ObjectManager\FrameStats     |
-| 💎   | CI monitor socket security         | N/A (vmconnect.exe)                    | ✅ QEMU `-monitor unix:` common | ✅ Done §7 unix sock + 0600 perms        |
-| ⭐   | Shared-session visual regression   | ⚠️ Playwright-style per tool           | ⚠️ openQA per-test VM default  | ✅ Done §8 amortized boot + fresh opt-in |
+| ⭐  | Feature                            | 🪟 Win11                                | 🐧 Linux                        | 🚀 Impossible OS                         |
+| --- | ---------------------------------- | --------------------------------------- | ------------------------------- | ---------------------------------------- |
+| ⭐  | Late-phase kernel test hook        | ❌ Internal WTT only                    | ⚠️ KUnit late init only          | ⚠️ §1 planned                             |
+| ⭐  | Crash artifact bundle on test fail | ⚠️ ad hoc per team                       | ⚠️ ad hoc per team               | ⚠️ §2 planned (CI upload wired today)     |
+| ⭐  | Committed input traces per-fixture | ❌ PSR deprecated                       | ✅ libinput record samples      | ⚠️ §3 planned                             |
+| 💎  | Snapshot-time reader sync          | ✅ DWM quiesce                          | ✅ wlroots frame barrier        | ⚠️ §4 planned (single-threaded today)     |
+| 💎  | Virtio-GPU multi-output            | ⚠️ Hyper-V virtual display               | ✅ virtio-gpu + KMS             | ⚠️ §5 planned (matrix rows SKIPped)       |
+| ⭐  | OS-level frame-stats pseudo-file   | ❌ DwmGetCompositionTimingInfo API only | ❌ no pseudo-file               | ✅ Done §6 \ObjectManager\FrameStats     |
+| 💎  | CI monitor socket security         | N/A (vmconnect.exe)                     | ✅ QEMU `-monitor unix:` common | ✅ Done §7 unix sock + 0600 perms        |
+| ⭐  | Shared-session visual regression   | ⚠️ Playwright-style per tool             | ⚠️ openQA per-test VM default    | ✅ Done §8 amortized boot + fresh opt-in |
 
 ## Unit Tests
 

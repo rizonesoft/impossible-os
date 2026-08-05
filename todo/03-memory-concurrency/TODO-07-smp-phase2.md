@@ -44,17 +44,17 @@ title: "TODO-07 -- SMP Phase 2"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                              | Depends On             | Status |
+| ⭐  | Order | Deliverable                              | Depends On             | Status |
 | --- | :---: | ---------------------------------------- | ---------------------- | :----: |
-| 💎   |   1   | §8 `READ_ONCE`/`WRITE_ONCE` macros       | --                     |  [ ]   |
-| 💎   |   2   | §1 SMP-safe atomics audit + `smp_mb/rmb/wmb` barriers | §8                     |  [ ]   |
-| 💎   |   3   | §9 CPU feature intersection at AP bringup | SMP Phase 1            |  [ ]   |
-| 💎   |   4   | §2 TLB shootdown IPI (`tlb_shootdown`)   | §1, §8                 |  [ ]   |
-| 💎   |   5   | §3 Per-CPU run queues                    | §1, §8, §9, TODO-06 §1 |  [ ]   |
-| 💎   |   6   | §5 Adaptive mutex spin-on-owner          | §1, §3                 |  [ ]   |
-| ⭐   |   7   | §6 Per-CPU RCU upgrade                   | §1, §3                 |  [ ]   |
-| 💎   |   8   | §4 Work-stealing load balancer           | §3, §6                 |  [ ]   |
-| 💎   |   9   | §7 CPU hotplug stub                      | §3, §6, §4             |  [ ]   |
+| 💎  |   1   | §8 `READ_ONCE`/`WRITE_ONCE` macros       | --                     |  [ ]   |
+| 💎  |   2   | §1 SMP-safe atomics audit + `smp_mb/rmb/wmb` barriers | §8                     |  [ ]   |
+| 💎  |   3   | §9 CPU feature intersection at AP bringup | SMP Phase 1            |  [ ]   |
+| 💎  |   4   | §2 TLB shootdown IPI (`tlb_shootdown`)   | §1, §8                 |  [ ]   |
+| 💎  |   5   | §3 Per-CPU run queues                    | §1, §8, §9, TODO-06 §1 |  [ ]   |
+| 💎  |   6   | §5 Adaptive mutex spin-on-owner          | §1, §3                 |  [ ]   |
+| ⭐  |   7   | §6 Per-CPU RCU upgrade                   | §1, §3                 |  [ ]   |
+| 💎  |   8   | §4 Work-stealing load balancer           | §3, §6                 |  [ ]   |
+| 💎  |   9   | §7 CPU hotplug stub                      | §3, §6, §4             |  [ ]   |
 
 > 💎 = parity -- Windows NT and Linux both implement per-CPU run queues, TLB shootdowns, adaptive spinning, RCU, and hotplug; Impossible OS must match.
 > ⭐ = exclusive -- the per-CPU RCU design (quiescent-state IPI with `call_rcu` deferred callbacks) goes further than Impossible OS's current scheduler-disable approach, matching Linux's `Tree RCU` sophistication.
@@ -233,17 +233,17 @@ During SMP bringup each AP executes CPUID and reports its feature flags to the B
 ## OS Comparison
 
 
-| ⭐   | Feature                                  | 🪟 Win11                                  | 🐧 Linux                                  | 🚀 Impossible OS                          |
+| ⭐  | Feature                                  | 🪟 Win11                                 | 🐧 Linux                                 | 🚀 Impossible OS                         |
 | --- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
-| 💎   | LOCK-prefix atomics + hardware memory barriers | ✅ `InterlockedXxx`; `KeMemoryBarrier()`  | ✅ `atomic_t`; `smp_mb/rmb/wmb`; `LOCK` prefix enforced | ⬜ §1 -- full audit, `smp_mb/rmb/wmb`, CONFIG_SMP gate |
-| 💎   | TLB shootdown IPI                        | ✅ `KeFlushEntireTb` / per-processor IPI  | ✅ `flush_tlb_mm_range()`; IPI + `invlpg` | ⬜ §2 -- `tlb_shootdown(mask, vaddr, len)`, atomic ack |
-| 💎   | Per-CPU run queues                       | ✅ Per-processor `KPRCB` dispatch queues  | ✅ Per-CPU `struct rq`; `schedule()` dequeues | ⬜ §3 -- `struct rq[MAX_CPUS]`, local dequeue, load-weighted |
-| 💎   | Work-stealing load balancer              | ✅ `KiBalanceSetManager` thread; idle processor steals | ✅ `load_balance()`; NEWIDLE trigger; CFS load | ⬜ §4 -- idle-steal, `load_weight`, affinity-aware, 4 ms |
-| 💎   | Adaptive mutex spin-on-owner             | ✅ `ExAcquireFastMutex` adaptive spin     | ✅ `mutex_optimistic_spin()`; owner-on-cpu check | ⬜ §5 -- 200-cycle spin, `READ_ONCE(owner->current_cpu)` |
-| ⭐   | Per-CPU RCU with `call_rcu` deferred callbacks | ❌ No public RCU; kernel uses             | ✅ Tree RCU; `synchronize_rcu()`; `call_rcu()` | ⬜ §6 -- preempt counter + QS IPI         |
-| 💎   | CPU hotplug                              | ✅ Logical processor online/offline via ACPI | ✅ `cpu_up()` / `cpu_down()`; task migration; | ⬜ §7 -- task migration, INIT IPI park,   |
-| 💎   | `READ_ONCE` / `WRITE_ONCE` racy-access discipline | ✅ `ReadNoFence` / `WriteNoFence` WDK macros | ✅ `READ_ONCE()` / `WRITE_ONCE()` (volatile + | ⬜ §8 -- volatile-cast macros, annotated on all |
-| 💎   | CPU feature intersection across APs      | ✅ HAL validates AP CPUID at              | ✅ `cpu_data[]` per-AP; `cpu_has()` uses intersection | ⬜ §9 -- CPUID AND across APs, `XSAVE`/`FXSAVE` |
+| 💎  | LOCK-prefix atomics + hardware memory barriers | ✅ `InterlockedXxx`; `KeMemoryBarrier()` | ✅ `atomic_t`; `smp_mb/rmb/wmb`; `LOCK` prefix enforced | ⬜ §1 -- full audit, `smp_mb/rmb/wmb`, CONFIG_SMP gate |
+| 💎  | TLB shootdown IPI                        | ✅ `KeFlushEntireTb` / per-processor IPI | ✅ `flush_tlb_mm_range()`; IPI + `invlpg` | ⬜ §2 -- `tlb_shootdown(mask, vaddr, len)`, atomic ack |
+| 💎  | Per-CPU run queues                       | ✅ Per-processor `KPRCB` dispatch queues | ✅ Per-CPU `struct rq`; `schedule()` dequeues | ⬜ §3 -- `struct rq[MAX_CPUS]`, local dequeue, load-weighted |
+| 💎  | Work-stealing load balancer              | ✅ `KiBalanceSetManager` thread; idle processor steals | ✅ `load_balance()`; NEWIDLE trigger; CFS load | ⬜ §4 -- idle-steal, `load_weight`, affinity-aware, 4 ms |
+| 💎  | Adaptive mutex spin-on-owner             | ✅ `ExAcquireFastMutex` adaptive spin    | ✅ `mutex_optimistic_spin()`; owner-on-cpu check | ⬜ §5 -- 200-cycle spin, `READ_ONCE(owner->current_cpu)` |
+| ⭐  | Per-CPU RCU with `call_rcu` deferred callbacks | ❌ No public RCU; kernel uses            | ✅ Tree RCU; `synchronize_rcu()`; `call_rcu()` | ⬜ §6 -- preempt counter + QS IPI        |
+| 💎  | CPU hotplug                              | ✅ Logical processor online/offline via ACPI | ✅ `cpu_up()` / `cpu_down()`; task migration; | ⬜ §7 -- task migration, INIT IPI park,  |
+| 💎  | `READ_ONCE` / `WRITE_ONCE` racy-access discipline | ✅ `ReadNoFence` / `WriteNoFence` WDK macros | ✅ `READ_ONCE()` / `WRITE_ONCE()` (volatile + | ⬜ §8 -- volatile-cast macros, annotated on all |
+| 💎  | CPU feature intersection across APs      | ✅ HAL validates AP CPUID at             | ✅ `cpu_data[]` per-AP; `cpu_has()` uses intersection | ⬜ §9 -- CPUID AND across APs, `XSAVE`/`FXSAVE` |
 
 > **After §1–§9:** Impossible OS matches Windows NT and Linux in SMP correctness for all common scheduler, memory, and locking subsystems. The per-CPU RCU implementation (`call_rcu` with deferred callbacks and quiescent-state IPI) is a step beyond a basic `synchronize_rcu()` and places Impossible OS at the level of Linux's Tree RCU -- a read-side primitive Windows lacks an equivalent public API for.
 

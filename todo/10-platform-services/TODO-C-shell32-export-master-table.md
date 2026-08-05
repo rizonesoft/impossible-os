@@ -562,9 +562,9 @@ Microsoft does not publish one MSDN page per `shell32.dll` export. Use two layer
 
 ## OS Comparison
 
-| ⭐   | Feature                             | 🪟 Win11                              | 🐧 Linux                        | 🚀 Impossible OS                          |
+| ⭐  | Feature                             | 🪟 Win11                             | 🐧 Linux                       | 🚀 Impossible OS                         |
 | --- | ----------------------------------- | ------------------------------------ | ------------------------------ | ---------------------------------------- |
-| 💎   | Shell paths + icons (`shell32.dll`) | shell32 `SH*` APIs + icon index maps | `xdg-user-dir` + desktop files | Tier 1 rows; icon index kernel maps stay per `TODO-11` Notes |
+| 💎  | Shell paths + icons (`shell32.dll`) | shell32 `SH*` APIs + icon index maps | `xdg-user-dir` + desktop files | Tier 1 rows; icon index kernel maps stay per `TODO-11` Notes |
 
 ## Unit Tests
 

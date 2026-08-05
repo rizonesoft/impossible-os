@@ -64,15 +64,15 @@ shows `Impossible OS 1.0 (Build 22000)`.
 ## Implementation Order
 
 | Step | Section                                  | 💎/⭐ | Dependency                               |
-| ---- | ---------------------------------------- | --- | ---------------------------------------- |
-| 1    | Versioning scheme (`set-version.sh`, `winver.exe`) | 💎   | Extends existing `version.h` + `build_info.h` |
-| 2    | GPT disk image release (`release-image.sh`, zstd) | 💎   | §1 version baked; existing `build/system-disk.img` |
-| 3    | USB-bootable image (`make-usb.sh` + `usb_creator.c`) | 💎   | §2 compressed image                      |
-| 4    | Bootable ISO (Joliet+Rock Ridge, versioned, `README.txt`) | 💎   | `D10T11 §6` base ISO; §6 version         |
-| 5    | Code signing (`sign-release.sh`, bootloader verify) | 💎   | `D09T07 §7` `codesign_sign/verify`; §1–§4 artifacts |
-| 6    | Artifact manifest (`release-{version}.json`) | ⭐   | §2–§5 all artifacts; `TODO-03` consumer  |
-| 7    | VM image variants (VMDK/VHD/VHDX + `.ovf`) | 💎   | §2 raw image; `qemu-img` installed       |
-| 8    | Reproducible builds (`SOURCE_DATE_EPOCH`) | ⭐   | §1–§7 all scripts; `make verify-reproducible` |
+| ---- | ---------------------------------------- | ----- | ---------------------------------------- |
+| 1    | Versioning scheme (`set-version.sh`, `winver.exe`) | 💎    | Extends existing `version.h` + `build_info.h` |
+| 2    | GPT disk image release (`release-image.sh`, zstd) | 💎    | §1 version baked; existing `build/system-disk.img` |
+| 3    | USB-bootable image (`make-usb.sh` + `usb_creator.c`) | 💎    | §2 compressed image                      |
+| 4    | Bootable ISO (Joliet+Rock Ridge, versioned, `README.txt`) | 💎    | `D10T11 §6` base ISO; §6 version         |
+| 5    | Code signing (`sign-release.sh`, bootloader verify) | 💎    | `D09T07 §7` `codesign_sign/verify`; §1–§4 artifacts |
+| 6    | Artifact manifest (`release-{version}.json`) | ⭐    | §2–§5 all artifacts; `TODO-03` consumer  |
+| 7    | VM image variants (VMDK/VHD/VHDX + `.ovf`) | 💎    | §2 raw image; `qemu-img` installed       |
+| 8    | Reproducible builds (`SOURCE_DATE_EPOCH`) | ⭐    | §1–§7 all scripts; `make verify-reproducible` |
 
 ---
 

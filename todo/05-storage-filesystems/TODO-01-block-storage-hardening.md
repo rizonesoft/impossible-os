@@ -188,15 +188,15 @@ Enforce the I/O rate-limit records published by the quota subsystem at the `blkd
 ## OS Comparison
 
 
-| ⭐   | Feature                                  | 🪟 Win11                                  | 🐧 Linux                                  | 🚀 Impossible OS                          |
+| ⭐  | Feature                                  | 🪟 Win11                                 | 🐧 Linux                                 | 🚀 Impossible OS                         |
 | --- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
-| 💎   | VirtIO-blk flush (`VIRTIO_BLK_T_FLUSH`) + `fsync()` | ✅ `storport.sys` flush via `SCSI_SYNCHRONIZE_CACHE`; `FlushFileBuffers` | ✅ `virtio_blk.c` `REQ_OP_FLUSH`; `fsync()` via `submit_bio()` | ⬜ §1 -- `VIRTIO_BLK_T_FLUSH`, write-back queue, blocking `fsync()` |
-| 💎   | VirtIO-blk error recovery                | ✅ `storport.sys` request retry + error   | ✅ `virtio_blk.c` `VIRTIO_BLK_S_IOERR` → `BLK_STS_IOERR`; retry | ⬜ §2 -- status byte parse, 3× retry,     |
-| 💎   | AHCI NCQ                                 | ✅ `StorAHCI.sys`; NCQ tag allocation; SDB | ✅ `libahci.c`; `ata_eh_recover_host_bus()`; NCQ via `qc_issue()` | ⬜ §3 -- `CAP.SNCQ` detect, bitmask tag allocator, |
-| 💎   | AHCI error recovery -- `PxIS.TFES`, COMRESET, retry | ✅ `StorAHCI.sys`; automatic port reset + | ✅ `ahci.c` `ahci_handle_port_interrupt()`; EH framework; COMRESET | ⬜ §4 -- `PxIS.TFES` IRQ, 3× retry, COMRESET |
-| 💎   | AHCI SMART read                          | ✅ `StorAHCI.sys`; SMART via `IOCTL_STORAGE_QUERY_PROPERTY` | ✅ `libata-smart.c`; `hdparm -i`; `smartctl` (user | ⬜ §5 -- `0xB0/0xD0` DMA, attribute parser, `blkdev_smart_query()` |
-| ⭐   | Per-device I/O counters in `blkdev_t` + `iostat` shell command | ⚠️ PDH/ETW counters; no unified per-device | ⚠️ `/proc/diskstats` per-device; no unified abstraction | ⬜ §6 -- atomic counters in `blkdev_t` (shared |
-| ⭐   | In-kernel LRU sector cache               | ⚠️ Page cache (NTFS metadata/data) --    | ⚠️ Page cache + block device             | ⬜ §7 -- single LRU cache at `blkdev_t`   |
+| 💎  | VirtIO-blk flush (`VIRTIO_BLK_T_FLUSH`) + `fsync()` | ✅ `storport.sys` flush via `SCSI_SYNCHRONIZE_CACHE`; `FlushFileBuffers` | ✅ `virtio_blk.c` `REQ_OP_FLUSH`; `fsync()` via `submit_bio()` | ⬜ §1 -- `VIRTIO_BLK_T_FLUSH`, write-back queue, blocking `fsync()` |
+| 💎  | VirtIO-blk error recovery                | ✅ `storport.sys` request retry + error  | ✅ `virtio_blk.c` `VIRTIO_BLK_S_IOERR` → `BLK_STS_IOERR`; retry | ⬜ §2 -- status byte parse, 3× retry,    |
+| 💎  | AHCI NCQ                                 | ✅ `StorAHCI.sys`; NCQ tag allocation; SDB | ✅ `libahci.c`; `ata_eh_recover_host_bus()`; NCQ via `qc_issue()` | ⬜ §3 -- `CAP.SNCQ` detect, bitmask tag allocator, |
+| 💎  | AHCI error recovery -- `PxIS.TFES`, COMRESET, retry | ✅ `StorAHCI.sys`; automatic port reset + | ✅ `ahci.c` `ahci_handle_port_interrupt()`; EH framework; COMRESET | ⬜ §4 -- `PxIS.TFES` IRQ, 3× retry, COMRESET |
+| 💎  | AHCI SMART read                          | ✅ `StorAHCI.sys`; SMART via `IOCTL_STORAGE_QUERY_PROPERTY` | ✅ `libata-smart.c`; `hdparm -i`; `smartctl` (user | ⬜ §5 -- `0xB0/0xD0` DMA, attribute parser, `blkdev_smart_query()` |
+| ⭐  | Per-device I/O counters in `blkdev_t` + `iostat` shell command | ⚠️ PDH/ETW counters; no unified per-device | ⚠️ `/proc/diskstats` per-device; no unified abstraction | ⬜ §6 -- atomic counters in `blkdev_t` (shared |
+| ⭐  | In-kernel LRU sector cache               | ⚠️ Page cache (NTFS metadata/data) --     | ⚠️ Page cache + block device              | ⬜ §7 -- single LRU cache at `blkdev_t`  |
 
 > **After §1–7:** Impossible OS has the most transparent and measurable block layer of the three platforms. The `⭐` sections -- §6 (in-kernel `blkdev_stats()`) and §7 (unified LRU sector cache) -- are architectural choices with no direct equivalent: Windows exposes I/O metrics only through PDH/ETW (external monitoring layers); Linux exposes them through procfs without a unified cache at the `blkdev` level. Impossible OS unifies both in `blkdev_t`, so every driver and every filesystem layer automatically inherits stats and caching without additional plumbing.
 

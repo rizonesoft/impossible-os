@@ -38,15 +38,15 @@ $ ixfs-fsck --repair build/system-disk.img 3
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                            | Depends On | Status |
+| ⭐  | Order | Deliverable                            | Depends On | Status |
 | --- | :---: | -------------------------------------- | ---------- | :----: |
-| 💎   |   1   | Superblock validation                  | --         |  [ ]   |
-| 💎   |   2   | Block bitmap verification              | §1         |  [ ]   |
-| 💎   |   3   | Inode table scan                       | §1         |  [ ]   |
-| 💎   |   4   | Extent integrity check                 | §3         |  [ ]   |
-| 💎   |   5   | Directory structure + orphan detection | §3, §4     |  [ ]   |
-| 💎   |   6   | Cross-reference (bitmap vs extents)    | §2, §4     |  [ ]   |
-| ⭐   |   7   | Repair mode (--repair)                 | §1-§6      |  [ ]   |
+| 💎  |   1   | Superblock validation                  | --         |  [ ]   |
+| 💎  |   2   | Block bitmap verification              | §1         |  [ ]   |
+| 💎  |   3   | Inode table scan                       | §1         |  [ ]   |
+| 💎  |   4   | Extent integrity check                 | §3         |  [ ]   |
+| 💎  |   5   | Directory structure + orphan detection | §3, §4     |  [ ]   |
+| 💎  |   6   | Cross-reference (bitmap vs extents)    | §2, §4     |  [ ]   |
+| ⭐  |   7   | Repair mode (--repair)                 | §1-§6      |  [ ]   |
 
 ---
 

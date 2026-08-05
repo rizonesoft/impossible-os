@@ -38,19 +38,19 @@ title: "TODO-28 -- Boot Validation & Hardware Certification Matrix"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                        | Depends On             | Status |
+| ⭐  | Order | Deliverable                        | Depends On             | Status |
 | --- | :---: | ---------------------------------- | ---------------------- | :----: |
-| 💎   |   1   | Boot certification matrix schema   | GAP-ANALYSIS           |  [x]   |
-| 💎   |   2   | VM automation suite                | §1                     |  [x]   |
-| 💎   |   3   | Storage/media boot suite           | §1, T16, T17, T06      |  [/]   |
-| 💎   |   4   | Security boot suite                | §1, T02, T13, T12      |  [/]   |
-| 💎   |   5   | Recovery and rollback suite        | §1, T21, T22, T23, T26 |  [/]   |
-| 💎   |   6   | Network boot suite                 | §1, T25                |  [/]   |
-| 💎   |   7   | Bare-metal lab inventory           | §1                     |  [x]   |
-| ⭐   |   8   | Boot support bundle collector      | §2-§7, TODO-24         |  [/]   |
-| ⭐   |   9   | Release gate and dashboard         | §1-§8                  |  [/]   |
-| 💎   |  10   | Certification docs                 | §1-§9                  |  [/]   |
-| 💎   |  11   | Firmware sanity certification gate | §1, T04 §2, §8         |  [/]   |
+| 💎  |   1   | Boot certification matrix schema   | GAP-ANALYSIS           |  [x]   |
+| 💎  |   2   | VM automation suite                | §1                     |  [x]   |
+| 💎  |   3   | Storage/media boot suite           | §1, T16, T17, T06      |  [/]   |
+| 💎  |   4   | Security boot suite                | §1, T02, T13, T12      |  [/]   |
+| 💎  |   5   | Recovery and rollback suite        | §1, T21, T22, T23, T26 |  [/]   |
+| 💎  |   6   | Network boot suite                 | §1, T25                |  [/]   |
+| 💎  |   7   | Bare-metal lab inventory           | §1                     |  [x]   |
+| ⭐  |   8   | Boot support bundle collector      | §2-§7, TODO-24         |  [/]   |
+| ⭐  |   9   | Release gate and dashboard         | §1-§8                  |  [/]   |
+| 💎  |  10   | Certification docs                 | §1-§9                  |  [/]   |
+| 💎  |  11   | Firmware sanity certification gate | §1, T04 §2, §8         |  [/]   |
 
 ## 1. Boot Certification Matrix Schema
 
@@ -254,15 +254,15 @@ Gate releases on firmware-table sanity, not just Secure Boot/TPM: malformed or d
 
 ## OS Comparison
 
-| ⭐   | Feature                  | 🪟 Win11              | 🐧 Linux                   | 🚀 Impossible OS                |
-| --- | ------------------------ | -------------------- | ------------------------- | ------------------------------ |
-| 💎   | WHQL-style boot matrix   | ✅ WHQL/HLK           | ⚠️ per-distro CI          | ⬜ §1 cert matrix + gate        |
-| 💎   | VM boot automation       | ⚠️ internal only     | ⚠️ per-distro tests       | ✅ §2 4-class launcher registry |
-| ⭐   | BlackBox support bundle  | ⚠️ WER/event logs    | ⚠️ journal/sosreport      | ⬜ §8 one-zip bundle            |
-| ⭐   | TODO-owner mapped matrix | ❌ internal, opaque   | ❌ ad hoc                  | ✅ §1 boot-cert.yml + lint gate |
-| 💎   | Firmware sanity gate     | ✅ HLK firmware tests | ✅ FWTS (ACPI/UEFI)        | ⬜ §11 consumes T04 inventory   |
-| 💎   | Bare-metal cert lab      | ✅ WHQL/HLK lab       | ⚠️ per-distro HW labs     | ✅ §7 5-class lab inventory     |
-| 💎   | Repeat-boot reliability  | ✅ HLK MTBF           | ⚠️ KernelCI boot-to-shell | ✅ §2 cold/warm flake gate      |
+| ⭐  | Feature                  | 🪟 Win11              | 🐧 Linux                 | 🚀 Impossible OS                |
+| --- | ------------------------ | --------------------- | ------------------------ | ------------------------------- |
+| 💎  | WHQL-style boot matrix   | ✅ WHQL/HLK           | ⚠️ per-distro CI          | ⬜ §1 cert matrix + gate        |
+| 💎  | VM boot automation       | ⚠️ internal only       | ⚠️ per-distro tests       | ✅ §2 4-class launcher registry |
+| ⭐  | BlackBox support bundle  | ⚠️ WER/event logs      | ⚠️ journal/sosreport      | ⬜ §8 one-zip bundle            |
+| ⭐  | TODO-owner mapped matrix | ❌ internal, opaque   | ❌ ad hoc                | ✅ §1 boot-cert.yml + lint gate |
+| 💎  | Firmware sanity gate     | ✅ HLK firmware tests | ✅ FWTS (ACPI/UEFI)      | ⬜ §11 consumes T04 inventory   |
+| 💎  | Bare-metal cert lab      | ✅ WHQL/HLK lab       | ⚠️ per-distro HW labs     | ✅ §7 5-class lab inventory     |
+| 💎  | Repeat-boot reliability  | ✅ HLK MTBF           | ⚠️ KernelCI boot-to-shell | ✅ §2 cold/warm flake gate      |
 
 ---
 

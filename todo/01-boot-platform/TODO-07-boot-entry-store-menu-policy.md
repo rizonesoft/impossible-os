@@ -52,26 +52,26 @@ title: "TODO-07 -- Boot Entry Store, Menu & Policy"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                              | Depends On                              | Status |
+| ⭐  | Order | Deliverable                              | Depends On                              | Status |
 | --- | :---: | ---------------------------------------- | --------------------------------------- | :----: |
-| 💎   |   1   | Boot entry file format                   | --                                      |  [x]   |
-| 💎   |   2   | Boot entry parser and validator          | §1                                      |  [x]   |
-| 💎   |   3   | Boot policy merge order (firmware vs OS layer split) | §2, T01 §1, T05 §6                      |  [x]   |
-| 💎   |   4   | ESP store read + Boot#### OptionalData + policy wiring | §3                                      |  [x]   |
-| 💎   |   5   | Crash-tolerant counter protocol + v19 ABI validator | §3, §4                                  |  [x]   |
-| 💎   |   6   | Boot menu renderer + countdown + input infrastructure | §4, T15 §3, T15 §4                      |  [x]   |
-| 💎   |   7   | Boot menu indicators + hotkeys + hide_when_alone | §6                                      |  [x]   |
-| 💎   |   8   | Safe mode, test mode, and diagnostics entries | §3, T10 §7                              |  [/]   |
-| 💎   |   9   | A/B and recovery entry integration (DEFERRED) | §3, §4, T21 §1+§3+§4, T22 §1+§2         |  [/]   |
-| 💎   |  10   | Previous-kernel and known-good entries (DEFERRED) | §2, §14, T06 §1, D15 T03 §6 (updater)   |  [/]   |
-| 💎   |  11   | Boot entry editor tooling                | §1, §2                                  |  [/]   |
-| ⭐   |  12   | Policy audit (BlackBox primary, NVRAM exceptional) | §3, §4, §9                              |  [x]   |
-| 💎   |  13   | Entry kinds: split, UKI, chainload, network, resume | §1, §2, T02 §11, T26 §3, T25 §7, T27 §1 |  [/]   |
-| 💎   |  14   | Per-entry health-gated mark-good         | §3, §5, §9, T21 §5, D02 T02 §10         |  [/]   |
-| 💎   |  15   | OS-visible loader UEFI variables         | §3, §4, §9, §13                         |  [x]   |
-| 💎   |  16   | Bootstrap and first-install entry seeding | §1, §9, §13, T22 §1, T06 §1             |  [/]   |
-| 💎   |  17   | Boot entry tests                         | §1-§16                                  |  [/]   |
-| 💎   |  18   | systemd BLI parity (BLS display order, one-shot, loader timestamps) | §6, §15                                 |  [/]   |
+| 💎  |   1   | Boot entry file format                   | --                                      |  [x]   |
+| 💎  |   2   | Boot entry parser and validator          | §1                                      |  [x]   |
+| 💎  |   3   | Boot policy merge order (firmware vs OS layer split) | §2, T01 §1, T05 §6                      |  [x]   |
+| 💎  |   4   | ESP store read + Boot#### OptionalData + policy wiring | §3                                      |  [x]   |
+| 💎  |   5   | Crash-tolerant counter protocol + v19 ABI validator | §3, §4                                  |  [x]   |
+| 💎  |   6   | Boot menu renderer + countdown + input infrastructure | §4, T15 §3, T15 §4                      |  [x]   |
+| 💎  |   7   | Boot menu indicators + hotkeys + hide_when_alone | §6                                      |  [x]   |
+| 💎  |   8   | Safe mode, test mode, and diagnostics entries | §3, T10 §7                              |  [/]   |
+| 💎  |   9   | A/B and recovery entry integration (DEFERRED) | §3, §4, T21 §1+§3+§4, T22 §1+§2         |  [/]   |
+| 💎  |  10   | Previous-kernel and known-good entries (DEFERRED) | §2, §14, T06 §1, D15 T03 §6 (updater)   |  [/]   |
+| 💎  |  11   | Boot entry editor tooling                | §1, §2                                  |  [/]   |
+| ⭐  |  12   | Policy audit (BlackBox primary, NVRAM exceptional) | §3, §4, §9                              |  [x]   |
+| 💎  |  13   | Entry kinds: split, UKI, chainload, network, resume | §1, §2, T02 §11, T26 §3, T25 §7, T27 §1 |  [/]   |
+| 💎  |  14   | Per-entry health-gated mark-good         | §3, §5, §9, T21 §5, D02 T02 §10         |  [/]   |
+| 💎  |  15   | OS-visible loader UEFI variables         | §3, §4, §9, §13                         |  [x]   |
+| 💎  |  16   | Bootstrap and first-install entry seeding | §1, §9, §13, T22 §1, T06 §1             |  [/]   |
+| 💎  |  17   | Boot entry tests                         | §1-§16                                  |  [/]   |
+| 💎  |  18   | systemd BLI parity (BLS display order, one-shot, loader timestamps) | §6, §15                                 |  [/]   |
 
 > 💎 = parity work -- matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work -- Impossible OS is superior or first.

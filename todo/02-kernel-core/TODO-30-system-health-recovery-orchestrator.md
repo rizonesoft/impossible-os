@@ -34,18 +34,18 @@ title: "TODO-30 -- System Health & Recovery Orchestrator"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                         | Depends On         | Status |
+| ⭐  | Order | Deliverable                         | Depends On         | Status |
 | --- | :---: | ----------------------------------- | ------------------ | :----: |
-| 💎   |   1   | Health state model and registry     | T01                |  [ ]   |
-| 💎   |   2   | Subsystem heartbeat API             | §1                 |  [ ]   |
-| 💎   |   3   | Failure bucket taxonomy             | T27, T28           |  [ ]   |
-| ⭐   |   4   | Live kernel dump trigger            | T27                |  [ ]   |
-| ⭐   |   5   | Degraded-mode transition engine     | T02                |  [ ]   |
-| 💎   |   6   | Recovery action dispatcher          | Ex work items      |  [ ]   |
-| ⭐   |   7   | Repeated-failure escalation         | T02, boot rollback |  [ ]   |
-| 💎   |   8   | Native health query/control APIs    | T12                |  [ ]   |
-| ⭐   |   9   | Health notifications and dashboards | T16                |  [ ]   |
-| 💎   |  10   | Tests and chaos scenarios           | §1..§9             |  [ ]   |
+| 💎  |   1   | Health state model and registry     | T01                |  [ ]   |
+| 💎  |   2   | Subsystem heartbeat API             | §1                 |  [ ]   |
+| 💎  |   3   | Failure bucket taxonomy             | T27, T28           |  [ ]   |
+| ⭐  |   4   | Live kernel dump trigger            | T27                |  [ ]   |
+| ⭐  |   5   | Degraded-mode transition engine     | T02                |  [ ]   |
+| 💎  |   6   | Recovery action dispatcher          | Ex work items      |  [ ]   |
+| ⭐  |   7   | Repeated-failure escalation         | T02, boot rollback |  [ ]   |
+| 💎  |   8   | Native health query/control APIs    | T12                |  [ ]   |
+| ⭐  |   9   | Health notifications and dashboards | T16                |  [ ]   |
+| 💎  |  10   | Tests and chaos scenarios           | §1..§9             |  [ ]   |
 
 ## 1. Health State Model and Registry
 

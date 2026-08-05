@@ -59,13 +59,13 @@ sdk/tools/                  # Compiled output (gitignored)
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                    | Depends On | Status |
-| --- | :---: | ------------------------------ | ---------- | :----: |
-| 💎   |   1   | Shared IXFS core parser        | --         |  [x]   |
-| 💎   |   2   | Disk I/O layer with GPT        | §1         |  [x]   |
-| 💎   |   3   | 🐧 Linux FUSE mount (read-only) | §2         |  [x]   |
-| 💎   |   4   | Write support                  | §3         |  [x]   |
-| 💎   |   5   | USB auto-mount script          | §3         |  [x]   |
+| ⭐  | Order | Deliverable                     | Depends On | Status |
+| --- | :---: | ------------------------------- | ---------- | :----: |
+| 💎  |   1   | Shared IXFS core parser         | --         |  [x]   |
+| 💎  |   2   | Disk I/O layer with GPT         | §1         |  [x]   |
+| 💎  |   3   | 🐧 Linux FUSE mount (read-only) | §2         |  [x]   |
+| 💎  |   4   | Write support                   | §3         |  [x]   |
+| 💎  |   5   | USB auto-mount script           | §3         |  [x]   |
 
 ---
 
@@ -161,12 +161,12 @@ Script to detect USB drives with IXFS partitions and mount them automatically.
 
 ## OS Comparison
 
-| ⭐   | Feature               | 🪟 Win11             | 🐧 Linux          | 🚀 Impossible OS         |
-| --- | --------------------- | ------------------- | ---------------- | ----------------------- |
-| 💎   | Cross-OS FS mount     | ✅ ext2fsd           | ✅ ntfs-3g        | ✅ §3 IXFS FUSE mount    |
-| ⭐   | USB auto-mount        | ❌ No custom FS      | ❌ No custom FS   | ✅ §5 detect + mount USB |
-| ⭐   | Image:partition mount | ❌ Manual losetup    | ❌ Manual losetup | ✅ §2 `img:N` one-cmd    |
-| ⭐   | R/W from day one      | ⚠️ ext2fsd corrupts | ⚠️ ntfs-3g slow  | ✅ §4 write support      |
+| ⭐  | Feature               | 🪟 Win11           | 🐧 Linux          | 🚀 Impossible OS         |
+| --- | --------------------- | ------------------ | ----------------- | ------------------------ |
+| 💎  | Cross-OS FS mount     | ✅ ext2fsd         | ✅ ntfs-3g        | ✅ §3 IXFS FUSE mount    |
+| ⭐  | USB auto-mount        | ❌ No custom FS    | ❌ No custom FS   | ✅ §5 detect + mount USB |
+| ⭐  | Image:partition mount | ❌ Manual losetup  | ❌ Manual losetup | ✅ §2 `img:N` one-cmd    |
+| ⭐  | R/W from day one      | ⚠️ ext2fsd corrupts | ⚠️ ntfs-3g slow    | ✅ §4 write support      |
 
 ## Verification
 

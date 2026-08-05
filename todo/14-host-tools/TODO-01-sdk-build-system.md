@@ -43,11 +43,11 @@ sdk/
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                        | Depends On | Status |
+| ⭐  | Order | Deliverable                        | Depends On | Status |
 | --- | :---: | ---------------------------------- | ---------- | :----: |
-| 💎   |   1   | 🐧 Linux build script (bash)        | --         |  [x]   |
-| 💎   |   2   | Dependency detection and reporting | §1         |  [x]   |
-| 💎   |   3   | Auto-discovery of SDK tool dirs    | §1         |  [x]   |
+| 💎  |   1   | 🐧 Linux build script (bash)       | --         |  [x]   |
+| 💎  |   2   | Dependency detection and reporting | §1         |  [x]   |
+| 💎  |   3   | Auto-discovery of SDK tool dirs    | §1         |  [x]   |
 
 ---
 
@@ -103,11 +103,11 @@ Build discovers new tools automatically -- add a directory to `sdk/src/`, it get
 
 ## OS Comparison
 
-| ⭐   | Feature         | 🪟 Win11           | 🐧 Linux          | 🚀 Impossible OS           |
-| --- | --------------- | ----------------- | ---------------- | ------------------------- |
-| 💎   | Build system    | ✅ MSBuild / CMake | ✅ make / CMake   | ✅ §1 bash build script    |
-| ⭐   | Progress output | ❌ Verbose only    | ❌ Verbose only   | ✅ §1 colored progress bar |
-| ⭐   | Dep detection   | ❌ Manual install  | ❌ Manual install | ✅ §2 auto-detect + guide  |
+| ⭐  | Feature         | 🪟 Win11           | 🐧 Linux          | 🚀 Impossible OS           |
+| --- | --------------- | ------------------ | ----------------- | -------------------------- |
+| 💎  | Build system    | ✅ MSBuild / CMake | ✅ make / CMake   | ✅ §1 bash build script    |
+| ⭐  | Progress output | ❌ Verbose only    | ❌ Verbose only   | ✅ §1 colored progress bar |
+| ⭐  | Dep detection   | ❌ Manual install  | ❌ Manual install | ✅ §2 auto-detect + guide  |
 
 ## Verification
 

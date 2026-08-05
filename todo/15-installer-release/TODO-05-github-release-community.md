@@ -64,15 +64,15 @@ outsiders can track progress without reading 100+ TODO files.
 ## Implementation Order
 
 | Step | Section                                  | 💎/⭐ | Dependency                               |
-| ---- | ---------------------------------------- | --- | ---------------------------------------- |
-| 1    | Contribution guide overhaul (`CONTRIBUTING.md`) | 💎   | `scripts/build.sh`; existing file        |
-| 2    | Issue & PR templates (`.github/`)        | ⭐   | §1; existing templates                   |
-| 3    | Changelog discipline (`CHANGELOG.md`)    | 💎   | `gen-changelog.sh` (TODO-03 §5)          |
-| 4    | GitHub release workflow (`create-release.sh`) | 💎   | `TODO-01 §5` signing; `D10T03 §9 §5`; SDK `D12T06 §8` |
-| 5    | README overhaul                          | ⭐   | §4 (download links); desktop screenshot  |
-| 6    | Project website (`docs/website/`)        | ⭐   | §5 content; §4 release links             |
-| 7    | Community channels (Discussions + Discord) | 💎   | §6 live; §4 release announcements webhook |
-| 8    | Roadmap publication + GitHub Milestones sync | ⭐   | §7; domain `INDEX.md` files              |
+| ---- | ---------------------------------------- | ----- | ---------------------------------------- |
+| 1    | Contribution guide overhaul (`CONTRIBUTING.md`) | 💎    | `scripts/build.sh`; existing file        |
+| 2    | Issue & PR templates (`.github/`)        | ⭐    | §1; existing templates                   |
+| 3    | Changelog discipline (`CHANGELOG.md`)    | 💎    | `gen-changelog.sh` (TODO-03 §5)          |
+| 4    | GitHub release workflow (`create-release.sh`) | 💎    | `TODO-01 §5` signing; `D10T03 §9 §5`; SDK `D12T06 §8` |
+| 5    | README overhaul                          | ⭐    | §4 (download links); desktop screenshot  |
+| 6    | Project website (`docs/website/`)        | ⭐    | §5 content; §4 release links             |
+| 7    | Community channels (Discussions + Discord) | 💎    | §6 live; §4 release announcements webhook |
+| 8    | Roadmap publication + GitHub Milestones sync | ⭐    | §7; domain `INDEX.md` files              |
 
 ---
 
@@ -339,16 +339,16 @@ outsiders can track progress without reading 100+ TODO files.
 ## OS Comparison
 
 
-| ⭐   | Feature                                  | 🪟 Win11                                  | 🐧 Linux                                  | 🚀 Impossible OS                          |
+| ⭐  | Feature                                  | 🪟 Win11                                 | 🐧 Linux                                 | 🚀 Impossible OS                         |
 | --- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
-| 💎   | Automated release workflow               | ✅ Internal pipeline; not public          | ✅ `make release` + distro infra;         | ⬜ §1 -- `create-release.sh`; GHA on `v*` tag |
-| 💎   | Keep-a-Changelog + changelog lint in CI  | ✅ Windows Blog; no structured changelog  | ✅ kernel.org `CHANGES`; distro changelogs | ⬜ §2 -- `CHANGELOG.md` Keep-a-Changelog; lint-changelog.py in CI |
-| 💎   | Structured contribution guide + DCO      | ✅ `CONTRIBUTING.md` on GitHub repos; not | ✅ `Documentation/process/` in kernel; `CONTRIBUTING.md` in | ⬜ §3 -- overhaul `CONTRIBUTING.md`; setup, style, DCO, |
-| ⭐   | Structured YAML issue forms + PR checklist | ✅ GitHub YAML forms on MS                | ✅ Many kernel/distro repos use forms     | ⬜ §4 -- YAML `bug_report.yml` + `feature_request.yml`; PR |
-| ⭐   | README with live download CTA            | ❌ N/A (Windows is not on                 | ✅ Distro READMEs; no dynamic download    | ⬜ §5 -- README download table; `main.js` fetches |
-| ⭐   | Static project website with dynamic version CTA | ✅ `microsoft.com` -- commercial; not open-source | ✅ `kernel.org`, distro websites          | ⬜ §6 -- `docs/website/`; GitHub Pages; Cloudflare CNAME |
-| 💎   | Discord + GitHub Discussions community   | ✅ Windows Insider Hub; not Discord       | ✅ Kernel mailing list; many distros      | ⬜ §7 -- Discussions categories; Discord server + |
-| ⭐   | Public roadmap with auto-sync from TODO system to GitHub Milestones | ✅ Windows Roadmap on Learn.microsoft.com; no | ✅ kernel.org merge window schedule; no   | ⬜ §8 -- `docs/roadmap.md`; `sync-milestones.sh`; compat progress bar |
+| 💎  | Automated release workflow               | ✅ Internal pipeline; not public         | ✅ `make release` + distro infra;        | ⬜ §1 -- `create-release.sh`; GHA on `v*` tag |
+| 💎  | Keep-a-Changelog + changelog lint in CI  | ✅ Windows Blog; no structured changelog | ✅ kernel.org `CHANGES`; distro changelogs | ⬜ §2 -- `CHANGELOG.md` Keep-a-Changelog; lint-changelog.py in CI |
+| 💎  | Structured contribution guide + DCO      | ✅ `CONTRIBUTING.md` on GitHub repos; not | ✅ `Documentation/process/` in kernel; `CONTRIBUTING.md` in | ⬜ §3 -- overhaul `CONTRIBUTING.md`; setup, style, DCO, |
+| ⭐  | Structured YAML issue forms + PR checklist | ✅ GitHub YAML forms on MS               | ✅ Many kernel/distro repos use forms    | ⬜ §4 -- YAML `bug_report.yml` + `feature_request.yml`; PR |
+| ⭐  | README with live download CTA            | ❌ N/A (Windows is not on                | ✅ Distro READMEs; no dynamic download   | ⬜ §5 -- README download table; `main.js` fetches |
+| ⭐  | Static project website with dynamic version CTA | ✅ `microsoft.com` -- commercial; not open-source | ✅ `kernel.org`, distro websites         | ⬜ §6 -- `docs/website/`; GitHub Pages; Cloudflare CNAME |
+| 💎  | Discord + GitHub Discussions community   | ✅ Windows Insider Hub; not Discord      | ✅ Kernel mailing list; many distros     | ⬜ §7 -- Discussions categories; Discord server + |
+| ⭐  | Public roadmap with auto-sync from TODO system to GitHub Milestones | ✅ Windows Roadmap on Learn.microsoft.com; no | ✅ kernel.org merge window schedule; no  | ⬜ §8 -- `docs/roadmap.md`; `sync-milestones.sh`; compat progress bar |
 
 Impossible OS's `⭐` advantage: the release workflow, changelog, README, and roadmap are
 all connected -- `create-release.sh` updates the README download table, posts to Discord,

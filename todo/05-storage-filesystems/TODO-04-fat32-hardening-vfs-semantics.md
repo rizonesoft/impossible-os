@@ -492,23 +492,23 @@ From the stamped section 16:
 ## OS Comparison
 
 
-| ⭐   | Feature                | 🪟 Win11                  | 🐧 Linux                   | 🚀 Impossible OS              |
-| --- | ---------------------- | ------------------------ | ------------------------- | ---------------------------- |
-| 💎   | BPB validation + dirty | ✅ fastfat strict check   | ✅ fat_fill_super + DIRTY  | ✅ §1 -- validate_bpb + dirty |
-| 💎   | FSInfo FreeCount       | ✅ maintained + scan      | ✅ count_free fallback     | ✅ §2 -- scan + sync          |
-| 💎   | Dual-FAT mirror        | ✅ both written + repair  | ✅ both written, no repair | ✅ §3 -- write + compare      |
-| 💎   | LFN write              | ✅ full LFN R/W           | ✅ fat_add_entries         | ✅ §4 -- full LFN R/W         |
-| 💎   | FAT32 timestamps       | ✅ FILETIME encode        | ✅ fat_time_unix2fat       | ✅ §5 -- FILETIME + tz bias   |
-| 💎   | FAT32 fsck             | ✅ chkdsk full check      | ✅ fsck.fat cross-link     | ✅ §6 -- cross-link + lost    |
-| 💎   | Case-insensitive paths | ✅ per-driver fold        | ✅ per-mount nocase        | ✅ §7 -- per-driver fold      |
-| 💎   | Share-mode enforcement | ✅ per-FCB share check    | ✅ POSIX locks             | ✅ §8 -- per-handle check     |
-| 💎   | Delete-on-close        | ✅ DELETE_ON_CLOSE flag   | ✅ unlink-then-keep-open   | ✅ §9 -- last-close unlink    |
-| 💎   | Byte-range locks       | ✅ LockFile/UnlockFile    | ✅ fcntl F_SETLK           | ✅ §10 -- vfs_lock_file       |
-| 💎   | Win32 feature stubs    | ✅ full ADS/ACL/vol       | ❌ POSIX only              | ✅ §11 -- ADS/vol/reparse     |
-| 💎   | SFN tail collision     | ✅ ~1-~9, 5-char ~10+     | ✅ fat_gen_ks_short hash   | ✅ §12 -- ~1-~99 loop         |
-| 💎   | 4 GiB write guard      | ✅ rejects at limit       | ✅ fat_cont_expand check   | ✅ §13 -- write + truncate    |
-| 💎   | Opportunistic locks    | ✅ L1/L2/Batch/R/RW/RH    | ⚠️ POSIX leases only      | ✅ §14 -- Level 1/2           |
-| 💎   | VFS_O_TRUNC end-to-end | ✅ TRUNCATE_EXISTING flag | ✅ POSIX O_TRUNC           | ⬜ §15 -- planned (3 prereqs) |
+| ⭐  | Feature                | 🪟 Win11                  | 🐧 Linux                   | 🚀 Impossible OS              |
+| --- | ---------------------- | ------------------------- | -------------------------- | ----------------------------- |
+| 💎  | BPB validation + dirty | ✅ fastfat strict check   | ✅ fat_fill_super + DIRTY  | ✅ §1 -- validate_bpb + dirty |
+| 💎  | FSInfo FreeCount       | ✅ maintained + scan      | ✅ count_free fallback     | ✅ §2 -- scan + sync          |
+| 💎  | Dual-FAT mirror        | ✅ both written + repair  | ✅ both written, no repair | ✅ §3 -- write + compare      |
+| 💎  | LFN write              | ✅ full LFN R/W           | ✅ fat_add_entries         | ✅ §4 -- full LFN R/W         |
+| 💎  | FAT32 timestamps       | ✅ FILETIME encode        | ✅ fat_time_unix2fat       | ✅ §5 -- FILETIME + tz bias   |
+| 💎  | FAT32 fsck             | ✅ chkdsk full check      | ✅ fsck.fat cross-link     | ✅ §6 -- cross-link + lost    |
+| 💎  | Case-insensitive paths | ✅ per-driver fold        | ✅ per-mount nocase        | ✅ §7 -- per-driver fold      |
+| 💎  | Share-mode enforcement | ✅ per-FCB share check    | ✅ POSIX locks             | ✅ §8 -- per-handle check     |
+| 💎  | Delete-on-close        | ✅ DELETE_ON_CLOSE flag   | ✅ unlink-then-keep-open   | ✅ §9 -- last-close unlink    |
+| 💎  | Byte-range locks       | ✅ LockFile/UnlockFile    | ✅ fcntl F_SETLK           | ✅ §10 -- vfs_lock_file       |
+| 💎  | Win32 feature stubs    | ✅ full ADS/ACL/vol       | ❌ POSIX only              | ✅ §11 -- ADS/vol/reparse     |
+| 💎  | SFN tail collision     | ✅ ~1-~9, 5-char ~10+     | ✅ fat_gen_ks_short hash   | ✅ §12 -- ~1-~99 loop         |
+| 💎  | 4 GiB write guard      | ✅ rejects at limit       | ✅ fat_cont_expand check   | ✅ §13 -- write + truncate    |
+| 💎  | Opportunistic locks    | ✅ L1/L2/Batch/R/RW/RH    | ⚠️ POSIX leases only        | ✅ §14 -- Level 1/2           |
+| 💎  | VFS_O_TRUNC end-to-end | ✅ TRUNCATE_EXISTING flag | ✅ POSIX O_TRUNC           | ⬜ §15 -- planned (3 prereqs) |
 
 > After §1-§14, FAT32 matches fastfat.sys spec correctness and exceeds dosfstools with in-kernel fsck.
 > §7 (unified VFS case-fold) is the architectural win -- one implementation benefits all filesystem drivers.

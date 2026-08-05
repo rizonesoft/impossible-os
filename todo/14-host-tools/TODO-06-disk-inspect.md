@@ -42,13 +42,13 @@ $ disk-inspect build/system-disk.img
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                       | Depends On | Status |
+| ⭐  | Order | Deliverable                       | Depends On | Status |
 | --- | :---: | --------------------------------- | ---------- | :----: |
-| 💎   |   1   | GPT partition table parser        | --         |  [ ]   |
-| 💎   |   2   | IXFS superblock + inode inspector | §1         |  [ ]   |
-| 💎   |   3   | Directory listing (ls, tree)      | §2         |  [ ]   |
-| 💎   |   4   | Hex dump and raw sector read      | §1         |  [ ]   |
-| 💎   |   5   | Interactive shell (REPL)          | §1-§4      |  [ ]   |
+| 💎  |   1   | GPT partition table parser        | --         |  [ ]   |
+| 💎  |   2   | IXFS superblock + inode inspector | §1         |  [ ]   |
+| 💎  |   3   | Directory listing (ls, tree)      | §2         |  [ ]   |
+| 💎  |   4   | Hex dump and raw sector read      | §1         |  [ ]   |
+| 💎  |   5   | Interactive shell (REPL)          | §1-§4      |  [ ]   |
 
 ---
 

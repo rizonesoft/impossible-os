@@ -42,14 +42,14 @@ title: "TODO-01 -- Advanced 2D Graphics and Visual Asset Foundation"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                              | Depends On | Status |
+| ⭐  | Order | Deliverable                              | Depends On | Status |
 | --- | :---: | ---------------------------------------- | ---------- | :----: |
-| 💎   |   1   | §1 Render-target allocator, views, and cached layers | --         |  [ ]   |
-| 💎   |   2   | §2 Clip, transform, and state stack      | §1         |  [ ]   |
-| 💎   |   3   | §3 Path, stroke, fill, and SVG-ready vector raster contract | §2         |  [ ]   |
-| 💎   |   4   | §4 Theme-aware icon, cursor, and scalable asset pipeline | §1, §3     |  [ ]   |
-| 💎   |   5   | §5 Thumbnail, preview, and multi-size asset cache | §4         |  [ ]   |
-| ⭐   |   6   | §6 Recorded scene lists and deterministic re-render for shell and Win32k | §2, §3, §5 |  [ ]   |
+| 💎  |   1   | §1 Render-target allocator, views, and cached layers | --         |  [ ]   |
+| 💎  |   2   | §2 Clip, transform, and state stack      | §1         |  [ ]   |
+| 💎  |   3   | §3 Path, stroke, fill, and SVG-ready vector raster contract | §2         |  [ ]   |
+| 💎  |   4   | §4 Theme-aware icon, cursor, and scalable asset pipeline | §1, §3     |  [ ]   |
+| 💎  |   5   | §5 Thumbnail, preview, and multi-size asset cache | §4         |  [ ]   |
+| ⭐  |   6   | §6 Recorded scene lists and deterministic re-render for shell and Win32k | §2, §3, §5 |  [ ]   |
 
 > 💎 = parity work -- matches the reusable graphics and asset layers that Windows 11 and Linux already have.
 > ⭐ = exclusive work -- Impossible OS goes beyond both with a simpler and more deterministic foundation.
@@ -146,14 +146,14 @@ Add a retained "record once, replay many" graphics layer that lets Impossible OS
 
 ## OS Comparison
 
-| ⭐   | Feature                            | 🪟 Win11               | 🐧 Linux                | 🚀 Impossible OS |
-| --- | ---------------------------------- | --------------------- | ---------------------- | --------------- |
-| 💎   | PMM-safe render targets            | ✅ DComp/D2D surfaces  | ✅ Cairo/Skia surfaces  | ⬜ Planned - §1  |
-| 💎   | Clip + transform state             | ✅ GDI/D2D state       | ✅ Cairo/Qt painter     | ⬜ Planned - §2  |
-| 💎   | Vector path + SVG-ready raster     | ✅ Direct2D/SVG paths  | ✅ Cairo + SVG loaders  | ⬜ Planned - §3  |
-| 💎   | Theme-aware icon/cursor pipeline   | ✅ ICO/CUR + shell DPI | ✅ Freedesktop themes   | ⬜ Planned - §4  |
-| 💎   | Shared thumbnail service           | ✅ Shell thumbnails    | ✅ Tracker/GIO previews | ⬜ Planned - §5  |
-| ⭐   | Recorded deterministic scene lists | ⚠️ Framework-specific | ⚠️ Toolkit-specific    | ⬜ Planned - §6  |
+| ⭐  | Feature                            | 🪟 Win11               | 🐧 Linux                | 🚀 Impossible OS |
+| --- | ---------------------------------- | ---------------------- | ----------------------- | ---------------- |
+| 💎  | PMM-safe render targets            | ✅ DComp/D2D surfaces  | ✅ Cairo/Skia surfaces  | ⬜ Planned - §1  |
+| 💎  | Clip + transform state             | ✅ GDI/D2D state       | ✅ Cairo/Qt painter     | ⬜ Planned - §2  |
+| 💎  | Vector path + SVG-ready raster     | ✅ Direct2D/SVG paths  | ✅ Cairo + SVG loaders  | ⬜ Planned - §3  |
+| 💎  | Theme-aware icon/cursor pipeline   | ✅ ICO/CUR + shell DPI | ✅ Freedesktop themes   | ⬜ Planned - §4  |
+| 💎  | Shared thumbnail service           | ✅ Shell thumbnails    | ✅ Tracker/GIO previews | ⬜ Planned - §5  |
+| ⭐  | Recorded deterministic scene lists | ⚠️ Framework-specific   | ⚠️ Toolkit-specific      | ⬜ Planned - §6  |
 
 After §1-§5, Impossible OS reaches parity with the reusable graphics and asset layers that modern Windows and Linux desktop stacks already depend on. After §6, it gains a cleaner replay model that keeps shell and Win32k code fast without spreading invalidation policy across every consumer.
 

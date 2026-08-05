@@ -63,13 +63,13 @@ compositor to 4K 120 Hz.
 ## Implementation Order
 
 | Step | Section                                  | 💎/⭐ | Dependency                               |
-| ---- | ---------------------------------------- | --- | ---------------------------------------- |
-| 1    | GPU access strategy (option comparison)  | ⭐   | existing VirtIO transport; IOMMU analysis (TODO-02 §6) |
-| 2    | TinyGL → Mesa lavapipe upgrade research  | ⭐   | `D10T12 §7` TinyGL baseline              |
-| 3    | Display engine research (AMD DCN + Intel Arc) | ⭐   | bare-metal GPU strategy from §1          |
-| 4    | Vulkan kernel driver architecture        | ⭐   | §1 option selection; `pmm_alloc_contiguous`; syscall table |
-| 5    | Compositor GPU path design               | ⭐   | §4 Vulkan API; `wm.h` compositor internals |
-| 6    | Research deliverables (`gpu-compositor-plan.md`) | ⭐   | §1–§5 complete                           |
+| ---- | ---------------------------------------- | ----- | ---------------------------------------- |
+| 1    | GPU access strategy (option comparison)  | ⭐    | existing VirtIO transport; IOMMU analysis (TODO-02 §6) |
+| 2    | TinyGL → Mesa lavapipe upgrade research  | ⭐    | `D10T12 §7` TinyGL baseline              |
+| 3    | Display engine research (AMD DCN + Intel Arc) | ⭐    | bare-metal GPU strategy from §1          |
+| 4    | Vulkan kernel driver architecture        | ⭐    | §1 option selection; `pmm_alloc_contiguous`; syscall table |
+| 5    | Compositor GPU path design               | ⭐    | §4 Vulkan API; `wm.h` compositor internals |
+| 6    | Research deliverables (`gpu-compositor-plan.md`) | ⭐    | §1–§5 complete                           |
 
 ---
 
@@ -99,9 +99,9 @@ compositor to 4K 120 Hz.
 
 | Option                    | Works in QEMU         | Bare-metal | LOC estimate           | Timeline     | IOMMU required |
 | ------------------------- | --------------------- | ---------- | ---------------------- | ------------ | -------------- |
-| A -- VirtIO-GPU           | ✅ now                 | ❌          | ~2 K LOC driver        | 4–6 weeks    | No             |
-| B -- Bare-metal AMD/Intel | ✅ (pass-through)      | ✅          | ~30–50 K LOC           | 12–18 months | Yes            |
-| C -- DRM/KMS layer        | N/A                   | ✅          | ~10 K LOC (layer only) | 3–4 months   | Depends on GPU |
+| A -- VirtIO-GPU           | ✅ now                | ❌         | ~2 K LOC driver        | 4–6 weeks    | No             |
+| B -- Bare-metal AMD/Intel | ✅ (pass-through)     | ✅         | ~30–50 K LOC           | 12–18 months | Yes            |
+| C -- DRM/KMS layer        | N/A                   | ✅         | ~10 K LOC (layer only) | 3–4 months   | Depends on GPU |
 | **Recommended**           | **A first, then C+B** | --         | --                     | --           | --             |
 
 ---
@@ -270,14 +270,14 @@ compositor to 4K 120 Hz.
 ## OS Comparison
 
 
-| ⭐   | Feature                                  | 🪟 Win11                                  | 🐧 Linux                                  | 🚀 Impossible OS                          |
+| ⭐  | Feature                                  | 🪟 Win11                                 | 🐧 Linux                                 | 🚀 Impossible OS                         |
 | --- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
-| 💎   | GPU-accelerated compositor               | ✅ DWM (DirectCompose; D3D11; GPU flip    | ✅ Mutter/KWin (OpenGL/Vulkan; KMS; GPU planes; | ⬜ §5 -- VirtIO-GPU Phase 1; DMA flip     |
-| 💎   | CPU Vulkan                               | ✅ WARPDevice (D3D12 software rasterizer) | ✅ Mesa lavapipe (CPU Vulkan 1.3)         | ⬜ §2 -- Mesa softpipe Phase 2; lavapipe  |
-| 💎   | Kernel-mode GPU memory + fence API       | ✅ D3DKMT / `dxgkrnl.sys` (`SYS_*` GPU    | ✅ DRM GEM/TTM + syncobj fences           | ⬜ §4 -- `SYS_GPU_MAP/SUBMIT/WAIT/QUERY`; GPU fence waitqueue |
-| 💎   | DRM/KMS-style display plane abstraction  | ✅ Windows DDI (DXGK display miniport;    | ✅ Linux DRM atomic KMS (CRTC             | ⬜ §1 -- §5; `display_plane_ops_t` vtable; VirtIO-GPU + |
-| 💎   | DirectX / Vulkan on GPU                  | ✅ WDDM 3.x; D3D12; Vulkan via            | ✅ Mesa AMDGPU/RADV/ANV; AMDKFD; i915/xe kernel | ⬜ §3 -- §4; blocked by IOMMU +           |
-| ⭐   | Zero-CPU-copy 4K 120 Hz compositor target | ✅ Windows 11 DWM: GPU flip               | ✅ KWin/Mutter: DRM page-flip, atomic commit | ⬜ §5 -- VirtIO-GPU `RESOURCE_FLUSH` DMA flip; 4K |
+| 💎  | GPU-accelerated compositor               | ✅ DWM (DirectCompose; D3D11; GPU flip   | ✅ Mutter/KWin (OpenGL/Vulkan; KMS; GPU planes; | ⬜ §5 -- VirtIO-GPU Phase 1; DMA flip    |
+| 💎  | CPU Vulkan                               | ✅ WARPDevice (D3D12 software rasterizer) | ✅ Mesa lavapipe (CPU Vulkan 1.3)        | ⬜ §2 -- Mesa softpipe Phase 2; lavapipe |
+| 💎  | Kernel-mode GPU memory + fence API       | ✅ D3DKMT / `dxgkrnl.sys` (`SYS_*` GPU   | ✅ DRM GEM/TTM + syncobj fences          | ⬜ §4 -- `SYS_GPU_MAP/SUBMIT/WAIT/QUERY`; GPU fence waitqueue |
+| 💎  | DRM/KMS-style display plane abstraction  | ✅ Windows DDI (DXGK display miniport;   | ✅ Linux DRM atomic KMS (CRTC            | ⬜ §1 -- §5; `display_plane_ops_t` vtable; VirtIO-GPU + |
+| 💎  | DirectX / Vulkan on GPU                  | ✅ WDDM 3.x; D3D12; Vulkan via           | ✅ Mesa AMDGPU/RADV/ANV; AMDKFD; i915/xe kernel | ⬜ §3 -- §4; blocked by IOMMU +          |
+| ⭐  | Zero-CPU-copy 4K 120 Hz compositor target | ✅ Windows 11 DWM: GPU flip              | ✅ KWin/Mutter: DRM page-flip, atomic commit | ⬜ §5 -- VirtIO-GPU `RESOURCE_FLUSH` DMA flip; 4K |
 
 Impossible OS's `⭐` advantage: the `display_plane_ops_t` abstraction layer means VirtIO-GPU
 in QEMU and bare-metal AMD/Intel share the same compositor call path from day one --

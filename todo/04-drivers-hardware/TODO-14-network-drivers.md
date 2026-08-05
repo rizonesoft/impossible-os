@@ -32,18 +32,18 @@ title: "TODO-14 -- Network Drivers"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                              | Depends On                          | Status |
+| ⭐  | Order | Deliverable                              | Depends On                          | Status |
 | --- | :---: | ---------------------------------------- | ----------------------------------- | :----: |
-| 💎   |   1   | §1 License tracking -- `LICENSES/`, `NOTICE.md` | none (create before porting begins) |  [ ]   |
-| 💎   |   2   | §2 Intel e1000 module                    | TODO-05 module loader, §1           |  [ ]   |
-| 💎   |   3   | §3 VirtIO-net module                     | TODO-05 module loader, VirtIO core  |  [ ]   |
-| 💎   |   4   | §4 RTL8169/RTL8111 gigabit module        | TODO-05 module loader, §1           |  [ ]   |
-| 💎   |   5   | §5 Intel igc (I225/I226 2.5 GbE) module  | TODO-05 module loader, §1           |  [ ]   |
-| 💎   |   6   | §6 RTL8125 2.5 GbE module                | TODO-05 module loader, §1           |  [ ]   |
-| 💎   |   7   | §7 Network driver test suite             | §2–§6 all complete                  |  [ ]   |
-| 💎   |   8   | §8 WiFi 802.11 MAC layer stub            | none (infrastructure only)          |  [ ]   |
-| 💎   |   9   | §9 Intel iwlwifi stub (P4 stretch)       | §8                                  |  [ ]   |
-| 💎   |  10   | §10 Realtek rtw89 stub (P4 stretch)      | §8                                  |  [ ]   |
+| 💎  |   1   | §1 License tracking -- `LICENSES/`, `NOTICE.md` | none (create before porting begins) |  [ ]   |
+| 💎  |   2   | §2 Intel e1000 module                    | TODO-05 module loader, §1           |  [ ]   |
+| 💎  |   3   | §3 VirtIO-net module                     | TODO-05 module loader, VirtIO core  |  [ ]   |
+| 💎  |   4   | §4 RTL8169/RTL8111 gigabit module        | TODO-05 module loader, §1           |  [ ]   |
+| 💎  |   5   | §5 Intel igc (I225/I226 2.5 GbE) module  | TODO-05 module loader, §1           |  [ ]   |
+| 💎  |   6   | §6 RTL8125 2.5 GbE module                | TODO-05 module loader, §1           |  [ ]   |
+| 💎  |   7   | §7 Network driver test suite             | §2–§6 all complete                  |  [ ]   |
+| 💎  |   8   | §8 WiFi 802.11 MAC layer stub            | none (infrastructure only)          |  [ ]   |
+| 💎  |   9   | §9 Intel iwlwifi stub (P4 stretch)       | §8                                  |  [ ]   |
+| 💎  |  10   | §10 Realtek rtw89 stub (P4 stretch)      | §8                                  |  [ ]   |
 
 > All rows are 💎 parity: Windows 11 ships inbox drivers for all listed NICs; Linux ships them in `drivers/net/ethernet/`. The differentiator is delivery as proper `.kmod` files loaded by the Impossible OS module system, proving end-to-end loadable-module infrastructure with real network hardware.
 
@@ -220,17 +220,17 @@ Register an rtw89 PCI device stub against the WiFi MAC layer. Clean-room. Covers
 ## OS Comparison
 
 
-| ⭐   | Feature                                  | 🪟 Win11                                  | 🐧 Linux                                  | 🚀 Impossible OS                          |
+| ⭐  | Feature                                  | 🪟 Win11                                 | 🐧 Linux                                 | 🚀 Impossible OS                         |
 | --- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
-| 💎   | Intel e1000 / e1000e wired NIC           | ✅ `e1000e.sys` inbox NDIS driver         | ✅ `drivers/net/ethernet/intel/e1000/`    | ⬜ §2 -- loadable `.kmod`, VirtualBox default NIC, |
-| 💎   | VirtIO-net paravirtual NIC               | ✅ `netkvm.sys` (Red Hat VirtIO drivers   | ✅ `drivers/net/virtio_net.c`; widely used in QEMU/KVM | ⬜ §3 -- loadable `.kmod`, reuses VirtIO transport |
-| 💎   | RTL8169 / RTL8111 gigabit NIC            | ✅ `rtwlane.sys` and variants; or third-party | ✅ `drivers/net/ethernet/realtek/r8169.c` | ⬜ §4 -- loadable `.kmod`, 256-entry DMA rings, |
-| 💎   | Intel igc (I225 / I226) 2.5 GbE          | ✅ `igc.sys` (Windows Update driver)      | ✅ `drivers/net/ethernet/intel/igc/`; mainline since 5.6 | ⬜ §5 -- loadable `.kmod`, 32-byte advanced descriptors, |
-| 💎   | RTL8125 2.5 GbE                          | ✅ Realtek inbox driver via Windows       | ✅ `drivers/net/ethernet/realtek/r8169.c` (8125 support merged 5.9) | ⬜ §6 -- loadable `.kmod`, 32-byte descriptors, FreeBSD |
-| 💎   | WiFi 802.11 MAC layer + station state machine | ✅ `wlan.sys` WLAN API; native 802.11     | ✅ `net/mac80211/`; full MLME, `cfg80211` | ⬜ §8 -- `wifi_mac_t` stub, DISCONNECTED→SCANNING→ASSOC state machine |
-| 💎   | Intel Wi-Fi 6                            | ✅ `iwifi65.sys` inbox driver             | ✅ `drivers/net/wireless/intel/iwlwifi/`; open firmware + GPL | ⬜ §9 -- PCI detection stub (P4); full    |
-| 💎   | Realtek Wi-Fi 6                          | ✅ `rtwlane6.sys` inbox driver            | ✅ `drivers/net/wireless/realtek/rtw89/`; open firmware + GPL | ⬜ §10 -- PCI detection stub (P4); full   |
-| ⭐   | License tracking                         | ❌ Closed-source; no per-driver attribution table | ⚠️ `LICENSES/` directory exists; no per-file | ⬜ §1 -- `NOTICES.md` table with file, upstream, |
+| 💎  | Intel e1000 / e1000e wired NIC           | ✅ `e1000e.sys` inbox NDIS driver        | ✅ `drivers/net/ethernet/intel/e1000/`   | ⬜ §2 -- loadable `.kmod`, VirtualBox default NIC, |
+| 💎  | VirtIO-net paravirtual NIC               | ✅ `netkvm.sys` (Red Hat VirtIO drivers  | ✅ `drivers/net/virtio_net.c`; widely used in QEMU/KVM | ⬜ §3 -- loadable `.kmod`, reuses VirtIO transport |
+| 💎  | RTL8169 / RTL8111 gigabit NIC            | ✅ `rtwlane.sys` and variants; or third-party | ✅ `drivers/net/ethernet/realtek/r8169.c` | ⬜ §4 -- loadable `.kmod`, 256-entry DMA rings, |
+| 💎  | Intel igc (I225 / I226) 2.5 GbE          | ✅ `igc.sys` (Windows Update driver)     | ✅ `drivers/net/ethernet/intel/igc/`; mainline since 5.6 | ⬜ §5 -- loadable `.kmod`, 32-byte advanced descriptors, |
+| 💎  | RTL8125 2.5 GbE                          | ✅ Realtek inbox driver via Windows      | ✅ `drivers/net/ethernet/realtek/r8169.c` (8125 support merged 5.9) | ⬜ §6 -- loadable `.kmod`, 32-byte descriptors, FreeBSD |
+| 💎  | WiFi 802.11 MAC layer + station state machine | ✅ `wlan.sys` WLAN API; native 802.11    | ✅ `net/mac80211/`; full MLME, `cfg80211` | ⬜ §8 -- `wifi_mac_t` stub, DISCONNECTED→SCANNING→ASSOC state machine |
+| 💎  | Intel Wi-Fi 6                            | ✅ `iwifi65.sys` inbox driver            | ✅ `drivers/net/wireless/intel/iwlwifi/`; open firmware + GPL | ⬜ §9 -- PCI detection stub (P4); full   |
+| 💎  | Realtek Wi-Fi 6                          | ✅ `rtwlane6.sys` inbox driver           | ✅ `drivers/net/wireless/realtek/rtw89/`; open firmware + GPL | ⬜ §10 -- PCI detection stub (P4); full  |
+| ⭐  | License tracking                         | ❌ Closed-source; no per-driver attribution table | ⚠️ `LICENSES/` directory exists; no per-file | ⬜ §1 -- `NOTICES.md` table with file, upstream, |
 
 > **After §1–10:** Impossible OS covers five wired NIC families spanning the three most common PC environments (VirtualBox, QEMU, bare metal) and a WiFi stub infrastructure that positions the OS for future AX200/rtw89 support. The `NOTICE.md` per-file attribution table (§1, `⭐`) is Impossible OS's strongest open-source governance commitment -- more granular than Linux's `LICENSES/` directory and filling the gap entirely absent from Windows.
 

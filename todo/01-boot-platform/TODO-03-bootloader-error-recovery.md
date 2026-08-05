@@ -60,29 +60,29 @@ title: "TODO-03 -- Bootloader Error Recovery & ELF Hardening"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                              | Depends On | Status |
+| ⭐  | Order | Deliverable                              | Depends On | Status |
 | --- | :---: | ---------------------------------------- | ---------- | :----: |
-| 💎   |   1   | ELF bounds checking                      | --         |  [x]   |
-| 💎   |   2   | ExitBootServices retry loop (bounded)    | --         |  [x]   |
-| 💎   |   3   | Fallback kernel search (3 paths)         | --         |  [x]   |
-| 💎   |   4   | Serial port probe and COM2 fallback      | --         |  [x]   |
-| 💎   |   5   | GOP timeout and graceful degradation     | --         |  [x]   |
-| 💎   |   6   | Memory map overflow detection (512 entries) | --         |  [x]   |
-| 💎   |   7   | boot.conf validation and version field   | --         |  [x]   |
-| 💎   |   8   | Kernel load allocation fallback (32-16-8 MiB) | --         |  [x]   |
-| ⭐   |   9   | Boot failure error screen                | §1-§8      |  [x]   |
-| 💎   |  10   | ACPI SPCR serial port auto-detection     | §4         |  [x]   |
-| 💎   |  11   | UEFI watchdog timer management           | --         |  [x]   |
-| 💎   |  12   | Memory map descriptor validation         | §6         |  [x]   |
-| ⭐   |  13   | Boot error code registry & NVRAM persistence | §9         |  [x]   |
-| ⭐   |  14   | Error screen QR code                     | §9         |  [x]   |
-| 💎   |  15   | boot_info ABI foundation moved to TODO-01 | --         |  [x]   |
-| 💎   |  16   | boot_info kernel validation moved to TODO-01 | §15        |  [x]   |
-| 💎   |  17   | Memory map overlap normalization (sort+carve) | §12        |  [x]   |
-| ⭐   |  18   | Graphical error screen (ChromeOS/Win11-style) | §9, §14    |  [x]   |
-| 💎   |  19   | PT_LOAD destination policy (defense-in-depth) | §1         |  [x]   |
-| ⭐   |  20   | Boot error history ring -- producer (struct, append sites, NVRAM cookie) | §13        |  [x]   |
-| ⭐   |  21   | Boot error history ring -- consumer (reader, renderer, tests, smoke fixture) | §20        |  [x]   |
+| 💎  |   1   | ELF bounds checking                      | --         |  [x]   |
+| 💎  |   2   | ExitBootServices retry loop (bounded)    | --         |  [x]   |
+| 💎  |   3   | Fallback kernel search (3 paths)         | --         |  [x]   |
+| 💎  |   4   | Serial port probe and COM2 fallback      | --         |  [x]   |
+| 💎  |   5   | GOP timeout and graceful degradation     | --         |  [x]   |
+| 💎  |   6   | Memory map overflow detection (512 entries) | --         |  [x]   |
+| 💎  |   7   | boot.conf validation and version field   | --         |  [x]   |
+| 💎  |   8   | Kernel load allocation fallback (32-16-8 MiB) | --         |  [x]   |
+| ⭐  |   9   | Boot failure error screen                | §1-§8      |  [x]   |
+| 💎  |  10   | ACPI SPCR serial port auto-detection     | §4         |  [x]   |
+| 💎  |  11   | UEFI watchdog timer management           | --         |  [x]   |
+| 💎  |  12   | Memory map descriptor validation         | §6         |  [x]   |
+| ⭐  |  13   | Boot error code registry & NVRAM persistence | §9         |  [x]   |
+| ⭐  |  14   | Error screen QR code                     | §9         |  [x]   |
+| 💎  |  15   | boot_info ABI foundation moved to TODO-01 | --         |  [x]   |
+| 💎  |  16   | boot_info kernel validation moved to TODO-01 | §15        |  [x]   |
+| 💎  |  17   | Memory map overlap normalization (sort+carve) | §12        |  [x]   |
+| ⭐  |  18   | Graphical error screen (ChromeOS/Win11-style) | §9, §14    |  [x]   |
+| 💎  |  19   | PT_LOAD destination policy (defense-in-depth) | §1         |  [x]   |
+| ⭐  |  20   | Boot error history ring -- producer (struct, append sites, NVRAM cookie) | §13        |  [x]   |
+| ⭐  |  21   | Boot error history ring -- consumer (reader, renderer, tests, smoke fixture) | §20        |  [x]   |
 
 > 💎 = parity -- Windows bootmgfw.efi and GRUB2 both handle these error paths.
 > ⭐ = exclusive -- visible error screen with recovery instructions, QR code, and NVRAM-persisted error codes; neither Windows nor Linux provides this level of pre-kernel diagnostic detail.
@@ -779,27 +779,27 @@ The pre-§18 error screen used UEFI text console (`ConOut`) with white-on-blue t
 
 ## OS Comparison
 
-| ⭐   | Feature            | 🪟 Win11                           | 🐧 Linux                            | 🚀 Impossible OS                         |
-| --- | ------------------ | --------------------------------- | ---------------------------------- | --------------------------------------- |
-| 💎   | ELF bounds         | ✅ PE header + SizeOfImage check   | ✅ GRUB ELF phdr bounds             | ✅ §1 phdr+seg+overlap+32M cap           |
-| 💎   | EBS retry          | ✅ bootmgr bounded retry loop      | ✅ efi-stub retry on map stale      | ✅ §2 N=4 bounded + map refresh          |
-| 💎   | Kernel fallback    | ✅ BCD alternate paths + WinRE     | ✅ GRUB rescue + fallback.cfg       | ✅ §3 3-path search + DeviceHdl          |
-| 💎   | Serial detect      | ✅ ACPI SPCR + EMS headless        | ✅ earlycon=uart,io,0x3f8           | ✅ §4 COM1/COM2 probe+boot_info          |
-| 💎   | GOP degrade        | ✅ Fallback to basic display       | ✅ efifb + simpledrm fallback       | ✅ §5 headless + SetMode fallbk          |
-| 💎   | Mmap overflow      | ✅ Dynamic buffer reallocation     | ✅ Grow buf + retry loop            | ✅ §6 512 cap + truncate warn            |
-| 💎   | boot.conf parse    | ✅ BCD registry schema + edit      | ✅ grub.cfg + grub-mkconfig         | ✅ §7 key whitelist + range chk          |
-| 💎   | Alloc fallback     | ✅ Graduated pool sizes            | ✅ Dynamic retry allocation         | ✅ §8 32/16/8 MiB + overlap chk          |
-| 💎   | SPCR serial        | ✅ EMS Emergency Management        | ✅ earlycon SPCR auto-detect        | ✅ §10 RSDP->XSDT->SPCR parse            |
-| 💎   | UEFI watchdog      | ✅ Re-arm via SetWatchdogTimer     | ✅ efi_stub disables watchdog       | ✅ §11 60s arm + disarm pre-EBS          |
-| 💎   | Mmap validate      | ✅ Descriptor version + size       | ✅ efi_stub sanity checks           | ✅ §12 align+pages+type+overlap          |
-| ⭐   | Error screen       | ❌ Generic BSOD (no boot ctx)      | ⚠️ GRUB text menu (no graphics)    | ✅ §9 blue BSOD + key + reboot           |
-| ⭐   | NVRAM errors       | ⚠️ Opaque status codes            | ❌ No persistent boot errors        | ✅ §13 13 codes + NVRAM persist          |
-| ⭐   | Boot QR            | ❌ No UEFI-phase QR codes          | ❌ No GRUB QR support               | ✅ §14 QR V3 byte mode + scan            |
-| ⭐   | Graphical error    | ✅ :( BSOD (OS-level only)         | ❌ GRUB text menu only              | ✅ §18 pre-OS pixel BSOD + icon          |
-| 💎   | Mmap normalize     | ✅ Hal.dll coalesces overlaps      | ✅ efi_fake_memmap + sanitize       | ✅ §17 sweep-line carve+min-loss         |
-| 💎   | Handoff ABI        | ✅ BCD signature + protocol        | ✅ Multiboot2 / Linux boot          | ✅ §15 magic+ver+size + halt             |
-| 💎   | Offline repair     | ✅ Windows Recovery Environment    | ✅ rescue/live ISO image            | ⬜ TODO-22 recovery partition            |
-| ⭐   | Multi-attempt diag | ✅ BootStatusData (Vista+, last 4) | ⚠️ systemd-bootctl status (single) | ✅ §20+§21 8-entry NVRAM ring + renderer |
+| ⭐  | Feature            | 🪟 Win11                           | 🐧 Linux                          | 🚀 Impossible OS                         |
+| --- | ------------------ | ---------------------------------- | --------------------------------- | ---------------------------------------- |
+| 💎  | ELF bounds         | ✅ PE header + SizeOfImage check   | ✅ GRUB ELF phdr bounds           | ✅ §1 phdr+seg+overlap+32M cap           |
+| 💎  | EBS retry          | ✅ bootmgr bounded retry loop      | ✅ efi-stub retry on map stale    | ✅ §2 N=4 bounded + map refresh          |
+| 💎  | Kernel fallback    | ✅ BCD alternate paths + WinRE     | ✅ GRUB rescue + fallback.cfg     | ✅ §3 3-path search + DeviceHdl          |
+| 💎  | Serial detect      | ✅ ACPI SPCR + EMS headless        | ✅ earlycon=uart,io,0x3f8         | ✅ §4 COM1/COM2 probe+boot_info          |
+| 💎  | GOP degrade        | ✅ Fallback to basic display       | ✅ efifb + simpledrm fallback     | ✅ §5 headless + SetMode fallbk          |
+| 💎  | Mmap overflow      | ✅ Dynamic buffer reallocation     | ✅ Grow buf + retry loop          | ✅ §6 512 cap + truncate warn            |
+| 💎  | boot.conf parse    | ✅ BCD registry schema + edit      | ✅ grub.cfg + grub-mkconfig       | ✅ §7 key whitelist + range chk          |
+| 💎  | Alloc fallback     | ✅ Graduated pool sizes            | ✅ Dynamic retry allocation       | ✅ §8 32/16/8 MiB + overlap chk          |
+| 💎  | SPCR serial        | ✅ EMS Emergency Management        | ✅ earlycon SPCR auto-detect      | ✅ §10 RSDP->XSDT->SPCR parse            |
+| 💎  | UEFI watchdog      | ✅ Re-arm via SetWatchdogTimer     | ✅ efi_stub disables watchdog     | ✅ §11 60s arm + disarm pre-EBS          |
+| 💎  | Mmap validate      | ✅ Descriptor version + size       | ✅ efi_stub sanity checks         | ✅ §12 align+pages+type+overlap          |
+| ⭐  | Error screen       | ❌ Generic BSOD (no boot ctx)      | ⚠️ GRUB text menu (no graphics)    | ✅ §9 blue BSOD + key + reboot           |
+| ⭐  | NVRAM errors       | ⚠️ Opaque status codes              | ❌ No persistent boot errors      | ✅ §13 13 codes + NVRAM persist          |
+| ⭐  | Boot QR            | ❌ No UEFI-phase QR codes          | ❌ No GRUB QR support             | ✅ §14 QR V3 byte mode + scan            |
+| ⭐  | Graphical error    | ✅ :( BSOD (OS-level only)         | ❌ GRUB text menu only            | ✅ §18 pre-OS pixel BSOD + icon          |
+| 💎  | Mmap normalize     | ✅ Hal.dll coalesces overlaps      | ✅ efi_fake_memmap + sanitize     | ✅ §17 sweep-line carve+min-loss         |
+| 💎  | Handoff ABI        | ✅ BCD signature + protocol        | ✅ Multiboot2 / Linux boot        | ✅ §15 magic+ver+size + halt             |
+| 💎  | Offline repair     | ✅ Windows Recovery Environment    | ✅ rescue/live ISO image          | ⬜ TODO-22 recovery partition            |
+| ⭐  | Multi-attempt diag | ✅ BootStatusData (Vista+, last 4) | ⚠️ systemd-bootctl status (single) | ✅ §20+§21 8-entry NVRAM ring + renderer |
 
 > **Parity:** 💎 rows track Win11 + Linux bootloader hardening. **⭐** rows are pre-kernel UX beyond typical UEFI/GRUB rescue. Capsule apply stays `TODO-27 §2`; multi-GOP enumeration stays `TODO-27 §4` with §5 here as timeout wrapper only. Full recovery partition / WinRE-class repair is `TODO-22-recovery-partition.md`, not duplicated here.
 

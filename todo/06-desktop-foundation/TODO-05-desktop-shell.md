@@ -28,13 +28,13 @@ title: "TODO-05 -- Desktop Shell Completion"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                      | Depends On     | Status |
+| ⭐  | Order | Deliverable                      | Depends On     | Status |
 | --- | :---: | -------------------------------- | -------------- | :----: |
-| 💎   |   1   | Desktop icon click actions       | --             |  [ ]   |
-| 💎   |   2   | Desktop right-click context menu | D06/TODO-04 §5 |  [ ]   |
-| 💎   |   3   | Taskbar window state sync        | D06/TODO-01 §1 |  [ ]   |
-| 💎   |   4   | Start menu program launch        | --             |  [ ]   |
-| 💎   |   5   | Power and settings buttons       | --             |  [ ]   |
+| 💎  |   1   | Desktop icon click actions       | --             |  [ ]   |
+| 💎  |   2   | Desktop right-click context menu | D06/TODO-04 §5 |  [ ]   |
+| 💎  |   3   | Taskbar window state sync        | D06/TODO-01 §1 |  [ ]   |
+| 💎  |   4   | Start menu program launch        | --             |  [ ]   |
+| 💎  |   5   | Power and settings buttons       | --             |  [ ]   |
 
 ---
 
@@ -119,10 +119,10 @@ Wire the bottom buttons in the start menu.
 
 ## OS Comparison
 
-| ⭐   | Feature             | 🪟 Win11    | 🐧 Linux (GNOME) | 🚀 Impossible OS |
-| --- | ------------------- | ---------- | --------------- | --------------- |
-| 💎   | Desktop icon launch | ✅ Built-in | ✅ Nautilus      | ⬜ §1            |
-| 💎   | Desktop right-click | ✅ Built-in | ✅ Built-in      | ⬜ §2            |
-| 💎   | Taskbar state sync  | ✅ Built-in | ✅ Dash/Panel    | ⬜ §3            |
-| 💎   | Start menu launch   | ✅ Built-in | ✅ Activities    | ⬜ §4            |
-| 💎   | Power/restart       | ✅ Built-in | ✅ Built-in      | ⬜ §5            |
+| ⭐  | Feature             | 🪟 Win11    | 🐧 Linux (GNOME) | 🚀 Impossible OS |
+| --- | ------------------- | ----------- | ---------------- | ---------------- |
+| 💎  | Desktop icon launch | ✅ Built-in | ✅ Nautilus      | ⬜ §1            |
+| 💎  | Desktop right-click | ✅ Built-in | ✅ Built-in      | ⬜ §2            |
+| 💎  | Taskbar state sync  | ✅ Built-in | ✅ Dash/Panel    | ⬜ §3            |
+| 💎  | Start menu launch   | ✅ Built-in | ✅ Activities    | ⬜ §4            |
+| 💎  | Power/restart       | ✅ Built-in | ✅ Built-in      | ⬜ §5            |

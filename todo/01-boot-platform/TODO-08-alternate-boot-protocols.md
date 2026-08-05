@@ -44,15 +44,15 @@ title: "TODO-08 -- Alternate Boot Protocols & Compatibility Boundary"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                            | Depends On           | Status |
+| ⭐  | Order | Deliverable                            | Depends On           | Status |
 | --- | :---: | -------------------------------------- | -------------------- | :----: |
-| 💎   |   1   | Alternate boot protocol policy         | T01 §8               |  [x]   |
-| 💎   |   2   | Multiboot2 feature parity audit        | §1                   |  [x]   |
-| 💎   |   3   | Multiboot2-to-boot_info adapter        | §2, T01 §11, T01 §12 |  [x]   |
-| 💎   |   4   | Unsupported-feature degradation matrix | §2, §3               |  [x]   |
-| 💎   |   5   | GRUB/Limine/legacy BIOS documentation  | §1                   |  [x]   |
-| ⭐   |   6   | Compatibility test images              | §3                   |  [x]   |
-| ⭐   |   7   | Deprecation or promotion gate          | §1                   |  [x]   |
+| 💎  |   1   | Alternate boot protocol policy         | T01 §8               |  [x]   |
+| 💎  |   2   | Multiboot2 feature parity audit        | §1                   |  [x]   |
+| 💎  |   3   | Multiboot2-to-boot_info adapter        | §2, T01 §11, T01 §12 |  [x]   |
+| 💎  |   4   | Unsupported-feature degradation matrix | §2, §3               |  [x]   |
+| 💎  |   5   | GRUB/Limine/legacy BIOS documentation  | §1                   |  [x]   |
+| ⭐  |   6   | Compatibility test images              | §3                   |  [x]   |
+| ⭐  |   7   | Deprecation or promotion gate          | §1                   |  [x]   |
 
 > 💎 = parity -- Linux distros ship Multiboot2 + UEFI dual-boot; Win11 is UEFI-only since 24H2 (no Multiboot equivalent).
 > ⭐ = exclusive -- §6 + §7 explicit policy gate (neither OS publishes a structured "supported / diagnostic / unsupported" taxonomy for alternate boot protocols).
@@ -208,18 +208,18 @@ title: "TODO-08 -- Alternate Boot Protocols & Compatibility Boundary"
 
 ## OS Comparison
 
-| ⭐   | Feature                              | 🪟 Win11                    | 🐧 Linux                        | 🚀 Impossible OS                 |
-| --- | ------------------------------------ | -------------------------- | ------------------------------ | ------------------------------- |
-| 💎   | UEFI primary boot                    | ✅ UEFI/GPT only since 24H2 | ✅ UEFI is default              | ✅ UEFI is the canonical path    |
-| 💎   | Legacy BIOS / CSM                    | ❌ removed in 24H2          | ⚠️ deprecated; distro-specific | ❌ unsupported -- §5 doc stance  |
-| 💎   | Multiboot2 / GRUB protocol           | ❌ no equivalent            | ✅ widely shipped               | ❌ unsupported (parser deleted)  |
-| 💎   | Limine / stivale protocol            | ❌ no equivalent            | ⚠️ niche distros               | ❌ unsupported per policy        |
-| ⭐   | Explicit unsupported-path fence      | ⚠️ bootmgr-specific halts  | ⚠️ distro-specific             | ✅ deletion-as-enforcement       |
-| ⭐   | Capability-bit degradation surfacing | ❌ silent feature absence   | ❌ silent feature absence       | ⚠️ (no alt-boot path exists)    |
-| ⭐   | Higher-level alt-boot loss matrix    | ❌ undefined                | ❌ distro-specific              | ⚠️ (no alt-boot path exists)    |
-| ⭐   | Userspace degraded-feature syscall   | ❌ no equivalent            | ❌ scrape dmesg                 | ⚠️ (no alt-boot path exists)    |
-| ⭐   | Compatible-mode CVE-tracking gate    | ❌ n/a (no alt-boot)        | ⚠️ per-distro shim/grub        | ⚠️ (no GRUB artifact ships)     |
-| 💎   | Explicit alt-boot non-goals          | ⚠️ Microsoft-only path     | ⚠️ implicit per-distro         | ✅ `docs/boot/alt-boot.md` table |
+| ⭐  | Feature                              | 🪟 Win11                    | 🐧 Linux                      | 🚀 Impossible OS                 |
+| --- | ------------------------------------ | --------------------------- | ----------------------------- | -------------------------------- |
+| 💎  | UEFI primary boot                    | ✅ UEFI/GPT only since 24H2 | ✅ UEFI is default            | ✅ UEFI is the canonical path    |
+| 💎  | Legacy BIOS / CSM                    | ❌ removed in 24H2          | ⚠️ deprecated; distro-specific | ❌ unsupported -- §5 doc stance  |
+| 💎  | Multiboot2 / GRUB protocol           | ❌ no equivalent            | ✅ widely shipped             | ❌ unsupported (parser deleted)  |
+| 💎  | Limine / stivale protocol            | ❌ no equivalent            | ⚠️ niche distros               | ❌ unsupported per policy        |
+| ⭐  | Explicit unsupported-path fence      | ⚠️ bootmgr-specific halts    | ⚠️ distro-specific             | ✅ deletion-as-enforcement       |
+| ⭐  | Capability-bit degradation surfacing | ❌ silent feature absence   | ❌ silent feature absence     | ⚠️ (no alt-boot path exists)      |
+| ⭐  | Higher-level alt-boot loss matrix    | ❌ undefined                | ❌ distro-specific            | ⚠️ (no alt-boot path exists)      |
+| ⭐  | Userspace degraded-feature syscall   | ❌ no equivalent            | ❌ scrape dmesg               | ⚠️ (no alt-boot path exists)      |
+| ⭐  | Compatible-mode CVE-tracking gate    | ❌ n/a (no alt-boot)        | ⚠️ per-distro shim/grub        | ⚠️ (no GRUB artifact ships)       |
+| 💎  | Explicit alt-boot non-goals          | ⚠️ Microsoft-only path       | ⚠️ implicit per-distro         | ✅ `docs/boot/alt-boot.md` table |
 
 > **Closure summary:** Impossible OS matches the Linux + Win11 UEFI/GPT floor and goes beyond on the "Explicit unsupported-path fence" + "Explicit alt-boot non-goals" rows: deletion-as-enforcement is structurally stronger than a build-flag gate (no code to drift), and the non-goal table documents adjacent rejections so future contributors do not re-discover the same decisions. The capability/loss/syscall rows are no longer applicable -- there is no alt-boot code path to surface degradation from.
 

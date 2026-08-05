@@ -62,14 +62,14 @@ title: "TODO-01 -- Web Browser"
 
 | #   | Section                                  | Tag        | Dep                               | Mark |
 | --- | ---------------------------------------- | ---------- | --------------------------------- | ---- |
-| 1   | Text-only browser (Phase 1, ~500 lines)  | `[Sonnet]` | 06-net/TODO-03                    | 💎    |
-| 2   | HTML tokenizer + DOM tree                | `[Opus]`   | §1                                | 💎    |
-| 3   | Layout engine (block + inline flow)      | `[Opus]`   | §2                                | 💎    |
-| 4   | CSS parser + cascade (stretch)           | `[Opus]`   | §3                                | 💎    |
-| 5   | JavaScript engine -- QuickJS/Duktape (long-term) | `[Opus]`   | §3                                | 💎    |
-| 6   | Alternative: NetSurf / Dillo port evaluation | `[Sonnet]` | §1                                | 💎    |
-| 7   | Browser chrome (tabs, toolbar, bookmarks, context menu) | `[Sonnet]` | §1 or §6, XREF: 07-gfx/TODO-04 §8 | ⭐    |
-| 8   | Browser settings + history + cookie jar  | `[Sonnet]` | §7                                | 💎    |
+| 1   | Text-only browser (Phase 1, ~500 lines)  | `[Sonnet]` | 06-net/TODO-03                    | 💎   |
+| 2   | HTML tokenizer + DOM tree                | `[Opus]`   | §1                                | 💎   |
+| 3   | Layout engine (block + inline flow)      | `[Opus]`   | §2                                | 💎   |
+| 4   | CSS parser + cascade (stretch)           | `[Opus]`   | §3                                | 💎   |
+| 5   | JavaScript engine -- QuickJS/Duktape (long-term) | `[Opus]`   | §3                                | 💎   |
+| 6   | Alternative: NetSurf / Dillo port evaluation | `[Sonnet]` | §1                                | 💎   |
+| 7   | Browser chrome (tabs, toolbar, bookmarks, context menu) | `[Sonnet]` | §1 or §6, XREF: 07-gfx/TODO-04 §8 | ⭐   |
+| 8   | Browser settings + history + cookie jar  | `[Sonnet]` | §7                                | 💎   |
 
 ---
 
@@ -246,20 +246,20 @@ Settings page (`browser://settings`) and privacy controls. All state in `HKCU\So
 ## OS Comparison
 
 
-| ⭐   | Feature                                  | 🪟 Win11                            | 🐧 Linux                         | 🚀 Impossible OS                        |
-| --- | ---------------------------------------- | ---------------------------------- | ------------------------------- | -------------------------------------- |
-| 💎   | HTTP/HTTPS page fetch                    | ✅ Edge/WebView2                    | ✅ Firefox/Chrome                | ⬜ `https_get()`                        |
-| 💎   | HTML renderer                            | ✅ Blink engine                     | ✅ Gecko/Blink                   | ⬜ custom or NetSurf port               |
-| 💎   | CSS box model + selectors                | ✅ Blink                            | ✅ Gecko/Blink                   | ⬜ §4 -- (stretch )                     |
-| 💎   | JavaScript engine                        | ✅ V8                               | ✅ V8/SpiderMonkey               | ⬜ §5 -- (long-term , QuickJS/Duktape)  |
-| 💎   | Multi-tab browser                        | ✅ Edge tabs                        | ✅ Firefox tabs                  | ⬜ `CTRL_TABSTRIP` (16 tabs)            |
-| 💎   | HTTPS 🔒 padlock indicator                | ✅ Edge                             | ✅ Firefox                       | ⬜ Fluent `lock_closed` icon            |
-| 💎   | Bookmarks + history                      | ✅ Edge                             | ✅ Firefox                       | ⬜ Registry-backed                      |
-| 💎   | Download manager                         | ✅ Edge                             | ✅ Firefox                       | ⬜ `https_get` stream to file           |
-| 💎   | Find in page                             | ✅ Edge                             | ✅ Firefox                       | ⬜ highlight matching text              |
-| ⭐   | Phase 1 text browser                     | ❌ No minimal mode                  | ❌ No minimal mode               | ⬜ runs without DOM/CSS                 |
-| ⭐   | Entire browser built on OS's own HTTP stack | ❌ Chromium ships own network layer | ❌ Gecko ships own network layer | ⬜ reuses kernel `http_get`/`https_get` |
-| ⭐   | Settings, bookmarks, history in OS Registry | ❌ Separate profile format          | ❌ SQLite profile                | ⬜ `HKCU\Software\Impossible\Browser\`  |
+| ⭐  | Feature                                  | 🪟 Win11                            | 🐧 Linux                         | 🚀 Impossible OS                        |
+| --- | ---------------------------------------- | ----------------------------------- | -------------------------------- | --------------------------------------- |
+| 💎  | HTTP/HTTPS page fetch                    | ✅ Edge/WebView2                    | ✅ Firefox/Chrome                | ⬜ `https_get()`                        |
+| 💎  | HTML renderer                            | ✅ Blink engine                     | ✅ Gecko/Blink                   | ⬜ custom or NetSurf port               |
+| 💎  | CSS box model + selectors                | ✅ Blink                            | ✅ Gecko/Blink                   | ⬜ §4 -- (stretch )                     |
+| 💎  | JavaScript engine                        | ✅ V8                               | ✅ V8/SpiderMonkey               | ⬜ §5 -- (long-term , QuickJS/Duktape)  |
+| 💎  | Multi-tab browser                        | ✅ Edge tabs                        | ✅ Firefox tabs                  | ⬜ `CTRL_TABSTRIP` (16 tabs)            |
+| 💎  | HTTPS 🔒 padlock indicator               | ✅ Edge                             | ✅ Firefox                       | ⬜ Fluent `lock_closed` icon            |
+| 💎  | Bookmarks + history                      | ✅ Edge                             | ✅ Firefox                       | ⬜ Registry-backed                      |
+| 💎  | Download manager                         | ✅ Edge                             | ✅ Firefox                       | ⬜ `https_get` stream to file           |
+| 💎  | Find in page                             | ✅ Edge                             | ✅ Firefox                       | ⬜ highlight matching text              |
+| ⭐  | Phase 1 text browser                     | ❌ No minimal mode                  | ❌ No minimal mode               | ⬜ runs without DOM/CSS                 |
+| ⭐  | Entire browser built on OS's own HTTP stack | ❌ Chromium ships own network layer | ❌ Gecko ships own network layer | ⬜ reuses kernel `http_get`/`https_get` |
+| ⭐  | Settings, bookmarks, history in OS Registry | ❌ Separate profile format          | ❌ SQLite profile                | ⬜ `HKCU\Software\Impossible\Browser\`  |
 
 **Impossible OS advantage:** The browser is the first app that exercises every major OS subsystem simultaneously -- networking, TLS, TTF rendering, image decoding, IxUI windows, registry, and clipboard. Phase 1 delivers a working browser in ~500 lines by reusing the kernel's `https_get()` directly, with no Chromium or Firefox dependency. All state lives in the OS Registry, making profiles trivially inspectable and portable.
 

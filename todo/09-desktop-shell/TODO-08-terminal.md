@@ -187,15 +187,15 @@ Multi-tab strip (each tab = independent `terminal_t` + scrollback). Acrylic tran
 ## OS Comparison
 
 
-| ⭐   | Feature           | 🪟 Win11                                  | 🐧 Linux                                  | 🚀 Impossible OS                          |
+| ⭐  | Feature           | 🪟 Win11                                 | 🐧 Linux                                 | 🚀 Impossible OS                         |
 | --- | ----------------- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
-| ⭐   | Cell grid         | ✅ Windows Terminal: full Unicode, unlimited | ✅ GNOME Terminal/Alacritty: full Unicode, unlimited | ⬜ §1 -- `⭐` PMM flat-array ring buffer   |
-| 💎   | ANSI/VT100 parser | ✅ Windows Terminal: VT220+; Sixel; iTerm2 | ✅ libvte/Alacritty: near-complete VT220; full 256-color | ⬜ §3 -- 16-color + SGR + cursor          |
-| 💎   | Scrollback        | ✅ Windows Terminal: unlimited scrollback (default | ✅ GNOME Terminal: 10000+ rows; smooth    | ⬜ §4 -- 2000 rows (configurable via Registry) |
-| 💎   | Text selection    | ✅ Windows Terminal: block/line/word select; search; | ✅ GNOME Terminal: click+drag; primary selection; | ⬜ §4 -- inverted-cell selection render; Ctrl+Shift+C/V wired |
-| 💎   | Resize + SIGWINCH | ✅ Windows Terminal: SIGWINCH via ConPTY; | ✅ PTY SIGWINCH on resize; `TIOCSWINSZ`   | ⬜ §5 -- `SIGWINCH=28` + `terminal_resize()` recalc + |
-| 💎   | Registry settings | ✅ Windows Terminal settings.json (font, color | ✅ GNOME Terminal: per-profile settings in | ⬜ §6 -- Registry `HKCU\...\Terminal\*`; hot-reload on `WM_THEME_CHANGED` |
-| ⭐   | Advanced          | ✅ Windows Terminal: tabs, panes, Acrylic, | ✅ tmux (split panes, detach); GNOME      | ⬜ §7 -- `⭐` Acrylic via kernel `gfx_acrylic()` |
+| ⭐  | Cell grid         | ✅ Windows Terminal: full Unicode, unlimited | ✅ GNOME Terminal/Alacritty: full Unicode, unlimited | ⬜ §1 -- `⭐` PMM flat-array ring buffer |
+| 💎  | ANSI/VT100 parser | ✅ Windows Terminal: VT220+; Sixel; iTerm2 | ✅ libvte/Alacritty: near-complete VT220; full 256-color | ⬜ §3 -- 16-color + SGR + cursor         |
+| 💎  | Scrollback        | ✅ Windows Terminal: unlimited scrollback (default | ✅ GNOME Terminal: 10000+ rows; smooth   | ⬜ §4 -- 2000 rows (configurable via Registry) |
+| 💎  | Text selection    | ✅ Windows Terminal: block/line/word select; search; | ✅ GNOME Terminal: click+drag; primary selection; | ⬜ §4 -- inverted-cell selection render; Ctrl+Shift+C/V wired |
+| 💎  | Resize + SIGWINCH | ✅ Windows Terminal: SIGWINCH via ConPTY; | ✅ PTY SIGWINCH on resize; `TIOCSWINSZ`  | ⬜ §5 -- `SIGWINCH=28` + `terminal_resize()` recalc + |
+| 💎  | Registry settings | ✅ Windows Terminal settings.json (font, color | ✅ GNOME Terminal: per-profile settings in | ⬜ §6 -- Registry `HKCU\...\Terminal\*`; hot-reload on `WM_THEME_CHANGED` |
+| ⭐  | Advanced          | ✅ Windows Terminal: tabs, panes, Acrylic, | ✅ tmux (split panes, detach); GNOME     | ⬜ §7 -- `⭐` Acrylic via kernel `gfx_acrylic()` |
 
 > **After §1–§7:** Impossible OS has a production-quality terminal emulator. The `⭐` differentiators: the cell grid is a PMM flat-array ring buffer with no heap fragmentation; Acrylic transparency runs directly through the kernel compositor (`gfx_acrylic()`) with no GPU delegation; and hyperlink detection is built into the cell renderer rather than an optional plugin.
 

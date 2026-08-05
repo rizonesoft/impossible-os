@@ -75,24 +75,24 @@ title: "TODO-10 -- Bare Metal Boot Hardening"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                              | Depends On | Status |
+| ⭐  | Order | Deliverable                              | Depends On | Status |
 | --- | :---: | ---------------------------------------- | ---------- | :----: |
-| 💎   |   1   | Minimal UC MMIO mapping (`vmm_map_mmio_uc`) | --         |  [x]   |
-| 💎   |   2   | IST stacks for critical exceptions       | --         |  [/]   |
-| 💎   |   3   | Hardware interrupt root cause investigation | §2         |  [x]   |
-| 💎   |   4   | ACPI FADT boot architecture flags        | --         |  [x]   |
-| 💎   |   5   | PS/2 controller detection and safe init  | §4         |  [x]   |
-| 💎   |   6   | AHCI interrupt hardening                 | §1, §3     |  [x]   |
-| 💎   |   7   | Resilient boot with graceful degradation | --         |  [/]   |
-| 💎   |   8   | Per-process page tables (minimal base)   | §1         |  [/]   |
-| 💎   |   9   | CPU security activation and verification | §4, §8     |  [x]   |
-| 💎   |  10   | Boot order hardening (timer-last, UEFI-safe) | §3         |  [x]   |
-| ⭐   |  11   | ~~`boot.conf` subsystem skip list~~      | --         |  [x]   |
-| 💎   |  12   | Logging and diagnostic storage moved to TODO-24 | §7         |  [x]   |
-| 💎   |  13   | CPU feature minimum requirements and verification | §4, §9     |  [x]   |
-| 💎   |  14   | Bare-metal test matrix and validation plan | §3         |  [x]   |
-| 💎   |  15   | Boot splash spinner bare-metal fix       | §3, §10    |  [x]   |
-| 💎   |  16   | Post-ship follow-up backfill (2026-07-31 cohort) | --         |  [ ]   |
+| 💎  |   1   | Minimal UC MMIO mapping (`vmm_map_mmio_uc`) | --         |  [x]   |
+| 💎  |   2   | IST stacks for critical exceptions       | --         |  [/]   |
+| 💎  |   3   | Hardware interrupt root cause investigation | §2         |  [x]   |
+| 💎  |   4   | ACPI FADT boot architecture flags        | --         |  [x]   |
+| 💎  |   5   | PS/2 controller detection and safe init  | §4         |  [x]   |
+| 💎  |   6   | AHCI interrupt hardening                 | §1, §3     |  [x]   |
+| 💎  |   7   | Resilient boot with graceful degradation | --         |  [/]   |
+| 💎  |   8   | Per-process page tables (minimal base)   | §1         |  [/]   |
+| 💎  |   9   | CPU security activation and verification | §4, §8     |  [x]   |
+| 💎  |  10   | Boot order hardening (timer-last, UEFI-safe) | §3         |  [x]   |
+| ⭐  |  11   | ~~`boot.conf` subsystem skip list~~      | --         |  [x]   |
+| 💎  |  12   | Logging and diagnostic storage moved to TODO-24 | §7         |  [x]   |
+| 💎  |  13   | CPU feature minimum requirements and verification | §4, §9     |  [x]   |
+| 💎  |  14   | Bare-metal test matrix and validation plan | §3         |  [x]   |
+| 💎  |  15   | Boot splash spinner bare-metal fix       | §3, §10    |  [x]   |
+| 💎  |  16   | Post-ship follow-up backfill (2026-07-31 cohort) | --         |  [ ]   |
 
 > 💎 = parity -- Windows and Linux both handle bare-metal quirks, IST, ACPI gating, and graceful degradation.
 > ⭐ = exclusive -- dense 4-digit POST codes in every boot function are not standard in any OS kernel.
@@ -190,10 +190,10 @@ Root cause found and fixed 2026-03-29.
 
 | Platform   | Timer               | AHCI | Desktop         | Status |
 | ---------- | ------------------- | ---- | --------------- | ------ |
-| QEMU WHPX  | LAPIC (Hyper-V MSR) | MSI  | Full            | ✅      |
-| QEMU TCG   | PIT                 | MSI  | Full            | ✅      |
-| VirtualBox | LAPIC (TSC ref)     | INTx | Full (NCQ slow) | ✅      |
-| Bare metal | LAPIC               | MSI  | Full            | ✅      |
+| QEMU WHPX  | LAPIC (Hyper-V MSR) | MSI  | Full            | ✅     |
+| QEMU TCG   | PIT                 | MSI  | Full            | ✅     |
+| VirtualBox | LAPIC (TSC ref)     | INTx | Full (NCQ slow) | ✅     |
+| Bare metal | LAPIC               | MSI  | Full            | ✅     |
 
 **Test checkpoint:** Table rows match serial on each platform; no triple fault after `sti` with LAPIC timer ticking; `clac` absent from `isr_common_stub` (`isr_stubs.asm`). QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
@@ -534,9 +534,9 @@ Define the hardware platforms to test on, expected boot timings per phase, and a
 
 | Platform   | Timer | Calibration | AHCI | PS/2             | Per-Process PT  | Boot Time  |
 | ---------- | ----- | ----------- | ---- | ---------------- | --------------- | ---------- |
-| QEMU WHPX  | LAPIC | Hyper-V MSR | MSI  | Skipped (8042=0) | ✅ CR3 switch    | ~10s       |
-| QEMU TCG   | PIT   | N/A         | MSI  | Skipped (8042=0) | ✅ CR3 switch    | ~3s        |
-| VirtualBox | LAPIC | PM Timer    | INTx | Active (8042=1)  | ✅ CR3 switch    | ~45s (NCQ) |
+| QEMU WHPX  | LAPIC | Hyper-V MSR | MSI  | Skipped (8042=0) | ✅ CR3 switch   | ~10s       |
+| QEMU TCG   | PIT   | N/A         | MSI  | Skipped (8042=0) | ✅ CR3 switch   | ~3s        |
+| VirtualBox | LAPIC | PM Timer    | INTx | Active (8042=1)  | ✅ CR3 switch   | ~45s (NCQ) |
 | Bare metal | LAPIC | TSC ref     | MSI  | Active (8042=1)  | TBD (BM Test 5) | ~10s       |
 
 - [x] Phase acceptance bands documented (P0 <200ms, P1 <2s, P2 <10s except VBox NCQ, P3 <15s) -- manual per-platform bands from BM records; per-phase bare-metal record owned by BM Test 5
@@ -608,21 +608,21 @@ From the stamped section 2:
 
 ## OS Comparison
 
-| ⭐   | Feature                 | 🪟 Win11                      | 🐧 Linux                      | 🚀 Impossible OS                 |
-| --- | ----------------------- | ---------------------------- | ---------------------------- | ------------------------------- |
-| 💎   | UC MMIO mapping         | ✅ MmMapIoSpace               | ✅ ioremap_uc                 | ✅ §1 vmm_map_mmio_uc            |
-| 💎   | IST stacks              | ✅ All critical exceptions    | ✅ IST1-4 DF/NMI/MCE          | ⚠️ §2 BSP IST1-3 (AP: T09 §10)  |
-| 💎   | ACPI FADT boot arch     | ✅ HAL checks all flags       | ✅ Gates PIT/RTC/PS2          | ✅ §4 IAPC_BOOT_ARCH parsed      |
-| 💎   | PS/2 ACPI detection     | ✅ HAL detects i8042          | ✅ i8042.nopnp                | ✅ §5 FADT + GSI routing         |
-| 💎   | AHCI MSI fallback       | ✅ StorAHCI INTx fallback     | ✅ libahci polled fallback    | ✅ §6 MSI→INTx→polled            |
-| 💎   | Graceful degradation    | ✅ Safe Mode + Last Known     | ✅ systemd continues          | ✅ §7 BOOT_TRY + degraded_mask   |
-| 💎   | Per-process page tables | ✅ Each process own CR3       | ✅ mm_struct per task         | ✅ §8 PML4 clone + CR3 switch    |
-| 💎   | CPU security verify     | ✅ HAL verifies CR4/EFER      | ✅ Checks feature enable      | ✅ §9 verify NX/SMEP/SMAP        |
-| 💎   | Boot order / UEFI-safe  | ✅ Ordered HAL + RT serialize | ✅ setup_arch + efi_call wrap | ✅ §10 timer-last + rt_call mask |
-| 💎   | Logging on main FS      | ✅ C:\Windows\System32        | ✅ /var/log                   | ✅ §12 KLOG_DIR X:\ (T24)        |
-| 💎   | CPU feature minimums    | ✅ NX required since Vista    | ✅ verify_cpu required mask   | ✅ §13 NX+SSE2+LM+SYSCALL mask   |
-| ⭐   | Bare-metal test matrix  | ❌ Internal only (WHQL)       | ❌ Community-driven           | ✅ §14 4-platform matrix         |
-| ⭐   | Boot spinner liveness   | ✅ ISR-driven ring            | ⚠️ plymouth (optional)       | ✅ §15 timer ISR @10fps Fluent   |
+| ⭐  | Feature                 | 🪟 Win11                      | 🐧 Linux                      | 🚀 Impossible OS                 |
+| --- | ----------------------- | ----------------------------- | ----------------------------- | -------------------------------- |
+| 💎  | UC MMIO mapping         | ✅ MmMapIoSpace               | ✅ ioremap_uc                 | ✅ §1 vmm_map_mmio_uc            |
+| 💎  | IST stacks              | ✅ All critical exceptions    | ✅ IST1-4 DF/NMI/MCE          | ⚠️ §2 BSP IST1-3 (AP: T09 §10)    |
+| 💎  | ACPI FADT boot arch     | ✅ HAL checks all flags       | ✅ Gates PIT/RTC/PS2          | ✅ §4 IAPC_BOOT_ARCH parsed      |
+| 💎  | PS/2 ACPI detection     | ✅ HAL detects i8042          | ✅ i8042.nopnp                | ✅ §5 FADT + GSI routing         |
+| 💎  | AHCI MSI fallback       | ✅ StorAHCI INTx fallback     | ✅ libahci polled fallback    | ✅ §6 MSI→INTx→polled            |
+| 💎  | Graceful degradation    | ✅ Safe Mode + Last Known     | ✅ systemd continues          | ✅ §7 BOOT_TRY + degraded_mask   |
+| 💎  | Per-process page tables | ✅ Each process own CR3       | ✅ mm_struct per task         | ✅ §8 PML4 clone + CR3 switch    |
+| 💎  | CPU security verify     | ✅ HAL verifies CR4/EFER      | ✅ Checks feature enable      | ✅ §9 verify NX/SMEP/SMAP        |
+| 💎  | Boot order / UEFI-safe  | ✅ Ordered HAL + RT serialize | ✅ setup_arch + efi_call wrap | ✅ §10 timer-last + rt_call mask |
+| 💎  | Logging on main FS      | ✅ C:\Windows\System32        | ✅ /var/log                   | ✅ §12 KLOG_DIR X:\ (T24)        |
+| 💎  | CPU feature minimums    | ✅ NX required since Vista    | ✅ verify_cpu required mask   | ✅ §13 NX+SSE2+LM+SYSCALL mask   |
+| ⭐  | Bare-metal test matrix  | ❌ Internal only (WHQL)       | ❌ Community-driven           | ✅ §14 4-platform matrix         |
+| ⭐  | Boot spinner liveness   | ✅ ISR-driven ring            | ⚠️ plymouth (optional)         | ✅ §15 timer ISR @10fps Fluent   |
 
 > **After §1--§15:** Impossible OS boots on any x86-64 hardware with the same reliability as Windows and Linux. User/kernel separation with per-process PML4; SMEP/SMAP where CPU and page tables allow (see §8--§9). Graceful degradation via `BOOT_TRY` (§7). Logging on BlackBox `X:\` (§12). External CPU sequencing remains in `TODO-09-cpu-boot-sequencing.md`.
 
@@ -647,8 +647,8 @@ From the stamped section 2:
 
 **Results:**
 
-| Platform   | Timer       | Calibration        | AHCI | Desktop | Notes                 |
-| ---------- | ----------- | ------------------ | ---- | ------- | --------------------- |
+| Platform   | Timer       | Calibration        | AHCI | Desktop  | Notes                 |
+| ---------- | ----------- | ------------------ | ---- | -------- | --------------------- |
 | QEMU WHPX  | LAPIC 100Hz | Tier 1 Hyper-V MSR | MSI  | ✅ 8.4s  | Primary dev           |
 | QEMU TCG   | PIT 100Hz   | N/A (PIT)          | MSI  | ✅       | Fixed by clac removal |
 | VirtualBox | LAPIC 100Hz | Tier 1b TSC ref    | INTx | ✅ 21.8s | NCQ timeout adds 15s  |
@@ -668,10 +668,10 @@ From the stamped section 2:
 
 | Platform   | Boot Time | Timer       | Calibration         | AHCI | PS/2             | Status |
 | ---------- | --------- | ----------- | ------------------- | ---- | ---------------- | ------ |
-| QEMU WHPX  | 9.4s      | LAPIC 100Hz | Tier 1 Hyper-V MSR  | MSI  | Skipped (8042=0) | ✅      |
-| QEMU TCG   | 3.1s      | PIT 100Hz   | N/A (PIT)           | MSI  | Skipped (8042=0) | ✅      |
-| VirtualBox | 21.8s     | LAPIC 100Hz | PM Timer (TSC skip) | INTx | Active (8042=1)  | ✅      |
-| Bare metal | ~10s      | LAPIC 100Hz | Tier 1b TSC ref     | MSI  | Active (8042=1)  | ✅      |
+| QEMU WHPX  | 9.4s      | LAPIC 100Hz | Tier 1 Hyper-V MSR  | MSI  | Skipped (8042=0) | ✅     |
+| QEMU TCG   | 3.1s      | PIT 100Hz   | N/A (PIT)           | MSI  | Skipped (8042=0) | ✅     |
+| VirtualBox | 21.8s     | LAPIC 100Hz | PM Timer (TSC skip) | INTx | Active (8042=1)  | ✅     |
+| Bare metal | ~10s      | LAPIC 100Hz | Tier 1b TSC ref     | MSI  | Active (8042=1)  | ✅     |
 
 ### BM Test 4 -- Memory Model (§8 + §9) ✅ PASSED 2026-03-29
 > [!NOTE]
@@ -685,12 +685,12 @@ From the stamped section 2:
 
 **Results (2026-03-29, post-§9):**
 
-| Platform   | Boot  | Per-Process PT | NX Verify  | SMEP/SMAP      | cmd.exe | Status       |
-| ---------- | ----- | -------------- | ---------- | -------------- | ------- | ------------ |
-| QEMU WHPX  | 10.3s | ✅ CR3 switch   | ✅ EFER.NXE | EPT enforced   | ✅       | ✅            |
-| QEMU TCG   | 3.2s  | ✅ CR3 switch   | ✅ EFER.NXE | N/A (no CPUID) | ✅       | ✅            |
-| VirtualBox | ~45s  | ✅ CR3 switch   | ✅ EFER.NXE | N/A (no CPUID) | ✅       | ✅            |
-| Bare metal | TBD   | TBD            | TBD        | TBD            | TBD     | Next session |
+| Platform   | Boot  | Per-Process PT | NX Verify   | SMEP/SMAP      | cmd.exe | Status       |
+| ---------- | ----- | -------------- | ----------- | -------------- | ------- | ------------ |
+| QEMU WHPX  | 10.3s | ✅ CR3 switch  | ✅ EFER.NXE | EPT enforced   | ✅      | ✅           |
+| QEMU TCG   | 3.2s  | ✅ CR3 switch  | ✅ EFER.NXE | N/A (no CPUID) | ✅      | ✅           |
+| VirtualBox | ~45s  | ✅ CR3 switch  | ✅ EFER.NXE | N/A (no CPUID) | ✅      | ✅           |
+| Bare metal | TBD   | TBD            | TBD         | TBD            | TBD     | Next session |
 
 ### BM Test 5 -- Final Validation (after §11--§15)
 Full acceptance pass. All sections complete.

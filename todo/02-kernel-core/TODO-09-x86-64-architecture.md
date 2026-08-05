@@ -65,28 +65,28 @@ title: "TODO-09 -- x86-64 Architecture Enhancements"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                              | Depends On | Status |
+| ⭐  | Order | Deliverable                              | Depends On | Status |
 | --- | :---: | ---------------------------------------- | ---------- | :----: |
-| 💎   |   1   | XSAVE/XRSTOR state management (per-thread, lazy) | (none)     |  [x]   |
-| 💎   |   2   | AVX/AVX2 kernel memops + framebuffer blit | §1         |  [x]   |
-| 💎   |   3   | AVX-512 opt-in + future silicon detection | §2         |  [x]   |
-| 💎   |   4   | MSR management infrastructure (`msr.c`)  | (none)     |  [x]   |
-| 💎   |   5   | UMIP + PKU protection keys               | §4         |  [x]   |
-| 💎   |   6   | 1 GiB huge pages + Write-Combining PAT   | §4         |  [x]   |
-| 💎   |   7   | FRED unified event delivery              | §4, T07 §3 |  [/]   |
-| 💎   |   8   | LKGS fast GS-base swap                   | §4         |  [/]   |
-| 💎   |   9   | CPU topology: Zen chiplets + Intel hybrid P/E-core | (none)     |  [x]   |
-| 💎   |  10   | Performance monitoring counters (Intel + AMD) | §4         |  [x]   |
-| 💎   |  11   | OSVW errata + RDTSCP processor ID setup  | §4, T08 §3 |  [x]   |
-| 💎   |  12   | AMD IBS profiling (stretch)              | §4         |  [/]   |
-| 💎   |  13   | Virtualization detection (AMD-V + Intel VT-x) | §4         |  [x]   |
-| ⭐   |  14   | Boot self-benchmark + auto-tune          | §1, §2, §9 |  [/]   |
-| 💎   |  15   | Future silicon stubs: UINTR/LA57/LAM/LASS + TDX/SEV | (none)     |  [/]   |
-| 💎   |  16   | Boot page tables: 1 GiB pages from the UEFI bootloader | §6         |  [/]   |
-| 💎   |  17   | AMX tile state + XFD dynamic XSAVE       | §1, §4     |  [/]   |
-| 💎   |  18   | Split-lock (#AC) + bus-lock (#DB) detection | §4         |  [/]   |
-| 💎   |  19   | WAITPKG + SERIALIZE + RDPID adoption     | §4, §11    |  [/]   |
-| 💎   |  20   | Post-ship follow-up backfill (2026-07-31 cohort) | --         |  [ ]   |
+| 💎  |   1   | XSAVE/XRSTOR state management (per-thread, lazy) | (none)     |  [x]   |
+| 💎  |   2   | AVX/AVX2 kernel memops + framebuffer blit | §1         |  [x]   |
+| 💎  |   3   | AVX-512 opt-in + future silicon detection | §2         |  [x]   |
+| 💎  |   4   | MSR management infrastructure (`msr.c`)  | (none)     |  [x]   |
+| 💎  |   5   | UMIP + PKU protection keys               | §4         |  [x]   |
+| 💎  |   6   | 1 GiB huge pages + Write-Combining PAT   | §4         |  [x]   |
+| 💎  |   7   | FRED unified event delivery              | §4, T07 §3 |  [/]   |
+| 💎  |   8   | LKGS fast GS-base swap                   | §4         |  [/]   |
+| 💎  |   9   | CPU topology: Zen chiplets + Intel hybrid P/E-core | (none)     |  [x]   |
+| 💎  |  10   | Performance monitoring counters (Intel + AMD) | §4         |  [x]   |
+| 💎  |  11   | OSVW errata + RDTSCP processor ID setup  | §4, T08 §3 |  [x]   |
+| 💎  |  12   | AMD IBS profiling (stretch)              | §4         |  [/]   |
+| 💎  |  13   | Virtualization detection (AMD-V + Intel VT-x) | §4         |  [x]   |
+| ⭐  |  14   | Boot self-benchmark + auto-tune          | §1, §2, §9 |  [/]   |
+| 💎  |  15   | Future silicon stubs: UINTR/LA57/LAM/LASS + TDX/SEV | (none)     |  [/]   |
+| 💎  |  16   | Boot page tables: 1 GiB pages from the UEFI bootloader | §6         |  [/]   |
+| 💎  |  17   | AMX tile state + XFD dynamic XSAVE       | §1, §4     |  [/]   |
+| 💎  |  18   | Split-lock (#AC) + bus-lock (#DB) detection | §4         |  [/]   |
+| 💎  |  19   | WAITPKG + SERIALIZE + RDPID adoption     | §4, §11    |  [/]   |
+| 💎  |  20   | Post-ship follow-up backfill (2026-07-31 cohort) | --         |  [ ]   |
 
 > 💎 = parity work: matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work: Impossible OS is superior or first.
@@ -579,38 +579,38 @@ From the stamped section 9:
 
 ## OS Comparison
 
-| ⭐   | Feature               | 🪟 Win11                    | 🐧 Linux                   | 🚀 Impossible OS    |
-| --- | --------------------- | -------------------------- | ------------------------- | ------------------ |
-| 💎   | CPUID feature gates   | ✅ KeQueryFeature API       | ✅ cpu_has() x86/cpu       | ✅ cpuid_init       |
-| 💎   | AMD ext CPUID         | ✅ HAL ext leaves 8000xxxx  | ✅ amd.c + topo ext        | ✅ §1               |
-| 💎   | XSAVE per thread      | ✅ KTHREAD XSAVE area       | ✅ fpu__alloc lazy FPU     | ✅ §1 Done          |
-| 💎   | AVX memops in kernel  | ✅ RtlCopyMemory via NT HAL | ✅ kernel_fpu_begin + kfpu | ⚠️ §2 GFX only     |
-| 💎   | AVX-512 + throttle    | ✅ context-switch aware     | ✅ eager FPU, power cgroup | ✅ §3 Done          |
-| 💎   | Central safe MSR      | ✅ HalMsrRead + #GP safe    | ✅ rdmsr_safe() extable    | ✅ §4 Done          |
-| 💎   | UMIP                  | ✅ CR4.UMIP on boot         | ✅ 4.15+ on boot           | ✅ §5 Done          |
-| 💎   | PKU / pkeys           | ✅ implicit OS use          | ✅ pkey_alloc/mprotect_key | ✅ §5 kernel API    |
-| 💎   | PKS (supervisor)      | ⚠️ niche, not exposed      | ✅ mm/pkeys since 5.13     | ⬜ defer T10        |
-| 💎   | FB WC PAT             | ✅ WDDM GPU WC mapping      | ✅ ioremap_wc PAT entry    | ✅ §6 WC mapped     |
-| 💎   | 1 GiB huge pages      | ✅ Large Pages in registry  | ✅ hugetlbfs 1G mount      | ✅ §6 promoted      |
-| 💎   | 1 GiB boot PT         | ✅ HAL builds from start    | ✅ direct-map 1G native    | ⬜ §16 runtime      |
-| 💎   | FRED events           | 🔜 future Windows roadmap   | ✅ 6.9+ Granite Rapids     | ⬜ §7               |
-| 💎   | LKGS fast GS          | 🔜 future Windows roadmap   | ✅ 6.4+ no SWAPGS in entry | ⬜ §8               |
-| 💎   | Zen CCD NUMA          | ✅ Ke node + NUMA policy    | ✅ amd_nb.c CCD/CCX topo   | ✅ §9 Done          |
-| 💎   | Intel P/E hybrid      | ✅ Thread Director HFI      | ✅ HFI + itmt scheduler    | ✅ §9 BSP-only      |
-| 💎   | PMU / PMC             | ✅ ETW + WPA counters       | ✅ perf_event PMU driver   | ✅ §10 Done         |
-| 💎   | OSVW errata           | ✅ HAL workaround table     | ✅ amd.c osvw_id_length    | ✅ §11 Done         |
-| 💎   | RDTSCP TSC_AUX        | ✅ QPC reads TSC_AUX        | ✅ per-CPU wrmsr in SMP    | ✅ §11 Done         |
-| 💎   | AMD IBS sample        | ⚠️ uProf vendor tool only  | ✅ perf IBS + oprofile     | ⬜ §12 stretch      |
-| 💎   | SVM VT-x detect       | ✅ HAL + Hv caps            | ✅ kvm cpuid + vmx_init    | ✅ §13              |
-| 💎   | AMX tile + XFD        | ✅ HAL XFD lazy alloc       | ✅ XFD dynamic XSAVE       | ⬜ §17 deferred     |
-| 💎   | Split/bus-lock det    | ✅ HAL #AC/#DB handling     | ✅ split_lock_detect=      | ⬜ §18 deferred     |
-| 💎   | WAITPKG UMWAIT bound  | ✅ HAL dwell limit          | ✅ IA32_UMWAIT_CONTROL     | ✅ UMWAIT bounded   |
-| 💎   | x2APIC MSR mode       | ✅ HAL enables if firmware  | ✅ CONFIG_X86_X2APIC       | ⬜ D04 T02 §1       |
-| 💎   | LAM / LASS            | ⚠️ unclear public surface  | ⚠️ LAM gated on LASS      | ⚠️ §15 detected    |
-| 💎   | Confidential VM guest | ✅ TDX + SEV in 24H2        | ✅ TDX + SEV-SNP 6.x       | ⚠️ §15 cc_kind det |
-| ⭐   | Boot hw self tune     | ❌ static config only       | ❌ static defaults         | ⚠️ §14 bench+SIMD  |
-| ⭐   | PKU Win32 wrapper     | ❌ no user API surface      | ⚠️ raw syscall pkey_*     | ⚠️ §5 kernel only  |
-| ⭐   | Per-core freq UI      | ❌ basic Task Manager       | ⚠️ turbostat CLI tool     | ⬜ §10 + shell      |
+| ⭐  | Feature               | 🪟 Win11                    | 🐧 Linux                   | 🚀 Impossible OS  |
+| --- | --------------------- | --------------------------- | -------------------------- | ----------------- |
+| 💎  | CPUID feature gates   | ✅ KeQueryFeature API       | ✅ cpu_has() x86/cpu       | ✅ cpuid_init     |
+| 💎  | AMD ext CPUID         | ✅ HAL ext leaves 8000xxxx  | ✅ amd.c + topo ext        | ✅ §1             |
+| 💎  | XSAVE per thread      | ✅ KTHREAD XSAVE area       | ✅ fpu__alloc lazy FPU     | ✅ §1 Done        |
+| 💎  | AVX memops in kernel  | ✅ RtlCopyMemory via NT HAL | ✅ kernel_fpu_begin + kfpu | ⚠️ §2 GFX only     |
+| 💎  | AVX-512 + throttle    | ✅ context-switch aware     | ✅ eager FPU, power cgroup | ✅ §3 Done        |
+| 💎  | Central safe MSR      | ✅ HalMsrRead + #GP safe    | ✅ rdmsr_safe() extable    | ✅ §4 Done        |
+| 💎  | UMIP                  | ✅ CR4.UMIP on boot         | ✅ 4.15+ on boot           | ✅ §5 Done        |
+| 💎  | PKU / pkeys           | ✅ implicit OS use          | ✅ pkey_alloc/mprotect_key | ✅ §5 kernel API  |
+| 💎  | PKS (supervisor)      | ⚠️ niche, not exposed        | ✅ mm/pkeys since 5.13     | ⬜ defer T10      |
+| 💎  | FB WC PAT             | ✅ WDDM GPU WC mapping      | ✅ ioremap_wc PAT entry    | ✅ §6 WC mapped   |
+| 💎  | 1 GiB huge pages      | ✅ Large Pages in registry  | ✅ hugetlbfs 1G mount      | ✅ §6 promoted    |
+| 💎  | 1 GiB boot PT         | ✅ HAL builds from start    | ✅ direct-map 1G native    | ⬜ §16 runtime    |
+| 💎  | FRED events           | 🔜 future Windows roadmap   | ✅ 6.9+ Granite Rapids     | ⬜ §7             |
+| 💎  | LKGS fast GS          | 🔜 future Windows roadmap   | ✅ 6.4+ no SWAPGS in entry | ⬜ §8             |
+| 💎  | Zen CCD NUMA          | ✅ Ke node + NUMA policy    | ✅ amd_nb.c CCD/CCX topo   | ✅ §9 Done        |
+| 💎  | Intel P/E hybrid      | ✅ Thread Director HFI      | ✅ HFI + itmt scheduler    | ✅ §9 BSP-only    |
+| 💎  | PMU / PMC             | ✅ ETW + WPA counters       | ✅ perf_event PMU driver   | ✅ §10 Done       |
+| 💎  | OSVW errata           | ✅ HAL workaround table     | ✅ amd.c osvw_id_length    | ✅ §11 Done       |
+| 💎  | RDTSCP TSC_AUX        | ✅ QPC reads TSC_AUX        | ✅ per-CPU wrmsr in SMP    | ✅ §11 Done       |
+| 💎  | AMD IBS sample        | ⚠️ uProf vendor tool only    | ✅ perf IBS + oprofile     | ⬜ §12 stretch    |
+| 💎  | SVM VT-x detect       | ✅ HAL + Hv caps            | ✅ kvm cpuid + vmx_init    | ✅ §13            |
+| 💎  | AMX tile + XFD        | ✅ HAL XFD lazy alloc       | ✅ XFD dynamic XSAVE       | ⬜ §17 deferred   |
+| 💎  | Split/bus-lock det    | ✅ HAL #AC/#DB handling     | ✅ split_lock_detect=      | ⬜ §18 deferred   |
+| 💎  | WAITPKG UMWAIT bound  | ✅ HAL dwell limit          | ✅ IA32_UMWAIT_CONTROL     | ✅ UMWAIT bounded |
+| 💎  | x2APIC MSR mode       | ✅ HAL enables if firmware  | ✅ CONFIG_X86_X2APIC       | ⬜ D04 T02 §1     |
+| 💎  | LAM / LASS            | ⚠️ unclear public surface    | ⚠️ LAM gated on LASS        | ⚠️ §15 detected    |
+| 💎  | Confidential VM guest | ✅ TDX + SEV in 24H2        | ✅ TDX + SEV-SNP 6.x       | ⚠️ §15 cc_kind det |
+| ⭐  | Boot hw self tune     | ❌ static config only       | ❌ static defaults         | ⚠️ §14 bench+SIMD  |
+| ⭐  | PKU Win32 wrapper     | ❌ no user API surface      | ⚠️ raw syscall pkey_*       | ⚠️ §5 kernel only  |
+| ⭐  | Per-core freq UI      | ❌ basic Task Manager       | ⚠️ turbostat CLI tool       | ⬜ §10 + shell    |
 
 After §1 through §13 done and §7 through §12 plus §14 through §16 planned, parity with Win11/Linux 6.x on this stack; §14 boot benchmark is the differentiator. `SetThreadMemoryZone` (§5) is a planned Win32-style PKU surface. PKS (supervisor keys) stays in `TODO-10` until kernel mappings allow it without breaking SMEP/SMAP rollout.
 

@@ -41,22 +41,22 @@ title: "TODO-06 -- Executive Support Runtime"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                              | Depends On             | Status |
+| ⭐  | Order | Deliverable                              | Depends On             | Status |
 | --- | :---: | ---------------------------------------- | ---------------------- | :----: |
-| 💎   |   1   | Executive headers and namespace          | --                     |  [x]   |
-| 💎   |   2   | Interlocked SLIST                        | §1, atomics            |  [x]   |
-| 💎   |   3   | Rundown protection                       | §1, atomics, events    |  [x]   |
-| 💎   |   4   | Callback objects                         | §1, §3, T05, T07       |  [x]   |
-| 💎   |   5   | Lookaside lists (NPaged/Paged/Ex)        | §2, D03 T03            |  [x]   |
-| 💎   |   6   | Fast references                          | §1, T05                |  [x]   |
-| 💎   |   7   | Generic tables and bitmaps               | §1                     |  [x]   |
-| 💎   |   8   | Push locks                               | §1, T07                |  [/]   |
-| 💎   |   9   | Fast and guarded mutexes                 | §1, T07                |  [/]   |
-| 💎   |  10   | Executive resource wrapper               | §1, T07, D03 T08       |  [/]   |
-| 💎   |  11   | Run-once initialization                  | §1                     |  [/]   |
-| ⭐   |  12   | Worker items, delayed work, and Ex timers | §1, T07, DPC/workqueue |  [/]   |
-| 💎   |  13   | Bugcheck reason callbacks                | §3, T27                |  [/]   |
-| ⭐   |  14   | Executive verifier hooks                 | §2..§13                |  [/]   |
+| 💎  |   1   | Executive headers and namespace          | --                     |  [x]   |
+| 💎  |   2   | Interlocked SLIST                        | §1, atomics            |  [x]   |
+| 💎  |   3   | Rundown protection                       | §1, atomics, events    |  [x]   |
+| 💎  |   4   | Callback objects                         | §1, §3, T05, T07       |  [x]   |
+| 💎  |   5   | Lookaside lists (NPaged/Paged/Ex)        | §2, D03 T03            |  [x]   |
+| 💎  |   6   | Fast references                          | §1, T05                |  [x]   |
+| 💎  |   7   | Generic tables and bitmaps               | §1                     |  [x]   |
+| 💎  |   8   | Push locks                               | §1, T07                |  [/]   |
+| 💎  |   9   | Fast and guarded mutexes                 | §1, T07                |  [/]   |
+| 💎  |  10   | Executive resource wrapper               | §1, T07, D03 T08       |  [/]   |
+| 💎  |  11   | Run-once initialization                  | §1                     |  [/]   |
+| ⭐  |  12   | Worker items, delayed work, and Ex timers | §1, T07, DPC/workqueue |  [/]   |
+| 💎  |  13   | Bugcheck reason callbacks                | §3, T27                |  [/]   |
+| ⭐  |  14   | Executive verifier hooks                 | §2..§13                |  [/]   |
 
 ## 1. Executive Headers and Namespace
 
@@ -394,21 +394,21 @@ One-time lazy-init primitive (`RTL_RUN_ONCE`) so drivers stop inventing unsafe a
 
 ## OS Comparison
 
-| ⭐   | Feature                   | 🪟 Win11                            | 🐧 Linux             | 🚀 Impossible OS                    |
-| --- | ------------------------- | ---------------------------------- | ------------------- | ---------------------------------- |
-| 💎   | Interlocked SLIST         | ✅ SLIST_HEADER                     | ✅ llist_head        | ✅ §2 cmpxchg16b DCAS               |
-| 💎   | Rundown protection        | ✅ EX_RUNDOWN_REF                   | ⚠️ percpu-ref/RCU   | ✅ §3 atomic + poll-drain           |
-| 💎   | Callback objects          | ✅ ExCreateCallback                 | ⚠️ notifier chains  | ✅ §4 \Callback\ + rundown          |
-| 💎   | Lookaside lists           | ✅ NPaged/Paged/Ex                  | ✅ slab/kmem_cache   | ✅ NPaged/Paged/Ex + verifier       |
-| 💎   | Fast references           | ✅ EX_FAST_REF                      | ❌ none              | ✅ §6 EX_FAST_REF (3-bit)           |
-| 💎   | Ordered tables + bitmaps  | ✅ RTL_AVL_TABLE/RTL_BITMAP         | ✅ rbtree/bitmap     | ✅ §7 AVL + dyn-hash + bitmap       |
-| 💎   | Push locks                | ✅ EX_PUSH_LOCK                     | ⚠️ rwsem/RCU        | ⬜ §8 deferred (keyed events)       |
-| 💎   | Fast/guarded mutexes      | ✅ FAST_MUTEX/KGUARDED_MUTEX        | ✅ mutex             | ⬜ §9 deferred (per-thread APC)     |
-| 💎   | Shared/exclusive resource | ✅ ERESOURCE                        | ✅ rw_semaphore      | ⬜ §10 deferred (SMP rwlock)        |
-| 💎   | Run-once init             | ✅ RTL_RUN_ONCE                     | ⚠️ ad-hoc/call_once | ⬜ §11 deferred (keyed events)      |
-| 💎   | Worker items + Ex timers  | ✅ ExQueueWorkItem/ExTimer          | ✅ workqueue/hrtimer | ✅ §12 work items (timers deferred) |
-| 💎   | Bugcheck reason callbacks | ✅ KeRegisterBugCheckReasonCallback | ⚠️ panic notifiers  | ⬜ §13 deferred (panic freeze)      |
-| ⭐   | Scoped executive verifier | ⚠️ Driver Verifier (heavy)         | ⚠️ KASAN/lockdep    | ⬜ §14 deferred (needs §8-§13)      |
+| ⭐  | Feature                   | 🪟 Win11                            | 🐧 Linux             | 🚀 Impossible OS                    |
+| --- | ------------------------- | ----------------------------------- | -------------------- | ----------------------------------- |
+| 💎  | Interlocked SLIST         | ✅ SLIST_HEADER                     | ✅ llist_head        | ✅ §2 cmpxchg16b DCAS               |
+| 💎  | Rundown protection        | ✅ EX_RUNDOWN_REF                   | ⚠️ percpu-ref/RCU     | ✅ §3 atomic + poll-drain           |
+| 💎  | Callback objects          | ✅ ExCreateCallback                 | ⚠️ notifier chains    | ✅ §4 \Callback\ + rundown          |
+| 💎  | Lookaside lists           | ✅ NPaged/Paged/Ex                  | ✅ slab/kmem_cache   | ✅ NPaged/Paged/Ex + verifier       |
+| 💎  | Fast references           | ✅ EX_FAST_REF                      | ❌ none              | ✅ §6 EX_FAST_REF (3-bit)           |
+| 💎  | Ordered tables + bitmaps  | ✅ RTL_AVL_TABLE/RTL_BITMAP         | ✅ rbtree/bitmap     | ✅ §7 AVL + dyn-hash + bitmap       |
+| 💎  | Push locks                | ✅ EX_PUSH_LOCK                     | ⚠️ rwsem/RCU          | ⬜ §8 deferred (keyed events)       |
+| 💎  | Fast/guarded mutexes      | ✅ FAST_MUTEX/KGUARDED_MUTEX        | ✅ mutex             | ⬜ §9 deferred (per-thread APC)     |
+| 💎  | Shared/exclusive resource | ✅ ERESOURCE                        | ✅ rw_semaphore      | ⬜ §10 deferred (SMP rwlock)        |
+| 💎  | Run-once init             | ✅ RTL_RUN_ONCE                     | ⚠️ ad-hoc/call_once   | ⬜ §11 deferred (keyed events)      |
+| 💎  | Worker items + Ex timers  | ✅ ExQueueWorkItem/ExTimer          | ✅ workqueue/hrtimer | ✅ §12 work items (timers deferred) |
+| 💎  | Bugcheck reason callbacks | ✅ KeRegisterBugCheckReasonCallback | ⚠️ panic notifiers    | ⬜ §13 deferred (panic freeze)      |
+| ⭐  | Scoped executive verifier | ⚠️ Driver Verifier (heavy)           | ⚠️ KASAN/lockdep      | ⬜ §14 deferred (needs §8-§13)      |
 
 > **Shipped (pass 1):** §2-§7 (SLIST, rundown, callbacks, lookaside, fast refs, AVL/hash/bitmap) + §12 immediate work items match Win11/Linux. §8-§11 + §13/§14 are deferred on lower-level sync/panic infrastructure (keyed events, per-thread APC-disable, SMP-safe rwlock, panic CPU-freeze, T27 dump writer) -- see each section's Deferred stamp.
 > **After §8-§14 land:** the full lock spectrum (push locks, fast/guarded mutexes, ERESOURCE), run-once, Ex timers, bugcheck callbacks, and a low-cost scoped verifier complete the layer; broader tooling stays with D02 T31.

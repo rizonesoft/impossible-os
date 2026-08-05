@@ -196,15 +196,15 @@ WAV files (22050 Hz mono 16-bit) in `resources/sounds/`; install to `C:\Impossib
 ## OS Comparison
 
 
-| ⭐   | Feature                         | 🪟 Win11                                  | 🐧 Linux                                  | 🚀 Impossible OS                          |
+| ⭐  | Feature                         | 🪟 Win11                                 | 🐧 Linux                                 | 🚀 Impossible OS                         |
 | --- | ------------------------------- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
-| 💎   | Extension-to-app mapping        | ✅ Win32 HKCR; Shell `ShellExecuteEx`; prog_id | ✅ XDG MIME types (`xdg-open`, `mimeapps.list`); | ⬜ §1 -- `RegGetValue(HKCR, ...)` prog_id chain; `icon_for_extension()` |
-| 💎   | First-boot default associations | ✅ Windows ships with all default         | ✅ Distro ships `mimeapps.list`; `update-mime-database` on | ⬜ §2 -- `FileAssocsInit` guard flag; 12-entry static |
-| 💎   | Open With dialog                | ✅ "Open with" dialog; "Always use        | ✅ GNOME/KDE "Open With" dialog; writes   | ⬜ §3 -- `CTRL_LISTVIEW` HKCR app scan; "Browse…" |
-| ⭐   | Shortcut files                  | ✅ Binary Shell Link format (.lnk);       | ✅ XDG `.desktop` files (INI-like); `xdg-open` | ⬜ §4 -- `⭐` plain-text INI `.lnk` (human-readable |
-| 💎   | Recycle Bin                     | ✅ Recycle Bin; Restore; auto-purge; right-click | ✅ GNOME/KDE Trash (`~/.local/share/Trash`); `trash-cli`; restore | ⬜ §6 -- `C:\Recycle\`; `.meta` sidecars; MaxSize from |
-| 💎   | System sounds                   | ✅ Sound schemes; WinMM `PlaySound`; per-event | ✅ PulseAudio/PipeWire; sound themes; `gsettings` per-event; | ⬜ §7 -- 44-byte WAV parser; `audio_write_pcm()` stub |
-| 💎   | Font manager                    | ✅ Settings → Personalization → Fonts;    | ✅ GNOME Font Viewer; KDE Font            | ⬜ §8 -- 640×480 px app; 4-size preview   |
+| 💎  | Extension-to-app mapping        | ✅ Win32 HKCR; Shell `ShellExecuteEx`; prog_id | ✅ XDG MIME types (`xdg-open`, `mimeapps.list`); | ⬜ §1 -- `RegGetValue(HKCR, ...)` prog_id chain; `icon_for_extension()` |
+| 💎  | First-boot default associations | ✅ Windows ships with all default        | ✅ Distro ships `mimeapps.list`; `update-mime-database` on | ⬜ §2 -- `FileAssocsInit` guard flag; 12-entry static |
+| 💎  | Open With dialog                | ✅ "Open with" dialog; "Always use       | ✅ GNOME/KDE "Open With" dialog; writes  | ⬜ §3 -- `CTRL_LISTVIEW` HKCR app scan; "Browse…" |
+| ⭐  | Shortcut files                  | ✅ Binary Shell Link format (.lnk);      | ✅ XDG `.desktop` files (INI-like); `xdg-open` | ⬜ §4 -- `⭐` plain-text INI `.lnk` (human-readable |
+| 💎  | Recycle Bin                     | ✅ Recycle Bin; Restore; auto-purge; right-click | ✅ GNOME/KDE Trash (`~/.local/share/Trash`); `trash-cli`; restore | ⬜ §6 -- `C:\Recycle\`; `.meta` sidecars; MaxSize from |
+| 💎  | System sounds                   | ✅ Sound schemes; WinMM `PlaySound`; per-event | ✅ PulseAudio/PipeWire; sound themes; `gsettings` per-event; | ⬜ §7 -- 44-byte WAV parser; `audio_write_pcm()` stub |
+| 💎  | Font manager                    | ✅ Settings → Personalization → Fonts;   | ✅ GNOME Font Viewer; KDE Font           | ⬜ §8 -- 640×480 px app; 4-size preview  |
 
 > **After §1–§8:** Impossible OS has a complete file association and resource stack. The `⭐` differentiator is the human-readable INI `.lnk` shortcut format -- unlike Windows' binary COM Shell Link structure or Linux's XDG `.desktop` (which is similar but XDG-namespaced), Impossible OS `.lnk` files can be created and edited in any text editor, lowering the barrier for system administration and making the format durable across versions.
 

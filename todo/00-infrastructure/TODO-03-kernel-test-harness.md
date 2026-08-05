@@ -53,17 +53,17 @@ title: "TODO-03 -- Kernel Test Harness"
 
 ## Implementation Order
 
-| ⭐   | Order | Section | Deliverable                              | Depends On   | Status |
+| ⭐  | Order | Section | Deliverable                              | Depends On   | Status |
 | --- | :---: | :-----: | ---------------------------------------- | ------------ | :----: |
-| 💎   |   1   |   §1    | kmalloc fault injection (`kmalloc_fail_countdown`) | --           |  [x]   |
-| 💎   |   2   |   §7    | Test action/cleanup registry (`test_add_action`) | --           |  [x]   |
-| 💎   |   3   |   §3    | Scratch-buffer helper (`TEST_SCRATCH_KBUF`) | §7           |  [x]   |
-| 💎   |   4   |   §2    | Deterministic race barrier (`test_race_barrier_t`) | --           |  [x]   |
-| 💎   |   5   |   §6    | Fault-injection hardening (task-filter, multi-allocator) | §1           |  [x]   |
-| 💎   |   6   |   §5    | Test-scoped klog level demotion (`TEST_KLOG_SUPPRESS`) | §7           |  [x]   |
-| 💎   |   7   |   §8    | Per-test heap-leak detection             | §7           |  [x]   |
-| 💎   |   8   |   §4    | Retrofit existing "Test gaps" stamps across `todo/` | §1-§3, §5-§8 |  [x]   |
-| 💎   |   9   |   §9    | Audit + classify the 50+ [LEAK] failures §8 surfaced | §8           |  [/]   |
+| 💎  |   1   |   §1    | kmalloc fault injection (`kmalloc_fail_countdown`) | --           |  [x]   |
+| 💎  |   2   |   §7    | Test action/cleanup registry (`test_add_action`) | --           |  [x]   |
+| 💎  |   3   |   §3    | Scratch-buffer helper (`TEST_SCRATCH_KBUF`) | §7           |  [x]   |
+| 💎  |   4   |   §2    | Deterministic race barrier (`test_race_barrier_t`) | --           |  [x]   |
+| 💎  |   5   |   §6    | Fault-injection hardening (task-filter, multi-allocator) | §1           |  [x]   |
+| 💎  |   6   |   §5    | Test-scoped klog level demotion (`TEST_KLOG_SUPPRESS`) | §7           |  [x]   |
+| 💎  |   7   |   §8    | Per-test heap-leak detection             | §7           |  [x]   |
+| 💎  |   8   |   §4    | Retrofit existing "Test gaps" stamps across `todo/` | §1-§3, §5-§8 |  [x]   |
+| 💎  |   9   |   §9    | Audit + classify the 50+ [LEAK] failures §8 surfaced | §8           |  [/]   |
 
 > 💎 = parity work -- Linux kernel self-test framework has `lib/fault-inject.c` (multi-allocator fault injection), `kunit_add_action` (test-scoped cleanup registry), `kcsan`/`kasan` fences, `kunit_kzalloc()` scratch helpers, and `kmemleak` leak detection. This TODO brings the same floor to the Impossible OS kernel test runner without requiring the Driver Verifier / WDK workflow Windows leans on.
 > **Order vs section-number:** Implementation Order is execution sequence; section numbers (§N) preserve file stability. §7 (action registry) ships at Order 2 because §3, §5, and §8 all consume it.
@@ -365,18 +365,18 @@ No fourth category. If a leak does not fit any of these three, the `[LEAK]` line
 
 ## OS Comparison
 
-| ⭐   | Feature                           | 🪟 Win11                     | 🐧 Linux                                  | 🚀 Impossible OS                          |
+| ⭐  | Feature                           | 🪟 Win11                    | 🐧 Linux                                 | 🚀 Impossible OS                         |
 | --- | --------------------------------- | --------------------------- | ---------------------------------------- | ---------------------------------------- |
-| 💎   | Slab/kmalloc fault injection      | ⚠️ DV Low-Resources (heavy) | ✅ `failslab` + fail-nth                  | ✅ §1 `kmalloc_fail_countdown`            |
-| 💎   | Multi-allocator fault injection   | ⚠️ DV LRS (coarse)          | ✅ `failslab` + `fail_page_alloc` + `fail_usercopy` | ✅ §6 pmm/vmm/copy_user countdowns        |
-| 💎   | Task-scoped fault injection       | ❌ Rare                      | ✅ `task_filter` (fault-inject)           | ✅ §6 `kmalloc_fail_task_filter`          |
-| 💎   | Deterministic concurrency testing | ⚠️ TAEF with effort         | ⚠️ KCSAN (probabilistic)                 | ✅ §2 `test_race_barrier_t` (yield-ordered) |
-| 💎   | Test-scoped cleanup registry      | ❌ Manual in TAEF            | ✅ `kunit_add_action`                     | ✅ §7 `test_add_action` (primitive shipped) |
-| 💎   | Test-scoped scratch allocation    | ⚠️ Manual in TAEF           | ✅ `kunit_kzalloc` (kmalloc-only)         | ✅ §3 `TEST_SCRATCH_KBUF` (kmalloc + PMM) |
-| 💎   | Per-test leak detection           | ⚠️ DV verifier pool checks  | ✅ `kmemleak` (kernel-wide)               | ✅ §8 heap_used delta (per-test, built-in) |
-| ⭐   | Test-scoped klog level demotion   | ❌ None                      | ❌ None                                   | ✅ §5 `TEST_KLOG_SUPPRESS`                |
-| ⭐   | Single-boot 436-suite runner      | ❌ WDK run per-driver        | ❌ KUnit one-module-at-a-time             | ✅ existing `test=1` infrastructure       |
-| ⭐   | CI-gated unannotated-leak counter | ❌ DV advisory, not CI-gate  | ⚠️ kmemleak is kernel-wide, not per-test CI-gate | ✅ §9 `L leaked` folds into FAILED        |
+| 💎  | Slab/kmalloc fault injection      | ⚠️ DV Low-Resources (heavy)  | ✅ `failslab` + fail-nth                 | ✅ §1 `kmalloc_fail_countdown`           |
+| 💎  | Multi-allocator fault injection   | ⚠️ DV LRS (coarse)           | ✅ `failslab` + `fail_page_alloc` + `fail_usercopy` | ✅ §6 pmm/vmm/copy_user countdowns       |
+| 💎  | Task-scoped fault injection       | ❌ Rare                     | ✅ `task_filter` (fault-inject)          | ✅ §6 `kmalloc_fail_task_filter`         |
+| 💎  | Deterministic concurrency testing | ⚠️ TAEF with effort          | ⚠️ KCSAN (probabilistic)                  | ✅ §2 `test_race_barrier_t` (yield-ordered) |
+| 💎  | Test-scoped cleanup registry      | ❌ Manual in TAEF           | ✅ `kunit_add_action`                    | ✅ §7 `test_add_action` (primitive shipped) |
+| 💎  | Test-scoped scratch allocation    | ⚠️ Manual in TAEF            | ✅ `kunit_kzalloc` (kmalloc-only)        | ✅ §3 `TEST_SCRATCH_KBUF` (kmalloc + PMM) |
+| 💎  | Per-test leak detection           | ⚠️ DV verifier pool checks   | ✅ `kmemleak` (kernel-wide)              | ✅ §8 heap_used delta (per-test, built-in) |
+| ⭐  | Test-scoped klog level demotion   | ❌ None                     | ❌ None                                  | ✅ §5 `TEST_KLOG_SUPPRESS`               |
+| ⭐  | Single-boot 436-suite runner      | ❌ WDK run per-driver       | ❌ KUnit one-module-at-a-time            | ✅ existing `test=1` infrastructure      |
+| ⭐  | CI-gated unannotated-leak counter | ❌ DV advisory, not CI-gate | ⚠️ kmemleak is kernel-wide, not per-test CI-gate | ✅ §9 `L leaked` folds into FAILED       |
 
 After §1-§8 land (all shipped 2026-04-19), in-kernel test coverage reaches Linux-KUnit-plus-fault-inject parity for allocator-failure, cleanup, and concurrency testing; §5 (klog demotion) and §8 (per-test leak delta, no KASAN required) give Impossible OS two real edges neither Win11 nor Linux offers at the in-kernel-test layer. §4 (sweep-and-retrofit) closed the inbound TODO-24 §4 ALPC deferred-test-gaps block as the first concrete consumer; future deferred-test-gaps stamps that name §1-§3 / §5-§8 as the unblocker get retrofitted on the same model. §9 (shipped 2026-04-22) promoted the §8 advisory L column into a CI-failing gate by closing all 56 [LEAK] lines (root-cause fixes in OB namespace locking, ETW IDLE state, and ALPC disconnect ordering; two `test_*_cleanup_named` helpers) and hardening `scripts/test.sh` to fail-closed on unparseable summaries -- a third edge neither Win11's Driver Verifier nor Linux's kernel-wide kmemleak delivers at the per-test, CI-gated layer.
 

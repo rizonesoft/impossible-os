@@ -26,13 +26,13 @@ title: "TODO-04 -- Control Library Completion"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable               | Depends On | Status |
+| ⭐  | Order | Deliverable               | Depends On | Status |
 | --- | :---: | ------------------------- | ---------- | :----: |
-| 💎   |   1   | Checkbox and radio button | --         |  [ ]   |
-| 💎   |   2   | Progress bar              | --         |  [ ]   |
-| 💎   |   3   | Listbox with scrollbar    | --         |  [ ]   |
-| 💎   |   4   | Combobox (dropdown)       | §3         |  [ ]   |
-| 💎   |   5   | Context menu (popup)      | --         |  [ ]   |
+| 💎  |   1   | Checkbox and radio button | --         |  [ ]   |
+| 💎  |   2   | Progress bar              | --         |  [ ]   |
+| 💎  |   3   | Listbox with scrollbar    | --         |  [ ]   |
+| 💎  |   4   | Combobox (dropdown)       | §3         |  [ ]   |
+| 💎  |   5   | Context menu (popup)      | --         |  [ ]   |
 
 ---
 
@@ -120,10 +120,10 @@ Reusable popup menu that appears at cursor position on right-click.
 
 ## OS Comparison
 
-| ⭐   | Feature        | 🪟 Win11    | 🐧 Linux (GTK) | 🚀 Impossible OS |
-| --- | -------------- | ---------- | ------------- | --------------- |
-| 💎   | Checkbox/Radio | ✅ Built-in | ✅ Built-in    | ⬜ §1            |
-| 💎   | Progress bar   | ✅ Built-in | ✅ Built-in    | ⬜ §2            |
-| 💎   | Listbox        | ✅ Built-in | ✅ Built-in    | ⬜ §3            |
-| 💎   | Combobox       | ✅ Built-in | ✅ Built-in    | ⬜ §4            |
-| 💎   | Context menu   | ✅ Built-in | ✅ Built-in    | ⬜ §5            |
+| ⭐  | Feature        | 🪟 Win11    | 🐧 Linux (GTK) | 🚀 Impossible OS |
+| --- | -------------- | ----------- | -------------- | ---------------- |
+| 💎  | Checkbox/Radio | ✅ Built-in | ✅ Built-in    | ⬜ §1            |
+| 💎  | Progress bar   | ✅ Built-in | ✅ Built-in    | ⬜ §2            |
+| 💎  | Listbox        | ✅ Built-in | ✅ Built-in    | ⬜ §3            |
+| 💎  | Combobox       | ✅ Built-in | ✅ Built-in    | ⬜ §4            |
+| 💎  | Context menu   | ✅ Built-in | ✅ Built-in    | ⬜ §5            |

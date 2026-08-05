@@ -49,23 +49,23 @@ title: "TODO-05 -- Object Manager"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                              | Depends On    | Status |
+| ⭐  | Order | Deliverable                              | Depends On    | Status |
 | --- | :---: | ---------------------------------------- | ------------- | :----: |
-| 💎   |   1   | OBJECT_HEADER and OBJECT_TYPE infrastructure | --            |  [x]   |
-| 💎   |   2   | Reference counting and object lifetime   | §1            |  [x]   |
-| 💎   |   3   | Per-process handle table                 | §2            |  [/]   |
-| 💎   |   4   | Object namespace (directory + symbolic link) | §2            |  [/]   |
-| 💎   |   5   | File, Process, Thread object types       | §3, §4        |  [/]   |
-| 💎   |   6   | Synchronisation object types (Event, Mutex, Semaphore, Timer) | §3, §4        |  [/]   |
-| 💎   |   7   | Section (shared memory) object type      | §3, §4        |  [/]   |
-| 💎   |   8   | Security descriptor integration          | §1, T15 §1,§3 |  [x]   |
-| 💎   |   9   | NtClose / NtDuplicateObject / NtQueryObject | §3, T15 §4    |  [/]   |
-| 💎   |  10   | Handle inheritance across CreateProcess  | §3, §5        |  [/]   |
-| ⭐   |  11   | Unified kernel-user namespace browser API | §4            |  [/]   |
-| 💎   |  12   | Per-type object and handle statistics    | §1, §2, §3    |  [x]   |
-| 💎   |  13   | Object callbacks -- handle operation filtering | §3, §9        |  [x]   |
-| 💎   |  14   | Per-process handle quota                 | §3            |  [x]   |
-| ⭐   |  15   | Handle tracing and leak detection        | §2, §12       |  [x]   |
+| 💎  |   1   | OBJECT_HEADER and OBJECT_TYPE infrastructure | --            |  [x]   |
+| 💎  |   2   | Reference counting and object lifetime   | §1            |  [x]   |
+| 💎  |   3   | Per-process handle table                 | §2            |  [/]   |
+| 💎  |   4   | Object namespace (directory + symbolic link) | §2            |  [/]   |
+| 💎  |   5   | File, Process, Thread object types       | §3, §4        |  [/]   |
+| 💎  |   6   | Synchronisation object types (Event, Mutex, Semaphore, Timer) | §3, §4        |  [/]   |
+| 💎  |   7   | Section (shared memory) object type      | §3, §4        |  [/]   |
+| 💎  |   8   | Security descriptor integration          | §1, T15 §1,§3 |  [x]   |
+| 💎  |   9   | NtClose / NtDuplicateObject / NtQueryObject | §3, T15 §4    |  [/]   |
+| 💎  |  10   | Handle inheritance across CreateProcess  | §3, §5        |  [/]   |
+| ⭐  |  11   | Unified kernel-user namespace browser API | §4            |  [/]   |
+| 💎  |  12   | Per-type object and handle statistics    | §1, §2, §3    |  [x]   |
+| 💎  |  13   | Object callbacks -- handle operation filtering | §3, §9        |  [x]   |
+| 💎  |  14   | Per-process handle quota                 | §3            |  [x]   |
+| ⭐  |  15   | Handle tracing and leak detection        | §2, §12       |  [x]   |
 
 > 💎 = parity -- Windows NT ObXxx and Linux kobject/fd_table both provide these capabilities.
 > ⭐ = exclusive -- built-in handle/reference leak detection integrated with klog, providing
@@ -572,25 +572,25 @@ Provide tagged reference tracking and optional per-handle event recording for di
 
 ## OS Comparison
 
-| ⭐   | Feature               | 🪟 Win11               | 🐧 Linux            | 🚀 Impossible OS              |
-| --- | --------------------- | --------------------- | ------------------ | ---------------------------- |
-| 💎   | Typed object header   | ✅ OBJECT_HEADER       | ✅ kobject + kref   | ✅ §1                         |
-| 💎   | Type descriptors      | ✅ OBJECT_TYPE hooks   | ✅ kobj_type        | ✅ §1                         |
-| 💎   | Auto-delete on 0 ref  | ✅ ObDereferenceObject | ✅ kref_put         | ✅ §2                         |
-| 💎   | Per-process handles   | ✅ HANDLE_TABLE        | ✅ fd table         | ✅ §3                         |
-| 💎   | Named namespace       | ✅ \BaseNamedObjects   | ✅ /proc, /sys      | ✅ §4                         |
-| 💎   | File objects          | ✅ FILE_OBJECT         | ✅ struct file      | ✅ §5                         |
-| 💎   | Process/thread objs   | ✅ EPROCESS/ETHREAD    | ✅ task_struct      | ✅ §5                         |
-| 💎   | Named sync objects    | ✅ Named events/mutex  | ✅ POSIX named sem  | ✅ §6                         |
-| 💎   | Section objects       | ✅ SECTION_OBJECT      | ✅ anonymous mmap   | ✅ §7                         |
-| 💎   | Security descriptors  | ✅ DACL/SACL           | ✅ inode perms/ACLs | ✅ §8                         |
-| 💎   | Duplicate/inherit     | ✅ Full semantics      | ✅ dup/O_CLOEXEC    | ✅ §9, §10                    |
-| ⭐   | Public namespace API  | ❌ Internal only       | ❌ No equivalent    | ✅ §11 -- public, documented  |
-| ⭐   | Unified type system   | ⚠️ Partial ObXxx      | ❌ Split fd/kobject | ✅ §1-§7 -- one header        |
-| 💎   | Per-type statistics   | ✅ OBJECT_TYPE_INFO    | ✅ /proc/slabinfo   | ✅ §12 -- atomic counters     |
-| 💎   | Handle op callbacks   | ✅ ObRegisterCallbacks | ⚠️ LSM hooks       | ✅ §13 -- pre/post filtering  |
-| 💎   | Handle quota          | ✅ 16M + pool quota    | ✅ RLIMIT_NOFILE    | ✅ §14 -- 16K default, 1M max |
-| ⭐   | Handle leak detection | ⚠️ ETW (complex)      | ❌ No built-in      | ✅ §15 -- klog-integrated     |
+| ⭐  | Feature               | 🪟 Win11               | 🐧 Linux            | 🚀 Impossible OS              |
+| --- | --------------------- | ---------------------- | ------------------- | ----------------------------- |
+| 💎  | Typed object header   | ✅ OBJECT_HEADER       | ✅ kobject + kref   | ✅ §1                         |
+| 💎  | Type descriptors      | ✅ OBJECT_TYPE hooks   | ✅ kobj_type        | ✅ §1                         |
+| 💎  | Auto-delete on 0 ref  | ✅ ObDereferenceObject | ✅ kref_put         | ✅ §2                         |
+| 💎  | Per-process handles   | ✅ HANDLE_TABLE        | ✅ fd table         | ✅ §3                         |
+| 💎  | Named namespace       | ✅ \BaseNamedObjects   | ✅ /proc, /sys      | ✅ §4                         |
+| 💎  | File objects          | ✅ FILE_OBJECT         | ✅ struct file      | ✅ §5                         |
+| 💎  | Process/thread objs   | ✅ EPROCESS/ETHREAD    | ✅ task_struct      | ✅ §5                         |
+| 💎  | Named sync objects    | ✅ Named events/mutex  | ✅ POSIX named sem  | ✅ §6                         |
+| 💎  | Section objects       | ✅ SECTION_OBJECT      | ✅ anonymous mmap   | ✅ §7                         |
+| 💎  | Security descriptors  | ✅ DACL/SACL           | ✅ inode perms/ACLs | ✅ §8                         |
+| 💎  | Duplicate/inherit     | ✅ Full semantics      | ✅ dup/O_CLOEXEC    | ✅ §9, §10                    |
+| ⭐  | Public namespace API  | ❌ Internal only       | ❌ No equivalent    | ✅ §11 -- public, documented  |
+| ⭐  | Unified type system   | ⚠️ Partial ObXxx        | ❌ Split fd/kobject | ✅ §1-§7 -- one header        |
+| 💎  | Per-type statistics   | ✅ OBJECT_TYPE_INFO    | ✅ /proc/slabinfo   | ✅ §12 -- atomic counters     |
+| 💎  | Handle op callbacks   | ✅ ObRegisterCallbacks | ⚠️ LSM hooks         | ✅ §13 -- pre/post filtering  |
+| 💎  | Handle quota          | ✅ 16M + pool quota    | ✅ RLIMIT_NOFILE    | ✅ §14 -- 16K default, 1M max |
+| ⭐  | Handle leak detection | ⚠️ ETW (complex)        | ❌ No built-in      | ✅ §15 -- klog-integrated     |
 
 > All parity items (§1-§15) complete -- Impossible OS matches Windows NT object management, including per-type statistics (§12), handle-operation callbacks (§13), and handle quota (§14) for full NT driver compatibility.
 > Three exclusive features (⭐): public namespace browser API (§11), unified single-header type system (§1-§7), and built-in klog-integrated handle leak detection (§15).

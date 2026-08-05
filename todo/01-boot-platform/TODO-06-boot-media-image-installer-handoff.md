@@ -38,22 +38,22 @@ title: "TODO-06 -- Boot Media, Image Pipeline & Installer Handoff"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                              | Depends On  | Status |
+| ⭐  | Order | Deliverable                              | Depends On  | Status |
 | --- | :---: | ---------------------------------------- | ----------- | :----: |
-| 💎   |   1   | Boot artifact matrix and manifest format | T24         |  [x]   |
-| 💎   |   2   | Reproducible raw/USB image build         | §1          |  [x]   |
-| 💎   |   3   | VHD/VHDX/VDI conversion and validation   | §1, §2      |  [x]   |
-| 💎   |   4   | Hybrid ISO / El Torito UEFI boot         | §1          |  [x]   |
-| 💎   |   5   | Installer/live/recovery media detection  | §1, T07     |  [x]   |
-| 💎   |   6   | Bootloader handoff of media role         | §5, T01 §12 |  [x]   |
-| 💎   |   7   | Artifact signing and manifest verification | §1, T02     |  [/]   |
-| ⭐   |   8   | Offline artifact inspector               | §1--§7      |  [/]   |
-| 💎   |   9   | CI boot matrix for every artifact        | §2--§7      |  [/]   |
-| 💎   |  10   | Release checklist and documentation      | §1--§9      |  [x]   |
-| ⭐   |  11   | UKI + network-boot artifact role + manifest path | §5, §6, §7  |  [/]   |
-| 💎   |  12   | Windows host parity: manifest tooling    | §1, §8      |  [x]   |
-| 💎   |  13   | Windows host parity: disk artifact converters | §3, §4      |  [x]   |
-| 💎   |  14   | Windows host parity: release test subdir + runner | §1, T08     |  [x]   |
+| 💎  |   1   | Boot artifact matrix and manifest format | T24         |  [x]   |
+| 💎  |   2   | Reproducible raw/USB image build         | §1          |  [x]   |
+| 💎  |   3   | VHD/VHDX/VDI conversion and validation   | §1, §2      |  [x]   |
+| 💎  |   4   | Hybrid ISO / El Torito UEFI boot         | §1          |  [x]   |
+| 💎  |   5   | Installer/live/recovery media detection  | §1, T07     |  [x]   |
+| 💎  |   6   | Bootloader handoff of media role         | §5, T01 §12 |  [x]   |
+| 💎  |   7   | Artifact signing and manifest verification | §1, T02     |  [/]   |
+| ⭐  |   8   | Offline artifact inspector               | §1--§7      |  [/]   |
+| 💎  |   9   | CI boot matrix for every artifact        | §2--§7      |  [/]   |
+| 💎  |  10   | Release checklist and documentation      | §1--§9      |  [x]   |
+| ⭐  |  11   | UKI + network-boot artifact role + manifest path | §5, §6, §7  |  [/]   |
+| 💎  |  12   | Windows host parity: manifest tooling    | §1, §8      |  [x]   |
+| 💎  |  13   | Windows host parity: disk artifact converters | §3, §4      |  [x]   |
+| 💎  |  14   | Windows host parity: release test subdir + runner | §1, T08     |  [x]   |
 
 > 💎 = parity -- Win11 (Media Creation Tool / Hyper-V VHDX / Windows ISO) and Linux (distro hybrid ISOs / cloud VHD-VDI) both cover items 1-6 + 9-10.
 > ⭐ = exclusive -- §7 release-key-signed artifact manifest verified at the bootloader stage; §8 single offline inspector covering raw/VHD/VHDX/VDI/ISO.
@@ -439,21 +439,21 @@ UKI (Unified Kernel Image, single signed PE containing kernel + cmdline + `.init
 
 ## OS Comparison
 
-| ⭐   | Feature                                | 🪟 Win11                                 | 🐧 Linux                       | 🚀 Impossible OS                          |
-| --- | -------------------------------------- | --------------------------------------- | ----------------------------- | ---------------------------------------- |
-| 💎   | USB / raw disk image                   | ✅ Media Creation Tool                   | ✅ distro raw images           | ✅ §2 build-image.sh + verify             |
-| 💎   | ISO UEFI boot (El Torito)              | ✅ Windows ISO                           | ✅ distro hybrid ISO           | ✅ §4 build-iso.sh + boot-test            |
-| 💎   | VHD / VHDX virtual disk artifact       | ✅ Hyper-V VHDX                          | ⚠️ cloud images per distro    | ✅ §3 to-vhdx.sh + boot-test              |
-| 💎   | VDI virtual disk artifact              | ❌ no first-class VDI                    | ⚠️ cloud images per distro    | ✅ §3 to-vdi.sh + VBox boot-test          |
-| 💎   | Installer / recovery media detection   | ✅ WinPE / Windows RE                    | ✅ live ISO + dracut rescue    | ✅ §5 role.txt marker + bootloader        |
-| 💎   | Reproducible image build               | ⚠️ partial via WIM tooling              | ⚠️ per-distro reproducibility | ✅ §2 byte-identical disk.img             |
-| ⭐   | Versioned boot artifact schema         | ❌ no unified schema                     | ❌ no unified schema           | ✅ §1 v1 schema + check tool              |
-| ⭐   | Signed artifact manifest at boot       | ❌ SBAT/dbx only (coarser)               | ❌ SBAT/dbx only (coarser)     | 🟡 §7 partial -- v18 trust surface        |
-| ⭐   | Trust-landscape exposed to attestation | ⚠️ split across MSFT_SecureBootSettings | ⚠️ scattered (mokutil, dmesg) | ✅ §7 boot_info v18 + HKLM Trust\*        |
-| ⭐   | Offline artifact inspector (1 tool)    | ❌ separate tools per format             | ❌ separate tools per format   | 🟡 §8 partial -- raw/VHD/VHDX/VDI/ISO inspect+JSON; sig blocked on §7 |
-| ⭐   | UKI as a release artifact format       | ❌ no UKI ecosystem                      | ✅ systemd-boot UKI            | ⬜ planned -- §11                         |
-| 💎   | Network-boot kernel + manifest         | ⚠️ WDS / iPXE chainload                 | ✅ PXE + HTTP boot + dracut    | ⬜ planned -- §11 + T25                   |
-| ⭐   | Native Windows + Linux build hosts     | ✅ MSBuild / WDK / ADK only              | ✅ shell tooling only          | ⬜ planned -- §12 PS1 + bat parity        |
+| ⭐  | Feature                                | 🪟 Win11                               | 🐧 Linux                     | 🚀 Impossible OS                         |
+| --- | -------------------------------------- | -------------------------------------- | ---------------------------- | ---------------------------------------- |
+| 💎  | USB / raw disk image                   | ✅ Media Creation Tool                 | ✅ distro raw images         | ✅ §2 build-image.sh + verify            |
+| 💎  | ISO UEFI boot (El Torito)              | ✅ Windows ISO                         | ✅ distro hybrid ISO         | ✅ §4 build-iso.sh + boot-test           |
+| 💎  | VHD / VHDX virtual disk artifact       | ✅ Hyper-V VHDX                        | ⚠️ cloud images per distro    | ✅ §3 to-vhdx.sh + boot-test             |
+| 💎  | VDI virtual disk artifact              | ❌ no first-class VDI                  | ⚠️ cloud images per distro    | ✅ §3 to-vdi.sh + VBox boot-test         |
+| 💎  | Installer / recovery media detection   | ✅ WinPE / Windows RE                  | ✅ live ISO + dracut rescue  | ✅ §5 role.txt marker + bootloader       |
+| 💎  | Reproducible image build               | ⚠️ partial via WIM tooling              | ⚠️ per-distro reproducibility | ✅ §2 byte-identical disk.img            |
+| ⭐  | Versioned boot artifact schema         | ❌ no unified schema                   | ❌ no unified schema         | ✅ §1 v1 schema + check tool             |
+| ⭐  | Signed artifact manifest at boot       | ❌ SBAT/dbx only (coarser)             | ❌ SBAT/dbx only (coarser)   | 🟡 §7 partial -- v18 trust surface       |
+| ⭐  | Trust-landscape exposed to attestation | ⚠️ split across MSFT_SecureBootSettings | ⚠️ scattered (mokutil, dmesg) | ✅ §7 boot_info v18 + HKLM Trust\*       |
+| ⭐  | Offline artifact inspector (1 tool)    | ❌ separate tools per format           | ❌ separate tools per format | 🟡 §8 partial -- raw/VHD/VHDX/VDI/ISO inspect+JSON; sig blocked on §7 |
+| ⭐  | UKI as a release artifact format       | ❌ no UKI ecosystem                    | ✅ systemd-boot UKI          | ⬜ planned -- §11                        |
+| 💎  | Network-boot kernel + manifest         | ⚠️ WDS / iPXE chainload                 | ✅ PXE + HTTP boot + dracut  | ⬜ planned -- §11 + T25                  |
+| ⭐  | Native Windows + Linux build hosts     | ✅ MSBuild / WDK / ADK only            | ✅ shell tooling only        | ⬜ planned -- §12 PS1 + bat parity       |
 
 > **After parity items:** Impossible OS will match Windows + Linux on USB/ISO/VHD/installer-detection fundamentals once §1-§6 ship. The exclusive items push beyond: a release-key-signed artifact manifest the bootloader verifies before loading the kernel (§7) goes further than SBAT/dbx alone, a single offline inspector covering raw + VHD + VHDX + VDI + ISO formats (§8) consolidates what both ecosystems split across `qemu-img` / `wimlib-imagex` / `xorriso` / `7z` / `VBoxManage`, and §12 dual-host build tooling means a developer can produce a release artifact on either Windows (no WSL) or Linux without losing byte-identical reproducibility.
 

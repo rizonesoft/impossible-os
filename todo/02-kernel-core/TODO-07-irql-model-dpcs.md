@@ -50,26 +50,26 @@ title: "TODO-07 -- IRQL Model & DPCs"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                              | Depends On  | Status |
+| ⭐  | Order | Deliverable                              | Depends On  | Status |
 | --- | :---: | ---------------------------------------- | ----------- | :----: |
-| 💎   |   1   | `KIRQL` type, constants, and core contract | --          |  [x]   |
-| 💎   |   2   | Per-CPU IRQL tracking and transition primitives | §1          |  [x]   |
-| 💎   |   3   | Interrupt entry/exit IRQL integration    | §2          |  [/]   |
-| 💎   |   4   | DPC object type and per-CPU queue        | §2          |  [x]   |
-| 💎   |   5   | DPC drain loop at `DISPATCH_LEVEL`       | §3, §4      |  [x]   |
-| 💎   |   6   | Timer/APIC scheduling path for DPC dispatch | §5          |  [/]   |
-| 💎   |   7   | DPC targeting, importance, and flush     | §4, §5      |  [x]   |
-| 💎   |   8   | Threaded DPCs (`PASSIVE_LEVEL` DPC variant) | §5          |  [x]   |
-| 💎   |   9   | Timer-DPC association                    | §4, §6      |  [/]   |
-| 💎   |  10   | Driver migration and workqueue contract split | §5          |  [/]   |
-| 💎   |  11   | APC object type and per-thread queues    | §1, §2      |  [/]   |
-| 💎   |  12   | APC delivery mechanism (KiDeliverApc)    | §11         |  [/]   |
-| ⭐   |  13   | IRQL violation traps and structured telemetry | §2, §3, §5  |  [/]   |
-| ⭐   |  14   | Budgeted DPC/APC fairness and starvation watchdog | §5, §6, §12 |  [/]   |
-| 💎   |  15   | Threaded DPC list synchronization        | §8          |  [/]   |
-| 💎   |  16   | KeFlushQueuedDpcs completion barrier (normal+threaded) | §7, §8, §15 |  [x]   |
-| 💎   |  17   | Per-CPU threaded DPC worker affinity     | §8, §15     |  [/]   |
-| ⭐   |  18   | System worker thread pool (long-period periodic) | §8          |  [/]   |
+| 💎  |   1   | `KIRQL` type, constants, and core contract | --          |  [x]   |
+| 💎  |   2   | Per-CPU IRQL tracking and transition primitives | §1          |  [x]   |
+| 💎  |   3   | Interrupt entry/exit IRQL integration    | §2          |  [/]   |
+| 💎  |   4   | DPC object type and per-CPU queue        | §2          |  [x]   |
+| 💎  |   5   | DPC drain loop at `DISPATCH_LEVEL`       | §3, §4      |  [x]   |
+| 💎  |   6   | Timer/APIC scheduling path for DPC dispatch | §5          |  [/]   |
+| 💎  |   7   | DPC targeting, importance, and flush     | §4, §5      |  [x]   |
+| 💎  |   8   | Threaded DPCs (`PASSIVE_LEVEL` DPC variant) | §5          |  [x]   |
+| 💎  |   9   | Timer-DPC association                    | §4, §6      |  [/]   |
+| 💎  |  10   | Driver migration and workqueue contract split | §5          |  [/]   |
+| 💎  |  11   | APC object type and per-thread queues    | §1, §2      |  [/]   |
+| 💎  |  12   | APC delivery mechanism (KiDeliverApc)    | §11         |  [/]   |
+| ⭐  |  13   | IRQL violation traps and structured telemetry | §2, §3, §5  |  [/]   |
+| ⭐  |  14   | Budgeted DPC/APC fairness and starvation watchdog | §5, §6, §12 |  [/]   |
+| 💎  |  15   | Threaded DPC list synchronization        | §8          |  [/]   |
+| 💎  |  16   | KeFlushQueuedDpcs completion barrier (normal+threaded) | §7, §8, §15 |  [x]   |
+| 💎  |  17   | Per-CPU threaded DPC worker affinity     | §8, §15     |  [/]   |
+| ⭐  |  18   | System worker thread pool (long-period periodic) | §8          |  [/]   |
 
 > 💎 = parity -- core IRQL, DPC, and APC behavior expected from Windows NT and mirrored by Linux's hardirq/softirq/signal split.
 > ⭐ = exclusive -- Impossible OS adds explicit diagnostics and fairness controls as first-class kernel guarantees.
@@ -615,29 +615,29 @@ The kernel needs a generic "background monitor" primitive: register a callback w
 
 ## OS Comparison
 
-| ⭐   | Feature                        | 🪟 Win11                     | 🐧 Linux                      | 🚀 Impossible OS               |
-| --- | ------------------------------ | --------------------------- | ---------------------------- | ----------------------------- |
-| 💎   | IRQL / preemption levels       | ✅ KIRQL (PASSIVE→HIGH)      | ✅ preempt/softirq/hardirq    | ✅ §1-§3 done                  |
-| 💎   | DPC bottom-half queue          | ✅ KDPC at DISPATCH_LEVEL    | ✅ softirq/tasklet/NAPI       | ✅ §4-§6                       |
-| 💎   | DPC drain on IRQL lower        | ✅ at DISPATCH→below         | ✅ softirq on local_bh_enable | ✅ §12 KeLowerIrql drain       |
-| 💎   | ISR-safe deferred enqueue      | ✅ KeInsertQueueDpc          | ✅ IRQ-safe enqueue           | ✅ §4                          |
-| 💎   | Per-CPU deferred queues        | ✅ Per-CPU DPC state         | ✅ Per-CPU softirq            | ✅ §4-§6                       |
-| 💎   | DPC targeting (CPU affinity)   | ✅ KeSetTargetProcessorDpc   | ✅ Per-CPU workqueues         | ⚠️ §7 DPC; §17 threaded       |
-| 💎   | DPC importance / priority      | ✅ 4 levels (Low→High)       | ⚠️ Priority workqueues       | ✅ §7                          |
-| 💎   | DPC flush barrier              | ✅ KeFlushQueuedDpcs         | ✅ flush_workqueue            | ⚠️ §7 normal; §16 threaded    |
-| 💎   | Threaded DPCs (PASSIVE)        | ✅ KeInitializeThreadedDpc   | ✅ request_threaded_irq       | ⚠️ §8 + §15 sync; §16-§17     |
-| 💎   | Timer-DPC auto-queue           | ✅ KeSetTimerEx + KDPC       | ✅ timer_setup + callback     | ✅ §9 ktimer (tick-based)      |
-| 💎   | Context legality contract      | ✅ API rules by IRQL         | ✅ might_sleep() + atomic     | ✅ §1 in irql.h                |
-| 💎   | Workqueue (thread deferred)    | ✅ Work items at PASSIVE     | ✅ alloc_workqueue            | ⚠️ §10 -- exists, needs split |
-| 💎   | APC objects (KAPC)             | ✅ KeInitialize/InsertApc    | ⚠️ Signals only              | ✅ §11 KAPC + per-thread queue |
-| 💎   | APC delivery engine            | ✅ KiDeliverApc at APC_LEVEL | ⚠️ do_signal on return       | ✅ §12 kernel-mode             |
-| 💎   | Critical/guarded regions       | ✅ KeEnterCriticalRegion     | ⚠️ preempt_disable           | ✅ §11 critical + guarded      |
-| 💎   | Alertable wait + user APC      | ✅ WaitForSingleObjectEx     | ❌ No equivalent              | ⬜ §12                         |
-| 💎   | Special user-mode APCs         | ✅ NtQueueApcThreadEx (RS5+) | ❌ No equivalent              | ⬜ §12 SpecialUserApc          |
-| 💎   | ISR sync object                | ✅ KeSynchronizeExecution    | ✅ spin_lock_irqsave          | ✅ §10 KeSynchronizeExecution  |
-| ⭐   | IRQL nesting validation (LIFO) | ❌ No runtime check          | ✅ lockdep IRQ-state          | ⬜ §13 transition stack        |
-| ⭐   | IRQL violation telemetry       | ⚠️ Checked builds only      | ⚠️ Fragmented debug warnings | ✅ §13 counters + strict trap  |
-| ⭐   | DPC/APC fairness watchdog      | ⚠️ Internal heuristics      | ⚠️ Subsystem-specific        | ✅ §14 budget + 0x133 + APC    |
+| ⭐  | Feature                        | 🪟 Win11                     | 🐧 Linux                      | 🚀 Impossible OS               |
+| --- | ------------------------------ | ---------------------------- | ----------------------------- | ------------------------------ |
+| 💎  | IRQL / preemption levels       | ✅ KIRQL (PASSIVE→HIGH)      | ✅ preempt/softirq/hardirq    | ✅ §1-§3 done                  |
+| 💎  | DPC bottom-half queue          | ✅ KDPC at DISPATCH_LEVEL    | ✅ softirq/tasklet/NAPI       | ✅ §4-§6                       |
+| 💎  | DPC drain on IRQL lower        | ✅ at DISPATCH→below         | ✅ softirq on local_bh_enable | ✅ §12 KeLowerIrql drain       |
+| 💎  | ISR-safe deferred enqueue      | ✅ KeInsertQueueDpc          | ✅ IRQ-safe enqueue           | ✅ §4                          |
+| 💎  | Per-CPU deferred queues        | ✅ Per-CPU DPC state         | ✅ Per-CPU softirq            | ✅ §4-§6                       |
+| 💎  | DPC targeting (CPU affinity)   | ✅ KeSetTargetProcessorDpc   | ✅ Per-CPU workqueues         | ⚠️ §7 DPC; §17 threaded         |
+| 💎  | DPC importance / priority      | ✅ 4 levels (Low→High)       | ⚠️ Priority workqueues         | ✅ §7                          |
+| 💎  | DPC flush barrier              | ✅ KeFlushQueuedDpcs         | ✅ flush_workqueue            | ⚠️ §7 normal; §16 threaded      |
+| 💎  | Threaded DPCs (PASSIVE)        | ✅ KeInitializeThreadedDpc   | ✅ request_threaded_irq       | ⚠️ §8 + §15 sync; §16-§17       |
+| 💎  | Timer-DPC auto-queue           | ✅ KeSetTimerEx + KDPC       | ✅ timer_setup + callback     | ✅ §9 ktimer (tick-based)      |
+| 💎  | Context legality contract      | ✅ API rules by IRQL         | ✅ might_sleep() + atomic     | ✅ §1 in irql.h                |
+| 💎  | Workqueue (thread deferred)    | ✅ Work items at PASSIVE     | ✅ alloc_workqueue            | ⚠️ §10 -- exists, needs split   |
+| 💎  | APC objects (KAPC)             | ✅ KeInitialize/InsertApc    | ⚠️ Signals only                | ✅ §11 KAPC + per-thread queue |
+| 💎  | APC delivery engine            | ✅ KiDeliverApc at APC_LEVEL | ⚠️ do_signal on return         | ✅ §12 kernel-mode             |
+| 💎  | Critical/guarded regions       | ✅ KeEnterCriticalRegion     | ⚠️ preempt_disable             | ✅ §11 critical + guarded      |
+| 💎  | Alertable wait + user APC      | ✅ WaitForSingleObjectEx     | ❌ No equivalent              | ⬜ §12                         |
+| 💎  | Special user-mode APCs         | ✅ NtQueueApcThreadEx (RS5+) | ❌ No equivalent              | ⬜ §12 SpecialUserApc          |
+| 💎  | ISR sync object                | ✅ KeSynchronizeExecution    | ✅ spin_lock_irqsave          | ✅ §10 KeSynchronizeExecution  |
+| ⭐  | IRQL nesting validation (LIFO) | ❌ No runtime check          | ✅ lockdep IRQ-state          | ⬜ §13 transition stack        |
+| ⭐  | IRQL violation telemetry       | ⚠️ Checked builds only        | ⚠️ Fragmented debug warnings   | ✅ §13 counters + strict trap  |
+| ⭐  | DPC/APC fairness watchdog      | ⚠️ Internal heuristics        | ⚠️ Subsystem-specific          | ✅ §14 budget + 0x133 + APC    |
 
 > **After §1-§8:** Impossible OS reaches parity on the core IRQL contract and DPC architecture: IRQL transitions, per-CPU DPC queues, auto-drain, targeting, importance, and baseline threaded DPC support all exist.
 > **§9-§10** close the remaining timer-DPC and driver-migration gaps so drivers stop treating workqueue as a DPC substitute.

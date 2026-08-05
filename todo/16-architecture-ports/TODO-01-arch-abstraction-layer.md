@@ -40,11 +40,11 @@ title: "TODO-01 -- Architecture Abstraction Layer"
 
 | Star | Order | Deliverable                              | Depends On | Status |
 | ---- | :---: | ---------------------------------------- | ---------- | :----: |
-| 💎    |   1   | Define HAL interface (hal.h)             | --         |  [ ]   |
-| 💎    |   2   | Create arch/x86_64/ directory, move files | §1         |  [ ]   |
-| 💎    |   3   | Update Makefile for ARCH= variable       | §2         |  [ ]   |
-| 💎    |   4   | Update all #include paths                | §2         |  [ ]   |
-| 💎    |   5   | Verify 4-platform boot + all tests pass  | §3, §4     |  [ ]   |
+| 💎   |   1   | Define HAL interface (hal.h)             | --         |  [ ]   |
+| 💎   |   2   | Create arch/x86_64/ directory, move files | §1         |  [ ]   |
+| 💎   |   3   | Update Makefile for ARCH= variable       | §2         |  [ ]   |
+| 💎   |   4   | Update all #include paths                | §2         |  [ ]   |
+| 💎   |   5   | Verify 4-platform boot + all tests pass  | §3, §4     |  [ ]   |
 
 ---
 
@@ -136,11 +136,11 @@ Full regression test across all platforms.
 
 ## OS Comparison
 
-| ⭐   | Feature                             | 🪟 Win11            | 🐧 Linux                  | 🚀 Impossible OS                     |
-| --- | ----------------------------------- | ------------------ | ------------------------ | ----------------------------------- |
-| 💎   | Multi-arch source tree              | ✅ HAL + arch/ dirs | ✅ arch/ per architecture | ⬜ §1-§2 -- hal.h + arch/            |
-| 💎   | Build-time arch select              | ✅ Build config     | ✅ `ARCH=` make variable  | ⬜ §3 -- `ARCH=` in Makefile         |
-| ⭐   | Arch split preserves bulletproofing | ❌ No equivalent    | ❌ No equivalent          | ⬜ §5 -- static asserts survive move |
+| ⭐  | Feature                             | 🪟 Win11            | 🐧 Linux                  | 🚀 Impossible OS                     |
+| --- | ----------------------------------- | ------------------- | ------------------------- | ------------------------------------ |
+| 💎  | Multi-arch source tree              | ✅ HAL + arch/ dirs | ✅ arch/ per architecture | ⬜ §1-§2 -- hal.h + arch/            |
+| 💎  | Build-time arch select              | ✅ Build config     | ✅ `ARCH=` make variable  | ⬜ §3 -- `ARCH=` in Makefile         |
+| ⭐  | Arch split preserves bulletproofing | ❌ No equivalent    | ❌ No equivalent          | ⬜ §5 -- static asserts survive move |
 
 ---
 

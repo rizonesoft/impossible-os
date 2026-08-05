@@ -172,14 +172,14 @@ Five widgets: **Analog Clock** (150×150, `gfx_draw_line` hands), **CPU Meter** 
 ## OS Comparison
 
 
-| ⭐   | Feature                   | 🪟 Win11                                  | 🐧 Linux                                  | 🚀 Impossible OS                          |
+| ⭐  | Feature                   | 🪟 Win11                                 | 🐧 Linux                                 | 🚀 Impossible OS                         |
 | --- | ------------------------- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
-| 💎   | Screensaver               | ✅ Built-in screensavers; idle timeout; lock | ✅ GNOME/KDE screensavers; `xscreensaver`; idle timeout | ⬜ §1 -- `⭐` `scr_entry_fn` pluggable API; 5 |
-| 💎   | Screensaver → lock bridge | ✅ Windows lock screen shown on           | ✅ `gnome-screensaver` + PAM; `xscreensaver-auth`; `slock` | ⬜ §2 -- direct `lock_screen_show()` callback from `scr_dismiss()` |
-| ⭐   | Desktop widget framework  | ✅ Win11 Widgets panel (web-based); legacy | ✅ KDE Plasma: QML plasmoids (separate    | ⬜ §3 -- `⭐` in-kernel widget layer (above |
-| ⭐   | Built-in widgets          | ✅ Win11 Widgets: news/weather/stocks (web); no | ✅ KDE Plasma: analog clock widget,       | ⬜ §4 -- `⭐` precomputed trig table in    |
-| 💎   | Display management        | ✅ Display Settings: all resolutions; refresh | ✅ `xrandr`; `arandr`; GNOME/KDE display settings; | ⬜ §5 -- `display_enum_modes()` from `boot_info->gop_modes[]`; DPI Registry |
-| 💎   | Multi-monitor stubs       | ✅ Full multi-monitor: per-monitor taskbar; DPI | ✅ `xrandr --output`; wayland `wl_output`; virtual | ⬜ §6 -- (stubs) -- ; `monitor_enum()`; `wm_to_monitor()` |
+| 💎  | Screensaver               | ✅ Built-in screensavers; idle timeout; lock | ✅ GNOME/KDE screensavers; `xscreensaver`; idle timeout | ⬜ §1 -- `⭐` `scr_entry_fn` pluggable API; 5 |
+| 💎  | Screensaver → lock bridge | ✅ Windows lock screen shown on          | ✅ `gnome-screensaver` + PAM; `xscreensaver-auth`; `slock` | ⬜ §2 -- direct `lock_screen_show()` callback from `scr_dismiss()` |
+| ⭐  | Desktop widget framework  | ✅ Win11 Widgets panel (web-based); legacy | ✅ KDE Plasma: QML plasmoids (separate   | ⬜ §3 -- `⭐` in-kernel widget layer (above |
+| ⭐  | Built-in widgets          | ✅ Win11 Widgets: news/weather/stocks (web); no | ✅ KDE Plasma: analog clock widget,      | ⬜ §4 -- `⭐` precomputed trig table in  |
+| 💎  | Display management        | ✅ Display Settings: all resolutions; refresh | ✅ `xrandr`; `arandr`; GNOME/KDE display settings; | ⬜ §5 -- `display_enum_modes()` from `boot_info->gop_modes[]`; DPI Registry |
+| 💎  | Multi-monitor stubs       | ✅ Full multi-monitor: per-monitor taskbar; DPI | ✅ `xrandr --output`; wayland `wl_output`; virtual | ⬜ §6 -- (stubs) -- ; `monitor_enum()`; `wm_to_monitor()` |
 
 > **After §1–§6:** The Impossible OS desktop shell is feature-complete for single-monitor use. The `⭐` differentiators: the widget framework runs as a compositor layer with zero separate processes (unlike KDE's QML plasmoids or Windows' Electron-based widgets panel); the screensaver uses a pluggable `scr_entry_fn` callback that runs in the compositor context with no process spawn overhead; and the CPU meter widget uses a precomputed sin/cos table (16 bytes) to avoid any floating-point dependency in the compositor rendering path.
 

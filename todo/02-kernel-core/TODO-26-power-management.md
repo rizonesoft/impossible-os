@@ -76,29 +76,29 @@ title: "TODO-26 -- Power Management (S-States, D-States, Thermal & Idle)"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                              | Depends On                 | Status |
+| ⭐  | Order | Deliverable                              | Depends On                 | Status |
 | --- | :---: | ---------------------------------------- | -------------------------- | :----: |
-| 💎   |   1   | §1 ACPI sleep object parsing & PM1 state machine | (none)                     |  [x]   |
-| 💎   |   2   | §2 S1: CPU halt / idle thread integration | §1                         |  [ ]   |
-| 💎   |   3   | §3 S3: suspend to RAM (CPU state + driver freeze) | §1, §2, D02T06§3           |  [ ]   |
-| 💎   |   4   | §4 S4: hibernate to disk (image write + resume) | §3                         |  [ ]   |
-| 💎   |   5   | §5 ACPI Embedded Controller (EC) driver  | §1                         |  [ ]   |
-| 💎   |   6   | §6 Battery & AC adapter (`_BIF`/`_BIX`/`_BST`) | §5                         |  [ ]   |
-| 💎   |   7   | §7 Power button & lid-close events       | §5                         |  [ ]   |
-| 💎   |   8   | §8 PCI device D-states (D0--D3cold)      | §1                         |  [ ]   |
-| 💎   |   9   | §9 Driver power callbacks & resume ordering | §3, §8                     |  [ ]   |
-| ⭐   |  10   | §10 Connected Standby (S0ix / Modern Standby) | §2, §9, D02T06§3           |  [ ]   |
-| 💎   |  11   | §11 Fast Startup (hybrid shutdown / hiberboot) | §4, §9                     |  [ ]   |
-| 💎   |  12   | §12 Runtime device idle management       | §8, §9                     |  [ ]   |
-| 💎   |  13   | §13 Power request tracking & wake source management | §9, §12                    |  [ ]   |
-| 💎   |  14   | §14 ACPI thermal zone management         | §5, D04T04§1               |  [ ]   |
-| 💎   |  15   | §15 CPU frequency scaling governor framework | §2, D04T04§4, D03T05§9     |  [ ]   |
-| 💎   |  16   | §16 CPU idle governor framework          | §2, D04T04§7               |  [ ]   |
-| 💎   |  17   | §17 Driver power query & veto (IRP_MN_QUERY_POWER) | §9                         |  [ ]   |
-| 💎   |  18   | §18 Power plan UI & `powercfg`           | §6, §7, §13, §14, §15, §16 |  [ ]   |
-| ⭐   |  19   | §19 Energy-aware scheduling integration  | §15, §16, D02T19§9         |  [ ]   |
-| 💎   |  20   | §20 Power syscalls wired to SSDT         | §2, §6, D02T05§4           |  [ ]   |
-| 💎   |  21   | §21 Linux `/sys/power` suspend variant parity | §1, §10                    |  [ ]   |
+| 💎  |   1   | §1 ACPI sleep object parsing & PM1 state machine | (none)                     |  [x]   |
+| 💎  |   2   | §2 S1: CPU halt / idle thread integration | §1                         |  [ ]   |
+| 💎  |   3   | §3 S3: suspend to RAM (CPU state + driver freeze) | §1, §2, D02T06§3           |  [ ]   |
+| 💎  |   4   | §4 S4: hibernate to disk (image write + resume) | §3                         |  [ ]   |
+| 💎  |   5   | §5 ACPI Embedded Controller (EC) driver  | §1                         |  [ ]   |
+| 💎  |   6   | §6 Battery & AC adapter (`_BIF`/`_BIX`/`_BST`) | §5                         |  [ ]   |
+| 💎  |   7   | §7 Power button & lid-close events       | §5                         |  [ ]   |
+| 💎  |   8   | §8 PCI device D-states (D0--D3cold)      | §1                         |  [ ]   |
+| 💎  |   9   | §9 Driver power callbacks & resume ordering | §3, §8                     |  [ ]   |
+| ⭐  |  10   | §10 Connected Standby (S0ix / Modern Standby) | §2, §9, D02T06§3           |  [ ]   |
+| 💎  |  11   | §11 Fast Startup (hybrid shutdown / hiberboot) | §4, §9                     |  [ ]   |
+| 💎  |  12   | §12 Runtime device idle management       | §8, §9                     |  [ ]   |
+| 💎  |  13   | §13 Power request tracking & wake source management | §9, §12                    |  [ ]   |
+| 💎  |  14   | §14 ACPI thermal zone management         | §5, D04T04§1               |  [ ]   |
+| 💎  |  15   | §15 CPU frequency scaling governor framework | §2, D04T04§4, D03T05§9     |  [ ]   |
+| 💎  |  16   | §16 CPU idle governor framework          | §2, D04T04§7               |  [ ]   |
+| 💎  |  17   | §17 Driver power query & veto (IRP_MN_QUERY_POWER) | §9                         |  [ ]   |
+| 💎  |  18   | §18 Power plan UI & `powercfg`           | §6, §7, §13, §14, §15, §16 |  [ ]   |
+| ⭐  |  19   | §19 Energy-aware scheduling integration  | §15, §16, D02T19§9         |  [ ]   |
+| 💎  |  20   | §20 Power syscalls wired to SSDT         | §2, §6, D02T05§4           |  [ ]   |
+| 💎  |  21   | §21 Linux `/sys/power` suspend variant parity | §1, §10                    |  [ ]   |
 
 > 💎 = parity work: matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work: Impossible OS is superior or first.
@@ -802,46 +802,46 @@ Linux exposes system suspend through `/sys/power/state` plus `/sys/power/mem_sle
 
 ## OS Comparison
 
-| ⭐   | Feature                     | 🪟 Win11       | 🐧 Linux        | 🚀 Impossible OS |
-| --- | --------------------------- | ------------- | -------------- | --------------- |
-| 💎   | S5 ACPI shutdown            | ✅ Full        | ✅ Full         | ✅ Done §1       |
-| 💎   | S1 idle / HLT               | ✅ Full        | ✅ cpuidle      | ⬜ §2            |
-| 💎   | S3 suspend RAM              | ✅ Full        | ✅ sleep        | ⬜ §3            |
-| 💎   | S4 hibernate disk           | ✅ Full        | ✅ swsusp       | ⬜ §4            |
-| 💎   | Fast startup hiberboot      | ✅ Default     | ❌ None         | ⬜ §11           |
-| 💎   | ACPI EC driver              | ✅ Full        | ✅ acpi_ec      | ⬜ §5            |
-| 💎   | Battery `_BIX` / `_BST`     | ✅ Full        | ✅ upower       | ⬜ §6            |
-| 💎   | Power lid button events     | ✅ Full        | ✅ logind       | ⬜ §7            |
-| 💎   | PCI D-states D0--D3cold     | ✅ Full        | ✅ PCI PM       | ⬜ §8            |
-| 💎   | Driver sleep wake callbacks | ✅ WDM         | ✅ pm_ops       | ⬜ §9            |
-| 💎   | Driver query veto power     | ✅ QUERY_POWER | ✅ prepare      | ⬜ §17           |
-| 💎   | Runtime idle PoFx RPM       | ✅ PoFx        | ✅ runtime_pm   | ⬜ §12           |
-| 💎   | Power requests tracking     | ✅ powercfg    | ⚠️ wake_lock   | ⬜ §13           |
-| 💎   | Wake source lastwake        | ✅ powercfg    | ⚠️ dmesg       | ⬜ §13           |
-| 💎   | ACPI thermal zones          | ✅ ACPI.sys    | ✅ thermal      | ⬜ §14           |
-| 💎   | Passive active cooling      | ✅ Full        | ✅ step_wise    | ⬜ §14           |
-| 💎   | CPU DVFS cpufreq            | ✅ PPM HWP     | ✅ cpufreq      | ⬜ §15           |
-| 💎   | CPU idle C-states           | ✅ PPM         | ✅ menu teo     | ⬜ §16           |
-| 💎   | Connected standby S0ix      | ✅ Modern      | ⚠️ Partial     | ⬜ §10           |
-| 💎   | mem_sleep s2idle deep       | ✅ S0 idle     | ✅ sysfs        | ⬜ §21           |
-| 💎   | powercfg CLI surface        | ✅ 50 cmds     | ⚠️ systemctl   | ⬜ §18           |
-| 💎   | Power Options GUI           | ✅ powercpl    | ⚠️ GNOME basic | ⬜ §18           |
-| ⭐   | Energy aware scheduling     | ⚠️ HW ITD     | ✅ EAS ARM      | ⬜ §19           |
-| ⭐   | Battery wear tray hint      | ❌ Settings    | ❌ CLI only     | ⬜ §6            |
-| ⭐   | batteryreport plain text    | ✅ HTML        | ❌ None         | ⬜ §18           |
-| ⭐   | energy audit trace          | ✅ Full        | ❌ None         | ⬜ §13           |
-| ⭐   | sleepstudy DRIPS report     | ✅ Full        | ❌ None         | ⬜ §18           |
-| 💎   | PoFx F-states components    | ✅ Per Fx      | ❌ Device only  | ⬜ §12           |
-| 💎   | Directed PoFx DRIPS         | ✅ PoFx v3     | ❌ None         | ⬜ §10           |
-| 💎   | USB suspend U1 U2 LPM       | ✅ Full        | ✅ autosuspend  | ⬜ §12           |
-| 💎   | NVMe APST idle states       | ✅ On          | ✅ sysfs        | ⬜ §12           |
-| 💎   | SATA ALPM link power        | ✅ HIPM        | ✅ sysfs        | ⬜ §12           |
-| 💎   | NIC ARP NS offload S0ix     | ✅ NDIS        | ⚠️ Firmware    | ⬜ §10           |
-| 💎   | Smart charge 80 percent     | ✅ OEM         | ⚠️ TLP         | ⬜ §6            |
-| 💎   | RAPL power cap sysfs        | ✅ Internal    | ✅ powercap     | ⬜ §15           |
-| 💎   | AMD P-State EPP             | ✅ Driver      | ✅ amd_pstate   | ⬜ §15           |
-| 💎   | Energy Saver adaptive       | ✅ Win11       | ⚠️ profiles    | ⬜ §18           |
-| ⭐   | Human presence HPD wake     | ✅ Platform    | ❌ None         | ⬜ §7            |
+| ⭐  | Feature                     | 🪟 Win11       | 🐧 Linux       | 🚀 Impossible OS |
+| --- | --------------------------- | -------------- | -------------- | ---------------- |
+| 💎  | S5 ACPI shutdown            | ✅ Full        | ✅ Full        | ✅ Done §1       |
+| 💎  | S1 idle / HLT               | ✅ Full        | ✅ cpuidle     | ⬜ §2            |
+| 💎  | S3 suspend RAM              | ✅ Full        | ✅ sleep       | ⬜ §3            |
+| 💎  | S4 hibernate disk           | ✅ Full        | ✅ swsusp      | ⬜ §4            |
+| 💎  | Fast startup hiberboot      | ✅ Default     | ❌ None        | ⬜ §11           |
+| 💎  | ACPI EC driver              | ✅ Full        | ✅ acpi_ec     | ⬜ §5            |
+| 💎  | Battery `_BIX` / `_BST`     | ✅ Full        | ✅ upower      | ⬜ §6            |
+| 💎  | Power lid button events     | ✅ Full        | ✅ logind      | ⬜ §7            |
+| 💎  | PCI D-states D0--D3cold     | ✅ Full        | ✅ PCI PM      | ⬜ §8            |
+| 💎  | Driver sleep wake callbacks | ✅ WDM         | ✅ pm_ops      | ⬜ §9            |
+| 💎  | Driver query veto power     | ✅ QUERY_POWER | ✅ prepare     | ⬜ §17           |
+| 💎  | Runtime idle PoFx RPM       | ✅ PoFx        | ✅ runtime_pm  | ⬜ §12           |
+| 💎  | Power requests tracking     | ✅ powercfg    | ⚠️ wake_lock    | ⬜ §13           |
+| 💎  | Wake source lastwake        | ✅ powercfg    | ⚠️ dmesg        | ⬜ §13           |
+| 💎  | ACPI thermal zones          | ✅ ACPI.sys    | ✅ thermal     | ⬜ §14           |
+| 💎  | Passive active cooling      | ✅ Full        | ✅ step_wise   | ⬜ §14           |
+| 💎  | CPU DVFS cpufreq            | ✅ PPM HWP     | ✅ cpufreq     | ⬜ §15           |
+| 💎  | CPU idle C-states           | ✅ PPM         | ✅ menu teo    | ⬜ §16           |
+| 💎  | Connected standby S0ix      | ✅ Modern      | ⚠️ Partial      | ⬜ §10           |
+| 💎  | mem_sleep s2idle deep       | ✅ S0 idle     | ✅ sysfs       | ⬜ §21           |
+| 💎  | powercfg CLI surface        | ✅ 50 cmds     | ⚠️ systemctl    | ⬜ §18           |
+| 💎  | Power Options GUI           | ✅ powercpl    | ⚠️ GNOME basic  | ⬜ §18           |
+| ⭐  | Energy aware scheduling     | ⚠️ HW ITD       | ✅ EAS ARM     | ⬜ §19           |
+| ⭐  | Battery wear tray hint      | ❌ Settings    | ❌ CLI only    | ⬜ §6            |
+| ⭐  | batteryreport plain text    | ✅ HTML        | ❌ None        | ⬜ §18           |
+| ⭐  | energy audit trace          | ✅ Full        | ❌ None        | ⬜ §13           |
+| ⭐  | sleepstudy DRIPS report     | ✅ Full        | ❌ None        | ⬜ §18           |
+| 💎  | PoFx F-states components    | ✅ Per Fx      | ❌ Device only | ⬜ §12           |
+| 💎  | Directed PoFx DRIPS         | ✅ PoFx v3     | ❌ None        | ⬜ §10           |
+| 💎  | USB suspend U1 U2 LPM       | ✅ Full        | ✅ autosuspend | ⬜ §12           |
+| 💎  | NVMe APST idle states       | ✅ On          | ✅ sysfs       | ⬜ §12           |
+| 💎  | SATA ALPM link power        | ✅ HIPM        | ✅ sysfs       | ⬜ §12           |
+| 💎  | NIC ARP NS offload S0ix     | ✅ NDIS        | ⚠️ Firmware     | ⬜ §10           |
+| 💎  | Smart charge 80 percent     | ✅ OEM         | ⚠️ TLP          | ⬜ §6            |
+| 💎  | RAPL power cap sysfs        | ✅ Internal    | ✅ powercap    | ⬜ §15           |
+| 💎  | AMD P-State EPP             | ✅ Driver      | ✅ amd_pstate  | ⬜ §15           |
+| 💎  | Energy Saver adaptive       | ✅ Win11       | ⚠️ profiles     | ⬜ §18           |
+| ⭐  | Human presence HPD wake     | ✅ Platform    | ❌ None        | ⬜ §7            |
 
 After §1 through §21, Impossible OS reaches parity for laptop-grade power on real hardware: S-states, D-states, runtime idle including component F-states, USB LPM, NVMe APST, SATA ALPM, thermal, DVFS with HWP CPPC EPP RAPL, C-states, EC, battery with smart charging, power lid HPD events, driver callbacks with query veto, DFx for Modern Standby DRIPS, fast startup, Energy Saver, NIC offloads, power request tracking, and an explicit Linux `mem_sleep` vocabulary map for suspend diagnostics. Linux splits this across drivers, logind, upower, cpufreq, and cpufreq sysfs; Windows is the most integrated reference. Impossible OS adds a software energy model on hybrid CPUs, HPD wake and lock policies Linux lacks, adaptive Energy Saver, and convenient battery wear plus plain-text `powercfg /batteryreport`.
 

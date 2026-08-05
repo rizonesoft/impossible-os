@@ -166,14 +166,14 @@ Embedded minimal timezone table: UTC, UTC±1 through ±14, plus named entries (U
 ## OS Comparison
 
 
-| ⭐   | Feature                 | 🪟 Win11                                  | 🐧 Linux                                  | 🚀 Impossible OS                          |
+| ⭐  | Feature                 | 🪟 Win11                                 | 🐧 Linux                                 | 🚀 Impossible OS                         |
 | --- | ----------------------- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
-| 💎   | Kernel time API         | ✅ `GetSystemTime`, `SystemTimeToTzSpecificLocalTime`, `SetSystemTime` | ✅ `clock_gettime(CLOCK_REALTIME)`, `mktime`, `localtime_r`, `settimeofday` | ⬜ §1 -- `time_now()` = boot CMOS +       |
-| 💎   | Time formatting         | ✅ `strftime`, `GetTimeFormat`, locale-aware | ✅ `strftime()` + locale; `date` utility  | ⬜ §2 -- 13 specifiers; hand-coded (no `-nostdinc` |
-| 💎   | Taskbar clock           | ✅ System tray clock; click →             | ✅ GNOME clock indicator; KDE clock       | ⬜ §3 -- Acrylic flyout; 6×7 calendar grid |
-| 💎   | Date/Time Control Panel | ✅ Settings → Time & Language             | ✅ GNOME Settings date-time; `timedatectl`; KDE | ⬜ §4 -- analog clock face with integer   |
-| 💎   | Timezone database       | ✅ Bundled `tzdata` in Windows; DST       | ✅ IANA `tzdata` package; `zoneinfo` files; | ⬜ §5 -- 30-entry embedded table; `tz_is_dst()` Nth-weekday-of-month |
-| 💎   | Monotonic uptime        | ✅ `GetTickCount64()` (ms); `QueryPerformanceCounter()` (ns) | ✅ `clock_gettime(CLOCK_MONOTONIC)`; `uptime` command; `/proc/uptime` | ⬜ §6 -- `uptime_ms()` uint64; `uptime` shell cmd |
+| 💎  | Kernel time API         | ✅ `GetSystemTime`, `SystemTimeToTzSpecificLocalTime`, `SetSystemTime` | ✅ `clock_gettime(CLOCK_REALTIME)`, `mktime`, `localtime_r`, `settimeofday` | ⬜ §1 -- `time_now()` = boot CMOS +      |
+| 💎  | Time formatting         | ✅ `strftime`, `GetTimeFormat`, locale-aware | ✅ `strftime()` + locale; `date` utility | ⬜ §2 -- 13 specifiers; hand-coded (no `-nostdinc` |
+| 💎  | Taskbar clock           | ✅ System tray clock; click →            | ✅ GNOME clock indicator; KDE clock      | ⬜ §3 -- Acrylic flyout; 6×7 calendar grid |
+| 💎  | Date/Time Control Panel | ✅ Settings → Time & Language            | ✅ GNOME Settings date-time; `timedatectl`; KDE | ⬜ §4 -- analog clock face with integer  |
+| 💎  | Timezone database       | ✅ Bundled `tzdata` in Windows; DST      | ✅ IANA `tzdata` package; `zoneinfo` files; | ⬜ §5 -- 30-entry embedded table; `tz_is_dst()` Nth-weekday-of-month |
+| 💎  | Monotonic uptime        | ✅ `GetTickCount64()` (ms); `QueryPerformanceCounter()` (ns) | ✅ `clock_gettime(CLOCK_MONOTONIC)`; `uptime` command; `/proc/uptime` | ⬜ §6 -- `uptime_ms()` uint64; `uptime` shell cmd |
 
 > **After §1–§6:** Impossible OS has a complete civil-time stack. No libc, no `tzdata` package -- the timezone table and `time_format()` are hand-coded directly in the kernel, making the total footprint under 2 KB of static data. The 30-entry timezone table covers all major world regions with proper DST rules.
 

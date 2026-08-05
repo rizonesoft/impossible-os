@@ -37,18 +37,18 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                        | Depends On    | Status |
+| ⭐  | Order | Deliverable                        | Depends On    | Status |
 | --- | :---: | ---------------------------------- | ------------- | :----: |
-| 💎   |   1   | Unicode string primitive layer     | --            |  [x]   |
-| 💎   |   2   | Case folding and invariant compare | §1            |  [x]   |
-| 💎   |   3   | Global and local atom tables       | T12           |  [x]   |
-| 💎   |   4   | NLS table file format and loader   | VFS, T03      |  [x]   |
-| 💎   |   5   | Code page conversion providers     | §4            |  [x]   |
-| 💎   |   6   | Locale and LCID metadata           | §4            |  [/]   |
-| 💎   |   7   | Sort keys and normalization policy | §2, §6        |  [x]   |
-| 💎   |   8   | Native atom/NLS/locale syscalls    | T12           |  [/]   |
-| ⭐   |   9   | Retrofit kernel consumers          | T05, T14, T22 |  [/]   |
-| 💎   |  10   | Tests and compatibility corpus     | §1..§9        |  [/]   |
+| 💎  |   1   | Unicode string primitive layer     | --            |  [x]   |
+| 💎  |   2   | Case folding and invariant compare | §1            |  [x]   |
+| 💎  |   3   | Global and local atom tables       | T12           |  [x]   |
+| 💎  |   4   | NLS table file format and loader   | VFS, T03      |  [x]   |
+| 💎  |   5   | Code page conversion providers     | §4            |  [x]   |
+| 💎  |   6   | Locale and LCID metadata           | §4            |  [/]   |
+| 💎  |   7   | Sort keys and normalization policy | §2, §6        |  [x]   |
+| 💎  |   8   | Native atom/NLS/locale syscalls    | T12           |  [/]   |
+| ⭐  |   9   | Retrofit kernel consumers          | T05, T14, T22 |  [/]   |
+| 💎  |  10   | Tests and compatibility corpus     | §1..§9        |  [/]   |
 
 ---
 

@@ -30,13 +30,13 @@ title: "TODO-03 -- SMP Scaling & Processor Groups"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                              | Depends On | Status |
+| ⭐  | Order | Deliverable                              | Depends On | Status |
 | --- | :---: | ---------------------------------------- | ---------- | :----: |
-| 💎   |   1   | Raise MAX_CPUS and dynamic per-CPU allocation | --         |  [ ]   |
-| 💎   |   2   | PROCESSOR_NUMBER type and group definitions | §1         |  [ ]   |
-| 💎   |   3   | KeSetTargetProcessorDpcEx -- group-aware DPC targeting | §2         |  [ ]   |
-| 💎   |   4   | GROUP_AFFINITY for thread and interrupt affinity | §2         |  [ ]   |
-| 💎   |   5   | MADT parsing for >64 LAPIC entries       | §1         |  [ ]   |
+| 💎  |   1   | Raise MAX_CPUS and dynamic per-CPU allocation | --         |  [ ]   |
+| 💎  |   2   | PROCESSOR_NUMBER type and group definitions | §1         |  [ ]   |
+| 💎  |   3   | KeSetTargetProcessorDpcEx -- group-aware DPC targeting | §2         |  [ ]   |
+| 💎  |   4   | GROUP_AFFINITY for thread and interrupt affinity | §2         |  [ ]   |
+| 💎  |   5   | MADT parsing for >64 LAPIC entries       | §1         |  [ ]   |
 
 ---
 
@@ -73,11 +73,11 @@ title: "TODO-03 -- SMP Scaling & Processor Groups"
 
 ## OS Comparison
 
-| ⭐   | Feature         | 🪟 Win11            | 🐧 Linux                 | 🚀 Impossible OS |
-| --- | --------------- | ------------------ | ----------------------- | --------------- |
-| 💎   | >64 CPU support | ✅ Processor groups | ✅ cpumask_t (8192 CPUs) | ⬜ §1-§5         |
-| 💎   | Group-aware DPC | ✅ DpcEx APIs       | ❌ N/A (no DPC model)    | ⬜ §3            |
-| 💎   | Group affinity  | ✅ GROUP_AFFINITY   | ✅ cpu_set_t             | ⬜ §4            |
+| ⭐  | Feature         | 🪟 Win11            | 🐧 Linux                 | 🚀 Impossible OS |
+| --- | --------------- | ------------------- | ------------------------ | ---------------- |
+| 💎  | >64 CPU support | ✅ Processor groups | ✅ cpumask_t (8192 CPUs) | ⬜ §1-§5         |
+| 💎  | Group-aware DPC | ✅ DpcEx APIs       | ❌ N/A (no DPC model)    | ⬜ §3            |
+| 💎  | Group affinity  | ✅ GROUP_AFFINITY   | ✅ cpu_set_t             | ⬜ §4            |
 
 ## Verification
 

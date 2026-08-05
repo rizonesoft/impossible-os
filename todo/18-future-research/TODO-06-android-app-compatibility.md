@@ -75,15 +75,15 @@ or ARM64 emulator image boots with VirtIO console (manual step, not CI).
 ## Implementation Order
 
 | Step | Section                                  | 💎/⭐ | Dependency                        |
-| ---- | ---------------------------------------- | --- | --------------------------------- |
-| 1    | Research charter and success criteria    | ⭐   | This file; stakeholder north star |
-| 2    | Architecture options record (VM vs container vs translation) | ⭐   | Industry survey; `TODO-02`        |
-| 3    | Host kernel prerequisites                | ⭐   | `TODO-02` §5; networking; storage |
-| 4    | Guest Android runtime plan               | ⭐   | AOSP version; ART; update cadence |
-| 5    | Display and input bridging               | ⭐   | `TODO-03` §1 §3; compositor       |
-| 6    | ABI and ISA strategy                     | ⭐   | `TODO-01` §3 §6; multi-ABI APK    |
-| 7    | Distribution and ecosystem stance        | ⭐   | AOSP vs GMS; sideload policy      |
-| 8    | Milestones, exit gates, deliverables     | ⭐   | §1--§7 complete                   |
+| ---- | ---------------------------------------- | ----- | --------------------------------- |
+| 1    | Research charter and success criteria    | ⭐    | This file; stakeholder north star |
+| 2    | Architecture options record (VM vs container vs translation) | ⭐    | Industry survey; `TODO-02`        |
+| 3    | Host kernel prerequisites                | ⭐    | `TODO-02` §5; networking; storage |
+| 4    | Guest Android runtime plan               | ⭐    | AOSP version; ART; update cadence |
+| 5    | Display and input bridging               | ⭐    | `TODO-03` §1 §3; compositor       |
+| 6    | ABI and ISA strategy                     | ⭐    | `TODO-01` §3 §6; multi-ABI APK    |
+| 7    | Distribution and ecosystem stance        | ⭐    | AOSP vs GMS; sideload policy      |
+| 8    | Milestones, exit gates, deliverables     | ⭐    | §1--§7 complete                   |
 
 ---
 
@@ -237,13 +237,13 @@ deferred).
 ## OS Comparison
 
 
-| ⭐   | Feature                           | 🪟 Win11                                 | 🐧 Linux                                  | 🚀 Impossible OS                          |
-| --- | --------------------------------- | --------------------------------------- | ---------------------------------------- | ---------------------------------------- |
-| ⭐   | Run Android apps on desktop       | ✅ WSA (deprecated); emulators common    | ✅ Waydroid; Anbox-class containers       | ⬜ §2 §4 VM-first guest; no host ART today |
-| ⭐   | Isolated Android from host kernel | ✅ Hyper-V VM boundary for WSA           | ✅ Namespaces; cgroups; (ARCVM VM trend)  | ⬜ §2 Option A; ImpossibleHV guest RAM    |
-| 💎   | Google Play Store certified       | ✅ Official WSA used Amazon store        | ⬜ GAPPS scripts; no cert                 | ⬜ §7 pure AOSP default; no Play Integrity |
-| ⭐   | ARM APK on x86_64 silicon         | ✅ ARM64 WSA guest; emulator translation | ✅ Waydroid arm64 profile; binfmt misc patterns | ⬜ §6 AArch64 guest per `TODO-01` or x86_64 AOSP trade-off |
-| ⭐   | GPU composited Android UI         | ✅ Host compositor + guest GPU paravirt  | ✅ Mesa + Wayland pipewire stacks         | ⬜ §5 `TODO-03` VirtIO-GPU path           |
+| ⭐  | Feature                           | 🪟 Win11                                 | 🐧 Linux                                 | 🚀 Impossible OS                         |
+| --- | --------------------------------- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
+| ⭐  | Run Android apps on desktop       | ✅ WSA (deprecated); emulators common    | ✅ Waydroid; Anbox-class containers      | ⬜ §2 §4 VM-first guest; no host ART today |
+| ⭐  | Isolated Android from host kernel | ✅ Hyper-V VM boundary for WSA           | ✅ Namespaces; cgroups; (ARCVM VM trend) | ⬜ §2 Option A; ImpossibleHV guest RAM   |
+| 💎  | Google Play Store certified       | ✅ Official WSA used Amazon store        | ⬜ GAPPS scripts; no cert                | ⬜ §7 pure AOSP default; no Play Integrity |
+| ⭐  | ARM APK on x86_64 silicon         | ✅ ARM64 WSA guest; emulator translation | ✅ Waydroid arm64 profile; binfmt misc patterns | ⬜ §6 AArch64 guest per `TODO-01` or x86_64 AOSP trade-off |
+| ⭐  | GPU composited Android UI         | ✅ Host compositor + guest GPU paravirt  | ✅ Mesa + Wayland pipewire stacks        | ⬜ §5 `TODO-03` VirtIO-GPU path          |
 
 Impossible OS should treat Android as **a guest environment** with a crisp security
 boundary, integrate its framebuffer through the same GPU research thread as `TODO-03`,

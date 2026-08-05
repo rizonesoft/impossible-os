@@ -33,18 +33,18 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                              | Depends On      | Status |
+| ⭐  | Order | Deliverable                              | Depends On      | Status |
 | --- | :---: | ---------------------------------------- | --------------- | :----: |
-| 💎   |   1   | UEFI SNP/PXE protocol discovery          | TODO-05 §5      |  [x]   |
-| 💎   |   2   | DHCP/PXE provenance capture              | §1              |  [/]   |
-| 💎   |   3   | TFTP kernel and boot.conf load           | §1, §2          |  [x]   |
-| 💎   |   4   | UEFI HTTP Boot load path                 | §1, §2          |  [x]   |
-| 💎   |   5   | Network boot asset integrity             | §3, §4, TODO-13 |  [/]   |
-| 💎   |   6   | boot_info network provenance             | TODO-01 §4, §12 |  [/]   |
-| 💎   |   7   | Fallback ordering with local media       | TODO-05 §5, §6  |  [/]   |
-| ⭐   |   8   | Recovery and installer over network      | §3-§7, TODO-22  |  [/]   |
-| 💎   |   9   | Network boot diagnostics and BlackBox report | §1-§8           |  [/]   |
-| 💎   |  10   | PXE/HTTP boot tests                      | §1-§9           |  [/]   |
+| 💎  |   1   | UEFI SNP/PXE protocol discovery          | TODO-05 §5      |  [x]   |
+| 💎  |   2   | DHCP/PXE provenance capture              | §1              |  [/]   |
+| 💎  |   3   | TFTP kernel and boot.conf load           | §1, §2          |  [x]   |
+| 💎  |   4   | UEFI HTTP Boot load path                 | §1, §2          |  [x]   |
+| 💎  |   5   | Network boot asset integrity             | §3, §4, TODO-13 |  [/]   |
+| 💎  |   6   | boot_info network provenance             | TODO-01 §4, §12 |  [/]   |
+| 💎  |   7   | Fallback ordering with local media       | TODO-05 §5, §6  |  [/]   |
+| ⭐  |   8   | Recovery and installer over network      | §3-§7, TODO-22  |  [/]   |
+| 💎  |   9   | Network boot diagnostics and BlackBox report | §1-§8           |  [/]   |
+| 💎  |  10   | PXE/HTTP boot tests                      | §1-§9           |  [/]   |
 
 ## 1. UEFI SNP/PXE Protocol Discovery
 
@@ -293,12 +293,12 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 
 ## OS Comparison
 
-| ⭐   | Feature                       | 🪟 Win11                | 🐧 Linux                | 🚀 Impossible OS                  |
-| --- | ----------------------------- | ---------------------- | ---------------------- | -------------------------------- |
-| 💎   | PXE boot                      | ✅ WDS/MDT              | ✅ PXELINUX/iPXE        | ✅ §1-§3 discover + DHCP + TFTP   |
-| 💎   | HTTP boot                     | ✅ UEFI HTTP Boot       | ✅ iPXE/systemd-boot    | ✅ §4 EFI_HTTP client + probe     |
-| 💎   | Signed network manifest       | ✅ Secure Boot policies | ✅ shim/grub signatures | ⏸ §5 deferred (trust model)      |
-| ⭐   | On-device network-boot report | ❌ event logs only      | ❌ external server logs | ⭐ Planned §9 (X:\Diag JSON + QR) |
+| ⭐  | Feature                       | 🪟 Win11                | 🐧 Linux                | 🚀 Impossible OS                  |
+| --- | ----------------------------- | ----------------------- | ----------------------- | --------------------------------- |
+| 💎  | PXE boot                      | ✅ WDS/MDT              | ✅ PXELINUX/iPXE        | ✅ §1-§3 discover + DHCP + TFTP   |
+| 💎  | HTTP boot                     | ✅ UEFI HTTP Boot       | ✅ iPXE/systemd-boot    | ✅ §4 EFI_HTTP client + probe     |
+| 💎  | Signed network manifest       | ✅ Secure Boot policies | ✅ shim/grub signatures | ⏸ §5 deferred (trust model)       |
+| ⭐  | On-device network-boot report | ❌ event logs only      | ❌ external server logs | ⭐ Planned §9 (X:\Diag JSON + QR) |
 
 ## Unit Tests
 

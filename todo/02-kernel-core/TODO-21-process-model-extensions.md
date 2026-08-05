@@ -51,29 +51,29 @@ title: "TODO-21 -- Process Model Extensions"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                              | Depends On         | Status |
+| ⭐  | Order | Deliverable                              | Depends On         | Status |
 | --- | :---: | ---------------------------------------- | ------------------ | :----: |
-| 💎   |   1   | Working directory (`cwd` field + Nt/VFS wiring) | VFS                |  [x]   |
-| 💎   |   2   | Standard handle pre-wiring at process creation | T05 §3             |  [/]   |
-| 💎   |   3   | User-mode program break (brk/sbrk Linux compat) | VMM, T17 §5        |  [/]   |
-| 💎   |   4   | Process priority class (Win32 `SetPriorityClass`) | sched (exists)     |  [/]   |
-| 💎   |   5   | Per-task scheduling policy (`SCHED_FIFO`/`IDLE`) | §4                 |  [/]   |
-| 💎   |   6   | Process capabilities and privilege bitmask | --                 |  [/]   |
-| ⭐   |   7   | Capability inheritance and drop-only policy | §6                 |  [/]   |
-| 💎   |   8   | Process accounting fields (times, I/O counters) | §1                 |  [/]   |
-| 💎   |   9   | Per-process resource limits (rlimits)    | §3, §6             |  [/]   |
-| 💎   |  10   | CPU affinity per process                 | §4, D03 T06 §6     |  [/]   |
-| 💎   |  11   | Per-process mitigation policy            | §6, T10 §1         |  [/]   |
-| ⭐   |  12   | Pledge/unveil-style process restriction  | §6, §7             |  [x]   |
-| 💎   |  13   | Job Object syscalls wired to SSDT        | §6, T12 §5         |  [/]   |
-| 💎   |  14   | Process exit cleanup -- release all per-process resources | §8, §9             |  [/]   |
-| 💎   |  15   | Parenting, reaping, wait4 + ZOMBIE lifecycle | §14                |  [/]   |
-| 💎   |  16   | Protected Process Light (PS_PROTECTION)  | D02 T19 §1, T12 §7 |  [/]   |
-| 💎   |  17   | Process groups and sessions (setpgid/setsid) | --                 |  [/]   |
-| 💎   |  18   | Rich wait variants + NT multi-waiter wake + dumpable | §15, §17           |  [/]   |
-| 💎   |  19   | `task_exec` commit point + kernel-stack reclamation | §14, §15           |  [x]   |
-| 💎   |  20   | Page-table lifetime across reap + fork/exec | §15, §19           |  [ ]   |
-| 💎   |  21   | Post-ship follow-up backfill (2026-07-31 cohort) | --                 |  [ ]   |
+| 💎  |   1   | Working directory (`cwd` field + Nt/VFS wiring) | VFS                |  [x]   |
+| 💎  |   2   | Standard handle pre-wiring at process creation | T05 §3             |  [/]   |
+| 💎  |   3   | User-mode program break (brk/sbrk Linux compat) | VMM, T17 §5        |  [/]   |
+| 💎  |   4   | Process priority class (Win32 `SetPriorityClass`) | sched (exists)     |  [/]   |
+| 💎  |   5   | Per-task scheduling policy (`SCHED_FIFO`/`IDLE`) | §4                 |  [/]   |
+| 💎  |   6   | Process capabilities and privilege bitmask | --                 |  [/]   |
+| ⭐  |   7   | Capability inheritance and drop-only policy | §6                 |  [/]   |
+| 💎  |   8   | Process accounting fields (times, I/O counters) | §1                 |  [/]   |
+| 💎  |   9   | Per-process resource limits (rlimits)    | §3, §6             |  [/]   |
+| 💎  |  10   | CPU affinity per process                 | §4, D03 T06 §6     |  [/]   |
+| 💎  |  11   | Per-process mitigation policy            | §6, T10 §1         |  [/]   |
+| ⭐  |  12   | Pledge/unveil-style process restriction  | §6, §7             |  [x]   |
+| 💎  |  13   | Job Object syscalls wired to SSDT        | §6, T12 §5         |  [/]   |
+| 💎  |  14   | Process exit cleanup -- release all per-process resources | §8, §9             |  [/]   |
+| 💎  |  15   | Parenting, reaping, wait4 + ZOMBIE lifecycle | §14                |  [/]   |
+| 💎  |  16   | Protected Process Light (PS_PROTECTION)  | D02 T19 §1, T12 §7 |  [/]   |
+| 💎  |  17   | Process groups and sessions (setpgid/setsid) | --                 |  [/]   |
+| 💎  |  18   | Rich wait variants + NT multi-waiter wake + dumpable | §15, §17           |  [/]   |
+| 💎  |  19   | `task_exec` commit point + kernel-stack reclamation | §14, §15           |  [x]   |
+| 💎  |  20   | Page-table lifetime across reap + fork/exec | §15, §19           |  [ ]   |
+| 💎  |  21   | Post-ship follow-up backfill (2026-07-31 cohort) | --                 |  [ ]   |
 
 > 💎 = parity -- Windows NT (tokens + priority classes + accounting + rlimits) and Linux (capabilities + scheduling + getrusage + rlimits) both provide these.
 > ⭐ = exclusive -- strict drop-only inheritance and pledge/unveil-style restriction are more auditable than both Windows token elevation and Linux `setcap`.

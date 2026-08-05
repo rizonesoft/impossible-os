@@ -30,15 +30,15 @@ title: "TODO-06 -- Desktop Icon System"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                             | Depends On         | Status |
+| ⭐  | Order | Deliverable                             | Depends On         | Status |
 | --- | :---: | --------------------------------------- | ------------------ | :----: |
-| 💎   |   1   | Icon data model and grid layout         | --                 |  [ ]   |
-| 💎   |   2   | Special folder icons (always present)   | §1                 |  [ ]   |
-| 💎   |   3   | Dynamic icons from Desktop directory    | §1                 |  [ ]   |
-| 💎   |   4   | Icon interaction (select, drag, rename) | §1                 |  [ ]   |
-| 💎   |   5   | Shortcut (.lnk) file support            | §3                 |  [ ]   |
-| 💎   |   6   | File type icon association              | §3                 |  [ ]   |
-| 💎   |   7   | Icon right-click context menu           | §4, D06/TODO-04 §5 |  [ ]   |
+| 💎  |   1   | Icon data model and grid layout         | --                 |  [ ]   |
+| 💎  |   2   | Special folder icons (always present)   | §1                 |  [ ]   |
+| 💎  |   3   | Dynamic icons from Desktop directory    | §1                 |  [ ]   |
+| 💎  |   4   | Icon interaction (select, drag, rename) | §1                 |  [ ]   |
+| 💎  |   5   | Shortcut (.lnk) file support            | §3                 |  [ ]   |
+| 💎  |   6   | File type icon association              | §3                 |  [ ]   |
+| 💎  |   7   | Icon right-click context menu           | §4, D06/TODO-04 §5 |  [ ]   |
 
 ---
 
@@ -154,11 +154,11 @@ Per-icon context menu with standard actions.
 
 ## OS Comparison
 
-| ⭐   | Feature             | 🪟 Win11    | 🐧 Linux (GNOME) | 🚀 Impossible OS |
-| --- | ------------------- | ---------- | --------------- | --------------- |
-| 💎   | Desktop icons       | ✅ Built-in | ✅ Nautilus      | ⬜ §1-§2         |
-| 💎   | Dynamic from folder | ✅ Built-in | ✅ ~/Desktop     | ⬜ §3            |
-| 💎   | Drag to reposition  | ✅ Built-in | ✅ Built-in      | ⬜ §4            |
-| 💎   | Shortcuts (.lnk)    | ✅ Built-in | ✅ .desktop      | ⬜ §5            |
-| 💎   | File type icons     | ✅ Registry | ✅ MIME          | ⬜ §6            |
-| 💎   | Icon context menu   | ✅ Built-in | ✅ Built-in      | ⬜ §7            |
+| ⭐  | Feature             | 🪟 Win11    | 🐧 Linux (GNOME) | 🚀 Impossible OS |
+| --- | ------------------- | ----------- | ---------------- | ---------------- |
+| 💎  | Desktop icons       | ✅ Built-in | ✅ Nautilus      | ⬜ §1-§2         |
+| 💎  | Dynamic from folder | ✅ Built-in | ✅ ~/Desktop     | ⬜ §3            |
+| 💎  | Drag to reposition  | ✅ Built-in | ✅ Built-in      | ⬜ §4            |
+| 💎  | Shortcuts (.lnk)    | ✅ Built-in | ✅ .desktop      | ⬜ §5            |
+| 💎  | File type icons     | ✅ Registry | ✅ MIME          | ⬜ §6            |
+| 💎  | Icon context menu   | ✅ Built-in | ✅ Built-in      | ⬜ §7            |

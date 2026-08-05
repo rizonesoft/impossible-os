@@ -50,23 +50,23 @@ title: "TODO-31 -- Kernel Bulletproofing"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                              | Depends On | Status |
+| ⭐  | Order | Deliverable                              | Depends On | Status |
 | --- | :---: | ---------------------------------------- | ---------- | :----: |
-| ⭐   |   1   | per_cpu_data assembly offsets (gs:0, gs:24, gs:32) | --         |  [x]   |
-| ⭐   |   2   | boot_config struct layout (cmdline at offset 32) | --         |  [x]   |
-| ⭐   |   3   | User ELF range (0x800000-0x900000) 3-file sync | --         |  [x]   |
-| ⭐   |   4   | AP trampoline data area layout (0x8E00 offsets) | --         |  [x]   |
-| ⭐   |   5   | Task interrupt frame layout (iretq register order) | --         |  [x]   |
-| ⭐   |   6   | IDT vector assignment collision detection | --         |  [x]   |
-| ⭐   |   7   | SSDT service number count stability      | --         |  [x]   |
-| ⭐   |   8   | XSAVE/FXSAVE area alignment (64-byte)    | --         |  [x]   |
-| ⭐   |   9   | ISR swapgs symmetry verification         | §5         |  [x]   |
-| ⭐   |  10   | Memory layout guard pages (heap, stack, user) | §3         |  [x]   |
-| ⭐   |  11   | IXFS superblock layout and magic         | --         |  [x]   |
-| ⭐   |  12   | Security structs (SID, TOKEN, ACL/ACE)   | --         |  [x]   |
-| ⭐   |  13   | VFS drive letter range and partition offsets | --         |  [x]   |
-| ⭐   |  14   | exec_pending state machine verification  | §5         |  [x]   |
-| ⭐   |  15   | Framebuffer bare-metal safety (5 rules)  | --         |  [x]   |
+| ⭐  |   1   | per_cpu_data assembly offsets (gs:0, gs:24, gs:32) | --         |  [x]   |
+| ⭐  |   2   | boot_config struct layout (cmdline at offset 32) | --         |  [x]   |
+| ⭐  |   3   | User ELF range (0x800000-0x900000) 3-file sync | --         |  [x]   |
+| ⭐  |   4   | AP trampoline data area layout (0x8E00 offsets) | --         |  [x]   |
+| ⭐  |   5   | Task interrupt frame layout (iretq register order) | --         |  [x]   |
+| ⭐  |   6   | IDT vector assignment collision detection | --         |  [x]   |
+| ⭐  |   7   | SSDT service number count stability      | --         |  [x]   |
+| ⭐  |   8   | XSAVE/FXSAVE area alignment (64-byte)    | --         |  [x]   |
+| ⭐  |   9   | ISR swapgs symmetry verification         | §5         |  [x]   |
+| ⭐  |  10   | Memory layout guard pages (heap, stack, user) | §3         |  [x]   |
+| ⭐  |  11   | IXFS superblock layout and magic         | --         |  [x]   |
+| ⭐  |  12   | Security structs (SID, TOKEN, ACL/ACE)   | --         |  [x]   |
+| ⭐  |  13   | VFS drive letter range and partition offsets | --         |  [x]   |
+| ⭐  |  14   | exec_pending state machine verification  | §5         |  [x]   |
+| ⭐  |  15   | Framebuffer bare-metal safety (5 rules)  | --         |  [x]   |
 
 > ⭐ = all exclusive -- no other OS has systematic compile-time + boot-time invariant verification across the entire kernel.
 
@@ -369,16 +369,16 @@ Five non-negotiable rules for correct framebuffer/GOP handling on real hardware.
 
 ## OS Comparison
 
-| ⭐   | Feature                | 🪟 Win11  | 🐧 Linux         | 🚀 Impossible OS    |
-| --- | ---------------------- | -------- | --------------- | ------------------ |
-| ⭐   | Compile struct asserts | ❌ sparse | ⚠️ BUILD_BUG_ON | ✅ §1--§15          |
-| ⭐   | Boot invariant verify  | ❌ hidden | ⚠️ BUG_ON       | ✅ §1--§15          |
-| ⭐   | Asm offset asserts     | ❌ manual | ⚠️ asm-offsets  | ✅ §1 §4 §5         |
-| ⭐   | Guard pages wide       | ✅ stacks | ✅ VMAP_STACK    | ✅ §10 all sites    |
-| ⭐   | ABI size lock-in       | ❌ opaque | ⚠️ sparse       | ✅ §2 §5 §11 §12    |
-| ⭐   | IDT vector uniqueness  | ❌ manual | ❌ manual        | ✅ §6 vectors.h     |
-| ⭐   | swapgs sanity check    | ❌ none   | ❌ none          | ✅ §9 gs:0 self     |
-| ⭐   | Stuck scheduler flags  | ❌ none   | ❌ none          | ✅ §14 exec_pending |
+| ⭐  | Feature                | 🪟 Win11  | 🐧 Linux       | 🚀 Impossible OS    |
+| --- | ---------------------- | --------- | -------------- | ------------------- |
+| ⭐  | Compile struct asserts | ❌ sparse | ⚠️ BUILD_BUG_ON | ✅ §1--§15          |
+| ⭐  | Boot invariant verify  | ❌ hidden | ⚠️ BUG_ON       | ✅ §1--§15          |
+| ⭐  | Asm offset asserts     | ❌ manual | ⚠️ asm-offsets  | ✅ §1 §4 §5         |
+| ⭐  | Guard pages wide       | ✅ stacks | ✅ VMAP_STACK  | ✅ §10 all sites    |
+| ⭐  | ABI size lock-in       | ❌ opaque | ⚠️ sparse       | ✅ §2 §5 §11 §12    |
+| ⭐  | IDT vector uniqueness  | ❌ manual | ❌ manual      | ✅ §6 vectors.h     |
+| ⭐  | swapgs sanity check    | ❌ none   | ❌ none        | ✅ §9 gs:0 self     |
+| ⭐  | Stuck scheduler flags  | ❌ none   | ❌ none        | ✅ §14 exec_pending |
 
 > **All exclusive.** Linux uses sparse BUILD_BUG_ON and asm-offsets.c; Windows has no public compile-time invariant system like this.
 

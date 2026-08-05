@@ -55,20 +55,20 @@ title: "TODO-14 -- Boot Diagnostics, Heartbeat & Spinner"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                              | Depends On                         | Status |
+| ⭐  | Order | Deliverable                              | Depends On                         | Status |
 | --- | :---: | ---------------------------------------- | ---------------------------------- | :----: |
-| 💎   |   1   | UEFI pre-kernel POST codes               | --                                 |  [/]   |
-| 💎   |   2   | Boot progress named-stage API            | §1                                 |  [/]   |
-| 💎   |   3   | POST-style hex code display              | §2                                 |  [x]   |
-| 💎   |   4   | Alive blink / visual heartbeat           | permanently deferred; hang=TODO-23 |  [/]   |
-| 💎   |   5   | Panic forensic evidence                  | §2                                 |  [/]   |
-| ⭐   |   6   | Panic QR code                            | §5; T03 §14 (QR seed)              |  [/]   |
-| 💎   |   7   | System-wide multi-instance spinner       | D08 T08 §8 (compositor)            |  [/]   |
-| ⭐   |   8   | Runtime vital signs strip                | D02 T25 §7 (CPU accounting)        |  [/]   |
-| 💎   |   9   | Boot timeline visualization/import       | §2                                 |  [/]   |
-| ⭐   |  10   | Bootloader build identity dump in BlackBox | TODO-01 §20                        |  [x]   |
-| 💎   |  11   | Boot load status log (ntbtlog parity)    | §2                                 |  [/]   |
-| 💎   |  12   | Post-ship follow-up backfill (2026-07-31 cohort) | --                                 |  [ ]   |
+| 💎  |   1   | UEFI pre-kernel POST codes               | --                                 |  [/]   |
+| 💎  |   2   | Boot progress named-stage API            | §1                                 |  [/]   |
+| 💎  |   3   | POST-style hex code display              | §2                                 |  [x]   |
+| 💎  |   4   | Alive blink / visual heartbeat           | permanently deferred; hang=TODO-23 |  [/]   |
+| 💎  |   5   | Panic forensic evidence                  | §2                                 |  [/]   |
+| ⭐  |   6   | Panic QR code                            | §5; T03 §14 (QR seed)              |  [/]   |
+| 💎  |   7   | System-wide multi-instance spinner       | D08 T08 §8 (compositor)            |  [/]   |
+| ⭐  |   8   | Runtime vital signs strip                | D02 T25 §7 (CPU accounting)        |  [/]   |
+| 💎  |   9   | Boot timeline visualization/import       | §2                                 |  [/]   |
+| ⭐  |  10   | Bootloader build identity dump in BlackBox | TODO-01 §20                        |  [x]   |
+| 💎  |  11   | Boot load status log (ntbtlog parity)    | §2                                 |  [/]   |
+| 💎  |  12   | Post-ship follow-up backfill (2026-07-31 cohort) | --                                 |  [ ]   |
 
 > 💎 = parity -- Windows and Linux both have equivalent diagnostics; Impossible OS must match them.
 > ⭐ = exclusive -- the QR code on BSOD and always-visible vital-signs strip are not present in either competitor at the kernel level.
@@ -374,18 +374,18 @@ From the stamped section 11:
 
 ## OS Comparison
 
-| ⭐   | Feature                   | 🪟 Win11                  | 🐧 Linux                   | 🚀 Impossible OS                    |
-| --- | ------------------------- | ------------------------ | ------------------------- | ---------------------------------- |
-| 💎   | Boot POST codes           | ✅ Firmware boot mgr      | ✅ BIOS POST codes         | ✅ §1 §3 POST port 80 + FB hex      |
-| 💎   | Named boot progress       | ✅ ETW boot trace         | ✅ dmesg systemd-analyze   | ✅ §2 serial STAGE ms lines         |
-| 💎   | Boot load/status log      | ✅ ntbtlog.txt driver log | ✅ dmesg drivers loaded    | ✅ §11 boot-load-status.txt         |
-| ⭐   | Bootloader build identity | ⚠️ bcdedit/msinfo32      | ⚠️ /proc/version uname    | ✅ §10 boot-loader-identity.txt     |
-| 💎   | Boot timeline viewers     | ⚠️ Performance Toolkit   | ✅ systemd-analyze plot    | ⚠️ JSON+schema §9; viewers pending |
-| 💎   | Panic forensics           | ✅ WER minidump EventLog  | ✅ kdump pstore ramoops    | ✅ §5 0x80000 page last-panic.txt   |
-| 💎   | Multi UI spinner          | ✅ WinUI ProgressRing     | ✅ GTK Qt spinners         | ⬜ §7 spinner_create pool           |
-| ⭐   | Panic BSOD QR             | ❌ Text URL BSOD only     | ❌ No kernel QR            | ⬜ §6 segno+phone-gated QR          |
-| ⭐   | Alive hang pixel          | ❌ No kernel hang pixel   | ❌ Not production default  | [~] §4 permanently deferred        |
-| ⭐   | Live vital overlay        | ⚠️ Task Manager separate | ⚠️ htop conky third-party | ⬜ §8 bottom metrics strip          |
+| ⭐  | Feature                   | 🪟 Win11                  | 🐧 Linux                  | 🚀 Impossible OS                  |
+| --- | ------------------------- | ------------------------- | ------------------------- | --------------------------------- |
+| 💎  | Boot POST codes           | ✅ Firmware boot mgr      | ✅ BIOS POST codes        | ✅ §1 §3 POST port 80 + FB hex    |
+| 💎  | Named boot progress       | ✅ ETW boot trace         | ✅ dmesg systemd-analyze  | ✅ §2 serial STAGE ms lines       |
+| 💎  | Boot load/status log      | ✅ ntbtlog.txt driver log | ✅ dmesg drivers loaded   | ✅ §11 boot-load-status.txt       |
+| ⭐  | Bootloader build identity | ⚠️ bcdedit/msinfo32        | ⚠️ /proc/version uname     | ✅ §10 boot-loader-identity.txt   |
+| 💎  | Boot timeline viewers     | ⚠️ Performance Toolkit     | ✅ systemd-analyze plot   | ⚠️ JSON+schema §9; viewers pending |
+| 💎  | Panic forensics           | ✅ WER minidump EventLog  | ✅ kdump pstore ramoops   | ✅ §5 0x80000 page last-panic.txt |
+| 💎  | Multi UI spinner          | ✅ WinUI ProgressRing     | ✅ GTK Qt spinners        | ⬜ §7 spinner_create pool         |
+| ⭐  | Panic BSOD QR             | ❌ Text URL BSOD only     | ❌ No kernel QR           | ⬜ §6 segno+phone-gated QR        |
+| ⭐  | Alive hang pixel          | ❌ No kernel hang pixel   | ❌ Not production default | [~] §4 permanently deferred       |
+| ⭐  | Live vital overlay        | ⚠️ Task Manager separate   | ⚠️ htop conky third-party  | ⬜ §8 bottom metrics strip        |
 
 > **Parity scan:** Win11+Linux ✅ on POST, named progress, panic dumps, UI spinners -- Impossible OS matches via §1--§3 plus §10 bootloader identity and §11 ntbtlog-parity load/status log; timeline **export** + **v1 schema** exist (§9 `docs/boot/boot-timeline-schema.md`) but **viewers** match Linux/Win tooling only after the §9 converters land. §4 is permanently deferred; the ⬜ rows §6/§7/§8 remain deferred with recorded blockers (§6 segno+phone QR validation, §7 WM compositor integration, §8 scheduler CPU% accounting); §9 converters pending. **Edges:** §6 QR and §8 always-on strip are planned differentiators once unblocked.
 

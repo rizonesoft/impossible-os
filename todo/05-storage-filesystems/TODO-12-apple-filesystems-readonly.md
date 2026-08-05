@@ -265,20 +265,20 @@ Register both drivers with `vfs_probe()`. Probe APFS then HFS+ for Apple-partiti
 ## OS Comparison
 
 
-| ⭐   | Feature                                  | 🪟 Win11                                  | 🐧 Linux                                  | 🚀 Impossible OS                          |
+| ⭐  | Feature                                  | 🪟 Win11                                 | 🐧 Linux                                 | 🚀 Impossible OS                         |
 | --- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
-| ⭐   | APFS container superblock + Fletcher-64 + checkpoint resolution | ❌ No native support (requires third-party | ❌ No upstream kernel driver; `apfs-fuse` | ⬜ §1 -- native in-kernel; Fletcher-64 verify; checkpoint |
-| ⭐   | APFS object map B-tree                   | ❌ N/A                                    | ❌ `apfs-fuse` only (userspace FUSE)      | ⬜ §2 -- MVCC lookup (highest xid ≤       |
-| ⭐   | APFS volume enumeration                  | ❌ N/A                                    | ❌ `apfs-fuse` only                       | ⬜ §3 -- `nx_fs_oid[100]` scan; sealed-volume detection + |
-| ⭐   | APFS filesystem B-tree                   | ❌ N/A                                    | ❌ `apfs-fuse` only                       | ⬜ §4 -- virtual OID resolution via volume |
-| ⭐   | APFS inodes                              | ❌ N/A                                    | ❌ `apfs-fuse` only                       | ⬜ §5 -- xf_blob extended field decode; nanosecond |
-| ⭐   | APFS file extents + FileVault deny       | ❌ N/A                                    | ❌ `apfs-fuse` only; no FileVault handling | ⬜ §6 -- `FILE_EXTENT` walk; sparse zeros; `STATUS_ACCESS_DENIED` |
-| ⭐   | APFS directory reader                    | ❌ N/A                                    | ❌ `apfs-fuse` only                       | ⬜ §7 -- `j_drec_hashed_key_t`; NFD→NFC for Windows display |
-| ⭐   | APFS symlinks + xattrs -- inline + stream dnode | ❌ N/A                                    | ❌ `apfs-fuse` only                       | ⬜ §8 -- `com.apple.fs.symlink`; xattr stream via `xattr_obj_id` |
-| ⭐   | HFS+ volume header + journal replay + fork data | ❌ No native support (requires `Paragon   | ✅ `hfsplus.ko`; full R/O + limited       | ⬜ §9 -- `H+`/`HX` magic; dirty-flag journal replay |
-| ⭐   | HFS+ Catalog B-tree + readdir + `HFSUniStr255` UTF-16BE decode | ❌ No native support                      | ✅ `hfsplus.ko`; full Catalog B-tree; UTF-16BE | ⬜ §10 -- HFSX case-folding table; leaf chain |
-| ⭐   | HFS+ file read + Extents Overflow B-tree for fragmented files | ❌ No native support                      | ✅ `hfsplus.ko`; Extents Overflow lookup; fragmented | ⬜ §11 -- inline extents + overflow B-tree |
-| ⭐   | Dual read-only probe                     | ❌ No native support for either           | ✅ HFS+ via `hfsplus.ko`; APFS only       | ⬜ §12 -- both in-kernel; GPT GUID guard  |
+| ⭐  | APFS container superblock + Fletcher-64 + checkpoint resolution | ❌ No native support (requires third-party | ❌ No upstream kernel driver; `apfs-fuse` | ⬜ §1 -- native in-kernel; Fletcher-64 verify; checkpoint |
+| ⭐  | APFS object map B-tree                   | ❌ N/A                                   | ❌ `apfs-fuse` only (userspace FUSE)     | ⬜ §2 -- MVCC lookup (highest xid ≤      |
+| ⭐  | APFS volume enumeration                  | ❌ N/A                                   | ❌ `apfs-fuse` only                      | ⬜ §3 -- `nx_fs_oid[100]` scan; sealed-volume detection + |
+| ⭐  | APFS filesystem B-tree                   | ❌ N/A                                   | ❌ `apfs-fuse` only                      | ⬜ §4 -- virtual OID resolution via volume |
+| ⭐  | APFS inodes                              | ❌ N/A                                   | ❌ `apfs-fuse` only                      | ⬜ §5 -- xf_blob extended field decode; nanosecond |
+| ⭐  | APFS file extents + FileVault deny       | ❌ N/A                                   | ❌ `apfs-fuse` only; no FileVault handling | ⬜ §6 -- `FILE_EXTENT` walk; sparse zeros; `STATUS_ACCESS_DENIED` |
+| ⭐  | APFS directory reader                    | ❌ N/A                                   | ❌ `apfs-fuse` only                      | ⬜ §7 -- `j_drec_hashed_key_t`; NFD→NFC for Windows display |
+| ⭐  | APFS symlinks + xattrs -- inline + stream dnode | ❌ N/A                                   | ❌ `apfs-fuse` only                      | ⬜ §8 -- `com.apple.fs.symlink`; xattr stream via `xattr_obj_id` |
+| ⭐  | HFS+ volume header + journal replay + fork data | ❌ No native support (requires `Paragon  | ✅ `hfsplus.ko`; full R/O + limited      | ⬜ §9 -- `H+`/`HX` magic; dirty-flag journal replay |
+| ⭐  | HFS+ Catalog B-tree + readdir + `HFSUniStr255` UTF-16BE decode | ❌ No native support                     | ✅ `hfsplus.ko`; full Catalog B-tree; UTF-16BE | ⬜ §10 -- HFSX case-folding table; leaf chain |
+| ⭐  | HFS+ file read + Extents Overflow B-tree for fragmented files | ❌ No native support                     | ✅ `hfsplus.ko`; Extents Overflow lookup; fragmented | ⬜ §11 -- inline extents + overflow B-tree |
+| ⭐  | Dual read-only probe                     | ❌ No native support for either          | ✅ HFS+ via `hfsplus.ko`; APFS only      | ⬜ §12 -- both in-kernel; GPT GUID guard |
 
 > **After §1–§12:** Impossible OS becomes the only non-Apple, non-Linux OS with native in-kernel APFS read support -- surpassing Windows 11 (which requires a paid Paragon driver for both formats). The in-kernel APFS driver with proper MVCC object map semantics, FileVault detection, and NFD→NFC filename normalization provides a cleaner experience than the `apfs-fuse` userspace approach on Linux. The GPT GUID guard on both probes prevents any false-positive mounts on non-Apple drives.
 

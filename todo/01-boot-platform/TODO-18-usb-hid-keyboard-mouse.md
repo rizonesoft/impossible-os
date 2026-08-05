@@ -42,15 +42,15 @@ title: "TODO-18 -- USB HID Boot-Protocol Keyboard & Mouse"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                              | Depends On | Status |
+| ⭐  | Order | Deliverable                              | Depends On | Status |
 | --- | :---: | ---------------------------------------- | ---------- | :----: |
-| 💎   |   1   | xHCI interrupt endpoint setup            | --         |  [x]   |
-| 💎   |   2   | Interrupt transfer polling (periodic TRBs) | §1         |  [x]   |
-| 💎   |   3   | USB HID boot-protocol keyboard driver    | §2         |  [x]   |
-| 💎   |   4   | USB HID boot-protocol mouse driver       | §2         |  [x]   |
-| 💎   |   5   | Input source coexistence (PS/2 + USB)    | §3, §4     |  [x]   |
-| ⭐   |   6   | Hot-plug keyboard/mouse detection        | §5         |  [/]   |
-| ⭐   |   7   | USB input diagnostic logging             | §1-§5      |  [x]   |
+| 💎  |   1   | xHCI interrupt endpoint setup            | --         |  [x]   |
+| 💎  |   2   | Interrupt transfer polling (periodic TRBs) | §1         |  [x]   |
+| 💎  |   3   | USB HID boot-protocol keyboard driver    | §2         |  [x]   |
+| 💎  |   4   | USB HID boot-protocol mouse driver       | §2         |  [x]   |
+| 💎  |   5   | Input source coexistence (PS/2 + USB)    | §3, §4     |  [x]   |
+| ⭐  |   6   | Hot-plug keyboard/mouse detection        | §5         |  [/]   |
+| ⭐  |   7   | USB input diagnostic logging             | §1-§5      |  [x]   |
 
 > 💎 = parity -- Windows HID minidriver and Linux usbhid both provide boot-protocol keyboard/mouse.
 > ⭐ = exclusive -- hot-plug keyboard detection and diagnostic logging.
@@ -240,14 +240,14 @@ Comprehensive USB input status in serial log.
 
 ## OS Comparison
 
-| ⭐   | Feature                  | 🪟 Win11               | 🐧 Linux             | 🚀 Impossible OS             |
-| --- | ------------------------ | --------------------- | ------------------- | --------------------------- |
-| 💎   | USB HID interrupt EP     | ✅ usbxhci.sys         | ✅ xhci-hcd          | ✅ §1 Configure Endpoint     |
-| 💎   | USB keyboard in boot     | ✅ HID minidriver      | ✅ usbhid + usbkbd   | ✅ §3 boot-proto parse       |
-| 💎   | USB mouse in boot        | ✅ HID minidriver      | ✅ usbhid + usbmouse | ✅ §4 boot-proto cursor      |
-| 💎   | PS/2 + USB coexistence   | ✅ Automatic           | ✅ Automatic         | ✅ §5 one merged cursor      |
-| 💎   | USB HID hot-plug         | ✅ PnP Manager         | ✅ udev + usbhid     | ⬜ §6                        |
-| ⭐   | Input source diagnostics | ❌ Device Manager only | ❌ dmesg only        | ✅ §7 [INPUT] boot summary 🚀 |
+| ⭐  | Feature                  | 🪟 Win11               | 🐧 Linux             | 🚀 Impossible OS              |
+| --- | ------------------------ | ---------------------- | -------------------- | ----------------------------- |
+| 💎  | USB HID interrupt EP     | ✅ usbxhci.sys         | ✅ xhci-hcd          | ✅ §1 Configure Endpoint      |
+| 💎  | USB keyboard in boot     | ✅ HID minidriver      | ✅ usbhid + usbkbd   | ✅ §3 boot-proto parse        |
+| 💎  | USB mouse in boot        | ✅ HID minidriver      | ✅ usbhid + usbmouse | ✅ §4 boot-proto cursor       |
+| 💎  | PS/2 + USB coexistence   | ✅ Automatic           | ✅ Automatic         | ✅ §5 one merged cursor       |
+| 💎  | USB HID hot-plug         | ✅ PnP Manager         | ✅ udev + usbhid     | ⬜ §6                         |
+| ⭐  | Input source diagnostics | ❌ Device Manager only | ❌ dmesg only        | ✅ §7 [INPUT] boot summary 🚀 |
 
 After §1–§5, USB input is at parity with Windows and Linux. §6–§7 add hot-plug and diagnostics.
 

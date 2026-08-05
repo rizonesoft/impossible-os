@@ -58,15 +58,15 @@ the install. `pxesrv start` serves netboot images over TFTP to diskless clients.
 ## Implementation Order
 
 | Step | Section                                | 💎/⭐ | Dependency                               |
-| ---- | -------------------------------------- | --- | ---------------------------------------- |
-| 1    | Answer file format + INI parser        | ⭐   | `vfs_read`; `boot_info->cmdline`         |
-| 2    | Unattended install mode                | 💎   | §1; `D10T11` installer pipeline; `auth_create_user` |
-| 3    | `sysprep.exe` (generalize + SID clear) | 💎   | `auth_create_user` (`D10T06`); `csprng_fill` for SID |
-| 4    | OEM customization (`$OEM$` layout)     | ⭐   | §1 answer file; `ipkg_create.exe` (D12T06 §1) |
-| 5    | WIM / image capture (`imagex.exe`)     | 💎   | `vfs_readdir` full tree; `monocypher` SHA-1 for single-instancing |
-| 6    | Network boot (PXE + TFTP server)       | 💎   | §2 unattended; UDP sockets; DHCP proxy   |
-| 7    | VM provisioning templates              | ⭐   | §2 unattended; release ISO (TODO-01 §4)  |
-| 8    | Enterprise deployment guide            | ⭐   | §1–§7 all done                           |
+| ---- | -------------------------------------- | ----- | ---------------------------------------- |
+| 1    | Answer file format + INI parser        | ⭐    | `vfs_read`; `boot_info->cmdline`         |
+| 2    | Unattended install mode                | 💎    | §1; `D10T11` installer pipeline; `auth_create_user` |
+| 3    | `sysprep.exe` (generalize + SID clear) | 💎    | `auth_create_user` (`D10T06`); `csprng_fill` for SID |
+| 4    | OEM customization (`$OEM$` layout)     | ⭐    | §1 answer file; `ipkg_create.exe` (D12T06 §1) |
+| 5    | WIM / image capture (`imagex.exe`)     | 💎    | `vfs_readdir` full tree; `monocypher` SHA-1 for single-instancing |
+| 6    | Network boot (PXE + TFTP server)       | 💎    | §2 unattended; UDP sockets; DHCP proxy   |
+| 7    | VM provisioning templates              | ⭐    | §2 unattended; release ISO (TODO-01 §4)  |
+| 8    | Enterprise deployment guide            | ⭐    | §1–§7 all done                           |
 
 ---
 

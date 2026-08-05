@@ -37,11 +37,11 @@ title: "TODO-11 -- Remote Syslog Forwarding (RFC 5424)"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                              | Depends On | Status |
+| ⭐  | Order | Deliverable                              | Depends On | Status |
 | --- | :---: | ---------------------------------------- | ---------- | :----: |
-| 💎   |   1   | RFC 5424 packet formatter and UDP sender | --         |  [ ]   |
-| 💎   |   2   | Registry-gated syslog init in klog_disk_enable | §1         |  [ ]   |
-| 💎   |   3   | Network-down resilience and queue drain  | §2         |  [ ]   |
+| 💎  |   1   | RFC 5424 packet formatter and UDP sender | --         |  [ ]   |
+| 💎  |   2   | Registry-gated syslog init in klog_disk_enable | §1         |  [ ]   |
+| 💎  |   3   | Network-down resilience and queue drain  | §2         |  [ ]   |
 
 ---
 
@@ -75,11 +75,11 @@ title: "TODO-11 -- Remote Syslog Forwarding (RFC 5424)"
 
 ## OS Comparison
 
-| ⭐   | Feature         | 🪟 Win11        | 🐧 Linux            | 🚀 Impossible OS                |
-| --- | --------------- | -------------- | ------------------ | ------------------------------ |
-| 💎   | Remote syslog   | ✅ WEF          | ✅ rsyslog/journald | ⬜ §1–§2                        |
-| 💎   | RFC 5424 format | ⚠️ Custom ETW  | ✅ rsyslog          | ⬜ §1                           |
-| ⭐   | Registry-gated  | ❌ Group Policy | ✅ Config file      | ⬜ §2 -- zero config by default |
+| ⭐  | Feature         | 🪟 Win11        | 🐧 Linux            | 🚀 Impossible OS                |
+| --- | --------------- | --------------- | ------------------- | ------------------------------- |
+| 💎  | Remote syslog   | ✅ WEF          | ✅ rsyslog/journald | ⬜ §1–§2                        |
+| 💎  | RFC 5424 format | ⚠️ Custom ETW    | ✅ rsyslog          | ⬜ §1                           |
+| ⭐  | Registry-gated  | ❌ Group Policy | ✅ Config file      | ⬜ §2 -- zero config by default |
 
 ---
 

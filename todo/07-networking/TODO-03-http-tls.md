@@ -198,16 +198,16 @@ Pool of 8 connections per host (`host:port` key). Reuse existing TCP (or TLS) co
 ## OS Comparison
 
 
-| ⭐   | Feature                                  | 🪟 Win11                                  | 🐧 Linux                                  | 🚀 Impossible OS                          |
+| ⭐  | Feature                                  | 🪟 Win11                                 | 🐧 Linux                                 | 🚀 Impossible OS                         |
 | --- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
-| 💎   | URL parser                               | ✅ `wininet.dll` `InternetCrackUrl()`; heap-based | ✅ glibc `getaddrinfo()`; various userspace URL | ⬜ §1 -- stack-only in-place parse; kernel-native; no |
-| 💎   | HTTP GET                                 | ✅ `winhttp.dll` `WinHttpSendRequest()`; full redirect follow | ✅ `libcurl`/`wget`/glibc; kernel HTTP via eBPF | ⬜ §2 -- kernel-native `http_get()`; no userspace DLL |
-| 💎   | HTTP POST + chunked transfer decoder     | ✅ `winhttp.dll` `WinHttpWriteData()`; chunked handled transparently | ✅ `libcurl` chunked support              | ⬜ §3 -- hex-chunk state machine; chunk-boundary-safe across |
-| ⭐   | `wget` + `curl` built-in with progress bar | ✅ `curl.exe` bundled since Win10 21H1    | ✅ `wget` + `curl` as standard            | ⬜ §4 -- `⭐` both built into the          |
-| ⭐   | Mbed TLS as freestanding kernel static library | ✅ `schannel.dll` (kernel TLS in `ncrypt.sys` | ✅ kernel TLS via `ktls` +                | ⬜ §5 -- `⭐` single self-contained kernel library |
-| 💎   | CA cert store                            | ✅ Windows Certificate Store (`certmgr`); Mozilla | ✅ `/etc/ssl/certs/`; `update-ca-certificates`; `x509_verify_cert()` | ⬜ §6 -- 130 Mozilla root CAs at          |
-| 💎   | HTTPS GET/POST                           | ✅ `WinHttpSendRequest()` with TLS via SChannel; | ✅ `libcurl`/`wget` with OpenSSL; TLS 1.3 | ⬜ §7 -- Mbed TLS handshake; SNI; CN/SAN  |
-| 💎   | HTTP/1.1 keep-alive pool                 | ✅ `WinHTTP` session-level connection pooling; transparent | ✅ `libcurl` multi-handle persistent connections; kernel | ⬜ §8 -- kernel-native pool shared by `http_get`+`https_get` |
+| 💎  | URL parser                               | ✅ `wininet.dll` `InternetCrackUrl()`; heap-based | ✅ glibc `getaddrinfo()`; various userspace URL | ⬜ §1 -- stack-only in-place parse; kernel-native; no |
+| 💎  | HTTP GET                                 | ✅ `winhttp.dll` `WinHttpSendRequest()`; full redirect follow | ✅ `libcurl`/`wget`/glibc; kernel HTTP via eBPF | ⬜ §2 -- kernel-native `http_get()`; no userspace DLL |
+| 💎  | HTTP POST + chunked transfer decoder     | ✅ `winhttp.dll` `WinHttpWriteData()`; chunked handled transparently | ✅ `libcurl` chunked support             | ⬜ §3 -- hex-chunk state machine; chunk-boundary-safe across |
+| ⭐  | `wget` + `curl` built-in with progress bar | ✅ `curl.exe` bundled since Win10 21H1   | ✅ `wget` + `curl` as standard           | ⬜ §4 -- `⭐` both built into the        |
+| ⭐  | Mbed TLS as freestanding kernel static library | ✅ `schannel.dll` (kernel TLS in `ncrypt.sys` | ✅ kernel TLS via `ktls` +               | ⬜ §5 -- `⭐` single self-contained kernel library |
+| 💎  | CA cert store                            | ✅ Windows Certificate Store (`certmgr`); Mozilla | ✅ `/etc/ssl/certs/`; `update-ca-certificates`; `x509_verify_cert()` | ⬜ §6 -- 130 Mozilla root CAs at         |
+| 💎  | HTTPS GET/POST                           | ✅ `WinHttpSendRequest()` with TLS via SChannel; | ✅ `libcurl`/`wget` with OpenSSL; TLS 1.3 | ⬜ §7 -- Mbed TLS handshake; SNI; CN/SAN |
+| 💎  | HTTP/1.1 keep-alive pool                 | ✅ `WinHTTP` session-level connection pooling; transparent | ✅ `libcurl` multi-handle persistent connections; kernel | ⬜ §8 -- kernel-native pool shared by `http_get`+`https_get` |
 
 > **After §1–§8:** Impossible OS has a fully self-contained, kernel-native HTTP/HTTPS client with zero userspace library dependencies. The combination of `wget` + `curl` built into the base OS (`⭐`), Mbed TLS as a freestanding kernel library (`⭐`), and the in-kernel connection pool positions the networking stack to directly support a browser, package manager, and OS update service without any additional runtime libraries.
 

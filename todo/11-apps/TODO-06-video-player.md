@@ -47,15 +47,15 @@ title: "TODO-06 -- Video Player"
 ## Implementation Order
 
 | Step | Section                    | 💎/⭐ | Dependency                               |
-| ---- | -------------------------- | --- | ---------------------------------------- |
-| 1    | pl_mpeg Integration        | 💎   | VFS file I/O                             |
-| 2    | YCbCr → RGB Conversion     | 💎   | §1 `plm_frame_t` output                  |
-| 3    | A/V Sync Engine            | 💎   | §1 `plm_samples_t`, `audio_mixer` TODO-01 §2 |
-| 4    | Player UI                  | 💎   | §2 page surface, §3 timing, controls.h, wm.h |
-| 5    | File Operations            | 💎   | §4 app exists, `file_assoc_set`          |
-| 6    | Playlist                   | ⭐   | §4 + §5 complete                         |
-| 7    | Subtitle Support (Stretch) | ⭐   | §4 stable, `ttf_draw_string`             |
-| 8    | Format Support Roadmap     | ⭐   | §1 MPEG-1 proven                         |
+| ---- | -------------------------- | ----- | ---------------------------------------- |
+| 1    | pl_mpeg Integration        | 💎    | VFS file I/O                             |
+| 2    | YCbCr → RGB Conversion     | 💎    | §1 `plm_frame_t` output                  |
+| 3    | A/V Sync Engine            | 💎    | §1 `plm_samples_t`, `audio_mixer` TODO-01 §2 |
+| 4    | Player UI                  | 💎    | §2 page surface, §3 timing, controls.h, wm.h |
+| 5    | File Operations            | 💎    | §4 app exists, `file_assoc_set`          |
+| 6    | Playlist                   | ⭐    | §4 + §5 complete                         |
+| 7    | Subtitle Support (Stretch) | ⭐    | §4 stable, `ttf_draw_string`             |
+| 8    | Format Support Roadmap     | ⭐    | §1 MPEG-1 proven                         |
 
 ---
 
@@ -249,17 +249,17 @@ title: "TODO-06 -- Video Player"
 ## OS Comparison
 
 
-| ⭐   | Feature                                  | 🪟 Win11                   | 🐧 Linux              | 🚀 Impossible OS                          |
-| --- | ---------------------------------------- | ------------------------- | -------------------- | ---------------------------------------- |
-| 💎   | MPEG-1 video decode                      | ✅ Windows Media Player    | ✅ VLC / mpv          | ⬜ §1 -- pl_mpeg single-header port       |
-| 💎   | YCbCr → RGB                              | ✅ WMP (GPU)               | ✅ VLC (libyuv)       | ⬜ §2 -- SSE2 4-pixel-at-a-time           |
-| 💎   | A/V synchronisation + drift correction   | ✅ WMP                     | ✅ mpv (audio-driven) | ⬜ §3 -- 3-frame ring buffer, ±200 ms     |
-| 💎   | Seek bar + time display + volume         | ✅ WMP                     | ✅ VLC                | ⬜ §4 -- CTRL_SCROLLBAR seek, OSD         |
-| ⭐   | Fullscreen with 3 s auto-hiding controls | ✅ WMP / films app         | ✅ VLC / mpv          | ⬜ §4 -- `wm_set_fullscreen`, hide_timer_ms |
-| 💎   | Playlist with loop + shuffle             | ✅ WMP                     | ✅ VLC                | ⬜ §6 -- CTRL_LISTVIEW sidebar, Fisher-Yates shuffle |
-| ⭐   | SRT subtitle overlay with TTF text       | ✅ WMP (limited) / films ✅ | ✅ VLC (built-in)     | ⬜ §7 -- (Stretch) -- ; `ttf_draw_string` + |
-| 💎   | File associations                        | ✅ WMP default             | ✅ `xdg-open`         | ⬜ §5 -- `file_assoc_set`                 |
-| 💎   | H.264 / MP4 support                      | ✅ WMP / HEVC codec        | ✅ VLC / mpv          | ⬜ §8 -- (Phase 2) -- ; h264bsd           |
+| ⭐  | Feature                                  | 🪟 Win11                    | 🐧 Linux              | 🚀 Impossible OS                         |
+| --- | ---------------------------------------- | --------------------------- | --------------------- | ---------------------------------------- |
+| 💎  | MPEG-1 video decode                      | ✅ Windows Media Player     | ✅ VLC / mpv          | ⬜ §1 -- pl_mpeg single-header port      |
+| 💎  | YCbCr → RGB                              | ✅ WMP (GPU)                | ✅ VLC (libyuv)       | ⬜ §2 -- SSE2 4-pixel-at-a-time          |
+| 💎  | A/V synchronisation + drift correction   | ✅ WMP                      | ✅ mpv (audio-driven) | ⬜ §3 -- 3-frame ring buffer, ±200 ms    |
+| 💎  | Seek bar + time display + volume         | ✅ WMP                      | ✅ VLC                | ⬜ §4 -- CTRL_SCROLLBAR seek, OSD        |
+| ⭐  | Fullscreen with 3 s auto-hiding controls | ✅ WMP / films app          | ✅ VLC / mpv          | ⬜ §4 -- `wm_set_fullscreen`, hide_timer_ms |
+| 💎  | Playlist with loop + shuffle             | ✅ WMP                      | ✅ VLC                | ⬜ §6 -- CTRL_LISTVIEW sidebar, Fisher-Yates shuffle |
+| ⭐  | SRT subtitle overlay with TTF text       | ✅ WMP (limited) / films ✅ | ✅ VLC (built-in)     | ⬜ §7 -- (Stretch) -- ; `ttf_draw_string` + |
+| 💎  | File associations                        | ✅ WMP default              | ✅ `xdg-open`         | ⬜ §5 -- `file_assoc_set`                |
+| 💎  | H.264 / MP4 support                      | ✅ WMP / HEVC codec         | ✅ VLC / mpv          | ⬜ §8 -- (Phase 2) -- ; h264bsd          |
 
 Impossible OS ships a fully native, zero-dependency video player backed by a public-domain
 single-header codec -- no COM, no DirectShow, no GStreamer pipeline. The SSE2 YCbCr converter

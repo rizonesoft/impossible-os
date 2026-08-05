@@ -38,15 +38,15 @@ title: "TODO-20 -- Zero-Delay USB Boot (Pre-ExitBootServices Driver Loading)"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                              | Depends On | Status |
+| ⭐  | Order | Deliverable                              | Depends On | Status |
 | --- | :---: | ---------------------------------------- | ---------- | :----: |
-| ⭐   |   1   | Bootloader allocates xHCI DMA structures | --         |  [/]   |
-| ⭐   |   2   | Bootloader performs USBLEGSUP + controller takeover | §1         |  [/]   |
-| ⭐   |   3   | Bootloader enumerates devices with persistent state | §2         |  [/]   |
-| ⭐   |   4   | boot_info passes controller + device DMA state | §3, T01 §4 |  [/]   |
-| ⭐   |   5   | Kernel inherits controller DMA (partial; full zero-delay needs §3) | §1, §2     |  [/]   |
-| ⭐   |   6   | Kernel registers MSC devices from boot_info geometry | §5         |  [/]   |
-| 💎   |   7   | Fallback: detect corrupt state, revert to §1-§4 path | §5         |  [/]   |
+| ⭐  |   1   | Bootloader allocates xHCI DMA structures | --         |  [/]   |
+| ⭐  |   2   | Bootloader performs USBLEGSUP + controller takeover | §1         |  [/]   |
+| ⭐  |   3   | Bootloader enumerates devices with persistent state | §2         |  [/]   |
+| ⭐  |   4   | boot_info passes controller + device DMA state | §3, T01 §4 |  [/]   |
+| ⭐  |   5   | Kernel inherits controller DMA (partial; full zero-delay needs §3) | §1, §2     |  [/]   |
+| ⭐  |   6   | Kernel registers MSC devices from boot_info geometry | §5         |  [/]   |
+| 💎  |   7   | Fallback: detect corrupt state, revert to §1-§4 path | §5         |  [/]   |
 
 > All ⭐ rows -- this is a competitive advantage over Linux (which always re-enumerates after kexec/boot). Windows does this via winload.efi but it's invisible to users. Making it visible in boot timing would be a first.
 
@@ -286,15 +286,15 @@ If any handover validation fails, transparently fall back to the proven halt/res
 
 ## OS Comparison
 
-| ⭐   | Feature             | 🪟 Win11         | 🐧 Linux        | 🚀 Impossible OS                  |
-| --- | ------------------- | --------------- | -------------- | -------------------------------- |
-| ⭐   | Pre-boot USB driver | ✅ winload.efi   | ❌ Post-boot    | 🔄 §1-§2 DMA only                 |
-| ⭐   | Zero-delay handover | ✅ Seamless      | ❌ Halt/reset   | 🔄 §5 partial (500ms+enum remain) |
-| ⭐   | Persistent DMA      | ✅ Kernel memory | ❌ Reallocates  | ✅ §1 EfiLoaderData               |
-| 💎   | USBLEGSUP handoff   | ✅ Automatic     | ✅ xhci-pci.c   | ✅ §2 done                        |
-| ⭐   | Boot USB timing VPD | ❌ Not exposed   | ❌ Not exposed  | ⬜ TODO-17 planned                |
-| 💎   | Handover fallback   | ✅ Automatic     | ✅ Always fresh | ⬜ §7 planned                     |
-| ⭐   | Handover + EHCI     | ✅ usbehci.sys   | ❌ Always reset | ⬜ xHCI-only; EHCI -> T19 §11     |
+| ⭐  | Feature             | 🪟 Win11         | 🐧 Linux        | 🚀 Impossible OS                  |
+| --- | ------------------- | ---------------- | --------------- | --------------------------------- |
+| ⭐  | Pre-boot USB driver | ✅ winload.efi   | ❌ Post-boot    | 🔄 §1-§2 DMA only                 |
+| ⭐  | Zero-delay handover | ✅ Seamless      | ❌ Halt/reset   | 🔄 §5 partial (500ms+enum remain) |
+| ⭐  | Persistent DMA      | ✅ Kernel memory | ❌ Reallocates  | ✅ §1 EfiLoaderData               |
+| 💎  | USBLEGSUP handoff   | ✅ Automatic     | ✅ xhci-pci.c   | ✅ §2 done                        |
+| ⭐  | Boot USB timing VPD | ❌ Not exposed   | ❌ Not exposed  | ⬜ TODO-17 planned                |
+| 💎  | Handover fallback   | ✅ Automatic     | ✅ Always fresh | ⬜ §7 planned                     |
+| ⭐  | Handover + EHCI     | ✅ usbehci.sys   | ❌ Always reset | ⬜ xHCI-only; EHCI -> T19 §11     |
 
 > §1-§2 + §5 DMA-inherit foundation shipped; full Windows-parity zero-delay still needs §3-§6 (bootloader enumeration + the §4 boot_info DMA-payload ABI). VPD timing visibility would be a competitive first.
 

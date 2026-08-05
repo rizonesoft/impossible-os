@@ -49,36 +49,36 @@ title: "TODO-11 -- PEB / TEB & User-Mode ABI"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                              | Depends On         | Status |
+| ⭐  | Order | Deliverable                              | Depends On         | Status |
 | --- | :---: | ---------------------------------------- | ------------------ | :----: |
-| 💎   |   1   | TEB struct and GS self-pointer           | --                 |  [x]   |
-| 💎   |   2   | PEB struct and RTL_USER_PROCESS_PARAMETERS | --                 |  [/]   |
-| 💎   |   3   | swapgs on INT 0x80 entry and exit        | §1                 |  [x]   |
-| 💎   |   4   | KERNEL_GS_BASE written at task_exec / fork | §1, §3             |  [/]   |
-| 💎   |   5   | PEB allocation and population at task_exec | §2, §4             |  [/]   |
-| 💎   |   6   | TEB allocation and population at thread create | §1, §4             |  [/]   |
-| 💎   |   7   | Initial user stack frame (argv / envp / PEB) | §5, §6             |  [x]   |
-| 💎   |   8   | PEB Ldr (module list) basic population   | §5                 |  [/]   |
-| 💎   |   9   | TLS slot allocation (64 static slots)    | §6                 |  [/]   |
-| ⭐   |  10   | PEB / TEB exposed in Ob namespace        | §5, §6             |  [/]   |
-| 💎   |  11   | KUSER_SHARED_DATA -- kernel-user shared page | §5                 |  [/]   |
-| 💎   |  12   | TLS expansion slots (1024 dynamic slots) | §9                 |  [/]   |
-| 💎   |  13   | Extended auxiliary vector (AT_RANDOM + friends) | §7                 |  [/]   |
-| 💎   |  14   | User-mode thread bootstrap (uthread_create) | §6, T01§12, T12§11 |  [/]   |
-| 💎   |  15   | Per-thread TEB allocation at uthread_create() | §6, §12, §14       |  [/]   |
-| 💎   |  16   | TEB multi-page mapping + user-VA non-overlap | §1, §6, §15, §19   |  [/]   |
-| 💎   |  17   | PEB x64 version-field offsets (0x118/0x120) | §2, §5             |  [/]   |
-| 💎   |  18   | Paranoid swapgs entry for NMI/#DF/#MCE   | §3, T01            |  [/]   |
-| 💎   |  19   | exec/fork/switch GS-base staging + cost  | §4, §5, §6         |  [/]   |
-| 💎   |  20   | PEB alloc robustness + Win32 ABI handoff | §5, §7             |  [/]   |
-| 💎   |  21   | Format-specific user startup frame + env unify | §7, §5             |  [/]   |
-| 💎   |  22   | PEB Ldr module identity (DllBase/size/name) | §8, §5             |  [/]   |
-| 💎   |  23   | Per-thread TLS value storage (static+expansion) | §9, §12, §16       |  [/]   |
-| ⭐   |  24   | Safe PEB/TEB Ob-namespace wrappers + lifecycle | §10                |  [/]   |
-| 💎   |  25   | TLS expansion mapping safety + alloc race | §12, §16           |  [/]   |
-| 💎   |  26   | auxv hardening: classified AT_RANDOM + AT_PHDR | §13                |  [/]   |
-| 💎   |  27   | uthread_create robustness (guard/tid/stack) | §14, §16           |  [/]   |
-| 💎   |  28   | Intermittent TEB-without-kernel_gs_base halt | §1, §4             |  [ ]   |
+| 💎  |   1   | TEB struct and GS self-pointer           | --                 |  [x]   |
+| 💎  |   2   | PEB struct and RTL_USER_PROCESS_PARAMETERS | --                 |  [/]   |
+| 💎  |   3   | swapgs on INT 0x80 entry and exit        | §1                 |  [x]   |
+| 💎  |   4   | KERNEL_GS_BASE written at task_exec / fork | §1, §3             |  [/]   |
+| 💎  |   5   | PEB allocation and population at task_exec | §2, §4             |  [/]   |
+| 💎  |   6   | TEB allocation and population at thread create | §1, §4             |  [/]   |
+| 💎  |   7   | Initial user stack frame (argv / envp / PEB) | §5, §6             |  [x]   |
+| 💎  |   8   | PEB Ldr (module list) basic population   | §5                 |  [/]   |
+| 💎  |   9   | TLS slot allocation (64 static slots)    | §6                 |  [/]   |
+| ⭐  |  10   | PEB / TEB exposed in Ob namespace        | §5, §6             |  [/]   |
+| 💎  |  11   | KUSER_SHARED_DATA -- kernel-user shared page | §5                 |  [/]   |
+| 💎  |  12   | TLS expansion slots (1024 dynamic slots) | §9                 |  [/]   |
+| 💎  |  13   | Extended auxiliary vector (AT_RANDOM + friends) | §7                 |  [/]   |
+| 💎  |  14   | User-mode thread bootstrap (uthread_create) | §6, T01§12, T12§11 |  [/]   |
+| 💎  |  15   | Per-thread TEB allocation at uthread_create() | §6, §12, §14       |  [/]   |
+| 💎  |  16   | TEB multi-page mapping + user-VA non-overlap | §1, §6, §15, §19   |  [/]   |
+| 💎  |  17   | PEB x64 version-field offsets (0x118/0x120) | §2, §5             |  [/]   |
+| 💎  |  18   | Paranoid swapgs entry for NMI/#DF/#MCE   | §3, T01            |  [/]   |
+| 💎  |  19   | exec/fork/switch GS-base staging + cost  | §4, §5, §6         |  [/]   |
+| 💎  |  20   | PEB alloc robustness + Win32 ABI handoff | §5, §7             |  [/]   |
+| 💎  |  21   | Format-specific user startup frame + env unify | §7, §5             |  [/]   |
+| 💎  |  22   | PEB Ldr module identity (DllBase/size/name) | §8, §5             |  [/]   |
+| 💎  |  23   | Per-thread TLS value storage (static+expansion) | §9, §12, §16       |  [/]   |
+| ⭐  |  24   | Safe PEB/TEB Ob-namespace wrappers + lifecycle | §10                |  [/]   |
+| 💎  |  25   | TLS expansion mapping safety + alloc race | §12, §16           |  [/]   |
+| 💎  |  26   | auxv hardening: classified AT_RANDOM + AT_PHDR | §13                |  [/]   |
+| 💎  |  27   | uthread_create robustness (guard/tid/stack) | §14, §16           |  [/]   |
+| 💎  |  28   | Intermittent TEB-without-kernel_gs_base halt | §1, §4             |  [ ]   |
 
 > 💎 = parity -- Windows NT / 11 and ntdll both require and implement all of these.
 > ⭐ = exclusive -- exposing PEB and TEB as queryable named Ob objects enables user-mode introspection tools and debuggers without any kernel patching; Windows hides these as private loader internals.
@@ -713,25 +713,25 @@ A 2-CPU `SUITE=exec` run halted at the FIRST user-mode binary with `[CRIT] sched
 
 ## OS Comparison
 
-| ⭐   | Feature                     | 🪟 Win11                   | 🐧 Linux                 | 🚀 Impossible OS                   |
-| --- | --------------------------- | ------------------------- | ----------------------- | --------------------------------- |
-| 💎   | Per-process env block       | ✅ PEB at gs:[0x60]        | ❌ argv/envp on stack    | ✅ §2+§5 PEB allocated             |
-| 💎   | Per-thread block (TEB)      | ✅ TEB at gs:[0x30]        | ⚠️ glibc pthread TLS    | ⚠️ §1+§6 task-level (-> §15)      |
-| 💎   | swapgs kernel entry/exit    | ✅ KiSystemCall64          | ✅ entry.S swapgs        | ✅ §3+§4 swapgs+MSR                |
-| 💎   | LastError per-thread        | ✅ TEB offset 0x68         | ⚠️ errno per-thread     | ⚠️ §6 task-level (-> §15)         |
-| 💎   | TLS static slots (64)       | ✅ TEB offset 0x1480       | ✅ pthread + FS-base     | ✅ §9 bitmap alloc                 |
-| 💎   | Process parameters          | ✅ cmdline, env, handles   | ❌ stack + /proc         | ✅ §5 RTLPP populated              |
-| 💎   | Ldr module list             | ✅ PEB->Ldr linked list    | ❌ ld-linux link map     | ✅ §8 main module                  |
-| 💎   | Initial stack frame         | ✅ RCX=PEB (Win64)         | ✅ ELF ABI layout        | ✅ §7 argc/argv/auxv               |
-| ⭐   | PEB/TEB in Ob namespace     | ❌ Private internal        | ❌ Not exposed           | ✅ §10 public API                  |
-| ⭐   | Win11 version in PEB        | ✅ Internal only           | ❌ N/A                   | ✅ §5 10.0.22621                   |
-| 💎   | KUSER_SHARED_DATA page      | ✅ 0x7FFE0000 read-only    | ✅ vDSO equivalent       | [/] §11 time core; policy pending |
-| 💎   | TLS expansion (1024 slots)  | ✅ TlsExpansionSlots       | ✅ pthread TLS unlimited | ✅ §12 1024 slots                  |
-| 💎   | AT_RANDOM stack canary      | ⚠️ PEB Cookie (different) | ✅ auxv AT_RANDOM        | ✅ §13 RDRAND+TSC fb               |
-| 💎   | AT_PHDR/AT_PHNUM auxv       | ❌ PE, not ELF             | ✅ auxv standard         | ✅ §13 shared parser               |
-| 💎   | CPU feature auxv (AT_HWCAP) | ⚠️ ProcessorFeatures[]    | ✅ AT_HWCAP/AT_HWCAP2    | ✅ §13 raw CPUID 1 EDX             |
-| 💎   | Real user threads (ring 3)  | ✅ NtCreateThread ring 3   | ✅ clone() ring 3        | ✅ §14 uthread_create done         |
-| 💎   | Per-thread TEB / GS swap    | ✅ Per-thread TEB          | ✅ Per-thread FS_BASE    | ✅ §15 per-thread TEB+MSR          |
+| ⭐  | Feature                     | 🪟 Win11                 | 🐧 Linux                 | 🚀 Impossible OS                  |
+| --- | --------------------------- | ------------------------ | ------------------------ | --------------------------------- |
+| 💎  | Per-process env block       | ✅ PEB at gs:[0x60]      | ❌ argv/envp on stack    | ✅ §2+§5 PEB allocated            |
+| 💎  | Per-thread block (TEB)      | ✅ TEB at gs:[0x30]      | ⚠️ glibc pthread TLS      | ⚠️ §1+§6 task-level (-> §15)       |
+| 💎  | swapgs kernel entry/exit    | ✅ KiSystemCall64        | ✅ entry.S swapgs        | ✅ §3+§4 swapgs+MSR               |
+| 💎  | LastError per-thread        | ✅ TEB offset 0x68       | ⚠️ errno per-thread       | ⚠️ §6 task-level (-> §15)          |
+| 💎  | TLS static slots (64)       | ✅ TEB offset 0x1480     | ✅ pthread + FS-base     | ✅ §9 bitmap alloc                |
+| 💎  | Process parameters          | ✅ cmdline, env, handles | ❌ stack + /proc         | ✅ §5 RTLPP populated             |
+| 💎  | Ldr module list             | ✅ PEB->Ldr linked list  | ❌ ld-linux link map     | ✅ §8 main module                 |
+| 💎  | Initial stack frame         | ✅ RCX=PEB (Win64)       | ✅ ELF ABI layout        | ✅ §7 argc/argv/auxv              |
+| ⭐  | PEB/TEB in Ob namespace     | ❌ Private internal      | ❌ Not exposed           | ✅ §10 public API                 |
+| ⭐  | Win11 version in PEB        | ✅ Internal only         | ❌ N/A                   | ✅ §5 10.0.22621                  |
+| 💎  | KUSER_SHARED_DATA page      | ✅ 0x7FFE0000 read-only  | ✅ vDSO equivalent       | [/] §11 time core; policy pending |
+| 💎  | TLS expansion (1024 slots)  | ✅ TlsExpansionSlots     | ✅ pthread TLS unlimited | ✅ §12 1024 slots                 |
+| 💎  | AT_RANDOM stack canary      | ⚠️ PEB Cookie (different) | ✅ auxv AT_RANDOM        | ✅ §13 RDRAND+TSC fb              |
+| 💎  | AT_PHDR/AT_PHNUM auxv       | ❌ PE, not ELF           | ✅ auxv standard         | ✅ §13 shared parser              |
+| 💎  | CPU feature auxv (AT_HWCAP) | ⚠️ ProcessorFeatures[]    | ✅ AT_HWCAP/AT_HWCAP2    | ✅ §13 raw CPUID 1 EDX            |
+| 💎  | Real user threads (ring 3)  | ✅ NtCreateThread ring 3 | ✅ clone() ring 3        | ✅ §14 uthread_create done        |
+| 💎  | Per-thread TEB / GS swap    | ✅ Per-thread TEB        | ✅ Per-thread FS_BASE    | ✅ §15 per-thread TEB+MSR         |
 
 > **Current parity:** Impossible OS matches Windows NT on the core user-mode ABI contract for PEB/TEB, TLS, and user threads, with one remaining `KUSER_SHARED_DATA` policy-publication gap in §11. `NtCurrentTeb()`, `GetLastError()`, TLS slots, and PEB->ProcessParameters all work at correct GS offsets -- ntdll and Win32 DLLs initialise without patching.
 > **§10** goes beyond both Windows and Linux by making PEB and TEB first-class named objects in the Ob namespace.

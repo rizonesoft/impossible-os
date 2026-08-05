@@ -55,16 +55,16 @@ title: "TODO-04 -- Email Client"
 ## Implementation Order
 
 | Step | Section                               | 💎/⭐ | Dependency                             |
-| ---- | ------------------------------------- | --- | -------------------------------------- |
-| 1    | SMTP Client                           | 💎   | Mbed TLS TODO-03, DNS TODO-02          |
-| 2    | POP3 Client + Message Storage         | 💎   | §1 complete                            |
-| 3    | IMAP Client (Stretch)                 | 💎   | §1 complete, TLS                       |
-| 4    | Three-Panel Email GUI                 | 💎   | §2 complete, controls.h, wm.h          |
-| 5    | Compose Window                        | 💎   | §4 complete, §7 contacts               |
-| 6    | Account Management + Credential Store | ⭐   | CNG TODO-07 §1+§4, Registry            |
-| 7    | Auto-Check + Notifications + Tray     | ⭐   | §2 complete, TODO-04 §8, TODO-09 §5+§6 |
-| 8    | Contacts Store                        | 💎   | VFS, §5 compose window                 |
-| 9    | Spam & Junk Filter                    | ⭐   | §4 complete, Registry                  |
+| ---- | ------------------------------------- | ----- | -------------------------------------- |
+| 1    | SMTP Client                           | 💎    | Mbed TLS TODO-03, DNS TODO-02          |
+| 2    | POP3 Client + Message Storage         | 💎    | §1 complete                            |
+| 3    | IMAP Client (Stretch)                 | 💎    | §1 complete, TLS                       |
+| 4    | Three-Panel Email GUI                 | 💎    | §2 complete, controls.h, wm.h          |
+| 5    | Compose Window                        | 💎    | §4 complete, §7 contacts               |
+| 6    | Account Management + Credential Store | ⭐    | CNG TODO-07 §1+§4, Registry            |
+| 7    | Auto-Check + Notifications + Tray     | ⭐    | §2 complete, TODO-04 §8, TODO-09 §5+§6 |
+| 8    | Contacts Store                        | 💎    | VFS, §5 compose window                 |
+| 9    | Spam & Junk Filter                    | ⭐    | §4 complete, Registry                  |
 
 ---
 
@@ -233,17 +233,17 @@ Layout (fixed proportions): sidebar 200 px | message list 350 px | viewer fills 
 ## OS Comparison
 
 
-| ⭐   | Feature                                  | 🪟 Win11                              | 🐧 Linux                         | 🚀 Impossible OS                          |
-| --- | ---------------------------------------- | ------------------------------------ | ------------------------------- | ---------------------------------------- |
-| 💎   | SMTP + STARTTLS                          | ✅ Outlook / New Outlook              | ✅ Thunderbird / Evolution       | ⬜ §1 -- EHLO + STARTTLS + AUTH           |
-| 💎   | POP3 over TLS                            | ✅ Outlook                            | ✅ Thunderbird                   | ⬜ §2 -- USER/PASS/STAT/LIST/RETR/DELE    |
-| 💎   | IMAP + IDLE                              | ✅ Outlook (push via IDLE)            | ✅ Thunderbird / Mutt            | ⬜ §3 -- (Stretch) -- ; IDLE push         |
-| 💎   | Three-panel GUI                          | ✅ Outlook / New Outlook              | ✅ Thunderbird                   | ⬜ §4 -- IxUI CTRL_LISTVIEW, attachment icons |
-| 💎   | Compose with reply/forward/attach        | ✅ Outlook                            | ✅ Thunderbird                   | ⬜ §5 -- MIME multipart attach, auto-save draft |
-| ⭐   | Account passwords encrypted in Registry  | ✅ Windows Credential Manager (DPAPI) | ⚠️ Seahorse / plaintext configs | ⬜ §6 -- `cng_aes256gcm_encrypt` + login-derived KEK |
-| ⭐   | 5-min auto-check + toast + tray badge    | ✅ Outlook background service         | ✅ Thunderbird background agent  | ⬜ §7 -- `sched_task_add(300)`, `notify_send`, `tray_register` |
-| 💎   | Contacts book with To-field autocomplete | ✅ Outlook + People app               | ✅ Thunderbird address book      | ⬜ §8 -- CSV store, `contact_lookup()`, dropdown |
-| ⭐   | Built-in spam filter with trainable thresholds | ✅ Outlook (server-side, Junk filter) | ⚠️ SpamAssassin plugin needed   | ⬜ §9 -- keyword score + whitelist/blacklist, `[Mark |
+| ⭐  | Feature                                  | 🪟 Win11                              | 🐧 Linux                        | 🚀 Impossible OS                         |
+| --- | ---------------------------------------- | ------------------------------------- | ------------------------------- | ---------------------------------------- |
+| 💎  | SMTP + STARTTLS                          | ✅ Outlook / New Outlook              | ✅ Thunderbird / Evolution      | ⬜ §1 -- EHLO + STARTTLS + AUTH          |
+| 💎  | POP3 over TLS                            | ✅ Outlook                            | ✅ Thunderbird                  | ⬜ §2 -- USER/PASS/STAT/LIST/RETR/DELE   |
+| 💎  | IMAP + IDLE                              | ✅ Outlook (push via IDLE)            | ✅ Thunderbird / Mutt           | ⬜ §3 -- (Stretch) -- ; IDLE push        |
+| 💎  | Three-panel GUI                          | ✅ Outlook / New Outlook              | ✅ Thunderbird                  | ⬜ §4 -- IxUI CTRL_LISTVIEW, attachment icons |
+| 💎  | Compose with reply/forward/attach        | ✅ Outlook                            | ✅ Thunderbird                  | ⬜ §5 -- MIME multipart attach, auto-save draft |
+| ⭐  | Account passwords encrypted in Registry  | ✅ Windows Credential Manager (DPAPI) | ⚠️ Seahorse / plaintext configs  | ⬜ §6 -- `cng_aes256gcm_encrypt` + login-derived KEK |
+| ⭐  | 5-min auto-check + toast + tray badge    | ✅ Outlook background service         | ✅ Thunderbird background agent | ⬜ §7 -- `sched_task_add(300)`, `notify_send`, `tray_register` |
+| 💎  | Contacts book with To-field autocomplete | ✅ Outlook + People app               | ✅ Thunderbird address book     | ⬜ §8 -- CSV store, `contact_lookup()`, dropdown |
+| ⭐  | Built-in spam filter with trainable thresholds | ✅ Outlook (server-side, Junk filter) | ⚠️ SpamAssassin plugin needed    | ⬜ §9 -- keyword score + whitelist/blacklist, `[Mark |
 
 Impossible OS encrypts credentials natively in the Registry using the same CNG key store as the
 rest of the OS (no separate credential manager needed), and ships a built-in trainable spam filter

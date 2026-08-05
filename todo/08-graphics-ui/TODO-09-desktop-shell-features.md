@@ -225,16 +225,16 @@ Up to 8 desktops. `vdesk_create()`, `vdesk_destroy(idx)`, `vdesk_switch(idx)` (1
 ## OS Comparison
 
 
-| ⭐   | Feature              | 🪟 Win11                                  | 🐧 Linux                                  | 🚀 Impossible OS                          |
+| ⭐  | Feature              | 🪟 Win11                                 | 🐧 Linux                                 | 🚀 Impossible OS                         |
 | --- | -------------------- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
-| 💎   | Context menu engine  | ✅ Win32 `CreatePopupMenu`; WinUI3 `MenuFlyout`; Acrylic | ✅ GTK `GtkMenu`; Qt `QMenu`; cascading   | ⬜ §1 -- z_order=25000 overlay; 300 ms hover |
-| 💎   | Wallpaper engine     | ✅ `SystemParametersInfo(SPI_SETDESKWALLPAPER)`; fill/fit/stretch/tile/center | ✅ GNOME `gsettings org.gnome.desktop.background`; feh/nitrogen for | ⬜ §3 -- `image_scale(mode)` + `pmm_alloc_contiguous` cache; 5 |
-| 💎   | DPI scaling          | ✅ `SetProcessDpiAwareness`; `WM_DPICHANGED`; GDI/WinUI3 auto-scale | ✅ Wayland logical pixels; GDK `GDK_DPI_SCALE`; | ⬜ §4 -- single `g_dpi_pct` global; `DPI_SCALE(x)` applied |
-| 💎   | Screenshot           | ✅ PrintScreen to clipboard; Win+PrintScreen → | ✅ `scrot`/`gnome-screenshot`; KDE Spectacle; PrtSc to | ⬜ §5 -- `rtc_read()` timestamp filename; `image_save_png()` to |
-| 💎   | Night light          | ✅ Settings → System → Night              | ✅ `redshift`/`gammastep`; GNOME built-in night light; | ⬜ §6 -- integer `g_nl_g_scale/b_scale` per-pixel LUT in |
-| 💎   | Focus / DND          | ✅ Windows Focus Assist; priority-only; alarms-only; | ✅ GNOME DND (`org.gnome.desktop.notifications`); KDE DND | ⬜ §7 -- `FOCUS_OFF/PRIORITY/ALARMS` enum; compositor fullscreen detect |
-| 💎   | Quick settings panel | ✅ Win+A; Fluent slide-in panel; tiles    | ✅ GNOME quick settings (since 43);       | ⬜ §8 -- z_order=30000; acrylic; 6 tiles; sliders |
-| ⭐   | Virtual desktops     | ✅ Win+Ctrl+D/F4/←/→; Task View (Win+Tab); per-desktop | ✅ GNOME workspaces; KDE virtual desktops; | ⬜ §9 -- `⭐` fade composited in kernel    |
+| 💎  | Context menu engine  | ✅ Win32 `CreatePopupMenu`; WinUI3 `MenuFlyout`; Acrylic | ✅ GTK `GtkMenu`; Qt `QMenu`; cascading  | ⬜ §1 -- z_order=25000 overlay; 300 ms hover |
+| 💎  | Wallpaper engine     | ✅ `SystemParametersInfo(SPI_SETDESKWALLPAPER)`; fill/fit/stretch/tile/center | ✅ GNOME `gsettings org.gnome.desktop.background`; feh/nitrogen for | ⬜ §3 -- `image_scale(mode)` + `pmm_alloc_contiguous` cache; 5 |
+| 💎  | DPI scaling          | ✅ `SetProcessDpiAwareness`; `WM_DPICHANGED`; GDI/WinUI3 auto-scale | ✅ Wayland logical pixels; GDK `GDK_DPI_SCALE`; | ⬜ §4 -- single `g_dpi_pct` global; `DPI_SCALE(x)` applied |
+| 💎  | Screenshot           | ✅ PrintScreen to clipboard; Win+PrintScreen → | ✅ `scrot`/`gnome-screenshot`; KDE Spectacle; PrtSc to | ⬜ §5 -- `rtc_read()` timestamp filename; `image_save_png()` to |
+| 💎  | Night light          | ✅ Settings → System → Night             | ✅ `redshift`/`gammastep`; GNOME built-in night light; | ⬜ §6 -- integer `g_nl_g_scale/b_scale` per-pixel LUT in |
+| 💎  | Focus / DND          | ✅ Windows Focus Assist; priority-only; alarms-only; | ✅ GNOME DND (`org.gnome.desktop.notifications`); KDE DND | ⬜ §7 -- `FOCUS_OFF/PRIORITY/ALARMS` enum; compositor fullscreen detect |
+| 💎  | Quick settings panel | ✅ Win+A; Fluent slide-in panel; tiles   | ✅ GNOME quick settings (since 43);      | ⬜ §8 -- z_order=30000; acrylic; 6 tiles; sliders |
+| ⭐  | Virtual desktops     | ✅ Win+Ctrl+D/F4/←/→; Task View (Win+Tab); per-desktop | ✅ GNOME workspaces; KDE virtual desktops; | ⬜ §9 -- `⭐` fade composited in kernel  |
 
 > **After §1–§9:** Impossible OS matches Windows 11 on every desktop shell feature. The `⭐` virtual desktop fade is composited in the kernel's software renderer -- a single `gfx_fill_rect_alpha` pass over the already-composited frame buffer -- meaning the transition is frame-perfect with no GPU needed and no per-window alpha manipulation.
 

@@ -247,18 +247,18 @@ Control Panel Sound applet: master volume slider + mute + output device selector
 ## OS Comparison
 
 
-| ⭐   | Feature                                  | 🪟 Win11                                  | 🐧 Linux                                  | 🚀 Impossible OS                          |
+| ⭐  | Feature                                  | 🪟 Win11                                 | 🐧 Linux                                 | 🚀 Impossible OS                         |
 | --- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
-| 💎   | Audio abstraction layer -- driver-agnostic API | ✅ WDM kernel streaming; WASAPI; Core     | ✅ ALSA kernel API; PulseAudio/PipeWire userspace; | ⬜ §1 -- `struct audio_device` fn-ptr dispatch; `audio_play/stop/volume()` |
-| ⭐   | Audio mixer                              | ✅ KMixer (kernel); WASAPI exclusive/shared; HDA | ✅ PulseAudio/PipeWire: userspace daemon; ALSA dmix: | ⬜ §2 -- `⭐` INT32 accumulate + clamp     |
-| 💎   | WAV decoder                              | ✅ MFMediaSource; DirectShow; built-in WAV support | ✅ libsndfile; FFmpeg; GStreamer; ALSA `aplay` | ⬜ §3 -- `dr_wav.h` + `kmalloc/kfree` redirect; PMM |
-| 💎   | MP3 decoder -- `dr_mp3.h` + linear resampler | ✅ Media Foundation MP3 decoder; WMP;     | ✅ FFmpeg; mpg123; GStreamer bad plugins  | ⬜ §4 -- `dr_mp3.h`; linear interpolation resampler for |
-| 💎   | OGG Vorbis decoder -- `stb_vorbis`, PMM arena | ⚠️ No native OGG support; requires       | ✅ libvorbis; FFmpeg; GStreamer; native in | ⬜ §5 -- `stb_vorbis` PMM arena (`realloc`-free); `audio_load_ogg()` |
-| 💎   | FLAC decoder (stretch) -- `dr_flac.h` lossless | ⚠️ No native FLAC; requires Windows      | ✅ libFLAC; FFmpeg; GStreamer; native in  | ⬜ §6 -- (stretch) -- ; `dr_flac.h`; always |
-| ⭐   | Unified loader                           | ❌ No single API; requires per-format     | ⚠️ FFmpeg `avformat_open_input` is unified but | ⬜ §7 -- `⭐` single `audio_load(path)` → `audio_clip |
-| 💎   | Media player                             | ✅ Windows Media Player / Groove          | ✅ Rhythmbox; Banshee; Clementine; mpv; VLC; | ⬜ §8 -- `⭐` in-kernel ID3v2 parser (no   |
-| 💎   | Volume tray flyout -- slider, mute, keyboard OSD | ✅ System tray volume flyout; OSD         | ✅ PulseAudio / PipeWire tray icon        | ⬜ §9 -- in-kernel compositor OSD (no notify |
-| 💎   | Sound Control Panel (`mmsys.cpl`)        | ✅ Sound control panel; per-app volume    | ✅ PulseAudio Volume Control; PipeWire settings; | ⬜ §10 -- CPL applet (TODO-11 framework); `CTRL_DROPDOWN` |
+| 💎  | Audio abstraction layer -- driver-agnostic API | ✅ WDM kernel streaming; WASAPI; Core    | ✅ ALSA kernel API; PulseAudio/PipeWire userspace; | ⬜ §1 -- `struct audio_device` fn-ptr dispatch; `audio_play/stop/volume()` |
+| ⭐  | Audio mixer                              | ✅ KMixer (kernel); WASAPI exclusive/shared; HDA | ✅ PulseAudio/PipeWire: userspace daemon; ALSA dmix: | ⬜ §2 -- `⭐` INT32 accumulate + clamp   |
+| 💎  | WAV decoder                              | ✅ MFMediaSource; DirectShow; built-in WAV support | ✅ libsndfile; FFmpeg; GStreamer; ALSA `aplay` | ⬜ §3 -- `dr_wav.h` + `kmalloc/kfree` redirect; PMM |
+| 💎  | MP3 decoder -- `dr_mp3.h` + linear resampler | ✅ Media Foundation MP3 decoder; WMP;    | ✅ FFmpeg; mpg123; GStreamer bad plugins | ⬜ §4 -- `dr_mp3.h`; linear interpolation resampler for |
+| 💎  | OGG Vorbis decoder -- `stb_vorbis`, PMM arena | ⚠️ No native OGG support; requires        | ✅ libvorbis; FFmpeg; GStreamer; native in | ⬜ §5 -- `stb_vorbis` PMM arena (`realloc`-free); `audio_load_ogg()` |
+| 💎  | FLAC decoder (stretch) -- `dr_flac.h` lossless | ⚠️ No native FLAC; requires Windows       | ✅ libFLAC; FFmpeg; GStreamer; native in | ⬜ §6 -- (stretch) -- ; `dr_flac.h`; always |
+| ⭐  | Unified loader                           | ❌ No single API; requires per-format    | ⚠️ FFmpeg `avformat_open_input` is unified but | ⬜ §7 -- `⭐` single `audio_load(path)` → `audio_clip |
+| 💎  | Media player                             | ✅ Windows Media Player / Groove         | ✅ Rhythmbox; Banshee; Clementine; mpv; VLC; | ⬜ §8 -- `⭐` in-kernel ID3v2 parser (no |
+| 💎  | Volume tray flyout -- slider, mute, keyboard OSD | ✅ System tray volume flyout; OSD        | ✅ PulseAudio / PipeWire tray icon       | ⬜ §9 -- in-kernel compositor OSD (no notify |
+| 💎  | Sound Control Panel (`mmsys.cpl`)        | ✅ Sound control panel; per-app volume   | ✅ PulseAudio Volume Control; PipeWire settings; | ⬜ §10 -- CPL applet (TODO-11 framework); `CTRL_DROPDOWN` |
 
 > **After §1–§10:** Impossible OS has a self-contained in-kernel audio stack with no userspace daemon (unlike PulseAudio/PipeWire). The `⭐` advantages: the mixer runs INT32 accumulate + clamp directly in the DMA completion ISR (zero-copy, no scheduling latency); `audio_load()` is the only OS to provide a single in-kernel format-agnostic loader with no library dependencies; the volume OSD dismisses via a PIT-ticked scheduler task rather than a userspace notification daemon.
 

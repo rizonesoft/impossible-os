@@ -52,14 +52,14 @@ title: "TODO-10 -- WordPad (Rich Text Editor)"
 ## Implementation Order
 
 | Step | Section                             | 💎/⭐ | Dependency                               |
-| ---- | ----------------------------------- | --- | ---------------------------------------- |
-| 1    | Rich Text Document Model            | 💎   | `pmm_alloc_contiguous`, `kmalloc`        |
-| 2    | RTF File Format (Reader + Writer)   | 💎   | §1 document model                        |
-| 3    | Rich Text Rendering + Layout Engine | 💎   | §1 model, `ttf_measure_width`, `gfx_fill_rect` |
-| 4    | Toolbar + Menus                     | 💎   | §3 rendering, `CTRL_COMBOBOX`, `dialog_color` |
-| 5    | Formatting Interactions             | 💎   | §3 + §4 stable                           |
-| 6    | File Operations + File Associations | 💎   | §2 RTF reader/writer, `dialog_file_open/save`, `file_assoc_set` |
-| 7    | Print (Stretch)                     | 💎   | §3 layout, `pdf_begin/draw_text/end` D10T12 §8 |
+| ---- | ----------------------------------- | ----- | ---------------------------------------- |
+| 1    | Rich Text Document Model            | 💎    | `pmm_alloc_contiguous`, `kmalloc`        |
+| 2    | RTF File Format (Reader + Writer)   | 💎    | §1 document model                        |
+| 3    | Rich Text Rendering + Layout Engine | 💎    | §1 model, `ttf_measure_width`, `gfx_fill_rect` |
+| 4    | Toolbar + Menus                     | 💎    | §3 rendering, `CTRL_COMBOBOX`, `dialog_color` |
+| 5    | Formatting Interactions             | 💎    | §3 + §4 stable                           |
+| 6    | File Operations + File Associations | 💎    | §2 RTF reader/writer, `dialog_file_open/save`, `file_assoc_set` |
+| 7    | Print (Stretch)                     | 💎    | §3 layout, `pdf_begin/draw_text/end` D10T12 §8 |
 
 ---
 
@@ -220,17 +220,17 @@ title: "TODO-10 -- WordPad (Rich Text Editor)"
 ## OS Comparison
 
 
-| ⭐   | Feature                                  | 🪟 Win11                          | 🐧 Linux                                 | 🚀 Impossible OS                          |
-| --- | ---------------------------------------- | -------------------------------- | --------------------------------------- | ---------------------------------------- |
-| 💎   | Paragraph + run rich text document model | ✅ WordPad (internal; RTF-backed) | ✅ AbiWord / LibreOffice Writer          | ⬜ §1 -- doubly-linked para list, per-run char_fmt, |
-| 💎   | RTF 1.5 reader                           | ✅ WordPad (full RTF 1.5)         | ✅ AbiWord (RTF import)                  | ⬜ §2 -- stack-based control word parser, font |
-| 💎   | RTF writer                               | ✅ WordPad                        | ✅ AbiWord                               | ⬜ §2 -- minimal valid RTF emission       |
-| 💎   | Multi-run layout engine                  | ✅ WordPad (RichEdit control)     | ✅ GTK TextView / Pango                  | ⬜ §3 -- `ttf_measure_width` word-break, JUSTIFY, per-run baseline |
-| 💎   | Horizontal ruler with draggable indent + tab stops | ✅ WordPad                        | ✅ AbiWord                               | ⬜ §3 -- ruler strip, drag-update para_fmt, tab |
-| 💎   | Format toolbar                           | ✅ WordPad                        | ✅ AbiWord / LibreOffice                 | ⬜ §4 -- `CTRL_COMBOBOX` font/size, toggle buttons, `dialog_color` |
-| 💎   | Paragraph split/merge, Tab, Ctrl+B/I/U interactions | ✅ WordPad                        | ✅ AbiWord                               | ⬜ §5 -- run boundary split/merge, tab-stop advance |
-| 💎   | `.rtf` + `.doc` file associations        | ✅ WordPad (`.rtf` default)       | ⚠️ AbiWord (`.rtf`; no built-in `.doc`) | ⬜ §6 -- `file_assoc_set` for both        |
-| 💎   | Print preview + PDF export               | ✅ WordPad (Print dialog → PDF    | ✅ AbiWord (PDF via evince/cups)         | ⬜ §7 -- (Stretch) -- ; `pdf_begin/draw_text/end` TODO-12 |
+| ⭐  | Feature                                  | 🪟 Win11                          | 🐧 Linux                               | 🚀 Impossible OS                         |
+| --- | ---------------------------------------- | --------------------------------- | -------------------------------------- | ---------------------------------------- |
+| 💎  | Paragraph + run rich text document model | ✅ WordPad (internal; RTF-backed) | ✅ AbiWord / LibreOffice Writer        | ⬜ §1 -- doubly-linked para list, per-run char_fmt, |
+| 💎  | RTF 1.5 reader                           | ✅ WordPad (full RTF 1.5)         | ✅ AbiWord (RTF import)                | ⬜ §2 -- stack-based control word parser, font |
+| 💎  | RTF writer                               | ✅ WordPad                        | ✅ AbiWord                             | ⬜ §2 -- minimal valid RTF emission      |
+| 💎  | Multi-run layout engine                  | ✅ WordPad (RichEdit control)     | ✅ GTK TextView / Pango                | ⬜ §3 -- `ttf_measure_width` word-break, JUSTIFY, per-run baseline |
+| 💎  | Horizontal ruler with draggable indent + tab stops | ✅ WordPad                        | ✅ AbiWord                             | ⬜ §3 -- ruler strip, drag-update para_fmt, tab |
+| 💎  | Format toolbar                           | ✅ WordPad                        | ✅ AbiWord / LibreOffice               | ⬜ §4 -- `CTRL_COMBOBOX` font/size, toggle buttons, `dialog_color` |
+| 💎  | Paragraph split/merge, Tab, Ctrl+B/I/U interactions | ✅ WordPad                        | ✅ AbiWord                             | ⬜ §5 -- run boundary split/merge, tab-stop advance |
+| 💎  | `.rtf` + `.doc` file associations        | ✅ WordPad (`.rtf` default)       | ⚠️ AbiWord (`.rtf`; no built-in `.doc`) | ⬜ §6 -- `file_assoc_set` for both       |
+| 💎  | Print preview + PDF export               | ✅ WordPad (Print dialog → PDF    | ✅ AbiWord (PDF via evince/cups)       | ⬜ §7 -- (Stretch) -- ; `pdf_begin/draw_text/end` TODO-12 |
 
 Impossible OS WordPad uses the same native TTF stack as every other desktop component --
 no RichEdit COM object, no GTK, no external layout engine -- giving consistent glyph metrics

@@ -48,24 +48,24 @@ title: "TODO-01 -- VMM Memory Protection & Diagnostics"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                              | Depends On                               | Status |
+| ⭐  | Order | Deliverable                              | Depends On                               | Status |
 | --- | :---: | ---------------------------------------- | ---------------------------------------- | :----: |
-| 💎   |   1   | `mprotect` / `NtProtectVirtualMemory` + guard pages | 01-boot-platform/TODO-09-cpu-boot-sequencing.md §2, D02 T11 §7 |  [ ]   |
-| 💎   |   2   | W^X enforcement in VMM                   | §1                                       |  [ ]   |
-| 💎   |   3   | Demand paging -- MEM_RESERVE / MEM_COMMIT | §1                                       |  [ ]   |
-| 💎   |   4   | `NtQueryVirtualMemory` -- `MEMORY_BASIC_INFORMATION` | §1, §2, §3                               |  [ ]   |
-| 💎   |   5   | `VirtualAlloc` / `VirtualFree` / `VirtualProtect` wrappers | §3, §4                                   |  [ ]   |
-| ⭐   |   6   | kmalloc size audit -- migrate oversized call-sites | --                                       |  [ ]   |
-| ⭐   |   7   | Build-time kmalloc lint                  | §6                                       |  [ ]   |
-| 💎   |   8   | PMM statistics -- `mm_stats_t` + `meminfo` | --                                       |  [ ]   |
-| 💎   |   9   | Heap canaries + double-free detection    | --                                       |  [ ]   |
-| 💎   |  10   | Kernel memory leak detector              | §9                                       |  [ ]   |
-| 💎   |  11   | MMIO mapping with UC attributes + HPET validation | --                                       |  [ ]   |
-| 💎   |  12   | Per-process user page mapping (`vmm_map_user_page`) | --                                       |  [/]   |
-| 💎   |  13   | Auto-growing user stacks                 | §1                                       |  [ ]   |
-| 💎   |  14   | NtLockVirtualMemory / mlock -- pin pages in RAM | §3                                       |  [ ]   |
-| 💎   |  15   | Commit charge tracking + enforcement     | §3                                       |  [ ]   |
-| 💎   |  16   | Process memory counters (`GetProcessMemoryInfo`) | §8                                       |  [ ]   |
+| 💎  |   1   | `mprotect` / `NtProtectVirtualMemory` + guard pages | 01-boot-platform/TODO-09-cpu-boot-sequencing.md §2, D02 T11 §7 |  [ ]   |
+| 💎  |   2   | W^X enforcement in VMM                   | §1                                       |  [ ]   |
+| 💎  |   3   | Demand paging -- MEM_RESERVE / MEM_COMMIT | §1                                       |  [ ]   |
+| 💎  |   4   | `NtQueryVirtualMemory` -- `MEMORY_BASIC_INFORMATION` | §1, §2, §3                               |  [ ]   |
+| 💎  |   5   | `VirtualAlloc` / `VirtualFree` / `VirtualProtect` wrappers | §3, §4                                   |  [ ]   |
+| ⭐  |   6   | kmalloc size audit -- migrate oversized call-sites | --                                       |  [ ]   |
+| ⭐  |   7   | Build-time kmalloc lint                  | §6                                       |  [ ]   |
+| 💎  |   8   | PMM statistics -- `mm_stats_t` + `meminfo` | --                                       |  [ ]   |
+| 💎  |   9   | Heap canaries + double-free detection    | --                                       |  [ ]   |
+| 💎  |  10   | Kernel memory leak detector              | §9                                       |  [ ]   |
+| 💎  |  11   | MMIO mapping with UC attributes + HPET validation | --                                       |  [ ]   |
+| 💎  |  12   | Per-process user page mapping (`vmm_map_user_page`) | --                                       |  [/]   |
+| 💎  |  13   | Auto-growing user stacks                 | §1                                       |  [ ]   |
+| 💎  |  14   | NtLockVirtualMemory / mlock -- pin pages in RAM | §3                                       |  [ ]   |
+| 💎  |  15   | Commit charge tracking + enforcement     | §3                                       |  [ ]   |
+| 💎  |  16   | Process memory counters (`GetProcessMemoryInfo`) | §8                                       |  [ ]   |
 
 > 💎 = parity -- Windows and Linux both implement these memory management features; Impossible OS must match.
 > ⭐ = exclusive -- build-time allocator lint that fails the build on unannotated bare `kmalloc` calls is not present in Windows or Linux toolchains by default.
@@ -348,23 +348,23 @@ Expose per-process memory statistics: working set size, peak working set, page f
 ## OS Comparison
 
 
-| ⭐   | Feature                 | 🪟 Win11              | 🐧 Linux               | 🚀 Impossible OS         |
-| --- | ----------------------- | -------------------- | --------------------- | ----------------------- |
-| 💎   | Page protection + guard | ✅ VirtualProtect     | ✅ mprotect(2)         | ⬜ §1 vmm_protect        |
-| 💎   | W^X enforcement         | ⚠️ DEP; RWX allowed  | ✅ NX enforced         | ⬜ §2 hard reject        |
-| 💎   | Demand paging           | ✅ RESERVE/COMMIT     | ✅ overcommit+zero     | ⬜ §3 region states      |
-| 💎   | Query virtual memory    | ✅ VirtualQuery       | ✅ /proc/maps          | ⬜ §4 NtQueryVirtualMem  |
-| 💎   | VirtualAlloc API        | ✅ native Win32       | ✅ mmap/munmap         | ⬜ §5 Win32 shim         |
-| ⭐   | Build-time alloc lint   | ❌ runtime only       | ❌ external tools      | ⬜ §7 build-fail lint    |
-| 💎   | PMM statistics          | ✅ Task Manager       | ✅ /proc/meminfo       | ⬜ §8 mm_stats_t         |
-| 💎   | Heap canaries           | ✅ debug heap         | ✅ SLUB debug          | ⬜ §9 tail canary        |
-| 💎   | Memory leak detector    | ✅ Driver Verifier    | ✅ kmemleak            | ⬜ §10 memleak cmd       |
-| 💎   | UC MMIO mapping         | ✅ MmMapIoSpace       | ✅ ioremap_uc          | ⬜ §11 vmm_map_mmio      |
-| 💎   | Per-process page map    | ✅ ZwMapViewOfSection | ✅ do_mmap PTE walk    | ✅ §12 done              |
-| 💎   | Auto-growing stacks     | ✅ PE StackReserve    | ✅ RLIMIT_STACK        | ⬜ §13 guard page expand |
-| 💎   | Pin pages (mlock)       | ✅ VirtualLock        | ✅ mlock(2)            | ⬜ §14 NtLockVirtualMem  |
-| ⭐   | Commit charge tracking  | ✅ hard commit limit  | ⚠️ overcommit default | ⬜ §15 deterministic     |
-| 💎   | Process memory counters | ✅ GetProcessMemInfo  | ✅ /proc/PID/status    | ⬜ §16 VM_COUNTERS       |
+| ⭐  | Feature                 | 🪟 Win11              | 🐧 Linux             | 🚀 Impossible OS         |
+| --- | ----------------------- | --------------------- | -------------------- | ------------------------ |
+| 💎  | Page protection + guard | ✅ VirtualProtect     | ✅ mprotect(2)       | ⬜ §1 vmm_protect        |
+| 💎  | W^X enforcement         | ⚠️ DEP; RWX allowed    | ✅ NX enforced       | ⬜ §2 hard reject        |
+| 💎  | Demand paging           | ✅ RESERVE/COMMIT     | ✅ overcommit+zero   | ⬜ §3 region states      |
+| 💎  | Query virtual memory    | ✅ VirtualQuery       | ✅ /proc/maps        | ⬜ §4 NtQueryVirtualMem  |
+| 💎  | VirtualAlloc API        | ✅ native Win32       | ✅ mmap/munmap       | ⬜ §5 Win32 shim         |
+| ⭐  | Build-time alloc lint   | ❌ runtime only       | ❌ external tools    | ⬜ §7 build-fail lint    |
+| 💎  | PMM statistics          | ✅ Task Manager       | ✅ /proc/meminfo     | ⬜ §8 mm_stats_t         |
+| 💎  | Heap canaries           | ✅ debug heap         | ✅ SLUB debug        | ⬜ §9 tail canary        |
+| 💎  | Memory leak detector    | ✅ Driver Verifier    | ✅ kmemleak          | ⬜ §10 memleak cmd       |
+| 💎  | UC MMIO mapping         | ✅ MmMapIoSpace       | ✅ ioremap_uc        | ⬜ §11 vmm_map_mmio      |
+| 💎  | Per-process page map    | ✅ ZwMapViewOfSection | ✅ do_mmap PTE walk  | ✅ §12 done              |
+| 💎  | Auto-growing stacks     | ✅ PE StackReserve    | ✅ RLIMIT_STACK      | ⬜ §13 guard page expand |
+| 💎  | Pin pages (mlock)       | ✅ VirtualLock        | ✅ mlock(2)          | ⬜ §14 NtLockVirtualMem  |
+| ⭐  | Commit charge tracking  | ✅ hard commit limit  | ⚠️ overcommit default | ⬜ §15 deterministic     |
+| 💎  | Process memory counters | ✅ GetProcessMemInfo  | ✅ /proc/PID/status  | ⬜ §16 VM_COUNTERS       |
 
 > Parity: matches Win11+Linux on page protection, demand paging, VirtualAlloc, query, PMM stats, heap safety, leak detection, MMIO, auto-growing stacks, page pinning, process counters. W^X is stronger than Windows (hard reject RWX). Build-time allocator lint and deterministic commit charge tracking (vs Linux overcommit) are exclusive.
 

@@ -38,11 +38,11 @@ title: "TODO-02 -- Event Viewer (Log Viewer)"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                              | Depends On | Status |
+| ⭐  | Order | Deliverable                              | Depends On | Status |
 | --- | :---: | ---------------------------------------- | ---------- | :----: |
-| 💎   |   1   | Console-mode log viewer (text table to stdout) | --         |  [ ]   |
-| ⭐   |   2   | GUI Event Viewer with filterable table   | §1         |  [ ]   |
-| ⭐   |   3   | Live tail mode and auto-refresh          | §2         |  [ ]   |
+| 💎  |   1   | Console-mode log viewer (text table to stdout) | --         |  [ ]   |
+| ⭐  |   2   | GUI Event Viewer with filterable table   | §1         |  [ ]   |
+| ⭐  |   3   | Live tail mode and auto-refresh          | §2         |  [ ]   |
 
 > 💎 = parity -- Windows ships Event Viewer; Linux has journalctl.
 > ⭐ = exclusive -- colour-coded JSONL viewer integrated into the OS.
@@ -90,12 +90,12 @@ Watch for new events and update the display.
 
 ## OS Comparison
 
-| ⭐   | Feature             | 🪟 Win11                 | 🐧 Linux         | 🚀 Impossible OS |
-| --- | ------------------- | ----------------------- | --------------- | --------------- |
-| 💎   | Event log viewer    | ✅ Event Viewer          | ✅ journalctl    | ⬜ §1–§2         |
-| 💎   | Level filtering     | ✅ Filter by type        | ✅ journalctl -p | ⬜ §1–§2         |
-| ⭐   | Built-in colour GUI | ⚠️ Separate MMC snap-in | ❌ CLI only      | ⬜ §2            |
-| ⭐   | Live tail in GUI    | ❌ Manual refresh        | ✅ journalctl -f | ⬜ §3            |
+| ⭐  | Feature             | 🪟 Win11               | 🐧 Linux         | 🚀 Impossible OS |
+| --- | ------------------- | ---------------------- | ---------------- | ---------------- |
+| 💎  | Event log viewer    | ✅ Event Viewer        | ✅ journalctl    | ⬜ §1–§2         |
+| 💎  | Level filtering     | ✅ Filter by type      | ✅ journalctl -p | ⬜ §1–§2         |
+| ⭐  | Built-in colour GUI | ⚠️ Separate MMC snap-in | ❌ CLI only      | ⬜ §2            |
+| ⭐  | Live tail in GUI    | ❌ Manual refresh      | ✅ journalctl -f | ⬜ §3            |
 
 ---
 

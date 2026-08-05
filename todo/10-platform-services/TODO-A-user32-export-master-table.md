@@ -1186,9 +1186,9 @@ Microsoft does not publish one MSDN page per `user32.dll` export. For **coverage
 
 ## OS Comparison
 
-| ⭐   | Feature                   | 🪟 Win11                | 🐧 Linux                      | 🚀 Impossible OS                          |
+| ⭐  | Feature                   | 🪟 Win11               | 🐧 Linux                     | 🚀 Impossible OS                         |
 | --- | ------------------------- | ---------------------- | ---------------------------- | ---------------------------------------- |
-| ⭐   | user32.dll export roadmap | Implicit in SDK + MSDN | N/A (Win32-specific surface) | Explicit rows: Owner, Done, Notes in this file |
+| ⭐  | user32.dll export roadmap | Implicit in SDK + MSDN | N/A (Win32-specific surface) | Explicit rows: Owner, Done, Notes in this file |
 
 ## Unit Tests
 

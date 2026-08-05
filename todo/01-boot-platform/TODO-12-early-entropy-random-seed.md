@@ -36,18 +36,18 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                              | Depends On    | Status |
+| ⭐  | Order | Deliverable                              | Depends On    | Status |
 | --- | :---: | ---------------------------------------- | ------------- | :----: |
-| 💎   |   1   | Entropy source inventory and quality model | T04 §2        |  [x]   |
-| 💎   |   2   | EFI_RNG_PROTOCOL collection              | §1            |  [x]   |
-| 💎   |   3   | CPU RDRAND/RDSEED collection             | §1, T09 §1    |  [x]   |
-| 💎   |   4   | TPM RNG collection                       | §1, T13 §2    |  [x]   |
-| 💎   |   5   | Boot timing and interrupt jitter mix-in  | §1            |  [x]   |
-| 💎   |   6   | Seed file carryover lifecycle            | §1, T24 §3,§4 |  [x]   |
-| 💎   |   7   | boot_info seed handoff                   | T01 §4        |  [x]   |
-| 💎   |   8   | Kernel early CSPRNG seeding              | §7, D02T03 §5 |  [x]   |
-| ⭐   |   9   | Entropy diagnostics and policy gates     | §1-§8         |  [/]   |
-| 💎   |  10   | Entropy tests                            | §1-§9         |  [x]   |
+| 💎  |   1   | Entropy source inventory and quality model | T04 §2        |  [x]   |
+| 💎  |   2   | EFI_RNG_PROTOCOL collection              | §1            |  [x]   |
+| 💎  |   3   | CPU RDRAND/RDSEED collection             | §1, T09 §1    |  [x]   |
+| 💎  |   4   | TPM RNG collection                       | §1, T13 §2    |  [x]   |
+| 💎  |   5   | Boot timing and interrupt jitter mix-in  | §1            |  [x]   |
+| 💎  |   6   | Seed file carryover lifecycle            | §1, T24 §3,§4 |  [x]   |
+| 💎  |   7   | boot_info seed handoff                   | T01 §4        |  [x]   |
+| 💎  |   8   | Kernel early CSPRNG seeding              | §7, D02T03 §5 |  [x]   |
+| ⭐  |   9   | Entropy diagnostics and policy gates     | §1-§8         |  [/]   |
+| 💎  |  10   | Entropy tests                            | §1-§9         |  [x]   |
 
 ## 1. Entropy Source Inventory and Quality Model
 
@@ -319,17 +319,17 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 
 ## OS Comparison
 
-| ⭐   | Feature                        | 🪟 Win11                   | 🐧 Linux                 | 🚀 Impossible OS             |
-| --- | ------------------------------ | ------------------------- | ----------------------- | --------------------------- |
-| 💎   | Entropy quality/credit model   | ✅ internal pool credit    | ✅ credit accounting     | ✅ §1 mask+class+policy      |
-| 💎   | Firmware RNG collection        | ✅ boot entropy via CNG    | ✅ EFI RNG seeds random  | ✅ §2 + OEM0, framed seed    |
-| 💎   | CPU RDRAND/RDSEED              | ✅ CNG source              | ✅ arch_random + mix     | ✅ §3 RDSEED-first, gated    |
-| 💎   | TPM RNG mix                    | ✅ TPM-backed entropy      | ✅ tpm-rng driver        | ✅ §4 budgeted + floor-gated |
-| 💎   | Jitter/timing mix-in           | ✅ interrupt timing        | ✅ jitterentropy         | ✅ §5 staged, LOW-clamped    |
-| 💎   | Seed carryover file            | ✅ registry system secrets | ✅ /var/lib random-seed  | ✅ §6 MAC+NVRAM anti-clone   |
-| 💎   | Bootloader-kernel seed handoff | ✅ winload loader block    | ✅ EFI config-table seed | ✅ §7 typed+CRC, first-seed  |
-| 💎   | Early kernel CSPRNG seeding    | ✅ before ASLR consumers   | ✅ random_init early     | ✅ §8 named init + gate      |
-| ⭐   | Visible entropy quality report | ❌ hidden                  | ⚠️ dmesg only           | ✅ §9 registry+JSON+splash   |
+| ⭐  | Feature                        | 🪟 Win11                   | 🐧 Linux                 | 🚀 Impossible OS             |
+| --- | ------------------------------ | -------------------------- | ------------------------ | ---------------------------- |
+| 💎  | Entropy quality/credit model   | ✅ internal pool credit    | ✅ credit accounting     | ✅ §1 mask+class+policy      |
+| 💎  | Firmware RNG collection        | ✅ boot entropy via CNG    | ✅ EFI RNG seeds random  | ✅ §2 + OEM0, framed seed    |
+| 💎  | CPU RDRAND/RDSEED              | ✅ CNG source              | ✅ arch_random + mix     | ✅ §3 RDSEED-first, gated    |
+| 💎  | TPM RNG mix                    | ✅ TPM-backed entropy      | ✅ tpm-rng driver        | ✅ §4 budgeted + floor-gated |
+| 💎  | Jitter/timing mix-in           | ✅ interrupt timing        | ✅ jitterentropy         | ✅ §5 staged, LOW-clamped    |
+| 💎  | Seed carryover file            | ✅ registry system secrets | ✅ /var/lib random-seed  | ✅ §6 MAC+NVRAM anti-clone   |
+| 💎  | Bootloader-kernel seed handoff | ✅ winload loader block    | ✅ EFI config-table seed | ✅ §7 typed+CRC, first-seed  |
+| 💎  | Early kernel CSPRNG seeding    | ✅ before ASLR consumers   | ✅ random_init early     | ✅ §8 named init + gate      |
+| ⭐  | Visible entropy quality report | ❌ hidden                  | ⚠️ dmesg only             | ✅ §9 registry+JSON+splash   |
 
 > **Parity:** rows track Win11 CNG boot entropy and Linux random.c; §1-§8 shipped (model, firmware+OEM0, CPU RNG, TPM RNG, jitter/timing, MAC'd seed carryover with NVRAM anti-clone/anti-replay -- stronger than the unauthenticated Linux seed file -- the §7 checksummed typed handoff folding verified carryover into the FIRST kernel seed, and the §8 named init point with a credited-class release crypto gate -- stronger than Linux, which has no boot-time crypto-readiness gate), and the §9 visible quality surfaces. The ⭐ §9 quality report (HKLM registry mirror + X:\Diag\entropy.json + splash degraded warning) goes beyond both; the §9 admin ExternalEntropy one-shot awaits the D02 TODO-14 hive-load wiring for cross-reboot use.
 
