@@ -1144,6 +1144,24 @@ The PreToolUse gates decide their exemptions by hand-scanning command text. [`.c
 
 ---
 
+> [!WARNING]
+> **bashlex was EVALUATED and REJECTED on measurement, 2026-08-05. Do not re-attempt it.** This section's plan says "prefer a vendored pure-python shell parser (`bashlex` or equivalent) over hand-extending the walk". The named candidate is strictly WORSE than the walk it would replace, on the shapes this repo actually issues:
+>
+> | shape | current hand-rolled walk | bashlex 0.18 |
+> |---|---|---|
+> | `<<'PY'` quoted heredoc | 1 segment, handled | `ParsingError` |
+> | `git commit -F -` heredoc | 1 segment, handled | `ParsingError` |
+> | heredoc into a pipe | 2 segments, handled | `ParsingError` |
+> | `case`/`esac` | refuses, fail-closed | `NotImplementedError` |
+>
+> Two of those are disqualifying on their own. bashlex parses only UNQUOTED heredoc delimiters (`<<PY`), and the QUOTED form is the one this repo's own doctrine requires -- 3 unquoted heredocs were converted to quoted on 2026-08-05 precisely because the unquoted form silently corrupts its own body. And `case` raising `NotImplementedError` means bashlex cannot deliver this section's SECOND item at all: it refuses the same construct `_has_unmodelled_grammar()` refuses, so there is nothing to retire.
+>
+> Weight, so this is not dismissed on synthetic cases: **2,562 of 31,528 recorded tool-history commands (8.1%) contain `<<`**. A parser that fails on those would fail-open or fail-closed on roughly one command in twelve.
+>
+> Cost was never the problem -- bashlex parses in 0.179 ms, comfortably inside a PreToolUse budget. Capability was.
+>
+> **What this leaves.** The first item stands but its prescribed MEANS does not: "or equivalent" now has to name a parser that handles quoted heredocs and `case`, or the item becomes a deliberate hand-rolled tokenizer with the plan rewritten to say so. That is an operator design call, and it is the reason this section stays parked rather than being attempted again.
+
 > **Deferred:** [M] operator-gated -- every deliverable here edits `.claude/hooks/**`, which the unattended run is forbidden to touch, so no run can ever implement this section. It is not blocked on another TODO; it is blocked on an ATTENDED session. Reached and correctly parked rather than discovered mid-pass (2026-08-05).
 
 ## Format Quick Reference
