@@ -2842,19 +2842,29 @@ fi
 
 # Sub-test 14c: INTENTIONAL-STUB allowlist marker on the body opener
 # suppresses the finding.
+#
+# CHANNEL DISCIPLINE -- the two NO-FINDING assertions below read STDOUT ONLY.
+# check_stub_behind_stamp.py prints findings on stdout (lint.sh routes every
+# stdout line through error()) and coverage/diagnostics on stderr, deliberately.
+# Capturing 2>&1 here conflated the channels: when 08e64173 added the
+# unconditional `stub-behind-stamp:coverage ...` stderr line, both sub-tests
+# read it as a finding and CI went red (run 31038832724, 2026-08-05) while the
+# check itself was behaving correctly. Stderr is kept in a file so a genuine
+# failure still prints it.
 cat > "$SI_TREE/src/sample.c" <<'EOF'
 int foo_init(void)
 { /* INTENTIONAL-STUB: pending downstream scaffolding */
     return 0;
 }
 EOF
+SI_ERR2="$SI_TREE/build/stub-lint-14c.err"
 SI_OUT2="$(STUB_LINT_CACHE="$SI_CACHE" STUB_LINT_REPO_ROOT="$SI_TREE" \
-    python3 "$REPO_ROOT/scripts/lint/check_stub_behind_stamp.py" 2>&1)"
+    python3 "$REPO_ROOT/scripts/lint/check_stub_behind_stamp.py" 2>"$SI_ERR2")"
 SI_RC2=$?
 if [ "$SI_RC2" = "0" ] && [ -z "$SI_OUT2" ]; then
     t_pass "lint Check 7: INTENTIONAL-STUB marker suppresses finding"
 else
-    t_fail "lint Check 7: marker should suppress; rc=$SI_RC2, out=$SI_OUT2"
+    t_fail "lint Check 7: marker should suppress; rc=$SI_RC2, out=$SI_OUT2, err=$(cat "$SI_ERR2")"
 fi
 
 # Sub-test 14d: real (non-stub) function does NOT trigger Check 7.
@@ -2868,13 +2878,14 @@ int foo_init(void)
     return total;
 }
 EOF
+SI_ERR3="$SI_TREE/build/stub-lint-14d.err"
 SI_OUT3="$(STUB_LINT_CACHE="$SI_CACHE" STUB_LINT_REPO_ROOT="$SI_TREE" \
-    python3 "$REPO_ROOT/scripts/lint/check_stub_behind_stamp.py" 2>&1)"
+    python3 "$REPO_ROOT/scripts/lint/check_stub_behind_stamp.py" 2>"$SI_ERR3")"
 SI_RC3=$?
 if [ "$SI_RC3" = "0" ] && [ -z "$SI_OUT3" ]; then
     t_pass "lint Check 7: real multi-line function not flagged"
 else
-    t_fail "lint Check 7: real function false-positive; rc=$SI_RC3, out=$SI_OUT3"
+    t_fail "lint Check 7: real function false-positive; rc=$SI_RC3, out=$SI_OUT3, err=$(cat "$SI_ERR3")"
 fi
 
 # Sub-test 14f: prototype-then-definition is correctly resolved (Codex F2).
