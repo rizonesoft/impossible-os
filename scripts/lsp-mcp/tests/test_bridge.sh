@@ -10954,6 +10954,9 @@ time.sleep(0.2)                         # exited, and deliberately UNREAPED
 
 class Degraded:
     lang = "c"
+    # PUBLISHED (appended to _SPAWNED below): the modelled state is a live
+    # record whose descriptor borrow fails transiently, NOT a retired one.
+    # A retired record is a different case with the opposite answer.
     _spawn_record = lsp_client._SpawnRecord(degraded.pid, None, None)
 
     def __init__(self, proc):
@@ -10964,6 +10967,7 @@ class Degraded:
 
 real_borrow2 = lsp_client._borrow_pidfd
 lsp_client._borrow_pidfd = lambda rec: None    # transient failure
+lsp_client._SPAWNED.append(Degraded._spawn_record)
 try:
     d = Degraded(degraded)
     ans = d._leader_exited(degraded)
@@ -10978,6 +10982,10 @@ try:
           "session-continuity proof")
 finally:
     lsp_client._borrow_pidfd = real_borrow2
+    try:
+        lsp_client._SPAWNED.remove(Degraded._spawn_record)
+    except ValueError:
+        pass
     try:
         degraded.wait(timeout=5)
     except Exception:
@@ -11004,6 +11012,8 @@ class NeverCollects:
 
     _schedule_crash_collection = \
         lsp_client.LspSubprocess._schedule_crash_collection
+    _run_crash_collection = \
+        lsp_client.LspSubprocess._run_crash_collection
 
 
 nc = NeverCollects(incomplete)
@@ -11021,39 +11031,234 @@ try:
 except Exception:
     pass
 
-# --- a collector that cannot START stays retryable --------------------
-unstartable = subprocess.Popen([sys.executable, "-c", "import sys; sys.exit(0)"])
-time.sleep(0.15)
+# --- a RETIRED record must not wedge the helper forever ---------------
+# _collect_after_death retires unconditionally (section 24's EMFILE fix),
+# so an instance keeps a reference to a record no longer in _SPAWNED. The
+# fail-closed rule then answered 'not exited' FOREVER: alive reported a
+# zombie alive indefinitely and the instance could never be confirmed
+# dead -- a wedge the rule created rather than prevented (Codex
+# adversarial, High).
+retired = subprocess.Popen([sys.executable, "-c", "import sys; sys.exit(0)"])
+time.sleep(0.2)
 
 
-class Unstartable(NeverCollects):
-    pass
+class Retired:
+    lang = "c"
+    # Retirement is an EXPLICIT flag, not absence from _SPAWNED: the
+    # descriptor-claim path also removes a record while still using its
+    # fd, so membership cannot tell "finished" from "in use right now".
+    _spawn_record = lsp_client._SpawnRecord(retired.pid, None, 12345)
+
+    def __init__(self, proc):
+        self._proc = proc
+
+    _leader_exited = lsp_client.LspSubprocess._leader_exited
 
 
-us = Unstartable(unstartable)
-us._crash_collect_started = False
-us._crash_collect_lock = threading.Lock()
-real_thread = lsp_client.threading.Thread
+Retired._spawn_record.retired = True
+r = Retired(retired)
+check(r._spawn_record.retired is True,
+      "the retired-record fixture is not marked retired; it does not "
+      "model the post-retirement state")
+# A CLAIMED record -- absent from _SPAWNED but NOT retired -- must keep
+# the non-reaping behavior. This is the pair that membership conflated.
+#
+# The process must be EXITED-BUT-UNREAPED for this to discriminate: while
+# it is still running both the correct path and the membership shortcut
+# answer "not exited", and the assertion proves nothing. Dead-and-
+# uncollected is the state where they diverge -- fail-closed answers
+# False without touching it, while the shortcut polls, REAPS, and
+# answers True.
+claimed = subprocess.Popen([sys.executable, "-c", "import sys; sys.exit(0)"])
+time.sleep(0.2)
 
 
-class BoomThread:
-    def __init__(self, *a, **k):
-        raise RuntimeError("cannot start thread")
+class Claimed(Retired):
+    _spawn_record = lsp_client._SpawnRecord(claimed.pid, None, None)
 
 
-lsp_client.threading.Thread = BoomThread
+c = Claimed(claimed)
+check(c._spawn_record not in lsp_client._SPAWNED
+      and c._spawn_record.retired is False,
+      "the claimed-record fixture is misconfigured")
+check(c._leader_exited(claimed) is False,
+      "a CLAIMED record (removed from _SPAWNED so the escalation can use "
+      "its original fd) was treated as retired and fell through to a "
+      "reaping poll -- exactly the FD-pressure path that must not reap")
+check(claimed.returncode is None,
+      "the claimed-record path REAPED an exited leader; a mid-claim "
+      "_confirm_dead_late would then destroy the session proof before "
+      "the descendant sweep runs")
 try:
-    us._schedule_crash_collection()
-finally:
-    lsp_client.threading.Thread = real_thread
-check(us._crash_collect_started is False,
-      "a collector whose thread failed to START latched 'already handled' "
-      "over work that never ran; the zombie and its record then have no "
-      "automatic retry at all, under the very exhaustion that caused it")
-try:
-    unstartable.wait(timeout=5)
+    claimed.wait(timeout=5)
 except Exception:
     pass
+check(r._leader_exited(retired) is True,
+      "a RETIRED record still answered 'not exited' -- the instance can "
+      "then never be confirmed dead and alive reports a zombie alive "
+      "forever, because a retired record can authorize nothing and there "
+      "is no proof left for poll() to destroy")
+try:
+    retired.wait(timeout=5)
+except Exception:
+    pass
+
+# --- the crash collection runs INLINE, and exactly once ---------------
+# A worker dispatcher and, before it, a Semaphore + queue were both built
+# here and both REMOVED: each review round found another way for a
+# submission to be lost, because handing the work to another thread means
+# owning durability and start-failure recovery for it. The reader is
+# already terminating when it sees EOF, so it does the work itself and
+# there is no queue for anything to fall out of.
+ran = []
+
+
+class Counted(NeverCollects):
+    def __init__(self):
+        self._proc = object()
+        self._crash_collect_started = False
+        self._crash_collect_lock = threading.Lock()
+
+    def _run_crash_collection(self):
+        ran.append((self, threading.get_ident()))
+
+
+q = Counted()
+me = threading.get_ident()
+q._schedule_crash_collection()
+check(len(ran) == 1,
+      f"the collection did not run inline: {len(ran)} run(s) after "
+      f"scheduling returned -- nothing else will run it")
+check(ran[0][1] == me,
+      "the collection ran on another thread; inline is the point, since "
+      "a handoff is what kept losing submissions")
+q._schedule_crash_collection()
+check(len(ran) == 1,
+      "a second schedule ran the collection again; the claim flag must "
+      "make this idempotent")
+
+# A raising collection must not escape into the reader's finally.
+class Boom(Counted):
+    def _run_crash_collection(self):
+        raise RuntimeError("collection exploded")
+
+
+b = Boom()
+b._schedule_crash_collection()          # must not raise
+
+# --- a RETIRED record must not wedge the helper forever ---------------
+# _collect_after_death retires unconditionally (section 24's EMFILE fix),
+# so an instance keeps a reference to a record no longer in _SPAWNED. The
+# fail-closed rule then answered 'not exited' FOREVER: alive reported a
+# zombie alive indefinitely and the instance could never be confirmed
+# dead -- a wedge the rule created rather than prevented (Codex
+# adversarial, High).
+retired = subprocess.Popen([sys.executable, "-c", "import sys; sys.exit(0)"])
+time.sleep(0.2)
+
+
+class Retired:
+    lang = "c"
+    # Retirement is an EXPLICIT flag, not absence from _SPAWNED: the
+    # descriptor-claim path also removes a record while still using its
+    # fd, so membership cannot tell "finished" from "in use right now".
+    _spawn_record = lsp_client._SpawnRecord(retired.pid, None, 12345)
+
+    def __init__(self, proc):
+        self._proc = proc
+
+    _leader_exited = lsp_client.LspSubprocess._leader_exited
+
+
+Retired._spawn_record.retired = True
+r = Retired(retired)
+check(r._spawn_record.retired is True,
+      "the retired-record fixture is not marked retired; it does not "
+      "model the post-retirement state")
+# A CLAIMED record -- absent from _SPAWNED but NOT retired -- must keep
+# the non-reaping behavior. This is the pair that membership conflated.
+#
+# The process must be EXITED-BUT-UNREAPED for this to discriminate: while
+# it is still running both the correct path and the membership shortcut
+# answer "not exited", and the assertion proves nothing. Dead-and-
+# uncollected is the state where they diverge -- fail-closed answers
+# False without touching it, while the shortcut polls, REAPS, and
+# answers True.
+claimed = subprocess.Popen([sys.executable, "-c", "import sys; sys.exit(0)"])
+time.sleep(0.2)
+
+
+class Claimed(Retired):
+    _spawn_record = lsp_client._SpawnRecord(claimed.pid, None, None)
+
+
+c = Claimed(claimed)
+check(c._spawn_record not in lsp_client._SPAWNED
+      and c._spawn_record.retired is False,
+      "the claimed-record fixture is misconfigured")
+check(c._leader_exited(claimed) is False,
+      "a CLAIMED record (removed from _SPAWNED so the escalation can use "
+      "its original fd) was treated as retired and fell through to a "
+      "reaping poll -- exactly the FD-pressure path that must not reap")
+check(claimed.returncode is None,
+      "the claimed-record path REAPED an exited leader; a mid-claim "
+      "_confirm_dead_late would then destroy the session proof before "
+      "the descendant sweep runs")
+try:
+    claimed.wait(timeout=5)
+except Exception:
+    pass
+check(r._leader_exited(retired) is True,
+      "a RETIRED record still answered 'not exited' -- the instance can "
+      "then never be confirmed dead and alive reports a zombie alive "
+      "forever, because a retired record can authorize nothing and there "
+      "is no proof left for poll() to destroy")
+try:
+    retired.wait(timeout=5)
+except Exception:
+    pass
+
+# --- the crash DISPATCHER never drops a submission ---------------------
+# The first shape (Semaphore + bounded list + a drain that re-entered the
+# scheduler) produced three separate ways to lose a crashed instance
+# across two review rounds: a queue-full drop, a handoff that cleared the
+# claim before knowing the reschedule started, and a re-entry whose own
+# failure nobody could observe. The invariant now is structural: once
+# submitted, an instance stays queued until a worker has actually run it.
+ran = []
+
+
+class Counted(NeverCollects):
+    def __init__(self):
+        self._proc = object()
+        self._crash_collect_started = False
+        self._crash_collect_lock = threading.Lock()
+
+    def _run_crash_collection(self):
+        ran.append((self, threading.get_ident()))
+
+
+q = Counted()
+me = threading.get_ident()
+q._schedule_crash_collection()
+check(len(ran) == 1,
+      f"the collection did not run inline: {len(ran)} run(s) after "
+      f"scheduling returned -- nothing else will run it")
+check(ran[0][1] == me,
+      "the collection ran on another thread; inline is the point, since "
+      "a handoff is what kept losing submissions")
+q._schedule_crash_collection()
+check(len(ran) == 1,
+      "a second schedule ran the collection again; the claim flag must "
+      "make this idempotent")
+
+
+class Boom(Counted):
+    def _run_crash_collection(self):
+        raise RuntimeError("collection exploded")
+
+
+Boom()._schedule_crash_collection()     # must not raise
 
 if fails:
     for f in fails:
@@ -11310,6 +11515,32 @@ finally:
         bridge_mod._LIVE_LSPS.clear()
         bridge_mod._LIVE_LSPS.update(saved_live)
     bridge_mod._BRIDGE_SHUTTING_DOWN.clear()
+
+# --- a RAISED force sweep must not read as a completed one ------------
+# _shutdown_bounded initializes `killed` to a plain int and wraps the
+# sweep in a bare except, so a raised sweep returned int 0 -- and the
+# watchdog's getattr(result, "completed", True) read that missing
+# attribute as SUCCESS, suppressing the incomplete-reap warning right
+# before os._exit, under exactly the failure conditions the path exists
+# for (Codex adversarial + consistency, High).
+real_fks = bridge_mod.force_kill_spawned
+
+
+def boom_sweep(settle=1.0, deadline=None):
+    raise RuntimeError("sweep exploded")
+
+
+bridge_mod.force_kill_spawned = boom_sweep
+try:
+    res_boom = bridge_mod._shutdown_bounded("unit-raise")
+    check(hasattr(res_boom, "completed"),
+          f"_shutdown_bounded returned {type(res_boom).__name__} without a "
+          f"completion verdict after the sweep RAISED; the watchdog then "
+          f"defaults the missing attribute and exits silently")
+    check(getattr(res_boom, "completed", None) is False,
+          "a force sweep that RAISED reported itself completed")
+finally:
+    bridge_mod.force_kill_spawned = real_fks
 
 # --- the SHUTDOWN-PUBLISH gate reports too ----------------------------
 # An instance that finishes spawning after teardown began is never added

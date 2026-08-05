@@ -70,6 +70,7 @@ title: "TODO-07 -- LSP to MCP Bridge (C, NASM, shell, Python, PowerShell)"
 | 💎   |  24   | Single-pass procfs cleanup in the teardown sweep                           | §22, §23                          |  [x]   |
 | ⭐   |  25   | Restart-publish confirmed-dead gate + single-flight teardown               | §22, §23                          |  [/]   |
 | ⭐   |  26   | Teardown verdict propagation + a non-reaping liveness probe                | §22, §23, §25                     |  [x]   |
+| ⭐   |  27   | Spawn-record claim lifecycle: claimed-in-use is not retired                | §22, §23, §26                     |  [ ]   |
 
 > 💎 = parity -- matches the existing LSP stacks Win11/Linux devs already use, wrapped in an MCP transport.
 > ⭐ = exclusive -- neither Win11 nor Linux ships a repo-tracked cross-language LSP-MCP bridge with read-only boundary compliance baked in.
@@ -894,13 +895,13 @@ Split out of §24 (2026-08-05): these two are about WHO runs a lifecycle transit
 - [/] Recover a record claimed out of `_SPAWNED` when a termination lands mid-claim -- BLOCKED on §23's process-wide signal design (sigwait), a bridge-lifecycle change
       - Under descriptor pressure the sweep CLAIMS a record: it removes the entry from `_SPAWNED` and carries the original descriptor on its stack for the one signal that needs no new fd. A termination arriving between the remove and the send leaves that record in no collection at all -- the interrupted frame never resumes, and no later sweep can see or reissue it (`_borrow_pidfd` rejects records absent from `_SPAWNED`).
       - Older than this section, and confirmed so by review: before §25 the handler ran its own sweep over the same `list(_SPAWNED)` and equally could not see a claimed entry, so single-flight neither opens nor widens the window. §25 closes only the reporting half -- the nested re-entry answers `completed=False`, which stops `mark_teardown_complete()` on the paths that RETURN through `_shutdown_bounded` (idle watchdog, main-finally) and buys nothing on the signal path, where the self-signal and `os._exit` bypass `atexit` outright. Closing the window itself needs termination blocked before any worker starts and routed through a `sigwait` thread -- §23's parked item, same blocker. -> XREF: 00-infrastructure/TODO-07 §23 (item: "Close the spawn-publication window against termination" at line 814)
-- [/] Make descendants-before-leader-reap structural, with a non-reaping liveness probe -- OWNED by §26, which carries the fix; parked here because §25 shipped its own scope
+- [x] Make descendants-before-leader-reap structural, with a non-reaping liveness probe -- SHIPPED in §26; parked here because §25 shipped its own scope first
       - Every liveness check in the reap path is `Popen.poll()`, which REAPS -- so the ordering §23's session continuity depends on (a same-session hardened descendant is authorized by the recorded leader still being there) holds by arrangement rather than by construction. Measured 2026-08-05 on both shapes: the escalation-time `_reap_group` sees the leader unreaped for a SIGTERM-ignoring AND a SIGTERM-responsive leader. But nothing prevents a future edit reordering a poll ahead of the sweep, and the late-retry path polls the SIGKILL to death before `_collect_after_death` by design.
       - A pidfd is readable once the process has exited and BEFORE it is reaped, so `select` on the descriptor `_escalate_recorded` already holds is a genuine non-reaping readiness probe. Thread it through the escalation and the late retry, then defer every `Popen.poll()`/`wait()` until after the pre-reap sweep. Raised by §25's re-adversarial review and accepted rather than fixed: it changes the liveness primitive the whole reap path is built on, which is §22/§23 machinery. -> XREF: 00-infrastructure/TODO-07 §23 (item: "Gave the reap an injectable clock, as a PARAMETER rather than a module global" at line 794)
-- [/] Bound the recorded-leader pass, or report the sweep incomplete when it cannot finish -- OWNED by §26, which carries the fix; parked here because §25 shipped its own scope
+- [x] Bound the recorded-leader pass, or report the sweep incomplete when it cannot finish -- SHIPPED in §26 as a fair-share bound; parked here because §25 shipped its own scope first
       - §22 left `signal_recorded_leaders` deliberately ungated ("cheap and certain first") because a small budget spent entirely on the first record's `/proc` walks skipped every later language server. The consequence is that no reservation inside the caller's budget can bound it: the pass iterates an unbounded `_SPAWNED` snapshot and the recorded-pidfd fast path does dup + signal + close per entry with no deadline check between them, so many records or one slow operation still overrun. A waiter then reports `completed=False` at the deadline while the owner is still inside the pass, and an idle-watchdog caller proceeds to `os._exit` through it.
       - Either deadline-check each leader iteration (and accept §22's original failure mode returning in a bounded form), or keep the pass ungated and have the owner report itself incomplete when it could not finish -- so a caller about to end the process learns the difference. Raised by §25's re-adversarial review and accepted rather than fixed: the ungated pass is §22's deliberate design and changing it is that section's call. -> XREF: 00-infrastructure/TODO-07 §22 (item: "Closed the pidfd retirement race: the recorded descriptor has ONE owner at a time" at line 755)
-- [/] Report CONFIRMED reaps, not attempts, from the remaining teardown consumers -- OWNED by §26, which carries the fix; parked here because §25 shipped its own scope
+- [x] Report CONFIRMED reaps, not attempts, from the remaining teardown consumers -- SHIPPED in §26; parked here because §25 shipped its own scope first
       - `reap_all_live` (`lsp_client.py`), `_shutdown_all_lsps` and the shutdown-publish gate (`bridge.py`), plus the five spawner init-failure handlers (`servers/bash_server.py`, `asm_server.py`, `clangd_server.py`, `python_server.py`, `powershell_server.py`) each call `shutdown()` and discard the new verdict; `_shutdown_all_lsps` clears `_LIVE_LSPS` before ignoring it, so an unconfirmed instance leaves the published set with correctness resting entirely on the force sweep -- which can itself be incomplete.
       - Aggregate the unconfirmed instances into the teardown result, hand them explicitly to the force phase, and correct the doc. Raised by this section's consistency review and accepted rather than fixed: it changes `reap_all_live`'s published contract and the whole teardown reporting surface, which is wider than either item above.
 
@@ -913,19 +914,19 @@ Split out of §24 (2026-08-05): these two are about WHO runs a lifecycle transit
 > - Runs by REPLACING the discarded results at both seams: the swallowed `inst.shutdown(...)` in the respawn path, and the four independent entries into the force sweep, now one flight under one shared deadline with the death deferred when a signal lands on the sweeping thread.
 > - Downstream: `_collect_after_death` unpacks `_reap_group`'s `(killed, emptied)`; `__del__` gates on `_confirmed_dead`; `mark_teardown_complete()` is conditional on a completed sweep; `SweepCount` is an `int`, so no caller changed.
 > - Canonical doc: this section plus the `SweepCount`, `_SWEEP_FLIGHT` and `_collect_after_death` comments in `lsp_client.py`, and `_teardown_deadline` in `bridge.py`.
-> - Scope boundary: the teardown's other verdict consumers stay attempt-reporting, filed as the third item above rather than widened into here.
+> - Scope boundary: the teardown's other verdict consumers stayed attempt-reporting HERE, filed as the third item above and shipped in §26 rather than widened into this section.
 > - Rejected on evidence: `pthread_sigmask` around the sweep (masks one thread; §23 recorded this once already), deferring the death to a post-sweep delivery point (loses or double-delivers it from any path that is not `_shutdown_bounded`), re-running SIGTERM before SIGKILL on retry (spends the only identity), and an unbounded waiter.
 
 > **Verified:** 2026-08-05 | commit `362a03f3` + review fixes | 2/5 items (3 filed open) | build OK | 115/115 lsp-mcp sub-tests, 0 write-capable methods, 1287/1287 tooling, 28326 kernel + 17 user-mode, lint 0 errors
-> **Accepted:** [H] The remaining teardown consumers report attempts, not confirmed reaps (reason: changes `reap_all_live`'s published contract and the whole teardown reporting surface) -> XREF: 00-infrastructure/TODO-07 §25 (item: "Report CONFIRMED reaps, not attempts, from the remaining teardown consumers" at line 902)
-> **Accepted:** [H] Descendants-before-leader-reap holds by arrangement, not by construction (reason: needs a non-reaping pidfd readiness probe through the whole reap path, which is §22/§23 machinery) -> XREF: 00-infrastructure/TODO-07 §25 (item: "Make descendants-before-leader-reap structural, with a non-reaping liveness probe" at line 896)
-> **Accepted:** [M] No reservation can bound the deliberately ungated recorded-leader pass (reason: §22 made that pass ungated on measured evidence; changing it is that section's call) -> XREF: 00-infrastructure/TODO-07 §25 (item: "Bound the recorded-leader pass, or report the sweep incomplete when it cannot finish" at line 899)
+> **Accepted:** [H] The remaining teardown consumers report attempts, not confirmed reaps (reason: changes `reap_all_live`'s published contract and the whole teardown reporting surface); SHIPPED in §26 -> XREF: 00-infrastructure/TODO-07 §26 (item: "Reported CONFIRMED reaps, not attempts, from the remaining teardown consumers")
+> **Accepted:** [H] Descendants-before-leader-reap holds by arrangement, not by construction (reason: needs a non-reaping pidfd readiness probe through the whole reap path, which is §22/§23 machinery); SHIPPED in §26 -> XREF: 00-infrastructure/TODO-07 §26 (item: "Made descendants-before-leader-reap structural, with a non-reaping liveness probe")
+> **Accepted:** [M] No reservation can bound the deliberately ungated recorded-leader pass (reason: §22 made that pass ungated on measured evidence; changing it is that section's call); SHIPPED in §26 -> XREF: 00-infrastructure/TODO-07 §26 (item: "Bounded the recorded-leader pass by FAIR SHARE, and made the sweep report when it could not finish")
 > **Deferred:** [H] A termination landing between a record's claim and its signal loses that record (reason: older than this section -- the pre-§25 handler could not see a claimed entry either -- and closing it needs §23's process-wide sigwait design) -> XREF: 00-infrastructure/TODO-07 §23 (item: "Close the spawn-publication window against termination" at line 814)
 > **Quality reviewed:** 2026-08-05 | Codex 11x (design, adversarial x2, test-coverage, consistency x2, perf x2, re-adversarial x4) | 19H+7M+2L fixed, 4 open (all filed) | scope: N/A (host-side Python tooling; no kernel/boot/desktop/shell/userland surface)
 
 ## 26. Teardown Verdict Propagation and a Non-Reaping Liveness Probe
 
-Split out of §25 (2026-08-05): the three findings §25 ACCEPTED rather than fixed, each because it changes a contract or a primitive wider than that section's own scope. They are not blocked on anything external -- every one carries a concrete fix shape from the review that raised it -- so they are OWNED here rather than parked, and §25's copies are `[/]` pointing at this section. This is the terminal section for the teardown-reap cluster (§20-§25): its own residue parks with a named owner rather than spawning a §27. -> XREF: 00-infrastructure/TODO-07 §25 (item: "Make descendants-before-leader-reap structural, with a non-reaping liveness probe")
+Split out of §25 (2026-08-05): the three findings §25 ACCEPTED rather than fixed, each because it changes a contract or a primitive wider than that section's own scope. They are not blocked on anything external -- every one carries a concrete fix shape from the review that raised it -- so they are OWNED here rather than parked, and §25's copies are `[/]` pointing at this section. This section was declared terminal for the teardown-reap cluster (§20-§25) when it was filed; that claim did NOT survive implementation and is corrected here rather than quietly dropped. Making the reader non-reaping introduced a zombie-retention leak, closing that leak required a deferred collector, and the collector's interaction with §22-§23's claim/retirement machinery is a genuinely separate lifecycle problem -- owned by §27, not parked. -> XREF: 00-infrastructure/TODO-07 §25 (item: "Make descendants-before-leader-reap structural, with a non-reaping liveness probe")
 
 - [x] Made descendants-before-leader-reap structural, with a non-reaping liveness probe
       - `_pidfd_exited(fd)` answers "has it exited" from a pidfd WITHOUT collecting it, and `_escalate_recorded` derives death from the descriptor it ALREADY holds -- the caller's `is_dead` is only the fallback for when that handle cannot answer. The ordering moved from something the callers happened to honour into a property of the function.
@@ -958,6 +959,31 @@ Split out of §25 (2026-08-05): the three findings §25 ACCEPTED rather than fix
 > - Canonical doc: this section plus the `_pidfd_exited`, `_leader_exited` and `_schedule_crash_collection` docstrings in `lsp_client.py`.
 > - Scope boundary: does NOT re-cover §25's restart gate or single-flight sweep; it consumes their verdicts. The spawn-publication window stays parked in §23 (needs sigwait).
 > - Rejected on evidence: nothing -- all 10 findings across four review legs were verified at file:line and fixed.
+
+> **Verified:** 2026-08-05 | commit `9d635e79` + review fixes | 4/4 items | build OK | 118/118 lsp-mcp sub-tests, 0 write-capable methods, 1287/1287 tooling, 28326 kernel + 17 user-mode, lint 0 errors
+> **Deferred:** [H] A completed descriptor claim is a third record state that `retired` cannot express, so it must choose between wedging `alive` and reaping before descendant collection (reason: changes when a reaping poll is permitted across the whole reap path; §26 shipped the fail-closed residual) -> XREF: 00-infrastructure/TODO-07 §27 (item: "Model CLAIMED-and-in-use separately from safely RETIRED on `_SpawnRecord`")
+> **Quality reviewed:** 2026-08-05 | Codex 9x (design, adversarial x2, test-coverage, consistency, perf, re-adversarial x3) | 12H+8M+1L fixed, 1 deferred, 1 accepted | scope: N/A (host-side Python tooling; no kernel/boot/desktop/shell/userland surface)
+
+## 27. Spawn-Record Claim Lifecycle: Claimed-In-Use Is Not Retired
+
+Raised by §26's re-adversarial rounds and filed rather than fixed there, because it is a THIRD state in a lifecycle §22-§23 model with one boolean, and closing it correctly changes when a reaping poll is permitted across the whole reap path. §26 shipped the safer of the two residuals; this section closes the gap properly. -> XREF: 00-infrastructure/TODO-07 §26 (item: "Made descendants-before-leader-reap structural, with a non-reaping liveness probe")
+
+- [ ] Model CLAIMED-and-in-use separately from safely RETIRED on `_SpawnRecord`
+      - A record leaves `_SPAWNED` for two unrelated reasons: `_retire_spawn` (child confirmed dead, descriptor closed, identity finished) and the descriptor-exhaustion CLAIM path in `_escalate_recorded` / `_signal_recorded` / `signal_recorded_leaders`, which removes the entry precisely so it can keep using the original fd for one signal. `retired` distinguishes those two, but a COMPLETED claim is a third state it cannot express: out of `_SPAWNED`, fd closed, yet `retired` still False.
+      - Marking the claim finalizers `retired = True` was implemented and REVERTED inside §26: it let the very next `_leader_exited` in `_confirm_dead_late` treat the record as finished and fall through to a REAPING poll -- before `_collect_after_death`, and with the claim having already removed the record `_session_handle` needs, so a hardened same-session descendant reads as collected and a replacement is published beside it. §26 kept the opposite residual instead, which is milder and fail-closed: the record stays unanswerable, `alive` reports the instance live, and the force sweep collects it at teardown.
+      - The fix is a state, not a second boolean: claimed-in-use must keep the record non-reapable while its descriptor or descendant proof is in use, and transition to retired only once collection no longer needs the leader.
+- [ ] Permit a reaping `poll()` only after `_collect_after_death` has completed
+      - `_leader_exited` currently decides reapability from the record alone, which is why the claim states leak into it. Give the reap path an explicit ordering signal so the final leader reap -- and only that -- may poll, and every pre-collection caller (`alive`, health snapshots, `reap_all_live`, the shutdown wait loops) provably cannot.
+      - This is what makes the §26 residual disappear rather than being traded for another: with the ordering explicit, a record that cannot answer no longer has to choose between wedging `alive` and reaping too early.
+- [ ] Commit: `"scripts/lsp-mcp: three-state spawn-record claim lifecycle"`
+
+**Test checkpoint:** `bash scripts/lsp-mcp/tests/test_bridge.sh` exits 0; a claim completing inside `_retry_pinned_kill` followed immediately by `_confirm_dead_late` collects an opaque same-session descendant BEFORE the leader is reaped, and `alive` never reports a collected instance as live. Test on: host tooling only (no QEMU dependency).
+
+> **Test runner:** `bash scripts/lsp-mcp/tests/test_bridge.sh`; `bash scripts/lsp-mcp/tests/test_boundary.sh` -- 0 write-capable methods. No kernel test surface: host-side python tooling, no `TEST_CAT_*`.
+
+> **Notes:**
+> - Scope boundary: does NOT re-cover §26's probe, fair-share leader pass, verdict propagation, or inline crash collection -- all shipped. It replaces the two-state record model those rest on.
+> - Drives the real claim finalizers, not a hand-constructed claimed record: §26's first attempt at this test passed against a manually built fixture that could not reach the racing path.
 
 ## Format Quick Reference
 
@@ -1027,7 +1053,7 @@ Split out of §25 (2026-08-05): the three findings §25 ACCEPTED rather than fix
 > [!NOTE]
 > Host-side tooling checks live outside `test_runner_init()`. This TODO owns a shell-based regression pack (`scripts/lsp-mcp/tests/test_bridge.sh`), same pattern as [TODO-06 §8](./TODO-06-todo-metadata-layer.md#8-mcp-server-ai-agent-transport-over-the-cache) and [TODO-01 §7](./TODO-01-developer-tooling-stack.md#7-tooling-doctor-and-regression-pack). No kernel-side test runner involvement.
 
-- [x] Created `scripts/lsp-mcp/tests/test_bridge.sh` (shipped §1, base sub-tests 1a-1g) + `test_boundary.sh`; now 99 sub-tests covering every §1-§18 capability.
+- [x] Created `scripts/lsp-mcp/tests/test_bridge.sh` (shipped §1, base sub-tests 1a-1g) + `test_boundary.sh`; now 118 sub-tests covering every §1-§26 capability.
 - [x] Extended the harness with at least one sub-test per §11-§18 capability (extended tools 11a-11g, file-change 12a-12f, watchdog 13a-13h, correlation-ID 14a-..., path-escape 15a-..., warm-start 16a-17g, type-hierarchy 18a-18e).
 - [x] Wired into [`scripts/test-tooling.sh`](../../scripts/test-tooling.sh) `[lsp-mcp]` block (shipped §10; bridge-harness + boundary aggregate sub-tests).
 - [x] Wired into [`.github/workflows/build.yml`](../../.github/workflows/build.yml) "Run LSP-MCP bridge tests" post-build step (shipped §10).
@@ -1040,9 +1066,9 @@ Split out of §25 (2026-08-05): the three findings §25 ACCEPTED rather than fix
 - [x] `bash scripts/build.sh clean` -> `=== BUILD OK ===` (20.0s, 2026-06-13; bridge is Python, no kernel regression).
 - [x] `python3 scripts/lsp-mcp/bridge.py --self-test` exits 0; prints `[lsp-mcp] OK: 0 LSPs spawned, 17 tools registered, bridge ready` (2026-06-13).
 - [x] `--self-test --tools` prints 17 MCP tool schemas (6 core + 8 extended + 2 type-hierarchy + 1 `_health` meta); `type_hierarchy_supertypes`/`type_hierarchy_subtypes` take `path`/`line`/`character`.
-- [x] `bash scripts/lsp-mcp/tests/test_bridge.sh` exits 0; 99/99 sub-tests PASS (base + §11-§18) with clangd-19 (2026-06-13).
+- [x] `bash scripts/lsp-mcp/tests/test_bridge.sh` exits 0; 118/118 sub-tests PASS (base + §11-§26) with clangd-19 (2026-08-05).
 - [x] `--self-test --tools` reports 17 tools (6 core + 8 extended + 2 type-hierarchy + 1 meta) with correct typed params.
-- [x] `_health` MCP tool returns per-LSP status; exercised via kill-and-respawn in sub-tests 13a-13h (part of 99/99).
+- [x] `_health` MCP tool returns per-LSP status; exercised via kill-and-respawn in sub-tests 13a-13h (part of 118/118).
 - [x] `hover(path="/etc/passwd")` rejected (`lsp-path-outside-workspace`); `hover(path="src/kernel/main.c")` succeeds -- sandbox enforced (2026-06-13).
 - [x] `bash scripts/lsp-mcp/tests/test_boundary.sh` exits 0: `[boundary] OK: 0 write-capable LSP methods reachable from MCP surface`.
 - [x] `bash scripts/test-tooling.sh` passes: exit 0, `PASS 1287/1287 tooling tests passed` (2026-08-04, §23)
@@ -1052,6 +1078,6 @@ Split out of §25 (2026-08-05): the three findings §25 ACCEPTED rather than fix
 - [/] Verify on: WSL2 (DONE 2026-06-13 -- every check above ran on WSL2); Linux native (Arch, Ubuntu 24.04) + macOS still pending (user runs on those).
 - [x] Commit: `"scripts/lsp-mcp: bridge complete"`
 
-**Test runner:** N/A (host-side Python tooling, no `TEST_CAT_*` surface) | validation: `bash scripts/lsp-mcp/tests/test_bridge.sh` 99/99 sub-tests PASS on a host with `clangd-19` (2026-06-13); `bash scripts/lsp-mcp/tests/test_boundary.sh` 0 write-capable methods.
+**Test runner:** N/A (host-side Python tooling, no `TEST_CAT_*` surface) | validation: `bash scripts/lsp-mcp/tests/test_bridge.sh` 118/118 sub-tests PASS on a host with `clangd-19` (2026-08-05); `bash scripts/lsp-mcp/tests/test_boundary.sh` 0 write-capable methods.
 
 ---

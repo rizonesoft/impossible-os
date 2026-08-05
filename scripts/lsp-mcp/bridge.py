@@ -71,8 +71,8 @@ if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
 from lsp_client import (  # noqa: E402
-    LspError, LspSubprocess, force_kill_spawned, mark_teardown_complete,
-    reap_all_live, report_unconfirmed_shutdown,
+    LspError, LspSubprocess, SweepCount, force_kill_spawned,
+    mark_teardown_complete, reap_all_live, report_unconfirmed_shutdown,
 )
 import logger as _lsplog  # noqa: E402
 
@@ -5183,7 +5183,8 @@ def _teardown_deadline(proposed: Optional[float] = None) -> float:
         return _TEARDOWN_DEADLINE
 
 
-def _shutdown_bounded(reason: str, deadline: Optional[float] = None) -> int:
+def _shutdown_bounded(reason: str,
+                      deadline: Optional[float] = None) -> SweepCount:
     """Run teardown on a worker thread, wait out the budget, then force.
 
     Every caller that is about to END the process goes through here, not
@@ -5292,6 +5293,15 @@ def _shutdown_bounded(reason: str, deadline: Optional[float] = None) -> int:
             mark_teardown_complete()
     except Exception:
         pass
+    # ONE return type on EVERY path. `killed` is initialized to a plain
+    # int and the force-sweep call is wrapped in a bare except, so a
+    # raised sweep previously returned int 0 -- and the watchdog's
+    # `getattr(result, "completed", True)` read that missing attribute as
+    # SUCCESS, suppressing the incomplete-reap warning immediately before
+    # os._exit under exactly the failure conditions this path exists for
+    # (Codex adversarial + consistency review, High).
+    if not isinstance(killed, SweepCount):
+        killed = SweepCount(int(killed or 0), swept)
     return killed
 
 
@@ -5424,8 +5434,12 @@ def _idle_watchdog() -> None:
             # -- a wedged serve loop must not be able to keep us alive,
             # and there is no bounded work left that would help -- but it
             # is now announced rather than silent.
+            # Default FALSE, not True: a result with no completion
+            # attribute is a contract violation, and reading it as
+            # success is precisely the fail-open this warning exists to
+            # prevent.
             _swept = _shutdown_bounded("idle-watchdog")
-            if not bool(getattr(_swept, "completed", True)):
+            if not bool(getattr(_swept, "completed", False)):
                 _diag("[lsp-mcp] idle-watchdog: exiting through an "
                       "INCOMPLETE reap; language servers may survive\n")
             os._exit(0)

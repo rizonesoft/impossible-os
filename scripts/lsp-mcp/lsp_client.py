@@ -257,15 +257,27 @@ class _SpawnRecord:
     operation and not the protocol (Codex adversarial review, High).
 
     A plain object compares by identity, so `entry in _SPAWNED` and
-    `_SPAWNED.remove(entry)` mean THIS record and no other."""
+    `_SPAWNED.remove(entry)` mean THIS record and no other.
 
-    __slots__ = ("pid", "ticks", "fd")
+    `retired` is EXPLICIT, and absence from `_SPAWNED` is NOT a substitute
+    for it. Two different lifecycle states remove a record from that list:
+    RETIREMENT (child confirmed dead, descriptor closed, identity
+    finished) and the descriptor-exhaustion CLAIM path in
+    `_escalate_recorded` / `signal_recorded_leaders`, which removes the
+    entry precisely so it can keep using the original fd for one signal.
+    Inferring retirement from membership conflated the two, so a
+    `_confirm_dead_late` landing mid-claim reaped the leader before the
+    descendant sweep -- destroying the session proof under exactly the FD
+    pressure the claim path exists for (Codex re-adversarial, High)."""
+
+    __slots__ = ("pid", "ticks", "fd", "retired")
 
     def __init__(self, pid: int, ticks: Optional[int],
                  fd: Optional[int]) -> None:
         self.pid = pid
         self.ticks = ticks
         self.fd = fd
+        self.retired = False
 
 
 _SPAWNED: list = []
@@ -422,6 +434,26 @@ _FD_RESERVE: list = []
 # acquisition at a hard RLIMIT_NOFILE wall and skipped the SIGKILL, with
 # no concurrency required (Codex adversarial review, High).
 _FD_RESERVE_SIZE = 2
+
+# Deferred crash collection: how many may run at once, and the ONE budget
+# each gets for both of its collection passes plus the leader reap. Two
+# slots because that is what the descriptor reserve supports without a
+# collector and the force sweep starving each other; the budget bounds a
+# single crash's procfs scanning, which is otherwise up to twenty rounds
+# per pass (Codex perf review, Medium).
+_CRASH_COLLECT_BUDGET_S = 3.0
+
+# The deferred crash collection runs INLINE on the reader thread, in its
+# own end-of-life finally. A worker dispatcher was built here first (and
+# a Semaphore + queue before that) and BOTH were removed: every review
+# round found another way for a submission to be lost, because handing
+# work to another thread means owning durability, concurrency and
+# start-failure recovery for it. The reader is already terminating when
+# it observes EOF, so it can simply do the work -- nothing is queued, so
+# nothing can be dropped. `_collect_after_death` is single-entry, so a
+# concurrent shutdown() either claimed the collection first or finds it
+# done, and every wait on it is deadline-bound.
+_CRASH_COLLECT_BUDGET_S = 3.0
 
 
 def _arm_fd_reserve() -> None:
@@ -607,8 +639,19 @@ def _ledger_record(pid: int, lang: str, argv0: str) -> None:
 
 
 class ReapCount(int):
-    """How many live instances this sweep asked to stop, carrying the ones
+    """How many live instances this sweep ASKED to stop, carrying the ones
     whose death it could NOT confirm.
+
+    THE NUMERIC HALF IS AN ATTEMPT COUNT, deliberately. It is incremented
+    for every instance that was alive when asked, before `shutdown()`
+    answers -- the contract `reap_all_live` has always had ("how many
+    were still running when asked"), which callers and sub-test 9t both
+    read that way. Redefining it as confirmed reaps would silently change
+    a published number rather than add information. The CONFIRMATION
+    lives in `unconfirmed`: an empty list means every attempt was proven,
+    and that is the half a teardown decision should read (Codex
+    consistency review, Medium -- accepted with the contract stated here
+    rather than by renaming).
 
     An int subclass for the same reason `SweepCount` is one: every
     existing caller and sub-test treats the return value as a number, and
@@ -649,7 +692,13 @@ def reap_all_live(timeout: float = 0.5,
     caller thought it had (Codex adversarial review, High)."""
     reaped = 0
     unconfirmed: list = []
-    for lsp in list(_LIVE_SUBPROCS):
+    # ONE snapshot, indexed -- the expiry path below reports the UNVISITED
+    # SUFFIX. Re-reading the live set there swept up instances this call
+    # had already proven dead and reclassified them as unconfirmed, which
+    # inverts the verdict for exactly the instances that worked (Codex
+    # consistency review, Medium).
+    snapshot = list(_LIVE_SUBPROCS)
+    for idx, lsp in enumerate(snapshot):
         if deadline is not None and time.monotonic() >= deadline:
             # Budget spent. Continuing with a token 50ms per instance is how
             # a bounded cleanup quietly overruns its bound; the caller's
@@ -658,8 +707,7 @@ def reap_all_live(timeout: float = 0.5,
             # Everything NOT reached is unconfirmed by definition, and
             # saying so is the difference between a bounded sweep and a
             # silently partial one.
-            unconfirmed.extend(
-                x for x in _LIVE_SUBPROCS if x not in unconfirmed)
+            unconfirmed.extend(snapshot[idx:])
             break
         budget = timeout
         if deadline is not None:
@@ -698,14 +746,23 @@ def report_unconfirmed_shutdown(lsp, context: str,
     except Exception:
         confirmed = False
     if not confirmed:
-        try:
-            sys.stderr.write(
-                f"[lsp-mcp] WARN: {context}: {getattr(lsp, 'lang', '?')} "
-                f"server (pid {getattr(lsp, 'pid', None)}) not confirmed "
-                f"dead after init failure; left to the force sweep\n")
-        except Exception:
-            pass
+        _report_unconfirmed(lsp, context)
     return confirmed
+
+
+def _report_unconfirmed(lsp, context: str) -> None:
+    """Record that an instance's death could not be confirmed.
+
+    Split out so a caller that has ALREADY run `shutdown()` -- the
+    finalizer -- can report the same way without running teardown twice.
+    Never raises: reachable from `__del__` during interpreter shutdown."""
+    try:
+        sys.stderr.write(
+            f"[lsp-mcp] WARN: {context}: {getattr(lsp, 'lang', '?')} "
+            f"server (pid {getattr(lsp, 'pid', None)}) not confirmed "
+            f"dead; left to the force sweep\n")
+    except Exception:
+        pass
 
 
 def _record_spawn(pid: int) -> "_SpawnRecord":
@@ -810,6 +867,11 @@ def _retire_spawn(target) -> None:
             _SPAWNED.remove(entry)
         except ValueError:
             continue          # another thread retired it; its close, not ours
+        # Marked BEFORE the descriptor closes: from here the record can
+        # identify nothing, and `_leader_exited` reads this flag rather
+        # than membership -- which the claim path also clears while the
+        # descriptor is still in use.
+        entry.retired = True
         if entry.fd is not None:
             try:
                 os.close(entry.fd)
@@ -1189,10 +1251,13 @@ def _signal_recorded(target, sig: int) -> bool:
 
     `Popen.terminate()` / `.kill()` look identity-safe and are not: on
     POSIX they end in os.kill(self.pid, ...), and a Popen is not a pidfd.
-    The reader thread calls proc.poll() concurrently, so the leader can
-    be reaped between the caller's liveness check and the signal, leaving
-    a bare number that may already belong to somebody else (Codex
-    adversarial review, High). Routing through the record fixes that:
+    The reader thread USED TO call proc.poll() concurrently (section 26
+    made it non-reaping), so the leader could be reaped between the
+    caller's liveness check and the signal, leaving a bare number that
+    may already belong to somebody else (Codex adversarial review,
+    High). The hazard is not only historical -- any authorized reaper
+    still collects between a check and a signal, which is why identity
+    never rests on timing. Routing through the record fixes that:
     with a pidfd the signal is exact, and without one the start-time
     check is re-run immediately before signalling. Fails closed -- an
     unrecorded pid gets no signal from here.
@@ -1268,6 +1333,21 @@ def _signal_recorded(target, sig: int) -> bool:
                 except Exception:
                     pass
                 entry.fd = None
+                # NOT marked retired here, deliberately. Doing so was
+                # tried and REVERTED: a claim completing inside
+                # _retry_pinned_kill let the very next _leader_exited in
+                # _confirm_dead_late treat the record as finished and
+                # fall through to a REAPING poll -- before
+                # _collect_after_death, and with the claim having already
+                # removed the record _session_handle needs. A hardened
+                # same-session descendant then reads as collected and a
+                # replacement is published beside it (Codex
+                # re-adversarial, High). The residual is the opposite and
+                # milder failure: this record stays unanswerable, so
+                # `alive` reports the instance live and the force sweep
+                # collects it at teardown. A recoverable leak beats a
+                # duplicated server -- the fail-closed rule this whole
+                # file is built on. Owned by section 27.
         # FAIL CLOSED on absent identity. `ticks is None` means the start
         # time could not be read when the child was recorded, and nothing
         # else here identifies the NUMBER.
@@ -1422,6 +1502,21 @@ def _escalate_recorded(target, is_dead, sigs=None,
                 pass
             if claimed:
                 entry.fd = None         # nobody else may close it now
+                # NOT marked retired here, deliberately. Doing so was
+                # tried and REVERTED: a claim completing inside
+                # _retry_pinned_kill let the very next _leader_exited in
+                # _confirm_dead_late treat the record as finished and
+                # fall through to a REAPING poll -- before
+                # _collect_after_death, and with the claim having already
+                # removed the record _session_handle needs. A hardened
+                # same-session descendant then reads as collected and a
+                # replacement is published beside it (Codex
+                # re-adversarial, High). The residual is the opposite and
+                # milder failure: this record stays unanswerable, so
+                # `alive` reports the instance live and the force sweep
+                # collects it at teardown. A recoverable leak beats a
+                # duplicated server -- the fail-closed rule this whole
+                # file is built on. Owned by section 27.
         return sent
     return False
 
@@ -1837,9 +1932,11 @@ def _group_members(
     This exists because `killpg` addresses a group by a bare number, and
     that number is the leader's PID -- which stops being a safe address
     the moment the leader exits. The dead-leader case is not academic:
-    the reader thread can reap the leader through Popen.poll() while a
-    forked helper of its own survives, and a group kill issued after that
-    can land on a stranger (Codex adversarial review, High). Enumerating
+    an authorized reaper collects the leader while a forked helper of its
+    own survives, and a group kill issued after that can land on a
+    stranger (Codex adversarial review, High -- originally reached via
+    the reader thread's own poll, which section 26 made non-reaping;
+    the deferred crash collector and shutdown still reap). Enumerating
     the members and signalling each through a captured identity keeps the
     guarantee without ever trusting the number.
 
@@ -2180,10 +2277,13 @@ def _force_kill_spawned_sweep(settle: float = 1.0,
     # The ORDER the merge has to preserve is descendants-before-leaders.
     # Session ownership is authorized by the recorded leader still being
     # there -- its presence is what stops the kernel recycling the session
-    # number -- so once the leaders die, the reader thread reaps one
-    # through Popen.poll(), the leader pidfd answers ESRCH, and exactly
-    # the opaque descendant this collects is rejected (Codex adversarial
-    # review, High, reproduced). Two things follow, and both are load-
+    # number -- so once the leaders die and an authorized reaper collects
+    # one, the leader pidfd answers ESRCH and exactly the opaque
+    # descendant this collects is rejected (Codex adversarial review,
+    # High, reproduced -- the original reaper was the reader thread's own
+    # poll, which section 26 made non-reaping; shutdown and the deferred
+    # crash collector still reap, so the ordering still binds). Two
+    # things follow, and both are load-
     # bearing:
     #
     #   * the leaders fire the INSTANT the session scan reaches its own
@@ -2343,8 +2443,8 @@ def _force_kill_spawned_sweep(settle: float = 1.0,
             # NEVER the leader itself. For a recorded leader sid ==
             # pid, so it passes the session check and this scan used
             # to kill it -- destroying the very handle every LATER row's
-            # ownership proof depends on, after which the reader
-            # reaps it and its remaining descendants survive (Codex
+            # ownership proof depends on, after which a reaper collects
+            # it and its remaining descendants survive (Codex
             # adversarial review, High). The leaders belong to
             # signal_recorded_leaders(), which fires once THIS scan
             # has been empty twice.
@@ -4138,69 +4238,67 @@ class LspSubprocess:
     # ------------------------------------------------------------------
 
     def _schedule_crash_collection(self) -> None:
-        """Collect a CRASHED leader's group, then the leader, off-thread.
+        """Collect a CRASHED leader's group, then the leader -- INLINE.
 
-        The reader thread deliberately does not reap (that would strip the
-        leader's identity before any descendant sweep), which leaves a
-        crashed server uncollected until the next lifecycle event on the
-        same key. This closes that window without putting a group sweep on
-        the reader's own thread.
+        Runs on the reader thread, from its end-of-life finally. The
+        reader deliberately does not reap (that would strip the leader's
+        identity before any descendant sweep), which would otherwise
+        leave a crashed server uncollected until the next lifecycle event
+        on the same key -- and traffic on other keys holds off the idle
+        watchdog indefinitely.
+
+        Inline rather than handed to a worker: the reader has finished
+        its loop, so it blocks nothing by doing the work, and there is no
+        queue for a submission to be lost from. Idempotent via the claim
+        flag; never raises."""
+        with self._crash_collect_lock:
+            if self._proc is None or self._crash_collect_started:
+                return
+            self._crash_collect_started = True
+        try:
+            self._run_crash_collection()
+        except Exception:
+            pass
+
+    def _run_crash_collection(self) -> None:
+        """The collection itself, run by a dispatcher worker.
 
         Ordering is the same as every other teardown path:
         `_collect_after_death` sweeps descendants while the leader is
-        still unreaped, and only then is the leader waited for. Idempotent
-        by construction -- `_collect_after_death` admits one runner and a
-        concurrent `shutdown()` either claimed it first or finds it done.
+        still unreaped, and only then is the leader waited for.
         Never raises: this runs on a daemon thread nobody joins."""
         proc = self._proc
-        with self._crash_collect_lock:
-            if proc is None or self._crash_collect_started:
-                return
-            self._crash_collect_started = True
-
-        def collect() -> None:
+        if proc is None:
+            return
+        # ONE absolute budget for BOTH passes and the reap, not a fresh
+        # 2.0s per pass plus 1.0s: two independently minted deadlines let
+        # a single crash occupy a thread for ~5s of procfs scanning
+        # outside any caller's bound (Codex perf review, Medium).
+        collect_deadline = time.monotonic() + _CRASH_COLLECT_BUDGET_S
+        # RETRIED before it gives up, and only reaped once the collection
+        # actually confirmed. Waiting unconditionally meant a first pass
+        # that timed out before reaching an opaque same-session descendant
+        # then reaped the leader -- destroying the last handle a later
+        # attempt could have used, after which a retry sees no provable
+        # members, reports the group empty, and a replacement is published
+        # beside the survivor (Codex re-adversarial, High).
+        ok = False
+        for _ in range(2):
+            ok = self._collect_after_death(proc, collect_deadline)
+            if ok or time.monotonic() >= collect_deadline:
+                break
+        self._confirmed_dead = ok
+        # Reaped only on a confirmed-empty collection. An incomplete one
+        # leaves the leader unreaped ON PURPOSE: `_reap_group` addresses
+        # members by pgid, which stays usable while the leader is not
+        # collected, so the next teardown path still has something to work
+        # with. The zombie is bounded by that teardown; a destroyed proof
+        # is not recoverable at all.
+        if ok:
             try:
-                # RETRIED before it gives up, and only reaped once the
-                # collection actually confirmed. The first version waited
-                # unconditionally, so a first pass that timed out before
-                # reaching an opaque same-session descendant then reaped
-                # the leader -- destroying the last handle a later attempt
-                # could have used, after which a retry sees no provable
-                # members, reports the group empty, and a replacement is
-                # published beside the survivor (Codex re-adversarial,
-                # High).
-                ok = False
-                for _ in range(2):
-                    ok = self._collect_after_death(
-                        proc, time.monotonic() + 2.0)
-                    if ok:
-                        break
-                self._confirmed_dead = ok
-                # Reaped only on a confirmed-empty collection. An
-                # incomplete one leaves the leader unreaped ON PURPOSE:
-                # `_reap_group` addresses members by pgid, which stays
-                # usable while the leader is not collected, so the next
-                # teardown path still has something to work with. The
-                # zombie is bounded by that teardown; a destroyed proof
-                # is not recoverable at all.
-                if ok:
-                    proc.wait(timeout=1.0)
+                proc.wait(timeout=1.0)
             except Exception:
                 pass
-
-        try:
-            threading.Thread(target=collect, daemon=True,
-                             name=f"lsp-crash-collect-{self.lang}").start()
-        except Exception:
-            # The flag is committed BEFORE the start, so a start failure
-            # would otherwise latch "already handled" over work that never
-            # ran -- leaving the zombie and its record with no automatic
-            # retry at all, precisely under the thread/resource exhaustion
-            # that caused the failure (Codex re-adversarial, Medium).
-            # Released instead, so the next lifecycle event on this
-            # instance schedules it again.
-            with self._crash_collect_lock:
-                self._crash_collect_started = False
 
     def _leader_exited(self, proc) -> bool:
         """Has this instance's leader exited? WITHOUT reaping it.
@@ -4236,6 +4334,22 @@ class LspSubprocess:
         if proc.returncode is not None:
             return True
         rec = self._spawn_record
+        if rec is not None and rec.retired:
+            # RETIRED, asked EXPLICITLY. `_collect_after_death` retires
+            # unconditionally (section 24's fix for descriptor
+            # accumulation), so the instance keeps a reference to a record
+            # that is finished: it can authorize nothing, and `_own_pidfd`
+            # rejects it anyway. Treating it as live made this helper
+            # answer "not exited" FOREVER -- `alive` reported a zombie
+            # alive indefinitely and the instance could never be confirmed
+            # dead, a wedge the fail-closed rule created rather than
+            # prevented (Codex adversarial review, High).
+            #
+            # The flag, NOT `rec not in _SPAWNED`: the claim path removes
+            # a record while still holding and using its descriptor, so
+            # membership cannot tell "finished" from "in use right now"
+            # (Codex re-adversarial, High).
+            rec = None
         if rec is not None:
             fd = _borrow_pidfd(rec)
             if fd is None and rec.ticks is not None:
@@ -4405,9 +4519,9 @@ class LspSubprocess:
         the budget, or a signal a full descriptor table stopped us
         sending, both answer False while the process is either dying or
         never asked to. So a repeat call retries the pinned signals,
-        re-polls, and -- when it is the first to see the death --
-        performs the collection the original call never reached (Codex
-        design review + adversarial review, High)."""
+        re-probes WITHOUT reaping, and -- when it is the first to see the
+        death -- performs the collection the original call never reached
+        (Codex design review + adversarial review, High)."""
         if self._confirmed_dead:
             return True
         proc = self._proc
@@ -4452,16 +4566,24 @@ class LspSubprocess:
         cleanup can't crash the interpreter.
 
         RETURNS the confirmed-dead verdict: True when this instance's
-        leader is known to have exited (or never existed), False when the
-        attempt finished without proving it. The caller that matters is
-        the bridge's respawn path, which must not publish a replacement
-        language server while the old one might still be running -- an
-        unconfirmed disposal that publishes anyway is how one crash turns
-        into two live servers on the same workspace (section 25).
+        leader is known to have exited (or never existed) AND its group
+        has been collected to the empty fixpoint, False when the attempt
+        finished without proving both. The group half is not decoration
+        -- publishing a replacement beside a surviving old-generation
+        worker is the same duplication as publishing beside a live
+        leader. The caller that matters is the bridge's respawn path,
+        which must not publish while the old server might still be
+        running: an unconfirmed disposal that publishes anyway is how one
+        crash turns into two live servers on the same workspace
+        (section 25).
 
-        Idempotent: safe to call twice. A second call re-polls the
-        process and returns the verdict; it does not repeat the teardown
-        traffic.
+        Idempotent: safe to call twice. A second call re-probes the
+        leader through the NON-REAPING pidfd path, retries the pinned
+        signal a full descriptor table may have swallowed, and collects
+        the group when it is the first to observe the death; it does not
+        repeat the LSP protocol traffic. It does not "re-poll" -- polling
+        reaps, which would destroy the session proof the collection
+        depends on (section 26).
 
         Ordering matters: we set _shutdown_called BEFORE the teardown
         traffic so external request/notify/apply_text calls reject
@@ -4587,8 +4709,8 @@ class LspSubprocess:
         group_deadline = shutdown_deadline
         if not self._leader_exited(proc):
             # Signal the leader through its PINNED identity, not by
-            # number. proc.poll() was checked above, and between that
-            # check and the signal the reader thread can reap the leader
+            # number. Liveness was checked above, and between that check
+            # and the signal an authorized reaper can collect the leader
             # -- after which proc.terminate() is just os.kill() on a
             # number that may already belong to somebody else (Codex
             # adversarial review, High; the killpg pair this replaced had
@@ -4741,8 +4863,17 @@ class LspSubprocess:
         # can still retry the signal and collect the group -- the object
         # simply disappeared with its child running (Codex consistency
         # review, Medium).
+        # The verdict is CONSUMED, not discarded. A finalizer that cannot
+        # prove the death lets the object leave the weak live-instance
+        # registry with its child still running, and the global force
+        # sweep was then the only remaining collector with nothing on the
+        # record saying so (Codex consistency review, Medium). Reported
+        # through the shared helper's own exception-safe path; the outer
+        # guard stays because __del__ may run during interpreter teardown,
+        # where even the report can fail.
         try:
             if not self._confirmed_dead:
-                self.shutdown(timeout=0.2)
+                if not self.shutdown(timeout=0.2):
+                    _report_unconfirmed(self, "finalizer")
         except Exception:
             pass
