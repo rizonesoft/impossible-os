@@ -1036,6 +1036,31 @@ def _provably_ours(pid: int, deadline: Optional[float] = None,
     return _session_marks_ours(pid, _session_of(pid))
 
 
+def _provably_ours_and_gen(pid: int, gen: Optional[str],
+                           deadline: Optional[float] = None,
+                           clock: _Clock = _REAL_CLOCK) -> tuple[bool, bool]:
+    """_provably_ours and _carries_gen_id from ONE environment traversal.
+
+    Identical answers to asking them separately, including the rule that
+    session continuity is consulted ONLY when the owner probe read
+    nothing at all. What changes is the cost: the group sweep's
+    post-pidfd recheck asked both back to back, so one many-threaded
+    candidate paid two full task walks for a single authorization
+    (section 24).
+
+    The second element is True when no generation was asked for, so a
+    caller can consume it unconditionally."""
+    owner, generation = _read_env_markers(pid, gen, deadline=deadline,
+                                          clock=clock)
+    if owner is True:
+        ours = True
+    elif owner is not None:
+        ours = False                # readable and unstamped: not ours
+    else:
+        ours = _session_marks_ours(pid, _session_of(pid))
+    return ours, (True if gen is None else generation is True)
+
+
 def _signal_recorded(target, sig: int) -> bool:
     """Send `sig` to a RECORDED child through its pinned identity.
 
@@ -1208,6 +1233,94 @@ def _kill_verified(pid: int, fd: Optional[int], still_ours) -> bool:
         return False
 
 
+def _read_env_markers(
+    pid: int, gen: Optional[str] = None,
+    deadline: Optional[float] = None,
+    clock: _Clock = _REAL_CLOCK,
+) -> tuple[Optional[bool], Optional[bool]]:
+    """`(owner, generation)` from ONE traversal of `pid`'s environments.
+
+    Each answer is True, False when an environment was read and did not
+    carry that marker, or None when nothing authoritative could be read.
+    `generation` is always None when no `gen` was asked for.
+
+    Both markers live in the SAME environment -- they are placed together
+    by the env passed to Popen -- so asking for them separately read the
+    same file twice. A group sweep asked for both in its pre-filter and
+    then again in its post-pidfd recheck, so an unstamped many-threaded
+    candidate could pay FOUR full task walks, one read per task each,
+    all charged to a teardown budget (section 24).
+
+    None is per-marker, and it is NOT merely "every read failed". A walk
+    cut short by the deadline has proven nothing about the tasks it never
+    reached, so every UNRESOLVED marker stays None even when an earlier
+    task WAS readable: collapsing that partial result to False would stop
+    _provably_ours consulting session continuity, and a dead-leader /
+    live-worker child would then be skipped and survive teardown under
+    exactly the load that truncated the walk (Codex design review, High).
+
+    For the same reason the walk does not stop at the first task carrying
+    the owner stamp while the generation is still unresolved -- an early
+    return would answer one marker from a read environment and downgrade
+    the other to a guess."""
+    owner_marker = b"LSP_BRIDGE_OWNER=" + _OWNER_ID.encode()
+    gen_marker = (b"LSP_BRIDGE_GEN=" + gen.encode()
+                  if gen is not None else None)
+
+    def expired() -> bool:
+        return deadline is not None and clock.now() >= deadline
+
+    if expired():
+        return None, None               # budget spent before we even read
+    try:
+        with open(f"/proc/{pid}/environ", "rb") as fh:
+            env = fh.read().split(b"\0")
+        return (owner_marker in env,
+                None if gen_marker is None else gen_marker in env)
+    except Exception:
+        pass
+    # Only now walk the threads. The leader environ answers for almost
+    # every process, and reading EVERY task environment before trusting it
+    # made an unstamped multithreaded process (a browser, a JVM, a build
+    # worker) cost one read per thread -- paid out of the shutdown budget,
+    # for a process we were about to reject anyway (Codex post-commit perf).
+    #
+    # Read per-TASK as well as per-process, for the same reason the
+    # liveness check is thread-group-aware: once the thread-group leader
+    # has exited, /proc/PID/environ answers EACCES while a surviving
+    # worker's /proc/PID/task/<tid>/environ still carries the stamp.
+    try:
+        tids = os.listdir(f"/proc/{pid}/task")
+    except Exception:
+        return None, None
+    owner: Optional[bool] = None
+    generation: Optional[bool] = None
+    read_any = False
+    for tid in tids:
+        if expired():
+            # Truncated: a resolved positive stands, everything else is
+            # still UNKNOWN rather than negative.
+            return (True if owner is True else None,
+                    True if generation is True else None)
+        try:
+            with open(f"/proc/{pid}/task/{tid}/environ", "rb") as fh:
+                data = fh.read().split(b"\0")
+        except Exception:
+            continue
+        read_any = True
+        if owner_marker in data:
+            owner = True
+        if gen_marker is not None and gen_marker in data:
+            generation = True
+        if owner is True and (gen_marker is None or generation is True):
+            break                       # every asked marker answered
+    if not read_any:
+        # Every task refused to be read: nothing was proven either way.
+        return None, None
+    return (owner is True,
+            None if gen_marker is None else generation is True)
+
+
 def _carries_our_owner_id(
     pid: int, deadline: Optional[float] = None,
     clock: _Clock = _REAL_CLOCK,
@@ -1240,38 +1353,11 @@ def _carries_our_owner_id(
     worker's /proc/PID/task/<tid>/environ still carries the stamp. Asking
     only the leader therefore disowned exactly the dead-leader,
     live-worker process the previous fix had just taught the scan to keep
-    (Codex adversarial review, Medium, reproduced)."""
-    if deadline is not None and clock.now() >= deadline:
-        return None                     # budget spent before we even read
-    marker = b"LSP_BRIDGE_OWNER=" + _OWNER_ID.encode()
-    try:
-        with open(f"/proc/{pid}/environ", "rb") as fh:
-            return marker in fh.read().split(b"\0")
-    except Exception:
-        pass
-    # Only now walk the threads. The leader environ answers for almost
-    # every process, and reading EVERY task environment before trusting it
-    # made an unstamped multithreaded process (a browser, a JVM, a build
-    # worker) cost one read per thread -- paid out of the shutdown budget,
-    # for a process we were about to reject anyway (Codex post-commit perf).
-    try:
-        tids = os.listdir(f"/proc/{pid}/task")
-    except Exception:
-        return None
-    read_any = False
-    for tid in tids:
-        if deadline is not None and clock.now() >= deadline:
-            return None             # budget spent, not an answer
-        try:
-            with open(f"/proc/{pid}/task/{tid}/environ", "rb") as fh:
-                data = fh.read()
-        except Exception:
-            continue
-        read_any = True
-        if marker in data.split(b"\0"):
-            return True
-    # Every task refused to be read: nothing was proven either way.
-    return False if read_any else None
+    (Codex adversarial review, Medium, reproduced).
+
+    The traversal itself lives in _read_env_markers, which answers this
+    question and the generation question from the same read."""
+    return _read_env_markers(pid, None, deadline=deadline, clock=clock)[0]
 
 
 class _ProcSnapshot:
@@ -1303,13 +1389,14 @@ class _ProcSnapshot:
     And in every case the cache only NARROWS the candidate set --
     authorization to signal is a live re-read after the pidfd is open."""
 
-    __slots__ = ("procs", "_ours")
+    __slots__ = ("procs", "_ours", "_gen")
 
     def __init__(
         self,
         procs: list[tuple[int, Optional[int], Optional[int],
                           Optional[int], Optional[int]]],
         ours_cache: Optional[dict] = None,
+        gen_cache: Optional[dict] = None,
     ) -> None:
         self.procs = procs
         # A caller looping over several snapshots shares one cache: the
@@ -1318,6 +1405,11 @@ class _ProcSnapshot:
         # true for as long as that process does.
         self._ours: dict[tuple[int, int], bool] = (
             ours_cache if ours_cache is not None else {})
+        # The generation answer earns the same treatment for the same
+        # reason, keyed by (pid, ticks, gen) because one pid can be asked
+        # about two generations across a respawn.
+        self._gen: dict[tuple[int, int, str], bool] = (
+            gen_cache if gen_cache is not None else {})
 
     def ours(self, pid: int, ticks: Optional[int],
              deadline: Optional[float] = None,
@@ -1354,6 +1446,45 @@ class _ProcSnapshot:
         if answer is True and key is not None:
             self._ours[key] = True
         return answer is True
+
+    def markers(self, pid: int, ticks: Optional[int], gen: Optional[str],
+                deadline: Optional[float] = None,
+                sid: Optional[int] = None,
+                clock: _Clock = _REAL_CLOCK) -> tuple[bool, bool]:
+        """`(ours, matches_gen)` for one candidate from ONE traversal.
+
+        The group filter needs both answers about the same process, and
+        asking ours() and then _carries_gen_id() read the same
+        environment twice. Every rule ours() enforces still holds here:
+        the cache is keyed by (pid, start_ticks) so a recycled number
+        cannot inherit an answer, only POSITIVES are stored because a
+        probe landing between fork and exec reads an unstamped
+        environment for a process that is about to carry the stamp, and
+        the session fallback is consulted only on an unreadable owner
+        probe and never cached (its truth depends on a leader that a
+        later round can find gone).
+
+        `matches_gen` is True when no generation was asked for."""
+        key = (pid, ticks) if ticks is not None else None
+        gkey = ((pid, ticks, gen)
+                if (key is not None and gen is not None) else None)
+        have_ours = key is not None and self._ours.get(key) is True
+        have_gen = gkey is not None and self._gen.get(gkey) is True
+        if have_ours and (gen is None or have_gen):
+            return True, True
+        owner, generation = _read_env_markers(pid, gen, deadline=deadline,
+                                              clock=clock)
+        ours = have_ours or owner is True
+        # Consulted only on None, never on a readable-and-unstamped
+        # False, and never cached -- see ours().
+        if not ours and owner is None and _session_marks_ours(pid, sid):
+            ours = True
+        if owner is True and key is not None:
+            self._ours[key] = True
+        if generation is True and gkey is not None:
+            self._gen[gkey] = True
+        return ours, (True if gen is None
+                      else have_gen or generation is True)
 
 
 def _proc_snapshot(deadline: Optional[float] = None,
@@ -1440,30 +1571,15 @@ def _carries_gen_id(pid: int, gen: str,
     Unreadable is False, as everywhere else: not-provably-ours is
     not-killed. `deadline` bounds the task walk for the same reason it
     bounds the owner probe: one many-threaded replacement could otherwise
-    hold a teardown open past its budget inside a single call."""
-    if deadline is not None and clock.now() >= deadline:
-        return False                    # budget spent before we even read
-    marker = b"LSP_BRIDGE_GEN=" + gen.encode()
-    try:
-        with open(f"/proc/{pid}/environ", "rb") as fh:
-            if marker in fh.read().split(b"\0"):
-                return True
-    except Exception:
-        pass
-    try:
-        tids = os.listdir(f"/proc/{pid}/task")
-    except Exception:
-        return False
-    for tid in tids:
-        if deadline is not None and clock.now() >= deadline:
-            return False                # budget spent; not provably ours
-        try:
-            with open(f"/proc/{pid}/task/{tid}/environ", "rb") as fh:
-                if marker in fh.read().split(b"\0"):
-                    return True
-        except Exception:
-            continue
-    return False
+    hold a teardown open past its budget inside a single call.
+
+    The tri-state _read_env_markers returns is coerced HERE, at the public
+    edge, and not inside the traversal: the merged reader has to keep
+    "unresolved" distinct from "read and absent" so the owner answer can
+    still reach session continuity, while this question has always failed
+    closed on both."""
+    return _read_env_markers(pid, gen, deadline=deadline,
+                             clock=clock)[1] is True
 
 
 def _group_members(
@@ -1507,28 +1623,30 @@ def _group_members(
         if pgrp is None or pgrp != pgid:
             continue        # unreadable stat: not groupable, but the
                             # stamp-wide pass still sees it
-        if not snap.ours(pid, ticks, deadline=deadline, sid=sid,
-                         clock=clock):
+        # BOTH stamps from one environment traversal, and one cache entry
+        # per answer: asking ours() and then _carries_gen_id() read the
+        # same file twice per candidate per round (section 24).
+        is_ours, gen_ok = snap.markers(pid, ticks, gen, deadline=deadline,
+                                       sid=sid, clock=clock)
+        if not is_ours:
             continue
-        if gen is not None and not _carries_gen_id(pid, gen,
-                                                   deadline=deadline,
-                                                   clock=clock):
+        if not gen_ok:
             continue        # a namesake generation, not this one
         fd = _pidfd_open(pid)
         # Recheck BOTH facts after opening the fd, not just the group: a
         # PID that was replaced between the stamp check and the open would
         # otherwise be captured with a valid pidfd pointing at a stranger.
-        if fd is not None and (
-            _pgrp_of(pid) != pgid
-            or not _provably_ours(pid, deadline=deadline, clock=clock)
-            or (gen is not None and not _carries_gen_id(
-                pid, gen, deadline=deadline, clock=clock))
-        ):
-            try:
-                os.close(fd)
-            except Exception:
-                pass
-            continue
+        # This re-read is LIVE and uncached -- it is the authorization,
+        # not a filter -- but it is still ONE traversal for both stamps.
+        if fd is not None:
+            live_ours, live_gen = _provably_ours_and_gen(
+                pid, gen, deadline=deadline, clock=clock)
+            if _pgrp_of(pid) != pgid or not live_ours or not live_gen:
+                try:
+                    os.close(fd)
+                except Exception:
+                    pass
+                continue
         # Carry the start time so the pidfd-less path has an identity to
         # verify at signal time; group membership alone is a reusable
         # number and cannot authorize a kill (Codex adversarial review,
@@ -1556,54 +1674,30 @@ def _reap_predicate(pgid: int, ticks: Optional[int], gen: Optional[str],
             return False
         if _pgrp_of(p) != pgid:
             return False
-        if not _provably_ours(p, deadline=deadline, clock=clock):
-            return False
-        if gen is not None and not _carries_gen_id(p, gen, deadline=deadline,
-                                                   clock=clock):
+        # One traversal for both stamps; the budget re-check below is why
+        # they are read together rather than in sequence.
+        ours, gen_ok = _provably_ours_and_gen(p, gen, deadline=deadline,
+                                              clock=clock)
+        if not ours or not gen_ok:
             return False
         return not (deadline is not None and clock.now() >= deadline)
 
     return still_ours
 
 
-def _group_is_empty(pgid: int, exclude: int = -1,
-                    gen: Optional[str] = None,
-                    deadline: Optional[float] = None,
-                    clock: _Clock = _REAL_CLOCK) -> bool:
-    """True when no live member of this group answers to `gen`.
-
-    A boolean question deserves a boolean answer. Asking _group_members
-    and reading its truthiness discards a list whose every entry may own
-    an open pidfd, and the caller that did so ran the question up to
-    twenty times per shutdown -- so a respawn loop accumulated
-    descriptors until EMFILE (Codex adversarial review, High)."""
-    members = _group_members(pgid, exclude=exclude, deadline=deadline,
-                             gen=gen, clock=clock)
-    for _pid, fd, _ticks in members:
-        if fd is not None:
-            try:
-                os.close(fd)
-            except Exception:
-                pass
-    if members:
-        return False
-    # An empty result is not the same answer as an empty group. The scan
-    # stops where its deadline runs out, so a budget that expired partway
-    # returns nothing at all -- and the caller took that for "gone",
-    # retired the spawn record, and left the descendants it had not
-    # reached (Codex adversarial review, Medium). Incomplete means
-    # unknown, and unknown fails toward still-there.
-    if deadline is not None and clock.now() >= deadline:
-        return False
-    return True
-
-
 def _reap_group(pgid: int, deadline: Optional[float] = None,
                 gen: Optional[str] = None,
-                clock: _Clock = _REAL_CLOCK) -> int:
+                clock: _Clock = _REAL_CLOCK) -> tuple[int, bool]:
     """SIGKILL every live member of a process group we own, by verified
     identity rather than by killpg, REPEATEDLY until the group is empty.
-    Returns how many were signalled.
+
+    Returns `(killed, emptied)`. `emptied` is True ONLY when the loop
+    reached its two-consecutive-empty-scans fixpoint -- an exit on the
+    deadline or the round cap answers False, because neither proves the
+    group is gone. Reporting it is what lets a caller stop asking the
+    question separately: the group emptiness check ran its own full
+    /proc walk before each reap, so a shutdown alternating the two
+    nested walks inside walks (section 24).
 
     One pass is not enough: the enumeration completes before the first
     signal is sent, so a leader that forks a helper in between produces a
@@ -1614,6 +1708,7 @@ def _reap_group(pgid: int, deadline: Optional[float] = None,
     open forever."""
     killed = 0
     empty_scans = 0
+    emptied = False
     for _ in range(20):                     # ~ bounded; see deadline below
         if deadline is not None and clock.now() >= deadline:
             break                           # checked BEFORE the scan, not after
@@ -1626,8 +1721,19 @@ def _reap_group(pgid: int, deadline: Optional[float] = None,
             # read -- is absent from a single scan that looks clean
             # (Codex adversarial review, Medium). A second look after a
             # scheduling interval sees it.
+            # An empty RESULT is not an empty group. _group_members stops
+            # where its deadline runs out, so a budget that expired partway
+            # returns nothing at all -- and counting that as an empty scan
+            # let `emptied` report the group gone over descendants the scan
+            # never reached, which is the retirement decision this flag now
+            # carries. Incomplete means unknown, and unknown fails toward
+            # still-there (Codex adversarial review, Medium; the rule the
+            # deleted _group_is_empty preflight held).
+            if deadline is not None and clock.now() >= deadline:
+                break                       # incomplete, not empty
             empty_scans += 1
             if empty_scans >= 2:
+                emptied = True
                 break
             clock.sleep(0.02)
             continue
@@ -1647,7 +1753,7 @@ def _reap_group(pgid: int, deadline: Optional[float] = None,
         if deadline is not None and clock.now() >= deadline:
             break
         clock.sleep(0.02)
-    return killed
+    return killed, emptied
 
 
 def force_kill_spawned(settle: float = 1.0,
@@ -1683,39 +1789,252 @@ def force_kill_spawned(settle: float = 1.0,
         waited += 0.02
 
     signalled: set[int] = set()
+    me = os.getpid()
+    me0 = me
 
-    # PASS 0 -- signal, through EXACT handles, every opaque descendant
-    # sitting in a session one of our recorded leaders owns.
+    def signal_recorded_leaders() -> None:
+        """PASS 1 -- the cheap one, and it is NOT deadline-gated.
+        Signalling a recorded leader through its pinned identity is a
+        couple of syscalls; there are at most a handful of records, and
+        these are the processes we most certainly own. Doing this
+        interleaved with the expensive per-record group scans meant a
+        small budget was spent entirely on the FIRST record's /proc
+        walks, and every later language server was skipped and survived
+        (Codex adversarial review, High). Cheap and certain first;
+        expensive and speculative with what is left."""
+        for entry in list(_SPAWNED):
+            pid = entry.pid
+            ticks = entry.ticks
+            # `entry in _SPAWNED`, checked at SIGNAL time rather than scan
+            # time, means no retirement has run: nobody has yet confirmed
+            # this child dead, so the record is still worth acting on. It
+            # is a necessary condition and NOT an identity -- the recorded
+            # pidfd keeps the DESCRIPTOR from retargeting but does not
+            # reserve the NUMBER, which free_pid() returns to the
+            # allocator when the task is reaped no matter how many struct
+            # pid references remain (Codex adversarial review, High).
+            #
+            # Identity is therefore the start time, or -- when the record
+            # never got one -- the owner stamp, which is enough HERE and
+            # only here: this sweep kills everything this bridge started,
+            # so "provably one of ours" is exactly the authorization it
+            # needs. _signal_recorded, which stops ONE named server, fails
+            # closed. The owner-stamp fallback is NOT cheap -- it can read
+            # one environment per task -- so unlike the rest of this pass
+            # it is deadline-bound, checked before and after the probe
+            # exactly as the stamp-wide pass does. Leaving it ungated let
+            # a 200ms probe signal 150ms past a 50ms budget (Codex
+            # adversarial review, High).
+            def still(p, t=ticks, a=entry, _dl=deadline):
+                if a not in _SPAWNED:
+                    return False
+                # NECESSARY, never SUFFICIENT. This used to return True on
+                # a tick match alone, and _own_pidfd then pinned and
+                # SIGKILLed whatever answered to the number -- so a
+                # recycle landing in the same 100 Hz tick killed a
+                # stranger, by DEFAULT rather than only under the bare-PID
+                # opt-in. It is the one place this section had not yet
+                # applied its own rule that a start time is not an
+                # identity (Codex adversarial review, High).
+                if t is not None and proc_start_ticks(p) != t:
+                    return False
+                if _dl is not None and clock.now() >= _dl:
+                    return False
+                ok = _provably_ours(p, deadline=_dl, clock=clock)
+                if _dl is not None and clock.now() >= _dl:
+                    return False
+                return ok
+            # A duplicate of the record's own descriptor is exact; the
+            # predicate below is only for records that never got one.
+            # _borrow_pidfd already validated membership after its dup; a
+            # second check here could only drop the descriptor on the
+            # floor without closing it (Codex adversarial review, Medium).
+            own = _borrow_pidfd(entry)
+            claimed = False
+            if own is None and entry.fd is not None:
+                # The dup failed -- and it fails under exactly the FD
+                # exhaustion that makes this sweep urgent. Falling back to
+                # a numeric signal would restore the equal-tick recycle
+                # the descriptor rules out, and refusing outright would
+                # orphan the child at the worst possible moment (Codex
+                # adversarial review, High then Medium). So CLAIM it
+                # instead: a successful remove transfers ownership of the
+                # original descriptor from _retire_spawn to this caller,
+                # which is the one operation that needs no new file
+                # descriptor at all.
+                try:
+                    _SPAWNED.remove(entry)
+                except ValueError:
+                    continue            # another thread owns it now
+                own, claimed = entry.fd, True
+            elif own is None:
+                own = _own_pidfd(pid, still)
+            try:
+                if own is not None:
+                    try:
+                        signal.pidfd_send_signal(own, signal.SIGKILL)
+                        signalled.add(pid)
+                    except (ProcessLookupError, OSError):
+                        pass
+                elif _kill_verified(pid, None, still):
+                    signalled.add(pid)
+            finally:
+                # Closed either way: a borrowed dup is ours by
+                # construction, and a CLAIMED original is ours because the
+                # remove that produced it took ownership from
+                # _retire_spawn.
+                if own is not None:
+                    try:
+                        os.close(own)
+                    except Exception:
+                        pass
+                    if claimed:
+                        entry.fd = None     # nobody else may close it now
+
+    # ONE /proc walk per round, shared by both scans that need one.
     #
-    # It runs BEFORE pass 1 because session ownership is authorized by the
-    # leader still being there -- its presence is what stops the kernel
-    # recycling the session number -- and pass 1 kills the leaders, after
-    # which the reader thread reaps one through Popen.poll() and the
-    # leader pidfd answers ESRCH. Asking afterwards rejected exactly the
-    # descendant this exists to collect (Codex adversarial review, High,
-    # reproduced).
+    # These were three separate loops -- session-owned descendants, then
+    # the recorded leaders, then the stamp-wide sweep -- and the first and
+    # third each took their OWN snapshots. In a production teardown, where
+    # every _record_spawn populates _OWNED_SESSIONS, that cost at least
+    # two extra full enumerations, and a persistent session target could
+    # spend whole rounds before detached owner-stamped helpers were
+    # considered at all (section 24).
     #
-    # It signals HERE rather than handing pass 2 a set of proven pids: a
-    # (pid, start_ticks) pair carried across the sweep is not an identity,
-    # for the same 100 Hz reason a session id is not one, and an opaque
-    # process inheriting the number inside the tick was signalled through
-    # it (Codex adversarial review, High). A pidfd opened while the proof
-    # holds IS an identity, so the proof and the signal travel together.
+    # The ORDER the merge has to preserve is descendants-before-leaders.
+    # Session ownership is authorized by the recorded leader still being
+    # there -- its presence is what stops the kernel recycling the session
+    # number -- so once the leaders die, the reader thread reaps one
+    # through Popen.poll(), the leader pidfd answers ESRCH, and exactly
+    # the opaque descendant this collects is rejected (Codex adversarial
+    # review, High, reproduced). Two things follow, and both are load-
+    # bearing:
     #
-    # Skipped entirely when nothing is recorded, and deadline-gated before
-    # the walk: _proc_snapshot lists /proc before its per-entry check, so
-    # an already-expired teardown would otherwise still pay for a full
-    # enumeration (Codex adversarial review, Medium).
-    if _OWNED_SESSIONS and not (deadline is not None
-                                and clock.now() >= deadline):
-        me0 = os.getpid()
-        empty0 = 0
-        for _ in range(20):
+    #   * the leaders fire the INSTANT the session scan reaches its own
+    #     two-consecutive-empty-rounds fixpoint, before this round's
+    #     stamped work. Running the stamped scan in between would leave
+    #     the leader alive across a walk that can read one environment per
+    #     task, and a descendant forked in that window is in no snapshot
+    #     and loses its proof the moment the leader is reaped (Codex
+    #     design review, High);
+    #   * until they have fired, the stamped scan SKIPS the recorded
+    #     session leaders themselves -- they carry the stamp, so it would
+    #     otherwise kill the very handle every session proof depends on.
+    #
+    # If the deadline or the round cap arrives first, the leaders are
+    # signalled unconditionally after the loop, preserving pass 1's
+    # deliberately ungated behavior.
+    owner_cache: dict = {}
+    leaders_done = False
+    session_empty = 0
+    stamped_empty = 0
+
+    def stamped_round(snap) -> bool:
+        """Signal every OTHER live process carrying this run's stamp:
+        descendants of a recorded leader, a helper reparented away after
+        its leader died, one that called setsid and left both the group
+        and the child list, and a spawn interrupted before it could write
+        a record. Returns whether the scan found anything.
+
+        This and the per-leader group sweep were once separate passes
+        asking the same question: _group_members requires the owner stamp
+        exactly as this scan does and adds only a pgrp filter, so the
+        group set is a strict SUBSET of the stamped set."""
+        # Deadline-checked, NOT a comprehension. Every snap.ours() miss
+        # can cost an environ read plus one per task, so a few hundred
+        # unstamped processes are enough to overrun the budget between
+        # the walk and the first signal -- the enumeration was bounded
+        # and the ownership probing behind it was not (Codex adversarial
+        # review, High).
+        targets: list[tuple[int, Optional[int]]] = []
+        for pid, _ppid, _pgrp, sid, ticks in snap.procs:
             if deadline is not None and clock.now() >= deadline:
                 break
-            pre = _proc_snapshot(deadline=deadline, clock=clock)
+            if pid == me:
+                continue
+            # The recorded session leaders are the handles every session
+            # proof depends on, and they carry this run's stamp, so until
+            # they have been signalled deliberately this scan must not
+            # take them (section 24).
+            if not leaders_done and sid == pid and pid in _OWNED_SESSIONS:
+                continue
+            if snap.ours(pid, ticks, deadline=deadline, sid=sid,
+                         clock=clock):
+                targets.append((pid, ticks))
+        for pid, _ticks in targets:
+            if deadline is not None and clock.now() >= deadline:
+                break
+            # The snapshot's ownership answer only NARROWED the candidate
+            # set. Authorization is this live re-read, taken after the
+            # pidfd pins the process, so a PID recycled between the walk
+            # and the signal cannot inherit the previous occupant's stamp
+            # (Codex design review, High).
+            #
+            # It carries the deadline itself, and re-checks it: the loop's
+            # check happens BEFORE _own_pidfd opens, and the predicate
+            # then runs twice -- once inside _own_pidfd and again on the
+            # pidfd-less fallback -- so a slow procfs read could authorize
+            # a signal well past a budget the caller is holding to (Codex
+            # adversarial review, High; a 200ms probe against a 50ms
+            # deadline still signalled).
+            def still(p, _dl=deadline):
+                if _dl is not None and clock.now() >= _dl:
+                    return False
+                # _provably_ours, not the raw stamp probe: a descendant
+                # that made its /proc entry unreadable answers None to
+                # the stamp forever, so authorizing on the stamp alone
+                # would let the snapshot nominate a target the live
+                # re-read could never confirm -- the leak this section
+                # exists to close, reintroduced one layer down.
+                ok = _provably_ours(p, deadline=_dl, clock=clock)
+                # Re-checked AFTER the probe as well. Checking only
+                # before it is what makes a slow read dangerous rather
+                # than merely slow: the leader's environ read is not
+                # interruptible, so the budget can expire inside the one
+                # call whose answer then authorizes the signal.
+                if _dl is not None and clock.now() >= _dl:
+                    return False
+                return ok
+            own = _own_pidfd(pid, still)
+            try:
+                if _kill_verified(pid, own, still):
+                    signalled.add(pid)
+            finally:
+                if own is not None:
+                    try:
+                        os.close(own)
+                    except Exception:
+                        pass
+        return bool(targets)
+
+    if not _OWNED_SESSIONS:
+        # No recorded session owns a proof handle, so nothing has to hold
+        # the leaders back -- and signalling them BEFORE the first
+        # snapshot is what keeps EVERY stamped scan a post-leader one,
+        # which the separate pass 1 / pass 2 shape used to guarantee for
+        # free (Codex adversarial review, High).
+        signal_recorded_leaders()
+        leaders_done = True
+
+    for _ in range(20):
+        if deadline is not None and clock.now() >= deadline:
+            break                           # checked BEFORE the scan
+        snap = _proc_snapshot(deadline=deadline, ours_cache=owner_cache,
+                              clock=clock)
+
+        # (a) Opaque descendants sitting in a session one of our recorded
+        # leaders owns, signalled through EXACT handles.
+        #
+        # Signalled HERE rather than handed on as a set of proven pids: a
+        # (pid, start_ticks) pair carried across the sweep is not an
+        # identity, for the same 100 Hz reason a session id is not one,
+        # and an opaque process inheriting the number inside the tick was
+        # signalled through it (Codex adversarial review, High). A pidfd
+        # opened while the proof holds IS an identity, so the proof and
+        # the signal travel together.
+        if _OWNED_SESSIONS and not leaders_done:
             hit = 0
-            for pid, _ppid, _pgrp, sid, _ticks in pre.procs:
+            for pid, _ppid, _pgrp, sid, _ticks in snap.procs:
                 if deadline is not None and clock.now() >= deadline:
                     break
                 # NEVER the leader itself. For a recorded leader sid ==
@@ -1793,209 +2112,70 @@ def force_kill_spawned(settle: float = 1.0,
                     except Exception:
                         pass
             # To a FIXPOINT, not one shot: a descendant forked after this
-            # snapshot is in no round that saw it, and once pass 1 kills
-            # the leader its session can no longer be proven. Two
-            # consecutive empty rounds, the same rule the other loops use.
+            # snapshot is in no round that saw it, and once the leaders
+            # die its session can no longer be proven. Two consecutive
+            # empty rounds, the same rule the other loops use.
             if hit == 0:
-                empty0 += 1
-                if empty0 >= 2:
-                    break
+                session_empty += 1
             else:
-                empty0 = 0
-            if deadline is not None and clock.now() >= deadline:
-                break
-            clock.sleep(0.02)
+                session_empty = 0
+            if session_empty >= 2:
+                # IMMEDIATELY -- before this round's stamped scan, which
+                # can read one environment per task and would leave the
+                # leader alive across all of it.
+                signal_recorded_leaders()
+                leaders_done = True
+                # This round's snapshot predates that signal, so it cannot
+                # show a helper the leader forked on its way out, and an
+                # empty stamped result read from it is not evidence. Drop
+                # the count and restart from a FRESH snapshot: the old
+                # separate stamped pass necessarily began post-leader, and
+                # without this the pre-leader empty scan plus one stale
+                # one reached the two-empty bound and the loop exited over
+                # the helper (Codex adversarial review, High).
+                stamped_empty = 0
+                if deadline is not None and clock.now() >= deadline:
+                    break
+                clock.sleep(0.02)
+                continue
+        elif not leaders_done:
+            # Nothing recorded owns a session, so there is no proof to
+            # preserve and no reason to hold the leaders back.
+            signal_recorded_leaders()
+            leaders_done = True
 
-    # PASS 1 -- the cheap one, and it is NOT deadline-gated. Signalling a
-    # recorded leader through its pinned identity is a couple of syscalls;
-    # there are at most a handful of records, and these are the processes
-    # we most certainly own. Doing this interleaved with the expensive
-    # per-record group scans meant a small budget was spent entirely on
-    # the FIRST record's /proc walks, and every later language server was
-    # skipped and survived (Codex adversarial review, High). Cheap and
-    # certain first; expensive and speculative with what is left.
-    for entry in list(_SPAWNED):
-        pid = entry.pid
-        ticks = entry.ticks
-        # `entry in _SPAWNED`, checked at SIGNAL time rather than scan
-        # time, means no retirement has run: nobody has yet confirmed
-        # this child dead, so the record is still worth acting on. It is
-        # a necessary condition and NOT an identity -- the recorded pidfd
-        # keeps the DESCRIPTOR from retargeting but does not reserve the
-        # NUMBER, which free_pid() returns to the allocator when the task
-        # is reaped no matter how many struct pid references remain
-        # (Codex adversarial review, High).
-        #
-        # Identity is therefore the start time, or -- when the record
-        # never got one -- the owner stamp, which is enough HERE and only
-        # here: this sweep kills everything this bridge started, so
-        # "provably one of ours" is exactly the authorization it needs.
-        # _signal_recorded, which stops ONE named server, fails closed.
-        # The owner-stamp fallback is NOT cheap -- it can read one
-        # environment per task -- so unlike the rest of this pass it is
-        # deadline-bound, checked before and after the probe exactly as
-        # the stamp-wide pass does. Leaving it ungated let a 200ms probe
-        # signal 150ms past a 50ms budget (Codex adversarial review,
-        # High).
-        def still(p, t=ticks, a=entry, _dl=deadline):
-            if a not in _SPAWNED:
-                return False
-            # NECESSARY, never SUFFICIENT. This used to return True on a
-            # tick match alone, and _own_pidfd then pinned and SIGKILLed
-            # whatever answered to the number -- so a recycle landing in
-            # the same 100 Hz tick killed a stranger, by DEFAULT rather
-            # than only under the bare-PID opt-in. It is the one place
-            # this section had not yet applied its own rule that a start
-            # time is not an identity (Codex adversarial review, High).
-            if t is not None and proc_start_ticks(p) != t:
-                return False
-            if _dl is not None and clock.now() >= _dl:
-                return False
-            ok = _provably_ours(p, deadline=_dl, clock=clock)
-            if _dl is not None and clock.now() >= _dl:
-                return False
-            return ok
-        # A duplicate of the record's own descriptor is exact; the
-        # predicate below is only for records that never got one.
-        # _borrow_pidfd already validated membership after its dup; a
-        # second check here could only drop the descriptor on the floor
-        # without closing it (Codex adversarial review, Medium).
-        own = _borrow_pidfd(entry)
-        claimed = False
-        if own is None and entry.fd is not None:
-            # The dup failed -- and it fails under exactly the FD
-            # exhaustion that makes this sweep urgent. Falling back to a
-            # numeric signal would restore the equal-tick recycle the
-            # descriptor rules out, and refusing outright would orphan
-            # the child at the worst possible moment (Codex adversarial
-            # review, High then Medium). So CLAIM it instead: a
-            # successful remove transfers ownership of the original
-            # descriptor from _retire_spawn to this caller, which is the
-            # one operation that needs no new file descriptor at all.
-            try:
-                _SPAWNED.remove(entry)
-            except ValueError:
-                continue            # another thread owns it now
-            own, claimed = entry.fd, True
-        elif own is None:
-            own = _own_pidfd(pid, still)
-        try:
-            if own is not None:
-                try:
-                    signal.pidfd_send_signal(own, signal.SIGKILL)
-                    signalled.add(pid)
-                except (ProcessLookupError, OSError):
-                    pass
-            elif _kill_verified(pid, None, still):
-                signalled.add(pid)
-        finally:
-            # Closed either way: a borrowed dup is ours by construction,
-            # and a CLAIMED original is ours because the remove that
-            # produced it took ownership from _retire_spawn.
-            if own is not None:
-                try:
-                    os.close(own)
-                except Exception:
-                    pass
-                if claimed:
-                    entry.fd = None     # nobody else may close it now
-
-    # PASS 2 -- every OTHER live process carrying this run's stamp:
-    # descendants of a recorded leader, a helper reparented away after its
-    # leader died, one that called setsid and left both the group and the
-    # child list, and a spawn interrupted before it could write a record.
-    #
-    # These used to be two passes -- one group sweep per recorded leader,
-    # then a stamp-wide walk -- and they were the same question asked
-    # twice: _group_members requires the owner stamp exactly as the
-    # stamp-wide scan does, and adds only a pgrp filter, so the group set
-    # is a strict SUBSET of the stamped set. Asking separately cost one
-    # full /proc walk per leader per round plus another for the stamp
-    # pass; asking once per round costs one, and hands the stamp-wide
-    # question the repeat-until-empty loop it never had.
-    #
-    # The loop is why one scan is not enough: the enumeration completes
-    # before the first signal is sent, so a server that forks a helper in
-    # between produces a helper no snapshot saw -- and once its leader
-    # dies that helper is reparented away, where no search for our own
-    # children can reach it (Codex adversarial review, High). Two
-    # CONSECUTIVE empty scans, not one, because a helper forked after the
-    # listdir is absent from a single scan that looks clean.
-    me = os.getpid()
-    owner_cache: dict = {}
-    empty_scans = 0
-    for _ in range(20):
-        if deadline is not None and clock.now() >= deadline:
-            break                           # checked BEFORE the scan
-        snap = _proc_snapshot(deadline=deadline, ours_cache=owner_cache,
-                              clock=clock)
-        # Deadline-checked, NOT a comprehension. Every snap.ours() miss
-        # can cost an environ read plus one per task, so a few hundred
-        # unstamped processes are enough to overrun the budget between
-        # the walk and the first signal -- the enumeration was bounded
-        # and the ownership probing behind it was not (Codex adversarial
-        # review, High).
-        targets: list[tuple[int, int]] = []
-        for pid, _ppid, _pgrp, sid, ticks in snap.procs:
-            if deadline is not None and clock.now() >= deadline:
-                break
-            if pid != me and snap.ours(pid, ticks, deadline=deadline,
-                                       sid=sid, clock=clock):
-                targets.append((pid, ticks))
-        if not targets:
-            empty_scans += 1
-            if empty_scans >= 2:
+        if not stamped_round(snap):
+            # TWO consecutive empty scans, not one, because a helper
+            # forked after the listdir is absent from a single scan that
+            # looks clean -- and never counted before the leaders have
+            # fired, or the sweep would finish with recorded children
+            # unsignalled.
+            stamped_empty += 1
+            if leaders_done and stamped_empty >= 2:
                 break
             clock.sleep(0.02)
             continue
-        empty_scans = 0
-        for pid, _ticks in targets:
-            if deadline is not None and clock.now() >= deadline:
-                break
-            # The snapshot's ownership answer only NARROWED the candidate
-            # set. Authorization is this live re-read, taken after the
-            # pidfd pins the process, so a PID recycled between the walk
-            # and the signal cannot inherit the previous occupant's stamp
-            # (Codex design review, High).
-            #
-            # It carries the deadline itself, and re-checks it: the loop's
-            # check happens BEFORE _own_pidfd opens, and the predicate
-            # then runs twice -- once inside _own_pidfd and again on the
-            # pidfd-less fallback -- so a slow procfs read could authorize
-            # a signal well past a budget the caller is holding to (Codex
-            # adversarial review, High; a 200ms probe against a 50ms
-            # deadline still signalled).
-            def still(p, _dl=deadline):
-                if _dl is not None and clock.now() >= _dl:
-                    return False
-                # _provably_ours, not the raw stamp probe: a descendant
-                # that made its /proc entry unreadable answers None to
-                # the stamp forever, so authorizing on the stamp alone
-                # would let the snapshot nominate a target the live
-                # re-read could never confirm -- the leak this section
-                # exists to close, reintroduced one layer down.
-                ok = _provably_ours(p, deadline=_dl, clock=clock)
-                # Re-checked AFTER the probe as well. Checking only
-                # before it is what makes a slow read dangerous rather
-                # than merely slow: the leader's environ read is not
-                # interruptible, so the budget can expire inside the one
-                # call whose answer then authorizes the signal.
-                if _dl is not None and clock.now() >= _dl:
-                    return False
-                return ok
-            own = _own_pidfd(pid, still)
-            try:
-                if _kill_verified(pid, own, still):
-                    signalled.add(pid)
-            finally:
-                if own is not None:
-                    try:
-                        os.close(own)
-                    except Exception:
-                        pass
+        stamped_empty = 0
         if deadline is not None and clock.now() >= deadline:
             break
         clock.sleep(0.02)
+    # The loop can exit on its round cap with the session scan still short
+    # of a fixpoint. The recorded leaders are the processes this sweep is
+    # most certain it owns, and pass 1 has always been deliberately
+    # ungated, so they are signalled either way -- but nothing has yet
+    # scanned a post-leader /proc, which the old separate stamped pass
+    # always did. Give it the two scans the loop would have run, under the
+    # same deadline (Codex adversarial review, High).
+    if not leaders_done:
+        signal_recorded_leaders()
+        leaders_done = True
+        for _ in range(2):
+            if deadline is not None and clock.now() >= deadline:
+                break
+            stamped_round(_proc_snapshot(deadline=deadline,
+                                         ours_cache=owner_cache,
+                                         clock=clock))
+            clock.sleep(0.02)
     return len(signalled)
 
 
@@ -3574,22 +3754,16 @@ class LspSubprocess:
         # adversarial review, High). So signal the group while we still
         # hold that handle.
         if proc.poll() is not None:
-            # ONE absolute deadline for the whole collection, threaded
-            # into both scans. Without it a continuously forking
-            # descendant drove 20 outer rounds, each running _reap_group's
-            # own 20 scans and sleeps -- seconds of it, inside a shutdown
-            # the respawn path calls with a 0.5s timeout (Codex
-            # adversarial review, Medium).
-            for _ in range(20):                 # ~1s, then give up
-                if _group_is_empty(proc.pid, exclude=proc.pid,
-                                   gen=self._gen_id,
-                                   deadline=group_deadline):
-                    break
-                _reap_group(proc.pid, gen=self._gen_id,
-                            deadline=group_deadline)
-                if time.monotonic() >= group_deadline:
-                    break
-                time.sleep(0.05)
+            # ONE absolute deadline and ONE loop. This used to alternate
+            # a group-emptiness question with a reap, up to 20 times --
+            # and each emptiness question walked /proc, while each reap
+            # ran its OWN bounded loop of walks, so a single shutdown
+            # nested walks inside walks and the deadline bounded the
+            # wall-clock but not the work (section 24). _reap_group
+            # already loops to a two-consecutive-empty-scans fixpoint;
+            # asking it separately was asking the same question twice.
+            _reap_group(proc.pid, gen=self._gen_id,
+                        deadline=group_deadline)
             _retire_spawn(self._spawn_record or proc.pid)
             # Retired UNCONDITIONALLY once the leader is confirmed dead.
             # Its descriptor can identify nothing further, and the group
