@@ -75,9 +75,19 @@ def _check_staleness(cache_path: Path, todo_root: Path) -> bool:
     return newest > cache_m
 
 
-def _walk(nodes: list, repo_root: Path) -> int:
+def _walk(nodes: list, repo_root: Path) -> tuple:
+    """Returns (findings, resolved, unresolved).
+
+    COVERAGE IS REPORTED, NOT DISCARDED. An unresolved symbol used to `continue`
+    silently, so a ref the check never examined was indistinguishable from one it
+    examined and cleared -- the lint printed the same nothing for both. Measured
+    2026-08-05: only 52 of 186 stamped symbol refs resolve, so the check was
+    ~72% blind and reporting clean.
+    """
     repo_resolved = repo_root.resolve()
     findings = 0
+    resolved_n = 0
+    unresolved: list = []
     for node in nodes:
         items = node.get("stamped_items") or []
         for it in items:
@@ -101,7 +111,9 @@ def _walk(nodes: list, repo_root: Path) -> int:
                     continue
                 resolved = _resolve_cached(str(file_abs), symbol)
                 if resolved is None:
+                    unresolved.append(f"{file_rel}:{symbol}")
                     continue
+                resolved_n += 1
                 _, line_start, line_end = resolved
                 stub = _is_stub_cached(str(file_abs), line_start, line_end)
                 if stub is None:
@@ -118,7 +130,7 @@ def _walk(nodes: list, repo_root: Path) -> int:
                     f"section {section_n}: \"{item_text}\")"
                 )
                 findings += 1
-    return findings
+    return findings, resolved_n, sorted(set(unresolved))
 
 
 def main() -> int:
@@ -150,10 +162,55 @@ def main() -> int:
         return 4
 
     try:
-        _walk(nodes, repo_root)
+        findings, resolved_n, unresolved = _walk(nodes, repo_root)
     except Exception as exc:  # pragma: no cover -- defensive
         sys.stderr.write(f"[check_stub_behind_stamp] internal failure: {exc}\n")
         return 6
+
+    # COVERAGE BASELINE. The standing gap (134 unresolved) is a WARN: it is
+    # pre-existing, and an ERROR would block every commit in the repo until it
+    # reached zero -- the same reason Check 24 warns rather than blocks.
+    #
+    # A DROP below the recorded baseline is different, and it is an ERROR. It
+    # means a change made the check blinder, which is the one failure this lint
+    # cannot report on its own: an unresolved symbol produces no finding, so
+    # losing resolution looks exactly like passing. MEASURED 2026-08-05 -- a
+    # resolver rewrite took coverage from 52/186 to 1/186 while the full suite
+    # stayed green and its own new fixtures passed. This gate is what would have
+    # caught it, in one line, at commit time.
+    total = resolved_n + len(unresolved)
+    base_path = repo_root / "scripts" / "lint" / "stub-lint-baseline.json"
+    baseline = None
+    try:
+        baseline = json.loads(base_path.read_text(encoding="utf-8")).get("resolved")
+    except Exception:
+        baseline = None
+
+    # STDERR, not stdout. stdout is this check's FINDINGS channel -- lint.sh
+    # routes every line of it through error() on rc 0 -- so informational
+    # coverage output on stdout becomes 6 phantom lint errors. Learned by
+    # doing exactly that, 2026-08-05.
+    sys.stderr.write(f"stub-behind-stamp:coverage resolved={resolved_n}/{total} "
+                     f"unresolved={len(unresolved)}"
+                     + (f" baseline={baseline}" if isinstance(baseline, int) else "")
+                     + "\n")
+    for u in unresolved[:5]:
+        sys.stderr.write(f"  unresolved (NOT checked): {u}\n")
+    if len(unresolved) > 5:
+        sys.stderr.write(f"  ... +{len(unresolved) - 5} more unresolved\n")
+
+    if isinstance(baseline, int) and resolved_n < baseline:
+        sys.stderr.write(
+            f"[check_stub_behind_stamp] COVERAGE REGRESSION: resolved "
+            f"{resolved_n} < baseline {baseline}. A change made this lint "
+            f"blinder -- an unresolved symbol yields no finding, so losing "
+            f"resolution looks identical to passing. Fix the resolver, or "
+            f"update {base_path.name} DELIBERATELY with the reason.\n")
+        return 7
+    if isinstance(baseline, int) and resolved_n > baseline:
+        sys.stderr.write(f"stub-behind-stamp:coverage improved {baseline} -> "
+                         f"{resolved_n}; update stub-lint-baseline.json to lock "
+                         f"it in\n")
     return 0
 
 

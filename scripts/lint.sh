@@ -492,6 +492,13 @@ else
             echo -e "${RED}error${NC}: Check 7 (stub-behind-stamp) cache stale relative to todo/**/*.md; rebuild with bash scripts/todo-graph/build-and-validate.sh and re-run lint"
             ERRORS=$((ERRORS + 1))
             ;;
+        7)
+            # Coverage floor breached: something made the check BLINDER. An
+            # unresolved symbol yields no finding, so losing resolution is
+            # indistinguishable from passing -- this rc is the only signal.
+            echo -e "${RED}error${NC}: Check 7 (stub-behind-stamp) COVERAGE REGRESSION -- $(grep -m1 'COVERAGE REGRESSION' "$STUB_ERR_FILE" 2>/dev/null | sed 's/.*REGRESSION: //' | cut -c1-140)"
+            ERRORS=$((ERRORS + 1))
+            ;;
         *)
             echo -e "${RED}error${NC}: Check 7 (stub-behind-stamp) helper exited $STUB_RC: $(head -3 "$STUB_ERR_FILE" 2>/dev/null | tr '\n' ' ')"
             ERRORS=$((ERRORS + 1))

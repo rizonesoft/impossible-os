@@ -402,11 +402,21 @@ This section makes the second state countable. It is the REPORTING half of the r
 
 **The failure mode to design against is a noisy gate, not a quiet one.** Check 7 runs in the pre-commit lint, so an unresolved-symbol count that is nonzero on the live tree and printed as an ERROR would block every commit in the repo on day one. Establish the live-tree number FIRST, then choose the severity that number justifies -- a WARN carrying the count is the likely answer, with an ERROR reserved for a regression above the recorded baseline. Do not pick the severity before measuring.
 
-- [ ] Separate "resolved, not a stub" from "symbol not found" in `check_stub_behind_stamp.py`, and emit the unresolved count rather than dropping those refs silently
-- [ ] Measure the live-tree unresolved count BEFORE and AFTER §10 lands, and record both numbers in this section's Notes -- the delta is the only evidence that §10's parse widening actually bought coverage
-- [ ] Choose the severity from that measurement (WARN with a count, or ERROR against a recorded baseline) and state in the section why the other was rejected
-- [ ] Regression fixtures in [`scripts/todo-graph/tests/test_build.sh`](../../scripts/todo-graph/tests/test_build.sh): a ref naming a symbol absent from its file is counted, not skipped, and a resolvable non-stub is still silent
-- [ ] Commit: `"lint: make Check 7 count the symbols it cannot resolve"`
+- [x] Separate "resolved, not a stub" from "symbol not found" in `check_stub_behind_stamp.py`, and emit the unresolved count rather than dropping those refs silently
+      `_walk` returns `(findings, resolved, unresolved)`; a `resolved is None` ref is recorded rather than `continue`d. NOTE `is_stub_body` returning None means NOT A STUB -- the healthy case -- so the only genuine silent skip was the unresolved one.
+- [x] Measure the live-tree count and record it -- **55 resolved of 189 refs; 134 unresolved (71% blind)**
+      The BEFORE/AFTER framing this item was written with no longer applies: §10's rewrite was REVERTED for taking coverage to 1/189 (commit `5cff59cc`), so there is no "after" to compare. The 55 is the pre-§10 baseline, which is also the current one.
+- [x] Choose the severity from that measurement -- **WARN on the standing gap, ERROR on a REGRESSION against a recorded baseline**
+      Both were live options and the measurement decided it. ERROR on the standing 134 would block every commit in the repo until it reached zero, which is why Check 24 warns rather than blocks. But a DROP is categorically different: an unresolved symbol produces no finding, so losing resolution looks exactly like passing. `scripts/lint/stub-lint-baseline.json` records 55 as the floor; `rc 7` on a drop. **Proven against the real failure: crippling the resolver reports `resolved 0 < baseline 55` and exits 7.** This gate would have caught §10's regression in one line at commit time, where a green 115/115 suite did not.
+- [x] Classify the 134 so the next step targets the real cause rather than the assumed one
+      **78 (58.2%) DECLARATION-only** -- the ref names a header that declares the symbol while the body lives in a `.c`. **46 (34.3%) comment-only or absent** -- the symbol appears in that file solely inside comments, or not at all. **10 (7.5%) genuine parser gap.** This reframes §10: multi-line head parsing addresses class C, which is 7.5% of the gap, while the dominant cause is a ref pointing at the wrong file.
+- [ ] Follow a DECLARATION to its definition (class B, 78 refs) -- the single largest coverage win available
+      When a ref names a header and the symbol is declared but not defined there, resolve against the matching `.c` rather than reporting unresolved. Raises the baseline; update `stub-lint-baseline.json` in the same commit.
+- [ ] Decide what a class-A ref MEANS (46 refs) -- a symbol present only in comments is likely a stale or mis-attributed ref
+      These may be bookkeeping errors in the stamped item rather than resolver gaps. Sample 10 by hand before writing code; the fix may belong in ref EXTRACTION, not resolution.
+- [x] Regression fixtures: coverage counting + the baseline gate
+      `scripts/overnight/tests/test_stub_lint_coverage.py` -- unresolved refs are counted not dropped, a drop below baseline exits 7, an improvement is reported, and a missing/corrupt baseline degrades to warn-only rather than blocking.
+- [x] Commit: `"lint: make Check 7 count the symbols it cannot resolve"`
 
 **Test checkpoint:** `bash scripts/todo-graph/tests/test_build.sh` green with the new fixtures; `bash scripts/lint.sh` completes with the unresolved count reported and zero NEW errors on the live tree; `bash scripts/test-tooling.sh` green in aggregate.
 
