@@ -50,7 +50,8 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from lsp_client import LspError, LspSubprocess
+from lsp_client import (LspError, LspSubprocess,
+                        report_unconfirmed_shutdown)
 
 
 BASH_LSP_BIN = "bash-language-server"
@@ -192,10 +193,10 @@ def spawn(workspace_root: Path) -> LspSubprocess:
             timeout=15.0,
         )
     except Exception:
-        try:
-            lsp.shutdown(timeout=1.0)
-        except Exception:
-            pass
+        # Verdict REPORTED, not discarded: an unconfirmed death here
+        # leaves a server running with the force sweep as its only
+        # remaining collector (section 26).
+        report_unconfirmed_shutdown(lsp, "bash spawner init failure")
         raise
     return lsp
 

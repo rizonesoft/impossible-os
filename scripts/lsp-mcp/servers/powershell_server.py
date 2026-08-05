@@ -85,7 +85,8 @@ import tempfile
 from pathlib import Path
 from typing import Any, NamedTuple, Optional
 
-from lsp_client import LspError, LspSubprocess
+from lsp_client import (LspError, LspSubprocess,
+                        report_unconfirmed_shutdown)
 
 
 PWSH_BIN = "pwsh"
@@ -451,10 +452,13 @@ def spawn(workspace_root: Path) -> LspSubprocess:
                 timeout=_INITIALIZE_TIMEOUT_S,
             )
         except Exception:
-            try:
-                lsp.shutdown(timeout=2.0)
-            except Exception:
-                pass
+            # Verdict REPORTED, not discarded: an unconfirmed death here
+            # leaves PSES running with the force sweep as its only
+            # remaining collector (section 26).
+            # 2.0s, not the 1.0 default: PSES teardown is heavier than the
+            # other servers' and that budget predates this change.
+            report_unconfirmed_shutdown(
+                lsp, "powershell spawner init failure", timeout=2.0)
             raise
     except BaseException:
         # Spawn-time failure: clean up tempdir BEFORE the LSP knows

@@ -72,7 +72,7 @@ if str(_HERE) not in sys.path:
 
 from lsp_client import (  # noqa: E402
     LspError, LspSubprocess, force_kill_spawned, mark_teardown_complete,
-    reap_all_live,
+    reap_all_live, report_unconfirmed_shutdown,
 )
 import logger as _lsplog  # noqa: E402
 
@@ -781,10 +781,14 @@ def _get_or_spawn(lang: str, workspace_root: Path) -> LspSubprocess:
         # Reap OUTSIDE the lock so a slow shutdown (subprocess
         # SIGTERM + 2 s wait) does not pin _LIVE_LSPS_LOCK and
         # block other callers' cached-instance fast paths.
-        try:
-            inst.shutdown(timeout=1.0)
-        except Exception:
-            pass
+        # The verdict is REPORTED, not swallowed. This instance was never
+        # published to _LIVE_LSPS, so it is absent from the unconfirmed
+        # set _shutdown_all_lsps returns -- if this shutdown fails and the
+        # force sweep is itself incomplete, a freshly spawned server
+        # survives teardown with nothing anywhere recording it (Codex
+        # test-coverage review, High). Section 26 named this caller
+        # explicitly and the first pass missed it.
+        report_unconfirmed_shutdown(inst, "spawn-published-during-teardown")
         with _LIVE_LSPS_LOCK:
             _SPAWN_EVENTS.pop(key, None)
         waiter_event.set()
@@ -1048,9 +1052,17 @@ def _workspace_root_from_argv(args: argparse.Namespace) -> Path:
     return Path.cwd()
 
 
-def _shutdown_all_lsps(deadline: Optional[float] = None) -> None:
+def _shutdown_all_lsps(deadline: Optional[float] = None) -> list:
     """Clean shutdown of every live LSP. Called on --self-test exit
     and at bridge teardown. Idempotent; safe to call twice.
+
+    RETURNS the instances whose death could not be CONFIRMED -- those
+    whose `shutdown()` answered False, those that raised, and those the
+    budget never reached. This function clears `_LIVE_LSPS` before
+    reaping, so an unconfirmed instance was previously dropped from the
+    published set with nothing recording that it might still be running:
+    correctness then rested entirely on the force sweep, which can itself
+    be incomplete (Codex consistency review, High).
 
     Sets _BRIDGE_SHUTTING_DOWN BEFORE snapshotting so any in-flight
     spawn that has not yet published to _LIVE_LSPS will see the gate
@@ -1063,7 +1075,8 @@ def _shutdown_all_lsps(deadline: Optional[float] = None) -> None:
     with _LIVE_LSPS_LOCK:
         insts = list(_LIVE_LSPS.values())
         _LIVE_LSPS.clear()
-    for inst in insts:
+    unconfirmed: list = []
+    for idx, inst in enumerate(insts):
         # Share ONE budget across all of them: "2 seconds each" silently
         # becomes ten for five language servers, which is how a caller's
         # bound gets overrun by cleanup that is behaving perfectly. And
@@ -1072,12 +1085,17 @@ def _shutdown_all_lsps(deadline: Optional[float] = None) -> None:
         budget = 2.0
         if deadline is not None:
             if _time.monotonic() >= deadline:
+                # Everything from here on was never asked. Unreached is
+                # unconfirmed, and the force phase is what acts on it.
+                unconfirmed.extend(insts[idx:])
                 break
             budget = min(2.0, max(0.05, deadline - _time.monotonic()))
         try:
-            inst.shutdown(timeout=budget)
+            if not inst.shutdown(timeout=budget):
+                unconfirmed.append(inst)
         except Exception:
-            pass
+            unconfirmed.append(inst)
+    return unconfirmed
 
 
 # ---------------------------------------------------------------------
@@ -5069,11 +5087,22 @@ def _graceful_shutdown(wait_timeout: float = 8.0) -> bool:
         bg_thread = _WARM_THREAD
         if bg_thread is not None and bg_thread.is_alive():
             bg_thread.join(timeout=min(2.0, max(0.1, deadline - _time.monotonic())))
-        _shutdown_all_lsps(deadline=deadline)
+        unconfirmed = _shutdown_all_lsps(deadline=deadline)
         try:
-            reap_all_live(timeout=1.0, deadline=deadline)
+            swept = reap_all_live(timeout=1.0, deadline=deadline)
+            unconfirmed.extend(getattr(swept, "unconfirmed", ()))
         except Exception:
             pass
+        # Handed EXPLICITLY to the force phase rather than left implicit.
+        # Both sweeps above now report which instances they could not
+        # prove dead; the force sweep is the only thing that can still
+        # act on them, and a caller reading only the graceful verdict
+        # would otherwise see a clean return over servers still running
+        # (Codex consistency review, High).
+        if unconfirmed:
+            _diag(f"[lsp-mcp] WARN: {len(unconfirmed)} language server(s) "
+                  f"not confirmed dead by graceful shutdown; "
+                  f"force sweep is the remaining collector\n")
     finally:
         _SHUTDOWN_COMPLETE.set()
     return True
@@ -5236,8 +5265,16 @@ def _shutdown_bounded(reason: str, deadline: Optional[float] = None) -> int:
             _diag(f"[lsp-mcp] WARN: force-killed {killed} language "
                   f"server(s) that survived graceful shutdown ({reason})\n")
         if not swept:
-            _diag(f"[lsp-mcp] WARN: force sweep ({reason}) gave up waiting "
-                  f"on another in-flight teardown; children may be left\n")
+            # Two distinct causes, one verdict: this caller stopped
+            # waiting on another thread's in-flight sweep, OR the sweep
+            # ran but could not attempt every recorded server within its
+            # share of the budget (section 26's fair-share leader pass).
+            # Both mean the same thing to somebody about to end the
+            # process -- a recorded language server may still be running.
+            _diag(f"[lsp-mcp] WARN: force sweep ({reason}) did not complete "
+                  f"(gave up waiting on another in-flight teardown, or "
+                  f"could not attempt every recorded server in budget); "
+                  f"children may be left\n")
     except Exception:
         pass
     # Tell the atexit hook a bounded teardown finished, so a normal return
@@ -5379,7 +5416,18 @@ def _idle_watchdog() -> None:
             # nothing, so nothing that can block may be the last word
             # before it. Calling the graceful path inline here was how a
             # wedged handshake could stop the watchdog from ever exiting.
-            _shutdown_bounded("idle-watchdog")
+            # The verdict is READ, not discarded. The comment above has
+            # always promised to "say so on the way out"; the code threw
+            # the answer away, so an incomplete sweep exited silently and
+            # section 26's completeness reporting would have reached
+            # nobody (Codex design review, High). os._exit still happens
+            # -- a wedged serve loop must not be able to keep us alive,
+            # and there is no bounded work left that would help -- but it
+            # is now announced rather than silent.
+            _swept = _shutdown_bounded("idle-watchdog")
+            if not bool(getattr(_swept, "completed", True)):
+                _diag("[lsp-mcp] idle-watchdog: exiting through an "
+                      "INCOMPLETE reap; language servers may survive\n")
             os._exit(0)
 
 

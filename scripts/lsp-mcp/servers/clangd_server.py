@@ -44,7 +44,8 @@ from typing import Any
 # sys.path when bridge.py imported this module; this file works under
 # both `from servers import clangd_server` and direct `python3
 # scripts/lsp-mcp/servers/clangd_server.py` invocation).
-from lsp_client import LspError, LspSubprocess
+from lsp_client import (LspError, LspSubprocess,
+                        report_unconfirmed_shutdown)
 
 
 CLANGD_BIN = "clangd-19"
@@ -166,10 +167,10 @@ def spawn(workspace_root: Path) -> LspSubprocess:
     except Exception:
         # Reap on handshake failure so we do not leak the subprocess
         # when the caller gets an exception.
-        try:
-            lsp.shutdown(timeout=1.0)
-        except Exception:
-            pass
+        # Verdict REPORTED, not discarded: an unconfirmed death here
+        # leaves a server running with the force sweep as its only
+        # remaining collector (section 26).
+        report_unconfirmed_shutdown(lsp, "clangd spawner init failure")
         raise
     return lsp
 

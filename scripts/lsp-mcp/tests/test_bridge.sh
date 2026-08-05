@@ -333,6 +333,28 @@
 #         tri-state, only an authoritative answer is cached (and never
 #         across a changed start time), and a degraded /proc row is
 #         skipped rather than guessed at.
+#   9l -- every deadline break point in the reap driven by an INJECTED
+#         clock, one transition per case, each mutation-verified.
+#   9m -- session continuity owns a PR_SET_DUMPABLE(0) descendant that
+#         the owner stamp can never answer for; start ticks rejected as
+#         an identity on this file's own measurement.
+#   9n -- destructive signalling never names a target by bare PID: both
+#         call sites refuse and count, with a named opt-in.
+#   9o -- a descendant forked opaque from inside the FIRST enumeration is
+#         still collected (descendants-before-leaders).
+#   9p -- the health-restart publish is gated on a CONFIRMED-dead old
+#         server, and stays retryable when it cannot prove one.
+#   9q -- the four teardown entry points run ONE sweep under ONE shared
+#         deadline; waiters report completion honestly.
+#   9r -- liveness probes observe death WITHOUT reaping: the pidfd probe
+#         and _leader_alive stay distinct questions, the probe survives a
+#         descriptor above FD_SETSIZE, and a bad fd answers None.
+#   9s -- the recorded-leader pass is FAIR-share: every record is
+#         attempted (section 22's requirement) AND the pass is bounded,
+#         reporting incomplete when a record could not be attempted.
+#   9t -- unconfirmed reaps propagate from reap_all_live,
+#         _shutdown_all_lsps and the shared spawner helper to the force
+#         phase, instead of being discarded.
 #
 #  15a -- workspace-root resolution priority chain.
 #  15b -- a file:// URI is rejected at the _dispatch_path entry.
@@ -10174,7 +10196,9 @@ lsp_client._retire_spawn(stubborn2.pid)
 # publish over a live old-generation worker.
 inst2 = object.__new__(lsp_client.LspSubprocess)
 inst2.lang = "c"
-inst2._proc = type("P", (), {"pid": 4243, "poll": staticmethod(lambda: 0)})()
+inst2._proc = type("P", (), {"pid": 4243, "returncode": 0,
+                              "poll": staticmethod(lambda: 0),
+                              "wait": staticmethod(lambda timeout=None: 0)})()
 inst2._confirmed_dead = False
 inst2._post_death_done = False
 inst2._post_death_running = None
@@ -10253,7 +10277,9 @@ finally:
 # perf review, High).
 inst4 = object.__new__(lsp_client.LspSubprocess)
 inst4.lang = "c"
-inst4._proc = type("P", (), {"pid": 4244, "poll": staticmethod(lambda: 0)})()
+inst4._proc = type("P", (), {"pid": 4244, "returncode": 0,
+                              "poll": staticmethod(lambda: 0),
+                              "wait": staticmethod(lambda timeout=None: 0)})()
 inst4._confirmed_dead = False
 inst4._shutdown_called = True
 inst4._post_death_done = False
@@ -10788,6 +10814,575 @@ PY
     return 0
 }
 
+# --- 9r: liveness probes must not REAP -----------------------------------
+# Section 23's session continuity authorizes a hardened descendant by its
+# recorded leader still being there, and `_leader_alive` proves that with
+# pidfd_send_signal(fd, 0) -- which raises ESRCH the moment the leader is
+# REAPED, not merely when it exits. Every liveness check on the reap path
+# used to be Popen.poll(), which reaps, so the ordering held only because
+# the callers happened to be arranged correctly (section 26).
+#
+# The pidfd probe and the alive proof answer DIFFERENT questions and the
+# test pins both: a pidfd stays readable after the task is collected, so
+# `_pidfd_exited` alone can never stand in for `_leader_alive`.
+t_nonreaping_liveness() {
+    local rc=0
+    python3 - <<'PY' || rc=$?
+import os, signal, subprocess, sys, threading, time
+sys.path.insert(0, "scripts/lsp-mcp")
+import lsp_client
+
+fails = []
+
+
+def check(cond, msg):
+    if not cond:
+        fails.append(msg)
+
+
+# --- the probe answers without collecting -----------------------------
+p = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+fd = os.pidfd_open(p.pid)
+try:
+    check(lsp_client._pidfd_exited(fd) is False,
+          "the probe reported a RUNNING process as exited")
+    p.send_signal(signal.SIGKILL)
+    for _ in range(200):
+        if lsp_client._pidfd_exited(fd):
+            break
+        time.sleep(0.01)
+    check(lsp_client._pidfd_exited(fd) is True,
+          "the probe never observed the death")
+    # THE point: still un-reaped, so the session proof still holds.
+    check(p.returncode is None,
+          "the probe REAPED the process -- returncode is populated, so a "
+          "same-session hardened descendant has just lost the leader-alive "
+          "proof its ownership depends on")
+    check(lsp_client._leader_alive(fd) is True,
+          "the leader-alive proof failed while the task was still a zombie; "
+          "that proof is what stops the kernel recycling the session id")
+    # --- and the two questions genuinely differ after the reap --------
+    p.wait(timeout=5)
+    check(lsp_client._pidfd_exited(fd) is True,
+          "a pidfd stopped reporting exited once the task was reaped")
+    check(lsp_client._leader_alive(fd) is False,
+          "_leader_alive still answered True after the reap -- if these two "
+          "agreed, the probe could stand in for the proof and section 23's "
+          "authorization would be meaningless")
+finally:
+    os.close(fd)
+
+# --- a high-numbered pidfd must not raise -----------------------------
+# select.select() is bounded by FD_SETSIZE and raises ValueError at ~1024.
+# This code path exists FOR descriptor pressure, so the probe guarding a
+# SIGKILL would have raised exactly when the SIGKILL mattered most (Codex
+# design review, Medium).
+p2 = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+low = os.pidfd_open(p2.pid)
+high = None
+try:
+    try:
+        high = os.dup2(low, 1100)
+    except OSError:
+        high = None
+    if high is not None:
+        ans = lsp_client._pidfd_exited(high)
+        check(ans is False,
+              f"the probe failed on a descriptor above FD_SETSIZE "
+              f"(fd={high}): {ans!r}")
+    else:
+        sys.stdout.write("[9r] NOTE: could not place a descriptor above "
+                         "FD_SETSIZE on this host\n")
+finally:
+    if high is not None:
+        os.close(high)
+    os.close(low)
+    p2.send_signal(signal.SIGKILL)
+    p2.wait(timeout=5)
+
+# --- a closed descriptor is "cannot tell", never "still running" ------
+spare_r, spare_w = os.pipe()
+os.close(spare_r)
+check(lsp_client._pidfd_exited(spare_r) is None,
+      "a bad descriptor answered a boolean; None is the only honest answer "
+      "and callers must not read it as 'still alive'")
+os.close(spare_w)
+
+# --- a CRASHED leader is collected without another lifecycle event ----
+# The reader deliberately does not reap, which fixed the ordering but
+# left a crashed server uncollected until the same key was requested
+# again or the bridge tore down -- and traffic on other keys holds off
+# the idle watchdog indefinitely, so zombies and their spawn-record
+# descriptors accumulated (Codex adversarial + test-coverage, Medium).
+# Driven through the REAL reader thread, not by calling the helper. An
+# earlier version of this assertion invoked _schedule_crash_collection()
+# directly and stayed green when the reader's call site was deleted --
+# the same "tests the private helper, not the production path" defect the
+# review caught in 9s.
+inst = lsp_client.LspSubprocess(
+    [sys.executable, "-c", "import sys; sys.stdout.write('x'); sys.exit(3)"],
+    lang="crashy")
+proc = inst._proc
+# NOBODY calls shutdown(): the whole point is that an unexpected exit is
+# collected without any later lifecycle event on this key.
+for _ in range(400):
+    if proc.returncode is not None:
+        break
+    time.sleep(0.01)
+check(proc.returncode is not None,
+      "a crashed leader was never collected -- the reader stopped reaping "
+      "(correctly) but scheduled no deferred collection, so it stays a "
+      "zombie until the next request on this key or bridge teardown, and "
+      "traffic on other keys holds off the idle watchdog indefinitely")
+check(inst._crash_collect_started is True,
+      "the reader did not mark the crash collection started; a repeat EOF "
+      "would spawn a second sweep over the same leader")
+try:
+    inst.shutdown(timeout=0.5)
+except Exception:
+    pass
+
+# --- a DEGRADED pidfd borrow must not fall through to a reaping poll --
+# _borrow_pidfd fails transiently under exactly the descriptor pressure
+# this path exists for, and the record stays published throughout -- so
+# the session proof is recoverable a moment later and reaping now would
+# destroy it permanently (Codex re-adversarial, High).
+degraded = subprocess.Popen(
+    [sys.executable, "-c", "import sys; sys.exit(0)"])
+time.sleep(0.2)                         # exited, and deliberately UNREAPED
+
+
+class Degraded:
+    lang = "c"
+    _spawn_record = lsp_client._SpawnRecord(degraded.pid, None, None)
+
+    def __init__(self, proc):
+        self._proc = proc
+
+    _leader_exited = lsp_client.LspSubprocess._leader_exited
+
+
+real_borrow2 = lsp_client._borrow_pidfd
+lsp_client._borrow_pidfd = lambda rec: None    # transient failure
+try:
+    d = Degraded(degraded)
+    ans = d._leader_exited(degraded)
+    check(ans is False,
+          "a published record that could not answer reported EXITED; the "
+          "conservative answer is 'not exited', because the caller acts on "
+          "it by waiting (deadline-bound) rather than by reaping")
+    check(degraded.returncode is None,
+          "the degraded path REAPED the leader -- _borrow_pidfd failing "
+          "transiently must never fall through to proc.poll(), or a "
+          "temporary descriptor shortage permanently destroys the "
+          "session-continuity proof")
+finally:
+    lsp_client._borrow_pidfd = real_borrow2
+    try:
+        degraded.wait(timeout=5)
+    except Exception:
+        pass
+
+# --- an INCOMPLETE collection must not reap the leader ----------------
+incomplete = subprocess.Popen([sys.executable, "-c", "import sys; sys.exit(0)"])
+time.sleep(0.15)
+
+
+class NeverCollects:
+    lang = "c"
+    _crash_collect_started = False
+    _crash_collect_lock = threading.Lock()
+    _confirmed_dead = False
+    calls = 0
+
+    def __init__(self, proc):
+        self._proc = proc
+
+    def _collect_after_death(self, proc, deadline):
+        NeverCollects.calls += 1
+        return False                    # never reaches the empty fixpoint
+
+    _schedule_crash_collection = \
+        lsp_client.LspSubprocess._schedule_crash_collection
+
+
+nc = NeverCollects(incomplete)
+nc._schedule_crash_collection()
+time.sleep(0.6)
+check(incomplete.returncode is None,
+      "an INCOMPLETE collection reaped the leader anyway -- the pgid the "
+      "next attempt needs is only addressable while the leader is not "
+      "collected, so this makes the surviving descendant unreachable")
+check(NeverCollects.calls >= 2,
+      f"the collector gave up after {NeverCollects.calls} attempt(s); an "
+      f"incomplete first pass must be retried before it is abandoned")
+try:
+    incomplete.wait(timeout=5)
+except Exception:
+    pass
+
+# --- a collector that cannot START stays retryable --------------------
+unstartable = subprocess.Popen([sys.executable, "-c", "import sys; sys.exit(0)"])
+time.sleep(0.15)
+
+
+class Unstartable(NeverCollects):
+    pass
+
+
+us = Unstartable(unstartable)
+us._crash_collect_started = False
+us._crash_collect_lock = threading.Lock()
+real_thread = lsp_client.threading.Thread
+
+
+class BoomThread:
+    def __init__(self, *a, **k):
+        raise RuntimeError("cannot start thread")
+
+
+lsp_client.threading.Thread = BoomThread
+try:
+    us._schedule_crash_collection()
+finally:
+    lsp_client.threading.Thread = real_thread
+check(us._crash_collect_started is False,
+      "a collector whose thread failed to START latched 'already handled' "
+      "over work that never ran; the zombie and its record then have no "
+      "automatic retry at all, under the very exhaustion that caused it")
+try:
+    unstartable.wait(timeout=5)
+except Exception:
+    pass
+
+if fails:
+    for f in fails:
+        sys.stdout.write("[9r] FAIL: %s\n" % f)
+    sys.exit(1)
+sys.stdout.write("[9r] non-reaping liveness OK: the probe observes death "
+                 "without collecting it, survives a descriptor above "
+                 "FD_SETSIZE, and stays distinct from the alive proof\n")
+PY
+    [ "$rc" = "0" ] || return 1
+    return 0
+}
+
+# --- 9s: the recorded-leader pass is FAIR, and reports when it is not -----
+# Section 22 left this pass wholly ungated because a global deadline let
+# record 1 consume the budget and every later server survived. "Ungated"
+# then meant no bound at all, and the callers that matter (os._exit on the
+# idle-watchdog and signal paths) act on no verdict -- so section 26 gives
+# each record its SHARE of what remains and reports incompleteness.
+#
+# The test asserts the property section 22 was protecting (no record is
+# skipped) and the one it lost (the pass is bounded), which is the pair a
+# single global deadline cannot satisfy at once.
+t_leader_pass_fair_share() {
+    local rc=0
+    python3 - <<'PY' || rc=$?
+import subprocess, sys, time
+sys.path.insert(0, "scripts/lsp-mcp")
+import lsp_client
+
+fails = []
+
+
+def check(cond, msg):
+    if not cond:
+        fails.append(msg)
+
+
+# The property under test is that an EXPENSIVE FIRST record cannot starve
+# the ones behind it. "Every record is attempted" does NOT discriminate --
+# the loop has no per-iteration deadline gate either way, so all four are
+# always reached. What differs is how much BUDGET each one gets: under a
+# single global deadline record 0 can spend it all, and records 1-3 then
+# reach an already-expired predicate and refuse. The slice each record is
+# handed is therefore what the assertion has to measure.
+procs = [subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+         for _ in range(4)]
+saved = list(lsp_client._SPAWNED)
+slices = []
+real_borrow = lsp_client._borrow_pidfd
+real_own = lsp_client._own_pidfd
+real_provably = lsp_client._provably_ours
+COST = {0: 0.18}                        # record 0 is deliberately greedy
+
+
+def fake_own(pid, still):
+    still(pid)                          # drive the predicate, take no handle
+    return None
+
+
+def fake_provably(p, deadline=None, clock=lsp_client._REAL_CLOCK):
+    # Stands in for the real deadline-aware probe: it spends what it is
+    # given and no more, which is exactly how the sub-deadline bounds a
+    # greedy record in production.
+    idx = pids.index(p) if p in pids else 0
+    want = COST.get(idx, 0.01)
+    left = None if deadline is None else max(0.0, deadline - clock.now())
+    slices.append((idx, left))
+    time.sleep(want if left is None else min(want, left))
+    return False
+
+
+try:
+    del lsp_client._SPAWNED[:]
+    pids = [p.pid for p in procs]
+    for p in procs:
+        lsp_client._SPAWNED.append(lsp_client._SpawnRecord(p.pid, None, None))
+    lsp_client._own_pidfd = fake_own
+    lsp_client._provably_ours = fake_provably
+    t0 = time.monotonic()
+    lsp_client._force_kill_spawned_sweep(
+        settle=0.0, deadline=time.monotonic() + 0.2)
+    elapsed = time.monotonic() - t0
+    got = dict(slices)
+    check(len(slices) == 4,
+          f"only {len(slices)} of 4 recorded leaders reached the ownership "
+          f"probe: {slices!r}")
+    # THE assertion. Under one global deadline record 0 spends 0.18 of the
+    # 0.2s budget and records 1-3 are handed what is left of nothing.
+    starved = [i for i, left in slices if i > 0 and (left or 0.0) < 0.02]
+    check(not starved,
+          f"records {starved} were handed under 20ms after a greedy first "
+          f"record: {slices!r} -- a single global deadline lets record 0 "
+          f"consume the budget and every later language server survives "
+          f"(section 22's failure, in the bounded form)")
+    check(elapsed < 2.0,
+          f"the leader pass ran {elapsed:.2f}s against a 0.2s budget -- "
+          f"fair-share must bound it, not merely report on it")
+finally:
+    lsp_client._own_pidfd = real_own
+    lsp_client._provably_ours = real_provably
+    lsp_client._borrow_pidfd = real_borrow
+    del lsp_client._SPAWNED[:]
+    lsp_client._SPAWNED.extend(saved)
+    for p in procs:
+        try:
+            p.kill()
+            p.wait(timeout=5)
+        except Exception:
+            pass
+
+# --- an unattemptable record makes the sweep report INCOMPLETE --------
+# The verdict is what a caller heading for os._exit reads; before section
+# 26 the pass could skip a recorded server and the sweep still answered
+# completed=True.
+#
+# A record with NO descriptor and NO start ticks is the genuinely
+# unattemptable shape. Patching _borrow_pidfd alone does not produce it:
+# the record still carries its own fd, so the pass takes the CLAIM path
+# (remove from _SPAWNED, signal through the original descriptor) and the
+# server IS attempted -- which is the descriptor-exhaustion fallback
+# working exactly as section 22 designed it.
+procs2 = [subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])]
+saved2 = list(lsp_client._SPAWNED)
+real_own = lsp_client._own_pidfd
+real_kv = lsp_client._kill_verified
+try:
+    del lsp_client._SPAWNED[:]
+    for p in procs2:
+        lsp_client._SPAWNED.append(lsp_client._SpawnRecord(p.pid, None, None))
+    lsp_client._own_pidfd = lambda pid, still: None     # no handle obtainable
+    lsp_client._kill_verified = lambda pid, fd, still: False
+    # Through the PUBLIC wrapper, not the private body. Production callers
+    # use force_kill_spawned, and it is the wrapper's leaders_ok transfer
+    # that decides whether _shutdown_bounded marks teardown complete and
+    # whether the watchdog warns before os._exit -- a mutation dropping
+    # that transfer left the private-body assertion green while production
+    # reported completed=True over an unattempted server (Codex
+    # test-coverage review, High).
+    res = lsp_client.force_kill_spawned(
+        settle=0.0, deadline=time.monotonic() + 0.2)
+    check(getattr(res, "completed", None) is False,
+          "a sweep that could not attempt a recorded server reported "
+          "itself COMPLETE; the idle watchdog then exits through it "
+          "believing every server was reached")
+    # ...and the private body agrees, so a regression is attributable to
+    # the body or the transfer rather than to "somewhere in between".
+    res_body = lsp_client._force_kill_spawned_sweep(
+        settle=0.0, deadline=time.monotonic() + 0.2)
+    check(getattr(res_body, "completed", None) is False,
+          "the sweep BODY reported complete over an unattemptable record")
+finally:
+    lsp_client._own_pidfd = real_own
+    lsp_client._kill_verified = real_kv
+    lsp_client._borrow_pidfd = real_borrow
+    del lsp_client._SPAWNED[:]
+    lsp_client._SPAWNED.extend(saved2)
+    for p in procs2:
+        try:
+            p.kill()
+            p.wait(timeout=5)
+        except Exception:
+            pass
+
+if fails:
+    for f in fails:
+        sys.stdout.write("[9s] FAIL: %s\n" % f)
+    sys.exit(1)
+sys.stdout.write("[9s] leader pass OK: every record attempted, the pass is "
+                 "bounded, and an unattemptable record reports incomplete\n")
+PY
+    [ "$rc" = "0" ] || return 1
+    return 0
+}
+
+# --- 9t: unconfirmed reaps travel, instead of being discarded ------------
+# reap_all_live, _shutdown_all_lsps and the five spawner init-failure
+# handlers each called shutdown() and dropped the confirmed-dead verdict
+# section 25 added -- and _shutdown_all_lsps cleared _LIVE_LSPS before
+# ignoring it, so an unconfirmed instance left the published set with
+# nothing recording that it might still be running (section 26).
+t_unconfirmed_reap_propagation() {
+    local rc=0
+    python3 - <<'PY' || rc=$?
+import importlib, sys, time
+sys.path.insert(0, "scripts/lsp-mcp")
+import lsp_client
+
+fails = []
+
+
+def check(cond, msg):
+    if not cond:
+        fails.append(msg)
+
+
+class FakeLsp:
+    def __init__(self, lang, confirmed, boom=False):
+        self.lang, self._c, self._boom = lang, confirmed, boom
+        self.alive, self.pid = True, 4242
+
+    def shutdown(self, timeout=1.0):
+        if self._boom:
+            raise RuntimeError("teardown exploded")
+        return self._c
+
+
+good, bad, boom = (FakeLsp("c", True), FakeLsp("py", False),
+                   FakeLsp("sh", True, boom=True))
+# _LIVE_SUBPROCS is a WeakSet -- the strong refs above are what keep these
+# alive for the duration of the sub-test.
+saved = list(lsp_client._LIVE_SUBPROCS)
+try:
+    lsp_client._LIVE_SUBPROCS.clear()
+    for x in (good, bad, boom):
+        lsp_client._LIVE_SUBPROCS.add(x)
+    res = lsp_client.reap_all_live(timeout=0.2)
+    check(int(res) == 3, f"the live count was lost: {int(res)!r}")
+    unc = getattr(res, "unconfirmed", None)
+    check(unc is not None, "reap_all_live did not report unconfirmed at all")
+    check(bad in (unc or []),
+          "an instance whose shutdown answered False was reported as "
+          "confirmed dead")
+    check(boom in (unc or []),
+          "an instance whose shutdown RAISED was treated as confirmed; "
+          "an exception is not a death")
+    check(good not in (unc or []),
+          "a confirmed death was reported as unconfirmed")
+finally:
+    lsp_client._LIVE_SUBPROCS.clear()
+    for x in saved:
+        lsp_client._LIVE_SUBPROCS.add(x)
+
+# --- and the bridge-side sweep hands its own set back -----------------
+bridge_mod = importlib.import_module("bridge")
+g2, b2 = FakeLsp("c", True), FakeLsp("py", False)
+with bridge_mod._LIVE_LSPS_LOCK:
+    saved_live = dict(bridge_mod._LIVE_LSPS)
+    bridge_mod._LIVE_LSPS.clear()
+    bridge_mod._LIVE_LSPS[("c", "/r")] = g2
+    bridge_mod._LIVE_LSPS[("py", "/r")] = b2
+try:
+    left = bridge_mod._shutdown_all_lsps(deadline=time.monotonic() + 2.0)
+    check(isinstance(left, list),
+          f"_shutdown_all_lsps returned {type(left).__name__}, not the "
+          f"unconfirmed set the force phase consumes")
+    check(b2 in (left or []),
+          "an unconfirmed instance was cleared from _LIVE_LSPS and dropped "
+          "silently; correctness then rests entirely on the force sweep")
+    check(g2 not in (left or []),
+          "a confirmed instance was reported unconfirmed")
+finally:
+    with bridge_mod._LIVE_LSPS_LOCK:
+        bridge_mod._LIVE_LSPS.clear()
+        bridge_mod._LIVE_LSPS.update(saved_live)
+    bridge_mod._BRIDGE_SHUTTING_DOWN.clear()
+
+# --- the SHUTDOWN-PUBLISH gate reports too ----------------------------
+# An instance that finishes spawning after teardown began is never added
+# to _LIVE_LSPS, so it is absent from the unconfirmed set
+# _shutdown_all_lsps returns. If its own shutdown fails and the force
+# sweep is incomplete, a freshly spawned server survives teardown with
+# nothing recording it. Section 26 named this caller and the first pass
+# still missed it, so the test drives the real _get_or_spawn gate rather
+# than the helper (Codex test-coverage review, High).
+import os, pathlib
+reported = []
+real_report = bridge_mod.report_unconfirmed_shutdown
+key_g = ("c", os.getcwd())
+real_sp = bridge_mod._LSP_SPAWNERS.get("c")
+for verdict, label in ((False, "False"), ("raise", "raising")):
+    class Gated:
+        alive, crashed = False, False
+        open_uri_meta: dict = {}
+
+        def shutdown(self, timeout=1.0):
+            if verdict == "raise":
+                raise RuntimeError("teardown exploded")
+            return verdict
+
+    made = Gated()
+    bridge_mod._LSP_SPAWNERS["c"] = lambda root, _m=made: _m
+    bridge_mod.report_unconfirmed_shutdown = (
+        lambda inst, ctx, timeout=1.0: reported.append((inst, ctx)) or False)
+    bridge_mod._BRIDGE_SHUTTING_DOWN.set()
+    try:
+        bridge_mod._get_or_spawn("c", pathlib.Path(os.getcwd()))
+        fails.append(f"the publish gate ({label}) did not refuse")
+    except lsp_client.LspError as exc:
+        check(exc.kind == "lsp-shutdown",
+              f"the publish gate ({label}) surfaced {exc.kind!r}")
+    except Exception as exc:
+        fails.append(f"the publish gate ({label}) raised {exc!r}")
+    finally:
+        bridge_mod._BRIDGE_SHUTTING_DOWN.clear()
+        bridge_mod.report_unconfirmed_shutdown = real_report
+        bridge_mod._SPAWN_EVENTS.pop(key_g, None)
+    check(any(inst is made for inst, _ in reported),
+          f"the shutdown-publish gate ({label}) discarded its verdict; the "
+          f"instance was never in _LIVE_LSPS either, so nothing anywhere "
+          f"records that this server may still be running")
+if real_sp is not None:
+    bridge_mod._LSP_SPAWNERS["c"] = real_sp
+else:
+    bridge_mod._LSP_SPAWNERS.pop("c", None)
+
+# --- the shared spawner helper reports rather than swallowing ---------
+noisy = FakeLsp("py", False)
+check(lsp_client.report_unconfirmed_shutdown(noisy, "unit") is False,
+      "the spawner helper claimed a confirmed death it did not get")
+check(lsp_client.report_unconfirmed_shutdown(FakeLsp("c", True), "unit")
+      is True,
+      "the spawner helper failed to report a genuine confirmed death")
+check(lsp_client.report_unconfirmed_shutdown(
+          FakeLsp("sh", True, boom=True), "unit") is False,
+      "the spawner helper treated a RAISING shutdown as confirmed")
+
+if fails:
+    for f in fails:
+        sys.stdout.write("[9t] FAIL: %s\n" % f)
+    sys.exit(1)
+sys.stdout.write("[9t] verdict propagation OK: unconfirmed instances travel "
+                 "from both sweeps and the spawner helper to the force "
+                 "phase instead of being discarded\n")
+PY
+    [ "$rc" = "0" ] || return 1
+    return 0
+}
+
 # --- 9h: the 9a ledger reader on rows the writer can really produce -------
 # Every shape here is producible by the bridge itself: os.write() can
 # return short on a full disk, and a bridge killed mid-append leaves a
@@ -11125,6 +11720,9 @@ run "9o late session descendant"         t_late_session_descendant
 run "9n no bare-PID destructive signal"  t_no_bare_pid_signal
 run "9p confirmed-dead restart gate"    t_confirmed_dead_restart_gate
 run "9q teardown single-flight"         t_teardown_single_flight
+run "9r non-reaping liveness"           t_nonreaping_liveness
+run "9s leader pass fair share"         t_leader_pass_fair_share
+run "9t unconfirmed reap propagation"   t_unconfirmed_reap_propagation
 # 9a runs LAST so every prior sub-test has had a chance to clean up.
 run "9a no leaked LSP processes"         t_no_leaked_lsp_processes
 
