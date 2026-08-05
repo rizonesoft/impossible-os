@@ -44,4 +44,13 @@ Five separate v08 items turned out to be ONE root cause -- a hook reading a comm
 
 ---
 
+- [ ] CLOSE-OUT MUST VERIFY: the 1,595-item `open-in-deferred` backlog is actually draining, and say by how much
+      Operator-filed 2026-08-05 for the canary closing **2026-08-19 09:00**. Two owners were added mid-flight to drain this incrementally; NEITHER is a gate, so both can be silently ignored by the run and the only way to know is to measure. Do not accept "it looks better" -- quote the numbers.
+      - **BASELINE at arm time (2026-08-05 02:2x, HEAD `1f836e60`): 1,595 items / 333 sections / 52 files.** By file class: **806 items in 21 NEEDS_WORK files** (FILE_CLOSE step 6 owns these), **702 in 28 DONE files** (ADVANCE step 7 owns these, one file per advance), **87 in 3 BLOCKED files** (only reachable if they unblock).
+      - **Verify with:** `bash scripts/lint.sh 2>&1 | grep "Check 24"` for the headline, and re-run the file-class split (the `--classify` loop recorded in the 2026-08-05 close-out) to see WHICH half moved. The split is the diagnostic: FILE_CLOSE and ADVANCE fail independently, so a drop concentrated in one class means the other instruction is being skipped.
+      - **If the count did NOT fall:** the instruction is not being followed, and THAT is the finding -- not the backlog. Check whether FILE_CLOSE/ADVANCE ran at all (run-log entries + `todo:` bookkeeping commits) before concluding anything about the items themselves.
+      - **If it fell but items were WRONGLY converted:** that is worse than no progress. THE failure mode is a standing task turned into a fake park -- the canonical example is `- [ ] Review this section's triggers once per calendar year`, which is not blocked work. Spot-check a sample of new `- [/]` items against their text; a blanket flip is forbidden and would show up as whole sections converted uniformly.
+      - **Why this needs checking at all rather than trusting the gate:** `phase FIXPOINT` DOES refuse completion while any remain (`todo-reachability.py` exits 1 on `open-in-deferred`), so the work is mandatory -- but that gate only bites at the finish line, which is exactly why the backlog survived since v06. If the run never reaches fixpoint (deadline stop, breaker, usage limit), the gate never fires and the backlog is whatever the two incremental owners managed.
+      - **Also re-check the 87 BLOCKED-file items specifically.** Neither owner reaches them unless their file unblocks during the run; if they are still there, they need their own owner and that is a v10 item.
+
 _No findings yet._
