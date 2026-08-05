@@ -1129,6 +1129,15 @@ The PreToolUse gates decide their exemptions by hand-scanning command text. [`.c
       The regressions added in section 34 (the `build_offload_grammar` cases) assert BLOCK today because the splitter declines to model them; with a real parser they should assert the precise segment set instead, and the legitimate-prompt cases beside them must keep passing unchanged.
 - [ ] Anchor the wrapper exemption on parsed argv rather than an anchored regex, so `run-artifact.sh` earns it only as the segment's actual executable
       `_RUN_ARTIFACT_RE` in [`.claude/hooks/build_offload_reminder.py`](../../.claude/hooks/build_offload_reminder.py) is anchored to the segment start and rejects `-c`, which closes the known shapes, but it is still a regex over text rather than a check on the command being run.
+> **Tactical predecessor shipped 2026-08-05** (`9feb1062`, `57e44841`, and the v08 close-out `fe819e4d`). Five separate v08 runner findings turned out to be ONE root cause -- a hook reading a command line as a STRING where it needed an ARGV -- and were fixed point-by-point in exactly the code this section wants replaced wholesale:
+> - `build_offload_reminder._tokens_invocation` now treats `-n`/`--noexec` (incl. clusters) as non-executing, so `bash -n <script>` is not a suite run. Filed THREE times in v08.
+> - `build_offload_reminder._substitution_bodies` is quote- and escape-aware, so markdown code-quotes in a commit message are not command substitution -- while an UNESCAPED backtick in double quotes still is.
+> - `_RUN_ARTIFACT_RE` now tolerates leading shell keywords (`do`/`then`/...), so a correctly-wrapped route inside a `for` body keeps its exemption. **This is the third bullet's exact complaint** -- it is now anchored more permissively, NOT on parsed argv, so that bullet still stands.
+> - `_codex_dispatch.extract_dispatch_prompts` + `_review_kind.detect_review_kinds_from_cmd` return EVERY dispatch in a command rather than the first, fixing step-attribution for bundled dispatches.
+> - `run_phase_guard._strip_git_message_bodies` keeps `[SEQ-TEARDOWN]` out of git `-m`/`-F` message bodies (git-only, so an executable heredoc still blocks).
+>
+> **What this section still owes, unchanged:** all of the above are hand-rolled special cases on top of the same hand-rolled walk. They make the CURRENT false positives stop; they do not make segmentation grammar-correct, and each one is another special case of the kind this section exists to retire. `_has_unmodelled_grammar()` is still the fail-closed backstop for `case`/`esac` and friends.
+
 - [ ] Commit: `"hooks: parse shell with a real grammar for the gate exemptions"`
 
 **Test checkpoint:** every `build_offload_*` case in `scripts/test-tooling.sh` still passes; the four `build_offload_grammar` shapes assert a correct segmentation rather than a fail-closed block; a bare suite invocation cannot be hidden in any shape the parser accepts. Test on: host tooling only (no QEMU dependency).
