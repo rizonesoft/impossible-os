@@ -5704,10 +5704,19 @@ if mode.startswith("threadleader"):
         sys.exit(0)
 
 if mode == "spawnrace_nopidfd":
-    # Same race with pidfd support removed. The runtime floor in
-    # scripts/setup.sh is python3 3.8 and os.pidfd_open arrived in 3.9, so
-    # a host without it is supported configuration -- and the guarantee
-    # must not quietly depend on the reviewer host being newer.
+    # Same race with pidfd support removed.
+    #
+    # Section 23 decided that destructive signalling never names a target
+    # by NUMBER on a host meeting the documented runtime of this module,
+    # so the bare-PID path this mode exercises is now reached only behind
+    # the named opt-in. The mode therefore models what it always actually
+    # modelled -- an out-of-profile host that has accepted the PID-reuse
+    # race in exchange for not leaking a child on every teardown -- and
+    # sets the opt-in explicitly. The DEFAULT refusal is pinned as a unit
+    # contract in 9n, where the two call sites can be asserted separately.
+    # (No apostrophes here: this driver is a single-quoted shell string.)
+    os.environ["LSP_BRIDGE_ALLOW_PID_SIGNAL"] = "1"
+
     def _no_pidfd(*a, **kw):
         raise OSError("pidfd_open unavailable")
     os.pidfd_open = _no_pidfd
@@ -7331,7 +7340,7 @@ time.sleep(0.3)
 real_owner_g = lsp_client._carries_our_owner_id
 
 
-def slow_true_owner(pid, deadline=None):
+def slow_true_owner(pid, deadline=None, **kw):
     time.sleep(0.2)
     return True
 
@@ -7448,7 +7457,7 @@ else:
     def emfile_open(pid, flags=0):
         raise OSError("EMFILE")
 
-    def emfile_probe(pid, deadline=None):
+    def emfile_probe(pid, deadline=None, **kw):
         return None                     # /proc reads fail under EMFILE too
 
     os.dup, os.pidfd_open = emfile_dup, emfile_open
@@ -7554,13 +7563,16 @@ real_kill_verified = lsp_client._kill_verified
 
 
 class _Immortal:
-    procs = [(4194300, 1, 4194300, 4242)]
+    # (pid, ppid, pgrp, sid, ticks) -- the snapshot row carries the
+    # session id since section 23, so the second ownership signal costs
+    # no extra procfs read.
+    procs = [(4194300, 1, 4194300, 4194300, 4242)]
 
-    def ours(self, pid, ticks, deadline=None):
+    def ours(self, pid, ticks, deadline=None, **kw):
         return True
 
 
-def immortal_snapshot(deadline=None, ours_cache=None):
+def immortal_snapshot(deadline=None, ours_cache=None, **kw):
     walks.append("/proc")
     return _Immortal()
 
@@ -7696,7 +7708,7 @@ if same_uid < 20:
           f"case needs a populated process table", file=sys.stderr)
     skipped_shapes.append("B budget-vs-ownership-probe")
 else:
-    def slow_probe(pid, deadline=None):
+    def slow_probe(pid, deadline=None, **kw):
         time.sleep(0.02)
         return None
 
@@ -7725,7 +7737,7 @@ time.sleep(0.3)
 seen = {}
 
 
-def flaky_probe(pid, deadline=None):
+def flaky_probe(pid, deadline=None, **kw):
     if pid == survivor.pid and not seen.get(pid):
         seen[pid] = True
         return None                 # transient: proves nothing
@@ -7756,17 +7768,17 @@ real_snapshot = lsp_client._proc_snapshot
 
 class _OneTarget:
     def __init__(self, pid):
-        self.procs = [(pid, 1, pid, 4242)]
+        self.procs = [(pid, 1, pid, pid, 4242)]
 
-    def ours(self, pid, ticks, deadline=None):
+    def ours(self, pid, ticks, deadline=None, **kw):
         return True                     # snapshot only NARROWS
 
 
-def one_target(deadline=None, ours_cache=None):
+def one_target(deadline=None, ours_cache=None, **kw):
     return _OneTarget(victim_d.pid)
 
 
-def slow_true(pid, deadline=None):
+def slow_true(pid, deadline=None, **kw):
     time.sleep(0.2)
     return True
 
@@ -7942,7 +7954,7 @@ real_owner = lsp_client._carries_our_owner_id
 def scripted(answers):
     seq = list(answers)
 
-    def probe(pid, deadline=None):
+    def probe(pid, deadline=None, **kw):
         calls.append(pid)
         return seq.pop(0) if seq else None
     return probe
@@ -7996,7 +8008,7 @@ finally:
 real_stat_fields = lsp_client._stat_fields
 real_listdir = os.listdir
 # Each row is skipped by a DIFFERENT guard.
-FAKE = ["10", "11", "12", "13", "notapid"]
+FAKE = ["10", "11", "12", "13", "14", "notapid"]
 
 
 def fake_listdir(path, *a, **kw):
@@ -8007,10 +8019,14 @@ def fake_listdir(path, *a, **kw):
 
 def fake_fields(pid):
     return {
-        10: ["S", "1", "10", "x"] + ["0"] * 20,   # well-formed -> kept
+        10: ["S", "1", "10", "10"] + ["0"] * 20,  # well-formed -> kept
         11: ["S", "1"],                           # truncated -> IndexError
         12: ["S", "1", "notanint"] + ["0"] * 20,  # unparseable -> ValueError
         13: None,                                 # vanished mid-walk
+        # Session is field 6, read since section 23. It degrades the row
+        # exactly like the other three: all fields or none, never a
+        # partially-invented candidate.
+        14: ["S", "1", "14", "nope"] + ["0"] * 20,
     }.get(pid)
 
 
@@ -8027,13 +8043,13 @@ finally:
 # is the difference between probing an owner-stamped descendant and
 # leaking it (Codex adversarial review, High). The fields go None; the
 # candidate stays.
-check(sorted(rows) == [10, 11, 12, 13],
+check(sorted(rows) == [10, 11, 12, 13, 14],
       f"a pid was dropped for an unreadable or unparsable stat: "
       f"{sorted(rows)}")
-check(rows.get(10) == (10, 1, 10, 0),
+check(rows.get(10) == (10, 1, 10, 10, 0),
       f"a well-formed row did not parse: {rows.get(10)}")
-for degraded in (11, 12, 13):
-    check(rows.get(degraded) == (degraded, None, None, None),
+for degraded in (11, 12, 13, 14):
+    check(rows.get(degraded) == (degraded, None, None, None, None),
           f"a degraded row carried invented fields: {rows.get(degraded)}")
 
 if fails:
@@ -8291,6 +8307,910 @@ lsp_survivors_of_this_run() {
         done
     fi
     printf '%s' "$out"
+}
+
+# --- 9l: each of the five deadline break points, on an injected clock ----
+# 9j asserts the sweep as a WHOLE stays inside its budget, which one
+# deleted check still satisfies -- and it measures against real time, so
+# the bound scales with the host's process table. Here the clock is a
+# parameter the test writes, expiring at exactly ONE transition per case,
+# and the assertion is that no probe, signal, scan or sleep happens after
+# it. Deleting any single check makes exactly one case fail.
+t_reap_deadline_break_points() {
+    local rc=0
+    python3 - <<'PY' || rc=$?
+import os, subprocess, sys
+sys.path.insert(0, "scripts/lsp-mcp")
+import lsp_client
+
+fails = []
+
+
+def check(cond, msg):
+    if not cond:
+        fails.append(msg)
+
+
+DEADLINE = 1000.0
+
+
+class Clock:
+    """A clock the test advances, plus the event log the assertions read.
+
+    now() answers `t` until `trip` fires, so a case decides exactly which
+    transition sees an expired budget. Every sleep is recorded rather than
+    taken: a real sleep here would make the sub-test slow AND would let a
+    missing check pass by running fast enough."""
+
+    def __init__(self, expire_on):
+        self.t = 0.0
+        self.expire_on = expire_on
+        self.events = []
+        self.expired = False
+
+    def now(self):
+        return DEADLINE + 1.0 if self.expired else self.t
+
+    def sleep(self, sec):
+        self.events.append(("sleep", sec))
+
+    def event(self, name):
+        self.events.append((name, None))
+        if name == self.expire_on:
+            self.expired = True
+
+    def after(self, name):
+        """Events recorded after the FIRST occurrence of `name`."""
+        for i, (ev, _a) in enumerate(self.events):
+            if ev == name:
+                return [e for e, _ in self.events[i + 1:]]
+        return [e for e, _ in self.events]
+
+    def trace(self, limit=12):
+        """A readable prefix. A sweep that ignored its budget produces
+        hundreds of identical sleeps, and dumping them all buries the one
+        fact the assertion is about."""
+        names = [e for e, _ in self.events]
+        extra = len(names) - limit
+        return names[:limit] + ([f"...+{extra} more"] if extra > 0 else [])
+
+
+real_snapshot = lsp_client._proc_snapshot
+real_owner = lsp_client._carries_our_owner_id
+real_own_pidfd = lsp_client._own_pidfd
+real_kill = lsp_client._kill_verified
+real_spawned = list(lsp_client._SPAWNED)
+
+# A candidate set that is never empty and never dies, so the ONLY thing
+# that can stop the sweep is a deadline check.
+FAKE_PROCS = [(9000 + i, 1, 9000 + i, 9000 + i, 100 + i) for i in range(4)]
+
+
+def instrument(clk):
+    def snapshot(deadline=None, ours_cache=None, clock=lsp_client._REAL_CLOCK):
+        clk.event("scan")
+        return lsp_client._ProcSnapshot(list(FAKE_PROCS), ours_cache)
+
+    def owner(pid, deadline=None, clock=lsp_client._REAL_CLOCK):
+        clk.event("probe")
+        return True
+
+    def own_pidfd(pid, still_ours):
+        clk.event("open")
+        return None
+
+    def kill_verified(pid, fd, still_ours):
+        clk.event("signal")
+        return True
+
+    lsp_client._proc_snapshot = snapshot
+    lsp_client._carries_our_owner_id = owner
+    lsp_client._own_pidfd = own_pidfd
+    lsp_client._kill_verified = kill_verified
+
+
+def restore():
+    lsp_client._proc_snapshot = real_snapshot
+    lsp_client._carries_our_owner_id = real_owner
+    lsp_client._own_pidfd = real_own_pidfd
+    lsp_client._kill_verified = real_kill
+    lsp_client._SPAWNED[:] = real_spawned
+
+
+def sweep(clk, settle=0.0):
+    instrument(clk)
+    try:
+        lsp_client.force_kill_spawned(settle=settle, deadline=DEADLINE,
+                                      clock=clk)
+    finally:
+        restore()
+
+
+try:
+    # 1. SETTLE WAIT -- an expired budget must not sleep out the
+    #    Popen-to-record window before starting.
+    lsp_client._SPAWNED[:] = []
+    lsp_client._SPAWN_INFLIGHT = 1
+    clk = Clock(expire_on=None)
+    clk.expired = True
+    sweep(clk, settle=5.0)
+    lsp_client._SPAWN_INFLIGHT = 0
+    # The FIRST event, not "no sleep anywhere": every later break point
+    # also sleeps between rounds, so a whole-sweep assertion here would
+    # fire for a check deleted three phases away and misattribute it.
+    check(not clk.events or clk.events[0][0] != "sleep",
+          f"the settle wait slept with the budget already spent: "
+          f"{clk.trace()}")
+
+    # 2. PRE-SCAN -- the budget expires before the first round, so /proc
+    #    must never be walked at all.
+    #
+    #    Run with a SEEDED owned session, because pass 0 walks /proc too
+    #    and is skipped entirely when _OWNED_SESSIONS is empty -- an
+    #    empty map hid a pass-0 enumeration that ran after the budget had
+    #    already expired (Codex adversarial review, Medium).
+    seeded = lsp_client._SpawnRecord(4194303, 4242, None)
+    saved_owned = dict(lsp_client._OWNED_SESSIONS)
+    lsp_client._OWNED_SESSIONS[4194303] = seeded
+    try:
+        clk = Clock(expire_on=None)
+        clk.expired = True
+        sweep(clk)
+        check("scan" not in [e for e, _ in clk.events],
+              f"an expired budget still walked /proc: {clk.trace()}")
+    finally:
+        lsp_client._OWNED_SESSIONS.clear()
+        lsp_client._OWNED_SESSIONS.update(saved_owned)
+
+    # 2b. PASS 0's OWN POST-PROBE CHECK. Pass 0 walks /proc too, and its
+    #     ownership probe is just as uninterruptible as pass 2's: a slow
+    #     environ read can return after the budget expired and then
+    #     authorize a SIGKILL. Seeded with a record carrying a REAL live
+    #     handle so pass 0 gets past _session_marks_ours and actually
+    #     reaches the probe (Codex adversarial review, Medium).
+    victim0 = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(30)"],
+        start_new_session=True)
+    saved0 = dict(lsp_client._OWNED_SESSIONS)
+    saved_spawned0 = list(lsp_client._SPAWNED)
+    try:
+        rec0 = lsp_client._record_spawn(victim0.pid)
+        clk = Clock(expire_on="probe")
+        instrument(clk)
+        try:
+            lsp_client.force_kill_spawned(settle=0.0, deadline=DEADLINE,
+                                          clock=clk)
+        finally:
+            restore()
+        after = clk.after("probe")
+        check("signal" not in after,
+              f"pass 0 signalled after its budget expired: {clk.trace()}")
+    finally:
+        lsp_client._OWNED_SESSIONS.clear()
+        lsp_client._OWNED_SESSIONS.update(saved0)
+        lsp_client._SPAWNED[:] = saved_spawned0
+        try:
+            victim0.kill()
+            victim0.wait()
+        except Exception:
+            pass
+
+    # 3. OWNERSHIP ENUMERATION -- the budget expires inside the first
+    #    ownership probe, so no SECOND candidate may be probed.
+    clk = Clock(expire_on="probe")
+    sweep(clk)
+    check(clk.after("probe").count("probe") == 0,
+          f"ownership probing continued past the budget: {clk.trace()}")
+
+    # 4. PRE-SIGNAL -- the budget expires as the candidate list is
+    #    finished, so nothing may be opened or signalled.
+    clk = Clock(expire_on="scan")
+    sweep(clk)
+    after = clk.after("scan")
+    check("signal" not in after and "open" not in after,
+          f"a signal was sent after the budget expired: {clk.trace()}")
+
+    # 5. POST-TARGET -- the budget expires on the first signal, so the
+    #    sweep must not proceed to the next target or to another round.
+    clk = Clock(expire_on="signal")
+    sweep(clk)
+    after = clk.after("signal")
+    check("signal" not in after,
+          f"a second target was signalled past the budget: {clk.trace()}")
+    check("scan" not in after,
+          f"another round was scanned past the budget: {clk.trace()}")
+    # The END-OF-ROUND check specifically. Without this assertion the
+    # sweep can fall through to the inter-round sleep and be stopped one
+    # statement later by the loop-head check instead -- same visible
+    # outcome, one deleted check, and a green test (found by deleting it:
+    # the other four assertions did not move).
+    check("sleep" not in after,
+          f"the sweep slept between rounds past the budget: {clk.trace()}")
+
+    # The clock is a PARAMETER, not a module global: nothing the sweep
+    # touched may have moved the module's real clock, or atexit would
+    # inherit a scripted one at interpreter shutdown.
+    check(lsp_client._REAL_CLOCK.now is not clk.now,
+          "the scripted clock leaked into the module-level real clock")
+finally:
+    restore()
+    lsp_client._SPAWN_INFLIGHT = 0
+
+if fails:
+    for f in fails:
+        sys.stdout.write("[9l] FAIL: %s\n" % f)
+    sys.exit(1)
+sys.stdout.write("[9l] deadline break points OK: settle wait, pre-scan, "
+                 "ownership enumeration, pre-signal and post-target each "
+                 "stop the sweep on an injected clock\n")
+PY
+    [ "$rc" = "0" ] || return 1
+    return 0
+}
+
+# --- 9m: the ownership signal that survives an unreadable /proc entry -----
+# A process that called PR_SET_DUMPABLE(0) has its /proc entry reassigned
+# to root, so the environ probe answers UNKNOWN at every task and the
+# stamp-wide sweep never claims it. Session continuity is the second
+# signal; these cases pin both what it accepts and -- the part that makes
+# it safe -- what it refuses.
+t_nondumpable_session_ownership() {
+    local rc=0
+    python3 - <<'PY' || rc=$?
+import os, signal, subprocess, sys
+sys.path.insert(0, "scripts/lsp-mcp")
+import lsp_client
+
+fails = []
+
+
+def check(cond, msg):
+    if not cond:
+        fails.append(msg)
+
+
+real_owner = lsp_client._carries_our_owner_id
+saved_sessions = dict(lsp_client._OWNED_SESSIONS)
+saved_spawned = list(lsp_client._SPAWNED)
+kids = []
+
+
+def sleeper():
+    """A real child in its own session, recorded exactly as a spawn is."""
+    p = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(300)"],
+                         start_new_session=True)
+    kids.append(p)
+    return p, lsp_client._record_spawn(p.pid)
+
+
+# --- _session_marks_ours: the leader HANDLE, never the leader number ---
+try:
+    alive, rec_alive = sleeper()
+    check(lsp_client._OWNED_SESSIONS.get(alive.pid) is rec_alive,
+          "_record_spawn did not publish the session marker")
+    check(lsp_client._session_marks_ours(999999, alive.pid) is True,
+          "a live recorded leader did not vouch for its session member")
+    check(lsp_client._session_marks_ours(999999, 4194301) is False,
+          "an unrecorded session was claimed as ours")
+    check(lsp_client._session_marks_ours(999999, None) is False,
+          "an unreadable session id was claimed as ours")
+
+    # THE case the ticks comparison could not decide. The leader is dead
+    # and reaped, so its session id may now belong to anybody -- and a
+    # recycled leader that started inside the SAME 100 Hz tick would have
+    # satisfied a start-time comparison. Identity is the descriptor, so
+    # the answer does not depend on the tick at all: forcing every tick
+    # read to return the recorded value must NOT flip it to True
+    # (Codex adversarial review, High).
+    dead, rec_dead = sleeper()
+    dead.kill()
+    dead.wait()
+    real_ticks = lsp_client.proc_start_ticks
+    lsp_client.proc_start_ticks = lambda pid: rec_dead.ticks
+    try:
+        check(lsp_client._session_marks_ours(999999, dead.pid) is False,
+              "an equal-tick session-id recycle authorized a kill -- "
+              "identity fell back to the start time")
+    finally:
+        lsp_client.proc_start_ticks = real_ticks
+
+    # No exact handle means no answer. A record whose pidfd_open failed
+    # cannot prove its leader is the one still running, so it fails closed
+    # rather than trusting the number.
+    handleless = lsp_client._SpawnRecord(alive.pid, rec_alive.ticks, None)
+    lsp_client._SPAWNED.append(handleless)
+    lsp_client._OWNED_SESSIONS[alive.pid] = handleless
+    try:
+        check(lsp_client._session_marks_ours(999999, alive.pid) is False,
+              "a record with no descriptor vouched for a session")
+    finally:
+        lsp_client._OWNED_SESSIONS[alive.pid] = rec_alive
+        try:
+            lsp_client._SPAWNED.remove(handleless)
+        except ValueError:
+            pass
+
+    # PASS 0 must never touch the LEADER. For a recorded leader sid ==
+    # pid, so it passes the session check -- and killing it there destroys
+    # the handle every later row's ownership proof depends on, after which
+    # the reader reaps it and the remaining descendants survive (Codex
+    # adversarial review, High). Pass 1 owns leaders.
+    #
+    # Asserted on _pidfd_open rather than on the signal, because that is
+    # what distinguishes the passes deterministically: pass 0 must OPEN a
+    # handle for anything it signals, while pass 1, for a record that
+    # already has a descriptor, uses _borrow_pidfd (a dup) and never calls
+    # _pidfd_open at all. A timing-based version of this test passed
+    # against a mutant that removed the exclusion, because the leader was
+    # still a signalable zombie when the descendant was examined.
+    # Carries the owner stamp, like a real spawn: without it the environ
+    # probe answers a readable False and pass 0 skips the row for that
+    # reason instead of the one under test -- which is how the first
+    # version of this case passed against a mutant with the exclusion
+    # removed.
+    env2 = dict(os.environ)
+    env2["LSP_BRIDGE_OWNER"] = lsp_client._OWNER_ID
+    leader2 = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(30)"],
+        env=env2, start_new_session=True)
+    kids.append(leader2)
+    rec2 = lsp_client._record_spawn(leader2.pid)
+    opened = []
+    real_pidfd_open = lsp_client._pidfd_open
+    real_snapshot = lsp_client._proc_snapshot
+    real_send = signal.pidfd_send_signal
+    real_spawned2 = list(lsp_client._SPAWNED)
+    try:
+        check(rec2.fd is not None,
+              "the fixture record got no descriptor, so pass 1 would call "
+              "_pidfd_open and the assertion could not attribute it")
+        lsp_client._SPAWNED[:] = [rec2]
+        lsp_client._OWNED_SESSIONS[leader2.pid] = rec2
+
+        def one_leader_row(deadline=None, ours_cache=None, **kw):
+            # (pid, ppid, pgrp, sid, ticks) -- the leader IS its own
+            # session, which is exactly the row pass 0 must skip.
+            return lsp_client._ProcSnapshot(
+                [(leader2.pid, os.getpid(), leader2.pid, leader2.pid,
+                  rec2.ticks)], ours_cache)
+
+        def watch(pid):
+            opened.append(("open", pid))
+            return real_pidfd_open(pid)
+
+        def watch_send(fd, sig, *a, **kw):
+            if sig == signal.SIGKILL:
+                opened.append(("kill", None))
+            return real_send(fd, sig, *a, **kw)
+
+        lsp_client._proc_snapshot = one_leader_row
+        lsp_client._pidfd_open = watch
+        signal.pidfd_send_signal = watch_send
+        lsp_client.force_kill_spawned(settle=0.0)
+        # ORDER, not presence. Pass 2 legitimately re-reaches the leader
+        # after pass 1 has killed it -- a dying leader is still ours -- so
+        # the question is whether anything opened a handle for it BEFORE
+        # the first SIGKILL. Pass 1 signals through _borrow_pidfd (a dup),
+        # which never calls _pidfd_open, so an open ahead of the first
+        # kill can only be pass 0.
+        first = next((kind for kind, _p in opened), None)
+        check(first != "open",
+              f"pass 0 opened a handle for the recorded session LEADER "
+              f"({leader2.pid}) before pass 1 signalled it: {opened[:4]}")
+    finally:
+        signal.pidfd_send_signal = real_send
+        lsp_client._pidfd_open = real_pidfd_open
+        lsp_client._proc_snapshot = real_snapshot
+        lsp_client._SPAWNED[:] = real_spawned2
+        lsp_client._OWNED_SESSIONS.pop(leader2.pid, None)
+
+    # A STALE retirement must not take a live replacement's marker. Both
+    # generations share a PID and a start time, so only object identity
+    # distinguishes them (Codex adversarial review, High).
+    stale = lsp_client._SpawnRecord(4194302, 4242, None)
+    fresh = lsp_client._SpawnRecord(4194302, 4242, None)
+    lsp_client._SPAWNED.extend([stale, fresh])
+    lsp_client._OWNED_SESSIONS[4194302] = stale
+    lsp_client._OWNED_SESSIONS[4194302] = fresh      # replacement published
+    lsp_client._retire_spawn(stale)
+    check(lsp_client._OWNED_SESSIONS.get(4194302) is fresh,
+          "a stale retirement deleted the replacement session marker")
+    lsp_client._retire_spawn(fresh)
+    check(4194302 not in lsp_client._OWNED_SESSIONS,
+          "retiring the owning record left its session marker behind")
+
+    # --- _ProcSnapshot.ours: the marker never overrides a READABLE answer
+    snap = lsp_client._ProcSnapshot([])
+    lsp_client._carries_our_owner_id = lambda pid, deadline=None, **kw: None
+    check(snap.ours(999999, 11, sid=alive.pid) is True,
+          "an UNREADABLE environ in our session was not claimed -- the "
+          "PR_SET_DUMPABLE(0) leak this case exists for")
+
+    # A readable environment that does not carry the stamp is positive
+    # evidence the process is NOT ours. The marker must not widen "ours"
+    # from a stamp we placed to a number we once used.
+    snap2 = lsp_client._ProcSnapshot([])
+    lsp_client._carries_our_owner_id = lambda pid, deadline=None, **kw: False
+    check(snap2.ours(999998, 11, sid=alive.pid) is False,
+          "the session marker overrode a READABLE unstamped environment")
+
+    # And the marker is not cached: it depends on the leader still being
+    # alive, which a later round can falsify.
+    snap3 = lsp_client._ProcSnapshot([])
+    lsp_client._carries_our_owner_id = lambda pid, deadline=None, **kw: None
+    check(snap3.ours(999997, 11, sid=alive.pid) is True, "first round misread")
+    alive.kill()
+    alive.wait()
+    check(snap3.ours(999997, 11, sid=alive.pid) is False,
+          "a session answer was CACHED and survived its leader's death")
+finally:
+    lsp_client._carries_our_owner_id = real_owner
+    for k in kids:
+        try:
+            k.kill()
+            k.wait()
+        except Exception:
+            pass
+    lsp_client._SPAWNED[:] = saved_spawned
+    lsp_client._OWNED_SESSIONS.clear()
+    lsp_client._OWNED_SESSIONS.update(saved_sessions)
+
+if fails:
+    for f in fails:
+        sys.stdout.write("[9m] FAIL: %s\n" % f)
+    sys.exit(1)
+sys.stdout.write("[9m] non-dumpable ownership OK: the leader HANDLE vouches "
+                 "for a session, and an equal-tick recycle, a handleless "
+                 "record, a stale retirement and a readable negative are all "
+                 "refused\n")
+PY
+    [ "$rc" = "0" ] || return 1
+
+    # The live half: a real PR_SET_DUMPABLE(0) descendant, reaped through
+    # the marker rather than through an environ nobody can read.
+    local drv out err child rc2=0
+    drv="$(mktemp -t lsp-nondump.XXXXXX.py)"
+    out="$(mktemp -t lsp-nondump-out.XXXXXX)"
+    err="$(mktemp -t lsp-nondump-err.XXXXXX)"
+    cat > "$drv" <<'PY'
+import ctypes, os, subprocess, sys, threading, time
+sys.path.insert(0, "scripts/lsp-mcp")
+import lsp_client
+
+PR_SET_DUMPABLE = 4
+try:
+    libc = ctypes.CDLL("libc.so.6", use_errno=True)
+except Exception as exc:
+    sys.stdout.write("NOSHAPE libc.so.6 did not load: %s\n" % exc)
+    sys.exit(0)
+
+# The descendant: hardens itself so /proc/<pid> is root-owned and its
+# environment is unreadable by us, then lives. It carries the owner stamp
+# it inherited, which is precisely the evidence that becomes unreadable.
+CHILD = (
+    "import ctypes,os,sys,time\n"
+    "ctypes.CDLL('libc.so.6').prctl(4,0,0,0,0)\n"
+    "sys.stdout.write('HARD %d\\n' % os.getpid()); sys.stdout.flush()\n"
+    "time.sleep(300)\n"
+)
+
+# Its session leader is a process we RECORD, exactly as a spawn does.
+env = dict(os.environ)
+env["LSP_BRIDGE_OWNER"] = lsp_client._OWNER_ID
+leader = subprocess.Popen(
+    [sys.executable, "-c",
+     "import subprocess,sys,os,time\n"
+     "p=subprocess.Popen([sys.executable,'-c',%r])\n"
+     "sys.stdout.write('KID %%d\\n' %% p.pid); sys.stdout.flush()\n"
+     "time.sleep(300)\n" % CHILD],
+    env=env, stdout=subprocess.PIPE, text=True, start_new_session=True)
+lsp_client._record_spawn(leader.pid)
+kid = int(leader.stdout.readline().split()[1])
+
+# Confirm the fixture really is opaque before asserting anything about it.
+for _ in range(100):
+    if lsp_client._carries_our_owner_id(kid) is None:
+        break
+    time.sleep(0.05)
+else:
+    sys.stdout.write("NOSHAPE the child's environ stayed readable "
+                     "(PR_SET_DUMPABLE had no effect on this host)\n")
+    leader.kill()
+    sys.exit(0)
+
+sys.stdout.write("LEADER %d\nCHILD %d\n" % (leader.pid, kid))
+sys.stdout.flush()
+
+# A stand-in for the production reader thread, which calls Popen.poll()
+# continuously. It REAPS the leader the moment pass 1 kills it, at which
+# point the leader pidfd answers ESRCH -- so a session marker authorized
+# by a live leader check goes dead between pass 1 and pass 2, and the
+# opaque descendant that only that marker can claim survives. Without
+# this thread the leader stays a zombie and the race never runs (Codex
+# adversarial review, High: "test 9m uses a raw Popen with no reader
+# thread, leaving the leader as a zombie and masking the race").
+def reaper():
+    while True:
+        if leader.poll() is not None:
+            return
+        time.sleep(0.005)
+
+
+threading.Thread(target=reaper, daemon=True).start()
+lsp_client.force_kill_spawned(settle=0.2, deadline=time.monotonic() + 10.0)
+sys.exit(0)
+PY
+    python3 "$drv" > "$out" 2> "$err" || rc2=$?
+    if grep -q '^NOSHAPE' "$out"; then
+        LSP_SKIPPED_SHAPES="${LSP_SKIPPED_SHAPES}${LSP_SKIPPED_SHAPES:+
+}9m live PR_SET_DUMPABLE(0) descendant: $(sed -n 's/^NOSHAPE //p' "$out")"
+        rm -f "$drv" "$out" "$err"
+        printf '[9m] session-continuity tables OK; live non-dumpable shape '
+        printf 'SKIPPED on this host\n'
+        return 0
+    fi
+    child="$(awk '/^CHILD/ {print $2; exit}' "$out" 2>/dev/null)"
+    if [ -z "$child" ]; then
+        printf '[9m] FAIL: driver never built the non-dumpable fixture\n' >&2
+        sed 's/^/     /' "$err" >&2
+        rm -f "$drv" "$out" "$err"; return 1
+    fi
+    if ! lsp_wait_gone "$child" 100; then
+        printf '[9m] FAIL: the PR_SET_DUMPABLE(0) descendant %s survived the\n' \
+            "$child" >&2
+        printf '     force sweep -- the environ is unreadable and the session\n' >&2
+        printf '     marker did not claim it\n' >&2
+        kill -9 "$child" 2>/dev/null || true
+        rm -f "$drv" "$out" "$err"; return 1
+    fi
+    rm -f "$drv" "$out" "$err"
+    printf '[9m] non-dumpable ownership OK: session continuity tables plus a '
+    printf 'live PR_SET_DUMPABLE(0) descendant collected\n'
+    return 0
+}
+
+# --- 9n: destructive signalling never names a target by NUMBER -----------
+# Both fallbacks re-verified identity and then called os.kill, which
+# cannot rule out the target exiting and its number being reused in
+# between. Section 23 decides that trade for a host meeting this module's
+# documented runtime (Python 3.10+, where both pidfd calls exist): refuse
+# and report. The opt-in half is asserted too, or the refusal could be
+# achieved by removing the capability rather than by gating it.
+t_no_bare_pid_signal() {
+    local rc=0
+    python3 - <<'PY' || rc=$?
+import errno, os, signal, subprocess, sys
+sys.path.insert(0, "scripts/lsp-mcp")
+import lsp_client
+
+fails = []
+
+
+def check(cond, msg):
+    if not cond:
+        fails.append(msg)
+
+
+killed = []
+real_kill = os.kill
+real_env = os.environ.get("LSP_BRIDGE_ALLOW_PID_SIGNAL")
+real_spawned = list(lsp_client._SPAWNED)
+os.kill = lambda pid, sig: killed.append((pid, sig))
+
+try:
+    os.environ.pop("LSP_BRIDGE_ALLOW_PID_SIGNAL", None)
+
+    # _kill_verified with no descriptor: refuse, and do not call os.kill
+    # even though the identity predicate agrees.
+    before = lsp_client._PID_SIGNAL_REFUSALS
+    check(lsp_client._kill_verified(4242, None, lambda p: True) is False,
+          "_kill_verified signalled a bare PID by default")
+    check(not killed, f"_kill_verified called os.kill by number: {killed}")
+    check(lsp_client._PID_SIGNAL_REFUSALS == before + 1,
+          "the refusal was not counted, so a leak would be unattributable")
+
+    # _signal_recorded on a record that never got a descriptor: same.
+    killed.clear()
+    rec = lsp_client._SpawnRecord(4243, 555, None)
+    lsp_client._SPAWNED[:] = [rec]
+    real_ticks = lsp_client.proc_start_ticks
+    real_own = lsp_client._own_pidfd
+    lsp_client.proc_start_ticks = lambda pid: 555
+    lsp_client._own_pidfd = lambda pid, still: None
+    try:
+        check(lsp_client._signal_recorded(rec, signal.SIGTERM) is False,
+              "_signal_recorded signalled a bare PID by default")
+        check(not killed,
+              f"_signal_recorded called os.kill by number: {killed}")
+
+        # The opt-in restores the documented out-of-profile behaviour --
+        # otherwise this would be a capability removal wearing a gate.
+        os.environ["LSP_BRIDGE_ALLOW_PID_SIGNAL"] = "1"
+        killed.clear()
+        check(lsp_client._signal_recorded(rec, signal.SIGTERM) is True,
+              "the opt-in did not restore signalling on a pidfd-less host")
+        check(killed == [(4243, signal.SIGTERM)],
+              f"the opt-in path signalled the wrong thing: {killed}")
+
+        killed.clear()
+        check(lsp_client._kill_verified(4242, None, lambda p: True) is True,
+              "the opt-in did not restore _kill_verified")
+        check(killed == [(4242, signal.SIGKILL)],
+              f"the opt-in path sent the wrong signal: {killed}")
+
+        # Even opted in, identity still gates the signal.
+        killed.clear()
+        check(lsp_client._kill_verified(4242, None, lambda p: False) is False,
+              "an opted-in host signalled a process it could not identify")
+        check(not killed, f"identity was not re-verified: {killed}")
+    finally:
+        lsp_client.proc_start_ticks = real_ticks
+        lsp_client._own_pidfd = real_own
+
+    # --- the emergency descriptor reserve --------------------------------
+    # Refusing to signal by number is only safe while the DESCRIPTOR path
+    # stays reachable, and the failure it has to survive is the one that
+    # makes teardown urgent: FD exhaustion, which makes pidfd_open fail at
+    # spawn AND again at teardown. Without the reserve the refusal turns a
+    # deterministic reap into a leak (Codex adversarial review, High).
+    os.environ.pop("LSP_BRIDGE_ALLOW_PID_SIGNAL", None)
+    real_pidfd_open = os.pidfd_open
+    attempts = []
+
+    def emfile_once(pid, flags=0):
+        attempts.append(pid)
+        if len(attempts) == 1:
+            raise OSError(errno.EMFILE, "Too many open files")
+        return real_pidfd_open(pid, flags)
+
+    try:
+        # The slot is a LIST, claimed by an atomic pop, not a lock: a
+        # termination handler can interrupt _record_spawn inside this very
+        # region, and a non-reentrant lock deadlocked the final reap there
+        # (Codex adversarial review, High).
+        check(isinstance(lsp_client._FD_RESERVE, list),
+              "the reserve is not the lock-free slot the signal path needs")
+        # TWO slots, because pass 0 holds a leader-proof handle and a
+        # target handle at the same time; one reserve deterministically
+        # failed the second acquisition at a full table.
+        check(len(lsp_client._FD_RESERVE) == lsp_client._FD_RESERVE_SIZE,
+              f"the descriptor reserve was not armed to "
+              f"{lsp_client._FD_RESERVE_SIZE}: {lsp_client._FD_RESERVE}")
+        os.pidfd_open = emfile_once
+        fd = lsp_client._pidfd_open(os.getpid())
+        check(fd is not None,
+              "an EMFILE pidfd_open was not retried against the reserve")
+        if fd is not None:
+            os.close(fd)
+        check(len(attempts) == 2,
+              f"the reserve retry did not happen exactly once: {attempts}")
+
+        # A slot that is claimed AND cannot be refilled -- the genuinely
+        # exhausted table -- must answer None after ONE attempt rather
+        # than wait for anything. This is the interleaving the lock turned
+        # into a deadlock, and it is also what a real RLIMIT_NOFILE wall
+        # looks like: the re-arm cannot get a descriptor either.
+        attempts.clear()
+        lsp_client._arm_fd_reserve()
+        claimed = list(lsp_client._FD_RESERVE)
+        del lsp_client._FD_RESERVE[:]
+        real_open = os.open
+
+        def no_descriptors(*a, **kw):
+            raise OSError(errno.EMFILE, "Too many open files")
+
+        def always_emfile(pid, flags=0):
+            attempts.append(pid)
+            raise OSError(errno.EMFILE, "Too many open files")
+
+        try:
+            os.open = no_descriptors
+            os.pidfd_open = always_emfile
+            check(lsp_client._pidfd_open(os.getpid()) is None,
+                  "an unrefillable empty reserve did not answer None")
+            check(len(attempts) == 1,
+                  f"an empty reserve retried anyway: {attempts}")
+            check(not lsp_client._FD_RESERVE,
+                  "the reserve was refilled while no descriptor existed")
+        finally:
+            os.open = real_open
+            for c in claimed:
+                os.close(c)
+
+        # And it RECOVERS: once a descriptor is free again, the very next
+        # call re-arms the slot. A re-arm that only ran in the finally of
+        # the spending call stayed empty forever, because the pidfd it had
+        # just returned was sitting in the slot the close freed (Codex
+        # adversarial review, Medium).
+        os.pidfd_open = real_pidfd_open
+        fd2 = lsp_client._pidfd_open(os.getpid())
+        if fd2 is not None:
+            os.close(fd2)
+        check(len(lsp_client._FD_RESERVE) == lsp_client._FD_RESERVE_SIZE,
+              "the reserve did not recover on the next call after "
+              "descriptors were released")
+
+        # A capability that is ABSENT is not a shortage, and must not
+        # consume the reserve on every call.
+        lsp_client._arm_fd_reserve()
+        attempts.clear()
+
+        def enosys(pid, flags=0):
+            attempts.append(pid)
+            raise OSError(errno.ENOSYS, "Function not implemented")
+
+        os.pidfd_open = enosys
+        check(lsp_client._pidfd_open(os.getpid()) is None,
+              "an ENOSYS pidfd_open answered with a descriptor")
+        check(len(attempts) == 1,
+              f"a non-shortage failure was retried anyway: {attempts}")
+        check(len(lsp_client._FD_RESERVE) == lsp_client._FD_RESERVE_SIZE,
+              "a non-shortage failure spent the reserve")
+    finally:
+        os.pidfd_open = real_pidfd_open
+        lsp_client._arm_fd_reserve()
+
+    # PASS 0 MUST NOT LEAK ITS PROOF HANDLE on the branches that reject a
+    # candidate. Both the readable-and-unstamped `continue` and the
+    # post-probe deadline `break` used to leave the loop before entering
+    # the finally that closes it -- one pidfd per scrubbed-environment
+    # candidate per scan, in the teardown where descriptors are scarcest
+    # (Codex adversarial review, High). Counted rather than inspected: an
+    # os.close hook is what distinguishes "closed on this branch" from
+    # "closed eventually by interpreter exit".
+    victim3 = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(30)"],
+        start_new_session=True)
+    saved_owned3 = dict(lsp_client._OWNED_SESSIONS)
+    saved_spawned3 = list(lsp_client._SPAWNED)
+    real_close3 = os.close
+    real_snapshot3 = lsp_client._proc_snapshot
+    real_owner3 = lsp_client._carries_our_owner_id
+    borrowed, closed3 = [], []
+    try:
+        rec3 = lsp_client._record_spawn(victim3.pid)
+        real_borrow = lsp_client._borrow_pidfd
+
+        def counting_borrow(entry):
+            fd = real_borrow(entry)
+            if fd is not None:
+                borrowed.append(fd)
+            return fd
+
+        def counting_close(fd):
+            closed3.append(fd)
+            return real_close3(fd)
+
+        def two_rows(deadline=None, ours_cache=None, **kw):
+            # The leader plus ONE member of its session whose environment
+            # reads as unstamped -- the branch under test.
+            return lsp_client._ProcSnapshot(
+                [(victim3.pid, os.getpid(), victim3.pid, victim3.pid,
+                  rec3.ticks),
+                 (victim3.pid + 1, victim3.pid, victim3.pid, victim3.pid,
+                  rec3.ticks)], ours_cache)
+
+        lsp_client._proc_snapshot = two_rows
+        lsp_client._borrow_pidfd = counting_borrow
+        lsp_client._carries_our_owner_id = (
+            lambda pid, deadline=None, **kw: False)
+        os.close = counting_close
+        lsp_client._SPAWNED[:] = [rec3]
+        lsp_client.force_kill_spawned(settle=0.0)
+        os.close = real_close3
+        leaked = [fd for fd in borrowed if fd not in closed3]
+        check(not leaked,
+              f"pass 0 leaked {len(leaked)} proof handle(s) on the "
+              f"readable-and-unstamped branch: {leaked}")
+    finally:
+        os.close = real_close3
+        lsp_client._proc_snapshot = real_snapshot3
+        lsp_client._carries_our_owner_id = real_owner3
+        lsp_client._borrow_pidfd = real_borrow
+        lsp_client._SPAWNED[:] = saved_spawned3
+        lsp_client._OWNED_SESSIONS.clear()
+        lsp_client._OWNED_SESSIONS.update(saved_owned3)
+        try:
+            victim3.kill()
+            victim3.wait()
+        except Exception:
+            pass
+
+    # THE TWO-HANDLE SEQUENCE, against a table that is genuinely full.
+    # Pass 0 needs a leader-proof handle and a target handle to exist at
+    # the SAME time. With one reserved descriptor the second acquisition
+    # failed deterministically and the SIGKILL was skipped, so an opaque
+    # session descendant survived teardown -- no concurrency required
+    # (Codex adversarial review, High). Modelled by a fake allocator that
+    # refuses any acquisition beyond a fixed number of LIVE descriptors,
+    # which is what a hard RLIMIT_NOFILE wall looks like to this code.
+    live_fds = set()
+    CAP = lsp_client._FD_RESERVE_SIZE
+    real_pidfd_open2 = os.pidfd_open
+    real_dup = os.dup
+    real_close2 = os.close
+    next_fd = [900]
+
+    def budgeted(kind):
+        def acquire(*a, **kw):
+            if len(live_fds) >= CAP:
+                raise OSError(errno.EMFILE, "Too many open files")
+            next_fd[0] += 1
+            live_fds.add(next_fd[0])
+            return next_fd[0]
+        return acquire
+
+    def budgeted_close(fd):
+        if fd in live_fds:
+            live_fds.discard(fd)
+            return
+        return real_close2(fd)
+
+    try:
+        # Every fake descriptor the sequence obtains must be released; a
+        # leak shows up as the budget running out on a later step.
+        os.pidfd_open = budgeted("pidfd")
+        os.dup = budgeted("dup")
+        os.close = budgeted_close
+        a1 = lsp_client._with_fd_reserve(lambda: os.dup(0))
+        check(a1 is not None, "the first exact handle could not be taken")
+        a2 = lsp_client._with_fd_reserve(lambda: os.pidfd_open(1, 0))
+        check(a2 is not None,
+              "the SECOND simultaneous exact handle could not be taken -- "
+              "pass 0 holds a leader proof and a target at once, so this "
+              "is the sequence that skipped the SIGKILL")
+        for h in (a1, a2):
+            if h is not None:
+                os.close(h)
+    finally:
+        os.pidfd_open = real_pidfd_open2
+        os.dup = real_dup
+        os.close = real_close2
+        for stale in list(live_fds):
+            live_fds.discard(stale)
+        lsp_client._arm_fd_reserve()
+
+    # END TO END: a record whose pidfd_open failed at SPAWN (fd is None --
+    # exactly what FD exhaustion produces) must still be reaped, because
+    # _own_pidfd now goes through the reserve. Before the reserve this was
+    # the leak: no descriptor at spawn, none at teardown, and a refusal.
+    victim = subprocess.Popen(
+        [sys.executable, "-c", "import time; time.sleep(60)"],
+        start_new_session=True)
+    try:
+        lsp_client._SPAWNED[:] = [
+            lsp_client._SpawnRecord(victim.pid,
+                                    lsp_client.proc_start_ticks(victim.pid),
+                                    None)]
+        lsp_client.force_kill_spawned(settle=0.0)
+        check(victim.wait(timeout=10) is not None,
+              "a record with no descriptor survived the force sweep")
+    except Exception as exc:
+        fails.append(f"the descriptor-less reap raised or hung: {exc!r}")
+    finally:
+        try:
+            real_kill(victim.pid, signal.SIGKILL)
+        except Exception:
+            pass
+finally:
+    os.kill = real_kill
+    lsp_client._SPAWNED[:] = real_spawned
+    if real_env is None:
+        os.environ.pop("LSP_BRIDGE_ALLOW_PID_SIGNAL", None)
+    else:
+        os.environ["LSP_BRIDGE_ALLOW_PID_SIGNAL"] = real_env
+
+if fails:
+    for f in fails:
+        sys.stdout.write("[9n] FAIL: %s\n" % f)
+    sys.exit(1)
+sys.stdout.write("[9n] bare-PID signalling OK: both call sites refuse and "
+                 "count by default, the named opt-in restores them, the "
+                 "reserve retries an EMFILE pidfd_open but not an ENOSYS "
+                 "one, and a descriptor-less record is still reaped\n")
+PY
+    [ "$rc" = "0" ] || return 1
+    return 0
 }
 
 # --- 9h: the 9a ledger reader on rows the writer can really produce -------
@@ -8624,6 +9544,9 @@ run "9h ledger reader row shapes"        t_ledger_reader_shapes
 run "9i force sweep one snapshot"        t_force_sweep_one_snapshot
 run "9j reap race regressions"           t_reap_race_regressions
 run "9k reap helper contract tables"     t_reap_helper_tables
+run "9l deadline break points"           t_reap_deadline_break_points
+run "9m non-dumpable session ownership"  t_nondumpable_session_ownership
+run "9n no bare-PID destructive signal"  t_no_bare_pid_signal
 # 9a runs LAST so every prior sub-test has had a chance to clean up.
 run "9a no leaked LSP processes"         t_no_leaked_lsp_processes
 
@@ -8641,7 +9564,7 @@ else
 fi
 if [ -n "$LSP_SKIPPED_SHAPES" ]; then
     # Printed unconditionally, including on a green run: the whole point
-    # is that "109/109 PASS" must never be read as "every shape ran".
+    # is that "112/112 PASS" must never be read as "every shape ran".
     # Shapes and whole sub-tests are counted separately -- a partial skip
     # leaves its sub-test passing, so reporting only `skipped` here would
     # print a zero above a non-empty list.

@@ -29,12 +29,14 @@
 from __future__ import annotations
 
 import atexit
+import errno
 import io
 import json
 import os
 import shutil
 import signal
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -284,6 +286,260 @@ _SPAWNED: list = []
 _SPAWN_INFLIGHT = 0
 _SPAWN_INFLIGHT_LOCK = threading.Lock()
 
+# The SECOND ownership signal, for a descendant whose environment cannot
+# be read at all.
+#
+# _carries_our_owner_id is the broad ownership question and it has one
+# blind spot it cannot close from the inside: a process that called
+# PR_SET_DUMPABLE(0) (directly, or implicitly by exec'ing a setuid binary)
+# has its /proc/<pid> reassigned to root, so neither its environ nor any
+# task's environ is readable by us. The probe then answers None -- unknown
+# -- forever, the stamp-wide pass never claims it, and a hardened
+# descendant of a language server escapes every sweep and leaks.
+#
+# Every spawn uses start_new_session=True, so each language server is a
+# session leader whose session id equals its own pid, and a descendant
+# inherits that session id unless it calls setsid itself. Session
+# membership is read from /proc/<pid>/stat, which stays world-readable
+# when the environment does not -- which is exactly the property the
+# environ probe lacks.
+#
+# {session id -> the _SpawnRecord of the leader that created it}. The
+# value is the RECORD, not its start ticks: ticks have 100 Hz granularity
+# and this file already measured 32 concurrent spawns sharing seven
+# values, so a recycled session id whose new leader started inside the
+# same tick would satisfy a ticks comparison and authorize a SIGKILL
+# against a stranger (Codex adversarial review, High). The record carries
+# the leader's own pidfd, which names the process itself and can never
+# retarget -- see _session_marks_ours.
+#
+# READ lock-free (dict.get is atomic under the GIL), because the caller
+# who needs it most is a process unwinding from a signal that cannot wait
+# for anything. WRITERS differ by path, deliberately:
+#
+#   * publication and the prune, both in _record_spawn, take the lock
+#     BLOCKING. An unguarded store was tried and removed -- landing
+#     between retirement's identity check and its pop, it let a stale
+#     generation delete the live replacement's marker, which is the exact
+#     race the lock exists to stop. Blocking is safe here because nothing
+#     that can INTERRUPT this frame takes the lock: the sweep only reads.
+#   * retirement takes it NON-BLOCKING and skips when contended. A missed
+#     pop leaves a stale entry, and a stale entry fails closed, so the
+#     wait is not worth the exposure.
+#
+# Publication happens in the same breath as the _SPAWNED append, NOT after
+# the descriptor is obtained: a termination in that gap left the sweep
+# with no marker while the leader was killed (Codex adversarial review,
+# High, Medium x2).
+_OWNED_SESSIONS: dict = {}
+_OWNED_SESSIONS_LOCK = threading.Lock()
+
+
+class _Clock:
+    """The reap's only source of time, passed EXPLICITLY.
+
+    Every deadline in the module-level sweep is an absolute value on some
+    clock, and a test that wants to pin the five break points (settle
+    wait, pre-scan, ownership enumeration, pre-signal, post-target) needs
+    to be the one deciding when each is crossed -- otherwise it can only
+    assert that the sweep as a whole stayed inside a wall-clock budget,
+    which one deleted check still satisfies.
+
+    It is a PARAMETER and deliberately not a module global that tests
+    monkeypatch. A global would put two clock domains in one call: the
+    graceful reap derives a per-instance budget from the deadline and
+    hands it to LspSubprocess.shutdown(), whose own waits are real, and
+    _atexit_kill_all derives a Thread.join timeout the same way. A
+    scripted clock still installed at interpreter exit would turn that
+    nominal 2s atexit bound into an arbitrary real join (Codex design
+    review, Medium). So the seam covers only the procfs sweep, which does
+    nothing but read /proc, signal, and sleep; atexit, reap_all_live and
+    every instance method stay bound to the real clock forever."""
+
+    __slots__ = ("now", "sleep")
+
+    def __init__(self, now=time.monotonic, sleep=time.sleep) -> None:
+        self.now = now
+        self.sleep = sleep
+
+
+_REAL_CLOCK = _Clock()
+
+# Signalling by NUMBER is not available on a supported host.
+#
+# os.pidfd_open and signal.pidfd_send_signal both arrived in python3 3.9.
+# The bare-PID fallback in _kill_verified/_signal_recorded was shipped in
+# section 20 to keep the pidfd-less 3.8 host from leaking a child on every
+# teardown, citing the python3 3.8 floor in scripts/setup.sh -- but THIS
+# module declares "Stdlib-only (Python 3.10+)" at the top of the file, so
+# a host that can meet its documented runtime always has both functions.
+# The fallback was therefore protecting a configuration this module does
+# not support, at the price of the one race it cannot rule out: the target
+# exits, is reaped, and its number is reused between the identity check
+# and the signal, so an unrelated process is killed.
+#
+# The decision (section 23) is that destructive signalling NEVER names a
+# target by number on a supported host. When the descriptor path is
+# genuinely unavailable the sweep refuses and says so, which loses a child
+# instead of killing a stranger -- and a leak is recoverable where a kill
+# is not. LSP_BRIDGE_ALLOW_PID_SIGNAL=1 restores the old behaviour for an
+# out-of-profile host that would otherwise leak on every teardown; it is
+# named, opt-in, and reported, rather than the silent default it was.
+_PID_SIGNAL_REFUSALS = 0
+_PID_SIGNAL_WARNED = False
+
+# Two descriptors, opened at import and never used, so the reap can still
+# get the exact handles it needs when the process has run out of them.
+#
+# Refusing to signal by number is only safe if the descriptor path stays
+# reachable, and the failure it must survive is exactly the one that makes
+# teardown urgent: under EMFILE/ENFILE os.pidfd_open fails at spawn (so the
+# record carries no descriptor) AND fails again at teardown (so _own_pidfd
+# cannot make one) -- and the refusal then turns the deterministic reap
+# sections 20 and 22 built into a leak (Codex adversarial review, High).
+# Closing this reserve buys back exactly the one descriptor a pidfd needs;
+# it is re-armed immediately afterwards.
+#
+# NOT a general-purpose allocator: a slot is claimed by REMOVING it from
+# the list (list.pop is atomic under the GIL), so two callers can never
+# both believe they hold the same one, and nobody waits.
+# LOCK-FREE, by the same rule the _SPAWNED comment states: the caller who
+# needs this most is a process unwinding from a signal, possibly having
+# interrupted a frame that holds the very lock it would wait for. A
+# threading.Lock here deadlocked exactly that way -- _record_spawn reaches
+# _pidfd_open on the main thread, a termination handler interrupts it
+# inside the locked region, and the handler's force sweep hits EMFILE and
+# blocks forever on a non-reentrant lock its own interrupted frame holds
+# (Codex adversarial review, High). list.pop() and list.append() are
+# atomic under the GIL, so the slot is claimed by REMOVING it: exactly one
+# caller can win, and nobody waits.
+_FD_RESERVE: list = []
+
+# TWO, not one. Pass 0 holds a leader-proof handle and a target handle at
+# the SAME time -- that is the protocol, not an accident of ordering -- so
+# a single reserved descriptor deterministically failed the second
+# acquisition at a hard RLIMIT_NOFILE wall and skipped the SIGKILL, with
+# no concurrency required (Codex adversarial review, High).
+_FD_RESERVE_SIZE = 2
+
+
+def _arm_fd_reserve() -> None:
+    """Best-effort: put a descriptor back in the reserve slot.
+
+    Called both after spending the reserve and at the top of every later
+    open, because the re-arm attempted immediately after a successful
+    pidfd_open runs while that pidfd still occupies the freed slot -- so
+    under a genuinely exhausted RLIMIT_NOFILE it fails, and a re-arm that
+    only ever ran there left the reserve empty forever (Codex adversarial
+    review, Medium). Retrying on the next call succeeds as soon as any
+    descriptor has been released."""
+    while len(_FD_RESERVE) < _FD_RESERVE_SIZE:
+        try:
+            fd = os.open(os.devnull, os.O_RDONLY)
+        except Exception:
+            return                  # table is full; try again next call
+        if len(_FD_RESERVE) >= _FD_RESERVE_SIZE:
+            try:                    # somebody topped it up first
+                os.close(fd)
+            except Exception:
+                pass
+            return
+        _FD_RESERVE.append(fd)
+
+
+_arm_fd_reserve()
+
+
+def _with_fd_reserve(make):
+    """Run `make()`, and if it fails for want of a DESCRIPTOR, spend the
+    emergency reserve and try once more.
+
+    Shared by every exact-handle acquisition in the reap. It was first
+    written into _pidfd_open alone, which left _borrow_pidfd's os.dup
+    uncovered -- so at RLIMIT_NOFILE the LEADER duplication failed,
+    _session_marks_ours answered False, pass 0 rejected every opaque
+    descendant, and pass 1 then killed the only process that could still
+    prove them ours (Codex adversarial review, High).
+
+    A descriptor SHORTAGE is a different thing from an absent capability:
+    the shortage is transient and self-inflicted (the bridge is the
+    process holding the descriptors), so it is the one worth retrying."""
+    _arm_fd_reserve()               # cheap no-op while the slot is full
+    try:
+        return make()
+    except OSError as exc:
+        if exc.errno not in (errno.EMFILE, errno.ENFILE):
+            return None
+    except Exception:
+        return None
+    # Out of descriptors. Claim the reserve by removing it -- atomically,
+    # so a second caller (or a signal handler that interrupted this very
+    # frame) simply finds the slot empty instead of waiting on a lock.
+    try:
+        spare = _FD_RESERVE.pop()
+    except IndexError:
+        return None                 # no reserve, or another caller has it
+    try:
+        os.close(spare)
+    except Exception:
+        pass
+    try:
+        return make()
+    except Exception:
+        return None
+    finally:
+        # Usually fails right here, because the descriptor just returned is
+        # sitting in the slot the close freed. _arm_fd_reserve is therefore
+        # also called at the TOP of the next acquisition, which is where it
+        # actually succeeds.
+        _arm_fd_reserve()
+
+
+def _pidfd_open(pid: int) -> Optional[int]:
+    """os.pidfd_open, reserve-backed. None when the syscall is
+    unavailable, denied, or the process is gone."""
+    if not hasattr(os, "pidfd_open"):
+        return None
+    return _with_fd_reserve(lambda: os.pidfd_open(pid, 0))
+
+
+def _bare_pid_signal_allowed() -> bool:
+    """True when this host is permitted to signal by number.
+
+    Read from the environment on every call rather than cached at import:
+    the harness sets it per sub-test, and a value frozen at import cannot
+    be exercised without one subprocess per case."""
+    return os.environ.get("LSP_BRIDGE_ALLOW_PID_SIGNAL") == "1"
+
+
+def _refuse_bare_pid_signal(pid: int) -> bool:
+    """Record -- and once per process, report -- a destructive signal
+    declined for want of a pidfd. Always returns False so a caller can
+    `return _refuse_bare_pid_signal(pid)`.
+
+    Reported because the alternative outcome is a surviving language
+    server, and a leak nobody was told about is exactly the
+    unattributable leak the ownership stamps exist to prevent."""
+    global _PID_SIGNAL_REFUSALS, _PID_SIGNAL_WARNED
+    _PID_SIGNAL_REFUSALS += 1
+    if not _PID_SIGNAL_WARNED:
+        _PID_SIGNAL_WARNED = True
+        try:
+            have = hasattr(os, "pidfd_open") and hasattr(
+                signal, "pidfd_send_signal")
+            why = ("no pidfd support in python3 "
+                   f"{sys.version_info.major}.{sys.version_info.minor} "
+                   "(this module documents 3.10+)" if not have
+                   else "no pidfd could be opened for this target")
+            sys.stderr.write(
+                f"[lsp-mcp] refusing to SIGKILL pid {pid} by number: {why}. "
+                f"The server may survive teardown. Set "
+                f"LSP_BRIDGE_ALLOW_PID_SIGNAL=1 to accept the PID-reuse "
+                f"race instead.\n")
+        except Exception:
+            pass
+    return False
+
 
 def run_id() -> str:
     """The identity stamped into every LSP this process spawns."""
@@ -381,13 +637,78 @@ def _record_spawn(pid: int) -> "_SpawnRecord":
     the task is reaped, however many struct pid references survive. The
     record's start time, not its descriptor, is what identifies the
     NUMBER later."""
-    fd = None
-    try:
-        fd = os.pidfd_open(pid, 0)      # Linux 5.3+; never recycled
-    except Exception:
-        fd = None
-    record = _SpawnRecord(pid, proc_start_ticks(pid), fd)
-    _SPAWNED.append(record)
+    # PUBLISHED FIRST, descriptor second, and NOT under a signal mask.
+    #
+    # A pthread_sigmask around this window was tried and removed: it masks
+    # only the CALLING thread, and CPython runs the Python-level handler
+    # on the MAIN thread at the next bytecode boundary even when main has
+    # the signal blocked, because the C handler can be delivered to any
+    # unblocked worker -- the reader, stderr-drain and warm-start threads
+    # all qualify. It therefore did not close the race it claimed to, and
+    # a false claim in a teardown path is worse than a stated gap (Codex
+    # adversarial review, High).
+    #
+    # What actually helps is publication ORDER: the record and its session
+    # marker both go out in the same breath as the append, so the sweep can
+    # always SEE an in-flight child and the session it leads.
+    #
+    # The residual is NOT gated on FD exhaustion. Between the append and
+    # the assignment of record.fd a few statements later, the record has
+    # no descriptor -- on EVERY spawn -- so _borrow_pidfd fails closed and
+    # the session proof cannot be made. A termination landing in that
+    # interval means pass 0 skips a hardened descendant before pass 1
+    # kills its leader. Exhaustion only makes it worse, by denying the
+    # fallback acquisition that would otherwise still work. Parked in the
+    # section rather than papered over.
+    if True:
+        record = _SpawnRecord(pid, None, None)
+        _SPAWNED.append(record)
+        # Marker published in the SAME breath as the record. It used to
+        # wait until after the descriptor and start time were read, and a
+        # termination landing in that gap left pass 0 with no session
+        # marker at all while pass 1 killed the leader -- so a descendant
+        # that had already hardened itself was unreachable. That window
+        # needed no FD exhaustion to open (Codex adversarial review,
+        # High). Publishing a record whose fd is still None is safe: the
+        # session proof borrows that descriptor, so an unfinished record
+        # fails CLOSED and authorizes nothing.
+        try:
+            if pid != os.getsid(0):
+                with _OWNED_SESSIONS_LOCK:
+                    _OWNED_SESSIONS[pid] = record
+        except Exception:
+            pass
+        # Reserve-aware: a spawn that lands under FD exhaustion would
+        # otherwise record no descriptor at all, and a record with no
+        # descriptor is exactly the one the reap can no longer signal.
+        record.fd = _pidfd_open(pid)    # Linux 5.3+; never recycled
+        record.ticks = proc_start_ticks(pid)
+        # Every spawn passes start_new_session=True, so this child leads a
+        # session whose id IS its pid. Recording it here -- not by reading
+        # /proc/<pid>/stat back, which can race the child's exec -- keeps
+        # the marker exact.
+        #
+        # Guarded against our OWN session for the reason the owner stamp
+        # is minted per process rather than inherited: a marker that
+        # matched the bridge's own session would make "ours" mean the
+        # whole harness tree, and a sweep acting on that answer kills its
+        # siblings.
+        try:
+            if pid != os.getsid(0):
+                # Hygiene only -- the marker itself went out above. Drops
+                # entries whose record has already left _SPAWNED through
+                # the two descriptor-claim paths, which run in a dying
+                # process and may not take a lock.
+                #
+                with _OWNED_SESSIONS_LOCK:
+                    live = {id(e) for e in list(_SPAWNED)}
+                    for sid in [k for k, v in list(_OWNED_SESSIONS.items())
+                                if id(v) not in live]:
+                        _OWNED_SESSIONS.pop(sid, None)
+
+        except Exception:
+            pass
+
     # Handed back so the owner can retire THIS generation later. Retiring
     # by number instead conflates generations: the respawn path creates
     # the replacement before disposing the dead instance, so if the PID
@@ -421,6 +742,18 @@ def _retire_spawn(target) -> None:
                 os.close(entry.fd)
             except Exception:
                 pass
+        # Drop the session marker with the record that justified it, by
+        # OBJECT IDENTITY and under the lock. A stale generation and a live
+        # replacement can share a PID; comparing start ticks instead let a
+        # stale retirement pop the replacement's marker, after which the
+        # replacement's non-dumpable descendants became unidentifiable
+        # (Codex adversarial review, High).
+        if _OWNED_SESSIONS_LOCK.acquire(blocking=False):
+            try:
+                if _OWNED_SESSIONS.get(entry.pid) is entry:
+                    _OWNED_SESSIONS.pop(entry.pid, None)
+            finally:
+                _OWNED_SESSIONS_LOCK.release()
         # By NUMBER, retire exactly one generation. Sweeping every record
         # sharing a PID is how a live replacement lost its descriptor.
         if not isinstance(target, _SpawnRecord):
@@ -449,9 +782,11 @@ def _borrow_pidfd(entry: tuple) -> Optional[int]:
     fd = entry.fd
     if fd is None:
         return None
-    try:
-        borrowed = os.dup(fd)
-    except Exception:
+    # Reserve-backed: this dup is how a session leader proves it is still
+    # alive, and it is taken during teardown -- precisely when the process
+    # may be out of descriptors.
+    borrowed = _with_fd_reserve(lambda: os.dup(fd))
+    if borrowed is None:
         return None
     if entry in _SPAWNED:
         return borrowed
@@ -486,9 +821,8 @@ def _own_pidfd(pid: int, still_ours) -> Optional[int]:
     was recycled before this open, the descriptor names the STRANGER, and
     only `still_ours` stands between that and a signal. Give it real
     evidence (Codex adversarial review, High)."""
-    try:
-        fd = os.pidfd_open(pid, 0)
-    except Exception:
+    fd = _pidfd_open(pid)
+    if fd is None:
         return None                 # no pidfd support, or already gone
     try:
         if still_ours(pid):
@@ -573,6 +907,135 @@ def _pgrp_of(pid: int) -> Optional[int]:
         return int(f[2]) if f else None
     except Exception:
         return None
+
+
+def _session_of(pid: int) -> Optional[int]:
+    """Field 6 of /proc/<pid>/stat -- the session id.
+
+    Readable when the environment is not, which is the entire reason this
+    marker exists: PR_SET_DUMPABLE(0) reassigns /proc/<pid> to root and
+    closes the environ, but leaves stat world-readable."""
+    f = _stat_fields(pid)
+    try:
+        return int(f[3]) if f else None
+    except Exception:
+        return None
+
+
+def _session_marks_ours(pid: int, sid: Optional[int]) -> bool:
+    """True when `pid`'s session is one we created AND that session is
+    still provably the one we created.
+
+    A session id is a pid, and a pid is reusable, so membership alone is
+    not ownership -- the same objection that makes a bare process-group
+    number an unsafe address. The kernel frees a struct pid only once
+    EVERY pid_type hlist is empty, so the number cannot be recycled while
+    any member of that session lives; but "cannot be recycled while a
+    member lives" is not "was never recycled". Our session can empty, the
+    number be handed to a stranger who calls setsid, fork an opaque
+    member and exit -- leaving a live session with our recorded number
+    whose leader is GONE (Codex design review, High).
+
+    So the authorization is CONTINUITY, not membership: the leader we
+    recorded must still be ALIVE. While it is, it holds the number itself
+    and no recycle can have happened.
+
+    And "still alive" is proven through the leader's OWN pidfd, not
+    through its start time. A ticks comparison looks equivalent and is
+    not: field 22 has 100 Hz granularity, this file measured 32 concurrent
+    spawns sharing seven values, and a session id recycled to a leader
+    that started inside the same tick would satisfy it -- authorizing a
+    SIGKILL against a stranger (Codex adversarial review, High). A pidfd
+    is bound to the process, so signal 0 through it answers the exact
+    question: is THAT process, not that number, still there.
+
+    No descriptor on the record means no exact handle, and that fails
+    closed rather than falling back to the number.
+
+    That is deliberately narrower than the marker could be. It covers a
+    hardened descendant of a LIVE language server, which is the shape the
+    section set out to reap. It does NOT cover a hardened descendant whose
+    leader already exited, and it cannot cover a descendant that called
+    setsid itself -- both need a kernel-enforced container (a cgroup) that
+    this bridge cannot create unprivileged."""
+    fd = _session_handle(sid)
+    if fd is None:
+        return False
+    try:
+        return _leader_alive(fd)
+    finally:
+        try:
+            os.close(fd)
+        except Exception:
+            pass
+
+
+def _session_handle(sid: Optional[int]) -> Optional[int]:
+    """A borrowed pidfd for the recorded leader of session `sid`, or None.
+
+    Split out of _session_marks_ours so a caller can HOLD one proof handle
+    across several steps instead of re-acquiring it. Pass 0 needs exactly
+    that: it proves the session, opens the target, and re-proves after the
+    target is pinned -- three acquisitions where two descriptors exist, so
+    at a full table the last one failed and the reap was skipped (Codex
+    adversarial review, High). The caller closes it."""
+    if sid is None or sid <= 0:
+        return None
+    record = _OWNED_SESSIONS.get(sid)
+    if record is None:
+        return None
+    # A dup of the record's own descriptor, taken the same race-safe way
+    # every other reader takes one: _borrow_pidfd validates that the record
+    # is still in _SPAWNED after the dup, so a concurrent retirement cannot
+    # have closed it and handed the number to an unrelated file.
+    return _borrow_pidfd(record)
+
+
+def _leader_alive(fd: int) -> bool:
+    """Is the process behind this borrowed leader handle still there?
+
+    Signal 0 delivers nothing and checks everything: it raises
+    ProcessLookupError once the leader has been reaped, which is the only
+    moment its session id can begin to move."""
+    try:
+        signal.pidfd_send_signal(fd, 0)
+        return True
+    except Exception:
+        return False
+
+
+def _provably_ours(pid: int, deadline: Optional[float] = None,
+                   clock: _Clock = _REAL_CLOCK) -> bool:
+    """The authorization every destructive path asks: can this bridge
+    PROVE it started `pid`?
+
+    Two independent signals, consulted in that order:
+
+    * the LSP_BRIDGE_OWNER stamp in the process environment, which is
+      authoritative in both directions when it can be read at all;
+    * failing that, session continuity.
+
+    The session marker is consulted ONLY when the environ probe answered
+    None -- unreadable -- and never when it answered False. A readable
+    environment that does not carry the stamp is positive evidence the
+    process is not ours, and a marker that could override it would widen
+    "ours" from a stamp we placed to a number we once used.
+
+    There is deliberately NO "proved earlier" shortcut here. One was
+    written -- a frozen set of (pid, start_ticks) pairs captured while the
+    leader was alive -- and removed on review: start ticks have 100 Hz
+    granularity, so an opaque process inheriting the PID inside the same
+    tick satisfied the pair and was signalled (Codex adversarial review,
+    High). Authorization proven at one moment and spent at another needs
+    an exact HANDLE, and a handle is not something a predicate taking a
+    bare pid can hold -- which is why the capture that needs it signals
+    through its own pidfd in force_kill_spawned instead of asking here."""
+    answer = _carries_our_owner_id(pid, deadline=deadline, clock=clock)
+    if answer is True:
+        return True
+    if answer is not None:
+        return False                # readable and unstamped: not ours
+    return _session_marks_ours(pid, _session_of(pid))
 
 
 def _signal_recorded(target, sig: int) -> bool:
@@ -693,6 +1156,14 @@ def _signal_recorded(target, sig: int) -> bool:
                     os.close(own)
                 except Exception:
                     pass
+        # No descriptor could be obtained for a record that never had
+        # one. The remaining option is a bare number, which section 23
+        # rules out on any host meeting this module's documented runtime
+        # -- see _kill_verified for why the 3.8 justification does not
+        # hold. Graceful stops already failed closed on absent identity;
+        # this closes the last path that did not.
+        if not _bare_pid_signal_allowed():
+            return _refuse_bare_pid_signal(pid)
         try:
             if not still(pid):
                 return False
@@ -707,21 +1178,29 @@ def _kill_verified(pid: int, fd: Optional[int], still_ours) -> bool:
     """SIGKILL `pid`, but only while it is provably still the process we
     meant. Returns True if the signal was sent.
 
-    With a pidfd this is exact and raceless. Without one -- the runtime
-    floor in scripts/setup.sh is python3 3.8 and os.pidfd_open arrived in
-    3.9, so this is a supported configuration, not a hypothetical -- the
-    best available substitute is to re-verify identity immediately before
-    signalling. That leaves a microsecond-wide window in which the
-    process could exit and its number be reused, which is a far better
-    trade than the alternative the reviewer found: skipping the signal
-    entirely and leaking the child every time (Codex adversarial review,
-    Medium)."""
+    With a pidfd this is exact and raceless. Without one there is no
+    raceless option at all: re-verifying identity immediately before
+    signalling still leaves a window in which the process exits, is
+    reaped, and its number is handed to somebody else.
+
+    Section 20 accepted that window because the pidfd-less host was
+    believed to be supported -- scripts/setup.sh floors python3 at 3.8 and
+    os.pidfd_open arrived in 3.9. It is not: this module documents
+    "Stdlib-only (Python 3.10+)" and uses 3.10 behaviour, so the
+    configuration the fallback existed for cannot import it. Section 23
+    therefore decides the question the fallback left open -- destructive
+    signalling does not name a target by number -- and refuses instead,
+    unless an out-of-profile host explicitly opts back in. A refusal
+    leaks a child, which is recoverable and now reported; a mis-aimed
+    SIGKILL is neither."""
     if fd is not None:
         try:
             signal.pidfd_send_signal(fd, signal.SIGKILL)
             return True
         except (ProcessLookupError, OSError):
             return False
+    if not _bare_pid_signal_allowed():
+        return _refuse_bare_pid_signal(pid)
     try:
         if not still_ours(pid):
             return False
@@ -733,6 +1212,7 @@ def _kill_verified(pid: int, fd: Optional[int], still_ours) -> bool:
 
 def _carries_our_owner_id(
     pid: int, deadline: Optional[float] = None,
+    clock: _Clock = _REAL_CLOCK,
 ) -> Optional[bool]:
     """True if this process was started by THIS bridge process, False if
     an environment was read and did NOT carry the stamp, and None when no
@@ -763,7 +1243,7 @@ def _carries_our_owner_id(
     only the leader therefore disowned exactly the dead-leader,
     live-worker process the previous fix had just taught the scan to keep
     (Codex adversarial review, Medium, reproduced)."""
-    if deadline is not None and time.monotonic() >= deadline:
+    if deadline is not None and clock.now() >= deadline:
         return None                     # budget spent before we even read
     marker = b"LSP_BRIDGE_OWNER=" + _OWNER_ID.encode()
     try:
@@ -782,7 +1262,7 @@ def _carries_our_owner_id(
         return None
     read_any = False
     for tid in tids:
-        if deadline is not None and time.monotonic() >= deadline:
+        if deadline is not None and clock.now() >= deadline:
             return None             # budget spent, not an answer
         try:
             with open(f"/proc/{pid}/task/{tid}/environ", "rb") as fh:
@@ -827,8 +1307,12 @@ class _ProcSnapshot:
 
     __slots__ = ("procs", "_ours")
 
-    def __init__(self, procs: list[tuple[int, int, int, int, int]],
-                 ours_cache: Optional[dict] = None) -> None:
+    def __init__(
+        self,
+        procs: list[tuple[int, Optional[int], Optional[int],
+                          Optional[int], Optional[int]]],
+        ours_cache: Optional[dict] = None,
+    ) -> None:
         self.procs = procs
         # A caller looping over several snapshots shares one cache: the
         # (pid, ticks) key pins identity, and a live process cannot gain
@@ -838,7 +1322,9 @@ class _ProcSnapshot:
             ours_cache if ours_cache is not None else {})
 
     def ours(self, pid: int, ticks: Optional[int],
-             deadline: Optional[float] = None) -> bool:
+             deadline: Optional[float] = None,
+             sid: Optional[int] = None,
+             clock: _Clock = _REAL_CLOCK) -> bool:
         # No start time means no cache KEY -- the pair is what pins
         # identity, and a bare pid would let a recycled number inherit
         # the previous occupant's answer. Such a row is probed afresh
@@ -847,7 +1333,16 @@ class _ProcSnapshot:
         key = (pid, ticks) if ticks is not None else None
         if key is not None and self._ours.get(key):
             return True
-        answer = _carries_our_owner_id(pid, deadline=deadline)
+        answer = _carries_our_owner_id(pid, deadline=deadline, clock=clock)
+        # The environ probe could not read ANYTHING. Before giving up on
+        # a candidate, ask the one ownership question that survives an
+        # unreadable environment -- session continuity. Consulted only on
+        # None, never on a readable-and-unstamped False.
+        if answer is None and _session_marks_ours(pid, sid):
+            # NOT cached. Its truth depends on the recorded leader still
+            # being alive, which a later round can falsify; the cache
+            # stores only facts that cannot change under a live process.
+            return True
         # POSITIVES only. Ownership is not immutable for a (pid, ticks)
         # pair the way it looks: the stamp reaches the child through the
         # env passed to Popen, so a probe landing between fork and exec
@@ -864,8 +1359,15 @@ class _ProcSnapshot:
 
 
 def _proc_snapshot(deadline: Optional[float] = None,
-                   ours_cache: Optional[dict] = None) -> _ProcSnapshot:
-    """(pid, ppid, pgrp, start_ticks) for every live process on the host.
+                   ours_cache: Optional[dict] = None,
+                   clock: _Clock = _REAL_CLOCK) -> _ProcSnapshot:
+    """One row per live process on the host:
+    `(pid, ppid, pgrp, session, start_ticks)`.
+
+    Only `pid` is guaranteed non-None. A row whose stat could not be read
+    or parsed is KEPT with the other four set to None -- see the comment
+    on the append below for why dropping it is a leak -- so every consumer
+    and every test fake must unpack five OPTIONAL fields.
 
     One listdir and one stat read per process, shared by every pass that
     needs it. The sweep used to walk /proc once per recorded language
@@ -883,13 +1385,14 @@ def _proc_snapshot(deadline: Optional[float] = None,
     (Codex design review, High). Anything unreadable or racing is kept,
     for the same reason it is kept there -- a redundant signal costs
     nothing and a skipped live process is the leak."""
-    procs: list[tuple[int, Optional[int], Optional[int], Optional[int]]] = []
+    procs: list[tuple[int, Optional[int], Optional[int], Optional[int],
+                      Optional[int]]] = []
     try:
         entries = os.listdir("/proc")
     except Exception:
         return _ProcSnapshot(procs, ours_cache)
     for name in entries:
-        if deadline is not None and time.monotonic() >= deadline:
+        if deadline is not None and clock.now() >= deadline:
             break
         if not name.isdigit():
             continue
@@ -898,15 +1401,20 @@ def _proc_snapshot(deadline: Optional[float] = None,
         state: Optional[str] = None
         ppid: Optional[int] = None
         pgrp: Optional[int] = None
+        sid: Optional[int] = None
         ticks: Optional[int] = None
         if fields:
             try:
                 state = fields[0]
                 ppid = int(fields[1])
                 pgrp = int(fields[2])
+                # Field 6. Read from the SAME stat line the other three
+                # come from, so the second ownership signal costs no
+                # extra procfs read at all.
+                sid = int(fields[3])
                 ticks = int(fields[19])
             except (IndexError, ValueError):
-                state = ppid = pgrp = ticks = None
+                state = ppid = pgrp = sid = ticks = None
         # A pid whose stat could not be read or parsed is KEPT, with its
         # fields left None. Dropping it silently removed an owner-stamped
         # descendant from the only broad sweep there is now that the group
@@ -918,12 +1426,13 @@ def _proc_snapshot(deadline: Optional[float] = None,
         # it through a caller-owned pidfd.
         if state == "Z" and _is_zombie(pid):
             continue
-        procs.append((pid, ppid, pgrp, ticks))
+        procs.append((pid, ppid, pgrp, sid, ticks))
     return _ProcSnapshot(procs, ours_cache)
 
 
 def _carries_gen_id(pid: int, gen: str,
-                    deadline: Optional[float] = None) -> bool:
+                    deadline: Optional[float] = None,
+                    clock: _Clock = _REAL_CLOCK) -> bool:
     """True if this process was started by one specific SPAWN.
 
     The owner stamp answers "did this bridge start it", which two
@@ -934,7 +1443,7 @@ def _carries_gen_id(pid: int, gen: str,
     not-killed. `deadline` bounds the task walk for the same reason it
     bounds the owner probe: one many-threaded replacement could otherwise
     hold a teardown open past its budget inside a single call."""
-    if deadline is not None and time.monotonic() >= deadline:
+    if deadline is not None and clock.now() >= deadline:
         return False                    # budget spent before we even read
     marker = b"LSP_BRIDGE_GEN=" + gen.encode()
     try:
@@ -948,7 +1457,7 @@ def _carries_gen_id(pid: int, gen: str,
     except Exception:
         return False
     for tid in tids:
-        if deadline is not None and time.monotonic() >= deadline:
+        if deadline is not None and clock.now() >= deadline:
             return False                # budget spent; not provably ours
         try:
             with open(f"/proc/{pid}/task/{tid}/environ", "rb") as fh:
@@ -962,6 +1471,7 @@ def _carries_gen_id(pid: int, gen: str,
 def _group_members(
     pgid: int, exclude: int = -1, deadline: Optional[float] = None,
     snapshot: Optional[_ProcSnapshot] = None, gen: Optional[str] = None,
+    clock: _Clock = _REAL_CLOCK,
 ) -> list[tuple[int, Optional[int], Optional[int]]]:
     """(pid, pidfd) for every live process in process group `pgid` that
     this bridge can prove it started.
@@ -988,34 +1498,33 @@ def _group_members(
     `snapshot` lets a caller sweeping several groups pay for ONE /proc
     walk instead of one per group; without it this takes its own."""
     members: list[tuple[int, Optional[int], Optional[int]]] = []
-    snap = snapshot if snapshot is not None else _proc_snapshot(deadline)
+    snap = (snapshot if snapshot is not None
+            else _proc_snapshot(deadline, clock=clock))
     me = os.getpid()
-    for pid, _ppid, pgrp, ticks in snap.procs:
-        if deadline is not None and time.monotonic() >= deadline:
+    for pid, _ppid, pgrp, sid, ticks in snap.procs:
+        if deadline is not None and clock.now() >= deadline:
             break
         if pid == exclude or pid == me:
             continue
         if pgrp is None or pgrp != pgid:
             continue        # unreadable stat: not groupable, but the
                             # stamp-wide pass still sees it
-        if not snap.ours(pid, ticks, deadline=deadline):
+        if not snap.ours(pid, ticks, deadline=deadline, sid=sid,
+                         clock=clock):
             continue
         if gen is not None and not _carries_gen_id(pid, gen,
-                                                   deadline=deadline):
+                                                   deadline=deadline,
+                                                   clock=clock):
             continue        # a namesake generation, not this one
-        fd = None
-        try:
-            fd = os.pidfd_open(pid, 0)
-        except Exception:
-            fd = None
+        fd = _pidfd_open(pid)
         # Recheck BOTH facts after opening the fd, not just the group: a
         # PID that was replaced between the stamp check and the open would
         # otherwise be captured with a valid pidfd pointing at a stranger.
         if fd is not None and (
             _pgrp_of(pid) != pgid
-            or not _carries_our_owner_id(pid, deadline=deadline)
+            or not _provably_ours(pid, deadline=deadline, clock=clock)
             or (gen is not None and not _carries_gen_id(
-                pid, gen, deadline=deadline))
+                pid, gen, deadline=deadline, clock=clock))
         ):
             try:
                 os.close(fd)
@@ -1031,7 +1540,8 @@ def _group_members(
 
 
 def _reap_predicate(pgid: int, ticks: Optional[int], gen: Optional[str],
-                    deadline: Optional[float]):
+                    deadline: Optional[float],
+                    clock: _Clock = _REAL_CLOCK):
     """The pidfd-less authorization used by the group reaper.
 
     Every probe it makes is bounded, and the budget is re-checked AFTER
@@ -1042,24 +1552,26 @@ def _reap_predicate(pgid: int, ticks: Optional[int], gen: Optional[str],
     (Codex adversarial review, Medium)."""
 
     def still_ours(p: int) -> bool:
-        if deadline is not None and time.monotonic() >= deadline:
+        if deadline is not None and clock.now() >= deadline:
             return False
         if ticks is None or proc_start_ticks(p) != ticks:
             return False
         if _pgrp_of(p) != pgid:
             return False
-        if _carries_our_owner_id(p, deadline=deadline) is not True:
+        if not _provably_ours(p, deadline=deadline, clock=clock):
             return False
-        if gen is not None and not _carries_gen_id(p, gen, deadline=deadline):
+        if gen is not None and not _carries_gen_id(p, gen, deadline=deadline,
+                                                   clock=clock):
             return False
-        return not (deadline is not None and time.monotonic() >= deadline)
+        return not (deadline is not None and clock.now() >= deadline)
 
     return still_ours
 
 
 def _group_is_empty(pgid: int, exclude: int = -1,
                     gen: Optional[str] = None,
-                    deadline: Optional[float] = None) -> bool:
+                    deadline: Optional[float] = None,
+                    clock: _Clock = _REAL_CLOCK) -> bool:
     """True when no live member of this group answers to `gen`.
 
     A boolean question deserves a boolean answer. Asking _group_members
@@ -1068,7 +1580,7 @@ def _group_is_empty(pgid: int, exclude: int = -1,
     twenty times per shutdown -- so a respawn loop accumulated
     descriptors until EMFILE (Codex adversarial review, High)."""
     members = _group_members(pgid, exclude=exclude, deadline=deadline,
-                             gen=gen)
+                             gen=gen, clock=clock)
     for _pid, fd, _ticks in members:
         if fd is not None:
             try:
@@ -1083,13 +1595,14 @@ def _group_is_empty(pgid: int, exclude: int = -1,
     # retired the spawn record, and left the descendants it had not
     # reached (Codex adversarial review, Medium). Incomplete means
     # unknown, and unknown fails toward still-there.
-    if deadline is not None and time.monotonic() >= deadline:
+    if deadline is not None and clock.now() >= deadline:
         return False
     return True
 
 
 def _reap_group(pgid: int, deadline: Optional[float] = None,
-                gen: Optional[str] = None) -> int:
+                gen: Optional[str] = None,
+                clock: _Clock = _REAL_CLOCK) -> int:
     """SIGKILL every live member of a process group we own, by verified
     identity rather than by killpg, REPEATEDLY until the group is empty.
     Returns how many were signalled.
@@ -1104,9 +1617,10 @@ def _reap_group(pgid: int, deadline: Optional[float] = None,
     killed = 0
     empty_scans = 0
     for _ in range(20):                     # ~ bounded; see deadline below
-        if deadline is not None and time.monotonic() >= deadline:
+        if deadline is not None and clock.now() >= deadline:
             break                           # checked BEFORE the scan, not after
-        members = _group_members(pgid, deadline=deadline, gen=gen)
+        members = _group_members(pgid, deadline=deadline, gen=gen,
+                                 clock=clock)
         if not members:
             # TWO consecutive empty scans, not one. A scan snapshots
             # /proc before examining it, so a helper forked after the
@@ -1117,14 +1631,14 @@ def _reap_group(pgid: int, deadline: Optional[float] = None,
             empty_scans += 1
             if empty_scans >= 2:
                 break
-            time.sleep(0.02)
+            clock.sleep(0.02)
             continue
         empty_scans = 0
         for pid, fd, ticks in members:
-            if deadline is None or time.monotonic() < deadline:
+            if deadline is None or clock.now() < deadline:
                 if _kill_verified(
                     pid, fd,
-                    _reap_predicate(pgid, ticks, gen, deadline),
+                    _reap_predicate(pgid, ticks, gen, deadline, clock=clock),
                 ):
                     killed += 1
             if fd is not None:
@@ -1132,56 +1646,15 @@ def _reap_group(pgid: int, deadline: Optional[float] = None,
                     os.close(fd)
                 except Exception:
                     pass
-        if deadline is not None and time.monotonic() >= deadline:
+        if deadline is not None and clock.now() >= deadline:
             break
-        time.sleep(0.02)
+        clock.sleep(0.02)
     return killed
 
 
-def _stamped_processes(
-    deadline: Optional[float] = None,
-    snapshot: Optional[_ProcSnapshot] = None,
-) -> list[tuple[int, Optional[int], Optional[int]]]:
-    """(pid, pidfd, start_ticks) for every live process carrying THIS
-    bridge run's stamp, regardless of parent or process group.
-
-    This is the broadest ownership question available, and the only one
-    that survives a descendant detaching itself: a helper that calls
-    setsid leaves its leader's process group, and one whose parent has
-    exited leaves our child list, but neither can shed the environment it
-    inherited. Strictly supersedes a parent-based scan -- a child in the
-    Popen-to-record window carries the stamp too, because the spawn sets
-    it in the child environment BEFORE Popen.
-
-    Identity is captured during the scan and re-verified after the pidfd
-    is opened, so an entry that changed underneath is dropped.
-
-    `snapshot` reuses a /proc walk a caller has already paid for."""
-    me = os.getpid()
-    found: list[tuple[int, Optional[int], Optional[int]]] = []
-    snap = snapshot if snapshot is not None else _proc_snapshot(deadline)
-    for pid, _ppid, _pgrp, ticks in snap.procs:
-        if deadline is not None and time.monotonic() >= deadline:
-            break
-        if pid == me or not snap.ours(pid, ticks, deadline=deadline):
-            continue
-        fd = None
-        try:
-            fd = os.pidfd_open(pid, 0)
-        except Exception:
-            fd = None
-        if fd is not None and not _carries_our_owner_id(pid):
-            try:
-                os.close(fd)
-            except Exception:
-                pass
-            continue
-        found.append((pid, fd, proc_start_ticks(pid)))
-    return found
-
-
 def force_kill_spawned(settle: float = 1.0,
-                       deadline: Optional[float] = None) -> int:
+                       deadline: Optional[float] = None,
+                       clock: _Clock = _REAL_CLOCK) -> int:
     """SIGKILL every recorded language server still alive, taking no lock
     that a wedged thread could be holding. Returns how many DISTINCT
     processes were signalled -- a leader reached by both the recorded
@@ -1206,12 +1679,134 @@ def force_kill_spawned(settle: float = 1.0,
     whether a child exists."""
     waited = 0.0
     while _SPAWN_INFLIGHT > 0 and waited < settle:
-        if deadline is not None and time.monotonic() >= deadline:
+        if deadline is not None and clock.now() >= deadline:
             break
-        time.sleep(0.02)
+        clock.sleep(0.02)
         waited += 0.02
 
     signalled: set[int] = set()
+
+    # PASS 0 -- signal, through EXACT handles, every opaque descendant
+    # sitting in a session one of our recorded leaders owns.
+    #
+    # It runs BEFORE pass 1 because session ownership is authorized by the
+    # leader still being there -- its presence is what stops the kernel
+    # recycling the session number -- and pass 1 kills the leaders, after
+    # which the reader thread reaps one through Popen.poll() and the
+    # leader pidfd answers ESRCH. Asking afterwards rejected exactly the
+    # descendant this exists to collect (Codex adversarial review, High,
+    # reproduced).
+    #
+    # It signals HERE rather than handing pass 2 a set of proven pids: a
+    # (pid, start_ticks) pair carried across the sweep is not an identity,
+    # for the same 100 Hz reason a session id is not one, and an opaque
+    # process inheriting the number inside the tick was signalled through
+    # it (Codex adversarial review, High). A pidfd opened while the proof
+    # holds IS an identity, so the proof and the signal travel together.
+    #
+    # Skipped entirely when nothing is recorded, and deadline-gated before
+    # the walk: _proc_snapshot lists /proc before its per-entry check, so
+    # an already-expired teardown would otherwise still pay for a full
+    # enumeration (Codex adversarial review, Medium).
+    if _OWNED_SESSIONS and not (deadline is not None
+                                and clock.now() >= deadline):
+        me0 = os.getpid()
+        empty0 = 0
+        for _ in range(20):
+            if deadline is not None and clock.now() >= deadline:
+                break
+            pre = _proc_snapshot(deadline=deadline, clock=clock)
+            hit = 0
+            for pid, _ppid, _pgrp, sid, _ticks in pre.procs:
+                if deadline is not None and clock.now() >= deadline:
+                    break
+                # NEVER the leader itself. For a recorded leader sid ==
+                # pid, so it passes the session check and pass 0 killed
+                # it -- destroying the very handle every LATER row's
+                # ownership proof depends on, after which the reader
+                # reaps it and its remaining descendants survive (Codex
+                # adversarial review, High). Leaders are pass 1's job,
+                # and pass 1 runs after this loop has emptied out.
+                if pid == me0 or pid == sid:
+                    continue
+                # ONE proof handle, HELD across the target acquisition and
+                # the final re-check. Proving, closing, opening the target
+                # and proving again is three acquisitions against two
+                # descriptors, so at a full table the last one failed and
+                # the SIGKILL was skipped -- deterministically, without any
+                # concurrency (Codex adversarial review, High).
+                proof = _session_handle(sid)
+                if proof is None:
+                    continue
+                # EVERYTHING from here to the close is inside the finally.
+                # The probe-refusal and expired-budget branches below used
+                # to `continue`/`break` BEFORE entering it, leaking one
+                # pidfd per scrubbed-environment candidate per scan -- in
+                # a teardown, which is precisely when descriptors are
+                # scarce enough for the leak to disable the reserve
+                # (Codex adversarial review, High).
+                try:
+                    if not _leader_alive(proof):
+                        continue
+                    # The environ probe gets first refusal, as everywhere
+                    # else: a readable environment that does not carry our
+                    # stamp is positive evidence the process is NOT ours,
+                    # and the session marker must never override it.
+                    if _carries_our_owner_id(pid, deadline=deadline,
+                                             clock=clock) is False:
+                        continue
+                    # Re-checked AFTER the probe, for the reason pass 2
+                    # re-checks: the environ read is not interruptible, so
+                    # the budget can expire inside the one call whose
+                    # answer then authorizes the signal (Codex adversarial
+                    # review, Medium).
+                    if deadline is not None and clock.now() >= deadline:
+                        break
+                    fd = _pidfd_open(pid)
+                    if fd is None:
+                        continue    # no exact handle, no signal
+                    try:
+                        # Re-prove AFTER the descriptor pins the process,
+                        # so a PID recycled between the walk and the open
+                        # cannot inherit the previous occupant's session --
+                        # through the handle ALREADY held, which needs no
+                        # further descriptor. The session id is re-read
+                        # because the candidate may have left our session
+                        # in between; the leader is re-checked through the
+                        # same proof.
+                        if (_session_of(pid) == sid
+                                and _leader_alive(proof)
+                                and not (deadline is not None
+                                         and clock.now() >= deadline)):
+                            try:
+                                signal.pidfd_send_signal(fd, signal.SIGKILL)
+                                signalled.add(pid)
+                                hit += 1
+                            except (ProcessLookupError, OSError):
+                                pass
+                    finally:
+                        try:
+                            os.close(fd)
+                        except Exception:
+                            pass
+                finally:
+                    try:
+                        os.close(proof)
+                    except Exception:
+                        pass
+            # To a FIXPOINT, not one shot: a descendant forked after this
+            # snapshot is in no round that saw it, and once pass 1 kills
+            # the leader its session can no longer be proven. Two
+            # consecutive empty rounds, the same rule the other loops use.
+            if hit == 0:
+                empty0 += 1
+                if empty0 >= 2:
+                    break
+            else:
+                empty0 = 0
+            if deadline is not None and clock.now() >= deadline:
+                break
+            clock.sleep(0.02)
 
     # PASS 1 -- the cheap one, and it is NOT deadline-gated. Signalling a
     # recorded leader through its pinned identity is a couple of syscalls;
@@ -1249,10 +1844,10 @@ def force_kill_spawned(settle: float = 1.0,
                 return False
             if t is not None and proc_start_ticks(p) == t:
                 return True
-            if _dl is not None and time.monotonic() >= _dl:
+            if _dl is not None and clock.now() >= _dl:
                 return False
-            ok = _carries_our_owner_id(p, deadline=_dl) is True
-            if _dl is not None and time.monotonic() >= _dl:
+            ok = _provably_ours(p, deadline=_dl, clock=clock)
+            if _dl is not None and clock.now() >= _dl:
                 return False
             return ok
         # A duplicate of the record's own descriptor is exact; the
@@ -1325,9 +1920,10 @@ def force_kill_spawned(settle: float = 1.0,
     owner_cache: dict = {}
     empty_scans = 0
     for _ in range(20):
-        if deadline is not None and time.monotonic() >= deadline:
+        if deadline is not None and clock.now() >= deadline:
             break                           # checked BEFORE the scan
-        snap = _proc_snapshot(deadline=deadline, ours_cache=owner_cache)
+        snap = _proc_snapshot(deadline=deadline, ours_cache=owner_cache,
+                              clock=clock)
         # Deadline-checked, NOT a comprehension. Every snap.ours() miss
         # can cost an environ read plus one per task, so a few hundred
         # unstamped processes are enough to overrun the budget between
@@ -1335,20 +1931,21 @@ def force_kill_spawned(settle: float = 1.0,
         # and the ownership probing behind it was not (Codex adversarial
         # review, High).
         targets: list[tuple[int, int]] = []
-        for pid, _ppid, _pgrp, ticks in snap.procs:
-            if deadline is not None and time.monotonic() >= deadline:
+        for pid, _ppid, _pgrp, sid, ticks in snap.procs:
+            if deadline is not None and clock.now() >= deadline:
                 break
-            if pid != me and snap.ours(pid, ticks, deadline=deadline):
+            if pid != me and snap.ours(pid, ticks, deadline=deadline,
+                                       sid=sid, clock=clock):
                 targets.append((pid, ticks))
         if not targets:
             empty_scans += 1
             if empty_scans >= 2:
                 break
-            time.sleep(0.02)
+            clock.sleep(0.02)
             continue
         empty_scans = 0
         for pid, _ticks in targets:
-            if deadline is not None and time.monotonic() >= deadline:
+            if deadline is not None and clock.now() >= deadline:
                 break
             # The snapshot's ownership answer only NARROWED the candidate
             # set. Authorization is this live re-read, taken after the
@@ -1364,15 +1961,21 @@ def force_kill_spawned(settle: float = 1.0,
             # adversarial review, High; a 200ms probe against a 50ms
             # deadline still signalled).
             def still(p, _dl=deadline):
-                if _dl is not None and time.monotonic() >= _dl:
+                if _dl is not None and clock.now() >= _dl:
                     return False
-                ok = _carries_our_owner_id(p, deadline=_dl) is True
+                # _provably_ours, not the raw stamp probe: a descendant
+                # that made its /proc entry unreadable answers None to
+                # the stamp forever, so authorizing on the stamp alone
+                # would let the snapshot nominate a target the live
+                # re-read could never confirm -- the leak this section
+                # exists to close, reintroduced one layer down.
+                ok = _provably_ours(p, deadline=_dl, clock=clock)
                 # Re-checked AFTER the probe as well. Checking only
                 # before it is what makes a slow read dangerous rather
                 # than merely slow: the leader's environ read is not
                 # interruptible, so the budget can expire inside the one
                 # call whose answer then authorizes the signal.
-                if _dl is not None and time.monotonic() >= _dl:
+                if _dl is not None and clock.now() >= _dl:
                     return False
                 return ok
             own = _own_pidfd(pid, still)
@@ -1385,9 +1988,9 @@ def force_kill_spawned(settle: float = 1.0,
                         os.close(own)
                     except Exception:
                         pass
-        if deadline is not None and time.monotonic() >= deadline:
+        if deadline is not None and clock.now() >= deadline:
             break
-        time.sleep(0.02)
+        clock.sleep(0.02)
     return len(signalled)
 
 
