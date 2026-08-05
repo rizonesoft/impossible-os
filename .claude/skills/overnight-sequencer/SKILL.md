@@ -489,11 +489,15 @@ information or judgment; none of this weakens a gate):**
   there so the doctrine re-read stays small). Then `phase TRIAGE` and pick the
   next file (step 2).
 
-- **Drain ONE already-DONE file's deferred-item backlog per advance.** FILE_CLOSE
+- **Drain ONE unreachable file's deferred-item backlog per advance.** FILE_CLOSE
   (step 6) only reaches files that still close. Measured 2026-08-05: of the 1,595
   `open-in-deferred` items, **806 sit in NEEDS_WORK files (FILE_CLOSE reaches
-  those) but 702 sit in 28 files the oracle already calls DONE** -- and a DONE
-  file is never revisited, so nothing would ever repair them.
+  those), 702 sit in 28 files the oracle already calls DONE, and 87 sit in 3
+  BLOCKED files** -- neither DONE nor BLOCKED files are revisited by the normal
+  pipeline, so nothing would ever repair those 789. **BLOCKED files are included
+  deliberately: this repair is BOOKKEEPING, so it does not need the file's
+  blocker cleared** -- writing down what an item is waiting on is exactly the
+  work that is possible while it waits.
 
   That remainder is not optional: `phase FIXPOINT` runs the reachability gate and
   **REFUSES completion while any of them exist** (`todo-reachability.py` exits 1
@@ -504,7 +508,7 @@ information or judgment; none of this weakens a gate):**
   spreads it across the pass and keeps each batch small enough to judge properly.
 
   ```bash
-  # DONE files that still carry open-in-deferred items (pick ONE, smallest first)
+  # DONE/BLOCKED files still carrying open-in-deferred items (pick ONE, smallest first)
   python3 scripts/todo-reachability.py --json | python3 -c '
   import json,re,subprocess,sys
   d=json.load(sys.stdin)
@@ -514,7 +518,7 @@ information or judgment; none of this weakens a gate):**
       if not n: continue
       o=json.loads(subprocess.run(["python3",".claude/hooks/sequencer_triage.py",
           "--classify",f],capture_output=True,text=True).stdout)
-      if o.get("file_class")=="DONE": print(n,f)' | sort -n | head -3
+      if o.get("file_class") in ("DONE","BLOCKED"): print(n,f)' | sort -n | head -3
   ```
 
   Apply the SAME per-item judgment as step 6 (park with a named blocker / leave a
