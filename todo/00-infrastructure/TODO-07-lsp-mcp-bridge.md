@@ -67,7 +67,8 @@ title: "TODO-07 -- LSP to MCP Bridge (C, NASM, shell, Python, PowerShell)"
 | 💎   |  21   | Thread-group edge cases in the language-server reap (harness coverage)     | §20                               |  [x]   |
 | ⭐   |  22   | Reap sweep internals: pidfd ownership, one-snapshot sweep, ledger reader   | §20                               |  [x]   |
 | 💎   |  23   | Injected-clock deadline coverage + the non-dumpable-child reap blind spot  | §22                               |  [x]   |
-| 💎   |  24   | Restart-publish confirmed-dead gate + single-pass procfs cleanup           | §22, §23                          |  [ ]   |
+| 💎   |  24   | Single-pass procfs cleanup in the teardown sweep                           | §22, §23                          |  [ ]   |
+| ⭐   |  25   | Restart-publish confirmed-dead gate + single-flight teardown               | §22, §23                          |  [ ]   |
 
 > 💎 = parity -- matches the existing LSP stacks Win11/Linux devs already use, wrapped in an MCP transport.
 > ⭐ = exclusive -- neither Win11 nor Linux ships a repo-tracked cross-language LSP-MCP bridge with read-only boundary compliance baked in.
@@ -698,7 +699,7 @@ Current repo is ~215k core LOC (~189k kernel + ~24k tooling per [COUNT.md](../..
 
 > **Verified:** 2026-08-04 | commit `ce4a798c` | 4/4 items | build OK | 101/101 test_bridge.sh, 1282/1282 test-tooling.sh, 28326 kernel + 17 user-mode tests, lint 0 errors
 > **Accepted:** [H] Concurrent `_retire_spawn` can close a pidfd the force sweep is holding (reason: single-owner descriptor handoff is a design change, not a patch); SHIPPED in §22 -> XREF: 00-infrastructure/TODO-07 §22 (item: "Closed the pidfd retirement race" at line 755)
-> **Accepted:** [H] Force sweep walks `/proc` once per recorded leader instead of sharing one enumeration (reason: needs a shared snapshot driving all three passes) -> XREF: 00-infrastructure/TODO-07 §21 (item: "Share ONE procfs enumeration across the force sweep" at line 701)
+> **Accepted:** [H] Force sweep walks `/proc` once per recorded leader instead of sharing one enumeration (reason: needs a shared snapshot driving all three passes) -> XREF: 00-infrastructure/TODO-07 §21 (item: "Share ONE procfs enumeration across the force sweep" at line 702)
 > **Accepted:** [M] 9a silently skips a truncated ledger row and a row with no start ticks (reason: reader hardening belongs with the harness coverage work); SHIPPED in §22 -> XREF: 00-infrastructure/TODO-07 §22 (item: "Hardened the 9a ledger reader" at line 765)
 > **Quality reviewed:** 2026-08-04 | Codex 26x (design, adversarial x23, consistency, perf) | 2H+2M fixed, 3 open | scope: N/A (host tooling; no kernel/boot domain skill applies)
 > **Notes:**
@@ -840,13 +841,10 @@ Three items raised while reviewing the sweep rewrite and accepted rather than fi
 
 ---
 
-## 24. Restart-Publish Confirmation and Single-Pass Procfs Cleanup
+## 24. Single-Pass Procfs Cleanup in the Teardown Sweep
 
-Split out of §23 (2026-08-04) because that section carried six work items across two unrelated concerns. These three share one: the bridge does teardown work it never checks the result of, and does it more times than the process table needs to be read. -> XREF: 00-infrastructure/TODO-07 §23 (item: "Give the reap an injectable monotonic clock" at line 793)
+Split out of §23 (2026-08-04), then split again (2026-08-05) when the section still carried five work items across two unrelated concerns. These three share one: teardown reads the process table more times than the work needs, and every extra traversal is charged to a deadline budget. The entry-point and restart-confirmation items moved to §25. -> XREF: 00-infrastructure/TODO-07 §25 (item: "Gate the health-restart publish on the old server being confirmed dead")
 
-- [ ] Gate the health-restart publish on the old server being confirmed dead
-      - `bridge.py` swallows the old instance's shutdown result and publishes the replacement without checking that the previous process exited. §22 removed the descriptor-exhaustion refusal that made this reachable (both signal paths now claim the record's own descriptor), but the publish itself is still unguarded, so any future path where disposal fails silently duplicates a language server.
-      - Fix shape: have the dispose helper return a confirmed-dead verdict and refuse to publish the replacement without it, with a caller-level health-respawn regression under simulated descriptor exhaustion.
 - [ ] Read the owner and generation stamps in ONE pass per candidate
       - A group scan with a generation filter can traverse a candidate's environments four times: the owner probe, the generation pre-filter, and both again in the post-pidfd recheck. On a many-threaded unstamped process each traversal is one read per task, all charged to a teardown budget.
       - Fix shape: one `/proc/<pid>/environ` read (falling back to the task walk once) answering both markers together, cached per `(pid, ticks)` under the same positives-only rule. Must compose with the second ownership signal §23 adds rather than re-probing behind it. -> XREF: 00-infrastructure/TODO-07 §22 (item: "Shared ONE procfs enumeration across the force sweep" at line 760)
@@ -856,12 +854,23 @@ Split out of §23 (2026-08-04) because that section carried six work items acros
 - [ ] Fold section 23's PASS 0 into the stamped sweep so teardown walks `/proc` once per round again
       - §23 added a pass-0 fixpoint that signals opaque session-owned descendants BEFORE pass 1 kills the leaders their proof depends on. It is correct and load-bearing, but it takes its OWN snapshots ahead of pass 2's loop, so a production teardown -- where every `_record_spawn` populates `_OWNED_SESSIONS` -- pays at least two extra `/proc` walks, and a persistent session target can spend pass-0 rounds before detached owner-stamped helpers are considered at all.
       - Fix shape: ONE snapshot loop per round that signals session-owned non-leader descendants and stamped candidates together, with the recorded-leader pass running only after the first round -- preserving the descendants-before-leaders ordering §23 needs while restoring §22's one-walk-per-round contract. 9i must move to production-shaped records that carry session markers, or it cannot see this regression at all. -> XREF: 00-infrastructure/TODO-07 §23 (item: "Reaped a language server that made its own `/proc` entry unreadable" at line 797)
+- [ ] Commit: `"scripts/lsp-mcp: single-pass procfs cleanup in the teardown sweep"`
+
+**Test checkpoint:** `bash scripts/lsp-mcp/tests/test_bridge.sh` exits 0; a stamped-group teardown reads `/proc` once per round with both markers answered from that one pass, and a session-owned teardown no longer pays extra walks ahead of the stamped sweep. Test on: host tooling only (no QEMU dependency).
+
+## 25. Restart-Publish Confirmed-Dead Gate and Single-Flight Teardown
+
+Split out of §24 (2026-08-05): these two are about WHO runs a lifecycle transition and whether it is confirmed to have happened, not about how many times the sweep walks `/proc` (that is §24). Both are reachable only through the bridge's entry points, and both currently trust an operation they never check. -> XREF: 00-infrastructure/TODO-07 §24 (item: "Read the owner and generation stamps in ONE pass per candidate")
+
+- [ ] Gate the health-restart publish on the old server being confirmed dead
+      - `bridge.py` swallows the old instance's shutdown result and publishes the replacement without checking that the previous process exited. §22 removed the descriptor-exhaustion refusal that made this reachable (both signal paths now claim the record's own descriptor), but the publish itself is still unguarded, so any future path where disposal fails silently duplicates a language server.
+      - Fix shape: have the dispose helper return a confirmed-dead verdict and refuse to publish the replacement without it, with a caller-level health-respawn regression under simulated descriptor exhaustion.
 - [ ] Serialise the bridge's four independent teardown entry points
       - The signal handler, the idle watchdog, the main-finally pass and `atexit` can each enter `force_kill_spawned` concurrently. §23's descriptor reserve is sized for the two exact handles ONE sweep holds at once, so two concurrent sweeps can take one slot each and neither completes its proof-plus-target pair; both then skip opaque session descendants until their deadlines expire.
       - Fix shape: single-flight the sweep -- one owner runs it, later callers wait on its completion rather than starting a second -- with the guarantee that a losing caller cannot terminate the process before the owning sweep finishes. An atomic two-handle reservation is the narrower alternative and does not fix the duplicated work. -> XREF: 00-infrastructure/TODO-07 §23 (item: "Make the pass-0 descriptor reservation transactional" at line 816)
-- [ ] Commit: `"scripts/lsp-mcp: confirmed-dead restart gate + single-pass procfs cleanup"`
+- [ ] Commit: `"scripts/lsp-mcp: confirmed-dead restart gate + single-flight teardown"`
 
-**Test checkpoint:** `bash scripts/lsp-mcp/tests/test_bridge.sh` exits 0; a health-respawn under simulated disposal failure refuses to publish the replacement, and a stamped-group teardown reads `/proc` once per round with both markers answered from that one pass. Test on: host tooling only (no QEMU dependency).
+**Test checkpoint:** `bash scripts/lsp-mcp/tests/test_bridge.sh` exits 0; a health-respawn under simulated disposal failure refuses to publish the replacement, and concurrent teardown entry points run exactly one sweep with the losing caller blocked until it completes. Test on: host tooling only (no QEMU dependency).
 
 ## Format Quick Reference
 
