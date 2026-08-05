@@ -59,6 +59,7 @@ title: "TODO-06 -- TODO Metadata Layer and Derived Graph"
 | ⭐  |   8   |  §8     | MCP server (read-only AI-agent transport over §4)                                   | §4         |  [x]   |
 | 💎  |   9   |  §9     | Per-item `stamped_items` cache extension (closes lint Check 7 deferral)             | §2         |  [x]   |
 | ⭐  |  10   |  §10    | Multi-line function-head resolution in `resolve_symbol` (Check 7 blind spot)        | §9         |  [ ]   |
+| ⭐  |  11   |  §11    | Check 7 counts what it cannot resolve (unresolved != clean)                         | §10        |  [ ]   |
 
 > 💎 = parity work -- Linux kernel has MAINTAINERS + get_maintainer.pl (person-ownership mapping without a dep graph); Windows has no public equivalent. §1 (frontmatter), §2 (generator), §5 (migration) bring us to partial Linux parity plus graph metadata neither OS ships.
 > ⭐ = competitive edge -- neither Win11 nor mainline Linux ships a first-class TODO dependency graph. §3 (validator), §4 (query CLI), §6 (CI gate), §7 (visualization), §8 (MCP server) are new ground; the surface has direct value for any contributor scanning "what can I work on next?".
@@ -370,7 +371,7 @@ The §2 cache today emits one node per TODO file with a `sections` array of `{n,
 
 [`scripts/todo-graph/resolve_symbol.py`](../../scripts/todo-graph/resolve_symbol.py) locates a C function definition by matching a head regex against ONE line at a time: it requires the return-type tokens and the symbol to sit on the same physical line. Every definition whose head spans two lines is therefore invisible to it -- and `resolve_symbol` is what [`scripts/lint/check_stub_behind_stamp.py`](../../scripts/lint/check_stub_behind_stamp.py) (lint Check 7) calls to decide whether a `[x]`-stamped symbol is really a `return CONSTANT;` stub. A symbol the resolver cannot find is not reported as unverifiable; it is simply not checked, so the blind spot is silent by construction and reads as a clean lint.
 
-This section owns ONLY that head-matching gap. It does NOT re-cover §9's `stamped_items` cache shape, Check 7's `lint.sh` wiring, the repo-escape guard, or the eight regression sub-tests §9 shipped -- all of those are live and stay untouched.
+This section owns ONLY that head-matching gap -- the PARSE. It does NOT re-cover §9's `stamped_items` cache shape, Check 7's `lint.sh` wiring, the repo-escape guard, or the eight regression sub-tests §9 shipped; all of those are live and stay untouched. It also does not change what Check 7 REPORTS: making an unresolvable symbol countable instead of silent is §11's job, split out of this section on the split predictor's verdict before any code was written, because it changes what a clean lint MEANS and carries a different risk (a noisy gate) than a parse fix does.
 
 > [!NOTE]
 > **Why it was parked and why it is open again.** §9 filed this as a known limitation on 2026-05-02 with two candidate fixes: a sliding-window head join, or delegation to `mcp__lsp-bridge__definition` "once TODO-07 lsp-bridge is generally available". TODO-07 has since shipped that tool, so the stated blocker cleared -- but §9 carries Verified + Quality-reviewed stamps, where a bare `- [ ]` is invisible to the triage oracle. Reopening it as its own section is the shape CLAUDE.md prescribes for residue in a stamped section, and it is a reopen rather than a duplicate: §9's item is `- [/]` pointing here, and this section points back.
@@ -381,7 +382,6 @@ This section owns ONLY that head-matching gap. It does NOT re-cover §9's `stamp
 - [ ] Cover the shapes the current regex drops: return type on its own line, `static inline` split across lines, `__attribute__((...))`-prefixed definitions, and a pointer return type whose `*` binds to the next line
 - [ ] Keep the false-positive bar §9 set: a prototype must still walk past to the real definition, and a call site or macro invocation must not be read as a head
   - The windowed join widens what matches, so each new shape needs a negative fixture beside its positive one.
-- [ ] Report what cannot be resolved instead of skipping it silently: `check_stub_behind_stamp.py` should separate "resolved, not a stub" from "symbol not found", so a future blind spot surfaces as a countable number rather than a clean lint
 - [ ] Measure the lsp-bridge delegation alternative against the local parse (accuracy on the live tree, added wall-clock in `lint.sh`) and record the verdict in this section's Notes, so the rejected option stays rejected with evidence
 - [ ] Regression fixtures in [`scripts/todo-graph/tests/test_build.sh`](../../scripts/todo-graph/tests/test_build.sh) for every shape above, each mutation-checked: break the windowed join and the new fixtures must fail by name
 - [ ] Commit: `"todo-graph: resolve multi-line function heads so Check 7 stops skipping them"`
@@ -390,6 +390,28 @@ This section owns ONLY that head-matching gap. It does NOT re-cover §9's `stamp
 
 -> XREF: [`TODO-06 §9`](#9-per-item-stamped_items-cache-extension) -- the parent section; its `- [/]` item points here and this section states what it does not re-cover.
 -> XREF: [`TODO-08 §12`](TODO-08-automation-hardening.md#12-ai-slop-content-lints-tautological-test--stub-behind-stamp) -- Check 7's owner; this section changes what Check 7 can see, not how it is wired.
+-> XREF: [`TODO-06 §11`](#11-count-what-check-7-cannot-resolve-instead-of-skipping-it) -- the reporting half, split out of this section before implementation; §10 makes the resolver see more, §11 makes what it still cannot see countable.
+
+---
+
+## 11. Count What Check 7 Cannot Resolve Instead of Skipping It
+
+Check 7 ([`scripts/lint/check_stub_behind_stamp.py`](../../scripts/lint/check_stub_behind_stamp.py)) walks every `kind=symbol` ref with a paired file, calls `resolve_symbol`, and classifies the body. A ref the resolver CANNOT locate produces no output at all: it is not a finding, not a warning, and not a count. So "Check 7 clean" today conflates two very different states -- every stamped symbol was found and none is a stub, versus some stamped symbols were never examined. §9's `Verified` stamp records "zero stub-behind-stamp findings on the current 227 TODOs" against exactly that ambiguity.
+
+This section makes the second state countable. It is the REPORTING half of the resolver work; §10 owns the parse itself and is a prerequisite, because widening what resolves shrinks this number and the two changes would otherwise fight over the same baseline.
+
+**The failure mode to design against is a noisy gate, not a quiet one.** Check 7 runs in the pre-commit lint, so an unresolved-symbol count that is nonzero on the live tree and printed as an ERROR would block every commit in the repo on day one. Establish the live-tree number FIRST, then choose the severity that number justifies -- a WARN carrying the count is the likely answer, with an ERROR reserved for a regression above the recorded baseline. Do not pick the severity before measuring.
+
+- [ ] Separate "resolved, not a stub" from "symbol not found" in `check_stub_behind_stamp.py`, and emit the unresolved count rather than dropping those refs silently
+- [ ] Measure the live-tree unresolved count BEFORE and AFTER §10 lands, and record both numbers in this section's Notes -- the delta is the only evidence that §10's parse widening actually bought coverage
+- [ ] Choose the severity from that measurement (WARN with a count, or ERROR against a recorded baseline) and state in the section why the other was rejected
+- [ ] Regression fixtures in [`scripts/todo-graph/tests/test_build.sh`](../../scripts/todo-graph/tests/test_build.sh): a ref naming a symbol absent from its file is counted, not skipped, and a resolvable non-stub is still silent
+- [ ] Commit: `"lint: make Check 7 count the symbols it cannot resolve"`
+
+**Test checkpoint:** `bash scripts/todo-graph/tests/test_build.sh` green with the new fixtures; `bash scripts/lint.sh` completes with the unresolved count reported and zero NEW errors on the live tree; `bash scripts/test-tooling.sh` green in aggregate.
+
+-> XREF: [`TODO-06 §10`](#10-multi-line-function-head-resolution-in-resolve_symbol) -- prerequisite; §10 widens what resolves, so this section's before/after numbers are meaningless until it lands.
+-> XREF: [`TODO-08 §12`](TODO-08-automation-hardening.md#12-ai-slop-content-lints-tautological-test--stub-behind-stamp) -- Check 7's owner; this section changes its output contract, so §12's description of what a clean Check 7 means updates with it.
 
 ---
 
