@@ -1550,18 +1550,33 @@ try: d=json.load(sys.stdin)
 except Exception: d={}
 n=sum(1 for v in d.values() for k,_,_ in v if k=='open-in-done')
 print(n)" 2>/dev/null || echo 0)"
+    # BOTH numbers. The record is per SECTION and carries its own item count in
+    # the message; reporting the record count while calling it "items" understated
+    # the backlog 4.8x (333 sections vs 1595 items, measured 2026-08-05) and that
+    # wrong figure had propagated into the capture files and the doctrine.
     LINT24_WARN="$(printf '%s' "$LINT24_OUT" | python3 -c "
 import json,sys
 try: d=json.load(sys.stdin)
 except Exception: d={}
 n=sum(1 for v in d.values() for k,_,_ in v if k=='open-in-deferred')
 print(n)" 2>/dev/null || echo 0)"
+    LINT24_ITEMS="$(printf '%s' "$LINT24_OUT" | python3 -c "
+import json,re,sys
+try: d=json.load(sys.stdin)
+except Exception: d={}
+n=0
+for v in d.values():
+    for k,_,msg in v:
+        if k=='open-in-deferred':
+            m=re.match(r'^(\\d+) open', msg)
+            n+= int(m.group(1)) if m else 1
+print(n)" 2>/dev/null || echo 0)"
     if [ "${LINT24_ERR:-0}" -gt 0 ] 2>/dev/null; then
         echo -e "${RED}error${NC}: Check 24 (reachability) ${LINT24_ERR} open item(s) in DONE sections are unreachable -- nothing will revisit them. Run: python3 scripts/todo-reachability.py"
         ERRORS=$((ERRORS + LINT24_ERR))
     fi
     if [ "${LINT24_WARN:-0}" -gt 0 ] 2>/dev/null; then
-        echo -e "${YELLOW}warn${NC}: Check 24 (reachability) ${LINT24_WARN} open \`- [ ]\` item(s) sit inside Deferred sections; repair shape is \`- [/]\` naming the blocker"
+        echo -e "${YELLOW}warn${NC}: Check 24 (reachability) ${LINT24_ITEMS} open \`- [ ]\` item(s) across ${LINT24_WARN} Deferred section(s); repair shape is \`- [/]\` naming the blocker"
         WARNINGS=$((WARNINGS + 1))
     fi
 fi
