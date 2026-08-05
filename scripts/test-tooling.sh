@@ -2039,7 +2039,15 @@ CMOD
     # 14: small-section WARN logged regardless.
     rm -f "$GATE_SKIP_LOG_T" "$GATE_STATE_FILE_T"
     _write_received_state "true" '["src/kernel/foo.c"]' "60"
-    touch "$GATE_REPO/build/build.log"
+    # Stamp build.log STRICTLY AFTER the staged source rather than relying on
+    # _build_evidence's 1s FS-rounding slop, so the fixture EXPRESSES the
+    # ordering it depends on. Same preventive applied to tests 19-20. The run
+    # filed this sub-test as intermittently red (v09); it did NOT reproduce
+    # here -- the gate block ran 85 times clean, and both proposed mechanisms
+    # were checked and ruled out (the state paths are already fixture-scoped,
+    # and `git rev-parse --show-toplevel` still resolves to the fixture under
+    # inherited git hook env). Not a claimed fix.
+    touch -d "+2 seconds" "$GATE_REPO/build/build.log"
     _gate_run 0 "small-section commit with full evidence allows" \
         '{"tool_name":"Bash","tool_input":{"command":"git commit -m foo"}}'
     if [ -f "$GATE_SKIP_LOG_T" ] && grep -q "small-section-skip-risk" "$GATE_SKIP_LOG_T"; then
