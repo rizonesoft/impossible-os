@@ -40,7 +40,15 @@ jobs:
   build:
     name: Build Impossible OS
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # 15 was a runaway backstop chosen when the job ran well under it; it became
+    # a live gate as the suites grew. MEASURED: the last green run (30864937433,
+    # 2026-08-04) finished in 14m52s -- 8 seconds of margin -- and the next
+    # growth tipped it over: run 31056543625 passed every step, then had
+    # `Stale-ABI fixtures` CANCELLED at the wall 13m10s in, with that step
+    # needing ~2m56s (so ~16m06s required). Raised to 25 to restore real
+    # headroom while staying a genuine runaway cap. A step that hangs still
+    # fails here rather than burning GHA's 6h default.
+    timeout-minutes: 25
 
     steps:
       # ── Checkout ────────────────────────────────────────────────────────────
