@@ -110,8 +110,18 @@ def gotchas(root: Path, relevant_only: bool = False) -> list[str]:
     today = date.today().isoformat()
     ctx = _gotcha_context(root) if relevant_only else ""
     tag_re = re.compile(r"\[(path|phase|todo|sym):([^\]]+)\]", re.I)
-    out: list[str] = []
-    budget = GOTCHA_BYTE_CAP
+    # SELECTION ORDER, not file order. The cap is 6 cards / 2400 bytes against a
+    # registry that reached 85 cards, and the old walk consumed it in FILE order
+    # -- so a newly-appended card was the LEAST likely to be delivered, which is
+    # the exact inverse of what a "live" registry needs. Measured 2026-08-05: an
+    # operator card tagged for the cursor file sat at position 85 behind 52 KB of
+    # older global cards and never reached the run at all.
+    #
+    # Priority: cards whose tag MATCHES the current cursor beat global ones (a
+    # card about the file you are on is worth more than a generic one from June),
+    # and within each group the NEWEST wins. Untagged cards are still global and
+    # still delivered -- they just no longer crowd out targeted guidance.
+    cards: list[tuple[int, str]] = []          # (priority, card)
     for ln in lines:
         ln = ln.strip()
         if not ln or ln.startswith("#"):
@@ -120,15 +130,27 @@ def gotchas(root: Path, relevant_only: bool = False) -> list[str]:
         if m and m.group(1) < today:
             continue
         card = ln.lstrip("- ").strip()
-        if relevant_only:
-            tags = tag_re.findall(card)
-            if tags:  # tagged card: keep only when a tag hits the context
-                if not any(val.strip().lower() in ctx for _, val in tags):
-                    continue
-            # untagged cards are global -> always kept
-            if len(out) >= GOTCHA_BRIEF_CAP or budget - len(card) < 0:
+        if not relevant_only:
+            cards.append((1, card))
+            continue
+        tags = tag_re.findall(card)
+        if tags:  # tagged card: keep only when a tag hits the context
+            if not any(val.strip().lower() in ctx for _, val in tags):
                 continue
-            budget -= len(card)
+            cards.append((0, card))            # targeted -> highest priority
+        else:
+            cards.append((1, card))            # global
+    if not relevant_only:
+        return [c for _, c in cards]
+    # stable within priority, newest (latest in file) first
+    ordered = [card for _, (_prio, card) in sorted(
+        enumerate(cards), key=lambda kv: (kv[1][0], -kv[0]))]
+    out: list[str] = []
+    budget = GOTCHA_BYTE_CAP
+    for card in ordered:
+        if len(out) >= GOTCHA_BRIEF_CAP or budget - len(card) < 0:
+            continue
+        budget -= len(card)
         out.append(card)
     return out
 
