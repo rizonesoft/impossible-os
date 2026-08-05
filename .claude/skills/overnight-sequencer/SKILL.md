@@ -464,10 +464,19 @@ information or judgment; none of this weakens a gate):**
     in a DONE section), which it still flags. The two populations are not
     mechanically separable, so the judgment is yours at the moment you park the
     item, and that is the only place it can live.
-  - **A standing or recurring task** -> LEAVE IT `- [ ]`. Real example that must
-    not be converted: *"Review this section's triggers once per calendar year"*.
-    That is not blocked work, and flipping it to `- [/]` with an invented
+  - **A standing or recurring task** -> keep it `- [ ]` and PREFIX it with
+    `standing:`. Real example: *"Review this section's triggers once per calendar
+    year"*. That is not blocked work, and flipping it to `- [/]` with an invented
     blocker manufactures a false park.
+    **The marker is load-bearing, not decoration.** Without it the doctrine and
+    the completion gate contradict each other: this skill says leave the item
+    alone, and `todo-reachability.py` then refuses `phase FIXPOINT` on it
+    forever, so a CORRECTLY-shaped corpus could never complete. The run found
+    this itself on 2026-08-05, and it is masked only while other items also
+    block the gate -- **the drain succeeding is what exposes it**. `standing:`
+    is AUTHORED at park time, which is what makes it legitimate where the
+    removed `parked-ownerless` detector was not: a human states the intent
+    rather than a rule inferring it, and an unmarked item still flags.
   - **Already satisfied** by work that shipped since -> `- [x]` with the
     evidence, same bar as any other completion claim.
   - **Cannot decide from the file alone** -> leave it and say so in the closure

@@ -48,6 +48,15 @@ from pathlib import Path
 SECTION_RE = re.compile(r"^## (\d+)\.")
 OPEN_ITEM_RE = re.compile(r"^\s*- \[ \]")
 PARKED_ITEM_RE = re.compile(r"^\s*- \[/\]")
+# AUTHOR-TIME marker for a recurring/standing task -- work that is
+# deliberately never "done" (an annual re-review, a periodic audit).
+# Such an item is CORRECTLY a bare `- [ ]` and must not be parked, but
+# the gate below would otherwise refuse fixpoint on it forever.
+# NOTE this is not the inferred `parked-ownerless` rule that was removed
+# (see the note at the end of audit()): the distinction is that a human
+# WRITES this marker when authoring the item, rather than a detector
+# guessing intent from shape. Unmarked items still flag -- fail-closed.
+STANDING_RE = re.compile(r"\bstanding:", re.I)
 VERIFIED_RE = re.compile(r"^> \*\*Verified:")
 DEFERRED_RE = re.compile(r"^> \*\*Deferred:")
 QUALITY_RE = re.compile(r"^> \*\*Quality reviewed:")
@@ -205,11 +214,23 @@ def audit(path, root="."):
             out.append(("open-in-done", num,
                         f"{len(opens)} open item(s) in a DONE section: {opens[0]}"))
 
-        # 3. open items parked in a Deferred section -- wrong shape
-        if is_done and opens and deferred:
+        # 3. open items parked in a Deferred section -- wrong shape.
+        # A `standing:`-marked item is EXCLUDED: it is recurring work that is
+        # correctly a bare `- [ ]` and must never be converted to a park. Without
+        # this the doctrine and the gate contradicted each other -- the sequencer
+        # skill instructs the run to LEAVE such an item alone, and this detector
+        # then refused fixpoint on it, so a correctly-shaped corpus could never
+        # complete. Found by the run itself, 2026-08-05, on an annual
+        # trigger-review item.
+        standing = [b for b in body
+                    if OPEN_ITEM_RE.match(b) and STANDING_RE.search(b)]
+        real_opens = [b for b in opens
+                      if not STANDING_RE.search(b)]
+        if is_done and real_opens and deferred:
             out.append(("open-in-deferred", num,
-                        f"{len(opens)} open `- [ ]` item(s) inside a Deferred "
-                        f"section (should be `- [/]` naming the blocker): {opens[0]}"))
+                        f"{len(real_opens)} open `- [ ]` item(s) inside a Deferred "
+                        f"section (should be `- [/]` naming the blocker): "
+                        f"{real_opens[0]}"))
 
         # NO "parked-ownerless" RULE. It was tried on 2026-08-02 and REMOVED:
         # `[/]` means IN PROGRESS in this repo, not "parked awaiting an owner"

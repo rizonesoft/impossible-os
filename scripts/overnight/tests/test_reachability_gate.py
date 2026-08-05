@@ -70,8 +70,38 @@ def test_gate_is_wired_into_fixpoint_and_fails_open():
     assert "naming its blocker" in src, "refusal text lacks the repair shape"
 
 
+def test_standing_marker_exempts_a_recurring_task():
+    """The doctrine and the completion gate must not contradict each other.
+
+    `overnight-sequencer` instructs the run to LEAVE a recurring task as a bare
+    `- [ ]` (converting it to `- [/]` with an invented blocker manufactures a
+    false park). The reachability gate then refused `phase FIXPOINT` on exactly
+    that shape, so a correctly-shaped corpus could never complete -- masked only
+    while other items also blocked the gate, which means the drain SUCCEEDING is
+    what would have exposed it. Found by the run itself, 2026-08-05.
+
+    `standing:` is AUTHORED at park time. That is the distinction from the
+    `parked-ownerless` detector removed on 2026-08-02: a human states the intent
+    instead of a rule inferring it from shape. Unmarked items still flag.
+    """
+    import importlib.util, pathlib, tempfile, subprocess, os
+    spec = importlib.util.spec_from_file_location("tr", str(REACH))
+    tr = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tr)
+    assert tr.STANDING_RE.search("- [ ] standing: re-check this annually")
+    assert not tr.STANDING_RE.search("- [ ] wire the frobnicator")
+    # and the filter drops ONLY the marked one
+    body = ["- [x] done",
+            "- [ ] standing: review triggers once per calendar year",
+            "- [ ] real blocked work"]
+    opens = [b for b in body if tr.OPEN_ITEM_RE.match(b)]
+    real = [b for b in opens if not tr.STANDING_RE.search(b)]
+    assert len(opens) == 2 and len(real) == 1 and "real blocked" in real[0]
+
+
 if __name__ == "__main__":
     test_detector_signals_findings_with_exit_1()
     test_detector_is_clean_on_a_reachable_fixture()
     test_gate_is_wired_into_fixpoint_and_fails_open()
-    print("PASS: reachability gate (fixpoint refuses while work is unreachable)")
+    test_standing_marker_exempts_a_recurring_task()
+    print("PASS: reachability gate + standing-marker exemption")
