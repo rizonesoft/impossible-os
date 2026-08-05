@@ -7183,10 +7183,14 @@ except Exception:
     pass
 
 # --- two generations sharing one PID -------------------------------
-# The respawn path builds the replacement before disposing the dead
-# instance, so two records can carry the same number. Retiring by number
-# removed and closed BOTH, taking the live replacement's only exact
-# handle with it (Codex adversarial review, High).
+# Two records can carry the same number -- a record outlives the
+# instance that made it, so an unretired old generation and a live
+# replacement can share one PID. (Before section 25 the respawn path
+# made that routine by building the replacement BEFORE disposing the
+# dead instance; it now disposes and confirms first, which narrows the
+# overlap without removing it.) Retiring by number removed and closed
+# BOTH, taking the live replacement's only exact handle with it (Codex
+# adversarial review, High).
 gen_a = lsp_client._SpawnRecord(4194299, 4242, None)
 gen_b = lsp_client._SpawnRecord(4194299, 4242, None)
 lsp_client._SPAWNED.extend([gen_a, gen_b])
@@ -7207,12 +7211,13 @@ if len(left) != 1:
 lsp_client._SPAWNED[:] = [e for e in lsp_client._SPAWNED if e.pid != 4194299]
 
 # --- a group sweep must not reach a namesake generation --------------
-# The respawn path builds the replacement before disposing the dead
-# instance, and both use start_new_session, so if the reaped leader's PID
-# is reused the two generations share a numeric PGID. Old-instance
-# cleanup then finds the REPLACEMENT in what it believes is its own group
-# and kills it -- a restart loop where each generation shoots its
-# successor (Codex adversarial review, High).
+# Two generations can coexist -- rarer since section 25 disposes and
+# confirms the old one before spawning, but a record outlives its
+# instance -- and both use start_new_session, so if the reaped leader's
+# PID is reused they share a numeric PGID. Old-instance cleanup then
+# finds the REPLACEMENT in what it believes is its own group and kills
+# it -- a restart loop where each generation shoots its successor
+# (Codex adversarial review, High).
 gen_old = "gen-old-" + str(os.getpid())
 gen_new = "gen-new-" + str(os.getpid())
 replacement = subprocess.Popen(
@@ -10020,6 +10025,148 @@ check(not any(e.pid == proc.pid for e in list(lsp_client._SPAWNED)),
       "record outlives the process it names")
 lsp_client._retire_spawn(proc.pid)
 
+# --- the escalation must survive its own first signal -----------------
+# Under descriptor pressure `_signal_recorded` CLAIMS the record to send
+# one signal -- removing it from _SPAWNED and closing its fd. Two
+# independent calls therefore spend the only identity on the SIGTERM, and
+# a server that ignores it survives the SIGKILL that can no longer be
+# addressed. The escalation holds ONE handle across both (Codex
+# adversarial review, High).
+stubborn = subprocess.Popen([sys.executable, "-c", STUBBORN], env=env,
+                            start_new_session=True)
+inst5 = object.__new__(lsp_client.LspSubprocess)
+inst5.lang = "c"
+inst5._proc = stubborn
+inst5._initialized = False
+inst5._shutdown_called = False
+inst5._confirmed_dead = False
+inst5._post_death_done = False
+inst5._post_death_running = None
+inst5._post_death_lock = threading.Lock()
+inst5._init_lock = threading.Lock()
+inst5._open_uris_lock = threading.Lock()
+inst5._pending_lock = threading.Lock()
+inst5._pending = {}
+inst5._teardown_thread_id = None
+inst5._reader_thread = None
+inst5._stderr_thread = None
+inst5.open_uris = set()
+inst5.cleanup_paths = []
+inst5._gen_id = "9p-gen5"
+inst5._spawn_record = lsp_client._record_spawn(stubborn.pid)
+check(inst5._spawn_record.fd is not None,
+      "the fixture record has no descriptor, so the CLAIM path this case "
+      "exists for cannot be reached")
+# dup fails => acquisition takes the claim path; pidfd_open fails too, so
+# nothing can re-acquire an identity once the record is consumed.
+real_dup2, real_open2 = os.dup, os.pidfd_open
+os.dup = EMFILE
+os.pidfd_open = EMFILE
+try:
+    verdict5 = inst5.shutdown(timeout=2.0)
+finally:
+    os.dup, os.pidfd_open = real_dup2, real_open2
+check(stubborn.poll() is not None,
+      "a SIGTERM-ignoring child survived shutdown(): the escalation spent "
+      "its only identity on the SIGTERM and could not send the SIGKILL")
+# The LEADER is dead, but the group sweep ran inside the same exhaustion
+# and could not prove the group empty -- so the verdict is honestly still
+# False, and becomes True once descriptors return.
+check(verdict5 is False,
+      "shutdown() confirmed a death whose group sweep could not acquire a "
+      "single handle to prove it with")
+check(inst5.shutdown(timeout=2.0) is True,
+      "the verdict never recovered once descriptors were available again")
+try:
+    stubborn.kill()
+except Exception:
+    pass
+lsp_client._retire_spawn(stubborn.pid)
+
+# --- descendants are collected BEFORE the leader is reaped ------------
+# A same-session hardened descendant is authorized by the recorded leader
+# still BEING there (section 23), so the group sweep has to run while the
+# leader is unreaped. Polling the leader to death first -- which
+# Popen.poll does -- destroys that proof and lets a surviving
+# old-generation worker read as a clean group, after which shutdown()
+# confirms the death and the restart gate publishes beside it (Codex
+# re-adversarial, High).
+ordering = {}
+real_reap, real_retire = lsp_client._reap_group, lsp_client._retire_spawn
+stubborn2 = subprocess.Popen([sys.executable, "-c", STUBBORN], env=env,
+                             start_new_session=True)
+inst6 = object.__new__(lsp_client.LspSubprocess)
+inst6.lang = "c"
+inst6._proc = stubborn2
+inst6._initialized = False
+inst6._shutdown_called = False
+inst6._confirmed_dead = False
+inst6._post_death_done = False
+inst6._post_death_running = None
+inst6._post_death_lock = threading.Lock()
+inst6._init_lock = threading.Lock()
+inst6._open_uris_lock = threading.Lock()
+inst6._pending_lock = threading.Lock()
+inst6._pending = {}
+inst6._teardown_thread_id = None
+inst6._reader_thread = None
+inst6._stderr_thread = None
+inst6.open_uris = set()
+inst6.cleanup_paths = []
+inst6._gen_id = "9p-gen6"
+inst6._spawn_record = lsp_client._record_spawn(stubborn2.pid)
+
+
+def ordering_reap(pgid, gen=None, deadline=None, **kw):
+    ordering["swept"] = ordering.get("swept", 0) + 1
+    return (0, True)
+
+
+def ordering_retire(target):
+    # _retire_spawn is reached only from _collect_after_death, so this
+    # marks the post-death phase and lets the escalation-time sweep be
+    # counted separately from the post-death one.
+    ordering.setdefault("swept_before_retire", ordering.get("swept", 0))
+
+
+real_escalate = lsp_client._escalate_recorded
+
+
+def ordering_escalate(target, is_dead, sigs=None, deadline=None,
+                      wait_after_last=False):
+    ordering["waited_after_last"] = wait_after_last
+    return real_escalate(target, is_dead, sigs=sigs, deadline=deadline,
+                         wait_after_last=wait_after_last)
+
+
+lsp_client._reap_group = ordering_reap
+lsp_client._retire_spawn = ordering_retire
+lsp_client._escalate_recorded = ordering_escalate
+try:
+    inst6.shutdown(timeout=2.0)
+finally:
+    lsp_client._reap_group = real_reap
+    lsp_client._retire_spawn = real_retire
+    lsp_client._escalate_recorded = real_escalate
+# The contract, asserted where it is decidable: shutdown()'s escalation
+# must NOT wait past its last signal, because for a Popen child that wait
+# is a reap -- and the group sweep that follows needs the leader
+# unreaped to prove session ownership of a hardened descendant.
+check(ordering.get("waited_after_last") is False,
+      f"shutdown()'s escalation waited past its final signal "
+      f"({ordering.get('waited_after_last')!r}), reaping the leader "
+      f"before the group sweep that depends on it being alive")
+check(ordering.get("swept_before_retire", 0) >= 2,
+      f"only {ordering.get('swept_before_retire', 0)} group sweep(s) ran "
+      f"before the record was retired: the escalation-time sweep is "
+      f"missing, so a killed leader's descendants are collected only "
+      f"after it has been reaped")
+try:
+    stubborn2.kill()
+except Exception:
+    pass
+lsp_client._retire_spawn(stubborn2.pid)
+
 # --- the post-death collection is not 'done' until it IS --------------
 # The flag used to be set at CLAIM time, so a concurrent late confirmer
 # skipped the collection and reported a confirmed death while the first
@@ -10229,7 +10376,7 @@ PY
 t_teardown_single_flight() {
     local rc=0
     python3 - <<'PY' || rc=$?
-import sys, threading, time
+import subprocess, sys, threading, time
 sys.path.insert(0, "scripts/lsp-mcp")
 import lsp_client
 
@@ -10297,6 +10444,30 @@ check(results.get("owner") == 3,
       f"the owner did not report its own kill count: {results.get('owner')!r}")
 check(getattr(results.get("owner"), "completed", None) is True,
       "the owner did not report a COMPLETED sweep")
+
+# --- returning is not finishing --------------------------------------
+# The recorded-leader pass is ungated by design (section 22), so the body
+# can hand back a full result well past the deadline it was given.
+# Publishing completed=True on that tells a waiter -- who already stopped
+# at the hard deadline and answered False -- that somebody else finished
+# the work, and it exits through the unfinished sweep.
+def overrunning_sweep(settle=1.0, deadline=None, clock=lsp_client._REAL_CLOCK):
+    time.sleep(0.15)                    # deliberately past the budget
+    return 2
+
+
+lsp_client._force_kill_spawned_sweep = overrunning_sweep
+try:
+    late_result = lsp_client.force_kill_spawned(
+        settle=0.0, deadline=time.monotonic() + 0.05)
+    check(late_result == 2,
+          f"the overrunning sweep's kill count was lost: {late_result!r}")
+    check(late_result.completed is False,
+          "a sweep that returned PAST its deadline reported itself "
+          "complete; mark_teardown_complete would then disarm the atexit "
+          "fallback over work that ran outside the promised bound")
+finally:
+    lsp_client._force_kill_spawned_sweep = real_sweep
 check(results.get("loser") == 0,
       "the waiter reported kills it never made; the owner's count is the "
       "owner's to report")
@@ -10305,6 +10476,58 @@ check(getattr(results.get("loser"), "completed", None) is True,
 check(results.get("loser_waited", 0.0) >= 0.25,
       f"the waiter returned after {results.get('loser_waited', 0.0):.3f}s -- "
       f"it honoured its OWN 0.05s deadline instead of the owner's")
+
+# --- but the shared deadline is INVIOLATE -----------------------------
+# The overrun grace is RESERVED INSIDE the budget (the owner works to an
+# earlier deadline), never added on top of it. Added on top, a waiter
+# measured 0.506s past a shared 0.2s deadline -- time an external
+# `timeout --kill-after` is counting, during which it can fire through
+# the unfinished sweep (Codex perf review, High).
+entries.clear()
+release.clear()
+entered.clear()
+lsp_client._force_kill_spawned_sweep = slow_sweep
+try:
+    hard = time.monotonic() + 0.2
+    t6 = threading.Thread(
+        target=lambda: lsp_client.force_kill_spawned(settle=0.0,
+                                                     deadline=hard))
+    t6.start()
+    entered.wait(timeout=5.0)
+    overrun = lsp_client.force_kill_spawned(settle=0.0, deadline=hard)
+    late_by = time.monotonic() - hard
+    check(late_by <= 0.1,
+          f"a waiter returned {late_by:.3f}s PAST the shared hard deadline; "
+          f"the grace must be reserved inside the budget, not added to it")
+    check(overrun.completed is False,
+          "a waiter that stopped at the hard deadline over a still-running "
+          "owner reported the sweep complete")
+    release.set()
+    t6.join(timeout=5.0)
+finally:
+    lsp_client._force_kill_spawned_sweep = real_sweep
+    release.set()
+
+# --- and the owner works to the EARLIER, reserved deadline ------------
+seen_deadline = {}
+
+
+def deadline_probe(settle=1.0, deadline=None, clock=lsp_client._REAL_CLOCK):
+    seen_deadline["d"] = deadline
+    return 0
+
+
+lsp_client._force_kill_spawned_sweep = deadline_probe
+try:
+    hard2 = time.monotonic() + 5.0
+    lsp_client.force_kill_spawned(settle=0.0, deadline=hard2)
+    got = seen_deadline.get("d")
+    check(got is not None
+          and abs((hard2 - got) - lsp_client._SWEEP_OVERRUN_GRACE_S) < 0.05,
+          f"the sweep body ran to {got!r}, not the caller's deadline minus "
+          f"the reserved {lsp_client._SWEEP_OVERRUN_GRACE_S}s grace")
+finally:
+    lsp_client._force_kill_spawned_sweep = real_sweep
 
 # --- a waiter whose owner blows the shared budget reports NOT complete -
 entries.clear()
@@ -10388,6 +10611,93 @@ check(lsp_client._SWEEP_OWNER is None,
 check(lsp_client._SWEEP_FLIGHT is None,
       "a finished flight was left published, so the next waiter would read "
       "its stale outcome")
+
+# --- a termination landing ON the sweeping thread must not wedge ------
+# A Python signal handler runs on the MAIN thread, so a signal arriving
+# while that thread is inside the sweep re-enters the wrapper through the
+# handler. Three ways this has gone wrong, each pinned below: a plain
+# Lock deadlocks the handler against its own interrupted frame; a nested
+# sweep that WAITS on its own event deadlocks the same way; and a
+# re-entry that returns nothing leaves whatever the interrupted sweep had
+# not reached with no collector at all (Codex re-adversarial, High x3).
+import importlib
+bridge_mod = importlib.import_module("bridge")
+
+# The lock must be reentrant: the handler re-acquires it on the SAME
+# thread that already holds it.
+check(isinstance(lsp_client._SWEEP_LOCK,
+                 type(threading.RLock())),
+      "_SWEEP_LOCK is not reentrant -- a signal handler interrupting a "
+      "lock-held region blocks forever on the frame it interrupted")
+check(isinstance(bridge_mod._TEARDOWN_DEADLINE_LOCK,
+                 type(threading.RLock())),
+      "_TEARDOWN_DEADLINE_LOCK is not reentrant -- _shutdown_bounded "
+      "re-enters _teardown_deadline from the handler")
+
+# Re-entry while the lock is held must COMPLETE, not block. This is the
+# handler's exact shape: same thread, lock already held, sweep in flight.
+# In a SUBPROCESS on purpose: a probe that really does deadlock holds
+# _SWEEP_LOCK forever, and every later assertion in this driver would
+# then block on it too -- turning a reportable failure into a wedged
+# harness.
+DEADLOCK_PROBE = (
+    "import sys, time\n"
+    "sys.path.insert(0, 'scripts/lsp-mcp')\n"
+    "import lsp_client\n"
+    "lsp_client._force_kill_spawned_sweep = (\n"
+    "    lambda settle=1.0, deadline=None, clock=lsp_client._REAL_CLOCK: 7)\n"
+    "with lsp_client._SWEEP_LOCK:\n"
+    "    lsp_client.force_kill_spawned(settle=0.0,\n"
+    "                                  deadline=time.monotonic() + 1.0)\n"
+    "sys.exit(0)\n"
+)
+try:
+    probe_rc = subprocess.run([sys.executable, "-c", DEADLOCK_PROBE],
+                              timeout=15, capture_output=True).returncode
+except subprocess.TimeoutExpired:
+    probe_rc = "timeout"
+check(probe_rc == 0,
+      f"force_kill_spawned entered by a thread already holding _SWEEP_LOCK "
+      f"did not return ({probe_rc!r}) -- this is the signal-handler "
+      f"deadlock, where the handler waits on a lock only the frame it "
+      f"interrupted can release")
+
+# And a genuine OWNER re-entry must run the sweep body rather than
+# returning empty-handed: the interrupted frame never resumes (its caller
+# is a handler that ends in os.kill / os._exit), so a nested run is a
+# degraded sweep against NO sweep, not two sweeps competing.
+reentry_result = {}
+
+
+def reentrant_sweep(settle=1.0, deadline=None, clock=lsp_client._REAL_CLOCK):
+    # Guard set BEFORE the nested call, or the nested body re-enters
+    # itself forever.
+    if not reentry_result.get("started"):
+        reentry_result["started"] = True
+        reentry_result["inner"] = lsp_client.force_kill_spawned(
+            settle=0.0, deadline=time.monotonic() + 1.0)
+    return 4
+
+
+lsp_client._force_kill_spawned_sweep = reentrant_sweep
+try:
+    outer = lsp_client.force_kill_spawned(settle=0.0,
+                                          deadline=time.monotonic() + 2.0)
+    inner = reentry_result.get("inner")
+    check(inner is not None,
+          "the owner re-entry never returned -- it waited on its own event")
+    check(inner == 4,
+          f"the owner re-entry returned {inner!r} instead of running the "
+          f"sweep body; whatever the interrupted sweep had not reached "
+          f"would have no collector before the handler exits")
+    check(getattr(inner, "completed", None) is False,
+          "the nested sweep claimed COMPLETENESS it cannot have: the "
+          "interrupted frame may be holding a record it claimed out of "
+          "_SPAWNED, which this sweep cannot see -- and completed=True "
+          "would disarm the atexit fallback over it")
+    check(outer == 4, f"the outer sweep result was lost: {outer!r}")
+finally:
+    lsp_client._force_kill_spawned_sweep = real_sweep
 
 # --- ONE budget for the whole teardown, whoever arrives first ---------
 # Each of the four entry points used to mint `now + budget`, so an entry

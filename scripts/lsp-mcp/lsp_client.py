@@ -1203,6 +1203,98 @@ def _signal_recorded(target, sig: int) -> bool:
     return False
 
 
+def _escalate_recorded(target, is_dead, sigs=None,
+                       deadline: Optional[float] = None,
+                       wait_after_last: bool = False) -> bool:
+    """Escalate a recorded child to death through ONE pinned handle.
+
+    Sends each signal in `sigs` (default SIGTERM then SIGKILL) through a
+    SINGLE descriptor held across the whole escalation, polling `is_dead`
+    BETWEEN them and stopping as soon as it answers True.
+
+    Nothing is waited for after the LAST signal unless `wait_after_last`
+    asks for it, because for a `Popen` child that wait IS a reap -- and a
+    caller whose next act is a group sweep needs the leader unreaped,
+    since a same-session hardened descendant is authorized by that leader
+    still being there (section 23).
+
+    Holding one handle is the entire point. `_signal_recorded` acquires
+    its own per call, and under descriptor pressure its acquisition ends
+    in the CLAIM path -- which removes the record from `_SPAWNED` and
+    closes its descriptor to send that one signal. Two calls in sequence
+    therefore spend the only identity the child had on the SIGTERM, and
+    the SIGKILL that follows finds no record and fails closed, leaving a
+    server that ignores SIGTERM alive exactly when descriptors are scarce
+    (Codex adversarial review, High -- reproduced). Fails closed the same
+    way `_signal_recorded` does: no handle, no signal, and the refusal is
+    counted rather than downgraded to a bare number."""
+    if sigs is None:
+        sigs = (signal.SIGTERM, signal.SIGKILL)
+    if isinstance(target, _SpawnRecord):
+        candidates = [e for e in list(_SPAWNED) if e is target]
+    else:
+        candidates = [e for e in list(_SPAWNED) if e.pid == target]
+        if len(candidates) > 1:
+            return False
+    for entry in candidates:
+        pid, ticks = entry.pid, entry.ticks
+        own = _borrow_pidfd(entry)
+        claimed = False
+        if own is None and entry.fd is not None:
+            try:
+                _SPAWNED.remove(entry)
+            except ValueError:
+                continue                # another thread owns it now
+            own, claimed = entry.fd, True
+        elif own is None:
+            if ticks is None:
+                continue                # no identity at all; fail closed
+            still = (lambda p, a=entry, t=ticks: (
+                a in _SPAWNED and proc_start_ticks(p) == t))
+            own = _own_pidfd(pid, still)
+        if own is None:
+            continue
+        sent = False
+        try:
+            for idx, sig in enumerate(sigs):
+                if is_dead():
+                    break
+                try:
+                    signal.pidfd_send_signal(own, sig)
+                    sent = True
+                except (ProcessLookupError, OSError):
+                    break
+                # Wait only BETWEEN signals, never after the last one.
+                # The wait is a poll of the leader, and polling reaps it
+                # -- which destroys the identity a same-session hardened
+                # descendant's ownership proof depends on (section 23:
+                # authorization is the recorded leader still being
+                # there). The caller collects the group FIRST and reaps
+                # the leader after; polling here reversed that and let a
+                # surviving old-generation worker read as a clean group
+                # (Codex re-adversarial, High).
+                last = idx + 1 >= len(sigs)
+                if deadline is None or (last and not wait_after_last):
+                    continue
+                # Each signal gets a SHARE of what is left, never all of
+                # it: spending the whole budget waiting out a SIGTERM the
+                # process ignored is how the SIGKILL that would have
+                # worked never gets sent.
+                remaining = max(0.0, deadline - time.monotonic())
+                until = time.monotonic() + remaining * (1.0 if last else 0.5)
+                while not is_dead() and time.monotonic() < until:
+                    time.sleep(min(0.02, max(0.0, until - time.monotonic())))
+        finally:
+            try:
+                os.close(own)
+            except Exception:
+                pass
+            if claimed:
+                entry.fd = None         # nobody else may close it now
+        return sent
+    return False
+
+
 def _kill_verified(pid: int, fd: Optional[int], still_ours) -> bool:
     """SIGKILL `pid`, but only while it is provably still the process we
     meant. Returns True if the signal was sent.
@@ -2236,7 +2328,13 @@ class SweepCount(int):
 # finally (all three through the bridge's bounded coordinator) and this
 # module's atexit hook -- and before section 25 nothing stopped two of
 # them running at once.
-_SWEEP_LOCK = threading.Lock()
+# RLock, not Lock, and for the reason the bridge's own _SHUTDOWN_LOCK
+# is one: a Python signal handler runs on the main thread, so a
+# termination arriving while that thread holds this lock re-enters
+# the wrapper through the handler and would block forever on a lock
+# only the interrupted frame can release -- reproduced to an exit-137
+# timeout despite a 50ms budget (Codex re-adversarial, High).
+_SWEEP_LOCK = threading.RLock()
 _SWEEP_OWNER: Optional[int] = None
 # The in-flight sweep, or None. A record rather than a bare Event because
 # the Event alone cannot tell "the sweep finished" apart from "the sweep
@@ -2252,34 +2350,11 @@ _SWEEP_OWNER: Optional[int] = None
 # budget doing legitimate work (Codex design review, High). Same rule the
 # bridge's _graceful_shutdown already applies to its own coordinator.
 _SWEEP_FLIGHT: Optional[dict] = None
-# How long past the owner's deadline a waiter keeps waiting. Sized for
-# the sweep's ONE deliberately ungated step (the recorded-leader pass:
-# a couple of syscalls per record), not for a wedged owner.
+# CAP on the slice reserved inside the caller's budget for the owner's
+# one deliberately ungated step (the recorded-leader pass: a couple of
+# syscalls per record). The actual reservation is a fraction of what
+# remains, so a short budget still leaves the sweep a usable slice.
 _SWEEP_OVERRUN_GRACE_S = 0.5
-
-
-def _mask_term_signals():
-    """Block SIGTERM/SIGINT/SIGHUP on THIS thread; return the old mask.
-
-    None when the platform has no pthread_sigmask (the call is then a
-    no-op and the owner-reentry guard below is the remaining net).
-
-    Why the owner masks at all: a Python signal handler runs on the main
-    thread, so a termination arriving while the main thread is sweeping
-    re-enters this sweep on the sweeping thread. Running it nested is not
-    an option -- the interrupted frame still holds its proof descriptor,
-    so the nested sweep competes for the remaining reserve slot and
-    reproduces the very split this single-flight exists to remove (Codex
-    design review, High). Masking makes that re-entry unreachable: the
-    signal stays pending and is delivered the moment the sweep finishes,
-    where it starts a fresh, uncontended sweep of its own."""
-    try:
-        blocked = [s for s in (getattr(signal, n, None)
-                               for n in ("SIGTERM", "SIGINT", "SIGHUP"))
-                   if s is not None]
-        return signal.pthread_sigmask(signal.SIG_BLOCK, blocked)
-    except Exception:
-        return None
 
 
 def force_kill_spawned(settle: float = 1.0,
@@ -2306,10 +2381,26 @@ def force_kill_spawned(settle: float = 1.0,
         its duration, publishes completion on the way out.
       * ANOTHER thread -- waits on the owner's completion against the
         OWNER's deadline, then reports completed.
-      * THE OWNER re-entering itself -- returns not-completed immediately
-        rather than deadlocking on its own event or running a nested
-        sweep. Effectively unreachable while the mask holds; it is the
-        answer for a platform without pthread_sigmask."""
+      * THE OWNER re-entering itself (a termination handler landing on
+        the sweeping thread) -- runs the sweep BODY directly, because
+        waiting on its own event is a deadlock and returning nothing
+        leaves the children the interrupted sweep had not yet reached
+        with no collector at all.
+
+    The nested run costs a degraded reserve -- the interrupted frame is
+    holding descriptors -- and that was the first design review's reason
+    to reject it. What that reasoning missed is that the interrupted
+    frame NEVER RESUMES: the only caller that re-enters this way is a
+    handler that ends in `os.kill`/`os._exit`. So the choice is a
+    degraded sweep against no sweep, not two sweeps competing.
+
+    Deferring the death instead was implemented and REMOVED. It has to
+    guarantee delivery from every path that can own a sweep -- the atexit
+    hook and any direct caller included -- and each round of that produced
+    another way to lose or double-deliver a termination (Codex
+    re-adversarial, High x3). Blocking termination process-wide before
+    any worker starts and routing it through `sigwait` is the real fix
+    and is a bridge-lifecycle change, already owned by section 23."""
     global _SWEEP_OWNER, _SWEEP_FLIGHT
     me = threading.get_ident()
     with _SWEEP_LOCK:
@@ -2337,7 +2428,29 @@ def force_kill_spawned(settle: float = 1.0,
             flight, role = _SWEEP_FLIGHT, "waiter"
 
     if role == "reentry":
-        return SweepCount(0, False)
+        # Runs, but NEVER claims completeness. It collects everything it
+        # can see, which is strictly better than returning empty-handed
+        # -- but it cannot see what the interrupted frame is holding. The
+        # claim path removes a record from _SPAWNED and carries its
+        # descriptor on that suspended stack, so a record caught between
+        # the remove and its signal is invisible here and _borrow_pidfd
+        # will not reissue it.
+        #
+        # What completed=False buys, precisely: the paths that RETURN
+        # through _shutdown_bounded (idle watchdog, main-finally) stop
+        # calling mark_teardown_complete() over a sweep that cannot be
+        # whole. It buys NOTHING on the signal path, which self-signals
+        # and os._exit()s -- both bypass atexit entirely, so there is no
+        # fallback left to preserve there (Codex re-adversarial, High:
+        # the earlier wording claimed protection it does not provide).
+        # The window itself is older than this section -- the pre-section
+        # -25 handler ran its own sweep over the same list(_SPAWNED) and
+        # equally could not see a claimed entry -- and closing it needs
+        # section 23's process-wide signal design.
+        return SweepCount(
+            _force_kill_spawned_sweep(settle=settle, deadline=deadline,
+                                      clock=clock),
+            False)
 
     if role == "waiter":
         done = flight["event"]
@@ -2348,18 +2461,14 @@ def force_kill_spawned(settle: float = 1.0,
             # here. Fall back to our own bound rather than comparing
             # across clocks.
             owner_deadline = deadline
-        if owner_deadline is not None:
-            # A bounded GRACE past the owner's deadline. Almost every
-            # operation in the sweep is deadline-checked, but the
-            # recorded-leader pass is deliberately ungated (cheap and
-            # certain first), so an owner can finish a little late. Since
-            # every caller here is about to end the process, cutting it
-            # at the exact deadline turns a 50ms overrun into an exit
-            # through a partial reap. This absorbs that without letting
-            # a waiter be held indefinitely: the alternative Codex asked
-            # for -- wait unconditionally on the event -- re-opens the
-            # unbounded stall _shutdown_bounded exists to close.
-            owner_deadline += _SWEEP_OVERRUN_GRACE_S
+        # NOT extended by any grace. The caller's deadline is the budget
+        # an external `timeout --kill-after` is counting in, so adding to
+        # it here bought the owner room out of somebody else's pocket: a
+        # waiter measured 0.506s past a shared 0.2s deadline, during
+        # which the killer can fire and orphan exactly what the sweep had
+        # not reached (Codex perf review, High). The grace is instead
+        # RESERVED INSIDE the budget below -- the owner works to an
+        # earlier deadline so its overrun still lands inside the bound.
         # Polled rather than Event.wait(timeout=...) so an INJECTED clock
         # bounds the wait in the same units it bounds everything else in
         # this module; a real-time wait against fake-time deadlines is a
@@ -2373,13 +2482,42 @@ def force_kill_spawned(settle: float = 1.0,
         with _SWEEP_LOCK:
             return SweepCount(0, bool(flight["ok"]))
 
-    old_mask = _mask_term_signals()
+    # The owner works to an EARLIER deadline than the one it published,
+    # keeping the grace inside the budget: its one deliberately ungated
+    # step (the recorded-leader pass) can then overrun without the
+    # waiters -- who stop at the real deadline -- cutting it short, and
+    # without anybody exceeding the bound the caller was promised.
+    work_deadline = deadline
+    if work_deadline is not None:
+        # A FRACTION of what is left, capped -- never a fixed floor that
+        # can exceed the budget. Subtracting a flat 0.5s handed the sweep
+        # an ALREADY-EXPIRED deadline whenever less than that remained,
+        # so it skipped the in-flight-spawn settle and both descendant
+        # fixpoint phases and ran only the ungated leader pass, while the
+        # wrapper still answered completed=True (Codex re-adversarial,
+        # High). This is the same floor-exceeds-budget bug the bridge's
+        # own `_shutdown_bounded` reserve was already fixed for; nothing
+        # here may allocate more time than exists.
+        _left = max(0.0, work_deadline - clock.now())
+        work_deadline -= min(_SWEEP_OVERRUN_GRACE_S, _left * 0.3)
     killed = 0
+    finished_in_budget = False
     try:
-        killed = _force_kill_spawned_sweep(settle=settle, deadline=deadline,
+        killed = _force_kill_spawned_sweep(settle=settle,
+                                           deadline=work_deadline,
                                            clock=clock)
+        # Returning is NOT finishing. The recorded-leader pass is ungated
+        # by design (section 22: cheap and certain first), so the body
+        # can hand back a full result well past the deadline it was
+        # given -- and publishing ok=True on that told a waiter, who had
+        # already stopped at the hard deadline and answered False, that
+        # somebody else had completed the work. `completed` therefore
+        # means finished INSIDE the budget, which is the only reading a
+        # caller about to end the process can act on (Codex
+        # re-adversarial, High).
+        finished_in_budget = (deadline is None or clock.now() <= deadline)
         with _SWEEP_LOCK:
-            flight["ok"] = True
+            flight["ok"] = finished_in_budget
     finally:
         with _SWEEP_LOCK:
             _SWEEP_OWNER = None
@@ -2388,12 +2526,7 @@ def force_kill_spawned(settle: float = 1.0,
         # event can immediately become the next owner rather than finding
         # the slot still held by a finished sweep.
         flight["event"].set()
-        if old_mask is not None:
-            try:
-                signal.pthread_sigmask(signal.SIG_SETMASK, old_mask)
-            except Exception:
-                pass
-    return SweepCount(killed, True)
+    return SweepCount(killed, finished_in_budget)
 
 
 _TEARDOWN_COMPLETE = False
@@ -3906,11 +4039,17 @@ class LspSubprocess:
         if proc.poll() is not None:
             return
         try:
-            _signal_recorded(self._spawn_record or proc.pid, signal.SIGKILL)
+            # wait_after_last: this caller has no group sweep of its own
+            # to run first -- `_confirm_dead_late` collects immediately
+            # after -- so it does want the death observed before it
+            # returns. `shutdown()` deliberately does NOT, because its
+            # unconditional `_reap_group` has to see an unreaped leader.
+            _escalate_recorded(self._spawn_record or proc.pid,
+                               lambda: proc.poll() is not None,
+                               sigs=(signal.SIGKILL,), deadline=deadline,
+                               wait_after_last=True)
         except Exception:
             pass
-        while proc.poll() is None and time.monotonic() < deadline:
-            time.sleep(0.02)
 
     def _confirm_dead_late(self, timeout: float) -> bool:
         """Re-answer the confirmed-dead question on an idempotent call.
@@ -3929,8 +4068,15 @@ class LspSubprocess:
         if proc is None:
             self._confirmed_dead = True
             return True
-        deadline = time.monotonic() + max(0.2, timeout)
-        if proc.poll() is None:
+        # The CALLER's budget, with no floor under it. A 0.2s minimum
+        # looked harmless and made every idempotent call cost at least
+        # that: reap_all_live enters with whatever the shared deadline
+        # has left, sometimes under 50ms, and this path then polled for
+        # 200 -- overrunning the very budget it was handed a slice of
+        # (Codex perf review, Medium, measured 204-208ms for 1-50ms
+        # requests).
+        deadline = time.monotonic() + max(0.0, timeout)
+        if proc.poll() is None and timeout > 0.0:
             self._retry_pinned_kill(proc, deadline)
         if proc.poll() is None:
             return False
@@ -4072,34 +4218,41 @@ class LspSubprocess:
         # collection (Codex perf review, Medium).
         group_deadline = shutdown_deadline
         if proc.poll() is None:
+            # Signal the leader through its PINNED identity, not by
+            # number. proc.poll() was checked above, and between that
+            # check and the signal the reader thread can reap the leader
+            # -- after which proc.terminate() is just os.kill() on a
+            # number that may already belong to somebody else (Codex
+            # adversarial review, High; the killpg pair this replaced had
+            # the same defect at the group level).
+            #
+            # ONE handle across the whole SIGTERM-to-SIGKILL escalation.
+            # Two independent _signal_recorded calls spend the record on
+            # the first signal whenever acquisition takes the claim path,
+            # so a server that ignores SIGTERM survived the SIGKILL that
+            # could not then be addressed (Codex adversarial review,
+            # High).
             try:
-                # Signal the leader through its PINNED identity, not by
-                # number. proc.poll() was checked above, and between that
-                # check and the signal the reader thread can reap the
-                # leader -- after which proc.terminate() is just
-                # os.kill() on a number that may already belong to
-                # somebody else (Codex adversarial review, High; the
-                # killpg pair this replaced had the same defect at the
-                # group level).
-                _signal_recorded(self._spawn_record or proc.pid,
-                                 signal.SIGTERM)
+                _escalate_recorded(self._spawn_record or proc.pid,
+                                   lambda: proc.poll() is not None,
+                                   deadline=min(group_deadline,
+                                                time.monotonic()
+                                                + max(timeout, 0.1)))
             except Exception:
                 pass
+            # DESCENDANTS FIRST, leader reap second. Unconditional: a
+            # leader that died to the SIGKILL is exactly the case whose
+            # workers need collecting, and its identity is still provable
+            # only while it is unreaped. Anything the leader forked goes
+            # through the ownership-verified group sweep.
+            _reap_group(proc.pid, gen=self._gen_id,
+                        deadline=group_deadline)
             try:
-                proc.wait(timeout=min(timeout, 1.0))
+                proc.wait(timeout=1.0)
             except subprocess.TimeoutExpired:
-                _signal_recorded(self._spawn_record or proc.pid,
-                                 signal.SIGKILL)
-                # Anything the leader forked goes through the
-                # ownership-verified group sweep instead.
-                _reap_group(proc.pid, gen=self._gen_id,
-                            deadline=group_deadline)
-                try:
-                    proc.wait(timeout=1.0)
-                except subprocess.TimeoutExpired:
-                    # Child is stuck in uninterruptible sleep; give up
-                    # and let the OS reap it at our exit.
-                    pass
+                # Child is stuck in uninterruptible sleep; give up and
+                # let the OS reap it at our exit.
+                pass
 
         # (4) Close remaining pipes + let the reader thread notice EOF.
         for f in (getattr(proc, "stdout", None), getattr(proc, "stderr", None)):

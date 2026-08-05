@@ -675,10 +675,16 @@ def _get_or_spawn(lang: str, workspace_root: Path) -> LspSubprocess:
             )
         with _LIVE_LSPS_LOCK:
             inst = _LIVE_LSPS.get(key)
-        if inst is None or not inst.alive:
+        # _inst_usable, not `inst.alive`. A respawn owner that refuses to
+        # publish (lsp-dispose-unconfirmed) deliberately LEAVES the old
+        # instance published, and the reader-dead-but-leader-alive shape
+        # passes an aliveness check -- so the waiter was handed back the
+        # very instance the owner had just declined to replace, with its
+        # transport already closed (Codex adversarial review, Medium).
+        if not _inst_usable(inst):
             raise LspError(
                 "lsp-spawn-failed",
-                "concurrent spawn owner did not publish a live instance",
+                "concurrent spawn owner did not publish a usable instance",
                 lang=lang,
             )
         return inst
@@ -5117,7 +5123,11 @@ def _diag(msg: str) -> None:
 
 
 _TEARDOWN_DEADLINE: Optional[float] = None
-_TEARDOWN_DEADLINE_LOCK = threading.Lock()
+# RLock, like _SHUTDOWN_LOCK above and for the same reason: a signal
+# handler running on the main thread re-enters _shutdown_bounded, and
+# a plain Lock held by the interrupted frame stalls the whole teardown
+# until an external SIGKILL (Codex re-adversarial, High, reproduced).
+_TEARDOWN_DEADLINE_LOCK = threading.RLock()
 
 
 def _teardown_deadline(proposed: Optional[float] = None) -> float:
