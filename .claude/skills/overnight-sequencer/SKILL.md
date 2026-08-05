@@ -469,6 +469,40 @@ information or judgment; none of this weakens a gate):**
   there so the doctrine re-read stays small). Then `phase TRIAGE` and pick the
   next file (step 2).
 
+- **Drain ONE already-DONE file's deferred-item backlog per advance.** FILE_CLOSE
+  (step 6) only reaches files that still close. Measured 2026-08-05: of the 1,595
+  `open-in-deferred` items, **806 sit in NEEDS_WORK files (FILE_CLOSE reaches
+  those) but 702 sit in 28 files the oracle already calls DONE** -- and a DONE
+  file is never revisited, so nothing would ever repair them.
+
+  That remainder is not optional: `phase FIXPOINT` runs the reachability gate and
+  **REFUSES completion while any of them exist** (`todo-reachability.py` exits 1
+  on `open-in-deferred`). So the choice is not whether to do this work but WHEN.
+  Left alone it arrives as one ~700-item batch at the finish line, with every
+  file's context long gone -- which is exactly the pressure that produces a
+  bulk-flip, the one repair explicitly forbidden. Draining one file per advance
+  spreads it across the pass and keeps each batch small enough to judge properly.
+
+  ```bash
+  # DONE files that still carry open-in-deferred items (pick ONE, smallest first)
+  python3 scripts/todo-reachability.py --json | python3 -c '
+  import json,re,subprocess,sys
+  d=json.load(sys.stdin)
+  for f,rs in d.items():
+      n=sum(int(m.group(1)) for r in rs if r[0]=="open-in-deferred"
+            and (m:=re.match(r"^(\d+) open",r[2])))
+      if not n: continue
+      o=json.loads(subprocess.run(["python3",".claude/hooks/sequencer_triage.py",
+          "--classify",f],capture_output=True,text=True).stdout)
+      if o.get("file_class")=="DONE": print(n,f)' | sort -n | head -3
+  ```
+
+  Apply the SAME per-item judgment as step 6 (park with a named blocker / leave a
+  standing task alone / complete with evidence / honest remainder) -- and the same
+  **NEVER bulk-flip**. Commit it as a `todo:` bookkeeping commit, separate from any
+  section ship. One file per advance; do not batch several, and never let it
+  displace the actual section work.
+
 ## Self-improvement filing (standing rule -- record, then continue)
 
 The run is expected to be self-observing: every runner defect, cost pattern, or improvement it cannot apply unattended is FILED in the same turn it is observed, then the run continues. A finding carried in-context to "report later" dies with the segment. Two capture surfaces, both OUTSIDE the traversal (nothing filed there is implemented by the run):
