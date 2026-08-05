@@ -97,7 +97,7 @@ title: "TODO-08 -- Automation Hardening (Skill / Hook / MCP / Codex Integration)
 | ⭐  |   29  |  §29    | Standardize PreToolUse prefix-allowlist across gates (partner to §23 env-scanner)            | §3, §4, §17, §20, §23      |  [x]   |
 | ⭐  |   30  |  §30    | Shell-aware Codex dispatch segmentation in `_review_kind` (close §25 round-7 deferred)       | §25                        |  [x]   |
 | 💎  |   31  |  §31    | Post-commit hook concurrency: serialize build/smoke via flock (end stomp-stamp races)        | --                         |  [x]   |
-| ⭐  |   32  |  §32    | Grammar-accurate shell segmentation for the gate exemptions (retire the hand-rolled walk)    | §30                        |  [ ]   |
+| ⭐  |   32  |  §32    | Grammar-accurate shell segmentation for the gate exemptions (retire the hand-rolled walk)    | §30                        |  [/]   |
 
 > 💎 = parity work -- standard developer-tooling hygiene (audit scripts, drift detection, doc sync). Linux kernel ships `MAINTAINERS` + `get_maintainer.pl`; Windows has the engineering-systems-internal equivalent. We need it because skill / hook / MCP wiring drifts silently.
 > ⭐ = competitive edge -- enforcing reviewer-contract discipline at the Bash / Edit tool boundary, hard-gating skill-pipeline steps, cross-wiring two AI assistants (Claude Code + Codex CLI) into the same MCP server set, and observed-not-claimed step-state telemetry are novel ground. Neither Win11 nor Linux ships AI-tooling automation at this layer; among AI dev tools (Cursor, Aider, Continue, Copilot Workspace) only `nesaminua/claude-code-lsp-enforcement-kit` ships a comparable state-binding pattern as of early 2026.
@@ -1123,11 +1123,11 @@ The PreToolUse gates decide their exemptions by hand-scanning command text. [`.c
 > [!NOTE]
 > Filed from the D00 T04 section 34 adversarial rounds (2026-07-30). The gate is a COST control -- it stops the unattended run flooding its own context with bare build/test output -- not a safety or security boundary, and the exploiting shapes all have to be written deliberately. That is why this is a tracked follow-up rather than a section-34 blocker. The interim position is already fail-closed in both directions: an unsplittable command that names a suite BLOCKS, and any command using grammar the walk does not model (`#`, `$((`, `case`/`esac`) is declared unsplittable rather than answered wrongly. A wrong split is worse than no split, because it hands the caller confident segments that hide a bare suite inside a fragment it then exempts.
 
-- [ ] Replace the hand-rolled walk in `command_segments()` with a grammar-accurate parse, so segmentation is correct rather than fail-closed for `case`/`esac`, comments, arithmetic, and nested substitutions
+- [/] operator-gated: Replace the hand-rolled walk in `command_segments()` with a grammar-accurate parse, so segmentation is correct rather than fail-closed for `case`/`esac`, comments, arithmetic, and nested substitutions
       Covers `_split_raw_segments()` and `_take_substitution()` alongside it. Prefer a vendored pure-python shell parser (`bashlex` or equivalent) over hand-extending the walk: the walk is at the point where each new construct costs another special case and the special cases interact. Keep the fail-closed fallback for anything the parser itself rejects. -> XREF: `00-infrastructure/TODO-04-usermode-test-framework.md` §34 (item: "Detect a live orphan before touching any shared boot state, and refuse the run naming the pid rather than interleaving with it")
-- [ ] Retire `_has_unmodelled_grammar()` once the parser lands, converting its four constructs from "refuse to answer" into asserted-correct segmentations
+- [/] operator-gated: Retire `_has_unmodelled_grammar()` once the parser lands, converting its four constructs from "refuse to answer" into asserted-correct segmentations
       The regressions added in section 34 (the `build_offload_grammar` cases) assert BLOCK today because the splitter declines to model them; with a real parser they should assert the precise segment set instead, and the legitimate-prompt cases beside them must keep passing unchanged.
-- [ ] Anchor the wrapper exemption on parsed argv rather than an anchored regex, so `run-artifact.sh` earns it only as the segment's actual executable
+- [/] operator-gated: Anchor the wrapper exemption on parsed argv rather than an anchored regex, so `run-artifact.sh` earns it only as the segment's actual executable
       `_RUN_ARTIFACT_RE` in [`.claude/hooks/build_offload_reminder.py`](../../.claude/hooks/build_offload_reminder.py) is anchored to the segment start and rejects `-c`, which closes the known shapes, but it is still a regex over text rather than a check on the command being run.
 > **Tactical predecessor shipped 2026-08-05** (`9feb1062`, `57e44841`, and the v08 close-out `fe819e4d`). Five separate v08 runner findings turned out to be ONE root cause -- a hook reading a command line as a STRING where it needed an ARGV -- and were fixed point-by-point in exactly the code this section wants replaced wholesale:
 > - `build_offload_reminder._tokens_invocation` now treats `-n`/`--noexec` (incl. clusters) as non-executing, so `bash -n <script>` is not a suite run. Filed THREE times in v08.
@@ -1138,11 +1138,13 @@ The PreToolUse gates decide their exemptions by hand-scanning command text. [`.c
 >
 > **What this section still owes, unchanged:** all of the above are hand-rolled special cases on top of the same hand-rolled walk. They make the CURRENT false positives stop; they do not make segmentation grammar-correct, and each one is another special case of the kind this section exists to retire. `_has_unmodelled_grammar()` is still the fail-closed backstop for `case`/`esac` and friends.
 
-- [ ] Commit: `"hooks: parse shell with a real grammar for the gate exemptions"`
+- [/] operator-gated: Commit: `"hooks: parse shell with a real grammar for the gate exemptions"`
 
 **Test checkpoint:** every `build_offload_*` case in `scripts/test-tooling.sh` still passes; the four `build_offload_grammar` shapes assert a correct segmentation rather than a fail-closed block; a bare suite invocation cannot be hidden in any shape the parser accepts. Test on: host tooling only (no QEMU dependency).
 
 ---
+
+> **Deferred:** [M] operator-gated -- every deliverable here edits `.claude/hooks/**`, which the unattended run is forbidden to touch, so no run can ever implement this section. It is not blocked on another TODO; it is blocked on an ATTENDED session. Reached and correctly parked rather than discovered mid-pass (2026-08-05).
 
 ## Format Quick Reference
 
