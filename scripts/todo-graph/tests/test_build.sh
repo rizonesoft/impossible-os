@@ -2787,9 +2787,9 @@ python3 "$BUILD_PY" --quiet --root "$SI_TREE/todo" --output "$SI_CACHE" \
 if [ $? != 0 ]; then
     t_fail "stamped_items: build.py failed on fixture (log: $(tail -3 $TMP_DIR/si.log))"
 else
-    if python3 - <<PY 2>/dev/null
-import json, sys
-d = json.load(open("$SI_CACHE"))
+      if SI_CACHE="$SI_CACHE" python3 - <<'PY' 2>/dev/null
+import os, json, sys
+d = json.load(open(os.environ["SI_CACHE"]))
 assert len(d) == 1, f"expected 1 node got {len(d)}"
 node = d[0]
 items = node.get("stamped_items")
@@ -2954,11 +2954,11 @@ fi
 # Sub-test 14i: shared file-line cache is actually wired (resolve_symbol +
 # is_stub_body share _load_file_lines). Two consecutive lookups for the
 # same file must register cache hits.
-SI_CACHE_HIT=$(python3 - <<PY 2>&1
-import sys
-sys.path.insert(0, "$REPO_ROOT/scripts/todo-graph")
+SI_CACHE_HIT=$(REPO_ROOT="$REPO_ROOT" SI_TREE="$SI_TREE" python3 - <<'PY' 2>&1
+import os, sys
+sys.path.insert(0, os.environ["REPO_ROOT"] + "/scripts/todo-graph")
 import resolve_symbol as rs
-fixture = "$SI_TREE/src/sample.c"
+fixture = os.environ["SI_TREE"] + "/src/sample.c"
 with open(fixture, "w") as f:
     f.write("int real(void)\n{\n    int a = 1;\n    int b = a + 2;\n    return b;\n}\n")
 rs.cache_clear()
