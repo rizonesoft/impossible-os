@@ -93,6 +93,148 @@ def _build_def_head_re(symbol: str) -> "re.Pattern[str]":
     )
 
 
+# A declarator modifier that may sit between a split return type and the
+# symbol: a GNU attribute, or a calling-convention macro. MEASURED on the live
+# tree 2026-08-05: ZERO definitions currently use this shape (EFIAPI appears
+# only inside typedefs such as src/boot/uefi/efi.h:173, which begin with
+# `typedef` and are correctly refused). It is supported because section 10
+# names `__attribute__((...))`-prefixed definitions explicitly, so the value is
+# forward-looking robustness rather than a coverage win today.
+_DECL_MODIFIER_RE = re.compile(
+    r"^\s*(?:__attribute__\s*\(\([^()]*(?:\([^()]*\)[^()]*)*\)\)"
+    r"|EFIAPI|UEFI_EFIAPI|WINAPI|NTAPI|[A-Z][A-Z0-9_]*CALL)\s+"
+)
+
+# A physical line that carries ONLY return-type tokens -- the leading line(s)
+# of a split function head. Deliberately the same character class as the
+# single-line head regex, so pass 2 cannot accept a token shape pass 1 would
+# have rejected.
+_TYPE_ONLY_LINE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_*\s]*$")
+
+_WINDOW_LINES = 3  # terminal line + up to 2 preceding type-only lines
+
+
+def _mask_line_comments(line: str) -> str:
+    """Blank out `//` and `/* ... */` spans with SPACES, preserving length.
+
+    Offset-preserving on purpose. The stripping variant (`_strip_line_comments`)
+    shortens the line, so a column measured on the stripped text does not index
+    the raw text -- and pass 2 needs a RAW column to hand `_confirm_definition`.
+    Computing that column by searching the raw line for the symbol instead is
+    what broke: a comment or attribute containing the same `symbol(` earlier on
+    the line captured the search, the walk started at the wrong parenthesis, and
+    the real definition was silently dropped. Reproduced on both
+    `/* foo(legacy) */ foo(void)` and `__attribute__((foo())) foo(void)`.
+    Masking keeps match offsets valid, which removes the search entirely.
+    """
+    out = list(line)
+    i = 0
+    n = len(line)
+    while i < n:
+        if line[i:i + 2] == "//":
+            for k in range(i, n):
+                out[k] = " "
+            break
+        if line[i:i + 2] == "/*":
+            end = line.find("*/", i + 2)
+            stop = n if end < 0 else end + 2
+            for k in range(i, stop):
+                out[k] = " "
+            i = stop
+            continue
+        i += 1
+    return "".join(out)
+
+
+def _mask_decl_modifiers(text: str) -> str:
+    """Blank a bounded run of leading declarator modifiers with SPACES so the
+    symbol can lead the line for matching while offsets stay raw-accurate."""
+    for _ in range(4):  # bounded: no unbounded rescan on adversarial input
+        m = _DECL_MODIFIER_RE.match(text)
+        if not m:
+            break
+        text = " " * m.end() + text[m.end():]
+    return text
+
+
+def _confirm_definition(lines: list, head_idx: int, after_paren_col: int):
+    """Walk forward from just past a candidate head's opening `(` and decide
+    what the candidate really is. Returns (kind, body_open_idx) where kind is
+    "def" (body_open_idx set), "decl", or "reject".
+
+    PAREN-DEPTH AWARE, unlike the original walk this replaces. That walk took
+    the first `{` appearing before the first `;` anywhere in a 16-line window,
+    which mis-reads two real shapes:
+      * `int\\nfoo(struct Local { int v; } *arg)` -- the PARAMETER struct's
+        brace was taken as the function body, yielding a wrong line range.
+      * `TYPE\\nSYMBOL(args) = { ... };` -- an object initializer produced by a
+        function-like macro was accepted as a definition, because `=` was
+        ignored entirely.
+    Both are latent in the single-line path too; the fix applies to both passes
+    and the corpus snapshot (corpus_resolution_snapshot.py) is what proves no
+    existing mapping moved as a result.
+
+    K-and-R definitions are explicitly DECLINED, not supported: a parameter
+    declaration`s `;` at depth 0 classifies as "decl". This tree is modern C
+    and has none; supporting them would widen the accept surface for no gain.
+    """
+    depth = 1  # we start immediately inside the parameter list
+    in_block_comment = False
+    for j in range(head_idx, min(len(lines), head_idx + 16)):
+        raw = lines[j][after_paren_col:] if j == head_idx else lines[j]
+        # Block-comment state must survive across lines, so clean manually
+        # rather than through _strip_line_comments (which is single-line).
+        cleaned = []
+        k = 0
+        while k < len(raw):
+            two = raw[k:k + 2]
+            if in_block_comment:
+                if two == "*/":
+                    in_block_comment = False
+                    k += 2
+                else:
+                    k += 1
+                continue
+            if two == "/*":
+                in_block_comment = True
+                k += 2
+                continue
+            if two == "//":
+                break
+            cleaned.append(raw[k])
+            k += 1
+        for ch in "".join(cleaned):
+            if depth > 0:
+                if ch == "(":
+                    depth += 1
+                elif ch == ")":
+                    depth -= 1
+                continue
+            # depth == 0: the parameter list has closed.
+            if ch.isspace():
+                continue
+            if ch == "(":
+                # A trailing attribute group, e.g. `__attribute__((noreturn))`.
+                depth += 1
+                continue
+            if ch == "{":
+                return ("def", j)
+            if ch == ";":
+                return ("decl", None)
+            if ch.isalnum() or ch == "_":
+                # Attribute / calling-convention identifier between the
+                # parameter list and the body. Keep walking.
+                continue
+            # Anything else at depth 0 -- notably `=` (an object initializer
+            # produced by a function-like macro) or `,` (a declarator list) --
+            # means this is not a function definition. ONE reject path, so a
+            # mutation of it is individually provable: an earlier draft also
+            # special-cased `,=` above, and the two branches shadowed each
+            # other so neither could be shown to matter on its own.
+            return ("reject", None)
+    return ("reject", None)
+
+
 def resolve_symbol(file_path: str, symbol: str) -> Optional[Tuple[str, int, int]]:
     """Return (file_path, line_start, line_end) for the function `symbol`
     defined in `file_path`, or None if not found / not a real function
@@ -113,59 +255,73 @@ def resolve_symbol(file_path: str, symbol: str) -> Optional[Tuple[str, int, int]
     lines = list(full_tuple[: _DEF_HEAD_LIMIT + _BODY_SCAN_LIMIT])
 
     head_re = _build_def_head_re(symbol)
+    head_window = lines[:_DEF_HEAD_LIMIT]
+
+    # ---- PASS 1: single-line head. UNCHANGED CANDIDATE SET. -------------
     # Collect EVERY candidate head; keep walking past prototypes that turn
     # out to be declarations (Codex F2: `static int foo(void);` followed
     # by the real definition is a common C pattern). The head_idx that
-    # carries the body opener wins; if none do, return None.
-    head_candidates = [
-        i for i, ln in enumerate(lines[:_DEF_HEAD_LIMIT]) if head_re.match(ln)
-    ]
-    if not head_candidates:
-        return None
-
+    # carries the body opener wins; if none do, fall through to pass 2.
     head_idx = -1
     body_open_idx = -1
-    for cand in head_candidates:
-        in_block_comment = False
-        local_body_idx = -1
-        is_decl = False
-        for j in range(cand, min(len(lines), cand + 16)):
-            raw = lines[j]
-            if in_block_comment:
-                if "*/" in raw:
-                    raw = raw.split("*/", 1)[1]
-                    in_block_comment = False
-                else:
-                    continue
-            if j == cand:
-                head_match = head_re.match(raw)
-                if head_match:
-                    raw = raw[head_match.end():]
-            raw = _strip_line_comments(raw)
-            if "/*" in raw and "*/" not in raw:
-                in_block_comment = True
-                raw = raw.split("/*", 1)[0]
-            stripped = raw.strip()
-            if not stripped:
-                continue
-            brace_pos = stripped.find("{")
-            semi_pos = stripped.find(";")
-            if brace_pos >= 0 and (semi_pos < 0 or brace_pos < semi_pos):
-                local_body_idx = j
-                break
-            if semi_pos >= 0:
-                is_decl = True
-                break
-        if local_body_idx >= 0:
-            head_idx = cand
-            body_open_idx = local_body_idx
+    for cand, ln in enumerate(head_window):
+        m = head_re.match(ln)
+        if not m:
+            continue
+        kind, local_body_idx = _confirm_definition(lines, cand, m.end())
+        if kind == "def":
+            head_idx, body_open_idx = cand, local_body_idx
             break
-        # is_decl=True: candidate was a forward declaration; keep walking.
-        # local_body_idx<0 and not is_decl: ambiguous head (no terminator
-        # in 16-line window); skip it too.
+        # "decl": forward declaration -- keep walking to the real definition.
+        # "reject": not a function definition -- skip it too.
+
+    # ---- PASS 2: split head, FALLBACK ONLY. -----------------------------
+    # Runs only when pass 1 found nothing, so a resolution pass 1 can make is
+    # never displaced and the resolved COUNT cannot fall by construction. That
+    # ordering is the whole reason this section's first attempt was reverted
+    # (5cff59cc): it REPLACED the single-line matcher and took live coverage
+    # from 52/186 to 1/186 while its own synthetic fixtures passed.
+    if head_idx < 0:
+        for term in range(1, len(head_window)):
+            # MASKED, not stripped: every offset below is a RAW-line offset, so
+            # `lead.end()` can be handed straight to _confirm_definition with no
+            # search back into the raw text.
+            body = _mask_decl_modifiers(_mask_line_comments(head_window[term]))
+            # The symbol must OPEN the terminal line (after any modifiers and
+            # an optional pointer star). Without this, a call statement such as
+            # `total = foo(x);` becomes a candidate head.
+            lead = re.match(r"^\s*\*?\s*" + re.escape(symbol) + r"\s*\(", body)
+            if not lead:
+                continue
+            # Walk back over up to _WINDOW_LINES-1 preceding type-only lines.
+            prefix_parts = []
+            for back in range(1, _WINDOW_LINES):
+                pi = term - back
+                if pi < 0:
+                    break
+                prev = _mask_line_comments(head_window[pi]).strip()
+                if not prev:
+                    break
+                if not _TYPE_ONLY_LINE_RE.match(prev):
+                    break
+                prefix_parts.insert(0, prev)
+                # A single type-only line is enough to make a valid head; keep
+                # collecting only while the joined text still fails to match.
+                joined = " ".join(prefix_parts) + " " + body.strip()
+                if not head_re.match(joined):
+                    continue
+                # Confirm through the SAME depth-aware walk pass 1 uses.
+                # `lead.end()` is already a raw-line column (see
+                # _mask_line_comments) and sits just past the opening paren,
+                # which is exactly where _confirm_definition expects to start.
+                kind, local_body_idx = _confirm_definition(lines, term, lead.end())
+                if kind == "def":
+                    head_idx, body_open_idx = pi, local_body_idx
+                    break
+            if head_idx >= 0:
+                break
+
     if head_idx < 0 or body_open_idx < 0:
-        return None
-    if body_open_idx < 0:
         return None
 
     # Brace-count from the body opener to find the body end.
@@ -217,10 +373,27 @@ def is_stub_body(
     # straddles, body open may be on a later line. The marker scan is
     # explicit: any line in the head-through-body-open range carrying
     # /* INTENTIONAL-STUB: */ disables the check.
+    # PAREN-DEPTH AWARE, for the same reason _confirm_definition is. Taking the
+    # FIRST `{` in the range picks the wrong line for
+    # `foo(struct Local { int v; } *arg)`: it names the PARAMETER list's brace
+    # as the body opener. That line number is not cosmetic -- it is what Check 7
+    # prints as the finding location AND the only line the INTENTIONAL-STUB
+    # allowlist is read from, so a marker on the real opener is never seen and a
+    # deliberate stub becomes a blocking false positive. Latent for single-line
+    # heads too; split-head support made it reachable more often.
     body_open_line_idx = None  # 0-based within body_text_lines
+    paren_depth = 0
     for i, ln in enumerate(body_text_lines):
-        if "{" in _strip_line_comments(ln):
-            body_open_line_idx = i
+        for ch in _strip_line_comments(ln):
+            if ch == "(":
+                paren_depth += 1
+            elif ch == ")":
+                if paren_depth > 0:
+                    paren_depth -= 1
+            elif ch == "{" and paren_depth == 0:
+                body_open_line_idx = i
+                break
+        if body_open_line_idx is not None:
             break
     if body_open_line_idx is None:
         return None

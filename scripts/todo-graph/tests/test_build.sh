@@ -2985,6 +2985,262 @@ else
     t_fail "resolve_symbol: shared file cache not wired ($SI_CACHE_HIT)"
 fi
 
+# ---------------------------------------------------------------------------
+# Sub-tests 14j-14r: SPLIT FUNCTION-HEAD RESOLUTION (TODO-06 section 10).
+#
+# These drive resolve_symbol() directly rather than through the lint, because
+# what must be pinned is the exact (file, line_start, line_end) tuple -- not
+# merely "a finding appeared". Section 10's FIRST attempt was reverted
+# (5cff59cc) precisely because fixtures that only asserted the new shapes parse
+# let a 52 -> 1 collapse in already-working shapes ship green. So every positive
+# below asserts an EXACT range, and 14n-14r are the negative shapes.
+SPLIT_PY="$SI_TREE/split_head_check.py"
+cat > "$SPLIT_PY" <<'PY'
+import os, sys
+sys.path.insert(0, os.environ["REPO_ROOT"] + "/scripts/todo-graph")
+import resolve_symbol as rs
+src, sym = sys.argv[1], sys.argv[2]
+rs.cache_clear()
+res = rs.resolve_symbol(src, sym)
+print("NONE" if res is None else f"{res[1]}:{res[2]}")
+PY
+
+split_case() {  # <label> <symbol> <expected "start:end" or NONE> <<heredoc body
+    local label="$1" sym="$2" want="$3"
+    cat > "$SI_TREE/src/split.c"
+    local got
+    got="$(REPO_ROOT="$REPO_ROOT" python3 "$SPLIT_PY" "$SI_TREE/src/split.c" "$sym" 2>&1)"
+    if [ "$got" = "$want" ]; then
+        t_pass "resolve_symbol split-head: $label"
+    else
+        t_fail "resolve_symbol split-head: $label; want=$want got=$got"
+    fi
+}
+
+# 14j POSITIVE: return type on its own line.
+split_case "return type on its own line" foo_split "1:5" <<'EOF'
+static int
+foo_split(void)
+{
+    return 0;
+}
+EOF
+
+# 14k POSITIVE: pointer return type whose `*` binds to the type line.
+split_case "pointer return type, star on type line" foo_ptr "1:5" <<'EOF'
+const struct thing *
+foo_ptr(int a)
+{
+    return 0;
+}
+EOF
+
+# 14l POSITIVE: pointer star leading the SYMBOL line.
+split_case "pointer star leads the symbol line" foo_star "1:5" <<'EOF'
+const struct thing
+*foo_star(int a)
+{
+    return 0;
+}
+EOF
+
+# 14m POSITIVE: __attribute__ between the split return type and the symbol.
+# MEASURED: zero live definitions use this shape today (EFIAPI appears only in
+# typedefs); it is covered because section 10 names it explicitly.
+split_case "__attribute__ prefix on the symbol line" foo_attr "1:5" <<'EOF'
+static void
+__attribute__((noinline)) foo_attr(void)
+{
+    return;
+}
+EOF
+
+# 14n POSITIVE: a split PROTOTYPE must walk past to the real definition --
+# the false-positive bar section 9 set, now on the split path. Mirrors the real
+# shape at src/boot/uefi/bootx64.c:9866 (prototype) vs :13024 (definition).
+split_case "split prototype walks past to the definition" foo_proto "4:8" <<'EOF'
+static int
+foo_proto(void);
+
+static int
+foo_proto(void)
+{
+    return 0;
+}
+EOF
+
+# 14o NEGATIVE: a call statement never resolves as a head.
+#
+# HONEST LABEL: this is a BEHAVIOR PIN, not a mutation-provable guard test, and
+# it is the one fixture here that no single mutation makes fail. A call site is
+# refused at THREE independent layers -- the lead anchor (the symbol must open
+# its physical line), the type-only bound on the preceding line, and the shared
+# head regex (whose character class admits neither `;` nor `=`). Measured by
+# breaking the first two together: the case still resolves to NONE. Its value is
+# as a guard against a FUTURE loosening of all three, not as proof that any one
+# of them is load-bearing today.
+#
+# Said explicitly because a section-10 fixture has already shipped once
+# "passing without testing anything" (f11c3bcc), and the honest response to
+# that lesson is labelling what a fixture proves -- not quietly keeping a green
+# check whose description overstates it. The guards that ARE individually
+# provable are 14j-14n (fail when pass 2 is disabled), 14p (fails when the
+# depth-0 reject path is removed), 14q (fails when depth-awareness is removed),
+# and 14s (fails when pass 1 is displaced).
+split_case "call statement is not a split head (lead anchor)" foo_call "NONE" <<'EOF'
+static void caller(void)
+{
+    int total;
+    total = foo_call(1);
+}
+EOF
+
+# 14p NEGATIVE: an object initializer produced by a function-like macro.
+# The old confirmation walk ignored `=` entirely and took the initializer
+# brace as a function body (Codex design F2).
+split_case "object initializer is not a definition" foo_init "NONE" <<'EOF'
+static const struct ops
+foo_init(A) = { .x = 1 };
+EOF
+
+# 14q NEGATIVE: a struct defined INSIDE the parameter list must not have its
+# brace mistaken for the function body (Codex design F2). Depth-aware walk.
+split_case "parameter-scope struct brace is not the body" foo_param "1:5" <<'EOF'
+static int
+foo_param(struct Local { int v; } *arg)
+{
+    return 0;
+}
+EOF
+
+# 14r NEGATIVE: function-pointer typedef -- terminal line opens with `(`, so
+# the symbol never leads it.
+split_case "function-pointer typedef is not a definition" foo_fp "NONE" <<'EOF'
+typedef int
+(*foo_fp)(int a, int b);
+EOF
+
+# 14s REGRESSION GUARD: the single-line path still resolves. This is the
+# assertion whose absence let the reverted attempt ship -- it proves pass 1
+# was not displaced by adding pass 2.
+split_case "single-line head still resolves (pass 1 intact)" foo_one "1:4" <<'EOF'
+static int foo_one(void)
+{
+    return 0;
+}
+EOF
+
+# 14t OFFSET SAFETY: an attribute expression containing the SAME `symbol(`
+# earlier on the terminal line. Pass 2 matches a comment/modifier-masked line,
+# so its match offset must still index the RAW line. An earlier draft searched
+# the raw line for the symbol instead and started the confirmation walk at the
+# attribute's parenthesis, silently dropping the definition (Codex adversarial).
+split_case "attribute containing symbol( does not capture the offset" foo_attr2 "1:5" <<'EOF'
+static void
+__attribute__((foo_attr2())) foo_attr2(void)
+{
+    return;
+}
+EOF
+
+# 14u OFFSET SAFETY: same hazard via a block comment on the terminal line.
+split_case "comment containing symbol( does not capture the offset" foo_cmt "1:5" <<'EOF'
+static int
+/* foo_cmt(legacy) */ foo_cmt(void)
+{
+    return 0;
+}
+EOF
+
+# 14v END-TO-END: resolve_symbol + is_stub_body together. 14q pins only the
+# RANGE, and Codex correctly noted that leaves the downstream classifier
+# untested: is_stub_body picked the first brace in the range, so the
+# parameter-scope struct brace was reported as the body opener -- and that line
+# is the ONLY one the INTENTIONAL-STUB allowlist is read from. A deliberate stub
+# therefore became a blocking Check 7 false positive.
+cat > "$SI_TREE/src/split.c" <<'EOF'
+static int
+foo_e2e(struct Local { int v; } *arg)
+{ /* INTENTIONAL-STUB: pending downstream scaffolding */
+    return 0;
+}
+EOF
+SI_E2E="$(REPO_ROOT="$REPO_ROOT" SI_TREE="$SI_TREE" python3 - <<'PY' 2>&1
+import os, sys
+sys.path.insert(0, os.environ["REPO_ROOT"] + "/scripts/todo-graph")
+import resolve_symbol as rs
+src = os.environ["SI_TREE"] + "/src/split.c"
+rs.cache_clear()
+r = rs.resolve_symbol(src, "foo_e2e")
+print("NORESOLVE" if r is None else f"{r[1]}:{r[2]}:{rs.is_stub_body(r[0], r[1], r[2])}")
+PY
+)"
+if [ "$SI_E2E" = "1:5:None" ]; then
+    t_pass "resolve_symbol+is_stub_body: INTENTIONAL-STUB honored behind a parameter-scope brace"
+else
+    t_fail "resolve_symbol+is_stub_body: param-scope brace bypassed the allowlist; got=$SI_E2E"
+fi
+
+# ---------------------------------------------------------------------------
+# Sub-tests 14w-14z: corpus_resolution_snapshot.py -- the acceptance gate for
+# section 10. A gate that fails OPEN is worse than no gate, so these pin that it
+# REFUSES (exit 3, distinct from 0=pass and 1=regression) rather than emitting a
+# vacuous passing baseline. Codex adversarial: an `[]` cache used to snapshot
+# 0 refs, exit 0, and then report "OK, 54 added" against the live tree.
+SNAP="$REPO_ROOT/scripts/todo-graph/corpus_resolution_snapshot.py"
+
+snap_refuses() {  # <label> <cache-json-content>
+    local label="$1" content="$2"
+    printf '%s' "$content" > "$SI_TREE/build/snap-cache.json"
+    STUB_LINT_CACHE="$SI_TREE/build/snap-cache.json" STUB_LINT_REPO_ROOT="$SI_TREE" \
+        python3 "$SNAP" write "$SI_TREE/build/snap-out.json" >/dev/null 2>&1
+    local rc=$?
+    if [ "$rc" = "3" ]; then
+        t_pass "corpus snapshot: refuses $label (exit 3)"
+    else
+        t_fail "corpus snapshot: $label must exit 3, got $rc"
+    fi
+}
+
+snap_refuses "an empty node array" '[]'
+snap_refuses "a cache with no stamped_items" '[{"file_path":"todo/x.md"}]'
+snap_refuses "a non-list cache" '{"nodes":[]}'
+snap_refuses "a cache whose stamped_items are all empty" '[{"file_path":"a","stamped_items":[]}]'
+
+# 14z: a duplicate (file, symbol) occurrence must be tracked PER OCCURRENCE --
+# dropping one occurrence has to register as LOST. Deduping on (file, symbol)
+# hid exactly this: the surviving twin kept the key and the tuple, so `compare`
+# reported OK while a stamped reference had really gone.
+cat > "$SI_TREE/src/dup.c" <<'EOF'
+int dup_fn(void)
+{
+    return 0;
+}
+EOF
+snap_cache() {  # <n-occurrences>
+    python3 - "$SI_TREE/build/snap-cache.json" "$1" <<'PY'
+import json, sys
+out, n = sys.argv[1], int(sys.argv[2])
+refs = [{"kind": "symbol", "file": "src/dup.c", "symbol": "dup_fn"}]
+items = [{"section_n": 1, "item_idx": i, "item_text": "x", "refs": refs}
+         for i in range(n)]
+json.dump([{"file_path": "todo/01-test/TODO-01-fixture.md",
+            "stamped_items": items}], open(out, "w"))
+PY
+}
+snap_cache 2
+STUB_LINT_CACHE="$SI_TREE/build/snap-cache.json" STUB_LINT_REPO_ROOT="$SI_TREE" \
+    python3 "$SNAP" write "$SI_TREE/build/snap-base.json" >/dev/null 2>&1
+snap_cache 1
+SNAP_OUT="$(STUB_LINT_CACHE="$SI_TREE/build/snap-cache.json" STUB_LINT_REPO_ROOT="$SI_TREE" \
+    python3 "$SNAP" compare "$SI_TREE/build/snap-base.json" 2>&1)"
+SNAP_RC=$?
+if [ "$SNAP_RC" = "1" ] && echo "$SNAP_OUT" | grep -q "LOST"; then
+    t_pass "corpus snapshot: a dropped duplicate occurrence registers as LOST"
+else
+    t_fail "corpus snapshot: dropped duplicate not caught; rc=$SNAP_RC out=$SNAP_OUT"
+fi
+
 # Sub-test 14e: forbidden-field validator rejects hand-authored
 # stamped_items in frontmatter (defense-in-depth, Codex Q4).
 cat > "$SI_TREE/todo/01-test/TODO-02-forbidden.md" <<'EOF'

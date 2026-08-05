@@ -1,7 +1,8 @@
 {
-  "resolved": 55,
+  "resolved": 57,
   "total": 189,
   "recorded": "2026-08-05",
+  "raised_by": "Split function-head resolution in the todo-metadata-layer roadmap: 55 -> 57. The resolver's fallback pass now resolves a head whose return type sits on its own physical line. Only +2 because split heads were never the dominant blind spot -- the coverage-classification work put most unresolved refs in declaration-only and comment-only classes rather than parser gaps. Verified with scripts/todo-graph/corpus_resolution_snapshot.py: 0 prior mappings lost or moved, 2 added, both ground-truthed by hand. A corpus sweep now finds ZERO genuine split-head definitions still unresolved, so this class is closed.",
   "why": "Check 7 can only inspect a stamped symbol it can RESOLVE; an unresolved ref yields no finding, so losing resolution is indistinguishable from passing. This number is the floor: a drop is an ERROR (rc 7). Raising it is the point -- when the resolver improves, update this file in the same commit and say what changed.",
   "standing_gap": "134 refs unresolved. NOT a defect count -- it mixes refs naming a header that only declares the symbol, refs whose symbol appears solely in comments, and genuine parser gaps. Classifying them is the todo-metadata-layer TODO's Check-7 coverage section (open work)."
 }
