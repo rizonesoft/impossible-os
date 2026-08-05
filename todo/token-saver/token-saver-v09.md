@@ -1,5 +1,14 @@
 # Token Saver v09 -- Cost Findings (opened 2026-08-04)
 
+> **CLOSED 2026-08-05.** Successor: [`token-saver-v10.md`](token-saver-v10.md). **The run filed ZERO cost findings against this file** -- the second consecutive cycle at zero, and the >= 2% bar held throughout.
+>
+> **THE ROTATION QUESTION IS ANSWERED, after four cycles of asking it.** Measured across the full advisory record: **146 hints fired, 0 `rollover-wip` actions -- ever.** This canary alone fired 20 (threshold 90, event counts 90 -> 240, median 150).
+>
+> **And the surviving hypothesis is now disproven too.** v08/v09 held that the premise had expired -- that segments run too short for a hint at 90 to leave useful runway. But **5 of this canary's 20 hints fired at >= 190 events**, i.e. with 100+ events of runway past the threshold, and the run still did not rotate. Runway was available and unused. The threshold was never the problem, which makes FOUR rounds in which the number was blamed and exonerated.
+>
+> **What that leaves is a decision, not another measurement.** The feature fires, is delivered, has runway, and never acts. Either the run's own escape ("if the next action is the ship, skip") declines in every reachable state, or the hint is not actionable as written. Carried to v10 as an OPERATOR DECISION with a recommendation to retire it and reclaim the hook, rather than tune a threshold a fifth time. Do not re-open it as a measurement question -- it has been measured.
+
+
 Cost and token findings from the run armed after the 2026-08-04 close-out of [v08](token-saver-v08.md). CAPTURE surface, not a work queue: it sits outside the sequencer's traversal, so nothing here is implemented by the run. It is the CURRENT capture file -- the sequencer files to the NEWEST `token-saver-vNN.md` in this directory, which is this one until an operator opens v10.
 
 **Why findings land here instead of being fixed.** Cost machinery is control plane (`.claude/hooks/**`, `scripts/overnight/**`) or receipt surface, both off-limits unattended. Record the finding in the same turn it is observed, then continue; a finding carried in-context to "report later" dies with the segment.

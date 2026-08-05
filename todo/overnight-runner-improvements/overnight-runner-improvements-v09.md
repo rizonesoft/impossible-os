@@ -1,5 +1,14 @@
 # Overnight Runner Improvements v09 -- Findings (opened 2026-08-04)
 
+> **CLOSED 2026-08-05.** Successor: [`overnight-runner-improvements-v10.md`](overnight-runner-improvements-v10.md). Every item carries a verdict; nothing was dropped.
+>
+> **Scoreboard: 5 resolved, 2 carried open (both deliberately).** Resolved: the standing-task/fixpoint contradiction (found by the RUN, and its reasoning picked the right fix and said why), the branching-factor recursion (spawn-chain sensor), the table-alignment width (though NOT by the cap -- see below), the open-in-deferred SIZE correction (333 -> 1,595), and Check 7 coverage counting. Carried: the 2026-08-19 verification obligation, which is a future check by construction, and the flaky gate sub-test, NOT REPRODUCED in 40 runs with both proposed mechanisms ruled out at source.
+>
+> **Three of this cycle's findings named a mechanism that was wrong** while the symptom was real every time -- a review-KIND mismatch that was an evidence TTL, a step-8 "broker not recognised" that was first-match truncation, and a flaky test blamed on state collision that reproduces under neither proposed cause. That is why this file's header now tells the next run to write the mechanism as a HYPOTHESIS unless it was confirmed at source.
+>
+> **And one correction to my own record, kept visible rather than quietly amended:** the table-width item was written up as "RESOLVED, cap 40 applied" and the cap was reverted hours later. Capping leaves over-cap cells unpadded and breaks the column -- the exact defect Check 17 exists to prevent. Width was never the quantity that mattered; alignment was.
+
+
 Findings from the run armed after the 2026-08-04 close-out of [v08](overnight-runner-improvements-v08.md). This file is a CAPTURE surface, not a work queue: it sits outside the sequencer's traversal, so nothing here is implemented by the run. It is the CURRENT capture file -- the sequencer files to the NEWEST `overnight-runner-improvements-vNN.md` in this directory, which is this one until an operator opens v10.
 
 **Why findings land here instead of being fixed.** The run is explicitly NOT permitted to modify its own control plane while unattended -- `.claude/hooks/**`, `.claude/skills/**`, `scripts/overnight/**`, `.githooks/**`, `.claude/settings.json` -- nor the RECEIPT SURFACE (`Makefile*`, `scripts/build.sh`, the ABI generator), which `receipt_surface_guard.py` enforces: build/verification machinery whose content the run's own receipts are computed over must not drift while nobody is watching. Ordinary work is unaffected: kernel code, tests, docs and TODO files are fixed in place as normal.
