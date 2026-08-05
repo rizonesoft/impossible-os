@@ -442,11 +442,10 @@ information or judgment; none of this weakens a gate):**
 
   - **Genuinely parked work** -> `- [/]` naming its blocker/owner IN THE TEXT
     (the section's Deferred stamp is a section-level reason; it does not
-    automatically describe this item). **SHAPE IS NOT ROUTING -- the `- [/]` is
-    only half the repair.** `stranded_deferrals.py` sweeps ONLY parked items that
-    name a cross-TODO XREF owner, and measured 2026-08-05, just **201 of the 612
-    existing `- [/]` items (33%) carry one; the other 411 have no re-open path at
-    all**. So every item you park must land in one of exactly two buckets:
+    automatically describe this item). **SHAPE IS NOT ROUTING.**
+    `stranded_deferrals.py` sweeps ONLY parked items naming a cross-TODO XREF
+    owner (~a third of them do), so a park without one has no automatic way back.
+    Give yours an owner where one honestly exists:
     - **an owning TODO exists** -> name it as a real XREF (`NN-domain/TODO-NN`
       + section) with a reciprocal item on the owner side. The sweep can then
       re-open it when the owner ships. This is the DEFAULT -- look for an owner
@@ -456,9 +455,15 @@ information or judgment; none of this weakens a gate):**
       the word **`operator-gated`**, so the park is searchable and honestly
       states that only a human will ever clear it.
 
-    A `- [/]` with neither is the worst outcome available here: it clears Check
-    24, it unblocks `phase FIXPOINT`, and it leaves the work exactly as stuck --
-    the corpus reads as improved while nothing improved. Do not create one.
+    **This is a QUALITY BAR, not a checkable rule -- do not expect a gate, and do
+    not invent one.** A detector for "parked without an owner" was built on
+    2026-08-02 and REMOVED: `[/]` means IN PROGRESS in this repo, not "parked
+    awaiting an owner", so it misread 329 ordinary progress markers as defects.
+    Scoping it to terminal parks does NOT rescue it -- re-tested 2026-08-05
+    against the removal's own counter-example (`- [/] GetEnvironmentVariableA(...)`
+    in a DONE section), which it still flags. The two populations are not
+    mechanically separable, so the judgment is yours at the moment you park the
+    item, and that is the only place it can live.
   - **A standing or recurring task** -> LEAVE IT `- [ ]`. Real example that must
     not be converted: *"Review this section's triggers once per calendar year"*.
     That is not blocked work, and flipping it to `- [/]` with an invented
