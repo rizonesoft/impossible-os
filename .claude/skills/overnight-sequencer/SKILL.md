@@ -442,8 +442,23 @@ information or judgment; none of this weakens a gate):**
 
   - **Genuinely parked work** -> `- [/]` naming its blocker/owner IN THE TEXT
     (the section's Deferred stamp is a section-level reason; it does not
-    automatically describe this item). Add a reciprocal XREF if it names another
-    TODO.
+    automatically describe this item). **SHAPE IS NOT ROUTING -- the `- [/]` is
+    only half the repair.** `stranded_deferrals.py` sweeps ONLY parked items that
+    name a cross-TODO XREF owner, and measured 2026-08-05, just **201 of the 612
+    existing `- [/]` items (33%) carry one; the other 411 have no re-open path at
+    all**. So every item you park must land in one of exactly two buckets:
+    - **an owning TODO exists** -> name it as a real XREF (`NN-domain/TODO-NN`
+      + section) with a reciprocal item on the owner side. The sweep can then
+      re-open it when the owner ships. This is the DEFAULT -- look for an owner
+      before concluding there is none.
+    - **no owning TODO can exist** (bare metal, VirtualBox/WHPX, external
+      hardware, an operator decision) -> say so explicitly in the item text with
+      the word **`operator-gated`**, so the park is searchable and honestly
+      states that only a human will ever clear it.
+
+    A `- [/]` with neither is the worst outcome available here: it clears Check
+    24, it unblocks `phase FIXPOINT`, and it leaves the work exactly as stuck --
+    the corpus reads as improved while nothing improved. Do not create one.
   - **A standing or recurring task** -> LEAVE IT `- [ ]`. Real example that must
     not be converted: *"Review this section's triggers once per calendar year"*.
     That is not blocked work, and flipping it to `- [/]` with an invented
