@@ -255,16 +255,16 @@ List all installed apps from `HKLM\SOFTWARE\*`: Name, Version, Size, Install Dat
 ## OS Comparison
 
 
-| ⭐   | Feature                                             | 🪟 Win11                                         | 🐧 Linux                                             | 🚀 Impossible OS                                                      |
-| --- | --------------------------------------------------- | ----------------------------------------------- | --------------------------------------------------- | -------------------------------------------------------------------- |
-| 💎   | Update check                                        | ✅ Windows Update: HTTPS WSUS/WU endpoint;       | ✅ `apt check`; `dnf check-update`; `pacman          | ⬜ §1 -- `http_get()` INI endpoint; Registry version                  |
-| 💎   | Update download + SHA-256 verification before apply | ✅ Windows Update: SHA-256 + code-signed         | ✅ `apt/dnf`: GPG-signed package files +             | ⬜ §2 -- `cng_sha256()` + `crypto_verify32()` constant-time compare   |
-| ⭐   | Update apply                                        | ✅ Windows Update: cabinet/WIM staging; System   | ✅ `apt/dpkg`: pre-inst/post-inst scripts; no atomic | ⬜ §3 -- `⭐` explicit restore point before                            |
-| ⭐   | IPKG package format                                 | ✅ MSI: COM-based installer database; complex    | ✅ `.deb`/`.rpm`: binary control data +              | ⬜ §5 -- `⭐` INI text manifest +                                      |
-| 💎   | App installer wizard                                | ✅ NSIS/Inno/WiX/MSI installers: full wizard UI; | ✅ GUI: Discover/GNOME Software/Pamac; CLI: `apt     | ⬜ §6 -- 4-page wizard; `privilege_request()` UAC; `restore_create()` |
-| 💎   | App uninstaller                                     | ✅ Programs & Features / Settings                | ✅ `apt remove`/`dnf remove`; `purge` for            | ⬜ §7 -- re-parse `install.ini` for precise file                      |
-| 💎   | Programs & Features (`appwiz.cpl`)                  | ✅ Settings → Apps: list +                       | ✅ GNOME Software; Pamac; Muon; `dpkg                | ⬜ §8 -- `CTRL_LISTVIEW` from `HKLM\SOFTWARE\*`; search filter        |
-| ⭐   | `ipkg_create` host build tool                       | ✅ WiX Toolset / NSIS /                          | ✅ `dpkg-deb`, `rpmbuild`, `makepkg`: complex spec   | ⬜ §9 -- `⭐` single `gcc`-compiled tool; 6                            |
+| ⭐   | Feature                                  | 🪟 Win11                                  | 🐧 Linux                                  | 🚀 Impossible OS                          |
+| --- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
+| 💎   | Update check                             | ✅ Windows Update: HTTPS WSUS/WU endpoint; | ✅ `apt check`; `dnf check-update`; `pacman | ⬜ §1 -- `http_get()` INI endpoint; Registry version |
+| 💎   | Update download + SHA-256 verification before apply | ✅ Windows Update: SHA-256 + code-signed  | ✅ `apt/dnf`: GPG-signed package files +  | ⬜ §2 -- `cng_sha256()` + `crypto_verify32()` constant-time compare |
+| ⭐   | Update apply                             | ✅ Windows Update: cabinet/WIM staging; System | ✅ `apt/dpkg`: pre-inst/post-inst scripts; no atomic | ⬜ §3 -- `⭐` explicit restore point before |
+| ⭐   | IPKG package format                      | ✅ MSI: COM-based installer database; complex | ✅ `.deb`/`.rpm`: binary control data +   | ⬜ §5 -- `⭐` INI text manifest +          |
+| 💎   | App installer wizard                     | ✅ NSIS/Inno/WiX/MSI installers: full wizard UI; | ✅ GUI: Discover/GNOME Software/Pamac; CLI: `apt | ⬜ §6 -- 4-page wizard; `privilege_request()` UAC; `restore_create()` |
+| 💎   | App uninstaller                          | ✅ Programs & Features / Settings         | ✅ `apt remove`/`dnf remove`; `purge` for | ⬜ §7 -- re-parse `install.ini` for precise file |
+| 💎   | Programs & Features (`appwiz.cpl`)       | ✅ Settings → Apps: list +                | ✅ GNOME Software; Pamac; Muon; `dpkg     | ⬜ §8 -- `CTRL_LISTVIEW` from `HKLM\SOFTWARE\*`; search filter |
+| ⭐   | `ipkg_create` host build tool            | ✅ WiX Toolset / NSIS /                   | ✅ `dpkg-deb`, `rpmbuild`, `makepkg`: complex spec | ⬜ §9 -- `⭐` single `gcc`-compiled tool; 6 |
 
 > **After §1–§9:** Impossible OS has a complete self-update + app ecosystem. The `⭐` advantages: IPKG uses human-readable INI manifests inside a plain ZIP (trivially inspectable with any archive tool, unlike MSI's COM database or `.deb`'s binary control); the update pipeline requires an explicit restore point before every file replacement (rollback is always possible); and `ipkg_create` is a single-source host tool vs the hundreds-of-lines spec files required by `rpmbuild` or WiX.
 

@@ -33,16 +33,16 @@ title: "TODO-08 -- BlackBox Log Extractor"
 
 ## Implementation Order
 
-| S   | Order | Deliverable                                       | Depends On  | Status |
-| --- | :---: | ------------------------------------------------- | ----------- | :----: |
-| 💎   |   1   | GPT parser -- find BlackBox partition by name     | --          |  [ ]   |
-| 💎   |   2   | FAT32 reader -- traverse dirs, read files         | S1          |  [ ]   |
-| 💎   |   3   | `blackbox extract` -- dump all logs to local dir  | S1, S2      |  [ ]   |
-| 💎   |   4   | `blackbox cat` -- view a specific log file        | S1, S2      |  [ ]   |
-| 💎   |   5   | `blackbox events` -- parse/filter events.jsonl    | S1, S2      |  [ ]   |
-| 💎   |   6   | `blackbox boot` -- show boot timeline from JSON   | S1, S2      |  [ ]   |
-| S   |   7   | `blackbox verify` -- HMAC chain verification      | S5, T02 S10 |  [ ]   |
-| 💎   |   8   | Windows build -- MSVC or MinGW cross-compile      | S1-S6       |  [ ]   |
+| S   | Order | Deliverable                              | Depends On  | Status |
+| --- | :---: | ---------------------------------------- | ----------- | :----: |
+| 💎   |   1   | GPT parser -- find BlackBox partition by name | --          |  [ ]   |
+| 💎   |   2   | FAT32 reader -- traverse dirs, read files | S1          |  [ ]   |
+| 💎   |   3   | `blackbox extract` -- dump all logs to local dir | S1, S2      |  [ ]   |
+| 💎   |   4   | `blackbox cat` -- view a specific log file | S1, S2      |  [ ]   |
+| 💎   |   5   | `blackbox events` -- parse/filter events.jsonl | S1, S2      |  [ ]   |
+| 💎   |   6   | `blackbox boot` -- show boot timeline from JSON | S1, S2      |  [ ]   |
+| S   |   7   | `blackbox verify` -- HMAC chain verification | S5, T02 S10 |  [ ]   |
+| 💎   |   8   | Windows build -- MSVC or MinGW cross-compile | S1-S6       |  [ ]   |
 | S   |   9   | Shell wrapper scripts for Claude Code integration | S3          |  [ ]   |
 
 > 💎 = parity -- standard tooling expectation for OS development.

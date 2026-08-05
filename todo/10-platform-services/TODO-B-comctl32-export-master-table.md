@@ -45,11 +45,11 @@ Every **named** `comctl32.dll` export that appears on a shipping Windows 11 mach
 
 ## Tier 1 -- Init and version
 
-| Export                 | Category | Owner                       | Done | Notes                                                            |
-| ---------------------- | -------- | --------------------------- | ---- | ---------------------------------------------------------------- |
+| Export                 | Category | Owner                       | Done | Notes                                    |
+| ---------------------- | -------- | --------------------------- | ---- | ---------------------------------------- |
 | `InitCommonControls`   | Init     | T08 / T07 PE built-in table | [ ]  | Ordinal-friendly legacy entry; pairs with `InitCommonControlsEx` |
-| `InitCommonControlsEx` | Init     | T08 / T07 PE built-in table | [ ]  | Required for v6 common controls awareness in many installers     |
-| `DllGetVersion`        | Version  | T08 / PE loader             | [ ]  | Optional stub returning common controls major/minor              |
+| `InitCommonControlsEx` | Init     | T08 / T07 PE built-in table | [ ]  | Required for v6 common controls awareness in many installers |
+| `DllGetVersion`        | Version  | T08 / PE loader             | [ ]  | Optional stub returning common controls major/minor |
 
 ## Tier 2 -- Control class roadmap (IxUI mapping, not PE names)
 
@@ -72,8 +72,8 @@ Microsoft does not publish one MSDN page per `comctl32.dll` export. Use two laye
 
 ## Tier 3 -- Full named export roster (alphabetical, Wine scaffold)
 
-| Export                         | Category       | Owner          | Done | Notes                                            |
-| ------------------------------ | -------------- | -------------- | ---- | ------------------------------------------------ |
+| Export                         | Category       | Owner          | Done | Notes                                    |
+| ------------------------------ | -------------- | -------------- | ---- | ---------------------------------------- |
 | `AddMRUData`                   | MRU            | NO_OWNING_TODO | [ ]  | Wine `comctl32*.spec`; reconcile with Win11 dump |
 | `AddMRUStringA`                | MRU            | NO_OWNING_TODO | [ ]  | Wine `comctl32*.spec`; reconcile with Win11 dump |
 | `AddMRUStringW`                | MRU            | NO_OWNING_TODO | [ ]  | Wine `comctl32*.spec`; reconcile with Win11 dump |
@@ -238,8 +238,8 @@ Microsoft does not publish one MSDN page per `comctl32.dll` export. Use two laye
 
 ## OS Comparison
 
-| ⭐   | Feature                          | 🪟 Win11                           | 🐧 Linux              | 🚀 Impossible OS                                             |
-| --- | -------------------------------- | --------------------------------- | -------------------- | ----------------------------------------------------------- |
+| ⭐   | Feature                          | 🪟 Win11                           | 🐧 Linux              | 🚀 Impossible OS                          |
+| --- | -------------------------------- | --------------------------------- | -------------------- | ---------------------------------------- |
 | 💎   | Common Controls (`comctl32.dll`) | comctl32 v6 + manifest activation | GTK/Qt widget stacks | Tier 1 init + Tier 3 rows; native `CTRL_*` where applicable |
 
 ## Unit Tests

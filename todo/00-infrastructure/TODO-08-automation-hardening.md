@@ -819,10 +819,10 @@ The TODO-02 §11 review-pipeline closure (commit `3bc47f6f`) exposed a real fric
 
 Mismatch: same env var, two different read mechanisms. **No single command shape satisfies both gates** when both are armed:
 
-| Cmd shape                                        | section_review_required           | section_commit_gate                        |
-| ------------------------------------------------ | --------------------------------- | ------------------------------------------ |
-| `git commit ...`                                 | PASS (`git ` prefix)              | BLOCK (no opt-out)                         |
-| `SKIP_REVIEW_HOOK=1 git commit ...`              | BLOCK (cmd starts with `SKIP_*=`) | PASS (inline scan)                         |
+| Cmd shape                                | section_review_required           | section_commit_gate                      |
+| ---------------------------------------- | --------------------------------- | ---------------------------------------- |
+| `git commit ...`                         | PASS (`git ` prefix)              | BLOCK (no opt-out)                       |
+| `SKIP_REVIEW_HOOK=1 git commit ...`      | BLOCK (cmd starts with `SKIP_*=`) | PASS (inline scan)                       |
 | `bash scripts/commit-with-skip.sh ...` (wrapper) | PASS (`bash scripts/`)            | PASS (wrapper exports env before exec git) |
 
 The duct-tape workaround `scripts/commit-with-skip.sh` exists precisely because the in-tree gates have no shared opt-out scanner. That wrapper now lives in the tree (added during the §11 closure) but it is NOT documented as a canonical bridge, NOT enumerated in MANIFEST.md, and the underlying opt-out shape inconsistency remains.
@@ -1185,37 +1185,37 @@ The PreToolUse gates decide their exemptions by hand-scanning command text. [`.c
 
 ## OS Comparison
 
-| ⭐   | Feature                                 | 🪟 Win11    | 🐧 Linux        | 🚀 Impossible OS                                        |
-| --- | --------------------------------------- | ---------- | -------------- | ------------------------------------------------------ |
-| 💎   | Cross-tool MCP server set               | ❌ N/A      | ❌ N/A          | ✅ §1 (Claude+Codex shared)                             |
-| 💎   | Hook + skill manifest                   | ❌ N/A      | ❌ N/A          | ✅ §7 (MANIFEST + audit)                                |
-| ⭐   | Reviewer-contract hard gate at edit     | ❌ N/A      | ❌ N/A          | ✅ §3 (BLOCK on receive)                                |
-| ⭐   | Section-commit build-evidence gate      | ❌ N/A      | ❌ N/A          | ✅ §4 (~60 bypasses blocked)                            |
-| ⭐   | Multi-dispatch review enforcement       | ❌ N/A      | ❌ N/A          | ✅ §5 (3x state file + gate)                            |
-| ⭐   | Cross-tool drift detection              | ❌ N/A      | ❌ N/A          | ✅ §9 (7 checks audit)                                  |
-| 💎   | Doctrine + skill catalog audit          | ❌ Internal | ⚠️ Per project | ✅ §8 (suppression policy)                              |
-| 💎   | MCP usage discipline doctrine           | ❌ N/A      | ❌ N/A          | ✅ §6 (CLAUDE.md pointer)                               |
-| ⭐   | Skill step-state telemetry              | ❌ N/A      | ❌ N/A          | ✅ §10 (observer + block)                               |
-| ⭐   | Hook event surface coverage             | ❌ N/A      | ❌ N/A          | ✅ §11 (5 events wired)                                 |
-| ⭐   | AI-slop content lints                   | ❌ N/A      | ⚠️ Linter only | ✅ §12 (Check 6+7 live; 8 attempted+dropped)            |
-| 💎   | Doctrine sync + reciprocal XREFs        | ❌ N/A      | ❌ N/A          | ✅ §13 (lockstep with code)                             |
-| 💎   | Sole external reviewer surface          | ❌ N/A      | ❌ N/A          | ✅ §14 (Copilot retired; Codex only)                    |
-| ⭐   | Design-review hook scope precision      | ❌ N/A      | ❌ N/A          | ✅ §15 (review-kind + commit-clears)                    |
-| ⭐   | Compaction-resilient skill state        | ❌ N/A      | ❌ N/A          | ✅ §16 (PreCompact orphan-marking)                      |
-| ⭐   | Review pre-Codex enforcement            | ❌ N/A      | ❌ N/A          | ✅ §17 (phase1 gate + re-adv trigger)                   |
-| ⭐   | Stamp-region + OS-table lints           | ❌ N/A      | ❌ N/A          | ✅ §18 (Check 10 + Check 11)                            |
-| 💎   | Codex re-review prompt-scope helper     | ❌ N/A      | ❌ N/A          | ✅ §19 (committed-content embed)                        |
-| ⭐   | Implement-pipeline commit gates         | ❌ N/A      | ❌ N/A          | ✅ §20 (steps 5/8/13/16)                                |
-| ⭐   | Heuristic WARN -> ERROR promotion       | ❌ N/A      | ❌ N/A          | ✅ §21 (7 WARN hooks + miss-log + ratio)                |
-| ⭐   | Review-pipeline right-sizing            | ❌ N/A      | ❌ N/A          | ✅ §22 (RISK_TIER + bootstrap + spiral)                 |
-| ⭐   | Unified SKIP-env opt-out scanner        | ❌ N/A      | ❌ N/A          | ✅ §23 (`_skip_env.py` helper; 7 gates migrated)        |
-| ⭐   | Codex review state-write reliability    | ❌ N/A      | ❌ N/A          | ✅ §24 ((ok,err) contract; JSONL diagnostic)            |
-| ⭐   | Step-observer regex coverage            | ❌ N/A      | ❌ N/A          | ✅ §25 (7 canonical kinds; 14 sub-tests)                |
-| 💎   | Opt-out wrapper formalize/retire        | ❌ N/A      | ❌ N/A          | ✅ §26 (`commit-with-skip.sh` retired by §23)           |
-| ⭐   | Phase-1 evidence-gate FP tuning         | ❌ N/A      | ❌ N/A          | ✅ §27 (step-4 miss-log + per-section dedup)            |
-| 💎   | Codex prompt argument escaping          | ❌ N/A      | ❌ N/A          | ✅ §28 (`codex-dispatch.sh` wrapper + lint 12)          |
-| ⭐   | Standardized PreToolUse prefix-list     | ❌ N/A      | ❌ N/A          | ✅ §29 (`_review_pipeline_passthrough.py`)              |
-| ⭐   | Shell-aware Codex dispatch parser       | ❌ N/A      | ❌ N/A          | ✅ §30 (`_codex_dispatch.py` shared helper)             |
+| ⭐   | Feature                                 | 🪟 Win11    | 🐧 Linux        | 🚀 Impossible OS                          |
+| --- | --------------------------------------- | ---------- | -------------- | ---------------------------------------- |
+| 💎   | Cross-tool MCP server set               | ❌ N/A      | ❌ N/A          | ✅ §1 (Claude+Codex shared)               |
+| 💎   | Hook + skill manifest                   | ❌ N/A      | ❌ N/A          | ✅ §7 (MANIFEST + audit)                  |
+| ⭐   | Reviewer-contract hard gate at edit     | ❌ N/A      | ❌ N/A          | ✅ §3 (BLOCK on receive)                  |
+| ⭐   | Section-commit build-evidence gate      | ❌ N/A      | ❌ N/A          | ✅ §4 (~60 bypasses blocked)              |
+| ⭐   | Multi-dispatch review enforcement       | ❌ N/A      | ❌ N/A          | ✅ §5 (3x state file + gate)              |
+| ⭐   | Cross-tool drift detection              | ❌ N/A      | ❌ N/A          | ✅ §9 (7 checks audit)                    |
+| 💎   | Doctrine + skill catalog audit          | ❌ Internal | ⚠️ Per project | ✅ §8 (suppression policy)                |
+| 💎   | MCP usage discipline doctrine           | ❌ N/A      | ❌ N/A          | ✅ §6 (CLAUDE.md pointer)                 |
+| ⭐   | Skill step-state telemetry              | ❌ N/A      | ❌ N/A          | ✅ §10 (observer + block)                 |
+| ⭐   | Hook event surface coverage             | ❌ N/A      | ❌ N/A          | ✅ §11 (5 events wired)                   |
+| ⭐   | AI-slop content lints                   | ❌ N/A      | ⚠️ Linter only | ✅ §12 (Check 6+7 live; 8 attempted+dropped) |
+| 💎   | Doctrine sync + reciprocal XREFs        | ❌ N/A      | ❌ N/A          | ✅ §13 (lockstep with code)               |
+| 💎   | Sole external reviewer surface          | ❌ N/A      | ❌ N/A          | ✅ §14 (Copilot retired; Codex only)      |
+| ⭐   | Design-review hook scope precision      | ❌ N/A      | ❌ N/A          | ✅ §15 (review-kind + commit-clears)      |
+| ⭐   | Compaction-resilient skill state        | ❌ N/A      | ❌ N/A          | ✅ §16 (PreCompact orphan-marking)        |
+| ⭐   | Review pre-Codex enforcement            | ❌ N/A      | ❌ N/A          | ✅ §17 (phase1 gate + re-adv trigger)     |
+| ⭐   | Stamp-region + OS-table lints           | ❌ N/A      | ❌ N/A          | ✅ §18 (Check 10 + Check 11)              |
+| 💎   | Codex re-review prompt-scope helper     | ❌ N/A      | ❌ N/A          | ✅ §19 (committed-content embed)          |
+| ⭐   | Implement-pipeline commit gates         | ❌ N/A      | ❌ N/A          | ✅ §20 (steps 5/8/13/16)                  |
+| ⭐   | Heuristic WARN -> ERROR promotion       | ❌ N/A      | ❌ N/A          | ✅ §21 (7 WARN hooks + miss-log + ratio)  |
+| ⭐   | Review-pipeline right-sizing            | ❌ N/A      | ❌ N/A          | ✅ §22 (RISK_TIER + bootstrap + spiral)   |
+| ⭐   | Unified SKIP-env opt-out scanner        | ❌ N/A      | ❌ N/A          | ✅ §23 (`_skip_env.py` helper; 7 gates migrated) |
+| ⭐   | Codex review state-write reliability    | ❌ N/A      | ❌ N/A          | ✅ §24 ((ok,err) contract; JSONL diagnostic) |
+| ⭐   | Step-observer regex coverage            | ❌ N/A      | ❌ N/A          | ✅ §25 (7 canonical kinds; 14 sub-tests)  |
+| 💎   | Opt-out wrapper formalize/retire        | ❌ N/A      | ❌ N/A          | ✅ §26 (`commit-with-skip.sh` retired by §23) |
+| ⭐   | Phase-1 evidence-gate FP tuning         | ❌ N/A      | ❌ N/A          | ✅ §27 (step-4 miss-log + per-section dedup) |
+| 💎   | Codex prompt argument escaping          | ❌ N/A      | ❌ N/A          | ✅ §28 (`codex-dispatch.sh` wrapper + lint 12) |
+| ⭐   | Standardized PreToolUse prefix-list     | ❌ N/A      | ❌ N/A          | ✅ §29 (`_review_pipeline_passthrough.py`) |
+| ⭐   | Shell-aware Codex dispatch parser       | ❌ N/A      | ❌ N/A          | ✅ §30 (`_codex_dispatch.py` shared helper) |
 | 💎   | Post-commit hook concurrency: serialize | ❌ N/A      | ❌ N/A          | ✅ §31 (flock-based serializer; ends stomp-stamp races) |
 
 > **After §1-§5:** Claude and Codex share the same MCP server set, the same Codex invocation policy, the same hard gates around reviews and section commits. Drift between the two automation sides is detectable.

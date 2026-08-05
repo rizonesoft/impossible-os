@@ -241,18 +241,18 @@ Show link-local and global IPv6 addresses in `ifconfig` output. `ndp -an` shell 
 ## OS Comparison
 
 
-| ⭐   | Feature                                         | 🪟 Win11                                                     | 🐧 Linux                                                            | 🚀 Impossible OS                                              |
-| --- | ----------------------------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------ |
-| 💎   | IPv6 header + ethertype 0x86DD routing          | ✅ `tcpip.sys` full IPv6; dual-stack on                      | ✅ `net/ipv6/ip6_input.c`; full dual-stack                          | ⬜ §1 -- `struct ipv6_header`, ethertype dispatch; no         |
-| 💎   | IPv6 send/receive -- TCP/UDP/ICMPv6 dispatch    | ✅ Full IPv6 in `tcpip.sys`; extension                       | ✅ Full extension header support in                                 | ⬜ §2 -- extension header skip (log+drop); full               |
-| 💎   | ICMPv6 NS/NA/RS/RA -- NDP replaces ARP for IPv6 | ✅ `tcpip.sys` NDP; solicited-node multicast; RA-triggered   | ✅ `net/ipv6/ndisc.c`; full RFC 4861 NDP                            | ⬜ §3 -- NS/NA/RS/RA; solicited-node multicast MAC; ICMPv6    |
-| 💎   | Link-local EUI-64 from MAC, DAD                 | ✅ Auto-derives `fe80::/10` on interface up;                 | ✅ `ipv6_generate_eui64()` + DAD in kernel                          | ⬜ §4 -- EUI-64 derivation, bit-6 flip, DAD                   |
-| 💎   | NDP neighbor cache                              | ✅ `tcpip.sys` neighbor cache; RFC 4861                      | ✅ `net/ipv6/ndisc.c` neighbor table; GC via                        | ⬜ §5 -- 128-entry spinlock-guarded; 30 s reachability        |
-| 💎   | SLAAC                                           | ✅ SLAAC by default; RA processing                           | ✅ `net/ipv6/addrconf.c`; full RFC 4862 SLAAC                       | ⬜ §6 -- Prefix Info option parsing; DAD                      |
-| 💎   | DHCPv6 client                                   | ✅ `dhcpcsvc.dll` + `tcpip.sys`; full DHCPv6                 | ✅ `dhclient`/`systemd-networkd`/`NetworkManager` (userspace)       | ⬜ §7 -- in-kernel DHCPv6 (`⭐` vs Linux's                     |
-| 💎   | DNS AAAA queries                                | ✅ Dual A+AAAA by default; RFC                               | ✅ `getaddrinfo()` prefers AAAA; kernel DNS                         | ⬜ §8 -- activates TODO-02 stub; `dns_resolve_dual()` prefers |
-| 💎   | Dual-stack socket API                           | ✅ Winsock2 `AF_INET6`; `IPV6_V6ONLY`; IPv4-mapped `::ffff:` | ✅ `net/socket.c`; `AF_INET6`; `IPV6_V6ONLY`; IPv4-mapped addresses | ⬜ §9 -- `AF_INET6=10`; IPv4-mapped in dual-stack accept      |
-| 💎   | `ifconfig` IPv6 display, `ndp -an`, `route -6`  | ✅ `ipconfig /all` shows IPv6; `netsh                        | ✅ `ip -6 addr`, `ip neigh`,                                        | ⬜ §10 -- `ipv6_ntop()` RFC 5952; `ifconfig` extended         |
+| ⭐   | Feature                                  | 🪟 Win11                                  | 🐧 Linux                                  | 🚀 Impossible OS                          |
+| --- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
+| 💎   | IPv6 header + ethertype 0x86DD routing   | ✅ `tcpip.sys` full IPv6; dual-stack on   | ✅ `net/ipv6/ip6_input.c`; full dual-stack | ⬜ §1 -- `struct ipv6_header`, ethertype dispatch; no |
+| 💎   | IPv6 send/receive -- TCP/UDP/ICMPv6 dispatch | ✅ Full IPv6 in `tcpip.sys`; extension    | ✅ Full extension header support in       | ⬜ §2 -- extension header skip (log+drop); full |
+| 💎   | ICMPv6 NS/NA/RS/RA -- NDP replaces ARP for IPv6 | ✅ `tcpip.sys` NDP; solicited-node multicast; RA-triggered | ✅ `net/ipv6/ndisc.c`; full RFC 4861 NDP  | ⬜ §3 -- NS/NA/RS/RA; solicited-node multicast MAC; ICMPv6 |
+| 💎   | Link-local EUI-64 from MAC, DAD          | ✅ Auto-derives `fe80::/10` on interface up; | ✅ `ipv6_generate_eui64()` + DAD in kernel | ⬜ §4 -- EUI-64 derivation, bit-6 flip, DAD |
+| 💎   | NDP neighbor cache                       | ✅ `tcpip.sys` neighbor cache; RFC 4861   | ✅ `net/ipv6/ndisc.c` neighbor table; GC via | ⬜ §5 -- 128-entry spinlock-guarded; 30 s reachability |
+| 💎   | SLAAC                                    | ✅ SLAAC by default; RA processing        | ✅ `net/ipv6/addrconf.c`; full RFC 4862 SLAAC | ⬜ §6 -- Prefix Info option parsing; DAD  |
+| 💎   | DHCPv6 client                            | ✅ `dhcpcsvc.dll` + `tcpip.sys`; full DHCPv6 | ✅ `dhclient`/`systemd-networkd`/`NetworkManager` (userspace) | ⬜ §7 -- in-kernel DHCPv6 (`⭐` vs Linux's |
+| 💎   | DNS AAAA queries                         | ✅ Dual A+AAAA by default; RFC            | ✅ `getaddrinfo()` prefers AAAA; kernel DNS | ⬜ §8 -- activates TODO-02 stub; `dns_resolve_dual()` prefers |
+| 💎   | Dual-stack socket API                    | ✅ Winsock2 `AF_INET6`; `IPV6_V6ONLY`; IPv4-mapped `::ffff:` | ✅ `net/socket.c`; `AF_INET6`; `IPV6_V6ONLY`; IPv4-mapped addresses | ⬜ §9 -- `AF_INET6=10`; IPv4-mapped in dual-stack accept |
+| 💎   | `ifconfig` IPv6 display, `ndp -an`, `route -6` | ✅ `ipconfig /all` shows IPv6; `netsh     | ✅ `ip -6 addr`, `ip neigh`,              | ⬜ §10 -- `ipv6_ntop()` RFC 5952; `ifconfig` extended |
 
 > **After §1–§10:** Impossible OS supports full IPv6 dual-stack -- link-local + global addresses via SLAAC (and DHCPv6 fallback), NDP replacing ARP, AAAA DNS resolution, and `AF_INET6` sockets. The in-kernel DHCPv6 client (`⭐` over Linux's userspace daemon approach) means zero userspace daemon dependencies. Every higher-level TODO (browser, email, SSH, OS updates) transparently benefits from IPv6 dual-stack routing without changes to their HTTP/TLS layer.
 

@@ -55,23 +55,23 @@ title: "TODO-15 -- Security Reference Monitor"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                                                       | Depends On         | Status |
-| --- | :---: | ----------------------------------------------------------------- | ------------------ | :----: |
-| 💎   |   1   | SID & LUID primitives                                             | --                 |  [x]   |
-| 💎   |   2   | Privilege constants & PRIVILEGE_SET                               | §1                 |  [x]   |
-| 💎   |   3   | SECURITY_DESCRIPTOR, ACL, ACE types                               | §1                 |  [/]   |
-| 💎   |   4   | ACCESS_TOKEN object (primary)                                     | §1, §2, §3, T05 §1 |  [/]   |
-| 💎   |   5   | SeAccessCheck engine                                              | §3, §4             |  [/]   |
-| 💎   |   6   | Mandatory Integrity Control (MIC)                                 | §4, §5             |  [/]   |
-| 💎   |   7   | Process/thread token assignment & impersonation                   | §4                 |  [x]   |
-| 💎   |   8   | SePrivilegeCheck & per-privilege enforcement                      | §2, §4, §5         |  [x]   |
-| 💎   |   9   | UAC token split & NtFilterToken                                   | §4, §5, §6, §7     |  [/]   |
-| 💎   |  10   | Win32 security API wrappers                                       | §4–§9, T12 §1      |  [/]   |
-| ⭐   |  11   | Live token inspector (`whoami.exe` + tray popout)                 | §4–§10             |  [/]   |
-| 💎   |  12   | Security/token syscalls wired to SSDT                             | §4, §8, T12 §4     |  [/]   |
-| 💎   |  13   | SD inheritance / SeAssignSecurity                                 | §3, §4, §5, T05 §1 |  [/]   |
-| 💎   |  14   | AppContainer / LowBox tokens                                      | §4, §5, §6, §9     |  [/]   |
-| ⭐   |  15   | Access denial explainer                                           | §5, §6, §8, §14    |  [/]   |
+| ⭐   | Order | Deliverable                              | Depends On         | Status |
+| --- | :---: | ---------------------------------------- | ------------------ | :----: |
+| 💎   |   1   | SID & LUID primitives                    | --                 |  [x]   |
+| 💎   |   2   | Privilege constants & PRIVILEGE_SET      | §1                 |  [x]   |
+| 💎   |   3   | SECURITY_DESCRIPTOR, ACL, ACE types      | §1                 |  [/]   |
+| 💎   |   4   | ACCESS_TOKEN object (primary)            | §1, §2, §3, T05 §1 |  [/]   |
+| 💎   |   5   | SeAccessCheck engine                     | §3, §4             |  [/]   |
+| 💎   |   6   | Mandatory Integrity Control (MIC)        | §4, §5             |  [/]   |
+| 💎   |   7   | Process/thread token assignment & impersonation | §4                 |  [x]   |
+| 💎   |   8   | SePrivilegeCheck & per-privilege enforcement | §2, §4, §5         |  [x]   |
+| 💎   |   9   | UAC token split & NtFilterToken          | §4, §5, §6, §7     |  [/]   |
+| 💎   |  10   | Win32 security API wrappers              | §4–§9, T12 §1      |  [/]   |
+| ⭐   |  11   | Live token inspector (`whoami.exe` + tray popout) | §4–§10             |  [/]   |
+| 💎   |  12   | Security/token syscalls wired to SSDT    | §4, §8, T12 §4     |  [/]   |
+| 💎   |  13   | SD inheritance / SeAssignSecurity        | §3, §4, §5, T05 §1 |  [/]   |
+| 💎   |  14   | AppContainer / LowBox tokens             | §4, §5, §6, §9     |  [/]   |
+| ⭐   |  15   | Access denial explainer                  | §5, §6, §8, §14    |  [/]   |
 | 💎   |  16   | Security primitive hardening (SHA-1 SID, 64-bit LUID, const-time) | §1, T03 §5         |  [/]   |
 
 > 💎 = parity work -- matches what Windows 11 and Linux already do.

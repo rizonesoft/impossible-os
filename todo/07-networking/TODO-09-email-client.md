@@ -256,18 +256,18 @@ Full-text search over local message cache (grep headers + body). `SEARCH <term>`
 ## OS Comparison
 
 
-| ⭐   | Feature                                   | 🪟 Win11                                                 | 🐧 Linux                                              | 🚀 Impossible OS                                                   |
-| --- | ----------------------------------------- | ------------------------------------------------------- | ---------------------------------------------------- | ----------------------------------------------------------------- |
-| 💎   | Message parser                            | ✅ Windows Mail / Outlook: full                          | ✅ Thunderbird/Evolution: full MIME; `libmime` /      | ⬜ §1 -- hand-written MIME parser; `base64_decode` reused          |
-| 💎   | SMTP client                               | ✅ `System.Net.Mail.SmtpClient`; Outlook SMTP; full AUTH | ✅ `sendmail`/`postfix` + `libesmtp`; Thunderbird     | ⬜ §2 -- STARTTLS via Mbed TLS; QP                                 |
-| 💎   | POP3 client                               | ✅ Windows Mail (POP3); Outlook POP3;                    | ✅ Thunderbird/Evolution POP3; `fetchmail`            | ⬜ §3 -- immediate TLS on port 995                                 |
-| 💎   | IMAP client                               | ✅ Windows Mail (IMAP); Outlook IMAP;                    | ✅ Thunderbird/Evolution IMAP; `mutt`; full IMAP4rev1 | ⬜ §4 -- tagged command protocol; parenthesized response           |
-| 💎   | Account manager                           | ✅ Windows Mail account wizard; Outlook                  | ✅ Thunderbird account setup wizard; `autoconfig`     | ⬜ §5 -- `dns_resolve_mx()` MX QTYPE=15; port probing              |
-| 💎   | Toast notifications + tray envelope badge | ✅ Windows notification center; badge on                 | ✅ GNOME/KDE desktop notifications; tray indicator    | ⬜ §6 -- 5-s auto-dismiss toast overlay; tray                      |
-| 💎   | Three-panel GUI                           | ✅ Outlook / Windows Mail: full                          | ✅ Thunderbird/Evolution: three-panel; GNOME Mail     | ⬜ §7 -- `controls.h` widget library; sort by                      |
-| 💎   | Compose window                            | ✅ Outlook compose; HTML rich-text; drag-and-drop        | ✅ Thunderbird compose; HTML editor; attachment       | ⬜ §8 -- plain-text with `*bold*` inline markers                   |
-| 💎   | Contacts integration                      | ✅ Outlook/People app; Exchange GAL; vCard               | ✅ GNOME Contacts + Evolution integration;            | ⬜ §9 -- `contacts.json`; count-sorted autocomplete; batch harvest |
-| 💎   | Full-text search                          | ✅ Windows Search indexes mail; Outlook                  | ✅ Thunderbird search; `notmuch` / `mu`               | ⬜ §10 -- local header+body grep; IMAP `SEARCH`                    |
+| ⭐   | Feature                                  | 🪟 Win11                                  | 🐧 Linux                                  | 🚀 Impossible OS                          |
+| --- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
+| 💎   | Message parser                           | ✅ Windows Mail / Outlook: full           | ✅ Thunderbird/Evolution: full MIME; `libmime` / | ⬜ §1 -- hand-written MIME parser; `base64_decode` reused |
+| 💎   | SMTP client                              | ✅ `System.Net.Mail.SmtpClient`; Outlook SMTP; full AUTH | ✅ `sendmail`/`postfix` + `libesmtp`; Thunderbird | ⬜ §2 -- STARTTLS via Mbed TLS; QP        |
+| 💎   | POP3 client                              | ✅ Windows Mail (POP3); Outlook POP3;     | ✅ Thunderbird/Evolution POP3; `fetchmail` | ⬜ §3 -- immediate TLS on port 995        |
+| 💎   | IMAP client                              | ✅ Windows Mail (IMAP); Outlook IMAP;     | ✅ Thunderbird/Evolution IMAP; `mutt`; full IMAP4rev1 | ⬜ §4 -- tagged command protocol; parenthesized response |
+| 💎   | Account manager                          | ✅ Windows Mail account wizard; Outlook   | ✅ Thunderbird account setup wizard; `autoconfig` | ⬜ §5 -- `dns_resolve_mx()` MX QTYPE=15; port probing |
+| 💎   | Toast notifications + tray envelope badge | ✅ Windows notification center; badge on  | ✅ GNOME/KDE desktop notifications; tray indicator | ⬜ §6 -- 5-s auto-dismiss toast overlay; tray |
+| 💎   | Three-panel GUI                          | ✅ Outlook / Windows Mail: full           | ✅ Thunderbird/Evolution: three-panel; GNOME Mail | ⬜ §7 -- `controls.h` widget library; sort by |
+| 💎   | Compose window                           | ✅ Outlook compose; HTML rich-text; drag-and-drop | ✅ Thunderbird compose; HTML editor; attachment | ⬜ §8 -- plain-text with `*bold*` inline markers |
+| 💎   | Contacts integration                     | ✅ Outlook/People app; Exchange GAL; vCard | ✅ GNOME Contacts + Evolution integration; | ⬜ §9 -- `contacts.json`; count-sorted autocomplete; batch harvest |
+| 💎   | Full-text search                         | ✅ Windows Search indexes mail; Outlook   | ✅ Thunderbird search; `notmuch` / `mu`   | ⬜ §10 -- local header+body grep; IMAP `SEARCH` |
 
 > **After §1–§10:** Impossible OS has a kernel-native email client rivalling Windows 11 Mail and Linux Thunderbird -- SMTP/POP3/IMAP with TLS, three-panel GUI, compose with attachments, IMAP IDLE push, contacts autocomplete, and full-text search. All built on the Mbed TLS and DNS infrastructure already in place, with zero external email library dependencies.
 

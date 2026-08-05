@@ -34,18 +34,18 @@ title: "TODO-02 -- AArch64 Kernel Port"
 
 ## Implementation Order
 
-| Star | Order | Deliverable                               | Depends On    | Status |
-| ---- | :---: | ----------------------------------------- | ------------- | :----: |
-| 💎    |   1   | UEFI AA64 bootloader                      | TODO-01 §1-§5 |  [ ]   |
-| 💎    |   2   | Exception vectors + EL1 entry             | §1            |  [ ]   |
-| 💎    |   3   | GICv3 interrupt controller                | §2            |  [ ]   |
-| 💎    |   4   | ARM generic timer                         | §3            |  [ ]   |
+| Star | Order | Deliverable                              | Depends On    | Status |
+| ---- | :---: | ---------------------------------------- | ------------- | :----: |
+| 💎    |   1   | UEFI AA64 bootloader                     | TODO-01 §1-§5 |  [ ]   |
+| 💎    |   2   | Exception vectors + EL1 entry            | §1            |  [ ]   |
+| 💎    |   3   | GICv3 interrupt controller               | §2            |  [ ]   |
+| 💎    |   4   | ARM generic timer                        | §3            |  [ ]   |
 | 💎    |   5   | TTBR page tables (4 KiB granule, 4-level) | §2            |  [ ]   |
-| 💎    |   6   | PSCI SMP bringup                          | §3, §5        |  [ ]   |
-| 💎    |   7   | SVC syscall entry + SSDT dispatch         | §2            |  [ ]   |
-| 💎    |   8   | NEON/SVE context switch                   | §6            |  [ ]   |
-| ⭐    |   9   | ARM security: PAN + BTI + PAC + MTE       | §5, §8        |  [ ]   |
-| 💎    |  10   | QEMU AArch64 test suite pass              | §1-§8         |  [ ]   |
+| 💎    |   6   | PSCI SMP bringup                         | §3, §5        |  [ ]   |
+| 💎    |   7   | SVC syscall entry + SSDT dispatch        | §2            |  [ ]   |
+| 💎    |   8   | NEON/SVE context switch                  | §6            |  [ ]   |
+| ⭐    |   9   | ARM security: PAN + BTI + PAC + MTE      | §5, §8        |  [ ]   |
+| 💎    |  10   | QEMU AArch64 test suite pass             | §1-§8         |  [ ]   |
 
 ---
 

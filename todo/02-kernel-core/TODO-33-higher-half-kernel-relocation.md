@@ -45,19 +45,19 @@ title: "TODO-33 -- Higher-Half Kernel Relocation"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                                              | Depends On             | Status |
-| --- | :---: | -------------------------------------------------------- | ---------------------- | :----: |
-| 🔥   |  10   | Tactical BSS headroom: large static pools -> dynamic     | --                     |  [x]   |
-| 🔥   |  11   | Unpark the ceiling-stalled kernel queue (status sweep)   | §10                    |  [/]   |
-| 💎   |   1   | Memory-map design + canonical layout decision            | --                     |  [x]   |
+| ⭐   | Order | Deliverable                              | Depends On             | Status |
+| --- | :---: | ---------------------------------------- | ---------------------- | :----: |
+| 🔥   |  10   | Tactical BSS headroom: large static pools -> dynamic | --                     |  [x]   |
+| 🔥   |  11   | Unpark the ceiling-stalled kernel queue (status sweep) | §10                    |  [/]   |
+| 💎   |   1   | Memory-map design + canonical layout decision | --                     |  [x]   |
 | 💎   |   2   | Direct map construction (install HHDM; kernel still low) | §1                     |  [x]   |
-| 💎   |   9   | VMM walker conversion -- derefs onto the HHDM helper     | §2                     |  [/]   |
-| 💎   |   3   | Linker VMA/LMA split + higher-half jump (one unit)       | §1, §2, §9             |  [/]   |
-| 💎   |   4   | Descriptor tables + per-CPU at high addresses + AP path  | §3                     |  [/]   |
-| 💎   |   5   | `boot_info` / framebuffer handoff + identity teardown    | §1, §3, §9, D01 T01 §8 |  [/]   |
-| 💎   |   6   | Per-process PML4: kernel high shared, user low private   | §3, D01 T10 §8         |  [/]   |
-| 💎   |   7   | Retire `0x800000` USER_BASE ceiling + BSS guard          | §6                     |  [/]   |
-| ⭐   |   8   | 5-level paging (LA57) support -- exceeds Win11           | §1, §3                 |  [/]   |
+| 💎   |   9   | VMM walker conversion -- derefs onto the HHDM helper | §2                     |  [/]   |
+| 💎   |   3   | Linker VMA/LMA split + higher-half jump (one unit) | §1, §2, §9             |  [/]   |
+| 💎   |   4   | Descriptor tables + per-CPU at high addresses + AP path | §3                     |  [/]   |
+| 💎   |   5   | `boot_info` / framebuffer handoff + identity teardown | §1, §3, §9, D01 T01 §8 |  [/]   |
+| 💎   |   6   | Per-process PML4: kernel high shared, user low private | §3, D01 T10 §8         |  [/]   |
+| 💎   |   7   | Retire `0x800000` USER_BASE ceiling + BSS guard | §6                     |  [/]   |
+| ⭐   |   8   | 5-level paging (LA57) support -- exceeds Win11 | §1, §3                 |  [/]   |
 
 > 💎 = parity work -- matches the Windows 11 and Linux memory model.
 > ⭐ = exclusive work -- LA57 5-level paging is supported by Linux but **not** Windows; Impossible OS can surpass Win11 here.
@@ -429,21 +429,21 @@ Measured BSS consumers (`build/kernel.map`, 2026-07-17; BSS end `0x7fe000` vs `U
 
 ## OS Comparison
 
-| ⭐   | Feature                           | 🪟 Win11                  | 🐧 Linux                         | 🚀 Impossible OS                                               |
-| --- | --------------------------------- | ------------------------ | ------------------------------- | ------------------------------------------------------------- |
-| 💎   | Kernel in upper canonical half    | ✅ `0xFFFF800000000000`+  | ✅ `0xffffffff80000000` (-2 GiB) | ⚠️ §1 pins `0xffffffff80000000`; §2-§3 move it                |
+| ⭐   | Feature                           | 🪟 Win11                  | 🐧 Linux                         | 🚀 Impossible OS                          |
+| --- | --------------------------------- | ------------------------ | ------------------------------- | ---------------------------------------- |
+| 💎   | Kernel in upper canonical half    | ✅ `0xFFFF800000000000`+  | ✅ `0xffffffff80000000` (-2 GiB) | ⚠️ §1 pins `0xffffffff80000000`; §2-§3 move it |
 | 💎   | Direct physmap of RAM (HHDM)      | ⚠️ PFN db + dynamic PTEs | ✅ `page_offset_base` physmap    | ✅ §2 HHDM (PML4 273-400, 64 TiB); §9 walkers route through it |
-| 💎   | 128 TB user / 128 TB kernel split | ✅ 48-bit split           | ✅ 48-bit split                  | ⚠️ §1 defines the split; §7 retires the ceiling               |
-| 💎   | Per-process address space         | ✅ per-process            | ✅ `mm_struct` per task          | ⚠️ PML4 per task (D01 T10 §8); high-share §6                  |
-| 💎   | Kernel/user page-table isolation  | ✅ KVA Shadow             | ✅ KPTI                          | ⬜ Unblocked by §6 (D02 T10 §6)                                |
-| 💎   | KASLR                             | ✅ kernel ASLR            | ✅ KASLR                         | ⬜ Unblocked by §3 (D02 T10 §14)                               |
-| 💎   | SMEP / SMAP clean split           | ✅ enforced               | ✅ enforced                      | ⬜ Unblocked by §6 (D02 T10 §2)                                |
-| 💎   | PCID no-flush ring transitions    | ✅ with KVA Shadow        | ✅ with KPTI                     | ⬜ Unblocked by §6 (D02 T10 §7)                                |
-| 💎   | No hardcoded user ceiling         | ✅ no low ceiling         | ✅ no low ceiling                | ⬜ §7 retires `0x800000`                                       |
-| ⭐   | 5-level paging (LA57, 128 PiB)    | ❌ not supported          | ✅ unconditional (6.10+)         | ⬜ Planned -- §8 (surpasses Win11)                             |
+| 💎   | 128 TB user / 128 TB kernel split | ✅ 48-bit split           | ✅ 48-bit split                  | ⚠️ §1 defines the split; §7 retires the ceiling |
+| 💎   | Per-process address space         | ✅ per-process            | ✅ `mm_struct` per task          | ⚠️ PML4 per task (D01 T10 §8); high-share §6 |
+| 💎   | Kernel/user page-table isolation  | ✅ KVA Shadow             | ✅ KPTI                          | ⬜ Unblocked by §6 (D02 T10 §6)           |
+| 💎   | KASLR                             | ✅ kernel ASLR            | ✅ KASLR                         | ⬜ Unblocked by §3 (D02 T10 §14)          |
+| 💎   | SMEP / SMAP clean split           | ✅ enforced               | ✅ enforced                      | ⬜ Unblocked by §6 (D02 T10 §2)           |
+| 💎   | PCID no-flush ring transitions    | ✅ with KVA Shadow        | ✅ with KPTI                     | ⬜ Unblocked by §6 (D02 T10 §7)           |
+| 💎   | No hardcoded user ceiling         | ✅ no low ceiling         | ✅ no low ceiling                | ⬜ §7 retires `0x800000`                  |
+| ⭐   | 5-level paging (LA57, 128 PiB)    | ❌ not supported          | ✅ unconditional (6.10+)         | ⬜ Planned -- §8 (surpasses Win11)        |
 | 💎   | Kernel pools dynamic, not static  | ✅ `ExAllocatePool*`      | ✅ slab / `kmem_cache`           | ✅ §10 registry + atom pools frame-backed (1.25 MiB reclaimed) |
-| ⭐   | Layout as asserted single source  | ⚠️ undocumented publicly | ⚠️ macros + prose, no manifest  | ✅ §1 `memmap.h` + 20-assert gate (live)                       |
-| ⭐   | Phys<->virt relations type-split  | ⚠️ single blended macro  | ⚠️ single `__pa`/`__va` pair    | ✅ §1 HHDM vs image, range-checked + rejecting                 |
+| ⭐   | Layout as asserted single source  | ⚠️ undocumented publicly | ⚠️ macros + prose, no manifest  | ✅ §1 `memmap.h` + 20-assert gate (live)  |
+| ⭐   | Phys<->virt relations type-split  | ⚠️ single blended macro  | ⚠️ single `__pa`/`__va` pair    | ✅ §1 HHDM vs image, range-checked + rejecting |
 
 > **After §1-§7:** Impossible OS matches the Windows 11 / Linux memory model -- higher-half kernel, private per-process lower half, and the security split that KASLR / SMEP / SMAP / KPTI build on.
 > **After §8:** Impossible OS exceeds Windows 11, which has no 5-level paging support.

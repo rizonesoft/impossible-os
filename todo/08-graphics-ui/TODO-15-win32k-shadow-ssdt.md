@@ -42,35 +42,35 @@ title: "TODO-15 -- Win32k Shadow SSDT (NtGdi / NtUser)"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                                      | Depends On      | Status |
-| --- | :---: | ------------------------------------------------ | --------------- | :----: |
-| 💎   |   1   | Shadow SSDT infrastructure (Table 1 dispatch)    | TODO-05 §3      |  [ ]   |
-| 💎   |   2   | GDI device context (DC) object table             | §1              |  [ ]   |
+| ⭐   | Order | Deliverable                              | Depends On      | Status |
+| --- | :---: | ---------------------------------------- | --------------- | :----: |
+| 💎   |   1   | Shadow SSDT infrastructure (Table 1 dispatch) | TODO-05 §3      |  [ ]   |
+| 💎   |   2   | GDI device context (DC) object table     | §1              |  [ ]   |
 | 💎   |   3   | GDI drawing syscalls (line, rect, ellipse, blit) | §2              |  [ ]   |
-| 💎   |   4   | GDI text and font syscalls                       | §2              |  [ ]   |
-| 💎   |   5   | GDI bitmap and DIB syscalls                      | §2              |  [ ]   |
-| 💎   |   6   | GDI pen, brush, and region syscalls              | §2              |  [ ]   |
-| 💎   |   7   | USER window management syscalls                  | §1, TODO-06     |  [ ]   |
-| 💎   |   8   | USER message queue syscalls                      | §7              |  [ ]   |
-| 💎   |   9   | USER input and cursor syscalls                   | §7              |  [ ]   |
-| 💎   |  10   | USER menu and accelerator syscalls               | §7              |  [ ]   |
-| 💎   |  11   | USER clipboard syscalls                          | §7              |  [ ]   |
-| ⭐   |  12   | Migrate SYS_GETMESSAGE/etc. to shadow SSDT       | §8              |  [ ]   |
-| 💎   |  13   | GDI path, curve, and extended drawing            | §3              |  [ ]   |
-| 💎   |  14   | GDI transform, palette, and color management     | §2              |  [ ]   |
-| 💎   |  15   | GDI print and metafile                           | §2              |  [ ]   |
-| 💎   |  16   | GDI font advanced                                | §4              |  [ ]   |
-| 💎   |  17   | GDI extended object management                   | §2, §6          |  [ ]   |
-| 💎   |  18   | USER window properties, styles, enumeration      | §7              |  [ ]   |
-| 💎   |  19   | USER dialog, caret, and drawing helpers          | §7              |  [ ]   |
-| 💎   |  20   | USER scrollbar                                   | §7              |  [ ]   |
-| 💎   |  21   | USER keyboard, IME, and hook                     | §8, §9          |  [ ]   |
-| 💎   |  22   | USER DPI, accessibility, system parameters       | §7              |  [ ]   |
-| 💎   |  23   | USER raw input, touch, and gesture               | §9              |  [ ]   |
-| 💎   |  24   | USER multi-monitor and display                   | §1              |  [ ]   |
-| 💎   |  25   | USER shell integration                           | §7, §8          |  [ ]   |
-| 💎   |  26   | GDI/USER DirectX and DXGI kernel integration     | §1, TODO-08-gpu |  [ ]   |
-| ⭐   |  27   | Impossible OS exclusive graphics extensions      | §2, §7, §8      |  [ ]   |
+| 💎   |   4   | GDI text and font syscalls               | §2              |  [ ]   |
+| 💎   |   5   | GDI bitmap and DIB syscalls              | §2              |  [ ]   |
+| 💎   |   6   | GDI pen, brush, and region syscalls      | §2              |  [ ]   |
+| 💎   |   7   | USER window management syscalls          | §1, TODO-06     |  [ ]   |
+| 💎   |   8   | USER message queue syscalls              | §7              |  [ ]   |
+| 💎   |   9   | USER input and cursor syscalls           | §7              |  [ ]   |
+| 💎   |  10   | USER menu and accelerator syscalls       | §7              |  [ ]   |
+| 💎   |  11   | USER clipboard syscalls                  | §7              |  [ ]   |
+| ⭐   |  12   | Migrate SYS_GETMESSAGE/etc. to shadow SSDT | §8              |  [ ]   |
+| 💎   |  13   | GDI path, curve, and extended drawing    | §3              |  [ ]   |
+| 💎   |  14   | GDI transform, palette, and color management | §2              |  [ ]   |
+| 💎   |  15   | GDI print and metafile                   | §2              |  [ ]   |
+| 💎   |  16   | GDI font advanced                        | §4              |  [ ]   |
+| 💎   |  17   | GDI extended object management           | §2, §6          |  [ ]   |
+| 💎   |  18   | USER window properties, styles, enumeration | §7              |  [ ]   |
+| 💎   |  19   | USER dialog, caret, and drawing helpers  | §7              |  [ ]   |
+| 💎   |  20   | USER scrollbar                           | §7              |  [ ]   |
+| 💎   |  21   | USER keyboard, IME, and hook             | §8, §9          |  [ ]   |
+| 💎   |  22   | USER DPI, accessibility, system parameters | §7              |  [ ]   |
+| 💎   |  23   | USER raw input, touch, and gesture       | §9              |  [ ]   |
+| 💎   |  24   | USER multi-monitor and display           | §1              |  [ ]   |
+| 💎   |  25   | USER shell integration                   | §7, §8          |  [ ]   |
+| 💎   |  26   | GDI/USER DirectX and DXGI kernel integration | §1, TODO-08-gpu |  [ ]   |
+| ⭐   |  27   | Impossible OS exclusive graphics extensions | §2, §7, §8      |  [ ]   |
 
 > 💎 = parity -- Windows GDI32/USER32 and Linux Xlib/Wayland both provide equivalent functionality.
 > ⭐ = exclusive -- clean migration path from legacy SYS_* to proper shadow SSDT.

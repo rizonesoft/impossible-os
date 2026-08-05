@@ -39,14 +39,14 @@ title: "TODO-17 -- xHCI, USB Storage & USB HID (Boot-Critical)"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                                       | Depends On | Status |
-| --- | :---: | ------------------------------------------------- | ---------- | :----: |
-| 💎   |   1   | xHCI controller bring-up and port scan            | --         |  [x]   |
-| 💎   |   2   | USB device enumeration and configuration          | §1         |  [x]   |
-| 💎   |   3   | USB MSC BOT (Bulk-Only Transport) driver          | §2         |  [x]   |
-| 💎   |   4   | Block device registration and VFS integration     | §3         |  [x]   |
+| ⭐   | Order | Deliverable                              | Depends On | Status |
+| --- | :---: | ---------------------------------------- | ---------- | :----: |
+| 💎   |   1   | xHCI controller bring-up and port scan   | --         |  [x]   |
+| 💎   |   2   | USB device enumeration and configuration | §1         |  [x]   |
+| 💎   |   3   | USB MSC BOT (Bulk-Only Transport) driver | §2         |  [x]   |
+| 💎   |   4   | Block device registration and VFS integration | §3         |  [x]   |
 | 💎   |   5   | Interrupt-driven hot-plug and post-boot lifecycle | §1-§4      |  [/]   |
-| ⭐   |   6   | Non-Intel xHCI vendor compatibility (de-scoped)   | §1         |  [/]   |
+| ⭐   |   6   | Non-Intel xHCI vendor compatibility (de-scoped) | §1         |  [/]   |
 
 ---
 

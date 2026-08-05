@@ -48,24 +48,24 @@ title: "TODO-01 -- VMM Memory Protection & Diagnostics"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                                                | Depends On                                                     | Status |
-| --- | :---: | ---------------------------------------------------------- | -------------------------------------------------------------- | :----: |
-| 💎   |   1   | `mprotect` / `NtProtectVirtualMemory` + guard pages        | 01-boot-platform/TODO-09-cpu-boot-sequencing.md §2, D02 T11 §7 |  [ ]   |
-| 💎   |   2   | W^X enforcement in VMM                                     | §1                                                             |  [ ]   |
-| 💎   |   3   | Demand paging -- MEM_RESERVE / MEM_COMMIT                  | §1                                                             |  [ ]   |
-| 💎   |   4   | `NtQueryVirtualMemory` -- `MEMORY_BASIC_INFORMATION`       | §1, §2, §3                                                     |  [ ]   |
-| 💎   |   5   | `VirtualAlloc` / `VirtualFree` / `VirtualProtect` wrappers | §3, §4                                                         |  [ ]   |
-| ⭐   |   6   | kmalloc size audit -- migrate oversized call-sites         | --                                                             |  [ ]   |
-| ⭐   |   7   | Build-time kmalloc lint                                    | §6                                                             |  [ ]   |
-| 💎   |   8   | PMM statistics -- `mm_stats_t` + `meminfo`                 | --                                                             |  [ ]   |
-| 💎   |   9   | Heap canaries + double-free detection                      | --                                                             |  [ ]   |
-| 💎   |  10   | Kernel memory leak detector                                | §9                                                             |  [ ]   |
-| 💎   |  11   | MMIO mapping with UC attributes + HPET validation          | --                                                             |  [ ]   |
-| 💎   |  12   | Per-process user page mapping (`vmm_map_user_page`)        | --                                                             |  [/]   |
-| 💎   |  13   | Auto-growing user stacks                                   | §1                                                             |  [ ]   |
-| 💎   |  14   | NtLockVirtualMemory / mlock -- pin pages in RAM            | §3                                                             |  [ ]   |
-| 💎   |  15   | Commit charge tracking + enforcement                       | §3                                                             |  [ ]   |
-| 💎   |  16   | Process memory counters (`GetProcessMemoryInfo`)           | §8                                                             |  [ ]   |
+| ⭐   | Order | Deliverable                              | Depends On                               | Status |
+| --- | :---: | ---------------------------------------- | ---------------------------------------- | :----: |
+| 💎   |   1   | `mprotect` / `NtProtectVirtualMemory` + guard pages | 01-boot-platform/TODO-09-cpu-boot-sequencing.md §2, D02 T11 §7 |  [ ]   |
+| 💎   |   2   | W^X enforcement in VMM                   | §1                                       |  [ ]   |
+| 💎   |   3   | Demand paging -- MEM_RESERVE / MEM_COMMIT | §1                                       |  [ ]   |
+| 💎   |   4   | `NtQueryVirtualMemory` -- `MEMORY_BASIC_INFORMATION` | §1, §2, §3                               |  [ ]   |
+| 💎   |   5   | `VirtualAlloc` / `VirtualFree` / `VirtualProtect` wrappers | §3, §4                                   |  [ ]   |
+| ⭐   |   6   | kmalloc size audit -- migrate oversized call-sites | --                                       |  [ ]   |
+| ⭐   |   7   | Build-time kmalloc lint                  | §6                                       |  [ ]   |
+| 💎   |   8   | PMM statistics -- `mm_stats_t` + `meminfo` | --                                       |  [ ]   |
+| 💎   |   9   | Heap canaries + double-free detection    | --                                       |  [ ]   |
+| 💎   |  10   | Kernel memory leak detector              | §9                                       |  [ ]   |
+| 💎   |  11   | MMIO mapping with UC attributes + HPET validation | --                                       |  [ ]   |
+| 💎   |  12   | Per-process user page mapping (`vmm_map_user_page`) | --                                       |  [/]   |
+| 💎   |  13   | Auto-growing user stacks                 | §1                                       |  [ ]   |
+| 💎   |  14   | NtLockVirtualMemory / mlock -- pin pages in RAM | §3                                       |  [ ]   |
+| 💎   |  15   | Commit charge tracking + enforcement     | §3                                       |  [ ]   |
+| 💎   |  16   | Process memory counters (`GetProcessMemoryInfo`) | §8                                       |  [ ]   |
 
 > 💎 = parity -- Windows and Linux both implement these memory management features; Impossible OS must match.
 > ⭐ = exclusive -- build-time allocator lint that fails the build on unannotated bare `kmalloc` calls is not present in Windows or Linux toolchains by default.

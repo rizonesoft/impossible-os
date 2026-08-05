@@ -60,21 +60,21 @@ title: "TODO-28: BSOD / Panic Screen & Crash Experience"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                                      | Depends On | Status |
-| --- | :---: | ------------------------------------------------ | ---------- | :----: |
-| 💎   |   1   | TTF font rendering in panic screen               | none       |  [ ]   |
-| 💎   |   2   | Improved layout and visual hierarchy             | §1         |  [ ]   |
-| ⭐   |   3   | Crash context: last 10 klog entries inline       | none       |  [ ]   |
-| ⭐   |   4   | Smart QR code with compressed crash data         | §2         |  [ ]   |
-| 💎   |   5   | Auto-restart countdown improvements              | §2         |  [ ]   |
-| ⭐   |   6   | Crash analysis hints on-screen                   | §2         |  [ ]   |
-| ⭐   |   7   | Crash statistics counter in NVRAM                | none       |  [ ]   |
-| ⭐   |   8   | Safe mode suggestion after repeated crashes      | §7         |  [ ]   |
-| 💎   |   9   | "What failed" faulting module identification     | none       |  [ ]   |
-| ⭐   |  10   | Panic screen modes (user / developer / QR)       | §1, §3, §4 |  [ ]   |
+| ⭐   | Order | Deliverable                              | Depends On | Status |
+| --- | :---: | ---------------------------------------- | ---------- | :----: |
+| 💎   |   1   | TTF font rendering in panic screen       | none       |  [ ]   |
+| 💎   |   2   | Improved layout and visual hierarchy     | §1         |  [ ]   |
+| ⭐   |   3   | Crash context: last 10 klog entries inline | none       |  [ ]   |
+| ⭐   |   4   | Smart QR code with compressed crash data | §2         |  [ ]   |
+| 💎   |   5   | Auto-restart countdown improvements      | §2         |  [ ]   |
+| ⭐   |   6   | Crash analysis hints on-screen           | §2         |  [ ]   |
+| ⭐   |   7   | Crash statistics counter in NVRAM        | none       |  [ ]   |
+| ⭐   |   8   | Safe mode suggestion after repeated crashes | §7         |  [ ]   |
+| 💎   |   9   | "What failed" faulting module identification | none       |  [ ]   |
+| ⭐   |  10   | Panic screen modes (user / developer / QR) | §1, §3, §4 |  [ ]   |
 | ⭐   |  11   | Audio crash notification (PC speaker beep codes) | none       |  [ ]   |
 | ⭐   |  12   | Keyboard-driven recovery actions at crash screen | §5, §8     |  [ ]   |
-| 💎   |  13   | Dump collection progress percentage              | T27 §5     |  [ ]   |
+| 💎   |  13   | Dump collection progress percentage      | T27 §5     |  [ ]   |
 
 > 💎 = parity: Windows 11 and/or Linux have equivalent features.
 > ⭐ = exclusive: Impossible OS is superior or first.

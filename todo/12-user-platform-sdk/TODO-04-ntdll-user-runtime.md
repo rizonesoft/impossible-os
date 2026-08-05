@@ -67,18 +67,18 @@ are available via `CreateFiber`/`SwitchToFiber`.
 
 ## Implementation Order
 
-| Step | Section                                                   | 💎/⭐ | Dependency                                                            |
-| ---- | --------------------------------------------------------- | --- | --------------------------------------------------------------------- |
-| 1    | ntdll.dll structure + TEB/PEB extensions                  | 💎   | `TODO-07 §9`; `D10T08 §2` stubs                                       |
-| 2    | RtlHeap process heap allocator                            | 💎   | §1; `VirtualAlloc` (`D10T08 §3`)                                      |
-| 3    | LdrLoadDll PE DLL loader                                  | 💎   | §1; `TODO-07 §4 §5 §7`; `D10T08 §7`                                   |
-| 4    | Thread-local storage (TLS + PE TLS callbacks)             | 💎   | §1 TEB extensions; `TODO-07 §3` TLS data dir                          |
-| 5    | Vectored exception handling (VEH)                         | 💎   | §1 TEB VEH chain; `D10T08 §3` VirtualAlloc; `D10T10 §3` SEH fallback  |
-| 6    | Process startup (CRT0)                                    | 💎   | §2 heap init; §3 Ldr init; §4 TLS init; §5 VEH                        |
-| 7    | User-mode libc shims (`user/lib/libc.lib`)                | 💎   | §6 CRT0; `kernel32.dll` stubs                                         |
-| 8    | Fiber API                                                 | ⭐   | §1 TEB FiberData; §6 thread-to-fiber conversion                       |
-| 9    | Local atom tables (RtlAtomTable + kernel32 AddAtom)       | 💎   | §2 RtlHeap; `D02T13 §3` (kernel global `NtAddAtom` stays global-only) |
-| 10   | WNF user runtime (RtlPublish/Subscribe + dispatch worker) | 💎   | §1 TEB; §2 RtlHeap; `D02 T16 §3 §8` (kernel KNF/WNF SSDT surface)     |
+| Step | Section                                  | 💎/⭐ | Dependency                               |
+| ---- | ---------------------------------------- | --- | ---------------------------------------- |
+| 1    | ntdll.dll structure + TEB/PEB extensions | 💎   | `TODO-07 §9`; `D10T08 §2` stubs          |
+| 2    | RtlHeap process heap allocator           | 💎   | §1; `VirtualAlloc` (`D10T08 §3`)         |
+| 3    | LdrLoadDll PE DLL loader                 | 💎   | §1; `TODO-07 §4 §5 §7`; `D10T08 §7`      |
+| 4    | Thread-local storage (TLS + PE TLS callbacks) | 💎   | §1 TEB extensions; `TODO-07 §3` TLS data dir |
+| 5    | Vectored exception handling (VEH)        | 💎   | §1 TEB VEH chain; `D10T08 §3` VirtualAlloc; `D10T10 §3` SEH fallback |
+| 6    | Process startup (CRT0)                   | 💎   | §2 heap init; §3 Ldr init; §4 TLS init; §5 VEH |
+| 7    | User-mode libc shims (`user/lib/libc.lib`) | 💎   | §6 CRT0; `kernel32.dll` stubs            |
+| 8    | Fiber API                                | ⭐   | §1 TEB FiberData; §6 thread-to-fiber conversion |
+| 9    | Local atom tables (RtlAtomTable + kernel32 AddAtom) | 💎   | §2 RtlHeap; `D02T13 §3` (kernel global `NtAddAtom` stays global-only) |
+| 10   | WNF user runtime (RtlPublish/Subscribe + dispatch worker) | 💎   | §1 TEB; §2 RtlHeap; `D02 T16 §3 §8` (kernel KNF/WNF SSDT surface) |
 
 ---
 
@@ -419,16 +419,16 @@ are available via `CreateFiber`/`SwitchToFiber`.
 ## OS Comparison
 
 
-| ⭐   | Feature                                  | 🪟 Win11                                                     | 🐧 Linux                                                     | 🚀 Impossible OS                                                     |
-| --- | ---------------------------------------- | ----------------------------------------------------------- | ----------------------------------------------------------- | ------------------------------------------------------------------- |
-| 💎   | User-mode heap                           | ✅ `ntdll!RtlAllocateHeap`; LFH + segment heap               | ✅ glibc `malloc` (ptmalloc)                                 | ⬜ §2 -- free-list best-fit with coalescing; `HEAP_ZERO_MEMORY`      |
-| 💎   | PE DLL loader in user-mode ntdll         | ✅ `ntdll!LdrLoadDll`; full PEB LDR chain                    | ❌ Not applicable (ELF native)                               | ⬜ §3 -- full PEB LDR list; recursive                                |
-| 💎   | Thread-local storage                     | ✅ Full TLS + `__declspec(thread)`                           | ✅ `pthread_key_create` + `__thread`                         | ⬜ §4 -- `TEB.TlsSlots[64]`, `TlsBitmapBits`, PE TLS callbacks,      |
-| 💎   | Vectored Exception Handling              | ✅ `AddVectoredExceptionHandler`; KiUserExceptionDispatcher  | ✅ POSIX signals (`sigaction`)                               | ⬜ §5 -- VEH list → SEH fallback                                     |
-| 💎   | Process CRT startup                      | ✅ `ntdll!LdrpInitialize`; `.ctors`/`atexit`; Win32 entry    | ✅ glibc `__libc_start_main`                                 | ⬜ §6 -- heap+Ldr+TLS init → `.ctors` walk                           |
-| 💎   | User-mode libc shims                     | ✅ `msvcrt.dll` / `ucrt.dll`                                 | ✅ glibc                                                     | ⬜ §7 -- `libc.lib` thin wrappers over Win32                         |
-| ⭐   | Fiber API                                | ✅ Windows fibers                                            | ⚠️ `makecontext`/`swapcontext` (POSIX; deprecated in glibc) | ⬜ §8 -- `SwitchToFiber` NASM context switch; `ConvertThreadToFiber` |
-| 💎   | WNF user runtime (Rtl publish/subscribe) | ✅ `ntdll!RtlSubscribeWnfStateChangeNotification` + dispatch | ✅ inotify/`sd-bus`/kdbus signals (different model)          | ⬜ §10 -- Rtl wrappers over kernel KNF; per-process table + 1 worker |
+| ⭐   | Feature                                  | 🪟 Win11                                  | 🐧 Linux                                  | 🚀 Impossible OS                          |
+| --- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
+| 💎   | User-mode heap                           | ✅ `ntdll!RtlAllocateHeap`; LFH + segment heap | ✅ glibc `malloc` (ptmalloc)              | ⬜ §2 -- free-list best-fit with coalescing; `HEAP_ZERO_MEMORY` |
+| 💎   | PE DLL loader in user-mode ntdll         | ✅ `ntdll!LdrLoadDll`; full PEB LDR chain | ❌ Not applicable (ELF native)            | ⬜ §3 -- full PEB LDR list; recursive     |
+| 💎   | Thread-local storage                     | ✅ Full TLS + `__declspec(thread)`        | ✅ `pthread_key_create` + `__thread`      | ⬜ §4 -- `TEB.TlsSlots[64]`, `TlsBitmapBits`, PE TLS callbacks, |
+| 💎   | Vectored Exception Handling              | ✅ `AddVectoredExceptionHandler`; KiUserExceptionDispatcher | ✅ POSIX signals (`sigaction`)            | ⬜ §5 -- VEH list → SEH fallback          |
+| 💎   | Process CRT startup                      | ✅ `ntdll!LdrpInitialize`; `.ctors`/`atexit`; Win32 entry | ✅ glibc `__libc_start_main`              | ⬜ §6 -- heap+Ldr+TLS init → `.ctors` walk |
+| 💎   | User-mode libc shims                     | ✅ `msvcrt.dll` / `ucrt.dll`              | ✅ glibc                                  | ⬜ §7 -- `libc.lib` thin wrappers over Win32 |
+| ⭐   | Fiber API                                | ✅ Windows fibers                         | ⚠️ `makecontext`/`swapcontext` (POSIX; deprecated in glibc) | ⬜ §8 -- `SwitchToFiber` NASM context switch; `ConvertThreadToFiber` |
+| 💎   | WNF user runtime (Rtl publish/subscribe) | ✅ `ntdll!RtlSubscribeWnfStateChangeNotification` + dispatch | ✅ inotify/`sd-bus`/kdbus signals (different model) | ⬜ §10 -- Rtl wrappers over kernel KNF; per-process table + 1 worker |
 
 Impossible OS `ntdll.dll` maps at a fixed VA (`0x7FF000000000`) with **zero import dependencies**
 and issues raw `SYSCALL` instructions for all `Nt*` functions -- identical to Windows NT's design.

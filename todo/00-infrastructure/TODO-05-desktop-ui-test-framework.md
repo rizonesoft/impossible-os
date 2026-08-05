@@ -55,23 +55,23 @@ title: "TODO-05 -- Desktop & UI Test Framework"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                                       | Depends On | Status |
-| --- | :---: | ------------------------------------------------- | ---------- | :----: |
-| 💎   |   1   | Framebuffer snapshot API (kernel-side capture)    | --         |  [x]   |
-| 💎   |   2   | QEMU framebuffer dump (screendump via monitor)    | --         |  [x]   |
-| 💎   |   3   | Desktop smoke test (non-black screen after boot)  | §1, §2     |  [x]   |
-| 💎   |   4   | Input event injection (key press, mouse click)    | --         |  [x]   |
-| 💎   |   5   | Terminal output verification                      | §4         |  [x]   |
-| ⭐   |   6   | Reference screenshot comparison                   | §2         |  [x]   |
-| ⭐   |   7   | Visual regression CI pipeline                     | §3, §6     |  [x]   |
-| ⭐   |   8   | Window manager state verification                 | §4         |  [x]   |
-| ⭐   |   9   | Perceptual diff + structured screenshot needles   | §6         |  [x]   |
+| ⭐   | Order | Deliverable                              | Depends On | Status |
+| --- | :---: | ---------------------------------------- | ---------- | :----: |
+| 💎   |   1   | Framebuffer snapshot API (kernel-side capture) | --         |  [x]   |
+| 💎   |   2   | QEMU framebuffer dump (screendump via monitor) | --         |  [x]   |
+| 💎   |   3   | Desktop smoke test (non-black screen after boot) | §1, §2     |  [x]   |
+| 💎   |   4   | Input event injection (key press, mouse click) | --         |  [x]   |
+| 💎   |   5   | Terminal output verification             | §4         |  [x]   |
+| ⭐   |   6   | Reference screenshot comparison          | §2         |  [x]   |
+| ⭐   |   7   | Visual regression CI pipeline            | §3, §6     |  [x]   |
+| ⭐   |   8   | Window manager state verification        | §4         |  [x]   |
+| ⭐   |   9   | Perceptual diff + structured screenshot needles | §6         |  [x]   |
 | 💎   |  10   | Frame timing + drop oracle (`wm_get_frame_stats`) | --         |  [x]   |
-| 💎   |  11   | Input record + replay (Unicode, IME)              | §4, §12    |  [x]   |
-| ⭐   |  12   | Headless compositor + frame-lock stepping         | §1         |  [x]   |
-| 💎   |  13   | Multi-monitor + DPI test matrix                   | §1         |  [/]   |
-| ⭐   |  14   | WCAG sweep over automation tree                   | D08 T07 §6 |  [/]   |
-| 💎   |  15   | Test isolation + crash artifact capture           | §1, §10    |  [x]   |
+| 💎   |  11   | Input record + replay (Unicode, IME)     | §4, §12    |  [x]   |
+| ⭐   |  12   | Headless compositor + frame-lock stepping | §1         |  [x]   |
+| 💎   |  13   | Multi-monitor + DPI test matrix          | §1         |  [/]   |
+| ⭐   |  14   | WCAG sweep over automation tree          | D08 T07 §6 |  [/]   |
+| 💎   |  15   | Test isolation + crash artifact capture  | §1, §10    |  [x]   |
 
 > 💎 = parity -- Windows has the Windows App Certification Kit (WACK), UI Automation, DwmGetCompositionTimingInfo, SendInput; Linux has dogtail, LDTP, openQA, libinput record/replay, AT-SPI2.
 > ⭐ = exclusive -- pixel-level visual regression in CI for an OS-level compositor; perceptual diff; headless-with-virtual-clock compositor; WCAG gating in CI; Unicode/IME-correct record/replay.

@@ -56,16 +56,16 @@ and Cloudflare R2 -- no live server to maintain.
 
 ## Implementation Order
 
-| Step | Section                                                      | 💎/⭐ | Dependency                                                 |
-| ---- | ------------------------------------------------------------ | --- | ---------------------------------------------------------- |
-| 1    | Version manifest API (JSON schema + GitHub Pages)            | 💎   | `D10T03 §1` client parse upgrade                           |
-| 2    | CDN & hosting (GitHub Releases + Cloudflare R2)              | 💎   | `TODO-01 §6` artifact manifest                             |
-| 3    | Release promotion pipeline (dev→beta→stable)                 | ⭐   | §1; §2; `TODO-01 §1` versioning                            |
-| 4    | IPKG package repository (index.json + `ipkg` commands)       | 💎   | `D10T03 §6–6` IPKG installer                               |
-| 5    | Package submission (CI validation + `ipkg-sign`)             | ⭐   | §4; `TODO-01 §5` code signing key                          |
+| Step | Section                                  | 💎/⭐ | Dependency                               |
+| ---- | ---------------------------------------- | --- | ---------------------------------------- |
+| 1    | Version manifest API (JSON schema + GitHub Pages) | 💎   | `D10T03 §1` client parse upgrade         |
+| 2    | CDN & hosting (GitHub Releases + Cloudflare R2) | 💎   | `TODO-01 §6` artifact manifest           |
+| 3    | Release promotion pipeline (dev→beta→stable) | ⭐   | §1; §2; `TODO-01 §1` versioning          |
+| 4    | IPKG package repository (index.json + `ipkg` commands) | 💎   | `D10T03 §6–6` IPKG installer             |
+| 5    | Package submission (CI validation + `ipkg-sign`) | ⭐   | §4; `TODO-01 §5` code signing key        |
 | 6    | Update delta packages (`make-delta.sh` + client delta-first) | ⭐   | §1 manifest `delta_url` field; `D10T03 §9` client download |
-| 7    | Telemetry pipeline (Cloudflare Worker + D1 + Grafana)        | ⭐   | `D10T12 §9` OS-side sender                                 |
-| 8    | Status page (GitHub Actions health checks + incident log)    | ⭐   | §1 §2 §4 §7 all live                                       |
+| 7    | Telemetry pipeline (Cloudflare Worker + D1 + Grafana) | ⭐   | `D10T12 §9` OS-side sender               |
+| 8    | Status page (GitHub Actions health checks + incident log) | ⭐   | §1 §2 §4 §7 all live                     |
 
 ---
 
@@ -271,15 +271,15 @@ and Cloudflare R2 -- no live server to maintain.
 ## OS Comparison
 
 
-| ⭐   | Feature                                            | 🪟 Win11                                        | 🐧 Linux                                          | 🚀 Impossible OS                                                         |
-| --- | -------------------------------------------------- | ---------------------------------------------- | ------------------------------------------------ | ----------------------------------------------------------------------- |
-| 💎   | Update manifest API with channels                  | ✅ Windows Update; WUfB; WSUS; channel          | ✅ APT/DNF repos; Flatpak remote; snap            | ⬜ §1 -- static JSON on GitHub Pages                                     |
-| 💎   | Package repository with install/search/upgrade     | ✅ MS Store; winget repo; Chocolatey            | ✅ APT/DNF/pacman/AUR; Flathub                    | ⬜ §4 -- `index.json` on R2; `ipkg search/install/update/upgrade`        |
-| ⭐   | Package CI submission pipeline                     | ✅ MS Store review (opaque); winget             | ✅ Debian NEW queue; AUR PRs;                     | ⬜ §5 -- GitHub PR + automated QEMU                                      |
-| ⭐   | Update delta packages                              | ✅ Express updates (CBS differential); WUfB     | ✅ apt delta (binary xdelta); rpm-ostree          | ⬜ §6 -- BLAKE2b-160 file diff; `make-delta.sh`; client                  |
-| ⭐   | Opt-in telemetry → public Grafana dashboard        | ⚠️ Windows: opt-out telemetry; non-public data | ✅ Ubuntu Popularity Contest (opt-in; public      | ⬜ §7 -- CF Worker + D1; `stats.impossible-os.dev`                       |
-| ⭐   | Transparent public status page with auto-incidents | ✅ `windowsupdate.microsoft.com/` -- minimal    | ✅ Varies (Canonical status.ubuntu.com, etc.)     | ⬜ §8 -- GitHub Actions every 5 min                                      |
-| 💎   | Release promotion pipeline                         | ✅ Windows Insider rings; WUfB rings            | ✅ Debian unstable→testing→stable; Fedora Rawhide | ⬜ §3 -- `promote-release.sh`; `rollback-release.sh`; sign-off checklist |
+| ⭐   | Feature                                  | 🪟 Win11                                  | 🐧 Linux                                  | 🚀 Impossible OS                          |
+| --- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
+| 💎   | Update manifest API with channels        | ✅ Windows Update; WUfB; WSUS; channel    | ✅ APT/DNF repos; Flatpak remote; snap    | ⬜ §1 -- static JSON on GitHub Pages      |
+| 💎   | Package repository with install/search/upgrade | ✅ MS Store; winget repo; Chocolatey      | ✅ APT/DNF/pacman/AUR; Flathub            | ⬜ §4 -- `index.json` on R2; `ipkg search/install/update/upgrade` |
+| ⭐   | Package CI submission pipeline           | ✅ MS Store review (opaque); winget       | ✅ Debian NEW queue; AUR PRs;             | ⬜ §5 -- GitHub PR + automated QEMU       |
+| ⭐   | Update delta packages                    | ✅ Express updates (CBS differential); WUfB | ✅ apt delta (binary xdelta); rpm-ostree  | ⬜ §6 -- BLAKE2b-160 file diff; `make-delta.sh`; client |
+| ⭐   | Opt-in telemetry → public Grafana dashboard | ⚠️ Windows: opt-out telemetry; non-public data | ✅ Ubuntu Popularity Contest (opt-in; public | ⬜ §7 -- CF Worker + D1; `stats.impossible-os.dev` |
+| ⭐   | Transparent public status page with auto-incidents | ✅ `windowsupdate.microsoft.com/` -- minimal | ✅ Varies (Canonical status.ubuntu.com, etc.) | ⬜ §8 -- GitHub Actions every 5 min       |
+| 💎   | Release promotion pipeline               | ✅ Windows Insider rings; WUfB rings      | ✅ Debian unstable→testing→stable; Fedora Rawhide | ⬜ §3 -- `promote-release.sh`; `rollback-release.sh`; sign-off checklist |
 
 Impossible OS's `⭐` advantage: the entire update delivery chain -- manifest, CDN, package
 repo, delta generation, telemetry, and status page -- runs on free-tier GitHub Pages,

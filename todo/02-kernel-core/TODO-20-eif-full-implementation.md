@@ -60,19 +60,19 @@ title: "TODO-20 -- EIF Full Implementation"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                                 | Depends On                 | Status |
-| --- | :---: | ------------------------------------------- | -------------------------- | :----: |
+| ⭐   | Order | Deliverable                              | Depends On                 | Status |
+| --- | :---: | ---------------------------------------- | -------------------------- | :----: |
 | ⭐   |   1   | Range overlap validation (normative rule 2) | --                         |  [x]   |
-| 💎   |   2   | Segment permission enforcement (R/W/X PTE)  | §1                         |  [/]   |
-| ⭐   |   3   | Module registration for EIF                 | T17 §6                     |  [/]   |
-| ⭐   |   4   | API version gating                          | §1                         |  [x]   |
-| ⭐   |   5   | Metadata section parser                     | §1                         |  [x]   |
-| ⭐   |   6   | LZ4 compressed segments                     | T03 §3                     |  [x]   |
-| ⭐   |   7   | Optional import stubs                       | §3, T17 §4, T17 §13        |  [/]   |
-| ⭐   |   8   | EIF ASLR (load_base=0 randomization)        | §2, T17 §15, T03 §5        |  [/]   |
-| ⭐   |   9   | Per-process dispatch table isolation        | §3, D01 T10 §8, D03 T01 §3 |  [/]   |
+| 💎   |   2   | Segment permission enforcement (R/W/X PTE) | §1                         |  [/]   |
+| ⭐   |   3   | Module registration for EIF              | T17 §6                     |  [/]   |
+| ⭐   |   4   | API version gating                       | §1                         |  [x]   |
+| ⭐   |   5   | Metadata section parser                  | §1                         |  [x]   |
+| ⭐   |   6   | LZ4 compressed segments                  | T03 §3                     |  [x]   |
+| ⭐   |   7   | Optional import stubs                    | §3, T17 §4, T17 §13        |  [/]   |
+| ⭐   |   8   | EIF ASLR (load_base=0 randomization)     | §2, T17 §15, T03 §5        |  [/]   |
+| ⭐   |   9   | Per-process dispatch table isolation     | §3, D01 T10 §8, D03 T01 §3 |  [/]   |
 | 💎   |  10   | CET compatibility flag (format reservation) | --                         |  [/]   |
-| 💎   |  11   | EIF signature-block ABI (signer key)        | D02 T19 §4                 |  [/]   |
+| 💎   |  11   | EIF signature-block ABI (signer key)     | D02 T19 §4                 |  [/]   |
 
 > 💎 = parity -- matches a capability Windows PE and Linux ELF both have.
 > ⭐ = exclusive -- Impossible OS native format superiority.
@@ -318,20 +318,20 @@ The spec'd signature block (`algo`, `sig_size`, `signature` over `[0, signature_
 
 ## OS Comparison
 
-| ⭐   | Feature                 | 🪟 Win11                  | 🐧 Linux                  | 🚀 Impossible OS                                         |
-| --- | ----------------------- | ------------------------ | ------------------------ | ------------------------------------------------------- |
-| 💎   | Segment RWX pages       | ✅ PE section chars       | ✅ ELF p_flags            | ⬜ §2                                                    |
-| 💎   | ASLR                    | ✅ HighEntropyVA + reloc  | ✅ PIE + mmap ASLR        | ⬜ §8 T17 §15                                            |
-| 💎   | RELRO import table RO   | ⚠️ often partial RELRO   | ✅ full RELRO w/-z now    | ⬜ §2 §7 §9                                              |
-| 💎   | Code signing            | ✅ Authenticode pipeline  | ✅ IMA / module sig       | ⬜ §11 ABI + T17 §17                                     |
+| ⭐   | Feature                 | 🪟 Win11                  | 🐧 Linux                  | 🚀 Impossible OS                          |
+| --- | ----------------------- | ------------------------ | ------------------------ | ---------------------------------------- |
+| 💎   | Segment RWX pages       | ✅ PE section chars       | ✅ ELF p_flags            | ⬜ §2                                     |
+| 💎   | ASLR                    | ✅ HighEntropyVA + reloc  | ✅ PIE + mmap ASLR        | ⬜ §8 T17 §15                             |
+| 💎   | RELRO import table RO   | ⚠️ often partial RELRO   | ✅ full RELRO w/-z now    | ⬜ §2 §7 §9                               |
+| 💎   | Code signing            | ✅ Authenticode pipeline  | ✅ IMA / module sig       | ⬜ §11 ABI + T17 §17                      |
 | 💎   | CET compat flag         | ✅ CETCOMPAT              | ✅ .note IBT/SHSTK        | ⚠️ §10 IBT+SHSTK reserved+validated; enforce D02T10 §10 |
-| ⭐   | Fast load path          | ❌ slow IAT fixups        | ❌ slow PLT/GOT           | ✅ T17 §5                                                |
-| ⭐   | Integer SSDT imports    | ❌ name-based imports     | ❌ dynamic string sym     | ✅ T17 §5                                                |
-| ⭐   | API version gate        | ⚠️ subsystem version     | ❌ no ELF equivalent      | ✅ §4                                                    |
-| ⭐   | Built-in metadata       | ⚠️ RT_VERSION resource   | ⚠️ .note / build-id      | ✅ §5                                                    |
-| ⭐   | LZ4 compressed segments | ❌ not in PE load         | ❌ not standard ELF       | ✅ §6                                                    |
-| ⭐   | Range overlap checks    | ⚠️ loader partial checks | ⚠️ partial loader checks | ✅ §1                                                    |
-| ⭐   | Optional import stub    | ❌ delay-load thunks      | ❌ weak sym may be NULL   | ⬜ §7                                                    |
+| ⭐   | Fast load path          | ❌ slow IAT fixups        | ❌ slow PLT/GOT           | ✅ T17 §5                                 |
+| ⭐   | Integer SSDT imports    | ❌ name-based imports     | ❌ dynamic string sym     | ✅ T17 §5                                 |
+| ⭐   | API version gate        | ⚠️ subsystem version     | ❌ no ELF equivalent      | ✅ §4                                     |
+| ⭐   | Built-in metadata       | ⚠️ RT_VERSION resource   | ⚠️ .note / build-id      | ✅ §5                                     |
+| ⭐   | LZ4 compressed segments | ❌ not in PE load         | ❌ not standard ELF       | ✅ §6                                     |
+| ⭐   | Range overlap checks    | ⚠️ loader partial checks | ⚠️ partial loader checks | ✅ §1                                     |
+| ⭐   | Optional import stub    | ❌ delay-load thunks      | ❌ weak sym may be NULL   | ⬜ §7                                     |
 
 > **Parity gaps:** 💎/⬜ rows are owned by §1-§11 or `TODO-17-binary-system.md` §17. **Shipped+reviewed:** overlap (§1), API gate (§4), metadata (§5), LZ4 (§6), CET flags (§10). **Deferred with concrete owners:** W^X permissions (§2), loader-owned module registration (§3), optional-import stubs (§7), ASLR (§8), per-process dispatch (§9), signature-block ABI (§11).
 

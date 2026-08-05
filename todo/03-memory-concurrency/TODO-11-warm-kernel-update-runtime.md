@@ -29,15 +29,15 @@ Ship the runtime machinery that uses the warm-kernel-update handoff ABI from [01
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                                            | Depends On        | Status |
-| --- | :---: | ------------------------------------------------------ | ----------------- | :----: |
-| 💎   |   1   | Outgoing-kernel staging area + folio preservation      | TODO-04 pager     |  [ ]   |
-| 💎   |   2   | Per-subsystem quiesce callback registry                | TODO-06 scheduler |  [ ]   |
-| 💎   |   3   | VFS writeback + FD table serialize                     | (none)            |  [ ]   |
-| 💎   |   4   | Scheduler drain + thread freeze                        | §2                |  [ ]   |
-| 💎   |   5   | Kexec-equivalent jump into new kernel image            | §1..§4            |  [ ]   |
+| ⭐   | Order | Deliverable                              | Depends On        | Status |
+| --- | :---: | ---------------------------------------- | ----------------- | :----: |
+| 💎   |   1   | Outgoing-kernel staging area + folio preservation | TODO-04 pager     |  [ ]   |
+| 💎   |   2   | Per-subsystem quiesce callback registry  | TODO-06 scheduler |  [ ]   |
+| 💎   |   3   | VFS writeback + FD table serialize       | (none)            |  [ ]   |
+| 💎   |   4   | Scheduler drain + thread freeze          | §2                |  [ ]   |
+| 💎   |   5   | Kexec-equivalent jump into new kernel image | §1..§4            |  [ ]   |
 | 💎   |   6   | Incoming-kernel reattach path (splice memory, restore) | D01 T01 §14       |  [ ]   |
-| 💎   |   7   | Live-update syscall + `nt_live_update` SSDT entry      | §5, §6            |  [ ]   |
+| 💎   |   7   | Live-update syscall + `nt_live_update` SSDT entry | §5, §6            |  [ ]   |
 
 > 💎 = parity work: Linux 6.16 KHO + LUO set the baseline for cloud/server kernel replacement without VM bounce.
 

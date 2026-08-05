@@ -63,18 +63,18 @@ title: "TODO-09 -- CPU Boot Sequencing & AP Hardening"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                                      | Depends On               | Status |
-| --- | :---: | ------------------------------------------------ | ------------------------ | :----: |
-| 💎   |   1   | CPUID detection & per-CPU capability capture     | D2/T01 §1                |  [x]   |
-| 💎   |   2   | Phase 0 CPU security activation order            | §1, D2/T10 §1, D2/T01 §2 |  [x]   |
-| ⭐   |   3   | Hypervisor detection before timer selection      | §1, D2/T01 §12           |  [x]   |
-| 💎   |   4   | AP CPU hardening (`ap_cpu_harden()`)             | §2, D2/T10 §1            |  [x]   |
-| 💎   |   5   | Phase 1 XSAVE & PCID activation window           | §2, D2/T24 §4, D2/T01 §1 |  [x]   |
-| 💎   |   6   | AP feature consistency validation                | §1, §4                   |  [/]   |
-| 💎   |   7   | CR4 safety-bit pinning                           | §2, §5                   |  [x]   |
-| 💎   |   8   | MTRR/PAT AP synchronization                      | §4                       |  [x]   |
-| ⭐   |   9   | CPU register state audit trail                   | §2, §5                   |  [x]   |
-| 💎   |  10   | AP bringup hardening & robustness                | §4, §6                   |  [x]   |
+| ⭐   | Order | Deliverable                              | Depends On               | Status |
+| --- | :---: | ---------------------------------------- | ------------------------ | :----: |
+| 💎   |   1   | CPUID detection & per-CPU capability capture | D2/T01 §1                |  [x]   |
+| 💎   |   2   | Phase 0 CPU security activation order    | §1, D2/T10 §1, D2/T01 §2 |  [x]   |
+| ⭐   |   3   | Hypervisor detection before timer selection | §1, D2/T01 §12           |  [x]   |
+| 💎   |   4   | AP CPU hardening (`ap_cpu_harden()`)     | §2, D2/T10 §1            |  [x]   |
+| 💎   |   5   | Phase 1 XSAVE & PCID activation window   | §2, D2/T24 §4, D2/T01 §1 |  [x]   |
+| 💎   |   6   | AP feature consistency validation        | §1, §4                   |  [/]   |
+| 💎   |   7   | CR4 safety-bit pinning                   | §2, §5                   |  [x]   |
+| 💎   |   8   | MTRR/PAT AP synchronization              | §4                       |  [x]   |
+| ⭐   |   9   | CPU register state audit trail           | §2, §5                   |  [x]   |
+| 💎   |  10   | AP bringup hardening & robustness        | §4, §6                   |  [x]   |
 | 💎   |  11   | Post-ship follow-up backfill (2026-07-31 cohort) | --                       |  [ ]   |
 
 > 💎 = parity -- Windows and Linux both enforce EFER/CR4 ordering, AP parity, feature consistency, CR4 pinning, and PAT synchronization; Impossible OS must match that contract.

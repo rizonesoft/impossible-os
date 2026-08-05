@@ -57,14 +57,14 @@ title: "TODO-02 -- FTP Client, wget/curl & WiFi"
 
 ## Implementation Order
 
-| #   | Section                                                   | Tag        | Dep                | Mark |
-| --- | --------------------------------------------------------- | ---------- | ------------------ | ---- |
+| #   | Section                                  | Tag        | Dep                | Mark |
+| --- | ---------------------------------------- | ---------- | ------------------ | ---- |
 | 1   | FTP protocol core (`ftp_connect`, `PASV`, `RETR`, `STOR`) | `[Sonnet]` | 06-net/TODO-02     | 💎    |
-| 2   | FTP shell commands + `wget ftp://`                        | `[Sonnet]` | §1                 | 💎    |
-| 3   | `wget` command (HTTP/HTTPS + progress)                    | `[Sonnet]` | 06-net/TODO-03     | 💎    |
-| 4   | `curl` command (full flag set)                            | `[Sonnet]` | §3                 | 💎    |
-| 5   | FTP GUI client (dual-pane, stretch)                       | `[Sonnet]` | §1, 07-gfx/TODO-05 | 💎    |
-| 6   | WiFi framework (stretch)                                  | `[Opus]`   | 04-drivers/TODO-09 | 💎    |
+| 2   | FTP shell commands + `wget ftp://`       | `[Sonnet]` | §1                 | 💎    |
+| 3   | `wget` command (HTTP/HTTPS + progress)   | `[Sonnet]` | 06-net/TODO-03     | 💎    |
+| 4   | `curl` command (full flag set)           | `[Sonnet]` | §3                 | 💎    |
+| 5   | FTP GUI client (dual-pane, stretch)      | `[Sonnet]` | §1, 07-gfx/TODO-05 | 💎    |
+| 6   | WiFi framework (stretch)                 | `[Opus]`   | 04-drivers/TODO-09 | 💎    |
 
 ---
 
@@ -218,17 +218,17 @@ Standalone `ftpgui.exe` with a dual-pane file manager layout. Depends on `CTRL_L
 ## OS Comparison
 
 
-| ⭐   | Feature                                        | 🪟 Win11                           | 🐧 Linux                   | 🚀 Impossible OS                        |
-| --- | ---------------------------------------------- | --------------------------------- | ------------------------- | -------------------------------------- |
-| 💎   | FTP client                                     | ✅ `ftp.exe` built-in              | ✅ `ftp`/`lftp`            | ⬜ `ftp` shell command + PASV/RETR/STOR |
-| 💎   | `wget` file downloader                         | ❌ Not built-in (requires install) | ✅ Built-in                | ⬜ built-in with `-O/-q/-c/-r` flags    |
-| 💎   | `curl` HTTP tool                               | ✅ Built-in (Windows 10+)          | ✅ Built-in                | ⬜ `-X/-d/-H/-I/-L/-u/-v/-k` flags      |
-| 💎   | FTP GUI dual-pane client                       | ✅ FileZilla (3rd party)           | ✅ FileZilla/gFTP          | ⬜ `ftpgui.exe` native dual-pane        |
-| 💎   | WiFi connection management                     | ✅ Windows WiFi                    | ✅ NetworkManager          | ⬜ §6 -- (stretch ) -- WPA2 +           |
-| 💎   | WPA2/WPA3 association                          | ✅ wpa_supplicant via WlanAPI      | ✅ wpa_supplicant          | ⬜ §6 -- (stretch ) -- 4-way handshake  |
-| ⭐   | `wget` + `curl` built in from first boot       | ❌ `wget` requires manual install  | ✅ Built-in                | ⬜ both ship with OS                    |
+| ⭐   | Feature                                  | 🪟 Win11                           | 🐧 Linux                   | 🚀 Impossible OS                        |
+| --- | ---------------------------------------- | --------------------------------- | ------------------------- | -------------------------------------- |
+| 💎   | FTP client                               | ✅ `ftp.exe` built-in              | ✅ `ftp`/`lftp`            | ⬜ `ftp` shell command + PASV/RETR/STOR |
+| 💎   | `wget` file downloader                   | ❌ Not built-in (requires install) | ✅ Built-in                | ⬜ built-in with `-O/-q/-c/-r` flags    |
+| 💎   | `curl` HTTP tool                         | ✅ Built-in (Windows 10+)          | ✅ Built-in                | ⬜ `-X/-d/-H/-I/-L/-u/-v/-k` flags      |
+| 💎   | FTP GUI dual-pane client                 | ✅ FileZilla (3rd party)           | ✅ FileZilla/gFTP          | ⬜ `ftpgui.exe` native dual-pane        |
+| 💎   | WiFi connection management               | ✅ Windows WiFi                    | ✅ NetworkManager          | ⬜ §6 -- (stretch ) -- WPA2 +           |
+| 💎   | WPA2/WPA3 association                    | ✅ wpa_supplicant via WlanAPI      | ✅ wpa_supplicant          | ⬜ §6 -- (stretch ) -- 4-way handshake  |
+| ⭐   | `wget` + `curl` built in from first boot | ❌ `wget` requires manual install  | ✅ Built-in                | ⬜ both ship with OS                    |
 | ⭐   | Progress bar shared across `ftp`/`wget`/`curl` | ❌ Inconsistent per tool           | ❌ Inconsistent per tool   | ⬜ `progress_bar_print()` shared helper |
-| ⭐   | FTP GUI file manager with native IxUI          | ❌ Requires FileZilla              | ❌ Requires FileZilla/gFTP | ⬜ `ftpgui.exe` built in                |
+| ⭐   | FTP GUI file manager with native IxUI    | ❌ Requires FileZilla              | ❌ Requires FileZilla/gFTP | ⬜ `ftpgui.exe` built in                |
 
 **Impossible OS advantage:** `wget` and `curl` ship out-of-the-box on first boot -- no installation needed. A consistent `progress_bar_print()` helper gives every download tool the same KB/s + ETA display. The FTP GUI is a native IxUI dual-pane app with no third-party dependency.
 

@@ -41,20 +41,20 @@ title: "TODO-04 -- Firmware Table & Platform Inventory"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                                             | Depends On     | Status |
-| --- | :---: | ------------------------------------------------------- | -------------- | :----: |
-| 💎   |   1   | Firmware table catalog API                              | TODO-01 §1     |  [x]   |
-| 💎   |   2   | Physical range and checksum validation                  | §1             |  [x]   |
-| 💎   |   3   | ACPI/SMBIOS/DTB table arbitration                       | §1, §2         |  [x]   |
-| 💎   |   4   | FPDT and boot timing normalization                      | §1             |  [x]   |
+| ⭐   | Order | Deliverable                              | Depends On     | Status |
+| --- | :---: | ---------------------------------------- | -------------- | :----: |
+| 💎   |   1   | Firmware table catalog API               | TODO-01 §1     |  [x]   |
+| 💎   |   2   | Physical range and checksum validation   | §1             |  [x]   |
+| 💎   |   3   | ACPI/SMBIOS/DTB table arbitration        | §1, §2         |  [x]   |
+| 💎   |   4   | FPDT and boot timing normalization       | §1             |  [x]   |
 | 💎   |   5   | UEFI memory attributes and runtime properties inventory | §1, TODO-27 §3 |  [x]   |
-| 💎   |   6   | ESRT firmware inventory mirror                          | §1, TODO-27 §2 |  [x]   |
-| 💎   |   7   | UEFI conformance profile and EBBR detection             | §1             |  [x]   |
-| 💎   |   8   | Registry and BlackBox firmware report                   | §1-§7          |  [x]   |
-| ⭐   |   9   | Firmware quirk database                                 | §8             |  [x]   |
-| ⭐   |  10   | Firmware inventory tests and host decoder               | §1-§9          |  [x]   |
-| ⭐   |  11   | Firmware inventory bug-fix debt                         | §1-§9          |  [x]   |
-| ⭐   |  12   | Firmware inventory refactor debt                        | §1-§9          |  [x]   |
+| 💎   |   6   | ESRT firmware inventory mirror           | §1, TODO-27 §2 |  [x]   |
+| 💎   |   7   | UEFI conformance profile and EBBR detection | §1             |  [x]   |
+| 💎   |   8   | Registry and BlackBox firmware report    | §1-§7          |  [x]   |
+| ⭐   |   9   | Firmware quirk database                  | §8             |  [x]   |
+| ⭐   |  10   | Firmware inventory tests and host decoder | §1-§9          |  [x]   |
+| ⭐   |  11   | Firmware inventory bug-fix debt          | §1-§9          |  [x]   |
+| ⭐   |  12   | Firmware inventory refactor debt         | §1-§9          |  [x]   |
 
 ---
 

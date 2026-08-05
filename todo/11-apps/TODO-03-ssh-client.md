@@ -219,15 +219,15 @@ title: "TODO-03 -- SSH Client"
 ## OS Comparison
 
 
-| ⭐   | Feature                                           | 🪟 Win11                                         | 🐧 Linux                  | 🚀 Impossible OS                                             |
-| --- | ------------------------------------------------- | ----------------------------------------------- | ------------------------ | ----------------------------------------------------------- |
-| 💎   | SSH2 transport -- ChaCha20-Poly1305 + HKDF-SHA256 | ✅ OpenSSH via `ssh.exe`                         | ✅ OpenSSH                | ⬜ §1 -- monocypher crypto; HKDF-SHA256 key derivation       |
-| 💎   | Password + pubkey (Ed25519) auth                  | ✅ OpenSSH                                       | ✅ OpenSSH                | ⬜ §2 -- Ed25519 auto-generate on first use                  |
-| 💎   | Interactive PTY relay + ANSI rendering            | ✅ OpenSSH + Windows Terminal                    | ✅ OpenSSH + any terminal | ⬜ §3 -- relay via `terminal_puts()`/`terminal_trygetchar()` |
-| ⭐   | TOFU fingerprint stored in Registry               | ✅ OpenSSH uses `%USERPROFILE%\.ssh\known_hosts` | ✅ `~/.ssh/known_hosts`   | ⬜ §4 -- `HKCU\Software\Impossible\SSH\KnownHosts\{host}`    |
-| 💎   | SCP file transfer with progress                   | ✅ OpenSSH `scp.exe`                             | ✅ OpenSSH `scp`          | ⬜ §5 -- SCP C-mode protocol, 64 KiB                         |
-| ⭐   | Windows-style SSH config                          | ✅ `%USERPROFILE%\.ssh\config`                   | ✅ `~/.ssh/config`        | ⬜ §6 -- IxUI Registry fallback + auto-create                |
-| 💎   | Interactive SFTP subsystem                        | ✅ OpenSSH `sftp.exe`                            | ✅ OpenSSH `sftp`         | ⬜ §7 -- (Stretch) -- ; `SSH2_FXP_*` protocol                |
+| ⭐   | Feature                                  | 🪟 Win11                                  | 🐧 Linux                  | 🚀 Impossible OS                          |
+| --- | ---------------------------------------- | ---------------------------------------- | ------------------------ | ---------------------------------------- |
+| 💎   | SSH2 transport -- ChaCha20-Poly1305 + HKDF-SHA256 | ✅ OpenSSH via `ssh.exe`                  | ✅ OpenSSH                | ⬜ §1 -- monocypher crypto; HKDF-SHA256 key derivation |
+| 💎   | Password + pubkey (Ed25519) auth         | ✅ OpenSSH                                | ✅ OpenSSH                | ⬜ §2 -- Ed25519 auto-generate on first use |
+| 💎   | Interactive PTY relay + ANSI rendering   | ✅ OpenSSH + Windows Terminal             | ✅ OpenSSH + any terminal | ⬜ §3 -- relay via `terminal_puts()`/`terminal_trygetchar()` |
+| ⭐   | TOFU fingerprint stored in Registry      | ✅ OpenSSH uses `%USERPROFILE%\.ssh\known_hosts` | ✅ `~/.ssh/known_hosts`   | ⬜ §4 -- `HKCU\Software\Impossible\SSH\KnownHosts\{host}` |
+| 💎   | SCP file transfer with progress          | ✅ OpenSSH `scp.exe`                      | ✅ OpenSSH `scp`          | ⬜ §5 -- SCP C-mode protocol, 64 KiB      |
+| ⭐   | Windows-style SSH config                 | ✅ `%USERPROFILE%\.ssh\config`            | ✅ `~/.ssh/config`        | ⬜ §6 -- IxUI Registry fallback + auto-create |
+| 💎   | Interactive SFTP subsystem               | ✅ OpenSSH `sftp.exe`                     | ✅ OpenSSH `sftp`         | ⬜ §7 -- (Stretch) -- ; `SSH2_FXP_*` protocol |
 
 Impossible OS stores known hosts natively in the Registry (no hidden dotfiles), auto-generates
 Ed25519 keys on first use, and routes PTY I/O directly through the native terminal API -- no POSIX

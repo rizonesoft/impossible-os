@@ -175,15 +175,15 @@ Hash table keyed on `(src_ip, src_port, dst_ip, dst_port)`. Create entries on ou
 ## OS Comparison
 
 
-| ⭐   | Feature                                                         | 🪟 Win11                                     | 🐧 Linux                                           | 🚀 Impossible OS                                            |
-| --- | --------------------------------------------------------------- | ------------------------------------------- | ------------------------------------------------- | ---------------------------------------------------------- |
-| 💎   | TCP header + pseudo-header checksum, IP_PROTO_TCP routing       | ✅ `tcpip.sys`; full TCP/IP stack            | ✅ `net/ipv4/tcp.c`; full TCP stack                | ⬜ §1 -- 20-byte header, flags, pseudo-CRC, ipv4_handle     |
-| 💎   | TCP 11-state RFC 793 machine                                    | ✅ `tcpip.sys`; RFC 793 + RFC                | ✅ Linux TCP; RFC 793 +                            | ⬜ §2 -- 32-slot table, all 11 states,                      |
-| 💎   | `tcp_connect/send/recv/close` + listen/accept + ephemeral ports | ✅ Winsock2 API wraps `tcpip.sys`            | ✅ BSD socket API over `net/ipv4/tcp.c`            | ⬜ §3 -- direct kernel API; ephemeral 49152–65535           |
-| 💎   | TCP robustness                                                  | ✅ `tcpip.sys`; full RFC 5681 +              | ✅ Linux TCP; SACK, cubic congestion               | ⬜ §4 -- basic Nagle + slow-start sufficient                |
-| 💎   | `net_interface` manager                                         | ✅ `tcpip.sys` / NDIS NIC abstraction        | ✅ `net_device` + `netif_*` infrastructure         | ⬜ §5 -- 8-slot table; `net_cfg` shim; RTL8139              |
-| 💎   | Loopback `lo`                                                   | ✅ `tcpip.sys`; loopback fully optimized (no | ✅ `drivers/net/loopback.c`; `dev_loopback_xmit()` | ⬜ §6 -- detection in `ipv4_send()`, direct `ipv4_handle()` |
-| 💎   | Stateful connection tracking                                    | ✅ `tcpip.sys`; full stateful NAT +          | ✅ `nf_conntrack`; nftables / iptables backing;    | ⬜ §7 -- 256-slot open-addressing table; firewall "allow    |
+| ⭐   | Feature                                  | 🪟 Win11                                  | 🐧 Linux                                  | 🚀 Impossible OS                          |
+| --- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
+| 💎   | TCP header + pseudo-header checksum, IP_PROTO_TCP routing | ✅ `tcpip.sys`; full TCP/IP stack         | ✅ `net/ipv4/tcp.c`; full TCP stack       | ⬜ §1 -- 20-byte header, flags, pseudo-CRC, ipv4_handle |
+| 💎   | TCP 11-state RFC 793 machine             | ✅ `tcpip.sys`; RFC 793 + RFC             | ✅ Linux TCP; RFC 793 +                   | ⬜ §2 -- 32-slot table, all 11 states,    |
+| 💎   | `tcp_connect/send/recv/close` + listen/accept + ephemeral ports | ✅ Winsock2 API wraps `tcpip.sys`         | ✅ BSD socket API over `net/ipv4/tcp.c`   | ⬜ §3 -- direct kernel API; ephemeral 49152–65535 |
+| 💎   | TCP robustness                           | ✅ `tcpip.sys`; full RFC 5681 +           | ✅ Linux TCP; SACK, cubic congestion      | ⬜ §4 -- basic Nagle + slow-start sufficient |
+| 💎   | `net_interface` manager                  | ✅ `tcpip.sys` / NDIS NIC abstraction     | ✅ `net_device` + `netif_*` infrastructure | ⬜ §5 -- 8-slot table; `net_cfg` shim; RTL8139 |
+| 💎   | Loopback `lo`                            | ✅ `tcpip.sys`; loopback fully optimized (no | ✅ `drivers/net/loopback.c`; `dev_loopback_xmit()` | ⬜ §6 -- detection in `ipv4_send()`, direct `ipv4_handle()` |
+| 💎   | Stateful connection tracking             | ✅ `tcpip.sys`; full stateful NAT +       | ✅ `nf_conntrack`; nftables / iptables backing; | ⬜ §7 -- 256-slot open-addressing table; firewall "allow |
 
 > **After §1–§7:** Impossible OS has a complete, standards-correct TCP stack with a multi-NIC interface abstraction and a stateful firewall backing layer -- all built in kernel space without any userspace networking daemon. Every higher-level protocol (DNS, TLS, HTTP, SSH) can be built directly on the `tcp_connect`/`tcp_send`/`tcp_recv` API from this TODO.
 

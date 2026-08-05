@@ -42,13 +42,13 @@ title: "TODO-01 -- Advanced 2D Graphics and Visual Asset Foundation"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                                                              | Depends On | Status |
-| --- | :---: | ------------------------------------------------------------------------ | ---------- | :----: |
-| 💎   |   1   | §1 Render-target allocator, views, and cached layers                     | --         |  [ ]   |
-| 💎   |   2   | §2 Clip, transform, and state stack                                      | §1         |  [ ]   |
-| 💎   |   3   | §3 Path, stroke, fill, and SVG-ready vector raster contract              | §2         |  [ ]   |
-| 💎   |   4   | §4 Theme-aware icon, cursor, and scalable asset pipeline                 | §1, §3     |  [ ]   |
-| 💎   |   5   | §5 Thumbnail, preview, and multi-size asset cache                        | §4         |  [ ]   |
+| ⭐   | Order | Deliverable                              | Depends On | Status |
+| --- | :---: | ---------------------------------------- | ---------- | :----: |
+| 💎   |   1   | §1 Render-target allocator, views, and cached layers | --         |  [ ]   |
+| 💎   |   2   | §2 Clip, transform, and state stack      | §1         |  [ ]   |
+| 💎   |   3   | §3 Path, stroke, fill, and SVG-ready vector raster contract | §2         |  [ ]   |
+| 💎   |   4   | §4 Theme-aware icon, cursor, and scalable asset pipeline | §1, §3     |  [ ]   |
+| 💎   |   5   | §5 Thumbnail, preview, and multi-size asset cache | §4         |  [ ]   |
 | ⭐   |   6   | §6 Recorded scene lists and deterministic re-render for shell and Win32k | §2, §3, §5 |  [ ]   |
 
 > 💎 = parity work -- matches the reusable graphics and asset layers that Windows 11 and Linux already have.

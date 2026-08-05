@@ -193,16 +193,16 @@ Block on up to 64 socket fds simultaneously. Bitmask-based readiness: data-ready
 ## OS Comparison
 
 
-| ⭐   | Feature                                                              | 🪟 Win11                                           | 🐧 Linux                                                | 🚀 Impossible OS                                                            |
-| --- | -------------------------------------------------------------------- | ------------------------------------------------- | ------------------------------------------------------ | -------------------------------------------------------------------------- |
-| 💎   | DNS query builder                                                    | ✅ `dnsapi.dll` + `dns.exe` resolver; kernel       | ✅ `net/dns/` in kernel; `glibc` resolver               | ⬜ §1 -- kernel-native `dns_build_query()` + `udp_register_handler()` reply |
-| 💎   | DNS response parser                                                  | ✅ Full RFC 1035 + EDNS0                           | ✅ `net/dns_resolve.c`; compression pointer handling    | ⬜ §2 -- pointer depth cap 8; RCODE                                         |
-| 💎   | DNS LRU cache                                                        | ✅ DNS Client Service cache; configurable          | ✅ `nscd` or `systemd-resolved` (userspace); no         | ⬜ §3 -- in-kernel 64-entry LRU; `nslookup` shell                           |
-| 💎   | AAAA query + dual A+AAAA resolve, AAAA preference                    | ✅ Full IPv6 DNS in `dnsapi.dll`;                  | ✅ `getaddrinfo()` prefers AAAA; kernel resolves        | ⬜ §4 -- AAAA query stub; dual resolve                                      |
-| 💎   | Kernel socket layer                                                  | ✅ `afd.sys` (Ancillary Function Driver); Winsock2 | ✅ `net/socket.c`; full BSD socket API                  | ⬜ §5 -- direct kernel functions; 64-fd table                               |
-| 💎   | Server sockets                                                       | ✅ `afd.sys`; full Winsock server socket           | ✅ `net/socket.c`; `SOMAXCONN`, backlog, `SO_REUSEADDR` | ⬜ §6 -- backlog ring buffer; `SOMAXCONN=16`; `kern_accept()`               |
-| 💎   | Socket syscalls 39–49 + `user/lib/socket.c` wrappers + `getaddrinfo` | ✅ Winsock2 `WSA*` functions (kernel +             | ✅ glibc `socket()` → `syscall(SYS_socket, ...)`        | ⬜ §7 -- `INT 0x80` socket syscalls; `user/lib/socket.c`                    |
-| 💎   | `select()`                                                           | ✅ `select()` + `WSAPoll()` in Winsock2;           | ✅ `select()` + `poll()` + `epoll()`                    | ⬜ §8 -- 64-fd `uint64_t` bitmask; 1 ms                                     |
+| ⭐   | Feature                                  | 🪟 Win11                                  | 🐧 Linux                                  | 🚀 Impossible OS                          |
+| --- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
+| 💎   | DNS query builder                        | ✅ `dnsapi.dll` + `dns.exe` resolver; kernel | ✅ `net/dns/` in kernel; `glibc` resolver | ⬜ §1 -- kernel-native `dns_build_query()` + `udp_register_handler()` reply |
+| 💎   | DNS response parser                      | ✅ Full RFC 1035 + EDNS0                  | ✅ `net/dns_resolve.c`; compression pointer handling | ⬜ §2 -- pointer depth cap 8; RCODE       |
+| 💎   | DNS LRU cache                            | ✅ DNS Client Service cache; configurable | ✅ `nscd` or `systemd-resolved` (userspace); no | ⬜ §3 -- in-kernel 64-entry LRU; `nslookup` shell |
+| 💎   | AAAA query + dual A+AAAA resolve, AAAA preference | ✅ Full IPv6 DNS in `dnsapi.dll`;         | ✅ `getaddrinfo()` prefers AAAA; kernel resolves | ⬜ §4 -- AAAA query stub; dual resolve    |
+| 💎   | Kernel socket layer                      | ✅ `afd.sys` (Ancillary Function Driver); Winsock2 | ✅ `net/socket.c`; full BSD socket API    | ⬜ §5 -- direct kernel functions; 64-fd table |
+| 💎   | Server sockets                           | ✅ `afd.sys`; full Winsock server socket  | ✅ `net/socket.c`; `SOMAXCONN`, backlog, `SO_REUSEADDR` | ⬜ §6 -- backlog ring buffer; `SOMAXCONN=16`; `kern_accept()` |
+| 💎   | Socket syscalls 39–49 + `user/lib/socket.c` wrappers + `getaddrinfo` | ✅ Winsock2 `WSA*` functions (kernel +    | ✅ glibc `socket()` → `syscall(SYS_socket, ...)` | ⬜ §7 -- `INT 0x80` socket syscalls; `user/lib/socket.c` |
+| 💎   | `select()`                               | ✅ `select()` + `WSAPoll()` in Winsock2;  | ✅ `select()` + `poll()` + `epoll()`      | ⬜ §8 -- 64-fd `uint64_t` bitmask; 1 ms   |
 
 > **After §1–§8:** Impossible OS has a hostname-based, file-descriptor–driven networking API sufficient for every application protocol: DNS resolution, TCP clients and servers, UDP sockets, and multiplexed I/O via `select()`. Every higher-level TODO (TLS, HTTP, SSH) is unblocked. The in-kernel DNS LRU cache (§3) is a `⭐` advantage over Linux which handles DNS caching only in userspace daemons.
 

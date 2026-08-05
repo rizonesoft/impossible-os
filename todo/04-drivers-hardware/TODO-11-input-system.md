@@ -33,19 +33,19 @@ title: "TODO-11 -- Input System Enhancement"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                                                      | Depends On                             | Status |
-| --- | :---: | ---------------------------------------------------------------- | -------------------------------------- | :----: |
-| 💎   |   1   | §1 Keyboard layout system (`kbd_layout_t`, `kbd_set_layout`)     | keyboard.c baseline                    |  [ ]   |
+| ⭐   | Order | Deliverable                              | Depends On                             | Status |
+| --- | :---: | ---------------------------------------- | -------------------------------------- | :----: |
+| 💎   |   1   | §1 Keyboard layout system (`kbd_layout_t`, `kbd_set_layout`) | keyboard.c baseline                    |  [ ]   |
 | 💎   |   2   | §2 Built-in layouts -- en-US, en-GB, de-DE, fr-FR, es-ES, Dvorak | §6                                     |  [ ]   |
-| 💎   |   3   | §3 UTF-8 / Unicode codepoint output                              | §6 (layout tables emit codepoints)     |  [ ]   |
-| 💎   |   4   | §4 Dead key compose                                              | §6, §5                                 |  [ ]   |
-| 💎   |   5   | §5 PS/2 packet resync -- sync-bit validation                     | mouse.c baseline                       |  [ ]   |
-| 💎   |   6   | §6 Intellimouse scroll wheel (ID 3)                              | §3 (stable packet parser)              |  [ ]   |
-| 💎   |   7   | §7 Explorer 5-button extension (ID 4)                            | §6 (scroll already done)               |  [ ]   |
-| 💎   |   8   | §8 Mouse acceleration + sensitivity                              | §3, §6, §7 (final packet layout known) |  [ ]   |
-| 💎   |   9   | §9 Raw input grab API (`WM_INPUT`, syscalls)                     | §8 (acceleration skip for raw mode)    |  [ ]   |
-| 💎   |  10   | §10 Layout switching -- Win+Space, tray indicator                | §7 (layouts exist), shell tray         |  [ ]   |
-| 💎   |  11   | §11 Sticky keys + typematic rate                                 | §6 (modifier key events)               |  [ ]   |
+| 💎   |   3   | §3 UTF-8 / Unicode codepoint output      | §6 (layout tables emit codepoints)     |  [ ]   |
+| 💎   |   4   | §4 Dead key compose                      | §6, §5                                 |  [ ]   |
+| 💎   |   5   | §5 PS/2 packet resync -- sync-bit validation | mouse.c baseline                       |  [ ]   |
+| 💎   |   6   | §6 Intellimouse scroll wheel (ID 3)      | §3 (stable packet parser)              |  [ ]   |
+| 💎   |   7   | §7 Explorer 5-button extension (ID 4)    | §6 (scroll already done)               |  [ ]   |
+| 💎   |   8   | §8 Mouse acceleration + sensitivity      | §3, §6, §7 (final packet layout known) |  [ ]   |
+| 💎   |   9   | §9 Raw input grab API (`WM_INPUT`, syscalls) | §8 (acceleration skip for raw mode)    |  [ ]   |
+| 💎   |  10   | §10 Layout switching -- Win+Space, tray indicator | §7 (layouts exist), shell tray         |  [ ]   |
+| 💎   |  11   | §11 Sticky keys + typematic rate         | §6 (modifier key events)               |  [ ]   |
 
 > All eleven rows are 💎 parity: Windows 11 and Linux both support Intellimouse, raw input, Unicode keyboard, layout switching, and accessibility features. Closing these gaps brings the Impossible OS input stack to desktop-OS standard.
 
@@ -217,19 +217,19 @@ Sticky Keys activates after 5 rapid consecutive Shift presses (< 500 ms each); m
 ## OS Comparison
 
 
-| ⭐   | Feature                                     | 🪟 Win11                                                 | 🐧 Linux                                                  | 🚀 Impossible OS                                                    |
-| --- | ------------------------------------------- | ------------------------------------------------------- | -------------------------------------------------------- | ------------------------------------------------------------------ |
-| 💎   | Intellimouse scroll wheel                   | ✅ `mouhid.sys`; `WM_MOUSEWHEEL`                         | ✅ `psmouse`; `INPUT_EV_REL` `REL_WHEEL`                  | ⬜ §6 -- magic init, 4-byte parser, `WM_SCROLL`                     |
-| 💎   | Explorer 5-button (ID 4) side/extra buttons | ✅ `mouhid.sys`; `WM_XBUTTONDOWN`; `XBUTTON1`/`XBUTTON2` | ✅ `psmouse` Explorer; `BTN_SIDE`/`BTN_EXTRA`             | ⬜ §7 -- second magic sequence, `MOUSE_BTN_SIDE`/`EXTRA`            |
-| 💎   | PS/2 packet resync on sync-bit failure      | ✅ `i8042prt.sys` sync recovery                          | ✅ `psmouse` resync logic; `psmouse_resync()`             | ⬜ §5 -- bit-3 validation, single-byte re-scan, `sync_loss_count`   |
-| 💎   | Mouse acceleration + sensitivity curve      | ✅ Enhanced pointer precision; sensitivity slider        | ✅ `libinput` accel profiles (`adaptive`, `flat`)         | ⬜ §8 -- 16.16 fixed-point polynomial, `MouseSensitivity` Registry  |
-| 💎   | Raw input grab                              | ✅ `WM_INPUT` + `SetCapture`; DirectInput raw            | ✅ `evdev` grab (`EVIOCGRAB`); `libinput` grab            | ⬜ §9 -- `mouse_raw_grab()`, `WM_INPUT`, `SYS_MOUSE_GRAB` syscall   |
-| 💎   | Multi-plane keyboard layout                 | ✅ KTT layout files; `ToUnicodeEx`; full                 | ✅ `xkb` layouts; `evdev` key translation                 | ⬜ §1 -- `kbd_layout_t`, 3 planes + dead                            |
-| 💎   | Built-in layouts -- 6 locales + Dvorak      | ✅ 100+ layouts via Windows Update                       | ✅ `xkb` symbols ships 200+ layouts                       | ⬜ §2 -- en-US, en-GB, de-DE, fr-FR, es-ES,                         |
-| 💎   | Dead key compose -- accented characters     | ✅ `ToUnicodeEx` dead key state machine                  | ✅ `xkb` dead keys; `compose` table                       | ⬜ §4 -- `pending_dead_cp`, triple lookup, double-emit fallback     |
-| 💎   | UTF-8 / Unicode codepoint keyboard output   | ✅ `WM_CHAR` sends UTF-16 codepoint; `wchar_t`           | ✅ `evdev` `EV_KEY` + `KEY_*`; `libinput`                 | ⬜ §3 -- `utf8_encode/decode`, `codepoint` in key event,            |
-| 💎   | Layout switching -- hotkey + tray indicator | ✅ Win+Space / Win+Shift+Space; language bar             | ✅ `setxkbmap`; GNOME/KDE layout indicator in             | ⬜ §10 -- Win+Space cycle, `WM_INPUT_LAYOUT_CHANGED`, 2-letter tray |
-| 💎   | Sticky keys + typematic rate / delay        | ✅ Accessibility Settings → Sticky Keys;                 | ✅ `xkb` `StickyKeys`; `typematic_rate` via `setkeycodes` | ⬜ §11 -- 5-tap Shift, latch modifier, PS/2                         |
+| ⭐   | Feature                                  | 🪟 Win11                                  | 🐧 Linux                                  | 🚀 Impossible OS                          |
+| --- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
+| 💎   | Intellimouse scroll wheel                | ✅ `mouhid.sys`; `WM_MOUSEWHEEL`          | ✅ `psmouse`; `INPUT_EV_REL` `REL_WHEEL`  | ⬜ §6 -- magic init, 4-byte parser, `WM_SCROLL` |
+| 💎   | Explorer 5-button (ID 4) side/extra buttons | ✅ `mouhid.sys`; `WM_XBUTTONDOWN`; `XBUTTON1`/`XBUTTON2` | ✅ `psmouse` Explorer; `BTN_SIDE`/`BTN_EXTRA` | ⬜ §7 -- second magic sequence, `MOUSE_BTN_SIDE`/`EXTRA` |
+| 💎   | PS/2 packet resync on sync-bit failure   | ✅ `i8042prt.sys` sync recovery           | ✅ `psmouse` resync logic; `psmouse_resync()` | ⬜ §5 -- bit-3 validation, single-byte re-scan, `sync_loss_count` |
+| 💎   | Mouse acceleration + sensitivity curve   | ✅ Enhanced pointer precision; sensitivity slider | ✅ `libinput` accel profiles (`adaptive`, `flat`) | ⬜ §8 -- 16.16 fixed-point polynomial, `MouseSensitivity` Registry |
+| 💎   | Raw input grab                           | ✅ `WM_INPUT` + `SetCapture`; DirectInput raw | ✅ `evdev` grab (`EVIOCGRAB`); `libinput` grab | ⬜ §9 -- `mouse_raw_grab()`, `WM_INPUT`, `SYS_MOUSE_GRAB` syscall |
+| 💎   | Multi-plane keyboard layout              | ✅ KTT layout files; `ToUnicodeEx`; full  | ✅ `xkb` layouts; `evdev` key translation | ⬜ §1 -- `kbd_layout_t`, 3 planes + dead  |
+| 💎   | Built-in layouts -- 6 locales + Dvorak   | ✅ 100+ layouts via Windows Update        | ✅ `xkb` symbols ships 200+ layouts       | ⬜ §2 -- en-US, en-GB, de-DE, fr-FR, es-ES, |
+| 💎   | Dead key compose -- accented characters  | ✅ `ToUnicodeEx` dead key state machine   | ✅ `xkb` dead keys; `compose` table       | ⬜ §4 -- `pending_dead_cp`, triple lookup, double-emit fallback |
+| 💎   | UTF-8 / Unicode codepoint keyboard output | ✅ `WM_CHAR` sends UTF-16 codepoint; `wchar_t` | ✅ `evdev` `EV_KEY` + `KEY_*`; `libinput` | ⬜ §3 -- `utf8_encode/decode`, `codepoint` in key event, |
+| 💎   | Layout switching -- hotkey + tray indicator | ✅ Win+Space / Win+Shift+Space; language bar | ✅ `setxkbmap`; GNOME/KDE layout indicator in | ⬜ §10 -- Win+Space cycle, `WM_INPUT_LAYOUT_CHANGED`, 2-letter tray |
+| 💎   | Sticky keys + typematic rate / delay     | ✅ Accessibility Settings → Sticky Keys;  | ✅ `xkb` `StickyKeys`; `typematic_rate` via `setkeycodes` | ⬜ §11 -- 5-tap Shift, latch modifier, PS/2 |
 
 > **After §1–11:** Impossible OS matches Windows 11 and Linux on the complete desktop input stack. No exclusive differentiators are claimed here -- correctness and parity are the goal. The notable design decision: the keyboard outputs Unicode codepoints natively (not scan codes or VK codes) from the driver layer up, matching how modern compositors expect to receive text input and eliminating the legacy ASCII transformation layer that Windows and Linux carry for backward compatibility.
 

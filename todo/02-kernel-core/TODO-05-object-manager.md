@@ -49,23 +49,23 @@ title: "TODO-05 -- Object Manager"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                                                   | Depends On    | Status |
-| --- | :---: | ------------------------------------------------------------- | ------------- | :----: |
-| 💎   |   1   | OBJECT_HEADER and OBJECT_TYPE infrastructure                  | --            |  [x]   |
-| 💎   |   2   | Reference counting and object lifetime                        | §1            |  [x]   |
-| 💎   |   3   | Per-process handle table                                      | §2            |  [/]   |
-| 💎   |   4   | Object namespace (directory + symbolic link)                  | §2            |  [/]   |
-| 💎   |   5   | File, Process, Thread object types                            | §3, §4        |  [/]   |
+| ⭐   | Order | Deliverable                              | Depends On    | Status |
+| --- | :---: | ---------------------------------------- | ------------- | :----: |
+| 💎   |   1   | OBJECT_HEADER and OBJECT_TYPE infrastructure | --            |  [x]   |
+| 💎   |   2   | Reference counting and object lifetime   | §1            |  [x]   |
+| 💎   |   3   | Per-process handle table                 | §2            |  [/]   |
+| 💎   |   4   | Object namespace (directory + symbolic link) | §2            |  [/]   |
+| 💎   |   5   | File, Process, Thread object types       | §3, §4        |  [/]   |
 | 💎   |   6   | Synchronisation object types (Event, Mutex, Semaphore, Timer) | §3, §4        |  [/]   |
-| 💎   |   7   | Section (shared memory) object type                           | §3, §4        |  [/]   |
-| 💎   |   8   | Security descriptor integration                               | §1, T15 §1,§3 |  [x]   |
-| 💎   |   9   | NtClose / NtDuplicateObject / NtQueryObject                   | §3, T15 §4    |  [/]   |
-| 💎   |  10   | Handle inheritance across CreateProcess                       | §3, §5        |  [/]   |
-| ⭐   |  11   | Unified kernel-user namespace browser API                     | §4            |  [/]   |
-| 💎   |  12   | Per-type object and handle statistics                         | §1, §2, §3    |  [x]   |
-| 💎   |  13   | Object callbacks -- handle operation filtering                | §3, §9        |  [x]   |
-| 💎   |  14   | Per-process handle quota                                      | §3            |  [x]   |
-| ⭐   |  15   | Handle tracing and leak detection                             | §2, §12       |  [x]   |
+| 💎   |   7   | Section (shared memory) object type      | §3, §4        |  [/]   |
+| 💎   |   8   | Security descriptor integration          | §1, T15 §1,§3 |  [x]   |
+| 💎   |   9   | NtClose / NtDuplicateObject / NtQueryObject | §3, T15 §4    |  [/]   |
+| 💎   |  10   | Handle inheritance across CreateProcess  | §3, §5        |  [/]   |
+| ⭐   |  11   | Unified kernel-user namespace browser API | §4            |  [/]   |
+| 💎   |  12   | Per-type object and handle statistics    | §1, §2, §3    |  [x]   |
+| 💎   |  13   | Object callbacks -- handle operation filtering | §3, §9        |  [x]   |
+| 💎   |  14   | Per-process handle quota                 | §3            |  [x]   |
+| ⭐   |  15   | Handle tracing and leak detection        | §2, §12       |  [x]   |
 
 > 💎 = parity -- Windows NT ObXxx and Linux kobject/fd_table both provide these capabilities.
 > ⭐ = exclusive -- built-in handle/reference leak detection integrated with klog, providing

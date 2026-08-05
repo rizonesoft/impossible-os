@@ -41,22 +41,22 @@ title: "TODO-06 -- Executive Support Runtime"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                               | Depends On             | Status |
-| --- | :---: | ----------------------------------------- | ---------------------- | :----: |
-| 💎   |   1   | Executive headers and namespace           | --                     |  [x]   |
-| 💎   |   2   | Interlocked SLIST                         | §1, atomics            |  [x]   |
-| 💎   |   3   | Rundown protection                        | §1, atomics, events    |  [x]   |
-| 💎   |   4   | Callback objects                          | §1, §3, T05, T07       |  [x]   |
-| 💎   |   5   | Lookaside lists (NPaged/Paged/Ex)         | §2, D03 T03            |  [x]   |
-| 💎   |   6   | Fast references                           | §1, T05                |  [x]   |
-| 💎   |   7   | Generic tables and bitmaps                | §1                     |  [x]   |
-| 💎   |   8   | Push locks                                | §1, T07                |  [/]   |
-| 💎   |   9   | Fast and guarded mutexes                  | §1, T07                |  [/]   |
-| 💎   |  10   | Executive resource wrapper                | §1, T07, D03 T08       |  [/]   |
-| 💎   |  11   | Run-once initialization                   | §1                     |  [/]   |
+| ⭐   | Order | Deliverable                              | Depends On             | Status |
+| --- | :---: | ---------------------------------------- | ---------------------- | :----: |
+| 💎   |   1   | Executive headers and namespace          | --                     |  [x]   |
+| 💎   |   2   | Interlocked SLIST                        | §1, atomics            |  [x]   |
+| 💎   |   3   | Rundown protection                       | §1, atomics, events    |  [x]   |
+| 💎   |   4   | Callback objects                         | §1, §3, T05, T07       |  [x]   |
+| 💎   |   5   | Lookaside lists (NPaged/Paged/Ex)        | §2, D03 T03            |  [x]   |
+| 💎   |   6   | Fast references                          | §1, T05                |  [x]   |
+| 💎   |   7   | Generic tables and bitmaps               | §1                     |  [x]   |
+| 💎   |   8   | Push locks                               | §1, T07                |  [/]   |
+| 💎   |   9   | Fast and guarded mutexes                 | §1, T07                |  [/]   |
+| 💎   |  10   | Executive resource wrapper               | §1, T07, D03 T08       |  [/]   |
+| 💎   |  11   | Run-once initialization                  | §1                     |  [/]   |
 | ⭐   |  12   | Worker items, delayed work, and Ex timers | §1, T07, DPC/workqueue |  [/]   |
-| 💎   |  13   | Bugcheck reason callbacks                 | §3, T27                |  [/]   |
-| ⭐   |  14   | Executive verifier hooks                  | §2..§13                |  [/]   |
+| 💎   |  13   | Bugcheck reason callbacks                | §3, T27                |  [/]   |
+| ⭐   |  14   | Executive verifier hooks                 | §2..§13                |  [/]   |
 
 ## 1. Executive Headers and Namespace
 

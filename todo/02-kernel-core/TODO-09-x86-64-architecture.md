@@ -65,28 +65,28 @@ title: "TODO-09 -- x86-64 Architecture Enhancements"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                                            | Depends On | Status |
-| --- | :---: | ------------------------------------------------------ | ---------- | :----: |
-| 💎   |   1   | XSAVE/XRSTOR state management (per-thread, lazy)       | (none)     |  [x]   |
-| 💎   |   2   | AVX/AVX2 kernel memops + framebuffer blit              | §1         |  [x]   |
-| 💎   |   3   | AVX-512 opt-in + future silicon detection              | §2         |  [x]   |
-| 💎   |   4   | MSR management infrastructure (`msr.c`)                | (none)     |  [x]   |
-| 💎   |   5   | UMIP + PKU protection keys                             | §4         |  [x]   |
-| 💎   |   6   | 1 GiB huge pages + Write-Combining PAT                 | §4         |  [x]   |
-| 💎   |   7   | FRED unified event delivery                            | §4, T07 §3 |  [/]   |
-| 💎   |   8   | LKGS fast GS-base swap                                 | §4         |  [/]   |
-| 💎   |   9   | CPU topology: Zen chiplets + Intel hybrid P/E-core     | (none)     |  [x]   |
-| 💎   |  10   | Performance monitoring counters (Intel + AMD)          | §4         |  [x]   |
-| 💎   |  11   | OSVW errata + RDTSCP processor ID setup                | §4, T08 §3 |  [x]   |
-| 💎   |  12   | AMD IBS profiling (stretch)                            | §4         |  [/]   |
-| 💎   |  13   | Virtualization detection (AMD-V + Intel VT-x)          | §4         |  [x]   |
-| ⭐   |  14   | Boot self-benchmark + auto-tune                        | §1, §2, §9 |  [/]   |
-| 💎   |  15   | Future silicon stubs: UINTR/LA57/LAM/LASS + TDX/SEV    | (none)     |  [/]   |
+| ⭐   | Order | Deliverable                              | Depends On | Status |
+| --- | :---: | ---------------------------------------- | ---------- | :----: |
+| 💎   |   1   | XSAVE/XRSTOR state management (per-thread, lazy) | (none)     |  [x]   |
+| 💎   |   2   | AVX/AVX2 kernel memops + framebuffer blit | §1         |  [x]   |
+| 💎   |   3   | AVX-512 opt-in + future silicon detection | §2         |  [x]   |
+| 💎   |   4   | MSR management infrastructure (`msr.c`)  | (none)     |  [x]   |
+| 💎   |   5   | UMIP + PKU protection keys               | §4         |  [x]   |
+| 💎   |   6   | 1 GiB huge pages + Write-Combining PAT   | §4         |  [x]   |
+| 💎   |   7   | FRED unified event delivery              | §4, T07 §3 |  [/]   |
+| 💎   |   8   | LKGS fast GS-base swap                   | §4         |  [/]   |
+| 💎   |   9   | CPU topology: Zen chiplets + Intel hybrid P/E-core | (none)     |  [x]   |
+| 💎   |  10   | Performance monitoring counters (Intel + AMD) | §4         |  [x]   |
+| 💎   |  11   | OSVW errata + RDTSCP processor ID setup  | §4, T08 §3 |  [x]   |
+| 💎   |  12   | AMD IBS profiling (stretch)              | §4         |  [/]   |
+| 💎   |  13   | Virtualization detection (AMD-V + Intel VT-x) | §4         |  [x]   |
+| ⭐   |  14   | Boot self-benchmark + auto-tune          | §1, §2, §9 |  [/]   |
+| 💎   |  15   | Future silicon stubs: UINTR/LA57/LAM/LASS + TDX/SEV | (none)     |  [/]   |
 | 💎   |  16   | Boot page tables: 1 GiB pages from the UEFI bootloader | §6         |  [/]   |
-| 💎   |  17   | AMX tile state + XFD dynamic XSAVE                     | §1, §4     |  [/]   |
-| 💎   |  18   | Split-lock (#AC) + bus-lock (#DB) detection            | §4         |  [/]   |
-| 💎   |  19   | WAITPKG + SERIALIZE + RDPID adoption                   | §4, §11    |  [/]   |
-| 💎   |  20   | Post-ship follow-up backfill (2026-07-31 cohort)       | --         |  [ ]   |
+| 💎   |  17   | AMX tile state + XFD dynamic XSAVE       | §1, §4     |  [/]   |
+| 💎   |  18   | Split-lock (#AC) + bus-lock (#DB) detection | §4         |  [/]   |
+| 💎   |  19   | WAITPKG + SERIALIZE + RDPID adoption     | §4, §11    |  [/]   |
+| 💎   |  20   | Post-ship follow-up backfill (2026-07-31 cohort) | --         |  [ ]   |
 
 > 💎 = parity work: matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work: Impossible OS is superior or first.

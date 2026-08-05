@@ -50,23 +50,23 @@ title: "TODO-31 -- Kernel Bulletproofing"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                                        | Depends On | Status |
-| --- | :---: | -------------------------------------------------- | ---------- | :----: |
+| ⭐   | Order | Deliverable                              | Depends On | Status |
+| --- | :---: | ---------------------------------------- | ---------- | :----: |
 | ⭐   |   1   | per_cpu_data assembly offsets (gs:0, gs:24, gs:32) | --         |  [x]   |
-| ⭐   |   2   | boot_config struct layout (cmdline at offset 32)   | --         |  [x]   |
-| ⭐   |   3   | User ELF range (0x800000-0x900000) 3-file sync     | --         |  [x]   |
-| ⭐   |   4   | AP trampoline data area layout (0x8E00 offsets)    | --         |  [x]   |
+| ⭐   |   2   | boot_config struct layout (cmdline at offset 32) | --         |  [x]   |
+| ⭐   |   3   | User ELF range (0x800000-0x900000) 3-file sync | --         |  [x]   |
+| ⭐   |   4   | AP trampoline data area layout (0x8E00 offsets) | --         |  [x]   |
 | ⭐   |   5   | Task interrupt frame layout (iretq register order) | --         |  [x]   |
-| ⭐   |   6   | IDT vector assignment collision detection          | --         |  [x]   |
-| ⭐   |   7   | SSDT service number count stability                | --         |  [x]   |
-| ⭐   |   8   | XSAVE/FXSAVE area alignment (64-byte)              | --         |  [x]   |
-| ⭐   |   9   | ISR swapgs symmetry verification                   | §5         |  [x]   |
-| ⭐   |  10   | Memory layout guard pages (heap, stack, user)      | §3         |  [x]   |
-| ⭐   |  11   | IXFS superblock layout and magic                   | --         |  [x]   |
-| ⭐   |  12   | Security structs (SID, TOKEN, ACL/ACE)             | --         |  [x]   |
-| ⭐   |  13   | VFS drive letter range and partition offsets       | --         |  [x]   |
-| ⭐   |  14   | exec_pending state machine verification            | §5         |  [x]   |
-| ⭐   |  15   | Framebuffer bare-metal safety (5 rules)            | --         |  [x]   |
+| ⭐   |   6   | IDT vector assignment collision detection | --         |  [x]   |
+| ⭐   |   7   | SSDT service number count stability      | --         |  [x]   |
+| ⭐   |   8   | XSAVE/FXSAVE area alignment (64-byte)    | --         |  [x]   |
+| ⭐   |   9   | ISR swapgs symmetry verification         | §5         |  [x]   |
+| ⭐   |  10   | Memory layout guard pages (heap, stack, user) | §3         |  [x]   |
+| ⭐   |  11   | IXFS superblock layout and magic         | --         |  [x]   |
+| ⭐   |  12   | Security structs (SID, TOKEN, ACL/ACE)   | --         |  [x]   |
+| ⭐   |  13   | VFS drive letter range and partition offsets | --         |  [x]   |
+| ⭐   |  14   | exec_pending state machine verification  | §5         |  [x]   |
+| ⭐   |  15   | Framebuffer bare-metal safety (5 rules)  | --         |  [x]   |
 
 > ⭐ = all exclusive -- no other OS has systematic compile-time + boot-time invariant verification across the entire kernel.
 

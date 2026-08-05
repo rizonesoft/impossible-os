@@ -34,18 +34,18 @@ title: "TODO-07 -- Device Manager & Driver Diagnostics"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                                                                    | Depends On                                  | Status |
-| --- | :---: | ------------------------------------------------------------------------------ | ------------------------------------------- | :----: |
-| 💎   |   1   | §1 PCI device registry -- `pci_device_db[]`, BDF/vendor/driver storage         | `pci_scan()` (existing)                     |  [ ]   |
-| 💎   |   2   | §2 Embedded PCI ID database -- 2000-entry vendor/device name lookup            | §1 (IDs known at scan time)                 |  [ ]   |
-| 💎   |   3   | §3 Live interrupt counter -- `irq_count[]`, `irq_rate()`, 1 s sliding window   | IDT stubs (existing)                        |  [ ]   |
-| 💎   |   4   | §4 Driver health registry -- `DRIVER_HEALTH_*` map, probe/error updates        | §1 (driver name linked to PCI entry)        |  [ ]   |
-| 💎   |   5   | §5 `/sys/devices` + `/sys/interrupts` VFS files                                | §1–4 (data sources ready)                   |  [ ]   |
-| 💎   |   6   | §6 `lspci` / `lsusb` shell commands                                            | §1–2 (registry + names), §8 (USB list)      |  [ ]   |
-| ⭐   |   7   | §7 Device Manager GUI -- tree view + detail panel + auto-refresh               | §1–5 (all data sources), compositor widgets |  [ ]   |
-| 💎   |   8   | §8 USB device tree integration                                                 | §7 (tree widget), TODO-10 USB device list   |  [ ]   |
-| 💎   |   9   | §9 `SetupDiGetClassDevs` / `SetupDiEnumDeviceInfo` Win32 API                   | §1 (PCI registry), §4 (health/driver name)  |  [ ]   |
-| 💎   |  10   | §10 Driver unload/reload -- context menu → `module_unload`, `driver_probe_all` | §7 (GUI), TODO-05 module system             |  [ ]   |
+| ⭐   | Order | Deliverable                              | Depends On                               | Status |
+| --- | :---: | ---------------------------------------- | ---------------------------------------- | :----: |
+| 💎   |   1   | §1 PCI device registry -- `pci_device_db[]`, BDF/vendor/driver storage | `pci_scan()` (existing)                  |  [ ]   |
+| 💎   |   2   | §2 Embedded PCI ID database -- 2000-entry vendor/device name lookup | §1 (IDs known at scan time)              |  [ ]   |
+| 💎   |   3   | §3 Live interrupt counter -- `irq_count[]`, `irq_rate()`, 1 s sliding window | IDT stubs (existing)                     |  [ ]   |
+| 💎   |   4   | §4 Driver health registry -- `DRIVER_HEALTH_*` map, probe/error updates | §1 (driver name linked to PCI entry)     |  [ ]   |
+| 💎   |   5   | §5 `/sys/devices` + `/sys/interrupts` VFS files | §1–4 (data sources ready)                |  [ ]   |
+| 💎   |   6   | §6 `lspci` / `lsusb` shell commands      | §1–2 (registry + names), §8 (USB list)   |  [ ]   |
+| ⭐   |   7   | §7 Device Manager GUI -- tree view + detail panel + auto-refresh | §1–5 (all data sources), compositor widgets |  [ ]   |
+| 💎   |   8   | §8 USB device tree integration           | §7 (tree widget), TODO-10 USB device list |  [ ]   |
+| 💎   |   9   | §9 `SetupDiGetClassDevs` / `SetupDiEnumDeviceInfo` Win32 API | §1 (PCI registry), §4 (health/driver name) |  [ ]   |
+| 💎   |  10   | §10 Driver unload/reload -- context menu → `module_unload`, `driver_probe_all` | §7 (GUI), TODO-05 module system          |  [ ]   |
 
 > §7 Device Manager with live interrupt-rate auto-refresh is `⭐` exclusive: Windows Device Manager is a static MMC snap-in with no live counters; Linux has no built-in GUI Device Manager (only `lspci`/`lsusb` CLI + third-party tools like `hardinfo`). Impossible OS ships a first-class native Device Manager with live IRQ rates and driver health badges in the base OS.
 
@@ -218,18 +218,18 @@ Expose "Unload Driver" and "Reload Driver" actions in the Device Manager context
 ## OS Comparison
 
 
-| ⭐   | Feature                                                   | 🪟 Win11                                                                    | 🐧 Linux                                                          | 🚀 Impossible OS                                                                |
-| --- | --------------------------------------------------------- | -------------------------------------------------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| 💎   | PCI device registry                                       | ✅ PnP manager device tree; `HKLM\SYSTEM\CurrentControlSet\Enum\PCI\`       | ✅ `struct pci_dev` in driver model;                              | ⬜ §1 -- `pci_device_db[]`, `pci_bind_driver()`, `pci_enumerate_devices()`      |
-| 💎   | Embedded PCI ID name database                             | ✅ `pci.ids` via Windows Update; `SetupAPI`                                 | ✅ `pci.ids` file; `libpci` or kernel                             | ⬜ §2 -- 2000-entry binary-search C array, `gen_pci_ids.py`                     |
-| 💎   | Live per-IRQ interrupt counter + rate                     | ✅ `NtQuerySystemInformation(SystemInterruptInformation)`; Perfmon counters | ✅ `/proc/interrupts`; per-CPU vector counts; `perf               | ⬜ §3 -- `irq_count[]`, `irq_rate()` 1 s window,                                |
-| 💎   | Driver health status reporting                            | ✅ Device Manager yellow `!` /                                              | ✅ `driver_probe()` return codes; `dmesg` errors;                 | ⬜ §4 -- `driver_health_map`, `DRIVER_HEALTH_OK/WARN/ERROR`, probe-path updates |
-| 💎   | `/sys/devices` + `/sys/interrupts` machine-readable VFS   | ✅ WMI `Win32_PnPEntity`; registry; no simple                               | ✅ `/sys/bus/pci/devices/`, `/proc/interrupts` -- canonical Linux | ⬜ §5 -- `sys_register_file()`, tabular PCI + IRQ                               |
-| 💎   | `lspci` / `lsusb` CLI commands                            | ❌ No inbox `lspci`/`lsusb`; only WMI                                       | ✅ `lspci`/`lsusb`; Linux standard diagnostic tools               | ⬜ §6 -- built-in shell commands, Linux-compatible column                       |
-| ⭐   | Native GUI Device Manager with live IRQ-rate auto-refresh | ⚠️ `devmgmt.msc` static MMC snap-in; no                                    | ❌ No built-in GUI Device Manager;                                | ⬜ §7 -- tree + detail panel, `✅⚠️❌`                                            |
-| 💎   | USB hub topology in Device Manager tree                   | ✅ Device Manager shows USB hub                                             | ❌ No built-in GUI; `lsusb -t`                                    | ⬜ §8 -- hub parent/child tree in DevMgr,                                       |
-| 💎   | `SetupDiGetClassDevs` / `SetupDiEnumDeviceInfo` Win32 API | ✅ Full `SetupAPI.dll` -- `GetClassDevs`, `EnumDeviceInfo`,                 | ✅ `libudev` equivalent; `udev_enumerate_*` API                   | ⬜ §9 -- `HDEVINFO`, `SP_DEVINFO_DATA`, `DEVPKEY_Device_*` property keys        |
-| 💎   | Driver hot-unload / reload from UI                        | ✅ Device Manager → Disable/Enable; driver                                  | ✅ `modprobe -r` / `modprobe`; `udevadm                           | ⬜ §10 -- context menu → `module_unload` +                                      |
+| ⭐   | Feature                                  | 🪟 Win11                                  | 🐧 Linux                                  | 🚀 Impossible OS                          |
+| --- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
+| 💎   | PCI device registry                      | ✅ PnP manager device tree; `HKLM\SYSTEM\CurrentControlSet\Enum\PCI\` | ✅ `struct pci_dev` in driver model;      | ⬜ §1 -- `pci_device_db[]`, `pci_bind_driver()`, `pci_enumerate_devices()` |
+| 💎   | Embedded PCI ID name database            | ✅ `pci.ids` via Windows Update; `SetupAPI` | ✅ `pci.ids` file; `libpci` or kernel     | ⬜ §2 -- 2000-entry binary-search C array, `gen_pci_ids.py` |
+| 💎   | Live per-IRQ interrupt counter + rate    | ✅ `NtQuerySystemInformation(SystemInterruptInformation)`; Perfmon counters | ✅ `/proc/interrupts`; per-CPU vector counts; `perf | ⬜ §3 -- `irq_count[]`, `irq_rate()` 1 s window, |
+| 💎   | Driver health status reporting           | ✅ Device Manager yellow `!` /            | ✅ `driver_probe()` return codes; `dmesg` errors; | ⬜ §4 -- `driver_health_map`, `DRIVER_HEALTH_OK/WARN/ERROR`, probe-path updates |
+| 💎   | `/sys/devices` + `/sys/interrupts` machine-readable VFS | ✅ WMI `Win32_PnPEntity`; registry; no simple | ✅ `/sys/bus/pci/devices/`, `/proc/interrupts` -- canonical Linux | ⬜ §5 -- `sys_register_file()`, tabular PCI + IRQ |
+| 💎   | `lspci` / `lsusb` CLI commands           | ❌ No inbox `lspci`/`lsusb`; only WMI     | ✅ `lspci`/`lsusb`; Linux standard diagnostic tools | ⬜ §6 -- built-in shell commands, Linux-compatible column |
+| ⭐   | Native GUI Device Manager with live IRQ-rate auto-refresh | ⚠️ `devmgmt.msc` static MMC snap-in; no  | ❌ No built-in GUI Device Manager;        | ⬜ §7 -- tree + detail panel, `✅⚠️❌`      |
+| 💎   | USB hub topology in Device Manager tree  | ✅ Device Manager shows USB hub           | ❌ No built-in GUI; `lsusb -t`            | ⬜ §8 -- hub parent/child tree in DevMgr, |
+| 💎   | `SetupDiGetClassDevs` / `SetupDiEnumDeviceInfo` Win32 API | ✅ Full `SetupAPI.dll` -- `GetClassDevs`, `EnumDeviceInfo`, | ✅ `libudev` equivalent; `udev_enumerate_*` API | ⬜ §9 -- `HDEVINFO`, `SP_DEVINFO_DATA`, `DEVPKEY_Device_*` property keys |
+| 💎   | Driver hot-unload / reload from UI       | ✅ Device Manager → Disable/Enable; driver | ✅ `modprobe -r` / `modprobe`; `udevadm   | ⬜ §10 -- context menu → `module_unload` + |
 
 > **After §1–10:** Impossible OS ships a Device Manager that Windows 11 and Linux cannot match out-of-the-box. The live IRQ-rate auto-refresh (§7, `⭐`) turns Device Manager from a static hardware list into a real-time diagnostic tool -- useful for identifying IRQ storms, misbehaving drivers, and latency bottlenecks without needing `perf` or Perfmon. Linux users rely on CLI tools and optional third-party GUIs; Windows users get a static snap-in. Impossible OS integrates driver health, live counters, USB topology, and hot-unload in a single native window.
 

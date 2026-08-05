@@ -67,18 +67,18 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                                          | Depends On | Status |
-| --- | :---: | ---------------------------------------------------- | ---------- | :----: |
+| ⭐   | Order | Deliverable                              | Depends On | Status |
+| --- | :---: | ---------------------------------------- | ---------- | :----: |
 | 💎   |   1   | Freestanding string library (`snprintf`/`vsnprintf`) | --         |  [x]   |
-| 💎   |   2   | Complete floating-point math library                 | --         |  [x]   |
-| 💎   |   3   | LZ4 block compressor                                 | --         |  [/]   |
-| 💎   |   4   | miniz deflate/inflate + ZIP                          | §1         |  [/]   |
-| 💎   |   5   | Monocypher crypto primitives + kernel CSPRNG         | §1         |  [x]   |
-| 💎   |   6   | cJSON DOM parser                                     | §1         |  [x]   |
-| 💎   |   7   | Mbed TLS freestanding port (record layer)            | §1, §2, §5 |  [/]   |
-| 💎   |   8   | Checksum + base64/hex codec dispatch (CRC32/CRC32C)  | §1         |  [x]   |
-| 💎   |   9   | Zstandard (zstd) freestanding port                   | §1         |  [/]   |
-| 💎   |  10   | SHA-3 / SHAKE (Keccak) hash family                   | §1         |  [x]   |
+| 💎   |   2   | Complete floating-point math library     | --         |  [x]   |
+| 💎   |   3   | LZ4 block compressor                     | --         |  [/]   |
+| 💎   |   4   | miniz deflate/inflate + ZIP              | §1         |  [/]   |
+| 💎   |   5   | Monocypher crypto primitives + kernel CSPRNG | §1         |  [x]   |
+| 💎   |   6   | cJSON DOM parser                         | §1         |  [x]   |
+| 💎   |   7   | Mbed TLS freestanding port (record layer) | §1, §2, §5 |  [/]   |
+| 💎   |   8   | Checksum + base64/hex codec dispatch (CRC32/CRC32C) | §1         |  [x]   |
+| 💎   |   9   | Zstandard (zstd) freestanding port       | §1         |  [/]   |
+| 💎   |  10   | SHA-3 / SHAKE (Keccak) hash family       | §1         |  [x]   |
 
 > 💎 = parity work: matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work: Impossible OS is superior or first.
@@ -414,29 +414,29 @@ SHA-3 (FIPS 202, Keccak) is a both-platform baseline the §5 Monocypher set (Bla
 
 ## OS Comparison
 
-| ⭐   | Feature                                                         | 🪟 Win11                     | 🐧 Linux                         | 🚀 Impossible OS                                           |
-| --- | --------------------------------------------------------------- | --------------------------- | ------------------------------- | --------------------------------------------------------- |
-| 💎   | snprintf safe                                                   | ✅ Rtl safe                  | ✅ vsprintf                      | ✅ §1 libc                                                 |
-| 💎   | Core string ops                                                 | ✅ Rtl mem                   | ✅ string.c                      | ✅ §1 libc                                                 |
-| 💎   | Float math lib                                                  | ✅ CRT                       | ✅ libm                          | ✅ §2 libc (trig/exp/log/cbrt, few-ULP, IEEE)              |
-| 💎   | LZ4 in kernel                                                   | ⚠️ Xpress                   | ✅ lib/lz4                       | ✅ §3 block codec (size-safe, frame deferred)              |
-| 💎   | Deflate zlib                                                    | ✅ Rtl LZNT1                 | ✅ zlib                          | ⬜ §4 miniz                                                |
-| 💎   | Zstandard zstd                                                  | ⚠️ ReFS 24H2                | ✅ lib/zstd                      | ⬜ §9                                                      |
-| 💎   | ZIP read                                                        | ✅ Shell                     | ✅ unzip                         | ⬜ §4                                                      |
-| 💎   | ChaCha Poly AEAD                                                | ✅ BCrypt                    | ✅ chacha                        | ✅ §5 Monocypher                                           |
-| 💎   | Blake2b                                                         | ✅ no native                 | ✅ blake2b                       | ✅ §5 Monocypher                                           |
-| 💎   | SHA-3 / SHAKE                                                   | ✅ CNG 24H2                  | ✅ sha3_generic                  | ✅ §10 Keccak (SHA3-256/384/512 + SHAKE128/256 + dispatch) |
-| 💎   | Argon2id                                                        | ✅ KDF API                   | ✅ argon2                        | ✅ §5 Monocypher                                           |
-| 💎   | X25519 ECDH                                                     | ✅ BCrypt                    | ✅ ecdh                          | ✅ §5 Monocypher                                           |
-| 💎   | Ed25519                                                         | ✅ BCrypt                    | ✅ eddsa                         | ✅ §5 std + Blake2b EdDSA                                  |
-| 💎   | Kernel CSPRNG                                                   | ✅ BCrypt                    | ✅ random.c                      | ✅ §5 fast-key-erasure ChaCha20                            |
-| 💎   | getrandom syscall                                               | ✅ BCryptGenRandom           | ✅ getrandom(2)                  | ✅ §5 NtGetRandom 0x03D8                                   |
-| 💎   | JSON in kernel                                                  | ❌ user COM                  | ❌ none std                      | ✅ §6 cJSON                                                |
-| 💎   | TLS record crypto                                               | ✅ SChannel                  | ✅ ktls                          | ⬜ §7 mbed                                                 |
-| 💎   | CRC32 / CRC32C dispatch                                         | ✅ RtlCrc32                  | ✅ lib/crc32                     | ✅ §8 kcrc32/kcrc32c (SSE4.2+table)                        |
-| 💎   | base64 / hex codec                                              | ✅ Crypt32                   | ✅ lib/base64                    | ✅ §8 kcodec (strict+MIME)                                 |
-| 💎   | UTF-16<->UTF-8 conversion                                       | ✅ RtlUnicode                | ✅ nls/utf8                      | ⬜ owned by T13 NLS                                        |
-| ⭐   | One ring-0 CSPRNG façade (TLS seed + hiber + dumps + klog HMAC) | ⚠️ many BCrypt entry points | ⚠️ `get_random_bytes` + drivers | ✅ §5 `csprng_fill`/`csprng_add_entropy`                   |
+| ⭐   | Feature                                  | 🪟 Win11                     | 🐧 Linux                         | 🚀 Impossible OS                          |
+| --- | ---------------------------------------- | --------------------------- | ------------------------------- | ---------------------------------------- |
+| 💎   | snprintf safe                            | ✅ Rtl safe                  | ✅ vsprintf                      | ✅ §1 libc                                |
+| 💎   | Core string ops                          | ✅ Rtl mem                   | ✅ string.c                      | ✅ §1 libc                                |
+| 💎   | Float math lib                           | ✅ CRT                       | ✅ libm                          | ✅ §2 libc (trig/exp/log/cbrt, few-ULP, IEEE) |
+| 💎   | LZ4 in kernel                            | ⚠️ Xpress                   | ✅ lib/lz4                       | ✅ §3 block codec (size-safe, frame deferred) |
+| 💎   | Deflate zlib                             | ✅ Rtl LZNT1                 | ✅ zlib                          | ⬜ §4 miniz                               |
+| 💎   | Zstandard zstd                           | ⚠️ ReFS 24H2                | ✅ lib/zstd                      | ⬜ §9                                     |
+| 💎   | ZIP read                                 | ✅ Shell                     | ✅ unzip                         | ⬜ §4                                     |
+| 💎   | ChaCha Poly AEAD                         | ✅ BCrypt                    | ✅ chacha                        | ✅ §5 Monocypher                          |
+| 💎   | Blake2b                                  | ✅ no native                 | ✅ blake2b                       | ✅ §5 Monocypher                          |
+| 💎   | SHA-3 / SHAKE                            | ✅ CNG 24H2                  | ✅ sha3_generic                  | ✅ §10 Keccak (SHA3-256/384/512 + SHAKE128/256 + dispatch) |
+| 💎   | Argon2id                                 | ✅ KDF API                   | ✅ argon2                        | ✅ §5 Monocypher                          |
+| 💎   | X25519 ECDH                              | ✅ BCrypt                    | ✅ ecdh                          | ✅ §5 Monocypher                          |
+| 💎   | Ed25519                                  | ✅ BCrypt                    | ✅ eddsa                         | ✅ §5 std + Blake2b EdDSA                 |
+| 💎   | Kernel CSPRNG                            | ✅ BCrypt                    | ✅ random.c                      | ✅ §5 fast-key-erasure ChaCha20           |
+| 💎   | getrandom syscall                        | ✅ BCryptGenRandom           | ✅ getrandom(2)                  | ✅ §5 NtGetRandom 0x03D8                  |
+| 💎   | JSON in kernel                           | ❌ user COM                  | ❌ none std                      | ✅ §6 cJSON                               |
+| 💎   | TLS record crypto                        | ✅ SChannel                  | ✅ ktls                          | ⬜ §7 mbed                                |
+| 💎   | CRC32 / CRC32C dispatch                  | ✅ RtlCrc32                  | ✅ lib/crc32                     | ✅ §8 kcrc32/kcrc32c (SSE4.2+table)       |
+| 💎   | base64 / hex codec                       | ✅ Crypt32                   | ✅ lib/base64                    | ✅ §8 kcodec (strict+MIME)                |
+| 💎   | UTF-16<->UTF-8 conversion                | ✅ RtlUnicode                | ✅ nls/utf8                      | ⬜ owned by T13 NLS                       |
+| ⭐   | One ring-0 CSPRNG façade (TLS seed + hiber + dumps + klog HMAC) | ⚠️ many BCrypt entry points | ⚠️ `get_random_bytes` + drivers | ✅ §5 `csprng_fill`/`csprng_add_entropy`  |
 
 After §1 through §8, freestanding libc and these libs unblock LZ4, miniz, crypto, JSON, the TLS record layer, and a shared checksum/codec dispatch for hibernation, dumps, IXFS, registry, and `07-networking` HTTPS.
 

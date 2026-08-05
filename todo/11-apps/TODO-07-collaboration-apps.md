@@ -47,14 +47,14 @@ title: "TODO-07 -- Collaboration & Network Client Apps"
 
 ## Implementation Order
 
-| Step | Section                                            | 💎/⭐ | Dependency                                       |
-| ---- | -------------------------------------------------- | --- | ------------------------------------------------ |
-| 1    | VNC Client                                         | 💎   | TCP sockets TODO-02, TLS TODO-03                 |
-| 2    | IRC / Chat Client                                  | 💎   | TCP sockets TODO-02, TLS TODO-03                 |
-| 3    | RSS / News Reader                                  | 💎   | `http_get`/`https_get` TODO-03, `sched_task_add` |
-| 4    | `ping` + `traceroute`                              | 💎   | → XREF TODO-06 §5–§6 (already specified)         |
-| 5    | Network Diagnostic Tools (`arp -a`, `route print`) | ⭐   | `arp_cache_dump` TODO-06 §8; routing table       |
-| 6    | VNC Server (Stretch)                               | ⭐   | §1 RFB protocol known, compositor framebuffer    |
+| Step | Section                                  | 💎/⭐ | Dependency                               |
+| ---- | ---------------------------------------- | --- | ---------------------------------------- |
+| 1    | VNC Client                               | 💎   | TCP sockets TODO-02, TLS TODO-03         |
+| 2    | IRC / Chat Client                        | 💎   | TCP sockets TODO-02, TLS TODO-03         |
+| 3    | RSS / News Reader                        | 💎   | `http_get`/`https_get` TODO-03, `sched_task_add` |
+| 4    | `ping` + `traceroute`                    | 💎   | → XREF TODO-06 §5–§6 (already specified) |
+| 5    | Network Diagnostic Tools (`arp -a`, `route print`) | ⭐   | `arp_cache_dump` TODO-06 §8; routing table |
+| 6    | VNC Server (Stretch)                     | ⭐   | §1 RFB protocol known, compositor framebuffer |
 
 ---
 
@@ -209,16 +209,16 @@ title: "TODO-07 -- Collaboration & Network Client Apps"
 ## OS Comparison
 
 
-| ⭐   | Feature                                          | 🪟 Win11                           | 🐧 Linux                           | 🚀 Impossible OS                                       |
-| --- | ------------------------------------------------ | --------------------------------- | --------------------------------- | ----------------------------------------------------- |
-| 💎   | VNC viewer                                       | ✅ no built-in; TightVNC / RealVNC | ✅ Remmina / TigerVNC              | ⬜ §1 -- DES auth, keyboard/mouse forward, viewer      |
-| 💎   | IRC client                                       | ✅ no built-in; HexChat / mIRC     | ✅ HexChat / irssi / WeeChat       | ⬜ §2 -- nick completion, colored usernames, PING/PONG |
-| ⭐   | IRC nick-tab-completion + hash-colored usernames | ❌ no built-in IRC                 | ✅ HexChat built-in                | ⬜ §2 -- `hash(nick) % 8` palette                      |
-| 💎   | RSS 2.0 + Atom 1.0 feed reader                   | ✅ no built-in (removed in Win10)  | ✅ Liferea / Newsboat              | ⬜ §3 -- callback XML parser, 30-min auto-refresh,     |
-| ⭐   | RSS auto-refresh + toast notification            | ❌ removed from Windows            | ⚠️ Liferea plugin                 | ⬜ §3 -- `sched_task_add(1800)` + `notify_send`        |
-| 💎   | `ping` + `traceroute` commands                   | ✅ built-in                        | ✅ built-in                        | ⬜ §5–§6 -- → XREF TODO-06 ; shell                     |
-| 💎   | `arp -a` + `route print`                         | ✅ `arp -a`, `route print`         | ✅ `arp -n`, `ip route`            | ⬜ §5 -- `arp_cache_dump` wrapper + routing table      |
-| ⭐   | VNC server for headless remote access            | ❌ no built-in VNC server          | ⚠️ `x11vnc` / `wayvnc` (external) | ⬜ §6 -- (Stretch) -- ; compositor fb                  |
+| ⭐   | Feature                                  | 🪟 Win11                           | 🐧 Linux                           | 🚀 Impossible OS                          |
+| --- | ---------------------------------------- | --------------------------------- | --------------------------------- | ---------------------------------------- |
+| 💎   | VNC viewer                               | ✅ no built-in; TightVNC / RealVNC | ✅ Remmina / TigerVNC              | ⬜ §1 -- DES auth, keyboard/mouse forward, viewer |
+| 💎   | IRC client                               | ✅ no built-in; HexChat / mIRC     | ✅ HexChat / irssi / WeeChat       | ⬜ §2 -- nick completion, colored usernames, PING/PONG |
+| ⭐   | IRC nick-tab-completion + hash-colored usernames | ❌ no built-in IRC                 | ✅ HexChat built-in                | ⬜ §2 -- `hash(nick) % 8` palette         |
+| 💎   | RSS 2.0 + Atom 1.0 feed reader           | ✅ no built-in (removed in Win10)  | ✅ Liferea / Newsboat              | ⬜ §3 -- callback XML parser, 30-min auto-refresh, |
+| ⭐   | RSS auto-refresh + toast notification    | ❌ removed from Windows            | ⚠️ Liferea plugin                 | ⬜ §3 -- `sched_task_add(1800)` + `notify_send` |
+| 💎   | `ping` + `traceroute` commands           | ✅ built-in                        | ✅ built-in                        | ⬜ §5–§6 -- → XREF TODO-06 ; shell        |
+| 💎   | `arp -a` + `route print`                 | ✅ `arp -a`, `route print`         | ✅ `arp -n`, `ip route`            | ⬜ §5 -- `arp_cache_dump` wrapper + routing table |
+| ⭐   | VNC server for headless remote access    | ❌ no built-in VNC server          | ⚠️ `x11vnc` / `wayvnc` (external) | ⬜ §6 -- (Stretch) -- ; compositor fb     |
 
 Impossible OS ships RSS news reader and IRC client out of the box -- features Windows 11 dropped
 years ago -- plus a built-in VNC server enabling zero-install remote desktop for QEMU testing,

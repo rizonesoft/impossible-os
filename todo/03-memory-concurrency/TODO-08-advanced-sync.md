@@ -44,19 +44,19 @@ title: "TODO-08 -- Advanced Synchronisation Primitives"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                                              | Depends On                 | Status |
-| --- | :---: | -------------------------------------------------------- | -------------------------- | :----: |
+| ⭐   | Order | Deliverable                              | Depends On                 | Status |
+| --- | :---: | ---------------------------------------- | -------------------------- | :----: |
 | 💎   |   1   | §1 Ticket locks (`ticket_lock_t`, run-queue replacement) | TODO-07 §8 (`READ_ONCE`)   |  [ ]   |
 | 💎   |   2   | §2 Preemption count (`preempt_disable`/`preempt_enable`) | §1, TODO-07 §1 (atomics)   |  [ ]   |
-| 💎   |   3   | §3 TLS -- `FS` base MSR, context save, `tls_key_*`       | --                         |  [ ]   |
-| 💎   |   4   | §4 Futexes -- `FUTEX_WAIT`/`WAKE`/`WAKE_OP`              | §2, §3                     |  [ ]   |
-| 💎   |   5   | §9 Unified `_timeout(ms)` API                            | §1, §2 (primitives stable) |  [ ]   |
-| 💎   |   6   | §5 `pthread_once` / `call_once`                          | §1                         |  [ ]   |
-| 💎   |   7   | §7 Thread cancellation (`pthread_cancel`)                | §4, §3                     |  [ ]   |
-| ⭐   |   8   | §8 `WaitForMultipleObjects` (`waitable_t` + `wait_any`)  | §4, §9                     |  [ ]   |
-| ⭐   |   9   | §6 `pthread_barrier_t` -- kernel-level, reusable         | §8 or §9 (timeout variant) |  [ ]   |
-| 💎   |  10   | Sync syscalls wired to SSDT (keyed events, alerts)       | §4, §8, D02 T06 §5         |  [ ]   |
-| ⭐   |  11   | §11 Mutex wait-queue SMP-safety backfill                 | --                         |  [ ]   |
+| 💎   |   3   | §3 TLS -- `FS` base MSR, context save, `tls_key_*` | --                         |  [ ]   |
+| 💎   |   4   | §4 Futexes -- `FUTEX_WAIT`/`WAKE`/`WAKE_OP` | §2, §3                     |  [ ]   |
+| 💎   |   5   | §9 Unified `_timeout(ms)` API            | §1, §2 (primitives stable) |  [ ]   |
+| 💎   |   6   | §5 `pthread_once` / `call_once`          | §1                         |  [ ]   |
+| 💎   |   7   | §7 Thread cancellation (`pthread_cancel`) | §4, §3                     |  [ ]   |
+| ⭐   |   8   | §8 `WaitForMultipleObjects` (`waitable_t` + `wait_any`) | §4, §9                     |  [ ]   |
+| ⭐   |   9   | §6 `pthread_barrier_t` -- kernel-level, reusable | §8 or §9 (timeout variant) |  [ ]   |
+| 💎   |  10   | Sync syscalls wired to SSDT (keyed events, alerts) | §4, §8, D02 T06 §5         |  [ ]   |
+| ⭐   |  11   | §11 Mutex wait-queue SMP-safety backfill | --                         |  [ ]   |
 
 > 💎 = parity -- ticket locks, preemption count, TLS, futexes, timeout API, pthread_once, and thread cancellation all have direct Linux or Windows NT equivalents.
 > ⭐ = exclusive -- `WaitForMultipleObjects` with a first-class `waitable_t` vtable across all sync types is superior to Linux's fd-only `epoll`; `pthread_barrier_t` as a kernel primitive (not just user-space pthreads) is a Windows gap.
@@ -292,17 +292,17 @@ The "already complete" §1-§14 baseline (line 14) lists `mutex_t` as shipped, b
 ## OS Comparison
 
 
-| ⭐   | Feature                                          | 🪟 Win11                                                           | 🐧 Linux                                                             | 🚀 Impossible OS                                                        |
-| --- | ------------------------------------------------ | ----------------------------------------------------------------- | ------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| 💎   | FIFO ticket locks                                | ✅ `KSPIN_LOCK` queued spinlocks (FIFO via                         | ✅ `arch/x86/include/asm/spinlock.h` -- ticket locks (pre-qspinlock) | ⬜ §1 -- `ticket_lock_t`, run-queue lock replacement                    |
-| 💎   | Preemption count                                 | ✅ `KiAcquireApcLock` / preemption depth in                        | ✅ `preempt_disable()` / `preempt_enable()` per-thread counter       | ⬜ §2 -- `preempt_count` + `need_resched` in `task_t`                   |
-| 💎   | Thread-local storage via FS base MSR             | ✅ TEB at `FS:0` (32-bit) /                                        | ✅ `ARCH_SET_FS` via `arch_prctl`; `IA32_FS_BASE` WRMSR              | ⬜ §3 -- `IA32_FS_BASE` WRMSR, context-switch save/restore, PT_TLS      |
-| 💎   | Futex `WAIT`/`WAKE` user-space fast mutex        | ✅ `NtWaitForKeyedEvent` / `NtReleaseKeyedEvent` (similar concept) | ✅ `futex(2)` -- `FUTEX_WAIT`/`WAKE`/`WAKE_OP`                       | ⬜ §4 -- per-process hash table, `SYS_FUTEX`, `NtWaitForKeyedEvent`     |
-| 💎   | `pthread_once` / C11 `call_once`                 | ✅ `InitOnceExecuteOnce` Win32 / `INIT_ONCE` kernel                | ✅ `pthread_once(3)` / `DEFINE_STATIC_SRCU`                          | ⬜ §5 -- `once_flag_t`, double-checked lock, atomic fast                |
-| ⭐   | `pthread_barrier_t` as kernel primitive          | ❌ No native barrier; developers use                               | ⬜ User-space pthreads only; no kernel                               | ⬜ §6 -- phase-toggle, kernel threads + user                            |
-| 💎   | Deferred thread cancellation + cleanup handlers  | ✅ `TerminateThread` (unsafe); no POSIX deferred                   | ✅ `pthread_cancel(3)` deferred; `pthread_cleanup_push/pop`          | ⬜ §7 -- `cancel_requested`, cancellation points, LIFO cleanup          |
-| ⭐   | `WaitForMultipleObjects` across all sync types   | ✅ `WaitForMultipleObjects` -- handle-based, up to                 | ❌ `epoll`/`select` for FDs only; no                                 | ⬜ §8 -- `waitable_t` vtable in mutex/sem/event/condvar, `wait_any/all` |
-| 💎   | Unified `_timeout(ms)` across all blocking prims | ✅ All `Wait*` take `DWORD dwMilliseconds`                         | ⬜ Inconsistent (`timespec`, jiffies, relative/absolute per          | ⬜ §9 -- `mutex/sem/rwlock/cond _timeout(ms)`, `WAIT_SIGNALLED/-1`      |
+| ⭐   | Feature                                  | 🪟 Win11                                  | 🐧 Linux                                  | 🚀 Impossible OS                          |
+| --- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
+| 💎   | FIFO ticket locks                        | ✅ `KSPIN_LOCK` queued spinlocks (FIFO via | ✅ `arch/x86/include/asm/spinlock.h` -- ticket locks (pre-qspinlock) | ⬜ §1 -- `ticket_lock_t`, run-queue lock replacement |
+| 💎   | Preemption count                         | ✅ `KiAcquireApcLock` / preemption depth in | ✅ `preempt_disable()` / `preempt_enable()` per-thread counter | ⬜ §2 -- `preempt_count` + `need_resched` in `task_t` |
+| 💎   | Thread-local storage via FS base MSR     | ✅ TEB at `FS:0` (32-bit) /               | ✅ `ARCH_SET_FS` via `arch_prctl`; `IA32_FS_BASE` WRMSR | ⬜ §3 -- `IA32_FS_BASE` WRMSR, context-switch save/restore, PT_TLS |
+| 💎   | Futex `WAIT`/`WAKE` user-space fast mutex | ✅ `NtWaitForKeyedEvent` / `NtReleaseKeyedEvent` (similar concept) | ✅ `futex(2)` -- `FUTEX_WAIT`/`WAKE`/`WAKE_OP` | ⬜ §4 -- per-process hash table, `SYS_FUTEX`, `NtWaitForKeyedEvent` |
+| 💎   | `pthread_once` / C11 `call_once`         | ✅ `InitOnceExecuteOnce` Win32 / `INIT_ONCE` kernel | ✅ `pthread_once(3)` / `DEFINE_STATIC_SRCU` | ⬜ §5 -- `once_flag_t`, double-checked lock, atomic fast |
+| ⭐   | `pthread_barrier_t` as kernel primitive  | ❌ No native barrier; developers use      | ⬜ User-space pthreads only; no kernel    | ⬜ §6 -- phase-toggle, kernel threads + user |
+| 💎   | Deferred thread cancellation + cleanup handlers | ✅ `TerminateThread` (unsafe); no POSIX deferred | ✅ `pthread_cancel(3)` deferred; `pthread_cleanup_push/pop` | ⬜ §7 -- `cancel_requested`, cancellation points, LIFO cleanup |
+| ⭐   | `WaitForMultipleObjects` across all sync types | ✅ `WaitForMultipleObjects` -- handle-based, up to | ❌ `epoll`/`select` for FDs only; no      | ⬜ §8 -- `waitable_t` vtable in mutex/sem/event/condvar, `wait_any/all` |
+| 💎   | Unified `_timeout(ms)` across all blocking prims | ✅ All `Wait*` take `DWORD dwMilliseconds` | ⬜ Inconsistent (`timespec`, jiffies, relative/absolute per | ⬜ §9 -- `mutex/sem/rwlock/cond _timeout(ms)`, `WAIT_SIGNALLED/-1` |
 
 > **After §1–9:** Impossible OS achieves full parity with Windows NT and Linux on synchronisation fundamentals. Two exclusive differentiators stand out: `WaitForMultipleObjects` with a `waitable_t` vtable covers arbitrary kernel sync objects (Linux's `epoll` is FD-only); and `pthread_barrier_t` as a kernel-level reusable primitive fills a gap Windows never addressed natively. The unified `_timeout(ms)` API is a direct improvement on Linux's fragmented timeout conventions.
 

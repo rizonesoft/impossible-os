@@ -225,16 +225,16 @@ title: "TODO-14 -- Win32 GDI / USER32 Desktop API Stubs"
 ## OS Comparison
 
 
-| ⭐   | Feature                    | 🪟 Win11                                                             | 🐧 Linux                                          | 🚀 Impossible OS                                                      |
-| --- | -------------------------- | ------------------------------------------------------------------- | ------------------------------------------------ | -------------------------------------------------------------------- |
-| 💎   | Shell icon index map       | ✅ shell32.dll + imageres.dll; full icon                             | ✅ XDG icon theme; `gtk_icon_theme_load_icon`; no | ⬜ §1 -- ~45 mapped entries; `win32_shell_icon(dll, index)`           |
-| 💎   | GDI device context         | ✅ Win32 GDI DC; GDI object                                          | ✅ Xlib `XCreateGC`; Cairo device contexts;       | ⬜ §2 -- 256-slot object table; `gfx_surface_t` backing               |
-| 💎   | GDI drawing                | ✅ Full GDI drawing API; ROP3                                        | ✅ Cairo/Xlib; Wine GDI drawing; full             | ⬜ §3 -- SRCCOPY+PATCOPY BitBlt; all wired to                         |
-| 💎   | GDI text                   | ✅ Win32 GDI text; font selection;                                   | ✅ Pango/Cairo text; Wine GDI text                | ⬜ §4 -- `ttf_draw_string` backend; `CreateFontA` maps weight/size    |
-| 💎   | USER32 windows             | ✅ Full USER32 window creation; WS_*                                 | ✅ GTK/Qt window APIs; Wine USER32                | ⬜ §5 -- `wm_create_window` backend; WS_*/SW_* style/show-cmd mapping |
-| ⭐   | USER32 message loop        | ✅ Full Win32 message pump; per-thread                               | ✅ X11 event loop; Wayland protocol;              | ⬜ §6 -- `⭐` per-window kernel queue (not                             |
-| 💎   | Cursor/icon/system metrics | ✅ Full USER32 cursor/icon management; `GetSystemMetrics`            | ✅ `XDefineCursor`; GDK cursor API; no            | ⬜ §7 -- 9 IDC_* cursor mappings; SM_CX/CYSCREEN                      |
-| 💎   | USER32 dialogs             | ✅ Full comdlg32.dll; `MessageBox`, `GetOpenFileName`, `ChooseColor` | ✅ GTK/Qt dialog APIs; Wine comdlg32              | ⬜ §8 -- thin forwarding layer to existing                            |
+| ⭐   | Feature                    | 🪟 Win11                                  | 🐧 Linux                                  | 🚀 Impossible OS                          |
+| --- | -------------------------- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
+| 💎   | Shell icon index map       | ✅ shell32.dll + imageres.dll; full icon  | ✅ XDG icon theme; `gtk_icon_theme_load_icon`; no | ⬜ §1 -- ~45 mapped entries; `win32_shell_icon(dll, index)` |
+| 💎   | GDI device context         | ✅ Win32 GDI DC; GDI object               | ✅ Xlib `XCreateGC`; Cairo device contexts; | ⬜ §2 -- 256-slot object table; `gfx_surface_t` backing |
+| 💎   | GDI drawing                | ✅ Full GDI drawing API; ROP3             | ✅ Cairo/Xlib; Wine GDI drawing; full     | ⬜ §3 -- SRCCOPY+PATCOPY BitBlt; all wired to |
+| 💎   | GDI text                   | ✅ Win32 GDI text; font selection;        | ✅ Pango/Cairo text; Wine GDI text        | ⬜ §4 -- `ttf_draw_string` backend; `CreateFontA` maps weight/size |
+| 💎   | USER32 windows             | ✅ Full USER32 window creation; WS_*      | ✅ GTK/Qt window APIs; Wine USER32        | ⬜ §5 -- `wm_create_window` backend; WS_*/SW_* style/show-cmd mapping |
+| ⭐   | USER32 message loop        | ✅ Full Win32 message pump; per-thread    | ✅ X11 event loop; Wayland protocol;      | ⬜ §6 -- `⭐` per-window kernel queue (not |
+| 💎   | Cursor/icon/system metrics | ✅ Full USER32 cursor/icon management; `GetSystemMetrics` | ✅ `XDefineCursor`; GDK cursor API; no    | ⬜ §7 -- 9 IDC_* cursor mappings; SM_CX/CYSCREEN |
+| 💎   | USER32 dialogs             | ✅ Full comdlg32.dll; `MessageBox`, `GetOpenFileName`, `ChooseColor` | ✅ GTK/Qt dialog APIs; Wine comdlg32      | ⬜ §8 -- thin forwarding layer to existing |
 
 > **After §1–§8:** Impossible OS has a functional GDI/USER32 stub surface sufficient for Win32 PE32+ apps to call standard drawing, windowing, and dialog APIs. The `⭐` differentiator is the message queue architecture: unlike Windows (per-thread queue) or Wine (per-thread emulation), Impossible OS uses a per-window kernel queue -- simpler, with no thread-affinity complexity, while still delivering the blocking `GetMessageA` contract Win32 apps expect.
 

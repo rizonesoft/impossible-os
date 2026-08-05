@@ -36,22 +36,22 @@ title: "TODO-13 -- TPM Measured Boot, PCR Replay & Attestation"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                                                  | Depends On                                                | Status |
-| --- | :---: | ------------------------------------------------------------ | --------------------------------------------------------- | :----: |
-| 💎   |   1   | Harden TCG event-log parser                                  | --                                                        |  [/]   |
-| 💎   |   2   | TPM2 command transport                                       | §1 (ordering-only; transport does not consume the parser) |  [x]   |
-| 💎   |   3   | PCR read API                                                 | §2                                                        |  [x]   |
-| 💎   |   4   | PCR replay engine                                            | §1, ../02-kernel-core/TODO-03 §3                          |  [x]   |
-| 💎   |   5   | Secure Boot variable measurement reconciliation (structural) | §1, TODO-02 §3                                            |  [x]   |
-| 💎   |   6   | Baseline enrollment and storage                              | §3, §4, §7                                                |  [/]   |
-| 💎   |   7   | TPM NV index support                                         | §2 (transport); §12 (baseline mask)                       |  [/]   |
-| ⭐   |   8   | Sealed-secret boot policy hooks                              | §7, §12                                                   |  [x]   |
-| 💎   |   9   | Attestation report export                                    | §3-§6, §12, §13                                           |  [/]   |
-| ⭐   |  10   | Recovery and mismatch UX                                     | §6, TODO-22                                               |  [/]   |
-| 💎   |  11   | TPM tests and event-log fixtures                             | §1-§10, §12, §13                                          |  [x]   |
-| 💎   |  12   | PCR allocation table and policy masks                        | (foundational; consumed by §6/§8/§13)                     |  [x]   |
-| 💎   |  13   | Attestation key provisioning and TPM2 quote                  | §3, §7, §12                                               |  [x]   |
-| 💎   |  14   | Post-ship follow-up backfill (2026-07-31 cohort)             | --                                                        |  [ ]   |
+| ⭐   | Order | Deliverable                              | Depends On                               | Status |
+| --- | :---: | ---------------------------------------- | ---------------------------------------- | :----: |
+| 💎   |   1   | Harden TCG event-log parser              | --                                       |  [/]   |
+| 💎   |   2   | TPM2 command transport                   | §1 (ordering-only; transport does not consume the parser) |  [x]   |
+| 💎   |   3   | PCR read API                             | §2                                       |  [x]   |
+| 💎   |   4   | PCR replay engine                        | §1, ../02-kernel-core/TODO-03 §3         |  [x]   |
+| 💎   |   5   | Secure Boot variable measurement reconciliation (structural) | §1, TODO-02 §3                           |  [x]   |
+| 💎   |   6   | Baseline enrollment and storage          | §3, §4, §7                               |  [/]   |
+| 💎   |   7   | TPM NV index support                     | §2 (transport); §12 (baseline mask)      |  [/]   |
+| ⭐   |   8   | Sealed-secret boot policy hooks          | §7, §12                                  |  [x]   |
+| 💎   |   9   | Attestation report export                | §3-§6, §12, §13                          |  [/]   |
+| ⭐   |  10   | Recovery and mismatch UX                 | §6, TODO-22                              |  [/]   |
+| 💎   |  11   | TPM tests and event-log fixtures         | §1-§10, §12, §13                         |  [x]   |
+| 💎   |  12   | PCR allocation table and policy masks    | (foundational; consumed by §6/§8/§13)    |  [x]   |
+| 💎   |  13   | Attestation key provisioning and TPM2 quote | §3, §7, §12                              |  [x]   |
+| 💎   |  14   | Post-ship follow-up backfill (2026-07-31 cohort) | --                                       |  [ ]   |
 
 ## 1. Harden TCG Event-Log Parser
 

@@ -217,16 +217,16 @@ Per-user private key storage encrypted at rest with AES-256-GCM. `cng_key_store_
 ## OS Comparison
 
 
-| ⭐   | Feature                                      | 🪟 Win11                                                   | 🐧 Linux                                                             | 🚀 Impossible OS                                          |
-| --- | -------------------------------------------- | --------------------------------------------------------- | ------------------------------------------------------------------- | -------------------------------------------------------- |
-| ⭐   | Crypto primitives                            | ✅ BCryptPrimitives.dll; AES-NI acceleration; CNG provider | ✅ kernel `crypto/` subsystem; AES-NI; GCM                           | ⬜ §1 -- `⭐` no AES-NI yet (pure-C                        |
-| 💎   | TLS handshake helpers                        | ✅ SChannel; BCrypt TLS extension; full                    | ✅ OpenSSL / BoringSSL / mbedTLS;                                    | ⬜ §8 -- TLS 1.2 PRF + PKCS#1                             |
-| 💎   | X.509 cert store                             | ✅ Windows Certificate Store; `certmgr.msc`; CAPI2;        | ✅ `ca-certificates`; OpenSSL cert store; `update-ca-certificates`;  | ⬜ §2 -- minimal DER parser; Registry backend             |
-| ⭐   | Key store                                    | ✅ DPAPI; CNG key storage providers;                       | ✅ `gnome-keyring`/`kwallet`; `libsecret`; kernel keyring (`keyctl`) | ⬜ §3 -- `⭐` no TPM dependency; HKCU                      |
-| 💎   | BCrypt API                                   | ✅ Full BCrypt.dll; all algorithms; hardware               | ✅ No BCrypt equivalent; use libgcrypt                               | ⬜ §4 -- Win32-compatible `bcrypt.dll` stub table; routes |
-| 💎   | NCrypt API -- `NCryptOpenKey/Encrypt/Import` | ✅ Full NCrypt.dll; TPM-backed keys; smart                 | ✅ PKCS#11 (`p11-kit`); no NCrypt equivalent                         | ⬜ §5 -- `ncrypt.dll` stub; backed by HKCU                |
-| ⭐   | Code signing                                 | ✅ Authenticode (RSA + X.509); Kernel                      | ✅ IMA/EVM (kernel integrity measurement); `kexec`                   | ⬜ §7 -- `⭐` Ed25519 (smaller+faster than RSA             |
-| 💎   | EFS                                          | ✅ NTFS EFS; AES-256; DPAPI-backed keys;                   | ✅ `fscrypt` (ext4/f2fs); eCryptfs; `dm-crypt` (block-level);        | ⬜ §6 -- `⭐` RSA-2048 key wrap +                          |
+| ⭐   | Feature                                  | 🪟 Win11                                  | 🐧 Linux                                  | 🚀 Impossible OS                          |
+| --- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
+| ⭐   | Crypto primitives                        | ✅ BCryptPrimitives.dll; AES-NI acceleration; CNG provider | ✅ kernel `crypto/` subsystem; AES-NI; GCM | ⬜ §1 -- `⭐` no AES-NI yet (pure-C        |
+| 💎   | TLS handshake helpers                    | ✅ SChannel; BCrypt TLS extension; full   | ✅ OpenSSL / BoringSSL / mbedTLS;         | ⬜ §8 -- TLS 1.2 PRF + PKCS#1             |
+| 💎   | X.509 cert store                         | ✅ Windows Certificate Store; `certmgr.msc`; CAPI2; | ✅ `ca-certificates`; OpenSSL cert store; `update-ca-certificates`; | ⬜ §2 -- minimal DER parser; Registry backend |
+| ⭐   | Key store                                | ✅ DPAPI; CNG key storage providers;      | ✅ `gnome-keyring`/`kwallet`; `libsecret`; kernel keyring (`keyctl`) | ⬜ §3 -- `⭐` no TPM dependency; HKCU      |
+| 💎   | BCrypt API                               | ✅ Full BCrypt.dll; all algorithms; hardware | ✅ No BCrypt equivalent; use libgcrypt    | ⬜ §4 -- Win32-compatible `bcrypt.dll` stub table; routes |
+| 💎   | NCrypt API -- `NCryptOpenKey/Encrypt/Import` | ✅ Full NCrypt.dll; TPM-backed keys; smart | ✅ PKCS#11 (`p11-kit`); no NCrypt equivalent | ⬜ §5 -- `ncrypt.dll` stub; backed by HKCU |
+| ⭐   | Code signing                             | ✅ Authenticode (RSA + X.509); Kernel     | ✅ IMA/EVM (kernel integrity measurement); `kexec` | ⬜ §7 -- `⭐` Ed25519 (smaller+faster than RSA |
+| 💎   | EFS                                      | ✅ NTFS EFS; AES-256; DPAPI-backed keys;  | ✅ `fscrypt` (ext4/f2fs); eCryptfs; `dm-crypt` (block-level); | ⬜ §6 -- `⭐` RSA-2048 key wrap +          |
 
 > **After §1–§8:** Impossible OS has a complete CNG-compatible cryptographic stack. The `⭐` differentiators: Ed25519 code signing is a smaller, faster, and more modern algorithm than Windows Authenticode RSA; the key store requires no TPM (useful on VMs and embedded hardware); and EFS uses a direct AES-256-GCM + RSA key wrap in the NTFS data path with no DPAPI complexity.
 

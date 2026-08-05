@@ -38,14 +38,14 @@ title: "TODO-08 -- Core Built-in Driver Enhancements"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                                        | Depends On                        | Status |
-| --- | :---: | -------------------------------------------------- | --------------------------------- | :----: |
+| ⭐   | Order | Deliverable                              | Depends On                        | Status |
+| --- | :---: | ---------------------------------------- | --------------------------------- | :----: |
 | 💎   |   1   | §1 PCI enhanced config space -- ECAM via ACPI MCFG | ACPI MCFG parsed                  |  [ ]   |
-| 💎   |   2   | §2 PCIe capability chain scanner                   | §5 (ECAM for extended caps)       |  [ ]   |
-| 💎   |   3   | §3 MSI / MSI-X support                             | §4 (capability pointer lookup)    |  [ ]   |
-| 💎   |   4   | §4 HPET timer driver                               | ACPI HPET table, VMM map          |  [ ]   |
-| 💎   |   5   | §5 NVMe storage driver                             | §5, §1 (MSI vector), ACPI         |  [ ]   |
-| 💎   |   6   | §6 PCIe hot-plug                                   | §4 (Slot cap), §1 (MSI interrupt) |  [ ]   |
+| 💎   |   2   | §2 PCIe capability chain scanner         | §5 (ECAM for extended caps)       |  [ ]   |
+| 💎   |   3   | §3 MSI / MSI-X support                   | §4 (capability pointer lookup)    |  [ ]   |
+| 💎   |   4   | §4 HPET timer driver                     | ACPI HPET table, VMM map          |  [ ]   |
+| 💎   |   5   | §5 NVMe storage driver                   | §5, §1 (MSI vector), ACPI         |  [ ]   |
+| 💎   |   6   | §6 PCIe hot-plug                         | §4 (Slot cap), §1 (MSI interrupt) |  [ ]   |
 
 > All six rows are 💎 parity: Windows and Linux both support NVMe, HPET, ECAM, capability scanning, MSI/MSI-X, and hot-plug. These are the minimum gaps between a working QEMU boot and real modern hardware.
 
@@ -178,14 +178,14 @@ Subscribe to the Hot-Plug interrupt via the PCIe Slot Control register. On a Pre
 ## OS Comparison
 
 
-| ⭐   | Feature                                            | 🪟 Win11                                            | 🐧 Linux                                                             | 🚀 Impossible OS                                                   |
-| --- | -------------------------------------------------- | -------------------------------------------------- | ------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| 💎   | NVMe storage driver -- Admin + I/O queue           | ✅ `storport.sys` + `stornvme.sys`; multi-queue     | ✅ `drivers/nvme/host/`; multi-queue, io_uring                       | ⬜ §5 -- Admin+1×IO queue, Identify, read/write, `blkdev_register` |
-| 💎   | HPET timer -- `hpet_read_ns()` + LAPIC calibration | ✅ HAL uses HPET for TSC                            | ✅ `arch/x86/kernel/hpet.c`; LAPIC calibration reference             | ⬜ §4 -- MMIO map, `hpet_read_ns()`, LAPIC ICR                     |
-| 💎   | PCIe ECAM (ACPI MCFG) -- 4 KiB config per device   | ✅ HAL reads MCFG; MMIO config                      | ✅ `pci_mcfg.c`; ECAM primary; `pci_read_config_word` routes         | ⬜ §1 -- `pci_read/write_config32_ext`, CF8 fallback, MCFG segment |
-| 💎   | PCIe capability chain scanner                      | ✅ `PciFindCapOffsetRtn`; extended caps via ECAM    | ✅ `pci_find_capability()`; `pci_find_ext_capability()`              | ⬜ §2 -- standard + extended walker, `pcie_get_link_speed/width`   |
-| 💎   | MSI / MSI-X -- per-device vectors, no shared INTx  | ✅ `HalGetInterruptVectorForMsi`; all PCIe uses MSI | ✅ `pci_enable_msi()`/`pci_enable_msix()`; IRQ affinity              | ⬜ §3 -- `pci_enable_msi/msix()`, LAPIC message format, INTx       |
-| 💎   | PCIe hot-plug -- Presence Detect Changed interrupt | ✅ PCI Hot-Plug Service; device tree                | ✅ `pciehp` driver; `pciehp_isr()` → `pciehp_handle_presence_change` | ⬜ §6 -- Slot Control MSI, workqueue enumeration,                  |
+| ⭐   | Feature                                  | 🪟 Win11                                  | 🐧 Linux                                  | 🚀 Impossible OS                          |
+| --- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
+| 💎   | NVMe storage driver -- Admin + I/O queue | ✅ `storport.sys` + `stornvme.sys`; multi-queue | ✅ `drivers/nvme/host/`; multi-queue, io_uring | ⬜ §5 -- Admin+1×IO queue, Identify, read/write, `blkdev_register` |
+| 💎   | HPET timer -- `hpet_read_ns()` + LAPIC calibration | ✅ HAL uses HPET for TSC                  | ✅ `arch/x86/kernel/hpet.c`; LAPIC calibration reference | ⬜ §4 -- MMIO map, `hpet_read_ns()`, LAPIC ICR |
+| 💎   | PCIe ECAM (ACPI MCFG) -- 4 KiB config per device | ✅ HAL reads MCFG; MMIO config            | ✅ `pci_mcfg.c`; ECAM primary; `pci_read_config_word` routes | ⬜ §1 -- `pci_read/write_config32_ext`, CF8 fallback, MCFG segment |
+| 💎   | PCIe capability chain scanner            | ✅ `PciFindCapOffsetRtn`; extended caps via ECAM | ✅ `pci_find_capability()`; `pci_find_ext_capability()` | ⬜ §2 -- standard + extended walker, `pcie_get_link_speed/width` |
+| 💎   | MSI / MSI-X -- per-device vectors, no shared INTx | ✅ `HalGetInterruptVectorForMsi`; all PCIe uses MSI | ✅ `pci_enable_msi()`/`pci_enable_msix()`; IRQ affinity | ⬜ §3 -- `pci_enable_msi/msix()`, LAPIC message format, INTx |
+| 💎   | PCIe hot-plug -- Presence Detect Changed interrupt | ✅ PCI Hot-Plug Service; device tree      | ✅ `pciehp` driver; `pciehp_isr()` → `pciehp_handle_presence_change` | ⬜ §6 -- Slot Control MSI, workqueue enumeration, |
 
 > **After §1–6:** Impossible OS reaches parity with Windows NT and Linux on the core built-in hardware infrastructure needed to boot on and interact with modern x86-64 hardware. NVMe enables booting from current-generation SSDs. HPET eliminates boot-time timer jitter. ECAM + capability scanning + MSI/MSI-X form the complete PCIe programming model. Hot-plug enables rack-server and enterprise workstation use cases without rebooting.
 

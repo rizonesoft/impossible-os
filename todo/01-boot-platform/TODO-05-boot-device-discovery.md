@@ -51,22 +51,22 @@ title: "TODO-05 -- Boot Device Discovery & Fallback Chain"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                                         | Depends On     | Status |
-| --- | :---: | --------------------------------------------------- | -------------- | :----: |
-| 💎   |   1   | Boot device identification via LoadedImage          | --             |  [x]   |
-| 💎   |   2   | Filesystem access scoped to boot device             | §1             |  [x]   |
-| 💎   |   3   | Boot device info in boot_info struct                | §1             |  [x]   |
-| 💎   |   4   | Boot device type detection (SATA/NVMe/USB/Net)      | §3             |  [x]   |
-| 💎   |   5   | Device fallback chain (priority-based)              | §2, §4         |  [x]   |
+| ⭐   | Order | Deliverable                              | Depends On     | Status |
+| --- | :---: | ---------------------------------------- | -------------- | :----: |
+| 💎   |   1   | Boot device identification via LoadedImage | --             |  [x]   |
+| 💎   |   2   | Filesystem access scoped to boot device  | §1             |  [x]   |
+| 💎   |   3   | Boot device info in boot_info struct     | §1             |  [x]   |
+| 💎   |   4   | Boot device type detection (SATA/NVMe/USB/Net) | §3             |  [x]   |
+| 💎   |   5   | Device fallback chain (priority-based)   | §2, §4         |  [x]   |
 | 💎   |   6   | UEFI boot variable reading (BootOrder/Current/Next) | §1             |  [x]   |
-| 💎   |   7   | Partition GUID extraction and validation            | §1             |  [x]   |
-| 💎   |   8   | Removable media detection                           | §1, §4         |  [x]   |
-| 💎   |   9   | Boot device Registry population                     | §3, §4, §7, §8 |  [x]   |
-| ⭐   |  10   | Boot device logging and diagnostics                 | §1--§9, §12    |  [x]   |
-| ⭐   |  11   | Pre-boot device health check                        | §1, §7         |  [x]   |
-| 💎   |  12   | Boot#### `EFI_LOAD_OPTION` decode (diagnostics)     | §6             |  [x]   |
-| 💎   |  13   | Extended boot variable capability surface           | §6, §9, §12    |  [x]   |
-| 💎   |  14   | Local boot device path detail capture               | §3, §4, §9     |  [x]   |
+| 💎   |   7   | Partition GUID extraction and validation | §1             |  [x]   |
+| 💎   |   8   | Removable media detection                | §1, §4         |  [x]   |
+| 💎   |   9   | Boot device Registry population          | §3, §4, §7, §8 |  [x]   |
+| ⭐   |  10   | Boot device logging and diagnostics      | §1--§9, §12    |  [x]   |
+| ⭐   |  11   | Pre-boot device health check             | §1, §7         |  [x]   |
+| 💎   |  12   | Boot#### `EFI_LOAD_OPTION` decode (diagnostics) | §6             |  [x]   |
+| 💎   |  13   | Extended boot variable capability surface | §6, §9, §12    |  [x]   |
+| 💎   |  14   | Local boot device path detail capture    | §3, §4, §9     |  [x]   |
 
 > 💎 = parity -- Windows (BCD + device path) and Linux (GRUB device search) both do this.
 > ⭐ = exclusive -- detailed boot device diagnostics with full enumeration, and proactive disk health check before kernel load.

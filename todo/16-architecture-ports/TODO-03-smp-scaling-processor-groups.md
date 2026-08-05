@@ -30,13 +30,13 @@ title: "TODO-03 -- SMP Scaling & Processor Groups"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                                            | Depends On | Status |
-| --- | :---: | ------------------------------------------------------ | ---------- | :----: |
-| 💎   |   1   | Raise MAX_CPUS and dynamic per-CPU allocation          | --         |  [ ]   |
-| 💎   |   2   | PROCESSOR_NUMBER type and group definitions            | §1         |  [ ]   |
+| ⭐   | Order | Deliverable                              | Depends On | Status |
+| --- | :---: | ---------------------------------------- | ---------- | :----: |
+| 💎   |   1   | Raise MAX_CPUS and dynamic per-CPU allocation | --         |  [ ]   |
+| 💎   |   2   | PROCESSOR_NUMBER type and group definitions | §1         |  [ ]   |
 | 💎   |   3   | KeSetTargetProcessorDpcEx -- group-aware DPC targeting | §2         |  [ ]   |
-| 💎   |   4   | GROUP_AFFINITY for thread and interrupt affinity       | §2         |  [ ]   |
-| 💎   |   5   | MADT parsing for >64 LAPIC entries                     | §1         |  [ ]   |
+| 💎   |   4   | GROUP_AFFINITY for thread and interrupt affinity | §2         |  [ ]   |
+| 💎   |   5   | MADT parsing for >64 LAPIC entries       | §1         |  [ ]   |
 
 ---
 

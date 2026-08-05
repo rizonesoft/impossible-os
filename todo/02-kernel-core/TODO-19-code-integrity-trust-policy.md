@@ -38,18 +38,18 @@ title: "TODO-19 -- Code Integrity & Trust Policy"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                                      | Depends On   | Status |
-| --- | :---: | ------------------------------------------------ | ------------ | :----: |
-| 💎   |   1   | Code Integrity policy object                     | T02          |  [/]   |
-| 💎   |   2   | Image validation API and callback                | T17          |  [/]   |
-| 💎   |   3   | Hashing and signature provider bridge            | T03          |  [x]   |
-| 💎   |   4   | Embedded signature validation                    | §2, §3       |  [/]   |
-| 💎   |   5   | Catalog database                                 | Registry/VFS |  [/]   |
-| 💎   |   6   | Revocation and deny lists                        | §5           |  [/]   |
-| ⭐   |   7   | Measured-boot and Secure Boot binding            | TPM          |  [/]   |
-| 💎   |   8   | Driver/module enforcement                        | T18, D04 T04 |  [/]   |
-| 💎   |   9   | User-mode image enforcement                      | T17, T20     |  [/]   |
-| ⭐   |  10   | CI audit, telemetry, and syscalls                | T12, T16     |  [/]   |
+| ⭐   | Order | Deliverable                              | Depends On   | Status |
+| --- | :---: | ---------------------------------------- | ------------ | :----: |
+| 💎   |   1   | Code Integrity policy object             | T02          |  [/]   |
+| 💎   |   2   | Image validation API and callback        | T17          |  [/]   |
+| 💎   |   3   | Hashing and signature provider bridge    | T03          |  [x]   |
+| 💎   |   4   | Embedded signature validation            | §2, §3       |  [/]   |
+| 💎   |   5   | Catalog database                         | Registry/VFS |  [/]   |
+| 💎   |   6   | Revocation and deny lists                | §5           |  [/]   |
+| ⭐   |   7   | Measured-boot and Secure Boot binding    | TPM          |  [/]   |
+| 💎   |   8   | Driver/module enforcement                | T18, D04 T04 |  [/]   |
+| 💎   |   9   | User-mode image enforcement              | T17, T20     |  [/]   |
+| ⭐   |  10   | CI audit, telemetry, and syscalls        | T12, T16     |  [/]   |
 | ⭐   |  11   | Post-ship follow-up backfill (2026-07-31 cohort) | --           |  [ ]   |
 
 ## 1. Code Integrity Policy Object

@@ -50,26 +50,26 @@ title: "TODO-07 -- IRQL Model & DPCs"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                                            | Depends On  | Status |
-| --- | :---: | ------------------------------------------------------ | ----------- | :----: |
-| 💎   |   1   | `KIRQL` type, constants, and core contract             | --          |  [x]   |
-| 💎   |   2   | Per-CPU IRQL tracking and transition primitives        | §1          |  [x]   |
-| 💎   |   3   | Interrupt entry/exit IRQL integration                  | §2          |  [/]   |
-| 💎   |   4   | DPC object type and per-CPU queue                      | §2          |  [x]   |
-| 💎   |   5   | DPC drain loop at `DISPATCH_LEVEL`                     | §3, §4      |  [x]   |
-| 💎   |   6   | Timer/APIC scheduling path for DPC dispatch            | §5          |  [/]   |
-| 💎   |   7   | DPC targeting, importance, and flush                   | §4, §5      |  [x]   |
-| 💎   |   8   | Threaded DPCs (`PASSIVE_LEVEL` DPC variant)            | §5          |  [x]   |
-| 💎   |   9   | Timer-DPC association                                  | §4, §6      |  [/]   |
-| 💎   |  10   | Driver migration and workqueue contract split          | §5          |  [/]   |
-| 💎   |  11   | APC object type and per-thread queues                  | §1, §2      |  [/]   |
-| 💎   |  12   | APC delivery mechanism (KiDeliverApc)                  | §11         |  [/]   |
-| ⭐   |  13   | IRQL violation traps and structured telemetry          | §2, §3, §5  |  [/]   |
-| ⭐   |  14   | Budgeted DPC/APC fairness and starvation watchdog      | §5, §6, §12 |  [/]   |
-| 💎   |  15   | Threaded DPC list synchronization                      | §8          |  [/]   |
+| ⭐   | Order | Deliverable                              | Depends On  | Status |
+| --- | :---: | ---------------------------------------- | ----------- | :----: |
+| 💎   |   1   | `KIRQL` type, constants, and core contract | --          |  [x]   |
+| 💎   |   2   | Per-CPU IRQL tracking and transition primitives | §1          |  [x]   |
+| 💎   |   3   | Interrupt entry/exit IRQL integration    | §2          |  [/]   |
+| 💎   |   4   | DPC object type and per-CPU queue        | §2          |  [x]   |
+| 💎   |   5   | DPC drain loop at `DISPATCH_LEVEL`       | §3, §4      |  [x]   |
+| 💎   |   6   | Timer/APIC scheduling path for DPC dispatch | §5          |  [/]   |
+| 💎   |   7   | DPC targeting, importance, and flush     | §4, §5      |  [x]   |
+| 💎   |   8   | Threaded DPCs (`PASSIVE_LEVEL` DPC variant) | §5          |  [x]   |
+| 💎   |   9   | Timer-DPC association                    | §4, §6      |  [/]   |
+| 💎   |  10   | Driver migration and workqueue contract split | §5          |  [/]   |
+| 💎   |  11   | APC object type and per-thread queues    | §1, §2      |  [/]   |
+| 💎   |  12   | APC delivery mechanism (KiDeliverApc)    | §11         |  [/]   |
+| ⭐   |  13   | IRQL violation traps and structured telemetry | §2, §3, §5  |  [/]   |
+| ⭐   |  14   | Budgeted DPC/APC fairness and starvation watchdog | §5, §6, §12 |  [/]   |
+| 💎   |  15   | Threaded DPC list synchronization        | §8          |  [/]   |
 | 💎   |  16   | KeFlushQueuedDpcs completion barrier (normal+threaded) | §7, §8, §15 |  [x]   |
-| 💎   |  17   | Per-CPU threaded DPC worker affinity                   | §8, §15     |  [/]   |
-| ⭐   |  18   | System worker thread pool (long-period periodic)       | §8          |  [/]   |
+| 💎   |  17   | Per-CPU threaded DPC worker affinity     | §8, §15     |  [/]   |
+| ⭐   |  18   | System worker thread pool (long-period periodic) | §8          |  [/]   |
 
 > 💎 = parity -- core IRQL, DPC, and APC behavior expected from Windows NT and mirrored by Linux's hardirq/softirq/signal split.
 > ⭐ = exclusive -- Impossible OS adds explicit diagnostics and fairness controls as first-class kernel guarantees.

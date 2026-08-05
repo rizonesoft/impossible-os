@@ -57,20 +57,20 @@ title: "TODO-07 -- Win32 Compatibility Matrix & Bring-Up Ladder"
 
 ## Implementation Order
 
-| Step | Section                                        | 💎/⭐ | Gate / Dependency                             |
-| ---- | ---------------------------------------------- | --- | --------------------------------------------- |
+| Step | Section                                  | 💎/⭐ | Gate / Dependency                        |
+| ---- | ---------------------------------------- | --- | ---------------------------------------- |
 | 1    | API coverage tracker + `compat_stub` extension | ⭐   | `D10T08 §9` base stub; `SYS_SHMEM_CREATE/MAP` |
-| 2    | Bring-up ladder framework                      | ⭐   | §1; `sdk/compat/` test program structure      |
-| 3    | Tier 1 -- Process exit                         | 💎   | Gate: `TODO-07 §1`                            |
-| 4    | Tier 2 -- Console I/O                          | 💎   | Gate: `D10T08 §5 §4`                          |
-| 5    | Tier 3 -- File I/O                             | 💎   | Gate: `TODO-07 §7`, `D10T08 §1` partial       |
-| 6    | Tier 4 -- Process & Registry                   | 💎   | Gate: `D10T08 §4`, `D02T14`                   |
-| 7    | Tier 5 -- Memory & Sync                        | 💎   | Gate: `D10T08 §3 §6`                          |
-| 8    | Tier 6 -- MessageBox & Basic GUI               | 💎   | Gate: `TODO-05 §1–3`, `D10T08 §10`            |
-| 9    | Tier 7 -- Full Win32 Window + Controls         | 💎   | Gate: `TODO-05 §4–4`, `D10T08 §7 §10 §11`     |
-| 10   | Tier 8 -- Extended Win32 surface               | 💎   | Gate: all Tiers 1–7; `advapi32`/`shell32`     |
-| 11   | Stub call log analysis (`win32compat.exe log`) | ⭐   | §1 shmem counters; `win32_unimpl_stub`        |
-| 12   | CI compat gate (`scripts/compat-check.sh`)     | ⭐   | §3–9 native programs; QEMU headless           |
+| 2    | Bring-up ladder framework                | ⭐   | §1; `sdk/compat/` test program structure |
+| 3    | Tier 1 -- Process exit                   | 💎   | Gate: `TODO-07 §1`                       |
+| 4    | Tier 2 -- Console I/O                    | 💎   | Gate: `D10T08 §5 §4`                     |
+| 5    | Tier 3 -- File I/O                       | 💎   | Gate: `TODO-07 §7`, `D10T08 §1` partial  |
+| 6    | Tier 4 -- Process & Registry             | 💎   | Gate: `D10T08 §4`, `D02T14`              |
+| 7    | Tier 5 -- Memory & Sync                  | 💎   | Gate: `D10T08 §3 §6`                     |
+| 8    | Tier 6 -- MessageBox & Basic GUI         | 💎   | Gate: `TODO-05 §1–3`, `D10T08 §10`       |
+| 9    | Tier 7 -- Full Win32 Window + Controls   | 💎   | Gate: `TODO-05 §4–4`, `D10T08 §7 §10 §11` |
+| 10   | Tier 8 -- Extended Win32 surface         | 💎   | Gate: all Tiers 1–7; `advapi32`/`shell32` |
+| 11   | Stub call log analysis (`win32compat.exe log`) | ⭐   | §1 shmem counters; `win32_unimpl_stub`   |
+| 12   | CI compat gate (`scripts/compat-check.sh`) | ⭐   | §3–9 native programs; QEMU headless      |
 
 ---
 
@@ -345,16 +345,16 @@ title: "TODO-07 -- Win32 Compatibility Matrix & Bring-Up Ladder"
 ## OS Comparison
 
 
-| ⭐   | Feature                                        | 🪟 Win11                                            | 🐧 Linux                                     | 🚀 Impossible OS                                                               |
-| --- | ---------------------------------------------- | -------------------------------------------------- | ------------------------------------------- | ----------------------------------------------------------------------------- |
-| ⭐   | Win32 API coverage tracker                     | ✅ MSDN + Windows App Compat                        | ✅ Wine AppDB; ReactOS compat table          | ⬜ §1 -- `sdk/docs/win32-compat.md` with per-function status; `compat-scan.sh` |
-| ⭐   | `compat_stub` shmem counter + live report tool | ✅ ETW provider; `win32u!NtUser*` logging; AppVerif | ✅ Wine `WINEDEBUG=+relay`; strace           | ⬜ §1 -- shmem counter map; `win32compat report`                               |
-| ⭐   | 8-tier progressive bring-up ladder             | ❌ No public bring-up ladder                        | ✅ ReactOS internal bring-up milestones      | ⬜ §2 -- –10; explicit gate conditions +                                       |
-| 💎   | Runs XP `cmd.exe`                              | ✅ Native                                           | ✅ Wine runs XP cmd.exe                      | ⬜ §4                                                                          |
-| 💎   | Runs Busybox, SQLite, Lua                      | ✅ Native                                           | ✅ Native Linux; Wine also runs              | ⬜ §5 -- §6 §7                                                                 |
-| 💎   | Runs PuTTY                                     | ✅ Native                                           | ✅ Wine runs PuTTY                           | ⬜ §9                                                                          |
-| ⭐   | Stub call log analysis                         | ❌ No equivalent (Windows is the                    | ✅ `wine --log-file` + `winetricks diagnose` | ⬜ §11 -- pinpoints exactly which stubs blocked                                |
-| ⭐   | CI compat gate with % score in sysinfo         | ❌ Not applicable                                   | ✅ ReactOS TestBot; Wine CI                  | ⬜ §12 -- `make compat-check`; score in `HKLM\SYSTEM\Win32Compat\Score`        |
+| ⭐   | Feature                                  | 🪟 Win11                                  | 🐧 Linux                                  | 🚀 Impossible OS                          |
+| --- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
+| ⭐   | Win32 API coverage tracker               | ✅ MSDN + Windows App Compat              | ✅ Wine AppDB; ReactOS compat table       | ⬜ §1 -- `sdk/docs/win32-compat.md` with per-function status; `compat-scan.sh` |
+| ⭐   | `compat_stub` shmem counter + live report tool | ✅ ETW provider; `win32u!NtUser*` logging; AppVerif | ✅ Wine `WINEDEBUG=+relay`; strace        | ⬜ §1 -- shmem counter map; `win32compat report` |
+| ⭐   | 8-tier progressive bring-up ladder       | ❌ No public bring-up ladder              | ✅ ReactOS internal bring-up milestones   | ⬜ §2 -- –10; explicit gate conditions +  |
+| 💎   | Runs XP `cmd.exe`                        | ✅ Native                                 | ✅ Wine runs XP cmd.exe                   | ⬜ §4                                     |
+| 💎   | Runs Busybox, SQLite, Lua                | ✅ Native                                 | ✅ Native Linux; Wine also runs           | ⬜ §5 -- §6 §7                            |
+| 💎   | Runs PuTTY                               | ✅ Native                                 | ✅ Wine runs PuTTY                        | ⬜ §9                                     |
+| ⭐   | Stub call log analysis                   | ❌ No equivalent (Windows is the          | ✅ `wine --log-file` + `winetricks diagnose` | ⬜ §11 -- pinpoints exactly which stubs blocked |
+| ⭐   | CI compat gate with % score in sysinfo   | ❌ Not applicable                         | ✅ ReactOS TestBot; Wine CI               | ⬜ §12 -- `make compat-check`; score in `HKLM\SYSTEM\Win32Compat\Score` |
 
 Impossible OS's `⭐` advantage over Wine/ReactOS: the compat tracking is **kernel-native**
 (stub counters in shmem, score in Registry, visible in System Information), the bring-up

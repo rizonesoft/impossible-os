@@ -65,27 +65,27 @@ title: "TODO-17 -- Binary Format System (exec_load / ELF / PE32+ / EIF)"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                                    | Depends On      | Status |
-| --- | :---: | ---------------------------------------------- | --------------- | :----: |
-| 💎   |   1   | `exec_load()` multi-format dispatcher          | VMM, VFS, sched |  [x]   |
-| 💎   |   2   | Enhanced ELF loader (VMM-backed, PIE)          | §1              |  [/]   |
+| ⭐   | Order | Deliverable                              | Depends On      | Status |
+| --- | :---: | ---------------------------------------- | --------------- | :----: |
+| 💎   |   1   | `exec_load()` multi-format dispatcher    | VMM, VFS, sched |  [x]   |
+| 💎   |   2   | Enhanced ELF loader (VMM-backed, PIE)    | §1              |  [/]   |
 | 💎   |   3   | ELF security segments (GNU_STACK, RELRO, PROP) | §2              |  [/]   |
-| ⭐   |   4   | EIF format specification                       | --              |  [x]   |
-| ⭐   |   5   | EIF kernel loader                              | §1, §4          |  [x]   |
-| 💎   |   6   | Module list registration (LDR_DATA_TABLE)      | §1, TODO-11 §4  |  [/]   |
-| 💎   |   7   | PE32+ header parser                            | §1              |  [x]   |
-| 💎   |   8   | PE32+ section loader + `.pdata` registration   | §7              |  [/]   |
-| 💎   |   9   | PE32+ import table resolver (Win32 dispatch)   | §8, TODO-12 §6  |  [/]   |
-| 💎   |  10   | PE32+ base relocation                          | §8              |  [/]   |
-| 💎   |  11   | PE32+ TLS directory processing                 | §8, TODO-11 §3  |  [/]   |
-| 💎   |  12   | PE32+ Load Config and CFG bitmap               | §8              |  [/]   |
-| ⭐   |  13   | `elf2eif` host-side converter                  | §4              |  [/]   |
-| 💎   |  14   | ELF dynamic linker (shared libraries)          | §2              |  [/]   |
-| 💎   |  15   | ASLR for all three formats                     | §2, §5, §8      |  [/]   |
-| ⭐   |  16   | Script/shebang interpreter support             | §1              |  [/]   |
-| ⭐   |  17   | EIF code signing                               | §5              |  [/]   |
-| 💎   |  18   | ELF `PT_TLS` template loading                  | §2              |  [/]   |
-| 💎   |  19   | PE API-set + delay-load/bound import support   | §9              |  [/]   |
+| ⭐   |   4   | EIF format specification                 | --              |  [x]   |
+| ⭐   |   5   | EIF kernel loader                        | §1, §4          |  [x]   |
+| 💎   |   6   | Module list registration (LDR_DATA_TABLE) | §1, TODO-11 §4  |  [/]   |
+| 💎   |   7   | PE32+ header parser                      | §1              |  [x]   |
+| 💎   |   8   | PE32+ section loader + `.pdata` registration | §7              |  [/]   |
+| 💎   |   9   | PE32+ import table resolver (Win32 dispatch) | §8, TODO-12 §6  |  [/]   |
+| 💎   |  10   | PE32+ base relocation                    | §8              |  [/]   |
+| 💎   |  11   | PE32+ TLS directory processing           | §8, TODO-11 §3  |  [/]   |
+| 💎   |  12   | PE32+ Load Config and CFG bitmap         | §8              |  [/]   |
+| ⭐   |  13   | `elf2eif` host-side converter            | §4              |  [/]   |
+| 💎   |  14   | ELF dynamic linker (shared libraries)    | §2              |  [/]   |
+| 💎   |  15   | ASLR for all three formats               | §2, §5, §8      |  [/]   |
+| ⭐   |  16   | Script/shebang interpreter support       | §1              |  [/]   |
+| ⭐   |  17   | EIF code signing                         | §5              |  [/]   |
+| 💎   |  18   | ELF `PT_TLS` template loading            | §2              |  [/]   |
+| 💎   |  19   | PE API-set + delay-load/bound import support | §9              |  [/]   |
 | 💎   |  20   | ELF dynamic linker advanced (IFUNC, init/fini) | §14             |  [/]   |
 
 > 💎 = parity -- Windows NT (PE32+) and Linux (ELF) both provide these capabilities.

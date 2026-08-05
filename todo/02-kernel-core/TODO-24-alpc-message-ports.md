@@ -64,21 +64,21 @@ title: "TODO-24 -- ALPC / Message Ports"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                                              | Depends On    | Status |
-| --- | :---: | -------------------------------------------------------- | ------------- | :----: |
-| 💎   |   1   | Message header, port attributes, type codes              | (none)        |  [x]   |
-| 💎   |   2   | ALPC_PORT object & Object Manager registration           | §1, T05 §1-§4 |  [x]   |
-| 💎   |   3   | Connection state machine (create/connect/accept)         | §2, T12 §4    |  [x]   |
-| 💎   |   4   | Synchronous send+wait+receive engine                     | §3, T07 §3    |  [x]   |
-| 💎   |   5   | Asynchronous delivery & completion list                  | §4            |  [x]   |
-| 💎   |   6   | Large data: port sections & view mapping                 | §2, T05 §3,§7 |  [/]   |
-| 💎   |   7   | Security: client token capture & impersonation           | §4, T15 §4-§7 |  [/]   |
-| 💎   |   8   | NtAlpc* SSDT registration & stub retrofit                | §1-§7, T12 §4 |  [/]   |
+| ⭐   | Order | Deliverable                              | Depends On    | Status |
+| --- | :---: | ---------------------------------------- | ------------- | :----: |
+| 💎   |   1   | Message header, port attributes, type codes | (none)        |  [x]   |
+| 💎   |   2   | ALPC_PORT object & Object Manager registration | §1, T05 §1-§4 |  [x]   |
+| 💎   |   3   | Connection state machine (create/connect/accept) | §2, T12 §4    |  [x]   |
+| 💎   |   4   | Synchronous send+wait+receive engine     | §3, T07 §3    |  [x]   |
+| 💎   |   5   | Asynchronous delivery & completion list  | §4            |  [x]   |
+| 💎   |   6   | Large data: port sections & view mapping | §2, T05 §3,§7 |  [/]   |
+| 💎   |   7   | Security: client token capture & impersonation | §4, T15 §4-§7 |  [/]   |
+| 💎   |   8   | NtAlpc* SSDT registration & stub retrofit | §1-§7, T12 §4 |  [/]   |
 | 💎   |   9   | NtAlpc QueryInformation / SetInformation / CancelMessage | §8, T12 §4    |  [/]   |
-| 💎   |  10   | CSRSS ApiPort bootstrap                                  | §3-§9         |  [/]   |
-| 💎   |  11   | Message zones (pre-allocated message buffers)            | §4, §8-§9     |  [/]   |
-| ⭐   |  12   | Live port monitor & IPC latency profiler                 | §8-§9         |  [/]   |
-| ⭐   |  13   | Post-ship follow-up backfill (2026-07-31 cohort)         | --            |  [ ]   |
+| 💎   |  10   | CSRSS ApiPort bootstrap                  | §3-§9         |  [/]   |
+| 💎   |  11   | Message zones (pre-allocated message buffers) | §4, §8-§9     |  [/]   |
+| ⭐   |  12   | Live port monitor & IPC latency profiler | §8-§9         |  [/]   |
+| ⭐   |  13   | Post-ship follow-up backfill (2026-07-31 cohort) | --            |  [ ]   |
 
 > 💎 = parity work; matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work; Impossible OS is superior or first.

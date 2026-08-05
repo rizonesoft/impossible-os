@@ -53,21 +53,21 @@ title: "TODO-01 -- Kernel Init Sequencing"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                               | Depends On | Status |
-| --- | :---: | ----------------------------------------- | ---------- | :----: |
-| 💎   |   1   | Boot init infrastructure                  | --         |  [x]   |
-| 💎   |   2   | Phase 0 -- critical init                  | §1         |  [x]   |
-| 💎   |   3   | Phase 1 -- platform services              | §2         |  [/]   |
-| 💎   |   4   | Phase 2 -- system services                | §3         |  [/]   |
-| 💎   |   5   | Phase 3 -- user platform                  | §4         |  [x]   |
-| 💎   |   6   | Dependency gates                          | §1--§5     |  [/]   |
-| 💎   |   7   | Failure policy                            | §6         |  [/]   |
-| 💎   |   8   | Code cleanup                              | §2--§5     |  [/]   |
-| ⭐   |   9   | Degraded-boot recovery screen             | §7         |  [/]   |
-| ⭐   |  10   | POST code + UEFI variable log             | §1         |  [x]   |
+| ⭐   | Order | Deliverable                              | Depends On | Status |
+| --- | :---: | ---------------------------------------- | ---------- | :----: |
+| 💎   |   1   | Boot init infrastructure                 | --         |  [x]   |
+| 💎   |   2   | Phase 0 -- critical init                 | §1         |  [x]   |
+| 💎   |   3   | Phase 1 -- platform services             | §2         |  [/]   |
+| 💎   |   4   | Phase 2 -- system services               | §3         |  [/]   |
+| 💎   |   5   | Phase 3 -- user platform                 | §4         |  [x]   |
+| 💎   |   6   | Dependency gates                         | §1--§5     |  [/]   |
+| 💎   |   7   | Failure policy                           | §6         |  [/]   |
+| 💎   |   8   | Code cleanup                             | §2--§5     |  [/]   |
+| ⭐   |   9   | Degraded-boot recovery screen            | §7         |  [/]   |
+| ⭐   |  10   | POST code + UEFI variable log            | §1         |  [x]   |
 | 💎   |  11   | Deferred init for non-critical subsystems | §5         |  [/]   |
-| ⭐   |  12   | Boot performance regression detection     | §10        |  [/]   |
-| ⭐   |  13   | Async subsystem init (SMP parallel)       | §6, §11    |  [/]   |
+| ⭐   |  12   | Boot performance regression detection    | §10        |  [/]   |
+| ⭐   |  13   | Async subsystem init (SMP parallel)      | §6, §11    |  [/]   |
 
 > 💎 = parity -- Windows NT and Linux both have formal init phase models; Impossible OS must match them.
 > ⭐ = exclusive -- degraded-boot recovery UI, UEFI NVRAM POST log, boot perf regression detection, and SMP parallel init.
@@ -311,15 +311,15 @@ Scheduler, IPC, exec loader, and desktop. The kernel is fully operational before
 ---
 
 ## 7. Failure Policy
-| Phase | Failure       | Action                                            |
-| ----- | ------------- | ------------------------------------------------- |
-| 0     | Any           | `boot_halt()` -- serial message + halt            |
-| 1     | BOOT_FATAL    | `boot_halt()` (FB may not be ready yet)           |
-| 1     | BOOT_DEGRADED | `klog(WARN)` + mark not ready, continue           |
-| 2     | BOOT_FATAL    | Recovery screen + `boot_halt()` (FB up)           |
-| 2     | BOOT_DEGRADED | `klog(WARN)` + continue                           |
+| Phase | Failure       | Action                                   |
+| ----- | ------------- | ---------------------------------------- |
+| 0     | Any           | `boot_halt()` -- serial message + halt   |
+| 1     | BOOT_FATAL    | `boot_halt()` (FB may not be ready yet)  |
+| 1     | BOOT_DEGRADED | `klog(WARN)` + mark not ready, continue  |
+| 2     | BOOT_FATAL    | Recovery screen + `boot_halt()` (FB up)  |
+| 2     | BOOT_DEGRADED | `klog(WARN)` + continue                  |
 | 3     | BOOT_FATAL    | Recovery screen + `boot_halt()` (same as Phase 2) |
-| 3     | BOOT_DEGRADED | `klog(WARN)` + continue to desktop                |
+| 3     | BOOT_DEGRADED | `klog(WARN)` + continue to desktop       |
 
 - [x] Implement `boot_halt(const char *reason)` -- serial-only emergency stop for Phase 0 (already existed)
 - [x] Ensure `panic()` works correctly when called before `fb_init()` (serial-only path) -- added SUBSYS_FB guard, falls back to serial+halt

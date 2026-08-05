@@ -208,14 +208,14 @@ NTP sync every 3600 s → `ntp_sync()`. Registry flush every 2 s → `registry_f
 ## OS Comparison
 
 
-| ⭐   | Feature                  | 🪟 Win11                                                   | 🐧 Linux                                                                  | 🚀 Impossible OS                                     |
-| --- | ------------------------ | --------------------------------------------------------- | ------------------------------------------------------------------------ | --------------------------------------------------- |
-| ⭐   | Recycle Bin              | ✅ `$Recycle.Bin`; `$I`/`$R` file pairs; Recycle           | ✅ `~/.local/share/Trash/`; `.trashinfo` INI; `trash-cli`; per-filesystem | ⬜ §1 -- `⭐` human-readable INI meta (matches        |
-| 💎   | Recycle Bin UI           | ✅ Recycle Bin explorer window; list/icon                  | ✅ GNOME/KDE Trash window; restore; empty;                                | ⬜ §2 -- `CTRL_LISTVIEW` with 4 columns; column-sort |
-| 💎   | ZIP support              | ✅ Built-in ZIP (Explorer); `Compress-Archive` PowerShell; | ✅ `zip`/`unzip` utils; libz in glibc;                                    | ⬜ §3 -- -5; miniz vendored + freestanding           |
-| ⭐   | Task scheduler           | ✅ Task Scheduler (`schtasks`); XML task                   | ✅ `cron`; `systemd timers`; `at`; D-Bus                                  | ⬜ §6 -- `⭐` zero external daemon --                 |
-| 💎   | Built-in scheduled tasks | ✅ W32TM, Windows Update, Disk Defrag,                     | ✅ systemd timers for chrony, journald                                    | ⬜ §7 -- same 4 tasks registered via                 |
-| 💎   | `at` command             | ✅ `at` command (deprecated in Win10+;                     | ✅ `at` (POSIX, deprecated in favour                                      | ⬜ §8 -- one-shot scheduler entries; no daemon       |
+| ⭐   | Feature                  | 🪟 Win11                                  | 🐧 Linux                                  | 🚀 Impossible OS                          |
+| --- | ------------------------ | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
+| ⭐   | Recycle Bin              | ✅ `$Recycle.Bin`; `$I`/`$R` file pairs; Recycle | ✅ `~/.local/share/Trash/`; `.trashinfo` INI; `trash-cli`; per-filesystem | ⬜ §1 -- `⭐` human-readable INI meta (matches |
+| 💎   | Recycle Bin UI           | ✅ Recycle Bin explorer window; list/icon | ✅ GNOME/KDE Trash window; restore; empty; | ⬜ §2 -- `CTRL_LISTVIEW` with 4 columns; column-sort |
+| 💎   | ZIP support              | ✅ Built-in ZIP (Explorer); `Compress-Archive` PowerShell; | ✅ `zip`/`unzip` utils; libz in glibc;    | ⬜ §3 -- -5; miniz vendored + freestanding |
+| ⭐   | Task scheduler           | ✅ Task Scheduler (`schtasks`); XML task  | ✅ `cron`; `systemd timers`; `at`; D-Bus  | ⬜ §6 -- `⭐` zero external daemon --      |
+| 💎   | Built-in scheduled tasks | ✅ W32TM, Windows Update, Disk Defrag,    | ✅ systemd timers for chrony, journald    | ⬜ §7 -- same 4 tasks registered via      |
+| 💎   | `at` command             | ✅ `at` command (deprecated in Win10+;    | ✅ `at` (POSIX, deprecated in favour      | ⬜ §8 -- one-shot scheduler entries; no daemon |
 
 > **After §1–§8:** Impossible OS has complete Recycle Bin, ZIP, and task scheduling infrastructure. The dual `⭐` differentiators: Recycle Bin uses human-readable INI meta files (more transparent than Windows' binary `$I`/`$R` pairs) and the task scheduler runs as direct PIT-ticked kernel workqueue callbacks -- no `atd` daemon, no XML, no D-Bus, just a 16-slot static array with function pointers.
 

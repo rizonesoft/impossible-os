@@ -28,12 +28,12 @@ title: "TODO-02 -- Compositor Optimization"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                               | Depends On | Status |
-| --- | :---: | ----------------------------------------- | ---------- | :----: |
-| 💎   |   1   | Dirty rect tracking infrastructure        | --         |  [ ]   |
-| 💎   |   2   | Partial wallpaper restore                 | §1         |  [ ]   |
-| 💎   |   3   | Per-window damage and compositor loop     | §1, §2     |  [ ]   |
-| ⭐   |   4   | Frame timing and VSync                    | §3         |  [ ]   |
+| ⭐   | Order | Deliverable                              | Depends On | Status |
+| --- | :---: | ---------------------------------------- | ---------- | :----: |
+| 💎   |   1   | Dirty rect tracking infrastructure       | --         |  [ ]   |
+| 💎   |   2   | Partial wallpaper restore                | §1         |  [ ]   |
+| 💎   |   3   | Per-window damage and compositor loop    | §1, §2     |  [ ]   |
+| ⭐   |   4   | Frame timing and VSync                   | §3         |  [ ]   |
 | 💎   |   5   | Terminal render clipping (boot bleed fix) | §3         |  [ ]   |
 
 ---

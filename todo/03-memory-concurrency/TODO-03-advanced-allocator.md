@@ -64,22 +64,22 @@ title: "TODO-03 -- Advanced Kernel Allocator"
 
 ## Implementation Order
 
-| Star | Order | Deliverable                                        | Depends On        | Status |
-| ---- | :---: | -------------------------------------------------- | ----------------- | :----: |
-| 💎    |   1   | §1 Growable kernel heap + SMP spinlock             | PMM, VMM          |  [ ]   |
-| 💎    |   2   | §2 Memory pressure notifications                   | PMM stats         |  [ ]   |
-| 💎    |   3   | §3 vmalloc                                         | §1, TODO-01 §3    |  [ ]   |
-| 💎    |   4   | §4 SLAB allocator + lock-free per-CPU fast path    | §1                |  [ ]   |
-| 💎    |   5   | §5 SLAB shrinker                                   | §4, §2            |  [ ]   |
-| 💎    |   6   | §6 Tagged allocation API                           | §1                |  [ ]   |
-| 💎    |   7   | §7 NonPagedPool / PagedPool                        | §4, §3            |  [ ]   |
-| ⭐    |   8   | §8 Out-of-band metadata                            | §4                |  [ ]   |
-| ⭐    |   9   | §9 Type-isolated pools (kalloc_type model)         | §4, §8            |  [ ]   |
-| ⭐    |  10   | §10 Per-page header encoding keys                  | §8                |  [ ]   |
-| ⭐    |  11   | §11 Probabilistic guard pages (KFENCE model)       | §4                |  [ ]   |
-| ⭐    |  12   | §12 Production quarantine (delayed reuse)          | §4, §11           |  [ ]   |
-| ⭐    |  13   | §13 Zero-on-free                                   | §1                |  [ ]   |
-| ⭐    |  14   | §14 Bulk alloc/free API                            | §4                |  [ ]   |
+| Star | Order | Deliverable                              | Depends On        | Status |
+| ---- | :---: | ---------------------------------------- | ----------------- | :----: |
+| 💎    |   1   | §1 Growable kernel heap + SMP spinlock   | PMM, VMM          |  [ ]   |
+| 💎    |   2   | §2 Memory pressure notifications         | PMM stats         |  [ ]   |
+| 💎    |   3   | §3 vmalloc                               | §1, TODO-01 §3    |  [ ]   |
+| 💎    |   4   | §4 SLAB allocator + lock-free per-CPU fast path | §1                |  [ ]   |
+| 💎    |   5   | §5 SLAB shrinker                         | §4, §2            |  [ ]   |
+| 💎    |   6   | §6 Tagged allocation API                 | §1                |  [ ]   |
+| 💎    |   7   | §7 NonPagedPool / PagedPool              | §4, §3            |  [ ]   |
+| ⭐    |   8   | §8 Out-of-band metadata                  | §4                |  [ ]   |
+| ⭐    |   9   | §9 Type-isolated pools (kalloc_type model) | §4, §8            |  [ ]   |
+| ⭐    |  10   | §10 Per-page header encoding keys        | §8                |  [ ]   |
+| ⭐    |  11   | §11 Probabilistic guard pages (KFENCE model) | §4                |  [ ]   |
+| ⭐    |  12   | §12 Production quarantine (delayed reuse) | §4, §11           |  [ ]   |
+| ⭐    |  13   | §13 Zero-on-free                         | §1                |  [ ]   |
+| ⭐    |  14   | §14 Bulk alloc/free API                  | §4                |  [ ]   |
 | 💎    |  15   | §15 `/sys/slab` + `/sys/pooltags` + shell commands | §4, §6, VFS ready |  [ ]   |
 
 > 💎 = parity (Windows + Linux both have equivalent). ⭐ = exclusive (neither OS does this in production, or Impossible OS does it better).

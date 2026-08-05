@@ -579,10 +579,10 @@ one of these, the item is wrong and gets re-scoped, not the floor.
 T4-3 required this published "with the raw numbers, whatever they say". They are not good.
 
 |                      | pre-T1 (2026-07-25/26, 4 runs, 984 turns) | post-T1 (2026-07-28 canary, 3 segments, 897 turns) | predicted      |
-| -------------------- | ----------------------------------------- | -------------------------------------------------- | -------------- |
-| avg context/turn     | 311,479                                   | 299,988 (**-3.7%**)                                | 180,000 (-42%) |
-| re-read ratio        | 132/206 = **64%**                         | 106/170 = **62%** (-2pp)                           | 20% (-44pp)    |
-| hook fires / segment | ~1,609 (2026-07-10 measurement)           | 12 / 26 / 73                                       | <= 400         |
+| -------------------- | ---------------------------------------- | ---------------------------------------- | -------------- |
+| avg context/turn     | 311,479                                  | 299,988 (**-3.7%**)                      | 180,000 (-42%) |
+| re-read ratio        | 132/206 = **64%**                        | 106/170 = **62%** (-2pp)                 | 20% (-44pp)    |
+| hook fires / segment | ~1,609 (2026-07-10 measurement)          | 12 / 26 / 73                             | <= 400         |
 
 **Prediction error: ~11x on context per turn, ~26x on re-read ratio.** T4-3's threshold was 2x, so its verdict clause applies without argument: the model of where cost goes is wrong, and the remaining items in this file must be re-derived before any more of them land.
 

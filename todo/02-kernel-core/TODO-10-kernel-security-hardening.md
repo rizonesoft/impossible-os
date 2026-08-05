@@ -62,40 +62,40 @@ title: "TODO-10 -- Kernel Security Hardening"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                                                     | Depends On                 | Status |
-| --- | :---: | --------------------------------------------------------------- | -------------------------- | :----: |
-| 💎   |   1   | NX bit: EFER.NXE + PTE NX on all non-code mappings              | (none)                     |  [x]   |
-| 💎   |   2   | SMEP & SMAP: CR4 activation + CLAC/STAC wrappers                | §1                         |  [/]   |
-| 💎   |   3   | KPTI trampoline page + per-CPU CR3 fields                       | §1, T11 §3                 |  [x]   |
-| 💎   |   4   | KPTI SYSCALL CR3 swap                                           | §3, T33                    |  [/]   |
-| 💎   |   5   | KPTI IDT CR3 swap (all 256 vectors)                             | §3, §4, T33                |  [/]   |
-| 💎   |   6   | KPTI user_cr3 allocation + context switch                       | §3, §4, §5, T33            |  [/]   |
-| 💎   |   7   | PCID: TLB tagging for KPTI (no-flush CR3 switch)                | §6                         |  [/]   |
-| 💎   |   8   | Spectre: eIBRS/IBPB MSR + retpoline build flag                  | T12 §2                     |  [x]   |
-| 💎   |   9   | CET shadow stack (kernel ring 0)                                | §1, §2, T23 §3, D01T09 §10 |  [/]   |
-| 💎   |  10   | CET indirect branch tracking (IBT / ENDBR64)                    | §9, T23 §3                 |  [/]   |
-| 💎   |  11   | Kernel heap hardening (cookies, redzone)                        | T27 §1                     |  [x]   |
-| 💎   |  12   | Stack canaries (`-fstack-protector-strong`)                     | T27 §1                     |  [x]   |
-| 💎   |  13   | Kernel stack guard pages                                        | §1                         |  [/]   |
-| ⭐   |  14   | KASLR (RDRAND kernel load address)                              | §1, §6, T33                |  [/]   |
-| 💎   |  15   | Enclave and signing syscalls wired to SSDT                      | §14, T12 §4, T19           |  [/]   |
-| 💎   |  16   | Secure Boot lockdown enforcement                                | D01 T02 §5,§15             |  [/]   |
-| 💎   |  17   | Kernel-image W^X (.text RO, .rodata RO-after-init)              | §1                         |  [x]   |
-| 💎   |  18   | CPU feature-flag 128-bit expansion (cpu_feature_mask_t)         | §8                         |  [x]   |
-| 💎   |  19   | Microarchitectural data-sampling clears (VERW/MDS)              | §8                         |  [x]   |
-| 💎   |  20   | kCFI software control-flow integrity                            | §10                        |  [/]   |
-| 💎   |  21   | FORTIFY_SOURCE bounds-checked str/mem builtins                  | (none)                     |  [/]   |
-| 💎   |  22   | stackleak: erase kernel stack on return to user                 | §13                        |  [/]   |
-| 💎   |  23   | KFENCE sampling UAF/OOB detector                                | §11, §13                   |  [/]   |
-| ⭐   |  24   | Mitigation visibility: queryable security posture               | §17, §19, §25              |  [/]   |
+| ⭐   | Order | Deliverable                              | Depends On                 | Status |
+| --- | :---: | ---------------------------------------- | -------------------------- | :----: |
+| 💎   |   1   | NX bit: EFER.NXE + PTE NX on all non-code mappings | (none)                     |  [x]   |
+| 💎   |   2   | SMEP & SMAP: CR4 activation + CLAC/STAC wrappers | §1                         |  [/]   |
+| 💎   |   3   | KPTI trampoline page + per-CPU CR3 fields | §1, T11 §3                 |  [x]   |
+| 💎   |   4   | KPTI SYSCALL CR3 swap                    | §3, T33                    |  [/]   |
+| 💎   |   5   | KPTI IDT CR3 swap (all 256 vectors)      | §3, §4, T33                |  [/]   |
+| 💎   |   6   | KPTI user_cr3 allocation + context switch | §3, §4, §5, T33            |  [/]   |
+| 💎   |   7   | PCID: TLB tagging for KPTI (no-flush CR3 switch) | §6                         |  [/]   |
+| 💎   |   8   | Spectre: eIBRS/IBPB MSR + retpoline build flag | T12 §2                     |  [x]   |
+| 💎   |   9   | CET shadow stack (kernel ring 0)         | §1, §2, T23 §3, D01T09 §10 |  [/]   |
+| 💎   |  10   | CET indirect branch tracking (IBT / ENDBR64) | §9, T23 §3                 |  [/]   |
+| 💎   |  11   | Kernel heap hardening (cookies, redzone) | T27 §1                     |  [x]   |
+| 💎   |  12   | Stack canaries (`-fstack-protector-strong`) | T27 §1                     |  [x]   |
+| 💎   |  13   | Kernel stack guard pages                 | §1                         |  [/]   |
+| ⭐   |  14   | KASLR (RDRAND kernel load address)       | §1, §6, T33                |  [/]   |
+| 💎   |  15   | Enclave and signing syscalls wired to SSDT | §14, T12 §4, T19           |  [/]   |
+| 💎   |  16   | Secure Boot lockdown enforcement         | D01 T02 §5,§15             |  [/]   |
+| 💎   |  17   | Kernel-image W^X (.text RO, .rodata RO-after-init) | §1                         |  [x]   |
+| 💎   |  18   | CPU feature-flag 128-bit expansion (cpu_feature_mask_t) | §8                         |  [x]   |
+| 💎   |  19   | Microarchitectural data-sampling clears (VERW/MDS) | §8                         |  [x]   |
+| 💎   |  20   | kCFI software control-flow integrity     | §10                        |  [/]   |
+| 💎   |  21   | FORTIFY_SOURCE bounds-checked str/mem builtins | (none)                     |  [/]   |
+| 💎   |  22   | stackleak: erase kernel stack on return to user | §13                        |  [/]   |
+| 💎   |  23   | KFENCE sampling UAF/OOB detector         | §11, §13                   |  [/]   |
+| ⭐   |  24   | Mitigation visibility: queryable security posture | §17, §19, §25              |  [/]   |
 | 💎   |  25   | Spectre predictor mitigations (SSBD/STIBP/RSB/BHI/ITS/Retbleed) | §18, §8                    |  [/]   |
-| 💎   |  26   | Release-build test-surface exclusion (KERNEL_TESTS is uncond.)  | (none)                     |  [x]   |
-| 💎   |  27   | Release-flavor proof: seam-inventory gate + CI attestation      | §26                        |  [x]   |
-| 💎   |  28   | Test-only TUs outside `src/kernel/test/` (NTFS self-test etc.)  | §26                        |  [x]   |
-| 💎   |  29   | Guard unguarded test-only helpers in production TUs             | §27, §28                   |  [x]   |
-| 💎   |  30   | Signed CI attestation for the release-flavor proof gate         | §27, §29                   |  [/]   |
+| 💎   |  26   | Release-build test-surface exclusion (KERNEL_TESTS is uncond.) | (none)                     |  [x]   |
+| 💎   |  27   | Release-flavor proof: seam-inventory gate + CI attestation | §26                        |  [x]   |
+| 💎   |  28   | Test-only TUs outside `src/kernel/test/` (NTFS self-test etc.) | §26                        |  [x]   |
+| 💎   |  29   | Guard unguarded test-only helpers in production TUs | §27, §28                   |  [x]   |
+| 💎   |  30   | Signed CI attestation for the release-flavor proof gate | §27, §29                   |  [/]   |
 | 💎   |  31   | Legacy-syscall user-pointer validation (`sys_write`, `sys_log`) | (none)                     |  [ ]   |
-| 💎   |  32   | Post-ship follow-up backfill (2026-07-31 cohort)                | --                         |  [ ]   |
+| 💎   |  32   | Post-ship follow-up backfill (2026-07-31 cohort) | --                         |  [ ]   |
 
 > 💎 = parity work: matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work: Impossible OS is superior or first.

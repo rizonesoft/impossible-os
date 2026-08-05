@@ -42,15 +42,15 @@ title: "TODO-18 -- USB HID Boot-Protocol Keyboard & Mouse"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                                | Depends On | Status |
-| --- | :---: | ------------------------------------------ | ---------- | :----: |
-| 💎   |   1   | xHCI interrupt endpoint setup              | --         |  [x]   |
+| ⭐   | Order | Deliverable                              | Depends On | Status |
+| --- | :---: | ---------------------------------------- | ---------- | :----: |
+| 💎   |   1   | xHCI interrupt endpoint setup            | --         |  [x]   |
 | 💎   |   2   | Interrupt transfer polling (periodic TRBs) | §1         |  [x]   |
-| 💎   |   3   | USB HID boot-protocol keyboard driver      | §2         |  [x]   |
-| 💎   |   4   | USB HID boot-protocol mouse driver         | §2         |  [x]   |
-| 💎   |   5   | Input source coexistence (PS/2 + USB)      | §3, §4     |  [x]   |
-| ⭐   |   6   | Hot-plug keyboard/mouse detection          | §5         |  [/]   |
-| ⭐   |   7   | USB input diagnostic logging               | §1-§5      |  [x]   |
+| 💎   |   3   | USB HID boot-protocol keyboard driver    | §2         |  [x]   |
+| 💎   |   4   | USB HID boot-protocol mouse driver       | §2         |  [x]   |
+| 💎   |   5   | Input source coexistence (PS/2 + USB)    | §3, §4     |  [x]   |
+| ⭐   |   6   | Hot-plug keyboard/mouse detection        | §5         |  [/]   |
+| ⭐   |   7   | USB input diagnostic logging             | §1-§5      |  [x]   |
 
 > 💎 = parity -- Windows HID minidriver and Linux usbhid both provide boot-protocol keyboard/mouse.
 > ⭐ = exclusive -- hot-plug keyboard detection and diagnostic logging.

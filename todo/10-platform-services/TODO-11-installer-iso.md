@@ -31,19 +31,19 @@ title: "TODO-11 -- OS Installer & ISO Build"
 
 ## Inputs
 
-| Path                                        | Purpose                                                      |
-| ------------------------------------------- | ------------------------------------------------------------ |
-| `include/kernel/fs/fat32.h`                 | `fat32_format(dev, label)` for ESP formatting                |
-| `include/kernel/fs/ixfs.h`                  | `ixfs_format(dev, volume_name)` for system partition         |
-| `include/kernel/fs/gpt.h`                   | `gpt_parse()` -- extend with GPT write                       |
-| `include/kernel/drivers/blkdev.h`           | `blkdev_count()`, `blkdev_list()`, `blkdev_write()`          |
-| `include/kernel/uefi_runtime.h`             | `uefi_set_variable()` for NVRAM boot entry                   |
-| `include/registry.h`                        | `registry_set()` for `InstallerMode`, `FirstBoot` flags      |
-| `src/boot/uefi/bootx64.c`                   | Existing bootloader -- copy to ISO `EFI/BOOT/BOOTX64.EFI`    |
-| `scripts/build.sh`                          | Add `make iso` target here                                   |
-| → XREF: `10-platform-services/TODO-04 §1`   | OOBE first-boot wizard (do not re-implement -- trigger only) |
-| → XREF: `05-storage-filesystems/TODO-08 §5` | GPT partition table write (reuse if available)               |
-| → XREF: `TODO-08 §10–13`                    | IxUI window/message/GDI stack for installer GUI              |
+| Path                                     | Purpose                                  |
+| ---------------------------------------- | ---------------------------------------- |
+| `include/kernel/fs/fat32.h`              | `fat32_format(dev, label)` for ESP formatting |
+| `include/kernel/fs/ixfs.h`               | `ixfs_format(dev, volume_name)` for system partition |
+| `include/kernel/fs/gpt.h`                | `gpt_parse()` -- extend with GPT write   |
+| `include/kernel/drivers/blkdev.h`        | `blkdev_count()`, `blkdev_list()`, `blkdev_write()` |
+| `include/kernel/uefi_runtime.h`          | `uefi_set_variable()` for NVRAM boot entry |
+| `include/registry.h`                     | `registry_set()` for `InstallerMode`, `FirstBoot` flags |
+| `src/boot/uefi/bootx64.c`                | Existing bootloader -- copy to ISO `EFI/BOOT/BOOTX64.EFI` |
+| `scripts/build.sh`                       | Add `make iso` target here               |
+| → XREF: `10-platform-services/TODO-04 §1` | OOBE first-boot wizard (do not re-implement -- trigger only) |
+| → XREF: `05-storage-filesystems/TODO-08 §5` | GPT partition table write (reuse if available) |
+| → XREF: `TODO-08 §10–13`                 | IxUI window/message/GDI stack for installer GUI |
 
 ---
 
@@ -60,18 +60,18 @@ title: "TODO-11 -- OS Installer & ISO Build"
 
 ## Implementation Order
 
-| #   | Section                                              | Tag        | Dep                | Mark |
-| --- | ---------------------------------------------------- | ---------- | ------------------ | ---- |
-| 1   | ISO build script (`make-iso.sh`, `make iso`)         | `[Sonnet]` | existing build     | ⭐    |
+| #   | Section                                  | Tag        | Dep                | Mark |
+| --- | ---------------------------------------- | ---------- | ------------------ | ---- |
+| 1   | ISO build script (`make-iso.sh`, `make iso`) | `[Sonnet]` | existing build     | ⭐    |
 | 2   | Installer init process (InstallerMode registry flag) | `[Sonnet]` | TODO-08 §4         | ⭐    |
-| 3   | Installer GUI wizard (IxUI screens A–G)              | `[Sonnet]` | §2, TODO-08 §10–13 | 💎    |
-| 4   | GPT partition write (`gpt_create`/`gpt_commit`)      | `[Opus]`   | §3                 | 💎    |
-| 5   | Partition format (ESP FAT32 + IXFS system)           | `[Sonnet]` | §4                 | 💎    |
-| 6   | File copy engine (ISO VFS → target IXFS)             | `[Sonnet]` | §5                 | 💎    |
-| 7   | UEFI bootloader install + NVRAM boot entry           | `[Opus]`   | §5–6               | 💎    |
-| 8   | Post-install first boot + OOBE trigger               | `[Sonnet]` | §7                 | 💎    |
-| 9   | Validation: QEMU + Hyper-V Gen2 + VirtualBox         | `[Sonnet]` | §1–8               | 💎    |
-| 10  | Stability + performance pass                         | `[Sonnet]` | §9                 | ⭐    |
+| 3   | Installer GUI wizard (IxUI screens A–G)  | `[Sonnet]` | §2, TODO-08 §10–13 | 💎    |
+| 4   | GPT partition write (`gpt_create`/`gpt_commit`) | `[Opus]`   | §3                 | 💎    |
+| 5   | Partition format (ESP FAT32 + IXFS system) | `[Sonnet]` | §4                 | 💎    |
+| 6   | File copy engine (ISO VFS → target IXFS) | `[Sonnet]` | §5                 | 💎    |
+| 7   | UEFI bootloader install + NVRAM boot entry | `[Opus]`   | §5–6               | 💎    |
+| 8   | Post-install first boot + OOBE trigger   | `[Sonnet]` | §7                 | 💎    |
+| 9   | Validation: QEMU + Hyper-V Gen2 + VirtualBox | `[Sonnet]` | §1–8               | 💎    |
+| 10  | Stability + performance pass             | `[Sonnet]` | §9                 | ⭐    |
 
 ---
 

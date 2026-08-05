@@ -38,27 +38,27 @@ title: "TODO-25 -- Kernel Resource Accounting & Quotas"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                                     | Depends On              | Status |
-| --- | :---: | ----------------------------------------------- | ----------------------- | :----: |
-| 💎   |   1   | Resource type registry                          | --                      |  [x]   |
-| 💎   |   2   | Quota block and charge API                      | §1                      |  [x]   |
-| 💎   |   3   | Process/token/job ownership model               | T21 §9, T15 §4          |  [x]   |
-| 💎   |   4   | Receipt identity (generation-tokened charges)   | §3                      |  [x]   |
-| 💎   |   5   | Pool and allocation quota integration           | D03T03 §6,§7            |  [/]   |
-| 💎   |   6   | Registry, ALPC, notification quotas             | T24 §6, T14 §15, T16 §7 |  [/]   |
-| ⭐   |   7   | CPU, I/O, and wakeup accounting                 | T08 §6, T21 §9          |  [x]   |
-| 💎   |   8   | Native query/set quota syscalls                 | T12 §10                 |  [x]   |
-| ⭐   |   9   | Resource pressure events and recovery hooks     | T16 §2, T30 §6          |  [/]   |
-| 💎   |  10   | Tests, leak sweeps, and dashboards              | §1..§9                  |  [/]   |
-| 💎   |  11   | Charge ledger and transactional adjustment      | §4                      |  [x]   |
-| ⭐   |  12   | Resource pressure stall telemetry               | D03T07 §3, D03T03 §2    |  [/]   |
-| 💎   |  13   | Object Manager charge points                    | §11, T05 §3, T05 §14    |  [/]   |
-| 💎   |  14   | Ledger lifetime: ISR-safe return + adoption     | §11, §13                |  [/]   |
-| ⭐   |  15   | Charge-path cost reduction                      | §6, §7, §14             |  [/]   |
-| ⭐   |  16   | Charge attribution and status fidelity          | §9, §11, T16 §2         |  [x]   |
-| ⭐   |  17   | Infra-gated charge bounding and stall lanes     | §10, §12, D03T07 §3     |  [/]   |
+| ⭐   | Order | Deliverable                              | Depends On              | Status |
+| --- | :---: | ---------------------------------------- | ----------------------- | :----: |
+| 💎   |   1   | Resource type registry                   | --                      |  [x]   |
+| 💎   |   2   | Quota block and charge API               | §1                      |  [x]   |
+| 💎   |   3   | Process/token/job ownership model        | T21 §9, T15 §4          |  [x]   |
+| 💎   |   4   | Receipt identity (generation-tokened charges) | §3                      |  [x]   |
+| 💎   |   5   | Pool and allocation quota integration    | D03T03 §6,§7            |  [/]   |
+| 💎   |   6   | Registry, ALPC, notification quotas      | T24 §6, T14 §15, T16 §7 |  [/]   |
+| ⭐   |   7   | CPU, I/O, and wakeup accounting          | T08 §6, T21 §9          |  [x]   |
+| 💎   |   8   | Native query/set quota syscalls          | T12 §10                 |  [x]   |
+| ⭐   |   9   | Resource pressure events and recovery hooks | T16 §2, T30 §6          |  [/]   |
+| 💎   |  10   | Tests, leak sweeps, and dashboards       | §1..§9                  |  [/]   |
+| 💎   |  11   | Charge ledger and transactional adjustment | §4                      |  [x]   |
+| ⭐   |  12   | Resource pressure stall telemetry        | D03T07 §3, D03T03 §2    |  [/]   |
+| 💎   |  13   | Object Manager charge points             | §11, T05 §3, T05 §14    |  [/]   |
+| 💎   |  14   | Ledger lifetime: ISR-safe return + adoption | §11, §13                |  [/]   |
+| ⭐   |  15   | Charge-path cost reduction               | §6, §7, §14             |  [/]   |
+| ⭐   |  16   | Charge attribution and status fidelity   | §9, §11, T16 §2         |  [x]   |
+| ⭐   |  17   | Infra-gated charge bounding and stall lanes | §10, §12, D03T07 §3     |  [/]   |
 | ⭐   |  18   | Obligation ceiling + charge-source pass-through | §14, §16                |  [x]   |
-| ⭐   |  19   | Lockless job membership + pressure-retry seam   | §10, §15                |  [x]   |
+| ⭐   |  19   | Lockless job membership + pressure-retry seam | §10, §15                |  [x]   |
 
 ## 1. Resource Type Registry
 

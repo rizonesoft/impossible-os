@@ -38,15 +38,15 @@ title: "TODO-05 -- Kernel Module System"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                                       | Depends On                                       | Status |
-| --- | :---: | ------------------------------------------------- | ------------------------------------------------ | :----: |
-| 💎   |   1   | §1 Kernel symbol table + `EXPORT_SYMBOL`          | --                                               |  [ ]   |
-| 💎   |   2   | §2 Module build system (`src/modules/`, Makefile) | §1 (headers needed for modules)                  |  [ ]   |
-| 💎   |   3   | §3 Driver model + HAL vtables + PCI match         | §1 (exported HAL symbols), PCI scan              |  [ ]   |
-| 💎   |   4   | §4 ELF relocatable module loader                  | §1, §4 (test `.kmod` to load)                    |  [ ]   |
-| 💎   |   5   | §5 Auto-load modules at boot                      | §3, VFS/IXFS mounted                             |  [ ]   |
-| 💎   |   6   | §6 RTL8139 as first loadable module               | §3, §4, §2, §5                                   |  [ ]   |
-| 💎   |   7   | Plug and Play syscalls wired to SSDT              | §1, 02-kernel-core/TODO-12-native-api-ssdt.md §4 |  [ ]   |
+| ⭐   | Order | Deliverable                              | Depends On                               | Status |
+| --- | :---: | ---------------------------------------- | ---------------------------------------- | :----: |
+| 💎   |   1   | §1 Kernel symbol table + `EXPORT_SYMBOL` | --                                       |  [ ]   |
+| 💎   |   2   | §2 Module build system (`src/modules/`, Makefile) | §1 (headers needed for modules)          |  [ ]   |
+| 💎   |   3   | §3 Driver model + HAL vtables + PCI match | §1 (exported HAL symbols), PCI scan      |  [ ]   |
+| 💎   |   4   | §4 ELF relocatable module loader         | §1, §4 (test `.kmod` to load)            |  [ ]   |
+| 💎   |   5   | §5 Auto-load modules at boot             | §3, VFS/IXFS mounted                     |  [ ]   |
+| 💎   |   6   | §6 RTL8139 as first loadable module      | §3, §4, §2, §5                           |  [ ]   |
+| 💎   |   7   | Plug and Play syscalls wired to SSDT     | §1, 02-kernel-core/TODO-12-native-api-ssdt.md §4 |  [ ]   |
 
 > All six rows are 💎 parity: Windows NT has `.sys` driver loading with a symbol table (HAL.dll exports); Linux has `insmod`/`modprobe` with `.ko` ELF modules and `EXPORT_SYMBOL`. Impossible OS matches both with a leaner design -- no separate HAL.dll, no kernel version magic -- but achieves the same driver isolation and hot-load capability.
 
@@ -193,14 +193,14 @@ PnP syscalls (`NtPlugPlayControl`, device-enumeration) are exposed through the n
 ## OS Comparison
 
 
-| ⭐   | Feature                                           | 🪟 Win11                                                   | 🐧 Linux                                                  | 🚀 Impossible OS                                                         |
-| --- | ------------------------------------------------- | --------------------------------------------------------- | -------------------------------------------------------- | ----------------------------------------------------------------------- |
-| 💎   | Kernel symbol export table                        | ✅ `HAL.dll` + `ntoskrnl.exe` export tables                | ✅ `EXPORT_SYMBOL` → `.kallsyms`; `ksym_lookup` via       | ⬜ §1 -- `EXPORT_SYMBOL` → `.ksymtab` linker section,                    |
-| 💎   | Loadable kernel module                            | ✅ `.sys` PE/COFF loaded by I/O                            | ✅ `insmod`/`modprobe`; ELF `.ko` with relocations        | ⬜ §4 -- `ET_REL` ELF loader, 4 reloc                                    |
-| 💎   | Module build system + freestanding compiler flags | ✅ WDK/MSBuild; driver project templates                   | ✅ Kbuild `obj-m`; `-ffreestanding` per module            | ⬜ §2 -- `src/modules/`, `Makefile.module`, IXFS install                 |
-| 💎   | Driver model + PCI match tables + HAL vtables     | ✅ WDM `DRIVER_OBJECT`; `IoCreateDevice`; miniport vtables | ✅ `struct bus_type`; `driver.probe()`; `platform_driver` | ⬜ §3 -- `struct driver`, `pci_match[]`, `blk_ops`/`net_ops`/`input_ops` |
-| 💎   | Auto-load drivers at boot from filesystem         | ✅ `HKLM\SYSTEM\CurrentControlSet\Services`; SCM loads     | ✅ `initrd` + `depmod`; `modprobe` at                     | ⬜ §5 -- scan `C:\Impossible\System\Drivers\`, non-fatal on failure      |
-| 💎   | First-party driver as loadable module             | ✅ All NDIS miniport NIC drivers                           | ✅ Almost all NIC drivers are                             | ⬜ §6 -- RTL8139 migrated to `rtl8139.kmod`; networking                  |
+| ⭐   | Feature                                  | 🪟 Win11                                  | 🐧 Linux                                  | 🚀 Impossible OS                          |
+| --- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
+| 💎   | Kernel symbol export table               | ✅ `HAL.dll` + `ntoskrnl.exe` export tables | ✅ `EXPORT_SYMBOL` → `.kallsyms`; `ksym_lookup` via | ⬜ §1 -- `EXPORT_SYMBOL` → `.ksymtab` linker section, |
+| 💎   | Loadable kernel module                   | ✅ `.sys` PE/COFF loaded by I/O           | ✅ `insmod`/`modprobe`; ELF `.ko` with relocations | ⬜ §4 -- `ET_REL` ELF loader, 4 reloc     |
+| 💎   | Module build system + freestanding compiler flags | ✅ WDK/MSBuild; driver project templates  | ✅ Kbuild `obj-m`; `-ffreestanding` per module | ⬜ §2 -- `src/modules/`, `Makefile.module`, IXFS install |
+| 💎   | Driver model + PCI match tables + HAL vtables | ✅ WDM `DRIVER_OBJECT`; `IoCreateDevice`; miniport vtables | ✅ `struct bus_type`; `driver.probe()`; `platform_driver` | ⬜ §3 -- `struct driver`, `pci_match[]`, `blk_ops`/`net_ops`/`input_ops` |
+| 💎   | Auto-load drivers at boot from filesystem | ✅ `HKLM\SYSTEM\CurrentControlSet\Services`; SCM loads | ✅ `initrd` + `depmod`; `modprobe` at     | ⬜ §5 -- scan `C:\Impossible\System\Drivers\`, non-fatal on failure |
+| 💎   | First-party driver as loadable module    | ✅ All NDIS miniport NIC drivers          | ✅ Almost all NIC drivers are             | ⬜ §6 -- RTL8139 migrated to `rtl8139.kmod`; networking |
 
 > **After §1–6:** Impossible OS reaches full parity with Windows NT and Linux for the foundational driver-loading infrastructure. The key design difference: no separate HAL binary (`HAL.dll`) -- the HAL vtables (`blk_ops`, `net_ops`) live directly in kernel address space and are accessed via standard C function-pointer dispatch, eliminating one indirection level and one binary boundary Windows drivers must cross.
 

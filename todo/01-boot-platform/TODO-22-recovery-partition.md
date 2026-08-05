@@ -43,15 +43,15 @@ title: "TODO-22 -- Recovery Partition & Self-Repair"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                                                                  | Depends On               | Status |
-| --- | :---: | ---------------------------------------------------------------------------- | ------------------------ | :----: |
-| 💎   |   1   | Recovery partition in disk layout                                            | --                       |  [/]   |
+| ⭐   | Order | Deliverable                              | Depends On               | Status |
+| --- | :---: | ---------------------------------------- | ------------------------ | :----: |
+| 💎   |   1   | Recovery partition in disk layout        | --                       |  [/]   |
 | 💎   |   2   | Recovery load-path contract + kernel recovery-mode entry (entry-store model) | §1, T07 §4+§9            |  [/]   |
-| 💎   |   3   | Filesystem integrity check (IXFS fsck)                                       | §2 (recovery invocation) |  [x]   |
-| 💎   |   4   | Backup kernel restore                                                        | §2                       |  [/]   |
-| 💎   |   5   | Boot metadata reset                                                          | §2, T21 §1               |  [/]   |
-| 💎   |   6   | NVRAM boot entry reconstruction                                              | §2                       |  [/]   |
-| ⭐   |   7   | Recovery UI with status display                                              | §2–§6                    |  [/]   |
+| 💎   |   3   | Filesystem integrity check (IXFS fsck)   | §2 (recovery invocation) |  [x]   |
+| 💎   |   4   | Backup kernel restore                    | §2                       |  [/]   |
+| 💎   |   5   | Boot metadata reset                      | §2, T21 §1               |  [/]   |
+| 💎   |   6   | NVRAM boot entry reconstruction          | §2                       |  [/]   |
+| ⭐   |   7   | Recovery UI with status display          | §2–§6                    |  [/]   |
 
 > 💎 = parity -- Windows WinRE and Chrome OS recovery both provide these.
 > ⭐ = exclusive -- clear status display during recovery with step-by-step progress.

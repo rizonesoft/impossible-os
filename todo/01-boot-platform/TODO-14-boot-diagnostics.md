@@ -55,19 +55,19 @@ title: "TODO-14 -- Boot Diagnostics, Heartbeat & Spinner"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                                      | Depends On                         | Status |
-| --- | :---: | ------------------------------------------------ | ---------------------------------- | :----: |
-| 💎   |   1   | UEFI pre-kernel POST codes                       | --                                 |  [/]   |
-| 💎   |   2   | Boot progress named-stage API                    | §1                                 |  [/]   |
-| 💎   |   3   | POST-style hex code display                      | §2                                 |  [x]   |
-| 💎   |   4   | Alive blink / visual heartbeat                   | permanently deferred; hang=TODO-23 |  [/]   |
-| 💎   |   5   | Panic forensic evidence                          | §2                                 |  [/]   |
-| ⭐   |   6   | Panic QR code                                    | §5; T03 §14 (QR seed)              |  [/]   |
-| 💎   |   7   | System-wide multi-instance spinner               | D08 T08 §8 (compositor)            |  [/]   |
-| ⭐   |   8   | Runtime vital signs strip                        | D02 T25 §7 (CPU accounting)        |  [/]   |
-| 💎   |   9   | Boot timeline visualization/import               | §2                                 |  [/]   |
-| ⭐   |  10   | Bootloader build identity dump in BlackBox       | TODO-01 §20                        |  [x]   |
-| 💎   |  11   | Boot load status log (ntbtlog parity)            | §2                                 |  [/]   |
+| ⭐   | Order | Deliverable                              | Depends On                         | Status |
+| --- | :---: | ---------------------------------------- | ---------------------------------- | :----: |
+| 💎   |   1   | UEFI pre-kernel POST codes               | --                                 |  [/]   |
+| 💎   |   2   | Boot progress named-stage API            | §1                                 |  [/]   |
+| 💎   |   3   | POST-style hex code display              | §2                                 |  [x]   |
+| 💎   |   4   | Alive blink / visual heartbeat           | permanently deferred; hang=TODO-23 |  [/]   |
+| 💎   |   5   | Panic forensic evidence                  | §2                                 |  [/]   |
+| ⭐   |   6   | Panic QR code                            | §5; T03 §14 (QR seed)              |  [/]   |
+| 💎   |   7   | System-wide multi-instance spinner       | D08 T08 §8 (compositor)            |  [/]   |
+| ⭐   |   8   | Runtime vital signs strip                | D02 T25 §7 (CPU accounting)        |  [/]   |
+| 💎   |   9   | Boot timeline visualization/import       | §2                                 |  [/]   |
+| ⭐   |  10   | Bootloader build identity dump in BlackBox | TODO-01 §20                        |  [x]   |
+| 💎   |  11   | Boot load status log (ntbtlog parity)    | §2                                 |  [/]   |
 | 💎   |  12   | Post-ship follow-up backfill (2026-07-31 cohort) | --                                 |  [ ]   |
 
 > 💎 = parity -- Windows and Linux both have equivalent diagnostics; Impossible OS must match them.

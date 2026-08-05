@@ -35,21 +35,21 @@ title: "TODO-08 -- Win32 API Surface Completion"
 
 ## Inputs
 
-| Path                                                      | Purpose                                                |
-| --------------------------------------------------------- | ------------------------------------------------------ |
-| `include/kernel/sched/mutex.h`                            | `mutex_t`, `mutex_init/lock/unlock`                    |
-| `include/kernel/sched/semaphore.h`                        | `semaphore_t`, `sem_init/wait/signal`                  |
-| `include/kernel/sched/event.h`                            | `event_t`, `event_init/set/reset/wait`                 |
-| `include/kernel/mm/heap.h`                                | `kmalloc`, `kfree`                                     |
-| `include/desktop/wm.h`                                    | `wm_create_window`, `wm_destroy_window`                |
-| `include/desktop/controls.h`                              | `CTRL_*` widget types                                  |
-| `include/kernel/sched/task.h`                             | `task_t`, `handle_table[]`, TEB base                   |
-| `include/kernel/sched/abi.h`                              | Win32 `SYS_*` constants (`TODO-07 §2`)                 |
-| `include/pe.h`                                            | PE32+ structs, export directory types (`TODO-07 §3`)   |
-| `src/win32/pe_loader.c`                                   | `pe_exec()`, `pe_load()` (`TODO-07 §4–7`)              |
-| `todo-old/510-Long-Term-Stretch/TODO-510-Native-Win32.md` | §5–9 migration source                                  |
-| → XREF: `TODO-07 §1–9`                                    | Ring-3, SYSCALL ABI, PE loader, TEB/PEB, `exec_load()` |
-| → XREF: `08-graphics-ui/TODO-04`                          | `CTRL_LISTVIEW`, `CTRL_TREEVIEW`, `CTRL_TABSTRIP`      |
+| Path                                     | Purpose                                  |
+| ---------------------------------------- | ---------------------------------------- |
+| `include/kernel/sched/mutex.h`           | `mutex_t`, `mutex_init/lock/unlock`      |
+| `include/kernel/sched/semaphore.h`       | `semaphore_t`, `sem_init/wait/signal`    |
+| `include/kernel/sched/event.h`           | `event_t`, `event_init/set/reset/wait`   |
+| `include/kernel/mm/heap.h`               | `kmalloc`, `kfree`                       |
+| `include/desktop/wm.h`                   | `wm_create_window`, `wm_destroy_window`  |
+| `include/desktop/controls.h`             | `CTRL_*` widget types                    |
+| `include/kernel/sched/task.h`            | `task_t`, `handle_table[]`, TEB base     |
+| `include/kernel/sched/abi.h`             | Win32 `SYS_*` constants (`TODO-07 §2`)   |
+| `include/pe.h`                           | PE32+ structs, export directory types (`TODO-07 §3`) |
+| `src/win32/pe_loader.c`                  | `pe_exec()`, `pe_load()` (`TODO-07 §4–7`) |
+| `todo-old/510-Long-Term-Stretch/TODO-510-Native-Win32.md` | §5–9 migration source                    |
+| → XREF: `TODO-07 §1–9`                   | Ring-3, SYSCALL ABI, PE loader, TEB/PEB, `exec_load()` |
+| → XREF: `08-graphics-ui/TODO-04`         | `CTRL_LISTVIEW`, `CTRL_TREEVIEW`, `CTRL_TABSTRIP` |
 
 ---
 
@@ -66,23 +66,23 @@ title: "TODO-08 -- Win32 API Surface Completion"
 
 ## Implementation Order
 
-| #   | Section                                                     | Tag        | Dep            | Mark |
-| --- | ----------------------------------------------------------- | ---------- | -------------- | ---- |
-| 1   | Win32 Type Definitions                                      | `[Sonnet]` | TODO-07 §2     | 💎    |
-| 2   | Console & Process API (`kernel32.dll` tier 1)               | `[Sonnet]` | §1             | 💎    |
-| 3   | C Runtime (`msvcrt.dll`)                                    | `[Sonnet]` | §1             | 💎    |
-| 4   | NT Runtime stubs (`ntdll.dll`)                              | `[Sonnet]` | §1             | 💎    |
-| 5   | Memory Management API                                       | `[Sonnet]` | §1, TODO-07 §9 | 💎    |
-| 6   | Synchronization API                                         | `[Sonnet]` | §1             | 💎    |
-| 7   | DLL Loading API (`LoadLibrary`/`GetProcAddress`)            | `[Opus]`   | §2, TODO-07 §7 | 💎    |
-| 8   | Error API (`GetLastError`, `FormatMessage`, debug output)   | `[Sonnet]` | §1             | 💎    |
-| 9   | Unimplemented Function Logger                               | `[Sonnet]` | §2–8           | ⭐    |
-| 10  | Window Management (`user32.dll`)                            | `[Sonnet]` | §1, TODO-07 §9 | 💎    |
-| 11  | GDI Rendering (`gdi32.dll`)                                 | `[Sonnet]` | §10            | 💎    |
-| 12  | Shell & Icon API (`shell32.dll`)                            | `[Sonnet]` | §10            | 💎    |
-| 13  | IxUI Native Toolkit (`sdk/include/ixui.h`)                  | `[Opus]`   | §10–11         | ⭐    |
+| #   | Section                                  | Tag        | Dep            | Mark |
+| --- | ---------------------------------------- | ---------- | -------------- | ---- |
+| 1   | Win32 Type Definitions                   | `[Sonnet]` | TODO-07 §2     | 💎    |
+| 2   | Console & Process API (`kernel32.dll` tier 1) | `[Sonnet]` | §1             | 💎    |
+| 3   | C Runtime (`msvcrt.dll`)                 | `[Sonnet]` | §1             | 💎    |
+| 4   | NT Runtime stubs (`ntdll.dll`)           | `[Sonnet]` | §1             | 💎    |
+| 5   | Memory Management API                    | `[Sonnet]` | §1, TODO-07 §9 | 💎    |
+| 6   | Synchronization API                      | `[Sonnet]` | §1             | 💎    |
+| 7   | DLL Loading API (`LoadLibrary`/`GetProcAddress`) | `[Opus]`   | §2, TODO-07 §7 | 💎    |
+| 8   | Error API (`GetLastError`, `FormatMessage`, debug output) | `[Sonnet]` | §1             | 💎    |
+| 9   | Unimplemented Function Logger            | `[Sonnet]` | §2–8           | ⭐    |
+| 10  | Window Management (`user32.dll`)         | `[Sonnet]` | §1, TODO-07 §9 | 💎    |
+| 11  | GDI Rendering (`gdi32.dll`)              | `[Sonnet]` | §10            | 💎    |
+| 12  | Shell & Icon API (`shell32.dll`)         | `[Sonnet]` | §10            | 💎    |
+| 13  | IxUI Native Toolkit (`sdk/include/ixui.h`) | `[Opus]`   | §10–11         | ⭐    |
 | 14  | Win32 Shell Integration (`ShellExecute`, `SHGetFolderPath`) | `[Sonnet]` | §12            | 💎    |
-| 15  | Developer SDK (`windows.h`, `impossible-cc`)                | `[Sonnet]` | §1–14          | ⭐    |
+| 15  | Developer SDK (`windows.h`, `impossible-cc`) | `[Sonnet]` | §1–14          | ⭐    |
 
 ---
 
@@ -340,22 +340,22 @@ Provides the cross-compilation toolchain for targeting Impossible OS from a host
 ## OS Comparison
 
 
-| ⭐   | Feature                                                 | 🪟 Win11                 | 🐧 Linux                      | 🚀 Impossible OS                               |
-| --- | ------------------------------------------------------- | ----------------------- | ---------------------------- | --------------------------------------------- |
-| 💎   | Console API                                             | ✅ Win32                 | ✅ POSIX tty                  | ⬜ routes to terminal emulator                 |
-| 💎   | Process management                                      | ✅ Win32                 | ✅ `fork`/`waitpid`           | ⬜ wraps native task scheduler                 |
-| 💎   | Memory management                                       | ✅ Win32                 | ✅ `mmap`/`malloc`            | ⬜ wraps `vmm_alloc_user`                      |
-| 💎   | Synchronization                                         | ✅ Win32                 | ✅ `pthread_mutex`, `eventfd` | ⬜ thin wrappers on kernel `mutex_t`/`event_t` |
-| 💎   | DLL loading                                             | ✅ Win32                 | ✅ `dlopen`/`dlsym`           | ⬜ native PE export directory walk             |
-| 💎   | Error API                                               | ✅ Win32                 | ✅ `errno`/`strerror`         | ⬜ TEB-backed per-thread error                 |
-| 💎   | GUI window management                                   | ✅ Win32                 | ✅ X11/Wayland                | ⬜ wraps native WM                             |
-| 💎   | GDI rendering                                           | ✅ GDI32                 | ✅ Cairo/Skia                 | ⬜ wraps `gfx_*`/`ttf_*`                       |
-| 💎   | C runtime                                               | ✅ MSVCRT                | ✅ glibc/musl                 | ⬜ kernel freestanding implementations         |
-| 💎   | Shell API                                               | ✅ shell32               | ✅ `xdg-open`                 | ⬜ `file_assoc_open()` + VFS paths             |
-| ⭐   | Native IxUI toolkit                                     | ❌ User32 emulation only | ❌ No native Win32            | ⬜ first-class kernel-backed Win32 GUI         |
-| ⭐   | Zero-layer Win32 ABI                                    | ❌ Requires Windows      | ❌ Requires Wine              | ⬜ native kernel implements Win32              |
-| ⭐   | Unimplemented function logger with call-count telemetry | ❌ Crashes or silent     | ❌ Crashes                    | ⬜ safe stubs + serial diagnostics             |
-| ⭐   | Developer SDK                                           | ❌ Windows only          | ❌ No Win32 SDK               | ⬜ MinGW cross-compiler + native headers       |
+| ⭐   | Feature                                  | 🪟 Win11                 | 🐧 Linux                      | 🚀 Impossible OS                          |
+| --- | ---------------------------------------- | ----------------------- | ---------------------------- | ---------------------------------------- |
+| 💎   | Console API                              | ✅ Win32                 | ✅ POSIX tty                  | ⬜ routes to terminal emulator            |
+| 💎   | Process management                       | ✅ Win32                 | ✅ `fork`/`waitpid`           | ⬜ wraps native task scheduler            |
+| 💎   | Memory management                        | ✅ Win32                 | ✅ `mmap`/`malloc`            | ⬜ wraps `vmm_alloc_user`                 |
+| 💎   | Synchronization                          | ✅ Win32                 | ✅ `pthread_mutex`, `eventfd` | ⬜ thin wrappers on kernel `mutex_t`/`event_t` |
+| 💎   | DLL loading                              | ✅ Win32                 | ✅ `dlopen`/`dlsym`           | ⬜ native PE export directory walk        |
+| 💎   | Error API                                | ✅ Win32                 | ✅ `errno`/`strerror`         | ⬜ TEB-backed per-thread error            |
+| 💎   | GUI window management                    | ✅ Win32                 | ✅ X11/Wayland                | ⬜ wraps native WM                        |
+| 💎   | GDI rendering                            | ✅ GDI32                 | ✅ Cairo/Skia                 | ⬜ wraps `gfx_*`/`ttf_*`                  |
+| 💎   | C runtime                                | ✅ MSVCRT                | ✅ glibc/musl                 | ⬜ kernel freestanding implementations    |
+| 💎   | Shell API                                | ✅ shell32               | ✅ `xdg-open`                 | ⬜ `file_assoc_open()` + VFS paths        |
+| ⭐   | Native IxUI toolkit                      | ❌ User32 emulation only | ❌ No native Win32            | ⬜ first-class kernel-backed Win32 GUI    |
+| ⭐   | Zero-layer Win32 ABI                     | ❌ Requires Windows      | ❌ Requires Wine              | ⬜ native kernel implements Win32         |
+| ⭐   | Unimplemented function logger with call-count telemetry | ❌ Crashes or silent     | ❌ Crashes                    | ⬜ safe stubs + serial diagnostics        |
+| ⭐   | Developer SDK                            | ❌ Windows only          | ❌ No Win32 SDK               | ⬜ MinGW cross-compiler + native headers  |
 
 **Impossible OS advantage:** Win32 is implemented natively in the kernel -- no translation layer, no Wine, no DLL emulation. IxUI is a first-class toolkit that gives Win32 programs a native compositor-backed window system with zero overhead. The unimplemented-function logger gives a unique observability story not available on any other platform.
 

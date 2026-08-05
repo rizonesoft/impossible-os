@@ -94,7 +94,8 @@ def _find_tables(lines: list[str]) -> list[tuple[int, int]]:
     return tables
 
 
-def _render_table(lines: list[str], start: int, end: int, max_cell: int) -> list[str] | None:
+def _render_table(lines: list[str], start: int, end: int, max_cell: int,
+                  max_pad: int = 40) -> list[str] | None:
     rows = [_split_row(l) for l in lines[start:end]]
     ncols = len(rows[0])
     if any(len(r) != ncols for r in rows):
@@ -102,8 +103,27 @@ def _render_table(lines: list[str], start: int, end: int, max_cell: int) -> list
     if any(len(cell) > max_cell for row in rows for cell in row):
         return None  # prose table -- do not force-align
     aligns = [_alignment(c) for c in rows[1]]
+    # PER-COLUMN CAP. Padding every cell to the column's WIDEST makes one long
+    # entry inflate every other row in that column, and the cost is superlinear
+    # in the outlier rather than in the average. Measured 2026-08-05 across the
+    # 5,606 aligned rows in todo/: median 134 chars, 2,057 over 160 -- about a
+    # third wrapping at any common terminal width, trading one raw-source
+    # irritation for another.
+    #
+    # 40 chosen from the corpus, not intuition (operator decision, same day).
+    # Simulated against the real tables -- median / rows>160 / cells left
+    # unpadded: no cap 133/2134/2.0%, cap 50 126/1849/10.5%, CAP 40
+    # 122/1635/17.1%, cap 30 117/1263/25.3%. Cap 30 reaches a nicer median but
+    # leaves a QUARTER of cells ragged, undoing much of what the alignment was
+    # introduced to buy.
+    #
+    # A cell WIDER than the cap is left unpadded rather than truncated -- content
+    # is never touched, only inter-cell padding. And note the ceiling on what any
+    # padding policy can achieve: the median NATURAL row is already 91 chars, so
+    # ~49% of over-160 rows are wide because their CONTENT is wide.
     widths = [
-        max(3, max(len(rows[r][c]) for r in range(len(rows)) if r != 1))
+        min(max_pad,
+            max(3, max(len(rows[r][c]) for r in range(len(rows)) if r != 1)))
         for c in range(ncols)
     ]
 
@@ -142,14 +162,14 @@ def _render_table(lines: list[str], start: int, end: int, max_cell: int) -> list
     return out
 
 
-def process(path: Path, max_cell: int, check: bool) -> bool:
+def process(path: Path, max_cell: int, check: bool, max_pad: int = 40) -> bool:
     """Return True if the file has (or would have) changes."""
     text = path.read_text(encoding="utf-8")
     lines = text.split("\n")
     trailing_newline = text.endswith("\n")
     changed = False
     for start, end in reversed(_find_tables(lines)):
-        rendered = _render_table(lines, start, end, max_cell)
+        rendered = _render_table(lines, start, end, max_cell, max_pad)
         if rendered is None:
             continue
         if rendered != lines[start:end]:
@@ -180,11 +200,13 @@ def main() -> int:
     ap.add_argument("paths", nargs="+")
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--max-cell", type=int, default=80)
+    # Per-column padding ceiling. See _render_table for how 40 was chosen.
+    ap.add_argument("--max-pad", type=int, default=40)
     args = ap.parse_args()
 
     any_changed = False
     for f in _iter_md(args.paths):
-        if process(f, args.max_cell, args.check):
+        if process(f, args.max_cell, args.check, args.max_pad):
             any_changed = True
             verb = "would align" if args.check else "aligned"
             print(f"{verb}: {f}")

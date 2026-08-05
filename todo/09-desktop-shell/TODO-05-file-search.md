@@ -161,14 +161,14 @@ Hook `vfs_create`/`vfs_unlink`/`vfs_rename` to mark index dirty. `search_index_a
 ## OS Comparison
 
 
-| ⭐   | Feature              | 🪟 Win11                                  | 🐧 Linux                                                   | 🚀 Impossible OS                                                        |
-| --- | -------------------- | ---------------------------------------- | --------------------------------------------------------- | ---------------------------------------------------------------------- |
-| ⭐   | Search index         | ✅ Windows Search (ETW-based, NTFS change | ✅ `locate`/`updatedb`; `mlocate.db` binary; `inotify` for | ⬜ §1 -- `⭐` no background daemon --                                    |
-| 💎   | Ranked query API     | ✅ Windows Search API; relevance ranking; | ✅ `locate -i`; `grep -r` for                              | ⬜ §2 -- scoring 3/2/1; type-primary sort; live                         |
-| 💎   | `find` shell command | ✅ `where`, `dir /s /b`, `Get-ChildItem   | ✅ `find`, `locate`, `fd`, `fzf` (external)                | ⬜ §3 -- integrated with ranked index; `--type`                         |
-| 💎   | Start Menu search    | ✅ Start Menu search (integrated, very    | ✅ GNOME Activities (live search, app+file                 | ⬜ §4 -- `⭐` no cloud results mixed                                     |
-| 💎   | File Manager search  | ✅ File Explorer search bar (very         | ✅ Nautilus/Dolphin search bars; `tracker` for             | ⬜ §5 -- `search_query_scoped(root_path)` constrains results to subtree |
-| ⭐   | VFS change hooks     | ✅ NTFS change journal + USN              | ✅ `inotify` / `fanotify` kernel events;                   | ⬜ §6 -- `⭐` zero-daemon: VFS mutation hooks                            |
+| ⭐   | Feature              | 🪟 Win11                                  | 🐧 Linux                                  | 🚀 Impossible OS                          |
+| --- | -------------------- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
+| ⭐   | Search index         | ✅ Windows Search (ETW-based, NTFS change | ✅ `locate`/`updatedb`; `mlocate.db` binary; `inotify` for | ⬜ §1 -- `⭐` no background daemon --      |
+| 💎   | Ranked query API     | ✅ Windows Search API; relevance ranking; | ✅ `locate -i`; `grep -r` for             | ⬜ §2 -- scoring 3/2/1; type-primary sort; live |
+| 💎   | `find` shell command | ✅ `where`, `dir /s /b`, `Get-ChildItem   | ✅ `find`, `locate`, `fd`, `fzf` (external) | ⬜ §3 -- integrated with ranked index; `--type` |
+| 💎   | Start Menu search    | ✅ Start Menu search (integrated, very    | ✅ GNOME Activities (live search, app+file | ⬜ §4 -- `⭐` no cloud results mixed       |
+| 💎   | File Manager search  | ✅ File Explorer search bar (very         | ✅ Nautilus/Dolphin search bars; `tracker` for | ⬜ §5 -- `search_query_scoped(root_path)` constrains results to subtree |
+| ⭐   | VFS change hooks     | ✅ NTFS change journal + USN              | ✅ `inotify` / `fanotify` kernel events;  | ⬜ §6 -- `⭐` zero-daemon: VFS mutation hooks |
 
 > **After §1–§6:** Impossible OS has an always-on search index with no background daemon, no D-Bus, and no third-party indexer. The `⭐` differentiators: double-buffer PMM swap keeps queries live during index rebuild (no stall), VFS mutation hooks update the index inline in the kernel (no `inotify` userspace round-trip), and Start Menu search is guaranteed ad-free with local-only results.
 

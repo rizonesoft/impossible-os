@@ -37,13 +37,13 @@ $ serial-analyze --compare boot1.log boot2.log
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                                  | Depends On | Status |
-| --- | :---: | -------------------------------------------- | ---------- | :----: |
-| 💎   |   1   | Log parser (timestamps, phases, subsystems)  | --         |  [ ]   |
-| ⭐   |   2   | Timing analysis (per-phase, per-subsystem)   | §1         |  [ ]   |
-| ⭐   |   3   | Warning/error highlighter                    | §1         |  [ ]   |
+| ⭐   | Order | Deliverable                              | Depends On | Status |
+| --- | :---: | ---------------------------------------- | ---------- | :----: |
+| 💎   |   1   | Log parser (timestamps, phases, subsystems) | --         |  [ ]   |
+| ⭐   |   2   | Timing analysis (per-phase, per-subsystem) | §1         |  [ ]   |
+| ⭐   |   3   | Warning/error highlighter                | §1         |  [ ]   |
 | ⭐   |   4   | Boot comparison (two logs, find regressions) | §2         |  [ ]   |
-| 💎   |   5   | HTML report output (timing waterfall chart)  | §2         |  [ ]   |
+| 💎   |   5   | HTML report output (timing waterfall chart) | §2         |  [ ]   |
 
 ---
 

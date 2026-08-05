@@ -60,28 +60,28 @@ title: "TODO-03 -- Bootloader Error Recovery & ELF Hardening"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                                                                  | Depends On | Status |
-| --- | :---: | ---------------------------------------------------------------------------- | ---------- | :----: |
-| 💎   |   1   | ELF bounds checking                                                          | --         |  [x]   |
-| 💎   |   2   | ExitBootServices retry loop (bounded)                                        | --         |  [x]   |
-| 💎   |   3   | Fallback kernel search (3 paths)                                             | --         |  [x]   |
-| 💎   |   4   | Serial port probe and COM2 fallback                                          | --         |  [x]   |
-| 💎   |   5   | GOP timeout and graceful degradation                                         | --         |  [x]   |
-| 💎   |   6   | Memory map overflow detection (512 entries)                                  | --         |  [x]   |
-| 💎   |   7   | boot.conf validation and version field                                       | --         |  [x]   |
-| 💎   |   8   | Kernel load allocation fallback (32-16-8 MiB)                                | --         |  [x]   |
-| ⭐   |   9   | Boot failure error screen                                                    | §1-§8      |  [x]   |
-| 💎   |  10   | ACPI SPCR serial port auto-detection                                         | §4         |  [x]   |
-| 💎   |  11   | UEFI watchdog timer management                                               | --         |  [x]   |
-| 💎   |  12   | Memory map descriptor validation                                             | §6         |  [x]   |
-| ⭐   |  13   | Boot error code registry & NVRAM persistence                                 | §9         |  [x]   |
-| ⭐   |  14   | Error screen QR code                                                         | §9         |  [x]   |
-| 💎   |  15   | boot_info ABI foundation moved to TODO-01                                    | --         |  [x]   |
-| 💎   |  16   | boot_info kernel validation moved to TODO-01                                 | §15        |  [x]   |
-| 💎   |  17   | Memory map overlap normalization (sort+carve)                                | §12        |  [x]   |
-| ⭐   |  18   | Graphical error screen (ChromeOS/Win11-style)                                | §9, §14    |  [x]   |
-| 💎   |  19   | PT_LOAD destination policy (defense-in-depth)                                | §1         |  [x]   |
-| ⭐   |  20   | Boot error history ring -- producer (struct, append sites, NVRAM cookie)     | §13        |  [x]   |
+| ⭐   | Order | Deliverable                              | Depends On | Status |
+| --- | :---: | ---------------------------------------- | ---------- | :----: |
+| 💎   |   1   | ELF bounds checking                      | --         |  [x]   |
+| 💎   |   2   | ExitBootServices retry loop (bounded)    | --         |  [x]   |
+| 💎   |   3   | Fallback kernel search (3 paths)         | --         |  [x]   |
+| 💎   |   4   | Serial port probe and COM2 fallback      | --         |  [x]   |
+| 💎   |   5   | GOP timeout and graceful degradation     | --         |  [x]   |
+| 💎   |   6   | Memory map overflow detection (512 entries) | --         |  [x]   |
+| 💎   |   7   | boot.conf validation and version field   | --         |  [x]   |
+| 💎   |   8   | Kernel load allocation fallback (32-16-8 MiB) | --         |  [x]   |
+| ⭐   |   9   | Boot failure error screen                | §1-§8      |  [x]   |
+| 💎   |  10   | ACPI SPCR serial port auto-detection     | §4         |  [x]   |
+| 💎   |  11   | UEFI watchdog timer management           | --         |  [x]   |
+| 💎   |  12   | Memory map descriptor validation         | §6         |  [x]   |
+| ⭐   |  13   | Boot error code registry & NVRAM persistence | §9         |  [x]   |
+| ⭐   |  14   | Error screen QR code                     | §9         |  [x]   |
+| 💎   |  15   | boot_info ABI foundation moved to TODO-01 | --         |  [x]   |
+| 💎   |  16   | boot_info kernel validation moved to TODO-01 | §15        |  [x]   |
+| 💎   |  17   | Memory map overlap normalization (sort+carve) | §12        |  [x]   |
+| ⭐   |  18   | Graphical error screen (ChromeOS/Win11-style) | §9, §14    |  [x]   |
+| 💎   |  19   | PT_LOAD destination policy (defense-in-depth) | §1         |  [x]   |
+| ⭐   |  20   | Boot error history ring -- producer (struct, append sites, NVRAM cookie) | §13        |  [x]   |
 | ⭐   |  21   | Boot error history ring -- consumer (reader, renderer, tests, smoke fixture) | §20        |  [x]   |
 
 > 💎 = parity -- Windows bootmgfw.efi and GRUB2 both handle these error paths.

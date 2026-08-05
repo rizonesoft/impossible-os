@@ -228,17 +228,17 @@ Read-only synthetic VFS file at `/sys/net`. On read: emit per-interface stats, A
 ## OS Comparison
 
 
-| ⭐   | Feature                                                  | 🪟 Win11                                             | 🐧 Linux                                                               | 🚀 Impossible OS                                  |
-| --- | -------------------------------------------------------- | --------------------------------------------------- | --------------------------------------------------------------------- | ------------------------------------------------ |
-| 💎   | DHCP lease renewal                                       | ✅ `dhcpcsvc.dll` T1/T2 RFC 2131-compliant renewal;  | ✅ `dhclient`/`systemd-networkd` T1/T2; in-kernel DHCP not             | ⬜ §1 -- in-kernel daemon; `ksleep` 1 s           |
-| 💎   | NTP v4 client                                            | ✅ `w32tm.exe` Windows Time Service; slew            | ✅ `ntpd`/`chronyd`/`systemd-timesyncd` (userspace); `adjtimex()` slew | ⬜ §2 -- `⭐` in-kernel (no userspace daemon)      |
-| 💎   | `ifconfig` multi-NIC, RX/TX stats, manual IP/up/down     | ✅ `ipconfig /all`; `netsh interface ip              | ✅ `ifconfig` + `ip link`/`ip addr`;                                   | ⬜ §4 -- extends TODO-04 §10; adds stats          |
-| 💎   | Network stats API + system-tray icon + Task Manager hook | ✅ `GetAdaptersInfo()`; tray in `explorer.exe`; Task | ✅ `/proc/net/dev`; `NetworkManager` tray; `gnome-task-manager`        | ⬜ §3 -- `net_stats()` kernel API; tray icon      |
-| 💎   | `ping` IPv6 ICMPv6 echo, `-6/-4/-c/-t` flags             | ✅ `ping -6 <host>`; `-n count`;                     | ✅ `ping6`/`ping -6`; `-c count`; `-i                                  | ⬜ §5 -- ICMPv6 type-128 echo; unified `ping`     |
-| 💎   | `traceroute`                                             | ✅ `tracert.exe` (ICMP-based, not UDP)               | ✅ `traceroute` (UDP-based by default); `tracepath`;                   | ⬜ §6 -- UDP-based; ICMP Time Exceeded cb         |
-| 💎   | `netstat`                                                | ✅ `netstat.exe`; `-a/-n/-o/-p` flags                | ✅ `netstat`/`ss`; reads `/proc/net/tcp6`                              | ⬜ §7 -- reads kernel `sock_table`; `-n/-a` flags |
-| ⭐   | `/sys/net`                                               | ✅ `netsh`, `ipconfig`, `arp -a` (separate           | ✅ `/proc/net/dev`, `/proc/net/arp`, `/proc/net/tcp` (separate files)  | ⬜ §8 -- `⭐` single `/sys/net` file aggregates    |
-| 💎   | `ws2_32.dll` Winsock stubs                               | ✅ Full `ws2_32.dll` (kernel `afd.sys` +             | ✅ glibc `socket()`/`connect()`; no `ws2_32.dll` (POSIX                | ⬜ §9 -- DLL stub table maps Win32                |
+| ⭐   | Feature                                  | 🪟 Win11                                  | 🐧 Linux                                  | 🚀 Impossible OS                          |
+| --- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
+| 💎   | DHCP lease renewal                       | ✅ `dhcpcsvc.dll` T1/T2 RFC 2131-compliant renewal; | ✅ `dhclient`/`systemd-networkd` T1/T2; in-kernel DHCP not | ⬜ §1 -- in-kernel daemon; `ksleep` 1 s   |
+| 💎   | NTP v4 client                            | ✅ `w32tm.exe` Windows Time Service; slew | ✅ `ntpd`/`chronyd`/`systemd-timesyncd` (userspace); `adjtimex()` slew | ⬜ §2 -- `⭐` in-kernel (no userspace daemon) |
+| 💎   | `ifconfig` multi-NIC, RX/TX stats, manual IP/up/down | ✅ `ipconfig /all`; `netsh interface ip   | ✅ `ifconfig` + `ip link`/`ip addr`;      | ⬜ §4 -- extends TODO-04 §10; adds stats  |
+| 💎   | Network stats API + system-tray icon + Task Manager hook | ✅ `GetAdaptersInfo()`; tray in `explorer.exe`; Task | ✅ `/proc/net/dev`; `NetworkManager` tray; `gnome-task-manager` | ⬜ §3 -- `net_stats()` kernel API; tray icon |
+| 💎   | `ping` IPv6 ICMPv6 echo, `-6/-4/-c/-t` flags | ✅ `ping -6 <host>`; `-n count`;          | ✅ `ping6`/`ping -6`; `-c count`; `-i     | ⬜ §5 -- ICMPv6 type-128 echo; unified `ping` |
+| 💎   | `traceroute`                             | ✅ `tracert.exe` (ICMP-based, not UDP)    | ✅ `traceroute` (UDP-based by default); `tracepath`; | ⬜ §6 -- UDP-based; ICMP Time Exceeded cb |
+| 💎   | `netstat`                                | ✅ `netstat.exe`; `-a/-n/-o/-p` flags     | ✅ `netstat`/`ss`; reads `/proc/net/tcp6` | ⬜ §7 -- reads kernel `sock_table`; `-n/-a` flags |
+| ⭐   | `/sys/net`                               | ✅ `netsh`, `ipconfig`, `arp -a` (separate | ✅ `/proc/net/dev`, `/proc/net/arp`, `/proc/net/tcp` (separate files) | ⬜ §8 -- `⭐` single `/sys/net` file aggregates |
+| 💎   | `ws2_32.dll` Winsock stubs               | ✅ Full `ws2_32.dll` (kernel `afd.sys` +  | ✅ glibc `socket()`/`connect()`; no `ws2_32.dll` (POSIX | ⬜ §9 -- DLL stub table maps Win32        |
 
 > **After §1–§9:** The networking layer is fully closed out. Impossible OS has an in-kernel NTP client without a userspace daemon (`⭐`), a unified `/sys/net` observability file (`⭐`), and `ws2_32.dll` Winsock stubs that let Win32 applications use the network stack without modification. Every higher-level networking TODO (browser, email, SSH, OS updates) is unblocked.
 

@@ -37,16 +37,16 @@ title: "TODO-14 -- Desktop Test Late-Phase Harness and Artifact Bundle"
 
 ## Implementation Order
 
-| Order | Deliverable                                                                  | Depends On | Status |
-| :---: | ---------------------------------------------------------------------------- | ---------- | :----: |
-|   1   | Post-desktop-init test harness (`TEST_CAT_DESKTOP_LATE`)                     | --         |  [ ]   |
-|   2   | Failure capture hook + retention + replace semantics                         | §1         |  [ ]   |
-|   3   | Committed JSONL input traces + replay fixture loader                         | §1         |  [ ]   |
-|   4   | Snapshot-time read-side sync (fb + terminal)                                 | §1         |  [ ]   |
+| Order | Deliverable                              | Depends On | Status |
+| :---: | ---------------------------------------- | ---------- | :----: |
+|   1   | Post-desktop-init test harness (`TEST_CAT_DESKTOP_LATE`) | --         |  [ ]   |
+|   2   | Failure capture hook + retention + replace semantics | §1         |  [ ]   |
+|   3   | Committed JSONL input traces + replay fixture loader | §1         |  [ ]   |
+|   4   | Snapshot-time read-side sync (fb + terminal) | §1         |  [ ]   |
 |   5   | Virtio-GPU multi-output driver (scope-migration candidate to 08-graphics-ui) | --         |  [ ]   |
-|   6   | `\\?\ObjectManager\FrameStats` Ob pseudo-file                                | --         |  [x]   |
-|   7   | QEMU HMP monitor UNIX-socket hardening (Linux shared hosts)                  | --         |  [x]   |
-|   8   | `scripts/test-visual-regression.sh` shared-session refactor                  | --         |  [x]   |
+|   6   | `\\?\ObjectManager\FrameStats` Ob pseudo-file | --         |  [x]   |
+|   7   | QEMU HMP monitor UNIX-socket hardening (Linux shared hosts) | --         |  [x]   |
+|   8   | `scripts/test-visual-regression.sh` shared-session refactor | --         |  [x]   |
 
 ## 1. Post-Desktop-Init Test Harness
 

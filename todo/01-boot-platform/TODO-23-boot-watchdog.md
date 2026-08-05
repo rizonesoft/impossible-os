@@ -42,15 +42,15 @@ title: "TODO-23 -- Boot Watchdog & Hang Detection"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                                             | Depends On                                | Status |
-| --- | :---: | ------------------------------------------------------- | ----------------------------------------- | :----: |
-| 💎   |   1   | Software watchdog via LAPIC NMI timer                   | D01 T10 §2 (nested-NMI), T09 §10 (AP IST) |  [/]   |
-| 💎   |   2   | Per-phase timeout configuration                         | §1                                        |  [/]   |
-| 💎   |   3   | Watchdog pet at each boot_progress() call               | §1, §2                                    |  [/]   |
-| 💎   |   4   | Watchdog-triggered reboot with diagnostics              | §3, T21 §4                                |  [/]   |
-| 💎   |   5   | ACPI WDAT hardware watchdog (WDAT-first; iTCO deferred) | --                                        |  [x]   |
-| ⭐   |   6   | Watchdog status in VPD display                          | §1-§5                                     |  [/]   |
-| ⭐   |   7   | Post-ship follow-up backfill (2026-07-31 cohort)        | --                                        |  [ ]   |
+| ⭐   | Order | Deliverable                              | Depends On                               | Status |
+| --- | :---: | ---------------------------------------- | ---------------------------------------- | :----: |
+| 💎   |   1   | Software watchdog via LAPIC NMI timer    | D01 T10 §2 (nested-NMI), T09 §10 (AP IST) |  [/]   |
+| 💎   |   2   | Per-phase timeout configuration          | §1                                       |  [/]   |
+| 💎   |   3   | Watchdog pet at each boot_progress() call | §1, §2                                   |  [/]   |
+| 💎   |   4   | Watchdog-triggered reboot with diagnostics | §3, T21 §4                               |  [/]   |
+| 💎   |   5   | ACPI WDAT hardware watchdog (WDAT-first; iTCO deferred) | --                                       |  [x]   |
+| ⭐   |   6   | Watchdog status in VPD display           | §1-§5                                    |  [/]   |
+| ⭐   |   7   | Post-ship follow-up backfill (2026-07-31 cohort) | --                                       |  [ ]   |
 
 > 💎 = parity -- Windows boot watchdog and Linux systemd watchdog both detect hung boots.
 > ⭐ = exclusive -- watchdog countdown visible in VPD during boot.

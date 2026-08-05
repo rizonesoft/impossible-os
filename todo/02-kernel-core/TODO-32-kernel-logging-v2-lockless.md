@@ -49,17 +49,17 @@ title: "TODO-32 -- Kernel Logging v2: Lockless, Priority-Lanes, Fail-Proof"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                                                      | Depends On         | Status |
-| --- | ----- | ---------------------------------------------------------------- | ------------------ | ------ |
-| ⭐   | 1     | Per-CPU SPSC ring buffer + atomic primitives                     | T31 §1             | [ ]    |
-| ⭐   | 2     | Lockless `klog_v2()` enqueue + format helpers                    | §1                 | [ ]    |
-| ⭐   | 3     | Priority lanes + per-level sub-budgets                           | §1, §2             | [ ]    |
-| ⭐   | 4     | Fail-proof FATAL emergency path (bypasses ring on overflow)      | §3                 | [ ]    |
-| 💎   | 5     | Configurable per-subsystem rate limits + TEST exemption          | §3                 | [ ]    |
-| ⭐   | 6     | Background drain worker (per-CPU read, serial batch write)       | §1, §2, T07 §4     | [ ]    |
-| 💎   | 7     | Backpressure-aware serial drain + pressure counters              | §6                 | [ ]    |
-| ⭐   | 8     | Native structured field wire format + ETW + JSON Lines feed      | §2, T04 §6, T04 §7 | [ ]    |
-| ⭐   | 9     | Boot-survival ring snapshot + recovery                           | §1, T27 §2         | [ ]    |
+| ⭐   | Order | Deliverable                              | Depends On         | Status |
+| --- | ----- | ---------------------------------------- | ------------------ | ------ |
+| ⭐   | 1     | Per-CPU SPSC ring buffer + atomic primitives | T31 §1             | [ ]    |
+| ⭐   | 2     | Lockless `klog_v2()` enqueue + format helpers | §1                 | [ ]    |
+| ⭐   | 3     | Priority lanes + per-level sub-budgets   | §1, §2             | [ ]    |
+| ⭐   | 4     | Fail-proof FATAL emergency path (bypasses ring on overflow) | §3                 | [ ]    |
+| 💎   | 5     | Configurable per-subsystem rate limits + TEST exemption | §3                 | [ ]    |
+| ⭐   | 6     | Background drain worker (per-CPU read, serial batch write) | §1, §2, T07 §4     | [ ]    |
+| 💎   | 7     | Backpressure-aware serial drain + pressure counters | §6                 | [ ]    |
+| ⭐   | 8     | Native structured field wire format + ETW + JSON Lines feed | §2, T04 §6, T04 §7 | [ ]    |
+| ⭐   | 9     | Boot-survival ring snapshot + recovery   | §1, T27 §2         | [ ]    |
 | 💎   | 10    | v1 -> v2 migration switch (`KLOG_V2=1`) + benchmarks + retire v1 | §2..§9, T04        | [ ]    |
 
 > ⭐ = exclusive: no other production OS combines lockless per-CPU + fail-proof + structured + plain-text + HMAC-chained.

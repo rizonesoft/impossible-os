@@ -38,11 +38,11 @@ title: "TODO-02 -- Event Viewer (Log Viewer)"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                                    | Depends On | Status |
-| --- | :---: | ---------------------------------------------- | ---------- | :----: |
+| ⭐   | Order | Deliverable                              | Depends On | Status |
+| --- | :---: | ---------------------------------------- | ---------- | :----: |
 | 💎   |   1   | Console-mode log viewer (text table to stdout) | --         |  [ ]   |
-| ⭐   |   2   | GUI Event Viewer with filterable table         | §1         |  [ ]   |
-| ⭐   |   3   | Live tail mode and auto-refresh                | §2         |  [ ]   |
+| ⭐   |   2   | GUI Event Viewer with filterable table   | §1         |  [ ]   |
+| ⭐   |   3   | Live tail mode and auto-refresh          | §2         |  [ ]   |
 
 > 💎 = parity -- Windows ships Event Viewer; Linux has journalctl.
 > ⭐ = exclusive -- colour-coded JSONL viewer integrated into the OS.

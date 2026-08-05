@@ -50,13 +50,13 @@ title: "TODO-16 -- NVMe Storage Driver (Boot-Critical)"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                                           | Depends On     | Status |
-| --- | :---: | ----------------------------------------------------- | -------------- | :----: |
-| 💎   |   1   | NVMe controller discovery and BAR mapping             | --             |  [x]   |
-| 💎   |   2   | Admin Queue setup and Identify commands               | §1             |  [x]   |
-| 💎   |   3   | I/O Queue creation and sector read/write              | §2             |  [x]   |
-| 💎   |   4   | Block device registration and VFS integration         | §3             |  [x]   |
-| ⭐   |   5   | Advanced NVMe parity backlog (owned by D04 T08)       | §1, §2, §3, §4 |  [/]   |
+| ⭐   | Order | Deliverable                              | Depends On     | Status |
+| --- | :---: | ---------------------------------------- | -------------- | :----: |
+| 💎   |   1   | NVMe controller discovery and BAR mapping | --             |  [x]   |
+| 💎   |   2   | Admin Queue setup and Identify commands  | §1             |  [x]   |
+| 💎   |   3   | I/O Queue creation and sector read/write | §2             |  [x]   |
+| 💎   |   4   | Block device registration and VFS integration | §3             |  [x]   |
+| ⭐   |   5   | Advanced NVMe parity backlog (owned by D04 T08) | §1, §2, §3, §4 |  [/]   |
 | 💎   |   6   | Controller lifecycle: shutdown, flush, I/O validation | §2, §3, §4     |  [x]   |
 
 ---

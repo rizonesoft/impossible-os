@@ -66,15 +66,15 @@ Calendar opens from the taskbar clock flyout, persists events in Registry, suppo
 
 ## Implementation Order
 
-| Step | Section                                      | 💎/⭐ | Dependency                                                      |
-| ---- | -------------------------------------------- | --- | --------------------------------------------------------------- |
-| 1    | Calendar App (Recurring Events + ICS Export) | 💎   | `09-desktop-shell/TODO-12 §7` base calendar complete            |
-| 2    | Sticky Notes                                 | 💎   | `wm_create_window(WM_FLAG_ALWAYS_ON_TOP)`, Registry persist     |
-| 3    | System Information (`sysinfo.exe`)           | 💎   | `cpuid_get`, `smbios_get_system_info`, `pmm_*`, `blkdev_count`  |
-| 4    | On-Screen Keyboard                           | 💎   | `keyboard_inject_scancode`, `WM_FLAG_NO_FOCUS`, `hotkey_table`  |
-| 5    | Color Picker                                 | ⭐   | `fb_get_backbuffer`, `hotkey_table`, `clipboard_set(CLIP_TEXT)` |
-| 6    | Font Manager (OS/2 + Unicode Coverage)       | 💎   | `09-desktop-shell/TODO-02 §8` base fontmgr complete             |
-| 7    | Shared Help / About Dialog                   | 💎   | `wm_create_window`, icon rendering                              |
+| Step | Section                                  | 💎/⭐ | Dependency                               |
+| ---- | ---------------------------------------- | --- | ---------------------------------------- |
+| 1    | Calendar App (Recurring Events + ICS Export) | 💎   | `09-desktop-shell/TODO-12 §7` base calendar complete |
+| 2    | Sticky Notes                             | 💎   | `wm_create_window(WM_FLAG_ALWAYS_ON_TOP)`, Registry persist |
+| 3    | System Information (`sysinfo.exe`)       | 💎   | `cpuid_get`, `smbios_get_system_info`, `pmm_*`, `blkdev_count` |
+| 4    | On-Screen Keyboard                       | 💎   | `keyboard_inject_scancode`, `WM_FLAG_NO_FOCUS`, `hotkey_table` |
+| 5    | Color Picker                             | ⭐   | `fb_get_backbuffer`, `hotkey_table`, `clipboard_set(CLIP_TEXT)` |
+| 6    | Font Manager (OS/2 + Unicode Coverage)   | 💎   | `09-desktop-shell/TODO-02 §8` base fontmgr complete |
+| 7    | Shared Help / About Dialog               | 💎   | `wm_create_window`, icon rendering       |
 
 ---
 
@@ -239,15 +239,15 @@ Calendar opens from the taskbar clock flyout, persists events in Registry, suppo
 ## OS Comparison
 
 
-| ⭐   | Feature                                           | 🪟 Win11                                       | 🐧 Linux                            | 🚀 Impossible OS                                                  |
-| --- | ------------------------------------------------- | --------------------------------------------- | ---------------------------------- | ---------------------------------------------------------------- |
-| 💎   | Calendar with recurring events + ICS export       | ✅ Outlook/Calendar (RRULE, ICS import/export) | ✅ GNOME Calendar / KOrganizer      | ⬜ §1 -- daily/weekly/monthly/yearly RRULE, RFC 5545 ICS          |
-| 💎   | Sticky Notes with always-on-top restore           | ✅ Sticky Notes (syncs OneDrive)               | ✅ KNotes / GNOME Notes             | ⬜ §2 -- colored WM_FLAG_ALWAYS_ON_TOP windows, Registry persist, |
-| 💎   | System Information read-only summary table        | ✅ `msinfo32.exe` (full detail)                | ✅ `inxi` / GNOME System Info       | ⬜ §3 -- `sysinfo_gather()` shared with `sysdm.cpl`; Copy         |
-| 💎   | On-Screen Keyboard injecting hardware scancodes   | ✅ `osk.exe` (Win+Ctrl+O)                      | ✅ Onboard / GNOME OSK              | ⬜ §4 -- `keyboard_inject_scancode`, WM_FLAG_NO_FOCUS, Win+Ctrl+O |
-| ⭐   | System-wide color picker with loupe + RGB/HSL/HEX | ✅ PowerToys Color Picker (not inbox)          | ✅ gpick / KColorChooser            | ⬜ §5 -- inbox Win+Shift+C, 9×9 loupe, 10-color                   |
-| ⭐   | Font Manager with OS/2 Unicode coverage tag pills | ✅ Font Settings (basic list)                  | ✅ Font Manager / GNOME Fonts       | ⬜ §6 -- OS/2 table `ulUnicodeRange1–4` block-name display,       |
-| 💎   | Shared Help→About dialog across all apps          | ✅ Each app has own About                      | ✅ gtk_about_dialog() shared widget | ⬜ §7 -- `ui_dialog_about()` single impl called by                |
+| ⭐   | Feature                                  | 🪟 Win11                                  | 🐧 Linux                            | 🚀 Impossible OS                          |
+| --- | ---------------------------------------- | ---------------------------------------- | ---------------------------------- | ---------------------------------------- |
+| 💎   | Calendar with recurring events + ICS export | ✅ Outlook/Calendar (RRULE, ICS import/export) | ✅ GNOME Calendar / KOrganizer      | ⬜ §1 -- daily/weekly/monthly/yearly RRULE, RFC 5545 ICS |
+| 💎   | Sticky Notes with always-on-top restore  | ✅ Sticky Notes (syncs OneDrive)          | ✅ KNotes / GNOME Notes             | ⬜ §2 -- colored WM_FLAG_ALWAYS_ON_TOP windows, Registry persist, |
+| 💎   | System Information read-only summary table | ✅ `msinfo32.exe` (full detail)           | ✅ `inxi` / GNOME System Info       | ⬜ §3 -- `sysinfo_gather()` shared with `sysdm.cpl`; Copy |
+| 💎   | On-Screen Keyboard injecting hardware scancodes | ✅ `osk.exe` (Win+Ctrl+O)                 | ✅ Onboard / GNOME OSK              | ⬜ §4 -- `keyboard_inject_scancode`, WM_FLAG_NO_FOCUS, Win+Ctrl+O |
+| ⭐   | System-wide color picker with loupe + RGB/HSL/HEX | ✅ PowerToys Color Picker (not inbox)     | ✅ gpick / KColorChooser            | ⬜ §5 -- inbox Win+Shift+C, 9×9 loupe, 10-color |
+| ⭐   | Font Manager with OS/2 Unicode coverage tag pills | ✅ Font Settings (basic list)             | ✅ Font Manager / GNOME Fonts       | ⬜ §6 -- OS/2 table `ulUnicodeRange1–4` block-name display, |
+| 💎   | Shared Help→About dialog across all apps | ✅ Each app has own About                 | ✅ gtk_about_dialog() shared widget | ⬜ §7 -- `ui_dialog_about()` single impl called by |
 
 Impossible OS ships the Color Picker as an **inbox OS feature** (Win+Shift+C hotkey baked into
 the global hotkey table) -- unlike Windows where it requires PowerToys installation. The loupe

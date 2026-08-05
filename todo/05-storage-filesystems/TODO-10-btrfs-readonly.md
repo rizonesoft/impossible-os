@@ -228,18 +228,18 @@ Register Btrfs with `vfs_probe()`. Mount unconditionally read-only. Show subvolu
 ## OS Comparison
 
 
-| ⭐   | Feature                                              | 🪟 Win11             | 🐧 Linux                                                            | 🚀 Impossible OS                                          |
-| --- | ---------------------------------------------------- | ------------------- | ------------------------------------------------------------------ | -------------------------------------------------------- |
-| ⭐   | Btrfs superblock + CRC32C verify + backup superblock | ❌ No native support | ✅ `btrfs.ko`; CRC32C hardware-accelerated; 3 backup                | ⬜ §1 -- hardware CRC32C via SSE4.2; 3-level              |
-| ⭐   | B-tree node format + per-node CRC verify             | ❌ No native support | ✅ `btrfs.ko`; per-node CRC verified on                             | ⬜ §2 -- `btrfs_key_compare`, binary search, per-node CRC |
-| ⭐   | Chunk tree logical→physical + RAID1 stripe fallback  | ❌ No native support | ✅ `btrfs.ko`; all RAID levels; multi-device                        | ⬜ §3 -- SINGLE + RAID1; sys_chunk_array bootstrap        |
-| ⭐   | Generic tree search + walk with node cache           | ❌ No native support | ✅ `btrfs.ko`; `btrfs_search_slot()` + `btrfs_next_leaf()`          | ⬜ §4 -- path context, 16-entry node LRU                  |
-| ⭐   | Root tree + subvolume enumeration                    | ❌ No native support | ✅ `btrfs.ko`; subvol list via `btrfs                               | ⬜ §5 -- ROOT_ITEM walk; `/.btrfs/` virtual dir           |
-| ⭐   | Inode reader                                         | ❌ No native support | ✅ `btrfs.ko`; full inode decode; nanosecond                        | ⬜ §6 -- 160-byte inode item; `otime` decoded             |
-| ⭐   | Extent data                                          | ❌ No native support | ✅ `btrfs.ko`; all compression codecs; `ValidDataLength`-equivalent | ⬜ §7 -- self-contained zlib inflate + LZO1X              |
-| ⭐   | Directory reader                                     | ❌ No native support | ✅ `btrfs.ko`; `btrfs_lookup_dir_item()` + `btrfs_readdir()`        | ⬜ §8 -- CRC32C name hash, chain scan,                    |
-| ⭐   | Symlinks + xattrs                                    | ❌ No native support | ✅ `btrfs.ko`; xattr namespace support; inline                      | ⬜ §9 -- inline EXTENT_DATA symlink; XATTR_ITEM hash      |
-| ⭐   | Read-only VFS mount                                  | ❌ No native support | ❌ Linux Btrfs is always R/W                                        | ⬜ §10 -- `VFS_READONLY` flag; all 6 write                |
+| ⭐   | Feature                                  | 🪟 Win11             | 🐧 Linux                                  | 🚀 Impossible OS                          |
+| --- | ---------------------------------------- | ------------------- | ---------------------------------------- | ---------------------------------------- |
+| ⭐   | Btrfs superblock + CRC32C verify + backup superblock | ❌ No native support | ✅ `btrfs.ko`; CRC32C hardware-accelerated; 3 backup | ⬜ §1 -- hardware CRC32C via SSE4.2; 3-level |
+| ⭐   | B-tree node format + per-node CRC verify | ❌ No native support | ✅ `btrfs.ko`; per-node CRC verified on   | ⬜ §2 -- `btrfs_key_compare`, binary search, per-node CRC |
+| ⭐   | Chunk tree logical→physical + RAID1 stripe fallback | ❌ No native support | ✅ `btrfs.ko`; all RAID levels; multi-device | ⬜ §3 -- SINGLE + RAID1; sys_chunk_array bootstrap |
+| ⭐   | Generic tree search + walk with node cache | ❌ No native support | ✅ `btrfs.ko`; `btrfs_search_slot()` + `btrfs_next_leaf()` | ⬜ §4 -- path context, 16-entry node LRU  |
+| ⭐   | Root tree + subvolume enumeration        | ❌ No native support | ✅ `btrfs.ko`; subvol list via `btrfs     | ⬜ §5 -- ROOT_ITEM walk; `/.btrfs/` virtual dir |
+| ⭐   | Inode reader                             | ❌ No native support | ✅ `btrfs.ko`; full inode decode; nanosecond | ⬜ §6 -- 160-byte inode item; `otime` decoded |
+| ⭐   | Extent data                              | ❌ No native support | ✅ `btrfs.ko`; all compression codecs; `ValidDataLength`-equivalent | ⬜ §7 -- self-contained zlib inflate + LZO1X |
+| ⭐   | Directory reader                         | ❌ No native support | ✅ `btrfs.ko`; `btrfs_lookup_dir_item()` + `btrfs_readdir()` | ⬜ §8 -- CRC32C name hash, chain scan,    |
+| ⭐   | Symlinks + xattrs                        | ❌ No native support | ✅ `btrfs.ko`; xattr namespace support; inline | ⬜ §9 -- inline EXTENT_DATA symlink; XATTR_ITEM hash |
+| ⭐   | Read-only VFS mount                      | ❌ No native support | ❌ Linux Btrfs is always R/W              | ⬜ §10 -- `VFS_READONLY` flag; all 6 write |
 
 > **After §1–§10:** Impossible OS joins Linux as one of only two mainstream OS kernels capable of reading Btrfs volumes -- surpassing Windows 11, macOS, FreeBSD, and every other non-Linux OS. The unconditional read-only mount with clean write-protection errors (rather than silently corrupting the volume by attempting a write) is safer than a naive partial-write implementation. The self-contained zlib, LZO, and Zstd decompressors mean no external library dependencies in kernel space.
 

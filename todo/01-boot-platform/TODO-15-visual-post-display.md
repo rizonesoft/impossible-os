@@ -55,21 +55,21 @@ title: "TODO-15 -- Visual POST Display (VPD)"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                                            | Depends On | Status |
-| --- | :---: | ------------------------------------------------------ | ---------- | :----: |
-| 💎   |   1   | 4-digit POST code system (0x0000-0xFFFF)               | --         |  [/]   |
-| ⭐   |   2   | POST codes in UEFI bootloader + every kernel function  | §1         |  [/]   |
-| ⭐   |   3   | Embedded 5x7 bitmap micro-font                         | --         |  [/]   |
-| 💎   |   4   | Tier 1: Pre-splash VPD renderer                        | §1, §3     |  [/]   |
-| 💎   |   5   | `boot.conf` `postbars` configuration                   | §4         |  [x]   |
-| 💎   |   6   | Named stages with TSC timing                           | §4         |  [x]   |
-| 💎   |   7   | Status indicators and progress bar                     | §6         |  [x]   |
+| ⭐   | Order | Deliverable                              | Depends On | Status |
+| --- | :---: | ---------------------------------------- | ---------- | :----: |
+| 💎   |   1   | 4-digit POST code system (0x0000-0xFFFF) | --         |  [/]   |
+| ⭐   |   2   | POST codes in UEFI bootloader + every kernel function | §1         |  [/]   |
+| ⭐   |   3   | Embedded 5x7 bitmap micro-font           | --         |  [/]   |
+| 💎   |   4   | Tier 1: Pre-splash VPD renderer          | §1, §3     |  [/]   |
+| 💎   |   5   | `boot.conf` `postbars` configuration     | §4         |  [x]   |
+| 💎   |   6   | Named stages with TSC timing             | §4         |  [x]   |
+| 💎   |   7   | Status indicators and progress bar       | §6         |  [x]   |
 | ⭐   |   8   | NVRAM crash persistence and "last boot failed" display | §6         |  [/]   |
-| 💎   |   9   | Tier 2: Splash-integrated progress                     | §6, §7     |  [/]   |
-| 💎   |  10   | Seamless tier transition                               | §4, §9     |  [/]   |
-| ⭐   |  11   | Phase grouping and diagnostic layout                   | §7         |  [x]   |
-| 💎   |  12   | HV_BAR removal and migration                           | §4, §6     |  [x]   |
-| ⭐   |  13   | Panic integration and failure highlighting             | §8, §11    |  [/]   |
+| 💎   |   9   | Tier 2: Splash-integrated progress       | §6, §7     |  [/]   |
+| 💎   |  10   | Seamless tier transition                 | §4, §9     |  [/]   |
+| ⭐   |  11   | Phase grouping and diagnostic layout     | §7         |  [x]   |
+| 💎   |  12   | HV_BAR removal and migration             | §4, §6     |  [x]   |
+| ⭐   |  13   | Panic integration and failure highlighting | §8, §11    |  [/]   |
 
 > 💎 = parity -- Windows has boot progress display (logo + dots); Linux has `plymouth` splash and `systemd-analyze blame`.
 > ⭐ = exclusive -- embedded micro-font pre-splash diagnostics, NVRAM crash persistence display, and full timing waterfall are not available in Windows or Linux at the kernel level without external tools.

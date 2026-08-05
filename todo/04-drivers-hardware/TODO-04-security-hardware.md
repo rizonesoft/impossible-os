@@ -37,16 +37,16 @@ title: "TODO-04 -- Security Hardware & DMA Safety"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                                                            | Depends On                                                          | Status |
-| --- | :---: | ---------------------------------------------------------------------- | ------------------------------------------------------------------- | :----: |
-| 💎   |   1   | §1 SMEP + SMAP `CR4` enable on BSP + all APs                           | `cpuid.c` detection (exists)                                        |  [ ]   |
-| 💎   |   2   | §2 Hardware RNG -- `RDRAND`/`RDSEED`, ChaCha20 CSPRNG fallback         | §1 (CR4 bits safe before entropy use)                               |  [ ]   |
-| 💎   |   3   | §3 DMA bounce buffer manager -- PMM low zone, `dma_alloc/map/unmap`    | PMM (existing)                                                      |  [ ]   |
+| ⭐   | Order | Deliverable                              | Depends On                               | Status |
+| --- | :---: | ---------------------------------------- | ---------------------------------------- | :----: |
+| 💎   |   1   | §1 SMEP + SMAP `CR4` enable on BSP + all APs | `cpuid.c` detection (exists)             |  [ ]   |
+| 💎   |   2   | §2 Hardware RNG -- `RDRAND`/`RDSEED`, ChaCha20 CSPRNG fallback | §1 (CR4 bits safe before entropy use)    |  [ ]   |
+| 💎   |   3   | §3 DMA bounce buffer manager -- PMM low zone, `dma_alloc/map/unmap` | PMM (existing)                           |  [ ]   |
 | 💎   |   4   | §4 IOMMU / VT-d + AMD-Vi -- DMAR/IVRS parse, page tables, default-deny | §3 (bounce bufs needed before IOMMU default-deny), ACPICA (TODO-03) |  [ ]   |
-| 💎   |   5   | §5 Secure Boot UEFI variable read → Registry                           | boot UEFI runtime services (existing)                               |  [ ]   |
-| 💎   |   6   | §6 TPM 2.0 command driver -- extend `tpm.c`, STARTUP/PCR/GetRandom     | §2 (entropy seeding from TPM)                                       |  [ ]   |
-| ⭐   |   7   | §7 Boot-time kernel integrity check -- SHA-256 + TPM PCR_Extend        | §6 (TPM command driver)                                             |  [ ]   |
-| ⭐   |   8   | §8 Intel CET shadow stacks -- `CR4.CET`, `MSR_IA32_U_CET`, syscall SSP | §4 (CR4 baseline set), §6 (entropy for canary)                      |  [ ]   |
+| 💎   |   5   | §5 Secure Boot UEFI variable read → Registry | boot UEFI runtime services (existing)    |  [ ]   |
+| 💎   |   6   | §6 TPM 2.0 command driver -- extend `tpm.c`, STARTUP/PCR/GetRandom | §2 (entropy seeding from TPM)            |  [ ]   |
+| ⭐   |   7   | §7 Boot-time kernel integrity check -- SHA-256 + TPM PCR_Extend | §6 (TPM command driver)                  |  [ ]   |
+| ⭐   |   8   | §8 Intel CET shadow stacks -- `CR4.CET`, `MSR_IA32_U_CET`, syscall SSP | §4 (CR4 baseline set), §6 (entropy for canary) |  [ ]   |
 
 > §7 kernel integrity check and §8 CET are `⭐` exclusive: Windows 11 requires VBS + HVCI for kernel integrity; Linux requires CONFIG_CFI_CLANG or CONFIG_SHADOW_CALL_STACK. Impossible OS implements both as first-class features in the base kernel -- no hypervisor required for integrity measurement, no compiler plugin required for CET.
 
@@ -202,16 +202,16 @@ Enable Intel Control-flow Enforcement Technology for user mode. Set `CR4.CET` an
 ## OS Comparison
 
 
-| ⭐   | Feature                                                   | 🪟 Win11                                                    | 🐧 Linux                                                       | 🚀 Impossible OS                                                              |
-| --- | --------------------------------------------------------- | ---------------------------------------------------------- | ------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| 💎   | Hardware RNG (`RDRAND`/`RDSEED`) + CSPRNG fallback        | ✅ `BCryptGenRandom`; CNG uses RDRAND; SP800-90A            | ✅ `arch_get_random_{long,seed}`; ChaCha20 DRNG in kernel      | ⬜ §2 -- `hwrng_read()`, 10× retry, ChaCha20 fallback,                        |
-| 💎   | IOMMU/VT-d DMA isolation -- default-deny policy           | ✅ VBS + IOMMU; Kernel DMA                                  | ✅ `intel_iommu=on`; 4-level page tables; default-deny         | ⬜ §4 -- DMAR/IVRS parse, 4-level IOMMU PT,                                   |
-| 💎   | DMA bounce buffer for 32-bit legacy DMA devices           | ✅ `DmaAdapter.AllocateCommonBuffer`; 32-bit DMA zone       | ✅ `dma_alloc_coherent` low-zone; bounce buffers via           | ⬜ §3 -- 16 MiB PMM low-zone pool,                                            |
-| 💎   | TPM 2.0 command driver                                    | ✅ `tpm.sys`; TBS service; `BCryptCreateHash(TPM_*)`        | ✅ `tpm_crb.c` / `tpm_tis.c`; `tpm2_pcr_extend`; `/dev/tpm0`   | ⚠️ §6 -- Partial -- event log parser                                         |
-| 💎   | Secure Boot state exposed to OS                           | ✅ `HKLM\SYSTEM\CurrentControlSet\Control\SecureBoot\State` | ✅ `/sys/firmware/efi/vars/SecureBoot-*`; `mokutil --sb-state` | ⬜ §5 -- `EFI_RUNTIME_SERVICES.GetVariable`, `HKLM\SYSTEM\SecureBoot\Enabled` |
-| ⭐   | Intel CET shadow stacks                                   | ✅ CET enabled on Win11 x64                                 | ✅ `CONFIG_X86_SHADOW_STACK`; user-mode CET in 6.6+;           | ⬜ §8 -- `CR4.CET`, `IA32_U_CET`, per-task SS, `INCSSPQ`/`RSTORSSP`           |
-| 💎   | SMEP + SMAP on all CPUs                                   | ✅ Enabled by Windows HAL on                                | ✅ `native_write_cr4`; enabled on all CPUs                     | ⬜ §1 -- `CR4` bit 20+21 on BSP                                               |
-| ⭐   | Kernel integrity via TPM PCR extend + baseline comparison | ✅ VBS/HVCI + Measured Boot; PCR                            | ✅ IMA (`ima_measure_file`); PCR[10] extend; `ima-policy`      | ⬜ §7 -- SHA-256 `.text`/`.rodata`, PCR[10] extend, UEFI                      |
+| ⭐   | Feature                                  | 🪟 Win11                                  | 🐧 Linux                                  | 🚀 Impossible OS                          |
+| --- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
+| 💎   | Hardware RNG (`RDRAND`/`RDSEED`) + CSPRNG fallback | ✅ `BCryptGenRandom`; CNG uses RDRAND; SP800-90A | ✅ `arch_get_random_{long,seed}`; ChaCha20 DRNG in kernel | ⬜ §2 -- `hwrng_read()`, 10× retry, ChaCha20 fallback, |
+| 💎   | IOMMU/VT-d DMA isolation -- default-deny policy | ✅ VBS + IOMMU; Kernel DMA                | ✅ `intel_iommu=on`; 4-level page tables; default-deny | ⬜ §4 -- DMAR/IVRS parse, 4-level IOMMU PT, |
+| 💎   | DMA bounce buffer for 32-bit legacy DMA devices | ✅ `DmaAdapter.AllocateCommonBuffer`; 32-bit DMA zone | ✅ `dma_alloc_coherent` low-zone; bounce buffers via | ⬜ §3 -- 16 MiB PMM low-zone pool,        |
+| 💎   | TPM 2.0 command driver                   | ✅ `tpm.sys`; TBS service; `BCryptCreateHash(TPM_*)` | ✅ `tpm_crb.c` / `tpm_tis.c`; `tpm2_pcr_extend`; `/dev/tpm0` | ⚠️ §6 -- Partial -- event log parser     |
+| 💎   | Secure Boot state exposed to OS          | ✅ `HKLM\SYSTEM\CurrentControlSet\Control\SecureBoot\State` | ✅ `/sys/firmware/efi/vars/SecureBoot-*`; `mokutil --sb-state` | ⬜ §5 -- `EFI_RUNTIME_SERVICES.GetVariable`, `HKLM\SYSTEM\SecureBoot\Enabled` |
+| ⭐   | Intel CET shadow stacks                  | ✅ CET enabled on Win11 x64               | ✅ `CONFIG_X86_SHADOW_STACK`; user-mode CET in 6.6+; | ⬜ §8 -- `CR4.CET`, `IA32_U_CET`, per-task SS, `INCSSPQ`/`RSTORSSP` |
+| 💎   | SMEP + SMAP on all CPUs                  | ✅ Enabled by Windows HAL on              | ✅ `native_write_cr4`; enabled on all CPUs | ⬜ §1 -- `CR4` bit 20+21 on BSP           |
+| ⭐   | Kernel integrity via TPM PCR extend + baseline comparison | ✅ VBS/HVCI + Measured Boot; PCR          | ✅ IMA (`ima_measure_file`); PCR[10] extend; `ima-policy` | ⬜ §7 -- SHA-256 `.text`/`.rodata`, PCR[10] extend, UEFI |
 
 > **After §1–8:** Impossible OS matches or exceeds Windows 11 and Linux on all hardware security primitives. Two features stand out as `⭐` exclusive: **CET** (§8) works without VBS -- Windows requires Virtualization Based Security for kernel-mode CET, Impossible OS enables it natively in the base kernel; **kernel integrity** (§7) extends TPM PCR[10] directly from the kernel without a hypervisor measurement layer, matching Linux IMA but integrating the baseline comparison into the boot flow with a UEFI variable golden record rather than a separate `ima-policy` daemon.
 

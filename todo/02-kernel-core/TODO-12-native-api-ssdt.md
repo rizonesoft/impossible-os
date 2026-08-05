@@ -61,40 +61,40 @@ title: "TODO-12 -- Native API Layer (Nt/Zw)"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                                                    | Depends On         | Status |
-| --- | :---: | -------------------------------------------------------------- | ------------------ | :----: |
-| 💎   |   1   | NTSTATUS type and canonical status codes                       | --                 |  [x]   |
-| 💎   |   2   | SYSCALL/SYSRET fast path (IA32_LSTAR)                          | TODO-11 §5–§8      |  [x]   |
-| 💎   |   3   | INT 0x2E compatibility path                                    | §2                 |  [/]   |
-| 💎   |   4   | System Service Descriptor Table (SSDT) -- 475 entries          | §1                 |  [/]   |
-| 💎   |   5   | Nt/Zw naming and existing syscall migration                    | §1, §4             |  [x]   |
+| ⭐   | Order | Deliverable                              | Depends On         | Status |
+| --- | :---: | ---------------------------------------- | ------------------ | :----: |
+| 💎   |   1   | NTSTATUS type and canonical status codes | --                 |  [x]   |
+| 💎   |   2   | SYSCALL/SYSRET fast path (IA32_LSTAR)    | TODO-11 §5–§8      |  [x]   |
+| 💎   |   3   | INT 0x2E compatibility path              | §2                 |  [/]   |
+| 💎   |   4   | System Service Descriptor Table (SSDT) -- 475 entries | §1                 |  [/]   |
+| 💎   |   5   | Nt/Zw naming and existing syscall migration | §1, §4             |  [x]   |
 | 💎   |   6   | NtCreateFile / NtOpenFile / NtClose / NtReadFile / NtWriteFile | §5, TODO-05 §2     |  [/]   |
-| 💎   |   7   | NtCreateProcess / NtCreateThread / process-thread lifecycle    | §5, TODO-05 §2     |  [/]   |
-| 💎   |   8   | Sync objects + NtWaitForMultipleObjects                        | §5, TODO-05 §6     |  [x]   |
-| 💎   |   9   | Virtual memory (alloc, free, protect, lock)                    | §5                 |  [/]   |
-| 💎   |  10   | NtQuerySystemInformation / NtQueryInformationProcess           | §5                 |  [/]   |
-| ⭐   |  11   | Extended error information (IOSB + TEB LastError)              | §5, TODO-11 §1     |  [x]   |
-| ⭐   |  12   | ZwXxx kernel-mode alias layer with privilege assertion         | §4, §5             |  [x]   |
-| 💎   |  13   | File metadata and device control                               | §6                 |  [x]   |
-| 💎   |  14   | Registry syscalls (core CRUD)                                  | §5, TODO-14 §5     |  [/]   |
-| 💎   |  15   | Registry syscalls (advanced: flush/notify/save/hive)           | §14, TODO-14 §5    |  [/]   |
-| 💎   |  16   | Token open/query/adjust syscalls                               | §5, TODO-15 §7     |  [/]   |
-| 💎   |  17   | Directory and symbolic link object syscalls                    | §5, TODO-05 §3     |  [/]   |
-| 💎   |  18   | Section and memory-mapped file syscalls                        | §5, TODO-05 §7     |  [/]   |
-| 💎   |  19   | Timer control syscalls                                         | §5, TODO-08 §8,§9  |  [/]   |
-| 💎   |  20   | Legacy LPC port syscalls (stubs; engine TODO-09 §7)            | §5, TODO-09 §7     |  [/]   |
-| 💎   |  21   | Exception and debug syscalls                                   | §5, TODO-23 §5     |  [/]   |
-| 💎   |  22   | Power and system control                                       | §5, TODO-26 §20    |  [/]   |
-| 💎   |  23   | Atom, locale, and miscellaneous                                | §5                 |  [x]   |
-| ⭐   |  24   | Syscall audit and tracing hook                                 | §4                 |  [/]   |
-| 💎   |  25   | Per-process syscall filtering (seccomp / SystemCallDisable)    | §4, §7             |  [x]   |
-| 💎   |  26   | Kernel-to-user mode callback dispatch (KeUserModeCallback)     | §2, TODO-11 §9     |  [/]   |
-| ⭐   |  27   | SSDT integrity protection (hardware write-protect)             | §4                 |  [/]   |
-| 💎   |  28   | Extended directory enumeration classes                         | §6, §13            |  [x]   |
-| 💎   |  29   | Token lifecycle + SRM access check syscalls                    | §16, TODO-15 §7,§8 |  [/]   |
-| 💎   |  30   | Generic object management (make-temp/perm, set-info, compare)  | §17, TODO-05 §1,§9 |  [/]   |
-| 💎   |  31   | Modern ALPC port syscalls                                      | §20, TODO-24 §8-§9 |  [x]   |
-| 💎   |  32   | Post-ship follow-up backfill (2026-07-31 cohort)               | --                 |  [ ]   |
+| 💎   |   7   | NtCreateProcess / NtCreateThread / process-thread lifecycle | §5, TODO-05 §2     |  [/]   |
+| 💎   |   8   | Sync objects + NtWaitForMultipleObjects  | §5, TODO-05 §6     |  [x]   |
+| 💎   |   9   | Virtual memory (alloc, free, protect, lock) | §5                 |  [/]   |
+| 💎   |  10   | NtQuerySystemInformation / NtQueryInformationProcess | §5                 |  [/]   |
+| ⭐   |  11   | Extended error information (IOSB + TEB LastError) | §5, TODO-11 §1     |  [x]   |
+| ⭐   |  12   | ZwXxx kernel-mode alias layer with privilege assertion | §4, §5             |  [x]   |
+| 💎   |  13   | File metadata and device control         | §6                 |  [x]   |
+| 💎   |  14   | Registry syscalls (core CRUD)            | §5, TODO-14 §5     |  [/]   |
+| 💎   |  15   | Registry syscalls (advanced: flush/notify/save/hive) | §14, TODO-14 §5    |  [/]   |
+| 💎   |  16   | Token open/query/adjust syscalls         | §5, TODO-15 §7     |  [/]   |
+| 💎   |  17   | Directory and symbolic link object syscalls | §5, TODO-05 §3     |  [/]   |
+| 💎   |  18   | Section and memory-mapped file syscalls  | §5, TODO-05 §7     |  [/]   |
+| 💎   |  19   | Timer control syscalls                   | §5, TODO-08 §8,§9  |  [/]   |
+| 💎   |  20   | Legacy LPC port syscalls (stubs; engine TODO-09 §7) | §5, TODO-09 §7     |  [/]   |
+| 💎   |  21   | Exception and debug syscalls             | §5, TODO-23 §5     |  [/]   |
+| 💎   |  22   | Power and system control                 | §5, TODO-26 §20    |  [/]   |
+| 💎   |  23   | Atom, locale, and miscellaneous          | §5                 |  [x]   |
+| ⭐   |  24   | Syscall audit and tracing hook           | §4                 |  [/]   |
+| 💎   |  25   | Per-process syscall filtering (seccomp / SystemCallDisable) | §4, §7             |  [x]   |
+| 💎   |  26   | Kernel-to-user mode callback dispatch (KeUserModeCallback) | §2, TODO-11 §9     |  [/]   |
+| ⭐   |  27   | SSDT integrity protection (hardware write-protect) | §4                 |  [/]   |
+| 💎   |  28   | Extended directory enumeration classes   | §6, §13            |  [x]   |
+| 💎   |  29   | Token lifecycle + SRM access check syscalls | §16, TODO-15 §7,§8 |  [/]   |
+| 💎   |  30   | Generic object management (make-temp/perm, set-info, compare) | §17, TODO-05 §1,§9 |  [/]   |
+| 💎   |  31   | Modern ALPC port syscalls                | §20, TODO-24 §8-§9 |  [x]   |
+| 💎   |  32   | Post-ship follow-up backfill (2026-07-31 cohort) | --                 |  [ ]   |
 
 > 💎 = parity -- Windows NT and Linux both have equivalents for these categories.
 > ⭐ = exclusive -- the ZwXxx privilege layer, the audit hook, SSDT integrity protection, and the IOSB/LastError unified path go beyond what Linux offers.

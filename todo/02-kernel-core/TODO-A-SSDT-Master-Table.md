@@ -239,23 +239,23 @@ title: "SSDT Master Table"
 
 **0x0100–0x011F: ALPC and LPC Ports (→ XREF TODO-24 §8-§9)**
 
-| Index  | Function                      | §   | Owner                                     | Done |
-| ------ | ----------------------------- | --- | ----------------------------------------- | ---- |
-| 0x0100 | NtCreatePort                  | §20 | T12 §20 (nt_lpc.c stub, T17 §7 retrofit)  | [/]  |
-| 0x0101 | NtCreateWaitablePort          | §20 | T12 §20 (nt_lpc.c stub, T17 §7 retrofit)  | [/]  |
-| 0x0102 | NtConnectPort                 | §20 | T12 §20 (nt_lpc.c stub, T17 §7 retrofit)  | [/]  |
-| 0x0103 | NtSecureConnectPort           | §20 | T12 §20 (nt_lpc.c stub, T17 §7 retrofit)  | [/]  |
-| 0x0104 | NtAcceptConnectPort           | §20 | T12 §20 (nt_lpc.c stub, T17 §7 retrofit)  | [/]  |
-| 0x0105 | NtCompleteConnectPort         | §20 | T12 §20 (nt_lpc.c stub, T17 §7 retrofit)  | [/]  |
-| 0x0106 | NtListenPort                  | §20 | T12 §20 (nt_lpc.c stub, T17 §7 retrofit)  | [/]  |
-| 0x0107 | NtReplyPort                   | §20 | T12 §20 (nt_lpc.c stub, T17 §7 retrofit)  | [/]  |
-| 0x0108 | NtReplyWaitReceivePort        | §20 | T12 §20 (nt_lpc.c stub, T17 §7 retrofit)  | [/]  |
-| 0x0109 | NtReplyWaitReceivePortEx      | §20 | T12 §20 (nt_lpc.c stub, T17 §7 retrofit)  | [/]  |
-| 0x010A | NtRequestPort                 | §20 | T12 §20 (nt_lpc.c stub, T17 §7 retrofit)  | [/]  |
-| 0x010B | NtRequestWaitReplyPort        | §20 | T12 §20 (nt_lpc.c stub, T17 §7 retrofit)  | [/]  |
-| 0x010C | NtImpersonateClientOfPort     | §20 | T12 §20 (nt_lpc.c stub, T17 §7 retrofit)  | [/]  |
-| 0x010D | NtReadRequestData             | §20 | T12 §20 (nt_lpc.c stub, T17 §7 retrofit)  | [/]  |
-| 0x010E | NtWriteRequestData            | §20 | T12 §20 (nt_lpc.c stub, T17 §7 retrofit)  | [/]  |
+| Index  | Function                      | §   | Owner                                    | Done |
+| ------ | ----------------------------- | --- | ---------------------------------------- | ---- |
+| 0x0100 | NtCreatePort                  | §20 | T12 §20 (nt_lpc.c stub, T17 §7 retrofit) | [/]  |
+| 0x0101 | NtCreateWaitablePort          | §20 | T12 §20 (nt_lpc.c stub, T17 §7 retrofit) | [/]  |
+| 0x0102 | NtConnectPort                 | §20 | T12 §20 (nt_lpc.c stub, T17 §7 retrofit) | [/]  |
+| 0x0103 | NtSecureConnectPort           | §20 | T12 §20 (nt_lpc.c stub, T17 §7 retrofit) | [/]  |
+| 0x0104 | NtAcceptConnectPort           | §20 | T12 §20 (nt_lpc.c stub, T17 §7 retrofit) | [/]  |
+| 0x0105 | NtCompleteConnectPort         | §20 | T12 §20 (nt_lpc.c stub, T17 §7 retrofit) | [/]  |
+| 0x0106 | NtListenPort                  | §20 | T12 §20 (nt_lpc.c stub, T17 §7 retrofit) | [/]  |
+| 0x0107 | NtReplyPort                   | §20 | T12 §20 (nt_lpc.c stub, T17 §7 retrofit) | [/]  |
+| 0x0108 | NtReplyWaitReceivePort        | §20 | T12 §20 (nt_lpc.c stub, T17 §7 retrofit) | [/]  |
+| 0x0109 | NtReplyWaitReceivePortEx      | §20 | T12 §20 (nt_lpc.c stub, T17 §7 retrofit) | [/]  |
+| 0x010A | NtRequestPort                 | §20 | T12 §20 (nt_lpc.c stub, T17 §7 retrofit) | [/]  |
+| 0x010B | NtRequestWaitReplyPort        | §20 | T12 §20 (nt_lpc.c stub, T17 §7 retrofit) | [/]  |
+| 0x010C | NtImpersonateClientOfPort     | §20 | T12 §20 (nt_lpc.c stub, T17 §7 retrofit) | [/]  |
+| 0x010D | NtReadRequestData             | §20 | T12 §20 (nt_lpc.c stub, T17 §7 retrofit) | [/]  |
+| 0x010E | NtWriteRequestData            | §20 | T12 §20 (nt_lpc.c stub, T17 §7 retrofit) | [/]  |
 | 0x010F | NtAlpcCreatePort              | §31 | T12 §31 (nt_alpc.c stub, T24 §8 retrofit) | [/]  |
 | 0x0110 | NtAlpcConnectPort             | §31 | T12 §31 (nt_alpc.c stub, T24 §8 retrofit) | [/]  |
 | 0x0111 | NtAlpcConnectPortEx           | §31 | T12 §31 (nt_alpc.c stub, T24 §8 retrofit) | [/]  |
@@ -493,16 +493,16 @@ title: "SSDT Master Table"
 
 **0x02A0–0x02BF: Security Extensions (AppContainer, Signing)**
 
-| Index  | Function                                   | §   | Owner                 | Done |
-| ------ | ------------------------------------------ | --- | --------------------- | ---- |
-| 0x02A0 | NtCreateLowBoxToken                        | §16 | T15                   | [ ]  |
-| 0x02A1 | NtQuerySecurityPolicy                      | §16 | T15                   | [ ]  |
-| 0x02A2 | NtSetCachedSigningLevel                    | §16 | T10 (security harden) | [ ]  |
-| 0x02A3 | NtGetCachedSigningLevel                    | §16 | T10                   | [ ]  |
-| 0x02A4 | NtCompareSigningLevels                     | §16 | T10                   | [ ]  |
-| 0x02A5 | NtSetInformationSymbolicLink               | §17 | T12                   | [ ]  |
-| 0x02A6 | NtQuerySecurityAttributesToken             | §16 | T15                   | [ ]  |
-| 0x02A7 | NtAccessCheckByTypeAndAuditAlarm           | §16 | T15                   | [ ]  |
+| Index  | Function                                 | §   | Owner                 | Done |
+| ------ | ---------------------------------------- | --- | --------------------- | ---- |
+| 0x02A0 | NtCreateLowBoxToken                      | §16 | T15                   | [ ]  |
+| 0x02A1 | NtQuerySecurityPolicy                    | §16 | T15                   | [ ]  |
+| 0x02A2 | NtSetCachedSigningLevel                  | §16 | T10 (security harden) | [ ]  |
+| 0x02A3 | NtGetCachedSigningLevel                  | §16 | T10                   | [ ]  |
+| 0x02A4 | NtCompareSigningLevels                   | §16 | T10                   | [ ]  |
+| 0x02A5 | NtSetInformationSymbolicLink             | §17 | T12                   | [ ]  |
+| 0x02A6 | NtQuerySecurityAttributesToken           | §16 | T15                   | [ ]  |
+| 0x02A7 | NtAccessCheckByTypeAndAuditAlarm         | §16 | T15                   | [ ]  |
 | 0x02A8 | NtAccessCheckByTypeResultListAndAuditAlarm | §16 | T15                   | [ ]  |
 
 **0x02C0–0x02DF: Object and Namespace Extensions**
@@ -525,46 +525,46 @@ title: "SSDT Master Table"
 
 **0x0300–0x034F: Miscellaneous / Extended APIs**
 
-| Index  | Function                                              | §   | Owner            | Done |
-| ------ | ----------------------------------------------------- | --- | ---------------- | ---- |
-| 0x0300 | NtCallbackReturn                                      | §23 | T12              | [ ]  |
-| 0x0301 | NtSetLdtEntries                                       | §23 | T12 (x86 compat) | [ ]  |
-| 0x0302 | NtQueryOpenSubKeysEx                                  | §14 | T14 §4           | [ ]  |
-| 0x0303 | NtMapCMFModule                                        | §23 | T12              | [ ]  |
-| 0x0304 | NtCancelSynchronousIoFile                             | §13 | T12              | [ ]  |
-| 0x0305 | NtSetTimer2                                           | §19 | T12 §19          | [ ]  |
-| 0x0306 | NtCancelTimer2                                        | §19 | T12 §19          | [ ]  |
-| 0x0307 | NtCreateResourceManager                               | §23 | T14              | [ ]  |
-| 0x0308 | NtApphelpCacheControl                                 | §23 | T12              | [ ]  |
-| 0x0309 | NtRaiseStatus                                         | §23 | T12              | [ ]  |
-| 0x030A | NtFlushKey                                            | §14 | T14 §4           | [ ]  |
-| 0x030B | NtWaitForAlertByThreadId                              | §8  | T08-mem §4       | [ ]  |
-| 0x030C | NtAlertThreadByThreadId                               | §8  | T08-mem §4       | [ ]  |
-| 0x030D | NtQueryAuxiliaryCounterFrequency                      | §10 | T12              | [ ]  |
+| Index  | Function                                 | §   | Owner            | Done |
+| ------ | ---------------------------------------- | --- | ---------------- | ---- |
+| 0x0300 | NtCallbackReturn                         | §23 | T12              | [ ]  |
+| 0x0301 | NtSetLdtEntries                          | §23 | T12 (x86 compat) | [ ]  |
+| 0x0302 | NtQueryOpenSubKeysEx                     | §14 | T14 §4           | [ ]  |
+| 0x0303 | NtMapCMFModule                           | §23 | T12              | [ ]  |
+| 0x0304 | NtCancelSynchronousIoFile                | §13 | T12              | [ ]  |
+| 0x0305 | NtSetTimer2                              | §19 | T12 §19          | [ ]  |
+| 0x0306 | NtCancelTimer2                           | §19 | T12 §19          | [ ]  |
+| 0x0307 | NtCreateResourceManager                  | §23 | T14              | [ ]  |
+| 0x0308 | NtApphelpCacheControl                    | §23 | T12              | [ ]  |
+| 0x0309 | NtRaiseStatus                            | §23 | T12              | [ ]  |
+| 0x030A | NtFlushKey                               | §14 | T14 §4           | [ ]  |
+| 0x030B | NtWaitForAlertByThreadId                 | §8  | T08-mem §4       | [ ]  |
+| 0x030C | NtAlertThreadByThreadId                  | §8  | T08-mem §4       | [ ]  |
+| 0x030D | NtQueryAuxiliaryCounterFrequency         | §10 | T12              | [ ]  |
 | 0x030E | NtConvertBetweenAuxiliaryCounterAndPerformanceCounter | §10 | T12              | [ ]  |
-| 0x030F | NtManagePartition                                     | §23 | T12              | [ ]  |
-| 0x0310 | NtCreatePartition                                     | §23 | T12              | [ ]  |
-| 0x0311 | NtOpenPartition                                       | §23 | T12              | [ ]  |
-| 0x0312 | NtManageHotPatch                                      | §23 | T12              | [ ]  |
-| 0x0313 | NtQuerySystemInformationEx                            | §10 | T12              | [ ]  |
-| 0x0314 | NtCreateTokenEx                                       | §16 | T15              | [ ]  |
-| 0x0315 | NtCompareObjects                                      | §17 | T12              | [ ]  |
-| 0x0316 | NtQueryInformationByName                              | §13 | T12              | [ ]  |
-| 0x0317 | NtCancelWaitCompletionPacket                          | §13 | T12              | [ ]  |
-| 0x0318 | NtAssociateWaitCompletionPacket                       | §13 | T12              | [ ]  |
-| 0x0319 | NtCreateWaitCompletionPacket                          | §13 | T12              | [ ]  |
-| 0x031A | NtDirectGraphicsCall                                  | §23 | T17-gfx (GPU)    | [ ]  |
-| 0x031B | NtSetWnfProcessNotificationEvent                      | §23 | T12              | [ ]  |
-| 0x031C | NtCopyFileChunk                                       | §13 | T12              | [ ]  |
-| 0x031D | NtCreateCrossVmEvent                                  | §8  | T12              | [ ]  |
-| 0x031E | NtCreateCrossVmMutant                                 | §8  | T12              | [ ]  |
-| 0x031F | NtAcquireCrossVmMutant                                | §8  | T12              | [ ]  |
-| 0x0320 | NtQueryInformationEnlistment                          | §23 | T14              | [ ]  |
-| 0x0321 | NtSetInformationEnlistment                            | §23 | T14              | [ ]  |
-| 0x0322 | NtQueryInformationResourceManager                     | §23 | T14              | [ ]  |
-| 0x0323 | NtSetInformationResourceManager                       | §23 | T14              | [ ]  |
-| 0x0324 | NtQueryInformationTransactionManager                  | §23 | T14              | [ ]  |
-| 0x0325 | NtSetInformationTransactionManager                    | §23 | T14              | [ ]  |
+| 0x030F | NtManagePartition                        | §23 | T12              | [ ]  |
+| 0x0310 | NtCreatePartition                        | §23 | T12              | [ ]  |
+| 0x0311 | NtOpenPartition                          | §23 | T12              | [ ]  |
+| 0x0312 | NtManageHotPatch                         | §23 | T12              | [ ]  |
+| 0x0313 | NtQuerySystemInformationEx               | §10 | T12              | [ ]  |
+| 0x0314 | NtCreateTokenEx                          | §16 | T15              | [ ]  |
+| 0x0315 | NtCompareObjects                         | §17 | T12              | [ ]  |
+| 0x0316 | NtQueryInformationByName                 | §13 | T12              | [ ]  |
+| 0x0317 | NtCancelWaitCompletionPacket             | §13 | T12              | [ ]  |
+| 0x0318 | NtAssociateWaitCompletionPacket          | §13 | T12              | [ ]  |
+| 0x0319 | NtCreateWaitCompletionPacket             | §13 | T12              | [ ]  |
+| 0x031A | NtDirectGraphicsCall                     | §23 | T17-gfx (GPU)    | [ ]  |
+| 0x031B | NtSetWnfProcessNotificationEvent         | §23 | T12              | [ ]  |
+| 0x031C | NtCopyFileChunk                          | §13 | T12              | [ ]  |
+| 0x031D | NtCreateCrossVmEvent                     | §8  | T12              | [ ]  |
+| 0x031E | NtCreateCrossVmMutant                    | §8  | T12              | [ ]  |
+| 0x031F | NtAcquireCrossVmMutant                   | §8  | T12              | [ ]  |
+| 0x0320 | NtQueryInformationEnlistment             | §23 | T14              | [ ]  |
+| 0x0321 | NtSetInformationEnlistment               | §23 | T14              | [ ]  |
+| 0x0322 | NtQueryInformationResourceManager        | §23 | T14              | [ ]  |
+| 0x0323 | NtSetInformationResourceManager          | §23 | T14              | [ ]  |
+| 0x0324 | NtQueryInformationTransactionManager     | §23 | T14              | [ ]  |
+| 0x0325 | NtSetInformationTransactionManager       | §23 | T14              | [ ]  |
 
 **0x0340–0x037F: Extended File and Volume Operations**
 

@@ -247,18 +247,18 @@ Detect `AcroForm` dictionary in catalog. Render form fields (text, checkbox, rad
 ## OS Comparison
 
 
-| ⭐   | Feature                    | 🪟 Win11                                       | 🐧 Linux                                               | 🚀 Impossible OS                                            |
-| --- | -------------------------- | --------------------------------------------- | ----------------------------------------------------- | ---------------------------------------------------------- |
-| 💎   | PDF structure + xref       | ✅ Edge PDF viewer; Adobe Acrobat;             | ✅ `poppler`/`mupdf`; full xref stream +               | ⬜ §1 -- xref table + stream; incremental                   |
-| 💎   | Object model               | ✅ Full object model in `poppler`/Adobe        | ✅ `mupdf`/`poppler` full object model                 | ⬜ §2 -- stbi_zlib_decode for FlateDecode; hand-written LZW |
-| 💎   | Page tree                  | ✅ Full page tree in all                       | ✅ Full page tree support                              | ⬜ §3 -- flat `page_map[]` for O(1) random                  |
-| 💎   | Content stream interpreter | ✅ Full PDF operator set in                    | ✅ `mupdf` full operator set; `poppler`                | ⬜ §4 -- 50+ operators; CTM affine stack                    |
-| 💎   | Embedded font rendering    | ✅ DirectWrite font rendering; full CMap       | ✅ FreeType2 in `poppler`/`mupdf`; full CMap           | ⬜ §5 -- stb_truetype render (already in OS)                |
-| 💎   | Image rendering            | ✅ Full colorspace support in Acrobat/Edge     | ✅ JPEG via libjpeg; CMYK conversion                   | ⬜ §6 -- stbi_load_from_memory for JPEG (already in         |
-| 💎   | Page renderer              | ✅ DirectX hardware-accelerated; 300 DPI print | ✅ Cairo/Skia software rasterizer in `poppler`/`mupdf` | ⬜ §7 -- software rasterizer; de Casteljau bezier           |
-| 💎   | Viewer app                 | ✅ Edge PDF viewer + Adobe                     | ✅ Evince/Okular; thumbnail sidebar; text search       | ⬜ §8 -- 50–400% zoom + fit-to-width/page; 16-thumb         |
-| ⭐   | PDF from HTTP              | ✅ Edge opens PDF URLs in-browser;             | ✅ Firefox opens PDFs via `pdf.js`                     | ⬜ §9 -- `⭐` true in-kernel streaming --                    |
-| 💎   | PDF forms                  | ✅ Acrobat full form support; Edge             | ✅ Okular/Evince form fill; `poppler` FDF              | ⬜ §10 -- stub renders field widgets; FDF/XFDF              |
+| ⭐   | Feature                    | 🪟 Win11                                  | 🐧 Linux                                  | 🚀 Impossible OS                          |
+| --- | -------------------------- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
+| 💎   | PDF structure + xref       | ✅ Edge PDF viewer; Adobe Acrobat;        | ✅ `poppler`/`mupdf`; full xref stream +  | ⬜ §1 -- xref table + stream; incremental |
+| 💎   | Object model               | ✅ Full object model in `poppler`/Adobe   | ✅ `mupdf`/`poppler` full object model    | ⬜ §2 -- stbi_zlib_decode for FlateDecode; hand-written LZW |
+| 💎   | Page tree                  | ✅ Full page tree in all                  | ✅ Full page tree support                 | ⬜ §3 -- flat `page_map[]` for O(1) random |
+| 💎   | Content stream interpreter | ✅ Full PDF operator set in               | ✅ `mupdf` full operator set; `poppler`   | ⬜ §4 -- 50+ operators; CTM affine stack  |
+| 💎   | Embedded font rendering    | ✅ DirectWrite font rendering; full CMap  | ✅ FreeType2 in `poppler`/`mupdf`; full CMap | ⬜ §5 -- stb_truetype render (already in OS) |
+| 💎   | Image rendering            | ✅ Full colorspace support in Acrobat/Edge | ✅ JPEG via libjpeg; CMYK conversion      | ⬜ §6 -- stbi_load_from_memory for JPEG (already in |
+| 💎   | Page renderer              | ✅ DirectX hardware-accelerated; 300 DPI print | ✅ Cairo/Skia software rasterizer in `poppler`/`mupdf` | ⬜ §7 -- software rasterizer; de Casteljau bezier |
+| 💎   | Viewer app                 | ✅ Edge PDF viewer + Adobe                | ✅ Evince/Okular; thumbnail sidebar; text search | ⬜ §8 -- 50–400% zoom + fit-to-width/page; 16-thumb |
+| ⭐   | PDF from HTTP              | ✅ Edge opens PDF URLs in-browser;        | ✅ Firefox opens PDFs via `pdf.js`        | ⬜ §9 -- `⭐` true in-kernel streaming --  |
+| 💎   | PDF forms                  | ✅ Acrobat full form support; Edge        | ✅ Okular/Evince form fill; `poppler` FDF | ⬜ §10 -- stub renders field widgets; FDF/XFDF |
 
 > **After §1–§10:** Impossible OS has a kernel-native PDF renderer using stb_truetype (already in the OS), stb_image's zlib decoder (already present), and a custom scanline rasterizer -- zero external PDF libraries required. The HTTP streaming path (`⭐`) opens PDFs from URLs without writing to disk, a capability native browsers handle via JavaScript (pdf.js) but that Impossible OS handles in the kernel directly.
 

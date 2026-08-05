@@ -44,15 +44,15 @@ title: "TODO-27 -- UEFI Advanced Features"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                                   | Depends On     | Status |
-| --- | :---: | --------------------------------------------- | -------------- | :----: |
+| ⭐   | Order | Deliverable                              | Depends On     | Status |
+| --- | :---: | ---------------------------------------- | -------------- | :----: |
 | ⭐   |   1   | UEFI multi-OS detection and chainload entries | T07 §1-§4      |  [x]   |
-| 💎   |   2   | Firmware update advisor (read-only LVFS)      | T04 §6         |  [x]   |
-| 💎   |   3   | UEFI memory attributes (W^X)                  | T02 §1, T24 §1 |  [/]   |
-| 💎   |   4   | Multi-GPU GOP enumeration                     | T02 §3         |  [x]   |
-| 💎   |   5   | Secure Boot extended state + enforcement      | T02 §5         |  [/]   |
-| 💎   |   6   | SMBIOS extended type parsing                  | T02 §4         |  [x]   |
-| 💎   |   7   | DBX revocation list sync                      | T02 §2, §5     |  [/]   |
+| 💎   |   2   | Firmware update advisor (read-only LVFS) | T04 §6         |  [x]   |
+| 💎   |   3   | UEFI memory attributes (W^X)             | T02 §1, T24 §1 |  [/]   |
+| 💎   |   4   | Multi-GPU GOP enumeration                | T02 §3         |  [x]   |
+| 💎   |   5   | Secure Boot extended state + enforcement | T02 §5         |  [/]   |
+| 💎   |   6   | SMBIOS extended type parsing             | T02 §4         |  [x]   |
+| 💎   |   7   | DBX revocation list sync                 | T02 §2, §5     |  [/]   |
 
 ---
 

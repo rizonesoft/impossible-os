@@ -58,23 +58,23 @@ title: "TODO-29 -- Kernel Debugger (KD Protocol)"
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                                             | Depends On                  | Status |
-| --- | :---: | ------------------------------------------------------- | --------------------------- | :----: |
-| 💎   |   1   | Serial line: 115200 baud, 8N1, FIFO                     | --                          |  [ ]   |
-| 💎   |   2   | IRQ RX ring + COM1/COM2 KD port selection               | §1                          |  [ ]   |
-| 💎   |   3   | KD packet framing: send/receive, checksum, ACK/RESEND   | §1, §2                      |  [ ]   |
-| 💎   |   4   | KD connection handshake & breakin detection             | §3                          |  [ ]   |
-| 💎   |   5   | `#DB` / `#BP` exception routing to KD, AP freeze/thaw   | §4, T07 §3                  |  [ ]   |
-| 💎   |   6   | Context get/set (DbgKdGetContextApi / SetContextApi)    | §5, T27 §2                  |  [ ]   |
-| 💎   |   7   | Memory read/write (DbgKdReadVirtualMemoryApi / Write)   | §5                          |  [ ]   |
-| 💎   |   8   | Software breakpoint management (Write / RestoreApi)     | §5, §7                      |  [ ]   |
-| 💎   |   9   | Hardware breakpoints (DR0--DR3, DR7) + `#DB` reporting  | §5, §6                      |  [ ]   |
-| 💎   |  10   | Single-step (RFLAGS.TF) + continue / continue-step      | §5, §6                      |  [ ]   |
-| 💎   |  11   | DbgKdGetVersionApi + module list                        | §4, T27 §3                  |  [ ]   |
+| ⭐   | Order | Deliverable                              | Depends On                  | Status |
+| --- | :---: | ---------------------------------------- | --------------------------- | :----: |
+| 💎   |   1   | Serial line: 115200 baud, 8N1, FIFO      | --                          |  [ ]   |
+| 💎   |   2   | IRQ RX ring + COM1/COM2 KD port selection | §1                          |  [ ]   |
+| 💎   |   3   | KD packet framing: send/receive, checksum, ACK/RESEND | §1, §2                      |  [ ]   |
+| 💎   |   4   | KD connection handshake & breakin detection | §3                          |  [ ]   |
+| 💎   |   5   | `#DB` / `#BP` exception routing to KD, AP freeze/thaw | §4, T07 §3                  |  [ ]   |
+| 💎   |   6   | Context get/set (DbgKdGetContextApi / SetContextApi) | §5, T27 §2                  |  [ ]   |
+| 💎   |   7   | Memory read/write (DbgKdReadVirtualMemoryApi / Write) | §5                          |  [ ]   |
+| 💎   |   8   | Software breakpoint management (Write / RestoreApi) | §5, §7                      |  [ ]   |
+| 💎   |   9   | Hardware breakpoints (DR0--DR3, DR7) + `#DB` reporting | §5, §6                      |  [ ]   |
+| 💎   |  10   | Single-step (RFLAGS.TF) + continue / continue-step | §5, §6                      |  [ ]   |
+| 💎   |  11   | DbgKdGetVersionApi + module list         | §4, T27 §3                  |  [ ]   |
 | 💎   |  12   | I/O port & MSR read/write (DbgKdReadIoSpace / MSR apis) | §5                          |  [ ]   |
-| ⭐   |  13   | `kd_break()` + keyboard F12 breakin + QEMU pipe guide   | §4                          |  [ ]   |
-| 💎   |  14   | Debug syscalls wired to SSDT                            | §1, §2, §5, T12 §4, T12 §21 |  [ ]   |
-| 💎   |  15   | KD transport roadmap + idle/BSOD coexistence            | §3, §5, T26 §2, T28 §1      |  [ ]   |
+| ⭐   |  13   | `kd_break()` + keyboard F12 breakin + QEMU pipe guide | §4                          |  [ ]   |
+| 💎   |  14   | Debug syscalls wired to SSDT             | §1, §2, §5, T12 §4, T12 §21 |  [ ]   |
+| 💎   |  15   | KD transport roadmap + idle/BSOD coexistence | §3, §5, T26 §2, T28 §1      |  [ ]   |
 
 > 💎 = parity work: matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work: Impossible OS is superior or first.

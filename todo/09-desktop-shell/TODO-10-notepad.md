@@ -202,16 +202,16 @@ Line number gutter (12 px, right-aligned, muted color). Tokenizer-based syntax h
 ## OS Comparison
 
 
-| ⭐   | Feature                                            | 🪟 Win11                                                 | 🐧 Linux                                    | 🚀 Impossible OS                                                     |
-| --- | -------------------------------------------------- | ------------------------------------------------------- | ------------------------------------------ | ------------------------------------------------------------------- |
-| ⭐   | Gap buffer                                         | ✅ Notepad: undisclosed internal (likely piece           | ✅ gedit: piece table; Kate: custom         | ⬜ §1 -- `⭐` explicit gap buffer design                              |
-| 💎   | Text rendering                                     | ✅ Notepad: hardware-accelerated Direct2D rendering; GDI | ✅ gedit/Kate: Pango + Cairo; GLib;         | ⬜ §2 -- `ttf_draw_string()` per line; software rasterizer           |
-| 💎   | Undo/redo -- 200-action stack, Ctrl+Z/Y            | ✅ Notepad: unlimited undo since Win10;                  | ✅ All editors: undo/redo; gedit unlimited; | ⬜ §3 -- 200-action ring buffer; insert +                            |
-| 💎   | File menu                                          | ✅ Notepad: full file menu; "Save                        | ✅ gedit/nano: full file menu; modified     | ⬜ §4 -- `CTRL_MENUBAR` + `dialog_file_open/save()`; `modified` flag |
-| 💎   | Editing                                            | ✅ Notepad: full mouse select; clipboard;                | ✅ All editors: mouse; clipboard; status    | ⬜ §5 -- pixel-to-col binary search; inverted selection              |
-| 💎   | Find & Replace                                     | ✅ Notepad: inline find toolbar; Ctrl+H;                 | ✅ gedit: find toolbar; replace dialog;     | ⬜ §6 -- find toolbar (non-modal, slides in)                         |
-| 💎   | Syntax highlight -- C/ASM/Markdown tokenizer-based | ✅ Notepad: no syntax highlighting (it's                 | ✅ gedit: GtkSourceView with full syntax;   | ⬜ §7 -- `⭐` more than Windows Notepad                               |
-| 💎   | Font zoom -- Ctrl++/−/0, Registry persist          | ✅ Notepad: Ctrl++ zoom (since Win10                     | ✅ gedit: View → Zoom; font                 | ⬜ §7 -- `ttf_get(FONT_MONO, new_px)` hot-reload; `cell_h` recalc    |
+| ⭐   | Feature                                  | 🪟 Win11                                  | 🐧 Linux                                  | 🚀 Impossible OS                          |
+| --- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
+| ⭐   | Gap buffer                               | ✅ Notepad: undisclosed internal (likely piece | ✅ gedit: piece table; Kate: custom       | ⬜ §1 -- `⭐` explicit gap buffer design   |
+| 💎   | Text rendering                           | ✅ Notepad: hardware-accelerated Direct2D rendering; GDI | ✅ gedit/Kate: Pango + Cairo; GLib;       | ⬜ §2 -- `ttf_draw_string()` per line; software rasterizer |
+| 💎   | Undo/redo -- 200-action stack, Ctrl+Z/Y  | ✅ Notepad: unlimited undo since Win10;   | ✅ All editors: undo/redo; gedit unlimited; | ⬜ §3 -- 200-action ring buffer; insert + |
+| 💎   | File menu                                | ✅ Notepad: full file menu; "Save         | ✅ gedit/nano: full file menu; modified   | ⬜ §4 -- `CTRL_MENUBAR` + `dialog_file_open/save()`; `modified` flag |
+| 💎   | Editing                                  | ✅ Notepad: full mouse select; clipboard; | ✅ All editors: mouse; clipboard; status  | ⬜ §5 -- pixel-to-col binary search; inverted selection |
+| 💎   | Find & Replace                           | ✅ Notepad: inline find toolbar; Ctrl+H;  | ✅ gedit: find toolbar; replace dialog;   | ⬜ §6 -- find toolbar (non-modal, slides in) |
+| 💎   | Syntax highlight -- C/ASM/Markdown tokenizer-based | ✅ Notepad: no syntax highlighting (it's  | ✅ gedit: GtkSourceView with full syntax; | ⬜ §7 -- `⭐` more than Windows Notepad    |
+| 💎   | Font zoom -- Ctrl++/−/0, Registry persist | ✅ Notepad: Ctrl++ zoom (since Win10      | ✅ gedit: View → Zoom; font               | ⬜ §7 -- `ttf_get(FONT_MONO, new_px)` hot-reload; `cell_h` recalc |
 
 > **After §1–§7:** Impossible OS has a text editor that exceeds Windows Notepad (syntax highlighting, line numbers) while using a textbook gap-buffer data structure with PMM flat allocation. The `⭐` differentiators: the gap buffer eliminates heap fragmentation for large text files; syntax highlighting in Notepad is a feature Windows Notepad still doesn't have; and the find toolbar is non-modal (slides in below the menu bar, never blocking text).
 

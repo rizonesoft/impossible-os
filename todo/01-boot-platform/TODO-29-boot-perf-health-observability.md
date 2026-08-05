@@ -62,27 +62,27 @@ implements_after: TODO-04
 
 ## Implementation Order
 
-| ⭐   | Order | Deliverable                                                 | Depends On                                      | Status |
-| --- | :---: | ----------------------------------------------------------- | ----------------------------------------------- | :----: |
-| 💎   |   1   | Per-phase boot perf budgets + threshold alarms              | --                                              |  [/]   |
-| 💎   |   2   | Boot health audit JSON (`X:\Diag\boot-health.json`)         | §1, T04 §11 (VFS fix)                           |  [x]   |
-| ⭐   |   3   | Boot perf trend file + regression detection                 | §1, §2                                          |  [/]   |
-| 💎   |   4   | SMBIOS init profiling + optimization                        | §1                                              |  [x]   |
-| 💎   |   5   | MAT W^X violation root-cause attribution                    | T04 §5                                          |  [x]   |
-| 💎   |   6   | Mouse PS/2 init profiling + optimization                    | §1                                              |  [x]   |
-| ⭐   |   7   | Async font/icon loader (post-desktop-ready)                 | §1                                              |  [/]   |
-| ⭐   |   8   | Boot heartbeat telemetry during long phases                 | §1, T23 (watchdog); T14 §4 permanently deferred |  [/]   |
-| 💎   |   9   | EXEC step latency profile (13834ms FAIL; 11x regression)    | §1                                              |  [/]   |
-| ⭐   |  10   | UEFI RT SetVariable latency (>50ms threshold)               | §1, T04 §11                                     |  [/]   |
-| ⭐   |  11   | Phase-3 X:\Diag JSON writer batching                        | T04 §8, T27 §2 (advisor)                        |  [/]   |
-| ⭐   |  12   | AVX-512 throttle policy when APERF/MPERF absent             | T19 §3                                          |  [/]   |
-| ⭐   |  13   | Boot history ring depth + format (8 → 32+ entries)          | T01 §11                                         |  [/]   |
-| ⭐   |  14   | FAT32 dirty-mount fsck cost in VFS step                     | D05 T04                                         |  [/]   |
-| ⭐   |  15   | User-mode binary spawn latency (~1s task_create→ELF)        | T22 (sched / exec)                              |  [/]   |
-| ⭐   |  16   | TSC frequency variability under hypervisor                  | --                                              |  [/]   |
-| ⭐   |  17   | PAT WC -> WT hypervisor trap quirk                          | §2 (consumer)                                   |  [/]   |
-| 💎   |  18   | Boot critical-path / dependency / resource-wait attribution | §1, §2                                          |  [/]   |
-| 💎   |  19   | Post-ship follow-up backfill (2026-07-31 cohort)            | --                                              |  [ ]   |
+| ⭐   | Order | Deliverable                              | Depends On                               | Status |
+| --- | :---: | ---------------------------------------- | ---------------------------------------- | :----: |
+| 💎   |   1   | Per-phase boot perf budgets + threshold alarms | --                                       |  [/]   |
+| 💎   |   2   | Boot health audit JSON (`X:\Diag\boot-health.json`) | §1, T04 §11 (VFS fix)                    |  [x]   |
+| ⭐   |   3   | Boot perf trend file + regression detection | §1, §2                                   |  [/]   |
+| 💎   |   4   | SMBIOS init profiling + optimization     | §1                                       |  [x]   |
+| 💎   |   5   | MAT W^X violation root-cause attribution | T04 §5                                   |  [x]   |
+| 💎   |   6   | Mouse PS/2 init profiling + optimization | §1                                       |  [x]   |
+| ⭐   |   7   | Async font/icon loader (post-desktop-ready) | §1                                       |  [/]   |
+| ⭐   |   8   | Boot heartbeat telemetry during long phases | §1, T23 (watchdog); T14 §4 permanently deferred |  [/]   |
+| 💎   |   9   | EXEC step latency profile (13834ms FAIL; 11x regression) | §1                                       |  [/]   |
+| ⭐   |  10   | UEFI RT SetVariable latency (>50ms threshold) | §1, T04 §11                              |  [/]   |
+| ⭐   |  11   | Phase-3 X:\Diag JSON writer batching     | T04 §8, T27 §2 (advisor)                 |  [/]   |
+| ⭐   |  12   | AVX-512 throttle policy when APERF/MPERF absent | T19 §3                                   |  [/]   |
+| ⭐   |  13   | Boot history ring depth + format (8 → 32+ entries) | T01 §11                                  |  [/]   |
+| ⭐   |  14   | FAT32 dirty-mount fsck cost in VFS step  | D05 T04                                  |  [/]   |
+| ⭐   |  15   | User-mode binary spawn latency (~1s task_create→ELF) | T22 (sched / exec)                       |  [/]   |
+| ⭐   |  16   | TSC frequency variability under hypervisor | --                                       |  [/]   |
+| ⭐   |  17   | PAT WC -> WT hypervisor trap quirk       | §2 (consumer)                            |  [/]   |
+| 💎   |  18   | Boot critical-path / dependency / resource-wait attribution | §1, §2                                   |  [/]   |
+| 💎   |  19   | Post-ship follow-up backfill (2026-07-31 cohort) | --                                       |  [ ]   |
 
 ---
 
