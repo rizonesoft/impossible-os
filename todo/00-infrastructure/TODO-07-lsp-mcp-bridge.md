@@ -70,7 +70,6 @@ title: "TODO-07 -- LSP to MCP Bridge (C, NASM, shell, Python, PowerShell)"
 | 💎   |  24   | Single-pass procfs cleanup in the teardown sweep                           | §22, §23                          |  [x]   |
 | ⭐   |  25   | Restart-publish confirmed-dead gate + single-flight teardown               | §22, §23                          |  [/]   |
 | ⭐   |  26   | Teardown verdict propagation + a non-reaping liveness probe                | §22, §23, §25                     |  [x]   |
-| ⭐   |  27   | Spawn-record claim lifecycle: claimed-in-use is not retired                | §22, §23, §26                     |  [ ]   |
 
 > 💎 = parity -- matches the existing LSP stacks Win11/Linux devs already use, wrapped in an MCP transport.
 > ⭐ = exclusive -- neither Win11 nor Linux ships a repo-tracked cross-language LSP-MCP bridge with read-only boundary compliance baked in.
@@ -926,7 +925,7 @@ Split out of §24 (2026-08-05): these two are about WHO runs a lifecycle transit
 
 ## 26. Teardown Verdict Propagation and a Non-Reaping Liveness Probe
 
-Split out of §25 (2026-08-05): the three findings §25 ACCEPTED rather than fixed, each because it changes a contract or a primitive wider than that section's own scope. They are not blocked on anything external -- every one carries a concrete fix shape from the review that raised it -- so they are OWNED here rather than parked, and §25's copies are `[/]` pointing at this section. This section was declared terminal for the teardown-reap cluster (§20-§25) when it was filed; that claim did NOT survive implementation and is corrected here rather than quietly dropped. Making the reader non-reaping introduced a zombie-retention leak, closing that leak required a deferred collector, and the collector's interaction with §22-§23's claim/retirement machinery is a genuinely separate lifecycle problem -- owned by §27, not parked. -> XREF: 00-infrastructure/TODO-07 §25 (item: "Make descendants-before-leader-reap structural, with a non-reaping liveness probe")
+Split out of §25 (2026-08-05): the three findings §25 ACCEPTED rather than fixed, each because it changes a contract or a primitive wider than that section's own scope. They are not blocked on anything external -- every one carries a concrete fix shape from the review that raised it -- so they are OWNED here rather than parked, and §25's copies are `[/]` pointing at this section. TERMINAL for the teardown-reap cluster (§20-§26): seven consecutive sections on one teardown path, each spawned by the previous one's review, is past the depth this dev-tooling component warrants (operator scope boundary, 2026-08-05). Its residue parks HERE with a named blocker rather than opening a §27 -- the finding is still filed in the owning section, which is what completion-first requires; only the destination changes. -> XREF: 00-infrastructure/TODO-07 §25 (item: "Make descendants-before-leader-reap structural, with a non-reaping liveness probe")
 
 - [x] Made descendants-before-leader-reap structural, with a non-reaping liveness probe
       - `_pidfd_exited(fd)` answers "has it exited" from a pidfd WITHOUT collecting it, and `_escalate_recorded` derives death from the descriptor it ALREADY holds -- the caller's `is_dead` is only the fallback for when that handle cannot answer. The ordering moved from something the callers happened to honour into a property of the function.
@@ -948,6 +947,11 @@ Split out of §25 (2026-08-05): the three findings §25 ACCEPTED rather than fix
       - The five spawner init-failure handlers share ONE `report_unconfirmed_shutdown` helper rather than five copies of a `sys.stderr.write` (PSES keeps its heavier 2.0s budget as an argument, not a silent change). The shutdown-publish gate in `bridge.py` routes through it too -- that caller is named in this item's original text and the first pass still missed it, which the test-coverage review caught: the instance is never in `_LIVE_LSPS`, so it is absent from the unconfirmed set as well, and a failed shutdown there left a fresh server surviving teardown with nothing anywhere recording it. -> XREF: 00-infrastructure/TODO-07 §25 (item: "Report CONFIRMED reaps, not attempts, from the remaining teardown consumers")
 - [x] Commit: `"scripts/lsp-mcp: confirmed-reap teardown verdicts + non-reaping liveness probe"`
 
+- [/] Model CLAIMED-and-in-use separately from safely RETIRED on `_SpawnRecord` -- BLOCKED on an operator decision to reopen the reap line (operator-gated, 2026-08-05: sections 20-26 are already seven consecutive sections on one teardown path)
+      - A record leaves `_SPAWNED` for two unrelated reasons: `_retire_spawn` (child confirmed dead, descriptor closed, identity finished) and the descriptor-exhaustion CLAIM path in `_escalate_recorded` / `_signal_recorded` / `signal_recorded_leaders`, which removes the entry precisely so it can keep using the original fd for one signal. `retired` distinguishes those two, but a COMPLETED claim is a third state it cannot express: out of `_SPAWNED`, fd closed, `retired` still False.
+      - Marking the claim finalizers `retired = True` was implemented and REVERTED here: it let the very next `_leader_exited` in `_confirm_dead_late` treat the record as finished and fall through to a REAPING poll -- before `_collect_after_death`, and with the claim having already removed the record `_session_handle` needs, so a hardened same-session descendant reads as collected and a replacement is published beside it (Codex re-adversarial, High).
+      - What SHIPPED is the opposite and milder residual, chosen on this file's own fail-closed rule: the record stays unanswerable, `alive` reports the instance live, and the force sweep collects it at teardown. A recoverable leak beats a duplicated server. The real fix is a state rather than a second boolean, plus an explicit ordering signal so only the final leader reap may poll -- both of which change when a reaping poll is permitted across the whole reap path, which is why this is an operator call rather than in-section work.
+
 **Test checkpoint:** `bash scripts/lsp-mcp/tests/test_bridge.sh` exits 0 (118/118, 2026-08-05); a leader is proven exited without being reaped before the descendant sweep runs, an over-budget recorded-leader pass reports the sweep incomplete to its caller, and an unconfirmed instance is visible in the teardown result rather than silently dropped from `_LIVE_LSPS`. Test on: host tooling only (no QEMU dependency).
 
 > **Test runner:** `bash scripts/lsp-mcp/tests/test_bridge.sh` -- 118/118 sub-tests PASS (9r non-reaping liveness, 9s leader-pass fair share, 9t unconfirmed reap propagation are this section); `bash scripts/lsp-mcp/tests/test_boundary.sh` -- 0 write-capable methods. No kernel test surface: host-side python tooling, no `TEST_CAT_*`.
@@ -961,29 +965,8 @@ Split out of §25 (2026-08-05): the three findings §25 ACCEPTED rather than fix
 > - Rejected on evidence: nothing -- all 10 findings across four review legs were verified at file:line and fixed.
 
 > **Verified:** 2026-08-05 | commit `9d635e79` + review fixes | 4/4 items | build OK | 118/118 lsp-mcp sub-tests, 0 write-capable methods, 1287/1287 tooling, 28326 kernel + 17 user-mode, lint 0 errors
-> **Deferred:** [H] A completed descriptor claim is a third record state that `retired` cannot express, so it must choose between wedging `alive` and reaping before descendant collection (reason: changes when a reaping poll is permitted across the whole reap path; §26 shipped the fail-closed residual) -> XREF: 00-infrastructure/TODO-07 §27 (item: "Model CLAIMED-and-in-use separately from safely RETIRED on `_SpawnRecord`")
+> **Deferred:** [L] reap hardening beyond dev-tool depth -- operator-gated. A completed descriptor claim is a third record state `retired` cannot express, so it must choose between wedging `alive` and reaping before descendant collection; §26 shipped the fail-closed residual -> XREF: 00-infrastructure/TODO-07 §26 (item: "Model CLAIMED-and-in-use separately from safely RETIRED on `_SpawnRecord`")
 > **Quality reviewed:** 2026-08-05 | Codex 9x (design, adversarial x2, test-coverage, consistency, perf, re-adversarial x3) | 12H+8M+1L fixed, 1 deferred, 1 accepted | scope: N/A (host-side Python tooling; no kernel/boot/desktop/shell/userland surface)
-
-## 27. Spawn-Record Claim Lifecycle: Claimed-In-Use Is Not Retired
-
-Raised by §26's re-adversarial rounds and filed rather than fixed there, because it is a THIRD state in a lifecycle §22-§23 model with one boolean, and closing it correctly changes when a reaping poll is permitted across the whole reap path. §26 shipped the safer of the two residuals; this section closes the gap properly. -> XREF: 00-infrastructure/TODO-07 §26 (item: "Made descendants-before-leader-reap structural, with a non-reaping liveness probe")
-
-- [ ] Model CLAIMED-and-in-use separately from safely RETIRED on `_SpawnRecord`
-      - A record leaves `_SPAWNED` for two unrelated reasons: `_retire_spawn` (child confirmed dead, descriptor closed, identity finished) and the descriptor-exhaustion CLAIM path in `_escalate_recorded` / `_signal_recorded` / `signal_recorded_leaders`, which removes the entry precisely so it can keep using the original fd for one signal. `retired` distinguishes those two, but a COMPLETED claim is a third state it cannot express: out of `_SPAWNED`, fd closed, yet `retired` still False.
-      - Marking the claim finalizers `retired = True` was implemented and REVERTED inside §26: it let the very next `_leader_exited` in `_confirm_dead_late` treat the record as finished and fall through to a REAPING poll -- before `_collect_after_death`, and with the claim having already removed the record `_session_handle` needs, so a hardened same-session descendant reads as collected and a replacement is published beside it. §26 kept the opposite residual instead, which is milder and fail-closed: the record stays unanswerable, `alive` reports the instance live, and the force sweep collects it at teardown.
-      - The fix is a state, not a second boolean: claimed-in-use must keep the record non-reapable while its descriptor or descendant proof is in use, and transition to retired only once collection no longer needs the leader.
-- [ ] Permit a reaping `poll()` only after `_collect_after_death` has completed
-      - `_leader_exited` currently decides reapability from the record alone, which is why the claim states leak into it. Give the reap path an explicit ordering signal so the final leader reap -- and only that -- may poll, and every pre-collection caller (`alive`, health snapshots, `reap_all_live`, the shutdown wait loops) provably cannot.
-      - This is what makes the §26 residual disappear rather than being traded for another: with the ordering explicit, a record that cannot answer no longer has to choose between wedging `alive` and reaping too early.
-- [ ] Commit: `"scripts/lsp-mcp: three-state spawn-record claim lifecycle"`
-
-**Test checkpoint:** `bash scripts/lsp-mcp/tests/test_bridge.sh` exits 0; a claim completing inside `_retry_pinned_kill` followed immediately by `_confirm_dead_late` collects an opaque same-session descendant BEFORE the leader is reaped, and `alive` never reports a collected instance as live. Test on: host tooling only (no QEMU dependency).
-
-> **Test runner:** `bash scripts/lsp-mcp/tests/test_bridge.sh`; `bash scripts/lsp-mcp/tests/test_boundary.sh` -- 0 write-capable methods. No kernel test surface: host-side python tooling, no `TEST_CAT_*`.
-
-> **Notes:**
-> - Scope boundary: does NOT re-cover §26's probe, fair-share leader pass, verdict propagation, or inline crash collection -- all shipped. It replaces the two-state record model those rest on.
-> - Drives the real claim finalizers, not a hand-constructed claimed record: §26's first attempt at this test passed against a manually built fixture that could not reach the racing path.
 
 ## Format Quick Reference
 
