@@ -2974,6 +2974,115 @@ else
     t_fail "resolve_symbol: shared file cache not wired ($SI_CACHE_HIT)"
 fi
 
+# ---------------------------------------------------------------------------
+# Sub-tests 14j-14p (TODO-06 section 10): multi-line function-head resolution.
+#
+# The head match used to be a regex against ONE physical line, so every
+# definition whose head spanned two lines was invisible to resolve_symbol --
+# and Check 7 reported nothing at all for it, which reads identically to
+# "checked, not a stub". Each case below asserts the RESOLVED RANGE, not just
+# that something was found: a head that resolves to the wrong range is how
+# the prototype-scope-structure bug (14n) hid a stub while appearing to work.
+# ---------------------------------------------------------------------------
+SI_MLINE=$(SI_REPO="$REPO_ROOT" SI_TREE="$SI_TREE" python3 - <<'PY' 2>&1
+import sys
+import os; sys.path.insert(0, os.environ["SI_REPO"] + "/scripts/todo-graph")
+import resolve_symbol as rs
+
+CASES = {
+    # 14j: return type on its own line.
+    "split_ret": ("static int\nsplit_ret(void)\n{\n    return 7;\n}\n", (1, 5), "7"),
+    # 14k: static inline split across lines, pointer return type whose `*`
+    # binds to the line above the symbol.
+    "ptr_split": ("static inline int *\nptr_split(void)\n{\n    return 0;\n}\n",
+                  (1, 5), "0"),
+    # 14l: __attribute__((...)) on the SAME line as the rest of the head.
+    # Its parentheses would otherwise be read as the parameter list.
+    "attr_same": ("__attribute__((noinline)) static int attr_same(void)\n"
+                  "{\n    return 1;\n}\n", (1, 4), "1"),
+    # 14m: four-line head. A physical-line window of 3 would miss this;
+    # the scan is barrier-driven, not window-driven.
+    "four_line": ("__attribute__((noinline))\nstatic\ninline int *\n"
+                  "four_line(void)\n{\n    return 0;\n}\n", (1, 7), "0"),
+    # 14n: prototype-scope structure in the parameter list -- legal C. The
+    # `{` and `;` inside it must NOT be read as the body opener or as a
+    # declaration terminator. Before section 10 this resolved to (1, 1) and
+    # is_stub_body() then returned None, so the stub read as clean.
+    "param_struct": ("int param_struct(struct Local { int value; } *arg)\n"
+                     "{\n    return 0;\n}\n", (1, 4), "0"),
+    # 14o: #ifdef inside the BODY must not truncate the brace count (a
+    # directive ends a head scan, but is skipped inside a body).
+    "has_ifdef": ("static int\nhas_ifdef(void)\n{\n    int x = 1;\n"
+                  "#ifdef SOMETHING\n    x = 2;\n#endif\n    return x;\n}\n",
+                  (1, 9), None),
+}
+
+fail = 0
+for sym, (src, want_range, want_stub) in CASES.items():
+    path = os.environ["SI_TREE"] + "/src/mline_%s.c" % sym
+    with open(path, "w") as fh:
+        fh.write(src)
+    rs.cache_clear()
+    got = rs.resolve_symbol(path, sym)
+    if got is None or (got[1], got[2]) != want_range:
+        print("FAIL %s: range %s want %s" % (sym, got, want_range)); fail += 1; continue
+    stub = rs.is_stub_body(*got)
+    got_stub = stub[0] if stub else None
+    if got_stub != want_stub:
+        print("FAIL %s: stub %r want %r" % (sym, got_stub, want_stub)); fail += 1
+
+# 14p: the false-positive bar. None of these is a function definition, and
+# none resolved before section 10 either -- widening what MATCHES must not
+# widen what COUNTS as a definition.
+NEG_SRC = '''typedef int (*fp_only)(void);
+
+struct ops {
+    int (*field_only)(void);
+};
+
+static const int var_only = 3;
+
+static struct ops table_only = {
+    .field_only = 0,
+};
+
+int decl_only(void);
+
+void user(void)
+{
+    int x;
+    x = call_only(1);
+    indented_only();
+}
+
+static char *msg_only(void)
+{
+    return "brace } and semi ; inside a literal";
+}
+'''
+neg_path = os.environ["SI_TREE"] + "/src/mline_neg.c"
+with open(neg_path, "w") as fh:
+    fh.write(NEG_SRC)
+rs.cache_clear()
+for sym in ("fp_only", "field_only", "var_only", "table_only", "decl_only",
+            "call_only", "indented_only"):
+    got = rs.resolve_symbol(neg_path, sym)
+    if got is not None:
+        print("FAIL neg %s resolved to %s" % (sym, got)); fail += 1
+# A literal carrying `}` and `;` must not end the body early.
+got = rs.resolve_symbol(neg_path, "msg_only")
+if got is None or (got[1], got[2]) != (22, 25):
+    print("FAIL msg_only: %s want (22, 25)" % (got,)); fail += 1
+
+print("MLINE_FAILURES=%d" % fail)
+PY
+)
+if echo "$SI_MLINE" | grep -q "MLINE_FAILURES=0"; then
+    t_pass "resolve_symbol: multi-line heads, attributes, param-struct, FP bar (14j-14p)"
+else
+    t_fail "resolve_symbol: multi-line head resolution; out=$SI_MLINE"
+fi
+
 # Sub-test 14e: forbidden-field validator rejects hand-authored
 # stamped_items in frontmatter (defense-in-depth, Codex Q4).
 cat > "$SI_TREE/todo/01-test/TODO-02-forbidden.md" <<'EOF'
