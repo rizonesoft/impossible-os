@@ -3152,6 +3152,116 @@ static int
 }
 EOF
 
+# 14v-1 RANGE TRUNCATION: a parameter-scope struct on the SAME line as the body
+# opener. Brace counting used to restart at column 0 of the opener line, so the
+# parameter struct's `}` closed the "body" immediately and the resolver returned
+# a truncated 1:2 range that Check 7 still counted as resolved. The pre-section
+# resolver returned None here, so accepting a WRONG range was a regression this
+# section introduced (Codex adversarial, review round).
+split_case "same-line param struct does not truncate the range" foo_a3 "1:5" <<'EOF'
+static int
+foo_a3(struct Local { int v; } *arg) {
+    int x = 1;
+    return x;
+}
+EOF
+
+# 14v-2 LEXICAL STATE: a multi-line block comment containing an unbalanced brace
+# must not break the body brace count. Pre-existing defect (the old resolver
+# also returned None), fixed by routing every structural walk through one scanner.
+split_case "block comment with a brace does not break resolution" foo_c1 "1:8" <<'EOF'
+static int
+foo_c1(void)
+{
+/* a block comment
+   containing { a brace
+   spanning lines */
+    return 0;
+}
+EOF
+
+# 14v-3 LEXICAL STATE: a string literal containing parens and a comment opener.
+# 9 files in this tree carry attribute/annotation strings of this shape.
+split_case "string literal parens do not unbalance the depth" foo_str "1:5" <<'EOF'
+static const char *
+foo_str(const char *tag)
+{
+    return "unbalanced ( and // and /* inside a string";
+}
+EOF
+
+# 14v-5 REGEX PATHOLOGY: a long comment-only candidate line. The raw substring
+# filter admits a line whose ONLY occurrence of the symbol is inside a block
+# comment; masking then leaves near-pure whitespace. With the old
+# `^\s*\*?\s*` lead pattern -- two whitespace quantifiers around an optional
+# atom -- a failing match explored quadratically many partitions: 0.38s at 20k
+# characters, 2.3s at 50k, and a 5MB case did not finish in 90s. That could hang
+# the commit-time lint on one generated comment (Codex perf re-review).
+# Asserts a WALL-CLOCK bound, so a reintroduced pathology fails loudly.
+# Two long-line inputs, and only ONE of them is mutation-provable -- said plainly
+# rather than implying otherwise:
+#   quad-a: the symbol survives masking but is not followed by `(`, so the lead
+#           regex RUNS and must fail fast. This ISOLATES the pattern rewrite:
+#           restoring `^\s*\*?\s*` makes it fail (3.09s on this input).
+#   quad-b: the symbol exists only inside the comment, so masking removes it and
+#           the pre-regex short-circuit skips the line. With the regex already
+#           fixed this case is fast either way, so removing the short-circuit
+#           does NOT fail it -- that guard is a work-saver on the common path,
+#           not a correctness guard. quad-b is a behavior pin against a future
+#           reintroduction of both.
+SI_QUAD="$(REPO_ROOT="$REPO_ROOT" SI_TREE="$SI_TREE" python3 - <<'PY' 2>&1
+import os, sys, time
+sys.path.insert(0, os.environ["REPO_ROOT"] + "/scripts/todo-graph")
+import resolve_symbol as rs
+out = []
+a = os.environ["SI_TREE"] + "/src/quad_a.c"
+with open(a, "w") as f:
+    f.write("static int\n" + " " * 60000 + "foo_qa;\nint z;\n")
+rs.cache_clear()
+t = time.time()
+ra = rs.resolve_symbol(a, "foo_qa")
+out.append(f"{ra is None}:{time.time() - t < 1.0}")
+b = os.environ["SI_TREE"] + "/src/quad_b.c"
+with open(b, "w") as f:
+    f.write("static int\n/* " + "x" * 60000 + " foo_qb( */ y;\nint z;\n")
+rs.cache_clear()
+t = time.time()
+rb = rs.resolve_symbol(b, "foo_qb")
+out.append(f"{rb is None}:{time.time() - t < 1.0}")
+print(" ".join(out))
+PY
+)"
+if [ "$SI_QUAD" = "True:True True:True" ]; then
+    t_pass "resolve_symbol: long candidate lines resolve fast (no regex blowup)"
+else
+    t_fail "resolve_symbol: quadratic lead-regex pathology; got=$SI_QUAD (want 'True:True True:True')"
+fi
+
+# 14v-4 END-TO-END, ONE-LINE: a stub whose head carries a parameter-scope struct
+# on the SAME line as the body. resolve_symbol returned the right range (1:1) but
+# is_stub_body sliced the body at the line's FIRST `{` -- the parameter struct's
+# -- so the extracted text never matched return-constant and a real
+# stub-behind-stamp went unreported (Codex re-adversarial; the multi-line
+# fixture above does not reach this path).
+cat > "$SI_TREE/src/split.c" <<'EOF'
+static int foo_1line(struct Local { int v; } *arg) { return 0; }
+EOF
+SI_1L="$(REPO_ROOT="$REPO_ROOT" SI_TREE="$SI_TREE" python3 - <<'PY' 2>&1
+import os, sys
+sys.path.insert(0, os.environ["REPO_ROOT"] + "/scripts/todo-graph")
+import resolve_symbol as rs
+src = os.environ["SI_TREE"] + "/src/split.c"
+rs.cache_clear()
+r = rs.resolve_symbol(src, "foo_1line")
+print("NORESOLVE" if r is None else str(rs.is_stub_body(r[0], r[1], r[2])))
+PY
+)"
+if [ "$SI_1L" = "('0', 1)" ]; then
+    t_pass "resolve_symbol+is_stub_body: one-line param-struct stub IS reported"
+else
+    t_fail "resolve_symbol+is_stub_body: one-line param-struct stub missed; got=$SI_1L"
+fi
+
 # 14v END-TO-END: resolve_symbol + is_stub_body together. 14q pins only the
 # RANGE, and Codex correctly noted that leaves the downstream classifier
 # untested: is_stub_body picked the first brace in the range, so the
@@ -3201,6 +3311,40 @@ snap_refuses() {  # <label> <cache-json-content>
         t_fail "corpus snapshot: $label must exit 3, got $rc"
     fi
 }
+
+# The BASELINE is an input too. Validating only the live cache left compare()
+# fail-open: an empty or all-null baseline yields an empty resolved_before, so
+# every current mapping reads as ADDED and compare exits 0 having checked
+# nothing (Codex adversarial, review round).
+snap_baseline_refuses() {  # <label> <baseline-json>
+    local label="$1" content="$2"
+    printf '%s' "$content" > "$SI_TREE/build/snap-bad-base.json"
+    STUB_LINT_CACHE="$REPO_ROOT/build/todo-cache.json" STUB_LINT_REPO_ROOT="$REPO_ROOT" \
+        python3 "$SNAP" compare "$SI_TREE/build/snap-bad-base.json" >/dev/null 2>&1
+    local rc=$?
+    if [ "$rc" = "3" ]; then
+        t_pass "corpus snapshot: refuses baseline $label (exit 3)"
+    else
+        t_fail "corpus snapshot: baseline $label must exit 3, got $rc"
+    fi
+}
+snap_baseline_refuses "that is empty" '{}'
+snap_baseline_refuses "in the legacy schema-less format" '{"a::b": null}'
+snap_baseline_refuses "with only null mappings" '{"schema":1,"refs":1,"mappings":{"a::b":null}}'
+snap_baseline_refuses "with a malformed mapping" '{"schema":1,"refs":1,"mappings":{"a::b":"x"}}'
+# An arity-only check let `[path, 411.0, 442.0]` through: three elements, and
+# floats compare EQUAL to the integer tuple in Python, so a malformed baseline
+# silently became authoritative (Codex re-adversarial).
+snap_baseline_refuses "with float line numbers" \
+    '{"schema":1,"refs":1,"mappings":{"a::b":["src/x.c",411.0,442.0]}}'
+snap_baseline_refuses "with a reversed line range" \
+    '{"schema":1,"refs":1,"mappings":{"a::b":["src/x.c",442,411]}}'
+snap_baseline_refuses "with a boolean line number" \
+    '{"schema":1,"refs":1,"mappings":{"a::b":["src/x.c",true,442]}}'
+# TRUNCATION: a one-entry baseline used to compare clean, reporting the other 56
+# resolved mappings as ADDED and exiting 0. The declared population catches it.
+snap_baseline_refuses "that is truncated (declared count disagrees)" \
+    '{"schema":1,"refs":57,"mappings":{"a::b":["src/x.c",1,2]}}'
 
 snap_refuses "an empty node array" '[]'
 snap_refuses "a cache with no stamped_items" '[{"file_path":"todo/x.md"}]'

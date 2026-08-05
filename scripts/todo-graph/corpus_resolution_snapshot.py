@@ -41,6 +41,9 @@ def _cache_path() -> Path:
     return Path(os.environ.get("STUB_LINT_CACHE", "build/todo-cache.json"))
 
 
+SNAPSHOT_SCHEMA = 1
+
+
 class CacheError(RuntimeError):
     """The cache cannot support a trustworthy snapshot."""
 
@@ -72,20 +75,40 @@ def _load_nodes() -> list:
     # Staleness, mirroring check_stub_behind_stamp.py: a cache older than the
     # newest TODO describes a tree that no longer exists, and a baseline taken
     # from it silently omits live refs.
+    # Walk the SELECTED repository's todo/, not the process CWD's. Using a bare
+    # relative "todo" meant the staleness check silently measured nothing
+    # whenever the tool ran from anywhere but the repo root -- exactly the
+    # fail-open the rest of this function exists to close.
+    #
+    # os.walk SWALLOWS traversal errors unless given an onerror callback -- a
+    # missing root simply yields nothing and an unreadable subtree is skipped.
+    # Wrapping the walk in try/except therefore caught nothing: an unreadable
+    # TODO subtree would leave `newest` low and an old cache would look fresh,
+    # which is the exact fail-open this check exists to close.
+    def _walk_err(exc):
+        raise CacheError(f"cannot traverse todo tree: {exc}")
+
+    todo_root = _repo_root() / "todo"
+    if not todo_root.is_dir():
+        raise CacheError(f"todo root is not a readable directory: {todo_root}")
     try:
         cache_m = p.stat().st_mtime
         newest = 0.0
-        for dirpath, _, files in os.walk("todo"):
+        for dirpath, _, files in os.walk(todo_root, onerror=_walk_err):
             for f in files:
                 if f.startswith("TODO-") and f.endswith(".md"):
                     newest = max(newest,
                                  os.stat(os.path.join(dirpath, f)).st_mtime)
-        if newest > cache_m:
-            raise CacheError(
-                f"cache is STALE (a TODO is newer than {p}); rebuild via "
-                f"scripts/todo-graph/build-and-validate.sh --keep-cache")
-    except OSError:
-        pass  # cannot stat -- do not manufacture a staleness verdict
+    except OSError as exc:
+        # A stat failure is an INFRASTRUCTURE error, not "fresh enough".
+        raise CacheError(f"cannot determine cache freshness: {exc}")
+    if newest == 0.0:
+        raise CacheError(f"no TODO files found under {todo_root} -- refusing to "
+                         f"call a cache fresh against an empty corpus")
+    if newest > cache_m:
+        raise CacheError(
+            f"cache is STALE (a TODO is newer than {p}); rebuild via "
+            f"scripts/todo-graph/build-and-validate.sh --keep-cache")
     return nodes
 
 
@@ -175,14 +198,84 @@ def main(argv) -> int:
         return 3
 
     if argv[0] == "write":
-        Path(argv[1]).write_text(
-            json.dumps(now, indent=1, sort_keys=True), encoding="utf-8")
+        # SELF-DESCRIBING. The bare mapping-only format could not distinguish a
+        # complete baseline from a truncated one: a single-entry file compared
+        # clean, reporting the other 56 resolved mappings as ADDED and exiting 0.
+        # Recording the population lets `compare` detect truncation instead of
+        # trusting the file's own size.
+        Path(argv[1]).write_text(json.dumps({
+            "schema": SNAPSHOT_SCHEMA,
+            "refs": len(now),
+            "resolved": len(resolved_now),
+            "mappings": now,
+        }, indent=1, sort_keys=True), encoding="utf-8")
         print(f"snapshot: {len(resolved_now)} resolved of {len(now)} refs "
               f"-> {argv[1]}")
         return 0
 
-    before = json.loads(Path(argv[1]).read_text(encoding="utf-8"))
+    # VALIDATE THE BASELINE TOO. Validating only the live cache left the other
+    # input fail-open: a `{}` baseline, or one whose mappings are all null,
+    # yields an empty `resolved_before`, so every current mapping classifies as
+    # ADDED, `lost` and `moved` stay empty, and compare exits 0 having checked
+    # nothing. That is the same vacuous pass the cache validation above exists
+    # to prevent, on the input the gate is actually comparing against.
+    try:
+        before = json.loads(Path(argv[1]).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        sys.stderr.write(f"[corpus_resolution_snapshot] baseline unreadable: "
+                         f"{argv[1]}: {exc}\n")
+        return 3
+    if not isinstance(before, dict) or not before:
+        sys.stderr.write(f"[corpus_resolution_snapshot] baseline is not a "
+                         f"non-empty object: {argv[1]}\n")
+        return 3
+    if before.get("schema") != SNAPSHOT_SCHEMA:
+        sys.stderr.write(f"[corpus_resolution_snapshot] baseline schema is "
+                         f"{before.get('schema')!r}, expected {SNAPSHOT_SCHEMA}"
+                         f" -- regenerate it with `write`\n")
+        return 3
+    mappings = before.get("mappings")
+    if not isinstance(mappings, dict) or not mappings:
+        sys.stderr.write("[corpus_resolution_snapshot] baseline has no "
+                         "mappings object\n")
+        return 3
+    # TRUNCATION: the recorded population must match what the file actually
+    # holds. Without this a one-entry baseline passed cleanly.
+    if before.get("refs") != len(mappings):
+        sys.stderr.write(f"[corpus_resolution_snapshot] baseline is TRUNCATED: "
+                         f"declares {before.get('refs')} refs, holds "
+                         f"{len(mappings)}\n")
+        return 3
+    # ELEMENT TYPES, not just arity. `[path, 411.0, 442.0]` satisfied a
+    # length-3 check and compared EQUAL to the integer tuple under Python, so
+    # an arity-only check let a malformed baseline through.
+    bad = []
+    for k, v in mappings.items():
+        if v is None:
+            continue
+        if not (isinstance(v, list) and len(v) == 3):
+            bad.append(k)
+            continue
+        pth, a, b = v
+        if not isinstance(pth, str) or not pth:
+            bad.append(k)
+        elif isinstance(a, bool) or isinstance(b, bool):
+            bad.append(k)
+        elif not isinstance(a, int) or not isinstance(b, int):
+            bad.append(k)
+        elif a < 1 or b < a:
+            bad.append(k)
+    if bad:
+        sys.stderr.write(f"[corpus_resolution_snapshot] baseline has "
+                         f"{len(bad)} malformed mapping(s), e.g. {bad[0]!r}\n")
+        return 3
+    before = mappings
     resolved_before = {k: v for k, v in before.items() if v is not None}
+    if not resolved_before:
+        sys.stderr.write("[corpus_resolution_snapshot] baseline records ZERO "
+                         "resolved mappings -- there is nothing to protect, so "
+                         "a pass would be vacuous\n")
+        return 3
 
     lost, moved = [], []
     for k, v in resolved_before.items():
