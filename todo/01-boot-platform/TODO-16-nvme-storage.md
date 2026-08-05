@@ -50,13 +50,13 @@ title: "TODO-16 -- NVMe Storage Driver (Boot-Critical)"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                              | Depends On     | Status |
-| --- | :---: | ---------------------------------------- | -------------- | :----: |
-| 💎  |   1   | NVMe controller discovery and BAR mapping | --             |  [x]   |
-| 💎  |   2   | Admin Queue setup and Identify commands  | §1             |  [x]   |
-| 💎  |   3   | I/O Queue creation and sector read/write | §2             |  [x]   |
-| 💎  |   4   | Block device registration and VFS integration | §3             |  [x]   |
-| ⭐  |   5   | Advanced NVMe parity backlog (owned by D04 T08) | §1, §2, §3, §4 |  [/]   |
+| ⭐  | Order | Deliverable                                           | Depends On     | Status |
+| --- | :---: | ----------------------------------------------------- | -------------- | :----: |
+| 💎  |   1   | NVMe controller discovery and BAR mapping             | --             |  [x]   |
+| 💎  |   2   | Admin Queue setup and Identify commands               | §1             |  [x]   |
+| 💎  |   3   | I/O Queue creation and sector read/write              | §2             |  [x]   |
+| 💎  |   4   | Block device registration and VFS integration         | §3             |  [x]   |
+| ⭐  |   5   | Advanced NVMe parity backlog (owned by D04 T08)       | §1, §2, §3, §4 |  [/]   |
 | 💎  |   6   | Controller lifecycle: shutdown, flush, I/O validation | §2, §3, §4     |  [x]   |
 
 ---
@@ -257,7 +257,7 @@ Boot-disk data-integrity gaps found in gap audit: the driver acknowledges durabl
 | 💎  | NVMe boot mount          | ✅ Boot start driver      | ✅ initramfs loads nvme   | ✅ §4 blkdev then VFS mount    |
 | 💎  | NVMe write durability    | ✅ Flush on FlushBuffers  | ✅ REQ_OP_FLUSH / fsync   | ✅ §6 NVM Flush -> blkdev_sync |
 | 💎  | NVMe clean shutdown      | ✅ CC.SHN on shutdown     | ✅ shutdown on poweroff   | ✅ §6 CC.SHN + CSTS.SHST poll  |
-| ⭐  | WHPX NVMe CI caveat      | N/A host hypervisor layer | N/A host hypervisor layer | ⚠️ Prefer TCG for NVMe tests    |
+| ⭐  | WHPX NVMe CI caveat      | N/A host hypervisor layer | N/A host hypervisor layer | ⚠️ Prefer TCG for NVMe tests   |
 | ⭐  | SMART health at boot     | ❌ Needs vendor tools     | ❌ Needs nvme userland    | ⬜ Planned VPD SMART stretch   |
 | ⭐  | Firmware ID at boot      | ❌ Not shown in boot UI   | ❌ dmesg after boot only  | ✅ §2 Identify strings in klog |
 | ⭐  | Wear counters at boot    | ❌ Needs third party app  | ❌ Needs nvme userland    | ⬜ Planned wear field stretch  |

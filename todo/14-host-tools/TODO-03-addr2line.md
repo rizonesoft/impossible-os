@@ -40,13 +40,13 @@ $ ixfs-addr2line --crash RIP=0x800000 CR2=0x800000 ERR=0x15
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                              | Depends On | Status |
-| --- | :---: | ---------------------------------------- | ---------- | :----: |
-| 💎  |   1   | Symbol map parser (kernel.sym + kernel.map) | --         |  [ ]   |
+| ⭐  | Order | Deliverable                                     | Depends On | Status |
+| --- | :---: | ----------------------------------------------- | ---------- | :----: |
+| 💎  |   1   | Symbol map parser (kernel.sym + kernel.map)     | --         |  [ ]   |
 | ⭐  |   2   | Source context display (show surrounding lines) | §1         |  [ ]   |
-| ⭐  |   3   | Error code decoder (PF, GP, DF, MCE)     | --         |  [ ]   |
-| ⭐  |   4   | Memory region mapper (CR2 → what was accessed) | §1         |  [ ]   |
-| ⭐  |   5   | Full crash decode mode (--crash flag)    | §1-§4      |  [ ]   |
+| ⭐  |   3   | Error code decoder (PF, GP, DF, MCE)            | --         |  [ ]   |
+| ⭐  |   4   | Memory region mapper (CR2 → what was accessed)  | §1         |  [ ]   |
+| ⭐  |   5   | Full crash decode mode (--crash flag)           | §1-§4      |  [ ]   |
 
 ---
 

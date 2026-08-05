@@ -38,18 +38,18 @@ title: "TODO-19 -- Code Integrity & Trust Policy"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                              | Depends On   | Status |
-| --- | :---: | ---------------------------------------- | ------------ | :----: |
-| 💎  |   1   | Code Integrity policy object             | T02          |  [/]   |
-| 💎  |   2   | Image validation API and callback        | T17          |  [/]   |
-| 💎  |   3   | Hashing and signature provider bridge    | T03          |  [x]   |
-| 💎  |   4   | Embedded signature validation            | §2, §3       |  [/]   |
-| 💎  |   5   | Catalog database                         | Registry/VFS |  [/]   |
-| 💎  |   6   | Revocation and deny lists                | §5           |  [/]   |
-| ⭐  |   7   | Measured-boot and Secure Boot binding    | TPM          |  [/]   |
-| 💎  |   8   | Driver/module enforcement                | T18, D04 T04 |  [/]   |
-| 💎  |   9   | User-mode image enforcement              | T17, T20     |  [/]   |
-| ⭐  |  10   | CI audit, telemetry, and syscalls        | T12, T16     |  [/]   |
+| ⭐  | Order | Deliverable                                      | Depends On   | Status |
+| --- | :---: | ------------------------------------------------ | ------------ | :----: |
+| 💎  |   1   | Code Integrity policy object                     | T02          |  [/]   |
+| 💎  |   2   | Image validation API and callback                | T17          |  [/]   |
+| 💎  |   3   | Hashing and signature provider bridge            | T03          |  [x]   |
+| 💎  |   4   | Embedded signature validation                    | §2, §3       |  [/]   |
+| 💎  |   5   | Catalog database                                 | Registry/VFS |  [/]   |
+| 💎  |   6   | Revocation and deny lists                        | §5           |  [/]   |
+| ⭐  |   7   | Measured-boot and Secure Boot binding            | TPM          |  [/]   |
+| 💎  |   8   | Driver/module enforcement                        | T18, D04 T04 |  [/]   |
+| 💎  |   9   | User-mode image enforcement                      | T17, T20     |  [/]   |
+| ⭐  |  10   | CI audit, telemetry, and syscalls                | T12, T16     |  [/]   |
 | ⭐  |  11   | Post-ship follow-up backfill (2026-07-31 cohort) | --           |  [ ]   |
 
 ## 1. Code Integrity Policy Object
@@ -252,25 +252,25 @@ From the stamped section 2:
 
 ## OS Comparison
 
-| ⭐  | Feature                    | 🪟 Win11                          | 🐧 Linux                      | 🚀 Impossible OS                       |
-| --- | -------------------------- | --------------------------------- | ----------------------------- | -------------------------------------- |
-| 💎  | Kernel CI engine           | ✅ ci.dll (CI/WDAC)               | ✅ IMA/EVM appraisal          | 🔄 §1-§2 ci_validate_image + policy    |
-| 💎  | Enforce/audit mode split   | ✅ WDAC audit vs enforce          | ✅ IMA log vs enforce         | 🔄 §1 explicit mode enum               |
-| 💎  | Embedded signatures        | ✅ Authenticode                   | ✅ PE/module appended sig     | 🔄 §4 EIF trailer + PE Authenticode    |
+| ⭐  | Feature                    | 🪟 Win11                          | 🐧 Linux                       | 🚀 Impossible OS                       |
+| --- | -------------------------- | --------------------------------- | ------------------------------ | -------------------------------------- |
+| 💎  | Kernel CI engine           | ✅ ci.dll (CI/WDAC)               | ✅ IMA/EVM appraisal           | 🔄 §1-§2 ci_validate_image + policy    |
+| 💎  | Enforce/audit mode split   | ✅ WDAC audit vs enforce          | ✅ IMA log vs enforce          | 🔄 §1 explicit mode enum               |
+| 💎  | Embedded signatures        | ✅ Authenticode                   | ✅ PE/module appended sig      | 🔄 §4 EIF trailer + PE Authenticode    |
 | 💎  | Catalog signatures         | ✅ .cat catalog store             | ⚠️ IMA sig files               | 🔄 §5 catalog DB (hash->signer)        |
 | 💎  | Revocation                 | ✅ CRL / dbx / revoked hashes     | ⚠️ manual keyring revoke       | 🔄 §6 revoked-hash + signer deny       |
-| 💎  | Measured/Secure Boot bind  | ✅ HVCI + PCR policy binding      | ✅ IMA + TPM PCR              | 🔄 §7 policy digest -> PCR + SB refuse |
-| 💎  | Driver signing enforce     | ✅ WHQL / boot-start classes      | ✅ CONFIG_MODULE_SIG          | 🔄 §8 signer-class + boot hash table   |
+| 💎  | Measured/Secure Boot bind  | ✅ HVCI + PCR policy binding      | ✅ IMA + TPM PCR               | 🔄 §7 policy digest -> PCR + SB refuse |
+| 💎  | Driver signing enforce     | ✅ WHQL / boot-start classes      | ✅ CONFIG_MODULE_SIG           | 🔄 §8 signer-class + boot hash table   |
 | ⭐  | Native Ed25519 signing     | ❌ RSA/ECDSA Authenticode         | ⚠️ RSA module sig              | ✅ §3 ci_crypto_verify PureEd25519     |
-| ⭐  | CI decision in image reg   | ⚠️ separate CI state               | ❌ none unified               | 🔄 §9 -> TODO-18 §9 provenance field   |
+| ⭐  | CI decision in image reg   | ⚠️ separate CI state              | ❌ none unified                | 🔄 §9 -> TODO-18 §9 provenance field   |
 | ⭐  | CI query syscall           | ✅ SystemCodeIntegrityInformation | ⚠️ /sys/kernel/security/ima    | 🔄 §10 NtQuery/NtSet + ci_dump_policy  |
-| 💎  | Per-page hash on demand    | ✅ Authenticode page hashes       | ✅ fs-verity Merkle           | 🔄 §4 validate each paged-in page      |
-| 💎  | Layered trust anchors      | ⚠️ cert-store roots                | ✅ 4-tier keyring             | 🔄 §1 role-separated anchor tiers      |
+| 💎  | Per-page hash on demand    | ✅ Authenticode page hashes       | ✅ fs-verity Merkle            | 🔄 §4 validate each paged-in page      |
+| 💎  | Layered trust anchors      | ⚠️ cert-store roots               | ✅ 4-tier keyring              | 🔄 §1 role-separated anchor tiers      |
 | 💎  | Signed/versioned policy    | ✅ signed WDAC policy + rollback  | ⚠️ keyring, no policy artifact | 🔄 §1 authenticate policy provenance   |
-| 💎  | Measurement-only mode      | ⚠️ audit only                      | ✅ IMA measure vs appraise    | 🔄 §1 measure mode -> PCR aggregate    |
+| 💎  | Measurement-only mode      | ⚠️ audit only                     | ✅ IMA measure vs appraise     | 🔄 §1 measure mode -> PCR aggregate    |
 | ⭐  | Dynamic/JIT code admission | ✅ dynamic code policy (.NET)     | ⚠️ W^X, no CI hook             | 🔄 §2 ci_validate_dynamic_code         |
 | ⭐  | Policy self-protection     | ✅ HVCI VTL-isolated CI           | ⚠️ lockdown, same ring         | 🔄 §1 RO-after-lock policy page        |
-| ⭐  | Tamper-evident CI audit    | ⚠️ ETW (mutable)                   | ⚠️ audit log (mutable)         | 🔄 §10 -> T04 §10 HMAC-chain           |
+| ⭐  | Tamper-evident CI audit    | ⚠️ ETW (mutable)                  | ⚠️ audit log (mutable)         | 🔄 §10 -> T04 §10 HMAC-chain           |
 
 > **After §1-§6:** a kernel CI decision point every loader calls, with policy modes, embedded + catalog signatures, and revocation that overrides allow.
 > **After §7-§10:** Secure-Boot/TPM binding, driver vs user enforcement split, CI decisions surfaced in the image registry + crash dumps, and native policy-query syscalls.

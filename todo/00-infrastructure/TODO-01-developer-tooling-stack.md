@@ -62,21 +62,21 @@ title: "TODO-01 -- Developer Tooling Stack"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                              | Depends On     | Status |
-| --- | :---: | ---------------------------------------- | -------------- | :----: |
-| 💎  |   1   | Host bootstrap and dependency contract   | --             |  [x]   |
+| ⭐  | Order | Deliverable                                           | Depends On     | Status |
+| --- | :---: | ----------------------------------------------------- | -------------- | :----: |
+| 💎  |   1   | Host bootstrap and dependency contract                | --             |  [x]   |
 | 💎  |   2   | Supported host profiles and reproducible environments | §1             |  [x]   |
-| 💎  |   3   | Build, test, lint, and run wrapper contract | §1, §2         |  [x]   |
-| 💎  |   4   | Machine launcher and debug profile matrix | §2, §3         |  [x]   |
-| 💎  |   5   | Git hooks and local automation lifecycle | §1, §3         |  [x]   |
-| 💎  |   6   | GitHub Actions and artifact policy alignment | §2, §3, §4, §5 |  [x]   |
-| ⭐  |   7   | Tooling doctor and regression pack       | §1-§6          |  [x]   |
-| 💎  |   8   | Unify specialist-launcher `-ExtraArgs` surface | §4             |  [x]   |
+| 💎  |   3   | Build, test, lint, and run wrapper contract           | §1, §2         |  [x]   |
+| 💎  |   4   | Machine launcher and debug profile matrix             | §2, §3         |  [x]   |
+| 💎  |   5   | Git hooks and local automation lifecycle              | §1, §3         |  [x]   |
+| 💎  |   6   | GitHub Actions and artifact policy alignment          | §2, §3, §4, §5 |  [x]   |
+| ⭐  |   7   | Tooling doctor and regression pack                    | §1-§6          |  [x]   |
+| 💎  |   8   | Unify specialist-launcher `-ExtraArgs` surface        | §4             |  [x]   |
 | 💎  |   9   | Legacy-XREF sweep (lint Check 5 -> 0 errors; CI gate) | §3, §6         |  [x]   |
-| 💎  |  10   | Smoke-test POST16 assertions (boot-phase manifest) | §3             |  [x]   |
-| ⭐  |  11   | Bare section-ref sweep (lint Check 5 zero-allowlist) | §9             |  [x]   |
-| 💎  |  12   | Enforce required-tool version floors in `--verify` | §1, §2         |  [x]   |
-| 💎  |  13   | Duplicate-recipe sweep in the root Makefile | §3             |  [/]   |
+| 💎  |  10   | Smoke-test POST16 assertions (boot-phase manifest)    | §3             |  [x]   |
+| ⭐  |  11   | Bare section-ref sweep (lint Check 5 zero-allowlist)  | §9             |  [x]   |
+| 💎  |  12   | Enforce required-tool version floors in `--verify`    | §1, §2         |  [x]   |
+| 💎  |  13   | Duplicate-recipe sweep in the root Makefile           | §3             |  [/]   |
 
 > 💎 = parity work: Windows and Linux projects both rely on stable setup/build/test/CI contracts.
 > ⭐ = exclusive work: Impossible OS can provide a single operator-facing developer workflow with self-diagnosis instead of scattered scripts and tribal knowledge.

@@ -46,12 +46,12 @@ title: "TODO-34 -- Serial Log Signal-to-Noise and Log-Cleanliness Gate"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                              | Depends On | Status |
-| --- | :---: | ---------------------------------------- | ---------- | :----: |
-| ⭐  |   1   | Mark expected test-path log output at emission | --         |  [ ]   |
-| 💎  |   2   | Log-cleanliness gate in the kernel test runner | §1         |  [ ]   |
-| 💎  |   3   | Smoke test fails on any `[FAIL]` in its own log | --         |  [ ]   |
-| ⭐  |   4   | Surface the platform blind spots in the run summary | §2         |  [ ]   |
+| ⭐  | Order | Deliverable                                          | Depends On | Status |
+| --- | :---: | ---------------------------------------------------- | ---------- | :----: |
+| ⭐  |   1   | Mark expected test-path log output at emission       | --         |  [ ]   |
+| 💎  |   2   | Log-cleanliness gate in the kernel test runner       | §1         |  [ ]   |
+| 💎  |   3   | Smoke test fails on any `[FAIL]` in its own log      | --         |  [ ]   |
+| ⭐  |   4   | Surface the platform blind spots in the run summary  | §2         |  [ ]   |
 | 💎  |   5   | Rate-limit the repeat-offender warnings (86% of vol) | --         |  [/]   |
 
 > 💎 = parity -- Linux kernel selftests and Windows WHQL both gate on unexpected log output.
@@ -163,11 +163,11 @@ This section owns the LOG-NOISE half only. The underlying performance defect -- 
 
 ## OS Comparison
 
-| ⭐  | Feature                              | 🪟 Win11                       | 🐧 Linux                              | 🚀 Impossible OS                         |
-| --- | ------------------------------------ | ------------------------------ | ------------------------------------- | ---------------------------------------- |
+| ⭐  | Feature                              | 🪟 Win11                        | 🐧 Linux                               | 🚀 Impossible OS                         |
+| --- | ------------------------------------ | ------------------------------- | -------------------------------------- | ---------------------------------------- |
 | 💎  | Gate on unexpected kernel log output | ⚠️ WHQL/HLK scans, post-hoc     | ⚠️ selftests + `dmesg` diff, per-suite | ⬜ §2 runner-side, suite-attributed      |
-| ⭐  | Expected diagnostic output declared  | ❌ no equivalent               | ❌ no equivalent                      | ⬜ §1 declared at the emission site      |
-| 💎  | Smoke gate reads its own log         | ✅ boot-critical ETW checks    | ✅ CI greps `dmesg` for oops/WARN     | ⚠️ §3 today: 2 markers + 9 fatal strings  |
+| ⭐  | Expected diagnostic output declared  | ❌ no equivalent                | ❌ no equivalent                       | ⬜ §1 declared at the emission site      |
+| 💎  | Smoke gate reads its own log         | ✅ boot-critical ETW checks     | ✅ CI greps `dmesg` for oops/WARN      | ⚠️ §3 today: 2 markers + 9 fatal strings |
 | ⭐  | "Check disabled" reported distinctly | ⚠️ HLK marks unsupported as N/A | ⚠️ selftests print SKIP inconsistently | ⬜ §4 disabled != passed, in the summary |
 
 ## Unit Tests

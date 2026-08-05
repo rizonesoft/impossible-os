@@ -65,27 +65,27 @@ title: "TODO-17 -- Binary Format System (exec_load / ELF / PE32+ / EIF)"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                              | Depends On      | Status |
-| --- | :---: | ---------------------------------------- | --------------- | :----: |
-| 💎  |   1   | `exec_load()` multi-format dispatcher    | VMM, VFS, sched |  [x]   |
-| 💎  |   2   | Enhanced ELF loader (VMM-backed, PIE)    | §1              |  [/]   |
+| ⭐  | Order | Deliverable                                    | Depends On      | Status |
+| --- | :---: | ---------------------------------------------- | --------------- | :----: |
+| 💎  |   1   | `exec_load()` multi-format dispatcher          | VMM, VFS, sched |  [x]   |
+| 💎  |   2   | Enhanced ELF loader (VMM-backed, PIE)          | §1              |  [/]   |
 | 💎  |   3   | ELF security segments (GNU_STACK, RELRO, PROP) | §2              |  [/]   |
-| ⭐  |   4   | EIF format specification                 | --              |  [x]   |
-| ⭐  |   5   | EIF kernel loader                        | §1, §4          |  [x]   |
-| 💎  |   6   | Module list registration (LDR_DATA_TABLE) | §1, TODO-11 §4  |  [/]   |
-| 💎  |   7   | PE32+ header parser                      | §1              |  [x]   |
-| 💎  |   8   | PE32+ section loader + `.pdata` registration | §7              |  [/]   |
-| 💎  |   9   | PE32+ import table resolver (Win32 dispatch) | §8, TODO-12 §6  |  [/]   |
-| 💎  |  10   | PE32+ base relocation                    | §8              |  [/]   |
-| 💎  |  11   | PE32+ TLS directory processing           | §8, TODO-11 §3  |  [/]   |
-| 💎  |  12   | PE32+ Load Config and CFG bitmap         | §8              |  [/]   |
-| ⭐  |  13   | `elf2eif` host-side converter            | §4              |  [/]   |
-| 💎  |  14   | ELF dynamic linker (shared libraries)    | §2              |  [/]   |
-| 💎  |  15   | ASLR for all three formats               | §2, §5, §8      |  [/]   |
-| ⭐  |  16   | Script/shebang interpreter support       | §1              |  [/]   |
-| ⭐  |  17   | EIF code signing                         | §5              |  [/]   |
-| 💎  |  18   | ELF `PT_TLS` template loading            | §2              |  [/]   |
-| 💎  |  19   | PE API-set + delay-load/bound import support | §9              |  [/]   |
+| ⭐  |   4   | EIF format specification                       | --              |  [x]   |
+| ⭐  |   5   | EIF kernel loader                              | §1, §4          |  [x]   |
+| 💎  |   6   | Module list registration (LDR_DATA_TABLE)      | §1, TODO-11 §4  |  [/]   |
+| 💎  |   7   | PE32+ header parser                            | §1              |  [x]   |
+| 💎  |   8   | PE32+ section loader + `.pdata` registration   | §7              |  [/]   |
+| 💎  |   9   | PE32+ import table resolver (Win32 dispatch)   | §8, TODO-12 §6  |  [/]   |
+| 💎  |  10   | PE32+ base relocation                          | §8              |  [/]   |
+| 💎  |  11   | PE32+ TLS directory processing                 | §8, TODO-11 §3  |  [/]   |
+| 💎  |  12   | PE32+ Load Config and CFG bitmap               | §8              |  [/]   |
+| ⭐  |  13   | `elf2eif` host-side converter                  | §4              |  [/]   |
+| 💎  |  14   | ELF dynamic linker (shared libraries)          | §2              |  [/]   |
+| 💎  |  15   | ASLR for all three formats                     | §2, §5, §8      |  [/]   |
+| ⭐  |  16   | Script/shebang interpreter support             | §1              |  [/]   |
+| ⭐  |  17   | EIF code signing                               | §5              |  [/]   |
+| 💎  |  18   | ELF `PT_TLS` template loading                  | §2              |  [/]   |
+| 💎  |  19   | PE API-set + delay-load/bound import support   | §9              |  [/]   |
 | 💎  |  20   | ELF dynamic linker advanced (IFUNC, init/fini) | §14             |  [/]   |
 
 > 💎 = parity -- Windows NT (PE32+) and Linux (ELF) both provide these capabilities.
@@ -525,32 +525,32 @@ Modern Windows binaries frequently import `api-ms-win-*` / `ext-ms-*` contract D
 
 ## OS Comparison
 
-| ⭐  | Feature                     | 🪟 Win11                | 🐧 Linux            | 🚀 Impossible OS                 |
-| --- | --------------------------- | ----------------------- | ------------------- | -------------------------------- |
-| 💎  | Native binary format        | ✅ PE32+                | ✅ ELF              | 🔄 §4 spec + §5 loader done      |
-| 💎  | ELF loading                 | ⚠️ WSL only              | ✅ Native           | ⚠️ §2 basic loader                |
-| 💎  | PE32+ loading               | ✅ Native               | ⚠️ Wine only         | 🔄 §7-§8 done; §9-§10 pending    |
-| 💎  | Dynamic linking             | ✅ DLL loading          | ✅ ld.so            | ⬜ §14                           |
-| 💎  | ASLR                        | ✅ Mandatory            | ✅ PIE + kernel     | ⬜ §15                           |
-| 💎  | NX stack                    | ✅ DEP default          | ✅ PT_GNU_STACK     | ⬜ §3                            |
+| ⭐  | Feature                     | 🪟 Win11                 | 🐧 Linux            | 🚀 Impossible OS                 |
+| --- | --------------------------- | ------------------------ | ------------------- | -------------------------------- |
+| 💎  | Native binary format        | ✅ PE32+                 | ✅ ELF              | 🔄 §4 spec + §5 loader done      |
+| 💎  | ELF loading                 | ⚠️ WSL only              | ✅ Native           | ⚠️ §2 basic loader               |
+| 💎  | PE32+ loading               | ✅ Native                | ⚠️ Wine only        | 🔄 §7-§8 done; §9-§10 pending    |
+| 💎  | Dynamic linking             | ✅ DLL loading           | ✅ ld.so            | ⬜ §14                           |
+| 💎  | ASLR                        | ✅ Mandatory             | ✅ PIE + kernel     | ⬜ §15                           |
+| 💎  | NX stack                    | ✅ DEP default           | ✅ PT_GNU_STACK     | ⬜ §3                            |
 | 💎  | RELRO (read-only GOT)       | ⚠️ N/A (PE IAT)          | ✅ PT_GNU_RELRO     | ⬜ §3                            |
-| 💎  | CET/IBT binary flags        | ✅ Load Config          | ✅ GNU_PROPERTY     | ⬜ §3 ELF, §12 PE                |
-| 💎  | Module list                 | ✅ PEB->Ldr             | ✅ link_map         | 🔄 §6 registry + Ldr done        |
-| 💎  | PE .pdata unwind            | ✅ Kernel + ntdll       | ❌ N/A              | 🔄 §8 .pdata registered          |
-| 💎  | PE TLS + callbacks          | ✅ Full support         | ❌ N/A (ELF PT_TLS) | ⬜ §11                           |
-| 💎  | Native TLS templates        | ✅ PE TLS               | ✅ PT_TLS           | ⬜ §11 + §18                     |
-| 💎  | PE Load Config / CFG        | ✅ CFG mandatory        | ❌ N/A              | ⬜ §12                           |
-| 💎  | Contract import mapping     | ✅ API-set              | ⚠️ SONAME aliases    | ⬜ §19                           |
-| 💎  | ELF symbol versioning       | ❌ N/A (PE)             | ✅ DT_VERNEED       | ⬜ §20                           |
-| 💎  | GNU IFUNC dispatch          | ❌ N/A                  | ✅ IRELATIVE        | ⬜ §20                           |
+| 💎  | CET/IBT binary flags        | ✅ Load Config           | ✅ GNU_PROPERTY     | ⬜ §3 ELF, §12 PE                |
+| 💎  | Module list                 | ✅ PEB->Ldr              | ✅ link_map         | 🔄 §6 registry + Ldr done        |
+| 💎  | PE .pdata unwind            | ✅ Kernel + ntdll        | ❌ N/A              | 🔄 §8 .pdata registered          |
+| 💎  | PE TLS + callbacks          | ✅ Full support          | ❌ N/A (ELF PT_TLS) | ⬜ §11                           |
+| 💎  | Native TLS templates        | ✅ PE TLS                | ✅ PT_TLS           | ⬜ §11 + §18                     |
+| 💎  | PE Load Config / CFG        | ✅ CFG mandatory         | ❌ N/A              | ⬜ §12                           |
+| 💎  | Contract import mapping     | ✅ API-set               | ⚠️ SONAME aliases   | ⬜ §19                           |
+| 💎  | ELF symbol versioning       | ❌ N/A (PE)              | ✅ DT_VERNEED       | ⬜ §20                           |
+| 💎  | GNU IFUNC dispatch          | ❌ N/A                   | ✅ IRELATIVE        | ⬜ §20                           |
 | 💎  | Init/fini arrays            | ⚠️ CRT thunk             | ✅ init_array       | ⬜ §20                           |
-| 💎  | ELF .eh_frame unwind        | ❌ N/A (PE .pdata)      | ✅ PT_GNU_EH_FRAME  | ⬜ §6                            |
-| 💎  | PE export forwarders        | ✅ DLL.Func chains      | ❌ N/A              | ⬜ §19                           |
-| ⭐  | Triple format support       | ❌ PE32+ only           | ❌ ELF only         | ⬜ §1–§10 all three              |
-| ⭐  | < 10 us load time           | ❌ ~50 us               | ❌ ~30 us           | 🔄 §5 uptime_ns measured         |
-| ⭐  | Syscall-ID imports          | ❌ String-based         | ❌ String-based     | ✅ §5 dispatch table at 0x8F0000 |
-| ⭐  | Standard toolchain → native | ❌ Needs PE linker      | ⚠️ ELF only          | ⬜ §13 elf2eif                   |
-| ⭐  | Shebang dispatch            | ❌ File extension       | ⚠️ Separate module   | ⬜ §16 unified                   |
+| 💎  | ELF .eh_frame unwind        | ❌ N/A (PE .pdata)       | ✅ PT_GNU_EH_FRAME  | ⬜ §6                            |
+| 💎  | PE export forwarders        | ✅ DLL.Func chains       | ❌ N/A              | ⬜ §19                           |
+| ⭐  | Triple format support       | ❌ PE32+ only            | ❌ ELF only         | ⬜ §1–§10 all three              |
+| ⭐  | < 10 us load time           | ❌ ~50 us                | ❌ ~30 us           | 🔄 §5 uptime_ns measured         |
+| ⭐  | Syscall-ID imports          | ❌ String-based          | ❌ String-based     | ✅ §5 dispatch table at 0x8F0000 |
+| ⭐  | Standard toolchain → native | ❌ Needs PE linker       | ⚠️ ELF only         | ⬜ §13 elf2eif                   |
+| ⭐  | Shebang dispatch            | ❌ File extension        | ⚠️ Separate module  | ⬜ §16 unified                   |
 | ⭐  | Mandatory code signing      | ⚠️ Optional Authenticode | ❌ None built-in    | ⬜ §17 mandatory EIF             |
 
 > **After §1–§6:** Impossible OS has a triple-format dispatcher, module list infrastructure, and the world's fastest native loader (EIF).

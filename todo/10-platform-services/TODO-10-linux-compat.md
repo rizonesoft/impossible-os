@@ -62,19 +62,19 @@ title: "TODO-10 -- Linux ELF Compatibility Layer"
 
 ## Implementation Order
 
-| #   | Section                                  | Tag        | Dep            | Mark |
-| --- | ---------------------------------------- | ---------- | -------------- | ---- |
-| 1   | `task_t` Linux flags + fd table          | `[Sonnet]` | TODO-07 §1     | ⭐   |
-| 2   | ELF Linux loader (SYSV stack + auxv)     | `[Opus]`   | §1, TODO-07 §8 | ⭐   |
-| 3   | Syscall entry dispatch (`is_linux_elf` branch) | `[Opus]`   | §2             | ⭐   |
+| #   | Section                                                              | Tag        | Dep            | Mark |
+| --- | -------------------------------------------------------------------- | ---------- | -------------- | ---- |
+| 1   | `task_t` Linux flags + fd table                                      | `[Sonnet]` | TODO-07 §1     | ⭐   |
+| 2   | ELF Linux loader (SYSV stack + auxv)                                 | `[Opus]`   | §1, TODO-07 §8 | ⭐   |
+| 3   | Syscall entry dispatch (`is_linux_elf` branch)                       | `[Opus]`   | §2             | ⭐   |
 | 4   | 🐧 Linux syscall translation table (file I/O, process, memory, misc) | `[Sonnet]` | §3             | ⭐   |
-| 5   | Path translation (`/` → `C:\`, `/tmp`, `/proc` stubs) | `[Sonnet]` | §4             | ⭐   |
-| 6   | 🐧 Linux file descriptor table           | `[Sonnet]` | §4             | ⭐   |
-| 7   | POSIX filesystem stubs (`opendir`/`readdir`/`getdents`) | `[Sonnet]` | §6             | 💎   |
-| 8   | Signal stubs (`rt_sigaction`, `SIGINT`, `SIGCHLD`, `SIGKILL`) | `[Opus]`   | §3             | 💎   |
-| 9   | Shell ELF integration + `[Linux]` process tag | `[Sonnet]` | §2             | ⭐   |
-| 10  | Test: static hello + busybox             | `[Sonnet]` | §4–7           | 💎   |
-| 11  | Future: dynamic ELF (stretch)            | `[Opus]`   | §2–8           | 💎   |
+| 5   | Path translation (`/` → `C:\`, `/tmp`, `/proc` stubs)                | `[Sonnet]` | §4             | ⭐   |
+| 6   | 🐧 Linux file descriptor table                                       | `[Sonnet]` | §4             | ⭐   |
+| 7   | POSIX filesystem stubs (`opendir`/`readdir`/`getdents`)              | `[Sonnet]` | §6             | 💎   |
+| 8   | Signal stubs (`rt_sigaction`, `SIGINT`, `SIGCHLD`, `SIGKILL`)        | `[Opus]`   | §3             | 💎   |
+| 9   | Shell ELF integration + `[Linux]` process tag                        | `[Sonnet]` | §2             | ⭐   |
+| 10  | Test: static hello + busybox                                         | `[Sonnet]` | §4–7           | 💎   |
+| 11  | Future: dynamic ELF (stretch)                                        | `[Opus]`   | §2–8           | 💎   |
 
 ---
 
@@ -320,18 +320,18 @@ Basic signal delivery for foreground process control. Full POSIX signal semantic
 ## OS Comparison
 
 
-| ⭐  | Feature                                  | 🪟 Win11                 | 🐧 Linux      | 🚀 Impossible OS                 |
-| --- | ---------------------------------------- | ------------------------ | ------------- | -------------------------------- |
-| 💎  | Run static Linux ELF binaries            | ✅ WSL2 (full VM)        | ✅ Native     | ⬜ in-kernel compat, no VM       |
-| 💎  | 🐧 Linux syscall translation             | ✅ WSL2 NT layer         | ✅ Native     | ⬜ `linux_syscall_table[]`       |
-| 💎  | POSIX path model                         | ✅ WSL2 VirtIO-FS        | ✅ Native     | ⬜ `linux_path_to_win32()`       |
-| 💎  | Integer file descriptor table            | ✅ WSL2                  | ✅ Native     | ⬜ `linux_fd_table[]` in task    |
-| 💎  | Signal delivery                          | ✅ WSL2                  | ✅ Native     | ⬜ user-mode signal frames       |
-| 💎  | `busybox` runs                           | ✅ WSL2                  | ✅ Native     | ⬜ static busybox milestone      |
-| ⭐  | Zero-VM Linux compat                     | ❌ WSL2 requires Hyper-V | ❌ N/A        | ⬜ compat layer in kernel, ~500  |
+| ⭐  | Feature                                          | 🪟 Win11                 | 🐧 Linux      | 🚀 Impossible OS                 |
+| --- | ------------------------------------------------ | ------------------------ | ------------- | -------------------------------- |
+| 💎  | Run static Linux ELF binaries                    | ✅ WSL2 (full VM)        | ✅ Native     | ⬜ in-kernel compat, no VM       |
+| 💎  | 🐧 Linux syscall translation                     | ✅ WSL2 NT layer         | ✅ Native     | ⬜ `linux_syscall_table[]`       |
+| 💎  | POSIX path model                                 | ✅ WSL2 VirtIO-FS        | ✅ Native     | ⬜ `linux_path_to_win32()`       |
+| 💎  | Integer file descriptor table                    | ✅ WSL2                  | ✅ Native     | ⬜ `linux_fd_table[]` in task    |
+| 💎  | Signal delivery                                  | ✅ WSL2                  | ✅ Native     | ⬜ user-mode signal frames       |
+| 💎  | `busybox` runs                                   | ✅ WSL2                  | ✅ Native     | ⬜ static busybox milestone      |
+| ⭐  | Zero-VM Linux compat                             | ❌ WSL2 requires Hyper-V | ❌ N/A        | ⬜ compat layer in kernel, ~500  |
 | ⭐  | PE-native + ELF-compat in same process namespace | ❌ Separate WSL env      | ❌ N/A        | ⬜ both formats in `exec_load()` |
-| ⭐  | `[Linux]` tag in process list for ELF processes | ❌ No tagging            | ❌ No tagging | ⬜ `tasklist` shows format       |
-| ❌  | Dynamic ELF / `dlopen` / `libc.so`       | ✅ WSL2                  | ✅ Native     | ⬜ §11 -- Future only            |
+| ⭐  | `[Linux]` tag in process list for ELF processes  | ❌ No tagging            | ❌ No tagging | ⬜ `tasklist` shows format       |
+| ❌  | Dynamic ELF / `dlopen` / `libc.so`               | ✅ WSL2                  | ✅ Native     | ⬜ §11 -- Future only            |
 
 **Impossible OS advantage:** Linux ELF compat runs in-kernel with no hypervisor, no separate VHD, and no process namespace boundary -- a static Linux binary simply runs in ring-3 alongside PE binaries using the same scheduler, memory manager, and VFS. This is architecturally lighter than WSL2 and unique among OS designs.
 

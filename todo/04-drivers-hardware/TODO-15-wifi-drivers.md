@@ -35,18 +35,18 @@ title: "TODO-15 -- WiFi Hardware Drivers"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                              | Depends On                               | Status |
-| --- | :---: | ---------------------------------------- | ---------------------------------------- | :----: |
-| ⭐  |   1   | §1 WiFi driver abstraction layer -- `wifi_device_t`, `wifi_manager.c`, syscalls | none                                     |  [ ]   |
-| 💎  |   2   | §2 802.11 frame layer -- header parse/build, LLC/SNAP, `net_receive_ethernet` | §1 (vtable), `ethernet.c`                |  [ ]   |
-| 💎  |   3   | §3 WiFi scan & association state machine | §2 (frame layer), §1 (state in manager)  |  [ ]   |
-| 💎  |   4   | §4 RTL8188/8192 USB WiFi driver          | §1 (vtable), §2 (frame layer), TODO-10 USB stack |  [ ]   |
-| 💎  |   5   | §5 WPA2-PSK supplicant -- EAPOL 4-way handshake, CCMP decrypt | §3 (association path), hwrng (TODO-04 §2) |  [ ]   |
-| 💎  |   6   | §6 RTL8821CE/8822BE PCIe driver          | §1, §2, §5 (WPA2 shared path)            |  [ ]   |
-| 💎  |   7   | §7 Intel AX200/AX210 iwlwifi PCIe driver | §1, §2, §5                               |  [ ]   |
-| 💎  |   8   | §8 MediaTek MT7921/MT7922 PCIe driver    | §1, §2, §5                               |  [ ]   |
-| 💎  |   9   | §9 WiFi power management -- PS-Poll, wake-on-WLAN | §3 (associated), TODO-03 §9 ACPI S3      |  [ ]   |
-| 💎  |  10   | §10 `ncpa.cpl` WiFi tab + `netsh wlan` commands | §3 (scan/connect API), §5 (WPA2)         |  [ ]   |
+| ⭐  | Order | Deliverable                                                                     | Depends On                                       | Status |
+| --- | :---: | ------------------------------------------------------------------------------- | ------------------------------------------------ | :----: |
+| ⭐  |   1   | §1 WiFi driver abstraction layer -- `wifi_device_t`, `wifi_manager.c`, syscalls | none                                             |  [ ]   |
+| 💎  |   2   | §2 802.11 frame layer -- header parse/build, LLC/SNAP, `net_receive_ethernet`   | §1 (vtable), `ethernet.c`                        |  [ ]   |
+| 💎  |   3   | §3 WiFi scan & association state machine                                        | §2 (frame layer), §1 (state in manager)          |  [ ]   |
+| 💎  |   4   | §4 RTL8188/8192 USB WiFi driver                                                 | §1 (vtable), §2 (frame layer), TODO-10 USB stack |  [ ]   |
+| 💎  |   5   | §5 WPA2-PSK supplicant -- EAPOL 4-way handshake, CCMP decrypt                   | §3 (association path), hwrng (TODO-04 §2)        |  [ ]   |
+| 💎  |   6   | §6 RTL8821CE/8822BE PCIe driver                                                 | §1, §2, §5 (WPA2 shared path)                    |  [ ]   |
+| 💎  |   7   | §7 Intel AX200/AX210 iwlwifi PCIe driver                                        | §1, §2, §5                                       |  [ ]   |
+| 💎  |   8   | §8 MediaTek MT7921/MT7922 PCIe driver                                           | §1, §2, §5                                       |  [ ]   |
+| 💎  |   9   | §9 WiFi power management -- PS-Poll, wake-on-WLAN                               | §3 (associated), TODO-03 §9 ACPI S3              |  [ ]   |
+| 💎  |  10   | §10 `ncpa.cpl` WiFi tab + `netsh wlan` commands                                 | §3 (scan/connect API), §5 (WPA2)                 |  [ ]   |
 
 > §1 `wifi_device_t` is `⭐` exclusive by architecture: Windows uses NDIS 6.x miniport with a fixed DDI; Linux uses `mac80211` + `cfg80211`. Impossible OS defines a lean 7-function vtable that any driver can satisfy, with `wifi_manager.c` as the single ownership point for scan results, preferred networks, and syscall dispatch -- no kernel socket layer or `wpa_supplicant` daemon required.
 
@@ -264,18 +264,18 @@ Add a WiFi tab to `ncpa.cpl` (Network Connections): scan results list, Connect/D
 ## OS Comparison
 
 
-| ⭐  | Feature                                  | 🪟 Win11                                 | 🐧 Linux                                 | 🚀 Impossible OS                         |
-| --- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
-| ⭐  | WiFi driver vtable                       | ❌ NDIS 6.x miniport DDI --              | ❌ `mac80211` + `cfg80211` -- two-layer  | ⬜ §1 -- 7-function vtable, `wifi_manager.c` singleton, no |
-| 💎  | Realtek RTL8188/8192 USB WiFi            | ✅ `rtwlane.sys` inbox; some via WU      | ✅ `rtl8xxxu.c`; embedded firmware; USB bulk | ⬜ §4 -- firmware embed, USB control upload, |
-| 💎  | Realtek RTL8821CE/8822BE PCIe WiFi       | ✅ `rtwlane6.sys` inbox                  | ✅ `rtw88_8821ce.c`; DMA rings; MSI IRQ; | ⬜ §6 -- MMIO, VFS firmware load, DMA    |
-| 💎  | Intel AX200/AX210 WiFi 6                 | ✅ `iwifi65.sys` inbox driver            | ✅ `iwlwifi` GPL + BSD ucode;            | ⬜ §7 -- BSD ucode, clean-room transport, host |
-| 💎  | MediaTek MT7921/MT7922                   | ✅ `netvwifibus.inf` via WU              | ✅ `mt7921e.c`; WFDMA rings; MIT firmware | ⬜ §8 -- WFDMA rings, MIT firmware, PCIe |
-| 💎  | WPA2-PSK 4-way handshake + CCMP decrypt  | ✅ `dot11krnl.sys`; WPA2 in kernel; `wlansvc` | ✅ `mac80211` CCMP; `wpa_supplicant` user-space for | ⬜ §5 -- PBKDF2+HMAC-SHA1+AES-CCM all in kernel; no |
-| 💎  | 802.11 frame layer                       | ✅ `dot11krnl.sys` 802.11 frame processing | ✅ `ieee80211_rx_napi()` in `mac80211`   | ⬜ §2 -- `ieee80211_hdr_t`, LLC/SNAP strip, `net_receive_ethernet` delivery |
-| 💎  | WiFi scan + association state machine    | ✅ `wlansvc` AutoConfig; `WLAN_CONNECTION_NOTIFICATION` | ✅ `wpa_supplicant`; `cfg80211` scan; `iw` commands | ⬜ §3 -- channel sweep, auth/assoc/WPA2/DHCP SM, auto-reconnect, |
-| 💎  | 802.11 PS-Poll power management + wake-on-WLAN | ✅ NDIS selective suspend; `NdisMIndicateStatus(WLAN_POWER_STATE)` | ✅ `mac80211` PS mode; `rfkill`; wake-on-WLAN | ⬜ §9 -- PS-Poll PM bit, DTIM wake,      |
-| 💎  | WiFi UI                                  | ✅ WiFi tray flyout; Settings WiFi       | ✅ `nm-applet`; `nmcli`; GNOME WiFi settings | ⬜ §10 -- `ncpa.cpl` WiFi tab, passphrase dialog, |
+| ⭐  | Feature                                        | 🪟 Win11                                                           | 🐧 Linux                                            | 🚀 Impossible OS                                                            |
+| --- | ---------------------------------------------- | ------------------------------------------------------------------ | --------------------------------------------------- | --------------------------------------------------------------------------- |
+| ⭐  | WiFi driver vtable                             | ❌ NDIS 6.x miniport DDI --                                        | ❌ `mac80211` + `cfg80211` -- two-layer             | ⬜ §1 -- 7-function vtable, `wifi_manager.c` singleton, no                  |
+| 💎  | Realtek RTL8188/8192 USB WiFi                  | ✅ `rtwlane.sys` inbox; some via WU                                | ✅ `rtl8xxxu.c`; embedded firmware; USB bulk        | ⬜ §4 -- firmware embed, USB control upload,                                |
+| 💎  | Realtek RTL8821CE/8822BE PCIe WiFi             | ✅ `rtwlane6.sys` inbox                                            | ✅ `rtw88_8821ce.c`; DMA rings; MSI IRQ;            | ⬜ §6 -- MMIO, VFS firmware load, DMA                                       |
+| 💎  | Intel AX200/AX210 WiFi 6                       | ✅ `iwifi65.sys` inbox driver                                      | ✅ `iwlwifi` GPL + BSD ucode;                       | ⬜ §7 -- BSD ucode, clean-room transport, host                              |
+| 💎  | MediaTek MT7921/MT7922                         | ✅ `netvwifibus.inf` via WU                                        | ✅ `mt7921e.c`; WFDMA rings; MIT firmware           | ⬜ §8 -- WFDMA rings, MIT firmware, PCIe                                    |
+| 💎  | WPA2-PSK 4-way handshake + CCMP decrypt        | ✅ `dot11krnl.sys`; WPA2 in kernel; `wlansvc`                      | ✅ `mac80211` CCMP; `wpa_supplicant` user-space for | ⬜ §5 -- PBKDF2+HMAC-SHA1+AES-CCM all in kernel; no                         |
+| 💎  | 802.11 frame layer                             | ✅ `dot11krnl.sys` 802.11 frame processing                         | ✅ `ieee80211_rx_napi()` in `mac80211`              | ⬜ §2 -- `ieee80211_hdr_t`, LLC/SNAP strip, `net_receive_ethernet` delivery |
+| 💎  | WiFi scan + association state machine          | ✅ `wlansvc` AutoConfig; `WLAN_CONNECTION_NOTIFICATION`            | ✅ `wpa_supplicant`; `cfg80211` scan; `iw` commands | ⬜ §3 -- channel sweep, auth/assoc/WPA2/DHCP SM, auto-reconnect,            |
+| 💎  | 802.11 PS-Poll power management + wake-on-WLAN | ✅ NDIS selective suspend; `NdisMIndicateStatus(WLAN_POWER_STATE)` | ✅ `mac80211` PS mode; `rfkill`; wake-on-WLAN       | ⬜ §9 -- PS-Poll PM bit, DTIM wake,                                         |
+| 💎  | WiFi UI                                        | ✅ WiFi tray flyout; Settings WiFi                                 | ✅ `nm-applet`; `nmcli`; GNOME WiFi settings        | ⬜ §10 -- `ncpa.cpl` WiFi tab, passphrase dialog,                           |
 
 > **After §1–10:** Impossible OS covers the four most prevalent laptop WiFi chipsets (Realtek USB, Realtek PCIe, Intel AX200/AX210, MediaTek MT7921) plus complete WPA2-PSK in kernel. The `wifi_device_t` vtable (`⭐`) is the differentiating architecture: the entire WiFi stack -- scan, association, 4-way handshake, CCMP decryption, DHCP -- runs in the kernel without a `wpa_supplicant` daemon or NDIS intermediate driver. This eliminates the 50–200 ms handshake delays caused by user-space daemon round-trips in Linux and the NDIS miniport marshalling overhead in Windows.
 

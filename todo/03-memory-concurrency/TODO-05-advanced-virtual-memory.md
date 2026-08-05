@@ -41,19 +41,19 @@ title: "TODO-05 -- Advanced Virtual Memory"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                              | Depends On                       | Status |
-| --- | :---: | ---------------------------------------- | -------------------------------- | :----: |
-| ⭐  |   1   | §1 COW `fork()`                          | TODO-01 §1 (`mprotect`)          |  [ ]   |
-| 💎  |   2   | §2 2 MiB huge pages                      | PMM                              |  [ ]   |
-| 💎  |   3   | §3 1 GiB pages (kernel MMIO)             | §2                               |  [ ]   |
-| 💎  |   4   | §4 `madvise` / `MEM_RESET` hints         | §2 (for `MADV_HUGEPAGE`)         |  [ ]   |
-| 💎  |   5   | §5 Section Object multi-view mappings    | §1, TODO-01 §3                   |  [ ]   |
+| ⭐  | Order | Deliverable                                | Depends On                       | Status |
+| --- | :---: | ------------------------------------------ | -------------------------------- | :----: |
+| ⭐  |   1   | §1 COW `fork()`                            | TODO-01 §1 (`mprotect`)          |  [ ]   |
+| 💎  |   2   | §2 2 MiB huge pages                        | PMM                              |  [ ]   |
+| 💎  |   3   | §3 1 GiB pages (kernel MMIO)               | §2                               |  [ ]   |
+| 💎  |   4   | §4 `madvise` / `MEM_RESET` hints           | §2 (for `MADV_HUGEPAGE`)         |  [ ]   |
+| 💎  |   5   | §5 Section Object multi-view mappings      | §1, TODO-01 §3                   |  [ ]   |
 | 💎  |   6   | §6 Per-process memory limits (Job Objects) | TODO-01 §3 (commit tracking)     |  [ ]   |
-| 💎  |   7   | §7 Zero-copy DMA buffer pool             | §2, PMM contiguous               |  [ ]   |
-| 💎  |   8   | §8 Compressed memory (zRAM-style)        | TODO-03 §5 (vmalloc), TODO-03 §8 |  [ ]   |
-| 💎  |   9   | §9 NUMA-aware PMM                        | ACPI SRAT, CPUID                 |  [ ]   |
-| ⭐  |  10   | §10 Transparent huge pages collapser     | §2, §4, scheduler tick           |  [ ]   |
-| 💎  |  11   | §11 Address Windowing Extensions (AWE)   | per-process page tables, §1      |  [ ]   |
+| 💎  |   7   | §7 Zero-copy DMA buffer pool               | §2, PMM contiguous               |  [ ]   |
+| 💎  |   8   | §8 Compressed memory (zRAM-style)          | TODO-03 §5 (vmalloc), TODO-03 §8 |  [ ]   |
+| 💎  |   9   | §9 NUMA-aware PMM                          | ACPI SRAT, CPUID                 |  [ ]   |
+| ⭐  |  10   | §10 Transparent huge pages collapser       | §2, §4, scheduler tick           |  [ ]   |
+| 💎  |  11   | §11 Address Windowing Extensions (AWE)     | per-process page tables, §1      |  [ ]   |
 
 > ⭐ = exclusive -- COW `fork()` is a POSIX capability Windows does not have; the THP collapser is a Linux-specific optimization Impossible OS adds on top of the huge-page foundation.
 > 💎 = parity -- Windows and Linux both implement huge pages, madvise, Section Objects, DMA pools, compressed memory, NUMA, and AWE-style physical-page windowing (`AllocateUserPhysicalPages` / `MAP_HUGETLB` reservation).
@@ -255,18 +255,18 @@ Windows AWE lets a process reserve physical pages it owns (`NtAllocateUserPhysic
 ## OS Comparison
 
 
-| ⭐  | Feature                                  | 🪟 Win11                                 | 🐧 Linux                                 | 🚀 Impossible OS                         |
-| --- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
-| ⭐  | COW `fork()` -- instant process clone    | ❌ No `fork()`; uses `CreateProcess` with | ✅ COW `fork()` -- standard POSIX,       | ⬜ §1 -- beats Windows -- both `fork()`  |
-| 💎  | 2 MiB huge pages                         | ✅ `VirtualAlloc(MEM_LARGE_PAGES)`; requires privilege | ✅ `MAP_HUGETLB`; `hugepages=` kernel param | ⬜ §2 -- `MAP_HUGE` flag, `pmm_alloc_huge()` |
-| 💎  | 1 GiB pages for MMIO / reserved ranges   | ✅ 1 GB large pages (Win8+,              | ✅ `PUD_SIZE` mappings for MMIO in       | ⬜ §3 -- kernel-only `vmm_map_1g()`, PDPTE PS bit |
-| 💎  | `madvise` / `MEM_RESET` access hints     | ✅ `VirtualAlloc(MEM_RESET / MEM_RESET_UNDO)` | ✅ `madvise(2)` -- `DONTNEED`, `HUGEPAGE`, `SEQUENTIAL` | ⬜ §4 -- `vmm_advise()`, `MADV_*` + Win32 `MEM_RESET` |
-| 💎  | Section Object / shared memory multi-view | ✅ `NtCreateSection` / `MapViewOfFile` -- core | ⚠️ `mmap(MAP_SHARED)` / POSIX `shm_open`; no | ⬜ §5 -- `NtCreateSection` + `NtMapViewOfSection` |
-| 💎  | Per-process memory limits                | ✅ `CreateJobObject` / `ProcessMemoryLimit` | ⚠️ `cgroups` memory limit; no Win32       | ⬜ §6 -- `NtCreateJobObject` + committed-page enforcement |
-| 💎  | Zero-copy DMA buffer pool                | ✅ `AllocateCommonBuffer` (WDM); HAL DMA API | ✅ `dma_alloc_coherent` / `dma_map_sg` (DMA-API) | ⬜ §7 -- unified `dma_alloc_coherent` / `dma_map_sg` |
-| 💎  | Compressed memory                        | ✅ Memory Compression (Win10+, `MemCompressionProcess`) | ✅ zRAM (`CONFIG_ZRAM`); LZ4/LZO/zstd backends | ⬜ §8 -- LZ4 vmalloc pool, `MM_PRESSURE_HIGH` trigger |
-| 💎  | NUMA-aware physical frame allocation     | ✅ NUMA node affinity in `MmAllocateContiguousMemory` | ✅ `alloc_pages_node()` + `numactl` / cpuset | ⬜ §9 -- ACPI SRAT parse, `pmm_alloc_node()` |
-| ⭐  | Transparent huge page collapser          | ❌ No THP; large pages are               | ✅ THP daemon (`khugepaged`); `MADV_HUGEPAGE` regions | ⬜ §10 -- `thp_kthread` collapse pass every 200 |
+| ⭐  | Feature                                   | 🪟 Win11                                                | 🐧 Linux                                                | 🚀 Impossible OS                                          |
+| --- | ----------------------------------------- | ------------------------------------------------------- | ------------------------------------------------------- | --------------------------------------------------------- |
+| ⭐  | COW `fork()` -- instant process clone     | ❌ No `fork()`; uses `CreateProcess` with               | ✅ COW `fork()` -- standard POSIX,                      | ⬜ §1 -- beats Windows -- both `fork()`                   |
+| 💎  | 2 MiB huge pages                          | ✅ `VirtualAlloc(MEM_LARGE_PAGES)`; requires privilege  | ✅ `MAP_HUGETLB`; `hugepages=` kernel param             | ⬜ §2 -- `MAP_HUGE` flag, `pmm_alloc_huge()`              |
+| 💎  | 1 GiB pages for MMIO / reserved ranges    | ✅ 1 GB large pages (Win8+,                             | ✅ `PUD_SIZE` mappings for MMIO in                      | ⬜ §3 -- kernel-only `vmm_map_1g()`, PDPTE PS bit         |
+| 💎  | `madvise` / `MEM_RESET` access hints      | ✅ `VirtualAlloc(MEM_RESET / MEM_RESET_UNDO)`           | ✅ `madvise(2)` -- `DONTNEED`, `HUGEPAGE`, `SEQUENTIAL` | ⬜ §4 -- `vmm_advise()`, `MADV_*` + Win32 `MEM_RESET`     |
+| 💎  | Section Object / shared memory multi-view | ✅ `NtCreateSection` / `MapViewOfFile` -- core          | ⚠️ `mmap(MAP_SHARED)` / POSIX `shm_open`; no            | ⬜ §5 -- `NtCreateSection` + `NtMapViewOfSection`         |
+| 💎  | Per-process memory limits                 | ✅ `CreateJobObject` / `ProcessMemoryLimit`             | ⚠️ `cgroups` memory limit; no Win32                     | ⬜ §6 -- `NtCreateJobObject` + committed-page enforcement |
+| 💎  | Zero-copy DMA buffer pool                 | ✅ `AllocateCommonBuffer` (WDM); HAL DMA API            | ✅ `dma_alloc_coherent` / `dma_map_sg` (DMA-API)        | ⬜ §7 -- unified `dma_alloc_coherent` / `dma_map_sg`      |
+| 💎  | Compressed memory                         | ✅ Memory Compression (Win10+, `MemCompressionProcess`) | ✅ zRAM (`CONFIG_ZRAM`); LZ4/LZO/zstd backends          | ⬜ §8 -- LZ4 vmalloc pool, `MM_PRESSURE_HIGH` trigger     |
+| 💎  | NUMA-aware physical frame allocation      | ✅ NUMA node affinity in `MmAllocateContiguousMemory`   | ✅ `alloc_pages_node()` + `numactl` / cpuset            | ⬜ §9 -- ACPI SRAT parse, `pmm_alloc_node()`              |
+| ⭐  | Transparent huge page collapser           | ❌ No THP; large pages are                              | ✅ THP daemon (`khugepaged`); `MADV_HUGEPAGE` regions   | ⬜ §10 -- `thp_kthread` collapse pass every 200           |
 
 > **After parity items:** Impossible OS matches Windows and Linux on huge pages, Section Objects, DMA pools, compressed memory, and NUMA. COW `fork()` adds a POSIX capability Windows lacks entirely. The THP collapser matches Linux `khugepaged`, giving transparent large-page performance to any anonymous mapping without application changes.
 

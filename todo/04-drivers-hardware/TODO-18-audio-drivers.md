@@ -33,15 +33,15 @@ title: "TODO-18 -- Audio Drivers"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                              | Depends On                               | Status |
-| --- | :---: | ---------------------------------------- | ---------------------------------------- | :----: |
-| ⭐  |   1   | §1 `audio_device_t` HAL vtable           | none                                     |  [ ]   |
-| 💎  |   2   | §2 AC97 driver -- BDL DMA ring, IRQ refill, QEMU AC97 | §1 (vtable)                              |  [ ]   |
-| 💎  |   3   | §3 Intel HDA driver -- CORB/RIRB, widget tree, DMA stream | §1 (vtable)                              |  [ ]   |
-| 💎  |   4   | §4 VirtIO Sound module -- control/tx/rx virtqueues, mic | §1 (vtable), VirtIO core                 |  [ ]   |
-| 💎  |   5   | §5 USB Audio UAC1 -- isochronous OUT, `SET_CUR` volume | §1 (vtable), TODO-10 §3 (isoch endpoint) |  [ ]   |
+| ⭐  | Order | Deliverable                                                        | Depends On                               | Status |
+| --- | :---: | ------------------------------------------------------------------ | ---------------------------------------- | :----: |
+| ⭐  |   1   | §1 `audio_device_t` HAL vtable                                     | none                                     |  [ ]   |
+| 💎  |   2   | §2 AC97 driver -- BDL DMA ring, IRQ refill, QEMU AC97              | §1 (vtable)                              |  [ ]   |
+| 💎  |   3   | §3 Intel HDA driver -- CORB/RIRB, widget tree, DMA stream          | §1 (vtable)                              |  [ ]   |
+| 💎  |   4   | §4 VirtIO Sound module -- control/tx/rx virtqueues, mic            | §1 (vtable), VirtIO core                 |  [ ]   |
+| 💎  |   5   | §5 USB Audio UAC1 -- isochronous OUT, `SET_CUR` volume             | §1 (vtable), TODO-10 §3 (isoch endpoint) |  [ ]   |
 | 💎  |   6   | §6 Audio device hot-plug -- active device switch, Registry persist | §2–5 (drivers registered)                |  [ ]   |
-| 💎  |   7   | §7 Convert all drivers to `.kmod`        | §2–5, TODO-05 module loader              |  [ ]   |
+| 💎  |   7   | §7 Convert all drivers to `.kmod`                                  | §2–5, TODO-05 module loader              |  [ ]   |
 
 > §1 `audio_device_t` is `⭐` exclusive by design: Windows WaveRT/WASAPI and Linux ALSA both have multi-layer audio stacks; Impossible OS exposes a single kernel-level HAL vtable that any driver can satisfy in under 300 lines. The desktop mixer sits on top -- clean separation, no in-kernel mixing.
 
@@ -200,15 +200,15 @@ Move AC97, HDA, VirtIO Sound, and USB Audio out of the built-in kernel and into 
 ## OS Comparison
 
 
-| ⭐  | Feature                                  | 🪟 Win11                                 | 🐧 Linux                                 | 🚀 Impossible OS                         |
-| --- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
-| ⭐  | Single `audio_device_t` HAL vtable       | ❌ WaveRT→WASAPI multi-layer stack; KMixer in | ❌ ALSA PCM + mixer layers;              | ⬜ §1 -- 6-function vtable, passthrough only, desktop |
-| 💎  | AC97 PCM playback                        | ✅ `msac97.sys` inbox AC97 WDM audio     | ✅ `snd_intel8x0` ALSA driver; BDL DMA;  | ⬜ §2 -- cold reset, NAM/NAB I/O, 32-entry |
-| 💎  | Intel HDA                                | ✅ `hdaudio.sys` + `HDAudBus.sys`; codec enumeration; | ✅ `snd_hda_intel`; CORB/RIRB; codec parser; widget | ⬜ §3 -- CORB/RIRB verbs, AFG widget walk, |
-| 💎  | VirtIO Sound PCM playback + capture      | ✅ VirtIO drivers for Windows (Red       | ✅ `snd_virtio` ALSA driver; v1.2 spec;  | ⬜ §4 -- controlq PCM params, txq write, |
-| 💎  | USB Audio Class 1.0 (UAC1) PCM playback  | ✅ `usbaudio.sys` inbox UAC1/UAC2 driver | ✅ `snd_usb_audio`; UAC1 + UAC2; isochronous; | ⬜ §5 -- xHCI isoch endpoint, fractional packet |
-| 💎  | Audio drivers as loadable `.kmod` modules | ✅ All WDM audio drivers are             | ✅ All ALSA drivers are loadable         | ⬜ §7 -- `module_init/exit`, `src/modules/ac97/` etc., after TODO-05 |
-| 💎  | Audio device hot-plug + active device switch | ✅ Windows Audio Session API; device     | ✅ `udev` + PulseAudio/PipeWire; `PA_SINK_ADDED` / | ⬜ §6 -- `audio_notify_attach/detach`, `WM_AUDIO_DEVICE_CHANGED`, Registry pref |
+| ⭐  | Feature                                      | 🪟 Win11                                              | 🐧 Linux                                            | 🚀 Impossible OS                                                                |
+| --- | -------------------------------------------- | ----------------------------------------------------- | --------------------------------------------------- | ------------------------------------------------------------------------------- |
+| ⭐  | Single `audio_device_t` HAL vtable           | ❌ WaveRT→WASAPI multi-layer stack; KMixer in         | ❌ ALSA PCM + mixer layers;                         | ⬜ §1 -- 6-function vtable, passthrough only, desktop                           |
+| 💎  | AC97 PCM playback                            | ✅ `msac97.sys` inbox AC97 WDM audio                  | ✅ `snd_intel8x0` ALSA driver; BDL DMA;             | ⬜ §2 -- cold reset, NAM/NAB I/O, 32-entry                                      |
+| 💎  | Intel HDA                                    | ✅ `hdaudio.sys` + `HDAudBus.sys`; codec enumeration; | ✅ `snd_hda_intel`; CORB/RIRB; codec parser; widget | ⬜ §3 -- CORB/RIRB verbs, AFG widget walk,                                      |
+| 💎  | VirtIO Sound PCM playback + capture          | ✅ VirtIO drivers for Windows (Red                    | ✅ `snd_virtio` ALSA driver; v1.2 spec;             | ⬜ §4 -- controlq PCM params, txq write,                                        |
+| 💎  | USB Audio Class 1.0 (UAC1) PCM playback      | ✅ `usbaudio.sys` inbox UAC1/UAC2 driver              | ✅ `snd_usb_audio`; UAC1 + UAC2; isochronous;       | ⬜ §5 -- xHCI isoch endpoint, fractional packet                                 |
+| 💎  | Audio drivers as loadable `.kmod` modules    | ✅ All WDM audio drivers are                          | ✅ All ALSA drivers are loadable                    | ⬜ §7 -- `module_init/exit`, `src/modules/ac97/` etc., after TODO-05            |
+| 💎  | Audio device hot-plug + active device switch | ✅ Windows Audio Session API; device                  | ✅ `udev` + PulseAudio/PipeWire; `PA_SINK_ADDED` /  | ⬜ §6 -- `audio_notify_attach/detach`, `WM_AUDIO_DEVICE_CHANGED`, Registry pref |
 
 > **After §1–7:** Impossible OS has PCM playback across all four common audio surfaces (AC97, HDA, VirtIO, USB). The `audio_device_t` vtable (`⭐`) is the OS's architectural differentiator: Windows ships `KMixer` in the kernel and a 5-layer audio stack; Linux ships `dmix` as an ALSA plugin. Impossible OS keeps all mixing, resampling, and effects above the kernel boundary -- the driver layer is a thin, auditable PCM pipe that any device can implement in under 300 lines.
 

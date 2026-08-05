@@ -507,7 +507,7 @@ From the stamped section 16:
 | 💎  | Win32 feature stubs    | ✅ full ADS/ACL/vol       | ❌ POSIX only              | ✅ §11 -- ADS/vol/reparse     |
 | 💎  | SFN tail collision     | ✅ ~1-~9, 5-char ~10+     | ✅ fat_gen_ks_short hash   | ✅ §12 -- ~1-~99 loop         |
 | 💎  | 4 GiB write guard      | ✅ rejects at limit       | ✅ fat_cont_expand check   | ✅ §13 -- write + truncate    |
-| 💎  | Opportunistic locks    | ✅ L1/L2/Batch/R/RW/RH    | ⚠️ POSIX leases only        | ✅ §14 -- Level 1/2           |
+| 💎  | Opportunistic locks    | ✅ L1/L2/Batch/R/RW/RH    | ⚠️ POSIX leases only       | ✅ §14 -- Level 1/2           |
 | 💎  | VFS_O_TRUNC end-to-end | ✅ TRUNCATE_EXISTING flag | ✅ POSIX O_TRUNC           | ⬜ §15 -- planned (3 prereqs) |
 
 > After §1-§14, FAT32 matches fastfat.sys spec correctness and exceeds dosfstools with in-kernel fsck.

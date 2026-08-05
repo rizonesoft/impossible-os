@@ -66,17 +66,17 @@ file_patterns:
 
 ## Implementation Order
 
-| ⭐  | Order | Section | Deliverable                              | Depends On                     | Status |
-| --- | :---: | :-----: | ---------------------------------------- | ------------------------------ | :----: |
-| ⭐  |   1   |    1    | Preflight inventory and risk register    | --                             |  [x]   |
-| ⭐  |   2   |    2    | `rizonetech` organization readiness and policy parity | §1                             |  [/]   |
-| ⭐  |   3   |    3    | GitHub Pages custom-domain continuity plan | §1, §2                         |  [/]   |
-| ⭐  |   4   |    4    | Repository transfer runbook and rollback window | §1, §2, §3                     |  [/]   |
-| ⭐  |   5   |    5    | Post-transfer settings, workflows, secrets, environments audit | §4                             |  [/]   |
-| ⭐  |   6   |    6    | URL, badge, docs, and generated-link sweep | §4, §5                         |  [x]   |
+| ⭐  | Order | Section | Deliverable                                                     | Depends On                     | Status |
+| --- | :---: | :-----: | --------------------------------------------------------------- | ------------------------------ | :----: |
+| ⭐  |   1   |    1    | Preflight inventory and risk register                           | --                             |  [x]   |
+| ⭐  |   2   |    2    | `rizonetech` organization readiness and policy parity           | §1                             |  [/]   |
+| ⭐  |   3   |    3    | GitHub Pages custom-domain continuity plan                      | §1, §2                         |  [/]   |
+| ⭐  |   4   |    4    | Repository transfer runbook and rollback window                 | §1, §2, §3                     |  [/]   |
+| ⭐  |   5   |    5    | Post-transfer settings, workflows, secrets, environments audit  | §4                             |  [/]   |
+| ⭐  |   6   |    6    | URL, badge, docs, and generated-link sweep                      | §4, §5                         |  [x]   |
 | ⭐  |   7   |    7    | Validation suite: Pages, Actions, releases, clone, hooks, graph | §5, §6                         |  [/]   |
-| ⭐  |   8   |    8    | Move-back and public-visibility runbook  | §1, §2, §3, §4, §5, §6, §7     |  [/]   |
-| ⭐  |   9   |    9    | Documentation sync and closure           | §1, §2, §3, §4, §5, §6, §7, §8 |  [x]   |
+| ⭐  |   8   |    8    | Move-back and public-visibility runbook                         | §1, §2, §3, §4, §5, §6, §7     |  [/]   |
+| ⭐  |   9   |    9    | Documentation sync and closure                                  | §1, §2, §3, §4, §5, §6, §7, §8 |  [x]   |
 
 > **Order vs section number:** The file is ordered by execution flow. Section 8 is intentionally specified before the first transfer happens so the team can confirm the move is reversible rather than discovering account or Pages constraints after the repository is already in the organization.
 

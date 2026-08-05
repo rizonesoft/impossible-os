@@ -202,11 +202,11 @@ title: "TODO-26 -- Hibernation Resume & Fast Startup Boot Handoff"
 | ⭐  | Feature                  | 🪟 Win11                   | 🐧 Linux                  | 🚀 Impossible OS              |
 | --- | ------------------------ | -------------------------- | ------------------------- | ----------------------------- |
 | 💎  | S4 resume selection      | ✅ hiberfil.sys + winload  | ✅ `resume=` kernel param | ⬜ Planned §1-§6              |
-| 💎  | Fast startup             | ✅ hybrid boot (hiberboot) | ⚠️ limited distro support  | ⬜ Planned §7                 |
-| 💎  | Resume invalidation      | ✅ update/driver policy    | ⚠️ initramfs logic         | ⬜ Planned §3                 |
+| 💎  | Fast startup             | ✅ hybrid boot (hiberboot) | ⚠️ limited distro support | ⬜ Planned §7                 |
+| 💎  | Resume invalidation      | ✅ update/driver policy    | ⚠️ initramfs logic        | ⬜ Planned §3                 |
 | ⭐  | BlackBox resume report   | ❌ event logs only         | ❌ journal only           | ⭐ Planned §8 (X:\Diag + QR)  |
 | ⭐  | Resume image anti-replay | ❌ none                    | ❌ none                   | ⭐ Planned §4 (TPM-NV gen)    |
-| ⭐  | Resume image encryption  | ⚠️ only via BitLocker       | ⚠️ needs encrypted swap    | ⭐ Planned §4 + D02T26 (AEAD) |
+| ⭐  | Resume image encryption  | ⚠️ only via BitLocker      | ⚠️ needs encrypted swap   | ⭐ Planned §4 + D02T26 (AEAD) |
 
 ---
 

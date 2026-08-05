@@ -38,13 +38,13 @@ title: "TODO-01 -- Architecture Abstraction Layer"
 
 ## Implementation Order
 
-| Star | Order | Deliverable                              | Depends On | Status |
-| ---- | :---: | ---------------------------------------- | ---------- | :----: |
-| 💎   |   1   | Define HAL interface (hal.h)             | --         |  [ ]   |
+| Star | Order | Deliverable                               | Depends On | Status |
+| ---- | :---: | ----------------------------------------- | ---------- | :----: |
+| 💎   |   1   | Define HAL interface (hal.h)              | --         |  [ ]   |
 | 💎   |   2   | Create arch/x86_64/ directory, move files | §1         |  [ ]   |
-| 💎   |   3   | Update Makefile for ARCH= variable       | §2         |  [ ]   |
-| 💎   |   4   | Update all #include paths                | §2         |  [ ]   |
-| 💎   |   5   | Verify 4-platform boot + all tests pass  | §3, §4     |  [ ]   |
+| 💎   |   3   | Update Makefile for ARCH= variable        | §2         |  [ ]   |
+| 💎   |   4   | Update all #include paths                 | §2         |  [ ]   |
+| 💎   |   5   | Verify 4-platform boot + all tests pass   | §3, §4     |  [ ]   |
 
 ---
 

@@ -40,16 +40,16 @@ title: "TODO-02 -- Memory Security Hardening"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                              | Depends On                               | Status |
-| --- | :---: | ---------------------------------------- | ---------------------------------------- | :----: |
-| 💎  |   1   | §5 NX/DEP -- data mapping audit + enforce | 01-boot-platform/TODO-09-cpu-boot-sequencing.md §2, TODO-01 §2 |  [ ]   |
-| 💎  |   2   | §3 SMEP -- enable + test coverage        | 01-boot-platform/TODO-09-cpu-boot-sequencing.md §1, §2 |  [~]   |
-| 💎  |   3   | §4 SMAP + `copy_from_user` / `copy_to_user` | §3 (CR4 baseline), D02 T11 §3            |  [~]   |
-| ⭐  |   4   | §1 User-space ASLR (mandatory for all procs) | TODO-01 §3 demand paging                 |  [ ]   |
-| 💎  |   5   | §2 KASLR -- bootloader offset + kernel reloc | --                                       |  [~]   |
-| 💎  |   6   | §6 KPTI basic -- per-mode page table split | §2, VMM page table work                  |  [~]   |
-| 💎  |   7   | §7 CET shadow stack stub                 | §3, §4 (CR4 baseline)                    |  [ ]   |
-| ⭐  |   8   | §8 Security layout report                | §1, §2                                   |  [ ]   |
+| ⭐  | Order | Deliverable                                  | Depends On                                                     | Status |
+| --- | :---: | -------------------------------------------- | -------------------------------------------------------------- | :----: |
+| 💎  |   1   | §5 NX/DEP -- data mapping audit + enforce    | 01-boot-platform/TODO-09-cpu-boot-sequencing.md §2, TODO-01 §2 |  [ ]   |
+| 💎  |   2   | §3 SMEP -- enable + test coverage            | 01-boot-platform/TODO-09-cpu-boot-sequencing.md §1, §2         |  [~]   |
+| 💎  |   3   | §4 SMAP + `copy_from_user` / `copy_to_user`  | §3 (CR4 baseline), D02 T11 §3                                  |  [~]   |
+| ⭐  |   4   | §1 User-space ASLR (mandatory for all procs) | TODO-01 §3 demand paging                                       |  [ ]   |
+| 💎  |   5   | §2 KASLR -- bootloader offset + kernel reloc | --                                                             |  [~]   |
+| 💎  |   6   | §6 KPTI basic -- per-mode page table split   | §2, VMM page table work                                        |  [~]   |
+| 💎  |   7   | §7 CET shadow stack stub                     | §3, §4 (CR4 baseline)                                          |  [ ]   |
+| ⭐  |   8   | §8 Security layout report                    | §1, §2                                                         |  [ ]   |
 
 > 💎 = parity -- Windows and Linux both implement SMEP/SMAP, KASLR, NX/DEP, KPTI, and CET; Impossible OS must match.
 > ⭐ = exclusive -- ASLR mandatory for every process (no per-binary opt-in) and the structured security layout report are not surfaced the same way on Windows or Linux.
@@ -205,16 +205,16 @@ Surface the active security configuration to diagnostics, the registry, and user
 ## OS Comparison
 
 
-| ⭐  | Feature                                  | 🪟 Win11                                 | 🐧 Linux                                 | 🚀 Impossible OS                         |
-| --- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
-| ⭐  | User-space ASLR                          | ⚠️ Opt-in per PE (`IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE`) | ✅ Default on all processes; ELF         | ⬜ §1 -- mandatory, no per-binary opt-out |
-| 💎  | KASLR -- kernel base randomized at each boot | ✅ Default since Vista; random kernel    | ✅ `CONFIG_RANDOMIZE_BASE`; `kaslr` boot param | ⬜ §2 -- RDRAND offset in bootloader     |
-| 💎  | SMEP -- kernel cannot exec user pages    | ✅ Enabled on supported hardware since   | ✅ Set in `setup_cr4()` if CPUID         | ⬜ §3 -- `cpu_cr4_harden()` + AP parity  |
-| 💎  | SMAP + `copy_from_user` wrappers         | ✅ `__readgsqword` + IRQL guards; no     | ✅ `copy_from_user` with `stac`/`clac` in all | ⬜ §4 -- `copy_from_user` wrappers + syscall audit |
-| 💎  | NX / DEP on all data mappings            | ✅ DEP default on; all data              | ✅ NX on all anonymous +                 | ⬜ §5 -- audit all VMM mapping paths     |
-| 💎  | KPTI / KVA Shadow                        | ✅ KVA Shadow; auto-enabled on vulnerable | ✅ PTI (`CONFIG_PAGE_TABLE_ISOLATION`)   | ⬜ §6 -- minimal trampoline PML4, CR3 swap |
-| 💎  | CET shadow stack                         | ✅ Hardware-enforced stack protection (Win10 2004+) | ✅ Kernel + glibc support since          | ⬜ §7 -- probe + enable + `NtSetInformationThread` |
-| ⭐  | Structured security layout report at boot | ❌ No single boot-time security summary  | ⚠️ `dmesg` grep; no unified security      | ⬜ §8 -- `secinfo` command + full registry |
+| ⭐  | Feature                                      | 🪟 Win11                                                   | 🐧 Linux                                       | 🚀 Impossible OS                                   |
+| --- | -------------------------------------------- | ---------------------------------------------------------- | ---------------------------------------------- | -------------------------------------------------- |
+| ⭐  | User-space ASLR                              | ⚠️ Opt-in per PE (`IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE`) | ✅ Default on all processes; ELF               | ⬜ §1 -- mandatory, no per-binary opt-out          |
+| 💎  | KASLR -- kernel base randomized at each boot | ✅ Default since Vista; random kernel                      | ✅ `CONFIG_RANDOMIZE_BASE`; `kaslr` boot param | ⬜ §2 -- RDRAND offset in bootloader               |
+| 💎  | SMEP -- kernel cannot exec user pages        | ✅ Enabled on supported hardware since                     | ✅ Set in `setup_cr4()` if CPUID               | ⬜ §3 -- `cpu_cr4_harden()` + AP parity            |
+| 💎  | SMAP + `copy_from_user` wrappers             | ✅ `__readgsqword` + IRQL guards; no                       | ✅ `copy_from_user` with `stac`/`clac` in all  | ⬜ §4 -- `copy_from_user` wrappers + syscall audit |
+| 💎  | NX / DEP on all data mappings                | ✅ DEP default on; all data                                | ✅ NX on all anonymous +                       | ⬜ §5 -- audit all VMM mapping paths               |
+| 💎  | KPTI / KVA Shadow                            | ✅ KVA Shadow; auto-enabled on vulnerable                  | ✅ PTI (`CONFIG_PAGE_TABLE_ISOLATION`)         | ⬜ §6 -- minimal trampoline PML4, CR3 swap         |
+| 💎  | CET shadow stack                             | ✅ Hardware-enforced stack protection (Win10 2004+)        | ✅ Kernel + glibc support since                | ⬜ §7 -- probe + enable + `NtSetInformationThread` |
+| ⭐  | Structured security layout report at boot    | ❌ No single boot-time security summary                    | ⚠️ `dmesg` grep; no unified security           | ⬜ §8 -- `secinfo` command + full registry         |
 
 > **After parity items:** Impossible OS matches Windows and Linux on KASLR, SMEP, SMAP, NX/DEP, KPTI, and CET. User-space ASLR is stronger than Windows -- mandatory for all processes rather than opt-in per PE binary. The structured `secinfo` command and boot-time security summary line give operator-visible confirmation that all mitigations are active without digging through `dmesg` or WinDbg.
 

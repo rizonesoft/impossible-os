@@ -38,15 +38,15 @@ title: "TODO-20 -- Zero-Delay USB Boot (Pre-ExitBootServices Driver Loading)"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                              | Depends On | Status |
-| --- | :---: | ---------------------------------------- | ---------- | :----: |
-| ⭐  |   1   | Bootloader allocates xHCI DMA structures | --         |  [/]   |
-| ⭐  |   2   | Bootloader performs USBLEGSUP + controller takeover | §1         |  [/]   |
-| ⭐  |   3   | Bootloader enumerates devices with persistent state | §2         |  [/]   |
-| ⭐  |   4   | boot_info passes controller + device DMA state | §3, T01 §4 |  [/]   |
+| ⭐  | Order | Deliverable                                                        | Depends On | Status |
+| --- | :---: | ------------------------------------------------------------------ | ---------- | :----: |
+| ⭐  |   1   | Bootloader allocates xHCI DMA structures                           | --         |  [/]   |
+| ⭐  |   2   | Bootloader performs USBLEGSUP + controller takeover                | §1         |  [/]   |
+| ⭐  |   3   | Bootloader enumerates devices with persistent state                | §2         |  [/]   |
+| ⭐  |   4   | boot_info passes controller + device DMA state                     | §3, T01 §4 |  [/]   |
 | ⭐  |   5   | Kernel inherits controller DMA (partial; full zero-delay needs §3) | §1, §2     |  [/]   |
-| ⭐  |   6   | Kernel registers MSC devices from boot_info geometry | §5         |  [/]   |
-| 💎  |   7   | Fallback: detect corrupt state, revert to §1-§4 path | §5         |  [/]   |
+| ⭐  |   6   | Kernel registers MSC devices from boot_info geometry               | §5         |  [/]   |
+| 💎  |   7   | Fallback: detect corrupt state, revert to §1-§4 path               | §5         |  [/]   |
 
 > All ⭐ rows -- this is a competitive advantage over Linux (which always re-enumerates after kexec/boot). Windows does this via winload.efi but it's invisible to users. Making it visible in boot timing would be a first.
 

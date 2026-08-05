@@ -64,22 +64,22 @@ title: "TODO-03 -- Advanced Kernel Allocator"
 
 ## Implementation Order
 
-| Star | Order | Deliverable                              | Depends On        | Status |
-| ---- | :---: | ---------------------------------------- | ----------------- | :----: |
-| 💎   |   1   | §1 Growable kernel heap + SMP spinlock   | PMM, VMM          |  [ ]   |
-| 💎   |   2   | §2 Memory pressure notifications         | PMM stats         |  [ ]   |
-| 💎   |   3   | §3 vmalloc                               | §1, TODO-01 §3    |  [ ]   |
-| 💎   |   4   | §4 SLAB allocator + lock-free per-CPU fast path | §1                |  [ ]   |
-| 💎   |   5   | §5 SLAB shrinker                         | §4, §2            |  [ ]   |
-| 💎   |   6   | §6 Tagged allocation API                 | §1                |  [ ]   |
-| 💎   |   7   | §7 NonPagedPool / PagedPool              | §4, §3            |  [ ]   |
-| ⭐   |   8   | §8 Out-of-band metadata                  | §4                |  [ ]   |
-| ⭐   |   9   | §9 Type-isolated pools (kalloc_type model) | §4, §8            |  [ ]   |
-| ⭐   |  10   | §10 Per-page header encoding keys        | §8                |  [ ]   |
-| ⭐   |  11   | §11 Probabilistic guard pages (KFENCE model) | §4                |  [ ]   |
-| ⭐   |  12   | §12 Production quarantine (delayed reuse) | §4, §11           |  [ ]   |
-| ⭐   |  13   | §13 Zero-on-free                         | §1                |  [ ]   |
-| ⭐   |  14   | §14 Bulk alloc/free API                  | §4                |  [ ]   |
+| Star | Order | Deliverable                                        | Depends On        | Status |
+| ---- | :---: | -------------------------------------------------- | ----------------- | :----: |
+| 💎   |   1   | §1 Growable kernel heap + SMP spinlock             | PMM, VMM          |  [ ]   |
+| 💎   |   2   | §2 Memory pressure notifications                   | PMM stats         |  [ ]   |
+| 💎   |   3   | §3 vmalloc                                         | §1, TODO-01 §3    |  [ ]   |
+| 💎   |   4   | §4 SLAB allocator + lock-free per-CPU fast path    | §1                |  [ ]   |
+| 💎   |   5   | §5 SLAB shrinker                                   | §4, §2            |  [ ]   |
+| 💎   |   6   | §6 Tagged allocation API                           | §1                |  [ ]   |
+| 💎   |   7   | §7 NonPagedPool / PagedPool                        | §4, §3            |  [ ]   |
+| ⭐   |   8   | §8 Out-of-band metadata                            | §4                |  [ ]   |
+| ⭐   |   9   | §9 Type-isolated pools (kalloc_type model)         | §4, §8            |  [ ]   |
+| ⭐   |  10   | §10 Per-page header encoding keys                  | §8                |  [ ]   |
+| ⭐   |  11   | §11 Probabilistic guard pages (KFENCE model)       | §4                |  [ ]   |
+| ⭐   |  12   | §12 Production quarantine (delayed reuse)          | §4, §11           |  [ ]   |
+| ⭐   |  13   | §13 Zero-on-free                                   | §1                |  [ ]   |
+| ⭐   |  14   | §14 Bulk alloc/free API                            | §4                |  [ ]   |
 | 💎   |  15   | §15 `/sys/slab` + `/sys/pooltags` + shell commands | §4, §6, VFS ready |  [ ]   |
 
 > 💎 = parity (Windows + Linux both have equivalent). ⭐ = exclusive (neither OS does this in production, or Impossible OS does it better).
@@ -403,14 +403,14 @@ Surface live allocator state through VFS for diagnostics.
 | 💎  | Virtual contiguous allocator  | ✅ MmAllocateMapping          | ✅ vmalloc/vfree           | ⬜ §3 -- scattered PMM, NX             |
 | 💎  | SLAB/slab caches              | ✅ Lookaside lists + LFH      | ✅ SLUB per-CPU slabs      | ⬜ §4 -- lock-free cmpxchg fast path   |
 | 💎  | SLAB shrinker                 | ✅ Lookaside depth tuning     | ✅ kmem_cache_shrink       | ⬜ §5 -- pressure-driven reap          |
-| 💎  | Tagged allocation             | ✅ ExAllocatePoolWithTag      | ⚠️ kmemleak only            | ⬜ §6 -- tag mismatch = panic          |
-| 💎  | NonPagedPool / PagedPool      | ✅ Core NT contract           | ⚠️ GFP flags, not explicit  | ⬜ §7 -- IRQL-enforced pool classes    |
+| 💎  | Tagged allocation             | ✅ ExAllocatePoolWithTag      | ⚠️ kmemleak only           | ⬜ §6 -- tag mismatch = panic          |
+| 💎  | NonPagedPool / PagedPool      | ✅ Core NT contract           | ⚠️ GFP flags, not explicit | ⬜ §7 -- IRQL-enforced pool classes    |
 | ⭐  | Out-of-band metadata          | ❌ In-band headers            | ❌ In-band freelist ptrs   | ⬜ §8 -- separate metadata pages       |
-| ⭐  | Type-isolated pools           | ❌ No type isolation          | ⚠️ Cache merge weakens it   | ⬜ §9 -- no-merge for critical types   |
-| ⭐  | Per-page encoding keys        | ⚠️ Single key per heap         | ⚠️ Per-cache key            | ⬜ §10 -- page-addr derived key        |
-| ⭐  | Probabilistic guard pages     | ❌ Special Pool too expensive | ⚠️ KFENCE 255 obj limit     | ⬜ §11 -- 1/64 slab pages, integrated  |
+| ⭐  | Type-isolated pools           | ❌ No type isolation          | ⚠️ Cache merge weakens it  | ⬜ §9 -- no-merge for critical types   |
+| ⭐  | Per-page encoding keys        | ⚠️ Single key per heap        | ⚠️ Per-cache key           | ⬜ §10 -- page-addr derived key        |
+| ⭐  | Probabilistic guard pages     | ❌ Special Pool too expensive | ⚠️ KFENCE 255 obj limit    | ⬜ §11 -- 1/64 slab pages, integrated  |
 | ⭐  | Production quarantine         | ❌ Debug mode only            | ❌ KASAN only (3x slow)    | ⬜ §12 -- always-on FIFO, 256 KB cost  |
-| ⭐  | Zero-on-free                  | ⚠️ Moving to zero-on-alloc     | ⚠️ Opt-in CONFIG            | ⬜ §13 -- zero at free time, not alloc |
+| ⭐  | Zero-on-free                  | ⚠️ Moving to zero-on-alloc    | ⚠️ Opt-in CONFIG           | ⬜ §13 -- zero at free time, not alloc |
 | ⭐  | Bulk alloc/free               | ❌ No bulk API                | ✅ kmem_cache_alloc_bulk   | ⬜ §14 -- slab_alloc_bulk/free_bulk    |
 | 💎  | Live allocator stats          | ✅ !poolused, Poolmon         | ✅ /proc/slabinfo          | ⬜ §15 -- /sys/slab + /sys/pooltags    |
 

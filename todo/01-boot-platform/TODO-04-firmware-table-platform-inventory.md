@@ -41,20 +41,20 @@ title: "TODO-04 -- Firmware Table & Platform Inventory"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                              | Depends On     | Status |
-| --- | :---: | ---------------------------------------- | -------------- | :----: |
-| 💎  |   1   | Firmware table catalog API               | TODO-01 §1     |  [x]   |
-| 💎  |   2   | Physical range and checksum validation   | §1             |  [x]   |
-| 💎  |   3   | ACPI/SMBIOS/DTB table arbitration        | §1, §2         |  [x]   |
-| 💎  |   4   | FPDT and boot timing normalization       | §1             |  [x]   |
+| ⭐  | Order | Deliverable                                             | Depends On     | Status |
+| --- | :---: | ------------------------------------------------------- | -------------- | :----: |
+| 💎  |   1   | Firmware table catalog API                              | TODO-01 §1     |  [x]   |
+| 💎  |   2   | Physical range and checksum validation                  | §1             |  [x]   |
+| 💎  |   3   | ACPI/SMBIOS/DTB table arbitration                       | §1, §2         |  [x]   |
+| 💎  |   4   | FPDT and boot timing normalization                      | §1             |  [x]   |
 | 💎  |   5   | UEFI memory attributes and runtime properties inventory | §1, TODO-27 §3 |  [x]   |
-| 💎  |   6   | ESRT firmware inventory mirror           | §1, TODO-27 §2 |  [x]   |
-| 💎  |   7   | UEFI conformance profile and EBBR detection | §1             |  [x]   |
-| 💎  |   8   | Registry and BlackBox firmware report    | §1-§7          |  [x]   |
-| ⭐  |   9   | Firmware quirk database                  | §8             |  [x]   |
-| ⭐  |  10   | Firmware inventory tests and host decoder | §1-§9          |  [x]   |
-| ⭐  |  11   | Firmware inventory bug-fix debt          | §1-§9          |  [x]   |
-| ⭐  |  12   | Firmware inventory refactor debt         | §1-§9          |  [x]   |
+| 💎  |   6   | ESRT firmware inventory mirror                          | §1, TODO-27 §2 |  [x]   |
+| 💎  |   7   | UEFI conformance profile and EBBR detection             | §1             |  [x]   |
+| 💎  |   8   | Registry and BlackBox firmware report                   | §1-§7          |  [x]   |
+| ⭐  |   9   | Firmware quirk database                                 | §8             |  [x]   |
+| ⭐  |  10   | Firmware inventory tests and host decoder               | §1-§9          |  [x]   |
+| ⭐  |  11   | Firmware inventory bug-fix debt                         | §1-§9          |  [x]   |
+| ⭐  |  12   | Firmware inventory refactor debt                        | §1-§9          |  [x]   |
 
 ---
 
@@ -378,19 +378,19 @@ Cross-section dedup / future-spec drift prevention. None of these items is an ac
 | --- | ------------------------------------- | -------------------------------- | -------------------------------- | --------------------------------- |
 | 💎  | Firmware table catalog API            | ✅ ACPI/HAL + WMI                | ✅ acpi_get_table + sysfs        | ✅ firmware_table_entry_t catalog |
 | 💎  | Physical range + checksum validation  | ✅ HAL validates pre-use         | ✅ acpi_tb_verify_checksum       | ✅ §2 mmap-bound + checksums      |
-| 💎  | ACPI/SMBIOS/DTB arbitration           | ⚠️ ACPI-first; no DTB             | ✅ ACPI on x86, DTB on ARM       | ✅ §3 ACPI > DTB + HYBRID detect  |
-| 💎  | FPDT boot-timeline normalization      | ✅ FPDT + ETW timeline           | ⚠️ acpi_fpdt_init read-only       | ✅ §4 FPDT + TSC unified JSON     |
+| 💎  | ACPI/SMBIOS/DTB arbitration           | ⚠️ ACPI-first; no DTB            | ✅ ACPI on x86, DTB on ARM       | ✅ §3 ACPI > DTB + HYBRID detect  |
+| 💎  | FPDT boot-timeline normalization      | ✅ FPDT + ETW timeline           | ⚠️ acpi_fpdt_init read-only      | ✅ §4 FPDT + TSC unified JSON     |
 | 💎  | UEFI MAT + Runtime Properties         | ✅ MmGetEfiRuntimeServicesTable  | ✅ efi_memmap_attributes         | ✅ §5 MAT inventory + RT mismatch |
 | 💎  | ESRT firmware inventory               | ✅ Windows Update / fwupdd       | ✅ fwupd /sys/firmware/efi/esrt  | ✅ §6 HKLM ESRT mirror + decoders |
-| 💎  | UEFI conformance profile + EBBR       | ⚠️ assumes full PC profile        | ✅ EBBR detection in efi-stub    | ✅ §7 ECPT + EBBR + PC contradict |
-| 💎  | Registry + BlackBox firmware report   | ✅ msinfo32 + Event Log          | ⚠️ scattered (dmidecode/sysfs)    | ✅ §8 HKLM mirror + JSON writer   |
-| ⭐  | Firmware quirk database               | ⚠️ HAL-internal, opaque           | ⚠️ DMI quirks scattered           | ✅ §9 SMBIOS-keyed + JSON publish |
+| 💎  | UEFI conformance profile + EBBR       | ⚠️ assumes full PC profile       | ✅ EBBR detection in efi-stub    | ✅ §7 ECPT + EBBR + PC contradict |
+| 💎  | Registry + BlackBox firmware report   | ✅ msinfo32 + Event Log          | ⚠️ scattered (dmidecode/sysfs)   | ✅ §8 HKLM mirror + JSON writer   |
+| ⭐  | Firmware quirk database               | ⚠️ HAL-internal, opaque          | ⚠️ DMI quirks scattered          | ✅ §9 SMBIOS-keyed + JSON publish |
 | ⭐  | Host decoder for firmware-tables.json | ❌ N/A                           | ❌ N/A                           | ✅ §10 firmware-tables-decode     |
 | 💎  | APEI (BERT/HEST/EINJ/ERST) visibility | ✅ WHEA hardware-error subsystem | ✅ /sys/firmware/acpi/* + ras-mc | ✅ §8 apei block in JSON writer   |
 | ⭐  | DBG2 secondary debug ports            | ✅ kernel debugger reads DBG2    | ✅ amba_pl011 + earlycon DBG2    | ✅ §8 dbg2 block in JSON writer   |
 | ⭐  | WSMT SMM mitigations posture          | ✅ HAL reads WSMT bitmap         | ❌ Linux ignores WSMT            | ✅ §8 wsmt block in JSON writer   |
-| 💎  | firmware-tables.json schema doc       | ⚠️ msinfo32 schema undocumented   | ⚠️ tools differ per distro        | ✅ §8 firmware-tables-schema.md   |
-| ⭐  | Single-source SMBIOS + quirk parsers  | ❌ N/A (no public refactor)      | ⚠️ DMI const drift across files   | ✅ §12 shared header + .inc dedup |
+| 💎  | firmware-tables.json schema doc       | ⚠️ msinfo32 schema undocumented  | ⚠️ tools differ per distro       | ✅ §8 firmware-tables-schema.md   |
+| ⭐  | Single-source SMBIOS + quirk parsers  | ❌ N/A (no public refactor)      | ⚠️ DMI const drift across files  | ✅ §12 shared header + .inc dedup |
 
 ---
 

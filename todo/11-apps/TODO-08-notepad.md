@@ -48,13 +48,13 @@ title: "TODO-08 -- Notepad"
 
 ## Implementation Order
 
-| Step | Section                              | 💎/⭐ | Dependency                               |
-| ---- | ------------------------------------ | ----- | ---------------------------------------- |
-| 1    | Gap Buffer Text Engine               | 💎    | `pmm_alloc_contiguous`                   |
-| 2    | Text Rendering + Cursor              | 💎    | §1 complete, `ttf_draw_string`           |
+| Step | Section                              | 💎/⭐ | Dependency                                |
+| ---- | ------------------------------------ | ----- | ----------------------------------------- |
+| 1    | Gap Buffer Text Engine               | 💎    | `pmm_alloc_contiguous`                    |
+| 2    | Text Rendering + Cursor              | 💎    | §1 complete, `ttf_draw_string`            |
 | 3    | File Operations                      | 💎    | §1 complete, `dialog_file_open/save`, VFS |
-| 4    | Editing Features                     | 💎    | §2 + §3 complete, `clipboard_set/get`    |
-| 5    | File Associations + App Registration | ⭐    | §3 complete, `file_assoc_set`            |
+| 4    | Editing Features                     | 💎    | §2 + §3 complete, `clipboard_set/get`     |
+| 5    | File Associations + App Registration | ⭐    | §3 complete, `file_assoc_set`             |
 
 > Full section-by-section implementation detail is in `09-desktop-shell/TODO-10-notepad.md §1–§8`.
 > Sections below record app-specific requirements that supplement that spec.
@@ -149,16 +149,16 @@ title: "TODO-08 -- Notepad"
 ## OS Comparison
 
 
-| ⭐  | Feature                                  | 🪟 Win11                               | 🐧 Linux                        | 🚀 Impossible OS                         |
-| --- | ---------------------------------------- | -------------------------------------- | ------------------------------- | ---------------------------------------- |
-| 💎  | Gap buffer O(1) insert/delete            | ✅ Notepad (rope-based in modern; gap  | ✅ gedit / Kate (GtkTextBuffer) | ⬜ §1 -- `pmm_alloc_contiguous`, grow-by-doubling |
-| 💎  | TTF text rendering + blinking I-beam     | ✅ Notepad (DirectWrite)               | ✅ gedit (Pango/Cairo)          | ⬜ §2 -- `ttf_draw_string()` per visible line |
-| 💎  | CRLF/LF detection + status bar encoding display | ✅ Notepad (bottom status bar: Ln/Col, | ✅ gedit (status bar)           | ⬜ §2 -- status bar + §1 `text_detect_line_ending()` |
-| 💎  | File open/save + unsaved-changes prompt  | ✅ Notepad                             | ✅ gedit                        | ⬜ §3 -- `dialog_file_open/save`, title asterisk, save-changes dialog |
-| 💎  | Click/drag selection + clipboard         | ✅ Notepad                             | ✅ gedit                        | ⬜ §4 -- `clipboard_set/get(CLIP_TEXT)`  |
-| 💎  | 200-step undo/redo                       | ✅ Notepad (unlimited undo since Win10 | ✅ gedit / Kate                 | ⬜ §4 -- 200-entry ring, coalesced single-char inserts |
-| 💎  | Find + Replace                           | ✅ Notepad (with regex in Win11)       | ✅ gedit                        | ⬜ §4 -- + `09-desktop-shell/TODO-10 §7` |
-| ⭐  | `.txt`, `.log`, `.ini`, `.conf`, `.md` all → Notepad | ✅ Notepad (`.txt`); `.ini` → Notepad; | ⚠️ `xdg-open` varies by distro   | ⬜ §5 -- 5× `file_assoc_set` calls, "Open with |
+| ⭐  | Feature                                              | 🪟 Win11                               | 🐧 Linux                        | 🚀 Impossible OS                                                      |
+| --- | ---------------------------------------------------- | -------------------------------------- | ------------------------------- | --------------------------------------------------------------------- |
+| 💎  | Gap buffer O(1) insert/delete                        | ✅ Notepad (rope-based in modern; gap  | ✅ gedit / Kate (GtkTextBuffer) | ⬜ §1 -- `pmm_alloc_contiguous`, grow-by-doubling                     |
+| 💎  | TTF text rendering + blinking I-beam                 | ✅ Notepad (DirectWrite)               | ✅ gedit (Pango/Cairo)          | ⬜ §2 -- `ttf_draw_string()` per visible line                         |
+| 💎  | CRLF/LF detection + status bar encoding display      | ✅ Notepad (bottom status bar: Ln/Col, | ✅ gedit (status bar)           | ⬜ §2 -- status bar + §1 `text_detect_line_ending()`                  |
+| 💎  | File open/save + unsaved-changes prompt              | ✅ Notepad                             | ✅ gedit                        | ⬜ §3 -- `dialog_file_open/save`, title asterisk, save-changes dialog |
+| 💎  | Click/drag selection + clipboard                     | ✅ Notepad                             | ✅ gedit                        | ⬜ §4 -- `clipboard_set/get(CLIP_TEXT)`                               |
+| 💎  | 200-step undo/redo                                   | ✅ Notepad (unlimited undo since Win10 | ✅ gedit / Kate                 | ⬜ §4 -- 200-entry ring, coalesced single-char inserts                |
+| 💎  | Find + Replace                                       | ✅ Notepad (with regex in Win11)       | ✅ gedit                        | ⬜ §4 -- + `09-desktop-shell/TODO-10 §7`                              |
+| ⭐  | `.txt`, `.log`, `.ini`, `.conf`, `.md` all → Notepad | ✅ Notepad (`.txt`); `.ini` → Notepad; | ⚠️ `xdg-open` varies by distro  | ⬜ §5 -- 5× `file_assoc_set` calls, "Open with                        |
 
 Impossible OS Notepad handles every plain-text file type the OS produces out-of-the-box --
 including `.ini` config files and `.log` system logs -- with one consistent editor, no

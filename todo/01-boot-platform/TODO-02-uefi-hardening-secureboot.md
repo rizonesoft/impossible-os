@@ -65,28 +65,28 @@ title: "TODO-02 -- UEFI Bootloader Hardening & Secure Boot"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                              | Depends On     | Status |
-| --- | :---: | ---------------------------------------- | -------------- | :----: |
-| 💎  |   1   | UEFI runtime services preservation       | --             |  [x]   |
-| 💎  |   2   | UEFI variable services                   | §1             |  [x]   |
-| 💎  |   3   | GOP resolution auto-detection            | §1             |  [x]   |
-| 💎  |   4   | SMBIOS table parsing                     | §1             |  [x]   |
-| 💎  |   5   | Secure Boot state detection              | §2             |  [x]   |
-| 💎  |   6   | Secure Boot shim chain-loading           | §5             |  [x]   |
-| 💎  |   7   | Boot UX polish                           | §3, §5, T14 §2 |  [x]   |
-| ⭐  |   8   | Serial log standardization               | --             |  [x]   |
-| 💎  |   9   | SBAT ops, DB registry mirror, EBS retry  | §2, §5         |  [x]   |
-| 💎  |  10   | RT sleepable lock migration              | §1             |  [x]   |
-| 💎  |  11   | Unified signed boot artifact (UKI-style) | §6             |  [x]   |
-| 💎  |  12   | MS UEFI CA 2023 transition + 2011 retirement | §6             |  [/]   |
-| 💎  |  13   | EFI System Partition integrity check     | --             |  [x]   |
-| 💎  |  14   | Win32 firmware variable + table surface  | §2             |  [x]   |
-| 💎  |  15   | Post-boot SecureBoot revalidation        | §5             |  [/]   |
-| 💎  |  16   | Signed `.initrd` / recovery / module PE sections in UKI | §11            |  [/]   |
-| 💎  |  17   | SBAT revocation metadata in boot artifacts | §9, §11        |  [x]   |
-| 🛠️   |  18   | Build idempotency: UKI SBAT survives incremental rebuild | §11, §17       |  [/]   |
-| 🛠️   |  19   | Bootloader `ReadBlocks` IoAlign compliance | §13            |  [/]   |
-| 🛠️   |  20   | Post-ship follow-up backfill (2026-07-31 cohort) | --             |  [ ]   |
+| ⭐  | Order | Deliverable                                              | Depends On     | Status |
+| --- | :---: | -------------------------------------------------------- | -------------- | :----: |
+| 💎  |   1   | UEFI runtime services preservation                       | --             |  [x]   |
+| 💎  |   2   | UEFI variable services                                   | §1             |  [x]   |
+| 💎  |   3   | GOP resolution auto-detection                            | §1             |  [x]   |
+| 💎  |   4   | SMBIOS table parsing                                     | §1             |  [x]   |
+| 💎  |   5   | Secure Boot state detection                              | §2             |  [x]   |
+| 💎  |   6   | Secure Boot shim chain-loading                           | §5             |  [x]   |
+| 💎  |   7   | Boot UX polish                                           | §3, §5, T14 §2 |  [x]   |
+| ⭐  |   8   | Serial log standardization                               | --             |  [x]   |
+| 💎  |   9   | SBAT ops, DB registry mirror, EBS retry                  | §2, §5         |  [x]   |
+| 💎  |  10   | RT sleepable lock migration                              | §1             |  [x]   |
+| 💎  |  11   | Unified signed boot artifact (UKI-style)                 | §6             |  [x]   |
+| 💎  |  12   | MS UEFI CA 2023 transition + 2011 retirement             | §6             |  [/]   |
+| 💎  |  13   | EFI System Partition integrity check                     | --             |  [x]   |
+| 💎  |  14   | Win32 firmware variable + table surface                  | §2             |  [x]   |
+| 💎  |  15   | Post-boot SecureBoot revalidation                        | §5             |  [/]   |
+| 💎  |  16   | Signed `.initrd` / recovery / module PE sections in UKI  | §11            |  [/]   |
+| 💎  |  17   | SBAT revocation metadata in boot artifacts               | §9, §11        |  [x]   |
+| 🛠️  |  18   | Build idempotency: UKI SBAT survives incremental rebuild | §11, §17       |  [/]   |
+| 🛠️  |  19   | Bootloader `ReadBlocks` IoAlign compliance               | §13            |  [/]   |
+| 🛠️  |  20   | Post-ship follow-up backfill (2026-07-31 cohort)         | --             |  [ ]   |
 
 ---
 
@@ -673,25 +673,25 @@ From the stamped section 12:
 
 ## OS Comparison
 
-| ⭐  | Feature               | 🪟 Win11                        | 🐧 Linux                      | 🚀 Impossible OS                         |
-| --- | --------------------- | ------------------------------- | ----------------------------- | ---------------------------------------- |
-| 💎  | UEFI runtime post-EBS | ✅ Full RT via hal.dll          | ✅ efi_call wrapper           | ✅ §1 SVAM + 6 RT services               |
-| 💎  | UEFI variables        | ✅ NtQuery/SetSystemEnvValue    | ✅ efivarfs mount             | ✅ §2 get/set/enum + SSDT wired          |
-| 💎  | GOP resolution        | ✅ Boot mgr + BCD               | ✅ EFIFB + simplefb           | ✅ §3 auto-select best mode              |
-| 💎  | SMBIOS core           | ✅ WMI Win32_BIOS class         | ✅ sysfs /sys/class/dmi       | ✅ §4 types 0-4 + registry               |
-| 💎  | Secure Boot shim      | ✅ MS-signed shim + MOK         | ✅ rhboot/shim + MokManager   | ✅ §6 MOK chain + sbsign                 |
-| 💎  | Secure Boot state     | ✅ Registry + msinfo32          | ✅ efivar + mokutil --sb      | ✅ §5 NVRAM + registry State             |
-| ⭐  | Boot timeline         | ❌ ETW WPA (heavyweight)        | ❌ systemd-analyze (userland) | ✅ §7 per-step JSON + NVRAM              |
-| 💎  | Atomic serial         | ✅ KdPrint spinlock             | ✅ printk logbuf              | ✅ §8 klog ring + serial                 |
-| 💎  | SBAT shim ops         | ✅ MS Secure Boot program       | ✅ distro shim refresh        | ✅ §9 SBAT checklist doc                 |
-| 💎  | SBAT artifact revoke  | ✅ MS-signed shim SBAT          | ✅ shim + UKI .sbat section   | ✅ §17 BOOTX64 + UKI .sbat               |
-| 💎  | DB/dbx inventory      | ✅ msinfo32 SB details          | ✅ mokutil --db               | ✅ §9 registry Db/Dbx counts             |
-| 💎  | EBS retry hardening   | ✅ bootmgr bounded retry        | ✅ efi-stub retry patch       | ✅ §9 4-attempt bounded loop             |
-| 💎  | Capsule install UX    | ✅ Windows Update stack         | ✅ fwupd + LVFS               | ⬜ TODO-27 §2 (query-only)               |
-| 💎  | MS UEFI CA lifecycle  | ✅ Windows Update CA rotation   | ⚠️ Distro re-sign timing       | ✅ §12 build-time graduated WARN/FAIL + ShimCA registry |
-| 💎  | ESP integrity check   | ⚠️ BootMgr GUID / FAT32 only     | ⚠️ efibootmgr UUID surface     | ✅ GPT type-GUID + FAT BPB + batched files + UUID/Size mirror |
-| 💎  | Win32 firmware vars   | ✅ kernel32 GetFirmwareEnv*     | ⚠️ WINE shim only              | ✅ kernel32 exports + RSMB/ACPI tables + Vars quota mirror |
-| 💎  | Unified Kernel Image  | ❌ N/A (signed bootmgr+winload) | ✅ systemd-boot UKI           | ✅ §11 BOOTX64.UKI.efi + whole-chain Secure Boot signature |
+| ⭐  | Feature               | 🪟 Win11                        | 🐧 Linux                      | 🚀 Impossible OS                                              |
+| --- | --------------------- | ------------------------------- | ----------------------------- | ------------------------------------------------------------- |
+| 💎  | UEFI runtime post-EBS | ✅ Full RT via hal.dll          | ✅ efi_call wrapper           | ✅ §1 SVAM + 6 RT services                                    |
+| 💎  | UEFI variables        | ✅ NtQuery/SetSystemEnvValue    | ✅ efivarfs mount             | ✅ §2 get/set/enum + SSDT wired                               |
+| 💎  | GOP resolution        | ✅ Boot mgr + BCD               | ✅ EFIFB + simplefb           | ✅ §3 auto-select best mode                                   |
+| 💎  | SMBIOS core           | ✅ WMI Win32_BIOS class         | ✅ sysfs /sys/class/dmi       | ✅ §4 types 0-4 + registry                                    |
+| 💎  | Secure Boot shim      | ✅ MS-signed shim + MOK         | ✅ rhboot/shim + MokManager   | ✅ §6 MOK chain + sbsign                                      |
+| 💎  | Secure Boot state     | ✅ Registry + msinfo32          | ✅ efivar + mokutil --sb      | ✅ §5 NVRAM + registry State                                  |
+| ⭐  | Boot timeline         | ❌ ETW WPA (heavyweight)        | ❌ systemd-analyze (userland) | ✅ §7 per-step JSON + NVRAM                                   |
+| 💎  | Atomic serial         | ✅ KdPrint spinlock             | ✅ printk logbuf              | ✅ §8 klog ring + serial                                      |
+| 💎  | SBAT shim ops         | ✅ MS Secure Boot program       | ✅ distro shim refresh        | ✅ §9 SBAT checklist doc                                      |
+| 💎  | SBAT artifact revoke  | ✅ MS-signed shim SBAT          | ✅ shim + UKI .sbat section   | ✅ §17 BOOTX64 + UKI .sbat                                    |
+| 💎  | DB/dbx inventory      | ✅ msinfo32 SB details          | ✅ mokutil --db               | ✅ §9 registry Db/Dbx counts                                  |
+| 💎  | EBS retry hardening   | ✅ bootmgr bounded retry        | ✅ efi-stub retry patch       | ✅ §9 4-attempt bounded loop                                  |
+| 💎  | Capsule install UX    | ✅ Windows Update stack         | ✅ fwupd + LVFS               | ⬜ TODO-27 §2 (query-only)                                    |
+| 💎  | MS UEFI CA lifecycle  | ✅ Windows Update CA rotation   | ⚠️ Distro re-sign timing      | ✅ §12 build-time graduated WARN/FAIL + ShimCA registry       |
+| 💎  | ESP integrity check   | ⚠️ BootMgr GUID / FAT32 only    | ⚠️ efibootmgr UUID surface    | ✅ GPT type-GUID + FAT BPB + batched files + UUID/Size mirror |
+| 💎  | Win32 firmware vars   | ✅ kernel32 GetFirmwareEnv*     | ⚠️ WINE shim only             | ✅ kernel32 exports + RSMB/ACPI tables + Vars quota mirror    |
+| 💎  | Unified Kernel Image  | ❌ N/A (signed bootmgr+winload) | ✅ systemd-boot UKI           | ✅ §11 BOOTX64.UKI.efi + whole-chain Secure Boot signature    |
 
 > **Parity:** 💎 rows match Win11+Linux baseline. **⭐** JSON boot profile is extra vs ETW and userland boot charts. Capsule **apply** path and W^X on RT pages stay in [TODO-27](TODO-27-uefi-advanced.md); kernel already runs read-only `esrt_init()` / `uefi_capsule_init()` / `uefi_crypto_agility_init()` during Phase 1 bring-up.
 

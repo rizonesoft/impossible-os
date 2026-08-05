@@ -260,17 +260,17 @@ Rewrite UEFI boot entry, recompute GPT header CRCs, verify kernel ELF SHA-256 vs
 ## OS Comparison
 
 
-| ⭐  | Feature                                  | 🪟 Win11                                 | 🐧 Linux                                 | 🚀 Impossible OS                         |
-| --- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
-| 💎  | Event log -- structured persistent events | ✅ Windows Event Log: XML structured;    | ✅ systemd journal (`journalctl`); syslog; `/var/log/*`; | ⬜ §1 -- `kevent_log()` + `LOG_SECURITY=4`; rolling 1 |
-| 💎  | Restore points                           | ✅ System Restore: VSS shadow copies;    | ⚠️ No built-in; Btrfs/ZFS snapshots; `snapper`; | ⬜ §2 -- `⭐` explicit ZIP + registry    |
-| 💎  | System rollback                          | ✅ System Restore: VSS revert; registry  | ⚠️ No built-in; filesystem snapshots only; | ⬜ §3 -- `cng_sha256()` manifest check before any |
-| 💎  | Recovery environment                     | ✅ WinRE: graphical; Startup Repair; Command | ✅ Recovery mode; GRUB single-user; `init=/bin/bash`; | ⬜ §7 -- `[Opus]` text-mode F8 menu; 15-command |
-| 💎  | Factory reset                            | ✅ Reset this PC: Keep/Remove files;     | ✅ Reinstall distro; `reinstall-os` on some; | ⬜ §8 -- typed-"YES" guard; GPT recovery partition |
-| ⭐  | Startup repair                           | ✅ WinRE Startup Repair: BCD fixup;      | ⚠️ `grub-install`; `fsck`; manual; no unified | ⬜ §9 -- `⭐` kernel ELF SHA-256 verify  |
-| 💎  | First-boot OOBE wizard                   | ✅ OOBE: account (MSA/local), region, keyboard, | ✅ Most distros: Anaconda/Ubiquity/Calamares first-boot wizard | ⬜ §5 -- `HKLM\SYSTEM\FirstBoot=1` flag; 6-page wizard; `auth_create_user()` |
-| 💎  | Crash dump viewer                        | ✅ Windows Error Reporting; minidump viewer | ✅ `apport`; `kdump`/`kexec`; `abrt`; crash files | ⬜ §6 -- on-boot `notify_send()` + `CTRL_TABSTRIP` viewer |
-| 💎  | Disk cleanup                             | ✅ Disk Cleanup + Storage Sense:         | ✅ `bleachbit`; `journalctl --vacuum`; `apt clean`; | ⬜ §10 -- 6 categories with size preview |
+| ⭐  | Feature                                   | 🪟 Win11                                        | 🐧 Linux                                                       | 🚀 Impossible OS                                                             |
+| --- | ----------------------------------------- | ----------------------------------------------- | -------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| 💎  | Event log -- structured persistent events | ✅ Windows Event Log: XML structured;           | ✅ systemd journal (`journalctl`); syslog; `/var/log/*`;       | ⬜ §1 -- `kevent_log()` + `LOG_SECURITY=4`; rolling 1                        |
+| 💎  | Restore points                            | ✅ System Restore: VSS shadow copies;           | ⚠️ No built-in; Btrfs/ZFS snapshots; `snapper`;                | ⬜ §2 -- `⭐` explicit ZIP + registry                                        |
+| 💎  | System rollback                           | ✅ System Restore: VSS revert; registry         | ⚠️ No built-in; filesystem snapshots only;                     | ⬜ §3 -- `cng_sha256()` manifest check before any                            |
+| 💎  | Recovery environment                      | ✅ WinRE: graphical; Startup Repair; Command    | ✅ Recovery mode; GRUB single-user; `init=/bin/bash`;          | ⬜ §7 -- `[Opus]` text-mode F8 menu; 15-command                              |
+| 💎  | Factory reset                             | ✅ Reset this PC: Keep/Remove files;            | ✅ Reinstall distro; `reinstall-os` on some;                   | ⬜ §8 -- typed-"YES" guard; GPT recovery partition                           |
+| ⭐  | Startup repair                            | ✅ WinRE Startup Repair: BCD fixup;             | ⚠️ `grub-install`; `fsck`; manual; no unified                  | ⬜ §9 -- `⭐` kernel ELF SHA-256 verify                                      |
+| 💎  | First-boot OOBE wizard                    | ✅ OOBE: account (MSA/local), region, keyboard, | ✅ Most distros: Anaconda/Ubiquity/Calamares first-boot wizard | ⬜ §5 -- `HKLM\SYSTEM\FirstBoot=1` flag; 6-page wizard; `auth_create_user()` |
+| 💎  | Crash dump viewer                         | ✅ Windows Error Reporting; minidump viewer     | ✅ `apport`; `kdump`/`kexec`; `abrt`; crash files              | ⬜ §6 -- on-boot `notify_send()` + `CTRL_TABSTRIP` viewer                    |
+| 💎  | Disk cleanup                              | ✅ Disk Cleanup + Storage Sense:                | ✅ `bleachbit`; `journalctl --vacuum`; `apt clean`;            | ⬜ §10 -- 6 categories with size preview                                     |
 
 > **After §1–§10:** Impossible OS has the full OS safety net. The `⭐` advantages: restore points are stored as human-inspectable ZIP archives + INI manifests (no VSS opaque shadow copy format); startup repair automatically SHA-256 verifies the kernel ELF and restores from recovery partition on mismatch (no equivalent in WinRE); the recovery shell runs from VGA direct output with zero framebuffer/WM dependencies, making it available even when the compositor is corrupt.
 

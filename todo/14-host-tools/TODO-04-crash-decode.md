@@ -41,12 +41,12 @@ $ crash-decode serial.log
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                              | Depends On | Status |
-| --- | :---: | ---------------------------------------- | ---------- | :----: |
-| 💎  |   1   | Serial log parser (extract BSOD block)   | --         |  [ ]   |
-| ⭐  |   2   | Register dump decoder (integrate addr2line) | TODO-03    |  [ ]   |
+| ⭐  | Order | Deliverable                                     | Depends On | Status |
+| --- | :---: | ----------------------------------------------- | ---------- | :----: |
+| 💎  |   1   | Serial log parser (extract BSOD block)          | --         |  [ ]   |
+| ⭐  |   2   | Register dump decoder (integrate addr2line)     | TODO-03    |  [ ]   |
 | ⭐  |   3   | Timeline extraction (boot phases + crash point) | §1         |  [ ]   |
-| ⭐  |   4   | Root cause hypothesis engine             | §2, §3     |  [ ]   |
+| ⭐  |   4   | Root cause hypothesis engine                    | §2, §3     |  [ ]   |
 
 ---
 

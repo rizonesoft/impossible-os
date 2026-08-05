@@ -41,18 +41,18 @@ title: "TODO-10 -- Concurrency & Memory Diagnostics"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                              | Depends On                             | Status |
-| --- | :---: | ---------------------------------------- | -------------------------------------- | :----: |
-| 💎  |   1   | §1 Thread stack guard pages              | `vmm_map_guard`, page fault handler    |  [ ]   |
+| ⭐  | Order | Deliverable                                        | Depends On                             | Status |
+| --- | :---: | -------------------------------------------------- | -------------------------------------- | :----: |
+| 💎  |   1   | §1 Thread stack guard pages                        | `vmm_map_guard`, page fault handler    |  [ ]   |
 | 💎  |   2   | §2 Preemption count (debug assertions + extension) | TODO-08 §4 definition                  |  [ ]   |
-| 💎  |   3   | §3 Heap canaries + SLAB red zones        | TODO-03 §1 SLAB layout                 |  [ ]   |
+| 💎  |   3   | §3 Heap canaries + SLAB red zones                  | TODO-03 §1 SLAB layout                 |  [ ]   |
 | 💎  |   4   | §8 Named lock browser (`/sys/locks` + `locks` cmd) | lock registry hook in `mutex_init`     |  [ ]   |
-| 💎  |   5   | §4 Lockdep -- class graph + DFS cycle detection | §2, §4 (`/sys/locks` for output)       |  [ ]   |
-| 💎  |   6   | §5 Kernel watchdog thread                | §2, tick counter                       |  [ ]   |
-| 💎  |   7   | §9 KASAN -- 1:8 shadow memory + quarantine | §3 (canary baseline), PMM hook         |  [ ]   |
-| 💎  |   8   | §6 KCSAN -- `__tsan_*` callbacks + shadow cells | §2, §7 (shadow memory pattern)         |  [ ]   |
-| ⭐  |   9   | §7 Graphical deadlock visualisation      | §5 (lockdep cycle data), GFX subsystem |  [ ]   |
-| ⭐  |  10   | §10 `/sys/mem` unified memory observability | §3, §7, §9 (stat sources)              |  [ ]   |
+| 💎  |   5   | §4 Lockdep -- class graph + DFS cycle detection    | §2, §4 (`/sys/locks` for output)       |  [ ]   |
+| 💎  |   6   | §5 Kernel watchdog thread                          | §2, tick counter                       |  [ ]   |
+| 💎  |   7   | §9 KASAN -- 1:8 shadow memory + quarantine         | §3 (canary baseline), PMM hook         |  [ ]   |
+| 💎  |   8   | §6 KCSAN -- `__tsan_*` callbacks + shadow cells    | §2, §7 (shadow memory pattern)         |  [ ]   |
+| ⭐  |   9   | §7 Graphical deadlock visualisation                | §5 (lockdep cycle data), GFX subsystem |  [ ]   |
+| ⭐  |  10   | §10 `/sys/mem` unified memory observability        | §3, §7, §9 (stat sources)              |  [ ]   |
 
 > 💎 = parity -- stack guards, preempt count, lockdep, watchdog, KASAN, KCSAN, and memory stats all have Linux equivalents; stack guards and named sync objects have Windows equivalents.
 > ⭐ = exclusive -- the graphical deadlock visualiser (framebuffer graph, not a text dump) and the unified `/sys/mem` cross-subsystem snapshot are differentiators over both Linux `dmesg` dumps and Windows bluescreen stop codes.
@@ -235,18 +235,18 @@ Aggregate statistics from PMM, SLAB, huge pages, compressed memory, and swap int
 ## OS Comparison
 
 
-| ⭐  | Feature                                  | 🪟 Win11                                 | 🐧 Linux                                 | 🚀 Impossible OS                         |
-| --- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
-| 💎  | Thread stack guard pages                 | ✅ Guard page per thread stack;          | ✅ `MAP_STACK` + `SIGSEGV` on overflow;  | ⬜ §1 -- `vmm_map_guard`, `#PF` panic with thread |
-| 💎  | Preemption count + debug assertions      | ✅ `IRQL` preemption depth in `KTHREAD`  | ✅ `preempt_count()` per-thread; `WARN_ON_ONCE` in `schedule()` | ⬜ §2 -- nesting cap, `schedule()` assert, `preemptible()` |
-| 💎  | Heap canaries + SLAB red zones           | ✅ Driver Verifier special pool; `POOL_HEADER` | ✅ `SLUB_DEBUG` -- red zones, poison,    | ⬜ §3 -- `CANARY_MAGIC` at end of kmalloc, |
-| 💎  | Lock dependency validator                | ✅ Driver Verifier deadlock detection (limited) | ✅ `CONFIG_LOCKDEP` -- lock-class graph, DFS | ⬜ §4 -- lock-class graph, DFS, held-locks stack, |
-| 💎  | Kernel watchdog                          | ✅ Watchdog timer + `KeBugCheckEx` (hidden | ✅ `CONFIG_LOCKUP_DETECTOR` -- soft/hard lockup detector | ⬜ §5 -- `SCHED_FIFO` thread, heartbeat counter, framebuffer |
-| 💎  | KCSAN data-race detector                 | ❌ No equivalent in-kernel race detector | ✅ `CONFIG_KCSAN` (v5.8+) -- `__tsan_*` callbacks, | ⬜ §6 -- `__tsan_*` callbacks, shadow cells, `data_race()` |
-| ⭐  | Graphical deadlock visualisation on framebuffer | ❌ Blue screen stop code only            | ❌ Text `dmesg` dump only                | ⬜ §7 -- directed graph on framebuffer, red |
-| ⭐  | Unified `/sys/locks` named lock browser  | ❌ No readable kernel lock registry      | ❌ `/proc/locks` for file locks only     | ⬜ §8 -- all sync types, owner +         |
-| 💎  | KASAN -- kernel address sanitiser        | ✅ KASAN in WDK test mode                | ✅ `CONFIG_KASAN` -- 1:8 shadow, quarantine, | ⬜ §9 -- 1:8 shadow, quarantine queue, `KASAN=1` |
-| ⭐  | Unified `/sys/mem` + Win32 `GlobalMemoryStatusEx` parity | ✅ `GlobalMemoryStatusEx`; no single readable file | ✅ `/proc/meminfo` -- many fields, no    | ⬜ §10 -- one file, both Win32 +         |
+| ⭐  | Feature                                                  | 🪟 Win11                                           | 🐧 Linux                                                        | 🚀 Impossible OS                                             |
+| --- | -------------------------------------------------------- | -------------------------------------------------- | --------------------------------------------------------------- | ------------------------------------------------------------ |
+| 💎  | Thread stack guard pages                                 | ✅ Guard page per thread stack;                    | ✅ `MAP_STACK` + `SIGSEGV` on overflow;                         | ⬜ §1 -- `vmm_map_guard`, `#PF` panic with thread            |
+| 💎  | Preemption count + debug assertions                      | ✅ `IRQL` preemption depth in `KTHREAD`            | ✅ `preempt_count()` per-thread; `WARN_ON_ONCE` in `schedule()` | ⬜ §2 -- nesting cap, `schedule()` assert, `preemptible()`   |
+| 💎  | Heap canaries + SLAB red zones                           | ✅ Driver Verifier special pool; `POOL_HEADER`     | ✅ `SLUB_DEBUG` -- red zones, poison,                           | ⬜ §3 -- `CANARY_MAGIC` at end of kmalloc,                   |
+| 💎  | Lock dependency validator                                | ✅ Driver Verifier deadlock detection (limited)    | ✅ `CONFIG_LOCKDEP` -- lock-class graph, DFS                    | ⬜ §4 -- lock-class graph, DFS, held-locks stack,            |
+| 💎  | Kernel watchdog                                          | ✅ Watchdog timer + `KeBugCheckEx` (hidden         | ✅ `CONFIG_LOCKUP_DETECTOR` -- soft/hard lockup detector        | ⬜ §5 -- `SCHED_FIFO` thread, heartbeat counter, framebuffer |
+| 💎  | KCSAN data-race detector                                 | ❌ No equivalent in-kernel race detector           | ✅ `CONFIG_KCSAN` (v5.8+) -- `__tsan_*` callbacks,              | ⬜ §6 -- `__tsan_*` callbacks, shadow cells, `data_race()`   |
+| ⭐  | Graphical deadlock visualisation on framebuffer          | ❌ Blue screen stop code only                      | ❌ Text `dmesg` dump only                                       | ⬜ §7 -- directed graph on framebuffer, red                  |
+| ⭐  | Unified `/sys/locks` named lock browser                  | ❌ No readable kernel lock registry                | ❌ `/proc/locks` for file locks only                            | ⬜ §8 -- all sync types, owner +                             |
+| 💎  | KASAN -- kernel address sanitiser                        | ✅ KASAN in WDK test mode                          | ✅ `CONFIG_KASAN` -- 1:8 shadow, quarantine,                    | ⬜ §9 -- 1:8 shadow, quarantine queue, `KASAN=1`             |
+| ⭐  | Unified `/sys/mem` + Win32 `GlobalMemoryStatusEx` parity | ✅ `GlobalMemoryStatusEx`; no single readable file | ✅ `/proc/meminfo` -- many fields, no                           | ⬜ §10 -- one file, both Win32 +                             |
 
 > **After §1–6, §8–9:** Impossible OS reaches full parity with Linux's best-in-class kernel diagnostics and exceeds Windows's limited Driver Verifier coverage. Two exclusive differentiators stand out: the graphical deadlock visualiser (§7) replaces text dumps with a directed graph directly on the framebuffer -- actionable at a glance on bare metal. The unified `/sys/mem` file (§10) serves both Linux-style `/proc/meminfo` readers and Win32 `GlobalMemoryStatusEx` callers from one data source, eliminating the per-subsystem stat divergence both existing OSes suffer from.
 

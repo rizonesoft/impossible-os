@@ -65,17 +65,17 @@ title: "TODO-02 -- AI Development System"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                              | Depends On | Status |
-| --- | :---: | ---------------------------------------- | ---------- | :----: |
-| 💎  |   1   | Canonical ownership and source-of-truth map | --         |  [x]   |
+| ⭐  | Order | Deliverable                                   | Depends On | Status |
+| --- | :---: | --------------------------------------------- | ---------- | :----: |
+| 💎  |   1   | Canonical ownership and source-of-truth map   | --         |  [x]   |
 | 💎  |   2   | Skill lifecycle, templates, and catalog rules | §1         |  [x]   |
-| 💎  |   3   | Hook routing and policy contract         | §1         |  [x]   |
-| 💎  |   4   | External-reviewer contract (Codex, Copilot) | §1-§3      |  [x]   |
-| 💎  |   5   | MCP, permissions, and extension boundary | §1, §3, §4 |  [x]   |
-| 💎  |   6   | `AGENTS.md` cross-tool pointer file      | §1, §4     |  [x]   |
-| 💎  |   7   | AI-assist commit disclosure policy       | §1         |  [x]   |
-| ⭐  |   8   | Autonomous-agent boundary policy         | §4, §5     |  [x]   |
-| ⭐  |   9   | AI workflow regression suite             | §1-§8      |  [x]   |
+| 💎  |   3   | Hook routing and policy contract              | §1         |  [x]   |
+| 💎  |   4   | External-reviewer contract (Codex, Copilot)   | §1-§3      |  [x]   |
+| 💎  |   5   | MCP, permissions, and extension boundary      | §1, §3, §4 |  [x]   |
+| 💎  |   6   | `AGENTS.md` cross-tool pointer file           | §1, §4     |  [x]   |
+| 💎  |   7   | AI-assist commit disclosure policy            | §1         |  [x]   |
+| ⭐  |   8   | Autonomous-agent boundary policy              | §4, §5     |  [x]   |
+| ⭐  |   9   | AI workflow regression suite                  | §1-§8      |  [x]   |
 
 > 💎 = parity work: mature engineering repos document ownership, automation rules, and policy boundaries.
 > ⭐ = exclusive work: Impossible OS can treat its AI workflow as a first-class subsystem with regression checks, not as untracked prompt folklore.
@@ -358,17 +358,17 @@ This is the refinement step: test the workflow itself.
 
 ## OS Comparison
 
-| ⭐  | Feature                        | 🪟 Win11                             | 🐧 Linux                                 | 🚀 Impossible OS                         |
-| --- | ------------------------------ | ------------------------------------ | ---------------------------------------- | ---------------------------------------- |
-| 💎  | Repo-codified AI instructions  | ✅ `.github/copilot-instructions.md` | ⚠️ AGENTS.md emerging                     | ✅ §1 ownership map + `CLAUDE.md` authority |
-| 💎  | Skill/catalog ownership        | ⚠️ `.github/chatmodes/` + `/prompts/` | ❌ Ad hoc                                | ✅ §2 skill lifecycle; no parallel trees |
-| 💎  | Hook policy matrix             | ⚠️ `.vscode/mcp.json` + IDE settings  | ⚠️ Implicit                               | ✅ §3 routing; reminder vs block tiers   |
-| 💎  | External-reviewer contract     | ❌ Rare                              | ❌ Rare                                  | ✅ §4 Codex + Copilot reviewer-not-authority |
-| 💎  | Permissions/extension boundary | ⚠️ Varies                             | ⚠️ Varies                                 | ✅ §5 allow/deny tiers + `.local.json` split |
-| 💎  | Cross-tool `AGENTS.md` pointer | ⚠️ awesome-copilot stub               | ✅ LF-backed (Aug 2025)                  | ✅ §6 pointer to `CLAUDE.md`; no duplication |
-| 💎  | AI-assist commit disclosure    | ❌ No convention                     | ✅ kernel `Assisted-by:` trailer (2025-12) | ✅ §7 zero-trailer policy + stance-change condition |
-| ⭐  | Autonomous-agent boundary      | ⚠️ coding-agent + firewall allowlist  | ❌ No formal policy                      | ✅ §8 interactive-only; no Devin / setup-steps |
-| ⭐  | AI workflow regression suite   | ❌ Rare                              | ❌ Rare (Promptfoo/Guardrails; AI apps)  | ✅ §9 catalog + hierarchy + trailer + boundary checks |
+| ⭐  | Feature                        | 🪟 Win11                              | 🐧 Linux                                   | 🚀 Impossible OS                                      |
+| --- | ------------------------------ | ------------------------------------- | ------------------------------------------ | ----------------------------------------------------- |
+| 💎  | Repo-codified AI instructions  | ✅ `.github/copilot-instructions.md`  | ⚠️ AGENTS.md emerging                      | ✅ §1 ownership map + `CLAUDE.md` authority           |
+| 💎  | Skill/catalog ownership        | ⚠️ `.github/chatmodes/` + `/prompts/` | ❌ Ad hoc                                  | ✅ §2 skill lifecycle; no parallel trees              |
+| 💎  | Hook policy matrix             | ⚠️ `.vscode/mcp.json` + IDE settings  | ⚠️ Implicit                                | ✅ §3 routing; reminder vs block tiers                |
+| 💎  | External-reviewer contract     | ❌ Rare                               | ❌ Rare                                    | ✅ §4 Codex + Copilot reviewer-not-authority          |
+| 💎  | Permissions/extension boundary | ⚠️ Varies                             | ⚠️ Varies                                  | ✅ §5 allow/deny tiers + `.local.json` split          |
+| 💎  | Cross-tool `AGENTS.md` pointer | ⚠️ awesome-copilot stub               | ✅ LF-backed (Aug 2025)                    | ✅ §6 pointer to `CLAUDE.md`; no duplication          |
+| 💎  | AI-assist commit disclosure    | ❌ No convention                      | ✅ kernel `Assisted-by:` trailer (2025-12) | ✅ §7 zero-trailer policy + stance-change condition   |
+| ⭐  | Autonomous-agent boundary      | ⚠️ coding-agent + firewall allowlist  | ❌ No formal policy                        | ✅ §8 interactive-only; no Devin / setup-steps        |
+| ⭐  | AI workflow regression suite   | ❌ Rare                               | ❌ Rare (Promptfoo/Guardrails; AI apps)    | ✅ §9 catalog + hierarchy + trailer + boundary checks |
 
 > **After §1-§5:** Impossible OS documents its AI workflow as first-class infrastructure: explicit ownership, documented hooks, and a clear external-reviewer contract.
 > **After §6-§7:** reaches parity with the 2025-2026 Linux Foundation `AGENTS.md` standard and the Linux kernel's AI-assist commit policy, while preserving its zero-trailer stance explicitly.

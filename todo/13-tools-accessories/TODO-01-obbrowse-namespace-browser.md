@@ -39,12 +39,12 @@ title: "TODO-01 -- ObBrowse: Object Namespace Browser"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                              | Depends On | Status |
-| --- | :---: | ---------------------------------------- | ---------- | :----: |
+| ⭐  | Order | Deliverable                                             | Depends On | Status |
+| --- | :---: | ------------------------------------------------------- | ---------- | :----: |
 | 💎  |   1   | User-mode syscall wrappers for OB directory enumeration | --         |  [ ]   |
-| 💎  |   2   | Console-mode ObBrowse (text tree dump to stdout) | §1         |  [ ]   |
-| ⭐  |   3   | GUI ObBrowse with tree view + detail panel | §2         |  [ ]   |
-| ⭐  |   4   | Object type icons and security descriptor display | §3         |  [ ]   |
+| 💎  |   2   | Console-mode ObBrowse (text tree dump to stdout)        | §1         |  [ ]   |
+| ⭐  |   3   | GUI ObBrowse with tree view + detail panel              | §2         |  [ ]   |
+| ⭐  |   4   | Object type icons and security descriptor display       | §3         |  [ ]   |
 
 > 💎 = parity -- Windows ships WinObj (Sysinternals) and Process Explorer handle view.
 > ⭐ = exclusive -- integrated into the OS itself, not a third-party download.
@@ -113,8 +113,8 @@ Enhanced display with per-type icons and security info.
 
 | ⭐  | Feature                  | 🪟 Win11                 | 🐧 Linux             | 🚀 Impossible OS          |
 | --- | ------------------------ | ------------------------ | -------------------- | ------------------------- |
-| 💎  | Object namespace browser | ✅ WinObj (Sysinternals) | ⚠️ /proc + /sys       | ⬜ §2–§3                  |
-| 💎  | Handle viewer            | ✅ Process Explorer      | ⚠️ lsof               | ⬜ §3 detail panel        |
+| 💎  | Object namespace browser | ✅ WinObj (Sysinternals) | ⚠️ /proc + /sys      | ⬜ §2–§3                  |
+| 💎  | Handle viewer            | ✅ Process Explorer      | ⚠️ lsof              | ⬜ §3 detail panel        |
 | ⭐  | Built-in (not 3rd party) | ❌ WinObj is download    | ✅ /proc is built-in | ⬜ §2–§3 -- ships with OS |
 | ⭐  | Security descriptor view | ✅ WinObj shows SD       | ❌ Not in /proc      | ⬜ §4                     |
 

@@ -51,23 +51,23 @@ title: "TODO-19 -- USB Boot Hardening & Fail-Safe Pipeline"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                              | Depends On | Status |
-| --- | :---: | ---------------------------------------- | ---------- | :----: |
-| 💎  |   1   | SCSI REQUEST SENSE and error classification | --         |  [/]   |
-| 💎  |   2   | TEST UNIT READY poll loop after BOT init | §1         |  [x]   |
-| 💎  |   3   | MSC BOT retry on transient errors        | §1, §2, §4 |  [x]   |
-| 💎  |   4   | USB transport error recovery (stall/halt) | §1         |  [x]   |
-| 💎  |   5   | Bulk transfer timeouts                   | §4         |  [/]   |
-| 💎  |   6   | Remove sleep_ms(2000) hack               | §2-§5, §7  |  [/]   |
-| 💎  |   7   | XUSB2PR port-ready polling (Intel EHCI→xHCI) | §4         |  [/]   |
-| 💎  |   8   | klog_disk_flush bounded loop             | --         |  [/]   |
-| 💎  |   9   | klog deferred flush mode (batch to RAM)  | §8         |  [x]   |
-| 💎  |  10   | Boot media speed detection               | §8         |  [/]   |
-| 💎  |  11   | EHCI/UHCI companion controller fallback  | --         |  [/]   |
-| ⭐  |  12   | USB boot diagnostic report               | §1-§11     |  [x]   |
-| 💎  |  13   | Single-pass per-subsystem log routing    | §8         |  [x]   |
-| 💎  |  14   | IXFS boot tests: slow-media-aware        | §10        |  [x]   |
-| ⭐  |  15   | Flush progress on splash diagnostic line | §9         |  [/]   |
+| ⭐  | Order | Deliverable                                         | Depends On | Status |
+| --- | :---: | --------------------------------------------------- | ---------- | :----: |
+| 💎  |   1   | SCSI REQUEST SENSE and error classification         | --         |  [/]   |
+| 💎  |   2   | TEST UNIT READY poll loop after BOT init            | §1         |  [x]   |
+| 💎  |   3   | MSC BOT retry on transient errors                   | §1, §2, §4 |  [x]   |
+| 💎  |   4   | USB transport error recovery (stall/halt)           | §1         |  [x]   |
+| 💎  |   5   | Bulk transfer timeouts                              | §4         |  [/]   |
+| 💎  |   6   | Remove sleep_ms(2000) hack                          | §2-§5, §7  |  [/]   |
+| 💎  |   7   | XUSB2PR port-ready polling (Intel EHCI→xHCI)        | §4         |  [/]   |
+| 💎  |   8   | klog_disk_flush bounded loop                        | --         |  [/]   |
+| 💎  |   9   | klog deferred flush mode (batch to RAM)             | §8         |  [x]   |
+| 💎  |  10   | Boot media speed detection                          | §8         |  [/]   |
+| 💎  |  11   | EHCI/UHCI companion controller fallback             | --         |  [/]   |
+| ⭐  |  12   | USB boot diagnostic report                          | §1-§11     |  [x]   |
+| 💎  |  13   | Single-pass per-subsystem log routing               | §8         |  [x]   |
+| 💎  |  14   | IXFS boot tests: slow-media-aware                   | §10        |  [x]   |
+| ⭐  |  15   | Flush progress on splash diagnostic line            | §9         |  [/]   |
 | 💎  |  16   | xHCI command ring + BOT transport SMP serialization | §4         |  [/]   |
 
 > 💎 = parity -- Windows usbstor.sys and Linux usb-storage both handle SCSI retry, stall recovery, transfer timeouts, and EHCI fallback.

@@ -44,23 +44,23 @@ title: "TODO-06 -- Scheduler Enhancement"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                              | Depends On                               | Status |
-| --- | :---: | ---------------------------------------- | ---------------------------------------- | :----: |
-| 💎  |   1   | §1 40-level priority queues + O(1) bitmap dequeue | --                                       |  [ ]   |
-| 💎  |   2   | §2 Dynamic priority aging (starvation prevention) | §1                                       |  [ ]   |
-| 💎  |   3   | §8 Scheduler tick calibration (RDTSC+HPET) | D01 T11 §3, 01-boot-platform/TODO-09-cpu-boot-sequencing.md §4 |  [ ]   |
-| 💎  |   4   | §3 CFS vruntime + `prio_to_weight` table | §1, §3 (tick calibration)                |  [ ]   |
-| 💎  |   5   | §4 `SCHED_FIFO` / `SCHED_RR` real-time classes | §1, §4 (CFS baseline)                    |  [ ]   |
-| ⭐  |   6   | §5 `SCHED_DEADLINE` EDF scheduling       | §5 (RT infra), §4 (CFS)                  |  [ ]   |
-| 💎  |   7   | §6 CPU affinity (`ThreadAffinityMask`)   | §1 (per-CPU run queues)                  |  [ ]   |
-| ⭐  |   8   | §7 Scheduler stats + `/sys/sched` VFS file | §1–§5 (meaningful data)                  |  [ ]   |
-| 💎  |   9   | §9 CPU frequency scaling hook + P-state governors | §7 (load measurement), ACPI              |  [ ]   |
-| 💎  |  10   | Worker Factory syscalls wired to SSDT    | §1, D02 T12 §4                           |  [ ]   |
-| 💎  |  11   | Per-thread kernel stack + TSS.rsp0 switching | --                                       |  [x]   |
-| 💎  |  12   | Dynamic thread table + resource-driven thread limits | §11, D02 T11 §15, D02 T21 §9             |  [ ]   |
-| 💎  |  13   | Dynamic task table + reusable PID slot allocation | §12                                      |  [ ]   |
-| ⭐  |  14   | §14 Process/job CPU bandwidth control (cap/reserve) | D02 T25 §7 (rate record), §8 (tick calibration) |  [ ]   |
-| 💎  |  15   | §15 Wait/wake transaction locking (lost-wakeup fix) | §1 (run-queue lock granularity)          |  [ ]   |
+| ⭐  | Order | Deliverable                                          | Depends On                                                     | Status |
+| --- | :---: | ---------------------------------------------------- | -------------------------------------------------------------- | :----: |
+| 💎  |   1   | §1 40-level priority queues + O(1) bitmap dequeue    | --                                                             |  [ ]   |
+| 💎  |   2   | §2 Dynamic priority aging (starvation prevention)    | §1                                                             |  [ ]   |
+| 💎  |   3   | §8 Scheduler tick calibration (RDTSC+HPET)           | D01 T11 §3, 01-boot-platform/TODO-09-cpu-boot-sequencing.md §4 |  [ ]   |
+| 💎  |   4   | §3 CFS vruntime + `prio_to_weight` table             | §1, §3 (tick calibration)                                      |  [ ]   |
+| 💎  |   5   | §4 `SCHED_FIFO` / `SCHED_RR` real-time classes       | §1, §4 (CFS baseline)                                          |  [ ]   |
+| ⭐  |   6   | §5 `SCHED_DEADLINE` EDF scheduling                   | §5 (RT infra), §4 (CFS)                                        |  [ ]   |
+| 💎  |   7   | §6 CPU affinity (`ThreadAffinityMask`)               | §1 (per-CPU run queues)                                        |  [ ]   |
+| ⭐  |   8   | §7 Scheduler stats + `/sys/sched` VFS file           | §1–§5 (meaningful data)                                        |  [ ]   |
+| 💎  |   9   | §9 CPU frequency scaling hook + P-state governors    | §7 (load measurement), ACPI                                    |  [ ]   |
+| 💎  |  10   | Worker Factory syscalls wired to SSDT                | §1, D02 T12 §4                                                 |  [ ]   |
+| 💎  |  11   | Per-thread kernel stack + TSS.rsp0 switching         | --                                                             |  [x]   |
+| 💎  |  12   | Dynamic thread table + resource-driven thread limits | §11, D02 T11 §15, D02 T21 §9                                   |  [ ]   |
+| 💎  |  13   | Dynamic task table + reusable PID slot allocation    | §12                                                            |  [ ]   |
+| ⭐  |  14   | §14 Process/job CPU bandwidth control (cap/reserve)  | D02 T25 §7 (rate record), §8 (tick calibration)                |  [ ]   |
+| 💎  |  15   | §15 Wait/wake transaction locking (lost-wakeup fix)  | §1 (run-queue lock granularity)                                |  [ ]   |
 
 > 💎 = parity -- Windows and Linux both implement priority queues, aging, CFS-equivalent, RT classes, affinity, tick calibration, and cpufreq; Impossible OS must match.
 > ⭐ = exclusive -- `SCHED_DEADLINE` with GRUB bandwidth reclaim and the unified `/sys/sched` all-threads snapshot are differentiators over the base Windows NT scheduler.

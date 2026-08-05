@@ -75,24 +75,24 @@ title: "TODO-10 -- Bare Metal Boot Hardening"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                              | Depends On | Status |
-| --- | :---: | ---------------------------------------- | ---------- | :----: |
-| 💎  |   1   | Minimal UC MMIO mapping (`vmm_map_mmio_uc`) | --         |  [x]   |
-| 💎  |   2   | IST stacks for critical exceptions       | --         |  [/]   |
-| 💎  |   3   | Hardware interrupt root cause investigation | §2         |  [x]   |
-| 💎  |   4   | ACPI FADT boot architecture flags        | --         |  [x]   |
-| 💎  |   5   | PS/2 controller detection and safe init  | §4         |  [x]   |
-| 💎  |   6   | AHCI interrupt hardening                 | §1, §3     |  [x]   |
-| 💎  |   7   | Resilient boot with graceful degradation | --         |  [/]   |
-| 💎  |   8   | Per-process page tables (minimal base)   | §1         |  [/]   |
-| 💎  |   9   | CPU security activation and verification | §4, §8     |  [x]   |
-| 💎  |  10   | Boot order hardening (timer-last, UEFI-safe) | §3         |  [x]   |
-| ⭐  |  11   | ~~`boot.conf` subsystem skip list~~      | --         |  [x]   |
-| 💎  |  12   | Logging and diagnostic storage moved to TODO-24 | §7         |  [x]   |
+| ⭐  | Order | Deliverable                                       | Depends On | Status |
+| --- | :---: | ------------------------------------------------- | ---------- | :----: |
+| 💎  |   1   | Minimal UC MMIO mapping (`vmm_map_mmio_uc`)       | --         |  [x]   |
+| 💎  |   2   | IST stacks for critical exceptions                | --         |  [/]   |
+| 💎  |   3   | Hardware interrupt root cause investigation       | §2         |  [x]   |
+| 💎  |   4   | ACPI FADT boot architecture flags                 | --         |  [x]   |
+| 💎  |   5   | PS/2 controller detection and safe init           | §4         |  [x]   |
+| 💎  |   6   | AHCI interrupt hardening                          | §1, §3     |  [x]   |
+| 💎  |   7   | Resilient boot with graceful degradation          | --         |  [/]   |
+| 💎  |   8   | Per-process page tables (minimal base)            | §1         |  [/]   |
+| 💎  |   9   | CPU security activation and verification          | §4, §8     |  [x]   |
+| 💎  |  10   | Boot order hardening (timer-last, UEFI-safe)      | §3         |  [x]   |
+| ⭐  |  11   | ~~`boot.conf` subsystem skip list~~               | --         |  [x]   |
+| 💎  |  12   | Logging and diagnostic storage moved to TODO-24   | §7         |  [x]   |
 | 💎  |  13   | CPU feature minimum requirements and verification | §4, §9     |  [x]   |
-| 💎  |  14   | Bare-metal test matrix and validation plan | §3         |  [x]   |
-| 💎  |  15   | Boot splash spinner bare-metal fix       | §3, §10    |  [x]   |
-| 💎  |  16   | Post-ship follow-up backfill (2026-07-31 cohort) | --         |  [ ]   |
+| 💎  |  14   | Bare-metal test matrix and validation plan        | §3         |  [x]   |
+| 💎  |  15   | Boot splash spinner bare-metal fix                | §3, §10    |  [x]   |
+| 💎  |  16   | Post-ship follow-up backfill (2026-07-31 cohort)  | --         |  [ ]   |
 
 > 💎 = parity -- Windows and Linux both handle bare-metal quirks, IST, ACPI gating, and graceful degradation.
 > ⭐ = exclusive -- dense 4-digit POST codes in every boot function are not standard in any OS kernel.
@@ -611,7 +611,7 @@ From the stamped section 2:
 | ⭐  | Feature                 | 🪟 Win11                      | 🐧 Linux                      | 🚀 Impossible OS                 |
 | --- | ----------------------- | ----------------------------- | ----------------------------- | -------------------------------- |
 | 💎  | UC MMIO mapping         | ✅ MmMapIoSpace               | ✅ ioremap_uc                 | ✅ §1 vmm_map_mmio_uc            |
-| 💎  | IST stacks              | ✅ All critical exceptions    | ✅ IST1-4 DF/NMI/MCE          | ⚠️ §2 BSP IST1-3 (AP: T09 §10)    |
+| 💎  | IST stacks              | ✅ All critical exceptions    | ✅ IST1-4 DF/NMI/MCE          | ⚠️ §2 BSP IST1-3 (AP: T09 §10)   |
 | 💎  | ACPI FADT boot arch     | ✅ HAL checks all flags       | ✅ Gates PIT/RTC/PS2          | ✅ §4 IAPC_BOOT_ARCH parsed      |
 | 💎  | PS/2 ACPI detection     | ✅ HAL detects i8042          | ✅ i8042.nopnp                | ✅ §5 FADT + GSI routing         |
 | 💎  | AHCI MSI fallback       | ✅ StorAHCI INTx fallback     | ✅ libahci polled fallback    | ✅ §6 MSI→INTx→polled            |
@@ -622,7 +622,7 @@ From the stamped section 2:
 | 💎  | Logging on main FS      | ✅ C:\Windows\System32        | ✅ /var/log                   | ✅ §12 KLOG_DIR X:\ (T24)        |
 | 💎  | CPU feature minimums    | ✅ NX required since Vista    | ✅ verify_cpu required mask   | ✅ §13 NX+SSE2+LM+SYSCALL mask   |
 | ⭐  | Bare-metal test matrix  | ❌ Internal only (WHQL)       | ❌ Community-driven           | ✅ §14 4-platform matrix         |
-| ⭐  | Boot spinner liveness   | ✅ ISR-driven ring            | ⚠️ plymouth (optional)         | ✅ §15 timer ISR @10fps Fluent   |
+| ⭐  | Boot spinner liveness   | ✅ ISR-driven ring            | ⚠️ plymouth (optional)        | ✅ §15 timer ISR @10fps Fluent   |
 
 > **After §1--§15:** Impossible OS boots on any x86-64 hardware with the same reliability as Windows and Linux. User/kernel separation with per-process PML4; SMEP/SMAP where CPU and page tables allow (see §8--§9). Graceful degradation via `BOOT_TRY` (§7). Logging on BlackBox `X:\` (§12). External CPU sequencing remains in `TODO-09-cpu-boot-sequencing.md`.
 

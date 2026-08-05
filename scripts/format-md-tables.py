@@ -47,7 +47,27 @@ def _dwidth(text: str) -> int:
     editors this corpus is read in. Combining marks (Mn/Me) add no width.
     """
     w = 0
-    for ch in text:
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        nxt = text[i + 1] if i + 1 < n else ""
+        # VARIATION SELECTOR-16 (U+FE0F) requests EMOJI presentation, which
+        # renders double-width even when the base character is East-Asian
+        # Narrow. Missing this scored the warning sign as 1 while it displays
+        # as 2, so every row carrying it was padded one column too wide -- the
+        # operator spotted it in an OS Comparison table where the warning rows
+        # sat a column proud of the check-mark rows. U+FE0E is the opposite
+        # request (text presentation) and stays narrow.
+        if nxt == "\ufe0f":
+            w += 2
+            i += 2
+            continue
+        if nxt == "\ufe0e":
+            w += 1
+            i += 2
+            continue
+        i += 1
         if unicodedata.combining(ch) or unicodedata.category(ch) in ("Mn", "Me"):
             continue
         w += 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
@@ -94,6 +114,22 @@ def _alignment(sep_cell: str) -> str:
     return "default"
 
 
+def _reescape(cell: str) -> str:
+    """Re-escape pipes that `_split_row` decoded.
+
+    `_split_row` turns a literal `\\|` inside a cell into a bare `|` so the cell
+    text is what the reader sees. Rendering joined cells with a bare `|` and
+    never put the escape back -- so a table containing `safeboot=minimal\\|network`
+    was rewritten with that pipe as a COLUMN SEPARATOR, silently corrupting the
+    row into one cell too many and making the whole table ragged. The formatter
+    then refused to touch it ever again, which is how it hid.
+
+    Found 2026-08-05 while repairing exactly such a row: the escape was applied,
+    the formatter ran, and the escape was gone.
+    """
+    return cell.replace("|", "\\|")
+
+
 def _find_tables(lines: list[str]) -> list[tuple[int, int]]:
     """Return (start, end_exclusive) line-index ranges of table blocks."""
     tables = []
@@ -116,7 +152,7 @@ def _find_tables(lines: list[str]) -> list[tuple[int, int]]:
 
 
 def _render_table(lines: list[str], start: int, end: int, max_cell: int,
-                  max_pad: int = 40) -> list[str] | None:
+                  max_pad: int = 0) -> list[str] | None:
     rows = [_split_row(l) for l in lines[start:end]]
     ncols = len(rows[0])
     if any(len(r) != ncols for r in rows):
@@ -142,11 +178,24 @@ def _render_table(lines: list[str], start: int, end: int, max_cell: int,
     # is never touched, only inter-cell padding. And note the ceiling on what any
     # padding policy can achieve: the median NATURAL row is already 91 chars, so
     # ~49% of over-160 rows are wide because their CONTENT is wide.
+    # NO CAP BY DEFAULT (max_pad=0). A per-column cap was applied on 2026-08-05
+    # and REVERTED the same day on rendered evidence: a cell wider than the cap
+    # is left UNPADDED, so its pipe juts out and the column stops lining up --
+    # which is precisely the defect Check 17 exists to prevent. The measurement
+    # that justified the cap scored LINE WIDTH (median 134 -> 124, rows over 200
+    # halved) and reported the cost as "17% of cells left unpadded", which
+    # sounded like a minor trade and is in fact broken alignment on one row in
+    # six. Width was never the quantity that mattered.
+    # Width is measured on the RE-ESCAPED text, because that is what lands in
+    # the file and what a reader of the raw source sees. Measuring the decoded
+    # cell instead left every escaped-pipe row one column short: `_reescape`
+    # adds a backslash after the width was already fixed.
     widths = [
-        min(max_pad,
-            max(3, max(_dwidth(rows[r][c]) for r in range(len(rows)) if r != 1)))
+        max(3, max(_dwidth(_reescape(rows[r][c])) for r in range(len(rows)) if r != 1))
         for c in range(ncols)
     ]
+    if max_pad:
+        widths = [min(max_pad, w) for w in widths]
 
     def pad(cell: str, width: int, align: str) -> str:
         gap = width - _dwidth(cell)
@@ -175,15 +224,15 @@ def _render_table(lines: list[str], start: int, end: int, max_cell: int,
                 else:
                     cell = "-" * w
                 cells.append(cell)
-            out.append("| " + " | ".join(cells) + " |")
+            out.append("| " + " | ".join(_reescape(c) for c in cells) + " |")
         else:
             out.append("| " + " | ".join(
-                pad(row[c], widths[c], aligns[c]) for c in range(ncols)
+                pad(_reescape(row[c]), widths[c], aligns[c]) for c in range(ncols)
             ) + " |")
     return out
 
 
-def process(path: Path, max_cell: int, check: bool, max_pad: int = 40) -> bool:
+def process(path: Path, max_cell: int, check: bool, max_pad: int = 0) -> bool:
     """Return True if the file has (or would have) changes."""
     text = path.read_text(encoding="utf-8")
     lines = text.split("\n")
@@ -222,7 +271,10 @@ def main() -> int:
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--max-cell", type=int, default=80)
     # Per-column padding ceiling. See _render_table for how 40 was chosen.
-    ap.add_argument("--max-pad", type=int, default=40)
+    ap.add_argument("--max-pad", type=int, default=0,
+                    help="cap per-column padding (0 = no cap). See _render_table: "
+                         "capping BREAKS alignment for over-cap cells, which is "
+                         "worse than a wide table.")
     args = ap.parse_args()
 
     any_changed = False

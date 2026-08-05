@@ -61,16 +61,16 @@ must tick the release readiness checklist before `promote-release.sh stable` is 
 
 ## Implementation Order
 
-| Step | Section                                  | 💎/⭐ | Dependency                               |
-| ---- | ---------------------------------------- | ----- | ---------------------------------------- |
+| Step | Section                                  | 💎/⭐ | Dependency                                                   |
+| ---- | ---------------------------------------- | ----- | ------------------------------------------------------------ |
 | 1    | Automated regression test suite          | ⭐    | `01-boot-platform/TODO-14` serial marker; `scripts/build.sh` |
-| 2    | QEMU validation (`qemu-test.sh`)         | ⭐    | §1 test suite; `build.sh run`            |
-| 3    | Performance benchmarks                   | ⭐    | §2 QEMU; `01-boot-platform/TODO-14` boot stage timing |
-| 4    | Crash analytics review (QA build + soak) | 💎    | `D03T10` KASAN flags; `D02T27` crash dumps |
-| 5    | Hyper-V certification                    | 💎    | §1; `D10T11 §4` OOBE; `TODO-04 §3` HV detect |
-| 6    | VirtualBox certification                 | 💎    | §1; §5 (parallel)                        |
-| 7    | Real hardware checklist                  | 💎    | §4 soak pass; §5 §6 VM pass              |
-| 8    | Release readiness checklist              | ⭐    | §1–§7 all done; compat gate (D12T07 §12) |
+| 2    | QEMU validation (`qemu-test.sh`)         | ⭐    | §1 test suite; `build.sh run`                                |
+| 3    | Performance benchmarks                   | ⭐    | §2 QEMU; `01-boot-platform/TODO-14` boot stage timing        |
+| 4    | Crash analytics review (QA build + soak) | 💎    | `D03T10` KASAN flags; `D02T27` crash dumps                   |
+| 5    | Hyper-V certification                    | 💎    | §1; `D10T11 §4` OOBE; `TODO-04 §3` HV detect                 |
+| 6    | VirtualBox certification                 | 💎    | §1; §5 (parallel)                                            |
+| 7    | Real hardware checklist                  | 💎    | §4 soak pass; §5 §6 VM pass                                  |
+| 8    | Release readiness checklist              | ⭐    | §1–§7 all done; compat gate (D12T07 §12)                     |
 
 ---
 
@@ -85,19 +85,19 @@ must tick the release readiness checklist before `promote-release.sh stable` is 
   - Parse `build/test-{timestamp}.log` for `TEST <name> PASS [<ms>ms]` / `TEST <name> FAIL [<ms>ms]` lines; exit code 0 if all PASS; exit code 1 on any FAIL
 - [ ] **Test matrix** (each test emits `TEST <name> PASS|FAIL [<ms>ms]`):
 
-| Test name        | What it checks                           |
-| ---------------- | ---------------------------------------- |
-| `kernel-init`    | Serial boot log contains all expected `[Phase N]` markers; no `[PANIC]` |
-| `pmm-alloc-loop` | Alloc + free 1000 frames in a loop; no double-free, no leak |
-| `kmalloc-stress` | 500× `kmalloc` + `kfree` of random sizes (16–4096 bytes); heap intact |
-| `fs-crud`        | Create, write 4 KiB, read back, verify hash, delete × 100 files |
-| `registry-rw`    | Write 50 registry keys; read back; delete; verify absent |
-| `network-dhcp`   | DHCP lease acquired within 10 s (requires QEMU user-mode networking) |
-| `network-dns`    | Resolve `impossible-os.dev` via DNS (QEMU user-mode NAT) |
+| Test name        | What it checks                                                                   |
+| ---------------- | -------------------------------------------------------------------------------- |
+| `kernel-init`    | Serial boot log contains all expected `[Phase N]` markers; no `[PANIC]`          |
+| `pmm-alloc-loop` | Alloc + free 1000 frames in a loop; no double-free, no leak                      |
+| `kmalloc-stress` | 500× `kmalloc` + `kfree` of random sizes (16–4096 bytes); heap intact            |
+| `fs-crud`        | Create, write 4 KiB, read back, verify hash, delete × 100 files                  |
+| `registry-rw`    | Write 50 registry keys; read back; delete; verify absent                         |
+| `network-dhcp`   | DHCP lease acquired within 10 s (requires QEMU user-mode networking)             |
+| `network-dns`    | Resolve `impossible-os.dev` via DNS (QEMU user-mode NAT)                         |
 | `network-http`   | `http_get("https://impossible-os.dev/api/version?channel=dev", ...)` returns 200 |
-| `compositor-fps` | Render 100 compositor frames; measure via PIT tick delta; assert ≥ 60 FPS |
-| `process-spawn`  | Spawn + exit 50 processes via `task_create`; verify all exit cleanly |
-| `syscall-smoke`  | Call each syscall with valid args; none panic (smoke check, not coverage) |
+| `compositor-fps` | Render 100 compositor frames; measure via PIT tick delta; assert ≥ 60 FPS        |
+| `process-spawn`  | Spawn + exit 50 processes via `task_create`; verify all exit cleanly             |
+| `syscall-smoke`  | Call each syscall with valid args; none panic (smoke check, not coverage)        |
 
 - [ ] **CI integration**: `scripts/run-tests.sh` is called by `.github/workflows/test.yml` on every push to `main`; workflow fails build if exit code ≠ 0; test log attached as workflow artifact
 - [ ] **Test programs**: each test is a small self-contained function in `sdk/compat/tests/regression/test_*.c`; linked into OS image for QA builds via a `regression_tests[]` table; triggered on-OS via `test run-all` shell command
@@ -190,25 +190,25 @@ must tick the release readiness checklist before `promote-release.sh stable` is 
   ```markdown
   ## Hardware: {Make/Model} -- Tested by: {Tester} -- Date: {YYYY-MM-DD}
 
-| Component        | Test                                     | Pass/Fail | Notes |
-| ---------------- | ---------------------------------------- | --------- | ----- |
-| UEFI boot        | Secure Boot OFF; boots from USB; reaches desktop |           |       |
-| Display (GOP)    | Native resolution framebuffer; no artifacts |           |       |
-| Keyboard PS/2    | All keys register correctly              |           |       |
-| Keyboard USB HID | USB keyboard all keys                    |           |       |
-| Mouse PS/2       | Movement + all buttons                   |           |       |
-| Mouse USB HID    | USB mouse movement + buttons             |           |       |
-| Storage AHCI     | AHCI SSD detected; R/W 100 MiB stress test |           |       |
-| Storage NVMe     | NVMe SSD detected (if present)           |           |       |
-| NIC Realtek      | RTL8111 DHCP lease + ping 8.8.8.8        |           |       |
-| NIC Intel        | I219/I225 DHCP lease + ping 8.8.8.8      |           |       |
+| Component        | Test                                                 | Pass/Fail | Notes |
+| ---------------- | ---------------------------------------------------- | --------- | ----- |
+| UEFI boot        | Secure Boot OFF; boots from USB; reaches desktop     |           |       |
+| Display (GOP)    | Native resolution framebuffer; no artifacts          |           |       |
+| Keyboard PS/2    | All keys register correctly                          |           |       |
+| Keyboard USB HID | USB keyboard all keys                                |           |       |
+| Mouse PS/2       | Movement + all buttons                               |           |       |
+| Mouse USB HID    | USB mouse movement + buttons                         |           |       |
+| Storage AHCI     | AHCI SSD detected; R/W 100 MiB stress test           |           |       |
+| Storage NVMe     | NVMe SSD detected (if present)                       |           |       |
+| NIC Realtek      | RTL8111 DHCP lease + ping 8.8.8.8                    |           |       |
+| NIC Intel        | I219/I225 DHCP lease + ping 8.8.8.8                  |           |       |
 | Audio HD Audio   | HD Audio controller detected; audio output (stretch) |           |       |
-| USB 2.0 hub      | USB flash drive mounts as drive letter   |           |       |
-| USB 3.0 hub      | USB 3.0 flash drive mounts + correct speed |           |       |
-| ACPI shutdown    | Shutdown from menu → power off           |           |       |
-| ACPI reboot      | Reboot → re-boots to OS                  |           |       |
-| ACPI sleep S3    | Sleep + resume (if S3 supported)         |           |       |
-| SMP              | All CPU cores detected in `sysinfo.exe`  |           |       |
+| USB 2.0 hub      | USB flash drive mounts as drive letter               |           |       |
+| USB 3.0 hub      | USB 3.0 flash drive mounts + correct speed           |           |       |
+| ACPI shutdown    | Shutdown from menu → power off                       |           |       |
+| ACPI reboot      | Reboot → re-boots to OS                              |           |       |
+| ACPI sleep S3    | Sleep + resume (if S3 supported)                     |           |       |
+| SMP              | All CPU cores detected in `sysinfo.exe`              |           |       |
   ```
 - [ ] **Minimum coverage before stable release**: results from ≥ 3 distinct physical machines (different manufacturers/chipsets); all `Pass` in critical rows (UEFI, Display, Keyboard, Mouse, Storage, NIC, ACPI Shutdown/Reboot)
 - [ ] **Results archive**: store completed checklists in `docs/guides/hardware-test-results/v{version}/` -- one file per machine tested; linked from release notes
@@ -226,17 +226,17 @@ must tick the release readiness checklist before `promote-release.sh stable` is 
 
 - [ ] **Benchmark metrics** (targets for QEMU on host with VirtIO NVMe + user networking):
 
-| Metric                       | Measurement method                       | Target             |
-| ---------------------------- | ---------------------------------------- | ------------------ |
+| Metric                       | Measurement method                                                    | Target             |
+| ---------------------------- | --------------------------------------------------------------------- | ------------------ |
 | Boot time (UEFI → `[READY]`) | `boot_stage_history[]` timestamps (→ XREF `01-boot-platform/TODO-14`) | < 5 s in QEMU      |
-| PMM alloc throughput         | 1M `pmm_alloc_frame()` + `pmm_free_frame()` pairs; measure via PIT | > 1M pairs/s       |
-| Heap alloc throughput        | 1M `kmalloc(64)` + `kfree()` pairs       | > 500K pairs/s     |
-| FS sequential write          | Write 256 MiB to `C:\Temp\bench.bin` via VFS (VirtIO) | > 500 MB/s         |
-| FS sequential read           | Read back `bench.bin` and verify hash    | > 800 MB/s         |
-| Network loopback             | 1000 × 64 KiB UDP send/recv; measure total time | > 1 Gbps equiv     |
-| Compositor frame time        | Render 100 full-screen frames; PIT delta per frame | < 16 ms (≥ 60 FPS) |
-| Process spawn latency        | 50 `task_create()` + immediate `task_exit()` pairs; avg | < 1 ms avg         |
-| Syscall roundtrip            | 10K `SYS_GETPID` calls; measure time     | < 100 ns avg       |
+| PMM alloc throughput         | 1M `pmm_alloc_frame()` + `pmm_free_frame()` pairs; measure via PIT    | > 1M pairs/s       |
+| Heap alloc throughput        | 1M `kmalloc(64)` + `kfree()` pairs                                    | > 500K pairs/s     |
+| FS sequential write          | Write 256 MiB to `C:\Temp\bench.bin` via VFS (VirtIO)                 | > 500 MB/s         |
+| FS sequential read           | Read back `bench.bin` and verify hash                                 | > 800 MB/s         |
+| Network loopback             | 1000 × 64 KiB UDP send/recv; measure total time                       | > 1 Gbps equiv     |
+| Compositor frame time        | Render 100 full-screen frames; PIT delta per frame                    | < 16 ms (≥ 60 FPS) |
+| Process spawn latency        | 50 `task_create()` + immediate `task_exit()` pairs; avg               | < 1 ms avg         |
+| Syscall roundtrip            | 10K `SYS_GETPID` calls; measure time                                  | < 100 ns avg       |
 
 - [ ] **`build/benchmark-{version}.json` schema**:
   ```json
@@ -324,15 +324,15 @@ must tick the release readiness checklist before `promote-release.sh stable` is 
 ## OS Comparison
 
 
-| ⭐  | Feature                                  | 🪟 Win11                                 | 🐧 Linux                                 | 🚀 Impossible OS                         |
-| --- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
-| 💎  | Automated regression tests in CI         | ✅ Internal Windows Test Lab (WTL);      | ✅ `kselftest`, LTP, KUnit; open public  | ⬜ §1 -- `run-tests.sh` 11-test matrix; `TEST PASS/FAIL` |
-| 💎  | Hyper-V certification run                | ✅ Internal HCK/HLK; WinHEC compliance   | ✅ `kvm_unit_tests`; virt-io CI          | ⬜ §3 -- `hyperv-test.ps1`; Gen2 VM; 8 required |
-| 💎  | VirtualBox certification run             | ✅ WHQL; VirtualBox Guest Additions official | ✅ VirtualBox Guest Additions for Linux  | ⬜ §4 -- `vbox-test.sh`; OVA import test; guest |
-| 💎  | Real hardware test checklist             | ✅ HCK/HLK hardware logo program         | ✅ Fedora/Ubuntu hardware certification (SoC vendors) | ⬜ §5 -- `hardware-test-checklist.md`; ≥ 3 machines; results |
-| ⭐  | Performance benchmark JSON with regression gate | ✅ Internal PerfLab; private; no public  | ✅ `phoronix-test-suite`; public LWN perf reports | ⬜ §6 -- `benchmark-{version}.json`; 9 metrics; 10%/25% regression |
-| ⭐  | Public release readiness checklist       | ✅ Internal release process; not public  | ✅ Distro RC process (kernel.org rc1–rc8); | ⬜ §7 -- `release-checklist.md`; PR template; merge blocked |
-| 💎  | Pre-release crash analytics + KASAN QA soak | ✅ WER crash analysis; internal crash    | ✅ `kdump` + crash triage; KASAN         | ⬜ §8 -- KASAN=1 + sentinel pages QA     |
+| ⭐  | Feature                                         | 🪟 Win11                                     | 🐧 Linux                                              | 🚀 Impossible OS                                                   |
+| --- | ----------------------------------------------- | -------------------------------------------- | ----------------------------------------------------- | ------------------------------------------------------------------ |
+| 💎  | Automated regression tests in CI                | ✅ Internal Windows Test Lab (WTL);          | ✅ `kselftest`, LTP, KUnit; open public               | ⬜ §1 -- `run-tests.sh` 11-test matrix; `TEST PASS/FAIL`           |
+| 💎  | Hyper-V certification run                       | ✅ Internal HCK/HLK; WinHEC compliance       | ✅ `kvm_unit_tests`; virt-io CI                       | ⬜ §3 -- `hyperv-test.ps1`; Gen2 VM; 8 required                    |
+| 💎  | VirtualBox certification run                    | ✅ WHQL; VirtualBox Guest Additions official | ✅ VirtualBox Guest Additions for Linux               | ⬜ §4 -- `vbox-test.sh`; OVA import test; guest                    |
+| 💎  | Real hardware test checklist                    | ✅ HCK/HLK hardware logo program             | ✅ Fedora/Ubuntu hardware certification (SoC vendors) | ⬜ §5 -- `hardware-test-checklist.md`; ≥ 3 machines; results       |
+| ⭐  | Performance benchmark JSON with regression gate | ✅ Internal PerfLab; private; no public      | ✅ `phoronix-test-suite`; public LWN perf reports     | ⬜ §6 -- `benchmark-{version}.json`; 9 metrics; 10%/25% regression |
+| ⭐  | Public release readiness checklist              | ✅ Internal release process; not public      | ✅ Distro RC process (kernel.org rc1–rc8);            | ⬜ §7 -- `release-checklist.md`; PR template; merge blocked        |
+| 💎  | Pre-release crash analytics + KASAN QA soak     | ✅ WER crash analysis; internal crash        | ✅ `kdump` + crash triage; KASAN                      | ⬜ §8 -- KASAN=1 + sentinel pages QA                               |
 
 Impossible OS's `⭐` advantage: the benchmark JSON (`build/benchmark-{version}.json`) is
 committed to the repo and published with every release, giving the community verifiable,

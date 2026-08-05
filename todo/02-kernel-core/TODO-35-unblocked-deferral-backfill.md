@@ -51,14 +51,14 @@ title: "TODO-35 -- Unblocked-Deferral Backfill (2026-07-27 cohort)"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                              | Depends On | Status |
-| --- | :---: | ---------------------------------------- | ---------- | :----: |
-| ⭐  |   1   | Registry tree SMP synchronization and hive durability | --         |  [ ]   |
+| ⭐  | Order | Deliverable                                              | Depends On | Status |
+| --- | :---: | -------------------------------------------------------- | ---------- | :----: |
+| ⭐  |   1   | Registry tree SMP synchronization and hive durability    | --         |  [ ]   |
 | 💎  |   2   | Registry save/restore hive bodies and transactional load | §1         |  [ ]   |
-| 💎  |   3   | Quota enforcement and job memory accounting | --         |  [ ]   |
-| 💎  |   4   | Module identity and ELF unwind registration | --         |  [ ]   |
-| ⭐  |   5   | User-buffer hardening on fault-recoverable usercopy | --         |  [ ]   |
-| 💎  |   6   | Boot, entropy, config and SRM leftovers  | --         |  [ ]   |
+| 💎  |   3   | Quota enforcement and job memory accounting              | --         |  [ ]   |
+| 💎  |   4   | Module identity and ELF unwind registration              | --         |  [ ]   |
+| ⭐  |   5   | User-buffer hardening on fault-recoverable usercopy      | --         |  [ ]   |
+| 💎  |   6   | Boot, entropy, config and SRM leftovers                  | --         |  [ ]   |
 
 > 💎 = parity -- Win11 and Linux both have these; we deferred them and the deferral went stale.
 > ⭐ = exclusive -- the SMP-locked registry and the declared-safe user-buffer contract go beyond both.
@@ -189,9 +189,9 @@ triage. Grouped because none is large enough to carry a section alone, not becau
 | ⭐  | Feature                              | 🪟 Win11             | 🐧 Linux                 | 🚀 Impossible OS                        |
 | --- | ------------------------------------ | -------------------- | ------------------------ | --------------------------------------- |
 | 💎  | Registry/config store SMP-safe       | ✅ CM lock hierarchy | ✅ per-subsystem locking | ⬜ §1 no lock in the tree today         |
-| 💎  | Hive journal with dual-log recovery  | ✅ `.LOG1`/`.LOG2`   | ⚠️ no direct analogue     | ⬜ §1 matches the NT scheme             |
-| 💎  | Working-set / commit limits enforced | ✅ enforced          | ✅ cgroups + rlimits     | ⚠️ §3 stored and returned, not enforced  |
-| 💎  | ELF unwind data registered           | ⚠️ PE-only by design  | ✅ `.eh_frame_hdr`       | ⬜ §4 PE has `.pdata`, ELF has nothing  |
+| 💎  | Hive journal with dual-log recovery  | ✅ `.LOG1`/`.LOG2`   | ⚠️ no direct analogue    | ⬜ §1 matches the NT scheme             |
+| 💎  | Working-set / commit limits enforced | ✅ enforced          | ✅ cgroups + rlimits     | ⚠️ §3 stored and returned, not enforced |
+| 💎  | ELF unwind data registered           | ⚠️ PE-only by design | ✅ `.eh_frame_hdr`       | ⬜ §4 PE has `.pdata`, ELF has nothing  |
 | ⭐  | Fault-recoverable usercopy contract  | ✅ SEH probe         | ✅ `copy_from_user`      | ✅ §5 shipped; callers not yet using it |
 
 ## Unit Tests

@@ -29,15 +29,15 @@ Ship the runtime machinery that uses the warm-kernel-update handoff ABI from [01
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                              | Depends On        | Status |
-| --- | :---: | ---------------------------------------- | ----------------- | :----: |
-| 💎  |   1   | Outgoing-kernel staging area + folio preservation | TODO-04 pager     |  [ ]   |
-| 💎  |   2   | Per-subsystem quiesce callback registry  | TODO-06 scheduler |  [ ]   |
-| 💎  |   3   | VFS writeback + FD table serialize       | (none)            |  [ ]   |
-| 💎  |   4   | Scheduler drain + thread freeze          | §2                |  [ ]   |
-| 💎  |   5   | Kexec-equivalent jump into new kernel image | §1..§4            |  [ ]   |
+| ⭐  | Order | Deliverable                                            | Depends On        | Status |
+| --- | :---: | ------------------------------------------------------ | ----------------- | :----: |
+| 💎  |   1   | Outgoing-kernel staging area + folio preservation      | TODO-04 pager     |  [ ]   |
+| 💎  |   2   | Per-subsystem quiesce callback registry                | TODO-06 scheduler |  [ ]   |
+| 💎  |   3   | VFS writeback + FD table serialize                     | (none)            |  [ ]   |
+| 💎  |   4   | Scheduler drain + thread freeze                        | §2                |  [ ]   |
+| 💎  |   5   | Kexec-equivalent jump into new kernel image            | §1..§4            |  [ ]   |
 | 💎  |   6   | Incoming-kernel reattach path (splice memory, restore) | D01 T01 §14       |  [ ]   |
-| 💎  |   7   | Live-update syscall + `nt_live_update` SSDT entry | §5, §6            |  [ ]   |
+| 💎  |   7   | Live-update syscall + `nt_live_update` SSDT entry      | §5, §6            |  [ ]   |
 
 > 💎 = parity work: Linux 6.16 KHO + LUO set the baseline for cloud/server kernel replacement without VM bounce.
 
@@ -122,11 +122,11 @@ Syscall interface (`nt_live_update`) with an SSDT entry that user-space privileg
 
 ## OS Comparison
 
-| ⭐  | Feature                      | 🪟 Win11                  | 🐧 Linux                     | 🚀 Impossible OS                |
-| --- | ---------------------------- | ------------------------- | ---------------------------- | ------------------------------- |
+| ⭐  | Feature                      | 🪟 Win11                   | 🐧 Linux                     | 🚀 Impossible OS                |
+| --- | ---------------------------- | -------------------------- | ---------------------------- | ------------------------------- |
 | 💎  | Live kernel replacement      | ⚠️ Hot Patch (closed)      | ✅ 6.16 Kexec Handover + LUO | ⬜ runtime machinery (ABI done) |
 | 💎  | User-process preservation    | ⚠️ Hot Patch scope limited | ✅ KHO preserves VMs         | ⬜ §1 folio preservation        |
-| 💎  | Subsystem-state continuation | ❌                        | ✅ LUO continuation          | ⬜ §2 quiesce callback registry |
+| 💎  | Subsystem-state continuation | ❌                         | ✅ LUO continuation          | ⬜ §2 quiesce callback registry |
 
 > Impossible OS starts with the ABI contract already in place (TODO-01 §14); this TODO builds the runtime that uses it.
 

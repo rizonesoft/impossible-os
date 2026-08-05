@@ -61,19 +61,19 @@ title: "TODO-09 -- C/C++ Compiler & SDK"
 
 ## Implementation Order
 
-| #   | Section                                  | Tag        | Dep               | Mark |
-| --- | ---------------------------------------- | ---------- | ----------------- | ---- |
-| 1   | SDK C headers (`impossible.h` + subsystem headers) | `[Sonnet]` | TODO-08 §5        | ⭐   |
+| #   | Section                                                   | Tag        | Dep               | Mark |
+| --- | --------------------------------------------------------- | ---------- | ----------------- | ---- |
+| 1   | SDK C headers (`impossible.h` + subsystem headers)        | `[Sonnet]` | TODO-08 §5        | ⭐   |
 | 2   | SDK GUI headers (`window.h`, `gdi.h`, `controls.h`, etc.) | `[Sonnet]` | TODO-08 §10–11,13 | 💎   |
 | 3   | SDK import libraries (`kernel32.lib`, `user32.lib`, etc.) | `[Sonnet]` | §1–2              | 💎   |
-| 4   | Cross-compile TCC for Impossible OS      | `[Opus]`   | §1–3, TODO-08 §4  | 💎   |
-| 5   | Install TCC on OS disk image             | `[Sonnet]` | §4                | 💎   |
-| 6   | TCC self-hosting tests                   | `[Sonnet]` | §5                | 💎   |
-| 7   | TCC IxUI integration                     | `[Sonnet]` | §6, TODO-08 §13   | ⭐   |
-| 8   | Shell compiler integration (`cc`, `run`, `make`) | `[Sonnet]` | §6                | ⭐   |
-| 9   | SDK installer + on-OS pre-install        | `[Sonnet]` | §1–3              | ⭐   |
-| 10  | SDK documentation                        | `[Sonnet]` | §1–9              | 💎   |
-| 11  | GCC/Clang (long-term C++ support)        | `[Opus]`   | §6, TODO-08 §3    | 💎   |
+| 4   | Cross-compile TCC for Impossible OS                       | `[Opus]`   | §1–3, TODO-08 §4  | 💎   |
+| 5   | Install TCC on OS disk image                              | `[Sonnet]` | §4                | 💎   |
+| 6   | TCC self-hosting tests                                    | `[Sonnet]` | §5                | 💎   |
+| 7   | TCC IxUI integration                                      | `[Sonnet]` | §6, TODO-08 §13   | ⭐   |
+| 8   | Shell compiler integration (`cc`, `run`, `make`)          | `[Sonnet]` | §6                | ⭐   |
+| 9   | SDK installer + on-OS pre-install                         | `[Sonnet]` | §1–3              | ⭐   |
+| 10  | SDK documentation                                         | `[Sonnet]` | §1–9              | 💎   |
+| 11  | GCC/Clang (long-term C++ support)                         | `[Opus]`   | §6, TODO-08 §3    | 💎   |
 
 ---
 
@@ -250,14 +250,14 @@ Packages the SDK for host cross-compilation and pre-installs it on the OS disk i
 
 **Additional prerequisites beyond TCC:**
 
-| Prerequisite                           | Status                           | Why Needed                               |
-| -------------------------------------- | -------------------------------- | ---------------------------------------- |
-| `fork()` + `exec()`                    | `SYS_FORK=5`, `SYS_EXEC=6` exist | GCC spawns cc1, as, ld as child processes |
+| Prerequisite                           | Status                           | Why Needed                                           |
+| -------------------------------------- | -------------------------------- | ---------------------------------------------------- |
+| `fork()` + `exec()`                    | `SYS_FORK=5`, `SYS_EXEC=6` exist | GCC spawns cc1, as, ld as child processes            |
 | `pipe()` for IPC                       | ⬜ Planned                       | Pipeline between preprocessor → compiler → assembler |
-| Large virtual memory (256+ MB/process) | ⬜ Planned (TODO-08 §3)          | GCC uses 100+ MB during C++ compilation  |
-| `libgmp`, `libmpfr`, `libmpc`          | ⬜ Planned                       | GCC internal math library dependencies   |
-| Writable `C:\Temp\` with ≥ 512 MiB     | ⬜ Planned                       | Intermediate compilation files           |
-| Working `make` utility                 | ⬜ §8 above                      | GCC configure + build system             |
+| Large virtual memory (256+ MB/process) | ⬜ Planned (TODO-08 §3)          | GCC uses 100+ MB during C++ compilation              |
+| `libgmp`, `libmpfr`, `libmpc`          | ⬜ Planned                       | GCC internal math library dependencies               |
+| Writable `C:\Temp\` with ≥ 512 MiB     | ⬜ Planned                       | Intermediate compilation files                       |
+| Working `make` utility                 | ⬜ §8 above                      | GCC configure + build system                         |
 
 - [ ] Verify `CreateProcess()` (`SYS_CREATEPROCESS`) reliably spawns child processes with correct handle inheritance
 - [ ] Verify `pipe()` (IPC between parent/child) works for preprocessor → compiler pipeline
@@ -275,18 +275,18 @@ Packages the SDK for host cross-compilation and pre-installs it on the OS disk i
 ## OS Comparison
 
 
-| ⭐  | Feature                                  | 🪟 Win11                         | 🐧 Linux                    | 🚀 Impossible OS                         |
-| --- | ---------------------------------------- | -------------------------------- | --------------------------- | ---------------------------------------- |
-| 💎  | Native C compiler on OS                  | ✅ MSVC                          | ✅ GCC/Clang                | ⬜ TCC natively, self-hosting            |
-| 💎  | GCC/Clang C++ compiler                   | ✅ MSVC C++                      | ✅ GCC/Clang                | ⬜ §11 -- (long-term, )                  |
-| 💎  | SDK headers                              | ✅ Windows SDK                   | ✅ glibc headers            | ⬜ `impossible.h` + subsystem headers    |
-| 💎  | Import libraries for linker              | ✅ Windows SDK                   | ✅ `.so` stubs              | ⬜ COFF `.lib` from `mkimportlib`        |
-| 💎  | Cross-compilation toolchain              | ✅ VS Build Tools                | ✅ `gcc`/`clang`            | ⬜ §15 -- MinGW wrapper (`TODO-08 `)     |
-| 💎  | `make` build utility                     | ✅ nmake/MSBuild                 | ✅ GNU make                 | ⬜ lightweight Makefile parser           |
-| ⭐  | Self-hosting TCC on OS                   | ❌ Can't run TCC on Windows      | ❌ TCC runs but targets ELF | ⬜ TCC outputs PE on Impossible          |
-| ⭐  | SDK pre-installed out-of-the-box on OS image | ❌ Separate SDK install required | ❌ distro-specific headers  | ⬜ headers + libs at `C:\Impossible\Include\` |
-| ⭐  | `cc`/`run` shell built-ins for instant C compilation | ❌ No equivalent                 | ❌ No equivalent            | ⬜ `run hello.c` compiles and executes   |
-| ⭐  | IxUI GUI framework compilable natively with TCC | ❌ Requires full Win32 SDK       | ❌ No native Win32          | ⬜ `tcc gui.c -lixui -o app.exe`         |
+| ⭐  | Feature                                              | 🪟 Win11                         | 🐧 Linux                    | 🚀 Impossible OS                              |
+| --- | ---------------------------------------------------- | -------------------------------- | --------------------------- | --------------------------------------------- |
+| 💎  | Native C compiler on OS                              | ✅ MSVC                          | ✅ GCC/Clang                | ⬜ TCC natively, self-hosting                 |
+| 💎  | GCC/Clang C++ compiler                               | ✅ MSVC C++                      | ✅ GCC/Clang                | ⬜ §11 -- (long-term, )                       |
+| 💎  | SDK headers                                          | ✅ Windows SDK                   | ✅ glibc headers            | ⬜ `impossible.h` + subsystem headers         |
+| 💎  | Import libraries for linker                          | ✅ Windows SDK                   | ✅ `.so` stubs              | ⬜ COFF `.lib` from `mkimportlib`             |
+| 💎  | Cross-compilation toolchain                          | ✅ VS Build Tools                | ✅ `gcc`/`clang`            | ⬜ §15 -- MinGW wrapper (`TODO-08 `)          |
+| 💎  | `make` build utility                                 | ✅ nmake/MSBuild                 | ✅ GNU make                 | ⬜ lightweight Makefile parser                |
+| ⭐  | Self-hosting TCC on OS                               | ❌ Can't run TCC on Windows      | ❌ TCC runs but targets ELF | ⬜ TCC outputs PE on Impossible               |
+| ⭐  | SDK pre-installed out-of-the-box on OS image         | ❌ Separate SDK install required | ❌ distro-specific headers  | ⬜ headers + libs at `C:\Impossible\Include\` |
+| ⭐  | `cc`/`run` shell built-ins for instant C compilation | ❌ No equivalent                 | ❌ No equivalent            | ⬜ `run hello.c` compiles and executes        |
+| ⭐  | IxUI GUI framework compilable natively with TCC      | ❌ Requires full Win32 SDK       | ❌ No native Win32          | ⬜ `tcc gui.c -lixui -o app.exe`              |
 
 **Impossible OS advantage:** The SDK ships pre-installed on the OS -- a developer can boot Impossible OS, type `run hello.c`, and their program runs, with zero additional setup. TCC self-hosting on a custom OS is a milestone that neither Windows nor Linux achieve with their native formats. The `run` shell built-in makes C feel like a scripting language.
 

@@ -187,16 +187,16 @@ Mouse-wheel zoom (25%–800%), zoom buttons in status bar. Image→Resize (new W
 ## OS Comparison
 
 
-| ⭐  | Feature           | 🪟 Win11                                 | 🐧 Linux                                 | 🚀 Impossible OS                         |
-| --- | ----------------- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
-| 💎  | Canvas & viewport | ✅ MS Paint: GDI-backed canvas; scroll;  | ✅ GIMP, Pinta, KolourPaint; Cairo/GDK backed; | ⬜ §1 -- `⭐` PMM `gfx_surface_t` canvas (no |
-| 💎  | Drawing tools     | ✅ MS Paint: all standard tools;         | ✅ Pinta / KolourPaint: full standard    | ⬜ §2 -- BFS flood fill via PMM          |
-| ⭐  | Fill Bucket       | ✅ MS Paint: fill tool uses              | ✅ GIMP bucket fill: heap-allocated queue | ⬜ §2 -- `⭐` PMM contiguous traversal stack |
-| 💎  | Color system      | ✅ MS Paint: 20 preset swatches;         | ✅ Pinta / GIMP: full HSV/RGB            | ⬜ §3 -- matches Windows Paint palette; `dialog_color()` |
-| ⭐  | Undo/Redo         | ✅ MS Paint: limited undo (few           | ✅ GIMP/Pinta: 50+ undo levels; tile-based | ⬜ §4 -- `⭐` PMM contiguous snapshots (no |
-| 💎  | File I/O          | ✅ MS Paint: BMP/JPEG/GIF/PNG/TIFF save; `modified` | ✅ Pinta / GIMP: broad format            | ⬜ §5 -- BMP + PNG via `image_save_bmp/save_png()` |
-| 💎  | Selection         | ✅ MS Paint: rect/free-form select; copy/paste; | ✅ Pinta: rect/freehand/magic wand; clipboard integration | ⬜ §6 -- (stretch) -- ; `CLIP_IMAGE` format |
-| 💎  | Zoom              | ✅ MS Paint Win11: 100–800% zoom;        | ✅ GIMP: unlimited zoom; Image→Scale Image; | ⬜ §7 -- (stretch) -- ; nearest-neighbour zoom |
+| ⭐  | Feature           | 🪟 Win11                                            | 🐧 Linux                                                  | 🚀 Impossible OS                                         |
+| --- | ----------------- | --------------------------------------------------- | --------------------------------------------------------- | -------------------------------------------------------- |
+| 💎  | Canvas & viewport | ✅ MS Paint: GDI-backed canvas; scroll;             | ✅ GIMP, Pinta, KolourPaint; Cairo/GDK backed;            | ⬜ §1 -- `⭐` PMM `gfx_surface_t` canvas (no             |
+| 💎  | Drawing tools     | ✅ MS Paint: all standard tools;                    | ✅ Pinta / KolourPaint: full standard                     | ⬜ §2 -- BFS flood fill via PMM                          |
+| ⭐  | Fill Bucket       | ✅ MS Paint: fill tool uses                         | ✅ GIMP bucket fill: heap-allocated queue                 | ⬜ §2 -- `⭐` PMM contiguous traversal stack             |
+| 💎  | Color system      | ✅ MS Paint: 20 preset swatches;                    | ✅ Pinta / GIMP: full HSV/RGB                             | ⬜ §3 -- matches Windows Paint palette; `dialog_color()` |
+| ⭐  | Undo/Redo         | ✅ MS Paint: limited undo (few                      | ✅ GIMP/Pinta: 50+ undo levels; tile-based                | ⬜ §4 -- `⭐` PMM contiguous snapshots (no               |
+| 💎  | File I/O          | ✅ MS Paint: BMP/JPEG/GIF/PNG/TIFF save; `modified` | ✅ Pinta / GIMP: broad format                             | ⬜ §5 -- BMP + PNG via `image_save_bmp/save_png()`       |
+| 💎  | Selection         | ✅ MS Paint: rect/free-form select; copy/paste;     | ✅ Pinta: rect/freehand/magic wand; clipboard integration | ⬜ §6 -- (stretch) -- ; `CLIP_IMAGE` format              |
+| 💎  | Zoom              | ✅ MS Paint Win11: 100–800% zoom;                   | ✅ GIMP: unlimited zoom; Image→Scale Image;               | ⬜ §7 -- (stretch) -- ; nearest-neighbour zoom           |
 
 > **After §1–§7:** Impossible OS Paint matches MS Paint feature-for-feature with two hardware advantages: the canvas lives in `pmm_alloc_contiguous()` memory (direct GPU DMA path, no heap fragmentation) and the BFS flood fill uses a PMM-allocated traversal stack (deterministic latency even on 4K canvases, unlike heap-queue implementations that can stall on large areas).
 

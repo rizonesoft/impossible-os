@@ -39,14 +39,14 @@ title: "TODO-17 -- xHCI, USB Storage & USB HID (Boot-Critical)"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                              | Depends On | Status |
-| --- | :---: | ---------------------------------------- | ---------- | :----: |
-| 💎  |   1   | xHCI controller bring-up and port scan   | --         |  [x]   |
-| 💎  |   2   | USB device enumeration and configuration | §1         |  [x]   |
-| 💎  |   3   | USB MSC BOT (Bulk-Only Transport) driver | §2         |  [x]   |
-| 💎  |   4   | Block device registration and VFS integration | §3         |  [x]   |
+| ⭐  | Order | Deliverable                                       | Depends On | Status |
+| --- | :---: | ------------------------------------------------- | ---------- | :----: |
+| 💎  |   1   | xHCI controller bring-up and port scan            | --         |  [x]   |
+| 💎  |   2   | USB device enumeration and configuration          | §1         |  [x]   |
+| 💎  |   3   | USB MSC BOT (Bulk-Only Transport) driver          | §2         |  [x]   |
+| 💎  |   4   | Block device registration and VFS integration     | §3         |  [x]   |
 | 💎  |   5   | Interrupt-driven hot-plug and post-boot lifecycle | §1-§4      |  [/]   |
-| ⭐  |   6   | Non-Intel xHCI vendor compatibility (de-scoped) | §1         |  [/]   |
+| ⭐  |   6   | Non-Intel xHCI vendor compatibility (de-scoped)   | §1         |  [/]   |
 
 ---
 
@@ -198,17 +198,17 @@ Finish the baseline xHCI boot path across controller vendors. The generic non-In
 
 ## OS Comparison
 
-| ⭐  | Feature             | 🪟 Win11       | 🐧 Linux         | 🚀 Impossible OS            |
-| --- | ------------------- | -------------- | ---------------- | --------------------------- |
-| 💎  | xHCI controller     | ✅ usbxhci.sys | ✅ xhci-hcd      | ✅ §1-§4 done               |
-| 💎  | USB MSC             | ✅ USBSTOR.SYS | ✅ usb-storage   | ✅ §3 BOT done              |
-| 💎  | USB boot drive      | ✅ Automatic   | ✅ initramfs     | ✅ §4 bare metal            |
-| ⭐  | Pre-boot handover   | ✅ winload.efi | ❌ Re-enumerates | ⬜ TODO-20 zero-delay       |
-| ⭐  | BIOS/OS handoff     | ✅ Automatic   | ✅ xhci-pci.c    | ✅ TODO-20 §2               |
-| ⭐  | EHCI fallback       | ✅ usbehci.sys | ✅ ehci-hcd      | ⬜ T10 §10 + T19 §11        |
-| ⭐  | USB hub support     | ✅ usbhub.sys  | ✅ hub.c         | ⬜ T10 §9 recursive         |
+| ⭐  | Feature             | 🪟 Win11       | 🐧 Linux         | 🚀 Impossible OS             |
+| --- | ------------------- | -------------- | ---------------- | ---------------------------- |
+| 💎  | xHCI controller     | ✅ usbxhci.sys | ✅ xhci-hcd      | ✅ §1-§4 done                |
+| 💎  | USB MSC             | ✅ USBSTOR.SYS | ✅ usb-storage   | ✅ §3 BOT done               |
+| 💎  | USB boot drive      | ✅ Automatic   | ✅ initramfs     | ✅ §4 bare metal             |
+| ⭐  | Pre-boot handover   | ✅ winload.efi | ❌ Re-enumerates | ⬜ TODO-20 zero-delay        |
+| ⭐  | BIOS/OS handoff     | ✅ Automatic   | ✅ xhci-pci.c    | ✅ TODO-20 §2                |
+| ⭐  | EHCI fallback       | ✅ usbehci.sys | ✅ ehci-hcd      | ⬜ T10 §10 + T19 §11         |
+| ⭐  | USB hub support     | ✅ usbhub.sys  | ✅ hub.c         | ⬜ T10 §9 recursive          |
 | ⭐  | Hot-plug            | ✅ Automatic   | ✅ Automatic     | ⚠️ §5 interim; robust T10 §8 |
-| ⭐  | USB boot timing VPD | ❌ Not exposed | ❌ Not exposed   | ⬜ TODO-20 latency          |
+| ⭐  | USB boot timing VPD | ❌ Not exposed | ❌ Not exposed   | ⬜ TODO-20 latency           |
 
 ## Unit Tests
 

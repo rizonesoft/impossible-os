@@ -61,16 +61,16 @@ available. `.profile` is sourced on startup and persists env changes across rebo
 
 ## Implementation Order
 
-| Step | Section                                  | 💎/⭐ | Dependency                             |
-| ---- | ---------------------------------------- | ----- | -------------------------------------- |
+| Step | Section                                    | 💎/⭐ | Dependency                             |
+| ---- | ------------------------------------------ | ----- | -------------------------------------- |
 | 1    | Per-process environ storage (SDK contract) | 💎    | `D02T14 §2` complete                   |
-| 2    | System default variables                 | 💎    | `D02T14 §3` complete; Registry mounted |
-| 3    | `%VAR%` expansion + `env_expand_path`    | 💎    | `D02T14 §4` complete                   |
-| 4    | SYS_GETENV / SYS_SETENV / SYS_UNSETENV   | 💎    | `D02T14 §6` complete                   |
-| 5    | PATH-based command lookup + session cache | 💎    | `D02T14 §8`; `vfs_stat`                |
-| 6    | argv / argc process ABI + `cmd_tokenize` | 💎    | `TODO-04 §1` complete                  |
-| 7    | Shell `.profile` startup script          | 💎    | §5 PATH lookup, §6 cmd_tokenize        |
-| 8    | `set` / `echo` / `env` / `where` commands | 💎    | §1–§5 all complete                     |
+| 2    | System default variables                   | 💎    | `D02T14 §3` complete; Registry mounted |
+| 3    | `%VAR%` expansion + `env_expand_path`      | 💎    | `D02T14 §4` complete                   |
+| 4    | SYS_GETENV / SYS_SETENV / SYS_UNSETENV     | 💎    | `D02T14 §6` complete                   |
+| 5    | PATH-based command lookup + session cache  | 💎    | `D02T14 §8`; `vfs_stat`                |
+| 6    | argv / argc process ABI + `cmd_tokenize`   | 💎    | `TODO-04 §1` complete                  |
+| 7    | Shell `.profile` startup script            | 💎    | §5 PATH lookup, §6 cmd_tokenize        |
+| 8    | `set` / `echo` / `env` / `where` commands  | 💎    | §1–§5 all complete                     |
 
 ---
 
@@ -109,20 +109,20 @@ int         env_expand_path(struct task *t, const char *templ,
 
 - [ ] Confirm all the following are populated by `env_init_defaults()` before any user-mode app starts:
 
-| Variable                 | Default value                            | Source                                   |
-| ------------------------ | ---------------------------------------- | ---------------------------------------- |
+| Variable                 | Default value                                           | Source                                    |
+| ------------------------ | ------------------------------------------------------- | ----------------------------------------- |
 | `PATH`                   | `C:\Impossible\Bin;C:\Impossible\System32;C:\Programs\` | Registry + user `HKCU\Environment` append |
-| `SYSTEMROOT` / `WINDIR`  | `C:\Impossible\`                         | Registry                                 |
-| `SYSTEMDRIVE`            | `C:\`                                    | Hardcoded                                |
-| `TEMP` / `TMP`           | `C:\Temp\`                               | Registry                                 |
-| `USERPROFILE`            | `C:\Users\{USERNAME}\`                   | Computed from token                      |
-| `APPDATA`                | `C:\Users\{USERNAME}\AppData\Roaming\`   | Computed                                 |
-| `LOCALAPPDATA`           | `C:\Users\{USERNAME}\AppData\Local\`     | Computed                                 |
-| `USERNAME`               | current user account name                | Token lookup                             |
-| `COMPUTERNAME`           | `HKLM\SYSTEM\ComputerName\ActiveComputerName` | Registry                                 |
-| `OS`                     | `"Impossible_OS"`                        | Hardcoded                                |
-| `PROCESSOR_ARCHITECTURE` | `"AMD64"`                                | Hardcoded                                |
-| `NUMBER_OF_PROCESSORS`   | CPU count string                         | `acpi_get_cpu_count()`                   |
+| `SYSTEMROOT` / `WINDIR`  | `C:\Impossible\`                                        | Registry                                  |
+| `SYSTEMDRIVE`            | `C:\`                                                   | Hardcoded                                 |
+| `TEMP` / `TMP`           | `C:\Temp\`                                              | Registry                                  |
+| `USERPROFILE`            | `C:\Users\{USERNAME}\`                                  | Computed from token                       |
+| `APPDATA`                | `C:\Users\{USERNAME}\AppData\Roaming\`                  | Computed                                  |
+| `LOCALAPPDATA`           | `C:\Users\{USERNAME}\AppData\Local\`                    | Computed                                  |
+| `USERNAME`               | current user account name                               | Token lookup                              |
+| `COMPUTERNAME`           | `HKLM\SYSTEM\ComputerName\ActiveComputerName`           | Registry                                  |
+| `OS`                     | `"Impossible_OS"`                                       | Hardcoded                                 |
+| `PROCESSOR_ARCHITECTURE` | `"AMD64"`                                               | Hardcoded                                 |
+| `NUMBER_OF_PROCESSORS`   | CPU count string                                        | `acpi_get_cpu_count()`                    |
 
 - [ ] Per-user overrides from `HKCU\Environment` are applied **after** system defaults; user's `PATH` extension is **appended** with `;`, not replaced
 
@@ -251,18 +251,18 @@ int         env_expand_path(struct task *t, const char *templ,
 ## OS Comparison
 
 
-| ⭐  | Feature                                  | 🪟 Win11                                 | 🐧 Linux                                 | 🚀 Impossible OS                         |
-| --- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
-| 💎  | Per-process `KEY=VALUE` environ array    | ✅ `PEB->ProcessParameters->Environment` UTF-16 block | ✅ `execve` `envp[]`; `environ` global   | ⬜ §1 -- `D02T14 `; `struct task` environ |
-| 💎  | System default variables                 | ✅ Registry `HKLM\SYSTEM\...\Environment` + `HKCU\Environment` | ✅ `/etc/environment` + PAM + `~/.profile` | ⬜ §2 -- `D02T14 `; same dual-hive Registry |
-| 💎  | `%VAR%` expansion                        | ✅ CMD `%VAR%` + `ExpandEnvironmentStrings` | ✅ `$VAR` / `${VAR}` (shell-level)       | ⬜ §3 -- `D02T14 `; depth-4 cap prevents |
-| ⭐  | `env_expand_path` `%1`–`%9` file-assoc template substitution | ✅ `ShellExecute` HKCR command template (`%1` | ⚠️ `xdg-open` delegates to desktop; no    | ⬜ §3 -- (this TODO); quote-wraps filepath; also |
-| 💎  | `SYS_GETENV` / `SYS_SETENV` syscalls     | ✅ `NtQueryEnvironmentVariable` / `NtSetEnvironmentVariable` | ✅ `getenv`/`setenv` via CRT (no direct  | ⬜ §5 -- `D02T14 `; SSDT + user-mode     |
-| 💎  | PATH lookup + executable-not-found error | ✅ `SearchPath`; `where.exe` utility     | ✅ `execvp` + shell `type`/`which`       | ⬜ §7 -- `D02T14 ` + §6 (session         |
-| 💎  | `cmd_tokenize` with Win32 quote/escape rules | ✅ `CommandLineToArgvW`                  | ✅ POSIX shell word-splitting            | ⬜ §6 -- `\"` inside quotes, `\\` before |
-| 💎  | `CommandLineToArgvW` Win32 stub          | ✅ `shell32.dll` `CommandLineToArgvW`    | ❌ Not applicable (different model)      | ⬜ §6 -- adapter over `cmd_tokenize`     |
-| 💎  | `.profile` sourced on shell startup      | ✅ `HKCU\...\Run` / PowerShell profile   | ✅ `~/.profile` / `~/.bashrc`            | ⬜ §8 -- `D02T14 ` + §8; default         |
-| 💎  | `set`/`echo`/`env`/`where` shell built-ins | ✅ CMD `set`/`echo`/`where`              | ✅ `export`/`echo`/`env`/`which`         | ⬜ §8 -- `echo.` blank-line idiom + `set |
+| ⭐  | Feature                                                      | 🪟 Win11                                                       | 🐧 Linux                                   | 🚀 Impossible OS                                 |
+| --- | ------------------------------------------------------------ | -------------------------------------------------------------- | ------------------------------------------ | ------------------------------------------------ |
+| 💎  | Per-process `KEY=VALUE` environ array                        | ✅ `PEB->ProcessParameters->Environment` UTF-16 block          | ✅ `execve` `envp[]`; `environ` global     | ⬜ §1 -- `D02T14 `; `struct task` environ        |
+| 💎  | System default variables                                     | ✅ Registry `HKLM\SYSTEM\...\Environment` + `HKCU\Environment` | ✅ `/etc/environment` + PAM + `~/.profile` | ⬜ §2 -- `D02T14 `; same dual-hive Registry      |
+| 💎  | `%VAR%` expansion                                            | ✅ CMD `%VAR%` + `ExpandEnvironmentStrings`                    | ✅ `$VAR` / `${VAR}` (shell-level)         | ⬜ §3 -- `D02T14 `; depth-4 cap prevents         |
+| ⭐  | `env_expand_path` `%1`–`%9` file-assoc template substitution | ✅ `ShellExecute` HKCR command template (`%1`                  | ⚠️ `xdg-open` delegates to desktop; no     | ⬜ §3 -- (this TODO); quote-wraps filepath; also |
+| 💎  | `SYS_GETENV` / `SYS_SETENV` syscalls                         | ✅ `NtQueryEnvironmentVariable` / `NtSetEnvironmentVariable`   | ✅ `getenv`/`setenv` via CRT (no direct    | ⬜ §5 -- `D02T14 `; SSDT + user-mode             |
+| 💎  | PATH lookup + executable-not-found error                     | ✅ `SearchPath`; `where.exe` utility                           | ✅ `execvp` + shell `type`/`which`         | ⬜ §7 -- `D02T14 ` + §6 (session                 |
+| 💎  | `cmd_tokenize` with Win32 quote/escape rules                 | ✅ `CommandLineToArgvW`                                        | ✅ POSIX shell word-splitting              | ⬜ §6 -- `\"` inside quotes, `\\` before         |
+| 💎  | `CommandLineToArgvW` Win32 stub                              | ✅ `shell32.dll` `CommandLineToArgvW`                          | ❌ Not applicable (different model)        | ⬜ §6 -- adapter over `cmd_tokenize`             |
+| 💎  | `.profile` sourced on shell startup                          | ✅ `HKCU\...\Run` / PowerShell profile                         | ✅ `~/.profile` / `~/.bashrc`              | ⬜ §8 -- `D02T14 ` + §8; default                 |
+| 💎  | `set`/`echo`/`env`/`where` shell built-ins                   | ✅ CMD `set`/`echo`/`where`                                    | ✅ `export`/`echo`/`env`/`which`           | ⬜ §8 -- `echo.` blank-line idiom + `set         |
 
 Impossible OS merges the Windows `%1`–`%9` file-association template model with `env_expand`
 into a single `env_expand_path` pass -- so a command template like `"player.exe %1 /fullscreen"`

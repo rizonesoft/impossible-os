@@ -64,18 +64,18 @@ title: "TODO-27 -- Crash Dump Generation"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                              | Depends On     | Status |
-| --- | :---: | ---------------------------------------- | -------------- | :----: |
-| 💎  |   1   | Bugcheck codes & `KeBugCheckEx`          | --             |  [x]   |
-| 💎  |   2   | FPU/XMM/XSAVE state capture              | §1             |  [/]   |
-| 💎  |   3   | Module registry (wire `exec_register_module`) | T17 §6         |  [x]   |
+| ⭐  | Order | Deliverable                                    | Depends On     | Status |
+| --- | :---: | ---------------------------------------------- | -------------- | :----: |
+| 💎  |   1   | Bugcheck codes & `KeBugCheckEx`                | --             |  [x]   |
+| 💎  |   2   | FPU/XMM/XSAVE state capture                    | §1             |  [/]   |
+| 💎  |   3   | Module registry (wire `exec_register_module`)  | T17 §6         |  [x]   |
 | 💎  |   4   | MDMP binary format: header, directory, streams | §1, §2, §3     |  [x]   |
-| 💎  |   5   | Minidump writer (crashing thread + memory) | §4             |  [ ]   |
-| 💎  |   6   | Kernel dump & full dump variants         | §5             |  [ ]   |
-| 💎  |   7   | Raw-partition dump sink (VFS bypass)     | §5, T26 §4     |  [ ]   |
-| 💎  |   8   | Post-boot crash recovery + shutdown dialog | §7, T01 §4     |  [ ]   |
-| ⭐  |   9   | `dmpanalyze.exe` crash analyzer          | §4, §8         |  [ ]   |
-| ⭐  |  10   | Dump policy, WinDbg interop, confidentiality | §4, §6, T04 §6 |  [ ]   |
+| 💎  |   5   | Minidump writer (crashing thread + memory)     | §4             |  [ ]   |
+| 💎  |   6   | Kernel dump & full dump variants               | §5             |  [ ]   |
+| 💎  |   7   | Raw-partition dump sink (VFS bypass)           | §5, T26 §4     |  [ ]   |
+| 💎  |   8   | Post-boot crash recovery + shutdown dialog     | §7, T01 §4     |  [ ]   |
+| ⭐  |   9   | `dmpanalyze.exe` crash analyzer                | §4, §8         |  [ ]   |
+| ⭐  |  10   | Dump policy, WinDbg interop, confidentiality   | §4, §6, T04 §6 |  [ ]   |
 
 > 💎 = parity work: matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work: Impossible OS is superior or first.
@@ -365,11 +365,11 @@ Windows 11 exposes multiple crash-dump settings (small, kernel, complete, automa
 | 💎  | FPU XMM in dump         | ✅ CONTEXT      | ✅ ptrace core   | ✅ Done §2       |
 | 💎  | Loaded module list      | ✅ WinDbg lm    | ✅ kcore modules | ✅ Done §3       |
 | 💎  | MDMP structs WinDbg     | ✅ WER native   | ❌ ELF not MDMP  | ✅ Done §4       |
-| 💎  | Minidump writer         | ✅ Full         | ⚠️ ELF mini       | ⬜ §5            |
+| 💎  | Minidump writer         | ✅ Full         | ⚠️ ELF mini      | ⬜ §5            |
 | 💎  | Kernel full dump        | ✅ MEMORY.DMP   | ✅ makedumpfile  | ⬜ §6            |
 | 💎  | Raw partition sink      | ✅ Pagefile     | ✅ kdump part    | ⬜ §7            |
 | 💎  | Post boot WER dialog    | ✅ WER UI       | ✅ apport        | ⬜ §8            |
-| 💎  | Dump archive rotate     | ✅ Minidump dir | ⚠️ distro         | ⬜ §8            |
+| 💎  | Dump archive rotate     | ✅ Minidump dir | ⚠️ distro        | ⬜ §8            |
 | 💎  | WinDbg open same file   | ✅ Yes          | ❌ ELF no        | ⬜ §5            |
 | 💎  | LZ4 compression         | ❌ Xpress       | ✅ makedumpfile  | ⬜ §6            |
 | ⭐  | ImpossibleOSInfo stream | ❌ None         | ❌ None          | ✅ Done §4       |
@@ -377,7 +377,7 @@ Windows 11 exposes multiple crash-dump settings (small, kernel, complete, automa
 | 💎  | Active memory dump      | ✅ Win10+       | ❌ None          | ⬜ §6            |
 | 💎  | Automatic memory dump   | ✅ Pagefile     | ❌ N/A           | ⬜ §10 doc       |
 | 💎  | WinDbg Linux KDUMP ZLIB | ✅ ZLIB only    | ✅ kdump         | ⭐ §10 doc       |
-| 💎  | Crash dump dir ACL      | ✅ SDDL         | ⚠️ perms          | ⬜ §10           |
+| 💎  | Crash dump dir ACL      | ✅ SDDL         | ⚠️ perms         | ⬜ §10           |
 | 💎  | NMI crash dump          | ✅ NMI          | ✅ sysrq         | ✅ Done §1       |
 | ⭐  | Ctrl ScrollLock crash   | ✅ Registry     | ❌ None          | ✅ Done §1       |
 | ⭐  | On device dmpanalyze    | ❌ WinDbg       | ❌ crash tool    | ⬜ §9            |

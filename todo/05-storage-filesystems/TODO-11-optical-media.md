@@ -197,16 +197,16 @@ Detect audio tracks from the TOC. Issue READ CD (CDB `0xBE`) for raw 2 352-byte 
 ## OS Comparison
 
 
-| ⭐  | Feature                                  | 🪟 Win11                                 | 🐧 Linux                                 | 🚀 Impossible OS                         |
-| --- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
-| 💎  | READ TOC + DISC INFO + TRACK INFO SCSI MMC commands | ✅ `cdrom.sys`; full MMC support; `IOCTL_CDROM_READ_TOC` | ✅ `cdrom.ko`; `cdrom_read_toc()`, `cdrom_get_disc_info()` | ⚠️ §1 -- In progress -- ; `atapi_dma_command` |
-| 💎  | ISO 9660 base                            | ✅ `cdfs.sys`; full ISO 9660 R/O         | ✅ `isofs.ko`; full ISO 9660 R/O         | ⬜ §2 -- PVD scan, directory record walk, |
-| 💎  | Rock Ridge SUSP                          | ❌ `cdfs.sys` does not support Rock      | ✅ `isofs.ko`; full Rock Ridge RRIP      | ⬜ §3 -- all 6 SUSP entry types          |
-| 💎  | Joliet UCS-2BE names                     | ✅ `cdfs.sys`; Joliet Level 1–3; preferred | ✅ `isofs.ko`; Joliet with `-o iocharset` | ⬜ §4 -- `joliet_to_utf8()`, `%/E` detection, El Torito |
-| 💎  | UDF                                      | ✅ `udfs.sys`; full UDF 1.5–2.6 R/W      | ✅ `udf.ko`; UDF 1.5–2.6 R/O +           | ⬜ §5 -- UDF 1.5/2.0/2.01 R/O; AVDP→VDS→FSD→ICB chain |
-| ⭐  | Auto-probe priority                      | ✅ Windows mounts the "best" format      | ✅ Linux uses `mount -t udf/iso9660`     | ⬜ §6 -- single in-kernel `optical_probe_and_mount()`; no daemon |
-| 💎  | `GetVolumeInformationW`                  | ✅ Full Win32 optical volume API         | ✅ Via `libblkid` / `udisks2` (userspace); | ⬜ §7 -- in-kernel; label from PVD/LVD/SVD; CRC32 |
-| 💎  | Audio CD raw READ CD                     | ✅ `cdaudio.sys` + `IOCTL_CDROM_READ_TOC`; Windows Media | ✅ `cdrom.ko`; `cdparanoia`/`cdda2wav` use raw READ | ⬜ §8 -- `atapi_read_cd_audio()`, audio track detection from |
+| ⭐  | Feature                                             | 🪟 Win11                                                 | 🐧 Linux                                                   | 🚀 Impossible OS                                                 |
+| --- | --------------------------------------------------- | -------------------------------------------------------- | ---------------------------------------------------------- | ---------------------------------------------------------------- |
+| 💎  | READ TOC + DISC INFO + TRACK INFO SCSI MMC commands | ✅ `cdrom.sys`; full MMC support; `IOCTL_CDROM_READ_TOC` | ✅ `cdrom.ko`; `cdrom_read_toc()`, `cdrom_get_disc_info()` | ⚠️ §1 -- In progress -- ; `atapi_dma_command`                    |
+| 💎  | ISO 9660 base                                       | ✅ `cdfs.sys`; full ISO 9660 R/O                         | ✅ `isofs.ko`; full ISO 9660 R/O                           | ⬜ §2 -- PVD scan, directory record walk,                        |
+| 💎  | Rock Ridge SUSP                                     | ❌ `cdfs.sys` does not support Rock                      | ✅ `isofs.ko`; full Rock Ridge RRIP                        | ⬜ §3 -- all 6 SUSP entry types                                  |
+| 💎  | Joliet UCS-2BE names                                | ✅ `cdfs.sys`; Joliet Level 1–3; preferred               | ✅ `isofs.ko`; Joliet with `-o iocharset`                  | ⬜ §4 -- `joliet_to_utf8()`, `%/E` detection, El Torito          |
+| 💎  | UDF                                                 | ✅ `udfs.sys`; full UDF 1.5–2.6 R/W                      | ✅ `udf.ko`; UDF 1.5–2.6 R/O +                             | ⬜ §5 -- UDF 1.5/2.0/2.01 R/O; AVDP→VDS→FSD→ICB chain            |
+| ⭐  | Auto-probe priority                                 | ✅ Windows mounts the "best" format                      | ✅ Linux uses `mount -t udf/iso9660`                       | ⬜ §6 -- single in-kernel `optical_probe_and_mount()`; no daemon |
+| 💎  | `GetVolumeInformationW`                             | ✅ Full Win32 optical volume API                         | ✅ Via `libblkid` / `udisks2` (userspace);                 | ⬜ §7 -- in-kernel; label from PVD/LVD/SVD; CRC32                |
+| 💎  | Audio CD raw READ CD                                | ✅ `cdaudio.sys` + `IOCTL_CDROM_READ_TOC`; Windows Media | ✅ `cdrom.ko`; `cdparanoia`/`cdda2wav` use raw READ        | ⬜ §8 -- `atapi_read_cd_audio()`, audio track detection from     |
 
 > **After §1–§8:** Impossible OS handles every common optical disc format -- including Rock Ridge (which Windows 11 does not support), UDF for DVD/Blu-ray, and audio CDs -- all resolved in-kernel without a userspace daemon. The in-kernel auto-probe chain with graceful audio-disc detection is a level of optical intelligence that neither Windows nor Linux achieves in the kernel alone.
 

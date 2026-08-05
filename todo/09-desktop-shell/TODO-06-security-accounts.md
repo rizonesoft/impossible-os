@@ -256,15 +256,15 @@ Wire `ixfs_check_perm(inode, uid, access_type)` into `vfs_open/write/exec` paths
 ## OS Comparison
 
 
-| ⭐  | Feature          | 🪟 Win11                                 | 🐧 Linux                                 | 🚀 Impossible OS                         |
-| --- | ---------------- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
-| ⭐  | CSPRNG           | ✅ `CryptGenRandom` / `BCryptGenRandom`; RDRAND + | ✅ `/dev/urandom`, `/dev/random`; CSPRNG in kernel | ⬜ §11 -- `⭐` pool seeded RDRAND +      |
-| ⭐  | Password hashing | ✅ NTLM / Kerberos (not argon2i);        | ✅ `shadow` with yescrypt/SHA-512/bcrypt; PAM pluggable | ⬜ §2 -- `⭐` argon2i (2015 Password Hashing |
-| 💎  | User accounts    | ✅ SAM/LDAP; SIDs; full ACL; groups;     | ✅ `/etc/passwd`+`/etc/shadow`; uid/gid; `useradd/passwd` | ⬜ §1 -- Registry-backed; uid 16-bit; privilege enum |
-| 💎  | Login screen     | ✅ Windows Hello, PIN, fingerprint, picture | ✅ GDM/SDDM/LightDM; user strip; password field; | ⬜ §5 -- /§6; blurred bg + circular      |
-| 💎  | Lock screen      | ✅ Win+L; hello/PIN unlock; no session   | ✅ `loginctl lock-session`; gnome-screensaver/i3lock; idle auto-lock | ⬜ §8 -- blur current compositor back-buffer; no |
-| ⭐  | File permissions | ✅ NTFS ACLs (full DACL/SACL); very      | ✅ Unix `rwxrwxrwx` + ACLs (`setfacl`);  | ⬜ §9 -- `⭐` same Unix 9-bit model      |
-| ⭐  | UAC elevation    | ✅ UAC elevation prompt; integrity levels; | ✅ `sudo`/`pkexec`/PolicyKit; `setuid`; `capabilities` | ⬜ §10 -- `⭐` task-local priv token reset |
+| ⭐  | Feature          | 🪟 Win11                                          | 🐧 Linux                                                             | 🚀 Impossible OS                                     |
+| --- | ---------------- | ------------------------------------------------- | -------------------------------------------------------------------- | ---------------------------------------------------- |
+| ⭐  | CSPRNG           | ✅ `CryptGenRandom` / `BCryptGenRandom`; RDRAND + | ✅ `/dev/urandom`, `/dev/random`; CSPRNG in kernel                   | ⬜ §11 -- `⭐` pool seeded RDRAND +                  |
+| ⭐  | Password hashing | ✅ NTLM / Kerberos (not argon2i);                 | ✅ `shadow` with yescrypt/SHA-512/bcrypt; PAM pluggable              | ⬜ §2 -- `⭐` argon2i (2015 Password Hashing         |
+| 💎  | User accounts    | ✅ SAM/LDAP; SIDs; full ACL; groups;              | ✅ `/etc/passwd`+`/etc/shadow`; uid/gid; `useradd/passwd`            | ⬜ §1 -- Registry-backed; uid 16-bit; privilege enum |
+| 💎  | Login screen     | ✅ Windows Hello, PIN, fingerprint, picture       | ✅ GDM/SDDM/LightDM; user strip; password field;                     | ⬜ §5 -- /§6; blurred bg + circular                  |
+| 💎  | Lock screen      | ✅ Win+L; hello/PIN unlock; no session            | ✅ `loginctl lock-session`; gnome-screensaver/i3lock; idle auto-lock | ⬜ §8 -- blur current compositor back-buffer; no     |
+| ⭐  | File permissions | ✅ NTFS ACLs (full DACL/SACL); very               | ✅ Unix `rwxrwxrwx` + ACLs (`setfacl`);                              | ⬜ §9 -- `⭐` same Unix 9-bit model                  |
+| ⭐  | UAC elevation    | ✅ UAC elevation prompt; integrity levels;        | ✅ `sudo`/`pkexec`/PolicyKit; `setuid`; `capabilities`               | ⬜ §10 -- `⭐` task-local priv token reset           |
 
 > **After §1–§11:** Impossible OS moves from single root-equivalent to a full multi-user security model. The `⭐` differentiators: argon2i password hashing is stronger than Windows NTLM and typical Linux SHA-512; IXFS permission enforcement requires zero new inode format changes (fields were already designed in); and UAC task-local elevation automatically resets on process exit -- no ambient privilege escalation possible.
 

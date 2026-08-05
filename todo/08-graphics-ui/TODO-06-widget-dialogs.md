@@ -218,19 +218,19 @@ Win32-compatible `MessageBox()` (exact `MB_*`/`ID*` constants, embedded 48×48 B
 ## OS Comparison
 
 
-| ⭐  | Feature                                  | 🪟 Win11                                 | 🐧 Linux                                 | 🚀 Impossible OS                         |
-| --- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
-| 💎  | ListView                                 | ✅ WinUI3 `ListView`/`GridView`; Win32 `LVM_SORTITEMS`; virtual | ✅ GTK `GtkTreeView`/`GtkIconView`; Qt `QListView`; virtual | ⬜ §1 -- DFS-rebuilt visible list; shell-sort; `pmm_alloc_contiguous` |
-| 💎  | TreeView                                 | ✅ WinUI3 `TreeView`; Win32 `WC_TREEVIEW`; `TVN_ITEMEXPANDING` | ✅ GTK `GtkTreeView` with `GtkTreeStore`; Qt | ⬜ §2 -- 512-node `pmm_alloc_contiguous` slab; DFS visible-list |
-| 💎  | Toolbar                                  | ✅ Win32 `WC_TOOLBAR`; WinUI3 `CommandBar`; overflow | ✅ GTK `GtkToolbar`; Qt `QToolBar`; overflow | ⬜ §3 -- z_order=9999 overlay for overflow popup |
-| 💎  | MenuBar                                  | ✅ Win32 `HMENU`; WinUI3 `MenuBar`; full | ✅ GTK `GtkMenuBar`; Qt `QMenuBar`; Alt-key | ⬜ §4 -- self-contained popup (z_order overlay); TODO-07 |
-| 💎  | StatusBar -- stretchy + fixed panes, text + icon | ✅ Win32 `WC_STATUSBAR`; `SB_SETTEXT`; multiple parts | ✅ GTK `GtkStatusbar`; Qt `QStatusBar`; permanent | ⬜ §5 -- 8 panes; `width=0` = stretchy   |
-| 💎  | GroupBox + Separator                     | ✅ Win32 `BS_GROUPBOX`; `WS_GROUP` frame; `SS_ETCHEDHORZ` | ✅ GTK `GtkFrame`; Qt `QGroupBox`; `QFrame` | ⬜ §6 -- label cutout via surface fill   |
-| 💎  | Tooltip                                  | ✅ WinUI3 `ToolTipService`; Win32 `WC_TOOLTIP`; 500 | ✅ GTK `gtk_widget_set_tooltip_text`; Qt `setToolTip`; default | ⬜ §7 -- global `tooltip_tick()` in compositor; 100 |
-| 💎  | MessageBox                               | ✅ `MessageBoxW` exact same constants; modal | ✅ GTK `gtk_message_dialog_new`; Qt `QMessageBox`; parent | ⬜ §8 -- exact Win32 MB_*/ID* values; 128-alpha |
-| ⭐  | Color picker                             | ✅ Windows color dialog; Settings accent | ✅ GTK `GtkColorChooserDialog`; Qt `QColorDialog`; hue | ⬜ §8 -- `⭐` hue wheel rasterized at    |
-| 💎  | File Open/Save dialog                    | ✅ `GetOpenFileNameW`; IFileOpenDialog Shell API; breadcrumb | ✅ GTK `GtkFileChooserDialog`; Qt `QFileDialog`; bookmarks | ⬜ §8 -- TreeView left + ListView right  |
-| ⭐  | `SYS_MSGBOX = 51`                        | ✅ User-mode `MessageBoxW` via `user32.dll`; `msg` | ❌ No kernel-level MessageBox syscall; all | ⬜ §8 -- `⭐` kernel-dispatched MessageBox via syscall |
+| ⭐  | Feature                                          | 🪟 Win11                                                        | 🐧 Linux                                                       | 🚀 Impossible OS                                                      |
+| --- | ------------------------------------------------ | --------------------------------------------------------------- | -------------------------------------------------------------- | --------------------------------------------------------------------- |
+| 💎  | ListView                                         | ✅ WinUI3 `ListView`/`GridView`; Win32 `LVM_SORTITEMS`; virtual | ✅ GTK `GtkTreeView`/`GtkIconView`; Qt `QListView`; virtual    | ⬜ §1 -- DFS-rebuilt visible list; shell-sort; `pmm_alloc_contiguous` |
+| 💎  | TreeView                                         | ✅ WinUI3 `TreeView`; Win32 `WC_TREEVIEW`; `TVN_ITEMEXPANDING`  | ✅ GTK `GtkTreeView` with `GtkTreeStore`; Qt                   | ⬜ §2 -- 512-node `pmm_alloc_contiguous` slab; DFS visible-list       |
+| 💎  | Toolbar                                          | ✅ Win32 `WC_TOOLBAR`; WinUI3 `CommandBar`; overflow            | ✅ GTK `GtkToolbar`; Qt `QToolBar`; overflow                   | ⬜ §3 -- z_order=9999 overlay for overflow popup                      |
+| 💎  | MenuBar                                          | ✅ Win32 `HMENU`; WinUI3 `MenuBar`; full                        | ✅ GTK `GtkMenuBar`; Qt `QMenuBar`; Alt-key                    | ⬜ §4 -- self-contained popup (z_order overlay); TODO-07              |
+| 💎  | StatusBar -- stretchy + fixed panes, text + icon | ✅ Win32 `WC_STATUSBAR`; `SB_SETTEXT`; multiple parts           | ✅ GTK `GtkStatusbar`; Qt `QStatusBar`; permanent              | ⬜ §5 -- 8 panes; `width=0` = stretchy                                |
+| 💎  | GroupBox + Separator                             | ✅ Win32 `BS_GROUPBOX`; `WS_GROUP` frame; `SS_ETCHEDHORZ`       | ✅ GTK `GtkFrame`; Qt `QGroupBox`; `QFrame`                    | ⬜ §6 -- label cutout via surface fill                                |
+| 💎  | Tooltip                                          | ✅ WinUI3 `ToolTipService`; Win32 `WC_TOOLTIP`; 500             | ✅ GTK `gtk_widget_set_tooltip_text`; Qt `setToolTip`; default | ⬜ §7 -- global `tooltip_tick()` in compositor; 100                   |
+| 💎  | MessageBox                                       | ✅ `MessageBoxW` exact same constants; modal                    | ✅ GTK `gtk_message_dialog_new`; Qt `QMessageBox`; parent      | ⬜ §8 -- exact Win32 MB_*/ID* values; 128-alpha                       |
+| ⭐  | Color picker                                     | ✅ Windows color dialog; Settings accent                        | ✅ GTK `GtkColorChooserDialog`; Qt `QColorDialog`; hue         | ⬜ §8 -- `⭐` hue wheel rasterized at                                 |
+| 💎  | File Open/Save dialog                            | ✅ `GetOpenFileNameW`; IFileOpenDialog Shell API; breadcrumb    | ✅ GTK `GtkFileChooserDialog`; Qt `QFileDialog`; bookmarks     | ⬜ §8 -- TreeView left + ListView right                               |
+| ⭐  | `SYS_MSGBOX = 51`                                | ✅ User-mode `MessageBoxW` via `user32.dll`; `msg`              | ❌ No kernel-level MessageBox syscall; all                     | ⬜ §8 -- `⭐` kernel-dispatched MessageBox via syscall                |
 
 > **After §1–§8:** Impossible OS has a production-quality widget library and dialog system entirely in kernel-native code. The `⭐` differentiators are: (1) `dialog_color()` rasterizes the hue wheel at init time -- no external color picker library needed; (2) `SYS_MSGBOX = 51` lets any user-mode program pop a MessageBox with a single syscall -- a pattern Linux has no equivalent for (GTK/Qt are userspace-only).
 

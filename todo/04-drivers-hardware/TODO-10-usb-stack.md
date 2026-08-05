@@ -45,21 +45,21 @@ title: "TODO-10 -- USB Stack Completion"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                              | Depends On                               | Status |
-| --- | :---: | ---------------------------------------- | ---------------------------------------- | :----: |
-| 💎  |   1   | §1 USB core abstraction layer (`usb_device_t`, HCD vtable) | `xhci_dev.c` existing transport          |  [ ]   |
-| 💎  |   2   | §2 USB string descriptor retrieval       | §1 (usb_submit_control)                  |  [ ]   |
-| 💎  |   3   | §3 Isochronous endpoint support          | §1 (usb_device_t, HCD vtable)            |  [ ]   |
-| 💎  |   4   | §4 Interrupt endpoint setup for HID (`xhci_configure_interrupt_ep`) | §1 (usb_device_t)                        |  [ ]   |
-| 💎  |   5   | §5 USB HID class driver -- keyboard + mouse boot protocol | §4 (interrupt-IN endpoint)               |  [ ]   |
-| 💎  |   6   | §6 PS/2 ↔ USB input fallback             | §5 (USB HID active flag)                 |  [ ]   |
-| 💎  |   7   | §7 USB MSC BOT completion -- SCSI CBW/CSW, multi-LUN, blkdev | §1 (usb_submit_bulk), §2 (string descriptors) |  [ ]   |
-| 💎  |   8   | §8 Hot-plug interrupt handling -- port status change TRB | §5 + §9 (HID + MSC attach/detach paths needed) |  [ ]   |
-| 💎  |   9   | §9 USB hub class driver                  | §10 (hot-plug path established)          |  [ ]   |
-| 💎  |  10   | §10 EHCI fallback (USB 2.0)              | §1 (HCD vtable), §5, §9 (class drivers to reuse) |  [ ]   |
-| 💎  |  11   | §11 USB CDC-ECM Ethernet                 | §1 (usb_submit_bulk/interrupt), §2 (iMACAddress) |  [ ]   |
-| 💎  |  12   | §12 USB CDC-ACM serial                   | §1 (usb_submit_bulk, interrupt-IN)       |  [ ]   |
-| 💎  |  13   | §13 Bluetooth HCI via USB                | §1 (usb_submit_control/interrupt/bulk)   |  [ ]   |
+| ⭐  | Order | Deliverable                                                         | Depends On                                       | Status |
+| --- | :---: | ------------------------------------------------------------------- | ------------------------------------------------ | :----: |
+| 💎  |   1   | §1 USB core abstraction layer (`usb_device_t`, HCD vtable)          | `xhci_dev.c` existing transport                  |  [ ]   |
+| 💎  |   2   | §2 USB string descriptor retrieval                                  | §1 (usb_submit_control)                          |  [ ]   |
+| 💎  |   3   | §3 Isochronous endpoint support                                     | §1 (usb_device_t, HCD vtable)                    |  [ ]   |
+| 💎  |   4   | §4 Interrupt endpoint setup for HID (`xhci_configure_interrupt_ep`) | §1 (usb_device_t)                                |  [ ]   |
+| 💎  |   5   | §5 USB HID class driver -- keyboard + mouse boot protocol           | §4 (interrupt-IN endpoint)                       |  [ ]   |
+| 💎  |   6   | §6 PS/2 ↔ USB input fallback                                        | §5 (USB HID active flag)                         |  [ ]   |
+| 💎  |   7   | §7 USB MSC BOT completion -- SCSI CBW/CSW, multi-LUN, blkdev        | §1 (usb_submit_bulk), §2 (string descriptors)    |  [ ]   |
+| 💎  |   8   | §8 Hot-plug interrupt handling -- port status change TRB            | §5 + §9 (HID + MSC attach/detach paths needed)   |  [ ]   |
+| 💎  |   9   | §9 USB hub class driver                                             | §10 (hot-plug path established)                  |  [ ]   |
+| 💎  |  10   | §10 EHCI fallback (USB 2.0)                                         | §1 (HCD vtable), §5, §9 (class drivers to reuse) |  [ ]   |
+| 💎  |  11   | §11 USB CDC-ECM Ethernet                                            | §1 (usb_submit_bulk/interrupt), §2 (iMACAddress) |  [ ]   |
+| 💎  |  12   | §12 USB CDC-ACM serial                                              | §1 (usb_submit_bulk, interrupt-IN)               |  [ ]   |
+| 💎  |  13   | §13 Bluetooth HCI via USB                                           | §1 (usb_submit_control/interrupt/bulk)           |  [ ]   |
 
 > All rows are 💎 parity: Windows 11 and Linux ship all listed USB infrastructure and class drivers in their inbox/mainline driver sets. §1–§3 establish the USB core layer that all class drivers (§4–§12) build on.
 
@@ -309,22 +309,22 @@ Detect USB Bluetooth adapters (class `0xE0` subclass `0x01` protocol `0x01`). Se
 ## OS Comparison
 
 
-| ⭐  | Feature                                  | 🪟 Win11                                 | 🐧 Linux                                 | 🚀 Impossible OS                         |
-| --- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
-| 💎  | USB core abstraction (HCD-agnostic API)  | ✅ USBD (`usb_submit_urb` equivalent)    | ✅ `usb_submit_urb()` + `struct usb_hcd` | ⬜ §1 -- `usb_device_t`, `usb_hcd_ops_t` vtable |
-| 💎  | USB string descriptors (device names)    | ✅ Automatic in PnP Manager              | ✅ `usb_string()` in usb core            | ⬜ §2 -- `usb_get_string_ascii()`, manufacturer/product/serial |
-| 💎  | Isochronous endpoint transfers           | ✅ USBD isochronous URBs                 | ✅ `usb_submit_urb()` with iso packets   | ⬜ §3 -- xHCI Isoch TRB, ESIT payload    |
-| ⚠️   | xHCI controller init + basic enumeration | ✅ `USBXHCI.sys` full xHCI implementation | ✅ `xhci_hcd` full xHCI; slot/ring management | ⚠️ Partial -- controller init, DCBAA,     |
-| 💎  | USB HID keyboard + mouse                 | ✅ `HIDCLASS.sys` + `HIDUSB.sys`; full HID | ✅ `usbhid` driver; boot + full          | ⬜ §4+§5; interrupt-IN endpoint setup, 8-byte report |
-| 💎  | USB MSC BOT / SCSI + multi-LUN           | ✅ `USBSTOR.sys`; multi-LUN; PnP mount   | ✅ `usb-storage`; multi-LUN; block device | ⬜ §7 -- CBW/CSW, GET_MAX_LUN, per-LUN blkdev |
-| 💎  | USB hot-plug attach/detach with desktop notification | ✅ `cfgmgr32.dll` PnP; AutoPlay toast; safe | ✅ `udevd` uevent; udisks2 auto-mount; systemd | ⬜ §8 -- Port Status Change TRB handler  |
-| 💎  | USB hub class driver                     | ✅ `usbhub.sys`; hub descriptor; cascaded port | ✅ `usbhub` driver; hub class; cascaded  | ⬜ §9 -- GET_DESCRIPTOR(HUB), port power, interrupt-IN bitmap |
-| 💎  | EHCI fallback for USB 2.0 systems        | ✅ `USBEHCI.sys` (legacy; phased out)    | ✅ `ehci_hcd`; async + periodic schedule | ⬜ §10 -- QH/QTD, `usb_hcd_register()` via §1 vtable |
-| 💎  | PS/2 yields to USB HID; auto-resumes on disconnect | ✅ ACPI `_PRS`/`_CRS` resource arbitration; PS/2 | ✅ `i8042` suppressed if USB HID         | ⬜ §6 -- `usb_keyboard_active` flag; PS/2 skips inject |
-| 💎  | Bluetooth HCI via USB                    | ✅ `BTHUSB.sys`; HCI over USB transport  | ✅ `btusb.c`; HCI over USB; `hci_register_dev()` | ⬜ §13 -- HCI_RESET, interrupt-IN events, ACL bulk |
-| 💎  | USB CDC-ECM Ethernet                     | ✅ `rndiscmp.sys` (RNDIS); CDC-ECM via Windows | ✅ `cdc_ether.c`; `net_device` registration; auto DHCP | ⬜ §11 -- `usb_get_string_ascii()` for MAC, bulk RX/TX |
-| 💎  | USB CDC-ACM serial                       | ✅ `usbser.sys` inbox CDC-ACM driver     | ✅ `cdc_acm.c`; `/dev/ttyACM%u`; `tty_register_driver()` | ⬜ §12 -- SET_LINE_CODING, bulk RX/TX, virtual serial port |
-| 💎  | USB selective suspend / LPM              | ✅ Selective suspend policy per device   | ✅ `autosuspend` + USB 3.x U1/U2 LPM     | ⬜ Deferred → `02-kernel-core/TODO-26 §9` |
+| ⭐  | Feature                                              | 🪟 Win11                                         | 🐧 Linux                                                 | 🚀 Impossible OS                                               |
+| --- | ---------------------------------------------------- | ------------------------------------------------ | -------------------------------------------------------- | -------------------------------------------------------------- |
+| 💎  | USB core abstraction (HCD-agnostic API)              | ✅ USBD (`usb_submit_urb` equivalent)            | ✅ `usb_submit_urb()` + `struct usb_hcd`                 | ⬜ §1 -- `usb_device_t`, `usb_hcd_ops_t` vtable                |
+| 💎  | USB string descriptors (device names)                | ✅ Automatic in PnP Manager                      | ✅ `usb_string()` in usb core                            | ⬜ §2 -- `usb_get_string_ascii()`, manufacturer/product/serial |
+| 💎  | Isochronous endpoint transfers                       | ✅ USBD isochronous URBs                         | ✅ `usb_submit_urb()` with iso packets                   | ⬜ §3 -- xHCI Isoch TRB, ESIT payload                          |
+| ⚠️  | xHCI controller init + basic enumeration             | ✅ `USBXHCI.sys` full xHCI implementation        | ✅ `xhci_hcd` full xHCI; slot/ring management            | ⚠️ Partial -- controller init, DCBAA,                          |
+| 💎  | USB HID keyboard + mouse                             | ✅ `HIDCLASS.sys` + `HIDUSB.sys`; full HID       | ✅ `usbhid` driver; boot + full                          | ⬜ §4+§5; interrupt-IN endpoint setup, 8-byte report           |
+| 💎  | USB MSC BOT / SCSI + multi-LUN                       | ✅ `USBSTOR.sys`; multi-LUN; PnP mount           | ✅ `usb-storage`; multi-LUN; block device                | ⬜ §7 -- CBW/CSW, GET_MAX_LUN, per-LUN blkdev                  |
+| 💎  | USB hot-plug attach/detach with desktop notification | ✅ `cfgmgr32.dll` PnP; AutoPlay toast; safe      | ✅ `udevd` uevent; udisks2 auto-mount; systemd           | ⬜ §8 -- Port Status Change TRB handler                        |
+| 💎  | USB hub class driver                                 | ✅ `usbhub.sys`; hub descriptor; cascaded port   | ✅ `usbhub` driver; hub class; cascaded                  | ⬜ §9 -- GET_DESCRIPTOR(HUB), port power, interrupt-IN bitmap  |
+| 💎  | EHCI fallback for USB 2.0 systems                    | ✅ `USBEHCI.sys` (legacy; phased out)            | ✅ `ehci_hcd`; async + periodic schedule                 | ⬜ §10 -- QH/QTD, `usb_hcd_register()` via §1 vtable           |
+| 💎  | PS/2 yields to USB HID; auto-resumes on disconnect   | ✅ ACPI `_PRS`/`_CRS` resource arbitration; PS/2 | ✅ `i8042` suppressed if USB HID                         | ⬜ §6 -- `usb_keyboard_active` flag; PS/2 skips inject         |
+| 💎  | Bluetooth HCI via USB                                | ✅ `BTHUSB.sys`; HCI over USB transport          | ✅ `btusb.c`; HCI over USB; `hci_register_dev()`         | ⬜ §13 -- HCI_RESET, interrupt-IN events, ACL bulk             |
+| 💎  | USB CDC-ECM Ethernet                                 | ✅ `rndiscmp.sys` (RNDIS); CDC-ECM via Windows   | ✅ `cdc_ether.c`; `net_device` registration; auto DHCP   | ⬜ §11 -- `usb_get_string_ascii()` for MAC, bulk RX/TX         |
+| 💎  | USB CDC-ACM serial                                   | ✅ `usbser.sys` inbox CDC-ACM driver             | ✅ `cdc_acm.c`; `/dev/ttyACM%u`; `tty_register_driver()` | ⬜ §12 -- SET_LINE_CODING, bulk RX/TX, virtual serial port     |
+| 💎  | USB selective suspend / LPM                          | ✅ Selective suspend policy per device           | ✅ `autosuspend` + USB 3.x U1/U2 LPM                     | ⬜ Deferred → `02-kernel-core/TODO-26 §9`                      |
 
 > **After §1–§13:** Impossible OS's USB stack reaches full production parity -- USB core abstraction, string descriptors, isochronous transfers, keyboard, mouse, mass storage (multi-LUN), hubs, hot-plug, EHCI fallback, serial, Ethernet, and Bluetooth HCI. The key advantage over Windows: no reboot required for USB class-driver changes (loadable `.kmod`). The key advantage over Linux: the hot-plug notification (§8) posts a desktop toast through the compositor message bus, not via a separate udev/udisks2 daemon -- one kernel path from TRB event to user-visible notification. USB selective suspend and Link Power Management are deferred to `02-kernel-core/TODO-26-power-management.md §9` (device D-states) -- required for laptop battery life but not blocking for desktop/server USB functionality.
 

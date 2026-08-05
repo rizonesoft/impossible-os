@@ -60,21 +60,21 @@ title: "TODO-28: BSOD / Panic Screen & Crash Experience"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                              | Depends On | Status |
-| --- | :---: | ---------------------------------------- | ---------- | :----: |
-| 💎  |   1   | TTF font rendering in panic screen       | none       |  [ ]   |
-| 💎  |   2   | Improved layout and visual hierarchy     | §1         |  [ ]   |
-| ⭐  |   3   | Crash context: last 10 klog entries inline | none       |  [ ]   |
-| ⭐  |   4   | Smart QR code with compressed crash data | §2         |  [ ]   |
-| 💎  |   5   | Auto-restart countdown improvements      | §2         |  [ ]   |
-| ⭐  |   6   | Crash analysis hints on-screen           | §2         |  [ ]   |
-| ⭐  |   7   | Crash statistics counter in NVRAM        | none       |  [ ]   |
-| ⭐  |   8   | Safe mode suggestion after repeated crashes | §7         |  [ ]   |
-| 💎  |   9   | "What failed" faulting module identification | none       |  [ ]   |
-| ⭐  |  10   | Panic screen modes (user / developer / QR) | §1, §3, §4 |  [ ]   |
+| ⭐  | Order | Deliverable                                      | Depends On | Status |
+| --- | :---: | ------------------------------------------------ | ---------- | :----: |
+| 💎  |   1   | TTF font rendering in panic screen               | none       |  [ ]   |
+| 💎  |   2   | Improved layout and visual hierarchy             | §1         |  [ ]   |
+| ⭐  |   3   | Crash context: last 10 klog entries inline       | none       |  [ ]   |
+| ⭐  |   4   | Smart QR code with compressed crash data         | §2         |  [ ]   |
+| 💎  |   5   | Auto-restart countdown improvements              | §2         |  [ ]   |
+| ⭐  |   6   | Crash analysis hints on-screen                   | §2         |  [ ]   |
+| ⭐  |   7   | Crash statistics counter in NVRAM                | none       |  [ ]   |
+| ⭐  |   8   | Safe mode suggestion after repeated crashes      | §7         |  [ ]   |
+| 💎  |   9   | "What failed" faulting module identification     | none       |  [ ]   |
+| ⭐  |  10   | Panic screen modes (user / developer / QR)       | §1, §3, §4 |  [ ]   |
 | ⭐  |  11   | Audio crash notification (PC speaker beep codes) | none       |  [ ]   |
 | ⭐  |  12   | Keyboard-driven recovery actions at crash screen | §5, §8     |  [ ]   |
-| 💎  |  13   | Dump collection progress percentage      | T27 §5     |  [ ]   |
+| 💎  |  13   | Dump collection progress percentage              | T27 §5     |  [ ]   |
 
 > 💎 = parity: Windows 11 and/or Linux have equivalent features.
 > ⭐ = exclusive: Impossible OS is superior or first.
@@ -345,23 +345,23 @@ Windows shows "37% complete" during crash dump collection. When T27 implements b
 
 ## OS Comparison
 
-| ⭐  | Feature                             | 🪟 Win11      | 🐧 Linux     | 🚀 Impossible OS            |
-| --- | ----------------------------------- | ------------- | ------------ | --------------------------- |
-| 💎  | GUI panic UI                        | ✅ Black 2025 | ✅ DRM panic | ⬜ §1 through §2 TTF        |
-| 💎  | Stop code text                      | ✅ Yes        | ✅ String    | ✅ today                    |
-| 💎  | Register dump                       | ✅ Minidump   | ✅ GPRs      | ✅ today                    |
-| 💎  | Stack trace                         | ✅ dbg        | ✅ trace     | ✅ today                    |
+| ⭐  | Feature                             | 🪟 Win11      | 🐧 Linux      | 🚀 Impossible OS            |
+| --- | ----------------------------------- | ------------- | ------------- | --------------------------- |
+| 💎  | GUI panic UI                        | ✅ Black 2025 | ✅ DRM panic  | ⬜ §1 through §2 TTF        |
+| 💎  | Stop code text                      | ✅ Yes        | ✅ String     | ✅ today                    |
+| 💎  | Register dump                       | ✅ Minidump   | ✅ GPRs       | ✅ today                    |
+| 💎  | Stack trace                         | ✅ dbg        | ✅ trace      | ✅ today                    |
 | 💎  | What failed mod                     | ✅ Driver     | ⚠️ in trace   | ⬜ §9                       |
 | ⭐  | Inline klog ctx                     | ❌ none       | ⚠️ kmsg       | ⬜ §3                       |
-| ⭐  | Smart data QR                       | ❌ gone       | ✅ zlib kmsg | ⬜ §4                       |
-| 💎  | Auto restart                        | ✅ cfg        | ✅ timeout   | ⬜ §5                       |
-| ⭐  | Crash hints                         | ❌ generic    | ❌ raw       | ⬜ §6                       |
-| ⭐  | Crash stats NVRAM                   | ❌ cloud      | ❌ none      | ⬜ §7                       |
-| ⭐  | Safe mode nudge                     | ⚠️ WinRE       | ❌ none      | ⬜ §8                       |
-| ⭐  | Panic modes                         | ❌ fixed      | ✅ 3 modes   | ⬜ §10                      |
-| ⭐  | Audio beep                          | ❌ silent     | ❌ silent    | ⬜ §11                      |
-| ⭐  | F-key recovery                      | ❌ cloud      | ❌ SysRq     | ⬜ §12                      |
-| 💎  | Dump progress %                     | ✅ text       | ❌ none      | ⬜ §13 + T27 §5             |
+| ⭐  | Smart data QR                       | ❌ gone       | ✅ zlib kmsg  | ⬜ §4                       |
+| 💎  | Auto restart                        | ✅ cfg        | ✅ timeout    | ⬜ §5                       |
+| ⭐  | Crash hints                         | ❌ generic    | ❌ raw        | ⬜ §6                       |
+| ⭐  | Crash stats NVRAM                   | ❌ cloud      | ❌ none       | ⬜ §7                       |
+| ⭐  | Safe mode nudge                     | ⚠️ WinRE      | ❌ none       | ⬜ §8                       |
+| ⭐  | Panic modes                         | ❌ fixed      | ✅ 3 modes    | ⬜ §10                      |
+| ⭐  | Audio beep                          | ❌ silent     | ❌ silent     | ⬜ §11                      |
+| ⭐  | F-key recovery                      | ❌ cloud      | ❌ SysRq      | ⬜ §12                      |
+| 💎  | Dump progress %                     | ✅ text       | ❌ none       | ⬜ §13 + T27 §5             |
 | ⭐  | Runtime panic verbosity (no reboot) | ❌ fixed UI   | ⚠️ boot param | ⬜ §10 Registry + boot.conf |
 
 **Parity:** GUI, codes, regs, stack, module hint, QR or restart or progress where Win or Linux ship equivalents. **Exclusive:** inline klog, hints, NVRAM stats, safe-mode path, user or dev or QR modes, PC speaker, F-key menu, structured QR, Registry-driven verbosity without a full kernel rebuild.

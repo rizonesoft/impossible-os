@@ -56,70 +56,70 @@ title: "TODO-04 -- User-Mode Test Framework"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                              | Depends On                    | Status |
-| --- | :---: | ---------------------------------------- | ----------------------------- | :----: |
-| 💎  |   1   | User-mode test assertion macro and harness | --                            |  [x]   |
-| 💎  |   2   | Userland syscall.h parity with kernel INT 0x80 ABI | --                            |  [x]   |
-| 💎  |   3   | Kernel test launcher (run `test_*.exe` in sequence) | §1                            |  [x]   |
-| 💎  |   4   | Launcher manifest, timeouts, TAP, and skip policy | §3                            |  [x]   |
-| ⭐  |   5   | User-mode fault-injection bridge (SYS_FAULT_INJECT) | §1, §3, T03 §1, T03 §6        |  [x]   |
-| 💎  |   6   | Per-test isolation + cleanup hook        | §3, §4                        |  [x]   |
-| 💎  |   7   | JUnit XML + JSON output formats          | §4                            |  [x]   |
-| 💎  |   8   | Test type taxonomy (smoke/correctness/stress/perf) | §3, §4                        |  [x]   |
-| 💎  |   9   | Syscall test binary (`test_syscall.exe`) | §1, §2, §3                    |  [x]   |
-| 💎  |  10   | Libc test binary (`test_libc.exe`)       | §1, §3                        |  [x]   |
-| 💎  |  11   | IPC test binary (`test_ipc.exe`)         | §1, §2, §3                    |  [x]   |
-| 💎  |  12   | Process lifecycle test (`test_process.exe`) | §1, §3                        |  [x]   |
-| 💎  |  13   | File I/O test (`test_fileio.exe`)        | §1, §2, §3                    |  [x]   |
-| ⭐  |  14   | Win32 API test binary (`test_win32.exe`) | §1, §3, D02T12 §6             |  [x]   |
-| 💎  |  15   | Binary format loader coverage (ELF / PE32+ / EIF) | §1, §3, D02T17 §5, D02T17 §19 |  [x]   |
-| 💎  |  16   | Build integration: `make test` includes user tests | §3-§15                        |  [x]   |
-| 💎  |  17   | Fast-path transport hardening (probes + invariants) | §2, §3, §4                    |  [x]   |
-| ⭐  |  18   | Fast-path observability + ABI versioning | §17                           |  [x]   |
-| ⭐  |  19   | Transition ring buffer + 3-way transport fuzz | §17, §18                      |  [x]   |
-| 💎  |  20   | Site-targeted and PMM-countdown fault selectors | §5                            |  [/]   |
-| 💎  |  21   | Child-targeted fault arming across `fork()` | §5, §20                       |  [/]   |
-| 💎  |  22   | Honest machine artifacts for skipped sub-tests | §4, §7                        |  [x]   |
-| 💎  |  23   | Generated exit-status ABI for ring-3 assertions | §2                            |  [x]   |
-| 💎  |  24   | JSON artifact file + abort-aware summaries | §7, §22                       |  [x]   |
-| ⭐  |  25   | Non-forgeable launcher record framing    | §4, §7, §22                   |  [x]   |
-| 💎  |  26   | Preprocessor-faithful constant extraction | §23                           |  [x]   |
-| 💎  |  27   | Artifact run identity + fail-closed publication | §24                           |  [x]   |
-| 💎  |  28   | Atomic publication of the generated header pair | §23, §26                      |  [x]   |
-| 💎  |  29   | Serial-transport volume (burst ceiling + incr. parse) | §25, §27                      |  [x]   |
-| 💎  |  30   | Per-run artifact records + per-leg aliases | §27                           |  [x]   |
-| 💎  |  31   | Record name bound + counted ingest refusal | §4, §22                       |  [x]   |
-| 💎  |  32   | ABI validation on every artifact target  | §28                           |  [x]   |
-| 💎  |  33   | Per-binary output capture at the source  | §25, §29, §31                 |  [x]   |
-| 💎  |  34   | Orphaned-QEMU recovery (detect, reap, attribute) | §30                           |  [x]   |
-| 💎  |  35   | Immutable enumeration plan for the two-walk launcher | §31                           |  [x]   |
-| 💎  |  36   | Per-binary output artifacts + fail-closed reconciliation | §24, §27, §33                 |  [x]   |
-| 💎  |  37   | Refusal-name correlator + JUnit error/failure classification | §31                           |  [x]   |
-| 💎  |  38   | Per-leg generation pointer for coherent resolution | §30                           |  [x]   |
-| ⭐  |  39   | Executable identity for a planned entry  | §35                           |  [x]   |
-| 💎  |  40   | Producer-side capture emission budget    | §33, §36                      |  [x]   |
-| 💎  |  41   | Post-ship follow-up backfill (2026-07-31 cohort) | --                            |  [/]   |
-| 💎  |  42   | Structural reap-grace assertions (no wall-clock margin) | §34                           |  [x]   |
-| 💎  |  43   | Distinguishable identity kind for aggregate refusals | §35, §37                      |  [x]   |
-| 💎  |  44   | Close the residual completeness gaps §37's review found | §37                           |  [x]   |
-| ⭐  |  45   | Reader leases for a resolved generation  | §38                           |  [x]   |
-| 💎  |  46   | Inode-safe classification in the pointer sweep | §38                           |  [x]   |
-| 💎  |  47   | End-to-end proof of the loader's identity-mismatch branch | §39                           |  [/]   |
-| 💎  |  48   | Wire-published facts the host enforces (write id, spawn, chunk) | §33, §36, §40                 |  [x]   |
-| 💎  |  49   | Run-boundary fence for emitters that outlive their binary | §33, §35, §40                 |  [x]   |
-| 💎  |  50   | Per-child loader evidence (ring-3 entry + stage flags) | §37, §42                      |  [x]   |
-| ⭐  |  51   | Reproducible kernel assertion total + the intermittent TEB halt | §44                           |  [x]   |
-| ⭐  |  52   | Bind a leg pointer to the record's own identity | §38, §45                      |  [x]   |
-| 💎  |  53   | A directory occupying a pointer or lease name | §46                           |  [x]   |
-| ⭐  |  54   | A write abandoned before its first chunk reached the wire | §48                           |  [x]   |
-| 💎  |  55   | Klog-ring assertions bounded by saturating occupancy | §48                           |  [/]   |
-| ⭐  |  56   | Fork publication interlocked with the capture-tree reap | §49                           |  [/]   |
-| ⭐  |  57   | A klog delivery receipt, so a record's settlement is exact | §49                           |  [x]   |
-| ⭐  |  58   | Launcher waits bounded independently of the monotonic clock | §3, §49                       |  [/]   |
+| ⭐  | Order | Deliverable                                                                  | Depends On                    | Status |
+| --- | :---: | ---------------------------------------------------------------------------- | ----------------------------- | :----: |
+| 💎  |   1   | User-mode test assertion macro and harness                                   | --                            |  [x]   |
+| 💎  |   2   | Userland syscall.h parity with kernel INT 0x80 ABI                           | --                            |  [x]   |
+| 💎  |   3   | Kernel test launcher (run `test_*.exe` in sequence)                          | §1                            |  [x]   |
+| 💎  |   4   | Launcher manifest, timeouts, TAP, and skip policy                            | §3                            |  [x]   |
+| ⭐  |   5   | User-mode fault-injection bridge (SYS_FAULT_INJECT)                          | §1, §3, T03 §1, T03 §6        |  [x]   |
+| 💎  |   6   | Per-test isolation + cleanup hook                                            | §3, §4                        |  [x]   |
+| 💎  |   7   | JUnit XML + JSON output formats                                              | §4                            |  [x]   |
+| 💎  |   8   | Test type taxonomy (smoke/correctness/stress/perf)                           | §3, §4                        |  [x]   |
+| 💎  |   9   | Syscall test binary (`test_syscall.exe`)                                     | §1, §2, §3                    |  [x]   |
+| 💎  |  10   | Libc test binary (`test_libc.exe`)                                           | §1, §3                        |  [x]   |
+| 💎  |  11   | IPC test binary (`test_ipc.exe`)                                             | §1, §2, §3                    |  [x]   |
+| 💎  |  12   | Process lifecycle test (`test_process.exe`)                                  | §1, §3                        |  [x]   |
+| 💎  |  13   | File I/O test (`test_fileio.exe`)                                            | §1, §2, §3                    |  [x]   |
+| ⭐  |  14   | Win32 API test binary (`test_win32.exe`)                                     | §1, §3, D02T12 §6             |  [x]   |
+| 💎  |  15   | Binary format loader coverage (ELF / PE32+ / EIF)                            | §1, §3, D02T17 §5, D02T17 §19 |  [x]   |
+| 💎  |  16   | Build integration: `make test` includes user tests                           | §3-§15                        |  [x]   |
+| 💎  |  17   | Fast-path transport hardening (probes + invariants)                          | §2, §3, §4                    |  [x]   |
+| ⭐  |  18   | Fast-path observability + ABI versioning                                     | §17                           |  [x]   |
+| ⭐  |  19   | Transition ring buffer + 3-way transport fuzz                                | §17, §18                      |  [x]   |
+| 💎  |  20   | Site-targeted and PMM-countdown fault selectors                              | §5                            |  [/]   |
+| 💎  |  21   | Child-targeted fault arming across `fork()`                                  | §5, §20                       |  [/]   |
+| 💎  |  22   | Honest machine artifacts for skipped sub-tests                               | §4, §7                        |  [x]   |
+| 💎  |  23   | Generated exit-status ABI for ring-3 assertions                              | §2                            |  [x]   |
+| 💎  |  24   | JSON artifact file + abort-aware summaries                                   | §7, §22                       |  [x]   |
+| ⭐  |  25   | Non-forgeable launcher record framing                                        | §4, §7, §22                   |  [x]   |
+| 💎  |  26   | Preprocessor-faithful constant extraction                                    | §23                           |  [x]   |
+| 💎  |  27   | Artifact run identity + fail-closed publication                              | §24                           |  [x]   |
+| 💎  |  28   | Atomic publication of the generated header pair                              | §23, §26                      |  [x]   |
+| 💎  |  29   | Serial-transport volume (burst ceiling + incr. parse)                        | §25, §27                      |  [x]   |
+| 💎  |  30   | Per-run artifact records + per-leg aliases                                   | §27                           |  [x]   |
+| 💎  |  31   | Record name bound + counted ingest refusal                                   | §4, §22                       |  [x]   |
+| 💎  |  32   | ABI validation on every artifact target                                      | §28                           |  [x]   |
+| 💎  |  33   | Per-binary output capture at the source                                      | §25, §29, §31                 |  [x]   |
+| 💎  |  34   | Orphaned-QEMU recovery (detect, reap, attribute)                             | §30                           |  [x]   |
+| 💎  |  35   | Immutable enumeration plan for the two-walk launcher                         | §31                           |  [x]   |
+| 💎  |  36   | Per-binary output artifacts + fail-closed reconciliation                     | §24, §27, §33                 |  [x]   |
+| 💎  |  37   | Refusal-name correlator + JUnit error/failure classification                 | §31                           |  [x]   |
+| 💎  |  38   | Per-leg generation pointer for coherent resolution                           | §30                           |  [x]   |
+| ⭐  |  39   | Executable identity for a planned entry                                      | §35                           |  [x]   |
+| 💎  |  40   | Producer-side capture emission budget                                        | §33, §36                      |  [x]   |
+| 💎  |  41   | Post-ship follow-up backfill (2026-07-31 cohort)                             | --                            |  [/]   |
+| 💎  |  42   | Structural reap-grace assertions (no wall-clock margin)                      | §34                           |  [x]   |
+| 💎  |  43   | Distinguishable identity kind for aggregate refusals                         | §35, §37                      |  [x]   |
+| 💎  |  44   | Close the residual completeness gaps §37's review found                      | §37                           |  [x]   |
+| ⭐  |  45   | Reader leases for a resolved generation                                      | §38                           |  [x]   |
+| 💎  |  46   | Inode-safe classification in the pointer sweep                               | §38                           |  [x]   |
+| 💎  |  47   | End-to-end proof of the loader's identity-mismatch branch                    | §39                           |  [/]   |
+| 💎  |  48   | Wire-published facts the host enforces (write id, spawn, chunk)              | §33, §36, §40                 |  [x]   |
+| 💎  |  49   | Run-boundary fence for emitters that outlive their binary                    | §33, §35, §40                 |  [x]   |
+| 💎  |  50   | Per-child loader evidence (ring-3 entry + stage flags)                       | §37, §42                      |  [x]   |
+| ⭐  |  51   | Reproducible kernel assertion total + the intermittent TEB halt              | §44                           |  [x]   |
+| ⭐  |  52   | Bind a leg pointer to the record's own identity                              | §38, §45                      |  [x]   |
+| 💎  |  53   | A directory occupying a pointer or lease name                                | §46                           |  [x]   |
+| ⭐  |  54   | A write abandoned before its first chunk reached the wire                    | §48                           |  [x]   |
+| 💎  |  55   | Klog-ring assertions bounded by saturating occupancy                         | §48                           |  [/]   |
+| ⭐  |  56   | Fork publication interlocked with the capture-tree reap                      | §49                           |  [/]   |
+| ⭐  |  57   | A klog delivery receipt, so a record's settlement is exact                   | §49                           |  [x]   |
+| ⭐  |  58   | Launcher waits bounded independently of the monotonic clock                  | §3, §49                       |  [/]   |
 | 💎  |  59   | Capture reconciliation runs on the default test path, not only for artifacts | §36, §49                      |  [/]   |
-| ⭐  |  60   | An aggregate budget for pointer validation under the retention mutex | §38, §45, §52                 |  [x]   |
-| ⭐  |  61   | Marker validated as a shape; record documents read from one snapshot | §38, §52                      |  [x]   |
-| 💎  |  62   | Detaching an age candidate before classifying it | §46, §53                      |  [/]   |
+| ⭐  |  60   | An aggregate budget for pointer validation under the retention mutex         | §38, §45, §52                 |  [x]   |
+| ⭐  |  61   | Marker validated as a shape; record documents read from one snapshot         | §38, §52                      |  [x]   |
+| 💎  |  62   | Detaching an age candidate before classifying it                             | §46, §53                      |  [/]   |
 
 > 💎 = parity: Linux kselftest and Windows HLK both use user-mode test binaries, TAP/JUnit XML, machine-readable test orchestration, per-test isolation, and stress/perf categorisation. §17 brings the fast-path transports (TEB/KUSD/syscall) up to the same "no silent drift, no silent hang" stability floor both competitors offer at their stable ABIs.
 > ⭐ = exclusive: testing the Win32 API surface from user mode on a non-Windows kernel (§14); user-mode fault-injection bridge that reaches kernel allocator countdowns under a single `test=1` gate (§5); §18 versioned ABI fingerprint + self-describing KUSD + invariant-guarded ring transitions + transition ring buffer -- capabilities neither Windows 11 nor Linux 6.x exposes to user code today.
@@ -2730,85 +2730,85 @@ Retention classifies every record and then destroys the losers in a second loop,
 
 ## OS Comparison
 
-| ⭐  | Feature                                  | 🪟 Win11                                 | 🐧 Linux                                 | 🚀 Impossible OS                         |
-| --- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
-| 💎  | User-mode test bins                      | ✅ HLK                                   | ✅ kselftest                             | ✅ §1-§15 15 binaries                    |
-| 💎  | Multi-format loader                      | ✅ PE + .NET via HLK                     | ✅ ELF + a.out kselftest                 | ✅ §15 ELF+PE32+ +EIF                    |
-| 💎  | Syscall coverage                         | ✅ NtDll                                 | ✅ ptrace selftest                       | ✅ §9 11 syscalls                        |
-| 💎  | Auto launcher                            | ✅ HLK                                   | ✅ run_kselftest                         | ✅ §3 manifest-driven                    |
-| 💎  | TAP or CI parse                          | ✅ HLK XML                               | ✅ TAP kselftest                         | ✅ §7 XML + §4 TAP                       |
-| 💎  | JUnit XML / JSON                         | ✅ HLK XML                               | ⚠️ kselftest TAP only                     | ✅ §7 XML+JSON+TAP                       |
-| 💎  | Timeouts or skips                        | ✅ HLK                                   | ✅ LKFT skip                             | ✅ §4 10s + §22 per-skip                 |
-| 💎  | ABI header sync                          | ✅ SDK                                   | ✅ uapi                                  | ✅ §2+§17 gen+static asr                 |
-| 💎  | Per-test isolation                       | ✅ HLK session reset                     | ✅ kselftest fork+tmp                    | ✅ §6 scratch+reg+leak                   |
-| 💎  | Libc surface probe                       | ✅ HLK CRT tests                         | ✅ kselftest libc                        | ✅ §10 7 contracts                       |
-| 💎  | IPC surface probe                        | ✅ HLK pipe+shmem                        | ✅ kselftest pipe+shm                    | ✅ §11 pipe + shmem RT                   |
-| 💎  | Process lifecycle                        | ✅ HLK fork+exec                         | ✅ kselftest fork+exec                   | ✅ §12 fork+exec+kill                    |
-| 💎  | File I/O surface                         | ✅ HLK filesys tests                     | ✅ kselftest openat etc.                 | ✅ §13 open+read+enum                    |
-| 💎  | Stress / longhaul                        | ✅ TAEF Loop+Stress                      | ✅ LTP runtest/stress                    | ✅ §8 stress type                        |
-| 💎  | Perf regression                          | ✅ perfview/PerfTest                     | ✅ perf + flame baseline                 | ⚠️ §8 threshold-only                      |
-| 💎  | Test type taxonomy                       | ✅ TAEF categories                       | ✅ LTP test classes                      | ✅ §8 4 types + phase                    |
-| ⭐  | Fault-inject bridge                      | ⚠️ AppVerifier hooks                      | ⚠️ debugfs failslab                       | ✅ §5 SYS_FAULT_INJECT                   |
-| ⭐  | Win32 on non-Win                         | ❌ N/A                                   | ❌ Wine only                             | ✅ §14 statically linked                 |
-| 💎  | Fast-path isolation                      | ⚠️ HLK TEB probes                         | ⚠️ kselftest vdso_test                    | ✅ §17 5/5 probes PASS                   |
-| 💎  | ABI drift guard                          | ⚠️ SDK hdr versioning                     | ✅ syscall.tbl generator                 | ✅ §17 gen-user-abi.py                   |
-| ⭐  | Exit-status ABI sync                     | ⚠️ SDK ntstatus.h                         | ❌ no exported reasons                   | ✅ §23 generated + hashed                |
-| ⭐  | Self-report vs exit                      | ⚠️ trusts result log                      | ⚠️ trusts TAP output                      | ✅ §22 fail-closed check                 |
-| ⭐  | Never-ran evidence                       | ⚠️ HLK infers on exit                     | ⚠️ kselftest exit-only                    | ✅ §50 per-child in TCB                  |
-| ⭐  | Ring-3 entry proof                       | ❌ no entry witness                      | ❌ no entry witness                      | ✅ §50 CPL3 + adoption                   |
-| ⭐  | ABI fingerprint hash                     | ❌ silent Win10/11                       | ❌ vDSO unsigned layout                  | ✅ §18 FNV-1a handshake                  |
-| ⭐  | Self-describing KUSD                     | ❌ KUSD raw struct                       | ❌ vDSO no layout ver                    | ✅ §18 magic+ver+hash                    |
-| ⭐  | Ring-3 invariants                        | ⚠️ debug-only checks                      | ⚠️ CONFIG_DEBUG_ENTRY                     | 🔄 §18 2/5 always-on                     |
-| ⭐  | Transition ring dump                     | ⚠️ opt-in perf/xperf                      | ⚠️ opt-in perf/ftrace                     | ✅ §19 always-on panic                   |
-| ⭐  | Transport fuzz in CI                     | ❌ external TAEF                         | ❌ external syzkaller                    | ✅ §19 3-way fuzz at boot                |
-| 💎  | Named-site fault inj                     | ❌ AppVerifier ordinal                   | ✅ debugfs per-callsite                  | 🔄 §21 3/4 sites e2e                     |
-| 💎  | fork OOM fails closed                    | ✅ CreateProcess fails                   | ✅ fork() -ENOMEM                        | 🔄 §21 root PML4 only                    |
-| 💎  | JSON results artifact                    | ❓ TRX is XML                            | ❓ per-tool, no standard                 | ✅ §24 validated envelope                |
-| ⭐  | Aborted-run signal                       | ❓ TRX RunAborted                        | ❓ implicit TAP plan                     | ✅ §24 aborted + not_run                 |
-| ⭐  | Unforgeable test recs                    | ❌ ring-3 writes TRX                     | ❌ ring-3 writes TAP                     | ✅ §25 per-boot nonce                    |
-| ⭐  | Run-completion proof                     | ⚠️ trusts result file                     | ⚠️ trusts plan count                      | ✅ §25 reconciled count                  |
-| ⭐  | Compiler-certified ABI                   | ❌ SDK hdrs hand-kept                    | ⚠️ uapi headers copied                    | ✅ §26 _Static_assert gate               |
-| ⭐  | Build-flavor ABI sweep                   | ❌ per-SKU hdr drift                     | ❌ per-config uapi drift                 | ✅ §26 12-flavor refusal                 |
-| 💎  | Run identity in artifact                 | ❓ TRX run times                         | ❓ per-tool, no standard                 | ✅ §27 stamp+commit+leg                  |
-| ⭐  | Per-binary captured stdout               | ❓ TRX StdOut field                      | ❓ TAP diagnostic lines                  | ✅ §36 framed + reconciled               |
-| ⭐  | Fail-closed publication                  | ⚠️ stale file lingers                     | ⚠️ stale file lingers                     | ✅ §27 refusal on any exit               |
-| ⭐  | Crash-safe ABI publish                   | ❓ SDK ships prebuilt                    | ⚠️ kbuild atomic per-file                 | ✅ §28 one commit point                  |
-| ⭐  | Derived record ceiling                   | ❓ no stated bound                       | ❓ no stated bound                       | ✅ §29 byte-derived 517                  |
-| ⭐  | Resumable result parse                   | ❓ per-tool reparse                      | ❓ per-tool reparse                      | ✅ §29 offset + cold gate                |
-| ⭐  | Immutable per-run record                 | ❓ TRX per-invocation                    | ❓ per-tool, no standard                 | ✅ §30 run-id dir+marker                 |
-| ⭐  | Explicit concurrency stance              | ❓ unstated                              | ❓ unstated                              | ✅ §30 flock refusal                     |
-| ⭐  | Derived test-name bound                  | ❓ no stated bound                       | ❓ no stated bound                       | ✅ §31 per-formatter 37                  |
-| 💎  | Refused binary is counted                | ⚠️ HLK skips silently                     | ⚠️ kselftest skips silently               | ✅ §31 FAIL + not_run                    |
-| 💎  | ABI check in build graph                 | ❌ SDK hdrs ship unchecked               | ✅ syscalltbl generated as real prereq   | ✅ §32 stamp gates every target          |
-| ⭐  | Non-forgeable stdout capture             | ⚠️ TAEF logs raw, no framing              | ⚠️ kselftest logs raw, no framing         | ✅ §33 source-framed, non-forgeable      |
-| ⭐  | Producer-side output budget              | ❌ host-side log caps only               | ❌ host-side log caps only               | ✅ §40 derived per-owner + run ceiling   |
-| ⭐  | Per-write output reconciliation          | ❌ stdout is one opaque blob             | ❌ stdout is one opaque blob             | ✅ §48 `wr=` group, each write terminable |
-| ⭐  | Producer publishes its own bounds        | ❌ host mirrors or guesses               | ❌ host mirrors or guesses               | ✅ §48 `chunk_max=` + `spawned=` enforced |
-| ⭐  | Output channel closes with its binary    | ❌ orphan writes land in the next test's log | ❌ orphan writes land in the next test's log | ✅ §49 seal + drain + descendant reap    |
-| ⭐  | Capture loss fails the DEFAULT run       | ❌ only when a TRX artifact is requested | ❌ only when a TAP consumer reads the stream | ✅ §59 reconciled on every framed run    |
-| ⭐  | Stalled test clock is host-refusable     | ❌ host trusts the harness's own timing  | ❌ host trusts the harness's own timing  | ✅ §59 `[UTEST-WAIT-STALLED]` refused by site |
-| ⭐  | Undelivered output is named, not silent  | ❌ a lost write is indistinguishable from none | ❌ a lost write is indistinguishable from none | ✅ §49 `pending=` charged to its own run |
-| ⭐  | Orphaned-VM recovery                     | ❓ harness does not own a VM             | ❓ harness does not own a VM             | ✅ §34 PDEATHSIG + fd-owner refusal      |
-| 💎  | Enumeration fixed before execution       | ✅ job list fixed at schedule            | ✅ kselftest-list.txt fixed at build     | ✅ §35 one plan, absentee named          |
-| 💎  | Never-ran is an error, not a failure     | ❓ TRX Aborted vs Failed outcome         | ❓ TAP `not ok` covers both              | ✅ §37 `<error>`+ERROR, reconciled       |
-| ⭐  | Refusal identity is reversible           | ❓ no synthesized identity               | ❓ no synthesized identity               | ✅ §37 correlator + golden vectors       |
-| ⭐  | Aggregate loss is a distinct record kind | ❌ folded into the run's error text      | ❌ folded into the run's error text      | ✅ §43 `agg_` shape, unit-bearing label  |
-| ⭐  | Retention sweep unlinks a verified object | ❓ deletes by pathname                   | ❓ deletes by pathname                   | ✅ §46 detach, recheck, atomic relink    |
-| ⭐  | One-file generation resolution           | ❓ enumerate result dir                  | ❓ enumerate result files                | ✅ §38 `.run` pointer + pinned record    |
-| ⭐  | Reader lease on a resolved generation    | ❓ no known lifetime hold                | ❓ no known lifetime hold                | ✅ §45 TTL + liveness lease, retention honours it |
-| ⭐  | Resolution path bound to its producing leg | ❓ no per-leg generation pointer         | ❓ no per-leg generation pointer         | ✅ §52 record identity gates pin AND lease |
-| ⭐  | Retention bounds its own critical section, and fails closed | ❓ no stated retention mutex or bound    | ❓ no stated retention mutex or bound    | ✅ §60 budget over discovery+validation, age cut deferred if incomplete |
-| 💎  | Abort reds a generic artifact walk       | ❓ TRX RunAborted is an attribute        | ❓ TAP bail-out is a line                | ✅ §44 `suite-abort` in BOTH artifacts   |
-| ⭐  | Host projection kept out of producer counts | ❓ no such split                         | ❓ no such split                         | ✅ §44 `synthetic_errors`/`testcase_total` |
-| ⭐  | Composed reason widths lint-bound        | ❓ no derived bound                      | ❓ no derived bound                      | ✅ §44 ordered composition check         |
-| ⭐  | Kernel-assigned cause vs generic death   | ⚠️ one DWORD shared by exit, return and NTSTATUS | ⚠️ WIFSIGNALED splits exit/signal, not cause | ✅ §47 reserved block + classifier macros |
-| ⭐  | An obstructed artifact name is named and held, not removed | ❓ no stated policy for a directory at a result path | ❓ no stated policy for a directory at a result path | ✅ §53 one policy + uncapped hold; §62 detaches before classifying |
-| ⭐  | Aged records destroyed through a detached object | ❌ deletes by pathname                   | ❌ deletes by pathname                   | ✅ §62 claim + rollback, restores whole on a blocker |
-| ⭐  | A test's log window cannot silently collapse to nothing | ❓ no bounded window over the kernel ring | ❓ no bounded window over the kernel ring | ✅ §55 monotonic-sequence bound, refuses when unreadable |
-| ⭐  | Output accounting settles at the log sink, not after it | ❓ harness credits its own write         | ❓ harness credits its own write         | ✅ §57 klog delivery receipt, opt-in per record |
-| ⭐  | A dropped record is told apart from a lost emitter | ❌ both read as missing output           | ❌ both read as missing output           | ✅ §57 `[UTEST-CAPTURE-UNDELIVERED]` vs `pending=` |
-| ⭐  | A harness wait survives its own clock stopping | ❓ no stated bound independent of the tick | ❓ no stated bound independent of the tick | ✅ §58 TSC watchdog escape under every deadline |
-| ⭐  | A stalled clock is told apart from a hung test | ❓ no separate cause for either          | ❓ no separate cause for either          | ✅ §58 own exit reason, record, artifact reason, suite abort |
+| ⭐  | Feature                                                     | 🪟 Win11                                             | 🐧 Linux                                             | 🚀 Impossible OS                                                        |
+| --- | ----------------------------------------------------------- | ---------------------------------------------------- | ---------------------------------------------------- | ----------------------------------------------------------------------- |
+| 💎  | User-mode test bins                                         | ✅ HLK                                               | ✅ kselftest                                         | ✅ §1-§15 15 binaries                                                   |
+| 💎  | Multi-format loader                                         | ✅ PE + .NET via HLK                                 | ✅ ELF + a.out kselftest                             | ✅ §15 ELF+PE32+ +EIF                                                   |
+| 💎  | Syscall coverage                                            | ✅ NtDll                                             | ✅ ptrace selftest                                   | ✅ §9 11 syscalls                                                       |
+| 💎  | Auto launcher                                               | ✅ HLK                                               | ✅ run_kselftest                                     | ✅ §3 manifest-driven                                                   |
+| 💎  | TAP or CI parse                                             | ✅ HLK XML                                           | ✅ TAP kselftest                                     | ✅ §7 XML + §4 TAP                                                      |
+| 💎  | JUnit XML / JSON                                            | ✅ HLK XML                                           | ⚠️ kselftest TAP only                                | ✅ §7 XML+JSON+TAP                                                      |
+| 💎  | Timeouts or skips                                           | ✅ HLK                                               | ✅ LKFT skip                                         | ✅ §4 10s + §22 per-skip                                                |
+| 💎  | ABI header sync                                             | ✅ SDK                                               | ✅ uapi                                              | ✅ §2+§17 gen+static asr                                                |
+| 💎  | Per-test isolation                                          | ✅ HLK session reset                                 | ✅ kselftest fork+tmp                                | ✅ §6 scratch+reg+leak                                                  |
+| 💎  | Libc surface probe                                          | ✅ HLK CRT tests                                     | ✅ kselftest libc                                    | ✅ §10 7 contracts                                                      |
+| 💎  | IPC surface probe                                           | ✅ HLK pipe+shmem                                    | ✅ kselftest pipe+shm                                | ✅ §11 pipe + shmem RT                                                  |
+| 💎  | Process lifecycle                                           | ✅ HLK fork+exec                                     | ✅ kselftest fork+exec                               | ✅ §12 fork+exec+kill                                                   |
+| 💎  | File I/O surface                                            | ✅ HLK filesys tests                                 | ✅ kselftest openat etc.                             | ✅ §13 open+read+enum                                                   |
+| 💎  | Stress / longhaul                                           | ✅ TAEF Loop+Stress                                  | ✅ LTP runtest/stress                                | ✅ §8 stress type                                                       |
+| 💎  | Perf regression                                             | ✅ perfview/PerfTest                                 | ✅ perf + flame baseline                             | ⚠️ §8 threshold-only                                                    |
+| 💎  | Test type taxonomy                                          | ✅ TAEF categories                                   | ✅ LTP test classes                                  | ✅ §8 4 types + phase                                                   |
+| ⭐  | Fault-inject bridge                                         | ⚠️ AppVerifier hooks                                 | ⚠️ debugfs failslab                                  | ✅ §5 SYS_FAULT_INJECT                                                  |
+| ⭐  | Win32 on non-Win                                            | ❌ N/A                                               | ❌ Wine only                                         | ✅ §14 statically linked                                                |
+| 💎  | Fast-path isolation                                         | ⚠️ HLK TEB probes                                    | ⚠️ kselftest vdso_test                               | ✅ §17 5/5 probes PASS                                                  |
+| 💎  | ABI drift guard                                             | ⚠️ SDK hdr versioning                                | ✅ syscall.tbl generator                             | ✅ §17 gen-user-abi.py                                                  |
+| ⭐  | Exit-status ABI sync                                        | ⚠️ SDK ntstatus.h                                    | ❌ no exported reasons                               | ✅ §23 generated + hashed                                               |
+| ⭐  | Self-report vs exit                                         | ⚠️ trusts result log                                 | ⚠️ trusts TAP output                                 | ✅ §22 fail-closed check                                                |
+| ⭐  | Never-ran evidence                                          | ⚠️ HLK infers on exit                                | ⚠️ kselftest exit-only                               | ✅ §50 per-child in TCB                                                 |
+| ⭐  | Ring-3 entry proof                                          | ❌ no entry witness                                  | ❌ no entry witness                                  | ✅ §50 CPL3 + adoption                                                  |
+| ⭐  | ABI fingerprint hash                                        | ❌ silent Win10/11                                   | ❌ vDSO unsigned layout                              | ✅ §18 FNV-1a handshake                                                 |
+| ⭐  | Self-describing KUSD                                        | ❌ KUSD raw struct                                   | ❌ vDSO no layout ver                                | ✅ §18 magic+ver+hash                                                   |
+| ⭐  | Ring-3 invariants                                           | ⚠️ debug-only checks                                 | ⚠️ CONFIG_DEBUG_ENTRY                                | 🔄 §18 2/5 always-on                                                    |
+| ⭐  | Transition ring dump                                        | ⚠️ opt-in perf/xperf                                 | ⚠️ opt-in perf/ftrace                                | ✅ §19 always-on panic                                                  |
+| ⭐  | Transport fuzz in CI                                        | ❌ external TAEF                                     | ❌ external syzkaller                                | ✅ §19 3-way fuzz at boot                                               |
+| 💎  | Named-site fault inj                                        | ❌ AppVerifier ordinal                               | ✅ debugfs per-callsite                              | 🔄 §21 3/4 sites e2e                                                    |
+| 💎  | fork OOM fails closed                                       | ✅ CreateProcess fails                               | ✅ fork() -ENOMEM                                    | 🔄 §21 root PML4 only                                                   |
+| 💎  | JSON results artifact                                       | ❓ TRX is XML                                        | ❓ per-tool, no standard                             | ✅ §24 validated envelope                                               |
+| ⭐  | Aborted-run signal                                          | ❓ TRX RunAborted                                    | ❓ implicit TAP plan                                 | ✅ §24 aborted + not_run                                                |
+| ⭐  | Unforgeable test recs                                       | ❌ ring-3 writes TRX                                 | ❌ ring-3 writes TAP                                 | ✅ §25 per-boot nonce                                                   |
+| ⭐  | Run-completion proof                                        | ⚠️ trusts result file                                | ⚠️ trusts plan count                                 | ✅ §25 reconciled count                                                 |
+| ⭐  | Compiler-certified ABI                                      | ❌ SDK hdrs hand-kept                                | ⚠️ uapi headers copied                               | ✅ §26 _Static_assert gate                                              |
+| ⭐  | Build-flavor ABI sweep                                      | ❌ per-SKU hdr drift                                 | ❌ per-config uapi drift                             | ✅ §26 12-flavor refusal                                                |
+| 💎  | Run identity in artifact                                    | ❓ TRX run times                                     | ❓ per-tool, no standard                             | ✅ §27 stamp+commit+leg                                                 |
+| ⭐  | Per-binary captured stdout                                  | ❓ TRX StdOut field                                  | ❓ TAP diagnostic lines                              | ✅ §36 framed + reconciled                                              |
+| ⭐  | Fail-closed publication                                     | ⚠️ stale file lingers                                | ⚠️ stale file lingers                                | ✅ §27 refusal on any exit                                              |
+| ⭐  | Crash-safe ABI publish                                      | ❓ SDK ships prebuilt                                | ⚠️ kbuild atomic per-file                            | ✅ §28 one commit point                                                 |
+| ⭐  | Derived record ceiling                                      | ❓ no stated bound                                   | ❓ no stated bound                                   | ✅ §29 byte-derived 517                                                 |
+| ⭐  | Resumable result parse                                      | ❓ per-tool reparse                                  | ❓ per-tool reparse                                  | ✅ §29 offset + cold gate                                               |
+| ⭐  | Immutable per-run record                                    | ❓ TRX per-invocation                                | ❓ per-tool, no standard                             | ✅ §30 run-id dir+marker                                                |
+| ⭐  | Explicit concurrency stance                                 | ❓ unstated                                          | ❓ unstated                                          | ✅ §30 flock refusal                                                    |
+| ⭐  | Derived test-name bound                                     | ❓ no stated bound                                   | ❓ no stated bound                                   | ✅ §31 per-formatter 37                                                 |
+| 💎  | Refused binary is counted                                   | ⚠️ HLK skips silently                                | ⚠️ kselftest skips silently                          | ✅ §31 FAIL + not_run                                                   |
+| 💎  | ABI check in build graph                                    | ❌ SDK hdrs ship unchecked                           | ✅ syscalltbl generated as real prereq               | ✅ §32 stamp gates every target                                         |
+| ⭐  | Non-forgeable stdout capture                                | ⚠️ TAEF logs raw, no framing                         | ⚠️ kselftest logs raw, no framing                    | ✅ §33 source-framed, non-forgeable                                     |
+| ⭐  | Producer-side output budget                                 | ❌ host-side log caps only                           | ❌ host-side log caps only                           | ✅ §40 derived per-owner + run ceiling                                  |
+| ⭐  | Per-write output reconciliation                             | ❌ stdout is one opaque blob                         | ❌ stdout is one opaque blob                         | ✅ §48 `wr=` group, each write terminable                               |
+| ⭐  | Producer publishes its own bounds                           | ❌ host mirrors or guesses                           | ❌ host mirrors or guesses                           | ✅ §48 `chunk_max=` + `spawned=` enforced                               |
+| ⭐  | Output channel closes with its binary                       | ❌ orphan writes land in the next test's log         | ❌ orphan writes land in the next test's log         | ✅ §49 seal + drain + descendant reap                                   |
+| ⭐  | Capture loss fails the DEFAULT run                          | ❌ only when a TRX artifact is requested             | ❌ only when a TAP consumer reads the stream         | ✅ §59 reconciled on every framed run                                   |
+| ⭐  | Stalled test clock is host-refusable                        | ❌ host trusts the harness's own timing              | ❌ host trusts the harness's own timing              | ✅ §59 `[UTEST-WAIT-STALLED]` refused by site                           |
+| ⭐  | Undelivered output is named, not silent                     | ❌ a lost write is indistinguishable from none       | ❌ a lost write is indistinguishable from none       | ✅ §49 `pending=` charged to its own run                                |
+| ⭐  | Orphaned-VM recovery                                        | ❓ harness does not own a VM                         | ❓ harness does not own a VM                         | ✅ §34 PDEATHSIG + fd-owner refusal                                     |
+| 💎  | Enumeration fixed before execution                          | ✅ job list fixed at schedule                        | ✅ kselftest-list.txt fixed at build                 | ✅ §35 one plan, absentee named                                         |
+| 💎  | Never-ran is an error, not a failure                        | ❓ TRX Aborted vs Failed outcome                     | ❓ TAP `not ok` covers both                          | ✅ §37 `<error>`+ERROR, reconciled                                      |
+| ⭐  | Refusal identity is reversible                              | ❓ no synthesized identity                           | ❓ no synthesized identity                           | ✅ §37 correlator + golden vectors                                      |
+| ⭐  | Aggregate loss is a distinct record kind                    | ❌ folded into the run's error text                  | ❌ folded into the run's error text                  | ✅ §43 `agg_` shape, unit-bearing label                                 |
+| ⭐  | Retention sweep unlinks a verified object                   | ❓ deletes by pathname                               | ❓ deletes by pathname                               | ✅ §46 detach, recheck, atomic relink                                   |
+| ⭐  | One-file generation resolution                              | ❓ enumerate result dir                              | ❓ enumerate result files                            | ✅ §38 `.run` pointer + pinned record                                   |
+| ⭐  | Reader lease on a resolved generation                       | ❓ no known lifetime hold                            | ❓ no known lifetime hold                            | ✅ §45 TTL + liveness lease, retention honours it                       |
+| ⭐  | Resolution path bound to its producing leg                  | ❓ no per-leg generation pointer                     | ❓ no per-leg generation pointer                     | ✅ §52 record identity gates pin AND lease                              |
+| ⭐  | Retention bounds its own critical section, and fails closed | ❓ no stated retention mutex or bound                | ❓ no stated retention mutex or bound                | ✅ §60 budget over discovery+validation, age cut deferred if incomplete |
+| 💎  | Abort reds a generic artifact walk                          | ❓ TRX RunAborted is an attribute                    | ❓ TAP bail-out is a line                            | ✅ §44 `suite-abort` in BOTH artifacts                                  |
+| ⭐  | Host projection kept out of producer counts                 | ❓ no such split                                     | ❓ no such split                                     | ✅ §44 `synthetic_errors`/`testcase_total`                              |
+| ⭐  | Composed reason widths lint-bound                           | ❓ no derived bound                                  | ❓ no derived bound                                  | ✅ §44 ordered composition check                                        |
+| ⭐  | Kernel-assigned cause vs generic death                      | ⚠️ one DWORD shared by exit, return and NTSTATUS     | ⚠️ WIFSIGNALED splits exit/signal, not cause         | ✅ §47 reserved block + classifier macros                               |
+| ⭐  | An obstructed artifact name is named and held, not removed  | ❓ no stated policy for a directory at a result path | ❓ no stated policy for a directory at a result path | ✅ §53 one policy + uncapped hold; §62 detaches before classifying      |
+| ⭐  | Aged records destroyed through a detached object            | ❌ deletes by pathname                               | ❌ deletes by pathname                               | ✅ §62 claim + rollback, restores whole on a blocker                    |
+| ⭐  | A test's log window cannot silently collapse to nothing     | ❓ no bounded window over the kernel ring            | ❓ no bounded window over the kernel ring            | ✅ §55 monotonic-sequence bound, refuses when unreadable                |
+| ⭐  | Output accounting settles at the log sink, not after it     | ❓ harness credits its own write                     | ❓ harness credits its own write                     | ✅ §57 klog delivery receipt, opt-in per record                         |
+| ⭐  | A dropped record is told apart from a lost emitter          | ❌ both read as missing output                       | ❌ both read as missing output                       | ✅ §57 `[UTEST-CAPTURE-UNDELIVERED]` vs `pending=`                      |
+| ⭐  | A harness wait survives its own clock stopping              | ❓ no stated bound independent of the tick           | ❓ no stated bound independent of the tick           | ✅ §58 TSC watchdog escape under every deadline                         |
+| ⭐  | A stalled clock is told apart from a hung test              | ❓ no separate cause for either                      | ❓ no separate cause for either                      | ✅ §58 own exit reason, record, artifact reason, suite abort            |
 
 > **Parity state (§1-§17 shipped):** every 💎 parity row is ✅ except `Perf regression`, which is ⚠️ because §8 asserts against hardcoded thresholds rather than tracking a historical baseline over time -- threshold regressions fail the run, but silent drift below the threshold would not. Closing that to full ✅ needs launcher-side `tests/perf-baseline.json` drift detection, which is deferred to §8 follow-up pending an env-passing syscall (tracked inline in §8's Deferred stamp). **⭐ exclusives:** §5 fault-inject bridge gives a typed `test=1`-gated kernel-allocator probe surface that AppVerifier hooks Win32 for and Linux only exposes through debugfs; §14 Win32-on-non-Win depends on `D02T12 §6` Win32 thunk landing; §17 closes the fast-path stability floor (probes + ABI generator + invariant panic) so TEB/KUSD/syscall transports are as robust as Win11 TEB reads and Linux vDSO calls; §18 will put Impossible OS past both competitors by baking versioned ABI handshake, self-describing KUSD, always-on ring-3 invariants, always-on transition ring-buffer dumps, and in-boot transport fuzzing into the baseline kernel -- capabilities that on Win11 and Linux require opt-in profilers, external fuzzers, or debug-only builds. **❓ = competitor cell UNVERIFIED.** The two §24 artifact rows carry ❓ because the parity research for them could not be sourced: the researcher's `WebSearch`/`WebFetch` were blocked for the whole dispatch, so the TRX and kselftest/TAP claims are recollection, not citation. The Impossible OS column is measured from the shipped artifacts and stands; re-verifying the competitor cells (and deciding whether the utest JSON schema should align with a published cross-tool schema) is owned by §27. §27 could NOT clear them either: web access was blocked for a second consecutive dispatch, this time with the cause identified (the R4 headless reroute blocks the researcher agent it reroutes TO, so both ends are blocked -- filed against the runner TODO). The two ❓ rows §27 adds carry it for the same reason. §36's `Per-binary captured stdout` row carries ❓ for the SAME web-access reason as §24/§27's -- the Impossible OS cell is measured (17/17 binaries, byte-identical across both artifacts, reconciled fail-closed), and it is marked ⭐ rather than 💎 because neither competitor reconciles captured bytes against a producer-declared count at all: they carry whatever the harness scraped. §37's two rows carry ❓ for the THIRD-CONSECUTIVE-BLOCK reason: its review DID dispatch `parity-research-analyst`, but `websearch_offload_gate.py` rule R4 blocked both `WebSearch` and `WebFetch` for the researcher agent it reroutes TO, so the TRX outcome vocabulary and the TAP claim remain recollection rather than citation -- the Impossible OS cells are measured (984 tooling assertions, both assemblers reconciled fail-closed, `binaries_reported` reconciled against the records carrying a triple) and the competitor cells are what re-verification would change. The analyst's unblocked, code-read findings were acted on: they are §44's JSON-abort-record item and the reason-lint item. §34's `Orphaned-VM recovery` row carries ❓ on a DIFFERENT ground: HLK and kselftest do not launch the machine their tests run on, so there is no published orphan-reaping contract to compare against rather than a claim that went unsourced -- calling that ❌ would assert an absence in a harness the question does not apply to. §45's `Reader lease` row carries ❓ on the same footing, and deliberately NOT ❌: "HLK and kselftest have no reader lease" is an ABSENCE claim about a competitor, which is exactly the class that needs a citation rather than recollection, and no web dispatch was spent to get one. The Impossible OS cell is measured (21 tooling regressions covering hold, reclaim, expiry, the TTL ceiling and both its evasions, admission, contention, malformed leases, record/filename binding, and every liveness verdict). §52's row carries ❓ on exactly §45's footing and for the same reason -- neither competitor publishes a per-leg generation pointer, so "their pointer is not bound to its producing leg" is an absence claim about a thing that does not exist there, which needs a citation rather than recollection, and no web dispatch was spent to get one. §53's row carries ❓ on that same footing once more: "HLK and kselftest have no policy for a directory standing at a result pathname" is an absence claim, and the honest reading is that the question is not asked there rather than that it is answered badly -- both harnesses would surface it as an ordinary write failure, which is a mechanism, not a policy. The Impossible OS cell is measured (the two namespaces share one verdict function, four regressions pin report / hold / age-out / the `UTEST_LEASE_MAX=0` boundary, and one pins that nothing a healthy run writes takes a hold). §58's two rows carry ❓ on §34's footing rather than §45's: HLK and kselftest are HOST processes whose timeouts are measured by an OS whose clock stopping would take the harness with it, so "they have no bound independent of the tick" describes a question that is not asked there rather than one answered badly -- the in-kernel launcher is the only one of the three that can outlive its own timekeeping. The Impossible OS cells are measured (ten regressions over a synthetic clock pair: watchdog escape, iteration-ceiling escape, no-watchdog-source escape, a coarse clock that must NOT be called a stall, and the reap's stall-stickiness and withheld free). §60's row carries ❓ on §34's footing: neither competitor holds an exclusive mutex across result-directory retention at all, so "they state no bound on it" describes a question that is not asked there rather than one answered badly. The Impossible OS cell is measured (the pin phase is bounded in time across discovery, sorting and validation, the candidate set at `pin_max * 4`, and any incomplete classification defers the destructive age cut rather than deleting a record it never examined). Everything the ❓ cells would change is a competitor claim, never an Impossible OS one.
 

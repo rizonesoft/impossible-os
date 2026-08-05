@@ -44,15 +44,15 @@ title: "TODO-27 -- UEFI Advanced Features"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                              | Depends On     | Status |
-| --- | :---: | ---------------------------------------- | -------------- | :----: |
+| ⭐  | Order | Deliverable                                   | Depends On     | Status |
+| --- | :---: | --------------------------------------------- | -------------- | :----: |
 | ⭐  |   1   | UEFI multi-OS detection and chainload entries | T07 §1-§4      |  [x]   |
-| 💎  |   2   | Firmware update advisor (read-only LVFS) | T04 §6         |  [x]   |
-| 💎  |   3   | UEFI memory attributes (W^X)             | T02 §1, T24 §1 |  [/]   |
-| 💎  |   4   | Multi-GPU GOP enumeration                | T02 §3         |  [x]   |
-| 💎  |   5   | Secure Boot extended state + enforcement | T02 §5         |  [/]   |
-| 💎  |   6   | SMBIOS extended type parsing             | T02 §4         |  [x]   |
-| 💎  |   7   | DBX revocation list sync                 | T02 §2, §5     |  [/]   |
+| 💎  |   2   | Firmware update advisor (read-only LVFS)      | T04 §6         |  [x]   |
+| 💎  |   3   | UEFI memory attributes (W^X)                  | T02 §1, T24 §1 |  [/]   |
+| 💎  |   4   | Multi-GPU GOP enumeration                     | T02 §3         |  [x]   |
+| 💎  |   5   | Secure Boot extended state + enforcement      | T02 §5         |  [/]   |
+| 💎  |   6   | SMBIOS extended type parsing                  | T02 §4         |  [x]   |
+| 💎  |   7   | DBX revocation list sync                      | T02 §2, §5     |  [/]   |
 
 ---
 
@@ -275,14 +275,14 @@ Detect when the installed UEFI dbx is missing revocations shipped with OS update
 | ⭐  | Feature                   | 🪟 Win11                   | 🐧 Linux                    | 🚀 Impossible OS                       |
 | --- | ------------------------- | -------------------------- | --------------------------- | -------------------------------------- |
 | ⭐  | In-bootloader OS menu     | ❌ Separate BCD/bootmgr    | ❌ GRUB is separate         | ✅ §1 detect + chainload menu          |
-| ⭐  | Firmware update advisor   | ⚠️ silent WU push only      | ⚠️ fwupd writes flash        | ⬜ §2 read-only LVFS; no UpdateCapsule |
+| ⭐  | Firmware update advisor   | ⚠️ silent WU push only     | ⚠️ fwupd writes flash       | ⬜ §2 read-only LVFS; no UpdateCapsule |
 | 💎  | UEFI memory W^X           | ✅ Since Win10 1607        | ✅ EFI_MEMORY_ATTRIBUTES    | ✅ §3 static MAT enforce               |
 | 💎  | Multi-GPU GOP             | ✅ LocateHandleBuffer      | ✅ grub handle buffer       | ✅ §4 enum + ConOut primary            |
 | 💎  | Secure Boot extended vars | ✅ SetupMode + Deployed    | ✅ efivarfs all SB vars     | ✅ T02 §5 state detection              |
 | 💎  | Secure Boot enforcement   | ✅ HVCI lockdown           | ✅ kernel lockdown mode     | ⬜ §5 deferred -> D02 T10 §16          |
 | 💎  | SMBIOS extended types     | ✅ WMI BaseBoard/Enclosure | ✅ /sys/firmware/dmi full   | ✅ §6 Type 2/3/16/19 + ECC             |
-| 💎  | DBX revocation sync       | ✅ WU silent dbx push      | ✅ fwupd/dbxtool            | ⏸️ §7 deferred (baseline)               |
-| ⭐  | Proactive dbx stale alert | ❌ Silent WU push only     | ❌ Requires manual fwupdmgr | ⏸️ §7 deferred (verified base)          |
+| 💎  | DBX revocation sync       | ✅ WU silent dbx push      | ✅ fwupd/dbxtool            | ⏸️ §7 deferred (baseline)              |
+| ⭐  | Proactive dbx stale alert | ❌ Silent WU push only     | ❌ Requires manual fwupdmgr | ⏸️ §7 deferred (verified base)         |
 
 ---
 

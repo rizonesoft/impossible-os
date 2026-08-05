@@ -28,18 +28,18 @@ title: "TODO-19 -- Hardware Monitoring, Sensors & Environmental Devices"
 
 ## Implementation Order
 
-| Priority  | Order | Deliverable                              | Depends On                | Status |
-| --------- | :---: | ---------------------------------------- | ------------------------- | :----: |
-| Parity    |   1   | Sensor class API and unit model          | --                        |  [ ]   |
-| Parity    |   2   | ACPI thermal, lid, tablet, and ALS sensors | §1, TODO-03               |  [ ]   |
-| Parity    |   3   | SMBus/I2C hwmon sensor transport         | §1, TODO-12               |  [ ]   |
-| Parity    |   4   | Fan, voltage, and chassis sensors        | §2, §3                    |  [ ]   |
-| Parity    |   5   | Accelerometer and orientation sensors    | §2, TODO-12               |  [ ]   |
-| Parity    |   6   | Audio jack and device-presence sensors   | §1, TODO-18               |  [ ]   |
-| Parity    |   7   | Sensor event notifications               | §1, notification facility |  [ ]   |
+| Priority  | Order | Deliverable                                     | Depends On                | Status |
+| --------- | :---: | ----------------------------------------------- | ------------------------- | :----: |
+| Parity    |   1   | Sensor class API and unit model                 | --                        |  [ ]   |
+| Parity    |   2   | ACPI thermal, lid, tablet, and ALS sensors      | §1, TODO-03               |  [ ]   |
+| Parity    |   3   | SMBus/I2C hwmon sensor transport                | §1, TODO-12               |  [ ]   |
+| Parity    |   4   | Fan, voltage, and chassis sensors               | §2, §3                    |  [ ]   |
+| Parity    |   5   | Accelerometer and orientation sensors           | §2, TODO-12               |  [ ]   |
+| Parity    |   6   | Audio jack and device-presence sensors          | §1, TODO-18               |  [ ]   |
+| Parity    |   7   | Sensor event notifications                      | §1, notification facility |  [ ]   |
 | Parity    |   8   | Registry, Device Manager, and shell diagnostics | §1-§7, TODO-07            |  [ ]   |
-| Exclusive |   9   | BlackBox environmental timeline          | §7                        |  [ ]   |
-| Parity    |  10   | Sensor test matrix                       | §1-§9                     |  [ ]   |
+| Exclusive |   9   | BlackBox environmental timeline                 | §7                        |  [ ]   |
+| Parity    |  10   | Sensor test matrix                              | §1-§9                     |  [ ]   |
 
 ## 1. Sensor Class API
 

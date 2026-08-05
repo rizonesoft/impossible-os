@@ -67,16 +67,16 @@ title: "TODO-01 -- Kernel Embedded Libraries"
 
 ## Implementation Order
 
-| Step | Section                               | 💎/⭐ | Dependency                               |
-| ---- | ------------------------------------- | ----- | ---------------------------------------- |
-| 1    | String Library Consolidation          | 💎    | `kmalloc`, `kfree`; freestanding build flags |
-| 2    | Math Library Extension                | 💎    | existing `kmath.h`; `-msse2` flag confirmed |
-| 3    | miniz (Writer + Stream Extension)     | 💎    | §4 (reader/port) must be done first      |
-| 4    | monocypher + CSPRNG + SYS_GETRANDOM   | ⭐    | §1 string utils; `RDRAND` CPU feature check |
-| 5    | cJSON                                 | 💎    | §1 string lib; `kmalloc`/`kfree`         |
-| 6    | Mbed TLS Subset                       | 💎    | §2 math; §4 monocypher entropy; §1 string |
+| Step | Section                               | 💎/⭐ | Dependency                                                 |
+| ---- | ------------------------------------- | ----- | ---------------------------------------------------------- |
+| 1    | String Library Consolidation          | 💎    | `kmalloc`, `kfree`; freestanding build flags               |
+| 2    | Math Library Extension                | 💎    | existing `kmath.h`; `-msse2` flag confirmed                |
+| 3    | miniz (Writer + Stream Extension)     | 💎    | §4 (reader/port) must be done first                        |
+| 4    | monocypher + CSPRNG + SYS_GETRANDOM   | ⭐    | §1 string utils; `RDRAND` CPU feature check                |
+| 5    | cJSON                                 | 💎    | §1 string lib; `kmalloc`/`kfree`                           |
+| 6    | Mbed TLS Subset                       | 💎    | §2 math; §4 monocypher entropy; §1 string                  |
 | 7    | STB Consolidation + `stb_image_write` | 💎    | existing `stb_truetype_impl.c`; `image_save_png` consumers |
-| 8    | Library Integration Tests + README    | ⭐    | §1–§7 all complete                       |
+| 8    | Library Integration Tests + README    | ⭐    | §1–§7 all complete                                         |
 
 ---
 
@@ -278,31 +278,31 @@ title: "TODO-01 -- Kernel Embedded Libraries"
   - [ ] Exit 0 on all pass; exit 1 on first failure with descriptive message; integrate as `make check` target in `Makefile`
 - [ ] **`src/libs/README.md`** -- table:
 
-| Library         | Version | License       | Source URL                         | Purpose                                  |
-| --------------- | ------- | ------------- | ---------------------------------- | ---------------------------------------- |
+| Library         | Version | License       | Source URL                         | Purpose                                     |
+| --------------- | ------- | ------------- | ---------------------------------- | ------------------------------------------- |
 | monocypher      | 4.x     | BSD-2-Clause  | github.com/LoupVaillant/Monocypher | ChaCha20, Blake2b, X25519, Ed25519, Argon2i |
-| miniz           | 2.x     | MIT           | github.com/richgel999/miniz        | deflate/inflate, ZIP read/write          |
-| cJSON           | 1.7.x   | MIT           | github.com/DaveGamble/cJSON        | JSON parse/emit                          |
-| Mbed TLS        | 3.x     | Apache-2.0    | github.com/Mbed-TLS/mbedtls        | TLS 1.2, AES, SHA, RSA, ECDH             |
-| stb_truetype    | 1.26    | Public Domain | github.com/nothings/stb            | TrueType font rasterization              |
-| stb_image       | latest  | Public Domain | github.com/nothings/stb            | JPEG/PNG/BMP/GIF decode                  |
-| stb_image_write | latest  | Public Domain | github.com/nothings/stb            | PNG/BMP encode                           |
+| miniz           | 2.x     | MIT           | github.com/richgel999/miniz        | deflate/inflate, ZIP read/write             |
+| cJSON           | 1.7.x   | MIT           | github.com/DaveGamble/cJSON        | JSON parse/emit                             |
+| Mbed TLS        | 3.x     | Apache-2.0    | github.com/Mbed-TLS/mbedtls        | TLS 1.2, AES, SHA, RSA, ECDH                |
+| stb_truetype    | 1.26    | Public Domain | github.com/nothings/stb            | TrueType font rasterization                 |
+| stb_image       | latest  | Public Domain | github.com/nothings/stb            | JPEG/PNG/BMP/GIF decode                     |
+| stb_image_write | latest  | Public Domain | github.com/nothings/stb            | PNG/BMP encode                              |
 
 ---
 
 ## OS Comparison
 
 
-| ⭐  | Feature                                  | 🪟 Win11                         | 🐧 Linux                        | 🚀 Impossible OS                         |
-| --- | ---------------------------------------- | -------------------------------- | ------------------------------- | ---------------------------------------- |
-| 💎  | Freestanding string/printf libc          | ✅ ntdll CRT subset              | ✅ kernel/lib/string.c + printk | ⬜ §1 -- `include/libc/string.h` consolidation |
-| 💎  | Full software math library               | ✅ MSVC CRT `libcmt`             | ✅ kernel/lib/math.c + libm     | ⬜ §2 -- extends existing `kmath.h`; all trig/exp/log |
-| 💎  | deflate/inflate + ZIP read/write         | ✅ ntoskrnl LZNT1 + Cabinet.dll  | ✅ lib/zlib in-tree + zip via   | ⬜ §3 -- (extends §4); `mz_zip_writer` + |
-| ⭐  | RDRAND-seeded ChaCha20 CSPRNG as inbox API | ✅ `BCryptGenRandom` (CNG)       | ✅ `get_random_bytes` (kernel)  | ⬜ §4 -- monocypher + RDRAND entropy +   |
-| 💎  | JSON parse/emit in-kernel                | ❌ Not in ntoskrnl               | ❌ Not in kernel                | ⬜ §5 -- cJSON with `kmalloc` hooks +    |
-| 💎  | TLS 1.2 client                           | ✅ Schannel (kernel TLS offload) | ✅ Rustls / OpenSSL via socket  | ⬜ §6 -- Mbed TLS 3.x subset; ECDHE-RSA-AES128-GCM-SHA256 |
-| 💎  | STB image decode/encode                  | ✅ WIC (COM, Ring 3)             | ✅ GdkPixbuf / libpng           | ✅ §7 -- Done -- stb_truetype + stb_image |
-| ⭐  | Host-side integration test suite for embedded libs | ✅ Partial (vendor unit tests)   | ✅ Partial (lib/crypto/testmgr) | ⬜ §8 -- `scripts/test-libs.sh` with known test vectors |
+| ⭐  | Feature                                            | 🪟 Win11                         | 🐧 Linux                        | 🚀 Impossible OS                                          |
+| --- | -------------------------------------------------- | -------------------------------- | ------------------------------- | --------------------------------------------------------- |
+| 💎  | Freestanding string/printf libc                    | ✅ ntdll CRT subset              | ✅ kernel/lib/string.c + printk | ⬜ §1 -- `include/libc/string.h` consolidation            |
+| 💎  | Full software math library                         | ✅ MSVC CRT `libcmt`             | ✅ kernel/lib/math.c + libm     | ⬜ §2 -- extends existing `kmath.h`; all trig/exp/log     |
+| 💎  | deflate/inflate + ZIP read/write                   | ✅ ntoskrnl LZNT1 + Cabinet.dll  | ✅ lib/zlib in-tree + zip via   | ⬜ §3 -- (extends §4); `mz_zip_writer` +                  |
+| ⭐  | RDRAND-seeded ChaCha20 CSPRNG as inbox API         | ✅ `BCryptGenRandom` (CNG)       | ✅ `get_random_bytes` (kernel)  | ⬜ §4 -- monocypher + RDRAND entropy +                    |
+| 💎  | JSON parse/emit in-kernel                          | ❌ Not in ntoskrnl               | ❌ Not in kernel                | ⬜ §5 -- cJSON with `kmalloc` hooks +                     |
+| 💎  | TLS 1.2 client                                     | ✅ Schannel (kernel TLS offload) | ✅ Rustls / OpenSSL via socket  | ⬜ §6 -- Mbed TLS 3.x subset; ECDHE-RSA-AES128-GCM-SHA256 |
+| 💎  | STB image decode/encode                            | ✅ WIC (COM, Ring 3)             | ✅ GdkPixbuf / libpng           | ✅ §7 -- Done -- stb_truetype + stb_image                 |
+| ⭐  | Host-side integration test suite for embedded libs | ✅ Partial (vendor unit tests)   | ✅ Partial (lib/crypto/testmgr) | ⬜ §8 -- `scripts/test-libs.sh` with known test vectors   |
 
 Impossible OS carries the CSPRNG as an **inbox kernel service** backed by hardware RDRAND
 entropy -- the same CSPRNG that seeds SSH key generation, WiFi WPA2, and the credential store

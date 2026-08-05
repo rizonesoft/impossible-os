@@ -34,20 +34,20 @@ title: "TODO-09 -- Hypervisor Abstraction Layer"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                              | Depends On                               | Status |
-| --- | :---: | ---------------------------------------- | ---------------------------------------- | :----: |
-| 💎  |   1   | §1 Hypervisor detection -- CPUID `0x40000000`, PCI `80EE:CAFE` | PCI scan (existing)                      |  [ ]   |
-| 💎  |   2   | §2 Unified `hv.h` interface + backend dispatch table | §1 (type known at boot)                  |  [ ]   |
-| 💎  |   3   | §3 Bare-metal null backend               | §2 (dispatch table structure defined)    |  [ ]   |
-| 💎  |   4   | §4 VBox display auto-resize              | §2, VBox IRQ handler (existing)          |  [ ]   |
-| 💎  |   5   | §5 VBox HGCM client                      | §2 (VBox confirmed), VBox port I/O baseline |  [ ]   |
-| 💎  |   6   | §6 VBox shared folders                   | §6 (HGCM), VFS mount point API           |  [ ]   |
-| 💎  |   7   | §7 VBox shared clipboard                 | §6 (HGCM)                                |  [ ]   |
-| 💎  |   8   | §8 VirtIO GPU display resize + page flip | §2, VirtIO core (existing)               |  [ ]   |
-| 💎  |   9   | §9 VirtIO 9P shared folders              | §2, VirtIO core, VFS mount               |  [ ]   |
-| 💎  |  10   | §10 Hyper-V synthetic HID (keyboard + mouse) | §2, VMBus core (existing)                |  [ ]   |
-| 💎  |  11   | §11 Hyper-V synthetic video              | §2, VMBus, framebuffer infrastructure    |  [ ]   |
-| 💎  |  12   | §12 VirtIO RNG guest entropy             | §2, VirtIO core (existing), D02T03 §5    |  [ ]   |
+| ⭐  | Order | Deliverable                                                    | Depends On                                  | Status |
+| --- | :---: | -------------------------------------------------------------- | ------------------------------------------- | :----: |
+| 💎  |   1   | §1 Hypervisor detection -- CPUID `0x40000000`, PCI `80EE:CAFE` | PCI scan (existing)                         |  [ ]   |
+| 💎  |   2   | §2 Unified `hv.h` interface + backend dispatch table           | §1 (type known at boot)                     |  [ ]   |
+| 💎  |   3   | §3 Bare-metal null backend                                     | §2 (dispatch table structure defined)       |  [ ]   |
+| 💎  |   4   | §4 VBox display auto-resize                                    | §2, VBox IRQ handler (existing)             |  [ ]   |
+| 💎  |   5   | §5 VBox HGCM client                                            | §2 (VBox confirmed), VBox port I/O baseline |  [ ]   |
+| 💎  |   6   | §6 VBox shared folders                                         | §6 (HGCM), VFS mount point API              |  [ ]   |
+| 💎  |   7   | §7 VBox shared clipboard                                       | §6 (HGCM)                                   |  [ ]   |
+| 💎  |   8   | §8 VirtIO GPU display resize + page flip                       | §2, VirtIO core (existing)                  |  [ ]   |
+| 💎  |   9   | §9 VirtIO 9P shared folders                                    | §2, VirtIO core, VFS mount                  |  [ ]   |
+| 💎  |  10   | §10 Hyper-V synthetic HID (keyboard + mouse)                   | §2, VMBus core (existing)                   |  [ ]   |
+| 💎  |  11   | §11 Hyper-V synthetic video                                    | §2, VMBus, framebuffer infrastructure       |  [ ]   |
+| 💎  |  12   | §12 VirtIO RNG guest entropy                                   | §2, VirtIO core (existing), D02T03 §5       |  [ ]   |
 
 > All parity rows are 💎: VirtualBox, KVM/QEMU, and Hyper-V guest-additions are shipping features of those hypervisors. The ⭐ differentiator is the unified `hv.h` dispatch table -- Impossible OS treats all three hypervisors as first-class targets behind a single clean interface, whereas Linux's hypervisor drivers span dozens of kernel subsystems with no cross-hypervisor abstraction.
 
@@ -234,19 +234,19 @@ Discover the virtio-rng device (PCI device ID 0x1005), drain host-provided entro
 ## OS Comparison
 
 
-| ⭐  | Feature                                 | 🪟 Win11                                 | 🐧 Linux                                 | 🚀 Impossible OS                         |
-| --- | --------------------------------------- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
-| 💎  | Hypervisor detection                    | ✅ `hvinfo`; Hyper-V detection built into | ✅ `hypervisor` CPUID leaf; `arch/x86/kernel/cpu/hypervisor.c` | ⬜ §1 -- `HV_NONE/VBOX/KVM/HYPERV` enum, PCI `80EE:CAFE` fallback |
-| ⭐  | Unified cross-hypervisor dispatch table | ❌ Per-hypervisor drivers in separate kernel | ❌ No unified abstraction; hypervisor drivers | ⬜ §2 -- single `hv_ops_t` vtable; one `hypervisor_init()` |
-| 💎  | VirtualBox display auto-resize          | ✅ `VBoxVideoW8.sys` wddm driver         | ✅ `vboxvideo` kernel module; `drm_mode_set` | ⬜ §4 -- `SetGuestCaps`, DISPLAY_CHANGE IRQ, VBE reconfigure, |
-| 💎  | VirtualBox HGCM channel                 | ✅ `VBoxSF.sys` (shared folders), `VBoxTray.exe` (clipboard) | ✅ `vboxsf` module; `vboxguest` IOCTL interface | ⬜ §5 -- HGCM_CONNECT/CALL, param encoding, async completion |
-| 💎  | VirtualBox shared folders               | ✅ `\\\\vboxsvr\\share` UNC path; `net use` | ✅ `mount -t vboxsf name /mnt/share`     | ⬜ §6 -- HGCM QueryMappings/MapFolder, VFS `H:\` mount |
-| 💎  | VirtualBox shared clipboard             | ✅ `VBoxTray.exe` clipboard integration  | ✅ `vboxclient --clipboard`              | ⬜ §7 -- HGCM `VBoxSharedClipboard`, `CF_UNICODETEXT` bidirectional |
-| 💎  | VirtIO GPU display + page flip          | ✅ `viogpu.sys` WDDM display driver      | ✅ `virtio-gpu` DRM driver; `DRM_FORMAT_XRGB8888`, KMS | ⬜ §8 -- RESOURCE_CREATE/SET_SCANOUT/FLUSH, hardware cursor, display events |
-| 💎  | VirtIO 9P shared folders                | ❌ Not supported (no VirtIO 9P           | ✅ `9p` kernel module; `mount -t         | ⬜ §9 -- 9P2000.L protocol, `I:\` VFS mount |
-| 💎  | Hyper-V synthetic keyboard/mouse        | ✅ `hid-hyperv.sys`; `hyperv-keyboard`; full WM integration | ✅ `hv_kbd.c`, `hv_mouse.c`; evdev injection | ⬜ §10 -- VSP GUIDs, `SYNTH_KBD_KEYSTROKE`, mouse report |
-| 💎  | Hyper-V synthetic video                 | ✅ `hypervideo.sys` (pre-Hyper-V Integration Services); `synth | ✅ `hyperv_fb.c`; `fbdev` interface; dirty-region flush | ⬜ §11 -- Video VSP GUID, VRAM GPA       |
-| ⭐  | Bare-metal null backend                 | ❌ HAL hardcodes bare-metal vs. guest    | ❌ Hypervisor modules loaded/not loaded by | ⬜ §3 -- `hv_none_ops` struct; bare-metal boot is |
+| ⭐  | Feature                                 | 🪟 Win11                                                       | 🐧 Linux                                                       | 🚀 Impossible OS                                                            |
+| --- | --------------------------------------- | -------------------------------------------------------------- | -------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| 💎  | Hypervisor detection                    | ✅ `hvinfo`; Hyper-V detection built into                      | ✅ `hypervisor` CPUID leaf; `arch/x86/kernel/cpu/hypervisor.c` | ⬜ §1 -- `HV_NONE/VBOX/KVM/HYPERV` enum, PCI `80EE:CAFE` fallback           |
+| ⭐  | Unified cross-hypervisor dispatch table | ❌ Per-hypervisor drivers in separate kernel                   | ❌ No unified abstraction; hypervisor drivers                  | ⬜ §2 -- single `hv_ops_t` vtable; one `hypervisor_init()`                  |
+| 💎  | VirtualBox display auto-resize          | ✅ `VBoxVideoW8.sys` wddm driver                               | ✅ `vboxvideo` kernel module; `drm_mode_set`                   | ⬜ §4 -- `SetGuestCaps`, DISPLAY_CHANGE IRQ, VBE reconfigure,               |
+| 💎  | VirtualBox HGCM channel                 | ✅ `VBoxSF.sys` (shared folders), `VBoxTray.exe` (clipboard)   | ✅ `vboxsf` module; `vboxguest` IOCTL interface                | ⬜ §5 -- HGCM_CONNECT/CALL, param encoding, async completion                |
+| 💎  | VirtualBox shared folders               | ✅ `\\\\vboxsvr\\share` UNC path; `net use`                    | ✅ `mount -t vboxsf name /mnt/share`                           | ⬜ §6 -- HGCM QueryMappings/MapFolder, VFS `H:\` mount                      |
+| 💎  | VirtualBox shared clipboard             | ✅ `VBoxTray.exe` clipboard integration                        | ✅ `vboxclient --clipboard`                                    | ⬜ §7 -- HGCM `VBoxSharedClipboard`, `CF_UNICODETEXT` bidirectional         |
+| 💎  | VirtIO GPU display + page flip          | ✅ `viogpu.sys` WDDM display driver                            | ✅ `virtio-gpu` DRM driver; `DRM_FORMAT_XRGB8888`, KMS         | ⬜ §8 -- RESOURCE_CREATE/SET_SCANOUT/FLUSH, hardware cursor, display events |
+| 💎  | VirtIO 9P shared folders                | ❌ Not supported (no VirtIO 9P                                 | ✅ `9p` kernel module; `mount -t                               | ⬜ §9 -- 9P2000.L protocol, `I:\` VFS mount                                 |
+| 💎  | Hyper-V synthetic keyboard/mouse        | ✅ `hid-hyperv.sys`; `hyperv-keyboard`; full WM integration    | ✅ `hv_kbd.c`, `hv_mouse.c`; evdev injection                   | ⬜ §10 -- VSP GUIDs, `SYNTH_KBD_KEYSTROKE`, mouse report                    |
+| 💎  | Hyper-V synthetic video                 | ✅ `hypervideo.sys` (pre-Hyper-V Integration Services); `synth | ✅ `hyperv_fb.c`; `fbdev` interface; dirty-region flush        | ⬜ §11 -- Video VSP GUID, VRAM GPA                                          |
+| ⭐  | Bare-metal null backend                 | ❌ HAL hardcodes bare-metal vs. guest                          | ❌ Hypervisor modules loaded/not loaded by                     | ⬜ §3 -- `hv_none_ops` struct; bare-metal boot is                           |
 
 > **After §1–11:** Impossible OS targets all four environments (VirtualBox, QEMU/KVM, Hyper-V, bare metal) with a single kernel binary and no `#ifdef` or `if/else` sprawl. The unified `hv_ops_t` dispatch table (§2) and null backend (§3) are exclusive to Impossible OS -- neither Linux nor Windows exposes a clean cross-hypervisor abstraction behind a single vtable in the kernel core. Linux users on Hyper-V, VirtualBox, and KVM each configure separate kernel modules; Impossible OS makes all three first-class targets behind one interface.
 

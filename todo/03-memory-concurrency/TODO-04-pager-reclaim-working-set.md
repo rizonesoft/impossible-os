@@ -39,14 +39,14 @@ title: "TODO-04 -- Pager, Reclaim, and Working Set Manager"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                              | Depends On                 | Status |
-| --- | :---: | ---------------------------------------- | -------------------------- | :----: |
-| 💎  |   1   | §1 Pagefile manager + swap metadata foundation | --                         |  [ ]   |
-| 💎  |   2   | §2 Working-set tracking + lock-aware residency rules | §1, T01 §14,§15            |  [ ]   |
-| 💎  |   3   | §3 Background reclaim + modified-page writer | §1, §2, T03 §2             |  [ ]   |
+| ⭐  | Order | Deliverable                                            | Depends On                 | Status |
+| --- | :---: | ------------------------------------------------------ | -------------------------- | :----: |
+| 💎  |   1   | §1 Pagefile manager + swap metadata foundation         | --                         |  [ ]   |
+| 💎  |   2   | §2 Working-set tracking + lock-aware residency rules   | §1, T01 §14,§15            |  [ ]   |
+| 💎  |   3   | §3 Background reclaim + modified-page writer           | §1, §2, T03 §2             |  [ ]   |
 | 💎  |   4   | §4 Lazy file-backed pager + soft/hard fault resolution | §1, §3, D02 T23 §2, T01 §3 |  [ ]   |
-| 💎  |   5   | §5 Replacement policy + refault tracking | §2, §3, §4                 |  [ ]   |
-| 💎  |   6   | §6 Control surface + observability handoff | §2-5                       |  [ ]   |
+| 💎  |   5   | §5 Replacement policy + refault tracking               | §2, §3, §4                 |  [ ]   |
+| 💎  |   6   | §6 Control surface + observability handoff             | §2-5                       |  [ ]   |
 
 > 💎 = parity work: Windows and Linux both ship a first-class pager, pagefile/swap policy, working-set trim, and reclaim daemons. Impossible OS must reach that baseline before higher VM features feel real.
 
@@ -180,13 +180,13 @@ Wire the pager to the APIs and telemetry surfaces that make policy visible and d
 
 ## OS Comparison
 
-| ⭐  | Feature                               | 🪟 Win11                        | 🐧 Linux                         | 🚀 Impossible OS |
-| --- | ------------------------------------- | ------------------------------- | -------------------------------- | ---------------- |
-| 💎  | Pagefile / swap manager               | ✅ `pagefile.sys` managed       | ✅ swapfile or partition         | ⬜ Planned -- §1 |
+| ⭐  | Feature                               | 🪟 Win11                        | 🐧 Linux                          | 🚀 Impossible OS |
+| --- | ------------------------------------- | ------------------------------- | --------------------------------- | ---------------- |
+| 💎  | Pagefile / swap manager               | ✅ `pagefile.sys` managed       | ✅ swapfile or partition          | ⬜ Planned -- §1 |
 | 💎  | Working-set trim and residency        | ✅ min/max + trim APIs          | ⚠️ reclaim + `mlock` + `mincore`  | ⬜ Planned -- §2 |
-| 💎  | Background reclaim + page writer      | ✅ WS manager + modified writer | ✅ kswapd + writeback            | ⬜ Planned -- §3 |
-| 💎  | Lazy mapped-file faults + readahead   | ✅ demand-paged sections        | ✅ lazy file pager               | ⬜ Planned -- §4 |
-| 💎  | Refault-aware replacement policy      | ✅ standby or transition reuse  | ✅ workingset refault            | ⬜ Planned -- §5 |
+| 💎  | Background reclaim + page writer      | ✅ WS manager + modified writer | ✅ kswapd + writeback             | ⬜ Planned -- §3 |
+| 💎  | Lazy mapped-file faults + readahead   | ✅ demand-paged sections        | ✅ lazy file pager                | ⬜ Planned -- §4 |
+| 💎  | Refault-aware replacement policy      | ✅ standby or transition reuse  | ✅ workingset refault             | ⬜ Planned -- §5 |
 | 💎  | Working-set and pager control surface | ✅ PSAPI + trim controls        | ⚠️ split across `/proc` + sysctls | ⬜ Planned -- §6 |
 
 > After §1-§3, Impossible OS has a credible pagefile and reclaim core instead of isolated swap primitives.

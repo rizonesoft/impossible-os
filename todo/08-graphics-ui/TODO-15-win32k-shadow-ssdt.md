@@ -42,35 +42,35 @@ title: "TODO-15 -- Win32k Shadow SSDT (NtGdi / NtUser)"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                              | Depends On      | Status |
-| --- | :---: | ---------------------------------------- | --------------- | :----: |
-| 💎  |   1   | Shadow SSDT infrastructure (Table 1 dispatch) | TODO-05 §3      |  [ ]   |
-| 💎  |   2   | GDI device context (DC) object table     | §1              |  [ ]   |
+| ⭐  | Order | Deliverable                                      | Depends On      | Status |
+| --- | :---: | ------------------------------------------------ | --------------- | :----: |
+| 💎  |   1   | Shadow SSDT infrastructure (Table 1 dispatch)    | TODO-05 §3      |  [ ]   |
+| 💎  |   2   | GDI device context (DC) object table             | §1              |  [ ]   |
 | 💎  |   3   | GDI drawing syscalls (line, rect, ellipse, blit) | §2              |  [ ]   |
-| 💎  |   4   | GDI text and font syscalls               | §2              |  [ ]   |
-| 💎  |   5   | GDI bitmap and DIB syscalls              | §2              |  [ ]   |
-| 💎  |   6   | GDI pen, brush, and region syscalls      | §2              |  [ ]   |
-| 💎  |   7   | USER window management syscalls          | §1, TODO-06     |  [ ]   |
-| 💎  |   8   | USER message queue syscalls              | §7              |  [ ]   |
-| 💎  |   9   | USER input and cursor syscalls           | §7              |  [ ]   |
-| 💎  |  10   | USER menu and accelerator syscalls       | §7              |  [ ]   |
-| 💎  |  11   | USER clipboard syscalls                  | §7              |  [ ]   |
-| ⭐  |  12   | Migrate SYS_GETMESSAGE/etc. to shadow SSDT | §8              |  [ ]   |
-| 💎  |  13   | GDI path, curve, and extended drawing    | §3              |  [ ]   |
-| 💎  |  14   | GDI transform, palette, and color management | §2              |  [ ]   |
-| 💎  |  15   | GDI print and metafile                   | §2              |  [ ]   |
-| 💎  |  16   | GDI font advanced                        | §4              |  [ ]   |
-| 💎  |  17   | GDI extended object management           | §2, §6          |  [ ]   |
-| 💎  |  18   | USER window properties, styles, enumeration | §7              |  [ ]   |
-| 💎  |  19   | USER dialog, caret, and drawing helpers  | §7              |  [ ]   |
-| 💎  |  20   | USER scrollbar                           | §7              |  [ ]   |
-| 💎  |  21   | USER keyboard, IME, and hook             | §8, §9          |  [ ]   |
-| 💎  |  22   | USER DPI, accessibility, system parameters | §7              |  [ ]   |
-| 💎  |  23   | USER raw input, touch, and gesture       | §9              |  [ ]   |
-| 💎  |  24   | USER multi-monitor and display           | §1              |  [ ]   |
-| 💎  |  25   | USER shell integration                   | §7, §8          |  [ ]   |
-| 💎  |  26   | GDI/USER DirectX and DXGI kernel integration | §1, TODO-08-gpu |  [ ]   |
-| ⭐  |  27   | Impossible OS exclusive graphics extensions | §2, §7, §8      |  [ ]   |
+| 💎  |   4   | GDI text and font syscalls                       | §2              |  [ ]   |
+| 💎  |   5   | GDI bitmap and DIB syscalls                      | §2              |  [ ]   |
+| 💎  |   6   | GDI pen, brush, and region syscalls              | §2              |  [ ]   |
+| 💎  |   7   | USER window management syscalls                  | §1, TODO-06     |  [ ]   |
+| 💎  |   8   | USER message queue syscalls                      | §7              |  [ ]   |
+| 💎  |   9   | USER input and cursor syscalls                   | §7              |  [ ]   |
+| 💎  |  10   | USER menu and accelerator syscalls               | §7              |  [ ]   |
+| 💎  |  11   | USER clipboard syscalls                          | §7              |  [ ]   |
+| ⭐  |  12   | Migrate SYS_GETMESSAGE/etc. to shadow SSDT       | §8              |  [ ]   |
+| 💎  |  13   | GDI path, curve, and extended drawing            | §3              |  [ ]   |
+| 💎  |  14   | GDI transform, palette, and color management     | §2              |  [ ]   |
+| 💎  |  15   | GDI print and metafile                           | §2              |  [ ]   |
+| 💎  |  16   | GDI font advanced                                | §4              |  [ ]   |
+| 💎  |  17   | GDI extended object management                   | §2, §6          |  [ ]   |
+| 💎  |  18   | USER window properties, styles, enumeration      | §7              |  [ ]   |
+| 💎  |  19   | USER dialog, caret, and drawing helpers          | §7              |  [ ]   |
+| 💎  |  20   | USER scrollbar                                   | §7              |  [ ]   |
+| 💎  |  21   | USER keyboard, IME, and hook                     | §8, §9          |  [ ]   |
+| 💎  |  22   | USER DPI, accessibility, system parameters       | §7              |  [ ]   |
+| 💎  |  23   | USER raw input, touch, and gesture               | §9              |  [ ]   |
+| 💎  |  24   | USER multi-monitor and display                   | §1              |  [ ]   |
+| 💎  |  25   | USER shell integration                           | §7, §8          |  [ ]   |
+| 💎  |  26   | GDI/USER DirectX and DXGI kernel integration     | §1, TODO-08-gpu |  [ ]   |
+| ⭐  |  27   | Impossible OS exclusive graphics extensions      | §2, §7, §8      |  [ ]   |
 
 > 💎 = parity -- Windows GDI32/USER32 and Linux Xlib/Wayland both provide equivalent functionality.
 > ⭐ = exclusive -- clean migration path from legacy SYS_* to proper shadow SSDT.
@@ -506,31 +506,31 @@ Shadow Table 1 routing and syscall contract (parallel to kernel `TODO-05`): [`TO
 
 ## OS Comparison
 
-| ⭐  | Feature                    | 🪟 Win11                       | 🐧 Linux                      | 🚀 Impossible OS                |
-| --- | -------------------------- | ------------------------------ | ----------------------------- | ------------------------------- |
-| 💎  | Kernel GDI dispatch        | ✅ win32k.sys NtGdiXxx         | ❌ No kernel GDI (Mesa UMD)   | ⬜ §2–§6,§13–§17 -- GDI entries |
-| 💎  | Kernel USER dispatch       | ✅ win32k.sys NtUserXxx        | ❌ No kernel USER (Wayland)   | ⬜ §7–§12,§18–§25 -- USER       |
-| 💎  | Shadow SSDT (Table 1)      | ✅ ~1300 entries               | ❌ No SSDT concept            | ⬜ §1 + `TODO-A` -- 1300 slots  |
-| 💎  | DC-based drawing model     | ✅ HDC + GDI objects           | ❌ Direct framebuffer/Vulkan  | ⬜ §2 -- DC wraps gfx_surface   |
-| 💎  | Message queue syscalls     | ✅ NtUserGetMessage            | ❌ Wayland fd polling         | ⬜ §8 -- kernel msg queue       |
-| 💎  | Clipboard syscalls         | ✅ NtUserGet/SetClipboardData  | ❌ Wayland clipboard protocol | ⬜ §11 -- kernel clipboard      |
-| 💎  | Menu/accelerator syscalls  | ✅ NtUserCreateMenu            | ❌ Toolkit-level only         | ⬜ §10 -- kernel menus          |
+| ⭐  | Feature                    | 🪟 Win11                        | 🐧 Linux                      | 🚀 Impossible OS                |
+| --- | -------------------------- | ------------------------------- | ----------------------------- | ------------------------------- |
+| 💎  | Kernel GDI dispatch        | ✅ win32k.sys NtGdiXxx          | ❌ No kernel GDI (Mesa UMD)   | ⬜ §2–§6,§13–§17 -- GDI entries |
+| 💎  | Kernel USER dispatch       | ✅ win32k.sys NtUserXxx         | ❌ No kernel USER (Wayland)   | ⬜ §7–§12,§18–§25 -- USER       |
+| 💎  | Shadow SSDT (Table 1)      | ✅ ~1300 entries                | ❌ No SSDT concept            | ⬜ §1 + `TODO-A` -- 1300 slots  |
+| 💎  | DC-based drawing model     | ✅ HDC + GDI objects            | ❌ Direct framebuffer/Vulkan  | ⬜ §2 -- DC wraps gfx_surface   |
+| 💎  | Message queue syscalls     | ✅ NtUserGetMessage             | ❌ Wayland fd polling         | ⬜ §8 -- kernel msg queue       |
+| 💎  | Clipboard syscalls         | ✅ NtUserGet/SetClipboardData   | ❌ Wayland clipboard protocol | ⬜ §11 -- kernel clipboard      |
+| 💎  | Menu/accelerator syscalls  | ✅ NtUserCreateMenu             | ❌ Toolkit-level only         | ⬜ §10 -- kernel menus          |
 | ⭐  | Unified kernel GDI+USER    | ⚠️ win32k.sys (legacy monolith) | ❌ No equivalent              | ⬜ Clean modular impl           |
-| 💎  | GDI path/curve ops         | ✅ BeginPath/EndPath           | ❌ Cairo (userspace)          | ⬜ §13 -- kernel paths          |
-| 💎  | GDI transforms             | ✅ WorldTransform matrix       | ❌ Cairo matrix               | ⬜ §14 -- kernel transforms     |
-| 💎  | GDI print/metafile         | ✅ Print spooler + EMF         | ✅ CUPS/PostScript            | ⬜ §15 -- EMF record/playback   |
-| 💎  | Font enumeration           | ✅ EnumFontFamiliesEx          | ✅ fontconfig                 | ⬜ §16 -- kernel font enum      |
-| 💎  | Dialog boxes               | ✅ DialogBox/EndDialog         | ❌ Toolkit-level only         | ⬜ §19 -- kernel dialogs        |
-| 💎  | Keyboard hooks             | ✅ WH_KEYBOARD_LL              | ✅ XInput/libinput            | ⬜ §21 -- kernel hook chain     |
-| 💎  | DPI awareness              | ✅ Per-Monitor DPI v2          | ⚠️ Wayland basic               | ⬜ §22 -- per-monitor DPI       |
-| 💎  | Multi-touch/gesture        | ✅ WM_TOUCH/WM_GESTURE         | ✅ libinput gestures          | ⬜ §23 -- kernel touch/gesture  |
-| 💎  | Multi-monitor              | ✅ EnumDisplayMonitors         | ✅ xrandr/wlr-output          | ⬜ §24 -- kernel monitor enum   |
-| 💎  | DXGI/DirectX kernel thunks | ✅ DXGK ~50 calls              | ❌ Mesa/DRM userspace         | ⬜ §26 -- DXGK dispatch         |
-| ⭐  | Direct gfx_* wrapping      | ❌ GDI → DirectX translation   | ❌ Mesa userspace             | ⬜ Zero-overhead kernel path    |
-| ⭐  | Virtual desktop syscalls   | ❌ COM API only                | ❌ No standard                | ⬜ §27 -- kernel VD control     |
-| ⭐  | Compositor stats syscall   | ❌ No public API               | ❌ No equivalent              | ⬜ §27 -- NtGdiQueryStats       |
-| ⭐  | Acrylic/Mica as syscall    | ❌ DWM internal only           | ❌ No equivalent              | ⬜ §27 -- NtGdiSetAcrylicBlur   |
-| ⭐  | Toast notifications kernel | ❌ COM/UWP only                | ❌ D-Bus notify               | ⬜ §27 -- NtUserSendToast       |
+| 💎  | GDI path/curve ops         | ✅ BeginPath/EndPath            | ❌ Cairo (userspace)          | ⬜ §13 -- kernel paths          |
+| 💎  | GDI transforms             | ✅ WorldTransform matrix        | ❌ Cairo matrix               | ⬜ §14 -- kernel transforms     |
+| 💎  | GDI print/metafile         | ✅ Print spooler + EMF          | ✅ CUPS/PostScript            | ⬜ §15 -- EMF record/playback   |
+| 💎  | Font enumeration           | ✅ EnumFontFamiliesEx           | ✅ fontconfig                 | ⬜ §16 -- kernel font enum      |
+| 💎  | Dialog boxes               | ✅ DialogBox/EndDialog          | ❌ Toolkit-level only         | ⬜ §19 -- kernel dialogs        |
+| 💎  | Keyboard hooks             | ✅ WH_KEYBOARD_LL               | ✅ XInput/libinput            | ⬜ §21 -- kernel hook chain     |
+| 💎  | DPI awareness              | ✅ Per-Monitor DPI v2           | ⚠️ Wayland basic              | ⬜ §22 -- per-monitor DPI       |
+| 💎  | Multi-touch/gesture        | ✅ WM_TOUCH/WM_GESTURE          | ✅ libinput gestures          | ⬜ §23 -- kernel touch/gesture  |
+| 💎  | Multi-monitor              | ✅ EnumDisplayMonitors          | ✅ xrandr/wlr-output          | ⬜ §24 -- kernel monitor enum   |
+| 💎  | DXGI/DirectX kernel thunks | ✅ DXGK ~50 calls               | ❌ Mesa/DRM userspace         | ⬜ §26 -- DXGK dispatch         |
+| ⭐  | Direct gfx_* wrapping      | ❌ GDI → DirectX translation    | ❌ Mesa userspace             | ⬜ Zero-overhead kernel path    |
+| ⭐  | Virtual desktop syscalls   | ❌ COM API only                 | ❌ No standard                | ⬜ §27 -- kernel VD control     |
+| ⭐  | Compositor stats syscall   | ❌ No public API                | ❌ No equivalent              | ⬜ §27 -- NtGdiQueryStats       |
+| ⭐  | Acrylic/Mica as syscall    | ❌ DWM internal only            | ❌ No equivalent              | ⬜ §27 -- NtGdiSetAcrylicBlur   |
+| ⭐  | Toast notifications kernel | ❌ COM/UWP only                 | ❌ D-Bus notify               | ⬜ §27 -- NtUserSendToast       |
 
 > **After §1–§27:** Full Windows 11 win32k.sys parity (1300 shadow SSDT entries) plus 55 Impossible OS exclusive graphics extensions. Win32 PE applications call GDI32/USER32 via shadow SSDT syscalls wrapping the compositor/gfx/font primitives directly. No translation layer.
 

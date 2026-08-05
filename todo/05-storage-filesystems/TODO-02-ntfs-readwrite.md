@@ -164,14 +164,14 @@ Extend `ntfs_test.c` with an end-to-end scenario: format a 64 MiB in-memory imag
 ## OS Comparison
 
 
-| ⭐  | Feature                                  | 🪟 Win11                                 | 🐧 Linux                                 | 🚀 Impossible OS                         |
-| --- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
-| 💎  | NTFS B+ tree insert/delete with split/merge + `$LogFile` journaling | ✅ `NTFS.sys`; full B+ tree mutation;    | ✅ `ntfs3.ko`; B+ tree insert/delete; journal; | ⚠️ §1 -- Partial -- cores exist; audits   |
-| 💎  | NTFS data write                          | ✅ `NTFS.sys`; full write path; `NtWriteFile`/`NtSetEndOfFile` | ✅ `ntfs3.ko`; `file_write_iter()`; cluster alloc + | ⚠️ §2 -- Partial -- `ntfs_write_data()`/`ntfs_truncate()` exist; wires |
-| 💎  | NTFS volume format                       | ✅ `format.exe`; in-kernel `NTFS.sys` init | ✅ `mkntfs` (`ntfsprogs`); full volume initialiser | ⬜ §3 -- `ntfs_format()`, VBR, MFT system files |
-| 💎  | `$Secure` security stream                | ✅ `NTFS.sys`; `$Secure` full; `GetFileSecurity`/`SetFileSecurity` | ✅ `ntfs3.ko` reads `$Secure`; write support | ⬜ §4 -- `ntfs_secure.c`, SD write with CRC32c |
-| 💎  | Dirty volume auto-recovery               | ✅ `NTFS.sys`; chkdsk-on-dirty or replay at | ✅ `ntfs3.ko`; dirty flag check in       | ⚠️ §5 -- Partial -- `ntfs_recovery_replay()` exists; wires |
-| 💎  | End-to-end format + crash + replay regression test | ✅ Internal Windows test suites (not     | ✅ `ntfsck` (`ntfsprogs`); `ntfs3` upstream LTP | ⬜ §6 -- in-kernel `ntfs_test_format_and_rw()` + `ntfs_fsck()` automated |
+| ⭐  | Feature                                                             | 🪟 Win11                                                           | 🐧 Linux                                            | 🚀 Impossible OS                                                         |
+| --- | ------------------------------------------------------------------- | ------------------------------------------------------------------ | --------------------------------------------------- | ------------------------------------------------------------------------ |
+| 💎  | NTFS B+ tree insert/delete with split/merge + `$LogFile` journaling | ✅ `NTFS.sys`; full B+ tree mutation;                              | ✅ `ntfs3.ko`; B+ tree insert/delete; journal;      | ⚠️ §1 -- Partial -- cores exist; audits                                  |
+| 💎  | NTFS data write                                                     | ✅ `NTFS.sys`; full write path; `NtWriteFile`/`NtSetEndOfFile`     | ✅ `ntfs3.ko`; `file_write_iter()`; cluster alloc + | ⚠️ §2 -- Partial -- `ntfs_write_data()`/`ntfs_truncate()` exist; wires   |
+| 💎  | NTFS volume format                                                  | ✅ `format.exe`; in-kernel `NTFS.sys` init                         | ✅ `mkntfs` (`ntfsprogs`); full volume initialiser  | ⬜ §3 -- `ntfs_format()`, VBR, MFT system files                          |
+| 💎  | `$Secure` security stream                                           | ✅ `NTFS.sys`; `$Secure` full; `GetFileSecurity`/`SetFileSecurity` | ✅ `ntfs3.ko` reads `$Secure`; write support        | ⬜ §4 -- `ntfs_secure.c`, SD write with CRC32c                           |
+| 💎  | Dirty volume auto-recovery                                          | ✅ `NTFS.sys`; chkdsk-on-dirty or replay at                        | ✅ `ntfs3.ko`; dirty flag check in                  | ⚠️ §5 -- Partial -- `ntfs_recovery_replay()` exists; wires               |
+| 💎  | End-to-end format + crash + replay regression test                  | ✅ Internal Windows test suites (not                               | ✅ `ntfsck` (`ntfsprogs`); `ntfs3` upstream LTP     | ⬜ §6 -- in-kernel `ntfs_test_format_and_rw()` + `ntfs_fsck()` automated |
 
 > **After §1–6:** Impossible OS NTFS reaches full read/write parity with `ntfs3.ko` on Linux. External Windows drives -- USB sticks, SSDs, dual-boot partitions -- mount cleanly, survive dirty disconnects via journal replay, and receive correctly stamped security descriptors on new files. This is a correctness goal; the differentiator is that the entire stack runs in-kernel with no FUSE indirection, matching Windows' own `NTFS.sys` architecture rather than Linux's user-space `ntfs-3g` fallback.
 

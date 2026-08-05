@@ -66,19 +66,19 @@ title: "TODO-12 -- Long-Term Features"
 
 ## Implementation Order
 
-| #   | Section                                  | Tag        | Dep                                      | Mark |
-| --- | ---------------------------------------- | ---------- | ---------------------------------------- | ---- |
-| 1   | Kernel debugger (GDB RSP stub)           | `[Opus]`   | serial                                   | 💎   |
-| 2   | User-mode debugger (`debugger.exe`, Win32 debug API) | `[Opus]`   | §1, TODO-07 §7                           | 💎   |
+| #   | Section                                                    | Tag        | Dep                                      | Mark |
+| --- | ---------------------------------------------------------- | ---------- | ---------------------------------------- | ---- |
+| 1   | Kernel debugger (GDB RSP stub)                             | `[Opus]`   | serial                                   | 💎   |
+| 2   | User-mode debugger (`debugger.exe`, Win32 debug API)       | `[Opus]`   | §1, TODO-07 §7                           | 💎   |
 | 3   | Developer tools (F12 console, memmap, strace, FPS overlay) | `[Sonnet]` | TODO-08 §2                               | ⭐   |
-| 4   | Touch input + gesture recognizer         | `[Opus]`   | XREF: 04-drivers/TODO-09                 | 💎   |
-| 5   | Gamepad / controller input + XInput stubs | `[Sonnet]` | XREF: 04-drivers/TODO-09                 | 💎   |
-| 6   | Print support (PDF export + IPP stretch) | `[Sonnet]` | TODO-08 §11                              | 💎   |
-| 7   | Text-to-speech (SAM port → eSpeak-NG upgrade) | `[Sonnet]` | TODO-01 (audio)                          | 💎   |
-| 8   | Software OpenGL (TinyGL port)            | `[Opus]`   | TODO-08 §11 (GDI)                        | 💎   |
-| 9   | Multi-user session management + fast switching | `[Opus]`   | TODO-03 (accounts), XREF: 07-gfx/TODO-02 | 💎   |
-| 10  | Telemetry (opt-in, anonymous)            | `[Sonnet]` | TODO-08 §2                               | 💎   |
-| 11  | Parental controls (`parcon.cpl`)         | `[Sonnet]` | TODO-03 (accounts), TODO-07 §7           | 💎   |
+| 4   | Touch input + gesture recognizer                           | `[Opus]`   | XREF: 04-drivers/TODO-09                 | 💎   |
+| 5   | Gamepad / controller input + XInput stubs                  | `[Sonnet]` | XREF: 04-drivers/TODO-09                 | 💎   |
+| 6   | Print support (PDF export + IPP stretch)                   | `[Sonnet]` | TODO-08 §11                              | 💎   |
+| 7   | Text-to-speech (SAM port → eSpeak-NG upgrade)              | `[Sonnet]` | TODO-01 (audio)                          | 💎   |
+| 8   | Software OpenGL (TinyGL port)                              | `[Opus]`   | TODO-08 §11 (GDI)                        | 💎   |
+| 9   | Multi-user session management + fast switching             | `[Opus]`   | TODO-03 (accounts), XREF: 07-gfx/TODO-02 | 💎   |
+| 10  | Telemetry (opt-in, anonymous)                              | `[Sonnet]` | TODO-08 §2                               | 💎   |
+| 11  | Parental controls (`parcon.cpl`)                           | `[Sonnet]` | TODO-03 (accounts), TODO-07 §7           | 💎   |
 
 ---
 
@@ -333,21 +333,21 @@ Per-user time limits, app blocking, and activity logging. Admin password require
 ## OS Comparison
 
 
-| ⭐  | Feature                                  | 🪟 Win11             | 🐧 Linux               | 🚀 Impossible OS                         |
-| --- | ---------------------------------------- | -------------------- | ---------------------- | ---------------------------------------- |
-| 💎  | Kernel debugger                          | ✅ WinDbg KD         | ✅ KGDB (GDB RSP)      | ⬜ GDB RSP on COM1                       |
-| 💎  | User-mode debugger with Win32 debug API  | ✅ WinDbg user       | ✅ GDB/ptrace          | ⬜ `debugger.exe` + INT3/DR*             |
-| 💎  | Developer console overlay                | ✅ DevHome           | ✅ Various             | ⬜ F12 overlay (⭐ in-kernel, not        |
-| 💎  | Multi-touch input + gestures             | ✅ WM_TOUCH          | ✅ libinput            | ⬜ `touch_point` + gesture engine        |
-| 💎  | Gamepad / XInput API                     | ✅ XInput            | ✅ SDL2/evdev          | ⬜ `gamepad_poll()` + XInput stubs       |
-| 💎  | Print-to-PDF                             | ✅ MS Print to PDF   | ✅ CUPS/PDF            | ⬜ native PDF writer                     |
-| 💎  | Text-to-speech                           | ✅ SAPI/Narrator     | ✅ eSpeak              | ⬜ SAM port + `SYS_TTS_SPEAK`            |
-| 💎  | Software OpenGL                          | ✅ WARP d3d11        | ✅ Mesa llvmpipe       | ⬜ TinyGL port                           |
-| 💎  | Multi-user fast switching                | ✅ Win11 switch      | ✅ DM sessions         | ⬜ per-session compositor                |
-| 💎  | Opt-in telemetry                         | ✅ Windows telemetry | ✅ Ubuntu opt-in       | ⬜ zero by default                       |
-| 💎  | Parental controls                        | ✅ Family Safety     | ✅ Various             | ⬜ kernel-enforced                       |
-| ⭐  | F12 in-kernel debug console              | ❌ DevTools are apps | ❌ External tools      | ⬜ composited overlay, zero process overhead |
-| ⭐  | Kernel GDB stub + user debugger in same OS | ❌ Separate KD + VS  | ❌ KGDB + GDB separate | ⬜ unified debug story                   |
+| ⭐  | Feature                                    | 🪟 Win11             | 🐧 Linux               | 🚀 Impossible OS                             |
+| --- | ------------------------------------------ | -------------------- | ---------------------- | -------------------------------------------- |
+| 💎  | Kernel debugger                            | ✅ WinDbg KD         | ✅ KGDB (GDB RSP)      | ⬜ GDB RSP on COM1                           |
+| 💎  | User-mode debugger with Win32 debug API    | ✅ WinDbg user       | ✅ GDB/ptrace          | ⬜ `debugger.exe` + INT3/DR*                 |
+| 💎  | Developer console overlay                  | ✅ DevHome           | ✅ Various             | ⬜ F12 overlay (⭐ in-kernel, not            |
+| 💎  | Multi-touch input + gestures               | ✅ WM_TOUCH          | ✅ libinput            | ⬜ `touch_point` + gesture engine            |
+| 💎  | Gamepad / XInput API                       | ✅ XInput            | ✅ SDL2/evdev          | ⬜ `gamepad_poll()` + XInput stubs           |
+| 💎  | Print-to-PDF                               | ✅ MS Print to PDF   | ✅ CUPS/PDF            | ⬜ native PDF writer                         |
+| 💎  | Text-to-speech                             | ✅ SAPI/Narrator     | ✅ eSpeak              | ⬜ SAM port + `SYS_TTS_SPEAK`                |
+| 💎  | Software OpenGL                            | ✅ WARP d3d11        | ✅ Mesa llvmpipe       | ⬜ TinyGL port                               |
+| 💎  | Multi-user fast switching                  | ✅ Win11 switch      | ✅ DM sessions         | ⬜ per-session compositor                    |
+| 💎  | Opt-in telemetry                           | ✅ Windows telemetry | ✅ Ubuntu opt-in       | ⬜ zero by default                           |
+| 💎  | Parental controls                          | ✅ Family Safety     | ✅ Various             | ⬜ kernel-enforced                           |
+| ⭐  | F12 in-kernel debug console                | ❌ DevTools are apps | ❌ External tools      | ⬜ composited overlay, zero process overhead |
+| ⭐  | Kernel GDB stub + user debugger in same OS | ❌ Separate KD + VS  | ❌ KGDB + GDB separate | ⬜ unified debug story                       |
 
 **Impossible OS advantage:** The F12 debug console is implemented in-kernel with zero process overhead -- it reads live kernel state without IPC, making it faster than any userland tool. The GDB stub and user-mode debugger share the same OS, giving a unified debugging story from kernel panic to user-mode INT3 that no other OS provides out of the box.
 

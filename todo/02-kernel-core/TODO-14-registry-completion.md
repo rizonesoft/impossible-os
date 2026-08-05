@@ -65,24 +65,24 @@ title: "TODO-14 -- Registry System Completion"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                              | Depends On                | Status |
-| --- | :---: | ---------------------------------------- | ------------------------- | :----: |
+| ⭐  | Order | Deliverable                                       | Depends On                | Status |
+| --- | :---: | ------------------------------------------------- | ------------------------- | :----: |
 | 💎  |   1   | Access rights, API limits, FILETIME & RegFlushKey | TODO-05 §2,§3, TODO-08 §1 |  [/]   |
-| 💎  |   2   | Advanced key ops (copy, rename, save, volatile) | §1                        |  [/]   |
-| 💎  |   3   | Change notifications (core + exclusive extras) | §2                        |  [/]   |
-| 💎  |   4   | Nt/Zw registry syscalls & pointer validation | §1, TODO-12 §14, §15      |  [/]   |
-| 💎  |   5   | advapi32.dll compat (A/W, HKCR, error map) | §4                        |  [/]   |
-| 💎  |   6   | Registry virtualization & .reg import/export | §5                        |  [/]   |
-| 💎  |   7   | `regedit` shell tool                     | §4                        |  [/]   |
+| 💎  |   2   | Advanced key ops (copy, rename, save, volatile)   | §1                        |  [/]   |
+| 💎  |   3   | Change notifications (core + exclusive extras)    | §2                        |  [/]   |
+| 💎  |   4   | Nt/Zw registry syscalls & pointer validation      | §1, TODO-12 §14, §15      |  [/]   |
+| 💎  |   5   | advapi32.dll compat (A/W, HKCR, error map)        | §4                        |  [/]   |
+| 💎  |   6   | Registry virtualization & .reg import/export      | §5                        |  [/]   |
+| 💎  |   7   | `regedit` shell tool                              | §4                        |  [/]   |
 | ⭐  |   8   | Advanced hive features (dual-log, delta, compact) | §4                        |  [/]   |
-| ⭐  |   9   | Transactions, search API & snapshot/diff | §2, §3, §8                |  [/]   |
-| ⭐  |  10   | Performance (mmap hive, B-tree cell format) | §9                        |  [/]   |
-| 💎  |  11   | KTM Transaction syscalls wired to SSDT   | §9, TODO-12 §14, §15      |  [/]   |
-| 💎  |  12   | Registry symlink completion (create, open-link) | §2, §4                    |  [/]   |
-| ⭐  |  13   | Schema-validated registry keys           | §3, §4                    |  [/]   |
-| 💎  |  14   | Registry SMP synchronization             | TODO-12 §14               |  [/]   |
-| 💎  |  15   | Value size expansion (16 KiB names, 1 MiB data) | §1, §14                   |  [/]   |
-| 💎  |  16   | Post-ship follow-up backfill (2026-07-31 cohort) | --                        |  [ ]   |
+| ⭐  |   9   | Transactions, search API & snapshot/diff          | §2, §3, §8                |  [/]   |
+| ⭐  |  10   | Performance (mmap hive, B-tree cell format)       | §9                        |  [/]   |
+| 💎  |  11   | KTM Transaction syscalls wired to SSDT            | §9, TODO-12 §14, §15      |  [/]   |
+| 💎  |  12   | Registry symlink completion (create, open-link)   | §2, §4                    |  [/]   |
+| ⭐  |  13   | Schema-validated registry keys                    | §3, §4                    |  [/]   |
+| 💎  |  14   | Registry SMP synchronization                      | TODO-12 §14               |  [/]   |
+| 💎  |  15   | Value size expansion (16 KiB names, 1 MiB data)   | §1, §14                   |  [/]   |
+| 💎  |  16   | Post-ship follow-up backfill (2026-07-31 cohort)  | --                        |  [ ]   |
 
 > 💎 = parity work -- matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work -- Impossible OS is superior or first.
@@ -705,44 +705,44 @@ From the stamped section 2:
 
 ## OS Comparison
 
-| ⭐  | Feature                               | 🪟 Win11                     | 🐧 Linux                         | 🚀 Impossible OS                         |
-| --- | ------------------------------------- | ---------------------------- | -------------------------------- | ---------------------------------------- |
-| 💎  | Hierarchical typed key/value store    | ✅ Full                      | ⚠️ dconf (GNOME), ini files       | ✅ Done -- `reg_key_t` tree              |
-| 💎  | Win32 `RegXxx` API                    | ✅ Native                    | ❌ N/A                           | ✅ Done -- complete native API           |
-| 💎  | Persistent hive + crash-safe WAJ      | ✅ `.LOG1`/`.LOG2`           | ⚠️ dconf binary db, no WAJ        | ✅ Done -- `.hive.log` WAJ               |
-| 💎  | Key `LastWriteTime` (FILETIME)        | ✅ Every key                 | ❌ N/A                           | ✅ FILETIME read-time (§1)               |
-| 💎  | KEY_* access rights enforcement       | ✅ Full                      | ❌ N/A                           | 🔄 handle-mask enforced (§1); DACL SeAccessCheck T15 §5 |
-| 💎  | Registry symlinks (REG_LINK)          | ✅ CurrentControlSet, etc.   | ❌ N/A                           | ⚠️ Resolution done; API ⬜ §12            |
-| 💎  | `RegCopyTree` / `RegRenameKey`        | ✅ Full                      | ❌ N/A                           | ✅ Done -- recursive copy + in-place rename (§2) |
-| 💎  | Volatile keys (`REG_OPTION_VOLATILE`) | ✅ Full                      | ❌ N/A                           | ✅ Done -- RAM-only, no-persist (§2)     |
-| 💎  | `RegSaveKey` / `RegRestoreKey`        | ✅ SeBackup/SeRestore        | ❌ N/A                           | 🔄 fail-closed; body T15 §2 (§2)         |
-| ⭐  | KCB hot-key close-cache               | ✅ CmpCache pushlock         | ❌ N/A                           | ✅ Done -- 32-entry LRU (§2)             |
-| 💎  | Change notifications                  | ✅ `RegNotifyChangeKeyValue` | ⚠️ inotify (file-level)           | 🔄 callback engine (§3); Win32 event path §4 |
-| 💎  | `REG_NOTIFY_THREAD_AGNOSTIC`          | ✅ Win8+                     | ❌ N/A                           | ⬜ §3                                    |
-| 💎  | Full NT registry syscall surface      | ✅ 30+ syscalls              | ❌ No registry concept           | ⬜ §4                                    |
-| 💎  | `KEY_INFORMATION_CLASS` completeness  | ✅ 10 info classes           | ❌ N/A                           | ⬜ §4                                    |
-| 💎  | advapi32.dll W variants + HKCR        | ✅ Full                      | ⚠️ Wine reimplements              | ⬜ §5                                    |
-| 💎  | Registry virtualization               | ✅ Vista+ VirtualStore       | ❌ N/A                           | ⬜ §6                                    |
-| 💎  | Virtualization control flags          | ✅ `DONT_VIRTUALIZE` etc.    | ❌ N/A                           | ⬜ §6                                    |
-| 💎  | `.reg` import/export                  | ✅ regedit.exe built-in      | ⚠️ Wine `regedit`                 | ⬜ §6 §7                                 |
-| 💎  | Dual-log WAJ failover                 | ✅ `.LOG1`/`.LOG2`           | ❌ N/A                           | ⬜ §8                                    |
-| ⭐  | Incremental delta flush               | ❌ Full hive rewrite         | ❌ Full db rewrite               | ⬜ §8                                    |
-| ⭐  | Change-detail payloads                | ❌ Signal only               | ❌ N/A                           | ⬜ §3                                    |
-| ⭐  | Priority-based notification dispatch  | ❌ All watchers equal        | ❌ N/A                           | ⬜ §3                                    |
-| ⭐  | Atomic registry transactions          | ⚠️ KTM deprecated             | ⚠️ dconf change_set (no rollback) | ⬜ §9                                    |
-| ⭐  | Native pattern-search API             | ❌ Manual enumerate+match    | ❌ N/A                           | ⬜ §9                                    |
-| ⭐  | Snapshot & diff                       | ❌ Needs RegShot (3rd-party) | ❌ N/A                           | ⬜ §9                                    |
-| ⭐  | Hive integrity reporter               | ❌ No built-in               | ❌ N/A                           | ⬜ §8                                    |
-| ⭐  | Idle-time hive compaction             | ❌ No defrag                 | ❌ N/A                           | ⬜ §8                                    |
-| ⭐  | Per-process registry sandbox          | ❌ HKCU shared               | ❌ N/A                           | ⬜ §4                                    |
-| ⭐  | Built-in API call tracing             | ❌ Needs ProcMon/ETW         | ❌ N/A                           | ⬜ §5                                    |
-| ⭐  | Per-PID registry quota                | ❌ Global limit only         | ❌ N/A                           | ⬜ §9                                    |
-| ⭐  | Memory-mapped hive                    | ❌ Static pool               | ✅ dconf mmap reads              | ⬜ §10                                   |
-| ⭐  | B-tree cell format                    | ✅ `regf` format             | ❌ N/A                           | ⬜ §10                                   |
-| ⭐  | Schema-validated keys                 | ❌ No type enforcement       | ⚠️ GSettings XML schemas          | ⬜ §13                                   |
-| 💎  | SMP-safe registry operations          | ✅ CmpLock pushlock          | ✅ dconf GVDB atomic             | ⬜ §14                                   |
-| 💎  | NtFreezeRegistry / NtThawRegistry     | ✅ VSS backup support        | ❌ N/A                           | ⬜ §4                                    |
-| 💎  | NtInitializeRegistry boot signal      | ✅ SMSS boot sequence        | ❌ N/A                           | ⬜ §4                                    |
+| ⭐  | Feature                               | 🪟 Win11                     | 🐧 Linux                          | 🚀 Impossible OS                                        |
+| --- | ------------------------------------- | ---------------------------- | --------------------------------- | ------------------------------------------------------- |
+| 💎  | Hierarchical typed key/value store    | ✅ Full                      | ⚠️ dconf (GNOME), ini files       | ✅ Done -- `reg_key_t` tree                             |
+| 💎  | Win32 `RegXxx` API                    | ✅ Native                    | ❌ N/A                            | ✅ Done -- complete native API                          |
+| 💎  | Persistent hive + crash-safe WAJ      | ✅ `.LOG1`/`.LOG2`           | ⚠️ dconf binary db, no WAJ        | ✅ Done -- `.hive.log` WAJ                              |
+| 💎  | Key `LastWriteTime` (FILETIME)        | ✅ Every key                 | ❌ N/A                            | ✅ FILETIME read-time (§1)                              |
+| 💎  | KEY_* access rights enforcement       | ✅ Full                      | ❌ N/A                            | 🔄 handle-mask enforced (§1); DACL SeAccessCheck T15 §5 |
+| 💎  | Registry symlinks (REG_LINK)          | ✅ CurrentControlSet, etc.   | ❌ N/A                            | ⚠️ Resolution done; API ⬜ §12                          |
+| 💎  | `RegCopyTree` / `RegRenameKey`        | ✅ Full                      | ❌ N/A                            | ✅ Done -- recursive copy + in-place rename (§2)        |
+| 💎  | Volatile keys (`REG_OPTION_VOLATILE`) | ✅ Full                      | ❌ N/A                            | ✅ Done -- RAM-only, no-persist (§2)                    |
+| 💎  | `RegSaveKey` / `RegRestoreKey`        | ✅ SeBackup/SeRestore        | ❌ N/A                            | 🔄 fail-closed; body T15 §2 (§2)                        |
+| ⭐  | KCB hot-key close-cache               | ✅ CmpCache pushlock         | ❌ N/A                            | ✅ Done -- 32-entry LRU (§2)                            |
+| 💎  | Change notifications                  | ✅ `RegNotifyChangeKeyValue` | ⚠️ inotify (file-level)           | 🔄 callback engine (§3); Win32 event path §4            |
+| 💎  | `REG_NOTIFY_THREAD_AGNOSTIC`          | ✅ Win8+                     | ❌ N/A                            | ⬜ §3                                                   |
+| 💎  | Full NT registry syscall surface      | ✅ 30+ syscalls              | ❌ No registry concept            | ⬜ §4                                                   |
+| 💎  | `KEY_INFORMATION_CLASS` completeness  | ✅ 10 info classes           | ❌ N/A                            | ⬜ §4                                                   |
+| 💎  | advapi32.dll W variants + HKCR        | ✅ Full                      | ⚠️ Wine reimplements              | ⬜ §5                                                   |
+| 💎  | Registry virtualization               | ✅ Vista+ VirtualStore       | ❌ N/A                            | ⬜ §6                                                   |
+| 💎  | Virtualization control flags          | ✅ `DONT_VIRTUALIZE` etc.    | ❌ N/A                            | ⬜ §6                                                   |
+| 💎  | `.reg` import/export                  | ✅ regedit.exe built-in      | ⚠️ Wine `regedit`                 | ⬜ §6 §7                                                |
+| 💎  | Dual-log WAJ failover                 | ✅ `.LOG1`/`.LOG2`           | ❌ N/A                            | ⬜ §8                                                   |
+| ⭐  | Incremental delta flush               | ❌ Full hive rewrite         | ❌ Full db rewrite                | ⬜ §8                                                   |
+| ⭐  | Change-detail payloads                | ❌ Signal only               | ❌ N/A                            | ⬜ §3                                                   |
+| ⭐  | Priority-based notification dispatch  | ❌ All watchers equal        | ❌ N/A                            | ⬜ §3                                                   |
+| ⭐  | Atomic registry transactions          | ⚠️ KTM deprecated            | ⚠️ dconf change_set (no rollback) | ⬜ §9                                                   |
+| ⭐  | Native pattern-search API             | ❌ Manual enumerate+match    | ❌ N/A                            | ⬜ §9                                                   |
+| ⭐  | Snapshot & diff                       | ❌ Needs RegShot (3rd-party) | ❌ N/A                            | ⬜ §9                                                   |
+| ⭐  | Hive integrity reporter               | ❌ No built-in               | ❌ N/A                            | ⬜ §8                                                   |
+| ⭐  | Idle-time hive compaction             | ❌ No defrag                 | ❌ N/A                            | ⬜ §8                                                   |
+| ⭐  | Per-process registry sandbox          | ❌ HKCU shared               | ❌ N/A                            | ⬜ §4                                                   |
+| ⭐  | Built-in API call tracing             | ❌ Needs ProcMon/ETW         | ❌ N/A                            | ⬜ §5                                                   |
+| ⭐  | Per-PID registry quota                | ❌ Global limit only         | ❌ N/A                            | ⬜ §9                                                   |
+| ⭐  | Memory-mapped hive                    | ❌ Static pool               | ✅ dconf mmap reads               | ⬜ §10                                                  |
+| ⭐  | B-tree cell format                    | ✅ `regf` format             | ❌ N/A                            | ⬜ §10                                                  |
+| ⭐  | Schema-validated keys                 | ❌ No type enforcement       | ⚠️ GSettings XML schemas          | ⬜ §13                                                  |
+| 💎  | SMP-safe registry operations          | ✅ CmpLock pushlock          | ✅ dconf GVDB atomic              | ⬜ §14                                                  |
+| 💎  | NtFreezeRegistry / NtThawRegistry     | ✅ VSS backup support        | ❌ N/A                            | ⬜ §4                                                   |
+| 💎  | NtInitializeRegistry boot signal      | ✅ SMSS boot sequence        | ❌ N/A                            | ⬜ §4                                                   |
 
 After §1--7 + §12 + §14, Impossible OS reaches full Windows 11 parity on every registry feature including access rights, FILETIME timestamps, symlink creation, complete NT syscall surface (30+ syscalls with all info classes), notifications, HKCR, virtualization with control flags, `.reg` I/O, the regedit tool, and SMP-safe concurrent access. Linux has no equivalent in-kernel typed store; it relies on user-space GNOME dconf or scattered ini files.
 Sections §8--10 + §13 deliver exclusive features that exceed Windows 11: incremental delta flush saves I/O on large hives, notification coalescing and change-detail payloads eliminate the need to re-query after a change, atomic transactions fill a gap Windows deprecated, snapshot/diff and search API replace third-party RegShot, hive compaction and mmap make the registry faster, and schema-validated keys provide type enforcement that neither Windows nor Linux offers natively.

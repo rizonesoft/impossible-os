@@ -207,16 +207,16 @@ Right-click pinned or window button → jump list popup above context menu showi
 ## OS Comparison
 
 
-| ⭐  | Feature             | 🪟 Win11                                 | 🐧 Linux                                 | 🚀 Impossible OS                         |
-| --- | ------------------- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
-| 💎  | Window list         | ✅ Taskbar grouping, labels, accent underline, | ✅ GNOME dash-to-panel, KDE task manager; | ⬜ §1 -- `taskbar_entry_t` 64-slot static array; accent |
-| 💎  | Button context menu | ✅ Right-click taskbar button → window   | ✅ KDE right-click task; GNOME extension; | ⬜ §2 -- uses `context_menu_show()` (TODO-07 §1); virtual |
-| ⭐  | Aero Peek           | ✅ DWM Aero Peek (GPU composited);       | ⚠️ KDE Peek effect (GPU shader);          | ⬜ §3 -- `⭐` software `gfx_blit_alpha` per-window alpha |
-| 💎  | Progress badges     | ✅ `ITaskbarList3::SetProgressValue/State`; used by Explorer, Edge, | ✅ Unity `libunity`; KDE `KStatusNotifierItem`; taskbar | ⬜ §4 -- 3 px bar at icon                |
-| 💎  | Pinned apps         | ✅ Pin to taskbar; combined pin+window;  | ✅ GNOME Favorites (`gsettings`); KDE pinned | ⬜ §5 -- max 16 pins; CSV in             |
-| 💎  | Jump lists          | ✅ `ICustomDestinationList`; Shell infrastructure; Explorer integration | ⚠️ KDE recent documents in taskbar;       | ⬜ §6 -- `SYS_JUMPLIST_NOTIFY=53`; Registry ring buffer max |
-| 💎  | Auto-hide           | ✅ Taskbar settings → Auto-hide; DWM     | ✅ GNOME auto-hide dock; KDE auto-hide   | ⬜ §7 -- `gfx_tween_t` via `anim_mgr`; 150 ms |
-| 💎  | Customization       | ✅ Taskbar position (all edges, Win10);  | ✅ GNOME extension position; KDE panel   | ⬜ §8 -- `⭐` all 4 edge positions       |
+| ⭐  | Feature             | 🪟 Win11                                                                | 🐧 Linux                                                | 🚀 Impossible OS                                            |
+| --- | ------------------- | ----------------------------------------------------------------------- | ------------------------------------------------------- | ----------------------------------------------------------- |
+| 💎  | Window list         | ✅ Taskbar grouping, labels, accent underline,                          | ✅ GNOME dash-to-panel, KDE task manager;               | ⬜ §1 -- `taskbar_entry_t` 64-slot static array; accent     |
+| 💎  | Button context menu | ✅ Right-click taskbar button → window                                  | ✅ KDE right-click task; GNOME extension;               | ⬜ §2 -- uses `context_menu_show()` (TODO-07 §1); virtual   |
+| ⭐  | Aero Peek           | ✅ DWM Aero Peek (GPU composited);                                      | ⚠️ KDE Peek effect (GPU shader);                        | ⬜ §3 -- `⭐` software `gfx_blit_alpha` per-window alpha    |
+| 💎  | Progress badges     | ✅ `ITaskbarList3::SetProgressValue/State`; used by Explorer, Edge,     | ✅ Unity `libunity`; KDE `KStatusNotifierItem`; taskbar | ⬜ §4 -- 3 px bar at icon                                   |
+| 💎  | Pinned apps         | ✅ Pin to taskbar; combined pin+window;                                 | ✅ GNOME Favorites (`gsettings`); KDE pinned            | ⬜ §5 -- max 16 pins; CSV in                                |
+| 💎  | Jump lists          | ✅ `ICustomDestinationList`; Shell infrastructure; Explorer integration | ⚠️ KDE recent documents in taskbar;                     | ⬜ §6 -- `SYS_JUMPLIST_NOTIFY=53`; Registry ring buffer max |
+| 💎  | Auto-hide           | ✅ Taskbar settings → Auto-hide; DWM                                    | ✅ GNOME auto-hide dock; KDE auto-hide                  | ⬜ §7 -- `gfx_tween_t` via `anim_mgr`; 150 ms               |
+| 💎  | Customization       | ✅ Taskbar position (all edges, Win10);                                 | ✅ GNOME extension position; KDE panel                  | ⬜ §8 -- `⭐` all 4 edge positions                          |
 
 > **After §1–§8:** Impossible OS taskbar matches Windows 10 (not Win11's regression) by supporting all four edge positions while also delivering software Aero Peek (via `gfx_blit_alpha` per-window alpha pass) without any GPU dependency. Jump list integration with the `SYS_JUMPLIST_NOTIFY` syscall gives user-mode apps a clean path to register recent files from day one.
 

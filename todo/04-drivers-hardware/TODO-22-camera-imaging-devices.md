@@ -28,18 +28,18 @@ title: "TODO-22 -- Camera, Video Capture & Imaging Devices"
 
 ## Implementation Order
 
-| Priority  | Order | Deliverable                              | Depends On     | Status |
-| --------- | :---: | ---------------------------------------- | -------------- | :----: |
-| Parity    |   1   | Camera class API and buffer model        | --             |  [ ]   |
-| Parity    |   2   | USB UVC discovery and controls           | §1, TODO-10 §3 |  [ ]   |
-| Parity    |   3   | UVC streaming and frame formats          | §2             |  [ ]   |
-| Parity    |   4   | Privacy LED/switch enforcement           | §1, TODO-19    |  [ ]   |
-| Parity    |   5   | MIPI/IPU laptop camera boundary          | TODO-06        |  [ ]   |
+| Priority  | Order | Deliverable                                 | Depends On     | Status |
+| --------- | :---: | ------------------------------------------- | -------------- | :----: |
+| Parity    |   1   | Camera class API and buffer model           | --             |  [ ]   |
+| Parity    |   2   | USB UVC discovery and controls              | §1, TODO-10 §3 |  [ ]   |
+| Parity    |   3   | UVC streaming and frame formats             | §2             |  [ ]   |
+| Parity    |   4   | Privacy LED/switch enforcement              | §1, TODO-19    |  [ ]   |
+| Parity    |   5   | MIPI/IPU laptop camera boundary             | TODO-06        |  [ ]   |
 | Parity    |   6   | Capture device and HDMI/USB grabber support | §1             |  [ ]   |
-| Parity    |   7   | Scanner/image acquisition class          | §1, TODO-10    |  [ ]   |
-| Parity    |   8   | Permissions and audit hooks              | §1, SRM        |  [ ]   |
-| Exclusive |   9   | Camera diagnostics and privacy report    | §1-§8          |  [ ]   |
-| Parity    |  10   | Tests and device matrix                  | §1-§9          |  [ ]   |
+| Parity    |   7   | Scanner/image acquisition class             | §1, TODO-10    |  [ ]   |
+| Parity    |   8   | Permissions and audit hooks                 | §1, SRM        |  [ ]   |
+| Exclusive |   9   | Camera diagnostics and privacy report       | §1-§8          |  [ ]   |
+| Parity    |  10   | Tests and device matrix                     | §1-§9          |  [ ]   |
 
 ## 1. Camera Class API and Buffer Model
 

@@ -49,17 +49,17 @@ title: "TODO-32 -- Kernel Logging v2: Lockless, Priority-Lanes, Fail-Proof"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                              | Depends On         | Status |
-| --- | ----- | ---------------------------------------- | ------------------ | ------ |
-| ⭐  | 1     | Per-CPU SPSC ring buffer + atomic primitives | T31 §1             | [ ]    |
-| ⭐  | 2     | Lockless `klog_v2()` enqueue + format helpers | §1                 | [ ]    |
-| ⭐  | 3     | Priority lanes + per-level sub-budgets   | §1, §2             | [ ]    |
-| ⭐  | 4     | Fail-proof FATAL emergency path (bypasses ring on overflow) | §3                 | [ ]    |
-| 💎  | 5     | Configurable per-subsystem rate limits + TEST exemption | §3                 | [ ]    |
-| ⭐  | 6     | Background drain worker (per-CPU read, serial batch write) | §1, §2, T07 §4     | [ ]    |
-| 💎  | 7     | Backpressure-aware serial drain + pressure counters | §6                 | [ ]    |
-| ⭐  | 8     | Native structured field wire format + ETW + JSON Lines feed | §2, T04 §6, T04 §7 | [ ]    |
-| ⭐  | 9     | Boot-survival ring snapshot + recovery   | §1, T27 §2         | [ ]    |
+| ⭐  | Order | Deliverable                                                      | Depends On         | Status |
+| --- | ----- | ---------------------------------------------------------------- | ------------------ | ------ |
+| ⭐  | 1     | Per-CPU SPSC ring buffer + atomic primitives                     | T31 §1             | [ ]    |
+| ⭐  | 2     | Lockless `klog_v2()` enqueue + format helpers                    | §1                 | [ ]    |
+| ⭐  | 3     | Priority lanes + per-level sub-budgets                           | §1, §2             | [ ]    |
+| ⭐  | 4     | Fail-proof FATAL emergency path (bypasses ring on overflow)      | §3                 | [ ]    |
+| 💎  | 5     | Configurable per-subsystem rate limits + TEST exemption          | §3                 | [ ]    |
+| ⭐  | 6     | Background drain worker (per-CPU read, serial batch write)       | §1, §2, T07 §4     | [ ]    |
+| 💎  | 7     | Backpressure-aware serial drain + pressure counters              | §6                 | [ ]    |
+| ⭐  | 8     | Native structured field wire format + ETW + JSON Lines feed      | §2, T04 §6, T04 §7 | [ ]    |
+| ⭐  | 9     | Boot-survival ring snapshot + recovery                           | §1, T27 §2         | [ ]    |
 | 💎  | 10    | v1 -> v2 migration switch (`KLOG_V2=1`) + benchmarks + retire v1 | §2..§9, T04        | [ ]    |
 
 > ⭐ = exclusive: no other production OS combines lockless per-CPU + fail-proof + structured + plain-text + HMAC-chained.
@@ -219,20 +219,20 @@ Ship v2 alongside v1 behind a build-time flag (`KLOG_V2=1`) until benchmarks pro
 
 ## OS Comparison
 
-| ⭐  | Feature                           | 🪟 Win11                   | 🐧 Linux                  | 🚀 Impossible OS               |
-| --- | --------------------------------- | -------------------------- | ------------------------- | ------------------------------ |
-| ⭐  | Lockless per-CPU enqueue          | ⚠️ ETW per-CPU, ring-lock   | ✅ printk 5.10+ lockless  | ⬜ §1, §2 (SPSC)               |
+| ⭐  | Feature                           | 🪟 Win11                    | 🐧 Linux                   | 🚀 Impossible OS               |
+| --- | --------------------------------- | --------------------------- | -------------------------- | ------------------------------ |
+| ⭐  | Lockless per-CPU enqueue          | ⚠️ ETW per-CPU, ring-lock   | ✅ printk 5.10+ lockless   | ⬜ §1, §2 (SPSC)               |
 | ⭐  | Fail-proof FATAL guarantee        | ⚠️ ETW can drop hi-rate     | ⚠️ printk_emergency only   | ⬜ §4 (dedicated emergency)    |
-| ⭐  | Priority lanes (per-level budget) | ❌ shared budget           | ❌ single ring            | ⬜ §3                          |
-| 💎  | Native structured fields          | ✅ ETW binary              | ⚠️ journald binary only    | ⬜ §8 (binary + plain-text)    |
-| 💎  | Plain-text + structured at once   | ❌ separate                | ⚠️ printk vs journald      | ⬜ §8 (one source, two render) |
-| ⭐  | NMI-safe enqueue                  | ⚠️ NMI uses dedicated buf   | ✅ NMI ring (since 5.10)  | ⬜ §1 (atomic SPSC)            |
-| 💎  | Configurable per-tag rate limit   | ❌ global only             | ⚠️ rate_limit_burst        | ⬜ §5                          |
-| ⭐  | Diagnostic-tag exemption (TEST)   | ❌                         | ❌                        | ⬜ §5                          |
-| 💎  | Backpressure-aware serial drain   | ❌                         | ⚠️ printk synchronous      | ⬜ §6, §7                      |
+| ⭐  | Priority lanes (per-level budget) | ❌ shared budget            | ❌ single ring             | ⬜ §3                          |
+| 💎  | Native structured fields          | ✅ ETW binary               | ⚠️ journald binary only    | ⬜ §8 (binary + plain-text)    |
+| 💎  | Plain-text + structured at once   | ❌ separate                 | ⚠️ printk vs journald      | ⬜ §8 (one source, two render) |
+| ⭐  | NMI-safe enqueue                  | ⚠️ NMI uses dedicated buf   | ✅ NMI ring (since 5.10)   | ⬜ §1 (atomic SPSC)            |
+| 💎  | Configurable per-tag rate limit   | ❌ global only              | ⚠️ rate_limit_burst        | ⬜ §5                          |
+| ⭐  | Diagnostic-tag exemption (TEST)   | ❌                          | ❌                         | ⬜ §5                          |
+| 💎  | Backpressure-aware serial drain   | ❌                          | ⚠️ printk synchronous      | ⬜ §6, §7                      |
 | ⭐  | Boot-survival snapshot            | ⚠️ Event Log only post-boot | ⚠️ pstore / persistent ram | ⬜ §9 (reserved physmem)       |
-| 💎  | HMAC-chained on-disk integrity    | ❌                         | ⚠️ journald FSS optional   | ✅ T04 §10 (consumed by v2)    |
-| 💎  | Wire format versioned             | ✅ ETW manifests           | ⚠️ implicit                | ⬜ §8 (explicit version byte)  |
+| 💎  | HMAC-chained on-disk integrity    | ❌                          | ⚠️ journald FSS optional   | ✅ T04 §10 (consumed by v2)    |
+| 💎  | Wire format versioned             | ✅ ETW manifests            | ⚠️ implicit                | ⬜ §8 (explicit version byte)  |
 
 After §10 retires v1: Impossible OS is the only kernel combining lockless per-CPU + fail-proof FATAL + native structured + plain-text + HMAC-chained + boot-survival in a single in-kernel layer with zero external daemon dependency.
 

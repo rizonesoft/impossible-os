@@ -35,14 +35,14 @@ title: "TODO-02 -- Text, Font, and Internationalization Foundation"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                              | Depends On | Status |
-| --- | :---: | ---------------------------------------- | ---------- | :----: |
-| 💎  |   1   | §1 Font catalog, enumeration, install/remove, and default stacks | --         |  [ ]   |
-| 💎  |   2   | §2 Fallback chains, emoji, and color-font support | §1         |  [ ]   |
-| 💎  |   3   | §3 Shaping, bidi, line-break, and paragraph layout engine | §1, §2     |  [ ]   |
+| ⭐  | Order | Deliverable                                                                | Depends On | Status |
+| --- | :---: | -------------------------------------------------------------------------- | ---------- | :----: |
+| 💎  |   1   | §1 Font catalog, enumeration, install/remove, and default stacks           | --         |  [ ]   |
+| 💎  |   2   | §2 Fallback chains, emoji, and color-font support                          | §1         |  [ ]   |
+| 💎  |   3   | §3 Shaping, bidi, line-break, and paragraph layout engine                  | §1, §2     |  [ ]   |
 | 💎  |   4   | §4 Caret, hit-test, selection, and composition-aware text editing services | §3         |  [ ]   |
-| 💎  |   5   | §5 Desktop and Win32 wiring: `DrawText`, `ChooseFont`, `WM_FONTCHANGE` | §1-§4      |  [ ]   |
-| ⭐  |   6   | §6 Persistent text-run cache and no-FPU steady-state draw path | §2-§5      |  [ ]   |
+| 💎  |   5   | §5 Desktop and Win32 wiring: `DrawText`, `ChooseFont`, `WM_FONTCHANGE`     | §1-§4      |  [ ]   |
+| ⭐  |   6   | §6 Persistent text-run cache and no-FPU steady-state draw path             | §2-§5      |  [ ]   |
 
 > 💎 = parity work -- matches the text stacks used by Windows 11 and Linux desktops.
 > ⭐ = exclusive work -- Impossible OS gets a cleaner and more predictable text engine.
@@ -145,7 +145,7 @@ Make text rendering more predictable than both old GDI and many Linux toolkit ho
 | 💎  | Shaping + bidi + layout           | ✅ DirectWrite layout   | ✅ Pango/Qt text layout  | ⬜ Planned - §3  |
 | 💎  | Caret + hit-test editing services | ✅ RichEdit/TextSvc     | ✅ GTK/Qt text widgets   | ⬜ Planned - §4  |
 | 💎  | Font picker + Win32 integration   | ✅ `ChooseFont` + GDI   | ✅ toolkit dialogs       | ⬜ Planned - §5  |
-| ⭐  | Persistent shaped-run cache       | ⚠️ Framework-specific    | ⚠️ Toolkit-specific       | ⬜ Planned - §6  |
+| ⭐  | Persistent shaped-run cache       | ⚠️ Framework-specific   | ⚠️ Toolkit-specific      | ⬜ Planned - §6  |
 
 After §1-§5, Impossible OS reaches parity with the text and font capabilities expected from modern Windows and Linux desktop stacks. After §6, it adds a more explicit and deterministic text-cache contract that should keep shell and Win32 redraw paths cleaner and cheaper.
 

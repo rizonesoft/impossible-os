@@ -36,14 +36,14 @@ title: "TODO-07 -- UI Accessibility, Automation, and IME Foundation"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                              | Depends On        | Status |
-| --- | :---: | ---------------------------------------- | ----------------- | :----: |
-| 💎  |   1   | §1 Semantic node tree, roles, states, values, and action descriptors | --                |  [ ]   |
-| 💎  |   2   | §2 Provider/query API, focus/hit-test lookup, and accessibility events | §1                |  [ ]   |
+| ⭐  | Order | Deliverable                                                               | Depends On        | Status |
+| --- | :---: | ------------------------------------------------------------------------- | ----------------- | :----: |
+| 💎  |   1   | §1 Semantic node tree, roles, states, values, and action descriptors      | --                |  [ ]   |
+| 💎  |   2   | §2 Provider/query API, focus/hit-test lookup, and accessibility events    | §1                |  [ ]   |
 | 💎  |   3   | §3 Inspect bridge, screen-reader hooks, and automation subscription model | §1, §2            |  [ ]   |
-| 💎  |   4   | §4 IME and text-composition framework    | §2, D06 T03 §2,§3 |  [ ]   |
-| 💎  |   5   | §5 Win32 and platform-service wiring     | §1-§4             |  [ ]   |
-| ⭐  |   6   | §6 Deterministic automation transport for testing and assistive tooling | §2-§5             |  [ ]   |
+| 💎  |   4   | §4 IME and text-composition framework                                     | §2, D06 T03 §2,§3 |  [ ]   |
+| 💎  |   5   | §5 Win32 and platform-service wiring                                      | §1-§4             |  [ ]   |
+| ⭐  |   6   | §6 Deterministic automation transport for testing and assistive tooling   | §2-§5             |  [ ]   |
 
 > 💎 = parity work -- matches the accessibility and input-method layers that Windows 11 and Linux desktops already provide.
 > ⭐ = exclusive work -- Impossible OS gets a cleaner automation contract for both assistive tools and tests.
@@ -144,7 +144,7 @@ Add a first-class automation transport that lets Impossible OS do better than pi
 | 💎  | Inspect + screen-reader hooks     | ✅ Inspect/Narrator     | ✅ Orca + inspectors      | ⬜ Planned - §3  |
 | 💎  | IME + composition framework       | ✅ IMM/TSF              | ✅ IBus/fcitx toolkit     | ⬜ Planned - §4  |
 | 💎  | Win32/accessibility bridge        | ✅ USER32/Win32k        | ✅ toolkit + desktop glue | ⬜ Planned - §5  |
-| ⭐  | Deterministic semantic automation | ⚠️ UIA + app wrappers    | ⚠️ AT-SPI + app wrappers   | ⬜ Planned - §6  |
+| ⭐  | Deterministic semantic automation | ⚠️ UIA + app wrappers   | ⚠️ AT-SPI + app wrappers  | ⬜ Planned - §6  |
 
 After §1-§5, Impossible OS reaches parity with the semantics, automation, and IME layers exposed by modern Windows and Linux desktops. After §6, it gains a cleaner automation path that should be better for both accessibility tooling and regression tests.
 

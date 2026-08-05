@@ -45,13 +45,13 @@ title: "TODO-09 -- Calculator"
 
 ## Implementation Order
 
-| Step | Section                | 💎/⭐ | Dependency                               |
-| ---- | ---------------------- | ----- | ---------------------------------------- |
+| Step | Section                | 💎/⭐ | Dependency                                                     |
+| ---- | ---------------------- | ----- | -------------------------------------------------------------- |
 | 1    | Standard Calculator UI | 💎    | `gfx_fill_rounded_rect`, `ttf_draw_string`, `wm_create_window` |
-| 2    | Arithmetic Engine      | 💎    | §1 complete                              |
-| 3    | Memory + History       | ⭐    | §2 complete, `clipboard_set`             |
-| 4    | Scientific Mode        | 💎    | §2 complete, `kmath_sin/tan/log/exp` additions |
-| 5    | Programmer Mode        | 💎    | §2 complete                              |
+| 2    | Arithmetic Engine      | 💎    | §1 complete                                                    |
+| 3    | Memory + History       | ⭐    | §2 complete, `clipboard_set`                                   |
+| 4    | Scientific Mode        | 💎    | §2 complete, `kmath_sin/tan/log/exp` additions                 |
+| 5    | Programmer Mode        | 💎    | §2 complete                                                    |
 
 ---
 

@@ -57,25 +57,25 @@ title: "TODO-04 -- System Logging"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                              | Depends On       | Status |
-| --- | :---: | ---------------------------------------- | ---------------- | :----: |
-| 💎  |   1   | Boot-phase aware klog init               | T01 §1           |  [x]   |
-| 💎  |   2   | Per-subsystem log splitting              | §1               |  [/]   |
-| 💎  |   3   | Per-subsystem verbosity control          | §2               |  [x]   |
-| 💎  |   4   | Log rotation                             | §2               |  [x]   |
-| 💎  |   5   | Rate limiting                            | §2               |  [x]   |
-| ⭐  |   6   | Structured JSON log events               | §4               |  [x]   |
-| 💎  |   7   | ETW tracing syscalls wired to SSDT       | §4, T12 §4       |  [x]   |
-| 💎  |   8   | Crash-persistent log capture             | §1               |  [x]   |
-| 💎  |   9   | Per-entry context metadata               | §2               |  [x]   |
-| ⭐  |  10   | Log integrity verification (HMAC)        | §6, T03 §5       |  [/]   |
-| 💎  |  11   | ETW provider registration + filtering    | §7, T12 §5       |  [/]   |
-| 💎  |  12   | ETW advanced capture (stack/autologger/schema) | §11, T23, T18 §4 |  [/]   |
-| 💎  |  13   | Rotated-log compression (LZ4)            | §4, T03 §3       |  [x]   |
-| ⭐  |  14   | Serial timestamp render bound            | §1               |  [ ]   |
-| ⭐  |  15   | Post-ship follow-up backfill (2026-07-31 cohort) | --               |  [ ]   |
+| ⭐  | Order | Deliverable                                                         | Depends On       | Status |
+| --- | :---: | ------------------------------------------------------------------- | ---------------- | :----: |
+| 💎  |   1   | Boot-phase aware klog init                                          | T01 §1           |  [x]   |
+| 💎  |   2   | Per-subsystem log splitting                                         | §1               |  [/]   |
+| 💎  |   3   | Per-subsystem verbosity control                                     | §2               |  [x]   |
+| 💎  |   4   | Log rotation                                                        | §2               |  [x]   |
+| 💎  |   5   | Rate limiting                                                       | §2               |  [x]   |
+| ⭐  |   6   | Structured JSON log events                                          | §4               |  [x]   |
+| 💎  |   7   | ETW tracing syscalls wired to SSDT                                  | §4, T12 §4       |  [x]   |
+| 💎  |   8   | Crash-persistent log capture                                        | §1               |  [x]   |
+| 💎  |   9   | Per-entry context metadata                                          | §2               |  [x]   |
+| ⭐  |  10   | Log integrity verification (HMAC)                                   | §6, T03 §5       |  [/]   |
+| 💎  |  11   | ETW provider registration + filtering                               | §7, T12 §5       |  [/]   |
+| 💎  |  12   | ETW advanced capture (stack/autologger/schema)                      | §11, T23, T18 §4 |  [/]   |
+| 💎  |  13   | Rotated-log compression (LZ4)                                       | §4, T03 §3       |  [x]   |
+| ⭐  |  14   | Serial timestamp render bound                                       | §1               |  [ ]   |
+| ⭐  |  15   | Post-ship follow-up backfill (2026-07-31 cohort)                    | --               |  [ ]   |
 | 💎  |  16   | Klog assertions and scans that depend on nothing else having logged | §1               |  [ ]   |
-| ⭐  |  17   | Bounded wait until the sinks have caught up to a given sequence | §1, §2           |  [ ]   |
+| ⭐  |  17   | Bounded wait until the sinks have caught up to a given sequence     | §1, §2           |  [ ]   |
 
 > 💎 = parity -- Windows Event Log and Linux journald/syslog both have these capabilities.
 > ⭐ = exclusive -- HMAC-chained JSON Lines is human-readable AND cryptographically verifiable; beats Windows XML and Linux binary journal.
@@ -515,27 +515,27 @@ A caller can ask klog what the current sequence is (`klog_get_seq`), how much of
 | --- | ---------------------- | ------------------ | -------------------- | -------------------------- |
 | 💎  | Unified kernel log     | ✅ Event Log       | ✅ journald/syslog   | ✅ klog ring buffer        |
 | 💎  | Log levels             | ✅ 5 levels        | ✅ 8 POSIX levels    | ✅ 5 levels                |
-| 💎  | Serial debug output    | ⚠️ Needs WinDbg     | ✅ earlyprintk       | ✅ All entries to serial   |
+| 💎  | Serial debug output    | ⚠️ Needs WinDbg    | ✅ earlyprintk       | ✅ All entries to serial   |
 | ⭐  | Per-boot log files     | ❌ Not built-in    | ❌ Not built-in      | ✅ BOOT_NNN.LOG on FAT32   |
 | 💎  | User-mode log API      | ✅ ReportEvent/ETW | ✅ syslog()          | ✅ SYS_LOG syscall #17     |
 | 💎  | Boot-phase init        | ✅ Phase 0/1       | ✅ early_printk      | ✅ §1 -- done              |
 | 💎  | Subsystem splitting    | ✅ Event channels  | ✅ syslog facilities | ✅ §2 -- done              |
 | 💎  | Subsystem verbosity    | ✅ ETW filters     | ✅ per-facility      | ✅ §3 -- done              |
 | 💎  | Log rotation           | ✅ Size-limited    | ✅ logrotate         | ✅ §4 -- done              |
-| 💎  | Rate limiting          | ✅ ETW built-in    | ⚠️ rsyslog only       | ✅ §5 -- done              |
+| 💎  | Rate limiting          | ✅ ETW built-in    | ⚠️ rsyslog only      | ✅ §5 -- done              |
 | ⭐  | Human-readable struct  | ❌ XML verbose     | ❌ Binary journal    | ✅ §6 -- JSON Lines        |
 | 💎  | Remote forwarding      | ✅ WEF             | ✅ rsyslog UDP       | ⬜ → net/TODO-11           |
 | 💎  | ETW tracing API        | ✅ NtTraceEvent    | ✅ ftrace/perf_event | ✅ §7 -- 7 NtTrace* SSDT   |
-| 💎  | ETW provider registry  | ✅ EtwRegister     | ⚠️ tracefs            | ⬜ §11 -- GUID registry    |
-| 💎  | ETW session filtering  | ✅ keyword/level   | ⚠️ filter exprs       | ⬜ §11 -- keyword+level    |
+| 💎  | ETW provider registry  | ✅ EtwRegister     | ⚠️ tracefs           | ⬜ §11 -- GUID registry    |
+| 💎  | ETW session filtering  | ✅ keyword/level   | ⚠️ filter exprs      | ⬜ §11 -- keyword+level    |
 | 💎  | ETW stack-walk         | ✅ stack trace     | ✅ perf/eBPF         | ⬜ §12 -- RtlCapture stack |
-| 💎  | ETW autologger         | ✅ boot session    | ⚠️ early ftrace       | ⬜ §12 -- boot-persistent  |
+| 💎  | ETW autologger         | ✅ boot session    | ⚠️ early ftrace      | ⬜ §12 -- boot-persistent  |
 | ⭐  | Self-describing events | ✅ TraceLogging    | ❌ none              | ⬜ §12 -- schema id        |
-| 💎  | Log channel tiers      | ✅ Admin/Op/etc    | ⚠️ facilities         | ⬜ deferred refinement     |
+| 💎  | Log channel tiers      | ✅ Admin/Op/etc    | ⚠️ facilities        | ⬜ deferred refinement     |
 | ⭐  | Serial timestamps      | ❌ Not standard    | ❌ Not standard      | ✅ Every entry             |
 | 💎  | Crash-persistent log   | ✅ Minidump + WER  | ✅ pstore/ramoops    | ✅ §8 NVRAM + reserved RAM |
 | 💎  | Per-entry CPU/PID/TID  | ✅ ETW metadata    | ✅ journald _PID     | ✅ §9 -- cpu/pid/tid       |
-| ⭐  | Tamper-evident log     | ❌ No integrity    | ⚠️ FSS optional       | ⬜ §10 -- HMAC-chain       |
+| ⭐  | Tamper-evident log     | ❌ No integrity    | ⚠️ FSS optional      | ⬜ §10 -- HMAC-chain       |
 | 💎  | Rotated log compress   | ❌ Not built-in    | ✅ logrotate gzip    | ✅ §13 -- LZ4, atomic+CRC  |
 
 > After §1-§9, Impossible OS matches or exceeds Windows and Linux on all core logging features.

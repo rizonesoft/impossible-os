@@ -254,13 +254,13 @@ Gate releases on firmware-table sanity, not just Secure Boot/TPM: malformed or d
 
 ## OS Comparison
 
-| ⭐  | Feature                  | 🪟 Win11              | 🐧 Linux                 | 🚀 Impossible OS                |
-| --- | ------------------------ | --------------------- | ------------------------ | ------------------------------- |
+| ⭐  | Feature                  | 🪟 Win11              | 🐧 Linux                  | 🚀 Impossible OS                |
+| --- | ------------------------ | --------------------- | ------------------------- | ------------------------------- |
 | 💎  | WHQL-style boot matrix   | ✅ WHQL/HLK           | ⚠️ per-distro CI          | ⬜ §1 cert matrix + gate        |
-| 💎  | VM boot automation       | ⚠️ internal only       | ⚠️ per-distro tests       | ✅ §2 4-class launcher registry |
-| ⭐  | BlackBox support bundle  | ⚠️ WER/event logs      | ⚠️ journal/sosreport      | ⬜ §8 one-zip bundle            |
-| ⭐  | TODO-owner mapped matrix | ❌ internal, opaque   | ❌ ad hoc                | ✅ §1 boot-cert.yml + lint gate |
-| 💎  | Firmware sanity gate     | ✅ HLK firmware tests | ✅ FWTS (ACPI/UEFI)      | ⬜ §11 consumes T04 inventory   |
+| 💎  | VM boot automation       | ⚠️ internal only      | ⚠️ per-distro tests       | ✅ §2 4-class launcher registry |
+| ⭐  | BlackBox support bundle  | ⚠️ WER/event logs     | ⚠️ journal/sosreport      | ⬜ §8 one-zip bundle            |
+| ⭐  | TODO-owner mapped matrix | ❌ internal, opaque   | ❌ ad hoc                 | ✅ §1 boot-cert.yml + lint gate |
+| 💎  | Firmware sanity gate     | ✅ HLK firmware tests | ✅ FWTS (ACPI/UEFI)       | ⬜ §11 consumes T04 inventory   |
 | 💎  | Bare-metal cert lab      | ✅ WHQL/HLK lab       | ⚠️ per-distro HW labs     | ✅ §7 5-class lab inventory     |
 | 💎  | Repeat-boot reliability  | ✅ HLK MTBF           | ⚠️ KernelCI boot-to-shell | ✅ §2 cold/warm flake gate      |
 

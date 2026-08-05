@@ -229,17 +229,17 @@ SSH channel with `SSH_MSG_CHANNEL_REQUEST "subsystem" "sftp"`. SFTP v3 protocol:
 ## OS Comparison
 
 
-| ⭐  | Feature                                  | 🪟 Win11                                 | 🐧 Linux                                 | 🚀 Impossible OS                         |
-| --- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
-| 💎  | FTP client                               | ✅ `ftp.exe` CLI; File Explorer `ftp://`; | ✅ `ftp`/`lftp`; File Manager `ftp://` via | ⬜ §1 -- `ftp_session_t` API; PASV mode; binary/ASCII |
-| 💎  | FTP shell + GUI                          | ✅ `ftp.exe` interactive; Windows Explorer drag-drop | ✅ `ftp`/`lftp` interactive; GNOME/KDE file manager | ⬜ §2 -- glob matching; `wget ftp://` anonymous |
-| 💎  | FTPS/FTPES -- AUTH TLS, PBSZ 0 PROT P    | ✅ WinSCP/FileZilla FTPS; not built into | ✅ `lftp` FTPS; `curl --ftp-ssl`         | ⬜ §3 -- Mbed TLS control + data         |
-| 💎  | SSH2 transport                           | ✅ OpenSSH bundled since Win10 1809;     | ✅ OpenSSH built-in; all algorithms supported | ⬜ §4 -- monocypher port; host key fingerprint |
-| 💎  | SSH auth -- password + Ed25519 public key | ✅ OpenSSH: password + RSA/Ed25519/ECDSA; Windows | ✅ OpenSSH: full key type support        | ⬜ §5 -- Ed25519 via monocypher; `ssh-keygen -t |
-| 💎  | SSH channel + PTY                        | ✅ OpenSSH: full PTY via ConPTY;         | ✅ OpenSSH: full PTY; pseudo-tty via     | ⬜ §6 -- relay via `terminal_puts`/`terminal_trygetchar`; window adjust |
-| 💎  | `ssh user@host`, `scp` file copy         | ✅ `ssh.exe`, `scp.exe` in System32      | ✅ OpenSSH `ssh`/`scp` standard on all   | ⬜ §7 -- `ssh` + `scp` shell commands    |
-| 💎  | SSH agent -- key store, `ssh-add`, auto-use | ✅ `ssh-agent` service; `ssh-add`; Pageant (PuTTY) | ✅ `ssh-agent`; `ssh-add`; gnome-keyring | ⬜ §8 -- in-process key store (8 keys)   |
-| 💎  | SFTP subsystem                           | ✅ OpenSSH `sftp.exe`; WinSCP SFTP; no   | ✅ OpenSSH `sftp`; GNOME Files `sftp://` | ⬜ §9 -- SFTP over SSH channel; `sftp`   |
+| ⭐  | Feature                                     | 🪟 Win11                                             | 🐧 Linux                                            | 🚀 Impossible OS                                                        |
+| --- | ------------------------------------------- | ---------------------------------------------------- | --------------------------------------------------- | ----------------------------------------------------------------------- |
+| 💎  | FTP client                                  | ✅ `ftp.exe` CLI; File Explorer `ftp://`;            | ✅ `ftp`/`lftp`; File Manager `ftp://` via          | ⬜ §1 -- `ftp_session_t` API; PASV mode; binary/ASCII                   |
+| 💎  | FTP shell + GUI                             | ✅ `ftp.exe` interactive; Windows Explorer drag-drop | ✅ `ftp`/`lftp` interactive; GNOME/KDE file manager | ⬜ §2 -- glob matching; `wget ftp://` anonymous                         |
+| 💎  | FTPS/FTPES -- AUTH TLS, PBSZ 0 PROT P       | ✅ WinSCP/FileZilla FTPS; not built into             | ✅ `lftp` FTPS; `curl --ftp-ssl`                    | ⬜ §3 -- Mbed TLS control + data                                        |
+| 💎  | SSH2 transport                              | ✅ OpenSSH bundled since Win10 1809;                 | ✅ OpenSSH built-in; all algorithms supported       | ⬜ §4 -- monocypher port; host key fingerprint                          |
+| 💎  | SSH auth -- password + Ed25519 public key   | ✅ OpenSSH: password + RSA/Ed25519/ECDSA; Windows    | ✅ OpenSSH: full key type support                   | ⬜ §5 -- Ed25519 via monocypher; `ssh-keygen -t                         |
+| 💎  | SSH channel + PTY                           | ✅ OpenSSH: full PTY via ConPTY;                     | ✅ OpenSSH: full PTY; pseudo-tty via                | ⬜ §6 -- relay via `terminal_puts`/`terminal_trygetchar`; window adjust |
+| 💎  | `ssh user@host`, `scp` file copy            | ✅ `ssh.exe`, `scp.exe` in System32                  | ✅ OpenSSH `ssh`/`scp` standard on all              | ⬜ §7 -- `ssh` + `scp` shell commands                                   |
+| 💎  | SSH agent -- key store, `ssh-add`, auto-use | ✅ `ssh-agent` service; `ssh-add`; Pageant (PuTTY)   | ✅ `ssh-agent`; `ssh-add`; gnome-keyring            | ⬜ §8 -- in-process key store (8 keys)                                  |
+| 💎  | SFTP subsystem                              | ✅ OpenSSH `sftp.exe`; WinSCP SFTP; no               | ✅ OpenSSH `sftp`; GNOME Files `sftp://`            | ⬜ §9 -- SFTP over SSH channel; `sftp`                                  |
 
 > **After §1–§9:** Impossible OS can act as a full remote administration client -- FTP (plain + TLS), SSH interactive sessions, SCP/SFTP file transfer, and key-based authentication. All implemented as kernel-native code using monocypher (analogous to the Mbed TLS approach), with no userspace daemon boundary. The monocypher port brings Curve25519 + Ed25519 + ChaCha20-Poly1305 at ~2K lines, dramatically smaller than OpenSSH's ~100K lines.
 

@@ -229,16 +229,16 @@ Scan `C:\Users\Default\AppData\Startup\` for `.lnk` files after desktop fully in
 ## OS Comparison
 
 
-| ⭐  | Feature                               | 🪟 Win11                                 | 🐧 Linux                                 | 🚀 Impossible OS                         |
-| --- | ------------------------------------- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
-| ⭐  | Service manager                       | ✅ SCM (Services Control Manager); full  | ✅ systemd / OpenRC / runit;             | ⬜ §1 -- `⭐` zero-dependency static table; no |
-| ⭐  | Auto-restart with exponential backoff | ✅ SCM restart policy (delay, max        | ✅ systemd `Restart=on-failure`; `RestartSec`; `StartLimitBurst`; journald | ⬜ §2 -- `⭐` PIT-ticked in-kernel monitor; no |
-| 💎  | Graceful degradation                  | ✅ Critical services → BSoD; non-critical | ✅ systemd critical unit → emergency.target; | ⬜ §3 -- `critical=1` → `kernel_panic()`; else persistent |
-| 💎  | Built-in daemons                      | ✅ Dozens of system services; LSASS,     | ✅ systemd system daemons; NetworkManager, chrony, | ⬜ §5 -- 4 kernel threads; dependency `depends_on[4]` |
-| 💎  | Kernel notification queue             | ✅ Event Log + WNF (Windows              | ✅ `printk` → `journald`; `netlink` event | ⬜ §6 -- `⭐` no IPC or daemon           |
-| 💎  | Autostart                             | ✅ `HKLM/HKCU\Software\Microsoft\Windows\CurrentVersion\Run`; Startup folder | ✅ XDG autostart (`~/.config/autostart/`); systemd user | ⬜ §7 -- identical Win32 `Run`/`RunOnce` Registry layout |
-| 💎  | Win32 system info                     | ✅ Full Win32 APIs; accurate CPU         | ✅ `uname(2)`; `/proc/cpuinfo`; `getpwuid()`; Wine kernel32 | ⬜ §8 -- Win11 compat version (11.0.22000); `smp_cpu_count()` |
-| 💎  | User account stub                     | ✅ Full SAM; NTLM/Kerberos auth; per-user | ✅ `/etc/passwd`; `PAM`; per-user `~/.config`; UID/GID | ⬜ §9 -- (single stub user); full multi-user |
+| ⭐  | Feature                               | 🪟 Win11                                                                     | 🐧 Linux                                                                   | 🚀 Impossible OS                                              |
+| --- | ------------------------------------- | ---------------------------------------------------------------------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| ⭐  | Service manager                       | ✅ SCM (Services Control Manager); full                                      | ✅ systemd / OpenRC / runit;                                               | ⬜ §1 -- `⭐` zero-dependency static table; no                |
+| ⭐  | Auto-restart with exponential backoff | ✅ SCM restart policy (delay, max                                            | ✅ systemd `Restart=on-failure`; `RestartSec`; `StartLimitBurst`; journald | ⬜ §2 -- `⭐` PIT-ticked in-kernel monitor; no                |
+| 💎  | Graceful degradation                  | ✅ Critical services → BSoD; non-critical                                    | ✅ systemd critical unit → emergency.target;                               | ⬜ §3 -- `critical=1` → `kernel_panic()`; else persistent     |
+| 💎  | Built-in daemons                      | ✅ Dozens of system services; LSASS,                                         | ✅ systemd system daemons; NetworkManager, chrony,                         | ⬜ §5 -- 4 kernel threads; dependency `depends_on[4]`         |
+| 💎  | Kernel notification queue             | ✅ Event Log + WNF (Windows                                                  | ✅ `printk` → `journald`; `netlink` event                                  | ⬜ §6 -- `⭐` no IPC or daemon                                |
+| 💎  | Autostart                             | ✅ `HKLM/HKCU\Software\Microsoft\Windows\CurrentVersion\Run`; Startup folder | ✅ XDG autostart (`~/.config/autostart/`); systemd user                    | ⬜ §7 -- identical Win32 `Run`/`RunOnce` Registry layout      |
+| 💎  | Win32 system info                     | ✅ Full Win32 APIs; accurate CPU                                             | ✅ `uname(2)`; `/proc/cpuinfo`; `getpwuid()`; Wine kernel32                | ⬜ §8 -- Win11 compat version (11.0.22000); `smp_cpu_count()` |
+| 💎  | User account stub                     | ✅ Full SAM; NTLM/Kerberos auth; per-user                                    | ✅ `/etc/passwd`; `PAM`; per-user `~/.config`; UID/GID                     | ⬜ §9 -- (single stub user); full multi-user                  |
 
 > **After §1–§9:** Impossible OS has a production-grade service lifecycle layer with zero external dependencies -- no D-Bus, no XML unit files, no daemon processes managing daemons. The `⭐` differentiators are the PIT-ticked in-kernel crash monitor (backoff computed from a pre-built constant array, running in workqueue context) and the kernel notification queue (a simple lock-protected ring buffer drained by the compositor, eliminating any kernel-to-user IPC machinery).
 

@@ -219,16 +219,16 @@ Preview pane (toggle right panel: text via `ttf_draw_string`, images via `stb_im
 ## OS Comparison
 
 
-| ⭐  | Feature         | 🪟 Win11                                 | 🐧 Linux                                 | 🚀 Impossible OS                         |
-| --- | --------------- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
-| 💎  | Core layout     | ✅ File Explorer: Ribbon (simplified in  | ✅ Nautilus/Dolphin: toolbar; sidebar; main area; | ⬜ §1 -- 4-zone layout; 16-entry history stack |
-| 💎  | Sidebar         | ✅ File Explorer nav pane: Quick         | ✅ Nautilus bookmarks + Drives (GIO      | ⬜ §2 -- Quick Access hardcoded + `auth_get_userprofile()` |
-| 💎  | View modes      | ✅ Extra-large/large/medium/small icons; List; Details; Tiles; | ✅ Nautilus: icons/list/compact; Dolphin: icons/list/compact/details; sort | ⬜ §3 -- Icon (48 px) + Detail           |
-| 💎  | File operations | ✅ Full copy engine with speed           | ✅ Nautilus/Dolphin: copy/move/delete/rename/undo; Trash; progress dialog | ⬜ §4 -- `filemgr_copy_file` PMM chunked; progress non-modal |
-| 💎  | Context menus   | ✅ Full context menu; shell extensions;  | ✅ Nautilus/Dolphin: context menus; Properties with | ⬜ §5 -- `context_menu_show()` menus; Properties shows `i_uid/i_mode` |
-| ⭐  | File search     | ✅ File Explorer search bar uses         | ✅ Nautilus/Dolphin search bars; Tracker/Baloo indexed; | ⬜ §6 -- `search_query_scoped()` (TODO-05) instantly returns; accent-highlight |
-| 💎  | Drag and drop   | ✅ Full OLE drag-drop; ghost thumbnail   | ✅ Nautilus/Dolphin: drag to sidebar/desktop/other windows; | ⬜ §7 -- PMM ghost surface stack of      |
-| 💎  | Advanced        | ✅ Preview pane; Details pane; tabbed    | ✅ Dolphin: preview pane; tabs (Ctrl+T); | ⬜ §8 -- preview pane text+image via `stb_image` |
+| ⭐  | Feature         | 🪟 Win11                                                       | 🐧 Linux                                                                   | 🚀 Impossible OS                                                               |
+| --- | --------------- | -------------------------------------------------------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| 💎  | Core layout     | ✅ File Explorer: Ribbon (simplified in                        | ✅ Nautilus/Dolphin: toolbar; sidebar; main area;                          | ⬜ §1 -- 4-zone layout; 16-entry history stack                                 |
+| 💎  | Sidebar         | ✅ File Explorer nav pane: Quick                               | ✅ Nautilus bookmarks + Drives (GIO                                        | ⬜ §2 -- Quick Access hardcoded + `auth_get_userprofile()`                     |
+| 💎  | View modes      | ✅ Extra-large/large/medium/small icons; List; Details; Tiles; | ✅ Nautilus: icons/list/compact; Dolphin: icons/list/compact/details; sort | ⬜ §3 -- Icon (48 px) + Detail                                                 |
+| 💎  | File operations | ✅ Full copy engine with speed                                 | ✅ Nautilus/Dolphin: copy/move/delete/rename/undo; Trash; progress dialog  | ⬜ §4 -- `filemgr_copy_file` PMM chunked; progress non-modal                   |
+| 💎  | Context menus   | ✅ Full context menu; shell extensions;                        | ✅ Nautilus/Dolphin: context menus; Properties with                        | ⬜ §5 -- `context_menu_show()` menus; Properties shows `i_uid/i_mode`          |
+| ⭐  | File search     | ✅ File Explorer search bar uses                               | ✅ Nautilus/Dolphin search bars; Tracker/Baloo indexed;                    | ⬜ §6 -- `search_query_scoped()` (TODO-05) instantly returns; accent-highlight |
+| 💎  | Drag and drop   | ✅ Full OLE drag-drop; ghost thumbnail                         | ✅ Nautilus/Dolphin: drag to sidebar/desktop/other windows;                | ⬜ §7 -- PMM ghost surface stack of                                            |
+| 💎  | Advanced        | ✅ Preview pane; Details pane; tabbed                          | ✅ Dolphin: preview pane; tabs (Ctrl+T);                                   | ⬜ §8 -- preview pane text+image via `stb_image`                               |
 
 > **After §1–§8:** Impossible OS has a full-featured File Manager. The `⭐` differentiator: file search is instant at any depth of the current directory tree because it routes through the kernel PMM index from TODO-05 -- no waiting for an indexer to catch up, no full VFS walk on demand.
 

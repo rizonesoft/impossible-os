@@ -61,15 +61,15 @@ the toolchain and UEFI boot path work.
 
 ## Implementation Order
 
-| Step | Section                                  | 💎/⭐ | Dependency                               |
-| ---- | ---------------------------------------- | ----- | ---------------------------------------- |
-| 1    | x86-64 gap analysis (audit + LOC delta estimate) | ⭐    | All arch-specific source files above     |
-| 2    | Build system multi-arch (`ARCH=arm64/riscv64`) | ⭐    | §1 file inventory; `scripts/build.sh`; `linker.ld` |
-| 3    | AArch64 boot path (minimal UART kernel prototype) | ⭐    | §2 build system; `clang-19 --target=aarch64-elf` |
-| 4    | RISC-V gap analysis                      | ⭐    | §1 methodology; §3 ARM64 prototype for comparison |
-| 5    | ABI considerations (AAPCS64 vs Win64 MSABI) | ⭐    | §3 prototype; Win32 ABI docs             |
-| 6    | AArch64 port plan (`src/arch/arm64/` layer design) | ⭐    | §1 §2 §3 §5                              |
-| 7    | Research deliverables (`multi-arch-port-plan.md`) | ⭐    | §1–§6 complete                           |
+| Step | Section                                            | 💎/⭐ | Dependency                                         |
+| ---- | -------------------------------------------------- | ----- | -------------------------------------------------- |
+| 1    | x86-64 gap analysis (audit + LOC delta estimate)   | ⭐    | All arch-specific source files above               |
+| 2    | Build system multi-arch (`ARCH=arm64/riscv64`)     | ⭐    | §1 file inventory; `scripts/build.sh`; `linker.ld` |
+| 3    | AArch64 boot path (minimal UART kernel prototype)  | ⭐    | §2 build system; `clang-19 --target=aarch64-elf`   |
+| 4    | RISC-V gap analysis                                | ⭐    | §1 methodology; §3 ARM64 prototype for comparison  |
+| 5    | ABI considerations (AAPCS64 vs Win64 MSABI)        | ⭐    | §3 prototype; Win32 ABI docs                       |
+| 6    | AArch64 port plan (`src/arch/arm64/` layer design) | ⭐    | §1 §2 §3 §5                                        |
+| 7    | Research deliverables (`multi-arch-port-plan.md`)  | ⭐    | §1–§6 complete                                     |
 
 ---
 
@@ -91,24 +91,24 @@ the toolchain and UEFI boot path work.
 
 - [ ] **Construct categories and ARM64 equivalents**:
 
-| x86-64 construct                         | AArch64 equivalent                       | RISC-V equivalent                        |
-| ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
-| `LSTAR`/`STAR`/`SFMASK` MSRs (syscall)   | `VBAR_EL1` vector table + `svc #0`       | `stvec` CSR + `ecall`                    |
-| `IDT` + `IRETQ` (interrupts)             | Exception vector table at `VBAR_EL1` (16 entries × 128 B) | `stvec` trap handler + `sret`            |
-| LAPIC + IOAPIC (interrupt controller)    | GIC-400 / GICv3 (GICD + GICC MMIO registers) | PLIC (Platform-Level Interrupt Controller) |
-| `INIT`-`SIPI`-`SIPI` (AP bringup)        | PSCI `CPU_ON` (SMC call `0xC4000003`)    | SBI `HSM` extension (`sbi_hart_start`)   |
-| `RDTSC` (timer)                          | `CNTVCT_EL0` (counter-timer virtual count) | `rdtime` (CSR `time`)                    |
-| HPET/PIT                                 | ARM Generic Timer (`CNTFRQ_EL0` frequency) | CLINT `mtime` register                   |
-| `WRMSR`/`RDMSR`                          | `msr`/`mrs` system register instructions | `csrw`/`csrr` instructions               |
-| `cli`/`sti`                              | `msr DAIFSet/DAIFClr, #0xF`              | `csrci/csrsi mstatus, MIE`               |
-| `hlt`                                    | `wfi` (Wait For Interrupt)               | `wfi`                                    |
-| `RDRAND`                                 | `RNDR` system register (ARMv8.5-RNG) or SMCCC TRNG | RISC-V entropy extension (`seed` CSR)    |
-| `CPUID`                                  | `MIDR_EL1` + feature registers (`ID_AA64ISAR0_EL1`, etc.) | `misa` CSR + RISC-V priv spec            |
-| Port I/O (`inb`/`outb`)                  | No port I/O -- everything MMIO           | No port I/O -- everything MMIO           |
-| GDT/TSS                                  | No GDT -- exception levels replace privilege rings | No GDT -- CSR privilege modes            |
-| `CR0`/`CR3`/`CR4` (page tables, paging control) | `TTBR0_EL1`/`TTBR1_EL1` + `TCR_EL1` + `SCTLR_EL1` | `satp` CSR (ASID + page table base)      |
-| SMEP/SMAP/CET                            | PAN (Privileged Access Never) / UAO / BTI / PAC | not directly equivalent                  |
-| SSE2 intrinsics (`_mm_*`)                | NEON (`vld1q_u8`, `vaddq_u8`, etc.)      | Vector extension (RVV 1.0)               |
+| x86-64 construct                                | AArch64 equivalent                                        | RISC-V equivalent                          |
+| ----------------------------------------------- | --------------------------------------------------------- | ------------------------------------------ |
+| `LSTAR`/`STAR`/`SFMASK` MSRs (syscall)          | `VBAR_EL1` vector table + `svc #0`                        | `stvec` CSR + `ecall`                      |
+| `IDT` + `IRETQ` (interrupts)                    | Exception vector table at `VBAR_EL1` (16 entries × 128 B) | `stvec` trap handler + `sret`              |
+| LAPIC + IOAPIC (interrupt controller)           | GIC-400 / GICv3 (GICD + GICC MMIO registers)              | PLIC (Platform-Level Interrupt Controller) |
+| `INIT`-`SIPI`-`SIPI` (AP bringup)               | PSCI `CPU_ON` (SMC call `0xC4000003`)                     | SBI `HSM` extension (`sbi_hart_start`)     |
+| `RDTSC` (timer)                                 | `CNTVCT_EL0` (counter-timer virtual count)                | `rdtime` (CSR `time`)                      |
+| HPET/PIT                                        | ARM Generic Timer (`CNTFRQ_EL0` frequency)                | CLINT `mtime` register                     |
+| `WRMSR`/`RDMSR`                                 | `msr`/`mrs` system register instructions                  | `csrw`/`csrr` instructions                 |
+| `cli`/`sti`                                     | `msr DAIFSet/DAIFClr, #0xF`                               | `csrci/csrsi mstatus, MIE`                 |
+| `hlt`                                           | `wfi` (Wait For Interrupt)                                | `wfi`                                      |
+| `RDRAND`                                        | `RNDR` system register (ARMv8.5-RNG) or SMCCC TRNG        | RISC-V entropy extension (`seed` CSR)      |
+| `CPUID`                                         | `MIDR_EL1` + feature registers (`ID_AA64ISAR0_EL1`, etc.) | `misa` CSR + RISC-V priv spec              |
+| Port I/O (`inb`/`outb`)                         | No port I/O -- everything MMIO                            | No port I/O -- everything MMIO             |
+| GDT/TSS                                         | No GDT -- exception levels replace privilege rings        | No GDT -- CSR privilege modes              |
+| `CR0`/`CR3`/`CR4` (page tables, paging control) | `TTBR0_EL1`/`TTBR1_EL1` + `TCR_EL1` + `SCTLR_EL1`         | `satp` CSR (ASID + page table base)        |
+| SMEP/SMAP/CET                                   | PAN (Privileged Access Never) / UAO / BTI / PAC           | not directly equivalent                    |
+| SSE2 intrinsics (`_mm_*`)                       | NEON (`vld1q_u8`, `vaddq_u8`, etc.)                       | Vector extension (RVV 1.0)                 |
 
 - [ ] **LOC delta estimate**: count lines in all files containing x86-specific constructs; divide by total kernel LOC; target < 5% arch-specific:
   ```bash
@@ -198,18 +198,18 @@ the toolchain and UEFI boot path work.
 
 - [ ] **RISC-V privilege model mapping**:
 
-| x86-64                | AArch64           | RISC-V RV64                              |
-| --------------------- | ----------------- | ---------------------------------------- |
-| Ring 0 (kernel)       | EL1               | S-mode (Supervisor)                      |
-| Ring 3 (user)         | EL0               | U-mode (User)                            |
-| SMM                   | EL3               | M-mode (Machine) -- usually firmware     |
-| VM hypervisor         | EL2               | H-extension (Hypervisor)                 |
-| `syscall` instruction | `svc #0`          | `ecall`                                  |
-| `iret`                | `eret`            | `sret`                                   |
-| MSR writes            | `msr` instruction | `csrw` instruction                       |
+| x86-64                | AArch64           | RISC-V RV64                                |
+| --------------------- | ----------------- | ------------------------------------------ |
+| Ring 0 (kernel)       | EL1               | S-mode (Supervisor)                        |
+| Ring 3 (user)         | EL0               | U-mode (User)                              |
+| SMM                   | EL3               | M-mode (Machine) -- usually firmware       |
+| VM hypervisor         | EL2               | H-extension (Hypervisor)                   |
+| `syscall` instruction | `svc #0`          | `ecall`                                    |
+| `iret`                | `eret`            | `sret`                                     |
+| MSR writes            | `msr` instruction | `csrw` instruction                         |
 | APIC                  | GICv3             | PLIC (Platform-Level Interrupt Controller) |
-| INIT-SIPI-SIPI        | PSCI `CPU_ON`     | SBI `HSM` `sbi_hart_start`               |
-| RDTSC                 | `CNTVCT_EL0`      | `rdtime` pseudo-instruction              |
+| INIT-SIPI-SIPI        | PSCI `CPU_ON`     | SBI `HSM` `sbi_hart_start`                 |
+| RDTSC                 | `CNTVCT_EL0`      | `rdtime` pseudo-instruction                |
 
 - [ ] **RISC-V-specific considerations**:
   - No UEFI standard on most RISC-V boards -- use **OpenSBI** (M-mode firmware) + **U-Boot** + kernel or TianoCore EDK2 on supported boards; QEMU `virt` machine supports UEFI via EDK2 RV64 port
@@ -315,14 +315,14 @@ the toolchain and UEFI boot path work.
 ## OS Comparison
 
 
-| ⭐  | Feature                               | 🪟 Win11                              | 🐧 Linux                                 | 🚀 Impossible OS                         |
-| --- | ------------------------------------- | ------------------------------------- | ---------------------------------------- | ---------------------------------------- |
-| 💎  | ARM64 (AArch64) port                  | ✅ Windows 11 ARM runs natively       | ✅ Linux ARM64 is tier-1; ships          | ⬜ §3 -- §6; research spike first; ARM64 |
-| 💎  | RISC-V port                           | ✅ Windows on RISC-V: announced but   | ✅ Linux RISC-V is tier-2; mainline      | ⬜ §4 -- RV64GC second port; shared arch |
-| ⭐  | Formal arch gap analysis document     | ❌ Not public                         | ✅ Linux `Documentation/arch/` per-arch docs | ⬜ §7 -- `x86-arch-inventory.md` + `multi-arch-port-plan.md` |
-| ⭐  | Multi-arch CI compile gate from day 1 | ❌ N/A (Windows is commercial)        | ✅ Linux CI builds on arm64,             | ⬜ §2 -- `multi-arch-build.yml`; compile-only initially, boot test |
-| 💎  | Arch abstraction layer                | ✅ Windows HAL; arch-specific drivers | ✅ `arch/` directory per ISA in          | ⬜ §6 -- `src/arch/x86_64/` + `src/arch/arm64/` + `src/arch/riscv64/` |
-| 💎  | PSCI / SBI SMP bringup                | ✅ Windows ARM64 uses PSCI            | ✅ Linux uses PSCI + SBI                 | ⬜ §6 -- PSCI `CPU_ON` replacing INIT-SIPI-SIPI; SBI |
+| ⭐  | Feature                               | 🪟 Win11                              | 🐧 Linux                                     | 🚀 Impossible OS                                                      |
+| --- | ------------------------------------- | ------------------------------------- | -------------------------------------------- | --------------------------------------------------------------------- |
+| 💎  | ARM64 (AArch64) port                  | ✅ Windows 11 ARM runs natively       | ✅ Linux ARM64 is tier-1; ships              | ⬜ §3 -- §6; research spike first; ARM64                              |
+| 💎  | RISC-V port                           | ✅ Windows on RISC-V: announced but   | ✅ Linux RISC-V is tier-2; mainline          | ⬜ §4 -- RV64GC second port; shared arch                              |
+| ⭐  | Formal arch gap analysis document     | ❌ Not public                         | ✅ Linux `Documentation/arch/` per-arch docs | ⬜ §7 -- `x86-arch-inventory.md` + `multi-arch-port-plan.md`          |
+| ⭐  | Multi-arch CI compile gate from day 1 | ❌ N/A (Windows is commercial)        | ✅ Linux CI builds on arm64,                 | ⬜ §2 -- `multi-arch-build.yml`; compile-only initially, boot test    |
+| 💎  | Arch abstraction layer                | ✅ Windows HAL; arch-specific drivers | ✅ `arch/` directory per ISA in              | ⬜ §6 -- `src/arch/x86_64/` + `src/arch/arm64/` + `src/arch/riscv64/` |
+| 💎  | PSCI / SBI SMP bringup                | ✅ Windows ARM64 uses PSCI            | ✅ Linux uses PSCI + SBI                     | ⬜ §6 -- PSCI `CPU_ON` replacing INIT-SIPI-SIPI; SBI                  |
 
 Impossible OS's `⭐` advantage: the arch abstraction layer design starts from a greenfield
 clean state -- all the x86 hardware cruft (i8259 PIC, PIT, real-mode trampoline) is

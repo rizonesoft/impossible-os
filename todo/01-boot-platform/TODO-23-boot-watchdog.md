@@ -42,15 +42,15 @@ title: "TODO-23 -- Boot Watchdog & Hang Detection"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                              | Depends On                               | Status |
-| --- | :---: | ---------------------------------------- | ---------------------------------------- | :----: |
-| 💎  |   1   | Software watchdog via LAPIC NMI timer    | D01 T10 §2 (nested-NMI), T09 §10 (AP IST) |  [/]   |
-| 💎  |   2   | Per-phase timeout configuration          | §1                                       |  [/]   |
-| 💎  |   3   | Watchdog pet at each boot_progress() call | §1, §2                                   |  [/]   |
-| 💎  |   4   | Watchdog-triggered reboot with diagnostics | §3, T21 §4                               |  [/]   |
-| 💎  |   5   | ACPI WDAT hardware watchdog (WDAT-first; iTCO deferred) | --                                       |  [x]   |
-| ⭐  |   6   | Watchdog status in VPD display           | §1-§5                                    |  [/]   |
-| ⭐  |   7   | Post-ship follow-up backfill (2026-07-31 cohort) | --                                       |  [ ]   |
+| ⭐  | Order | Deliverable                                             | Depends On                                | Status |
+| --- | :---: | ------------------------------------------------------- | ----------------------------------------- | :----: |
+| 💎  |   1   | Software watchdog via LAPIC NMI timer                   | D01 T10 §2 (nested-NMI), T09 §10 (AP IST) |  [/]   |
+| 💎  |   2   | Per-phase timeout configuration                         | §1                                        |  [/]   |
+| 💎  |   3   | Watchdog pet at each boot_progress() call               | §1, §2                                    |  [/]   |
+| 💎  |   4   | Watchdog-triggered reboot with diagnostics              | §3, T21 §4                                |  [/]   |
+| 💎  |   5   | ACPI WDAT hardware watchdog (WDAT-first; iTCO deferred) | --                                        |  [x]   |
+| ⭐  |   6   | Watchdog status in VPD display                          | §1-§5                                     |  [/]   |
+| ⭐  |   7   | Post-ship follow-up backfill (2026-07-31 cohort)        | --                                        |  [ ]   |
 
 > 💎 = parity -- Windows boot watchdog and Linux systemd watchdog both detect hung boots.
 > ⭐ = exclusive -- watchdog countdown visible in VPD during boot.
@@ -207,12 +207,12 @@ From TODO-04 section 58's re-adversarial review (2026-08-02), filed here because
 
 ## OS Comparison
 
-| ⭐  | Feature                  | 🪟 Win11            | 🐧 Linux              | 🚀 Impossible OS                     |
-| --- | ------------------------ | ------------------- | --------------------- | ------------------------------------ |
-| 💎  | Boot hang detection      | ✅ Boot watchdog    | ✅ systemd watchdog   | ⚠️ §5 WDAT coarse; §1-§3 NMI deferred |
-| 💎  | Hardware watchdog        | ✅ ACPI WDT driver  | ✅ iTCO_wdt driver    | ✅ §5 WDAT (I/O, fail-closed disarm) |
+| ⭐  | Feature                  | 🪟 Win11            | 🐧 Linux               | 🚀 Impossible OS                      |
+| --- | ------------------------ | ------------------- | ---------------------- | ------------------------------------- |
+| 💎  | Boot hang detection      | ✅ Boot watchdog    | ✅ systemd watchdog    | ⚠️ §5 WDAT coarse; §1-§3 NMI deferred |
+| 💎  | Hardware watchdog        | ✅ ACPI WDT driver  | ✅ iTCO_wdt driver     | ✅ §5 WDAT (I/O, fail-closed disarm)  |
 | 💎  | Hang → rollback          | ✅ Automatic Repair | ⚠️ Manual intervention | ⚠️ T21 try-consume; §4 diag deferred  |
-| ⭐  | Watchdog in boot display | ❌ Hidden           | ❌ Hidden             | ⬜ §6 (deferred)                     |
+| ⭐  | Watchdog in boot display | ❌ Hidden           | ❌ Hidden              | ⬜ §6 (deferred)                      |
 
 ---
 

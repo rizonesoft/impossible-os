@@ -36,13 +36,13 @@ title: "TODO-02 -- APIC Architecture & Advanced Interrupt Routing"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                              | Depends On                    | Status |
-| --- | :---: | ---------------------------------------- | ----------------------------- | :----: |
-| 💎  |   1   | §1 x2APIC mode -- MSR read/write, 32-bit APIC IDs | CPUID, MADT type-9            |  [ ]   |
-| 💎  |   2   | §2 LAPIC timer calibration via HPET      | §1, TODO-08 §4 (hpet_read_ns) |  [ ]   |
-| 💎  |   3   | §3 MSI vector bitmap allocator           | §1 (APIC IDs stable)          |  [ ]   |
-| 💎  |   4   | §4 TLB shootdown IPI -- IPI send + `invlpg` handler | §1, §3 (vector from bitmap)   |  [ ]   |
-| ⭐  |   5   | §5 NMI watchdog -- PMI/NMI configuration | §1, §3 (NMI vector or pin)    |  [ ]   |
+| ⭐  | Order | Deliverable                                             | Depends On                    | Status |
+| --- | :---: | ------------------------------------------------------- | ----------------------------- | :----: |
+| 💎  |   1   | §1 x2APIC mode -- MSR read/write, 32-bit APIC IDs       | CPUID, MADT type-9            |  [ ]   |
+| 💎  |   2   | §2 LAPIC timer calibration via HPET                     | §1, TODO-08 §4 (hpet_read_ns) |  [ ]   |
+| 💎  |   3   | §3 MSI vector bitmap allocator                          | §1 (APIC IDs stable)          |  [ ]   |
+| 💎  |   4   | §4 TLB shootdown IPI -- IPI send + `invlpg` handler     | §1, §3 (vector from bitmap)   |  [ ]   |
+| ⭐  |   5   | §5 NMI watchdog -- PMI/NMI configuration                | §1, §3 (NMI vector or pin)    |  [ ]   |
 | ⭐  |   6   | §6 Interrupt profiler -- `/sys/interrupts` + `irqstats` | §1–§3 (vectors registered)    |  [ ]   |
 
 > 💎 = parity -- x2APIC, LAPIC calibration, TLB shootdown, and MSI vector allocation are standard in Windows HAL and Linux `arch/x86/`.
@@ -164,14 +164,14 @@ Increment a per-vector `irq_count` and accumulate `irq_ns` in each IDT stub befo
 ## OS Comparison
 
 
-| ⭐  | Feature                                  | 🪟 Win11                                 | 🐧 Linux                                 | 🚀 Impossible OS                         |
-| --- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
-| 💎  | x2APIC MSR mode -- 32-bit APIC IDs, atomic IPI | ✅ HAL enables x2APIC on systems         | ✅ `arch/x86/kernel/apic/x2apic_*.c`; `x2apic_enabled()` check | ⬜ §1 -- `lapic_read/write` dispatch, 32-bit `apic_id`, single-MSR |
-| 💎  | LAPIC timer calibration via HPET reference | ✅ HAL `HalCalibratePerformanceCounter` via HPET | ✅ `lapic_calibrate()`; HPET 10 ms window; | ⬜ §2 -- 3-sample median, `g_lapic_ticks_per_ms`, `g_tick_ns` update |
-| 💎  | TLB shootdown IPI -- `invlpg` handler + ack counter | ✅ `KiIpiTlbFlush`; per-processor IPI; KeSynchronizeExecution | ✅ `flush_tlb_others_ipi()`; `on_each_cpu` IPI + `invlpg` | ⬜ §4 -- `IPI_TLB_FLUSH` ISR, per-CPU work slot, |
-| ⭐  | NMI watchdog via PMI counter overflow    | ⚠️ NMI used internally; not exposed       | ✅ `CONFIG_X86_NMI_WATCHDOG`; PMU overflow → NMI; | ⬜ §5 -- `IA32_PERFEVTSEL0` PMI, NMI LVT, backtrace |
-| 💎  | MSI vector bitmap allocator              | ✅ `HalGetInterruptVectorForMsi`; vector pool in HAL | ✅ `arch/x86/kernel/apic/vector.c`; `irq_domain` vector allocation | ⬜ §3 -- bitmap 32–254, `ticket_lock_t`, `apic_alloc_msi_vector` |
-| ⭐  | Per-vector interrupt profiler with timing | ❌ ETW performance counters only; no     | ⚠️ `/proc/interrupts` -- counts only, no  | ⬜ §6 -- `irq_count` + `irq_ns` per vector, |
+| ⭐  | Feature                                             | 🪟 Win11                                                      | 🐧 Linux                                                           | 🚀 Impossible OS                                                     |
+| --- | --------------------------------------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------ | -------------------------------------------------------------------- |
+| 💎  | x2APIC MSR mode -- 32-bit APIC IDs, atomic IPI      | ✅ HAL enables x2APIC on systems                              | ✅ `arch/x86/kernel/apic/x2apic_*.c`; `x2apic_enabled()` check     | ⬜ §1 -- `lapic_read/write` dispatch, 32-bit `apic_id`, single-MSR   |
+| 💎  | LAPIC timer calibration via HPET reference          | ✅ HAL `HalCalibratePerformanceCounter` via HPET              | ✅ `lapic_calibrate()`; HPET 10 ms window;                         | ⬜ §2 -- 3-sample median, `g_lapic_ticks_per_ms`, `g_tick_ns` update |
+| 💎  | TLB shootdown IPI -- `invlpg` handler + ack counter | ✅ `KiIpiTlbFlush`; per-processor IPI; KeSynchronizeExecution | ✅ `flush_tlb_others_ipi()`; `on_each_cpu` IPI + `invlpg`          | ⬜ §4 -- `IPI_TLB_FLUSH` ISR, per-CPU work slot,                     |
+| ⭐  | NMI watchdog via PMI counter overflow               | ⚠️ NMI used internally; not exposed                           | ✅ `CONFIG_X86_NMI_WATCHDOG`; PMU overflow → NMI;                  | ⬜ §5 -- `IA32_PERFEVTSEL0` PMI, NMI LVT, backtrace                  |
+| 💎  | MSI vector bitmap allocator                         | ✅ `HalGetInterruptVectorForMsi`; vector pool in HAL          | ✅ `arch/x86/kernel/apic/vector.c`; `irq_domain` vector allocation | ⬜ §3 -- bitmap 32–254, `ticket_lock_t`, `apic_alloc_msi_vector`     |
+| ⭐  | Per-vector interrupt profiler with timing           | ❌ ETW performance counters only; no                          | ⚠️ `/proc/interrupts` -- counts only, no                           | ⬜ §6 -- `irq_count` + `irq_ns` per vector,                          |
 
 > **After §1–6:** Impossible OS matches Windows NT HAL and Linux `arch/x86/` on the full APIC feature set needed for production SMP hardware. Two exclusive differentiators: the NMI watchdog (§5) goes beyond the software heartbeat in TODO-10 by firing an NMI even when `CLI` masks all maskable interrupts -- catching spinlock-induced hard lockups that a timer ISR can never detect. The interrupt profiler (§6) adds per-vector `irq_ns` timing data that Linux `/proc/interrupts` lacks and Windows exposes only through heavyweight ETW tracing.
 

@@ -58,27 +58,27 @@ title: "TODO-08 -- Time & FILETIME Management"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                              | Depends On          | Status |
-| --- | :---: | ---------------------------------------- | ------------------- | :----: |
-| 💎  |   1   | `FILETIME` type, epoch constants, and conversion math | --                  |  [x]   |
-| 💎  |   2   | Monotonic nanosecond clock source selection | §1                  |  [x]   |
-| 💎  |   3   | Invariant TSC detection and per-CPU offset calibration | §2                  |  [/]   |
-| 💎  |   4   | HPET standalone driver                   | --                  |  [x]   |
-| 💎  |   5   | Wall clock init from UEFI GetTime / RTC  | §1, §2              |  [x]   |
-| 💎  |   6   | Kernel time service (`KeQuerySystemTime`, `KeSetSystemTime`) | §5                  |  [x]   |
-| 💎  |   7   | Interrupt time and unbiased interrupt time APIs | §2, §6              |  [x]   |
-| 💎  |   8   | Timer resolution management (`NtSetTimerResolution`) | §6, TODO-12 §5      |  [x]   |
+| ⭐  | Order | Deliverable                                                           | Depends On          | Status |
+| --- | :---: | --------------------------------------------------------------------- | ------------------- | :----: |
+| 💎  |   1   | `FILETIME` type, epoch constants, and conversion math                 | --                  |  [x]   |
+| 💎  |   2   | Monotonic nanosecond clock source selection                           | §1                  |  [x]   |
+| 💎  |   3   | Invariant TSC detection and per-CPU offset calibration                | §2                  |  [/]   |
+| 💎  |   4   | HPET standalone driver                                                | --                  |  [x]   |
+| 💎  |   5   | Wall clock init from UEFI GetTime / RTC                               | §1, §2              |  [x]   |
+| 💎  |   6   | Kernel time service (`KeQuerySystemTime`, `KeSetSystemTime`)          | §5                  |  [x]   |
+| 💎  |   7   | Interrupt time and unbiased interrupt time APIs                       | §2, §6              |  [x]   |
+| 💎  |   8   | Timer resolution management (`NtSetTimerResolution`)                  | §6, TODO-12 §5      |  [x]   |
 | 💎  |   9   | `NtQuerySystemTime` / `NtSetSystemTime` / `NtQueryPerformanceCounter` | §6, TODO-12 §5      |  [x]   |
-| 💎  |  10   | Precise system time (`KeQuerySystemTimePrecise`) | §6, §2              |  [x]   |
-| 💎  |  11   | Timezone bias and DST management         | §6                  |  [x]   |
-| 💎  |  12   | KUSER_SHARED_DATA time field updates from timer ISR | §6, §7, TODO-11 §11 |  [/]   |
-| 💎  |  13   | Filesystem timestamp encoding (FAT32 + NTFS) | §6, §11             |  [x]   |
-| 💎  |  14   | Suspend/hibernate time bias tracking     | §7, TODO-26 §3,§4   |  [/]   |
-| 💎  |  15   | Leap second policy                       | §1                  |  [x]   |
-| ⭐  |  16   | Coarse time fast path (lock-free cached time) | §6                  |  [x]   |
-| ⭐  |  17   | NTP clock adjustment hooks               | §6                  |  [/]   |
-| 💎  |  18   | Clocksource quality watchdog (drift demotion) | §2, §3              |  [/]   |
-| 💎  |  19   | NTP continuous wall-time discipline      | §17, §18            |  [x]   |
+| 💎  |  10   | Precise system time (`KeQuerySystemTimePrecise`)                      | §6, §2              |  [x]   |
+| 💎  |  11   | Timezone bias and DST management                                      | §6                  |  [x]   |
+| 💎  |  12   | KUSER_SHARED_DATA time field updates from timer ISR                   | §6, §7, TODO-11 §11 |  [/]   |
+| 💎  |  13   | Filesystem timestamp encoding (FAT32 + NTFS)                          | §6, §11             |  [x]   |
+| 💎  |  14   | Suspend/hibernate time bias tracking                                  | §7, TODO-26 §3,§4   |  [/]   |
+| 💎  |  15   | Leap second policy                                                    | §1                  |  [x]   |
+| ⭐  |  16   | Coarse time fast path (lock-free cached time)                         | §6                  |  [x]   |
+| ⭐  |  17   | NTP clock adjustment hooks                                            | §6                  |  [/]   |
+| 💎  |  18   | Clocksource quality watchdog (drift demotion)                         | §2, §3              |  [/]   |
+| 💎  |  19   | NTP continuous wall-time discipline                                   | §17, §18            |  [x]   |
 
 > 💎 = parity -- Windows NT and Linux both provide these capabilities.
 > ⭐ = exclusive -- coarse time gives O(1) cached reads for hot-path callers without reading hardware; NTP hook API is a first-class kernel-level adjustment interface, not a userspace-only workaround.
@@ -586,7 +586,7 @@ Apply the stored NTP frequency/slew correction (from §17 `ke_ntp_adjtime`) to t
 
 | ⭐  | Feature               | 🪟 Win11                 | 🐧 Linux                  | 🚀 Impossible OS           |
 | --- | --------------------- | ------------------------ | ------------------------- | -------------------------- |
-| 💎  | 100 ns wall time      | ✅ FILETIME API          | ⚠️ timespec, diff epoch    | ✅ §1,§5,§6 done           |
+| 💎  | 100 ns wall time      | ✅ FILETIME API          | ⚠️ timespec, diff epoch   | ✅ §1,§5,§6 done           |
 | 💎  | Monotonic counter     | ✅ QPC via TSC/HPET      | ✅ CLOCK_MONOTONIC vDSO   | ✅ §2/§4/§18, AP-sync §3   |
 | 💎  | Invariant TSC detect  | ✅ CPUID 0x15            | ✅ tsc_khz calibration    | ✅ §3 -- invariant+offset  |
 | 💎  | Per-CPU TSC sync      | ✅ TSC sync at INIT      | ✅ check_tsc_sync         | ⬜ §3 -- AP sync deferred  |
@@ -605,8 +605,8 @@ Apply the stored NTP frequency/slew correction (from §17 `ke_ntp_adjtime`) to t
 | 💎  | Suspend time bias     | ✅ InterruptTimeBias     | ✅ CLOCK_BOOTTIME         | ⬜ §14                     |
 | 💎  | Leap second policy    | ✅ skips leap seconds    | ✅ 86400 s/day            | ✅ documented + tested     |
 | 💎  | NTP adjustment        | ✅ W32tm + SetSystemTime | ✅ adjtimex syscall       | ✅ ke_ntp_adjtime hooks    |
-| ⭐  | Fixed 10 MHz QPC      | ⚠️ varies by hardware     | ❌ no fixed-freq API      | ✅ §9 -- 10 MHz fixed      |
-| ⭐  | Coarse time API       | ⚠️ implicit KUSD          | ⚠️ ktime_get_coarse        | ✅ explicit Ke*Coarse      |
+| ⭐  | Fixed 10 MHz QPC      | ⚠️ varies by hardware    | ❌ no fixed-freq API      | ✅ §9 -- 10 MHz fixed      |
+| ⭐  | Coarse time API       | ⚠️ implicit KUSD         | ⚠️ ktime_get_coarse       | ✅ explicit Ke*Coarse      |
 
 > **After §1–§15:** Impossible OS matches Windows NT exactly on FILETIME semantics, QPC, interrupt time, timer resolution, precise time, timezone handling, KUSD time updates, suspend bias, and filesystem timestamp accuracy.
 > **§9** locks `QueryPerformanceFrequency` to 10 MHz (FILETIME ticks/second), making it constant and hardware-independent -- Windows still returns variable hardware frequencies and apps must handle this; Linux has no equivalent fixed-frequency API.

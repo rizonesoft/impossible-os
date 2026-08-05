@@ -63,18 +63,18 @@ title: "TODO-09 -- CPU Boot Sequencing & AP Hardening"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                              | Depends On               | Status |
-| --- | :---: | ---------------------------------------- | ------------------------ | :----: |
-| 💎  |   1   | CPUID detection & per-CPU capability capture | D2/T01 §1                |  [x]   |
-| 💎  |   2   | Phase 0 CPU security activation order    | §1, D2/T10 §1, D2/T01 §2 |  [x]   |
-| ⭐  |   3   | Hypervisor detection before timer selection | §1, D2/T01 §12           |  [x]   |
-| 💎  |   4   | AP CPU hardening (`ap_cpu_harden()`)     | §2, D2/T10 §1            |  [x]   |
-| 💎  |   5   | Phase 1 XSAVE & PCID activation window   | §2, D2/T24 §4, D2/T01 §1 |  [x]   |
-| 💎  |   6   | AP feature consistency validation        | §1, §4                   |  [/]   |
-| 💎  |   7   | CR4 safety-bit pinning                   | §2, §5                   |  [x]   |
-| 💎  |   8   | MTRR/PAT AP synchronization              | §4                       |  [x]   |
-| ⭐  |   9   | CPU register state audit trail           | §2, §5                   |  [x]   |
-| 💎  |  10   | AP bringup hardening & robustness        | §4, §6                   |  [x]   |
+| ⭐  | Order | Deliverable                                      | Depends On               | Status |
+| --- | :---: | ------------------------------------------------ | ------------------------ | :----: |
+| 💎  |   1   | CPUID detection & per-CPU capability capture     | D2/T01 §1                |  [x]   |
+| 💎  |   2   | Phase 0 CPU security activation order            | §1, D2/T10 §1, D2/T01 §2 |  [x]   |
+| ⭐  |   3   | Hypervisor detection before timer selection      | §1, D2/T01 §12           |  [x]   |
+| 💎  |   4   | AP CPU hardening (`ap_cpu_harden()`)             | §2, D2/T10 §1            |  [x]   |
+| 💎  |   5   | Phase 1 XSAVE & PCID activation window           | §2, D2/T24 §4, D2/T01 §1 |  [x]   |
+| 💎  |   6   | AP feature consistency validation                | §1, §4                   |  [/]   |
+| 💎  |   7   | CR4 safety-bit pinning                           | §2, §5                   |  [x]   |
+| 💎  |   8   | MTRR/PAT AP synchronization                      | §4                       |  [x]   |
+| ⭐  |   9   | CPU register state audit trail                   | §2, §5                   |  [x]   |
+| 💎  |  10   | AP bringup hardening & robustness                | §4, §6                   |  [x]   |
 | 💎  |  11   | Post-ship follow-up backfill (2026-07-31 cohort) | --                       |  [ ]   |
 
 > 💎 = parity -- Windows and Linux both enforce EFER/CR4 ordering, AP parity, feature consistency, CR4 pinning, and PAT synchronization; Impossible OS must match that contract.
@@ -434,7 +434,7 @@ From the stamped section 6:
 | ⭐  | Feature                  | 🪟 Win11                     | 🐧 Linux                  | 🚀 Impossible OS                |
 | --- | ------------------------ | ---------------------------- | ------------------------- | ------------------------------- |
 | 💎  | EFER.NXE before NX pages | ✅ Hal before paging         | ✅ cpu_init pre-paging    | ✅ §2 cpu_harden + log          |
-| 💎  | SMEP/SMAP BSP Phase 0    | ✅ Hal CR4 early             | ✅ setup_cr4 early        | ⚠️ §2 wired, T10 §2 gate         |
+| 💎  | SMEP/SMAP BSP Phase 0    | ✅ Hal CR4 early             | ✅ setup_cr4 early        | ⚠️ §2 wired, T10 §2 gate        |
 | 💎  | AP hardening matches BSP | ✅ Hal per AP                | ✅ cpu_init secondary     | ✅ §4 ap_cpu_harden+profile     |
 | 💎  | XSAVE after VMM ready    | ✅ OSXSAVE post-paging       | ✅ fpu deferred           | ✅ §5 Phase 1 finalize          |
 | 💎  | PCID after page tables   | ✅ PCIDE post-PML4           | ✅ cr4 post-paging        | ✅ §5 CR4.PCIDE set             |
@@ -445,7 +445,7 @@ From the stamped section 6:
 | 💎  | MTRR AP matches BSP      | ✅ HAL sync paths            | ✅ mtrr_bp_init on APs    | ✅ §8 parity audit (warn-only)  |
 | 💎  | Hybrid feature intersect | ✅ Group affinity            | ✅ cpu_caps per type      | ✅ §6 global AND-mask           |
 | 💎  | AP bringup robustness    | ✅ KeStartProcessors timeout | ✅ cpuhp + per-cpu cr-pin | ✅ §10 abandon CAS + verify-IPI |
-| ⭐  | HV detect before timer   | ✅ Before HAL timer          | ⚠️ Clocksource may lag     | ✅ §3 TLFS-gated hv_flags       |
+| ⭐  | HV detect before timer   | ✅ Before HAL timer          | ⚠️ Clocksource may lag    | ✅ §3 TLFS-gated hv_flags       |
 | ⭐  | Confidential VM guest    | ✅ TDX + SEV in 24H2         | ✅ TDX + SEV-SNP 6.x      | ⬜ XREF 02/T09 §13              |
 | ⭐  | CPU register audit trail | ❌ ETW fragments             | ❌ dmesg fragments        | ✅ §9 [CPU%u AUDIT] line        |
 | ⭐  | POST per activation step | ❌ BIOS POST only            | ❌ dmesg only             | ⬜ TODO-14-boot-diag §2         |

@@ -219,18 +219,18 @@ title: "TODO-18 -- Kernel Image & Module Registry"
 
 ## OS Comparison
 
-| ⭐  | Feature                    | 🪟 Win11                       | 🐧 Linux                  | 🚀 Impossible OS                     |
-| --- | -------------------------- | ------------------------------ | ------------------------- | ------------------------------------ |
-| 💎  | Loaded-image registry      | ✅ PsLoadedModuleList          | ✅ /proc/modules + vmap   | 🔄 §1-§2 KIMAGE_ENTRY registries     |
-| 💎  | Address-to-image lookup    | ✅ KLDR range tables           | ✅ __module_address       | 🔄 §3 interval index + per-CPU cache |
-| 💎  | Symbol resolution          | ✅ DbgHelp/PDB                 | ✅ kallsyms               | 🔄 §4 provider abstraction           |
-| 💎  | Unwind metadata registry   | ✅ RtlLookupFunctionEntry      | ✅ ORC (kernel)           | 🔄 §5 normalized table; T23 executes |
+| ⭐  | Feature                    | 🪟 Win11                       | 🐧 Linux                   | 🚀 Impossible OS                     |
+| --- | -------------------------- | ------------------------------ | -------------------------- | ------------------------------------ |
+| 💎  | Loaded-image registry      | ✅ PsLoadedModuleList          | ✅ /proc/modules + vmap    | 🔄 §1-§2 KIMAGE_ENTRY registries     |
+| 💎  | Address-to-image lookup    | ✅ KLDR range tables           | ✅ __module_address        | 🔄 §3 interval index + per-CPU cache |
+| 💎  | Symbol resolution          | ✅ DbgHelp/PDB                 | ✅ kallsyms                | 🔄 §4 provider abstraction           |
+| 💎  | Unwind metadata registry   | ✅ RtlLookupFunctionEntry      | ✅ ORC (kernel)            | 🔄 §5 normalized table; T23 executes |
 | 💎  | Dynamic/JIT unwind         | ✅ RtlAddFunctionTable         | ⚠️ no kernel JIT unwind    | 🔄 §5 growable table; T23 add/delete |
-| ⭐  | Format-agnostic image list | ⚠️ PE only                      | ⚠️ ELF only                | 🔄 §1-§6 PE + ELF + EIF + kmod       |
+| ⭐  | Format-agnostic image list | ⚠️ PE only                     | ⚠️ ELF only                | 🔄 §1-§6 PE + ELF + EIF + kmod       |
 | 💎  | Image load/unload notify   | ✅ PsSetLoadImageNotifyRoutine | ⚠️ module notifier chain   | 🔄 §7 Executive callbacks            |
-| 💎  | Crash-dump module stream   | ✅ MINIDUMP module list        | ✅ ELF core NT_FILE       | 🔄 §8 KIMAGE_ENTRY module stream     |
-| 💎  | Recently-unloaded history  | ✅ MmUnloadedDrivers           | ❌ none                   | 🔄 §8 bounded tombstone ring         |
-| ⭐  | Image provenance + CI      | ⚠️ CI.dll separate              | ⚠️ IMA/module sig separate | 🔄 §9 unified provenance record      |
+| 💎  | Crash-dump module stream   | ✅ MINIDUMP module list        | ✅ ELF core NT_FILE        | 🔄 §8 KIMAGE_ENTRY module stream     |
+| 💎  | Recently-unloaded history  | ✅ MmUnloadedDrivers           | ❌ none                    | 🔄 §8 bounded tombstone ring         |
+| ⭐  | Image provenance + CI      | ⚠️ CI.dll separate             | ⚠️ IMA/module sig separate | 🔄 §9 unified provenance record      |
 | ⭐  | Hotpatch metadata slot     | ✅ hotpatch pointers           | ⚠️ livepatch separate      | ⬜ §9 reserved fields                |
 
 > **After §1-§6:** a single loader-independent image registry (PE/ELF/EIF/kmod) with fast address/symbol/unwind lookup that every subsystem shares.

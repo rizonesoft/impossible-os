@@ -61,33 +61,33 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                              | Depends On                 | Status |
-| --- | :---: | ---------------------------------------- | -------------------------- | :----: |
-| 💎  |   1   | Per-process environ storage & kernel API | --                         |  [x]   |
-| 💎  |   2   | System default variables from Registry   | §1, T14 §4                 |  [x]   |
-| 💎  |   3   | `%VAR%` expansion (`env_expand`)         | §1                         |  [x]   |
-| 💎  |   4   | argv array: kernel storage & shell parsing | §1                         |  [x]   |
-| 💎  |   5   | Nt/Zw environment variable syscalls      | §1, T11 §2, T11 §5, T12 §4 |  [x]   |
-| 💎  |   6   | Win32 API wrappers                       | §5                         |  [/]   |
-| 💎  |   7   | Shell integration (PATH lookup, SET, ECHO) | §3, §4                     |  [/]   |
-| 💎  |   8   | `.profile` startup script                | §7                         |  [/]   |
+| ⭐  | Order | Deliverable                                        | Depends On                 | Status |
+| --- | :---: | -------------------------------------------------- | -------------------------- | :----: |
+| 💎  |   1   | Per-process environ storage & kernel API           | --                         |  [x]   |
+| 💎  |   2   | System default variables from Registry             | §1, T14 §4                 |  [x]   |
+| 💎  |   3   | `%VAR%` expansion (`env_expand`)                   | §1                         |  [x]   |
+| 💎  |   4   | argv array: kernel storage & shell parsing         | §1                         |  [x]   |
+| 💎  |   5   | Nt/Zw environment variable syscalls                | §1, T11 §2, T11 §5, T12 §4 |  [x]   |
+| 💎  |   6   | Win32 API wrappers                                 | §5                         |  [/]   |
+| 💎  |   7   | Shell integration (PATH lookup, SET, ECHO)         | §3, §4                     |  [/]   |
+| 💎  |   8   | `.profile` startup script                          | §7                         |  [/]   |
 | ⭐  |   9   | Environment change notifications & `sysdm.cpl` tab | §6, §8                     |  [/]   |
-| 💎  |  10   | Environment block sorting & size limits  | §1                         |  [x]   |
-| 💎  |  11   | PATHEXT variable & extension search order | §7                         |  [/]   |
-| 💎  |  12   | Hidden drive-letter variables (`=C:`, `=D:`) | §1, §10                    |  [/]   |
-| 💎  |  13   | CreateEnvironmentBlock / DestroyEnvironmentBlock | §2, §10, §12, T15 §4       |  [/]   |
-| 💎  |  14   | SearchPathW / SearchPathA Win32 API      | §7, §6                     |  [/]   |
-| 💎  |  15   | CommandLineToArgvW Win32 API             | §4, §6                     |  [/]   |
-| 💎  |  16   | Environment variable security & sanitization | §1, T15 §4                 |  [/]   |
-| ⭐  |  17   | App Paths registry-based executable lookup | §7, T14 §4                 |  [/]   |
-| 💎  |  18   | cmd.exe dynamic pseudo-vars & delayed `!VAR!` | §3, §7                     |  [/]   |
-| 💎  |  19   | Rtl expansion hardening (count wrap, `%=X:%`) | §3                         |  [x]   |
-| 💎  |  20   | Rtl export prereqs (lookup bound, extent, alloc) | §19                        |  [x]   |
-| 💎  |  21   | ntdll Rtl environment exports            | §5, §6, §19, §20           |  [/]   |
-| 💎  |  22   | env allocator safety + UTF-8 expansion budget | §1, §3, §21                |  [x]   |
-| 💎  |  23   | Live-environment adoption (SetCurrent/Strings/Ex) | §20, §21, T33 §10          |  [x]   |
-| 💎  |  24   | Rtl expansion completeness (probe+copy, budget) | §3, §20, §21, T23 §13      |  [/]   |
-| 💎  |  25   | Counted (non-`_U`) Rtl env read forms    | §20, §21, T33 §10          |  [x]   |
+| 💎  |  10   | Environment block sorting & size limits            | §1                         |  [x]   |
+| 💎  |  11   | PATHEXT variable & extension search order          | §7                         |  [/]   |
+| 💎  |  12   | Hidden drive-letter variables (`=C:`, `=D:`)       | §1, §10                    |  [/]   |
+| 💎  |  13   | CreateEnvironmentBlock / DestroyEnvironmentBlock   | §2, §10, §12, T15 §4       |  [/]   |
+| 💎  |  14   | SearchPathW / SearchPathA Win32 API                | §7, §6                     |  [/]   |
+| 💎  |  15   | CommandLineToArgvW Win32 API                       | §4, §6                     |  [/]   |
+| 💎  |  16   | Environment variable security & sanitization       | §1, T15 §4                 |  [/]   |
+| ⭐  |  17   | App Paths registry-based executable lookup         | §7, T14 §4                 |  [/]   |
+| 💎  |  18   | cmd.exe dynamic pseudo-vars & delayed `!VAR!`      | §3, §7                     |  [/]   |
+| 💎  |  19   | Rtl expansion hardening (count wrap, `%=X:%`)      | §3                         |  [x]   |
+| 💎  |  20   | Rtl export prereqs (lookup bound, extent, alloc)   | §19                        |  [x]   |
+| 💎  |  21   | ntdll Rtl environment exports                      | §5, §6, §19, §20           |  [/]   |
+| 💎  |  22   | env allocator safety + UTF-8 expansion budget      | §1, §3, §21                |  [x]   |
+| 💎  |  23   | Live-environment adoption (SetCurrent/Strings/Ex)  | §20, §21, T33 §10          |  [x]   |
+| 💎  |  24   | Rtl expansion completeness (probe+copy, budget)    | §3, §20, §21, T23 §13      |  [/]   |
+| 💎  |  25   | Counted (non-`_U`) Rtl env read forms              | §20, §21, T33 §10          |  [x]   |
 
 > 💎 = parity work -- matches what Windows 11 and Linux already do.
 > ⭐ = exclusive work -- Impossible OS is superior or first.
@@ -880,44 +880,44 @@ The counted `RtlQueryEnvironmentVariable` / `RtlExpandEnvironmentStrings` (raw p
 
 ## OS Comparison
 
-| ⭐  | Feature                    | 🪟 Win11              | 🐧 Linux              | 🚀 Impossible OS     |
-| --- | -------------------------- | --------------------- | --------------------- | -------------------- |
-| 💎  | Per-process env storage    | ✅ PEB UTF-16         | ✅ POSIX environ      | ✅ §1 kernel API     |
-| 💎  | `%VAR%` / `$VAR`           | ✅ cmd `%VAR%`        | ✅ bash `$VAR`        | ✅ §3 `env_expand`   |
-| 💎  | System defaults            | ✅ Session Manager    | ✅ `/etc/environment` | ✅ §2 Registry+synth |
-| 💎  | argv to child              | ✅ CRT cmdline        | ✅ execve argv        | ✅ §4 crt0->main     |
-| 💎  | Env var read/write         | ⚠️ ntdll Rtl usermode  | ⚠️ libc only           | ⚠️ §5 Nt✅, §21 Rtl✅ |
-| 💎  | Get/Set env Win32          | ✅ kernel32 A/W       | ⚠️ Wine path           | ⬜ §6                |
-| 💎  | Expand env strings         | ✅ A/W                | ⚠️ Wine path           | ⬜ §6                |
-| 💎  | GetCommandLine             | ✅ A/W                | ⚠️ Wine path           | ⬜ §6                |
-| 💎  | PATH lookup                | ✅ PATHEXT            | ✅ POSIX PATH         | ⬜ §7                |
-| 💎  | SET shell cmd              | ✅ cmd built-in       | ✅ export/env         | ⬜ §7                |
-| 💎  | Shell startup              | ✅ HKCU at logon      | ✅ profile files      | ⬜ §8                |
-| 💎  | Env change notify          | ✅ WM_SETTINGCHANGE   | ⚠️ inotify etc         | ⬜ §9                |
-| 💎  | Persistent set             | ✅ setx.exe           | ⚠️ edit dotfiles       | ⬜ §9                |
-| ⭐  | sysdm env tab              | ✅ sysdm.cpl          | ❌ no GNOME equiv     | ⬜ §9                |
-| ⭐  | SET /A arith               | ✅ cmd only           | ✅ bash arith         | ⬜ §7                |
-| ⭐  | source / `.`               | ❌ not cmd            | ✅ POSIX              | ⬜ §8                |
-| 💎  | Sorted env block           | ✅ Unicode sort       | ❌ unsorted           | ✅ §10 ASCII sort    |
+| ⭐  | Feature                    | 🪟 Win11              | 🐧 Linux              | 🚀 Impossible OS      |
+| --- | -------------------------- | --------------------- | --------------------- | --------------------- |
+| 💎  | Per-process env storage    | ✅ PEB UTF-16         | ✅ POSIX environ      | ✅ §1 kernel API      |
+| 💎  | `%VAR%` / `$VAR`           | ✅ cmd `%VAR%`        | ✅ bash `$VAR`        | ✅ §3 `env_expand`    |
+| 💎  | System defaults            | ✅ Session Manager    | ✅ `/etc/environment` | ✅ §2 Registry+synth  |
+| 💎  | argv to child              | ✅ CRT cmdline        | ✅ execve argv        | ✅ §4 crt0->main      |
+| 💎  | Env var read/write         | ⚠️ ntdll Rtl usermode | ⚠️ libc only          | ⚠️ §5 Nt✅, §21 Rtl✅ |
+| 💎  | Get/Set env Win32          | ✅ kernel32 A/W       | ⚠️ Wine path          | ⬜ §6                 |
+| 💎  | Expand env strings         | ✅ A/W                | ⚠️ Wine path          | ⬜ §6                 |
+| 💎  | GetCommandLine             | ✅ A/W                | ⚠️ Wine path          | ⬜ §6                 |
+| 💎  | PATH lookup                | ✅ PATHEXT            | ✅ POSIX PATH         | ⬜ §7                 |
+| 💎  | SET shell cmd              | ✅ cmd built-in       | ✅ export/env         | ⬜ §7                 |
+| 💎  | Shell startup              | ✅ HKCU at logon      | ✅ profile files      | ⬜ §8                 |
+| 💎  | Env change notify          | ✅ WM_SETTINGCHANGE   | ⚠️ inotify etc        | ⬜ §9                 |
+| 💎  | Persistent set             | ✅ setx.exe           | ⚠️ edit dotfiles      | ⬜ §9                 |
+| ⭐  | sysdm env tab              | ✅ sysdm.cpl          | ❌ no GNOME equiv     | ⬜ §9                 |
+| ⭐  | SET /A arith               | ✅ cmd only           | ✅ bash arith         | ⬜ §7                 |
+| ⭐  | source / `.`               | ❌ not cmd            | ✅ POSIX              | ⬜ §8                 |
+| 💎  | Sorted env block           | ✅ Unicode sort       | ❌ unsorted           | ✅ §10 ASCII sort     |
 | 💎  | CREATE_UNICODE_ENVIRONMENT | ✅ CreateProcess docs | ❌ Win32-only         | ⚠️ §10 blk, T12 §7    |
-| 💎  | Env size limits            | ✅ 32K/var            | ⚠️ ARG_MAX             | ✅ §10 32K+1MiB      |
+| 💎  | Env size limits            | ✅ 32K/var            | ⚠️ ARG_MAX            | ✅ §10 32K+1MiB       |
 | 💎  | PATHEXT                    | ✅ long default       | ❌ N/A                | ⚠️ §11 `.EXE` def     |
 | 💎  | Hidden `=C:` cwd           | ✅ per drive          | ❌ single cwd         | ⚠️ §12 (inherit def)  |
 | 💎  | CreateEnvBlock             | ✅ userenv            | ❌ none               | ⚠️ §13 caller blk     |
 | 💎  | ExpandForUser              | ✅ userenv            | ❌ none               | ⚠️ §13 NULL token     |
-| 💎  | SearchPathW                | ✅ kernel32           | ⚠️ execvp libc         | ✅ env_searchpath.c  |
-| 💎  | SetSearchPathMode          | ✅ kernel32           | ❌ N/A                | ✅ safe-search CAS   |
+| 💎  | SearchPathW                | ✅ kernel32           | ⚠️ execvp libc        | ✅ env_searchpath.c   |
+| 💎  | SetSearchPathMode          | ✅ kernel32           | ❌ N/A                | ✅ safe-search CAS    |
 | 💎  | CmdLineToArgvW             | ✅ shell32            | ❌ wordexp diff       | ⚠️ §15 kernel prim    |
 | 💎  | Elevated env strip         | ✅ restricted         | ✅ AT_SECURE          | ⚠️ §16 read gate      |
 | ⭐  | App Paths                  | ✅ HKLM App Paths     | ❌ none               | ⚠️ §17 lookup/reg     |
-| 💎  | Dynamic pseudo-vars        | ✅ %CD%/%ERRORLEVEL%  | ⚠️ $PWD/$?/$RANDOM     | ⬜ §18               |
-| 💎  | Delayed `!VAR!` expansion  | ✅ cmd /V             | ❌ N/A                | ⬜ §18               |
+| 💎  | Dynamic pseudo-vars        | ✅ %CD%/%ERRORLEVEL%  | ⚠️ $PWD/$?/$RANDOM    | ⬜ §18                |
+| 💎  | Delayed `!VAR!` expansion  | ✅ cmd /V             | ❌ N/A                | ⬜ §18                |
 | 💎  | ntdll Rtl env exports      | ✅ ntdll usermode     | ❌ none               | ⚠️ §21 kernel-side    |
 | 💎  | Rtl live-env adoption      | ✅ ntdll usermode     | ❌ none               | ⚠️ §23 kernel-side    |
 | 💎  | Counted Rtl env reads      | ✅ phnt ntrtl.h       | ❌ none               | ⚠️ §25 SIZE_T-safe    |
-| ⭐  | Rtl expansion hardening    | ⚠️ uint32 len fields   | ❌ n/a                | ✅ §19 u64 + `%=X:%` |
-| ⭐  | Rtl lookup work bound      | ❌ O(n) scan per ref  | ❌ n/a                | ✅ §20 work budget   |
-| 💎  | Exec argv+envp size cap    | ⚠️ per-var only        | ✅ E2BIG/ARG_MAX      | ✅ §4 frame+ARG_MAX  |
+| ⭐  | Rtl expansion hardening    | ⚠️ uint32 len fields  | ❌ n/a                | ✅ §19 u64 + `%=X:%`  |
+| ⭐  | Rtl lookup work bound      | ❌ O(n) scan per ref  | ❌ n/a                | ✅ §20 work budget    |
+| 💎  | Exec argv+envp size cap    | ⚠️ per-var only       | ✅ E2BIG/ARG_MAX      | ✅ §4 frame+ARG_MAX   |
 
 After §1 through §9, Impossible OS reaches base Windows 11 and Linux parity for core environment variable features: per-process UTF-8 env storage, `%VAR%` expansion, Registry-backed system defaults, Win32 `GetEnvironmentVariable` / `ExpandEnvironmentStrings`, PATH lookup, `SET`, and `.profile` startup.
 

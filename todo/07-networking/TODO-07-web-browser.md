@@ -244,18 +244,18 @@ Block mixed content (HTTP resource on HTTPS page). TLS padlock icon in address b
 ## OS Comparison
 
 
-| ⭐  | Feature                                  | 🪟 Win11                                 | 🐧 Linux                                 | 🚀 Impossible OS                         |
-| --- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
-| 💎  | Text-only HTML browser                   | ✅ Edge + IE legacy; `lynx`              | ✅ `w3m`, `lynx`, `elinks` text browsers | ⬜ §1 -- kernel-native `http_get` → tag-strip → |
-| 💎  | HTML parser + DOM tree                   | ✅ Edge (Chromium Blink); IE (Trident);  | ✅ Firefox (Gecko), Chromium (Blink), WebKit; | ⬜ §2 -- custom tokenizer; void-element auto-close; 20 |
-| 💎  | Tab management -- 16 tabs, tab bar, Ctrl+T/W/Tab | ✅ Edge multi-tab; tab groups, vertical  | ✅ All major browsers support tabs       | ⬜ §3 -- `browser_tab_t` per-tab DOM+history; tab bar |
-| 💎  | Block/inline layout engine               | ✅ Blink/Gecko full CSS layout including | ✅ Same (Blink/Gecko/WebKit)             | ⬜ §4 -- block + inline flow; word       |
-| 💎  | Image loading                            | ✅ Full image support (WebP, AVIF,       | ✅ Same format support                   | ⬜ §5 -- `image_load_mem`; 16-entry decoded cache; alt |
-| 💎  | CSS cascade                              | ✅ Full CSS3 in Blink/Gecko; DevTools    | ✅ Same                                  | ⬜ §6 -- specificity sort, `!important`, em/%/px lengths, |
-| 💎  | JavaScript stub → QuickJS upgrade path   | ✅ V8 (Edge); SpiderMonkey (Firefox); full | ✅ Same                                  | ⬜ §7 -- stub with `[JavaScript disabled]` placeholder |
-| 💎  | Bookmarks                                | ✅ Edge Favorites; IE bookmark import;   | ✅ All major browsers support bookmark   | ⬜ §8 -- `bookmarks.json`; NETSCAPE HTML import/export; 512 |
-| 💎  | Download manager                         | ✅ Edge download shelf; resume via       | ✅ Firefox/Chromium download manager; resume support | ⬜ §9 -- `http_get_range()`; 8 concurrent; pause/resume; `Downloads\` |
-| 💎  | Privacy + security                       | ✅ Edge: HTTPS indicator, mixed content  | ✅ All major browsers implement these    | ⬜ §10 -- padlock/⚠ in address bar; cookie |
+| ⭐  | Feature                                          | 🪟 Win11                                   | 🐧 Linux                                             | 🚀 Impossible OS                                                      |
+| --- | ------------------------------------------------ | ------------------------------------------ | ---------------------------------------------------- | --------------------------------------------------------------------- |
+| 💎  | Text-only HTML browser                           | ✅ Edge + IE legacy; `lynx`                | ✅ `w3m`, `lynx`, `elinks` text browsers             | ⬜ §1 -- kernel-native `http_get` → tag-strip →                       |
+| 💎  | HTML parser + DOM tree                           | ✅ Edge (Chromium Blink); IE (Trident);    | ✅ Firefox (Gecko), Chromium (Blink), WebKit;        | ⬜ §2 -- custom tokenizer; void-element auto-close; 20                |
+| 💎  | Tab management -- 16 tabs, tab bar, Ctrl+T/W/Tab | ✅ Edge multi-tab; tab groups, vertical    | ✅ All major browsers support tabs                   | ⬜ §3 -- `browser_tab_t` per-tab DOM+history; tab bar                 |
+| 💎  | Block/inline layout engine                       | ✅ Blink/Gecko full CSS layout including   | ✅ Same (Blink/Gecko/WebKit)                         | ⬜ §4 -- block + inline flow; word                                    |
+| 💎  | Image loading                                    | ✅ Full image support (WebP, AVIF,         | ✅ Same format support                               | ⬜ §5 -- `image_load_mem`; 16-entry decoded cache; alt                |
+| 💎  | CSS cascade                                      | ✅ Full CSS3 in Blink/Gecko; DevTools      | ✅ Same                                              | ⬜ §6 -- specificity sort, `!important`, em/%/px lengths,             |
+| 💎  | JavaScript stub → QuickJS upgrade path           | ✅ V8 (Edge); SpiderMonkey (Firefox); full | ✅ Same                                              | ⬜ §7 -- stub with `[JavaScript disabled]` placeholder                |
+| 💎  | Bookmarks                                        | ✅ Edge Favorites; IE bookmark import;     | ✅ All major browsers support bookmark               | ⬜ §8 -- `bookmarks.json`; NETSCAPE HTML import/export; 512           |
+| 💎  | Download manager                                 | ✅ Edge download shelf; resume via         | ✅ Firefox/Chromium download manager; resume support | ⬜ §9 -- `http_get_range()`; 8 concurrent; pause/resume; `Downloads\` |
+| 💎  | Privacy + security                               | ✅ Edge: HTTPS indicator, mixed content    | ✅ All major browsers implement these                | ⬜ §10 -- padlock/⚠ in address bar; cookie                            |
 
 > **After §1–§10:** Impossible OS has a kernel-native web browser with full HTML/CSS rendering, tabs, images, bookmarks, downloads, and TLS security -- all built on the in-kernel HTTP/HTTPS stack with zero external runtime libraries. The JavaScript stub with a clear `js_eval()` upgrade path means QuickJS can be dropped in as a freestanding port (analogous to Mbed TLS in TODO-03 §3) whenever needed, instantly upgrading the browser to ES2020 support.
 

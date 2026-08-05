@@ -208,18 +208,18 @@ title: "TODO-08 -- Alternate Boot Protocols & Compatibility Boundary"
 
 ## OS Comparison
 
-| ⭐  | Feature                              | 🪟 Win11                    | 🐧 Linux                      | 🚀 Impossible OS                 |
-| --- | ------------------------------------ | --------------------------- | ----------------------------- | -------------------------------- |
-| 💎  | UEFI primary boot                    | ✅ UEFI/GPT only since 24H2 | ✅ UEFI is default            | ✅ UEFI is the canonical path    |
+| ⭐  | Feature                              | 🪟 Win11                    | 🐧 Linux                       | 🚀 Impossible OS                 |
+| --- | ------------------------------------ | --------------------------- | ------------------------------ | -------------------------------- |
+| 💎  | UEFI primary boot                    | ✅ UEFI/GPT only since 24H2 | ✅ UEFI is default             | ✅ UEFI is the canonical path    |
 | 💎  | Legacy BIOS / CSM                    | ❌ removed in 24H2          | ⚠️ deprecated; distro-specific | ❌ unsupported -- §5 doc stance  |
-| 💎  | Multiboot2 / GRUB protocol           | ❌ no equivalent            | ✅ widely shipped             | ❌ unsupported (parser deleted)  |
+| 💎  | Multiboot2 / GRUB protocol           | ❌ no equivalent            | ✅ widely shipped              | ❌ unsupported (parser deleted)  |
 | 💎  | Limine / stivale protocol            | ❌ no equivalent            | ⚠️ niche distros               | ❌ unsupported per policy        |
-| ⭐  | Explicit unsupported-path fence      | ⚠️ bootmgr-specific halts    | ⚠️ distro-specific             | ✅ deletion-as-enforcement       |
-| ⭐  | Capability-bit degradation surfacing | ❌ silent feature absence   | ❌ silent feature absence     | ⚠️ (no alt-boot path exists)      |
-| ⭐  | Higher-level alt-boot loss matrix    | ❌ undefined                | ❌ distro-specific            | ⚠️ (no alt-boot path exists)      |
-| ⭐  | Userspace degraded-feature syscall   | ❌ no equivalent            | ❌ scrape dmesg               | ⚠️ (no alt-boot path exists)      |
-| ⭐  | Compatible-mode CVE-tracking gate    | ❌ n/a (no alt-boot)        | ⚠️ per-distro shim/grub        | ⚠️ (no GRUB artifact ships)       |
-| 💎  | Explicit alt-boot non-goals          | ⚠️ Microsoft-only path       | ⚠️ implicit per-distro         | ✅ `docs/boot/alt-boot.md` table |
+| ⭐  | Explicit unsupported-path fence      | ⚠️ bootmgr-specific halts   | ⚠️ distro-specific             | ✅ deletion-as-enforcement       |
+| ⭐  | Capability-bit degradation surfacing | ❌ silent feature absence   | ❌ silent feature absence      | ⚠️ (no alt-boot path exists)     |
+| ⭐  | Higher-level alt-boot loss matrix    | ❌ undefined                | ❌ distro-specific             | ⚠️ (no alt-boot path exists)     |
+| ⭐  | Userspace degraded-feature syscall   | ❌ no equivalent            | ❌ scrape dmesg                | ⚠️ (no alt-boot path exists)     |
+| ⭐  | Compatible-mode CVE-tracking gate    | ❌ n/a (no alt-boot)        | ⚠️ per-distro shim/grub        | ⚠️ (no GRUB artifact ships)      |
+| 💎  | Explicit alt-boot non-goals          | ⚠️ Microsoft-only path      | ⚠️ implicit per-distro         | ✅ `docs/boot/alt-boot.md` table |
 
 > **Closure summary:** Impossible OS matches the Linux + Win11 UEFI/GPT floor and goes beyond on the "Explicit unsupported-path fence" + "Explicit alt-boot non-goals" rows: deletion-as-enforcement is structurally stronger than a build-flag gate (no code to drift), and the non-goal table documents adjacent rejections so future contributors do not re-discover the same decisions. The capability/loss/syscall rows are no longer applicable -- there is no alt-boot code path to surface degradation from.
 

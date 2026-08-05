@@ -34,18 +34,18 @@ title: "TODO-16 -- Bluetooth Full Stack"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                              | Depends On                               | Status |
-| --- | :---: | ---------------------------------------- | ---------------------------------------- | :----: |
-| 💎  |   1   | §1 HCI transport layer -- commands, events, ACL, `hci_conn` table | `bt_hci_ops_t` stub (TODO-10 §13)        |  [ ]   |
-| 💎  |   2   | §2 HCI firmware loading -- Intel AX200-BT + Realtek RTL8761B | §1 (HCI commands available)              |  [ ]   |
-| 💎  |   3   | §3 L2CAP -- channel multiplexing, signalling, MTU negotiation | §1 (ACL data path)                       |  [ ]   |
-| 💎  |   4   | §4 SDP -- `ServiceSearchAttributeRequest`, PSM/channel discovery, local server | §3 (L2CAP channels)                      |  [ ]   |
-| 💎  |   5   | §5 HID Profile -- L2CAP PSM 0x11/0x13, report descriptor, input injection | §3, §4 (SDP PSM lookup), `hid_parser.c`  |  [ ]   |
-| 💎  |   6   | §6 BLE -- LE scan, `LE_CREATE_CONNECTION`, ATT/GATT Battery + DevInfo | §1 (LE HCI commands), §3 (LE L2CAP CIDs) |  [ ]   |
-| 💎  |   7   | §7 RFCOMM & SPP -- L2CAP PSM 0x03, SABM/UA frames, `/dev/rfcomm0` | §3, §4 (RFCOMM channel via SDP)          |  [ ]   |
-| 💎  |   8   | §8 A2DP + SBC encoder + AVRCP            | §3 (L2CAP PSM 0x19), §4 (AVDTP discovery) |  [ ]   |
-| ⭐  |   9   | §9 Bluetooth manager + pairing UI + `bluetooth.cpl` | §1–8 (all profiles), `hwrng` (pairing nonce) |  [ ]   |
-| 💎  |  10   | §10 `btctl` shell command                | §9 (manager API)                         |  [ ]   |
+| ⭐  | Order | Deliverable                                                                    | Depends On                                   | Status |
+| --- | :---: | ------------------------------------------------------------------------------ | -------------------------------------------- | :----: |
+| 💎  |   1   | §1 HCI transport layer -- commands, events, ACL, `hci_conn` table              | `bt_hci_ops_t` stub (TODO-10 §13)            |  [ ]   |
+| 💎  |   2   | §2 HCI firmware loading -- Intel AX200-BT + Realtek RTL8761B                   | §1 (HCI commands available)                  |  [ ]   |
+| 💎  |   3   | §3 L2CAP -- channel multiplexing, signalling, MTU negotiation                  | §1 (ACL data path)                           |  [ ]   |
+| 💎  |   4   | §4 SDP -- `ServiceSearchAttributeRequest`, PSM/channel discovery, local server | §3 (L2CAP channels)                          |  [ ]   |
+| 💎  |   5   | §5 HID Profile -- L2CAP PSM 0x11/0x13, report descriptor, input injection      | §3, §4 (SDP PSM lookup), `hid_parser.c`      |  [ ]   |
+| 💎  |   6   | §6 BLE -- LE scan, `LE_CREATE_CONNECTION`, ATT/GATT Battery + DevInfo          | §1 (LE HCI commands), §3 (LE L2CAP CIDs)     |  [ ]   |
+| 💎  |   7   | §7 RFCOMM & SPP -- L2CAP PSM 0x03, SABM/UA frames, `/dev/rfcomm0`              | §3, §4 (RFCOMM channel via SDP)              |  [ ]   |
+| 💎  |   8   | §8 A2DP + SBC encoder + AVRCP                                                  | §3 (L2CAP PSM 0x19), §4 (AVDTP discovery)    |  [ ]   |
+| ⭐  |   9   | §9 Bluetooth manager + pairing UI + `bluetooth.cpl`                            | §1–8 (all profiles), `hwrng` (pairing nonce) |  [ ]   |
+| 💎  |  10   | §10 `btctl` shell command                                                      | §9 (manager API)                             |  [ ]   |
 
 > §9 Bluetooth manager is `⭐` exclusive by architecture: Windows uses `bthserv` (user-space Bluetooth service) + `btpan.sys`; Linux uses `bluetoothd` (BlueZ user-space daemon). Impossible OS runs the full Bluetooth protocol stack in the kernel with no daemon -- pairing, profile negotiation, and audio routing happen inside the kernel without IPC round-trips to a user-space service.
 

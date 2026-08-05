@@ -38,18 +38,18 @@ title: "TODO-09 -- Win32 IPC Extensions & Async I/O"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                              | Depends On                              | Status |
-| --- | :---: | ---------------------------------------- | --------------------------------------- | :----: |
-| 💎  |   1   | §1 Named pipes (NPFS) -- server endpoint, byte/message mode | Ob namespace, `pipe.c` baseline         |  [ ]   |
-| 💎  |   2   | §2 Named pipe instances + overlapped I/O (IRP) | §1                                      |  [ ]   |
-| 💎  |   3   | §3 Mailslots (MSFS) -- broadcast, `GetMailslotInfo` | Ob namespace                            |  [ ]   |
-| 💎  |   4   | §4 I/O completion ports (IOCP) -- `NtCreateIoCompletion`, FIFO | TODO-08 §2 (futex wait), TODO-08 §8     |  [ ]   |
-| 💎  |   5   | §5 IOCP worker thread pool + DMA completion hook | §4, AHCI/VirtIO DMA callback            |  [ ]   |
-| 💎  |   6   | §6 Win32 Ob-backed sync objects -- Event, Mutant, Semaphore | Ob namespace, TODO-08 §8 (`waitable_t`) |  [ ]   |
-| 💎  |   7   | §7 LPC basic -- `NtCreatePort`, request/reply, `PORT_MESSAGE` | §6, Ob `\RPC Control\`                  |  [ ]   |
+| ⭐  | Order | Deliverable                                                     | Depends On                              | Status |
+| --- | :---: | --------------------------------------------------------------- | --------------------------------------- | :----: |
+| 💎  |   1   | §1 Named pipes (NPFS) -- server endpoint, byte/message mode     | Ob namespace, `pipe.c` baseline         |  [ ]   |
+| 💎  |   2   | §2 Named pipe instances + overlapped I/O (IRP)                  | §1                                      |  [ ]   |
+| 💎  |   3   | §3 Mailslots (MSFS) -- broadcast, `GetMailslotInfo`             | Ob namespace                            |  [ ]   |
+| 💎  |   4   | §4 I/O completion ports (IOCP) -- `NtCreateIoCompletion`, FIFO  | TODO-08 §2 (futex wait), TODO-08 §8     |  [ ]   |
+| 💎  |   5   | §5 IOCP worker thread pool + DMA completion hook                | §4, AHCI/VirtIO DMA callback            |  [ ]   |
+| 💎  |   6   | §6 Win32 Ob-backed sync objects -- Event, Mutant, Semaphore     | Ob namespace, TODO-08 §8 (`waitable_t`) |  [ ]   |
+| 💎  |   7   | §7 LPC basic -- `NtCreatePort`, request/reply, `PORT_MESSAGE`   | §6, Ob `\RPC Control\`                  |  [ ]   |
 | 💎  |   8   | §8 ALPC extensions -- shared section, handle attrs, direct mode | §7, TODO-05 §5 (Section Object)         |  [ ]   |
-| ⭐  |   9   | §9 `ImpossibleRing` SQ+CQ async submission rings | §4, §5, TODO-05 §5 (NtMapViewOfSection) |  [ ]   |
-| 💎  |  10   | IPC syscalls wired to SSDT               | §1–§4, D02 T12 §4                       |  [ ]   |
+| ⭐  |   9   | §9 `ImpossibleRing` SQ+CQ async submission rings                | §4, §5, TODO-05 §5 (NtMapViewOfSection) |  [ ]   |
+| 💎  |  10   | IPC syscalls wired to SSDT                                      | §1–§4, D02 T12 §4                       |  [ ]   |
 
 > 💎 = parity -- named pipes, IOCP, named sync objects, LPC, and ALPC are Windows NT core IPC primitives; Impossible OS must match for Win32 compatibility. Mailslots are a Windows-exclusive feature Linux lacks.
 > ⭐ = exclusive -- `ImpossibleRing` provides io_uring–style zero-syscall async submission, going beyond classic Windows I/O models.
@@ -249,17 +249,17 @@ Wire named pipes, mailslots, and I/O completion port syscalls into the SSDT. (�
 ## OS Comparison
 
 
-| ⭐  | Feature                                  | 🪟 Win11                                 | 🐧 Linux                                 | 🚀 Impossible OS                         |
-| --- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- | ---------------------------------------- |
-| 💎  | Named pipes -- byte/message, duplex      | ✅ NPFS; `CreateNamedPipe`; message + byte | ✅ `mkfifo(3)` / `open(O_RDWR)`; byte only; | ⬜ §1 -- NPFS, `NtCreateNamedPipeFile`, byte + message, |
-| 💎  | Overlapped I/O + multiple pipe instances | ✅ `dwMaxInstances`; `FILE_FLAG_OVERLAPPED`; `GetOverlappedResult` | ❌ No named pipe instances; `O_NONBLOCK` | ⬜ §2 -- `dwMaxInstances`, `irp_t`, `FILE_FLAG_OVERLAPPED` |
-| 💎  | Mailslots -- one-way broadcast           | ✅ `CreateMailslot`; broadcast via `\\.\Mailslot\*` | ❌ No equivalent; workarounds use UDP/domain | ⬜ §3 -- MSFS, `NtCreateMailslotFile`, broadcast, `GetMailslotInfo` |
-| 💎  | I/O completion ports                     | ✅ `CreateIoCompletionPort`; `GetQueuedCompletionStatus` | ✅ `io_uring`; `epoll` (FD-only)         | ⬜ §4 -- `NtCreateIoCompletion`, FIFO, `ticket_lock_t`, `waitable_t` |
-| 💎  | DMA-backed async I/O completion worker pool | ✅ Thread pool API (`CreateThreadpoolIo`) | ✅ `io_uring` sqpoll / libaio thread     | ⬜ §5 -- ISR-safe `iocp_post_from_isr`, pool scaling, AHCI/VirtIO |
-| 💎  | Named cross-process sync objects         | ✅ `CreateEvent(name)` / `OpenEvent(name)` via Ob | ❌ No named kernel sync objects;         | ⬜ §6 -- Ob-backed, `NtCreateEvent/Mutant/Semaphore`, cross-process name |
-| 💎  | LPC -- synchronous request/reply 256-byte messages | ✅ `NtRequestWaitReplyPort`; used by CSRSS, Win32k | ❌ No equivalent kernel rendezvous IPC;  | ⬜ §7 -- `NtCreatePort`, rendezvous, `PORT_MESSAGE`, `\RPC Control\` |
-| 💎  | ALPC                                     | ✅ ALPC in Vista+; `NtAlpcSendWaitReceivePort` | ❌ No equivalent; D-Bus operates in      | ⬜ §8 -- view + handle attributes, direct/indirect, |
-| ⭐  | `ImpossibleRing` zero-syscall async submission | ❌ IOCP still requires one `GetQueuedCompletionStatus` | ✅ `io_uring` SQ+CQ rings; `io_uring_enter` doorbell | ⬜ §9 -- SQ+CQ `NtMapViewOfSection`, `NtSubmitRing` batch doorbell |
+| ⭐  | Feature                                            | 🪟 Win11                                                           | 🐧 Linux                                             | 🚀 Impossible OS                                                         |
+| --- | -------------------------------------------------- | ------------------------------------------------------------------ | ---------------------------------------------------- | ------------------------------------------------------------------------ |
+| 💎  | Named pipes -- byte/message, duplex                | ✅ NPFS; `CreateNamedPipe`; message + byte                         | ✅ `mkfifo(3)` / `open(O_RDWR)`; byte only;          | ⬜ §1 -- NPFS, `NtCreateNamedPipeFile`, byte + message,                  |
+| 💎  | Overlapped I/O + multiple pipe instances           | ✅ `dwMaxInstances`; `FILE_FLAG_OVERLAPPED`; `GetOverlappedResult` | ❌ No named pipe instances; `O_NONBLOCK`             | ⬜ §2 -- `dwMaxInstances`, `irp_t`, `FILE_FLAG_OVERLAPPED`               |
+| 💎  | Mailslots -- one-way broadcast                     | ✅ `CreateMailslot`; broadcast via `\\.\Mailslot\*`                | ❌ No equivalent; workarounds use UDP/domain         | ⬜ §3 -- MSFS, `NtCreateMailslotFile`, broadcast, `GetMailslotInfo`      |
+| 💎  | I/O completion ports                               | ✅ `CreateIoCompletionPort`; `GetQueuedCompletionStatus`           | ✅ `io_uring`; `epoll` (FD-only)                     | ⬜ §4 -- `NtCreateIoCompletion`, FIFO, `ticket_lock_t`, `waitable_t`     |
+| 💎  | DMA-backed async I/O completion worker pool        | ✅ Thread pool API (`CreateThreadpoolIo`)                          | ✅ `io_uring` sqpoll / libaio thread                 | ⬜ §5 -- ISR-safe `iocp_post_from_isr`, pool scaling, AHCI/VirtIO        |
+| 💎  | Named cross-process sync objects                   | ✅ `CreateEvent(name)` / `OpenEvent(name)` via Ob                  | ❌ No named kernel sync objects;                     | ⬜ §6 -- Ob-backed, `NtCreateEvent/Mutant/Semaphore`, cross-process name |
+| 💎  | LPC -- synchronous request/reply 256-byte messages | ✅ `NtRequestWaitReplyPort`; used by CSRSS, Win32k                 | ❌ No equivalent kernel rendezvous IPC;              | ⬜ §7 -- `NtCreatePort`, rendezvous, `PORT_MESSAGE`, `\RPC Control\`     |
+| 💎  | ALPC                                               | ✅ ALPC in Vista+; `NtAlpcSendWaitReceivePort`                     | ❌ No equivalent; D-Bus operates in                  | ⬜ §8 -- view + handle attributes, direct/indirect,                      |
+| ⭐  | `ImpossibleRing` zero-syscall async submission     | ❌ IOCP still requires one `GetQueuedCompletionStatus`             | ✅ `io_uring` SQ+CQ rings; `io_uring_enter` doorbell | ⬜ §9 -- SQ+CQ `NtMapViewOfSection`, `NtSubmitRing` batch doorbell       |
 
 > **After §1–8:** Impossible OS achieves full Win32 IPC parity required for CSRSS and Win32k -- named pipes, mailslots, IOCP, named sync objects, LPC, and ALPC all present. Mailslots and named sync objects fill gaps that Linux never addressed at the kernel level. `ImpossibleRing` (§9) then surpasses classic Windows IOCP by providing io_uring–style zero-per-operation-syscall async I/O with a shared ring buffer -- the same architecture that made io_uring the Linux storage throughput benchmark leader.
 
