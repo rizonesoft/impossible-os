@@ -652,7 +652,9 @@ Current repo is ~215k core LOC (~189k kernel + ~24k tooling per [COUNT.md](../..
 
 **What NOT to plan here:** concrete `[ ]` checklist items, commit lines, test checkpoints, CI wiring. Those land when a trigger fires and this section gets rewritten into active form.
 
-- [ ] Review this section's triggers once per calendar year (or when any trigger appears likely to fire within 6 months). If any trigger is active or imminent, convert the "planned shape" notes above into concrete `[ ]` items, move §19 ahead of the OS Comparison table, and re-run `/todo-pipeline` on the TODO.
+- [ ] standing: Review this section's triggers once per calendar year, or when any trigger appears likely to fire within 6 months.
+  - If any trigger is active or imminent, convert the "planned shape" notes above into concrete `[ ]` items, move §19 ahead of the OS Comparison table, and re-run `/todo-pipeline` on the TODO.
+  - This item never closes: it is the trigger-watcher itself, so it is `standing:` rather than a park, and it names no blocker because nothing blocks it -- the calendar is its only gate.
 
 **Test checkpoint:** No runtime verification -- §19 is a trigger-watcher, not executable work. The tracking item closes one year at a time: the reviewer re-reads the five deferral triggers against current repo state (`wc -l`, `jq '.[] | length' compile_commands.json`, wall-clock of `clangd-19 --check` on a cold cache) and records "no trigger fired, reset the clock" in the commit message of the `- [ ] Review` item. When a trigger DOES fire, §19 converts to active form and a real Test checkpoint replaces this block.
 
@@ -660,7 +662,7 @@ Current repo is ~215k core LOC (~189k kernel + ~24k tooling per [COUNT.md](../..
 > **Per the skill-template rule, every section normally ends with a `Commit:` item.** §19 intentionally does not, because nothing ships until a trigger fires. The single `[ ]` item above is the tracking work itself (review triggers). Do not "close" §19 by marking it `[x]` -- it stays open as a standing trigger-watcher for the lifetime of this TODO, and graduates to active form when needed.
 
 > **Verified:** 2026-06-13 | commit `8e121a57` | 0/1 items (standing trigger-watcher, intentionally open) | build N/A | validation: five scale triggers checked vs current repo, none fired
-> **Deferred:** [L] Standing trigger-watcher; no code until a scale threshold fires (2M core LOC / 5min cold clangd-check / 10k compile_commands entries / 2s warm workspace-symbol / 4 GiB clangd RSS) -- current repo is ~5 orders of magnitude under every threshold (2026-06-13) -> XREF: 00-infrastructure/TODO-07 §19 (item: "Review this section's triggers once per calendar year" at line 653)
+> **Deferred:** [L] Standing trigger-watcher; no code until a scale threshold fires (2M core LOC / 5min cold clangd-check / 10k compile_commands entries / 2s warm workspace-symbol / 4 GiB clangd RSS) -- current repo is ~5 orders of magnitude under every threshold (2026-06-13) -> XREF: 00-infrastructure/TODO-07 §19 (item: "standing: Review this section's triggers once per calendar year" at line 655)
 
 ---
 
@@ -700,7 +702,7 @@ Current repo is ~215k core LOC (~189k kernel + ~24k tooling per [COUNT.md](../..
 
 > **Verified:** 2026-08-04 | commit `ce4a798c` | 4/4 items | build OK | 101/101 test_bridge.sh, 1282/1282 test-tooling.sh, 28326 kernel + 17 user-mode tests, lint 0 errors
 > **Accepted:** [H] Concurrent `_retire_spawn` can close a pidfd the force sweep is holding (reason: single-owner descriptor handoff is a design change, not a patch); SHIPPED in §22 -> XREF: 00-infrastructure/TODO-07 §22 (item: "Closed the pidfd retirement race" at line 755)
-> **Accepted:** [H] Force sweep walks `/proc` once per recorded leader instead of sharing one enumeration (reason: needs a shared snapshot driving all three passes) -> XREF: 00-infrastructure/TODO-07 §21 (item: "Share ONE procfs enumeration across the force sweep" at line 703)
+> **Accepted:** [H] Force sweep walks `/proc` once per recorded leader instead of sharing one enumeration (reason: needs a shared snapshot driving all three passes) -> XREF: 00-infrastructure/TODO-07 §21 (item: "Share ONE procfs enumeration across the force sweep" at line 705)
 > **Accepted:** [M] 9a silently skips a truncated ledger row and a row with no start ticks (reason: reader hardening belongs with the harness coverage work); SHIPPED in §22 -> XREF: 00-infrastructure/TODO-07 §22 (item: "Hardened the 9a ledger reader" at line 765)
 > **Quality reviewed:** 2026-08-04 | Codex 26x (design, adversarial x23, consistency, perf) | 2H+2M fixed, 3 open | scope: N/A (host tooling; no kernel/boot domain skill applies)
 > **Notes:**
