@@ -512,19 +512,27 @@ def _bare_pid_signal_allowed() -> bool:
     return os.environ.get("LSP_BRIDGE_ALLOW_PID_SIGNAL") == "1"
 
 
-def _refuse_bare_pid_signal(pid: int) -> bool:
+def _refuse_bare_pid_signal(pid: int, sig: int) -> bool:
     """Record -- and once per process, report -- a destructive signal
     declined for want of a pidfd. Always returns False so a caller can
-    `return _refuse_bare_pid_signal(pid)`.
+    `return _refuse_bare_pid_signal(pid, sig)`.
 
     Reported because the alternative outcome is a surviving language
     server, and a leak nobody was told about is exactly the
     unattributable leak the ownership stamps exist to prevent."""
     global _PID_SIGNAL_REFUSALS, _PID_SIGNAL_WARNED
     _PID_SIGNAL_REFUSALS += 1
+    # Reported once, but the COUNT rides along, so a later refusal for a
+    # different pid is not silently swallowed by the once-flag -- the
+    # first message hardcoded SIGKILL even when the refused signal was
+    # the SIGTERM of a graceful stop (Codex consistency review, Medium).
     if not _PID_SIGNAL_WARNED:
         _PID_SIGNAL_WARNED = True
         try:
+            try:
+                name = signal.Signals(sig).name
+            except Exception:
+                name = f"signal {sig}"
             have = hasattr(os, "pidfd_open") and hasattr(
                 signal, "pidfd_send_signal")
             why = ("no pidfd support in python3 "
@@ -532,10 +540,11 @@ def _refuse_bare_pid_signal(pid: int) -> bool:
                    "(this module documents 3.10+)" if not have
                    else "no pidfd could be opened for this target")
             sys.stderr.write(
-                f"[lsp-mcp] refusing to SIGKILL pid {pid} by number: {why}. "
-                f"The server may survive teardown. Set "
-                f"LSP_BRIDGE_ALLOW_PID_SIGNAL=1 to accept the PID-reuse "
-                f"race instead.\n")
+                f"[lsp-mcp] refusing to send {name} to pid {pid} by "
+                f"number: {why}. The server may survive teardown; further "
+                f"refusals are counted in _PID_SIGNAL_REFUSALS rather "
+                f"than reported. Set LSP_BRIDGE_ALLOW_PID_SIGNAL=1 to "
+                f"accept the PID-reuse race instead.\n")
         except Exception:
             pass
     return False
@@ -649,8 +658,10 @@ def _record_spawn(pid: int) -> "_SpawnRecord":
     # adversarial review, High).
     #
     # What actually helps is publication ORDER: the record and its session
-    # marker both go out in the same breath as the append, so the sweep can
-    # always SEE an in-flight child and the session it leads.
+    # marker go out immediately after the append, so the sweep sees an
+    # in-flight child and the session it leads as early as it can be shown
+    # one. That is EARLIER, not atomic -- the three stores are separate
+    # statements and a termination can still land between them.
     #
     # The residual is NOT gated on FD exhaustion. Between the append and
     # the assignment of record.fd a few statements later, the record has
@@ -660,54 +671,41 @@ def _record_spawn(pid: int) -> "_SpawnRecord":
     # kills its leader. Exhaustion only makes it worse, by denying the
     # fallback acquisition that would otherwise still work. Parked in the
     # section rather than papered over.
-    if True:
-        record = _SpawnRecord(pid, None, None)
-        _SPAWNED.append(record)
-        # Marker published in the SAME breath as the record. It used to
-        # wait until after the descriptor and start time were read, and a
-        # termination landing in that gap left pass 0 with no session
-        # marker at all while pass 1 killed the leader -- so a descendant
-        # that had already hardened itself was unreachable. That window
-        # needed no FD exhaustion to open (Codex adversarial review,
-        # High). Publishing a record whose fd is still None is safe: the
-        # session proof borrows that descriptor, so an unfinished record
-        # fails CLOSED and authorizes nothing.
-        try:
-            if pid != os.getsid(0):
-                with _OWNED_SESSIONS_LOCK:
-                    _OWNED_SESSIONS[pid] = record
-        except Exception:
-            pass
-        # Reserve-aware: a spawn that lands under FD exhaustion would
-        # otherwise record no descriptor at all, and a record with no
-        # descriptor is exactly the one the reap can no longer signal.
-        record.fd = _pidfd_open(pid)    # Linux 5.3+; never recycled
-        record.ticks = proc_start_ticks(pid)
-        # Every spawn passes start_new_session=True, so this child leads a
-        # session whose id IS its pid. Recording it here -- not by reading
-        # /proc/<pid>/stat back, which can race the child's exec -- keeps
-        # the marker exact.
-        #
-        # Guarded against our OWN session for the reason the owner stamp
-        # is minted per process rather than inherited: a marker that
-        # matched the bridge's own session would make "ours" mean the
-        # whole harness tree, and a sweep acting on that answer kills its
-        # siblings.
-        try:
-            if pid != os.getsid(0):
-                # Hygiene only -- the marker itself went out above. Drops
-                # entries whose record has already left _SPAWNED through
-                # the two descriptor-claim paths, which run in a dying
-                # process and may not take a lock.
-                #
-                with _OWNED_SESSIONS_LOCK:
-                    live = {id(e) for e in list(_SPAWNED)}
-                    for sid in [k for k, v in list(_OWNED_SESSIONS.items())
-                                if id(v) not in live]:
-                        _OWNED_SESSIONS.pop(sid, None)
-
-        except Exception:
-            pass
+    record = _SpawnRecord(pid, None, None)
+    _SPAWNED.append(record)
+    # Marker published in the SAME breath as the record. It used to
+    # wait until after the descriptor and start time were read, and a
+    # termination landing in that gap left pass 0 with no session
+    # marker at all while pass 1 killed the leader -- so a descendant
+    # that had already hardened itself was unreachable. That window
+    # needed no FD exhaustion to open (Codex adversarial review,
+    # High). Publishing a record whose fd is still None is safe: the
+    # session proof borrows that descriptor, so an unfinished record
+    # fails CLOSED and authorizes nothing.
+    try:
+        if pid != os.getsid(0):
+            with _OWNED_SESSIONS_LOCK:
+                _OWNED_SESSIONS[pid] = record
+    except Exception:
+        pass
+    # Reserve-aware: a spawn that lands under FD exhaustion would
+    # otherwise record no descriptor at all, and a record with no
+    # descriptor is exactly the one the reap can no longer signal.
+    record.fd = _pidfd_open(pid)    # Linux 5.3+; never recycled
+    record.ticks = proc_start_ticks(pid)
+    try:
+        if pid != os.getsid(0):
+            # Hygiene only -- the marker itself went out above. Drops
+            # entries whose record has already left _SPAWNED through
+            # the two descriptor-claim paths, which run in a dying
+            # process and may not take a lock.
+            with _OWNED_SESSIONS_LOCK:
+                live = {id(e) for e in list(_SPAWNED)}
+                for sid in [k for k, v in list(_OWNED_SESSIONS.items())
+                            if id(v) not in live]:
+                    _OWNED_SESSIONS.pop(sid, None)
+    except Exception:
+        pass
 
     # Handed back so the owner can retire THIS generation later. Retiring
     # by number instead conflates generations: the respawn path creates
@@ -1163,7 +1161,7 @@ def _signal_recorded(target, sig: int) -> bool:
         # hold. Graceful stops already failed closed on absent identity;
         # this closes the last path that did not.
         if not _bare_pid_signal_allowed():
-            return _refuse_bare_pid_signal(pid)
+            return _refuse_bare_pid_signal(pid, sig)
         try:
             if not still(pid):
                 return False
@@ -1200,7 +1198,7 @@ def _kill_verified(pid: int, fd: Optional[int], still_ours) -> bool:
         except (ProcessLookupError, OSError):
             return False
     if not _bare_pid_signal_allowed():
-        return _refuse_bare_pid_signal(pid)
+        return _refuse_bare_pid_signal(pid, signal.SIGKILL)
     try:
         if not still_ours(pid):
             return False
@@ -1842,8 +1840,15 @@ def force_kill_spawned(settle: float = 1.0,
         def still(p, t=ticks, a=entry, _dl=deadline):
             if a not in _SPAWNED:
                 return False
-            if t is not None and proc_start_ticks(p) == t:
-                return True
+            # NECESSARY, never SUFFICIENT. This used to return True on a
+            # tick match alone, and _own_pidfd then pinned and SIGKILLed
+            # whatever answered to the number -- so a recycle landing in
+            # the same 100 Hz tick killed a stranger, by DEFAULT rather
+            # than only under the bare-PID opt-in. It is the one place
+            # this section had not yet applied its own rule that a start
+            # time is not an identity (Codex adversarial review, High).
+            if t is not None and proc_start_ticks(p) != t:
+                return False
             if _dl is not None and clock.now() >= _dl:
                 return False
             ok = _provably_ours(p, deadline=_dl, clock=clock)

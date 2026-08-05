@@ -8947,6 +8947,49 @@ try:
         lsp_client.proc_start_ticks = real_ticks
         lsp_client._own_pidfd = real_own
 
+    # --- a tick match is NOT authorization -------------------------------
+    # Pass 1's predicate used to return True on proc_start_ticks == t
+    # alone; _own_pidfd then pinned whatever answered to that number and
+    # SIGKILLed it, so a recycle inside the same 100 Hz tick killed a
+    # stranger BY DEFAULT (Codex adversarial review, High). The tick is
+    # now a necessary filter and the owner stamp is the authorization.
+    killed2 = []
+    real_open2 = lsp_client._pidfd_open
+    real_send2 = signal.pidfd_send_signal
+    real_ticks2 = lsp_client.proc_start_ticks
+    real_owner2 = lsp_client._carries_our_owner_id
+    real_snap2 = lsp_client._proc_snapshot
+    real_spawned4 = list(lsp_client._SPAWNED)
+    try:
+        rec4 = lsp_client._SpawnRecord(4194300, 4242, None)
+        lsp_client._SPAWNED[:] = [rec4]
+        # The number still answers, with the SAME start tick -- the recycle
+        # this predicate cannot distinguish by time alone.
+        lsp_client.proc_start_ticks = lambda pid: 4242
+        # ...but the process is readably NOT ours.
+        lsp_client._carries_our_owner_id = (
+            lambda pid, deadline=None, **kw: False)
+        lsp_client._pidfd_open = lambda pid: 4242424
+        lsp_client._proc_snapshot = (
+            lambda deadline=None, ours_cache=None, **kw:
+            lsp_client._ProcSnapshot([], ours_cache))
+
+        def record_send(fd, sig, *a, **kw):
+            killed2.append((fd, sig))
+
+        signal.pidfd_send_signal = record_send
+        lsp_client.force_kill_spawned(settle=0.0)
+        check(not killed2,
+              f"a same-tick recycle that is readably NOT ours was "
+              f"signalled on the strength of its start time: {killed2}")
+    finally:
+        signal.pidfd_send_signal = real_send2
+        lsp_client._pidfd_open = real_open2
+        lsp_client.proc_start_ticks = real_ticks2
+        lsp_client._carries_our_owner_id = real_owner2
+        lsp_client._proc_snapshot = real_snap2
+        lsp_client._SPAWNED[:] = real_spawned4
+
     # --- the emergency descriptor reserve --------------------------------
     # Refusing to signal by number is only safe while the DESCRIPTOR path
     # stays reachable, and the failure it has to survive is the one that
@@ -9174,9 +9217,15 @@ try:
     # exactly what FD exhaustion produces) must still be reaped, because
     # _own_pidfd now goes through the reserve. Before the reserve this was
     # the leak: no descriptor at spawn, none at teardown, and a refusal.
+    # Carries the owner stamp, as every real spawn does: pass 1 now
+    # requires provable ownership rather than accepting a start-time match
+    # on its own, so an unstamped fixture would be refused for a reason
+    # that has nothing to do with the descriptor path under test.
+    env_v = dict(os.environ)
+    env_v["LSP_BRIDGE_OWNER"] = lsp_client._OWNER_ID
     victim = subprocess.Popen(
         [sys.executable, "-c", "import time; time.sleep(60)"],
-        start_new_session=True)
+        env=env_v, start_new_session=True)
     try:
         lsp_client._SPAWNED[:] = [
             lsp_client._SpawnRecord(victim.pid,
