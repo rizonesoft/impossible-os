@@ -13,6 +13,7 @@ EXACTLY like passing. Only a recorded floor can see that.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import pathlib
@@ -30,6 +31,25 @@ def _run(env_extra=None):
     env.update(env_extra or {})
     return subprocess.run([sys.executable, str(CHECK)], cwd=str(REPO),
                           capture_output=True, text=True, env=env, timeout=300)
+
+
+@contextlib.contextmanager
+def _baseline(content):
+    """Point the floor at a TEMPORARY baseline carrying `content`.
+
+    These fixtures used to overwrite the TRACKED scripts/lint/
+    stub-lint-baseline.json in place and restore it in a `finally`. A `finally`
+    does not run on SIGKILL, on an external timeout that kills the runner, or
+    on a crash mid-write, and two concurrent runs interleave -- any of which
+    leaves the repo's real floor truncated, artificially high (blocking every
+    later commit) or artificially low (silently weakening the very gate these
+    tests protect). A regression test must not be able to wedge production
+    state, so it writes its own file and overrides the path instead.
+    """
+    with tempfile.TemporaryDirectory() as td:
+        p = pathlib.Path(td) / "stub-lint-baseline.json"
+        p.write_text(content, encoding="utf-8")
+        yield {"STUB_LINT_BASELINE": str(p)}
 
 
 def test_coverage_is_reported_not_discarded():
@@ -67,30 +87,20 @@ def test_the_baseline_is_a_real_floor_and_it_holds_today():
 def test_a_coverage_DROP_is_an_error():
     """The failure a green test suite cannot see. Raise the recorded floor above
     the live number and the check must refuse (rc 7), naming the regression."""
-    orig = BASELINE.read_text(encoding="utf-8")
-    data = json.loads(orig)
-    try:
-        data["resolved"] = data["resolved"] + 10_000
-        BASELINE.write_text(json.dumps(data), encoding="utf-8")
-        r = _run()
+    data = json.loads(BASELINE.read_text(encoding="utf-8"))
+    data["resolved"] = data["resolved"] + 10_000
+    with _baseline(json.dumps(data)) as env:
+        r = _run(env)
         assert r.returncode == 7, (r.returncode, r.stdout[:300], r.stderr[:300])
         assert "COVERAGE REGRESSION" in r.stderr, r.stderr[:400]
         assert "blinder" in r.stderr, r.stderr[:400]
-    finally:
-        BASELINE.write_text(orig, encoding="utf-8")
 
 
 def test_an_improvement_is_reported_so_the_floor_gets_raised():
-    orig = BASELINE.read_text(encoding="utf-8")
-    data = json.loads(orig)
-    try:
-        data["resolved"] = 1
-        BASELINE.write_text(json.dumps(data), encoding="utf-8")
-        r = _run()
+    with _baseline('{"resolved": 1}') as env:
+        r = _run(env)
         assert r.returncode == 0, r.returncode
         assert "coverage improved" in r.stderr, r.stderr[:400]
-    finally:
-        BASELINE.write_text(orig, encoding="utf-8")
 
 
 def test_a_corrupt_baseline_FAILS_CLOSED():
@@ -103,43 +113,62 @@ def test_a_corrupt_baseline_FAILS_CLOSED():
     silent, unrecorded bypass -- delete the file and the only coverage floor
     stops applying while the check still exits 0.
     """
-    orig = BASELINE.read_text(encoding="utf-8")
-    try:
-        BASELINE.write_text("{ not json", encoding="utf-8")
-        r = _run()
+    with _baseline("{ not json") as env:
+        r = _run(env)
         assert r.returncode == 8, (r.returncode, r.stderr[:300])
         assert "BASELINE INVALID" in r.stderr, r.stderr[:300]
-    finally:
-        BASELINE.write_text(orig, encoding="utf-8")
 
 
 def test_a_non_integer_baseline_FAILS_CLOSED():
     """Well-formed JSON whose `resolved` is not a usable count must not be
     silently treated as 'no floor' either -- that is the same bypass wearing
-    valid syntax."""
-    orig = BASELINE.read_text(encoding="utf-8")
-    try:
-        for bad in ('{"resolved": null}', '{"resolved": "57"}',
-                    '{"resolved": true}', '{"resolved": -1}', '{}'):
-            BASELINE.write_text(bad, encoding="utf-8")
-            r = _run()
+    valid syntax. `true` is the sharp one: bool is an int subclass in python, so
+    an isinstance(x, int) check alone accepts it."""
+    for bad in ('{"resolved": null}', '{"resolved": "57"}',
+                '{"resolved": true}', '{"resolved": -1}', '{}',
+                '[1]', '"just a string"'):
+        with _baseline(bad) as env:
+            r = _run(env)
             assert r.returncode == 8, (bad, r.returncode, r.stderr[:200])
-    finally:
-        BASELINE.write_text(orig, encoding="utf-8")
+
+
+def test_an_invalid_UTF8_baseline_is_rc8_not_a_traceback():
+    """UnicodeDecodeError is a ValueError, NOT an OSError. Catching only
+    (OSError, JSONDecodeError) let invalid UTF-8 escape as an uncaught
+    traceback and exit 1 -- an undocumented code that contradicts the rc 8
+    contract and gives the caller no actionable diagnostic."""
+    with tempfile.TemporaryDirectory() as td:
+        p = pathlib.Path(td) / "stub-lint-baseline.json"
+        p.write_bytes(b'{"resolved": 57, "x": "\xff\xfe not utf8"}')
+        r = _run({"STUB_LINT_BASELINE": str(p)})
+        assert r.returncode == 8, (r.returncode, r.stderr[:300])
+        assert "BASELINE INVALID" in r.stderr, r.stderr[:300]
 
 
 def test_the_baseline_bypass_is_explicit_and_reported():
     """A bypass must exist (so a genuine emergency is not wedged) but it must be
     opt-in AND announce itself, which is what the swallowed-exception path was
     not."""
-    orig = BASELINE.read_text(encoding="utf-8")
-    try:
-        BASELINE.write_text("{ not json", encoding="utf-8")
-        r = _run({"STUB_LINT_ALLOW_NO_BASELINE": "1"})
+    with _baseline("{ not json") as env:
+        env = dict(env, STUB_LINT_ALLOW_NO_BASELINE="1")
+        r = _run(env)
         assert r.returncode == 0, (r.returncode, r.stderr[:300])
         assert "baseline floor SKIPPED" in r.stderr, r.stderr[:300]
-    finally:
-        BASELINE.write_text(orig, encoding="utf-8")
+
+
+def test_the_fixtures_never_mutate_the_TRACKED_baseline():
+    """The guard on the guard. These tests previously rewrote the real
+    stub-lint-baseline.json and relied on `finally` to put it back; a SIGKILL,
+    an external timeout or a crash mid-write would leave the repo floor
+    corrupt (blocking every later commit) or artificially low (silently
+    weakening the gate). Prove the tracked file is byte-identical after the
+    whole mutation battery has run."""
+    before = BASELINE.read_bytes()
+    test_a_coverage_DROP_is_an_error()
+    test_a_corrupt_baseline_FAILS_CLOSED()
+    test_a_non_integer_baseline_FAILS_CLOSED()
+    test_the_baseline_bypass_is_explicit_and_reported()
+    assert BASELINE.read_bytes() == before, "tracked baseline was modified"
 
 
 def test_every_occurrence_lands_in_exactly_one_bucket():
@@ -208,8 +237,43 @@ def test_lint_sh_surfaces_the_coverage_line_to_the_CALLER():
     """
     r = subprocess.run(["bash", str(REPO / "scripts/lint.sh")], cwd=str(REPO),
                        capture_output=True, text=True, timeout=900)
-    assert "Check 7 coverage" in r.stdout, r.stdout[-800:]
-    assert "resolved=" in r.stdout, r.stdout[-800:]
+    line = [l for l in r.stdout.splitlines()
+            if "Check 7" in l and "resolved=" in l]
+    assert line, r.stdout[-800:]
+    # SEVERITY, not just presence. The roadmap chose "WARN on the standing
+    # gap"; shipping it as an informational line made the implemented severity
+    # weaker than the committed decision, and a presence-only assertion could
+    # not tell the difference.
+    assert "warn" in line[0], line[0]
+
+
+def test_the_classifier_is_cached_PER_FILE_not_per_symbol():
+    """PERF GUARD, structural rather than wall-clock.
+
+    Classifying each unresolved ref with its own full-file scan took Check 7
+    from 147ms to 829ms -- 5.62x on a check that runs in the PRE-COMMIT HOOK
+    for every contributor on every commit. The stripped text does not depend on
+    the symbol, so the fix was to cache it per FILE; the guard is that the
+    number of expensive strips stays bounded by distinct files rather than by
+    distinct (file, symbol) pairs. A timing assertion would be flaky on a
+    loaded host; this states the invariant that actually matters.
+    """
+    sys.path.insert(0, str(REPO / "scripts/lint"))
+    sys.path.insert(0, str(REPO / "scripts/todo-graph"))
+    import importlib
+    m = importlib.import_module("check_stub_behind_stamp")
+    m._code_text.cache_clear()
+    m._raw_text.cache_clear()
+    m._resolve_cached.cache_clear()
+    m._is_stub_cached.cache_clear()
+    nodes = json.loads((REPO / "build/todo-cache.json").read_text(encoding="utf-8"))
+    m._walk(nodes, REPO)
+    ci = m._code_text.cache_info()
+    assert ci.misses <= ci.hits + ci.misses, ci
+    # Distinct files that needed stripping must be well under the number of
+    # classification calls; equality would mean the per-file cache is doing
+    # nothing and every ref pays its own scan again.
+    assert ci.misses < 100, f"too many full-file strips: {ci}"
 
 
 def test_bucket_names_do_not_claim_a_CAUSE():
@@ -234,10 +298,13 @@ if __name__ == "__main__":
     test_an_improvement_is_reported_so_the_floor_gets_raised()
     test_a_corrupt_baseline_FAILS_CLOSED()
     test_a_non_integer_baseline_FAILS_CLOSED()
+    test_an_invalid_UTF8_baseline_is_rc8_not_a_traceback()
     test_the_baseline_bypass_is_explicit_and_reported()
+    test_the_fixtures_never_mutate_the_TRACKED_baseline()
     test_every_occurrence_lands_in_exactly_one_bucket()
     test_unpaired_refs_are_counted_so_the_POPULATION_cannot_shrink()
     test_lint_sh_surfaces_the_coverage_line_to_the_CALLER()
+    test_the_classifier_is_cached_PER_FILE_not_per_symbol()
     test_missing_file_refs_are_counted_not_dropped()
     test_bucket_names_do_not_claim_a_CAUSE()
     print("PASS: Check 7 coverage counting + regression floor + bucket invariant")

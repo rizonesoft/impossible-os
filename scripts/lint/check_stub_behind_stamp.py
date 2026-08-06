@@ -80,60 +80,98 @@ def _check_staleness(cache_path: Path, todo_root: Path) -> bool:
     return newest > cache_m
 
 
-@lru_cache(maxsize=2048)
+# String/char literal FIRST, then line comment, then block comment -- see the
+# ordering argument in `_code_text`. Unterminated constructs simply fail to
+# match and are left as code, which is the conservative direction here: it can
+# only make a ref look call-like, never hide one.
+_STRIP_RE = re.compile(
+    r'"(?:\\.|[^"\\\n])*"'      # string literal (post-splice, so no newline)
+    r"|'(?:\\.|[^'\\\n])*'"     # char literal
+    r"|//[^\n]*"                # line comment
+    r"|/\*[^*]*\*+(?:[^/*][^*]*\*+)*/",   # block comment (C comments do not nest)
+    re.S)
+
+
+@lru_cache(maxsize=512)
+def _raw_text(file_abs: str) -> str:
+    """The file's lines joined once, cached, for the pre-filter's substring test."""
+    return "\n".join(_rs._load_file_lines(file_abs))
+
+
+@lru_cache(maxsize=512)
+def _code_text(file_abs: str) -> str:
+    """The file with comments and string/char literals blanked, as ONE string.
+
+    PER FILE, NOT PER SYMBOL. The first version of this did the stateful scan
+    inside the per-`(file, symbol)` helper, so a file was re-lexed once for
+    every unresolved symbol naming it. MEASURED on the live corpus: Check 7
+    went from 147.4ms to 828.6ms, a 5.62x regression on a check that runs in
+    the PRE-COMMIT HOOK for every contributor on every commit. The stripped
+    text does not depend on the symbol, so it is computed once and cached and
+    the per-symbol step becomes one regex over it. The multi-line function-head
+    resolution work paid for this same lesson when its fallback pass cost 7.1x
+    before a pre-filter was added.
+
+    `resolve_symbol._strip_line_comments` is NOT reusable here: it documents
+    that it does not track multi-line block comments, so a symbol named inside
+    a `/* ... */` prose block would read as code and land in the wrong bucket.
+
+    LINE SPLICING IS APPLIED FIRST (C translation phase 2), which is safe HERE
+    and not in `resolve_symbol`: this helper answers a yes/no question and
+    never reports coordinates, whereas every resolver consumer prints real line
+    numbers. Splicing fixes two shapes that were classified wrong -- a string
+    continued across a backslash-newline no longer hides its terminator, and an
+    identifier joined to its `(` across a continuation is seen.
+    """
+    lines = _rs._load_file_lines(file_abs)
+    spliced, buf = [], ""
+    for line in lines:
+        if line.endswith("\\"):
+            buf += line[:-1]
+            continue
+        spliced.append(buf + line)
+        buf = ""
+    if buf:
+        spliced.append(buf)
+
+    # ONE C-level regex pass, not a Python character loop. The char loop was
+    # correct but cost ~5ms per file over 55 files; `re` runs the same
+    # tokenization in C. Alternation ORDER is the correctness argument: a
+    # string/char literal is tried FIRST at each position, so it consumes
+    # through its own terminator and a `//` or `/*` sitting inside a literal
+    # can never start a comment. C block comments do not nest, so non-greedy
+    # `/\*.*?\*/` is exact rather than approximate.
+    #
+    # Each match is replaced by a space plus its own newlines, which keeps
+    # tokens from merging across a removed literal AND preserves line
+    # structure, so `\s*` in the caller's pattern still spans a definition
+    # written `symbol\n(args)`. Scanning line-by-line could not see that shape.
+    return _STRIP_RE.sub(lambda mo: " " + "\n" * mo.group(0).count("\n"),
+                         "\n".join(spliced))
+
+
 def _has_calllike_token(file_abs: str, symbol: str) -> bool:
     """True when `symbol(` occurs in CODE -- outside comments and strings.
 
-    Deliberately stateful across lines. `resolve_symbol._strip_line_comments`
-    documents that it does NOT track multi-line block comments, so reusing it
-    here would read a symbol named inside a `/* ... */` prose block as code and
-    put the ref in the wrong bucket. This is the one place that distinction
-    decides a published number, so it gets a real scan.
-
-    It proves a call-like TOKEN is present and nothing more. A call site, a
+    Proves a call-like TOKEN is present and nothing more. A call site, a
     prototype, a macro invocation and a struct function-pointer field all
     satisfy it -- which is exactly why the bucket it feeds is named for the
     token rather than for a cause. See the bucket comment in `_walk`.
     """
-    pat = re.compile(r"\b" + re.escape(symbol) + r"\s*\(")
-    in_block = False
-    for line in _rs._load_file_lines(file_abs):
-        out = []
-        i, n = 0, len(line)
-        while i < n:
-            if in_block:
-                end = line.find("*/", i)
-                if end < 0:
-                    i = n
-                else:
-                    in_block = False
-                    i = end + 2
-                continue
-            ch = line[i]
-            if ch == "/" and i + 1 < n and line[i + 1] == "*":
-                in_block = True
-                i += 2
-                continue
-            if ch == "/" and i + 1 < n and line[i + 1] == "/":
-                break
-            if ch in ('"', "'"):
-                quote = ch
-                i += 1
-                while i < n:
-                    if line[i] == "\\":
-                        i += 2
-                        continue
-                    if line[i] == quote:
-                        i += 1
-                        break
-                    i += 1
-                out.append(" ")
-                continue
-            out.append(ch)
-            i += 1
-        if pat.search("".join(out)):
-            return True
-    return False
+    # RAW PRE-FILTER. Blanking literals and comments only ever REMOVES text, so
+    # a symbol absent from the raw file cannot appear in the stripped text --
+    # this skips building it entirely. Sound in one direction only, which is
+    # the direction used: absent-in-raw is conclusive, present-in-raw still has
+    # to be confirmed against stripped text.
+    #
+    # Against the CACHED JOINED text, not `any(sym in line for line in ...)`.
+    # The generator form ran a Python-level loop over every line on all 136
+    # calls (~272k iterations) and cost more than the scan it was added to
+    # avoid; one `in` over one cached string is a single C-level scan.
+    if symbol not in _raw_text(file_abs):
+        return False
+    return re.search(r"\b" + re.escape(symbol) + r"\s*\(",
+                     _code_text(file_abs)) is not None
 
 
 def _walk(nodes: list, repo_root: Path) -> tuple:
@@ -253,12 +291,22 @@ def main() -> int:
         return 2
 
     try:
+        # ValueError, not just JSONDecodeError: a cache containing invalid UTF-8
+        # raises UnicodeDecodeError, which is a ValueError and NOT an OSError,
+        # so the narrower tuple let it escape as an undocumented rc 1 traceback
+        # rather than the documented rc 5.
         nodes = json.loads(cache_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, ValueError) as exc:
         sys.stderr.write(f"[check_stub_behind_stamp] cache unreadable: {exc}\n")
         return 5
     if not isinstance(nodes, list):
         sys.stderr.write("[check_stub_behind_stamp] cache is not a JSON array\n")
+        return 5
+    # Every node must be a mapping before anything probes it. A well-formed but
+    # wrong-shaped cache such as `[1]` parses cleanly and then raises deep in
+    # the walk, surfacing as rc 1 instead of the rc 5 the contract promises.
+    if not all(isinstance(n, dict) for n in nodes):
+        sys.stderr.write("[check_stub_behind_stamp] cache has non-object nodes\n")
         return 5
 
     if not any("stamped_items" in (n or {}) for n in nodes):
@@ -308,7 +356,16 @@ def main() -> int:
     # stayed green and its own new fixtures passed. This gate is what would have
     # caught it, in one line, at commit time.
     total = cov["occurrences"]
-    base_path = repo_root / "scripts" / "lint" / "stub-lint-baseline.json"
+    # STUB_LINT_BASELINE lets a test point the floor at a TEMPORARY file. The
+    # mutation fixtures previously rewrote the tracked baseline in place and
+    # relied on a `finally` to restore it, so a SIGKILL, an external timeout, a
+    # crash mid-write or two concurrent runs could leave the repo's real floor
+    # truncated, artificially high (blocking every later commit) or artificially
+    # low (silently weakening the gate the tests exist to protect). A regression
+    # test must not be able to wedge or weaken production state.
+    base_env = os.environ.get("STUB_LINT_BASELINE")
+    base_path = (Path(base_env) if base_env
+                 else repo_root / "scripts" / "lint" / "stub-lint-baseline.json")
 
     # FAIL CLOSED on the baseline. This file is TRACKED repo state, so it is
     # never legitimately absent -- a fresh clone has it. The earlier shape
@@ -320,22 +377,34 @@ def main() -> int:
     # warn-only behaviour protected cannot occur for a tracked file.
     baseline = None
     baseline_err = None
+    def _read_baseline():
+        """(value, error). Catches ValueError, not just JSONDecodeError: invalid
+        UTF-8 raises UnicodeDecodeError, which is a ValueError and NOT an
+        OSError, so the narrower tuple let it escape as an undocumented rc 1
+        traceback instead of the rc 8 the contract promises. AttributeError
+        covers well-formed JSON of the wrong SHAPE -- `[1]` parses fine and then
+        `.get` does not exist on a list."""
+        try:
+            doc = json.loads(base_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            return None, f"unreadable ({exc})"
+        if not isinstance(doc, dict):
+            return None, f"is not a JSON object ({type(doc).__name__})"
+        return doc.get("resolved"), None
+
     if os.environ.get("STUB_LINT_ALLOW_NO_BASELINE") == "1":
         # Explicit, visibly reported skip -- the one sanctioned bypass.
-        try:
-            baseline = json.loads(base_path.read_text(encoding="utf-8")).get("resolved")
-        except Exception:
-            baseline = None
+        baseline, _ = _read_baseline()
         sys.stderr.write("[check_stub_behind_stamp] baseline floor SKIPPED via "
                          "STUB_LINT_ALLOW_NO_BASELINE=1\n")
     else:
-        try:
-            baseline = json.loads(base_path.read_text(encoding="utf-8")).get("resolved")
-        except (OSError, json.JSONDecodeError) as exc:
-            baseline_err = f"unreadable ({exc})"
-        if baseline_err is None and not isinstance(baseline, int):
+        baseline, baseline_err = _read_baseline()
+        # bool BEFORE the `< 0` compare: bool is an int subclass, so `True`
+        # satisfies isinstance(x, int) and would otherwise pass as a count.
+        if baseline_err is None and (not isinstance(baseline, int)
+                                     or isinstance(baseline, bool)):
             baseline_err = f"`resolved` is not an integer ({baseline!r})"
-        if baseline_err is None and (isinstance(baseline, bool) or baseline < 0):
+        if baseline_err is None and baseline < 0:
             baseline_err = f"`resolved` is not a valid count ({baseline!r})"
 
     # STDERR, not stdout. stdout is this check's FINDINGS channel -- lint.sh

@@ -486,8 +486,23 @@ else
             # only -- so a normal lint run published no coverage ratio at all
             # and the whole point of counting the blind spot was invisible to
             # the caller.
+            # SEVERITY IS WARN WHILE A GAP STANDS, INFO ONLY AT FULL COVERAGE.
+            # The roadmap chose "WARN on the standing gap, ERROR on a
+            # REGRESSION"; emitting the gap as INFO made the shipped severity
+            # weaker than the committed decision. It stays a WARN (not an
+            # ERROR) for the original reason: the gap is pre-existing and
+            # erroring would block every commit in the repo until it hit zero.
             STUB_COV="$(grep -m1 'stub-behind-stamp:coverage' "$STUB_ERR_FILE" 2>/dev/null || true)"
-            [ -n "$STUB_COV" ] && echo -e "${CYAN}info${NC}: Check 7 ${STUB_COV#stub-behind-stamp:}"
+            if [ -n "$STUB_COV" ]; then
+                STUB_R="${STUB_COV#*resolved=}"; STUB_R="${STUB_R%%/*}"
+                STUB_T="${STUB_COV#*resolved=*/}"; STUB_T="${STUB_T%% *}"
+                if [ -n "$STUB_R" ] && [ "$STUB_R" = "$STUB_T" ]; then
+                    echo -e "${CYAN}info${NC}: Check 7 ${STUB_COV#stub-behind-stamp:}"
+                else
+                    echo -e "${YELLOW}warn${NC}: Check 7 (stub-behind-stamp) ${STUB_COV#stub-behind-stamp:coverage } -- refs the check could not examine are NOT findings and NOT clean"
+                    WARNINGS=$((WARNINGS + 1))
+                fi
+            fi
             # A DELIBERATE BYPASS MUST BE SEEN. STUB_LINT_ALLOW_NO_BASELINE=1
             # disables the only coverage floor; announcing it on the helper's
             # stderr while the caller discards stderr is not "visibly reported".
