@@ -223,6 +223,19 @@ def _load_file_lines(path_str: str) -> tuple:
     return lines
 
 
+# Modules that memoize ANSWERS derived from this one's caches register below,
+# so the documented reset entry point invalidates the whole graph rather than
+# only its own layer.
+_RESET_DEPENDENTS = []
+
+
+def register_reset_dependent(fn) -> None:
+    """Register `fn` to run on every `cache_clear()`. It must NOT call back
+    into `cache_clear` -- that would recurse."""
+    if fn not in _RESET_DEPENDENTS:
+        _RESET_DEPENDENTS.append(fn)
+
+
 def cache_clear() -> None:
     """Clear the per-process file caches AND the generation pins. Tests that
     mutate fixtures on disk AND want a CLEAN read of the new generation (not a
@@ -234,6 +247,8 @@ def cache_clear() -> None:
     _file_index.cache_clear()
     _masked_text_for_index.cache_clear()
     _pinned.clear()
+    for reset in _RESET_DEPENDENTS:
+        reset()
 
 
 def _strip_line_comments(line: str) -> str:
@@ -1301,7 +1316,104 @@ def is_stub_body(
     )
     if not m:
         return None
+    # `return <bare identifier>;` is only a stub when the identifier is a
+    # CONSTANT (`STATUS_NOT_IMPLEMENTED`, `E_NOTIMPL`). When it names a
+    # file-scope VARIABLE in the same translation unit the function is reading
+    # state, which is exactly what an accessor is supposed to do -- not a
+    # placeholder. Real false positive surfaced when this section's coverage
+    # work first reached it: `compositor_get_test_seed()` at
+    # src/kernel/main/compositor.c:64 returns `s_compositor_test_seed`, the
+    # seed its own sibling setter stores. Marking that INTENTIONAL-STUB would
+    # have been a false confession; weakening the rule to "any identifier" in
+    # the other direction would blind the check to the whole
+    # `return STATUS_NOT_IMPLEMENTED;` class it exists for.
+    if _is_file_scope_variable(masked_whole, m.group(1)):
+        return None
     return (m.group(1), line_start + body_open_line_idx)
+
+
+# A file-scope object declaration/definition. Anchored at column 0, because an
+# indented declaration is a LOCAL and a <=3-line return-only body cannot
+# contain one. A `#define`d constant cannot match: its line starts with `#`.
+#
+# The declarator forms below are the ones this tree actually writes; the first
+# draft recognized only `TYPE name = | ; | [` and therefore still flagged a
+# getter for `static int a, name;`, `static int (*name)(void);`,
+# `_Atomic(int) name;` or `static int name __attribute__((unused));` (Codex
+# adversarial). Widening is bounded on purpose: every addition must still
+# require a real DECLARATION context, because the direction that matters is
+# the other one -- suppressing a genuine `return STATUS_NOT_IMPLEMENTED;` is
+# the failure this check exists to prevent, and a macro or enum constant must
+# never satisfy any of these.
+_FILE_SCOPE_OBJ_RE_CACHE = {}
+
+# Chars legal between the line start and the declarator: type tokens, pointer
+# stars, commas from a multi-declarator list, and the parens of a
+# parenthesized type specifier (`_Atomic(int)`) or an earlier function-pointer
+# declarator in the same list. `{` is absent on purpose: it would let an enum
+# or struct BODY (`enum { NAME = 1 };`) read as a declaration of NAME.
+_DECL_PREFIX = r"[A-Za-z0-9_*\s,()\[\]]"
+
+# Line-leading keywords that are NOT type specifiers. Admitting parentheses to
+# the prefix above made `_Static_assert(NAME == -1, "...")` look like a
+# declaration of NAME, which SUPPRESSED a genuine `return NAME;` stub --
+# fail-OPEN on the exact class this lint exists for, reproduced end-to-end by
+# Codex adversarial (round 2). This closes the statement-shape hole; the
+# terminator's `==` hole is closed by the lookarounds in the pattern below.
+_NOT_A_TYPE_RE = re.compile(
+    r"^(?:_Static_assert|static_assert|typedef|return|if|while|for|switch"
+    r"|do|else|case|goto|sizeof|defined)\b")
+
+
+def _is_file_scope_variable(masked_text: str, name: str) -> bool:
+    """True when `name` is declared as a file-scope object in this text.
+
+    `masked_text` is the whole-file text with comments and string literals
+    already blanked (`_masked_text_for_index`), so a mention inside a comment
+    or a literal cannot answer this question."""
+    pat = _FILE_SCOPE_OBJ_RE_CACHE.get(name)
+    if pat is None:
+        esc = re.escape(name)
+        pat = re.compile(
+            # Line must start with an identifier (a type/storage-class token)
+            # or a star, never `#`, `}` or whitespace.
+            r"^(?:[A-Za-z_][A-Za-z0-9_]*|\*)" + _DECL_PREFIX + r"*?"
+            # The declarator: the bare name, or `(*name)` for a
+            # function-pointer object. Word-bounded, so `NAME` does not match
+            # inside `OTHER_NAME`.
+            r"(?P<decl>\*?\b" + esc + r"\b|\(\s*\*+\s*\b" + esc + r"\b\s*\))"
+            # Array bounds, a function-pointer parameter list, or a trailing
+            # attribute may follow before the terminator.
+            r"(?:\s*\[[^\]\n]*\])*"
+            r"(?:\s*\([^;\n]*\))?"
+            r"(?:\s*__attribute__\s*\(\([^;\n]*\)\))?"
+            # Terminator: an ASSIGNMENT, the end of the declaration, or the
+            # comma separating it from the next declarator. The lookarounds
+            # keep a COMPARISON out: `==`, `!=`, `<=`, `>=` are expressions,
+            # and reading one as an initializer is what let a `_Static_assert`
+            # about a constant masquerade as a declaration of it.
+            r"\s*(?:(?<![=!<>])=(?!=)|;|,)",
+            re.M)
+        _FILE_SCOPE_OBJ_RE_CACHE[name] = pat
+    for m in pat.finditer(masked_text):
+        line_start = masked_text.rfind("\n", 0, m.start()) + 1
+        prefix = masked_text[line_start:m.start("decl")]
+        # STRUCTURAL, and the guard that actually closes this class: a real
+        # object declarator sits at paren depth 0. A keyword blacklist cannot
+        # close it -- `ASSERT_EQ(STATUS_NOT_IMPLEMENTED, -1);` is an arbitrary
+        # function-like macro whose comma argument matched the declarator and
+        # SUPPRESSED a genuine `return STATUS_NOT_IMPLEMENTED;` stub, the same
+        # fail-open as the `_Static_assert` case and unbounded in the same way
+        # (Codex adversarial, round 3). An unbalanced `(` before the name means
+        # the name is an ARGUMENT, never a declarator. `_Atomic(int) name;`
+        # stays balanced and still passes; `(*name)` starts its own match, so
+        # its prefix is the type tokens alone.
+        if prefix.count("(") != prefix.count(")"):
+            continue
+        if _NOT_A_TYPE_RE.match(masked_text, line_start):
+            continue
+        return True
+    return False
 
 
 # Allow `python3 scripts/todo-graph/resolve_symbol.py <file> <symbol>`

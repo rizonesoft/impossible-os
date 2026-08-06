@@ -517,10 +517,12 @@ static inline void test_usermode_set_isolation(int enable __attribute__((unused)
 static inline void test_usermode_set_xml(int enable __attribute__((unused))) {}
 static inline void test_usermode_set_json(int enable __attribute__((unused))) {}
 static inline void test_usermode_set_stress_iters(uint32_t n __attribute__((unused))) {}
-static inline int  test_usermode_color_active(void) { return 0; }
+static inline int  test_usermode_color_active(void)
+{ /* INTENTIONAL-STUB: no launcher in this flavor, so color is never on */ return 0; }
 static inline void test_usermode_capture_start(struct utest_capture_ctx *ctx __attribute__((unused))) {}
 static inline int  test_usermode_capture_byte(struct utest_capture_ctx *ctx __attribute__((unused)),
-                                              char c __attribute__((unused))) { return 0; }
+                                              char c __attribute__((unused)))
+{ /* INTENTIONAL-STUB: this flavor captures nothing */ return 0; }
 static inline void test_usermode_capture_end(struct utest_capture_ctx *ctx __attribute__((unused))) {}
 static inline void test_usermode_capture_begin(uint32_t owner_pid __attribute__((unused)),
                                                const char *name __attribute__((unused))) {}

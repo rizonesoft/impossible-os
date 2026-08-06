@@ -4270,6 +4270,348 @@ else
 fi
 
 # ----------------------------------------------------------------------
+# Sub-tests 14j-14u (12): stored-ref repair at RESOLUTION time (ref_resolution.py).
+#
+# Two repairs, both measured against the live corpus before they were written:
+# a bare filename that does not exist at the repo root but is basename-unique
+# in the tree (246 occurrences), and a symbol with no file of its own that
+# exactly one of its SECTION's authored files defines (106 occurrences).
+#
+# Every assertion below pins the EXACT effective path, not "a finding
+# appeared": the whole risk in both repairs is binding to the WRONG file, and a
+# finding-count assertion cannot see that. The negative cases (ambiguous,
+# absent, cross-section) are the load-bearing ones -- they pin that an
+# unprovable pairing is left counted rather than guessed.
+# ----------------------------------------------------------------------
+RR_TREE="$SI_TREE/rr"
+mkdir -p "$RR_TREE/build" "$RR_TREE/src/deep" "$RR_TREE/src/a" "$RR_TREE/src/b" \
+    "$RR_TREE/todo/01-test"
+
+# Basename-unique target, in a directory the ref never names.
+cat > "$RR_TREE/src/deep/bare_only.c" <<'EOF'
+int bare_fn(void)
+{
+    return 0;
+}
+EOF
+# Two files sharing a basename: the ambiguous case, never guessed.
+cat > "$RR_TREE/src/a/dup.c" <<'EOF'
+int dup_fn(void)
+{
+    return 0;
+}
+EOF
+cat > "$RR_TREE/src/b/dup.c" <<'EOF'
+void dup_other(void) { }
+EOF
+# Section-scope pairing: one authored file in the section defines the symbol.
+cat > "$RR_TREE/src/paired.c" <<'EOF'
+static int s_paired_state = 0;
+
+int pair_stub(void)
+{
+    return 0;
+}
+
+int pair_accessor(void)
+{
+    return s_paired_state;
+}
+EOF
+cat > "$RR_TREE/src/sibling.c" <<'EOF'
+void sibling_fn(void) { }
+EOF
+# Section whose only authored file ref is itself a BARE filename.
+cat > "$RR_TREE/src/bare_sec.c" <<'EOF'
+void bare_sec_other(void) { }
+
+int bare_sec_stub(void)
+{
+    return 0;
+}
+EOF
+# Both of a section's files define the same symbol -> ambiguous, no pairing.
+cat > "$RR_TREE/src/a/twin.c" <<'EOF'
+int twin_fn(void)
+{
+    return 0;
+}
+EOF
+cat > "$RR_TREE/src/b/twin.c" <<'EOF'
+int twin_fn(void)
+{
+    return 0;
+}
+EOF
+
+rr_cache() {
+    # rr_cache <out.json> -- writes the fixture cache. Hand-authored rather
+    # than built from a TODO because the point under test is RESOLUTION of a
+    # given ref shape, not extraction of it.
+    python3 - "$1" <<'PY'
+import json, sys
+def sym(s, f=None):
+    r = {"kind": "symbol", "symbol": s}
+    if f:
+        r["file"] = f
+    return r
+def fil(f):
+    return {"kind": "file", "file": f}
+def item(sec, idx, refs):
+    return {"section_n": sec, "item_idx": idx, "item_text": "x", "refs": refs}
+items = [
+    # sec 1: bare filename, basename-unique in the tree
+    item(1, 0, [sym("bare_fn", "bare_only.c")]),
+    # sec 2: bare filename shared by two files -> ambiguous
+    item(2, 0, [sym("dup_fn", "dup.c")]),
+    # sec 3: bare filename that exists nowhere
+    item(3, 0, [sym("ghost_fn", "nowhere.c")]),
+    # sec 4: item 0 authors the file, item 1 names the symbol alone
+    item(4, 0, [fil("src/paired.c"), fil("src/sibling.c")]),
+    item(4, 1, [sym("pair_stub")]),
+    # sec 5: same shape, but the symbol is an accessor returning file state
+    item(5, 0, [fil("src/paired.c")]),
+    item(5, 1, [sym("pair_accessor")]),
+    # sec 6: two authored files both define the symbol -> ambiguous
+    item(6, 0, [fil("src/a/twin.c"), fil("src/b/twin.c")]),
+    item(6, 1, [sym("twin_fn")]),
+    # sec 7: names NO file of its own; sec 4's file must not leak here
+    item(7, 0, [sym("pair_stub")]),
+    # sec 8: the section's only file ref is a BARE filename
+    item(8, 0, [fil("bare_sec.c")]),
+    item(8, 1, [sym("bare_sec_stub")]),
+]
+json.dump([{"file_path": "todo/01-test/TODO-01-rr.md",
+            "stamped_items": items}], open(sys.argv[1], "w"))
+PY
+}
+cat > "$RR_TREE/todo/01-test/TODO-01-rr.md" <<'EOF'
+# TODO-01 -- ref-resolution fixture
+
+## 1. Fixture section
+- [x] placeholder
+EOF
+rr_cache "$RR_TREE/build/rr-cache.json"
+
+RR_ERR="$TMP_DIR/rr.err"
+RR_OUT="$(STUB_LINT_CACHE="$RR_TREE/build/rr-cache.json" STUB_LINT_REPO_ROOT="$RR_TREE" \
+    STUB_LINT_ALLOW_NO_BASELINE=1 \
+    python3 "$REPO_ROOT/scripts/lint/check_stub_behind_stamp.py" 2>"$RR_ERR")"
+
+# 14j: bare filename resolves, and is REPORTED at the real path.
+if echo "$RR_OUT" | grep -q "^src/deep/bare_only\.c:2:stub-behind-stamp:bare_fn "; then
+    t_pass "ref_resolution: bare filename repaired to src/deep/bare_only.c"
+else
+    t_fail "ref_resolution: bare-filename repair missing/mis-pathed; out=$RR_OUT"
+fi
+
+# 14k: ambiguous basename is NEVER guessed -- no finding, still counted.
+if echo "$RR_OUT" | grep -q "dup_fn"; then
+    t_fail "ref_resolution: ambiguous basename dup.c was guessed; out=$RR_OUT"
+elif grep -q "missing-file=2" "$RR_ERR"; then
+    t_pass "ref_resolution: ambiguous + absent basenames stay counted (missing-file=2)"
+else
+    t_fail "ref_resolution: expected missing-file=2; err=$(grep buckets "$RR_ERR")"
+fi
+
+# 14l: absent basename does not resolve and does not crash the walk.
+# BEHAVIOR PIN, not a mutation-flipped fixture -- verified 2026-08-06 that no
+# single mutation of the repair flips it: disabling the basename repair leaves
+# `nowhere.c` unresolved (as here), and relaxing the uniqueness test to "pick
+# the first hit" still finds zero candidates for it. It asserts an absence both
+# the correct and the plausibly-broken code produce, and is kept because the
+# empty-candidate path is the one that would IndexError under a careless
+# "cands[0]" rewrite.
+if echo "$RR_OUT" | grep -q "ghost_fn"; then
+    t_fail "ref_resolution: absent basename nowhere.c produced a finding"
+else
+    t_pass "ref_resolution: absent basename produces no finding"
+fi
+
+# 14m: section-scope pairing, reported at the file the SECTION authored.
+if echo "$RR_OUT" | grep -q "^src/paired\.c:4:stub-behind-stamp:pair_stub "; then
+    t_pass "ref_resolution: section-scope pairing resolves pair_stub"
+else
+    t_fail "ref_resolution: section-scope pairing missing; out=$RR_OUT"
+fi
+
+# 14n: `return <file-scope variable>` is an accessor, not a stub. Without this
+# the section-scope win would have shipped a false positive on its first live
+# use (compositor_get_test_seed, src/kernel/main/compositor.c:64).
+if echo "$RR_OUT" | grep -q "pair_accessor"; then
+    t_fail "ref_resolution: accessor returning file-scope state flagged as stub"
+else
+    t_pass "ref_resolution: return of a file-scope variable is not a stub"
+fi
+
+# 14o: two authored files both defining the symbol -> no pairing, no guess.
+if echo "$RR_OUT" | grep -q "twin_fn"; then
+    t_fail "ref_resolution: ambiguous section-scope pairing was guessed"
+else
+    t_pass "ref_resolution: ambiguous section-scope pairing left unpaired"
+fi
+
+# 14p: section scope does not leak ACROSS sections. Section 7 names no file, so
+# section 4's src/paired.c must not resolve its identical symbol -- the
+# authored evidence belongs to a section, not to a TODO.
+RR_HITS="$(echo "$RR_OUT" | grep -c "stub-behind-stamp:pair_stub " || true)"
+if [ "$RR_HITS" = "1" ]; then
+    t_pass "ref_resolution: section scope does not leak across sections"
+else
+    t_fail "ref_resolution: expected exactly 1 pair_stub finding, got $RR_HITS"
+fi
+
+# 14r: a section whose FILE ref is itself a bare filename still contributes a
+# candidate. The first draft applied the basename repair only to symbol refs,
+# so section_candidate_files silently dropped every bare file ref -- 673 of the
+# corpus's 1,167 stamped .c/.h file refs, 629 of them bare and tree-unique --
+# and starved the pairing of exactly the sections most likely to need it
+# (Codex adversarial). One rule, both ref kinds.
+if echo "$RR_OUT" | grep -q "^src/bare_sec\.c:4:stub-behind-stamp:bare_sec_stub "; then
+    t_pass "ref_resolution: a bare section FILE ref still pairs its sibling symbol"
+else
+    t_fail "ref_resolution: bare section file ref dropped from candidates; out=$RR_OUT"
+fi
+
+# 14s: the accessor exemption must recognize the declarator forms this tree
+# writes, not just `TYPE name =`. Each of these is a real C file-scope object
+# whose getter was still flagged by the first draft's narrow regex.
+if RR_ACC="$(REPO_ROOT="$REPO_ROOT" python3 - <<'PY' 2>&1
+import os, sys
+sys.path.insert(0, os.environ["REPO_ROOT"] + "/scripts/todo-graph")
+import resolve_symbol as rs
+pos = ["static int s_v = 0;", "static int a, s_v;", "static int (*s_v)(void);",
+       "_Atomic(int) s_v;", "static int s_v __attribute__((unused));",
+       "static volatile uint64_t *s_v[4] = {0};"]
+neg = [("#define S_CONST 3", "S_CONST"), ("enum { S_CONST = 1 };", "S_CONST"),
+       ("    int s_v = 0;", "s_v"), ("int fn(int s_v);", "s_v"),
+       ("typedef int s_v;", "s_v"), ("static int other_s_v = 0;", "s_v"),
+       # THE DANGEROUS DIRECTION. Admitting parens to the declarator prefix
+       # made `_Static_assert(NAME == -1, ...)` read as a declaration of NAME,
+       # which SUPPRESSED a genuine `return NAME;` stub -- fail-open on the
+       # exact class this lint exists for (Codex adversarial, round 2).
+       ('_Static_assert(STATUS_NOT_IMPLEMENTED == -1, "c");',
+        "STATUS_NOT_IMPLEMENTED"),
+       ('static_assert(E_NOTIMPL != 0, "c");', "E_NOTIMPL"),
+       ("if (STATUS_X == 1) ;", "STATUS_X"),
+       # An ARBITRARY function-like macro, which no keyword blacklist can
+       # enumerate: the constant is a comma-separated ARGUMENT, and the guard
+       # that rejects it is structural (the declarator must sit at paren
+       # depth 0), not a name list (Codex adversarial, round 3).
+       ("ASSERT_EQ(STATUS_NOT_IMPLEMENTED, -1);", "STATUS_NOT_IMPLEMENTED"),
+       ("CHECK_RANGE(E_NOTIMPL, 0, 9);", "E_NOTIMPL")]
+for d in pos:
+    assert rs._is_file_scope_variable(d, "s_v"), f"missed object: {d}"
+for text, name in neg:
+    assert not rs._is_file_scope_variable(text, name), f"false object: {text}"
+PY
+)"; then
+    t_pass "is_stub_body: accessor exemption covers real declarator forms, not constants"
+else
+    t_fail "is_stub_body: accessor declarator recognition wrong; $RR_ACC"
+fi
+
+# 14t: END-TO-END dangerous direction -- a `_Static_assert` about a constant
+# must not suppress the stub that returns it. The declarator unit cases above
+# pin the predicate; this pins the behavior lint Check 7 actually publishes.
+if RR_SA="$(REPO_ROOT="$REPO_ROOT" python3 - <<'PY' 2>&1
+import os, sys, tempfile
+sys.path.insert(0, os.environ["REPO_ROOT"] + "/scripts/todo-graph")
+import resolve_symbol as rs
+src = ('#define STATUS_NOT_IMPLEMENTED -1\n'
+       '_Static_assert(STATUS_NOT_IMPLEMENTED == -1, "contract");\n'
+       '\nint f(void)\n{\n    return STATUS_NOT_IMPLEMENTED;\n}\n')
+with tempfile.NamedTemporaryFile(suffix=".c", delete=False, mode="w") as t:
+    t.write(src)
+rs.cache_clear()
+res = rs.resolve_symbol(t.name, "f")
+stub = rs.is_stub_body(*res)
+os.unlink(t.name)
+assert stub and stub[0] == "STATUS_NOT_IMPLEMENTED", f"stub suppressed: {stub}"
+PY
+)"; then
+    t_pass "is_stub_body: a _Static_assert about a constant does not suppress its stub"
+else
+    t_fail "is_stub_body: _Static_assert suppressed a real stub; $RR_SA"
+fi
+
+# 14u: the caches this module memoizes must reset TOGETHER. ref_resolution
+# holds resolver ANSWERS while resolve_symbol holds the content and lexical
+# index they came from, so clearing one alone can serve a pre-mutation verdict.
+# check_stub_behind_stamp._resolve_cached was an lru_cache and callers still
+# reach for its `.cache_clear` (scripts/overnight/tests/test_stub_lint_coverage
+# .py resets all four); delegating to the shared memo silently dropped that
+# attribute and broke them with an AttributeError (Codex adversarial, round 2).
+if RR_CC="$(REPO_ROOT="$REPO_ROOT" python3 - <<'PY' 2>&1
+import os, sys, tempfile
+sys.path.insert(0, os.environ["REPO_ROOT"] + "/scripts/todo-graph")
+sys.path.insert(0, os.environ["REPO_ROOT"] + "/scripts/lint")
+import ref_resolution as rr
+import importlib.util
+spec = importlib.util.spec_from_file_location(
+    "csbs", os.environ["REPO_ROOT"] + "/scripts/lint/check_stub_behind_stamp.py")
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+assert callable(getattr(m._resolve_cached, "cache_clear", None)), \
+    "_resolve_cached.cache_clear contract broken"
+d = tempfile.mkdtemp(); p = os.path.join(d, "m.c")
+open(p, "w").write("int z(void)\n{\n    return 0;\n}\n")
+assert m._resolve_cached(p, "z") is not None, "pre-mutation resolve failed"
+# Rewrite so the symbol is GONE, then clear through the public reset.
+open(p, "w").write("int other(void)\n{\n    return 0;\n}\n")
+m._resolve_cached.cache_clear()
+assert not rr._MENTION_INDEX and not rr._RESOLVE_MEMO, "memo not cleared"
+assert m._resolve_cached(p, "z") is None, "stale resolve served after reset"
+# REVERSE reset: the lower-level public entry point must invalidate the
+# answers derived from it, or a caller that knows only resolve_symbol gets a
+# pre-mutation verdict from a cache it cannot see.
+import resolve_symbol as rs
+open(p, "w").write("int z(void)\n{\n    return 0;\n}\n")
+rs.cache_clear()
+assert not rr._RESOLVE_MEMO, "resolve_symbol.cache_clear left ref_resolution stale"
+assert m._resolve_cached(p, "z") is not None, "reverse reset lost the new content"
+# CONTENT-BINDING, probed WITHOUT a reset -- that is the whole point. Keying
+# the identifier set on the path alone let a file rewritten mid-run keep
+# answering from the set built before the rewrite, so a symbol the file GAINED
+# read as absent and the resolver's own rc 9 drift failure was swallowed
+# (Codex adversarial, round 3). Correct behavior is either to see the new
+# symbol or to RAISE the drift error -- never a silent miss.
+assert not rr._mentions(p, "brand_new_sym"), "pre-mutation mention"
+open(p, "w").write("int brand_new_sym(void)\n{\n    return 0;\n}\n")
+try:
+    saw = rr._mentions(p, "brand_new_sym")
+except rs.ResolverInputError:
+    saw = True   # drift surfaced loudly, which is the other legal answer
+assert saw, "stale mention index hid content the file gained mid-run"
+PY
+)"; then
+    t_pass "ref_resolution: one reset clears both caches, and cache_clear survives"
+else
+    t_fail "ref_resolution: cache reset contract broken; $RR_CC"
+fi
+
+# 14q: THE IDENTITY GATE SEES THE REPAIRS. corpus_resolution_snapshot.collect()
+# used to skip every ref without a stored `file`, so a repair taught only to
+# the lint walk would be invisible to the 0-lost/0-moved proof that is supposed
+# to gate it -- the exact incomplete-proof defect the decl-following change
+# already shipped once. Both now call ref_resolution.classify_ref.
+RR_SNAP="$(STUB_LINT_CACHE="$RR_TREE/build/rr-cache.json" STUB_LINT_REPO_ROOT="$RR_TREE" \
+    python3 "$REPO_ROOT/scripts/todo-graph/corpus_resolution_snapshot.py" \
+    write "$RR_TREE/build/rr-snap.json" 2>&1)"
+if python3 - "$RR_TREE/build/rr-snap.json" <<'PY'
+import json, sys
+m = json.load(open(sys.argv[1]))["mappings"]
+got = {k.split("::")[-1]: (v[0] if v else None) for k, v in m.items()}
+assert got.get("bare_fn") == "src/deep/bare_only.c", f"bare_fn: {got.get('bare_fn')}"
+assert got.get("pair_stub") == "src/paired.c", f"pair_stub: {got.get('pair_stub')}"
+assert "dup_fn" not in got and "twin_fn" not in got, f"guessed: {sorted(got)}"
+PY
+then
+    t_pass "corpus snapshot: identity gate covers both stored-ref repairs"
+else
+    t_fail "corpus snapshot: repairs invisible to the identity gate; $RR_SNAP"
+fi
+
+# ----------------------------------------------------------------------
 # Test 7: performance budget (under 2s wall-clock per the generator spec).
 # ----------------------------------------------------------------------
 START_NS=$(date +%s%N)

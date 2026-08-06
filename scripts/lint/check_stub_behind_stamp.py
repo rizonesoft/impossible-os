@@ -45,6 +45,7 @@ sys.path.insert(0, str(REPO_ROOT / "scripts" / "todo-graph"))
 
 try:
     import resolve_symbol as _rs
+    import ref_resolution as _rr
 except ImportError as exc:
     sys.stderr.write(f"[check_stub_behind_stamp] FATAL: cannot import resolve_symbol: {exc}\n")
     sys.exit(6)
@@ -55,9 +56,21 @@ except ImportError as exc:
 # by both resolve_symbol() and is_stub_body(); these wrappers just memoize
 # the parsed-result so the same (file, symbol) tuple does not re-walk the
 # regex/brace logic when multiple stamped items name it.
-@lru_cache(maxsize=2048)
 def _resolve_cached(file_path: str, symbol: str):
-    return _rs.resolve_symbol(file_path, symbol)
+    # Delegates to ref_resolution's memo rather than holding a second one:
+    # the section-scope pairing there already asked this exact question for
+    # the file that won, and two independent caches would pay for the same
+    # resolve twice (measured: 1,159 resolve_symbol calls for 606 walk-side
+    # lookups).
+    return _rr._resolve_memoized(file_path, symbol)
+
+
+# `_resolve_cached` was an `lru_cache` and callers reach for its `.cache_clear`
+# (scripts/overnight/tests/test_stub_lint_coverage.py resets all four caches
+# between fixture trees). Delegating silently dropped that attribute and broke
+# them with an AttributeError, so the contract is preserved explicitly and
+# routed at the memo that now holds the entries (Codex adversarial, round 2).
+_resolve_cached.cache_clear = _rr.clear_caches
 
 
 @lru_cache(maxsize=2048)
@@ -219,7 +232,19 @@ def _walk(nodes: list, repo_root: Path) -> tuple:
     }
     for node in nodes:
         items = node.get("stamped_items") or []
+        # SECTION-SCOPED candidate files, computed once per section rather than
+        # per ref: the section-scope pairing in ref_resolution.classify_ref
+        # needs every .c/.h file the section's OWN stamped items name, and a
+        # section routinely holds dozens of items.
+        by_section = {}
         for it in items:
+            by_section.setdefault(it.get("section_n"), []).append(it)
+        sec_files = {
+            sec: _rr.section_candidate_files(sec_items, repo_resolved)
+            for sec, sec_items in by_section.items()
+        }
+        for it in items:
+            section_files = sec_files.get(it.get("section_n"), ())
             for ref in it.get("refs", []):
                 if ref.get("kind") != "symbol":
                     continue
@@ -237,25 +262,22 @@ def _walk(nodes: list, repo_root: Path) -> tuple:
                 cov["occurrences"] += 1
                 file_rel = ref.get("file")
                 symbol = ref.get("symbol")
-                if not file_rel or not symbol:
-                    cov["unpaired_ref"].append(str(symbol or file_rel or "?"))
+                # ONE effective-path rule, shared with the identity snapshot
+                # (ref_resolution.classify_ref). It applies the historical
+                # order of filters unchanged and adds the two stored-ref
+                # repairs -- section-scope pairing for a symbol with no file,
+                # and basename repair for a bare filename that does not exist
+                # at the repo root. Bucket idents keep the AUTHORED spelling so
+                # a ref that stays unresolved reads the same as it always did.
+                verdict = _rr.classify_ref(ref, section_files, repo_resolved)
+                if verdict.bucket is not None:
+                    if verdict.bucket == "unpaired_ref":
+                        cov["unpaired_ref"].append(
+                            str(symbol or file_rel or "?"))
+                    else:
+                        cov[verdict.bucket].append(f"{file_rel}:{symbol}")
                     continue
-                ident = f"{file_rel}:{symbol}"
-                if file_rel.startswith("/"):
-                    cov["path_escape"].append(ident)
-                    continue
-                try:
-                    file_abs = (repo_root / file_rel).resolve()
-                    file_abs.relative_to(repo_resolved)
-                except (ValueError, OSError):
-                    cov["path_escape"].append(ident)
-                    continue
-                if file_abs.suffix not in (".c", ".h"):
-                    cov["unsupported_lang"].append(ident)
-                    continue
-                if not file_abs.is_file():
-                    cov["missing_file"].append(ident)
-                    continue
+                file_abs = Path(verdict.abs_path)
                 resolved = _resolve_cached(str(file_abs), symbol)
                 res_file = str(file_abs)
                 if resolved is None:
@@ -272,6 +294,11 @@ def _walk(nodes: list, repo_root: Path) -> tuple:
                     if resolved is not None:
                         res_file = resolved[0]
                 if resolved is None:
+                    # Bucket the ref at the path actually opened, not the
+                    # authored spelling: for a repaired ref the authored token
+                    # names nothing (a bare filename, or no file at all), so
+                    # reporting it here would name a file nobody can inspect.
+                    ident = f"{verdict.rel_path}:{symbol}"
                     if _has_calllike_token(str(file_abs), symbol):
                         cov["unresolved_calllike"].append(ident)
                     else:
@@ -289,10 +316,14 @@ def _walk(nodes: list, repo_root: Path) -> tuple:
                 todo_path = node.get("file_path") or "?"
                 section_n = it.get("section_n", "?")
                 # A followed definition lives in a DIFFERENT file than the
-                # ref's own `file_rel` (the declaring header) -- report at
+                # ref's own effective path (the declaring header) -- report at
                 # the file that actually has the body, not the header,
-                # which has nothing at `body_open_line` to inspect.
-                report_rel = file_rel
+                # which has nothing at `body_open_line` to inspect. The base
+                # is the EFFECTIVE path, never the authored spelling: a
+                # basename-repaired or section-paired ref's authored token
+                # names no file, so printing it would send a reader to a path
+                # that does not exist.
+                report_rel = verdict.rel_path
                 if res_file != str(file_abs):
                     try:
                         report_rel = str(
@@ -389,7 +420,7 @@ def main() -> int:
             f"{accounted} but {cov['occurrences']} occurrences were seen\n")
         return 6
 
-    # COVERAGE BASELINE. The standing gap (134 unresolved) is a WARN: it is
+    # COVERAGE BASELINE. The standing gap is a WARN, not an ERROR: it is
     # pre-existing, and an ERROR would block every commit in the repo until it
     # reached zero -- the same reason Check 24 warns rather than blocks.
     #

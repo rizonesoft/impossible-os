@@ -41,6 +41,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import ref_resolution as _rr  # noqa: E402
 from resolve_symbol import (  # noqa: E402
     ResolverInputError, follow_declaration, resolve_symbol)
 
@@ -142,34 +143,51 @@ def collect() -> dict:
     memo = {}  # (abs, sym) -> tuple|None; resolution is deterministic per pair
     for node in nodes:
         todo_path = node.get("file_path") or "?"
-        for it in node.get("stamped_items") or []:
+        items = node.get("stamped_items") or []
+        by_section = {}
+        for it in items:
+            by_section.setdefault(it.get("section_n"), []).append(it)
+        sec_files = {
+            s: _rr.section_candidate_files(sec_items, root)
+            for s, sec_items in by_section.items()
+        }
+        for it in items:
             sec = it.get("section_n", "?")
             idx = it.get("item_idx", "?")
+            section_files = sec_files.get(it.get("section_n"), ())
             for ref_i, ref in enumerate(it.get("refs") or []):
                 if ref.get("kind") != "symbol":
                     continue
-                rel, sym = ref.get("file"), ref.get("symbol")
-                if not rel or not sym:
+                sym = ref.get("symbol")
+                # MIRROR check_stub_behind_stamp._walk's ref filters exactly --
+                # by CALLING THE SAME CODE, not by re-deriving them. A snapshot
+                # over a wider population than Check 7 actually walks is not a
+                # gate on Check 7, and one over a NARROWER population silently
+                # omits the mappings a change added: both happened here (the
+                # decl-following draft covered 36 of 54). `classify_ref` also
+                # applies the two stored-ref repairs, so the identity proof
+                # covers a basename-repaired or section-paired mapping as it
+                # covers an authored one.
+                verdict = _rr.classify_ref(ref, section_files, root)
+                if verdict.bucket is not None:
                     continue
-                # MIRROR check_stub_behind_stamp._walk's ref filters exactly
-                # (:101-111). A snapshot over a wider population than Check 7
-                # actually walks is not a gate on Check 7 -- it would report
-                # "unresolved" for .md/.py refs the check never attempts, and
-                # the before/after numbers would not be comparable to the
-                # coverage baseline they exist to protect.
-                if rel.startswith("/"):
-                    continue
-                try:
-                    abs_p = (root / rel).resolve()
-                    abs_p.relative_to(root)
-                except (ValueError, OSError):
-                    continue
-                if not abs_p.is_file() or abs_p.suffix not in (".c", ".h"):
-                    continue
+                abs_p = Path(verdict.abs_path)
+                rel = verdict.rel_path
+                # The key carries the EFFECTIVE path. Every ref that resolved
+                # before the repairs is `authored` provenance, so its path --
+                # and therefore its key -- is byte-identical to the recorded
+                # baseline's; a repaired ref is a new key either way, and the
+                # effective path is the one a reader can open.
                 key = f"{todo_path}#{sec}.{idx}r{ref_i} {rel}::{sym}"
                 memo_key = (str(abs_p), sym)
                 if memo_key not in memo:
-                    res = resolve_symbol(str(abs_p), sym)
+                    # THROUGH THE SHARED MEMO, not resolve_symbol directly:
+                    # section-scope pairing above has usually already asked
+                    # this exact question, and a private cache paid for it
+                    # twice (measured: 1,219 resolver calls for 945 unique
+                    # pairs, 269 of them duplicated across the two layers;
+                    # ~8% of this tool's wall clock -- Codex perf).
+                    res = _rr._resolve_memoized(str(abs_p), sym)
                     if res is None:
                         # MIRROR check_stub_behind_stamp._walk's fallback
                         # exactly: a header-only ref may still resolve via
