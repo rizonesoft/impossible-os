@@ -5233,6 +5233,150 @@ else
     t_fail "ref_resolution: cache lifecycle wrong; $RR_LIFE"
 fi
 
+# 15c: the PAIRING's growth shape, across all three axes independently.
+# 15a pins the body walk; it varies only one function's length and therefore
+# cannot see the pairing cost at all. The section's Test checkpoint asked for a
+# fixture varying symbols x candidate files x file size, and measuring
+# discovery at 5% of today's corpus does NOT refute the multiplicative shape --
+# it only says the constant is small at today's scale (Codex perf, section 15).
+# So the shape is MEASURED and pinned here as a known, accepted property rather
+# than left to a wall-clock number on one corpus.
+if RR_PAIR="$(REPO_ROOT="$REPO_ROOT" python3 - <<'PY' 2>&1
+import os, sys, tempfile
+sys.path.insert(0, os.environ["REPO_ROOT"] + "/scripts/todo-graph")
+import resolve_symbol as rs, ref_resolution as rr
+
+
+def build(n_files, n_syms, pad):
+    """A section naming `n_files` files, each defining all `n_syms` symbols,
+    with `pad` filler lines per file. Every symbol is AMBIGUOUS across files,
+    so `_defining_candidates` must probe every (file, symbol) pair."""
+    d = tempfile.mkdtemp()
+    items, files = [], []
+    for f in range(n_files):
+        path = os.path.join(d, "f%d.c" % f)
+        body = []
+        for s in range(n_syms):
+            body.append("void s%d(void) {" % s)
+            body += ["    int p%d = %d;" % (i, i) for i in range(pad)]
+            body.append("}")
+        open(path, "w").write("\n".join(body) + "\n")
+        files.append(path)
+        items.append({"section_n": 1, "refs": [{"kind": "file",
+                                                "file": os.path.basename(path)}]})
+    items.append({"section_n": 1,
+                  "refs": [{"kind": "symbol", "symbol": "s%d" % s}
+                           for s in range(n_syms)]})
+    return d, items
+
+
+def cost(n_files, n_syms, pad):
+    d, items = build(n_files, n_syms, pad)
+    rr.clear_caches()
+    scope = rr.section_scope(items, __import__("pathlib").Path(d))
+    for s in range(n_syms):
+        rr._defining_candidates(scope, "s%d" % s, __import__("pathlib").Path(d))
+    st = rs.scan_stats()
+    return st["scalar"], st["bytes"]
+
+
+base_scans, base_bytes = cost(2, 4, 5)
+# SYMBOLS x2 -> scans x2. This is the multiplicative term, pinned deliberately:
+# the section did NOT remove it, and a future change that does must update this
+# assertion rather than silently pass a shape test that never looked.
+s2, _ = cost(2, 8, 5)
+assert s2 >= base_scans * 2, f"symbol axis not linear: {base_scans} -> {s2}"
+# FILES x2 -> scans x2.
+f2, _ = cost(4, 4, 5)
+assert f2 >= base_scans * 2, f"file axis not linear: {base_scans} -> {f2}"
+# FILE SIZE x~4 -> scan COUNT unchanged, scanned BYTES grow. Separating the two
+# is the point: a wall-clock number cannot distinguish "more scans" from
+# "bigger scans", and they have different fixes.
+p4, p4_bytes = cost(2, 4, 25)
+assert p4 == base_scans, f"size axis changed scan count: {base_scans} -> {p4}"
+assert p4_bytes > base_bytes * 2, f"size axis not growing bytes: {base_bytes} -> {p4_bytes}"
+PY
+)"; then
+    t_pass "ref_resolution: pairing growth shape measured on all three axes"
+else
+    t_fail "ref_resolution: pairing shape unpinned; $RR_PAIR"
+fi
+
+# 15d: the walk boundary is RE-ENTRANT and covers declaration-following.
+# A nested scope that cleared on exit would drop resolve_symbol's generation
+# pins mid-walk, turning a documented rc 9 drift failure into a silent clean
+# read; and the sibling glob must be frozen per walk or two refs in one walk
+# can straddle a topology change (Codex adversarial + consistency, section 15).
+if RR_REENT="$(REPO_ROOT="$REPO_ROOT" python3 - <<'PY' 2>&1
+import os, sys, tempfile
+sys.path.insert(0, os.environ["REPO_ROOT"] + "/scripts/todo-graph")
+import resolve_symbol as rs, ref_resolution as rr
+from pathlib import Path
+
+d = tempfile.mkdtemp()
+os.makedirs(os.path.join(d, "src", "a"))
+open(os.path.join(d, "src", "a", "w.c"), "w").write("void wf(void) { }\n")
+with rr.walk_scope():
+    first = rs._sibling_candidates(d, "w.c")
+    assert len(first) == 1, f"setup: {first}"
+    # A nested scope must NOT reset the outer walk's snapshot.
+    with rr.walk_scope():
+        pass
+    os.makedirs(os.path.join(d, "src", "b"))
+    open(os.path.join(d, "src", "b", "w.c"), "w").write("void wf(void) { }\n")
+    again = rs._sibling_candidates(d, "w.c")
+    assert again == first, (
+        f"sibling glob straddled a topology change inside one walk: "
+        f"{first} -> {again}")
+# The OUTERMOST exit does release it, so the next walk sees the new tree.
+after = rs._sibling_candidates(d, "w.c")
+assert len(after) == 2, f"walk exit did not release the snapshot: {after}"
+
+# An INTERRUPTED walk must not strand the depth above zero. Incrementing
+# outside the `try` left a window where an exception between the increment and
+# the protected block permanently disabled clearing, so every later walk kept
+# the previous walk's topology -- including cached ZERO-match tuples (Codex
+# re-adversarial, section 15). Depth must return to its prior value however
+# the body exits.
+assert rr._WALK_DEPTH == 0, f"depth not clean before test: {rr._WALK_DEPTH}"
+try:
+    with rr.walk_scope():
+        raise KeyboardInterrupt("simulated interrupt inside the walk")
+except KeyboardInterrupt:
+    pass
+assert rr._WALK_DEPTH == 0, (
+    f"an interrupted walk stranded _WALK_DEPTH at {rr._WALK_DEPTH}; every "
+    f"later walk would skip clearing and serve a stale topology")
+# STRUCTURAL, because the behavioural assertion above CANNOT reach the real
+# window: the defect needs an exception delivered between the increment and
+# the `try`, and an in-body `raise` balances under the broken shape too (its
+# `finally` still runs). Checked at source, the way fixture 14ee checks the
+# caller rule -- the depth must not be mutated before the protected region
+# opens, and the exit must RESTORE a saved value rather than decrement, so a
+# stranded depth cannot accumulate across walks.
+src = open(os.environ["REPO_ROOT"]
+           + "/scripts/todo-graph/ref_resolution.py", encoding="utf-8").read()
+ws = src[src.index("def walk_scope("):]
+ws = ws[:ws.index("\ndef ", 1)]
+code = "\n".join(l for l in ws.splitlines() if not l.lstrip().startswith("#"))
+body = code[code.index('"""', code.index('"""') + 3) + 3:]
+assert body.index("    try:") < body.index("_WALK_DEPTH ="), (
+    "walk_scope mutates _WALK_DEPTH before entering `try` -- an exception in "
+    "that window strands the depth and disables clearing permanently")
+assert "_WALK_DEPTH = prior" in body and "_WALK_DEPTH -=" not in body, (
+    "walk_scope must RESTORE a saved depth in `finally`, not decrement")
+# And a normal walk after the interruption still clears.
+with rr.walk_scope():
+    rs._sibling_candidates(d, "w.c")
+    assert rs._SIBLING_INDEX, "sibling index not populated after interruption"
+assert not rs._SIBLING_INDEX, "clearing stayed disabled after an interruption"
+PY
+)"; then
+    t_pass "resolve_symbol: walk boundary is re-entrant and freezes sibling glob"
+else
+    t_fail "resolve_symbol: walk boundary leaks topology; $RR_REENT"
+fi
+
 # ----------------------------------------------------------------------
 # Test 7: performance budget (under 2s wall-clock per the generator spec).
 # ----------------------------------------------------------------------
@@ -5240,7 +5384,15 @@ START_NS=$(date +%s%N)
 python3 "$BUILD_PY" --quiet --output "$TMP_DIR/cache-perf.json" >/dev/null 2>&1
 END_NS=$(date +%s%N)
 ELAPSED_MS=$(( (END_NS - START_NS) / 1000000 ))
-if [ "$ELAPSED_MS" -lt 2000 ]; then
+# A NON-POSITIVE elapsed is an invalid MEASUREMENT, not a fast build, and the
+# naive `-lt 2000` banked it as a pass -- so a clock step turned this budget
+# into a guaranteed green. Observed three times on 2026-08-06 under WSL2
+# (`-1158ms` in this very test, plus `-262ms`/`-246ms` in hand timings), where
+# the host clock resyncs after a suspend. Refuse the reading instead of
+# trusting it: a budget that cannot fail is not a budget.
+if [ "$ELAPSED_MS" -le 0 ]; then
+    t_fail "build timing invalid (${ELAPSED_MS}ms) -- clock stepped mid-measurement; re-run"
+elif [ "$ELAPSED_MS" -lt 2000 ]; then
     t_pass "build under 2s wall-clock (${ELAPSED_MS}ms)"
 else
     t_fail "build exceeded 2s budget: ${ELAPSED_MS}ms"

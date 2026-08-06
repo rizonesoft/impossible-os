@@ -167,8 +167,8 @@ def _walk(nodes: list, repo_root: Path) -> tuple:
         # `_needs` set copied into both callers: only a section that actually
         # holds an unpaired symbol builds candidates, and 357 of the corpus's
         # 830 sections do (Codex perf, post-commit). The scope also carries the
-        # section's batched per-file definition map, which is what keeps the
-        # pairing's cost proportional to files rather than files x symbols.
+        # scope is also where the section's unpaired-symbol set is derived, so
+        # both gates agree on the pairing population without either computing it.
         sec_scopes = {
             sec: _rr.section_scope(sec_items, repo_resolved)
             for sec, sec_items in by_section.items()

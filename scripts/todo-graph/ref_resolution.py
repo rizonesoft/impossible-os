@@ -211,23 +211,59 @@ def _clear_local_only() -> None:
 _rs.register_reset_dependent(_clear_local_only)
 
 
+_WALK_DEPTH = 0
+
+
 @contextmanager
 def walk_scope():
     """One walk's cache lifetime, released on exit.
 
     The boundary the topology-derived caches need in order to be BOTH
     consistent and bounded: inside it they never evict, so every ref in the
-    walk answers from one directory snapshot; leaving it drops them, so a
+    walk answers from one directory snapshot -- the basename index, the
+    effective-path memo, the end-to-end memo, and (since the same review) the
+    declaration-following sibling index. Leaving it drops them, so a
     long-lived importer serving several worktrees does not accumulate a
     tree-sized index per root forever. The CLI callers get this for free
     either way (a lint invocation is a fresh interpreter that exits), which is
     why this is housekeeping rather than a correctness gate -- but a gate is
-    exactly what an in-process caller would otherwise lack."""
-    clear_caches()
+    exactly what an in-process caller would otherwise lack.
+
+    RE-ENTRANT, and that is load-bearing rather than politeness. Only the
+    OUTERMOST scope clears. A nested scope that cleared on exit would drop
+    `resolve_symbol`'s generation PINS while the outer walk is still running,
+    and those pins are the only thing that turns a mid-walk file rewrite into
+    the documented rc 9 / rc 3 infrastructure failure -- so the mutation would
+    instead be accepted as an innocent first read, which is the one outcome
+    indistinguishable from a clean pass (Codex consistency, section 15).
+
+    SINGLE-THREADED BY CONTRACT, and the depth counter does not change that.
+    Every cache this module and `resolve_symbol` hold -- the seven dicts above,
+    `_content_cache`, `_pinned`, and the `lru_cache`-backed file index -- is
+    unsynchronized process-global state, and always has been. Both consumers
+    are single-shot CLI processes. A lock around THIS boundary alone would
+    serialize walks while leaving all of that unguarded, which advertises a
+    thread-safety property the module does not have; stating the contract is
+    the honest form."""
+    global _WALK_DEPTH
+    # `prior` is captured, and restored in a `finally` whose protected region
+    # begins BEFORE the clear and the increment. Incrementing outside the
+    # `try` left a real window: an exception delivered between the increment
+    # and the block (a KeyboardInterrupt is enough) stranded the depth above
+    # zero permanently, and every later walk then skipped clearing -- so
+    # `_SIBLING_INDEX` entries, including cached ZERO-match tuples, and the
+    # generation pins survived boundaries they exist to be dropped at (Codex
+    # re-adversarial, section 15).
+    prior = _WALK_DEPTH
     try:
+        if prior == 0:
+            clear_caches()
+        _WALK_DEPTH = prior + 1
         yield
     finally:
-        clear_caches()
+        _WALK_DEPTH = prior
+        if prior == 0:
+            clear_caches()
 
 
 def _basename_index(repo_root: Path) -> dict:
@@ -406,34 +442,31 @@ def _resolve_memoized(abs_path: str, symbol: str):
 
 
 class SectionScope:
-    """One section's pairing evidence: its authored files, its unpaired
-    symbols, and the per-file definition map derived from them.
+    """One section's pairing evidence: its authored files and its unpaired
+    symbols, computed once per section instead of once per ref.
 
-    THE BATCH RESULT LIVES HERE, not in the process-wide memo. Routing it
-    through `_RESOLVE_MEMO` was the first design and is wrong: that memo is
-    capacity-bounded, so a section whose (symbols x candidate files) exceeds
-    the capacity would evict earlier files' batch results while warming later
-    ones, and the following symbols would re-warm the same files -- degrading
-    back to the symbols x files x file-size shape this section exists to
-    remove, with no fixed capacity able to prevent it for arbitrary input
-    (Codex design review, section 15). Section-local means the scaling
-    property is structural: one batch per candidate file per section, whatever
-    the capacity is set to. The global memo stays a secondary cache for the
-    other resolve paths.
+    NO BATCHING HAPPENS HERE, and the class must not imply otherwise. An
+    earlier revision carried a `_defs` per-file batch map plus a docstring
+    promising "one batch per candidate file per section"; the batch was
+    measured slower than the C-speed per-symbol scan and removed, but the
+    member and the promise survived the revert -- a dead attribute advertising
+    a performance contract the code does not honour, on the very module whose
+    purpose is that both gates share ONE truthful rule (Codex consistency,
+    section 15). `defines()` performs one memoized resolve per (file, symbol);
+    the cost shape that follows from that is stated on `_defining_candidates`.
 
     BOTH LISTS ARE LAZY. 357 of the corpus's 830 sections hold an unpaired
     symbol; the rest never consult `files` at all, and canonicalizing paths
     for them was measured waste. Nothing is computed until a ref asks.
     """
 
-    __slots__ = ("_items", "_root", "_files", "_symbols", "_defs")
+    __slots__ = ("_items", "_root", "_files", "_symbols")
 
     def __init__(self, items: list, repo_root: Path):
         self._items = items or []
         self._root = repo_root
         self._files = None
         self._symbols = None
-        self._defs = {}
 
     @property
     def symbols(self) -> frozenset:

@@ -53,6 +53,26 @@ _BODY_SCAN_LIMIT = 1024  # lines to scan once the head is found
 _MAX_FILE_BYTES = 16 * 1024 * 1024
 
 
+# How much candidate DISCOVERY has actually run, COUNTED rather than timed.
+# The section that added this exists because an earlier round of the same work
+# was accepted on a wall-clock number, which cannot see a growth SHAPE: a
+# per-symbol rescan and a per-file scan differ by a factor of the symbol count,
+# and on a quiet host both read as "fast". A scan COUNT and a scanned-BYTE
+# total separate the two axes that a timer conflates -- more scans versus
+# bigger scans -- which have different fixes. Reset by `cache_clear()`.
+_SCALAR_SCANS = 0
+_SCANNED_BYTES = 0
+
+
+def scan_stats() -> dict:
+    """Candidate-discovery counters since the last `cache_clear()`.
+
+    `scalar` counts whole-file sweeps made for one symbol; `bytes` is the file
+    text swept. Published for the scaling fixture, which asserts a growth shape
+    these express directly and a wall-clock measurement cannot."""
+    return {"scalar": _SCALAR_SCANS, "bytes": _SCANNED_BYTES}
+
+
 class ResolverInputError(RuntimeError):
     """An input the resolver refuses to answer about.
 
@@ -247,6 +267,9 @@ def cache_clear() -> None:
     _file_index.cache_clear()
     _masked_text_for_index.cache_clear()
     _pinned.clear()
+    _SIBLING_INDEX.clear()
+    global _SCALAR_SCANS, _SCANNED_BYTES
+    _SCALAR_SCANS = _SCANNED_BYTES = 0
     for reset in _RESET_DEPENDENTS:
         reset()
 
@@ -621,6 +644,9 @@ class _FileIndex:
         without deciding the line, so a later real-code occurrence still gets
         a chance.
         """
+        global _SCALAR_SCANS, _SCANNED_BYTES
+        _SCALAR_SCANS += 1
+        _SCANNED_BYTES += len(self.text)
         text, offs, lines = self.text, self.offs, self.lines
         out = []
         decided = set()
@@ -728,6 +754,37 @@ def _mask_decl_modifiers(text: str) -> str:
             break
         text = " " * m.end() + text[m.end():]
     return text
+
+
+_SIBLING_INDEX = {}   # (root, basename) -> (abs path, ...) -- WALK-SCOPED
+
+
+def _sibling_candidates(root: str, basename: str) -> tuple:
+    """`src/**/<basename>` under `root`, resolved ONCE per walk.
+
+    The glob used to run per `follow_declaration` call, straight against the
+    live tree, so two refs in the SAME walk could see different topology: the
+    first keeps a formerly-unique sibling while the second, after a same-named
+    file appears, sees ambiguity and gives up. `_END_TO_END` did not catch it
+    because it only freezes REPEATED `(file, symbol, root)` keys, and no
+    lines-object check can detect a directory-only change (Codex adversarial,
+    section 15).
+
+    Memoizing here is what makes the walk's "one topology snapshot" claim
+    TRUE rather than merely narrower -- it puts declaration-following on the
+    same footing as `ref_resolution._basename_index`, which has always been
+    built once per root. WALK-SCOPED for the same reason that one is: nothing
+    pins directory contents, so this must never evict mid-walk. Cleared by
+    `cache_clear()`, i.e. at the walk boundary.
+    """
+    key = (root, basename)
+    hit = _SIBLING_INDEX.get(key)
+    if hit is None:
+        hit = tuple(str(m.resolve())
+                    for m in Path(root).glob(f"src/**/{basename}")
+                    if m.is_file())
+        _SIBLING_INDEX[key] = hit
+    return hit
 
 
 def _iter_code_chars(lines: list, start_idx: int, start_col: int, end_idx: int,
@@ -1066,10 +1123,10 @@ def follow_declaration(file_path: str, symbol: str,
 
     root = Path(repo_root).resolve()
     basename = p.stem + ".c"
-    matches = [m for m in root.glob(f"src/**/{basename}") if m.is_file()]
+    matches = _sibling_candidates(str(root), basename)
     if len(matches) != 1:
         return None  # zero or ambiguous -- never guess
-    cand_path = matches[0].resolve()
+    cand_path = Path(matches[0])
     try:
         cand_path.relative_to(root)
     except ValueError:
