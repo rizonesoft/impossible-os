@@ -462,6 +462,8 @@ else
     #   4 = cache stale       -> ERROR (false-clean risk; rebuild required)
     #   5 = cache malformed   -> ERROR (corrupt JSON; investigate)
     #   6 = internal failure  -> ERROR
+    #   7 = coverage floor breached -> ERROR (the check went blinder)
+    #   8 = baseline invalid  -> ERROR (tracked floor file missing/corrupt)
     CACHE="$REPO_ROOT/build/todo-cache.json"
     STUB_ERR_FILE="$(mktemp -t lint-stub-stderr.XXXXXX)"
     STUB_OUT_FILE="$(mktemp -t lint-stub-stdout.XXXXXX)"
@@ -479,6 +481,20 @@ else
                 [ -z "$f" ] && continue
                 error "$f" "$l" "$rest"
             done <<< "$STUB_OUT"
+            # SURFACE THE COVERAGE LINE. The helper writes it to stderr (stdout
+            # is the findings channel), and this branch used to read stdout
+            # only -- so a normal lint run published no coverage ratio at all
+            # and the whole point of counting the blind spot was invisible to
+            # the caller.
+            STUB_COV="$(grep -m1 'stub-behind-stamp:coverage' "$STUB_ERR_FILE" 2>/dev/null || true)"
+            [ -n "$STUB_COV" ] && echo -e "${CYAN}info${NC}: Check 7 ${STUB_COV#stub-behind-stamp:}"
+            # A DELIBERATE BYPASS MUST BE SEEN. STUB_LINT_ALLOW_NO_BASELINE=1
+            # disables the only coverage floor; announcing it on the helper's
+            # stderr while the caller discards stderr is not "visibly reported".
+            if grep -q 'baseline floor SKIPPED' "$STUB_ERR_FILE" 2>/dev/null; then
+                echo -e "${YELLOW}warn${NC}: Check 7 (stub-behind-stamp) coverage floor BYPASSED via STUB_LINT_ALLOW_NO_BASELINE=1 -- the resolver could go blind without this run noticing"
+                WARNINGS=$((WARNINGS + 1))
+            fi
             ;;
         2)
             echo -e "${YELLOW}warn${NC}: Check 7 (stub-behind-stamp) skipped -- build/todo-cache.json missing; run bash scripts/todo-graph/build-and-validate.sh"
@@ -497,6 +513,14 @@ else
             # unresolved symbol yields no finding, so losing resolution is
             # indistinguishable from passing -- this rc is the only signal.
             echo -e "${RED}error${NC}: Check 7 (stub-behind-stamp) COVERAGE REGRESSION -- $(grep -m1 'COVERAGE REGRESSION' "$STUB_ERR_FILE" 2>/dev/null | sed 's/.*REGRESSION: //' | cut -c1-140)"
+            ERRORS=$((ERRORS + 1))
+            ;;
+        8)
+            # The coverage floor's own bookkeeping file is tracked repo state.
+            # Treating it as absent-means-no-floor let a delete silently
+            # disable the gate, so an invalid baseline is an ERROR with a
+            # named, reported bypass rather than a quiet degrade to warn.
+            echo -e "${RED}error${NC}: Check 7 (stub-behind-stamp) BASELINE INVALID -- $(grep -m1 'BASELINE INVALID' "$STUB_ERR_FILE" 2>/dev/null | sed 's/.*BASELINE INVALID: //' | cut -c1-140)"
             ERRORS=$((ERRORS + 1))
             ;;
         *)

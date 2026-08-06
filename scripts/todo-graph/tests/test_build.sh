@@ -2831,13 +2831,30 @@ mkdir -p "$SI_TREE/include"
 
 # Run only Check 7 by exercising the helper directly. Avoids dragging in
 # the full lint.sh prelude (which scans for #pragma once etc.).
-SI_OUT="$(STUB_LINT_CACHE="$SI_CACHE" STUB_LINT_REPO_ROOT="$SI_TREE" \
+SI_OUT="$(STUB_LINT_CACHE="$SI_CACHE" STUB_LINT_REPO_ROOT="$SI_TREE" STUB_LINT_ALLOW_NO_BASELINE=1 \
     python3 "$REPO_ROOT/scripts/lint/check_stub_behind_stamp.py" 2>&1)"
 SI_RC=$?
 if [ "$SI_RC" = "0" ] && echo "$SI_OUT" | grep -q "stub-behind-stamp:foo_init"; then
     t_pass "lint Check 7: foo_init flagged as stub-behind-stamp"
 else
     t_fail "lint Check 7: expected foo_init flag (rc=$SI_RC, out=$SI_OUT)"
+fi
+
+# Sub-test 14b2: a MISSING baseline fails CLOSED (rc 8), and the bypass the
+# synthetic-root sub-tests above rely on is what makes them pass. Before
+# 2026-08-06 an absent or corrupt stub-lint-baseline.json was swallowed into
+# `baseline = None` and the coverage floor simply stopped applying while the
+# check still exited 0 -- a silent, unrecorded bypass of the only gate that can
+# see the resolver going blind. The file is TRACKED, so it is never legitimately
+# absent; this pins that the skip must be asked for out loud.
+SI_NOBASE_RC=0
+STUB_LINT_CACHE="$SI_CACHE" STUB_LINT_REPO_ROOT="$SI_TREE" \
+    python3 "$REPO_ROOT/scripts/lint/check_stub_behind_stamp.py" \
+    >/dev/null 2>&1 || SI_NOBASE_RC=$?
+if [ "$SI_NOBASE_RC" = "8" ]; then
+    t_pass "lint Check 7: missing baseline fails CLOSED (rc 8)"
+else
+    t_fail "lint Check 7: missing baseline should be rc 8, got $SI_NOBASE_RC"
 fi
 
 # Sub-test 14c: INTENTIONAL-STUB allowlist marker on the body opener
@@ -2858,7 +2875,7 @@ int foo_init(void)
 }
 EOF
 SI_ERR2="$SI_TREE/build/stub-lint-14c.err"
-SI_OUT2="$(STUB_LINT_CACHE="$SI_CACHE" STUB_LINT_REPO_ROOT="$SI_TREE" \
+SI_OUT2="$(STUB_LINT_CACHE="$SI_CACHE" STUB_LINT_REPO_ROOT="$SI_TREE" STUB_LINT_ALLOW_NO_BASELINE=1 \
     python3 "$REPO_ROOT/scripts/lint/check_stub_behind_stamp.py" 2>"$SI_ERR2")"
 SI_RC2=$?
 if [ "$SI_RC2" = "0" ] && [ -z "$SI_OUT2" ]; then
@@ -2879,7 +2896,7 @@ int foo_init(void)
 }
 EOF
 SI_ERR3="$SI_TREE/build/stub-lint-14d.err"
-SI_OUT3="$(STUB_LINT_CACHE="$SI_CACHE" STUB_LINT_REPO_ROOT="$SI_TREE" \
+SI_OUT3="$(STUB_LINT_CACHE="$SI_CACHE" STUB_LINT_REPO_ROOT="$SI_TREE" STUB_LINT_ALLOW_NO_BASELINE=1 \
     python3 "$REPO_ROOT/scripts/lint/check_stub_behind_stamp.py" 2>"$SI_ERR3")"
 SI_RC3=$?
 if [ "$SI_RC3" = "0" ] && [ -z "$SI_OUT3" ]; then
@@ -2899,7 +2916,7 @@ static int foo_init(void)
     return 0;
 }
 EOF
-SI_OUT4="$(STUB_LINT_CACHE="$SI_CACHE" STUB_LINT_REPO_ROOT="$SI_TREE" \
+SI_OUT4="$(STUB_LINT_CACHE="$SI_CACHE" STUB_LINT_REPO_ROOT="$SI_TREE" STUB_LINT_ALLOW_NO_BASELINE=1 \
     python3 "$REPO_ROOT/scripts/lint/check_stub_behind_stamp.py" 2>&1)"
 if echo "$SI_OUT4" | grep -q "stub-behind-stamp:foo_init"; then
     t_pass "lint Check 7: prototype-before-definition correctly resolves to def"
@@ -2936,7 +2953,7 @@ int evil_fn(void) { return 0; }
 EOF
 python3 "$BUILD_PY" --quiet --root "$SI_TREE/todo" --output "$SI_CACHE" \
     --repo-root "$SI_TREE" >/dev/null 2>&1
-SI_ESC="$(STUB_LINT_CACHE="$SI_CACHE" STUB_LINT_REPO_ROOT="$SI_TREE" \
+SI_ESC="$(STUB_LINT_CACHE="$SI_CACHE" STUB_LINT_REPO_ROOT="$SI_TREE" STUB_LINT_ALLOW_NO_BASELINE=1 \
     python3 "$REPO_ROOT/scripts/lint/check_stub_behind_stamp.py" 2>&1)"
 if ! echo "$SI_ESC" | grep -q "stub-behind-stamp:evil_fn"; then
     t_pass "lint Check 7: repo-escape ref not followed (path-traversal guard)"
@@ -2950,7 +2967,7 @@ rm -f "$SI_TREE/todo/01-test/TODO-03-escape.md" /tmp/evil.c
 cp "$SI_CACHE" "$SI_TREE/build/cache-corrupt.json"
 echo "this is not json" > "$SI_TREE/build/cache-corrupt.json"
 SI_CORRUPT_OUT="$(STUB_LINT_CACHE="$SI_TREE/build/cache-corrupt.json" \
-    STUB_LINT_REPO_ROOT="$SI_TREE" \
+    STUB_LINT_REPO_ROOT="$SI_TREE" STUB_LINT_ALLOW_NO_BASELINE=1 \
     python3 "$REPO_ROOT/scripts/lint/check_stub_behind_stamp.py" 2>&1)"
 SI_CORRUPT_RC=$?
 # Pin the documented exit-code contract: 5 = corrupt JSON cache. lint.sh
@@ -3302,7 +3319,7 @@ SNAP="$REPO_ROOT/scripts/todo-graph/corpus_resolution_snapshot.py"
 snap_refuses() {  # <label> <cache-json-content>
     local label="$1" content="$2"
     printf '%s' "$content" > "$SI_TREE/build/snap-cache.json"
-    STUB_LINT_CACHE="$SI_TREE/build/snap-cache.json" STUB_LINT_REPO_ROOT="$SI_TREE" \
+    STUB_LINT_CACHE="$SI_TREE/build/snap-cache.json" STUB_LINT_REPO_ROOT="$SI_TREE" STUB_LINT_ALLOW_NO_BASELINE=1 \
         python3 "$SNAP" write "$SI_TREE/build/snap-out.json" >/dev/null 2>&1
     local rc=$?
     if [ "$rc" = "3" ]; then
@@ -3373,10 +3390,10 @@ json.dump([{"file_path": "todo/01-test/TODO-01-fixture.md",
 PY
 }
 snap_cache 2
-STUB_LINT_CACHE="$SI_TREE/build/snap-cache.json" STUB_LINT_REPO_ROOT="$SI_TREE" \
+STUB_LINT_CACHE="$SI_TREE/build/snap-cache.json" STUB_LINT_REPO_ROOT="$SI_TREE" STUB_LINT_ALLOW_NO_BASELINE=1 \
     python3 "$SNAP" write "$SI_TREE/build/snap-base.json" >/dev/null 2>&1
 snap_cache 1
-SNAP_OUT="$(STUB_LINT_CACHE="$SI_TREE/build/snap-cache.json" STUB_LINT_REPO_ROOT="$SI_TREE" \
+SNAP_OUT="$(STUB_LINT_CACHE="$SI_TREE/build/snap-cache.json" STUB_LINT_REPO_ROOT="$SI_TREE" STUB_LINT_ALLOW_NO_BASELINE=1 \
     python3 "$SNAP" compare "$SI_TREE/build/snap-base.json" 2>&1)"
 SNAP_RC=$?
 if [ "$SNAP_RC" = "1" ] && echo "$SNAP_OUT" | grep -q "LOST"; then

@@ -93,17 +93,136 @@ def test_an_improvement_is_reported_so_the_floor_gets_raised():
         BASELINE.write_text(orig, encoding="utf-8")
 
 
-def test_a_missing_baseline_degrades_to_warn_not_block():
-    """Fail OPEN on the baseline itself. A lint that refuses every commit because
-    its own bookkeeping file is missing is worse than the gap it guards."""
+def test_a_corrupt_baseline_FAILS_CLOSED():
+    """REVERSED 2026-08-06 (was: degrades to warn-not-block).
+
+    The original reasoning was that a lint refusing every commit over its own
+    bookkeeping file is worse than the gap it guards. That protects a bootstrap
+    case which CANNOT OCCUR: stub-lint-baseline.json is tracked repo state, so
+    a fresh clone always has it. What the warn-only path actually bought was a
+    silent, unrecorded bypass -- delete the file and the only coverage floor
+    stops applying while the check still exits 0.
+    """
     orig = BASELINE.read_text(encoding="utf-8")
     try:
         BASELINE.write_text("{ not json", encoding="utf-8")
         r = _run()
-        assert r.returncode == 0, (r.returncode, r.stderr[:300])
-        assert "stub-behind-stamp:coverage" in r.stderr
+        assert r.returncode == 8, (r.returncode, r.stderr[:300])
+        assert "BASELINE INVALID" in r.stderr, r.stderr[:300]
     finally:
         BASELINE.write_text(orig, encoding="utf-8")
+
+
+def test_a_non_integer_baseline_FAILS_CLOSED():
+    """Well-formed JSON whose `resolved` is not a usable count must not be
+    silently treated as 'no floor' either -- that is the same bypass wearing
+    valid syntax."""
+    orig = BASELINE.read_text(encoding="utf-8")
+    try:
+        for bad in ('{"resolved": null}', '{"resolved": "57"}',
+                    '{"resolved": true}', '{"resolved": -1}', '{}'):
+            BASELINE.write_text(bad, encoding="utf-8")
+            r = _run()
+            assert r.returncode == 8, (bad, r.returncode, r.stderr[:200])
+    finally:
+        BASELINE.write_text(orig, encoding="utf-8")
+
+
+def test_the_baseline_bypass_is_explicit_and_reported():
+    """A bypass must exist (so a genuine emergency is not wedged) but it must be
+    opt-in AND announce itself, which is what the swallowed-exception path was
+    not."""
+    orig = BASELINE.read_text(encoding="utf-8")
+    try:
+        BASELINE.write_text("{ not json", encoding="utf-8")
+        r = _run({"STUB_LINT_ALLOW_NO_BASELINE": "1"})
+        assert r.returncode == 0, (r.returncode, r.stderr[:300])
+        assert "baseline floor SKIPPED" in r.stderr, r.stderr[:300]
+    finally:
+        BASELINE.write_text(orig, encoding="utf-8")
+
+
+def test_every_occurrence_lands_in_exactly_one_bucket():
+    """THE denominator invariant. MEASURED 2026-08-06: 503 paired symbol refs
+    existed but only 193 reached resolution -- the rest were `continue`d before
+    any counting, so retargeting a ref at a nonexistent path made the published
+    ratio look BETTER. Buckets must sum to the population or the number is a
+    fiction; a mismatch is rc 6, not a plausible-looking ratio."""
+    r = _run()
+    assert r.returncode in (0, 7), (r.returncode, r.stderr[:300])
+    cov = [l for l in r.stderr.splitlines() if "stub-behind-stamp:coverage" in l][0]
+    buck = [l for l in r.stderr.splitlines() if l.strip().startswith("buckets:")][0]
+    resolved, total = cov.split("resolved=")[1].split()[0].split("/")
+    got = {k: int(v) for k, v in
+           (p.split("=") for p in buck.split("buckets:")[1].split())}
+    assert int(resolved) + sum(got.values()) == int(total), (cov, buck)
+
+
+def test_unpaired_refs_are_counted_so_the_POPULATION_cannot_shrink():
+    """The invariant is only worth as much as the population it runs over.
+
+    A first cut of the bucket work counted `occurrences` AFTER the file/symbol
+    pairing check, which put the invariant downstream of a drop it could not
+    see: an extractor regression that stopped emitting `file` would move refs
+    out of a counted bucket into nothing at all, every bucket would still sum,
+    the unchanged resolved floor would still pass, and the ratio would IMPROVE
+    because its denominator shrank. MEASURED 2026-08-06: 1,625 kind=symbol refs
+    exist and 1,122 of them carry a symbol with no file.
+    """
+    # Derive the expected population INDEPENDENTLY from the cache. Asserting
+    # only that an `unpaired-ref=` key exists is not enough -- reintroducing the
+    # bug leaves the key present at 0, so a weaker form of this test passed the
+    # mutation that removes the fix.
+    cache = json.loads((REPO / "build/todo-cache.json").read_text(encoding="utf-8"))
+    expected = sum(1
+                   for node in cache
+                   for it in (node.get("stamped_items") or [])
+                   for ref in it.get("refs", [])
+                   if ref.get("kind") == "symbol")
+
+    r = _run()
+    buck = [l for l in r.stderr.splitlines() if l.strip().startswith("buckets:")][0]
+    assert "unpaired-ref=" in buck, buck
+    cov = [l for l in r.stderr.splitlines() if "stub-behind-stamp:coverage" in l][0]
+    total = int(cov.split("resolved=")[1].split()[0].split("/")[1])
+    assert total == expected, (
+        f"denominator {total} != {expected} kind=symbol refs in the cache -- "
+        f"refs are being dropped before they are counted")
+
+
+def test_missing_file_refs_are_counted_not_dropped():
+    """The largest single class, and the one the old shape hid entirely."""
+    r = _run()
+    assert "missing-file=" in r.stderr, r.stderr[:400]
+    n = int(r.stderr.split("missing-file=")[1].split()[0])
+    if n:
+        assert "missing file (ref points nowhere):" in r.stderr, r.stderr[:600]
+
+
+def test_lint_sh_surfaces_the_coverage_line_to_the_CALLER():
+    """INTEGRATION, not helper-only. The helper writes coverage to stderr
+    because stdout is its findings channel -- and lint.sh's rc-0 branch read
+    stdout only, so a normal lint run published no ratio at all and the whole
+    point of counting the blind spot was invisible where people actually look.
+    Testing the helper's own stderr would not have caught that.
+    """
+    r = subprocess.run(["bash", str(REPO / "scripts/lint.sh")], cwd=str(REPO),
+                       capture_output=True, text=True, timeout=900)
+    assert "Check 7 coverage" in r.stdout, r.stdout[-800:]
+    assert "resolved=" in r.stdout, r.stdout[-800:]
+
+
+def test_bucket_names_do_not_claim_a_CAUSE():
+    """A call site, a prototype and a macro invocation all carry `symbol(` while
+    the real definition lives elsewhere -- src/kernel/test/test_alpc.c only
+    CALLS kmalloc_fail_next, defined at src/kernel/mm/heap.c:499. So a bucket
+    named 'resolver gap' or 'bookkeeping error' would be wrong for a large share
+    of its own contents. The published names must stay evidence-shaped."""
+    r = _run()
+    buck = [l for l in r.stderr.splitlines() if l.strip().startswith("buckets:")][0]
+    for causal in ("bookkeeping", "resolver-gap", "stale-ref", "absent="):
+        assert causal not in buck, (causal, buck)
+    assert "calllike-unresolved=" in buck and "no-calllike-token=" in buck, buck
 
 
 if __name__ == "__main__":
@@ -113,5 +232,12 @@ if __name__ == "__main__":
     test_the_baseline_is_a_real_floor_and_it_holds_today()
     test_a_coverage_DROP_is_an_error()
     test_an_improvement_is_reported_so_the_floor_gets_raised()
-    test_a_missing_baseline_degrades_to_warn_not_block()
-    print("PASS: Check 7 coverage counting + regression floor")
+    test_a_corrupt_baseline_FAILS_CLOSED()
+    test_a_non_integer_baseline_FAILS_CLOSED()
+    test_the_baseline_bypass_is_explicit_and_reported()
+    test_every_occurrence_lands_in_exactly_one_bucket()
+    test_unpaired_refs_are_counted_so_the_POPULATION_cannot_shrink()
+    test_lint_sh_surfaces_the_coverage_line_to_the_CALLER()
+    test_missing_file_refs_are_counted_not_dropped()
+    test_bucket_names_do_not_claim_a_CAUSE()
+    print("PASS: Check 7 coverage counting + regression floor + bucket invariant")

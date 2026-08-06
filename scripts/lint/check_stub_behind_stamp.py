@@ -23,10 +23,15 @@
 #   4  cache stale relative to todo/**/*.md (lint.sh treats as ERROR)
 #   5  cache unreadable / malformed JSON (lint.sh treats as ERROR)
 #   6  internal helper failure (lint.sh treats as ERROR)
+#   7  coverage regression below the recorded floor (lint.sh treats as ERROR)
+#   8  stub-lint-baseline.json missing/malformed (lint.sh treats as ERROR --
+#      the baseline is TRACKED, so its absence disables the gate silently;
+#      STUB_LINT_ALLOW_NO_BASELINE=1 is the deliberate, reported bypass)
 # ============================================================================
 
 import json
 import os
+import re
 import sys
 from functools import lru_cache
 from pathlib import Path
@@ -75,45 +80,148 @@ def _check_staleness(cache_path: Path, todo_root: Path) -> bool:
     return newest > cache_m
 
 
+@lru_cache(maxsize=2048)
+def _has_calllike_token(file_abs: str, symbol: str) -> bool:
+    """True when `symbol(` occurs in CODE -- outside comments and strings.
+
+    Deliberately stateful across lines. `resolve_symbol._strip_line_comments`
+    documents that it does NOT track multi-line block comments, so reusing it
+    here would read a symbol named inside a `/* ... */` prose block as code and
+    put the ref in the wrong bucket. This is the one place that distinction
+    decides a published number, so it gets a real scan.
+
+    It proves a call-like TOKEN is present and nothing more. A call site, a
+    prototype, a macro invocation and a struct function-pointer field all
+    satisfy it -- which is exactly why the bucket it feeds is named for the
+    token rather than for a cause. See the bucket comment in `_walk`.
+    """
+    pat = re.compile(r"\b" + re.escape(symbol) + r"\s*\(")
+    in_block = False
+    for line in _rs._load_file_lines(file_abs):
+        out = []
+        i, n = 0, len(line)
+        while i < n:
+            if in_block:
+                end = line.find("*/", i)
+                if end < 0:
+                    i = n
+                else:
+                    in_block = False
+                    i = end + 2
+                continue
+            ch = line[i]
+            if ch == "/" and i + 1 < n and line[i + 1] == "*":
+                in_block = True
+                i += 2
+                continue
+            if ch == "/" and i + 1 < n and line[i + 1] == "/":
+                break
+            if ch in ('"', "'"):
+                quote = ch
+                i += 1
+                while i < n:
+                    if line[i] == "\\":
+                        i += 2
+                        continue
+                    if line[i] == quote:
+                        i += 1
+                        break
+                    i += 1
+                out.append(" ")
+                continue
+            out.append(ch)
+            i += 1
+        if pat.search("".join(out)):
+            return True
+    return False
+
+
 def _walk(nodes: list, repo_root: Path) -> tuple:
-    """Returns (findings, resolved, unresolved).
+    """Returns (findings, coverage). `coverage` buckets EVERY paired symbol
+    occurrence into mutually exclusive classes that sum back to `occurrences`.
 
     COVERAGE IS REPORTED, NOT DISCARDED. An unresolved symbol used to `continue`
     silently, so a ref the check never examined was indistinguishable from one it
     examined and cleared -- the lint printed the same nothing for both. Measured
     2026-08-05: only 52 of 186 stamped symbol refs resolve, so the check was
     ~72% blind and reporting clean.
+
+    EVERY skip is now a BUCKET, not a bare `continue`. MEASURED 2026-08-06: of
+    503 paired symbol refs only 193 ever reached resolution -- 262 were dropped
+    because the named file does not exist, 47 for a non-C suffix, 1 for escaping
+    the repo. Those skips ran BEFORE any counting, so retargeting an unresolved
+    ref at a nonexistent path made the published ratio look BETTER. A gate whose
+    denominator shrinks as the corpus rots is fail-open by construction.
+
+    BUCKET NAMES DESCRIBE EVIDENCE, NOT CAUSE. `no_calllike_token` and
+    `unresolved_calllike` say what was observed in the named file; they
+    deliberately do not claim "stale bookkeeping" vs "resolver gap". A call
+    site, a prototype and a macro invocation all carry a call-like token while
+    the real definition lives in another file -- e.g. src/kernel/test/
+    test_alpc.c only CALLS kmalloc_fail_next, defined at src/kernel/mm/
+    heap.c:499 -- so a causal label would be wrong for a large share of both.
+    Assigning cause needs cross-file definition evidence, which is resolver
+    work owned by the todo-metadata-layer roadmap's resolver-coverage section.
     """
     repo_resolved = repo_root.resolve()
     findings = 0
-    resolved_n = 0
-    unresolved: list = []
+    cov = {
+        "occurrences": 0,
+        "resolved": 0,
+        "unresolved_calllike": [],
+        "no_calllike_token": [],
+        "missing_file": [],
+        "unsupported_lang": [],
+        "path_escape": [],
+        "unpaired_ref": [],
+    }
     for node in nodes:
         items = node.get("stamped_items") or []
         for it in items:
             for ref in it.get("refs", []):
                 if ref.get("kind") != "symbol":
                     continue
+                # POPULATION IS EVERY kind=symbol REF -- count FIRST, classify
+                # after. An earlier revision of THIS change incremented
+                # `occurrences` only after the file/symbol pairing check, which
+                # left the invariant downstream of a drop it therefore could not
+                # see: an extractor regression that stopped emitting `file`
+                # would move refs out of a counted bucket into nothing, every
+                # bucket would still sum, the unchanged resolved floor would
+                # still pass, and the published ratio would IMPROVE because its
+                # denominator shrank. MEASURED 2026-08-06: 1,625 kind=symbol
+                # refs exist and 1,122 carry a symbol with no file -- the blind
+                # spot was more than twice the population hiding inside it.
+                cov["occurrences"] += 1
                 file_rel = ref.get("file")
                 symbol = ref.get("symbol")
                 if not file_rel or not symbol:
+                    cov["unpaired_ref"].append(str(symbol or file_rel or "?"))
                     continue
+                ident = f"{file_rel}:{symbol}"
                 if file_rel.startswith("/"):
+                    cov["path_escape"].append(ident)
                     continue
                 try:
                     file_abs = (repo_root / file_rel).resolve()
                     file_abs.relative_to(repo_resolved)
                 except (ValueError, OSError):
-                    continue
-                if not file_abs.is_file():
+                    cov["path_escape"].append(ident)
                     continue
                 if file_abs.suffix not in (".c", ".h"):
+                    cov["unsupported_lang"].append(ident)
+                    continue
+                if not file_abs.is_file():
+                    cov["missing_file"].append(ident)
                     continue
                 resolved = _resolve_cached(str(file_abs), symbol)
                 if resolved is None:
-                    unresolved.append(f"{file_rel}:{symbol}")
+                    if _has_calllike_token(str(file_abs), symbol):
+                        cov["unresolved_calllike"].append(ident)
+                    else:
+                        cov["no_calllike_token"].append(ident)
                     continue
-                resolved_n += 1
+                cov["resolved"] += 1
                 _, line_start, line_end = resolved
                 stub = _is_stub_cached(str(file_abs), line_start, line_end)
                 if stub is None:
@@ -130,7 +238,7 @@ def _walk(nodes: list, repo_root: Path) -> tuple:
                     f"section {section_n}: \"{item_text}\")"
                 )
                 findings += 1
-    return findings, resolved_n, sorted(set(unresolved))
+    return findings, cov
 
 
 def main() -> int:
@@ -162,9 +270,30 @@ def main() -> int:
         return 4
 
     try:
-        findings, resolved_n, unresolved = _walk(nodes, repo_root)
+        findings, cov = _walk(nodes, repo_root)
     except Exception as exc:  # pragma: no cover -- defensive
         sys.stderr.write(f"[check_stub_behind_stamp] internal failure: {exc}\n")
+        return 6
+
+    resolved_n = cov["resolved"]
+    buckets = ("unresolved_calllike", "no_calllike_token", "missing_file",
+               "unsupported_lang", "path_escape", "unpaired_ref")
+
+    # ONE COUNTING BASE. The old line published `resolved=57/189`, where 57 was
+    # counted per OCCURRENCE and the 132 it was added to had been through
+    # `sorted(set(...))` -- an occurrence count plus a unique count is not a
+    # ratio over any one population. Everything below counts OCCURRENCES; the
+    # deduped view appears only as a parenthetical on the human sample list,
+    # where collapsing repeats is a readability win rather than a measurement.
+    accounted = resolved_n + sum(len(cov[b]) for b in buckets)
+    if accounted != cov["occurrences"]:
+        # Not defensive paranoia: the bug this whole change repairs was a
+        # denominator that silently lost refs. If the buckets ever stop summing
+        # to the population, the published number is wrong again and the check
+        # must say so rather than print a plausible ratio.
+        sys.stderr.write(
+            f"[check_stub_behind_stamp] internal failure: buckets sum to "
+            f"{accounted} but {cov['occurrences']} occurrences were seen\n")
         return 6
 
     # COVERAGE BASELINE. The standing gap (134 unresolved) is a WARN: it is
@@ -178,26 +307,73 @@ def main() -> int:
     # resolver rewrite took coverage from 52/186 to 1/186 while the full suite
     # stayed green and its own new fixtures passed. This gate is what would have
     # caught it, in one line, at commit time.
-    total = resolved_n + len(unresolved)
+    total = cov["occurrences"]
     base_path = repo_root / "scripts" / "lint" / "stub-lint-baseline.json"
+
+    # FAIL CLOSED on the baseline. This file is TRACKED repo state, so it is
+    # never legitimately absent -- a fresh clone has it. The earlier shape
+    # swallowed every read/parse error into `baseline = None` and then skipped
+    # the floor entirely via the `isinstance(baseline, int)` guard, which meant
+    # deleting or corrupting the file disabled the only coverage gate and still
+    # exited 0. That is fail-open exactly when health cannot be established,
+    # and it is a silent bypass with no record. The bootstrap case the old
+    # warn-only behaviour protected cannot occur for a tracked file.
     baseline = None
-    try:
-        baseline = json.loads(base_path.read_text(encoding="utf-8")).get("resolved")
-    except Exception:
-        baseline = None
+    baseline_err = None
+    if os.environ.get("STUB_LINT_ALLOW_NO_BASELINE") == "1":
+        # Explicit, visibly reported skip -- the one sanctioned bypass.
+        try:
+            baseline = json.loads(base_path.read_text(encoding="utf-8")).get("resolved")
+        except Exception:
+            baseline = None
+        sys.stderr.write("[check_stub_behind_stamp] baseline floor SKIPPED via "
+                         "STUB_LINT_ALLOW_NO_BASELINE=1\n")
+    else:
+        try:
+            baseline = json.loads(base_path.read_text(encoding="utf-8")).get("resolved")
+        except (OSError, json.JSONDecodeError) as exc:
+            baseline_err = f"unreadable ({exc})"
+        if baseline_err is None and not isinstance(baseline, int):
+            baseline_err = f"`resolved` is not an integer ({baseline!r})"
+        if baseline_err is None and (isinstance(baseline, bool) or baseline < 0):
+            baseline_err = f"`resolved` is not a valid count ({baseline!r})"
 
     # STDERR, not stdout. stdout is this check's FINDINGS channel -- lint.sh
     # routes every line of it through error() on rc 0 -- so informational
     # coverage output on stdout becomes 6 phantom lint errors. Learned by
     # doing exactly that, 2026-08-05.
+    uniq = len(set(cov["unresolved_calllike"]) | set(cov["no_calllike_token"]))
+    unresolved_occ = len(cov["unresolved_calllike"]) + len(cov["no_calllike_token"])
     sys.stderr.write(f"stub-behind-stamp:coverage resolved={resolved_n}/{total} "
-                     f"unresolved={len(unresolved)}"
+                     f"unresolved={unresolved_occ} ({uniq} unique)"
                      + (f" baseline={baseline}" if isinstance(baseline, int) else "")
                      + "\n")
-    for u in unresolved[:5]:
+    sys.stderr.write(
+        f"  buckets: calllike-unresolved={len(cov['unresolved_calllike'])} "
+        f"no-calllike-token={len(cov['no_calllike_token'])} "
+        f"missing-file={len(cov['missing_file'])} "
+        f"non-c-suffix={len(cov['unsupported_lang'])} "
+        f"path-escape={len(cov['path_escape'])} "
+        f"unpaired-ref={len(cov['unpaired_ref'])}\n")
+
+    if baseline_err is not None:
+        sys.stderr.write(
+            f"[check_stub_behind_stamp] BASELINE INVALID: {base_path.name} "
+            f"{baseline_err}. This file is tracked repo state and gates the "
+            f"only coverage floor; treating its absence as 'no floor' would "
+            f"disable the gate silently. Restore it from git, or set "
+            f"STUB_LINT_ALLOW_NO_BASELINE=1 to proceed deliberately.\n")
+        return 8
+
+    samples = sorted(set(cov["unresolved_calllike"]))[:3] \
+        + sorted(set(cov["no_calllike_token"]))[:2]
+    for u in samples:
         sys.stderr.write(f"  unresolved (NOT checked): {u}\n")
-    if len(unresolved) > 5:
-        sys.stderr.write(f"  ... +{len(unresolved) - 5} more unresolved\n")
+    if uniq > len(samples):
+        sys.stderr.write(f"  ... +{uniq - len(samples)} more unresolved (unique)\n")
+    if cov["missing_file"]:
+        for u in sorted(set(cov["missing_file"]))[:3]:
+            sys.stderr.write(f"  missing file (ref points nowhere): {u}\n")
 
     if isinstance(baseline, int) and resolved_n < baseline:
         sys.stderr.write(
