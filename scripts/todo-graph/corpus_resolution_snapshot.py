@@ -30,7 +30,8 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from resolve_symbol import resolve_symbol  # noqa: E402
+from resolve_symbol import (  # noqa: E402
+    ResolverInputError, follow_declaration, resolve_symbol)
 
 
 def _repo_root() -> Path:
@@ -159,6 +160,17 @@ def collect() -> dict:
                 if memo_key not in memo:
                     res = resolve_symbol(str(abs_p), sym)
                     if res is None:
+                        # MIRROR check_stub_behind_stamp._walk's fallback
+                        # exactly: a header-only ref may still resolve via
+                        # its repo-convention sibling .c. Without this, the
+                        # snapshot silently omitted every follow_declaration
+                        # mapping -- Check 7's floor rose 57 -> 111 while this
+                        # tool's own "0 lost / 0 moved" proof covered only
+                        # the resolve_symbol()-direct subset (Codex
+                        # adversarial: the identity proof did not cover what
+                        # it claimed to cover).
+                        res = follow_declaration(str(abs_p), sym, str(root))
+                    if res is None:
                         memo[memo_key] = None
                     else:
                         # ALWAYS repo-relative. An absolute fallback here would
@@ -190,6 +202,19 @@ def main(argv) -> int:
         # 1 (regression). A caller must never read "the gate could not run" as
         # "the gate passed".
         sys.stderr.write(f"[corpus_resolution_snapshot] {exc}\n")
+        return 3
+    except ResolverInputError as exc:
+        # `collect()` calls resolve_symbol() per ref, and resolve_symbol() now
+        # raises this for an input it refuses to answer about (oversized file,
+        # or one that changed on disk mid-run) rather than silently returning
+        # None. Left uncaught, this surfaced as an unhandled traceback and a
+        # bare process exit 1 -- colliding with exit 1's DOCUMENTED meaning
+        # here (a prior mapping was lost or moved), which a caller reading
+        # only the exit code would misread as a real regression instead of
+        # "the walk could not complete". Same INFRASTRUCTURE code as
+        # CacheError, for the same reason: not a result, not a pass.
+        sys.stderr.write(f"[corpus_resolution_snapshot] resolver input "
+                         f"refused: {exc}\n")
         return 3
     resolved_now = {k: v for k, v in now.items() if v is not None}
     if not now:

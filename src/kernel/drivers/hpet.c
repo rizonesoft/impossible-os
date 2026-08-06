@@ -110,7 +110,9 @@ int hpet_init(void)
 /* ---- API ----------------------------------------------------------------- */
 
 int hpet_available(void)
-{
+{  /* INTENTIONAL-STUB: trivial accessor for s_available, a real module-level
+   flag set by hpet_init() from actual hardware detection (line 102) and
+   cleared on absence/failure (line 51) -- not a placeholder return */
     return s_available;
 }
 

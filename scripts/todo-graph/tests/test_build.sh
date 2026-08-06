@@ -2980,8 +2980,15 @@ else
 fi
 
 # Sub-test 14i: shared file-line cache is actually wired (resolve_symbol +
-# is_stub_body share _load_file_lines). Two consecutive lookups for the
-# same file must register cache hits.
+# is_stub_body share _load_file_lines). `_read_file_lines` is deliberately
+# NOT `@lru_cache`d (TODO-06 section 12 -- that was tried first and is a real
+# bug: it never re-opens a path on a second call, so a same-process mutation
+# is never observed and the pin comparison in `_load_file_lines` becomes dead
+# code; see the 14gg mutation-detection fixture, which is what caught it).
+# It re-fstats on EVERY call but skips the expensive read+split when the
+# fresh fstat matches what is cached -- proved here by IDENTITY: two lookups
+# against an unchanged file must return the SAME cached lines tuple object,
+# not merely equal content, or the "skip the reread" path did not fire.
 SI_CACHE_HIT=$(REPO_ROOT="$REPO_ROOT" SI_TREE="$SI_TREE" python3 - <<'PY' 2>&1
 import os, sys
 sys.path.insert(0, os.environ["REPO_ROOT"] + "/scripts/todo-graph")
@@ -2991,12 +2998,14 @@ with open(fixture, "w") as f:
     f.write("int real(void)\n{\n    int a = 1;\n    int b = a + 2;\n    return b;\n}\n")
 rs.cache_clear()
 rs.resolve_symbol(fixture, "real")
+lines_after_resolve = rs._content_cache[fixture][1]
 rs.is_stub_body(fixture, 1, 6)
-info = rs._load_file_lines.cache_info()
-print(f"hits={info.hits} misses={info.misses}")
+lines_after_stub = rs._content_cache[fixture][1]
+same = lines_after_resolve is lines_after_stub
+print(f"same_object={same} entries={len(rs._content_cache)}")
 PY
 )
-if echo "$SI_CACHE_HIT" | grep -qE "hits=[1-9]"; then
+if echo "$SI_CACHE_HIT" | grep -qE "same_object=True entries=1"; then
     t_pass "resolve_symbol: shared _load_file_lines cache registers hits ($SI_CACHE_HIT)"
 else
     t_fail "resolve_symbol: shared file cache not wired ($SI_CACHE_HIT)"
@@ -3431,6 +3440,824 @@ else
     t_fail "stamped_items: forbidden-field check broken (rc=$RC, log=$(cat $FORBID_LOG))"
 fi
 rm -f "$SI_TREE/todo/01-test/TODO-02-forbidden.md"
+
+# ---------------------------------------------------------------------------
+# Sub-tests 14aa-14ll: TODO-06 section 12 -- resolver coverage past the head
+# limit, and lexer/cache robustness. `split_case` (defined above at 14j) is
+# reused for the splice fixtures: they are ordinary resolve_symbol range
+# checks against a synthetic file, same idiom as every 14j-14v positive.
+
+# 14aa POSITIVE: a spliced `/*` opener (`/` + backslash-newline + `*...`)
+# must still open a block comment, hiding the embedded `}` from the brace
+# counter. Splicing deletes ONLY the backslash-newline pair, so the
+# continuation line must have NO leading whitespace for the two delimiter
+# characters to actually land adjacent post-splice.
+split_case "spliced /* opener hides an embedded brace" foo_spliceopen "1:6" <<'EOF'
+int foo_spliceopen(void)
+{
+    /\
+*this comment hides a } brace*/
+    return 0;
+}
+EOF
+
+# 14bb POSITIVE: a spliced `*/` closer (`*` + backslash-newline + `/`) must
+# still close the block comment at that point, not run to EOF.
+split_case "spliced */ closer ends the comment there" foo_spliceclose "1:6" <<'EOF'
+int foo_spliceclose(void)
+{
+    /* comment *\
+/
+    return 0;
+}
+EOF
+
+# 14cc POSITIVE: MULTI-HOP splice -- an empty splice-only line (just a lone
+# backslash) sits between the two comment-delimiter halves. The pending
+# state must carry across it rather than resolving (or dropping) early.
+split_case "multi-hop splice carries a pending delimiter across an empty line" foo_multihop "1:7" <<'EOF'
+int foo_multihop(void)
+{
+    /\
+\
+*multi-hop hides a } brace*/
+    return 0;
+}
+EOF
+
+# 14dd NEGATIVE (regression guard): an UNSPLICED `/` at end of line, followed
+# by a REAL newline and then `* ... */`, must NOT open a comment -- C deletes
+# only a literal backslash-newline, never a bare newline. The embedded `}`
+# therefore stays visible as CODE, and closes the body's brace-depth count at
+# the FIRST `}` it finds -- line 4, not the real closer on line 6. A truncated
+# "1:4" is the observable proof the comment never formed: had it formed, the
+# `}` would have been hidden and the range would extend to the real closer.
+split_case "unspliced newline never opens a comment (negative control)" foo_nosplice "1:4" <<'EOF'
+int foo_nosplice(void)
+{
+    /
+    * this is not a comment, a } sits here *
+    return 0;
+}
+EOF
+
+# 14ee REGRESSION GUARD (candidate_lines per-occurrence fix): a line whose
+# START sits inside a comment span, but which ALSO carries a REAL occurrence
+# of the symbol later on the same physical line after the comment closes,
+# must still surface that later occurrence as a candidate. An earlier version
+# checked only the line-START offset against the span index and excluded the
+# whole line, even though a later occurrence was ordinary code -- this is the
+# split-head shape 14u already exercises end-to-end; this pins the underlying
+# mechanism directly so a future regression fails at the right layer.
+CAND_PY="$SI_TREE/candidate_check.py"
+cat > "$CAND_PY" <<'PY'
+import os, sys
+sys.path.insert(0, os.environ["REPO_ROOT"] + "/scripts/todo-graph")
+import resolve_symbol as rs
+lines = (
+    "static int",
+    "/* foo_cand(legacy) */ foo_cand(void)",
+    "{",
+    "    return 0;",
+    "}",
+)
+idx = rs._FileIndex(lines)
+print(",".join(str(i) for i in idx.candidate_lines("foo_cand")))
+PY
+CAND_OUT="$(REPO_ROOT="$REPO_ROOT" python3 "$CAND_PY" 2>&1)"
+if [ "$CAND_OUT" = "1" ]; then
+    t_pass "resolve_symbol candidate_lines: real occurrence after a same-line comment is still a candidate"
+else
+    t_fail "resolve_symbol candidate_lines: line-start-only span check regressed; got=$CAND_OUT"
+fi
+
+# 14ff ROBUSTNESS: a file above the per-file byte ceiling raises
+# ResolverInputError rather than being silently read as empty (which would
+# make it indistinguishable from "not resolvable here"). _MAX_FILE_BYTES is
+# monkeypatched down for the test rather than writing a real 16 MiB fixture.
+CEIL_PY="$SI_TREE/ceiling_check.py"
+cat > "$CEIL_PY" <<'PY'
+import os, sys
+sys.path.insert(0, os.environ["REPO_ROOT"] + "/scripts/todo-graph")
+import resolve_symbol as rs
+path = os.environ["SI_TREE"] + "/src/big.c"
+with open(path, "w") as f:
+    f.write("x" * 200)
+rs.cache_clear()
+rs._MAX_FILE_BYTES = 100
+try:
+    rs.resolve_symbol(path, "anything")
+    print("NO_RAISE")
+except rs.ResolverInputError as exc:
+    print("RAISED" if "exceeds the" in str(exc) else f"WRONG_MESSAGE:{exc}")
+finally:
+    rs._MAX_FILE_BYTES = 16 * 1024 * 1024
+PY
+CEIL_OUT="$(REPO_ROOT="$REPO_ROOT" SI_TREE="$SI_TREE" python3 "$CEIL_PY" 2>&1)"
+if [ "$CEIL_OUT" = "RAISED" ]; then
+    t_pass "resolve_symbol: oversized file raises ResolverInputError (not silent empty)"
+else
+    t_fail "resolve_symbol: byte ceiling not enforced; got=$CEIL_OUT"
+fi
+
+# 14ff2 ROBUSTNESS: the ceiling bounds the ACTUAL READ, not just the pre-read
+# fstat. `fh.read()` with no argument reads to EOF regardless of what an
+# earlier fstat measured, so a file that GROWS after the pre-read fstat (a
+# concurrent writer) would be read in full -- unbounded -- before a later
+# fstat ever notices the drift (Codex adversarial). MUTATION-CHECKED
+# DIRECTLY: a first draft of this fixture only asserted the resulting
+# exception message, but `if len(text) > _MAX_FILE_BYTES: raise(...)` fires
+# with the IDENTICAL message regardless of whether `text` came from a bounded
+# `fh.read(_MAX_FILE_BYTES + 1)` or an unbounded `fh.read()` -- the length
+# check does not care HOW the length was reached, so reverting the bound
+# entirely would still pass an outcome-only assertion (Codex adversarial,
+# round 2). `os.fdopen` is wrapped to SPY on the exact argument passed to
+# `.read(...)`, proving the call site itself is bounded, not just its result.
+GROW_PY="$SI_TREE/growth_check.py"
+cat > "$GROW_PY" <<'PY'
+import os, sys
+sys.path.insert(0, os.environ["REPO_ROOT"] + "/scripts/todo-graph")
+import resolve_symbol as rs
+path = os.environ["SI_TREE"] + "/src/grow.c"
+with open(path, "w") as f:
+    f.write("y" * 5000)
+rs.cache_clear()
+rs._MAX_FILE_BYTES = 100
+real_fstat = os.fstat
+fstat_calls = {"n": 0}
+def fake_fstat(fd):
+    st = real_fstat(fd)
+    fstat_calls["n"] += 1
+    if fstat_calls["n"] == 1:
+        # Pretend the pre-read fstat saw a small file (the growth race).
+        class Small:
+            st_dev, st_ino, st_mtime_ns = st.st_dev, st.st_ino, st.st_mtime_ns
+            st_size = 50
+        return Small()
+    return st
+os.fstat = fake_fstat
+
+real_fdopen = os.fdopen
+read_args = []
+class _SpyFile:
+    def __init__(self, real):
+        self._real = real
+    def read(self, *a, **kw):
+        read_args.append(a[0] if a else None)
+        return self._real.read(*a, **kw)
+    def fileno(self):
+        return self._real.fileno()
+    def __enter__(self):
+        return self
+    def __exit__(self, *exc):
+        return self._real.__exit__(*exc)
+def fake_fdopen(fd, *a, **kw):
+    return _SpyFile(real_fdopen(fd, *a, **kw))
+os.fdopen = fake_fdopen
+
+try:
+    rs.resolve_symbol(path, "anything")
+    result = "NO_RAISE"
+except rs.ResolverInputError as exc:
+    result = "RAISED" if "grew past" in str(exc) else f"WRONG_MESSAGE:{exc}"
+finally:
+    os.fstat = real_fstat
+    os.fdopen = real_fdopen
+    rs._MAX_FILE_BYTES = 16 * 1024 * 1024
+bound = read_args[0] if read_args else "NO_READ_CALL"
+print(f"{result} bound={bound}")
+PY
+GROW_OUT="$(REPO_ROOT="$REPO_ROOT" SI_TREE="$SI_TREE" python3 "$GROW_PY" 2>&1)"
+if [ "$GROW_OUT" = "RAISED bound=101" ]; then
+    t_pass "resolve_symbol: read is bounded even when the pre-read fstat under-reports size"
+else
+    t_fail "resolve_symbol: unbounded read on a growth race; got=$GROW_OUT"
+fi
+
+# 14gg ROBUSTNESS: a file that changes on disk AFTER being pinned (a prior
+# read succeeded) raises ResolverInputError on the NEXT read, rather than
+# silently serving stale coordinates or degrading to empty. Two resolves for
+# DIFFERENT symbols in the same process share the pin (no cache_clear between
+# them), mirroring how Check 7 processes many refs against one file per run.
+MUT_PY="$SI_TREE/mutation_check.py"
+cat > "$MUT_PY" <<'PY'
+import os, sys, time
+sys.path.insert(0, os.environ["REPO_ROOT"] + "/scripts/todo-graph")
+import resolve_symbol as rs
+path = os.environ["SI_TREE"] + "/src/mut.c"
+with open(path, "w") as f:
+    f.write("int mut_a(void)\n{\n    return 0;\n}\n")
+rs.cache_clear()
+first = rs.resolve_symbol(path, "mut_a")
+# Rewrite with different content/size so size+mtime both change; sleep a hair
+# to guarantee a distinguishable mtime_ns on coarser filesystems.
+time.sleep(0.01)
+with open(path, "w") as f:
+    f.write("int mut_a(void)\n{\n    return 1;  /* changed */\n}\n")
+try:
+    rs.resolve_symbol(path, "mut_a")
+    print(f"NO_RAISE first={first}")
+except rs.ResolverInputError as exc:
+    print("RAISED" if "changed on disk" in str(exc) else f"WRONG_MESSAGE:{exc}")
+PY
+MUT_OUT="$(REPO_ROOT="$REPO_ROOT" SI_TREE="$SI_TREE" python3 "$MUT_PY" 2>&1)"
+if [ "$MUT_OUT" = "RAISED" ]; then
+    t_pass "resolve_symbol: file mutated after pinning raises ResolverInputError"
+else
+    t_fail "resolve_symbol: mutation not detected; got=$MUT_OUT"
+fi
+
+# 14hh-14kk: follow_declaration() -- TODO-06 section 12 "class B". Deliberately
+# NOT a general cross-file search (design-review-gated): restricted to the
+# repo's own include/-mirrors-src/ convention, basename-unique, non-static.
+FDECL_PY="$SI_TREE/follow_decl_check.py"
+mkdir -p "$SI_TREE/include/kernel/fd" "$SI_TREE/src/kernel/fd"
+cat > "$SI_TREE/include/kernel/fd/widget.h" <<'EOF'
+void widget_reset(void);
+EOF
+cat > "$SI_TREE/src/kernel/fd/widget.c" <<'EOF'
+void widget_reset(void)
+{
+    return;
+}
+EOF
+cat > "$FDECL_PY" <<'PY'
+import os, sys
+sys.path.insert(0, os.environ["REPO_ROOT"] + "/scripts/todo-graph")
+import resolve_symbol as rs
+root = os.environ["SI_TREE"]
+rs.cache_clear()
+res = rs.follow_declaration(root + "/include/kernel/fd/widget.h", "widget_reset", root)
+print("14hh:" + ("PASS" if res and res[0].endswith("widget.c") else f"FAIL:{res}"))
+
+rs.cache_clear()
+res2 = rs.follow_declaration(root + "/src/kernel/fd/widget.c", "widget_reset", root)
+print("14ii:" + ("PASS" if res2 is None else f"FAIL:{res2}"))
+PY
+echo "int mut_a(void) { return 0; }" > "$SI_TREE/src/kernel/fd/widget_caller.c"  # unrelated .c, not matched
+FDECL_OUT="$(REPO_ROOT="$REPO_ROOT" SI_TREE="$SI_TREE" python3 "$FDECL_PY" 2>&1)"
+if echo "$FDECL_OUT" | grep -q "^14hh:PASS"; then
+    t_pass "follow_declaration: header resolves via basename-unique sibling .c"
+else
+    t_fail "follow_declaration: header->sibling failed; got=$FDECL_OUT"
+fi
+if echo "$FDECL_OUT" | grep -q "^14ii:PASS"; then
+    t_pass "follow_declaration: a non-header (.c) declaring file stays unresolved"
+else
+    t_fail "follow_declaration: .c declaring file wrongly followed; got=$FDECL_OUT"
+fi
+
+# 14jj: the only sibling-.c candidate is `static` -- internal linkage cannot
+# satisfy an external header declaration, so this must stay unresolved.
+mkdir -p "$SI_TREE/include/kernel/fd2" "$SI_TREE/src/kernel/fd2"
+cat > "$SI_TREE/include/kernel/fd2/gadget.h" <<'EOF'
+void gadget_reset(void);
+EOF
+cat > "$SI_TREE/src/kernel/fd2/gadget.c" <<'EOF'
+static void gadget_reset(void)
+{
+    return;
+}
+EOF
+FDECL2_OUT="$(REPO_ROOT="$REPO_ROOT" python3 - <<PY 2>&1
+import sys
+sys.path.insert(0, "$REPO_ROOT/scripts/todo-graph")
+import resolve_symbol as rs
+rs.cache_clear()
+res = rs.follow_declaration("$SI_TREE/include/kernel/fd2/gadget.h", "gadget_reset", "$SI_TREE")
+print("PASS" if res is None else f"FAIL:{res}")
+PY
+)"
+if [ "$FDECL2_OUT" = "PASS" ]; then
+    t_pass "follow_declaration: a static-only candidate is rejected (internal linkage)"
+else
+    t_fail "follow_declaration: static candidate wrongly accepted; got=$FDECL2_OUT"
+fi
+
+# 14jj2 REGRESSION GUARD: `static` is not always the LEADING token -- C's
+# declaration-specifiers have no fixed order, so `inline static int foo(void)`
+# is exactly as internal-linkage as `static inline int foo(void)`. A
+# line-start-anchored check missed this (Codex adversarial).
+mkdir -p "$SI_TREE/include/kernel/fd2b" "$SI_TREE/src/kernel/fd2b"
+cat > "$SI_TREE/include/kernel/fd2b/sprocket.h" <<'EOF'
+void sprocket_reset(void);
+EOF
+cat > "$SI_TREE/src/kernel/fd2b/sprocket.c" <<'EOF'
+inline static void sprocket_reset(void)
+{
+    return;
+}
+EOF
+FDECL2B_OUT="$(REPO_ROOT="$REPO_ROOT" python3 - <<PY 2>&1
+import sys
+sys.path.insert(0, "$REPO_ROOT/scripts/todo-graph")
+import resolve_symbol as rs
+rs.cache_clear()
+res = rs.follow_declaration("$SI_TREE/include/kernel/fd2b/sprocket.h", "sprocket_reset", "$SI_TREE")
+print("PASS" if res is None else f"FAIL:{res}")
+PY
+)"
+if [ "$FDECL2B_OUT" = "PASS" ]; then
+    t_pass "follow_declaration: static rejected even when not the leading token (inline static)"
+else
+    t_fail "follow_declaration: non-leading static wrongly accepted; got=$FDECL2B_OUT"
+fi
+
+# 14jj3 REGRESSION GUARD (Codex adversarial, 3rd round): `static` alone on
+# the line BEFORE an otherwise self-sufficient single-line head is a real
+# repo idiom (src/libs/miniz/miniz.c:4482-4483). resolve_symbol resolves such
+# a symbol via PASS 1 (the symbol's own line is already a complete head), so
+# `res[1]` points at the symbol line, not the `static` line -- a check of
+# only that one line missed this shape entirely.
+mkdir -p "$SI_TREE/include/kernel/fd2c" "$SI_TREE/src/kernel/fd2c"
+cat > "$SI_TREE/include/kernel/fd2c/widget2.h" <<'EOF'
+void widget2_reset(void);
+EOF
+cat > "$SI_TREE/src/kernel/fd2c/widget2.c" <<'EOF'
+static
+void widget2_reset(void)
+{
+    return;
+}
+EOF
+FDECL2C_OUT="$(REPO_ROOT="$REPO_ROOT" python3 - <<PY 2>&1
+import sys
+sys.path.insert(0, "$REPO_ROOT/scripts/todo-graph")
+import resolve_symbol as rs
+rs.cache_clear()
+res = rs.follow_declaration("$SI_TREE/include/kernel/fd2c/widget2.h", "widget2_reset", "$SI_TREE")
+print("PASS" if res is None else f"FAIL:{res}")
+PY
+)"
+if [ "$FDECL2C_OUT" = "PASS" ]; then
+    t_pass "follow_declaration: static on the PRECEDING line (self-sufficient symbol line) is still rejected"
+else
+    t_fail "follow_declaration: static-on-preceding-line wrongly accepted; got=$FDECL2C_OUT"
+fi
+
+# 14jj4 REGRESSION GUARD (Codex adversarial, 4th round): an UNRELATED,
+# disqualifying line immediately before the real symbol must NOT be scanned
+# for `static` -- only lines that PASS the type-only declaration-prefix test
+# belong to the same declaration. An earlier draft appended a line to the
+# check set before verifying it was type-only, so the very line that broke
+# the walk was still searched. Confirmed live in this repo:
+# src/libs/monocypher/monocypher.c:158 is an unrelated one-line
+# `static u64 x64(...) { ... }` immediately before line 159's real,
+# external-linkage `crypto_verify16` -- the bug wrongly rejected it.
+mkdir -p "$SI_TREE/include/kernel/fd2d" "$SI_TREE/src/kernel/fd2d"
+cat > "$SI_TREE/include/kernel/fd2d/gizmo.h" <<'EOF'
+void gizmo_reset(void);
+EOF
+cat > "$SI_TREE/src/kernel/fd2d/gizmo.c" <<'EOF'
+static int unrelated_helper(int a, int b) { return a + b; }
+void gizmo_reset(void)
+{
+    return;
+}
+EOF
+FDECL2D_OUT="$(REPO_ROOT="$REPO_ROOT" python3 - <<PY 2>&1
+import sys
+sys.path.insert(0, "$REPO_ROOT/scripts/todo-graph")
+import resolve_symbol as rs
+rs.cache_clear()
+res = rs.follow_declaration("$SI_TREE/include/kernel/fd2d/gizmo.h", "gizmo_reset", "$SI_TREE")
+print("PASS" if res is not None else f"FAIL:{res}")
+PY
+)"
+if [ "$FDECL2D_OUT" = "PASS" ]; then
+    t_pass "follow_declaration: an unrelated static line immediately before the symbol does not cause a false rejection"
+else
+    t_fail "follow_declaration: false rejection from an unrelated preceding static line; got=$FDECL2D_OUT"
+fi
+
+# 14jj5 REGRESSION GUARD (Codex adversarial, 5th round): `static` split
+# across MORE lines than `_WINDOW_LINES` (the split-head resolver's own,
+# unrelated 3-line contract) must still be caught -- `static\ninline\nconst\n
+# void foo(void)` is valid C, and a bounded-to-3-lines lookback missed the
+# `static` sitting a 4th line back.
+mkdir -p "$SI_TREE/include/kernel/fd2e" "$SI_TREE/src/kernel/fd2e"
+cat > "$SI_TREE/include/kernel/fd2e/deepthing.h" <<'EOF'
+void deepthing_reset(void);
+EOF
+cat > "$SI_TREE/src/kernel/fd2e/deepthing.c" <<'EOF'
+static
+inline
+const
+void deepthing_reset(void)
+{
+    return;
+}
+EOF
+FDECL2E_OUT="$(REPO_ROOT="$REPO_ROOT" python3 - <<PY 2>&1
+import sys
+sys.path.insert(0, "$REPO_ROOT/scripts/todo-graph")
+import resolve_symbol as rs
+rs.cache_clear()
+res = rs.follow_declaration("$SI_TREE/include/kernel/fd2e/deepthing.h", "deepthing_reset", "$SI_TREE")
+print("PASS" if res is None else f"FAIL:{res}")
+PY
+)"
+if [ "$FDECL2E_OUT" = "PASS" ]; then
+    t_pass "follow_declaration: static caught even 4 lines back, past the split-head resolver's own window"
+else
+    t_fail "follow_declaration: deep static wrongly accepted; got=$FDECL2E_OUT"
+fi
+
+# 14jj6 REGRESSION GUARD (Codex adversarial, 5th round): a BLANK line between
+# `static` and the symbol must not terminate the lookback early --
+# `_TYPE_ONLY_LINE_RE` requires >= 1 character, so an empty line is not
+# type-only, but it IS still part of the same declaration in C.
+mkdir -p "$SI_TREE/include/kernel/fd2f" "$SI_TREE/src/kernel/fd2f"
+cat > "$SI_TREE/include/kernel/fd2f/blankthing.h" <<'EOF'
+void blankthing_reset(void);
+EOF
+printf 'static\n\nvoid blankthing_reset(void)\n{\n    return;\n}\n' > "$SI_TREE/src/kernel/fd2f/blankthing.c"
+FDECL2F_OUT="$(REPO_ROOT="$REPO_ROOT" python3 - <<PY 2>&1
+import sys
+sys.path.insert(0, "$REPO_ROOT/scripts/todo-graph")
+import resolve_symbol as rs
+rs.cache_clear()
+res = rs.follow_declaration("$SI_TREE/include/kernel/fd2f/blankthing.h", "blankthing_reset", "$SI_TREE")
+print("PASS" if res is None else f"FAIL:{res}")
+PY
+)"
+if [ "$FDECL2F_OUT" = "PASS" ]; then
+    t_pass "follow_declaration: a blank line between static and the symbol does not end the lookback early"
+else
+    t_fail "follow_declaration: blank-line-terminated lookback missed static; got=$FDECL2F_OUT"
+fi
+
+# 14jj7 FAIL-CLOSED (Codex adversarial, 6th round on this guard): a
+# PREPROCESSOR-CONDITIONAL `static` (`#if ... / static / #endif` immediately
+# before the head) cannot be evaluated by this lexical resolver -- there is
+# no preprocessing anywhere in this module, so "no literal `static` found
+# before hitting `#endif`" is UNDECIDED linkage, not proof of external
+# linkage. This exact shape is REAL and LIVE in this repo:
+# src/libs/mbedtls/library/sha512.c:558-566
+# (`#if defined(MBEDTLS_SHA512_USE_A64_CRYPTO_IF_PRESENT)` / `static` /
+# `#endif` / the function head).
+mkdir -p "$SI_TREE/include/kernel/fd2g" "$SI_TREE/src/kernel/fd2g"
+cat > "$SI_TREE/include/kernel/fd2g/crypt.h" <<'EOF'
+void crypt_process(void);
+EOF
+cat > "$SI_TREE/src/kernel/fd2g/crypt.c" <<'EOF'
+#if defined(SOME_CONFIG)
+static
+#endif
+void crypt_process(void)
+{
+    return;
+}
+EOF
+FDECL2G_OUT="$(REPO_ROOT="$REPO_ROOT" python3 - <<PY 2>&1
+import sys
+sys.path.insert(0, "$REPO_ROOT/scripts/todo-graph")
+import resolve_symbol as rs
+rs.cache_clear()
+res = rs.follow_declaration("$SI_TREE/include/kernel/fd2g/crypt.h", "crypt_process", "$SI_TREE")
+print("PASS" if res is None else f"FAIL:{res}")
+PY
+)"
+if [ "$FDECL2G_OUT" = "PASS" ]; then
+    t_pass "follow_declaration: a preprocessor-conditional static fails closed (undecidable, not assumed external)"
+else
+    t_fail "follow_declaration: preprocessor-conditional static wrongly accepted; got=$FDECL2G_OUT"
+fi
+
+# 14jj8 REGRESSION GUARD (Codex adversarial, 7th round on this guard): a
+# block comment whose CLOSE shares a physical line with the directive it
+# hides (`/* explanation` on one line, ` */ #endif` on the next) must still
+# be recognized as a conditional directive -- `_mask_line_comments` only
+# sees ONE physical line and reads the tail as raw `*/ #endif` text, which
+# matches neither the type-only nor the directive pattern. Uses the
+# multi-line-aware span index instead.
+mkdir -p "$SI_TREE/include/kernel/fd2h" "$SI_TREE/src/kernel/fd2h"
+cat > "$SI_TREE/include/kernel/fd2h/mcond.h" <<'EOF'
+void mcond_process(void);
+EOF
+cat > "$SI_TREE/src/kernel/fd2h/mcond.c" <<'EOF'
+#if 1
+/* explanation
+ */ #endif
+void mcond_process(void)
+{
+    return;
+}
+EOF
+FDECL2H_OUT="$(REPO_ROOT="$REPO_ROOT" python3 - <<PY 2>&1
+import sys
+sys.path.insert(0, "$REPO_ROOT/scripts/todo-graph")
+import resolve_symbol as rs
+rs.cache_clear()
+res = rs.follow_declaration("$SI_TREE/include/kernel/fd2h/mcond.h", "mcond_process", "$SI_TREE")
+print("PASS" if res is None else f"FAIL:{res}")
+PY
+)"
+if [ "$FDECL2H_OUT" = "PASS" ]; then
+    t_pass "follow_declaration: a directive whose preceding comment closes on the same line still fails closed"
+else
+    t_fail "follow_declaration: comment-tail-before-directive wrongly accepted; got=$FDECL2H_OUT"
+fi
+
+# 14jj9 REGRESSION GUARD (Codex adversarial, 7th round on this guard): a
+# standalone GCC/Clang attribute line (`__attribute__((noinline))`) between
+# `static` and an otherwise self-sufficient head is valid, real style --
+# `static\n__attribute__((noinline))\nvoid foo(void)` -- and must not
+# terminate the lookback before reaching `static`.
+mkdir -p "$SI_TREE/include/kernel/fd2i" "$SI_TREE/src/kernel/fd2i"
+cat > "$SI_TREE/include/kernel/fd2i/attrthing.h" <<'EOF'
+void attrthing_reset(void);
+EOF
+cat > "$SI_TREE/src/kernel/fd2i/attrthing.c" <<'EOF'
+static
+__attribute__((noinline))
+void attrthing_reset(void)
+{
+    return;
+}
+EOF
+FDECL2I_OUT="$(REPO_ROOT="$REPO_ROOT" python3 - <<PY 2>&1
+import sys
+sys.path.insert(0, "$REPO_ROOT/scripts/todo-graph")
+import resolve_symbol as rs
+rs.cache_clear()
+res = rs.follow_declaration("$SI_TREE/include/kernel/fd2i/attrthing.h", "attrthing_reset", "$SI_TREE")
+print("PASS" if res is None else f"FAIL:{res}")
+PY
+)"
+if [ "$FDECL2I_OUT" = "PASS" ]; then
+    t_pass "follow_declaration: a standalone attribute line does not hide static from the lookback"
+else
+    t_fail "follow_declaration: attribute-hidden static wrongly accepted; got=$FDECL2I_OUT"
+fi
+
+# 14jj10 POSITIVE (companion to 14jj9): the SAME standalone-attribute shape,
+# non-static, must still resolve -- proves the attribute recognition is a
+# genuine "continue", not an accidental fail-closed-everything.
+cat > "$SI_TREE/include/kernel/fd2i/attrthing2.h" <<'EOF'
+void attrthing2_reset(void);
+EOF
+cat > "$SI_TREE/src/kernel/fd2i/attrthing2.c" <<'EOF'
+__attribute__((noinline))
+void attrthing2_reset(void)
+{
+    return;
+}
+EOF
+FDECL2I2_OUT="$(REPO_ROOT="$REPO_ROOT" python3 - <<PY 2>&1
+import sys
+sys.path.insert(0, "$REPO_ROOT/scripts/todo-graph")
+import resolve_symbol as rs
+rs.cache_clear()
+res = rs.follow_declaration("$SI_TREE/include/kernel/fd2i/attrthing2.h", "attrthing2_reset", "$SI_TREE")
+print("PASS" if res is not None else f"FAIL:{res}")
+PY
+)"
+if [ "$FDECL2I2_OUT" = "PASS" ]; then
+    t_pass "follow_declaration: a standalone attribute line alone (non-static) still resolves"
+else
+    t_fail "follow_declaration: non-static attribute case wrongly rejected; got=$FDECL2I2_OUT"
+fi
+
+# 14jj11 FAIL-CLOSED DEFAULT (Codex adversarial, 7th round): a genuinely
+# UNRECOGNIZED line during the lookback -- neither a known-safe continuation
+# (blank/type-only/attribute) nor a confident boundary (`;`/`}`-terminated,
+# or a non-conditional directive) -- must fail closed rather than default to
+# accept. Uses a made-up unterminated construct as a stand-in for "the next
+# C syntax shape nobody has enumerated yet".
+mkdir -p "$SI_TREE/include/kernel/fd2j" "$SI_TREE/src/kernel/fd2j"
+cat > "$SI_TREE/include/kernel/fd2j/oddthing.h" <<'EOF'
+void oddthing_reset(void);
+EOF
+cat > "$SI_TREE/src/kernel/fd2j/oddthing.c" <<'EOF'
+SOME_MACRO(x, y)
+void oddthing_reset(void)
+{
+    return;
+}
+EOF
+FDECL2J_OUT="$(REPO_ROOT="$REPO_ROOT" python3 - <<PY 2>&1
+import sys
+sys.path.insert(0, "$REPO_ROOT/scripts/todo-graph")
+import resolve_symbol as rs
+rs.cache_clear()
+res = rs.follow_declaration("$SI_TREE/include/kernel/fd2j/oddthing.h", "oddthing_reset", "$SI_TREE")
+print("PASS" if res is None else f"FAIL:{res}")
+PY
+)"
+if [ "$FDECL2J_OUT" = "PASS" ]; then
+    t_pass "follow_declaration: an unrecognized declaration-adjacent line fails closed by default"
+else
+    t_fail "follow_declaration: unrecognized shape wrongly defaulted to accept; got=$FDECL2J_OUT"
+fi
+
+# 14v-2b END-TO-END (Codex adversarial, 7th round): `is_stub_body`'s comment
+# stripper only saw ONE physical line, so a return-constant body containing a
+# MULTI-LINE comment retained both comment fragments in `real_lines` and the
+# joined text never matched the return-constant pattern -- a real
+# stub-behind-stamp silently missed classification. 14v-2 (above) already
+# pins this exact shape for RESOLUTION; this pins it end-to-end through
+# `is_stub_body` too, using the whole-file span index instead of a
+# second, narrower per-line stripper. Live corpus hit surfaced by this fix:
+# fb_get_output_count() (src/kernel/drivers/framebuffer.c) -- marked
+# INTENTIONAL-STUB (a genuine, documented single-output placeholder).
+MLC_PY="$SI_TREE/mlc_stub_check.py"
+cat > "$MLC_PY" <<'PY'
+import os, sys
+sys.path.insert(0, os.environ["REPO_ROOT"] + "/scripts/todo-graph")
+import resolve_symbol as rs
+path = os.environ["SI_TREE"] + "/src/mlc_stub.c"
+with open(path, "w") as f:
+    f.write(
+        "int foo_mlc(void)\n"
+        "{\n"
+        "    /* explanation\n"
+        "       continues */\n"
+        "    return 0;\n"
+        "}\n"
+    )
+rs.cache_clear()
+res = rs.resolve_symbol(path, "foo_mlc")
+stub = rs.is_stub_body(res[0], res[1], res[2]) if res else None
+print("PASS" if stub == ("0", 2) else f"FAIL:{res}:{stub}")
+PY
+MLC_OUT="$(REPO_ROOT="$REPO_ROOT" SI_TREE="$SI_TREE" python3 "$MLC_PY" 2>&1)"
+if [ "$MLC_OUT" = "PASS" ]; then
+    t_pass "is_stub_body: a return-constant body containing a multi-line comment is still classified as a stub"
+else
+    t_fail "is_stub_body: multi-line comment hid a real stub; got=$MLC_OUT"
+fi
+
+# 14v-2c END-TO-END (Codex adversarial, 8th round): a genuine TWO-PHYSICAL-
+# LINE body (`int f(void) {` / `    return 0; }`) -- content on the SAME
+# line as the CLOSER, a DIFFERENT line than the opener -- was misread as a
+# one-liner (the `not inner` slice-emptiness check cannot distinguish "one
+# physical line" from "opener and closer on adjacent lines with nothing in
+# between") and searched for `}` only on the OPENER's line, where it does
+# not exist. The matching closer is now found via the SAME depth-aware scan
+# used elsewhere, regardless of how many physical lines the body spans.
+TL_PY="$SI_TREE/twoline_stub_check.py"
+cat > "$TL_PY" <<'PY'
+import os, sys
+sys.path.insert(0, os.environ["REPO_ROOT"] + "/scripts/todo-graph")
+import resolve_symbol as rs
+path = os.environ["SI_TREE"] + "/src/twoline.c"
+with open(path, "w") as f:
+    f.write("int foo_twoline(void) {\n    return 0; }\n")
+rs.cache_clear()
+res = rs.resolve_symbol(path, "foo_twoline")
+stub = rs.is_stub_body(res[0], res[1], res[2]) if res else None
+print("PASS" if stub == ("0", 1) else f"FAIL:{res}:{stub}")
+PY
+TL_OUT="$(REPO_ROOT="$REPO_ROOT" SI_TREE="$SI_TREE" python3 "$TL_PY" 2>&1)"
+if [ "$TL_OUT" = "PASS" ]; then
+    t_pass "is_stub_body: a two-physical-line body (closer on a different line than the opener) is still classified"
+else
+    t_fail "is_stub_body: two-line body misread as one-liner; got=$TL_OUT"
+fi
+
+# 14v-2d MARKER TIGHTENING (Codex adversarial, 9th round): the INTENTIONAL-
+# STUB allowlist honored a bare SUBSTRING match, so negated prose, a
+# bare token with no reason, and even a string-literal occurrence all
+# silently suppressed a genuine stub-behind-stamp finding. Now requires the
+# documented `/* INTENTIONAL-STUB: <reason> */` shape -- MUTATION-CHECKED
+# both directions: a real marker (even one whose reason wraps onto later
+# physical lines, the shape both real markers in this tree use) still
+# suppresses; negated prose, a bare token, and an empty reason do NOT.
+MARKER_PY="$SI_TREE/marker_check.py"
+cat > "$MARKER_PY" <<'PY'
+import os, sys
+sys.path.insert(0, os.environ["REPO_ROOT"] + "/scripts/todo-graph")
+import resolve_symbol as rs
+
+def check(body, want_stub):
+    path = os.environ["SI_TREE"] + "/src/marker.c"
+    with open(path, "w") as f:
+        f.write(f"int foo_marker(void)\n{body}\n")
+    rs.cache_clear()
+    res = rs.resolve_symbol(path, "foo_marker")
+    stub = rs.is_stub_body(res[0], res[1], res[2]) if res else None
+    is_stub = stub is not None
+    return is_stub == want_stub
+
+cases = [
+    # (body, want_stub) -- want_stub=True means NOT suppressed (real finding)
+    ("{ /* INTENTIONAL-STUB: pending scaffolding */\n    return 0;\n}", False),
+    ("{  /* INTENTIONAL-STUB: reason wraps onto\n   a second physical line */\n    return 0;\n}", False),
+    ("{ /* INTENTIONAL-STUB */\n    return 0;\n}", True),
+    ("{ /* INTENTIONAL-STUB: */\n    return 0;\n}", True),
+    ("{ /* not an INTENTIONAL-STUB, this is real */\n    return 0;\n}", True),
+]
+results = [check(body, want) for body, want in cases]
+print("PASS" if all(results) else f"FAIL:{results}")
+PY
+MARKER_OUT="$(REPO_ROOT="$REPO_ROOT" SI_TREE="$SI_TREE" python3 "$MARKER_PY" 2>&1)"
+if [ "$MARKER_OUT" = "PASS" ]; then
+    t_pass "is_stub_body: INTENTIONAL-STUB marker requires the documented shape, not a bare substring"
+else
+    t_fail "is_stub_body: marker over- or under-matched; got=$MARKER_OUT"
+fi
+
+# 14kk: TWO files share the header's basename under src/ -- ambiguous, must
+# never guess.
+mkdir -p "$SI_TREE/src/kernel/fd3a" "$SI_TREE/src/kernel/fd3b" "$SI_TREE/include/kernel/fd3"
+cat > "$SI_TREE/include/kernel/fd3/thing.h" <<'EOF'
+void thing_reset(void);
+EOF
+cat > "$SI_TREE/src/kernel/fd3a/thing.c" <<'EOF'
+void thing_reset(void)
+{
+    return;
+}
+EOF
+cat > "$SI_TREE/src/kernel/fd3b/thing.c" <<'EOF'
+void thing_reset(void)
+{
+    return;
+}
+EOF
+FDECL3_OUT="$(REPO_ROOT="$REPO_ROOT" python3 - <<PY 2>&1
+import sys
+sys.path.insert(0, "$REPO_ROOT/scripts/todo-graph")
+import resolve_symbol as rs
+rs.cache_clear()
+res = rs.follow_declaration("$SI_TREE/include/kernel/fd3/thing.h", "thing_reset", "$SI_TREE")
+print("PASS" if res is None else f"FAIL:{res}")
+PY
+)"
+if [ "$FDECL3_OUT" = "PASS" ]; then
+    t_pass "follow_declaration: ambiguous basename (2 matching .c files) never guesses"
+else
+    t_fail "follow_declaration: ambiguous basename wrongly resolved; got=$FDECL3_OUT"
+fi
+
+# 14mm FAIL-CLOSED (Codex adversarial, 3rd round): a string/char literal
+# whose escaping backslash lands exactly on a spliced line boundary -- e.g. an
+# EVEN-length run of trailing backslashes before the splice, so ONE survives
+# C phase 2 as a real escape on the continuation line's first character --
+# cannot be resolved safely by this per-line scanner (it does not carry
+# escape state across the splice). Rather than silently guess a wrong range
+# (an earlier draft returned a truncated "1:4" here), `_scan_line` now raises
+# `_AmbiguousEscapeSplice` the moment it detects this exact shape, and all
+# three `_iter_code_chars` callers (`_confirm_definition`, the body-close
+# walk, `is_stub_body`'s opener scan) catch it and degrade to the SAME "not
+# found" result an ordinary unresolvable input already produces. A
+# whole-tree, parity-aware scan (any EVEN-length run >= 2, not just exactly
+# two, across every .c/.h file, not just src/+include/) finds exactly ONE
+# hit in the entire repo (tools/firmware-tables-decode.c:10) and it sits
+# INSIDE A COMMENT, never in live string content -- so this fixture proves
+# the SAFE degrade, not a corpus-verified-absent guess.
+split_case "fail-closed: an escape spanning a splice boundary is refused, not misresolved" foo_escgap "NONE" <<'SPLITEOF'
+int foo_escgap(void)
+{
+    char *s = "abc\\
+"; }
+SPLITEOF
+
+# 14ll: corpus_resolution_snapshot.py surfaces a resolver ResolverInputError
+# as exit 3 (INFRASTRUCTURE), not an uncaught traceback landing on the bare
+# process exit 1 -- which would collide with exit 1's DOCUMENTED meaning
+# (a prior mapping was lost or moved).
+RIE_TREE="$SI_TREE/rie"
+mkdir -p "$RIE_TREE/todo/01-test" "$RIE_TREE/src" "$RIE_TREE/build"
+cat > "$RIE_TREE/src/rie.c" <<'EOF'
+int rie_fn(void)
+{
+    return 0;
+}
+EOF
+cat > "$RIE_TREE/todo/01-test/TODO-01-fixture.md" <<'EOF'
+# TODO-01 -- fixture
+
+## 1. Fixture section
+- [x] rie_fn stamped
+EOF
+python3 - "$RIE_TREE/build/rie-cache.json" <<'PY'
+import json, sys
+out = sys.argv[1]
+refs = [{"kind": "symbol", "file": "src/rie.c", "symbol": "rie_fn"}]
+items = [{"section_n": 1, "item_idx": 0, "item_text": "x", "refs": refs}]
+json.dump([{"file_path": "todo/01-test/TODO-01-fixture.md",
+            "stamped_items": items}], open(out, "w"))
+PY
+RIE_OUT="$(REPO_ROOT="$REPO_ROOT" \
+    STUB_LINT_CACHE="$RIE_TREE/build/rie-cache.json" STUB_LINT_REPO_ROOT="$RIE_TREE" \
+    python3 - "$RIE_TREE" <<'PY' 2>&1
+import os, sys
+sys.path.insert(0, os.environ["REPO_ROOT"] + "/scripts/todo-graph")
+import resolve_symbol as rs
+rs._MAX_FILE_BYTES = 1  # every file in this fixture tree now "exceeds" it
+import corpus_resolution_snapshot as crs
+rc = crs.main(["write", sys.argv[1] + "/build/rie-out.json"])
+print(f"RC={rc}")
+PY
+)"
+RIE_RC="${RIE_OUT##*RC=}"
+if [ "$RIE_RC" = "3" ] && echo "$RIE_OUT" | grep -q "resolver input refused"; then
+    t_pass "corpus snapshot: ResolverInputError surfaces as exit 3, not a bare traceback"
+else
+    t_fail "corpus snapshot: ResolverInputError mishandled; got=$RIE_OUT"
+fi
 
 # ----------------------------------------------------------------------
 # Test 7: performance budget (under 2s wall-clock per the generator spec).

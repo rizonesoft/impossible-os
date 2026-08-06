@@ -27,6 +27,10 @@
 #   8  stub-lint-baseline.json missing/malformed (lint.sh treats as ERROR --
 #      the baseline is TRACKED, so its absence disables the gate silently;
 #      STUB_LINT_ALLOW_NO_BASELINE=1 is the deliberate, reported bypass)
+#   9  resolver refused an input (file past the per-file byte ceiling, or
+#      rewritten mid-run so returned coordinates no longer describe it).
+#      lint.sh treats as ERROR: it is an infrastructure failure, and the one
+#      thing it must never be silently downgraded to is "unresolved".
 # ============================================================================
 
 import json
@@ -253,6 +257,20 @@ def _walk(nodes: list, repo_root: Path) -> tuple:
                     cov["missing_file"].append(ident)
                     continue
                 resolved = _resolve_cached(str(file_abs), symbol)
+                res_file = str(file_abs)
+                if resolved is None:
+                    # A ref naming a HEADER often resolves via its own
+                    # "decl" verdict (a prototype, no local body) -- follow
+                    # to the repo-convention sibling .c before giving up
+                    # (todo-metadata-layer roadmap's resolver-coverage work,
+                    # decl-following class). Deliberately not cached
+                    # alongside `_resolve_cached`: it is scoped to the small
+                    # decl-only population and its own internal reads are
+                    # already served by resolve_symbol's file/index caches.
+                    resolved = _rs.follow_declaration(
+                        str(file_abs), symbol, str(repo_resolved))
+                    if resolved is not None:
+                        res_file = resolved[0]
                 if resolved is None:
                     if _has_calllike_token(str(file_abs), symbol):
                         cov["unresolved_calllike"].append(ident)
@@ -261,7 +279,7 @@ def _walk(nodes: list, repo_root: Path) -> tuple:
                     continue
                 cov["resolved"] += 1
                 _, line_start, line_end = resolved
-                stub = _is_stub_cached(str(file_abs), line_start, line_end)
+                stub = _is_stub_cached(res_file, line_start, line_end)
                 if stub is None:
                     continue
                 ret_const, body_open_line = stub
@@ -270,8 +288,20 @@ def _walk(nodes: list, repo_root: Path) -> tuple:
                     item_text = item_text[:97] + "..."
                 todo_path = node.get("file_path") or "?"
                 section_n = it.get("section_n", "?")
+                # A followed definition lives in a DIFFERENT file than the
+                # ref's own `file_rel` (the declaring header) -- report at
+                # the file that actually has the body, not the header,
+                # which has nothing at `body_open_line` to inspect.
+                report_rel = file_rel
+                if res_file != str(file_abs):
+                    try:
+                        report_rel = str(
+                            Path(res_file).resolve().relative_to(
+                                repo_resolved))
+                    except ValueError:
+                        report_rel = res_file
                 print(
-                    f"{file_rel}:{body_open_line}:stub-behind-stamp:{symbol} "
+                    f"{report_rel}:{body_open_line}:stub-behind-stamp:{symbol} "
                     f"returns {ret_const} (stamped [x] in {todo_path} "
                     f"section {section_n}: \"{item_text}\")"
                 )
@@ -319,6 +349,21 @@ def main() -> int:
 
     try:
         findings, cov = _walk(nodes, repo_root)
+    except _rs.ResolverInputError as exc:
+        # SURFACED, never bucketed. The resolver raises this for an input it
+        # refuses to answer about -- a file past the per-file byte ceiling, or
+        # one rewritten mid-run so that coordinates already returned no longer
+        # describe its contents. Letting it fall into the generic handler below
+        # would report it as an opaque "internal failure"; letting it become an
+        # ordinary unresolved ref would be worse still, since that is the one
+        # outcome indistinguishable from a clean pass.
+        sys.stderr.write(
+            f"[check_stub_behind_stamp] RESOLVER INPUT REFUSED: {exc}\n"
+            f"  This is not a stub finding and not a coverage gap: the file "
+            f"could not be read in a way that makes line coordinates "
+            f"trustworthy. Re-run on a quiescent tree; if a source file really "
+            f"is that large, raise _MAX_FILE_BYTES deliberately.\n")
+        return 9
     except Exception as exc:  # pragma: no cover -- defensive
         sys.stderr.write(f"[check_stub_behind_stamp] internal failure: {exc}\n")
         return 6
