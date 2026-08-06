@@ -50,6 +50,7 @@
 import os
 import re
 from collections import namedtuple
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional
 
@@ -73,13 +74,78 @@ _SKIP_DIRS = {".git", "build", "__pycache__", "node_modules", ".venv"}
 #               exactly so the reporting contract is unchanged.
 Verdict = namedtuple("Verdict", "abs_path rel_path provenance bucket")
 
-_BASENAME_INDEX = {}  # repo_root(str) -> {basename: (rel, ...)} sorted
-_RESOLVE_MEMO = {}    # (abs_path, symbol) -> (lines object, result)
-_EFFECTIVE_PATH_MEMO = {}  # (rel, repo_root) -> (abs_path|None, provenance|bucket)
-_MENTION_INDEX = {}   # abs_path -> (lines object, frozenset of identifiers)
-_RAW_TEXT = {}        # abs_path -> (lines object, joined raw text)
-_CODE_TEXT = {}       # abs_path -> (lines object, literal/comment-blanked text)
-_END_TO_END = {}      # (abs_path, symbol, repo_root) -> (lines object, answer)
+class _Lru(dict):
+    """A dict with a capacity, evicting least-recently-USED on insert.
+
+    Only legitimate for a CONTENT-BOUND cache -- one whose every entry carries
+    the `_load_file_lines` tuple it was derived from and is revalidated by
+    identity on read. For those, an eviction costs a recompute and returns the
+    same answer, so the bound is purely a memory bound. It is NOT legitimate
+    for a topology-derived cache; see the lifecycle note below."""
+
+    __slots__ = ("cap",)
+
+    def __init__(self, cap: int):
+        super().__init__()
+        self.cap = cap
+
+    def get(self, key, default=None):
+        if key in self:
+            val = super().pop(key)
+            super().__setitem__(key, val)   # renew recency
+            return val
+        return default
+
+    def __setitem__(self, key, value):
+        if key in self:
+            super().pop(key)
+        elif len(self) >= self.cap:
+            super().pop(next(iter(self)))   # oldest insertion == LRU
+        super().__setitem__(key, value)
+
+
+# ---------------------------------------------------------------------------
+# TWO CACHE LIFECYCLES, and they are not interchangeable (Codex design review,
+# section 15).
+#
+# CONTENT-BOUND caches below store `(lines object, value)` and revalidate by
+# `is` on every read, so the file's own generation decides whether an entry is
+# still true. Dropping one can only cost a recompute -- the recompute reads the
+# same pinned content and produces the same answer -- so these are LRU-BOUNDED.
+#
+# TOPOLOGY-DERIVED caches (`_BASENAME_INDEX`, `_EFFECTIVE_PATH_MEMO`) answer
+# from the directory tree instead: which files EXIST, and whether a basename is
+# unique among them. Nothing pins that. Under LRU those two would recompute
+# against a tree that may have gained or lost a file since the walk began, so a
+# late ref could get a different effective path or bucket than an early one --
+# a silent RESULT change, which is exactly what this section's own eviction
+# invariant forbids. They are therefore WALK-SCOPED: unbounded for the duration
+# of one walk, so every ref in that walk sees ONE topology snapshot, and
+# released at the walk boundary (`clear_caches`, or the `walk_scope` context
+# manager) rather than trimmed inside it. Memory stays bounded by the walk, not
+# by a capacity that would have to trade consistency for it.
+# ---------------------------------------------------------------------------
+_BASENAME_INDEX = {}  # WALK-SCOPED: repo_root(str) -> {basename: (rel, ...)}
+_EFFECTIVE_PATH_MEMO = {}  # WALK-SCOPED: (rel, root) -> (abs|None, prov|bucket)
+# WALK-SCOPED for the SAME reason, though it looks content-bound: a MISS or a
+# followed-header answer also depends on `follow_declaration`'s live
+# `src/**/<basename>.c` glob, which no lines object pins. Creating a sibling can
+# turn zero matches into one, or one into ambiguity, without invalidating any
+# entry here. That is tolerable only while the whole walk shares one topology
+# snapshot -- the argument `_resolve_end_to_end`'s docstring already makes about
+# `_basename_index`. Under eviction it stops holding: a dropped entry recomputes
+# against the CURRENT tree while a retained one answers from the old, so two
+# refs in one walk can disagree (Codex adversarial, section 15).
+_END_TO_END = {}      # WALK-SCOPED: (abs, symbol, root) -> (lines, answer, dep)
+
+# Capacities are sized against the live corpus working set (measured 2026-08-06
+# over one Check 7 walk: ~924 resolve pairs, ~998 effective paths, ~260
+# identifier sets) with headroom, so an ordinary walk never evicts and a
+# runaway importer still cannot grow without limit.
+_RESOLVE_MEMO = _Lru(8192)   # (abs_path, symbol) -> (lines object, result)
+_MENTION_INDEX = _Lru(512)   # abs_path -> (lines object, frozenset of idents)
+_RAW_TEXT = _Lru(512)        # abs_path -> (lines object, joined raw text)
+_CODE_TEXT = _Lru(512)       # abs_path -> (lines object, blanked text)
 
 # How many times the literal/comment strip has actually RUN. The per-file cache
 # it guards replaced a per-symbol scan that took Check 7 from 147ms to 829ms, so
@@ -143,6 +209,25 @@ def _clear_local_only() -> None:
 
 
 _rs.register_reset_dependent(_clear_local_only)
+
+
+@contextmanager
+def walk_scope():
+    """One walk's cache lifetime, released on exit.
+
+    The boundary the topology-derived caches need in order to be BOTH
+    consistent and bounded: inside it they never evict, so every ref in the
+    walk answers from one directory snapshot; leaving it drops them, so a
+    long-lived importer serving several worktrees does not accumulate a
+    tree-sized index per root forever. The CLI callers get this for free
+    either way (a lint invocation is a fresh interpreter that exits), which is
+    why this is housekeeping rather than a correctness gate -- but a gate is
+    exactly what an in-process caller would otherwise lack."""
+    clear_caches()
+    try:
+        yield
+    finally:
+        clear_caches()
 
 
 def _basename_index(repo_root: Path) -> dict:
@@ -320,7 +405,84 @@ def _resolve_memoized(abs_path: str, symbol: str):
     return hit[1]
 
 
-def _defining_candidates(section_files: tuple, symbol: str,
+class SectionScope:
+    """One section's pairing evidence: its authored files, its unpaired
+    symbols, and the per-file definition map derived from them.
+
+    THE BATCH RESULT LIVES HERE, not in the process-wide memo. Routing it
+    through `_RESOLVE_MEMO` was the first design and is wrong: that memo is
+    capacity-bounded, so a section whose (symbols x candidate files) exceeds
+    the capacity would evict earlier files' batch results while warming later
+    ones, and the following symbols would re-warm the same files -- degrading
+    back to the symbols x files x file-size shape this section exists to
+    remove, with no fixed capacity able to prevent it for arbitrary input
+    (Codex design review, section 15). Section-local means the scaling
+    property is structural: one batch per candidate file per section, whatever
+    the capacity is set to. The global memo stays a secondary cache for the
+    other resolve paths.
+
+    BOTH LISTS ARE LAZY. 357 of the corpus's 830 sections hold an unpaired
+    symbol; the rest never consult `files` at all, and canonicalizing paths
+    for them was measured waste. Nothing is computed until a ref asks.
+    """
+
+    __slots__ = ("_items", "_root", "_files", "_symbols", "_defs")
+
+    def __init__(self, items: list, repo_root: Path):
+        self._items = items or []
+        self._root = repo_root
+        self._files = None
+        self._symbols = None
+        self._defs = {}
+
+    @property
+    def symbols(self) -> frozenset:
+        """Every symbol this section names with NO file of its own -- exactly
+        the population the section-scope pairing has to answer for, and so
+        exactly the set worth resolving per candidate file in one pass."""
+        if self._symbols is None:
+            self._symbols = frozenset(
+                r.get("symbol") for it in self._items
+                for r in (it.get("refs") or [])
+                if r.get("kind") == "symbol" and not r.get("file")
+                and r.get("symbol"))
+        return self._symbols
+
+    @property
+    def files(self) -> tuple:
+        if self._files is None:
+            self._files = (section_candidate_files(self._items, self._root)
+                           if self.symbols else ())
+        return self._files
+
+    def defines(self, abs_path: str, symbol: str):
+        """Does `abs_path` define `symbol`, per the resolver's own rule?
+
+        A thin pass-through to the shared per-symbol memo, deliberately. This
+        is where a BATCHED per-file definition lookup was implemented and then
+        REMOVED, because measurement refuted the premise it was built on --
+        see the section 15 note in the module header. It stays a named method
+        on the scope so the pairing pass has one place to ask the question,
+        and so a future batching attempt has a seam that does not require
+        touching `classify_ref` again."""
+        return _resolve_memoized(abs_path, symbol)
+
+
+def section_scope(items: list, repo_root: Path) -> SectionScope:
+    """THE shared constructor for a section's pairing evidence.
+
+    Both callers build their per-section scope with this and nothing else. It
+    replaces the identical `_needs` + `section_candidate_files` preamble each
+    had copied, which is the same duplication-of-a-shared-rule this module was
+    created to end -- two copies of "which sections need candidates" can drift
+    apart exactly like two copies of the resolution sequence did."""
+    return SectionScope(items, repo_root)
+
+
+EMPTY_SCOPE = SectionScope([], Path("."))
+
+
+def _defining_candidates(scope: "SectionScope", symbol: str,
                          repo_root: Path) -> list:
     """Which of a section's authored files actually DEFINE `symbol`.
 
@@ -339,19 +501,19 @@ def _defining_candidates(section_files: tuple, symbol: str,
     scanner, so it can only skip a file that provably does not name the symbol
     in code -- never change a verdict."""
     hits = []
-    for abs_str in section_files:
+    for abs_str in scope.files:
         # A ResolverInputError from either call propagates on purpose: a
         # refused input is an infrastructure failure the CALLER surfaces as
         # rc 9, never evidence about this symbol, and must not read as
         # "not defined here".
         if not _mentions(abs_str, symbol):
             continue
-        if _resolve_memoized(abs_str, symbol) is not None:
+        if scope.defines(abs_str, symbol) is not None:
             hits.append(abs_str)
     return hits
 
 
-def classify_ref(ref: dict, section_files: tuple, repo_root: Path) -> Verdict:
+def classify_ref(ref: dict, scope: "SectionScope", repo_root: Path) -> Verdict:
     """Decide which file a `kind=symbol` ref is checked against.
 
     The order of tests is the caller's historical order, preserved exactly so
@@ -382,9 +544,9 @@ def classify_ref(ref: dict, section_files: tuple, repo_root: Path) -> Verdict:
     if not symbol:
         return Verdict(None, None, provenance, "unpaired_ref")
     if not rel:
-        if not section_files:
+        if not scope.files:
             return Verdict(None, None, provenance, "unpaired_ref")
-        hits = _defining_candidates(section_files, symbol, repo_root)
+        hits = _defining_candidates(scope, symbol, repo_root)
         if len(hits) != 1:
             return Verdict(None, None, provenance, "unpaired_ref")
         abs_p = Path(hits[0])
@@ -601,14 +763,18 @@ def _resolve_end_to_end(abs_path: str, symbol: str, repo_root: Path):
     return answer
 
 
-def resolve_ref(ref: dict, section_files: tuple, repo_root: Path) -> RefResult:
+def resolve_ref(ref: dict, scope: "SectionScope", repo_root: Path) -> RefResult:
     """THE shared verdict for one `kind=symbol` ref: classify, resolve, bucket.
 
     Both consumers of the cache's `stamped_items[].refs` call exactly this and
     nothing else from the resolver. A caller that reached past it to add its own
     fallback would put the identity snapshot back out of step with lint Check 7,
-    which is the failure this module exists to prevent."""
-    verdict = classify_ref(ref, section_files, repo_root)
+    which is the failure this module exists to prevent.
+
+    `scope` is the section's `SectionScope` (see `section_scope`); pass
+    `EMPTY_SCOPE` for a ref with no section context, which classifies a
+    file-less symbol as `unpaired_ref` exactly as an empty file tuple did."""
+    verdict = classify_ref(ref, scope, repo_root)
     if verdict.bucket is not None:
         return RefResult(verdict.rel_path, verdict.provenance, verdict.bucket,
                          None, None, None, None)

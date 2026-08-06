@@ -313,6 +313,14 @@ _INTENTIONAL_STUB_RE = re.compile(r"/\*\s*INTENTIONAL-STUB:\s*(?!\*/)\S")
 
 _WINDOW_LINES = 3  # terminal line + up to 2 preceding type-only lines
 
+# What each structural walk actually reads. Passed to `_iter_code_chars` so the
+# lexer stops materializing characters nobody tests -- see `_scan_line`.
+# `_confirm_definition` is absent on purpose: it inspects EVERY character
+# (isspace / isalnum / a catch-all reject), so narrowing it would change what
+# it rejects.
+_BRACES = frozenset("{}")
+_PARENS_BRACES = frozenset("(){}")
+
 # Generous, pathological-input-only bound for follow_declaration's linkage
 # lookback (walking back through preceding declaration-specifier lines
 # looking for `static`). Unrelated to `_WINDOW_LINES` -- that constant is
@@ -371,11 +379,26 @@ _STANDALONE_ATTR_RE = re.compile(
 #     `// disabled \` followed by what looks like a definition means that
 #     "definition" is commented out, and candidate discovery has to know.
 def _scan_line(line: str, in_block: bool, in_str, in_lc: bool,
-               start_col: int, emit: bool, pending=None, line_idx: int = -1):
+               start_col: int, emit: bool, pending=None, line_idx: int = -1,
+               wanted=None):
     """Lex ONE physical line from `start_col`. Returns
     (out_block, out_str, out_lc, chars, out_pending, carried).
 
     `chars` is the list of (col, ch) CODE characters on THIS line when `emit`.
+
+    `wanted`, when given, is the set of characters the CALLER will actually
+    look at; everything else is lexed exactly as before but not materialized.
+    This is a pure output filter over an UNCHANGED state machine -- comment,
+    literal and splice handling all still see every character, so what counts
+    as code cannot shift. It exists because the structural walks are the
+    resolver's hot path and they ignore almost everything they are handed:
+    MEASURED on the live corpus, `_iter_code_chars` yielded 1.31 MILLION
+    characters in one Check 7 walk (0.649s of a ~1.5s run, and 2.19M list
+    appends) so that three brace counters could test each one against `{` and
+    `}`. `_confirm_definition` is deliberately NOT filtered -- it inspects
+    every character, including a catch-all reject branch -- which is why this
+    is a per-caller parameter and not a global narrowing.
+
     `pending` / `out_pending` model a half-open two-character comment
     delimiter ('/' awaiting '*' or '/' to open a comment; '*' awaiting '/' to
     close a block comment, while `in_block`) that sat at the very end of a
@@ -411,7 +434,7 @@ def _scan_line(line: str, in_block: bool, in_str, in_lc: bool,
             if spliced:
                 return in_block, in_str, in_lc, chars, pending, None
             kind, oi, oc = pending
-            if kind == "slash" and emit:
+            if kind == "slash" and emit and (wanted is None or "/" in wanted):
                 carried = (oi, oc, "/")
             return in_block, in_str, in_lc, chars, None, carried
         kind, oi, oc = pending
@@ -424,7 +447,7 @@ def _scan_line(line: str, in_block: bool, in_str, in_lc: bool,
                 in_lc = True
                 j = 1
             else:
-                if emit:
+                if emit and (wanted is None or "/" in wanted):
                     carried = (oi, oc, "/")
                 j = 0
         else:  # "star" -- in_block was already True when this was deferred
@@ -486,7 +509,7 @@ def _scan_line(line: str, in_block: bool, in_str, in_lc: bool,
             in_str = ch
             j += 1
             continue
-        if emit:
+        if emit and (wanted is None or ch in wanted):
             chars.append((j, ch))
         j += 1
     if not spliced:
@@ -707,9 +730,15 @@ def _mask_decl_modifiers(text: str) -> str:
     return text
 
 
-def _iter_code_chars(lines: list, start_idx: int, start_col: int, end_idx: int):
+def _iter_code_chars(lines: list, start_idx: int, start_col: int, end_idx: int,
+                     wanted=None):
     """Yield (line_idx, col, ch) for CODE characters only -- skipping `//` and
     `/* */` comments and the contents of string and character literals.
+
+    `wanted` narrows what is YIELDED, never what is lexed: see `_scan_line`.
+    A caller that brace-counts passes the two brace characters and is handed
+    only those, at the same positions and in the same order it would have seen
+    them among the rest.
 
     ONE scanner for every structural walk in this module. Three separate
     ad-hoc passes previously did their own per-line comment stripping, and each
@@ -741,12 +770,13 @@ def _iter_code_chars(lines: list, start_idx: int, start_col: int, end_idx: int):
     for i in range(start_idx, min(len(lines), end_idx)):
         col = start_col if i == start_idx else 0
         in_block, in_str, in_lc, chars, pending, carried = _scan_line(
-            lines[i], in_block, in_str, in_lc, col, True, pending, i)
+            lines[i], in_block, in_str, in_lc, col, True, pending, i, wanted)
         if carried is not None:
             yield carried
         for c, ch in chars:
             yield (i, c, ch)
-    if pending is not None and pending[0] == "slash":
+    if pending is not None and pending[0] == "slash" and (
+            wanted is None or "/" in wanted):
         # The scan window ended (EOF or end_idx) with an unresolved deferred
         # '/' -- there is no further line to combine with, so it was always
         # ordinary code.
@@ -962,7 +992,7 @@ def resolve_symbol(file_path: str, symbol: str) -> Optional[Tuple[str, int, int]
     try:
         for line_i, _col, ch in _iter_code_chars(
                 lines, body_open_idx, body_open_col,
-                body_open_idx + _BODY_SCAN_LIMIT):
+                body_open_idx + _BODY_SCAN_LIMIT, _BRACES):
             if ch == "{":
                 depth += 1
             elif ch == "}":
@@ -1211,7 +1241,7 @@ def is_stub_body(
     paren_depth = 0
     try:
         for i, col, ch in _iter_code_chars(
-                body_text_lines, 0, 0, len(body_text_lines)):
+                body_text_lines, 0, 0, len(body_text_lines), _PARENS_BRACES):
             if ch == "(":
                 paren_depth += 1
             elif ch == ")":
@@ -1272,7 +1302,7 @@ def is_stub_body(
     try:
         for i, col, ch in _iter_code_chars(
                 body_text_lines, body_open_line_idx, body_open_col,
-                len(body_text_lines)):
+                len(body_text_lines), _BRACES):
             if ch == "{":
                 depth += 1
             elif ch == "}":

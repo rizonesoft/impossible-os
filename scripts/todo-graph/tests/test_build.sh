@@ -4911,14 +4911,14 @@ open(h, "w").write("int wfn(void);\n")
 open(c, "w").write("int wfn(void)\n{\n    return 0;\n}\n")
 ref = {"kind": "symbol", "symbol": "wfn", "file": "include/w.h"}
 from pathlib import Path
-first = rr.resolve_ref(ref, (), Path(d))
+first = rr.resolve_ref(ref, rr.EMPTY_SCOPE, Path(d))
 assert first.bucket is None, f"header ref did not follow to its sibling: {first}"
 assert first.def_rel == "src/w.c", first.def_rel
 # Rewrite ONLY the .c. The header is untouched, so a memo bound to the header
 # alone would hand back the pre-rewrite coordinates.
 open(c, "w").write("\n\n\nint wfn(void)\n{\n    return 0;\n}\n")
 try:
-    again = rr.resolve_ref(ref, (), Path(d))
+    again = rr.resolve_ref(ref, rr.EMPTY_SCOPE, Path(d))
 except rs.ResolverInputError:
     pass          # drift surfaced loudly -- the correct answer
 else:
@@ -4959,7 +4959,7 @@ for stage in ("_resolve_memoized", "follow_declaration", "has_calllike_token"):
         raise rs.ResolverInputError("injected at " + stage)
     setattr(owner, stage, boom)
     try:
-        rr.resolve_ref(ref, (), Path(d))
+        rr.resolve_ref(ref, rr.EMPTY_SCOPE, Path(d))
     except rs.ResolverInputError:
         pass
     else:
@@ -4975,7 +4975,7 @@ outside = tempfile.mkdtemp() + "/far.c"
 open(outside, "w").write("int target(void)\n{\n    return 0;\n}\n")
 rr._resolve_end_to_end = lambda a, s, r: (outside, 1, 4)
 try:
-    rr.resolve_ref(ref, (), Path(d))
+    rr.resolve_ref(ref, rr.EMPTY_SCOPE, Path(d))
 except rs.ResolverInputError as exc:
     assert "outside repo root" in str(exc), str(exc)
 else:
@@ -5077,6 +5077,160 @@ PY
     t_pass "ref_resolution: both callers consume ONE end-to-end verdict"
 else
     t_fail "ref_resolution: resolution orchestration duplicated again; $RR_ONE"
+fi
+
+# 15a: SCALING SHAPE of the structural walk, counted rather than timed.
+# The section this guards was filed to remove a per-symbol rescan and the
+# premise did not survive measurement: candidate discovery is ~5% of the walk
+# (0.071s of ~1.5s), while the body brace walk materialized 1.31M characters so
+# three brace counters could test each against `{` and `}`. The fix narrows
+# what the lexer EMITS, so the invariant is a growth SHAPE -- a body that grows
+# without gaining braces must not make the walk yield more -- and a wall-clock
+# number could not see it. That is the exact failure mode the section names:
+# the earlier round was accepted on wall clock.
+if RR_SCALE="$(REPO_ROOT="$REPO_ROOT" python3 - <<'PY' 2>&1
+import os, sys
+sys.path.insert(0, os.environ["REPO_ROOT"] + "/scripts/todo-graph")
+import resolve_symbol as rs
+
+
+def body(n):
+    """A function whose body has `n` brace-free statement lines."""
+    return (["void f(void) {"] + ["    int x%d = %d + 1;" % (i, i)
+                                  for i in range(n)] + ["}"])
+
+
+def yielded(lines, wanted):
+    return sum(1 for _ in rs._iter_code_chars(lines, 0, 0, len(lines), wanted))
+
+
+small, big = body(50), body(400)
+# FILTERED: only the two braces are yielded, whatever the body size. This is
+# the shape -- constant in body length, not merely "smaller".
+s_f, b_f = yielded(small, rs._BRACES), yielded(big, rs._BRACES)
+assert s_f == b_f == 2, f"brace walk not body-independent: {s_f} vs {b_f}"
+
+# END-TO-END, through the REAL entry point, because the direct calls above
+# prove only that the mechanism works -- not that anything uses it. MUTATION
+# CHECKED: dropping `_BRACES` from the body-walk call sites left every
+# assertion in this fixture green until this block existed, which is the
+# green-for-the-wrong-reason shape the section 14 fixtures were written to
+# stop. Counting through a wrapper is what binds the fixture to the WIRING.
+import tempfile
+counted = {"n": 0}
+real_iter = rs._iter_code_chars
+
+
+def counting(*a, **kw):
+    for t in real_iter(*a, **kw):
+        counted["n"] += 1
+        yield t
+
+
+def resolve_cost(n):
+    d = tempfile.mkdtemp()
+    p = os.path.join(d, "big.c")
+    open(p, "w").write("\n".join(body(n)) + "\n")
+    rs.cache_clear()
+    counted["n"] = 0
+    rs._iter_code_chars = counting
+    try:
+        assert rs.resolve_symbol(p, "f") is not None, "fixture file unresolved"
+    finally:
+        rs._iter_code_chars = real_iter
+    return counted["n"]
+
+
+c_small, c_big = resolve_cost(50), resolve_cost(400)
+# An 8x longer brace-free body must not cost 8x the yields. The bound is
+# generous on purpose: `_confirm_definition` stays unfiltered by design and
+# contributes a fixed head-window cost, so the assertion targets the BODY
+# walk's growth, not a total.
+assert c_big < c_small * 2, (
+    f"resolve yields grew with body size ({c_small} -> {c_big}): the body "
+    f"brace walk is not passing its `wanted` filter")
+# UNFILTERED grows with the body, which is what the filter removed. Asserting
+# the contrast pins the WIN, so deleting the `wanted` argument fails here
+# instead of silently restoring the old cost.
+s_u, b_u = yielded(small, None), yielded(big, None)
+assert b_u > s_u * 5, f"unfiltered walk not growing: {s_u} vs {b_u}"
+# And the filter must be a pure OUTPUT narrowing: the characters it does yield
+# are exactly the ones the unfiltered walk yielded, at the same positions.
+want = rs._PARENS_BRACES
+full = [t for t in rs._iter_code_chars(big, 0, 0, len(big)) if t[2] in want]
+filt = list(rs._iter_code_chars(big, 0, 0, len(big), want))
+assert full == filt, "filtered walk disagrees with unfiltered on kept chars"
+# The narrowing must not reach the classifier, which inspects EVERY character
+# (isspace / isalnum / a catch-all reject); a filtered _confirm_definition
+# would stop rejecting `int f(void) = 1;`.
+src = open(os.environ["REPO_ROOT"]
+           + "/scripts/todo-graph/resolve_symbol.py", encoding="utf-8").read()
+conf = src[src.index("def _confirm_definition("):]
+conf = conf[:conf.index("\ndef ", 1)]
+assert "_BRACES" not in conf and "_PARENS_BRACES" not in conf, (
+    "_confirm_definition must stay unfiltered -- it reads every character")
+PY
+)"; then
+    t_pass "resolve_symbol: structural walk is body-independent, output-only"
+else
+    t_fail "resolve_symbol: walk scaling shape regressed; $RR_SCALE"
+fi
+
+# 15b: the two cache LIFECYCLES are not interchangeable. Content-bound caches
+# revalidate against the file generation they were derived from, so evicting
+# one costs a recompute and returns the same answer -- those are LRU-bounded.
+# Topology-derived caches (which files exist, whether a basename is unique)
+# have nothing pinning them, so an eviction mid-walk can recompute against a
+# CHANGED tree and hand a later ref a different verdict than an earlier one.
+# Those stay walk-scoped. Codex design review, section 15.
+if RR_LIFE="$(REPO_ROOT="$REPO_ROOT" python3 - <<'PY' 2>&1
+import os, sys, tempfile
+sys.path.insert(0, os.environ["REPO_ROOT"] + "/scripts/todo-graph")
+import ref_resolution as rr
+# `_END_TO_END` belongs with the TOPOLOGY group despite looking content-bound:
+# a miss or a followed-header answer also depends on `follow_declaration`'s live
+# `src/**/<basename>.c` glob, which no lines object pins (Codex adversarial,
+# section 15).
+for name in ("_BASENAME_INDEX", "_EFFECTIVE_PATH_MEMO", "_END_TO_END"):
+    c = getattr(rr, name)
+    assert not isinstance(c, rr._Lru), (
+        f"{name} is topology-derived and must NOT evict mid-walk: an entry "
+        f"recomputed against a changed tree is a silent RESULT change")
+for name in ("_RESOLVE_MEMO", "_MENTION_INDEX", "_RAW_TEXT", "_CODE_TEXT"):
+    c = getattr(rr, name)
+    assert isinstance(c, rr._Lru) and c.cap > 0, f"{name} unbounded"
+# The lifecycle must be ENTERED by production, not merely offered: an API no
+# walk enters leaves both gates answering from the previous walk's topology.
+for rel in ("scripts/lint/check_stub_behind_stamp.py",
+            "scripts/todo-graph/corpus_resolution_snapshot.py"):
+    src = open(os.environ["REPO_ROOT"] + "/" + rel, encoding="utf-8").read()
+    body = "\n".join(l for l in src.splitlines()
+                     if not l.lstrip().startswith("#"))
+    assert "walk_scope()" in body, (
+        f"{rel} never enters walk_scope -- the cache lifecycle is advertised "
+        f"but not applied")
+# The bound is real: inserting past capacity evicts, and never exceeds it.
+lru = rr._Lru(3)
+for i in range(10):
+    lru[i] = i
+assert len(lru) == 3 and 9 in lru and 0 not in lru, f"no eviction: {dict(lru)}"
+# Eviction must not change an ANSWER. Drive a real resolve, evict it, re-ask.
+d = tempfile.mkdtemp()
+p = os.path.join(d, "z.c")
+open(p, "w").write("void zfn(void) { }\n")
+first = rr._resolve_memoized(p, "zfn")
+rr._RESOLVE_MEMO.clear()          # the eviction, in its strongest form
+assert rr._resolve_memoized(p, "zfn") == first, "eviction changed a verdict"
+# And the walk boundary releases the topology caches rather than trimming them.
+with rr.walk_scope():
+    rr._basename_index(__import__("pathlib").Path(d))
+    assert rr._BASENAME_INDEX, "topology cache not populated inside the walk"
+assert not rr._BASENAME_INDEX, "walk_scope did not release the topology cache"
+PY
+)"; then
+    t_pass "ref_resolution: cache lifecycles split by what pins them"
+else
+    t_fail "ref_resolution: cache lifecycle wrong; $RR_LIFE"
 fi
 
 # ----------------------------------------------------------------------

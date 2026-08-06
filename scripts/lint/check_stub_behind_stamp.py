@@ -163,21 +163,18 @@ def _walk(nodes: list, repo_root: Path) -> tuple:
         by_section = {}
         for it in items:
             by_section.setdefault(it.get("section_n"), []).append(it)
-        # LAZY: only a section that actually holds an unpaired symbol can
-        # use candidates, and 357 of the corpus's 830 sections do. Building
-        # them eagerly canonicalized paths for the other 473 for nothing
-        # (Codex perf, post-commit).
-        _needs = {
-            it.get("section_n") for it in items
-            for r in (it.get("refs") or [])
-            if r.get("kind") == "symbol" and not r.get("file")
-        }
-        sec_files = {
-            sec: _rr.section_candidate_files(sec_items, repo_resolved)
-            for sec, sec_items in by_section.items() if sec in _needs
+        # LAZY, and the laziness lives INSIDE the scope rather than in a
+        # `_needs` set copied into both callers: only a section that actually
+        # holds an unpaired symbol builds candidates, and 357 of the corpus's
+        # 830 sections do (Codex perf, post-commit). The scope also carries the
+        # section's batched per-file definition map, which is what keeps the
+        # pairing's cost proportional to files rather than files x symbols.
+        sec_scopes = {
+            sec: _rr.section_scope(sec_items, repo_resolved)
+            for sec, sec_items in by_section.items()
         }
         for it in items:
-            section_files = sec_files.get(it.get("section_n"), ())
+            scope = sec_scopes.get(it.get("section_n")) or _rr.EMPTY_SCOPE
             for ref in it.get("refs", []):
                 if ref.get("kind") != "symbol":
                     continue
@@ -202,7 +199,7 @@ def _walk(nodes: list, repo_root: Path) -> tuple:
                 # and basename repair for a bare filename that does not exist
                 # at the repo root. Bucket idents keep the AUTHORED spelling so
                 # a ref that stays unresolved reads the same as it always did.
-                result = _rr.resolve_ref(ref, section_files, repo_resolved)
+                result = _rr.resolve_ref(ref, scope, repo_resolved)
                 if result.bucket is not None:
                     if result.bucket == "unpaired_ref":
                         cov["unpaired_ref"].append(
@@ -284,7 +281,13 @@ def main() -> int:
         return 4
 
     try:
-        findings, cov = _walk(nodes, repo_root)
+        # ONE WALK, ONE CACHE LIFETIME. `walk_scope` releases the resolver's
+        # topology-derived caches on both entry and exit, so a second walk in
+        # the same interpreter cannot answer from the previous walk's tree
+        # snapshot (Codex adversarial, section 15: the lifecycle shipped as an
+        # API that no production caller entered).
+        with _rr.walk_scope():
+            findings, cov = _walk(nodes, repo_root)
     except _rs.ResolverInputError as exc:
         # SURFACED, never bucketed. The resolver raises this for an input it
         # refuses to answer about -- a file past the per-file byte ceiling, or

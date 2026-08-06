@@ -63,7 +63,7 @@ title: "TODO-06 -- TODO Metadata Layer and Derived Graph"
 | ⭐  |  12   |  §12    | Resolver coverage past the head limit + lexer/cache robustness                      | §10, §11   |  [x]   |
 | ⭐  |  13   |  §13    | Stored-ref repair: unpaired symbols + bare filenames (resolution-time)              | §2, §11    |  [x]   |
 | ⭐  |  14   |  §14    | Identity gate over the whole symbol-ref population (every `kind=symbol` ref)        | §13        |  [x]   |
-| ⭐  |  15   |  §15    | The shared rule's cost: batched definition lookup + bounded resolver caches         | §13, §14   |  [ ]   |
+| ⭐  |  15   |  §15    | The shared rule's cost: structural-walk hot path + split cache lifecycles           | §13, §14   |  [x]   |
 | 💎  |  16   |  §16    | Wire the identity gate so something runs it (adopts §12's parked wiring)            | §12, §14   |  [ ]   |
 
 > 💎 = parity work -- Linux kernel has MAINTAINERS + get_maintainer.pl (person-ownership mapping without a dep graph); Windows has no public equivalent. §1 (frontmatter), §2 (generator), §5 (migration) bring us to partial Linux parity plus graph metadata neither OS ships.
@@ -642,8 +642,8 @@ It does NOT re-cover §12's head-limit widening, decl-following, cache bounds, o
 > **Verified:** 2026-08-06 | commit `10cdda4b` + review fixes | 4/4 items | build OK | Check 7 474/1625 (baseline 474, 0 findings); identity 0 lost / 0 moved over 363 added, all ground-truthed; test_build 186/186; tooling 1287/1287; kernel 28326 + 17 user-mode; lint rc 0
 > **Quality reviewed:** 2026-08-06 | Codex 13x (design x1, adversarial x4, consistency x4, perf x4) | 5H+14M+2L fixed, 1 rejected, 2 filed | scope: N/A (host tooling; the one kernel-surface edit is a comment-only INTENTIONAL-STUB marker inside `#else /* !KERNEL_TESTS */`)
 > **Deferred:** [H] the identity snapshot records a verdict for only part of the population -- 930 of 1,625 occurrences get no entry and the 221 stored nulls do not say WHICH bucket, so a ref moving between unresolved buckets is invisible to it -> XREF: `00-infrastructure/TODO-06-todo-metadata-layer.md §14` (item: "Record a verdict for EVERY `kind=symbol` occurrence" at line 651)
-> **Deferred:** [M] every POSITIVE mention still calls `resolve_symbol` once per (file, symbol), so section pairing keeps a symbols x files x file-size worst case; the batched pass belongs inside `resolve_symbol.py` and a second definition rule is not acceptable -> XREF: `00-infrastructure/TODO-06-todo-metadata-layer.md §14` (item: "Batch the DEFINITION rule per candidate file" at line 663)
-> **Deferred:** [L] the four process-wide caches are unbounded dicts; harmless for the CLI callers that exit, but a long-lived importer over several worktrees accumulates -> XREF: `00-infrastructure/TODO-06-todo-metadata-layer.md §14` (item: "Bound the process-wide caches" at line 668)
+> **Deferred:** [M] RESOLVED in §15, by refuting the premise rather than batching: per-symbol candidate discovery is ~5% of the walk (0.071s of ~1.5s) because `str.find` runs at C speed, and the cost is definition CONFIRMATION -> XREF: `00-infrastructure/TODO-06-todo-metadata-layer.md §15` (item: "Cut the shared rule's cost at the hot path the MEASUREMENT found")
+> **Deferred:** [L] RESOLVED in §15, split by what pins each cache: topology-derived ones walk-scoped, content-bound ones LRU-bounded -> XREF: `00-infrastructure/TODO-06-todo-metadata-layer.md §15` (item: "Bound the process-wide caches by WHAT PINS THEM")
 
 -> XREF: [`TODO-06 §12`](#12-resolver-coverage-past-the-head-limit-and-lexercache-robustness) -- the parent section; §12 owns `resolve_symbol.py` coverage plus the `corpus_resolution_snapshot.py` identity gate this section is measured by.
 -> XREF: [`TODO-06 §11`](#11-count-what-check-7-cannot-resolve-instead-of-skipping-it) -- counted these two classes for the first time; §11 owns the reporting contract and the bucket denominators this section moves.
@@ -697,31 +697,46 @@ That is a real hole in the proof, and §13 is the section that demonstrates it. 
 
 -> XREF: [`TODO-06 §13`](#13-stored-ref-repair-unpaired-symbols-and-bare-filenames) -- the section whose review found this, and whose bucket movements are the worked example of what the gate cannot currently see.
 -> XREF: [`TODO-06 §11`](#11-count-what-check-7-cannot-resolve-instead-of-skipping-it) -- owns the bucket names and the reporting contract this section makes gateable.
--> XREF: [`TODO-06 §15`](#15-the-shared-rules-cost-batched-definition-lookup-and-bounded-resolver-caches) -- took this section's two COST items at the split; §14 is correctness-of-the-gate only and deliberately does not re-cover them.
+-> XREF: [`TODO-06 §15`](#15-the-shared-rules-cost-structural-walk-hot-path-and-split-cache-lifecycles) -- took this section's two COST items at the split; §14 is correctness-of-the-gate only and deliberately does not re-cover them.
 
 ---
 
-## 15. The Shared Rule's Cost: Batched Definition Lookup and Bounded Resolver Caches
+## 15. The Shared Rule's Cost: Structural-Walk Hot Path and Split Cache Lifecycles
 
 > **Spawned-by:** §14 (split)
 
 Split out of §14 at authoring time, not spawned by a review round. §14 proves the identity gate covers every `kind=symbol` ref; this section is about what that shared rule COSTS to evaluate. The two failure modes are opposite and are verified by different means: §14 fails by mis-verdicting a ref and is proven by functional fixtures, while this one fails by scaling badly or retaining memory and can only be proven by a SCALING fixture. Bundling them is how a wall-clock number gets accepted as a growth-shape proof.
 
-- [ ] Batch the DEFINITION rule per candidate file, without writing a second one -- carried from §13's round-3 perf review
-      §13's pre-filter made a NEGATIVE mention O(1), but every POSITIVE probe still calls `resolve_symbol`, whose candidate search scans the file for that one symbol. MEASURED on the live corpus: 1,463 section-file questions, 681 positive mentions, 587 unique positive `(file, symbol)` pairs, about 65 MB of repeated scanning; `_defining_candidates` is ~1.0s of Check 7's ~1.47s.
-      - The fix belongs INSIDE [`resolve_symbol.py`](../../scripts/todo-graph/resolve_symbol.py) as a batched entry point that applies its OWN existing definition rule to a requested symbol SET in one per-file pass. A definition map built anywhere else is a second definition rule, which is exactly what §13 declined twice and what [`ref_resolution.py`](../../scripts/todo-graph/ref_resolution.py) exists to prevent.
-      - Needs a SCALING fixture (varying symbols x candidate files x file size), not another fixed functional one: the round-2 fix was accepted on a wall-clock number that could not see the growth shape.
-      - Sequenced AFTER §14 because §14 moves post-resolution classification behind the shared rule, which changes both the call population this batches and the surface a scaling fixture has to drive.
-- [ ] Bound the process-wide caches, or scope them to a walk
-      `_BASENAME_INDEX`, `_RESOLVE_MEMO`, `_EFFECTIVE_PATH_MEMO` and `_MENTION_INDEX` are plain dicts that retain every repo root, path, identifier set and `(path, symbol)` result until an explicit reset. One Check 7 walk leaves ~924 resolve pairs, ~998 effective paths and ~260 identifier sets resident.
-      - Harmless for the CLI callers (each lint invocation is a fresh interpreter that exits), so this is bounded-risk housekeeping, NOT a correctness gate. It matters only for a long-lived importer serving several worktrees -- which is why it was filed rather than fixed under §13.
-      - Whatever bound is chosen must not silently change a RESULT: an eviction that drops a memo has to recompute to the same answer, so the identity gate §14 builds is the regression net for this item.
-- [ ] Commit: `"todo-graph: batch the definition rule per candidate file and bound the resolver caches"`
+- [x] Cut the shared rule's cost at the hot path the MEASUREMENT found -- the batched-lookup premise this item was filed on did not survive profiling
+      The item assumed per-symbol candidate rescanning was the cost. It is not: `candidate_lines` is **0.071s of a ~1.5s walk (~5%)**, because `str.find` runs at C speed -- the "65 MB of repeated scanning" is real in bytes and ~70ms in time. The ~1.0s under `_defining_candidates` is definition CONFIRMATION, not discovery.
+      - The real hot path was [`_iter_code_chars`](../../scripts/todo-graph/resolve_symbol.py): **1,308,110 characters yielded and 2.19M list appends in one walk (0.649s)**, so that three brace counters could test each character against `{` and `}`. Fixed by giving `_scan_line`/`_iter_code_chars` a `wanted` output filter and passing `_BRACES` / `_PARENS_BRACES` at the three body-walk call sites. The lexer state machine is UNCHANGED -- comment, literal and splice handling still see every character -- so what counts as code cannot shift; only materialization narrows.
+      - `_confirm_definition` is deliberately NOT filtered: it inspects every character (`isspace` / `isalnum` / a catch-all reject branch), so narrowing it would change what it rejects. That is why `wanted` is a per-caller argument rather than a global.
+      - MEASURED after: **5.09M -> 2.54M function calls, 1.67M -> 0.40M list appends, 1263ms -> 1177ms median (6.8%)** over 7 interleaved runs against the pre-change tree, with `corpus_resolution_snapshot.py compare` reporting 0 dropped / 0 lost / 0 moved / 0 reclassified across all 1,626 refs. The call-count drop is the durable number; the wall-clock ratio held at 6-7% across separately-loaded hosts.
+      - BATCHING WAS BUILT, MEASURED AND REMOVED -- recorded so it is not re-litigated. A `resolve_symbols(file, symbol_set)` entry point plus `candidate_lines_batch` was implemented behind the same `_resolve_from_candidates` rule and verified verdict-identical (720 real resolutions, 0 mismatches). It made Check 7 **SLOWER**: a tokenize-and-bucket pass costs more in Python than the C-speed `str.find` it replaces (2.9s), and a `\b`-anchored alternation still cost 2.1s against HEAD's 1.5s. Section symbol sets are large enough that the alternation itself dominates. The premise that discovery is the cost is what was wrong, so no implementation of it could pay.
+      - Sequenced AFTER §14 as planned: §14's whole-population identity gate is what made a rewrite of the shared rule's hot path provable rather than plausible.
+- [x] Bound the process-wide caches by WHAT PINS THEM, which splits them into two lifecycles rather than one bound
+      The item assumed one policy for all four dicts. A Codex design round showed that is unsafe: `_BASENAME_INDEX` and `_EFFECTIVE_PATH_MEMO` answer from directory TOPOLOGY (which files exist, whether a basename is unique) and nothing pins that, so an LRU eviction mid-walk can recompute against a changed tree and give a late ref a different verdict than an early one -- the exact silent RESULT change this item forbids.
+      - Those two are therefore WALK-SCOPED: unbounded inside one walk so every ref sees one topology snapshot, released at the boundary by `clear_caches()` or the new `walk_scope()` context manager. Memory is bounded by the walk rather than by a capacity that would have to trade consistency for it.
+      - `_RESOLVE_MEMO`, `_MENTION_INDEX`, `_RAW_TEXT` and `_CODE_TEXT` store `(lines object, value)` and revalidate by identity on every read, so an eviction can only cost a recompute of the same answer. Those are LRU-bounded (`_Lru`, capacities 512/8192 sized against the measured ~924 / ~998 / ~260 working set, so an ordinary walk never evicts).
+      - `_END_TO_END` LOOKS content-bound and is not: a miss or a followed-header answer also depends on `follow_declaration`'s live `src/**/<basename>.c` glob, which no lines object pins. It was bounded in the first draft and the adversarial round caught it -- creating a sibling can turn zero matches into one without invalidating any entry, which is only tolerable while the whole walk shares one snapshot. Walk-scoped with the other two.
+      - Both gates now ENTER the lifecycle (`with _rr.walk_scope():` around `_walk` and `collect`). The first draft shipped the context manager as an API no production caller used, so the release-at-boundary property it advertised was not actually realized -- also an adversarial finding.
+      - Still housekeeping, not a correctness gate, exactly as filed -- each lint invocation is a fresh interpreter. The value is that an in-process importer now has a boundary at all.
+- [x] Commit: `"todo-graph: cut the shared rule's hot path and split the cache lifecycles"`
 
-**Test checkpoint:** a scaling fixture in [`scripts/todo-graph/tests/test_build.sh`](../../scripts/todo-graph/tests/test_build.sh) that fails on a per-symbol-rescan growth shape; `corpus_resolution_snapshot.py compare` clean against §14's baseline (the batched rule must change no verdict); `bash scripts/lint.sh` Check 7 unchanged at its recorded floor; `bash scripts/test-tooling.sh` green.
+**Test checkpoint:** MET. `test_build.sh` 211/211 (adds 15a scaling-shape + 15b cache-lifecycle fixtures); `corpus_resolution_snapshot.py compare` clean against §14's baseline (0 dropped / lost / moved / reclassified over 1,626 refs); Check 7 `resolved=474/1626` unchanged; `bash scripts/test-tooling.sh` 1287/1287.
+
+> **Test runner:** `bash scripts/todo-graph/tests/test_build.sh` -- expect `211/211 passed, 0 failed`. Also `bash scripts/test-tooling.sh` (1287/1287) and `bash scripts/lint.sh` reporting Check 7 `resolved=474/1626` with no ERROR lines.
 
 -> XREF: [`TODO-06 §14`](#14-identity-gate-over-the-whole-symbol-ref-population) -- the split parent; owns the gate this section's changes must leave verdict-identical, and must land first.
--> XREF: [`TODO-06 §13`](#13-stored-ref-repair-unpaired-symbols-and-bare-filenames) -- whose round-3 perf review measured the repeated per-symbol scanning that item 1 removes.
+-> XREF: [`TODO-06 §13`](#13-stored-ref-repair-unpaired-symbols-and-bare-filenames) -- whose round-3 perf review measured the per-symbol scanning this section profiled and found to be ~5% of the walk, not its cost.
+
+> **Notes:**
+> - Shipped a `wanted` output filter on `_scan_line`/`_iter_code_chars` plus `_BRACES`/`_PARENS_BRACES` at the three body-walk call sites; the lexer state machine is untouched, so only materialization narrows.
+> - Split `ref_resolution`'s caches by what pins them: topology-derived ones walk-scoped behind `walk_scope()`, content-bound ones LRU-bounded via `_Lru`.
+> - Added `SectionScope`/`section_scope()` as the ONE shared per-section constructor, replacing the `_needs` + `section_candidate_files` preamble both callers had copied.
+> - Measured: 5.09M -> 2.54M calls and 1574ms -> 1477ms median, verdict-identical across all 1,626 refs by the §14 identity gate.
+> - The filed premise (per-symbol rescanning is the cost) was refuted by profiling; the batched entry point was built, measured slower, and removed rather than shipped to satisfy the wording.
+> - Scope boundary: does NOT wire the identity gate into anything (§16 owns that) and does not change any resolution verdict.
 
 ---
 
@@ -754,27 +769,28 @@ Split out of §14 at authoring time, not spawned by a review round. §14 proves 
 
 ## OS Comparison
 
-| ⭐  | Feature                                           | 🪟 Win11                | 🐧 Linux                           | 🚀 Impossible OS                                                     |
-| --- | ------------------------------------------------- | ----------------------- | ---------------------------------- | -------------------------------------------------------------------- |
-| 💎  | Structured ownership metadata                     | ⚠️ CODEOWNERS           | ✅ MAINTAINERS + get_maintainer.pl | ✅ §1 frontmatter on 223/223 TODOs (§5)                              |
-| ⭐  | Cross-file dependency graph                       | ❌ Project boards (DB)  | ❌ Ad hoc cover letters            | ✅ §2 generator + JSON cache (0.4s)                                  |
-| ⭐  | Stale-XREF / cycle validator                      | ❌ None                 | ❌ None                            | ✅ §3 validator (8 checks, incl duplicate-id)                        |
-| ⭐  | "Ready to work" / backlinks queries               | ❌ Manual board filters | ❌ None in-tree                    | ✅ §4 query CLI (12 subcommands)                                     |
-| 💎  | CI gate on dep-graph integrity                    | ⚠️ Per repo             | ❌ Rare                            | ✅ §6 GHA workflow + --diff + auto-rewrite hook                      |
-| ⭐  | Canonical-markdown + derived-cache invariant      | ❌ DB-first             | ❌ Flat MAINTAINERS                | ✅ §1-§2 mirrors settings.json pattern                               |
-| 💎  | Editor-time frontmatter validation                | ❌ None                 | ⚠️ Hugo/Jekyll JSON Schema         | ⚠️ §1 sidecar; §6 CI is the gate                                     |
-| ⭐  | Mermaid/dot graph render                          | ❌ Manual board views   | ❌ None in-tree                    | ✅ §7 render CLI (5 formats) + docs/infrastructure/todo-graph.md     |
-| ⭐  | Critical-path / "most-blocking" rank              | ⚠️ TaskJuggler external | ⚠️ TaskJuggler external            | ✅ §4 `blocking` subcommand                                          |
-| ⭐  | Stale-TODO / git-aware tracking                   | ❌ Manual board filters | ❌ None in-tree                    | ✅ §1 git timestamps + §4 `stale`                                    |
-| ⭐  | Source-file backlinks (`code <id>`)               | ❌ Manual board links   | ⚠️ MAINTAINERS `F:` (people)       | ✅ §1 `file_patterns` + §4 `code <id>`                               |
-| ⭐  | AI-agent MCP / autocomplete surface               | ❌ Closed               | ❌ None                            | ✅ §8 MCP server (12 read-only tools)                                |
-| 💎  | Per-item stamped_items / stub-behind-stamp lint   | ❌ None                 | ❌ None                            | ✅ §9 stamped_items cache + lint Check 7 live                        |
-| 💎  | Split function-head resolution, no LSP required   | ❌ None                 | ❌ None                            | ✅ §10 two-pass stdlib resolver + corpus mapping gate                |
-| 💎  | Lint reports its own blind spot as a ratio        | ❌ None                 | ❌ None                            | ✅ §11 every ref bucketed; buckets must sum or no ratio is published |
-| 💎  | Resolver follows a header declaration to its impl | ❌ None                 | ❌ None                            | ✅ §12 basename-unique, non-static, linkage-checked; +54 resolved    |
-| 💎  | Stamped ref repaired against the tree, not stored | ❌ None                 | ❌ None                            | ✅ §13 basename + section-scope repair at resolution time            |
-| 💎  | Identity gate verdicts the WHOLE ref population   | ❌ None                 | ❌ None                            | ✅ §14 all 1,626 refs, bucket-for-bucket equal to the lint's own     |
-| 💎  | Reclassification distinguished from lost coverage | ❌ None                 | ❌ None                            | ✅ §14 dropped/lost/moved/changed fail; gained/added pass            |
+| ⭐  | Feature                                           | 🪟 Win11                | 🐧 Linux                           | 🚀 Impossible OS                                                              |
+| --- | ------------------------------------------------- | ----------------------- | ---------------------------------- | ----------------------------------------------------------------------------- |
+| 💎  | Structured ownership metadata                     | ⚠️ CODEOWNERS           | ✅ MAINTAINERS + get_maintainer.pl | ✅ §1 frontmatter on 223/223 TODOs (§5)                                       |
+| ⭐  | Cross-file dependency graph                       | ❌ Project boards (DB)  | ❌ Ad hoc cover letters            | ✅ §2 generator + JSON cache (0.4s)                                           |
+| ⭐  | Stale-XREF / cycle validator                      | ❌ None                 | ❌ None                            | ✅ §3 validator (8 checks, incl duplicate-id)                                 |
+| ⭐  | "Ready to work" / backlinks queries               | ❌ Manual board filters | ❌ None in-tree                    | ✅ §4 query CLI (12 subcommands)                                              |
+| 💎  | CI gate on dep-graph integrity                    | ⚠️ Per repo             | ❌ Rare                            | ✅ §6 GHA workflow + --diff + auto-rewrite hook                               |
+| ⭐  | Canonical-markdown + derived-cache invariant      | ❌ DB-first             | ❌ Flat MAINTAINERS                | ✅ §1-§2 mirrors settings.json pattern                                        |
+| 💎  | Editor-time frontmatter validation                | ❌ None                 | ⚠️ Hugo/Jekyll JSON Schema         | ⚠️ §1 sidecar; §6 CI is the gate                                              |
+| ⭐  | Mermaid/dot graph render                          | ❌ Manual board views   | ❌ None in-tree                    | ✅ §7 render CLI (5 formats) + docs/infrastructure/todo-graph.md              |
+| ⭐  | Critical-path / "most-blocking" rank              | ⚠️ TaskJuggler external | ⚠️ TaskJuggler external            | ✅ §4 `blocking` subcommand                                                   |
+| ⭐  | Stale-TODO / git-aware tracking                   | ❌ Manual board filters | ❌ None in-tree                    | ✅ §1 git timestamps + §4 `stale`                                             |
+| ⭐  | Source-file backlinks (`code <id>`)               | ❌ Manual board links   | ⚠️ MAINTAINERS `F:` (people)       | ✅ §1 `file_patterns` + §4 `code <id>`                                        |
+| ⭐  | AI-agent MCP / autocomplete surface               | ❌ Closed               | ❌ None                            | ✅ §8 MCP server (12 read-only tools)                                         |
+| 💎  | Per-item stamped_items / stub-behind-stamp lint   | ❌ None                 | ❌ None                            | ✅ §9 stamped_items cache + lint Check 7 live                                 |
+| 💎  | Split function-head resolution, no LSP required   | ❌ None                 | ❌ None                            | ✅ §10 two-pass stdlib resolver + corpus mapping gate                         |
+| 💎  | Lint reports its own blind spot as a ratio        | ❌ None                 | ❌ None                            | ✅ §11 every ref bucketed; buckets must sum or no ratio is published          |
+| 💎  | Resolver follows a header declaration to its impl | ❌ None                 | ❌ None                            | ✅ §12 basename-unique, non-static, linkage-checked; +54 resolved             |
+| 💎  | Stamped ref repaired against the tree, not stored | ❌ None                 | ❌ None                            | ✅ §13 basename + section-scope repair at resolution time                     |
+| 💎  | Identity gate verdicts the WHOLE ref population   | ❌ None                 | ❌ None                            | ✅ §14 all 1,626 refs, bucket-for-bucket equal to the lint's own              |
+| 💎  | Reclassification distinguished from lost coverage | ❌ None                 | ❌ None                            | ✅ §14 dropped/lost/moved/changed fail; gained/added pass                     |
+| ⭐  | Resolver cache lifecycle split by what pins it    | ❌ None                 | ⚠️ ctags/cscope rebuild wholesale  | ✅ §15 topology walk-scoped, content-bound LRU; eviction can't move a verdict |
 
 > **After §1-§3:** Impossible OS has full Linux-parity ownership metadata plus the dep-graph that neither OS ships, plus automated cross-file XREF integrity checks AND a CI-gated JSON Schema sidecar (consumed by `remark-lint-frontmatter-schema`; no Linux equivalent for project plans). Editor-time diagnostics are best-effort developer convenience via `markdown-yaml-embedded-langservers`; the §6 CI gate is the authoritative line of defense.
 > **After §4-§6:** "what should I work on next?" + "what's most-blocking?" + "what's been stale for 90 days?" are one-command queries, and graph drift is caught at PR time instead of at next-reviewer-sweep time, with `--diff` surfacing graph regressions per-PR. The canonical-markdown / derived-cache invariant matches the existing [Hook Routing Matrix](../../docs/infrastructure/ai-system.md#hook-routing-matrix) architecture, so contributors already understand the mental model.

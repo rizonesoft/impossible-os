@@ -227,23 +227,20 @@ def collect() -> dict:
         by_section = {}
         for it in items:
             by_section.setdefault(it.get("section_n"), []).append(it)
-        # LAZY: only a section that actually holds an unpaired symbol can
-        # use candidates, and 357 of the corpus's 830 sections do. Building
-        # them eagerly canonicalized paths for the other 473 for nothing
-        # (Codex perf, post-commit).
-        _needs = {
-            it.get("section_n") for it in items
-            for r in (it.get("refs") or [])
-            if r.get("kind") == "symbol" and not r.get("file")
-        }
-        sec_files = {
-            sec: _rr.section_candidate_files(sec_items, root)
-            for sec, sec_items in by_section.items() if sec in _needs
+        # LAZY, and the laziness now lives INSIDE the scope rather than in a
+        # `_needs` set copied into both callers: only a section that actually
+        # holds an unpaired symbol builds candidates, and 357 of the corpus's
+        # 830 sections do (Codex perf, post-commit). The scope also carries the
+        # section's batched per-file definition map, which is what keeps the
+        # pairing's cost proportional to files rather than files x symbols.
+        sec_scopes = {
+            sec: _rr.section_scope(sec_items, root)
+            for sec, sec_items in by_section.items()
         }
         for it in items:
             sec = it.get("section_n", "?")
             idx = it.get("item_idx", "?")
-            section_files = sec_files.get(it.get("section_n"), ())
+            scope = sec_scopes.get(it.get("section_n")) or _rr.EMPTY_SCOPE
             for ref_i, ref in enumerate(it.get("refs") or []):
                 if ref.get("kind") != "symbol":
                     continue
@@ -259,7 +256,7 @@ def collect() -> dict:
                 # each caller ran its own direct-resolve -> follow_declaration
                 # sequence, so a fallback added to one and not the other
                 # recreated the defect exactly (Codex design review, section 14).
-                result = _rr.resolve_ref(ref, section_files, root)
+                result = _rr.resolve_ref(ref, scope, root)
                 # AUTHORED spelling, with an explicit sentinel when the TODO
                 # names none -- see the key rationale in the docstring. `-` is
                 # not ambiguous with a real value: a ref's stored file is either
@@ -299,7 +296,11 @@ def main(argv) -> int:
         return 2
 
     try:
-        now = collect()
+        # ONE WALK, ONE CACHE LIFETIME -- see the same wrapping in
+        # check_stub_behind_stamp.main. Both gates must share the lifecycle for
+        # the same reason they share the resolution rule.
+        with _rr.walk_scope():
+            now = collect()
     except CacheError as exc:
         # Exit 3 == INFRASTRUCTURE, deliberately distinct from 0 (pass) and
         # 1 (regression). A caller must never read "the gate could not run" as
