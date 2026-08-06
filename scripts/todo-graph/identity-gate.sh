@@ -64,13 +64,28 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 # gate early-exits. The closure must be COMPLETE or the early exit becomes the
 # hole: a change to any file that can alter a verdict but is missing from this
 # list would skip the walk entirely (Codex design review, section 16).
-# NOTE WHAT IS ABSENT: scripts/lint/check_stub_behind_stamp.py. It shares the
-# resolution rule, so listing it LOOKS right -- but both walks execute
-# corpus_resolution_snapshot.py and nothing else, so a change to the lint
-# consumer would mark the closure changed, produce two identical snapshots, and
-# exit 0 having adjudicated none of it. Listing it would advertise coverage
-# this gate does not provide, which is worse than the gap itself (Codex
-# adversarial round 2, section 16). The consumer differential is section 18's.
+# THIS IS A "MUST THE GATE RUN?" TRIGGER LIST, NOT A "WHAT IS DIFFERENTIALLY
+# COVERED?" LIST. The two are not the same and conflating them advertises
+# coverage that does not exist (Codex consistency, section 16). Membership is
+# decided by whether a change can alter a verdict, and the entries fall into
+# two kinds:
+#
+#   DIFFERENTIALLY EXECUTED -- base and head versions both run, so a behaviour
+#   change between them IS what the comparison measures:
+#       corpus_resolution_snapshot.py, ref_resolution.py, resolve_symbol.py
+#
+#   AFFECTS THE COMPARISON BUT IS NOT ITSELF DIFFERENTIALLED -- only the head
+#   version ever runs, so a change forces the walk (conservative, never a false
+#   pass) while this gate proves nothing about the change itself:
+#       build.py          produces the ONE cache both walks read, so a change
+#                         moves the shared input under both sides equally --
+#                         which is exactly the blind spot section 18 owns.
+#       identity-gate.sh  is the driver; a change to it must re-run the gate.
+#
+# Contrast scripts/lint/check_stub_behind_stamp.py, which is deliberately
+# ABSENT: it is neither executed by the walks nor an input to them, so listing
+# it would force a walk that adjudicates nothing about it. That is the same
+# false-coverage test applied consistently, not a different rule.
 CLOSURE=(
     "scripts/todo-graph/corpus_resolution_snapshot.py"
     "scripts/todo-graph/ref_resolution.py"
@@ -202,21 +217,42 @@ git worktree add --detach "$BASE_TREE" "$BASE_SHA" >/dev/null 2>&1 \
 # (Codex design review, section 16).
 # ---------------------------------------------------------------------------
 proto_of() {  # $1 = tree root
+    # EVALUATE the constants, never scrape their source text. The first cut
+    # regex-captured the RHS of `ALL_BUCKETS` -- which is literally
+    # `PRE_RESOLUTION_BUCKETS + POST_RESOLUTION_BUCKETS` and NEVER changes when
+    # a bucket NAME does, so the protocol check compared a constant string to
+    # itself and the fail-closed branch could not fire. The same regex also
+    # swept up any comment line following the assignment, so an unrelated
+    # comment edit read as a protocol change and wedged the gate (Codex
+    # adversarial, section 16). Importing in a throwaway process per tree gives
+    # the real ordered tuple and is immune to both.
     python3 - "$1" <<'PY' 2>/dev/null || echo UNREADABLE
-import re, sys, pathlib
+import importlib.util, json, sys, pathlib
 root = pathlib.Path(sys.argv[1])
-out = []
-snap = (root / "scripts/todo-graph/corpus_resolution_snapshot.py")
-m = re.search(r"^SNAPSHOT_SCHEMA\s*=\s*(\d+)", snap.read_text(encoding="utf-8"), re.M) \
-    if snap.is_file() else None
-out.append(m.group(1) if m else "?")
-rr = (root / "scripts/todo-graph/ref_resolution.py")
-if rr.is_file():
-    b = re.search(r"^ALL_BUCKETS\s*=\s*([^\n]*(?:\n(?!\w)[^\n]*)*)", rr.read_text(encoding="utf-8"), re.M)
-    out.append(re.sub(r"\s+", "", b.group(1)) if b else "?")
-else:
-    out.append("?")
-print("|".join(out))
+tg = root / "scripts/todo-graph"
+sys.path.insert(0, str(tg))
+
+
+def _load(name):
+    spec = importlib.util.spec_from_file_location(name, tg / (name + ".py"))
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+try:
+    schema = _load("corpus_resolution_snapshot").SNAPSHOT_SCHEMA
+    buckets = _load("ref_resolution").ALL_BUCKETS
+except Exception:
+    print("UNREADABLE")
+    raise SystemExit(0)
+if not isinstance(schema, int) or not isinstance(buckets, (list, tuple)):
+    print("UNREADABLE")
+    raise SystemExit(0)
+# ORDER-SENSITIVE: the bucket tuple is a published contract, so a reorder is a
+# protocol change even when the membership is identical.
+print("%d|%s" % (schema, json.dumps(list(buckets))))
 PY
 }
 BASE_PROTO="$(proto_of "$BASE_TREE")"
@@ -299,7 +335,19 @@ case "$CMP_RC" in
         printf '[identity-gate] Ground-truth each line above by hand. This gate has deliberately no self-serve override: an approval token the committer can mint is not approval.\n' >&2
         exit 1
         ;;
+    2)
+        # rc 2 is the snapshot tool's USAGE error, which here can only mean
+        # this driver invoked it wrongly. Folding it into the generic
+        # infrastructure bucket made a driver bug indistinguishable from a
+        # cache/worktree/resolver failure, against the very non-collapsing
+        # contract this gate advertises (Codex consistency, section 16). Still
+        # fatal -- but say which thing broke.
+        die_infra "the snapshot tool rejected this driver's own invocation (rc=2, usage). This is a bug in identity-gate.sh, not in the tree under test."
+        ;;
+    3)
+        die_infra "compare could not complete its walk (rc=3, infrastructure: cache, baseline or resolver input)"
+        ;;
     *)
-        die_infra "compare could not produce a verdict (rc=$CMP_RC)"
+        die_infra "compare exited with an undocumented status (rc=$CMP_RC)"
         ;;
 esac

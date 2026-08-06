@@ -31,7 +31,10 @@
 #   1  compare: at least one prior VERDICT changed for the worse -- any of
 #      DROPPED (the occurrence is gone), LOST (it no longer resolves), MOVED
 #      (different coordinates) or CHANGED (a different unresolved bucket). All
-#      four are real regressions; GAINED and ADDED are not and exit 0.
+#      four are real regressions. GAINED and ADDED are not, and exit 0 --
+#      EXCEPT under --strict, where both also return 1. Stating that here
+#      unqualified contradicted the --strict line above and the code (Codex
+#      consistency, section 16).
 #   2  usage error (wrong argv shape)
 #   3  INFRASTRUCTURE failure -- the walk could not complete at all, so the
 #      exit code above is NOT a verdict on regression: an invalid/missing/
@@ -126,6 +129,25 @@ def _load_nodes() -> list:
             if not isinstance(it, dict):
                 raise CacheError(
                     f"cache node {i} item {j} is not an object: {p}")
+            # ITEM-LEVEL SCALARS TOO, for the same reason the ref scalars are
+            # checked below. `collect()` uses `section_n` as a DICT KEY
+            # (`by_section.setdefault`), so a list- or dict-valued one is
+            # unhashable and raises TypeError from inside the walk -- uncaught,
+            # so the process exits 1, which is this tool's DOCUMENTED code for
+            # "a prior verdict changed". A malformed cache would therefore be
+            # reported to the section 16 gate as a resolver REGRESSION rather
+            # than as the infrastructure failure the header promises (Codex
+            # consistency, section 16).
+            for field in ("section_n", "item_idx"):
+                v = it.get(field)
+                if v is not None and not isinstance(v, (str, int, float)):
+                    raise CacheError(
+                        f"cache node {i} item {j} `{field}` is "
+                        f"{type(v).__name__}, expected a scalar: {p}")
+                if isinstance(v, bool):
+                    raise CacheError(
+                        f"cache node {i} item {j} `{field}` is a bool, "
+                        f"expected a scalar: {p}")
             refs = it.get("refs")
             if refs is None:
                 continue

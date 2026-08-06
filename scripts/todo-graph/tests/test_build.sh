@@ -5427,7 +5427,12 @@ GATE_IN_CLONE="$GATE_REPO/scripts/todo-graph/identity-gate.sh"
 gate_seed() {
     # Returns 0 if a usable fixture clone was built, 1 otherwise.
     rm -rf "$GATE_REPO" 2>/dev/null || true
-    git clone --quiet --local --no-hardlinks "$REPO_ROOT" "$GATE_REPO" \
+    # HARDLINKED local clone. `--no-hardlinks` forced a physical copy of the
+    # whole object store -- ~212 MiB in this checkout -- on every tooling run
+    # (Codex perf, section 16). Hardlinks are safe here: git never rewrites an
+    # existing object, the fixture only ADDS commits, and removing the clone
+    # cannot affect the source through a hardlink.
+    git clone --quiet --local "$REPO_ROOT" "$GATE_REPO" \
         >/dev/null 2>&1 || return 1
     (
         cd "$GATE_REPO" || exit 1
@@ -5616,6 +5621,85 @@ else
         t_pass "identity gate: the DRIVER passes --strict (a pure GAINED fails it)"
     else
         t_fail "identity gate: driver did not reject a pure GAINED (rc=$G_RC; see $TMP_DIR/gate-22h.log)"
+    fi
+
+    # 22j / 22k: THE PROTOCOL CHECK MUST TRACK BUCKET VALUES, NOT THEIR SOURCE
+    # TEXT. `ALL_BUCKETS` is spelled `PRE_RESOLUTION_BUCKETS +
+    # POST_RESOLUTION_BUCKETS`, so a regex over its RHS is invariant under a
+    # bucket RENAME -- the fail-closed branch could never fire -- while it DID
+    # capture a comment line following the assignment, so unrelated prose
+    # wedged the gate. Both directions get a fixture (Codex adversarial, s16).
+    (cd "$GATE_REPO" && git checkout --quiet -- scripts/todo-graph/ref_resolution.py 2>/dev/null)
+    G_PROTO_BASE="$(cd "$GATE_REPO" && git rev-parse HEAD)"
+
+    # 22j: a bucket the corpus never exercises still changes the protocol.
+    (
+        cd "$GATE_REPO" || exit 1
+        python3 - scripts/todo-graph/ref_resolution.py <<'PY'
+import sys, pathlib
+p = pathlib.Path(sys.argv[1]); s = p.read_text(encoding="utf-8")
+old = 'POST_RESOLUTION_BUCKETS = ("unresolved_calllike", "no_calllike_token")'
+assert old in s, "bucket tuple not found"
+p.write_text(s.replace(old, old[:-1] + ', "never_used_by_any_ref")', 1), encoding="utf-8")
+PY
+        git commit --quiet --no-verify -am "22j: add an unused bucket" >/dev/null 2>&1
+    )
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head HEAD \
+        >"$TMP_DIR/gate-22j.log" 2>&1)
+    G_RC=$?
+    if [ "$G_RC" -eq 3 ] && grep -q 'ALL_BUCKETS' "$TMP_DIR/gate-22j.log"; then
+        t_pass "identity gate: a bucket change fails closed even if no ref uses it"
+    else
+        t_fail "identity gate: bucket change did not fail closed (rc=$G_RC; see $TMP_DIR/gate-22j.log)"
+    fi
+
+    # 22k: a comment beside the assignment is NOT a protocol change. This is
+    # the false-positive direction -- without it, a fix for 22j that simply
+    # hashes more source text would pass 22j and silently wedge the gate.
+    (
+        cd "$GATE_REPO" || exit 1
+        git checkout --quiet "$G_PROTO_BASE" -- scripts/todo-graph/ref_resolution.py
+        python3 - scripts/todo-graph/ref_resolution.py <<'PY'
+import sys, pathlib
+p = pathlib.Path(sys.argv[1]); s = p.read_text(encoding="utf-8")
+anchor = "ALL_BUCKETS = PRE_RESOLUTION_BUCKETS + POST_RESOLUTION_BUCKETS"
+assert anchor in s, "ALL_BUCKETS assignment not found"
+p.write_text(s.replace(anchor, anchor + "\n# 22k: an adjacent comment, no behaviour change", 1), encoding="utf-8")
+PY
+        git commit --quiet --no-verify -am "22k: comment beside ALL_BUCKETS" >/dev/null 2>&1
+    )
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head HEAD \
+        >"$TMP_DIR/gate-22k.log" 2>&1)
+    G_RC=$?
+    if [ "$G_RC" -eq 0 ]; then
+        t_pass "identity gate: a comment beside ALL_BUCKETS is not a protocol change"
+    else
+        t_fail "identity gate: adjacent comment wedged the gate (rc=$G_RC; see $TMP_DIR/gate-22k.log)"
+    fi
+    (cd "$GATE_REPO" && git checkout --quiet "$G_PROTO_BASE" -- scripts/todo-graph/ref_resolution.py \
+        && git commit --quiet --no-verify -am "restore resolver after protocol fixtures" >/dev/null 2>&1)
+
+    # 22i: A MALFORMED CACHE MUST BE rc 3, NOT rc 1. `collect()` uses
+    # `section_n` as a dict key, so a list-valued one is unhashable and raised
+    # an uncaught TypeError -- python exits 1, which is this tool's DOCUMENTED
+    # code for "a prior verdict changed", so the gate would report a malformed
+    # cache to CI as a resolver REGRESSION (Codex consistency, section 16).
+    python3 - "$TMP_DIR/bad-cache.json" <<'PY'
+import json, sys
+json.dump([{"file_path": "todo/x.md",
+            "stamped_items": [{"section_n": ["not", "hashable"], "item_idx": 0,
+                               "refs": [{"kind": "symbol", "file": "a.c",
+                                         "symbol": "f"}]}]}],
+          open(sys.argv[1], "w"))
+PY
+    (cd "$GATE_REPO" && STUB_LINT_CACHE="$TMP_DIR/bad-cache.json" STUB_LINT_REPO_ROOT="$GATE_REPO" \
+        python3 scripts/todo-graph/corpus_resolution_snapshot.py write "$TMP_DIR/nope2.json" \
+        >"$TMP_DIR/gate-22i.log" 2>&1)
+    G_RC=$?
+    if [ "$G_RC" -eq 3 ]; then
+        t_pass "identity gate: a malformed cache is rc 3, not rc 1 (regression)"
+    else
+        t_fail "identity gate: malformed cache exited $G_RC, expected 3 (see $TMP_DIR/gate-22i.log)"
     fi
 
     # 22f: --strict is what makes an unreviewed GAINED fail for a machine.
