@@ -3356,31 +3356,92 @@ snap_baseline_refuses() {  # <label> <baseline-json>
 }
 snap_baseline_refuses "that is empty" '{}'
 snap_baseline_refuses "in the legacy schema-less format" '{"a::b": null}'
-snap_baseline_refuses "with only null mappings" '{"schema":1,"refs":1,"mappings":{"a::b":null}}'
-snap_baseline_refuses "with a malformed mapping" '{"schema":1,"refs":1,"mappings":{"a::b":"x"}}'
+# EVERY element-validation fixture BELOW MUST DECLARE THE CURRENT SCHEMA.
+# They were written at schema 1 and kept passing after the section 14 bump --
+# but for the wrong reason: `compare` returns at the schema mismatch long
+# before reaching the element checks, so deleting the arity, path-type,
+# integer/range or truncation validation entirely would have left every one of
+# them green. A fixture that passes because an EARLIER guard fired is not
+# coverage of the guard it names (Codex test-coverage, section 14). The
+# schema-1 migration refusal keeps its own assertion in 14cc.
+snap_baseline_refuses "with only null mappings" '{"schema":2,"refs":1,"mappings":{"a::b":null}}'
+snap_baseline_refuses "with an unknown bucket string" '{"schema":2,"refs":1,"mappings":{"a::b":"x"}}'
 # An arity-only check let `[path, 411.0, 442.0]` through: three elements, and
 # floats compare EQUAL to the integer tuple in Python, so a malformed baseline
 # silently became authoritative (Codex re-adversarial).
 snap_baseline_refuses "with float line numbers" \
-    '{"schema":1,"refs":1,"mappings":{"a::b":["src/x.c",411.0,442.0]}}'
+    '{"schema":2,"refs":1,"mappings":{"a::b":["src/x.c",411.0,442.0]}}'
 snap_baseline_refuses "with a reversed line range" \
-    '{"schema":1,"refs":1,"mappings":{"a::b":["src/x.c",442,411]}}'
+    '{"schema":2,"refs":1,"mappings":{"a::b":["src/x.c",442,411]}}'
 snap_baseline_refuses "with a boolean line number" \
-    '{"schema":1,"refs":1,"mappings":{"a::b":["src/x.c",true,442]}}'
+    '{"schema":2,"refs":1,"mappings":{"a::b":["src/x.c",true,442]}}'
+snap_baseline_refuses "with a boolean END line number" \
+    '{"schema":2,"refs":1,"mappings":{"a::b":["src/x.c",411,true]}}'
+snap_baseline_refuses "with a zero start line" \
+    '{"schema":2,"refs":1,"mappings":{"a::b":["src/x.c",0,442]}}'
+snap_baseline_refuses "with a two-element mapping" \
+    '{"schema":2,"refs":1,"mappings":{"a::b":["src/x.c",411]}}'
+snap_baseline_refuses "with a non-string path" \
+    '{"schema":2,"refs":1,"mappings":{"a::b":[7,411,442]}}'
+snap_baseline_refuses "with an empty path" \
+    '{"schema":2,"refs":1,"mappings":{"a::b":["",411,442]}}'
 # TRUNCATION: a one-entry baseline used to compare clean, reporting the other 56
 # resolved mappings as ADDED and exiting 0. The declared population catches it.
 snap_baseline_refuses "that is truncated (declared count disagrees)" \
-    '{"schema":1,"refs":57,"mappings":{"a::b":["src/x.c",1,2]}}'
+    '{"schema":2,"refs":57,"mappings":{"a::b":["src/x.c",1,2]}}'
+# NOT valid JSON at all, and specifically NOT UTF-8: UnicodeDecodeError is a
+# ValueError rather than an OSError or JSONDecodeError, so the original except
+# tuple let it escape as a traceback and a bare exit 1 -- colliding with exit
+# 1's documented "a prior verdict changed" (Codex adversarial, section 14).
+#
+# ASSERTS THE MESSAGE, not just rc 3. `collect()` runs BEFORE the baseline is
+# read, so a fixture pointed at a missing cache also exits 3 -- with a
+# completely different diagnostic. An rc-only assertion would have passed here
+# while never once reaching the baseline reader it exists to test, which is the
+# same "green for the wrong reason" trap as the schema-1 fixtures above. Uses
+# the REAL cache, exactly as `snap_baseline_refuses` does.
+SNAP_BAD_UTF8="$TMP_DIR/snap-bad-utf8.json"
+printf '{"schema":2,"refs":1,"mappings":{"a::b":["src/\xff\xfe.c",1,2]}}' > "$SNAP_BAD_UTF8"
+SNAP_U_RC=0
+STUB_LINT_CACHE="$REPO_ROOT/build/todo-cache.json" STUB_LINT_REPO_ROOT="$REPO_ROOT" \
+    python3 "$SNAP" compare "$SNAP_BAD_UTF8" \
+    >/dev/null 2>"$TMP_DIR/snap-utf8.err" || SNAP_U_RC=$?
+if [ "$SNAP_U_RC" = "3" ] && grep -q "baseline unreadable" "$TMP_DIR/snap-utf8.err"; then
+    t_pass "corpus snapshot: invalid UTF-8 baseline is rc 3, not a traceback"
+else
+    t_fail "corpus snapshot: bad-UTF-8 baseline rc=$SNAP_U_RC (want 3)"
+fi
 
 snap_refuses "an empty node array" '[]'
 snap_refuses "a cache with no stamped_items" '[{"file_path":"todo/x.md"}]'
 snap_refuses "a non-list cache" '{"nodes":[]}'
 snap_refuses "a cache whose stamped_items are all empty" '[{"file_path":"a","stamped_items":[]}]'
+# MIXED shapes, node by node. The presence test is an `any(...)`, so ONE
+# well-formed node used to admit the whole array -- and `collect()` then called
+# `.get` on every node, item and ref, raising AttributeError from deep in the
+# walk. `main()` catches only CacheError and ResolverInputError, so that
+# escaped as a traceback and a bare exit 1, colliding with exit 1's documented
+# "a prior verdict changed" (Codex adversarial, section 14).
+snap_refuses "a cache with one good node and one junk node" \
+    '[{"file_path":"a","stamped_items":[{"section_n":1,"item_idx":0,"refs":[]}]},"junk"]'
+snap_refuses "a cache whose stamped_items is not a list" \
+    '[{"file_path":"a","stamped_items":{"x":1}},{"file_path":"b","stamped_items":[{"refs":[]}]}]'
+snap_refuses "a cache with a non-object stamped item" \
+    '[{"file_path":"a","stamped_items":[{"refs":[]},"junk"]}]'
+snap_refuses "a cache whose refs is not a list" \
+    '[{"file_path":"a","stamped_items":[{"section_n":1,"item_idx":0,"refs":"x"}]}]'
+snap_refuses "a cache with a non-object ref" \
+    '[{"file_path":"a","stamped_items":[{"section_n":1,"item_idx":0,"refs":[{"kind":"symbol","symbol":"s"},"junk"]}]}]'
 
 # 14z: a duplicate (file, symbol) occurrence must be tracked PER OCCURRENCE --
-# dropping one occurrence has to register as LOST. Deduping on (file, symbol)
-# hid exactly this: the surviving twin kept the key and the tuple, so `compare`
+# dropping one occurrence has to fail the gate. Deduping on (file, symbol) hid
+# exactly this: the surviving twin kept the key and the tuple, so `compare`
 # reported OK while a stamped reference had really gone.
+#
+# The class is DROPPED, not LOST, since section 14 split the old single verdict:
+# DROPPED is "this occurrence no longer exists in the corpus" and LOST is "it
+# still exists but no longer resolves". Both fail; naming them apart is what
+# tells a reader whether a TODO edit or a resolver change caused it.
 cat > "$SI_TREE/src/dup.c" <<'EOF'
 int dup_fn(void)
 {
@@ -3405,8 +3466,8 @@ snap_cache 1
 SNAP_OUT="$(STUB_LINT_CACHE="$SI_TREE/build/snap-cache.json" STUB_LINT_REPO_ROOT="$SI_TREE" STUB_LINT_ALLOW_NO_BASELINE=1 \
     python3 "$SNAP" compare "$SI_TREE/build/snap-base.json" 2>&1)"
 SNAP_RC=$?
-if [ "$SNAP_RC" = "1" ] && echo "$SNAP_OUT" | grep -q "LOST"; then
-    t_pass "corpus snapshot: a dropped duplicate occurrence registers as LOST"
+if [ "$SNAP_RC" = "1" ] && echo "$SNAP_OUT" | grep -q "DROPPED"; then
+    t_pass "corpus snapshot: a dropped duplicate occurrence registers as DROPPED"
 else
     t_fail "corpus snapshot: dropped duplicate not caught; rc=$SNAP_RC out=$SNAP_OUT"
 fi
@@ -4343,6 +4404,25 @@ int twin_fn(void)
     return 0;
 }
 EOF
+# POST-RESOLUTION buckets. Every other file here either resolves or fails
+# BEFORE resolution, so the fixture produced no `unresolved_calllike` /
+# `no_calllike_token` refs at all -- the two buckets section 13 actually moved
+# refs between, and therefore the pair a CHANGED assertion most needs. The file
+# is found and read; the symbol simply is not defined in it.
+cat > "$RR_TREE/src/calls_only.c" <<'EOF'
+void local_helper(void)
+{
+    absent_called_fn(1);
+}
+EOF
+cat > "$RR_TREE/src/mentions_only.c" <<'EOF'
+/* absent_named_fn is described here in prose, never called. */
+int absent_named_fn_marker = 0;
+
+void other_local(void)
+{
+}
+EOF
 
 rr_cache() {
     # rr_cache <out.json> -- writes the fixture cache. Hand-authored rather
@@ -4380,6 +4460,11 @@ items = [
     # sec 8: the section's only file ref is a BARE filename
     item(8, 0, [fil("bare_sec.c")]),
     item(8, 1, [sym("bare_sec_stub")]),
+    # sec 9/10: refs that REACH resolution and fail there -- the two
+    # post-resolution buckets. The named file exists and is read; the symbol is
+    # merely absent from it, called in one and only named in prose in the other.
+    item(9, 0, [sym("absent_called_fn", "src/calls_only.c")]),
+    item(10, 0, [sym("absent_named_fn", "src/mentions_only.c")]),
 ]
 json.dump([{"file_path": "todo/01-test/TODO-01-rr.md",
             "stamped_items": items}], open(sys.argv[1], "w"))
@@ -4643,15 +4728,317 @@ RR_SNAP="$(STUB_LINT_CACHE="$RR_TREE/build/rr-cache.json" STUB_LINT_REPO_ROOT="$
 if python3 - "$RR_TREE/build/rr-snap.json" <<'PY'
 import json, sys
 m = json.load(open(sys.argv[1]))["mappings"]
-got = {k.split("::")[-1]: (v[0] if v else None) for k, v in m.items()}
-assert got.get("bare_fn") == "src/deep/bare_only.c", f"bare_fn: {got.get('bare_fn')}"
-assert got.get("pair_stub") == "src/paired.c", f"pair_stub: {got.get('pair_stub')}"
-assert "dup_fn" not in got and "twin_fn" not in got, f"guessed: {sorted(got)}"
+# A RESOLVED value is a list; an unresolved one is now a BUCKET STRING, so
+# `v[0] if v else None` would silently read the bucket's first CHARACTER.
+res = {k.split("::")[-1]: v[0] for k, v in m.items() if isinstance(v, list)}
+assert res.get("bare_fn") == "src/deep/bare_only.c", f"bare_fn: {res.get('bare_fn')}"
+assert res.get("pair_stub") == "src/paired.c", f"pair_stub: {res.get('pair_stub')}"
+# NEVER GUESSED -- but no longer ABSENT either. Under section 14 an ambiguous
+# ref carries a bucket verdict instead of vanishing from the population, which
+# is the whole point: a guess and a silence used to be indistinguishable here.
+assert "dup_fn" not in res and "twin_fn" not in res, f"guessed: {sorted(res)}"
+buckets = {k.split("::")[-1]: v for k, v in m.items() if isinstance(v, str)}
+assert buckets.get("dup_fn") == "missing_file", f"dup_fn: {buckets.get('dup_fn')}"
+assert buckets.get("twin_fn") == "unpaired_ref", f"twin_fn: {buckets.get('twin_fn')}"
 PY
 then
     t_pass "corpus snapshot: identity gate covers both stored-ref repairs"
 else
     t_fail "corpus snapshot: repairs invisible to the identity gate; $RR_SNAP"
+fi
+
+# ----------------------------------------------------------------------
+# Sub-tests 14aa-14ee: TODO-06 section 14 -- the identity gate must verdict the
+# WHOLE symbol-ref population, and every degradation of a prior verdict must
+# fail. Before this, collect() skipped any ref that did not reach resolution
+# and recorded a bare null for one that reached it and failed: 695 of the live
+# corpus's 1,625 occurrences had an entry, and section 13's own movements
+# between the two unresolved buckets (35 -> 132, 47 -> 89) were ungated.
+# ----------------------------------------------------------------------
+
+# 14aa: POPULATION EQUALITY BY CONSTRUCTION, cross-checked against Check 7's
+# own published counts rather than against a number written here. A snapshot
+# over a narrower population than the check walks omits exactly the mappings a
+# change added; a wider one is not a gate on the check at all.
+if python3 - "$RR_TREE/build/rr-snap.json" "$RR_ERR" <<'PY'
+import collections, json, re, sys
+m = json.load(open(sys.argv[1]))["mappings"]
+err = open(sys.argv[2], encoding="utf-8").read()
+cov = re.search(r"coverage resolved=(\d+)/(\d+)", err)
+assert cov, f"no coverage line in check 7 stderr: {err[:300]}"
+resolved, total = int(cov.group(1)), int(cov.group(2))
+assert len(m) == total, f"snapshot {len(m)} refs vs check 7 {total}"
+got = collections.Counter(v if isinstance(v, str) else "RESOLVED"
+                          for v in m.values())
+assert got["RESOLVED"] == resolved, f"resolved {got['RESOLVED']} vs {resolved}"
+# The bucket line is the reporting contract section 11 owns; pinning the
+# snapshot against it keeps the two from drifting apart silently.
+names = {"calllike-unresolved": "unresolved_calllike",
+         "no-calllike-token": "no_calllike_token",
+         "missing-file": "missing_file", "non-c-suffix": "unsupported_lang",
+         "path-escape": "path_escape", "unpaired-ref": "unpaired_ref"}
+line = [l for l in err.splitlines() if "buckets:" in l][0]
+for printed, key in names.items():
+    want = int(re.search(printed + r"=(\d+)", line).group(1))
+    assert got[key] == want, f"{key}: snapshot {got[key]} vs check 7 {want}"
+PY
+then
+    t_pass "corpus snapshot: population and buckets equal lint Check 7's exactly"
+else
+    t_fail "corpus snapshot: population diverges from Check 7; see $RR_ERR"
+fi
+
+# 14bb: every DEGRADATION of a prior verdict fails, and only the two shapes
+# that cannot hide a loss pass. CHANGED fails deliberately: exit status is the
+# only part of this tool an automated gate can read, so reporting a bucket
+# reclassification while exiting 0 would let a resolver defect that moved
+# hundreds of refs ship unattended (Codex design review, section 14).
+if RR_CMP="$(REPO_ROOT="$REPO_ROOT" RR_TREE="$RR_TREE" python3 - <<'PY' 2>&1
+import json, os, subprocess, sys, tempfile
+tree, repo = os.environ["RR_TREE"], os.environ["REPO_ROOT"]
+snap = json.load(open(tree + "/build/rr-snap.json"))
+m = snap["mappings"]
+a_res = next(k for k, v in m.items() if isinstance(v, list))
+a_buc = next(k for k, v in m.items() if isinstance(v, str))
+def run(doc):
+    f = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+    json.dump(doc, f); f.close()
+    env = dict(os.environ, STUB_LINT_CACHE=tree + "/build/rr-cache.json",
+               STUB_LINT_REPO_ROOT=tree)
+    r = subprocess.run([sys.executable,
+                        repo + "/scripts/todo-graph/corpus_resolution_snapshot.py",
+                        "compare", f.name], capture_output=True, text=True, env=env)
+    return r.returncode, r.stdout + r.stderr
+def mutate(fn):
+    d = json.loads(json.dumps(snap)); fn(d["mappings"])
+    d["refs"] = len(d["mappings"]); return d
+rc, out = run(snap)
+assert rc == 0, f"unchanged corpus must pass: rc={rc} {out[:300]}"
+cases = [
+    ("DROPPED", 1, lambda mm: mm.__setitem__("todo/x.md#9.9r9 g.c::gone",
+                                             ["src/g.c", 1, 2])),
+    ("LOST", 1, lambda mm: mm.__setitem__(a_buc, ["src/paired.c", 1, 2])),
+    ("MOVED", 1, lambda mm: mm.__setitem__(
+        a_res, [m[a_res][0], m[a_res][1] + 3, m[a_res][2] + 3])),
+    ("CHANGED", 1, lambda mm: mm.__setitem__(
+        a_buc, "no_calllike_token" if m[a_buc] != "no_calllike_token"
+        else "unpaired_ref")),
+    ("GAINED", 0, lambda mm: mm.__setitem__(a_res, "no_calllike_token")),
+]
+for label, want_rc, fn in cases:
+    rc, out = run(mutate(fn))
+    assert rc == want_rc, f"{label}: rc={rc} want {want_rc}\n{out[:400]}"
+    assert label in out, f"{label} not named in output:\n{out[:400]}"
+# ADDED: a key the baseline never had is not a regression.
+rc, out = run(mutate(lambda mm: mm.pop(a_res)))
+assert rc == 0 and "ADDED" in out, f"ADDED: rc={rc}\n{out[:300]}"
+# EVERY TRANSITION, BY NAME -- not just whichever bucket happens to sort first.
+# Picking `a_buc` exercised one cross-phase pair (post-resolution vs
+# missing_file) with this fixture's insertion order, so a suppression specific
+# to same-phase pairs -- unresolved_calllike vs no_calllike_token being the one
+# section 13 actually moved refs between -- would have passed (Codex
+# test-coverage, section 14).
+by_bucket = {}
+for k, v in m.items():
+    if isinstance(v, str):
+        by_bucket.setdefault(v, k)
+pairs = [("unresolved_calllike", "no_calllike_token"),
+         ("missing_file", "unpaired_ref")]
+for have, want in pairs:
+    k = by_bucket.get(have)
+    assert k is not None, f"fixture lost its {have} ref: {sorted(by_bucket)}"
+    rc, out = run(mutate(lambda mm, k=k, want=want: mm.__setitem__(k, want)))
+    assert rc == 1, f"{have}->{want}: rc={rc} want 1\n{out[:400]}"
+    assert "CHANGED" in out, f"{have}->{want} not reported:\n{out[:400]}"
+PY
+)"; then
+    t_pass "corpus snapshot: dropped/lost/moved/changed fail, gained/added pass"
+else
+    t_fail "corpus snapshot: verdict-degradation classes wrong; $RR_CMP"
+fi
+
+# 14ff: the END-TO-END memo must bind the DEFINITION file, not only the
+# declaring one. A followed declaration resolves in a sibling .c, so an entry
+# validated against the header alone returned cached coordinates for a file it
+# never re-read -- rewrite the .c mid-run and the header still looks unchanged,
+# so the walk answers with stale line numbers instead of raising
+# ResolverInputError. Found independently by BOTH review legs (section 14).
+if RR_SIB="$(REPO_ROOT="$REPO_ROOT" python3 - <<'PY' 2>&1
+import os, sys, tempfile
+sys.path.insert(0, os.environ["REPO_ROOT"] + "/scripts/todo-graph")
+import ref_resolution as rr, resolve_symbol as rs
+d = tempfile.mkdtemp(); os.makedirs(d + "/include"); os.makedirs(d + "/src")
+h = d + "/include/w.h"; c = d + "/src/w.c"
+open(h, "w").write("int wfn(void);\n")
+open(c, "w").write("int wfn(void)\n{\n    return 0;\n}\n")
+ref = {"kind": "symbol", "symbol": "wfn", "file": "include/w.h"}
+from pathlib import Path
+first = rr.resolve_ref(ref, (), Path(d))
+assert first.bucket is None, f"header ref did not follow to its sibling: {first}"
+assert first.def_rel == "src/w.c", first.def_rel
+# Rewrite ONLY the .c. The header is untouched, so a memo bound to the header
+# alone would hand back the pre-rewrite coordinates.
+open(c, "w").write("\n\n\nint wfn(void)\n{\n    return 0;\n}\n")
+try:
+    again = rr.resolve_ref(ref, (), Path(d))
+except rs.ResolverInputError:
+    pass          # drift surfaced loudly -- the correct answer
+else:
+    assert again.line_start != first.line_start, (
+        f"stale followed-definition coordinates served: {again.line_start}")
+PY
+)"; then
+    t_pass "ref_resolution: the end-to-end memo binds the followed sibling too"
+else
+    t_fail "ref_resolution: followed-definition cache not dependency-bound; $RR_SIB"
+fi
+
+# 14gg: the resolver's EXCEPTION contract, at each stage of the end-to-end
+# rule. The existing ResolverInputError fixture forces the FIRST file load to
+# fail, so it never reaches an error raised from the direct resolve, the
+# declaration fallback, or the call-like probe -- nor the guard that refuses a
+# definition resolving outside the repo root. A regression that buckets an
+# inner resolver failure would not have failed a named test (Codex
+# test-coverage, section 14).
+if RR_EXC="$(REPO_ROOT="$REPO_ROOT" python3 - <<'PY' 2>&1
+import os, sys, tempfile
+from pathlib import Path
+sys.path.insert(0, os.environ["REPO_ROOT"] + "/scripts/todo-graph")
+import ref_resolution as rr, resolve_symbol as rs
+
+d = tempfile.mkdtemp(); os.makedirs(d + "/src")
+p = d + "/src/e.c"
+open(p, "w").write("void only_calls(void) { target(1); }\n")
+ref = {"kind": "symbol", "symbol": "target", "file": "src/e.c"}
+
+# A ResolverInputError from ANY stage must PROPAGATE, never become a bucket,
+# and must not leave a partial entry behind for the next caller to trust.
+for stage in ("_resolve_memoized", "follow_declaration", "has_calllike_token"):
+    rr.clear_caches()
+    owner = rr if stage in ("_resolve_memoized", "has_calllike_token") else rs
+    orig = getattr(owner, stage)
+    def boom(*a, **k):
+        raise rs.ResolverInputError("injected at " + stage)
+    setattr(owner, stage, boom)
+    try:
+        rr.resolve_ref(ref, (), Path(d))
+    except rs.ResolverInputError:
+        pass
+    else:
+        raise AssertionError(f"{stage}: error was swallowed into a bucket")
+    finally:
+        setattr(owner, stage, orig)
+    assert not rr._END_TO_END, f"{stage}: partial answer cached: {rr._END_TO_END}"
+
+# A definition resolving OUTSIDE the repo root is refused, not recorded as a
+# path that differs per checkout and reads as a false MOVE.
+rr.clear_caches()
+outside = tempfile.mkdtemp() + "/far.c"
+open(outside, "w").write("int target(void)\n{\n    return 0;\n}\n")
+rr._resolve_end_to_end = lambda a, s, r: (outside, 1, 4)
+try:
+    rr.resolve_ref(ref, (), Path(d))
+except rs.ResolverInputError as exc:
+    assert "outside repo root" in str(exc), str(exc)
+else:
+    raise AssertionError("a definition outside the repo root was accepted")
+PY
+)"; then
+    t_pass "ref_resolution: resolver errors propagate at every stage, uncached"
+else
+    t_fail "ref_resolution: exception contract broken; $RR_EXC"
+fi
+
+# 14cc: a schema-1 baseline is REFUSED, not mis-compared. Under schema 1 an
+# unresolved ref was a null and a never-resolved one was absent, so reading one
+# here would report every newly-verdicted ref as an addition and every former
+# null as a bucket change -- noise around any real regression. rc 3 is the
+# INFRASTRUCTURE code: the gate could not run, which is not a pass.
+if RR_SCH="$(REPO_ROOT="$REPO_ROOT" RR_TREE="$RR_TREE" python3 - <<'PY' 2>&1
+import json, os, subprocess, sys, tempfile
+tree, repo = os.environ["RR_TREE"], os.environ["REPO_ROOT"]
+snap = json.load(open(tree + "/build/rr-snap.json"))
+env = dict(os.environ, STUB_LINT_CACHE=tree + "/build/rr-cache.json",
+           STUB_LINT_REPO_ROOT=tree)
+def run(doc):
+    f = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+    json.dump(doc, f); f.close()
+    r = subprocess.run([sys.executable,
+                        repo + "/scripts/todo-graph/corpus_resolution_snapshot.py",
+                        "compare", f.name], capture_output=True, text=True, env=env)
+    return r.returncode, r.stdout + r.stderr
+old = json.loads(json.dumps(snap)); old["schema"] = 1
+rc, out = run(old)
+assert rc == 3, f"schema-1 baseline: rc={rc} want 3\n{out[:300]}"
+assert "regenerate" in out, f"no regenerate pointer:\n{out[:300]}"
+# An unrecognised bucket string is malformed, not a novel value: accepting it
+# would leave a permanent CHANGED that no correct behaviour can ever clear.
+bad = json.loads(json.dumps(snap))
+k = next(k for k, v in bad["mappings"].items() if isinstance(v, str))
+bad["mappings"][k] = "typo_bucket"
+rc, out = run(bad)
+assert rc == 3 and "malformed" in out, f"bad bucket: rc={rc}\n{out[:300]}"
+PY
+)"; then
+    t_pass "corpus snapshot: old schema and unknown buckets are refused (rc 3)"
+else
+    t_fail "corpus snapshot: baseline migration not fail-closed; $RR_SCH"
+fi
+
+# 14dd: the moved call-like text caches are CONTENT-BOUND. As
+# `lru_cache(file_abs)` a cache HIT never re-entered `_load_file_lines`, which
+# is the only layer that re-stats a pinned file, so a file rewritten mid-walk
+# answered from pre-mutation text and produced a stale BUCKET instead of the
+# resolver's drift failure. Same defect `_mentions` fixed one level down.
+if RR_CB="$(REPO_ROOT="$REPO_ROOT" python3 - <<'PY' 2>&1
+import os, sys, tempfile
+sys.path.insert(0, os.environ["REPO_ROOT"] + "/scripts/todo-graph")
+import ref_resolution as rr, resolve_symbol as rs
+d = tempfile.mkdtemp(); p = os.path.join(d, "c.c")
+open(p, "w").write("void other(void) { }\n")
+assert not rr.has_calllike_token(p, "later_fn"), "pre-mutation call-like hit"
+open(p, "w").write("void other(void) { later_fn(1); }\n")
+try:
+    saw = rr.has_calllike_token(p, "later_fn")
+except rs.ResolverInputError:
+    saw = True   # drift surfaced loudly, the other legal answer
+assert saw, "stale code text hid a call-like token the file gained mid-run"
+# And the strip must still be PER FILE: the counter is what the 5.62x
+# regression was made of, so repeated symbols on one file must not rebuild it.
+rr.clear_caches()
+open(p, "w").write("void a(void) { x1(0); x2(0); x3(0); }\n")
+for s in ("x1", "x2", "x3", "x1"):
+    rr.has_calllike_token(p, s)
+assert rr._CODE_TEXT_BUILDS == 1, f"per-symbol strip: {rr._CODE_TEXT_BUILDS}"
+PY
+)"; then
+    t_pass "ref_resolution: call-like text is content-bound and stripped per file"
+else
+    t_fail "ref_resolution: call-like text caching broken; $RR_CB"
+fi
+
+# 14ee: ONE END-TO-END RULE. Both consumers must reach their verdict through
+# ref_resolution.resolve_ref and neither may orchestrate a resolver fallback of
+# its own -- that split is what let decl-following ship taught to the lint walk
+# only, so the identity proof covered 36 of 54 added mappings.
+if RR_ONE="$(REPO_ROOT="$REPO_ROOT" python3 - <<'PY' 2>&1
+import os, re, sys
+repo = os.environ["REPO_ROOT"]
+for rel in ("scripts/lint/check_stub_behind_stamp.py",
+            "scripts/todo-graph/corpus_resolution_snapshot.py"):
+    src = open(repo + "/" + rel, encoding="utf-8").read()
+    body = "\n".join(l for l in src.splitlines()
+                     if not l.lstrip().startswith("#"))
+    assert "resolve_ref(" in body, f"{rel} does not call resolve_ref"
+    for banned in ("follow_declaration(", "classify_ref("):
+        assert banned not in body, (
+            f"{rel} still orchestrates {banned} itself -- the identity gate and "
+            f"Check 7 can drift again")
+PY
+)"; then
+    t_pass "ref_resolution: both callers consume ONE end-to-end verdict"
+else
+    t_fail "ref_resolution: resolution orchestration duplicated again; $RR_ONE"
 fi
 
 # ----------------------------------------------------------------------

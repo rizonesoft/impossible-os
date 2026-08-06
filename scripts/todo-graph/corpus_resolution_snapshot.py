@@ -42,8 +42,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import ref_resolution as _rr  # noqa: E402
-from resolve_symbol import (  # noqa: E402
-    ResolverInputError, follow_declaration, resolve_symbol)
+from resolve_symbol import ResolverInputError  # noqa: E402
 
 
 def _repo_root() -> Path:
@@ -54,7 +53,15 @@ def _cache_path() -> Path:
     return Path(os.environ.get("STUB_LINT_CACHE", "build/todo-cache.json"))
 
 
-SNAPSHOT_SCHEMA = 1
+# 2: every `kind=symbol` occurrence carries a verdict, so a mapping value is
+# either a [path, start, end] list OR a bucket string, and keys carry the
+# AUTHORED spelling rather than the effective path. A schema-1 baseline is
+# REFUSED with a regenerate pointer rather than mis-compared: under schema 1 a
+# ref that merely failed to resolve was recorded as `null` and one that never
+# reached resolution was absent entirely, so silently reading it here would
+# report every newly-verdicted ref as an addition and every former null as a
+# bucket change -- thousands of lines of noise around any real regression.
+SNAPSHOT_SCHEMA = 2
 
 
 class CacheError(RuntimeError):
@@ -85,6 +92,37 @@ def _load_nodes() -> list:
         raise CacheError(
             f"cache carries no stamped_items -- it predates the section 9 "
             f"extension, or came from a different generator: {p}")
+    # EVERY node, item and ref must have the shape `collect()` will `.get` on.
+    # The `any(...)` above only proves ONE node is well-formed, so a mixed cache
+    # -- `[{good}, "junk"]` -- passed here and then raised AttributeError deep in
+    # the walk, which `main()` does not catch: it escapes as a traceback and a
+    # bare exit 1, colliding with exit 1's documented "a prior verdict changed".
+    # `check_stub_behind_stamp` maps unexpected walk failures to an
+    # infrastructure code; this caller only caught CacheError and
+    # ResolverInputError, so the shape is rejected UP FRONT instead (Codex
+    # adversarial, section 14).
+    for i, n in enumerate(nodes):
+        if not isinstance(n, dict):
+            raise CacheError(f"cache node {i} is not an object ({type(n).__name__}): {p}")
+        items = n.get("stamped_items")
+        if items is None:
+            continue
+        if not isinstance(items, list):
+            raise CacheError(f"cache node {i} stamped_items is not a list: {p}")
+        for j, it in enumerate(items):
+            if not isinstance(it, dict):
+                raise CacheError(
+                    f"cache node {i} item {j} is not an object: {p}")
+            refs = it.get("refs")
+            if refs is None:
+                continue
+            if not isinstance(refs, list):
+                raise CacheError(
+                    f"cache node {i} item {j} refs is not a list: {p}")
+            for k, r in enumerate(refs):
+                if not isinstance(r, dict):
+                    raise CacheError(
+                        f"cache node {i} item {j} ref {k} is not an object: {p}")
     # Staleness, mirroring check_stub_behind_stamp.py: a cache older than the
     # newest TODO describes a tree that no longer exists, and a baseline taken
     # from it silently omits live refs.
@@ -127,8 +165,19 @@ def _load_nodes() -> list:
 
 def collect() -> dict:
     """Return {"<todo>#<sec>.<item>r<n> <file>::<symbol>": [path, start, end]
-    | None} for every symbol ref carrying a paired file in the cache's
-    stamped_items -- the exact ref population lint Check 7 walks.
+    | "<bucket>"} for EVERY `kind=symbol` ref in the cache's stamped_items --
+    the exact ref population lint Check 7 walks, with no ref left unverdicted.
+
+    THE POPULATION IS THE WHOLE POPULATION. This used to `continue` on any ref
+    that did not reach resolution and record a bare `None` for one that reached
+    it and failed, so the gate covered 695 of Check 7's 1,625 occurrences: 930
+    refs had no entry at all (unpaired-ref 858, missing-file 8, non-C-suffix 63,
+    path-escape 1) and the 221 nulls did not say WHICH bucket they landed in.
+    Section 13 is the worked example of the hole -- it moved refs between
+    `calllike-unresolved` (35 -> 132) and `no_calllike_token` (47 -> 89) at
+    scale, and nothing gated the movement: the resolved floor only saw the total
+    rise, and the bucket line is printed but was never compared. A change that
+    quietly reclassified hundreds of refs the other way would have read as clean.
 
     KEYED PER OCCURRENCE, not per (file, symbol). Deduping looked harmless --
     the same pair always resolves the same way -- but it quietly weakened the
@@ -136,11 +185,22 @@ def collect() -> dict:
     disappears or changes away from `kind=symbol`, the surviving occurrence
     holds the key and the tuple, so `compare` reports OK while a stamped
     reference really did regress.
+
+    THE KEY CARRIES THE AUTHORED SPELLING, NOT RESOLVER OUTPUT. It used to
+    carry the EFFECTIVE path, which made the key a function of the very thing
+    the gate measures: a basename-repaired ref that stopped resolving lost its
+    effective path, so its key changed and the regression reported as a DROPPED
+    plus an ADDED instead of a LOST, obscuring what actually happened. The
+    authored spelling is a pure function of the TODO text, so an occurrence
+    keeps one key across every verdict it can ever have. Byte-compatibility
+    with a schema-1 baseline was considered and is worth nothing here: `compare`
+    refuses any baseline whose `schema` is not SNAPSHOT_SCHEMA, so an old
+    baseline can never be compared against these keys anyway (Codex design
+    review, section 14).
     """
     root = _repo_root()
     nodes = _load_nodes()
     out = {}
-    memo = {}  # (abs, sym) -> tuple|None; resolution is deterministic per pair
     for node in nodes:
         todo_path = node.get("file_path") or "?"
         items = node.get("stamped_items") or []
@@ -168,61 +228,28 @@ def collect() -> dict:
                 if ref.get("kind") != "symbol":
                     continue
                 sym = ref.get("symbol")
-                # MIRROR check_stub_behind_stamp._walk's ref filters exactly --
-                # by CALLING THE SAME CODE, not by re-deriving them. A snapshot
-                # over a wider population than Check 7 actually walks is not a
-                # gate on Check 7, and one over a NARROWER population silently
-                # omits the mappings a change added: both happened here (the
-                # decl-following draft covered 36 of 54). `classify_ref` also
-                # applies the two stored-ref repairs, so the identity proof
-                # covers a basename-repaired or section-paired mapping as it
-                # covers an authored one.
-                verdict = _rr.classify_ref(ref, section_files, root)
-                if verdict.bucket is not None:
-                    continue
-                abs_p = Path(verdict.abs_path)
-                rel = verdict.rel_path
-                # The key carries the EFFECTIVE path. Every ref that resolved
-                # before the repairs is `authored` provenance, so its path --
-                # and therefore its key -- is byte-identical to the recorded
-                # baseline's; a repaired ref is a new key either way, and the
-                # effective path is the one a reader can open.
-                key = f"{todo_path}#{sec}.{idx}r{ref_i} {rel}::{sym}"
-                memo_key = (str(abs_p), sym)
-                if memo_key not in memo:
-                    # THROUGH THE SHARED MEMO, not resolve_symbol directly:
-                    # section-scope pairing above has usually already asked
-                    # this exact question, and a private cache paid for it
-                    # twice (measured: 1,219 resolver calls for 945 unique
-                    # pairs, 269 of them duplicated across the two layers;
-                    # ~8% of this tool's wall clock -- Codex perf).
-                    res = _rr._resolve_memoized(str(abs_p), sym)
-                    if res is None:
-                        # MIRROR check_stub_behind_stamp._walk's fallback
-                        # exactly: a header-only ref may still resolve via
-                        # its repo-convention sibling .c. Without this, the
-                        # snapshot silently omitted every follow_declaration
-                        # mapping -- Check 7's floor rose 57 -> 111 while this
-                        # tool's own "0 lost / 0 moved" proof covered only
-                        # the resolve_symbol()-direct subset (Codex
-                        # adversarial: the identity proof did not cover what
-                        # it claimed to cover).
-                        res = follow_declaration(str(abs_p), sym, str(root))
-                    if res is None:
-                        memo[memo_key] = None
-                    else:
-                        # ALWAYS repo-relative. An absolute fallback here would
-                        # differ between checkouts and read as a false MOVE, so
-                        # a path that will not relativise is a hard error, not
-                        # a quietly-different value.
-                        rp = Path(res[0]).resolve()
-                        try:
-                            rel_out = str(rp.relative_to(root))
-                        except ValueError:
-                            raise CacheError(
-                                f"resolved outside repo root: {rp} (root {root})")
-                        memo[memo_key] = [rel_out, res[1], res[2]]
-                out[key] = memo[memo_key]
+                # ONE SHARED END-TO-END RULE, not a mirrored walk. Check 7 and
+                # this snapshot both call `resolve_ref` and neither orchestrates
+                # a resolver step itself. Mirroring by hand is what shipped an
+                # incomplete proof twice: a snapshot over a NARROWER population
+                # than Check 7 walks silently omits the mappings a change added
+                # (the decl-following draft covered 36 of 54), and one over a
+                # WIDER population is not a gate on Check 7 at all. Sharing only
+                # the pre-resolution half left the same hazard one level down --
+                # each caller ran its own direct-resolve -> follow_declaration
+                # sequence, so a fallback added to one and not the other
+                # recreated the defect exactly (Codex design review, section 14).
+                result = _rr.resolve_ref(ref, section_files, root)
+                # AUTHORED spelling, with an explicit sentinel when the TODO
+                # names none -- see the key rationale in the docstring. `-` is
+                # not ambiguous with a real value: a ref's stored file is either
+                # a path or absent, and a symbol is either present or the ref is
+                # `unpaired_ref` by definition.
+                a_file = ref.get("file") or "-"
+                key = f"{todo_path}#{sec}.{idx}r{ref_i} {a_file}::{sym or '-'}"
+                out[key] = (result.bucket if result.bucket is not None
+                            else [result.def_rel, result.line_start,
+                                  result.line_end])
     return out
 
 
@@ -254,7 +281,11 @@ def main(argv) -> int:
         sys.stderr.write(f"[corpus_resolution_snapshot] resolver input "
                          f"refused: {exc}\n")
         return 3
-    resolved_now = {k: v for k, v in now.items() if v is not None}
+    # A RESOLVED entry is a list; every other entry is a bucket string. Under
+    # schema 1 this test was `v is not None`, which is exactly the test that
+    # stops working once an unresolved ref carries a bucket instead of a null --
+    # left unchanged it would have counted all 1,625 refs as resolved.
+    resolved_now = {k: v for k, v in now.items() if isinstance(v, list)}
     if not now:
         sys.stderr.write("[corpus_resolution_snapshot] no eligible refs -- "
                          "refusing to treat an empty population as a result\n")
@@ -284,7 +315,17 @@ def main(argv) -> int:
     # to prevent, on the input the gate is actually comparing against.
     try:
         before = json.loads(Path(argv[1]).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, ValueError, RecursionError) as exc:
+        # ValueError, not just JSONDecodeError: invalid UTF-8 raises
+        # UnicodeDecodeError, which is a ValueError and NOT an OSError, so the
+        # narrower tuple let it escape as an uncaught traceback and a bare
+        # process exit 1 -- colliding with exit 1's DOCUMENTED meaning here (a
+        # prior verdict changed), which a caller reading only the exit code
+        # would misread as a real regression instead of "the gate could not
+        # run". Deeply-nested JSON raises RecursionError, which is not a
+        # ValueError at all. `check_stub_behind_stamp._read_baseline` already
+        # catches ValueError for precisely this reason; this is the same
+        # contract on the other input (Codex adversarial, section 14).
         sys.stderr.write(f"[corpus_resolution_snapshot] baseline unreadable: "
                          f"{argv[1]}: {exc}\n")
         return 3
@@ -312,9 +353,17 @@ def main(argv) -> int:
     # ELEMENT TYPES, not just arity. `[path, 411.0, 442.0]` satisfied a
     # length-3 check and compared EQUAL to the integer tuple under Python, so
     # an arity-only check let a malformed baseline through.
+    #
+    # A BUCKET IS VALIDATED AGAINST THE EXACT ENUM, not merely "is a string".
+    # The bucket names are ref_resolution's published contract; accepting an
+    # unrecognised one would let a typo'd or retired bucket sit in the baseline
+    # comparing unequal against every future run forever -- a permanent CHANGED
+    # that no amount of correct behaviour can clear.
     bad = []
     for k, v in mappings.items():
-        if v is None:
+        if isinstance(v, str):
+            if v not in _rr.ALL_BUCKETS:
+                bad.append(k)
             continue
         if not (isinstance(v, list) and len(v) == 3):
             bad.append(k)
@@ -333,36 +382,74 @@ def main(argv) -> int:
                          f"{len(bad)} malformed mapping(s), e.g. {bad[0]!r}\n")
         return 3
     before = mappings
-    resolved_before = {k: v for k, v in before.items() if v is not None}
+    resolved_before = {k: v for k, v in before.items() if isinstance(v, list)}
     if not resolved_before:
         sys.stderr.write("[corpus_resolution_snapshot] baseline records ZERO "
                          "resolved mappings -- there is nothing to protect, so "
                          "a pass would be vacuous\n")
         return 3
 
-    lost, moved = [], []
-    for k, v in resolved_before.items():
+    # SIX OUTCOMES, and the split between them is the point of section 14.
+    # Before, a ref that stopped resolving and a ref that never had a verdict
+    # were the same `None`, and a ref moving between unresolved buckets was not
+    # recorded at all.
+    #
+    #   DROPPED  the occurrence is gone from the corpus entirely
+    #   LOST     resolved before, now only a bucket
+    #   MOVED    resolved before and after, at different coordinates
+    #   CHANGED  unresolved before and after, in a DIFFERENT bucket
+    #   GAINED   unresolved before, resolved now -- a coverage win
+    #   ADDED    a key the baseline did not carry
+    dropped, lost, moved, changed, gained = [], [], [], [], []
+    for k, v in before.items():
         nv = now.get(k)
         if nv is None:
-            lost.append((k, v))
+            dropped.append((k, v))
+        elif isinstance(v, list) and isinstance(nv, list):
+            if nv != v:
+                moved.append((k, v, nv))
+        elif isinstance(v, list):
+            lost.append((k, v, nv))
+        elif isinstance(nv, list):
+            gained.append((k, v, nv))
         elif nv != v:
-            moved.append((k, v, nv))
-    added = sorted(k for k in resolved_now if k not in resolved_before)
+            changed.append((k, v, nv))
+    added = sorted(k for k in now if k not in before)
 
     print(f"before: {len(resolved_before)} resolved of {len(before)} refs")
     print(f"after:  {len(resolved_now)} resolved of {len(now)} refs")
-    for k, v in lost:
-        print(f"  LOST   {k} was {v}")
+    for k, v in dropped:
+        print(f"  DROPPED {k} was {v}")
+    for k, v, nv in lost:
+        print(f"  LOST    {k} was {v}, now bucket {nv!r}")
     for k, v, nv in moved:
-        print(f"  MOVED  {k} {v} -> {nv}")
+        print(f"  MOVED   {k} {v} -> {nv}")
+    for k, v, nv in changed:
+        print(f"  CHANGED {k} bucket {v!r} -> {nv!r}")
+    for k, v, nv in gained:
+        print(f"  GAINED  {k} bucket {v!r} -> {nv}  (GROUND-TRUTH BY HAND)")
     for k in added:
-        print(f"  ADDED  {k} -> {resolved_now[k]}  (GROUND-TRUTH BY HAND)")
+        print(f"  ADDED   {k} -> {now[k]}  (GROUND-TRUTH BY HAND)")
 
-    if lost or moved:
-        print(f"\nFAIL: {len(lost)} lost, {len(moved)} moved. A prior mapping "
-              f"changed -- the resolved COUNT alone would not have shown this.")
+    # CHANGED FAILS. It is not automatically a regression -- section 13's bucket
+    # movements were the intended effect of a coverage win -- but the exit code
+    # is the only part of this tool a wired gate can read, so reporting a
+    # reclassification while exiting 0 would let a resolver defect that moved
+    # hundreds of refs between buckets ship unattended (Codex design review,
+    # section 14). The clearing path is the one this roadmap already uses for
+    # every ADDED mapping: ground-truth the movement by hand, then regenerate
+    # the baseline with `write`. GAINED and ADDED stay non-failing because
+    # neither can hide a loss: every prior verdict is still accounted for.
+    regressions = len(dropped) + len(lost) + len(moved) + len(changed)
+    if regressions:
+        print(f"\nFAIL: {len(dropped)} dropped, {len(lost)} lost, "
+              f"{len(moved)} moved, {len(changed)} bucket-changed. A prior "
+              f"verdict changed -- the resolved COUNT alone would not have "
+              f"shown this. Ground-truth each line, then regenerate with "
+              f"`write` if the change is intended.")
         return 1
-    print(f"\nOK: no prior mapping lost or moved; {len(added)} added.")
+    print(f"\nOK: no prior verdict dropped, lost, moved or reclassified; "
+          f"{len(gained)} gained, {len(added)} added.")
     return 0
 
 

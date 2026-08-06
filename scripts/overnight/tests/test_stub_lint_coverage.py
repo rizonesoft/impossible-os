@@ -97,9 +97,22 @@ def test_a_coverage_DROP_is_an_error():
 
 
 def test_an_improvement_is_reported_so_the_floor_gets_raised():
-    with _baseline('{"resolved": 1}') as env:
+    """CARRIES `total`, because the floor is a RATIO.
+
+    This fixture was `{"resolved": 1}` and had been failing with rc 8 since the
+    counted-population work made `total` part of the floor: a baseline without
+    one is malformed, so the test never reached the improvement path it exists
+    to check. It went unnoticed because this file's runner
+    (scripts/overnight/tests/run-all.sh) gates on the control-plane manifest,
+    which does not list scripts/lint or scripts/todo-graph.
+
+    `total` must MATCH the live population -- a mismatch is rc 7 in either
+    direction by design -- so it is read from the tracked baseline rather than
+    hardcoded, which would drift the moment stamped work is added."""
+    live_total = json.loads(BASELINE.read_text(encoding="utf-8"))["total"]
+    with _baseline(json.dumps({"resolved": 1, "total": live_total})) as env:
         r = _run(env)
-        assert r.returncode == 0, r.returncode
+        assert r.returncode == 0, (r.returncode, r.stderr[:400])
         assert "coverage improved" in r.stderr, r.stderr[:400]
 
 
@@ -257,23 +270,31 @@ def test_the_classifier_is_cached_PER_FILE_not_per_symbol():
     number of expensive strips stays bounded by distinct files rather than by
     distinct (file, symbol) pairs. A timing assertion would be flaky on a
     loaded host; this states the invariant that actually matters.
+
+    COUNTS THE STRIP ITSELF, not a cache size. The helpers moved to
+    ref_resolution (section 14) and became content-bound dicts, and a dict keyed
+    on the path is bounded by the file count however often it is rebuilt -- so
+    `len(_CODE_TEXT)` would stay small even if every ref forced a fresh strip.
+    `_CODE_TEXT_BUILDS` increments on each real splice+regex pass, which is the
+    quantity the 5.62x regression was made of.
     """
     sys.path.insert(0, str(REPO / "scripts/lint"))
     sys.path.insert(0, str(REPO / "scripts/todo-graph"))
     import importlib
     m = importlib.import_module("check_stub_behind_stamp")
-    m._code_text.cache_clear()
-    m._raw_text.cache_clear()
-    m._resolve_cached.cache_clear()
+    rr = importlib.import_module("ref_resolution")
+    rr.clear_caches()
     m._is_stub_cached.cache_clear()
     nodes = json.loads((REPO / "build/todo-cache.json").read_text(encoding="utf-8"))
     m._walk(nodes, REPO)
-    ci = m._code_text.cache_info()
-    assert ci.misses <= ci.hits + ci.misses, ci
+    builds = rr._CODE_TEXT_BUILDS
     # Distinct files that needed stripping must be well under the number of
-    # classification calls; equality would mean the per-file cache is doing
-    # nothing and every ref pays its own scan again.
-    assert ci.misses < 100, f"too many full-file strips: {ci}"
+    # classification calls; a per-symbol scan would put this in the hundreds
+    # (221 refs reach post-resolution bucketing on the live corpus).
+    assert builds < 100, f"too many full-file strips: {builds}"
+    # And the cache must actually be serving: strips can never exceed the
+    # number of distinct files that were stripped.
+    assert builds == len(rr._CODE_TEXT), (builds, len(rr._CODE_TEXT))
 
 
 def test_bucket_names_do_not_claim_a_CAUSE():

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # ============================================================================
-# ref_resolution.py -- the SINGLE effective-path rule for a stamped-item
-# symbol ref.
+# ref_resolution.py -- the SINGLE END-TO-END rule for a stamped-item symbol
+# ref: which file it is checked against, whether a definition was found there,
+# and which coverage bucket it lands in when one was not.
 #
 # Owner: todo-metadata-layer roadmap, stored-ref-repair section. Imported by
 # BOTH consumers of the cache's `stamped_items[].refs`:
@@ -76,6 +77,28 @@ _BASENAME_INDEX = {}  # repo_root(str) -> {basename: (rel, ...)} sorted
 _RESOLVE_MEMO = {}    # (abs_path, symbol) -> (lines object, result)
 _EFFECTIVE_PATH_MEMO = {}  # (rel, repo_root) -> (abs_path|None, provenance|bucket)
 _MENTION_INDEX = {}   # abs_path -> (lines object, frozenset of identifiers)
+_RAW_TEXT = {}        # abs_path -> (lines object, joined raw text)
+_CODE_TEXT = {}       # abs_path -> (lines object, literal/comment-blanked text)
+_END_TO_END = {}      # (abs_path, symbol, repo_root) -> (lines object, answer)
+
+# How many times the literal/comment strip has actually RUN. The per-file cache
+# it guards replaced a per-symbol scan that took Check 7 from 147ms to 829ms, so
+# the regression is invisible to a cache-size check (a dict keyed on the path is
+# bounded by the file count however often it is rebuilt) and flaky as a
+# wall-clock assertion on a loaded host. Counting the expensive operation itself
+# is the invariant that actually matters, and it also makes the content-binding
+# observable: a file rewritten mid-run must REBUILD rather than answer stale.
+_CODE_TEXT_BUILDS = 0
+
+# The coverage buckets, split by WHERE the verdict is reached. Both callers
+# report against these names, so they are this module's published contract:
+# `corpus_resolution_snapshot` validates a baseline's bucket strings against
+# ALL_BUCKETS, which makes a typo'd or retired bucket a hard baseline error
+# rather than an unrecognised value that silently compares unequal forever.
+PRE_RESOLUTION_BUCKETS = ("unpaired_ref", "path_escape", "unsupported_lang",
+                          "missing_file")
+POST_RESOLUTION_BUCKETS = ("unresolved_calllike", "no_calllike_token")
+ALL_BUCKETS = PRE_RESOLUTION_BUCKETS + POST_RESOLUTION_BUCKETS
 
 
 def clear_caches() -> None:
@@ -86,6 +109,11 @@ def clear_caches() -> None:
     _RESOLVE_MEMO.clear()
     _EFFECTIVE_PATH_MEMO.clear()
     _MENTION_INDEX.clear()
+    _RAW_TEXT.clear()
+    _CODE_TEXT.clear()
+    _END_TO_END.clear()
+    global _CODE_TEXT_BUILDS
+    _CODE_TEXT_BUILDS = 0
     # ONE reset, not two. This module memoizes resolver ANSWERS while
     # resolve_symbol memoizes the file content, lexical index and generation
     # pins they were derived from, so clearing either alone leaves the other
@@ -107,6 +135,11 @@ def _clear_local_only() -> None:
     _RESOLVE_MEMO.clear()
     _EFFECTIVE_PATH_MEMO.clear()
     _MENTION_INDEX.clear()
+    _RAW_TEXT.clear()
+    _CODE_TEXT.clear()
+    _END_TO_END.clear()
+    global _CODE_TEXT_BUILDS
+    _CODE_TEXT_BUILDS = 0
 
 
 _rs.register_reset_dependent(_clear_local_only)
@@ -373,3 +406,227 @@ def classify_ref(ref: dict, section_files: tuple, repo_root: Path) -> Verdict:
     except ValueError:
         return Verdict(None, None, provenance, "path_escape")
     return Verdict(str(abs_p), eff_rel, provenance, None)
+
+
+# ---------------------------------------------------------------------------
+# POST-RESOLUTION classification. Moved here from check_stub_behind_stamp.py so
+# the identity snapshot and lint Check 7 share the END-TO-END verdict, not just
+# its first half.
+#
+# Sharing only `classify_ref` was not enough, and the reason is the same defect
+# this module was created to close. Each caller ran its OWN direct-resolve ->
+# `follow_declaration` -> bucket sequence, so a fallback added to one and not
+# the other silently re-creates the incident in the header above: the identity
+# proof covering 36 of 54 added mappings. `resolve_ref` below is now the only
+# place that sequence exists, and both callers consume its answer rather than
+# orchestrating any resolver step themselves.
+# ---------------------------------------------------------------------------
+
+# String/char literal FIRST, then line comment, then block comment -- see the
+# ordering argument in `_code_text`. Unterminated constructs simply fail to
+# match and are left as code, which is the conservative direction here: it can
+# only make a ref look call-like, never hide one.
+_STRIP_RE = re.compile(
+    r'"(?:\\.|[^"\\\n])*"'      # string literal (post-splice, so no newline)
+    r"|'(?:\\.|[^'\\\n])*'"     # char literal
+    r"|//[^\n]*"                # line comment
+    r"|/\*[^*]*\*+(?:[^/*][^*]*\*+)*/",   # block comment (C comments do not nest)
+    re.S)
+
+
+def _raw_text(file_abs: str) -> str:
+    """The file's lines joined once, cached, for the pre-filter's substring test.
+
+    CONTENT-BOUND, not `lru_cache(file_abs)`. Keyed on the path alone, a cache
+    HIT never runs the body, so `_load_file_lines` -- the only layer that
+    re-stats a pinned file and raises ResolverInputError on a same-run rewrite
+    -- was never reached after the first call. A file rewritten mid-walk then
+    answered from pre-mutation text and produced a stale BUCKET instead of the
+    infrastructure failure the resolver promises. Same defect and same repair as
+    `_mentions` above (Codex design review, section 14)."""
+    lines = _rs._load_file_lines(file_abs)
+    hit = _RAW_TEXT.get(file_abs)
+    if hit is None or hit[0] is not lines:
+        _RAW_TEXT[file_abs] = (lines, "\n".join(lines))
+    return _RAW_TEXT[file_abs][1]
+
+
+def _code_text(file_abs: str) -> str:
+    """The file with comments and string/char literals blanked, as ONE string.
+
+    PER FILE, NOT PER SYMBOL. The first version of this did the stateful scan
+    inside the per-`(file, symbol)` helper, so a file was re-lexed once for
+    every unresolved symbol naming it. MEASURED on the live corpus: Check 7
+    went from 147.4ms to 828.6ms, a 5.62x regression on a check that runs in
+    the PRE-COMMIT HOOK for every contributor on every commit. The stripped
+    text does not depend on the symbol, so it is computed once and cached and
+    the per-symbol step becomes one regex over it.
+
+    `resolve_symbol._strip_line_comments` is NOT reusable here: it documents
+    that it does not track multi-line block comments, so a symbol named inside
+    a `/* ... */` prose block would read as code and land in the wrong bucket.
+
+    LINE SPLICING IS APPLIED FIRST (C translation phase 2), which is safe HERE
+    and not in `resolve_symbol`: this helper answers a yes/no question and
+    never reports coordinates, whereas every resolver consumer prints real line
+    numbers. Splicing fixes two shapes that were classified wrong -- a string
+    continued across a backslash-newline no longer hides its terminator, and an
+    identifier joined to its `(` across a continuation is seen.
+
+    Content-bound for the same reason as `_raw_text` above."""
+    global _CODE_TEXT_BUILDS
+    lines = _rs._load_file_lines(file_abs)
+    hit = _CODE_TEXT.get(file_abs)
+    if hit is not None and hit[0] is lines:
+        return hit[1]
+    _CODE_TEXT_BUILDS += 1
+
+    spliced, buf = [], ""
+    for line in lines:
+        if line.endswith("\\"):
+            buf += line[:-1]
+            continue
+        spliced.append(buf + line)
+        buf = ""
+    if buf:
+        spliced.append(buf)
+
+    # ONE C-level regex pass, not a Python character loop. The char loop was
+    # correct but cost ~5ms per file over 55 files; `re` runs the same
+    # tokenization in C. Alternation ORDER is the correctness argument: a
+    # string/char literal is tried FIRST at each position, so it consumes
+    # through its own terminator and a `//` or `/*` sitting inside a literal
+    # can never start a comment. C block comments do not nest, so non-greedy
+    # `/\*.*?\*/` is exact rather than approximate.
+    #
+    # Each match is replaced by a space plus its own newlines, which keeps
+    # tokens from merging across a removed literal AND preserves line
+    # structure, so `\s*` in the caller's pattern still spans a definition
+    # written `symbol\n(args)`. Scanning line-by-line could not see that shape.
+    text = _STRIP_RE.sub(lambda mo: " " + "\n" * mo.group(0).count("\n"),
+                         "\n".join(spliced))
+    _CODE_TEXT[file_abs] = (lines, text)
+    return text
+
+
+def has_calllike_token(file_abs: str, symbol: str) -> bool:
+    """True when `symbol(` occurs in CODE -- outside comments and strings.
+
+    Proves a call-like TOKEN is present and nothing more. A call site, a
+    prototype, a macro invocation and a struct function-pointer field all
+    satisfy it -- which is exactly why the bucket it feeds is named for the
+    token rather than for a cause.
+    """
+    # RAW PRE-FILTER. Blanking literals and comments only ever REMOVES text, so
+    # a symbol absent from the raw file cannot appear in the stripped text --
+    # this skips building it entirely. Sound in one direction only, which is
+    # the direction used: absent-in-raw is conclusive, present-in-raw still has
+    # to be confirmed against stripped text.
+    #
+    # Against the CACHED JOINED text, not `any(sym in line for line in ...)`.
+    # The generator form ran a Python-level loop over every line on all 136
+    # calls (~272k iterations) and cost more than the scan it was added to
+    # avoid; one `in` over one cached string is a single C-level scan.
+    if symbol not in _raw_text(file_abs):
+        return False
+    return re.search(r"\b" + re.escape(symbol) + r"\s*\(",
+                     _code_text(file_abs)) is not None
+
+
+# The END-TO-END answer for one symbol ref.
+#   rel_path    repo-relative EFFECTIVE path the ref was checked against, or
+#               None when a pre-resolution bucket was reached
+#   provenance  "authored" | "basename" | "section"
+#   bucket      None when a definition was found; otherwise the coverage bucket
+#   def_abs     absolute path of the file holding the DEFINITION, or None. Not
+#               always `rel_path`: a followed declaration resolves in the
+#               sibling .c, and findings must be reported where the body is.
+#   def_rel     repo-relative form of def_abs, or None
+#   line_start  first line of the definition, or None
+#   line_end    last line of the definition, or None
+RefResult = namedtuple(
+    "RefResult", "rel_path provenance bucket def_abs def_rel line_start line_end")
+
+
+def _resolve_end_to_end(abs_path: str, symbol: str, repo_root: Path):
+    """(def_path, start, end) for a resolvable ref, else a POST_RESOLUTION bucket.
+
+    The direct resolve, the declaration-following fallback and the final
+    call-like bucketing in ONE place. Memoized exactly as `_resolve_memoized`
+    is -- bound to the lines OBJECT so new content is a new entry, and reached
+    only after `_load_file_lines` has re-stat'd the file, so a mid-run rewrite
+    still raises ResolverInputError instead of being served a stale verdict.
+
+    BOUND TO THE DEFINITION FILE TOO, not just the declaring one. A followed
+    declaration resolves in a SIBLING .c, so an entry validated only against
+    `abs_path` handed back coordinates for a file it never re-read: rewrite the
+    .c mid-run and the header still looked unchanged, so the walk answered with
+    stale line numbers instead of raising ResolverInputError -- defeating the
+    generation pinning in exactly the cross-file case where it matters most.
+    Found independently by BOTH review legs (Codex adversarial + test-coverage,
+    section 14). Every file the answer was derived from is re-entered on a hit.
+
+    NOT covered, and pre-existing rather than introduced here: a sibling CREATED
+    mid-run can make a previously-unique basename ambiguous without any file the
+    answer depends on changing. `_basename_index` above is already cached per
+    repo_root for the whole walk, so the existing basename repair has the same
+    property -- a walk does not re-enumerate the tree.
+    """
+    lines = _rs._load_file_lines(abs_path)
+    key = (abs_path, symbol, str(repo_root))
+    hit = _END_TO_END.get(key)
+    if hit is not None and hit[0] is lines:
+        dep_path, dep_lines = hit[2]
+        # `_load_file_lines` is the ONLY layer that re-stats and raises on
+        # drift, so a dependency must be RE-ENTERED on a hit, never assumed.
+        if dep_path is None or _rs._load_file_lines(dep_path) is dep_lines:
+            return hit[1]
+
+    resolved = _resolve_memoized(abs_path, symbol)
+    if resolved is None:
+        # A ref naming a HEADER often resolves via its own "decl" verdict (a
+        # prototype, no local body) -- follow to the repo-convention sibling
+        # .c before giving up.
+        resolved = _rs.follow_declaration(abs_path, symbol, str(repo_root))
+    dep = (None, None)
+    if resolved is None:
+        answer = ("unresolved_calllike" if has_calllike_token(abs_path, symbol)
+                  else "no_calllike_token")
+    else:
+        answer = (resolved[0], resolved[1], resolved[2])
+        def_abs = str(Path(resolved[0]).resolve())
+        if def_abs != abs_path:
+            dep = (def_abs, _rs._load_file_lines(def_abs))
+    _END_TO_END[key] = (lines, answer, dep)
+    return answer
+
+
+def resolve_ref(ref: dict, section_files: tuple, repo_root: Path) -> RefResult:
+    """THE shared verdict for one `kind=symbol` ref: classify, resolve, bucket.
+
+    Both consumers of the cache's `stamped_items[].refs` call exactly this and
+    nothing else from the resolver. A caller that reached past it to add its own
+    fallback would put the identity snapshot back out of step with lint Check 7,
+    which is the failure this module exists to prevent."""
+    verdict = classify_ref(ref, section_files, repo_root)
+    if verdict.bucket is not None:
+        return RefResult(verdict.rel_path, verdict.provenance, verdict.bucket,
+                         None, None, None, None)
+    answer = _resolve_end_to_end(verdict.abs_path, ref.get("symbol"), repo_root)
+    if isinstance(answer, str):
+        return RefResult(verdict.rel_path, verdict.provenance, answer,
+                         None, None, None, None)
+    def_path, start, end = answer
+    def_abs = Path(def_path).resolve()
+    try:
+        def_rel = str(def_abs.relative_to(repo_root)).replace("\\", "/")
+    except ValueError:
+        # ALWAYS repo-relative for the reported/recorded form. An absolute path
+        # differs between checkouts and would read as a false MOVE in the
+        # identity gate, so a definition outside the root is a hard error
+        # rather than a quietly-different value.
+        raise _rs.ResolverInputError(
+            f"definition resolved outside repo root: {def_abs} "
+            f"(root {repo_root})")
+    return RefResult(verdict.rel_path, verdict.provenance, None,
+                     str(def_abs), def_rel, start, end)

@@ -97,98 +97,18 @@ def _check_staleness(cache_path: Path, todo_root: Path) -> bool:
     return newest > cache_m
 
 
-# String/char literal FIRST, then line comment, then block comment -- see the
-# ordering argument in `_code_text`. Unterminated constructs simply fail to
-# match and are left as code, which is the conservative direction here: it can
-# only make a ref look call-like, never hide one.
-_STRIP_RE = re.compile(
-    r'"(?:\\.|[^"\\\n])*"'      # string literal (post-splice, so no newline)
-    r"|'(?:\\.|[^'\\\n])*'"     # char literal
-    r"|//[^\n]*"                # line comment
-    r"|/\*[^*]*\*+(?:[^/*][^*]*\*+)*/",   # block comment (C comments do not nest)
-    re.S)
+# `_STRIP_RE`, `_raw_text`, `_code_text` and `_has_calllike_token` MOVED to
+# scripts/todo-graph/ref_resolution.py (section 14). They were the second half
+# of the resolution rule, and leaving them here kept this walk orchestrating
+# direct-resolve -> follow_declaration -> bucket independently of the identity
+# snapshot that is supposed to gate it -- the same shape that once let a
+# fallback ship covering 36 of 54 mappings. Both callers now consume
+# `ref_resolution.resolve_ref` and neither touches the resolver directly.
+# The move also fixed a real defect in them: keyed by `lru_cache(file_abs)`,
+# a cache HIT never re-entered `_load_file_lines`, so a file rewritten mid-walk
+# answered from pre-mutation text instead of raising ResolverInputError. The
+# moved versions are content-bound (Codex design review, section 14).
 
-
-@lru_cache(maxsize=512)
-def _raw_text(file_abs: str) -> str:
-    """The file's lines joined once, cached, for the pre-filter's substring test."""
-    return "\n".join(_rs._load_file_lines(file_abs))
-
-
-@lru_cache(maxsize=512)
-def _code_text(file_abs: str) -> str:
-    """The file with comments and string/char literals blanked, as ONE string.
-
-    PER FILE, NOT PER SYMBOL. The first version of this did the stateful scan
-    inside the per-`(file, symbol)` helper, so a file was re-lexed once for
-    every unresolved symbol naming it. MEASURED on the live corpus: Check 7
-    went from 147.4ms to 828.6ms, a 5.62x regression on a check that runs in
-    the PRE-COMMIT HOOK for every contributor on every commit. The stripped
-    text does not depend on the symbol, so it is computed once and cached and
-    the per-symbol step becomes one regex over it. The multi-line function-head
-    resolution work paid for this same lesson when its fallback pass cost 7.1x
-    before a pre-filter was added.
-
-    `resolve_symbol._strip_line_comments` is NOT reusable here: it documents
-    that it does not track multi-line block comments, so a symbol named inside
-    a `/* ... */` prose block would read as code and land in the wrong bucket.
-
-    LINE SPLICING IS APPLIED FIRST (C translation phase 2), which is safe HERE
-    and not in `resolve_symbol`: this helper answers a yes/no question and
-    never reports coordinates, whereas every resolver consumer prints real line
-    numbers. Splicing fixes two shapes that were classified wrong -- a string
-    continued across a backslash-newline no longer hides its terminator, and an
-    identifier joined to its `(` across a continuation is seen.
-    """
-    lines = _rs._load_file_lines(file_abs)
-    spliced, buf = [], ""
-    for line in lines:
-        if line.endswith("\\"):
-            buf += line[:-1]
-            continue
-        spliced.append(buf + line)
-        buf = ""
-    if buf:
-        spliced.append(buf)
-
-    # ONE C-level regex pass, not a Python character loop. The char loop was
-    # correct but cost ~5ms per file over 55 files; `re` runs the same
-    # tokenization in C. Alternation ORDER is the correctness argument: a
-    # string/char literal is tried FIRST at each position, so it consumes
-    # through its own terminator and a `//` or `/*` sitting inside a literal
-    # can never start a comment. C block comments do not nest, so non-greedy
-    # `/\*.*?\*/` is exact rather than approximate.
-    #
-    # Each match is replaced by a space plus its own newlines, which keeps
-    # tokens from merging across a removed literal AND preserves line
-    # structure, so `\s*` in the caller's pattern still spans a definition
-    # written `symbol\n(args)`. Scanning line-by-line could not see that shape.
-    return _STRIP_RE.sub(lambda mo: " " + "\n" * mo.group(0).count("\n"),
-                         "\n".join(spliced))
-
-
-def _has_calllike_token(file_abs: str, symbol: str) -> bool:
-    """True when `symbol(` occurs in CODE -- outside comments and strings.
-
-    Proves a call-like TOKEN is present and nothing more. A call site, a
-    prototype, a macro invocation and a struct function-pointer field all
-    satisfy it -- which is exactly why the bucket it feeds is named for the
-    token rather than for a cause. See the bucket comment in `_walk`.
-    """
-    # RAW PRE-FILTER. Blanking literals and comments only ever REMOVES text, so
-    # a symbol absent from the raw file cannot appear in the stripped text --
-    # this skips building it entirely. Sound in one direction only, which is
-    # the direction used: absent-in-raw is conclusive, present-in-raw still has
-    # to be confirmed against stripped text.
-    #
-    # Against the CACHED JOINED text, not `any(sym in line for line in ...)`.
-    # The generator form ran a Python-level loop over every line on all 136
-    # calls (~272k iterations) and cost more than the scan it was added to
-    # avoid; one `in` over one cached string is a single C-level scan.
-    if symbol not in _raw_text(file_abs):
-        return False
-    return re.search(r"\b" + re.escape(symbol) + r"\s*\(",
-                     _code_text(file_abs)) is not None
 
 
 def _walk(nodes: list, repo_root: Path) -> tuple:
@@ -278,44 +198,24 @@ def _walk(nodes: list, repo_root: Path) -> tuple:
                 # and basename repair for a bare filename that does not exist
                 # at the repo root. Bucket idents keep the AUTHORED spelling so
                 # a ref that stays unresolved reads the same as it always did.
-                verdict = _rr.classify_ref(ref, section_files, repo_resolved)
-                if verdict.bucket is not None:
-                    if verdict.bucket == "unpaired_ref":
+                result = _rr.resolve_ref(ref, section_files, repo_resolved)
+                if result.bucket is not None:
+                    if result.bucket == "unpaired_ref":
                         cov["unpaired_ref"].append(
                             str(symbol or file_rel or "?"))
+                    elif result.bucket in _rr.POST_RESOLUTION_BUCKETS:
+                        # Bucket the ref at the path actually opened, not the
+                        # authored spelling: for a repaired ref the authored
+                        # token names nothing (a bare filename, or no file at
+                        # all), so reporting it here would name a file nobody
+                        # can inspect.
+                        cov[result.bucket].append(f"{result.rel_path}:{symbol}")
                     else:
-                        cov[verdict.bucket].append(f"{file_rel}:{symbol}")
-                    continue
-                file_abs = Path(verdict.abs_path)
-                resolved = _resolve_cached(str(file_abs), symbol)
-                res_file = str(file_abs)
-                if resolved is None:
-                    # A ref naming a HEADER often resolves via its own
-                    # "decl" verdict (a prototype, no local body) -- follow
-                    # to the repo-convention sibling .c before giving up
-                    # (todo-metadata-layer roadmap's resolver-coverage work,
-                    # decl-following class). Deliberately not cached
-                    # alongside `_resolve_cached`: it is scoped to the small
-                    # decl-only population and its own internal reads are
-                    # already served by resolve_symbol's file/index caches.
-                    resolved = _rs.follow_declaration(
-                        str(file_abs), symbol, str(repo_resolved))
-                    if resolved is not None:
-                        res_file = resolved[0]
-                if resolved is None:
-                    # Bucket the ref at the path actually opened, not the
-                    # authored spelling: for a repaired ref the authored token
-                    # names nothing (a bare filename, or no file at all), so
-                    # reporting it here would name a file nobody can inspect.
-                    ident = f"{verdict.rel_path}:{symbol}"
-                    if _has_calllike_token(str(file_abs), symbol):
-                        cov["unresolved_calllike"].append(ident)
-                    else:
-                        cov["no_calllike_token"].append(ident)
+                        cov[result.bucket].append(f"{file_rel}:{symbol}")
                     continue
                 cov["resolved"] += 1
-                _, line_start, line_end = resolved
-                stub = _is_stub_cached(res_file, line_start, line_end)
+                stub = _is_stub_cached(result.def_abs, result.line_start,
+                                       result.line_end)
                 if stub is None:
                     continue
                 ret_const, body_open_line = stub
@@ -324,22 +224,14 @@ def _walk(nodes: list, repo_root: Path) -> tuple:
                     item_text = item_text[:97] + "..."
                 todo_path = node.get("file_path") or "?"
                 section_n = it.get("section_n", "?")
-                # A followed definition lives in a DIFFERENT file than the
-                # ref's own effective path (the declaring header) -- report at
-                # the file that actually has the body, not the header,
-                # which has nothing at `body_open_line` to inspect. The base
-                # is the EFFECTIVE path, never the authored spelling: a
+                # REPORT AT THE DEFINITION, which is not always the ref's own
+                # effective path: a followed declaration resolves in the
+                # sibling .c, and the declaring header has nothing at
+                # `body_open_line` to inspect. `def_rel` is already that file
+                # in repo-relative form, and never the authored spelling -- a
                 # basename-repaired or section-paired ref's authored token
-                # names no file, so printing it would send a reader to a path
-                # that does not exist.
-                report_rel = verdict.rel_path
-                if res_file != str(file_abs):
-                    try:
-                        report_rel = str(
-                            Path(res_file).resolve().relative_to(
-                                repo_resolved))
-                    except ValueError:
-                        report_rel = res_file
+                # names no file, so printing it would send a reader nowhere.
+                report_rel = result.def_rel
                 print(
                     f"{report_rel}:{body_open_line}:stub-behind-stamp:{symbol} "
                     f"returns {ret_const} (stamped [x] in {todo_path} "
