@@ -113,7 +113,7 @@ def _load_nodes() -> list:
             f"cache carries zero stamped items -- refusing to write a vacuous "
             f"baseline that would make every later compare report a clean "
             f"pass over nothing: {p}")
-    return nodes
+    return nodes, info.corpus
 
 
 def collect() -> dict:
@@ -152,7 +152,7 @@ def collect() -> dict:
     review, section 14).
     """
     root = _repo_root()
-    nodes = _load_nodes()
+    nodes, corpus = _load_nodes()
     out = {}
     for node in nodes:
         todo_path = node.get("file_path") or "?"
@@ -218,6 +218,16 @@ def collect() -> dict:
                 out[key] = (result.bucket if result.bucket is not None
                             else [result.def_rel, result.line_start,
                                   result.line_end])
+    # RE-VERIFY THE CORPUS GENERATION NOW THE WALK IS DONE. The freshness check
+    # inside `_load_nodes` bounds only its own few milliseconds; the window that
+    # matters is the ~1s resolution walk just completed, during which a TODO
+    # edit would leave these results describing a tree that no longer exists.
+    # Raising here is correct: an infrastructure refusal (rc 3) rather than a
+    # verdict computed from stale nodes (Codex adversarial, section 17 review).
+    try:
+        _cs.check_corpus_unchanged(root / "todo", corpus)
+    except _cs.CacheSchemaError as exc:
+        raise CacheError(str(exc))
     return out
 
 

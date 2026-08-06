@@ -4743,7 +4743,13 @@ fi
 # exactly the corpus rot the counted population exists to catch (Codex
 # adversarial, post-commit).
 RR_BASE="$RR_TREE/build/rr-baseline.json"
-printf '%s\n' '{"resolved": 0, "total": 9, "recorded": "fixture", "why": "fixture"}' > "$RR_BASE"
+# `resolved: 1`, not 0. This fixture used a zero floor so that ONLY the
+# population check could fire -- but section 17 made a zero `resolved` an
+# invalid baseline (rc 8), because a zero floor passes a walk that resolved
+# nothing. 1 is the smallest valid floor and preserves the intent: the
+# population check at check_stub_behind_stamp.py:501 runs BEFORE the coverage
+# floor, so a moved denominator is still what this fixture measures.
+printf '%s\n' '{"resolved": 1, "total": 9, "recorded": "fixture", "why": "fixture"}' > "$RR_BASE"
 RR_POP_RC=0
 STUB_LINT_CACHE="$RR_TREE/build/rr-cache.json" STUB_LINT_REPO_ROOT="$RR_TREE" \
     STUB_LINT_BASELINE="$RR_BASE" \
@@ -6071,6 +6077,138 @@ fi
 # The injection bumped a fixture TODO's mtime; keep the cache newer than it.
 touch "$CS_TREE/build/good.json" "$CS_TREE/build/case.json"
 
+# 23k7: THE POST-WALK CORPUS RE-VERIFICATION. The two adjacent scans inside
+# check_freshness bound only their own few milliseconds; the window that
+# matters is the caller's ~1s resolution walk. check_corpus_unchanged is what
+# callers run once that walk finishes, so a TODO edited DURING the walk yields
+# an infrastructure refusal instead of a verdict over stale nodes.
+# The mutation moves the TODO mtime BACKWARD, never forward: a future-dated
+# TODO would leave the cache looking stale to every fixture after this one
+# (which is exactly what it did on first run -- two later sub-tests failed with
+# STALE before reaching what they were testing).
+CS_POST=$(python3 -c "
+import os, sys
+sys.path.insert(0, '$REPO_ROOT/scripts/todo-graph')
+import cache_schema as cs
+todo = '$CS_TREE/todo/01-test/TODO-01-cs.md'
+corpus = cs._scan_corpus('$CS_TREE/todo', lambda e: None)
+# The caller's walk happens here; a TODO changes during it.
+st = os.stat(todo)
+os.utime(todo, (st.st_atime - 100, st.st_mtime - 100))
+try:
+    cs.check_corpus_unchanged('$CS_TREE/todo', corpus)
+    print('NORAISE')
+except cs.CacheSchemaError as e:
+    print(e.reason)
+" 2>&1)
+if [ "$CS_POST" = "STALE" ]; then
+    t_pass "shared cache schema: a TODO edited DURING the walk refuses post-walk"
+else
+    t_fail "shared cache schema: post-walk corpus check gave '$CS_POST' (want STALE)"
+fi
+# A None fingerprint (check_stale=False caller) must be a no-op, not a crash.
+CS_POST_NONE=$(python3 -c "
+import sys
+sys.path.insert(0, '$REPO_ROOT/scripts/todo-graph')
+import cache_schema as cs
+cs.check_corpus_unchanged('$CS_TREE/todo', None)
+print('NOOP')
+" 2>&1)
+if [ "$CS_POST_NONE" = "NOOP" ]; then
+    t_pass "shared cache schema: post-walk check is a no-op without a fingerprint"
+else
+    t_fail "shared cache schema: None fingerprint gave '$CS_POST_NONE' (want NOOP)"
+fi
+touch "$CS_TREE/build/good.json" "$CS_TREE/build/case.json"
+
+# 23k8: A RAISING close() must not escape, and must not MASK an in-flight
+# CacheSchemaError. Bare fh.close() in the finally sat outside every OSError
+# normalization path, so a close failure escaped as a raw OSError -- the lint
+# exits an undocumented rc 1 and the snapshot exits its DOCUMENTED "a prior
+# verdict changed" code (Codex adversarial, section 17 review).
+CS_CLOSE=$(python3 -c "
+import builtins, sys
+sys.path.insert(0, '$REPO_ROOT/scripts/todo-graph')
+import cache_schema as cs
+real_open = builtins.open
+class BadClose:
+    def __init__(self, fh): self._fh = fh
+    def fileno(self): return self._fh.fileno()
+    def read(self, *a): return self._fh.read(*a)
+    def close(self):
+        self._fh.close(); raise OSError('injected close failure')
+builtins.open = lambda *a, **k: BadClose(real_open(*a, **k))
+try:
+    cs.load_and_validate('$CS_TREE/build/good.json', '$CS_TREE/todo')
+    print('NORAISE')
+except cs.CacheSchemaError as e:
+    print(e.reason)
+except OSError:
+    print('ESCAPED')
+" 2>&1)
+if [ "$CS_CLOSE" = "UNREADABLE" ]; then
+    t_pass "shared cache schema: a failing close is a reason, not a raw OSError"
+else
+    t_fail "shared cache schema: failing close gave '$CS_CLOSE' (want UNREADABLE)"
+fi
+
+# 23k8b: ...and the same holds when the load runs INSIDE an unrelated outer
+# except block. The first version discriminated with sys.exc_info(), which is
+# AMBIENT -- it also reports an exception being handled by an outer caller, so a
+# perfectly successful load called from someone else's handler looked like it
+# was already failing and its close error was swallowed, silently certifying a
+# load whose descriptor never closed (Codex re-adversarial, section 17).
+CS_CLOSE_OUTER=$(python3 -c "
+import builtins, sys
+sys.path.insert(0, '$REPO_ROOT/scripts/todo-graph')
+import cache_schema as cs
+real_open = builtins.open
+class BadClose:
+    def __init__(self, fh): self._fh = fh
+    def fileno(self): return self._fh.fileno()
+    def read(self, *a): return self._fh.read(*a)
+    def close(self):
+        self._fh.close(); raise OSError('injected close failure')
+builtins.open = lambda *a, **k: BadClose(real_open(*a, **k))
+try:
+    raise ValueError('an unrelated outer failure')
+except ValueError:
+    # The load SUCCEEDS here; only close() fails. Ambient exception state must
+    # not make that look like an already-failing body.
+    try:
+        cs.load_and_validate('$CS_TREE/build/good.json', '$CS_TREE/todo')
+        print('SWALLOWED')
+    except cs.CacheSchemaError as e:
+        print(e.reason)
+    except OSError:
+        print('ESCAPED')
+" 2>&1)
+if [ "$CS_CLOSE_OUTER" = "UNREADABLE" ]; then
+    t_pass "shared cache schema: close failure still reported inside an outer except"
+else
+    t_fail "shared cache schema: close-in-outer-except gave '$CS_CLOSE_OUTER' (want UNREADABLE)"
+fi
+
+# 23k9: A ZERO-RESOLVED baseline is as vacuous as a zero total. With every
+# symbol in an unresolved bucket and {"resolved":0,"total":N}, the population
+# comparison matches and 0 < 0 is false, so the walk exited 0 having examined
+# no function body at all.
+cat > "$CS_TREE/scripts/lint/stub-lint-baseline.json" <<'JSON'
+{"resolved": 0, "total": 1}
+JSON
+STUB_LINT_CACHE="$CS_TREE/build/good.json" STUB_LINT_REPO_ROOT="$CS_TREE" \
+    python3 "$REPO_ROOT/scripts/lint/check_stub_behind_stamp.py" \
+    >"$TMP_DIR/cs-zres.out" 2>"$TMP_DIR/cs-zres.err"
+CS_ZRES_RC=$?
+if [ "$CS_ZRES_RC" = "8" ]; then
+    t_pass "shared cache schema: a zero-RESOLVED baseline is rejected too"
+else
+    t_fail "shared cache schema: zero-resolved baseline gave rc=$CS_ZRES_RC (want 8); $(head -2 "$TMP_DIR/cs-zres.err")"
+fi
+cat > "$CS_TREE/scripts/lint/stub-lint-baseline.json" <<'JSON'
+{"resolved": 1, "total": 1}
+JSON
+
 # 23l: MUTATION-CHECK THE RULE ITSELF. Delete the falsey-shape check from the
 # shared module and 23b must go red. A fixture that passes with the rule removed
 # is testing nothing -- this is the check that proves it is not.
@@ -6127,6 +6265,102 @@ if [ "$CS_REAL_RC" = "5" ] && [ "$CS_MUT_RC" != "5" ]; then
     t_pass "shared cache schema: mutation-check -- deleting the falsey rule reopens the silent-clean-run defect"
 else
     t_fail "shared cache schema: mutation-check FAILED -- real lint rc=$CS_REAL_RC (want 5), mutant rc=$CS_MUT_RC (want anything but 5)"
+fi
+
+# 23l2: MUTATION-CHECK EVERY CLAIMED RULE, not just the falsey one. The
+# checklist says the bad-shape fixtures are "each mutation-checked"; 23l alone
+# covered only the stamped_items list guard, which overstated the evidence
+# (Codex consistency, section 17 review). Each rule below is neutered in a COPY
+# of the module and the matching fixture must stop being rejected. Driven
+# through validate_nodes directly so a rule is tested in isolation rather than
+# through whichever reader-level guard happens to fire first.
+CS_MUT2=$(python3 - "$REPO_ROOT" 2>&1 <<'PY'
+import copy, json, re, sys, types
+repo = sys.argv[1]
+src = open(repo + "/scripts/todo-graph/cache_schema.py").read()
+
+GOOD = [{"file_path": "todo/01-test/TODO-01-cs.md",
+         "stamped_items": [{"section_n": 1, "item_idx": 0,
+                            "item_text": "shipped a thing",
+                            "refs": [{"kind": "symbol", "file": "src/a.c",
+                                      "symbol": "f"}]}]}]
+
+def mutate(doc, path, value, delete=False):
+    d = copy.deepcopy(doc)
+    tgt = d
+    for k in path[:-1]:
+        tgt = tgt[k]
+    if delete:
+        del tgt[path[-1]]
+    else:
+        tgt[path[-1]] = value
+    return d
+
+# (label, rule source line to neuter, fixture)
+CASES = [
+    ("stamped_items list guard", "        if not isinstance(items, list):",
+     mutate(GOOD, [0, "stamped_items"], {})),
+    ("refs list guard", "            if not isinstance(refs, list):",
+     mutate(GOOD, [0, "stamped_items", 0, "refs"], {})),
+    ("required item fields", "                if field not in it:",
+     mutate(GOOD, [0, "stamped_items", 0, "item_text"], None, delete=True)),
+    ("item additionalProperties", "            if extra:",
+     mutate(GOOD, [0, "stamped_items", 0, "zzz"], 1)),
+    ("file_path required-string", '        if "file_path" not in node:',
+     mutate(GOOD, [0, "file_path"], None, delete=True)),
+    ("empty node array", "    if not nodes:", []),
+]
+
+def load(mutated_src):
+    mod = types.ModuleType("cs_mut")
+    mod.__dict__["__file__"] = repo + "/scripts/todo-graph/cache_schema.py"
+    exec(compile(mutated_src, "cs_mut", "exec"), mod.__dict__)
+    return mod
+
+real = load(src)
+bad = []
+for label, needle, fixture in CASES:
+    if needle not in src:
+        bad.append(f"{label}: mutation target not found -- module moved")
+        continue
+    # Baseline: the REAL module must reject this fixture, and WITH WHICH REASON
+    # matters -- each reason maps to a different documented exit code, so a rule
+    # that merely changes EMPTY into LEGACY has changed an ERROR into a WARN.
+    try:
+        real.validate_nodes(copy.deepcopy(fixture), "x")
+        bad.append(f"{label}: real module ACCEPTED the fixture (fixture is inert)")
+        continue
+    except real.CacheSchemaError as exc:
+        real_reason = exc.reason
+    # Neuter just this rule; the fixture must then get through.
+    indent = needle[:len(needle) - len(needle.lstrip())]
+    mut = load(src.replace(needle, indent + "if False:", 1))
+    try:
+        mut.validate_nodes(copy.deepcopy(fixture), "x")
+    except mut.CacheSchemaError as exc:
+        # A rejection with the SAME reason means some OTHER rule was doing the
+        # work and this fixture proves nothing about the named one. A DIFFERENT
+        # reason is a pass: the rule decided which documented exit code the
+        # caller reports. Deleting the empty-array rule, for instance, leaves
+        # `[]` rejected as LEGACY (lint rc 3, a WARN) instead of EMPTY (rc 5,
+        # an ERROR) -- the input is still refused, but at the wrong severity.
+        if exc.reason == real_reason:
+            bad.append(f"{label}: still rejected as {exc.reason} with the "
+                       f"rule deleted")
+    except Exception:
+        # Any OTHER exception means the rule IS load-bearing: without it the
+        # bad shape reaches the walk and crashes it, which is precisely the
+        # uncaught-traceback-as-rc-1 failure the validator exists to prevent.
+        # (Deleting the required-field check makes `it["item_text"]` a
+        # KeyError, for example.) That is a passing mutation, not a failure.
+        pass
+print("OK" if not bad else "FAIL: " + "; ".join(bad))
+PY
+)
+if [ "$CS_MUT2" = "OK" ]; then
+    t_pass "shared cache schema: every claimed rule is individually mutation-checked"
+else
+    t_fail "shared cache schema: per-rule mutation check -- $CS_MUT2"
 fi
 
 # 23m: THE SHARED MODULE IS IN THE IDENTITY-GATE CLOSURE. It is imported by the

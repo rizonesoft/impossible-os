@@ -301,6 +301,20 @@ def main() -> int:
         # API that no production caller entered).
         with _rr.walk_scope():
             findings, cov = _walk(nodes, repo_root)
+        # RE-VERIFY THE CORPUS GENERATION NOW THE WALK IS DONE. The freshness
+        # check inside the shared loader bounds only its own few milliseconds;
+        # the window that matters is the ~1s walk just completed, during which a
+        # TODO edit would leave these findings describing a tree that no longer
+        # exists. Mapped to the documented STALE code (4) like any other
+        # staleness, never to a finding count (Codex adversarial, s17 review).
+        _cs.check_corpus_unchanged(todo_root, info.corpus)
+    except _cs.CacheSchemaError as exc:
+        # BEFORE the generic handler below, which would otherwise swallow the
+        # post-walk staleness refusal into rc 6 "internal failure". It is a
+        # cache-state reason like any other and maps through the same table, so
+        # a corpus that moved under the walk reports the documented rc 4.
+        sys.stderr.write(f"[check_stub_behind_stamp] {exc}\n")
+        return _CACHE_REASON_RC[exc.reason]
     except _rs.ResolverInputError as exc:
         # SURFACED, never bucketed. The resolver raises this for an input it
         # refuses to answer about -- a file past the per-file byte ceiling, or
@@ -404,8 +418,18 @@ def main() -> int:
         if baseline_err is None and (not isinstance(baseline, int)
                                      or isinstance(baseline, bool)):
             baseline_err = f"`resolved` is not an integer ({baseline!r})"
-        if baseline_err is None and baseline < 0:
-            baseline_err = f"`resolved` is not a valid count ({baseline!r})"
+        # `<= 0`, for the SAME reason as `total` below and found by the same
+        # class of reasoning one round later: a zero RESOLVED floor is not a
+        # floor either. With every symbol landing in an unresolved bucket and a
+        # baseline of {"resolved": 0, "total": N}, the population comparison
+        # matches, `0 < 0` is false, and main returns 0 -- an exit-0 run in
+        # which Check 7 examined no function body at all, rendered by lint.sh
+        # as a mere warning (Codex adversarial, section 17 review). The
+        # snapshot already rejects the equivalent zero-resolved baseline.
+        if baseline_err is None and baseline <= 0:
+            baseline_err = (f"`resolved` is not a valid floor ({baseline!r})"
+                            f" -- a zero floor passes a walk that resolved "
+                            f"nothing")
         # THE DENOMINATOR IS PART OF THE FLOOR, not decoration. `total` was
         # recorded but never read, so the ratio was protected only from above:
         # if extraction stopped emitting UNRESOLVED refs, `occurrences` and the

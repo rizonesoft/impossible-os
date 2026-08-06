@@ -27,7 +27,7 @@
       "domain": { "type": "string" },
       "status": { "type": ["string", "null"] },
       "title": { "type": ["string", "null"] },
-      "file_path": { "type": "string" },
+      "file_path": { "type": "string", "minLength": 1, "description": "Repo-relative path of the TODO. minLength is load-bearing, not decoration: both cache readers build occurrence keys from this field, so an empty one produces a keyed-on-nothing occurrence rather than a refusal (TODO-06 section 17)." },
       "created_at": { "type": ["string", "null"], "description": "ISO-8601 UTC timestamp from git log (cache-only; rejected in frontmatter)." },
       "last_active_at": { "type": ["string", "null"], "description": "ISO-8601 UTC timestamp from git log (cache-only; rejected in frontmatter)." },
       "owners": { "type": "array", "items": { "type": "string" } },

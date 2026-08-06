@@ -38,13 +38,24 @@
 #   READINESS checks are operational, not schema: does the cache exist, does it
 #                    parse, does it hold any nodes, is it stale against
 #                    todo/**/*.md, does it carry a stamped population at all.
-#                    A JSON Schema cannot express any of them, and one of them
-#                    deliberately DIVERGES from the schema: cache.schema.json
-#                    permits a root `[]`, because it describes what the producer
-#                    may legally EMIT. The readers additionally require
-#                    something to walk, so `[]` is refused here as READINESS
-#                    (REASON_EMPTY), never as a schema violation. That split is
-#                    stated rather than hidden (Codex design review, section 17).
+#                    A JSON Schema cannot express any of them, and TWO of them
+#                    deliberately DIVERGE from the schema -- the schema
+#                    describes what the producer may legally EMIT, while a
+#                    reader additionally needs something to walk. Both are
+#                    refused as READINESS reasons, never as schema violations,
+#                    and both are listed rather than hidden:
+#                      * a root `[]` is schema-valid, refused as REASON_EMPTY.
+#                      * a cache where EVERY node omits `stamped_items` is also
+#                        schema-valid (the field is emitted only when a body has
+#                        a [x] item), and is refused as
+#                        REASON_LEGACY_NO_STAMPED_ITEMS -- it cannot be
+#                        distinguished from a pre-extension cache, which is why
+#                        the lint routes it to a WARN rather than an error.
+#                    An earlier revision of this header claimed the root `[]`
+#                    was the ONLY divergence. It was not, and the fixture oracle
+#                    had been asserting the second one as `accept` all along
+#                    without the prose admitting it (Codex consistency, section
+#                    17 review).
 #
 # NOT IN SCOPE: the node-level frontmatter fields neither reader consumes
 # (id/domain/status/sections and friends). Validating them here would advertise
@@ -110,13 +121,21 @@ class CacheInfo:
     warn-worthy) from a CURRENT cache whose producer regressed to emitting an
     empty population (key present, zero items -- a regression that must not be
     downgraded to a warning).
+
+    `corpus` is the TODO-corpus fingerprint taken during validation. It is
+    handed back so a caller can re-verify it AFTER its own walk via
+    `check_corpus_unchanged`. Without that, the generation binding covered only
+    the few milliseconds inside `check_freshness`, while the window that
+    actually matters is the caller's ~1s symbol-resolution walk (Codex
+    adversarial, section 17 review).
     """
 
-    __slots__ = ("population", "key_present")
+    __slots__ = ("population", "key_present", "corpus")
 
-    def __init__(self, population: int, key_present: bool):
+    def __init__(self, population: int, key_present: bool, corpus=None):
         self.population = population
         self.key_present = key_present
+        self.corpus = corpus
 
 
 def _err(reason: str, message: str):
@@ -290,8 +309,20 @@ def validate_nodes(nodes, path) -> CacheInfo:
     return CacheInfo(population=population, key_present=key_present)
 
 
+def _scan_corpus(todo_root: Path, on_err):
+    """One generation of the TODO corpus: {path: (dev, ino, size, mtime_ns)}."""
+    seen = {}
+    for dirpath, _, files in os.walk(todo_root, onerror=on_err):
+        for f in files:
+            if f.startswith("TODO-") and f.endswith(".md"):
+                fp = os.path.join(dirpath, f)
+                st = os.stat(fp)
+                seen[fp] = (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns)
+    return seen
+
+
 def check_freshness(cache_path: Path, todo_root: Path,
-                    cache_mtime: float = None) -> None:
+                    cache_mtime: float = None):
     """Refuse a cache older than the newest TODO. FAIL-CLOSED in all three ways
     the lint copy was fail-open (Codex design review, section 17):
 
@@ -313,16 +344,7 @@ def check_freshness(cache_path: Path, todo_root: Path,
         _err(REASON_STALE,
              f"todo root is not a readable directory: {todo_root}")
     def _scan():
-        """One generation of the TODO corpus: {path: (dev, ino, size, mtime_ns)}."""
-        seen = {}
-        for dirpath, _, files in os.walk(todo_root, onerror=_walk_err):
-            for f in files:
-                if f.startswith("TODO-") and f.endswith(".md"):
-                    fp = os.path.join(dirpath, f)
-                    st = os.stat(fp)
-                    seen[fp] = (st.st_dev, st.st_ino, st.st_size,
-                                st.st_mtime_ns)
-        return seen
+        return _scan_corpus(todo_root, _walk_err)
 
     try:
         # `cache_mtime` is the mtime of the descriptor the caller actually READ.
@@ -356,13 +378,46 @@ def check_freshness(cache_path: Path, todo_root: Path,
         after = _scan()
     except OSError as exc:
         _err(REASON_STALE, f"cannot determine cache freshness: {exc}")
-    if after != before:
-        changed = sorted(set(before) ^ set(after)) or sorted(
-            p for p in before if p in after and before[p] != after[p])
-        _err(REASON_STALE,
-             f"the TODO corpus changed while freshness was being checked "
-             f"({len(changed)} file(s), e.g. {changed[0] if changed else '?'}); "
-             f"re-run rather than certify a cache against a moving corpus")
+    _diff_or_ok(before, after, "while freshness was being checked")
+    return after
+
+
+def _diff_or_ok(before, after, when: str) -> None:
+    if after == before:
+        return
+    changed = sorted(set(before) ^ set(after)) or sorted(
+        p for p in before if p in after and before[p] != after[p])
+    _err(REASON_STALE,
+         f"the TODO corpus changed {when} "
+         f"({len(changed)} file(s), e.g. {changed[0] if changed else '?'}); "
+         f"re-run rather than certify a cache against a moving corpus")
+
+
+def check_corpus_unchanged(todo_root: Path, corpus) -> None:
+    """Re-verify the corpus fingerprint AFTER the caller's own walk.
+
+    THE WINDOW THAT MATTERS IS THE CALLER'S WALK, NOT THIS MODULE'S CHECK. The
+    two scans inside `check_freshness` are adjacent, so on their own they bound
+    only a few milliseconds -- while both readers then spend ~1s resolving
+    symbols, during which a TODO edit would leave the in-memory nodes stale and
+    still let a VERDICT be returned (Codex adversarial, section 17 review).
+    Callers therefore re-verify here once their walk completes, which is the
+    point at which the verdict is actually about to be published.
+
+    A no-op when `corpus` is None (a caller that loaded with `check_stale=False`
+    never took a fingerprint and has nothing to compare).
+    """
+    if corpus is None:
+        return
+
+    def _walk_err(exc):
+        _err(REASON_STALE, f"cannot traverse todo tree: {exc}")
+
+    try:
+        after = _scan_corpus(Path(todo_root), _walk_err)
+    except OSError as exc:
+        _err(REASON_STALE, f"cannot re-verify cache freshness: {exc}")
+    _diff_or_ok(corpus, after, "during the walk")
 
 
 def load_and_validate(cache_path: Path, todo_root: Path,
@@ -410,6 +465,7 @@ def _load_and_validate(cache_path: Path, todo_root: Path,
     the same way.
     """
     cache_path = Path(cache_path)
+    body_ok = False
     try:
         fh = open(cache_path, "rb")
     except FileNotFoundError:
@@ -459,10 +515,12 @@ def _load_and_validate(cache_path: Path, todo_root: Path,
 
         info = validate_nodes(nodes, cache_path)
         if check_stale:
+            # The fingerprint returned here is handed to the caller so it can
+            # re-verify AFTER its own walk (`check_corpus_unchanged`).
             # Compare against the mtime of the descriptor actually READ, never
             # a fresh stat of the name.
-            check_freshness(cache_path, todo_root,
-                            cache_mtime=st_before.st_mtime)
+            info.corpus = check_freshness(cache_path, todo_root,
+                                          cache_mtime=st_before.st_mtime)
             # ...and prove the file did not change underneath the operation. A
             # rewrite means the parsed nodes may already describe a tree that
             # no longer exists, so the honest answer is an infrastructure
@@ -482,6 +540,30 @@ def _load_and_validate(cache_path: Path, todo_root: Path,
                      f"cache was rewritten while it was being validated (a "
                      f"concurrent build-and-validate.sh?); re-run rather than "
                      f"trust a verdict from mixed generations: {cache_path}")
+        body_ok = True
     finally:
-        fh.close()
+        # A CLOSE FAILURE IS ALSO INFRASTRUCTURE. A bare `fh.close()` here sat
+        # outside every OSError normalization path, so a raising close escaped
+        # as a raw OSError -- the lint exits an undocumented rc 1 and the
+        # snapshot exits its DOCUMENTED "a prior verdict changed" code. Worse,
+        # an exception from `finally` REPLACES an in-flight CacheSchemaError,
+        # turning a precise diagnosis into an opaque one (Codex adversarial,
+        # section 17 review), so while the body is already failing the close
+        # error is swallowed and the original reason survives.
+        #
+        # The discriminator is a FUNCTION-LOCAL flag, deliberately NOT
+        # `sys.exc_info()` (which the first version of this used). That state
+        # is AMBIENT: it also reports an exception being handled by an OUTER
+        # caller, so a load invoked from inside someone else's `except` block
+        # would look like it was already failing and its close error would be
+        # swallowed -- silently certifying a load whose descriptor failed to
+        # close (Codex re-adversarial, section 17). `body_ok` is true only when
+        # THIS body completed, which is exactly when a close failure is the
+        # only thing left to report.
+        try:
+            fh.close()
+        except OSError as exc:
+            if body_ok:
+                _err(REASON_UNREADABLE,
+                     f"cache descriptor failed to close: {cache_path}: {exc}")
     return nodes, info
