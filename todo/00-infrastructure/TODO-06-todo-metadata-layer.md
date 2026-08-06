@@ -62,7 +62,8 @@ title: "TODO-06 -- TODO Metadata Layer and Derived Graph"
 | ⭐  |  11   |  §11    | Check 7 counts what it cannot resolve (unresolved != clean)                         | §10        |  [x]   |
 | ⭐  |  12   |  §12    | Resolver coverage past the head limit + lexer/cache robustness                      | §10, §11   |  [x]   |
 | ⭐  |  13   |  §13    | Stored-ref repair: unpaired symbols + bare filenames (resolution-time)              | §2, §11    |  [x]   |
-| ⭐  |  14   |  §14    | Identity gate over the whole symbol-ref population + shared-rule cost               | §13        |  [ ]   |
+| ⭐  |  14   |  §14    | Identity gate over the whole symbol-ref population (every `kind=symbol` ref)        | §13        |  [ ]   |
+| ⭐  |  15   |  §15    | The shared rule's cost: batched definition lookup + bounded resolver caches         | §13, §14   |  [ ]   |
 
 > 💎 = parity work -- Linux kernel has MAINTAINERS + get_maintainer.pl (person-ownership mapping without a dep graph); Windows has no public equivalent. §1 (frontmatter), §2 (generator), §5 (migration) bring us to partial Linux parity plus graph metadata neither OS ships.
 > ⭐ = competitive edge -- neither Win11 nor mainline Linux ships a first-class TODO dependency graph. §3 (validator), §4 (query CLI), §6 (CI gate), §7 (visualization), §8 (MCP server) are new ground; the surface has direct value for any contributor scanning "what can I work on next?".
@@ -649,7 +650,7 @@ It does NOT re-cover §12's head-limit widening, decl-following, cache bounds, o
 
 ---
 
-## 14. Identity Gate Over the Whole Symbol-Ref Population, and the Shared Rule's Cost
+## 14. Identity Gate Over the Whole Symbol-Ref Population
 
 > **Spawned-by:** §13 (review)
 
@@ -669,20 +670,37 @@ That is a real hole in the proof, and §13 is the section that demonstrates it. 
       Today every non-null mapping is validated as a 3-element `[path, start, end]` list and `resolved` is derived from `v is not None`; a bucket string breaks both. Bump `SNAPSHOT_SCHEMA` so an old baseline is REFUSED with a regenerate pointer rather than silently mis-compared.
 - [ ] Regression fixtures, each mutation-checked
       Extend [`scripts/todo-graph/tests/test_build.sh`](../../scripts/todo-graph/tests/test_build.sh): prove that dropping a ref, and separately moving one between buckets, both fail the gate; and that an unchanged corpus still reports clean.
-- [ ] Batch the DEFINITION rule per candidate file, without writing a second one -- carried here from §13's round-3 perf review
-      §13's pre-filter made a NEGATIVE mention O(1), but every POSITIVE probe still calls `resolve_symbol`, whose candidate search scans the file for that one symbol. MEASURED on the live corpus: 1,463 section-file questions, 681 positive mentions, 587 unique positive `(file, symbol)` pairs, about 65 MB of repeated scanning; `_defining_candidates` is ~1.0s of Check 7's ~1.47s.
-      - The fix belongs INSIDE [`resolve_symbol.py`](../../scripts/todo-graph/resolve_symbol.py) as a batched entry point that applies its OWN existing definition rule to a requested symbol SET in one per-file pass. A definition map built anywhere else is a second definition rule, which is exactly what §13 declined twice and what [`ref_resolution.py`](../../scripts/todo-graph/ref_resolution.py) exists to prevent.
-      - It rides in this section rather than spawning another because it touches the same two modules and the same shared rule, and §13 already grew twice under review; a section per review round is the failure mode the spawn-chain sensor exists to catch.
-      - Needs a SCALING fixture (varying symbols x candidate files x file size), not another fixed functional one: the round-2 fix was accepted on a wall-clock number that could not see the growth shape.
-- [ ] Bound the process-wide caches, or scope them to a walk
-      `_BASENAME_INDEX`, `_RESOLVE_MEMO`, `_EFFECTIVE_PATH_MEMO` and `_MENTION_INDEX` are plain dicts that retain every repo root, path, identifier set and `(path, symbol)` result until an explicit reset. One Check 7 walk leaves ~924 resolve pairs, ~998 effective paths and ~260 identifier sets resident.
-      - Harmless for the CLI callers (each lint invocation is a fresh interpreter that exits), so this is bounded-risk housekeeping, NOT a correctness gate. It matters only for a long-lived importer serving several worktrees -- which is why it is filed rather than fixed under §13.
 - [ ] Commit: `"todo-graph: identity gate covers every symbol ref, not only resolved ones"`
 
 **Test checkpoint:** `bash scripts/todo-graph/tests/test_build.sh` green with the new fixtures; `corpus_resolution_snapshot.py compare` clean against a regenerated baseline and REFUSING an old-schema one; `bash scripts/lint.sh` Check 7 unchanged at its recorded floor; `bash scripts/test-tooling.sh` green.
 
 -> XREF: [`TODO-06 §13`](#13-stored-ref-repair-unpaired-symbols-and-bare-filenames) -- the section whose review found this, and whose bucket movements are the worked example of what the gate cannot currently see.
 -> XREF: [`TODO-06 §11`](#11-count-what-check-7-cannot-resolve-instead-of-skipping-it) -- owns the bucket names and the reporting contract this section makes gateable.
+-> XREF: [`TODO-06 §15`](#15-the-shared-rules-cost-batched-definition-lookup-and-bounded-resolver-caches) -- took this section's two COST items at the split; §14 is correctness-of-the-gate only and deliberately does not re-cover them.
+
+---
+
+## 15. The Shared Rule's Cost: Batched Definition Lookup and Bounded Resolver Caches
+
+> **Spawned-by:** §14 (split)
+
+Split out of §14 at authoring time, not spawned by a review round. §14 proves the identity gate covers every `kind=symbol` ref; this section is about what that shared rule COSTS to evaluate. The two failure modes are opposite and are verified by different means: §14 fails by mis-verdicting a ref and is proven by functional fixtures, while this one fails by scaling badly or retaining memory and can only be proven by a SCALING fixture. Bundling them is how a wall-clock number gets accepted as a growth-shape proof.
+
+- [ ] Batch the DEFINITION rule per candidate file, without writing a second one -- carried from §13's round-3 perf review
+      §13's pre-filter made a NEGATIVE mention O(1), but every POSITIVE probe still calls `resolve_symbol`, whose candidate search scans the file for that one symbol. MEASURED on the live corpus: 1,463 section-file questions, 681 positive mentions, 587 unique positive `(file, symbol)` pairs, about 65 MB of repeated scanning; `_defining_candidates` is ~1.0s of Check 7's ~1.47s.
+      - The fix belongs INSIDE [`resolve_symbol.py`](../../scripts/todo-graph/resolve_symbol.py) as a batched entry point that applies its OWN existing definition rule to a requested symbol SET in one per-file pass. A definition map built anywhere else is a second definition rule, which is exactly what §13 declined twice and what [`ref_resolution.py`](../../scripts/todo-graph/ref_resolution.py) exists to prevent.
+      - Needs a SCALING fixture (varying symbols x candidate files x file size), not another fixed functional one: the round-2 fix was accepted on a wall-clock number that could not see the growth shape.
+      - Sequenced AFTER §14 because §14 moves post-resolution classification behind the shared rule, which changes both the call population this batches and the surface a scaling fixture has to drive.
+- [ ] Bound the process-wide caches, or scope them to a walk
+      `_BASENAME_INDEX`, `_RESOLVE_MEMO`, `_EFFECTIVE_PATH_MEMO` and `_MENTION_INDEX` are plain dicts that retain every repo root, path, identifier set and `(path, symbol)` result until an explicit reset. One Check 7 walk leaves ~924 resolve pairs, ~998 effective paths and ~260 identifier sets resident.
+      - Harmless for the CLI callers (each lint invocation is a fresh interpreter that exits), so this is bounded-risk housekeeping, NOT a correctness gate. It matters only for a long-lived importer serving several worktrees -- which is why it was filed rather than fixed under §13.
+      - Whatever bound is chosen must not silently change a RESULT: an eviction that drops a memo has to recompute to the same answer, so the identity gate §14 builds is the regression net for this item.
+- [ ] Commit: `"todo-graph: batch the definition rule per candidate file and bound the resolver caches"`
+
+**Test checkpoint:** a scaling fixture in [`scripts/todo-graph/tests/test_build.sh`](../../scripts/todo-graph/tests/test_build.sh) that fails on a per-symbol-rescan growth shape; `corpus_resolution_snapshot.py compare` clean against §14's baseline (the batched rule must change no verdict); `bash scripts/lint.sh` Check 7 unchanged at its recorded floor; `bash scripts/test-tooling.sh` green.
+
+-> XREF: [`TODO-06 §14`](#14-identity-gate-over-the-whole-symbol-ref-population) -- the split parent; owns the gate this section's changes must leave verdict-identical, and must land first.
+-> XREF: [`TODO-06 §13`](#13-stored-ref-repair-unpaired-symbols-and-bare-filenames) -- whose round-3 perf review measured the repeated per-symbol scanning that item 1 removes.
 
 ---
 
