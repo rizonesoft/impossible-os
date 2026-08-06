@@ -5453,11 +5453,21 @@ gate_seed() {
         # then failed with an import error at rc 1/3 -- which reads as "the gate
         # mis-fired" rather than "the fixture is missing a file". Extracting the
         # array literal means the two cannot drift again.
+        #
+        # BOTH arrays, and filtered to `scripts/` entries. Section 18 split the
+        # list into EXEC_CLOSURE (can run code) plus a CLOSURE that expands it
+        # with `"${EXEC_CLOSURE[@]}"`. Reading only CLOSURE then yielded ONE
+        # real path plus the literal expansion text, so the clone was seeded
+        # almost entirely from COMMITTED code and every fixture silently tested
+        # the old gate -- the same drift this derivation exists to prevent,
+        # wearing a different shape. The `scripts/` filter drops the expansion
+        # token without needing to know what it expands to.
         while IFS= read -r f; do
             [ -n "$f" ] && [ -f "$REPO_ROOT/$f" ] && cp "$REPO_ROOT/$f" "$f"
-        done < <(sed -n '/^CLOSURE=(/,/^)/p' \
+        done < <(sed -n -e '/^EXEC_CLOSURE=(/,/^)/p' -e '/^CLOSURE=(/,/^)/p' \
                      "$REPO_ROOT/scripts/todo-graph/identity-gate.sh" \
-                 | sed -n 's/^[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p')
+                 | sed -n 's/^[[:space:]]*"\(scripts\/.*\)"[[:space:]]*$/\1/p' \
+                 | sort -u)
         # check_stub_behind_stamp.py is DELIBERATELY absent from the closure
         # (it is neither executed by the walks nor an input to them), but the
         # fixture still needs the file present to exercise the lint side.
@@ -5639,61 +5649,985 @@ else
         t_fail "identity gate: driver did not reject a pure GAINED (rc=$G_RC; see $TMP_DIR/gate-22h.log)"
     fi
 
-    # 22j / 22k: THE PROTOCOL CHECK MUST TRACK BUCKET VALUES, NOT THEIR SOURCE
-    # TEXT. `ALL_BUCKETS` is spelled `PRE_RESOLUTION_BUCKETS +
-    # POST_RESOLUTION_BUCKETS`, so a regex over its RHS is invariant under a
-    # bucket RENAME -- the fail-closed branch could never fire -- while it DID
-    # capture a comment line following the assignment, so unrelated prose
-    # wedged the gate. Both directions get a fixture (Codex adversarial, s16).
+    # 22j..22n: THE PROTOCOL CHECK MUST TRACK BUCKET VALUES, NOT THEIR SOURCE
+    # TEXT, and -- since section 18 -- must SEPARATE a protocol migration from a
+    # resolver change instead of refusing both alike.
+    #
+    # The constants moved to the inert snapshot_protocol.json in section 18, so
+    # these fixtures mutate THAT rather than ref_resolution.py's source text.
+    # The section-16 contract they replaced ("any bucket change fails closed")
+    # is deliberately no longer asserted: failing closed was the SYMPTOM of the
+    # constants living beside the logic, and 22l keeps the fail-closed
+    # direction for the case that genuinely cannot be separated.
     (cd "$GATE_REPO" && git checkout --quiet -- scripts/todo-graph/ref_resolution.py 2>/dev/null)
     G_PROTO_BASE="$(cd "$GATE_REPO" && git rev-parse HEAD)"
 
-    # 22j: a bucket the corpus never exercises still changes the protocol.
+    # 22j: a bucket the corpus never exercises, added ALONE, is provably
+    # verdict-neutral -- every executable closure file is byte-identical, so
+    # the differential runs and finds nothing. Under section 16 this was rc 3.
     (
         cd "$GATE_REPO" || exit 1
-        python3 - scripts/todo-graph/ref_resolution.py <<'PY'
-import sys, pathlib
-p = pathlib.Path(sys.argv[1]); s = p.read_text(encoding="utf-8")
-old = 'POST_RESOLUTION_BUCKETS = ("unresolved_calllike", "no_calllike_token")'
-assert old in s, "bucket tuple not found"
-p.write_text(s.replace(old, old[:-1] + ', "never_used_by_any_ref")', 1), encoding="utf-8")
-PY
-        git commit --quiet --no-verify -am "22j: add an unused bucket" >/dev/null 2>&1
+        python3 - scripts/todo-graph/snapshot_protocol.json <<'PY2'
+import json, sys, pathlib
+p = pathlib.Path(sys.argv[1]); d = json.loads(p.read_text(encoding="utf-8"))
+assert "post_resolution_buckets" in d, "protocol file shape changed"
+d["post_resolution_buckets"].append("never_used_by_any_ref")
+p.write_text(json.dumps(d, indent=2) + "\n", encoding="utf-8")
+PY2
+        git commit --quiet --no-verify -am "22j: add an unused bucket (data only)" >/dev/null 2>&1
     )
     (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head HEAD \
         >"$TMP_DIR/gate-22j.log" 2>&1)
     G_RC=$?
-    if [ "$G_RC" -eq 3 ] && grep -q 'ALL_BUCKETS' "$TMP_DIR/gate-22j.log"; then
-        t_pass "identity gate: a bucket change fails closed even if no ref uses it"
+    if [ "$G_RC" -eq 0 ] && grep -q 'DATA-ONLY' "$TMP_DIR/gate-22j.log"; then
+        t_pass "identity gate: a data-only bucket addition runs the differential and passes"
     else
-        t_fail "identity gate: bucket change did not fail closed (rc=$G_RC; see $TMP_DIR/gate-22j.log)"
+        t_fail "identity gate: data-only bucket addition not separated (rc=$G_RC; see $TMP_DIR/gate-22j.log)"
     fi
 
-    # 22k: a comment beside the assignment is NOT a protocol change. This is
-    # the false-positive direction -- without it, a fix for 22j that simply
-    # hashes more source text would pass 22j and silently wedge the gate.
+    # 22l: THE FAIL-CLOSED DIRECTION, which section 18 must NOT weaken. A
+    # protocol change bundled with an executable-closure change cannot be
+    # separated, so the gate still refuses -- and names splitting the commit.
     (
         cd "$GATE_REPO" || exit 1
-        git checkout --quiet "$G_PROTO_BASE" -- scripts/todo-graph/ref_resolution.py
-        python3 - scripts/todo-graph/ref_resolution.py <<'PY'
-import sys, pathlib
-p = pathlib.Path(sys.argv[1]); s = p.read_text(encoding="utf-8")
-anchor = "ALL_BUCKETS = PRE_RESOLUTION_BUCKETS + POST_RESOLUTION_BUCKETS"
-assert anchor in s, "ALL_BUCKETS assignment not found"
-p.write_text(s.replace(anchor, anchor + "\n# 22k: an adjacent comment, no behaviour change", 1), encoding="utf-8")
-PY
-        git commit --quiet --no-verify -am "22k: comment beside ALL_BUCKETS" >/dev/null 2>&1
+        git checkout --quiet "$G_PROTO_BASE" -- scripts/todo-graph/snapshot_protocol.json
+        python3 - scripts/todo-graph/snapshot_protocol.json <<'PY2'
+import json, sys, pathlib
+p = pathlib.Path(sys.argv[1]); d = json.loads(p.read_text(encoding="utf-8"))
+d["post_resolution_buckets"].append("bundled_with_a_resolver_change")
+p.write_text(json.dumps(d, indent=2) + "\n", encoding="utf-8")
+PY2
+        printf '\n# 22l: a resolver edit riding along with the protocol change\n' \
+            >> scripts/todo-graph/ref_resolution.py
+        git commit --quiet --no-verify -am "22l: protocol + resolver together" >/dev/null 2>&1
+    )
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head HEAD \
+        >"$TMP_DIR/gate-22l.log" 2>&1)
+    G_RC=$?
+    if [ "$G_RC" -eq 3 ] && grep -q 'Split the commit' "$TMP_DIR/gate-22l.log"; then
+        t_pass "identity gate: a protocol change bundled with a resolver change still fails closed"
+    else
+        t_fail "identity gate: bundled protocol+resolver change was not refused (rc=$G_RC; see $TMP_DIR/gate-22l.log)"
+    fi
+
+    # 22m: a SCHEMA change alone. The differential is mechanically impossible
+    # across formats, so the gate passes on the byte-identical-executables
+    # inference -- and must SAY so, not pass silently.
+    (
+        cd "$GATE_REPO" || exit 1
+        git checkout --quiet "$G_PROTO_BASE" -- scripts/todo-graph/snapshot_protocol.json \
+            scripts/todo-graph/ref_resolution.py
+        python3 - scripts/todo-graph/snapshot_protocol.json <<'PY2'
+import json, sys, pathlib
+p = pathlib.Path(sys.argv[1]); d = json.loads(p.read_text(encoding="utf-8"))
+d["snapshot_schema"] = int(d["snapshot_schema"]) + 1
+p.write_text(json.dumps(d, indent=2) + "\n", encoding="utf-8")
+PY2
+        git commit --quiet --no-verify -am "22m: schema bump, data only" >/dev/null 2>&1
+    )
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head HEAD \
+        >"$TMP_DIR/gate-22m.log" 2>&1)
+    G_RC=$?
+    if [ "$G_RC" -eq 0 ] && grep -q 'schema migrated' "$TMP_DIR/gate-22m.log"; then
+        t_pass "identity gate: a data-only schema migration passes on the byte-identical-executables proof"
+    else
+        t_fail "identity gate: data-only schema migration not handled (rc=$G_RC; see $TMP_DIR/gate-22m.log)"
+    fi
+
+    # 22k: a comment in the RESOLVER is not a protocol change. This is the
+    # false-positive direction -- without it, a fix for 22j that hashed more
+    # source text would pass 22j and silently wedge the gate.
+    (
+        cd "$GATE_REPO" || exit 1
+        git checkout --quiet "$G_PROTO_BASE" -- scripts/todo-graph/snapshot_protocol.json \
+            scripts/todo-graph/ref_resolution.py
+        printf '\n# 22k: an adjacent comment, no behaviour change\n' \
+            >> scripts/todo-graph/ref_resolution.py
+        git commit --quiet --no-verify -am "22k: comment in the resolver" >/dev/null 2>&1
     )
     (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head HEAD \
         >"$TMP_DIR/gate-22k.log" 2>&1)
     G_RC=$?
     if [ "$G_RC" -eq 0 ]; then
-        t_pass "identity gate: a comment beside ALL_BUCKETS is not a protocol change"
+        t_pass "identity gate: a comment in the resolver is not a protocol change"
     else
         t_fail "identity gate: adjacent comment wedged the gate (rc=$G_RC; see $TMP_DIR/gate-22k.log)"
     fi
+
+    # 22n: THE PRODUCER BLIND SPOT, which is the whole reason section 18
+    # exists. A build.py that stops emitting a stamped ref removes it from BOTH
+    # walks, so the resolver differential sees two agreeing sides and passes.
+    # The producer differential must fail -- and note the mutation drops the
+    # refs unconditionally, so the head corpus carries no live example either,
+    # which is exactly the case a head-corpus-only comparison would miss.
+    (
+        cd "$GATE_REPO" || exit 1
+        git checkout --quiet "$G_PROTO_BASE" -- scripts/todo-graph/ref_resolution.py \
+            scripts/todo-graph/snapshot_protocol.json
+        python3 - scripts/todo-graph/build.py <<'PY2'
+import sys, pathlib
+p = pathlib.Path(sys.argv[1]); s = p.read_text(encoding="utf-8")
+old = '    nodes.sort(key=lambda n: n["file_path"])'
+assert old in s, "producer publish anchor not found"
+# A REGRESSION SHAPED LIKE A REAL ONE: silently drop every symbol ref from the
+# per-item population the resolver walk consumes.
+inject = [
+    old,
+    '    for _n in nodes:',
+    '        for _it in _n.get("stamped_items") or []:',
+    '            _it["refs"] = [_r for _r in (_it.get("refs") or [])',
+    '                           if _r.get("kind") != "symbol"]',
+]
+p.write_text(s.replace(old, "\n".join(inject), 1), encoding="utf-8")
+PY2
+        git commit --quiet --no-verify -am "22n: producer drops every symbol ref" >/dev/null 2>&1
+    )
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head HEAD \
+        >"$TMP_DIR/gate-22n.log" 2>&1)
+    G_RC=$?
+    if [ "$G_RC" -eq 1 ] && grep -q 'DROPPED' "$TMP_DIR/gate-22n.log"; then
+        t_pass "identity gate: the producer differential catches a dropped stamped ref"
+    else
+        t_fail "identity gate: producer regression not caught (rc=$G_RC; see $TMP_DIR/gate-22n.log)"
+    fi
+
+    # 22o: BOTH the schema AND the buckets changed. The schema fast path exits
+    # 0 WITHOUT walking, and a bucket rename is a real verdict change only the
+    # differential can surface -- but the differential is impossible across
+    # schemas. Neither half of the answer exists, so it must fail closed. The
+    # first cut let the schema branch swallow the bundled vocabulary change
+    # (Codex adversarial, section 18).
+    (
+        cd "$GATE_REPO" || exit 1
+        git checkout --quiet "$G_PROTO_BASE" -- scripts/todo-graph/snapshot_protocol.json \
+            scripts/todo-graph/ref_resolution.py scripts/todo-graph/build.py
+        python3 - scripts/todo-graph/snapshot_protocol.json <<'PY2'
+import json, sys, pathlib
+p = pathlib.Path(sys.argv[1]); d = json.loads(p.read_text(encoding="utf-8"))
+d["snapshot_schema"] = int(d["snapshot_schema"]) + 1
+d["post_resolution_buckets"].append("bundled_with_a_schema_bump")
+p.write_text(json.dumps(d, indent=2) + "\n", encoding="utf-8")
+PY2
+        git commit --quiet --no-verify -am "22o: schema AND buckets together" >/dev/null 2>&1
+    )
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head HEAD \
+        >"$TMP_DIR/gate-22o.log" 2>&1)
+    G_RC=$?
+    if [ "$G_RC" -eq 3 ] && grep -q 'BOTH the snapshot schema' "$TMP_DIR/gate-22o.log"; then
+        t_pass "identity gate: a schema bump bundled with a bucket change fails closed"
+    else
+        t_fail "identity gate: bundled schema+bucket change was not refused (rc=$G_RC; see $TMP_DIR/gate-22o.log)"
+    fi
+
+    # 22p: A CROSS-BOUNDARY MOVE. `ALL_BUCKETS` is PRE + POST, so moving the
+    # first POST bucket to the end of PRE leaves the concatenation
+    # byte-identical -- while changing behaviour, because the consumer branches
+    # on POST membership to decide whether to report the effective path or the
+    # authored one. Fingerprinting the flattened tuple could not see it.
+    (
+        cd "$GATE_REPO" || exit 1
+        git checkout --quiet "$G_PROTO_BASE" -- scripts/todo-graph/snapshot_protocol.json
+        python3 - scripts/todo-graph/snapshot_protocol.json <<'PY2'
+import json, sys, pathlib
+p = pathlib.Path(sys.argv[1]); d = json.loads(p.read_text(encoding="utf-8"))
+moved = d["post_resolution_buckets"].pop(0)
+d["pre_resolution_buckets"].append(moved)
+p.write_text(json.dumps(d, indent=2) + "\n", encoding="utf-8")
+PY2
+        git commit --quiet --no-verify -am "22p: move a bucket across the pre/post boundary" >/dev/null 2>&1
+    )
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head HEAD \
+        >"$TMP_DIR/gate-22p.log" 2>&1)
+    G_RC=$?
+    # The concatenation is unchanged and every bucket STRING is unchanged, so
+    # the mapping diff reports nothing -- the relocation is only visible in the
+    # two halves the snapshots now record separately. It must FAIL, not merely
+    # run: asserting "the DATA-ONLY branch ran" was the round-1 defect, because
+    # the move then shipped green after bypassing the schema fast path.
+    if [ "$G_RC" -eq 1 ] && grep -q 'RELOCATED' "$TMP_DIR/gate-22p.log"; then
+        t_pass "identity gate: a pre/post boundary move FAILS even though the flattened tuple is identical"
+    else
+        t_fail "identity gate: cross-boundary bucket move was not failed (rc=$G_RC; see $TMP_DIR/gate-22p.log)"
+    fi
+
+    # 22q: a schema value the runtime loader REJECTS must not reach the fast
+    # path. proto_of accepted any non-boolean int while snapshot_protocol.load
+    # requires a positive one, so a data-only 2 -> 0 exited 0 without ever
+    # importing the loader that would refuse the tree.
+    (
+        cd "$GATE_REPO" || exit 1
+        git checkout --quiet "$G_PROTO_BASE" -- scripts/todo-graph/snapshot_protocol.json
+        python3 - scripts/todo-graph/snapshot_protocol.json <<'PY2'
+import json, sys, pathlib
+p = pathlib.Path(sys.argv[1]); d = json.loads(p.read_text(encoding="utf-8"))
+d["snapshot_schema"] = 0
+p.write_text(json.dumps(d, indent=2) + "\n", encoding="utf-8")
+PY2
+        git commit --quiet --no-verify -am "22q: schema 0, which the loader refuses" >/dev/null 2>&1
+    )
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head HEAD \
+        >"$TMP_DIR/gate-22q.log" 2>&1)
+    G_RC=$?
+    if [ "$G_RC" -eq 3 ] && grep -q 'cannot read the snapshot protocol' "$TMP_DIR/gate-22q.log"; then
+        t_pass "identity gate: a schema the loader would reject is infrastructure, not a fast-path PASS"
+    else
+        t_fail "identity gate: unusable schema reached a verdict (rc=$G_RC; see $TMP_DIR/gate-22q.log)"
+    fi
+
+    # 22r: OBJECT-VALUED HALVES whose ordered keys reproduce the old digest.
+    # proto_of normalised with list(...) BEFORE validating, so a JSON object
+    # hashed identically to the real list while snapshot_protocol.load rejected
+    # it -- bundled with a schema bump it left BUCKETS_CHANGED false and the
+    # fast path exited 0 for a protocol nothing can load.
+    (
+        cd "$GATE_REPO" || exit 1
+        git checkout --quiet "$G_PROTO_BASE" -- scripts/todo-graph/snapshot_protocol.json
+        python3 - scripts/todo-graph/snapshot_protocol.json <<'PY2'
+import json, sys, pathlib
+p = pathlib.Path(sys.argv[1]); d = json.loads(p.read_text(encoding="utf-8"))
+d["post_resolution_buckets"] = {n: i for i, n in
+                                enumerate(d["post_resolution_buckets"])}
+d["snapshot_schema"] = int(d["snapshot_schema"]) + 1
+p.write_text(json.dumps(d, indent=2) + "\n", encoding="utf-8")
+PY2
+        git commit --quiet --no-verify -am "22r: object-valued halves + schema bump" >/dev/null 2>&1
+    )
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head HEAD \
+        >"$TMP_DIR/gate-22r.log" 2>&1)
+    G_RC=$?
+    if [ "$G_RC" -eq 3 ] && grep -q 'cannot read the snapshot protocol' "$TMP_DIR/gate-22r.log"; then
+        t_pass "identity gate: object-valued halves are unreadable, not a digest match"
+    else
+        t_fail "identity gate: object-valued halves passed (rc=$G_RC; see $TMP_DIR/gate-22r.log)"
+    fi
+
+    # 22s: a RENAME PAIRED WITH A MOVE. The old name reads as a removal and the
+    # new one as an addition, so a name-by-name comparison sees no relocation
+    # at all -- and an unused bucket produces no mapping difference either, so
+    # the pair shipped green at rc 0.
+    (
+        cd "$GATE_REPO" || exit 1
+        git checkout --quiet "$G_PROTO_BASE" -- scripts/todo-graph/snapshot_protocol.json
+        python3 - scripts/todo-graph/snapshot_protocol.json <<'PY2'
+import json, sys, pathlib
+p = pathlib.Path(sys.argv[1]); d = json.loads(p.read_text(encoding="utf-8"))
+# Remove a PRE bucket and add a differently-named one to POST.
+d["pre_resolution_buckets"].remove("path_escape")
+d["post_resolution_buckets"].append("path_escaped")
+p.write_text(json.dumps(d, indent=2) + "\n", encoding="utf-8")
+PY2
+        git commit --quiet --no-verify -am "22s: rename paired with a cross-half move" >/dev/null 2>&1
+    )
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head HEAD \
+        >"$TMP_DIR/gate-22s.log" 2>&1)
+    G_RC=$?
+    if [ "$G_RC" -ne 0 ] && grep -qE 'RELOCATED|undeclared_removals' "$TMP_DIR/gate-22s.log"; then
+        t_pass "identity gate: an undeclared bucket removal is refused (ambiguous with a rename)"
+    else
+        t_fail "identity gate: rename+move escaped (rc=$G_RC; see $TMP_DIR/gate-22s.log)"
+    fi
+
+    # 22t: THE CLEARING PATH ITSELF. 22s proves an undeclared removal is
+    # refused; this proves the declaration actually clears it, because a
+    # refusal with no working remedy is a wedge, not a gate. Declaring the
+    # rename ALSO makes the cross-half move visible as the move it is.
+    (
+        cd "$GATE_REPO" || exit 1
+        git checkout --quiet "$G_PROTO_BASE" -- scripts/todo-graph/snapshot_protocol.json
+        python3 - scripts/todo-graph/snapshot_protocol.json <<'PY2'
+import json, sys, pathlib
+p = pathlib.Path(sys.argv[1]); d = json.loads(p.read_text(encoding="utf-8"))
+d["pre_resolution_buckets"].remove("path_escape")
+d["pre_resolution_buckets"].append("path_escaped")
+d["renamed_buckets"] = {"path_escape": "path_escaped"}
+p.write_text(json.dumps(d, indent=2) + "\n", encoding="utf-8")
+PY2
+        git commit --quiet --no-verify -am "22t: a DECLARED rename, same half" >/dev/null 2>&1
+    )
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head HEAD \
+        >"$TMP_DIR/gate-22t.log" 2>&1)
+    G_RC=$?
+    # A DATA-ONLY RENAME IS REFUSED, and this fixture asserted the opposite
+    # until the final adversarial round. Bucket names are hardcoded in
+    # ref_resolution.py's emitters and in check_stub_behind_stamp.py's coverage
+    # keys, so renaming the vocabulary alone leaves both producing and
+    # expecting the retired name -- invisible while the bucket is dormant, and
+    # invalid for every snapshot the day a ref lands in it. The fixture proved
+    # only that its own pruned corpus did not exercise the bucket.
+    if [ "$G_RC" -ne 0 ] && grep -q 'cannot be a data-only migration' "$TMP_DIR/gate-22t.log"; then
+        t_pass "identity gate: a data-only rename is REFUSED (bucket names are hardcoded in the emitters)"
+    else
+        t_fail "identity gate: data-only rename was accepted (rc=$G_RC; see $TMP_DIR/gate-22t.log)"
+    fi
+
+    # 22u: a declared rename that ALSO crosses the boundary is a MOVE, and must
+    # fail as one -- the declaration is what makes it visible.
+    (
+        cd "$GATE_REPO" || exit 1
+        git checkout --quiet "$G_PROTO_BASE" -- scripts/todo-graph/snapshot_protocol.json
+        python3 - scripts/todo-graph/snapshot_protocol.json <<'PY2'
+import json, sys, pathlib
+p = pathlib.Path(sys.argv[1]); d = json.loads(p.read_text(encoding="utf-8"))
+d["pre_resolution_buckets"].remove("path_escape")
+d["post_resolution_buckets"].append("path_escaped")
+d["renamed_buckets"] = {"path_escape": "path_escaped"}
+p.write_text(json.dumps(d, indent=2) + "\n", encoding="utf-8")
+PY2
+        git commit --quiet --no-verify -am "22u: declared rename that also moves half" >/dev/null 2>&1
+    )
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head HEAD \
+        >"$TMP_DIR/gate-22u.log" 2>&1)
+    G_RC=$?
+    # Refused as a rename before the move is even reached -- strictly stronger
+    # than reporting it as a relocation, and for the same underlying reason.
+    if [ "$G_RC" -ne 0 ]; then
+        t_pass "identity gate: a declared rename that crosses the boundary is refused"
+    else
+        t_fail "identity gate: declared rename+move was accepted (rc=$G_RC; see $TMP_DIR/gate-22u.log)"
+    fi
+
+    # 22v: A RENAME DECLARATION THAT COLLIDES with an existing bucket. Applying
+    # declarations unvalidated collapsed two base entries onto one target and
+    # silently erased a genuine same-name move; a declaration written by the
+    # very commit under judgement must be validated against the real delta.
+    (
+        cd "$GATE_REPO" || exit 1
+        git checkout --quiet "$G_PROTO_BASE" -- scripts/todo-graph/snapshot_protocol.json
+        python3 - scripts/todo-graph/snapshot_protocol.json <<'PY2'
+import json, sys, pathlib
+p = pathlib.Path(sys.argv[1]); d = json.loads(p.read_text(encoding="utf-8"))
+# Move a bucket across the boundary AND declare a rename onto a name that
+# already exists, which is what made the collapse possible.
+d["pre_resolution_buckets"].remove("path_escape")
+d["post_resolution_buckets"].append("path_escape")
+d["renamed_buckets"] = {"missing_file": "no_calllike_token"}
+p.write_text(json.dumps(d, indent=2) + "\n", encoding="utf-8")
+PY2
+        git commit --quiet --no-verify -am "22v: colliding rename declaration" >/dev/null 2>&1
+    )
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head HEAD \
+        >"$TMP_DIR/gate-22v.log" 2>&1)
+    G_RC=$?
+    if [ "$G_RC" -ne 0 ] && grep -q 'bad_declarations' "$TMP_DIR/gate-22v.log"; then
+        t_pass "identity gate: a colliding rename declaration is rejected, not applied"
+    else
+        t_fail "identity gate: colliding rename declaration was applied (rc=$G_RC; see $TMP_DIR/gate-22v.log)"
+    fi
+
+    # 22w: a STALE retirement -- naming a bucket that was never in base -- is a
+    # self-authored exemption left lying around for a future migration.
+    (
+        cd "$GATE_REPO" || exit 1
+        git checkout --quiet "$G_PROTO_BASE" -- scripts/todo-graph/snapshot_protocol.json
+        python3 - scripts/todo-graph/snapshot_protocol.json <<'PY2'
+import json, sys, pathlib
+p = pathlib.Path(sys.argv[1]); d = json.loads(p.read_text(encoding="utf-8"))
+d["retired_buckets"] = ["a_bucket_that_never_existed"]
+p.write_text(json.dumps(d, indent=2) + "\n", encoding="utf-8")
+PY2
+        git commit --quiet --no-verify -am "22w: stale retirement declaration" >/dev/null 2>&1
+    )
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head HEAD \
+        >"$TMP_DIR/gate-22w.log" 2>&1)
+    G_RC=$?
+    # A retirement naming a bucket absent from BOTH sides is INERT, and the
+    # gate deliberately accepts it. The two requirements here are in direct
+    # tension and only one is implementable: rejecting it (so a pre-authorised
+    # removal cannot sit waiting) requires distinguishing "never existed" from
+    # "retired in an earlier commit", and the gate sees only base..head, not
+    # history. Rejecting it therefore also rejects the declaration that a
+    # LEGITIMATE migration must leave behind, which wedges every later commit
+    # (fixture 22x). Edge-bound is the honest rule; the residual -- a
+    # pre-declared retirement pre-authorises one future removal -- is recorded
+    # as an accepted limitation on the section rather than papered over.
+    if [ "$G_RC" -eq 0 ]; then
+        t_pass "identity gate: an inert retirement declaration does not fail an unrelated commit"
+    else
+        t_fail "identity gate: inert retirement wedged an unrelated commit (rc=$G_RC; see $TMP_DIR/gate-22w.log)"
+    fi
+
+    (cd "$GATE_REPO" && git checkout --quiet "$G_PROTO_BASE" -- scripts/todo-graph/snapshot_protocol.json \
+        && git commit --quiet --no-verify -am "restore after round-3 fixtures" >/dev/null 2>&1)
+    # 22x: THE DECLARATION LIFECYCLE, over TWO commits. A migration must carry
+    # its declaration, and that declaration then stays in the file -- so on the
+    # NEXT commit the renamed-from name is absent from both sides. Treating
+    # that as stale rejected every later verdict-safe commit until someone made
+    # a cleanup commit no lifecycle described. Declarations are edge-bound.
+    (
+        cd "$GATE_REPO" || exit 1
+        git checkout --quiet "$G_PROTO_BASE" -- scripts/todo-graph/snapshot_protocol.json \
+            scripts/todo-graph/ref_resolution.py
+        python3 - scripts/todo-graph/snapshot_protocol.json <<'PY2'
+import json, sys, pathlib
+p = pathlib.Path(sys.argv[1]); d = json.loads(p.read_text(encoding="utf-8"))
+i = d["pre_resolution_buckets"].index("path_escape")
+d["pre_resolution_buckets"][i] = "path_escaped"
+d["renamed_buckets"] = {"path_escape": "path_escaped"}
+p.write_text(json.dumps(d, indent=2) + "\n", encoding="utf-8")
+PY2
+        git commit --quiet --no-verify -am "22x-1: declared rename migration" >/dev/null 2>&1
+    )
+    G_MIG_SHA="$(cd "$GATE_REPO" && git rev-parse HEAD)"
+    # Second commit: touches only executable code, protocol untouched, and the
+    # completed declaration is still sitting in the file.
+    (
+        cd "$GATE_REPO" || exit 1
+        printf '\n# 22x-2: an ordinary resolver comment, no protocol change\n' \
+            >> scripts/todo-graph/ref_resolution.py
+        git commit --quiet --no-verify -am "22x-2: executable-only change after the migration" >/dev/null 2>&1
+    )
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_MIG_SHA" --head HEAD \
+        >"$TMP_DIR/gate-22x.log" 2>&1)
+    G_RC=$?
+    if [ "$G_RC" -eq 0 ]; then
+        t_pass "identity gate: a completed declaration does not brick the next executable-only commit"
+    else
+        t_fail "identity gate: retained declaration wedged an unrelated commit (rc=$G_RC; see $TMP_DIR/gate-22x.log)"
+    fi
+    (cd "$GATE_REPO" && git checkout --quiet "$G_PROTO_BASE" -- scripts/todo-graph/snapshot_protocol.json \
+        scripts/todo-graph/ref_resolution.py \
+        && git commit --quiet --no-verify -am "restore after lifecycle fixture" >/dev/null 2>&1)
+
+    # 22ad: A DORMANT RETIREMENT still leaves the emitters able to produce the
+    # retired name. `path_escape` is hardcoded in ref_resolution.py and in
+    # check_stub_behind_stamp.py coverage keys, so removing it from the
+    # vocabulary while both still emit it is invalid for a reachable input --
+    # dormant only until a ref meets that condition. Same latent-failure
+    # argument that rejects renames, applied to retirements.
+    (
+        cd "$GATE_REPO" || exit 1
+        git checkout --quiet "$G_PROTO_BASE" -- scripts/todo-graph/snapshot_protocol.json
+        python3 - scripts/todo-graph/snapshot_protocol.json <<'PY2'
+import json, sys, pathlib
+p = pathlib.Path(sys.argv[1]); d = json.loads(p.read_text(encoding="utf-8"))
+d["pre_resolution_buckets"].remove("path_escape")
+d["retired_buckets"] = ["path_escape"]
+p.write_text(json.dumps(d, indent=2) + "\n", encoding="utf-8")
+PY2
+        git commit --quiet --no-verify -am "22ad: retire a bucket the emitters still hardcode" >/dev/null 2>&1
+    )
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head HEAD \
+        >"$TMP_DIR/gate-22ad.log" 2>&1)
+    G_RC=$?
+    if [ "$G_RC" -ne 0 ] && grep -q 'still hardcoded in' "$TMP_DIR/gate-22ad.log"; then
+        t_pass "identity gate: retiring a bucket the emitters still hardcode is refused"
+    else
+        t_fail "identity gate: dormant retirement accepted (rc=$G_RC; see $TMP_DIR/gate-22ad.log)"
+    fi
+
+    # 22ae: THE CLEARING PATH. Once the emitters no longer name it, the
+    # data-only retirement is safe and must be allowed -- otherwise the rule is
+    # a wedge rather than a gate.
+    (
+        cd "$GATE_REPO" || exit 1
+        git checkout --quiet "$G_PROTO_BASE" -- scripts/todo-graph/snapshot_protocol.json
+        python3 - scripts/todo-graph/snapshot_protocol.json <<'PY2'
+import json, sys, pathlib
+p = pathlib.Path(sys.argv[1]); d = json.loads(p.read_text(encoding="utf-8"))
+d["post_resolution_buckets"].append("never_emitted_anywhere")
+p.write_text(json.dumps(d, indent=2) + "\n", encoding="utf-8")
+PY2
+        git commit --quiet --no-verify -am "22ae-1: introduce a bucket no emitter names" >/dev/null 2>&1
+    )
+    G_RETIRE_BASE="$(cd "$GATE_REPO" && git rev-parse HEAD)"
+    (
+        cd "$GATE_REPO" || exit 1
+        python3 - scripts/todo-graph/snapshot_protocol.json <<'PY2'
+import json, sys, pathlib
+p = pathlib.Path(sys.argv[1]); d = json.loads(p.read_text(encoding="utf-8"))
+d["post_resolution_buckets"].remove("never_emitted_anywhere")
+d["retired_buckets"] = ["never_emitted_anywhere"]
+p.write_text(json.dumps(d, indent=2) + "\n", encoding="utf-8")
+PY2
+        git commit --quiet --no-verify -am "22ae-2: retire it, no emitter names it" >/dev/null 2>&1
+    )
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_RETIRE_BASE" --head HEAD \
+        >"$TMP_DIR/gate-22ae.log" 2>&1)
+    G_RC=$?
+    # REFUSED, and this fixture asserted the opposite until the ship gate. The
+    # only available proof that a bucket is no longer emitted is a source-text
+    # search, and an indexed or concatenated emission defeats it -- so "no
+    # emitter names it" is not something this gate can currently establish.
+    # Retirement is enabled by the declared emitted-member contract in section
+    # 20; until then the path is closed rather than knowingly unsound.
+    if [ "$G_RC" -ne 0 ] && grep -q 'section 20' "$TMP_DIR/gate-22ae.log"; then
+        t_pass "identity gate: retirement is refused pending a provable emission contract"
+    else
+        t_fail "identity gate: a retirement was approved on source-text evidence alone (rc=$G_RC; see $TMP_DIR/gate-22ae.log)"
+    fi
+    (cd "$GATE_REPO" && git checkout --quiet "$G_PROTO_BASE" -- scripts/todo-graph/snapshot_protocol.json \
+        && git commit --quiet --no-verify -am "restore after retirement fixtures" >/dev/null 2>&1)
+
+    # 22af: AN UNREADABLE EMITTER IS NOT EVIDENCE OF ABSENCE. The retirement
+    # proof asks "does this bucket name appear in the emitters"; the first cut
+    # returned a sentinel string on a read failure, which matches no bucket
+    # name, so an unreadable emitter APPROVED the retirement. The guard was
+    # inverted -- exactly the fail-open shape it was written to prevent.
+    (
+        cd "$GATE_REPO" || exit 1
+        git checkout --quiet "$G_PROTO_BASE" -- scripts/todo-graph/snapshot_protocol.json
+        python3 - scripts/todo-graph/snapshot_protocol.json <<'PY2'
+import json, sys, pathlib
+p = pathlib.Path(sys.argv[1]); d = json.loads(p.read_text(encoding="utf-8"))
+d["pre_resolution_buckets"].remove("path_escape")
+d["retired_buckets"] = ["path_escape"]
+p.write_text(json.dumps(d, indent=2) + "\n", encoding="utf-8")
+PY2
+        rm -f scripts/lint/check_stub_behind_stamp.py
+        git commit --quiet --no-verify -am "22af: retire a bucket with an emitter missing" >/dev/null 2>&1
+    )
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head HEAD \
+        >"$TMP_DIR/gate-22af.log" 2>&1)
+    G_RC=$?
+    if [ "$G_RC" -ne 0 ]; then
+        t_pass "identity gate: an unreadable emitter is not evidence a bucket is retired-safe"
+    else
+        t_fail "identity gate: unreadable emitter approved a retirement (rc=$G_RC; see $TMP_DIR/gate-22af.log)"
+    fi
+    (cd "$GATE_REPO" && git checkout --quiet "$G_PROTO_BASE" -- scripts/todo-graph/snapshot_protocol.json \
+        scripts/lint/check_stub_behind_stamp.py \
+        && git commit --quiet --no-verify -am "restore after unreadable-emitter fixture" >/dev/null 2>&1)
+
+    # 22ag: LOADER/DATA DIVERGENCE. Reading only the JSON let the loader and
+    # the data disagree: filtering a DORMANT bucket in the loader while the
+    # JSON still declares it leaves both snapshots verdict-identical, so the
+    # differential runs and passes -- and runtime consumers then no longer
+    # recognise a bucket the published protocol declares.
+    (
+        cd "$GATE_REPO" || exit 1
+        git checkout --quiet "$G_PROTO_BASE" -- scripts/todo-graph/snapshot_protocol.json \
+            scripts/todo-graph/snapshot_protocol.py
+        python3 - scripts/todo-graph/snapshot_protocol.json <<'PY2'
+import json, sys, pathlib
+p = pathlib.Path(sys.argv[1]); d = json.loads(p.read_text(encoding="utf-8"))
+d["post_resolution_buckets"].append("declared_but_filtered_out")
+p.write_text(json.dumps(d, indent=2) + "\n", encoding="utf-8")
+PY2
+        python3 - scripts/todo-graph/snapshot_protocol.py <<'PY2'
+import sys, pathlib
+p = pathlib.Path(sys.argv[1]); s = p.read_text(encoding="utf-8")
+old = "    return schema, pre, post"
+assert old in s, "loader return anchor not found"
+new = ('    post = tuple(b for b in post if b != "declared_but_filtered_out")\n'
+       "    return schema, pre, post")
+p.write_text(s.replace(old, new, 1), encoding="utf-8")
+PY2
+        git commit --quiet --no-verify -am "22ag: loader filters a bucket the JSON declares" >/dev/null 2>&1
+    )
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head HEAD \
+        >"$TMP_DIR/gate-22ag.log" 2>&1)
+    G_RC=$?
+    if [ "$G_RC" -ne 0 ]; then
+        t_pass "identity gate: a loader that disagrees with the protocol data is refused"
+    else
+        t_fail "identity gate: loader/data divergence passed (rc=$G_RC; see $TMP_DIR/gate-22ag.log)"
+    fi
+    (cd "$GATE_REPO" && git checkout --quiet "$G_PROTO_BASE" -- scripts/todo-graph/snapshot_protocol.json \
+        scripts/todo-graph/snapshot_protocol.py \
+        && git commit --quiet --no-verify -am "restore after loader-divergence fixture" >/dev/null 2>&1)
+
+    # 22z: A DECLARATION ALREADY PRESENT IN BASE pre-authorises the edge it is
+    # supposed to declare. Concrete shape (Codex adversarial, round 7): BASE
+    # holds bucket `obsolete` AND already declares retired_buckets:
+    # ["obsolete"]; HEAD removes the bucket while retaining the declaration.
+    # An edge-bound-only rule saw neither a bad declaration nor an undeclared
+    # removal and passed.
+    (
+        cd "$GATE_REPO" || exit 1
+        git checkout --quiet "$G_PROTO_BASE" -- scripts/todo-graph/snapshot_protocol.json
+        python3 - scripts/todo-graph/snapshot_protocol.json <<'PY2'
+import json, sys, pathlib
+p = pathlib.Path(sys.argv[1]); d = json.loads(p.read_text(encoding="utf-8"))
+d["post_resolution_buckets"].append("obsolete")
+d["retired_buckets"] = ["obsolete"]
+p.write_text(json.dumps(d, indent=2) + "\n", encoding="utf-8")
+PY2
+        git commit --quiet --no-verify -am "22z-1: base carries the bucket AND its retirement" >/dev/null 2>&1
+    )
+    G_PREAUTH_BASE="$(cd "$GATE_REPO" && git rev-parse HEAD)"
+    (
+        cd "$GATE_REPO" || exit 1
+        python3 - scripts/todo-graph/snapshot_protocol.json <<'PY2'
+import json, sys, pathlib
+p = pathlib.Path(sys.argv[1]); d = json.loads(p.read_text(encoding="utf-8"))
+d["post_resolution_buckets"].remove("obsolete")   # declaration RETAINED
+p.write_text(json.dumps(d, indent=2) + "\n", encoding="utf-8")
+PY2
+        git commit --quiet --no-verify -am "22z-2: remove the bucket under the pre-existing declaration" >/dev/null 2>&1
+    )
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_PREAUTH_BASE" --head HEAD \
+        >"$TMP_DIR/gate-22z.log" 2>&1)
+    G_RC=$?
+    if [ "$G_RC" -ne 0 ] && grep -q 'pre-authorises' "$TMP_DIR/gate-22z.log"; then
+        t_pass "identity gate: a declaration already present in BASE cannot authorise this edge's removal"
+    else
+        t_fail "identity gate: pre-existing declaration authorised the removal (rc=$G_RC; see $TMP_DIR/gate-22z.log)"
+    fi
+    (cd "$GATE_REPO" && git checkout --quiet "$G_PROTO_BASE" -- scripts/todo-graph/snapshot_protocol.json \
+        && git commit --quiet --no-verify -am "restore after pre-authorisation fixture" >/dev/null 2>&1)
+
+    # 22ac: THE TRIGGER MUST FIRE ON A CLEAN TREE. GitHub Actions checks out
+    # the committed revision with an empty index and worktree, so a trigger
+    # reading only `git diff`/`git diff --cached` was ALWAYS false in CI -- the
+    # consumer-divergence check never ran in the environment it exists to
+    # protect. This extracts lint.sh's own trigger block and runs it against a
+    # freshly-initialised clean repo, so it exercises the shipped logic rather
+    # than restating it.
+    LINT25_TRIG="$TMP_DIR/lint25-trigger.sh"
+    LINT25_FAKE="$TMP_DIR/lint25-clean-repo"
+    rm -rf "$LINT25_FAKE"; mkdir -p "$LINT25_FAKE"
+    (cd "$LINT25_FAKE" && git init -q . >/dev/null 2>&1 \
+        && git -c user.email=t@t.invalid -c user.name=t commit -q --allow-empty -m init >/dev/null 2>&1)
+    {
+        printf 'REPO_ROOT=%s\n' "$LINT25_FAKE"
+        sed -n '/^    LINT25_TOUCHED=0$/,/^    if \[ "\$LINT25_TOUCHED" -eq 1 \]; then$/p' \
+            "$REPO_ROOT/scripts/lint.sh" | sed '$d'
+        printf 'echo "TOUCHED=$LINT25_TOUCHED"\n'
+    } > "$LINT25_TRIG"
+    LINT25_TRIG_OUT="$(bash "$LINT25_TRIG" 2>/dev/null | tail -1)"
+    if [ "$LINT25_TRIG_OUT" = "TOUCHED=1" ]; then
+        t_pass "consumer delegation: the Check 25 trigger fires on a CLEAN tree (i.e. in CI)"
+    else
+        t_fail "consumer delegation: Check 25 would not run in a clean CI checkout (got '$LINT25_TRIG_OUT')"
+    fi
+
+    # 22ab: CHECK 25 MUST FAIL CLOSED. `build/todo-cache.json` is gitignored,
+    # so it is absent in a fresh checkout -- which is what CI always is. The
+    # first cut routed the resulting rc 3 to a WARNING, so the only gate that
+    # can detect the lint consumer diverging from the shared resolution rule
+    # passed CI without running, and the identity gate explicitly does not
+    # cover the consumer.
+    DELEG_NC_RC=0
+    STUB_LINT_CACHE="$TMP_DIR/definitely-not-a-cache.json" \
+        python3 "$REPO_ROOT/scripts/lint/check_consumer_delegation.py" \
+        >"$TMP_DIR/deleg-nocache.log" 2>&1 || DELEG_NC_RC=$?
+    if [ "$DELEG_NC_RC" -eq 3 ]; then
+        t_pass "consumer delegation: an absent cache is rc 3 (infrastructure), never a pass"
+    else
+        t_fail "consumer delegation: absent cache did not report infrastructure (rc=$DELEG_NC_RC)"
+    fi
+    # ...and lint.sh must route that to an ERROR, not a warning, since the
+    # branch only runs when a file that can break the invariant changed.
+    if sed -n '/^# Check 25: the lint consumer must DELEGATE/,/^# Summary$/p' \
+           "$REPO_ROOT/scripts/lint.sh" \
+       | grep -q 'Check 25 (consumer-delegation) could not run' \
+       && sed -n '/^# Check 25: the lint consumer must DELEGATE/,/^# Summary$/p' \
+              "$REPO_ROOT/scripts/lint.sh" \
+          | grep -A2 'could not run' | grep -q 'ERRORS=$((ERRORS + 1))'; then
+        t_pass "consumer delegation: lint.sh fails CLOSED when the check cannot run"
+    else
+        t_fail "consumer delegation: lint.sh still warns instead of failing when Check 25 cannot run"
+    fi
+
+    # 22aa: THE DEADLINE MUST NOT BE A WALL CLOCK. A wall clock can step
+    # BACKWARD, which makes the remaining allowance GROW and hands the later
+    # phases more time than the budget permits -- restoring the overrun the
+    # single deadline exists to prevent. Not hypothetical on this host: the
+    # build-timing test above records three observed backward steps under WSL2
+    # on 2026-08-06 after a suspend/resync.
+    #
+    # THIS IS A STRUCTURAL ASSERTION and says so: it proves the enforcement
+    # path is derived from a monotonic source and that no timeout is granted
+    # from `date`, NOT that a simulated clock step behaves correctly -- faking
+    # the host clock inside the suite is not something a test may do.
+    GATE_SRC="$REPO_ROOT/scripts/todo-graph/identity-gate.sh"
+    if grep -q 'time.monotonic' "$GATE_SRC" \
+       && ! grep -E 'timeout .*--kill-after[^\n]*date \+%s' "$GATE_SRC" >/dev/null \
+       && [ "$(grep -c 'remaining()' "$GATE_SRC")" -ge 1 ]; then
+        t_pass "identity gate: the phase deadline is derived from a monotonic clock"
+    else
+        t_fail "identity gate: the phase deadline is not monotonic (a backward wall-clock step would grow the allowance)"
+    fi
+    if grep -nE 'timeout --kill-after=[0-9]+s "\$BUDGET_SECS"' "$GATE_SRC" >/dev/null; then
+        t_fail "identity gate: a phase is still granted the FULL budget instead of the remaining time"
+    else
+        t_pass "identity gate: every bounded phase is granted only the remaining time"
+    fi
+
+    # 22y: a budget of 0 DISABLES timeout(1) outright, so it must be refused
+    # before any phase spawns anything -- validating it late left the producer
+    # phase, which runs the changed head producer, entirely unbounded.
+    # NOTE: the empty string is deliberately NOT in this list. `${VAR:-600}`
+    # treats empty as unset, so it takes the documented default -- correct
+    # behaviour, not an accepted-bad-value.
+    for _bad_budget in 0 abc -1; do
+        (cd "$GATE_REPO" && IDENTITY_GATE_BUDGET_SECS="$_bad_budget" \
+            bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head HEAD \
+            >"$TMP_DIR/gate-22y.log" 2>&1)
+        G_RC=$?
+        if [ "$G_RC" -eq 3 ] && grep -q 'IDENTITY_GATE_BUDGET_SECS' "$TMP_DIR/gate-22y.log"; then
+            t_pass "identity gate: budget '$_bad_budget' is refused before any phase runs"
+        else
+            t_fail "identity gate: budget '$_bad_budget' was accepted (rc=$G_RC; see $TMP_DIR/gate-22y.log)"
+        fi
+    done
+
+
+    # A snapshot lacking the pre/post halves cannot adjudicate a relocation,
+    # and absence is not equality: it must be rc 3, not a clean pass.
+    SNAP_HALVES="$TMP_DIR/snap-halves.json"
+    SNAP_NOHALVES="$TMP_DIR/snap-nohalves.json"
+    STUB_LINT_CACHE="$REPO_ROOT/build/todo-cache.json" STUB_LINT_REPO_ROOT="$REPO_ROOT" \
+        python3 "$SNAP" write "$SNAP_HALVES" >/dev/null 2>&1 \
+        || t_fail "corpus snapshot: could not write a halves-bearing snapshot for the fixture"
+    python3 - "$SNAP_HALVES" "$SNAP_NOHALVES" <<'PY2' 2>/dev/null || true
+import json, sys, pathlib
+d = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+d.pop("buckets_pre", None); d.pop("buckets_post", None)
+pathlib.Path(sys.argv[2]).write_text(json.dumps(d), encoding="utf-8")
+PY2
+    if [ ! -s "$SNAP_NOHALVES" ]; then
+        t_fail "corpus snapshot: the halves-less fixture could not be built (a silent skip would read as a pass)"
+    else
+        SNAP_NH_RC=0
+        python3 "$SNAP" compare "$SNAP_NOHALVES" "$SNAP_HALVES" --strict \
+            >/dev/null 2>"$TMP_DIR/snap-nohalves.err" || SNAP_NH_RC=$?
+        if [ "$SNAP_NH_RC" -eq 3 ] && grep -q 'cannot be adjudicated' "$TMP_DIR/snap-nohalves.err"; then
+            t_pass "corpus snapshot: a snapshot without bucket halves is rc 3, not a silent pass"
+        else
+            t_fail "corpus snapshot: halves-less snapshot passed (rc=$SNAP_NH_RC)"
+        fi
+        SNAP_NH2_RC=0
+        SNAP_GOOD_B64="$(python3 -c 'import base64, json, sys; d = json.load(open(sys.argv[1])); print(base64.b64encode(json.dumps([d["buckets_pre"], d["buckets_post"]]).encode()).decode())' "$SNAP_HALVES")"
+        python3 "$SNAP" compare "$SNAP_NOHALVES" "$SNAP_HALVES" --strict \
+            --base-halves-b64 "$SNAP_GOOD_B64" >/dev/null 2>&1 || SNAP_NH2_RC=$?
+        if [ "$SNAP_NH2_RC" -eq 0 ]; then
+            t_pass "corpus snapshot: supplied half VALUES restore the comparison"
+        else
+            t_fail "corpus snapshot: supplied halves did not restore the comparison (rc=$SNAP_NH2_RC)"
+        fi
+        # AND THE VALUES ARE COMPARED, NOT TRUSTED: halves describing a
+        # relocation must FAIL, which a bare attestation flag could never do.
+        # The move is pre's LAST element to post's FRONT specifically, because
+        # that is the only shape that leaves the flattened vocabulary identical
+        # -- which is both what the binding requires and exactly the relocation
+        # class this mechanism exists to catch.
+        SNAP_BAD_B64="$(python3 -c 'import base64, json, sys; d = json.load(open(sys.argv[1])); pre = list(d["buckets_pre"]); post = list(d["buckets_post"]); post.insert(0, pre.pop()); print(base64.b64encode(json.dumps([pre, post]).encode()).decode())' "$SNAP_HALVES")"
+        SNAP_NH3_RC=0
+        python3 "$SNAP" compare "$SNAP_NOHALVES" "$SNAP_HALVES" --strict \
+            --base-halves-b64 "$SNAP_BAD_B64" >"$TMP_DIR/snap-reloc.out" 2>&1 || SNAP_NH3_RC=$?
+        if [ "$SNAP_NH3_RC" -eq 1 ] && grep -q 'RELOCATED' "$TMP_DIR/snap-reloc.out"; then
+            t_pass "corpus snapshot: supplied halves are COMPARED, not trusted -- a relocation still fails"
+        else
+            t_fail "corpus snapshot: supplied halves were trusted rather than compared (rc=$SNAP_NH3_RC)"
+        fi
+        # AND THE VALUES ARE BOUND TO THE SNAPSHOT'S OWN VOCABULARY: a caller
+        # may say how that vocabulary is SPLIT, never invent what it contains.
+        SNAP_FAKE_B64="$(python3 -c 'import base64, json; print(base64.b64encode(json.dumps([["totally", "invented"], ["halves", "here"]]).encode()).decode())')"
+        SNAP_NH4_RC=0
+        python3 "$SNAP" compare "$SNAP_NOHALVES" "$SNAP_HALVES" --strict \
+            --base-halves-b64 "$SNAP_FAKE_B64" >"$TMP_DIR/snap-fake.out" 2>&1 || SNAP_NH4_RC=$?
+        if [ "$SNAP_NH4_RC" -eq 3 ] && grep -q 'never what it contains' "$TMP_DIR/snap-fake.out"; then
+            t_pass "corpus snapshot: fabricated supplied halves are refused, not accepted as evidence"
+        else
+            t_fail "corpus snapshot: fabricated halves were accepted (rc=$SNAP_NH4_RC)"
+        fi
+    fi
+
     (cd "$GATE_REPO" && git checkout --quiet "$G_PROTO_BASE" -- scripts/todo-graph/ref_resolution.py \
-        && git commit --quiet --no-verify -am "restore resolver after protocol fixtures" >/dev/null 2>&1)
+        scripts/todo-graph/snapshot_protocol.json scripts/todo-graph/build.py \
+        && git commit --quiet --no-verify -am "restore after protocol/producer fixtures" >/dev/null 2>&1)
+
+# ----------------------------------------------------------------------
+# CONSUMER DELEGATION (section 18). The identity gate walks the snapshot and
+# adjudicates NOTHING about scripts/lint/check_stub_behind_stamp.py, even
+# though section 14 unified both behind one `resolve_ref`. This is the
+# invariant standing in for a full consumer differential.
+#
+# MUTATION-CHECKED, because the failure this roadmap keeps paying for is a
+# check that is green for the wrong reason -- and section 16's first fixture
+# round was exactly that. The mutation is deliberately the SUBTLE bypass: a
+# module-level captured reference (so patching the module attribute no longer
+# reaches the call) plus a dead `_rr.resolve_ref` call that satisfies a
+# count-only structural rule. A check that only counted call sites would pass
+# it.
+# ----------------------------------------------------------------------
+DELEG_CHK="$REPO_ROOT/scripts/lint/check_consumer_delegation.py"
+if [ ! -f "$DELEG_CHK" ]; then
+    t_fail "consumer delegation: check_consumer_delegation.py is missing"
+else
+    DELEG_ROOT="$TMP_DIR/deleg-root"
+    mkdir -p "$DELEG_ROOT/scripts/lint" "$DELEG_ROOT/scripts/todo-graph"
+    cp "$REPO_ROOT"/scripts/todo-graph/*.py "$DELEG_ROOT/scripts/todo-graph/" 2>/dev/null
+    cp "$REPO_ROOT"/scripts/todo-graph/*.json "$DELEG_ROOT/scripts/todo-graph/" 2>/dev/null
+    cp "$REPO_ROOT/scripts/lint/check_stub_behind_stamp.py" "$DELEG_ROOT/scripts/lint/"
+    cp "$DELEG_CHK" "$DELEG_ROOT/scripts/lint/"
+
+    DELEG_RC=0
+    STUB_LINT_CACHE="$REPO_ROOT/build/todo-cache.json" \
+        python3 "$DELEG_ROOT/scripts/lint/check_consumer_delegation.py" \
+        >"$TMP_DIR/deleg-clean.log" 2>&1 || DELEG_RC=$?
+    if [ "$DELEG_RC" -eq 0 ]; then
+        t_pass "consumer delegation: the shipped consumer delegates every occurrence"
+    else
+        t_fail "consumer delegation: shipped consumer flagged (rc=$DELEG_RC; see $TMP_DIR/deleg-clean.log)"
+    fi
+
+    python3 - "$DELEG_ROOT/scripts/lint/check_stub_behind_stamp.py" <<'PY3'
+import sys, pathlib
+p = pathlib.Path(sys.argv[1]); s = p.read_text(encoding="utf-8")
+old = "                result = _rr.resolve_ref(ref, scope, repo_resolved)"
+assert old in s, "consumer resolve_ref call site not found"
+s = s.replace(old, "                result = _local_resolve(ref, scope, repo_resolved)", 1)
+inject = [
+    "_CAPTURED = _rr.resolve_ref",
+    "",
+    "",
+    "def _local_resolve(ref, scope, root):",
+    "    if False:",
+    "        _rr.resolve_ref(ref, scope, root)   # dead call: defeats a count-only rule",
+    "    return _CAPTURED(ref, scope, root)      # identical shape, bypasses the patch",
+    "",
+    "",
+    "def _walk(nodes: list, repo_root: Path) -> tuple:",
+]
+s = s.replace("def _walk(nodes: list, repo_root: Path) -> tuple:", "\n".join(inject), 1)
+p.write_text(s, encoding="utf-8")
+PY3
+    DELEG_MUT_RC=0
+    STUB_LINT_CACHE="$REPO_ROOT/build/todo-cache.json" \
+        python3 "$DELEG_ROOT/scripts/lint/check_consumer_delegation.py" \
+        >"$TMP_DIR/deleg-mutated.log" 2>&1 || DELEG_MUT_RC=$?
+    if [ "$DELEG_MUT_RC" -eq 1 ] \
+       && grep -q 'called the shared resolve_ref 0 time' "$TMP_DIR/deleg-mutated.log"; then
+        t_pass "consumer delegation: mutation-check -- a captured-reference bypass FAILS the check"
+    else
+        t_fail "consumer delegation: bypass not caught (rc=$DELEG_MUT_RC; see $TMP_DIR/deleg-mutated.log)"
+    fi
+
+    # The SUBTLER consumer bypass: honour the one class a single-sentinel check
+    # would exercise and re-derive every other. A check that forced one bucket
+    # passes this; the per-class rotation is what catches it (Codex
+    # adversarial, section 18).
+    cp "$REPO_ROOT/scripts/lint/check_stub_behind_stamp.py" "$DELEG_ROOT/scripts/lint/"
+    python3 - "$DELEG_ROOT/scripts/lint/check_stub_behind_stamp.py" <<'PY3'
+import sys, pathlib
+p = pathlib.Path(sys.argv[1]); s = p.read_text(encoding="utf-8")
+old = "                result = _rr.resolve_ref(ref, scope, repo_resolved)"
+assert old in s, "consumer resolve_ref call site not found"
+inject = [
+    old,
+    '                if result.bucket != "path_escape":',
+    "                    result = _CAPTURED2(ref, scope, repo_resolved)",
+]
+s = s.replace(old, "\n".join(inject), 1)
+s = s.replace("def _walk(nodes: list, repo_root: Path) -> tuple:",
+              "_CAPTURED2 = _rr.resolve_ref\n\n\ndef _walk(nodes: list, repo_root: Path) -> tuple:", 1)
+p.write_text(s, encoding="utf-8")
+PY3
+    DELEG_CLS_RC=0
+    STUB_LINT_CACHE="$REPO_ROOT/build/todo-cache.json" \
+        python3 "$DELEG_ROOT/scripts/lint/check_consumer_delegation.py" \
+        >"$TMP_DIR/deleg-class.log" 2>&1 || DELEG_CLS_RC=$?
+    if [ "$DELEG_CLS_RC" -eq 1 ] \
+       && grep -q 'per-class shortfall' "$TMP_DIR/deleg-class.log"; then
+        t_pass "consumer delegation: mutation-check -- a BUCKET-KEYED fallback FAILS the check"
+    else
+        t_fail "consumer delegation: bucket-keyed fallback not caught (rc=$DELEG_CLS_RC; see $TMP_DIR/deleg-class.log)"
+    fi
+
+    # The SUBTLEST consumer divergence: a SYMMETRIC SWAP of two classes. Under
+    # a rotating single-pass check every class receives an equal share, so the
+    # cardinalities still matched and the swap passed with zero violations
+    # (Codex adversarial, section 18 round 2). Isolated per-class passes are
+    # what make it visible.
+    cp "$REPO_ROOT/scripts/lint/check_stub_behind_stamp.py" "$DELEG_ROOT/scripts/lint/"
+    python3 - "$DELEG_ROOT/scripts/lint/check_stub_behind_stamp.py" <<'PY3'
+import sys, pathlib
+p = pathlib.Path(sys.argv[1]); s = p.read_text(encoding="utf-8")
+old = "                result = _rr.resolve_ref(ref, scope, repo_resolved)"
+assert old in s, "consumer resolve_ref call site not found"
+inject = [
+    old,
+    '                if result.bucket == "missing_file":',
+    '                    result = result._replace(bucket="unresolved_calllike")',
+    '                elif result.bucket == "unresolved_calllike":',
+    '                    result = result._replace(bucket="missing_file")',
+]
+p.write_text(s.replace(old, "\n".join(inject), 1), encoding="utf-8")
+PY3
+    DELEG_SWAP_RC=0
+    STUB_LINT_CACHE="$REPO_ROOT/build/todo-cache.json" \
+        python3 "$DELEG_ROOT/scripts/lint/check_consumer_delegation.py" \
+        >"$TMP_DIR/deleg-swap.log" 2>&1 || DELEG_SWAP_RC=$?
+    if [ "$DELEG_SWAP_RC" -eq 1 ] \
+       && grep -q 'reached by the consumer itself' "$TMP_DIR/deleg-swap.log"; then
+        t_pass "consumer delegation: mutation-check -- an equal-cardinality class SWAP FAILS the check"
+    else
+        t_fail "consumer delegation: class swap not caught (rc=$DELEG_SWAP_RC; see $TMP_DIR/deleg-swap.log)"
+    fi
+
+    # A RESOLVED verdict's COORDINATES must propagate, not just its count: a
+    # consumer that inspects a different body reports on code the shared rule
+    # never pointed at.
+    cp "$REPO_ROOT/scripts/lint/check_stub_behind_stamp.py" "$DELEG_ROOT/scripts/lint/"
+    python3 - "$DELEG_ROOT/scripts/lint/check_stub_behind_stamp.py" <<'PY3'
+import sys, pathlib
+p = pathlib.Path(sys.argv[1]); s = p.read_text(encoding="utf-8")
+old = ("                stub = _is_stub_cached(result.def_abs, result.line_start,\n"
+       "                                       result.line_end)")
+assert old in s, "stub inspection call not found"
+p.write_text(s.replace(old, "                stub = _is_stub_cached(result.def_abs, 1, 2)", 1),
+             encoding="utf-8")
+PY3
+    DELEG_COORD_RC=0
+    STUB_LINT_CACHE="$REPO_ROOT/build/todo-cache.json" \
+        python3 "$DELEG_ROOT/scripts/lint/check_consumer_delegation.py" \
+        >"$TMP_DIR/deleg-coord.log" 2>&1 || DELEG_COORD_RC=$?
+    if [ "$DELEG_COORD_RC" -eq 1 ] \
+       && grep -q 'propagate verbatim into the body inspection' "$TMP_DIR/deleg-coord.log"; then
+        t_pass "consumer delegation: mutation-check -- rewritten resolved COORDINATES FAIL the check"
+    else
+        t_fail "consumer delegation: coordinate rewrite not caught (rc=$DELEG_COORD_RC; see $TMP_DIR/deleg-coord.log)"
+    fi
+
+    # A consumer that reports the AUTHORED path instead of the location the
+    # shared rule returned. The seven passes only reached the "not a stub"
+    # branch before, so the publishing path -- the consumer's real output --
+    # was never exercised at all.
+    cp "$REPO_ROOT/scripts/lint/check_stub_behind_stamp.py" "$DELEG_ROOT/scripts/lint/"
+    python3 - "$DELEG_ROOT/scripts/lint/check_stub_behind_stamp.py" <<'PY3'
+import sys, pathlib
+p = pathlib.Path(sys.argv[1]); s = p.read_text(encoding="utf-8")
+old = "                report_rel = result.def_rel"
+assert old in s, "report_rel anchor not found"
+p.write_text(s.replace(old, '                report_rel = file_rel or "?"', 1), encoding="utf-8")
+PY3
+    DELEG_REP_RC=0
+    STUB_LINT_CACHE="$REPO_ROOT/build/todo-cache.json" \
+        python3 "$DELEG_ROOT/scripts/lint/check_consumer_delegation.py" \
+        >"$TMP_DIR/deleg-report.log" 2>&1 || DELEG_REP_RC=$?
+    if [ "$DELEG_REP_RC" -eq 1 ] \
+       && grep -q 'must come from the shared rule' "$TMP_DIR/deleg-report.log"; then
+        t_pass "consumer delegation: mutation-check -- a REPORTED-PATH rewrite FAILS the check"
+    else
+        t_fail "consumer delegation: reported-path rewrite not caught (rc=$DELEG_REP_RC; see $TMP_DIR/deleg-report.log)"
+    fi
+
+    # A post-resolution bucket must report the path actually OPENED, and that
+    # path must come from the shared rule. Checking only list length left this
+    # second output path unverified.
+    cp "$REPO_ROOT/scripts/lint/check_stub_behind_stamp.py" "$DELEG_ROOT/scripts/lint/"
+    python3 - "$DELEG_ROOT/scripts/lint/check_stub_behind_stamp.py" <<'PY3'
+import sys, pathlib
+p = pathlib.Path(sys.argv[1]); s = p.read_text(encoding="utf-8")
+old = '                        cov[result.bucket].append(f"{result.rel_path}:{symbol}")'
+assert old in s, "post-bucket coverage anchor not found"
+new = '                        cov[result.bucket].append(f"{file_rel}:{symbol}")'
+p.write_text(s.replace(old, new, 1), encoding="utf-8")
+PY3
+    DELEG_PATH_RC=0
+    STUB_LINT_CACHE="$REPO_ROOT/build/todo-cache.json" \
+        python3 "$DELEG_ROOT/scripts/lint/check_consumer_delegation.py" \
+        >"$TMP_DIR/deleg-relpath.log" 2>&1 || DELEG_PATH_RC=$?
+    if [ "$DELEG_PATH_RC" -eq 1 ] \
+       && grep -q 'do not carry the rel_path' "$TMP_DIR/deleg-relpath.log"; then
+        t_pass "consumer delegation: mutation-check -- an AUTHORED-path post-bucket sample FAILS the check"
+    else
+        t_fail "consumer delegation: post-bucket path rewrite not caught (rc=$DELEG_PATH_RC; see $TMP_DIR/deleg-relpath.log)"
+    fi
+fi
+
 
     # 22i: A MALFORMED CACHE MUST BE rc 3, NOT rc 1. `collect()` uses
     # `section_n` as a dict key, so a list-valued one is unhashable and raised

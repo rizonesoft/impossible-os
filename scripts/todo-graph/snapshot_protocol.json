@@ -1,0 +1,17 @@
+{
+  "_comment": "THE PROTOCOL, AS DATA. This file is read with json.load and is NEVER executed. Being inert is its entire purpose: the identity gate infers 'this protocol migration carried no resolver change' from every EXECUTABLE file in the resolver closure -- including snapshot_protocol.py, the loader beside this file -- being byte-identical base..head. That inference is sound only if the thing that DID change cannot run code. Holding these constants in a Python module could not offer that: a schema bump could carry import-time behaviour or monkeypatch resolve_symbol while every checked file stayed byte-identical, and the gate would skip the only differential able to expose it (Codex design review, section 18).",
+  "snapshot_schema": 2,
+  "pre_resolution_buckets": [
+    "unpaired_ref",
+    "path_escape",
+    "unsupported_lang",
+    "missing_file"
+  ],
+  "post_resolution_buckets": [
+    "unresolved_calllike",
+    "no_calllike_token"
+  ],
+  "_migration_comment": "A bucket DISAPPEARING from the vocabulary must be declared here, because a removal is ambiguous with a rename and the gate cannot tell them apart: an unused bucket renamed AND moved across the pre/post boundary reads as an unrelated removal plus addition, changes no mapping, and would otherwise ship green -- then apply post-resolution semantics the day a ref lands in it. Declaring is the clearing path; inferring rename identity from a removed/added Cartesian product was tried and rejected for failing legitimate unrelated migrations.",
+  "renamed_buckets": {},
+  "retired_buckets": []
+}

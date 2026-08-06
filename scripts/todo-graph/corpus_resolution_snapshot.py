@@ -45,6 +45,7 @@
 #      could not run" as "the gate passed".
 # ============================================================================
 
+import base64
 import json
 import os
 import sys
@@ -53,6 +54,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import cache_schema as _cs  # noqa: E402
 import ref_resolution as _rr  # noqa: E402
+import snapshot_protocol as _protocol  # noqa: E402
 from resolve_symbol import ResolverInputError  # noqa: E402
 
 
@@ -72,7 +74,14 @@ def _cache_path() -> Path:
 # reached resolution was absent entirely, so silently reading it here would
 # report every newly-verdicted ref as an addition and every former null as a
 # bucket change -- thousands of lines of noise around any real regression.
-SNAPSHOT_SCHEMA = 2
+#
+# RE-EXPORTED, no longer DEFINED here (section 18). It moved to the
+# inert `snapshot_protocol.json` for the same reason the buckets did: it sat in
+# THIS file beside `collect()` and `--strict`, both verdict-affecting, so the
+# identity gate could not tell a schema migration from a resolver change and
+# failed closed on every one (section 16). Existing `SNAPSHOT_SCHEMA` references
+# in this module are unchanged.
+SNAPSHOT_SCHEMA = _protocol.SNAPSHOT_SCHEMA
 
 
 class CacheError(RuntimeError):
@@ -231,6 +240,181 @@ def collect() -> dict:
     return out
 
 
+class SnapshotInvalid(RuntimeError):
+    """A snapshot FILE is unreadable, truncated, or malformed. Always rc 3."""
+
+
+def _vocabulary_of(obj, label):
+    """The bucket vocabulary a snapshot was written under.
+
+    EACH SNAPSHOT DECLARES ITS OWN, which is what makes a bucket rename
+    comparable at all. Validating both sides against HEAD's `ALL_BUCKETS` --
+    the rule before section 18 -- meant that after a rename the base
+    snapshot necessarily held the retired name, so the comparison died at
+    validation with rc 3 (infrastructure) instead of reporting the rename as
+    the CHANGED verdicts it actually is. The gate would refuse exactly the
+    migration the protocol extraction exists to make possible (Codex design
+    review, section 18).
+
+    ABSENT is not an error: it means a snapshot written before this field
+    existed, and its meaning is unambiguously the pre-existing rule -- it was
+    written under the vocabulary of its own tree, and HEAD's is the only
+    vocabulary available to check it against. This is the EXPAND step of
+    expand/migrate/contract; the first rename AFTER both sides carry the field
+    compares correctly. That compatibility is also why SNAPSHOT_SCHEMA is NOT
+    bumped for this addition: a bump would make this section's own landing
+    commit a protocol-AND-resolver change, which the separation rule must
+    refuse -- the gate would refuse the very commit that installs it.
+    """
+    raw = obj.get("buckets")
+    if raw is None:
+        return tuple(_rr.ALL_BUCKETS)
+    if not isinstance(raw, list) or not raw:
+        raise SnapshotInvalid(f"{label}: 'buckets' is present but not a "
+                              f"non-empty list")
+    for v in raw:
+        if not isinstance(v, str) or not v:
+            raise SnapshotInvalid(f"{label}: 'buckets' holds a non-string or "
+                                  f"empty entry {v!r}")
+    if len(set(raw)) != len(raw):
+        raise SnapshotInvalid(f"{label}: 'buckets' holds duplicate names")
+    return tuple(raw)
+
+
+def _halves_from_b64(blob, label, vocab):
+    """Decode a caller-supplied [pre, post] pair and BIND it to `vocab`.
+
+    Values alone are not evidence either. Without this binding a caller could
+    supply fabricated-but-well-formed halves -- identical on both sides, say --
+    and the relocation comparison would see nothing, which is the boolean
+    attestation this replaced wearing a longer argument (Codex adversarial,
+    section 18 round 5). Requiring the ordered concatenation to equal the
+    snapshot's OWN declared vocabulary means the caller can only ever tell this
+    tool how that vocabulary was SPLIT, never invent what it contains.
+    """
+    try:
+        pair = json.loads(base64.b64decode(blob))
+    except Exception as exc:  # noqa: BLE001 -- any decode failure is infra
+        raise SnapshotInvalid(f"{label}: cannot decode the supplied bucket "
+                              f"halves: {exc}") from exc
+    if not isinstance(pair, list) or len(pair) != 2:
+        raise SnapshotInvalid(f"{label}: supplied halves must be a [pre, post] "
+                              f"pair")
+    for half in pair:
+        if not isinstance(half, list) or not half \
+                or not all(isinstance(b, str) and b for b in half):
+            raise SnapshotInvalid(f"{label}: supplied halves must each be a "
+                                  f"non-empty list of names")
+    pre, post = tuple(pair[0]), tuple(pair[1])
+    if set(pre) & set(post):
+        raise SnapshotInvalid(f"{label}: supplied halves overlap")
+    if len(set(pre)) != len(pre) or len(set(post)) != len(post):
+        raise SnapshotInvalid(f"{label}: supplied halves hold duplicates")
+    if pre + post != tuple(vocab):
+        raise SnapshotInvalid(
+            f"{label}: supplied halves {list(pre)} + {list(post)} do not "
+            f"reproduce the snapshot's own declared vocabulary "
+            f"{list(vocab)} -- a caller may say how the vocabulary is SPLIT, "
+            f"never what it contains")
+    return pre, post
+
+
+def _halves_of(obj, label, vocab):
+    """The (pre, post) split a snapshot was written under, or None if absent.
+
+    Absent means a snapshot written before section 18 recorded the split; the
+    caller treats that as "cannot adjudicate a relocation" rather than "no
+    relocation happened", because the two are not the same claim.
+    """
+    pre, post = obj.get("buckets_pre"), obj.get("buckets_post")
+    if pre is None and post is None:
+        return None
+    for half, name in ((pre, "buckets_pre"), (post, "buckets_post")):
+        if not isinstance(half, list) or not half \
+                or not all(isinstance(b, str) and b for b in half):
+            raise SnapshotInvalid(f"{label}: {name!r} is present but not a "
+                                  f"non-empty list of names")
+    if tuple(list(pre) + list(post)) != tuple(vocab):
+        raise SnapshotInvalid(
+            f"{label}: buckets_pre + buckets_post does not equal buckets -- "
+            f"the snapshot contradicts itself about its own vocabulary")
+    return tuple(pre), tuple(post)
+
+
+def _read_snapshot(path, role="baseline"):
+    """Load + fully validate a snapshot file. Returns (mappings, vocabulary).
+
+    `role` names the side in every message. A two-file comparison validates two
+    snapshots with identical rules, and calling the after-file a "baseline"
+    would misreport which input a reader has to go and fix.
+
+    Factored out of `compare` so BOTH sides of a two-file comparison get the
+    identical treatment. When only the baseline was validated, the other input
+    was fail-open by omission -- and a two-file mode with one validated side
+    would reintroduce that asymmetry on the side the gate newly trusts.
+    """
+    try:
+        obj = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError, RecursionError) as exc:
+        # ValueError, not just JSONDecodeError: invalid UTF-8 raises
+        # UnicodeDecodeError, which is a ValueError and NOT an OSError, so the
+        # narrower tuple let it escape as an uncaught traceback and a bare
+        # process exit 1 -- colliding with exit 1's DOCUMENTED meaning here (a
+        # prior verdict changed), which a caller reading only the exit code
+        # would misread as a real regression instead of "the gate could not
+        # run". Deeply-nested JSON raises RecursionError, which is not a
+        # ValueError at all (Codex adversarial, section 14).
+        raise SnapshotInvalid(f"{role} unreadable: {path}: {exc}") from exc
+    if not isinstance(obj, dict) or not obj:
+        raise SnapshotInvalid(f"{role} is not a non-empty object: {path}")
+    if obj.get("schema") != SNAPSHOT_SCHEMA:
+        raise SnapshotInvalid(
+            f"{role} schema is {obj.get('schema')!r}, expected "
+            f"{SNAPSHOT_SCHEMA} -- regenerate it with `write`: {path}")
+    mappings = obj.get("mappings")
+    if not isinstance(mappings, dict) or not mappings:
+        raise SnapshotInvalid(f"{role} has no mappings object: {path}")
+    # TRUNCATION: the recorded population must match what the file actually
+    # holds. Without this a one-entry baseline passed cleanly.
+    if obj.get("refs") != len(mappings):
+        raise SnapshotInvalid(
+            f"{role} is TRUNCATED: declares {obj.get('refs')} refs, holds "
+            f"{len(mappings)}: {path}")
+    vocab = _vocabulary_of(obj, str(path))
+    halves = _halves_of(obj, str(path), vocab)
+    # ELEMENT TYPES, not just arity. `[path, 411.0, 442.0]` satisfied a
+    # length-3 check and compared EQUAL to the integer tuple under Python, so
+    # an arity-only check let a malformed snapshot through.
+    #
+    # A BUCKET IS VALIDATED AGAINST THE EXACT ENUM -- now the enum THIS
+    # snapshot declares, not the reader's. Accepting an unrecognised name would
+    # let a typo'd bucket sit in the file comparing unequal against every
+    # future run forever: a permanent CHANGED that no correct behaviour clears.
+    bad = []
+    for k, v in mappings.items():
+        if isinstance(v, str):
+            if v not in vocab:
+                bad.append(k)
+            continue
+        if not (isinstance(v, list) and len(v) == 3):
+            bad.append(k)
+            continue
+        pth, a, b = v
+        if not isinstance(pth, str) or not pth:
+            bad.append(k)
+        elif isinstance(a, bool) or isinstance(b, bool):
+            bad.append(k)
+        elif not isinstance(a, int) or not isinstance(b, int):
+            bad.append(k)
+        elif a < 1 or b < a:
+            bad.append(k)
+    if bad:
+        raise SnapshotInvalid(
+            f"{role} has {len(bad)} malformed mapping(s), e.g. {bad[0]!r}: "
+            f"{path}")
+    return mappings, vocab, halves
+
+
 def main(argv) -> int:
     # `--strict` is parsed OUT of argv before the shape check, so the positional
     # contract below is unchanged. It exists for the section 16 wiring: an
@@ -241,12 +425,47 @@ def main(argv) -> int:
     # is the exact fail-open class this file exists to close (Codex design
     # review, section 16).
     strict = "--strict" in argv
-    argv = [a for a in argv if a != "--strict"]
-    if len(argv) != 2 or argv[0] not in ("write", "compare"):
+    # A CALLER MAY SUPPLY THE HALVES A SNAPSHOT DOES NOT CARRY -- but it hands
+    # over the VALUES, which this tool then compares itself. The first cut took
+    # a bare `--halves-checked` attestation instead, and that was fail-open by
+    # construction: presence of a flag became trusted evidence, so any future
+    # caller could silence rc 3 with one word rather than doing the comparison
+    # (Codex adversarial, section 18 round 4). A tool that cannot verify a
+    # claim must not accept the claim.
+    supplied = {"base": None, "head": None}
+    rest = []
+    _pending = None
+    for a in argv:
+        if _pending:
+            supplied[_pending] = a
+            _pending = None
+        elif a == "--base-halves-b64":
+            _pending = "base"
+        elif a == "--head-halves-b64":
+            _pending = "head"
+        elif a != "--strict":
+            rest.append(a)
+    if _pending:
+        sys.stderr.write(f"[corpus_resolution_snapshot] --{_pending}-halves-b64 "
+                         f"needs a value\n")
+        return 2
+    argv = rest
+    # THREE SHAPES. `compare <before> <after>` compares two ALREADY-WRITTEN
+    # snapshots and performs NO walk of its own -- which is what lets the
+    # identity gate run its two walks CONCURRENTLY instead of serially
+    # (section 18). The one-file form is unchanged: it walks the live
+    # tree and compares against the baseline.
+    ok_shape = (
+        (len(argv) == 2 and argv[0] in ("write", "compare"))
+        or (len(argv) == 3 and argv[0] == "compare")
+    )
+    if not ok_shape:
         sys.stderr.write(
             "usage: corpus_resolution_snapshot.py write <out.json>\n"
             "       corpus_resolution_snapshot.py compare <before.json> "
-            "[--strict]\n")
+            "[--strict]\n"
+            "       corpus_resolution_snapshot.py compare <before.json> "
+            "<after.json> [--strict] [--halves-checked]\n")
         return 2
     if strict and argv[0] != "compare":
         # A no-op flag a caller BELIEVES is protecting them is worse than an
@@ -254,6 +473,37 @@ def main(argv) -> int:
         sys.stderr.write("[corpus_resolution_snapshot] --strict applies to "
                          "`compare` only\n")
         return 2
+
+    two_file = len(argv) == 3
+    if two_file:
+        # NO WALK AT ALL on this path. Both sides are files, both are validated
+        # identically, and neither the cache nor the resolver is consulted --
+        # so this mode cannot be influenced by the tree it happens to run in.
+        try:
+            before, before_vocab, before_halves = _read_snapshot(
+                argv[1], "baseline")
+            now, now_vocab, now_halves = _read_snapshot(
+                argv[2], "after snapshot")
+            if before_halves is None and supplied["base"]:
+                before_halves = _halves_from_b64(supplied["base"], "baseline",
+                                                 before_vocab)
+            if now_halves is None and supplied["head"]:
+                now_halves = _halves_from_b64(supplied["head"],
+                                              "after snapshot", now_vocab)
+        except SnapshotInvalid as exc:
+            sys.stderr.write(f"[corpus_resolution_snapshot] {exc}\n")
+            return 3
+        resolved_now = {k: v for k, v in now.items() if isinstance(v, list)}
+        if before_vocab != now_vocab:
+            # NOT an error -- it is the migration the protocol extraction
+            # exists to allow. Say so loudly, because every bucket string
+            # differing between the two sides will now surface as CHANGED and
+            # a reader must know those lines are the rename, not a defect.
+            print(f"note: bucket vocabulary changed {list(before_vocab)} -> "
+                  f"{list(now_vocab)}; bucket-valued verdicts differing across "
+                  f"the two sides are reported as CHANGED below")
+        return _compare(before, now, resolved_now, strict,
+                        before_halves, now_halves)
 
     try:
         # ONE WALK, ONE CACHE LIFETIME -- see the same wrapping in
@@ -304,6 +554,20 @@ def main(argv) -> int:
         try:
             Path(argv[1]).write_text(json.dumps({
                 "schema": SNAPSHOT_SCHEMA,
+                # THE VOCABULARY THIS SNAPSHOT WAS WRITTEN UNDER. Recorded so a
+                # later reader validates the bucket strings against the enum
+                # that produced them rather than its own -- see _vocabulary_of.
+                "buckets": list(_rr.ALL_BUCKETS),
+                # THE TWO HALVES, SEPARATELY. The flattened tuple cannot
+                # express a cross-boundary move: relocating the first POST
+                # bucket to the end of PRE leaves `buckets` byte-identical
+                # while CHANGING BEHAVIOUR, because the lint consumer branches
+                # on POST membership to decide whether it reports the effective
+                # path or the authored one. Both snapshots then compared
+                # perfectly clean over a real reclassification (Codex
+                # adversarial, section 18 round 2).
+                "buckets_pre": list(_rr.PRE_RESOLUTION_BUCKETS),
+                "buckets_post": list(_rr.POST_RESOLUTION_BUCKETS),
                 "refs": len(now),
                 "resolved": len(resolved_now),
                 "mappings": now,
@@ -322,75 +586,85 @@ def main(argv) -> int:
     # ADDED, `lost` and `moved` stay empty, and compare exits 0 having checked
     # nothing. That is the same vacuous pass the cache validation above exists
     # to prevent, on the input the gate is actually comparing against.
-    try:
-        before = json.loads(Path(argv[1]).read_text(encoding="utf-8"))
-    except (OSError, ValueError, RecursionError) as exc:
-        # ValueError, not just JSONDecodeError: invalid UTF-8 raises
-        # UnicodeDecodeError, which is a ValueError and NOT an OSError, so the
-        # narrower tuple let it escape as an uncaught traceback and a bare
-        # process exit 1 -- colliding with exit 1's DOCUMENTED meaning here (a
-        # prior verdict changed), which a caller reading only the exit code
-        # would misread as a real regression instead of "the gate could not
-        # run". Deeply-nested JSON raises RecursionError, which is not a
-        # ValueError at all. `check_stub_behind_stamp._read_baseline` already
-        # catches ValueError for precisely this reason; this is the same
-        # contract on the other input (Codex adversarial, section 14).
-        sys.stderr.write(f"[corpus_resolution_snapshot] baseline unreadable: "
-                         f"{argv[1]}: {exc}\n")
-        return 3
-    if not isinstance(before, dict) or not before:
-        sys.stderr.write(f"[corpus_resolution_snapshot] baseline is not a "
-                         f"non-empty object: {argv[1]}\n")
-        return 3
-    if before.get("schema") != SNAPSHOT_SCHEMA:
-        sys.stderr.write(f"[corpus_resolution_snapshot] baseline schema is "
-                         f"{before.get('schema')!r}, expected {SNAPSHOT_SCHEMA}"
-                         f" -- regenerate it with `write`\n")
-        return 3
-    mappings = before.get("mappings")
-    if not isinstance(mappings, dict) or not mappings:
-        sys.stderr.write("[corpus_resolution_snapshot] baseline has no "
-                         "mappings object\n")
-        return 3
-    # TRUNCATION: the recorded population must match what the file actually
-    # holds. Without this a one-entry baseline passed cleanly.
-    if before.get("refs") != len(mappings):
-        sys.stderr.write(f"[corpus_resolution_snapshot] baseline is TRUNCATED: "
-                         f"declares {before.get('refs')} refs, holds "
-                         f"{len(mappings)}\n")
-        return 3
-    # ELEMENT TYPES, not just arity. `[path, 411.0, 442.0]` satisfied a
-    # length-3 check and compared EQUAL to the integer tuple under Python, so
-    # an arity-only check let a malformed baseline through.
     #
-    # A BUCKET IS VALIDATED AGAINST THE EXACT ENUM, not merely "is a string".
-    # The bucket names are ref_resolution's published contract; accepting an
-    # unrecognised one would let a typo'd or retired bucket sit in the baseline
-    # comparing unequal against every future run forever -- a permanent CHANGED
-    # that no amount of correct behaviour can clear.
-    bad = []
-    for k, v in mappings.items():
-        if isinstance(v, str):
-            if v not in _rr.ALL_BUCKETS:
-                bad.append(k)
-            continue
-        if not (isinstance(v, list) and len(v) == 3):
-            bad.append(k)
-            continue
-        pth, a, b = v
-        if not isinstance(pth, str) or not pth:
-            bad.append(k)
-        elif isinstance(a, bool) or isinstance(b, bool):
-            bad.append(k)
-        elif not isinstance(a, int) or not isinstance(b, int):
-            bad.append(k)
-        elif a < 1 or b < a:
-            bad.append(k)
-    if bad:
-        sys.stderr.write(f"[corpus_resolution_snapshot] baseline has "
-                         f"{len(bad)} malformed mapping(s), e.g. {bad[0]!r}\n")
+    # The validation body now lives in `_read_snapshot` so the two-file mode
+    # applies the IDENTICAL rules to both of its sides.
+    try:
+        before, before_vocab, before_halves = _read_snapshot(argv[1])
+        if before_halves is None and supplied["base"]:
+            before_halves = _halves_from_b64(supplied["base"], "baseline",
+                                             before_vocab)
+        # The live side's halves come from the tree being walked, which is
+        # authoritative for it.
+        now_halves = (tuple(_rr.PRE_RESOLUTION_BUCKETS),
+                      tuple(_rr.POST_RESOLUTION_BUCKETS))
+    except SnapshotInvalid as exc:
+        sys.stderr.write(f"[corpus_resolution_snapshot] {exc}\n")
         return 3
-    before = mappings
+    if tuple(before_vocab) != tuple(_rr.ALL_BUCKETS):
+        print(f"note: baseline bucket vocabulary {list(before_vocab)} differs "
+              f"from this tree's {list(_rr.ALL_BUCKETS)}; bucket-valued "
+              f"verdicts differing across the two sides are reported as "
+              f"CHANGED below")
+    return _compare(before, now, resolved_now, strict,
+                    before_halves, now_halves)
+
+
+def _compare(before, now, resolved_now, strict, before_halves=None,
+             now_halves=None) -> int:
+    """Diff two mapping sets. Shared by the live-walk and two-file modes."""
+    if before_halves is None or now_halves is None:
+        # ABSENCE IS NOT EQUALITY. A snapshot written before the halves were
+        # recorded cannot answer whether a bucket moved across the pre/post
+        # boundary -- and a move leaves every bucket STRING identical, so the
+        # mapping diff below cannot answer it either. Passing here would report
+        # "no prior verdict changed" about a question nothing asked (Codex
+        # adversarial, section 18 round 3, reproduced at rc 0).
+        sys.stderr.write(
+            "[corpus_resolution_snapshot] a snapshot does not record its "
+            "pre/post bucket halves, so a cross-boundary relocation cannot be "
+            "adjudicated -- and a relocation changes real verdicts while "
+            "leaving every mapping identical. Regenerate both snapshots with "
+            "`write`, or supply the missing side with "
+            "--base-halves-b64/--head-halves-b64 so this tool can compare "
+            "them itself.\n")
+        return 3
+    relocated = []
+    if before_halves is not None and now_halves is not None:
+        # ONLY A BUCKET PRESENT ON BOTH SIDES CAN HAVE MOVED. Comparing the
+        # halves wholesale flagged an ADDED bucket as a relocation, which is
+        # wrong on the merits and broke the data-only-addition case: growing
+        # the vocabulary changes no existing ref's half, and the mapping diff
+        # below already adjudicates whether any verdict actually moved.
+        b_half = {b: "pre" for b in before_halves[0]}
+        b_half.update({b: "post" for b in before_halves[1]})
+        n_half = {b: "pre" for b in now_halves[0]}
+        n_half.update({b: "post" for b in now_halves[1]})
+        # SAME-NAME MOVES ONLY. Pairing every removed name with every added
+        # one marked a legitimate atomic migration (retire an unused post
+        # bucket, add an unrelated pre bucket) as a relocation with no way to
+        # clear it. It is also unnecessary: this branch is only reachable with
+        # the resolver byte-identical, so it still EMITS the retired name and
+        # the head snapshot fails its own vocabulary validation at rc 3 --
+        # reproduced 2026-08-06 (Codex adversarial, section 18 round 4).
+        relocated = sorted(b for b in b_half
+                           if b in n_half and b_half[b] != n_half[b])
+    if relocated:
+        # A CROSS-BOUNDARY MOVE IS A REAL RECLASSIFICATION, and it is invisible
+        # in the mappings: every bucket STRING is unchanged, so the diff below
+        # would report nothing while the consumer silently switched which path
+        # it reports for every ref in the moved bucket. It fails here, and the
+        # clearing path is the usual one -- ground-truth the move by hand, then
+        # regenerate with `write`.
+        print(f"\nFAIL: bucket(s) {relocated} were RELOCATED across the "
+              f"pre/post-resolution boundary: {list(before_halves[0])} / "
+              f"{list(before_halves[1])} -> {list(now_halves[0])} / "
+              f"{list(now_halves[1])}. Every bucket STRING is unchanged, "
+              f"so no mapping differs -- but POST membership decides whether a "
+              f"repaired ref reports its effective path or its authored one, "
+              f"so this moves real verdicts. Ground-truth the move, then "
+              f"regenerate the baseline with `write`.")
+        return 1
     resolved_before = {k: v for k, v in before.items() if isinstance(v, list)}
     if not resolved_before:
         sys.stderr.write("[corpus_resolution_snapshot] baseline records ZERO "

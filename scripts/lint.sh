@@ -1753,6 +1753,96 @@ fi
 
 
 # ============================================================================
+# Check 25: the lint consumer must DELEGATE to the shared resolution rule
+# ============================================================================
+# section 18. The identity gate walks corpus_resolution_snapshot.py and
+# adjudicates NOTHING about scripts/lint/check_stub_behind_stamp.py, even though
+# section 14 unified the two behind one `resolve_ref` precisely so a fallback
+# added to one could not diverge from the other. This is the invariant standing
+# in for a full consumer differential: the consumer routes every symbol
+# occurrence through the shared rule exactly once and propagates its verdicts
+# verbatim.
+#
+# GATED ON THE FILES THAT CAN BREAK IT. The semantic half drives a real corpus
+# walk (~2s), and Check 7 already pays for one; charging every commit in the
+# repo a second walk to re-prove a property only these files can affect is not
+# a trade worth making. SKIP via SKIP_LINT_CONSUMER_DELEGATION=1; force a run
+# with LINT_CONSUMER_DELEGATION_ALWAYS=1.
+if [ "${SKIP_LINT_CONSUMER_DELEGATION:-}" = "1" ]; then
+    echo -e "${YELLOW}warn${NC}: Check 25 (consumer-delegation) skipped via SKIP_LINT_CONSUMER_DELEGATION=1"
+    WARNINGS=$((WARNINGS + 1))
+else
+    LINT25_TOUCHED=0
+    if [ "${LINT_CONSUMER_DELEGATION_ALWAYS:-}" = "1" ]; then
+        LINT25_TOUCHED=1
+    else
+        LINT25_DIFF="$( { git -C "$REPO_ROOT" diff --cached --name-only 2>/dev/null; \
+                          git -C "$REPO_ROOT" diff --name-only 2>/dev/null; } || true)"
+        # A CLEAN TREE MEANS CI, AND CI IS THE POINT. GitHub Actions checks out
+        # the committed revision with an empty index and worktree, so both
+        # diffs above are empty and the trigger was ALWAYS false there: the one
+        # check that can detect the lint consumer diverging from the shared
+        # resolution rule never ran in the environment it exists to protect,
+        # and the identity gate explicitly does not cover the consumer (Codex
+        # adversarial, section 18). Deriving paths from a commit RANGE was the
+        # alternative and is worse: a PR spans several commits and the range is
+        # a second thing to get wrong. On a clean tree just run it -- ~7s, and
+        # only where there is a committed state to adjudicate.
+        if [ -z "$(printf '%s' "$LINT25_DIFF" | tr -d '[:space:]')" ]; then
+            LINT25_TOUCHED=1
+        fi
+        case "$LINT25_DIFF" in
+            *scripts/lint/check_stub_behind_stamp.py*|\
+            *scripts/lint/check_consumer_delegation.py*|\
+            *scripts/todo-graph/ref_resolution.py*|\
+            *scripts/todo-graph/snapshot_protocol.py*|\
+            *scripts/todo-graph/snapshot_protocol.json*) LINT25_TOUCHED=1 ;;
+        esac
+    fi
+    if [ "$LINT25_TOUCHED" -eq 1 ]; then
+        LINT25_OUT="$(mktemp -t lint-delegation.XXXXXX)"
+        LINT25_RC=0
+        # BUILD THE CACHE IF IT IS NOT THERE. `build/todo-cache.json` is
+        # gitignored, so it is ABSENT in a fresh checkout -- which is exactly
+        # what CI is. Without this the check returned rc 3 (infrastructure),
+        # the branch below turned that into a WARNING, and lint passed: the
+        # only gate that can detect the consumer diverging from the shared
+        # resolution rule was fail-open in the one environment that matters,
+        # and the identity gate explicitly does not cover the consumer (Codex
+        # adversarial, section 18).
+        if [ ! -f "$REPO_ROOT/build/todo-cache.json" ]; then
+            python3 "$REPO_ROOT/scripts/todo-graph/build.py" --quiet \
+                --output "$REPO_ROOT/build/todo-cache.json" >/dev/null 2>&1 || true
+        fi
+        STUB_LINT_CACHE="$REPO_ROOT/build/todo-cache.json" \
+            python3 "$REPO_ROOT/scripts/lint/check_consumer_delegation.py" \
+            >"$LINT25_OUT" 2>&1 || LINT25_RC=$?
+        case "$LINT25_RC" in
+            0) echo -e "${CYAN}info${NC}: Check 25 (consumer-delegation) the lint consumer delegates every symbol occurrence to the shared rule" ;;
+            1)
+                # A REAL VIOLATION: the two gates have diverged.
+                while IFS= read -r _l25; do
+                    [ -z "$_l25" ] && continue
+                    echo -e "${RED}error${NC}: Check 25 (consumer-delegation) ${_l25#  VIOLATION }"
+                done < <(grep '  VIOLATION ' "$LINT25_OUT" || true)
+                ERRORS=$((ERRORS + 1))
+                ;;
+            *)
+                # FAIL CLOSED. This branch runs ONLY because a file that can
+                # break the invariant was changed, and the cache is built above
+                # if it was missing -- so "the check could not run" here is not
+                # a fresh-clone inconvenience, it is the gate being unable to
+                # adjudicate the very change that triggered it. Warning was
+                # fail-open in a fresh checkout, which is what CI always is.
+                echo -e "${RED}error${NC}: Check 25 (consumer-delegation) could not run (rc=$LINT25_RC) while a file that can break the invariant was changed: $(tail -1 "$LINT25_OUT")"
+                ERRORS=$((ERRORS + 1))
+                ;;
+        esac
+        rm -f "$LINT25_OUT"
+    fi
+fi
+
+# ============================================================================
 # Summary
 # ============================================================================
 echo ""

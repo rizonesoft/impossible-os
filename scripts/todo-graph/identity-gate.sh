@@ -91,13 +91,29 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 # ABSENT: it is neither executed by the walks nor an input to them, so listing
 # it would force a walk that adjudicates nothing about it. That is the same
 # false-coverage test applied consistently, not a different rule.
-CLOSURE=(
+#
+# EXEC_CLOSURE is the subset that can RUN CODE, and the split is load-bearing
+# (section 18). The protocol values now live in the inert
+# snapshot_protocol.json, so a protocol migration is a data-only diff -- and
+# "every executable file is byte-identical, therefore no verdict-affecting
+# change rode along" becomes a mechanical guarantee rather than a guess. That
+# inference is the ONLY thing that lets a protocol migration through, so the
+# .json is in CLOSURE (it must still trigger the gate) but deliberately NOT in
+# EXEC_CLOSURE, while snapshot_protocol.py -- the loader, which does run -- is
+# in both.
+EXEC_CLOSURE=(
     "scripts/todo-graph/corpus_resolution_snapshot.py"
     "scripts/todo-graph/ref_resolution.py"
     "scripts/todo-graph/resolve_symbol.py"
     "scripts/todo-graph/cache_schema.py"
     "scripts/todo-graph/build.py"
+    "scripts/todo-graph/snapshot_protocol.py"
+    "scripts/todo-graph/producer_differential.py"
     "scripts/todo-graph/identity-gate.sh"
+)
+CLOSURE=(
+    "${EXEC_CLOSURE[@]}"
+    "scripts/todo-graph/snapshot_protocol.json"
 )
 
 BASE_SHA=""
@@ -123,6 +139,41 @@ while [ $# -gt 0 ]; do
 done
 
 cd "$REPO_ROOT" || die_infra "cannot cd to repo root $REPO_ROOT"
+
+# VALIDATED ONCE, BEFORE ANY PHASE SPAWNS ANYTHING.
+BUDGET_SECS="${IDENTITY_GATE_BUDGET_SECS:-600}"
+case "$BUDGET_SECS" in
+    ''|*[!0-9]*) die_infra "IDENTITY_GATE_BUDGET_SECS must be a whole number of seconds, got '$BUDGET_SECS'" ;;
+esac
+[ "$BUDGET_SECS" -ge 1 ] || die_infra "IDENTITY_GATE_BUDGET_SECS must be >= 1 (0 DISABLES timeout(1) outright, which removes the bound entirely)"
+
+# ONE MONOTONIC DEADLINE FOR THE WHOLE GATE. Granting each sequential phase the
+# full budget meant the producer differential, the cache build, the two walks
+# and the comparison could together run ~4x it -- roughly 40 minutes against
+# build.yml's 20-minute job ceiling, so GitHub would kill the job before the
+# gate could report its own bounded failure (Codex adversarial, section 18).
+#
+# AND IT IS A MONOTONIC CLOCK, NOT `date +%s`. A wall clock can step BACKWARD,
+# which makes `remaining()` GROW and hands the later phases more time than the
+# budget allows -- restoring the exact overrun this deadline exists to prevent.
+# That is not hypothetical on this host: `test_build.sh` records three observed
+# backward steps under WSL2 on 2026-08-06 (-1158ms, -262ms, -246ms) after a
+# suspend/resync, and refuses such readings for the same reason.
+# `time.monotonic()` cannot step backward by definition.
+GATE_MONO_START="$(python3 -c 'import time; print(int(time.monotonic()))')" \
+    || die_infra "cannot read a monotonic clock"
+remaining() {
+    local _now _r
+    _now="$(python3 -c 'import time; print(int(time.monotonic()))')" || _now=""
+    if [ -z "$_now" ]; then
+        # A clock we cannot read is INFRASTRUCTURE, never "plenty of time".
+        printf '1'
+        return
+    fi
+    _r=$(( BUDGET_SECS - (_now - GATE_MONO_START) ))
+    [ "$_r" -lt 1 ] && _r=1   # timeout(1) treats 0 as "no timeout"
+    printf '%s' "$_r"
+}
 
 HEAD_RESOLVED="$(git rev-parse --verify "${HEAD_SHA}^{commit}" 2>/dev/null)" \
     || die_infra "head '$HEAD_SHA' is not a commit"
@@ -196,7 +247,34 @@ fi
 
 TMP_DIR="$(mktemp -d -t identity-gate.XXXXXX)" || die_infra "mktemp failed"
 BASE_TREE="$TMP_DIR/base"
+WALK_PIDS=""
 cleanup() {
+    # REAP BEFORE REMOVING. cleanup ran only on EXIT and never touched the
+    # background walks, so a TERM/INT after they were spawned deleted the base
+    # worktree and TMP_DIR while two `timeout` wrappers and their Python
+    # children kept running against those paths for up to the budget -- leaked
+    # processes writing into a directory that no longer exists (Codex
+    # adversarial, section 18 round 3).
+    if [ -n "$WALK_PIDS" ]; then
+        # SIGNAL THE PROCESS GROUP, then ESCALATE, then give up -- never block.
+        # TERM to the `timeout` wrapper alone left the python grandchild
+        # running, and an unbounded `wait` afterwards meant a child ignoring
+        # TERM hung cleanup forever: the worktree and TMP_DIR were never
+        # removed and CI cancellation stalled until an outer job-level kill
+        # (Codex adversarial, section 18 round 4, reproduced with a child
+        # ignoring SIGTERM). `setsid` below puts each walk in its own group so
+        # `kill -- -PGID` reaches the wrapper AND its children.
+        for _p in $WALK_PIDS; do kill -TERM -- "-$_p" 2>/dev/null || kill -TERM "$_p" 2>/dev/null || true; done
+        for _i in 1 2 3 4 5 6 7 8 9 10; do
+            _alive=0
+            for _p in $WALK_PIDS; do kill -0 "$_p" 2>/dev/null && _alive=1; done
+            [ "$_alive" -eq 0 ] && break
+            sleep 0.5
+        done
+        for _p in $WALK_PIDS; do kill -KILL -- "-$_p" 2>/dev/null || kill -KILL "$_p" 2>/dev/null || true; done
+        for _p in $WALK_PIDS; do wait "$_p" 2>/dev/null || true; done
+        WALK_PIDS=""
+    fi
     if [ -d "$BASE_TREE" ]; then
         git worktree remove --force "$BASE_TREE" >/dev/null 2>&1 || true
     fi
@@ -207,6 +285,8 @@ cleanup() {
     fi
 }
 trap cleanup EXIT
+trap 'cleanup; exit 130' INT
+trap 'cleanup; exit 143' TERM
 
 git worktree add --detach "$BASE_TREE" "$BASE_SHA" >/dev/null 2>&1 \
     || die_infra "cannot materialize base worktree at $BASE_SHA"
@@ -232,11 +312,21 @@ proto_of() {  # $1 = tree root
     # comment edit read as a protocol change and wedged the gate (Codex
     # adversarial, section 16). Importing in a throwaway process per tree gives
     # the real ordered tuple and is immune to both.
+    #
+    # AND SINCE SECTION 18, READ THE VALUES AS DATA WHERE THE TREE OFFERS THEM.
+    # snapshot_protocol.json is parsed with json.load and never executed, which
+    # is what makes the pure-protocol-migration inference below sound: the file
+    # that changed provably cannot have run code. A tree PREDATING the
+    # extraction has no .json and its constants are only reachable by importing
+    # -- that still works, but it is reported as `legacy` so the inference is
+    # refused for it rather than silently extended to a tree it does not hold
+    # for.
     python3 - "$1" <<'PY' 2>/dev/null || echo UNREADABLE
-import importlib.util, json, sys, pathlib
+import base64, hashlib, importlib.util, json, sys, pathlib
 root = pathlib.Path(sys.argv[1])
 tg = root / "scripts/todo-graph"
 sys.path.insert(0, str(tg))
+source = "data"
 
 
 def _load(name):
@@ -247,18 +337,110 @@ def _load(name):
     return mod
 
 
-try:
-    schema = _load("corpus_resolution_snapshot").SNAPSHOT_SCHEMA
-    buckets = _load("ref_resolution").ALL_BUCKETS
-except Exception:
+
+data_path = tg / "snapshot_protocol.json"
+if data_path.is_file():
+    try:
+        raw = json.loads(data_path.read_text(encoding="utf-8"))
+        schema = raw["snapshot_schema"]
+        # RAW TYPE FIRST. `list(...)` normalises a JSON OBJECT to its ordered
+        # keys, so `{"unresolved_calllike": 1, ...}` produced a digest
+        # identical to the real list while snapshot_protocol.load rejected it
+        # outright -- bundled with a schema bump that left BUCKETS_CHANGED
+        # false, the fast path exited 0 for a protocol nothing can load
+        # (Codex adversarial, section 18 round 3; digest collision confirmed).
+        pre_raw = raw["pre_resolution_buckets"]
+        post_raw = raw["post_resolution_buckets"]
+        renamed = raw.get("renamed_buckets") or {}
+        retired = raw.get("retired_buckets") or []
+        if not isinstance(renamed, dict) or not isinstance(retired, list):
+            print("UNREADABLE")
+            raise SystemExit(0)
+        if not isinstance(pre_raw, list) or not isinstance(post_raw, list):
+            print("UNREADABLE")
+            raise SystemExit(0)
+        pre, post = list(pre_raw), list(post_raw)
+        # BIND THE LOADER TO THE DATA. Reading only the JSON left the two free
+        # to disagree: a loader edit could filter or rename a DORMANT bucket
+        # while the JSON still declared it, and with no live mapping in that
+        # bucket the two snapshots stay verdict-identical, so the differential
+        # runs and passes. Runtime consumers would then no longer recognise a
+        # bucket the published protocol declares -- the latent-retirement
+        # failure again, reached from the supported unused-bucket introduction
+        # (Codex adversarial, section 18 ship gate). The JSON is the contract
+        # and the loader is how it reaches the code; if they disagree, neither
+        # is authoritative and this is INFRASTRUCTURE.
+        _mod = _load("snapshot_protocol")
+        if (_mod.SNAPSHOT_SCHEMA != schema
+                or list(_mod.PRE_RESOLUTION_BUCKETS) != pre
+                or list(_mod.POST_RESOLUTION_BUCKETS) != post
+                or list(_mod.ALL_BUCKETS) != pre + post):
+            print("UNREADABLE")
+            raise SystemExit(0)
+    except Exception:
+        print("UNREADABLE")
+        raise SystemExit(0)
+else:
+    source = "legacy"
+    try:
+        _r = _load("ref_resolution")
+        schema = _load("corpus_resolution_snapshot").SNAPSHOT_SCHEMA
+        # Same raw-type floor on the legacy path: a module is free to declare
+        # these as any object, and the contract is a sequence of names.
+        pre_raw = _r.PRE_RESOLUTION_BUCKETS
+        post_raw = _r.POST_RESOLUTION_BUCKETS
+        renamed, retired = {}, []
+        if not isinstance(pre_raw, (list, tuple)) \
+                or not isinstance(post_raw, (list, tuple)):
+            print("UNREADABLE")
+            raise SystemExit(0)
+        pre, post = list(pre_raw), list(post_raw)
+    except Exception:
+        print("UNREADABLE")
+        raise SystemExit(0)
+# ENFORCE THE FULL LOADER CONTRACT, not a weaker subset. proto_of previously
+# accepted any non-boolean int, while snapshot_protocol.load requires a
+# POSITIVE one -- so a data-only change from 2 to 0 produced a well-formed
+# protocol line, passed the executable-identity checks, and exited 0 through
+# the schema fast path without ever importing the loader that would have
+# rejected the tree. The gate would report PASS for a protocol nothing can
+# actually load (Codex adversarial, section 18 round 2).
+if isinstance(schema, bool) or not isinstance(schema, int) or schema < 1:
     print("UNREADABLE")
     raise SystemExit(0)
-if not isinstance(schema, int) or not isinstance(buckets, (list, tuple)):
+for _half in (pre, post):
+    if not isinstance(_half, (list, tuple)) or not _half \
+            or not all(isinstance(b, str) and b for b in _half) \
+            or len(set(_half)) != len(_half):
+        print("UNREADABLE")
+        raise SystemExit(0)
+if set(pre) & set(post):
+    # A name in BOTH halves is not a vocabulary, it is an ambiguity -- and the
+    # consumer branches on POST membership specifically.
     print("UNREADABLE")
     raise SystemExit(0)
-# ORDER-SENSITIVE: the bucket tuple is a published contract, so a reorder is a
-# protocol change even when the membership is identical.
-print("%d|%s" % (schema, json.dumps(list(buckets))))
+# THE TWO HALVES ARE FINGERPRINTED SEPARATELY, not as one flattened tuple.
+# `ALL_BUCKETS` is `PRE + POST`, so moving the first POST bucket to the end of
+# PRE leaves the concatenation byte-identical -- and that move is BEHAVIOURAL:
+# `check_stub_behind_stamp` branches on POST membership to decide whether to
+# report the EFFECTIVE path or the authored one, so a repaired ref would start
+# naming a file nobody can inspect while both resolver snapshots compared
+# perfectly clean (Codex adversarial, section 18).
+#
+# HEX DIGESTS, not the JSON itself. The caller splits this line on `|`, and a
+# bucket name is only validated as a non-empty string -- one containing a pipe
+# would silently corrupt every field after it. A digest cannot.
+def _fp(seq):
+    return hashlib.sha256(json.dumps(list(seq)).encode("utf-8")).hexdigest()
+
+
+# ORDER-SENSITIVE within each half: the tuples are a published contract, so a
+# reorder is a protocol change even when the membership is identical.
+print("%d|%s|%s|%s|%s|%s|%s" % (
+    schema, _fp(pre), _fp(post), source,
+    base64.b64encode(json.dumps(pre).encode("utf-8")).decode("ascii"),
+    base64.b64encode(json.dumps(post).encode("utf-8")).decode("ascii"),
+    base64.b64encode(json.dumps([renamed, retired]).encode("utf-8")).decode("ascii")))
 PY
 }
 BASE_PROTO="$(proto_of "$BASE_TREE")"
@@ -274,30 +456,342 @@ for prot in "$BASE_PROTO" "$HEAD_PROTO"; do
             die_infra "cannot read the snapshot protocol constants (got '$prot') -- the snapshot tool is missing or renamed, or declares SNAPSHOT_SCHEMA/ALL_BUCKETS in a shape this gate cannot parse" ;;
     esac
 done
-BASE_SCHEMA="${BASE_PROTO%%|*}"; HEAD_SCHEMA="${HEAD_PROTO%%|*}"
-BASE_BUCKETS="${BASE_PROTO#*|}"; HEAD_BUCKETS="${HEAD_PROTO#*|}"
+IFS='|' read -r BASE_SCHEMA BASE_PRE BASE_POST BASE_SOURCE BASE_PRE_B64 BASE_POST_B64 BASE_MIG_B64 <<< "$BASE_PROTO"
+IFS='|' read -r HEAD_SCHEMA HEAD_PRE HEAD_POST HEAD_SOURCE HEAD_PRE_B64 HEAD_POST_B64 HEAD_MIG_B64 <<< "$HEAD_PROTO"
+for _f in "$BASE_SCHEMA" "$BASE_PRE" "$BASE_POST" "$BASE_SOURCE" \
+          "$BASE_PRE_B64" "$BASE_POST_B64" "$BASE_MIG_B64" \
+          "$HEAD_SCHEMA" "$HEAD_PRE" "$HEAD_POST" "$HEAD_SOURCE" \
+          "$HEAD_PRE_B64" "$HEAD_POST_B64" "$HEAD_MIG_B64"; do
+    [ -n "$_f" ] || die_infra "the protocol line is malformed (base='$BASE_PROTO' head='$HEAD_PROTO')"
+done
 
-if [ "$BASE_BUCKETS" != "$HEAD_BUCKETS" ]; then
-    # ALL_BUCKETS is defined INSIDE ref_resolution.py, so a bucket migration
-    # NECESSARILY edits the very file the separation rule would need to hold
-    # byte-identical -- the rule is unsatisfiable in the current layout, and
-    # pretending otherwise would either reject every bucket migration or wave
-    # a bundled resolver change through (Codex design review, section 16). It
-    # fails closed and names the prerequisite instead of guessing.
-    die_infra "ALL_BUCKETS changed base..head. This gate cannot separate a bucket migration from a resolver change while ALL_BUCKETS lives inside ref_resolution.py. Extract the protocol constants into their own module first -- filed as a section 16 follow-up item."
+# ---------------------------------------------------------------------------
+# THE SEPARATION RULE (section 18, closing the section 16 refusals).
+#
+# Section 16 could only FAIL CLOSED here, and said so: both constants lived
+# beside verdict-affecting logic, so "the protocol changed" and "the resolver
+# changed" were indistinguishable. Extracting them makes the question decidable
+# -- but ONLY through the executable/inert split. The inference is exactly:
+# every file that can RUN is byte-identical base..head, and the only thing that
+# differs is data, therefore no verdict-affecting change rode along. Nothing
+# weaker is safe, because snapshot_protocol.py is imported by the resolver: if
+# THAT file were allowed to change here, a schema bump could carry import-time
+# behaviour or monkeypatch resolve_symbol while every checked file stayed
+# byte-identical, and this gate would skip the only differential capable of
+# exposing it (Codex design review, section 18).
+# ---------------------------------------------------------------------------
+    RELOC="$(python3 - "$BASE_PRE_B64" "$BASE_POST_B64" "$HEAD_PRE_B64" "$HEAD_POST_B64" "$HEAD_MIG_B64" "$BASE_MIG_B64" \
+        "$REPO_ROOT/scripts/todo-graph/ref_resolution.py" \
+        "$REPO_ROOT/scripts/lint/check_stub_behind_stamp.py" <<'RELOCPY'
+import base64, json, pathlib, sys
+from collections import Counter
+
+_EMITTER_CACHE = {}
+
+
+class EmitterUnreadable(Exception):
+    pass
+
+
+def _emitter_text(path):
+    if path not in _EMITTER_CACHE:
+        try:
+            _EMITTER_CACHE[path] = pathlib.Path(path).read_text(encoding="utf-8")
+        except OSError as exc:
+            # RAISE. The first cut returned a sentinel STRING here, intending
+            # to fail closed -- but the caller's test is "does this bucket name
+            # appear in the text", and a sentinel matches no bucket name, so
+            # an unreadable emitter read as PROOF OF ABSENCE and approved the
+            # retirement. The guard was inverted (Codex adversarial, section 18
+            # ship gate). An error cannot be mistaken for evidence.
+            raise EmitterUnreadable("%s: %s" % (path, exc))
+    return _EMITTER_CACHE[path]
+
+
+def halves(a, b):
+    return (json.loads(base64.b64decode(a)), json.loads(base64.b64decode(b)))
+
+
+bp, bq = halves(sys.argv[1], sys.argv[2])
+hp, hq = halves(sys.argv[3], sys.argv[4])
+b = {n: "pre" for n in bp}
+b.update({n: "post" for n in bq})
+h = {n: "pre" for n in hp}
+h.update({n: "post" for n in hq})
+renamed, retired = json.loads(base64.b64decode(sys.argv[5]))
+base_renamed, base_retired = json.loads(base64.b64decode(sys.argv[6]))
+# AN ACTIVE DECLARATION MUST BE NEW ON THIS EDGE. Without this, a declaration
+# already present in BASE authorised a removal made in HEAD -- pre-authorising
+# a future migration, which is exactly what the earlier "reject stale
+# declarations" rule was reaching for. Comparing BASE and HEAD metadata gets
+# both properties with no history at all: a declaration retained AFTER its
+# migration completed stays inert here, because its source is then absent from
+# both endpoint vocabularies and it is skipped before this check (Codex
+# adversarial, section 18 round 7 -- which refuted the residual this section
+# had accepted, so the residual is closed rather than documented).
+# VALIDATE EVERY DECLARATION AGAINST THE REAL DELTA BEFORE APPLYING ANY OF IT.
+# A declaration is written by the same commit the gate is judging, so an
+# unvalidated one is a self-authored exemption. Applying them with a bare dict
+# comprehension was worse than that: with base A=pre, B=post and a declared
+# A -> B, both base entries collapsed onto B and the later value overwrote the
+# earlier, erasing a genuine same-name move with no trace (Codex adversarial,
+# section 18 round 5).
+bad = []
+active_renames = {}
+for src, dst in sorted(renamed.items()):
+    if not isinstance(src, str) or not isinstance(dst, str) or not src or not dst:
+        bad.append("rename %r -> %r is not a pair of names" % (src, dst))
+        continue
+    if src in h:
+        bad.append("rename source %r still exists at HEAD, so nothing was renamed" % src)
+        continue
+    if src not in b:
+        # COMPLETED MIGRATION HISTORY, not an error. The declaration a valid
+        # migration must carry stays in the file afterwards; on the NEXT commit
+        # the renamed-from name is absent from both sides, and treating that as
+        # a stale declaration rejected every subsequent verdict-safe commit
+        # until someone made a metadata-cleanup commit no lifecycle described
+        # (Codex adversarial, section 18 round 6). Declarations are EDGE-BOUND:
+        # they say something about THIS base..head delta or they say nothing.
+        continue
+    if base_renamed.get(src) == dst:
+        bad.append("rename %r -> %r was already declared in BASE, so it "
+                   "pre-authorises this edge's change rather than declaring "
+                   "it" % (src, dst))
+    elif dst not in h:
+        bad.append("rename target %r is not in the HEAD vocabulary" % dst)
+    elif dst in b:
+        bad.append("rename target %r already existed in BASE, so this collides "
+                   "with an existing bucket rather than renaming into a new one" % dst)
+    else:
+        # A RENAME IS NOT A DATA-ONLY CHANGE, and the gate must not let one
+        # take the pure-protocol path. `ref_resolution.py` emits bucket names
+        # as hardcoded strings and `check_stub_behind_stamp.py` pre-keys its
+        # coverage dict on them, so renaming the vocabulary alone leaves both
+        # still producing and expecting the RETIRED name. If the bucket is
+        # dormant the gate sees nothing and it ships green; the day a ref lands
+        # in it, the emitted verdict names a bucket the published vocabulary
+        # does not contain and every snapshot becomes invalid (Codex
+        # adversarial, section 18 final round). Refuse, and say what a rename
+        # actually requires.
+        active_renames[src] = dst
+        bad.append("rename %r -> %r cannot be a data-only migration: the "
+                   "bucket names are hardcoded in ref_resolution.py and in "
+                   "check_stub_behind_stamp.py's coverage keys, so the "
+                   "emitters and the consumer must be migrated in the same "
+                   "change -- which this gate cannot adjudicate as a protocol "
+                   "migration. Retire the old bucket and introduce the new one "
+                   "as separate, individually-gated steps" % (src, dst))
+for dst, n in sorted(Counter(active_renames.values()).items()):
+    if n > 1:
+        bad.append("rename target %r is claimed by %d sources" % (dst, n))
+for r in retired:
+    if not isinstance(r, str) or not r:
+        bad.append("retirement %r is not a name" % (r,))
+    elif r in h:
+        bad.append("retired bucket %r still exists at HEAD" % r)
+    elif r not in b:
+        # Same edge-bound rule: a retirement that already happened is history.
+        continue
+    elif r in base_retired:
+        bad.append("retirement of %r was already declared in BASE, so it "
+                   "pre-authorises this edge's removal rather than declaring "
+                   "it" % r)
+    else:
+        # PROVE THE EMITTERS CAN NO LONGER PRODUCE IT. A retirement removes a
+        # name that `ref_resolution.py` still emits and that
+        # `check_stub_behind_stamp.py` still pre-keys its coverage dict on. If
+        # the bucket is DORMANT the two snapshots hold no affected mapping and
+        # the gate passes -- then a later TODO-only commit reaches that
+        # condition, the resolver emits a name the published vocabulary no
+        # longer contains, and every snapshot is invalid for a reachable input.
+        # That is precisely the latent-failure argument that rejects renames,
+        # so it applies here too (Codex adversarial, section 18 ship gate).
+        #
+        # It is CHECKABLE rather than blanket-refused: if the name appears
+        # nowhere in the head emitters, the executable-only migration has
+        # already happened and the data-only retirement is safe. That is the
+        # documented two-step sequence, and this is what verifies step one.
+        # EVERY ACTIVE RETIREMENT IS REFUSED, for now and deliberately.
+        #
+        # The proof available today is a SOURCE-TEXT search for the quoted
+        # bucket literal, and that is not proof of non-emission: an
+        # executable-only refactor to `PRE_RESOLUTION_BUCKETS[1]`, a
+        # concatenation, or a table lookup preserves behaviour, passes the
+        # differential, and leaves the literal absent -- so a following
+        # data-only retirement passes this search while the resolver can still
+        # emit a name the protocol no longer declares. Documenting that in a
+        # follow-up section does not protect the shipping path, so the path is
+        # closed until the follow-up lands (Codex adversarial, section 18 ship
+        # gate). Retirement is rare and has never been performed; refusing it
+        # costs nothing and cannot be unsound.
+        #
+        # The text search below still runs, because when it FIRES it names the
+        # concrete reason and is the more useful message of the two.
+        try:
+            still = [f for f in (sys.argv[7], sys.argv[8])
+                     if ('"%s"' % r) in _emitter_text(f)
+                     or ("'%s'" % r) in _emitter_text(f)]
+        except EmitterUnreadable as exc:
+            bad.append("cannot read an emitter to prove %r is no longer "
+                       "produced (%s) -- an unreadable file is not evidence of "
+                       "absence" % (r, exc))
+            continue
+        if still:
+            bad.append("retirement of %r cannot be a data-only migration: the "
+                       "name is still hardcoded in %s, so the emitters can "
+                       "still produce a verdict the retired vocabulary does "
+                       "not declare -- dormant today, invalid for every "
+                       "snapshot the day a ref reaches it"
+                       % (r, ", ".join(pathlib.Path(f).name for f in still)))
+        else:
+            bad.append("retirement of %r is refused: the only available proof "
+                       "that a bucket is no longer emitted is a source-text "
+                       "search, which an indexed or concatenated emission "
+                       "defeats. Retirement is enabled by the declared "
+                       "emitted-member contract in section 20; until that "
+                       "lands this path stays closed rather than knowingly "
+                       "unsound" % r)
+if bad:
+    print(json.dumps({"moved": [], "undeclared_removals": [],
+                      "bad_declarations": bad}))
+    raise SystemExit(0)
+# Now the mapping is provably injective and delta-consistent, so applying it
+# cannot collapse two entries onto one.
+b = {active_renames.get(n, n): half for n, half in b.items()}
+moved = sorted(n for n in b if n in h and b[n] != h[n])
+# AN UNDECLARED REMOVAL IS AMBIGUOUS WITH A RENAME and nothing downstream can
+# resolve it: an UNUSED bucket renamed across the boundary changes no mapping,
+# so it would ship green and then apply post-resolution semantics the day a ref
+# lands in it. Declaring it is the clearing path -- and it is a path, which is
+# what the rejected Cartesian rule lacked.
+undeclared = sorted(n for n in b if n not in h and n not in retired)
+# NO CARTESIAN RENAME INFERENCE. Pairing every removed name with every added
+# one failed a legitimate atomic migration (retire an unused post bucket, add
+# an unrelated pre bucket) as a relocation, with no way to clear it -- and it
+# was unnecessary: this branch is only reachable with the resolver
+# byte-identical, so it keeps EMITTING the retired name and the head snapshot
+# fails its own vocabulary validation at rc 3. Reproduced 2026-08-06 (Codex
+# adversarial, section 18 round 4).
+print(json.dumps({"moved": moved, "undeclared_removals": undeclared,
+                  "bad_declarations": []}))
+RELOCPY
+)" || die_infra "could not compare the bucket halves base..head"
+    RELOC_N="$(printf '%s' "$RELOC" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(len(d["moved"]) + len(d["undeclared_removals"]) + len(d["bad_declarations"]))')" \
+        || die_infra "could not read the bucket-halves comparison"
+    if [ "$RELOC_N" != "0" ]; then
+        printf '[identity-gate] FAIL: the bucket vocabulary was RELOCATED across the pre/post-resolution boundary: %s\n' "$RELOC" >&2
+        printf '[identity-gate] Every bucket STRING is unchanged, so no mapping differs -- but POST membership decides whether a repaired ref reports its effective path or its authored one, so this moves real verdicts. For a MOVE, ground-truth it by hand. For an undeclared REMOVAL, declare it in snapshot_protocol.json as `renamed_buckets` (old -> new) or `retired_buckets`: a removal is otherwise indistinguishable from a rename that also crossed the boundary.\n' >&2
+        exit 1
+    fi
+
+BUCKETS_CHANGED=0
+[ "$BASE_PRE" = "$HEAD_PRE" ] && [ "$BASE_POST" = "$HEAD_POST" ] || BUCKETS_CHANGED=1
+if [ "$BUCKETS_CHANGED" -eq 1 ] || [ "$BASE_SCHEMA" != "$HEAD_SCHEMA" ]; then
+    if [ "$BASE_SOURCE" != "data" ] || [ "$HEAD_SOURCE" != "data" ]; then
+        # A tree predating the extraction holds its protocol in EXECUTABLE
+        # code, so the inert-data premise does not hold for it. Refuse rather
+        # than extend an inference to a tree it was never true of.
+        die_infra "the protocol changed base..head, but one side predates the snapshot_protocol.json extraction (base=$BASE_SOURCE head=$HEAD_SOURCE), so its constants are only reachable by executing code and a protocol-only change cannot be proven inert. Re-run once both sides carry the extracted protocol."
+    fi
+    EXEC_CHANGED=""
+    for f in "${EXEC_CLOSURE[@]}"; do
+        b="$(git rev-parse --quiet --verify "$BASE_SHA:$f" 2>/dev/null || echo MISSING)"
+        h="$(git hash-object "$REPO_ROOT/$f" 2>/dev/null || echo MISSING)"
+        [ "$b" = "$h" ] || EXEC_CHANGED="$EXEC_CHANGED $f"
+    done
+    if [ -n "$EXEC_CHANGED" ]; then
+        die_infra "the protocol changed base..head AND executable closure file(s) changed with it:$EXEC_CHANGED. This gate cannot separate a protocol migration from a resolver change when both land together. Split the commit: land the protocol data change alone (this gate then proves it verdict-neutral), then the resolver change on top."
+    fi
+    if [ "$BASE_SCHEMA" != "$HEAD_SCHEMA" ] && [ "$BUCKETS_CHANGED" -eq 1 ]; then
+        # BOTH CHANGED. The schema fast path below cannot be taken: it exits 0
+        # WITHOUT walking, and a bucket rename is a real verdict change that
+        # only the differential can surface -- but the differential is
+        # impossible across schemas. Neither half of the answer is available,
+        # so this fails closed rather than letting the schema branch swallow a
+        # bundled vocabulary change (Codex adversarial, section 18).
+        die_infra "BOTH the snapshot schema ($BASE_SCHEMA -> $HEAD_SCHEMA) and the bucket vocabulary changed base..head. A cross-schema differential is impossible, and a vocabulary change needs one, so nothing here can adjudicate the pair. Land them as separate commits: the bucket migration first (this gate differentials it), then the schema bump (this gate proves it data-only)."
+    fi
+    if [ "$BASE_SCHEMA" != "$HEAD_SCHEMA" ]; then
+        # A schema change alters the snapshot FILE FORMAT, so the differential
+        # is mechanically impossible: the base process writes schema N and the
+        # head process refuses it (rc 3, "regenerate with write"). There is
+        # nothing left to measure -- and nothing to fear either, because every
+        # executable file is byte-identical, which is the whole content of the
+        # claim the differential would otherwise have to establish.
+        log "PASS -- snapshot schema migrated $BASE_SCHEMA -> $HEAD_SCHEMA as a DATA-ONLY change; every executable closure file is byte-identical base..head, so no resolver change can have ridden along. A cross-schema differential is not possible and is not needed."
+        exit 0
+    fi
+    # RELOCATION IS ADJUDICATED HERE, from the two TREES. A bucket moved across
+    # the pre/post boundary changes behaviour (the lint consumer branches on
+    # POST membership to choose the effective vs the authored path) while
+    # leaving every bucket STRING -- and therefore every mapping -- identical.
+    # A rename PAIRED with a move is the same hazard in disguise: the old name
+    # reads as a removal and the new one as an addition, so a name-by-name
+    # comparison sees no move at all (Codex adversarial, section 18 round 3,
+    # reproduced at rc 0). Adjudicating from the TREES rather than from the
+    # snapshots is strictly stronger: it holds even when the base tree predates
+    # the snapshot half metadata.
+    # BUCKETS-ONLY: the differential still RUNS, and must. A rename changes the
+    # verdict strings a consumer sees, so it is a real verdict change even
+    # under a byte-identical resolver -- it has to surface as CHANGED and be
+    # ground-truthed, not be waved through as "just a protocol migration".
+    # `compare` reads each snapshot's own declared vocabulary, which is what
+    # lets the old names reach the diff instead of dying at validation.
+    log "protocol: bucket vocabulary migrated as a DATA-ONLY change; every executable closure file is byte-identical. Running the differential anyway -- a rename alters real verdicts and must be ground-truthed as CHANGED."
 fi
 
-if [ "$BASE_SCHEMA" != "$HEAD_SCHEMA" ]; then
-    # THERE IS NO PROTOCOL-ONLY EXIT, deliberately. An earlier revision let a
-    # schema-only migration exit 0 after checking that ref_resolution.py and
-    # resolve_symbol.py were unchanged. That was fail-open: SNAPSHOT_SCHEMA
-    # lives in corpus_resolution_snapshot.py ALONGSIDE `collect()` and
-    # `--strict`, both verdict-affecting, so a schema bump bundled with a
-    # `collect()` change took the exit and walked nothing (Codex adversarial,
-    # section 16). It is the same constant-beside-logic problem ALL_BUCKETS has
-    # above, and it has the same prerequisite -- so it gets the same answer,
-    # rather than a second mechanism that is wrong in a subtler way.
-    die_infra "SNAPSHOT_SCHEMA changed base..head ($BASE_SCHEMA -> $HEAD_SCHEMA). This gate cannot separate a protocol migration from a resolver change while SNAPSHOT_SCHEMA lives in corpus_resolution_snapshot.py beside collect() and --strict. Extract the protocol constants into their own module first -- filed as a section 18 follow-up item."
+# ---------------------------------------------------------------------------
+# PRODUCER DIFFERENTIAL, BEFORE the resolver differential (section 18).
+#
+# The resolver differential below builds the cache ONCE and feeds it to both
+# walks. That is what makes its keys stable, and it is also a blind spot it
+# CANNOT close from the inside: a `build.py` that stops emitting a stamped ref
+# removes that ref from both walks equally, so the two sides agree perfectly and
+# no DROPPED is produced. It has to be caught where the cache is made.
+#
+# It runs FIRST because a producer regression invalidates the population the
+# resolver differential then reports on -- a PASS over a quietly shrunken corpus
+# is exactly the false assurance this gate exists to prevent.
+#
+# SKIPPED when build.py is byte-identical base..head: there is then no producer
+# change to differentiate, and four extra corpus builds prove nothing. This is
+# the same reasoning as the whole-closure early exit above, scoped to one file.
+# ---------------------------------------------------------------------------
+PRODUCER_BASE="$(git rev-parse --quiet --verify "$BASE_SHA:scripts/todo-graph/build.py" 2>/dev/null || echo MISSING)"
+PRODUCER_HEAD="$(git hash-object "$REPO_ROOT/scripts/todo-graph/build.py" 2>/dev/null || echo MISSING)"
+if [ "$PRODUCER_BASE" = "$PRODUCER_HEAD" ]; then
+    log "producer differential: skipped, build.py is byte-identical base..head."
+elif [ ! -f "$BASE_TREE/scripts/todo-graph/producer_differential.py" ] \
+        && [ ! -f "$REPO_ROOT/scripts/todo-graph/producer_differential.py" ]; then
+    die_infra "build.py changed base..head but producer_differential.py is missing from both trees"
+else
+    log "producer differential: build.py changed; comparing both producers over both corpora..."
+    # SAME BOUNDED, GROUP-WIDE LIFECYCLE AS THE WALKS. A plain `timeout`
+    # waits forever when the monitored command ignores TERM, and this phase
+    # executes the CHANGED head producer -- the code most likely to hang -- so
+    # without this the budget was not a bound on the gate at all (Codex
+    # adversarial, section 18 round 5).
+    setsid timeout --kill-after=10s "$(remaining)" python3 \
+        "$REPO_ROOT/scripts/todo-graph/producer_differential.py" \
+        "$BASE_TREE" "$REPO_ROOT" --strict >"$TMP_DIR/producer.log" 2>&1 &
+    PROD_PID=$!
+    WALK_PIDS="$PROD_PID"
+    wait "$PROD_PID"; PROD_RC=$?
+    WALK_PIDS=""
+    sed 's/^/    /' "$TMP_DIR/producer.log"
+    case "$PROD_RC" in
+        0) log "producer differential PASS -- both producers emit the same stamped-ref population." ;;
+        1)
+            printf '[identity-gate] FAIL: the producer change altered the stamped-ref population.\n' >&2
+            printf '[identity-gate] The resolver differential CANNOT see this: a ref missing from the one shared cache is missing from BOTH of its walks.\n' >&2
+            exit 1
+            ;;
+        124|137) die_infra "the producer differential exceeded the ${BUDGET_SECS}s budget and was killed" ;;
+        2)  die_infra "the producer differential rejected this driver's own invocation (rc=2, usage). This is a bug in identity-gate.sh, not in the tree under test." ;;
+        3)  die_infra "the producer differential could not run (rc=3, infrastructure: a producer failed or emitted an unusable cache)" ;;
+        *)  die_infra "the producer differential exited with an undocumented status (rc=$PROD_RC)" ;;
+    esac
 fi
 
 # ---------------------------------------------------------------------------
@@ -306,29 +800,96 @@ fi
 # and a relative STUB_LINT_CACHE would silently resolve against the wrong tree.
 # ---------------------------------------------------------------------------
 CACHE_ABS="$TMP_DIR/todo-cache.json"
-python3 "$REPO_ROOT/scripts/todo-graph/build.py" --quiet --output "$CACHE_ABS" \
-    >"$TMP_DIR/build.log" 2>&1 \
-    || die_infra "cache build failed (see $TMP_DIR/build.log)"
+setsid timeout --kill-after=10s "$(remaining)" \
+    python3 "$REPO_ROOT/scripts/todo-graph/build.py" --quiet --output "$CACHE_ABS" \
+    >"$TMP_DIR/build.log" 2>&1 &
+CACHE_PID=$!
+WALK_PIDS="$CACHE_PID"
+wait "$CACHE_PID"; CACHE_RC=$?
+WALK_PIDS=""
+case "$CACHE_RC" in
+    0) ;;
+    124|137) die_infra "the cache build exceeded the ${BUDGET_SECS}s budget and was killed" ;;
+    *) die_infra "cache build failed (see $TMP_DIR/build.log)" ;;
+esac
 [ -s "$CACHE_ABS" ] || die_infra "cache build produced an empty file"
 
 BASELINE="$TMP_DIR/baseline.json"
+HEADSHOT="$TMP_DIR/head.json"
 
-log "walking with BASE resolver code..."
+# ---------------------------------------------------------------------------
+# THE TWO WALKS RUN CONCURRENTLY (section 18).
+#
+# They were serial because `compare` had no way to read two finished snapshots
+# -- it walked the live tree itself, so the head walk could not start until the
+# base walk had produced its file. With the two-file `compare` mode the walks
+# are genuinely independent: separate processes, separate output files, and one
+# IMMUTABLE cache read by both (nothing writes to $CACHE_ABS after it is
+# built). Cost drops from roughly double a single walk to roughly one, against
+# a corpus that only grows.
+#
+# AND IT IS BOUNDED. Section 16's perf review flagged the curve, not a present
+# failure: ~80-120s at 1,626 refs against a 20-minute job ceiling. A budget
+# that fires while headroom REMAINS turns "the corpus outgrew CI" into a
+# legible failure instead of a 20-minute timeout that reads like an
+# infrastructure flake.
+# ---------------------------------------------------------------------------
+
+log "walking with BASE and HEAD resolver code concurrently (budget ${BUDGET_SECS}s)..."
+# Monotonic here too: a backward wall-clock step would otherwise print a
+# negative duration in the log line below.
+WALK_START="$(python3 -c 'import time; print(int(time.monotonic()))' 2>/dev/null || echo 0)"
+
 STUB_LINT_CACHE="$CACHE_ABS" STUB_LINT_REPO_ROOT="$REPO_ROOT" \
-    python3 "$BASE_TREE/scripts/todo-graph/corpus_resolution_snapshot.py" \
-    write "$BASELINE" >"$TMP_DIR/base-walk.log" 2>&1
-BASE_RC=$?
-if [ "$BASE_RC" -ne 0 ]; then
-    sed 's/^/    /' "$TMP_DIR/base-walk.log" >&2 || true
-    die_infra "the BASE resolver could not complete its walk (rc=$BASE_RC)"
-fi
+    setsid timeout --kill-after=10s "$(remaining)" python3 \
+    "$BASE_TREE/scripts/todo-graph/corpus_resolution_snapshot.py" \
+    write "$BASELINE" >"$TMP_DIR/base-walk.log" 2>&1 &
+BASE_PID=$!
+WALK_PIDS="$BASE_PID"
+STUB_LINT_CACHE="$CACHE_ABS" STUB_LINT_REPO_ROOT="$REPO_ROOT" \
+    setsid timeout --kill-after=10s "$(remaining)" python3 \
+    "$REPO_ROOT/scripts/todo-graph/corpus_resolution_snapshot.py" \
+    write "$HEADSHOT" >"$TMP_DIR/head-walk.log" 2>&1 &
+HEAD_PID=$!
+WALK_PIDS="$WALK_PIDS $HEAD_PID"
+
+# REAP BOTH, ALWAYS. `wait`ing on only the first and bailing on its failure
+# would leave the other walk running against a $TMP_DIR the EXIT trap is about
+# to delete -- an orphan writing into a removed directory, and a exit status
+# nobody read. Each `timeout` kills its own child at the budget, and both are
+# waited on here before any verdict is formed.
+wait "$BASE_PID"; BASE_RC=$?
+wait "$HEAD_PID"; HEAD_RC=$?
+WALK_PIDS=""
+WALK_SECS=$(( $(python3 -c 'import time; print(int(time.monotonic()))' 2>/dev/null || echo "$WALK_START") - WALK_START ))
+
+# 124 is timeout(1)'s "the budget fired". Report it as its own thing: it is not
+# a resolver defect and must never be read as one.
+for pair in "BASE:$BASE_RC:$TMP_DIR/base-walk.log" "HEAD:$HEAD_RC:$TMP_DIR/head-walk.log"; do
+    side="${pair%%:*}"; rest="${pair#*:}"; rc="${rest%%:*}"; logf="${rest#*:}"
+    if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
+        die_infra "the $side walk exceeded the ${BUDGET_SECS}s budget and was killed. The gate is approaching the CI job ceiling: shard the corpus or raise IDENTITY_GATE_BUDGET_SECS deliberately, but do not discover this as a job timeout."
+    fi
+    if [ "$rc" -ne 0 ]; then
+        sed 's/^/    /' "$logf" >&2 || true
+        die_infra "the $side resolver could not complete its walk (rc=$rc)"
+    fi
+done
 sed 's/^/    /' "$TMP_DIR/base-walk.log"
+sed 's/^/    /' "$TMP_DIR/head-walk.log"
+log "both walks finished in ${WALK_SECS}s of the ${BUDGET_SECS}s budget."
 
-log "comparing with HEAD resolver code (--strict)..."
-STUB_LINT_CACHE="$CACHE_ABS" STUB_LINT_REPO_ROOT="$REPO_ROOT" \
+log "comparing the two snapshots (--strict)..."
+setsid timeout --kill-after=10s "$(remaining)" \
     python3 "$REPO_ROOT/scripts/todo-graph/corpus_resolution_snapshot.py" \
-    compare "$BASELINE" --strict >"$TMP_DIR/compare.log" 2>&1
-CMP_RC=$?
+    compare "$BASELINE" "$HEADSHOT" --strict \
+    --base-halves-b64 "$(python3 -c 'import base64,json,sys; print(base64.b64encode(json.dumps([json.loads(base64.b64decode(sys.argv[1])), json.loads(base64.b64decode(sys.argv[2]))]).encode()).decode())' "$BASE_PRE_B64" "$BASE_POST_B64")" \
+    --head-halves-b64 "$(python3 -c 'import base64,json,sys; print(base64.b64encode(json.dumps([json.loads(base64.b64decode(sys.argv[1])), json.loads(base64.b64decode(sys.argv[2]))]).encode()).decode())' "$HEAD_PRE_B64" "$HEAD_POST_B64")" \
+    >"$TMP_DIR/compare.log" 2>&1 &
+CMP_PID=$!
+WALK_PIDS="$CMP_PID"
+wait "$CMP_PID"; CMP_RC=$?
+WALK_PIDS=""
 sed 's/^/    /' "$TMP_DIR/compare.log"
 
 case "$CMP_RC" in
@@ -352,6 +913,9 @@ case "$CMP_RC" in
         ;;
     3)
         die_infra "compare could not complete its walk (rc=3, infrastructure: cache, baseline or resolver input)"
+        ;;
+    124|137)
+        die_infra "the comparison exceeded the ${BUDGET_SECS}s budget and was killed"
         ;;
     *)
         die_infra "compare exited with an undocumented status (rc=$CMP_RC)"

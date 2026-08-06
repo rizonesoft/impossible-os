@@ -56,6 +56,7 @@ from pathlib import Path
 from typing import Optional
 
 import resolve_symbol as _rs
+import snapshot_protocol as _protocol
 
 # Suffixes the resolver can answer about at all. Mirrors the caller-side check
 # it replaces; a ref naming a .md/.py/.sh file is not a resolver failure.
@@ -158,14 +159,21 @@ _CODE_TEXT = _Lru(512)       # abs_path -> (lines object, blanked text)
 _CODE_TEXT_BUILDS = 0
 
 # The coverage buckets, split by WHERE the verdict is reached. Both callers
-# report against these names, so they are this module's published contract:
-# `corpus_resolution_snapshot` validates a baseline's bucket strings against
-# ALL_BUCKETS, which makes a typo'd or retired bucket a hard baseline error
-# rather than an unrecognised value that silently compares unequal forever.
-PRE_RESOLUTION_BUCKETS = ("unpaired_ref", "path_escape", "unsupported_lang",
-                          "missing_file")
-POST_RESOLUTION_BUCKETS = ("unresolved_calllike", "no_calllike_token")
-ALL_BUCKETS = PRE_RESOLUTION_BUCKETS + POST_RESOLUTION_BUCKETS
+# report against these names, so they are a published contract:
+# `corpus_resolution_snapshot` validates a snapshot's bucket strings against
+# them, which makes a typo'd or retired bucket a hard error rather than an
+# unrecognised value that silently compares unequal forever.
+#
+# RE-EXPORTED, no longer DEFINED here (section 18). They moved to the
+# inert `snapshot_protocol.json`, loaded by `snapshot_protocol.py`, because a
+# bucket migration otherwise had to edit THIS file -- the one the identity gate
+# needs byte-identical to prove no resolver change rode along with it. That made
+# the gate's separation rule unsatisfiable and left it failing closed on every
+# bucket migration (section 16). Every access site is unchanged: `_rr.ALL_BUCKETS`
+# and `_rr.POST_RESOLUTION_BUCKETS` still resolve here.
+PRE_RESOLUTION_BUCKETS = _protocol.PRE_RESOLUTION_BUCKETS
+POST_RESOLUTION_BUCKETS = _protocol.POST_RESOLUTION_BUCKETS
+ALL_BUCKETS = _protocol.ALL_BUCKETS
 
 
 def clear_caches() -> None:
