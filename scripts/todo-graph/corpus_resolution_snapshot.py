@@ -20,9 +20,14 @@
 # Usage:
 #   corpus_resolution_snapshot.py write <out.json>       # snapshot current tree
 #   corpus_resolution_snapshot.py compare <before.json>  # diff vs current tree
+#   corpus_resolution_snapshot.py compare <before.json> --strict
+#       As above, but GAINED and ADDED fail too. For an AUTOMATED caller (the
+#       section 16 identity gate), which has no human to act on the
+#       "(GROUND-TRUTH BY HAND)" lines that make them non-failing below.
 #
 # Exit codes:
 #   0  compare: no prior verdict was dropped, lost, moved or reclassified
+#      (and, under --strict, nothing was gained or added either)
 #   1  compare: at least one prior VERDICT changed for the worse -- any of
 #      DROPPED (the occurrence is gone), LOST (it no longer resolves), MOVED
 #      (different coordinates) or CHANGED (a different unresolved bucket). All
@@ -289,10 +294,27 @@ def collect() -> dict:
 
 
 def main(argv) -> int:
+    # `--strict` is parsed OUT of argv before the shape check, so the positional
+    # contract below is unchanged. It exists for the section 16 wiring: an
+    # AUTOMATED caller has no human to read "(GROUND-TRUTH BY HAND)", so the
+    # outcomes that are advisory for a human must be failing ones for it. The
+    # alternative -- having the driver grep this tool's stdout for "  GAINED "
+    # lines -- would let a print-format tweak silently disable the gate, which
+    # is the exact fail-open class this file exists to close (Codex design
+    # review, section 16).
+    strict = "--strict" in argv
+    argv = [a for a in argv if a != "--strict"]
     if len(argv) != 2 or argv[0] not in ("write", "compare"):
         sys.stderr.write(
             "usage: corpus_resolution_snapshot.py write <out.json>\n"
-            "       corpus_resolution_snapshot.py compare <before.json>\n")
+            "       corpus_resolution_snapshot.py compare <before.json> "
+            "[--strict]\n")
+        return 2
+    if strict and argv[0] != "compare":
+        # A no-op flag a caller BELIEVES is protecting them is worse than an
+        # absent one: `write --strict` would look gated and gate nothing.
+        sys.stderr.write("[corpus_resolution_snapshot] --strict applies to "
+                         "`compare` only\n")
         return 2
 
     try:
@@ -496,6 +518,24 @@ def main(argv) -> int:
               f"verdict changed -- the resolved COUNT alone would not have "
               f"shown this. Ground-truth each line, then regenerate with "
               f"`write` if the change is intended.")
+        return 1
+    # STRICT: what is advisory for a human is failing for a machine. GAINED and
+    # ADDED are non-failing above because neither can hide a LOSS, and that
+    # reasoning is intact -- but it silently assumes a human reads the
+    # "(GROUND-TRUTH BY HAND)" lines. A resolver defect that binds a previously
+    # unresolved ref to the WRONG definition produces a GAINED, and under an
+    # automated caller reading only the exit code it would ship green while
+    # Check 7 goes on to inspect the wrong body (Codex design review, section
+    # 16). Under --strict there is deliberately NO in-band clearing path: an
+    # approval token a committer can mint is not approval, and this repo's
+    # committer is frequently an unattended agent. Clearing a gain is a human
+    # act -- ground-truth it, then regenerate the baseline with `write`.
+    if strict and (gained or added):
+        print(f"\nFAIL (--strict): {len(gained)} gained, {len(added)} added. "
+              f"Neither can hide a loss, so both are non-failing for a HUMAN "
+              f"caller -- but nothing here has ground-truthed them, and a "
+              f"wrong new binding looks exactly like a coverage win. Verify "
+              f"each line above by hand, then regenerate with `write`.")
         return 1
     print(f"\nOK: no prior verdict dropped, lost, moved or reclassified; "
           f"{len(gained)} gained, {len(added)} added.")

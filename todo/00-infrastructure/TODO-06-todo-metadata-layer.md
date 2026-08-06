@@ -64,8 +64,9 @@ title: "TODO-06 -- TODO Metadata Layer and Derived Graph"
 | ⭐  |  13   |  §13    | Stored-ref repair: unpaired symbols + bare filenames (resolution-time)              | §2, §11    |  [x]   |
 | ⭐  |  14   |  §14    | Identity gate over the whole symbol-ref population (every `kind=symbol` ref)        | §13        |  [x]   |
 | ⭐  |  15   |  §15    | The shared rule's cost: structural-walk hot path + split cache lifecycles           | §13, §14   |  [x]   |
-| 💎  |  16   |  §16    | Wire the identity gate so something runs it (adopts §12's parked wiring)            | §12, §14   |  [ ]   |
+| 💎  |  16   |  §16    | Wire the identity gate so something runs it (adopts §12's parked wiring)            | §12, §14   |  [x]   |
 | ⭐  |  17   |  §17    | One shared cache-schema validator, consumed by both cache readers                   | §14, §16   |  [ ]   |
+| ⭐  |  18   |  §18    | Identity-gate hardening: producer differential + protocol-constant extraction       | §16        |  [ ]   |
 
 > 💎 = parity work -- Linux kernel has MAINTAINERS + get_maintainer.pl (person-ownership mapping without a dep graph); Windows has no public equivalent. §1 (frontmatter), §2 (generator), §5 (migration) bring us to partial Linux parity plus graph metadata neither OS ships.
 > ⭐ = competitive edge -- neither Win11 nor mainline Linux ships a first-class TODO dependency graph. §3 (validator), §4 (query CLI), §6 (CI gate), §7 (visualization), §8 (MCP server) are new ground; the surface has direct value for any contributor scanning "what can I work on next?".
@@ -693,7 +694,7 @@ That is a real hole in the proof, and §13 is the section that demonstrates it. 
 > - Also repaired `test_stub_lint_coverage.py`, RED in the tree since §11 made a `total`-less baseline invalid; its runner gates on a manifest listing neither `scripts/lint` nor `scripts/todo-graph`.
 > - Scope boundary: does NOT wire the gate into anything (§16 owns that) and does NOT touch resolver cost (§15).
 > **Verified:** 2026-08-06 | commit `d0b2dc17` | 5/5 items | build OK | 209/209 todo-graph, 1287/1287 tooling, 66/66 overnight, 28326 kernel + 17 user-mode, lint 0 errors
-> **Accepted:** [M] cache-schema validation is not shared between the two callers, so they disagree about which caches are valid and which rc a malformed one yields -> XREF: 00-infrastructure/TODO-06 §16 (item: "ONE shared cache-schema validator, consumed by both cache readers" at line 696)
+> **Accepted:** [M] cache-schema validation is not shared between the two callers, so they disagree about which caches are valid and which rc a malformed one yields -> XREF: 00-infrastructure/TODO-06 §16 (item: "ONE shared cache-schema validator, consumed by both cache readers" at line 697)
 > **Quality reviewed:** 2026-08-06 | Codex 6x (design, adversarial x2, test-coverage, consistency, perf) | 5H+7M fixed, 0 open | scope: N/A (host tooling -- no kernel/boot/desktop/shell/userland surface)
 
 -> XREF: [`TODO-06 §13`](#13-stored-ref-repair-unpaired-symbols-and-bare-filenames) -- the section whose review found this, and whose bucket movements are the worked example of what the gate cannot currently see.
@@ -754,20 +755,30 @@ Split out of §14 at authoring time, not spawned by a review round. §14 proves 
 
 **The park's two failure modes are the design constraints, not obstacles to route around.** §12 tried both obvious mechanisms across two Codex design rounds and each broke on a specific, reproducible case: a pre-commit hook conditioned on the worktree diff validates the WRONG artifact under partial staging and never fires at all in a clean CI checkout with no base SHA; and occurrence keys (`item_idx`/`ref_i`) are stable only while the cache is held fixed, so a tracked-baseline check either misses real regressions (as a WARN) or fires on ordinary TODO edits (as an ERROR). A mechanism that does not answer both is not an improvement on the manual call.
 
-- [ ] Choose the wiring mechanism on the two failure modes named here, and write down why the loser loses
-      The two candidates §12 identified are staged-blob materialization at pre-commit (run the resolver against the STAGED blob, not the worktree file) and a dedicated CI job comparing against the push's base SHA. Decide on evidence, and record the rejected one's specific failure so a later session does not re-litigate it.
-      - The key-stability problem is the harder half and is independent of the mechanism: a baseline keyed by `item_idx`/`ref_i` moves whenever a TODO gains an item, so either the gate regenerates the baseline from the SAME cache it compares against, or the key stops depending on item position. Decide which, because it changes what the baseline file is.
-- [ ] Implement the chosen wiring, fail-CLOSED on its own infrastructure errors
-      `compare` already separates exit 3 (could not run) from exit 1 (regression) precisely so a caller cannot read one as the other; the wiring must preserve that distinction rather than collapsing a stale cache into a pass.
-- [ ] Fixtures proving the gate FIRES, each mutation-checked
-      A wiring test that only proves the green path is the failure this whole roadmap keeps paying for: prove a lost mapping fails the gate under the real invocation shape, and that an ordinary TODO edit does NOT.
-- [ ] Commit: `"todo-graph: run the identity gate automatically instead of on request"`
+- [x] Chose the wiring mechanism on the two failure modes named here, and wrote down why each loser loses
+      WINNER: a CI job (`identity-gate` in [`.github/workflows/todo-graph.yml`](../../.github/workflows/todo-graph.yml)) driving [`scripts/todo-graph/identity-gate.sh`](../../scripts/todo-graph/identity-gate.sh). Three Codex design rounds; the losers and the reasons are recorded in the script header so a later session does not re-litigate them.
+      - LOSER 1, the pre-commit hook, on THREE counts and not just §12's two: git hooks are OPT-IN per developer (`install-hooks.sh`), so a hook gate protects only the authors who chose to be protected, which is the exact property this section exists to remove; conditioned on the worktree diff it validates the wrong artifact under partial staging; and it lives in `.githooks/`, control plane the unattended runner may not edit at all.
+      - LOSER 2, a tracked baseline file, because its keys embed `item_idx`/`ref_i`. Not worked around -- DISSOLVED. There is no baseline file: the cache is built ONCE and BOTH walks read that same byte-identical file, so the key set is identical by construction, only resolver CODE varies, and a TODO edit cannot move a key. `DROPPED` and `ADDED` become structurally impossible, which fixture 22b proves by editing a TODO and still passing.
+      - HONEST LIMIT, documented rather than hidden: this repo pushes directly to main, so the gate DETECTS after the fact, it does not PREVENT. What it guarantees is ADJUDICATION -- the range runs from the last SHA the job actually PASSED, not the push's before-SHA, so a cancelled or skipped run is absorbed by the next one instead of lost. Prevention needs a pre-receive hook or a protected merge queue, both operator-reserved.
+- [x] Implemented the chosen wiring, fail-CLOSED on its own infrastructure errors
+      Exit 1 (regression), 2 (usage) and 3 (infrastructure) all FAIL the job; "the gate could not run" is never read as "the gate passed". The job carries its own concurrency group with `cancel-in-progress: false`, because its verdict is about a RANGE and cancelling it drops the only adjudication that range gets.
+      - Automation has no human to act on `compare`'s "(GROUND-TRUTH BY HAND)" lines, so a new `--strict` flag makes `GAINED`/`ADDED` fail too: a resolver defect that binds a previously unresolved ref to the WRONG definition looks exactly like a coverage win. There is deliberately NO in-band override -- an approval token the committer can mint is not approval, and this repo's committer is frequently an unattended agent.
+      - `--strict` is a flag on the tool rather than the driver grepping stdout for `GAINED` lines, because a print-format tweak would then silently disable the gate.
+      - NON-CANCELLABLE COST A PLATFORM FACT TO GET RIGHT: a job-level concurrency group does NOT exempt a job from its own RUN being cancelled, so the workflow-level `cancel-in-progress: true` made this job cancellable while it claimed otherwise. The cancellable group now sits on `validate` alone and the workflow carries none. Adversarial review caught this; the first implementation shipped the claim without the property.
+      - The gate now FAILS CLOSED on any protocol-constant change rather than taking a protocol-only exit. `SNAPSHOT_SCHEMA` sits in the same file as `collect()` and `--strict`, so "schema changed but the resolver did not" could not be established without also excusing verdict-affecting edits -- the same constant-beside-logic problem `ALL_BUCKETS` has, so it gets the same answer instead of a second mechanism that is wrong more subtly. §18 owns the extraction that makes a migration possible.
+- [x] Fixtures proving the gate FIRES, each mutation-checked
+      Six sub-tests (22a-22f) in [`test_build.sh`](../../scripts/todo-graph/tests/test_build.sh), on a throwaway clone with a pruned corpus so the double walk costs seconds. 22c mutates `resolve_ref` into a PARTIAL loss and asserts rc 1 naming `LOST`; 22d reverts it and asserts green, so 22c cannot pass against a gate that fails always.
+      - The first run of these fixtures caught a real defect in the gate AND a green-for-the-wrong-reason defect in themselves: `identity-gate.sh` derives its repo root from its own location, so invoking the live script from inside the clone silently operated on the LIVE repo, fell back to `HEAD~1`, found an unchanged closure and exited 0. Two firing cases "passed" without walking anything. Fixed both -- the fixture runs the clone's own copy, and an explicit `--base` that does not resolve is now rc 3 instead of a silent fallback to a different range.
+      - 22b deliberately rides a BENIGN resolver comment alongside the TODO edit. Without it the closure is byte-identical, the gate early-exits, and the case proves nothing about key stability.
+      - 22g proves the TOOL's `--strict` branch rejects a pure GAINED; 22h proves the DRIVER actually passes the flag, which 22g cannot see. Mutation-checked by deleting `--strict` from the driver: 22h alone flips to rc 0 and fails, every other case stays green. Round 2 of the adversarial review is what found the gap -- 22c's LOST fails with or without `--strict`, so the integration guard was missing.
+- [x] Commit: `"todo-graph: run the identity gate automatically instead of on request"`
 
 **Test checkpoint:** the new gate fires on a deliberately broken resolver and passes on an unchanged tree; `bash scripts/todo-graph/tests/test_build.sh` green with the new fixtures; `bash scripts/test-tooling.sh` green; a TODO-only edit does not trip it.
 
 -> XREF: [`TODO-06 §12`](#12-resolver-coverage-past-the-head-limit-and-lexercache-robustness) -- owns the park this section adopts (item: "Wire `corpus_resolution_snapshot.py` into a GATE"), including the two mechanism failures above.
 -> XREF: [`TODO-06 §14`](#14-identity-gate-over-the-whole-symbol-ref-population) -- must land first: wiring a gate that verdicts only part of the population would automate an incomplete proof.
 -> XREF: [`TODO-06 §17`](#17-one-shared-cache-schema-validator-for-both-cache-readers) -- split out of this section (item: "ONE validator module both readers call, with the shape rules stated once"); this section wires the gate, §17 makes both cache readers agree about what a valid cache is.
+-> XREF: [`TODO-06 §18`](#18-identity-gate-hardening-producer-differential-and-protocol-constant-extraction) -- owns the two design-review findings this section accepted but does NOT close (item: "Producer differential across BOTH corpora"); the gate ships without them and states both blind spots in its own header.
 
 ---
 
@@ -794,6 +805,35 @@ Split out of §14 at authoring time, not spawned by a review round. §14 proves 
 
 -> XREF: [`TODO-06 §14`](#14-identity-gate-over-the-whole-symbol-ref-population) -- shipped the snapshot-side validation this generalizes (item: "Baseline format migration, fail-closed on an old baseline").
 -> XREF: [`TODO-06 §16`](#16-wire-the-identity-gate-so-something-actually-runs-it) -- the wiring this hardens; must land first so the shared validator is proven against the real automated caller.
+
+---
+
+## 18. Identity-Gate Hardening: Producer Differential and Protocol-Constant Extraction
+
+> **Spawned-by:** §16 (review)
+
+§16's Codex reviews raised three findings that were ACCEPTED as real and deliberately NOT closed in that section: neither is reachable without changing code §16 does not own, and folding either in would have shipped a gate whose scope nobody could state. §16 ships with both blind spots named in its own script header rather than papered over, and this section owns closing them. Each is a hole in what the gate can SEE, not a defect in what it does with what it sees.
+
+- [ ] Producer differential across BOTH corpora, so a cache-producer regression cannot hide
+      §16's gate builds the cache ONCE with head `build.py` and feeds it to both walks. That is what makes occurrence keys stable, and it is also a blind spot: if `build.py` stops emitting a stamped ref, the ref is absent from BOTH walks and no `DROPPED` is ever produced. The identity differential structurally cannot see it.
+      - Run the base and head producers against the SAME materialized corpus and history view -- both in one worktree, so the git-derived `last_active_at` and `created_at` values are identical by construction and cannot manufacture a false failure -- and compare a normalized projection of the STAMPED-REF POPULATION only.
+      - Run it over the BASE corpus as well as the head corpus. Over the head corpus alone it proves equivalence only for syntax still present at head, so a change that removes the last live example of a ref form AND stops parsing that form passes, then silently drops the form when it is reintroduced.
+      - This is why §16's gate is documented as a RESOLVER-CODE DIFFERENTIAL rather than a replacement for the manual snapshot contract. Until this item lands, that boundary is load-bearing and must not be widened in prose.
+- [ ] Extract the snapshot protocol constants into their own module
+      `ALL_BUCKETS` is defined INSIDE [`ref_resolution.py`](../../scripts/todo-graph/ref_resolution.py), so a bucket migration necessarily edits the file that §16's protocol rule needs byte-identical to prove no resolver change rode along. The rule is unsatisfiable in the current layout, so the gate currently FAILS CLOSED on any `ALL_BUCKETS` change and names this item as the prerequisite.
+      - Extract the constants WITHOUT changing their values first, so the move is provably behaviour-neutral and the gate itself confirms it (a pure extraction leaves every verdict identical, which is exactly what §16 measures).
+      - Then a bucket migration becomes an expand/migrate/contract sequence under a stable resolver, and §16's separation rule becomes satisfiable rather than a permanent refusal.
+- [ ] A differential for the LINT CONSUMER, or a delegation invariant in its place
+      §16's gate walks [`corpus_resolution_snapshot.py`](../../scripts/todo-graph/corpus_resolution_snapshot.py) and nothing else, so it adjudicates nothing about [`check_stub_behind_stamp.py`](../../scripts/lint/check_stub_behind_stamp.py) even though the two share the resolution rule. §16 REMOVED that file from its closure and its CI paths filter rather than keep it listed: a listed file that forces a walk and then compares two identical snapshots advertises coverage that does not exist, which is worse than the gap.
+      - Either differential the consumer's own normalized verdicts under base and head code, or prove the weaker invariant that it routes every symbol occurrence through `resolve_ref` and adds no fallback of its own. The invariant is cheaper and is what §14 actually promised; the differential is what proves it.
+      - Mutation fixture: replace the consumer's `resolve_ref` call with a local re-implementation and require the new check to FAIL. Without that, this item can ship green for the wrong reason exactly as §16's first fixture round did.
+- [ ] Fixtures for all three, each mutation-checked
+      A producer regression hidden by deleting its only live corpus example; a bucket migration that currently trips §16's fail-closed refusal and must stop tripping it once the constants move; and the consumer mutation above.
+- [ ] Commit: `"todo-graph: close the identity gate's producer and protocol blind spots"`
+
+**Test checkpoint:** a `build.py` change that drops a stamped ref FAILS the producer differential even when the head corpus no longer contains an example; a pure constants extraction passes §16's gate unchanged; `bash scripts/todo-graph/tests/test_build.sh` and `bash scripts/test-tooling.sh` green.
+
+-> XREF: [`TODO-06 §16`](#16-wire-the-identity-gate-so-something-actually-runs-it) -- the gate these harden (item: "Implemented the chosen wiring, fail-CLOSED on its own infrastructure errors"); both findings were accepted during its design review and scoped out of it.
 
 ---
 

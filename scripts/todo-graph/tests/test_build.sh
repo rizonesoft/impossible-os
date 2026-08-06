@@ -5399,6 +5399,240 @@ else
 fi
 
 # ----------------------------------------------------------------------
+# Tests 22a-22f: the section 16 identity GATE (scripts/todo-graph/
+# identity-gate.sh).
+#
+# A wiring test that only proves the green path is the failure this roadmap
+# keeps paying for, so every case below asserts a SPECIFIC outcome and the
+# firing cases are mutation-checked: the same fixture is run with and without
+# the deliberate resolver defect, and the test only counts if the mutation
+# flips the verdict. A gate that cannot be made to fail is not a gate.
+#
+# The fixture builds a THROWAWAY CLONE with a pruned todo/ corpus rather than
+# walking the live 1,626-ref corpus twice per case -- same invocation shape,
+# seconds instead of minutes. The clone is seeded from the WORKING TREE copies
+# of the closure files, so these tests exercise the code being changed rather
+# than whatever is committed.
+# ----------------------------------------------------------------------
+GATE_REPO="$TMP_DIR/gate-repo"
+# Invoke the CLONE's copy, not the live one. identity-gate.sh derives its repo
+# root from its own location and cd's there, so running the live script from
+# inside the clone silently operates on the LIVE repo -- which is exactly what
+# happened on the first run of these fixtures: the clone's SHAs did not exist
+# there, the gate fell back to HEAD~1, found an unchanged closure and exited 0,
+# so two firing cases "passed" without ever walking anything. Using the clone's
+# own copy also means the fixture exercises the script as that tree ships it.
+GATE_IN_CLONE="$GATE_REPO/scripts/todo-graph/identity-gate.sh"
+
+gate_seed() {
+    # Returns 0 if a usable fixture clone was built, 1 otherwise.
+    rm -rf "$GATE_REPO" 2>/dev/null || true
+    git clone --quiet --local --no-hardlinks "$REPO_ROOT" "$GATE_REPO" \
+        >/dev/null 2>&1 || return 1
+    (
+        cd "$GATE_REPO" || exit 1
+        git config user.email "test@example.invalid"
+        git config user.name "identity gate fixture"
+        # Seed with the working-tree closure files (the code under test).
+        for f in scripts/todo-graph/corpus_resolution_snapshot.py \
+                 scripts/todo-graph/ref_resolution.py \
+                 scripts/todo-graph/resolve_symbol.py \
+                 scripts/todo-graph/build.py \
+                 scripts/todo-graph/identity-gate.sh \
+                 scripts/lint/check_stub_behind_stamp.py; do
+            [ -f "$REPO_ROOT/$f" ] && cp "$REPO_ROOT/$f" "$f"
+        done
+        # Prune the corpus: keep a handful of TODOs so the double walk is fast.
+        keep=0
+        while IFS= read -r t; do
+            keep=$((keep + 1))
+            [ "$keep" -le 6 ] && continue
+            rm -f "$t"
+        done < <(find todo -name 'TODO-*.md' -not -name 'TODO-00-INDEX.md' | sort)
+        git add -A >/dev/null 2>&1
+        git commit --quiet --no-verify -m "fixture base" >/dev/null 2>&1
+    ) || return 1
+    return 0
+}
+
+# The mutation: a PARTIAL loss, not a total one. resolve_ref() is the single
+# shared verdict both consumers call, so forcing a bucket for odd-length symbol
+# names drops some previously-resolved mappings while leaving others intact --
+# exactly the shape a count-based check cannot see and this gate must.
+gate_mutate() {
+    python3 - "$GATE_REPO/scripts/todo-graph/ref_resolution.py" <<'PY'
+import sys, pathlib
+p = pathlib.Path(sys.argv[1])
+src = p.read_text(encoding="utf-8")
+anchor = '    answer = _resolve_end_to_end(verdict.abs_path, ref.get("symbol"), repo_root)'
+if anchor not in src:
+    sys.exit(7)
+# Tuple-guarded ON PURPOSE: only RESOLVED answers are bucketed. Overriding
+# unconditionally also re-bucketed refs that were already unresolved, which
+# shows up as CHANGED -- so the "gain" fixture (22g) could never isolate a pure
+# GAINED, and its plain-compare leg failed for the wrong reason.
+inject = (anchor + "\n"
+          '    if not isinstance(answer, str) and len(ref.get("symbol") or "") % 2 == 1:\n'
+          '        answer = "no_calllike_token"')
+p.write_text(src.replace(anchor, inject, 1), encoding="utf-8")
+PY
+}
+
+if ! gate_seed; then
+    t_fail "identity gate: could not build the fixture clone"
+else
+    GATE_BASE="$(cd "$GATE_REPO" && git rev-parse HEAD)"
+
+    # 22a: base == head is a clean no-op, not a spurious failure.
+    if (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$GATE_BASE" --head HEAD \
+            >"$TMP_DIR/gate-22a.log" 2>&1); then
+        t_pass "identity gate: unchanged tree exits 0"
+    else
+        t_fail "identity gate: unchanged tree did not exit 0 (see $TMP_DIR/gate-22a.log)"
+    fi
+
+    # 22b: a TODO-ONLY edit must NOT trip the gate. This is the case that
+    # sank the tracked-baseline design in section 12 -- occurrence keys embed
+    # item_idx, so adding an item moved every later key and fired an ERROR on
+    # ordinary roadmap work. Holding one cache across both walks is what makes
+    # this pass, so if it ever fails the key-stability property is gone.
+    (
+        cd "$GATE_REPO" || exit 1
+        t="$(find todo -name 'TODO-*.md' | sort | head -1)"
+        printf '\n- [ ] a new item that shifts every later item_idx\n' >>"$t"
+        # A BENIGN resolver edit rides along on purpose. Without it the closure
+        # is byte-identical, the gate early-exits, and this case proves nothing
+        # about key stability -- it would pass against a gate that never walks.
+        # With it the double walk really runs over a corpus whose item_idx
+        # values have shifted, which is the exact condition that sank section
+        # 12's tracked-baseline design.
+        printf '\n# identity-gate fixture: benign comment, no behaviour change\n' \
+            >>scripts/todo-graph/ref_resolution.py
+        git commit --quiet --no-verify -am "todo-only edit + benign resolver comment" >/dev/null 2>&1
+    )
+    if (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$GATE_BASE" --head HEAD \
+            >"$TMP_DIR/gate-22b.log" 2>&1); then
+        t_pass "identity gate: TODO-only edit does not trip it"
+    else
+        t_fail "identity gate: TODO-only edit tripped the gate (see $TMP_DIR/gate-22b.log)"
+    fi
+    GATE_TODO_SHA="$(cd "$GATE_REPO" && git rev-parse HEAD)"
+
+    # 22c: THE FIRING CASE -- a resolver that loses mappings must FAIL with the
+    # regression code (1), and the log must name the loss rather than merely
+    # exiting non-zero.
+    gate_mutate && (cd "$GATE_REPO" && git commit --quiet --no-verify -am "mutate resolver" >/dev/null 2>&1)
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$GATE_TODO_SHA" --head HEAD \
+        >"$TMP_DIR/gate-22c.log" 2>&1)
+    GATE_RC=$?
+    if [ "$GATE_RC" -eq 1 ] && grep -q 'LOST' "$TMP_DIR/gate-22c.log"; then
+        t_pass "identity gate: FIRES on a lost mapping (rc 1, names LOST)"
+    else
+        t_fail "identity gate: did not fire on a lost mapping (rc=$GATE_RC; see $TMP_DIR/gate-22c.log)"
+    fi
+
+    # 22d: mutation check for 22c -- reverting the defect must restore green.
+    # Without this, 22c would also "pass" against a gate that fails always.
+    (cd "$GATE_REPO" && git checkout --quiet HEAD~1 -- scripts/todo-graph/ref_resolution.py \
+        && git commit --quiet --no-verify -am "revert mutation" >/dev/null 2>&1)
+    if (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$GATE_TODO_SHA" --head HEAD \
+            >"$TMP_DIR/gate-22d.log" 2>&1); then
+        t_pass "identity gate: mutation-check -- reverting the defect restores green"
+    else
+        t_fail "identity gate: still red after reverting the defect (see $TMP_DIR/gate-22d.log)"
+    fi
+
+    # 22e: INFRASTRUCTURE FAILURE IS NOT A PASS. An unusable base must exit 3,
+    # never 0 -- "the gate could not run" read as "the gate passed" is the
+    # single failure mode that would make the whole wiring worthless.
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base 0000000000000000000000000000000000000000 \
+        >"$TMP_DIR/gate-22e.log" 2>&1)
+    GATE_RC=$?
+    if [ "$GATE_RC" -eq 3 ]; then
+        t_pass "identity gate: unusable base exits 3 (infrastructure, not pass)"
+    else
+        t_fail "identity gate: unusable base exited $GATE_RC, expected 3 (see $TMP_DIR/gate-22e.log)"
+    fi
+
+    # 22g: THE STRICT BRANCH ITSELF. 22c exercises the LOST path, which fails
+    # with or without --strict, so every case above would stay green if
+    # --strict were dropped from the driver or its `gained or added` branch
+    # deleted -- the advertised protection against a resolver binding an
+    # unresolved ref to the WRONG definition could regress silently (Codex
+    # adversarial, section 16). This builds a real GAINED and asserts the two
+    # verdicts DIFFER: plain compare 0, --strict 1 naming GAINED.
+    #
+    # The gain is manufactured the other way round from 22c's loss: take a
+    # baseline from a resolver that refuses odd-length symbols, then compare
+    # with the unmutated resolver, so refs that were bucketed now resolve.
+    (
+        cd "$GATE_REPO" || exit 1
+        git checkout --quiet -- scripts/todo-graph/ref_resolution.py 2>/dev/null
+        python3 scripts/todo-graph/build.py --quiet --output "$TMP_DIR/g-cache.json" >/dev/null 2>&1
+    )
+    gate_mutate
+    (cd "$GATE_REPO" && STUB_LINT_CACHE="$TMP_DIR/g-cache.json" STUB_LINT_REPO_ROOT="$GATE_REPO" \
+        python3 scripts/todo-graph/corpus_resolution_snapshot.py write "$TMP_DIR/g-base.json" \
+        >"$TMP_DIR/gate-22g-write.log" 2>&1)
+    (cd "$GATE_REPO" && git checkout --quiet -- scripts/todo-graph/ref_resolution.py)
+    (cd "$GATE_REPO" && STUB_LINT_CACHE="$TMP_DIR/g-cache.json" STUB_LINT_REPO_ROOT="$GATE_REPO" \
+        python3 scripts/todo-graph/corpus_resolution_snapshot.py compare "$TMP_DIR/g-base.json" \
+        >"$TMP_DIR/gate-22g-plain.log" 2>&1)
+    G_PLAIN=$?
+    (cd "$GATE_REPO" && STUB_LINT_CACHE="$TMP_DIR/g-cache.json" STUB_LINT_REPO_ROOT="$GATE_REPO" \
+        python3 scripts/todo-graph/corpus_resolution_snapshot.py compare "$TMP_DIR/g-base.json" --strict \
+        >"$TMP_DIR/gate-22g-strict.log" 2>&1)
+    G_STRICT=$?
+    if ! grep -q 'GAINED' "$TMP_DIR/gate-22g-plain.log"; then
+        t_fail "identity gate: fixture 22g produced no GAINED to test against"
+    elif [ "$G_PLAIN" -eq 0 ] && [ "$G_STRICT" -eq 1 ] \
+         && grep -q 'strict' "$TMP_DIR/gate-22g-strict.log"; then
+        t_pass "identity gate: --strict rejects a GAINED that plain compare passes"
+    else
+        t_fail "identity gate: --strict did not flip a GAINED verdict (plain=$G_PLAIN strict=$G_STRICT; see $TMP_DIR/gate-22g-strict.log)"
+    fi
+
+    # 22h: the DRIVER must supply --strict. 22g proves the tool's strict branch
+    # works when someone passes the flag; it says nothing about whether
+    # identity-gate.sh does. Deleting `--strict` from the driver leaves 22g
+    # green, and the only other driver fixture (22c) produces LOST, which fails
+    # with or without it -- so the integration guard was absent (Codex
+    # adversarial round 2, section 16). Here the GAIN is the whole diff: base
+    # commit carries the mutated resolver, head restores it, so the driver's
+    # own run must come back rc 1 naming GAINED.
+    (
+        cd "$GATE_REPO" || exit 1
+        git checkout --quiet -- scripts/todo-graph/ref_resolution.py 2>/dev/null
+    )
+    gate_mutate
+    (cd "$GATE_REPO" && git commit --quiet --no-verify -am "22h base: resolver that loses odd-length symbols" >/dev/null 2>&1)
+    G_MUT_BASE="$(cd "$GATE_REPO" && git rev-parse HEAD)"
+    (cd "$GATE_REPO" && git checkout --quiet HEAD~1 -- scripts/todo-graph/ref_resolution.py \
+        && git commit --quiet --no-verify -am "22h head: restore the resolver (pure GAINED)" >/dev/null 2>&1)
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_MUT_BASE" --head HEAD \
+        >"$TMP_DIR/gate-22h.log" 2>&1)
+    G_RC=$?
+    if [ "$G_RC" -eq 1 ] && grep -q 'GAINED' "$TMP_DIR/gate-22h.log"; then
+        t_pass "identity gate: the DRIVER passes --strict (a pure GAINED fails it)"
+    else
+        t_fail "identity gate: driver did not reject a pure GAINED (rc=$G_RC; see $TMP_DIR/gate-22h.log)"
+    fi
+
+    # 22f: --strict is what makes an unreviewed GAINED fail for a machine.
+    # Assert the flag is honoured rather than silently ignored: `write
+    # --strict` is a usage error (2), because a no-op flag a caller believes
+    # is protecting them is worse than an absent one.
+    (cd "$GATE_REPO" && python3 scripts/todo-graph/corpus_resolution_snapshot.py \
+        write "$TMP_DIR/nope.json" --strict >"$TMP_DIR/gate-22f.log" 2>&1)
+    GATE_RC=$?
+    if [ "$GATE_RC" -eq 2 ]; then
+        t_pass "identity gate: --strict on write is a usage error, not a no-op"
+    else
+        t_fail "identity gate: write --strict exited $GATE_RC, expected 2 (see $TMP_DIR/gate-22f.log)"
+    fi
+fi
+
+# ----------------------------------------------------------------------
 # Summary
 # ----------------------------------------------------------------------
 TOTAL=$((PASS + FAIL))

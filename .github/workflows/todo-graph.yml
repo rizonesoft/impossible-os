@@ -30,12 +30,17 @@ on:
       - 'scripts/todo-graph/**'
       - '.github/workflows/todo-graph.yml'
 
-concurrency:
-  group: todo-graph-${{ github.ref }}
-  cancel-in-progress: true
+# NO WORKFLOW-LEVEL CONCURRENCY. It used to live here with
+# `cancel-in-progress: true`, which cancels the ENTIRE RUN -- and a job-level
+# concurrency group cannot exempt a job from its own run being cancelled. The
+# identity-gate job below was therefore cancellable in practice while claiming
+# not to be, which is precisely the hole it exists to close (Codex adversarial,
+# section 16). The cancellable group now sits on `validate` alone, which may be
+# superseded freely because it re-derives everything from the pushed tree.
 
 permissions:
   contents: read
+  actions: read  # identity-gate reads this workflow's own last-green SHA
 
 env:
   # Node 20 runtime removed from runners 2026-09-16; opt in to Node 24 now.
@@ -46,6 +51,12 @@ jobs:
     name: build + validate
     runs-on: ubuntu-latest
     timeout-minutes: 5
+
+    # Cancellable: a newer run's verdict subsumes an older one's, because this
+    # job re-derives everything from the pushed tree rather than from a range.
+    concurrency:
+      group: todo-graph-validate-${{ github.ref }}
+      cancel-in-progress: true
 
     steps:
       - name: Checkout repository
@@ -85,3 +96,108 @@ jobs:
               --quiet \
               --diff "$BASELINE_DIR/baseline-cache.json"
           git worktree remove --force "$BASELINE_DIR"
+
+  # ==========================================================================
+  # Section 16: the identity gate. Runs corpus_resolution_snapshot.py as a
+  # GATE instead of as a thing a human remembers to invoke.
+  #
+  # SEPARATE CONCURRENCY GROUP, AND DELIBERATELY NOT CANCELLABLE. The validate
+  # job above may be superseded freely -- it re-derives everything from the
+  # pushed tree, so the newest run's verdict subsumes an older one's. This job
+  # may NOT: its verdict is about a RANGE, so cancelling it drops the only
+  # adjudication that range will ever get. Push P1 carrying a resolver
+  # regression, then P2 before P1 finishes: with cancel-in-progress, P1 dies
+  # and P2 compares P1..P2, sees the closure unchanged, early-exits, and no
+  # completed run ever examines P1. Cancellation is real in this repo --
+  # build.yml runs e49acdc2, ca61219d and faacf6eb were all cancelled by rapid
+  # pushes on 2026-08-06.
+  #
+  # The range starts from the last SHA this job actually PASSED, not from the
+  # push's before-SHA, so a run that was skipped, cancelled or never triggered
+  # is absorbed by the next one rather than lost.
+  #
+  # HONEST LIMIT: this repo pushes directly to main, so the gate DETECTS after
+  # the fact; it does not PREVENT. Prevention needs a pre-receive hook or a
+  # protected merge queue, both operator-reserved. Guaranteed adjudication is
+  # what this job buys.
+  # ==========================================================================
+  identity-gate:
+    name: resolver identity gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    concurrency:
+      group: todo-graph-identity-${{ github.ref }}
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # the base may be several pushes back
+
+      - name: Install PyYAML (build.py dependency)
+        run: python3 -m pip install --quiet PyYAML jsonschema
+
+      # The last SHA this job reported success on. Absent (first ever run) is
+      # NOT an error: the gate falls back through the push before-SHA to
+      # HEAD~1, and only a total absence of any base is infrastructure.
+      - name: Resolve last gated SHA
+        id: lastgreen
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -uo pipefail
+          # A QUERY FAILURE IS NOT AN ABSENCE. Swallowing both into "" let a
+          # transient API/auth/rate-limit error fall back to the push's
+          # before-SHA: if the previous push's gate had failed or been
+          # cancelled and this push carries no resolver change, the range
+          # collapses, the byte-identical early exit fires, and this run
+          # becomes the new green baseline -- laundering the unadjudicated
+          # push permanently (Codex adversarial, section 16). Fail the job
+          # instead; a gate that cannot establish its own range has not run.
+          if ! raw="$(gh run list --workflow=todo-graph.yml \
+                        --branch main --status success --limit 50 \
+                        --json headSha,conclusion 2>&1)"; then
+              echo "::error::last-gated-SHA query failed; refusing to guess a base"
+              echo "$raw"
+              exit 1
+          fi
+          # jq is guarded too. Under `set -uo pipefail` without -e a failed jq
+          # merely yields an empty string and the script carries on -- the same
+          # failure-as-absence collapse the gh guard above exists to stop, one
+          # line later (Codex adversarial round 2, section 16).
+          if ! sha="$(printf '%s' "$raw" | jq -r 'map(select(.conclusion=="success")) | .[0].headSha // empty')"; then
+              echo "::error::could not parse the last-gated-SHA query result"
+              exit 1
+          fi
+          if [ -z "${sha:-}" ]; then
+              # A genuinely empty API result means no successful run exists yet.
+              # That is the ONLY case where deriving a base is legitimate.
+              echo "sha=" >>"$GITHUB_OUTPUT"
+              echo "no prior successful run; the gate will derive a base"
+          elif git rev-parse --verify --quiet "${sha}^{commit}" >/dev/null 2>&1; then
+              echo "sha=$sha" >>"$GITHUB_OUTPUT"
+              echo "last gated SHA: $sha"
+          else
+              # A REAL last-green SHA we cannot materialize is NOT an absence.
+              # Downgrading it to "" fell back to HEAD~1, and after a
+              # force-push/history rewrite a regression older than HEAD~1 whose
+              # final commit leaves the closure unchanged would exit 0 and
+              # become the next green baseline. Try to fetch it; if it still
+              # cannot be materialized, the gate cannot establish its range.
+              git fetch --no-tags --quiet origin "$sha" 2>/dev/null || true
+              if git rev-parse --verify --quiet "${sha}^{commit}" >/dev/null 2>&1; then
+                  echo "sha=$sha" >>"$GITHUB_OUTPUT"
+                  echo "last gated SHA (fetched): $sha"
+              else
+                  echo "::error::last gated SHA $sha is not reachable even after fetch -- history was rewritten. Refusing to silently gate a shorter range."
+                  exit 1
+              fi
+          fi
+
+      - name: Resolver identity gate
+        env:
+          IDENTITY_GATE_LAST_GATED_SHA: ${{ steps.lastgreen.outputs.sha }}
+          GITHUB_EVENT_BEFORE: ${{ github.event.before }}
+        run: bash scripts/todo-graph/identity-gate.sh
