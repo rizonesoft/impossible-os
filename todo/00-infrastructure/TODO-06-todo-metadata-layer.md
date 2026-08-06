@@ -67,6 +67,7 @@ title: "TODO-06 -- TODO Metadata Layer and Derived Graph"
 | 💎  |  16   |  §16    | Wire the identity gate so something runs it (adopts §12's parked wiring)            | §12, §14   |  [x]   |
 | ⭐  |  17   |  §17    | One shared cache-schema validator, consumed by both cache readers                   | §14, §16   |  [x]   |
 | ⭐  |  18   |  §18    | Identity-gate hardening: producer differential + protocol-constant extraction       | §16        |  [ ]   |
+| ⭐  |  19   |  §19    | Cache-validation reach (remaining raw readers) + producer generation window         | §17        |  [ ]   |
 
 > 💎 = parity work -- Linux kernel has MAINTAINERS + get_maintainer.pl (person-ownership mapping without a dep graph); Windows has no public equivalent. §1 (frontmatter), §2 (generator), §5 (migration) bring us to partial Linux parity plus graph metadata neither OS ships.
 > ⭐ = competitive edge -- neither Win11 nor mainline Linux ships a first-class TODO dependency graph. §3 (validator), §4 (query CLI), §6 (CI gate), §7 (visualization), §8 (MCP server) are new ground; the surface has direct value for any contributor scanning "what can I work on next?".
@@ -694,7 +695,7 @@ That is a real hole in the proof, and §13 is the section that demonstrates it. 
 > - Also repaired `test_stub_lint_coverage.py`, RED in the tree since §11 made a `total`-less baseline invalid; its runner gates on a manifest listing neither `scripts/lint` nor `scripts/todo-graph`.
 > - Scope boundary: does NOT wire the gate into anything (§16 owns that) and does NOT touch resolver cost (§15).
 > **Verified:** 2026-08-06 | commit `d0b2dc17` | 5/5 items | build OK | 209/209 todo-graph, 1287/1287 tooling, 66/66 overnight, 28326 kernel + 17 user-mode, lint 0 errors
-> **Accepted:** [M] cache-schema validation is not shared between the two callers, so they disagree about which caches are valid and which rc a malformed one yields -> XREF: 00-infrastructure/TODO-06 §16 (item: "ONE shared cache-schema validator, consumed by both cache readers" at line 697)
+> **Accepted:** [M] cache-schema validation is not shared between the two callers, so they disagree about which caches are valid and which rc a malformed one yields -> XREF: 00-infrastructure/TODO-06 §16 (item: "ONE shared cache-schema validator, consumed by both cache readers" at line 698)
 > **Quality reviewed:** 2026-08-06 | Codex 6x (design, adversarial x2, test-coverage, consistency, perf) | 5H+7M fixed, 0 open | scope: N/A (host tooling -- no kernel/boot/desktop/shell/userland surface)
 
 -> XREF: [`TODO-06 §13`](#13-stored-ref-repair-unpaired-symbols-and-bare-filenames) -- the section whose review found this, and whose bucket movements are the worked example of what the gate cannot currently see.
@@ -827,7 +828,7 @@ Split out of §14 at authoring time, not spawned by a review round. §14 proves 
       - Test 23j pins the split and 23k proves the hand-off is real: with a baseline recording a population of 1, the emptied cache reaches rc 7 rather than a warning.
 - [x] The generation binding covers the CALLER'S walk, not just the check (review round)
       The two corpus scans inside `check_freshness` are adjacent, so on their own they bound a few milliseconds -- while both readers then spend ~1s resolving symbols, and a TODO edited in THAT window left the in-memory nodes stale with a verdict still returned. `CacheInfo` now carries the corpus fingerprint and `check_corpus_unchanged` re-verifies it once the caller's walk finishes; both readers call it and map the refusal to their own infrastructure code. Fixtures 23k6 (mid-check) and 23k7 (mid-walk).
-      - The PRODUCER-side mirror of this window is real and NOT closed here -- `build.py` can read a TODO, the file can change, and the cache it then writes carries a newer mtime that makes the stale node look fresh. No reader-side check can see that. Accepted and filed against §18.
+      - The PRODUCER-side mirror of this window is real and NOT closed here -- `build.py` can read a TODO, the file can change, and the cache it then writes carries a newer mtime that makes the stale node look fresh. No reader-side check can see that. Accepted and filed against §19.
 - [x] Descriptor close, baseline floors, and schema drift (review round)
       A raising `fh.close()` sat outside every normalization path, so a close failure escaped as a raw `OSError` -- an undocumented rc 1 for the lint and the snapshot's DOCUMENTED "a prior verdict changed" code. Now normalized, and gated on a FUNCTION-LOCAL flag rather than `sys.exc_info()`: that state is ambient and also reports an outer caller's in-flight exception, which would have silently swallowed the close failure of a perfectly successful load. Fixtures 23k8 and 23k8b.
       - `resolved <= 0` is now rejected alongside `total <= 0`. A zero-RESOLVED floor with a positive total let every symbol land in an unresolved bucket while the population matched and `0 < 0` stayed false -- an exit-0 run in which Check 7 examined no function body at all. Fixture 23k9; the pre-existing 14v fixture moved to `resolved: 1` because it had used the zero floor deliberately.
@@ -856,8 +857,8 @@ Split out of §14 at authoring time, not spawned by a review round. §14 proves 
 -> XREF: [`TODO-06 §16`](#16-wire-the-identity-gate-so-something-actually-runs-it) -- the wiring this hardens; must land first so the shared validator is proven against the real automated caller.
 
 > **Verified:** 2026-08-06 | commit `4d2b9fa62` + review | 10/10 items | build OK | test_build 251/251, test-tooling 1287/1287, lint rc 0, 28326 kernel tests
-> **Accepted:** [H] The PRODUCER has the mirror of the generation window the readers now close: `build.py` can read a TODO, the file can change, and the cache it writes carries a newer mtime that makes the stale node look fresh to every reader -- unreachable from any reader-side check (reason: requires changing `build.py`, which this section does not own) -> XREF: 00-infrastructure/TODO-06 §18 (item: "Close the PRODUCER-side generation window in `build.py`" at line 888)
-> **Accepted:** [H] ~10 further raw `todo-cache.json` readers still bypass the shared validator; on an empty cache `.claude/hooks/sequencer_triage.py` `cmd_next` prints `{"status":"DONE"}` and exits 0, so a corrupt cache reads as a finished work queue (reason: control plane, not editable by an unattended run) -> XREF: 00-infrastructure/TODO-06 §18 (item: "Route the REMAINING raw `todo-cache.json` readers through the §17 shared validator" at line 883)
+> **Accepted:** [H] The PRODUCER has the mirror of the generation window the readers now close: `build.py` can read a TODO, the file can change, and the cache it writes carries a newer mtime that makes the stale node look fresh to every reader -- unreachable from any reader-side check (reason: requires changing `build.py`, which this section does not own) -> XREF: 00-infrastructure/TODO-06 §19 (item: "Close the PRODUCER-side generation window in `build.py`" at line 910)
+> **Accepted:** [H] ~10 further raw `todo-cache.json` readers still bypass the shared validator; on an empty cache `.claude/hooks/sequencer_triage.py` `cmd_next` prints `{"status":"DONE"}` and exits 0, so a corrupt cache reads as a finished work queue (reason: control plane, not editable by an unattended run) -> XREF: 00-infrastructure/TODO-06 §19 (item: "Route the REMAINING raw `todo-cache.json` readers through the §17 shared validator" at line 905)
 > **Quality reviewed:** 2026-08-06 | Codex 7x (design, adversarial x2, consistency, perf, re-adversarial, review-adversarial) | 4H+10M+1L fixed, 2 open, 1 rejected | scope: N/A (host-side tooling; no `src/kernel|boot|desktop|shell` or `user/` surface)
 
 ---
@@ -885,16 +886,6 @@ Split out of §14 at authoring time, not spawned by a review round. §14 proves 
       The two walks are SERIAL -- base must finish before head starts -- so cost is roughly double a single walk (~80-120s today at 1,626 refs) against a 20-minute job ceiling, on a corpus that only grows. Perf review flagged the curve, not a present failure.
       - The two `write` walks are independent and could run CONCURRENTLY; `compare` would then diff two completed snapshots instead of re-walking. That needs a compare-two-files mode the tool does not have, which is why it is here and not in §16.
       - Add a runtime or operation-count budget that FAILS while there is still headroom, rather than discovering the ceiling as a 20-minute timeout that reads like an infrastructure flake.
-- [ ] Route the REMAINING raw `todo-cache.json` readers through the §17 shared validator
-      §17 gave the two RESOLUTION readers one validator, but the review of it found ~10 other files that still `json.load` the cache raw and trust whatever parses: `scripts/todo-reachability.py`, `scripts/overnight/runner-doctor.py`, `scripts/overnight/decision-registry.py`, `scripts/todo-graph/validate.py`, `scripts/hooks/pre-push`, and `.claude/hooks/sequencer_triage.py` among them. The validation split §17 closed for two consumers is still open for the rest.
-      - The consequential one is `.claude/hooks/sequencer_triage.py:273-281`: on an empty cache `cmd_next` prints `{"status":"DONE","file":null}` and exits 0, so a corrupt cache makes the overnight runner declare the entire queue finished. Reproduced 2026-08-06. It must exit NONZERO on an unusable cache.
-      - CONTROL PLANE, so an unattended run may not apply it; the operator-side filing carries the detail. -> XREF: [`overnight-runner-improvements-v10`](../overnight-runner-improvements/overnight-runner-improvements-v10.md) (item: "`sequencer_triage.py` reads `build/todo-cache.json` raw...").
-      - Each reader keeps its OWN documented exit code, exactly as §17 established; sharing the rule must not collapse the codes.
-- [ ] Close the PRODUCER-side generation window in `build.py`
-      §17 made both readers generation-bound (the cache is read through one descriptor, and the TODO corpus fingerprint is re-verified after the caller's walk). The producer has the mirror-image window and §17 could not close it: `build.py` can read a TODO, that file can change, and `build.py` can then write a cache whose NEWER mtime makes the already-stale node look fresh to every reader.
-      - No reader-side check can detect this: the cache is legitimately newer than the corpus, which is exactly what freshness tests for. It has to be closed where the cache is produced.
-      - Fix shape mirrors the reader side: fingerprint the corpus before the extraction pass, re-verify it before publishing the cache, and refuse to write on a mismatch rather than emitting a cache that certifies stale content.
-      - Found by the Codex adversarial review of §17, ACCEPTED there as out-of-scope because it requires changing `build.py`, which §17 does not own.
 - [ ] Fixtures for all four, each mutation-checked
       A producer regression hidden by deleting its only live corpus example; a bucket migration that currently trips §16's fail-closed refusal and must stop tripping it once the constants move; and the consumer mutation above.
 - [ ] Commit: `"todo-graph: close the identity gate's producer and protocol blind spots"`
@@ -902,6 +893,32 @@ Split out of §14 at authoring time, not spawned by a review round. §14 proves 
 **Test checkpoint:** a `build.py` change that drops a stamped ref FAILS the producer differential even when the head corpus no longer contains an example; a pure constants extraction passes §16's gate unchanged; `bash scripts/todo-graph/tests/test_build.sh` and `bash scripts/test-tooling.sh` green.
 
 -> XREF: [`TODO-06 §16`](#16-wire-the-identity-gate-so-something-actually-runs-it) -- the gate these harden (item: "Implemented the chosen wiring, fail-CLOSED on its own infrastructure errors"); both findings were accepted during its design review and scoped out of it.
+
+---
+
+## 19. Cache-Validation Reach and the Producer-Side Generation Window
+
+> **Spawned-by:** §17 (review)
+
+Split out of §18 on 2026-08-06: §18 is titled and scoped for the FOUR findings §16's reviews accepted, but §17's own review had appended two more items to it. Those two share neither a file nor a failure mode with the identity gate -- they are about the CACHE (who is allowed to trust it, and whether the producer may certify stale content), not about what the resolver differential can see -- so folding them into §18 would ship a section whose scope nobody could state, which is the exact defect §18's preamble was written to avoid.
+
+- [ ] Route the REMAINING raw `todo-cache.json` readers through the §17 shared validator
+      §17 gave the two RESOLUTION readers one validator, but the review of it found ~10 other files that still `json.load` the cache raw and trust whatever parses: `scripts/todo-reachability.py`, `scripts/overnight/runner-doctor.py`, `scripts/overnight/decision-registry.py`, `scripts/todo-graph/validate.py`, `scripts/hooks/pre-push`, and `.claude/hooks/sequencer_triage.py` among them. The validation split §17 closed for two consumers is still open for the rest.
+      - The consequential one is `.claude/hooks/sequencer_triage.py:273-281`: on an empty cache `cmd_next` prints `{"status":"DONE","file":null}` and exits 0, so a corrupt cache makes the overnight runner declare the entire queue finished. Reproduced 2026-08-06. It must exit NONZERO on an unusable cache.
+      - CONTROL PLANE, so an unattended run may not apply that one; the operator-side filing carries the detail. -> XREF: [`overnight-runner-improvements-v10`](../overnight-runner-improvements/overnight-runner-improvements-v10.md) (item: "`sequencer_triage.py` reads `build/todo-cache.json` raw..."). The NON-control-plane readers in the list above are ordinary work and are closed here.
+      - Each reader keeps its OWN documented exit code, exactly as §17 established; sharing the rule must not collapse the codes.
+- [ ] Close the PRODUCER-side generation window in `build.py`
+      §17 made both readers generation-bound (the cache is read through one descriptor, and the TODO corpus fingerprint is re-verified after the caller's walk). The producer has the mirror-image window and §17 could not close it: `build.py` can read a TODO, that file can change, and `build.py` can then write a cache whose NEWER mtime makes the already-stale node look fresh to every reader.
+      - No reader-side check can detect this: the cache is legitimately newer than the corpus, which is exactly what freshness tests for. It has to be closed where the cache is produced.
+      - Fix shape mirrors the reader side: fingerprint the corpus before the extraction pass, re-verify it before publishing the cache, and refuse to write on a mismatch rather than emitting a cache that certifies stale content.
+      - Found by the Codex adversarial review of §17, ACCEPTED there as out-of-scope because it requires changing `build.py`, which §17 does not own.
+- [ ] Fixtures for both, each mutation-checked
+      A reader handed a corrupt/empty cache must exit nonzero with its own documented code (mutation: restore the raw `json.load` and require the fixture to FAIL); and a corpus file mutated BETWEEN `build.py`'s extraction pass and its publish must be refused rather than written.
+- [ ] Commit: `"todo-graph: close the cache-validation reach and the producer generation window"`
+
+**Test checkpoint:** every non-control-plane raw cache reader rejects an unusable cache with its documented nonzero code; `build.py` refuses to publish a cache whose corpus fingerprint moved under it; `bash scripts/todo-graph/tests/test_build.sh` and `bash scripts/test-tooling.sh` green.
+
+-> XREF: [`TODO-06 §17`](#17-one-shared-cache-schema-validator-for-both-cache-readers) -- the validator these extend (item: "Commit: `\"todo-graph: one cache-schema validator for both cache readers\"`"); both findings were accepted during its adversarial review and scoped out of it.
 
 ---
 
