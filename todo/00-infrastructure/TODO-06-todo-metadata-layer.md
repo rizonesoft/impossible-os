@@ -61,6 +61,7 @@ title: "TODO-06 -- TODO Metadata Layer and Derived Graph"
 | ⭐  |  10   |  §10    | Multi-line function-head resolution in `resolve_symbol` (Check 7 blind spot)        | §9         |  [x]   |
 | ⭐  |  11   |  §11    | Check 7 counts what it cannot resolve (unresolved != clean)                         | §10        |  [x]   |
 | ⭐  |  12   |  §12    | Resolver coverage past the head limit + lexer/cache robustness                      | §10, §11   |  [ ]   |
+| ⭐  |  13   |  §13    | Stored-ref repair at extraction: unpaired symbols + bare filenames                  | §2, §11    |  [ ]   |
 
 > 💎 = parity work -- Linux kernel has MAINTAINERS + get_maintainer.pl (person-ownership mapping without a dep graph); Windows has no public equivalent. §1 (frontmatter), §2 (generator), §5 (migration) bring us to partial Linux parity plus graph metadata neither OS ships.
 > ⭐ = competitive edge -- neither Win11 nor mainline Linux ships a first-class TODO dependency graph. §3 (validator), §4 (query CLI), §6 (CI gate), §7 (visualization), §8 (MCP server) are new ground; the surface has direct value for any contributor scanning "what can I work on next?".
@@ -469,8 +470,8 @@ This section makes the second state countable. It is the REPORTING half of the r
 
 > **Verified:** 2026-08-06 | commit `08b96744` + review fixes | 8/9 items (1 parked operator-gated) | build OK | coverage 57/1625 with buckets summing; 17 coverage fixtures + test_build 146/146 + tooling 1287/1287 + lint 0 errors
 > **Deferred:** [H] a scalar `resolved_n` floor cannot see a lost resolved identity that a duplicate or unrelated one offsets; `corpus_resolution_snapshot.py` already pins identities but no gate runs it -> XREF: `00-infrastructure/TODO-06-todo-metadata-layer.md §12` (item: "Wire `corpus_resolution_snapshot.py` into a GATE" at line 496)
-> **Deferred:** [M] 1,122 unpaired symbol refs (69% of the population) name a symbol with no file, so nothing file-scoped can resolve them -> XREF: `00-infrastructure/TODO-06-todo-metadata-layer.md §12` (item: "Decide what an UNPAIRED symbol ref means" at line 498)
-> **Deferred:** [M] 246 bare-filename refs point at paths that never exist at the repo root though 224 have a unique basename in the tree -> XREF: `00-infrastructure/TODO-06-todo-metadata-layer.md §12` (item: "Resolve BARE-FILENAME refs against the tree" at line 500)
+> **Deferred:** [M] 1,122 unpaired symbol refs (69% of the population) name a symbol with no file, so nothing file-scoped can resolve them -> XREF: `00-infrastructure/TODO-06-todo-metadata-layer.md §12` (item: "Decide what an UNPAIRED symbol ref means" at line 472)
+> **Deferred:** [M] 246 bare-filename refs point at paths that never exist at the repo root though 224 have a unique basename in the tree -> XREF: `00-infrastructure/TODO-06-todo-metadata-layer.md §12` (item: "Resolve BARE-FILENAME refs against the tree" at line 473)
 > **Quality reviewed:** 2026-08-06 | Codex 4x (design, adversarial x2, consistency, perf) | 2H+5M+2L fixed, 1 deferred | scope: N/A (host tooling; the five code-quality skills all cover kernel/boot/desktop/shell/user surfaces)
 
 -> XREF: [`TODO-06 §10`](#10-multi-line-function-head-resolution-in-resolve_symbol) -- prerequisite; §10 widens what resolves, so this section's before/after numbers are meaningless until it lands.
@@ -491,14 +492,10 @@ It does NOT re-cover §10's two-pass head match, its paren-depth-aware confirmat
 
 **The corpus gate is the acceptance test, not the count.** §10 proved a count cannot see a MOVED mapping -- a wrong new resolution offsets a lost one and the floor still passes. Every item here lands with `corpus_resolution_snapshot.py` reporting 0 lost / 0 moved, and every ADDED mapping ground-truthed by hand before the baseline is raised.
 
-**Work the classes in measured size order, which is NOT the order they were discovered in.** §11's population repair changed the picture completely: against the true population of 1,625 occurrences the buckets are unpaired-ref 1122, missing-file 246, calllike-unresolved 89, non-C-suffix 63, no-calllike-token 47, path-escape 1. The two largest classes are BAD OR ABSENT STORED DATA, not parse gaps -- together 84% of the population -- so the cheapest large wins are upstream of the resolver entirely, and the head-limit item that once looked like the biggest prize is 35 refs against 1,368.
+**Work the classes in measured size order, which is NOT the order they were discovered in.** §11's population repair changed the picture completely: against the true population of 1,625 occurrences the buckets are unpaired-ref 1122, missing-file 246, calllike-unresolved 89, non-C-suffix 63, no-calllike-token 47, path-escape 1. The two largest classes are BAD OR ABSENT STORED DATA, not parse gaps -- together 84% of the population -- so the cheapest large wins are upstream of the resolver entirely. Those two are §13's charter, not this section's: they are repaired in `build.py`'s ref EXTRACTION and rewrite the cache every consumer reads, a different blast radius from a resolver that only changes what Check 7 can see. This section owns the resolver, so its largest class is the 35 head-limit refs.
 
 - [ ] Wire `corpus_resolution_snapshot.py` into a GATE -- a scalar floor cannot see a lost identity that another occurrence offsets
       The identity mechanism already EXISTS and is unused by any gate: `corpus_resolution_snapshot.py` pins each ref's exact `(path, start, end)` and its `compare` exits 1 on a lost or MOVED mapping, but it is a manual `write`/`compare` tool that nothing runs automatically. So today's only automatic gate is the scalar `resolved_n` floor, which stays satisfied if a resolved identity is lost while a duplicate or unrelated one is added -- the exact blind spot the snapshot was built for. Decide where the baseline snapshot lives, how it is deliberately updated, and what it costs: this section will MOVE resolved mappings, so it needs the gate anyway, and Check 7 already carries a measured +101ms that a second per-commit walk would add to. -> XREF: `TODO-06 §11` -- §11 established the reporting contract this gate would enforce.
-- [ ] Decide what an UNPAIRED symbol ref means -- **1,122 occurrences, 69% of the whole population; the single biggest class in the corpus**
-      Exposed by §11's population repair, which counted them for the first time. These are `kind=symbol` refs carrying a symbol and NO file (`{"kind":"symbol","symbol":"thread_yield"}`), so there is nothing for a file-scoped resolver to open. Two candidate readings and they need different fixes: the stamped item legitimately named a symbol without a file (so ref EXTRACTION in `build.py` should pair it, e.g. by resolving the symbol tree-wide), or the pairing exists upstream and is being lost. Establish which BEFORE writing code -- the answer decides whether this is an extraction bug or a corpus-authoring convention.
-- [ ] Resolve BARE-FILENAME refs against the tree -- **246 occurrences / 232 unique, the largest recoverable class among PAIRED refs**
-      Found by §11's denominator repair, which counted these for the first time. EVERY missing-file ref is a bare filename with no directory (`boot_desktop.c:boot_run_deferred`), stored verbatim as a repo-relative path that never exists at the repo root -- while the file itself does exist (`src/kernel/main/boot_desktop.c`). MEASURED: of the 232 unique, **224 have a UNIQUE basename in the tree, 7 are ambiguous, 1 is absent**. Resolve the unique ones; the 7 ambiguous need a disambiguation rule (or stay counted), and never guess. Decide whether the repair belongs in ref EXTRACTION (`build.py`, so the cache stores real paths) or in resolution -- extraction is likely correct, since a stored path that never existed is bad data, not a lookup failure.
 - [ ] Resolve definitions sitting past `_DEF_HEAD_LIMIT` (512 lines) -- **35 refs, and the single largest resolvable class**, ahead of class B
       `resolve_symbol()` slices the head scan to the first 512 lines, so `kmalloc` (`src/kernel/mm/heap.c:666`) and `schedule` (`src/kernel/sched/task.c:1721`) are invisible despite being plain single-line heads. The cap was a defensive bound against multi-MB generated headers, but `_load_file_lines` already caches the WHOLE file, so the bound now costs coverage for no memory saving. Measured by §10.
 - [ ] Follow a DECLARATION to its definition (class B) -- **re-measure first: the recorded 78 does not reproduce**
@@ -516,6 +513,39 @@ It does NOT re-cover §10's two-pass head match, its paren-depth-aware confirmat
 -> XREF: [`TODO-06 §10`](#10-multi-line-function-head-resolution-in-resolve_symbol) -- owns the multi-line head PARSE and deferred this section's cache-bounds and backslash-splicing items here; §12 continues that work and re-covers none of it.
 -> XREF: [`TODO-06 §11`](#11-count-what-check-7-cannot-resolve-instead-of-skipping-it) -- the parent section; §11 owns Check 7's reporting contract and its baseline gate, which is what measures whether this section's coverage work landed.
 -> XREF: [`TODO-08 §12`](TODO-08-automation-hardening.md#12-ai-slop-content-lints-tautological-test--stub-behind-stamp) -- Check 7's owner; this section changes what the resolver can see, not how the check is wired.
+-> XREF: [`TODO-06 §13`](#13-stored-ref-repair-in-extraction-unpaired-symbols-and-bare-filenames) -- split out of this section; §13 owns the two BAD-STORED-DATA classes (84% of the population) repaired in `build.py` extraction, and this section owns none of them.
+
+---
+
+## 13. Stored-Ref Repair in Extraction: Unpaired Symbols and Bare Filenames
+
+> **Spawned-by:** §12 (split)
+
+§11's population repair counted the whole corpus for the first time and found that the two largest unresolved classes are not resolver gaps at all: 1,122 unpaired symbol refs (69%) and 246 bare-filename refs (15%) are BAD OR ABSENT STORED DATA, produced by [`extract_stamped_items`](../../scripts/todo-graph/build.py) and written into `build/todo-cache.json` before any resolver runs. Together they are 84% of the population -- more than five times everything §12 can reach.
+
+This was split out of §12 on the split predictor's `SPLIT-RECOMMENDED` verdict before any code was written, and the boundary is a blast radius, not a size. §12 changes `resolve_symbol.py`, so its worst case is Check 7 seeing more or less than it did. This section changes what the CACHE CONTAINS, and the cache is read by `validate.py`, `query.py`, the MCP server, and every hook built on them -- a wrong repair here is wrong for every consumer, not just one lint check. Reviewing both under one gate would hide that difference.
+
+It does NOT re-cover §12's head-limit widening, decl-following, cache bounds, or lexer splicing, nor §11's counting base. The `corpus_resolution_snapshot.py` identity gate §12 wires is the acceptance test here too: every ADDED mapping is ground-truthed by hand before the baseline moves, and 0 lost / 0 moved is the bar.
+
+**Establish the MEANING before writing code.** Both items are currently a question about the corpus, not a bug with a known fix, and the answer decides which file changes. Guessing here rewrites 1,368 stored refs on an assumption.
+
+- [ ] Decide what an UNPAIRED symbol ref means -- **1,122 occurrences, 69% of the whole population; the single biggest class in the corpus**
+      These are `kind=symbol` refs carrying a symbol and NO file (`{"kind":"symbol","symbol":"thread_yield"}`), so there is nothing for a file-scoped resolver to open. `extract_stamped_items` sets `file` only from the FIRST file ref in the SAME item, so an item naming a symbol with no file link produces one by construction.
+      - Two candidate readings needing different fixes: the stamped item legitimately named a symbol without a file (extraction should pair it, e.g. by resolving the symbol tree-wide), or a pairing exists upstream and is being lost.
+      - Sample the real items behind the class before deciding -- a convention finding means the fix is the COUNTING contract, not the extractor.
+- [ ] Resolve BARE-FILENAME refs against the tree -- **246 occurrences / 232 unique, the largest recoverable class among PAIRED refs**
+      EVERY missing-file ref is a bare filename with no directory (`boot_desktop.c:boot_run_deferred`), stored verbatim as a repo-relative path that never exists at the repo root -- while the file itself does exist (`src/kernel/main/boot_desktop.c`).
+      - MEASURED: of the 232 unique, **224 have a UNIQUE basename in the tree, 7 are ambiguous, 1 is absent**. Resolve the unique ones; the 7 ambiguous need a disambiguation rule or stay counted. Never guess.
+      - Repair belongs in EXTRACTION (`build.py`, so the cache stores real paths) rather than resolution: a stored path that never existed is bad data, not a lookup failure. Confirm against a sampled item before committing to that.
+- [ ] Regression fixtures for both shapes, each mutation-checked, plus a corpus run that raises the baseline
+      Extend [`scripts/todo-graph/tests/test_build.sh`](../../scripts/todo-graph/tests/test_build.sh) in §10's style: assert the EXACT stored ref dicts rather than "a ref appeared", cover the ambiguous-basename case explicitly, and verify each fixture FAILS when its mechanism is disabled. A fixture no single mutation flips is labelled in-file as a behavior pin.
+- [ ] Commit: `"todo-graph: repair unpaired-symbol and bare-filename refs at extraction"`
+
+**Test checkpoint:** `bash scripts/todo-graph/tests/test_build.sh` green with the new fixtures; `python3 scripts/todo-graph/corpus_resolution_snapshot.py` reporting 0 lost / 0 moved; `bash scripts/todo-graph/build-and-validate.sh` green on the rewritten cache; `bash scripts/lint.sh` Check 7 reporting a higher resolved ratio with zero new findings; `bash scripts/test-tooling.sh` green in aggregate.
+
+-> XREF: [`TODO-06 §12`](#12-resolver-coverage-past-the-head-limit-and-lexercache-robustness) -- the parent section; §12 owns `resolve_symbol.py` coverage plus the `corpus_resolution_snapshot.py` identity gate this section is measured by.
+-> XREF: [`TODO-06 §11`](#11-count-what-check-7-cannot-resolve-instead-of-skipping-it) -- counted these two classes for the first time; §11 owns the reporting contract and the bucket denominators this section moves.
+-> XREF: [`TODO-06 §2`](#2-generator-and-cache-format) -- owns `build.py` and the cache format this section rewrites refs into.
 
 ---
 
