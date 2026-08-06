@@ -19,9 +19,15 @@
 # Distinct exit codes (consumed by scripts/lint.sh Check 7):
 #   0  walk completed (with or without findings -- caller counts findings)
 #   2  cache missing (lint.sh treats as WARN -- contributor hasn't built)
-#   3  cache lacks `stamped_items` field (lint.sh treats as WARN -- old cache)
+#   3  cache lacks the `stamped_items` field on EVERY node (lint.sh treats as
+#      WARN -- a legacy cache predating the section 9 extension). Narrowed in
+#      section 17: a cache that HAS the field but carries an empty population
+#      is a producer regression, not an old cache, and is deliberately left to
+#      the rc 7 population gate below rather than downgraded to this warning.
 #   4  cache stale relative to todo/**/*.md (lint.sh treats as ERROR)
-#   5  cache unreadable / malformed JSON (lint.sh treats as ERROR)
+#   5  cache unreadable / malformed JSON, or a shape that violates
+#      scripts/todo-graph/schema/cache.schema.json, or an empty node array
+#      (lint.sh treats as ERROR). Decided by the shared `cache_schema` module.
 #   6  internal helper failure (lint.sh treats as ERROR)
 #   7  the coverage gate refused, for EITHER of its two contracts (lint.sh
 #      treats as ERROR and routes on the emitted tag): `COVERAGE REGRESSION`
@@ -48,11 +54,29 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "scripts" / "todo-graph"))
 
 try:
+    import cache_schema as _cs
     import resolve_symbol as _rs
     import ref_resolution as _rr
 except ImportError as exc:
     sys.stderr.write(f"[check_stub_behind_stamp] FATAL: cannot import resolve_symbol: {exc}\n")
     sys.exit(6)
+
+
+# The SHARED cache-schema rule (scripts/todo-graph/cache_schema.py) raises with
+# a `reason` tag rather than an exit code, precisely so sharing the RULE does
+# not collapse the CODES: this tool's 2/3/4/5 split is consumed by lint.sh's
+# case statement and by section 16's gate wiring, while the snapshot maps every
+# reason to its single rc 3. Each reason is mapped EXPLICITLY -- a `.get`
+# default would silently route a newly-added reason to whatever code happened
+# to be the fallback.
+_CACHE_REASON_RC = {
+    _cs.REASON_MISSING: 2,                  # WARN: contributor hasn't built it
+    _cs.REASON_LEGACY_NO_STAMPED_ITEMS: 3,  # WARN: cache predates the extension
+    _cs.REASON_STALE: 4,                    # ERROR: false-clean risk
+    _cs.REASON_UNREADABLE: 5,               # ERROR: corrupt JSON
+    _cs.REASON_SHAPE: 5,                    # ERROR: violates cache.schema.json
+    _cs.REASON_EMPTY: 5,                    # ERROR: exists but nothing to walk
+}
 
 
 # Per-run dedupe of resolve / stub work. The actual file-line cache lives
@@ -82,23 +106,12 @@ def _is_stub_cached(file_path: str, line_start: int, line_end: int):
     return _rs.is_stub_body(file_path, line_start, line_end)
 
 
-def _check_staleness(cache_path: Path, todo_root: Path) -> bool:
-    """True if cache is stale relative to any TODO-*.md mtime."""
-    try:
-        cache_m = cache_path.stat().st_mtime
-    except OSError:
-        return False
-    newest = 0.0
-    for dirpath, _, files in os.walk(todo_root):
-        for f in files:
-            if f.startswith("TODO-") and f.endswith(".md"):
-                try:
-                    m = os.stat(os.path.join(dirpath, f)).st_mtime
-                    if m > newest:
-                        newest = m
-                except OSError:
-                    pass
-    return newest > cache_m
+# `_check_staleness` lived here until section 17. It was a fail-OPEN copy of
+# the snapshot's check -- it swallowed `os.walk` traversal errors (no `onerror`
+# callback), returned "not stale" when the cache `stat` failed, and treated a
+# corpus with zero TODO files as fresh -- and its sole caller additionally
+# skipped it whenever the todo root was absent. The fail-closed rule now lives
+# in `cache_schema.check_freshness`, shared with the corpus snapshot.
 
 
 # `_STRIP_RE`, `_raw_text`, `_code_text` and `_has_calllike_token` MOVED to
@@ -249,36 +262,36 @@ def main() -> int:
     repo_root = Path(repo_arg).resolve() if repo_arg else REPO_ROOT
     todo_root = repo_root / "todo"
 
-    if not cache_path.is_file():
-        sys.stderr.write(f"[check_stub_behind_stamp] cache missing: {cache_path}\n")
-        return 2
-
+    # ONE SHARED RULE, this tool's OWN CODES. Existence, readability, schema
+    # shape and staleness are all decided by `cache_schema` so this reader and
+    # the corpus snapshot cannot disagree about which caches are valid; the
+    # reason -> code mapping above keeps the documented 2/3/4/5 contract intact.
+    #
+    # This replaced four separate probes that were each WEAKER than the
+    # snapshot's (section 17): wrong-typed-but-falsey `stamped_items: {}` and
+    # `refs: {}` passed and then silently walked ZERO refs while reporting a
+    # clean lint; a non-list/non-dict deeper in the tree crashed into the
+    # `except Exception -> rc 6` handler instead of naming itself; a
+    # `RecursionError` from `json.loads` escaped as a bare rc 1 traceback; and
+    # the staleness check was fail-OPEN three ways (swallowed traversal errors,
+    # returned "fresh" on a stat failure, and was skipped entirely when the
+    # todo root was absent).
     try:
-        # ValueError, not just JSONDecodeError: a cache containing invalid UTF-8
-        # raises UnicodeDecodeError, which is a ValueError and NOT an OSError,
-        # so the narrower tuple let it escape as an undocumented rc 1 traceback
-        # rather than the documented rc 5.
-        nodes = json.loads(cache_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
-        sys.stderr.write(f"[check_stub_behind_stamp] cache unreadable: {exc}\n")
-        return 5
-    if not isinstance(nodes, list):
-        sys.stderr.write("[check_stub_behind_stamp] cache is not a JSON array\n")
-        return 5
-    # Every node must be a mapping before anything probes it. A well-formed but
-    # wrong-shaped cache such as `[1]` parses cleanly and then raises deep in
-    # the walk, surfacing as rc 1 instead of the rc 5 the contract promises.
-    if not all(isinstance(n, dict) for n in nodes):
-        sys.stderr.write("[check_stub_behind_stamp] cache has non-object nodes\n")
-        return 5
+        nodes, info = _cs.load_and_validate(cache_path, todo_root)
+    except _cs.CacheSchemaError as exc:
+        sys.stderr.write(f"[check_stub_behind_stamp] {exc}\n")
+        return _CACHE_REASON_RC[exc.reason]
 
-    if not any("stamped_items" in (n or {}) for n in nodes):
-        sys.stderr.write("[check_stub_behind_stamp] cache lacks stamped_items field\n")
-        return 3
-
-    if todo_root.is_dir() and _check_staleness(cache_path, todo_root):
-        sys.stderr.write("[check_stub_behind_stamp] cache stale relative to todo/**/*.md\n")
-        return 4
+    # DELIBERATELY NOT SHORT-CIRCUITED ON AN EMPTY POPULATION (Codex design
+    # review, section 17, [high]). The snapshot refuses a zero-item cache
+    # outright, because a vacuous baseline is useless to it. This reader must
+    # do the OPPOSITE: an emptied stamped population is a producer REGRESSION,
+    # and the gate that adjudicates it is this tool's own rc 7 "POPULATION
+    # GREW/SHRANK" check further down. Returning a cache-level code here would
+    # pre-empt that gate and route a regression through lint.sh as a WARNING --
+    # and warnings leave the overall lint exit at 0, so the loss would ship.
+    # The walk therefore proceeds and the population gate does its job.
+    _ = info
 
     try:
         # ONE WALK, ONE CACHE LIFETIME. `walk_scope` releases the resolver's
@@ -402,10 +415,24 @@ def main() -> int:
         # (Codex adversarial, post-commit). A denominator that moves is a
         # finding, in EITHER direction: growth is new stamped work and gets
         # recorded, shrinkage is data loss.
+        # `<= 0`, NOT `< 0`. A ZERO denominator is not a floor, it is the
+        # ABSENCE of one, and it silently disarms the population gate that the
+        # section 17 empty-population policy hands off to: with an emptied
+        # `stamped_items`, `occurrences` is also 0, the equality below passes,
+        # the resolved floor 0 >= 0 passes, main returns 0, and lint.sh renders
+        # `resolved=0/0` as full-coverage INFO. So re-recording the baseline
+        # while the producer is collapsed would make the collapse permanent and
+        # invisible (Codex adversarial, section 17). A corpus with zero stamped
+        # symbol refs IS the regression this file exists to catch, so the
+        # honest response is rc 8 "baseline invalid" -- and
+        # STUB_LINT_ALLOW_NO_BASELINE=1 remains the sanctioned, REPORTED bypass
+        # for a tree that genuinely has no floor yet.
         if baseline_err is None and (not isinstance(baseline_total, int)
                                      or isinstance(baseline_total, bool)
-                                     or baseline_total < 0):
-            baseline_err = f"`total` is not a valid count ({baseline_total!r})"
+                                     or baseline_total <= 0):
+            baseline_err = (f"`total` is not a valid count ({baseline_total!r})"
+                            f" -- a zero denominator disarms the population "
+                            f"gate rather than setting a floor")
 
     # STDERR, not stdout. stdout is this check's FINDINGS channel -- lint.sh
     # routes every line of it through error() on rc 0 -- so informational

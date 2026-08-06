@@ -1,0 +1,487 @@
+#!/usr/bin/env python3
+# ============================================================================
+# ONE cache-schema validator for BOTH cache readers (TODO-06 section 17).
+#
+# WHAT THIS MODULE IS -- and, just as load-bearing, what it is NOT.
+#
+# Two readers consume build/todo-cache.json and, before this module, disagreed
+# about which caches are valid at all:
+#
+#   corpus_resolution_snapshot._load_nodes  fail-closed, every check traceable
+#                                           to a Codex finding, one code (rc 3)
+#   check_stub_behind_stamp.main            validated containers only, leaned on
+#                                           `except Exception -> rc 6`, and
+#                                           SILENTLY walked zero refs on a
+#                                           wrong-typed-but-falsey shape
+#
+# So the same corrupt cache produced an infrastructure refusal on one side and
+# a clean-looking lint on the other. That is the divergence this module ends.
+#
+# SCOPE -- the two kinds of check here are DELIBERATELY separate, because
+# conflating them is what let a producer regression read as "old cache":
+#
+#   SCHEMA checks    enforce schema/cache.schema.json for THE FIELDS BOTH
+#                    READERS CONSUME: the `stamped_items` subtree, plus the
+#                    node-level `file_path` that both walks build occurrence
+#                    keys from. "Consumed by a reader" is the scope line, not
+#                    "inside stamped_items" -- an unvalidated consumed field
+#                    becomes identity data and turns a corrupt cache into a
+#                    VERDICT rather than an infrastructure refusal. Until
+#                    this module, NOTHING in the repo validated against that
+#                    file: it was checked-in documentation with no enforcement
+#                    path (Codex design review, section 17). The rules here are
+#                    derived from it, and test_build.sh asserts that agreement
+#                    against `jsonschema` as an INDEPENDENT oracle -- not by the
+#                    two readers agreeing with each other, which would only
+#                    prove they share a defect.
+#
+#   READINESS checks are operational, not schema: does the cache exist, does it
+#                    parse, does it hold any nodes, is it stale against
+#                    todo/**/*.md, does it carry a stamped population at all.
+#                    A JSON Schema cannot express any of them, and one of them
+#                    deliberately DIVERGES from the schema: cache.schema.json
+#                    permits a root `[]`, because it describes what the producer
+#                    may legally EMIT. The readers additionally require
+#                    something to walk, so `[]` is refused here as READINESS
+#                    (REASON_EMPTY), never as a schema violation. That split is
+#                    stated rather than hidden (Codex design review, section 17).
+#
+# NOT IN SCOPE: the node-level frontmatter fields neither reader consumes
+# (id/domain/status/sections and friends). Validating them here would advertise
+# a contract this module does not test. `build.py` owns them.
+#
+# THE POPULATION QUESTION IS THE CALLER'S, NOT THIS MODULE'S. An empty stamped
+# population is not a shape error, and the two readers legitimately want
+# different outcomes for it (a vacuous baseline is useless to the snapshot; a
+# population COLLAPSE must reach the lint's own rc 7 regression gate rather
+# than be pre-empted as a warning). So this module REPORTS the population as a
+# fact and lets each caller apply policy -- see `CacheInfo` below.
+#
+# SHARING THE RULE MUST NOT COLLAPSE THE CODES. The snapshot documents rc 3 for
+# "could not run"; the lint documents 2/3/4/5 and section 16's wiring depends
+# on both contracts. This module therefore RAISES with a `reason` tag and never
+# calls sys.exit; each caller maps reason -> its own documented code.
+# ============================================================================
+
+import json
+import os
+from pathlib import Path
+
+# Reason tags. Callers map these to their OWN documented exit codes; a caller
+# that grows a new code maps it here rather than re-deriving the rule.
+REASON_MISSING = "MISSING"                  # cache file absent
+REASON_UNREADABLE = "UNREADABLE"            # unreadable or not parseable JSON
+REASON_SHAPE = "SHAPE"                      # parsed, but violates the schema
+REASON_EMPTY = "EMPTY"                      # readiness: no nodes to walk at all
+REASON_LEGACY_NO_STAMPED_ITEMS = "LEGACY"   # predates the section 9 extension
+REASON_STALE = "STALE"                      # older than the newest TODO
+
+# Path to the schema these rules implement. Quoted in errors so a failure names
+# the contract it violated instead of just the offending value.
+SCHEMA_REL = "scripts/todo-graph/schema/cache.schema.json"
+
+# Input budget, enforced BEFORE the file is materialised. The live cache is
+# ~3.3 MiB across 232 nodes, so 64 MiB is ~19x headroom while still bounding a
+# hostile input. Same role as `resolve_symbol._MAX_FILE_BYTES` (16 MiB), larger
+# because this is the whole corpus in one document rather than one source file.
+_MAX_CACHE_BYTES = 64 * 1024 * 1024
+
+
+class CacheSchemaError(RuntimeError):
+    """The cache cannot support a trustworthy walk.
+
+    Carries a `reason` tag rather than an exit code: the two readers document
+    DIFFERENT codes for the same condition and both contracts are load-bearing.
+    """
+
+    def __init__(self, reason: str, message: str):
+        super().__init__(message)
+        self.reason = reason
+
+
+class CacheInfo:
+    """Facts a caller needs for POLICY, which this module deliberately does not
+    make. `population` is the total number of stamped items across all nodes;
+    `key_present` is whether ANY node carries the `stamped_items` key at all.
+
+    The pair separates two conditions that a single "no stamped items" check
+    conflated (Codex design review, section 17, [high]): a LEGACY cache that
+    predates the extension (key absent everywhere -- a genuine "run build",
+    warn-worthy) from a CURRENT cache whose producer regressed to emitting an
+    empty population (key present, zero items -- a regression that must not be
+    downgraded to a warning).
+    """
+
+    __slots__ = ("population", "key_present")
+
+    def __init__(self, population: int, key_present: bool):
+        self.population = population
+        self.key_present = key_present
+
+
+def _err(reason: str, message: str):
+    raise CacheSchemaError(reason, message)
+
+
+def _require_int(value, lo: int, where: str, field: str, path):
+    """Schema says integer with a minimum. `bool` is an `int` in Python and is
+    NOT an integer here -- rejected explicitly rather than silently accepted as
+    0/1, which would let `section_n: true` become a dict key downstream.
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        _err(REASON_SHAPE,
+             f"{where} `{field}` is {type(value).__name__}, expected integer "
+             f"(per {SCHEMA_REL}): {path}")
+    if value < lo:
+        _err(REASON_SHAPE,
+             f"{where} `{field}` is {value}, expected >= {lo} "
+             f"(per {SCHEMA_REL}): {path}")
+
+
+def _require_str(value, where: str, field: str, path, min_len: int = 0):
+    if not isinstance(value, str):
+        _err(REASON_SHAPE,
+             f"{where} `{field}` is {type(value).__name__}, expected string "
+             f"(per {SCHEMA_REL}): {path}")
+    if len(value) < min_len:
+        _err(REASON_SHAPE,
+             f"{where} `{field}` is empty, expected minLength {min_len} "
+             f"(per {SCHEMA_REL}): {path}")
+
+
+_ITEM_KEYS = ("section_n", "item_idx", "item_text", "refs")
+_REF_KEYS_FILE = ("kind", "file", "line")
+_REF_KEYS_SYMBOL = ("kind", "symbol", "file")
+
+
+def validate_nodes(nodes, path) -> CacheInfo:
+    """Validate the `stamped_items` subtree of an already-parsed cache.
+
+    Split out of `load_and_validate` so a caller holding nodes in memory (and
+    the tests) can apply the identical rule without touching the filesystem.
+    """
+    if not isinstance(nodes, list):
+        _err(REASON_SHAPE, f"cache is not a JSON array: {path}")
+    if not nodes:
+        # READINESS, not schema (see the header): an empty array parses cleanly
+        # and then walks nothing -- the vacuous pass this module exists to
+        # refuse. Distinct from LEGACY: a cache that exists and contains no
+        # nodes at all did not come from a working producer, so it is not the
+        # "contributor has not built it yet" case either.
+        _err(REASON_EMPTY, f"cache is an empty node array: {path}")
+
+    population = 0
+    key_present = False
+
+    for i, node in enumerate(nodes):
+        if not isinstance(node, dict):
+            _err(REASON_SHAPE,
+                 f"cache node {i} is not an object "
+                 f"({type(node).__name__}): {path}")
+        # NODE-LEVEL FIELDS THE WALKS CONSUME ARE IN SCOPE. `file_path` is a
+        # required string in the schema and BOTH readers build occurrence keys
+        # from it (`node.get("file_path") or "?"`). Left unchecked, a
+        # list-valued one is truthy and gets STRINGIFIED into the key, so the
+        # snapshot reports a bogus DROPPED/ADDED at rc 1 -- a verdict -- or
+        # writes a poisoned baseline, instead of refusing with rc 3 (Codex
+        # adversarial, section 17). That is why the scope line is "fields the
+        # readers consume", not "the stamped_items subtree".
+        if "file_path" not in node:
+            _err(REASON_SHAPE,
+                 f"cache node {i} is missing required `file_path` "
+                 f"(per {SCHEMA_REL}): {path}")
+        _require_str(node["file_path"], f"cache node {i}", "file_path", path, 1)
+        if "stamped_items" not in node:
+            # Legal and COMMON: the schema emits `stamped_items` only when a
+            # body has at least one [x] item. Measured on the live cache:
+            # 156 of 232 nodes have no shipped items and correctly omit it.
+            continue
+        key_present = True
+        items = node["stamped_items"]
+        # NOT a truthiness test. `stamped_items: {}` is wrong-typed but falsey,
+        # so `node.get("stamped_items") or []` treated it as absent and walked
+        # zero items while reporting a clean run -- the exact vacuous-pass class
+        # section 14 closed on the snapshot side and the lint still carried.
+        if not isinstance(items, list):
+            _err(REASON_SHAPE,
+                 f"cache node {i} `stamped_items` is "
+                 f"{type(items).__name__}, expected array "
+                 f"(per {SCHEMA_REL}): {path}")
+
+        for j, it in enumerate(items):
+            where = f"cache node {i} item {j}"
+            if not isinstance(it, dict):
+                _err(REASON_SHAPE,
+                     f"{where} is not an object "
+                     f"({type(it).__name__}): {path}")
+            for field in _ITEM_KEYS:
+                if field not in it:
+                    _err(REASON_SHAPE,
+                         f"{where} is missing required `{field}` "
+                         f"(per {SCHEMA_REL}): {path}")
+            extra = [k for k in it if k not in _ITEM_KEYS]
+            if extra:
+                # additionalProperties: false. An unknown key is producer drift;
+                # failing closed here is what forces the schema and the readers
+                # to be updated together instead of silently diverging.
+                _err(REASON_SHAPE,
+                     f"{where} has unknown key(s) {sorted(extra)} "
+                     f"(additionalProperties false per {SCHEMA_REL}): {path}")
+            # `section_n` is used as a DICT KEY by both readers, so a non-scalar
+            # is unhashable and raises TypeError from inside the walk -- which
+            # escaped as the tool's documented "a prior verdict changed" code
+            # (Codex consistency, section 16).
+            _require_int(it["section_n"], 1, where, "section_n", path)
+            _require_int(it["item_idx"], 0, where, "item_idx", path)
+            _require_str(it["item_text"], where, "item_text", path)
+
+            refs = it["refs"]
+            # Same falsey trap as `stamped_items`: `refs: {}` is not a list and
+            # must not read as "no refs".
+            if not isinstance(refs, list):
+                _err(REASON_SHAPE,
+                     f"{where} `refs` is {type(refs).__name__}, expected array "
+                     f"(per {SCHEMA_REL}): {path}")
+            population += 1
+
+            for k, r in enumerate(refs):
+                rwhere = f"{where} ref {k}"
+                if not isinstance(r, dict):
+                    _err(REASON_SHAPE,
+                         f"{rwhere} is not an object "
+                         f"({type(r).__name__}): {path}")
+                kind = r.get("kind")
+                # `kind` is a schema `const`, not free text: the readers branch
+                # on it, so an unknown kind silently drops the ref from every
+                # bucket rather than being counted as anything.
+                if kind == "file":
+                    allowed = _REF_KEYS_FILE
+                    _require_str(r.get("file"), rwhere, "file", path, 1)
+                    if "line" in r:
+                        _require_int(r["line"], 1, rwhere, "line", path)
+                elif kind == "symbol":
+                    allowed = _REF_KEYS_SYMBOL
+                    _require_str(r.get("symbol"), rwhere, "symbol", path, 1)
+                    # `file` is OPTIONAL on a symbol ref (absent when the item
+                    # names a symbol with no nearby file reference), but when
+                    # present it must be a usable non-empty string: the readers
+                    # call `.startswith` on it.
+                    if "file" in r:
+                        _require_str(r["file"], rwhere, "file", path, 1)
+                else:
+                    _err(REASON_SHAPE,
+                         f"{rwhere} `kind` is {kind!r}, expected 'file' or "
+                         f"'symbol' (per {SCHEMA_REL}): {path}")
+                extra = [x for x in r if x not in allowed]
+                if extra:
+                    _err(REASON_SHAPE,
+                         f"{rwhere} has unknown key(s) {sorted(extra)} "
+                         f"(additionalProperties false per {SCHEMA_REL}): "
+                         f"{path}")
+
+    if not key_present:
+        # LEGACY, and reported distinctly from an empty population: this cache
+        # predates the section 9 extension or came from a different generator,
+        # which is a "rebuild it" condition rather than a regression.
+        _err(REASON_LEGACY_NO_STAMPED_ITEMS,
+             f"cache carries no stamped_items -- it predates the section 9 "
+             f"extension, or came from a different generator: {path}")
+
+    return CacheInfo(population=population, key_present=key_present)
+
+
+def check_freshness(cache_path: Path, todo_root: Path,
+                    cache_mtime: float = None) -> None:
+    """Refuse a cache older than the newest TODO. FAIL-CLOSED in all three ways
+    the lint copy was fail-open (Codex design review, section 17):
+
+      * `os.walk` SWALLOWS traversal errors unless given an `onerror` callback,
+        so an unreadable subtree left `newest` low and an old cache looked
+        fresh. The snapshot copy passes `onerror`; the lint copy did not.
+      * a `stat` failure returned "not stale" instead of raising.
+      * zero TODO files found read as fresh, so a cache was called fresh
+        against an empty corpus.
+    """
+    def _walk_err(exc):
+        _err(REASON_STALE, f"cannot traverse todo tree: {exc}")
+
+    todo_root = Path(todo_root)
+    if not todo_root.is_dir():
+        # The lint guarded this with `if todo_root.is_dir()` and SKIPPED the
+        # whole staleness check when it was absent -- the fail-open the check
+        # exists to close. `todo/` is tracked, so its absence is infrastructure.
+        _err(REASON_STALE,
+             f"todo root is not a readable directory: {todo_root}")
+    def _scan():
+        """One generation of the TODO corpus: {path: (dev, ino, size, mtime_ns)}."""
+        seen = {}
+        for dirpath, _, files in os.walk(todo_root, onerror=_walk_err):
+            for f in files:
+                if f.startswith("TODO-") and f.endswith(".md"):
+                    fp = os.path.join(dirpath, f)
+                    st = os.stat(fp)
+                    seen[fp] = (st.st_dev, st.st_ino, st.st_size,
+                                st.st_mtime_ns)
+        return seen
+
+    try:
+        # `cache_mtime` is the mtime of the descriptor the caller actually READ.
+        # Falling back to a fresh stat is only for a direct caller that has no
+        # descriptor; `load_and_validate` always passes the bound value, which
+        # is what makes the freshness verdict describe the parsed bytes.
+        cache_m = (Path(cache_path).stat().st_mtime if cache_mtime is None
+                   else cache_mtime)
+        # THE CORPUS IS GENERATION-BOUND TOO, not just the cache. Each TODO used
+        # to be statted ONCE into a running `max()`, so a file edited AFTER the
+        # walk had already visited it was never observed: its new mtime could
+        # not raise `newest`, the cache itself need not change, the descriptor
+        # comparison in the caller still passed, and both readers walked stale
+        # nodes and produced a VERDICT instead of the documented STALE
+        # infrastructure code (Codex adversarial round 2, section 17). Two
+        # scans, compared as whole sets, also catch a TODO added or removed
+        # mid-walk, which a running maximum structurally cannot see.
+        before = _scan()
+        newest = max((v[3] for v in before.values()), default=0) / 1e9
+    except OSError as exc:
+        _err(REASON_STALE, f"cannot determine cache freshness: {exc}")
+    if not before:
+        _err(REASON_STALE,
+             f"no TODO files found under {todo_root} -- refusing to call a "
+             f"cache fresh against an empty corpus")
+    if newest > cache_m:
+        _err(REASON_STALE,
+             f"cache is STALE (a TODO is newer than {cache_path}); rebuild via "
+             f"scripts/todo-graph/build-and-validate.sh --keep-cache")
+    try:
+        after = _scan()
+    except OSError as exc:
+        _err(REASON_STALE, f"cannot determine cache freshness: {exc}")
+    if after != before:
+        changed = sorted(set(before) ^ set(after)) or sorted(
+            p for p in before if p in after and before[p] != after[p])
+        _err(REASON_STALE,
+             f"the TODO corpus changed while freshness was being checked "
+             f"({len(changed)} file(s), e.g. {changed[0] if changed else '?'}); "
+             f"re-run rather than certify a cache against a moving corpus")
+
+
+def load_and_validate(cache_path: Path, todo_root: Path,
+                      check_stale: bool = True):
+    """Read, parse and validate the cache. Returns `(nodes, CacheInfo)`.
+
+    MemoryError IS NORMALIZED ACROSS THE WHOLE OPERATION, which is why this is
+    a thin wrapper. The bounded read, the UTF-8 decode and `validate_nodes` all
+    allocate OUTSIDE the `json.loads` handler, and both readers catch only
+    `CacheSchemaError` -- so an allocation failure in any other stage escaped as
+    a bare rc 1, which `corpus_resolution_snapshot` DOCUMENTS as "a prior
+    verdict changed". An OOM would have been reported to the section 16 gate as
+    a resolver REGRESSION (Codex adversarial round 2, section 17). Compact JSON
+    also expands several-fold into Python objects, so this is reachable under a
+    constrained CI memory budget well before the byte ceiling binds.
+    """
+    try:
+        return _load_and_validate(cache_path, todo_root, check_stale)
+    except MemoryError:
+        # Deliberately no f-string interpolation of the exception: formatting a
+        # message is itself an allocation, and this handler runs precisely when
+        # allocation is failing.
+        _err(REASON_UNREADABLE,
+             "cache could not be loaded: out of memory while reading, "
+             "decoding or validating it")
+
+
+def _load_and_validate(cache_path: Path, todo_root: Path,
+                       check_stale: bool = True):
+    """The real body. See `load_and_validate` for the MemoryError contract.
+
+    Raises `CacheSchemaError` with a `reason` tag; the caller maps it to its own
+    documented exit code and NEVER lets it escape as a traceback -- an uncaught
+    one exits 1, which both readers document as a real verdict rather than an
+    infrastructure failure.
+
+    THE READ IS GENERATION-BOUND. The cache is opened ONCE and every later
+    decision -- the size budget, the freshness comparison, the rewrite check --
+    comes from `fstat` on THAT descriptor rather than a fresh `stat` of the
+    pathname. Reading bytes and then separately stat-ing the path is a real
+    TOCTOU here: `build.py` rewrites this exact file, so a reader could parse
+    the OLD cache, the producer could finish writing the NEW one, and the
+    freshness check would certify stale in-memory nodes with the new file's
+    mtime (Codex adversarial, section 17). `resolve_symbol` guards source files
+    the same way.
+    """
+    cache_path = Path(cache_path)
+    try:
+        fh = open(cache_path, "rb")
+    except FileNotFoundError:
+        _err(REASON_MISSING,
+             f"cache not found: {cache_path} (run build-and-validate.sh)")
+    except OSError as exc:
+        _err(REASON_UNREADABLE, f"cache unreadable: {cache_path}: {exc}")
+    try:
+        try:
+            st_before = os.fstat(fh.fileno())
+            # BUDGET BEFORE ALLOCATION. `read_text` + `json.loads` materialise
+            # the whole file and then its entire object graph with no ceiling,
+            # so a hostile or corrupt cache could exhaust memory and kill the
+            # process OUTSIDE the documented reason codes -- the one failure
+            # mode neither reader can report (Codex adversarial, section 17).
+            # Mirrors `resolve_symbol._MAX_FILE_BYTES`.
+            if st_before.st_size > _MAX_CACHE_BYTES:
+                _err(REASON_UNREADABLE,
+                     f"cache is {st_before.st_size} bytes, past the "
+                     f"{_MAX_CACHE_BYTES}-byte ceiling: {cache_path}")
+            # limit+1 so a file that GREW between fstat and read is caught by
+            # the length test below rather than silently truncated into what
+            # would look like an ordinary parse error.
+            blob = fh.read(_MAX_CACHE_BYTES + 1)
+        except OSError as exc:
+            _err(REASON_UNREADABLE, f"cache unreadable: {cache_path}: {exc}")
+        if len(blob) > _MAX_CACHE_BYTES:
+            _err(REASON_UNREADABLE,
+                 f"cache grew past the {_MAX_CACHE_BYTES}-byte ceiling while "
+                 f"being read: {cache_path}")
+        try:
+            raw = blob.decode("utf-8")
+        except ValueError as exc:
+            # UnicodeDecodeError IS a ValueError but neither an OSError nor a
+            # JSONDecodeError, so a narrower tuple let it escape as a bare
+            # exit 1 on the lint side.
+            _err(REASON_UNREADABLE, f"cache unreadable: {cache_path}: {exc}")
+        try:
+            nodes = json.loads(raw)
+        except (ValueError, RecursionError, MemoryError) as exc:
+            # RecursionError is NEITHER a ValueError nor an OSError: deeply
+            # nested JSON blew the parser stack and escaped the lint's handler
+            # entirely. MemoryError is caught for the same reason -- an
+            # allocation failure inside the parser must still report as an
+            # infrastructure reason rather than a traceback.
+            _err(REASON_UNREADABLE, f"cache unreadable: {cache_path}: {exc}")
+
+        info = validate_nodes(nodes, cache_path)
+        if check_stale:
+            # Compare against the mtime of the descriptor actually READ, never
+            # a fresh stat of the name.
+            check_freshness(cache_path, todo_root,
+                            cache_mtime=st_before.st_mtime)
+            # ...and prove the file did not change underneath the operation. A
+            # rewrite means the parsed nodes may already describe a tree that
+            # no longer exists, so the honest answer is an infrastructure
+            # refusal rather than a verdict computed from mixed generations.
+            try:
+                st_after = os.fstat(fh.fileno())
+                st_path = os.stat(cache_path)
+            except OSError as exc:
+                _err(REASON_STALE,
+                     f"cache became unreadable during validation: "
+                     f"{cache_path}: {exc}")
+            if (st_after.st_mtime_ns != st_before.st_mtime_ns
+                    or st_after.st_size != st_before.st_size
+                    or (st_path.st_dev, st_path.st_ino)
+                    != (st_before.st_dev, st_before.st_ino)):
+                _err(REASON_STALE,
+                     f"cache was rewritten while it was being validated (a "
+                     f"concurrent build-and-validate.sh?); re-run rather than "
+                     f"trust a verdict from mixed generations: {cache_path}")
+    finally:
+        fh.close()
+    return nodes, info

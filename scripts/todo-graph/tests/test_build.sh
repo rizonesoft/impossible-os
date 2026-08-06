@@ -5439,14 +5439,24 @@ gate_seed() {
         git config user.email "test@example.invalid"
         git config user.name "identity gate fixture"
         # Seed with the working-tree closure files (the code under test).
-        for f in scripts/todo-graph/corpus_resolution_snapshot.py \
-                 scripts/todo-graph/ref_resolution.py \
-                 scripts/todo-graph/resolve_symbol.py \
-                 scripts/todo-graph/build.py \
-                 scripts/todo-graph/identity-gate.sh \
-                 scripts/lint/check_stub_behind_stamp.py; do
-            [ -f "$REPO_ROOT/$f" ] && cp "$REPO_ROOT/$f" "$f"
-        done
+        #
+        # DERIVED FROM THE GATE'S OWN `CLOSURE` ARRAY, never a second hardcoded
+        # copy of it. This list WAS hardcoded, and section 17 paid for it: the
+        # closure grew `cache_schema.py`, this list did not, so the clone got a
+        # snapshot importing a module that was not there. Every gate fixture
+        # then failed with an import error at rc 1/3 -- which reads as "the gate
+        # mis-fired" rather than "the fixture is missing a file". Extracting the
+        # array literal means the two cannot drift again.
+        while IFS= read -r f; do
+            [ -n "$f" ] && [ -f "$REPO_ROOT/$f" ] && cp "$REPO_ROOT/$f" "$f"
+        done < <(sed -n '/^CLOSURE=(/,/^)/p' \
+                     "$REPO_ROOT/scripts/todo-graph/identity-gate.sh" \
+                 | sed -n 's/^[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p')
+        # check_stub_behind_stamp.py is DELIBERATELY absent from the closure
+        # (it is neither executed by the walks nor an input to them), but the
+        # fixture still needs the file present to exercise the lint side.
+        cp "$REPO_ROOT/scripts/lint/check_stub_behind_stamp.py" \
+           scripts/lint/check_stub_behind_stamp.py 2>/dev/null || true
         # Prune the corpus: keep a handful of TODOs so the double walk is fast.
         keep=0
         while IFS= read -r t; do
@@ -5686,8 +5696,14 @@ PY
     # cache to CI as a resolver REGRESSION (Codex consistency, section 16).
     python3 - "$TMP_DIR/bad-cache.json" <<'PY'
 import json, sys
+# Every OTHER field is schema-valid on purpose, so the unhashable `section_n`
+# is what the validator actually rejects. Before section 17 this item also
+# omitted `item_text`; once the shared validator began enforcing the documented
+# required-field list, that omission would have fired FIRST and this fixture
+# would have silently stopped testing the property it names.
 json.dump([{"file_path": "todo/x.md",
             "stamped_items": [{"section_n": ["not", "hashable"], "item_idx": 0,
+                               "item_text": "x",
                                "refs": [{"kind": "symbol", "file": "a.c",
                                          "symbol": "f"}]}]}],
           open(sys.argv[1], "w"))
@@ -5714,6 +5730,426 @@ PY
     else
         t_fail "identity gate: write --strict exited $GATE_RC, expected 2 (see $TMP_DIR/gate-22f.log)"
     fi
+fi
+
+# ----------------------------------------------------------------------
+# Test 23: ONE SHARED CACHE-SCHEMA VALIDATOR FOR BOTH CACHE READERS (s17)
+#
+# The two readers used to disagree about which caches are valid at all, so the
+# SAME bad cache produced an infrastructure refusal on one side and a clean
+# lint on the other. Every fixture below is therefore asserted against BOTH
+# readers in the SAME sub-test: a rule fixed on one side and not the other
+# fails here instead of passing twice.
+#
+# THE ORACLE IS NOT "THE TWO READERS AGREE". Two readers sharing one module
+# agree by construction, including when the module is wrong -- that is a
+# correlated failure, not a verification (Codex design review, section 17).
+# Each SCHEMA fixture is therefore ALSO checked against
+# scripts/todo-graph/schema/cache.schema.json via `jsonschema`, an oracle
+# derived from the checked-in contract rather than from our own code.
+# ----------------------------------------------------------------------
+CS_TREE="$TMP_DIR/cs-tree"
+mkdir -p "$CS_TREE/todo/01-test" "$CS_TREE/build" "$CS_TREE/src"
+cat > "$CS_TREE/todo/01-test/TODO-01-cs.md" <<'MD'
+# TODO-01 cache-schema fixture
+MD
+printf 'void f(void) { return; }\n' > "$CS_TREE/src/a.c"
+
+# The GOOD cache: schema-valid, non-empty population. Every mutation below is
+# this document with exactly one thing changed, so a fixture cannot fail for an
+# unrelated reason.
+python3 - "$CS_TREE/build/good.json" <<'PY'
+import json, sys
+json.dump([{"file_path": "todo/01-test/TODO-01-cs.md",
+            "stamped_items": [{"section_n": 1, "item_idx": 0,
+                               "item_text": "shipped a thing",
+                               "refs": [{"kind": "symbol", "file": "src/a.c",
+                                         "symbol": "f"}]}]}],
+          open(sys.argv[1], "w"))
+PY
+# The cache must be NEWER than the TODO or the shared freshness rule fires.
+touch "$CS_TREE/build/good.json"
+
+# cs_case <label> <mutation-python> <want_lint_rc> <want_snap_rc> <schema_verdict>
+#   schema_verdict: reject | accept | skip  (the INDEPENDENT jsonschema oracle)
+cs_case() {
+    local label="$1" mut="$2" want_lint="$3" want_snap="$4" schema_verdict="$5"
+    local f="$CS_TREE/build/case.json"
+    python3 - "$CS_TREE/build/good.json" "$f" <<PY
+import json, sys
+doc = json.load(open(sys.argv[1]))
+$mut
+json.dump(doc, open(sys.argv[2], "w"))
+PY
+    touch "$f"
+    # Reader B: lint Check 7 helper.
+    STUB_LINT_CACHE="$f" STUB_LINT_REPO_ROOT="$CS_TREE" \
+        STUB_LINT_ALLOW_NO_BASELINE=1 \
+        python3 "$REPO_ROOT/scripts/lint/check_stub_behind_stamp.py" \
+        >"$TMP_DIR/cs-lint.out" 2>"$TMP_DIR/cs-lint.err"
+    local lint_rc=$?
+    # Reader A: corpus resolution snapshot.
+    STUB_LINT_CACHE="$f" STUB_LINT_REPO_ROOT="$CS_TREE" \
+        python3 "$REPO_ROOT/scripts/todo-graph/corpus_resolution_snapshot.py" \
+        write "$TMP_DIR/cs-snap.json" >"$TMP_DIR/cs-snap.err" 2>&1
+    local snap_rc=$?
+    if [ "$lint_rc" != "$want_lint" ] || [ "$snap_rc" != "$want_snap" ]; then
+        t_fail "shared cache schema: $label -- lint rc=$lint_rc (want $want_lint), snapshot rc=$snap_rc (want $want_snap)"
+        return
+    fi
+    if [ "$schema_verdict" != "skip" ]; then
+        CS_SCHEMA_VERDICT="$schema_verdict" python3 - "$f" \
+            "$REPO_ROOT/scripts/todo-graph/schema/cache.schema.json" \
+            >"$TMP_DIR/cs-schema.err" 2>&1 <<'PY'
+import json, os, sys
+try:
+    import jsonschema
+except ImportError:
+    print("FAIL: jsonschema not installed -- run scripts/setup-deps.sh")
+    sys.exit(2)
+doc = json.load(open(sys.argv[1]))
+schema = json.load(open(sys.argv[2]))
+want = os.environ["CS_SCHEMA_VERDICT"]
+# SCOPE THE ORACLE TO WHAT THE MODULE CLAIMS. cache_schema validates the
+# `stamped_items` SUBTREE, not the node-level frontmatter (build.py owns that),
+# so validating a fixture node against the whole node schema would reject it
+# for missing `id`/`domain`/`created_at` -- an unrelated reason that would make
+# every verdict here meaningless. Pull the subschema out of the same checked-in
+# file so the oracle is still derived from the contract, not from our code.
+sub = schema["items"]["properties"]["stamped_items"]
+try:
+    if not doc:
+        # No nodes at all: nothing to scope to, so check the ROOT shape. This
+        # is the case that documents the deliberate divergence -- the schema
+        # permits `[]` (it describes what the producer may emit) while both
+        # readers refuse it (they additionally need something to walk).
+        jsonschema.validate(doc, schema)
+    else:
+        for node in doc:
+            if "stamped_items" in node:
+                jsonschema.validate(node["stamped_items"], sub)
+    got = "accept"
+except jsonschema.ValidationError:
+    got = "reject"
+if got != want:
+    print(f"FAIL: independent schema oracle said {got}, expected {want}")
+    sys.exit(1)
+PY
+        if [ $? -ne 0 ]; then
+            t_fail "shared cache schema: $label -- $(cat "$TMP_DIR/cs-schema.err")"
+            return
+        fi
+    fi
+    t_pass "shared cache schema: $label"
+}
+
+# 23a: BASELINE -- the good cache passes BOTH readers. Without this every
+# rejection below could be passing for an unrelated reason (the mutation-check).
+cs_case "valid cache passes both readers" "pass" 0 0 accept
+
+# 23b/23c: THE FALSEY SHAPES -- the defect that motivated the section. These are
+# wrong-typed but FALSEY, so the lint's `... or []` / `.get("refs", [])` treated
+# them as ABSENT and walked ZERO refs while reporting a clean run.
+cs_case "falsey stamped_items {} is rejected, not silently skipped" \
+    'doc[0]["stamped_items"] = {}' 5 3 reject
+cs_case "falsey refs {} is rejected, not silently skipped" \
+    'doc[0]["stamped_items"][0]["refs"] = {}' 5 3 reject
+
+# 23d: `section_n` is a DICT KEY in both walks, so a non-integer is unhashable
+# or mis-keys the section scope.
+cs_case "string section_n is rejected (schema says integer)" \
+    'doc[0]["stamped_items"][0]["section_n"] = "1"' 5 3 reject
+
+# 23e: required fields. `_load_nodes` permitted these to be absent; the
+# checked-in schema does not.
+cs_case "missing required item_text is rejected" \
+    'del doc[0]["stamped_items"][0]["item_text"]' 5 3 reject
+
+# 23f: `kind` is a schema `const`, not free text -- the readers branch on it, so
+# an unknown kind drops the ref from every bucket rather than being counted.
+cs_case "unknown ref kind is rejected" \
+    'doc[0]["stamped_items"][0]["refs"][0]["kind"] = "wat"' 5 3 reject
+
+# 23g: additionalProperties false -- an unknown key is producer drift, and
+# failing closed forces schema and readers to move together.
+cs_case "unknown ref key is rejected (additionalProperties false)" \
+    'doc[0]["stamped_items"][0]["refs"][0]["extra"] = 1' 5 3 reject
+
+# 23g2/23g3: `file_path` IS a consumed node field -- both walks build occurrence
+# keys from `node.get("file_path") or "?"`. Unvalidated, a list-valued one is
+# TRUTHY and gets stringified into the key, so the snapshot reports a bogus
+# DROPPED/ADDED at rc 1 (a VERDICT) or writes a poisoned baseline, instead of
+# refusing at rc 3. The schema oracle is skipped here: `file_path` lives on the
+# node, outside the `stamped_items` subschema this oracle is scoped to.
+cs_case "wrong-typed file_path is an infrastructure error, not a verdict" \
+    'doc[0]["file_path"] = ["a", "b"]' 5 3 skip
+cs_case "missing file_path is an infrastructure error, not a verdict" \
+    'del doc[0]["file_path"]' 5 3 skip
+
+# 23h: EMPTY ARRAY is a READINESS refusal, and the one place the readers
+# DELIBERATELY diverge from the schema: cache.schema.json permits `[]` because
+# it describes what the producer may legally EMIT, while a reader additionally
+# needs something to walk. The oracle is asserted to ACCEPT here on purpose --
+# that documents the divergence instead of hiding it.
+cs_case "empty node array is refused by both readers" \
+    'doc.clear()' 5 3 accept
+
+# 23i: LEGACY -- the field absent from EVERY node is a pre-extension cache, a
+# genuine "run build". It is the ONE cache-level condition the lint still routes
+# to its WARN code (3), and it must stay distinguishable from 23j below.
+cs_case "legacy cache with no stamped_items key is the WARN case" \
+    'del doc[0]["stamped_items"]' 3 3 accept
+
+# 23j: THE [high] DESIGN FINDING. A cache that HAS the field but carries an
+# EMPTY population is a producer regression, NOT an old cache. The two readers
+# take deliberately OPPOSITE actions on this single fact, which is why the
+# shared module reports the population rather than ruling on it:
+#   snapshot -> rc 3, because a snapshot over nothing is a vacuous baseline
+#   lint     -> does NOT short-circuit; the walk proceeds so the tool's own
+#               rc 7 population gate can adjudicate the loss. Pre-empting it
+#               with a cache-level rc 3 would route a REGRESSION through
+#               lint.sh as a WARNING -- and warnings leave the overall lint
+#               exit at 0, so the population loss would ship.
+# Here the floor is bypassed, so "not pre-empted" shows up as rc 0; 23k proves
+# the gate it hands off to actually fires.
+cs_case "empty population: snapshot refuses, lint defers to its population gate" \
+    'doc[0]["stamped_items"] = []' 0 3 accept
+
+# 23k: ...and the hand-off is real. With a baseline recording a population of 1,
+# the same emptied cache must reach rc 7 (POPULATION SHRANK), the ERROR path.
+# This is the assertion that would have failed under the rejected design.
+cat > "$CS_TREE/build/case.json" <<'JSON'
+[{"file_path": "todo/01-test/TODO-01-cs.md", "stamped_items": []}]
+JSON
+touch "$CS_TREE/build/case.json"
+mkdir -p "$CS_TREE/scripts/lint"
+cat > "$CS_TREE/scripts/lint/stub-lint-baseline.json" <<'JSON'
+{"resolved": 1, "total": 1}
+JSON
+STUB_LINT_CACHE="$CS_TREE/build/case.json" STUB_LINT_REPO_ROOT="$CS_TREE" \
+    python3 "$REPO_ROOT/scripts/lint/check_stub_behind_stamp.py" \
+    >"$TMP_DIR/cs-pop.out" 2>"$TMP_DIR/cs-pop.err"
+CS_POP_RC=$?
+if [ "$CS_POP_RC" = "7" ] && grep -q "POPULATION" "$TMP_DIR/cs-pop.err"; then
+    t_pass "shared cache schema: emptied population reaches the rc 7 gate (not a WARN)"
+else
+    t_fail "shared cache schema: emptied population gave rc=$CS_POP_RC (want 7 + POPULATION); $(head -2 "$TMP_DIR/cs-pop.err")"
+fi
+
+# 23k2: A ZERO BASELINE MUST NOT DISARM THE POPULATION GATE. 23k proves the
+# hand-off fires against a positive floor; this proves it cannot be silenced by
+# re-recording the baseline at zero while the producer is collapsed. Without
+# the `<= 0` rule, occurrences=0 vs total=0 compares equal, the resolved floor
+# 0 >= 0 passes, and the run exits 0 with lint.sh rendering `resolved=0/0` as
+# full-coverage INFO -- the collapse made permanent and invisible.
+cat > "$CS_TREE/scripts/lint/stub-lint-baseline.json" <<'JSON'
+{"resolved": 0, "total": 0}
+JSON
+STUB_LINT_CACHE="$CS_TREE/build/case.json" STUB_LINT_REPO_ROOT="$CS_TREE" \
+    python3 "$REPO_ROOT/scripts/lint/check_stub_behind_stamp.py" \
+    >"$TMP_DIR/cs-zero.out" 2>"$TMP_DIR/cs-zero.err"
+CS_ZERO_RC=$?
+if [ "$CS_ZERO_RC" = "8" ]; then
+    t_pass "shared cache schema: a zero baseline is rejected, not a free pass"
+else
+    t_fail "shared cache schema: zero baseline gave rc=$CS_ZERO_RC (want 8); $(head -2 "$TMP_DIR/cs-zero.err")"
+fi
+# Restore the positive floor so later fixtures are unaffected.
+cat > "$CS_TREE/scripts/lint/stub-lint-baseline.json" <<'JSON'
+{"resolved": 1, "total": 1}
+JSON
+
+# 23k3: THE CACHE BYTE CEILING is enforced BEFORE the file is materialised, so
+# a hostile cache reports a documented reason instead of an OOM kill outside
+# the exit-code contract. Asserted by shrinking the ceiling rather than writing
+# a 64 MiB fixture.
+CS_BIG_RC=$(STUB_LINT_CACHE="$CS_TREE/build/good.json" STUB_LINT_REPO_ROOT="$CS_TREE" \
+    python3 -c "
+import sys
+sys.path.insert(0, '$REPO_ROOT/scripts/todo-graph')
+import cache_schema as cs
+cs._MAX_CACHE_BYTES = 4
+try:
+    cs.load_and_validate('$CS_TREE/build/good.json', '$CS_TREE/todo')
+    print('NORAISE')
+except cs.CacheSchemaError as e:
+    print(e.reason)
+" 2>&1)
+if [ "$CS_BIG_RC" = "UNREADABLE" ]; then
+    t_pass "shared cache schema: an oversized cache is a documented reason, not an OOM"
+else
+    t_fail "shared cache schema: oversized cache gave '$CS_BIG_RC' (want UNREADABLE)"
+fi
+
+# 23k4: FRESHNESS IS BOUND TO THE BYTES PARSED. `check_freshness` takes the
+# mtime of the descriptor that was actually read; passing a stale one must fail
+# even though the file on disk is newer than every TODO. Without the binding, a
+# concurrent `build.py` rewrite lets a reader parse the OLD cache and then have
+# the NEW file's mtime certify it as fresh.
+CS_TOCTOU=$(python3 -c "
+import sys
+sys.path.insert(0, '$REPO_ROOT/scripts/todo-graph')
+import cache_schema as cs
+try:
+    cs.check_freshness('$CS_TREE/build/good.json', '$CS_TREE/todo', cache_mtime=1.0)
+    print('NORAISE')
+except cs.CacheSchemaError as e:
+    print(e.reason)
+" 2>&1)
+if [ "$CS_TOCTOU" = "STALE" ]; then
+    t_pass "shared cache schema: freshness uses the read descriptor's mtime, not a re-stat"
+else
+    t_fail "shared cache schema: bound-mtime freshness gave '$CS_TOCTOU' (want STALE)"
+fi
+
+# 23k5: A MemoryError ANYWHERE IN THE LOAD is a documented reason, not rc 1.
+# The read, the decode and validate_nodes all allocate outside the json.loads
+# handler, and both readers catch only CacheSchemaError -- so an OOM in any
+# other stage escaped as a bare rc 1, which the snapshot DOCUMENTS as "a prior
+# verdict changed". Fault-injected at the read, which is the stage furthest
+# from the original handler.
+CS_OOM=$(python3 -c "
+import builtins, sys
+sys.path.insert(0, '$REPO_ROOT/scripts/todo-graph')
+import cache_schema as cs
+real_open = builtins.open
+class BoomFile:
+    def __init__(self, fh): self._fh = fh
+    def fileno(self): return self._fh.fileno()
+    def read(self, *a): raise MemoryError('injected')
+    def close(self): return self._fh.close()
+builtins.open = lambda *a, **k: BoomFile(real_open(*a, **k))
+try:
+    cs.load_and_validate('$CS_TREE/build/good.json', '$CS_TREE/todo')
+    print('NORAISE')
+except cs.CacheSchemaError as e:
+    print(e.reason)
+except MemoryError:
+    print('ESCAPED')
+" 2>&1)
+if [ "$CS_OOM" = "UNREADABLE" ]; then
+    t_pass "shared cache schema: a MemoryError in the read is a reason, not a bare rc 1"
+else
+    t_fail "shared cache schema: injected MemoryError gave '$CS_OOM' (want UNREADABLE)"
+fi
+
+# 23k6: THE TODO CORPUS IS GENERATION-BOUND. A file edited AFTER the freshness
+# walk has already visited it was invisible to the old running max(): its new
+# mtime could not raise `newest`, the cache need not change, and both readers
+# walked stale nodes and produced a VERDICT. Two scans compared as whole sets
+# catch it -- and also catch a TODO added or removed mid-walk, which a running
+# maximum structurally cannot see. Injected by mutating the corpus from inside
+# the walk's own stat call.
+CS_GEN=$(python3 -c "
+import os, sys
+sys.path.insert(0, '$REPO_ROOT/scripts/todo-graph')
+import cache_schema as cs
+real_stat = os.stat
+state = {'n': 0}
+def hooked(path, *a, **k):
+    st = real_stat(path, *a, **k)
+    # On the FIRST TODO statted, touch it afterwards -- i.e. a file already
+    # visited by this walk changes before the walk finishes.
+    if state['n'] == 0 and str(path).endswith('.md'):
+        state['n'] = 1
+        os.utime(path, (st.st_atime + 50, st.st_mtime + 50))
+    return st
+os.stat = hooked
+try:
+    cs.check_freshness('$CS_TREE/build/good.json', '$CS_TREE/todo', cache_mtime=9e12)
+    print('NORAISE')
+except cs.CacheSchemaError as e:
+    print(e.reason)
+finally:
+    os.stat = real_stat
+" 2>&1)
+if [ "$CS_GEN" = "STALE" ]; then
+    t_pass "shared cache schema: a TODO changing mid-walk refuses instead of certifying"
+else
+    t_fail "shared cache schema: mid-walk corpus mutation gave '$CS_GEN' (want STALE)"
+fi
+# The injection bumped a fixture TODO's mtime; keep the cache newer than it.
+touch "$CS_TREE/build/good.json" "$CS_TREE/build/case.json"
+
+# 23l: MUTATION-CHECK THE RULE ITSELF. Delete the falsey-shape check from the
+# shared module and 23b must go red. A fixture that passes with the rule removed
+# is testing nothing -- this is the check that proves it is not.
+#
+# MUTATED AGAINST THE LINT, not the snapshot, and the difference is the point.
+# With the rule deleted, `stamped_items: {}` reaches `enumerate({})`, which
+# yields nothing -- so the SNAPSHOT still refuses at rc 3, but via its
+# zero-population guard rather than the deleted rule. It would look like a
+# passing mutation-check while proving nothing about the rule (observed while
+# writing this fixture). The lint is the side where this rule is uniquely
+# load-bearing: it has no population guard by design (see 23j), so deleting the
+# rule restores exactly the original defect -- a silent clean run over zero
+# refs. rc must therefore move OFF 5.
+#
+# A whole mini-TREE is copied, not one module: BOTH readers derive their import
+# root from their own file location (`Path(__file__).resolve().parent` /
+# `parents[2]`), which puts the REAL scripts/todo-graph ahead of PYTHONPATH, so
+# a mutant reachable only via PYTHONPATH is never imported.
+CS_MUT="$TMP_DIR/cs-mutant"
+rm -rf "$CS_MUT"; mkdir -p "$CS_MUT/scripts/todo-graph" "$CS_MUT/scripts/lint"
+cp "$REPO_ROOT"/scripts/todo-graph/*.py "$CS_MUT/scripts/todo-graph/"
+cp "$REPO_ROOT/scripts/lint/check_stub_behind_stamp.py" "$CS_MUT/scripts/lint/"
+CS_MUT_MOD="$CS_MUT/scripts/todo-graph"
+python3 - "$CS_MUT_MOD/cache_schema.py" <<'PY'
+import re, sys
+p = sys.argv[1]
+src = open(p).read()
+# Neuter ONLY the stamped_items list-type check (the 23b rule).
+needle = """        if not isinstance(items, list):"""
+assert needle in src, "mutation target not found -- cache_schema.py moved"
+src = src.replace(needle, """        if False:""", 1)
+open(p, "w").write(src)
+PY
+python3 - "$CS_TREE/build/good.json" "$CS_TREE/build/mut.json" <<'PY'
+import json, sys
+doc = json.load(open(sys.argv[1]))
+doc[0]["stamped_items"] = {}
+json.dump(doc, open(sys.argv[2], "w"))
+PY
+touch "$CS_TREE/build/mut.json"
+STUB_LINT_CACHE="$CS_TREE/build/mut.json" STUB_LINT_REPO_ROOT="$CS_TREE" \
+    STUB_LINT_ALLOW_NO_BASELINE=1 \
+    python3 "$CS_MUT/scripts/lint/check_stub_behind_stamp.py" \
+    >"$TMP_DIR/cs-mut.out" 2>"$TMP_DIR/cs-mut.err"
+CS_MUT_RC=$?
+# Sanity: the UNMUTATED lint must reject the same fixture at 5, or "5 -> not 5"
+# below would be measuring the fixture rather than the rule.
+STUB_LINT_CACHE="$CS_TREE/build/mut.json" STUB_LINT_REPO_ROOT="$CS_TREE" \
+    STUB_LINT_ALLOW_NO_BASELINE=1 \
+    python3 "$REPO_ROOT/scripts/lint/check_stub_behind_stamp.py" \
+    >/dev/null 2>&1
+CS_REAL_RC=$?
+if [ "$CS_REAL_RC" = "5" ] && [ "$CS_MUT_RC" != "5" ]; then
+    t_pass "shared cache schema: mutation-check -- deleting the falsey rule reopens the silent-clean-run defect"
+else
+    t_fail "shared cache schema: mutation-check FAILED -- real lint rc=$CS_REAL_RC (want 5), mutant rc=$CS_MUT_RC (want anything but 5)"
+fi
+
+# 23m: THE SHARED MODULE IS IN THE IDENTITY-GATE CLOSURE. It is imported by the
+# differentially-executed snapshot and can decide whether that snapshot RUNS AT
+# ALL, so a cache-schema-only change must not satisfy the gate's byte-identical
+# early exit and execute neither reader (Codex design review, section 17).
+if grep -q '"scripts/todo-graph/cache_schema.py"' \
+        "$REPO_ROOT/scripts/todo-graph/identity-gate.sh"; then
+    t_pass "shared cache schema: module is in the identity-gate CLOSURE"
+else
+    t_fail "shared cache schema: cache_schema.py missing from identity-gate.sh CLOSURE -- a schema-only change would skip the walk"
+fi
+
+# 23n: BOTH READERS ACTUALLY IMPORT THE SHARED MODULE. Without this, every
+# assertion above could be satisfied by two private copies that happen to agree
+# today -- which is the exact state section 17 exists to end.
+if grep -q "^import cache_schema as _cs" \
+        "$REPO_ROOT/scripts/todo-graph/corpus_resolution_snapshot.py" \
+   && grep -q "import cache_schema as _cs" \
+        "$REPO_ROOT/scripts/lint/check_stub_behind_stamp.py"; then
+    t_pass "shared cache schema: both readers import the one validator"
+else
+    t_fail "shared cache schema: a reader is not importing cache_schema -- the rule is not actually shared"
 fi
 
 # ----------------------------------------------------------------------

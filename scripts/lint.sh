@@ -458,9 +458,14 @@ else
     # Distinct exit codes (per check_stub_behind_stamp.py header):
     #   0 = clean walk        (route findings via error())
     #   2 = cache missing     -> WARN (contributor hasn't built it)
-    #   3 = no stamped_items  -> WARN (cache pre-extension; run build)
+    #   3 = no stamped_items  -> WARN (cache pre-extension; run build). This is
+    #       the LEGACY case only: the field absent from every node. A cache
+    #       that has the field but an empty population is a producer
+    #       regression and reaches the rc 7 gate instead (section 17).
     #   4 = cache stale       -> ERROR (false-clean risk; rebuild required)
-    #   5 = cache malformed   -> ERROR (corrupt JSON; investigate)
+    #   5 = cache malformed   -> ERROR (corrupt JSON, a shape violating
+    #       scripts/todo-graph/schema/cache.schema.json, or an empty node
+    #       array; investigate)
     #   6 = internal failure  -> ERROR
     #   7 = coverage floor breached -> ERROR (the check went blinder)
     #   8 = baseline invalid  -> ERROR (tracked floor file missing/corrupt)

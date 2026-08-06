@@ -72,7 +72,12 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 #
 #   DIFFERENTIALLY EXECUTED -- base and head versions both run, so a behaviour
 #   change between them IS what the comparison measures:
-#       corpus_resolution_snapshot.py, ref_resolution.py, resolve_symbol.py
+#       corpus_resolution_snapshot.py, ref_resolution.py, resolve_symbol.py,
+#       cache_schema.py -- imported by the snapshot since section 17, and it
+#       decides whether the snapshot RUNS AT ALL (it can turn a completed walk
+#       into an rc 3 infrastructure refusal, or the reverse). Omitting it would
+#       have let a cache-schema-only change satisfy the byte-identical early
+#       exit and execute NEITHER reader (Codex design review, section 17).
 #
 #   AFFECTS THE COMPARISON BUT IS NOT ITSELF DIFFERENTIALLED -- only the head
 #   version ever runs, so a change forces the walk (conservative, never a false
@@ -90,6 +95,7 @@ CLOSURE=(
     "scripts/todo-graph/corpus_resolution_snapshot.py"
     "scripts/todo-graph/ref_resolution.py"
     "scripts/todo-graph/resolve_symbol.py"
+    "scripts/todo-graph/cache_schema.py"
     "scripts/todo-graph/build.py"
     "scripts/todo-graph/identity-gate.sh"
 )

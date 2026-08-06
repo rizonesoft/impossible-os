@@ -51,6 +51,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import cache_schema as _cs  # noqa: E402
 import ref_resolution as _rr  # noqa: E402
 from resolve_symbol import ResolverInputError  # noqa: E402
 
@@ -79,134 +80,39 @@ class CacheError(RuntimeError):
 
 
 def _load_nodes() -> list:
-    """Parse AND VALIDATE the cache.
+    """Parse AND VALIDATE the cache, via the SHARED validator.
 
     A gate that fails OPEN is worse than no gate. `collect()` originally trusted
     any JSON: a cache of `[]` or `[{}]` yielded zero refs, `write` exited 0, and
     the resulting empty baseline made `compare` report "OK, 54 added" -- a
     vacuous pass in which a resolver regression on any ref absent from that
-    baseline is never checked. Semantic emptiness and staleness are the COMMON
-    corruption paths (a syntax error already failed loudly), so both are refused
-    here rather than silently producing a passing snapshot.
+    baseline is never checked.
+
+    The RULES now live in `cache_schema` so this reader and lint Check 7 agree
+    about which caches are valid at all (section 17). The CODE does not move:
+    every reason maps to this tool's single documented infrastructure exit 3,
+    because a caller must never read "the gate could not run" as "the gate
+    passed". `CacheError` is retained as this module's public failure type so
+    `main()` and its tests keep their existing contract.
     """
     p = _cache_path()
     try:
-        nodes = json.loads(p.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        raise CacheError(f"cache not found: {p} (run build-and-validate.sh)")
-    except (OSError, ValueError, RecursionError) as exc:
-        # ValueError, not JSONDecodeError: invalid UTF-8 raises
-        # UnicodeDecodeError, which is a ValueError and neither an OSError nor a
-        # decode error, so it escaped this handler entirely. The identical
-        # defect was fixed on the BASELINE reader below; leaving the CACHE
-        # reader narrower meant the same corrupt-input class exited 1 here and
-        # 3 there (Codex adversarial, section 14).
-        raise CacheError(f"cache unreadable: {p}: {exc}")
-    if not isinstance(nodes, list) or not nodes:
-        raise CacheError(f"cache is not a non-empty node array: {p}")
-    if not any(isinstance(n, dict) and n.get("stamped_items") for n in nodes):
+        nodes, info = _cs.load_and_validate(p, _repo_root() / "todo")
+    except _cs.CacheSchemaError as exc:
+        raise CacheError(str(exc))
+    # POLICY, not shape -- and it is THIS reader's policy, which is why the
+    # shared module reports the population instead of ruling on it. A snapshot
+    # taken over an empty stamped population is a vacuous baseline: every later
+    # `compare` would report "OK, N added" and check nothing. The lint makes the
+    # opposite call on the same fact (it lets the walk proceed so its own
+    # population-regression gate adjudicates the loss), which is exactly the
+    # divergence the shared RULE is allowed to keep (Codex design review,
+    # section 17).
+    if info.population == 0:
         raise CacheError(
-            f"cache carries no stamped_items -- it predates the section 9 "
-            f"extension, or came from a different generator: {p}")
-    # EVERY node, item and ref must have the shape `collect()` will `.get` on.
-    # The `any(...)` above only proves ONE node is well-formed, so a mixed cache
-    # -- `[{good}, "junk"]` -- passed here and then raised AttributeError deep in
-    # the walk, which `main()` does not catch: it escapes as a traceback and a
-    # bare exit 1, colliding with exit 1's documented "a prior verdict changed".
-    # `check_stub_behind_stamp` maps unexpected walk failures to an
-    # infrastructure code; this caller only caught CacheError and
-    # ResolverInputError, so the shape is rejected UP FRONT instead (Codex
-    # adversarial, section 14).
-    for i, n in enumerate(nodes):
-        if not isinstance(n, dict):
-            raise CacheError(f"cache node {i} is not an object ({type(n).__name__}): {p}")
-        items = n.get("stamped_items")
-        if items is None:
-            continue
-        if not isinstance(items, list):
-            raise CacheError(f"cache node {i} stamped_items is not a list: {p}")
-        for j, it in enumerate(items):
-            if not isinstance(it, dict):
-                raise CacheError(
-                    f"cache node {i} item {j} is not an object: {p}")
-            # ITEM-LEVEL SCALARS TOO, for the same reason the ref scalars are
-            # checked below. `collect()` uses `section_n` as a DICT KEY
-            # (`by_section.setdefault`), so a list- or dict-valued one is
-            # unhashable and raises TypeError from inside the walk -- uncaught,
-            # so the process exits 1, which is this tool's DOCUMENTED code for
-            # "a prior verdict changed". A malformed cache would therefore be
-            # reported to the section 16 gate as a resolver REGRESSION rather
-            # than as the infrastructure failure the header promises (Codex
-            # consistency, section 16).
-            for field in ("section_n", "item_idx"):
-                v = it.get(field)
-                if v is not None and not isinstance(v, (str, int, float)):
-                    raise CacheError(
-                        f"cache node {i} item {j} `{field}` is "
-                        f"{type(v).__name__}, expected a scalar: {p}")
-                if isinstance(v, bool):
-                    raise CacheError(
-                        f"cache node {i} item {j} `{field}` is a bool, "
-                        f"expected a scalar: {p}")
-            refs = it.get("refs")
-            if refs is None:
-                continue
-            if not isinstance(refs, list):
-                raise CacheError(
-                    f"cache node {i} item {j} refs is not a list: {p}")
-            for k, r in enumerate(refs):
-                if not isinstance(r, dict):
-                    raise CacheError(
-                        f"cache node {i} item {j} ref {k} is not an object: {p}")
-                # SCALAR TYPES TOO, not just containers. `classify_ref` calls
-                # `rel.startswith(...)` on a ref's `file`, so an integer there
-                # passed container validation and then raised AttributeError
-                # from inside the walk -- escaping as rc 1 and colliding with
-                # exit 1's documented "a prior verdict changed" (Codex
-                # adversarial, section 14).
-                for field in ("kind", "file", "symbol"):
-                    v = r.get(field)
-                    if v is not None and not isinstance(v, str):
-                        raise CacheError(
-                            f"cache node {i} item {j} ref {k} `{field}` is "
-                            f"{type(v).__name__}, expected string: {p}")
-    # Staleness, mirroring check_stub_behind_stamp.py: a cache older than the
-    # newest TODO describes a tree that no longer exists, and a baseline taken
-    # from it silently omits live refs.
-    # Walk the SELECTED repository's todo/, not the process CWD's. Using a bare
-    # relative "todo" meant the staleness check silently measured nothing
-    # whenever the tool ran from anywhere but the repo root -- exactly the
-    # fail-open the rest of this function exists to close.
-    #
-    # os.walk SWALLOWS traversal errors unless given an onerror callback -- a
-    # missing root simply yields nothing and an unreadable subtree is skipped.
-    # Wrapping the walk in try/except therefore caught nothing: an unreadable
-    # TODO subtree would leave `newest` low and an old cache would look fresh,
-    # which is the exact fail-open this check exists to close.
-    def _walk_err(exc):
-        raise CacheError(f"cannot traverse todo tree: {exc}")
-
-    todo_root = _repo_root() / "todo"
-    if not todo_root.is_dir():
-        raise CacheError(f"todo root is not a readable directory: {todo_root}")
-    try:
-        cache_m = p.stat().st_mtime
-        newest = 0.0
-        for dirpath, _, files in os.walk(todo_root, onerror=_walk_err):
-            for f in files:
-                if f.startswith("TODO-") and f.endswith(".md"):
-                    newest = max(newest,
-                                 os.stat(os.path.join(dirpath, f)).st_mtime)
-    except OSError as exc:
-        # A stat failure is an INFRASTRUCTURE error, not "fresh enough".
-        raise CacheError(f"cannot determine cache freshness: {exc}")
-    if newest == 0.0:
-        raise CacheError(f"no TODO files found under {todo_root} -- refusing to "
-                         f"call a cache fresh against an empty corpus")
-    if newest > cache_m:
-        raise CacheError(
-            f"cache is STALE (a TODO is newer than {p}); rebuild via "
-            f"scripts/todo-graph/build-and-validate.sh --keep-cache")
+            f"cache carries zero stamped items -- refusing to write a vacuous "
+            f"baseline that would make every later compare report a clean "
+            f"pass over nothing: {p}")
     return nodes
 
 

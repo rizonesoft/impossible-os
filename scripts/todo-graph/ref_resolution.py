@@ -24,7 +24,8 @@
 # the SOURCE TREE (which basenames are unique, which of a section's files
 # defines a symbol), while `build.py`'s extraction is a pure function of
 # (TODO body, TODO path) and the cache's freshness check compares the cache
-# mtime against `todo/**/*.md` ONLY (check_stub_behind_stamp._check_staleness).
+# mtime against `todo/**/*.md` ONLY (`cache_schema.check_freshness`, shared by
+# both cache readers since section 17).
 # Storing a tree-derived path in the cache would therefore create a claim that
 # goes stale on a source edit with nothing able to notice: add a second file
 # with the same basename, move the selected target, or move a definition out of
