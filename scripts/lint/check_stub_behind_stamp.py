@@ -239,9 +239,18 @@ def _walk(nodes: list, repo_root: Path) -> tuple:
         by_section = {}
         for it in items:
             by_section.setdefault(it.get("section_n"), []).append(it)
+        # LAZY: only a section that actually holds an unpaired symbol can
+        # use candidates, and 357 of the corpus's 830 sections do. Building
+        # them eagerly canonicalized paths for the other 473 for nothing
+        # (Codex perf, post-commit).
+        _needs = {
+            it.get("section_n") for it in items
+            for r in (it.get("refs") or [])
+            if r.get("kind") == "symbol" and not r.get("file")
+        }
         sec_files = {
             sec: _rr.section_candidate_files(sec_items, repo_resolved)
-            for sec, sec_items in by_section.items()
+            for sec, sec_items in by_section.items() if sec in _needs
         }
         for it in items:
             section_files = sec_files.get(it.get("section_n"), ())
@@ -466,15 +475,18 @@ def main() -> int:
             return None, f"unreadable ({exc})"
         if not isinstance(doc, dict):
             return None, f"is not a JSON object ({type(doc).__name__})"
-        return doc.get("resolved"), None
+        return (doc.get("resolved"), doc.get("total")), None
 
+    baseline_total = None
     if os.environ.get("STUB_LINT_ALLOW_NO_BASELINE") == "1":
         # Explicit, visibly reported skip -- the one sanctioned bypass.
-        baseline, _ = _read_baseline()
+        pair, _ = _read_baseline()
+        baseline, baseline_total = pair if pair else (None, None)
         sys.stderr.write("[check_stub_behind_stamp] baseline floor SKIPPED via "
                          "STUB_LINT_ALLOW_NO_BASELINE=1\n")
     else:
-        baseline, baseline_err = _read_baseline()
+        pair, baseline_err = _read_baseline()
+        baseline, baseline_total = pair if pair else (None, None)
         # bool BEFORE the `< 0` compare: bool is an int subclass, so `True`
         # satisfies isinstance(x, int) and would otherwise pass as a count.
         if baseline_err is None and (not isinstance(baseline, int)
@@ -482,6 +494,19 @@ def main() -> int:
             baseline_err = f"`resolved` is not an integer ({baseline!r})"
         if baseline_err is None and baseline < 0:
             baseline_err = f"`resolved` is not a valid count ({baseline!r})"
+        # THE DENOMINATOR IS PART OF THE FLOOR, not decoration. `total` was
+        # recorded but never read, so the ratio was protected only from above:
+        # if extraction stopped emitting UNRESOLVED refs, `occurrences` and the
+        # buckets shrank together, `resolved` stayed at its floor, the published
+        # ratio IMPROVED, and the check exited 0 -- fail-open on precisely the
+        # corpus-rot scenario the counted-population work exists to catch
+        # (Codex adversarial, post-commit). A denominator that moves is a
+        # finding, in EITHER direction: growth is new stamped work and gets
+        # recorded, shrinkage is data loss.
+        if baseline_err is None and (not isinstance(baseline_total, int)
+                                     or isinstance(baseline_total, bool)
+                                     or baseline_total < 0):
+            baseline_err = f"`total` is not a valid count ({baseline_total!r})"
 
     # STDERR, not stdout. stdout is this check's FINDINGS channel -- lint.sh
     # routes every line of it through error() on rc 0 -- so informational
@@ -520,6 +545,23 @@ def main() -> int:
         for u in sorted(set(cov["missing_file"]))[:3]:
             sys.stderr.write(f"  missing file (ref points nowhere): {u}\n")
 
+    # DENOMINATOR FIRST -- a shrunken population invalidates the ratio the
+    # floor below is expressed in, so reporting the floor as clean while the
+    # corpus lost refs would be the fail-open this check exists to prevent.
+    if isinstance(baseline_total, int) and cov["occurrences"] != baseline_total:
+        direction = ("SHRANK" if cov["occurrences"] < baseline_total
+                     else "GREW")
+        sys.stderr.write(
+            f"[check_stub_behind_stamp] POPULATION {direction}: "
+            f"{cov['occurrences']} kind=symbol refs vs baseline total "
+            f"{baseline_total}. The resolved floor is a RATIO, so a moving "
+            f"denominator changes what passing means: refs lost from the "
+            f"cache shrink the buckets and the total together, leaving "
+            f"`resolved` at its floor while the published ratio improves. "
+            f"If stamped work really was added or removed, update "
+            f"{base_path.name}'s `total` DELIBERATELY in the same commit "
+            f"and say what changed.\n")
+        return 7
     if isinstance(baseline, int) and resolved_n < baseline:
         sys.stderr.write(
             f"[check_stub_behind_stamp] COVERAGE REGRESSION: resolved "

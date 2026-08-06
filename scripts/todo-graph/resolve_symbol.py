@@ -1412,6 +1412,17 @@ def _is_file_scope_variable(masked_text: str, name: str) -> bool:
             continue
         if _NOT_A_TYPE_RE.match(masked_text, line_start):
             continue
+        # FILE SCOPE IS BRACE DEPTH 0, and column 0 is not evidence of it.
+        # Without this an UNINDENTED struct member (`int NAME;` inside a
+        # struct body) or a multi-line enumerator line (`OK, NAME,`) reads as
+        # a file-scope object and suppresses a genuine `return NAME;` stub --
+        # both valid C layouts this tree could adopt tomorrow, and both
+        # fail-OPEN (Codex adversarial, post-commit). `masked_text` has
+        # comments and string literals blanked, so counting braces in it is
+        # exact rather than heuristic.
+        head = masked_text[:line_start]
+        if head.count("{") != head.count("}"):
+            continue
         return True
     return False
 

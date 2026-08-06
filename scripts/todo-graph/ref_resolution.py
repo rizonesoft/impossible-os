@@ -73,9 +73,9 @@ _SKIP_DIRS = {".git", "build", "__pycache__", "node_modules", ".venv"}
 Verdict = namedtuple("Verdict", "abs_path rel_path provenance bucket")
 
 _BASENAME_INDEX = {}  # repo_root(str) -> {basename: (rel, ...)} sorted
-_RESOLVE_MEMO = {}    # (abs_path, symbol) -> resolve_symbol() result
+_RESOLVE_MEMO = {}    # (abs_path, symbol) -> (lines object, result)
 _EFFECTIVE_PATH_MEMO = {}  # (rel, repo_root) -> (abs_path|None, provenance|bucket)
-_MENTION_INDEX = {}   # file line-tuple -> frozenset of identifiers in it
+_MENTION_INDEX = {}   # abs_path -> (lines object, frozenset of identifiers)
 
 
 def clear_caches() -> None:
@@ -218,10 +218,12 @@ def section_candidate_files(items: list, repo_root: Path) -> tuple:
             if abs_p is None or str(abs_p) in seen:
                 continue
             seen.add(str(abs_p))
-            try:
-                out.append(str(abs_p.relative_to(repo_root)).replace("\\", "/"))
-            except ValueError:
-                continue
+            # ABSOLUTE and already canonical. Returning repo-relative strings
+            # forced `_defining_candidates` to re-run `_contained` -- i.e. a
+            # `Path.resolve()` + `relative_to()` pair -- once per
+            # (candidate, symbol) probe, 2,709 calls and ~0.5s of a 1.5s walk
+            # (Codex perf, post-commit).
+            out.append(str(abs_p))
     return tuple(out)
 
 
@@ -254,11 +256,11 @@ def _mentions(abs_path: str, symbol: str) -> bool:
     # index content-bound: new content is a new key, and the old set simply
     # goes unused.
     lines = _rs._load_file_lines(abs_path)
-    idents = _MENTION_INDEX.get(lines)
-    if idents is None:
+    hit = _MENTION_INDEX.get(abs_path)
+    if hit is None or hit[0] is not lines:
         idents = frozenset(_IDENT_RE.findall("\n".join(lines)))
-        _MENTION_INDEX[lines] = idents
-    return symbol in idents
+        _MENTION_INDEX[abs_path] = (lines, idents)
+    return symbol in _MENTION_INDEX[abs_path][1]
 
 
 def _resolve_memoized(abs_path: str, symbol: str):
@@ -268,10 +270,21 @@ def _resolve_memoized(abs_path: str, symbol: str):
     -- once per candidate here, then once more in the caller for the file that
     won -- and `resolve_symbol` itself is not memoized (only its file reads and
     lexical index are)."""
+    # `_load_file_lines` FIRST, on every call: it is the only layer that
+    # re-stats a pinned file and raises ResolverInputError on a same-run
+    # rewrite, and a memo that answers without it hands out pre-mutation
+    # coordinates instead of the promised infrastructure failure (Codex
+    # adversarial, post-commit). Binding the entry to the returned lines
+    # OBJECT keeps the check O(1): a path key hashes in constant time, while
+    # keying on the tuple itself re-hashes every line on every lookup
+    # (measured: 0.680s vs 0.0023s over 20,000 probes against bootx64.c).
+    lines = _rs._load_file_lines(abs_path)
     key = (abs_path, symbol)
-    if key not in _RESOLVE_MEMO:
-        _RESOLVE_MEMO[key] = _rs.resolve_symbol(abs_path, symbol)
-    return _RESOLVE_MEMO[key]
+    hit = _RESOLVE_MEMO.get(key)
+    if hit is None or hit[0] is not lines:
+        hit = (lines, _rs.resolve_symbol(abs_path, symbol))
+        _RESOLVE_MEMO[key] = hit
+    return hit[1]
 
 
 def _defining_candidates(section_files: tuple, symbol: str,
@@ -293,18 +306,15 @@ def _defining_candidates(section_files: tuple, symbol: str,
     scanner, so it can only skip a file that provably does not name the symbol
     in code -- never change a verdict."""
     hits = []
-    for rel in section_files:
-        abs_p = _contained(rel, repo_root)
-        if abs_p is None:
-            continue
+    for abs_str in section_files:
         # A ResolverInputError from either call propagates on purpose: a
         # refused input is an infrastructure failure the CALLER surfaces as
         # rc 9, never evidence about this symbol, and must not read as
         # "not defined here".
-        if not _mentions(str(abs_p), symbol):
+        if not _mentions(abs_str, symbol):
             continue
-        if _resolve_memoized(str(abs_p), symbol) is not None:
-            hits.append(rel)
+        if _resolve_memoized(abs_str, symbol) is not None:
+            hits.append(abs_str)
     return hits
 
 
@@ -344,7 +354,12 @@ def classify_ref(ref: dict, section_files: tuple, repo_root: Path) -> Verdict:
         hits = _defining_candidates(section_files, symbol, repo_root)
         if len(hits) != 1:
             return Verdict(None, None, provenance, "unpaired_ref")
-        rel, provenance = hits[0], "section"
+        abs_p = Path(hits[0])
+        try:
+            eff = str(abs_p.relative_to(repo_root)).replace("\\", "/")
+        except ValueError:
+            return Verdict(None, None, "section", "path_escape")
+        return Verdict(str(abs_p), eff, "section", None)
     abs_p, path_prov = _effective_path(rel, repo_root)
     if abs_p is None:
         return Verdict(None, None, provenance, path_prov)

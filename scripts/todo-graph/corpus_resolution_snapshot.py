@@ -147,9 +147,18 @@ def collect() -> dict:
         by_section = {}
         for it in items:
             by_section.setdefault(it.get("section_n"), []).append(it)
+        # LAZY: only a section that actually holds an unpaired symbol can
+        # use candidates, and 357 of the corpus's 830 sections do. Building
+        # them eagerly canonicalized paths for the other 473 for nothing
+        # (Codex perf, post-commit).
+        _needs = {
+            it.get("section_n") for it in items
+            for r in (it.get("refs") or [])
+            if r.get("kind") == "symbol" and not r.get("file")
+        }
         sec_files = {
-            s: _rr.section_candidate_files(sec_items, root)
-            for s, sec_items in by_section.items()
+            sec: _rr.section_candidate_files(sec_items, root)
+            for sec, sec_items in by_section.items() if sec in _needs
         }
         for it in items:
             sec = it.get("section_n", "?")

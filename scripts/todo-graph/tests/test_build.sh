@@ -4499,7 +4499,16 @@ neg = [("#define S_CONST 3", "S_CONST"), ("enum { S_CONST = 1 };", "S_CONST"),
        # that rejects it is structural (the declarator must sit at paren
        # depth 0), not a name list (Codex adversarial, round 3).
        ("ASSERT_EQ(STATUS_NOT_IMPLEMENTED, -1);", "STATUS_NOT_IMPLEMENTED"),
-       ("CHECK_RANGE(E_NOTIMPL, 0, 9);", "E_NOTIMPL")]
+       ("CHECK_RANGE(E_NOTIMPL, 0, 9);", "E_NOTIMPL"),
+       # FILE SCOPE IS BRACE DEPTH 0, and column 0 is not evidence of it.
+       # An UNINDENTED struct member or a multi-line enumerator line is
+       # valid C that the first draft read as a file-scope object, which
+       # suppressed the stub returning it (Codex adversarial, post-commit).
+       ("struct s {\nint STATUS_NOT_IMPLEMENTED;\n};", "STATUS_NOT_IMPLEMENTED"),
+       ("enum e {\nOK, STATUS_NOT_IMPLEMENTED,\n};", "STATUS_NOT_IMPLEMENTED"),
+       ("void f(void)\n{\nint s_v = 0;\n}\n", "s_v")]
+pos += ["static int s_arr[] = {\n1, 2\n};\nstatic int s_v = 0;",
+        "struct s { int a; };\nstatic int s_v;"]
 for d in pos:
     assert rs._is_file_scope_variable(d, "s_v"), f"missed object: {d}"
 for text, name in neg:
@@ -4582,11 +4591,45 @@ try:
 except rs.ResolverInputError:
     saw = True   # drift surfaced loudly, which is the other legal answer
 assert saw, "stale mention index hid content the file gained mid-run"
+# The RESOLUTION memo has the same obligation: a second probe of the same
+# (file, symbol) after a mid-run rewrite must not answer from the pre-mutation
+# entry. `_load_file_lines` is the only layer that re-stats, so the memo calls
+# it on every hit and binds its entry to the returned lines object.
+d2 = tempfile.mkdtemp(); q = os.path.join(d2, "n.c")
+open(q, "w").write("int keep(void)\n{\n    return 0;\n}\n")
+rs.cache_clear()
+first = rr._resolve_memoized(q, "keep")
+assert first is not None, "primed resolve failed"
+open(q, "w").write("\n\nint keep(void)\n{\n    return 1;\n}\n")
+try:
+    again = rr._resolve_memoized(q, "keep")
+    assert again != first, f"stale memo served pre-mutation coords: {again}"
+except rs.ResolverInputError:
+    pass  # drift surfaced loudly, the other legal answer
 PY
 )"; then
     t_pass "ref_resolution: one reset clears both caches, and cache_clear survives"
 else
     t_fail "ref_resolution: cache reset contract broken; $RR_CC"
+fi
+
+# 14v: the recorded DENOMINATOR is enforced, not decoration. `total` was
+# written to the baseline and never read, so a cache that lost UNRESOLVED refs
+# shrank the buckets and the population together while `resolved` stayed at its
+# floor -- the published ratio IMPROVED and the check exited 0, fail-open on
+# exactly the corpus rot the counted population exists to catch (Codex
+# adversarial, post-commit).
+RR_BASE="$RR_TREE/build/rr-baseline.json"
+printf '%s\n' '{"resolved": 0, "total": 9, "recorded": "fixture", "why": "fixture"}' > "$RR_BASE"
+RR_POP_RC=0
+STUB_LINT_CACHE="$RR_TREE/build/rr-cache.json" STUB_LINT_REPO_ROOT="$RR_TREE" \
+    STUB_LINT_BASELINE="$RR_BASE" \
+    python3 "$REPO_ROOT/scripts/lint/check_stub_behind_stamp.py" \
+    >/dev/null 2>"$TMP_DIR/rr-pop.err" || RR_POP_RC=$?
+if [ "$RR_POP_RC" = "7" ] && grep -q "POPULATION" "$TMP_DIR/rr-pop.err"; then
+    t_pass "lint Check 7: a moved population is rc 7, not a silently better ratio"
+else
+    t_fail "lint Check 7: denominator not enforced (rc=$RR_POP_RC)"
 fi
 
 # 14q: THE IDENTITY GATE SEES THE REPAIRS. corpus_resolution_snapshot.collect()
