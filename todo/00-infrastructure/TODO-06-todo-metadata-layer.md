@@ -660,8 +660,8 @@ It does NOT re-cover §12's head-limit widening, decl-following, cache bounds, o
 
 That is a real hole in the proof, and §13 is the section that demonstrates it. §13 moved refs BETWEEN unresolved buckets at scale (`calllike-unresolved` 35 -> 132, `no-calllike-token` 47 -> 89) as repaired refs entered the population that gets looked at. Nothing gated those movements: the `resolved` floor sees the total rise, and the bucket line is printed but not compared, so a change that quietly reclassified hundreds of refs the other way would read as clean.
 
-- [x] Record a verdict for EVERY `kind=symbol` occurrence -- `collect()` covers 1,625, was 695
-      `collect()` no longer skips a ref that never reaches resolution, and a ref that reaches it and fails now records WHICH bucket instead of a bare null. Value is `[path, start, end]` or a bucket string; the population equals Check 7's by construction (both 1,625 / 474 resolved, and all six bucket counts equal -- asserted by 14aa against Check 7's own printed line, not against a number written in the test).
+- [x] Record a verdict for EVERY `kind=symbol` occurrence -- `collect()` covers 1,626, was 695
+      `collect()` no longer skips a ref that never reaches resolution, and a ref that reaches it and fails now records WHICH bucket instead of a bare null. Value is `[path, start, end]` or a bucket string; the population equals Check 7's by construction (both 1,626 / 474 resolved, and all six bucket counts equal -- asserted by 14aa against Check 7's own printed line, not against a number written in the test).
       - **`classify_ref` alone was NOT sufficient**, exactly as the item predicted: it supplies only the PRE-resolution buckets. The whole end-to-end rule is now `ref_resolution.resolve_ref` (classify -> direct resolve -> `follow_declaration` -> call-like bucket), and `_has_calllike_token`/`_raw_text`/`_code_text`/`_STRIP_RE` moved out of `check_stub_behind_stamp.py` into it.
       - Sharing only the PRE-resolution half was itself the trap, caught by design review: each caller still ran its OWN resolve-then-follow sequence, so a fallback taught to one and not the other recreates the incomplete proof this module exists to prevent. Neither caller now names `follow_declaration` or `classify_ref` -- pinned by 14ee.
       - The key carries the AUTHORED spelling with a `-` sentinel, NOT the effective path. Byte-identity with a schema-1 baseline was the item's stated constraint and it is worth nothing: `compare` refuses any baseline whose schema differs, so an old one can never be compared against these keys anyway. A resolver-output key also changed identity when a repaired ref degraded, reporting DROPPED+ADDED instead of LOST.
@@ -680,17 +680,20 @@ That is a real hole in the proof, and §13 is the section that demonstrates it. 
       - Six baseline fixtures were passing for the WRONG REASON: they still declared schema 1, so `compare` returned at the schema mismatch and never reached the element validation they were written to test. Deleting arity, path-type, range or truncation validation would have left them green. All are schema 2 now, plus cases for a two-element mapping, a non-string and empty path, a bool in either line position, and a zero start line.
 - [x] Commit: `"todo-graph: identity gate covers every symbol ref, not only resolved ones"`
 
-**Test checkpoint:** `bash scripts/todo-graph/tests/test_build.sh` 204/204; `corpus_resolution_snapshot.py compare` clean against a regenerated baseline and refusing an old-schema one (rc 3); `bash scripts/lint.sh` Check 7 unchanged at `resolved=474/1625` with all six bucket counts unmoved; `bash scripts/test-tooling.sh` 1287/1287; `bash scripts/overnight/tests/run-all.sh` 66/66.
+**Test checkpoint:** `bash scripts/todo-graph/tests/test_build.sh` 204/204; `corpus_resolution_snapshot.py compare` clean against a regenerated baseline and refusing an old-schema one (rc 3); `bash scripts/lint.sh` Check 7 at `resolved=474/1626` with `resolved` and five of six buckets unmoved (`unpaired-ref` 858 -> 859: stamping this section's own items added one symbol ref no file in its section defines, re-recorded deliberately after the gate refused with rc 7); `bash scripts/test-tooling.sh` 1287/1287; `bash scripts/overnight/tests/run-all.sh` 66/66.
 
-> **Test runner:** `bash scripts/todo-graph/tests/test_build.sh` -- expect `204/204 passed, 0 failed`. Also `bash scripts/overnight/tests/run-all.sh` (66/66) and `bash scripts/lint.sh` reporting Check 7 `resolved=474/1625` with no ERROR lines.
+> **Test runner:** `bash scripts/todo-graph/tests/test_build.sh` -- expect `204/204 passed, 0 failed`. Also `bash scripts/overnight/tests/run-all.sh` (66/66) and `bash scripts/lint.sh` reporting Check 7 `resolved=474/1626` with no ERROR lines.
 
 > **Notes:**
 > - `ref_resolution.resolve_ref` is now the ONE end-to-end rule (classify -> resolve -> follow -> bucket); the identity snapshot and lint Check 7 both consume it and neither touches the resolver directly.
-> - The gate's population rose 695 -> 1,625 and equals Check 7's exactly, bucket for bucket; resolution behaviour is unchanged (474 before and after, 0 lost / 0 moved across the schema boundary).
+> - The gate's population rose 695 -> 1,626 and equals Check 7's exactly, bucket for bucket; resolution is unchanged (474 before and after, 0 lost / 0 moved across the schema boundary).
 > - `compare` fails on DROPPED / LOST / MOVED / CHANGED and passes GAINED / ADDED; `SNAPSHOT_SCHEMA` 2 refuses older baselines with a regenerate pointer.
 > - Moving the call-like text helpers fixed a live defect: `lru_cache(path)` skipped `_load_file_lines`, so a mid-walk rewrite answered from stale text instead of raising `ResolverInputError`.
 > - Also repaired `test_stub_lint_coverage.py`, RED in the tree since §11 made a `total`-less baseline invalid; its runner gates on a manifest listing neither `scripts/lint` nor `scripts/todo-graph`.
 > - Scope boundary: does NOT wire the gate into anything (§16 owns that) and does NOT touch resolver cost (§15).
+> **Verified:** 2026-08-06 | commit `d0b2dc17` | 5/5 items | build OK | 209/209 todo-graph, 1287/1287 tooling, 66/66 overnight, 28326 kernel + 17 user-mode, lint 0 errors
+> **Accepted:** [M] cache-schema validation is not shared between the two callers, so they disagree about which caches are valid and which rc a malformed one yields -> XREF: 00-infrastructure/TODO-06 §16 (item: "ONE shared cache-schema validator, consumed by both cache readers" at line 741)
+> **Quality reviewed:** 2026-08-06 | Codex 6x (design, adversarial x2, test-coverage, consistency, perf) | 5H+7M fixed, 0 open | scope: N/A (host tooling -- no kernel/boot/desktop/shell/userland surface)
 
 -> XREF: [`TODO-06 §13`](#13-stored-ref-repair-unpaired-symbols-and-bare-filenames) -- the section whose review found this, and whose bucket movements are the worked example of what the gate cannot currently see.
 -> XREF: [`TODO-06 §11`](#11-count-what-check-7-cannot-resolve-instead-of-skipping-it) -- owns the bucket names and the reporting contract this section makes gateable.
@@ -735,6 +738,11 @@ Split out of §14 at authoring time, not spawned by a review round. §14 proves 
       `compare` already separates exit 3 (could not run) from exit 1 (regression) precisely so a caller cannot read one as the other; the wiring must preserve that distinction rather than collapsing a stale cache into a pass.
 - [ ] Fixtures proving the gate FIRES, each mutation-checked
       A wiring test that only proves the green path is the failure this whole roadmap keeps paying for: prove a lost mapping fails the gate under the real invocation shape, and that an ordinary TODO edit does NOT.
+- [ ] ONE shared cache-schema validator, consumed by both cache readers
+      §14 shares the RESOLUTION rule but not the cache-VALIDATION rule: `corpus_resolution_snapshot._load_nodes` validates node/item/ref shape and the three ref scalars, while `check_stub_behind_stamp` does not and instead relies on a broad `except Exception -> rc 6`. The two therefore disagree about which caches are valid and which exit code a malformed one produces.
+      - Belongs here rather than in §14 because wiring is what makes it matter: an automated gate must refuse a bad cache identically on both sides, or the wired verdict and the lint disagree about whether the run happened at all.
+      - Reject the shapes even when FALSEY (`stamped_items: {}`, `refs: {}`), which the lint currently skips silently, and route every decode failure -- `UnicodeDecodeError`, `RecursionError` -- to each caller's documented infrastructure code.
+      -> XREF: `TODO-06 §14` -- shipped the snapshot-side validation this generalizes (item: "Baseline format migration, fail-closed on an old baseline").
 - [ ] Commit: `"todo-graph: run the identity gate automatically instead of on request"`
 
 **Test checkpoint:** the new gate fires on a deliberately broken resolver and passes on an unchanged tree; `bash scripts/todo-graph/tests/test_build.sh` green with the new fixtures; `bash scripts/test-tooling.sh` green; a TODO-only edit does not trip it.
@@ -765,7 +773,7 @@ Split out of §14 at authoring time, not spawned by a review round. §14 proves 
 | 💎  | Lint reports its own blind spot as a ratio        | ❌ None                 | ❌ None                            | ✅ §11 every ref bucketed; buckets must sum or no ratio is published |
 | 💎  | Resolver follows a header declaration to its impl | ❌ None                 | ❌ None                            | ✅ §12 basename-unique, non-static, linkage-checked; +54 resolved    |
 | 💎  | Stamped ref repaired against the tree, not stored | ❌ None                 | ❌ None                            | ✅ §13 basename + section-scope repair at resolution time            |
-| 💎  | Identity gate verdicts the WHOLE ref population   | ❌ None                 | ❌ None                            | ✅ §14 all 1,625 refs, bucket-for-bucket equal to the lint's own     |
+| 💎  | Identity gate verdicts the WHOLE ref population   | ❌ None                 | ❌ None                            | ✅ §14 all 1,626 refs, bucket-for-bucket equal to the lint's own     |
 | 💎  | Reclassification distinguished from lost coverage | ❌ None                 | ❌ None                            | ✅ §14 dropped/lost/moved/changed fail; gained/added pass            |
 
 > **After §1-§3:** Impossible OS has full Linux-parity ownership metadata plus the dep-graph that neither OS ships, plus automated cross-file XREF integrity checks AND a CI-gated JSON Schema sidecar (consumed by `remark-lint-frontmatter-schema`; no Linux equivalent for project plans). Editor-time diagnostics are best-effort developer convenience via `markdown-yaml-embedded-langservers`; the §6 CI gate is the authoritative line of defense.

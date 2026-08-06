@@ -3432,6 +3432,44 @@ snap_refuses "a cache whose refs is not a list" \
     '[{"file_path":"a","stamped_items":[{"section_n":1,"item_idx":0,"refs":"x"}]}]'
 snap_refuses "a cache with a non-object ref" \
     '[{"file_path":"a","stamped_items":[{"section_n":1,"item_idx":0,"refs":[{"kind":"symbol","symbol":"s"},"junk"]}]}]'
+# SCALAR types, not just containers: `classify_ref` calls `rel.startswith(...)`
+# on a ref's `file`, so an integer there passed container validation and raised
+# AttributeError from inside the walk -- rc 1, colliding with "a prior verdict
+# changed" (Codex adversarial, section 14).
+snap_refuses "a cache whose ref file is an integer" \
+    '[{"file_path":"a","stamped_items":[{"section_n":1,"item_idx":0,"refs":[{"kind":"symbol","symbol":"s","file":7}]}]}]'
+snap_refuses "a cache whose ref symbol is an integer" \
+    '[{"file_path":"a","stamped_items":[{"section_n":1,"item_idx":0,"refs":[{"kind":"symbol","symbol":9,"file":"src/x.c"}]}]}]'
+# A DUPLICATE OCCURRENCE KEY is a hard error, never a silent overwrite: the
+# dropped ref would leave `refs` recording the collapsed total, so the baseline
+# is self-consistent and compare() passes forever over a population smaller
+# than the lint's -- the exact divergence section 14 exists to prevent.
+snap_refuses "a cache producing two identical occurrence keys" \
+    '[{"file_path":"a","stamped_items":[{"section_n":1,"item_idx":0,"refs":[{"kind":"symbol","symbol":"s","file":"src/x.c"}]},{"section_n":1,"item_idx":0,"refs":[{"kind":"symbol","symbol":"s","file":"src/x.c"}]}]}]'
+# NOT UTF-8 at all. The baseline reader was fixed for this and the CACHE reader
+# was left narrower, so the same corrupt-input class exited 1 here and 3 there.
+SNAP_CACHE_UTF8="$TMP_DIR/snap-cache-badutf8.json"
+printf '[{"file_path":"a\xff\xfe","stamped_items":[{"refs":[]}]}]' > "$SNAP_CACHE_UTF8"
+SNAP_CU_RC=0
+STUB_LINT_CACHE="$SNAP_CACHE_UTF8" STUB_LINT_REPO_ROOT="$SI_TREE" \
+    STUB_LINT_ALLOW_NO_BASELINE=1 python3 "$SNAP" write "$SI_TREE/build/snap-out.json" \
+    >/dev/null 2>"$TMP_DIR/snap-cache-utf8.err" || SNAP_CU_RC=$?
+if [ "$SNAP_CU_RC" = "3" ] && grep -q "cache unreadable" "$TMP_DIR/snap-cache-utf8.err"; then
+    t_pass "corpus snapshot: invalid UTF-8 CACHE is rc 3, not a traceback"
+else
+    t_fail "corpus snapshot: bad-UTF-8 cache rc=$SNAP_CU_RC (want 3)"
+fi
+# An UNWRITABLE snapshot destination is infrastructure, not a regression
+# verdict: `write_text` raised straight out as a bare exit 1 (reproduced with a
+# directory target, Codex consistency).
+SNAP_W_RC=0
+STUB_LINT_CACHE="$REPO_ROOT/build/todo-cache.json" STUB_LINT_REPO_ROOT="$REPO_ROOT" \
+    python3 "$SNAP" write "$TMP_DIR" >/dev/null 2>"$TMP_DIR/snap-write.err" || SNAP_W_RC=$?
+if [ "$SNAP_W_RC" = "3" ] && grep -q "cannot write snapshot" "$TMP_DIR/snap-write.err"; then
+    t_pass "corpus snapshot: an unwritable destination is rc 3, not exit 1"
+else
+    t_fail "corpus snapshot: unwritable destination rc=$SNAP_W_RC (want 3)"
+fi
 
 # 14z: a duplicate (file, symbol) occurrence must be tracked PER OCCURRENCE --
 # dropping one occurrence has to fail the gate. Deduping on (file, symbol) hid

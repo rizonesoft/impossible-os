@@ -22,9 +22,11 @@
 #   corpus_resolution_snapshot.py compare <before.json>  # diff vs current tree
 #
 # Exit codes:
-#   0  compare: no prior mapping was lost or moved
-#   1  compare: at least one prior mapping was lost or moved (a real
-#      regression -- see the printed LOST/MOVED lines)
+#   0  compare: no prior verdict was dropped, lost, moved or reclassified
+#   1  compare: at least one prior VERDICT changed for the worse -- any of
+#      DROPPED (the occurrence is gone), LOST (it no longer resolves), MOVED
+#      (different coordinates) or CHANGED (a different unresolved bucket). All
+#      four are real regressions; GAINED and ADDED are not and exit 0.
 #   2  usage error (wrong argv shape)
 #   3  INFRASTRUCTURE failure -- the walk could not complete at all, so the
 #      exit code above is NOT a verdict on regression: an invalid/missing/
@@ -84,7 +86,13 @@ def _load_nodes() -> list:
         nodes = json.loads(p.read_text(encoding="utf-8"))
     except FileNotFoundError:
         raise CacheError(f"cache not found: {p} (run build-and-validate.sh)")
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, ValueError, RecursionError) as exc:
+        # ValueError, not JSONDecodeError: invalid UTF-8 raises
+        # UnicodeDecodeError, which is a ValueError and neither an OSError nor a
+        # decode error, so it escaped this handler entirely. The identical
+        # defect was fixed on the BASELINE reader below; leaving the CACHE
+        # reader narrower meant the same corrupt-input class exited 1 here and
+        # 3 there (Codex adversarial, section 14).
         raise CacheError(f"cache unreadable: {p}: {exc}")
     if not isinstance(nodes, list) or not nodes:
         raise CacheError(f"cache is not a non-empty node array: {p}")
@@ -123,6 +131,18 @@ def _load_nodes() -> list:
                 if not isinstance(r, dict):
                     raise CacheError(
                         f"cache node {i} item {j} ref {k} is not an object: {p}")
+                # SCALAR TYPES TOO, not just containers. `classify_ref` calls
+                # `rel.startswith(...)` on a ref's `file`, so an integer there
+                # passed container validation and then raised AttributeError
+                # from inside the walk -- escaping as rc 1 and colliding with
+                # exit 1's documented "a prior verdict changed" (Codex
+                # adversarial, section 14).
+                for field in ("kind", "file", "symbol"):
+                    v = r.get(field)
+                    if v is not None and not isinstance(v, str):
+                        raise CacheError(
+                            f"cache node {i} item {j} ref {k} `{field}` is "
+                            f"{type(v).__name__}, expected string: {p}")
     # Staleness, mirroring check_stub_behind_stamp.py: a cache older than the
     # newest TODO describes a tree that no longer exists, and a baseline taken
     # from it silently omits live refs.
@@ -247,6 +267,24 @@ def collect() -> dict:
                 # `unpaired_ref` by definition.
                 a_file = ref.get("file") or "-"
                 key = f"{todo_path}#{sec}.{idx}r{ref_i} {a_file}::{sym or '-'}"
+                # A COLLISION IS A HARD ERROR, never a silent overwrite. The key
+                # is assembled from stringified fields, so distinct occurrences
+                # CAN collide -- `section_n` 1 and "1" render identically, a
+                # field carrying the `#`/`::`/`r` delimiters is ambiguous, and a
+                # TODO with two headings of the same number restarts item_idx.
+                # `out[key] = ...` would drop one of them while Check 7 still
+                # counts both, so `refs` would record the collapsed total and
+                # the resulting baseline would be SELF-CONSISTENT: compare()
+                # passes forever over a population quietly smaller than the
+                # lint's. That is precisely the divergence this section exists
+                # to make impossible, so it fails loudly instead (rc 3). The
+                # live corpus has 1,626 unique keys, but nothing except this
+                # check keeps that true (Codex adversarial, section 14).
+                if key in out:
+                    raise CacheError(
+                        f"duplicate occurrence key {key!r} -- two refs share one "
+                        f"identity, so the gate would silently verdict fewer "
+                        f"refs than lint Check 7 counts")
                 out[key] = (result.bucket if result.bucket is not None
                             else [result.def_rel, result.line_start,
                                   result.line_end])
@@ -297,12 +335,22 @@ def main(argv) -> int:
         # clean, reporting the other 56 resolved mappings as ADDED and exiting 0.
         # Recording the population lets `compare` detect truncation instead of
         # trusting the file's own size.
-        Path(argv[1]).write_text(json.dumps({
-            "schema": SNAPSHOT_SCHEMA,
-            "refs": len(now),
-            "resolved": len(resolved_now),
-            "mappings": now,
-        }, indent=1, sort_keys=True), encoding="utf-8")
+        # A FAILED WRITE IS INFRASTRUCTURE, not a regression verdict. An
+        # unwritable path or a directory target raised straight out of
+        # `write_text` as a traceback and a bare exit 1 -- the one code that
+        # means "a prior verdict changed" (reproduced with a directory target,
+        # Codex consistency, section 14).
+        try:
+            Path(argv[1]).write_text(json.dumps({
+                "schema": SNAPSHOT_SCHEMA,
+                "refs": len(now),
+                "resolved": len(resolved_now),
+                "mappings": now,
+            }, indent=1, sort_keys=True), encoding="utf-8")
+        except (OSError, ValueError) as exc:
+            sys.stderr.write(f"[corpus_resolution_snapshot] cannot write "
+                             f"snapshot {argv[1]}: {exc}\n")
+            return 3
         print(f"snapshot: {len(resolved_now)} resolved of {len(now)} refs "
               f"-> {argv[1]}")
         return 0

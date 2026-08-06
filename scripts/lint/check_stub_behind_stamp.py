@@ -23,7 +23,11 @@
 #   4  cache stale relative to todo/**/*.md (lint.sh treats as ERROR)
 #   5  cache unreadable / malformed JSON (lint.sh treats as ERROR)
 #   6  internal helper failure (lint.sh treats as ERROR)
-#   7  coverage regression below the recorded floor (lint.sh treats as ERROR)
+#   7  the coverage gate refused, for EITHER of its two contracts (lint.sh
+#      treats as ERROR and routes on the emitted tag): `COVERAGE REGRESSION`
+#      -- resolved fell below the recorded floor; or `POPULATION GREW/SHRANK`
+#      -- the kind=symbol denominator moved, which changes what the floor's
+#      ratio means and must be re-recorded deliberately.
 #   8  stub-lint-baseline.json missing/malformed (lint.sh treats as ERROR --
 #      the baseline is TRACKED, so its absence disables the gate silently;
 #      STUB_LINT_ALLOW_NO_BASELINE=1 is the deliberate, reported bypass)

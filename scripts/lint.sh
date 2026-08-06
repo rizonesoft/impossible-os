@@ -527,10 +527,22 @@ else
             ERRORS=$((ERRORS + 1))
             ;;
         7)
-            # Coverage floor breached: something made the check BLINDER. An
-            # unresolved symbol yields no finding, so losing resolution is
-            # indistinguishable from passing -- this rc is the only signal.
-            echo -e "${RED}error${NC}: Check 7 (stub-behind-stamp) COVERAGE REGRESSION -- $(grep -m1 'COVERAGE REGRESSION' "$STUB_ERR_FILE" 2>/dev/null | sed 's/.*REGRESSION: //' | cut -c1-140)"
+            # rc 7 carries TWO contracts, and the handler must route on the
+            # emitted tag rather than assume one. Coverage floor breached:
+            # something made the check BLINDER -- an unresolved symbol yields no
+            # finding, so losing resolution is indistinguishable from passing.
+            # POPULATION moved: the floor is a RATIO, so a shifting denominator
+            # changes what passing means. Grepping only for COVERAGE REGRESSION
+            # printed an effectively BLANK error on a population change and
+            # threw away the helper's actionable message (Codex consistency,
+            # section 14).
+            if grep -q 'COVERAGE REGRESSION' "$STUB_ERR_FILE" 2>/dev/null; then
+                echo -e "${RED}error${NC}: Check 7 (stub-behind-stamp) COVERAGE REGRESSION -- $(grep -m1 'COVERAGE REGRESSION' "$STUB_ERR_FILE" 2>/dev/null | sed 's/.*REGRESSION: //' | cut -c1-140)"
+            elif grep -q 'POPULATION ' "$STUB_ERR_FILE" 2>/dev/null; then
+                echo -e "${RED}error${NC}: Check 7 (stub-behind-stamp) $(grep -m1 'POPULATION ' "$STUB_ERR_FILE" 2>/dev/null | sed 's/.*\] //' | cut -c1-200)"
+            else
+                echo -e "${RED}error${NC}: Check 7 (stub-behind-stamp) rc 7 with no recognized diagnostic; see $STUB_ERR_FILE"
+            fi
             ERRORS=$((ERRORS + 1))
             ;;
         8)
