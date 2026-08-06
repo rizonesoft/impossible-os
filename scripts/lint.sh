@@ -464,6 +464,9 @@ else
     #   6 = internal failure  -> ERROR
     #   7 = coverage floor breached -> ERROR (the check went blinder)
     #   8 = baseline invalid  -> ERROR (tracked floor file missing/corrupt)
+    #   9 = resolver input refused -> ERROR (oversized file, or one rewritten
+    #       mid-run so returned coordinates no longer describe it -- NEVER a
+    #       coverage finding, NEVER silently downgraded to "unresolved")
     CACHE="$REPO_ROOT/build/todo-cache.json"
     STUB_ERR_FILE="$(mktemp -t lint-stub-stderr.XXXXXX)"
     STUB_OUT_FILE="$(mktemp -t lint-stub-stdout.XXXXXX)"
@@ -536,6 +539,14 @@ else
             # disable the gate, so an invalid baseline is an ERROR with a
             # named, reported bypass rather than a quiet degrade to warn.
             echo -e "${RED}error${NC}: Check 7 (stub-behind-stamp) BASELINE INVALID -- $(grep -m1 'BASELINE INVALID' "$STUB_ERR_FILE" 2>/dev/null | sed 's/.*BASELINE INVALID: //' | cut -c1-140)"
+            ERRORS=$((ERRORS + 1))
+            ;;
+        9)
+            # Named case, not the wildcard: a resolver-refused input is
+            # infrastructure trouble with a specific, actionable cause
+            # (oversized file or a mid-run rewrite), not a generic helper
+            # crash -- routing it through `*)` would bury that guidance.
+            echo -e "${RED}error${NC}: Check 7 (stub-behind-stamp) RESOLVER INPUT REFUSED -- $(grep -m1 'RESOLVER INPUT REFUSED' "$STUB_ERR_FILE" 2>/dev/null | sed 's/.*RESOLVER INPUT REFUSED: //' | cut -c1-140)"
             ERRORS=$((ERRORS + 1))
             ;;
         *)

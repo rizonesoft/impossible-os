@@ -1210,9 +1210,34 @@ def is_stub_body(
     if body_open_line_idx is None:
         return None
     # Allowlist scan: same line as the body opener. Honors only the
-    # DOCUMENTED marker shape, not a bare substring match.
-    if _INTENTIONAL_STUB_RE.search(body_text_lines[body_open_line_idx]):
-        return None
+    # DOCUMENTED marker shape, not a bare substring match -- and the marker
+    # must be a REAL, lexically-independent comment span, not marker-shaped
+    # TEXT absorbed inside a `//` line comment or a string/attribute literal
+    # (Codex adversarial, TODO-06 section 12: `// example: /* INTENTIONAL-
+    # STUB: not an allowlist */` matched the raw-text regex and silently
+    # suppressed a real finding). `_FileIndex`'s span scan (`_LEX_SPAN_RE`)
+    # already resolves this correctly by construction: a `//` comment or a
+    # string literal is matched as ONE span starting at its own opener, so
+    # an embedded `/*...*/`-shaped substring is absorbed inside that larger
+    # span and never itself starts an independent span -- checking that the
+    # marker's `/*` coincides EXACTLY with a recorded span start proves it
+    # opens its own real comment, not text living inside something else's.
+    # Checks EVERY match, not just the first (Codex adversarial): a
+    # marker-shaped FAKE occurrence earlier on the line (e.g. inside a
+    # string literal) that fails the lexical-independence check must not
+    # short-circuit past a genuinely real, independent marker later on the
+    # SAME line -- `search()` alone stops at the first match regardless of
+    # its validity.
+    findex = _file_index(str(file_path))
+    abs_open_idx = (line_start - 1) + body_open_line_idx
+    opener_line_off = findex.offs[abs_open_idx]
+    for marker_match in _INTENTIONAL_STUB_RE.finditer(
+            body_text_lines[body_open_line_idx]):
+        marker_start_abs = opener_line_off + marker_match.start()
+        span_idx = bisect.bisect_left(findex._span_start, marker_start_abs)
+        if (span_idx < len(findex._span_start)
+                and findex._span_start[span_idx] == marker_start_abs):
+            return None
 
     # Find the matching CLOSE brace's exact (line, col) via the same
     # depth-aware scanner the rest of this module uses (mirrors
@@ -1256,9 +1281,7 @@ def is_stub_body(
     # index `follow_declaration`'s linkage lookback already relies on
     # (`_masked_text_for_index`) instead of a second, narrower stripper, so
     # both consumers see the SAME comment boundaries.
-    findex = _file_index(str(file_path))
     masked_whole = _masked_text_for_index(findex)
-    abs_open_idx = (line_start - 1) + body_open_line_idx
     abs_close_idx = (line_start - 1) + close_line_idx
     inner_start = findex.offs[abs_open_idx] + body_open_col + 1
     inner_end = findex.offs[abs_close_idx] + close_col

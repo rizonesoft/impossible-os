@@ -551,11 +551,14 @@ It does NOT re-cover §10's two-pass head match, its paren-depth-aware confirmat
 
 **Note:** No kernel test surface for the `src/kernel/drivers/hpet.c` change in this section -- it is a single `INTENTIONAL-STUB` comment marker (see Notes below), zero behavior change, so no new kernel-side assertion is meaningful; the resolver-coverage improvement that surfaced the false positive is exercised by this section's own `scripts/todo-graph/tests/test_build.sh` fixtures instead.
 
-**Notes:**
-- **Own-motion fixes while implementing:** `candidate_lines` per-occurrence span check (regressed 14u); `hpet_available()` + `fb_get_output_count()` marked `INTENTIONAL-STUB` (real accessors/placeholders). See commit message for evidence.
-- **Codex adversarial, 11 rounds:** identity-coverage, byte-ceiling race, gen-pin bug, escape-splice, growth-race fixture, `static`-lookback, `is_stub_body` (comments, 2-line bodies, marker). 3 rejected (no corpus precedent). Detail in commit.
-- **Accepted scope boundary (reiterated):** a macro expanding to `static` (`STBIWDEF`, `LZ4_FORCE_INLINE`) needs real preprocessing to detect, out of scope; a blanket "unknown identifier" heuristic would gut this section's own gains.
-- Gate-wiring (item 1) stayed manual/on-demand; automated wiring needs index-blob-vs-CI-job engineering, tracked as a parked item.
+> **Notes:**
+> - **Own-motion fixes while implementing:** `candidate_lines` per-occurrence span check (regressed 14u); `hpet_available()` + `fb_get_output_count()` marked `INTENTIONAL-STUB` (real accessors/placeholders). See commit message for evidence.
+> - **Codex adversarial, 13 rounds incl. post-commit:** identity-coverage, byte-ceiling, gen-pin, escape-splice, growth-race, `static`-lookback, `is_stub_body` (comments, 2-line bodies, marker validity + multi-match). 4 rejected.
+> - **Accepted scope boundary (reiterated):** a macro expanding to `static` (`STBIWDEF`, `LZ4_FORCE_INLINE`) needs real preprocessing to detect, out of scope; a blanket "unknown identifier" heuristic would gut this section's own gains.
+> - Gate-wiring (item 1) stayed manual/on-demand; automated wiring needs index-blob-vs-CI-job engineering, tracked as a parked item.
+
+> **Verified:** 2026-08-06 | commit `d41701b3` + review fixes | 6/6 items | build OK | test_build.sh 173/173, corpus gate 0 lost / 0 moved / 54 added, lint Check 7 111/1625 with 0 errors (fresh run, cache rebuilt last)
+> **Quality reviewed:** 2026-08-06 | Codex 14x (design x3, adversarial x2, re-adversarial x7, consistency, perf) | 12H/M fixed, 4 rejected (no corpus precedent, evidence in commit messages), 0 open | scope: kernel-code-quality (PASS via kernel-quality-auditor, comment-only diff on hpet.c/framebuffer.c); primary domain is host-side Python tooling
 
 -> XREF: [`TODO-06 §10`](#10-multi-line-function-head-resolution-in-resolve_symbol) -- owns the multi-line head PARSE and deferred this section's cache-bounds and backslash-splicing items here; §12 continues that work and re-covers none of it.
 -> XREF: [`TODO-06 §11`](#11-count-what-check-7-cannot-resolve-instead-of-skipping-it) -- the parent section; §11 owns Check 7's reporting contract and its baseline gate, which is what measures whether this section's coverage work landed.

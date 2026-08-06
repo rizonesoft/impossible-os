@@ -21,7 +21,18 @@
 #   corpus_resolution_snapshot.py write <out.json>       # snapshot current tree
 #   corpus_resolution_snapshot.py compare <before.json>  # diff vs current tree
 #
-# `compare` exits 0 when no prior mapping was lost or moved, 1 otherwise.
+# Exit codes:
+#   0  compare: no prior mapping was lost or moved
+#   1  compare: at least one prior mapping was lost or moved (a real
+#      regression -- see the printed LOST/MOVED lines)
+#   2  usage error (wrong argv shape)
+#   3  INFRASTRUCTURE failure -- the walk could not complete at all, so the
+#      exit code above is NOT a verdict on regression: an invalid/missing/
+#      truncated cache or baseline (CacheError), OR the resolver itself
+#      refused an input (ResolverInputError -- an oversized file, or one
+#      rewritten mid-run so returned coordinates no longer describe it).
+#      Distinct from 0/1 by design: a caller must never read "the gate
+#      could not run" as "the gate passed".
 # ============================================================================
 
 import json

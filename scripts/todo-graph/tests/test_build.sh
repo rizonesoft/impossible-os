@@ -4147,6 +4147,16 @@ cases = [
     ("{ /* INTENTIONAL-STUB */\n    return 0;\n}", True),
     ("{ /* INTENTIONAL-STUB: */\n    return 0;\n}", True),
     ("{ /* not an INTENTIONAL-STUB, this is real */\n    return 0;\n}", True),
+    # LEXICAL INDEPENDENCE (Codex adversarial, post-commit round): marker-
+    # SHAPED text absorbed inside a `//` line comment is not itself a real,
+    # independent block comment -- must NOT suppress.
+    ("{ // example: /* INTENTIONAL-STUB: not an allowlist */\n    return 0;\n}", True),
+    # MULTI-MATCH (Codex adversarial, post-commit round): a FAKE marker
+    # earlier on the line (inside a string) must not short-circuit past a
+    # genuinely real, independent marker later on the SAME line -- an
+    # earlier fix checked only the FIRST regex match regardless of validity.
+    ('{ const char *fake = "/* INTENTIONAL-STUB: fake */"; '
+     '/* INTENTIONAL-STUB: real reason */ return 0; }', False),
 ]
 results = [check(body, want) for body, want in cases]
 print("PASS" if all(results) else f"FAIL:{results}")
