@@ -65,6 +65,7 @@ title: "TODO-06 -- TODO Metadata Layer and Derived Graph"
 | ⭐  |  14   |  §14    | Identity gate over the whole symbol-ref population (every `kind=symbol` ref)        | §13        |  [x]   |
 | ⭐  |  15   |  §15    | The shared rule's cost: structural-walk hot path + split cache lifecycles           | §13, §14   |  [x]   |
 | 💎  |  16   |  §16    | Wire the identity gate so something runs it (adopts §12's parked wiring)            | §12, §14   |  [ ]   |
+| ⭐  |  17   |  §17    | One shared cache-schema validator, consumed by both cache readers                   | §14, §16   |  [ ]   |
 
 > 💎 = parity work -- Linux kernel has MAINTAINERS + get_maintainer.pl (person-ownership mapping without a dep graph); Windows has no public equivalent. §1 (frontmatter), §2 (generator), §5 (migration) bring us to partial Linux parity plus graph metadata neither OS ships.
 > ⭐ = competitive edge -- neither Win11 nor mainline Linux ships a first-class TODO dependency graph. §3 (validator), §4 (query CLI), §6 (CI gate), §7 (visualization), §8 (MCP server) are new ground; the surface has direct value for any contributor scanning "what can I work on next?".
@@ -692,7 +693,7 @@ That is a real hole in the proof, and §13 is the section that demonstrates it. 
 > - Also repaired `test_stub_lint_coverage.py`, RED in the tree since §11 made a `total`-less baseline invalid; its runner gates on a manifest listing neither `scripts/lint` nor `scripts/todo-graph`.
 > - Scope boundary: does NOT wire the gate into anything (§16 owns that) and does NOT touch resolver cost (§15).
 > **Verified:** 2026-08-06 | commit `d0b2dc17` | 5/5 items | build OK | 209/209 todo-graph, 1287/1287 tooling, 66/66 overnight, 28326 kernel + 17 user-mode, lint 0 errors
-> **Accepted:** [M] cache-schema validation is not shared between the two callers, so they disagree about which caches are valid and which rc a malformed one yields -> XREF: 00-infrastructure/TODO-06 §16 (item: "ONE shared cache-schema validator, consumed by both cache readers" at line 741)
+> **Accepted:** [M] cache-schema validation is not shared between the two callers, so they disagree about which caches are valid and which rc a malformed one yields -> XREF: 00-infrastructure/TODO-06 §16 (item: "ONE shared cache-schema validator, consumed by both cache readers" at line 696)
 > **Quality reviewed:** 2026-08-06 | Codex 6x (design, adversarial x2, test-coverage, consistency, perf) | 5H+7M fixed, 0 open | scope: N/A (host tooling -- no kernel/boot/desktop/shell/userland surface)
 
 -> XREF: [`TODO-06 §13`](#13-stored-ref-repair-unpaired-symbols-and-bare-filenames) -- the section whose review found this, and whose bucket movements are the worked example of what the gate cannot currently see.
@@ -760,17 +761,39 @@ Split out of §14 at authoring time, not spawned by a review round. §14 proves 
       `compare` already separates exit 3 (could not run) from exit 1 (regression) precisely so a caller cannot read one as the other; the wiring must preserve that distinction rather than collapsing a stale cache into a pass.
 - [ ] Fixtures proving the gate FIRES, each mutation-checked
       A wiring test that only proves the green path is the failure this whole roadmap keeps paying for: prove a lost mapping fails the gate under the real invocation shape, and that an ordinary TODO edit does NOT.
-- [ ] ONE shared cache-schema validator, consumed by both cache readers
-      §14 shares the RESOLUTION rule but not the cache-VALIDATION rule: `corpus_resolution_snapshot._load_nodes` validates node/item/ref shape and the three ref scalars, while `check_stub_behind_stamp` does not and instead relies on a broad `except Exception -> rc 6`. The two therefore disagree about which caches are valid and which exit code a malformed one produces.
-      - Belongs here rather than in §14 because wiring is what makes it matter: an automated gate must refuse a bad cache identically on both sides, or the wired verdict and the lint disagree about whether the run happened at all.
-      - Reject the shapes even when FALSEY (`stamped_items: {}`, `refs: {}`), which the lint currently skips silently, and route every decode failure -- `UnicodeDecodeError`, `RecursionError` -- to each caller's documented infrastructure code.
-      -> XREF: `TODO-06 §14` -- shipped the snapshot-side validation this generalizes (item: "Baseline format migration, fail-closed on an old baseline").
 - [ ] Commit: `"todo-graph: run the identity gate automatically instead of on request"`
 
 **Test checkpoint:** the new gate fires on a deliberately broken resolver and passes on an unchanged tree; `bash scripts/todo-graph/tests/test_build.sh` green with the new fixtures; `bash scripts/test-tooling.sh` green; a TODO-only edit does not trip it.
 
 -> XREF: [`TODO-06 §12`](#12-resolver-coverage-past-the-head-limit-and-lexercache-robustness) -- owns the park this section adopts (item: "Wire `corpus_resolution_snapshot.py` into a GATE"), including the two mechanism failures above.
 -> XREF: [`TODO-06 §14`](#14-identity-gate-over-the-whole-symbol-ref-population) -- must land first: wiring a gate that verdicts only part of the population would automate an incomplete proof.
+-> XREF: [`TODO-06 §17`](#17-one-shared-cache-schema-validator-for-both-cache-readers) -- split out of this section (item: "ONE validator module both readers call, with the shape rules stated once"); this section wires the gate, §17 makes both cache readers agree about what a valid cache is.
+
+---
+
+## 17. One Shared Cache-Schema Validator for Both Cache Readers
+
+> **Spawned-by:** §16 (split)
+
+§14 gave the two cache readers ONE shared RESOLUTION rule and deliberately stopped there. They still do not share the cache-VALIDATION rule: [`corpus_resolution_snapshot._load_nodes`](../../scripts/todo-graph/corpus_resolution_snapshot.py) validates node/item/ref shape and the three ref scalars against explicit `CacheError`s, while [`check_stub_behind_stamp`](../../scripts/lint/check_stub_behind_stamp.py) validates none of it and leans on a broad `except Exception -> rc 6`. So the two disagree about which caches are valid at all, and about which exit code a malformed one produces.
+
+**Split out of §16 because the failure modes are opposite, not because the work is large.** §16's failure mode is a gate that does not fire (or fires on an ordinary TODO edit); this section's is two readers that fire DIFFERENTLY on the same input. §16 is still what makes it matter -- an automated gate must refuse a bad cache identically on both sides, or the wired verdict and the lint disagree about whether the run happened at all -- so this lands after the wiring, against a real caller rather than a hypothetical one.
+
+- [ ] ONE validator module both readers call, with the shape rules stated once
+      Neither reader keeps a private copy of the rule. `_load_nodes` is the mature side and is the source the shared module should be lifted from, not a fresh re-derivation -- every check it carries was paid for by a specific Codex finding in §14, and the comments naming those findings must survive the move.
+- [ ] Reject the FALSEY shapes, which the lint currently skips in silence
+      `stamped_items: {}` and `refs: {}` are wrong-typed but falsey, so a truthiness test treats them as "absent" and walks zero refs. That is the same vacuous-pass class §14 closed on the snapshot side: the lint reports a clean run over a population of nothing.
+- [ ] Each caller keeps its OWN documented infrastructure exit code
+      Sharing the RULE must not collapse the CODES: the snapshot documents rc 3 for "could not run" and the lint documents rc 6, and both contracts are load-bearing for §16's wiring. The shared module raises; each caller maps that to its own documented code.
+      - Route every decode failure the same way on both sides -- `UnicodeDecodeError` (a `ValueError`, but not a `JSONDecodeError`) and `RecursionError` (neither) are the two that escaped narrower handlers in §14 and surfaced as a bare exit 1.
+- [ ] Fixtures: the SAME bad cache through both readers, each mutation-checked
+      One fixture per rejected shape, asserted against BOTH readers in the same sub-test, so a rule that gets fixed on one side and not the other fails the test rather than passing twice. Mutation-check each: delete the rule, prove the fixture goes red.
+- [ ] Commit: `"todo-graph: one cache-schema validator for both cache readers"`
+
+**Test checkpoint:** `bash scripts/todo-graph/tests/test_build.sh` green with the new fixtures; `bash scripts/test-tooling.sh` green; `bash scripts/lint.sh` rc 0; a deliberately falsey `stamped_items` fails BOTH readers, each with its own documented infrastructure code.
+
+-> XREF: [`TODO-06 §14`](#14-identity-gate-over-the-whole-symbol-ref-population) -- shipped the snapshot-side validation this generalizes (item: "Baseline format migration, fail-closed on an old baseline").
+-> XREF: [`TODO-06 §16`](#16-wire-the-identity-gate-so-something-actually-runs-it) -- the wiring this hardens; must land first so the shared validator is proven against the real automated caller.
 
 ---
 
