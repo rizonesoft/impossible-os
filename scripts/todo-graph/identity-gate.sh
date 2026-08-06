@@ -3,11 +3,19 @@
 # identity-gate.sh -- run corpus_resolution_snapshot.py as a GATE instead of
 # as a thing a human remembers to invoke.
 #
-# WHAT THIS IS. A RESOLVER-CODE DIFFERENTIAL gate. It answers exactly one
-# question: "does the resolver code in this range still produce the same
-# verdict for every symbol ref it produced a verdict for before?" It is NOT a
-# replacement for the full manual snapshot contract, and section 16 documents
-# that boundary rather than letting a reader assume the wider claim.
+# WHAT THIS IS. THREE checks over one base..head range, not one (section 18
+# widened it; the header said "exactly one question" long after that stopped
+# being true):
+#   1. RESOLVER-CODE DIFFERENTIAL -- does the resolver still produce the same
+#      verdict for every symbol ref it produced a verdict for before?
+#   2. PRODUCER DIFFERENTIAL -- do the base and head `build.py` emit the same
+#      stamped-ref population, over BOTH corpora? The resolver differential
+#      structurally cannot see this: it builds the cache ONCE, so a ref the
+#      producer stops emitting is absent from both of its walks.
+#   3. PROTOCOL SEPARATION -- is a vocabulary/schema change provably a
+#      data-only migration, with every executable closure file byte-identical?
+# It is still NOT a replacement for the full manual snapshot contract, and that
+# boundary is deliberate rather than an oversight.
 #
 # THE KEY-STABILITY PROBLEM, DISSOLVED RATHER THAN WORKED AROUND. Occurrence
 # keys embed `item_idx`/`ref_i`, so a TRACKED baseline file moves every time a
@@ -49,6 +57,9 @@
 #   0  no prior verdict changed, and nothing was gained or added unreviewed
 #   1  REGRESSION -- a prior verdict was dropped/lost/moved/reclassified, or an
 #      unreviewed GAINED/ADDED mapping appeared (see --strict)
+#   2  USAGE -- this gate was invoked wrongly (unknown argument, missing option
+#      value, malformed IDENTITY_GATE_BUDGET_SECS). A caller mistake, never a
+#      statement about the tree under test.
 #   3  INFRASTRUCTURE -- the gate could not run: no usable base, a protocol
 #      migration bundled with a resolver change, a cache/baseline failure, or a
 #      worktree it could not materialize
@@ -83,8 +94,10 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 #   version ever runs, so a change forces the walk (conservative, never a false
 #   pass) while this gate proves nothing about the change itself:
 #       build.py          produces the ONE cache both walks read, so a change
-#                         moves the shared input under both sides equally --
-#                         which is exactly the blind spot section 18 owns.
+#                         moves the shared input under both sides equally. That
+#                         blind spot is now CLOSED by the producer differential
+#                         above -- build.py stays listed here because a change
+#                         to it must still force the resolver walk.
 #       identity-gate.sh  is the driver; a change to it must re-run the gate.
 #
 # Contrast scripts/lint/check_stub_behind_stamp.py, which is deliberately
@@ -121,6 +134,18 @@ BASE_EXPLICIT=0
 HEAD_SHA="HEAD"
 KEEP_TMP=0
 
+die_usage() {
+    # A CALLER MISTAKE IS 2, not 3. The other three tools in this family
+    # (corpus_resolution_snapshot, producer_differential,
+    # check_consumer_delegation) all reserve 2 for a bad invocation, and this
+    # driver collapsed argument errors into the infrastructure channel --
+    # against the very non-collapsing contract section 16 established when it
+    # separated rc 2 from rc 3 in the OTHER direction (Codex consistency,
+    # section 18 review).
+    printf '[identity-gate] USAGE: %s\n' "$1" >&2
+    exit 2
+}
+
 die_infra() {
     printf '[identity-gate] INFRASTRUCTURE: %s\n' "$1" >&2
     printf '[identity-gate] this is NOT a pass -- the gate could not run.\n' >&2
@@ -131,10 +156,10 @@ log() { printf '[identity-gate] %s\n' "$1"; }
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --base) BASE_SHA="${2:-}"; BASE_EXPLICIT=1; shift 2 || die_infra "--base needs a value" ;;
-        --head) HEAD_SHA="${2:-}"; shift 2 || die_infra "--head needs a value" ;;
+        --base) BASE_SHA="${2:-}"; BASE_EXPLICIT=1; shift 2 || die_usage "--base needs a value" ;;
+        --head) HEAD_SHA="${2:-}"; shift 2 || die_usage "--head needs a value" ;;
         --keep-tmp) KEEP_TMP=1; shift ;;
-        *) die_infra "unknown argument: $1" ;;
+        *) die_usage "unknown argument: $1" ;;
     esac
 done
 
@@ -143,9 +168,9 @@ cd "$REPO_ROOT" || die_infra "cannot cd to repo root $REPO_ROOT"
 # VALIDATED ONCE, BEFORE ANY PHASE SPAWNS ANYTHING.
 BUDGET_SECS="${IDENTITY_GATE_BUDGET_SECS:-600}"
 case "$BUDGET_SECS" in
-    ''|*[!0-9]*) die_infra "IDENTITY_GATE_BUDGET_SECS must be a whole number of seconds, got '$BUDGET_SECS'" ;;
+    ''|*[!0-9]*) die_usage "IDENTITY_GATE_BUDGET_SECS must be a whole number of seconds, got '$BUDGET_SECS'" ;;
 esac
-[ "$BUDGET_SECS" -ge 1 ] || die_infra "IDENTITY_GATE_BUDGET_SECS must be >= 1 (0 DISABLES timeout(1) outright, which removes the bound entirely)"
+[ "$BUDGET_SECS" -ge 1 ] || die_usage "IDENTITY_GATE_BUDGET_SECS must be >= 1 (0 DISABLES timeout(1) outright, which removes the bound entirely)"
 
 # ONE MONOTONIC DEADLINE FOR THE WHOLE GATE. Granting each sequential phase the
 # full budget meant the producer differential, the cache build, the two walks

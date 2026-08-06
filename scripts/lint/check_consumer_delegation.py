@@ -116,7 +116,7 @@ def semantic_violations() -> list:
         raise DelegationError(f"cannot import the consumer or the shared "
                               f"resolver: {exc}") from exc
 
-    real = _rr.resolve_ref
+    real = _rr.resolve_ref   # restored in each pass's finally
     real_stub = getattr(_consumer, "_is_stub_cached", None)
     if real_stub is None:
         raise DelegationError("the consumer no longer exposes `_is_stub_cached`; "
@@ -140,7 +140,17 @@ def semantic_violations() -> list:
 
         def sentinel_resolve_ref(ref, scope, root, _cls=cls):
             calls["n"] += 1
-            result = real(ref, scope, root)
+            # CONSTRUCT the verdict; do NOT call the real resolver first. Its
+            # answer was discarded by the `_replace` below, but computing it
+            # repeated the whole resolution, source indexing and section
+            # pairing for every ref on every one of the seven passes: measured
+            # 6.02s here versus 0.18s constructing directly, on a lint check
+            # that runs on every clean-tree invocation (Codex perf, section 18
+            # review). The seven isolated passes are unchanged -- only the
+            # discarded work is gone.
+            result = _rr.RefResult(rel_path=None, provenance="delegation-probe",
+                                   bucket=None, def_abs=None, def_rel=None,
+                                   line_start=None, line_end=None)
             if _cls is None:
                 # A RESOLVED verdict with DISTINCTIVE coordinates. The consumer
                 # passes these straight to `_is_stub_cached`, so capturing them

@@ -157,16 +157,14 @@ def _walk(nodes: list, repo_root: Path) -> tuple:
     """
     repo_resolved = repo_root.resolve()
     findings = 0
-    cov = {
-        "occurrences": 0,
-        "resolved": 0,
-        "unresolved_calllike": [],
-        "no_calllike_token": [],
-        "missing_file": [],
-        "unsupported_lang": [],
-        "path_escape": [],
-        "unpaired_ref": [],
-    }
+    # KEYED FROM THE PUBLISHED VOCABULARY, not a private copy. Hardcoding the
+    # six names here made this file a SECOND definition of the protocol: a
+    # data-only bucket ADDITION is a supported migration (the identity gate
+    # accepts it, fixture 22j), and the very next `cov[result.bucket]` would
+    # then raise KeyError -- so the migration the gate advertises could not
+    # pass lint (Codex consistency, section 18 review).
+    cov = {"occurrences": 0, "resolved": 0}
+    cov.update({b: [] for b in _rr.ALL_BUCKETS})
     for node in nodes:
         items = node.get("stamped_items") or []
         # SECTION-SCOPED candidate files, computed once per section rather than

@@ -64,12 +64,15 @@ def _run_producer(tree: Path, corpus: Path, out: Path, label: str) -> None:
     script = tree / "scripts/todo-graph/build.py"
     if not script.is_file():
         raise ProducerError(f"{label}: no build.py at {script}")
-    proc = subprocess.run(
-        [sys.executable, str(script), "--quiet",
-         "--root", str(corpus / "todo"),
-         "--repo-root", str(corpus),
-         "--output", str(out)],
-        capture_output=True, text=True)
+    try:
+        proc = subprocess.run(
+                [sys.executable, str(script), "--quiet",
+             "--root", str(corpus / "todo"),
+             "--repo-root", str(corpus),
+             "--output", str(out)],
+            capture_output=True, text=True)
+    except OSError as exc:
+        raise ProducerError(f"{label}: cannot launch build.py: {exc}") from exc
     if proc.returncode != 0:
         tail = (proc.stderr or proc.stdout or "").strip().splitlines()[-6:]
         raise ProducerError(
@@ -195,6 +198,16 @@ def main(argv) -> int:
                     corpus_label, strict)
     except ProducerError as exc:
         sys.stderr.write(f"[producer-differential] {exc}\n")
+        return 3
+    except OSError as exc:
+        # OPERATIONAL FAILURES ARE INFRASTRUCTURE, not a regression verdict. An
+        # unusable TMPDIR raised straight out of TemporaryDirectory as a
+        # traceback and a bare exit 1 -- and 1 is the DOCUMENTED "a stamped ref
+        # was dropped" code, so identity-gate.sh would have reported a producer
+        # regression that never happened (Codex consistency, section 18
+        # review). Same contract the snapshot tool applies to its own I/O.
+        sys.stderr.write(f"[producer-differential] operational failure: "
+                         f"{exc}\n")
         return 3
 
     if total_fails:

@@ -5921,7 +5921,7 @@ PY2
     (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head HEAD \
         >"$TMP_DIR/gate-22s.log" 2>&1)
     G_RC=$?
-    if [ "$G_RC" -ne 0 ] && grep -qE 'RELOCATED|undeclared_removals' "$TMP_DIR/gate-22s.log"; then
+    if [ "$G_RC" -eq 1 ] && grep -qE 'RELOCATED|undeclared_removals' "$TMP_DIR/gate-22s.log"; then
         t_pass "identity gate: an undeclared bucket removal is refused (ambiguous with a rename)"
     else
         t_fail "identity gate: rename+move escaped (rc=$G_RC; see $TMP_DIR/gate-22s.log)"
@@ -5980,7 +5980,7 @@ PY2
     G_RC=$?
     # Refused as a rename before the move is even reached -- strictly stronger
     # than reporting it as a relocation, and for the same underlying reason.
-    if [ "$G_RC" -ne 0 ]; then
+    if [ "$G_RC" -eq 1 ] && grep -q 'cannot be a data-only migration' "$TMP_DIR/gate-22u.log"; then
         t_pass "identity gate: a declared rename that crosses the boundary is refused"
     else
         t_fail "identity gate: declared rename+move was accepted (rc=$G_RC; see $TMP_DIR/gate-22u.log)"
@@ -6150,7 +6150,7 @@ PY2
     # emitter names it" is not something this gate can currently establish.
     # Retirement is enabled by the declared emitted-member contract in section
     # 20; until then the path is closed rather than knowingly unsound.
-    if [ "$G_RC" -ne 0 ] && grep -q 'section 20' "$TMP_DIR/gate-22ae.log"; then
+    if [ "$G_RC" -eq 1 ] && grep -q 'section 20' "$TMP_DIR/gate-22ae.log"; then
         t_pass "identity gate: retirement is refused pending a provable emission contract"
     else
         t_fail "identity gate: a retirement was approved on source-text evidence alone (rc=$G_RC; see $TMP_DIR/gate-22ae.log)"
@@ -6179,10 +6179,13 @@ PY2
     (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head HEAD \
         >"$TMP_DIR/gate-22af.log" 2>&1)
     G_RC=$?
-    if [ "$G_RC" -ne 0 ]; then
+    # SPECIFIC CODE AND DIAGNOSTIC. Accepting any non-zero meant a gate that
+    # failed for an unrelated reason -- or failed always -- satisfied this
+    # assertion without ever exercising the unreadable-emitter path.
+    if [ "$G_RC" -eq 1 ] && grep -q 'not evidence of absence' "$TMP_DIR/gate-22af.log"; then
         t_pass "identity gate: an unreadable emitter is not evidence a bucket is retired-safe"
     else
-        t_fail "identity gate: unreadable emitter approved a retirement (rc=$G_RC; see $TMP_DIR/gate-22af.log)"
+        t_fail "identity gate: unreadable-emitter path not exercised (rc=$G_RC; see $TMP_DIR/gate-22af.log)"
     fi
     (cd "$GATE_REPO" && git checkout --quiet "$G_PROTO_BASE" -- scripts/todo-graph/snapshot_protocol.json \
         scripts/lint/check_stub_behind_stamp.py \
@@ -6217,10 +6220,13 @@ PY2
     (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head HEAD \
         >"$TMP_DIR/gate-22ag.log" 2>&1)
     G_RC=$?
-    if [ "$G_RC" -ne 0 ]; then
+    # Loader/data divergence makes the protocol UNREADABLE, which the caller
+    # treats as infrastructure -- assert that exact code and diagnostic rather
+    # than "something went wrong".
+    if [ "$G_RC" -eq 3 ] && grep -q 'cannot read the snapshot protocol' "$TMP_DIR/gate-22ag.log"; then
         t_pass "identity gate: a loader that disagrees with the protocol data is refused"
     else
-        t_fail "identity gate: loader/data divergence passed (rc=$G_RC; see $TMP_DIR/gate-22ag.log)"
+        t_fail "identity gate: loader/data divergence not exercised (rc=$G_RC; see $TMP_DIR/gate-22ag.log)"
     fi
     (cd "$GATE_REPO" && git checkout --quiet "$G_PROTO_BASE" -- scripts/todo-graph/snapshot_protocol.json \
         scripts/todo-graph/snapshot_protocol.py \
@@ -6276,8 +6282,16 @@ PY2
     LINT25_TRIG="$TMP_DIR/lint25-trigger.sh"
     LINT25_FAKE="$TMP_DIR/lint25-clean-repo"
     rm -rf "$LINT25_FAKE"; mkdir -p "$LINT25_FAKE"
+    # A clean tree WITH THE SUBJECT PRESENT. The trigger is scoped to a tree
+    # that actually has the consumer and a todo/ corpus, because lint.sh is
+    # also run against scratch repos that have neither -- and Check 25 fails
+    # closed, so triggering there turns every such run red. The fixture must
+    # model a real checkout, not merely an empty git repo.
+    mkdir -p "$LINT25_FAKE/scripts/lint" "$LINT25_FAKE/todo"
+    : > "$LINT25_FAKE/scripts/lint/check_stub_behind_stamp.py"
     (cd "$LINT25_FAKE" && git init -q . >/dev/null 2>&1 \
-        && git -c user.email=t@t.invalid -c user.name=t commit -q --allow-empty -m init >/dev/null 2>&1)
+        && git add -A >/dev/null 2>&1 \
+        && git -c user.email=t@t.invalid -c user.name=t commit -q -m init >/dev/null 2>&1)
     {
         printf 'REPO_ROOT=%s\n' "$LINT25_FAKE"
         sed -n '/^    LINT25_TOUCHED=0$/,/^    if \[ "\$LINT25_TOUCHED" -eq 1 \]; then$/p' \
@@ -6355,10 +6369,10 @@ PY2
             bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head HEAD \
             >"$TMP_DIR/gate-22y.log" 2>&1)
         G_RC=$?
-        if [ "$G_RC" -eq 3 ] && grep -q 'IDENTITY_GATE_BUDGET_SECS' "$TMP_DIR/gate-22y.log"; then
-            t_pass "identity gate: budget '$_bad_budget' is refused before any phase runs"
+        if [ "$G_RC" -eq 2 ] && grep -q 'IDENTITY_GATE_BUDGET_SECS' "$TMP_DIR/gate-22y.log"; then
+            t_pass "identity gate: budget '$_bad_budget' is refused as USAGE (2) before any phase runs"
         else
-            t_fail "identity gate: budget '$_bad_budget' was accepted (rc=$G_RC; see $TMP_DIR/gate-22y.log)"
+            t_fail "identity gate: budget '$_bad_budget' not refused as usage rc 2 (rc=$G_RC; see $TMP_DIR/gate-22y.log)"
         fi
     done
 
@@ -6626,6 +6640,29 @@ PY3
     else
         t_fail "consumer delegation: post-bucket path rewrite not caught (rc=$DELEG_PATH_RC; see $TMP_DIR/deleg-relpath.log)"
     fi
+
+    # A data-only bucket ADDITION is a supported migration (fixture 22j), so
+    # the lint consumer must survive one. While it kept a PRIVATE copy of the
+    # vocabulary, `cov[result.bucket]` raised KeyError on the new name and
+    # Check 25 exited 3 -- the migration the gate advertises could not pass
+    # lint (Codex consistency, section 18 review).
+    cp "$REPO_ROOT/scripts/lint/check_stub_behind_stamp.py" "$DELEG_ROOT/scripts/lint/"
+    python3 - "$DELEG_ROOT/scripts/todo-graph/snapshot_protocol.json" <<'PY3'
+import json, sys, pathlib
+p = pathlib.Path(sys.argv[1]); d = json.loads(p.read_text(encoding="utf-8"))
+d["post_resolution_buckets"].append("an_added_but_unused_bucket")
+p.write_text(json.dumps(d, indent=2) + "\n", encoding="utf-8")
+PY3
+    DELEG_ADD_RC=0
+    STUB_LINT_CACHE="$REPO_ROOT/build/todo-cache.json" \
+        python3 "$DELEG_ROOT/scripts/lint/check_consumer_delegation.py" \
+        >"$TMP_DIR/deleg-added.log" 2>&1 || DELEG_ADD_RC=$?
+    if [ "$DELEG_ADD_RC" -eq 0 ]; then
+        t_pass "consumer delegation: a data-only bucket ADDITION does not break the consumer"
+    else
+        t_fail "consumer delegation: an added protocol bucket broke the consumer (rc=$DELEG_ADD_RC; see $TMP_DIR/deleg-added.log)"
+    fi
+
 fi
 
 

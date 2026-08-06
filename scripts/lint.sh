@@ -1788,7 +1788,14 @@ else
         # alternative and is worse: a PR spans several commits and the range is
         # a second thing to get wrong. On a clean tree just run it -- ~7s, and
         # only where there is a committed state to adjudicate.
-        if [ -z "$(printf '%s' "$LINT25_DIFF" | tr -d '[:space:]')" ]; then
+        # ...but ONLY where this check is meaningful. `scripts/lint.sh` is run
+        # against scratch repos by the tooling suite, which have neither the
+        # consumer nor a todo/ corpus -- and since Check 25 fails CLOSED, a
+        # clean-tree trigger there turned every such sub-test red (measured: 4
+        # tooling failures). Absence of the subject is not a finding about it.
+        if [ -z "$(printf '%s' "$LINT25_DIFF" | tr -d '[:space:]')" ] \
+           && [ -f "$REPO_ROOT/scripts/lint/check_stub_behind_stamp.py" ] \
+           && [ -d "$REPO_ROOT/todo" ]; then
             LINT25_TOUCHED=1
         fi
         case "$LINT25_DIFF" in
