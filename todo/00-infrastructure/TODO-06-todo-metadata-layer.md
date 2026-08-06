@@ -64,6 +64,7 @@ title: "TODO-06 -- TODO Metadata Layer and Derived Graph"
 | ⭐  |  13   |  §13    | Stored-ref repair: unpaired symbols + bare filenames (resolution-time)              | §2, §11    |  [x]   |
 | ⭐  |  14   |  §14    | Identity gate over the whole symbol-ref population (every `kind=symbol` ref)        | §13        |  [ ]   |
 | ⭐  |  15   |  §15    | The shared rule's cost: batched definition lookup + bounded resolver caches         | §13, §14   |  [ ]   |
+| 💎  |  16   |  §16    | Wire the identity gate so something runs it (adopts §12's parked wiring)            | §12, §14   |  [ ]   |
 
 > 💎 = parity work -- Linux kernel has MAINTAINERS + get_maintainer.pl (person-ownership mapping without a dep graph); Windows has no public equivalent. §1 (frontmatter), §2 (generator), §5 (migration) bring us to partial Linux parity plus graph metadata neither OS ships.
 > ⭐ = competitive edge -- neither Win11 nor mainline Linux ships a first-class TODO dependency graph. §3 (validator), §4 (query CLI), §6 (CI gate), §7 (visualization), §8 (MCP server) are new ground; the surface has direct value for any contributor scanning "what can I work on next?".
@@ -503,7 +504,8 @@ It does NOT re-cover §10's two-pass head match, its paren-depth-aware confirmat
       - Occurrence keys (`item_idx`/`ref_i`) are stable only while the cache itself is held fixed, so a naive tracked-baseline WARN would either miss real regressions (downgraded to WARN) or fire on ordinary TODO edits (kept as ERROR).
       - The identity mechanism itself is unaffected and still works correctly on demand -- `write`/`compare` proved 0 lost / 0 moved across every mechanism this section shipped.
       - Blocked on: a real automated wiring needs either index-blob materialization at pre-commit (candidate resolver run against the STAGED blob, not the worktree file) or a dedicated CI job comparing against the push's base SHA -- both are scoped engineering beyond this section, not a quick gate.
-      -> XREF: `TODO-06 §11` -- §11 established the reporting contract this gate would enforce; the automated-wiring follow-up is unfiled pending a session that scopes the index-blob-vs-CI-job tradeoff.
+      -> XREF: `TODO-06 §11` -- §11 established the reporting contract this gate would enforce.
+      -> XREF: `TODO-06 §16` -- the OWNER of the automated wiring, filed 2026-08-06 (item: "Choose the wiring mechanism on the two failure modes named here"). This park was previously recorded as "unfiled pending a session", which left it with no owner able to re-open it.
 - [x] Resolve definitions sitting past `_DEF_HEAD_LIMIT` (512 lines) -- **35 refs, and the single largest resolvable class**, ahead of class B
       - `_DEF_HEAD_LIMIT` removed; the head search is now positionally unbounded, bounded instead by a new `_MAX_FILE_BYTES` (16 MiB) ceiling on the INPUT that raises `ResolverInputError` rather than silently truncating.
       - Candidate discovery uses a per-file lexical index (`_FileIndex`, one regex pass for line-start offsets + non-code spans) instead of a per-line Python scan, keeping the unbounded search affordable (1.39x vs. a naive 2.63x).
@@ -580,7 +582,7 @@ It does NOT re-cover §10's two-pass head match, its paren-depth-aware confirmat
 
 The §12 split still earned itself, on the boundary that turned out to matter: §12 owns `resolve_symbol.py`'s definition rule, this section owns which FILE that rule is pointed at. Reviewing both under one gate would have hidden which of the two moved a mapping.
 
-It does NOT re-cover §12's head-limit widening, decl-following, cache bounds, or lexer splicing, nor §11's counting base. The `corpus_resolution_snapshot.py` identity check is the acceptance test here too: every ADDED mapping is ground-truthed by hand before the baseline moves, and 0 lost / 0 moved is the bar. It is a MANUAL, on-demand `write`/`compare` -- §12 deliberately parked its automated wiring after two design rounds found real correctness gaps in every mechanism tried, so nothing runs it for you and calling it a wired gate would be false comfort. §14 owns making it one.
+It does NOT re-cover §12's head-limit widening, decl-following, cache bounds, or lexer splicing, nor §11's counting base. The `corpus_resolution_snapshot.py` identity check is the acceptance test here too: every ADDED mapping is ground-truthed by hand before the baseline moves, and 0 lost / 0 moved is the bar. It is a MANUAL, on-demand `write`/`compare` -- §12 deliberately parked its automated wiring after two design rounds found real correctness gaps in every mechanism tried, so nothing runs it for you and calling it a wired gate would be false comfort. §16 owns making it one; §14 owns making it COVER the whole population, which is a different defect and lands first.
 
 **Establish the MEANING before writing code.** Both items were a question about the corpus, not a bug with a known fix, and the answer decided which file changed. Guessing here would have rewritten 1,368 stored refs on an assumption -- and the measurement did in fact move the repair OUT of the extractor this section was named for.
 
@@ -646,7 +648,7 @@ It does NOT re-cover §12's head-limit widening, decl-following, cache bounds, o
 -> XREF: [`TODO-06 §12`](#12-resolver-coverage-past-the-head-limit-and-lexercache-robustness) -- the parent section; §12 owns `resolve_symbol.py` coverage plus the `corpus_resolution_snapshot.py` identity gate this section is measured by.
 -> XREF: [`TODO-06 §11`](#11-count-what-check-7-cannot-resolve-instead-of-skipping-it) -- counted these two classes for the first time; §11 owns the reporting contract and the bucket denominators this section moves.
 -> XREF: [`TODO-06 §2`](#2-generator-and-cache-format) -- owns `build.py` and the cache format. This section leaves BOTH untouched: the repairs are applied at resolution time, so the cache still stores exactly the paths TODO authors wrote.
--> XREF: [`TODO-06 §14`](#14-identity-gate-over-the-whole-symbol-ref-population-and-the-shared-rules-cost) -- spawned from this section's review; §14 widens `corpus_resolution_snapshot.py` to record a verdict for EVERY `kind=symbol` occurrence, which is the gap that let this section's own bucket movements go unproven.
+-> XREF: [`TODO-06 §14`](#14-identity-gate-over-the-whole-symbol-ref-population) -- spawned from this section's review; §14 widens `corpus_resolution_snapshot.py` to record a verdict for EVERY `kind=symbol` occurrence, which is the gap that let this section's own bucket movements go unproven.
 
 ---
 
@@ -701,6 +703,28 @@ Split out of §14 at authoring time, not spawned by a review round. §14 proves 
 
 -> XREF: [`TODO-06 §14`](#14-identity-gate-over-the-whole-symbol-ref-population) -- the split parent; owns the gate this section's changes must leave verdict-identical, and must land first.
 -> XREF: [`TODO-06 §13`](#13-stored-ref-repair-unpaired-symbols-and-bare-filenames) -- whose round-3 perf review measured the repeated per-symbol scanning that item 1 removes.
+
+---
+
+## 16. Wire the Identity Gate So Something Actually Runs It
+
+[`corpus_resolution_snapshot.py`](../../scripts/todo-graph/corpus_resolution_snapshot.py) has been the acceptance test for every resolver change since §10, and **nothing runs it**. It is a manual `write`/`compare` a human remembers to invoke, which means the gate protects only the changes whose author chose to be protected -- the property a gate exists to remove. §12 parked the wiring with a real blocker (below) and recorded the follow-up as "unfiled"; this section is that filing, so the park has an owner that can re-open it.
+
+**The park's two failure modes are the design constraints, not obstacles to route around.** §12 tried both obvious mechanisms across two Codex design rounds and each broke on a specific, reproducible case: a pre-commit hook conditioned on the worktree diff validates the WRONG artifact under partial staging and never fires at all in a clean CI checkout with no base SHA; and occurrence keys (`item_idx`/`ref_i`) are stable only while the cache is held fixed, so a tracked-baseline check either misses real regressions (as a WARN) or fires on ordinary TODO edits (as an ERROR). A mechanism that does not answer both is not an improvement on the manual call.
+
+- [ ] Choose the wiring mechanism on the two failure modes named here, and write down why the loser loses
+      The two candidates §12 identified are staged-blob materialization at pre-commit (run the resolver against the STAGED blob, not the worktree file) and a dedicated CI job comparing against the push's base SHA. Decide on evidence, and record the rejected one's specific failure so a later session does not re-litigate it.
+      - The key-stability problem is the harder half and is independent of the mechanism: a baseline keyed by `item_idx`/`ref_i` moves whenever a TODO gains an item, so either the gate regenerates the baseline from the SAME cache it compares against, or the key stops depending on item position. Decide which, because it changes what the baseline file is.
+- [ ] Implement the chosen wiring, fail-CLOSED on its own infrastructure errors
+      `compare` already separates exit 3 (could not run) from exit 1 (regression) precisely so a caller cannot read one as the other; the wiring must preserve that distinction rather than collapsing a stale cache into a pass.
+- [ ] Fixtures proving the gate FIRES, each mutation-checked
+      A wiring test that only proves the green path is the failure this whole roadmap keeps paying for: prove a lost mapping fails the gate under the real invocation shape, and that an ordinary TODO edit does NOT.
+- [ ] Commit: `"todo-graph: run the identity gate automatically instead of on request"`
+
+**Test checkpoint:** the new gate fires on a deliberately broken resolver and passes on an unchanged tree; `bash scripts/todo-graph/tests/test_build.sh` green with the new fixtures; `bash scripts/test-tooling.sh` green; a TODO-only edit does not trip it.
+
+-> XREF: [`TODO-06 §12`](#12-resolver-coverage-past-the-head-limit-and-lexercache-robustness) -- owns the park this section adopts (item: "Wire `corpus_resolution_snapshot.py` into a GATE"), including the two mechanism failures above.
+-> XREF: [`TODO-06 §14`](#14-identity-gate-over-the-whole-symbol-ref-population) -- must land first: wiring a gate that verdicts only part of the population would automate an incomplete proof.
 
 ---
 
