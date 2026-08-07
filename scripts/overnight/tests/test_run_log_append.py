@@ -218,19 +218,39 @@ def test_ships_before_the_arm_are_not_charged_to_the_run():
     mod = _load()
     with tempfile.TemporaryDirectory() as t:
         d, g = _repo(t)
+        import os, time
         _ship(d, g, "feat: OPERATOR ship, before the arm", n=1)
-        # arm marker written AFTER the operator's ship
+        # Arm marker STAMPED explicitly rather than slept into place. Relying on
+        # wall-clock made this test intermittently red under load -- which is the
+        # exact class v10 complains about: a flaky control-plane test teaches the
+        # reader to discount a FAILING suite. os.utime makes the ordering a fact.
         st = d / ".claude/state"
         st.mkdir(parents=True, exist_ok=True)
-        import time
-        time.sleep(1.1)
-        (st / "sequencer-run.json").write_text('{"active": true}')
-        assert mod._run_started_epoch(d), "arm epoch must be readable"
+        marker = st / "sequencer-run.json"
+        marker.write_text('{"active": true}')
+        # Anchor to the operator ship's OWN commit time, +2s. Stamping with
+        # time.time() put the marker in the same second as that commit, and
+        # git --since is second-granular, so the pre-arm ship was still swept.
+        ship_ts = int(subprocess.run(
+            g + ["log", "-1", "--format=%ct"], capture_output=True,
+            text=True).stdout.strip() or time.time())
+        arm = ship_ts + 2
+        os.utime(marker, (arm, arm))
+        assert mod._run_started_epoch(d) == arm, "arm epoch must be readable"
         # with only the pre-arm ship present, the run owes nothing
         assert mod._unlogged_ships(d) == [], "pre-arm ship charged to the run"
-        # a ship AFTER the arm is still caught
-        time.sleep(1.1)
-        sha = _ship(d, g, "feat: the run's own ship", n=2)
+        # a ship AFTER the arm is still caught. Its commit date is forced past
+        # the marker rather than slept for, so this cannot flake either.
+        env = dict(os.environ)
+        env["GIT_AUTHOR_DATE"] = env["GIT_COMMITTER_DATE"] = f"@{arm + 2} +0000"
+        p2 = d / "todo/T.md"
+        p2.write_text(p2.read_text() + IO_ROW.format("[x]").replace("| 1 |", "| 2 |") + "\n")
+        subprocess.run(g + ["add", "-A"], check=True)
+        subprocess.run(g + ["-c", "user.email=t@t", "-c", "user.name=t",
+                            "commit", "-qm", "feat: the run's own ship"],
+                       check=True, env=env)
+        sha = subprocess.run(g + ["rev-parse", "HEAD"],
+                             capture_output=True, text=True).stdout.strip()
         found = mod._unlogged_ships(d)
         assert len(found) == 1 and sha[:10] in found[0], found
 

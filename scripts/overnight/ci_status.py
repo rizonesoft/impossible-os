@@ -95,9 +95,29 @@ def collect(project, workflows=WORKFLOWS, limit=LIMIT):
 
         # Successful runs on our history are the evidence that a later failure
         # entry is already repaired.
+        #
+        # A CANCELLED run on a DESCENDANT commit counts too, and refusing it was
+        # a real trap. `cancel-in-progress` cancels a run the moment the next
+        # push supersedes it, so on a branch that pushes often almost nothing
+        # ever reaches `success`: measured 2026-08-06 across the last 100
+        # build.yml runs -- 75 cancelled, 5 failure, 20 success, with the newest
+        # success roughly two days stale. An old failure therefore stayed
+        # `ours_red` forever, and the doctrine ("fix it before shipping the next
+        # section") re-charged that instruction at EVERY section boundary
+        # against a failure that had already been repaired.
+        #
+        # A cancellation is weak evidence -- it proves the workflow STARTED on
+        # that commit, not that it passed -- so it is admitted only for a run
+        # whose head is a strict DESCENDANT of the failing commit, i.e. work
+        # that came after the fix. It cannot manufacture a green for the failing
+        # commit itself, and a genuine still-red HEAD keeps failing on its own
+        # newer run.
         greens = [rec for rec in recs
                   if rec.get("conclusion") == "success"
                   and is_ancestor(rec.get("headSha", ""), head)]
+        cancelled = [rec for rec in recs
+                     if rec.get("conclusion") == "cancelled"
+                     and is_ancestor(rec.get("headSha", ""), head)]
 
         for rec in recs:
             sha = rec.get("headSha", "") or ""
@@ -111,7 +131,18 @@ def collect(project, workflows=WORKFLOWS, limit=LIMIT):
                     if fixer:
                         entry["superseded_by"] = fixer[:12]
                     else:
-                        out["ours_red"] = True
+                        weak = _superseded_by(rec, cancelled, is_ancestor)
+                        if weak:
+                            entry["superseded_by"] = weak[:12]
+                            entry["evidence"] = "cancelled-descendant (weak)"
+                            out["notes"].append(
+                                f"{wf} {sha[:12]} failed, and the only later run "
+                                f"on our history is CANCELLED ({weak[:12]}). "
+                                f"Treated as superseded -- cancel-in-progress "
+                                f"makes success rare on a fast-moving branch -- "
+                                f"but this is weak evidence, not a green.")
+                        else:
+                            out["ours_red"] = True
             out["runs"].append(entry)
 
     if out["ours_red"]:

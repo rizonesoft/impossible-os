@@ -40,6 +40,40 @@ def _rec(sha, conclusion, created="2026-07-27T23:00:00Z"):
             "createdAt": created}
 
 
+class CancelledSupersessionTests(unittest.TestCase):
+    """`cancel-in-progress` makes SUCCESS rare on a fast-moving branch.
+
+    MEASURED 2026-08-06 across the last 100 build.yml runs: 75 cancelled, 5
+    failure, 20 success -- and the newest success was roughly two days stale. An
+    old failure therefore stayed `ours_red` forever, and the doctrine ("fix it
+    before shipping the next section") re-charged that instruction at EVERY
+    section boundary against a failure that had already been repaired.
+
+    A cancellation is WEAK evidence: it proves the workflow started on that
+    commit, not that it passed. So it is admitted only from a strict DESCENDANT
+    -- work that came after the fix -- and never for the failing commit itself.
+    """
+
+    def test_a_cancelled_descendant_supersedes_when_no_green_exists(self):
+        failure = _rec("051df5e0", "failure")
+        cancelled = [_rec("103a2db8", "cancelled")]
+        self.assertEqual(
+            ci_status._superseded_by(failure, cancelled, ANC), "103a2db8")
+
+    def test_a_cancelled_ANCESTOR_does_not_supersede(self):
+        """Older work says nothing about a later failure."""
+        failure = _rec("103a2db8", "failure")
+        cancelled = [_rec("051df5e0", "cancelled")]
+        self.assertEqual(ci_status._superseded_by(failure, cancelled, ANC), "")
+
+    def test_a_green_is_still_preferred_over_a_cancellation(self):
+        """The weak path must never displace real evidence."""
+        failure = _rec("051df5e0", "failure")
+        greens = [_rec("aaf4a4c3", "success")]
+        self.assertEqual(
+            ci_status._superseded_by(failure, greens, ANC), "aaf4a4c3")
+
+
 class SupersessionTests(unittest.TestCase):
     def test_later_green_descendant_supersedes(self):
         """A green run on a DESCENDANT commit proves the failure was fixed."""
