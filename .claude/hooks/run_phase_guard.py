@@ -330,6 +330,38 @@ def _skill_name(tool_input):
     return tool_input.get("skill") or tool_input.get("name") or ""
 
 
+# Control-plane roots the unattended run may not edit. `.claude/state/**` is
+# excluded on purpose -- it is the run's own notebook, not its machinery.
+_CONTROL_PLANE_ROOTS = (
+    ".claude/hooks/", ".claude/skills/", "scripts/overnight/", ".githooks/",
+)
+_CONTROL_PLANE_FILES = (".claude/settings.json",)
+
+
+def _control_plane_path(target: str):
+    """The control-plane path `target` resolves to, or None.
+
+    Compares against the REPO-RELATIVE path so an absolute path, a `./` prefix
+    and a `../` escape all normalise to the same answer. A target outside the
+    repo is not control plane and is left alone.
+    """
+    if not target:
+        return None
+    try:
+        root = repo_root().resolve()
+        p = Path(target)
+        p = (p if p.is_absolute() else root / p).resolve()
+        rel = p.relative_to(root).as_posix()
+    except Exception:
+        return None
+    if rel in _CONTROL_PLANE_FILES:
+        return rel
+    for r in _CONTROL_PLANE_ROOTS:
+        if rel.startswith(r):
+            return rel
+    return None
+
+
 def evaluate(tool_name, tool_input, state, armed=False, headless=False,
              stages_done=False, ship_pending=""):
     """Return (allow: bool, message: str). Pure -- unit-testable.
@@ -358,6 +390,31 @@ def evaluate(tool_name, tool_input, state, armed=False, headless=False,
             "[SEQ-ASK] blocked: decide conservatively + log the assumption, or "
             "defer ([/] + Deferred awaiting-answer + XREF) and advance. "
             "Details: docs/infrastructure/hook-codes.md#seq-ask")
+
+    # The unattended run may not edit its own CONTROL PLANE. Until 2026-08-07
+    # this was documentation only: the doctrine says it in three places, the
+    # capture files repeat it, and NOTHING enforced it -- an Edit on
+    # scripts/overnight/decision-registry.py returned rc 0 from every guard.
+    # The run edited that file for ~90 lines before noticing on its own and
+    # reverting, then filed the gap. Prose is not a gate.
+    #
+    # `.claude/state/**` is deliberately NOT covered: that is run STATE, which
+    # the run writes constantly (gotcha cards, receipts, cursors). The rule is
+    # about the machinery that DECIDES, not the notes it keeps.
+    if tool_name in ("Edit", "Write", "MultiEdit", "NotebookEdit"):
+        _target = (tool_input.get("file_path") or tool_input.get("path")
+                   or tool_input.get("notebook_path") or "")
+        _cp = _control_plane_path(_target)
+        if _cp:
+            return False, (
+                f"[SEQ-CONTROL-PLANE] blocked: `{_cp}` is control plane, which "
+                f"the unattended run may not edit -- a bad gate change with "
+                f"nobody watching is unrecoverable. FILE the finding in the "
+                f"newest todo/overnight-runner-improvements/ version (or "
+                f"todo/token-saver/ for cost) and CONTINUE; an attended session "
+                f"turns it into a fix. Ordinary work -- src/, user/, tests, "
+                f"docs, todo/ -- is unaffected. "
+                f"Details: docs/infrastructure/hook-codes.md#seq-control-plane")
 
     # The unattended run must never tear itself down. Disarm/clear/stop is a
     # human-only operation, performed from an interactive session (where the
@@ -2131,6 +2188,30 @@ def selftest():
          True, "a real teardown beside a git message escaped"),
     ):
         check(_is_self_teardown(cmd) is want, why)
+
+    # v10: the control-plane rule was documentation-only until 2026-08-07 --
+    # the run edited scripts/overnight/decision-registry.py for ~90 lines and
+    # every guard returned rc 0. `.claude/state/**` must stay writable: it is
+    # the run's notebook (gotcha cards, receipts), not its machinery.
+    for _p, _want, _why in (
+        ("scripts/overnight/decision-registry.py", False, "scripts/overnight not blocked"),
+        (".claude/hooks/section_commit_gate.py", False, "hooks not blocked"),
+        (".claude/skills/overnight-sequencer/SKILL.md", False, "skills not blocked"),
+        (".githooks/pre-commit", False, "githooks not blocked"),
+        (".claude/settings.json", False, "settings.json not blocked"),
+        ("./scripts/overnight/../overnight/preflight.py", False, "path escape not normalised"),
+        (".claude/state/live-gotchas.md", True, "run STATE wrongly blocked"),
+        ("todo/overnight-runner-improvements/x.md", True, "capture file wrongly blocked"),
+        ("src/kernel/sched/task.c", True, "ordinary work wrongly blocked"),
+        ("scripts/todo-graph/resolve_symbol.py", True, "non-control-plane wrongly blocked"),
+    ):
+        _a, _ = evaluate("Edit", {"file_path": _p},
+                         {"active": True, "phase": "SECTIONS"}, headless=H)
+        check(_a is _want, f"[SEQ-CONTROL-PLANE] {_why}: {_p}")
+    # and it must be INERT interactively -- an operator repairs the control plane
+    _a, _ = evaluate("Edit", {"file_path": ".claude/hooks/x.py"},
+                     {"active": True, "phase": "SECTIONS"}, headless=False)
+    check(_a, "[SEQ-CONTROL-PLANE] blocked an INTERACTIVE operator edit")
 
     if fails:
         for f in fails:

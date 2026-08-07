@@ -8,6 +8,15 @@ Codes are stable -- docs and transcripts reference them.
 
 ## SEQ-* (run_phase_guard.py)
 
+### SEQ-CONTROL-PLANE
+The unattended run may not EDIT its own control plane: `.claude/hooks/**`, `.claude/skills/**`, `scripts/overnight/**`, `.githooks/**`, `.claude/settings.json`. A bad gate change with nobody watching is unrecoverable -- the gate that would have caught it is the thing being changed. File the finding in the newest `todo/overnight-runner-improvements/` version (or `todo/token-saver/` for cost) and CONTINUE; an attended session turns filings into fixes.
+
+Added 2026-08-07 because the rule had been **documentation only**. It is stated in the sequencer skill, in the doctrine file and in every capture file's header, and nothing enforced it -- an `Edit` on `scripts/overnight/decision-registry.py` returned rc 0 from every guard. The run edited that file for ~90 lines, noticed on its own, reverted, and filed the gap. Prose is not a gate.
+
+`.claude/state/**` is deliberately NOT covered: that is the run's own notebook (gotcha cards, receipts, cursor state), which it writes constantly. The rule is about the machinery that DECIDES, not the notes it keeps. Ordinary work -- `src/`, `user/`, tests, docs, `todo/` -- is unaffected.
+
+Paths are compared repo-relative after resolution, so an absolute path, a `./` prefix and a `../` escape all normalise to the same answer. INERT interactively: an operator repairing the control plane is the intended path, and the guard is silent with no `OVERNIGHT_SEQUENCER_RUN` discriminator.
+
 ### SEQ-STOP
 The headless unattended run may not stop voluntarily. The work unit is the
 entire TODO queue; a blocker, hard failure, or operator-reserved decision is
