@@ -65,6 +65,33 @@ EOF
     esac
 done
 
+# ---- Environment hygiene: never inherit an operator opt-out ----------------
+# This suite ASSERTS gate behaviour, and every gate it asserts is switchable by
+# an ambient environment variable. So a variable exported in the operator's
+# shell silently rewrites the expected verdicts: the suite stops testing the
+# gates and starts testing the operator's environment.
+#
+# Measured 2026-08-08. An attended session prefixed SKIP_REVIEW_HOOK=1 on its
+# Bash calls to clear an unrelated post-ship gate. It inherited through
+# `git push` -> .githooks/pre-push -> here, where section_commit_gate saw
+# SKIP_REVIEW_HOOK set with SKIP_REVIEW_HOOK_REASON empty, correctly judged the
+# opt-out MALFORMED, and returned 2 where 27 tests expected 0. The push was
+# refused as "Tooling suite failed", naming neither the variable nor the cause.
+# Same tree, cleared environment: 1293/1293.
+#
+# Prefix-matched rather than an explicit list, so an opt-out added later is
+# covered the day it is written instead of the day it leaks. Tests that need one
+# of these set it per-command, which unsetting here does not affect.
+_TT_CLEARED=()
+for _tt_var in $(compgen -v 2>/dev/null | grep -E '^(SKIP_|ATTENDED_REPAIR_OVERRIDE$|CODEX_FLAG_OVERRIDE$)' || true); do
+    _TT_CLEARED+=("$_tt_var")
+    unset "$_tt_var" 2>/dev/null || true
+done
+if [ "${#_TT_CLEARED[@]}" -gt 0 ]; then
+    echo "test-tooling: cleared inherited opt-out env before gate tests: ${_TT_CLEARED[*]}" >&2
+fi
+unset _tt_var
+
 # ---- Colors ----
 if [ "$QUIET" = "0" ] && [ -t 1 ]; then
     RED='\033[0;31m'; GREEN='\033[0;32m'; CYAN='\033[0;36m'; DIM='\033[0;90m'; NC='\033[0m'
