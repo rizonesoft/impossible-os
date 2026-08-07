@@ -809,6 +809,34 @@ fi
 [ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[codex_flag_block]${NC}"
 
 CODEX_FLAG_HOOK="$REPO_ROOT/.claude/hooks/codex_model_flag_block.py"
+
+# v10 (2026-08-07): the companion path appearing as DATA is not an invocation.
+# `git commit -m "fixed codex-companion.mjs dispatch"` was BLOCKED as a Codex
+# call carrying a model flag -- shlex keeps the quoted message as ONE token, the
+# scan matched the path inside it, and `-m` is git's. Hit live while committing
+# the v10 fixes; the documented heredoc guard does not cover a quoted argument.
+# The disqualifier is a DATA-CONSUMER head (git/echo/rg/...), not a validator of
+# every preceding token -- validating forward falls behind wrapper VALUE tokens
+# like sudo's `-u root` and timeout's `5s`, which this module already paid for
+# twice. Both wrapper shapes are asserted below so that cannot regress.
+for _cf_case in \
+  'allow|git commit -m "fixed codex-companion.mjs dispatch" -- a.md' \
+  'allow|echo "see codex-companion.mjs docs"' \
+  'allow|rg -n "codex-companion.mjs" scripts/' \
+  'block|node /x/codex-companion.mjs adversarial-review -m gpt-5 "p"' \
+  'block|timeout 5s node /x/codex-companion.mjs review -m x "p"' \
+  'block|sudo -u root node /x/codex-companion.mjs review -m x "p"' \
+  ; do
+    _cf_want="${_cf_case%%|*}"; _cf_cmd="${_cf_case#*|}"
+    _cf_rc=$(printf '%s' "{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":$(python3 -c 'import json,sys;print(json.dumps(sys.argv[1]))' "$_cf_cmd")}}" \
+             | python3 "$CODEX_FLAG_HOOK" >/dev/null 2>&1; echo $?)
+    if { [ "$_cf_want" = "block" ] && [ "$_cf_rc" = "2" ]; } || \
+       { [ "$_cf_want" = "allow" ] && [ "$_cf_rc" = "0" ]; }; then
+        t_pass "codex_flag_block: data-vs-invocation ($_cf_want) ${_cf_cmd:0:44}"
+    else
+        t_fail "codex_flag_block: wanted $_cf_want got rc=$_cf_rc for: $_cf_cmd"
+    fi
+done
 if [ ! -f "$CODEX_FLAG_HOOK" ]; then
     t_fail "codex_flag_block hook missing: $CODEX_FLAG_HOOK"
 else

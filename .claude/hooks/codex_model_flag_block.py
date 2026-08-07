@@ -237,6 +237,39 @@ def _trim_heredoc_body(tokens: list[str]) -> list[str]:
     return tokens
 
 
+# Commands that take a following argument as DATA. If one of these heads the
+# segment, a later `codex-companion.mjs` token is text -- a commit message, a
+# search pattern, an echoed doc reference -- not an invocation.
+#
+# A DISQUALIFIER list, deliberately, not a validator of everything before the
+# mention. Validating forward re-introduces exactly the fragility this module's
+# docstring records paying for twice: it falls behind on wrapper VALUE tokens
+# like sudo's `-u root` and timeout's `5s`, which are neither flags nor
+# wrappers. Blocking on a known consumer is stable because the list only has to
+# name things that CONSUME text, and a miss fails toward BLOCKING, which is the
+# safe direction for this gate.
+_DATA_CONSUMERS = frozenset({
+    "git", "echo", "printf", "rg", "grep", "egrep", "fgrep", "ag", "ack",
+    "cat", "sed", "awk", "tee", "less", "more", "head", "tail", "jq",
+    "python", "python3", "perl", "ruby", "diff", "comm", "sort", "uniq",
+})
+
+
+def _runs_it(tokens: list[str], idx: int) -> bool:
+    """False when the segment is headed by a command that consumes text.
+
+    `git commit -m "fixed codex-companion.mjs dispatch"` was blocked as a Codex
+    invocation carrying a model flag: shlex keeps the quoted message as ONE
+    token, the scan matched the companion path inside it, and `-m` is git's.
+    Hit live 2026-08-07 while committing the v10 fixes. The documented heredoc
+    guard does not cover a plain quoted argument.
+    """
+    for t in tokens[:idx]:
+        if os.path.basename(t.rstrip("/")) in _DATA_CONSUMERS:
+            return False
+    return True
+
+
 def _command_argv(tokens: list[str]) -> list[str] | None:
     """Return the segment's tokens if it contains a Codex invocation,
     else None.
@@ -285,7 +318,19 @@ def _command_argv(tokens: list[str]) -> list[str] | None:
                 # interactive TUI receiving a prompt as positional).
                 return None
             return None  # `codex` token but no subcommand follows
-        if "codex-companion.mjs" in tok:
+        # COMMAND POSITION, not anywhere. A token merely CONTAINING the
+        # companion path is an ARGUMENT unless the segment actually runs it --
+        # and `git commit -m "fixed codex-companion.mjs dispatch"` was blocked
+        # as a Codex invocation carrying a model flag, because shlex keeps the
+        # quoted message as one token and `-m` is git's. Hit live 2026-08-07
+        # while committing the v10 fixes; the documented heredoc guard does not
+        # cover a plain quoted argument.
+        #
+        # The real shapes all put the companion at the head, after at most an
+        # interpreter and wrappers: `node .../codex-companion.mjs ...` and
+        # `.../codex-companion.mjs ...`. So the mention counts only when every
+        # token before it is an env-prefix, a wrapper, or an interpreter.
+        if "codex-companion.mjs" in tok and _runs_it(tokens, i):
             return tokens
     return None
 
