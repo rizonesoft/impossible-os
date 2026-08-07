@@ -49,29 +49,30 @@ title: "TODO-06 -- TODO Metadata Layer and Derived Graph"
 
 | ⭐  | Order | Section | Deliverable                                                                         | Depends On | Status |
 | --- | :---: | :-----: | ----------------------------------------------------------------------------------- | ---------- | :----: |
-| 💎  |   1   |  §1     | Frontmatter schema + spec doc                                                       | --         |  [x]   |
-| 💎  |   2   |  §2     | `scripts/todo-graph/build.py` generator + cache format                              | §1         |  [x]   |
-| 💎  |   3   |  §5     | Back-fill frontmatter across existing 86 TODO files                                 | §1, §2     |  [x]   |
-| ⭐  |   4   |  §3     | Validator: stale XREF / dangling dep / orphan / cycle / bat / status / schema       | §2         |  [x]   |
-| ⭐  |   5   |  §4     | Query CLI: ready / blocked / blocking / backlinks / deferred / stale / stats / code | §2         |  [x]   |
-| ⭐  |   6   |  §6     | CI gate on `todo/` commits + diff mode + auto-rewrite hook                          | §3, §4     |  [x]   |
-| ⭐  |   7   |  §7     | Visualization output (mermaid / dot / ascii / gantt / markdown)                     | §2, §4     |  [x]   |
-| ⭐  |   8   |  §8     | MCP server (read-only AI-agent transport over §4)                                   | §4         |  [x]   |
-| 💎  |   9   |  §9     | Per-item `stamped_items` cache extension (closes lint Check 7 deferral)             | §2         |  [x]   |
-| ⭐  |  10   |  §10    | Multi-line function-head resolution in `resolve_symbol` (Check 7 blind spot)        | §9         |  [x]   |
-| ⭐  |  11   |  §11    | Check 7 counts what it cannot resolve (unresolved != clean)                         | §10        |  [x]   |
-| ⭐  |  12   |  §12    | Resolver coverage past the head limit + lexer/cache robustness                      | §10, §11   |  [x]   |
-| ⭐  |  13   |  §13    | Stored-ref repair: unpaired symbols + bare filenames (resolution-time)              | §2, §11    |  [x]   |
-| ⭐  |  14   |  §14    | Identity gate over the whole symbol-ref population (every `kind=symbol` ref)        | §13        |  [x]   |
-| ⭐  |  15   |  §15    | The shared rule's cost: structural-walk hot path + split cache lifecycles           | §13, §14   |  [x]   |
-| 💎  |  16   |  §16    | Wire the identity gate so something runs it (adopts §12's parked wiring)            | §12, §14   |  [x]   |
-| ⭐  |  17   |  §17    | One shared cache-schema validator, consumed by both cache readers                   | §14, §16   |  [x]   |
-| ⭐  |  18   |  §18    | Identity-gate hardening: producer differential + protocol-constant extraction       | §16        |  [x]   |
-| ⭐  |  19   |  §19    | Caller profiles for the shared validator + two self-contained readers routed         | §17        |  [x]   |
-| ⭐  |  20   |  §20    | A machine-checkable bucket-emission contract, so retirement is provable         | §18        |  [x]   |
-| ⭐  |  21   |  §21    | The producer-side generation window in `build.py` (split from §19)                  | §17, §19   |  [x]   |
-| ⭐  |  22   |  §22    | `query.py` fail-closed through CLI, MCP and watch transports (split from §19)       | §19, §8    |  [ ]   |
-| ⭐  |  23   |  §23    | `validate.py` rebuild recovery + `--diff` baseline profile (split from §19)         | §19, §3    |  [ ]   |
+| 💎  |   1   |   §1    | Frontmatter schema + spec doc                                                       | --         |  [x]   |
+| 💎  |   2   |   §2    | `scripts/todo-graph/build.py` generator + cache format                              | §1         |  [x]   |
+| 💎  |   3   |   §5    | Back-fill frontmatter across existing 86 TODO files                                 | §1, §2     |  [x]   |
+| ⭐  |   4   |   §3    | Validator: stale XREF / dangling dep / orphan / cycle / bat / status / schema       | §2         |  [x]   |
+| ⭐  |   5   |   §4    | Query CLI: ready / blocked / blocking / backlinks / deferred / stale / stats / code | §2         |  [x]   |
+| ⭐  |   6   |   §6    | CI gate on `todo/` commits + diff mode + auto-rewrite hook                          | §3, §4     |  [x]   |
+| ⭐  |   7   |   §7    | Visualization output (mermaid / dot / ascii / gantt / markdown)                     | §2, §4     |  [x]   |
+| ⭐  |   8   |   §8    | MCP server (read-only AI-agent transport over §4)                                   | §4         |  [x]   |
+| 💎  |   9   |   §9    | Per-item `stamped_items` cache extension (closes lint Check 7 deferral)             | §2         |  [x]   |
+| ⭐  |  10   |   §10   | Multi-line function-head resolution in `resolve_symbol` (Check 7 blind spot)        | §9         |  [x]   |
+| ⭐  |  11   |   §11   | Check 7 counts what it cannot resolve (unresolved != clean)                         | §10        |  [x]   |
+| ⭐  |  12   |   §12   | Resolver coverage past the head limit + lexer/cache robustness                      | §10, §11   |  [x]   |
+| ⭐  |  13   |   §13   | Stored-ref repair: unpaired symbols + bare filenames (resolution-time)              | §2, §11    |  [x]   |
+| ⭐  |  14   |   §14   | Identity gate over the whole symbol-ref population (every `kind=symbol` ref)        | §13        |  [x]   |
+| ⭐  |  15   |   §15   | The shared rule's cost: structural-walk hot path + split cache lifecycles           | §13, §14   |  [x]   |
+| 💎  |  16   |   §16   | Wire the identity gate so something runs it (adopts §12's parked wiring)            | §12, §14   |  [x]   |
+| ⭐  |  17   |   §17   | One shared cache-schema validator, consumed by both cache readers                   | §14, §16   |  [x]   |
+| ⭐  |  18   |   §18   | Identity-gate hardening: producer differential + protocol-constant extraction       | §16        |  [x]   |
+| ⭐  |  19   |   §19   | Caller profiles for the shared validator + two self-contained readers routed        | §17        |  [x]   |
+| ⭐  |  20   |   §20   | A machine-checkable bucket-emission contract, so retirement is provable             | §18        |  [x]   |
+| ⭐  |  21   |   §21   | The producer-side generation window in `build.py` (split from §19)                  | §17, §19   |  [x]   |
+| ⭐  |  22   |   §22   | `query.py` fail-closed through CLI, MCP and watch transports (split from §19)       | §19, §8    |  [ ]   |
+| ⭐  |  23   |   §23   | `validate.py` rebuild recovery + `--diff` baseline profile (split from §19)         | §19, §3    |  [ ]   |
+| ⭐  |  24   |   §24   | The history-identity cost decision: `requires_history` for the query profile        | §21, §22   |  [ ]   |
 
 > 💎 = parity work -- Linux kernel has MAINTAINERS + get_maintainer.pl (person-ownership mapping without a dep graph); Windows has no public equivalent. §1 (frontmatter), §2 (generator), §5 (migration) bring us to partial Linux parity plus graph metadata neither OS ships.
 > ⭐ = competitive edge -- neither Win11 nor mainline Linux ships a first-class TODO dependency graph. §3 (validator), §4 (query CLI), §6 (CI gate), §7 (visualization), §8 (MCP server) are new ground; the surface has direct value for any contributor scanning "what can I work on next?".
@@ -699,7 +700,7 @@ That is a real hole in the proof, and §13 is the section that demonstrates it. 
 > - Also repaired `test_stub_lint_coverage.py`, RED in the tree since §11 made a `total`-less baseline invalid; its runner gates on a manifest listing neither `scripts/lint` nor `scripts/todo-graph`.
 > - Scope boundary: does NOT wire the gate into anything (§16 owns that) and does NOT touch resolver cost (§15).
 > **Verified:** 2026-08-06 | commit `d0b2dc17` | 5/5 items | build OK | 209/209 todo-graph, 1287/1287 tooling, 66/66 overnight, 28326 kernel + 17 user-mode, lint 0 errors
-> **Accepted:** [M] cache-schema validation is not shared between the two callers, so they disagree about which caches are valid and which rc a malformed one yields -> XREF: 00-infrastructure/TODO-06 §16 (item: "ONE shared cache-schema validator, consumed by both cache readers" at line 702)
+> **Accepted:** [M] cache-schema validation is not shared between the two callers, so they disagree about which caches are valid and which rc a malformed one yields -> XREF: 00-infrastructure/TODO-06 §16 (item: "ONE shared cache-schema validator, consumed by both cache readers" at line 703)
 > **Quality reviewed:** 2026-08-06 | Codex 6x (design, adversarial x2, test-coverage, consistency, perf) | 5H+7M fixed, 0 open | scope: N/A (host tooling -- no kernel/boot/desktop/shell/userland surface)
 
 -> XREF: [`TODO-06 §13`](#13-stored-ref-repair-unpaired-symbols-and-bare-filenames) -- the section whose review found this, and whose bucket movements are the worked example of what the gate cannot currently see.
@@ -1085,12 +1086,13 @@ Split out of §19 on 2026-08-07, before implementation, on that section's `SPLIT
 > **Verified:** 2026-08-07 | commit `2146c7033` | 5/5 items | build OK | test_build.sh 347/347, test-tooling.sh 1293/1293, lint 0 errors, build-and-validate 8/8, 28326 kernel + 17 user-mode tests
 > **Accepted:** [H] `validate.py` loads the cache raw, bypassing the corpus binding entirely -> XREF: 00-infrastructure/TODO-06 §23 (item: "Preserve ONE rebuild, then re-validate the recovered artifact" at line 1122 -- it names `validate.py:128-169`, the exact load path)
 > **Accepted:** [M] `mcp_server.py` keeps its own mtime freshness rule rather than the shared binding -> XREF: 00-infrastructure/TODO-06 §22 (item: "Make the MCP transport propagate the failure instead of swallowing it")
-> **Accepted:** [M] the history projection walks all corpus history (38ms at 3,788 commits, ~100ms projected at 10,000) -> XREF: 00-infrastructure/TODO-06 §22 (item: "Turn on `requires_history` for the query profile, and re-measure the history projection first")
-> **Accepted:** [L] freshness hashes the corpus twice per process (38-74ms per lint run; 5% crossover at a 30-70 MB corpus against 11 MB today) -> XREF: 00-infrastructure/TODO-06 §22 (item: "Turn on `requires_history` for the query profile, and re-measure the history projection first")
+> **Accepted:** [M] the history projection walks all corpus history (38ms at 3,788 commits, ~100ms projected at 10,000) -> XREF: 00-infrastructure/TODO-06 §24 (item: "Re-measure the history projection before turning `requires_history` on")
+> **Accepted:** [L] freshness hashes the corpus twice per process (38-74ms per lint run; 5% crossover at a 30-70 MB corpus against 11 MB today) -> XREF: 00-infrastructure/TODO-06 §24 (item: "Resolve the double-hash of the corpus per process, or record why it stays")
 > **Quality reviewed:** 2026-08-07 | Codex 5x (design, adversarial, consistency, perf, re-adversarial) | 6H+8M+1L fixed, 4 open | scope: N/A (host tooling -- no kernel/boot/desktop/shell/userland surface)
 
 -> XREF: [`TODO-06 §19`](#19-cache-validation-reach-the-remaining-raw-cache-readers) -- the BREADTH half this was split from (item: "Route the REMAINING raw `todo-cache.json` readers through the §17 shared validator"); that section hardens who may trust the cache, this one hardens whether the producer may certify it.
--> XREF: [`TODO-06 §22`](#22-querypy-fail-closed-through-every-transport) -- owns both follow-ups this section produced (items: "Turn on `requires_history` for the query profile, and re-measure the history projection first" and "Make the MCP transport propagate the failure instead of swallowing it"); the first reader that consumes the history-derived fields is also the first that pays to validate them.
+-> XREF: [`TODO-06 §22`](#22-querypy-fail-closed-through-every-transport) -- owns the transport follow-up this section produced (item: "Make the MCP transport propagate the failure instead of swallowing it"); `mcp_server.py` keeping its own mtime freshness rule is a symptom of the same transport swallowing the refusal.
+-> XREF: [`TODO-06 §24`](#24-the-history-identity-cost-decision-requires_history-for-the-query-profile) -- owns both COST follow-ups this section produced (items: "Re-measure the history projection before turning `requires_history` on" and "Resolve the double-hash of the corpus per process, or record why it stays"); the first reader that consumes the history-derived fields is also the first that pays to validate them.
 -> XREF: [`TODO-06 §17`](#17-one-shared-cache-schema-validator-for-both-cache-readers) -- the reader-side generation binding this mirrors (item: "Commit: `\"todo-graph: one cache-schema validator for both cache readers\"`"); its `_scan_corpus` fingerprint is the machinery to reuse here.
 
 ---
@@ -1112,16 +1114,13 @@ Split out of §19 on 2026-08-07 by that section's Codex design review, which rat
       Watch mode must not keep serving the last in-memory cache once a rebuild has failed and that cache is stale or invalid. Pin the chosen behavior in a fixture; the current behavior is unpinned either way, which is the actual defect.
 - [ ] Fixtures across every transport, each mutation-checked
       Direct CLI, MCP tool call, and watch mode each get a case proving an unusable cache produces a refusal rather than an empty answer. Mutation: restore the silent-drop `_validate_nodes` (and the `or "[]"`) and require the corresponding fixture to FAIL.
-- [ ] Turn on `requires_history` for the query profile, and re-measure the history projection first
-      `query.py` sorts `stale` / `deferred` by `last_active_at`, so its profile is the first that must set `requires_history=True` -- and the first reader that will pay `corpus_history_id`'s cost per invocation.
-      - Measured 2026-08-07 at 3,788 corpus-touching commits: `git rev-list --count` is 38ms of a 40ms call. Codex perf (§21) projects ~100ms at 10,000 commits and named that the crossover where it stops being acceptable.
-      - Cheaper sound alternative to evaluate then: corpus tip plus a digest of git's shallow-boundary file. The tip detects a rewrite, the boundary detects deepening or truncation, and neither walks all history.
 - [ ] Commit: `"todo-graph: query.py fails closed, and its transports stop swallowing it"`
 
 **Test checkpoint:** an unusable cache makes `query.py` exit with its documented infrastructure code through the direct CLI, surfaces as a structured error (never `[]`) through the MCP tool call, and does not leave watch mode serving a stale cache; the one-row-malformed case refuses rather than silently narrowing the answer; each fixture fails when its guard is reverted; `bash scripts/todo-graph/tests/test_build.sh` and `bash scripts/test-tooling.sh` green.
 
 -> XREF: [`TODO-06 §19`](#19-cache-validation-reach-the-remaining-raw-cache-readers) -- the section this was split from and DEPENDS ON (item: "Give `cache_schema` caller-declared validation profiles instead of one fixed contract"); `query.py` consumes those profiles, so this cannot start before §19 ships.
 -> XREF: [`TODO-06 §8`](#8-mcp-server-read-only-ai-agent-transport-over-4) -- the MCP transport whose error envelope this changes (item: "Commit: `\"todo-graph: MCP server for AI-agent graph queries\"`"); `mcp_server.py:258-266` is the swallow site.
+-> XREF: [`TODO-06 §24`](#24-the-history-identity-cost-decision-requires_history-for-the-query-profile) -- the history-identity half split OUT of this section on 2026-08-07 (item: "Re-measure the history projection before turning `requires_history` on"); this section pins WHETHER the query surface refuses an unusable cache, §24 pins WHAT the identity is derived from and what it costs per invocation.
 
 ---
 
@@ -1151,40 +1150,69 @@ Split out of §19 on 2026-08-07 by that section's Codex design review, which rat
 
 ---
 
+## 24. The History-Identity Cost Decision: `requires_history` for the Query Profile
+
+> **Spawned-by:** §22 (split)
+
+Split out of §22 on 2026-08-07 because it is a measure-then-decide question, not wiring. The rest of §22 is concrete and its outcome is known before it starts: route the reader through the shared validator, stop the transports swallowing the refusal, pin the fixtures. This item's outcome is NOT known -- it may end with `requires_history=True` on the query profile, or with `corpus_history_id` being REPLACED by a cheaper identity that never walks history. Bundling an open design decision behind a `re-measure first` prerequisite into a section of otherwise-mechanical work is what turns one section into a long tail, and the two halves fail differently: §22 fails by answering from a partial cache, this one fails by making every query slow or by binding identity to something that misses a real history change.
+
+- [ ] Re-measure the history projection before turning `requires_history` on
+      The 2026-08-07 numbers are the input to the decision, not the decision: 3,788 corpus-touching commits, `git rev-list --count` at 38ms of a 40ms call, and Codex perf (§21) projecting ~100ms at 10,000 commits, which it named as the crossover where the cost stops being acceptable.
+      - Re-measure on the CURRENT corpus rather than reusing the figure -- the projection is the thing under test, and a stale input silently decides the question.
+      - Measure the per-invocation cost on the QUERY path specifically. `query.py` is called interactively and from the runner, so its cost profile is not the producer's.
+- [ ] Evaluate the tip-plus-shallow-boundary alternative against that measurement
+      Corpus tip plus a digest of git's shallow-boundary file: the tip detects a rewrite, the boundary detects deepening or truncation, and neither walks all history. If it is sound it is strictly cheaper, which would retire the commit count rather than gate it behind a profile flag.
+      - The soundness bar is the one `corpus_history_id` already meets: identical bytes over a MOVED history must still read as stale. Name the case each half catches, and the case neither does.
+      - A shallow clone with no boundary file (the ordinary full-clone case) must degrade to a defined answer, not an exception.
+- [ ] Pin the chosen identity source for the query profile, with the reasoning recorded
+      Whichever way it resolves, the query profile stops being the unpinned case. If the answer is `requires_history=True`, say what the per-call cost is and why it is acceptable; if it is the cheaper identity, say what the commit count was buying that is now covered elsewhere.
+- [ ] Resolve the double-hash of the corpus per process, or record why it stays
+      §21 accepted this at `[L]`: freshness hashes the corpus twice per process, 38-74ms per lint run, with a 5% crossover projected at a 30-70 MB corpus against 11 MB today. It shares this section's measurement, so it is answered here rather than re-measured somewhere else.
+- [ ] Fixtures for whichever identity ships, each mutation-checked
+      A history rewrite that leaves bytes identical must invalidate; a shallow clone being deepened must invalidate; an ordinary no-op call must not pay for a full history walk it does not need. Mutation: revert the identity to the tip alone and require the rewrite and deepening fixtures to FAIL.
+- [ ] Commit: `"todo-graph: pin the query profile's history identity and its cost"`
+
+**Test checkpoint:** the query profile's identity source is pinned with a recorded measurement rather than left unset; a byte-identical corpus over a rewritten or deepened history is detected by whichever identity ships; the per-invocation cost on the query path is measured on the current corpus and stated; each fixture fails when the identity is reverted to the tip alone; `bash scripts/todo-graph/tests/test_build.sh` and `bash scripts/test-tooling.sh` green.
+
+-> XREF: [`TODO-06 §22`](#22-querypy-fail-closed-through-every-transport) -- the section this was split from (item: "Route `query.py` through the shared validator, fail-closed"); that section decides WHETHER the query surface refuses an unusable cache, this one decides WHAT its identity is derived from and what it costs.
+-> XREF: [`TODO-06 §21`](#21-the-producer-side-generation-window-in-buildpy) -- the section that produced both accepted findings this owns (item: "Commit: `\"todo-graph: close the producer-side generation window in build.py\"`"); `corpus_history_id` and the twice-per-process corpus hash are both its machinery.
+
+---
+
 ## OS Comparison
 
-| ⭐  | Feature                                           | 🪟 Win11                | 🐧 Linux                           | 🚀 Impossible OS                                                                |
-| --- | ------------------------------------------------- | ----------------------- | ---------------------------------- | ------------------------------------------------------------------------------- |
-| 💎  | Structured ownership metadata                     | ⚠️ CODEOWNERS           | ✅ MAINTAINERS + get_maintainer.pl | ✅ §1 frontmatter on 223/223 TODOs (§5)                                         |
-| ⭐  | Cross-file dependency graph                       | ❌ Project boards (DB)  | ❌ Ad hoc cover letters            | ✅ §2 generator + JSON cache (0.4s)                                             |
-| ⭐  | Stale-XREF / cycle validator                      | ❌ None                 | ❌ None                            | ✅ §3 validator (8 checks, incl duplicate-id)                                   |
-| ⭐  | "Ready to work" / backlinks queries               | ❌ Manual board filters | ❌ None in-tree                    | ✅ §4 query CLI (12 subcommands)                                                |
-| 💎  | CI gate on dep-graph integrity                    | ⚠️ Per repo             | ❌ Rare                            | ✅ §6 GHA workflow + --diff + auto-rewrite hook                                 |
-| ⭐  | Canonical-markdown + derived-cache invariant      | ❌ DB-first             | ❌ Flat MAINTAINERS                | ✅ §1-§2 mirrors settings.json pattern                                          |
-| 💎  | Editor-time frontmatter validation                | ❌ None                 | ⚠️ Hugo/Jekyll JSON Schema         | ⚠️ §1 sidecar; §6 CI is the gate                                                |
-| ⭐  | Mermaid/dot graph render                          | ❌ Manual board views   | ❌ None in-tree                    | ✅ §7 render CLI (5 formats) + docs/infrastructure/todo-graph.md                |
-| ⭐  | Critical-path / "most-blocking" rank              | ⚠️ TaskJuggler external | ⚠️ TaskJuggler external            | ✅ §4 `blocking` subcommand                                                     |
-| ⭐  | Stale-TODO / git-aware tracking                   | ❌ Manual board filters | ❌ None in-tree                    | ✅ §1 git timestamps + §4 `stale`                                               |
-| ⭐  | Source-file backlinks (`code <id>`)               | ❌ Manual board links   | ⚠️ MAINTAINERS `F:` (people)       | ✅ §1 `file_patterns` + §4 `code <id>`                                          |
-| ⭐  | AI-agent MCP / autocomplete surface               | ❌ Closed               | ❌ None                            | ✅ §8 MCP server (12 read-only tools)                                           |
-| 💎  | Per-item stamped_items / stub-behind-stamp lint   | ❌ None                 | ❌ None                            | ✅ §9 stamped_items cache + lint Check 7 live                                   |
-| 💎  | Split function-head resolution, no LSP required   | ❌ None                 | ❌ None                            | ✅ §10 two-pass stdlib resolver + corpus mapping gate                           |
-| 💎  | Lint reports its own blind spot as a ratio        | ❌ None                 | ❌ None                            | ✅ §11 every ref bucketed; buckets must sum or no ratio is published            |
-| 💎  | Resolver follows a header declaration to its impl | ❌ None                 | ❌ None                            | ✅ §12 basename-unique, non-static, linkage-checked; +54 resolved               |
-| 💎  | Stamped ref repaired against the tree, not stored | ❌ None                 | ❌ None                            | ✅ §13 basename + section-scope repair at resolution time                       |
-| 💎  | Identity gate verdicts the WHOLE ref population   | ❌ None                 | ❌ None                            | ✅ §14 all 1,626 refs, bucket-for-bucket equal to the lint's own                |
-| 💎  | Reclassification distinguished from lost coverage | ❌ None                 | ❌ None                            | ✅ §14 dropped/lost/moved/changed fail; gained/added pass                       |
-| ⭐  | Resolver cache lifecycle split by what pins it    | ❌ None                 | ⚠️ ctags/cscope rebuild wholesale  | ✅ §15 topology walk-scoped, content-bound LRU; eviction can't move a verdict   |
-| 💎  | Mapping gate RUNS itself; no human opt-in         | ❌ None                 | ❌ None                            | ✅ §16 non-cancellable CI job, range from last-green SHA; unreviewed gains fail |
-| 💎  | ONE cache-schema rule, every consumer identical   | ❌ None                 | ⚠️ Per-tool ad hoc parsing         | ✅ §17 shared validator; same bad cache refused by both readers, own exit codes |
-| 💎  | Protocol migration separated from behaviour change | ❌ None                 | ❌ None                            | ✅ §18 vocabulary/schema as inert data; gate passes only on byte-identical executables |
-| 💎  | The cache PRODUCER is differentialled, not trusted | ❌ None                 | ❌ None                            | ✅ §18 base vs head build.py over BOTH corpora; a dropped stamped ref cannot hide      |
-| ⭐  | Gate proves its consumer DELEGATES, not just runs   | ❌ None                 | ❌ None                            | ✅ §18 lint Check 25: sentinel-verdict propagation, mutation-checked                   |
-| 💎  | Each reader validated for what IT consumes          | ❌ None                 | ⚠️ One-size schema or none        | ✅ §19 caller profiles: subtrees consumed declared apart from readiness required       |
-| 💎  | A schema-valid cache cannot SUPPRESS a verdict      | ❌ None                 | ❌ None                            | ✅ §19 node identity, row coverage and one pinned generation per run, all fail-closed  |
-| 💎  | Emitter DECLARES its vocabulary; retirement provable | ❌ None                 | ❌ None                            | ✅ §20 declared `EMITTED_BUCKETS` + AST shape gate + runtime bound; text search retired |
-| 💎  | The PRODUCER may not certify a cache it invalidated | ❌ None                 | ❌ None                            | ✅ §21 fingerprint of the CONSUMED bytes re-verified before any write; rc 3, prior cache byte-identical |
-| 💎  | Cache freshness decided by content, never a clock   | ❌ Timestamp compare    | ❌ mtime / checksum stamps         | ✅ §21 digest-named binding + git-history id; a stepped clock cannot invert it |
+| ⭐  | Feature                                              | 🪟 Win11                | 🐧 Linux                           | 🚀 Impossible OS                                                                                        |
+| --- | ---------------------------------------------------- | ----------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| 💎  | Structured ownership metadata                        | ⚠️ CODEOWNERS           | ✅ MAINTAINERS + get_maintainer.pl | ✅ §1 frontmatter on 223/223 TODOs (§5)                                                                 |
+| ⭐  | Cross-file dependency graph                          | ❌ Project boards (DB)  | ❌ Ad hoc cover letters            | ✅ §2 generator + JSON cache (0.4s)                                                                     |
+| ⭐  | Stale-XREF / cycle validator                         | ❌ None                 | ❌ None                            | ✅ §3 validator (8 checks, incl duplicate-id)                                                           |
+| ⭐  | "Ready to work" / backlinks queries                  | ❌ Manual board filters | ❌ None in-tree                    | ✅ §4 query CLI (12 subcommands)                                                                        |
+| 💎  | CI gate on dep-graph integrity                       | ⚠️ Per repo             | ❌ Rare                            | ✅ §6 GHA workflow + --diff + auto-rewrite hook                                                         |
+| ⭐  | Canonical-markdown + derived-cache invariant         | ❌ DB-first             | ❌ Flat MAINTAINERS                | ✅ §1-§2 mirrors settings.json pattern                                                                  |
+| 💎  | Editor-time frontmatter validation                   | ❌ None                 | ⚠️ Hugo/Jekyll JSON Schema         | ⚠️ §1 sidecar; §6 CI is the gate                                                                        |
+| ⭐  | Mermaid/dot graph render                             | ❌ Manual board views   | ❌ None in-tree                    | ✅ §7 render CLI (5 formats) + docs/infrastructure/todo-graph.md                                        |
+| ⭐  | Critical-path / "most-blocking" rank                 | ⚠️ TaskJuggler external | ⚠️ TaskJuggler external            | ✅ §4 `blocking` subcommand                                                                             |
+| ⭐  | Stale-TODO / git-aware tracking                      | ❌ Manual board filters | ❌ None in-tree                    | ✅ §1 git timestamps + §4 `stale`                                                                       |
+| ⭐  | Source-file backlinks (`code <id>`)                  | ❌ Manual board links   | ⚠️ MAINTAINERS `F:` (people)       | ✅ §1 `file_patterns` + §4 `code <id>`                                                                  |
+| ⭐  | AI-agent MCP / autocomplete surface                  | ❌ Closed               | ❌ None                            | ✅ §8 MCP server (12 read-only tools)                                                                   |
+| 💎  | Per-item stamped_items / stub-behind-stamp lint      | ❌ None                 | ❌ None                            | ✅ §9 stamped_items cache + lint Check 7 live                                                           |
+| 💎  | Split function-head resolution, no LSP required      | ❌ None                 | ❌ None                            | ✅ §10 two-pass stdlib resolver + corpus mapping gate                                                   |
+| 💎  | Lint reports its own blind spot as a ratio           | ❌ None                 | ❌ None                            | ✅ §11 every ref bucketed; buckets must sum or no ratio is published                                    |
+| 💎  | Resolver follows a header declaration to its impl    | ❌ None                 | ❌ None                            | ✅ §12 basename-unique, non-static, linkage-checked; +54 resolved                                       |
+| 💎  | Stamped ref repaired against the tree, not stored    | ❌ None                 | ❌ None                            | ✅ §13 basename + section-scope repair at resolution time                                               |
+| 💎  | Identity gate verdicts the WHOLE ref population      | ❌ None                 | ❌ None                            | ✅ §14 all 1,626 refs, bucket-for-bucket equal to the lint's own                                        |
+| 💎  | Reclassification distinguished from lost coverage    | ❌ None                 | ❌ None                            | ✅ §14 dropped/lost/moved/changed fail; gained/added pass                                               |
+| ⭐  | Resolver cache lifecycle split by what pins it       | ❌ None                 | ⚠️ ctags/cscope rebuild wholesale  | ✅ §15 topology walk-scoped, content-bound LRU; eviction can't move a verdict                           |
+| 💎  | Mapping gate RUNS itself; no human opt-in            | ❌ None                 | ❌ None                            | ✅ §16 non-cancellable CI job, range from last-green SHA; unreviewed gains fail                         |
+| 💎  | ONE cache-schema rule, every consumer identical      | ❌ None                 | ⚠️ Per-tool ad hoc parsing         | ✅ §17 shared validator; same bad cache refused by both readers, own exit codes                         |
+| 💎  | Protocol migration separated from behaviour change   | ❌ None                 | ❌ None                            | ✅ §18 vocabulary/schema as inert data; gate passes only on byte-identical executables                  |
+| 💎  | The cache PRODUCER is differentialled, not trusted   | ❌ None                 | ❌ None                            | ✅ §18 base vs head build.py over BOTH corpora; a dropped stamped ref cannot hide                       |
+| ⭐  | Gate proves its consumer DELEGATES, not just runs    | ❌ None                 | ❌ None                            | ✅ §18 lint Check 25: sentinel-verdict propagation, mutation-checked                                    |
+| 💎  | Each reader validated for what IT consumes           | ❌ None                 | ⚠️ One-size schema or none         | ✅ §19 caller profiles: subtrees consumed declared apart from readiness required                        |
+| 💎  | A schema-valid cache cannot SUPPRESS a verdict       | ❌ None                 | ❌ None                            | ✅ §19 node identity, row coverage and one pinned generation per run, all fail-closed                   |
+| 💎  | Emitter DECLARES its vocabulary; retirement provable | ❌ None                 | ❌ None                            | ✅ §20 declared `EMITTED_BUCKETS` + AST shape gate + runtime bound; text search retired                 |
+| 💎  | The PRODUCER may not certify a cache it invalidated  | ❌ None                 | ❌ None                            | ✅ §21 fingerprint of the CONSUMED bytes re-verified before any write; rc 3, prior cache byte-identical |
+| 💎  | Cache freshness decided by content, never a clock    | ❌ Timestamp compare    | ❌ mtime / checksum stamps         | ✅ §21 digest-named binding + git-history id; a stepped clock cannot invert it                          |
 
 > **After §1-§3:** Impossible OS has full Linux-parity ownership metadata plus the dep-graph that neither OS ships, plus automated cross-file XREF integrity checks AND a CI-gated JSON Schema sidecar (consumed by `remark-lint-frontmatter-schema`; no Linux equivalent for project plans). Editor-time diagnostics are best-effort developer convenience via `markdown-yaml-embedded-langservers`; the §6 CI gate is the authoritative line of defense.
 > **After §4-§6:** "what should I work on next?" + "what's most-blocking?" + "what's been stale for 90 days?" are one-command queries, and graph drift is caught at PR time instead of at next-reviewer-sweep time, with `--diff` surfacing graph regressions per-PR. The canonical-markdown / derived-cache invariant matches the existing [Hook Routing Matrix](../../docs/infrastructure/ai-system.md#hook-routing-matrix) architecture, so contributors already understand the mental model.
