@@ -74,6 +74,37 @@ pushed_files() {
   done <<< "$STDIN_DATA"
 }
 
+# ---------------------------------------------------------------------------
+# Tooling-suite gate. `scripts/test-tooling.sh` is invoked from exactly ONE
+# place in the repo -- .github/workflows/build.yml -- so a tooling script and
+# the test that covers it could diverge with every LOCAL gate green, and the
+# divergence only surfaced as a red CI run the next segment had to repair
+# before doing any section work. Measured 2026-08-05: Check 7's new coverage
+# line printed on stdout, which lint.sh routes through error(), and CI went red
+# for 4 commits before anyone saw it; the run's first act was a CI repair
+# instead of section work, ~10 min plus a 1287-test re-run.
+#
+# CONDITIONAL, because the suite costs ~6 minutes: it fires only when the push
+# touches what the suite actually covers. An unconditional pre-push run would
+# tax every docs commit and would simply be disabled.
+TOOLING_PATHS_RE='^(scripts/lint/|scripts/todo-graph/|scripts/test-tooling\.sh|\.claude/hooks/)'
+TOOLING_HITS="$(pushed_files | sort -u | grep -E "$TOOLING_PATHS_RE" || true)"
+if [ -n "$TOOLING_HITS" ]; then
+  echo ""
+  echo "Pre-push: tooling change in this push -- gating on scripts/test-tooling.sh:"
+  printf '%s\n' "$TOOLING_HITS" | sort -u | head -6 | sed 's/^/  touched: /'
+  if ! bash "$REPO_ROOT/scripts/test-tooling.sh" --quiet; then
+    echo ""
+    echo -e "\033[31mTooling suite failed -- push blocked\033[0m"
+    echo "  A tooling change did not pass scripts/test-tooling.sh, which until"
+    echo "  now ran ONLY in CI. Fix it here rather than discovering it as a red"
+    echo "  build the next run has to repair before it can work."
+    echo "  Opt-out (last resort): SKIP_TOOLING_SUITE=1 git push ..."
+    [ "${SKIP_TOOLING_SUITE:-}" = "1" ] || exit 1
+    echo -e "\033[33m  SKIP_TOOLING_SUITE=1 set -- suite failure overridden\033[0m"
+  fi
+fi
+
 CP_MATCH="$REPO_ROOT/scripts/overnight/control-plane-match.sh"
 if [ -f "$CP_MATCH" ]; then
   CP_HITS="$(pushed_files | sort -u | bash "$CP_MATCH" || true)"
