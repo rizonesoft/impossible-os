@@ -67,9 +67,11 @@ title: "TODO-06 -- TODO Metadata Layer and Derived Graph"
 | 💎  |  16   |  §16    | Wire the identity gate so something runs it (adopts §12's parked wiring)            | §12, §14   |  [x]   |
 | ⭐  |  17   |  §17    | One shared cache-schema validator, consumed by both cache readers                   | §14, §16   |  [x]   |
 | ⭐  |  18   |  §18    | Identity-gate hardening: producer differential + protocol-constant extraction       | §16        |  [x]   |
-| ⭐  |  19   |  §19    | Cache-validation reach: route the remaining raw cache readers through §17            | §17        |  [ ]   |
+| ⭐  |  19   |  §19    | Caller profiles for the shared validator + three self-contained readers routed       | §17        |  [ ]   |
 | ⭐  |  20   |  §20    | A machine-checkable bucket-emission contract, so retirement is provable         | §18        |  [ ]   |
 | ⭐  |  21   |  §21    | The producer-side generation window in `build.py` (split from §19)                  | §17, §19   |  [ ]   |
+| ⭐  |  22   |  §22    | `query.py` fail-closed through CLI, MCP and watch transports (split from §19)       | §19, §8    |  [ ]   |
+| ⭐  |  23   |  §23    | `validate.py` rebuild recovery + `--diff` baseline profile (split from §19)         | §19, §3    |  [ ]   |
 
 > 💎 = parity work -- Linux kernel has MAINTAINERS + get_maintainer.pl (person-ownership mapping without a dep graph); Windows has no public equivalent. §1 (frontmatter), §2 (generator), §5 (migration) bring us to partial Linux parity plus graph metadata neither OS ships.
 > ⭐ = competitive edge -- neither Win11 nor mainline Linux ships a first-class TODO dependency graph. §3 (validator), §4 (query CLI), §6 (CI gate), §7 (visualization), §8 (MCP server) are new ground; the surface has direct value for any contributor scanning "what can I work on next?".
@@ -697,7 +699,7 @@ That is a real hole in the proof, and §13 is the section that demonstrates it. 
 > - Also repaired `test_stub_lint_coverage.py`, RED in the tree since §11 made a `total`-less baseline invalid; its runner gates on a manifest listing neither `scripts/lint` nor `scripts/todo-graph`.
 > - Scope boundary: does NOT wire the gate into anything (§16 owns that) and does NOT touch resolver cost (§15).
 > **Verified:** 2026-08-06 | commit `d0b2dc17` | 5/5 items | build OK | 209/209 todo-graph, 1287/1287 tooling, 66/66 overnight, 28326 kernel + 17 user-mode, lint 0 errors
-> **Accepted:** [M] cache-schema validation is not shared between the two callers, so they disagree about which caches are valid and which rc a malformed one yields -> XREF: 00-infrastructure/TODO-06 §16 (item: "ONE shared cache-schema validator, consumed by both cache readers" at line 700)
+> **Accepted:** [M] cache-schema validation is not shared between the two callers, so they disagree about which caches are valid and which rc a malformed one yields -> XREF: 00-infrastructure/TODO-06 §16 (item: "ONE shared cache-schema validator, consumed by both cache readers" at line 702)
 > **Quality reviewed:** 2026-08-06 | Codex 6x (design, adversarial x2, test-coverage, consistency, perf) | 5H+7M fixed, 0 open | scope: N/A (host tooling -- no kernel/boot/desktop/shell/userland surface)
 
 -> XREF: [`TODO-06 §13`](#13-stored-ref-repair-unpaired-symbols-and-bare-filenames) -- the section whose review found this, and whose bucket movements are the worked example of what the gate cannot currently see.
@@ -937,22 +939,32 @@ Split out of §18 on 2026-08-06: §18 is titled and scoped for the FOUR findings
 
 Split AGAIN on 2026-08-07, before implementation, on a `SPLIT-RECOMMENDED (4 subsystems)` verdict from `section-manifest.py`. The two halves that landed here are opposite in shape and in failure mode: this one is BREADTH (~6 reader files, one already-designed pattern applied to each, the risk being a reader whose documented exit code is collapsed in the process), while the producer-side generation window is DEPTH (one file, a TOCTOU whose fix has to be designed). The section text below already argued they are separable -- "No reader-side check can detect this ... It has to be closed where the cache is produced" -- so reviewing them under one diff would spend the adversarial round's attention on six mechanical swaps and the subtle one. The producer half is now §21.
 
-What remains here still scores `SPLIT-RECOMMENDED (4 subsystems)` and that residual verdict was WAIVED on 2026-08-07 with a structured waiver, because the score is a DIRECTORY artifact rather than conceptual breadth: `scripts/todo-reachability.py` counts as its own subsystem for being a top-level file, and `scripts/test-tooling.sh` counts for being where fixtures live. Splitting further would partition by directory instead of by concern. The reader set was verified at `file:line` before the waiver rather than taken from the item text above -- which OVERCOUNTS at "~10": `runner-doctor.py:113` compares mtimes and never parses the cache, and `mcp_server.py:204` delegates to `query.py` over argv, so neither is a raw reader. The real set is `todo-reachability.py:142`, `decision-registry.py:67`, `validate.py:137`+`169`, `check_consumer_delegation.py:312`, and `query.py:186`.
+Narrowed AGAIN on 2026-08-07 by its own Codex design review, which returned `needs-attention` with "Do not implement section 19 as written" and three `[high]` findings, all verified at `file:line` before being accepted. The residual `SPLIT-RECOMMENDED` verdict had been waived that morning on the structured prediction that this was "5 edits, under 15 lines each, independent of one another". THAT PREDICTION WAS WRONG, and recording so is the whole point of making a waiver an accountable estimate rather than an assertion: the edits are NOT independent (all five need a new caller-profile API in `cache_schema` first), and two carry blast radius the waiver never priced -- `query.py` reaches the MCP and watch transports, and `validate.py` both rebuilds on corruption and reads a SECOND historical cache at `:1024` that the inventory missed entirely. Those two became §22 and §23. What stays here is the foundation plus the three readers that are genuinely self-contained.
 
-- [ ] Route the REMAINING raw `todo-cache.json` readers through the §17 shared validator
-      §17 gave the two RESOLUTION readers one validator, but the review of it found ~10 other files that still `json.load` the cache raw and trust whatever parses: `scripts/todo-reachability.py`, `scripts/overnight/runner-doctor.py`, `scripts/overnight/decision-registry.py`, `scripts/todo-graph/validate.py`, `scripts/hooks/pre-push`, and `.claude/hooks/sequencer_triage.py` among them. The validation split §17 closed for two consumers is still open for the rest.
-      - The consequential one is `.claude/hooks/sequencer_triage.py:273-281`: on an empty cache `cmd_next` prints `{"status":"DONE","file":null}` and exits 0, so a corrupt cache makes the overnight runner declare the entire queue finished. Reproduced 2026-08-06. It must exit NONZERO on an unusable cache.
-      - CONTROL PLANE, so an unattended run may not apply that one; the operator-side filing carries the detail. -> XREF: [`overnight-runner-improvements-v10`](../overnight-runner-improvements/overnight-runner-improvements-v10.md) (item: "`sequencer_triage.py` reads `build/todo-cache.json` raw..."). The NON-control-plane readers in the list above are ordinary work and are closed here.
-      - Each reader keeps its OWN documented exit code, exactly as §17 established; sharing the rule must not collapse the codes.
-      - `query.py:186` is the one JUDGMENT call, not a mechanical swap: it already has a local `_validate_nodes` that SILENTLY DROPS malformed rows where the shared validator REFUSES the whole cache. Routing it is therefore a behavior change reaching `mcp_server.py` (which delegates over argv) and the runner. Decide it in-section and record the reasoning -- either route it and accept fail-closed, or keep the degrade and document why the divergence is deliberate. What is NOT acceptable is leaving two rules for "is this cache usable" that can disagree without anyone having chosen.
+The reader inventory was verified at `file:line` rather than taken from the original item text, which OVERCOUNTED at "~10": `runner-doctor.py:113` compares mtimes and never parses the cache, and `mcp_server.py:204` delegates to `query.py` over argv, so neither is a raw reader.
+
+- [ ] Give `cache_schema` caller-declared validation profiles instead of one fixed contract
+      `validate_nodes:301-307` RAISES `REASON_LEGACY_NO_STAMPED_ITEMS` when no node carries `stamped_items`. That is a readiness policy for the two stamped-items readers, and none of the readers routed here consume that subtree at all -- so routing them unchanged would refuse a schema-valid, perfectly usable cache. The module header at `cache_schema.py:64-71` already states the population question is the CALLER's and exposes `CacheInfo.key_present` to report it; the raise contradicts the module's own stated design.
+      - A `require_stamped_items` boolean was considered and REJECTED by the design review as the wrong axis: it would still validate an irrelevant subtree while leaving each new reader's ACTUAL inputs unchecked. The shape is a caller-declared profile -- which subtrees I consume, declared separately from which readiness conditions I require.
+      - Both existing readers keep the current profile BY DEFAULT, so §17's rc 2/3/4/5 and rc 3 contracts are preserved byte-for-byte. Changing them was the rejected Candidate B.
+- [ ] Extend `cache.schema.json` to the subtrees the routed readers actually consume
+      Without this the section advertises protection it does not deliver, which the design review raised as its own `[high]`. Verified: `stamps_xrefs` and `inputs_xrefs` are bare `{"type": "array"}` with no item shape, so a malformed nested entry passes today. `sections` IS constrained in the schema, but nothing in the shared validator's Python walk enforces it.
+      - `test_build.sh` already asserts the Python walk and the schema agree using `jsonschema` as an INDEPENDENT oracle; extend that agreement to every subtree added here rather than letting the two drift.
+- [ ] Route the three self-contained readers, each with its own DISTINCT infrastructure code
+      `todo-reachability.py:142` (bare `except Exception`, so it silently degrades to a fallback), `decision-registry.py:67` (returns an EMPTY xref list -- a clean-looking answer computed from nothing), `check_consumer_delegation.py:312` (raw load, no bounded read and no generation binding).
+      - "Keep its OWN documented exit code" is NOT satisfiable by reusing the codes these tools already have, and assuming it was is the trap: `todo-reachability.py:273` already returns `1` for FINDINGS and `decision-registry.py:165` returns `1` for NO SEARCH HITS. Mapping a cache failure onto either makes an infrastructure refusal indistinguishable from a real verdict -- the exact defect §17 exists to prevent. Each gets a NEW documented infrastructure code, distinct from its verdict codes.
+      - Test the DOWNSTREAM behavior, not just the load helper: a routed reader whose caller swallows the failure has not been routed.
 - [ ] A fixture per routed reader, each mutation-checked
-      A reader handed a corrupt/empty/oversized cache must exit nonzero with its OWN documented code, not a shared one and not a traceback. Mutation for each: restore that reader's raw `json.load` and require its fixture to FAIL, so the fixture is proven to be testing the routing rather than passing incidentally.
-- [ ] Commit: `"todo-graph: route the remaining raw cache readers through the shared validator"`
+      A reader handed a corrupt/empty/oversized cache must exit with its own documented INFRASTRUCTURE code -- not a verdict code, not a shared one, not a traceback. Mutation for each: restore that reader's raw `json.load` and require its fixture to FAIL, so the fixture is proven to test the routing rather than passing incidentally.
+- [ ] Commit: `"todo-graph: caller profiles for the shared validator, and three readers routed through it"`
 
-**Test checkpoint:** every non-control-plane raw cache reader rejects an unusable cache with its documented nonzero code, and each fixture fails when its reader is reverted to a raw `json.load`; `bash scripts/todo-graph/tests/test_build.sh` and `bash scripts/test-tooling.sh` green.
+**Test checkpoint:** `cache_schema` exposes caller profiles and both §17 readers keep their exact shipped reason-to-code mappings; the three routed readers reject an unusable cache with a documented infrastructure code distinct from their verdict codes; the schema and the Python walk still agree under the `jsonschema` oracle; each fixture fails when its reader is reverted to a raw `json.load`; `bash scripts/todo-graph/tests/test_build.sh` and `bash scripts/test-tooling.sh` green.
 
 -> XREF: [`TODO-06 §17`](#17-one-shared-cache-schema-validator-for-both-cache-readers) -- the validator this extends (item: "Commit: `\"todo-graph: one cache-schema validator for both cache readers\"`"); the finding was accepted during its adversarial review and scoped out of it.
 -> XREF: [`TODO-06 §21`](#21-the-producer-side-generation-window-in-buildpy) -- the DEPTH half split out of this section on 2026-08-07 (item: "Close the PRODUCER-side generation window in `build.py`"); it closes the mirror-image window on the write side, which no reader-side validation can detect.
+-> XREF: [`TODO-06 §22`](#22-querypy-fail-closed-through-every-transport) -- the `query.py` reader split out on 2026-08-07 (item: "Route `query.py` through the shared validator, fail-closed"); it CONSUMES the profiles API this section builds, so it cannot start before this ships.
+-> XREF: [`TODO-06 §23`](#23-validatepy-rebuild-recovery-and-the-baseline-cache) -- the `validate.py` reader split out on 2026-08-07 (item: "Preserve ONE rebuild, then re-validate the recovered artifact"); it CONSUMES the profiles API this section builds, so it cannot start before this ships.
+-> XREF: [`overnight-runner-improvements-v10`](../overnight-runner-improvements/overnight-runner-improvements-v10.md) -- the CONTROL-PLANE readers an unattended run may not touch (item: "`sequencer_triage.py` reads `build/todo-cache.json` raw..."); `.claude/hooks/sequencer_triage.py:273-281` prints `{"status":"DONE","file":null}` and exits 0 on an empty cache, so a corrupt cache makes the runner declare the whole queue finished. `scripts/hooks/pre-push` is the same class.
 
 
 ---
@@ -1000,6 +1012,58 @@ Split out of §19 on 2026-08-07, before implementation, on that section's `SPLIT
 
 -> XREF: [`TODO-06 §19`](#19-cache-validation-reach-the-remaining-raw-cache-readers) -- the BREADTH half this was split from (item: "Route the REMAINING raw `todo-cache.json` readers through the §17 shared validator"); that section hardens who may trust the cache, this one hardens whether the producer may certify it.
 -> XREF: [`TODO-06 §17`](#17-one-shared-cache-schema-validator-for-both-cache-readers) -- the reader-side generation binding this mirrors (item: "Commit: `\"todo-graph: one cache-schema validator for both cache readers\"`"); its `_scan_corpus` fingerprint is the machinery to reuse here.
+
+---
+
+## 22. `query.py` Fail-Closed Through Every Transport
+
+> **Spawned-by:** §19 (split)
+
+Split out of §19 on 2026-08-07 by that section's Codex design review, which rated it `[high]`. §19 had listed `query.py` as one of five readers to route and flagged it as "the one judgment call". The review showed it is not one call but a TRANSPORT problem: routing the reader fail-closed is pointless while the surfaces in front of it convert a nonzero exit back into a clean answer. That is a different failure mode from the rest of §19 and a different blast radius -- MCP agents, the runner, and watch-mode consumers -- so it gets its own review round rather than riding along with three mechanical swaps.
+
+- [ ] Route `query.py` through the shared validator, fail-closed
+      `query.py:186-203` has its own `_validate_nodes` that SILENTLY DROPS malformed rows -- `if not isinstance(n, dict): continue`, and the same for a missing/empty `file_path`. So `stats`, dependency and readiness answers can be computed from a SUBSET of the corpus, or from no nodes at all, and still look complete. The failure mode has a name: partial-cache false completeness.
+      - Two rules for "is this cache usable" that can disagree is the §17 defect reappearing one layer out. The shared validator REFUSES what this one quietly discards.
+      - Name and test both the all-rows-malformed and the one-row-malformed cases; they are different, and only the second is invisible today.
+- [ ] Make the MCP transport propagate the failure instead of swallowing it
+      `mcp_server.py:258-266` catches `SystemExit` from `_query_mod.main()` and then returns `buf.getvalue() or "[]"`. The comment says both exit paths already wrote a machine-readable body to the captured stdout -- but when no body was written, the `or "[]"` turns a fail-closed refusal into an empty, successful-looking MCP answer. Making the CLI strict without fixing this ships the appearance of safety.
+      - The tool call needs a structured error envelope, not `[]`. An agent cannot distinguish "no results" from "the cache was unusable" today.
+- [ ] Decide and pin watch-mode behavior after a failed rebuild
+      Watch mode must not keep serving the last in-memory cache once a rebuild has failed and that cache is stale or invalid. Pin the chosen behavior in a fixture; the current behavior is unpinned either way, which is the actual defect.
+- [ ] Fixtures across every transport, each mutation-checked
+      Direct CLI, MCP tool call, and watch mode each get a case proving an unusable cache produces a refusal rather than an empty answer. Mutation: restore the silent-drop `_validate_nodes` (and the `or "[]"`) and require the corresponding fixture to FAIL.
+- [ ] Commit: `"todo-graph: query.py fails closed, and its transports stop swallowing it"`
+
+**Test checkpoint:** an unusable cache makes `query.py` exit with its documented infrastructure code through the direct CLI, surfaces as a structured error (never `[]`) through the MCP tool call, and does not leave watch mode serving a stale cache; the one-row-malformed case refuses rather than silently narrowing the answer; each fixture fails when its guard is reverted; `bash scripts/todo-graph/tests/test_build.sh` and `bash scripts/test-tooling.sh` green.
+
+-> XREF: [`TODO-06 §19`](#19-cache-validation-reach-the-remaining-raw-cache-readers) -- the section this was split from and DEPENDS ON (item: "Give `cache_schema` caller-declared validation profiles instead of one fixed contract"); `query.py` consumes those profiles, so this cannot start before §19 ships.
+-> XREF: [`TODO-06 §8`](#8-mcp-server-read-only-ai-agent-transport-over-4) -- the MCP transport whose error envelope this changes (item: "Commit: `\"todo-graph: MCP server for AI-agent graph queries\"`"); `mcp_server.py:258-266` is the swallow site.
+
+---
+
+## 23. `validate.py` Rebuild Recovery and the Baseline Cache
+
+> **Spawned-by:** §19 (split)
+
+Split out of §19 on 2026-08-07 by that section's Codex design review, which rated it `[high]`. §19 treated `validate.py` as one more raw reader to route; it is the only consumer that RECOVERS from a bad cache by regenerating it, and the only one that reads a SECOND, historical cache. Both make its routing a semantics question rather than a swap, and the second one was missing from §19's inventory entirely -- which is itself the argument for giving it a section where someone looks at it directly.
+
+- [ ] Preserve ONE rebuild, then re-validate the recovered artifact
+      `validate.py:128-169` rebuilds via `build.py` when the cache is absent, unreadable or shape-stale. Rebuilding a DERIVED artifact is reasonable recovery and must be kept -- but trusting the result is not: `:169` is a final unguarded `json.loads` of whatever the rebuild produced, so a corrupt post-rebuild cache exits with a traceback (rc 1), colliding with `validate.py`'s documented rc 1 for GRAPH FINDINGS. An infrastructure failure currently reads as "the graph has problems".
+      - Exactly one rebuild attempt, then the same bounded, generation-bound validation, then rc 2 on a second failure. No loop -- a retry loop against a deterministically-corrupt producer is a hang, not a recovery.
+- [ ] Give the `--diff` baseline cache its own profile
+      `validate.py:1024` reads a baseline cache raw, guarded only into a `graph-delta` FAIL finding. A malformed historical cache can therefore crash the walk or MANUFACTURE graph deltas that no one authored -- a false finding is worse than a refusal, because it is actioned.
+      - The baseline needs freshness DISABLED (it is deliberately old; current-corpus staleness policy is meaningless against it) and an explicit schema-version policy for caches produced by an older `build.py`.
+      - This is exactly why the profiles API in §19 is caller-declared: the baseline is the same file format read under different readiness rules.
+- [ ] Hold `CacheInfo` until the post-walk corpus re-verification completes
+      §17's generation binding is only closed when the caller re-verifies via `check_corpus_unchanged` AFTER its walk. `validate.py` runs eight checks against the live TODO files, which is precisely the long window that binding exists to cover.
+- [ ] Fixtures, each mutation-checked
+      A corrupt cache that rebuilds clean -> passes; one that rebuilds still-corrupt -> rc 2, once, no loop; a malformed baseline -> refusal rather than invented deltas; a corpus file mutated during the eight checks -> caught by the post-walk re-verification. Mutation for each: remove the guard and require the fixture to FAIL.
+- [ ] Commit: `"todo-graph: validate.py recovery semantics and a baseline-cache profile"`
+
+**Test checkpoint:** a corrupt cache is rebuilt exactly once and re-validated; a second failure exits rc 2 rather than tracebacking into the rc 1 findings channel; a malformed `--diff` baseline is refused instead of producing graph deltas; a corpus edit during the check walk is caught post-walk; each fixture fails when its guard is reverted; `bash scripts/todo-graph/tests/test_build.sh` and `bash scripts/test-tooling.sh` green.
+
+-> XREF: [`TODO-06 §19`](#19-cache-validation-reach-the-remaining-raw-cache-readers) -- the section this was split from and DEPENDS ON (item: "Give `cache_schema` caller-declared validation profiles instead of one fixed contract"); the baseline profile is a direct consumer of that API, so this cannot start before §19 ships.
+-> XREF: [`TODO-06 §3`](#3-validator-stale-xref--dangling-dep--orphan--cycle--bat--status--schema) -- the validator whose exit-code contract this repairs (item: "Commit: `\"todo-graph: validator with 8 integrity checks\"`"); its documented rc 1 currently collides with an infrastructure traceback.
 
 ---
 
