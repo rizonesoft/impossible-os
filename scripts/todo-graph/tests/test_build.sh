@@ -7874,10 +7874,70 @@ for label, subtree, value, profile, python_only in CASES:
 print("OK" if not bad else "; ".join(bad))
 PY
 )
+# The label states the split rather than claiming blanket agreement. 15 cases
+# must produce IDENTICAL verdicts; `sections duplicate n` is declared
+# Python-only because JSON Schema 2020-12 cannot express uniqueness-by-property
+# (`uniqueItems` is whole-item equality and the two rows differ in
+# `deliverable`), and that case is asserted in BOTH directions above -- it fails
+# if the schema starts rejecting it OR if the Python walk stops. Saying "agree"
+# for all 16 was the overclaim (Codex consistency, section 19 review, [medium]).
 case "$CS_PARITY" in
-    OK) t_pass "shared cache schema: sections + stamps_xrefs agree with the published schema (16 cases)" ;;
+    OK) t_pass "shared cache schema: sections + stamps_xrefs -- 15 cases verdict-identical to the published schema, 1 declared Python-only (duplicate n)" ;;
     SKIP*) t_fail "shared cache schema: parity table could not run -- $CS_PARITY" ;;
     *) t_fail "shared cache schema: schema/Python drift -- $CS_PARITY" ;;
+esac
+
+# ----------------------------------------------------------------------
+# ROUTED READERS NAME SUBTREES BY THE SHARED CONSTANT, NOT A RETYPED LITERAL.
+# The vocabulary is centralized at `cache_schema.SUBTREE_*`, but a reader that
+# retypes the string reintroduces exactly what centralizing it removed: a
+# rename would validate one field while the reader accessed another, so
+# `todo-reachability` escapes through an uncaught KeyError under its VERDICT
+# code and `check_consumer_delegation` silently counts zero (Codex consistency,
+# section 19 review, [medium]).
+#
+# Asserted over the AST, NOT by text search. Both files legitimately mention
+# these names in comments and error messages -- a grep for the literal would
+# fail on prose and force the check to be muted, which is how a real rule turns
+# into an ignored one. Only the ACCESS shapes are examined: `node["sections"]`
+# and `node.get("stamped_items", ...)`.
+# ----------------------------------------------------------------------
+RR_CONST=$(python3 - "$REPO_ROOT" <<'PY'
+import ast, sys
+from pathlib import Path
+root = Path(sys.argv[1])
+sys.path.insert(0, str(root / "scripts" / "todo-graph"))
+import cache_schema as cs
+
+NAMES = {cs.SUBTREE_STAMPED_ITEMS, cs.SUBTREE_SECTIONS, cs.SUBTREE_STAMPS_XREFS}
+TARGETS = ["scripts/todo-reachability.py", "scripts/lint/check_consumer_delegation.py"]
+
+bad = []
+for rel in TARGETS:
+    path = root / rel
+    if not path.is_file():
+        bad.append(f"{rel}: missing")
+        continue
+    tree = ast.parse(path.read_text(encoding="utf-8"), str(path))
+    for node in ast.walk(tree):
+        # node["sections"]
+        if isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant) \
+                and node.slice.value in NAMES:
+            bad.append(f"{rel}:{node.lineno}: subscripts a bare "
+                       f"{node.slice.value!r}; use cache_schema.SUBTREE_*")
+        # node.get("stamped_items", ...)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
+                and node.func.attr == "get" and node.args \
+                and isinstance(node.args[0], ast.Constant) \
+                and node.args[0].value in NAMES:
+            bad.append(f"{rel}:{node.lineno}: .get() on a bare "
+                       f"{node.args[0].value!r}; use cache_schema.SUBTREE_*")
+print("OK" if not bad else "; ".join(bad))
+PY
+)
+case "$RR_CONST" in
+    OK) t_pass "routed reader: subtrees named by the shared SUBTREE_* constants, no retyped literals" ;;
+    *) t_fail "routed reader: retyped subtree literal -- $RR_CONST" ;;
 esac
 
 # ----------------------------------------------------------------------

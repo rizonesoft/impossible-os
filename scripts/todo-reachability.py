@@ -318,9 +318,15 @@ def _load_cache(root):
                 REASON_IDENTITY,
                 f"two cache nodes resolve to the identity {fp!r}; the second "
                 f"would silently replace the first")
+        # NAMED BY THE SHARED CONSTANT, not a local literal. A retyped copy lets
+        # a subtree rename validate one field and read another: the profile
+        # would keep declaring `SUBTREE_SECTIONS` while this indexed a key
+        # nothing emits, and the KeyError would escape under this tool's VERDICT
+        # code rather than its infrastructure one (Codex consistency, section 19
+        # review, [medium]).
         built[fp] = {
             sec["n"]: (sec["status"] or "").strip()
-            for sec in node["sections"] if sec["n"] is not None
+            for sec in node[_cs.SUBTREE_SECTIONS] if sec["n"] is not None
         }
     # PUBLISH ATOMICALLY. `_CACHE` used to be filled node by node, so a refusal
     # part-way through left a VALID PREFIX in the global -- and the `if _CACHE`

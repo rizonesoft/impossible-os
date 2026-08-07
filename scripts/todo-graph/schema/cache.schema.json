@@ -101,6 +101,7 @@
       },
       "sections": {
         "type": "array",
+        "description": "Per-section rows. NOTE: consumers enforce one rule this schema cannot express -- `n` must be unique within a node. JSON Schema 2020-12 has no uniqueness-by-property keyword (`uniqueItems` is whole-item equality, so two rows sharing an `n` but differing elsewhere satisfy it), and the rule is load-bearing rather than cosmetic: readers key a dict on `n`, so a duplicate silently overwrites a section's real status. cache_schema.validate_nodes refuses it. A document valid against this schema is therefore well-SHAPED, not automatically trustworthy.",
         "items": {
           "type": "object",
           "additionalProperties": false,

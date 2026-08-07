@@ -357,10 +357,17 @@ def _drive_consumer(_rr, _consumer):
     # (when present) and `refs` are lists, so a wrong-typed one now REFUSES
     # rather than silently counting zero -- which would have lowered the
     # expectation and passed the comparison it exists to make.
+    #
+    # The subtree is named by the SHARED CONSTANT, not a local literal. A
+    # retyped copy is what lets a rename validate one field and read another:
+    # the profile would keep declaring `SUBTREE_STAMPED_ITEMS` while this sum
+    # counted a key nothing emits, silently lowering the expectation to zero and
+    # passing the comparison it exists to make (Codex consistency, section 19
+    # review, [medium]).
     expected = sum(
         1
         for node in nodes
-        for it in node.get("stamped_items", ())
+        for it in node.get(_cs.SUBTREE_STAMPED_ITEMS, ())
         for ref in it["refs"]
         if ref["kind"] == "symbol")
     with _rr.walk_scope():
