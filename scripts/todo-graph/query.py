@@ -81,11 +81,20 @@ from typing import Optional
 _HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(_HERE))
 from validate import (  # noqa: E402
-    load_or_rebuild_cache,
     build_id_index,
     build_path_index,
     resolve_xref_target,
 )
+# THE SHARED CACHE-SCHEMA VALIDATOR (section 17 / 19 / 22). `load_or_rebuild_cache`
+# is deliberately NO LONGER IMPORTED: it ends at `validate.py:169` with a bare
+# `json.loads(cache_path.read_text())`, which has none of the bounded read, the
+# fstat generation binding, the freshness comparison or the corpus fingerprint
+# this module needs. Validating the nodes it returned would have been routing in
+# name only -- a well-shaped STALE cache still served, and a cache rewritten
+# between the read and the answer still published (Codex design review, section
+# 22, [high]). `validate.py` keeps that helper for its own recovery path, which
+# is section 23's to harden.
+import cache_schema as _cs  # noqa: E402
 
 
 # ----------------------------------------------------------------------
@@ -183,31 +192,78 @@ def _safe_list(v) -> list:
     return v if isinstance(v, list) else []
 
 
-def _validate_nodes(nodes: list) -> list:
-    """Drop rows that lack the minimum cache contract (dict + file_path
-    string). Build.py's forbidden-field + schema checks already fence
-    authored TODO files; this is belt-and-braces against a hand-edited
-    or interrupted-write cache that would otherwise crash downstream
-    with KeyError."""
-    clean = []
-    for n in nodes or []:
-        if not isinstance(n, dict):
-            continue
-        fp = n.get("file_path")
-        if not isinstance(fp, str) or not fp:
-            continue
-        clean.append(n)
-    return clean
+# EXIT CODES. rc 2 is the INFRASTRUCTURE code -- the cache exists and cannot be
+# trusted -- and it already meant exactly that here (the non-list guard in
+# `_build_ctx` has exited 2 since the CLI shipped). rc 3 stays the ceiling
+# breach, which is a bounded successful answer rather than a refusal, and rc 1
+# stays a real verdict. Keeping the refusal on 2 means no consumer's existing
+# exit-code handling changes meaning.
+EXIT_CACHE_UNUSABLE = 2
+
+
+class CacheRefused(Exception):
+    """The cache cannot be trusted, so no answer is produced.
+
+    RAISED RATHER THAN `sys.exit()`, which matters for exactly one caller:
+    `--watch`. A `sys.exit(2)` inside a tick unwinds straight through
+    `watch_loop` and KILLS the watcher, so a single half-saved TODO file would
+    end an interactive session -- while the refusal is supposed to be a
+    per-tick event the next good edit clears. `_run_once_guarded` maps this to
+    rc 2 for the single-shot and MCP transports, and the watch tick simply
+    continues; one refusal path, three transport behaviors, no duplicated
+    envelope.
+    """
+
+
+def _write_refusal(reason: str, message: str, quiet: bool) -> None:
+    """Emit the MACHINE-READABLE refusal body on stdout.
+
+    The body goes to STDOUT, not just stderr, and that is load-bearing rather
+    than cosmetic: `mcp_server.py` runs `main()` in-process with stdout
+    redirected into a buffer, so a refusal written only to stderr would leave
+    that buffer EMPTY -- which is precisely the `buf.getvalue() or "[]"` path
+    that turned a refusal into a successful-looking empty answer. Writing the
+    envelope here means every transport gets the same body from one place.
+
+    Split from `_refuse` because the resource handlers in `_run_once_guarded`
+    need the body WITHOUT the exception: they are already unwinding, and
+    raising from inside an `except` would escape the guard it is standing in.
+    """
+    sys.stdout.write(json.dumps({
+        "error": "cache-unusable",
+        "reason": reason,
+        "detail": message,
+        "hint": "rebuild with bash scripts/todo-graph/build-and-validate.sh",
+    }, indent=2, sort_keys=True) + "\n")
+    if not quiet:
+        sys.stderr.write(f"[query.py] FATAL: {reason}: {message}\n")
+
+
+def _refuse(reason: str, message: str, quiet: bool):
+    """Write the refusal body, then raise `CacheRefused` to abandon the walk."""
+    _write_refusal(reason, message, quiet)
+    raise CacheRefused(message)
 
 
 class Ctx:
     __slots__ = (
         "nodes", "id_index", "path_index", "slug_index", "slug_collisions",
         "stem_collisions", "inbound", "repo_root", "quiet", "pre_notice_fired",
+        "node_by_path", "ambiguous_edges",
     )
 
     def __init__(self, nodes, repo_root, quiet):
-        self.nodes = _validate_nodes(nodes)
+        # NODES ARRIVE VALIDATED. The old `_validate_nodes` silently dropped
+        # rows that were not dicts or lacked `file_path`, so every answer below
+        # -- stats, ready, backlinks -- could be computed from a SUBSET of the
+        # corpus and still look complete. The shared validator REFUSES what that
+        # one discarded; see `_build_ctx`.
+        self.nodes = nodes
+        # file_path -> node. The dependency walks resolved an id to a path and
+        # then LINEAR-SCANNED `nodes` for it, once per edge, which is O(n^2)
+        # over the graph. `file_path` uniqueness is guaranteed by the shared
+        # validator, so this map is exact rather than best-effort.
+        self.node_by_path = {n["file_path"]: n for n in self.nodes}
         self.id_index = build_id_index(self.nodes)
         self.path_index = build_path_index(self.nodes)
         self.slug_index, self.slug_collisions = build_slug_index(self.nodes)
@@ -215,7 +271,13 @@ class Ctx:
         self.repo_root = repo_root
         self.quiet = quiet
         self.pre_notice_fired = False
-        self.inbound = collect_inbound_edges(self.nodes, self.id_index, self.path_index)
+        # Edge tokens naming a BARE stem that more than one file carries are
+        # collected, not silently bound to whichever file the flattened index
+        # happened to keep. `_build_ctx` turns a non-empty list into a refusal.
+        self.ambiguous_edges = []
+        self.inbound = collect_inbound_edges(
+            self.nodes, self.id_index, self.path_index,
+            self.stem_collisions, self.ambiguous_edges)
 
     def stderr(self, msg):
         if self.quiet:
@@ -282,6 +344,63 @@ def build_slug_index(nodes: list) -> tuple:
     return out, collisions
 
 
+def _normalize_ref_token(raw) -> str:
+    """The ONE normalization both ambiguity classification and resolution use.
+
+    These were two ordered strip chains that had to be kept identical, and they
+    were not. `_note_ambiguous` stripped backticks then commas in a single
+    pass, while `_resolve_edge_target` hands its result to
+    `resolve_xref_target`, which strips backticks AGAIN -- so the realistic
+    token `` `TODO-A-Shared.md`, `` kept a trailing backtick during
+    classification (recording no ambiguity) and lost it during resolution
+    (returning None for the duplicate stem). The edge was then silently omitted
+    at rc 0 rather than refused (Codex adversarial, section 22 round 7, [high]).
+
+    Looping to a fixed point is what makes the order irrelevant: any
+    interleaving of backticks, commas, whitespace, an `#anchor` and a trailing
+    slash converges on the same token.
+    """
+    if raw is None:
+        return ""
+    token = str(raw)
+    while True:
+        before = token
+        token = token.strip().strip("`").strip(",").rstrip("/")
+        if "#" in token:
+            token = token.split("#", 1)[0]
+        if token == before:
+            return token
+
+
+def _edge_uses_ambiguous_stem(token: str, stem_collisions: dict) -> Optional[str]:
+    """Return the ambiguous stem when `token` is a BARE filename reference to a
+    stem more than one file carries, else None.
+
+    `validate.build_path_index` flattens `{stem: file_path}`, so when two files
+    share a stem only the LAST survives and every bare-stem edge naming either
+    one resolves to that survivor -- at rc 0, with the other file showing no
+    inbound edge at all. REPRODUCED with `todo/01-a/TODO-A-Shared.md` and
+    `todo/02-b/TODO-A-Shared.md`: `backlinks first` returned 0 rows and
+    `backlinks second` returned 1, for an Inputs XREF naming the bare stem
+    (Codex adversarial, section 22 round 4, [high]).
+
+    `_build_stem_collisions` already computes this map and its docstring claims
+    the reader "refuses stem-based resolution when >1 file shares the stem" --
+    but the only consumer was `resolve_id_to_node`, i.e. the target a HUMAN
+    types. Edge resolution never asked, which is why the graph could be wrong
+    while the CLI politely refused the same ambiguous name.
+
+    ONLY BARE STEMS ARE AMBIGUOUS. Duplicate stems across domains are a
+    supported layout, and a domain-qualified reference (`01-a/TODO-A-Shared.md`)
+    or an id names exactly one file -- so refusing those would be a false
+    positive on a corpus that is doing nothing wrong.
+    """
+    if not stem_collisions or "/" in token or "\\" in token:
+        return None
+    stem = token[:-3] if token.endswith(".md") else token
+    return stem if stem in stem_collisions else None
+
+
 def _resolve_edge_target(raw: str, source_file: str, id_index: dict, path_index: dict) -> Optional[str]:
     """Wrapper over resolve_xref_target that tolerates trailing punctuation
     and markdown anchor suffixes.
@@ -294,16 +413,15 @@ def _resolve_edge_target(raw: str, source_file: str, id_index: dict, path_index:
     inflated by the same class of refs and can be tightened separately."""
     if raw is None:
         return None
-    t = raw.strip().strip("`").strip(",").strip()
+    t = _normalize_ref_token(raw)
     if not t:
         return None
-    # Strip markdown anchor suffix (`TODO-02-foo.md#9-bar` -> `TODO-02-foo.md`).
-    if "#" in t:
-        t = t.split("#", 1)[0]
     return resolve_xref_target(t, source_file, id_index, path_index)
 
 
-def collect_inbound_edges(nodes: list, id_index: dict, path_index: dict) -> dict:
+def collect_inbound_edges(nodes: list, id_index: dict, path_index: dict,
+                          stem_collisions: Optional[dict] = None,
+                          ambiguous: Optional[list] = None) -> dict:
     """Precompute inbound edges keyed by target file_path.
 
     Returns {file_path: [edge_dict, ...]} where each edge_dict has:
@@ -312,10 +430,24 @@ def collect_inbound_edges(nodes: list, id_index: dict, path_index: dict) -> dict
       - section: Optional[str] -- the `§N` suffix when present
 
     Self-references are excluded so a TODO's own internal XREFs don't
-    make it look inbound-popular."""
+    make it look inbound-popular.
+
+    When `stem_collisions` and `ambiguous` are supplied, every edge token that
+    names a BARE ambiguous stem is appended to `ambiguous` as
+    `(source, token, [candidate paths])`. Collected rather than raised here so
+    the caller reports ALL of them at once instead of one per run -- and so
+    this function stays a pure index builder."""
     inbound: dict = {}
     for n in nodes:
         src = n["file_path"]
+
+        def _note_ambiguous(raw):
+            if ambiguous is None or raw is None:
+                return
+            token = _normalize_ref_token(raw)
+            stem = _edge_uses_ambiguous_stem(token, stem_collisions)
+            if stem:
+                ambiguous.append((src, token, stem_collisions[stem]))
 
         def _add(target: Optional[str], kind: str, section: Optional[str]):
             if not target or target == src:
@@ -340,6 +472,7 @@ def collect_inbound_edges(nodes: list, id_index: dict, path_index: dict) -> dict
         for x in _safe_list(n.get("inputs_xrefs")):
             if not isinstance(x, dict):
                 continue
+            _note_ambiguous(x.get("target_path"))
             tgt = _resolve_edge_target(x.get("target_path"), src, id_index, path_index)
             _add(tgt, EDGE_INPUTS, x.get("target_section"))
 
@@ -347,6 +480,7 @@ def collect_inbound_edges(nodes: list, id_index: dict, path_index: dict) -> dict
         for x in _safe_list(n.get("stamps_xrefs")):
             if not isinstance(x, dict):
                 continue
+            _note_ambiguous(x.get("target_path"))
             tgt = _resolve_edge_target(x.get("target_path"), src, id_index, path_index)
             _add(tgt, EDGE_STAMPS, x.get("target_section"))
 
@@ -360,6 +494,7 @@ def collect_inbound_edges(nodes: list, id_index: dict, path_index: dict) -> dict
                 tgt_tok = grp.get("target")
                 if not tgt_tok or tgt_tok == "self":
                     continue
+                _note_ambiguous(tgt_tok)
                 tgt = _resolve_edge_target(tgt_tok, src, id_index, path_index)
                 sections = _safe_list(grp.get("sections"))
                 section_str = ",".join(f"§{s}" for s in sections) if sections else None
@@ -702,27 +837,77 @@ def cmd_stale(ctx: Ctx, args) -> tuple:
 
 def _dep_depth(node: dict, ctx: Ctx, memo: dict, stack: set) -> int:
     """Longest depends_on chain length rooted at node. Cycles bounded by
-    the stack set (contributes 0 for the back-edge)."""
+    the stack set (contributes 0 for the back-edge).
+
+    ITERATIVE, NOT RECURSIVE, AND THE DIFFERENCE IS REACHABLE (Codex
+    adversarial, section 22, [high]). The recursive form recursed once per link,
+    so a cache describing a chain longer than Python's recursion limit raised
+    `RecursionError` -- which `_run_once_guarded` did not catch, so the CLI
+    exited **1**, the code this reader documents as a real VERDICT, with an
+    empty body. A 2,000-node chain reproduces it.
+
+    IT HID BEHIND NODE ORDER, which is why it survived this long: `cmd_stats`
+    walks `ctx.nodes` in order, so a cache listing the chain root FIRST fills
+    `memo` bottom-up and never nests more than one frame deep. Reverse the same
+    2,000 nodes -- an ordering an untrusted cache picks for itself -- and the
+    first call descends the entire chain. Bounding the input depth instead
+    would mean choosing an arbitrary limit for a shape the producer may
+    legitimately emit; an explicit stack has no limit to choose.
+    """
     fp = node["file_path"]
     if fp in memo:
         return memo[fp]
-    if fp in stack:
-        return 0
-    stack.add(fp)
-    best = 0
-    for ref in _safe_list(node.get("depends_on")):
-        tgt_path = ctx.id_index.get(ref)
-        if not tgt_path:
+    # Each frame is [node, targets-or-None, best-so-far, next-child-index]. A
+    # frame is EXPANDED once (targets None -> list), then drained one child at
+    # a time via the INDEX, then resolved -- the recursive control flow written
+    # out.
+    #
+    # THE INDEX IS NOT A STYLE CHOICE. The first version of this rewrite did
+    # `pending = pending[1:]` per child, which copies the remaining list every
+    # step and turns a node with k dependencies from O(k) into O(k^2). A valid
+    # 20,000-leaf star measured 1.36s that way against 0.03s recursively, and
+    # the schema puts no `maxItems` on `depends_on` while the cache ceiling is
+    # 64 MiB -- so far wider graphs are accepted. Under MCP the `_CALL_LOCK`
+    # makes one such `stats` call block every other query (Codex adversarial,
+    # section 22 round 2, [medium]).
+    frames = [[node, None, 0, 0]]
+    while frames:
+        cur, pending, best, idx = frames[-1]
+        cur_fp = cur["file_path"]
+        if pending is None:
+            if cur_fp in memo:
+                frames.pop()
+                if frames:
+                    frames[-1][2] = max(frames[-1][2], memo[cur_fp] + 1)
+                continue
+            if cur_fp in stack:
+                # Back-edge: contributes 0 to the ancestor, so the edge itself
+                # still counts as 1. Same as the recursive `0 + 1`.
+                frames.pop()
+                if frames:
+                    frames[-1][2] = max(frames[-1][2], 1)
+                continue
+            stack.add(cur_fp)
+            targets = []
+            for ref in _safe_list(cur.get("depends_on")):
+                tgt_path = ctx.id_index.get(ref)
+                if not tgt_path:
+                    continue
+                tgt = ctx.node_by_path.get(tgt_path)
+                if tgt is not None:
+                    targets.append(tgt)
+            frames[-1][1] = targets
             continue
-        tgt = next((x for x in ctx.nodes if x["file_path"] == tgt_path), None)
-        if not tgt:
+        if idx < len(pending):
+            frames[-1][3] = idx + 1
+            frames.append([pending[idx], None, 0, 0])
             continue
-        d = _dep_depth(tgt, ctx, memo, stack) + 1
-        if d > best:
-            best = d
-    stack.discard(fp)
-    memo[fp] = best
-    return best
+        stack.discard(cur_fp)
+        memo[cur_fp] = best
+        frames.pop()
+        if frames:
+            frames[-1][2] = max(frames[-1][2], best + 1)
+    return memo.get(fp, 0)
 
 
 def cmd_stats(ctx: Ctx, args) -> tuple:
@@ -1379,13 +1564,29 @@ def _cache_path_is_writable_from_here(cache_path: Path, repo_root: Path) -> bool
         return False
 
 
-def _rebuild_cache(cache_path: Path, repo_root: Path, quiet: bool) -> None:
+REBUILD_OK = "ok"           # build.py ran and succeeded
+REBUILD_FAILED = "failed"   # build.py ran and FAILED -- the cache is suspect
+REBUILD_SKIPPED = "skipped"  # no rebuild was applicable here
+
+
+def _rebuild_cache(cache_path: Path, repo_root: Path, quiet: bool) -> str:
     """Force-rebuild build/todo-cache.json by shelling out to build.py.
     Used between --watch ticks so the query reflects the user's latest
-    TODO edits (load_or_rebuild_cache alone won't trigger a rebuild for
-    a schema-stable cache; it only regenerates on absence or stale shape).
-    Errors bubble up as a stderr notice but don't abort the watch loop --
-    a transient build failure should not kill an interactive watcher.
+    TODO edits, and once on a MISSING cache for a fresh clone.
+
+    RETURNS A TRI-STATE, and the distinction between the last two is
+    load-bearing. It used to return None and print `using last successful
+    cache` on a build.py failure, which is the defect: after a FAILED rebuild
+    the previous cache is, by definition, the one that does not reflect the
+    edit that just broke the build, so answering from it serves a stale graph
+    as though it were fresh.
+
+    But "no rebuild happened" is NOT the same event. An out-of-repo `--cache`
+    and an absent build.py are both deliberate read-only situations in which
+    nothing was attempted and nothing is suspect -- collapsing them into the
+    failure code makes an inspection-mode watcher refuse EVERY tick and serve
+    nothing at all, which deletes the read-only workflow this function's own
+    guard exists to support.
 
     Refuses to write outside repo_root. A user who pointed --cache at an
     external path may inspect that cache read-only, but auto-rebuild is
@@ -1397,12 +1598,12 @@ def _rebuild_cache(cache_path: Path, repo_root: Path, quiet: bool) -> None:
                 f"[query.py] WARN: --cache {cache_path} is outside repo_root "
                 f"{repo_root}; skipping auto-rebuild (read-only mode)\n"
             )
-        return
+        return REBUILD_SKIPPED
     build_py = Path(__file__).resolve().parent / "build.py"
     if not build_py.exists():
         if not quiet:
             sys.stderr.write(f"[query.py] WARN: build.py missing at {build_py}; skipping cache rebuild\n")
-        return
+        return REBUILD_SKIPPED
     result = subprocess.run(
         [sys.executable, str(build_py),
          "--quiet", "--output", str(cache_path),
@@ -1410,8 +1611,13 @@ def _rebuild_cache(cache_path: Path, repo_root: Path, quiet: bool) -> None:
          "--repo-root", str(repo_root)],
         cwd=str(repo_root),
     )
-    if result.returncode != 0 and not quiet:
-        sys.stderr.write(f"[query.py] WARN: build.py exited {result.returncode}; using last successful cache\n")
+    if result.returncode != 0:
+        if not quiet:
+            sys.stderr.write(
+                f"[query.py] WARN: build.py exited {result.returncode}; "
+                f"the cache on disk no longer reflects the corpus\n")
+        return REBUILD_FAILED
+    return REBUILD_OK
 
 
 def _find_repo_root(explicit: Optional[str]) -> Path:
@@ -1444,26 +1650,113 @@ def main(argv=None) -> int:
     fmt = "json" if args.json else args.format
     status_gated = args.subcommand in ("ready", "blocked", "blocking")
 
+    todo_root = repo_root / "todo"
+    # THE CANONICAL CACHE IS THE ONE FRESHNESS CAN BE ESTABLISHED FOR.
+    # `check_freshness` compares the cache's recorded corpus binding against
+    # THIS repo's `todo/` tree, which is a meaningful question only for the
+    # cache this repo's producer writes. A cache the user pointed at with
+    # `--cache` (a CI fixture, a captured snapshot, another checkout) describes
+    # a DIFFERENT corpus by construction, so checking it against ours would
+    # refuse every such cache and delete the read-only inspection path the
+    # `--cache` flag exists for (`_cache_path_is_writable_from_here` documents
+    # that same boundary for the rebuild side).
+    #
+    # THIS IS NOT THE "TWO RULES THAT CAN DISAGREE" THE SECTION FORBIDS. There
+    # is exactly ONE shape rule -- the shared validator, fail-closed, applied to
+    # every cache on every transport. What varies is whether a FRESHNESS
+    # question that is undefined for a foreign corpus gets asked at all, and
+    # when it is skipped the reader says so on stderr rather than implying the
+    # cache was certified. The bypass a plain flag would create is closed by
+    # comparing the RESOLVED path: `--cache build/todo-cache.json` resolves onto
+    # the canonical path and is checked exactly like the default.
+    canonical_cache = (repo_root / "build" / "todo-cache.json").resolve()
+    check_stale = cache_path.resolve() == canonical_cache
+
     def _build_ctx():
         """(Re)load the cache and build a fresh Ctx. Called once up-front
         for a single-shot run; called every tick in --watch mode so the
         user sees output reflecting the latest TODO edits, not the snapshot
-        taken at process start."""
-        fresh_nodes = load_or_rebuild_cache(cache_path, repo_root, args.quiet)
-        if not isinstance(fresh_nodes, list):
+        taken at process start.
+
+        ROUTED THROUGH THE SHARED VALIDATOR under `PROFILE_QUERY`, which
+        declares what this reader actually consumes: the section rows, the
+        dependency groups inside them, the stamp XREFs, and the node-level
+        scalars and edge collections. The load is generation-bound (one
+        descriptor, fstat-based freshness and rewrite detection, a byte
+        ceiling), so a well-shaped but STALE cache is refused rather than
+        served -- which the previous `load_or_rebuild_cache` + drop-bad-rows
+        path could not do.
+
+        ONE REBUILD ON A MISSING CACHE, and only on MISSING. A fresh clone has
+        no `build/todo-cache.json` and building it is the useful behavior the
+        old loader provided. Every OTHER reason refuses: rebuilding over a
+        cache that is unreadable, stale or shape-invalid would destroy the
+        evidence and re-answer from a file the validator just rejected, which
+        is the fail-open shape this section closes. (Recovering from a corrupt
+        cache by regenerating it is `validate.py`'s documented behavior and is
+        section 23's to harden -- not something to reproduce here by accident.)
+        """
+        if not check_stale and not args.quiet and not _build_ctx.notified:
             sys.stderr.write(
-                f"[query.py] FATAL: cache at {cache_path} is not a list; "
-                f"got {type(fresh_nodes).__name__}\n"
-            )
-            sys.exit(2)
+                f"[query.py] NOTE: --cache {cache_path} is not this repo's "
+                f"build/todo-cache.json; validating its shape but NOT its "
+                f"freshness against {todo_root}\n")
+            _build_ctx.notified = True
+        try:
+            fresh_nodes, info = _cs.load_and_validate(
+                cache_path, todo_root, check_stale=check_stale,
+                profile=_cs.PROFILE_QUERY)
+        except _cs.CacheSchemaError as exc:
+            if exc.reason != _cs.REASON_MISSING:
+                _refuse(exc.reason, str(exc), args.quiet)
+            # Anything but a clean rebuild leaves the cache still absent, so
+            # both FAILED and SKIPPED refuse here -- unlike the watch tick,
+            # there is no previous answer to fall back to.
+            if _rebuild_cache(cache_path, repo_root, args.quiet) != REBUILD_OK:
+                _refuse(_cs.REASON_MISSING,
+                        f"cache absent at {cache_path} and build.py could not "
+                        f"produce it", args.quiet)
+            try:
+                fresh_nodes, info = _cs.load_and_validate(
+                    cache_path, todo_root, check_stale=check_stale,
+                    profile=_cs.PROFILE_QUERY)
+            except _cs.CacheSchemaError as exc2:
+                _refuse(exc2.reason, str(exc2), args.quiet)
         c = Ctx(fresh_nodes, repo_root, args.quiet)
+        if c.ambiguous_edges:
+            # The graph CANNOT be built correctly: each of these tokens names a
+            # stem several files carry, and the flattened index would bind it
+            # to whichever file came last while the others show no inbound edge
+            # at all. Refusing names the collision instead; a domain-qualified
+            # reference or an id resolves it.
+            first = c.ambiguous_edges[0]
+            _refuse("AMBIGUOUS_EDGE",
+                    f"{len(c.ambiguous_edges)} edge(s) name a filename stem "
+                    f"carried by more than one file -- e.g. {first[0]} -> "
+                    f"{first[1]!r}, which matches {', '.join(first[2])}; "
+                    f"use the target's frontmatter id, which names exactly "
+                    f"one file", args.quiet)
         if status_gated:
             c.pre_migration_notice_once()
-        return c
+        return c, info
+
+    # Once per process, not once per watch tick -- an inspection-mode watcher
+    # would otherwise repeat the same notice every 2 seconds forever.
+    _build_ctx.notified = False
 
     def _run_once():
-        ctx = _build_ctx()
+        ctx, info = _build_ctx()
         rows, columns = fn(ctx, args)
+        # THE GENERATION BINDING IS ONLY CLOSED HERE. The validated read proves
+        # the cache matched the corpus when it was opened; this proves the
+        # corpus did not move while the walk above computed an answer from it.
+        # Publishing first and checking after would report a result derived
+        # from a corpus that no longer exists (section 17's contract; the same
+        # post-walk re-verification `todo-reachability.py:542` performs).
+        try:
+            _cs.check_corpus_unchanged(todo_root, info.corpus)
+        except _cs.CacheSchemaError as exc:
+            _refuse(exc.reason, str(exc), args.quiet)
         output_path = getattr(args, "output_path", None)
 
         # Bounding applies to row-returning subcommands only. `stats`
@@ -1531,21 +1824,77 @@ def main(argv=None) -> int:
             sys.stdout.write(json.dumps(exc.envelope, indent=2,
                                         sort_keys=True) + "\n")
             return 3
+        except CacheRefused:
+            # `_refuse` already wrote the envelope to stdout; this only maps it
+            # onto the documented infrastructure exit code.
+            return EXIT_CACHE_UNUSABLE
+        except RecursionError as exc:
+            # A RESOURCE failure is infrastructure, not a verdict. Letting it
+            # escape exited 1 -- which this reader documents as "the graph has
+            # findings" -- with an empty body, so an unusable cache read as a
+            # clean run with nothing to report. `_dep_depth` is iterative now,
+            # so this is the backstop for any walk that grows one later rather
+            # than the live path (Codex adversarial, section 22, [high]).
+            _write_refusal("RECURSION",
+                           f"exhausted the interpreter stack while walking "
+                           f"the graph: {exc}", args.quiet)
+            return EXIT_CACHE_UNUSABLE
+        except MemoryError:
+            # Deliberately no interpolation: formatting allocates, and this
+            # handler runs precisely when allocation is failing. Same contract
+            # `cache_schema.load_and_validate` already applies to its own read.
+            _write_refusal("MEMORY", "out of memory while answering the query",
+                           args.quiet)
+            return EXIT_CACHE_UNUSABLE
 
     if args.watch:
-        # Ensure the todo/ directory exists before watching. Also regenerate
-        # the cache BEFORE each tick so build.py picks up the user's edit;
-        # do this inside _watch_rebuild since load_or_rebuild_cache alone
-        # won't trigger a rebuild for a schema-stable cache.
-        def _watch_rebuild_and_run():
-            _rebuild_cache(cache_path, repo_root, args.quiet)
+        # WATCH-MODE BEHAVIOR AFTER A FAILED REBUILD IS PINNED HERE (section 22):
+        # refuse THIS TICK, keep the watcher alive. The two alternatives are
+        # both worse. Serving the previous cache -- what this did until now --
+        # publishes a graph that predates the edit which broke the build, with
+        # nothing on stdout saying so, so the user reads a stale answer as a
+        # fresh one. Killing the watcher on a transient error makes an
+        # interactive tool unusable, since a half-saved TODO file is a normal
+        # intermediate state while editing. Refusing the tick keeps both
+        # properties: no stale rows are ever emitted, and the next valid edit
+        # produces a fresh successful answer with no restart.
+        def _watch_tick():
+            # Bound to a name rather than tested inline so the per-rule
+            # mutation harness has a needle unique to the WATCH guard: the
+            # identical `if not _rebuild_cache(...)` call also appears on the
+            # missing-cache path in `_build_ctx`, and a needle matching both
+            # would neuter two rules at once and verify neither.
+            rebuilt = _rebuild_cache(cache_path, repo_root, args.quiet)
+            # ONLY an attempted-and-failed rebuild refuses the tick. A SKIPPED
+            # rebuild (inspection-mode `--cache`, absent build.py) attempted
+            # nothing and casts no doubt on the cache, so the tick proceeds and
+            # the loader's own freshness rule remains the judge.
+            if rebuilt == REBUILD_FAILED:
+                sys.stdout.write(json.dumps({
+                    "error": "cache-rebuild-failed",
+                    "reason": "REBUILD",
+                    "detail": "build.py failed; refusing to serve the previous "
+                              "cache, which predates the edit that broke it",
+                    "hint": "fix the TODO tree build.py rejected; the watcher "
+                            "is still running and will answer on the next "
+                            "successful rebuild",
+                }, indent=2, sort_keys=True) + "\n")
+                sys.stdout.flush()
+                return
             # A ceiling breach must not kill an interactive watcher; the
             # envelope is printed and the loop continues to the next tick.
             _run_once_guarded()
-        # First run uses the cache already primed at startup (may be stale
-        # if the user edited a file between last build and invoking watch).
-        _rebuild_cache(cache_path, repo_root, args.quiet)
-        watch_loop(_watch_rebuild_and_run, repo_root / "todo", args.quiet)
+        # NO EXPLICIT FIRST TICK -- `watch_loop` performs the initial
+        # `run_once()` itself. The code this replaced called `_rebuild_cache`
+        # here (a rebuild, no output) before handing a separate runner to the
+        # loop; swapping in `_watch_tick`, which rebuilds AND answers, made the
+        # opening result be emitted TWICE, with no separator in quiet TSV/JSON
+        # streaming to tell a consumer the rows were one snapshot rather than
+        # two (Codex adversarial, section 22 round 2, [medium]). Passing the
+        # tick to the loop still gives the intended property: a watcher started
+        # against an already-broken tree refuses its first tick instead of
+        # opening with a stale answer.
+        watch_loop(_watch_tick, todo_root, args.quiet)
         return 0
     return _run_once_guarded()
 

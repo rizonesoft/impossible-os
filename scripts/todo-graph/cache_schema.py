@@ -77,9 +77,10 @@
 import hashlib
 import json
 import os
+import re
 import stat
 import subprocess
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 # Reason tags. Callers map these to their OWN documented exit codes; a caller
 # that grows a new code maps it here rather than re-deriving the rule.
@@ -172,9 +173,17 @@ _MAX_SECTION_N = 65535
 SUBTREE_STAMPED_ITEMS = "stamped_items"
 SUBTREE_SECTIONS = "sections"
 SUBTREE_STAMPS_XREFS = "stamps_xrefs"
+SUBTREE_INPUTS_XREFS = "inputs_xrefs"
+# Section 22. Two subtrees that are NOT node keys but named walks, which is why
+# they carry a qualified spelling: `sections.depends_on` is the GROUP shape
+# inside the `sections` subtree, and `node_fields` is the set of node-level
+# scalars and edge collections the readers consume.
+SUBTREE_SECTION_DEPS = "sections.depends_on"
+SUBTREE_NODE_FIELDS = "node_fields"
 
 _KNOWN_SUBTREES = frozenset((
     SUBTREE_STAMPED_ITEMS, SUBTREE_SECTIONS, SUBTREE_STAMPS_XREFS,
+    SUBTREE_SECTION_DEPS, SUBTREE_NODE_FIELDS,
 ))
 
 
@@ -229,10 +238,32 @@ PROFILE_STAMPED_ITEMS = Profile(
 # with no shipped items anywhere is perfectly usable to it.
 PROFILE_SECTIONS = Profile("sections", (SUBTREE_SECTIONS,))
 
-# The Accepted/Deferred stamp XREFs. DEFINED, TESTED, AND NOT YET WIRED TO ANY
-# READER -- see the block above; `decision-registry.py` is control plane and its
-# routing is filed, not done.
+# The Accepted/Deferred stamp XREFs, on their own. The PROFILE is still unwired
+# -- `decision-registry.py` is control plane and its routing is filed, not done
+# -- but the SUBTREE is no longer unconsumed: `PROFILE_QUERY` below declares it,
+# because `query.py` walks `stamps_xrefs` for `deferred` / `deferred-by` /
+# `backlinks` (query.py:347, 591, 628, 752). Section 19 said "no reader is
+# routed through this yet"; section 22 is when that stopped being true.
 PROFILE_STAMP_XREFS = Profile("stamp-xrefs", (SUBTREE_STAMPS_XREFS,))
+
+# `query.py` (and `render.py` behind `cmd_render`). THE WIDEST PROFILE, because
+# the query CLI is the widest reader: it walks the section rows, the dependency
+# groups inside them, the stamp XREFs, and the node-level scalars and edge
+# collections. Each of those was a `_safe_list()` or an `isinstance(...):
+# continue` in the reader -- a silent narrowing that produced a complete-looking
+# answer from a partial cache.
+#
+# `requires_history` is FALSE and that is a deliberate, owned decision, not an
+# oversight: `query.py` sorts `stale` / `deferred` by `last_active_at`, so it is
+# the first reader that would turn it on, and the cost of doing so (a full
+# history walk per invocation, 38ms of a 40ms call today, ~100ms projected at
+# 10,000 commits) is measured and decided in section 24. Leaving it False keeps
+# section 22 a fail-closed change with no per-call cost regression.
+PROFILE_QUERY = Profile(
+    "query",
+    (SUBTREE_SECTIONS, SUBTREE_SECTION_DEPS, SUBTREE_STAMPS_XREFS,
+     SUBTREE_NODE_FIELDS),
+)
 
 
 class CacheSchemaError(RuntimeError):
@@ -325,6 +356,26 @@ _SECTION_KEYS = ("n", "deliverable", "depends_on", "status")
 _SECTION_STATUSES = frozenset(("", " ", "x", "/"))
 _STAMP_XREF_REQUIRED = ("kind", "severity", "target_path", "target_section")
 _STAMP_XREF_KEYS = _STAMP_XREF_REQUIRED + ("item_name",)
+# Section 22 subtrees -- the `sections[].depends_on` GROUP shape and the
+# node-level fields, both consumed by `query.py`. Shapes were MEASURED against
+# the 232 live nodes before being written, not guessed: all 2,527 dep groups
+# carry exactly `{sections, target}` with a string target and integer section
+# numbers, and all 945 `inputs_xrefs` entries carry exactly
+# `{target_path, target_section}`.
+_SECTION_DEP_KEYS = ("target", "sections")
+_INPUTS_XREF_KEYS = ("target_path", "target_section")
+# Node fields the readers consume that the schema marks REQUIRED. All are
+# nullable per the schema except `domain`; `query.py` compares and joins them as
+# strings, so a non-string is a shape error rather than the reader's problem.
+_NODE_REQUIRED_STR_FIELDS = ("id", "status", "domain", "title",
+                             "created_at", "last_active_at")
+# Node fields the schema marks OPTIONAL. VALIDATED ONLY WHEN PRESENT -- absence
+# is the norm rather than a defect, and this is the measurement that matters
+# most here: `depends_on`, `satisfies`, `superseded_by` and `owners` are absent
+# from ALL 232 live nodes and `file_patterns` from 231 of them, because
+# `build.py:1028` copies each one only when the authored frontmatter carries it.
+# Requiring any of them would refuse every cache a working producer emits.
+_NODE_OPTIONAL_STR_LISTS = ("depends_on", "satisfies", "file_patterns")
 
 
 def _validate_sections(node, i: int, path):
@@ -337,9 +388,15 @@ def _validate_sections(node, i: int, path):
     -- a row whose Section column is unparseable -- and the reader must cope, so
     a null `n` is VALID here and is the reader's problem, not a shape error.
 
-    `depends_on` is checked only for being an array. Its ITEM shape is consumed
-    by `validate.py` (section 23), and validating it here would advertise a
-    contract this module does not test.
+    `depends_on` is checked only for being an array HERE. Its ITEM shape has its
+    own subtree, `SUBTREE_SECTION_DEPS`, so a caller that opens the groups
+    declares that separately -- see `_validate_section_deps`. Section 19 wrote
+    that the item shape was "consumed by validate.py (section 23)"; that was
+    incomplete, because `query.py:357-366` opens the same groups, and section 22
+    found it while routing that reader. `PROFILE_SECTIONS` is deliberately
+    unchanged: `todo-reachability.py` reads `n`/`status` and never a group, so
+    holding it to the item shape would be the unconsumed contract this module
+    forbids.
     """
     if SUBTREE_SECTIONS not in node:
         _err(REASON_SHAPE,
@@ -402,6 +459,294 @@ def _validate_sections(node, i: int, path):
             _err(REASON_SHAPE,
                  f"{where} `depends_on` is {type(s['depends_on']).__name__}, "
                  f"expected array (per {SCHEMA_REL}): {path}")
+
+
+def _validate_section_deps(node, i: int, path):
+    """`sections[].depends_on` ITEM shape -- the dependency GROUPS.
+
+    A SEPARATE SUBTREE from `sections`, deliberately. `_validate_sections` checks
+    that `depends_on` is an array and stops there, because its only routed
+    consumer at the time (`todo-reachability.py`, PROFILE_SECTIONS) reads
+    `n`/`status` and never opens a group. `query.py` DOES open them --
+    `query.py:357-366` dereferences `grp.get("target")` and `grp.get("sections")`
+    to build the inbound edge index -- so it needs the item shape while the
+    reachability audit still must not be held to a contract it does not consume.
+    Folding this into `_validate_sections` would impose exactly that unconsumed
+    contract (Codex design review, section 22, [high]).
+
+    THE SILENT SKIP IS THE DEFECT. `query.py:358` does `if not isinstance(grp,
+    dict): continue`, so a malformed group DROPS A DEPENDENCY EDGE and
+    `blocked` / `blocking` / `backlinks` answer from a subset of the graph while
+    reporting success -- the partial-cache false completeness this section
+    exists to end.
+    """
+    rows = node.get(SUBTREE_SECTIONS)
+    # Self-contained: a profile may declare this subtree without `sections`, and
+    # a caller must not get a TypeError instead of a reason-tagged refusal.
+    # LOCAL NAMES ARE DELIBERATELY DISTINCT from `_validate_sections`
+    # (`rows`/`row`, not `sections`/`s`): the per-rule mutation harness in
+    # test_build.sh identifies each rule by a UNIQUE source line and fails when
+    # a needle matches twice, so two validators sharing a guard line would make
+    # both rules unmutatable and silently un-verified.
+    if not isinstance(rows, list):
+        _err(REASON_SHAPE,
+             f"cache node {i} `sections` is "
+             f"{type(rows).__name__ if SUBTREE_SECTIONS in node else 'absent'}, "
+             f"expected array (per {SCHEMA_REL}): {path}")
+    for j, row in enumerate(rows):
+        if not isinstance(row, dict):
+            _err(REASON_SHAPE,
+                 f"cache node {i} section {j} is not an object "
+                 f"({type(row).__name__}): {path}")
+        groups = row.get("depends_on")
+        if not isinstance(groups, list):
+            _err(REASON_SHAPE,
+                 f"cache node {i} section {j} `depends_on` is "
+                 f"{type(groups).__name__ if 'depends_on' in row else 'absent'}, "
+                 f"expected array (per {SCHEMA_REL}): {path}")
+        for k, grp in enumerate(groups):
+            where = f"cache node {i} section {j} depends_on group {k}"
+            if not isinstance(grp, dict):
+                _err(REASON_SHAPE,
+                     f"{where} is not an object ({type(grp).__name__}): {path}")
+            for field in _SECTION_DEP_KEYS:
+                if field not in grp:
+                    _err(REASON_SHAPE,
+                         f"{where} is missing required `{field}` "
+                         f"(per {SCHEMA_REL}): {path}")
+            extra = [x for x in grp if x not in _SECTION_DEP_KEYS]
+            if extra:
+                _err(REASON_SHAPE,
+                     f"{where} has unknown key(s) {sorted(extra)} "
+                     f"(additionalProperties false per {SCHEMA_REL}): {path}")
+            # `target` is resolved through the id/path index and compared
+            # against the literal "self"; a non-string cannot be either.
+            _require_str(grp["target"], where, "target", path, 1)
+            secs = grp["sections"]
+            if not isinstance(secs, list):
+                _err(REASON_SHAPE,
+                     f"{where} `sections` is {type(secs).__name__}, "
+                     f"expected array (per {SCHEMA_REL}): {path}")
+            for m, num in enumerate(secs):
+                # The reader renders these into an edge label; a bool is an int
+                # in Python and would render as a section named "True".
+                _require_int(num, 0, f"{where} sections[{m}]", "section number",
+                             path, hi=_MAX_SECTION_N)
+
+
+def _validate_node_ids_unique(nodes, path):
+    """Non-null `id` must be unique across the cache.
+
+    `file_path` uniqueness is already enforced for every caller, because every
+    routed reader keys a dict on it. `id` is the OTHER key readers build a dict
+    on and it was unchecked: `build_id_index` is a dict comprehension, so two
+    nodes sharing an id leave only the LAST one reachable, and a third node's
+    `depends_on: ["dup"]` binds to that survivor while the first node silently
+    gets no inbound edge. `ready` / `blocked` / `blocking` / `backlinks` /
+    `stats` then return rc 0 with misattributed edges -- a wrong graph that
+    looks complete, which is the exact class this profile exists to refuse
+    (Codex adversarial, section 22 round 2, [high]).
+
+    `validate.py` has carried a `check_duplicate_id` graph check for this all
+    along, but that is a FINDING about the corpus reported at its own exit
+    code; it does not stop a reader trusting the cache, and it is not run by
+    anything on the query path.
+
+    NULL IS NOT A DUPLICATE. The schema declares `id` nullable and a
+    pre-migration corpus has many null ids at once; `build_id_index` skips
+    them, so they bind nothing and collide with nothing.
+    """
+    seen = {}
+    for i, node in enumerate(nodes):
+        # `node` shape and `id` type are already established by the per-node
+        # walk; this pass only answers the cross-node question.
+        ident = node.get("id")
+        if ident is None:
+            continue
+        if ident in seen:
+            _err(REASON_SHAPE,
+                 f"cache node {i} repeats id {ident!r} already used by node "
+                 f"{seen[ident]}; readers key a dict on it, so the duplicate "
+                 f"silently rebinds every edge naming it: {path}")
+        seen[ident] = i
+
+
+# MIRRORS `validate.build_path_index`. The resolver reduces a compact `T01` /
+# `D01T01` reference AND a full `01-a/TODO-01-first.md` path to the same
+# `(domain-code, TODO-number)` key, so that derived pair -- not `file_path` --
+# is what an edge actually resolves through. Kept as a local derivation rather
+# than importing `validate`, which is a CLI module and the wrong layer to pull
+# into the schema validator; `test_build.sh` asserts the two agree over the
+# live corpus, so a drift is a test failure rather than a silent divergence.
+_DOMAIN_DIR_RE = re.compile(r"^(\d\d)-")
+_TODO_NUM_RE = re.compile(r"^TODO-(\d{1,2})-")
+
+
+def resolver_key(file_path: str):
+    """The `(domain, number)` pair `build_path_index` files this node under, or
+    None when the path is not in the numbered-domain shape it indexes.
+
+    PUBLIC, and `validate.build_path_index` CALLS IT -- one derivation, not two
+    that must be kept in agreement. The first version of this rule duplicated
+    the logic here and pinned the pair with a parity test over the live corpus,
+    which proved only today's domain set: `build_path_index` hardcoded the
+    prefixes `00-` through `18-` while this matched any two digits, so a
+    legitimate domain-19 TODO would have been keyed here and NOT there --
+    making the validator refuse a collision the resolver never creates, and
+    breaking the parity test the moment such a file was added (Codex
+    adversarial, section 22 round 4, [medium]). The hardcoded list was also a
+    maintenance trap in its own right: it silently stops indexing a new domain.
+    """
+    parts = PurePosixPath(file_path).parts
+    if len(parts) < 2:
+        return None
+    dom = _DOMAIN_DIR_RE.match(parts[-2])
+    num = _TODO_NUM_RE.match(parts[-1])
+    if not dom or not num:
+        return None
+    return (dom.group(1), int(num.group(1)))
+
+
+def _validate_resolver_keys_unique(nodes, path):
+    """The DERIVED resolver identity must be unique, not merely `file_path`.
+
+    Distinct ids and distinct file paths are not enough. `build_path_index`
+    files nodes under `(domain-code, TODO-number)`, so
+    `todo/01-a/TODO-01-first.md` and `todo/01-a/TODO-01-second.md` occupy ONE
+    slot and the later node overwrites the earlier. An edge naming either the
+    compact `T01` form or the explicit full path `01-a/TODO-01-first.md` then
+    resolves to the survivor, because the resolver reduces both spellings to
+    that same overwritten key.
+
+    MEASURED with such a pair present: `backlinks first` returned 0 rows and
+    `backlinks second` returned 1 -- for an Inputs XREF naming `first`
+    explicitly -- at rc 0. Same false-completeness class as the duplicate-id
+    rule, one index over (Codex adversarial, section 22 round 3, [high]).
+
+    Zero collisions exist across the 232 live nodes, so this refuses nothing a
+    correctly-numbered corpus produces; a collision is a real authoring error
+    (two TODOs sharing a number inside one domain).
+    """
+    seen = {}
+    for i, node in enumerate(nodes):
+        key = resolver_key(node["file_path"])
+        if key is None:
+            # Not in the indexed shape, so it occupies no resolver slot and
+            # cannot collide with anything.
+            continue
+        if key in seen:
+            _err(REASON_SHAPE,
+                 f"cache node {i} ({node['file_path']}) derives resolver key "
+                 f"{key} already used by node {seen[key]}; compact and "
+                 f"full-path references both reduce to it, so the duplicate "
+                 f"silently rebinds every edge naming either file: {path}")
+        seen[key] = i
+
+
+def _validate_node_fields(node, i: int, path):
+    """The NODE-LEVEL fields `query.py` and `render.py` consume.
+
+    SCOPE IS STILL "FIELDS A READER CONSUMES". `owners`, `schema_version` and
+    `section_headings` are deliberately ABSENT from this walk: no routed reader
+    dereferences them, and validating them would advertise a contract this
+    module does not test -- the overreach the header at the top of this file
+    forbids. The inventory below was taken from the readers, not the schema:
+    `query.py` reads id / status / domain / title / last_active_at /
+    depends_on / satisfies / superseded_by / inputs_xrefs / file_patterns, and
+    `render.py` adds created_at.
+
+    EVERY ONE OF THESE IS WRAPPED IN `_safe_list` OR A DEFENSIVE SKIP BY THE
+    READER, which is the whole problem. `query.py:464` does
+    `deps = _safe_list(n.get("depends_on"))`, so a SCALAR `depends_on` becomes
+    an empty list, `all_done` stays True, and a TODO with unmet dependencies is
+    reported READY -- a wrong answer that looks like a complete one (Codex
+    design review, section 22, [high]).
+    """
+    for field in _NODE_REQUIRED_STR_FIELDS:
+        if field not in node:
+            _err(REASON_SHAPE,
+                 f"cache node {i} is missing required `{field}` "
+                 f"(per {SCHEMA_REL}): {path}")
+        value = node[field]
+        # Nullable per the schema for everything except `domain`; the readers
+        # cope with None (they format it or fall back), so null is VALID and is
+        # the reader's problem, exactly as a null `sections[].n` is.
+        if value is None and field != "domain":
+            continue
+        _require_str(value, f"cache node {i}", field, path)
+
+    for opt in _NODE_OPTIONAL_STR_LISTS:
+        # Loop variable named `opt`, not `field`, so the per-rule mutation
+        # harness can address the REQUIRED-field guard above by a unique line.
+        if opt not in node:
+            continue  # absence is the norm -- see _NODE_OPTIONAL_STR_LISTS
+        value = node[opt]
+        if not isinstance(value, list):
+            _err(REASON_SHAPE,
+                 f"cache node {i} `{opt}` is {type(value).__name__}, "
+                 f"expected array (per {SCHEMA_REL}): {path}")
+        seen_members = set()
+        for j, item in enumerate(value):
+            _require_str(item, f"cache node {i} {opt}[{j}]", opt, path, 1)
+            # UNIQUENESS IS PART OF THE PUBLISHED CONTRACT, not tidiness: the
+            # schema declares `uniqueItems` on all three of these, and the
+            # consumer COUNTS them. `cmd_blocking` does
+            # `counts[tgt] = counts.get(tgt, 0) + 1` per ref, so
+            # `depends_on: ["a", "a"]` reports an inbound count of 2 for ONE
+            # dependency and moves that node up `stats.top_blocking` -- a
+            # ranking a hostile or regressed producer can manipulate while the
+            # cache stays schema-shaped. Validating member TYPE while ignoring
+            # a constraint the schema states is the "routed but unprotected"
+            # shape this module exists to refuse (Codex adversarial, section
+            # 22, [medium]).
+            if item in seen_members:
+                _err(REASON_SHAPE,
+                     f"cache node {i} `{opt}` repeats {item!r} "
+                     f"(uniqueItems per {SCHEMA_REL}); consumers COUNT these, "
+                     f"so a duplicate inflates a dependency ranking: {path}")
+            seen_members.add(item)
+
+    if "superseded_by" in node and node["superseded_by"] is not None:
+        _require_str(node["superseded_by"], f"cache node {i}",
+                     "superseded_by", path, 1)
+
+    # `inputs_xrefs` is REQUIRED by the schema and `query.py:340-344` skips a
+    # non-dict entry, dropping an Inputs edge silently.
+    if SUBTREE_INPUTS_XREFS not in node:
+        _err(REASON_SHAPE,
+             f"cache node {i} is missing required `inputs_xrefs` "
+             f"(per {SCHEMA_REL}): {path}")
+    # Local names distinct from `_validate_stamps_xrefs` for the mutation-harness
+    # uniqueness reason documented in `_validate_section_deps`.
+    inputs = node[SUBTREE_INPUTS_XREFS]
+    if not isinstance(inputs, list):
+        _err(REASON_SHAPE,
+             f"cache node {i} `inputs_xrefs` is {type(inputs).__name__}, "
+             f"expected array (per {SCHEMA_REL}): {path}")
+    for j, entry in enumerate(inputs):
+        where = f"cache node {i} inputs xref {j}"
+        if not isinstance(entry, dict):
+            _err(REASON_SHAPE,
+                 f"{where} is not an object ({type(entry).__name__}): {path}")
+        for key in _INPUTS_XREF_KEYS:
+            if key not in entry:
+                _err(REASON_SHAPE,
+                     f"{where} is missing required `{key}` "
+                     f"(per {SCHEMA_REL}): {path}")
+        # Named `extra` like every other additionalProperties rule: the mutation
+        # harness addresses these by their ASSIGNMENT line (the `if extra:`
+        # below is ambiguous across four validators), and `if unknown:` collided
+        # with the Profile constructor's own unknown-subtree guard.
+        extra = [k for k in entry if k not in _INPUTS_XREF_KEYS]
+        if extra:
+            _err(REASON_SHAPE,
+                 f"{where} has unknown key(s) {sorted(extra)} "
+                 f"(additionalProperties false per {SCHEMA_REL}): {path}")
+        # `target_section` is nullable -- an Inputs XREF may name a file with no
+        # section. `target_path` is resolved through the path index.
+        _require_str(entry["target_path"], where, "target_path", path, 1)
+        if entry["target_section"] is not None:
+            _require_str(entry["target_section"], where, "target_section", path)
 
 
 def _validate_stamps_xrefs(node, i: int, path):
@@ -622,8 +967,18 @@ def validate_nodes(nodes, path, profile: Profile = PROFILE_STAMPED_ITEMS) -> Cac
             key_present = key_present or present
         if SUBTREE_SECTIONS in profile.subtrees:
             _validate_sections(node, i, path)
+        if SUBTREE_SECTION_DEPS in profile.subtrees:
+            _validate_section_deps(node, i, path)
         if SUBTREE_STAMPS_XREFS in profile.subtrees:
             _validate_stamps_xrefs(node, i, path)
+        if SUBTREE_NODE_FIELDS in profile.subtrees:
+            _validate_node_fields(node, i, path)
+
+    # CROSS-NODE rules run after the per-node walk, because they are questions
+    # about the SET rather than about any one node.
+    if SUBTREE_NODE_FIELDS in profile.subtrees:
+        _validate_node_ids_unique(nodes, path)
+        _validate_resolver_keys_unique(nodes, path)
 
     if profile.require_stamped_population and not key_present:
         # LEGACY, and reported distinctly from an empty population: this cache

@@ -258,21 +258,84 @@ def _call_query(subcommand: str, args_ns: argparse.Namespace, repo_root: Path,
 
         argv_save = sys.argv
         buf = io.StringIO()
+        rc = 0
         try:
             sys.argv = argv
             with redirect_stdout(buf):
                 try:
-                    _query_mod.main()
-                except SystemExit:
+                    # THE RETURN VALUE IS THE VERDICT and was previously
+                    # discarded entirely. `main()` RETURNS its exit code
+                    # (2 = unusable cache, 3 = ceiling breach) and only
+                    # `sys.exit()`s on some paths, so catching SystemExit
+                    # alone saw a fail-closed refusal as success.
+                    rc = _query_mod.main() or 0
+                except SystemExit as exc:
                     # query.py exits nonzero for an unresolvable target and
                     # for a fail-closed ceiling breach. Both already wrote
                     # their machine-readable body to the captured stdout,
-                    # so return that body instead of letting SystemExit
-                    # escape and kill the tool call.
-                    pass
+                    # so keep that body instead of letting SystemExit
+                    # escape and kill the tool call -- but keep the CODE too.
+                    rc = exc.code if isinstance(exc.code, int) else 1
         finally:
             sys.argv = argv_save
-    return buf.getvalue() or "[]"
+    return _envelope_or_body(buf.getvalue(), rc)
+
+
+def _looks_like_error_envelope(body: str) -> bool:
+    """True when the body query.py already wrote IS a machine-readable error.
+
+    Only a JSON object carrying an `error` key counts. A successful `[]` result
+    array is a legitimate empty answer and must NOT be mistaken for one, which
+    is the whole distinction this module previously could not make."""
+    stripped = body.strip()
+    if not stripped.startswith("{"):
+        return False
+    try:
+        parsed = json.loads(stripped)
+    except ValueError:
+        return False
+    return isinstance(parsed, dict) and "error" in parsed
+
+
+def _envelope_or_body(body: str, rc: int) -> str:
+    """Return query.py's body, or a structured error envelope when it failed.
+
+    THE `or "[]"` THIS REPLACES WAS THE DEFECT (TODO-06 section 22). When
+    query.py refused and wrote nothing to stdout, `buf.getvalue() or "[]"`
+    handed the agent an EMPTY RESULT ARRAY -- indistinguishable from "your
+    query matched nothing". An agent cannot tell "no results" from "the cache
+    was unusable", so it proceeds on an answer that was never computed. Making
+    the CLI fail closed without fixing this would have shipped the appearance
+    of safety and nothing else.
+
+    A non-empty body that is already an error envelope is passed through
+    unchanged: query.py owns the richer `reason`/`detail`, and re-wrapping it
+    would bury the reason one level deeper for no gain.
+    """
+    if rc != 0:
+        if _looks_like_error_envelope(body):
+            return body
+        return json.dumps({
+            "error": "query-failed",
+            "reason": "EXIT",
+            "exit_code": rc,
+            "detail": (body.strip() or
+                       "query.py exited nonzero without writing a body"),
+            "hint": "run the same query on the CLI for the full diagnostic; "
+                    "the MCP server is refusing to present this as a result.",
+        }, indent=2, sort_keys=True) + "\n"
+    if not body.strip():
+        # rc 0 with no body is not a known query.py path. Reporting it as an
+        # empty array would be the same silent-success failure one code path
+        # over, so it is surfaced rather than smoothed.
+        return json.dumps({
+            "error": "empty-response",
+            "reason": "NO_BODY",
+            "exit_code": rc,
+            "detail": "query.py exited 0 but wrote no output",
+            "hint": "run the same query on the CLI to reproduce.",
+        }, indent=2, sort_keys=True) + "\n"
+    return body
 
 
 # ---------------------------------------------------------------------

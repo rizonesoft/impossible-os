@@ -1731,22 +1731,100 @@ nodes = [
 with open('$MAL_TREE/cache.json', 'w') as f:
     json.dump(nodes, f)
 "
-# stats: clean + nested rows pass Ctx filtering (top-level shape ok);
-# nested None members are guarded inside collect_inbound_edges + friends
-# so total_nodes == 2.
+# SECTION 22 FLIPPED THIS ASSERTION, AND THE OLD ONE IS THE DEFECT IT NAMES.
+# This used to require rc 0 with `total_nodes == 2`: five malformed rows were
+# DROPPED and `stats` reported a corpus of two as though that were the whole
+# answer. A caller cannot tell that from a corpus that really has two nodes,
+# which is partial-cache false completeness. The cache is now REFUSED with the
+# documented infrastructure code and a machine-readable body.
 Q_OUT=$(python3 "$QUERY_PY" --cache "$MAL_TREE/cache.json" --repo-root "$MAL_TREE" --quiet stats --json 2>&1); Q_RC=$?
-if [ "$Q_RC" = "0" ] && echo "$Q_OUT" | python3 -c "import json, sys; d=json.loads(sys.stdin.read()); sys.exit(0 if d['total_nodes']==2 else 1)"; then
-    t_pass "query: malformed top-level rows dropped; nested-None guarded"
+if [ "$Q_RC" = "2" ] && echo "$Q_OUT" | python3 -c "
+import json, sys
+d = json.loads(sys.stdin.read())
+sys.exit(0 if d.get('error') == 'cache-unusable' and d.get('reason') and d.get('detail') else 1)"; then
+    t_pass "query: an all-malformed cache is REFUSED rc 2, not answered from the survivors"
 else
     t_fail "query: malformed cache handling broken (rc=$Q_RC, out=$Q_OUT)"
 fi
 
-# Sub-test 9w: backlinks against the nested-malformed fixture also
-# survives (stresses cmd_backlinks -> inbound index built on nested
-# None members).
+# Sub-test 9v2: THE ONE-ROW-MALFORMED CASE, which is the one that was
+# invisible. All-rows-malformed at least produced an obviously-empty answer;
+# a SINGLE bad row among good ones produced a confident, complete-looking,
+# WRONG answer. Both are named in the section; only this one had no symptom.
+ONEBAD_TREE="$TMP_DIR/q-onebad"
+mkdir -p "$ONEBAD_TREE"
+python3 -c "
+import json
+def node(name, ident):
+    return {'file_path': f'todo/01-t/TODO-{name}.md', 'id': ident,
+            'domain': '01-t', 'status': 'draft', 'title': ident,
+            'sections': [], 'section_headings': [], 'inputs_xrefs': [],
+            'stamps_xrefs': [], 'schema_version': 1,
+            'created_at': '2026-04-23T00:00:00Z',
+            'last_active_at': '2026-04-23T00:00:00Z'}
+nodes = [node('01-a', 'a'), node('02-b', 'b'), node('03-c', 'c')]
+# Exactly one row loses its identity field; the other two are pristine.
+del nodes[1]['file_path']
+with open('$ONEBAD_TREE/cache.json', 'w') as f:
+    json.dump(nodes, f)
+"
+Q_OUT=$(python3 "$QUERY_PY" --cache "$ONEBAD_TREE/cache.json" --repo-root "$ONEBAD_TREE" --quiet stats --json 2>&1); Q_RC=$?
+if [ "$Q_RC" = "2" ] && echo "$Q_OUT" | grep -q "cache-unusable"; then
+    t_pass "query: ONE malformed row refuses rather than silently narrowing to 2 of 3"
+else
+    t_fail "query: one-row-malformed cache silently narrowed (rc=$Q_RC, out=$Q_OUT)"
+fi
+
+# Sub-test 9v3: MUTATION -- restore the silent-drop `_validate_nodes` and the
+# one-row fixture must stop refusing. Without this, 9v2 would still pass
+# against a build that had quietly reverted to dropping rows, because "rc 2"
+# can be produced by many failures; the mutation proves the fixture is
+# sensitive to THIS guard and not to something on the way to it.
+python3 - "$QUERY_PY" "$TMP_DIR/query_mut.py" <<'MUTEOF'
+import sys, pathlib
+src = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+needle = "        self.nodes = nodes"
+assert src.count(needle) == 1, f"mutation needle appears {src.count(needle)}x"
+revert = ("        self.nodes = [n for n in (nodes or []) if isinstance(n, dict)\n"
+          "                      and isinstance(n.get('file_path'), str)\n"
+          "                      and n.get('file_path')]")
+pathlib.Path(sys.argv[2]).write_text(src.replace(needle, revert, 1), encoding="utf-8")
+MUTEOF
+# The mutant still refuses at the LOADER (the shared validator runs before Ctx),
+# so the mutation is checked where the drop actually happened: validate_nodes is
+# bypassed and the surviving rows are handed straight to Ctx.
+Q_OUT=$(python3 - "$TMP_DIR/query_mut.py" "$ONEBAD_TREE/cache.json" "$(dirname "$QUERY_PY")" <<'MUTRUN' 2>&1
+import sys, json, importlib.util, pathlib
+# The mutant lives in a temp dir, so its own `sys.path.insert(_HERE)` cannot
+# reach the sibling `validate` / `cache_schema` modules -- and a stdlib-adjacent
+# `validate` package on the system path gets imported instead. Put the REAL
+# module directory on the path first so the mutant differs from the shipped
+# module in exactly one line and nothing else.
+sys.path.insert(0, sys.argv[3])
+spec = importlib.util.spec_from_file_location("query_mut", sys.argv[1])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+nodes = json.load(open(sys.argv[2]))
+ctx = mod.Ctx(nodes, pathlib.Path("."), True)
+print(json.dumps({"kept": len(ctx.nodes), "given": len(nodes)}))
+MUTRUN
+); Q_RC=$?
+if [ "$Q_RC" = "0" ] && echo "$Q_OUT" | python3 -c "
+import json, sys
+d = json.loads(sys.stdin.read())
+sys.exit(0 if d['given'] == 3 and d['kept'] == 2 else 1)"; then
+    t_pass "query: mutation check -- the reverted silent-drop keeps 2 of 3 rows (fixture is sensitive)"
+else
+    t_fail "query: silent-drop mutation did not narrow as expected (rc=$Q_RC, out=$Q_OUT)"
+fi
+
+# Sub-test 9w: backlinks over the nested-malformed fixture refuses too. The
+# rule is the CACHE's, not the subcommand's, so every verb inherits it -- the
+# previous per-verb defensive skips were what let two verbs disagree about
+# whether the same cache was usable.
 Q_OUT=$(python3 "$QUERY_PY" --cache "$MAL_TREE/cache.json" --repo-root "$MAL_TREE" --quiet backlinks ok 2>&1); Q_RC=$?
-if [ "$Q_RC" = "0" ]; then
-    t_pass "query: backlinks over nested-malformed cache exits 0"
+if [ "$Q_RC" = "2" ] && echo "$Q_OUT" | grep -q "cache-unusable"; then
+    t_pass "query: backlinks refuses the same unusable cache stats refuses"
 else
     t_fail "query: backlinks over nested-malformed cache broken (rc=$Q_RC, out=$Q_OUT)"
 fi
@@ -1774,11 +1852,28 @@ nodes = [{
 with open('$SCALAR_TREE/cache.json', 'w') as f:
     json.dump(nodes, f)
 "
+# SECTION 22 FLIPPED THIS ONE TOO, and it is the clearest example of why.
+# "Treated as empty" is the whole problem: a node whose `sections`,
+# `inputs_xrefs`, `stamps_xrefs`, `file_patterns` AND `depends_on` are all
+# scalars was reported as one healthy node. `_safe_list` turned every one of
+# those into `[]`, so `ready` would call this node dependency-free and READY
+# on the strength of `depends_on: 'not-a-list'`.
 Q_OUT=$(python3 "$QUERY_PY" --cache "$SCALAR_TREE/cache.json" --repo-root "$SCALAR_TREE" --quiet stats --json 2>&1); Q_RC=$?
-if [ "$Q_RC" = "0" ] && echo "$Q_OUT" | python3 -c "import json, sys; d=json.loads(sys.stdin.read()); sys.exit(0 if d['total_nodes']==1 else 1)"; then
-    t_pass "query: scalar collection fields (sections: 42, etc) are treated as empty"
+if [ "$Q_RC" = "2" ] && echo "$Q_OUT" | grep -q "cache-unusable"; then
+    t_pass "query: scalar collection fields are REFUSED, not silently read as empty"
 else
     t_fail "query: scalar collection fields crash Ctx (rc=$Q_RC, out=$Q_OUT)"
+fi
+
+# Sub-test 9x2: the same scalar cache through `ready` specifically, because
+# that is the verb where the old behavior produced an actively WRONG verdict
+# rather than a merely thin one: `_safe_list(n.get("depends_on"))` made the
+# unmet-dependency loop iterate zero times and the node came back READY.
+Q_OUT=$(python3 "$QUERY_PY" --cache "$SCALAR_TREE/cache.json" --repo-root "$SCALAR_TREE" --quiet ready --json 2>&1); Q_RC=$?
+if [ "$Q_RC" = "2" ] && echo "$Q_OUT" | grep -q "cache-unusable"; then
+    t_pass "query: ready refuses a scalar depends_on instead of reporting the node ready"
+else
+    t_fail "query: ready over scalar depends_on broken (rc=$Q_RC, out=$Q_OUT)"
 fi
 
 # Sub-test 9z: mixed-shape cache detection (Codex pass 10 M1). A cache
@@ -1910,6 +2005,720 @@ if grep -q "outside repo_root" "$OOR_TREE/watch.out"; then
     t_pass "query: --cache outside repo_root disables auto-rebuild (watch mode)"
 else
     t_fail "query: external --cache should refuse rebuild (out=$(cat "$OOR_TREE/watch.out" 2>/dev/null))"
+fi
+
+# Sub-test 9aa1b: AND IT MUST STILL ANSWER. The check above only greps for the
+# skip warning, so it passed even when section 22 briefly made a SKIPPED
+# rebuild refuse the tick like a FAILED one -- which silently turned every
+# inspection-mode watcher into one that serves nothing forever. The tri-state
+# in `_rebuild_cache` exists for this distinction; this pins it.
+if grep -q '^01-t' "$OOR_TREE/watch.out" \
+   && ! grep -q "cache-rebuild-failed" "$OOR_TREE/watch.out"; then
+    t_pass "query: an inspection-mode watcher still serves rows (skipped != failed)"
+else
+    t_fail "query: external --cache watcher served nothing (out=$(tr '\n' ' ' < "$OOR_TREE/watch.out" 2>/dev/null))"
+fi
+
+# Sub-test 9aa2: WATCH MODE AFTER A FAILED REBUILD (TODO-06 section 22). The
+# behavior was unpinned, which the section names as the actual defect -- it
+# printed a WARN and kept serving the previous cache, so the watcher published
+# a graph that predates the edit which broke the build, with nothing in the
+# OUTPUT saying so. Pinned now: refuse the tick, keep the watcher alive.
+WFAIL_TREE="$TMP_DIR/q-watchfail"
+mkdir -p "$WFAIL_TREE/todo/01-t" "$WFAIL_TREE/build"
+cat > "$WFAIL_TREE/todo/01-t/TODO-01-ok.md" <<'WFEOF'
+---
+schema_version: 1
+id: ok
+domain: 01-t
+status: draft
+title: ok
+---
+
+## 1. First
+
+- [ ] something
+WFEOF
+# Prime a real, well-formed cache with its corpus binding, so the ONLY thing
+# that changes below is whether build.py succeeds.
+python3 "$BUILD_PY" --quiet --output "$WFAIL_TREE/build/todo-cache.json" \
+    --root "$WFAIL_TREE/todo" --repo-root "$WFAIL_TREE" >/dev/null 2>&1
+# Now break the corpus so every subsequent build.py run fails.
+printf 'id: [unclosed\n' > "$WFAIL_TREE/todo/01-t/TODO-02-broken.md"
+PATH="/usr/bin:/bin" timeout --signal=INT 4 \
+    python3 -u "$QUERY_PY" --repo-root "$WFAIL_TREE" \
+        --watch by-domain > "$WFAIL_TREE/watch.out" 2>&1 || true
+if grep -q "cache-rebuild-failed" "$WFAIL_TREE/watch.out" \
+   && ! grep -q '^01-t' "$WFAIL_TREE/watch.out"; then
+    t_pass "query: watch refuses the tick after a failed rebuild, emitting NO stale rows"
+else
+    t_fail "query: watch served stale rows after a failed rebuild (out=$(tr '\n' ' ' < "$WFAIL_TREE/watch.out" 2>/dev/null))"
+fi
+
+# Sub-test 9aa3: THE OTHER HALF OF THE PINNED DECISION -- the watcher must
+# still be ALIVE after refusing, and must answer normally once the corpus is
+# repaired, with no restart. "Refuse the tick" and "kill the watcher" both
+# produce no stale rows, so 9aa2 alone does not distinguish them; this is what
+# makes the chosen behavior pinned rather than merely half-observed.
+#
+# NOT WRITTEN AS A GUARD MUTATION, deliberately, and the reason is worth
+# recording: neutering `if rebuilt == REBUILD_FAILED` does NOT bring stale rows
+# back, because the loader's freshness check independently refuses a cache
+# whose corpus moved -- the two mechanisms overlap on exactly this case. A
+# mutation whose effect is masked by a second guard would pass for the wrong
+# reason. What the watch guard contributes on its own is the NAMED
+# `cache-rebuild-failed` cause (9aa2) and liveness across the failure (here).
+rm -f "$WFAIL_TREE/todo/01-t/TODO-02-broken.md"
+cat > "$WFAIL_TREE/todo/01-t/TODO-02-fixed.md" <<'WF2EOF'
+---
+schema_version: 1
+id: fixed
+domain: 01-t
+status: draft
+title: fixed
+---
+
+## 1. First
+
+- [ ] something
+WF2EOF
+PATH="/usr/bin:/bin" timeout --signal=INT 4 \
+    python3 -u "$QUERY_PY" --repo-root "$WFAIL_TREE" \
+        --watch by-domain > "$WFAIL_TREE/watch-ok.out" 2>&1 || true
+if grep -q '^01-t' "$WFAIL_TREE/watch-ok.out" \
+   && ! grep -q "cache-rebuild-failed" "$WFAIL_TREE/watch-ok.out"; then
+    t_pass "query: watch answers normally once the corpus is repaired (refusal was per-tick)"
+else
+    t_fail "query: watch did not recover after the corpus was repaired (out=$(tr '\n' ' ' < "$WFAIL_TREE/watch-ok.out" 2>/dev/null))"
+fi
+
+# Sub-test 9aa4: THE MCP TRANSPORT. Making the CLI fail closed while the MCP
+# server converts the refusal back into `[]` ships the appearance of safety
+# and nothing else, which is why this transport gets its own case.
+MCPQ_OUT=$(cd "$REPO_ROOT" && python3 - "$MAL_TREE" <<'MCPEOF' 2>&1
+import sys, json, argparse, shutil, pathlib
+sys.path.insert(0, "scripts/todo-graph")
+import mcp_server as m
+# The MCP surface always reads repo_root/build/todo-cache.json, so the
+# unusable cache is staged at exactly that path inside a throwaway root.
+root = pathlib.Path(sys.argv[1])
+(root / "build").mkdir(parents=True, exist_ok=True)
+shutil.copy(root / "cache.json", root / "build" / "todo-cache.json")
+ns = argparse.Namespace(limit=5, scope=None, fields=None, offset=None, days=None)
+body = m._call_query("stats", ns, root, False)
+print(json.dumps({"body": body.strip()[:200], "is_empty_array": body.strip() == "[]"}))
+MCPEOF
+); MCPQ_RC=$?
+if [ "$MCPQ_RC" = "0" ] && echo "$MCPQ_OUT" | python3 -c "
+import json, sys
+d = json.loads(sys.stdin.read())
+sys.exit(0 if not d['is_empty_array'] and 'error' in d['body'] else 1)"; then
+    t_pass "query/MCP: an unusable cache surfaces as a structured error, never as []"
+else
+    t_fail "query/MCP: unusable cache leaked through the transport (rc=$MCPQ_RC, out=$MCPQ_OUT)"
+fi
+
+# Sub-test 9aa5: MUTATION for the MCP rule -- restore `buf.getvalue() or "[]"`
+# and a nonzero exit that wrote NO body must come back as an empty result array.
+#
+# THE EMPTY-BODY CASE IS THE ONE THIS LINE ALONE DEFENDS, and picking it is the
+# point of the test. query.py now writes its refusal envelope to STDOUT, so a
+# cache-unusable refusal is caught twice over -- the buffer is non-empty, and
+# `or "[]"` never fires. That is defence in depth, not a reason to skip the
+# check: any query.py exit path that fails BEFORE writing a body still lands
+# here, and under the old line it became `[]`. Simulating exactly that (exit 2,
+# nothing printed) is what keeps this fixture bound to the rule rather than to
+# the other fix that happens to shadow it.
+MCPMUT_OUT=$(cd "$REPO_ROOT" && python3 - <<'MCPMUTEOF' 2>&1
+import sys, json, pathlib, importlib.util, argparse
+sys.path.insert(0, "scripts/todo-graph")
+src_path = pathlib.Path("scripts/todo-graph/mcp_server.py")
+src = src_path.read_text(encoding="utf-8")
+needle = "    return _envelope_or_body(buf.getvalue(), rc)"
+assert src.count(needle) == 1, f"mcp mutation needle appears {src.count(needle)}x"
+
+def load(path, name, text=None):
+    if text is not None:
+        path.write_text(text, encoding="utf-8")
+    spec = importlib.util.spec_from_file_location(name, path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+def probe(mod):
+    # query.py exited nonzero and wrote nothing -- the shape `or "[]"` cannot
+    # distinguish from an empty result set.
+    mod._query_mod.main = lambda *a, **k: 2
+    ns = argparse.Namespace(limit=5, scope=None, fields=None, offset=None, days=None)
+    return mod._call_query("stats", ns, pathlib.Path("."), False).strip()
+
+real_body = probe(load(src_path, "mcp_real"))
+mut_path = src_path.with_name(".mcp_server_mut.py")
+try:
+    mut_body = probe(load(mut_path, "mcp_mut",
+                          src.replace(needle, '    return buf.getvalue() or "[]"', 1)))
+finally:
+    mut_path.unlink(missing_ok=True)
+print(json.dumps({"real_is_empty_array": real_body == "[]",
+                  "real_has_error": "error" in real_body,
+                  "mut_is_empty_array": mut_body == "[]"}))
+MCPMUTEOF
+); MCPMUT_RC=$?
+if [ "$MCPMUT_RC" = "0" ] && echo "$MCPMUT_OUT" | python3 -c "
+import json, sys
+d = json.loads(sys.stdin.read())
+sys.exit(0 if d['mut_is_empty_array'] and d['real_has_error']
+         and not d['real_is_empty_array'] else 1)"; then
+    t_pass "query/MCP: mutation check -- the restored 'or []' turns a body-less failure back into []"
+else
+    t_fail "query/MCP: 'or []' mutation did not reproduce the swallow (rc=$MCPMUT_RC, out=$MCPMUT_OUT)"
+fi
+
+# Sub-test 9aa6: A DEEP DEPENDENCY CHAIN IS A RESOURCE QUESTION, NOT A VERDICT.
+# `_dep_depth` recursed once per link, so a chain longer than Python's
+# recursion limit raised RecursionError -- uncaught, so the CLI exited 1, the
+# code this reader documents as "the graph has findings", with an empty body.
+#
+# THE ORDERING IS THE TEST. Walking `ctx.nodes` in natural order fills the memo
+# bottom-up and never nests, which is why the bug was invisible; an untrusted
+# cache chooses its own order, so the same 2,000 nodes REVERSED descend the
+# whole chain. Both orders must now succeed AND agree, since an iterative
+# rewrite that changed the answer would be a different defect.
+DEEP_TREE="$TMP_DIR/q-deep"
+mkdir -p "$DEEP_TREE"
+python3 -c "
+import json
+nodes = []
+for i in range(2000):
+    n = {'file_path': f'todo/01-t/TODO-{i:05d}-x.md', 'id': f'n{i}',
+         'domain': '01-t', 'status': 'draft', 'title': f'n{i}',
+         'created_at': '2026-04-01T00:00:00Z',
+         'last_active_at': '2026-04-01T00:00:00Z',
+         'sections': [], 'inputs_xrefs': [], 'stamps_xrefs': []}
+    if i:
+        n['depends_on'] = [f'n{i-1}']
+    nodes.append(n)
+with open('$DEEP_TREE/fwd.json', 'w') as f:
+    json.dump(nodes, f)
+with open('$DEEP_TREE/rev.json', 'w') as f:
+    json.dump(list(reversed(nodes)), f)
+"
+DEEP_FWD=$(python3 "$QUERY_PY" --cache "$DEEP_TREE/fwd.json" --repo-root "$DEEP_TREE" --quiet stats --json 2>/dev/null); DEEP_FWD_RC=$?
+DEEP_REV=$(python3 "$QUERY_PY" --cache "$DEEP_TREE/rev.json" --repo-root "$DEEP_TREE" --quiet stats --json 2>/dev/null); DEEP_REV_RC=$?
+if [ "$DEEP_FWD_RC" = "0" ] && [ "$DEEP_REV_RC" = "0" ] \
+   && python3 -c "
+import json, sys
+a = json.loads(sys.argv[1]); b = json.loads(sys.argv[2])
+sys.exit(0 if a['avg_dep_depth'] == b['avg_dep_depth'] and a['avg_dep_depth'] > 900 else 1)" \
+      "$DEEP_FWD" "$DEEP_REV"; then
+    t_pass "query: a 2000-link chain answers in BOTH node orders, with the same depth"
+else
+    t_fail "query: deep dependency chain broke (fwd rc=$DEEP_FWD_RC rev rc=$DEEP_REV_RC)"
+fi
+
+# Sub-test 9aa7: duplicate members in a `uniqueItems` collection are REFUSED.
+# The schema declares uniqueItems on depends_on/satisfies/file_patterns and the
+# consumer COUNTS them -- `cmd_blocking` incremented once per ref, so
+# `["a","a"]` reported an inbound count of 2 for ONE dependency and lifted that
+# node up `stats.top_blocking`. Validating member type while ignoring a
+# constraint the schema states is "routed but unprotected".
+DUP_TREE="$TMP_DIR/q-dup"
+mkdir -p "$DUP_TREE"
+python3 -c "
+import json
+def node(name, ident, **extra):
+    n = {'file_path': f'todo/01-t/TODO-{name}.md', 'id': ident, 'domain': '01-t',
+         'status': 'draft', 'title': ident, 'created_at': '2026-04-01T00:00:00Z',
+         'last_active_at': '2026-04-01T00:00:00Z', 'sections': [],
+         'inputs_xrefs': [], 'stamps_xrefs': []}
+    n.update(extra)
+    return n
+with open('$DUP_TREE/dup.json', 'w') as f:
+    json.dump([node('01-a', 'a'), node('02-b', 'b', depends_on=['a', 'a'])], f)
+with open('$DUP_TREE/uniq.json', 'w') as f:
+    json.dump([node('01-a', 'a'), node('02-b', 'b', depends_on=['a'])], f)
+"
+DUP_OUT=$(python3 "$QUERY_PY" --cache "$DUP_TREE/dup.json" --repo-root "$DUP_TREE" --quiet blocking --json 2>&1); DUP_RC=$?
+UNIQ_OUT=$(python3 "$QUERY_PY" --cache "$DUP_TREE/uniq.json" --repo-root "$DUP_TREE" --quiet blocking --json 2>&1); UNIQ_RC=$?
+if [ "$DUP_RC" = "2" ] && echo "$DUP_OUT" | grep -q "uniqueItems" \
+   && [ "$UNIQ_RC" = "0" ] \
+   && echo "$UNIQ_OUT" | python3 -c "
+import json, sys
+d = json.loads(sys.stdin.read())
+sys.exit(0 if d['rows'][0]['inbound_count'] == 1 else 1)"; then
+    t_pass "query: a duplicated dependency is REFUSED; the unique form still counts 1"
+else
+    t_fail "query: duplicate-dependency handling broken (dup rc=$DUP_RC uniq rc=$UNIQ_RC, out=$DUP_OUT)"
+fi
+
+# Sub-test 9aa8: the PUBLISHED schema and the routed reader agree on the
+# dependency section-number ceiling. They disagreed: the schema said
+# `minimum: 0` with no maximum while the reader enforced _MAX_SECTION_N, so a
+# cache satisfying the published wire contract made every query unavailable.
+# `jsonschema` is the independent oracle here, exactly as for the other
+# schema-vs-validator parity checks.
+if python3 - "$REPO_ROOT" <<'CEILEOF'
+import json, sys, pathlib
+try:
+    import jsonschema
+except ImportError:
+    print("SKIP: jsonschema not installed"); sys.exit(0)
+repo = pathlib.Path(sys.argv[1])
+sys.path.insert(0, str(repo / "scripts" / "todo-graph"))
+import cache_schema as cs
+schema = json.loads((repo / "scripts/todo-graph/schema/cache.schema.json").read_text())
+
+def node(sec_n):
+    return {"file_path": "todo/01-t/TODO-01-a.md", "id": "a", "domain": "01-t",
+            "status": "draft", "title": "a", "schema_version": 1,
+            "created_at": "2026-04-01T00:00:00Z",
+            "last_active_at": "2026-04-01T00:00:00Z", "section_headings": [],
+            "sections": [{"n": 1, "deliverable": "d", "status": "x",
+                          "depends_on": [{"target": "T", "sections": [sec_n]}]}],
+            "inputs_xrefs": [], "stamps_xrefs": []}
+
+def pair(sec_n):
+    try:
+        jsonschema.validate([node(sec_n)], schema); schema_ok = True
+    except jsonschema.ValidationError:
+        schema_ok = False
+    try:
+        cs.validate_nodes([node(sec_n)], "x", cs.PROFILE_QUERY); reader_ok = True
+    except cs.CacheSchemaError:
+        reader_ok = False
+    return schema_ok, reader_ok
+
+# Boundary and boundary-plus-one must AGREE in both directions.
+assert pair(65535) == (True, True), f"65535: {pair(65535)}"
+assert pair(65536) == (False, False), f"65536: {pair(65536)}"
+CEILEOF
+then
+    t_pass "query: schema and reader agree on the dep section ceiling (65535 ok, 65536 refused by both)"
+else
+    t_fail "query: schema/reader dep-section-ceiling parity broken"
+fi
+
+# Sub-test 9aa9: DUPLICATE NODE IDS REBIND EDGES, so the cache is refused.
+# `file_path` uniqueness was already enforced; `id` is the OTHER key readers
+# build a dict on, and `build_id_index` is a comprehension -- so two nodes
+# sharing an id left only the LAST reachable, and a third node depending on
+# that id bound to the survivor while the first silently got no inbound edge.
+# rc 0 with a misattributed graph is exactly what this profile must refuse.
+# NULL ids are NOT duplicates: a pre-migration corpus has many at once.
+DUPID_TREE="$TMP_DIR/q-dupid"
+mkdir -p "$DUPID_TREE"
+python3 -c "
+import json
+def node(name, ident, **extra):
+    n = {'file_path': f'todo/01-t/TODO-{name}.md', 'id': ident, 'domain': '01-t',
+         'status': 'draft', 'title': str(ident), 'created_at': '2026-04-01T00:00:00Z',
+         'last_active_at': '2026-04-01T00:00:00Z', 'sections': [],
+         'inputs_xrefs': [], 'stamps_xrefs': []}
+    n.update(extra)
+    return n
+with open('$DUPID_TREE/dup.json', 'w') as f:
+    json.dump([node('01-a', 'dup'), node('02-b', 'dup'),
+               node('03-c', 'c', depends_on=['dup'])], f)
+with open('$DUPID_TREE/nulls.json', 'w') as f:
+    json.dump([node('01-a', None), node('02-b', None)], f)
+"
+DUPID_OUT=$(python3 "$QUERY_PY" --cache "$DUPID_TREE/dup.json" --repo-root "$DUPID_TREE" --quiet blocking --json 2>&1); DUPID_RC=$?
+NULLID_OUT=$(python3 "$QUERY_PY" --cache "$DUPID_TREE/nulls.json" --repo-root "$DUPID_TREE" --quiet stats --json 2>&1); NULLID_RC=$?
+if [ "$DUPID_RC" = "2" ] && echo "$DUPID_OUT" | grep -q "repeats id" \
+   && [ "$NULLID_RC" = "0" ]; then
+    t_pass "query: duplicate node ids are REFUSED; null ids stay legal"
+else
+    t_fail "query: duplicate-id handling broken (dup rc=$DUPID_RC null rc=$NULLID_RC, out=$DUPID_OUT)"
+fi
+
+# Sub-test 9aa10: the dependency walk stays LINEAR on a wide dependency list.
+# The first iterative rewrite sliced the pending list per child
+# (`pending = pending[1:]`), turning a node with k dependencies from O(k) into
+# O(k^2): a valid 20,000-leaf star took 1.36s against 0.03s recursively, and
+# under MCP `_CALL_LOCK` one such `stats` call blocks every other query. The
+# schema puts no `maxItems` on `depends_on`, so width is not bounded elsewhere.
+STAR_TREE="$TMP_DIR/q-star"
+mkdir -p "$STAR_TREE"
+python3 -c "
+import json
+N = 20000
+def node(name, ident, **extra):
+    n = {'file_path': f'todo/01-t/TODO-{name}.md', 'id': ident, 'domain': '01-t',
+         'status': 'draft', 'title': ident, 'created_at': '2026-04-01T00:00:00Z',
+         'last_active_at': '2026-04-01T00:00:00Z', 'sections': [],
+         'inputs_xrefs': [], 'stamps_xrefs': []}
+    n.update(extra)
+    return n
+nodes = [node('00000-root', 'root', depends_on=[f'L{i}' for i in range(N)])]
+nodes += [node(f'{i+1:05d}-leaf', f'L{i}') for i in range(N)]
+with open('$STAR_TREE/star.json', 'w') as f:
+    json.dump(nodes, f)
+"
+STAR_START=$(date +%s)
+STAR_OUT=$(python3 "$QUERY_PY" --cache "$STAR_TREE/star.json" --repo-root "$STAR_TREE" --quiet stats --json 2>&1); STAR_RC=$?
+STAR_ELAPSED=$(( $(date +%s) - STAR_START ))
+# A generous ceiling: the quadratic form took ~1.4s of pure list copying on top
+# of parse time, and a loaded CI host must not flake. Linear traversal has a
+# wide margin under this.
+if [ "$STAR_RC" = "0" ] && [ "$STAR_ELAPSED" -le 20 ]; then
+    t_pass "query: a 20k-wide dependency list traverses linearly (${STAR_ELAPSED}s)"
+else
+    t_fail "query: wide-star traversal rc=$STAR_RC elapsed=${STAR_ELAPSED}s (quadratic regression?)"
+fi
+
+# Sub-test 9aa11: ASCII render survives a chain deeper than the recursion
+# limit, and its output is unchanged for ordinary shapes. Same defect class as
+# `_dep_depth`; the query CLI maps the crash onto rc 2 now, but "refuses
+# cleanly" is not "works" for valid input.
+if python3 - "$REPO_ROOT" <<'ASCIIEOF'
+import sys, pathlib
+repo = pathlib.Path(sys.argv[1])
+sys.path.insert(0, str(repo / "scripts" / "todo-graph"))
+import render, query
+
+def node(i, deps=None):
+    return {"file_path": f"todo/01-t/TODO-{i:05d}-x.md", "id": f"n{i}",
+            "domain": "01-t", "status": "draft", "title": f"n{i}",
+            "depends_on": deps or [], "created_at": "2026-04-01T00:00:00Z",
+            "last_active_at": "2026-04-01T00:00:00Z",
+            "sections": [], "inputs_xrefs": [], "stamps_xrefs": []}
+
+# Cycle and seen markers must still appear exactly where they did.
+shapes = {
+    "diamond": [node(0, ["n1", "n2"]), node(1, ["n3"]), node(2, ["n3"]), node(3)],
+    "cycle": [node(0, ["n1"]), node(1, ["n2"]), node(2, ["n0"])],
+    "self": [node(0, ["n0"])],
+}
+ctx = query.Ctx(shapes["diamond"], pathlib.Path("."), True)
+out = render.render_ascii(shapes["diamond"], ctx, "n0")
+assert "(seen)" in out, f"diamond lost its (seen) marker: {out!r}"
+ctx = query.Ctx(shapes["cycle"], pathlib.Path("."), True)
+assert "(cycle)" in render.render_ascii(shapes["cycle"], ctx, "n0")
+ctx = query.Ctx(shapes["self"], pathlib.Path("."), True)
+assert "(cycle)" in render.render_ascii(shapes["self"], ctx, "n0")
+
+deep = [node(i, [f"n{i+1}"]) for i in range(2000)] + [node(2000)]
+ctx = query.Ctx(deep, pathlib.Path("."), True)
+lines = render.render_ascii(deep, ctx, "n0").splitlines()
+assert len(lines) == 2001, f"deep chain rendered {len(lines)} lines"
+ASCIIEOF
+then
+    t_pass "render: ascii walks a 2000-link chain and keeps (cycle)/(seen) semantics"
+else
+    t_fail "render: ascii deep-chain / marker semantics broken"
+fi
+
+# Sub-test 9aa12: watch mode emits its opening answer EXACTLY ONCE.
+# `watch_loop` performs the initial `run_once()` itself, so calling the tick
+# explicitly before handing it to the loop rendered the first snapshot twice --
+# and under quiet TSV/JSON streaming nothing marks the boundary, so a consumer
+# reads duplicated graph rows. The prior watch tests only grepped for presence.
+ONCE_TREE="$TMP_DIR/q-once"
+mkdir -p "$ONCE_TREE/todo/01-t" "$ONCE_TREE/build"
+cat > "$ONCE_TREE/todo/01-t/TODO-01-ok.md" <<'ONCEEOF'
+---
+schema_version: 1
+id: ok
+domain: 01-t
+status: draft
+title: ok
+---
+
+## 1. First
+
+- [ ] something
+ONCEEOF
+python3 "$BUILD_PY" --quiet --output "$ONCE_TREE/build/todo-cache.json" \
+    --root "$ONCE_TREE/todo" --repo-root "$ONCE_TREE" >/dev/null 2>&1
+PATH="/usr/bin:/bin" timeout --signal=INT 4 \
+    python3 -u "$QUERY_PY" --repo-root "$ONCE_TREE" --quiet \
+        --watch by-domain > "$ONCE_TREE/watch.out" 2>&1 || true
+ONCE_HITS=$(grep -c '^01-t' "$ONCE_TREE/watch.out" 2>/dev/null || true)
+ONCE_HITS=${ONCE_HITS:-0}
+if [ "$ONCE_HITS" = "1" ]; then
+    t_pass "query: watch emits the opening answer exactly once"
+else
+    t_fail "query: watch emitted the opening answer ${ONCE_HITS}x (expected 1)"
+fi
+
+# Sub-test 9aa13: DERIVED RESOLVER-KEY collisions are refused, and the
+# derivation matches the resolver's own. Distinct ids and distinct file_paths
+# are not enough: `build_path_index` files nodes under
+# `(domain-code, TODO-number)`, so `01-a/TODO-01-first.md` and
+# `01-a/TODO-01-second.md` share one slot and the later overwrites. MEASURED
+# before the fix: an Inputs XREF naming `first` EXPLICITLY gave
+# `backlinks first` 0 rows and `backlinks second` 1 row, at rc 0.
+#
+# The parity assertion is the load-bearing half. `cache_schema` derives the key
+# locally rather than importing the `validate` CLI, so a drift would mean
+# validating a DIFFERENT rule than the resolver applies -- passing while the
+# real index still collides. Comparing both derivations over the live corpus
+# turns that into a test failure.
+if python3 - "$REPO_ROOT" <<'RKEYEOF'
+import sys, json, pathlib
+repo = pathlib.Path(sys.argv[1])
+sys.path.insert(0, str(repo / "scripts" / "todo-graph"))
+import cache_schema as cs, validate as V
+
+def node(path, ident, **extra):
+    n = {"file_path": path, "id": ident, "domain": "01-a", "status": "draft",
+         "title": ident, "created_at": "2026-04-01T00:00:00Z",
+         "last_active_at": "2026-04-01T00:00:00Z", "sections": [],
+         "inputs_xrefs": [], "stamps_xrefs": []}
+    n.update(extra)
+    return n
+
+collide = [node("todo/01-a/TODO-01-first.md", "first"),
+           node("todo/01-a/TODO-01-second.md", "second")]
+try:
+    cs.validate_nodes(collide, "x", cs.PROFILE_QUERY)
+    raise AssertionError("collision ACCEPTED -- edges would rebind silently")
+except cs.CacheSchemaError as exc:
+    assert "derives resolver key" in str(exc), f"wrong refusal: {exc}"
+
+# Distinct numbers in the same domain, and the same number across domains, are
+# both legal -- the rule must not over-refuse.
+ok = [node("todo/01-a/TODO-01-first.md", "first"),
+      node("todo/01-a/TODO-02-second.md", "second"),
+      node("todo/02-b/TODO-01-third.md", "third")]
+ok[2]["domain"] = "02-b"
+cs.validate_nodes(ok, "x", cs.PROFILE_QUERY)
+
+# Derivation parity against the resolver's own index, over the LIVE corpus.
+cache = repo / "build" / "todo-cache.json"
+if cache.exists():
+    live = json.loads(cache.read_text())
+    theirs = V.build_path_index(live)["by_dn"]
+    mine = {}
+    for n in live:
+        k = cs.resolver_key(n["file_path"])
+        if k:
+            mine[k] = n["file_path"]
+    assert mine == theirs, (
+        f"derivation drifted from build_path_index: "
+        f"{len(mine)} vs {len(theirs)} keys")
+RKEYEOF
+then
+    t_pass "query: duplicate derived resolver keys refused; derivation matches build_path_index"
+else
+    t_fail "query: resolver-key collision rule or its parity with build_path_index broken"
+fi
+
+# Sub-test 9aa14: an EDGE naming an ambiguous bare stem is refused, but a
+# duplicated stem by itself is not. `build_path_index` flattens
+# `{stem: file_path}`, so with two files sharing a stem only the last survives
+# and a bare-stem edge naming either binds to it -- MEASURED before the fix as
+# `backlinks first` 0 rows and `backlinks second` 1 row, at rc 0, for an XREF
+# naming that stem. `_build_stem_collisions` already computed the ambiguity and
+# its docstring claimed the reader refuses stem-based resolution, but its only
+# consumer was the target a HUMAN types; edge resolution never asked.
+#
+# THE NON-REFUSALS ARE THE HALF THAT KEEPS THIS HONEST: duplicate stems across
+# domains are a supported layout, so a cache carrying them with no bare-stem
+# edge must still answer, and an `id` reference names exactly one file.
+if python3 - "$REPO_ROOT" "$TMP_DIR" <<'STEMEOF'
+import sys, json, subprocess, pathlib, re
+repo, tmp = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+q = str(repo / "scripts" / "todo-graph" / "query.py")
+root = tmp / "q-ambig"
+root.mkdir(parents=True, exist_ok=True)
+
+def node(path, ident, **extra):
+    n = {"file_path": path, "id": ident, "domain": path.split("/")[1],
+         "status": "draft", "title": ident, "created_at": "2026-04-01T00:00:00Z",
+         "last_active_at": "2026-04-01T00:00:00Z", "sections": [],
+         "inputs_xrefs": [], "stamps_xrefs": []}
+    n.update(extra)
+    return n
+
+dupes = [node("todo/01-a/TODO-A-Shared.md", "first"),
+         node("todo/02-b/TODO-A-Shared.md", "second")]
+
+def run(nodes, name, *argv):
+    p = root / f"{name}.json"
+    p.write_text(json.dumps(nodes))
+    return subprocess.run([sys.executable, q, "--cache", str(p), "--repo-root",
+                           str(root), "--quiet", *argv],
+                          capture_output=True, text=True)
+
+# 1. A bare-stem edge is REFUSED and names the candidates.
+bare = run(dupes + [node("todo/01-a/TODO-02-ref.md", "ref",
+                         inputs_xrefs=[{"target_path": "TODO-A-Shared.md",
+                                        "target_section": None}])],
+           "bare", "backlinks", "first", "--json")
+assert bare.returncode == 2, f"bare-stem edge rc={bare.returncode}"
+assert "AMBIGUOUS_EDGE" in bare.stdout, bare.stdout[:200]
+
+# 2. Duplicate stems with NO bare-stem edge are legal.
+plain = run(dupes, "plain", "stats", "--json")
+assert plain.returncode == 0, f"duplicate stems alone rc={plain.returncode}"
+
+# 3. An `id` reference is unambiguous and still resolves to ONE file.
+byid = run(dupes + [node("todo/01-a/TODO-02-ref.md", "ref",
+                         depends_on=["first"])],
+           "byid", "backlinks", "first", "--json")
+assert byid.returncode == 0, f"id reference rc={byid.returncode} {byid.stdout[:200]}"
+m = re.search(r'"returned": (\d+)', byid.stdout)
+assert m and m.group(1) == "1", f"id reference returned {m.group(1) if m else '?'}"
+STEMEOF
+then
+    t_pass "query: an ambiguous bare-stem EDGE is refused; duplicate stems and id refs still work"
+else
+    t_fail "query: ambiguous bare-stem edge handling broken"
+fi
+
+# Sub-test 9aa15: the resolver key derivation is SHARED, not mirrored.
+# `validate.build_path_index` hardcoded the domain prefixes `00-` through
+# `18-` while the validator's copy matched any two digits, so a legitimate
+# domain-19 TODO was keyed by one and not the other -- the validator would have
+# refused a collision the resolver never creates, and the live-corpus parity
+# test proved only today's domain set. Both now call one function.
+if python3 - "$REPO_ROOT" <<'SHAREEOF'
+import sys, pathlib
+repo = pathlib.Path(sys.argv[1])
+sys.path.insert(0, str(repo / "scripts" / "todo-graph"))
+import cache_schema as cs, validate as V
+# Table-driven, covering the boundary the hardcoded list used to sit on.
+for dom, num in (("00", 1), ("18", 1), ("19", 1), ("99", 42)):
+    path = f"todo/{dom}-x/TODO-{num:02d}-a.md"
+    assert cs.resolver_key(path) == (dom, num), f"{path}: {cs.resolver_key(path)}"
+    assert V.build_path_index([{"file_path": path}])["by_dn"] == {(dom, num): path}, path
+# Shapes that must key to NOTHING in both.
+for path in ("TODO-01-a.md", "todo/not-a-domain/TODO-01-a.md",
+             "todo/01-x/NOTES-01-a.md", "todo/01-x/TODO-A-a.md"):
+    assert cs.resolver_key(path) is None, f"{path} keyed {cs.resolver_key(path)}"
+    assert V.build_path_index([{"file_path": path}])["by_dn"] == {}, path
+SHAREEOF
+then
+    t_pass "query: resolver-key derivation is shared by cache_schema and build_path_index (00/18/19/99)"
+else
+    t_fail "query: shared resolver-key derivation broken"
+fi
+
+# Sub-test 9aa16: the RESOLVER refuses an ambiguous binding instead of
+# returning an arbitrary survivor. `by_dn` and `by_filename` both flattened
+# duplicates, so a reference naming the loser resolved to the winner at a
+# normal exit code, and `check_stale_xref` reported nothing -- the canonical
+# build-and-validate gate accepted a graph that was already wrong.
+#
+# The over-refusal cases matter as much: a fully-spelled letter stem names
+# exactly one file and MUST resolve (the letter branch keyed on the letter
+# alone and threw the rest of the stem away, which with three `TODO-A-*` files
+# in the live corpus produced an arbitrary answer), and a bare letter token
+# resolves against the SOURCE's domain exactly as bare `TODO-NN` does.
+if python3 - "$REPO_ROOT" <<'RESOLVEEOF'
+import sys, pathlib
+repo = pathlib.Path(sys.argv[1])
+sys.path.insert(0, str(repo / "scripts" / "todo-graph"))
+import validate as V
+
+def node(path, ident):
+    return {"file_path": path, "id": ident, "domain": path.split("/")[1],
+            "status": "draft", "title": ident, "sections": [],
+            "created_at": "2026-04-01T00:00:00Z",
+            "last_active_at": "2026-04-01T00:00:00Z",
+            "inputs_xrefs": [], "stamps_xrefs": []}
+
+# (domain, number) collision: an EXPLICIT path to the loser must not rebind.
+coll = [node("todo/19-x/TODO-01-first.md", "first"),
+        node("todo/19-x/TODO-01-second.md", "second")]
+p, i = V.build_path_index(coll), V.build_id_index(coll)
+assert p["dn_collisions"] == {("19", 1)}, p["dn_collisions"]
+assert V.resolve_xref_target("19-x/TODO-01-first.md", "todo/19-x/TODO-02-r.md",
+                             i, p) is None
+# Distinct numbers still resolve, including the compact same-domain form.
+ok = [node("todo/19-x/TODO-01-a.md", "a"), node("todo/19-x/TODO-02-b.md", "b")]
+p2, i2 = V.build_path_index(ok), V.build_id_index(ok)
+assert V.resolve_xref_target("T01", "todo/19-x/TODO-02-b.md", i2, p2) \
+    == "todo/19-x/TODO-01-a.md"
+
+# Letter-numbered files: three across domains, as the live corpus has.
+letters = [node("todo/02-k/TODO-A-SSDT-Master-Table.md", "ssdt"),
+           node("todo/08-g/TODO-A-Win32k-Shadow-SSDT-Master-Table.md", "shadow"),
+           node("todo/10-p/TODO-A-user32-export-master-table.md", "user32"),
+           node("todo/09-d/TODO-13-explorer.md", "explorer")]
+p3, i3 = V.build_path_index(letters), V.build_id_index(letters)
+# Fully-spelled stem -> exactly one file, from any domain.
+assert V.resolve_xref_target("TODO-A-user32-export-master-table",
+                             "todo/09-d/TODO-13-explorer.md", i3, p3) \
+    == "todo/10-p/TODO-A-user32-export-master-table.md"
+# Bare letter -> the SOURCE's own domain when it has one.
+assert V.resolve_xref_target("TODO-A", "todo/08-g/TODO-16-w.md", i3, p3) \
+    == "todo/08-g/TODO-A-Win32k-Shadow-SSDT-Master-Table.md"
+# Bare letter from a domain with no letter file -> ambiguous, refused.
+assert V.resolve_xref_target("TODO-A", "todo/09-d/TODO-13-explorer.md",
+                             i3, p3) is None
+
+# Duplicate STEMS across domains: every bare spelling refused, id still works.
+dup = [node("todo/01-a/TODO-A-Shared.md", "first"),
+       node("todo/02-b/TODO-A-Shared.md", "second")]
+p4, i4 = V.build_path_index(dup), V.build_id_index(dup)
+assert p4["stem_collisions"] == {"TODO-A-Shared"}, p4["stem_collisions"]
+for tok in ("TODO-A-Shared", "TODO-A-Shared.md", "TODO-A-Shared.md/",
+            "`TODO-A-Shared.md`", "TODO-A-Shared.md#x"):
+    got = V.resolve_xref_target(tok, "todo/01-a/TODO-02-r.md", i4, p4)
+    assert got is None, f"{tok!r} resolved to {got}"
+assert V.resolve_xref_target("first", "todo/01-a/TODO-02-r.md", i4, p4) \
+    == "todo/01-a/TODO-A-Shared.md"
+# Domain-qualified names exactly one file even when the stem is duplicated.
+assert V.resolve_xref_target("01-a/TODO-A-Shared.md", "todo/02-b/TODO-02-r.md",
+                             i4, p4) == "todo/01-a/TODO-A-Shared.md"
+RESOLVEEOF
+then
+    t_pass "validate: resolver refuses ambiguous bindings, still resolves every specific form"
+else
+    t_fail "validate: ambiguous-binding refusal or specific-form resolution broken"
+fi
+
+# Sub-test 9aa17: ONE token normalization, so ambiguity classification and
+# resolution cannot disagree. They were two ordered strip chains that had to
+# stay identical and did not: classification stripped backticks then commas in
+# a single pass while resolution strips backticks AGAIN, so `` `X.md`, `` kept
+# a trailing backtick while being classified (recording no ambiguity) and lost
+# it while being resolved (returning None) -- the edge was silently omitted at
+# rc 0 instead of refused. `_normalize_ref_token` loops to a fixed point, so
+# any interleaving of backticks, commas, whitespace, an #anchor and a trailing
+# slash converges on the same token.
+if python3 - "$REPO_ROOT" <<'NORMEOF'
+import sys, pathlib
+repo = pathlib.Path(sys.argv[1])
+sys.path.insert(0, str(repo / "scripts" / "todo-graph"))
+import query as Q
+
+def node(path, ident, **extra):
+    n = {"file_path": path, "id": ident, "domain": path.split("/")[1],
+         "status": "draft", "title": ident, "sections": [],
+         "created_at": "2026-04-01T00:00:00Z",
+         "last_active_at": "2026-04-01T00:00:00Z",
+         "inputs_xrefs": [], "stamps_xrefs": []}
+    n.update(extra)
+    return n
+
+dup = [node("todo/01-a/TODO-A-Shared.md", "first"),
+       node("todo/02-b/TODO-A-Shared.md", "second")]
+forms = ["TODO-A-Shared", "TODO-A-Shared.md", "`TODO-A-Shared.md`",
+         "`TODO-A-Shared.md`,", "  `TODO-A-Shared.md` , ",
+         "TODO-A-Shared.md/", "TODO-A-Shared.md#9-x"]
+for form in forms:
+    ctx = Q.Ctx(dup + [node("todo/01-a/TODO-02-ref.md", "ref",
+                            inputs_xrefs=[{"target_path": form,
+                                           "target_section": None}])],
+                pathlib.Path("."), True)
+    assert len(ctx.ambiguous_edges) == 1, f"{form!r}: {ctx.ambiguous_edges}"
+    assert not ctx.inbound, f"{form!r} bound an edge: {ctx.inbound}"
+# The PUNCTUATION forms must all collapse to one token -- that is the
+# invariant, not each individual strip. `.md` is deliberately NOT stripped
+# here: dropping a suffix is the resolver's job, and `TODO-A-Shared` is a
+# legitimately different spelling that the resolver maps to the same file.
+punctuated = [f for f in forms if f.strip().strip("`").rstrip("/") != "TODO-A-Shared"]
+assert len({Q._normalize_ref_token(f) for f in punctuated}) == 1, \
+    {Q._normalize_ref_token(f) for f in punctuated}
+assert Q._normalize_ref_token("TODO-A-Shared") == "TODO-A-Shared"
+NORMEOF
+then
+    t_pass "query: one shared token normalization -- 7 punctuation forms all classify ambiguous"
+else
+    t_fail "query: token normalization diverges between classification and resolution"
 fi
 
 # Sub-test 9bb: stem collisions (two TODOs with the same filename stem
@@ -2490,7 +3299,12 @@ nodes = [
      'sections': [], 'section_headings': [], 'inputs_xrefs': [],
      'stamps_xrefs': [], 'created_at': '2026-04-23T00:00:00Z',
      'last_active_at': '2026-04-23T00:00:00Z'},
-    {'file_path': 'todo/01-t/TODO-01-a_b.md', 'id': 'a_b', 'domain': '01-t',
+    # NUMBERED 02, not 01: two TODOs sharing a domain AND a number derive one
+    # resolver key, which section 22 refuses because the path index would file
+    # them in the same slot. That collision is incidental here -- this fixture
+    # is about `a-b` vs `a_b` sanitizing to the same MERMAID node id, and both
+    # ids are unchanged.
+    {'file_path': 'todo/01-t/TODO-02-a_b.md', 'id': 'a_b', 'domain': '01-t',
      'status': 'active', 'title': 'A_B', 'schema_version': 1,
      'sections': [], 'section_headings': [], 'inputs_xrefs': [],
      'stamps_xrefs': [], 'created_at': '2026-04-23T00:00:00Z',
@@ -7695,6 +8509,25 @@ GOOD_XREFS = [{"file_path": "todo/01-test/TODO-01-cs.md",
                                  "target_path": "todo/01-test/TODO-02-x.md",
                                  "target_section": "3"}]}]
 
+# Section 22 fixture. ONE COMPLETE NODE, because PROFILE_QUERY declares FOUR
+# subtrees (sections, sections.depends_on, stamps_xrefs, node_fields) and every
+# one of them runs on every node -- a fixture satisfying only the subtree under
+# test is refused by the other three, which makes the mutation unmeasurable.
+# `GOOD_DEPS` and `GOOD_FIELDS` are the same node; the two names just say which
+# rule the cases below are aiming at.
+GOOD_QUERY = [{"file_path": "todo/01-test/TODO-01-cs.md",
+               "id": "cs", "domain": "01-test", "status": "draft",
+               "title": "cs", "created_at": "2026-04-01T00:00:00Z",
+               "last_active_at": "2026-04-01T00:00:00Z",
+               "sections": [{"n": 1, "deliverable": "a thing", "status": "x",
+                             "depends_on": [{"target": "TODO-02-x",
+                                             "sections": [3]}]}],
+               "inputs_xrefs": [{"target_path": "todo/01-test/TODO-02-x.md",
+                                 "target_section": "3"}],
+               "stamps_xrefs": []}]
+GOOD_DEPS = GOOD_QUERY
+GOOD_FIELDS = GOOD_QUERY
+
 def mutate(doc, path, value, delete=False):
     d = copy.deepcopy(doc)
     tgt = d
@@ -7753,6 +8586,45 @@ CASES = [
        "sections": [{"n": 1, "deliverable": "a", "depends_on": [], "status": "x"},
                     {"n": 1, "deliverable": "b", "depends_on": [], "status": " "}]}],
      "PROFILE_SECTIONS"),
+    # Section 22 subtree validators, under PROFILE_QUERY. Each fixture is
+    # ACCEPTED by PROFILE_SECTIONS (which does not open a dependency group) and
+    # refused here, which is the profile split doing its job one more time.
+    # The group OBJECT guard is deliberately absent from this list. Its fixture
+    # (a non-dict group) also trips the required-fields rule that follows it --
+    # `"target" not in "TODO-02-x"` is True for a string -- so neutering the
+    # guard alone still refuses, and the harness cannot attribute the refusal.
+    # That rule is covered end-to-end instead, by the nested-malformed cache
+    # fixtures in sub-tests 9v/9w, which assert the refusal a real caller sees.
+    ("required section-dep fields", "                if field not in grp:",
+     mutate(GOOD_DEPS, [0, "sections", 0, "depends_on", 0, "target"], None,
+            delete=True), "PROFILE_QUERY"),
+    ("section-dep additionalProperties",
+     "            extra = [x for x in grp if x not in _SECTION_DEP_KEYS]",
+     mutate(GOOD_DEPS, [0, "sections", 0, "depends_on", 0, "zzz"], 1),
+     "PROFILE_QUERY"),
+    ("section-dep sections list guard",
+     "            if not isinstance(secs, list):",
+     mutate(GOOD_DEPS, [0, "sections", 0, "depends_on", 0, "sections"], 3),
+     "PROFILE_QUERY"),
+    ("node required-string fields", "        if field not in node:",
+     mutate(GOOD_FIELDS, [0, "domain"], None, delete=True), "PROFILE_QUERY"),
+    # The scalar value's CHARACTERS must be distinct: with the list guard
+    # neutered the walk iterates the string, and a repeated character would be
+    # caught by the uniqueItems rule instead -- making the fixture pass for the
+    # wrong reason and reporting this rule as unverified.
+    ("node optional list guard",
+     "        if not isinstance(value, list):",
+     mutate(GOOD_FIELDS, [0, "depends_on"], "abc"), "PROFILE_QUERY"),
+    ("node uniqueItems members", "            if item in seen_members:",
+     mutate(GOOD_FIELDS, [0, "depends_on"], ["a", "a"]), "PROFILE_QUERY"),
+    ("inputs_xrefs list guard", "    if not isinstance(inputs, list):",
+     mutate(GOOD_FIELDS, [0, "inputs_xrefs"], {}), "PROFILE_QUERY"),
+    ("required inputs-xref fields", "            if key not in entry:",
+     mutate(GOOD_FIELDS, [0, "inputs_xrefs", 0, "target_path"], None,
+            delete=True), "PROFILE_QUERY"),
+    ("inputs-xref additionalProperties",
+     "        extra = [k for k in entry if k not in _INPUTS_XREF_KEYS]",
+     mutate(GOOD_FIELDS, [0, "inputs_xrefs", 0, "zzz"], 1), "PROFILE_QUERY"),
     ("stamps_xrefs list guard", "    if not isinstance(xrefs, list):",
      mutate(GOOD_XREFS, [0, "stamps_xrefs"], {}), "PROFILE_STAMP_XREFS"),
     ("required stamp-xref fields", "            if field not in x:",

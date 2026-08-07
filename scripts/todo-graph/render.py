@@ -292,25 +292,51 @@ def render_ascii(nodes: list, ctx, root_id: Optional[str] = None) -> str:
     rendered: set = set()
 
     def _walk(node: dict, indent: int):
-        did = _display_id_for(node)
-        status = node.get("status") or "?"
-        prefix = "    " * indent + ("|-- " if indent > 0 else "")
-        fp = node["file_path"]
-        if fp in stack:
-            lines.append(f"{prefix}{did} [{status}] (cycle)")
-            return
-        if fp in rendered:
-            lines.append(f"{prefix}{did} [{status}] (seen)")
-            return
-        stack.add(fp)
-        rendered.add(fp)
-        lines.append(f"{prefix}{did} [{status}]")
-        for ref in (node.get("depends_on") or []):
-            tgt_fp = id_to_fp.get(ref)
-            child = nodes_by_fp.get(tgt_fp) if tgt_fp else None
-            if child:
-                _walk(child, indent + 1)
-        stack.discard(fp)
+        """Pre-order DFS, EXPLICIT-STACK rather than recursive.
+
+        Same defect and same reason as `query._dep_depth`: one frame per
+        dependency LEVEL meant a chain longer than Python's recursion limit
+        raised `RecursionError` on input the shared validator accepts, so
+        `render --render-format ascii` was unavailable for a valid cache. The
+        query CLI now maps that onto its rc-2 refusal rather than an ambiguous
+        rc 1, but "refuses cleanly" is not the same as "works" (Codex
+        adversarial, section 22 round 2, [medium]).
+
+        `(cycle)` vs `(seen)` semantics are preserved exactly: a back-edge to a
+        node still on the current path is a cycle, a node finished elsewhere is
+        seen, and `stack` is popped only after a node's children are done --
+        which is what the `_POP` sentinel frames below exist to schedule.
+        """
+        _POP = object()
+        frames = [(node, indent)]
+        while frames:
+            item, depth = frames.pop()
+            if item is _POP:
+                stack.discard(depth)  # `depth` carries the file_path here
+                continue
+            did = _display_id_for(item)
+            status = item.get("status") or "?"
+            prefix = "    " * depth + ("|-- " if depth > 0 else "")
+            fp = item["file_path"]
+            if fp in stack:
+                lines.append(f"{prefix}{did} [{status}] (cycle)")
+                continue
+            if fp in rendered:
+                lines.append(f"{prefix}{did} [{status}] (seen)")
+                continue
+            stack.add(fp)
+            rendered.add(fp)
+            lines.append(f"{prefix}{did} [{status}]")
+            # The pop marker goes on FIRST so it runs after every child, and
+            # children are pushed in REVERSE so they emit in declaration order.
+            frames.append((_POP, fp))
+            children = []
+            for ref in (item.get("depends_on") or []):
+                tgt_fp = id_to_fp.get(ref)
+                child = nodes_by_fp.get(tgt_fp) if tgt_fp else None
+                if child:
+                    children.append((child, depth + 1))
+            frames.extend(reversed(children))
 
     _walk(root, 0)
     return "\n".join(lines) + "\n"

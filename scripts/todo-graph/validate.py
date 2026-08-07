@@ -62,6 +62,12 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+# Sibling module, stdlib-only and side-effect-free at import. It owns the
+# `(domain, number)` derivation `build_path_index` files nodes under, so the
+# cache validator and this resolver cannot disagree about what collides.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import cache_schema  # noqa: E402
+
 
 # --- Constants -----------------------------------------------------------
 
@@ -233,24 +239,93 @@ def build_path_index(nodes: list) -> dict:
     Used by the resolver below for compact-form XREFs."""
     by_dn = {}
     by_filename = {}
+    dn_collisions = set()
+    stem_collisions = set()
+    stem_paths = {}
     for n in nodes:
         rel = n.get("file_path")
         if not rel:
             continue
         # path like 02-kernel-core/TODO-19-foo.md
-        parts = Path(rel).parts
-        if len(parts) >= 2 and parts[-2].startswith(("00-", "01-", "02-", "03-", "04-",
-                                                      "05-", "06-", "07-", "08-", "09-",
-                                                      "10-", "11-", "12-", "13-", "14-",
-                                                      "15-", "16-", "17-", "18-")):
-            dom = parts[-2][:2]  # "02" from "02-kernel-core"
-            m = re.match(r"TODO-(\d{1,2})-", parts[-1])
-            if m:
-                by_dn[(dom, int(m.group(1)))] = rel
+        #
+        # ONE DERIVATION, SHARED WITH THE CACHE VALIDATOR (section 22).
+        # `cache_schema` refuses a cache in which two nodes land on the same
+        # `(domain, number)` slot, because whichever one this index kept would
+        # silently rebind every edge naming the other. That refusal is sound
+        # only if it computes the SAME key this index does, and two copies
+        # drifted immediately: this hardcoded the prefixes `00-` through `18-`
+        # while the validator matched any two digits, so a legitimate domain-19
+        # TODO went unindexed here and keyed there. A hardcoded domain list is
+        # a maintenance trap besides -- it stops indexing the day a 19th domain
+        # is added, with nothing reporting it.
+        key = cache_schema.resolver_key(rel)
+        if key is not None:
+            if key in by_dn:
+                dn_collisions.add(key)
+            by_dn[key] = rel
         # filename stem (TODO-19-foo)
         stem = Path(rel).stem
+        if stem in by_filename:
+            stem_collisions.add(stem)
         by_filename[stem] = rel
-    return {"by_dn": by_dn, "by_filename": by_filename}
+        # EVERY candidate, not just the survivor. `by_filename` keeps its
+        # flattened shape so existing consumers are untouched, but a resolver
+        # branch that must reason about ambiguity cannot do it from a map that
+        # already discarded the losers -- the letter-numbered branch below
+        # scanned `by_filename.values()` and saw ONE path for two files.
+        stem_paths.setdefault(stem, []).append(rel)
+    # COLLISION-AWARE, NOT FLATTENED (section 22). Both maps let a later node
+    # overwrite an earlier one and returned only the survivor, so a reference
+    # naming the LOSER resolved to the WINNER -- silently, at a normal exit
+    # code. Reproduced with `todo/19-x/TODO-01-first.md` and `TODO-01-second.md`:
+    # an explicit XREF to `19-x/TODO-01-first.md` resolved to `...-second.md`
+    # while `check_stale_xref` reported nothing, so the canonical
+    # build-and-validate gate accepted a graph that was already wrong.
+    # Recording the ambiguity lets `resolve_xref_target` refuse rather than
+    # guess, which downgrades a WRONG BINDING to an ordinary unresolved-XREF
+    # finding -- visible, and at the right exit code (Codex adversarial,
+    # section 22 round 5, [high]).
+    return {"by_dn": by_dn, "by_filename": by_filename,
+            "dn_collisions": dn_collisions, "stem_collisions": stem_collisions,
+            "stem_paths": stem_paths}
+
+
+def _dn_lookup(path_index: dict, key) -> Optional[str]:
+    """Resolve a `(domain, number)` key, refusing an AMBIGUOUS one.
+
+    Returning the survivor of an overwrite is a WRONG ANSWER dressed as a
+    right one: the reference named a specific file and got a different one,
+    with nothing reporting it. None makes it an ordinary unresolved XREF,
+    which every caller already handles and which the validator counts
+    (section 22)."""
+    if key in path_index.get("dn_collisions", ()):
+        return None
+    return path_index["by_dn"].get(key)
+
+
+def _stem_lookup(path_index: dict, stem: str) -> Optional[str]:
+    """Resolve a bare filename stem, refusing an ambiguous one. Same rule and
+    same reason as `_dn_lookup`; duplicate stems across domains are a
+    supported layout, so only the REFERENCE is refused, never the corpus."""
+    if stem in path_index.get("stem_collisions", ()):
+        return None
+    return path_index["by_filename"].get(stem)
+
+
+def _all_paths(path_index: dict) -> set:
+    """Every file_path the index knows, from ALL stem candidates.
+
+    `by_filename.values()` holds only the LAST path per stem, so an exact
+    path-membership test against it is decided by cache row order: with
+    duplicate supported stems in two domains, `../01-a/TODO-A-Shared.md`
+    returned None while `../02-b/TODO-A-Shared.md` resolved, purely because the
+    latter was inserted second. That is a FALSE stale-XREF finding on a
+    perfectly good reference (Codex adversarial, section 22 round 6, [medium]).
+    """
+    paths = set(path_index.get("by_filename", {}).values())
+    for candidates in path_index.get("stem_paths", {}).values():
+        paths.update(candidates)
+    return paths
 
 
 def resolve_xref_target(target: str, source_file: str, id_index: dict, path_index: dict) -> Optional[str]:
@@ -300,14 +375,14 @@ def resolve_xref_target(target: str, source_file: str, id_index: dict, path_inde
     m = COMPACT_DT_RE.match(target)
     if m:
         dom, num = m.group("dom"), int(m.group("num"))
-        return path_index["by_dn"].get((dom, num))
+        return _dn_lookup(path_index, (dom, num))
     # 3. Same-domain compact: T17 (resolved against source_file's domain)
     m = COMPACT_T_RE.match(target)
     if m:
         src_parts = Path(source_file).parts
         if len(src_parts) >= 2:
             src_dom = src_parts[-2][:2]
-            return path_index["by_dn"].get((src_dom, int(m.group("num"))))
+            return _dn_lookup(path_index, (src_dom, int(m.group("num"))))
         return None
     # 3a. Domain-only compact: D14 -- resolve to the domain's INDEX.md.
     # Authors use `D14` to reference an entire domain's scope; the INDEX.md
@@ -326,14 +401,14 @@ def resolve_xref_target(target: str, source_file: str, id_index: dict, path_inde
     m = DOMAIN_PATH_RE.match(target)
     if m:
         dom, num = m.group("dom"), int(m.group("num"))
-        return path_index["by_dn"].get((dom, num))
+        return _dn_lookup(path_index, (dom, num))
     # 4a. Full domain path with -name[.md] suffix: 02-kernel-core/TODO-19-foo
     # or 02-kernel-core/TODO-19-foo.md. Common surface form in Inputs XREFs
     # and stamp links. Extract domain + TODO number, resolve via by_dn.
     m = re.match(r"^(?P<dom>\d{2})-[a-z0-9-]+/TODO-(?P<num>\d{1,2})-[a-z0-9-]+(?:\.md)?$", target)
     if m:
         dom, num = m.group("dom"), int(m.group("num"))
-        return path_index["by_dn"].get((dom, num))
+        return _dn_lookup(path_index, (dom, num))
     # 4b. Domain-only reference (`05-storage-filesystems`, with or without a
     # trailing `/INDEX.md`). Authors use this to mean "the whole domain"
     # when the XREF is scope-level rather than file-level; resolve to the
@@ -354,15 +429,75 @@ def resolve_xref_target(target: str, source_file: str, id_index: dict, path_inde
     )
     if letter_m:
         # Scan by_filename values for a matching path tail.
+        # EXACT STEM FIRST. This branch keys on the LETTER alone and throws the
+        # rest of the stem away, so `TODO-A-user32-export-master-table` -- which
+        # names exactly one file -- was matched against every `TODO-A-*` in the
+        # tree. With three of them in the corpus that produced an arbitrary
+        # answer before, and an over-refusal once ambiguity started being
+        # refused. A fully-spelled stem is not ambiguous and must resolve.
+        exact = letter_m.group(0)
+        if exact.endswith(".md"):
+            exact = exact[:-3]
+        exact = exact.rsplit("/", 1)[-1]
+        exact_paths = path_index.get("stem_paths", {}).get(exact)
+        if exact_paths and letter_m.group("dom"):
+            # A domain qualifier narrows the candidates BEFORE the uniqueness
+            # test -- otherwise `01-a/TODO-A-Shared.md` is refused as ambiguous
+            # on the strength of a same-named file in another domain, which is
+            # exactly the reference form that disambiguates it.
+            want = letter_m.group("dom")
+            exact_paths = [fp for fp in exact_paths
+                           if fp.startswith("todo/")
+                           and fp.split("/")[1][:2] == want]
+        # A SPELLED-OUT TARGET IS DECIDED BY ITS EXACT MATCH COUNT, ZERO
+        # INCLUDED. Only the literal `TODO-A` / `TODO-A.md` may reach the coarse
+        # letter scan below. Letting a spelled target fall through meant a
+        # MISSING one silently bound to a different file -- `TODO-A-Missing.md`
+        # resolved to `todo/19-x/TODO-A-Actual.md`, because that scan matches on
+        # the letter alone -- so a typo, a rename or a deleted target redirected
+        # every XREF naming it while `check_stale_xref` reported nothing (Codex
+        # adversarial, section 22 round 6, [high]).
+        if exact != f"TODO-{letter_m.group('letter')}":
+            if exact_paths and len(exact_paths) == 1:
+                return exact_paths[0]
+            return None
+        if exact_paths:
+            return exact_paths[0] if len(exact_paths) == 1 else None
         stem_fragment = f"TODO-{letter_m.group('letter')}"
-        for fp in set(path_index["by_filename"].values()):
+        # COLLECT ALL MATCHES, then refuse if more than one. This scanned and
+        # returned the FIRST hit from a `set()` -- so with two files carrying
+        # the same letter stem the answer depended on set iteration order, and
+        # a reference naming one silently bound to the other. It is the same
+        # overwrite class as the flattened indexes, in the one branch that does
+        # not consult them (Codex adversarial, section 22 round 5, [medium]).
+        want_dom = letter_m.group("dom")
+        matches = []
+        for fp in sorted({q for ps in path_index.get("stem_paths", {}).values()
+                           for q in ps} or _all_paths(path_index)):
             tail = fp.rsplit("/", 1)[-1]
-            if tail.startswith(stem_fragment + "-") or tail == stem_fragment + ".md":
-                # Domain match if one was specified.
-                want_dom = letter_m.group("dom")
-                have_dom = fp.split("/")[1][:2] if fp.startswith("todo/") else None
-                if want_dom is None or want_dom == have_dom:
-                    return fp
+            if not (tail.startswith(stem_fragment + "-")
+                    or tail == stem_fragment + ".md"):
+                continue
+            have_dom = fp.split("/")[1][:2] if fp.startswith("todo/") else None
+            if want_dom is None or want_dom == have_dom:
+                matches.append(fp)
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1 and want_dom is None:
+            # SAME-DOMAIN WINS, exactly as bare `TODO-NN` resolves against the
+            # source file's domain in branch 5. Three `TODO-A-*` files exist
+            # across different domains, so an unqualified `TODO-A` was binding
+            # to whichever one `set()` iteration yielded first -- arbitrary, and
+            # silently so. Preferring the source's own domain makes the common
+            # in-domain reference deterministic; anything else stays ambiguous
+            # and surfaces as an unresolved XREF the author must qualify.
+            src_parts = Path(source_file).parts
+            src_dom = src_parts[-2][:2] if len(src_parts) >= 2 else None
+            same = [fp for fp in matches
+                    if fp.startswith("todo/") and fp.split("/")[1][:2] == src_dom]
+            if len(same) == 1:
+                return same[0]
+        # Zero matches, or an ambiguous reference the author must qualify.
         return None
     # 5. Bare TODO-NN (resolved against source_file's domain)
     m = TODO_NN_RE.match(target)
@@ -370,7 +505,7 @@ def resolve_xref_target(target: str, source_file: str, id_index: dict, path_inde
         src_parts = Path(source_file).parts
         if len(src_parts) >= 2:
             src_dom = src_parts[-2][:2]
-            return path_index["by_dn"].get((src_dom, int(m.group("num"))))
+            return _dn_lookup(path_index, (src_dom, int(m.group("num"))))
         return None
     # 5a. TODO-NN-name[.md] (same-domain filename with slug and/or .md).
     # Resolves against source_file's domain since no domain prefix is given.
@@ -379,16 +514,16 @@ def resolve_xref_target(target: str, source_file: str, id_index: dict, path_inde
         src_parts = Path(source_file).parts
         if len(src_parts) >= 2:
             src_dom = src_parts[-2][:2]
-            return path_index["by_dn"].get((src_dom, int(m.group("num"))))
+            return _dn_lookup(path_index, (src_dom, int(m.group("num"))))
         return None
     # 6. Filename stem (TODO-19-foo) -- exact match against any domain
     if target in path_index["by_filename"]:
-        return path_index["by_filename"][target]
+        return _stem_lookup(path_index, target)
     # 7. Filename stem with .md suffix
     if target.endswith(".md"):
         stem = target[:-3]
         if stem in path_index["by_filename"]:
-            return path_index["by_filename"][stem]
+            return _stem_lookup(path_index, stem)
     # 8. Relative-path forms (./TODO-..., ../NN-dom/TODO-..., etc.).
     # Normalize against source_file's directory using filesystem semantics,
     # then match the normalized path against the cache. Works for any depth
@@ -403,7 +538,7 @@ def resolve_xref_target(target: str, source_file: str, id_index: dict, path_inde
             if "todo" in parts:
                 idx = parts.index("todo")
                 rel_path = "/".join(parts[idx:])
-                if rel_path in set(path_index["by_filename"].values()):
+                if rel_path in _all_paths(path_index):
                     return rel_path
                 # INDEX.md relative forms (../07-networking/INDEX.md).
                 # Return the normalized INDEX.md path if it names a live
@@ -428,13 +563,13 @@ def resolve_xref_target(target: str, source_file: str, id_index: dict, path_inde
                     dom_m = re.match(r"^(\d{2})-", dom_dir)
                     num_m = re.match(r"^TODO-(\d{1,2})(?:-|\.md|$)", tail)
                     if dom_m and num_m:
-                        return path_index["by_dn"].get(
+                        return _dn_lookup(path_index, 
                             (dom_m.group(1), int(num_m.group(1)))
                         )
         except (OSError, ValueError):
             pass
     # 9. Already a path-like form (00-domain/TODO-NN-name.md).
-    if target in set(path_index["by_filename"].values()):
+    if target in _all_paths(path_index):
         return target
     # No resolution.
     return None

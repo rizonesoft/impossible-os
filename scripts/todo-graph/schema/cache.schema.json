@@ -125,7 +125,31 @@
               "type": "string"
             },
             "depends_on": {
-              "type": "array"
+              "type": "array",
+              "description": "Dependency GROUPS from the Implementation Order row. Item shape added in TODO-06 section 22, derived from the 2,527 live groups, because this was a bare array whose entries `query.py:357-366` dereferences to build the inbound edge index -- a malformed group was silently skipped there, dropping a dependency edge while `blocked`/`blocking`/`backlinks` still reported success. `cache_schema.SUBTREE_SECTION_DEPS` enforces it for callers that declare it; `PROFILE_SECTIONS` deliberately does not, because `todo-reachability.py` reads only `n`/`status`.",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "target",
+                  "sections"
+                ],
+                "properties": {
+                  "target": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "sections": {
+                    "type": "array",
+                    "items": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 65535,
+                      "description": "Upper bound mirrors cache_schema._MAX_SECTION_N. Without it the published wire contract accepted a value the routed reader REFUSES, so a producer-valid cache could make every query unavailable while satisfying this schema. The bound belongs here rather than being dropped from the reader: it is a CPU budget on per-field validation, not a statement about plausible section numbers."
+                    }
+                  }
+                }
+              }
             },
             "status": {
               "type": "string",
@@ -160,7 +184,28 @@
         }
       },
       "inputs_xrefs": {
-        "type": "array"
+        "type": "array",
+        "description": "Inputs XREFs as build.py emits them. Item shape added in TODO-06 section 22, derived from the 945 live entries, for the same reason as `sections[].depends_on`: it was a bare array and `query.py:340-344` skipped a non-dict entry, dropping an Inputs edge with nothing reporting it. `target_section` is nullable -- an Inputs XREF may name a file rather than a section.",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "target_path",
+            "target_section"
+          ],
+          "properties": {
+            "target_path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "target_section": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        }
       },
       "stamps_xrefs": {
         "type": "array",

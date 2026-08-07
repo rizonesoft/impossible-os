@@ -75,6 +75,23 @@ Operational notes:
 - A cache **copied without its binding is refused**, not accepted -- absence of evidence is a rebuild condition. Rebuild with `bash scripts/todo-graph/build-and-validate.sh --keep-cache`.
 - Both files are derived build artifacts under `build/` and are gitignored.
 
+## Reader Profiles and Fail-Closed Behavior
+
+A reader declares what it CONSUMES via a `cache_schema.Profile`, and is validated for exactly that -- no more (which would advertise an untested contract) and no less (which would be routing in name only). `PROFILE_STAMPED_ITEMS` is the default; `PROFILE_SECTIONS` serves `todo-reachability.py`; `PROFILE_QUERY` serves `query.py` and covers four subtrees (`sections`, `sections.depends_on`, `stamps_xrefs`, and the node-level scalars and edge collections).
+
+**`query.py` fails closed on an unusable cache, through every transport** ([query.py fail-closed through every transport](../../todo/00-infrastructure/TODO-06-todo-metadata-layer.md#22-querypy-fail-closed-through-every-transport)). It previously dropped malformed rows silently, so `stats`, `ready`, `blocked` and `backlinks` could be computed from a SUBSET of the corpus and still look complete -- and a scalar `depends_on` made the unmet-dependency loop iterate zero times, reporting a blocked TODO as **ready**. The exit codes are:
+
+| Code | Meaning |
+|---|---|
+| 0 | A real answer (an empty result set is a legitimate 0). |
+| 1 | A verdict -- the graph itself has findings. |
+| 2 | **Infrastructure: the cache exists and cannot be trusted.** A machine-readable `{"error": "cache-unusable", "reason", "detail"}` body goes to stdout. |
+| 3 | Output-ceiling breach -- a bounded answer, not a refusal. |
+
+- The refusal body is written to **stdout**, not only stderr, because `mcp_server.py` runs `query.main()` in-process with stdout captured; a stderr-only refusal left that buffer empty and the old `buf.getvalue() or "[]"` turned it into an empty result array an agent could not distinguish from "nothing matched".
+- **Freshness is checked for this repo's canonical `build/todo-cache.json`.** A cache supplied with `--cache` pointing elsewhere describes a different corpus by construction, so it is validated for SHAPE (still fail-closed) while freshness is skipped, and the reader says so on stderr. Comparing the RESOLVED path means `--cache build/todo-cache.json` is checked exactly like the default.
+- **After a failed `--watch` rebuild the tick is refused, and the watcher stays alive.** Serving the previous cache would publish a graph predating the edit that broke the build. A rebuild that was never ATTEMPTED (out-of-repo `--cache`, absent `build.py`) is distinct from one that FAILED and does not refuse.
+
 ## Parsing Rules
 
 - **Frontmatter detection.** The opening `---` MUST be the first three bytes (after an optional UTF-8 BOM, which is stripped). The closing `---` MUST be on its own line. CRLF line endings (`\r\n`) are normalized to LF before fence detection so Windows-authored TODOs parse correctly.
