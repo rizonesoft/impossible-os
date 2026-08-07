@@ -695,6 +695,18 @@ def _strip_heredoc_bodies(cmd):
     just text, and treating it as a real heredoc silently swallowed the rest of
     the prompt -- including its closing quote, which made the whole split fail
     and (under the fail-closed fallback) blocked a legitimate mandatory review.
+
+    CONSUMER-AWARE (2026-08-07). "A heredoc body is DATA" is true of `cat`,
+    `tee`, `python3 -` and a dispatch prompt. It is FALSE when the heredoc feeds
+    a SHELL: `bash <<'EOF' ... EOF` executes every line of that body. Stripping
+    it unconditionally left a live bypass -- measured this date, all four of
+    `bash <<'EOF'`, `bash <<EOF`, `sh <<'EOF'` and `bash -s <<'EOF'` carrying a
+    bare `bash scripts/test.sh` passed the build-offload gate, so the suite ran
+    in the main context with nothing reporting it.
+
+    So a shell-consumed body is KEPT and scanned as commands; every other body
+    is stripped as before. The test that matters is what the body is fed TO, not
+    how its delimiter is quoted -- quoting controls EXPANSION, not execution.
     """
     out, pos, i, n = [], 0, 0, len(cmd)
     quote = None
@@ -723,6 +735,15 @@ def _strip_heredoc_bodies(cmd):
             i = m.end()
             continue
         out.append(cmd[pos:nl])          # keep the introducing line
+        # Does this heredoc feed a SHELL? If so its body is COMMANDS and must
+        # be kept for scanning; stripping it is a live bypass. The consumer is
+        # the command that owns this redirect: the last control operator before
+        # the `<<`, first word.
+        _head = cmd[:m.start()]
+        _seg = re.split(r"[;&|]", _head)[-1].strip()
+        _words = [w for w in _seg.split() if "=" not in w.split("<")[0]]
+        _cons = _words[0].rsplit("/", 1)[-1] if _words else ""
+        _shell_fed = _cons in ("bash", "sh", "zsh", "dash", "ksh")
         k = nl + 1
         end = len(cmd)
         while k <= len(cmd):
@@ -734,6 +755,9 @@ def _strip_heredoc_bodies(cmd):
             if j < 0:
                 break
             k = j + 1
+        if _shell_fed:
+            # keep the body: it is executable, and the caller must see it
+            out.append(cmd[nl:end])
         pos = end
         i = end
     out.append(cmd[pos:])

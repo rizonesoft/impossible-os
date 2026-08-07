@@ -853,6 +853,25 @@ _HASH_RE = re.compile(r"\b([0-9a-f]{7,40})\b")
 _RUNLOG_MAX_REFUSALS = 3
 
 
+def _run_started_epoch(root: Path):
+    """Epoch the current run was armed, or None.
+
+    Prefers the arm marker's mtime -- it is written once at arm time and is not
+    rewritten as the run works, so it is a stable lower bound. `started_at` in
+    the run state is a DATE string ("2026-08-07"), too coarse: a run armed at
+    21:47 would still sweep operator commits made at 09:00 the same day.
+    """
+    for rel in (".claude/state/sequencer-run.json",
+                ".claude/state/sequencer-armed"):
+        p = root / rel
+        try:
+            if p.exists():
+                return int(p.stat().st_mtime)
+        except OSError:
+            continue
+    return None
+
+
 def _unlogged_ships(root: Path, limit: int = 40) -> list:
     """SHIP commits that `docs/overnight/run-log.md` never recorded.
 
@@ -880,10 +899,21 @@ def _unlogged_ships(root: Path, limit: int = 40) -> list:
     except OSError:
         return []
     logged = set(_HASH_RE.findall(text))
+    # BOUND THE SCAN TO THIS RUN. Without a lower bound the walk reaches back
+    # into commits the OPERATOR made before the arm and charges them to the run,
+    # which then has to back-fill run-log lines for work it did not do -- and
+    # the cheap way to clear that is to write one line per hash, silently
+    # absorbing operator commits into the run's audit trail. Observed live
+    # 2026-08-06 01:26: a rollover refused over 4 ships, only one of which was
+    # the run's. The gate's purpose is the run's OWN honesty; charging it for
+    # someone else's commits corrupts exactly the record it protects.
+    since = _run_started_epoch(root)
     try:
-        out = subprocess.run(
-            ["git", "log", f"-{limit}", "--format=%H"],
-            cwd=str(root), capture_output=True, text=True, timeout=30)
+        cmd = ["git", "log", f"-{limit}", "--format=%H"]
+        if since:
+            cmd.insert(2, f"--since=@{since}")
+        out = subprocess.run(cmd, cwd=str(root), capture_output=True,
+                             text=True, timeout=30)
         if out.returncode != 0:
             return []
         commits = [c for c in out.stdout.split() if c]

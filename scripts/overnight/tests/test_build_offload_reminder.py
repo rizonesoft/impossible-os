@@ -354,6 +354,8 @@ def _main():
     test_v08_non_executing_option_is_not_an_invocation()
     test_v08_message_prose_is_not_a_command()
     test_v08_wrapped_route_inside_a_loop_is_still_wrapped()
+    test_v10_a_heredoc_fed_to_a_SHELL_is_executable()
+    test_v10_data_heredocs_are_still_not_invocations()
     print("PASS: build_offload_reminder exemption + P3.4 BLOCK + dedup + lint-exempt"
           " + R2 bypass shapes + follow log + v08 argv-attribution")
 
@@ -425,6 +427,40 @@ def test_v08_wrapped_route_inside_a_loop_is_still_wrapped():
         "-- bash scripts/build.sh; fi") is None
     # a BARE suite in a loop is still caught
     assert mod._blocking_match("for i in 1 2; do bash scripts/test.sh; done")
+
+
+
+
+def test_v10_a_heredoc_fed_to_a_SHELL_is_executable():
+    """"A heredoc body is DATA" is true of cat/tee/python3 and FALSE of bash.
+
+    MEASURED 2026-08-07: all four of `bash <<'EOF'`, `bash <<EOF`, `sh <<'EOF'`
+    and `bash -s <<'EOF'` carrying a bare `bash scripts/test.sh` passed this
+    gate, so the suite ran in the main context with nothing reporting it. The
+    stripper dropped every heredoc body unconditionally.
+
+    Quoting the delimiter controls EXPANSION, not EXECUTION -- so the test is
+    what the body is fed TO. A shell-consumed body is kept and scanned; every
+    other body is still stripped, which is what keeps a Codex prompt or a TODO
+    checkpoint line from reading as an invocation.
+    """
+    mod = _load()
+    for cmd in ("bash <<'EOF'\nbash scripts/test.sh\nEOF",
+                "bash <<EOF\nbash scripts/test.sh\nEOF",
+                "sh <<'EOF'\nmake test-mm\nEOF",
+                "bash -s <<'EOF'\nbash scripts/build.sh\nEOF"):
+        assert mod._blocking_match(cmd), f"BYPASS: {cmd!r}"
+
+
+def test_v10_data_heredocs_are_still_not_invocations():
+    """The other half of the same fix: keeping shell bodies must not start
+    treating prose as commands. These are the shapes TODO authoring produces on
+    every section ship."""
+    mod = _load()
+    for cmd in ("python3 - <<'PY'\nx='bash scripts/test.sh'\nPY",
+                "cat > f.txt <<'EOF'\nbash scripts/build.sh\nEOF",
+                "tee f.md <<'EOF'\n**Test checkpoint:** bash scripts/test.sh\nEOF"):
+        assert mod._blocking_match(cmd) is None, f"false positive: {cmd!r}"
 
 
 if __name__ == "__main__":

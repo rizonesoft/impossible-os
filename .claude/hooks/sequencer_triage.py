@@ -48,6 +48,7 @@ Honors --cache PATH (default build/todo-cache.json) and --repo-root.
 import argparse
 import json
 import os
+from pathlib import Path
 import re
 import sys
 
@@ -105,11 +106,34 @@ def load_cache(cache_path, root):
             f"todo-graph cache not found: {path} "
             "(run: bash scripts/todo-graph/build-and-validate.sh --keep-cache)"
         )
-    with open(path, encoding="utf-8") as fh:
-        data = json.load(fh)
-    if not isinstance(data, list):
-        raise ValueError("unexpected cache shape: expected a top-level list")
-    return data
+    # VALIDATE, do not merely parse. A raw `json.load` accepts `[]` and any
+    # half-written array, and an EMPTY cache makes every file classify DONE --
+    # so `--next` answers {"status":"DONE","file":null} and the runner declares
+    # the entire queue finished over work it simply could not see. Reproduced
+    # 2026-08-06 (Codex review of the todo-metadata-layer section 17) and again
+    # 2026-08-07 before this fix. A truncated cache is reachable in ordinary
+    # operation: a concurrent build, a killed rebuild, a full disk.
+    #
+    # `cache_schema.load_and_validate` already rejects `[]` and malformed nodes,
+    # and is what the other readers were routed through. Routing this one too
+    # makes a corrupt cache an ERROR the run stops on, instead of a silent
+    # completion verdict -- the difference between refusing and lying.
+    #
+    # Falls back to the raw parse ONLY if the validator cannot be imported, so a
+    # missing scripts/ tree degrades to previous behaviour rather than wedging.
+    try:
+        sys.path.insert(0, os.path.join(root, "scripts", "todo-graph"))
+        import cache_schema  # noqa: E402
+        nodes, _info = cache_schema.load_and_validate(
+            Path(path), Path(root) / "todo",
+            check_stale=False, profile=cache_schema.PROFILE_SECTIONS)
+        return nodes
+    except ImportError:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+        if not isinstance(data, list):
+            raise ValueError("unexpected cache shape: expected a top-level list")
+        return data
 
 
 def section_stamps(md_path):
@@ -396,7 +420,22 @@ def main(argv=None):
     g.add_argument("--selftest", action="store_true")
     args = ap.parse_args(argv)
     root = repo_root(args.repo_root)
-    cache = load_cache(args.cache, root)
+    try:
+        cache = load_cache(args.cache, root)
+    except Exception as exc:
+        # A cache this reader cannot trust must STOP the run, with a diagnosis.
+        # The failure mode being guarded is not a crash -- it is the opposite: a
+        # corrupt cache used to classify every file DONE, so `--next` answered
+        # "the queue is finished" over work it could not see. Refusing loudly is
+        # the whole point, so the message has to say what to do about it.
+        name = type(exc).__name__
+        sys.stderr.write(
+            f"[sequencer_triage] REFUSING to classify: the todo-graph cache is "
+            f"unusable ({name}: {str(exc)[:200]}).\n"
+            f"  This is NOT 'the queue is done' -- it is 'the queue cannot be "
+            f"read'. Treating it as DONE would silently complete unfinished work.\n"
+            f"  Rebuild: bash scripts/todo-graph/build-and-validate.sh --keep-cache\n")
+        return 2
     if args.next:
         return cmd_next(cache, root)
     if args.blockers:

@@ -206,6 +206,45 @@ def test_a_clean_trail_clears_the_counter():
         assert "runlog_refusals" not in state, state
 
 
+def test_ships_before_the_arm_are_not_charged_to_the_run():
+    """The gate guards the RUN's honesty; charging it for the operator's commits
+    corrupts the record it protects.
+
+    Observed live 2026-08-06 01:26: a rollover refused over 4 unlogged ships,
+    only one of which the run had made. The cheap way to clear that is one
+    run-log line per hash -- which silently absorbs operator work into the run's
+    audit trail. Now bounded by the arm marker's mtime.
+    """
+    mod = _load()
+    with tempfile.TemporaryDirectory() as t:
+        d, g = _repo(t)
+        _ship(d, g, "feat: OPERATOR ship, before the arm", n=1)
+        # arm marker written AFTER the operator's ship
+        st = d / ".claude/state"
+        st.mkdir(parents=True, exist_ok=True)
+        import time
+        time.sleep(1.1)
+        (st / "sequencer-run.json").write_text('{"active": true}')
+        assert mod._run_started_epoch(d), "arm epoch must be readable"
+        # with only the pre-arm ship present, the run owes nothing
+        assert mod._unlogged_ships(d) == [], "pre-arm ship charged to the run"
+        # a ship AFTER the arm is still caught
+        time.sleep(1.1)
+        sha = _ship(d, g, "feat: the run's own ship", n=2)
+        found = mod._unlogged_ships(d)
+        assert len(found) == 1 and sha[:10] in found[0], found
+
+
+def test_a_missing_arm_marker_falls_back_to_unbounded():
+    """No marker -> no lower bound. Losing the bound must not lose the GATE."""
+    mod = _load()
+    with tempfile.TemporaryDirectory() as t:
+        d, g = _repo(t)
+        _ship(d, g)
+        assert mod._run_started_epoch(d) is None
+        assert len(mod._unlogged_ships(d)) == 1
+
+
 if __name__ == "__main__":
     test_an_unlogged_ship_is_reported()
     test_a_logged_ship_is_not_reported()
@@ -216,4 +255,6 @@ if __name__ == "__main__":
     test_the_gate_yields_rather_than_wedging_the_run()
     test_the_refusal_counter_resets_when_a_different_ship_appears()
     test_a_clean_trail_clears_the_counter()
+    test_ships_before_the_arm_are_not_charged_to_the_run()
+    test_a_missing_arm_marker_falls_back_to_unbounded()
     print("PASS: a section ship owes a run-log entry before rollover")

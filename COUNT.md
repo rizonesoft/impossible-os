@@ -35,12 +35,12 @@
 | **Shell scripts** (`.sh`)         |      93 |      68964 |
 | **Batch scripts** (`.bat`)        |      73 |       1048 |
 | **PowerShell** (`.ps1`)           |      11 |       3448 |
-| **Python** (`.py`)                |     247 |      82522 |
+| **Python** (`.py`)                |     247 |      82692 |
 | **JavaScript** (`.js`)            |       1 |        524 |
 | **Include fragments** (`.inc`)    |       7 |       3241 |
 | **Makefile**                      |       4 |       2490 |
 | **Linker scripts** (`.ld`/`.lds`) |       3 |        199 |
-| **Subtotal**                      | **439** | **162436** |
+| **Subtotal**                      | **439** | **162606** |
 
 ## Documentation & Project Metadata
 
@@ -58,9 +58,9 @@
 
 |                                |    Files |       Lines |
 | ------------------------------ | -------: | ----------: |
-| **Core code + tooling**        | **1530** |  **793683** |
+| **Core code + tooling**        | **1530** |  **793853** |
 | **Supporting text + metadata** |  **507** |  **207352** |
-| **All counted text files**     | **2037** | **1001035** |
+| **All counted text files**     | **2037** | **1001205** |
 
 > Vendored code excluded: ~14441 lines (`stb_image.h`, `stb_truetype.h`, `efi.h`)
 >
@@ -77,15 +77,15 @@
 
 |                               |         Linux |     Windows |        Impossible OS |
 | ----------------------------- | ------------: | ----------: | -------------------: |
-| **Core code + tooling lines** |   ~28,000,000 | ~50,000,000 |              793,683 |
+| **Core code + tooling lines** |   ~28,000,000 | ~50,000,000 |              793,853 |
 | **Developers**                | ~1,000 active | ~5,000 peak |                    1 |
 | **Time span**                 |      33 years |    40 years | 5 month(s), 3 day(s) |
 
-> At industry rates (10,000 LOC/developer/year -- COCOMO II), writing 793,683
+> At industry rates (10,000 LOC/developer/year -- COCOMO II), writing 793,853
 > lines of core code and tooling would take **189 developers** working for **5 month(s), 3 day(s)**.
 >
 > *The "impossible" in Impossible OS was supposed to be the name, not the development method.*
 
 ---
 
-*Last updated: 2026-08-07 07:30 · commit `820a1f1c9`*
+*Last updated: 2026-08-07 07:51 · commit `566c5ef31`*
