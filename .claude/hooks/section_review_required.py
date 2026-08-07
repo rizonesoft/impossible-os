@@ -149,9 +149,27 @@ if msg_low.startswith(('review:', 'todo:', 'docs:', 'merge', 'revert', 'fix:')):
 if not diff.strip():
     sys.exit(0)
 
-# Detect [x] flip in the Implementation Order table: added line with
-# "| [x] |", and the same region had "[ ]" or "[/]" before.
-has_x_flip = bool(re.search(r'^\+.*\|\s*\[x\]\s*\|', diff, re.M))
+# Detect [x] flip in the Implementation Order table: an added line carrying
+# "| [x] |" whose row is genuinely NEW -- not the same row re-padded.
+#
+# The second half used to be only a comment. The test was a bare search for an
+# added "| [x] |" line, so ANY diff touching a row that already read [x] fired
+# the gate. A whitespace-only table realignment rewrites every row in the
+# table, [x] rows included, and so demanded a section review for a commit that
+# changed no status at all (measured 2026-08-07 on 9c92ef889, a 56-file column
+# realignment: zero cell-content drift, gate fired anyway).
+#
+# A row that appears on BOTH sides of the diff with the same content modulo
+# inter-cell whitespace is reformatting, not a flip. Compare normalized forms:
+# a real "[ ] -> [x]" flip still differs (the status cell changed), and a
+# brand-new row landing as [x] has no counterpart on the minus side at all.
+def _norm_row(line):
+    return re.sub(r'\s+', ' ', line[1:]).strip()
+
+_added_x = [l for l in diff.splitlines()
+            if l.startswith('+') and re.search(r'\|\s*\[x\]\s*\|', l)]
+_removed = {_norm_row(l) for l in diff.splitlines() if l.startswith('-')}
+has_x_flip = any(_norm_row(l) not in _removed for l in _added_x)
 if not has_x_flip:
     sys.exit(0)
 
