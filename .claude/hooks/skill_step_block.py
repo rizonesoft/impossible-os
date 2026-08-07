@@ -271,6 +271,42 @@ def _missing_terminal_steps(skill: str, observed) -> list:
     return [n for n in required if n not in seen]
 
 
+def _converged_kinds(root: str, entry: dict) -> set:
+    """Review kinds `review_convergence` has already declared CONVERGED for the
+    section this skill entry is working.
+
+    The two gates were individually right and knew nothing about each other:
+    `review_convergence should-redispatch <slice> adversarial` exits 1
+    (CONVERGED -- inputs unchanged since the last verdict, so re-dispatching
+    would burn a full round to re-derive the same answer), while this gate still
+    demanded a step-5 observation for that kind. The only way through was the
+    blanket `SKIP_SKILL_STEP_BLOCK=1`, which suppresses EVERY step check, not
+    just the contradicted one.
+
+    That is the shape that erodes a gate: when the escape hatch is wider than
+    the exception, reaching for it becomes routine and it stops being evidence
+    of anything. A CONVERGED verdict is positive evidence the review HAPPENED --
+    convergence is recorded from a real dispatch's fingerprint -- so it
+    satisfies the step rather than bypassing it.
+    """
+    try:
+        sec = entry.get("section") or entry.get("section_n")
+        todo = entry.get("todo") or entry.get("file") or entry.get("todo_path")
+        if not (sec and todo):
+            return set()
+        import json as _json
+        sp = os.path.join(root, ".claude", "state", "review-convergence.json")
+        with open(sp, encoding="utf-8") as fh:
+            state = _json.load(fh)
+        key = f"{todo}#{sec}"
+        rec = state.get(key)
+        if not isinstance(rec, dict):
+            return set()
+        return {k for k, v in rec.items() if isinstance(v, dict) and v.get("fp")}
+    except Exception:
+        return set()
+
+
 def _log_skip(root: str, reason: str, skill: str, missing: list) -> None:
     p = os.path.join(root, _SKIP_LOG_REL)
     os.makedirs(os.path.dirname(p), exist_ok=True)
@@ -517,6 +553,23 @@ def main() -> int:
 
     observed = entry.get("steps_observed", [])
     missing = _missing_terminal_steps(skill, observed)
+    if missing:
+        # A kind this section has already CONVERGED on satisfies its step: the
+        # convergence record is minted from a real dispatch, so it is evidence
+        # the review happened, not an excuse for skipping it. Without this the
+        # only exit was the blanket SKIP, which suppresses every other check too.
+        conv = _converged_kinds(root, entry)
+        if conv:
+            try:
+                from skill_step_map import SKILL_STEP_MAP
+                sat = set()
+                for step_n, tool, pattern in SKILL_STEP_MAP.get(skill, []):
+                    if pattern.startswith("__REVIEW_KIND__:") and \
+                            pattern.split(":", 1)[1] in conv:
+                        sat.add(step_n)
+                missing = [n for n in missing if n not in sat]
+            except Exception:
+                pass
     if not missing:
         return 0
 
