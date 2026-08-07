@@ -6793,7 +6793,13 @@ want = os.environ["CS_SCHEMA_VERDICT"]
 # for missing `id`/`domain`/`created_at` -- an unrelated reason that would make
 # every verdict here meaningless. Pull the subschema out of the same checked-in
 # file so the oracle is still derived from the contract, not from our code.
-sub = schema["items"]["properties"]["stamped_items"]
+#
+# EVERY SUBTREE THE MODULE VALIDATES, not just the section-17 one. Scoping the
+# oracle to `stamped_items` alone left the section-19 subtrees with no
+# independent check at all, so a Python rule with no schema counterpart (or the
+# reverse) could not be detected -- the drift this oracle exists to catch
+# (Codex consistency, section 19 review, [medium]).
+SUBTREES = ("stamped_items", "sections", "stamps_xrefs")
 try:
     if not doc:
         # No nodes at all: nothing to scope to, so check the ROOT shape. This
@@ -6803,8 +6809,10 @@ try:
         jsonschema.validate(doc, schema)
     else:
         for node in doc:
-            if "stamped_items" in node:
-                jsonschema.validate(node["stamped_items"], sub)
+            for name in SUBTREES:
+                if name in node:
+                    jsonschema.validate(
+                        node[name], schema["items"]["properties"][name])
     got = "accept"
 except jsonschema.ValidationError:
     got = "reject"
@@ -7500,6 +7508,52 @@ rr_case "duplicate section number" \
     '[{"file_path": "todo/01-test/TODO-01-rr.md", "sections": [{"n": 1, "deliverable": "a", "depends_on": [], "status": "x"}, {"n": 1, "deliverable": "b", "depends_on": [], "status": " "}]}]' 2
 rr_case "status outside the producer domain" \
     '[{"file_path": "todo/01-test/TODO-01-rr.md", "sections": [{"n": 1, "deliverable": "a", "depends_on": [], "status": "[x]"}]}]' 2
+# POSITIVE CONTROL. Without it every rc-2 above could be firing for an unrelated
+# reason, and the COVERAGE fixtures below would prove nothing.
+rr_case "a valid cache covering the file's IO row is ACCEPTED" \
+    '[{"file_path": "todo/01-test/TODO-01-rr.md", "sections": [{"n": 1, "deliverable": "a", "depends_on": [], "status": "x"}]}]' 0
+# NODE IDENTITY. A second node naming the same file overwrites the first in
+# every consumer's dict, so a decoy node could replace a file's real statuses.
+rr_case "duplicate node file_path" \
+    '[{"file_path": "todo/01-test/TODO-01-rr.md", "sections": [{"n": 1, "deliverable": "a", "depends_on": [], "status": "x"}]}, {"file_path": "todo/01-test/TODO-01-rr.md", "sections": [{"n": 1, "deliverable": "b", "depends_on": [], "status": " "}]}]' 2
+# CPU BUDGET. Section numbers are hashed as set members and dict keys; unbounded
+# values can be chosen to collide (cache_schema._MAX_SECTION_N).
+rr_case "section number past the ceiling" \
+    '[{"file_path": "todo/01-test/TODO-01-rr.md", "sections": [{"n": 2305843009213693951, "deliverable": "a", "depends_on": [], "status": "x"}]}]' 2
+# COVERAGE. Both shapes are SCHEMA-VALID and both used to resolve to a status of
+# "", which reads as "not done" and silently suppressed the section's findings.
+rr_case "node omits a status for a row the file declares" \
+    '[{"file_path": "todo/01-test/TODO-01-rr.md", "sections": []}]' 2
+rr_case "cache has no node at all for the audited file" \
+    '[{"file_path": "todo/01-test/TODO-99-other.md", "sections": [{"n": 1, "deliverable": "a", "depends_on": [], "status": "x"}]}]' 2
+# NEGATIVE for the coverage rule: a null `n` is LEGAL (an unparseable Section
+# column) and must not be mistaken for a missing row -- the row it would answer
+# for is one `_io_rows` cannot produce either.
+# SENTINEL COLLISION. `file_path` is any non-empty string, so a node named
+# after the tool's own "no cache" marker used to switch the entire audit onto
+# its weak pre-cache fallback with a cache loaded, past every check above.
+rr_case "a node named __missing__ cannot fake an absent cache" \
+    '[{"file_path": "__missing__", "sections": [{"n": 1, "deliverable": "a", "depends_on": [], "status": "x"}]}]' 2
+# ALIAS DECOY. A second SPELLING of a file already in the cache is not a
+# duplicate `file_path`, so node identity cannot see it; refusing non-canonical
+# identities at load is what closes it.
+rr_case "an absolute-path node identity is refused" \
+    "[{\"file_path\": \"$RR_TREE/todo/01-test/TODO-01-rr.md\", \"sections\": [{\"n\": 1, \"deliverable\": \"a\", \"depends_on\": [], \"status\": \" \"}]}, {\"file_path\": \"todo/01-test/TODO-01-rr.md\", \"sections\": [{\"n\": 1, \"deliverable\": \"a\", \"depends_on\": [], \"status\": \"x\"}]}]" 2
+rr_case "a dot-dot node identity is refused" \
+    '[{"file_path": "todo/01-test/../01-test/TODO-01-rr.md", "sections": [{"n": 1, "deliverable": "a", "depends_on": [], "status": " "}]}]' 2
+# THE COLLAPSING SPELLINGS. Each is a DISTINCT file_path string that normalizes
+# onto the canonical key, so no duplicate rule sees a repeat -- the decoy is
+# placed second in every pair, which is the order that overwrites.
+rr_case "a leading ./ node identity is refused" \
+    '[{"file_path": "todo/01-test/TODO-01-rr.md", "sections": [{"n": 1, "deliverable": "a", "depends_on": [], "status": "x"}]}, {"file_path": "./todo/01-test/TODO-01-rr.md", "sections": [{"n": 1, "deliverable": "a", "depends_on": [], "status": " "}]}]' 2
+rr_case "a doubled-separator node identity is refused" \
+    '[{"file_path": "todo/01-test/TODO-01-rr.md", "sections": [{"n": 1, "deliverable": "a", "depends_on": [], "status": "x"}]}, {"file_path": "todo//01-test/TODO-01-rr.md", "sections": [{"n": 1, "deliverable": "a", "depends_on": [], "status": " "}]}]' 2
+rr_case "an embedded ./ node identity is refused" \
+    '[{"file_path": "todo/01-test/./TODO-01-rr.md", "sections": [{"n": 1, "deliverable": "a", "depends_on": [], "status": " "}]}]' 2
+rr_case "a trailing-separator node identity is refused" \
+    '[{"file_path": "todo/01-test/TODO-01-rr.md/", "sections": [{"n": 1, "deliverable": "a", "depends_on": [], "status": " "}]}]' 2
+rr_case "a null section number is dropped, not refused" \
+    '[{"file_path": "todo/01-test/TODO-01-rr.md", "sections": [{"n": 1, "deliverable": "a", "depends_on": [], "status": "x"}, {"n": null, "deliverable": "unparseable row", "depends_on": [], "status": " "}]}]' 0
 
 # NEGATIVE: a MISSING cache is not corruption. The per-file fallback must keep
 # working on a fresh clone, so this stops the routing from being over-eager.
@@ -7604,6 +7658,226 @@ case "$LINT24_BLOCK" in
     OK) t_pass "routed reader: lint Check 24 surfaces a reachability infrastructure refusal" ;;
     MISSING) t_fail "routed reader: lint Check 24 no longer invokes todo-reachability -- the every-commit gate is gone" ;;
     *) t_fail "routed reader: lint Check 24 fails open -- $LINT24_BLOCK" ;;
+esac
+
+# ----------------------------------------------------------------------
+# TRANSACTIONAL LOAD. The rr_case fixtures above each run a FRESH process, so
+# none of them can see the in-process state this asserts: a refusal part-way
+# through the node walk must not leave a usable prefix behind for the next call
+# in the same interpreter to serve (Codex re-adversarial round 3, [medium]).
+# ----------------------------------------------------------------------
+RR_RETRY=$(python3 - "$REPO_ROOT" "$RR_TREE" <<'PY'
+import importlib.util, json, os, sys
+from pathlib import Path
+root, tree = Path(sys.argv[1]), Path(sys.argv[2])
+spec = importlib.util.spec_from_file_location(
+    "tr", root / "scripts" / "todo-reachability.py")
+tr = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(tr)
+# A VALID node first, then one with a non-canonical identity: the valid prefix
+# is exactly what a non-transactional load would publish before refusing.
+(tree / "build" / "todo-cache.json").write_text(json.dumps([
+    {"file_path": "todo/01-test/TODO-01-rr.md",
+     "sections": [{"n": 1, "deliverable": "a", "depends_on": [], "status": "x"}]},
+    {"file_path": "./todo/01-test/TODO-02-rr.md",
+     "sections": [{"n": 1, "deliverable": "b", "depends_on": [], "status": " "}]},
+]))
+problems = []
+for attempt in (1, 2):
+    try:
+        tr._load_cache(str(tree))
+        problems.append(f"attempt {attempt}: the refusal did not raise")
+    except tr.CacheUnusable:
+        pass
+    except Exception as exc:                                  # noqa: BLE001
+        problems.append(f"attempt {attempt}: wrong exception {exc!r}")
+if tr._CACHE:
+    problems.append(f"a refused load published {len(tr._CACHE)} node(s)")
+
+# MISSING -> LOADED, in one process. A cache created by a concurrent build
+# between two calls must not publish nodes and a fingerprint while the audit
+# keeps answering from the weak no-cache fallback; the verdict is pinned at the
+# first settled outcome instead.
+spec2 = importlib.util.spec_from_file_location(
+    "tr2", root / "scripts" / "todo-reachability.py")
+tr2 = importlib.util.module_from_spec(spec2)
+cache_file = tree / "build" / "todo-cache.json"
+saved = cache_file.read_text()
+cache_file.unlink()
+spec2.loader.exec_module(tr2)
+tr2._load_cache(str(tree))
+if not tr2._CACHE_LOADED["missing"]:
+    problems.append("an absent cache did not record the missing verdict")
+cache_file.write_text(json.dumps([
+    {"file_path": "todo/01-test/TODO-01-rr.md",
+     "sections": [{"n": 1, "deliverable": "a", "depends_on": [], "status": "x"}]},
+]))
+tr2._load_cache(str(tree))
+if tr2._CACHE or tr2._CACHE_CORPUS:
+    problems.append("a pinned missing verdict still published cache state")
+if tr2._io_status("todo/01-test/TODO-01-rr.md", str(tree), (1,)) is not None:
+    problems.append("a pinned missing verdict still answered from the cache")
+cache_file.write_text(saved)
+
+# ROOT BINDING. A resolved verdict belongs to the tree it was taken from; the
+# same process auditing a SECOND tree must not be served the first one's nodes,
+# and a pinned "missing" under one root must not make a CORRUPT cache under
+# another read as absent.
+spec3 = importlib.util.spec_from_file_location(
+    "tr3", root / "scripts" / "todo-reachability.py")
+tr3 = importlib.util.module_from_spec(spec3)
+spec3.loader.exec_module(tr3)
+tree_b = tree.parent / "routed-readers-b"
+(tree_b / "build").mkdir(parents=True, exist_ok=True)
+(tree_b / "todo" / "01-test").mkdir(parents=True, exist_ok=True)
+(tree_b / "todo" / "01-test" / "TODO-01-rr.md").write_text(
+    (tree / "todo" / "01-test" / "TODO-01-rr.md").read_text())
+cache_file.write_text(json.dumps([
+    {"file_path": "todo/01-test/TODO-01-rr.md",
+     "sections": [{"n": 1, "deliverable": "a", "depends_on": [], "status": "x"}]},
+]))
+tr3._load_cache(str(tree))
+if tr3._CACHE_LOADED["root"] != str(tree.resolve()):
+    problems.append("a resolved verdict is not bound to its root")
+(tree_b / "build" / "todo-cache.json").write_text("not json")
+try:
+    tr3._load_cache(str(tree_b))
+    problems.append("a corrupt cache under a second root was served from the first")
+except tr3.CacheUnusable:
+    pass
+# ...and the missing-then-corrupt order, which is the one that suppressed the
+# refusal outright.
+spec4 = importlib.util.spec_from_file_location(
+    "tr4", root / "scripts" / "todo-reachability.py")
+tr4 = importlib.util.module_from_spec(spec4)
+spec4.loader.exec_module(tr4)
+(tree_b / "build" / "todo-cache.json").unlink()
+tr4._load_cache(str(tree_b))
+if not tr4._CACHE_LOADED["missing"]:
+    problems.append("root B's absent cache did not record the missing verdict")
+# Root A's cache is CORRUPT. A missing verdict pinned under B must not answer
+# for A -- that is exactly how the required infrastructure refusal disappears.
+cache_file.write_text("not json")
+try:
+    tr4._load_cache(str(tree))
+    problems.append("a pinned missing verdict swallowed another root's corrupt cache")
+except tr4.CacheUnusable:
+    pass
+except Exception as exc:                                      # noqa: BLE001
+    problems.append(f"unexpected {exc!r}")
+cache_file.write_text(saved)
+
+# CWD-VS-ROOT. The body is read relative to the process cwd and the status came
+# from `root`; a raw-spelling fallback let those be two different trees.
+spec5 = importlib.util.spec_from_file_location(
+    "tr5", root / "scripts" / "todo-reachability.py")
+tr5 = importlib.util.module_from_spec(spec5)
+spec5.loader.exec_module(tr5)
+(tree_b / "build" / "todo-cache.json").write_text(json.dumps([
+    {"file_path": "todo/01-test/TODO-01-rr.md",
+     "sections": [{"n": 1, "deliverable": "b", "depends_on": [], "status": " "}]},
+]))
+cwd = os.getcwd()
+os.chdir(tree)
+try:
+    tr5._load_cache(str(tree_b))
+    tr5._io_status("todo/01-test/TODO-01-rr.md", str(tree_b), (1,))
+    problems.append("a body under root A was answered from root B's cache")
+except tr5.CacheUnusable:
+    pass
+except Exception as exc:                                      # noqa: BLE001
+    problems.append(f"unexpected {exc!r}")
+finally:
+    os.chdir(cwd)
+print("OK" if not problems else "; ".join(problems))
+PY
+)
+case "$RR_RETRY" in
+    OK) t_pass "routed reader: a refused cache load publishes nothing and re-refuses on retry" ;;
+    *) t_fail "routed reader: cache load is not transactional -- $RR_RETRY" ;;
+esac
+
+# ----------------------------------------------------------------------
+# SCHEMA <-> PYTHON PARITY FOR THE SECTION-19 SUBTREES, asserted MECHANICALLY
+# rather than by inspection. `stamped_items` had this from section 17 via
+# cs_case; `sections` and `stamps_xrefs` shipped without it, so a rule living in
+# only one of the two places was undetectable -- and one did: the Python walk
+# required `n >= 0` while the published schema permitted any integer, so `n: -1`
+# satisfied the contract and made the consumer refuse (Codex consistency,
+# section 19 review, [medium]).
+#
+# Each row mutates ONE field of a known-good subtree and asserts BOTH oracles
+# reach the same verdict. The documented exception is listed as data, not
+# hidden: `n` uniqueness is a per-node semantic invariant JSON Schema cannot
+# express (no uniqueness-by-property), so it is Python-only BY DESIGN and the
+# fixture asserts exactly that asymmetry rather than ignoring it.
+# ----------------------------------------------------------------------
+CS_PARITY=$(python3 - "$REPO_ROOT" <<'PY'
+import json, sys
+from pathlib import Path
+root = Path(sys.argv[1])
+sys.path.insert(0, str(root / "scripts" / "todo-graph"))
+import cache_schema as cs
+try:
+    import jsonschema
+except ImportError:
+    print("SKIP jsonschema not installed")
+    raise SystemExit(0)
+
+schema = json.loads((root / cs.SCHEMA_REL).read_text())
+GOOD_SECTION = {"n": 1, "deliverable": "a", "depends_on": [], "status": "x"}
+GOOD_XREF = {"kind": "accepted", "severity": "M",
+             "target_path": "todo/01-test/TODO-01.md", "target_section": "2",
+             "item_name": "a thing"}
+
+def mk(subtree, value):
+    node = {"file_path": "todo/01-test/TODO-01.md", subtree: value}
+    return [node]
+
+# (label, subtree, value, profile, python_only)
+CASES = [
+    ("sections good", "sections", [dict(GOOD_SECTION)], cs.PROFILE_SECTIONS, False),
+    ("sections n null", "sections", [dict(GOOD_SECTION, n=None)], cs.PROFILE_SECTIONS, False),
+    ("sections n negative", "sections", [dict(GOOD_SECTION, n=-1)], cs.PROFILE_SECTIONS, False),
+    ("sections n over ceiling", "sections", [dict(GOOD_SECTION, n=cs._MAX_SECTION_N + 1)], cs.PROFILE_SECTIONS, False),
+    ("sections n bool", "sections", [dict(GOOD_SECTION, n=True)], cs.PROFILE_SECTIONS, False),
+    ("sections bad status", "sections", [dict(GOOD_SECTION, status="[x]")], cs.PROFILE_SECTIONS, False),
+    ("sections extra key", "sections", [dict(GOOD_SECTION, wat=1)], cs.PROFILE_SECTIONS, False),
+    ("sections missing deliverable", "sections", [{"n": 1, "depends_on": [], "status": "x"}], cs.PROFILE_SECTIONS, False),
+    ("sections depends_on wrong type", "sections", [dict(GOOD_SECTION, depends_on={})], cs.PROFILE_SECTIONS, False),
+    ("sections duplicate n", "sections", [dict(GOOD_SECTION), dict(GOOD_SECTION, deliverable="b")], cs.PROFILE_SECTIONS, True),
+    ("xrefs good", "stamps_xrefs", [dict(GOOD_XREF)], cs.PROFILE_STAMP_XREFS, False),
+    ("xrefs item_name omitted", "stamps_xrefs", [{k: v for k, v in GOOD_XREF.items() if k != "item_name"}], cs.PROFILE_STAMP_XREFS, False),
+    ("xrefs missing target_path", "stamps_xrefs", [{k: v for k, v in GOOD_XREF.items() if k != "target_path"}], cs.PROFILE_STAMP_XREFS, False),
+    ("xrefs extra key", "stamps_xrefs", [dict(GOOD_XREF, wat=1)], cs.PROFILE_STAMP_XREFS, False),
+    ("xrefs non-object entry", "stamps_xrefs", ["nope"], cs.PROFILE_STAMP_XREFS, False),
+    ("xrefs kind wrong type", "stamps_xrefs", [dict(GOOD_XREF, kind=3)], cs.PROFILE_STAMP_XREFS, False),
+]
+
+bad = []
+for label, subtree, value, profile, python_only in CASES:
+    try:
+        cs.validate_nodes(mk(subtree, value), "fixture", profile)
+        py = "accept"
+    except cs.CacheSchemaError:
+        py = "reject"
+    try:
+        jsonschema.validate(value, schema["items"]["properties"][subtree])
+        js = "accept"
+    except jsonschema.ValidationError:
+        js = "reject"
+    if python_only:
+        if not (py == "reject" and js == "accept"):
+            bad.append(f"{label}: expected a Python-only rule, got py={py} schema={js}")
+    elif py != js:
+        bad.append(f"{label}: python={py} schema={js}")
+print("OK" if not bad else "; ".join(bad))
+PY
+)
+case "$CS_PARITY" in
+    OK) t_pass "shared cache schema: sections + stamps_xrefs agree with the published schema (16 cases)" ;;
+    SKIP*) t_fail "shared cache schema: parity table could not run -- $CS_PARITY" ;;
+    *) t_fail "shared cache schema: schema/Python drift -- $CS_PARITY" ;;
 esac
 
 # ----------------------------------------------------------------------

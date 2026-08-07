@@ -115,7 +115,10 @@
               "type": [
                 "integer",
                 "null"
-              ]
+              ],
+              "minimum": 0,
+              "maximum": 65535,
+              "description": "Section number, null when the row's Section column will not parse. Bounds added in TODO-06 section 19 to match cache_schema._require_int, which enforced them while this schema permitted any integer -- so `n: -1` passed the published contract and made the consumer refuse. The maximum is a CPU budget, not a size claim: consumers hash this as a set member and dict key, and CPython hashes an int as value % (2**61-1), so unbounded values can be chosen to collide and degrade those operations to O(n). NOT EXPRESSIBLE HERE: `n` must also be unique within a node, since consumers key a dict on it and a duplicate silently overwrites. JSON Schema has no per-object-array uniqueness-by-property rule, so that one invariant is deliberately Python-only and is pinned by fixtures instead."
             },
             "deliverable": {
               "type": "string"
@@ -160,7 +163,7 @@
       },
       "stamps_xrefs": {
         "type": "array",
-        "description": "Accepted/Deferred stamp XREFs. Consumed by scripts/overnight/decision-registry.py; item shape added in TODO-06 section 19, which routed that reader through the shared validator and found this was a bare array that accepted any entry. `item_name` is optional: a stamp clause may name a section rather than a named item (73 of 994 live entries omit it).",
+        "description": "Accepted/Deferred stamp XREFs as build.py emits them. Item shape added in TODO-06 section 19, derived from the 994 live entries, because this was a bare array that accepted any entry. NO READER IS ROUTED THROUGH IT YET: the intended consumer, scripts/overnight/decision-registry.py, is control plane that an unattended run may not edit, and it currently reads target/target_file/text/raw rather than the fields emitted here -- a filed defect (overnight-runner-improvements-v10), not a contract this schema describes. `item_name` is optional: a stamp clause may name a section rather than a named item (73 of 994 live entries omit it).",
         "items": {
           "type": "object",
           "additionalProperties": false,
@@ -203,7 +206,9 @@
           "properties": {
             "section_n": {
               "type": "integer",
-              "minimum": 1
+              "minimum": 1,
+              "maximum": 65535,
+              "description": "Ceiling added in TODO-06 section 19, same CPU budget as sections[].n: both readers use this value as a dict key."
             },
             "item_idx": {
               "type": "integer",

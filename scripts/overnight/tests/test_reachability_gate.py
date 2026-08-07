@@ -40,23 +40,37 @@ def test_detector_signals_findings_with_exit_1():
 
 def test_detector_is_clean_on_a_reachable_fixture():
     """No false positives on a well-formed file, or the gate blocks completion
-    of a repo that is genuinely done."""
+    of a repo that is genuinely done.
+
+    Uses a REAL corpus file rather than a synthetic one. As of 2026-08-07 the
+    detector refuses any file it cannot identify in the audited tree's cache --
+    out-of-tree is [IDENTITY], present-but-unindexed is [COVERAGE] -- because
+    answering from a cache that does not describe the file produces a verdict
+    that looks authoritative and is not. That is correct and it is also why a
+    tempdir fixture can no longer be audited: it is in no cache. The trade is
+    deliberate; this test follows it instead of working around it.
+    """
+    target = REPO / "todo/00-infrastructure/TODO-01-developer-tooling-stack.md"
+    assert target.is_file(), f"corpus file vanished: {target}"
+    r = subprocess.run([sys.executable, str(REACH), str(target)],
+                       capture_output=True, text=True, timeout=120)
+    assert r.returncode == 0, (
+        f"false positive on a known-clean corpus file:\n{r.stdout[:600]}")
+
+
+def test_out_of_tree_file_is_refused_not_silently_answered():
+    """A file outside the audited root must be an INFRASTRUCTURE error (rc 2),
+    never a clean verdict. A cache describes one tree; applying it to a file
+    from another tree produces an answer that looks authoritative and is not."""
     with tempfile.TemporaryDirectory() as td:
         d = pathlib.Path(td) / "todo" / "00-infrastructure"
         d.mkdir(parents=True)
-        f = d / "TODO-99-clean.md"
-        f.write_text(
-            "# Clean\n\n## Implementation Order\n\n"
-            "| 💎 | 1 | Shipped thing | -- | [x] |\n"
-            "| 💎 | 2 | Still open    | -- | [ ] |\n\n"
-            "## 1. Shipped thing\n\n- [x] done\n"
-            "> **Verified:** 2026-01-01 | commit `x`\n"
-            "> **Quality reviewed:** 2026-01-01 | Codex\n\n"
-            "## 2. Still open\n\n- [ ] genuinely open work, in an open section\n")
+        f = d / "TODO-99-elsewhere.md"
+        f.write_text("# X\n\n## 1. S\n\n- [ ] open\n")
         r = subprocess.run([sys.executable, str(REACH), str(f)],
                            capture_output=True, text=True, timeout=120)
-        assert r.returncode == 0, (
-            f"false positive on a reachable fixture:\n{r.stdout}")
+        assert r.returncode == 2, (r.returncode, r.stdout[:300])
+        assert "IDENTITY" in r.stdout or "IDENTITY" in r.stderr, r.stdout[:300]
 
 
 def test_gate_is_wired_into_fixpoint_and_fails_open():
@@ -103,5 +117,6 @@ if __name__ == "__main__":
     test_detector_signals_findings_with_exit_1()
     test_detector_is_clean_on_a_reachable_fixture()
     test_gate_is_wired_into_fixpoint_and_fails_open()
+    test_out_of_tree_file_is_refused_not_silently_answered()
     test_standing_marker_exempts_a_recurring_task()
     print("PASS: reachability gate + standing-marker exemption")

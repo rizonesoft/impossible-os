@@ -43,7 +43,7 @@ import os
 import re
 import subprocess
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "scripts" / "todo-graph"))
@@ -74,11 +74,20 @@ except ImportError as _exc:                                  # pragma: no cover
 EXIT_INFRA = 2
 _CACHE_FALLBACK_REASONS = frozenset((_cs.REASON_MISSING,))
 
+# One reason tag this tool raises itself rather than receiving from the shared
+# validator: the cache is schema-VALID but cannot answer for a file being
+# audited. See `_io_status`. It is deliberately a reason of the same shape, so
+# every refusal reads the same way in the lint's error line.
+REASON_COVERAGE = "COVERAGE"
+# ...and one for a node whose identity is not a canonical repo-relative path.
+REASON_IDENTITY = "IDENTITY"
+
 
 class CacheUnusable(RuntimeError):
-    """A cache exists but cannot be trusted. Carries the shared reason tag so
-    the message names WHICH rule refused, and is caught in `main` and mapped to
-    `EXIT_INFRA` -- never to the findings code."""
+    """A cache exists but cannot be trusted. Carries a reason tag -- the shared
+    validator's, or this module's `REASON_COVERAGE` -- so the message names
+    WHICH rule refused, and is caught in `main` and mapped to `EXIT_INFRA` --
+    never to the findings code."""
 
     def __init__(self, reason: str, message: str):
         super().__init__(message)
@@ -167,6 +176,64 @@ _CACHE = {}
 # can re-verify the corpus AFTER the audit walk. Empty when no cache was
 # loaded (missing-cache fallback), in which case there is nothing to bind.
 _CACHE_CORPUS = {}
+# CACHE ABSENCE IS OUT-OF-BAND STATE, not a key inside `_CACHE`. It was
+# `_CACHE["__missing__"] = True`, which put a control signal in the same
+# namespace as CACHE-CONTROLLED data: `file_path` is any non-empty string, so a
+# node literally named `__missing__` made every lookup report "no cache" and
+# sent the whole audit down the weak pre-cache fallback -- with a cache loaded,
+# and past every coverage check (Codex re-adversarial, section 19 review,
+# [high]). A separate flag cannot be spelled by an input.
+#
+# `resolved` PINS THE VERDICT FOR THE WHOLE RUN, and it is the other half of
+# that fix. With only `missing`, a first call that found no cache left `_CACHE`
+# empty -- so the `if _CACHE` early return did not fire, a later in-process call
+# RETRIED the load, and a cache created in between (a concurrent build) was
+# published together with its fingerprint while `missing` stayed True. Every
+# lookup then took the weak pre-cache fallback against a cache that had loaded
+# fine, and the post-walk corpus check attested to a generation nothing was
+# reading (Codex re-adversarial round 4, section 19 review, [high]). Both fields
+# are written together, only at a settled outcome, and an audit that begins
+# without a cache finishes without one rather than straddling two generations.
+#
+# `root` BINDS THE VERDICT TO THE TREE IT WAS TAKEN FROM. `resolved` alone was
+# process-global, so an in-process call sequence over two trees -- `audit(p,
+# root=A)` and then `_load_cache(".")` -- silently served A's statuses for
+# bodies read under `.`, and the post-walk fingerprint attested to A's corpus.
+# The missing variant was worse: a missing verdict under A made a CORRUPT cache
+# under `.` read as absent, suppressing the infrastructure refusal entirely
+# (Codex re-adversarial round 5, section 19 review, [high]). A different root is
+# a different corpus, never a cache hit, so it resets and reloads.
+_CACHE_LOADED = {"missing": False, "resolved": False, "root": None}
+
+
+def _reset_cache_state():
+    """Drop every cached generation. `main` calls this on entry so two runs in
+    one interpreter are independent rather than the second inheriting the
+    first's pinned verdict."""
+    _CACHE.clear()
+    _CACHE_CORPUS.clear()
+    _CACHE_LOADED.update(missing=False, resolved=False, root=None)
+
+
+def _canonical_root(root):
+    """The ONE resolved root everything in a run is anchored to.
+
+    Resolved STRICTLY, and a failure is an infrastructure refusal rather than a
+    fallback to the caller's spelling. `str(root)` was the fallback, which made
+    a relative root such as `"."` the same key in every working directory --
+    physical-tree identity silently gone -- and, because only the KEY was
+    canonicalized while `cache_path` and `todo_root` kept using the unresolved
+    root, a symlink retargeted in between could file one tree's cache and
+    fingerprint under another tree's key (Codex re-adversarial round 6, section
+    19 review, [medium]). Every filesystem path in the run is derived from this
+    value now, so the key and the reads cannot describe different trees.
+    """
+    try:
+        return Path(root).resolve(strict=True)
+    except OSError as exc:
+        raise CacheUnusable(
+            REASON_IDENTITY,
+            f"cannot resolve the audit root {root!r}: {exc}") from exc
 
 
 def _load_cache(root):
@@ -178,51 +245,178 @@ def _load_cache(root):
     `sections[].status` is the Implementation Order marker the classifier reads
     -- so one JSON load replaces the whole fan-out.
     """
-    if _CACHE:
-        return _CACHE
-    cache_path = Path(root) / "build" / "todo-cache.json"
+    root_path = _canonical_root(root)
+    canonical = str(root_path)
+    if _CACHE_LOADED["resolved"]:
+        if _CACHE_LOADED["root"] == canonical:
+            return _CACHE
+        # A DIFFERENT TREE IS NEVER A CACHE HIT. Serving the previous root's
+        # nodes here is what let one corpus' statuses be applied to another's
+        # bodies; dropping the state and reloading is the only answer that
+        # cannot mix generations.
+        _reset_cache_state()
+    cache_path = root_path / "build" / "todo-cache.json"
     # ROUTED THROUGH THE SHARED CACHE-SCHEMA VALIDATOR, under the profile that
     # declares what this reader actually consumes: `sections[].n/.status`. The
     # default stamped-items profile would REFUSE a cache in which nothing has
     # shipped yet, which is a perfectly usable cache for a reachability audit.
     try:
         data, info = _cs.load_and_validate(
-            cache_path, Path(root) / "todo", profile=_cs.PROFILE_SECTIONS)
-        # RETAINED FOR POST-WALK RE-VERIFICATION, not decoration. The loader's
-        # freshness scan bounds only the milliseconds inside itself; this tool
-        # then reads every TODO body and stamp in the corpus, which is the
-        # window that actually matters. A TODO edited during that walk would
-        # pair OLD cached section statuses with NEW body items and either
-        # suppress or fabricate a finding, at a normal exit code. `main` calls
-        # `check_corpus_unchanged` with this fingerprint before publishing.
-        _CACHE_CORPUS["corpus"] = info.corpus
-        _CACHE_CORPUS["todo_root"] = Path(root) / "todo"
+            cache_path, root_path / "todo", profile=_cs.PROFILE_SECTIONS)
     except _cs.CacheSchemaError as exc:
         if exc.reason in _CACHE_FALLBACK_REASONS:
-            _CACHE["__missing__"] = True
+            _CACHE_LOADED.update(missing=True, resolved=True,
+                                 root=canonical)
             return _CACHE
         # NOT a silent degrade. See EXIT_INFRA above: the cache exists and
         # cannot be trusted, so the audit refuses rather than quietly answering
         # from a different source.
         raise CacheUnusable(exc.reason, str(exc)) from exc
+    built = {}
     for node in data:
         # `file_path` and the `sections[]` shape are now guaranteed by the
         # validator, so the defensive `if not fp` / `isinstance(sec, dict)`
         # skips this walk used to need are gone: skipping is exactly the silent
         # narrowing the routing exists to end.
-        _CACHE[node["file_path"]] = {
+        # `n` MAY BE NULL and that is legal: the schema declares it nullable and
+        # `build.py` emits null when a row's Section column will not parse. Such
+        # a row is dropped rather than kept under a `None` key, because the
+        # lookup side is `_io_rows`, which only ever yields parsed INTEGER
+        # section numbers -- a `None` key could never be hit, and keeping it
+        # would put an entry in the map that no reader can reach. (Rejecting
+        # null outright was the reviewer's suggestion and is NOT taken: it would
+        # turn an unparseable IO row -- an ordinary lint finding -- into an
+        # infrastructure refusal of the whole audit.)
+        # NODE IDENTITY IS A CANONICAL REPO-RELATIVE POSIX PATH, and anything
+        # else is refused rather than stored. `build.py` emits exactly that
+        # spelling, so an absolute path or one containing a `..` segment cannot
+        # come from the producer -- but the shared validator only requires a
+        # non-empty string, and a second spelling of the SAME file is not a
+        # duplicate `file_path`, so it evades the node-identity rule. Stored, it
+        # becomes an alias that `_lookup` could prefer over the real node,
+        # letting a decoy status map suppress or fabricate findings (Codex
+        # re-adversarial, section 19 review, [medium]).
+        fp = node["file_path"]
+        # THE SPELLING MUST ALREADY BE CANONICAL -- normalising it here is what
+        # made the first version of this rule an alias FACTORY rather than a
+        # guard: `./todo/x.md`, `todo//x.md`, `todo/./x.md` and `todo/x.md/` are
+        # four distinct `file_path` strings (so neither the shared validator's
+        # duplicate rule nor this one sees a repeat) that `as_posix()` collapses
+        # onto ONE key, letting a decoy node overwrite the real one on insert
+        # (Codex re-adversarial round 3, section 19 review, [high]).
+        if (fp != PurePosixPath(fp).as_posix()
+                or PurePosixPath(fp).is_absolute()
+                or ".." in PurePosixPath(fp).parts
+                or Path(fp).is_absolute()):
+            raise CacheUnusable(
+                REASON_IDENTITY,
+                f"cache node file_path {fp!r} is not a canonical repo-relative "
+                f"path; a second spelling of a file already in the cache is an "
+                f"alias the node-identity rule cannot see")
+        if fp in built:
+            raise CacheUnusable(
+                REASON_IDENTITY,
+                f"two cache nodes resolve to the identity {fp!r}; the second "
+                f"would silently replace the first")
+        built[fp] = {
             sec["n"]: (sec["status"] or "").strip()
-            for sec in node["sections"]
+            for sec in node["sections"] if sec["n"] is not None
         }
+    # PUBLISH ATOMICALLY. `_CACHE` used to be filled node by node, so a refusal
+    # part-way through left a VALID PREFIX in the global -- and the `if _CACHE`
+    # early return at the top then served that prefix to every later call in the
+    # same process without re-validating or re-raising, deriving a clean verdict
+    # from a cache already declared unusable (Codex re-adversarial round 3,
+    # section 19 review, [medium]). Nothing is visible until every node passed.
+    _CACHE.update(built)
+    # RETAINED FOR POST-WALK RE-VERIFICATION, not decoration. The loader's
+    # freshness scan bounds only the milliseconds inside itself; this tool then
+    # reads every TODO body and stamp in the corpus, which is the window that
+    # actually matters. A TODO edited during that walk would pair OLD cached
+    # section statuses with NEW body items and either suppress or fabricate a
+    # finding, at a normal exit code. `main` calls `check_corpus_unchanged` with
+    # this fingerprint before publishing. Assigned HERE, with the cache, so a
+    # refusal cannot leave a fingerprint bound to nodes nobody accepted.
+    _CACHE_CORPUS["corpus"] = info.corpus
+    _CACHE_CORPUS["todo_root"] = root_path / "todo"
+    _CACHE_LOADED.update(missing=False, resolved=True, root=canonical)
     return _CACHE
 
 
-def _io_status(path, root):
-    """{section: IO-table status} from the cache, or None when unavailable."""
+def _lookup(cache, path, root):
+    """The cache node for `path`, matched on the spelling the PRODUCER used.
+
+    `build.py` keys nodes on repo-relative POSIX paths (`todo/01-x/TODO-01.md`),
+    so a caller passing an ABSOLUTE path -- which is exactly how an ad-hoc run
+    and the test fixtures invoke this tool -- missed every node and fell through
+    to the weak pre-cache rule without saying so. That silent miss is what made
+    the coverage refusal below look like a false positive when it was added; the
+    honest repair is to match the key rather than to refuse a usable cache
+    (found by this section's own positive-control fixture).
+    """
+    # THE CANONICAL KEY IS THE ONLY KEY. Trying the caller's raw spelling as a
+    # fallback looked harmless -- it was the ordering fix for an alias decoy --
+    # but it defeated the root binding outright: with the process cwd in tree A,
+    # `audit("todo/x.md", root=B)` resolves the BODY against the cwd (tree A)
+    # while the raw string `todo/x.md` matches tree B's cache node, so B's
+    # statuses were applied to A's body and B's fingerprint could not detect it
+    # (Codex re-adversarial round 6, section 19 review, [high]). A target that
+    # does not live under the audited root has no answer in this cache, and
+    # saying so is the only honest result.
+    base = Path(_CACHE_LOADED["root"]) if _CACHE_LOADED["root"] \
+        else _canonical_root(root)
+    try:
+        key = Path(path).resolve().relative_to(base).as_posix()
+    except (OSError, ValueError) as exc:
+        raise CacheUnusable(
+            REASON_IDENTITY,
+            f"{path} does not live under the audited root {base}; its status "
+            f"cannot come from that tree's cache ({exc})") from exc
+    return cache.get(key)
+
+
+def _io_status(path, root, rows=()):
+    """{section: IO-table status} from the cache, or None when NO cache exists.
+
+    A LOADED CACHE THAT CANNOT ANSWER FOR THIS FILE IS AN INFRASTRUCTURE
+    REFUSAL, not a quiet downgrade. Two shapes reach that, and both used to
+    resolve to a status of `""`, which `_is_done` reads as "not done" -- so the
+    `open-in-done` / `open-in-deferred` findings for those sections were simply
+    never raised, and the audit reported success (Codex adversarial, section 19
+    review, [high]):
+
+      * the file has Implementation Order rows but NO node in the cache, so the
+        weak pre-cache fallback (`stamped and quality`) silently replaced the
+        real oracle rule -- the same approximation this module's `_is_done`
+        docstring records as having given a wrong answer twice;
+      * the node exists but omits a row the file itself declares, so that one
+        section drops out of the comparison.
+
+    Measured across the live corpus before this check was added: zero
+    occurrences of either. `todo/TODO-00-INDEX.md` has no node AND no rows, so
+    it is not one -- it is a file with nothing to audit.
+    """
     cache = _load_cache(root)
-    if cache.get("__missing__"):
+    if _CACHE_LOADED["missing"]:
         return None
-    return cache.get(str(path))
+    status_map = _lookup(cache, path, root)
+    if status_map is None:
+        if rows:
+            raise CacheUnusable(
+                REASON_COVERAGE,
+                f"the cache has no node for {path}, which declares "
+                f"{len(rows)} Implementation Order row(s); falling back to the "
+                f"pre-cache rule would answer from a different source than this "
+                f"audit documents")
+        return None
+    gap = sorted(n for n in rows if n not in status_map)
+    if gap:
+        raise CacheUnusable(
+            REASON_COVERAGE,
+            f"the cache node for {path} is missing a status for Implementation "
+            f"Order row(s) {gap[:5]}; an absent status reads as 'not done' and "
+            f"silently suppresses this section's findings")
+    return status_map
 
 
 def _is_done(status, verified, quality, deferred, awaiting):
@@ -252,7 +446,7 @@ def audit(path, root="."):
     except OSError:
         return []
     rows = _io_rows(lines)
-    status_map = _io_status(path, root)
+    status_map = _io_status(path, root, rows)
     out = []
     for num, ln, body in _sections(lines):
         opens = [b.strip()[:90] for b in body if OPEN_ITEM_RE.match(b)]
@@ -316,6 +510,12 @@ def _targets(argv):
 def main(argv) -> int:
     as_json = "--json" in argv
     findings = {}
+    # ONE RUN, ONE GENERATION. A second `main()` in the same interpreter must
+    # re-derive everything rather than inherit the first run's pinned verdict --
+    # including a pinned "no cache", which would otherwise make a cache built
+    # between the two runs invisible to the second (Codex re-adversarial round
+    # 5, section 19 review, [high]).
+    _reset_cache_state()
     try:
         # PRIME THE CACHE BEFORE ANY TODO BODY IS READ. `audit()` reads its
         # file and only THEN calls `_io_status`, which is what initialises the

@@ -97,6 +97,23 @@ SCHEMA_REL = "scripts/todo-graph/schema/cache.schema.json"
 # because this is the whole corpus in one document rather than one source file.
 _MAX_CACHE_BYTES = 64 * 1024 * 1024
 
+# Section-number ceiling. THIS IS A CPU BUDGET, not tidiness, and it is the
+# companion the byte ceiling above was missing: the byte ceiling bounds memory
+# while leaving CPU unbounded. Consumers put these integers into a `set` (the
+# uniqueness rule below) and into `dict` keys, and CPython hashes an int as
+# `value % (2**61 - 1)` -- so values separated by that modulus COLLIDE, and a
+# schema-valid cache full of colliding numbers degrades those O(1) operations
+# to O(n). Measured by Codex perf review, section 19: doubling from 4,000 to
+# 8,000 colliding sections took validation from 0.143s to 0.588s from a 611 KB
+# input, which scales into the every-commit lint's 600s timeout well inside the
+# 64 MiB budget. Bounding the VALUE closes it outright -- every number below the
+# modulus hashes to itself, so collisions cannot be engineered -- and it bounds
+# the COUNT as a side effect, because duplicates are refused on first repeat.
+#
+# 65535 against a live maximum of 62 (TODO-04) and a documented 60-section hard
+# cap in CLAUDE.md: ~1000x headroom, so no real corpus can reach it.
+_MAX_SECTION_N = 65535
+
 
 # ---------------------------------------------------------------------------
 # CALLER PROFILES (TODO-06 section 19).
@@ -132,6 +149,21 @@ _MAX_CACHE_BYTES = 64 * 1024 * 1024
 # consumes it, and `sections[].depends_on` keeps its bare-array shape for the
 # same reason (its consumer, `validate.py`, is section 23). Adding either would
 # re-commit the exact overreach the header forbids.
+#
+# ONE PROFILE IS DEFINED WITHOUT A ROUTED CONSUMER, and saying so is the point.
+# `PROFILE_STAMP_XREFS` is NOT wired to anything: its intended consumer,
+# `scripts/overnight/decision-registry.py`, lives under `scripts/overnight/**`,
+# which an unattended run may not edit, so section 19 filed the routing instead
+# of doing it. An earlier revision of this block named that file as the
+# consumer in the present tense, which was false in two ways at once -- the
+# reader is not routed here, and it dereferences `target`/`target_file`/`text`/
+# `raw` (decision-registry.py:76-77) while the producer emits `target_path`/
+# `target_section`/`item_name`, which is a filed defect in its own right
+# (overnight-runner-improvements-v10). The SHAPE below is still derived from
+# the producer's live output rather than guessed -- all 994 entries in the live
+# cache satisfy it, and the fixtures pin it -- but until the control-plane
+# routing lands, the profile is available and unused. Codex consistency,
+# section 19 review, [high].
 # ---------------------------------------------------------------------------
 
 SUBTREE_STAMPED_ITEMS = "stamped_items"
@@ -181,7 +213,9 @@ PROFILE_STAMPED_ITEMS = Profile(
 # with no shipped items anywhere is perfectly usable to it.
 PROFILE_SECTIONS = Profile("sections", (SUBTREE_SECTIONS,))
 
-# `decision-registry.py`: reads the Accepted/Deferred stamp XREFs.
+# The Accepted/Deferred stamp XREFs. DEFINED, TESTED, AND NOT YET WIRED TO ANY
+# READER -- see the block above; `decision-registry.py` is control plane and its
+# routing is filed, not done.
 PROFILE_STAMP_XREFS = Profile("stamp-xrefs", (SUBTREE_STAMPS_XREFS,))
 
 
@@ -229,10 +263,13 @@ def _err(reason: str, message: str):
     raise CacheSchemaError(reason, message)
 
 
-def _require_int(value, lo: int, where: str, field: str, path):
+def _require_int(value, lo: int, where: str, field: str, path, hi: int = None):
     """Schema says integer with a minimum. `bool` is an `int` in Python and is
     NOT an integer here -- rejected explicitly rather than silently accepted as
     0/1, which would let `section_n: true` become a dict key downstream.
+
+    `hi` is the CPU budget described at `_MAX_SECTION_N`, applied to every field
+    a consumer uses as a set member or dict key.
     """
     if isinstance(value, bool) or not isinstance(value, int):
         _err(REASON_SHAPE,
@@ -242,6 +279,11 @@ def _require_int(value, lo: int, where: str, field: str, path):
         _err(REASON_SHAPE,
              f"{where} `{field}` is {value}, expected >= {lo} "
              f"(per {SCHEMA_REL}): {path}")
+    if hi is not None and value > hi:
+        _err(REASON_SHAPE,
+             f"{where} `{field}` is {value}, past the {hi} ceiling -- consumers "
+             f"hash it as a set member or dict key, and unbounded values can be "
+             f"chosen to collide (per {SCHEMA_REL}): {path}")
 
 
 def _require_str(value, where: str, field: str, path, min_len: int = 0):
@@ -319,7 +361,7 @@ def _validate_sections(node, i: int, path):
         # section's real status and suppress an `open-in-done` finding while the
         # audit reports success (Codex adversarial, section 19, [medium]).
         if s["n"] is not None:
-            _require_int(s["n"], 0, where, "n", path)
+            _require_int(s["n"], 0, where, "n", path, hi=_MAX_SECTION_N)
             if s["n"] in seen_n:
                 _err(REASON_SHAPE,
                      f"{where} repeats section number {s['n']} already seen in "
@@ -347,13 +389,15 @@ def _validate_sections(node, i: int, path):
 
 
 def _validate_stamps_xrefs(node, i: int, path):
-    """`stamps_xrefs[]` -- Accepted/Deferred stamp XREFs. Consumed by
-    `decision-registry.py`, which reads `kind`, `target_path`, `target_section`
-    and the optional `item_name`.
+    """`stamps_xrefs[]` -- Accepted/Deferred stamp XREFs, as the PRODUCER emits
+    them: `kind`, `severity`, `target_path`, `target_section` and the optional
+    `item_name`.
 
-    The schema carried this as a bare `{"type": "array"}` with no item shape, so
-    a malformed entry passed both the schema and every reader. Constrained here
-    and in the schema together (section 19).
+    NO READER IS ROUTED THROUGH THIS YET (see the profiles block above). The
+    schema carried this as a bare `{"type": "array"}` with no item shape, so a
+    malformed entry passed both the schema and every reader; the shape is
+    constrained here and in the schema together (section 19), derived from the
+    994 live entries, and waits for the control-plane routing that will use it.
     """
     if SUBTREE_STAMPS_XREFS not in node:
         _err(REASON_SHAPE,
@@ -441,7 +485,8 @@ def _validate_stamped_items(node, i: int, path):
         # is unhashable and raises TypeError from inside the walk -- which
         # escaped as the tool's documented "a prior verdict changed" code
         # (Codex consistency, section 16).
-        _require_int(it["section_n"], 1, where, "section_n", path)
+        _require_int(it["section_n"], 1, where, "section_n", path,
+                     hi=_MAX_SECTION_N)
         _require_int(it["item_idx"], 0, where, "item_idx", path)
         _require_str(it["item_text"], where, "item_text", path)
 
@@ -512,6 +557,7 @@ def validate_nodes(nodes, path, profile: Profile = PROFILE_STAMPED_ITEMS) -> Cac
 
     population = 0
     key_present = False
+    seen_file_path = {}
 
     for i, node in enumerate(nodes):
         if not isinstance(node, dict):
@@ -531,6 +577,25 @@ def validate_nodes(nodes, path, profile: Profile = PROFILE_STAMPED_ITEMS) -> Cac
                  f"cache node {i} is missing required `file_path` "
                  f"(per {SCHEMA_REL}): {path}")
         _require_str(node["file_path"], f"cache node {i}", "file_path", path, 1)
+
+        # `file_path` IS THE NODE'S IDENTITY, and identity must be unique for
+        # the same reason `sections[].n` must be: every routed reader keys a
+        # dict on it (`_CACHE[node["file_path"]]` in todo-reachability, the
+        # occurrence key in both stamped-items walks), so a second node naming
+        # the same file SILENTLY REPLACES the first. A schema-valid cache can
+        # then hide a file's real section statuses behind a decoy node and
+        # suppress a finding while the audit reports success -- the same
+        # overwrite class the per-node `n` rule already refuses, one level up
+        # (Codex adversarial, section 19 review, [high]). Zero duplicates exist
+        # across the 232 live nodes, so this refuses nothing a real producer
+        # emits.
+        if node["file_path"] in seen_file_path:
+            _err(REASON_SHAPE,
+                 f"cache node {i} repeats file_path {node['file_path']!r} "
+                 f"already used by node {seen_file_path[node['file_path']]}; "
+                 f"consumers key a dict on it, so a duplicate silently "
+                 f"overwrites: {path}")
+        seen_file_path[node["file_path"]] = i
 
         # PER-SUBTREE DISPATCH. A caller is validated for exactly what it
         # declared it consumes -- no more (that would advertise an untested
@@ -775,25 +840,34 @@ def _load_and_validate(cache_path: Path, todo_root: Path,
             # a fresh stat of the name.
             info.corpus = check_freshness(cache_path, todo_root,
                                           cache_mtime=st_before.st_mtime)
-            # ...and prove the file did not change underneath the operation. A
-            # rewrite means the parsed nodes may already describe a tree that
-            # no longer exists, so the honest answer is an infrastructure
-            # refusal rather than a verdict computed from mixed generations.
-            try:
-                st_after = os.fstat(fh.fileno())
-                st_path = os.stat(cache_path)
-            except OSError as exc:
-                _err(REASON_STALE,
-                     f"cache became unreadable during validation: "
-                     f"{cache_path}: {exc}")
-            if (st_after.st_mtime_ns != st_before.st_mtime_ns
-                    or st_after.st_size != st_before.st_size
-                    or (st_path.st_dev, st_path.st_ino)
-                    != (st_before.st_dev, st_before.st_ino)):
-                _err(REASON_STALE,
-                     f"cache was rewritten while it was being validated (a "
-                     f"concurrent build-and-validate.sh?); re-run rather than "
-                     f"trust a verdict from mixed generations: {cache_path}")
+        # THE GENERATION BINDING IS NOT PART OF THE FRESHNESS POLICY, and it
+        # used to sit inside the `if check_stale` block above. That coupled two
+        # independent protections behind one flag: `check_stale=False` means "I
+        # do not care whether a TODO is newer than the cache" (a policy about
+        # the CORPUS), but it was ALSO silently disabling "prove the file I
+        # parsed is still the file on disk" (a fact about THIS read). So the
+        # only caller that opts out -- check_consumer_delegation, which cannot
+        # take the corpus check because its fixtures run in a scratch tree with
+        # no todo/ -- lost rewrite detection it never asked to give up, and a
+        # concurrent build.py rewrite could leave it comparing counts from one
+        # generation against a walk of another (Codex adversarial, section 19
+        # review, [medium]). This check needs no corpus and no todo_root, so it
+        # now runs unconditionally.
+        try:
+            st_after = os.fstat(fh.fileno())
+            st_path = os.stat(cache_path)
+        except OSError as exc:
+            _err(REASON_STALE,
+                 f"cache became unreadable during validation: "
+                 f"{cache_path}: {exc}")
+        if (st_after.st_mtime_ns != st_before.st_mtime_ns
+                or st_after.st_size != st_before.st_size
+                or (st_path.st_dev, st_path.st_ino)
+                != (st_before.st_dev, st_before.st_ino)):
+            _err(REASON_STALE,
+                 f"cache was rewritten while it was being validated (a "
+                 f"concurrent build-and-validate.sh?); re-run rather than "
+                 f"trust a verdict from mixed generations: {cache_path}")
         body_ok = True
     finally:
         # A CLOSE FAILURE IS ALSO INFRASTRUCTURE. A bare `fh.close()` here sat
