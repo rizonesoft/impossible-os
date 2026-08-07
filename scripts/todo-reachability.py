@@ -163,6 +163,10 @@ def _io_rows(lines):
 
 
 _CACHE = {}
+# The generation fingerprint taken when the cache was loaded, held so `main`
+# can re-verify the corpus AFTER the audit walk. Empty when no cache was
+# loaded (missing-cache fallback), in which case there is nothing to bind.
+_CACHE_CORPUS = {}
 
 
 def _load_cache(root):
@@ -182,8 +186,17 @@ def _load_cache(root):
     # default stamped-items profile would REFUSE a cache in which nothing has
     # shipped yet, which is a perfectly usable cache for a reachability audit.
     try:
-        data, _info = _cs.load_and_validate(
+        data, info = _cs.load_and_validate(
             cache_path, Path(root) / "todo", profile=_cs.PROFILE_SECTIONS)
+        # RETAINED FOR POST-WALK RE-VERIFICATION, not decoration. The loader's
+        # freshness scan bounds only the milliseconds inside itself; this tool
+        # then reads every TODO body and stamp in the corpus, which is the
+        # window that actually matters. A TODO edited during that walk would
+        # pair OLD cached section statuses with NEW body items and either
+        # suppress or fabricate a finding, at a normal exit code. `main` calls
+        # `check_corpus_unchanged` with this fingerprint before publishing.
+        _CACHE_CORPUS["corpus"] = info.corpus
+        _CACHE_CORPUS["todo_root"] = Path(root) / "todo"
     except _cs.CacheSchemaError as exc:
         if exc.reason in _CACHE_FALLBACK_REASONS:
             _CACHE["__missing__"] = True
@@ -304,10 +317,30 @@ def main(argv) -> int:
     as_json = "--json" in argv
     findings = {}
     try:
+        # PRIME THE CACHE BEFORE ANY TODO BODY IS READ. `audit()` reads its
+        # file and only THEN calls `_io_status`, which is what initialises the
+        # fingerprint -- so on the first target the body was read BEFORE the
+        # generation was pinned. A concurrent rebuild landing in that gap paired
+        # old body lines with a new cache AND a new fingerprint, so the
+        # post-walk check saw an unchanged corpus and published a
+        # mixed-generation verdict: precisely the race this binding exists to
+        # close (Codex adversarial round 2, [medium]).
+        _load_cache(".")
         for path in _targets(argv):
             hits = audit(path)
             if hits:
                 findings[path] = hits
+        # CLOSE THE GENERATION WINDOW BEFORE PUBLISHING. Verdicts derived from
+        # a corpus that moved under the walk are not verdicts.
+        if _CACHE_CORPUS.get("corpus") is not None:
+            _cs.check_corpus_unchanged(_CACHE_CORPUS["todo_root"],
+                                       _CACHE_CORPUS["corpus"])
+    except _cs.CacheSchemaError as exc:
+        # `check_corpus_unchanged` raises the shared error directly. Same
+        # destination as a load failure: infrastructure, never a verdict.
+        sys.stderr.write(f"todo-reachability: corpus moved during the audit "
+                         f"[{exc.reason}]: {exc}\n")
+        return EXIT_INFRA
     except CacheUnusable as exc:
         # EXIT_INFRA, never 1. A caller distinguishing "unreachable items exist"
         # from "the audit could not run" depends on this separation.

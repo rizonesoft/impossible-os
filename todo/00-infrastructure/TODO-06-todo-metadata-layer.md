@@ -67,7 +67,7 @@ title: "TODO-06 -- TODO Metadata Layer and Derived Graph"
 | 💎  |  16   |  §16    | Wire the identity gate so something runs it (adopts §12's parked wiring)            | §12, §14   |  [x]   |
 | ⭐  |  17   |  §17    | One shared cache-schema validator, consumed by both cache readers                   | §14, §16   |  [x]   |
 | ⭐  |  18   |  §18    | Identity-gate hardening: producer differential + protocol-constant extraction       | §16        |  [x]   |
-| ⭐  |  19   |  §19    | Caller profiles for the shared validator + three self-contained readers routed       | §17        |  [ ]   |
+| ⭐  |  19   |  §19    | Caller profiles for the shared validator + two self-contained readers routed         | §17        |  [x]   |
 | ⭐  |  20   |  §20    | A machine-checkable bucket-emission contract, so retirement is provable         | §18        |  [ ]   |
 | ⭐  |  21   |  §21    | The producer-side generation window in `build.py` (split from §19)                  | §17, §19   |  [ ]   |
 | ⭐  |  22   |  §22    | `query.py` fail-closed through CLI, MCP and watch transports (split from §19)       | §19, §8    |  [ ]   |
@@ -943,24 +943,32 @@ Narrowed AGAIN on 2026-08-07 by its own Codex design review, which returned `nee
 
 The reader inventory was verified at `file:line` rather than taken from the original item text, which OVERCOUNTED at "~10": `runner-doctor.py:113` compares mtimes and never parses the cache, and `mcp_server.py:204` delegates to `query.py` over argv, so neither is a raw reader.
 
-- [ ] Give `cache_schema` caller-declared validation profiles instead of one fixed contract
+- [x] Give `cache_schema` caller-declared validation profiles instead of one fixed contract
       `validate_nodes:301-307` RAISES `REASON_LEGACY_NO_STAMPED_ITEMS` when no node carries `stamped_items`. That is a readiness policy for the two stamped-items readers, and none of the readers routed here consume that subtree at all -- so routing them unchanged would refuse a schema-valid, perfectly usable cache. The module header at `cache_schema.py:64-71` already states the population question is the CALLER's and exposes `CacheInfo.key_present` to report it; the raise contradicts the module's own stated design.
       - A `require_stamped_items` boolean was considered and REJECTED by the design review as the wrong axis: it would still validate an irrelevant subtree while leaving each new reader's ACTUAL inputs unchecked. The shape is a caller-declared profile -- which subtrees I consume, declared separately from which readiness conditions I require.
       - Both existing readers keep the current profile BY DEFAULT, so §17's rc 2/3/4/5 and rc 3 contracts are preserved byte-for-byte. Changing them was the rejected Candidate B.
-- [ ] Extend `cache.schema.json` to the subtrees the routed readers actually consume
+- [x] Extend `cache.schema.json` to the subtrees the routed readers actually consume
       Without this the section advertises protection it does not deliver, which the design review raised as its own `[high]`. Verified: `stamps_xrefs` and `inputs_xrefs` are bare `{"type": "array"}` with no item shape, so a malformed nested entry passes today. `sections` IS constrained in the schema, but nothing in the shared validator's Python walk enforces it.
       - `test_build.sh` already asserts the Python walk and the schema agree using `jsonschema` as an INDEPENDENT oracle; extend that agreement to every subtree added here rather than letting the two drift.
-- [ ] Route the two self-contained readers, each with its own DISTINCT infrastructure code
+- [x] Route the two self-contained readers, each with its own DISTINCT infrastructure code
       `todo-reachability.py:142` (bare `except Exception`, so it silently degrades to a fallback) and `check_consumer_delegation.py:312` (raw load, no bounded read and no generation binding).
       - "Keep its OWN documented exit code" is NOT satisfiable by reusing the codes these tools already have, and assuming it was is the trap: `todo-reachability.py:273` already returns `1` for FINDINGS. Mapping a cache failure onto it makes an infrastructure refusal indistinguishable from a real verdict -- the exact defect §17 exists to prevent. It gets a NEW documented infrastructure code, distinct from its verdict codes.
       - A MISSING cache is deliberately NOT an infrastructure error for either reader. Absence is not corruption: a fresh clone has no `build/todo-cache.json` until something builds one, and both tools are expected to work there. Only a cache that EXISTS and cannot be trusted refuses.
       - Test the DOWNSTREAM behavior, not just the load helper: a routed reader whose caller swallows the failure has not been routed.
       - `scripts/overnight/decision-registry.py:67` was listed here as ordinary work and IS NOT -- it lives under `scripts/overnight/**`, which the unattended run may not edit. The run made the edit on 2026-08-07 before catching this, reverted it, and filed both the routing and a real defect it uncovered (923 indexed ownership decisions carry an EMPTY target, because the reader asks for `target`/`target_file`/`text`/`raw` and the producer emits `target_path`/`target_section`/`item_name`). -> XREF: [`overnight-runner-improvements-v10`](../overnight-runner-improvements/overnight-runner-improvements-v10.md) (item: "`decision-registry.py` builds 923 ownership decisions whose target field is EMPTY...").
-- [ ] A fixture per routed reader, each mutation-checked
+- [x] A fixture per routed reader, each mutation-checked
       A reader handed a corrupt/empty/oversized cache must exit with its own documented INFRASTRUCTURE code -- not a verdict code, not a shared one, not a traceback. Mutation for each: restore that reader's raw `json.load` and require its fixture to FAIL, so the fixture is proven to test the routing rather than passing incidentally.
-- [ ] Commit: `"todo-graph: caller profiles for the shared validator, and three readers routed through it"`
+- [x] Commit: `"todo-graph: caller profiles for the shared validator, and two readers routed through it"`
 
-**Test checkpoint:** `cache_schema` exposes caller profiles and both §17 readers keep their exact shipped reason-to-code mappings; the three routed readers reject an unusable cache with a documented infrastructure code distinct from their verdict codes; the schema and the Python walk still agree under the `jsonschema` oracle; each fixture fails when its reader is reverted to a raw `json.load`; `bash scripts/todo-graph/tests/test_build.sh` and `bash scripts/test-tooling.sh` green.
+**Test checkpoint:** `cache_schema` exposes caller profiles and both §17 readers keep their exact shipped reason-to-code mappings; the routed readers reject an unusable cache with a documented infrastructure code distinct from their verdict codes; the schema and the Python walk still agree under the `jsonschema` oracle; each fixture fails when its reader is reverted to a raw `json.load`; `bash scripts/todo-graph/tests/test_build.sh` and `bash scripts/test-tooling.sh` green.
+
+> **Notes:**
+> - Shipped `cache_schema.Profile` -- subtrees consumed declared separately from readiness required -- plus `_validate_sections` and `_validate_stamps_xrefs`. The default profile is §17's contract unchanged.
+> - `todo-reachability.py` routed with a new `EXIT_INFRA = 2` (1 was already FINDINGS) and post-walk `check_corpus_unchanged`; `check_consumer_delegation.py` routed keeping its `DelegationError`, freshness off.
+> - `lint.sh` Check 24 was failing OPEN -- `|| true` plus a `{}` fallback turned every refusal into zero findings on the every-commit path. It now reports rc 2 as a lint error.
+> - Two semantic constraints beyond shape, both at zero violations on the live corpus: `sections[].n` unique per node, and `sections[].status` closed to what `build.py` can emit.
+> - Canonical doc: the `cache_schema.py` module header; 10 routed-reader fixtures and 9 mutation cases in `test_build.sh`.
+> - Scope boundary: `query.py` is §22 and `validate.py` is §23; `decision-registry.py` is control plane -- filed, not fixed.
 
 -> XREF: [`TODO-06 §17`](#17-one-shared-cache-schema-validator-for-both-cache-readers) -- the validator this extends (item: "Commit: `\"todo-graph: one cache-schema validator for both cache readers\"`"); the finding was accepted during its adversarial review and scoped out of it.
 -> XREF: [`TODO-06 §21`](#21-the-producer-side-generation-window-in-buildpy) -- the DEPTH half split out of this section on 2026-08-07 (item: "Close the PRODUCER-side generation window in `build.py`"); it closes the mirror-image window on the write side, which no reader-side validation can detect.

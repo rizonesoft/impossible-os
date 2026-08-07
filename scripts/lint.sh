@@ -1616,8 +1616,57 @@ if [ -f "$REPO_ROOT/scripts/todo-reachability.py" ]; then
     # fallback fired precisely when there was something to report, appending
     # `{}` to valid JSON and breaking the parse -- the check then silently
     # emitted nothing (2026-08-02). Capture the output and ignore the status.
-    LINT24_OUT="$(cd "$REPO_ROOT" && timeout 600 python3 scripts/todo-reachability.py --json 2>/dev/null)" || true
-    [ -n "$LINT24_OUT" ] || LINT24_OUT='{}'
+    # DISTINGUISH THE VERDICT CODES FROM THE INFRASTRUCTURE CODE. The tool
+    # exits 0 (clean) or 1 (findings) as verdicts, and 2 when the cache exists
+    # but cannot be trusted. Blanket-ignoring the status turned that refusal
+    # into a clean result: stderr went to /dev/null, `|| true` erased the code,
+    # and an empty stdout became `{}` -- so STALE, malformed, oversized,
+    # unreadable and timeout ALL reported zero findings on the every-commit
+    # path, silently disabling this gate (Codex adversarial, section 19,
+    # [high]). Routing the reader fail-closed is worthless while its only
+    # caller fails open.
+    # `&& ... || ...` rather than a bare assignment: this file runs under
+    # `set -euo pipefail`, where a command substitution that exits non-zero
+    # kills the script -- and rc 1 (findings exist) is the NORMAL case. The
+    # original `|| true` was shielding exactly that; it is replaced here, not
+    # dropped, because the status still has to be READ.
+    LINT24_ERRTXT="$(mktemp)"
+    LINT24_RC=0
+    LINT24_OUT="$(cd "$REPO_ROOT" && timeout 600 python3 scripts/todo-reachability.py --json 2>"$LINT24_ERRTXT")" \
+        || LINT24_RC=$?
+    # THE EXIT CODE ALONE IS NOT ENOUGH. Python exits 1 for an UNCAUGHT
+    # EXCEPTION as well as for this tool's findings verdict, so accepting every
+    # rc 1 and letting malformed or empty stdout fall through to `{}` reports a
+    # CRASH as zero findings -- the gate stays fail-open for the most likely
+    # case (reproduced with an invalid-UTF-8 TODO: rc 1, empty stdout; Codex
+    # adversarial round 2, [high]). The verdict is the PAIR (code, envelope):
+    # rc 0 must carry an empty object, rc 1 a non-empty one, anything else is
+    # infrastructure.
+    LINT24_SHAPE="$(printf '%s' "$LINT24_OUT" | python3 -c "
+import json,sys
+raw = sys.stdin.read()
+try:
+    d = json.loads(raw)
+except Exception as exc:
+    print('stdout is not valid JSON'); raise SystemExit(0)
+if not isinstance(d, dict):
+    print('stdout is ' + type(d).__name__ + ', expected an object'); raise SystemExit(0)
+print('EMPTY' if not d else 'NONEMPTY')" 2>/dev/null || echo 'could not parse stdout')"
+    LINT24_BAD=''
+    case "$LINT24_RC:$LINT24_SHAPE" in
+        0:EMPTY|1:NONEMPTY) ;;                       # the two honest verdicts
+        0:NONEMPTY) LINT24_BAD="exited 0 (clean) but reported findings" ;;
+        1:EMPTY)    LINT24_BAD="exited 1 (findings) but reported none -- an uncaught exception exits 1 too" ;;
+        *)          LINT24_BAD="rc $LINT24_RC, $LINT24_SHAPE" ;;
+    esac
+    if [ -n "$LINT24_BAD" ]; then
+        # Surface the tool's OWN diagnostic, which names WHICH shared-validator
+        # rule refused, rather than a generic message.
+        error "scripts/todo-reachability.py" "0" \
+            "reachability audit could not run ($LINT24_BAD): $(head -c 300 "$LINT24_ERRTXT" 2>/dev/null | tr '\n' ' ')"
+        LINT24_OUT=''
+    fi
+    rm -f "$LINT24_ERRTXT"
     LINT24_ERR="$(printf '%s' "$LINT24_OUT" | python3 -c "
 import json,sys
 try: d=json.load(sys.stdin)

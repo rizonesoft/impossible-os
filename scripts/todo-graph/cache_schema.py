@@ -262,6 +262,9 @@ _REF_KEYS_SYMBOL = ("kind", "symbol", "file")
 # agree using `jsonschema` as an INDEPENDENT oracle, so a divergence is a test
 # failure rather than a silent drift.
 _SECTION_KEYS = ("n", "deliverable", "depends_on", "status")
+# Closed by CONSTRUCTION in the producer: `build.py:821` matches
+# `\[([ x/])\]` and falls back to "". Four values, no others reachable.
+_SECTION_STATUSES = frozenset(("", " ", "x", "/"))
 _STAMP_XREF_REQUIRED = ("kind", "severity", "target_path", "target_section")
 _STAMP_XREF_KEYS = _STAMP_XREF_REQUIRED + ("item_name",)
 
@@ -291,6 +294,7 @@ def _validate_sections(node, i: int, path):
         _err(REASON_SHAPE,
              f"cache node {i} `sections` is {type(sections).__name__}, "
              f"expected array (per {SCHEMA_REL}): {path}")
+    seen_n = set()
     for j, s in enumerate(sections):
         where = f"cache node {i} section {j}"
         if not isinstance(s, dict):
@@ -309,12 +313,33 @@ def _validate_sections(node, i: int, path):
         # `n` is the DICT KEY the reader builds, so a non-scalar is unhashable
         # and raises TypeError from inside the walk -- the same escape class
         # `section_n` closed on the stamped-items side.
+        # UNIQUENESS IS LOAD-BEARING, not tidiness. `todo-reachability` builds
+        # `{sec["n"]: status}`, so two rows sharing an `n` SILENTLY OVERWRITE --
+        # a shape-valid but hostile cache with a duplicate `n: 1` can replace a
+        # section's real status and suppress an `open-in-done` finding while the
+        # audit reports success (Codex adversarial, section 19, [medium]).
         if s["n"] is not None:
             _require_int(s["n"], 0, where, "n", path)
+            if s["n"] in seen_n:
+                _err(REASON_SHAPE,
+                     f"{where} repeats section number {s['n']} already seen in "
+                     f"this node; consumers key a dict on it, so a duplicate "
+                     f"silently overwrites: {path}")
+            seen_n.add(s["n"])
         _require_str(s["deliverable"], where, "deliverable", path)
-        # `.strip()` is called on this by the reader, so a non-string raises
-        # AttributeError mid-walk instead of refusing here.
+        # STATUS IS A CLOSED DOMAIN, not free text. `build.py:821` extracts it
+        # with `re.search(r"\[([ x/])\]", ...)` and emits "" when no marker
+        # matched, so the producer can emit EXACTLY these four values --
+        # confirmed across all 2,394 sections in the live cache. The consumer
+        # tests `status not in ("x", "/")`, so ANY unrecognised value reads as
+        # "not done": an untrusted cache saying `"[x]"` or `"wat"` is silently
+        # treated as unfinished rather than refused. Accepting a value no
+        # producer emits is how a shape check stops being a contract.
         _require_str(s["status"], where, "status", path)
+        if s["status"] not in _SECTION_STATUSES:
+            _err(REASON_SHAPE,
+                 f"{where} `status` is {s['status']!r}, expected one of "
+                 f"{sorted(_SECTION_STATUSES)} (per {SCHEMA_REL}): {path}")
         if not isinstance(s["depends_on"], list):
             _err(REASON_SHAPE,
                  f"{where} `depends_on` is {type(s['depends_on']).__name__}, "

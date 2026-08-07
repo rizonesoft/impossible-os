@@ -7272,9 +7272,14 @@ GOOD = [{"file_path": "todo/01-test/TODO-01-cs.md",
 # Section 19 subtree fixtures. Each carries ONLY the subtree its profile
 # declares, which also proves the profiles are independent: neither of these
 # documents would survive the default stamped-items profile.
+# `status` is "x", NOT "[x]": the producer strips the brackets
+# (`build.py` matches `\[([ x/])\]` and stores the inner character). This
+# fixture originally carried "[x]" and the validator ACCEPTED it, which is
+# precisely the hole the closed-domain check now closes -- the consumer tests
+# `status not in ("x", "/")`, so "[x]" read as UNFINISHED.
 GOOD_SECTIONS = [{"file_path": "todo/01-test/TODO-01-cs.md",
                   "sections": [{"n": 1, "deliverable": "a thing",
-                                "depends_on": [], "status": "[x]"}]}]
+                                "depends_on": [], "status": "x"}]}]
 
 GOOD_XREFS = [{"file_path": "todo/01-test/TODO-01-cs.md",
                "stamps_xrefs": [{"kind": "accepted", "severity": "high",
@@ -7329,6 +7334,15 @@ CASES = [
     ("section depends_on list guard",
      '        if not isinstance(s["depends_on"], list):',
      mutate(GOOD_SECTIONS, [0, "sections", 0, "depends_on"], "x"),
+     "PROFILE_SECTIONS"),
+    ("section status closed domain",
+     "        if s[\"status\"] not in _SECTION_STATUSES:",
+     mutate(GOOD_SECTIONS, [0, "sections", 0, "status"], "[x]"),
+     "PROFILE_SECTIONS"),
+    ("section n uniqueness", "            if s[\"n\"] in seen_n:",
+     [{"file_path": "todo/01-test/TODO-01-cs.md",
+       "sections": [{"n": 1, "deliverable": "a", "depends_on": [], "status": "x"},
+                    {"n": 1, "deliverable": "b", "depends_on": [], "status": " "}]}],
      "PROFILE_SECTIONS"),
     ("stamps_xrefs list guard", "    if not isinstance(xrefs, list):",
      mutate(GOOD_XREFS, [0, "stamps_xrefs"], {}), "PROFILE_STAMP_XREFS"),
@@ -7434,6 +7448,163 @@ if grep -q "^import cache_schema as _cs" \
 else
     t_fail "shared cache schema: a reader is not importing cache_schema -- the rule is not actually shared"
 fi
+
+# ----------------------------------------------------------------------
+# THE NEWLY ROUTED READERS. One fixture per reader asserting that reader's OWN
+# infrastructure code -- not merely "non-zero". A reader whose cache failure
+# lands on a VERDICT code has not been routed, it has been disguised, and only
+# an exact-code assertion catches that.
+#
+# The DOWNSTREAM caller is asserted too. Routing a reader fail-closed is
+# worthless while its caller fails open, which is exactly what lint Check 24
+# did: it discarded stderr, erased the status with `|| true`, and substituted
+# `{}` for empty output, so every infrastructure refusal reported zero findings
+# on the every-commit path (Codex adversarial, section 19, [high]).
+# ----------------------------------------------------------------------
+RR_TREE="$TMP_DIR/routed-readers"
+mkdir -p "$RR_TREE/todo/01-test" "$RR_TREE/build"
+cat > "$RR_TREE/todo/01-test/TODO-01-rr.md" <<'MD'
+# TODO-01 routed-reader fixture
+
+## Implementation Order
+
+| 💎 | 1 | a thing | -- | [x] |
+
+## 1. A section
+
+- [x] done
+MD
+
+rr_case() {
+    local label="$1" content="$2" want="$3"
+    printf '%s' "$content" > "$RR_TREE/build/todo-cache.json"
+    touch "$RR_TREE/build/todo-cache.json"
+    ( cd "$RR_TREE" && python3 "$REPO_ROOT/scripts/todo-reachability.py" \
+        "$RR_TREE/todo/01-test/TODO-01-rr.md" ) >/dev/null 2>&1
+    local rc=$?
+    if [ "$rc" = "$want" ]; then
+        t_pass "routed reader: todo-reachability $label -> rc $rc"
+    else
+        t_fail "routed reader: todo-reachability $label -> rc $rc (want $want)"
+    fi
+}
+
+# EXIT_INFRA (2) is DISTINCT from the FINDINGS code (1) this tool already used.
+rr_case "unparseable cache" 'not json' 2
+rr_case "empty node array" '[]' 2
+rr_case "node missing file_path" '[{"sections": []}]' 2
+rr_case "sections wrong-typed" \
+    '[{"file_path": "todo/01-test/TODO-01-rr.md", "sections": {}}]' 2
+# The two semantic constraints, both of which a shape-only check would accept.
+rr_case "duplicate section number" \
+    '[{"file_path": "todo/01-test/TODO-01-rr.md", "sections": [{"n": 1, "deliverable": "a", "depends_on": [], "status": "x"}, {"n": 1, "deliverable": "b", "depends_on": [], "status": " "}]}]' 2
+rr_case "status outside the producer domain" \
+    '[{"file_path": "todo/01-test/TODO-01-rr.md", "sections": [{"n": 1, "deliverable": "a", "depends_on": [], "status": "[x]"}]}]' 2
+
+# NEGATIVE: a MISSING cache is not corruption. The per-file fallback must keep
+# working on a fresh clone, so this stops the routing from being over-eager.
+rm -f "$RR_TREE/build/todo-cache.json"
+( cd "$RR_TREE" && python3 "$REPO_ROOT/scripts/todo-reachability.py" \
+    "$RR_TREE/todo/01-test/TODO-01-rr.md" ) >/dev/null 2>&1
+RR_MISS_RC=$?
+if [ "$RR_MISS_RC" != "2" ]; then
+    t_pass "routed reader: todo-reachability falls back on a MISSING cache (rc $RR_MISS_RC)"
+else
+    t_fail "routed reader: todo-reachability treated an ABSENT cache as corruption"
+fi
+
+# MUTATION: restore the raw load the routing replaced. The refusal must vanish.
+RR_MUT="$TMP_DIR/rr-mutant"
+rm -rf "$RR_MUT"; mkdir -p "$RR_MUT/build"
+cp -r "$RR_TREE/todo" "$RR_MUT/todo"
+RR_MUT_OK=$(python3 - "$REPO_ROOT/scripts/todo-reachability.py" \
+    "$RR_MUT/todo-reachability.py" <<'PY'
+import sys
+src = open(sys.argv[1]).read()
+needle = "        data, info = _cs.load_and_validate("
+if src.count(needle) != 1:
+    print(f"FAIL: routing call site appears {src.count(needle)}x -- moved")
+    raise SystemExit(0)
+raw = ('        import json as _rawjson\n'
+       '        data = _rawjson.loads(cache_path.read_text(encoding="utf-8"))\n'
+       '        info = type("I", (), {"corpus": None})()\n'
+       '        _unused = (lambda *a, **k: None)(')
+open(sys.argv[2], "w").write(src.replace(needle, raw, 1))
+print("OK")
+PY
+)
+if [ "$RR_MUT_OK" != "OK" ]; then
+    t_fail "routed reader: mutation could not be applied -- $RR_MUT_OK"
+else
+    printf 'not json' > "$RR_MUT/build/todo-cache.json"
+    ( cd "$RR_MUT" && python3 "$RR_MUT/todo-reachability.py" \
+        "$RR_MUT/todo/01-test/TODO-01-rr.md" ) >/dev/null 2>&1
+    RR_MUT_RC=$?
+    if [ "$RR_MUT_RC" != "2" ]; then
+        t_pass "routed reader: mutation-check -- the raw load reopens the silent degrade (rc $RR_MUT_RC)"
+    else
+        t_fail "routed reader: mutation-check FAILED -- raw load still refused at 2, so the fixture is not testing the routing"
+    fi
+fi
+
+# The delegation prober maps a cache refusal to its OWN infrastructure code (3),
+# never to its VIOLATION code (1) -- which would report a corrupt cache as
+# "the consumer bypasses the shared rule".
+printf 'not json' > "$RR_TREE/build/todo-cache.json"
+STUB_LINT_CACHE="$RR_TREE/build/todo-cache.json" STUB_LINT_REPO_ROOT="$RR_TREE" \
+    python3 "$REPO_ROOT/scripts/lint/check_consumer_delegation.py" >/dev/null 2>&1
+RR_DELEG_RC=$?
+if [ "$RR_DELEG_RC" = "3" ]; then
+    t_pass "routed reader: check_consumer_delegation maps a corrupt cache to rc 3, not its violation code"
+else
+    t_fail "routed reader: check_consumer_delegation corrupt cache -> rc $RR_DELEG_RC (want 3)"
+fi
+
+# DOWNSTREAM: lint Check 24 must SURFACE the refusal, not absorb it.
+#
+# STRUCTURAL, and deliberately so: driving the real Check 24 needs a full
+# `lint.sh` run over 786 files against a deliberately-corrupted cache, which is
+# far too heavy for this suite and would race any concurrent run. What it pins
+# is the EXACT regression -- the reachability invocation must not discard the
+# status. The behavior was verified directly when the fix landed: with a
+# corrupt cache, `lint.sh` reports
+# `error: scripts/todo-reachability.py:0: reachability audit could not run
+# (rc 2): ... [UNREADABLE] ...` and exits 1, while a clean tree still exits 0
+# with 0 errors.
+# Scoped to the whole Check 24 BLOCK, not one physical line: the first cut
+# grepped only the line carrying `--json`, so moving `|| true` onto the
+# following continuation line evaded it entirely, and the error string
+# appearing ANYWHERE in lint.sh satisfied it (Codex adversarial round 2,
+# [medium]).
+LINT24_BLOCK=$(python3 - "$REPO_ROOT/scripts/lint.sh" <<'PY'
+import re, sys
+src = open(sys.argv[1], encoding="utf-8").read().splitlines()
+start = next((i for i, l in enumerate(src) if "todo-reachability.py --json" in l), None)
+if start is None:
+    print("MISSING"); raise SystemExit(0)
+# Walk back to the enclosing `if`, forward to its `fi`, so continuation lines
+# and the whole handling block are inside the window.
+lo = max(0, start - 12)
+hi = min(len(src), start + 45)
+block = "\n".join(src[lo:hi])
+problems = []
+if re.search(r"todo-reachability\.py --json[^\n]*\n?[^\n]*\|\|\s*true", block):
+    problems.append("discards the exit code with '|| true'")
+if "LINT24_RC" not in block:
+    problems.append("never captures the exit code")
+if "reachability audit could not run" not in block:
+    problems.append("captures the code but never reports it")
+if "LINT24_SHAPE" not in block:
+    problems.append("accepts rc 1 without validating the JSON envelope "
+                    "(an uncaught exception also exits 1)")
+print("OK" if not problems else "; ".join(problems))
+PY
+)
+case "$LINT24_BLOCK" in
+    OK) t_pass "routed reader: lint Check 24 surfaces a reachability infrastructure refusal" ;;
+    MISSING) t_fail "routed reader: lint Check 24 no longer invokes todo-reachability -- the every-commit gate is gone" ;;
+    *) t_fail "routed reader: lint Check 24 fails open -- $LINT24_BLOCK" ;;
+esac
 
 # ----------------------------------------------------------------------
 # Summary

@@ -124,7 +124,14 @@
               "type": "array"
             },
             "status": {
-              "type": "string"
+              "type": "string",
+              "enum": [
+                "",
+                " ",
+                "x",
+                "/"
+              ],
+              "description": "Implementation Order marker, a CLOSED domain: build.py extracts it with re.search(r'\\[([ x/])\\]', ...) and emits '' when no marker matched, so no other value is reachable from the producer. Constrained in TODO-06 section 19 because the consumer tests `status not in ('x','/')`, which silently reads any unrecognised value as unfinished."
             }
           }
         }
