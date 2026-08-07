@@ -22,30 +22,110 @@
       "stamps_xrefs"
     ],
     "properties": {
-      "id": { "type": ["string", "null"] },
-      "schema_version": { "type": ["integer", "null"] },
-      "domain": { "type": "string" },
-      "status": { "type": ["string", "null"] },
-      "title": { "type": ["string", "null"] },
-      "file_path": { "type": "string", "minLength": 1, "description": "Repo-relative path of the TODO. minLength is load-bearing, not decoration: both cache readers build occurrence keys from this field, so an empty one produces a keyed-on-nothing occurrence rather than a refusal (TODO-06 section 17)." },
-      "created_at": { "type": ["string", "null"], "description": "ISO-8601 UTC timestamp from git log (cache-only; rejected in frontmatter)." },
-      "last_active_at": { "type": ["string", "null"], "description": "ISO-8601 UTC timestamp from git log (cache-only; rejected in frontmatter)." },
-      "owners": { "type": "array", "items": { "type": "string" } },
-      "depends_on": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
-      "satisfies": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
-      "superseded_by": { "type": "string" },
-      "file_patterns": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+      "id": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "schema_version": {
+        "type": [
+          "integer",
+          "null"
+        ]
+      },
+      "domain": {
+        "type": "string"
+      },
+      "status": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "title": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "file_path": {
+        "type": "string",
+        "minLength": 1,
+        "description": "Repo-relative path of the TODO. minLength is load-bearing, not decoration: both cache readers build occurrence keys from this field, so an empty one produces a keyed-on-nothing occurrence rather than a refusal (TODO-06 section 17)."
+      },
+      "created_at": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "ISO-8601 UTC timestamp from git log (cache-only; rejected in frontmatter)."
+      },
+      "last_active_at": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "description": "ISO-8601 UTC timestamp from git log (cache-only; rejected in frontmatter)."
+      },
+      "owners": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "depends_on": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "uniqueItems": true
+      },
+      "satisfies": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "uniqueItems": true
+      },
+      "superseded_by": {
+        "type": "string"
+      },
+      "file_patterns": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        },
+        "uniqueItems": true
+      },
       "sections": {
         "type": "array",
         "items": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["n", "deliverable", "depends_on", "status"],
+          "required": [
+            "n",
+            "deliverable",
+            "depends_on",
+            "status"
+          ],
           "properties": {
-            "n": { "type": ["integer", "null"] },
-            "deliverable": { "type": "string" },
-            "depends_on": { "type": "array" },
-            "status": { "type": "string" }
+            "n": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "deliverable": {
+              "type": "string"
+            },
+            "depends_on": {
+              "type": "array"
+            },
+            "status": {
+              "type": "string"
+            }
           }
         }
       },
@@ -54,46 +134,123 @@
         "items": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["n", "title"],
+          "required": [
+            "n",
+            "title"
+          ],
           "properties": {
-            "n": { "type": "integer" },
-            "title": { "type": "string" }
+            "n": {
+              "type": "integer"
+            },
+            "title": {
+              "type": "string"
+            }
           }
         }
       },
-      "inputs_xrefs": { "type": "array" },
-      "stamps_xrefs": { "type": "array" },
+      "inputs_xrefs": {
+        "type": "array"
+      },
+      "stamps_xrefs": {
+        "type": "array",
+        "description": "Accepted/Deferred stamp XREFs. Consumed by scripts/overnight/decision-registry.py; item shape added in TODO-06 section 19, which routed that reader through the shared validator and found this was a bare array that accepted any entry. `item_name` is optional: a stamp clause may name a section rather than a named item (73 of 994 live entries omit it).",
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "severity",
+            "target_path",
+            "target_section"
+          ],
+          "properties": {
+            "kind": {
+              "type": "string"
+            },
+            "severity": {
+              "type": "string"
+            },
+            "target_path": {
+              "type": "string"
+            },
+            "target_section": {
+              "type": "string"
+            },
+            "item_name": {
+              "type": "string"
+            }
+          }
+        }
+      },
       "stamped_items": {
         "type": "array",
         "description": "Per-`[x]` checklist-item records. Emitted only when the body has at least one [x] item; absent when no items have shipped. Cache-only -- never legal in hand-authored frontmatter (build.py forbidden-field check enforces).",
         "items": {
           "type": "object",
-          "required": ["section_n", "item_idx", "item_text", "refs"],
+          "required": [
+            "section_n",
+            "item_idx",
+            "item_text",
+            "refs"
+          ],
           "properties": {
-            "section_n": { "type": "integer", "minimum": 1 },
-            "item_idx": { "type": "integer", "minimum": 0, "description": "0-based ordinal of the [x] item within the section (skips [ ] / [/])." },
-            "item_text": { "type": "string", "description": "Full prose after the `[x] ` prefix (preserved, not truncated)." },
+            "section_n": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "item_idx": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "0-based ordinal of the [x] item within the section (skips [ ] / [/])."
+            },
+            "item_text": {
+              "type": "string",
+              "description": "Full prose after the `[x] ` prefix (preserved, not truncated)."
+            },
             "refs": {
               "type": "array",
               "items": {
                 "oneOf": [
                   {
                     "type": "object",
-                    "required": ["kind", "file"],
+                    "required": [
+                      "kind",
+                      "file"
+                    ],
                     "properties": {
-                      "kind": { "const": "file" },
-                      "file": { "type": "string", "minLength": 1 },
-                      "line": { "type": "integer", "minimum": 1 }
+                      "kind": {
+                        "const": "file"
+                      },
+                      "file": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "line": {
+                        "type": "integer",
+                        "minimum": 1
+                      }
                     },
                     "additionalProperties": false
                   },
                   {
                     "type": "object",
-                    "required": ["kind", "symbol"],
+                    "required": [
+                      "kind",
+                      "symbol"
+                    ],
                     "properties": {
-                      "kind": { "const": "symbol" },
-                      "symbol": { "type": "string", "minLength": 1 },
-                      "file": { "type": "string", "minLength": 1, "description": "Optional: paired with the FIRST file ref in the same item so consumers (e.g. lint Check 7) can resolve symbol-only stamps deterministically. Absent when the item names a symbol with no nearby file reference." }
+                      "kind": {
+                        "const": "symbol"
+                      },
+                      "symbol": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "file": {
+                        "type": "string",
+                        "minLength": 1,
+                        "description": "Optional: paired with the FIRST file ref in the same item so consumers (e.g. lint Check 7) can resolve symbol-only stamps deterministically. Absent when the item names a symbol with no nearby file reference."
+                      }
                     },
                     "additionalProperties": false
                   }

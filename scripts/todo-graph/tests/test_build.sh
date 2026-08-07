@@ -7208,11 +7208,24 @@ import re, sys
 p = sys.argv[1]
 src = open(p).read()
 # Neuter ONLY the stamped_items list-type check (the 23b rule).
-needle = """        if not isinstance(items, list):"""
-assert needle in src, "mutation target not found -- cache_schema.py moved"
-src = src.replace(needle, """        if False:""", 1)
+# Indent is 4, not 8: section 19 extracted this walk into
+# `_validate_stamped_items`. It must appear EXACTLY once, so a future move
+# cannot silently select a different rule.
+needle = """    if not isinstance(items, list):"""
+assert src.count(needle) == 1, (
+    f"mutation target appears {src.count(needle)}x -- cache_schema.py moved")
+src = src.replace(needle, """    if False:""", 1)
 open(p, "w").write(src)
 PY
+# THE MUTATION STEP MUST SUCCEED. When the needle went stale (section 19's
+# extraction re-indented it), the assert above fired, the heredoc exited 1, and
+# the mutant file was left UNMUTATED -- yet the case still reported PASS,
+# because the unmutated copy happened to exit non-5 for an unrelated reason.
+# A mutation fixture that is green when no mutation was applied proves nothing;
+# this is the same "passes on any failure" shape flagged against 22af/22ag.
+if [ $? -ne 0 ]; then
+    t_fail "shared cache schema: mutation-check could not apply its mutation (stale needle)"
+fi
 python3 - "$CS_TREE/build/good.json" "$CS_TREE/build/mut.json" <<'PY'
 import json, sys
 doc = json.load(open(sys.argv[1]))
@@ -7256,6 +7269,18 @@ GOOD = [{"file_path": "todo/01-test/TODO-01-cs.md",
                             "refs": [{"kind": "symbol", "file": "src/a.c",
                                       "symbol": "f"}]}]}]
 
+# Section 19 subtree fixtures. Each carries ONLY the subtree its profile
+# declares, which also proves the profiles are independent: neither of these
+# documents would survive the default stamped-items profile.
+GOOD_SECTIONS = [{"file_path": "todo/01-test/TODO-01-cs.md",
+                  "sections": [{"n": 1, "deliverable": "a thing",
+                                "depends_on": [], "status": "[x]"}]}]
+
+GOOD_XREFS = [{"file_path": "todo/01-test/TODO-01-cs.md",
+               "stamps_xrefs": [{"kind": "accepted", "severity": "high",
+                                 "target_path": "todo/01-test/TODO-02-x.md",
+                                 "target_section": "3"}]}]
+
 def mutate(doc, path, value, delete=False):
     d = copy.deepcopy(doc)
     tgt = d
@@ -7267,19 +7292,52 @@ def mutate(doc, path, value, delete=False):
         tgt[path[-1]] = value
     return d
 
-# (label, rule source line to neuter, fixture)
+# (label, rule source line to neuter, fixture, profile-attr-or-None)
+#
+# NEEDLES MUST BE UNIQUE IN THE MODULE. Section 19 extracted the stamped-items
+# walk into `_validate_stamped_items` and added `_validate_sections` /
+# `_validate_stamps_xrefs`, which (a) re-indented every target here and (b) made
+# the bare `if extra:` line ambiguous across three validators -- `.replace(...,
+# 1)` would have neutered whichever came FIRST in the file, silently testing the
+# wrong rule while still reporting a pass. The additionalProperties cases
+# therefore neuter their `extra = [...]` comprehension, which names its own key
+# tuple and so cannot collide.
 CASES = [
-    ("stamped_items list guard", "        if not isinstance(items, list):",
-     mutate(GOOD, [0, "stamped_items"], {})),
-    ("refs list guard", "            if not isinstance(refs, list):",
-     mutate(GOOD, [0, "stamped_items", 0, "refs"], {})),
-    ("required item fields", "                if field not in it:",
-     mutate(GOOD, [0, "stamped_items", 0, "item_text"], None, delete=True)),
-    ("item additionalProperties", "            if extra:",
-     mutate(GOOD, [0, "stamped_items", 0, "zzz"], 1)),
+    ("stamped_items list guard", "    if not isinstance(items, list):",
+     mutate(GOOD, [0, "stamped_items"], {}), None),
+    ("refs list guard", "        if not isinstance(refs, list):",
+     mutate(GOOD, [0, "stamped_items", 0, "refs"], {}), None),
+    ("required item fields", "            if field not in it:",
+     mutate(GOOD, [0, "stamped_items", 0, "item_text"], None, delete=True), None),
+    ("item additionalProperties",
+     "        extra = [k for k in it if k not in _ITEM_KEYS]",
+     mutate(GOOD, [0, "stamped_items", 0, "zzz"], 1), None),
     ("file_path required-string", '        if "file_path" not in node:',
-     mutate(GOOD, [0, "file_path"], None, delete=True)),
-    ("empty node array", "    if not nodes:", []),
+     mutate(GOOD, [0, "file_path"], None, delete=True), None),
+    ("empty node array", "    if not nodes:", [], None),
+    # Section 19 subtree validators. Each runs under the profile that DECLARES
+    # its subtree -- under the default profile these fixtures are accepted,
+    # which is itself the point of the profile split.
+    ("sections list guard", "    if not isinstance(sections, list):",
+     mutate(GOOD_SECTIONS, [0, "sections"], {}), "PROFILE_SECTIONS"),
+    ("required section fields", "            if field not in s:",
+     mutate(GOOD_SECTIONS, [0, "sections", 0, "status"], None, delete=True),
+     "PROFILE_SECTIONS"),
+    ("section additionalProperties",
+     "        extra = [k for k in s if k not in _SECTION_KEYS]",
+     mutate(GOOD_SECTIONS, [0, "sections", 0, "zzz"], 1), "PROFILE_SECTIONS"),
+    ("section depends_on list guard",
+     '        if not isinstance(s["depends_on"], list):',
+     mutate(GOOD_SECTIONS, [0, "sections", 0, "depends_on"], "x"),
+     "PROFILE_SECTIONS"),
+    ("stamps_xrefs list guard", "    if not isinstance(xrefs, list):",
+     mutate(GOOD_XREFS, [0, "stamps_xrefs"], {}), "PROFILE_STAMP_XREFS"),
+    ("required stamp-xref fields", "            if field not in x:",
+     mutate(GOOD_XREFS, [0, "stamps_xrefs", 0, "kind"], None, delete=True),
+     "PROFILE_STAMP_XREFS"),
+    ("stamp-xref additionalProperties",
+     "        extra = [k for k in x if k not in _STAMP_XREF_KEYS]",
+     mutate(GOOD_XREFS, [0, "stamps_xrefs", 0, "zzz"], 1), "PROFILE_STAMP_XREFS"),
 ]
 
 def load(mutated_src):
@@ -7288,26 +7346,46 @@ def load(mutated_src):
     exec(compile(mutated_src, "cs_mut", "exec"), mod.__dict__)
     return mod
 
+def neuter(needle):
+    """The replacement that disables exactly this rule and nothing else.
+
+    An `if ...:` guard becomes `if False:`. An additionalProperties rule is
+    identified by its `extra = [...]` comprehension (the only unique text now
+    that three validators carry an `if extra:`), and is disabled by emptying the
+    comprehension rather than by deleting the branch that reads it.
+    """
+    indent = needle[:len(needle) - len(needle.lstrip())]
+    body = "extra = []" if needle.lstrip().startswith("extra = ") else "if False:"
+    return indent + body
+
 real = load(src)
 bad = []
-for label, needle, fixture in CASES:
-    if needle not in src:
-        bad.append(f"{label}: mutation target not found -- module moved")
+for label, needle, fixture, profile_attr in CASES:
+    if src.count(needle) != 1:
+        bad.append(f"{label}: mutation target appears {src.count(needle)}x "
+                   f"-- needle is not unique, or the module moved")
         continue
+    kw = {}
+    if profile_attr is not None:
+        if not hasattr(real, profile_attr):
+            bad.append(f"{label}: module exposes no {profile_attr}")
+            continue
+        kw["profile"] = getattr(real, profile_attr)
     # Baseline: the REAL module must reject this fixture, and WITH WHICH REASON
     # matters -- each reason maps to a different documented exit code, so a rule
     # that merely changes EMPTY into LEGACY has changed an ERROR into a WARN.
     try:
-        real.validate_nodes(copy.deepcopy(fixture), "x")
+        real.validate_nodes(copy.deepcopy(fixture), "x", **kw)
         bad.append(f"{label}: real module ACCEPTED the fixture (fixture is inert)")
         continue
     except real.CacheSchemaError as exc:
         real_reason = exc.reason
     # Neuter just this rule; the fixture must then get through.
-    indent = needle[:len(needle) - len(needle.lstrip())]
-    mut = load(src.replace(needle, indent + "if False:", 1))
+    mut = load(src.replace(needle, neuter(needle), 1))
+    mkw = ({"profile": getattr(mut, profile_attr)}
+           if profile_attr is not None else {})
     try:
-        mut.validate_nodes(copy.deepcopy(fixture), "x")
+        mut.validate_nodes(copy.deepcopy(fixture), "x", **mkw)
     except mut.CacheSchemaError as exc:
         # A rejection with the SAME reason means some OTHER rule was doing the
         # work and this fixture proves nothing about the named one. A DIFFERENT

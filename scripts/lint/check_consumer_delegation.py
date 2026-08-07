@@ -307,21 +307,62 @@ def _drive_consumer(_rr, _consumer):
     if walk is None:
         raise DelegationError("the consumer no longer exposes `_walk`; this "
                               "check's drive point is gone")
-    import json
+    # ROUTED THROUGH THE SHARED CACHE-SCHEMA VALIDATOR. This used a raw
+    # `json.loads` guarded only for OSError/ValueError, so it got none of the
+    # protections section 17 built: no size ceiling before allocation, no
+    # generation binding (this check reads the SAME file `build.py` rewrites),
+    # and no shape validation. It drives the consumer's `stamped_items` walk, so
+    # it takes the DEFAULT profile -- the same contract the consumer itself uses,
+    # which is the point: two views of one cache must not disagree about whether
+    # it is usable.
+    sys.path.insert(0, str(TODO_GRAPH))
     try:
-        nodes = json.loads(Path(cache).read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
-        raise DelegationError(f"cannot read the cache {cache}: {exc}") from exc
+        import cache_schema as _cs
+    except ImportError as exc:
+        raise DelegationError(
+            f"cannot import the shared cache-schema validator: {exc}") from exc
+    # FRESHNESS IS DELIBERATELY OFF HERE, and it is the one part of the shared
+    # rule this caller does not want.
+    #
+    # This check asks ONE question: does the consumer route every symbol
+    # occurrence through the shared resolver? Whether the cache is current is
+    # the CONSUMER's gate (`check_stub_behind_stamp` maps STALE to its own
+    # documented code) and is covered by its own fixtures. Taking the check here
+    # too would not add coverage -- it would add a second, redundant way for
+    # this prober to fail.
+    #
+    # It would also be unsatisfiable as invoked: `test_build.sh:6463-6473` copies
+    # this script into a scratch tree and points STUB_LINT_CACHE at the REAL
+    # cache, so `REPO_ROOT` resolves to a directory with no `todo/` at all. With
+    # freshness on, all eight delegation fixtures refused at rc 3 against a
+    # perfectly good cache. The remaining protections -- size ceiling before
+    # allocation, single-descriptor read, MemoryError normalisation and full
+    # shape validation -- all still apply, which is what routing was for.
+    repo_arg = os.environ.get("STUB_LINT_REPO_ROOT")
+    repo_root = Path(repo_arg).resolve() if repo_arg else REPO_ROOT
+    try:
+        nodes, _info = _cs.load_and_validate(
+            Path(cache), repo_root / "todo", check_stale=False)
+    except _cs.CacheSchemaError as exc:
+        # Kept as a DelegationError so this check's own documented exit code is
+        # preserved -- sharing the RULE must not collapse the CODES.
+        raise DelegationError(
+            f"cannot read the cache {cache} [{exc.reason}]: {exc}") from exc
     # Counted from the CACHE, independently of anything the consumer reports.
     # Deriving the expectation from the consumer's own output would make the
     # comparison circular: a consumer that skipped occurrences would lower both
     # sides of it and pass.
+    #
+    # The `or []` fallbacks are gone: the validator guarantees `stamped_items`
+    # (when present) and `refs` are lists, so a wrong-typed one now REFUSES
+    # rather than silently counting zero -- which would have lowered the
+    # expectation and passed the comparison it exists to make.
     expected = sum(
         1
         for node in nodes
-        for it in (node.get("stamped_items") or [])
-        for ref in (it.get("refs") or [])
-        if ref.get("kind") == "symbol")
+        for it in node.get("stamped_items", ())
+        for ref in it["refs"]
+        if ref["kind"] == "symbol")
     with _rr.walk_scope():
         findings, coverage = walk(nodes, REPO_ROOT)
     return expected, coverage, findings

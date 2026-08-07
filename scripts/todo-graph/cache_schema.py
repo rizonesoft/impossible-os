@@ -98,6 +98,93 @@ SCHEMA_REL = "scripts/todo-graph/schema/cache.schema.json"
 _MAX_CACHE_BYTES = 64 * 1024 * 1024
 
 
+# ---------------------------------------------------------------------------
+# CALLER PROFILES (TODO-06 section 19).
+#
+# Section 17 shipped ONE contract because it had exactly two callers and both
+# consumed the same subtree. Section 19 routes readers that consume DIFFERENT
+# subtrees and none of them touch `stamped_items` at all, which broke the fixed
+# contract in two directions at once:
+#
+#   * `validate_nodes` RAISED `REASON_LEGACY_NO_STAMPED_ITEMS` whenever no node
+#     carried `stamped_items`. For `todo-reachability`, which reads only
+#     `sections[].n/.status`, that refuses a schema-valid and entirely usable
+#     cache. The refusal is a READINESS policy belonging to the two stamped-item
+#     readers, and this module's own header already says the population question
+#     is the CALLER's -- `CacheInfo.key_present` exists precisely to report it.
+#
+#   * Conversely, those readers got NO validation of the fields they actually
+#     consume, so "routed through the shared validator" would have advertised
+#     protection that was never delivered (Codex design review, section 19,
+#     [high]).
+#
+# A `require_stamped_items` boolean was considered and REJECTED as the wrong
+# axis: it still validates an irrelevant subtree while leaving the caller's real
+# inputs unchecked. The two questions are INDEPENDENT and are declared
+# separately here:
+#
+#   subtrees                    WHAT I READ -- validated for me.
+#   require_stamped_population  WHETHER AN EMPTY POPULATION IS FATAL TO ME.
+#
+# SCOPE IS STILL "FIELDS A READER CONSUMES", unchanged from the header above. A
+# subtree earns a validator when a routed reader reads it, never speculatively:
+# `inputs_xrefs` is deliberately absent because no reader routed in section 19
+# consumes it, and `sections[].depends_on` keeps its bare-array shape for the
+# same reason (its consumer, `validate.py`, is section 23). Adding either would
+# re-commit the exact overreach the header forbids.
+# ---------------------------------------------------------------------------
+
+SUBTREE_STAMPED_ITEMS = "stamped_items"
+SUBTREE_SECTIONS = "sections"
+SUBTREE_STAMPS_XREFS = "stamps_xrefs"
+
+_KNOWN_SUBTREES = frozenset((
+    SUBTREE_STAMPED_ITEMS, SUBTREE_SECTIONS, SUBTREE_STAMPS_XREFS,
+))
+
+
+class Profile:
+    """What a caller CONSUMES, declared separately from what it REQUIRES.
+
+    `subtrees` is the set of node subtrees to validate for this caller.
+    `require_stamped_population` is a READINESS policy: raise
+    `REASON_LEGACY_NO_STAMPED_ITEMS` when no node carries `stamped_items` at
+    all. Only a reader that walks stamped items wants that.
+
+    An unknown subtree name is rejected at CONSTRUCTION rather than ignored at
+    walk time. A typo'd profile that silently validates nothing is the vacuous
+    pass this whole module exists to refuse, and it would be invisible: the
+    caller would look routed and be unprotected.
+    """
+
+    __slots__ = ("name", "subtrees", "require_stamped_population")
+
+    def __init__(self, name: str, subtrees=(), require_stamped_population=False):
+        unknown = sorted(set(subtrees) - _KNOWN_SUBTREES)
+        if unknown:
+            raise ValueError(
+                f"profile {name!r} declares unknown subtree(s) {unknown}; "
+                f"known: {sorted(_KNOWN_SUBTREES)}")
+        self.name = name
+        self.subtrees = frozenset(subtrees)
+        self.require_stamped_population = bool(require_stamped_population)
+
+
+# The section 17 contract, unchanged and still the DEFAULT, so both readers
+# routed there keep their shipped reason-to-code mappings byte-for-byte. Making
+# the new behavior opt-in is the whole reason Candidate B (change both existing
+# readers) was rejected.
+PROFILE_STAMPED_ITEMS = Profile(
+    "stamped-items", (SUBTREE_STAMPED_ITEMS,), require_stamped_population=True)
+
+# `todo-reachability.py`: reads `sections[].n` and `sections[].status`. A cache
+# with no shipped items anywhere is perfectly usable to it.
+PROFILE_SECTIONS = Profile("sections", (SUBTREE_SECTIONS,))
+
+# `decision-registry.py`: reads the Accepted/Deferred stamp XREFs.
+PROFILE_STAMP_XREFS = Profile("stamp-xrefs", (SUBTREE_STAMPS_XREFS,))
+
+
 class CacheSchemaError(RuntimeError):
     """The cache cannot support a trustworthy walk.
 
@@ -171,13 +258,222 @@ def _require_str(value, where: str, field: str, path, min_len: int = 0):
 _ITEM_KEYS = ("section_n", "item_idx", "item_text", "refs")
 _REF_KEYS_FILE = ("kind", "file", "line")
 _REF_KEYS_SYMBOL = ("kind", "symbol", "file")
+# Section 19 subtrees. Mirrors cache.schema.json; test_build.sh asserts the two
+# agree using `jsonschema` as an INDEPENDENT oracle, so a divergence is a test
+# failure rather than a silent drift.
+_SECTION_KEYS = ("n", "deliverable", "depends_on", "status")
+_STAMP_XREF_REQUIRED = ("kind", "severity", "target_path", "target_section")
+_STAMP_XREF_KEYS = _STAMP_XREF_REQUIRED + ("item_name",)
 
 
-def validate_nodes(nodes, path) -> CacheInfo:
-    """Validate the `stamped_items` subtree of an already-parsed cache.
+def _validate_sections(node, i: int, path):
+    """`sections[]` -- the Implementation Order rows. Consumed by
+    `todo-reachability.py`, which keys a dict on `n` and compares `status`.
+
+    The schema already constrains this subtree (required n/deliverable/
+    depends_on/status, additionalProperties false); until section 19 NOTHING
+    enforced it, so the schema was documentation. `n` is nullable per the schema
+    -- a row whose Section column is unparseable -- and the reader must cope, so
+    a null `n` is VALID here and is the reader's problem, not a shape error.
+
+    `depends_on` is checked only for being an array. Its ITEM shape is consumed
+    by `validate.py` (section 23), and validating it here would advertise a
+    contract this module does not test.
+    """
+    if SUBTREE_SECTIONS not in node:
+        _err(REASON_SHAPE,
+             f"cache node {i} is missing required `sections` "
+             f"(per {SCHEMA_REL}): {path}")
+    sections = node[SUBTREE_SECTIONS]
+    # Same falsey trap as `stamped_items`: `sections: {}` is not a list and must
+    # not read as "no sections".
+    if not isinstance(sections, list):
+        _err(REASON_SHAPE,
+             f"cache node {i} `sections` is {type(sections).__name__}, "
+             f"expected array (per {SCHEMA_REL}): {path}")
+    for j, s in enumerate(sections):
+        where = f"cache node {i} section {j}"
+        if not isinstance(s, dict):
+            _err(REASON_SHAPE,
+                 f"{where} is not an object ({type(s).__name__}): {path}")
+        for field in _SECTION_KEYS:
+            if field not in s:
+                _err(REASON_SHAPE,
+                     f"{where} is missing required `{field}` "
+                     f"(per {SCHEMA_REL}): {path}")
+        extra = [k for k in s if k not in _SECTION_KEYS]
+        if extra:
+            _err(REASON_SHAPE,
+                 f"{where} has unknown key(s) {sorted(extra)} "
+                 f"(additionalProperties false per {SCHEMA_REL}): {path}")
+        # `n` is the DICT KEY the reader builds, so a non-scalar is unhashable
+        # and raises TypeError from inside the walk -- the same escape class
+        # `section_n` closed on the stamped-items side.
+        if s["n"] is not None:
+            _require_int(s["n"], 0, where, "n", path)
+        _require_str(s["deliverable"], where, "deliverable", path)
+        # `.strip()` is called on this by the reader, so a non-string raises
+        # AttributeError mid-walk instead of refusing here.
+        _require_str(s["status"], where, "status", path)
+        if not isinstance(s["depends_on"], list):
+            _err(REASON_SHAPE,
+                 f"{where} `depends_on` is {type(s['depends_on']).__name__}, "
+                 f"expected array (per {SCHEMA_REL}): {path}")
+
+
+def _validate_stamps_xrefs(node, i: int, path):
+    """`stamps_xrefs[]` -- Accepted/Deferred stamp XREFs. Consumed by
+    `decision-registry.py`, which reads `kind`, `target_path`, `target_section`
+    and the optional `item_name`.
+
+    The schema carried this as a bare `{"type": "array"}` with no item shape, so
+    a malformed entry passed both the schema and every reader. Constrained here
+    and in the schema together (section 19).
+    """
+    if SUBTREE_STAMPS_XREFS not in node:
+        _err(REASON_SHAPE,
+             f"cache node {i} is missing required `stamps_xrefs` "
+             f"(per {SCHEMA_REL}): {path}")
+    xrefs = node[SUBTREE_STAMPS_XREFS]
+    if not isinstance(xrefs, list):
+        _err(REASON_SHAPE,
+             f"cache node {i} `stamps_xrefs` is {type(xrefs).__name__}, "
+             f"expected array (per {SCHEMA_REL}): {path}")
+    for j, x in enumerate(xrefs):
+        where = f"cache node {i} stamp xref {j}"
+        if not isinstance(x, dict):
+            # The reader ALREADY skips a non-dict here (`if not isinstance(x,
+            # dict): continue`). That defensive skip is exactly the silent
+            # narrowing this module refuses: the answer looks complete while
+            # entries were dropped.
+            _err(REASON_SHAPE,
+                 f"{where} is not an object ({type(x).__name__}): {path}")
+        for field in _STAMP_XREF_REQUIRED:
+            if field not in x:
+                _err(REASON_SHAPE,
+                     f"{where} is missing required `{field}` "
+                     f"(per {SCHEMA_REL}): {path}")
+        extra = [k for k in x if k not in _STAMP_XREF_KEYS]
+        if extra:
+            _err(REASON_SHAPE,
+                 f"{where} has unknown key(s) {sorted(extra)} "
+                 f"(additionalProperties false per {SCHEMA_REL}): {path}")
+        # `.lower()` is called on `kind` by the reader; the other three are
+        # compared and joined as strings.
+        for field in _STAMP_XREF_REQUIRED:
+            _require_str(x[field], where, field, path)
+        # `item_name` is OPTIONAL -- 73 of 994 live entries omit it (a stamp
+        # clause naming a section rather than an item) -- but when present it
+        # must be a usable string.
+        if "item_name" in x:
+            _require_str(x["item_name"], where, "item_name", path)
+
+
+def _validate_stamped_items(node, i: int, path):
+    """`stamped_items[]` -- the section 17 contract, unchanged.
+
+    Returns `(population_delta, key_present)`. Extracted from `validate_nodes`
+    so the per-node walk can dispatch on a profile without this block's early
+    `continue` swallowing the other subtrees.
+    """
+    if SUBTREE_STAMPED_ITEMS not in node:
+        # Legal and COMMON: the schema emits `stamped_items` only when a
+        # body has at least one [x] item. Measured on the live cache:
+        # 156 of 232 nodes have no shipped items and correctly omit it.
+        return 0, False
+    population = 0
+    items = node[SUBTREE_STAMPED_ITEMS]
+    # NOT a truthiness test. `stamped_items: {}` is wrong-typed but falsey,
+    # so `node.get("stamped_items") or []` treated it as absent and walked
+    # zero items while reporting a clean run -- the exact vacuous-pass class
+    # section 14 closed on the snapshot side and the lint still carried.
+    if not isinstance(items, list):
+        _err(REASON_SHAPE,
+             f"cache node {i} `stamped_items` is "
+             f"{type(items).__name__}, expected array "
+             f"(per {SCHEMA_REL}): {path}")
+
+    for j, it in enumerate(items):
+        where = f"cache node {i} item {j}"
+        if not isinstance(it, dict):
+            _err(REASON_SHAPE,
+                 f"{where} is not an object "
+                 f"({type(it).__name__}): {path}")
+        for field in _ITEM_KEYS:
+            if field not in it:
+                _err(REASON_SHAPE,
+                     f"{where} is missing required `{field}` "
+                     f"(per {SCHEMA_REL}): {path}")
+        extra = [k for k in it if k not in _ITEM_KEYS]
+        if extra:
+            # additionalProperties: false. An unknown key is producer drift;
+            # failing closed here is what forces the schema and the readers
+            # to be updated together instead of silently diverging.
+            _err(REASON_SHAPE,
+                 f"{where} has unknown key(s) {sorted(extra)} "
+                 f"(additionalProperties false per {SCHEMA_REL}): {path}")
+        # `section_n` is used as a DICT KEY by both readers, so a non-scalar
+        # is unhashable and raises TypeError from inside the walk -- which
+        # escaped as the tool's documented "a prior verdict changed" code
+        # (Codex consistency, section 16).
+        _require_int(it["section_n"], 1, where, "section_n", path)
+        _require_int(it["item_idx"], 0, where, "item_idx", path)
+        _require_str(it["item_text"], where, "item_text", path)
+
+        refs = it["refs"]
+        # Same falsey trap as `stamped_items`: `refs: {}` is not a list and
+        # must not read as "no refs".
+        if not isinstance(refs, list):
+            _err(REASON_SHAPE,
+                 f"{where} `refs` is {type(refs).__name__}, expected array "
+                 f"(per {SCHEMA_REL}): {path}")
+        population += 1
+
+        for k, r in enumerate(refs):
+            rwhere = f"{where} ref {k}"
+            if not isinstance(r, dict):
+                _err(REASON_SHAPE,
+                     f"{rwhere} is not an object "
+                     f"({type(r).__name__}): {path}")
+            kind = r.get("kind")
+            # `kind` is a schema `const`, not free text: the readers branch
+            # on it, so an unknown kind silently drops the ref from every
+            # bucket rather than being counted as anything.
+            if kind == "file":
+                allowed = _REF_KEYS_FILE
+                _require_str(r.get("file"), rwhere, "file", path, 1)
+                if "line" in r:
+                    _require_int(r["line"], 1, rwhere, "line", path)
+            elif kind == "symbol":
+                allowed = _REF_KEYS_SYMBOL
+                _require_str(r.get("symbol"), rwhere, "symbol", path, 1)
+                # `file` is OPTIONAL on a symbol ref (absent when the item
+                # names a symbol with no nearby file reference), but when
+                # present it must be a usable non-empty string: the readers
+                # call `.startswith` on it.
+                if "file" in r:
+                    _require_str(r["file"], rwhere, "file", path, 1)
+            else:
+                _err(REASON_SHAPE,
+                     f"{rwhere} `kind` is {kind!r}, expected 'file' or "
+                     f"'symbol' (per {SCHEMA_REL}): {path}")
+            extra = [x for x in r if x not in allowed]
+            if extra:
+                _err(REASON_SHAPE,
+                     f"{rwhere} has unknown key(s) {sorted(extra)} "
+                     f"(additionalProperties false per {SCHEMA_REL}): "
+                     f"{path}")
+    return population, True
+
+
+def validate_nodes(nodes, path, profile: Profile = PROFILE_STAMPED_ITEMS) -> CacheInfo:
+    """Validate the subtrees `profile` declares, of an already-parsed cache.
 
     Split out of `load_and_validate` so a caller holding nodes in memory (and
     the tests) can apply the identical rule without touching the filesystem.
+
+    `profile` defaults to the section 17 contract, so both readers routed there
+    are byte-for-byte unaffected by section 19.
     """
     if not isinstance(nodes, list):
         _err(REASON_SHAPE, f"cache is not a JSON array: {path}")
@@ -210,98 +506,29 @@ def validate_nodes(nodes, path) -> CacheInfo:
                  f"cache node {i} is missing required `file_path` "
                  f"(per {SCHEMA_REL}): {path}")
         _require_str(node["file_path"], f"cache node {i}", "file_path", path, 1)
-        if "stamped_items" not in node:
-            # Legal and COMMON: the schema emits `stamped_items` only when a
-            # body has at least one [x] item. Measured on the live cache:
-            # 156 of 232 nodes have no shipped items and correctly omit it.
-            continue
-        key_present = True
-        items = node["stamped_items"]
-        # NOT a truthiness test. `stamped_items: {}` is wrong-typed but falsey,
-        # so `node.get("stamped_items") or []` treated it as absent and walked
-        # zero items while reporting a clean run -- the exact vacuous-pass class
-        # section 14 closed on the snapshot side and the lint still carried.
-        if not isinstance(items, list):
-            _err(REASON_SHAPE,
-                 f"cache node {i} `stamped_items` is "
-                 f"{type(items).__name__}, expected array "
-                 f"(per {SCHEMA_REL}): {path}")
 
-        for j, it in enumerate(items):
-            where = f"cache node {i} item {j}"
-            if not isinstance(it, dict):
-                _err(REASON_SHAPE,
-                     f"{where} is not an object "
-                     f"({type(it).__name__}): {path}")
-            for field in _ITEM_KEYS:
-                if field not in it:
-                    _err(REASON_SHAPE,
-                         f"{where} is missing required `{field}` "
-                         f"(per {SCHEMA_REL}): {path}")
-            extra = [k for k in it if k not in _ITEM_KEYS]
-            if extra:
-                # additionalProperties: false. An unknown key is producer drift;
-                # failing closed here is what forces the schema and the readers
-                # to be updated together instead of silently diverging.
-                _err(REASON_SHAPE,
-                     f"{where} has unknown key(s) {sorted(extra)} "
-                     f"(additionalProperties false per {SCHEMA_REL}): {path}")
-            # `section_n` is used as a DICT KEY by both readers, so a non-scalar
-            # is unhashable and raises TypeError from inside the walk -- which
-            # escaped as the tool's documented "a prior verdict changed" code
-            # (Codex consistency, section 16).
-            _require_int(it["section_n"], 1, where, "section_n", path)
-            _require_int(it["item_idx"], 0, where, "item_idx", path)
-            _require_str(it["item_text"], where, "item_text", path)
+        # PER-SUBTREE DISPATCH. A caller is validated for exactly what it
+        # declared it consumes -- no more (that would advertise an untested
+        # contract) and no less (that would be routing in name only).
+        if SUBTREE_STAMPED_ITEMS in profile.subtrees:
+            delta, present = _validate_stamped_items(node, i, path)
+            population += delta
+            key_present = key_present or present
+        if SUBTREE_SECTIONS in profile.subtrees:
+            _validate_sections(node, i, path)
+        if SUBTREE_STAMPS_XREFS in profile.subtrees:
+            _validate_stamps_xrefs(node, i, path)
 
-            refs = it["refs"]
-            # Same falsey trap as `stamped_items`: `refs: {}` is not a list and
-            # must not read as "no refs".
-            if not isinstance(refs, list):
-                _err(REASON_SHAPE,
-                     f"{where} `refs` is {type(refs).__name__}, expected array "
-                     f"(per {SCHEMA_REL}): {path}")
-            population += 1
-
-            for k, r in enumerate(refs):
-                rwhere = f"{where} ref {k}"
-                if not isinstance(r, dict):
-                    _err(REASON_SHAPE,
-                         f"{rwhere} is not an object "
-                         f"({type(r).__name__}): {path}")
-                kind = r.get("kind")
-                # `kind` is a schema `const`, not free text: the readers branch
-                # on it, so an unknown kind silently drops the ref from every
-                # bucket rather than being counted as anything.
-                if kind == "file":
-                    allowed = _REF_KEYS_FILE
-                    _require_str(r.get("file"), rwhere, "file", path, 1)
-                    if "line" in r:
-                        _require_int(r["line"], 1, rwhere, "line", path)
-                elif kind == "symbol":
-                    allowed = _REF_KEYS_SYMBOL
-                    _require_str(r.get("symbol"), rwhere, "symbol", path, 1)
-                    # `file` is OPTIONAL on a symbol ref (absent when the item
-                    # names a symbol with no nearby file reference), but when
-                    # present it must be a usable non-empty string: the readers
-                    # call `.startswith` on it.
-                    if "file" in r:
-                        _require_str(r["file"], rwhere, "file", path, 1)
-                else:
-                    _err(REASON_SHAPE,
-                         f"{rwhere} `kind` is {kind!r}, expected 'file' or "
-                         f"'symbol' (per {SCHEMA_REL}): {path}")
-                extra = [x for x in r if x not in allowed]
-                if extra:
-                    _err(REASON_SHAPE,
-                         f"{rwhere} has unknown key(s) {sorted(extra)} "
-                         f"(additionalProperties false per {SCHEMA_REL}): "
-                         f"{path}")
-
-    if not key_present:
+    if profile.require_stamped_population and not key_present:
         # LEGACY, and reported distinctly from an empty population: this cache
         # predates the section 9 extension or came from a different generator,
         # which is a "rebuild it" condition rather than a regression.
+        #
+        # GATED ON THE PROFILE (section 19). This is a READINESS policy owned by
+        # the callers that walk stamped items; a reader of `sections[]` is
+        # perfectly served by a cache where nothing has shipped yet, and raising
+        # here would refuse it. `key_present` is still REPORTED to every caller
+        # via CacheInfo, which is what the module header always said it was for.
         _err(REASON_LEGACY_NO_STAMPED_ITEMS,
              f"cache carries no stamped_items -- it predates the section 9 "
              f"extension, or came from a different generator: {path}")
@@ -421,7 +648,8 @@ def check_corpus_unchanged(todo_root: Path, corpus) -> None:
 
 
 def load_and_validate(cache_path: Path, todo_root: Path,
-                      check_stale: bool = True):
+                      check_stale: bool = True,
+                      profile: Profile = PROFILE_STAMPED_ITEMS):
     """Read, parse and validate the cache. Returns `(nodes, CacheInfo)`.
 
     MemoryError IS NORMALIZED ACROSS THE WHOLE OPERATION, which is why this is
@@ -435,7 +663,7 @@ def load_and_validate(cache_path: Path, todo_root: Path,
     constrained CI memory budget well before the byte ceiling binds.
     """
     try:
-        return _load_and_validate(cache_path, todo_root, check_stale)
+        return _load_and_validate(cache_path, todo_root, check_stale, profile)
     except MemoryError:
         # Deliberately no f-string interpolation of the exception: formatting a
         # message is itself an allocation, and this handler runs precisely when
@@ -446,7 +674,8 @@ def load_and_validate(cache_path: Path, todo_root: Path,
 
 
 def _load_and_validate(cache_path: Path, todo_root: Path,
-                       check_stale: bool = True):
+                       check_stale: bool = True,
+                       profile: Profile = PROFILE_STAMPED_ITEMS):
     """The real body. See `load_and_validate` for the MemoryError contract.
 
     Raises `CacheSchemaError` with a `reason` tag; the caller maps it to its own
@@ -513,7 +742,7 @@ def _load_and_validate(cache_path: Path, todo_root: Path,
             # infrastructure reason rather than a traceback.
             _err(REASON_UNREADABLE, f"cache unreadable: {cache_path}: {exc}")
 
-        info = validate_nodes(nodes, cache_path)
+        info = validate_nodes(nodes, cache_path, profile)
         if check_stale:
             # The fingerprint returned here is handed to the caller so it can
             # re-verify AFTER its own walk (`check_corpus_unchanged`).

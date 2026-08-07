@@ -45,6 +45,45 @@ import subprocess
 import sys
 from pathlib import Path
 
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_REPO_ROOT / "scripts" / "todo-graph"))
+try:
+    import cache_schema as _cs
+except ImportError as _exc:                                  # pragma: no cover
+    sys.stderr.write(f"todo-reachability: cannot import the shared "
+                     f"cache-schema validator: {_exc}\n")
+    raise
+
+# EXIT CODES. 0 = clean, 1 = FINDINGS, 2 = infrastructure.
+#
+# `2` is NEW with the shared-cache-validator routing, and exists because 1 was
+# already taken by a VERDICT. Before this, a cache that would not parse was
+# swallowed by a bare `except Exception` and the audit silently fell back to
+# per-file parsing, so an unusable cache produced a clean-looking finding count
+# computed from a different source than the one this tool documents. Mapping
+# the failure onto 1 would have been no better: an infrastructure refusal would
+# then be indistinguishable from "there are unreachable items", which is the
+# exact defect the shared validator exists to prevent (Codex design review of
+# the cache-validation-reach work, [high]).
+#
+# A MISSING cache is deliberately NOT an error. Absence is not corruption: a
+# fresh clone has no `build/todo-cache.json` until something builds it, and this
+# audit is expected to work there via its per-file fallback. Every OTHER reason
+# -- unreadable, wrong shape, empty, stale -- means a cache EXISTS and cannot be
+# trusted, and silently preferring the fallback would hide that.
+EXIT_INFRA = 2
+_CACHE_FALLBACK_REASONS = frozenset((_cs.REASON_MISSING,))
+
+
+class CacheUnusable(RuntimeError):
+    """A cache exists but cannot be trusted. Carries the shared reason tag so
+    the message names WHICH rule refused, and is caught in `main` and mapped to
+    `EXIT_INFRA` -- never to the findings code."""
+
+    def __init__(self, reason: str, message: str):
+        super().__init__(message)
+        self.reason = reason
+
 SECTION_RE = re.compile(r"^## (\d+)\.")
 OPEN_ITEM_RE = re.compile(r"^\s*- \[ \]")
 PARKED_ITEM_RE = re.compile(r"^\s*- \[/\]")
@@ -138,17 +177,30 @@ def _load_cache(root):
     if _CACHE:
         return _CACHE
     cache_path = Path(root) / "build" / "todo-cache.json"
+    # ROUTED THROUGH THE SHARED CACHE-SCHEMA VALIDATOR, under the profile that
+    # declares what this reader actually consumes: `sections[].n/.status`. The
+    # default stamped-items profile would REFUSE a cache in which nothing has
+    # shipped yet, which is a perfectly usable cache for a reachability audit.
     try:
-        data = json.loads(cache_path.read_text(encoding="utf-8"))
-    except Exception:
-        _CACHE["__missing__"] = True
-        return _CACHE
+        data, _info = _cs.load_and_validate(
+            cache_path, Path(root) / "todo", profile=_cs.PROFILE_SECTIONS)
+    except _cs.CacheSchemaError as exc:
+        if exc.reason in _CACHE_FALLBACK_REASONS:
+            _CACHE["__missing__"] = True
+            return _CACHE
+        # NOT a silent degrade. See EXIT_INFRA above: the cache exists and
+        # cannot be trusted, so the audit refuses rather than quietly answering
+        # from a different source.
+        raise CacheUnusable(exc.reason, str(exc)) from exc
     for node in data:
-        fp = node.get("file_path")
-        if not fp:
-            continue
-        _CACHE[fp] = {sec.get("n"): (sec.get("status") or "").strip()
-                      for sec in node.get("sections", []) if isinstance(sec, dict)}
+        # `file_path` and the `sections[]` shape are now guaranteed by the
+        # validator, so the defensive `if not fp` / `isinstance(sec, dict)`
+        # skips this walk used to need are gone: skipping is exactly the silent
+        # narrowing the routing exists to end.
+        _CACHE[node["file_path"]] = {
+            sec["n"]: (sec["status"] or "").strip()
+            for sec in node["sections"]
+        }
     return _CACHE
 
 
@@ -251,10 +303,17 @@ def _targets(argv):
 def main(argv) -> int:
     as_json = "--json" in argv
     findings = {}
-    for path in _targets(argv):
-        hits = audit(path)
-        if hits:
-            findings[path] = hits
+    try:
+        for path in _targets(argv):
+            hits = audit(path)
+            if hits:
+                findings[path] = hits
+    except CacheUnusable as exc:
+        # EXIT_INFRA, never 1. A caller distinguishing "unreachable items exist"
+        # from "the audit could not run" depends on this separation.
+        sys.stderr.write(f"todo-reachability: cache unusable "
+                         f"[{exc.reason}]: {exc}\n")
+        return EXIT_INFRA
     if as_json:
         print(json.dumps(findings, indent=2))
     else:
