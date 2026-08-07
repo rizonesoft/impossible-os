@@ -93,15 +93,21 @@ if [ -n "$TOOLING_HITS" ]; then
   echo ""
   echo "Pre-push: tooling change in this push -- gating on scripts/test-tooling.sh:"
   printf '%s\n' "$TOOLING_HITS" | sort -u | head -6 | sed 's/^/  touched: /'
-  if ! bash "$REPO_ROOT/scripts/test-tooling.sh" --quiet; then
+  if [ "${SKIP_TOOLING_SUITE:-}" = "1" ]; then
+    # Skips the RUN, not just a failure. The sibling runner-suite gate can
+    # afford failure-only semantics because run-all.sh takes seconds; this
+    # suite takes ~6 minutes, and a gate that cannot be skipped on a known-good
+    # push is one that gets disabled wholesale. Measured immediately: it timed
+    # out the very push that introduced it.
+    echo -e "\033[33m  SKIP_TOOLING_SUITE=1 set -- tooling suite not run\033[0m"
+  elif ! bash "$REPO_ROOT/scripts/test-tooling.sh" --quiet; then
     echo ""
     echo -e "\033[31mTooling suite failed -- push blocked\033[0m"
     echo "  A tooling change did not pass scripts/test-tooling.sh, which until"
     echo "  now ran ONLY in CI. Fix it here rather than discovering it as a red"
     echo "  build the next run has to repair before it can work."
     echo "  Opt-out (last resort): SKIP_TOOLING_SUITE=1 git push ..."
-    [ "${SKIP_TOOLING_SUITE:-}" = "1" ] || exit 1
-    echo -e "\033[33m  SKIP_TOOLING_SUITE=1 set -- suite failure overridden\033[0m"
+    exit 1
   fi
 fi
 
