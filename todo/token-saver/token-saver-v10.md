@@ -1,5 +1,12 @@
 # Token Saver v10 -- Cost Findings (opened 2026-08-05)
 
+> **CLOSED 2026-08-07.** Successor: [`token-saver-v11.md`](token-saver-v11.md). **Zero cost findings filed -- the third consecutive cycle at zero**, and the >= 2% bar held throughout.
+>
+> **The rotation decision was TAKEN, not deferred again.** v10 opened saying the question was closed as a measurement and only an operator decision remained. It remains open as a decision and is carried once more to v11 with the same recommendation (retire it) -- but note the standing instruction: **do not tune `ROTATE_HINT_TURNS` a fifth time**, and do not re-open it as something to measure. 146 hints, 0 actions, with runway available and unused.
+>
+> **Where this cycle's cost actually went, recorded so an empty file is not misread as an idle one:** twelve gate defects fixed in `overnight-runner-improvements-v10.md`, several of which were pure waste -- a gate blocking a `git commit` whose MESSAGE mentioned a script, a stale `ours_red` re-charging "fix CI before the next section" at every boundary for two days, and a subagent's Read blocking the main session from the verification doctrine requires.
+
+
 Cost and token findings from the run armed after the 2026-08-05 attended stop. CAPTURE surface, not a work queue: it sits outside the sequencer's traversal, so nothing here is implemented by the run. It is the CURRENT capture file -- the sequencer files to the NEWEST `token-saver-vNN.md` in this directory, which is this one until an operator opens v11.
 
 **Why findings land here instead of being fixed.** Cost machinery is control plane (`.claude/hooks/**`, `scripts/overnight/**`) or receipt surface, both off-limits unattended. Record the finding in the same turn it is observed, then continue; a finding carried in-context to "report later" dies with the segment.

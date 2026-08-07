@@ -1,5 +1,14 @@
 # Overnight Runner Improvements v10 -- Findings (opened 2026-08-05)
 
+> **CLOSED 2026-08-07.** Successor: [`overnight-runner-improvements-v11.md`](overnight-runner-improvements-v11.md). **15 findings, 15 with a verdict, 0 open.** Twelve fixed in code with regressions, two recorded as agent-side discipline (the finding's own words), one measured as external.
+>
+> **Two were reported backwards, and probing them found REAL BYPASSES in the opposite direction.** The heredoc items were filed as false positives blocking legitimate work; the false positives did not reproduce, and `_strip_heredoc_bodies` was dropping EVERY body -- so `bash <<'EOF' ... bash scripts/test.sh ... EOF` ran the suite in the main context with nothing reporting it, in all four shell-fed shapes. Filing a symptom you cannot explain is still worth doing; this is why.
+>
+> **The most serious was that a rule everyone believed was enforced, was not.** The run may not edit its own control plane -- stated in the sequencer skill, the doctrine file and every capture-file header -- and an `Edit` on `scripts/overnight/decision-registry.py` returned rc 0 from every guard. The run edited it for ~90 lines, noticed on its own, reverted, and filed the gap. Prose is not a gate.
+>
+> **Two more were silent-wrong rather than loud-broken**, which is the class this corpus keeps producing: a corrupt cache classified every file DONE so `--next` answered "the queue is finished" over work it could not see; and `decision-registry` read four key names the producer has never emitted, so 923 ownership decisions were indexed pointing nowhere. Neither ever went red.
+
+
 Findings from the run armed after the 2026-08-05 attended stop. This file is a CAPTURE surface, not a work queue: it sits outside the sequencer's traversal, so nothing here is implemented by the run. It is the CURRENT capture file -- the sequencer files to the NEWEST `overnight-runner-improvements-vNN.md` in this directory, which is this one until an operator opens v11.
 
 **Why findings land here instead of being fixed.** The run is explicitly NOT permitted to modify its own control plane while unattended -- `.claude/hooks/**`, `.claude/skills/**`, `scripts/overnight/**`, `.githooks/**`, `.claude/settings.json` -- nor the RECEIPT SURFACE (`Makefile*`, `scripts/build.sh`, the ABI generator). Ordinary work is unaffected: kernel code, tests, docs and TODO files are fixed in place as normal.
