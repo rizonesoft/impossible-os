@@ -163,6 +163,15 @@ def walk_todo_files(root: Path) -> list:
     for p in root.rglob("TODO-*.md"):
         if p.name == "TODO-00-INDEX.md":
             continue
+        # DIRECTORIES ONLY are excluded here, and only because the reader's
+        # `os.walk` reports them under `dirs` rather than `files` -- so a
+        # directory named `TODO-x.md` belongs to neither side's corpus (Codex
+        # consistency, section 21, [medium]). A non-regular FILE is deliberately
+        # NOT skipped: both sides can see it, so the shared read rule must
+        # REFUSE it on both sides rather than let the producer quietly omit what
+        # every reader rejects (Codex re-adversarial, section 21, [medium]).
+        if p.is_dir():
+            continue
         out.append(p)
     return sorted(out)
 
@@ -182,6 +191,21 @@ def collect_git_timestamps(repo_root: Path, files: list) -> dict:
     sorting per-file.
 
     Files with no git history (untracked or new) get None timestamps.
+
+    THE WALK REPORTS ITS OWN PROVENANCE. Returning only the timestamps let the
+    caller pin the history with a SEPARATE `git log`, which is a different
+    generation: move the history to B while this walk resolves, return B-derived
+    timestamps, move back to A, and an A-vs-A comparison publishes B's
+    timestamps under an A binding (Codex re-adversarial, section 21, [high]).
+    The last `COMMIT` line of this very output IS the corpus tip the projection
+    came from, and the number of them is its commit count -- the same pair
+    `cache_schema.corpus_history_id` computes, verified equal on the live repo
+    -- so the provenance costs nothing extra and cannot describe a different
+    walk than the one that ran.
+
+    Returns `(timestamps, provenance)`; provenance is None when git could not be
+    consulted at all, which means no timestamp was derived and there is nothing
+    for a history check to protect.
     """
     rel_paths = set()
     for f in files:
@@ -192,6 +216,16 @@ def collect_git_timestamps(repo_root: Path, files: list) -> dict:
             rel_paths.add(str(rel))
         except ValueError:
             continue
+
+    if not rel_paths:
+        # NO FILE IS UNDER `repo_root`, so no timestamp can be derived from its
+        # history and the walk below would describe a DIFFERENT tree than the
+        # corpus (test fixtures pass `--root /tmp/...` with `--repo-root` at the
+        # live repo, which made the provenance the live repo's corpus tip while
+        # the corpus itself was not in a repository at all). Provenance None is
+        # the honest answer: nothing was derived, so there is nothing for the
+        # history binding to protect.
+        return {}, None
 
     created = {}
     last_active = {}
@@ -221,12 +255,15 @@ def collect_git_timestamps(repo_root: Path, files: list) -> dict:
     except (subprocess.CalledProcessError, FileNotFoundError):
         # Git unavailable or repo broken: emit empty timestamps (caller
         # treats None as unknown, generator still succeeds).
-        return {p: (None, None) for p in rel_paths}
+        return {p: (None, None) for p in rel_paths}, None
 
     cur_ts = None
+    walk_commits = []
     for line in result.stdout.splitlines():
         if line.startswith("COMMIT "):
             parts = line.split(" ", 2)
+            if len(parts) >= 2:
+                walk_commits.append(parts[1])
             if len(parts) >= 3:
                 try:
                     cur_ts = int(parts[2])
@@ -247,7 +284,9 @@ def collect_git_timestamps(repo_root: Path, files: list) -> dict:
             time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(c)) if c else None,
             time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(l)) if l else None,
         )
-    return out
+    # `--reverse`, so the LAST commit seen is the newest corpus-touching one.
+    tip = walk_commits[-1] if walk_commits else "no-history"
+    return out, f"{tip}:{len(walk_commits)}"
 
 
 # --- Frontmatter ---------------------------------------------------------
@@ -1091,6 +1130,52 @@ def _fsync_dir(d: Path) -> None:
         os.close(fd)
 
 
+class _publish_lock:
+    """Serialize publish + prune against another producer writing the same cache.
+
+    NOT a repo-wide writer lock -- one advisory `flock` on one lockfile beside
+    the cache being published. Deriving the prune's keeper from the cache on
+    disk shrank the concurrent-publish race but could not close it, and the
+    mtime guard that replaced it was both clock-dependent (in the one change
+    whose entire point is removing clock dependence) and wrong on
+    coarse-timestamp filesystems (Codex re-adversarial, section 21, [medium]).
+    A lock makes "publish the pair, then drop superseded bindings" atomic with
+    respect to another build, which is the only thing that was ever needed.
+
+    Best-effort by design: a platform without `flock`, or a `build/` we cannot
+    create a lockfile in, must not turn a working build into a failure. The
+    unlocked path is exactly the behaviour that shipped before, and its worst
+    outcome is a reader REFUSAL that the next rebuild clears.
+    """
+
+    def __init__(self, cache_path: Path):
+        self._path = cache_path.with_name(f".{cache_path.name}.lock")
+        self._fd = None
+
+    def __enter__(self):
+        try:
+            import fcntl
+            self._fd = os.open(str(self._path), os.O_CREAT | os.O_RDWR, 0o666)
+            fcntl.flock(self._fd, fcntl.LOCK_EX)
+        except (ImportError, OSError):
+            if self._fd is not None:
+                try:
+                    os.close(self._fd)
+                except OSError:
+                    pass
+                self._fd = None
+        return self
+
+    def __exit__(self, *exc):
+        if self._fd is not None:
+            try:
+                os.close(self._fd)     # closing the descriptor releases the lock
+            except OSError:
+                pass
+            self._fd = None
+        return False
+
+
 def _prune_stale_bindings(cache_path: Path) -> None:
     """Drop corpus bindings for cache generations that are no longer published.
 
@@ -1109,14 +1194,20 @@ def _prune_stale_bindings(cache_path: Path) -> None:
     is a reader REFUSAL, never a wrong answer.
     """
     try:
+        # The keeper is derived from the cache ON DISK, inside the same lock
+        # that published it, so no other producer can have replaced it between
+        # the read and the unlinks. No timestamp is consulted: under the lock
+        # there is exactly one live generation, and every other binding is
+        # superseded by definition.
         live = _cs.sidecar_path(
             cache_path, hashlib.sha256(cache_path.read_bytes()).hexdigest())
         for p in cache_path.parent.glob(f"{cache_path.name}.corpus-*.json"):
-            if p != live:
-                try:
-                    p.unlink()
-                except OSError:
-                    pass
+            if p == live:
+                continue
+            try:
+                p.unlink()
+            except OSError:
+                pass
     except OSError:
         return
 
@@ -1173,7 +1264,6 @@ def main():
     if not args.quiet:
         sys.stderr.write(f"[build.py] discovered {len(files)} TODO files under {todo_root}\n")
 
-    timestamps = collect_git_timestamps(repo_root, files)
 
     nodes = []
     fatal_errors = 0
@@ -1188,14 +1278,19 @@ def main():
     # map a statement about what was parsed, so that restoration shows up as the
     # mismatch it is.
     consumed = {}
-    # A history id that cannot be determined RAISES rather than reporting
-    # None, so an indeterminate git failure refuses the build instead of
-    # producing a cache whose derived timestamps nothing can vouch for.
-    try:
-        history_id = _cs.corpus_history_id(todo_root)
-    except _cs.CacheSchemaError as exc:
-        sys.stderr.write(f"[build.py] FAIL: {exc}; cache NOT written\n")
-        return 3
+    # THE RECORDED HISTORY IS THE ONE THE TIMESTAMPS CAME FROM, taken from the
+    # walk itself rather than from a second `git log` that could observe a
+    # different generation (Codex re-adversarial, section 21, [high]). A None
+    # provenance means git could not be consulted, so no timestamp was derived
+    # and there is nothing for the history binding to protect; the readers'
+    # `corpus_history_id` is then the authority for what to record.
+    timestamps, history_id = collect_git_timestamps(repo_root, files)
+    if history_id is None:
+        try:
+            history_id = _cs.corpus_history_id(todo_root)
+        except _cs.CacheSchemaError as exc:
+            sys.stderr.write(f"[build.py] FAIL: {exc}; cache NOT written\n")
+            return 3
 
     for f in files:
         # Compute display path: relative to repo_root when possible,
@@ -1205,7 +1300,10 @@ def main():
         except ValueError:
             display_rel = f.name
         try:
-            raw_bytes = f.read_bytes()
+            # THE SHARED RULE, not a private read: a FIFO or broken symlink named
+            # TODO-*.md must fail the BUILD, exactly as it fails every reader.
+            # Skipping it here published a cache no reader would accept.
+            raw_bytes = _cs.read_corpus_file(f)
             content = raw_bytes.decode("utf-8")
         except Exception as exc:
             sys.stderr.write(f"[build.py] FAIL {display_rel}: read error: {exc}\n")
@@ -1289,14 +1387,16 @@ def main():
     # fixed-name sidecar could not do that -- it would leave new-cache with
     # old-binding, which every reader refuses until somebody rebuilds.
     side = _cs.sidecar_path(output_path, cache_sha)
-    _publish_atomically(side, (json.dumps({
+    binding = (json.dumps({
         "schema": _cs.SIDECAR_SCHEMA,
         "cache_sha256": cache_sha,
         "history_id": history_id,
         "corpus": consumed,
-    }, indent=2, sort_keys=True) + "\n").encode("utf-8"))
-    _publish_atomically(output_path, blob)
-    _prune_stale_bindings(output_path)
+    }, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    with _publish_lock(output_path):
+        _publish_atomically(side, binding)
+        _publish_atomically(output_path, blob)
+        _prune_stale_bindings(output_path)
 
     elapsed = time.monotonic() - t0
     if not args.quiet:

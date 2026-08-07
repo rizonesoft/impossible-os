@@ -24,7 +24,14 @@
 # standard `mcpServers` block in scripts/todo-graph/mcp.json.
 #
 # Cache freshness: every tool call checks build/todo-cache.json mtime
-# vs the newest todo/**/*.md mtime. On mismatch, it regenerates by
+# vs the newest todo/**/*.md mtime. THIS IS THIS SERVER'S OWN RULE, and it
+# is deliberately NOT the shared one: `cache_schema.check_freshness`
+# replaced mtime ordering with a recorded corpus binding (TODO-06 section
+# 21) precisely because a wall-clock comparison is invertible by a clock
+# step. Routing this transport is owned by the query-transport section of
+# the TODO-metadata-layer plan, whose "Make the MCP transport propagate the
+# failure instead of swallowing it" item covers this file. On mismatch, it
+# regenerates by
 # importing `build` and calling `build.main()` in-process (no
 # subprocess -- bounded by build.py's existing ~0.5s budget so
 # per-call latency stays well under 1s). `--no-auto-rebuild` disables

@@ -190,11 +190,23 @@ class Profile:
     walk time. A typo'd profile that silently validates nothing is the vacuous
     pass this whole module exists to refuse, and it would be invisible: the
     caller would look routed and be unprotected.
+
+    `requires_history` is the third, independent axis: whether this caller
+    consumes the fields `build.py` derives from `git log` (`created_at` /
+    `last_active_at`). Only a caller that reads them cares whether the corpus
+    HISTORY moved, and establishing that costs three git subprocesses -- 40ms
+    today at 3,788 corpus-touching commits, growing with commit count rather
+    than corpus size (Codex perf, section 21, [medium]: two routed readers were
+    each paying it per lint for data neither consumes). The producer records the
+    history id unconditionally, so turning this on for a future profile needs no
+    migration -- the evidence is already in every binding.
     """
 
-    __slots__ = ("name", "subtrees", "require_stamped_population")
+    __slots__ = ("name", "subtrees", "require_stamped_population",
+                 "requires_history")
 
-    def __init__(self, name: str, subtrees=(), require_stamped_population=False):
+    def __init__(self, name: str, subtrees=(), require_stamped_population=False,
+                 requires_history=False):
         unknown = sorted(set(subtrees) - _KNOWN_SUBTREES)
         if unknown:
             raise ValueError(
@@ -203,6 +215,7 @@ class Profile:
         self.name = name
         self.subtrees = frozenset(subtrees)
         self.require_stamped_population = bool(require_stamped_population)
+        self.requires_history = bool(requires_history)
 
 
 # The section 17 contract, unchanged and still the DEFAULT, so both readers
@@ -650,6 +663,19 @@ SIDECAR_SCHEMA = "todo-cache-corpus-v1"
 _MAX_TODO_BYTES = 16 * 1024 * 1024
 
 
+def read_corpus_file(path) -> bytes:
+    """Read one corpus entry, or refuse it. THE SHARED RULE (section 21).
+
+    The producer and every reader must agree on which directory entries are
+    corpus files, and agreeing on the NAME is not enough: `build.py` skipping a
+    FIFO that `_scan_corpus` refuses meant a successful build published a cache
+    every reader then rejected -- a producer failing OPEN against a reader
+    failing closed (Codex re-adversarial, section 21, [medium]). Both sides call
+    this, so there is one answer.
+    """
+    return _read_regular(path, _MAX_TODO_BYTES, "corpus entry")
+
+
 def file_digest(path) -> str:
     """sha256 of a regular file's bytes, hex. The corpus fingerprint unit.
 
@@ -663,34 +689,78 @@ def file_digest(path) -> str:
     that is read -- checking the pathname and then opening it is the TOCTOU this
     module exists to avoid.
     """
-    h = hashlib.sha256()
-    # O_NONBLOCK so opening a FIFO cannot block before the type check runs;
-    # it has no effect on a regular file.
+    return hashlib.sha256(read_corpus_file(path)).hexdigest()
+
+
+# The binding is a map of the corpus plus three scalars: ~29 KB for 232 files,
+# so 8 MiB is ~280x headroom. It is bounded for the same reason the cache is --
+# it is read on EVERY reader invocation, and an unbounded read of a corrupt or
+# hostile file is the one failure mode no reason code can report (Codex
+# adversarial, section 21, [medium]).
+_MAX_SIDECAR_BYTES = 8 * 1024 * 1024
+
+
+def _read_regular(path, ceiling: int, what: str) -> bytes:
+    """Bounded read that REFUSES anything that is not a regular file.
+
+    The descriptor is opened FIRST and inspected with `fstat`, so the file that
+    is measured is the file that is read -- checking the pathname and then
+    opening it is the TOCTOU this module exists to avoid. `O_NONBLOCK` means
+    opening a FIFO cannot block before the type check runs; it has no effect on
+    a regular file. Without this, `os.walk` reporting a symlink-to-FIFO as an
+    ordinary file would hang every reader forever -- denial of service needing
+    no overflow or overread.
+    """
     fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
     try:
         st = os.fstat(fd)
         if not stat.S_ISREG(st.st_mode):
             _err(REASON_STALE,
-                 f"corpus entry is not a regular file (mode {st.st_mode:#o}): "
-                 f"{path}")
-        if st.st_size > _MAX_TODO_BYTES:
+                 f"{what} is not a regular file (mode {st.st_mode:#o}): {path}")
+        if st.st_size > ceiling:
             _err(REASON_STALE,
-                 f"corpus entry is {st.st_size} bytes, past the "
-                 f"{_MAX_TODO_BYTES}-byte ceiling: {path}")
+                 f"{what} is {st.st_size} bytes, past the {ceiling}-byte "
+                 f"ceiling: {path}")
         with os.fdopen(fd, "rb") as fh:
             fd = -1  # fdopen owns it now
-            read = 0
-            for chunk in iter(lambda: fh.read(1024 * 1024), b""):
-                read += len(chunk)
-                if read > _MAX_TODO_BYTES:
-                    _err(REASON_STALE,
-                         f"corpus entry grew past the {_MAX_TODO_BYTES}-byte "
-                         f"ceiling while being read: {path}")
-                h.update(chunk)
+            blob = fh.read(ceiling + 1)
+    except OSError as exc:
+        _err(REASON_STALE, f"{what} unreadable: {path}: {exc}")
     finally:
         if fd >= 0:
             os.close(fd)
-    return h.hexdigest()
+    if len(blob) > ceiling:
+        _err(REASON_STALE,
+             f"{what} grew past the {ceiling}-byte ceiling while being read: "
+             f"{path}")
+    return blob
+
+
+def _read_bounded(path: Path, ceiling: int, what: str) -> bytes:
+    """Read a file with the ceiling enforced on the DESCRIPTOR before the
+    allocation, then again against what was actually read (so a file that grows
+    between the fstat and the read is caught rather than silently truncated).
+    Mirrors the cache's own bounded read."""
+    fh = open(path, "rb")   # FileNotFoundError propagates: callers distinguish it
+    try:
+        st = os.fstat(fh.fileno())
+        if st.st_size > ceiling:
+            _err(REASON_STALE,
+                 f"{what} is {st.st_size} bytes, past the {ceiling}-byte "
+                 f"ceiling: {path}")
+        blob = fh.read(ceiling + 1)
+    except OSError as exc:
+        _err(REASON_STALE, f"{what} unreadable: {path}: {exc}")
+    finally:
+        try:
+            fh.close()
+        except OSError:
+            pass
+    if len(blob) > ceiling:
+        _err(REASON_STALE,
+             f"{what} grew past the {ceiling}-byte ceiling while being read: "
+             f"{path}")
+    return blob
 
 
 def _scan_corpus(todo_root: Path, on_err):
@@ -784,6 +854,25 @@ def corpus_history_id(todo_root: Path):
              f"(git rev-parse exited {probe.returncode}): "
              f"{(probe.stderr or '').strip()[:200]}")
 
+    # AN UNBORN HEAD IS DETERMINATE. `git init` plus files but no commit leaves
+    # rev-parse --git-dir succeeding while `log`/`rev-list HEAD` both fail, which
+    # the generic handler below would report as "could not ask" -- refusing a
+    # perfectly legitimate tree that `collect_git_timestamps` already handles by
+    # emitting None timestamps (Codex adversarial, section 21, [medium]).
+    # ONLY the documented unborn result. `--quiet` makes rev-parse exit exactly
+    # 1 with empty output when HEAD names no commit; a corrupt HEAD, a broken
+    # ref or a repository failure exits differently and is INDETERMINATE -- and
+    # collapsing those into the same stable sentinel would let a producer and a
+    # reader compare equal during the same failure (Codex re-adversarial,
+    # section 21, [medium]).
+    unborn = _git("rev-parse", "--verify", "--quiet", "HEAD")
+    if isinstance(unborn, subprocess.CalledProcessError):
+        if unborn.returncode == 1 and not (unborn.stdout or "").strip():
+            return "unborn-head"
+        _err(REASON_STALE,
+             f"cannot verify the corpus HEAD (git exited {unborn.returncode}): "
+             f"{(unborn.stderr or '').strip()[:200]}")
+
     tip = _git("log", "-1", "--format=%H", "--", ".")
     count = _git("rev-list", "--count", "HEAD", "--", ".")
     for r in (tip, count):
@@ -815,7 +904,8 @@ def sidecar_path(cache_path, cache_sha: str) -> Path:
 _REBUILD = ("rebuild via scripts/todo-graph/build-and-validate.sh --keep-cache")
 
 
-def check_freshness(cache_path: Path, todo_root: Path, cache_bytes: bytes):
+def check_freshness(cache_path: Path, todo_root: Path, cache_bytes: bytes,
+                    profile: 'Profile' = None):
     """Refuse a cache that was not built from the corpus now on disk.
 
     THE QUESTION CHANGED, AND THAT IS THE POINT (section 21). This used to ask
@@ -864,7 +954,7 @@ def check_freshness(cache_path: Path, todo_root: Path, cache_bytes: bytes):
     cache_sha = hashlib.sha256(cache_bytes).hexdigest()
     side = sidecar_path(cache_path, cache_sha)
     try:
-        raw = side.read_bytes()
+        raw = _read_bounded(side, _MAX_SIDECAR_BYTES, "corpus binding")
     except FileNotFoundError:
         _err(REASON_STALE,
              f"cache carries no corpus binding ({side.name} is absent) -- it "
@@ -894,9 +984,17 @@ def check_freshness(cache_path: Path, todo_root: Path, cache_bytes: bytes):
              f"corpus binding records no corpus: {side}; {_REBUILD}")
     _diff_or_ok(recorded, live, "since the cache was built")
 
-    # HISTORY, NOT JUST CONTENT. `created_at` / `last_active_at` are derived
-    # from the corpus-limited git log, so identical bytes over a rewritten
-    # history still means stale nodes (Codex design review, section 21, [high]).
+    # HISTORY, NOT JUST CONTENT -- FOR THE CALLERS THAT CONSUME IT. `created_at`
+    # / `last_active_at` are derived from the corpus-limited git log, so
+    # identical bytes over a rewritten history still means stale nodes (Codex
+    # design review, section 21, [high]). But establishing that forks three git
+    # processes and walks the corpus history (40ms today, growing with COMMIT
+    # count), and neither routed reader consumes either field -- so it is a
+    # profile declaration rather than an unconditional toll (Codex perf, section
+    # 21, [medium]). The producer records the id either way, so a profile can
+    # turn this on later with no migration.
+    if profile is not None and not profile.requires_history:
+        return live
     live_hist = corpus_history_id(todo_root)
     if rec.get("history_id") != live_hist:
         _err(REASON_STALE,
@@ -1048,7 +1146,7 @@ def _load_and_validate(cache_path: Path, todo_root: Path,
             # by ITS digest -- never by a fresh read of the pathname, which
             # `build.py` rewrites.
             info.corpus = check_freshness(cache_path, todo_root,
-                                          cache_bytes=blob)
+                                          cache_bytes=blob, profile=profile)
         # THE GENERATION BINDING IS NOT PART OF THE FRESHNESS POLICY, and it
         # used to sit inside the `if check_stale` block above. That coupled two
         # independent protections behind one flag: `check_stale=False` means "I

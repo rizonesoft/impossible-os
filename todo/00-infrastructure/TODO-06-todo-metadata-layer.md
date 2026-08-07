@@ -1082,7 +1082,15 @@ Split out of §19 on 2026-08-07, before implementation, on that section's `SPLIT
 > - Scope boundary: this bounds whether the PRODUCER may certify a cache. Which readers must validate at all is §19's, and the reader-side generation binding it mirrors is §17's.
 > - Known residual: the identity gate runs the BASE worktree's `cache_schema.py`, so the CI run at the landing commit still walks with the old mtime validator -- a single self-healing run, unavoidable for any change to the reader closure, and not repairable by shipping the change twice.
 
+> **Verified:** 2026-08-07 | commit `2146c7033` | 5/5 items | build OK | test_build.sh 347/347, test-tooling.sh 1293/1293, lint 0 errors, build-and-validate 8/8, 28326 kernel + 17 user-mode tests
+> **Accepted:** [H] `validate.py` loads the cache raw, bypassing the corpus binding entirely -> XREF: 00-infrastructure/TODO-06 §23 (item: "Preserve ONE rebuild, then re-validate the recovered artifact" at line 1122 -- it names `validate.py:128-169`, the exact load path)
+> **Accepted:** [M] `mcp_server.py` keeps its own mtime freshness rule rather than the shared binding -> XREF: 00-infrastructure/TODO-06 §22 (item: "Make the MCP transport propagate the failure instead of swallowing it")
+> **Accepted:** [M] the history projection walks all corpus history (38ms at 3,788 commits, ~100ms projected at 10,000) -> XREF: 00-infrastructure/TODO-06 §22 (item: "Turn on `requires_history` for the query profile, and re-measure the history projection first")
+> **Accepted:** [L] freshness hashes the corpus twice per process (38-74ms per lint run; 5% crossover at a 30-70 MB corpus against 11 MB today) -> XREF: 00-infrastructure/TODO-06 §22 (item: "Turn on `requires_history` for the query profile, and re-measure the history projection first")
+> **Quality reviewed:** 2026-08-07 | Codex 5x (design, adversarial, consistency, perf, re-adversarial) | 6H+8M+1L fixed, 4 open | scope: N/A (host tooling -- no kernel/boot/desktop/shell/userland surface)
+
 -> XREF: [`TODO-06 §19`](#19-cache-validation-reach-the-remaining-raw-cache-readers) -- the BREADTH half this was split from (item: "Route the REMAINING raw `todo-cache.json` readers through the §17 shared validator"); that section hardens who may trust the cache, this one hardens whether the producer may certify it.
+-> XREF: [`TODO-06 §22`](#22-querypy-fail-closed-through-every-transport) -- owns both follow-ups this section produced (items: "Turn on `requires_history` for the query profile, and re-measure the history projection first" and "Make the MCP transport propagate the failure instead of swallowing it"); the first reader that consumes the history-derived fields is also the first that pays to validate them.
 -> XREF: [`TODO-06 §17`](#17-one-shared-cache-schema-validator-for-both-cache-readers) -- the reader-side generation binding this mirrors (item: "Commit: `\"todo-graph: one cache-schema validator for both cache readers\"`"); its `_scan_corpus` fingerprint is the machinery to reuse here.
 
 ---
@@ -1104,6 +1112,10 @@ Split out of §19 on 2026-08-07 by that section's Codex design review, which rat
       Watch mode must not keep serving the last in-memory cache once a rebuild has failed and that cache is stale or invalid. Pin the chosen behavior in a fixture; the current behavior is unpinned either way, which is the actual defect.
 - [ ] Fixtures across every transport, each mutation-checked
       Direct CLI, MCP tool call, and watch mode each get a case proving an unusable cache produces a refusal rather than an empty answer. Mutation: restore the silent-drop `_validate_nodes` (and the `or "[]"`) and require the corresponding fixture to FAIL.
+- [ ] Turn on `requires_history` for the query profile, and re-measure the history projection first
+      `query.py` sorts `stale` / `deferred` by `last_active_at`, so its profile is the first that must set `requires_history=True` -- and the first reader that will pay `corpus_history_id`'s cost per invocation.
+      - Measured 2026-08-07 at 3,788 corpus-touching commits: `git rev-list --count` is 38ms of a 40ms call. Codex perf (§21) projects ~100ms at 10,000 commits and named that the crossover where it stops being acceptable.
+      - Cheaper sound alternative to evaluate then: corpus tip plus a digest of git's shallow-boundary file. The tip detects a rewrite, the boundary detects deepening or truncation, and neither walks all history.
 - [ ] Commit: `"todo-graph: query.py fails closed, and its transports stop swallowing it"`
 
 **Test checkpoint:** an unusable cache makes `query.py` exit with its documented infrastructure code through the direct CLI, surfaces as a structured error (never `[]`) through the MCP tool call, and does not leave watch mode serving a stale cache; the one-row-malformed case refuses rather than silently narrowing the answer; each fixture fails when its guard is reverted; `bash scripts/todo-graph/tests/test_build.sh` and `bash scripts/test-tooling.sh` green.

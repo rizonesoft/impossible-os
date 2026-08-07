@@ -8604,10 +8604,18 @@ except cs.CacheSchemaError as e:
     # Edit and commit, then revert and commit: two commits touching the corpus,
     # and a working tree byte-identical to the one the cache was built from. The
     # content fingerprint cannot see this; last_active_at moved regardless.
+    cp todo/01-test/TODO-02-pw.md "$TMP_DIR/pw-02-original"
     printf '\n- [ ] briefly\n' >> todo/01-test/TODO-02-pw.md
     git commit -q --no-verify -am "corpus edit" \
-        && git revert -q --no-edit HEAD
+        && git revert --no-edit HEAD
 ) >/dev/null 2>&1
+# THE REVERT MUST HAVE RESTORED THE BYTES, or this fixture silently degrades
+# into a CONTENT test and would pass against a build with no history binding at
+# all. (`git revert -q` is not a valid flag -- it exits 129 -- which is exactly
+# how this fixture first "passed" for the wrong reason.)
+if ! cmp -s "$PW_GIT/todo/01-test/TODO-02-pw.md" "$TMP_DIR/pw-02-original"; then
+    t_fail "producer window: history fixture did not restore the corpus bytes -- it would be testing content, not history"
+fi
 PW_HIST=$(python3 -c "
 import pathlib, sys
 sys.path.insert(0, '$REPO_ROOT/scripts/todo-graph')
@@ -8693,6 +8701,271 @@ if [ "$BV_3" = "3" ] && [ "$BV_1" = "1" ]; then
     t_pass "producer window: build-and-validate.sh propagates build.py exit status (3 stays 3)"
 else
     t_fail "producer window: wrapper flattened build.py status -- rc3 -> '$BV_3' (want 3), rc1 -> '$BV_1' (want 1)"
+fi
+
+# 25j: AN UNBORN HEAD IS A LEGITIMATE TREE. `git init` plus TODO files but no
+# commit leaves `rev-parse --git-dir` succeeding while `log`/`rev-list HEAD`
+# both fail. Reporting that as an indeterminate git failure refused a tree that
+# `collect_git_timestamps` already handles by emitting None timestamps -- the
+# producer would exit 3 and every freshness-enabled reader would hard-fail on a
+# brand-new repository (Codex adversarial, section 21, [medium]).
+PW_UNBORN="$TMP_DIR/pw-unborn"
+mkdir -p "$PW_UNBORN/build"
+cp -r "$PW_TREE/todo" "$PW_UNBORN/todo"
+(cd "$PW_UNBORN" && git init -q .) >/dev/null 2>&1
+python3 "$REPO_ROOT/scripts/todo-graph/build.py" --quiet \
+    --root "$PW_UNBORN/todo" --repo-root "$PW_UNBORN" \
+    --output "$PW_UNBORN/build/todo-cache.json" >/dev/null 2>&1
+PW_UNBORN_RC=$?
+PW_UNBORN_ID=$(python3 -c "
+import sys
+sys.path.insert(0, '$REPO_ROOT/scripts/todo-graph')
+import cache_schema as cs
+try:
+    print(cs.corpus_history_id('$PW_UNBORN/todo'))
+except cs.CacheSchemaError as e:
+    print('RAISED')
+" 2>&1)
+# ...and gaining the first commit MOVES it, so the cache built before that
+# commit is correctly seen as stale by a history-consuming reader.
+(
+    cd "$PW_UNBORN" || exit 1
+    git config user.email "t@example.invalid" && git config user.name "unborn fixture"
+    git add -A && git commit -q --no-verify -m "first commit"
+) >/dev/null 2>&1
+PW_UNBORN_AFTER=$(python3 -c "
+import sys
+sys.path.insert(0, '$REPO_ROOT/scripts/todo-graph')
+import cache_schema as cs
+try:
+    print(cs.corpus_history_id('$PW_UNBORN/todo'))
+except cs.CacheSchemaError:
+    print('RAISED')
+" 2>&1)
+# AN INDETERMINATE GIT FAILURE RAISES rather than becoming another sentinel.
+# Collapsing "could not ask" into a stable value would let a producer and a
+# reader compare EQUAL during the same failure and certify nodes whose timestamp
+# extraction failed (Codex re-adversarial, section 21, [medium]). Injected: a
+# corrupt HEAD is NOT usable for this, because git reports it as "not a git
+# repository", which is a determinate answer this code correctly returns.
+PW_INDET=$(python3 -c "
+import subprocess, sys
+sys.path.insert(0, '$REPO_ROOT/scripts/todo-graph')
+import cache_schema as cs
+real = subprocess.run
+def hooked(cmd, *a, **k):
+    r = real(cmd, *a, **k)
+    if isinstance(cmd, list) and 'rev-list' in cmd:
+        return subprocess.CalledProcessError(128, cmd, output='', stderr='fatal: injected')
+    return r
+subprocess.run = hooked
+try:
+    print('RETURNED', cs.corpus_history_id('$PW_GIT/todo'))
+except cs.CacheSchemaError as e:
+    print('RAISED')
+except Exception as e:
+    print('ESCAPED', type(e).__name__)
+finally:
+    subprocess.run = real
+" 2>&1)
+if [ "$PW_UNBORN_RC" = "0" ] && [ "$PW_UNBORN_ID" = "unborn-head" ] \
+        && [ "$PW_UNBORN_AFTER" != "unborn-head" ] && [ "$PW_INDET" = "RAISED" ]; then
+    t_pass "producer window: unborn HEAD is determinate, the first commit moves it, an indeterminate failure raises"
+else
+    t_fail "producer window: unborn=rc$PW_UNBORN_RC/'$PW_UNBORN_ID' (want 0/unborn-head), after-first-commit='$PW_UNBORN_AFTER' (want != unborn-head), indeterminate='$PW_INDET' (want RAISED)"
+fi
+
+# 25k: THE RECORDED HISTORY IS THE ONE THE TIMESTAMPS CAME FROM. Pinning it
+# with a SEPARATE `git log` observes a DIFFERENT generation: move history to B
+# while the timestamp walk resolves, take B-derived timestamps, move back to A,
+# and an A-vs-A comparison publishes B's timestamps under an A binding (Codex
+# re-adversarial, section 21, [high]).
+#
+# STAGED DETERMINISTICALLY rather than by racing a real commit: the timestamp
+# walk's own output is doctored to describe a generation one commit ahead, while
+# the tree stays where it is. That is exactly the state an A-to-B-to-A sequence
+# leaves behind, and it cannot flake.
+PW_ABA_HIST=$(PW_GIT="$PW_GIT" REPO_ROOT="$REPO_ROOT" PW_BUILD="$REPO_ROOT/scripts/todo-graph/build.py" python3 - <<'PY' 2>&1
+import importlib.util, os, pathlib, subprocess, sys
+tree = pathlib.Path(os.environ["PW_GIT"])
+repo = os.environ["REPO_ROOT"]
+sys.path.insert(0, repo + "/scripts/todo-graph")
+spec = importlib.util.spec_from_file_location("pw_aba_build", os.environ["PW_BUILD"])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+real_run = mod.subprocess.run
+def hooked(cmd, *a, **k):
+    r = real_run(cmd, *a, **k)
+    if isinstance(cmd, list) and "--name-only" in cmd:
+        # The walk resolved against a generation with one MORE corpus commit.
+        r.stdout = r.stdout + "COMMIT " + ("b" * 40) + " 1700000000\n"
+    return r
+mod.subprocess.run = hooked
+out = tree / "build/aba-cache.json"
+sys.argv = ["build.py", "--quiet", "--root", str(tree / "todo"),
+            "--repo-root", str(tree), "--output", str(out)]
+print("RESULT", mod.main(), out.exists())
+PY
+)
+PW_ABA_HIST=$(printf '%s' "$PW_ABA_HIST" | grep '^RESULT ' | tail -1 | cut -d' ' -f2-)
+if [ "$PW_ABA_HIST" = "3 False" ]; then
+    t_pass "producer window: timestamps from a different history generation are refused, nothing written"
+else
+    t_fail "producer window: history-ABA gave '$PW_ABA_HIST' (want '3 False')"
+fi
+
+# 25k2: THE MUTANT. A producer that pins the history with its own
+# corpus_history_id call instead of using the walk's provenance must PUBLISH the
+# same staged state -- otherwise 25k is not measuring the provenance binding.
+cp "$REPO_ROOT/scripts/todo-graph/build.py" "$PW_TREE/mut/scripts/todo-graph/build-hist.py"
+PW_HIST_MUT=$(python3 - "$PW_TREE/mut/scripts/todo-graph/build-hist.py" <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+src = p.read_text()
+needle = "    timestamps, history_id = collect_git_timestamps(repo_root, files)\n"
+if needle not in src:
+    print("STALE-NEEDLE")
+else:
+    p.write_text(src.replace(
+        needle,
+        "    timestamps, _ignored = collect_git_timestamps(repo_root, files)\n"
+        "    history_id = _cs.corpus_history_id(todo_root)\n", 1))
+    print("OK")
+PY
+)
+if [ "$PW_HIST_MUT" != "OK" ]; then
+    t_fail "producer window: history-ABA mutation could not be applied (stale needle: $PW_HIST_MUT)"
+fi
+PW_ABA_MUT=$(PW_GIT="$PW_GIT" REPO_ROOT="$REPO_ROOT" PW_BUILD="$PW_TREE/mut/scripts/todo-graph/build-hist.py" python3 - <<'PY' 2>&1
+import importlib.util, os, pathlib, sys
+tree = pathlib.Path(os.environ["PW_GIT"])
+repo = os.environ["REPO_ROOT"]
+sys.path.insert(0, repo + "/scripts/todo-graph")
+spec = importlib.util.spec_from_file_location("pw_aba_mut", os.environ["PW_BUILD"])
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+real_run = mod.subprocess.run
+def hooked(cmd, *a, **k):
+    r = real_run(cmd, *a, **k)
+    if isinstance(cmd, list) and "--name-only" in cmd:
+        r.stdout = r.stdout + "COMMIT " + ("b" * 40) + " 1700000000\n"
+    return r
+mod.subprocess.run = hooked
+out = tree / "build/aba-mut-cache.json"
+sys.argv = ["build.py", "--quiet", "--root", str(tree / "todo"),
+            "--repo-root", str(tree), "--output", str(out)]
+print(mod.main())
+PY
+)
+if [ "$PW_ABA_MUT" = "0" ]; then
+    t_pass "producer window: mutation check -- a separately-pinned history publishes the wrong generation"
+else
+    t_fail "producer window: HISTORY MUTATION SURVIVED -- separately-pinned producer gave '$PW_ABA_MUT' (want 0)"
+fi
+
+# 25l: A PROFILE THAT DOES NOT CONSUME THE HISTORY-DERIVED FIELDS DOES NOT PAY
+# FOR THEM. Both routed readers consume neither created_at nor last_active_at,
+# and establishing history costs three git forks per call (Codex perf, section
+# 21, [medium]). The gate must be the PROFILE, not a global switch: a profile
+# that declares requires_history still refuses a moved history.
+PW_PROF=$(python3 -c "
+import pathlib, sys
+sys.path.insert(0, '$REPO_ROOT/scripts/todo-graph')
+import cache_schema as cs
+p = pathlib.Path('$PW_GIT/build/todo-cache.json')
+b = p.read_bytes()
+noh = cs.Profile('t-nohist', (cs.SUBTREE_SECTIONS,))
+yeh = cs.Profile('t-hist', (cs.SUBTREE_SECTIONS,), requires_history=True)
+def run(prof):
+    try:
+        cs.check_freshness(p, '$PW_GIT/todo', cache_bytes=b, profile=prof)
+        return 'FRESH'
+    except cs.CacheSchemaError as e:
+        return e.reason
+print(run(noh), run(yeh))
+" 2>&1)
+if [ "$PW_PROF" = "FRESH STALE" ]; then
+    t_pass "producer window: history validation follows the caller profile, and still fires when declared"
+else
+    t_fail "producer window: profile-gated history gave '$PW_PROF' (want 'FRESH STALE')"
+fi
+
+# 25m: THE BINDING IS BOUNDED LIKE EVERY OTHER INPUT. It is read on every reader
+# invocation, so an unbounded read of a corrupt or hostile sidecar is the one
+# failure mode no reason code can report (Codex adversarial, section 21,
+# [medium]). Asserted by shrinking the ceiling rather than writing a huge file.
+PW_BOUND=$(python3 -c "
+import pathlib, sys
+sys.path.insert(0, '$REPO_ROOT/scripts/todo-graph')
+import cache_schema as cs
+cs._MAX_SIDECAR_BYTES = 4
+p = pathlib.Path('$PW_TREE/build/todo-cache.json')
+try:
+    cs.check_freshness(p, '$PW_TREE/todo', cache_bytes=p.read_bytes())
+    print('NORAISE')
+except cs.CacheSchemaError as e:
+    print(e.reason, 'CEILING' if 'ceiling' in str(e) else 'OTHER')
+" 2>&1)
+# THE MESSAGE, not just the code: any refusal exits the same way, so asserting
+# the reason alone would be satisfied by a fixture that never reached the bound.
+if [ "$PW_BOUND" = "STALE CEILING" ]; then
+    t_pass "producer window: an oversized corpus binding is a documented refusal, not an unbounded read"
+else
+    t_fail "producer window: oversized binding gave '$PW_BOUND' (want 'STALE CEILING')"
+fi
+
+# 25n: PRODUCER AND READER AGREE ON WHAT THE CORPUS IS -- for every entry shape,
+# not just the easy one. Two divergences were live: `rglob` matched DIRECTORIES
+# named TODO-x.md that the reader's `os.walk` reports under `dirs` (Codex
+# consistency, [medium]); and skipping non-regular FILES made the producer fail
+# OPEN where the reader fails closed, so a build SUCCEEDED and published a cache
+# every reader then rejected (Codex re-adversarial, [medium]).
+PW_DIR="$TMP_DIR/pw-dirname"
+mkdir -p "$PW_DIR/todo/01-test/TODO-77-notafile.md" "$PW_DIR/build"
+cp "$PW_TREE/todo/01-test/TODO-01-pw.md" "$PW_DIR/todo/01-test/TODO-01-pw.md"
+ln -s "TODO-01-pw.md" "$PW_DIR/todo/01-test/TODO-02-link.md" 2>/dev/null
+PW_DIR_OUT=$(PW_DIR="$PW_DIR" REPO_ROOT="$REPO_ROOT" python3 - <<'PY' 2>&1
+import importlib.util, os, pathlib, sys
+tree = pathlib.Path(os.environ["PW_DIR"])
+repo = os.environ["REPO_ROOT"]
+sys.path.insert(0, repo + "/scripts/todo-graph")
+import cache_schema as cs
+spec = importlib.util.spec_from_file_location(
+    "pw_dir_build", repo + "/scripts/todo-graph/build.py")
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+prod = {p.relative_to(tree / "todo").as_posix()
+        for p in mod.walk_todo_files(tree / "todo")}
+read = set(cs._scan_corpus(tree / "todo", lambda e: None))
+print("SAME" if prod == read else f"DIVERGED prod={sorted(prod)} read={sorted(read)}")
+PY
+)
+if [ "$PW_DIR_OUT" = "SAME" ]; then
+    t_pass "producer window: producer and reader enumerate the same corpus (directory skipped, symlink-to-regular kept)"
+else
+    t_fail "producer window: enumerators diverge -- $PW_DIR_OUT"
+fi
+
+# 25n2: AND A NON-REGULAR ENTRY FAILS THE BUILD rather than being omitted from
+# it. The reader refuses a FIFO named TODO-*.md, so a producer that silently
+# skipped it published a cache nothing could read.
+PW_FIFO2="$TMP_DIR/pw-fifo-producer"
+mkdir -p "$PW_FIFO2/todo/01-test" "$PW_FIFO2/build"
+cp "$PW_TREE/todo/01-test/TODO-01-pw.md" "$PW_FIFO2/todo/01-test/TODO-01-pw.md"
+if mkfifo "$PW_FIFO2/todo/01-test/TODO-98-fifo.md" 2>/dev/null; then
+    timeout 25 python3 "$REPO_ROOT/scripts/todo-graph/build.py" --quiet \
+        --root "$PW_FIFO2/todo" --repo-root "$PW_FIFO2" \
+        --output "$PW_FIFO2/build/todo-cache.json" >/dev/null 2>&1
+    PW_FIFO2_RC=$?
+    if [ "$PW_FIFO2_RC" = "124" ]; then
+        t_fail "producer window: the producer HUNG on a FIFO corpus entry (timed out)"
+    elif [ "$PW_FIFO2_RC" != "0" ] && [ ! -f "$PW_FIFO2/build/todo-cache.json" ]; then
+        t_pass "producer window: a non-regular corpus entry FAILS the build instead of being skipped"
+    else
+        t_fail "producer window: FIFO corpus entry gave build rc=$PW_FIFO2_RC with cache present=$([ -f "$PW_FIFO2/build/todo-cache.json" ] && echo yes || echo no) (want nonzero + no cache)"
+    fi
+else
+    t_pass "producer window: producer-side FIFO case skipped (mkfifo unavailable on this filesystem)"
 fi
 
 # ----------------------------------------------------------------------

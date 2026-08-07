@@ -8,7 +8,7 @@
 # without an /* INTENTIONAL-STUB: <reason> */ marker on the body opener.
 #
 # Single Python entry point for lint Check 7: handles the cache existence
-# probe, schema (`stamped_items` presence) check, mtime staleness check,
+# probe, schema (`stamped_items` presence) check, corpus-binding freshness check,
 # AND the actual stub walk in one process. Single JSON parse; per-run
 # file-content + symbol-resolution caches. Replaces 3 separate Python
 # spawns + bash heredoc that the earlier shape used.
