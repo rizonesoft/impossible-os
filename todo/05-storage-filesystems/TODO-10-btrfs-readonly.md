@@ -39,16 +39,16 @@ title: "TODO-10 -- Btrfs Read-Only Driver"
 
 | ⭐  | Order | Deliverable                                                                           | Depends On                                                     | Status |
 | --- | :---: | ------------------------------------------------------------------------------------- | -------------------------------------------------------------- | :----: |
-| ⭐  |   1   | §1 Superblock parse + CRC32C verify + backup superblock fallback                     | Block device I/O working                                       |  [ ]   |
+| ⭐  |   1   | §1 Superblock parse + CRC32C verify + backup superblock fallback                      | Block device I/O working                                       |  [ ]   |
 | ⭐  |   2   | §2 B-tree node format -- `btrfs_header`, internal/leaf node decode, per-node CRC      | §1 (`nodesize`, `sectorsize` from superblock)                  |  [ ]   |
 | ⭐  |   3   | §3 Chunk tree -- logical→physical map, SINGLE + RAID1 stripes, RAID5/6 reject         | §2 (chunk tree root traversal uses B-tree node format)         |  [ ]   |
 | ⭐  |   4   | §4 Tree search + walk -- `btrfs_tree_search`, `btrfs_tree_walk`, binary search        | §3 (all logical addresses need chunk translation before I/O)   |  [ ]   |
 | ⭐  |   5   | §5 Root tree + subvolume enumeration -- ROOT_ITEM walk, FS_TREE mount, subvol listing | §4 (tree search applied to root tree)                          |  [ ]   |
-| ⭐  |   6   | §6 Inode reader -- `INODE_ITEM`, `INODE_REF`, VFS node construction                  | §5 (subvolume tree root for the inode's home tree)             |  [ ]   |
-| ⭐  |   7   | §7 Extent data decoder -- inline, regular, prealloc; zlib/LZO/Zstd decompression     | §6 (inode needed to locate EXTENT_DATA items)                  |  [ ]   |
+| ⭐  |   6   | §6 Inode reader -- `INODE_ITEM`, `INODE_REF`, VFS node construction                   | §5 (subvolume tree root for the inode's home tree)             |  [ ]   |
+| ⭐  |   7   | §7 Extent data decoder -- inline, regular, prealloc; zlib/LZO/Zstd decompression      | §6 (inode needed to locate EXTENT_DATA items)                  |  [ ]   |
 | ⭐  |   8   | §8 Directory reader -- `DIR_INDEX` walk, `DIR_ITEM` decode, VFS `finddir`/`readdir`   | §6 (dir inode), §4 (tree walk for DIR_INDEX items)             |  [ ]   |
-| ⭐  |   9   | §9 Symlinks + xattrs -- inline EXTENT_DATA target, `XATTR_ITEM` read                 | §7 (symlink uses inline extent), §6 (xattr key uses inode num) |  [ ]   |
-| ⭐  |  10   | §10 VFS registration + probe + read-only mount + subvol listing                      | §1–§9 all complete                                             |  [ ]   |
+| ⭐  |   9   | §9 Symlinks + xattrs -- inline EXTENT_DATA target, `XATTR_ITEM` read                  | §7 (symlink uses inline extent), §6 (xattr key uses inode num) |  [ ]   |
+| ⭐  |  10   | §10 VFS registration + probe + read-only mount + subvol listing                       | §1–§9 all complete                                             |  [ ]   |
 
 > All rows are `⭐` exclusive -- neither Windows 11 nor macOS can natively read Btrfs. Among non-Linux systems, Impossible OS will be one of very few OS kernels capable of reading Btrfs volumes from NAS devices and Linux workstations.
 

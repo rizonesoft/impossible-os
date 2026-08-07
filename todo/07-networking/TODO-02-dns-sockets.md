@@ -35,16 +35,16 @@ title: "TODO-02 -- DNS Resolver & BSD Sockets API"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                                                          | Depends On                                                              | Status |
-| --- | :---: | ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------- | :----: |
-| 💎  |   1   | §1 DNS query builder -- `dns_header`, hostname encoding, A-record query, `udp_send`  | `udp_send()` working; `udp_register_handler()` for reply RX             |  [ ]   |
-| 💎  |   2   | §2 DNS response parser -- ID verify, RCODE, compression pointers, A-record extract   | §1 (query must be sent before response can be validated)                |  [ ]   |
-| 💎  |   3   | §3 DNS cache -- 64-entry LRU, TTL expiry, `nslookup` shell command                   | §2 (populate cache on successful resolve)                               |  [ ]   |
-| 💎  |   4   | §4 AAAA query stub -- parallel A+AAAA, prefer AAAA, fall back to A                   | §1–§3 (A-record path must be proven before AAAA is added)               |  [ ]   |
-| 💎  |   5   | §5 Kernel socket layer -- `socket/connect/send/recv/close`, `SOCK_STREAM`/`DGRAM`    | TCP API from TODO-01; `dns_resolve()` for connect-by-hostname           |  [ ]   |
-| 💎  |   6   | §6 Server sockets -- `bind/listen/accept`, backlog queue                             | §5 (socket fd table must exist before bind/listen/accept can be added)  |  [ ]   |
-| 💎  |   7   | §7 Socket options + syscalls -- `setsockopt/getsockopt`, 8 new `SYS_*` numbers      | §5, §6 (all socket operations must be complete before syscall dispatch)  |  [ ]   |
-| 💎  |   8   | §8 `select()` -- 64-fd event bitmask, data-ready + writable, ms timeout              | §5 (socket fd table); §6 (server sockets contribute ACCEPT readiness)   |  [ ]   |
+| ⭐  | Order | Deliverable                                                                         | Depends On                                                              | Status |
+| --- | :---: | ----------------------------------------------------------------------------------- | ----------------------------------------------------------------------- | :----: |
+| 💎  |   1   | §1 DNS query builder -- `dns_header`, hostname encoding, A-record query, `udp_send` | `udp_send()` working; `udp_register_handler()` for reply RX             |  [ ]   |
+| 💎  |   2   | §2 DNS response parser -- ID verify, RCODE, compression pointers, A-record extract  | §1 (query must be sent before response can be validated)                |  [ ]   |
+| 💎  |   3   | §3 DNS cache -- 64-entry LRU, TTL expiry, `nslookup` shell command                  | §2 (populate cache on successful resolve)                               |  [ ]   |
+| 💎  |   4   | §4 AAAA query stub -- parallel A+AAAA, prefer AAAA, fall back to A                  | §1–§3 (A-record path must be proven before AAAA is added)               |  [ ]   |
+| 💎  |   5   | §5 Kernel socket layer -- `socket/connect/send/recv/close`, `SOCK_STREAM`/`DGRAM`   | TCP API from TODO-01; `dns_resolve()` for connect-by-hostname           |  [ ]   |
+| 💎  |   6   | §6 Server sockets -- `bind/listen/accept`, backlog queue                            | §5 (socket fd table must exist before bind/listen/accept can be added)  |  [ ]   |
+| 💎  |   7   | §7 Socket options + syscalls -- `setsockopt/getsockopt`, 8 new `SYS_*` numbers      | §5, §6 (all socket operations must be complete before syscall dispatch) |  [ ]   |
+| 💎  |   8   | §8 `select()` -- 64-fd event bitmask, data-ready + writable, ms timeout             | §5 (socket fd table); §6 (server sockets contribute ACCEPT readiness)   |  [ ]   |
 
 ---
 

@@ -452,20 +452,20 @@ Rewrite the ~187 source / test / header / script files on the `scripts/lint.sh` 
 
 ## OS Comparison
 
-| ⭐ | Feature                       | 🪟 Win11 projects         | 🐧 Linux projects          | 🚀 Impossible OS                                                                 |
-| --- | ----------------------------- | ------------------------- | -------------------------- | --------------------------------------------------------------------------------- |
-| 💎 | Bootstrap script              | ⚠️ WDK/HLK heavy setup    | ⚠️ Distro docs + scripts   | ✅ §1 -- setup.sh + --verify sentinel                                            |
-| 💎 | Reproducible host profiles    | ⚠️ EWDK/Dev Box or VMs    | ✅ Devcontainers common    | ✅ §2 matrix + .devcontainer + shim procedure                                    |
-| 💎 | Canonical build/test wrappers | ✅ Common in mature repos | ✅ Common in mature repos  | ✅ §3 wrapper contract + --help on all 5                                         |
-| 💎 | Named VM/debug profiles       | ⚠️ Often ad hoc           | ⚠️ Often ad hoc            | ✅ §4 -- machine-matrix.md + bare-metal row                                      |
-| 💎 | Managed local hooks           | ⚠️ Varies by repo         | ✅ Common in many repos    | ✅ §5 -- install-hooks.sh one-command bootstrap + sentinel-gated opt-in pre-push |
-| 💎 | Workflow/artifact policy      | ✅ Standard CI practice   | ✅ Standard CI practice    | ✅ §6 -- 5 workflows classified, wrapper-aligned, retention/runner policy codified |
-| ⭐ | One-command tooling doctor    | ❌ Rare in OS repos       | ❌ Rare in OS repos        | ✅ §7 -- scripts/tooling-doctor.sh + structured JSON emitter                     |
-| 💎 | Unified launcher extra-args   | ⚠️ Per-script ad hoc      | ⚠️ Per-script ad hoc       | ✅ §8 -- `-ExtraArgs` surface uniform across every scenario launcher             |
-| ⭐ | Cross-reference drift gate    | ❌ Unenforced             | ❌ Unenforced              | ✅ §9 -- lint rejects numeric TODO shorthand outside `todo/`; CI-gated           |
-| ⭐ | Boot smoke assertions         | ⚠️ Log-string matches     | ⚠️ Log-string matches      | ✅ §10 -- POST16 manifest drift-detects; inverse-validated per emission          |
-| ⭐ | Bare section-sign drift gate  | ❌ Unenforced             | ❌ Unenforced              | ✅ §11 -- lint Check 5 + PreToolUse hook; allowlist drained to zero              |
-| 💎 | Min tool-version floors       | ⚠️ Build-time checks      | ✅ changes.rst + build gate | ✅ §12 -- --verify fails closed on below-floor required tools; drift-guarded     |
+| ⭐  | Feature                       | 🪟 Win11 projects         | 🐧 Linux projects           | 🚀 Impossible OS                                                                   |
+| --- | ----------------------------- | ------------------------- | --------------------------- | ---------------------------------------------------------------------------------- |
+| 💎  | Bootstrap script              | ⚠️ WDK/HLK heavy setup    | ⚠️ Distro docs + scripts    | ✅ §1 -- setup.sh + --verify sentinel                                              |
+| 💎  | Reproducible host profiles    | ⚠️ EWDK/Dev Box or VMs    | ✅ Devcontainers common     | ✅ §2 matrix + .devcontainer + shim procedure                                      |
+| 💎  | Canonical build/test wrappers | ✅ Common in mature repos | ✅ Common in mature repos   | ✅ §3 wrapper contract + --help on all 5                                           |
+| 💎  | Named VM/debug profiles       | ⚠️ Often ad hoc           | ⚠️ Often ad hoc             | ✅ §4 -- machine-matrix.md + bare-metal row                                        |
+| 💎  | Managed local hooks           | ⚠️ Varies by repo         | ✅ Common in many repos     | ✅ §5 -- install-hooks.sh one-command bootstrap + sentinel-gated opt-in pre-push   |
+| 💎  | Workflow/artifact policy      | ✅ Standard CI practice   | ✅ Standard CI practice     | ✅ §6 -- 5 workflows classified, wrapper-aligned, retention/runner policy codified |
+| ⭐  | One-command tooling doctor    | ❌ Rare in OS repos       | ❌ Rare in OS repos         | ✅ §7 -- scripts/tooling-doctor.sh + structured JSON emitter                       |
+| 💎  | Unified launcher extra-args   | ⚠️ Per-script ad hoc      | ⚠️ Per-script ad hoc        | ✅ §8 -- `-ExtraArgs` surface uniform across every scenario launcher               |
+| ⭐  | Cross-reference drift gate    | ❌ Unenforced             | ❌ Unenforced               | ✅ §9 -- lint rejects numeric TODO shorthand outside `todo/`; CI-gated             |
+| ⭐  | Boot smoke assertions         | ⚠️ Log-string matches     | ⚠️ Log-string matches       | ✅ §10 -- POST16 manifest drift-detects; inverse-validated per emission            |
+| ⭐  | Bare section-sign drift gate  | ❌ Unenforced             | ❌ Unenforced               | ✅ §11 -- lint Check 5 + PreToolUse hook; allowlist drained to zero                |
+| 💎  | Min tool-version floors       | ⚠️ Build-time checks      | ✅ changes.rst + build gate | ✅ §12 -- --verify fails closed on below-floor required tools; drift-guarded       |
 
 > **After §1-§6:** Impossible OS reaches the same baseline as well-run Windows and Linux projects for setup, reproducible environments, wrappers, hooks, and CI policy.
 > **After §7-§12:** the repo pulls ahead of either baseline with a first-class operator doctor, drift-guarded cross-references and section-refs, boot assertions that cannot silently regress when a contributor edits a printf, and a hard required-tool version-floor gate that fails closed before the build.

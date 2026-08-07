@@ -39,18 +39,18 @@ title: "TODO-13 -- Partition Management & Storage Tools"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                                                         | Depends On                                                        | Status |
-| --- | :---: | ----------------------------------------------------------------------------------- | ----------------------------------------------------------------- | :----: |
-| 💎  |   1   | §1 GPT partition write -- create/delete/resize + dual-header CRC update             | Existing `gpt_crc32()`, `guid_generate()`, `gpt_sync_backup()`   |  [ ]   |
-| 💎  |   2   | §2 MBR partition write -- create/delete, CHS encoding, slot management              | Existing MBR parse + EBR chain                                    |  [ ]   |
-| 💎  |   3   | §3 `diskpart` CLI -- interactive: list/create/delete/format/assign/active/info      | §1, §2 (CRUD backend); filesystem formatters for `format` command  |  [ ]   |
-| 💎  |   4   | §4 `chkdsk` CLI + GUI -- per-FS validation, repair, progress, boot-schedule         | Per-FS fsck backends in the NTFS / IXFS / FAT32 / exFAT TODOs (future; not a single XREF) |  [ ]   |
-| 💎  |   5   | §5 `defrag` CLI + GUI -- fragmentation analysis, block relocation, TRIM            | IXFS defrag backend (TODO-07 §7); FAT32/NTFS defrag pass          |  [ ]   |
-| 💎  |   6   | §6 `sfc` CLI + GUI -- build-time manifest, runtime verify, repair                  | Build script extension for manifest generation                    |  [ ]   |
-| ⭐  |   7   | §7 `recover` CLI + GUI -- IXFS/FAT32 deleted file recovery + data carving           | IXFS inode scan (TODO-07); FAT32 0xE5 scan                        |  [ ]   |
-| 💎  |   8   | §8 Disk Management GUI -- two-panel window, partition bar, context menu, SMART     | §1, §2 (write ops); §3 partial (format); compositor/widget layer  |  [ ]   |
-| ⭐  |   9   | §9 `diskuse` CLI + GUI -- recursive size walker, treemap, "Largest Files"           | VFS `readdir`/`stat` working; Win32 file API (TODO-05)            |  [ ]   |
-| ⭐  |  10   | §10 Snapshot manager CLI + GUI -- CRUD, diff viewer, auto-schedule                  | IXFS snapshot API (TODO-07 §8); §5 (GUI widget layer established) |  [ ]   |
+| ⭐  | Order | Deliverable                                                                    | Depends On                                                                                | Status |
+| --- | :---: | ------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------- | :----: |
+| 💎  |   1   | §1 GPT partition write -- create/delete/resize + dual-header CRC update        | Existing `gpt_crc32()`, `guid_generate()`, `gpt_sync_backup()`                            |  [ ]   |
+| 💎  |   2   | §2 MBR partition write -- create/delete, CHS encoding, slot management         | Existing MBR parse + EBR chain                                                            |  [ ]   |
+| 💎  |   3   | §3 `diskpart` CLI -- interactive: list/create/delete/format/assign/active/info | §1, §2 (CRUD backend); filesystem formatters for `format` command                         |  [ ]   |
+| 💎  |   4   | §4 `chkdsk` CLI + GUI -- per-FS validation, repair, progress, boot-schedule    | Per-FS fsck backends in the NTFS / IXFS / FAT32 / exFAT TODOs (future; not a single XREF) |  [ ]   |
+| 💎  |   5   | §5 `defrag` CLI + GUI -- fragmentation analysis, block relocation, TRIM        | IXFS defrag backend (TODO-07 §7); FAT32/NTFS defrag pass                                  |  [ ]   |
+| 💎  |   6   | §6 `sfc` CLI + GUI -- build-time manifest, runtime verify, repair              | Build script extension for manifest generation                                            |  [ ]   |
+| ⭐  |   7   | §7 `recover` CLI + GUI -- IXFS/FAT32 deleted file recovery + data carving      | IXFS inode scan (TODO-07); FAT32 0xE5 scan                                                |  [ ]   |
+| 💎  |   8   | §8 Disk Management GUI -- two-panel window, partition bar, context menu, SMART | §1, §2 (write ops); §3 partial (format); compositor/widget layer                          |  [ ]   |
+| ⭐  |   9   | §9 `diskuse` CLI + GUI -- recursive size walker, treemap, "Largest Files"      | VFS `readdir`/`stat` working; Win32 file API (TODO-05)                                    |  [ ]   |
+| ⭐  |  10   | §10 Snapshot manager CLI + GUI -- CRUD, diff viewer, auto-schedule             | IXFS snapshot API (TODO-07 §8); §5 (GUI widget layer established)                         |  [ ]   |
 
 > §1–§6 are `💎` parity -- standard disk management features present in every OS. §7, §9, §10 are `⭐` exclusive: deleted file recovery in-kernel without a third-party tool, in-kernel treemap disk usage analysis, and a snapshot manager integrated directly into the storage layer are not stock features in Windows 11 or Linux desktop environments.
 

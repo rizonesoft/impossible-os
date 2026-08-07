@@ -36,14 +36,14 @@ title: "TODO-01 -- Block Storage Hardening"
 
 | ⭐  | Order | Deliverable                                                                         | Depends On                                        | Status |
 | --- | :---: | ----------------------------------------------------------------------------------- | ------------------------------------------------- | :----: |
-| 💎  |   1   | §1 VirtIO-blk flush & write-back -- `VIRTIO_BLK_T_FLUSH`, write-back queue, `fsync` | `virtio/blk.c` working I/O path                  |  [ ]   |
+| 💎  |   1   | §1 VirtIO-blk flush & write-back -- `VIRTIO_BLK_T_FLUSH`, write-back queue, `fsync` | `virtio/blk.c` working I/O path                   |  [ ]   |
 | 💎  |   2   | §2 VirtIO-blk error recovery -- status parse, 3× retry, `EIO` surface               | §1 (flush before retry)                           |  [ ]   |
-| 💎  |   3   | §3 AHCI NCQ -- `CAP.SNCQ` detect, `READ/WRITE_FPDMA_QUEUED`, 32-deep `SATA_ACTIVE` | AHCI DMA R/W + IRQ working (from old §1–4)        |  [ ]   |
+| 💎  |   3   | §3 AHCI NCQ -- `CAP.SNCQ` detect, `READ/WRITE_FPDMA_QUEUED`, 32-deep `SATA_ACTIVE`  | AHCI DMA R/W + IRQ working (from old §1–4)        |  [ ]   |
 | 💎  |   4   | §4 AHCI error recovery -- `PxIS.TFES`, COMRESET, retry, `EIO` surface               | §3 (NCQ in-flight tracking)                       |  [ ]   |
-| 💎  |   5   | §5 AHCI SMART read -- `0xB0/0xD0`, attribute table, `blkdev_smart_query()`           | §4 (reliable ATA command path)                    |  [ ]   |
-| ⭐  |   6   | §6 Block device I/O metrics -- per-device counters, `blkdev_stats()`, `iostat`       | `blkdev.c` dispatch path (all drivers registered) |  [ ]   |
-| ⭐  |   7   | §7 Block-level disk cache -- LRU sector cache, write-back 5 s, `cache_invalidate()`  | §1 + §2 (flush/error path used by cache eviction)  |  [ ]   |
-| ⭐  |   8   | §8 Block-I/O QoS -- per-owner IOPS/bandwidth caps, period refill, backpressure       | §6 (dispatch counters), D02 T25 §7 (rate record)  |  [ ]   |
+| 💎  |   5   | §5 AHCI SMART read -- `0xB0/0xD0`, attribute table, `blkdev_smart_query()`          | §4 (reliable ATA command path)                    |  [ ]   |
+| ⭐  |   6   | §6 Block device I/O metrics -- per-device counters, `blkdev_stats()`, `iostat`      | `blkdev.c` dispatch path (all drivers registered) |  [ ]   |
+| ⭐  |   7   | §7 Block-level disk cache -- LRU sector cache, write-back 5 s, `cache_invalidate()` | §1 + §2 (flush/error path used by cache eviction) |  [ ]   |
+| ⭐  |   8   | §8 Block-I/O QoS -- per-owner IOPS/bandwidth caps, period refill, backpressure      | §6 (dispatch counters), D02 T25 §7 (rate record)  |  [ ]   |
 
 > §6 (I/O metrics) and §7 (block-level LRU cache) are `⭐` exclusive: Windows exposes I/O counters only through PDH/ETW; Linux exposes them only through procfs. Impossible OS embeds live counters directly in `blkdev_t` and exposes them through both a kernel API and the Task Manager, eliminating the indirection of a separate monitoring daemon. The in-kernel LRU sector cache is a single write-back layer shared by all filesystem drivers -- neither Windows nor Linux unifies this at the `blkdev` level without a more complex page cache or request queue abstraction.
 

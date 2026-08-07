@@ -38,20 +38,20 @@ title: "TODO-09 -- ext4 Read/Write Driver"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                                                           | Depends On                                                   | Status |
-| --- | :---: | ------------------------------------------------------------------------------------- | ------------------------------------------------------------ | :----: |
-| ⭐  |   1   | §1 Superblock + block group descriptors -- parse, feature gating, 64-bit counts       | Block device I/O working                                     |  [ ]   |
-| ⭐  |   2   | §2 Inode reader -- `ext4_read_inode()`, 64-bit sizes, flags, `i_extra_isize`          | §1 (inode table LBA from group descriptor)                   |  [ ]   |
-| ⭐  |   3   | §3 Extent tree decoder -- header, leaf extents, index nodes, triple-indirect fallback  | §2 (inode's `i_block` is the tree root)                      |  [ ]   |
-| ⭐  |   4   | §4 Directory htree (B+ tree) + linear scan fallback + `readdir`                      | §2 (dir inode), §3 (extent lookup for dir blocks)            |  [ ]   |
-| ⭐  |   5   | §5 File read -- extent-mapped data, multi-block, inline data (`INLINE_DATA_FL`)       | §3 (physical block lookup), §2 (inode flags)                 |  [ ]   |
-| ⭐  |   6   | §6 JBD2 journal replay -- superblock, descriptor blocks, transaction apply, sequence  | §1 (journal inode number), §2 (read journal inode)           |  [ ]   |
-| ⭐  |   7   | §7 File write -- within-block RMW, block alloc, extent append, JBD2 wrap             | §6 (journal must run before writes), §3 (extent tree)        |  [ ]   |
-| ⭐  |   8   | §8 Extent tree write -- `ext4_extent_insert`, leaf split, index propagation, remove   | §7 (writes call the extent mutator), §3 (read path proven)   |  [ ]   |
-| ⭐  |   9   | §9 Directory write -- `ext4_dir_add`, `ext4_dir_remove`, htree index maintenance      | §8 (dir block alloc uses extent write), §6 (JBD2 wrap)       |  [ ]   |
-| ⭐  |  10   | §10 File create / delete / rename -- inode alloc, link count, block free, atomic move | §9 (dir entry write), §6 (JBD2 atomicity)                    |  [ ]   |
-| 💎  |  11   | §11 Extended attributes -- inline xattr, xattr block, ACL + capability xattrs        | §2 (inode `i_extra_isize` for inline xattr), §7 (xattr write)|  [ ]   |
-| ⭐  |  12   | §12 VFS registration + probe + fsck + `chkdsk /ext4` + read-only fallback           | §1–§11 all complete                                          |  [ ]   |
+| ⭐  | Order | Deliverable                                                                           | Depends On                                                    | Status |
+| --- | :---: | ------------------------------------------------------------------------------------- | ------------------------------------------------------------- | :----: |
+| ⭐  |   1   | §1 Superblock + block group descriptors -- parse, feature gating, 64-bit counts       | Block device I/O working                                      |  [ ]   |
+| ⭐  |   2   | §2 Inode reader -- `ext4_read_inode()`, 64-bit sizes, flags, `i_extra_isize`          | §1 (inode table LBA from group descriptor)                    |  [ ]   |
+| ⭐  |   3   | §3 Extent tree decoder -- header, leaf extents, index nodes, triple-indirect fallback | §2 (inode's `i_block` is the tree root)                       |  [ ]   |
+| ⭐  |   4   | §4 Directory htree (B+ tree) + linear scan fallback + `readdir`                       | §2 (dir inode), §3 (extent lookup for dir blocks)             |  [ ]   |
+| ⭐  |   5   | §5 File read -- extent-mapped data, multi-block, inline data (`INLINE_DATA_FL`)       | §3 (physical block lookup), §2 (inode flags)                  |  [ ]   |
+| ⭐  |   6   | §6 JBD2 journal replay -- superblock, descriptor blocks, transaction apply, sequence  | §1 (journal inode number), §2 (read journal inode)            |  [ ]   |
+| ⭐  |   7   | §7 File write -- within-block RMW, block alloc, extent append, JBD2 wrap              | §6 (journal must run before writes), §3 (extent tree)         |  [ ]   |
+| ⭐  |   8   | §8 Extent tree write -- `ext4_extent_insert`, leaf split, index propagation, remove   | §7 (writes call the extent mutator), §3 (read path proven)    |  [ ]   |
+| ⭐  |   9   | §9 Directory write -- `ext4_dir_add`, `ext4_dir_remove`, htree index maintenance      | §8 (dir block alloc uses extent write), §6 (JBD2 wrap)        |  [ ]   |
+| ⭐  |  10   | §10 File create / delete / rename -- inode alloc, link count, block free, atomic move | §9 (dir entry write), §6 (JBD2 atomicity)                     |  [ ]   |
+| 💎  |  11   | §11 Extended attributes -- inline xattr, xattr block, ACL + capability xattrs         | §2 (inode `i_extra_isize` for inline xattr), §7 (xattr write) |  [ ]   |
+| ⭐  |  12   | §12 VFS registration + probe + fsck + `chkdsk /ext4` + read-only fallback             | §1–§11 all complete                                           |  [ ]   |
 
 > §1–§5 (read path), §6 (journal replay), and §7–§10 (write path) are `⭐` exclusive -- Windows 11 has no native ext4 support and cannot read Linux-formatted drives. §11 is `💎` parity -- Linux and macOS both handle xattrs. §12 is `⭐` for the combined in-kernel fsck without an external tool.
 
@@ -270,18 +270,18 @@ Register ext4 with `vfs_probe()`. Wire dirty-volume journal replay. Implement `e
 ## OS Comparison
 
 
-| ⭐ | Feature                                                    | 🪟 Win11                                      | 🐧 Linux                                                                                  | 🚀 Impossible OS                                                          |
-|----|------------------------------------------------------------|--------------------------------------------|----------------------------------------------------------------------------------------|------------------------------------------------------------------------|
-| ⭐ | Native ext4 read support                                   | ❌ No native support (requires third-party | ✅ `ext4.ko`; first-class support since 2008                                           | ⬜ §1–§5 -- , §12; read path with                                       |
-| ⭐ | Native ext4 write support                                  | ❌ No native support                       | ✅ `ext4.ko`; full R/W with JBD2                                                       | ⬜ §6–§10 -- JBD2-wrapped writes, extent tree mutation,                 |
-| ⭐ | JBD2 journal replay on mount                               | ❌ N/A -- no ext4 support                   | ✅ `jbd2.ko`; always replays before mounting                                           | ⬜ §6 -- committed-transaction replay, `EXT4_VALID_FS` state management |
-| ⭐ | Extent tree B+ tree (depth 0–4) + triple-indirect fallback | ❌ N/A                                     | ✅ `ext4_ext_find_extent()`; depth up to 5;                                            | ⬜ §3 -- , §8; binary search descent,                                   |
-| ⭐ | Directory htree (B+ tree) -- half_md4 / TEA hash            | ❌ N/A                                     | ✅ `dx_probe()` in `namei.c`; htree with                                               | ⬜ §4 -- all three hash variants; linear                                |
-| ⭐ | Inline data                                                | ❌ N/A                                     | ✅ `EXT4_INLINE_DATA_FL`; `ext4_readpage_inline()` / `ext4_writepage_inline()`         | ⬜ §5 -- `i_block` inline read; inline+xattr data                       |
-| ⭐ | ext4 fsck                                                  | ❌ N/A                                     | ✅ `e2fsck` (external tool); not in-kernel                                             | ⬜ §12 -- in-kernel fsck; orphan inode detection                        |
-| ⭐ | Read-only mount on unknown incompat features               | ❌ N/A                                     | ✅ `ext4_fill_super()` refuses mount on unknown                                        | ⬜ §12 -- `s_feature_incompat & ~SUPPORTED` check; `[READ-ONLY]`        |
-| 💎 | Extended attributes                                        | ❌ N/A for ext4; NTFS has                  | ✅ `ext4_xattr_get/set()`; `system.posix_acl_access`, `security.capability` namespaces | ⬜ §11 -- inline xattr + xattr block                                    |
-| ⭐ | Replace ext2 probe stub with full ext4 VFS driver          | ❌ N/A                                     | ✅ Full driver since 2.6.28 (2008)                                                     | ⬜ §12 -- `ext4_probe()` replaces `probe_ext2_sector2()` stub in        |
+| ⭐  | Feature                                                    | 🪟 Win11                                   | 🐧 Linux                                                                               | 🚀 Impossible OS                                                        |
+| --- | ---------------------------------------------------------- | ------------------------------------------ | -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| ⭐  | Native ext4 read support                                   | ❌ No native support (requires third-party | ✅ `ext4.ko`; first-class support since 2008                                           | ⬜ §1–§5 -- , §12; read path with                                       |
+| ⭐  | Native ext4 write support                                  | ❌ No native support                       | ✅ `ext4.ko`; full R/W with JBD2                                                       | ⬜ §6–§10 -- JBD2-wrapped writes, extent tree mutation,                 |
+| ⭐  | JBD2 journal replay on mount                               | ❌ N/A -- no ext4 support                  | ✅ `jbd2.ko`; always replays before mounting                                           | ⬜ §6 -- committed-transaction replay, `EXT4_VALID_FS` state management |
+| ⭐  | Extent tree B+ tree (depth 0–4) + triple-indirect fallback | ❌ N/A                                     | ✅ `ext4_ext_find_extent()`; depth up to 5;                                            | ⬜ §3 -- , §8; binary search descent,                                   |
+| ⭐  | Directory htree (B+ tree) -- half_md4 / TEA hash           | ❌ N/A                                     | ✅ `dx_probe()` in `namei.c`; htree with                                               | ⬜ §4 -- all three hash variants; linear                                |
+| ⭐  | Inline data                                                | ❌ N/A                                     | ✅ `EXT4_INLINE_DATA_FL`; `ext4_readpage_inline()` / `ext4_writepage_inline()`         | ⬜ §5 -- `i_block` inline read; inline+xattr data                       |
+| ⭐  | ext4 fsck                                                  | ❌ N/A                                     | ✅ `e2fsck` (external tool); not in-kernel                                             | ⬜ §12 -- in-kernel fsck; orphan inode detection                        |
+| ⭐  | Read-only mount on unknown incompat features               | ❌ N/A                                     | ✅ `ext4_fill_super()` refuses mount on unknown                                        | ⬜ §12 -- `s_feature_incompat & ~SUPPORTED` check; `[READ-ONLY]`        |
+| 💎  | Extended attributes                                        | ❌ N/A for ext4; NTFS has                  | ✅ `ext4_xattr_get/set()`; `system.posix_acl_access`, `security.capability` namespaces | ⬜ §11 -- inline xattr + xattr block                                    |
+| ⭐  | Replace ext2 probe stub with full ext4 VFS driver          | ❌ N/A                                     | ✅ Full driver since 2.6.28 (2008)                                                     | ⬜ §12 -- `ext4_probe()` replaces `probe_ext2_sector2()` stub in        |
 
 > **After §1–§12:** Impossible OS becomes one of only two desktop OS kernels (alongside Linux) capable of natively reading and writing ext4 volumes -- surpassing Windows 11 which requires third-party drivers. The in-kernel `ext4_fsck()` callable via `chkdsk /ext4` is a further exclusive -- Linux uses the external `e2fsck` tool which is not available in-kernel.
 

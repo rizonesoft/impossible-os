@@ -362,12 +362,12 @@ Provides the cross-compilation toolchain for targeting Impossible OS from a host
 
 ## History
 
-| Date | Action | Summary |
-|------|--------|---------|
-| 2026-04-14 | Added DLL export master tables TODO-A/B/C; condensed Sections 10 through 12 to XREF those tables | Hub links TODO-A/B/C as authoritative export rows. |
-| 2026-04-14 | gap-analysis | Confirmed TODO-A/B/C own export rows; TODO-08 hub + narrative only; Win32k syscall map stays 08-graphics-ui TODO-A shadow SSDT. |
-| 2026-04-14 | validate | Domain label set to 10-services-security; History schema aligned. |
-| 2026-04-14 | retarget | Renamed domain folder to `10-platform-services`; refreshed all `todo/` XREF paths. |
+| Date       | Action                                                                                           | Summary                                                                                                                         |
+| ---------- | ------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-04-14 | Added DLL export master tables TODO-A/B/C; condensed Sections 10 through 12 to XREF those tables | Hub links TODO-A/B/C as authoritative export rows.                                                                              |
+| 2026-04-14 | gap-analysis                                                                                     | Confirmed TODO-A/B/C own export rows; TODO-08 hub + narrative only; Win32k syscall map stays 08-graphics-ui TODO-A shadow SSDT. |
+| 2026-04-14 | validate                                                                                         | Domain label set to 10-services-security; History schema aligned.                                                               |
+| 2026-04-14 | retarget                                                                                         | Renamed domain folder to `10-platform-services`; refreshed all `todo/` XREF paths.                                              |
 
 ---
 

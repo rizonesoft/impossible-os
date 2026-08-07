@@ -41,18 +41,18 @@ title: "TODO-01 -- Audio System & Media Player"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                                                                         | Depends On                                                                         | Status |
-| --- | :---: | --------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- | :----: |
-| 💎  |   1   | §1 Audio abstraction -- `audio_device`, `audio_init/play/stop/volume`, Registry, syscalls           | AC97 driver (TODO-10); `registry_set/get`; add `SYS_AUDIO_PLAY=60`, `SYS_AUDIO_VOLUME=61` |  [ ]   |
-| ⭐  |   2   | §2 Audio mixer -- 8-stream INT32 accumulate + clamp, DMA feed, mute, per-stream handles             | §1 audio abstraction; `pmm_alloc_contiguous()` for mix buffer                     |  [ ]   |
-| 💎  |   3   | §3 WAV decoder -- `dr_wav.h` vendor, `kmalloc/kfree` redirect, `audio_load_wav()`                  | §1; `vfs_open/read()`                                                              |  [ ]   |
-| 💎  |   4   | §4 MP3 decoder -- `dr_mp3.h` vendor, `audio_load_mp3()`, linear resampler                          | §1; `vfs_open/read()`                                                              |  [ ]   |
-| 💎  |   5   | §5 OGG Vorbis -- `stb_vorbis.c` impl file, `audio_load_ogg()`                                      | §1; `vfs_open/read()`                                                              |  [ ]   |
-| 💎  |   6   | §6 FLAC decoder (stretch) -- `dr_flac.h` vendor, `audio_load_flac()`                               | §1; `vfs_open/read()`                                                              |  [ ]   |
-| ⭐  |   7   | §7 Unified loader -- `audio_load(path)` extension dispatch → clip                                   | §3 + §4 + §5 + §6                                                                 |  [ ]   |
-| 💎  |   8   | §8 Media player app -- transport, seek bar, ID3v2 tags, playlist, file assoc                        | §7; `CTRL_SLIDER`; `CTRL_LISTVIEW`; `dialog_file_open()` (TODO-05)               |  [ ]   |
-| 💎  |   9   | §9 Volume popup -- 🔊 tray flyout, slider, mute, keyboard OSD                                       | §1; tray slot (TODO-07); `sched_task_add()` for OSD dismiss                       |  [ ]   |
-| 💎  |  10   | §10 `mmsys.cpl` -- master vol + mute + device selector + system sounds + test                       | §1 + §9; `include/cpl.h` (TODO-11); `CTRL_SLIDER`                                |  [ ]   |
+| ⭐  | Order | Deliverable                                                                               | Depends On                                                                                | Status |
+| --- | :---: | ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- | :----: |
+| 💎  |   1   | §1 Audio abstraction -- `audio_device`, `audio_init/play/stop/volume`, Registry, syscalls | AC97 driver (TODO-10); `registry_set/get`; add `SYS_AUDIO_PLAY=60`, `SYS_AUDIO_VOLUME=61` |  [ ]   |
+| ⭐  |   2   | §2 Audio mixer -- 8-stream INT32 accumulate + clamp, DMA feed, mute, per-stream handles   | §1 audio abstraction; `pmm_alloc_contiguous()` for mix buffer                             |  [ ]   |
+| 💎  |   3   | §3 WAV decoder -- `dr_wav.h` vendor, `kmalloc/kfree` redirect, `audio_load_wav()`         | §1; `vfs_open/read()`                                                                     |  [ ]   |
+| 💎  |   4   | §4 MP3 decoder -- `dr_mp3.h` vendor, `audio_load_mp3()`, linear resampler                 | §1; `vfs_open/read()`                                                                     |  [ ]   |
+| 💎  |   5   | §5 OGG Vorbis -- `stb_vorbis.c` impl file, `audio_load_ogg()`                             | §1; `vfs_open/read()`                                                                     |  [ ]   |
+| 💎  |   6   | §6 FLAC decoder (stretch) -- `dr_flac.h` vendor, `audio_load_flac()`                      | §1; `vfs_open/read()`                                                                     |  [ ]   |
+| ⭐  |   7   | §7 Unified loader -- `audio_load(path)` extension dispatch → clip                         | §3 + §4 + §5 + §6                                                                         |  [ ]   |
+| 💎  |   8   | §8 Media player app -- transport, seek bar, ID3v2 tags, playlist, file assoc              | §7; `CTRL_SLIDER`; `CTRL_LISTVIEW`; `dialog_file_open()` (TODO-05)                        |  [ ]   |
+| 💎  |   9   | §9 Volume popup -- 🔊 tray flyout, slider, mute, keyboard OSD                             | §1; tray slot (TODO-07); `sched_task_add()` for OSD dismiss                               |  [ ]   |
+| 💎  |  10   | §10 `mmsys.cpl` -- master vol + mute + device selector + system sounds + test             | §1 + §9; `include/cpl.h` (TODO-11); `CTRL_SLIDER`                                         |  [ ]   |
 
 ---
 

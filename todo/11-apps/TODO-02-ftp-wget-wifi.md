@@ -32,16 +32,16 @@ title: "TODO-02 -- FTP Client, wget/curl & WiFi"
 
 ## Inputs
 
-| Path | Purpose |
-|------|---------|
-| `include/kernel/fs/vfs.h` | `vfs_open`, `vfs_write`, `vfs_read`, `vfs_stat` -- local file I/O |
-| `06-networking/TODO-03-http-tls.md` | `http_get`, `https_get`, `http_post` -- wget/curl network ops |
-| `06-networking/TODO-02-dns-sockets.md` | `kern_socket`, `kern_connect`, `kern_send`, `kern_recv`, `kern_close` -- FTP raw TCP |
-| `include/registry.h` | `registry_get/set()` -- WiFi credentials, ncpa.cpl settings |
-| `08-graphics-ui/TODO-05 §*` | `CTRL_LISTVIEW`, `CTRL_PROGRESSBAR` -- FTP GUI + WiFi settings panel |
-| → XREF: `06-networking/TODO-03` | HTTP/HTTPS client -- mandatory for wget/curl |
-| → XREF: `10-apps/TODO-01 §2` | HTML link extractor for `wget -r` recursive crawl |
-| → XREF: `04-drivers-hardware/TODO-10-usb-stack.md` | USB HID stack -- USB WiFi adapter driver prerequisite |
+| Path                                               | Purpose                                                                              |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `include/kernel/fs/vfs.h`                          | `vfs_open`, `vfs_write`, `vfs_read`, `vfs_stat` -- local file I/O                    |
+| `06-networking/TODO-03-http-tls.md`                | `http_get`, `https_get`, `http_post` -- wget/curl network ops                        |
+| `06-networking/TODO-02-dns-sockets.md`             | `kern_socket`, `kern_connect`, `kern_send`, `kern_recv`, `kern_close` -- FTP raw TCP |
+| `include/registry.h`                               | `registry_get/set()` -- WiFi credentials, ncpa.cpl settings                          |
+| `08-graphics-ui/TODO-05 §*`                        | `CTRL_LISTVIEW`, `CTRL_PROGRESSBAR` -- FTP GUI + WiFi settings panel                 |
+| → XREF: `06-networking/TODO-03`                    | HTTP/HTTPS client -- mandatory for wget/curl                                         |
+| → XREF: `10-apps/TODO-01 §2`                       | HTML link extractor for `wget -r` recursive crawl                                    |
+| → XREF: `04-drivers-hardware/TODO-10-usb-stack.md` | USB HID stack -- USB WiFi adapter driver prerequisite                                |
 
 ---
 

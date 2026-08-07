@@ -38,16 +38,16 @@ title: "TODO-03 -- Volume Management & Auto-mount"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                                                             | Depends On                                                       | Status |
-| --- | :---: | --------------------------------------------------------------------------------------- | ---------------------------------------------------------------- | :----: |
-| ⭐  |   1   | §1 Filesystem probe chain + drive-letter assignment + Registry population               | Existing FS drivers (IXFS, NTFS, FAT32)                          |  [ ]   |
-| 💎  |   2   | §2 Boot mount sequence -- rewire `boot_storage.c` to use `vfs_probe()`                  | §1 (probe API exists)                                            |  [ ]   |
-| ⭐  |   3   | §3 USB hot-plug volume arrival -- auto-mount + desktop toast + File Manager sidebar     | §1, TODO-09 §8 hot-plug events                                   |  [ ]   |
-| 💎  |   4   | §4 USB safe removal -- tray right-click, flush+unmount, force-unmount after 5 s         | §3 (drive mounted), TODO-01 §7 `cache_flush()`                   |  [ ]   |
-| 💎  |   5   | §5 Manual `mount` / `umount` shell commands                                             | §1 (probe), §4 (unmount path)                                    |  [ ]   |
-| 💎  |   6   | §6 Win32 volume query APIs -- `GetLogicalDrives`, `GetVolumeInformation`, `QueryDosDevice` | §1 (Registry populated)                                        |  [ ]   |
-| 💎  |   7   | §7 Optical drive -- ATAPI detect, ISO 9660 mount, tray-open, autorun stub                | §1 (probe chain), ATAPI driver                                   |  [ ]   |
-| 💎  |   8   | §8 Volume control ioctls -- `FSCTL_IS_VOLUME_DIRTY`, `LOCK`, `UNLOCK`, `DISMOUNT`        | §1 (mounted volumes), §4 (unmount path)                          |  [ ]   |
+| ⭐  | Order | Deliverable                                                                                | Depends On                                     | Status |
+| --- | :---: | ------------------------------------------------------------------------------------------ | ---------------------------------------------- | :----: |
+| ⭐  |   1   | §1 Filesystem probe chain + drive-letter assignment + Registry population                  | Existing FS drivers (IXFS, NTFS, FAT32)        |  [ ]   |
+| 💎  |   2   | §2 Boot mount sequence -- rewire `boot_storage.c` to use `vfs_probe()`                     | §1 (probe API exists)                          |  [ ]   |
+| ⭐  |   3   | §3 USB hot-plug volume arrival -- auto-mount + desktop toast + File Manager sidebar        | §1, TODO-09 §8 hot-plug events                 |  [ ]   |
+| 💎  |   4   | §4 USB safe removal -- tray right-click, flush+unmount, force-unmount after 5 s            | §3 (drive mounted), TODO-01 §7 `cache_flush()` |  [ ]   |
+| 💎  |   5   | §5 Manual `mount` / `umount` shell commands                                                | §1 (probe), §4 (unmount path)                  |  [ ]   |
+| 💎  |   6   | §6 Win32 volume query APIs -- `GetLogicalDrives`, `GetVolumeInformation`, `QueryDosDevice` | §1 (Registry populated)                        |  [ ]   |
+| 💎  |   7   | §7 Optical drive -- ATAPI detect, ISO 9660 mount, tray-open, autorun stub                  | §1 (probe chain), ATAPI driver                 |  [ ]   |
+| 💎  |   8   | §8 Volume control ioctls -- `FSCTL_IS_VOLUME_DIRTY`, `LOCK`, `UNLOCK`, `DISMOUNT`          | §1 (mounted volumes), §4 (unmount path)        |  [ ]   |
 
 > §1 (probe chain + drive-letter assignment) and §3 (USB hot-plug with toast + sidebar) are `⭐` exclusive: Windows uses a static partition table enumeration with `mountmgr.sys`; Linux uses `udev` rules in user space. Impossible OS performs dynamic probe + assignment + Registry write + toast + sidebar update entirely inside the kernel on a single hot-plug event -- no user-space daemon required.
 

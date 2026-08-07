@@ -21,7 +21,7 @@ title: "TODO-C -- shell32.dll Export Master Table"
 ## Inputs
 
 | Path / TODO                                                                              | Purpose                                                              |
-| ------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------- |
+| ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
 | `TODO-08-win32-api-surface.md`                                                           | `shell32.c` APIs + ShellExecute (Sections 12 and 14)                 |
 | `../08-graphics-ui/TODO-14-win32-gdi-user32-stubs.md`                                    | Icon index maps (`shell32_icon_map`, `imageres_icon_map`); Section 1 |
 | `../02-kernel-core/TODO-22-environment-variables.md`                                     | `CommandLineToArgvW` kernel / env surface                            |
@@ -37,7 +37,7 @@ Every **named** `shell32.dll` export that appears on a shipping Windows 11 machi
 ## Implementation Order
 
 | Order | Deliverable                                                                                                  | Status |
-| ------- | -------------------------------------------------------------------------------------------------------------- | -------- |
+| ----- | ------------------------------------------------------------------------------------------------------------ | ------ |
 | 1     | Tier 1 rows kept in sync with PE loader + `TODO-08` when `shell32` is wired                                  | [ ]    |
 | 2     | Tier 2 roadmap bullets updated when Explorer / compat matrix expands                                         | [ ]    |
 | 3     | Dump exports from pinned Win11 `shell32.dll`; merge deltas into Tier 3 Notes (new names, forwards, ordinals) | [ ]    |
@@ -573,7 +573,7 @@ Microsoft does not publish one MSDN page per `shell32.dll` export. Use two layer
 ## History
 
 | Date       | Action                                     | Summary                                                                                                                                          |
-| ------------ | -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ---------- | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ |
 | 2026-04-14 | Created TODO-C shell32 export master table | Initial Tier 1 shell paths + icon API seed rows.                                                                                                 |
 | 2026-04-14 | validate                                   | OS Comparison 5-column template; structural pass after master-table landing.                                                                     |
 | 2026-04-14 | gap-analysis                               | Master table owns per-export rows; TODO-08 / TODO-11 reference here only.                                                                        |

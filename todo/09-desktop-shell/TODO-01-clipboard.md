@@ -39,13 +39,13 @@ title: "TODO-01 -- Clipboard System"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                                                                   | Depends On                                                                 | Status |
-| --- | :---: | --------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- | :----: |
-| 💎  |   1   | §1 Kernel clipboard buffer -- `clip_format_t`, `clipboard_t`, `set/get/has/clear`, syscalls   | `kmalloc`, `pmm_alloc_contiguous` (both exist)                            |  [ ]   |
-| 💎  |   2   | §3 Win32 clipboard stubs -- `OpenClipboard/SetClipboardData/GetClipboardData/EmptyClipboard`  | §1 API must exist; TODO-11 USER32 stub table structure                     |  [ ]   |
-| 💎  |   3   | §5 Multi-format clipboard -- `clipboard_set_multi()`, parallel format slots                   | §1 (extends the single-format buffer to multi-slot)                        |  [ ]   |
-| ⭐  |   4   | §2 Keyboard shortcut wiring -- Ctrl+C/X/V to focused control, SIGINT passthrough              | §1 + §3 multi-format (paste can deliver text format); `CTRL_TEXTBOX`      |  [ ]   |
-| ⭐  |   5   | §4 Clipboard history -- 25-entry ring, Win+V popup, entry restore + paste                     | §4 keyboard wiring (Win+V hotkey in same dispatch table); §1 `clipboard_set()` hook |  [ ]   |
+| ⭐  | Order | Deliverable                                                                                  | Depends On                                                                          | Status |
+| --- | :---: | -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- | :----: |
+| 💎  |   1   | §1 Kernel clipboard buffer -- `clip_format_t`, `clipboard_t`, `set/get/has/clear`, syscalls  | `kmalloc`, `pmm_alloc_contiguous` (both exist)                                      |  [ ]   |
+| 💎  |   2   | §3 Win32 clipboard stubs -- `OpenClipboard/SetClipboardData/GetClipboardData/EmptyClipboard` | §1 API must exist; TODO-11 USER32 stub table structure                              |  [ ]   |
+| 💎  |   3   | §5 Multi-format clipboard -- `clipboard_set_multi()`, parallel format slots                  | §1 (extends the single-format buffer to multi-slot)                                 |  [ ]   |
+| ⭐  |   4   | §2 Keyboard shortcut wiring -- Ctrl+C/X/V to focused control, SIGINT passthrough             | §1 + §3 multi-format (paste can deliver text format); `CTRL_TEXTBOX`                |  [ ]   |
+| ⭐  |   5   | §4 Clipboard history -- 25-entry ring, Win+V popup, entry restore + paste                    | §4 keyboard wiring (Win+V hotkey in same dispatch table); §1 `clipboard_set()` hook |  [ ]   |
 
 ---
 
@@ -154,13 +154,13 @@ Ctrl+C/X/V in global WM key handler → dispatch to focused window's focused con
 ## OS Comparison
 
 
-| ⭐ | Feature                 | 🪟 Win11                                                    | 🐧 Linux                                                      | 🚀 Impossible OS                                                                          |
-|----|-------------------------|----------------------------------------------------------|------------------------------------------------------------|----------------------------------------------------------------------------------------|
-| 💎 | Kernel clipboard buffer | ✅ Global clipboard via Win32 `SetClipboardData`;        | ✅ X11 selection atoms (PRIMARY/CLIPBOARD); Wayland        | ⬜ §1 -- single global `g_clipboard`; spinlock-protected; `SYS_CLIPBOARD_SET/GET=56/57` |
-| ⭐ | Ctrl+C/X/V wiring       | ✅ Win32 apps handle WM_COPY/PASTE; no                   | ✅ X11 selection; terminal emulators handle                | ⬜ §2 -- `⭐` kernel decision tree: terminal+no-selection                               |
-| 💎 | Win32 clipboard stubs   | ✅ Full Win32 clipboard API (comdlg32/user32);           | ✅ Wine clipboard emulation; GTK/Qt clipboard              | ⬜ §3 -- CF_TEXT/BITMAP/HDROP/UNICODETEXT → `CLIP_*` forwarding table                   |
-| ⭐ | Clipboard history       | ✅ Win+V clipboard history (since Win10                  | ✅ `CopyQ`, `Parcellite`, `Clipman` (third-party daemons); | ⬜ §4 -- `⭐` built into kernel shell                                                   |
-| 💎 | Multi-format            | ✅ Multiple clipboard formats registered simultaneously; | ✅ X11 `TARGETS` atom; multiple MIME                       | ⬜ §5 -- `CLIP_MAX_FORMATS=4`; `clipboard_get_best()` priority order; HTML              |
+| ⭐  | Feature                 | 🪟 Win11                                                 | 🐧 Linux                                                   | 🚀 Impossible OS                                                                        |
+| --- | ----------------------- | -------------------------------------------------------- | ---------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| 💎  | Kernel clipboard buffer | ✅ Global clipboard via Win32 `SetClipboardData`;        | ✅ X11 selection atoms (PRIMARY/CLIPBOARD); Wayland        | ⬜ §1 -- single global `g_clipboard`; spinlock-protected; `SYS_CLIPBOARD_SET/GET=56/57` |
+| ⭐  | Ctrl+C/X/V wiring       | ✅ Win32 apps handle WM_COPY/PASTE; no                   | ✅ X11 selection; terminal emulators handle                | ⬜ §2 -- `⭐` kernel decision tree: terminal+no-selection                               |
+| 💎  | Win32 clipboard stubs   | ✅ Full Win32 clipboard API (comdlg32/user32);           | ✅ Wine clipboard emulation; GTK/Qt clipboard              | ⬜ §3 -- CF_TEXT/BITMAP/HDROP/UNICODETEXT → `CLIP_*` forwarding table                   |
+| ⭐  | Clipboard history       | ✅ Win+V clipboard history (since Win10                  | ✅ `CopyQ`, `Parcellite`, `Clipman` (third-party daemons); | ⬜ §4 -- `⭐` built into kernel shell                                                   |
+| 💎  | Multi-format            | ✅ Multiple clipboard formats registered simultaneously; | ✅ X11 `TARGETS` atom; multiple MIME                       | ⬜ §5 -- `CLIP_MAX_FORMATS=4`; `clipboard_get_best()` priority order; HTML              |
 
 > **After §1–§5:** Impossible OS has a complete clipboard stack built directly into the kernel shell, with no clipboard daemon. The dual `⭐` differentiators are (1) the SIGINT passthrough gate -- the kernel correctly distinguishes "Ctrl+C to copy" from "Ctrl+C to signal" without a terminal ever needing to intercept or re-implement copy shortcuts; and (2) clipboard history with app attribution (`current_task->name`) sourced at the kernel level -- no IPC or daemon required, just a ring buffer hooked into `clipboard_set()`.
 

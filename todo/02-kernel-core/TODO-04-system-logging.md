@@ -607,16 +607,16 @@ These items are implemented and verified. Kept here for future correctness check
 > **Round 2:** 2 new findings. 1 fixed (cursor-advance-on-failure), 1 accepted (ring snapshot).
 > **Final verdict: resolved.** Build clean.
 
-| # | Severity | Finding | Status |
-|---|----------|---------|--------|
-| 1 | critical | `klog()` ring buffer not SMP-safe | **Fixed** -- added `s_klog_lock` irqsave spinlock |
-| 2 | high | Flush stops after ring saturates at 1000 | **Fixed** -- monotonic `klog_ring_seq` replaces capped `ring_count` |
-| 3 | high | Per-subsystem logs re-append entire ring | **Fixed** -- subsystem routing uses same seq cursor as kernel.log |
-| 4 | high | JSON output not safely escaped | **Fixed** -- inline escape for `\ " \n \r \t` + control chars |
-| 5 | medium | Crash recovery fails when only X: mounted | **Fixed** -- gate on `X: \|\| C:` |
-| 6 | medium | ETW sessions never released after stop | **Fixed** -- `NtStopTrace` clears magic + kfree(buffer) |
-| 7 | high | Flush cursor advances on write failure | **Fixed** -- cursor gated on successful VFS write |
-| 8 | medium | Ring flush reads live entries without lock | **Accepted** -- inherent ring buffer behavior; locking during disk I/O would block all logging |
+| #   | Severity | Finding                                    | Status                                                                                         |
+| --- | -------- | ------------------------------------------ | ---------------------------------------------------------------------------------------------- |
+| 1   | critical | `klog()` ring buffer not SMP-safe          | **Fixed** -- added `s_klog_lock` irqsave spinlock                                              |
+| 2   | high     | Flush stops after ring saturates at 1000   | **Fixed** -- monotonic `klog_ring_seq` replaces capped `ring_count`                            |
+| 3   | high     | Per-subsystem logs re-append entire ring   | **Fixed** -- subsystem routing uses same seq cursor as kernel.log                              |
+| 4   | high     | JSON output not safely escaped             | **Fixed** -- inline escape for `\ " \n \r \t` + control chars                                  |
+| 5   | medium   | Crash recovery fails when only X: mounted  | **Fixed** -- gate on `X: \|\| C:`                                                              |
+| 6   | medium   | ETW sessions never released after stop     | **Fixed** -- `NtStopTrace` clears magic + kfree(buffer)                                        |
+| 7   | high     | Flush cursor advances on write failure     | **Fixed** -- cursor gated on successful VFS write                                              |
+| 8   | medium   | Ring flush reads live entries without lock | **Accepted** -- inherent ring buffer behavior; locking during disk I/O would block all logging |
 
 ## Verification
 

@@ -41,18 +41,18 @@ title: "TODO-03 -- ACPI Full Subsystem & Power Management"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                              | Depends On                                    | Status |
-| --- | :---: | -------------------------------------------------------- | --------------------------------------------- | :----: |
-| 💎  |   1   | §1 ACPICA AML interpreter integration                   | --                                             |  [ ]   |
-| 💎  |   2   | §2 Clean shutdown sequence orchestrator                 | §1, VFS flush, Registry                       |  [ ]   |
-| 💎  |   3   | §3 ACPI power button SCI                                | §1, §2 (shutdown orchestrator), IOAPIC        |  [ ]   |
-| 💎  |   4   | §4 Thermal monitoring (`IA32_THERM_STATUS`, Task Mgr)   | §1 (TjMax from AML), APIC Thermal LVT         |  [ ]   |
-| 💎  |   5   | §5 Battery status (`_BST`/`_BIF`)                       | §1                                            |  [ ]   |
-| 💎  |   6   | §6 CPU frequency scaling (DVFS, `_PSS` P-states)        | §1, `cpufreq_register_driver` (`03-memory-concurrency/TODO-06-scheduler-enhancement.md §9`)    |  [ ]   |
-| 💎  |   7   | §7 Power profiles -- Balanced/Performance/Power Saver   | §4, §6, §8                                    |  [ ]   |
-| 💎  |   8   | §8 ACPI C-states idle (`hlt`/`mwait`, `_CST`)           | §1, §7 (policy)                              |  [ ]   |
-| 💎  |   9   | §9 S3 suspend/resume -- trampoline, state save/restore   | §1, §2 (flush), APIC re-init                  |  [ ]   |
-| 💎  |  10   | §10 Hibernate (S4) -- hiberfil.sys, bootloader restore    | §9 (S3 path), filesystem                      |  [ ]   |
+| ⭐  | Order | Deliverable                                            | Depends On                                                                                  | Status |
+| --- | :---: | ------------------------------------------------------ | ------------------------------------------------------------------------------------------- | :----: |
+| 💎  |   1   | §1 ACPICA AML interpreter integration                  | --                                                                                          |  [ ]   |
+| 💎  |   2   | §2 Clean shutdown sequence orchestrator                | §1, VFS flush, Registry                                                                     |  [ ]   |
+| 💎  |   3   | §3 ACPI power button SCI                               | §1, §2 (shutdown orchestrator), IOAPIC                                                      |  [ ]   |
+| 💎  |   4   | §4 Thermal monitoring (`IA32_THERM_STATUS`, Task Mgr)  | §1 (TjMax from AML), APIC Thermal LVT                                                       |  [ ]   |
+| 💎  |   5   | §5 Battery status (`_BST`/`_BIF`)                      | §1                                                                                          |  [ ]   |
+| 💎  |   6   | §6 CPU frequency scaling (DVFS, `_PSS` P-states)       | §1, `cpufreq_register_driver` (`03-memory-concurrency/TODO-06-scheduler-enhancement.md §9`) |  [ ]   |
+| 💎  |   7   | §7 Power profiles -- Balanced/Performance/Power Saver  | §4, §6, §8                                                                                  |  [ ]   |
+| 💎  |   8   | §8 ACPI C-states idle (`hlt`/`mwait`, `_CST`)          | §1, §7 (policy)                                                                             |  [ ]   |
+| 💎  |   9   | §9 S3 suspend/resume -- trampoline, state save/restore | §1, §2 (flush), APIC re-init                                                                |  [ ]   |
+| 💎  |  10   | §10 Hibernate (S4) -- hiberfil.sys, bootloader restore | §9 (S3 path), filesystem                                                                    |  [ ]   |
 
 > All ten rows are 💎 parity: Windows NT and Linux both ship a complete ACPI OSPM, AML interpreter, S3/S4, DVFS, thermal, and C-state implementation. Closing these gaps is required to run Impossible OS on real laptops and power-managed hardware.
 

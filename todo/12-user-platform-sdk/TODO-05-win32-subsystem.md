@@ -68,16 +68,16 @@ synchronous reply. `ChooseColor`/`ChooseFont` show the common dialogs from `TODO
 
 ## Implementation Order
 
-| Step | Section | 💎/⭐ | Dependency |
-|------|---------|-------|-----------|
-| 1 | Win32 subsystem architecture + message queue | 💎 | `struct task` queue field; `SYS_WAIT_MESSAGE=75` |
-| 2 | Window class registry + built-in classes | 💎 | §1; `CTRL_*` (TODO-04); `wm_create_window` |
-| 3 | WndProc dispatch + DefWindowProc | 💎 | §1 §2; `TranslateMessage` key tables |
-| 4 | Win32 painting model (HDC + dirty rect) | 💎 | §1 §2; HDC table (see `08-graphics-ui/TODO-14-win32-gdi-user32-stubs.md`); compositor |
-| 5 | Message filters + accelerator tables | 💎 | §1 §3; `TranslateMessage` complete; `SYS_POSTMESSAGE=73` |
-| 6 | Window subclassing + property store | 💎 | §2 §3 |
-| 7 | Inter-process window messaging | 💎 | §1; `pipe.h`; `SYS_SHMEM_CREATE/MAP`; §2 `FindWindow` |
-| 8 | Common dialog boxes (`ChooseColor`/`ChooseFont`) | 💎 | §1 msg loop; `TODO-05 §8` dialog system |
+| Step | Section                                          | 💎/⭐ | Dependency                                                                            |
+| ---- | ------------------------------------------------ | ----- | ------------------------------------------------------------------------------------- |
+| 1    | Win32 subsystem architecture + message queue     | 💎    | `struct task` queue field; `SYS_WAIT_MESSAGE=75`                                      |
+| 2    | Window class registry + built-in classes         | 💎    | §1; `CTRL_*` (TODO-04); `wm_create_window`                                            |
+| 3    | WndProc dispatch + DefWindowProc                 | 💎    | §1 §2; `TranslateMessage` key tables                                                  |
+| 4    | Win32 painting model (HDC + dirty rect)          | 💎    | §1 §2; HDC table (see `08-graphics-ui/TODO-14-win32-gdi-user32-stubs.md`); compositor |
+| 5    | Message filters + accelerator tables             | 💎    | §1 §3; `TranslateMessage` complete; `SYS_POSTMESSAGE=73`                              |
+| 6    | Window subclassing + property store              | 💎    | §2 §3                                                                                 |
+| 7    | Inter-process window messaging                   | 💎    | §1; `pipe.h`; `SYS_SHMEM_CREATE/MAP`; §2 `FindWindow`                                 |
+| 8    | Common dialog boxes (`ChooseColor`/`ChooseFont`) | 💎    | §1 msg loop; `TODO-05 §8` dialog system                                               |
 
 ---
 
@@ -189,21 +189,21 @@ process in future iteration)
   - Look up `wnd_class_entry_t` for the window; call `entry->WndProc(hwnd, msg->message, msg->wParam, msg->lParam)`
   - Return WndProc return value
 - [ ] **`DefWindowProcA(hwnd, msg, wParam, lParam)`** default message handling:
-  | Message | Default action |
-  |---------|----------------|
-  | `WM_PAINT` | `BeginPaint` + `EndPaint` (validates region, no drawing) |
-  | `WM_CLOSE` | `DestroyWindow(hwnd)` |
-  | `WM_DESTROY` | `PostQuitMessage(0)` |
-  | `WM_SIZE` | Update stored window rect; return 0 |
-  | `WM_MOVE` | Update stored position; return 0 |
-  | `WM_ERASEBKGND` | `FillRect(hdc, &rect, hbrBackground)`; return 1 |
-  | `WM_SETFOCUS` / `WM_KILLFOCUS` | Store focus state in HWND entry; return 0 |
-  | `WM_KEYDOWN` / `WM_KEYUP` | Forward to parent if child window; else return 0 |
-  | `WM_LBUTTONDOWN` | Hit-test child windows; if hit: `SetFocus(child)`; forward msg |
-  | `WM_MOUSEMOVE` | Update cursor; check `WM_MOUSELEAVE` tracking; return 0 |
-  | `WM_NCHITTEST` | Return `HTCLIENT` for client area, `HTCAPTION` for title bar, `HTCLOSE` etc. |
-  | `WM_SYSCOMMAND` | `SC_CLOSE` → `SendMessage(hwnd, WM_CLOSE,...)`; `SC_MINIMIZE`/`SC_MAXIMIZE`/`SC_RESTORE` → `wm_*` calls |
-  | All others | Return 0 |
+| Message                        | Default action                                                                                          |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------- |
+| `WM_PAINT`                     | `BeginPaint` + `EndPaint` (validates region, no drawing)                                                |
+| `WM_CLOSE`                     | `DestroyWindow(hwnd)`                                                                                   |
+| `WM_DESTROY`                   | `PostQuitMessage(0)`                                                                                    |
+| `WM_SIZE`                      | Update stored window rect; return 0                                                                     |
+| `WM_MOVE`                      | Update stored position; return 0                                                                        |
+| `WM_ERASEBKGND`                | `FillRect(hdc, &rect, hbrBackground)`; return 1                                                         |
+| `WM_SETFOCUS` / `WM_KILLFOCUS` | Store focus state in HWND entry; return 0                                                               |
+| `WM_KEYDOWN` / `WM_KEYUP`      | Forward to parent if child window; else return 0                                                        |
+| `WM_LBUTTONDOWN`               | Hit-test child windows; if hit: `SetFocus(child)`; forward msg                                          |
+| `WM_MOUSEMOVE`                 | Update cursor; check `WM_MOUSELEAVE` tracking; return 0                                                 |
+| `WM_NCHITTEST`                 | Return `HTCLIENT` for client area, `HTCAPTION` for title bar, `HTCLOSE` etc.                            |
+| `WM_SYSCOMMAND`                | `SC_CLOSE` → `SendMessage(hwnd, WM_CLOSE,...)`; `SC_MINIMIZE`/`SC_MAXIMIZE`/`SC_RESTORE` → `wm_*` calls |
+| All others                     | Return 0                                                                                                |
 - [ ] **`SetWindowTextA(hwnd, text)`**: update stored title in HWND entry; call `wm_set_title(handle, text)`; post `WM_SETTEXT` to queue
 - [ ] **`GetWindowTextA(hwnd, buf, max)`**: copy from HWND entry title field; return length
 - [ ] **`ShowWindow(hwnd, nCmdShow)`**: map `SW_SHOW/HIDE/MINIMIZE/MAXIMIZE/RESTORE` to `WM_FLAG_*` changes via `wm_set_flags()`; post `WM_SHOWWINDOW`
@@ -354,16 +354,16 @@ process in future iteration)
 ## OS Comparison
 
 
-| ⭐ | Feature                                       | 🪟 Win11                                                          | 🐧 Linux                                           | 🚀 Impossible OS                                                                                   |
-|----|-----------------------------------------------|----------------------------------------------------------------|-------------------------------------------------|-------------------------------------------------------------------------------------------------|
-| 💎 | Per-thread MSG ring-buffer queue              | ✅ Win32k.sys per-thread queue; `NtUserGetMessage` blocking    | ❌ No equivalent (event loops are               | ⬜ §1 -- `msg_queue_t` ring (1000 entries); `SYS_WAIT_MESSAGE`                                   |
-| 💎 | Window class registry                         | ✅ Win32k system + app classes;                                | ❌ No concept (toolkit-specific)                | ⬜ §2 -- 256 global + 64 per-process                                                             |
-| 💎 | `DefWindowProc` default message handling      | ✅ `user32!DefWindowProcW`; full WM_* set                      | ❌ Not applicable                               | ⬜ §3 -- `WM_CLOSE→DestroyWindow`, `WM_DESTROY→PostQuitMessage`, `WM_SYSCOMMAND`, `WM_NCHITTEST` |
-| 💎 | HDC → compositor surface mapping + dirty rect | ✅ Win32k HDC; GDI `SURFOBJ`; dirty-rect                       | ✅ X11 expose events; Wayland damage            | ⬜ §4 -- HDC → `gfx_surface_t *`; `InvalidateRect`                                               |
-| 💎 | Accelerator tables                            | ✅ `user32!TranslateAccelerator`; PE `RT_ACCELERATOR` resource | ✅ GDK accelerators; X11 keysym matching        | ⬜ §5 -- PE resource-loaded ACCEL array; `FALT/FSHIFT/FCONTROL/FVIRTKEY`                         |
-| 💎 | Window subclassing                            | ✅ Full subclassing + property store                           | ✅ GTK subclass; X11 `XChangeProperty`          | ⬜ §6 -- `GWLP_WNDPROC` chain; `SetProp/GetProp/RemoveProp`; `CallWindowProc` forwarding         |
-| 💎 | Cross-process `SendMessage` + `WM_COPYDATA`   | ✅ Win32k cross-process; `WM_COPYDATA` kernel-mapped           | ❌ No standard; X11 `XSendEvent` (unsafe)       | ⬜ §7 -- IPC pipe + shmem; 5s                                                                    |
-| 💎 | `ChooseColor`/`ChooseFont` common dialogs     | ✅ `comdlg32.dll`                                              | ✅ GTK `GtkColorChooserDialog`/`GtkFontChooser` | ⬜ §8 -- thin Win32 struct adapter over                                                          |
+| ⭐  | Feature                                       | 🪟 Win11                                                       | 🐧 Linux                                        | 🚀 Impossible OS                                                                                 |
+| --- | --------------------------------------------- | -------------------------------------------------------------- | ----------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| 💎  | Per-thread MSG ring-buffer queue              | ✅ Win32k.sys per-thread queue; `NtUserGetMessage` blocking    | ❌ No equivalent (event loops are               | ⬜ §1 -- `msg_queue_t` ring (1000 entries); `SYS_WAIT_MESSAGE`                                   |
+| 💎  | Window class registry                         | ✅ Win32k system + app classes;                                | ❌ No concept (toolkit-specific)                | ⬜ §2 -- 256 global + 64 per-process                                                             |
+| 💎  | `DefWindowProc` default message handling      | ✅ `user32!DefWindowProcW`; full WM_* set                      | ❌ Not applicable                               | ⬜ §3 -- `WM_CLOSE→DestroyWindow`, `WM_DESTROY→PostQuitMessage`, `WM_SYSCOMMAND`, `WM_NCHITTEST` |
+| 💎  | HDC → compositor surface mapping + dirty rect | ✅ Win32k HDC; GDI `SURFOBJ`; dirty-rect                       | ✅ X11 expose events; Wayland damage            | ⬜ §4 -- HDC → `gfx_surface_t *`; `InvalidateRect`                                               |
+| 💎  | Accelerator tables                            | ✅ `user32!TranslateAccelerator`; PE `RT_ACCELERATOR` resource | ✅ GDK accelerators; X11 keysym matching        | ⬜ §5 -- PE resource-loaded ACCEL array; `FALT/FSHIFT/FCONTROL/FVIRTKEY`                         |
+| 💎  | Window subclassing                            | ✅ Full subclassing + property store                           | ✅ GTK subclass; X11 `XChangeProperty`          | ⬜ §6 -- `GWLP_WNDPROC` chain; `SetProp/GetProp/RemoveProp`; `CallWindowProc` forwarding         |
+| 💎  | Cross-process `SendMessage` + `WM_COPYDATA`   | ✅ Win32k cross-process; `WM_COPYDATA` kernel-mapped           | ❌ No standard; X11 `XSendEvent` (unsafe)       | ⬜ §7 -- IPC pipe + shmem; 5s                                                                    |
+| 💎  | `ChooseColor`/`ChooseFont` common dialogs     | ✅ `comdlg32.dll`                                              | ✅ GTK `GtkColorChooserDialog`/`GtkFontChooser` | ⬜ §8 -- thin Win32 struct adapter over                                                          |
 
 Impossible OS CSRSS delivers a **native kernel-backed Win32 message loop** -- not a
 user-space emulation layer. The MSG ring buffer is allocated and managed in kernel memory;

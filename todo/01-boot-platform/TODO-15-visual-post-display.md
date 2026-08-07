@@ -88,15 +88,15 @@ Replace the current 2-digit POST codes (28 values in 0x10-0x63) with a 4-digit s
 - [x] `POST16(code)` / `boot_post_write16()` -- volatile: writes high byte to I/O 0x80, updates the on-screen display, sets the `s_last_post16` RAM shadow. UEFI NVRAM persistence is `boot_post_nvram_write16()` (milestones only, flash endurance)
 - [x] Define POST code ranges:
 
-| Range | Phase | Example codes |
-|-------|-------|---------------|
-| 0xB000-0xBFFF | UEFI Bootloader | 0xB001=efi_main, 0xB010=GOP, 0xB020=kernel_open, 0xB030=RSDP, 0xB040=memmap, 0xB050=ExitBS, 0xB060=page_tables, 0xB070=kernel_jump |
-| 0x0000-0x0FFF | Phase 0 -- Critical Init | 0x0010=serial, 0x0020=PMM_enter, 0x0021=PMM_exit, 0x0030=VMM |
-| 0x1000-0x1FFF | Phase 1 -- Platform | 0x1000=GDT, 0x1010=IDT, 0x1020=ACPI, 0x1030=LAPIC, 0x1040=timer |
-| 0x2000-0x2FFF | Phase 2 -- System | 0x2000=PCI, 0x2010=NIC, 0x2020=AHCI, 0x2060=VFS |
-| 0x3000-0x3FFF | Phase 3 -- Desktop | 0x3000=sched, 0x3010=fonts, 0x3020=compositor |
-| 0xD000-0xDFFF | Diagnostic (cross-phase) | live `POST16_*` diag codes 0xD000-0xDF13 in `boot_init.h` (not a single boot phase) |
-| 0xF000-0xFFFE | Reserved | 0xFF00=BOOT_OK, 0xFFFE=BOOT_FAILED |
+| Range         | Phase                    | Example codes                                                                                                                      |
+| ------------- | ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
+| 0xB000-0xBFFF | UEFI Bootloader          | 0xB001=efi_main, 0xB010=GOP, 0xB020=kernel_open, 0xB030=RSDP, 0xB040=memmap, 0xB050=ExitBS, 0xB060=page_tables, 0xB070=kernel_jump |
+| 0x0000-0x0FFF | Phase 0 -- Critical Init | 0x0010=serial, 0x0020=PMM_enter, 0x0021=PMM_exit, 0x0030=VMM                                                                       |
+| 0x1000-0x1FFF | Phase 1 -- Platform      | 0x1000=GDT, 0x1010=IDT, 0x1020=ACPI, 0x1030=LAPIC, 0x1040=timer                                                                    |
+| 0x2000-0x2FFF | Phase 2 -- System        | 0x2000=PCI, 0x2010=NIC, 0x2020=AHCI, 0x2060=VFS                                                                                    |
+| 0x3000-0x3FFF | Phase 3 -- Desktop       | 0x3000=sched, 0x3010=fonts, 0x3020=compositor                                                                                      |
+| 0xD000-0xDFFF | Diagnostic (cross-phase) | live `POST16_*` diag codes 0xD000-0xDF13 in `boot_init.h` (not a single boot phase)                                                |
+| 0xF000-0xFFFE | Reserved                 | 0xFF00=BOOT_OK, 0xFFFE=BOOT_FAILED                                                                                                 |
 
 - [x] `boot_post_nvram_write16()` stores 2 bytes in UEFI NVRAM at milestones + panic; `boot_post_write16()` is volatile (no NVRAM write)
 - [x] `boot_post_read16()` -- reads 2 bytes if available, 1 byte otherwise

@@ -38,19 +38,19 @@ title: "TODO-08 -- exFAT Read/Write Driver"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                                                           | Depends On                                                   | Status |
-| --- | :---: | ------------------------------------------------------------------------------------- | ------------------------------------------------------------ | :----: |
-| 💎  |   1   | §1 VBR parser + boot checksum -- OEM ID, geometry fields, backup VBR fallback         | Block device I/O working                                     |  [ ]   |
-| 💎  |   2   | §2 Allocation Bitmap -- bitmap cache, `exfat_alloc_cluster`, `exfat_free_cluster`     | §1 (VBR fields: `ClusterHeapOffset`, `ClusterCount`)         |  [ ]   |
-| 💎  |   3   | §3 Up-Case Table -- verify checksum, cache, `exfat_upcase()`, name hash               | §1 (root directory cluster to find UpCase entry)             |  [ ]   |
-| 💎  |   4   | §4 Directory entry sets -- File/Stream/Filename parse, UTF-16 decode, SetChecksum     | §3 (Up-Case needed for name hash validation)                 |  [ ]   |
-| 💎  |   5   | §5 Directory read -- cluster chain walk, entry-set assembly, `vfs_dirent` output      | §4 (entry set parser), §2 (FAT chain for multi-cluster dirs) |  [ ]   |
-| 💎  |   6   | §6 File read -- FAT-chain path + `NoFatChain` fast path                               | §5 (inode has cluster + DataLength from entry set)           |  [ ]   |
-| 💎  |   7   | §7 File write -- within-cluster, cluster append, truncation, timestamps, SetChecksum  | §6 (read path proven; write mirrors it), §2 (alloc needed)  |  [ ]   |
-| 💎  |   8   | §8 File create / delete / rename -- entry-set write, bitmap+FAT cleanup               | §7 (write path stable), §5 (directory cluster chain write)   |  [ ]   |
+| ⭐  | Order | Deliverable                                                                          | Depends On                                                   | Status |
+| --- | :---: | ------------------------------------------------------------------------------------ | ------------------------------------------------------------ | :----: |
+| 💎  |   1   | §1 VBR parser + boot checksum -- OEM ID, geometry fields, backup VBR fallback        | Block device I/O working                                     |  [ ]   |
+| 💎  |   2   | §2 Allocation Bitmap -- bitmap cache, `exfat_alloc_cluster`, `exfat_free_cluster`    | §1 (VBR fields: `ClusterHeapOffset`, `ClusterCount`)         |  [ ]   |
+| 💎  |   3   | §3 Up-Case Table -- verify checksum, cache, `exfat_upcase()`, name hash              | §1 (root directory cluster to find UpCase entry)             |  [ ]   |
+| 💎  |   4   | §4 Directory entry sets -- File/Stream/Filename parse, UTF-16 decode, SetChecksum    | §3 (Up-Case needed for name hash validation)                 |  [ ]   |
+| 💎  |   5   | §5 Directory read -- cluster chain walk, entry-set assembly, `vfs_dirent` output     | §4 (entry set parser), §2 (FAT chain for multi-cluster dirs) |  [ ]   |
+| 💎  |   6   | §6 File read -- FAT-chain path + `NoFatChain` fast path                              | §5 (inode has cluster + DataLength from entry set)           |  [ ]   |
+| 💎  |   7   | §7 File write -- within-cluster, cluster append, truncation, timestamps, SetChecksum | §6 (read path proven; write mirrors it), §2 (alloc needed)   |  [ ]   |
+| 💎  |   8   | §8 File create / delete / rename -- entry-set write, bitmap+FAT cleanup              | §7 (write path stable), §5 (directory cluster chain write)   |  [ ]   |
 | 💎  |   9   | §9 Timestamp encoding -- `FILETIME`↔exFAT binary, 10 ms precision, UTC offset        | §8 (create/write paths call the encoder)                     |  [ ]   |
 | 💎  |  10   | §10 VFS registration + probe + dirty-volume fsck + `chkdsk` shell command            | §1–§9 all complete                                           |  [ ]   |
-| 💎  |  11   | §11 Unicode edge cases -- 255-char names, emoji/CJK round-trip, illegal char reject   | §4 (name parsing complete)                                   |  [ ]   |
+| 💎  |  11   | §11 Unicode edge cases -- 255-char names, emoji/CJK round-trip, illegal char reject  | §4 (name parsing complete)                                   |  [ ]   |
 | 💎  |  12   | §12 Large file support (> 4 GiB) -- 64-bit `DataLength`, `ValidDataLength` tracking  | §7 (write path complete)                                     |  [ ]   |
 
 > All sections are `💎` parity -- exFAT is a mandatory interoperability feature with no OS-differentiation claim. The goal is spec-correct conformance with the published Microsoft exFAT specification (2019) to achieve full interoperability with Windows-formatted drives.

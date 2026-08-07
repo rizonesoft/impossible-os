@@ -32,18 +32,18 @@ title: "TODO-10 -- Linux ELF Compatibility Layer"
 
 ## Inputs
 
-| Path | Purpose |
-|------|---------|
-| `include/kernel/elf.h` | Existing ELF types: `ET_EXEC`, `ET_DYN`, `EM_X86_64`, `PT_LOAD`, `elf_load()`, `elf_load_result` |
-| `src/kernel/elf.c` | Existing ELF loader (extend for SYSV stack setup) |
-| `include/kernel/sched/task.h` | `task_t`, `task_create_user()` -- add `is_linux_elf` flag + `fd_table[]` |
-| `include/kernel/sched/syscall.h` | `SYS_FORK`, `SYS_EXEC`, `SYS_MMAP` numbers; existing syscall dispatch |
-| `include/kernel/mm/mmap.h` | `mmap_region_t`, kernel `mmap()`/`munmap()` -- back `sys_mmap`/`sys_munmap` |
-| `include/kernel/mm/heap.h` | `kmalloc`/`kfree` for compat structs |
-| `include/kernel/fs/vfs.h` | `vfs_open`, `vfs_read`, `vfs_stat`, `vfs_readdir` -- back POSIX file ops |
-| → XREF: `TODO-07 §1,8` | Ring-3 `SYSCALL`/`SYSRET` entry; `exec_load()` format probe (ELF branch) |
-| → XREF: `TODO-08 §4,5` | `CreateFile`/`ReadFile`/`WriteFile` Win32 wrappers; `VirtualAlloc`/`VirtualFree` |
-| → XREF: `02-kernel-core/TODO-17-threads-sched.md` | Task flags, scheduler integration for `SIGCHLD` delivery |
+| Path                                                           | Purpose                                                                                                                                                                               |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `include/kernel/elf.h`                                         | Existing ELF types: `ET_EXEC`, `ET_DYN`, `EM_X86_64`, `PT_LOAD`, `elf_load()`, `elf_load_result`                                                                                      |
+| `src/kernel/elf.c`                                             | Existing ELF loader (extend for SYSV stack setup)                                                                                                                                     |
+| `include/kernel/sched/task.h`                                  | `task_t`, `task_create_user()` -- add `is_linux_elf` flag + `fd_table[]`                                                                                                              |
+| `include/kernel/sched/syscall.h`                               | `SYS_FORK`, `SYS_EXEC`, `SYS_MMAP` numbers; existing syscall dispatch                                                                                                                 |
+| `include/kernel/mm/mmap.h`                                     | `mmap_region_t`, kernel `mmap()`/`munmap()` -- back `sys_mmap`/`sys_munmap`                                                                                                           |
+| `include/kernel/mm/heap.h`                                     | `kmalloc`/`kfree` for compat structs                                                                                                                                                  |
+| `include/kernel/fs/vfs.h`                                      | `vfs_open`, `vfs_read`, `vfs_stat`, `vfs_readdir` -- back POSIX file ops                                                                                                              |
+| → XREF: `TODO-07 §1,8`                                         | Ring-3 `SYSCALL`/`SYSRET` entry; `exec_load()` format probe (ELF branch)                                                                                                              |
+| → XREF: `TODO-08 §4,5`                                         | `CreateFile`/`ReadFile`/`WriteFile` Win32 wrappers; `VirtualAlloc`/`VirtualFree`                                                                                                      |
+| → XREF: `02-kernel-core/TODO-17-threads-sched.md`              | Task flags, scheduler integration for `SIGCHLD` delivery                                                                                                                              |
 | → XREF: `02-kernel-core/TODO-23-exception-dispatch-seh.md §15` | Fault-to-signal mapping and signal frame setup for Linux compat processes; §8 of this TODO registers signal handlers via `rt_sigaction`, TODO-10 §15 delivers faults as POSIX signals |
 
 ---

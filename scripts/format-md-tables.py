@@ -5,7 +5,8 @@ GitHub/most renderers ignore source whitespace in tables entirely -- this is
 a SOURCE-readability tool only (skimming todo/*.md tables in a terminal or
 editor), not a rendering fix. Two things it deliberately does NOT do:
 
-- Touch PROSE tables (any cell wider than --max-cell, default 80 chars).
+- Touch PROSE tables (any COLUMN whose MEDIAN cell is wider than --max-cell,
+  default 80 chars -- a column that is consistently long, not long once).
   Reference/History-log tables carry multi-sentence Summary cells; forcing
   column alignment on those would bloat the file for zero rendering benefit
   and turn every future single-cell edit into a whole-table reformat diff.
@@ -26,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import statistics
 import unicodedata
 import sys
 from pathlib import Path
@@ -157,8 +159,31 @@ def _render_table(lines: list[str], start: int, end: int, max_cell: int,
     ncols = len(rows[0])
     if any(len(r) != ncols for r in rows):
         return None  # ragged cell count (e.g. an escaped-pipe edge case) -- leave untouched
-    if any(_dwidth(cell) > max_cell for row in rows for cell in row):
-        return None  # prose table -- do not force-align
+    # PROSE-TABLE TEST -- per COLUMN, not per cell.
+    #
+    # This was `any(_dwidth(cell) > max_cell for row in rows for cell in row)`:
+    # ONE oversized cell exempted the WHOLE table. The intent was to spare
+    # History/Notes logs whose Summary column carries multi-sentence prose, but
+    # under an any-cell rule a genuinely tabular table falls out of scope the
+    # moment a single entry grows past the threshold -- and it falls out of
+    # lint.sh Check 17 with it, because that ERROR gate shells out to --check
+    # here. The table then drifts freely with nothing reporting it, which is
+    # precisely the state Check 17 was promoted to ERROR to prevent.
+    #
+    # Measured 2026-08-07 across the 604 tables under todo/: 129 were exempt
+    # under the any-cell rule and 126 of those had drifted, across 103 files --
+    # including both tables the operator reported in TODO-06 (an Implementation
+    # Order cell at 83 chars, an OS Comparison cell at 103).
+    #
+    # A prose COLUMN is consistently long, not long once. Testing each column's
+    # MEDIAN keeps the 59 real prose tables skipped (their Summary columns run
+    # 121-486 median) while returning 70 tabular tables to scope. Median over
+    # ALL cells was measured and rejected: narrow columns drag it down so far
+    # that NOTHING is ever skipped, including 678-char prose cells.
+    body = [row for r, row in enumerate(rows) if r != 1]
+    if any(statistics.median([_dwidth(row[c]) for row in body]) > max_cell
+           for c in range(ncols)):
+        return None  # prose column -- do not force-align this table
     aligns = [_alignment(c) for c in rows[1]]
     # PER-COLUMN CAP. Padding every cell to the column's WIDEST makes one long
     # entry inflate every other row in that column, and the cost is superlinear
@@ -269,6 +294,8 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("paths", nargs="+")
     ap.add_argument("--check", action="store_true")
+    # Prose threshold, applied to each COLUMN's MEDIAN cell width -- NOT to any
+    # single cell. See the PROSE-TABLE TEST block in _render_table for why.
     ap.add_argument("--max-cell", type=int, default=80)
     # Per-column padding ceiling. See _render_table for how 40 was chosen.
     ap.add_argument("--max-pad", type=int, default=0,

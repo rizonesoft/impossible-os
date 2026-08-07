@@ -38,16 +38,16 @@ title: "TODO-03 -- HTTP/HTTPS Client & TLS"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                                                             | Depends On                                                       | Status |
-| --- | :---: | --------------------------------------------------------------------------------------- | ---------------------------------------------------------------- | :----: |
-| 💎  |   1   | §1 URL parser -- `struct url`, scheme/host/port/path/query split, no heap               | Nothing -- standalone parser                                      |  [ ]   |
-| 💎  |   2   | §2 HTTP GET -- `http_get()`, status line + header parse, body read, 5-hop redirect      | §1 (URL); DNS + socket layer (TODO-02)                           |  [ ]   |
-| 💎  |   3   | §3 HTTP POST + chunked TE -- `http_post()`, `Content-Length`, hex chunk decoder         | §2 (baseline HTTP send/receive)                                  |  [ ]   |
-| ⭐  |   4   | §4 `wget`/`curl` shell commands -- progress bar, file save, FTP stub                   | §2, §3 (HTTP client must work before shell commands wire it)     |  [ ]   |
-| ⭐  |   5   | §5 Mbed TLS port -- static kernel lib, `malloc→kmalloc`, `time_now`, `RDRAND` RNG      | `kmalloc/kfree`; kernel time; compile flags verified             |  [ ]   |
-| 💎  |   6   | §6 CA cert store -- PEM parser, `tls_load_ca_bundle()`, `tls_verify_cert()`             | §5 (Mbed TLS must compile before cert loading can be wired)      |  [ ]   |
-| 💎  |   7   | §7 HTTPS GET/POST -- TLS handshake after `tcp_connect`, `wget`/`curl` detect `https://` | §5, §6 (TLS lib + CA bundle); §2, §3 (HTTP logic reused)         |  [ ]   |
-| 💎  |   8   | §8 HTTP/1.1 keep-alive pool -- 8-conn LRU per host, `Connection: keep-alive`, spinlock  | §2, §7 (both plain and TLS paths needed before pool abstracts)   |  [ ]   |
+| ⭐  | Order | Deliverable                                                                             | Depends On                                                     | Status |
+| --- | :---: | --------------------------------------------------------------------------------------- | -------------------------------------------------------------- | :----: |
+| 💎  |   1   | §1 URL parser -- `struct url`, scheme/host/port/path/query split, no heap               | Nothing -- standalone parser                                   |  [ ]   |
+| 💎  |   2   | §2 HTTP GET -- `http_get()`, status line + header parse, body read, 5-hop redirect      | §1 (URL); DNS + socket layer (TODO-02)                         |  [ ]   |
+| 💎  |   3   | §3 HTTP POST + chunked TE -- `http_post()`, `Content-Length`, hex chunk decoder         | §2 (baseline HTTP send/receive)                                |  [ ]   |
+| ⭐  |   4   | §4 `wget`/`curl` shell commands -- progress bar, file save, FTP stub                    | §2, §3 (HTTP client must work before shell commands wire it)   |  [ ]   |
+| ⭐  |   5   | §5 Mbed TLS port -- static kernel lib, `malloc→kmalloc`, `time_now`, `RDRAND` RNG       | `kmalloc/kfree`; kernel time; compile flags verified           |  [ ]   |
+| 💎  |   6   | §6 CA cert store -- PEM parser, `tls_load_ca_bundle()`, `tls_verify_cert()`             | §5 (Mbed TLS must compile before cert loading can be wired)    |  [ ]   |
+| 💎  |   7   | §7 HTTPS GET/POST -- TLS handshake after `tcp_connect`, `wget`/`curl` detect `https://` | §5, §6 (TLS lib + CA bundle); §2, §3 (HTTP logic reused)       |  [ ]   |
+| 💎  |   8   | §8 HTTP/1.1 keep-alive pool -- 8-conn LRU per host, `Connection: keep-alive`, spinlock  | §2, §7 (both plain and TLS paths needed before pool abstracts) |  [ ]   |
 
 ---
 

@@ -37,20 +37,20 @@ title: "TODO-12 -- Apple Filesystems: APFS & HFS+ (Read-Only)"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                                                              | Depends On                                                             | Status |
-| --- | :---: | ---------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- | :----: |
-| ⭐  |   1   | §1 APFS container superblock -- `BSXN` magic, Fletcher-64, checkpoint resolution         | Block device I/O                                                       |  [ ]   |
-| ⭐  |   2   | §2 APFS object map B-tree -- `omap_lookup()`, virtual OID → physical block               | §1 (`nx_omap_oid` from container superblock)                           |  [ ]   |
-| ⭐  |   3   | §3 APFS volume mount -- `APSB` volume superblock, volume enumeration, fstree root        | §2 (omap needed to resolve volume OIDs from `nx_fs_oid[]`)             |  [ ]   |
-| ⭐  |   4   | §4 APFS filesystem B-tree search + walk -- `j_key_t` type-dispatch, range walk           | §3 (fstree root logical address from volume superblock)                |  [ ]   |
-| ⭐  |   5   | §5 APFS inode reader -- `j_inode_val_t`, extended fields, dstream, VFS node              | §4 (INODE_TYPE items found via fstree search)                          |  [ ]   |
-| ⭐  |   6   | §6 APFS file extent reader -- extent walk, physical read, FileVault reject               | §5 (inode's private_id used as FILE_EXTENT key), §4 (fstree walk)      |  [ ]   |
-| ⭐  |   7   | §7 APFS directory reader -- `j_drec_hashed_key_t`, NFD→NFC, VFS callbacks               | §5 (dir inode), §4 (DIR_REC items via fstree walk)                     |  [ ]   |
-| ⭐  |   8   | §8 APFS symlinks + xattrs -- `j_xattr_val_t`, inline + stream, symlink target           | §4 (XATTR_TYPE items), §5 (inode for key construction)                 |  [ ]   |
-| ⭐  |   9   | §9 HFS+ volume header -- `H+`/`HX` magic, fork data, journal replay, block layout       | Block device I/O                                                       |  [ ]   |
-| ⭐  |  10   | §10 HFS+ Catalog B-tree -- header node, leaf search, `HFSUniStr255` decode, readdir      | §9 (Catalog File fork data = B-tree root block)                        |  [ ]   |
-| ⭐  |  11   | §11 HFS+ file read + Extents Overflow B-tree -- inline extents, overflow lookup          | §10 (Catalog record gives inline extents + CNID for overflow lookup)   |  [ ]   |
-| ⭐  |  12   | §12 VFS registration -- `apfs_probe`, `hfsplus_probe`, read-only mount, volume metadata  | §1–§11 complete                                                        |  [ ]   |
+| ⭐  | Order | Deliverable                                                                             | Depends On                                                           | Status |
+| --- | :---: | --------------------------------------------------------------------------------------- | -------------------------------------------------------------------- | :----: |
+| ⭐  |   1   | §1 APFS container superblock -- `BSXN` magic, Fletcher-64, checkpoint resolution        | Block device I/O                                                     |  [ ]   |
+| ⭐  |   2   | §2 APFS object map B-tree -- `omap_lookup()`, virtual OID → physical block              | §1 (`nx_omap_oid` from container superblock)                         |  [ ]   |
+| ⭐  |   3   | §3 APFS volume mount -- `APSB` volume superblock, volume enumeration, fstree root       | §2 (omap needed to resolve volume OIDs from `nx_fs_oid[]`)           |  [ ]   |
+| ⭐  |   4   | §4 APFS filesystem B-tree search + walk -- `j_key_t` type-dispatch, range walk          | §3 (fstree root logical address from volume superblock)              |  [ ]   |
+| ⭐  |   5   | §5 APFS inode reader -- `j_inode_val_t`, extended fields, dstream, VFS node             | §4 (INODE_TYPE items found via fstree search)                        |  [ ]   |
+| ⭐  |   6   | §6 APFS file extent reader -- extent walk, physical read, FileVault reject              | §5 (inode's private_id used as FILE_EXTENT key), §4 (fstree walk)    |  [ ]   |
+| ⭐  |   7   | §7 APFS directory reader -- `j_drec_hashed_key_t`, NFD→NFC, VFS callbacks               | §5 (dir inode), §4 (DIR_REC items via fstree walk)                   |  [ ]   |
+| ⭐  |   8   | §8 APFS symlinks + xattrs -- `j_xattr_val_t`, inline + stream, symlink target           | §4 (XATTR_TYPE items), §5 (inode for key construction)               |  [ ]   |
+| ⭐  |   9   | §9 HFS+ volume header -- `H+`/`HX` magic, fork data, journal replay, block layout       | Block device I/O                                                     |  [ ]   |
+| ⭐  |  10   | §10 HFS+ Catalog B-tree -- header node, leaf search, `HFSUniStr255` decode, readdir     | §9 (Catalog File fork data = B-tree root block)                      |  [ ]   |
+| ⭐  |  11   | §11 HFS+ file read + Extents Overflow B-tree -- inline extents, overflow lookup         | §10 (Catalog record gives inline extents + CNID for overflow lookup) |  [ ]   |
+| ⭐  |  12   | §12 VFS registration -- `apfs_probe`, `hfsplus_probe`, read-only mount, volume metadata | §1–§11 complete                                                      |  [ ]   |
 
 > All rows are `⭐` exclusive -- neither Windows 11 nor any non-Apple, non-Linux OS reads APFS or HFS+ natively. Linux reads HFS+ via `hfsplus.ko` but has no upstream APFS driver (only the third-party `apfs-fuse` in userspace). Impossible OS will deliver native in-kernel APFS read alongside HFS+ read in a single driver pair.
 

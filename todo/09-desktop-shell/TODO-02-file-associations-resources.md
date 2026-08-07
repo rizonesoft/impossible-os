@@ -42,16 +42,16 @@ title: "TODO-02 -- File Associations, Shortcuts & System Resources"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                                                              | Depends On                                                                    | Status |
-| --- | :---: | ---------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------- | :----: |
-| 💎  |   1   | §1 Extension-to-app mapping -- `file_assoc_get_app/icon/set/open` via HKCR              | `RegGetValue` (exists); `icon_for_extension` (exists); `task_exec` (exists)  |  [ ]   |
-| 💎  |   2   | §2 Default associations on first boot -- write HKCR defaults for built-in file types     | §1 API must exist before writing default entries that §1 will later read      |  [ ]   |
-| 💎  |   3   | §4 Shortcut files (.lnk) -- INI parse/execute/create; `shortcut_execute()` stub         | §1 (`.lnk` association → `shortcut_execute()`); `vfs_read` (exists)          |  [ ]   |
-| 💎  |   4   | §5 Desktop shortcut integration -- .lnk detection, arrow overlay, Start Menu, first-boot defaults | §3 shortcut parse; TODO-07 desktop icon rendering                    |  [ ]   |
-| 💎  |   5   | §6 Recycle Bin icon states -- `trash_count()`, ICON_TRASH_EMPTY/FULL, right-click menu  | §1 `file_assoc_open()` for double-click "Open Recycle Bin"; §4 context menu  |  [ ]   |
-| 💎  |   6   | §3 Open With dialog -- app list popup, "Always use" writes HKCR default                  | §2 defaults (app list sourced from HKCR); §5 context menu (`context_menu_show`) |  [ ]   |
-| 💎  |   7   | §7 System sounds -- WAV parser, PCM → audio stub, Registry enable, startup chime        | §6 (first-boot associations must be stable); audio TODO-10 forward ref        |  [ ]   |
-| 💎  |   8   | §8 Font manager app -- list/preview/install/remove TTF, set default                      | §7 stable; `ttf_get()` + `vfs_readdir()` (both exist)                        |  [ ]   |
+| ⭐  | Order | Deliverable                                                                                       | Depends On                                                                      | Status |
+| --- | :---: | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- | :----: |
+| 💎  |   1   | §1 Extension-to-app mapping -- `file_assoc_get_app/icon/set/open` via HKCR                        | `RegGetValue` (exists); `icon_for_extension` (exists); `task_exec` (exists)     |  [ ]   |
+| 💎  |   2   | §2 Default associations on first boot -- write HKCR defaults for built-in file types              | §1 API must exist before writing default entries that §1 will later read        |  [ ]   |
+| 💎  |   3   | §4 Shortcut files (.lnk) -- INI parse/execute/create; `shortcut_execute()` stub                   | §1 (`.lnk` association → `shortcut_execute()`); `vfs_read` (exists)             |  [ ]   |
+| 💎  |   4   | §5 Desktop shortcut integration -- .lnk detection, arrow overlay, Start Menu, first-boot defaults | §3 shortcut parse; TODO-07 desktop icon rendering                               |  [ ]   |
+| 💎  |   5   | §6 Recycle Bin icon states -- `trash_count()`, ICON_TRASH_EMPTY/FULL, right-click menu            | §1 `file_assoc_open()` for double-click "Open Recycle Bin"; §4 context menu     |  [ ]   |
+| 💎  |   6   | §3 Open With dialog -- app list popup, "Always use" writes HKCR default                           | §2 defaults (app list sourced from HKCR); §5 context menu (`context_menu_show`) |  [ ]   |
+| 💎  |   7   | §7 System sounds -- WAV parser, PCM → audio stub, Registry enable, startup chime                  | §6 (first-boot associations must be stable); audio TODO-10 forward ref          |  [ ]   |
+| 💎  |   8   | §8 Font manager app -- list/preview/install/remove TTF, set default                               | §7 stable; `ttf_get()` + `vfs_readdir()` (both exist)                           |  [ ]   |
 
 ---
 

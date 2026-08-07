@@ -64,40 +64,40 @@ title: "TODO-08 -- Automation Hardening (Skill / Hook / MCP / Codex Integration)
 
 ## Implementation Order
 
-| ⭐  | Order | Section | Deliverable                                                                                  | Depends On                 | Status |
-| --- | :---: | :-----: | -------------------------------------------------------------------------------------------- | -------------------------- | :----: |
-| ⭐  |   1   |  §1     | Wire `todo-graph` + `lsp-bridge` MCP into Codex CLI; cross-config drift validator            | --                         |  [/]   |
-| ⭐  |   2   |  §2     | Codex invocation policy: no `--model` / `--effort` from Claude, hook block                   | §1                         |  [x]   |
-| ⭐  |   3   |  §3     | `receiving-code-review` hard gate: state file + post-Codex hook block                        | §2                         |  [/]   |
-| ⭐  |   4   |  §4     | Section-commit gate hardens to BLOCK with build + Codex + receiving evidence                 | §3                         |  [x]   |
-| ⭐  |   5   |  §5     | `review-todo-section` four-dispatch enforcement (state file + commit-gate check)             | §4                         |  [/]   |
-| 💎  |   6   |  §6     | MCP usage discipline doc; CLAUDE.md pointer; skill audits update prose                       | §1                         |  [x]   |
-| ⭐  |   7   |  §10    | Skill step-state telemetry + non-contiguous-step block                                       | §3, §11                    |  [x]   |
-| ⭐  |   8   |  §11    | Hook event surface expansion                                                                 | §3, §4                     |  [x]   |
-| ⭐  |   9   |  §12    | AI-slop content lints (tautological / stub-behind-stamp; phantom-include attempted then dropped) | --                       |  [x]   |
-| 💎  |   10  |  §7     | Hook system audit + dedupe; `MANIFEST.md`; `scripts/audit-hooks.sh`; exit-code gate          | §3, §4, §5, §10, §11, §12  |  [x]   |
-| 💎  |   11  |  §8     | Superpowers skill catalog audit; suppression policy; CLAUDE.md trigger rows                  | §3                         |  [x]   |
-| ⭐  |   12  |  §9     | Cross-tool drift detection: `scripts/audit-ai-system.sh` (7 checks)                          | §1, §2, §7, §11            |  [x]   |
-| 💎  |   13  |  §13    | Documentation sync: CLAUDE.md / ai-system.md / mcp-usage.md; reciprocal XREF sweep           | §1-§12                     |  [x]   |
-| 💎  |   14  |  §14    | Remove Copilot CLI reviewer wholesale (Codex is sole external reviewer)                      | §3 (initial sweep started) |  [x]   |
-| 💎  |   15  |  §15    | Design-review hook scope fix: review-kind recognition + commit-clears-gate                   | §7                         |  [x]   |
-| ⭐  |   16  |  §16    | Compaction-resilient skill-step state                                                        | §10, §11                   |  [x]   |
-| ⭐  |   17  |  §17    | Review-pipeline pre-Codex enforcement: Phase-1 evidence-map + re-adversarial trigger gate    | §10, §11, §4               |  [x]   |
-| ⭐  |   18  |  §18    | Stamp-region + OS Comparison completeness lints (lint.sh Check 10 + Check 11)                | §12                        |  [x]   |
-| 💎  |   19  |  §19    | Codex prompt-scope helper: re-review wrapper that embeds committed-file content              | §2                         |  [x]   |
-| ⭐  |   20  |  §20    | Implement-pipeline section-commit gates (steps 5/8/13/16 -- quality / tests / adv / smoke)   | §3, §4, §10, §11           |  [x]   |
-| ⭐  |   21  |  §21    | Implement-todo-section partial-enforcement heuristics (steps 1/2/3/9/15/17/18 -- WARN-first) | §10, §11, §20              |  [x]   |
-| ⭐  |   22  |  §22    | Review-pipeline right-sizing doctrine                                                        | §3, §10, §17               |  [x]   |
-| ⭐  |   23  |  §23    | Unify SKIP_REVIEW_HOOK opt-out scanner across PreToolUse gates                               | §3, §4, §17, §20           |  [x]   |
-| ⭐  |   24  |  §24    | last-codex-review.json state-write reliability -- close §22 #4 properly                      | §3, §22                    |  [x]   |
-| ⭐  |   25  |  §25    | Observer step-13/13.5 regex coverage for all Codex dispatch shapes                           | §10, §17, §22              |  [x]   |
-| 💎  |   26  |  §26    | Formalize or retire `scripts/commit-with-skip.sh` opt-out bridge wrapper                     | §23                        |  [x]   |
-| ⭐  |   27  |  §27    | Phase 1 evidence-gate threshold tuning via miss-log telemetry                                | §17, §21                   |  [x]   |
-| 💎  |   28  |  §28    | Codex prompt argument escaping doctrine (cosmetic shell-expansion errors)                    | §19                        |  [x]   |
-| ⭐  |   29  |  §29    | Standardize PreToolUse prefix-allowlist across gates (partner to §23 env-scanner)            | §3, §4, §17, §20, §23      |  [x]   |
-| ⭐  |   30  |  §30    | Shell-aware Codex dispatch segmentation in `_review_kind` (close §25 round-7 deferred)       | §25                        |  [x]   |
-| 💎  |   31  |  §31    | Post-commit hook concurrency: serialize build/smoke via flock (end stomp-stamp races)        | --                         |  [x]   |
-| ⭐  |   32  |  §32    | Grammar-accurate shell segmentation for the gate exemptions (retire the hand-rolled walk)    | §30                        |  [/]   |
+| ⭐  | Order | Section | Deliverable                                                                                      | Depends On                 | Status |
+| --- | :---: | :-----: | ------------------------------------------------------------------------------------------------ | -------------------------- | :----: |
+| ⭐  |   1   |   §1    | Wire `todo-graph` + `lsp-bridge` MCP into Codex CLI; cross-config drift validator                | --                         |  [/]   |
+| ⭐  |   2   |   §2    | Codex invocation policy: no `--model` / `--effort` from Claude, hook block                       | §1                         |  [x]   |
+| ⭐  |   3   |   §3    | `receiving-code-review` hard gate: state file + post-Codex hook block                            | §2                         |  [/]   |
+| ⭐  |   4   |   §4    | Section-commit gate hardens to BLOCK with build + Codex + receiving evidence                     | §3                         |  [x]   |
+| ⭐  |   5   |   §5    | `review-todo-section` four-dispatch enforcement (state file + commit-gate check)                 | §4                         |  [/]   |
+| 💎  |   6   |   §6    | MCP usage discipline doc; CLAUDE.md pointer; skill audits update prose                           | §1                         |  [x]   |
+| ⭐  |   7   |   §10   | Skill step-state telemetry + non-contiguous-step block                                           | §3, §11                    |  [x]   |
+| ⭐  |   8   |   §11   | Hook event surface expansion                                                                     | §3, §4                     |  [x]   |
+| ⭐  |   9   |   §12   | AI-slop content lints (tautological / stub-behind-stamp; phantom-include attempted then dropped) | --                         |  [x]   |
+| 💎  |  10   |   §7    | Hook system audit + dedupe; `MANIFEST.md`; `scripts/audit-hooks.sh`; exit-code gate              | §3, §4, §5, §10, §11, §12  |  [x]   |
+| 💎  |  11   |   §8    | Superpowers skill catalog audit; suppression policy; CLAUDE.md trigger rows                      | §3                         |  [x]   |
+| ⭐  |  12   |   §9    | Cross-tool drift detection: `scripts/audit-ai-system.sh` (7 checks)                              | §1, §2, §7, §11            |  [x]   |
+| 💎  |  13   |   §13   | Documentation sync: CLAUDE.md / ai-system.md / mcp-usage.md; reciprocal XREF sweep               | §1-§12                     |  [x]   |
+| 💎  |  14   |   §14   | Remove Copilot CLI reviewer wholesale (Codex is sole external reviewer)                          | §3 (initial sweep started) |  [x]   |
+| 💎  |  15   |   §15   | Design-review hook scope fix: review-kind recognition + commit-clears-gate                       | §7                         |  [x]   |
+| ⭐  |  16   |   §16   | Compaction-resilient skill-step state                                                            | §10, §11                   |  [x]   |
+| ⭐  |  17   |   §17   | Review-pipeline pre-Codex enforcement: Phase-1 evidence-map + re-adversarial trigger gate        | §10, §11, §4               |  [x]   |
+| ⭐  |  18   |   §18   | Stamp-region + OS Comparison completeness lints (lint.sh Check 10 + Check 11)                    | §12                        |  [x]   |
+| 💎  |  19   |   §19   | Codex prompt-scope helper: re-review wrapper that embeds committed-file content                  | §2                         |  [x]   |
+| ⭐  |  20   |   §20   | Implement-pipeline section-commit gates (steps 5/8/13/16 -- quality / tests / adv / smoke)       | §3, §4, §10, §11           |  [x]   |
+| ⭐  |  21   |   §21   | Implement-todo-section partial-enforcement heuristics (steps 1/2/3/9/15/17/18 -- WARN-first)     | §10, §11, §20              |  [x]   |
+| ⭐  |  22   |   §22   | Review-pipeline right-sizing doctrine                                                            | §3, §10, §17               |  [x]   |
+| ⭐  |  23   |   §23   | Unify SKIP_REVIEW_HOOK opt-out scanner across PreToolUse gates                                   | §3, §4, §17, §20           |  [x]   |
+| ⭐  |  24   |   §24   | last-codex-review.json state-write reliability -- close §22 #4 properly                          | §3, §22                    |  [x]   |
+| ⭐  |  25   |   §25   | Observer step-13/13.5 regex coverage for all Codex dispatch shapes                               | §10, §17, §22              |  [x]   |
+| 💎  |  26   |   §26   | Formalize or retire `scripts/commit-with-skip.sh` opt-out bridge wrapper                         | §23                        |  [x]   |
+| ⭐  |  27   |   §27   | Phase 1 evidence-gate threshold tuning via miss-log telemetry                                    | §17, §21                   |  [x]   |
+| 💎  |  28   |   §28   | Codex prompt argument escaping doctrine (cosmetic shell-expansion errors)                        | §19                        |  [x]   |
+| ⭐  |  29   |   §29   | Standardize PreToolUse prefix-allowlist across gates (partner to §23 env-scanner)                | §3, §4, §17, §20, §23      |  [x]   |
+| ⭐  |  30   |   §30   | Shell-aware Codex dispatch segmentation in `_review_kind` (close §25 round-7 deferred)           | §25                        |  [x]   |
+| 💎  |  31   |   §31   | Post-commit hook concurrency: serialize build/smoke via flock (end stomp-stamp races)            | --                         |  [x]   |
+| ⭐  |  32   |   §32   | Grammar-accurate shell segmentation for the gate exemptions (retire the hand-rolled walk)        | §30                        |  [/]   |
 
 > 💎 = parity work -- standard developer-tooling hygiene (audit scripts, drift detection, doc sync). Linux kernel ships `MAINTAINERS` + `get_maintainer.pl`; Windows has the engineering-systems-internal equivalent. We need it because skill / hook / MCP wiring drifts silently.
 > ⭐ = competitive edge -- enforcing reviewer-contract discipline at the Bash / Edit tool boundary, hard-gating skill-pipeline steps, cross-wiring two AI assistants (Claude Code + Codex CLI) into the same MCP server set, and observed-not-claimed step-state telemetry are novel ground. Neither Win11 nor Linux ships AI-tooling automation at this layer; among AI dev tools (Cursor, Aider, Continue, Copilot Workspace) only `nesaminua/claude-code-lsp-enforcement-kit` ships a comparable state-binding pattern as of early 2026.
@@ -1167,7 +1167,7 @@ The PreToolUse gates decide their exemptions by hand-scanning command text. [`.c
 ## Format Quick Reference
 
 | Concern                      | Where it lives                                                                                    | Owner                                           |
-|------------------------------|---------------------------------------------------------------------------------------------------|-------------------------------------------------|
+| ---------------------------- | ------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
 | Claude Code MCP servers      | [`.mcp.json`](../../.mcp.json)                                                                    | §1 (this TODO) -- mirrors to Codex              |
 | Codex CLI MCP servers        | `~/.codex/config.toml` `[mcp_servers.*]`                                                          | §1 -- mirrors from Claude side                  |
 | Codex model + effort default | `~/.codex/config.toml` top-level                                                                  | User -- centralized control; §2 non-override    |

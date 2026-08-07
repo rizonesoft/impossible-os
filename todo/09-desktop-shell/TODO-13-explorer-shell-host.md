@@ -33,13 +33,13 @@ title: "TODO-13 -- Explorer Shell Host (`explorer.exe`)"
 
 ## Implementation Order
 
-| Order | Deliverable | Depends On | Status |
-| :---: | ----------- | ---------- | :----: |
-| 1 | Minimal `explorer.exe` PE (message loop, hidden or minimal main HWND) | D10 T07 §7; D10 T08 §10; D10 TODO-A Tier 1 | [ ] |
-| 2 | Wire `SHGetFolderPath` subset for Desktop / Startup paths | D10 T08 §12; D10 TODO-C Tier 1 | [ ] |
-| 3 | Taskbar heartbeat: integrate with [`../08-graphics-ui/TODO-10-taskbar.md`](../08-graphics-ui/TODO-10-taskbar.md) window list | D08 TODO-08-taskbar §5 | [ ] |
-| 4 | `ShellExecute` open verb to filemgr or assoc target | D10 T08 §14; D09 T09 | [ ] |
-| 5 | Boot selection: `explorer.exe` default; installer override unchanged | D10 T11 §2 | [ ] |
+| Order | Deliverable                                                                                                                  | Depends On                                 | Status |
+| :---: | ---------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------ | :----: |
+|   1   | Minimal `explorer.exe` PE (message loop, hidden or minimal main HWND)                                                        | D10 T07 §7; D10 T08 §10; D10 TODO-A Tier 1 |  [ ]   |
+|   2   | Wire `SHGetFolderPath` subset for Desktop / Startup paths                                                                    | D10 T08 §12; D10 TODO-C Tier 1             |  [ ]   |
+|   3   | Taskbar heartbeat: integrate with [`../08-graphics-ui/TODO-10-taskbar.md`](../08-graphics-ui/TODO-10-taskbar.md) window list | D08 TODO-08-taskbar §5                     |  [ ]   |
+|   4   | `ShellExecute` open verb to filemgr or assoc target                                                                          | D10 T08 §14; D09 T09                       |  [ ]   |
+|   5   | Boot selection: `explorer.exe` default; installer override unchanged                                                         | D10 T11 §2                                 |  [ ]   |
 
 ## 1. Binary layout and boot
 
@@ -100,8 +100,8 @@ Sets `explorer.exe` as the default shell on boot unless the installer override f
 
 ## History
 
-| Date | Action | Summary |
-|------|--------|---------|
-| 2026-04-14 | Created TODO-13 explorer shell host plan | Initial scope: COM-less MVP, XREF TODO-A/C + installer boot. |
-| 2026-04-14 | gap-analysis | Shell host split from TODO-09 file manager; export truth in D10 TODO-C. |
-| 2026-04-14 | validate | OS Comparison 5-column template; stripped model tags from headings; Verification + boot test runner; Depends On uses DNN TNN notation. |
+| Date       | Action                                   | Summary                                                                                                                                |
+| ---------- | ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-04-14 | Created TODO-13 explorer shell host plan | Initial scope: COM-less MVP, XREF TODO-A/C + installer boot.                                                                           |
+| 2026-04-14 | gap-analysis                             | Shell host split from TODO-09 file manager; export truth in D10 TODO-C.                                                                |
+| 2026-04-14 | validate                                 | OS Comparison 5-column template; stripped model tags from headings; Verification + boot test runner; Depends On uses DNN TNN notation. |

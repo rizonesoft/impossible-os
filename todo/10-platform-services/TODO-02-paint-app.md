@@ -39,15 +39,15 @@ title: "TODO-02 -- Paint App & Image Tools"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                                                                  | Depends On                                                                             | Status |
-| --- | :---: | -------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- | :----: |
-| 💎  |   1   | §1 Canvas & viewport -- `struct paint`, PMM canvas, tool panel, palette bar, scrollbars      | `gfx_surface_create()` (exists); `pmm_alloc_contiguous()`; `CTRL_MENUBAR/STATUSBAR`  |  [ ]   |
-| 💎  |   2   | §3 Color system -- 20 swatches, fg/bg squares, right-click bg, swap, `dialog_color()` stretch | `gfx_fill_rect/put_pixel()` (exist); `dialog_color()` (TODO-05 forward dep)          |  [ ]   |
-| 💎  |   3   | §2 Drawing tools -- Pencil, Brush, Eraser, Line, Rect, Ellipse, Fill BFS, Text               | §1 canvas; §2 color; `gfx_draw_line/fill_circle/fill_rect()` (exist)                |  [ ]   |
-| ⭐  |   4   | §4 Undo/Redo -- 32-level PMM snapshot ring; Ctrl+Z/Y; region vs full-canvas                 | §3 tools (stroke begin event); `pmm_alloc_contiguous()`                               |  [ ]   |
-| 💎  |   5   | §5 File operations -- New/Open/Save/Save As; `image_load`; bmp/png format picker            | `image_load/save_bmp/save_png()` (exist); `dialog_file_open/save/input()` (TODO-05)  |  [ ]   |
-| 💎  |   6   | §6 Selection tool (stretch) -- dotted rect, Ctrl+C/V/X/Delete, move, `CLIP_IMAGE`           | §1 canvas; `clipboard_set/get(CLIP_IMAGE)` (TODO-01); `dialog_color()` bg fill       |  [ ]   |
-| 💎  |   7   | §7 Zoom & resize (stretch) -- mouse-wheel zoom 25–800%, Image→Resize, Image→Crop            | §1 viewport; `image_scale()` (exists); `dialog_input()` for dimensions               |  [ ]   |
+| ⭐  | Order | Deliverable                                                                                   | Depends On                                                                          | Status |
+| --- | :---: | --------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------- | :----: |
+| 💎  |   1   | §1 Canvas & viewport -- `struct paint`, PMM canvas, tool panel, palette bar, scrollbars       | `gfx_surface_create()` (exists); `pmm_alloc_contiguous()`; `CTRL_MENUBAR/STATUSBAR` |  [ ]   |
+| 💎  |   2   | §3 Color system -- 20 swatches, fg/bg squares, right-click bg, swap, `dialog_color()` stretch | `gfx_fill_rect/put_pixel()` (exist); `dialog_color()` (TODO-05 forward dep)         |  [ ]   |
+| 💎  |   3   | §2 Drawing tools -- Pencil, Brush, Eraser, Line, Rect, Ellipse, Fill BFS, Text                | §1 canvas; §2 color; `gfx_draw_line/fill_circle/fill_rect()` (exist)                |  [ ]   |
+| ⭐  |   4   | §4 Undo/Redo -- 32-level PMM snapshot ring; Ctrl+Z/Y; region vs full-canvas                   | §3 tools (stroke begin event); `pmm_alloc_contiguous()`                             |  [ ]   |
+| 💎  |   5   | §5 File operations -- New/Open/Save/Save As; `image_load`; bmp/png format picker              | `image_load/save_bmp/save_png()` (exist); `dialog_file_open/save/input()` (TODO-05) |  [ ]   |
+| 💎  |   6   | §6 Selection tool (stretch) -- dotted rect, Ctrl+C/V/X/Delete, move, `CLIP_IMAGE`             | §1 canvas; `clipboard_set/get(CLIP_IMAGE)` (TODO-01); `dialog_color()` bg fill      |  [ ]   |
+| 💎  |   7   | §7 Zoom & resize (stretch) -- mouse-wheel zoom 25–800%, Image→Resize, Image→Crop              | §1 viewport; `image_scale()` (exists); `dialog_input()` for dimensions              |  [ ]   |
 
 ---
 

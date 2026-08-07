@@ -306,15 +306,15 @@ the install. `pxesrv start` serves netboot images over TFTP to diskless clients.
 ## OS Comparison
 
 
-| ⭐ | Feature                                  | 🪟 Win11                                               | 🐧 Linux                                             | 🚀 Impossible OS                                                                    |
-|----|------------------------------------------|-----------------------------------------------------|---------------------------------------------------|----------------------------------------------------------------------------------|
-| 💎 | Unattended install via answer file       | ✅ `unattend.xml`; Windows SIM; WDS                 | ✅ Kickstart (RHEL); `preseed` (Debian); AutoYaST | ⬜ §1 -- §2; `answer.ini` INI format; auto-proceed                                |
-| 💎 | `sysprep /generalize`                    | ✅ `sysprep.exe /generalize`; full SID regeneration | ✅ `virt-sysprep`; cloud-init; `cloud-utils`      | ⬜ §3 -- CSPRNG 96-bit SID; hostname/GUID/credential/log clear                    |
-| ⭐ | OEM `$OEM$` customization layer          | ✅ OEM `$OEM$` dirs; `setupcomplete.cmd`            | ✅ Kickstart `%post`; OEM preseed                 | ⬜ §4 -- `$OEM$\Drivers\*.kmod` auto-load; `registry.reg` injection; `ipkg`       |
-| 💎 | WIM/image capture with single-instancing | ✅ WIM (wimlib, DISM); DISM `/add-package`          | ✅ `squashfs`; `dd`; Clonezilla                   | ⬜ §5 -- `.iim` BLAKE2b-160 deduplication; `imagex /capture`                      |
-| 💎 | PXE + TFTP server for netboot            | ✅ WDS (Windows Deployment Services)                | ✅ `dnsmasq` + TFTP; PXElinux; iPXE               | ⬜ §6 -- DHCP proxy + TFTP server                                                 |
-| ⭐ | VM provisioning scripts                  | ✅ Hyper-V PowerShell; Azure ARM templates          | ✅ `virt-install`; Vagrant; Packer                | ⬜ §7 -- `provision-qemu.sh` + `provision-hyperv.ps1`; CI-ready `ci-provision.sh` |
-| 💎 | Enterprise deployment documentation      | ✅ MSDN WDS/MDT/SCCM docs                           | ✅ Anaconda/Kickstart/AutoYaST docs               | ⬜ §8 -- `docs/guides/enterprise-deployment.md`; full answer file reference       |
+| ⭐  | Feature                                  | 🪟 Win11                                            | 🐧 Linux                                          | 🚀 Impossible OS                                                                  |
+| --- | ---------------------------------------- | --------------------------------------------------- | ------------------------------------------------- | --------------------------------------------------------------------------------- |
+| 💎  | Unattended install via answer file       | ✅ `unattend.xml`; Windows SIM; WDS                 | ✅ Kickstart (RHEL); `preseed` (Debian); AutoYaST | ⬜ §1 -- §2; `answer.ini` INI format; auto-proceed                                |
+| 💎  | `sysprep /generalize`                    | ✅ `sysprep.exe /generalize`; full SID regeneration | ✅ `virt-sysprep`; cloud-init; `cloud-utils`      | ⬜ §3 -- CSPRNG 96-bit SID; hostname/GUID/credential/log clear                    |
+| ⭐  | OEM `$OEM$` customization layer          | ✅ OEM `$OEM$` dirs; `setupcomplete.cmd`            | ✅ Kickstart `%post`; OEM preseed                 | ⬜ §4 -- `$OEM$\Drivers\*.kmod` auto-load; `registry.reg` injection; `ipkg`       |
+| 💎  | WIM/image capture with single-instancing | ✅ WIM (wimlib, DISM); DISM `/add-package`          | ✅ `squashfs`; `dd`; Clonezilla                   | ⬜ §5 -- `.iim` BLAKE2b-160 deduplication; `imagex /capture`                      |
+| 💎  | PXE + TFTP server for netboot            | ✅ WDS (Windows Deployment Services)                | ✅ `dnsmasq` + TFTP; PXElinux; iPXE               | ⬜ §6 -- DHCP proxy + TFTP server                                                 |
+| ⭐  | VM provisioning scripts                  | ✅ Hyper-V PowerShell; Azure ARM templates          | ✅ `virt-install`; Vagrant; Packer                | ⬜ §7 -- `provision-qemu.sh` + `provision-hyperv.ps1`; CI-ready `ci-provision.sh` |
+| 💎  | Enterprise deployment documentation      | ✅ MSDN WDS/MDT/SCCM docs                           | ✅ Anaconda/Kickstart/AutoYaST docs               | ⬜ §8 -- `docs/guides/enterprise-deployment.md`; full answer file reference       |
 
 Impossible OS's `⭐` advantage: the entire deployment pipeline -- answer file, sysprep,
 OEM customization, PXE, and VM provisioning -- is built into the OS itself with no

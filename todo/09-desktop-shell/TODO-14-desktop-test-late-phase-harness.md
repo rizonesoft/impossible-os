@@ -15,15 +15,15 @@ title: "TODO-14 -- Desktop Test Late-Phase Harness and Artifact Bundle"
 
 ## Inputs
 
-| Path / TODO | Purpose |
-|-------------|---------|
-| [`../00-infrastructure/TODO-05-desktop-ui-test-framework.md`](../00-infrastructure/TODO-05-desktop-ui-test-framework.md) §1, §5, §10, §11, §13, §15 | Deferred cross-section items tracked here |
-| [`../02-kernel-core/TODO-03-object-manager.md`](../02-kernel-core/TODO-03-object-manager.md) | Ob pseudo-file driver pattern for §6 `\\?\ObjectManager\FrameStats` |
-| [`../08-graphics-ui/INDEX.md`](../08-graphics-ui/INDEX.md) | True domain home for §5 virtio-gpu multi-output driver -- migrate when a specific virtio-gpu TODO is filed there |
-| `src/kernel/main/boot_desktop.c` | Phase where the late-phase hook attaches |
-| `src/kernel/test/test_runner.c` | Dispatch site where the late-phase category runs |
-| `src/kernel/drivers/framebuffer.c` | `fb_snapshot()` read-side quiesce target |
-| `src/desktop/terminal.c` | `terminal_get_buffer()` read-side quiesce target |
+| Path / TODO                                                                                                                                         | Purpose                                                                                                          |
+| --------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| [`../00-infrastructure/TODO-05-desktop-ui-test-framework.md`](../00-infrastructure/TODO-05-desktop-ui-test-framework.md) §1, §5, §10, §11, §13, §15 | Deferred cross-section items tracked here                                                                        |
+| [`../02-kernel-core/TODO-03-object-manager.md`](../02-kernel-core/TODO-03-object-manager.md)                                                        | Ob pseudo-file driver pattern for §6 `\\?\ObjectManager\FrameStats`                                              |
+| [`../08-graphics-ui/INDEX.md`](../08-graphics-ui/INDEX.md)                                                                                          | True domain home for §5 virtio-gpu multi-output driver -- migrate when a specific virtio-gpu TODO is filed there |
+| `src/kernel/main/boot_desktop.c`                                                                                                                    | Phase where the late-phase hook attaches                                                                         |
+| `src/kernel/test/test_runner.c`                                                                                                                     | Dispatch site where the late-phase category runs                                                                 |
+| `src/kernel/drivers/framebuffer.c`                                                                                                                  | `fb_snapshot()` read-side quiesce target                                                                         |
+| `src/desktop/terminal.c`                                                                                                                            | `terminal_get_buffer()` read-side quiesce target                                                                 |
 
 ## Outcome
 

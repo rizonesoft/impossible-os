@@ -37,16 +37,16 @@ title: "TODO-05 -- Extended Widget Library: Core Controls"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                                                                    | Depends On                                                              | Status |
-| --- | :---: | ---------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- | :----: |
-| 💎  |   1   | §1 Checkbox -- `CTRL_CHECKBOX`, 16×16 box + checkmark glyph, states, hover/focus              | Existing `gfx_fill_rounded_rect`; `theme_get()` (TODO-01)              |  [ ]   |
-| 💎  |   2   | §2 Radio button -- `CTRL_RADIO`, 16×16 circle + dot, group mutual exclusion                   | §1 (same struct extension pattern; group_id field added alongside)      |  [ ]   |
-| 💎  |   3   | §4 Slider -- `CTRL_SLIDER`, track + thumb drag, horiz/vert, real-time callback                | §1 (same `on_change` callback type established in §1)                   |  [ ]   |
-| 💎  |   4   | §5 Progress bar -- `CTRL_PROGRESSBAR`, determinate + indeterminate tween mode                 | §3 slider (determinate fill is same pattern); TODO-02 `anim_mgr_add()` |  [ ]   |
-| 💎  |   5   | §3 Dropdown -- `CTRL_DROPDOWN`, floating popup via WM z-order overlay, keyboard navigation    | All of §1–4 done (dropdown is most complex; isolated until others stable) |  [ ]   |
-| 💎  |   6   | §6 Tab strip -- `CTRL_TABSTRIP`, tab headers, accent underline, keyboard arrow navigation     | §5 dropdown (all input-capture patterns established)                    |  [ ]   |
-| 💎  |   7   | §7 Theming -- confirm all new controls use `theme_get()` only; remove any CTRL_COLOR_* usage  | §6 (all controls must exist before audit)                               |  [ ]   |
-| ⭐  |   8   | §8 Accessibility stubs -- `ctrl_get_accessible_name/role()` for all 8 types                  | §7 (all control types must be registered before role table is complete) |  [ ]   |
+| ⭐  | Order | Deliverable                                                                                  | Depends On                                                                | Status |
+| --- | :---: | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- | :----: |
+| 💎  |   1   | §1 Checkbox -- `CTRL_CHECKBOX`, 16×16 box + checkmark glyph, states, hover/focus             | Existing `gfx_fill_rounded_rect`; `theme_get()` (TODO-01)                 |  [ ]   |
+| 💎  |   2   | §2 Radio button -- `CTRL_RADIO`, 16×16 circle + dot, group mutual exclusion                  | §1 (same struct extension pattern; group_id field added alongside)        |  [ ]   |
+| 💎  |   3   | §4 Slider -- `CTRL_SLIDER`, track + thumb drag, horiz/vert, real-time callback               | §1 (same `on_change` callback type established in §1)                     |  [ ]   |
+| 💎  |   4   | §5 Progress bar -- `CTRL_PROGRESSBAR`, determinate + indeterminate tween mode                | §3 slider (determinate fill is same pattern); TODO-02 `anim_mgr_add()`    |  [ ]   |
+| 💎  |   5   | §3 Dropdown -- `CTRL_DROPDOWN`, floating popup via WM z-order overlay, keyboard navigation   | All of §1–4 done (dropdown is most complex; isolated until others stable) |  [ ]   |
+| 💎  |   6   | §6 Tab strip -- `CTRL_TABSTRIP`, tab headers, accent underline, keyboard arrow navigation    | §5 dropdown (all input-capture patterns established)                      |  [ ]   |
+| 💎  |   7   | §7 Theming -- confirm all new controls use `theme_get()` only; remove any CTRL_COLOR_* usage | §6 (all controls must exist before audit)                                 |  [ ]   |
+| ⭐  |   8   | §8 Accessibility stubs -- `ctrl_get_accessible_name/role()` for all 8 types                  | §7 (all control types must be registered before role table is complete)   |  [ ]   |
 
 ---
 
@@ -195,16 +195,16 @@ Audit all 6 new controls and confirm zero hardcoded hex colors. All color refere
 ## OS Comparison
 
 
-| ⭐ | Feature             | 🪟 Win11                                                    | 🐧 Linux                                                                             | 🚀 Impossible OS                                                                  |
-|----|---------------------|----------------------------------------------------------|-----------------------------------------------------------------------------------|--------------------------------------------------------------------------------|
-| 💎 | Checkbox            | ✅ WinUI3 `CheckBox`; BS_CHECKBOX; full state            | ✅ GTK `GtkCheckButton`; Qt `QCheckBox`; full                                     | ⬜ §1 -- `gfx_fill_rounded_rect` + Fluent checkmark glyph                       |
-| 💎 | Radio button        | ✅ WinUI3 `RadioButton`; BS_RADIOBUTTON; `WM_COMMAND` on | ✅ GTK `GtkRadioButton`; `gtk_radio_button_new_with_label_from_widget` group link | ⬜ §2 -- `gfx_fill_circle` outer ring + inner                                   |
-| 💎 | Dropdown / ComboBox | ✅ WinUI3 `ComboBox`; Win32 `CBS_DROPDOWN`; popup        | ✅ GTK `GtkComboBox`; Qt `QComboBox`; popup                                       | ⬜ §5 -- `wm_create_window` at z_order=9999; borderless; click-outside-to-close |
-| 💎 | Slider / TrackBar   | ✅ WinUI3 `Slider`; Win32 `TRACKBAR_CLASS`; TBS_VERT     | ✅ GTK `GtkScale`; Qt `QSlider`; both                                             | ⬜ §3 -- accent fill track + circle                                             |
-| 💎 | Progress bar        | ✅ WinUI3 `ProgressBar`; Win32 PBS_MARQUEE for           | ✅ GTK `GtkProgressBar`; `gtk_progress_bar_pulse()` for indeterminate             | ⬜ §4 -- indeterminate uses `anim_mgr_add()` looping tween                      |
-| 💎 | Tab strip           | ✅ WinUI3 `TabView`; Win32 `WC_TABCONTROL`; keyboard     | ✅ GTK `GtkNotebook`; Qt `QTabWidget`; arrow                                      | ⬜ §6 -- 16 tabs max; 2 px                                                      |
-| ⭐ | Theming             | ✅ WinUI3 resource brush system; Win32                   | ⚠️ GTK CSS variables per widget;                                                  | ⬜ §7 -- `⭐` new controls never had                                            |
-| 💎 | Accessibility stubs | ✅ UIA (UI Automation); `IUIAutomationElement`; full     | ✅ ATK/AT-SPI2; `AtkObject::get_name/get_role`; full accessibility tree           | ⬜ §8 -- plain-text name/role stubs; ARIA role                                  |
+| ⭐  | Feature             | 🪟 Win11                                                 | 🐧 Linux                                                                          | 🚀 Impossible OS                                                                |
+| --- | ------------------- | -------------------------------------------------------- | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| 💎  | Checkbox            | ✅ WinUI3 `CheckBox`; BS_CHECKBOX; full state            | ✅ GTK `GtkCheckButton`; Qt `QCheckBox`; full                                     | ⬜ §1 -- `gfx_fill_rounded_rect` + Fluent checkmark glyph                       |
+| 💎  | Radio button        | ✅ WinUI3 `RadioButton`; BS_RADIOBUTTON; `WM_COMMAND` on | ✅ GTK `GtkRadioButton`; `gtk_radio_button_new_with_label_from_widget` group link | ⬜ §2 -- `gfx_fill_circle` outer ring + inner                                   |
+| 💎  | Dropdown / ComboBox | ✅ WinUI3 `ComboBox`; Win32 `CBS_DROPDOWN`; popup        | ✅ GTK `GtkComboBox`; Qt `QComboBox`; popup                                       | ⬜ §5 -- `wm_create_window` at z_order=9999; borderless; click-outside-to-close |
+| 💎  | Slider / TrackBar   | ✅ WinUI3 `Slider`; Win32 `TRACKBAR_CLASS`; TBS_VERT     | ✅ GTK `GtkScale`; Qt `QSlider`; both                                             | ⬜ §3 -- accent fill track + circle                                             |
+| 💎  | Progress bar        | ✅ WinUI3 `ProgressBar`; Win32 PBS_MARQUEE for           | ✅ GTK `GtkProgressBar`; `gtk_progress_bar_pulse()` for indeterminate             | ⬜ §4 -- indeterminate uses `anim_mgr_add()` looping tween                      |
+| 💎  | Tab strip           | ✅ WinUI3 `TabView`; Win32 `WC_TABCONTROL`; keyboard     | ✅ GTK `GtkNotebook`; Qt `QTabWidget`; arrow                                      | ⬜ §6 -- 16 tabs max; 2 px                                                      |
+| ⭐  | Theming             | ✅ WinUI3 resource brush system; Win32                   | ⚠️ GTK CSS variables per widget;                                                  | ⬜ §7 -- `⭐` new controls never had                                            |
+| 💎  | Accessibility stubs | ✅ UIA (UI Automation); `IUIAutomationElement`; full     | ✅ ATK/AT-SPI2; `AtkObject::get_name/get_role`; full accessibility tree           | ⬜ §8 -- plain-text name/role stubs; ARIA role                                  |
 
 > **After §1–§8:** Impossible OS has the complete set of controls needed for every settings applet, dialog box, and app panel. The `⭐` theming advantage is that all 6 new controls are written against `theme_get()` natively -- they never had hardcoded hex colors, unlike Win32 legacy controls which require a `WM_CTLCOLOR*` redirection chain to theme, and unlike GTK which has a parallel CSS variable system alongside older hardcoded GDK colors.
 

@@ -160,15 +160,15 @@ title: "TODO-09 -- Calculator"
 ## OS Comparison
 
 
-| ⭐ | Feature                                                                           | 🪟 Win11                                      | 🐧 Linux                           | 🚀 Impossible OS                                          |
-|----|-----------------------------------------------------------------------------------|--------------------------------------------|---------------------------------|--------------------------------------------------------|
-| 💎 | Standard two-operand arithmetic + rounded-rect button grid                        | ✅ Windows Calculator                      | ✅ GNOME Calculator / KCalc     | ⬜ §1–§2 -- `gfx_fill_rounded_rect`, hover/press states |
-| 💎 | Memory register                                                                   | ✅ Windows Calculator                      | ✅ GNOME Calculator             | ⬜ §3 -- single double register, M indicator            |
-| ⭐ | History panel with click-to-copy-to-clipboard                                     | ✅ Windows Calculator (history sidebar)    | ⚠️ GNOME: history list only; no | ⬜ §3 -- 20-entry ring, `clipboard_set` on click,       |
-| 💎 | Scientific mode                                                                   | ✅ Windows Calculator Scientific           | ✅ GNOME Calculator Scientific  | ⬜ §4 -- add `kmath_sin/tan/log/exp`, deg/rad toggle    |
-| 💎 | Programmer mode                                                                   | ✅ Windows Calculator Programmer           | ✅ KCalc Numeral System         | ⬜ §5 -- simultaneous multi-base display, bit-flip row  |
-| ⭐ | BYTE/WORD/DWORD/QWORD word-size selector in Programmer mode                       | ✅ Windows Calculator (word-size selector) | ⚠️ KCalc: no per-type clipping  | ⬜ §5 -- `uint64_t` clamp to selected width             |
-| ⭐ | All 4 bases (HEX/DEC/OCT/BIN) displayed simultaneously with clickable base switch | ✅ Windows Calculator (shows all 4         | ⚠️ KCalc: one base at a         | ⬜ §5 -- 4 always-visible rows, active-row highlight    |
+| ⭐  | Feature                                                                           | 🪟 Win11                                   | 🐧 Linux                        | 🚀 Impossible OS                                        |
+| --- | --------------------------------------------------------------------------------- | ------------------------------------------ | ------------------------------- | ------------------------------------------------------- |
+| 💎  | Standard two-operand arithmetic + rounded-rect button grid                        | ✅ Windows Calculator                      | ✅ GNOME Calculator / KCalc     | ⬜ §1–§2 -- `gfx_fill_rounded_rect`, hover/press states |
+| 💎  | Memory register                                                                   | ✅ Windows Calculator                      | ✅ GNOME Calculator             | ⬜ §3 -- single double register, M indicator            |
+| ⭐  | History panel with click-to-copy-to-clipboard                                     | ✅ Windows Calculator (history sidebar)    | ⚠️ GNOME: history list only; no | ⬜ §3 -- 20-entry ring, `clipboard_set` on click,       |
+| 💎  | Scientific mode                                                                   | ✅ Windows Calculator Scientific           | ✅ GNOME Calculator Scientific  | ⬜ §4 -- add `kmath_sin/tan/log/exp`, deg/rad toggle    |
+| 💎  | Programmer mode                                                                   | ✅ Windows Calculator Programmer           | ✅ KCalc Numeral System         | ⬜ §5 -- simultaneous multi-base display, bit-flip row  |
+| ⭐  | BYTE/WORD/DWORD/QWORD word-size selector in Programmer mode                       | ✅ Windows Calculator (word-size selector) | ⚠️ KCalc: no per-type clipping  | ⬜ §5 -- `uint64_t` clamp to selected width             |
+| ⭐  | All 4 bases (HEX/DEC/OCT/BIN) displayed simultaneously with clickable base switch | ✅ Windows Calculator (shows all 4         | ⚠️ KCalc: one base at a         | ⬜ §5 -- 4 always-visible rows, active-row highlight    |
 
 Impossible OS Calculator ships all three modes (Standard/Scientific/Programmer) with a
 simultaneous four-base display in Programmer mode and a one-click clipboard history panel --

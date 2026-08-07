@@ -972,13 +972,13 @@ Split out of §25 (2026-08-05): the three findings §25 ACCEPTED rather than fix
 
 ## Format Quick Reference
 
-| Language | Extensions        | LSP Server                | Install                            | Spawn Command                                                          |
-| -------- | ----------------- | ------------------------- | ---------------------------------- | ---------------------------------------------------------------------- |
-| C / H    | `.c`, `.h`        | clangd-19                 | `apt install clangd-19` (existing) | `clangd-19 --compile-commands-dir=<root>`                              |
-| NASM     | `.asm`, `.S`      | asm-lsp                   | `cargo install asm-lsp`            | `asm-lsp` (reads `.asm-lsp.toml` from repo root)                       |
-| Shell    | `.sh`, `.bash`    | bash-language-server      | `npm install -g bash-language-server` | `bash-language-server start`                                        |
-| Python   | `.py`             | pyright                   | `npm install -g pyright`           | `pyright-langserver --stdio`                                           |
-| PowerShell | `.ps1`, `.psm1`, `.psd1` | PowerShellEditorServices | `pwsh 7.x` + PSES module | `pwsh -NoLogo -NoProfile -Command 'Import-Module PSES; Start-EditorServices ... -Stdio'` |
+| Language   | Extensions               | LSP Server               | Install                               | Spawn Command                                                                            |
+| ---------- | ------------------------ | ------------------------ | ------------------------------------- | ---------------------------------------------------------------------------------------- |
+| C / H      | `.c`, `.h`               | clangd-19                | `apt install clangd-19` (existing)    | `clangd-19 --compile-commands-dir=<root>`                                                |
+| NASM       | `.asm`, `.S`             | asm-lsp                  | `cargo install asm-lsp`               | `asm-lsp` (reads `.asm-lsp.toml` from repo root)                                         |
+| Shell      | `.sh`, `.bash`           | bash-language-server     | `npm install -g bash-language-server` | `bash-language-server start`                                                             |
+| Python     | `.py`                    | pyright                  | `npm install -g pyright`              | `pyright-langserver --stdio`                                                             |
+| PowerShell | `.ps1`, `.psm1`, `.psd1` | PowerShellEditorServices | `pwsh 7.x` + PSES module              | `pwsh -NoLogo -NoProfile -Command 'Import-Module PSES; Start-EditorServices ... -Stdio'` |
 
 ---
 

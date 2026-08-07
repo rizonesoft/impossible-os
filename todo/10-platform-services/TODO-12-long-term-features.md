@@ -33,19 +33,19 @@ title: "TODO-12 -- Long-Term Features"
 
 ## Inputs
 
-| Path | Purpose |
-|------|---------|
-| `include/kernel/drivers/serial.h` | `serial_write()`, `serial_putchar()` -- GDB stub + debug console output |
-| `include/kernel/sched/task.h` | `task_t`, `task_create_user()`, `thread_create()` -- debugger + session attach |
-| `include/kernel/sched/syscall.h` | Syscall dispatch -- add `SYS_TTS_SPEAK`, `SYS_GAMEPAD_POLL`, debug regs |
-| `include/kernel/mm/vmm.h` | `vmm_read_user()`, `vmm_write_user()` -- `ReadProcessMemory`/`WriteProcessMemory` |
-| `include/registry.h` | `registry_get/set()` -- debug console, telemetry, parental controls flags |
-| `include/desktop/wm.h` | `wm_create_window()` -- debug overlay, session compositor surface |
-| → XREF: `10-platform-services/TODO-01` | `audio_play()` -- TTS PCM output |
-| → XREF: `10-platform-services/TODO-08 §10–13` | IxUI windows -- debug console, parcon.cpl, gamepad settings |
-| → XREF: `04-drivers-hardware/TODO-10-usb-stack.md` | USB HID -- touch digitizer and gamepad hardware input |
-| → XREF: `08-graphics-ui/TODO-02` | Compositor -- per-session backbuffer for multi-user |
-| → XREF: `10-platform-services/TODO-03 §*` | User accounts and per-user registry hives (parental controls) |
+| Path                                               | Purpose                                                                           |
+| -------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `include/kernel/drivers/serial.h`                  | `serial_write()`, `serial_putchar()` -- GDB stub + debug console output           |
+| `include/kernel/sched/task.h`                      | `task_t`, `task_create_user()`, `thread_create()` -- debugger + session attach    |
+| `include/kernel/sched/syscall.h`                   | Syscall dispatch -- add `SYS_TTS_SPEAK`, `SYS_GAMEPAD_POLL`, debug regs           |
+| `include/kernel/mm/vmm.h`                          | `vmm_read_user()`, `vmm_write_user()` -- `ReadProcessMemory`/`WriteProcessMemory` |
+| `include/registry.h`                               | `registry_get/set()` -- debug console, telemetry, parental controls flags         |
+| `include/desktop/wm.h`                             | `wm_create_window()` -- debug overlay, session compositor surface                 |
+| → XREF: `10-platform-services/TODO-01`             | `audio_play()` -- TTS PCM output                                                  |
+| → XREF: `10-platform-services/TODO-08 §10–13`      | IxUI windows -- debug console, parcon.cpl, gamepad settings                       |
+| → XREF: `04-drivers-hardware/TODO-10-usb-stack.md` | USB HID -- touch digitizer and gamepad hardware input                             |
+| → XREF: `08-graphics-ui/TODO-02`                   | Compositor -- per-session backbuffer for multi-user                               |
+| → XREF: `10-platform-services/TODO-03 §*`          | User accounts and per-user registry hives (parental controls)                     |
 
 ---
 

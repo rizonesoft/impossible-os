@@ -621,14 +621,14 @@ The default `async_init=0` path (sequential, shipped + tested) is unaffected; al
 > **Round 2:** 2 findings. 1 fixed (GSI mask), 1 accepted (deferred fault isolation).
 > **Final verdict: resolved.** Build clean.
 
-| # | Severity | Finding | Status |
-|---|----------|---------|--------|
-| 1 | critical | `s_subsys_names[]` missing SUBSYS_OB -- OOB read in panic diagnostic path | **Fixed** -- added "OB" entry + `_Static_assert` in both tables |
-| 2 | high | `boot_recovery_show()` return value ignored -- menu is cosmetic | **Fixed** -- all call sites branch on RECOVERY_POWEROFF -> `acpi_shutdown()` |
-| 3 | high | Deferred init not fault-isolated -- optional driver panic aborts Phase 3 | **Reverted** -- thread starved deferred inits (broke mouse); inline call restored; isolation deferred to TODO-23 SEH |
-| 4 | high | Recovery keyboard polling races active PS/2 IRQ handler | **Fixed** -- `kbd_poll_begin()`: cli + mask routed GSI + drain |
-| 5 | high | Recovery masks raw IRQ1 instead of ACPI-remapped GSI | **Fixed** -- uses `ioapic_isa_to_gsi(1)` for correct GSI |
-| 6 | high | Deferred init not fault-contained | **Accepted** -- thread approach reverted (starved mouse drivers); inline call restored; per-thread isolation requires TODO-23 SEH |
+| #   | Severity | Finding                                                                   | Status                                                                                                                            |
+| --- | -------- | ------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | critical | `s_subsys_names[]` missing SUBSYS_OB -- OOB read in panic diagnostic path | **Fixed** -- added "OB" entry + `_Static_assert` in both tables                                                                   |
+| 2   | high     | `boot_recovery_show()` return value ignored -- menu is cosmetic           | **Fixed** -- all call sites branch on RECOVERY_POWEROFF -> `acpi_shutdown()`                                                      |
+| 3   | high     | Deferred init not fault-isolated -- optional driver panic aborts Phase 3  | **Reverted** -- thread starved deferred inits (broke mouse); inline call restored; isolation deferred to TODO-23 SEH              |
+| 4   | high     | Recovery keyboard polling races active PS/2 IRQ handler                   | **Fixed** -- `kbd_poll_begin()`: cli + mask routed GSI + drain                                                                    |
+| 5   | high     | Recovery masks raw IRQ1 instead of ACPI-remapped GSI                      | **Fixed** -- uses `ioapic_isa_to_gsi(1)` for correct GSI                                                                          |
+| 6   | high     | Deferred init not fault-contained                                         | **Accepted** -- thread approach reverted (starved mouse drivers); inline call restored; per-thread isolation requires TODO-23 SEH |
 
 ---
 

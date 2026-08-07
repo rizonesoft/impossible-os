@@ -340,20 +340,20 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 
 ## OS Comparison
 
-| ⭐ | Feature | 🪟 Win11 | 🐧 Linux | 🚀 Impossible OS |
-|----|---------|----------|----------|------------------|
-| 💎 | Global + local atom tables | ✅ Global/Local `AddAtom` | ⚠️ no direct equivalent | 🔄 global NLS-folded + bounded (§3); local user-mode (ntdll, see §3) |
-| 💎 | Unicode case-fold authority | ✅ `RtlUpcaseUnicodeString` NLS | ✅ ICU / glibc `towupper` | 🔄 invariant ASCII+Latin-1 fold + Rtl compare (§2/§4); full-BMP data §10-deferred |
-| 💎 | Code page conversion | ✅ `MultiByteToWideChar` NLS | ✅ `iconv` | ✅ UTF-8/CP437/CP850/1252 strict/replace/best-fit (§5) |
-| 💎 | LCID / locale metadata | ✅ `GetLocaleInfoEx` LCID | ✅ `setlocale` / `nl_langinfo` | 🔄 records + registry system/user/UI policy (§6); privileged setter -> SRM |
-| 💎 | Sort keys / collation | ✅ `CompareStringEx` linguistic | ✅ ICU collation, `strcoll` | ✅ invariant + case-insensitive `nls_sort_key` (§7); culture-aware -> user-mode |
-| 💎 | NLS table loading + fallback | ✅ `l_intl.nls` at boot | ✅ locale archive | ✅ `nls_table_v1` loader + CRC/bounds + compiled fallback (§4) |
-| 💎 | Object-name Unicode compare | ✅ OB case-insensitive NLS | ⚠️ VFS bytewise (case-sensitive) | 🔄 OB/registry/atom case-insensitive, compiled ASCII+Latin-1 fold (§9); full-BMP needs compile-time table |
-| ⭐ | Normalization policy | ✅ `NormalizeString` NFC/NFD | ✅ ICU normalizer | 🔄 no-silent-normalize + explicit ASCII/Latin-1 NFC/NFD (§7); full UAX #15 user-mode |
-| 💎 | Char-type + folding APIs | ✅ `GetStringType`/`FoldString` | ✅ ICU `u_charType` | 🔄 compiled `FoldStringW` digit/compat (§7); internal `nls_char_type` C1-C3; public GetStringTypeW deferred |
-| 💎 | Code-page metadata / DBCS | ✅ `GetCPInfoEx`/`IsDBCSLeadByte` | ✅ `nl_langinfo` / iconv | 🔄 CPINFO/ACP/OEMCP (§5); DBCS providers deferred |
-| ⭐ | MUI UI-language fallback chain | ✅ `SetThreadPreferredUILanguages` | ✅ gettext `LANGUAGE` list | ✅ `nls_locale_ui_fallback` ordered chain (§6) |
-| 💎 | NLS/MUI native query syscalls | ✅ `NtQuerySystemInformation` / `GetNLSVersionEx` | ⚠️ `/proc` + `localedef` | 🔄 SystemNlsInformation + MUI trio (§8); section-ptr deferred |
+| ⭐  | Feature                        | 🪟 Win11                                          | 🐧 Linux                         | 🚀 Impossible OS                                                                                            |
+| --- | ------------------------------ | ------------------------------------------------- | -------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| 💎  | Global + local atom tables     | ✅ Global/Local `AddAtom`                         | ⚠️ no direct equivalent          | 🔄 global NLS-folded + bounded (§3); local user-mode (ntdll, see §3)                                        |
+| 💎  | Unicode case-fold authority    | ✅ `RtlUpcaseUnicodeString` NLS                   | ✅ ICU / glibc `towupper`        | 🔄 invariant ASCII+Latin-1 fold + Rtl compare (§2/§4); full-BMP data §10-deferred                           |
+| 💎  | Code page conversion           | ✅ `MultiByteToWideChar` NLS                      | ✅ `iconv`                       | ✅ UTF-8/CP437/CP850/1252 strict/replace/best-fit (§5)                                                      |
+| 💎  | LCID / locale metadata         | ✅ `GetLocaleInfoEx` LCID                         | ✅ `setlocale` / `nl_langinfo`   | 🔄 records + registry system/user/UI policy (§6); privileged setter -> SRM                                  |
+| 💎  | Sort keys / collation          | ✅ `CompareStringEx` linguistic                   | ✅ ICU collation, `strcoll`      | ✅ invariant + case-insensitive `nls_sort_key` (§7); culture-aware -> user-mode                             |
+| 💎  | NLS table loading + fallback   | ✅ `l_intl.nls` at boot                           | ✅ locale archive                | ✅ `nls_table_v1` loader + CRC/bounds + compiled fallback (§4)                                              |
+| 💎  | Object-name Unicode compare    | ✅ OB case-insensitive NLS                        | ⚠️ VFS bytewise (case-sensitive) | 🔄 OB/registry/atom case-insensitive, compiled ASCII+Latin-1 fold (§9); full-BMP needs compile-time table   |
+| ⭐  | Normalization policy           | ✅ `NormalizeString` NFC/NFD                      | ✅ ICU normalizer                | 🔄 no-silent-normalize + explicit ASCII/Latin-1 NFC/NFD (§7); full UAX #15 user-mode                        |
+| 💎  | Char-type + folding APIs       | ✅ `GetStringType`/`FoldString`                   | ✅ ICU `u_charType`              | 🔄 compiled `FoldStringW` digit/compat (§7); internal `nls_char_type` C1-C3; public GetStringTypeW deferred |
+| 💎  | Code-page metadata / DBCS      | ✅ `GetCPInfoEx`/`IsDBCSLeadByte`                 | ✅ `nl_langinfo` / iconv         | 🔄 CPINFO/ACP/OEMCP (§5); DBCS providers deferred                                                           |
+| ⭐  | MUI UI-language fallback chain | ✅ `SetThreadPreferredUILanguages`                | ✅ gettext `LANGUAGE` list       | ✅ `nls_locale_ui_fallback` ordered chain (§6)                                                              |
+| 💎  | NLS/MUI native query syscalls  | ✅ `NtQuerySystemInformation` / `GetNLSVersionEx` | ⚠️ `/proc` + `localedef`         | 🔄 SystemNlsInformation + MUI trio (§8); section-ptr deferred                                               |
 
 Win11 provides the deepest NLS surface (per-locale `.nls` tables, linguistic collation, normalization) but couples case-insensitivity into the kernel object manager. Linux pushes locale to userspace (ICU/glibc) and keeps the VFS bytewise. Impossible OS centralizes one kernel case-fold authority (§2) that OB, registry, and environment all consume (§9), keeps culture-aware collation in user-mode (§7), and refuses silent normalization of object names.
 

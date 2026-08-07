@@ -35,16 +35,16 @@ title: "TODO-11 -- Optical Media: ISO 9660, Joliet & UDF"
 
 ## Implementation Order
 
-| ⭐  | Order | Deliverable                                                                           | Depends On                                                         | Status |
-| --- | :---: | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------ | :----: |
-| 💎  |   1   | §1 SCSI MMC layer -- READ TOC, DISC INFO, TRACK INFO, `atapi_disc_info_t`             | Existing `atapi_dma_command()` transport                           |  [ ]   |
-| 💎  |   2   | §2 ISO 9660 base -- PVD parse, directory records, file read, VFS mount               | §1 (`atapi_do_read` for cooked 2 KiB sectors)                      |  [ ]   |
-| 💎  |   3   | §3 Rock Ridge extensions -- SUSP walker, PX/SL/NM/TF/CL/RE entries                   | §2 (Rock Ridge SUSP data appended to ISO 9660 directory records)   |  [ ]   |
-| 💎  |   4   | §4 Joliet -- SVD `%/E` detection, UCS-2BE→UTF-8 decode, El Torito skip               | §2 (Joliet SVD shares the same VDS scan loop as PVD)               |  [ ]   |
-| 💎  |   5   | §5 UDF -- AVDP, VDS, Partition+LV descriptors, ICB, directory + file read            | §1 (raw sector reads needed for AVDP at sector 256)                |  [ ]   |
-| ⭐  |   6   | §6 Auto-probe priority -- UDF > Joliet > ISO 9660 selection + unified VFS mount       | §2, §4, §5 (all three format probes must exist before priority)    |  [ ]   |
-| 💎  |   7   | §7 Disc label + metadata -- `GetVolumeInformationW`, `GetDriveTypeW`, serial CRC      | §6 (format selected; label source depends on winner)               |  [ ]   |
-| 💎  |   8   | §8 Audio CD raw reads -- TOC audio track detection, READ CD 2352-byte sectors        | §1 (TOC parse identifies audio tracks), §2 (disc already probed)   |  [ ]   |
+| ⭐  | Order | Deliverable                                                                      | Depends On                                                       | Status |
+| --- | :---: | -------------------------------------------------------------------------------- | ---------------------------------------------------------------- | :----: |
+| 💎  |   1   | §1 SCSI MMC layer -- READ TOC, DISC INFO, TRACK INFO, `atapi_disc_info_t`        | Existing `atapi_dma_command()` transport                         |  [ ]   |
+| 💎  |   2   | §2 ISO 9660 base -- PVD parse, directory records, file read, VFS mount           | §1 (`atapi_do_read` for cooked 2 KiB sectors)                    |  [ ]   |
+| 💎  |   3   | §3 Rock Ridge extensions -- SUSP walker, PX/SL/NM/TF/CL/RE entries               | §2 (Rock Ridge SUSP data appended to ISO 9660 directory records) |  [ ]   |
+| 💎  |   4   | §4 Joliet -- SVD `%/E` detection, UCS-2BE→UTF-8 decode, El Torito skip           | §2 (Joliet SVD shares the same VDS scan loop as PVD)             |  [ ]   |
+| 💎  |   5   | §5 UDF -- AVDP, VDS, Partition+LV descriptors, ICB, directory + file read        | §1 (raw sector reads needed for AVDP at sector 256)              |  [ ]   |
+| ⭐  |   6   | §6 Auto-probe priority -- UDF > Joliet > ISO 9660 selection + unified VFS mount  | §2, §4, §5 (all three format probes must exist before priority)  |  [ ]   |
+| 💎  |   7   | §7 Disc label + metadata -- `GetVolumeInformationW`, `GetDriveTypeW`, serial CRC | §6 (format selected; label source depends on winner)             |  [ ]   |
+| 💎  |   8   | §8 Audio CD raw reads -- TOC audio track detection, READ CD 2352-byte sectors    | §1 (TOC parse identifies audio tracks), §2 (disc already probed) |  [ ]   |
 
 > §1–§5 and §7–§8 are `💎` parity -- every modern OS supports optical media. §6 is `⭐` exclusive: the unified in-kernel probe chain (UDF > Joliet > ISO) with automatic best-format selection is a level of optical drive intelligence that Linux leaves to userspace (`udisks2`) and Windows exposes only through the shell (not the kernel API). Impossible OS makes the right choice at mount time without any userspace daemon.
 

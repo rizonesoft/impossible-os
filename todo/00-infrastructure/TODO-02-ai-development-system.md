@@ -17,14 +17,14 @@ title: "TODO-02 -- AI Development System"
 
 > **Claude Code is the primary interactive orchestrator.** Doctrine files tell Claude what to do, skills tell Claude how to do it, and external reviewers tell Claude what might be wrong. There is no sibling executor in this repo. When this TODO uses the term "source of truth" it always identifies WHICH file or tool owns a particular kind of authority.
 
-| Layer                     | Role                                           | Authority over                                      |
-| ------------------------- | ---------------------------------------------- | --------------------------------------------------- |
-| **Claude Code (tool)**    | Primary interactive orchestrator               | Interactive code edits, commits, skill invocations, reviewer dispatches |
-| `CLAUDE.md`               | Doctrine source-of-truth (file)                | Product north star, workflow rules, safety constraints, policy |
-| `.claude/skills/`         | Workflow source-of-truth (directory)           | How Claude executes a specific task (implement, review, verify, diagnose) |
-| `.claude/settings.json`   | Harness policy source-of-truth (file)          | Permissions, hook reminders, pre/post-tool-use gates |
-| Codex review mode         | External reviewer                              | Adversarial findings only; invoked from Claude skills; findings go through receiving-code-review discipline before action |
-| `.githooks/`              | Git-time guards (distinct layer, see TODO-01 §5) | Pre-commit lint, post-commit COUNT, opt-in pre-push |
+| Layer                   | Role                                             | Authority over                                                                                                            |
+| ----------------------- | ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------- |
+| **Claude Code (tool)**  | Primary interactive orchestrator                 | Interactive code edits, commits, skill invocations, reviewer dispatches                                                   |
+| `CLAUDE.md`             | Doctrine source-of-truth (file)                  | Product north star, workflow rules, safety constraints, policy                                                            |
+| `.claude/skills/`       | Workflow source-of-truth (directory)             | How Claude executes a specific task (implement, review, verify, diagnose)                                                 |
+| `.claude/settings.json` | Harness policy source-of-truth (file)            | Permissions, hook reminders, pre/post-tool-use gates                                                                      |
+| Codex review mode       | External reviewer                                | Adversarial findings only; invoked from Claude skills; findings go through receiving-code-review discipline before action |
+| `.githooks/`            | Git-time guards (distinct layer, see TODO-01 §5) | Pre-commit lint, post-commit COUNT, opt-in pre-push                                                                       |
 
 **Hierarchy invariants:**
 1. **Doctrine lives in `CLAUDE.md`. Nowhere else.** Skill headers, tool instructions, and regression messages reference doctrine but do not redefine it. Edits go to `CLAUDE.md` first, then propagate.
