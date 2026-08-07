@@ -75,8 +75,25 @@ def extract_stamp_xrefs(root: Path) -> list:
             kind = (x.get("kind") or "").lower()
             if kind not in ("accepted", "deferred"):
                 continue
-            tgt = x.get("target") or x.get("target_file") or ""
-            body = x.get("text") or x.get("raw") or json.dumps(x)
+            # READ THE KEYS THE PRODUCER EMITS. This asked for `target` /
+            # `target_file` / `text` / `raw`, none of which the cache has ever
+            # contained -- the real fields are `target_path`, `target_section`,
+            # `item_name`, `severity`. So every stamp-xref record carried a
+            # title ending in "-> " with nothing after it and a body that fell
+            # through to a raw json.dumps. Invisible because the reader is
+            # defensive at every step (`or ""`, `or json.dumps(x)`), so wrong
+            # key names degrade to empty output instead of raising.
+            tgt = x.get("target_path") or ""
+            sec = x.get("target_section")
+            if tgt and sec:
+                tgt = f"{tgt} section {sec}"
+            _item = x.get("item_name") or ""
+            _sev = x.get("severity") or ""
+            body = " | ".join(q for q in (
+                f"severity: {_sev}" if _sev else "",
+                f"item: {_item}" if _item else "",
+                f"target: {tgt}" if tgt else "",
+            ) if q) or json.dumps(x)
             out.append(_mk(f"stamp-{kind}", e.get("file_path", ""),
                            f"{kind}: {e.get('file_path', '')} -> {tgt}", body))
     return out
