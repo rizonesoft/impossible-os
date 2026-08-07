@@ -481,15 +481,24 @@ def main() -> int:
                      + "\n")
     # The human labels are a PRESENTATION detail, so a bucket without one still
     # reports under its own name rather than vanishing from the line or raising.
-    labels = {"unresolved_calllike": "calllike-unresolved",
-              "no_calllike_token": "no-calllike-token",
-              "missing_file": "missing-file",
-              "unsupported_lang": "non-c-suffix",
-              "path_escape": "path-escape",
-              "unpaired_ref": "unpaired-ref"}
+    # ORDER IS PART OF THE PUBLISHED LINE. Iterating ALL_BUCKETS reordered it
+    # from the established `calllike-unresolved ... unpaired-ref` to the JSON's
+    # pre-then-post order -- a silent change to output people read and grep, for
+    # no reason (Codex consistency, section 20). Accounting still derives from
+    # the vocabulary; only the presentation keeps its historical sequence, with
+    # any bucket added later appended in vocabulary order rather than dropped.
+    labels = (("unresolved_calllike", "calllike-unresolved"),
+              ("no_calllike_token", "no-calllike-token"),
+              ("missing_file", "missing-file"),
+              ("unsupported_lang", "non-c-suffix"),
+              ("path_escape", "path-escape"),
+              ("unpaired_ref", "unpaired-ref"))
+    ordered = [(b, lbl) for b, lbl in labels if b in cov]
+    known = {b for b, _ in labels}
+    ordered += [(b, b) for b in buckets if b not in known]
     sys.stderr.write(
         "  buckets: "
-        + " ".join(f"{labels.get(b, b)}={len(cov[b])}" for b in buckets)
+        + " ".join(f"{lbl}={len(cov[b])}" for b, lbl in ordered)
         + "\n")
 
     if baseline_err is not None:

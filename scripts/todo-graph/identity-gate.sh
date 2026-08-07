@@ -643,15 +643,21 @@ for r in retired:
                    "pre-authorises this edge's removal rather than declaring "
                    "it" % r)
     else:
-        # PROVE THE EMITTERS CAN NO LONGER PRODUCE IT. A retirement removes a
-        # name that `ref_resolution.py` still emits and that
-        # `check_stub_behind_stamp.py` still pre-keys its coverage dict on. If
-        # the bucket is DORMANT the two snapshots hold no affected mapping and
-        # the gate passes -- then a later TODO-only commit reaches that
-        # condition, the resolver emits a name the published vocabulary no
-        # longer contains, and every snapshot is invalid for a reachable input.
-        # That is precisely the latent-failure argument that rejects renames,
-        # so it applies here too (Codex adversarial, section 18 ship gate).
+        # PROVE THE RESOLVER CAN NO LONGER PRODUCE IT. The risk is a STALE
+        # RESOLVER PATH: a branch that still references or computes the removed
+        # member. If that branch is DORMANT the two snapshots hold no affected
+        # mapping and the gate passes -- then a later TODO-only commit reaches
+        # that condition and the resolver produces a name the published
+        # vocabulary no longer contains, so every snapshot is invalid for a
+        # reachable input. That is precisely the latent-failure argument that
+        # rejects renames, so it applies here too (Codex adversarial, section 18
+        # ship gate).
+        #
+        # The CONSUMER is no longer part of this question. Until section 20
+        # `check_stub_behind_stamp.py` pre-keyed its coverage dict on hardcoded
+        # bucket names, so a retirement could leave it raising KeyError; it now
+        # derives every key, count and report line from the CURRENT vocabulary,
+        # so it simply follows a removal. Only the resolver needs proving.
         #
         # It is CHECKABLE rather than blanket-refused: if the resolver no longer
         # DECLARES the name in `ref_resolution.EMITTED_BUCKETS`, the

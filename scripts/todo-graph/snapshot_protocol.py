@@ -37,9 +37,12 @@ from __future__ import annotations
 
 import enum
 import json
+import re
 from pathlib import Path
 
 PROTOCOL_PATH = Path(__file__).resolve().parent / "snapshot_protocol.json"
+# The bucket-name grammar. See `build_bucket_enum` for why it is ASCII-only.
+_BUCKET_NAME_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 
 
 class ProtocolError(RuntimeError):
@@ -175,17 +178,29 @@ def build_bucket_enum(all_buckets) -> type:
     members = {}
     for name in all_buckets:
         member = _member_name(name)
-        # LOWERCASE, so the member name maps back to the bucket name by
-        # `.lower()` alone. The identity gate must read the emitted set from a
-        # tree MID-RETIREMENT, where a declared member is deliberately no longer
-        # in the vocabulary -- so it cannot resolve `Bucket.PATH_ESCAPE` by
-        # looking the name up. A bijective convention is what lets it recover
-        # the name with no table at all.
-        if name != name.lower():
+        # AN EXPLICIT ASCII GRAMMAR, not merely "is lowercase". The identity
+        # gate must read the emitted set from a tree MID-RETIREMENT, where a
+        # declared member is deliberately no longer in the vocabulary -- so it
+        # cannot resolve `Bucket.PATH_ESCAPE` by looking the name up and instead
+        # recovers it as `member.lower()`. That demands a BIJECTION, and
+        # `name == name.lower()` does not give one: `ß`, `ς`, `ﬀ` and `ı` are
+        # all lowercase, but upper-case to `SS`, `Σ`, `FF` and `I`, which lower
+        # back to `ss`, `σ`, `ff` and `i` -- a name the checker could never map
+        # to its member (Codex consistency, section 20). Unicode case folding is
+        # not an involution; an ASCII grammar sidesteps the whole class.
+        if not _BUCKET_NAME_RE.match(name):
             raise ProtocolError(
-                f"{PROTOCOL_PATH.name}: bucket {name!r} is not lowercase; the "
+                f"{PROTOCOL_PATH.name}: bucket {name!r} is not a plain ASCII "
+                f"identifier matching {_BUCKET_NAME_RE.pattern}; the "
                 f"member/name mapping must be reversible without consulting "
                 f"the vocabulary")
+        # BELT AND BRACES: assert the round trip the checker actually performs,
+        # so a future loosening of the grammar cannot quietly break it.
+        if member.lower() != name:
+            raise ProtocolError(
+                f"{PROTOCOL_PATH.name}: bucket {name!r} does not survive the "
+                f"member round trip ({name!r} -> {member!r} -> "
+                f"{member.lower()!r})")
         if not member.isidentifier() or member[:1].isdigit():
             raise ProtocolError(
                 f"{PROTOCOL_PATH.name}: bucket {name!r} does not yield a usable "

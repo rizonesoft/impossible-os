@@ -308,11 +308,20 @@ def _bucket_bounded(expected):
         @wraps(fn)
         def _bounded(*args, **kwargs):
             result = fn(*args, **kwargs)
-            if not isinstance(result, expected):
+            # EXACT TYPE, not `isinstance`. A SUBCLASS can override `bucket`
+            # with a property, and a probe returned a declared member on the
+            # boundary's read and a RETIRED one on the consumer's next read --
+            # so the caller observed a value the boundary never approved (Codex
+            # adversarial, section 20 post-commit round). Nothing legitimate
+            # returns a subclass: `Verdict` and `RefResult` subclass anonymous
+            # namedtuples, but every value the resolver constructs has exactly
+            # one of those two types.
+            if type(result) is not expected:
                 raise BucketContractError(
                     f"{fn.__name__} returned {type(result).__name__}, not "
-                    f"{expected.__name__}; the bucket contract can only be "
-                    f"enforced on the declared outcome types")
+                    f"exactly {expected.__name__}; the bucket contract can "
+                    f"only be enforced on the declared outcome types, and a "
+                    f"subclass can change `bucket` after it is validated")
             _check_emitted(result.bucket)
             return result
 

@@ -6330,6 +6330,48 @@ PY2
     _bucket_mutation "declaration dropped, emission site left behind" \
         "return (None, Bucket.PATH_ESCAPE)=>return (None, Bucket.PATH_ESCAPE)" \
         "is named here but is NOT in"
+    # THE THREE NON-CANONICAL ENUM ACCESSES. Matching only `Bucket.MEMBER` left
+    # all three invisible (post-commit adversarial round). The iteration form is
+    # the dangerous one: `Bucket` is derived from the JSON, so retiring the
+    # first member makes the SAME expression return the next still-declared one
+    # -- the branch keeps emitting, silently reclassified, and `_check_emitted`
+    # approves it because the value IS declared.
+    _bucket_mutation "nested-attribute enum access" \
+        "return (None, Bucket.UNSUPPORTED_LANG)=>return (None, _protocol.Bucket.UNSUPPORTED_LANG)" \
+        "reached through"
+    _bucket_mutation "enum iteration" \
+        "return (None, Bucket.UNSUPPORTED_LANG)=>return (None, next(iter(Bucket)))" \
+        "bare .Bucket. is used"
+    _bucket_mutation "enum alias" \
+        "return (None, Bucket.UNSUPPORTED_LANG)=>return (None, (lambda B: B.UNSUPPORTED_LANG)(Bucket))" \
+        "bare .Bucket. is used"
+    # A RENAME MUST DISARM NOTHING SILENTLY. The bans are string copies of
+    # resolver symbols, so renaming one makes its prohibited forms invisible;
+    # the checker fails CLOSED instead.
+    _bucket_mutation "watched symbol renamed out from under the bans" \
+        "ALL_BUCKETS = _protocol.ALL_BUCKETS=>ALL_BUCKETS_RENAMED = _protocol.ALL_BUCKETS" \
+        "no longer defines"
+    # THE TWO EXEMPTIONS MUST NOT BE LOADBEARING HOLES. Both were abusable as
+    # first written (re-adversarial round): a QUALIFIED `helper.isinstance(x,
+    # Bucket)` satisfied the type-test exemption while its method returned
+    # `next(iter(Bucket))`, and the re-export scan exempted EVERY matching
+    # top-level assignment rather than one.
+    _bucket_mutation "qualified isinstance masquerading as the builtin" \
+        "return (None, Bucket.UNSUPPORTED_LANG)=>return (None, _helper.isinstance(None, Bucket))" \
+        "bare .Bucket. is used"
+    # $'...' so the embedded newline is a REAL newline: inside "..." bash leaves
+    # `\n` as a literal backslash-n, which writes an unparseable emitter and
+    # makes the fixture pass on rc 3 (infrastructure) instead of the ban it
+    # names. Caught by asserting the MESSAGE, not just a non-zero code.
+    _bucket_mutation "a second enum re-export binding" \
+        $'ALL_BUCKETS = _protocol.ALL_BUCKETS=>ALL_BUCKETS = _protocol.ALL_BUCKETS\nBucket = _alt.Bucket' \
+        "re-exported 2 times"
+    # A DEAD NESTED DECOY MUST NOT SATISFY THE WATCHED-SYMBOL PROOF. Walking the
+    # whole tree counted a binding inside an unused function, so a rename plus a
+    # decoy passed while the renamed access evaded the subscript ban.
+    _bucket_mutation "dead nested decoy hiding a renamed watched symbol" \
+        $'ALL_BUCKETS = _protocol.ALL_BUCKETS=>BUCKETS = _protocol.ALL_BUCKETS\ndef _decoy():\n    ALL_BUCKETS = ()\n    return ALL_BUCKETS' \
+        "no longer defines"
 
     # 22aj: THE CONTRACT MUST HOLD ON THE REAL TREE. A checker that only ever
     # runs against mutated copies proves nothing about what ships.
@@ -6414,6 +6456,29 @@ for label, value in (("smuggled RefResult", smuggled),
 for public in ("classify_ref", "resolve_ref"):
     if not hasattr(getattr(rr, public), "__wrapped__"):
         leaked.append("%s is not bucket-bounded" % public)
+
+# A SUBCLASS CAN CHANGE `bucket` AFTER IT IS VALIDATED. `isinstance` accepted
+# one whose property returned a declared member on the boundary's read and a
+# RETIRED member on the consumer's next read, so the caller observed a value the
+# boundary never approved (post-commit adversarial round). The boundary requires
+# the EXACT type.
+class _Sneaky(rr.RefResult):
+    __slots__ = ()
+    _n = [0]
+
+    @property
+    def bucket(self):
+        self._n[0] += 1
+        return rr.Bucket.MISSING_FILE if self._n[0] == 1 else retired
+
+try:
+    rr._bucket_bounded(rr.RefResult)(
+        lambda *a, **k: _Sneaky(None, "a", rr.Bucket.MISSING_FILE,
+                                None, None, None, None))(
+        {}, rr.EMPTY_SCOPE, None)
+    leaked.append("public boundary passed a bucket-overriding subclass")
+except rr.BucketContractError:
+    pass
 # A still-declared member must keep working, or the check is vacuous.
 if rr.Verdict(None, None, "a", rr.Bucket.MISSING_FILE).bucket != "missing_file":
     leaked.append("declared-member-rejected")

@@ -268,19 +268,153 @@ def undeclared_references(tree: ast.Module, path: Path, declared) -> list:
     """
     out = []
     declared_members = {name.upper() for name in declared}
-    for node in ast.walk(tree):
-        if not (isinstance(node, ast.Attribute)
-                and isinstance(node.value, ast.Name)
-                and node.value.id == ENUM_NAME):
-            continue
-        if node.attr in declared_members:
-            continue
+    # CANONICAL ACCESS ONLY. Matching just `Bucket.MEMBER` left three shapes
+    # invisible (Codex adversarial, section 20 post-commit round): a nested
+    # module attribute `_protocol.Bucket.PATH_ESCAPE`, an alias `B = Bucket`
+    # followed by `B.PATH_ESCAPE`, and ITERATION -- `next(iter(Bucket))`. The
+    # last is the worst, because `Bucket` is derived from the JSON: retire the
+    # first member and that same expression silently returns the NEXT one, so a
+    # dormant branch starts emitting a different bucket and `_check_emitted`
+    # approves it. So every mention of the enum is a violation unless it is a
+    # direct `Bucket.<DECLARED_MEMBER>` read.
+    # TWO NAMED EXEMPTIONS, and only these. Both are uses that cannot yield a
+    # member, so neither can hide an emission:
+    #   1. the module-level RE-EXPORT `Bucket = <module>.Bucket`, which binds
+    #      the type itself;
+    #   2. `isinstance(x, Bucket)`, which tests a type and returns a bool.
+    # Anything else that touches the enum without naming a member is banned.
+    ok_nodes = set()
+    # EXACTLY ONE re-export, at module level. Exempting "every top-level
+    # assignment of this shape" let a SECOND `Bucket = alternate.Bucket` binding
+    # through, which is a different enum wearing the sanctioned name (Codex
+    # re-adversarial, section 20).
+    reexports = [n for n in tree.body
+                 if isinstance(n, ast.Assign) and len(n.targets) == 1
+                 and isinstance(n.targets[0], ast.Name)
+                 and n.targets[0].id == ENUM_NAME
+                 and isinstance(n.value, ast.Attribute)
+                 and n.value.attr == ENUM_NAME]
+    if len(reexports) > 1:
         out.append(
-            f"{path.name}:{node.lineno}: `{ENUM_NAME}.{node.attr}` is named "
-            f"here but is NOT in `{DECLARATION}`. Either declare it, or remove "
-            f"this emission site -- a site the declaration does not cover is "
-            f"how a retired bucket keeps a live code path.")
+            f"{path.name}: `{ENUM_NAME}` is re-exported "
+            f"{len(reexports)} times (lines {[n.lineno for n in reexports]}); "
+            f"exactly one canonical re-export is allowed, or the name no "
+            f"longer identifies one enum.")
+    for node in reexports[:1]:
+        ok_nodes.add(id(node.targets[0]))
+        ok_nodes.add(id(node.value))
+
+    # THE BUILTIN `isinstance`, not any callable spelled `isinstance`.
+    # `_name_of` returns an Attribute's `.attr`, so `helper.isinstance(x,
+    # Bucket)` satisfied the old test -- and a probe made that method return
+    # `next(iter(enum_type))`, so a dormant path kept emitting and silently
+    # reclassified after a retirement (Codex re-adversarial, section 20).
+    shadowed = any(
+        (isinstance(n, (ast.Assign, ast.AnnAssign, ast.FunctionDef,
+                        ast.ClassDef))
+         and "isinstance" in _bound_names(n))
+        for n in tree.body)
+    if not shadowed:
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Name)
+                    and node.func.id == "isinstance"
+                    and len(node.args) == 2
+                    and isinstance(node.args[1], ast.Name)
+                    and node.args[1].id == ENUM_NAME):
+                ok_nodes.add(id(node.args[1]))
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name)
+                and node.value.id == ENUM_NAME):
+            if node.attr in declared_members:
+                ok_nodes.add(id(node.value))
+                continue
+            out.append(
+                f"{path.name}:{node.lineno}: `{ENUM_NAME}.{node.attr}` is "
+                f"named here but is NOT in `{DECLARATION}`. Either declare it, "
+                f"or remove this emission site -- a site the declaration does "
+                f"not cover is how a retired bucket keeps a live code path.")
+            ok_nodes.add(id(node.value))
+        # A nested attribute (`<anything>.Bucket`) reaches the enum without
+        # naming a member, so no static rule downstream can say which member
+        # comes out of it.
+        elif (isinstance(node, ast.Attribute) and node.attr == ENUM_NAME
+                and id(node) not in ok_nodes):
+            out.append(
+                f"{path.name}:{node.lineno}: `{ENUM_NAME}` is reached through "
+                f"an attribute here; name members as `{ENUM_NAME}.<MEMBER>` so "
+                f"the declaration stays the complete record of what this "
+                f"module can emit.")
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and node.id == ENUM_NAME:
+            if id(node) in ok_nodes:
+                continue
+            out.append(
+                f"{path.name}:{node.lineno}: bare `{ENUM_NAME}` is used here "
+                f"(aliased, iterated, or passed along). Only a direct "
+                f"`{ENUM_NAME}.<MEMBER>` read is allowed: an alias or an "
+                f"iteration yields a member no declaration mentions, and after "
+                f"a retirement the SAME expression silently yields a different "
+                f"one.")
     return out
+
+
+def _bound_names(node: ast.AST) -> set:
+    """Names this ONE statement binds. Recurses into tuple/list targets."""
+    def targets(t):
+        if isinstance(t, ast.Name):
+            return {t.id}
+        if isinstance(t, (ast.Tuple, ast.List)):
+            return set().union(*(targets(e) for e in t.elts)) if t.elts else set()
+        if isinstance(t, ast.Starred):
+            return targets(t.value)
+        return set()
+
+    if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+        return {node.name}
+    if isinstance(node, ast.Assign):
+        return set().union(*(targets(t) for t in node.targets)) \
+            if node.targets else set()
+    if isinstance(node, ast.AnnAssign):
+        return targets(node.target)
+    if isinstance(node, (ast.Import, ast.ImportFrom)):
+        return {(a.asname or a.name).split(".")[0] for a in node.names}
+    return set()
+
+
+def watched_symbols_present(tree: ast.Module, path: Path) -> list:
+    """Every symbol the bans are written against must still EXIST here.
+
+    THE BANS ARE STRING COPIES OF RESOLVER SYMBOLS, so a rename silently
+    disarms them (Codex consistency, section 20): rename `ALL_BUCKETS` to
+    `BUCKETS` and `BUCKETS[1]` becomes invisible to the subscript ban; rename
+    `Verdict` and its `_make`/`_replace` accesses stop being watched. Such an
+    executable-only refactor passes the live differential while a branch is
+    dormant, and the next data-only retirement is then approved against a
+    checker that is no longer looking. Failing CLOSED on a missing symbol turns
+    a silent disarm into a loud one -- the checker cannot police what it cannot
+    find, and must say so rather than report a clean tree.
+    """
+    # MODULE LEVEL AND UNCONDITIONAL, via `tree.body` rather than `ast.walk`.
+    # An unrestricted walk counted bindings inside functions, classes and dead
+    # branches, so a decoy `ALL_BUCKETS = ()` in an unused function satisfied
+    # this proof while the real symbol was renamed and its indexed access
+    # evaded `emission_bans` (Codex re-adversarial, section 20). Imports and
+    # tuple targets ARE counted, so a legitimate refactor that rebinds a watched
+    # symbol through either shape is not wedged.
+    bound = set()
+    for node in tree.body:
+        bound |= _bound_names(node)
+    missing = [s for s in (_BUCKET_SEQUENCES + _OUTCOME_TYPES)
+               if s not in bound]
+    if not missing:
+        return []
+    return [
+        f"{path.name}: this checker polices {sorted(missing)}, which "
+        f"{path.name} no longer defines. A rename disarms the bans written "
+        f"against those names, so the contract is unenforced -- update "
+        f"_BUCKET_SEQUENCES / _OUTCOME_TYPES in the same change as the rename."]
 
 
 def emission_bans(tree: ast.Module, path: Path, vocabulary) -> list:
@@ -378,6 +512,7 @@ def check(emitter: Path, protocol: Path, allow_undeclared: bool = False):
         violations.append(
             f"{emitter.name}: `{DECLARATION}` lists a bucket more than once")
 
+    violations.extend(watched_symbols_present(tree, emitter))
     violations.extend(emission_bans(tree, emitter, vocabulary))
     # ONLY MEANINGFUL WITH A WELL-FORMED DECLARATION. A malformed one yields no
     # members, which would report every emission site as undeclared and bury
