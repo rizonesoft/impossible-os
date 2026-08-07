@@ -112,6 +112,21 @@ def _is_subagent_transcript(path: str) -> bool:
         return base.startswith("agent-") or "/subagents/" in path
 
 
+def _is_subagent_payload(d: dict) -> bool:
+    """Payload-level subagent identity, delegated to the shared detector.
+
+    Separate from `_is_subagent_transcript` because they fail differently: the
+    transcript heuristic sees the PARENT's path inside a subagent and returns
+    False, while this reads the harness's own agent identity fields.
+    """
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import runner_bash_guard
+        return bool(runner_bash_guard.is_subagent_payload(d))
+    except Exception:
+        return False
+
+
 def _digest(fp: str, size: int) -> tuple[str, int]:
     """Return (digest, line_count). line_count is 0 when unknown.
 
@@ -252,7 +267,23 @@ def main() -> int:
 
     # A subagent has its own context -- what the main session read is not in
     # it. Gating here would starve the analysts of the reads they exist to do.
-    if _is_subagent_transcript(str(d.get("transcript_path") or "")):
+    #
+    # BOTH detectors, because the transcript-path one is NOT sufficient inside a
+    # subagent: the PreToolUse payload delivered there carries the PARENT's
+    # `transcript_path`, so the agent's read was recorded as the main session's
+    # and the main session was then blocked from reading the same lines. That
+    # inverts the trust contract -- doctrine REQUIRES the main session to verify
+    # every load-bearing agent claim at file:line, and this gate was refusing
+    # exactly that verification. Measured 2026-08-06: a section-context-mapper
+    # read of identity-gate.sh blocked the very next main-session Read of it.
+    #
+    # `is_subagent_payload` (runner_bash_guard, 2026-07-31) reads the harness's
+    # own identity fields and was added for this same misclassification in a
+    # different hook. A False from it means "no marker", not "main session", so
+    # the two are OR-ed: this gate's harm direction is blocking the main
+    # session, so it must fail toward NOT gating.
+    if _is_subagent_transcript(str(d.get("transcript_path") or "")) \
+            or _is_subagent_payload(d):
         return 0
 
     try:
