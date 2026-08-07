@@ -79,7 +79,11 @@ done
 
 cleanup() {
     if [ "$KEEP_CACHE" = "0" ]; then
-        rm -f "$CACHE_PATH" 2>/dev/null || true
+        # The corpus binding goes with the cache it describes (section 21). A
+        # binding left behind is inert -- readers locate one by the digest of
+        # the cache they read, so an orphan matches nothing -- but leaving it
+        # would litter build/ once per discarded build.
+        rm -f "$CACHE_PATH" "$CACHE_PATH".corpus-*.json 2>/dev/null || true
     fi
 }
 trap cleanup EXIT
@@ -88,9 +92,19 @@ trap cleanup EXIT
 mkdir -p "$REPO_ROOT/build"
 
 # Step 1: rebuild cache. Exit on failure (malformed / missing frontmatter).
-if ! python3 "$BUILD_PY" --quiet --output "$CACHE_PATH"; then
-    echo "[build-and-validate] FATAL: build.py failed; not running validator" >&2
-    exit 1
+# BUILD.PY'S STATUS PROPAGATES UNCHANGED. This flattened every nonzero result to
+# 1 while the header above promised the opposite, which mattered the moment
+# build.py grew a second failure code: rc 3 (the corpus moved underneath the
+# build) is RETRYABLE and rc 1 (malformed frontmatter) is not, and a caller that
+# sees 1 for both cannot tell them apart (Codex adversarial, section 21).
+# Captured from the BARE invocation: inside `if ! cmd; then`, `$?` is the status
+# of the negation (always 0), not of the command -- which would have propagated
+# a successful exit for every failure.
+python3 "$BUILD_PY" --quiet --output "$CACHE_PATH"
+BUILD_RC=$?
+if [ "$BUILD_RC" -ne 0 ]; then
+    echo "[build-and-validate] FATAL: build.py failed (rc=$BUILD_RC); not running validator" >&2
+    exit "$BUILD_RC"
 fi
 
 # Step 2: validate. Exit code propagates -- must NOT use `exec` here

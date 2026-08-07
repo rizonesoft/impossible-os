@@ -41,6 +41,38 @@ t_fail() {
     printf '  [FAIL] %s\n' "$1" >&2
 }
 
+# bind_cache <cache-path> <todo-root> -- write the corpus binding a hand-authored
+# fixture cache needs in order to be READ (section 21).
+#
+# Freshness stopped asking "is the cache newer than the corpus?" and started
+# asking "was this cache built from the corpus now on disk?", answered from a
+# digest-named sidecar the producer publishes. `touch`ing a fixture cache
+# therefore no longer makes it readable, and an unbound one is CORRECTLY refused
+# as STALE by every reader.
+#
+# It calls the PRODUCTION machinery rather than restating the rule, so a fixture
+# can never pass against a binding shape the readers would not accept -- the
+# same reason build.py records `cache_schema._scan_corpus` output instead of its
+# own corpus walk.
+bind_cache() {
+    BIND_TG="$REPO_ROOT/scripts/todo-graph" python3 - "$1" "$2" <<'PY'
+import hashlib, json, os, pathlib, sys
+sys.path.insert(0, os.environ["BIND_TG"])
+import cache_schema as cs
+cache, root = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
+def boom(exc):
+    raise exc
+blob = cache.read_bytes()
+sha = hashlib.sha256(blob).hexdigest()
+cs.sidecar_path(cache, sha).write_text(json.dumps({
+    "schema": cs.SIDECAR_SCHEMA,
+    "cache_sha256": sha,
+    "history_id": cs.corpus_history_id(root),
+    "corpus": cs._scan_corpus(root, boom),
+}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+}
+
 cleanup() {
     # EVERY FAILURE MESSAGE IN THIS SUITE POINTS AT A LOG UNDER $TMP_DIR, and
     # the trap deleted it before anyone could read it -- so diagnosing an
@@ -3336,6 +3368,10 @@ SNAP="$REPO_ROOT/scripts/todo-graph/corpus_resolution_snapshot.py"
 snap_refuses() {  # <label> <cache-json-content>
     local label="$1" content="$2"
     printf '%s' "$content" > "$SI_TREE/build/snap-cache.json"
+    # Bind even the deliberately-BAD caches: an unbound one would be refused for
+    # the wrong reason and the fixture would pass on rc 3 without ever reaching
+    # the defect it names.
+    bind_cache "$SI_TREE/build/snap-cache.json" "$SI_TREE/todo"
     STUB_LINT_CACHE="$SI_TREE/build/snap-cache.json" STUB_LINT_REPO_ROOT="$SI_TREE" STUB_LINT_ALLOW_NO_BASELINE=1 \
         python3 "$SNAP" write "$SI_TREE/build/snap-out.json" >/dev/null 2>&1
     local rc=$?
@@ -3504,6 +3540,7 @@ items = [{"section_n": 1, "item_idx": i, "item_text": "x", "refs": refs}
 json.dump([{"file_path": "todo/01-test/TODO-01-fixture.md",
             "stamped_items": items}], open(out, "w"))
 PY
+    bind_cache "$SI_TREE/build/snap-cache.json" "$SI_TREE/todo"
 }
 snap_cache 2
 STUB_LINT_CACHE="$SI_TREE/build/snap-cache.json" STUB_LINT_REPO_ROOT="$SI_TREE" STUB_LINT_ALLOW_NO_BASELINE=1 \
@@ -4357,6 +4394,7 @@ items = [{"section_n": 1, "item_idx": 0, "item_text": "x", "refs": refs}]
 json.dump([{"file_path": "todo/01-test/TODO-01-fixture.md",
             "stamped_items": items}], open(out, "w"))
 PY
+bind_cache "$RIE_TREE/build/rie-cache.json" "$RIE_TREE/todo"
 RIE_OUT="$(REPO_ROOT="$REPO_ROOT" \
     STUB_LINT_CACHE="$RIE_TREE/build/rie-cache.json" STUB_LINT_REPO_ROOT="$RIE_TREE" \
     python3 - "$RIE_TREE" <<'PY' 2>&1
@@ -4515,6 +4553,7 @@ items = [
 json.dump([{"file_path": "todo/01-test/TODO-01-rr.md",
             "stamped_items": items}], open(sys.argv[1], "w"))
 PY
+    bind_cache "$1" "$RR_TREE/todo"
 }
 cat > "$RR_TREE/todo/01-test/TODO-01-rr.md" <<'EOF'
 # TODO-01 -- ref-resolution fixture
@@ -7057,8 +7096,8 @@ json.dump([{"file_path": "todo/01-test/TODO-01-cs.md",
                                          "symbol": "f"}]}]}],
           open(sys.argv[1], "w"))
 PY
-# The cache must be NEWER than the TODO or the shared freshness rule fires.
-touch "$CS_TREE/build/good.json"
+# The cache must carry a corpus binding or the shared freshness rule fires.
+bind_cache "$CS_TREE/build/good.json" "$CS_TREE/todo"
 
 # cs_case <label> <mutation-python> <want_lint_rc> <want_snap_rc> <schema_verdict>
 #   schema_verdict: reject | accept | skip  (the INDEPENDENT jsonschema oracle)
@@ -7071,7 +7110,7 @@ doc = json.load(open(sys.argv[1]))
 $mut
 json.dump(doc, open(sys.argv[2], "w"))
 PY
-    touch "$f"
+    bind_cache "$f" "$CS_TREE/todo"
     # Reader B: lint Check 7 helper.
     STUB_LINT_CACHE="$f" STUB_LINT_REPO_ROOT="$CS_TREE" \
         STUB_LINT_ALLOW_NO_BASELINE=1 \
@@ -7219,7 +7258,7 @@ cs_case "empty population: snapshot refuses, lint defers to its population gate"
 cat > "$CS_TREE/build/case.json" <<'JSON'
 [{"file_path": "todo/01-test/TODO-01-cs.md", "stamped_items": []}]
 JSON
-touch "$CS_TREE/build/case.json"
+bind_cache "$CS_TREE/build/case.json" "$CS_TREE/todo"
 mkdir -p "$CS_TREE/scripts/lint"
 cat > "$CS_TREE/scripts/lint/stub-lint-baseline.json" <<'JSON'
 {"resolved": 1, "total": 1}
@@ -7279,25 +7318,71 @@ else
     t_fail "shared cache schema: oversized cache gave '$CS_BIG_RC' (want UNREADABLE)"
 fi
 
-# 23k4: FRESHNESS IS BOUND TO THE BYTES PARSED. `check_freshness` takes the
-# mtime of the descriptor that was actually read; passing a stale one must fail
-# even though the file on disk is newer than every TODO. Without the binding, a
-# concurrent `build.py` rewrite lets a reader parse the OLD cache and then have
-# the NEW file's mtime certify it as fresh.
+# 23k4: FRESHNESS IS BOUND TO THE BYTES PARSED. The corpus binding is located
+# by the sha256 of the bytes the caller ACTUALLY READ, never by a fresh read of
+# the pathname -- `build.py` rewrites that exact path. Passing bytes that are
+# not the file's must therefore refuse: there is no binding for a generation
+# nobody published. Without that, a concurrent rebuild lets a reader parse the
+# OLD cache and have the NEW file's binding certify it.
 CS_TOCTOU=$(python3 -c "
 import sys
 sys.path.insert(0, '$REPO_ROOT/scripts/todo-graph')
 import cache_schema as cs
 try:
-    cs.check_freshness('$CS_TREE/build/good.json', '$CS_TREE/todo', cache_mtime=1.0)
+    cs.check_freshness('$CS_TREE/build/good.json', '$CS_TREE/todo',
+                       cache_bytes=b'[] # not the bytes on disk')
     print('NORAISE')
 except cs.CacheSchemaError as e:
     print(e.reason)
 " 2>&1)
 if [ "$CS_TOCTOU" = "STALE" ]; then
-    t_pass "shared cache schema: freshness uses the read descriptor's mtime, not a re-stat"
+    t_pass "shared cache schema: freshness binds to the bytes read, not the pathname"
 else
-    t_fail "shared cache schema: bound-mtime freshness gave '$CS_TOCTOU' (want STALE)"
+    t_fail "shared cache schema: bound-bytes freshness gave '$CS_TOCTOU' (want STALE)"
+fi
+
+# 23k4b: AND THE HAPPY PATH IS REAL. A fixture that refuses for the right
+# reason proves nothing if it also refuses for every other reason, so assert
+# that the SAME cache with its own bytes and its own binding is accepted.
+CS_FRESH=$(python3 -c "
+import pathlib, sys
+sys.path.insert(0, '$REPO_ROOT/scripts/todo-graph')
+import cache_schema as cs
+p = pathlib.Path('$CS_TREE/build/good.json')
+try:
+    cs.check_freshness(p, '$CS_TREE/todo', cache_bytes=p.read_bytes())
+    print('FRESH')
+except cs.CacheSchemaError as e:
+    print(e.reason, e)
+" 2>&1)
+if [ "$CS_FRESH" = "FRESH" ]; then
+    t_pass "shared cache schema: a correctly bound cache is accepted"
+else
+    t_fail "shared cache schema: bound cache gave '$CS_FRESH' (want FRESH)"
+fi
+
+# 23k4c: A MISSING BINDING IS STALE, NOT FRESH. A cache copied without its
+# sidecar, or one produced before section 21, carries no statement about the
+# corpus it was built from -- and "no evidence" is a rebuild condition, not a
+# pass. This is the fail-closed direction the pre-section-17 lint got wrong
+# three separate ways.
+CS_UNBOUND=$(python3 -c "
+import pathlib, shutil, sys
+sys.path.insert(0, '$REPO_ROOT/scripts/todo-graph')
+import cache_schema as cs
+src = pathlib.Path('$CS_TREE/build/good.json')
+dst = pathlib.Path('$CS_TREE/build/unbound.json')
+shutil.copyfile(src, dst)          # the cache, without its binding
+try:
+    cs.check_freshness(dst, '$CS_TREE/todo', cache_bytes=dst.read_bytes())
+    print('NORAISE')
+except cs.CacheSchemaError as e:
+    print(e.reason)
+" 2>&1)
+if [ "$CS_UNBOUND" = "STALE" ]; then
+    t_pass "shared cache schema: a cache with no corpus binding is refused"
+else
+    t_fail "shared cache schema: unbound cache gave '$CS_UNBOUND' (want STALE)"
 fi
 
 # 23k5: A MemoryError ANYWHERE IN THE LOAD is a documented reason, not rc 1.
@@ -7316,7 +7401,8 @@ class BoomFile:
     def fileno(self): return self._fh.fileno()
     def read(self, *a): raise MemoryError('injected')
     def close(self): return self._fh.close()
-builtins.open = lambda *a, **k: BoomFile(real_open(*a, **k))
+builtins.open = lambda *a, **k: (BoomFile(real_open(*a, **k))
+    if str(a[0]).endswith('good.json') else real_open(*a, **k))
 try:
     cs.load_and_validate('$CS_TREE/build/good.json', '$CS_TREE/todo')
     print('NORAISE')
@@ -7331,62 +7417,61 @@ else
     t_fail "shared cache schema: injected MemoryError gave '$CS_OOM' (want UNREADABLE)"
 fi
 
-# 23k6: THE TODO CORPUS IS GENERATION-BOUND. A file edited AFTER the freshness
-# walk has already visited it was invisible to the old running max(): its new
-# mtime could not raise `newest`, the cache need not change, and both readers
-# walked stale nodes and produced a VERDICT. Two scans compared as whole sets
-# catch it -- and also catch a TODO added or removed mid-walk, which a running
-# maximum structurally cannot see. Injected by mutating the corpus from inside
-# the walk's own stat call.
+# 23k6: THE TODO CORPUS IS GENERATION-BOUND. The freshness scan is not
+# instantaneous -- it hashes the corpus file by file -- so a TODO that changed
+# before the scan reaches it must be SEEN, or a reader certifies a cache against
+# a corpus it no longer matches. (A TODO that changes AFTER it is hashed is
+# caught by the post-walk re-verification in 23k7, which is the window that
+# actually matters.) Injected by rewriting the file the scan is about to hash,
+# from inside that hash -- which is order-independent, unlike picking a "later"
+# file out of an os.walk whose order is not defined.
 CS_GEN=$(python3 -c "
-import os, sys
+import pathlib, sys
 sys.path.insert(0, '$REPO_ROOT/scripts/todo-graph')
 import cache_schema as cs
-real_stat = os.stat
-state = {'n': 0}
-def hooked(path, *a, **k):
-    st = real_stat(path, *a, **k)
-    # On the FIRST TODO statted, touch it afterwards -- i.e. a file already
-    # visited by this walk changes before the walk finishes.
-    if state['n'] == 0 and str(path).endswith('.md'):
-        state['n'] = 1
-        os.utime(path, (st.st_atime + 50, st.st_mtime + 50))
-    return st
-os.stat = hooked
+real = cs.file_digest
+state = {'victim': None, 'original': None}
+def hooked(path):
+    if state['victim'] is None:
+        state['victim'] = pathlib.Path(path)
+        state['original'] = state['victim'].read_text()
+        state['victim'].write_text(state['original'] + '\nchanged before the scan reached it\n')
+    return real(path)
+cs.file_digest = hooked
 try:
-    cs.check_freshness('$CS_TREE/build/good.json', '$CS_TREE/todo', cache_mtime=9e12)
-    print('NORAISE')
+    p = pathlib.Path('$CS_TREE/build/good.json')
+    cs.check_freshness(p, '$CS_TREE/todo', cache_bytes=p.read_bytes())
+    print('NORAISE' if state['victim'] else 'NOTINJECTED')
 except cs.CacheSchemaError as e:
-    print(e.reason)
+    print(e.reason if state['victim'] else 'NOTINJECTED')
 finally:
-    os.stat = real_stat
+    cs.file_digest = real
+    if state['victim'] is not None:
+        state['victim'].write_text(state['original'])
 " 2>&1)
 if [ "$CS_GEN" = "STALE" ]; then
-    t_pass "shared cache schema: a TODO changing mid-walk refuses instead of certifying"
+    t_pass "shared cache schema: a TODO changing mid-scan refuses instead of certifying"
 else
-    t_fail "shared cache schema: mid-walk corpus mutation gave '$CS_GEN' (want STALE)"
+    t_fail "shared cache schema: mid-scan corpus mutation gave '$CS_GEN' (want STALE)"
 fi
-# The injection bumped a fixture TODO's mtime; keep the cache newer than it.
-touch "$CS_TREE/build/good.json" "$CS_TREE/build/case.json"
 
-# 23k7: THE POST-WALK CORPUS RE-VERIFICATION. The two adjacent scans inside
-# check_freshness bound only their own few milliseconds; the window that
-# matters is the caller's ~1s resolution walk. check_corpus_unchanged is what
-# callers run once that walk finishes, so a TODO edited DURING the walk yields
-# an infrastructure refusal instead of a verdict over stale nodes.
-# The mutation moves the TODO mtime BACKWARD, never forward: a future-dated
-# TODO would leave the cache looking stale to every fixture after this one
-# (which is exactly what it did on first run -- two later sub-tests failed with
-# STALE before reaching what they were testing).
+# 23k7: THE POST-WALK CORPUS RE-VERIFICATION. `check_freshness` proves the cache
+# matches the corpus at ONE instant; the window that matters is the caller's ~1s
+# resolution walk after it. check_corpus_unchanged is what callers run once that
+# walk finishes, so a TODO edited DURING the walk yields an infrastructure
+# refusal instead of a verdict over stale nodes.
+# THE MUTATION IS A CONTENT EDIT, not an mtime bump: the fingerprint is a
+# content digest since section 21, so back-dating or touching a file is
+# correctly NOT a change and would leave this fixture asserting nothing. The
+# TODO stays edited; the bind_cache calls below reissue the bindings for it.
 CS_POST=$(python3 -c "
-import os, sys
+import pathlib, sys
 sys.path.insert(0, '$REPO_ROOT/scripts/todo-graph')
 import cache_schema as cs
-todo = '$CS_TREE/todo/01-test/TODO-01-cs.md'
+todo = pathlib.Path('$CS_TREE/todo/01-test/TODO-01-cs.md')
 corpus = cs._scan_corpus('$CS_TREE/todo', lambda e: None)
 # The caller's walk happens here; a TODO changes during it.
-st = os.stat(todo)
-os.utime(todo, (st.st_atime - 100, st.st_mtime - 100))
+todo.write_text(todo.read_text() + '\nedited during the walk\n')
 try:
     cs.check_corpus_unchanged('$CS_TREE/todo', corpus)
     print('NORAISE')
@@ -7411,7 +7496,8 @@ if [ "$CS_POST_NONE" = "NOOP" ]; then
 else
     t_fail "shared cache schema: None fingerprint gave '$CS_POST_NONE' (want NOOP)"
 fi
-touch "$CS_TREE/build/good.json" "$CS_TREE/build/case.json"
+bind_cache "$CS_TREE/build/good.json" "$CS_TREE/todo"
+bind_cache "$CS_TREE/build/case.json" "$CS_TREE/todo"
 
 # 23k8: A RAISING close() must not escape, and must not MASK an in-flight
 # CacheSchemaError. Bare fh.close() in the finally sat outside every OSError
@@ -7429,7 +7515,8 @@ class BadClose:
     def read(self, *a): return self._fh.read(*a)
     def close(self):
         self._fh.close(); raise OSError('injected close failure')
-builtins.open = lambda *a, **k: BadClose(real_open(*a, **k))
+builtins.open = lambda *a, **k: (BadClose(real_open(*a, **k))
+    if str(a[0]).endswith('good.json') else real_open(*a, **k))
 try:
     cs.load_and_validate('$CS_TREE/build/good.json', '$CS_TREE/todo')
     print('NORAISE')
@@ -7461,7 +7548,8 @@ class BadClose:
     def read(self, *a): return self._fh.read(*a)
     def close(self):
         self._fh.close(); raise OSError('injected close failure')
-builtins.open = lambda *a, **k: BadClose(real_open(*a, **k))
+builtins.open = lambda *a, **k: (BadClose(real_open(*a, **k))
+    if str(a[0]).endswith('good.json') else real_open(*a, **k))
 try:
     raise ValueError('an unrelated outer failure')
 except ValueError:
@@ -7553,7 +7641,7 @@ doc = json.load(open(sys.argv[1]))
 doc[0]["stamped_items"] = {}
 json.dump(doc, open(sys.argv[2], "w"))
 PY
-touch "$CS_TREE/build/mut.json"
+bind_cache "$CS_TREE/build/mut.json" "$CS_TREE/todo"
 STUB_LINT_CACHE="$CS_TREE/build/mut.json" STUB_LINT_REPO_ROOT="$CS_TREE" \
     STUB_LINT_ALLOW_NO_BASELINE=1 \
     python3 "$CS_MUT/scripts/lint/check_stub_behind_stamp.py" \
@@ -7799,7 +7887,7 @@ MD
 rr_case() {
     local label="$1" content="$2" want="$3"
     printf '%s' "$content" > "$RR_TREE/build/todo-cache.json"
-    touch "$RR_TREE/build/todo-cache.json"
+    bind_cache "$RR_TREE/build/todo-cache.json" "$RR_TREE/todo"
     ( cd "$RR_TREE" && python3 "$REPO_ROOT/scripts/todo-reachability.py" \
         "$RR_TREE/todo/01-test/TODO-01-rr.md" ) >/dev/null 2>&1
     local rc=$?
@@ -8252,6 +8340,360 @@ case "$RR_CONST" in
     OK) t_pass "routed reader: subtrees named by the shared SUBTREE_* constants, no retyped literals" ;;
     *) t_fail "routed reader: retyped subtree literal -- $RR_CONST" ;;
 esac
+
+# ----------------------------------------------------------------------
+# 25: THE PRODUCER GENERATION WINDOW (section 21).
+#
+# Section 17 made both READERS generation-bound and could not close the mirror
+# image: `build.py` reads a TODO, that TODO changes, and `build.py` then
+# publishes a cache whose newer mtime made the already-stale node look FRESH to
+# every freshness test -- legitimately, because the cache really was newer. The
+# refusal has to live in the producer, and these fixtures are what prove it does.
+#
+# THE MUTATION IS THE POINT. Each case is re-run against a COPY of build.py with
+# the re-verification deleted, and the fixture must FAIL there. A refusal fixture
+# that also passes against a producer with no refusal in it is measuring the
+# exit code of something else.
+# ----------------------------------------------------------------------
+PW_TREE="$TMP_DIR/producer-window"
+mkdir -p "$PW_TREE/todo/01-test" "$PW_TREE/build" "$PW_TREE/mut/scripts/todo-graph"
+cat > "$PW_TREE/todo/01-test/TODO-01-pw.md" <<'MD'
+---
+id: todo-01-pw
+schema_version: 1
+domain: 01-test
+status: active
+title: producer window fixture
+---
+# TODO-01 producer-window fixture
+
+## 1. Section
+- [x] shipped a thing
+MD
+cat > "$PW_TREE/todo/01-test/TODO-02-pw.md" <<'MD'
+---
+id: todo-02-pw
+schema_version: 1
+domain: 01-test
+status: active
+title: producer window fixture two
+---
+# TODO-02 producer-window fixture
+
+## 1. Section
+- [x] shipped another thing
+MD
+
+# The mutant producer: the same file with the corpus re-verification removed.
+# Copied, never edited in place -- a harness that restores with `git checkout`
+# destroys uncommitted work, which this repo has paid for once already.
+cp "$REPO_ROOT/scripts/todo-graph/build.py" "$PW_TREE/mut/scripts/todo-graph/build.py"
+cp "$REPO_ROOT/scripts/todo-graph/cache_schema.py" "$PW_TREE/mut/scripts/todo-graph/cache_schema.py"
+PW_MUT_OK=$(python3 - "$PW_TREE/mut/scripts/todo-graph/build.py" <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+src = p.read_text()
+needle = "        _cs.check_corpus_unchanged(todo_root, consumed)\n"
+if needle not in src:
+    print("STALE-NEEDLE")
+else:
+    p.write_text(src.replace(needle, "        pass\n", 1))
+    print("OK")
+PY
+)
+if [ "$PW_MUT_OK" != "OK" ]; then
+    t_fail "producer window: mutation could not be applied (stale needle: $PW_MUT_OK)"
+fi
+
+# pw_run <producer-build.py> <mutation-python> -> prints "<rc>|<cache-sha-or-NONE>"
+#
+# The mutation runs from inside `build_node`, i.e. after that file's bytes have
+# been read and before the cache is published -- exactly the window under test.
+# It is handed the CALL INDEX (`n`, 1-based) plus both TODO paths and their
+# original text, because WHICH call fires is the whole distinction between the
+# cases: mutating a file the pass has already consumed is 25a, while mutating
+# one it has not reached yet and restoring it afterwards is the ABA sequence.
+# `walk_todo_files` sorts, so call 1 is TODO-01 and call 2 is TODO-02.
+pw_run() {
+    PW_BUILD="$1" PW_TREE="$PW_TREE" PW_MUT="$2" python3 - <<'PY'
+import hashlib, importlib.util, os, pathlib, sys
+build_py = os.environ["PW_BUILD"]
+tree = pathlib.Path(os.environ["PW_TREE"])
+sys.path.insert(0, str(pathlib.Path(build_py).parent))
+spec = importlib.util.spec_from_file_location("pw_build", build_py)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+t1 = tree / "todo/01-test/TODO-01-pw.md"
+t2 = tree / "todo/01-test/TODO-02-pw.md"
+o1, o2 = t1.read_text(), t2.read_text()
+real = mod.build_node
+state = {"n": 0}
+def hooked(file_path, *a, **k):
+    state["n"] += 1
+    exec(os.environ["PW_MUT"],
+         {"n": state["n"], "t1": t1, "t2": t2, "o1": o1, "o2": o2})
+    return real(file_path, *a, **k)
+mod.build_node = hooked
+out = tree / "build/todo-cache.json"
+sys.argv = ["build.py", "--quiet", "--root", str(tree / "todo"),
+            "--repo-root", str(tree), "--output", str(out)]
+try:
+    rc = mod.main()
+finally:
+    t1.write_text(o1)
+    t2.write_text(o2)
+sha = (hashlib.sha256(out.read_bytes()).hexdigest()[:16] if out.exists() else "NONE")
+print(f"{rc}|{sha}")
+PY
+}
+
+# Seed a good cache so "the previous cache survives byte-identical" is testable.
+python3 "$REPO_ROOT/scripts/todo-graph/build.py" --quiet \
+    --root "$PW_TREE/todo" --repo-root "$PW_TREE" \
+    --output "$PW_TREE/build/todo-cache.json" >/dev/null 2>&1
+PW_BEFORE=$(sha256sum "$PW_TREE/build/todo-cache.json" | cut -c1-16)
+PW_BINDINGS_BEFORE=$(ls "$PW_TREE/build/" | grep -c 'corpus-' || true)
+
+# 25a: A TODO CHANGED MID-BUILD IS REFUSED AT rc 3, AND NOTHING IS WRITTEN.
+PW_A=$(pw_run "$REPO_ROOT/scripts/todo-graph/build.py" \
+    "t1.write_text(o1 + '\n- [ ] appeared mid-build\n') if n == 2 else None")
+PW_AFTER=$(sha256sum "$PW_TREE/build/todo-cache.json" | cut -c1-16)
+# THE BINDING IS PART OF "UNTOUCHED". A refusal that left the cache intact but
+# removed or replaced its binding would leave a cache no reader can read -- the
+# window widened, not closed. PW_BINDINGS_BEFORE was recorded and never asserted
+# until Codex pointed it out (section 21, [medium]).
+PW_BINDINGS_AFTER=$(ls "$PW_TREE/build/" | grep -c 'corpus-' || true)
+PW_BOUND_OK=$([ -f "$PW_TREE/build/todo-cache.json.corpus-$PW_BEFORE.json" ] && echo yes || echo no)
+if [ "$PW_A" = "3|$PW_BEFORE" ] && [ "$PW_AFTER" = "$PW_BEFORE" ] \
+        && [ "$PW_BOUND_OK" = "yes" ] && [ "$PW_BINDINGS_AFTER" = "$PW_BINDINGS_BEFORE" ]; then
+    t_pass "producer window: a TODO changed mid-build refuses at rc 3, prior cache AND binding untouched"
+else
+    t_fail "producer window: mid-build change gave '$PW_A' (want '3|$PW_BEFORE'), cache now $PW_AFTER (was $PW_BEFORE), binding present=$PW_BOUND_OK, bindings $PW_BINDINGS_AFTER (was $PW_BINDINGS_BEFORE)"
+fi
+
+# 25b: THE ABA CASE -- changed to B, read as B, restored to A before the check.
+# Boundary scans compared to each other pass this: both see A. Only a
+# fingerprint taken from the bytes actually CONSUMED sees that B was parsed.
+PW_B=$(pw_run "$REPO_ROOT/scripts/todo-graph/build.py" \
+    "t2.write_text(o2 + '\n- [ ] B\n') if n == 1 else t2.write_text(o2)")
+if [ "${PW_B%%|*}" = "3" ]; then
+    t_pass "producer window: the ABA sequence (A -> B -> A) is refused, not certified"
+else
+    t_fail "producer window: ABA sequence gave '$PW_B' (want rc 3)"
+fi
+
+# 25c: THE MUTATION. The same two cases against a producer whose re-verification
+# was deleted must SUCCEED -- if they still refuse, these fixtures are measuring
+# something other than the check they claim to.
+PW_MA=$(pw_run "$PW_TREE/mut/scripts/todo-graph/build.py" \
+    "t1.write_text(o1 + '\n- [ ] appeared mid-build\n') if n == 2 else None")
+if [ "${PW_MA%%|*}" = "0" ]; then
+    t_pass "producer window: mutation check -- deleting the re-verify makes 25a pass a stale cache"
+else
+    t_fail "producer window: MUTATION SURVIVED -- mutant producer gave '$PW_MA' (want rc 0)"
+fi
+# 25c2: AND A MUTANT THAT ISOLATES THE ABA PROPERTY. Deleting the re-verify
+# outright (25c) shows the check exists; it does not show WHERE the fingerprint
+# comes from. This mutant keeps the re-verify and only moves the fingerprint
+# back to a scan taken BEFORE the extraction pass -- the boundary-scan design.
+# 25a must still refuse there (the file stays changed, so the two scans differ),
+# while the ABA case must slip through (both scans see A). If 25b passes against
+# this mutant too, it is not testing what it claims.
+cp "$REPO_ROOT/scripts/todo-graph/build.py" "$PW_TREE/mut/scripts/todo-graph/build-aba.py"
+PW_ABA_OK=$(python3 - "$PW_TREE/mut/scripts/todo-graph/build-aba.py" <<'PY'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+src = p.read_text()
+hashline = "        consumed[rel_key] = hashlib.sha256(raw_bytes).hexdigest()\n"
+initline = "    consumed = {}\n"
+prescan = "    consumed = _cs._scan_corpus(todo_root, lambda e: None)\n"
+if hashline not in src or initline not in src:
+    print("STALE-NEEDLE")
+else:
+    src = src.replace(hashline, "        pass\n", 1)
+    src = src.replace(initline, prescan, 1)
+    p.write_text(src)
+    print("OK")
+PY
+)
+if [ "$PW_ABA_OK" != "OK" ]; then
+    t_fail "producer window: ABA mutation could not be applied (stale needle: $PW_ABA_OK)"
+fi
+PW_MB=$(pw_run "$PW_TREE/mut/scripts/todo-graph/build-aba.py" \
+    "t2.write_text(o2 + '\n- [ ] B\n') if n == 1 else t2.write_text(o2)")
+PW_MB2=$(pw_run "$PW_TREE/mut/scripts/todo-graph/build-aba.py" \
+    "t1.write_text(o1 + '\n- [ ] appeared mid-build\n') if n == 2 else None")
+if [ "${PW_MB%%|*}" = "0" ] && [ "${PW_MB2%%|*}" = "3" ]; then
+    t_pass "producer window: mutation check -- a boundary-scan fingerprint lets the ABA sequence through"
+else
+    t_fail "producer window: ABA MUTATION SURVIVED -- boundary-scan mutant gave ABA='$PW_MB' (want rc 0), mid-build='$PW_MB2' (want rc 3)"
+fi
+
+# Restore the good cache the mutant just overwrote.
+python3 "$REPO_ROOT/scripts/todo-graph/build.py" --quiet \
+    --root "$PW_TREE/todo" --repo-root "$PW_TREE" \
+    --output "$PW_TREE/build/todo-cache.json" >/dev/null 2>&1
+
+# 25d: THE PUBLISHED PAIR IS SELF-DESCRIBING, and old bindings do not pile up.
+# Digest-named bindings are what let the sidecar be written BEFORE the cache
+# without a two-file transaction, so exactly one must survive each publish.
+PW_SHA=$(sha256sum "$PW_TREE/build/todo-cache.json" | cut -c1-16)
+PW_N=$(ls "$PW_TREE/build/" | grep -c 'corpus-' || true)
+if [ -f "$PW_TREE/build/todo-cache.json.corpus-$PW_SHA.json" ] && [ "$PW_N" = "1" ]; then
+    t_pass "producer window: the binding is named for the cache it describes, one per publish"
+else
+    t_fail "producer window: binding for $PW_SHA missing or $PW_N bindings present (want 1)"
+fi
+
+# 25e: AND THE PUBLISHED PAIR IS ACCEPTED BY THE READERS. Every case above is a
+# refusal; without this one they would all still pass against a producer that
+# refused unconditionally.
+PW_READ=$(python3 -c "
+import pathlib, sys
+sys.path.insert(0, '$REPO_ROOT/scripts/todo-graph')
+import cache_schema as cs
+p = pathlib.Path('$PW_TREE/build/todo-cache.json')
+try:
+    cs.check_freshness(p, '$PW_TREE/todo', cache_bytes=p.read_bytes())
+    print('FRESH')
+except cs.CacheSchemaError as e:
+    print(e.reason, e)
+" 2>&1)
+if [ "$PW_READ" = "FRESH" ]; then
+    t_pass "producer window: a cache this producer published is accepted by the shared reader"
+else
+    t_fail "producer window: freshly built cache gave '$PW_READ' (want FRESH)"
+fi
+
+# 25f: HISTORY IS BOUND TOO. `created_at`/`last_active_at` come from the
+# corpus-limited git log, so identical BYTES over a moved history still means
+# stale nodes -- a content-only binding would certify it (Codex design review,
+# section 21, [high]).
+#
+# THE HISTORY IS MOVED FOR REAL, not by editing the recorded field. Rewriting
+# the sidecar to a sentinel proves only that two strings compare unequal, which
+# is true of any field and would pass against a binding that recorded something
+# irrelevant (Codex adversarial, section 21, [medium]).
+PW_GIT="$TMP_DIR/producer-window-git"
+mkdir -p "$PW_GIT/build"
+cp -r "$PW_TREE/todo" "$PW_GIT/todo"
+(
+    cd "$PW_GIT" || exit 1
+    git init -q . && git config user.email "t@example.invalid" \
+        && git config user.name "producer window fixture" \
+        && git add -A && git commit -q --no-verify -m "corpus"
+) >/dev/null 2>&1
+python3 "$REPO_ROOT/scripts/todo-graph/build.py" --quiet \
+    --root "$PW_GIT/todo" --repo-root "$PW_GIT" \
+    --output "$PW_GIT/build/todo-cache.json" >/dev/null 2>&1
+PW_GIT_FRESH=$(python3 -c "
+import pathlib, sys
+sys.path.insert(0, '$REPO_ROOT/scripts/todo-graph')
+import cache_schema as cs
+p = pathlib.Path('$PW_GIT/build/todo-cache.json')
+try:
+    cs.check_freshness(p, '$PW_GIT/todo', cache_bytes=p.read_bytes())
+    print('FRESH')
+except cs.CacheSchemaError as e:
+    print(e.reason)
+" 2>&1)
+# A commit that touches the corpus WITHOUT changing any TODO byte: the content
+# fingerprint is identical afterwards, so only the history binding can see it.
+(
+    cd "$PW_GIT" || exit 1
+    # Edit and commit, then revert and commit: two commits touching the corpus,
+    # and a working tree byte-identical to the one the cache was built from. The
+    # content fingerprint cannot see this; last_active_at moved regardless.
+    printf '\n- [ ] briefly\n' >> todo/01-test/TODO-02-pw.md
+    git commit -q --no-verify -am "corpus edit" \
+        && git revert -q --no-edit HEAD
+) >/dev/null 2>&1
+PW_HIST=$(python3 -c "
+import pathlib, sys
+sys.path.insert(0, '$REPO_ROOT/scripts/todo-graph')
+import cache_schema as cs
+p = pathlib.Path('$PW_GIT/build/todo-cache.json')
+try:
+    cs.check_freshness(p, '$PW_GIT/todo', cache_bytes=p.read_bytes())
+    print('NORAISE')
+except cs.CacheSchemaError as e:
+    print(e.reason)
+" 2>&1)
+if [ "$PW_GIT_FRESH" = "FRESH" ] && [ "$PW_HIST" = "STALE" ]; then
+    t_pass "producer window: a moved corpus git history refuses even on identical bytes"
+else
+    t_fail "producer window: history binding gave before='$PW_GIT_FRESH' (want FRESH), after='$PW_HIST' (want STALE)"
+fi
+
+# 25g: AN EMPTY CORPUS IS REFUSED BY THE PRODUCER, not just by readers.
+# check_freshness always refused to certify a cache against an empty corpus, so
+# a producer that published `[]` emitted an artifact every reader rejects -- the
+# two halves of one rule disagreeing (Codex adversarial, section 21, [high]).
+mkdir -p "$TMP_DIR/pw-empty/todo" "$TMP_DIR/pw-empty/build"
+python3 "$REPO_ROOT/scripts/todo-graph/build.py" --quiet \
+    --root "$TMP_DIR/pw-empty/todo" --repo-root "$TMP_DIR/pw-empty" \
+    --output "$TMP_DIR/pw-empty/build/todo-cache.json" >/dev/null 2>&1
+PW_EMPTY_RC=$?
+if [ "$PW_EMPTY_RC" = "3" ] && [ ! -f "$TMP_DIR/pw-empty/build/todo-cache.json" ]; then
+    t_pass "producer window: an empty corpus is refused at rc 3 with nothing written"
+else
+    t_fail "producer window: empty corpus gave rc=$PW_EMPTY_RC (want 3), cache present=$([ -f "$TMP_DIR/pw-empty/build/todo-cache.json" ] && echo yes || echo no)"
+fi
+
+# 25h: A NON-REGULAR CORPUS ENTRY IS REFUSED, not read. os.walk reports a
+# symlink to a FIFO as an ordinary file, so hashing it would block every reader
+# forever -- a denial of service needing no overflow or overread (Codex
+# adversarial, section 21, [medium]).
+PW_FIFO="$TMP_DIR/pw-fifo"
+mkdir -p "$PW_FIFO/todo/01-test"
+cp "$PW_TREE/todo/01-test/TODO-01-pw.md" "$PW_FIFO/todo/01-test/TODO-01-pw.md"
+mkfifo "$PW_FIFO/pipe" 2>/dev/null && ln -s "$PW_FIFO/pipe" "$PW_FIFO/todo/01-test/TODO-99-fifo.md"
+if [ -p "$PW_FIFO/pipe" ]; then
+    PW_FIFO_OUT=$(timeout 20 python3 -c "
+import sys
+sys.path.insert(0, '$REPO_ROOT/scripts/todo-graph')
+import cache_schema as cs
+try:
+    cs._scan_corpus('$PW_FIFO/todo', lambda e: None)
+    print('NORAISE')
+except cs.CacheSchemaError as e:
+    print(e.reason)
+" 2>&1)
+    PW_FIFO_RC=$?
+    if [ "$PW_FIFO_OUT" = "STALE" ]; then
+        t_pass "producer window: a corpus entry that is not a regular file is refused, not read"
+    elif [ "$PW_FIFO_RC" = "124" ]; then
+        t_fail "producer window: hashing a FIFO corpus entry HUNG (timed out) -- the type check is missing"
+    else
+        t_fail "producer window: FIFO corpus entry gave '$PW_FIFO_OUT' (want STALE)"
+    fi
+else
+    t_pass "producer window: FIFO corpus case skipped (mkfifo unavailable on this filesystem)"
+fi
+
+# 25i: THE WRAPPER PROPAGATES build.py STATUS. build-and-validate.sh flattened
+# every nonzero result to 1 while its own header promised propagation, which
+# makes a RETRYABLE rc 3 (the corpus moved) indistinguishable from a rc 1 that
+# will fail identically forever (Codex adversarial, section 21, [medium]).
+# Driven with a stub producer so the assertion is about the WRAPPER, and so it
+# cannot be satisfied by whatever the real corpus happens to do today.
+BV_TREE="$TMP_DIR/bv-propagate"
+mkdir -p "$BV_TREE/scripts/todo-graph" "$BV_TREE/build"
+cp "$REPO_ROOT/scripts/todo-graph/build-and-validate.sh" "$BV_TREE/scripts/todo-graph/"
+cp "$REPO_ROOT/scripts/todo-graph/validate.py" "$BV_TREE/scripts/todo-graph/"
+bv_rc_for() {   # bv_rc_for <exit-code-the-stub-producer-returns>
+    printf '#!/usr/bin/env python3\nimport sys\nsys.exit(%s)\n' "$1" \
+        > "$BV_TREE/scripts/todo-graph/build.py"
+    bash "$BV_TREE/scripts/todo-graph/build-and-validate.sh" >/dev/null 2>&1
+    echo $?
+}
+BV_3=$(bv_rc_for 3)
+BV_1=$(bv_rc_for 1)
+if [ "$BV_3" = "3" ] && [ "$BV_1" = "1" ]; then
+    t_pass "producer window: build-and-validate.sh propagates build.py exit status (3 stays 3)"
+else
+    t_fail "producer window: wrapper flattened build.py status -- rc3 -> '$BV_3' (want 3), rc1 -> '$BV_1' (want 1)"
+fi
 
 # ----------------------------------------------------------------------
 # Summary

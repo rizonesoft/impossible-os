@@ -23,9 +23,9 @@
 # WHY RESOLUTION TIME AND NOT EXTRACTION. Both repairs below are functions of
 # the SOURCE TREE (which basenames are unique, which of a section's files
 # defines a symbol), while `build.py`'s extraction is a pure function of
-# (TODO body, TODO path) and the cache's freshness check compares the cache
-# mtime against `todo/**/*.md` ONLY (`cache_schema.check_freshness`, shared by
-# both cache readers since section 17).
+# (TODO body, TODO path) and the cache's freshness check compares a recorded
+# fingerprint of `todo/**/*.md` ONLY (`cache_schema.check_freshness`, shared by
+# both cache readers since section 17; content-based since section 21).
 # Storing a tree-derived path in the cache would therefore create a claim that
 # goes stale on a source edit with nothing able to notice: add a second file
 # with the same basename, move the selected target, or move a definition out of

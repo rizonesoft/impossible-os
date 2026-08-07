@@ -22,6 +22,10 @@
 #   1  any file's frontmatter is malformed (file:line + category printed to
 #      stderr); cache file is NOT written so a partial cache cannot mask a
 #      regression
+#   3  the corpus moved underneath this run (a TODO changed between being read
+#      and the cache being published, or the corpus git history moved). Nothing
+#      is written and any previous cache is left byte-identical -- see
+#      "THE PRODUCER GENERATION WINDOW" below.
 #
 # Performance target: under 2s wall-clock for ~86 TODO files. Strategy:
 #   - Single batched `git log` call gets created_at + last_active_at
@@ -34,13 +38,23 @@
 # ============================================================================
 
 import argparse
+import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import Optional
+
+# The corpus fingerprint rule is SHARED with every reader rather than restated
+# here. Two implementations of "has the corpus moved" that can disagree is a
+# worse defect than the window this closes, so the producer records exactly what
+# `cache_schema._scan_corpus` computes and `cache_schema.check_freshness` reads.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import cache_schema as _cs  # noqa: E402
 
 try:
     import yaml
@@ -1024,6 +1038,89 @@ def build_node(file_path: Path, repo_root: Path, timestamps: dict, content: str)
 # --- main ---------------------------------------------------------------
 
 
+def _publish_atomically(path: Path, blob: bytes) -> None:
+    """Write `blob` to `path` so no reader can ever observe a partial file.
+
+    `Path.write_text` truncates in place, so a reader that opened the cache
+    mid-write got a prefix of it, and a producer killed mid-write left a
+    permanently corrupt one. The temp file is created in the SAME directory so
+    `os.replace` is a rename within one filesystem (atomic); fsync before the
+    rename so a crash cannot leave the rename durable while the bytes are not.
+    """
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.")
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(blob)
+            fh.flush()
+            os.fsync(fh.fileno())
+        # `mkstemp` opens 0600 by design, and `os.replace` PRESERVES the source
+        # mode -- so switching from `write_text` to this silently made the cache
+        # owner-only. It is a shared build artifact read by lint checks, the
+        # snapshot, and CI, so restore the ordinary create mode under the
+        # process umask rather than inheriting the temp file's.
+        umask = os.umask(0)
+        os.umask(umask)
+        os.chmod(tmp, 0o666 & ~umask)
+        os.replace(tmp, path)
+        # FSYNC THE DIRECTORY, not just the file. `os.replace` durability is a
+        # property of the DIRECTORY ENTRY: without this a crash could persist
+        # the cache's rename while the binding's earlier rename is still only in
+        # the page cache, which is exactly the mismatched pair that writing the
+        # binding first is meant to make impossible (Codex adversarial, section
+        # 21, [high]).
+        _fsync_dir(path.parent)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _fsync_dir(d: Path) -> None:
+    """Best-effort directory fsync; not every filesystem supports it."""
+    try:
+        fd = os.open(str(d), os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+    finally:
+        os.close(fd)
+
+
+def _prune_stale_bindings(cache_path: Path) -> None:
+    """Drop corpus bindings for cache generations that are no longer published.
+
+    Immutable, digest-named bindings would otherwise accumulate one file per
+    build. BEST-EFFORT ON PURPOSE: a binding that cannot be removed is garbage,
+    never a correctness problem, and failing the build over it would turn a
+    successful publish into a refusal after the fact.
+
+    THE KEEPER IS DERIVED FROM THE CACHE ON DISK, NOT FROM WHAT THIS PROCESS
+    JUST WROTE (Codex adversarial, section 21, [high]). Two concurrent builds
+    interleave -- A publishes, B publishes, A prunes -- and a prune that kept
+    "my own binding" would delete B's while B's cache is the one on disk,
+    leaving the published cache unreadable until somebody rebuilt. Re-reading
+    here means A keeps whatever generation actually won. The remaining window is
+    one read plus one unlink rather than the whole publish, and its failure mode
+    is a reader REFUSAL, never a wrong answer.
+    """
+    try:
+        live = _cs.sidecar_path(
+            cache_path, hashlib.sha256(cache_path.read_bytes()).hexdigest())
+        for p in cache_path.parent.glob(f"{cache_path.name}.corpus-*.json"):
+            if p != live:
+                try:
+                    p.unlink()
+                except OSError:
+                    pass
+    except OSError:
+        return
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Build the TODO graph cache from todo/**/*.md frontmatter + structure."
@@ -1081,6 +1178,24 @@ def main():
     nodes = []
     fatal_errors = 0
     warnings = 0
+    # THE FINGERPRINT IS TAKEN FROM THE BYTES THIS PASS ACTUALLY CONSUMES, not
+    # from a separate scan bracketing it. A pre-scan plus a post-scan proves
+    # only that the corpus looked the same at two instants: a file that changed
+    # to B, was read as B, and was restored to A before the post-scan compares
+    # EQUAL, and the cache is then published with nodes built from B and a
+    # binding claiming A (Codex design review, section 21, [high] -- the ABA
+    # race). Hashing the exact bytes handed to `build_node` makes the recorded
+    # map a statement about what was parsed, so that restoration shows up as the
+    # mismatch it is.
+    consumed = {}
+    # A history id that cannot be determined RAISES rather than reporting
+    # None, so an indeterminate git failure refuses the build instead of
+    # producing a cache whose derived timestamps nothing can vouch for.
+    try:
+        history_id = _cs.corpus_history_id(todo_root)
+    except _cs.CacheSchemaError as exc:
+        sys.stderr.write(f"[build.py] FAIL: {exc}; cache NOT written\n")
+        return 3
 
     for f in files:
         # Compute display path: relative to repo_root when possible,
@@ -1090,11 +1205,14 @@ def main():
         except ValueError:
             display_rel = f.name
         try:
-            content = f.read_text(encoding="utf-8")
+            raw_bytes = f.read_bytes()
+            content = raw_bytes.decode("utf-8")
         except Exception as exc:
             sys.stderr.write(f"[build.py] FAIL {display_rel}: read error: {exc}\n")
             fatal_errors += 1
             continue
+        rel_key = f.relative_to(todo_root).as_posix()
+        consumed[rel_key] = hashlib.sha256(raw_bytes).hexdigest()
 
         node, errors = build_node(f, repo_root, timestamps, content)
         rel = display_rel
@@ -1118,14 +1236,67 @@ def main():
     # Sort nodes by file_path for deterministic output (idempotency).
     nodes.sort(key=lambda n: n["file_path"])
 
+    # ---------------------------------------------------------------------
+    # THE PRODUCER GENERATION WINDOW (section 21).
+    #
+    # Section 17 made both READERS generation-bound. The producer had the
+    # mirror-image hole and no reader could ever see it: this process reads a
+    # TODO, that file changes, and this process then writes a cache whose NEWER
+    # mtime made the already-stale node look FRESH. A freshness test asks "is
+    # the cache newer than the corpus?", and the answer was legitimately yes.
+    #
+    # So the refusal has to live here, at the only point that knows both what
+    # was parsed and what is on disk now. Nothing has been written yet, which is
+    # what makes "refuse" mean the previous cache survives byte-identical rather
+    # than truncated.
+    # ---------------------------------------------------------------------
+    # AN EMPTY CORPUS IS REFUSED HERE TOO. `check_freshness` already refuses to
+    # call a cache fresh against an empty corpus, so a producer that happily
+    # published `[]` would emit an artifact every reader rejects -- the two
+    # sides of one rule disagreeing (Codex adversarial, section 21, [high]).
+    if not consumed:
+        sys.stderr.write(
+            f"[build.py] FAIL: no TODO files found under {todo_root} -- "
+            f"refusing to publish a cache against an empty corpus\n")
+        return 3
+    try:
+        _cs.check_corpus_unchanged(todo_root, consumed)
+        moved = _cs.corpus_history_id(todo_root) != history_id
+    except _cs.CacheSchemaError as exc:
+        sys.stderr.write(
+            f"[build.py] FAIL: the TODO corpus moved while this build was "
+            f"reading it ({exc}); cache NOT written\n")
+        return 3
+    if moved:
+        sys.stderr.write(
+            "[build.py] FAIL: the corpus git history moved while this build "
+            "was running, so its created_at/last_active_at fields would not "
+            "describe any single generation; cache NOT written\n")
+        return 3
+
     output_path = Path(args.output).resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     # `sort_keys=True` for byte-identical re-runs; trailing newline so the
     # file is shell-friendly (`cat` doesn't show "no newline at end").
-    output_path.write_text(
-        json.dumps(nodes, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+    blob = (json.dumps(nodes, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    cache_sha = hashlib.sha256(blob).hexdigest()
+
+    # BINDING FIRST, CACHE SECOND, BOTH ATOMIC -- and the binding's NAME carries
+    # the cache digest, so the pair commits without a two-file transaction
+    # (Codex design review, section 21, [medium]). Die anywhere in here and the
+    # durable state is still a cache sitting next to the binding that describes
+    # it: before the replace that is the OLD pair, after it the NEW one. A
+    # fixed-name sidecar could not do that -- it would leave new-cache with
+    # old-binding, which every reader refuses until somebody rebuilds.
+    side = _cs.sidecar_path(output_path, cache_sha)
+    _publish_atomically(side, (json.dumps({
+        "schema": _cs.SIDECAR_SCHEMA,
+        "cache_sha256": cache_sha,
+        "history_id": history_id,
+        "corpus": consumed,
+    }, indent=2, sort_keys=True) + "\n").encode("utf-8"))
+    _publish_atomically(output_path, blob)
+    _prune_stale_bindings(output_path)
 
     elapsed = time.monotonic() - t0
     if not args.quiet:

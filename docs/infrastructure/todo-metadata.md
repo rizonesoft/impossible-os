@@ -63,6 +63,18 @@ These fields are computed by the generator from `git log` and emitted into `buil
 
 The generator uses a single batched `git log -- todo` call to fill these for every file in one pass; the per-file fork overhead is amortized.
 
+## The Corpus Binding (`build/todo-cache.json.corpus-<digest>.json`)
+
+Every published cache is accompanied by a **corpus binding**: a small JSON sidecar recording the sha256 of each `todo/**/TODO-*.md` the generator consumed, the id of the corpus git history those auto-derived fields came from, and the sha256 of the cache bytes it describes. Readers go through [`scripts/todo-graph/cache_schema.py`](../../scripts/todo-graph/cache_schema.py) `check_freshness`, which locates the binding by the digest of the cache bytes it actually parsed and refuses (`STALE`) unless the recorded corpus and history still match what is on disk.
+
+It replaced an mtime comparison ("is any TODO newer than the cache?"), which was a proxy resolved against the wall clock -- and therefore invertible by a backward clock step, which is what made one identity-gate fixture fail roughly 1 run in 4 on an unchanged tree. The binding also closes the producer's own generation window: `build.py` fingerprints the bytes it parsed, re-verifies them before publishing, and exits **3** without writing anything if the corpus moved underneath it, leaving any previous cache byte-identical.
+
+Operational notes:
+
+- The binding is **immutable and named for the cache digest**, so it can be written before the cache is atomically replaced; whichever generation survives a crash has its own binding beside it. `build.py` prunes the non-current ones after each successful publish.
+- A cache **copied without its binding is refused**, not accepted -- absence of evidence is a rebuild condition. Rebuild with `bash scripts/todo-graph/build-and-validate.sh --keep-cache`.
+- Both files are derived build artifacts under `build/` and are gitignored.
+
 ## Parsing Rules
 
 - **Frontmatter detection.** The opening `---` MUST be the first three bytes (after an optional UTF-8 BOM, which is stripped). The closing `---` MUST be on its own line. CRLF line endings (`\r\n`) are normalized to LF before fence detection so Windows-authored TODOs parse correctly.

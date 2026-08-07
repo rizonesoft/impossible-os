@@ -74,8 +74,11 @@
 # calls sys.exit; each caller maps reason -> its own documented code.
 # ============================================================================
 
+import hashlib
 import json
 import os
+import stat
+import subprocess
 from pathlib import Path
 
 # Reason tags. Callers map these to their OWN documented exit codes; a caller
@@ -626,29 +629,217 @@ def validate_nodes(nodes, path, profile: Profile = PROFILE_STAMPED_ITEMS) -> Cac
     return CacheInfo(population=population, key_present=key_present)
 
 
+# The corpus generator excludes this basename (`build.walk_todo_files`), so it
+# contributes no node and cannot make a cache stale. Excluding it HERE too is
+# what lets the producer record the very map a reader recomputes: with the two
+# file sets identical, "the corpus the cache was built from" is one rule with
+# one implementation instead of a producer subset compared against a reader
+# superset (section 21).
+_CORPUS_EXCLUDE = frozenset({"TODO-00-INDEX.md"})
+
+# Sidecar wire format. Bumping this string invalidates every existing sidecar,
+# which is the intended migration path: a reader that does not understand the
+# recorded shape must refuse rather than guess.
+SIDECAR_SCHEMA = "todo-cache-corpus-v1"
+
+
+# Per-TODO input budget. The largest TODO in the live corpus is well under
+# 1 MiB; 16 MiB is the same ceiling `resolve_symbol` puts on a source file, and
+# it exists for the same reason `_MAX_CACHE_BYTES` does -- a bound enforced
+# BEFORE the bytes are materialised.
+_MAX_TODO_BYTES = 16 * 1024 * 1024
+
+
+def file_digest(path) -> str:
+    """sha256 of a regular file's bytes, hex. The corpus fingerprint unit.
+
+    TYPE-CHECKED AND BOUNDED, because this runs on EVERY freshness check and
+    therefore on every reader invocation (Codex adversarial, section 21,
+    [medium]). `os.walk` reports a symlink to a FIFO as an ordinary file, so a
+    `TODO-*.md` pointing at one would block the reader forever, and a symlink to
+    a huge file outside the corpus would pull it through unbounded. Neither
+    needs an overflow or an overread to deny service. The descriptor is opened
+    FIRST and inspected with `fstat`, so the file that is measured is the file
+    that is read -- checking the pathname and then opening it is the TOCTOU this
+    module exists to avoid.
+    """
+    h = hashlib.sha256()
+    # O_NONBLOCK so opening a FIFO cannot block before the type check runs;
+    # it has no effect on a regular file.
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+    try:
+        st = os.fstat(fd)
+        if not stat.S_ISREG(st.st_mode):
+            _err(REASON_STALE,
+                 f"corpus entry is not a regular file (mode {st.st_mode:#o}): "
+                 f"{path}")
+        if st.st_size > _MAX_TODO_BYTES:
+            _err(REASON_STALE,
+                 f"corpus entry is {st.st_size} bytes, past the "
+                 f"{_MAX_TODO_BYTES}-byte ceiling: {path}")
+        with os.fdopen(fd, "rb") as fh:
+            fd = -1  # fdopen owns it now
+            read = 0
+            for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                read += len(chunk)
+                if read > _MAX_TODO_BYTES:
+                    _err(REASON_STALE,
+                         f"corpus entry grew past the {_MAX_TODO_BYTES}-byte "
+                         f"ceiling while being read: {path}")
+                h.update(chunk)
+    finally:
+        if fd >= 0:
+            os.close(fd)
+    return h.hexdigest()
+
+
 def _scan_corpus(todo_root: Path, on_err):
-    """One generation of the TODO corpus: {path: (dev, ino, size, mtime_ns)}."""
+    """One generation of the TODO corpus: {rel_posix_path: sha256_hex}.
+
+    CONTENT, NOT CLOCK (section 21). This used to return
+    `{abs_path: (dev, ino, size, mtime_ns)}`, and the freshness rule built on it
+    compared `max(mtime) > cache_mtime` -- an ORDERING of two wall-clock stamps.
+    That is not a fact about the data: this host's clock demonstrably steps
+    backward (`test_build.sh` records a separate "-139ms, clock stepped
+    mid-measurement" failure), and a backward step between a TODO write and the
+    cache write inverts the comparison. identity-gate fixture 22b failed that
+    way about 1 run in 4 on an unchanged tree. A content digest cannot be
+    inverted by a clock, and it is also STRICTLY more accurate in both
+    directions: a bare `touch` no longer reads as an edit, and an edit whose
+    size happens to match is no longer invisible.
+
+    Keys are RELATIVE to `todo_root` so a producer and a reader that reach the
+    same corpus by different absolute paths still compare equal.
+
+    Measured on the live corpus (233 files, 11 MB): 9.5ms per pass warm,
+    against the ~1s both readers already spend resolving symbols.
+    """
+    todo_root = Path(todo_root)
     seen = {}
     for dirpath, _, files in os.walk(todo_root, onerror=on_err):
         for f in files:
-            if f.startswith("TODO-") and f.endswith(".md"):
-                fp = os.path.join(dirpath, f)
-                st = os.stat(fp)
-                seen[fp] = (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns)
+            if not (f.startswith("TODO-") and f.endswith(".md")):
+                continue
+            if f in _CORPUS_EXCLUDE:
+                continue
+            fp = Path(dirpath) / f
+            seen[fp.relative_to(todo_root).as_posix()] = file_digest(fp)
     return seen
 
 
-def check_freshness(cache_path: Path, todo_root: Path,
-                    cache_mtime: float = None):
-    """Refuse a cache older than the newest TODO. FAIL-CLOSED in all three ways
-    the lint copy was fail-open (Codex design review, section 17):
+def corpus_history_id(todo_root: Path):
+    """The id of the git history the corpus's DERIVED fields came from, or None.
 
-      * `os.walk` SWALLOWS traversal errors unless given an `onerror` callback,
-        so an unreadable subtree left `newest` low and an old cache looked
-        fresh. The snapshot copy passes `onerror`; the lint copy did not.
-      * a `stat` failure returned "not stale" instead of raising.
-      * zero TODO files found read as fresh, so a cache was called fresh
-        against an empty corpus.
+    THE CACHE IS NOT A PURE FUNCTION OF THE TODO BYTES (Codex design review,
+    section 21, [high]). `build.collect_git_timestamps` runs one path-limited
+    `git log` and writes `created_at` / `last_active_at` into every node, and
+    `query.py` sorts `stale` / `deferred` results by `last_active_at`. So a
+    corpus whose CONTENT is unchanged while its HISTORY moved -- an amend, a
+    rebase, or an edit reverted to identical bytes after being committed --
+    produces a cache that a content-only check would happily certify.
+
+    Binding to the tip of the corpus-limited log is sound rather than a
+    heuristic: commit ids hash their ancestry, so rewriting ANY commit that
+    touches the corpus changes every descendant id and therefore this tip. A
+    commit that does not touch the corpus leaves both the tip and the timestamp
+    projection alone, so this does not invalidate the cache on unrelated work.
+
+    THE TIP ALONE IS NOT ENOUGH, so the COUNT rides with it (Codex adversarial,
+    section 21, [high]). `collect_git_timestamps` walks `--reverse` and takes the
+    FIRST commit it sees for each path as `created_at`, so DEEPENING a shallow
+    clone changes those values while adding only ancestors -- the tip does not
+    move and a tip-only binding would accept the stale cache. The count of
+    corpus-touching commits moves in every direction that matters: deepening
+    raises it, truncation lowers it, a rewrite changes the tip.
+
+    Measured: 40ms for both, against 312ms to recompute the full timestamp map,
+    which is why this projection is recorded instead of the map itself.
+
+    "NOT A REPOSITORY" AND "COULD NOT ASK" ARE DIFFERENT ANSWERS. Returning None
+    for both let a transient git failure on the producer compare EQUAL to a
+    transient failure on the reader, certifying a cache neither had evidence for.
+    A determinate not-a-repo (test fixtures under /tmp) returns a stable
+    sentinel; anything indeterminate raises, so the caller fails closed.
+    """
+    todo_root = str(todo_root)
+
+    def _git(*args):
+        try:
+            return subprocess.run(["git", "-C", todo_root, *args],
+                                  capture_output=True, text=True, check=True)
+        except subprocess.CalledProcessError as exc:
+            return exc
+        except (FileNotFoundError, OSError) as exc:
+            _err(REASON_STALE,
+                 f"cannot determine the corpus git history: {exc}")
+
+    probe = _git("rev-parse", "--git-dir")
+    if isinstance(probe, subprocess.CalledProcessError):
+        # git ran and answered: this path is not in a repository. That is a
+        # FACT about the corpus, and it is stable across producer and reader.
+        if "not a git repository" in (probe.stderr or "").lower():
+            return "no-repo"
+        _err(REASON_STALE,
+             f"cannot determine the corpus git history "
+             f"(git rev-parse exited {probe.returncode}): "
+             f"{(probe.stderr or '').strip()[:200]}")
+
+    tip = _git("log", "-1", "--format=%H", "--", ".")
+    count = _git("rev-list", "--count", "HEAD", "--", ".")
+    for r in (tip, count):
+        if isinstance(r, subprocess.CalledProcessError):
+            _err(REASON_STALE,
+                 f"cannot determine the corpus git history "
+                 f"(git exited {r.returncode}): "
+                 f"{(r.stderr or '').strip()[:200]}")
+    # An empty tip is determinate too: a repo whose corpus has no history yet.
+    return f"{tip.stdout.strip() or 'no-history'}:{count.stdout.strip() or '0'}"
+
+
+def sidecar_path(cache_path, cache_sha: str) -> Path:
+    """Where the binding for a cache with these exact bytes lives.
+
+    KEYED BY THE CACHE DIGEST, AND THEREFORE IMMUTABLE (Codex design review,
+    section 21, [medium]). A single fixed sidecar pathname cannot be committed
+    atomically with the cache: replace the cache and die before replacing the
+    sidecar and the durable state is new-cache + old-sidecar, which every reader
+    then refuses until somebody rebuilds. With the digest in the NAME the
+    producer writes the new sidecar FIRST and replaces the cache SECOND, so
+    whichever cache generation survives a crash, its own binding is already on
+    disk beside it.
+    """
+    cache_path = Path(cache_path)
+    return cache_path.with_name(f"{cache_path.name}.corpus-{cache_sha[:16]}.json")
+
+
+_REBUILD = ("rebuild via scripts/todo-graph/build-and-validate.sh --keep-cache")
+
+
+def check_freshness(cache_path: Path, todo_root: Path, cache_bytes: bytes):
+    """Refuse a cache that was not built from the corpus now on disk.
+
+    THE QUESTION CHANGED, AND THAT IS THE POINT (section 21). This used to ask
+    "is any TODO newer than the cache file?", which is a proxy -- and a proxy
+    resolved by comparing two wall-clock stamps, so a backward clock step made
+    a correct cache look stale (see `_scan_corpus`). It now asks the question
+    directly: the producer RECORDS the fingerprint of the corpus it consumed,
+    and this compares that record against the corpus right now. No clock is
+    consulted at any point, and no ordering is assumed.
+
+    The record is bound to the cache by DIGEST, not by pathname, so the bytes
+    the caller actually parsed are the bytes whose binding is read. `cache_bytes`
+    is required for exactly that reason.
+
+    FAIL-CLOSED throughout, including the three ways the pre-section-17 lint
+    copy was fail-open: `os.walk` traversal errors are raised via `onerror`
+    rather than silently lowering the corpus, a stat/read failure raises instead
+    of returning "fresh", and an empty corpus is refused rather than certified.
+    A MISSING sidecar joins that list: it means the cache predates this binding
+    or was copied without it, and both are rebuild conditions, not evidence of
+    freshness.
+
+    Returns the live corpus fingerprint so the caller can re-verify it after its
+    own walk (`check_corpus_unchanged`).
     """
     def _walk_err(exc):
         _err(REASON_STALE, f"cannot traverse todo tree: {exc}")
@@ -660,43 +851,59 @@ def check_freshness(cache_path: Path, todo_root: Path,
         # exists to close. `todo/` is tracked, so its absence is infrastructure.
         _err(REASON_STALE,
              f"todo root is not a readable directory: {todo_root}")
-    def _scan():
-        return _scan_corpus(todo_root, _walk_err)
 
     try:
-        # `cache_mtime` is the mtime of the descriptor the caller actually READ.
-        # Falling back to a fresh stat is only for a direct caller that has no
-        # descriptor; `load_and_validate` always passes the bound value, which
-        # is what makes the freshness verdict describe the parsed bytes.
-        cache_m = (Path(cache_path).stat().st_mtime if cache_mtime is None
-                   else cache_mtime)
-        # THE CORPUS IS GENERATION-BOUND TOO, not just the cache. Each TODO used
-        # to be statted ONCE into a running `max()`, so a file edited AFTER the
-        # walk had already visited it was never observed: its new mtime could
-        # not raise `newest`, the cache itself need not change, the descriptor
-        # comparison in the caller still passed, and both readers walked stale
-        # nodes and produced a VERDICT instead of the documented STALE
-        # infrastructure code (Codex adversarial round 2, section 17). Two
-        # scans, compared as whole sets, also catch a TODO added or removed
-        # mid-walk, which a running maximum structurally cannot see.
-        before = _scan()
-        newest = max((v[3] for v in before.values()), default=0) / 1e9
+        live = _scan_corpus(todo_root, _walk_err)
     except OSError as exc:
         _err(REASON_STALE, f"cannot determine cache freshness: {exc}")
-    if not before:
+    if not live:
         _err(REASON_STALE,
              f"no TODO files found under {todo_root} -- refusing to call a "
              f"cache fresh against an empty corpus")
-    if newest > cache_m:
-        _err(REASON_STALE,
-             f"cache is STALE (a TODO is newer than {cache_path}); rebuild via "
-             f"scripts/todo-graph/build-and-validate.sh --keep-cache")
+
+    cache_sha = hashlib.sha256(cache_bytes).hexdigest()
+    side = sidecar_path(cache_path, cache_sha)
     try:
-        after = _scan()
+        raw = side.read_bytes()
+    except FileNotFoundError:
+        _err(REASON_STALE,
+             f"cache carries no corpus binding ({side.name} is absent) -- it "
+             f"predates the section 21 producer contract, was copied without "
+             f"its binding, or was written by a producer that refused to "
+             f"certify it; {_REBUILD}")
     except OSError as exc:
-        _err(REASON_STALE, f"cannot determine cache freshness: {exc}")
-    _diff_or_ok(before, after, "while freshness was being checked")
-    return after
+        _err(REASON_STALE, f"corpus binding unreadable: {side}: {exc}")
+    try:
+        rec = json.loads(raw.decode("utf-8"))
+    except (ValueError, RecursionError) as exc:
+        _err(REASON_STALE, f"corpus binding is not readable JSON: {side}: {exc}")
+    if not isinstance(rec, dict) or rec.get("schema") != SIDECAR_SCHEMA:
+        _err(REASON_STALE,
+             f"corpus binding is not {SIDECAR_SCHEMA}: {side}; {_REBUILD}")
+    # The digest is in the FILENAME, so a mismatch here means someone renamed a
+    # binding onto a cache it does not describe. Checking it costs nothing and
+    # turns that into a refusal instead of a silent wrong answer.
+    if rec.get("cache_sha256") != cache_sha:
+        _err(REASON_STALE,
+             f"corpus binding names cache {rec.get('cache_sha256')} but the "
+             f"cache read is {cache_sha}: {side}; {_REBUILD}")
+
+    recorded = rec.get("corpus")
+    if not isinstance(recorded, dict) or not recorded:
+        _err(REASON_STALE,
+             f"corpus binding records no corpus: {side}; {_REBUILD}")
+    _diff_or_ok(recorded, live, "since the cache was built")
+
+    # HISTORY, NOT JUST CONTENT. `created_at` / `last_active_at` are derived
+    # from the corpus-limited git log, so identical bytes over a rewritten
+    # history still means stale nodes (Codex design review, section 21, [high]).
+    live_hist = corpus_history_id(todo_root)
+    if rec.get("history_id") != live_hist:
+        _err(REASON_STALE,
+             f"the corpus git history moved since the cache was built "
+             f"(recorded {rec.get('history_id')}, now {live_hist}), so its "
+             f"created_at/last_active_at fields are stale; {_REBUILD}")
+    return live
 
 
 def _diff_or_ok(before, after, when: str) -> None:
@@ -713,13 +920,13 @@ def _diff_or_ok(before, after, when: str) -> None:
 def check_corpus_unchanged(todo_root: Path, corpus) -> None:
     """Re-verify the corpus fingerprint AFTER the caller's own walk.
 
-    THE WINDOW THAT MATTERS IS THE CALLER'S WALK, NOT THIS MODULE'S CHECK. The
-    two scans inside `check_freshness` are adjacent, so on their own they bound
-    only a few milliseconds -- while both readers then spend ~1s resolving
-    symbols, during which a TODO edit would leave the in-memory nodes stale and
-    still let a VERDICT be returned (Codex adversarial, section 17 review).
-    Callers therefore re-verify here once their walk completes, which is the
-    point at which the verdict is actually about to be published.
+    THE WINDOW THAT MATTERS IS THE CALLER'S WALK, NOT THIS MODULE'S CHECK.
+    `check_freshness` proves the cache matches the corpus at ONE instant, while
+    both readers then spend ~1s resolving symbols, during which a TODO edit
+    would leave the in-memory nodes stale and still let a VERDICT be returned
+    (Codex adversarial, section 17 review). Callers therefore re-verify here
+    once their walk completes, which is the point at which the verdict is
+    actually about to be published.
 
     A no-op when `corpus` is None (a caller that loaded with `check_stale=False`
     never took a fingerprint and has nothing to compare).
@@ -836,10 +1043,12 @@ def _load_and_validate(cache_path: Path, todo_root: Path,
         if check_stale:
             # The fingerprint returned here is handed to the caller so it can
             # re-verify AFTER its own walk (`check_corpus_unchanged`).
-            # Compare against the mtime of the descriptor actually READ, never
-            # a fresh stat of the name.
+            # BOUND TO THE BYTES ACTUALLY PARSED: `blob` is what came off the
+            # single descriptor opened above, and the corpus binding is located
+            # by ITS digest -- never by a fresh read of the pathname, which
+            # `build.py` rewrites.
             info.corpus = check_freshness(cache_path, todo_root,
-                                          cache_mtime=st_before.st_mtime)
+                                          cache_bytes=blob)
         # THE GENERATION BINDING IS NOT PART OF THE FRESHNESS POLICY, and it
         # used to sit inside the `if check_stale` block above. That coupled two
         # independent protections behind one flag: `check_stale=False` means "I
