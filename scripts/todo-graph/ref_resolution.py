@@ -52,6 +52,7 @@ import os
 import re
 from collections import namedtuple
 from contextlib import contextmanager
+from functools import wraps
 from pathlib import Path
 from typing import Optional
 
@@ -72,9 +73,42 @@ _SKIP_DIRS = {".git", "build", "__pycache__", "node_modules", ".venv"}
 #   rel_path    repo-relative form of abs_path, or None
 #   provenance  how abs_path was arrived at: "authored" | "basename" | "section"
 #   bucket      None when resolved to a path; otherwise the coverage bucket the
-#               caller must count it in. Names match the existing cov keys
-#               exactly so the reporting contract is unchanged.
-Verdict = namedtuple("Verdict", "abs_path rel_path provenance bucket")
+#               caller must count it in. A `Bucket` member drawn from
+#               EMITTED_BUCKETS -- and `Bucket` members ARE `str`, so the names
+#               match the existing cov keys exactly and the reporting contract
+#               is unchanged.
+class Verdict(namedtuple("Verdict", "abs_path rel_path provenance bucket")):
+    """A verdict whose bucket field CANNOT hold a name outside the contract.
+
+    This is the RUNTIME half of the section 20 emission contract; see
+    EMITTED_BUCKETS below for the static half and for why one alone is not
+    enough.
+
+    OVERRIDING `__new__` ALONE IS NOT ENOUGH, and the first cut did exactly
+    that. A namedtuple carries three more construction routes that do not go
+    through it, and a probe drove a RETIRED bucket through every one (Codex
+    adversarial, section 20): `_replace` (which calls `_make`), `_make` itself
+    (a classmethod over `tuple.__new__`), and the un-subclassed base. So
+    `_make` is overridden here -- which covers `_replace` too, since `_replace`
+    is defined in terms of it -- and the base namedtuple is declared INLINE so
+    the module never binds a name for an unchecked constructor.
+
+    `tuple.__new__(Verdict, ...)` remains reachable and is NOT closed by any of
+    this; nothing in Python can close it. That is why the public return
+    boundary re-validates (`resolve_ref`, `classify_ref`) and why the AST
+    contract bans these shapes in the emitter: the guarantee is layered, not
+    absolute at any single point.
+    """
+
+    __slots__ = ()
+
+    def __new__(cls, abs_path, rel_path, provenance, bucket):
+        _check_emitted(bucket)
+        return super().__new__(cls, abs_path, rel_path, provenance, bucket)
+
+    @classmethod
+    def _make(cls, iterable):
+        return cls(*iterable)
 
 class _Lru(dict):
     """A dict with a capacity, evicting least-recently-USED on insert.
@@ -174,6 +208,128 @@ _CODE_TEXT_BUILDS = 0
 PRE_RESOLUTION_BUCKETS = _protocol.PRE_RESOLUTION_BUCKETS
 POST_RESOLUTION_BUCKETS = _protocol.POST_RESOLUTION_BUCKETS
 ALL_BUCKETS = _protocol.ALL_BUCKETS
+Bucket = _protocol.Bucket
+
+# THE DECLARED EMITTED-MEMBER SET (section 20). This is the whole contract: the
+# set of buckets this resolver can produce, written down in ONE place, in a
+# shape a checker can read without executing anything and without inferring it
+# from source text.
+#
+# WHY IT IS DECLARED AND NOT DISCOVERED. The first design inferred the set by
+# collecting every `Bucket.<MEMBER>` attribute access in this file. That is
+# bypassable and was rejected in design review: `next(iter(Bucket))`, or an
+# alias `B = Bucket` followed by `B.PATH_ESCAPE`, emits a bucket while the file
+# contains no bucket literal, no subscript, no dynamic construction and no
+# `Bucket.<MEMBER>` expression at all -- so a retirement gate reading the
+# inferred set would call the member absent while this module could still emit
+# it, recreating exactly the latent undeclared-verdict failure the section
+# exists to close.
+#
+# WHY BOTH HALVES ARE NEEDED.
+#   STATIC  -- `scripts/lint/check_bucket_emission.py` pins the literal AST
+#              shape of this assignment (a module-level `frozenset({...})` of
+#              `Bucket.<MEMBER>` elements, assigned exactly once and never
+#              rebound), so the set is readable as a static property. That is
+#              what `identity-gate.sh` consults to prove a retired bucket can
+#              no longer be produced.
+#   RUNTIME -- `_check_emitted` refuses any other value at construction, so a
+#              computed name cannot escape the declaration even though no AST
+#              rule can enumerate every way to compute one.
+# The static half makes the set READABLE; the runtime half makes it TRUE.
+#
+# RETIRING A BUCKET is therefore the documented two-step sequence, with step
+# one now provable: remove its member from this set (an executable change, put
+# through the resolver differential like any other), then remove the name from
+# `snapshot_protocol.json` (a data-only change the identity gate can approve).
+EMITTED_BUCKETS = frozenset({
+    Bucket.UNPAIRED_REF,
+    Bucket.PATH_ESCAPE,
+    Bucket.UNSUPPORTED_LANG,
+    Bucket.MISSING_FILE,
+    Bucket.UNRESOLVED_CALLLIKE,
+    Bucket.NO_CALLLIKE_TOKEN,
+})
+
+
+class BucketContractError(RuntimeError):
+    """A verdict tried to carry a bucket outside the declared emitted set."""
+
+
+def _check_emitted(bucket) -> None:
+    """Refuse any bucket value the declaration does not cover.
+
+    `None` is the resolved case and always legal. Everything else must be BOTH
+    a `Bucket` instance AND a member of EMITTED_BUCKETS. Both halves are load-
+    bearing and neither is redundant:
+
+      MEMBERSHIP alone is too weak in the other direction -- an instance check
+      would accept every DECLARED bucket, including ones this resolver does not
+      emit, and the retirement proof reads the EMITTED set, not the vocabulary.
+
+      INSTANCE alone is too weak in this one -- `Bucket` is str-valued, so a
+      bare `"path_escape"` string hashes and compares equal to the member and
+      sails through a membership test on its own. Measured while building this
+      contract: the first cut checked membership only and accepted both a raw
+      literal and a runtime concatenation. That would leave the enum typing
+      decorative and the AST literal ban unbacked at runtime.
+    """
+    if bucket is None or (isinstance(bucket, Bucket)
+                          and bucket in EMITTED_BUCKETS):
+        return
+    raise BucketContractError(
+        f"bucket {bucket!r} ({type(bucket).__name__}) is not a `Bucket` member "
+        f"of the declared emitted set {sorted(str(b) for b in EMITTED_BUCKETS)}"
+        f". A verdict may only carry a bucket this module declares it can emit "
+        f"(ref_resolution.EMITTED_BUCKETS), named as `Bucket.<MEMBER>`; if this "
+        f"is a new bucket, declare it there and in snapshot_protocol.json in "
+        f"the same change.")
+
+
+def _bucket_bounded(expected):
+    """Re-validate the bucket at the resolver's PUBLIC return boundary.
+
+    The constructors bound ORDINARY construction, but `tuple.__new__(Verdict,
+    ...)` is reachable in Python and cannot be taken away -- so a value built
+    that way inside this module would carry any string at all. Every bucket a
+    caller can observe leaves through `classify_ref` or `resolve_ref`, so
+    checking here bounds the OBSERVABLE emission set regardless of how the
+    value was constructed. Cheap: one type + membership test per ref (~1,600
+    per walk).
+
+    TYPED, because `getattr(result, "bucket", None)` FAILED OPEN. A missing
+    attribute read as `None`, which is the legal RESOLVED value, so a function
+    returning a raw tuple carrying an undeclared bucket passed the boundary
+    untouched (Codex adversarial, section 20 round 2). Requiring the declared
+    outcome type and reading `.bucket` directly means an unexpected return
+    shape is refused here rather than crashing a consumer later.
+    """
+
+    def _decorate(fn):
+        @wraps(fn)
+        def _bounded(*args, **kwargs):
+            result = fn(*args, **kwargs)
+            if not isinstance(result, expected):
+                raise BucketContractError(
+                    f"{fn.__name__} returned {type(result).__name__}, not "
+                    f"{expected.__name__}; the bucket contract can only be "
+                    f"enforced on the declared outcome types")
+            _check_emitted(result.bucket)
+            return result
+
+        return _bounded
+
+    return _decorate
+
+
+# A DECLARED MEMBER THAT IS NOT IN THE VOCABULARY IS A TYPO OR A HALF-DONE
+# RETIREMENT, and either way every snapshot it reached would compare unequal
+# forever. Checked at import so it cannot wait for a ref to land in it.
+_undeclared = sorted(str(b) for b in EMITTED_BUCKETS if b not in ALL_BUCKETS)
+if _undeclared:
+    raise _protocol.ProtocolError(
+        f"ref_resolution.EMITTED_BUCKETS names {_undeclared}, which the "
+        f"published vocabulary does not declare")
+del _undeclared
 
 
 def clear_caches() -> None:
@@ -339,22 +495,22 @@ def _effective_path_uncached(rel: str, repo_root: Path) -> tuple:
     refs are all bare filenames contributed no candidates at all (Codex
     adversarial)."""
     if rel.startswith("/"):
-        return (None, "path_escape")
+        return (None, Bucket.PATH_ESCAPE)
     abs_p = _contained(rel, repo_root)
     if abs_p is None:
-        return (None, "path_escape")
+        return (None, Bucket.PATH_ESCAPE)
     if abs_p.suffix not in _C_SUFFIXES:
-        return (None, "unsupported_lang")
+        return (None, Bucket.UNSUPPORTED_LANG)
     if abs_p.is_file():
         return (abs_p, "authored")
     if "/" in rel or "\\" in rel:
-        return (None, "missing_file")
+        return (None, Bucket.MISSING_FILE)
     cands = _basename_index(repo_root).get(rel, ())
     if len(cands) != 1:
-        return (None, "missing_file")
+        return (None, Bucket.MISSING_FILE)
     abs_p = _contained(cands[0], repo_root)
     if abs_p is None or not abs_p.is_file():
-        return (None, "missing_file")
+        return (None, Bucket.MISSING_FILE)
     return (abs_p, "basename")
 
 
@@ -555,6 +711,7 @@ def _defining_candidates(scope: "SectionScope", symbol: str,
     return hits
 
 
+@_bucket_bounded(Verdict)
 def classify_ref(ref: dict, scope: "SectionScope", repo_root: Path) -> Verdict:
     """Decide which file a `kind=symbol` ref is checked against.
 
@@ -584,18 +741,18 @@ def classify_ref(ref: dict, scope: "SectionScope", repo_root: Path) -> Verdict:
     rel = ref.get("file")
     provenance = "authored"
     if not symbol:
-        return Verdict(None, None, provenance, "unpaired_ref")
+        return Verdict(None, None, provenance, Bucket.UNPAIRED_REF)
     if not rel:
         if not scope.files:
-            return Verdict(None, None, provenance, "unpaired_ref")
+            return Verdict(None, None, provenance, Bucket.UNPAIRED_REF)
         hits = _defining_candidates(scope, symbol, repo_root)
         if len(hits) != 1:
-            return Verdict(None, None, provenance, "unpaired_ref")
+            return Verdict(None, None, provenance, Bucket.UNPAIRED_REF)
         abs_p = Path(hits[0])
         try:
             eff = str(abs_p.relative_to(repo_root)).replace("\\", "/")
         except ValueError:
-            return Verdict(None, None, "section", "path_escape")
+            return Verdict(None, None, "section", Bucket.PATH_ESCAPE)
         return Verdict(str(abs_p), eff, "section", None)
     abs_p, path_prov = _effective_path(rel, repo_root)
     if abs_p is None:
@@ -608,7 +765,7 @@ def classify_ref(ref: dict, scope: "SectionScope", repo_root: Path) -> Verdict:
     try:
         eff_rel = str(abs_p.relative_to(repo_root)).replace("\\", "/")
     except ValueError:
-        return Verdict(None, None, provenance, "path_escape")
+        return Verdict(None, None, provenance, Bucket.PATH_ESCAPE)
     return Verdict(str(abs_p), eff_rel, provenance, None)
 
 
@@ -748,8 +905,29 @@ def has_calllike_token(file_abs: str, symbol: str) -> bool:
 #   def_rel     repo-relative form of def_abs, or None
 #   line_start  first line of the definition, or None
 #   line_end    last line of the definition, or None
-RefResult = namedtuple(
-    "RefResult", "rel_path provenance bucket def_abs def_rel line_start line_end")
+class RefResult(namedtuple(
+        "RefResult",
+        "rel_path provenance bucket def_abs def_rel line_start line_end")):
+    """The end-to-end answer, bucket-contract-checked exactly as `Verdict` is.
+
+    Both outcome types are checked because both are constructed directly on
+    emission paths: `resolve_ref` builds a RefResult from a Verdict's bucket,
+    and `_resolve_end_to_end` builds one from the post-resolution branch, so
+    checking only Verdict would leave the post-resolution half unbounded. The
+    `_make`/`_replace`/inline-base reasoning is identical; see `Verdict`.
+    """
+
+    __slots__ = ()
+
+    def __new__(cls, rel_path, provenance, bucket, def_abs, def_rel,
+                line_start, line_end):
+        _check_emitted(bucket)
+        return super().__new__(cls, rel_path, provenance, bucket, def_abs,
+                               def_rel, line_start, line_end)
+
+    @classmethod
+    def _make(cls, iterable):
+        return cls(*iterable)
 
 
 def _resolve_end_to_end(abs_path: str, symbol: str, repo_root: Path):
@@ -794,8 +972,8 @@ def _resolve_end_to_end(abs_path: str, symbol: str, repo_root: Path):
         resolved = _rs.follow_declaration(abs_path, symbol, str(repo_root))
     dep = (None, None)
     if resolved is None:
-        answer = ("unresolved_calllike" if has_calllike_token(abs_path, symbol)
-                  else "no_calllike_token")
+        answer = (Bucket.UNRESOLVED_CALLLIKE if has_calllike_token(abs_path, symbol)
+                  else Bucket.NO_CALLLIKE_TOKEN)
     else:
         answer = (resolved[0], resolved[1], resolved[2])
         def_abs = str(Path(resolved[0]).resolve())
@@ -805,6 +983,7 @@ def _resolve_end_to_end(abs_path: str, symbol: str, repo_root: Path):
     return answer
 
 
+@_bucket_bounded(RefResult)
 def resolve_ref(ref: dict, scope: "SectionScope", repo_root: Path) -> RefResult:
     """THE shared verdict for one `kind=symbol` ref: classify, resolve, bucket.
 

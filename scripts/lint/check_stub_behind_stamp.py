@@ -333,8 +333,16 @@ def main() -> int:
         return 6
 
     resolved_n = cov["resolved"]
-    buckets = ("unresolved_calllike", "no_calllike_token", "missing_file",
-               "unsupported_lang", "path_escape", "unpaired_ref")
+    # FROM THE PUBLISHED VOCABULARY, exactly as `cov` is keyed at the top of
+    # `_walk`. This line used to retype the six names, which made it a SECOND
+    # definition of the protocol and re-opened the bug the `cov` comment above
+    # describes as fixed: an ADDED bucket that gets emitted is accumulated in
+    # `cov` but omitted from `accounted`, so the sum below disagrees with the
+    # population and this check exits 6 on a migration the identity gate
+    # accepts; a RETIRED name leaves `cov[b]` raising KeyError. So the gate
+    # could approve a retirement that leaves its own required lint consumer
+    # unusable (Codex design review, section 20).
+    buckets = tuple(_rr.ALL_BUCKETS)
 
     # ONE COUNTING BASE. The old line published `resolved=57/189`, where 57 was
     # counted per OCCURRENCE and the 132 it was added to had been through
@@ -460,19 +468,29 @@ def main() -> int:
     # routes every line of it through error() on rc 0 -- so informational
     # coverage output on stdout becomes 6 phantom lint errors. Learned by
     # doing exactly that, 2026-08-05.
-    uniq = len(set(cov["unresolved_calllike"]) | set(cov["no_calllike_token"]))
-    unresolved_occ = len(cov["unresolved_calllike"]) + len(cov["no_calllike_token"])
+    # POST-RESOLUTION IS "the file was opened and the symbol was not found
+    # there", which is what `unresolved` has always meant here. Naming the two
+    # members made this a third private copy of the vocabulary; deriving it from
+    # the published half keeps the meaning and survives a migration.
+    post = [b for b in _rr.POST_RESOLUTION_BUCKETS if b in cov]
+    uniq = len(set().union(*(set(cov[b]) for b in post)) if post else set())
+    unresolved_occ = sum(len(cov[b]) for b in post)
     sys.stderr.write(f"stub-behind-stamp:coverage resolved={resolved_n}/{total} "
                      f"unresolved={unresolved_occ} ({uniq} unique)"
                      + (f" baseline={baseline}" if isinstance(baseline, int) else "")
                      + "\n")
+    # The human labels are a PRESENTATION detail, so a bucket without one still
+    # reports under its own name rather than vanishing from the line or raising.
+    labels = {"unresolved_calllike": "calllike-unresolved",
+              "no_calllike_token": "no-calllike-token",
+              "missing_file": "missing-file",
+              "unsupported_lang": "non-c-suffix",
+              "path_escape": "path-escape",
+              "unpaired_ref": "unpaired-ref"}
     sys.stderr.write(
-        f"  buckets: calllike-unresolved={len(cov['unresolved_calllike'])} "
-        f"no-calllike-token={len(cov['no_calllike_token'])} "
-        f"missing-file={len(cov['missing_file'])} "
-        f"non-c-suffix={len(cov['unsupported_lang'])} "
-        f"path-escape={len(cov['path_escape'])} "
-        f"unpaired-ref={len(cov['unpaired_ref'])}\n")
+        "  buckets: "
+        + " ".join(f"{labels.get(b, b)}={len(cov[b])}" for b in buckets)
+        + "\n")
 
     if baseline_err is not None:
         sys.stderr.write(
@@ -483,15 +501,21 @@ def main() -> int:
             f"STUB_LINT_ALLOW_NO_BASELINE=1 to proceed deliberately.\n")
         return 8
 
-    samples = sorted(set(cov["unresolved_calllike"]))[:3] \
-        + sorted(set(cov["no_calllike_token"]))[:2]
+    # Sample the post-resolution halves in vocabulary order, 5 in total, so the
+    # shape of the list is unchanged while the bucket names come from the
+    # protocol rather than from here.
+    samples = []
+    for i, b in enumerate(post):
+        if len(samples) >= 5:
+            break
+        samples += sorted(set(cov[b]))[:(3 if i == 0 else 2)]
+    samples = samples[:5]
     for u in samples:
         sys.stderr.write(f"  unresolved (NOT checked): {u}\n")
     if uniq > len(samples):
         sys.stderr.write(f"  ... +{uniq - len(samples)} more unresolved (unique)\n")
-    if cov["missing_file"]:
-        for u in sorted(set(cov["missing_file"]))[:3]:
-            sys.stderr.write(f"  missing file (ref points nowhere): {u}\n")
+    for u in sorted(set(cov.get("missing_file") or ()))[:3]:
+        sys.stderr.write(f"  missing file (ref points nowhere): {u}\n")
 
     # DENOMINATOR FIRST -- a shrunken population invalidates the ratio the
     # floor below is expressed in, so reporting the floor as clean while the

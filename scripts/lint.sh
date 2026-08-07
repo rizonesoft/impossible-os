@@ -1899,6 +1899,51 @@ else
 fi
 
 # ============================================================================
+# Check 26: the resolver must DECLARE the bucket set it can emit
+# ============================================================================
+# section 20. `identity-gate.sh` adjudicates bucket RETIREMENT, and its proof
+# that a bucket is no longer produced is now `ref_resolution.EMITTED_BUCKETS`
+# rather than a source-text search for the quoted literal (which an indexed or
+# concatenated emission defeats). That proof is only as good as the declaration,
+# so the declaration's shape is checked here on every commit that can move it.
+#
+# UNCONDITIONAL WHERE THE SUBJECT EXISTS, unlike Check 25. This one is a pure
+# AST read of two files -- no corpus walk, no cache, ~30ms measured -- so there
+# is no cost argument for gating it on a diff, and a gate that only runs when
+# someone remembered to touch the right file is how the contract rots. Absent
+# subject (the tooling suite's scratch repos) is not a finding, exactly as
+# Check 25 learned. SKIP via SKIP_LINT_BUCKET_EMISSION=1.
+if [ "${SKIP_LINT_BUCKET_EMISSION:-}" = "1" ]; then
+    echo -e "${YELLOW}warn${NC}: Check 26 (bucket-emission) skipped via SKIP_LINT_BUCKET_EMISSION=1"
+    WARNINGS=$((WARNINGS + 1))
+elif [ -f "$REPO_ROOT/scripts/lint/check_bucket_emission.py" ] \
+     && [ -f "$REPO_ROOT/scripts/todo-graph/ref_resolution.py" ] \
+     && [ -f "$REPO_ROOT/scripts/todo-graph/snapshot_protocol.json" ]; then
+    LINT26_OUT="$(mktemp -t lint-bucket-emission.XXXXXX)"
+    LINT26_RC=0
+    python3 "$REPO_ROOT/scripts/lint/check_bucket_emission.py" \
+        --emitter "$REPO_ROOT/scripts/todo-graph/ref_resolution.py" \
+        --protocol "$REPO_ROOT/scripts/todo-graph/snapshot_protocol.json" \
+        >"$LINT26_OUT" 2>&1 || LINT26_RC=$?
+    case "$LINT26_RC" in
+        0) echo -e "${CYAN}info${NC}: Check 26 (bucket-emission) the resolver declares its emitted bucket set" ;;
+        *)
+            # FAIL CLOSED on both violation and infrastructure. A contract that
+            # could not be read proves nothing about what the resolver emits,
+            # and the retirement gate consults it -- treating "could not run" as
+            # a pass is the same inversion that once let an unreadable emitter
+            # approve a retirement (identity-gate fixture 22af).
+            while IFS= read -r _l26; do
+                [ -z "$_l26" ] && continue
+                echo -e "${RED}error${NC}: Check 26 (bucket-emission) ${_l26#\[check_bucket_emission\] }"
+            done < <(grep '^\[check_bucket_emission\]' "$LINT26_OUT" || tail -1 "$LINT26_OUT")
+            ERRORS=$((ERRORS + 1))
+            ;;
+    esac
+    rm -f "$LINT26_OUT"
+fi
+
+# ============================================================================
 # Summary
 # ============================================================================
 echo ""

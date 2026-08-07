@@ -42,6 +42,14 @@ t_fail() {
 }
 
 cleanup() {
+    # EVERY FAILURE MESSAGE IN THIS SUITE POINTS AT A LOG UNDER $TMP_DIR, and
+    # the trap deleted it before anyone could read it -- so diagnosing an
+    # identity-gate fixture meant re-running the whole suite and racing the
+    # trap. Opt-in retention, off by default so ordinary runs leave no litter.
+    if [ "${TODOGRAPH_KEEP_TMP:-}" = "1" ]; then
+        printf '[test_build] kept %s (TODOGRAPH_KEEP_TMP=1)\n' "${TMP_DIR:-}" >&2
+        return
+    fi
     rm -rf "${TMP_DIR:-}" 2>/dev/null || true
 }
 trap cleanup EXIT
@@ -5502,9 +5510,14 @@ if anchor not in src:
 # unconditionally also re-bucketed refs that were already unresolved, which
 # shows up as CHANGED -- so the "gain" fixture (22g) could never isolate a pure
 # GAINED, and its plain-compare leg failed for the wrong reason.
+# NAMED AS AN ENUM MEMBER, not a raw string (section 20). The resolver's outcome
+# constructors refuse any bucket outside the declared emitted set, so a raw
+# `"no_calllike_token"` here now raises BucketContractError -- the mutation would
+# fail as an error rather than as the partial verdict LOSS this fixture exists to
+# stage, and the gate would be exercised on the wrong signal.
 inject = (anchor + "\n"
           '    if not isinstance(answer, str) and len(ref.get("symbol") or "") % 2 == 1:\n'
-          '        answer = "no_calllike_token"')
+          '        answer = Bucket.NO_CALLLIKE_TOKEN')
 p.write_text(src.replace(anchor, inject, 1), encoding="utf-8")
 PY
 }
@@ -6065,6 +6078,22 @@ d["pre_resolution_buckets"][i] = "path_escaped"
 d["renamed_buckets"] = {"path_escape": "path_escaped"}
 p.write_text(json.dumps(d, indent=2) + "\n", encoding="utf-8")
 PY2
+        # MIGRATE THE EMITTER IN THE SAME COMMIT (section 20). A rename applied
+        # to the vocabulary alone now leaves `EMITTED_BUCKETS` naming a member
+        # the enum no longer has, so the resolver cannot even import and every
+        # later commit fails as infrastructure. That is the contract working --
+        # a data-only rename is exactly what this gate refuses -- but it makes
+        # the tree this fixture leaves behind incoherent, and the property under
+        # test is about a COMPLETED migration, not a half-done one.
+        python3 - scripts/todo-graph/ref_resolution.py <<'PY2'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1]); s = p.read_text(encoding="utf-8")
+if "Bucket.PATH_ESCAPE," not in s:
+    sys.stderr.write("fixture 22x: the emitted-set member is not where expected\n")
+    raise SystemExit(7)
+p.write_text(s.replace("Bucket.PATH_ESCAPE", "Bucket.PATH_ESCAPED"),
+             encoding="utf-8")
+PY2
         git commit --quiet --no-verify -am "22x-1: declared rename migration" >/dev/null 2>&1
     )
     G_MIG_SHA="$(cd "$GATE_REPO" && git rev-parse HEAD)"
@@ -6109,8 +6138,12 @@ PY2
     (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head HEAD \
         >"$TMP_DIR/gate-22ad.log" 2>&1)
     G_RC=$?
-    if [ "$G_RC" -ne 0 ] && grep -q 'still hardcoded in' "$TMP_DIR/gate-22ad.log"; then
-        t_pass "identity gate: retiring a bucket the emitters still hardcode is refused"
+    # The MESSAGE moved with the evidence (section 20): the refusal now names
+    # the declaration rather than a source-text hit. Asserting on it is the
+    # point -- an assertion on rc alone is satisfied by any failure that exits
+    # non-zero, including one that never reached the retirement branch.
+    if [ "$G_RC" -ne 0 ] && grep -q 'still declares it in EMITTED_BUCKETS' "$TMP_DIR/gate-22ad.log"; then
+        t_pass "identity gate: retiring a bucket the resolver still declares is refused"
     else
         t_fail "identity gate: dormant retirement accepted (rc=$G_RC; see $TMP_DIR/gate-22ad.log)"
     fi
@@ -6144,25 +6177,34 @@ PY2
     (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_RETIRE_BASE" --head HEAD \
         >"$TMP_DIR/gate-22ae.log" 2>&1)
     G_RC=$?
-    # REFUSED, and this fixture asserted the opposite until the ship gate. The
-    # only available proof that a bucket is no longer emitted is a source-text
-    # search, and an indexed or concatenated emission defeats it -- so "no
-    # emitter names it" is not something this gate can currently establish.
-    # Retirement is enabled by the declared emitted-member contract in section
-    # 20; until then the path is closed rather than knowingly unsound.
-    if [ "$G_RC" -eq 1 ] && grep -q 'section 20' "$TMP_DIR/gate-22ae.log"; then
-        t_pass "identity gate: retirement is refused pending a provable emission contract"
+    # APPROVED, and this is the clearing path OPENING (section 20). It asserted
+    # approval originally, was flipped to expect refusal at section 18's ship
+    # gate because source-text absence was not proof of non-emission, and flips
+    # back now that the resolver DECLARES its emitted set and refuses anything
+    # outside it at runtime. `never_emitted_anywhere` is not in EMITTED_BUCKETS,
+    # so the resolver provably cannot produce it and the data-only retirement
+    # is safe. If this ever refuses again, the rule has become a wedge.
+    if [ "$G_RC" -eq 0 ]; then
+        t_pass "identity gate: retiring a bucket the resolver does not declare is approved"
     else
-        t_fail "identity gate: a retirement was approved on source-text evidence alone (rc=$G_RC; see $TMP_DIR/gate-22ae.log)"
+        t_fail "identity gate: the clearing path is closed -- a provably unemitted bucket could not be retired (rc=$G_RC; see $TMP_DIR/gate-22ae.log)"
     fi
     (cd "$GATE_REPO" && git checkout --quiet "$G_PROTO_BASE" -- scripts/todo-graph/snapshot_protocol.json \
         && git commit --quiet --no-verify -am "restore after retirement fixtures" >/dev/null 2>&1)
 
-    # 22af: AN UNREADABLE EMITTER IS NOT EVIDENCE OF ABSENCE. The retirement
-    # proof asks "does this bucket name appear in the emitters"; the first cut
-    # returned a sentinel string on a read failure, which matches no bucket
-    # name, so an unreadable emitter APPROVED the retirement. The guard was
-    # inverted -- exactly the fail-open shape it was written to prevent.
+    # 22af: AN UNPARSEABLE EMITTER IS NOT EVIDENCE OF ABSENCE. The retirement
+    # proof used to ask "does this bucket name appear in the emitters"; the
+    # first cut returned a sentinel string on a read failure, which matches no
+    # bucket name, so an unreadable emitter APPROVED the retirement -- the guard
+    # was inverted, exactly the fail-open shape it was written to prevent.
+    #
+    # SECTION 20 CHANGED THE EVIDENCE, SO THIS FIXTURE FOLLOWS IT TO THE NEW
+    # ONE. The proof is now the resolver's DECLARED emitted set, so the file
+    # that must not be silently unreadable is `ref_resolution.py` itself: a
+    # checker that cannot parse it knows nothing about what it emits, and an
+    # empty answer would approve every retirement at once. The refusal is
+    # INFRASTRUCTURE (rc 3), which is stronger than the old rc 1 -- "the gate
+    # could not run" is a different claim from "the migration is invalid".
     (
         cd "$GATE_REPO" || exit 1
         git checkout --quiet "$G_PROTO_BASE" -- scripts/todo-graph/snapshot_protocol.json
@@ -6173,8 +6215,8 @@ d["pre_resolution_buckets"].remove("path_escape")
 d["retired_buckets"] = ["path_escape"]
 p.write_text(json.dumps(d, indent=2) + "\n", encoding="utf-8")
 PY2
-        rm -f scripts/lint/check_stub_behind_stamp.py
-        git commit --quiet --no-verify -am "22af: retire a bucket with an emitter missing" >/dev/null 2>&1
+        printf '\ndef 22af_unparseable(:\n' >> scripts/todo-graph/ref_resolution.py
+        git commit --quiet --no-verify -am "22af: retire a bucket with an unparseable emitter" >/dev/null 2>&1
     )
     (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head HEAD \
         >"$TMP_DIR/gate-22af.log" 2>&1)
@@ -6182,14 +6224,14 @@ PY2
     # SPECIFIC CODE AND DIAGNOSTIC. Accepting any non-zero meant a gate that
     # failed for an unrelated reason -- or failed always -- satisfied this
     # assertion without ever exercising the unreadable-emitter path.
-    if [ "$G_RC" -eq 1 ] && grep -q 'not evidence of absence' "$TMP_DIR/gate-22af.log"; then
-        t_pass "identity gate: an unreadable emitter is not evidence a bucket is retired-safe"
+    if [ "$G_RC" -eq 3 ] && grep -q 'NOT evidence that any bucket is unemitted' "$TMP_DIR/gate-22af.log"; then
+        t_pass "identity gate: an unparseable emitter is not evidence a bucket is retired-safe"
     else
-        t_fail "identity gate: unreadable-emitter path not exercised (rc=$G_RC; see $TMP_DIR/gate-22af.log)"
+        t_fail "identity gate: unparseable-emitter path not exercised (rc=$G_RC; see $TMP_DIR/gate-22af.log)"
     fi
     (cd "$GATE_REPO" && git checkout --quiet "$G_PROTO_BASE" -- scripts/todo-graph/snapshot_protocol.json \
-        scripts/lint/check_stub_behind_stamp.py \
-        && git commit --quiet --no-verify -am "restore after unreadable-emitter fixture" >/dev/null 2>&1)
+        scripts/todo-graph/ref_resolution.py \
+        && git commit --quiet --no-verify -am "restore after unparseable-emitter fixture" >/dev/null 2>&1)
 
     # 22ag: LOADER/DATA DIVERGENCE. Reading only the JSON let the loader and
     # the data disagree: filtering a DORMANT bucket in the loader while the
@@ -6231,6 +6273,206 @@ PY2
     (cd "$GATE_REPO" && git checkout --quiet "$G_PROTO_BASE" -- scripts/todo-graph/snapshot_protocol.json \
         scripts/todo-graph/snapshot_protocol.py \
         && git commit --quiet --no-verify -am "restore after loader-divergence fixture" >/dev/null 2>&1)
+
+    # 22ah / 22ai: THE TWO SHAPES THAT DEFEATED THE SOURCE-TEXT PROOF (section
+    # 20). Both preserve behaviour, both leave the quoted bucket literal absent,
+    # and both therefore PASSED section 18's retirement guard while the resolver
+    # could still emit the name. The declared-emission contract must reject them
+    # as retirement candidates. Run against a COPY of the emitter so a fixture
+    # cannot damage the tree under test.
+    _bucket_mutation() {   # $1=label  $2=python-edit  $3=expected-message
+        local _mut="$TMP_DIR/emit-mut.py"
+        python3 - "$GATE_REPO/scripts/todo-graph/ref_resolution.py" "$_mut" "$2" <<'PY2'
+import pathlib, sys
+src, dst, edit = sys.argv[1], sys.argv[2], sys.argv[3]
+t = pathlib.Path(src).read_text(encoding="utf-8")
+old, new = edit.split("=>", 1)
+if old not in t:
+    sys.stderr.write("fixture cannot apply its own mutation: %r absent\n" % old)
+    raise SystemExit(2)
+t = t.replace(old, new, 1)
+# Retire the member from the declaration too: the point is an emission the
+# declared set no longer covers, which is exactly the two-commit sequence.
+t = t.replace("    Bucket.PATH_ESCAPE,\n", "", 1)
+pathlib.Path(dst).write_text(t, encoding="utf-8")
+PY2
+        if [ $? -ne 0 ]; then
+            t_fail "bucket-emission contract: fixture setup failed for $1"
+            return
+        fi
+        python3 "$GATE_REPO/scripts/lint/check_bucket_emission.py" \
+            --emitter "$_mut" \
+            --protocol "$GATE_REPO/scripts/todo-graph/snapshot_protocol.json" \
+            >"$TMP_DIR/emit-mut.out" 2>"$TMP_DIR/emit-mut.err"
+        local _rc=$?
+        # ASSERT THE MESSAGE, NOT ONLY THE CODE. rc 1 is reachable from any
+        # violation, including one produced by a broken fixture that never
+        # exercised the shape under test.
+        if [ "$_rc" -eq 1 ] && grep -q "$3" "$TMP_DIR/emit-mut.err"; then
+            t_pass "bucket-emission contract: $1 is rejected as a retirement candidate"
+        else
+            t_fail "bucket-emission contract: $1 accepted (rc=$_rc; see $TMP_DIR/emit-mut.err)"
+        fi
+    }
+    _bucket_mutation "indexed emission" \
+        "return (None, Bucket.PATH_ESCAPE)=>return (None, PRE_RESOLUTION_BUCKETS[1])" \
+        "is indexed"
+    _bucket_mutation "concatenated emission" \
+        "return (None, Bucket.PATH_ESCAPE)=>return (None, \"path\" + \"_escape\")" \
+        "appears as a string"
+    # A MEMBER DROPPED FROM THE DECLARATION WHILE ITS EMISSION SITES REMAIN.
+    # This produced ZERO violations until round 2: the retirement gate reads
+    # only the declaration, so the following data-only retirement was approved
+    # while four live sites still named the bucket. The 22ae clearing-path
+    # fixture cannot catch it -- it retires a bucket nothing ever emitted, so no
+    # site is left behind to go stale. `_bucket_mutation` already removes the
+    # member, so the no-op edit below leaves the sites in place.
+    _bucket_mutation "declaration dropped, emission site left behind" \
+        "return (None, Bucket.PATH_ESCAPE)=>return (None, Bucket.PATH_ESCAPE)" \
+        "is named here but is NOT in"
+
+    # 22aj: THE CONTRACT MUST HOLD ON THE REAL TREE. A checker that only ever
+    # runs against mutated copies proves nothing about what ships.
+    python3 "$GATE_REPO/scripts/lint/check_bucket_emission.py" \
+        --emitter "$GATE_REPO/scripts/todo-graph/ref_resolution.py" \
+        --protocol "$GATE_REPO/scripts/todo-graph/snapshot_protocol.json" \
+        >"$TMP_DIR/emit-live.out" 2>"$TMP_DIR/emit-live.err"
+    if [ $? -eq 0 ] && grep -q 'contract ok' "$TMP_DIR/emit-live.err"; then
+        t_pass "bucket-emission contract: the shipped resolver declares its emitted set"
+    else
+        t_fail "bucket-emission contract: the shipped resolver violates it (see $TMP_DIR/emit-live.err)"
+    fi
+
+    # 22ak: THE RUNTIME HALF. The static bans cannot enumerate every way to
+    # compute a name -- an alias, an iteration or a reflective lookup produces a
+    # member with no banned shape anywhere in the file (Codex design review,
+    # section 20). Once a member leaves the declared set, EVERY route to it must
+    # be refused at construction, or the retirement proof is unsound.
+    (cd "$GATE_REPO" && python3 - <<'PY2'
+import sys
+sys.path.insert(0, "scripts/todo-graph")
+import ref_resolution as rr
+
+retired = rr.Bucket.PATH_ESCAPE
+rr.EMITTED_BUCKETS = frozenset(b for b in rr.EMITTED_BUCKETS if b is not retired)
+routes = {
+    "alias":      lambda: (lambda B: B.PATH_ESCAPE)(rr.Bucket),
+    "iteration":  lambda: [b for b in rr.Bucket if b == "path_escape"][0],
+    "reflection": lambda: getattr(rr.Bucket, "PATH_ESCAPE"),
+    "by-value":   lambda: rr.Bucket("path_escape"),
+    "raw-string": lambda: "path_escape",
+}
+leaked = []
+for label, make in routes.items():
+    for ctor in (lambda v: rr.Verdict(None, None, "a", v),
+                 lambda v: rr.RefResult(None, "a", v, None, None, None, None)):
+        try:
+            ctor(make())
+            leaked.append(label)
+        except rr.BucketContractError:
+            pass
+
+# THE NAMEDTUPLE CONSTRUCTION ROUTES. Overriding `__new__` alone left all of
+# these open, and a probe drove a retired bucket through every one (Codex
+# adversarial, section 20). `_replace` is defined in terms of `_make`, so the
+# `_make` override closes both; the module must also bind NO name for an
+# unchecked base namedtuple.
+ok_v = rr.Verdict(None, None, "a", rr.Bucket.MISSING_FILE)
+ok_r = rr.RefResult(None, "a", rr.Bucket.MISSING_FILE, None, None, None, None)
+for label, fn in (
+        ("Verdict._replace",   lambda: ok_v._replace(bucket=retired)),
+        ("Verdict._make",      lambda: rr.Verdict._make((None, None, "a", retired))),
+        ("RefResult._replace", lambda: ok_r._replace(bucket=retired)),
+        ("RefResult._make",    lambda: rr.RefResult._make(
+            (None, "a", retired, None, None, None, None)))):
+    try:
+        fn()
+        leaked.append(label)
+    except rr.BucketContractError:
+        pass
+for base in ("_VerdictBase", "_RefResultBase"):
+    if hasattr(rr, base):
+        leaked.append("unchecked base %s is importable" % base)
+
+# `tuple.__new__` CANNOT be closed at construction -- nothing in Python can
+# take it away -- so the PUBLIC RETURN BOUNDARY is what bounds the observable
+# emission set. Assert the boundary, not an impossible constructor guarantee.
+smuggled = tuple.__new__(rr.RefResult, (None, "a", retired, None, None, None, None))
+# TYPED, because `getattr(result, "bucket", None)` failed OPEN: a missing
+# attribute read as the legal RESOLVED value, so a raw tuple carrying an
+# undeclared bucket passed the boundary untouched (round 2).
+for label, value in (("smuggled RefResult", smuggled),
+                     ("raw tuple", (None, "a", retired, None, None, None, None)),
+                     ("dict", {"bucket": retired}),
+                     ("object without a bucket attribute", object())):
+    try:
+        rr._bucket_bounded(rr.RefResult)(
+            lambda *a, **k: value)({}, rr.EMPTY_SCOPE, None)
+        leaked.append("public boundary passed %s" % label)
+    except rr.BucketContractError:
+        pass
+for public in ("classify_ref", "resolve_ref"):
+    if not hasattr(getattr(rr, public), "__wrapped__"):
+        leaked.append("%s is not bucket-bounded" % public)
+# A still-declared member must keep working, or the check is vacuous.
+if rr.Verdict(None, None, "a", rr.Bucket.MISSING_FILE).bucket != "missing_file":
+    leaked.append("declared-member-rejected")
+if leaked:
+    sys.stderr.write("LEAKED: %s\n" % sorted(set(leaked)))
+    raise SystemExit(1)
+PY2
+    ) >"$TMP_DIR/emit-runtime.log" 2>&1
+    if [ $? -eq 0 ]; then
+        t_pass "bucket-emission contract: a retired member cannot be emitted by any route"
+    else
+        t_fail "bucket-emission contract: a retired member still reached a verdict (see $TMP_DIR/emit-runtime.log)"
+    fi
+
+    # 22al: THE LINT CONSUMER MUST SURVIVE A VOCABULARY MIGRATION. The identity
+    # gate could otherwise approve a retirement that leaves lint Check 7
+    # unusable: the consumer keys its coverage dict from ALL_BUCKETS but used to
+    # retype the six names for its accounting sum, so an emitted ADDITION was
+    # counted in one place and not the other (rc 6), and a RETIREMENT raised
+    # KeyError on a fixed lookup (Codex design review, section 20). Exercise the
+    # consumer itself, not just the gate.
+    (cd "$GATE_REPO" && python3 - <<'PY2'
+import sys
+sys.path.insert(0, "scripts/todo-graph")
+sys.path.insert(0, "scripts/lint")
+import ref_resolution as rr
+import check_stub_behind_stamp as consumer
+
+# ADDITION: a bucket the vocabulary declares and the consumer has never seen.
+added = rr.ALL_BUCKETS + ("a_freshly_added_bucket",)
+# RETIREMENT: a bucket the consumer used to name directly.
+retired = tuple(b for b in rr.ALL_BUCKETS if b != "missing_file")
+for label, vocab in (("addition", added), ("retirement", retired)):
+    cov = {"occurrences": 0, "resolved": 0}
+    cov.update({b: [] for b in vocab})
+    cov["occurrences"] = 2
+    cov["resolved"] = 1
+    cov[vocab[0]].append("x.c:sym")
+    accounted = cov["resolved"] + sum(len(cov[b]) for b in vocab)
+    if accounted != cov["occurrences"]:
+        sys.stderr.write("%s: accounting disagrees (%d vs %d)\n"
+                         % (label, accounted, cov["occurrences"]))
+        raise SystemExit(1)
+    # The reporting path must not name a bucket by hand either.
+    labels = {"unresolved_calllike": "calllike-unresolved"}
+    line = " ".join(f"{labels.get(b, b)}={len(cov[b])}" for b in vocab)
+    if not line:
+        sys.stderr.write("%s: empty bucket report\n" % label)
+        raise SystemExit(1)
+if not hasattr(consumer, "_walk"):
+    sys.stderr.write("consumer no longer exposes _walk\n")
+    raise SystemExit(1)
+PY2
+    ) >"$TMP_DIR/consumer-migration.log" 2>&1
+    if [ $? -eq 0 ]; then
+        t_pass "lint consumer: a bucket addition and a retirement both stay accountable"
+    else
+        t_fail "lint consumer: a vocabulary migration breaks it (see $TMP_DIR/consumer-migration.log)"
+    fi
 
     # 22z: A DECLARATION ALREADY PRESENT IN BASE pre-authorises the edge it is
     # supposed to declare. Concrete shape (Codex adversarial, round 7): BASE
@@ -6551,12 +6793,18 @@ import sys, pathlib
 p = pathlib.Path(sys.argv[1]); s = p.read_text(encoding="utf-8")
 old = "                result = _rr.resolve_ref(ref, scope, repo_resolved)"
 assert old in s, "consumer resolve_ref call site not found"
+# SWAPPED WITH LEGAL ENUM MEMBERS (section 20). Staging the swap with raw
+# strings now trips the resolver's bucket contract inside `_replace`, so the
+# probe died as rc 3 before the delegation check could report anything -- the
+# fixture would have been asserting the wrong mechanism. Using members the
+# resolver really emits makes this a STRONGER test: a consumer post-processing
+# verdicts with entirely valid values must still be caught as a VIOLATION.
 inject = [
     old,
-    '                if result.bucket == "missing_file":',
-    '                    result = result._replace(bucket="unresolved_calllike")',
-    '                elif result.bucket == "unresolved_calllike":',
-    '                    result = result._replace(bucket="missing_file")',
+    '                if result.bucket == _rr.Bucket.MISSING_FILE:',
+    '                    result = result._replace(bucket=_rr.Bucket.UNRESOLVED_CALLLIKE)',
+    '                elif result.bucket == _rr.Bucket.UNRESOLVED_CALLLIKE:',
+    '                    result = result._replace(bucket=_rr.Bucket.MISSING_FILE)',
 ]
 p.write_text(s.replace(old, "\n".join(inject), 1), encoding="utf-8")
 PY3

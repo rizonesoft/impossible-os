@@ -134,7 +134,20 @@ def semantic_violations() -> list:
     # permuted". Forcing EVERY occurrence to ONE class makes the expected
     # coverage exact -- that class holds all of them and every other class is
     # empty -- so a swap has nowhere to hide.
-    for cls in list(_protocol.ALL_BUCKETS) + [None]:
+    # THE RESOLVER'S EMITTED SET, as enum members. Two corrections at once
+    # (section 20):
+    #   TYPE -- `ALL_BUCKETS` holds plain strings from the inert JSON, and the
+    #   outcome types now refuse a bucket that is not a `Bucket` member, so the
+    #   probe's own sentinels were rejected before the consumer ever ran.
+    #   POPULATION -- the vocabulary is a superset of what the resolver EMITS. A
+    #   data-only bucket ADDITION is a supported migration (identity-gate
+    #   fixture 22j) that deliberately adds a name nothing emits yet, and
+    #   driving the consumer with it made this check fail on a legal migration.
+    # The probe must stage verdicts the resolver could really produce, which is
+    # exactly `EMITTED_BUCKETS`; iterating `Bucket` filters it into a
+    # deterministic order, since a frozenset has none.
+    emitted = [b for b in _protocol.Bucket if b in _rr.EMITTED_BUCKETS]
+    for cls in emitted + [None]:
         calls = {"n": 0}
         coords = []
 

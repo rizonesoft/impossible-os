@@ -35,6 +35,7 @@ exactly what the gate measures when it lands.
 """
 from __future__ import annotations
 
+import enum
 import json
 from pathlib import Path
 
@@ -112,7 +113,97 @@ def load():
     return schema, pre, post
 
 
+class _StrEnumBase(str, enum.Enum):
+    """A `str`-valued enum that behaves identically on every supported Python.
+
+    NOT `enum.StrEnum`, which is 3.11+ while this repo's floor is 3.8
+    (`docs/infrastructure/development-tooling.md` python3 row; `setup.sh
+    --versions` checks it). On a 3.8-3.10 host `enum.StrEnum` raises
+    AttributeError at IMPORT, which would take out the resolver, the lint
+    consumer and the identity gate before any of them could return their
+    documented exit codes -- a check that cannot start is the fail-open shape
+    those exit codes exist to prevent (Codex adversarial, section 20).
+
+    The two dunders are pinned deliberately. A bare `(str, Enum)` mixin renders
+    as `Bucket.PATH_ESCAPE` under `str()` and in f-strings before 3.12, so
+    bucket names would reach logs and reports in a spelling nothing compares
+    equal to. Pinning them to `str`'s gives StrEnum semantics on every version,
+    which is what makes this a drop-in for the bare strings it replaces.
+    """
+
+    __str__ = str.__str__
+    __format__ = str.__format__
+
+
+def _member_name(bucket: str) -> str:
+    """The enum member name for a bucket, by the one documented convention.
+
+    UPPERCASE of the bucket name. The convention has to be TOTAL and INJECTIVE
+    or `Bucket.PATH_ESCAPE` in the emitter could not be mapped back to a
+    vocabulary entry without executing anything -- which is precisely what the
+    section 20 retirement proof reads.
+    """
+    return bucket.upper()
+
+
+def build_bucket_enum(all_buckets) -> type:
+    """The published vocabulary as an enum type, derived from the inert JSON.
+
+    WHY AN ENUM AND NOT THE BARE STRINGS (section 20). The resolver used to
+    return bucket names as string literals, so the only available proof that it
+    could no longer produce a retired name was a SOURCE-TEXT search for that
+    literal -- and text absence is not proof of non-emission. An indexed or
+    concatenated emission preserves behaviour and leaves the literal absent, so
+    a two-commit sequence (refactor to indirect emission, then retire) passed
+    the search while the resolver could still emit a name the vocabulary no
+    longer declares.
+
+    WHY IT IS STILL DERIVED FROM THE JSON. Spelling the members out in Python
+    would put the vocabulary back in an EXECUTABLE file and undo section 18: a
+    bucket migration would once more have to edit code the identity gate needs
+    byte-identical, which is the exact condition that left the gate failing
+    closed on every migration in section 16. Deriving them keeps a migration a
+    data-only diff; what section 20 adds is a separate, explicitly declared
+    EMITTED set in the resolver (`ref_resolution.EMITTED_BUCKETS`), which is
+    where the emission contract lives.
+
+    A `str`-valued enum and not a plain `Enum`: members ARE `str`, so equality,
+    hashing, dict-keying, membership, f-strings and `json.dumps` behave exactly
+    as the bare names did at every existing call site. See `_StrEnumBase` for
+    why it is not `enum.StrEnum`.
+    """
+    members = {}
+    for name in all_buckets:
+        member = _member_name(name)
+        # LOWERCASE, so the member name maps back to the bucket name by
+        # `.lower()` alone. The identity gate must read the emitted set from a
+        # tree MID-RETIREMENT, where a declared member is deliberately no longer
+        # in the vocabulary -- so it cannot resolve `Bucket.PATH_ESCAPE` by
+        # looking the name up. A bijective convention is what lets it recover
+        # the name with no table at all.
+        if name != name.lower():
+            raise ProtocolError(
+                f"{PROTOCOL_PATH.name}: bucket {name!r} is not lowercase; the "
+                f"member/name mapping must be reversible without consulting "
+                f"the vocabulary")
+        if not member.isidentifier() or member[:1].isdigit():
+            raise ProtocolError(
+                f"{PROTOCOL_PATH.name}: bucket {name!r} does not yield a usable "
+                f"enum member name ({member!r}); a bucket name must be a plain "
+                f"identifier so the emitter can name it as `Bucket.{member}`")
+        if member in members:
+            # Two names differing only by case would map onto ONE member, so
+            # `Bucket.X` in the emitter would be ambiguous and the retirement
+            # proof could not say which of them it referred to.
+            raise ProtocolError(
+                f"{PROTOCOL_PATH.name}: buckets {members[member]!r} and "
+                f"{name!r} collide on the enum member name {member!r}")
+        members[member] = name
+    return _StrEnumBase("Bucket", members)
+
+
 SNAPSHOT_SCHEMA, PRE_RESOLUTION_BUCKETS, POST_RESOLUTION_BUCKETS = load()
 # ORDER IS PART OF THE CONTRACT: the identity gate compares the ordered tuple,
 # so a reorder is a protocol change even when the membership is identical.
 ALL_BUCKETS = PRE_RESOLUTION_BUCKETS + POST_RESOLUTION_BUCKETS
+Bucket = build_bucket_enum(ALL_BUCKETS)

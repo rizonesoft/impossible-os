@@ -123,6 +123,14 @@ EXEC_CLOSURE=(
     "scripts/todo-graph/snapshot_protocol.py"
     "scripts/todo-graph/producer_differential.py"
     "scripts/todo-graph/identity-gate.sh"
+    # THE RETIREMENT PROOF ITSELF (section 20). This gate asks
+    # check_bucket_emission.py which buckets the resolver declares it can emit,
+    # and approves a data-only retirement on that answer -- so a commit that
+    # weakened the checker WHILE retiring a bucket would be adjudicating its own
+    # evidence. Inside the closure it must be byte-identical for the data-only
+    # inference to hold, which forces the weakening to land as a separate,
+    # differentialled change.
+    "scripts/lint/check_bucket_emission.py"
 )
 CLOSURE=(
     "${EXEC_CLOSURE[@]}"
@@ -505,32 +513,43 @@ done
 # byte-identical, and this gate would skip the only differential capable of
 # exposing it (Codex design review, section 18).
 # ---------------------------------------------------------------------------
+# THE RETIREMENT PROOF, READ FROM A DECLARATION (section 20). Until now the
+# only evidence that a bucket is no longer produced was a SOURCE-TEXT search for
+# its quoted literal in the emitters, which an indexed or concatenated emission
+# defeats -- so every active retirement was refused rather than approved on
+# unsound evidence. `ref_resolution.py` now DECLARES the set it can emit
+# (`EMITTED_BUCKETS`), `check_bucket_emission.py` pins that declaration's AST
+# shape, and the resolver's own outcome constructors refuse at runtime any
+# bucket outside it. Absence from the declared set is therefore a real proof of
+# non-emission, and the retirement path can open.
+#
+# A VIOLATED OR UNREADABLE CONTRACT IS INFRASTRUCTURE, never absence. rc 1 means
+# the declaration is contradicted and proves nothing; rc 3 means the check could
+# not run. Both must refuse -- reading either as "the bucket is not there" is
+# the same fail-open inversion that made an unreadable emitter approve a
+# retirement (fixture 22af).
+    EMITTED_SET="$(python3 "$REPO_ROOT/scripts/lint/check_bucket_emission.py" \
+        --emitter "$REPO_ROOT/scripts/todo-graph/ref_resolution.py" \
+        --protocol "$REPO_ROOT/scripts/todo-graph/snapshot_protocol.json" \
+        --allow-undeclared --emitted-set 2>"$TMP_DIR/bucket-contract.err")"
+    EMITTED_RC=$?
+    if [ "$EMITTED_RC" -ne 0 ]; then
+        die_infra "the bucket-emission contract does not hold at HEAD (rc=$EMITTED_RC), so the set of buckets the resolver can emit is unknown and no retirement can be adjudicated: $(head -3 "$TMP_DIR/bucket-contract.err" 2>/dev/null | tr '\n' ' ')"
+    fi
+    EMITTED_B64="$(printf '%s' "$EMITTED_SET" | base64 -w0)" \
+        || die_infra "could not encode the declared emitted-bucket set"
     RELOC="$(python3 - "$BASE_PRE_B64" "$BASE_POST_B64" "$HEAD_PRE_B64" "$HEAD_POST_B64" "$HEAD_MIG_B64" "$BASE_MIG_B64" \
-        "$REPO_ROOT/scripts/todo-graph/ref_resolution.py" \
-        "$REPO_ROOT/scripts/lint/check_stub_behind_stamp.py" <<'RELOCPY'
-import base64, json, pathlib, sys
+        "$EMITTED_B64" <<'RELOCPY'
+import base64, json, sys
 from collections import Counter
 
-_EMITTER_CACHE = {}
-
-
-class EmitterUnreadable(Exception):
-    pass
-
-
-def _emitter_text(path):
-    if path not in _EMITTER_CACHE:
-        try:
-            _EMITTER_CACHE[path] = pathlib.Path(path).read_text(encoding="utf-8")
-        except OSError as exc:
-            # RAISE. The first cut returned a sentinel STRING here, intending
-            # to fail closed -- but the caller's test is "does this bucket name
-            # appear in the text", and a sentinel matches no bucket name, so
-            # an unreadable emitter read as PROOF OF ABSENCE and approved the
-            # retirement. The guard was inverted (Codex adversarial, section 18
-            # ship gate). An error cannot be mistaken for evidence.
-            raise EmitterUnreadable("%s: %s" % (path, exc))
-    return _EMITTER_CACHE[path]
+# THE DECLARED EMITTED SET, computed by check_bucket_emission.py before this
+# block runs. It is only ever passed in on a rc-0 contract check, so reaching
+# here at all means the declaration was verified against the emitter's AST; a
+# violated or unreadable contract died as infrastructure in the shell above and
+# never becomes an empty set here. That ordering is the whole safety property:
+# an empty set would approve every retirement at once.
+EMITTED = set(json.loads(base64.b64decode(sys.argv[7])))
 
 
 def halves(a, b):
@@ -601,12 +620,13 @@ for src, dst in sorted(renamed.items()):
         # actually requires.
         active_renames[src] = dst
         bad.append("rename %r -> %r cannot be a data-only migration: the "
-                   "bucket names are hardcoded in ref_resolution.py and in "
-                   "check_stub_behind_stamp.py's coverage keys, so the "
-                   "emitters and the consumer must be migrated in the same "
-                   "change -- which this gate cannot adjudicate as a protocol "
-                   "migration. Retire the old bucket and introduce the new one "
-                   "as separate, individually-gated steps" % (src, dst))
+                   "resolver names the bucket in its declared emitted set "
+                   "(ref_resolution.EMITTED_BUCKETS), which is executable "
+                   "code, so the rename and the resolver change would land in "
+                   "one commit -- and this gate cannot adjudicate that as a "
+                   "protocol migration. Retire the old bucket and introduce "
+                   "the new one as separate, individually-gated steps"
+                   % (src, dst))
 for dst, n in sorted(Counter(active_renames.values()).items()):
     if n > 1:
         bad.append("rename target %r is claimed by %d sources" % (dst, n))
@@ -633,50 +653,39 @@ for r in retired:
         # That is precisely the latent-failure argument that rejects renames,
         # so it applies here too (Codex adversarial, section 18 ship gate).
         #
-        # It is CHECKABLE rather than blanket-refused: if the name appears
-        # nowhere in the head emitters, the executable-only migration has
-        # already happened and the data-only retirement is safe. That is the
-        # documented two-step sequence, and this is what verifies step one.
-        # EVERY ACTIVE RETIREMENT IS REFUSED, for now and deliberately.
+        # It is CHECKABLE rather than blanket-refused: if the resolver no longer
+        # DECLARES the name in `ref_resolution.EMITTED_BUCKETS`, the
+        # executable-only migration has already happened and the data-only
+        # retirement is safe. That is the documented two-step sequence, and this
+        # is what verifies step one.
         #
-        # The proof available today is a SOURCE-TEXT search for the quoted
-        # bucket literal, and that is not proof of non-emission: an
-        # executable-only refactor to `PRE_RESOLUTION_BUCKETS[1]`, a
-        # concatenation, or a table lookup preserves behaviour, passes the
-        # differential, and leaves the literal absent -- so a following
-        # data-only retirement passes this search while the resolver can still
-        # emit a name the protocol no longer declares. Documenting that in a
-        # follow-up section does not protect the shipping path, so the path is
-        # closed until the follow-up lands (Codex adversarial, section 18 ship
-        # gate). Retirement is rare and has never been performed; refusing it
-        # costs nothing and cannot be unsound.
+        # SECTION 20 REPLACED THE EVIDENCE HERE, not the rule. The proof used to
+        # be a SOURCE-TEXT search for the quoted bucket literal in the emitters,
+        # which is not proof of non-emission: an executable-only refactor to
+        # `PRE_RESOLUTION_BUCKETS[1]`, a concatenation, or a table lookup
+        # preserves behaviour, passes the differential, and leaves the literal
+        # absent -- so a following data-only retirement passed the search while
+        # the resolver could still emit a name the protocol no longer declares.
+        # Every active retirement was therefore refused outright, which made
+        # this a wedge rather than a gate.
         #
-        # The text search below still runs, because when it FIRES it names the
-        # concrete reason and is the more useful message of the two.
-        try:
-            still = [f for f in (sys.argv[7], sys.argv[8])
-                     if ('"%s"' % r) in _emitter_text(f)
-                     or ("'%s'" % r) in _emitter_text(f)]
-        except EmitterUnreadable as exc:
-            bad.append("cannot read an emitter to prove %r is no longer "
-                       "produced (%s) -- an unreadable file is not evidence of "
-                       "absence" % (r, exc))
-            continue
-        if still:
+        # The declared set is a real proof because it is backed twice: the AST
+        # check pins the declaration's shape so it cannot be computed or
+        # rebound, and the resolver's outcome constructors refuse at RUNTIME any
+        # bucket outside it -- including the aliased, iterated and reflective
+        # shapes no static rule can enumerate. Removing a member is what makes
+        # the resolver unable to produce it; removing the name here is then
+        # bookkeeping.
+        if r in EMITTED:
             bad.append("retirement of %r cannot be a data-only migration: the "
-                       "name is still hardcoded in %s, so the emitters can "
-                       "still produce a verdict the retired vocabulary does "
-                       "not declare -- dormant today, invalid for every "
-                       "snapshot the day a ref reaches it"
-                       % (r, ", ".join(pathlib.Path(f).name for f in still)))
-        else:
-            bad.append("retirement of %r is refused: the only available proof "
-                       "that a bucket is no longer emitted is a source-text "
-                       "search, which an indexed or concatenated emission "
-                       "defeats. Retirement is enabled by the declared "
-                       "emitted-member contract in section 20; until that "
-                       "lands this path stays closed rather than knowingly "
-                       "unsound" % r)
+                       "resolver still declares it in EMITTED_BUCKETS, so it "
+                       "can still produce a verdict the retired vocabulary "
+                       "does not declare -- dormant today, invalid for every "
+                       "snapshot the day a ref reaches it. Remove the member "
+                       "from ref_resolution.EMITTED_BUCKETS first, as an "
+                       "executable change put through this gate's resolver "
+                       "differential, and retire the name in a following "
+                       "data-only commit" % r)
 if bad:
     print(json.dumps({"moved": [], "undeclared_removals": [],
                       "bad_declarations": bad}))
