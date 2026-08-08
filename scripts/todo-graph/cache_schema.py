@@ -186,7 +186,12 @@ _MAX_SECTION_N = 65535
 SUBTREE_STAMPED_ITEMS = "stamped_items"
 SUBTREE_SECTIONS = "sections"
 SUBTREE_STAMPS_XREFS = "stamps_xrefs"
-SUBTREE_INPUTS_XREFS = "inputs_xrefs"
+# NOT a subtree, and deliberately not spelled like one any more. The entry
+# shape is validated INSIDE `_validate_node_fields`, so a `SUBTREE_`-prefixed
+# name for it sat in the public vocabulary while appearing in no registry, no
+# profile and no dispatch -- a member no caller could ever select (Codex
+# consistency, section 23 review, [medium]).
+_INPUTS_XREFS_KEY = "inputs_xrefs"
 # Section 22. Two subtrees that are NOT node keys but named walks, which is why
 # they carry a qualified spelling: `sections.depends_on` is the GROUP shape
 # inside the `sections` subtree, and `node_fields` is the set of node-level
@@ -310,7 +315,7 @@ PROFILE_QUERY = Profile(
 # one field over would be routing in name only.
 #
 # `requires_history` is FALSE: `validate.py` reads neither `created_at` nor
-# `last_active_at` (grep-confirmed across all eight checks and the diff walk),
+# `last_active_at` (grep-confirmed across all nine checks and the diff walk),
 # so it must not pay section 21's three git subprocesses per lint.
 #
 # `SUBTREE_NODE_IDENTITY` IS DELIBERATELY ABSENT, and it is the only profile
@@ -348,9 +353,15 @@ PROFILE_VALIDATE = Profile(
 # (build.py:1020) is the per-node TODO frontmatter version, not an identity for
 # the artifact as a whole. Shape alone cannot detect a field that kept its type
 # and changed its MEANING, so the honest contract is the narrow one -- THE
-# BASELINE MUST COME FROM THE CURRENT `build.py`, which is exactly what CI does,
-# and an imported or older artifact is REFUSED rather than silently diffed
-# (Codex design review, section 23, [medium]).
+# BASELINE MUST COME FROM THE CURRENT `build.py`, which is exactly what CI does.
+# That is a REQUIREMENT ON THE CALLER, not a check this profile performs, and
+# the distinction is the whole point: an older artifact that still satisfies
+# every consumed field's SHAPE is accepted here and can manufacture deltas. An
+# earlier revision of this comment said such an artifact "is REFUSED", which
+# contradicted the sentence above it and promised a guarantee no code delivers
+# (Codex consistency, section 23 review, [medium]). Making it enforceable needs
+# a cache-format identity from the producer, filed against the section that
+# owns fields the readers consume and the producer never emits.
 # It DOES declare `node_identity`, where `PROFILE_VALIDATE` does not, and the
 # asymmetry is the point: `diff_caches` builds `build_id_index(baseline_nodes)`
 # and keys a dict on the baseline's ids, so a duplicate there silently rebinds
@@ -889,13 +900,13 @@ def _validate_node_fields(node, i: int, path):
 
     # `inputs_xrefs` is REQUIRED by the schema and `query.py:340-344` skips a
     # non-dict entry, dropping an Inputs edge silently.
-    if SUBTREE_INPUTS_XREFS not in node:
+    if _INPUTS_XREFS_KEY not in node:
         _err(REASON_SHAPE,
              f"cache node {i} is missing required `inputs_xrefs` "
              f"(per {SCHEMA_REL}): {path}")
     # Local names distinct from `_validate_stamps_xrefs` for the mutation-harness
     # uniqueness reason documented in `_validate_section_deps`.
-    inputs = node[SUBTREE_INPUTS_XREFS]
+    inputs = node[_INPUTS_XREFS_KEY]
     if not isinstance(inputs, list):
         _err(REASON_SHAPE,
              f"cache node {i} `inputs_xrefs` is {type(inputs).__name__}, "
@@ -1116,6 +1127,69 @@ def validate_nodes(nodes, path, profile: Profile = PROFILE_STAMPED_ITEMS) -> Cac
                  f"(per {SCHEMA_REL}): {path}")
         _require_str(node["file_path"], f"cache node {i}", "file_path", path, 1)
 
+        # THE PATH IS UNTRUSTED INPUT, and every routed reader joins it onto a
+        # repo root. Until now the only rule was "a non-empty string", so
+        # `../../outside.md` and `/etc/passwd` both validated -- confirmed by
+        # probe against the live cache. `repo_root / rel` then discards the root
+        # entirely for an absolute path and walks out of it for a relative one.
+        #
+        # That was survivable while every consumer only READ. It is not now:
+        # `validate.py --fix-line-numbers --write` REPLACES the files these
+        # paths name, so a caller-supplied cache could direct a rewrite at any
+        # file the user can write. And this module is precisely what makes that
+        # cache look trustworthy -- bounded, shape-checked, generation-bound --
+        # so the guarantee has to cover the paths too (Codex re-adversarial
+        # round 5, section 23 review, [high]).
+        #
+        # All 232 nodes of the live corpus already satisfy this, so it refuses
+        # nothing a real producer emits.
+        rel_path = node["file_path"]
+        if rel_path.startswith("/") or (len(rel_path) > 1 and rel_path[1] == ":"):
+            _err(REASON_SHAPE,
+                 f"cache node {i} `file_path` is absolute ({rel_path!r}); "
+                 f"consumers join it onto a repo root, so an absolute path "
+                 f"escapes that root entirely: {path}")
+        if "\\" in rel_path:
+            _err(REASON_SHAPE,
+                 f"cache node {i} `file_path` uses backslashes ({rel_path!r}); "
+                 f"cache paths are POSIX-relative: {path}")
+        if "\x00" in rel_path:
+            _err(REASON_SHAPE,
+                 f"cache node {i} `file_path` contains a NUL byte; that is not "
+                 f"a filename any producer can emit: {path}")
+        parts = rel_path.split("/")
+        # CANONICAL SPELLING, because `file_path` is the node's IDENTITY and
+        # the uniqueness check above compares it as a STRING. `todo//x.md`,
+        # `todo/./x.md` and `todo/x.md/` all name the same inode as
+        # `todo/x.md` while comparing unequal, so a poisoned cache could carry
+        # one physical file under several identities -- duplicating it in every
+        # index, or rebinding another node's edges to it. Rejecting the
+        # non-canonical spellings is what makes the string comparison a real
+        # identity test (Codex re-adversarial round 6, section 23 review,
+        # [medium]).
+        if len(parts) < 2 or not parts[-1]:
+            _err(REASON_SHAPE,
+                 f"cache node {i} `file_path` names no file ({rel_path!r}); "
+                 f"every node is a file under {_CORPUS_DIR}/, not the "
+                 f"directory itself and not a trailing separator: {path}")
+        if "" in parts or "." in parts:
+            _err(REASON_SHAPE,
+                 f"cache node {i} `file_path` is not canonical ({rel_path!r}); "
+                 f"an empty or `.` component names the same file under a "
+                 f"different spelling, and this path IS the node's identity: "
+                 f"{path}")
+        if ".." in parts:
+            _err(REASON_SHAPE,
+                 f"cache node {i} `file_path` traverses upward ({rel_path!r}); "
+                 f"consumers join it onto a repo root and a reader -- or the "
+                 f"line-number repair, which WRITES -- would leave the "
+                 f"corpus: {path}")
+        if parts[0] != _CORPUS_DIR:
+            _err(REASON_SHAPE,
+                 f"cache node {i} `file_path` is outside the corpus "
+                 f"({rel_path!r}); every node names a file under "
+                 f"{_CORPUS_DIR}/: {path}")
+
         # `file_path` IS THE NODE'S IDENTITY, and identity must be unique for
         # the same reason `sections[].n` must be: every routed reader keys a
         # dict on it (`_CACHE[node["file_path"]]` in todo-reachability, the
@@ -1186,6 +1260,10 @@ def validate_nodes(nodes, path, profile: Profile = PROFILE_STAMPED_ITEMS) -> Cac
 # one implementation instead of a producer subset compared against a reader
 # superset (section 21).
 _CORPUS_EXCLUDE = frozenset({"TODO-00-INDEX.md"})
+
+# The one directory every cache node lives under. Node paths are validated
+# against it so an untrusted cache cannot name a file outside the corpus.
+_CORPUS_DIR = "todo"
 
 # Sidecar wire format. Bumping this string invalidates every existing sidecar,
 # which is the intended migration path: a reader that does not understand the

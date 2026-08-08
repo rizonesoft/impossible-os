@@ -81,8 +81,10 @@ import argparse
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Optional
 
@@ -193,9 +195,58 @@ _REBUILDABLE_REASONS = frozenset((
 _CANONICAL_CACHE_REL = "build/todo-cache.json"
 
 
+def _is_canonical_cache(cache_path: Path, repo_root: Path) -> bool:
+    """Is this the generated cache -- the one file the recovery may overwrite?
+
+    Two failure modes a `==` on Path objects has, and both matter because the
+    answer authorises a destructive write:
+
+    - Equivalent spellings compare UNEQUAL. `--cache build/../build/todo-cache.json`
+      and `--cache ./build/todo-cache.json` both name the generated cache, and
+      both were treated as somebody else's file, so the recovery refused a cache
+      it does own.
+    - Equal spellings can name a DIFFERENT file. If `build/` is a symlink into a
+      shared or external directory, the canonical spelling still compares equal
+      and authorises overwriting a cache outside this repository entirely.
+
+    So compare resolved paths, and additionally require the resolved cache to
+    remain under the resolved repo root -- a symlinked `build` then fails the
+    containment test rather than smuggling the target out (Codex adversarial,
+    section 23 review, [medium]).
+    """
+    try:
+        root = Path(os.path.realpath(repo_root))
+        resolved = Path(os.path.realpath(cache_path))
+        canonical = Path(os.path.realpath(repo_root / _CANONICAL_CACHE_REL))
+    except OSError:
+        return False
+    if resolved != canonical:
+        return False
+    # RESOLVING BOTH SIDES CUTS THE OTHER WAY TOO, which is what the previous
+    # revision missed. If `build/todo-cache.json` is itself a SYMLINK to a
+    # tracked TODO, both realpaths equal that victim and the containment test
+    # passes -- so a corrupt cache is classified as owned, and the recovery
+    # writes cache JSON over the file the link points at. The ownership gate
+    # would have authorised the exact data loss it was added to prevent (Codex
+    # re-adversarial round 7, section 23 review, [high]).
+    #
+    # Ownership therefore requires the path to contain NO symlink at all: a
+    # purely lexical normalisation must agree with the resolved one. That still
+    # accepts every equivalent spelling (`build/../build/todo-cache.json`),
+    # because normpath collapses those without touching the filesystem.
+    lexical = Path(os.path.abspath(os.path.normpath(cache_path)))
+    if lexical != resolved:
+        return False
+    try:
+        resolved.relative_to(root)
+    except ValueError:
+        return False
+    return True
+
+
 def _refuse(message: str) -> None:
     """Every infrastructure refusal leaves through here, at rc 2, so it can
-    never be confused with the rc 1 the eight checks return."""
+    never be confused with the rc 1 the nine checks return."""
     sys.stderr.write(f"[validate.py] REFUSED: {message}\n")
     sys.exit(2)
 
@@ -205,7 +256,7 @@ def _reverify_corpus(todo_root: Path, cache_info) -> None:
 
     `check_freshness` proves the cache matched the corpus at ONE instant, at
     load time. This validator then spends its whole run walking the live TODO
-    files -- eight checks plus, under --diff, a delta pass -- and that walk is
+    files -- nine checks plus, under --diff, a delta pass -- and that walk is
     precisely the long window the binding exists to cover. Without this call the
     guarantee was a few milliseconds wide while the exposure was the entire run.
     """
@@ -241,7 +292,14 @@ def load_or_rebuild_cache(cache_path: Path, repo_root: Path, quiet: bool):
         return cache_schema.load_and_validate(
             cache_path, todo_root, profile=cache_schema.PROFILE_VALIDATE)
     except cache_schema.CacheSchemaError as first:
-        owned = cache_path == (repo_root / _CANONICAL_CACHE_REL)
+        # PHYSICAL, not lexical. `--cache build/../build/todo-cache.json`
+        # names the file this tool owns and compared unequal; conversely the
+        # canonical spelling compared EQUAL even when `build` is a symlink into
+        # a shared directory, which would authorise overwriting a cache outside
+        # the repository. Resolve both, and require the result to still sit
+        # under the resolved repo root so a symlinked `build` cannot smuggle
+        # the target out (Codex adversarial, section 23 review, [medium]).
+        owned = _is_canonical_cache(cache_path, repo_root)
         if first.reason in _REBUILDABLE_REASONS and not owned:
             _refuse(f"cache at {cache_path} is unusable [{first.reason}]: "
                     f"{first}. Not rebuilt automatically: this is not the "
@@ -1193,16 +1251,131 @@ def _commit_rewrites(repo_root: Path, pending: list) -> None:
     `os.replace`-ing it means a reader ever only sees the old file or the new
     one.
 
-    A RESIDUAL WINDOW REMAINS between the phase-1 compare and the phase-2
+    ALL-OR-NONE IS NOT CLAIMED FOR PHASE 3, because it cannot be delivered.
+    Every replacement is staged and fsynced first, so by the time any directory
+    entry moves the only remaining operation per file is `os.replace` within one
+    directory -- but a failure part-way through a multi-file batch still leaves
+    earlier files replaced. Rolling those back would mean writing MORE files on
+    the path where writing is already failing. So the batch reports exactly
+    which files it committed instead of asserting an atomicity it does not have
+    (Codex adversarial, section 23 review, [high]).
+
+    A RESIDUAL WINDOW REMAINS between the phase-1 compare and the phase-3
     replace, and it is documented rather than closed. Closing it properly needs
     an exclusion protocol -- a lock file every writer agrees to take -- and
     nothing else in this repo takes one, so a lock here would be ceremony that
-    excludes nobody while implying it does. What is bounded is the harm: the
-    window is now microseconds of `os.replace` rather than the whole walk, and
-    no partial file is observable either way.
+    excludes nobody while implying it does. What is bounded is the harm: no
+    partial file is ever observable, and the window is microseconds rather than
+    the whole walk.
     """
-    for rel, old_text, _new_text in pending:
+    # PHASE 1 -- verify every destination, and establish its IDENTITY.
+    #
+    # `lstat`, not `stat`: the corpus deliberately accepts a symlink pointing at
+    # a regular TODO file, and `os.replace` would swap the LINK ENTRY for a
+    # regular file, silently converting a tracked link into a copy. Repairing
+    # through a link is ambiguous enough that refusing is the honest answer.
+    #
+    # `(st_dev, st_ino)` deduplication catches the other aliasing case: two
+    # cache nodes naming one inode both pass the compare, and their `new_text`
+    # can differ because line resolution is relative to the SOURCE path -- so
+    # the second replacement would silently discard the first (Codex
+    # adversarial, section 23 review, [high]).
+    staged: list = []
+    by_inode: dict = {}
+    todo_root = Path(os.path.realpath(repo_root / "todo"))
+    for rel, old_text, new_text in pending:
         dest = repo_root / rel
+        # CONTAINMENT IS RE-ESTABLISHED HERE, not inherited. `cache_schema`
+        # refuses a node path that escapes the corpus, but that is a different
+        # module and this is the only code in the tool that WRITES -- so the
+        # last thing standing between an untrusted cache and someone's files
+        # should not depend on another module having been called first. The
+        # resolve also catches an ancestor SYMLINK, which a purely textual path
+        # rule cannot see.
+        try:
+            resolved = Path(os.path.realpath(dest))
+            resolved.relative_to(todo_root)
+        except (OSError, ValueError):
+            _refuse(f"{rel} resolves outside the corpus at {todo_root}; "
+                    f"nothing was written")
+        try:
+            st = os.lstat(dest)
+        except OSError as exc:
+            _refuse(f"cannot stat {rel} before rewriting it, so no rewrite is "
+                    f"safe; nothing was written: {exc}")
+        if stat.S_ISLNK(st.st_mode):
+            _refuse(f"{rel} is a symlink; rewriting it would replace the link "
+                    f"with a regular file. Nothing was written -- edit the "
+                    f"link's target directly")
+        # LINK COUNT, not a duplicate scan. `os.replace` swaps ONE directory
+        # entry and breaks the hard link, so every OTHER name for this inode
+        # keeps the old content and goes stale while the command reports
+        # success. Two attempts got this wrong before landing here:
+        #
+        #  - Dropping a duplicate whose derived text matched. Deduplicating
+        #    REPLACEMENTS is not updating every PATHNAME.
+        #  - Refusing when two PENDING destinations shared an inode. That map is
+        #    built from `pending_writes` ALONE, so an alias that needs no
+        #    rewrite of its own -- or one outside the cached corpus entirely --
+        #    is never seen, and exactly one name reaches this loop (Codex
+        #    re-adversarial round 2, section 23 review, [high]).
+        #
+        # `st_nlink` counts EVERY name for this inode, whether or not this run
+        # knows about them, which is what the pending-set map could not do.
+        #
+        # IT DOES NOT REPLACE THAT MAP, THOUGH, and deleting it was a third
+        # mistake: two pending paths can reach ONE directory entry through
+        # bind-mounted parents while each reports `st_nlink == 1`. Publishing
+        # the first then changes what the second names, and the second is
+        # refused only after the first is already committed. The two guards
+        # cover different aliasing mechanisms, so both stay (Codex
+        # re-adversarial round 3, section 23 review, [medium]).
+        ident = (st.st_dev, st.st_ino)
+        if ident in by_inode:
+            _refuse(f"{rel} and {by_inode[ident]} name the same file through "
+                    f"different paths; rewriting one silently changes the "
+                    f"other. Nothing was written")
+        by_inode[ident] = rel
+        if st.st_nlink > 1:
+            _refuse(f"{rel} has {st.st_nlink} names (hard link); rewriting it "
+                    f"would break the link and leave every other name on the "
+                    f"old content. Nothing was written -- replace the link "
+                    f"with a copy, or repair this stamp by hand")
+        # A FILE BIND MOUNT is a third aliasing mechanism, and it defeats both
+        # guards above: it increments no link count and puts no second path in
+        # the pending set, yet replacing this directory entry leaves the bound
+        # pathname pinned to the old inode (Codex re-adversarial round 4,
+        # section 23 review, [high]). It needs no mount-table parsing to spot,
+        # though -- a bind-mounted file is its own mount point, so its st_dev
+        # differs from its parent directory's.
+        #
+        # WHAT THIS CANNOT SEE, stated precisely rather than narrowed twice and
+        # still overclaimed. `st_dev` identifies the FILESYSTEM, not the mount
+        # instance, so a bind mount whose source and target share a filesystem
+        # keeps its parent's device number and passes -- Python's own
+        # `os.path.ismount` documentation says as much, and `/snap` on this host
+        # is a live example. Detecting those needs mount identity (statx mount
+        # IDs, or parsing /proc/self/mountinfo), and an alias in another mount
+        # NAMESPACE is not detectable at all.
+        #
+        # Deliberately NOT implemented here. The realistic hazard for a TODO
+        # line-number fixer is a concurrent editor, which the content compare
+        # covers; the guards below are worth keeping because they cost one stat
+        # each, but building mount-table inspection into this tool would buy a
+        # threat model this repo does not have. So the contract is: hard links
+        # and cross-filesystem mounts are refused, same-filesystem bind mounts
+        # and cross-namespace aliases are NOT detected (Codex re-adversarial
+        # round 5, section 23 review, [high] -- recommendation to use statx
+        # mount IDs declined, claim corrected instead).
+        try:
+            parent_dev = os.stat(dest.parent).st_dev
+        except OSError as exc:
+            _refuse(f"cannot stat the directory holding {rel}; nothing was "
+                    f"written: {exc}")
+        if st.st_dev != parent_dev:
+            _refuse(f"{rel} is a mount point (bind-mounted file); rewriting it "
+                    f"would replace the directory entry and leave every other "
+                    f"name for it on the old content. Nothing was written")
         try:
             current = cache_schema.read_corpus_file(dest).decode("utf-8")
         except (cache_schema.CacheSchemaError, OSError, ValueError) as exc:
@@ -1212,18 +1385,131 @@ def _commit_rewrites(repo_root: Path, pending: list) -> None:
             _refuse(f"{rel} changed since it was read, so rewriting it would "
                     f"discard that edit; nothing was written. Re-run "
                     f"--fix-line-numbers against the current tree")
-    for rel, _old_text, new_text in pending:
-        dest = repo_root / rel
-        tmp = dest.with_name(dest.name + ".validate-tmp")
-        try:
-            tmp.write_text(new_text, encoding="utf-8")
-            os.replace(tmp, dest)
-        except OSError as exc:
+        staged.append((rel, dest, old_text, new_text,
+                       stat.S_IMODE(st.st_mode), ident))
+
+    # PHASE 2 -- materialise every replacement before ANY of them is published.
+    #
+    # `mkstemp` rather than a fixed `<dest>.validate-tmp`: that name was
+    # predictable and was opened without O_EXCL or O_NOFOLLOW, so a pre-existing
+    # sibling was truncated and a planted symlink was FOLLOWED -- truncating
+    # whatever it pointed at, and then `os.replace` moved the symlink over the
+    # TODO. `mkstemp` opens O_CREAT|O_EXCL|O_NOFOLLOW at a unique name (Codex
+    # adversarial, section 23 review, [high]). The temp files are removed in a
+    # `finally` covering every exception path, not just OSError.
+    # PAIRS ARE IMMUTABLE; the outstanding set is what changes. An earlier
+    # revision iterated `zip(staged, tmps)` while `tmps.remove(...)` ran inside
+    # the loop -- and `zip` holds a positional iterator, so removing element 0
+    # shifted the list and the SECOND destination got paired with the THIRD
+    # destination's staged text. A two-file repair silently wrote C's content
+    # over B and returned success. Every fixture had exactly one destination, so
+    # nothing saw it (Codex re-adversarial, section 23 review, [high]).
+    pairs: list = []
+    outstanding: set = set()
+    try:
+        for entry in staged:
+            rel, dest, _old_text, new_text, mode, _ident = entry
+            # INSIDE the handler. `mkstemp` sat outside it, so ENOSPC,
+            # EDQUOT, EACCES or descriptor exhaustion escaped `main()` as a
+            # traceback and exited 1 -- the code this validator reserves for a
+            # COMPLETED graph verdict. A disk-full repair would have sent
+            # someone to fix a graph that was never evaluated, which is the
+            # exact confusion this section exists to end (Codex re-adversarial
+            # round 3, section 23 review, [high]).
             try:
-                tmp.unlink()
+                fd, tmp_name = tempfile.mkstemp(
+                    dir=str(dest.parent), prefix=dest.name + ".",
+                    suffix=".tmp")
+            except OSError as exc:
+                _refuse(f"cannot stage the rewrite of {rel}; nothing was "
+                        f"written: {exc}")
+            outstanding.add(tmp_name)
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                    # `fchmod` on the descriptor, and INSIDE the refusing
+                    # handler. `mkstemp` creates at 0600, so swallowing a mode
+                    # failure published a replacement other users could not
+                    # read -- a repair that returns 0 having made a shared TODO
+                    # private is materially broken, not cosmetically imperfect
+                    # (Codex re-adversarial round 4, section 23 review,
+                    # [medium]).
+                    os.fchmod(fh.fileno(), mode)
+                    fh.write(new_text)
+                    fh.flush()
+                    os.fsync(fh.fileno())
+            except OSError as exc:
+                _refuse(f"failed to stage the rewrite of {rel}; nothing was "
+                        f"written: {exc}")
+            pairs.append((entry, tmp_name))
+
+        # PHASE 3 -- publish, RE-VERIFYING each destination immediately before
+        # its replace. Phase 1's comparison for the first file happens before
+        # every later file is compared and staged, so for a batch the exposure
+        # was the whole staging pass, not "microseconds" -- long enough for an
+        # editor's atomic save to land and be overwritten, or for a destination
+        # to become a symlink after its lstat (Codex re-adversarial, section 23
+        # review, [high]). The re-check costs one lstat plus one read per file
+        # and shrinks the window to the gap before a single `os.replace`.
+        committed: list = []
+        for (rel, dest, old_text, _new_text, mode, ident), tmp_name in pairs:
+            done = ", ".join(committed) if committed else "none"
+            try:
+                st_now = os.lstat(dest)
+            except OSError as exc:
+                _refuse(f"{rel} became unreadable while the batch was staged: "
+                        f"{exc}. ALREADY REWRITTEN: {done}")
+            if stat.S_ISLNK(st_now.st_mode) or (st_now.st_dev,
+                                                st_now.st_ino) != ident:
+                _refuse(f"{rel} was replaced while the batch was staged, so "
+                        f"rewriting it would discard that change. ALREADY "
+                        f"REWRITTEN: {done}")
+            # The link count is re-read too, not carried from phase 1. A hard
+            # link created DURING staging leaves the device, inode, contents
+            # and file type all unchanged, so every other check here passes
+            # while `os.replace` would still break the new link and strand it
+            # on the old contents (Codex re-adversarial round 3, section 23
+            # review, [high]). This narrows the race to the gap before a single
+            # `os.replace`; closing it entirely needs an exclusion protocol
+            # every writer takes, which is the same boundary documented above.
+            if st_now.st_nlink != 1:
+                _refuse(f"{rel} gained a second name while the batch was "
+                        f"staged; rewriting it would leave that name on the "
+                        f"old content. ALREADY REWRITTEN: {done}")
+            # The MODE is state as well, and phase 2 baked the phase-1 value
+            # into the staged inode. A chmod during staging changes none of the
+            # fields checked above, so the replacement would silently restore
+            # the old permissions -- removing access, or restoring access
+            # somebody had just revoked (Codex re-adversarial round 5, section
+            # 23 review, [medium]).
+            if stat.S_IMODE(st_now.st_mode) != mode:
+                _refuse(f"the permissions on {rel} changed while the batch was "
+                        f"staged; rewriting it would restore the old mode. "
+                        f"ALREADY REWRITTEN: {done}")
+            try:
+                now = cache_schema.read_corpus_file(dest).decode("utf-8")
+            except (cache_schema.CacheSchemaError, OSError, ValueError) as exc:
+                _refuse(f"cannot re-read {rel} at publish time: {exc}. "
+                        f"ALREADY REWRITTEN: {done}")
+            if now != old_text:
+                _refuse(f"{rel} changed while the batch was staged, so "
+                        f"rewriting it would discard that edit. ALREADY "
+                        f"REWRITTEN: {done}")
+            try:
+                os.replace(tmp_name, dest)
+            except OSError as exc:
+                _refuse(f"failed to publish the rewrite of {rel}: {exc}. "
+                        f"ALREADY REWRITTEN before this failure: {done}. The "
+                        f"remaining files are untouched")
+            outstanding.discard(tmp_name)
+            committed.append(rel)
+    finally:
+        # Runs on SystemExit from `_refuse` too, so a refusal at any phase
+        # leaves no staging file behind.
+        for leftover in outstanding:
+            try:
+                os.unlink(leftover)
             except OSError:
                 pass
-            _refuse(f"failed to rewrite {rel}: {exc}")
 
 
 # --- main ----------------------------------------------------------------
@@ -1588,13 +1874,30 @@ def main() -> int:
     path_index = build_path_index(nodes)
 
     if args.fix_line_numbers:
+        # AN AMBIGUOUS GRAPH CANNOT BE REPAIRED, and repair runs long before
+        # the duplicate-id check below would report one. `build_id_index` is
+        # last-wins, `resolve_xref_target` accepts frontmatter ids, and
+        # PROFILE_VALIDATE deliberately permits duplicates so the check can
+        # report them -- so `--fix-line-numbers --write` could resolve a stamp
+        # against the WRONG file of a colliding pair, compute a line from it,
+        # rewrite the stamp and exit 0 (Codex re-adversarial round 4, section
+        # 23 review, [medium]). Refusing is right rather than merely safe: the
+        # repair's whole job is to make stamp line numbers true, and it cannot
+        # do that while it does not know which file a stamp names.
+        id_collisions = check_duplicate_id(nodes)
+        if id_collisions:
+            _refuse("cannot re-resolve line numbers while frontmatter ids "
+                    "collide -- a stamp naming a duplicated id would be "
+                    "rewritten against whichever file the cache lists last. "
+                    "Nothing was written. Offending: "
+                    + "; ".join(f.detail for f in id_collisions))
         _updates, ambig, _unres, report = fix_line_numbers(
             nodes, snapshot, id_index, path_index,
             repo_root, write=args.write, quiet=args.quiet,
         )
         # REPAIR MODE IS BOUND DIFFERENTLY FROM THE CHECK WALK, deliberately.
         # A dry run reaches a verdict about a corpus it only read, so it takes
-        # the same post-walk re-verification the eight checks take below. A
+        # the same post-walk re-verification the nine checks take below. A
         # --write run CANNOT: it changes the corpus itself, so a global
         # re-verification would report the tool's own edits as interference and
         # fail every successful repair. Its binding is per-destination instead,

@@ -981,7 +981,14 @@ def build_node(file_path: Path, repo_root: Path, timestamps: dict, content: str)
     (node, errors) where errors is a list of (category, message) tuples
     (file:line is added by the caller). errors == [] on clean parse."""
     try:
-        rel = str(file_path.relative_to(repo_root))
+        # `as_posix()`, not `str()`: the WIRE SPELLING of a cache path is
+        # POSIX-relative, and `str()` yields the host separator -- so a build on
+        # Windows would publish backslash paths that every routed reader then
+        # refuses as SHAPE, a cache the producer considers valid and no consumer
+        # will read (Codex re-adversarial round 7, section 23 review, [medium]).
+        # Fixing it here rather than relaxing the validator keeps one spelling
+        # in the artifact instead of two the readers must both accept.
+        rel = file_path.relative_to(repo_root).as_posix()
     except ValueError:
         rel = file_path.name
     domain = file_path.parent.name
@@ -1372,7 +1379,21 @@ def main():
             "describe any single generation; cache NOT written\n")
         return 3
 
-    output_path = Path(args.output).resolve()
+    # LEXICAL, NOT RESOLVED, and only the final component matters. `.resolve()`
+    # follows a symlink AT `build/todo-cache.json` and `_publish_atomically`
+    # then replaces what it POINTS AT -- so `build-and-validate.sh`, the
+    # ordinary user-facing path, could overwrite a tracked TODO with cache JSON
+    # and its own cleanup would remove the symlink afterwards, hiding what
+    # happened. `validate.py` grew an ownership gate for exactly this, but the
+    # wrapper runs the producer FIRST, so that gate never saw this path (Codex
+    # re-adversarial round 8, section 23 review, [high]).
+    #
+    # Normalising lexically keeps every equivalent spelling working and still
+    # resolves symlinked PARENT directories at open time -- a `build/` symlinked
+    # onto a tmpfs is untouched by this. What changes is that `os.replace` now
+    # replaces the final directory ENTRY, so `--output X` produces a regular
+    # file at X and nothing outside X is ever written.
+    output_path = Path(os.path.abspath(os.path.normpath(args.output)))
     output_path.parent.mkdir(parents=True, exist_ok=True)
     # `sort_keys=True` for byte-identical re-runs; trailing newline so the
     # file is shell-friendly (`cat` doesn't show "no newline at end").

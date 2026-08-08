@@ -1634,11 +1634,21 @@ bogus = [{
 with open('$ESC_TREE/cache.json', 'w') as f:
     json.dump(bogus, f)
 "
-# cmd_code must return no rows (empty output) rather than exfiltrating
-# the foreign file. Pre-boundary-fix this printed /etc/passwd contents.
+# The escaping path must not exfiltrate the foreign file. Pre-boundary-fix this
+# printed /etc/passwd contents; then it returned rc 0 with empty output, because
+# `cmd_code` declined the row on its own.
+#
+# THE ASSERTION IS NOW STRONGER, not merely different: the shared validator
+# refuses the whole cache at rc 2 before any verb runs. A node path that leaves
+# the corpus means the ARTIFACT is untrustworthy, not that one query happens to
+# have no rows -- and answering 0-with-nothing is the "partial index answers
+# thin" shape this graph's readers exist to refuse. The anti-exfiltration
+# assertion is kept and joined by the refusal.
 Q_OUT=$(python3 "$QUERY_PY" --cache "$ESC_TREE/cache.json" --repo-root "$ESC_TREE" --quiet code escape-attempt 2>&1); Q_RC=$?
-if [ "$Q_RC" = "0" ] && [ -z "$Q_OUT" ]; then
-    t_pass "query: cmd_code refuses cache file_path that escapes repo_root"
+if [ "$Q_RC" = "2" ] && ! echo "$Q_OUT" | grep -q "root:x:" \
+    && echo "$Q_OUT" | grep -q '"error": "cache-unusable"' \
+    && echo "$Q_OUT" | grep -q '"reason": "SHAPE"'; then
+    t_pass "query: a cache whose file_path escapes the corpus is REFUSED outright, not answered thin"
 else
     t_fail "query: escape attempt leaked content (rc=$Q_RC, out=$Q_OUT)"
 fi
@@ -3794,14 +3804,19 @@ fi
 
 # Sub-test 11b: --help prints usage without running build or validate.
 BNV_OUT=$(bash "$BNV_SH" --help 2>&1); BNV_RC=$?
-# Asserts the THREE-code contract, not just that an exit-code line exists. The
-# header used to promise "0 if all 7 checks pass, 1 otherwise" while rc 2 was
-# already reachable, so a caller reading --help would treat an infrastructure
-# refusal as a graph failure.
-if [ "$BNV_RC" = "0" ] && echo "$BNV_OUT" | grep -q "Exit code: the validator" \
+# Asserts EVERY numeric code the wrapper can return, not just that an exit-code
+# line exists. Two rounds of drift landed here: the header first promised
+# "0 if all 7 checks pass, 1 otherwise" while rc 2 was already reachable, then
+# published a three-code contract while still propagating build.py's rc 3. A
+# fixture that greps one label cannot see either, so it greps all four.
+BNV_CODES_OK=1
+for BNV_CODE in "^  0  " "^  1  " "^  2  " "^  3  "; do
+    echo "$BNV_OUT" | grep -q "$BNV_CODE" || BNV_CODES_OK=0
+done
+if [ "$BNV_RC" = "0" ] && [ "$BNV_CODES_OK" = "1" ] \
     && echo "$BNV_OUT" | grep -q "GRAPH FINDINGS" \
     && echo "$BNV_OUT" | grep -q "INFRASTRUCTURE REFUSAL"; then
-    t_pass "build-and-validate: --help prints usage + the three-code contract + exits 0"
+    t_pass "build-and-validate: --help prints usage + every numeric exit code it can return + exits 0"
 else
     t_fail "build-and-validate: --help broken (rc=$BNV_RC)"
 fi
@@ -10871,6 +10886,49 @@ else
     t_fail "validate recovery: mutation check -- reverted ownership gate left the imported cache intact, so 23r2b proves nothing"
 fi
 
+# Sub-test 23r2c: the generated cache path being a SYMLINK does not confer
+# ownership. Resolving both sides to compare them cuts both ways: a symlink at
+# build/todo-cache.json pointing at a tracked file makes both realpaths equal,
+# so the ownership gate would classify a corrupt cache as owned and the rebuild
+# would write cache JSON over the victim -- the exact data loss the gate exists
+# to prevent, authorised BY the gate.
+S23Y="$TMP_DIR/s23-cache-symlink"
+s23_tree "$S23Y"
+if ln -s "../todo/01-test/TODO-01-s23.md" "$S23Y/build/todo-cache.json" 2>/dev/null; then
+    S23Y_BEFORE=$(md5sum "$S23Y/todo/01-test/TODO-01-s23.md" | cut -d' ' -f1)
+    S23Y_OUT=$(timeout 60 python3 "$VALIDATE_PY" --repo-root "$S23Y" --quiet 2>&1); S23Y_RC=$?
+    S23Y_AFTER=$(md5sum "$S23Y/todo/01-test/TODO-01-s23.md" | cut -d' ' -f1)
+    if [ "$S23Y_RC" = "2" ] && [ "$S23Y_BEFORE" = "$S23Y_AFTER" ]; then
+        t_pass "validate recovery: a symlinked cache path is not owned, so the rebuild cannot overwrite what it points at"
+    else
+        t_fail "validate recovery: symlinked cache rc=$S23Y_RC victim-changed=$([ "$S23Y_BEFORE" = "$S23Y_AFTER" ] && echo no || echo yes) out=$S23Y_OUT"
+    fi
+else
+    t_pass "validate recovery: symlinked-cache case skipped (symlinks unavailable on this filesystem)"
+fi
+
+# Sub-test 23r2d: the PRIMARY path, end to end. build-and-validate.sh runs the
+# producer BEFORE the validator, so the ownership gate in validate.py never sees
+# it -- and build.py used to resolve its --output, following a symlink at
+# build/todo-cache.json and replacing what it pointed at. That is the same data
+# loss as 23r2c, reached through the command a human actually runs.
+S23Z="$TMP_DIR/s23-wrapper-symlink"
+s23_tree "$S23Z"
+if ln -s "../todo/01-test/TODO-01-s23.md" "$S23Z/build/todo-cache.json" 2>/dev/null; then
+    S23Z_BEFORE=$(md5sum "$S23Z/todo/01-test/TODO-01-s23.md" | cut -d' ' -f1)
+    timeout 120 python3 "$BUILD_PY" --quiet --root "$S23Z/todo" \
+        --output "$S23Z/build/todo-cache.json" --repo-root "$S23Z" >/dev/null 2>&1
+    S23Z_AFTER=$(md5sum "$S23Z/todo/01-test/TODO-01-s23.md" | cut -d' ' -f1)
+    S23Z_ISLINK=$([ -L "$S23Z/build/todo-cache.json" ] && echo yes || echo no)
+    if [ "$S23Z_BEFORE" = "$S23Z_AFTER" ] && [ "$S23Z_ISLINK" = "no" ]; then
+        t_pass "build: a symlinked --output is replaced as a directory entry, so the producer cannot write cache JSON over what it pointed at"
+    else
+        t_fail "build: symlinked output victim-changed=$([ "$S23Z_BEFORE" = "$S23Z_AFTER" ] && echo no || echo yes) still-a-link=$S23Z_ISLINK"
+    fi
+else
+    t_pass "build: symlinked-output case skipped (symlinks unavailable on this filesystem)"
+fi
+
 # Sub-test 23r3: a STALE cache REFUSES and is NOT rebuilt. The recovery
 # writes back to the caller-named --cache path, so auto-rebuilding on
 # staleness would destroy a captured or imported cache for being exactly
@@ -11175,9 +11233,15 @@ python3 - "$S23G_MUT/tool/validate.py" <<'S23GMPEOF'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1])
 src = p.read_text(encoding="utf-8")
-needle = "        if current != old_text:"
-assert src.count(needle) == 1, f"mutation needle appears {src.count(needle)}x"
-p.write_text(src.replace(needle, "        if False:", 1), encoding="utf-8")
+# BOTH compares must be reverted. The publish-time re-check added after the
+# re-adversarial round independently catches a destination that moved, so
+# neutralising phase 1 alone left the fixture passing for the WRONG reason --
+# defense in depth made a single-site mutation inert rather than proving the
+# fixture insensitive.
+for needle in ("        if current != old_text:", "            if now != old_text:"):
+    assert src.count(needle) == 1, f"mutation needle {needle!r} appears {src.count(needle)}x"
+    src = src.replace(needle, needle.split("if")[0] + "if False:", 1)
+p.write_text(src, encoding="utf-8")
 S23GMPEOF
 timeout 60 python3 "$BUILD_PY" --quiet --root "$S23G_MUT/todo" \
     --output "$S23G_MUT/cache.json" --repo-root "$S23G_MUT" >/dev/null 2>&1
@@ -11212,6 +11276,488 @@ if [ -z "$(find "$S23K/todo" -name '*.validate-tmp' -print -quit)" ]; then
     t_pass "validate repair: no temporary rewrite file is left behind"
 else
     t_fail "validate repair: a .validate-tmp file survived the run"
+fi
+
+# Sub-test 23w5: a repair that rewrites TWO destinations must give each its own
+# text. THE ABSENCE OF THIS FIXTURE IS WHY A REAL BUG SHIPPED THROUGH a full
+# review round: every other repair fixture has exactly one destination, and the
+# publish loop paired destination N with destination N+1's staged content, so a
+# two-file repair silently wrote the wrong file's contents and returned 0.
+# s23_multi_tree <dir> -- a corpus with TWO stamp-holding files whose stamps
+# both point at a third file. Two destinations is the minimum that exercises
+# the publish loop's pairing and the staging cleanup path.
+s23_multi_tree() {
+    local root="$1"
+    rm -rf "$root"
+    mkdir -p "$root/todo/01-test"
+    for mroot_n in 01 02; do
+        cat > "$root/todo/01-test/TODO-$mroot_n-holder.md" <<S23PEOF
+---
+schema_version: 1
+id: fm-multi-$mroot_n
+domain: 01-test
+status: active
+title: "multi $mroot_n"
+---
+# TODO-$mroot_n -- multi $mroot_n
+## Inputs
+| Path | Purpose |
+| ---- | ------- |
+| \`src/foo\` | example |
+## Outcome
+UNIQUE-MARKER-$mroot_n
+## Implementation Order
+| ⭐ | Order | Section | Deliverable | Depends On | Status |
+| --- | --- | --- | --- | --- | --- |
+| 💎 | 1 | 1 | First | -- | [x] |
+## 1. First Section
+Body.
+- [x] Commit
+
+> **Accepted:** finding -> XREF: [\`TODO-03\`](01-test/TODO-03-target.md) (item: "Wire the resolver" at line 999)
+S23PEOF
+    done
+    cat > "$root/todo/01-test/TODO-03-target.md" <<'S23PTEOF'
+---
+schema_version: 1
+id: fm-multi-target
+domain: 01-test
+status: active
+title: "multi target"
+---
+# TODO-03 -- multi target
+## Inputs
+| Path | Purpose |
+| ---- | ------- |
+| `src/bar` | example |
+## Outcome
+    Holds the item both stamps name.
+## Implementation Order
+| ⭐ | Order | Section | Deliverable | Depends On | Status |
+| --- | --- | --- | --- | --- | --- |
+| 💎 | 1 | 1 | First | -- | [ ] |
+## 1. First Section
+Body.
+- [ ] Wire the resolver
+- [ ] Commit
+S23PTEOF
+}
+
+S23P="$TMP_DIR/s23-multi-dest"
+s23_multi_tree "$S23P"
+timeout 60 python3 "$BUILD_PY" --quiet --root "$S23P/todo" \
+    --output "$S23P/cache.json" --repo-root "$S23P" >/dev/null 2>&1
+timeout 60 python3 "$VALIDATE_PY" --cache "$S23P/cache.json" --repo-root "$S23P" \
+    --fix-line-numbers --write --quiet >/dev/null 2>&1; S23P_RC=$?
+# Each file must still carry its OWN marker, and both stamps must have been
+# re-resolved off line 999.
+S23P_OK=1
+for S23P_N in 01 02; do
+    grep -q "UNIQUE-MARKER-$S23P_N" "$S23P/todo/01-test/TODO-$S23P_N-holder.md" || S23P_OK=0
+    grep -q 'at line 999' "$S23P/todo/01-test/TODO-$S23P_N-holder.md" && S23P_OK=0
+done
+if [ "$S23P_RC" = "0" ] && [ "$S23P_OK" = "1" ]; then
+    t_pass "validate repair: a two-destination rewrite gives each file its own content"
+else
+    t_fail "validate repair: multi-destination rc=$S23P_RC content-correct=$S23P_OK"
+fi
+
+# Sub-test 23w6: two paths that are the SAME inode refuse, even when the repair
+# derives identical text for both. os.replace swaps one directory entry and
+# breaks the hard link, so the other name would silently keep the old content.
+# THE ALIAS IS NOT ITSELF A CORPUS FILE, deliberately. An earlier version of
+# this fixture linked two TODO-*.md names in one directory, so BOTH entered the
+# pending write set and a duplicate-inode scan over that set caught it. The
+# escape path is the opposite shape: one name needs rewriting and the other is
+# invisible to this run, so no duplicate is ever observed. `st_nlink` sees it
+# either way, which is why the check moved to the link count.
+S23Q="$TMP_DIR/s23-hardlink"
+s23_write_tree "$S23Q"
+if ln "$S23Q/todo/01-test/TODO-01-a.md" "$S23Q/todo/01-test/alias-not-a-todo.txt" 2>/dev/null; then
+    timeout 60 python3 "$BUILD_PY" --quiet --root "$S23Q/todo" \
+        --output "$S23Q/cache.json" --repo-root "$S23Q" >/dev/null 2>&1
+    S23Q_OUT=$(timeout 60 python3 "$VALIDATE_PY" --cache "$S23Q/cache.json" \
+        --repo-root "$S23Q" --fix-line-numbers --write --quiet 2>&1); S23Q_RC=$?
+    S23Q_LEFT=$(grep -c 'at line 999' "$S23Q/todo/01-test/TODO-01-a.md")
+    S23Q_ALIAS=$(grep -c 'at line 999' "$S23Q/todo/01-test/alias-not-a-todo.txt")
+    if [ "$S23Q_RC" = "2" ] && echo "$S23Q_OUT" | grep -q "hard link" \
+        && [ "$S23Q_LEFT" != "0" ] && [ "$S23Q_ALIAS" != "0" ]; then
+        t_pass "validate repair: a destination with a second name refuses -- including an alias this run never sees -- instead of breaking the link and leaving it stale"
+    else
+        t_fail "validate repair: hard-link rc=$S23Q_RC untouched=$S23Q_LEFT out=$S23Q_OUT"
+    fi
+else
+    t_pass "validate repair: hard-link case skipped (hard links unavailable on this filesystem)"
+fi
+
+# Sub-test 23w7: a hard link created DURING staging is caught at publish time.
+# The phase-1 link count is stale by then, and a link added mid-batch changes
+# neither the device, the inode, the contents nor the file type -- so every
+# other phase-3 check passes. Injected deterministically by hooking mkstemp,
+# which runs after phase 1 has already accepted the destination.
+S23R="$TMP_DIR/s23-midstage-link"
+s23_write_tree "$S23R"
+if ln "$S23R/todo/01-test/TODO-02-b.md" "$S23R/todo/01-test/probe-link.txt" 2>/dev/null; then
+    rm -f "$S23R/todo/01-test/probe-link.txt"
+    timeout 60 python3 "$BUILD_PY" --quiet --root "$S23R/todo" \
+        --output "$S23R/cache.json" --repo-root "$S23R" >/dev/null 2>&1
+    S23R_BEFORE=$(md5sum "$S23R/todo/01-test/TODO-01-a.md" | cut -d' ' -f1)
+    cat > "$S23R/drive.py" <<S23RDEOF
+import os, sys, tempfile
+sys.path.insert(0, "$REPO_ROOT/scripts/todo-graph")
+import validate
+_orig = tempfile.mkstemp
+def _hooked(*a, **kw):
+    # Fires after phase 1 accepted the destination, before phase 3 publishes.
+    link = "$S23R/todo/01-test/late-alias.txt"
+    if not os.path.exists(link):
+        os.link("$S23R/todo/01-test/TODO-01-a.md", link)
+    return _orig(*a, **kw)
+tempfile.mkstemp = _hooked
+sys.argv = ["validate.py", "--cache", "$S23R/cache.json",
+            "--repo-root", "$S23R", "--fix-line-numbers", "--write", "--quiet"]
+sys.exit(validate.main())
+S23RDEOF
+    timeout 60 python3 "$S23R/drive.py" >/dev/null 2>&1; S23R_RC=$?
+    S23R_AFTER=$(md5sum "$S23R/todo/01-test/TODO-01-a.md" | cut -d' ' -f1)
+    S23R_LEFT=$(find "$S23R/todo" -name 'TODO-01-a.md.*.tmp' -print -quit)
+    if [ "$S23R_RC" = "2" ] && [ "$S23R_BEFORE" = "$S23R_AFTER" ] && [ -z "$S23R_LEFT" ]; then
+        t_pass "validate repair: a hard link created DURING staging is caught at publish time, leaving both names untouched"
+    else
+        t_fail "validate repair: mid-stage link rc=$S23R_RC changed=$([ "$S23R_BEFORE" = "$S23R_AFTER" ] && echo no || echo yes) leftover='$S23R_LEFT'"
+    fi
+else
+    t_pass "validate repair: mid-stage hard-link case skipped (hard links unavailable on this filesystem)"
+fi
+
+# Sub-test 23w8: a staging failure is an INFRASTRUCTURE refusal, not a graph
+# verdict. mkstemp sat outside the OSError handler, so a full disk exited 1 --
+# the code reserved for "the corpus has problems" -- and pointed the operator at
+# a graph that was never evaluated. Fault-injected after at least one temp file
+# has already been staged, so the cleanup path is exercised too.
+S23S="$TMP_DIR/s23-stage-enospc"
+s23_multi_tree "$S23S"
+timeout 60 python3 "$BUILD_PY" --quiet --root "$S23S/todo" \
+    --output "$S23S/cache.json" --repo-root "$S23S" >/dev/null 2>&1
+S23S_BEFORE=$(md5sum "$S23S/todo/01-test/TODO-01-holder.md" "$S23S/todo/01-test/TODO-02-holder.md" | md5sum)
+cat > "$S23S/drive.py" <<S23SDEOF
+import errno, os, sys, tempfile
+sys.path.insert(0, "$REPO_ROOT/scripts/todo-graph")
+import validate
+_orig = tempfile.mkstemp
+_calls = {"n": 0}
+def _hooked(*a, **kw):
+    _calls["n"] += 1
+    if _calls["n"] == 1:
+        # Stage one real temp file first, so the finally-cleanup has something
+        # to remove when the next call fails.
+        return _orig(*a, **kw)
+    raise OSError(errno.ENOSPC, "No space left on device")
+tempfile.mkstemp = _hooked
+sys.argv = ["validate.py", "--cache", "$S23S/cache.json",
+            "--repo-root", "$S23S", "--fix-line-numbers", "--write", "--quiet"]
+sys.exit(validate.main())
+S23SDEOF
+timeout 60 python3 "$S23S/drive.py" >/dev/null 2>&1; S23S_RC=$?
+S23S_AFTER=$(md5sum "$S23S/todo/01-test/TODO-01-holder.md" "$S23S/todo/01-test/TODO-02-holder.md" | md5sum)
+S23S_LEFT=$(find "$S23S/todo" -name '*.tmp' -print -quit)
+# TWO destinations, so call 1 stages a real temp file and call 2 fails: the
+# finally-cleanup has something to remove, which is the half a single-file tree
+# could not reach.
+if [ "$S23S_RC" = "2" ] && [ "$S23S_BEFORE" = "$S23S_AFTER" ] && [ -z "$S23S_LEFT" ]; then
+    t_pass "validate repair: a staging OSError refuses as infrastructure rather than exiting 1 into the findings channel"
+else
+    t_fail "validate repair: staging ENOSPC rc=$S23S_RC changed=$([ "$S23S_BEFORE" = "$S23S_AFTER" ] && echo no || echo yes) leftover='$S23S_LEFT'"
+fi
+
+# Sub-test 23w9: a staged file whose mode cannot be reproduced refuses rather
+# than publishing an owner-only replacement. mkstemp creates at 0600, so
+# swallowing the failure turned a world-readable TODO private at rc 0.
+S23T="$TMP_DIR/s23-mode-fail"
+s23_write_tree "$S23T"
+timeout 60 python3 "$BUILD_PY" --quiet --root "$S23T/todo" \
+    --output "$S23T/cache.json" --repo-root "$S23T" >/dev/null 2>&1
+S23T_BEFORE=$(md5sum "$S23T/todo/01-test/TODO-01-a.md" | cut -d' ' -f1)
+cat > "$S23T/drive.py" <<S23TDEOF
+import errno, os, sys
+sys.path.insert(0, "$REPO_ROOT/scripts/todo-graph")
+import validate
+def _boom(fd, mode):
+    raise OSError(errno.EPERM, "Operation not permitted")
+os.fchmod = _boom
+sys.argv = ["validate.py", "--cache", "$S23T/cache.json",
+            "--repo-root", "$S23T", "--fix-line-numbers", "--write", "--quiet"]
+sys.exit(validate.main())
+S23TDEOF
+timeout 60 python3 "$S23T/drive.py" >/dev/null 2>&1; S23T_RC=$?
+S23T_AFTER=$(md5sum "$S23T/todo/01-test/TODO-01-a.md" | cut -d' ' -f1)
+S23T_LEFT=$(find "$S23T/todo" -name '*.tmp' -print -quit)
+if [ "$S23T_RC" = "2" ] && [ "$S23T_BEFORE" = "$S23T_AFTER" ] && [ -z "$S23T_LEFT" ]; then
+    t_pass "validate repair: a staging mode failure refuses instead of publishing an owner-only replacement"
+else
+    t_fail "validate repair: mode failure rc=$S23T_RC changed=$([ "$S23T_BEFORE" = "$S23T_AFTER" ] && echo no || echo yes) leftover='$S23T_LEFT'"
+fi
+
+# Sub-test 23w10: repair refuses while frontmatter ids collide. The id index is
+# last-wins and repair runs BEFORE the duplicate-id check, so a stamp naming a
+# duplicated id would be re-resolved against the wrong file of the pair --
+# silently, at rc 0. PROFILE_VALIDATE permits the duplicate on purpose so the
+# check can report it, which is exactly why repair has to refuse it separately.
+S23U="$TMP_DIR/s23-dup-id-repair"
+rm -rf "$S23U"
+d_todo "$S23U" 01-t 01 first shared active
+d_todo "$S23U" 01-t 02 second shared active
+cat >> "$S23U/todo/01-t/TODO-01-first.md" <<'S23UEOF'
+
+> **Accepted:** finding -> XREF: [`shared`](shared) (item: "body" at line 999)
+S23UEOF
+timeout 60 python3 "$BUILD_PY" --quiet --root "$S23U/todo" \
+    --output "$S23U/cache.json" --repo-root "$S23U" >/dev/null 2>&1
+S23U_BEFORE=$(md5sum "$S23U/todo/01-t/TODO-01-first.md" | cut -d' ' -f1)
+S23U_OUT=$(timeout 60 python3 "$VALIDATE_PY" --cache "$S23U/cache.json" \
+    --repo-root "$S23U" --fix-line-numbers --write --quiet 2>&1); S23U_RC=$?
+S23U_AFTER=$(md5sum "$S23U/todo/01-t/TODO-01-first.md" | cut -d' ' -f1)
+if [ "$S23U_RC" = "2" ] && echo "$S23U_OUT" | grep -q "ids collide" \
+    && [ "$S23U_BEFORE" = "$S23U_AFTER" ]; then
+    t_pass "validate repair: colliding frontmatter ids refuse the rewrite instead of resolving against whichever file the cache lists last"
+else
+    t_fail "validate repair: duplicate-id repair rc=$S23U_RC changed=$([ "$S23U_BEFORE" = "$S23U_AFTER" ] && echo no || echo yes) out=$S23U_OUT"
+fi
+
+# Sub-test 23p1: node paths are containment-checked, and the WRITE path
+# re-establishes containment independently of the module that validated the
+# cache. Every shape below was accepted before -- confirmed by probe against
+# the live cache -- while `repo_root / rel` discarded the root for an absolute
+# path and walked out of it for a relative one.
+S23V_OUT=$(cd "$REPO_ROOT" && timeout 60 python3 - <<'S23VEOF' 2>&1
+import json, sys
+sys.path.insert(0, "scripts/todo-graph")
+import cache_schema as cs
+
+nodes = json.load(open("build/todo-cache.json"))
+base = nodes[0]
+# Escaping spellings, then NON-CANONICAL ones that name the same inode under a
+# different string -- `file_path` IS the node identity and the uniqueness check
+# compares it as text, so an alias spelling would let one file carry several
+# identities. The last entry must be ACCEPTED: a Cyrillic look-alike is an
+# ordinary POSIX filename character and refusing it would be the tool inventing
+# a rule the filesystem does not have.
+bad = ["../../outside.md", "/etc/passwd", "todo/../../x.md", "todo\\x.md",
+       "nottodo/x.md", "C:\\x.md", "todo//x.md", "todo/./x.md",
+       "todo/x.md/", "todo", "./todo/x.md", "todo/a\x00b.md"]
+results = []
+for spelling in bad:
+    node = dict(base)
+    node["file_path"] = spelling
+    try:
+        cs.validate_nodes([node], "probe", cs.PROFILE_VALIDATE)
+        results.append(f"ACCEPTED:{spelling}")
+    except cs.CacheSchemaError as exc:
+        results.append(exc.reason)
+ok_node = dict(base)
+ok_node["file_path"] = "todo/01-t/TODO-01-\u0430-cyrillic.md"
+try:
+    cs.validate_nodes([ok_node], "probe", cs.PROFILE_VALIDATE)
+    results.append("UNICODE-OK")
+except cs.CacheSchemaError as exc:
+    results.append(f"UNICODE-REFUSED:{exc.reason}")
+try:
+    cs.validate_nodes(nodes, "live", cs.PROFILE_VALIDATE)
+    results.append("LIVE-OK")
+except cs.CacheSchemaError as exc:
+    results.append(f"LIVE-BROKEN:{exc.reason}")
+print(" ".join(results))
+S23VEOF
+)
+if [ "$S23V_OUT" = "SHAPE SHAPE SHAPE SHAPE SHAPE SHAPE SHAPE SHAPE SHAPE SHAPE SHAPE SHAPE UNICODE-OK LIVE-OK" ]; then
+    t_pass "cache schema: every escaping and non-canonical file_path spelling is refused, a Unicode look-alike is not, and the live 232-node corpus still validates"
+else
+    t_fail "cache schema: file_path containment probe gave '$S23V_OUT'"
+fi
+
+# Sub-test 23p1c: cmd_code's OWN containment guard, exercised directly. The
+# cache-wide refusal added above shadows it, so breaking query.py's local guard
+# would leave the end-to-end escape fixture green.
+#
+# THE OUTSIDE FILE'S CONTENT IS LOAD-BEARING. A first attempt pointed at
+# /etc/passwd and passed with the guard deleted -- not because the guard was
+# unobservable, but because passwd contains nothing matching the notes-path
+# pattern, so the walk produced no rows either way. A file containing a
+# `(src/leak.c)` reference makes the difference visible: guard present -> no
+# rows; guard removed -> one `notes-grep` row naming a path read from outside
+# the repo. Measured both ways before this fixture was written.
+S23X_DIR="$TMP_DIR/s23-cmdcode-guard"
+rm -rf "$S23X_DIR"
+mkdir -p "$S23X_DIR/repo"
+printf 'see (src/leak.c) for details\n' > "$S23X_DIR/outside.md"
+S23X_OUT=$(cd "$REPO_ROOT" && timeout 60 python3 - "$S23X_DIR/repo" <<'S23XEOF' 2>&1
+import sys, types
+sys.path.insert(0, "scripts/todo-graph")
+from pathlib import Path
+import query
+
+node = {"file_path": "../outside.md", "id": "esc", "domain": "01-t",
+        "status": "draft", "title": "E", "sections": [],
+        "section_headings": [], "inputs_xrefs": [], "stamps_xrefs": [],
+        "schema_version": 1}
+ctx = query.Ctx([node], Path(sys.argv[1]), quiet=True)
+args = types.SimpleNamespace(target="esc", quiet=True, json=False,
+                             limit=50, offset=0)
+try:
+    rows, _cols = query.cmd_code(ctx, args)
+    print(f"rows={len(rows)}")
+except SystemExit as exc:
+    print(f"exit={exc.code}")
+S23XEOF
+)
+if [ "$S23X_OUT" = "rows=0" ]; then
+    t_pass "query: cmd_code's own containment guard yields no rows for a file_path outside the repo, independently of the cache-wide refusal"
+else
+    t_fail "query: cmd_code containment guard gave '$S23X_OUT' (want rows=0)"
+fi
+
+# 23p1b: and the repair refuses independently, so the write path does not
+# depend on cache_schema having been called first.
+S23W="$TMP_DIR/s23-write-escape"
+s23_write_tree "$S23W"
+timeout 60 python3 "$BUILD_PY" --quiet --root "$S23W/todo" \
+    --output "$S23W/cache.json" --repo-root "$S23W" >/dev/null 2>&1
+# ONE LEVEL ABOVE the repo root, because that is where `repo_root/../x` lands.
+# Placing it inside the root made the fixture inert: the refusal came from the
+# file not existing, and the guard could be deleted with the test still green.
+printf 'ORIGINAL' > "$TMP_DIR/outside-target.md"
+cat > "$S23W/drive.py" <<S23WDEOF
+import sys
+sys.path.insert(0, "$REPO_ROOT/scripts/todo-graph")
+import validate
+# Hand _commit_rewrites a destination that left the corpus, exactly as a
+# hostile cache would if cache_schema had not been consulted.
+try:
+    validate._commit_rewrites(__import__("pathlib").Path("$S23W"),
+                              [("../outside-target.md", "ORIGINAL", "REWRITTEN")])
+except SystemExit as exc:
+    sys.exit(exc.code)
+S23WDEOF
+timeout 60 python3 "$S23W/drive.py" >/dev/null 2>&1; S23W_RC=$?
+S23W_KEPT=$(cat "$TMP_DIR/outside-target.md")
+if [ "$S23W_RC" = "2" ] && [ "$S23W_KEPT" = "ORIGINAL" ]; then
+    t_pass "validate repair: a destination outside the corpus is refused by the write path itself, not only by the cache validator"
+else
+    t_fail "validate repair: escaping destination rc=$S23W_RC content='$S23W_KEPT'"
+fi
+
+# Sub-test 23d1: the ninth check. Two files land on the SAME derived
+# (domain, TODO-number) key with NO reference to the ambiguous form anywhere --
+# which is the case that used to escape: build_path_index recorded the
+# collision, but it only became a finding if some XREF happened to look the key
+# up. validate.py must REPORT it at rc 1 while PROFILE_QUERY REFUSES the same
+# cache, so the two tools agree on the defect and differ only in the response.
+S23L="$TMP_DIR/s23-resolver-collision"
+rm -rf "$S23L"
+d_todo "$S23L" 01-t 01 first alpha active
+d_todo "$S23L" 01-t 01 second beta active
+timeout 60 python3 "$BUILD_PY" --quiet --root "$S23L/todo" \
+    --output "$S23L/cache.json" --repo-root "$S23L" >/dev/null 2>&1
+S23L_OUT=$(timeout 60 python3 "$VALIDATE_PY" --cache "$S23L/cache.json" \
+    --repo-root "$S23L" 2>&1); S23L_RC=$?
+S23L_Q=$(timeout 60 python3 - "$S23L/cache.json" "$S23L/todo" <<'S23LEOF' 2>&1
+import sys
+sys.path.insert(0, "scripts/todo-graph")
+import cache_schema as cs
+try:
+    cs.load_and_validate(sys.argv[1], sys.argv[2], check_stale=False,
+                         profile=cs.PROFILE_QUERY)
+    print("NORAISE")
+except cs.CacheSchemaError as exc:
+    print(exc.reason)
+S23LEOF
+)
+if [ "$S23L_RC" = "1" ] && echo "$S23L_OUT" | grep -q "duplicate-resolver-key" \
+    && [ "$S23L_Q" = "SHAPE" ]; then
+    t_pass "validate: a resolver-key collision with no referring XREF is REPORTED at rc 1, while the query profile refuses the same cache"
+else
+    t_fail "validate: resolver-key collision rc=$S23L_RC query=$S23L_Q out=$(echo "$S23L_OUT" | tail -3)"
+fi
+
+# 23d1-mutation: drop the ninth check from the registered list. The collision
+# must then pass unreported -- the exact divergence it closes.
+S23L_MUT="$TMP_DIR/s23-resolver-collision-mut"
+rm -rf "$S23L_MUT"
+d_todo "$S23L_MUT" 01-t 01 first alpha active
+d_todo "$S23L_MUT" 01-t 01 second beta active
+s23_tooldir "$S23L_MUT/tool"
+python3 - "$S23L_MUT/tool/validate.py" <<'S23LMEOF'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+src = p.read_text(encoding="utf-8")
+needle = '        ("duplicate-resolver-key", check_duplicate_resolver_key, (nodes,)),\n'
+assert src.count(needle) == 1, f"mutation needle appears {src.count(needle)}x"
+p.write_text(src.replace(needle, "", 1), encoding="utf-8")
+S23LMEOF
+timeout 60 python3 "$BUILD_PY" --quiet --root "$S23L_MUT/todo" \
+    --output "$S23L_MUT/cache.json" --repo-root "$S23L_MUT" >/dev/null 2>&1
+timeout 60 python3 "$S23L_MUT/tool/validate.py" --cache "$S23L_MUT/cache.json" \
+    --repo-root "$S23L_MUT" --quiet >/dev/null 2>&1; S23LM_RC=$?
+if [ "$S23LM_RC" = "0" ]; then
+    t_pass "validate: mutation check -- without the ninth check the collision passes unreported (fixture is sensitive)"
+else
+    t_fail "validate: mutation check -- unregistered ninth check still gave rc=$S23LM_RC, so 23d1 proves nothing"
+fi
+
+# Sub-test 23w3: the repair refuses a SYMLINK destination instead of replacing
+# the link with a regular file. The corpus deliberately accepts a symlink to a
+# regular TODO, and os.replace swaps the directory ENTRY -- so a repair would
+# silently convert a tracked link into a copy.
+S23M="$TMP_DIR/s23-symlink-dest"
+s23_write_tree "$S23M"
+if ln -s "TODO-01-a.md" "$S23M/todo/01-test/link-probe" 2>/dev/null; then
+    rm -f "$S23M/todo/01-test/link-probe"
+    mv "$S23M/todo/01-test/TODO-01-a.md" "$S23M/todo/01-test/real-a.md"
+    ln -s "real-a.md" "$S23M/todo/01-test/TODO-01-a.md"
+    timeout 60 python3 "$BUILD_PY" --quiet --root "$S23M/todo" \
+        --output "$S23M/cache.json" --repo-root "$S23M" >/dev/null 2>&1
+    S23M_OUT=$(timeout 60 python3 "$VALIDATE_PY" --cache "$S23M/cache.json" \
+        --repo-root "$S23M" --fix-line-numbers --write --quiet 2>&1); S23M_RC=$?
+    if [ "$S23M_RC" = "2" ] && echo "$S23M_OUT" | grep -q "is a symlink" \
+        && [ -L "$S23M/todo/01-test/TODO-01-a.md" ]; then
+        t_pass "validate repair: a symlink destination refuses instead of being replaced by a regular file"
+    else
+        t_fail "validate repair: symlink dest rc=$S23M_RC still-a-link=$([ -L "$S23M/todo/01-test/TODO-01-a.md" ] && echo yes || echo no) out=$S23M_OUT"
+    fi
+else
+    t_pass "validate repair: symlink-destination case skipped (symlinks unavailable on this filesystem)"
+fi
+
+# Sub-test 23w4: a pre-existing sibling at the OLD fixed temp name must survive
+# untouched. The rewrite used to open `<dest>.validate-tmp` with no O_EXCL, so
+# it truncated whatever was already there -- and followed it if it was a link.
+S23N="$TMP_DIR/s23-tmp-collision"
+s23_write_tree "$S23N"
+timeout 60 python3 "$BUILD_PY" --quiet --root "$S23N/todo" \
+    --output "$S23N/cache.json" --repo-root "$S23N" >/dev/null 2>&1
+printf 'PRECIOUS' > "$S23N/todo/01-test/TODO-01-a.md.validate-tmp"
+timeout 60 python3 "$VALIDATE_PY" --cache "$S23N/cache.json" \
+    --repo-root "$S23N" --fix-line-numbers --write --quiet >/dev/null 2>&1; S23N_RC=$?
+S23N_KEPT=$(cat "$S23N/todo/01-test/TODO-01-a.md.validate-tmp" 2>/dev/null)
+S23N_LEFT=$(find "$S23N/todo" -name 'TODO-01-a.md.*.tmp' -print -quit)
+if [ "$S23N_RC" = "0" ] && [ "$S23N_KEPT" = "PRECIOUS" ] && [ -z "$S23N_LEFT" ]; then
+    t_pass "validate repair: a pre-existing sibling at the old fixed temp name is not truncated, and no staging file survives"
+else
+    t_fail "validate repair: temp collision rc=$S23N_RC kept='$S23N_KEPT' leftover='$S23N_LEFT'"
+fi
+
+# Sub-test 23c3: the ownership gate is PHYSICAL. A dot-dot spelling of the
+# generated cache names the same file and must be recovered, not refused.
+S23O="$TMP_DIR/s23-cache-alias"
+s23_tree "$S23O"
+printf 'CORRUPT{{{' > "$S23O/build/todo-cache.json"
+S23O_OUT=$(timeout 60 python3 "$VALIDATE_PY" \
+    --cache "$S23O/build/../build/todo-cache.json" \
+    --repo-root "$S23O" --quiet 2>&1); S23O_RC=$?
+if [ "$S23O_RC" = "0" ]; then
+    t_pass "validate recovery: a dot-dot spelling of the generated cache is recognised as owned and recovered"
+else
+    t_fail "validate recovery: aliased canonical cache rc=$S23O_RC out=$S23O_OUT (want rc 0)"
 fi
 
 # Sub-test 23h1: the section_headings subtree. validate.py dereferences

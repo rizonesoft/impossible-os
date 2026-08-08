@@ -178,7 +178,10 @@
           ],
           "properties": {
             "n": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 65535,
+              "description": "Heading number, parsed from a `## N.` body heading. NOT nullable, unlike sections[].n: a section ROW's Section column is free text that may not parse, whereas a heading is matched by build.extract_section_headings and therefore always has a number. Bounds mirror cache_schema._MAX_SECTION_N, which enforced them while this schema permitted any integer -- the same schema-accepts / Python-refuses gap sections[].n already closed. NOT EXPRESSIBLE HERE: `n` must also be unique within a node, because the consumer compares these as a SET against the Implementation Order rows, so a duplicate silently removes a heading from that comparison. JSON Schema has no per-object-array uniqueness-by-property rule, so that invariant is deliberately Python-only and is pinned by fixtures instead."
             },
             "title": {
               "type": "string"

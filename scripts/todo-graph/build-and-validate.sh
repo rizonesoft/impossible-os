@@ -8,17 +8,28 @@
 #   1. python3 scripts/todo-graph/build.py --quiet --output build/todo-cache.json
 #   2. python3 scripts/todo-graph/validate.py --cache build/todo-cache.json
 #
-# Exit code: the validator's exit code, propagated verbatim. It has THREE
-# values, not two, and the third is the one a caller must not misread:
-#   0  clean -- every check passed.
-#   1  GRAPH FINDINGS -- the corpus has problems a human should fix.
-#   2  usage error or INFRASTRUCTURE REFUSAL -- the cache or the --diff
-#      baseline could not be trusted, so NO verdict was reached and nothing is
-#      asserted about the corpus. Re-run after rebuilding rather than treating
-#      it as a graph failure.
+# Exit code: the UNION of two tools' codes, because this wrapper runs build.py
+# and then validate.py and propagates whichever one failed. Writing only the
+# validator's codes here would be the same mistake this header was already
+# making, one layer up:
+#
+#   0  clean -- the build succeeded and every check passed. ALSO returned by
+#      --help, which prints usage and runs neither tool.
+#   1  from validate.py: GRAPH FINDINGS, a corpus problem a human should fix.
+#      From build.py: a non-retryable producer failure. Both reach the caller
+#      as 1, so a caller that must tell them apart has to read the output.
+#   2  usage error or INFRASTRUCTURE REFUSAL -- an unknown flag here, or the
+#      cache / --diff baseline could not be trusted, so NO verdict was reached
+#      and nothing is asserted about the corpus.
+#   3  from build.py: the producer refused to certify the cache it generated
+#      (generation window). Retryable; this wrapper distinguishes it below and
+#      passes it through untouched.
+#
 # This header said "0 if all 7 checks pass, 1 otherwise" while rc 2 was already
-# reachable, which is how an infrastructure failure came to read as a graph
-# verdict; scripts/todo-graph/validate.py carries the same contract.
+# reachable and rc 3 was already propagated, which is how an infrastructure
+# failure came to read as a graph verdict (Codex consistency, section 23
+# review, [medium]); scripts/todo-graph/validate.py carries the validator half
+# of the same contract.
 # If build.py fails (malformed frontmatter, missing-frontmatter FATAL, etc)
 # the script aborts with build.py's exit code and never runs the validator.
 #
