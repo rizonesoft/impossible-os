@@ -1985,6 +1985,23 @@ def main(argv=None) -> int:
     canonical_cache = (repo_root / "build" / "todo-cache.json").resolve()
     check_stale = cache_path.resolve() == canonical_cache
 
+    # THE HISTORY AXIS IS PER-VERB, NOT PER-READER (section 24). Only three of
+    # this CLI's thirteen commands dereference a git-derived timestamp, and
+    # making the whole reader pay `corpus_history_id` (47.9ms measured, against
+    # a 169ms invocation) to protect fields the other ten never read is a ~28%
+    # toll for nothing. `stale` and `stats` read `last_active_at`; `render` reads
+    # `created_at` ONLY in the Gantt renderer (render.py:375), which is why the
+    # format is part of the test rather than the command name alone.
+    def _profile_for(args):
+        sub = getattr(args, "subcommand", None)
+        if sub in ("stale", "stats"):
+            return _cs.PROFILE_QUERY_HISTORY
+        if sub == "render" and getattr(args, "render_format", None) == "gantt":
+            return _cs.PROFILE_QUERY_HISTORY
+        return _cs.PROFILE_QUERY
+
+    profile = _profile_for(args)
+
     def _build_ctx():
         """(Re)load the cache and build a fresh Ctx. Called once up-front
         for a single-shot run; called every tick in --watch mode so the
@@ -2018,7 +2035,7 @@ def main(argv=None) -> int:
         try:
             fresh_nodes, info = _cs.load_and_validate(
                 cache_path, todo_root, check_stale=check_stale,
-                profile=_cs.PROFILE_QUERY)
+                profile=profile)
         except _cs.CacheSchemaError as exc:
             if exc.reason != _cs.REASON_MISSING:
                 _refuse(exc.reason, str(exc), args.quiet)
@@ -2032,7 +2049,7 @@ def main(argv=None) -> int:
             try:
                 fresh_nodes, info = _cs.load_and_validate(
                     cache_path, todo_root, check_stale=check_stale,
-                    profile=_cs.PROFILE_QUERY)
+                    profile=profile)
             except _cs.CacheSchemaError as exc2:
                 _refuse(exc2.reason, str(exc2), args.quiet)
         c = Ctx(fresh_nodes, repo_root, args.quiet)
@@ -2078,6 +2095,18 @@ def main(argv=None) -> int:
         # from a corpus that no longer exists (section 17's contract; the same
         # post-walk re-verification `todo-reachability.py:542` performs).
         try:
+            # HISTORY FIRST, CONTENT LAST, and the ORDER is the point (Codex
+            # adversarial, section 24, [medium]). The history probe forks git
+            # and costs ~48ms; running it AFTER the content check put that whole
+            # window between "the corpus is unchanged" and publication, so a
+            # TODO edit landing inside it changed no git history, passed both
+            # checks, and shipped anyway. Checking history first keeps the
+            # content fingerprint the LAST thing verified before the answer is
+            # emitted, which is the property the generation binding rests on.
+            # `info.history` is None for every verb outside the three that
+            # consume the derived timestamps, making this a no-op there rather
+            # than a second 47.9ms probe.
+            _cs.check_history_unchanged(todo_root, info.history)
             _cs.check_corpus_unchanged(todo_root, info.corpus)
         except _cs.CacheSchemaError as exc:
             # Refuses whether or not a request error is pending: a stale

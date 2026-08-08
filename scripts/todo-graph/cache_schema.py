@@ -293,16 +293,49 @@ PROFILE_STAMP_XREFS = Profile("stamp-xrefs", (SUBTREE_STAMPS_XREFS,))
 # continue` in the reader -- a silent narrowing that produced a complete-looking
 # answer from a partial cache.
 #
-# `requires_history` is FALSE and that is a deliberate, owned decision, not an
-# oversight: `query.py` sorts `stale` / `deferred` by `last_active_at`, so it is
-# the first reader that would turn it on, and the cost of doing so (a full
-# history walk per invocation, 38ms of a 40ms call today, ~100ms projected at
-# 10,000 commits) is measured and decided in section 24. Leaving it False keeps
-# section 22 a fail-closed change with no per-call cost regression.
+# `requires_history` is FALSE, and section 24 PINNED it there rather than
+# leaving it unset -- but the axis moved from the READER to the VERB, because
+# the reader-wide answer was wrong in both directions. Section 22 recorded that
+# "`query.py` sorts `stale` / `deferred` by `last_active_at`"; that is WRONG
+# about `deferred`, which never dereferences a timestamp (`cmd_deferred` at
+# query.py:1765 and its body read status and XREFs only). The actual consumers
+# are three of thirteen commands, and they are named on PROFILE_QUERY_HISTORY
+# below. So this profile stays history-blind and costs nothing extra, and the
+# ten verbs routed through it -- ready, deferred, blocked, blocking, backlinks,
+# code, code-by, by-domain, orphans, deferred-by -- pay no history probe at all.
 PROFILE_QUERY = Profile(
     "query",
     (SUBTREE_SECTIONS, SUBTREE_SECTION_DEPS, SUBTREE_STAMPS_XREFS,
      SUBTREE_NODE_FIELDS, SUBTREE_NODE_IDENTITY),
+)
+
+# THE SAME READER, ONE AXIS STRICTER, SELECTED PER VERB (section 24). Identical
+# subtrees to PROFILE_QUERY -- the walk is the same, so narrowing or widening it
+# here would be a second contract to keep in sync for no reason -- with
+# `requires_history` ON.
+#
+# THE COST IS WHY THIS IS NOT JUST A FLAG ON PROFILE_QUERY. Measured 2026-08-08
+# on the live corpus: `corpus_history_id` is 47.9ms median, of which
+# `git rev-list --count HEAD -- .` alone is 44.2ms, against a 169ms `query.py`
+# invocation. Turning it on reader-wide would put ~28% on EVERY query to protect
+# fields that ten of the thirteen commands never read. Selected per verb, the
+# three that do read them pay it and the rest do not.
+#
+# THE CONSUMERS, each confirmed by dereference and not by name:
+#   `stale`  -- cmd_stale (query.py:893) sorts and filters on `last_active_at`.
+#   `stats`  -- cmd_stats (query.py:1009, :1028, :1034) computes the
+#               longest-deferred table from `last_active_at`.
+#   `render --render-format gantt` -- render.py:375 uses `created_at` as each
+#               bar's start date, reached through cmd_render (query.py:1143).
+# That third one is the reason this comment lists dereferences rather than verb
+# names: an inventory built by grepping `query.py` alone MISSED it, because the
+# renderer lives in a different module behind a CLI-only command (Codex design
+# review, section 24, [medium]).
+PROFILE_QUERY_HISTORY = Profile(
+    "query-history",
+    (SUBTREE_SECTIONS, SUBTREE_SECTION_DEPS, SUBTREE_STAMPS_XREFS,
+     SUBTREE_NODE_FIELDS, SUBTREE_NODE_IDENTITY),
+    requires_history=True,
 )
 
 # `validate.py`'s CURRENT cache (section 23). Everything `PROFILE_QUERY` walks,
@@ -405,14 +438,25 @@ class CacheInfo:
     the few milliseconds inside `check_freshness`, while the window that
     actually matters is the caller's ~1s symbol-resolution walk (Codex
     adversarial, section 17 review).
+
+    `history` is the same idea one axis over, and it was MISSING (Codex design
+    review, section 24, [medium]). `check_freshness` validates the history id for
+    a `requires_history` profile at one instant and then discarded it, so the
+    post-walk re-verification covered TODO BYTES ONLY: a rebase or a deepening
+    landing during a query left the content identical, the derived timestamps
+    stale, and the verdict publishable. It is None for a profile that does not
+    consume the derived timestamps -- those callers have nothing to re-check and
+    must not pay for the probe.
     """
 
-    __slots__ = ("population", "key_present", "corpus")
+    __slots__ = ("population", "key_present", "corpus", "history")
 
-    def __init__(self, population: int, key_present: bool, corpus=None):
+    def __init__(self, population: int, key_present: bool, corpus=None,
+                 history=None):
         self.population = population
         self.key_present = key_present
         self.corpus = corpus
+        self.history = history
 
 
 def _err(reason: str, message: str):
@@ -1396,8 +1440,30 @@ def _scan_corpus(todo_root: Path, on_err):
     Keys are RELATIVE to `todo_root` so a producer and a reader that reach the
     same corpus by different absolute paths still compare equal.
 
-    Measured on the live corpus (233 files, 11 MB): 9.5ms per pass warm,
-    against the ~1s both readers already spend resolving symbols.
+    RUN TWICE PER PROCESS, AND IT STAYS THAT WAY (section 24, resolving a
+    section 21 `[L]` acceptance). `check_freshness` scans once and
+    `check_corpus_unchanged` scans again after the caller's walk. The second pass
+    is NOT a redundant hash of the same bytes -- it is a second OBSERVATION at a
+    different time, and it is the entire mechanism by which a corpus edit landing
+    mid-walk is caught. Removing it, or cheapening it with a stat/mtime
+    pre-filter, would reintroduce the clock proxy the paragraph above exists to
+    have removed. So the cost is owned, not eliminated.
+
+    Measured 2026-08-08 on the live corpus (232 files, 10.83 MB): 27.8ms per
+    pass warm (p50 of 15 runs), so ~56ms for the pair. The previously recorded
+    "9.5ms per pass warm" was 3x optimistic on an essentially unchanged corpus
+    and is corrected here. Attribution within one pass: ~7ms walk, 13.7ms
+    `read_corpus_file` (the bounded fstat-first read, against 4.3ms for a plain
+    read -- the safety wrapper is the larger term), 6.7ms sha256.
+
+    SECTION 21'S 5%-CROSSOVER PROJECTION WAS ANCHORED TO THE WRONG BASELINE. It
+    compared the pair against "the ~1s both readers spend resolving symbols",
+    which is `validate.py`'s profile; there the pair is ~5.6% and the projection
+    holds. `query.py` does not have that baseline -- it is a 169ms call -- so the
+    pair is ALREADY ~33% of it, and the "5% at a 30-70 MB corpus" crossover was
+    passed on the query path before it was ever written down. That is a
+    measurement to act on if the query path ever needs optimizing; it is not a
+    reason to weaken the second observation.
     """
     todo_root = Path(todo_root)
     seen = {}
@@ -1437,8 +1503,43 @@ def corpus_history_id(todo_root: Path):
     corpus-touching commits moves in every direction that matters: deepening
     raises it, truncation lowers it, a rewrite changes the tip.
 
-    Measured: 40ms for both, against 312ms to recompute the full timestamp map,
-    which is why this projection is recorded instead of the map itself.
+    THE COUNT IS ALSO THE ONLY HALF THAT FOLLOWS THE EFFECTIVE GIT ENVIRONMENT,
+    which is the property that killed the cheap replacement section 24 proposed.
+    A digest of the shallow-boundary FILE looks equivalent and is not: with
+    `GIT_SHALLOW_FILE` pointing elsewhere, `git log` and `git rev-list` both walk
+    the overridden boundary while `<git-common-dir>/shallow` stays byte-identical
+    and `rev-parse --git-path shallow` still resolves the default file.
+    Reproduced 2026-08-08 on git 2.43: the count went 2 -> 1 across the override
+    with the on-disk file unchanged. The count is computed by git under the same
+    environment as the walk, so it cannot be fooled that way; a file digest can.
+    (`--git-common-dir` also returns a RELATIVE path, so concatenating it is a
+    second trap.) Section 24 rejected the substitution on those grounds.
+
+    WHAT THIS PAIR DOES NOT COVER, stated because a projection onto two values
+    necessarily discards information (Codex design review, section 24, [medium]).
+    It covers ancestry rewrites, depth and cardinality changes, and boundary
+    changes however they are reached. It does NOT cover a replacement that
+    preserves both: replace an older corpus-touching commit with one carrying an
+    identical tree and identical parents but a different committer timestamp, and
+    the `%ct` that `build.collect_git_timestamps` consumes changes while the
+    latest touching hash and the commit count both stay equal. An equal-depth
+    graft has the same shape. Closing that axis is section 27; do not read this
+    pair as covering it.
+
+    Measured 2026-08-08 on the live corpus (3,807 corpus-touching commits of
+    5,387 total): 47.9ms median, of which `rev-list --count` is 44.2ms and the
+    three `rev-parse`/`log` probes are ~1.5ms each. AND THE COST GROWS WITH
+    TOTAL REPO COMMITS, NOT CORPUS-TOUCHING ONES -- section 21 recorded the
+    latter and it is the wrong variable. Measured by walk depth: 8.2ms at 100,
+    14.7ms at 1,000, 22.4ms at 2,000, 36.1ms at 4,000, 44.5ms at 5,387 -- about
+    6.9us per commit walked plus ~7.5ms of process spawn, and a pathspec matching
+    only 44 commits still costs 25.5ms because the expense is the tree-diff
+    across the whole walk, not the matches. So the ~100ms figure section 21
+    projected at "10,000 commits" arrives at 10,000 TOTAL commits, roughly 1.4x
+    sooner than its own model implied. `git commit-graph write --changed-paths`
+    does NOT rescue it (45.3ms -> 38.8ms, 1.2x): `--count` cannot early-exit.
+    Against 312ms to recompute the full timestamp map, the projection is still
+    the right thing to record.
 
     "NOT A REPOSITORY" AND "COULD NOT ASK" ARE DIFFERENT ANSWERS. Returning None
     for both let a transient git failure on the producer compare EQUAL to a
@@ -1520,7 +1621,7 @@ _REBUILD = ("rebuild via scripts/todo-graph/build-and-validate.sh --keep-cache")
 
 
 def check_freshness(cache_path: Path, todo_root: Path, cache_bytes: bytes,
-                    profile: 'Profile' = None):
+                    profile: 'Profile' = None, live_history=None):
     """Refuse a cache that was not built from the corpus now on disk.
 
     THE QUESTION CHANGED, AND THAT IS THE POINT (section 21). This used to ask
@@ -1610,7 +1711,13 @@ def check_freshness(cache_path: Path, todo_root: Path, cache_bytes: bytes,
     # turn this on later with no migration.
     if profile is not None and not profile.requires_history:
         return live
-    live_hist = corpus_history_id(todo_root)
+    # `live_history` lets the caller hand in an id it already probed, so a
+    # history-consuming reader pays for ONE `corpus_history_id` call and then
+    # re-uses that same value for its post-walk re-check (section 24). Probing
+    # again here would double the one cost this whole profile axis exists to
+    # ration. Omitted (every standalone fixture call), it is probed here as
+    # before.
+    live_hist = corpus_history_id(todo_root) if live_history is None else live_history
     if rec.get("history_id") != live_hist:
         _err(REASON_STALE,
              f"the corpus git history moved since the cache was built "
@@ -1655,6 +1762,32 @@ def check_corpus_unchanged(todo_root: Path, corpus) -> None:
     except OSError as exc:
         _err(REASON_STALE, f"cannot re-verify cache freshness: {exc}")
     _diff_or_ok(corpus, after, "during the walk")
+
+
+def check_history_unchanged(todo_root: Path, history) -> None:
+    """Re-verify the corpus git history AFTER the caller's own walk.
+
+    THE CONTENT AXIS HAD THIS AND THE HISTORY AXIS DID NOT (Codex design review,
+    section 24, [medium]). `check_corpus_unchanged` above closes the caller's
+    walk window for TODO BYTES; a rebase, an amend, a deepening or a truncation
+    landing in that same window changes `created_at` / `last_active_at` while
+    leaving every byte identical, so `stale`, `stats` and the Gantt renderer
+    could publish timestamps from a history that no longer exists -- past a
+    freshness check that had just certified them.
+
+    A no-op when `history` is None, which is every caller whose profile does not
+    declare `requires_history`. Those callers dereference no derived timestamp,
+    so they have nothing to protect and must not pay the probe.
+    """
+    if history is None:
+        return
+    live = corpus_history_id(todo_root)
+    if live != history:
+        _err(REASON_STALE,
+             f"the corpus git history moved during the walk (was {history}, "
+             f"now {live}), so the created_at/last_active_at fields this "
+             f"command consumed no longer describe it; re-run rather than "
+             f"publish a result from a history that changed underneath it")
 
 
 def load_and_validate(cache_path: Path, todo_root: Path,
@@ -1760,8 +1893,18 @@ def _load_and_validate(cache_path: Path, todo_root: Path,
             # single descriptor opened above, and the corpus binding is located
             # by ITS digest -- never by a fresh read of the pathname, which
             # `build.py` rewrites.
+            # PROBED ONCE, HELD FOR THE RE-CHECK. A history-consuming profile
+            # pays ~48ms for `corpus_history_id` (section 24 measurement), so
+            # the value validated here is the same value handed back on
+            # `info.history` for the caller's post-walk re-verification --
+            # never a second probe.
+            live_history = (corpus_history_id(todo_root)
+                            if profile is not None and profile.requires_history
+                            else None)
             info.corpus = check_freshness(cache_path, todo_root,
-                                          cache_bytes=blob, profile=profile)
+                                          cache_bytes=blob, profile=profile,
+                                          live_history=live_history)
+            info.history = live_history
         # THE GENERATION BINDING IS NOT PART OF THE FRESHNESS POLICY, and it
         # used to sit inside the `if check_stale` block above. That coupled two
         # independent protections behind one flag: `check_stale=False` means "I

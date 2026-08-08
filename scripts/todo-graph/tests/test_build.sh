@@ -11852,6 +11852,225 @@ else
 fi
 
 # ----------------------------------------------------------------------
+# Section 24: the history-identity cost decision
+# ----------------------------------------------------------------------
+
+# 24a: THE HISTORY AXIS IS THE PROFILE'S, AND IT DISCRIMINATES. A history moved
+# under a byte-identical corpus must be REFUSED for a profile that declares
+# requires_history and ACCEPTED for one that does not -- the same cache, the same
+# instant, two answers. A fixture asserting only the refusal would pass just as
+# well if the check had become unconditional, which is the regression that would
+# put 47.9ms on all thirteen query verbs.
+S24_TREE="$TMP_DIR/s24-history"
+mkdir -p "$S24_TREE/build"
+cp -r "$PW_TREE/todo" "$S24_TREE/todo"
+(
+    cd "$S24_TREE" || exit 1
+    git init -q . && git config user.email "t@example.invalid" \
+        && git config user.name "s24 fixture" \
+        && git add -A && git commit -q --no-verify -m "corpus"
+) >/dev/null 2>&1
+python3 "$REPO_ROOT/scripts/todo-graph/build.py" --quiet \
+    --root "$S24_TREE/todo" --repo-root "$S24_TREE" \
+    --output "$S24_TREE/build/todo-cache.json" >/dev/null 2>&1
+# CONTROL: the cache must exist before any verdict below means anything. A
+# fixture whose build silently failed reports every profile as "refused" and
+# looks like a pass of the strictest kind.
+if [ -f "$S24_TREE/build/todo-cache.json" ]; then
+    t_pass "section 24: control -- the history fixture built a cache to test against"
+else
+    t_fail "section 24: control -- the history fixture built NO cache, so every verdict below is vacuous"
+fi
+S24_PRE=$(python3 -c "
+import pathlib, sys
+sys.path.insert(0, '$REPO_ROOT/scripts/todo-graph')
+import cache_schema as cs
+p = pathlib.Path('$S24_TREE/build/todo-cache.json')
+_, i = cs.load_and_validate(p, '$S24_TREE/todo', profile=cs.PROFILE_QUERY_HISTORY)
+_, j = cs.load_and_validate(p, '$S24_TREE/todo', profile=cs.PROFILE_QUERY)
+# The history-consuming profile must CARRY the id forward for its post-walk
+# re-check; the blind one must carry None so its re-check is a no-op, not a
+# second 47.9ms probe.
+print('HELD' if i.history else 'LOST', 'NONE' if j.history is None else 'PAID')
+" 2>&1)
+if [ "$S24_PRE" = "HELD NONE" ]; then
+    t_pass "section 24: the validated history id rides on CacheInfo for the declaring profile only"
+else
+    t_fail "section 24: CacheInfo.history gave '$S24_PRE' (want 'HELD NONE')"
+fi
+# MUTATE: amend the commit. Every corpus byte is identical afterwards; only the
+# history moved.
+(
+    cd "$S24_TREE" || exit 1
+    git commit -q --no-verify --amend -m "corpus-amended"
+) >/dev/null 2>&1
+S24_POST=$(python3 -c "
+import pathlib, sys
+sys.path.insert(0, '$REPO_ROOT/scripts/todo-graph')
+import cache_schema as cs
+p = pathlib.Path('$S24_TREE/build/todo-cache.json')
+def run(prof):
+    try:
+        cs.load_and_validate(p, '$S24_TREE/todo', profile=prof)
+        return 'ACCEPT'
+    except cs.CacheSchemaError as e:
+        return e.reason
+print(run(cs.PROFILE_QUERY_HISTORY), run(cs.PROFILE_QUERY))
+" 2>&1)
+if [ "$S24_POST" = "STALE ACCEPT" ]; then
+    t_pass "section 24: mutation check -- an amended history is refused for the history profile and invisible to the blind one"
+else
+    t_fail "section 24: moved history under identical bytes gave '$S24_POST' (want 'STALE ACCEPT')"
+fi
+
+# 24b: THE POST-WALK RE-CHECK COVERS THE HISTORY AXIS, NOT JUST THE BYTES. The
+# window that matters is the caller's walk, and it was closed for content only:
+# a rebase landing mid-walk leaves every byte identical while the timestamps the
+# command already consumed stop describing the repository.
+S24_WALK=$(python3 -c "
+import pathlib, subprocess, sys
+sys.path.insert(0, '$REPO_ROOT/scripts/todo-graph')
+import cache_schema as cs
+root = '$S24_TREE/todo'
+held = cs.corpus_history_id(pathlib.Path(root))
+# Unchanged history: a no-op, and None is always a no-op.
+try:
+    cs.check_history_unchanged(root, held); a = 'OK'
+except cs.CacheSchemaError as e:
+    a = e.reason
+try:
+    cs.check_history_unchanged(root, None); b = 'NOOP'
+except cs.CacheSchemaError as e:
+    b = e.reason
+# Now move it underneath, exactly as a mid-walk rebase would.
+subprocess.run(['git', '-C', '$S24_TREE', 'commit', '-q', '--no-verify',
+                '--amend', '-m', 'moved-mid-walk'],
+               capture_output=True)
+try:
+    cs.check_history_unchanged(root, held); c = 'MISSED'
+except cs.CacheSchemaError as e:
+    c = e.reason
+print(a, b, c)
+" 2>&1)
+if [ "$S24_WALK" = "OK NOOP STALE" ]; then
+    t_pass "section 24: the post-walk history re-check is a no-op when unchanged or unrequested, and fires when the history moves mid-walk"
+else
+    t_fail "section 24: post-walk history re-check gave '$S24_WALK' (want 'OK NOOP STALE')"
+fi
+
+# 24c: AN INDETERMINATE TIMESTAMP WALK MUST NOT BECOME A VALID BINDING. A `git
+# log` failure that clears before the caller's second probe used to publish null
+# created_at/last_active_at under a perfectly valid history id, which a
+# history-consuming reader then accepts as fresh (Codex design review, section
+# 24, [high]). The two markers are distinct facts and only the determinate one
+# may be rescued by a probe.
+S24_PROV=$(python3 -c "
+import sys
+sys.path.insert(0, '$REPO_ROOT/scripts/todo-graph')
+import build as b
+# The markers must be distinguishable from any real identity string. A real id
+# is 'tip:count'; a bare string constant would be indistinguishable from one.
+ok_type = (isinstance(b.PROVENANCE_INDETERMINATE, b._Provenance)
+           and isinstance(b.PROVENANCE_NO_DERIVATION, b._Provenance)
+           and not isinstance('deadbeef:12', b._Provenance))
+# no-history:0 must NOT be a determinate rescue: the walk emits it itself on a
+# successful empty read, so seeing it only from the fallback means the walk
+# failed while git was healthy -- the transient case that must abort.
+print('TYPED' if ok_type else 'UNTYPED',
+      'no-repo' in b._DETERMINATE_NO_GIT and 'unborn-head' in b._DETERMINATE_NO_GIT
+      and 'no-history:0' not in b._DETERMINATE_NO_GIT)
+" 2>&1)
+if [ "$S24_PROV" = "TYPED True" ]; then
+    t_pass "section 24: provenance markers are typed and only no-repo/unborn-head may rescue an indeterminate walk"
+else
+    t_fail "section 24: provenance marker contract gave '$S24_PROV' (want 'TYPED True')"
+fi
+# MUTATION: a build whose timestamp walk fails while git is healthy must REFUSE.
+# Forced by pointing the walk at a git that always fails, with the real git still
+# answering the fallback probe.
+S24_FAKEBIN="$TMP_DIR/s24-fakegit"
+mkdir -p "$S24_FAKEBIN"
+S24_TRANS=$(python3 -c "
+import pathlib, sys
+sys.path.insert(0, '$REPO_ROOT/scripts/todo-graph')
+import build as b
+import cache_schema as cs
+# The walk reports INDETERMINATE while corpus_history_id still answers with a
+# real tip:count -- i.e. git is healthy now, so the failure was transient.
+real = b.collect_git_timestamps
+def failing(repo_root, files):
+    ts, _ = real(repo_root, files)
+    return ts, b.PROVENANCE_INDETERMINATE
+b.collect_git_timestamps = failing
+sys.argv = ['build.py', '--quiet', '--root', '$S24_TREE/todo',
+            '--repo-root', '$S24_TREE',
+            '--output', '$S24_TREE/build/transient.json']
+rc = b.main()
+print(rc, pathlib.Path('$S24_TREE/build/transient.json').exists())
+" 2>&1 | tail -1)
+if [ "$S24_TRANS" = "3 False" ]; then
+    t_pass "section 24: mutation check -- a transient timestamp-walk failure aborts the build instead of publishing null timestamps under a valid binding"
+else
+    t_fail "section 24: transient walk failure gave '$S24_TRANS' (want '3 False' -- rc 3 and NO cache written)"
+fi
+# THE SAME RULE ON THE OTHER MARKER. Gating only INDETERMINATE left the identical
+# hole one door over (Codex adversarial, section 24, [high]): a corpus in a
+# DIFFERENT repository than --repo-root derives no timestamp at all, and the
+# fallback probe then reads the corpus's own repository and returns a real
+# tip:count. A build must refuse rather than publish nulls under it. The tree
+# below is a real repository reached with a --repo-root that does not contain it.
+S24_OUTSIDE="$TMP_DIR/s24-outside"
+mkdir -p "$S24_OUTSIDE/build"
+S24_XREPO=$(python3 -c "
+import pathlib, sys
+sys.path.insert(0, '$REPO_ROOT/scripts/todo-graph')
+import build as b
+import cache_schema as cs
+# CONTROL: the corpus really is in a repository, so the probe really does return
+# a usable identity. If this is a sentinel the assertion below proves nothing.
+hid = cs.corpus_history_id(pathlib.Path('$S24_TREE/todo'))
+control = 'REAL' if ':' in hid and hid not in ('no-repo', 'unborn-head') else 'SENTINEL'
+sys.argv = ['build.py', '--quiet', '--root', '$S24_TREE/todo',
+            '--repo-root', '$S24_OUTSIDE',
+            '--output', '$S24_OUTSIDE/build/cross.json']
+rc = b.main()
+print(control, rc, pathlib.Path('$S24_OUTSIDE/build/cross.json').exists())
+" 2>&1 | tail -1)
+if [ "$S24_XREPO" = "REAL 3 False" ]; then
+    t_pass "section 24: a corpus outside --repo-root refuses rather than publishing null timestamps under its own repository's identity"
+else
+    t_fail "section 24: cross-repo build gave '$S24_XREPO' (want 'REAL 3 False')"
+fi
+
+# 24d: THE PER-VERB SPLIT COVERS THE GANTT RENDERER. `created_at` is the other
+# git-derived field, and it is dereferenced in render.py -- a different module,
+# behind a CLI-only command. An inventory built by grepping query.py alone
+# missed it (Codex design review, section 24, [medium]), so this pins the
+# selector against the CONSUMER SET rather than against a list of verb names.
+S24_SEL=$(python3 -c "
+import pathlib, re, sys
+sys.path.insert(0, '$REPO_ROOT/scripts/todo-graph')
+import cache_schema as cs
+q = pathlib.Path('$REPO_ROOT/scripts/todo-graph/query.py').read_text()
+r = pathlib.Path('$REPO_ROOT/scripts/todo-graph/render.py').read_text()
+# The renderer must still be a consumer; if it stops being one, this fixture is
+# telling us the selector can be narrowed, not that it is wrong.
+gantt_reads = 'created_at' in r
+# And the selector must name it. Both the command AND the format matter: render
+# in any other format consumes no timestamp.
+sel = q[q.index('def _profile_for('):]
+sel = sel[:sel.index('return _cs.PROFILE_QUERY\n')]
+print('CONSUMES' if gantt_reads else 'NOTANYMORE',
+      'SELECTED' if ('gantt' in sel and 'render' in sel) else 'MISSED',
+      'PAIRED' if ('stale' in sel and 'stats' in sel) else 'INCOMPLETE')
+" 2>&1)
+if [ "$S24_SEL" = "CONSUMES SELECTED PAIRED" ]; then
+    t_pass "section 24: the per-verb selector covers all three timestamp consumers including the Gantt renderer"
+else
+    t_fail "section 24: profile selector coverage gave '$S24_SEL' (want 'CONSUMES SELECTED PAIRED')"
+fi
+
+# ----------------------------------------------------------------------
 # Summary
 # ----------------------------------------------------------------------
 TOTAL=$((PASS + FAIL))

@@ -179,6 +179,34 @@ def walk_todo_files(root: Path) -> list:
 # --- Git timestamps (batched) -------------------------------------------
 
 
+class _Provenance(str):
+    """A typed provenance marker, distinguishable from a real identity string.
+
+    Subclassing `str` keeps every existing `history_id is None` -> truthiness and
+    formatting path working while making `isinstance(p, _Provenance)` the exact
+    test for "this is a marker, not an id". A bare string constant would be
+    indistinguishable from an identity that happened to equal it.
+    """
+
+    __slots__ = ()
+
+
+# Determinate: no corpus file is under `repo_root`, so no timestamp was derived.
+PROVENANCE_NO_DERIVATION = _Provenance("no-derivation")
+# Indeterminate: the walk did not answer and we cannot say why. ABORT, do not
+# re-ask -- a second probe that succeeds describes a different moment.
+PROVENANCE_INDETERMINATE = _Provenance("indeterminate")
+
+# The only answers from `corpus_history_id` that may rescue an INDETERMINATE
+# walk. Both are established by its own explicit probes (`rev-parse --git-dir`
+# reporting not-a-repository, `rev-parse --verify --quiet HEAD` reporting an
+# unborn HEAD), so they are facts about the tree rather than about this moment.
+# `no-history:0` is deliberately ABSENT: the walk produces that itself on a
+# successful empty read, so seeing it only from the fallback means the walk
+# failed while git was healthy -- which is the transient case that must abort.
+_DETERMINATE_NO_GIT = frozenset(("no-repo", "unborn-head"))
+
+
 def collect_git_timestamps(repo_root: Path, files: list) -> dict:
     """Return {relative_path_str: (created_at_iso, last_active_at_iso)} for
     every file. One subprocess call walks the entire log so we don't pay
@@ -203,9 +231,31 @@ def collect_git_timestamps(repo_root: Path, files: list) -> dict:
     -- so the provenance costs nothing extra and cannot describe a different
     walk than the one that ran.
 
-    Returns `(timestamps, provenance)`; provenance is None when git could not be
-    consulted at all, which means no timestamp was derived and there is nothing
-    for a history check to protect.
+    Returns `(timestamps, provenance)`. Provenance is either the walk-derived
+    identity string, or one of two typed markers -- and COLLAPSING THOSE TWO INTO
+    ONE `None` WAS A HOLE (Codex design review, section 24, [high]). Any `git log`
+    failure used to return `None`, and the caller then minted a history id from a
+    SECOND `corpus_history_id` probe. A transient git failure that cleared between
+    those two calls therefore published null `created_at` / `last_active_at`
+    fields under a perfectly valid history binding, which a history-consuming
+    reader accepts as fresh. The two states are not the same fact:
+
+      `PROVENANCE_NO_DERIVATION` -- DETERMINATE. No corpus file lives under
+      `repo_root`, so no timestamp could be derived from any history and there is
+      genuinely nothing for a history check to protect. The caller resolves the
+      recorded id from `corpus_history_id`, which fails closed on its own.
+
+      `PROVENANCE_INDETERMINATE` -- the walk did not answer and this process
+      cannot say why. The caller must ABORT rather than ask a second time; only
+      the determinate sentinels `no-repo` and `unborn-head`, established by
+      `corpus_history_id`'s own explicit probes, may rescue it.
+
+    A SUCCESSFUL WALK WITH EMPTY OUTPUT IS DETERMINATE, not a failure: an
+    existing HEAD simply has no commit touching `todo` (a tree whose TODO files
+    are still untracked is the ordinary case). That yields `no-history:0`, which
+    is byte-identical to what `corpus_history_id` returns for the same state --
+    the two must not drift, or the producer's own post-walk comparison would
+    reject legitimate builds.
     """
     rel_paths = set()
     for f in files:
@@ -225,7 +275,7 @@ def collect_git_timestamps(repo_root: Path, files: list) -> dict:
         # the corpus itself was not in a repository at all). Provenance None is
         # the honest answer: nothing was derived, so there is nothing for the
         # history binding to protect.
-        return {}, None
+        return {}, PROVENANCE_NO_DERIVATION
 
     created = {}
     last_active = {}
@@ -252,10 +302,15 @@ def collect_git_timestamps(repo_root: Path, files: list) -> dict:
             text=True,
             check=True,
         )
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        # Git unavailable or repo broken: emit empty timestamps (caller
-        # treats None as unknown, generator still succeeds).
-        return {p: (None, None) for p in rel_paths}, None
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        # THE WALK DID NOT ANSWER AND THIS PROCESS CANNOT SAY WHY. `git log`
+        # exiting nonzero covers a missing binary, a broken repository, a
+        # corrupt ref and a transient failure alike, and none of those is
+        # evidence that the corpus has no history. Emitting null timestamps and
+        # letting the caller mint an id from a later probe is exactly how a
+        # cleared transient failure published a timestamp-less cache under a
+        # valid binding (Codex design review, section 24, [high]).
+        return {p: (None, None) for p in rel_paths}, PROVENANCE_INDETERMINATE
 
     cur_ts = None
     walk_commits = []
@@ -1292,12 +1347,42 @@ def main():
     # and there is nothing for the history binding to protect; the readers'
     # `corpus_history_id` is then the authority for what to record.
     timestamps, history_id = collect_git_timestamps(repo_root, files)
-    if history_id is None:
+    if isinstance(history_id, _Provenance):
+        # NEITHER MARKER MAY BECOME AN IDENTITY BY ITSELF. The fallback probe is
+        # allowed to answer only with a DETERMINATE fact about the tree; if it
+        # answers with a real `tip:count`, git is healthy NOW and the walk that
+        # failed a moment ago was transient -- so the timestamps in hand describe
+        # nothing, and publishing them under that id is the exact certification
+        # hole this refuses (Codex design review, section 24, [high]).
         try:
-            history_id = _cs.corpus_history_id(todo_root)
+            probed = _cs.corpus_history_id(todo_root)
         except _cs.CacheSchemaError as exc:
             sys.stderr.write(f"[build.py] FAIL: {exc}; cache NOT written\n")
             return 3
+        if probed not in _DETERMINATE_NO_GIT:
+            # THE RULE COVERS BOTH MARKERS, and gating only INDETERMINATE left
+            # the same hole one door over (Codex adversarial, section 24,
+            # [high]): point `--root` at a corpus that lives in a DIFFERENT
+            # repository than `--repo-root` and every path fails
+            # `relative_to`, so the walk derives nothing and returns
+            # NO_DERIVATION -- while this probe reads the corpus's own
+            # repository and hands back a real `tip:count`. Null
+            # created_at/last_active_at would then ship under a binding that a
+            # history-consuming reader accepts as fresh. Whichever marker came
+            # back, a REAL identity here means the corpus has a history this
+            # build did not read, and that is never publishable.
+            why = ("did not answer, but git is answering now"
+                   if history_id is PROVENANCE_INDETERMINATE
+                   else "derived no timestamp for any corpus file, yet the "
+                        "corpus has git history")
+            sys.stderr.write(
+                f"[build.py] FAIL: the git log walk that derives "
+                f"created_at/last_active_at {why} ({probed}) -- so the "
+                f"timestamps in hand describe no history and must not be "
+                f"published under it (is --root inside --repo-root?); cache "
+                f"NOT written\n")
+            return 3
+        history_id = probed
 
     for f in files:
         # Compute display path: relative to repo_root when possible,
