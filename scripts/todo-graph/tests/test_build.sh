@@ -24,6 +24,21 @@
 
 set -u
 
+# INHERITED GIT ENVIRONMENT IS A REPO-CORRUPTING HAZARD FOR THIS SUITE. Dozens
+# of fixtures below run `git init` / `git add -A` / `git commit` inside a temp
+# tree, and every one of them uses the ambient environment. With `GIT_DIR` set
+# -- which is exactly what git exports to its own hooks -- those commits go to
+# the repository GIT_DIR names while the temp tree acts as the work tree, so a
+# fixture silently rewrites the REAL repo's HEAD, index and reflog. Observed
+# 2026-08-08: running this suite with GIT_DIR exported left the checkout on a
+# fixture commit ("both dirs in one commit"), every tracked file reading as
+# untracked, and 124 fixtures failing against the wrong repository. The suite
+# never needs an inherited git context -- every fixture names its own path or
+# uses `-C` -- so clear them once here rather than trusting each caller.
+unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_OBJECT_DIRECTORY \
+      GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_PREFIX \
+      GIT_CEILING_DIRECTORIES GIT_NAMESPACE 2>/dev/null || true
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 BUILD_PY="$REPO_ROOT/scripts/todo-graph/build.py"
@@ -2370,6 +2385,19 @@ fi
 # merging the streams -- and the MCP transport, which always passes --quiet --
 # read JSON followed by a human diagnostic.
 ARGVERR_ERR="$TMP_DIR/argverr.stderr"
+# THIS FIXTURE USES THE CANONICAL CACHE ON PURPOSE -- no `--cache`, so freshness
+# IS enforced -- and since section 24 that means TWO axes, not one. `stale` is
+# one of the three verbs that dereference a git-derived timestamp, so it now
+# also refuses when the corpus HISTORY moved, and every commit touching `todo/`
+# moves it. The canonical cache is therefore history-stale from the moment a
+# TODO commit lands until the next rebuild, and this fixture would report the
+# resulting rc 2 as "argv-shape handling broken" -- which is how it failed
+# under `.githooks/pre-push`, the one place that always runs just after a
+# commit. Rebuilding here makes the precondition explicit instead of inherited
+# from whatever the developer last ran.
+python3 "$BUILD_PY" --quiet --root "$REPO_ROOT/todo" --repo-root "$REPO_ROOT" \
+    --output "$REPO_ROOT/build/todo-cache.json" >/dev/null 2>&1 \
+    || t_fail "query: argv-shape precondition -- could not rebuild the canonical cache"
 ARGVERR_OUT=$(cd "$REPO_ROOT" && python3 "$QUERY_PY" --quiet stale --offset -1 \
     2>"$ARGVERR_ERR"); ARGVERR_RC=$?
 ARGVERR_ERRBYTES=$(wc -c < "$ARGVERR_ERR" | tr -d ' ')
