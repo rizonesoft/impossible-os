@@ -19,6 +19,52 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+# ---- Commit-gate scoping: todo/ files this commit does not touch ------------
+# The LINT_GATE_SCOPE_STAGED flag is set by `.githooks/pre-commit`, and by NOTHING
+# else -- a check in the tooling suite enforces that it has exactly one setter.
+# It names the `todo/**.md` files that are modified in the WORKING TREE but are
+# not part of the commit being made, so the three corpus-wide checks can stop
+# judging a file the commit never touches.
+#
+# WHY. While an unattended run holds the tree it is mid-edit in some TODO, and
+# a mid-edit TODO is routinely in a state those checks refuse -- a table not yet
+# realigned, a section without its Implementation Order row. An attended repair
+# that deliberately commits only `scripts/` was blocked by the run's in-flight
+# file anyway, three times on 2026-08-07, and re-blocked on every cache rebuild
+# because the run kept editing. The gate was answering a question nobody asked.
+#
+# NARROW ON PURPOSE. The set is exactly `unstaged AND NOT staged`: a file the
+# commit touches is judged as always, even if it also has later unstaged edits,
+# and a file with no working-tree changes is judged as always. A bare
+# `bash scripts/lint.sh` sets nothing and stays fully repo-wide, and CI runs on
+# a clean checkout where the set is empty by construction -- so this narrows
+# ONE invocation of the gate, not the rule.
+GATE_EXCLUDED_TODO=""
+GATE_STAGED_TODO=""
+if [ "${LINT_GATE_SCOPE_STAGED:-}" = "1" ]; then
+    GATE_STAGED_TODO="$(git -C "$REPO_ROOT" diff --cached --name-only -- 'todo/*.md' 'todo/**/*.md' 2>/dev/null | sort -u)"
+    # UNTRACKED counts too: a run that OPENS a new TODO (a fresh capture file,
+    # a split section) has a file that is equally not part of this commit, and
+    # leaving it in meant the wedge simply moved to new files. Staged wins over
+    # both -- `git diff --cached` lists a staged-new file, so anything the
+    # commit actually carries is judged.
+    GATE_EXCLUDED_TODO="$(
+        comm -23 \
+            <( { git -C "$REPO_ROOT" diff --name-only -- 'todo/*.md' 'todo/**/*.md' 2>/dev/null;
+                 git -C "$REPO_ROOT" ls-files --others --exclude-standard -- 'todo/*.md' 'todo/**/*.md' 2>/dev/null; } | sort -u) \
+            <(git -C "$REPO_ROOT" diff --cached --name-only -- 'todo/*.md' 'todo/**/*.md' 2>/dev/null | sort -u) \
+        2>/dev/null || true)"
+    if [ -n "$GATE_EXCLUDED_TODO" ]; then
+        echo -e "${DIM:-}gate scope: $(printf '%s\n' "$GATE_EXCLUDED_TODO" | wc -l | tr -d ' ') todo file(s) modified outside this commit are not judged by Checks 7/17/24${NC:-}"
+    fi
+fi
+
+# True when $1 is a todo file the commit does not touch.
+gate_excluded() {
+    [ -n "$GATE_EXCLUDED_TODO" ] || return 1
+    printf '%s\n' "$GATE_EXCLUDED_TODO" | grep -qxF "${1#"$REPO_ROOT"/}"
+}
+
 # ---- Help ----
 case "${1:-}" in
     -h|--help)
@@ -530,8 +576,25 @@ else
             WARNINGS=$((WARNINGS + 1))
             ;;
         4)
-            echo -e "${RED}error${NC}: Check 7 (stub-behind-stamp) cache stale relative to todo/**/*.md; rebuild with bash scripts/todo-graph/build-and-validate.sh and re-run lint"
-            ERRORS=$((ERRORS + 1))
+            # STALE CACHE. At the commit gate, with a `todo/` file being edited
+            # OUTSIDE this commit, the corpus genuinely did move and rebuilding
+            # chases a target that keeps moving -- that is the loop that
+            # re-blocked an attended repair on every rebuild. Excluding files
+            # cannot answer staleness, so this one is downgraded rather than
+            # filtered -- and only when the commit touches NO todo file at all.
+            # That last condition is not belt-and-braces: with a violating todo
+            # file STAGED, the excluded set is still non-empty (the run's file
+            # is in it) and the looser test downgraded a staleness THIS commit
+            # was causing. Caught by the staged-file safety probe.
+            # A bare lint and CI still ERROR unconditionally.
+            if [ "${LINT_GATE_SCOPE_STAGED:-}" = "1" ] && [ -n "$GATE_EXCLUDED_TODO" ] \
+               && [ -z "$GATE_STAGED_TODO" ]; then
+                echo -e "${YELLOW}warn${NC}: Check 7 (stub-behind-stamp) cache stale, but every modified todo file is outside this commit -- not gating on a corpus this commit does not touch"
+                WARNINGS=$((WARNINGS + 1))
+            else
+                echo -e "${RED}error${NC}: Check 7 (stub-behind-stamp) cache stale relative to todo/**/*.md; rebuild with bash scripts/todo-graph/build-and-validate.sh and re-run lint"
+                ERRORS=$((ERRORS + 1))
+            fi
             ;;
         7)
             # rc 7 carries TWO contracts, and the handler must route on the
@@ -1236,7 +1299,15 @@ else
     # One summary line, not one per file -- this is repo-wide-scan cosmetic
     # debt (measured 2026-07-05: 213/251 todo/*.md files), and per-file WARN
     # spam here would drown out every other check on every future commit.
-    TABLE_ALIGN_COUNT=$( { python3 "$REPO_ROOT/scripts/format-md-tables.py" --check "$REPO_ROOT/todo" 2>/dev/null || true; } | wc -l | tr -d ' ')
+    TABLE_ALIGN_RAW=$( { python3 "$REPO_ROOT/scripts/format-md-tables.py" --check "$REPO_ROOT/todo" 2>/dev/null || true; } )
+    # Drop findings in files the commit does not touch (see GATE_EXCLUDED_TODO).
+    # A mid-edit table is ragged for a moment by nature; that is the editing
+    # session's business, not this commit's.
+    if [ -n "$GATE_EXCLUDED_TODO" ] && [ -n "$TABLE_ALIGN_RAW" ]; then
+        TABLE_ALIGN_RAW=$(printf '%s\n' "$TABLE_ALIGN_RAW" \
+            | grep -vFf <(printf '%s\n' "$GATE_EXCLUDED_TODO") || true)
+    fi
+    TABLE_ALIGN_COUNT=$(printf '%s' "$TABLE_ALIGN_RAW" | grep -c . || true)
     if [ "${TABLE_ALIGN_COUNT:-0}" -gt 0 ]; then
         # PROMOTED TO ERROR 2026-08-02. It sat as a cosmetic warning and 22
         # files drifted, which is a real daily cost for anyone who READS these
@@ -1662,13 +1733,48 @@ print('EMPTY' if not d else 'NONEMPTY')" 2>/dev/null || echo 'could not parse st
         *)          LINT24_BAD="rc $LINT24_RC, $LINT24_SHAPE" ;;
     esac
     if [ -n "$LINT24_BAD" ]; then
+        # THE STALE REFUSAL IS THE SAME CLASS AS CHECK 7's, and it arrives
+        # BEFORE any per-file filtering can help: the audit refuses wholesale
+        # because the corpus moved, so there are no findings left to scope.
+        # Under the commit gate, with every modified todo file outside this
+        # commit, that is a corpus this commit does not touch. ONLY the STALE
+        # reason downgrades -- IDENTITY, COVERAGE, a malformed cache and a
+        # timeout all still ERROR, because none of those mean "someone else is
+        # editing".
+        if [ "${LINT_GATE_SCOPE_STAGED:-}" = "1" ] && [ -n "$GATE_EXCLUDED_TODO" ] \
+           && [ -z "$GATE_STAGED_TODO" ] \
+           && grep -q 'cache unusable \[STALE\]' "$LINT24_ERRTXT" 2>/dev/null; then
+            echo -e "${YELLOW}warn${NC}: Check 24 (reachability) cache stale, but every modified todo file is outside this commit -- not gating on a corpus this commit does not touch"
+            WARNINGS=$((WARNINGS + 1))
+        else
         # Surface the tool's OWN diagnostic, which names WHICH shared-validator
         # rule refused, rather than a generic message.
         error "scripts/todo-reachability.py" "0" \
             "reachability audit could not run ($LINT24_BAD): $(head -c 300 "$LINT24_ERRTXT" 2>/dev/null | tr '\n' ' ')"
+        fi
         LINT24_OUT=''
     fi
     rm -f "$LINT24_ERRTXT"
+    # Drop findings in todo files the commit does not touch. Applied AFTER the
+    # rc-vs-shape consistency check above, which validates the TOOL and must
+    # keep seeing what the tool actually returned; this only narrows what the
+    # GATE fails on.
+    if [ -n "$GATE_EXCLUDED_TODO" ] && [ -n "$LINT24_OUT" ]; then
+        LINT24_OUT="$(printf '%s' "$LINT24_OUT" \
+            | LINT24_EXCL="$GATE_EXCLUDED_TODO" python3 -c "
+import json, os, sys
+excl = {p.strip() for p in os.environ['LINT24_EXCL'].splitlines() if p.strip()}
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.stdout.write('')
+    sys.exit(0)
+def norm(p):
+    p = p.replace('\\\\', '/')
+    return p.split('todo/', 1)[-1] and ('todo/' + p.split('todo/', 1)[1]) or p
+json.dump({k: v for k, v in d.items() if norm(k) not in excl}, sys.stdout)
+" 2>/dev/null || printf '%s' "$LINT24_OUT")"
+    fi
     LINT24_ERR="$(printf '%s' "$LINT24_OUT" | python3 -c "
 import json,sys
 try: d=json.load(sys.stdin)

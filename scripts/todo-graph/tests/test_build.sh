@@ -9879,7 +9879,13 @@ if start is None:
 # Walk back to the enclosing `if`, forward to its `fi`, so continuation lines
 # and the whole handling block are inside the window.
 lo = max(0, start - 12)
-hi = min(len(src), start + 45)
+# WIDENED 2026-08-08 (45 -> 90). The window is a stand-in for "the enclosing
+# block", and the block grew when Check 24 learned to downgrade a STALE refusal
+# at the commit gate: the `reachability audit could not run` emission moved past
+# +45 and this pin reported `captures the code but never reports it` about code
+# that reports it two lines later. A window is not a parser -- if this fires
+# again, check whether the string simply moved before believing the finding.
+hi = min(len(src), start + 90)
 block = "\n".join(src[lo:hi])
 problems = []
 if re.search(r"todo-reachability\.py --json[^\n]*\n?[^\n]*\|\|\s*true", block):

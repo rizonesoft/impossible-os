@@ -53,7 +53,13 @@ if [ "${#_PC_CLEARED[@]}" -gt 0 ]; then
 fi
 unset _pc_var
 
-if ! bash "$REPO_ROOT/scripts/lint.sh"; then
+# Judge THIS COMMIT, not the working tree's unrelated dirt. See the
+# GATE_EXCLUDED_TODO block in scripts/lint.sh: while an unattended run holds the
+# tree, its mid-edit TODO is routinely in a state Checks 7/17/24 refuse, and an
+# attended commit that touches only scripts/ was blocked by it three times on
+# 2026-08-07. Set ONLY here -- a bare `bash scripts/lint.sh` and CI stay
+# repo-wide.
+if ! LINT_GATE_SCOPE_STAGED=1 bash "$REPO_ROOT/scripts/lint.sh"; then
     echo ""
     echo -e "\033[31mFix lint errors before committing\033[0m"
     echo "  Hint: 'bash scripts/lint.sh' shows all violations."

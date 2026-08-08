@@ -4178,6 +4178,47 @@ do
             "rc=$BOR_RCN: $BOR_OUTN"
     fi
 done
+# COMMIT-GATE TODO SCOPING. This is a gate NARROWING, so the wiring is pinned
+# in both directions. STRUCTURAL, and labelled as such: the behavioural proof
+# needs a violating todo file in the live tree with a stale cache, which cannot
+# be staged inside this suite without poisoning every other corpus test. That
+# proof was taken by hand on 2026-08-08 -- unstaged violating file with no todo
+# staged gave 0 errors, the SAME file staged gave back all three (Check 7
+# staleness, Check 17 alignment, Check 24 refusal), and removing it restored the
+# baseline. What is mechanically checkable is that the narrowing stays wired to
+# BOTH conditions and to the gate path only.
+LGS_LINT="$REPO_ROOT/scripts/lint.sh"
+LGS_HOOK="$REPO_ROOT/.githooks/pre-commit"
+if grep -v '^\s*#' "$LGS_HOOK" 2>/dev/null | grep -q 'LINT_GATE_SCOPE_STAGED=1 bash'; then
+    t_pass "lint_gate_scope: pre-commit sets LINT_GATE_SCOPE_STAGED for the gate run"
+else
+    t_fail "lint_gate_scope: pre-commit no longer scopes its lint run"
+fi
+if [ "$(grep -c 'GATE_STAGED_TODO' "$LGS_LINT" 2>/dev/null)" -ge 3 ]; then
+    t_pass "lint_gate_scope: the staleness downgrades still test the staged-todo set"
+else
+    t_fail "lint_gate_scope: a staleness downgrade stopped requiring an empty staged-todo set" \
+        "that loosening lets a commit that ITSELF moved the corpus skip the rebuild"
+fi
+# A bare lint must never narrow: no default, no fallback, no other setter.
+if [ "$(grep -c 'LINT_GATE_SCOPE_STAGED' "$LGS_LINT" 2>/dev/null)" -ge 3 ] \
+   && ! grep -v '^\s*#' "$LGS_LINT" 2>/dev/null | grep -qE '(^|[;&|]|[[:space:]])LINT_GATE_SCOPE_STAGED=1'; then
+    t_pass "lint_gate_scope: lint.sh only READS the flag -- a bare run stays repo-wide"
+else
+    t_fail "lint_gate_scope: lint.sh sets or defaults the gate-scope flag itself" \
+        "the narrowing must belong to the hook invocation, never to lint.sh"
+fi
+LGS_SETTERS="$(grep -rln --include='*.sh' --include='*.py' --include='pre-*' \
+    -E '(^|[;&|]|[[:space:]])LINT_GATE_SCOPE_STAGED=1' \
+    "$REPO_ROOT/scripts" "$REPO_ROOT/.githooks" "$REPO_ROOT/.github" "$REPO_ROOT/.claude/hooks" \
+    2>/dev/null | grep -v 'test-tooling.sh' | sort)"
+if [ "$LGS_SETTERS" = "$REPO_ROOT/.githooks/pre-commit" ]; then
+    t_pass "lint_gate_scope: pre-commit is the ONLY setter of the flag"
+else
+    t_fail "lint_gate_scope: the gate-scope flag is set somewhere else too" \
+        "setters: ${LGS_SETTERS:-<none>}"
+fi
+
 # TOOLING RECEIPT. The one mechanism here that lets a gate NOT run, so every
 # state is pinned -- and the three that matter are the ones that must REFUSE.
 # A receipt that survives an edit, an absent receipt read as a pass, or a

@@ -11808,11 +11808,33 @@ t_no_leaked_lsp_processes() {
     # away -- the old detector's third false-positive channel was
     # exactly this (it named a pid that had already exited by the time
     # it tried to describe it).
-    local survivors leaks anomalies
+    # WAIT UNTIL, not sleep-then-assert. The grace was a flat `sleep 2`, which
+    # is a guess about how fast a language server exits -- true on an idle box,
+    # not true inside the 1300-test aggregate, which runs QEMU fixtures with
+    # 45- and 60-second sleeps alongside this. That is the exact profile of the
+    # failure this file showed on 2026-08-08: `117/118` inside the suite,
+    # blocking a push, then 3/3 standalone afterwards.
+    #
+    # NOT a widened assertion. A real leak never exits, so it still survives the
+    # whole window and is still reported; only the mid-exit false positive gets
+    # the time it needs. And it is strictly FASTER in the normal case: the poll
+    # returns as soon as the survivors clear (~100 ms) instead of always
+    # spending two seconds.
+    #
+    # HONEST LIMIT: it is not confirmed that 9a is the sub-test that failed --
+    # the aggregate reported only the script and the count, which is the
+    # reporting gap fixed alongside this. This is the load-sensitive construct
+    # in the file, not a verified root cause.
+    local survivors leaks anomalies _grace
     survivors="$(lsp_survivors_of_this_run)"
     if [ -n "$survivors" ]; then
-        sleep 2
-        survivors="$(lsp_survivors_of_this_run)"
+        _grace=0
+        while [ "$_grace" -lt 150 ]; do
+            sleep 0.1
+            _grace=$((_grace + 1))
+            survivors="$(lsp_survivors_of_this_run)"
+            [ -n "$survivors" ] || break
+        done
     fi
     [ -n "$survivors" ] || return 0
     leaks="$(printf '%s' "$survivors" | awk '$2 ~ /^(ledger|ledger-tickless|environ):/')"

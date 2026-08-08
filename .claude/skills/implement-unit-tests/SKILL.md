@@ -145,6 +145,8 @@ Always use `test_suite_register_cat()` with the appropriate category.
 - **A mutation must edit the PRODUCTION source and run THAT.** A "mutation check" that re-implements the old algorithm inside the test watches its own copy fail; reverting the real call site leaves it green.
 - **Chase a contradiction; do not ship past it.** When the mutant and the original measure the same, either the probe or the mutation is inert. If it cannot be explained, say so and LABEL the fixture as the structural pin it actually is rather than presenting it as a discriminating guard.
 
+**Route a mutation through a helper that asserts its anchor.** `gate_mutate()` in `scripts/todo-graph/tests/test_build.sh` is the shape: it reads the production file, and `if anchor not in src: sys.exit(7)`, so a mutation whose needle has moved fails loudly instead of silently patching nothing. A repo-wide lint for this was measured on 2026-08-08 and REJECTED: requiring a production write near every mutation-claiming `t_pass` flagged 23 of 35 on a clean corpus, which is the precision that gets a check disabled wholesale. The helper's own assert is the enforcement that works, so put new mutations behind one.
+
 The same rule covers the ad-hoc measurements taken while DEBUGGING a fixture, which is where three more inert probes lived on the same day: every probe needs a control that MUST fire, and the filing/claim says that it did.
 
 ## Workflow
