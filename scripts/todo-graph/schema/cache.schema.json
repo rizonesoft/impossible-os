@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://impossible-os.local/schema/todo-graph/cache.schema.json",
   "title": "TODO graph cache (build/todo-cache.json)",
-  "description": "Per-node shape emitted by scripts/todo-graph/build.py. The cache is a JSON array of these nodes, sorted by file_path. This schema is the optional companion to the per-file frontmatter spec at docs/infrastructure/todo-metadata.schema.json: that one constrains hand-authored frontmatter; this one constrains the generator's output. The forbidden-field validator in build.py rejects hand-authored copies of any field marked cache-only here (created_at, last_active_at, stamped_items).",
+  "description": "Per-node shape emitted by scripts/todo-graph/build.py. The cache is a JSON array of these nodes, sorted by file_path. The artifact's own PRODUCER CONTRACT identity (cache_format_version + producer_contract_digest) is not in this document: it rides in the digest-named corpus binding sidecar beside the cache, which is where the artifact-level facts already live (TODO-06 section 25). This schema is the optional companion to the per-file frontmatter spec at docs/infrastructure/todo-metadata.schema.json: that one constrains hand-authored frontmatter; this one constrains the generator's output. The forbidden-field validator in build.py rejects hand-authored copies of any field marked cache-only here (created_at, last_active_at, stamped_items).",
   "type": "array",
   "items": {
     "type": "object",
@@ -67,6 +67,11 @@
           "null"
         ],
         "description": "ISO-8601 UTC timestamp from git log (cache-only; rejected in frontmatter)."
+      },
+      "effort": {
+        "type": "string",
+        "pattern": "^[1-9][0-9]*[dw]$",
+        "description": "Optional Gantt row duration copied from the TODO's frontmatter: whole days or whole weeks, e.g. '3d' or '2w'. Deliberately narrower than Mermaid's full duration grammar -- every unit this rejects is one that cannot reach the emitted gantt line. Absent means the renderer's 1w default; a present-but-invalid value is refused by build.py rather than defaulted, because silently defaulting hides a typo behind a plausible schedule (TODO-06 section 25)."
       },
       "owners": {
         "type": "array",

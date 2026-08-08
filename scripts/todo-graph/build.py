@@ -106,8 +106,24 @@ OPTIONAL_FIELDS = (
     "satisfies",
     "superseded_by",
     "file_patterns",
+    "effort",
 )
 SUPPORTED_SCHEMA_VERSION = 1
+
+# Gantt row duration (TODO-06 section 25). `render.py` has read this field
+# since section 7 and the producer never emitted it, so every row rendered the
+# `1w` default and the only way to change one was unreachable: a hand-authored
+# `effort:` parsed, warned as an unknown field, and was dropped before the
+# cache.
+#
+# THE GRAMMAR IS NOT RESTATED HERE. It lives in `cache_schema` with the rest of
+# the shared cache contract, so the value this producer accepts and the value
+# `render.py` will draw are the same rule rather than two that agree today. A
+# present-but-invalid value REFUSES rather than falling back to the default --
+# silently defaulting is the exact failure this section exists to close, and it
+# would hide a typo behind a plausible schedule.
+EFFORT_REGEX = _cs.EFFORT_REGEX
+EFFORT_DEFAULT = _cs.EFFORT_DEFAULT
 
 # `> **Accepted:**` / `> **Deferred:**` line header. Captures kind +
 # optional severity. The XREF clauses themselves are extracted in a
@@ -593,6 +609,20 @@ def validate_frontmatter(fm: dict) -> list:
             errors.append(("invalid-field", "file_patterns must be a list of non-empty glob strings"))
         elif len(fp) != len(set(fp)):
             errors.append(("invalid-field", "file_patterns must be uniqueItems (schema uniqueItems: true)"))
+    if "effort" in fm:
+        ef = fm["effort"]
+        # `isinstance(ef, str)` FIRST, and not merely for tidiness: YAML parses
+        # a bare `effort: 2` as an int, and `EFFORT_REGEX.match(2)` raises
+        # TypeError rather than reporting an invalid field. The message quotes
+        # the value with `!r` so `'2w '` and `'2w'` are distinguishable in the
+        # build log, which a bare `{ef}` renders identically.
+        if not isinstance(ef, str) or not EFFORT_REGEX.match(ef):
+            errors.append(
+                ("invalid-field",
+                 f"effort={ef!r} must be a whole-day or whole-week Gantt "
+                 f"duration matching {EFFORT_REGEX.pattern} (e.g. '3d', "
+                 f"'2w'); omit the field to take the {EFFORT_DEFAULT} default")
+            )
     # Warnings (don't fail the build)
     known = set(REQUIRED_FIELDS) | set(OPTIONAL_FIELDS)
     for field in fm:
@@ -1129,7 +1159,8 @@ def build_node(file_path: Path, repo_root: Path, timestamps: dict, content: str)
             "created_at": created_at,
             "last_active_at": last_active_at,
         }
-        for opt in ("owners", "file_patterns", "depends_on", "satisfies", "superseded_by"):
+        for opt in ("owners", "file_patterns", "depends_on", "satisfies",
+                    "superseded_by", "effort"):
             if opt in fm:
                 node[opt] = fm[opt]
     else:
@@ -1525,8 +1556,39 @@ def main():
     # file at X and nothing outside X is ever written.
     output_path = Path(os.path.abspath(os.path.normpath(args.output)))
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    # THE DECLARATION IS BOUND AT RUNTIME, not merely written down (section 25).
+    # `cache_schema.PRODUCER_CONTRACT_DIGEST` is derived from
+    # `EMITTED_NODE_FIELDS`, so it certifies the DECLARATION -- and a declaration
+    # nothing checks is exactly the evidence section 20 replaced when it retired
+    # "grep the emitter's source text". Without this loop a new key added to
+    # `node` above would ship under a digest that still claims the old field set,
+    # which is the one failure the identity exists to make impossible. Refusing
+    # here means the previous cache survives byte-identical, same as every other
+    # producer-side refusal.
+    undeclared = sorted({k for n in nodes for k in n} - _cs.EMITTED_NODE_FIELDS)
+    if undeclared:
+        sys.stderr.write(
+            f"[build.py] FAIL: emitted node key(s) {undeclared} are not in "
+            f"cache_schema.EMITTED_NODE_FIELDS; declare them there (which moves "
+            f"{_cs.PRODUCER_CONTRACT_DIGEST_KEY}) and add them to "
+            f"{_cs.SCHEMA_REL}; cache NOT written\n")
+        return 1
+
     # `sort_keys=True` for byte-identical re-runs; trailing newline so the
     # file is shell-friendly (`cat` doesn't show "no newline at end").
+    #
+    # THE ROOT STAYS A BARE ARRAY, and section 25 chose that deliberately after
+    # costing the alternative. A root envelope carrying the identity would make
+    # the cache self-describing, but the identity has to be READ, and every
+    # reader that already routes through `cache_schema` gets it either way --
+    # while the array is also parsed directly by tools this section may not
+    # rewrite (`scripts/overnight/decision-registry.py:67` and its two tests are
+    # control plane). Changing the root type would break those with no
+    # compatibility shim available in JSON, so the identity rides in the corpus
+    # binding sidecar instead: the artifact-level facts already live there
+    # (`SIDECAR_SCHEMA`, `cache_sha256`, `history_id`), the sidecar's NAME is
+    # the cache digest so it is bound to these exact bytes, and it costs no
+    # consumer a change.
     blob = (json.dumps(nodes, indent=2, sort_keys=True) + "\n").encode("utf-8")
     cache_sha = hashlib.sha256(blob).hexdigest()
 
@@ -1540,6 +1602,14 @@ def main():
     side = _cs.sidecar_path(output_path, cache_sha)
     binding = (json.dumps({
         "schema": _cs.SIDECAR_SCHEMA,
+        # THE PRODUCER CONTRACT THIS CACHE WAS WRITTEN AGAINST (section 25).
+        # `SIDECAR_SCHEMA` beside it identifies the BINDING's own wire format,
+        # which is a different question and moves for different reasons; these
+        # two identify the CACHE's field contract, which is what a reader needs
+        # before it walks a node. Both are emitted unconditionally, so no
+        # migration is needed to start requiring them.
+        _cs.CACHE_FORMAT_VERSION_KEY: _cs.CACHE_FORMAT_VERSION,
+        _cs.PRODUCER_CONTRACT_DIGEST_KEY: _cs.PRODUCER_CONTRACT_DIGEST,
         "cache_sha256": cache_sha,
         "history_id": history_id,
         "corpus": consumed,

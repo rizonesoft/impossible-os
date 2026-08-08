@@ -76,7 +76,30 @@ _CACHE_REASON_RC = {
     _cs.REASON_UNREADABLE: 5,               # ERROR: corrupt JSON
     _cs.REASON_SHAPE: 5,                    # ERROR: violates cache.schema.json
     _cs.REASON_EMPTY: 5,                    # ERROR: exists but nothing to walk
+    _cs.REASON_LEGACY_FORMAT: 5,            # ERROR: another producer contract
 }
+# The "map every reason EXPLICITLY" rule above is right, and the line below
+# exists because its failure mode bit: the cache-format identity work added
+# `REASON_LEGACY_FORMAT` and did not extend this table, so an old-contract
+# binding printed its useful refusal and THEN died on
+# `KeyError('LEGACY_FORMAT')` -- an undocumented traceback out of the very
+# handler that exists to keep infrastructure failures out of the verdict
+# channel (Codex adversarial, round 2, [medium]). LEGACY_FORMAT
+# joins UNREADABLE/SHAPE at 5 rather than STALE at 4: the artifact is not out
+# of date relative to the corpus, it is one this reader cannot interpret.
+#
+# An import-time completeness assert, NOT a `.get` fallback -- the distinction
+# is the whole point. A fallback silently routes the next new reason to some
+# code; this fails the moment the module loads, naming the reason and the
+# table, so the omission is impossible to ship.
+_UNMAPPED = sorted(
+    name for name in dir(_cs)
+    if name.startswith("REASON_") and getattr(_cs, name) not in _CACHE_REASON_RC)
+if _UNMAPPED:
+    raise AssertionError(
+        f"cache_schema declares reason(s) {_UNMAPPED} with no exit code in "
+        f"_CACHE_REASON_RC; add them here rather than letting the lookup raise "
+        f"KeyError at the moment a bad cache is being reported")
 
 
 # Per-run dedupe of resolve / stub work. The actual file-line cache lives

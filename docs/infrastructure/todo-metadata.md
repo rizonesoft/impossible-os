@@ -51,6 +51,18 @@ Optional fields surface as cache entries when present and as `unknown-field` war
 | `satisfies`       | string\[] | List of ids that this TODO closes when its `status` flips to `done`. Powers auto-closure propagation in the validator (gated by full acceptance).   |
 | `superseded_by`   | string    | Single id. Set when this TODO's `status` is `superseded`. Validator surfaces a chain when traversing supersession.                                  |
 | `file_patterns`   | string\[] | Glob patterns marking source paths this TODO owns. Linux MAINTAINERS-style `F:` parity. Powers the `code <id>` query (query-CLI section).            |
+| `effort`          | string    | Gantt row duration: whole days or whole weeks, matching `\A[1-9][0-9]*[dw]\Z` (`3d`, `2w`). Absent means the renderer's `1w` default; a **present-but-invalid value fails the build** rather than defaulting, because a silent default hides a typo behind a plausible schedule. Deliberately narrower than Mermaid's full duration grammar -- every unit it rejects is one that cannot reach the emitted `gantt` line. |
+
+### Which dependency evidence the readiness verbs consult
+
+`ready`, `blocked` and `blocking` (and `stats`, which reuses `blocking`) rank against the **file-level `depends_on` frontmatter key above, and nothing else**. That is a pinned decision, not an oversight, and it is worth stating because zero of the 232 live TODOs currently author the field -- so `blocked` and `blocking` return empty for every possible corpus and `stats.avg_dep_depth` is `0.0`. `query.py` prints a stderr note saying so whenever the edge set is empty, so an empty ranking cannot be mistaken for "nothing is blocked". The note is suppressed by `--quiet` and never touches stdout, so `--json` consumers are unaffected.
+
+The cache also carries `sections[].depends_on` -- 2,529 dependency groups parsed from the Implementation Order tables, far richer evidence. Redirecting the verbs at it was evaluated and rejected on two measurements:
+
+- **1,806 of the 2,529 groups target `self`.** A mechanical derivation either creates self-dependencies or, once those are filtered, promotes "depends on section 3 of that file" into "depends on all of that file" -- a widening nobody authored.
+- **The two fields are different namespaces.** Frontmatter `depends_on` holds TODO **ids** (`^[a-z][a-z0-9-]{0,58}[a-z0-9]$`); section groups hold unqualified filename stems. Of the 145 distinct cross-file targets, **26 name a bare `TODO-NN` that matches more than one file** (`TODO-01` matches 18, one per domain). So this is not a source swap but an unresolved-reference problem.
+
+Qualified target resolution is owned by [Domain-Code Resolution Picks a Directory by Cache Order](../../todo/00-infrastructure/TODO-06-todo-metadata-layer.md#26-domain-code-resolution-picks-a-directory-by-cache-order). Section-aware readiness verbs, if wanted, belong on top of that as explicitly new commands with stated aggregation rules -- never by reinterpreting what the existing three answer.
 
 ## Auto-Derived Fields (Cache-Only, NOT Hand-Authored, NOT in Frontmatter)
 
@@ -68,6 +80,15 @@ The generator uses a single batched `git log -- todo` call to fill these for eve
 Every published cache is accompanied by a **corpus binding**: a small JSON sidecar recording the sha256 of each `todo/**/TODO-*.md` the generator consumed, the id of the corpus git history those auto-derived fields came from, and the sha256 of the cache bytes it describes. Readers go through [`scripts/todo-graph/cache_schema.py`](../../scripts/todo-graph/cache_schema.py) `check_freshness`, which locates the binding by the digest of the cache bytes it actually parsed and refuses (`STALE`) unless the recorded corpus and history still match what is on disk.
 
 It replaced an mtime comparison ("is any TODO newer than the cache?"), which was a proxy resolved against the wall clock -- and therefore invertible by a backward clock step, which is what made one identity-gate fixture fail roughly 1 run in 4 on an unchanged tree. The binding also closes the producer's own generation window: `build.py` fingerprints the bytes it parsed, re-verifies them before publishing, and exits **3** without writing anything if the corpus moved underneath it, leaving any previous cache byte-identical.
+
+The binding also carries the **producer contract** the cache was written against, as two fields that answer different questions:
+
+| Field                       | Purpose                                                                                                                                                                                                                                                        |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cache_format_version`      | Hand-bumped integer, for a **semantic** change -- a field that keeps its name and type and changes its meaning, which no digest can detect. Distinct from the per-node `schema_version`, which is the TODO frontmatter's own generation.                          |
+| `producer_contract_digest`  | sha256 over `cache_schema.EMITTED_NODE_FIELDS` together with the version, so a **structural** change (field added, removed, renamed) invalidates old artifacts even when the version bump is forgotten. Taken over the declaration, never over an observed cache's keys -- hashing output would let a node-shape regression re-certify itself. |
+
+`build.py` refuses to publish a node carrying any key outside `EMITTED_NODE_FIELDS`, so the declaration the digest certifies cannot drift from what is actually emitted. Readers verify both whenever a binding is present, and refuse with `LEGACY_FORMAT` on a mismatch; `validate.py --diff` additionally **requires** the binding, because its baseline is read with freshness disabled and would otherwise be trusted on shape alone -- a field that kept its type and changed its meaning would pass and produce graph deltas nobody authored. A refused baseline is left byte-identical: it is somebody else's artifact, so the recovery path never reaches it.
 
 Operational notes:
 

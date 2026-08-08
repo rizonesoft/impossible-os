@@ -35,6 +35,16 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+# The Gantt duration grammar is the PRODUCER's rule, so it is imported rather
+# than restated: a copy here could accept a value `build.py` refuses, or draw
+# one it never emitted (TODO-06 section 25). Same sys.path shape build.py uses,
+# so this module works standalone as well as imported by `query.py`.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import cache_schema as _cs  # noqa: E402
+
+EFFORT_REGEX = _cs.EFFORT_REGEX
+EFFORT_DEFAULT = _cs.EFFORT_DEFAULT
+
 
 # Repo URL for clickable mermaid nodes. Spec pins this to the Impossible OS
 # GitHub repo; no override flag today (deferrable to a follow-up when the
@@ -357,6 +367,38 @@ def _parse_iso_date(ts) -> Optional[str]:
     return None
 
 
+def _gantt_effort(node: dict) -> str:
+    """Row duration for one node: the declared `effort`, else the default.
+
+    UNREACHABLE BY DESIGN, and kept anyway. Every route into this renderer runs
+    through `cache_schema` under a profile that validates `effort` against the
+    same grammar `build.py` enforces on the frontmatter, so a bad value refuses
+    at load. This is the last guard before the value is interpolated into a
+    mermaid line, and it RAISES rather than falling back: a silent fallback here
+    would restore precisely the failure TODO-06 section 25 closed -- a duration
+    nobody authored, rendered as though somebody had. `ValueError` because the
+    caller has already decided this cache is trustworthy, so reaching here is a
+    programming error in the pipeline, not a corpus problem.
+    """
+    # ABSENCE, NOT FALSINESS. `node.get("effort")` conflated a missing key with
+    # a present `null`, so `{"effort": null}` rendered the default -- and both
+    # the cache schema and `_validate_node_fields` REFUSE a present null, so
+    # this guard was more permissive than the validator it exists to backstop.
+    # That matters precisely because this function is the last line for a caller
+    # that imported the renderer without routing through `cache_schema` (Codex
+    # adversarial, section 25, [medium]).
+    if "effort" not in node:
+        return EFFORT_DEFAULT
+    effort = node["effort"]
+    if not isinstance(effort, str) or not EFFORT_REGEX.match(effort):
+        raise ValueError(
+            f"node {node.get('file_path') or node.get('id')!r} carries "
+            f"effort={effort!r}, which does not match "
+            f"{EFFORT_REGEX.pattern}; a validated cache cannot contain this, "
+            f"so the reader that produced these nodes skipped cache_schema")
+    return effort
+
+
 def render_gantt(nodes: list, ctx) -> str:
     """Emit a mermaid Gantt chart. Rows are grouped by domain; each row
     uses `created_at` as start + optional frontmatter `effort` field
@@ -373,7 +415,7 @@ def render_gantt(nodes: list, ctx) -> str:
         for n in sorted(by_domain[dom], key=lambda x: x["file_path"]):
             did = _display_id_for(n)
             start = _parse_iso_date(n.get("created_at")) or "2026-01-01"
-            effort = n.get("effort") if isinstance(n.get("effort"), str) else "1w"
+            effort = _gantt_effort(n)
             status = n.get("status") or "draft"
             # Mermaid Gantt status keywords
             gantt_status = ""

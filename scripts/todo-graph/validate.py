@@ -174,11 +174,21 @@ class Finding:
 #
 # LEGACY_NO_STAMPED_ITEMS is absent for a different reason: PROFILE_VALIDATE
 # does not set `require_stamped_population`, so this reader can never raise it.
+#
+# LEGACY_FORMAT joins the set for the reason the set exists: a cache whose root
+# predates the section 25 envelope, or whose producer contract this reader does
+# not speak, is repaired by running the current producer -- exactly what a
+# MISSING or SHAPE cache is repaired by. It is deliberately NOT grouped with
+# SHAPE, because the two need different words to the operator (that artifact was
+# valid under the contract it was written against) and because only the
+# ownership gate below decides whether the repair may WRITE: a historical
+# `--diff` baseline in this state is refused with its bytes intact.
 _REBUILDABLE_REASONS = frozenset((
     cache_schema.REASON_MISSING,
     cache_schema.REASON_UNREADABLE,
     cache_schema.REASON_SHAPE,
     cache_schema.REASON_EMPTY,
+    cache_schema.REASON_LEGACY_FORMAT,
 ))
 
 # The ONE path this tool owns and may therefore destroy. It is the argparse
@@ -1723,24 +1733,32 @@ def diff_caches(baseline_path: Path, current_nodes: list, repo_root: Path,
     try:
         baseline_nodes, _base_info = cache_schema.load_and_validate(
             baseline_path, repo_root / "todo", check_stale=False,
+            # FRESHNESS OFF IS WHAT REQUIRES THE BINDING (section 25).
+            # `check_cache_format` derives that: nothing else in this read
+            # would ever look at the binding, and a baseline with no producer
+            # identity is exactly the artifact section 23 could only ASK the
+            # caller not to import. An absent one is now a refusal.
             profile=cache_schema.PROFILE_BASELINE)
     except cache_schema.CacheSchemaError as exc:
-        # The wording is careful about what was actually established. Only the
-        # SHAPE was checked; whether this artifact came from the current
-        # producer is a REQUIREMENT the caller must meet, not a fact this path
-        # verified -- there is no cache-format identity to verify it against.
-        # An earlier draft asserted the baseline "must be produced by the
-        # CURRENT build.py" in a voice that read like a check result, which is
-        # a claim outrunning the code (Codex adversarial, section 23,
-        # [medium]). Emitting a producer-contract version so it CAN be checked
-        # is filed against the producer, not smuggled in here.
+        # THE WORDING NOW REPORTS A CHECK RATHER THAN ASKING FOR A FAVOUR.
+        # Until section 25 this path could only say "regenerate the baseline
+        # with the current build.py", because shape was all it had: a field
+        # that kept its type and changed its meaning passed, and produced
+        # deltas nobody authored. `load_and_validate` verifies the artifact's
+        # producer-contract identity BEFORE any subtree walk, so a baseline
+        # from a different contract now refuses as LEGACY_FORMAT naming both
+        # versions -- and the ask has become an assertion the code backs.
+        #
+        # A REFUSAL HERE NEVER REBUILDS. `--diff` names somebody else's
+        # artifact by definition (CI builds it from the PR base SHA), so the
+        # recovery path deliberately does not reach it: the bytes are left
+        # exactly as they were and the caller is told what they hold.
         _refuse(f"--diff baseline at {baseline_path} cannot be trusted, so no "
-                f"graph delta is reported [{exc.reason}]: {exc}. Note that "
-                f"only the SHAPE is checked here: regenerate the baseline with "
-                f"the current build.py rather than importing an older "
-                f"artifact, because a field that kept its type and changed its "
-                f"meaning would pass this and still produce deltas nobody "
-                f"authored")
+                f"graph delta is reported [{exc.reason}]: {exc}. The baseline "
+                f"is left untouched; rebuild it from the base revision with "
+                f"this checkout's build.py (which is what the CI job does) "
+                f"rather than importing an artifact written by another "
+                f"producer contract")
 
     base_idx = build_id_index(baseline_nodes)
     base_paths = build_path_index(baseline_nodes)

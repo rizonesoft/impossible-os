@@ -90,6 +90,7 @@ REASON_SHAPE = "SHAPE"                      # parsed, but violates the schema
 REASON_EMPTY = "EMPTY"                      # readiness: no nodes to walk at all
 REASON_LEGACY_NO_STAMPED_ITEMS = "LEGACY"   # predates the section 9 extension
 REASON_STALE = "STALE"                      # older than the newest TODO
+REASON_LEGACY_FORMAT = "LEGACY_FORMAT"      # root predates the section 25 envelope
 
 # Path to the schema these rules implement. Quoted in errors so a failure names
 # the contract it violated instead of just the offending value.
@@ -117,6 +118,107 @@ _MAX_CACHE_BYTES = 64 * 1024 * 1024
 # 65535 against a live maximum of 62 (TODO-04) and a documented 60-section hard
 # cap in CLAUDE.md: ~1000x headroom, so no real corpus can reach it.
 _MAX_SECTION_N = 65535
+
+
+# ---------------------------------------------------------------------------
+# CACHE-FORMAT IDENTITY (TODO-06 section 25).
+#
+# `schema_version` on a NODE is the TODO's own frontmatter generation, copied
+# straight out of the file (build.py:1124). Nothing identified the ARTIFACT's
+# own contract, so no reader could tell a cache written by today's producer
+# from one written months ago -- which is why `validate.py --diff` could only
+# ASK the caller to regenerate its baseline and then validate it on SHAPE
+# alone. A field that kept its type and changed its meaning passed that, and
+# manufactured or suppressed graph deltas a human then actioned.
+#
+# TWO VALUES, BECAUSE ONE CANNOT DO THE JOB. Neither half is decoration:
+#
+#   CACHE_FORMAT_VERSION      hand-bumped for a SEMANTIC change -- a field that
+#                             keeps its name and type and changes its meaning.
+#                             No digest can see that.
+#   PRODUCER_CONTRACT_DIGEST  derived from the declaration below, so a
+#                             STRUCTURAL change (a field added, removed or
+#                             renamed) invalidates old artifacts even when the
+#                             human forgets to bump the integer.
+#
+# The digest is taken over the DECLARATION, never over an observed cache's
+# keys: hashing output would make the identity a function of whatever the
+# producer happened to emit on that corpus, so a node-shape regression would
+# quietly re-certify itself. Same "declare, do not infer" rule section 20
+# established for `ref_resolution.EMITTED_BUCKETS`, and for the same reason.
+#
+# IT RIDES IN THE CORPUS BINDING SIDECAR, not in the cache root. A root envelope
+# was designed first and REJECTED on measurement: it makes the cache
+# self-describing, which is the nicer property, but the root is a bare array
+# that tools outside this package parse directly -- `decision-registry.py:67`
+# and two of its tests -- and JSON offers no shape that is both an object and a
+# list, so there is no compatibility path for them. The sidecar already carries
+# every other artifact-level fact (`SIDECAR_SCHEMA`, `cache_sha256`,
+# `history_id`), and its FILENAME is the cache digest, so an identity recorded
+# there is bound to exactly the bytes it describes -- the same binding strength
+# a root key would have had.
+#
+# THE CHECK IS NOT A PROFILE AXIS. `Profile` declares what a caller CONSUMES and
+# what it REQUIRES of the corpus; this is neither. It is a fact about the
+# artifact in front of this read, exactly like the generation binding at the
+# foot of `_load_and_validate`. A reader that could opt out of identity is a
+# reader that can be handed an unidentifiable cache.
+CACHE_FORMAT_VERSION = 1
+
+# Every key the producer may place on a node. `build.py` imports this and
+# refuses to emit a node carrying anything outside it, so the declaration and
+# the emission cannot drift apart silently; `cache.schema.json` lists the same
+# names with their types. Adding a field here is a STRUCTURAL change and moves
+# the digest, which is the intended migration path.
+EMITTED_NODE_FIELDS = frozenset((
+    "id", "schema_version", "domain", "status", "title", "file_path",
+    "created_at", "last_active_at", "effort", "owners", "depends_on",
+    "satisfies", "superseded_by", "file_patterns", "sections",
+    "section_headings", "inputs_xrefs", "stamps_xrefs", "stamped_items",
+))
+
+# Sidecar keys carrying the identity. Named constants because the producer
+# writes them and this module reads them; a retyped literal on one side is how
+# a contract check comes to validate a field nobody emits.
+CACHE_FORMAT_VERSION_KEY = "cache_format_version"
+PRODUCER_CONTRACT_DIGEST_KEY = "producer_contract_digest"
+
+
+def _producer_contract_digest() -> str:
+    """sha256 over the canonical declaration -- version AND field set together.
+
+    Both inputs are in the same digest deliberately: a bumped version with an
+    unchanged field set must still invalidate old artifacts, and a changed
+    field set must invalidate them even at the same version. `sort_keys` plus
+    the sorted field list make the value independent of set iteration order,
+    which is randomized per interpreter run.
+    """
+    payload = json.dumps({
+        "cache_format_version": CACHE_FORMAT_VERSION,
+        "node_fields": sorted(EMITTED_NODE_FIELDS),
+    }, sort_keys=True, separators=(",", ":"))
+    return "sha256:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+PRODUCER_CONTRACT_DIGEST = _producer_contract_digest()
+
+# Gantt row duration (TODO-06 section 25). THE GRAMMAR LIVES HERE, in the module
+# the producer and every routed reader already import, because three copies of
+# it is how `build.py` comes to accept a value `render.py` cannot draw. Narrower
+# than Mermaid's full duration syntax on purpose: a roadmap needs whole days and
+# weeks, and every unit this rejects is one that cannot reach the emitted line.
+# Anchored, and a leading zero is refused -- `0d` is a zero-length task.
+# `\Z`, NOT `$`, AND THIS IS THE WHOLE POINT OF THE GUARD. Python's `$` matches
+# at a trailing newline as well as at end-of-string, so `^[1-9][0-9]*[dw]$`
+# ACCEPTS "2w\n" -- measured, not reasoned about. That is exactly the value this
+# grammar exists to refuse: the renderer interpolates it into
+# `  id :status, id, start, <effort>`, and an embedded newline ends the row
+# early and silently reshapes the chart. `\Z` is end-of-string with no
+# exception. The JSON Schema mirror in cache.schema.json is unaffected -- ECMA
+# regex `$` has no such newline behaviour without the `m` flag -- so the two
+# spellings differ on purpose rather than by drift.
+EFFORT_REGEX = re.compile(r"\A[1-9][0-9]*[dw]\Z")
+EFFORT_DEFAULT = "1w"
 
 
 # ---------------------------------------------------------------------------
@@ -532,7 +634,7 @@ _STAMP_XREF_REQUIRED = ("kind", "severity", "target_path", "target_section")
 _STAMP_XREF_KEYS = _STAMP_XREF_REQUIRED + ("item_name",)
 # Section 22 subtrees -- the `sections[].depends_on` GROUP shape and the
 # node-level fields, both consumed by `query.py`. Shapes were MEASURED against
-# the 232 live nodes before being written, not guessed: all 2,527 dep groups
+# the 232 live nodes before being written, not guessed: all 2,529 dep groups
 # carry exactly `{sections, target}` with a string target and integer section
 # numbers, and all 945 `inputs_xrefs` entries carry exactly
 # `{target_path, target_section}`.
@@ -962,6 +1064,28 @@ def _validate_node_fields(node, i: int, path):
     if "superseded_by" in node and node["superseded_by"] is not None:
         _require_str(node["superseded_by"], f"cache node {i}",
                      "superseded_by", path, 1)
+
+    # `effort` earns a place in this walk under the same rule as everything else
+    # above -- a routed reader dereferences it. `render.py`'s Gantt emitter
+    # interpolates it straight into a mermaid duration field, so a value the
+    # grammar does not admit is not a cosmetic problem: a newline or a comma
+    # ends the row early and silently reshapes the chart, and `4mo` draws a
+    # length nobody authored. GRAMMAR, NOT JUST TYPE, for that reason -- the
+    # `_require_str` this used to be would have passed all three.
+    # NO `is not None` ESCAPE, unlike `superseded_by` above. The schema declares
+    # `effort` as `"type": "string"` with no null member and `validate_frontmatter`
+    # refuses a null, so accepting one here would be the schema-accepts /
+    # Python-refuses gap section 23 closed for `sections[].n`, running the other
+    # way: the module would admit a value the published contract forbids.
+    if "effort" in node:
+        _require_str(node["effort"], f"cache node {i}", "effort", path, 1)
+        if not EFFORT_REGEX.match(node["effort"]):
+            _err(REASON_SHAPE,
+                 f"cache node {i} `effort` is {node['effort']!r}, which does "
+                 f"not match {EFFORT_REGEX.pattern} (per {SCHEMA_REL}); the "
+                 f"Gantt emitter interpolates this into a mermaid duration, "
+                 f"so an unadmitted value reshapes the chart rather than "
+                 f"failing: {path}")
 
     # `inputs_xrefs` is REQUIRED by the schema and `query.py:340-344` skips a
     # non-dict entry, dropping an Inputs edge silently.
@@ -1862,6 +1986,130 @@ def check_history_unchanged(todo_root: Path, history) -> None:
              f"publish a result from a history that changed underneath it")
 
 
+def check_cache_format(cache_path: Path, cache_bytes: bytes,
+                       require_binding: bool) -> None:
+    """Refuse a cache written against a producer contract this reader does not
+    speak (section 25).
+
+    Raises `CacheSchemaError` rather than returning a verdict, so every routed
+    reader maps it through the reason table it already implements.
+
+    IT GETS ITS OWN REASON RATHER THAN JOINING `REASON_SHAPE`. Grouping them
+    would be cheaper and is wrong twice over: the operator is told the artifact
+    "violates the schema" when it was perfectly valid under the contract it was
+    written against, and `validate.py`'s recovery could not tell a corrupt cache
+    from an old one. `REASON_LEGACY_FORMAT` is rebuildable for the ONE cache
+    this repo generates and a plain refusal for anything else, which is the
+    ownership rule section 23 already established -- a historical `--diff`
+    baseline in this state is refused with its bytes intact, never overwritten.
+
+    A PRESENT BINDING IS ALWAYS CHECKED; `require_binding` decides only what an
+    ABSENT one means, and it is DERIVED from `check_stale` rather than declared
+    per caller. So NO read path can reach `validate_nodes` from an artifact that
+    declares no producer contract:
+
+    - Freshness ON: an absent binding is already fatal in `check_freshness`,
+      whose message describes the situation better than anything here. This
+      stays quiet and lets that fire, so an unbound cache still reports STALE
+      rather than flipping to a format complaint.
+    - Freshness OFF (`validate.py --diff`, `query.py` with an explicit
+      non-canonical `--cache`, `check_consumer_delegation`): nothing else in
+      the read will ever look at the binding, so an absent one refuses HERE.
+
+    A PER-CALLER FLAG WAS TRIED FIRST AND WAS WRONG, which is worth recording
+    because it is the same conflation the generation binding at the foot of
+    `_load_and_validate` was moved out of `check_stale` to escape. The argument
+    for it was that section 22 deliberately shape-checks a foreign `--cache`
+    without certifying its corpus -- true, but that is a decision about the
+    CORPUS. Whether this artifact was written by a producer this reader
+    understands is a fact about the READ, and waiving one does not waive the
+    other. The flag let an unidentified legacy cache reach every renderer and
+    produce normal-looking output, which is the exact ambiguity this section
+    exists to remove (Codex adversarial, section 25, [medium]). The 16 fixtures
+    that made the narrower rule tempting hand the tools an unbound cache, which
+    is not a supported artifact; they bind it now.
+    """
+    cache_sha = hashlib.sha256(cache_bytes).hexdigest()
+    side = sidecar_path(cache_path, cache_sha)
+    try:
+        raw = _read_bounded(side, _MAX_SIDECAR_BYTES, "corpus binding")
+    except FileNotFoundError:
+        if not require_binding:
+            return
+        _err(REASON_LEGACY_FORMAT,
+             f"cache carries no corpus binding ({side.name} is absent), so it "
+             f"declares no producer contract: {cache_path}; freshness is "
+             f"disabled for this read, so the binding is the only evidence of "
+             f"which contract wrote it; {_REBUILD}")
+    except OSError as exc:
+        _err(REASON_LEGACY_FORMAT,
+             f"corpus binding unreadable: {side}: {exc}")
+    try:
+        rec = json.loads(raw.decode("utf-8"))
+    except (ValueError, RecursionError, UnicodeDecodeError) as exc:
+        _err(REASON_LEGACY_FORMAT,
+             f"corpus binding is not readable JSON: {side}: {exc}")
+    if not isinstance(rec, dict):
+        _err(REASON_LEGACY_FORMAT,
+             f"corpus binding is {type(rec).__name__}, expected an object: "
+             f"{side}; {_REBUILD}")
+    # THE BINDING'S OWN WIRE FORMAT, CHECKED HERE TOO. `check_freshness` makes
+    # the same comparison, but `validate.py --diff` sets `check_stale=False` and
+    # never reaches it -- so for the one caller that REQUIRES a binding, the
+    # documented rule that bumping `SIDECAR_SCHEMA` invalidates every existing
+    # binding did not hold, and a sidecar declaring any other schema was trusted
+    # as long as it carried the four fields read below (Codex adversarial,
+    # section 25, [medium]). Checked BEFORE any other field is interpreted,
+    # because their meanings are what the schema string identifies.
+    if rec.get("schema") != SIDECAR_SCHEMA:
+        _err(REASON_LEGACY_FORMAT,
+             f"corpus binding declares schema {rec.get('schema')!r}, not "
+             f"{SIDECAR_SCHEMA}: {side}; the fields below mean whatever that "
+             f"format says they mean, so they are not read; {_REBUILD}")
+    # The digest is in the FILENAME, so it binds by name already -- but only by
+    # its first 16 hex characters. Comparing the recorded value costs nothing
+    # and refuses a binding renamed onto a cache it does not describe, which is
+    # the same reasoning `check_freshness` applies to the same field. Kept here
+    # rather than left to that function because the caller that most needs this
+    # (`--diff`) has freshness disabled and never reaches it.
+    if rec.get("cache_sha256") != cache_sha:
+        _err(REASON_LEGACY_FORMAT,
+             f"corpus binding names cache {rec.get('cache_sha256')!r} but the "
+             f"cache read is {cache_sha}: {side}; {_REBUILD}")
+    if CACHE_FORMAT_VERSION_KEY not in rec:
+        _err(REASON_LEGACY_FORMAT,
+             f"corpus binding declares no {CACHE_FORMAT_VERSION_KEY}: {side}; "
+             f"it was written before the producer contract was identified at "
+             f"all, so which fields the cache beside it carries is unknowable; "
+             f"{_REBUILD}")
+    got_v = rec[CACHE_FORMAT_VERSION_KEY]
+    # `bool` IS an `int` in Python and `True == 1`, so a binding carrying `true`
+    # would compare equal to version 1 and certify itself.
+    if isinstance(got_v, bool) or not isinstance(got_v, int):
+        _err(REASON_LEGACY_FORMAT,
+             f"{CACHE_FORMAT_VERSION_KEY} is {got_v!r}, expected an integer: "
+             f"{side}; {_REBUILD}")
+    if got_v != CACHE_FORMAT_VERSION:
+        _err(REASON_LEGACY_FORMAT,
+             f"cache was written by producer contract v{got_v}; this reader "
+             f"speaks v{CACHE_FORMAT_VERSION}: {cache_path}; a field that kept "
+             f"its type and changed its MEANING is exactly what shape "
+             f"validation cannot see, which is why the version is compared "
+             f"rather than inferred; {_REBUILD}")
+    got_d = rec.get(PRODUCER_CONTRACT_DIGEST_KEY)
+    if got_d != PRODUCER_CONTRACT_DIGEST:
+        # SAME VERSION, DIFFERENT FIELD SET is producer/schema drift rather than
+        # an ordinary old artifact -- somebody moved the emitted set without
+        # bumping the version -- so the message says that instead of the
+        # regenerate advice above, which would send them after the wrong thing.
+        _err(REASON_LEGACY_FORMAT,
+             f"producer contract digest {got_d!r} does not match this reader's "
+             f"{PRODUCER_CONTRACT_DIGEST!r} at the same "
+             f"{CACHE_FORMAT_VERSION_KEY} {CACHE_FORMAT_VERSION}: "
+             f"{cache_path}; the emitted node-field set moved without a version "
+             f"bump (cache_schema.EMITTED_NODE_FIELDS); {_REBUILD}")
+
+
 def load_and_validate(cache_path: Path, todo_root: Path,
                       check_stale: bool = True,
                       profile: Profile = PROFILE_STAMPED_ITEMS):
@@ -1957,6 +2205,14 @@ def _load_and_validate(cache_path: Path, todo_root: Path,
             # infrastructure reason rather than a traceback.
             _err(REASON_UNREADABLE, f"cache unreadable: {cache_path}: {exc}")
 
+        # IDENTITY BEFORE SHAPE (section 25). An artifact whose contract this
+        # reader does not speak must not be walked at all: validating it under
+        # the current subtree rules reports a v2 field as a v1 schema
+        # violation, which names the wrong defect and sends the operator after
+        # a corpus problem that does not exist. Bound to `blob` -- the bytes
+        # this descriptor actually yielded -- for the same reason
+        # `check_freshness` takes them rather than re-reading the pathname.
+        check_cache_format(cache_path, blob, require_binding=not check_stale)
         info = validate_nodes(nodes, cache_path, profile)
         if check_stale:
             # The fingerprint returned here is handed to the caller so it can

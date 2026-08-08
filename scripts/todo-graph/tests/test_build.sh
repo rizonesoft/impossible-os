@@ -81,9 +81,44 @@ blob = cache.read_bytes()
 sha = hashlib.sha256(blob).hexdigest()
 cs.sidecar_path(cache, sha).write_text(json.dumps({
     "schema": cs.SIDECAR_SCHEMA,
+    # Section 25: the producer-contract identity rides in the binding, so a
+    # fixture binding that omitted it would be refused as LEGACY_FORMAT. Taken
+    # from the PRODUCTION constants for the same reason the corpus scan is --
+    # a fixture must never be able to pass against an identity the readers
+    # would not accept.
+    cs.CACHE_FORMAT_VERSION_KEY: cs.CACHE_FORMAT_VERSION,
+    cs.PRODUCER_CONTRACT_DIGEST_KEY: cs.PRODUCER_CONTRACT_DIGEST,
     "cache_sha256": sha,
     "history_id": cs.corpus_history_id(root),
     "corpus": cs._scan_corpus(root, boom),
+}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+PY
+}
+
+# Bind a HAND-CRAFTED --diff baseline (section 25).
+#
+# A baseline is validated with freshness OFF, so its corpus and history are
+# deliberately not compared -- but `validate.py --diff` now requires the
+# artifact to declare which producer contract wrote it, which is the whole
+# point of section 25. `bind_cache` above cannot serve here: it scans a real
+# corpus and walks git for a history id, and a baseline in these fixtures is a
+# JSON blob with no tree behind it. So this writes the identity ONLY, from the
+# production constants, exactly as `bind_cache` takes its corpus rule from the
+# production scanner -- a fixture must never be able to pass against an
+# identity the readers would refuse.
+bind_baseline() {
+    BIND_TG="$REPO_ROOT/scripts/todo-graph" python3 - "$1" <<'PY'
+import hashlib, json, os, pathlib, sys
+sys.path.insert(0, os.environ["BIND_TG"])
+import cache_schema as cs
+cache = pathlib.Path(sys.argv[1])
+blob = cache.read_bytes()
+sha = hashlib.sha256(blob).hexdigest()
+cs.sidecar_path(cache, sha).write_text(json.dumps({
+    "schema": cs.SIDECAR_SCHEMA,
+    cs.CACHE_FORMAT_VERSION_KEY: cs.CACHE_FORMAT_VERSION,
+    cs.PRODUCER_CONTRACT_DIGEST_KEY: cs.PRODUCER_CONTRACT_DIGEST,
+    "cache_sha256": sha,
 }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 PY
 }
@@ -1361,6 +1396,7 @@ nodes.append({
 with open('$PREMIG_TREE/cache.json', 'w') as f:
     json.dump(nodes, f)
 "
+bind_baseline "$PREMIG_TREE/cache.json"
 q_pre() {
     python3 "$QUERY_PY" --cache "$PREMIG_TREE/cache.json" --repo-root "$PREMIG_TREE" "$@"
 }
@@ -1659,6 +1695,7 @@ with open('$ESC_TREE/cache.json', 'w') as f:
 # have no rows -- and answering 0-with-nothing is the "partial index answers
 # thin" shape this graph's readers exist to refuse. The anti-exfiltration
 # assertion is kept and joined by the refusal.
+bind_baseline "$ESC_TREE/cache.json"
 Q_OUT=$(python3 "$QUERY_PY" --cache "$ESC_TREE/cache.json" --repo-root "$ESC_TREE" --quiet code escape-attempt 2>&1); Q_RC=$?
 if [ "$Q_RC" = "2" ] && ! echo "$Q_OUT" | grep -q "root:x:" \
     && echo "$Q_OUT" | grep -q '"error": "cache-unusable"' \
@@ -1691,6 +1728,7 @@ sed -i 's/ambiguous-in-different-domains-$/ambiguous-in-different-domains-a/' "$
 sed -i 's/ambiguous-in-different-domains-$/ambiguous-in-different-domains-b/' "$AMB_TREE/todo/02-b/TODO-01-collide.md"
 sed -i 's/domain: 01-test/domain: 02-b/' "$AMB_TREE/todo/02-b/TODO-01-collide.md"
 python3 "$BUILD_PY" --quiet --root "$AMB_TREE/todo" --output "$AMB_TREE/cache.json" --repo-root "$AMB_TREE" >/dev/null 2>&1
+bind_baseline "$AMB_TREE/cache.json"
 Q_OUT=$(python3 "$QUERY_PY" --cache "$AMB_TREE/cache.json" --repo-root "$AMB_TREE" --quiet backlinks collide 2>&1); Q_RC=$?
 if [ "$Q_RC" = "4" ] && echo "$Q_OUT" | grep -q "ambiguous"; then
     t_pass "query: ambiguous slug refused with exit 4 + listing"
@@ -1718,6 +1756,7 @@ nodes = [{
 with open('$SAN_TREE/cache.json', 'w') as f:
     json.dump(nodes, f)
 "
+bind_baseline "$SAN_TREE/cache.json"
 Q_OUT=$(python3 "$QUERY_PY" --cache "$SAN_TREE/cache.json" --repo-root "$SAN_TREE" --quiet by-domain 2>&1)
 # Expect exactly 1 output line (no forged second row via embedded \n)
 # and exactly 5 tab-separated columns (domain, id, status, title, first_unfinished).
@@ -2030,6 +2069,7 @@ with open('$OOR_CACHE', 'w') as f:
     json.dump(nodes, f)
 "
 # Run in watch mode briefly; the auto-rebuild path must warn + skip.
+    bind_baseline "$OOR_CACHE"
 PATH="/usr/bin:/bin" timeout --signal=INT 3 \
     python3 -u "$QUERY_PY" --cache "$OOR_CACHE" --repo-root "$OOR_TREE" \
         --watch by-domain > "$OOR_TREE/watch.out" 2>&1 || true
@@ -2450,6 +2490,7 @@ assert all(n["file_path"] == "todo/01-test/blocker.fifo" for n in back), \
     "cache rewrite did not take"
 PY
 FIFO_REWRITE_RC=$?
+bind_baseline "$FIFO_TREE/cache.json"
 FIFO_OUT=$(timeout 15 python3 "$QUERY_PY" --cache "$FIFO_TREE/cache.json" \
     --repo-root "$FIFO_TREE" --quiet code fifo-fixture 2>&1); FIFO_RC=$?
 if [ "$FIFO_REWRITE_RC" = "0" ] && [ "$FIFO_RC" != "124" ]; then
@@ -3044,7 +3085,9 @@ with open('$DEEP_TREE/fwd.json', 'w') as f:
 with open('$DEEP_TREE/rev.json', 'w') as f:
     json.dump(list(reversed(nodes)), f)
 "
+bind_baseline "$DEEP_TREE/fwd.json"
 DEEP_FWD=$(python3 "$QUERY_PY" --cache "$DEEP_TREE/fwd.json" --repo-root "$DEEP_TREE" --quiet stats --json 2>/dev/null); DEEP_FWD_RC=$?
+bind_baseline "$DEEP_TREE/rev.json"
 DEEP_REV=$(python3 "$QUERY_PY" --cache "$DEEP_TREE/rev.json" --repo-root "$DEEP_TREE" --quiet stats --json 2>/dev/null); DEEP_REV_RC=$?
 if [ "$DEEP_FWD_RC" = "0" ] && [ "$DEEP_REV_RC" = "0" ] \
    && python3 -c "
@@ -3079,7 +3122,9 @@ with open('$DUP_TREE/dup.json', 'w') as f:
 with open('$DUP_TREE/uniq.json', 'w') as f:
     json.dump([node('01-a', 'a'), node('02-b', 'b', depends_on=['a'])], f)
 "
+bind_baseline "$DUP_TREE/dup.json"
 DUP_OUT=$(python3 "$QUERY_PY" --cache "$DUP_TREE/dup.json" --repo-root "$DUP_TREE" --quiet blocking --json 2>&1); DUP_RC=$?
+bind_baseline "$DUP_TREE/uniq.json"
 UNIQ_OUT=$(python3 "$QUERY_PY" --cache "$DUP_TREE/uniq.json" --repo-root "$DUP_TREE" --quiet blocking --json 2>&1); UNIQ_RC=$?
 if [ "$DUP_RC" = "2" ] && echo "$DUP_OUT" | grep -q "uniqueItems" \
    && [ "$UNIQ_RC" = "0" ] \
@@ -3163,7 +3208,9 @@ with open('$DUPID_TREE/dup.json', 'w') as f:
 with open('$DUPID_TREE/nulls.json', 'w') as f:
     json.dump([node('01-a', None), node('02-b', None)], f)
 "
+bind_baseline "$DUPID_TREE/dup.json"
 DUPID_OUT=$(python3 "$QUERY_PY" --cache "$DUPID_TREE/dup.json" --repo-root "$DUPID_TREE" --quiet blocking --json 2>&1); DUPID_RC=$?
+bind_baseline "$DUPID_TREE/nulls.json"
 NULLID_OUT=$(python3 "$QUERY_PY" --cache "$DUPID_TREE/nulls.json" --repo-root "$DUPID_TREE" --quiet stats --json 2>&1); NULLID_RC=$?
 if [ "$DUPID_RC" = "2" ] && echo "$DUPID_OUT" | grep -q "repeats id" \
    && [ "$NULLID_RC" = "0" ]; then
@@ -3196,6 +3243,7 @@ with open('$STAR_TREE/star.json', 'w') as f:
     json.dump(nodes, f)
 "
 STAR_START=$(date +%s)
+bind_baseline "$STAR_TREE/star.json"
 STAR_OUT=$(python3 "$QUERY_PY" --cache "$STAR_TREE/star.json" --repo-root "$STAR_TREE" --quiet stats --json 2>&1); STAR_RC=$?
 STAR_ELAPSED=$(( $(date +%s) - STAR_START ))
 # A generous ceiling: the quadratic form took ~1.4s of pure list copying on top
@@ -3375,9 +3423,25 @@ def node(path, ident, **extra):
 dupes = [node("todo/01-a/TODO-A-Shared.md", "first"),
          node("todo/02-b/TODO-A-Shared.md", "second")]
 
+sys.path.insert(0, str(repo / "scripts" / "todo-graph"))
+import hashlib
+import cache_schema as cs
+
 def run(nodes, name, *argv):
     p = root / f"{name}.json"
     p.write_text(json.dumps(nodes))
+    # Section 25: a cache with no corpus binding declares no producer contract
+    # and every reader refuses it, so a hand-crafted fixture must carry one.
+    # Identity only -- freshness is disabled for a foreign --cache, so the
+    # corpus and history fields are never read on this path.
+    blob = p.read_bytes()
+    sha = hashlib.sha256(blob).hexdigest()
+    cs.sidecar_path(p, sha).write_text(json.dumps({
+        "schema": cs.SIDECAR_SCHEMA,
+        cs.CACHE_FORMAT_VERSION_KEY: cs.CACHE_FORMAT_VERSION,
+        cs.PRODUCER_CONTRACT_DIGEST_KEY: cs.PRODUCER_CONTRACT_DIGEST,
+        "cache_sha256": sha,
+    }, indent=2, sort_keys=True) + "\n")
     return subprocess.run([sys.executable, q, "--cache", str(p), "--repo-root",
                            str(root), "--quiet", *argv],
                           capture_output=True, text=True)
@@ -3616,6 +3680,7 @@ nodes = [{'file_path': 'todo/01-t/TODO-01-self.md', 'id': 'self-def', 'domain': 
 with open('$SELF_TREE/cache.json', 'w') as f:
     json.dump(nodes, f)
 "
+bind_baseline "$SELF_TREE/cache.json"
 Q_OUT=$(python3 "$QUERY_PY" --cache "$SELF_TREE/cache.json" --repo-root "$SELF_TREE" --quiet stats --json 2>&1); Q_RC=$?
 if [ "$Q_RC" = "0" ] && echo "$Q_OUT" | python3 -c "
 import json, sys
@@ -4010,6 +4075,8 @@ baseline = [
 ]
 with open('$DIFF_TREE/base4.json', 'w') as f: json.dump(baseline, f)
 "
+bind_baseline "$DIFF_TREE/base4.json"
+
 # Current: alpha's file is GONE but beta still depends on it. Real corpus, so
 # the removal is a real removal rather than a node edited out of a JSON blob.
 D4="$DIFF_TREE/t4"
@@ -4069,6 +4136,8 @@ baseline = [{'file_path': 'todo/01-t/TODO-01-a.md', 'id': 'alpha', 'domain': '01
     'last_active_at': '2026-04-23T00:00:00Z'}]
 with open('$DIFF_TREE/base2.json', 'w') as f: json.dump(baseline, f)
 "
+bind_baseline "$DIFF_TREE/base2.json"
+
 # Current: the same file, demoted done -> active. Real corpus on the current
 # side; the baseline above is the historical artifact it is compared against.
 D2="$DIFF_TREE/t2"
@@ -4207,6 +4276,7 @@ nodes = [
 ]
 with open('$COLL_TREE/cache.json', 'w') as f: json.dump(nodes, f)
 "
+bind_baseline "$COLL_TREE/cache.json"
 Q_OUT=$(python3 "$QUERY_PY" --cache "$COLL_TREE/cache.json" --repo-root "$COLL_TREE" --quiet render --render-format mermaid 2>&1)
 # Count unique node-declaration lines (grep for the `["label"]` shape).
 UNIQ_NODES=$(printf '%s' "$Q_OUT" | grep -cE '\["[A-Za-z]' || true)
@@ -4239,6 +4309,7 @@ nodes = [
 with open('$CYC_TREE/cache.json', 'w') as f: json.dump(nodes, f)
 "
 # timeout 5s would be way more than enough; cycle protection should return immediately.
+    bind_baseline "$CYC_TREE/cache.json"
 CYC_OUT=$(PATH="/usr/bin:/bin" timeout --signal=TERM 5 \
     python3 "$QUERY_PY" --cache "$CYC_TREE/cache.json" --repo-root "$CYC_TREE" \
         --quiet render --render-format ascii alpha 2>&1); CYC_RC=$?
@@ -4282,6 +4353,7 @@ nodes = [
 ]
 with open('$DAG_TREE/cache.json', 'w') as f: json.dump(nodes, f)
 "
+bind_baseline "$DAG_TREE/cache.json"
 DAG_OUT=$(python3 "$QUERY_PY" --cache "$DAG_TREE/cache.json" --repo-root "$DAG_TREE" --quiet render --render-format ascii alpha 2>&1); DAG_RC=$?
 if [ "$DAG_RC" = "0" ] && ! echo "$DAG_OUT" | grep -q '(cycle)'; then
     # Second encounter of delta should be marked (seen), not (cycle).
@@ -10993,10 +11065,14 @@ python3 - "$S23C_MUT/tool/validate.py" <<'S23CMEOF'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1])
 src = p.read_text(encoding="utf-8")
-needle = "    cache_schema.REASON_EMPTY,\n))"
+# The tail of _REBUILDABLE_REASONS moved when REASON_LEGACY_FORMAT joined it
+# in section 25; the needle tracks the LAST member so the mutation still
+# lands inside the set rather than silently matching nothing.
+needle = "    cache_schema.REASON_LEGACY_FORMAT,\n))"
 assert src.count(needle) == 1, f"mutation needle appears {src.count(needle)}x"
 p.write_text(src.replace(
-    needle, "    cache_schema.REASON_EMPTY,\n    cache_schema.REASON_STALE,\n))",
+    needle,
+    "    cache_schema.REASON_LEGACY_FORMAT,\n    cache_schema.REASON_STALE,\n))",
     1), encoding="utf-8")
 S23CMEOF
 timeout 60 python3 "$BUILD_PY" --quiet --root "$S23C_MUT/todo" \
@@ -11047,9 +11123,14 @@ python3 - "$S23D_MUT/tool/validate.py" <<'S23DMEOF'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1])
 src = p.read_text(encoding="utf-8")
-needle = """        baseline_nodes, _base_info = cache_schema.load_and_validate(
-            baseline_path, repo_root / "todo", check_stale=False,
-            profile=cache_schema.PROFILE_BASELINE)"""
+# Matched by PREFIX and closing paren, not by a literal copy of the whole
+# call: section 25 added a comment block inside these parens and then moved it,
+# and a literal needle silently stops matching on any such edit -- which is
+# exactly how this control went quiet once already.
+needle_head = """        baseline_nodes, _base_info = cache_schema.load_and_validate("""
+start = src.index(needle_head)
+end = src.index("\n", src.index("PROFILE_BASELINE)", start))
+needle = src[start:end]
 assert src.count(needle) == 1, f"mutation needle appears {src.count(needle)}x"
 revert = """        baseline_nodes = json.loads(baseline_path.read_text(encoding="utf-8"))"""
 p.write_text(src.replace(needle, revert, 1), encoding="utf-8")
@@ -12260,6 +12341,426 @@ if [ "$S24_DEFER" = "RECORDED NOPROBE FAILCLOSED" ]; then
     t_pass "section 24: the deferring load hands back the recorded id, walks no git, and refuses a binding with none"
 else
     t_fail "section 24: deferred-history load gave '$S24_DEFER' (want 'RECORDED NOPROBE FAILCLOSED')"
+fi
+
+# ======================================================================
+# Section 25: fields the readers consume that the producer never emits.
+#
+# Three pipelines, each of which degraded SILENTLY rather than failing --
+# `effort` unreachable, file-level `depends_on` unauthored, and no cache-format
+# identity at all -- so every fixture below asserts the REFUSAL or the value,
+# and each is control-tested: revert the mechanism and the fixture must fail
+# with the predicted symptom.
+# ======================================================================
+
+# s25_tree <root> <effort-line> -- a one-TODO corpus with a real git history,
+# because `build.py` derives created_at/last_active_at from `git log` and a
+# tree without one produces null timestamps the Gantt renderer then defaults.
+s25_tree() {
+    local root="$1" effort="$2"
+    rm -rf "$root"
+    mkdir -p "$root/todo/01-test" "$root/build"
+    {
+        printf -- '---\nschema_version: 1\nid: fm-s25\ndomain: 01-test\n'
+        printf -- 'status: active\ntitle: "s25 fixture"\n'
+        [ -n "$effort" ] && printf -- 'effort: %s\n' "$effort"
+        printf -- '---\n# TODO-01 -- s25 fixture\n## Implementation Order\n'
+        printf -- '| Order | Section | Deliverable | Depends On | Status |\n'
+        printf -- '| --- | --- | --- | --- | --- |\n| 1 | 1 | First | -- | [ ] |\n'
+        printf -- '## 1. First Section\n\n- [ ] Item one\n'
+    } > "$root/todo/01-test/TODO-01-s25.md"
+    git init -q "$root" >/dev/null 2>&1
+    git -C "$root" add -A >/dev/null 2>&1
+    git -C "$root" -c user.email=t@t -c user.name=t commit -qm s25 >/dev/null 2>&1
+}
+
+# Sub-test 25e1: a frontmatter `effort` reaches the emitted Gantt duration, and
+# a TODO without one still renders the documented default. Before this section
+# the producer dropped the field, so the first row was UNREACHABLE by any route.
+S25E="$TMP_DIR/s25-effort"
+s25_tree "$S25E" "3d"
+timeout 60 python3 "$BUILD_PY" --quiet --root "$S25E/todo" \
+    --output "$S25E/build/todo-cache.json" --repo-root "$S25E" >/dev/null 2>&1
+S25E_GANTT=$(timeout 60 python3 "$QUERY_PY" --cache "$S25E/build/todo-cache.json" \
+    --repo-root "$S25E" --quiet render --render-format gantt 2>&1)
+s25_tree "$S25E-def" ""
+timeout 60 python3 "$BUILD_PY" --quiet --root "$S25E-def/todo" \
+    --output "$S25E-def/build/todo-cache.json" --repo-root "$S25E-def" >/dev/null 2>&1
+S25E_DEF=$(timeout 60 python3 "$QUERY_PY" --cache "$S25E-def/build/todo-cache.json" \
+    --repo-root "$S25E-def" --quiet render --render-format gantt 2>&1)
+if echo "$S25E_GANTT" | grep -q ", 3d$" && echo "$S25E_DEF" | grep -q ", 1w$"; then
+    t_pass "section 25: frontmatter effort reaches the Gantt row; absent still defaults to 1w"
+else
+    t_fail "section 25: effort round trip broken (with='$S25E_GANTT' without='$S25E_DEF')"
+fi
+
+# 25e1-mutation: drop `effort` from the producer's copy list, which is the exact
+# pre-section-25 state. The row must fall back to the default, proving the
+# fixture reads the PRODUCER's behaviour rather than the renderer's.
+S25E_MUT="$TMP_DIR/s25-effort-mut"
+s25_tree "$S25E_MUT" "3d"
+s23_tooldir "$S25E_MUT/tool"
+python3 - "$S25E_MUT/tool/build.py" <<'S25EMEOF'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+src = p.read_text(encoding="utf-8")
+needle = '''        for opt in ("owners", "file_patterns", "depends_on", "satisfies",
+                    "superseded_by", "effort"):'''
+assert src.count(needle) == 1, f"mutation needle appears {src.count(needle)}x"
+revert = '''        for opt in ("owners", "file_patterns", "depends_on", "satisfies",
+                    "superseded_by"):'''
+p.write_text(src.replace(needle, revert, 1), encoding="utf-8")
+S25EMEOF
+timeout 60 python3 "$S25E_MUT/tool/build.py" --quiet --root "$S25E_MUT/todo" \
+    --output "$S25E_MUT/build/todo-cache.json" --repo-root "$S25E_MUT" >/dev/null 2>&1
+S25EM=$(timeout 60 python3 "$QUERY_PY" --cache "$S25E_MUT/build/todo-cache.json" \
+    --repo-root "$S25E_MUT" --quiet render --render-format gantt 2>&1)
+if echo "$S25EM" | grep -q ", 1w$"; then
+    t_pass "section 25: mutation check -- dropping effort from the copy list restores the 1w default (fixture is sensitive)"
+else
+    t_fail "section 25: mutation check -- reverted copy list still emitted effort, so 25e1 proves nothing (out=$S25EM)"
+fi
+
+# Sub-test 25e2: hostile effort values are REFUSED by the producer rather than
+# defaulted. `2w\n` is the one that matters and the one a `$`-anchored regex
+# ACCEPTS: Python's `$` matches before a trailing newline, and the renderer
+# interpolates this straight into a mermaid row, so the newline ends the row
+# early and reshapes the chart. Measured, not reasoned about.
+S25E_BAD=""
+for bad in '4mo' '0d' '2 w' '007w' 'x' '2w extra'; do
+    s25_tree "$TMP_DIR/s25-bad" "$bad"
+    timeout 60 python3 "$BUILD_PY" --quiet --root "$TMP_DIR/s25-bad/todo" \
+        --output "$TMP_DIR/s25-bad/build/todo-cache.json" \
+        --repo-root "$TMP_DIR/s25-bad" >/dev/null 2>&1
+    [ $? -eq 0 ] && S25E_BAD="$S25E_BAD $bad"
+    [ -f "$TMP_DIR/s25-bad/build/todo-cache.json" ] && S25E_BAD="$S25E_BAD wrote:$bad"
+done
+S25E_NL=$(python3 -c "
+import sys; sys.path.insert(0, '$REPO_ROOT/scripts/todo-graph')
+import cache_schema as cs
+print('REFUSED' if not cs.EFFORT_REGEX.match('2w\n') else 'ACCEPTED')")
+if [ -z "$S25E_BAD" ] && [ "$S25E_NL" = "REFUSED" ]; then
+    t_pass "section 25: every hostile effort value refuses the build, including the trailing-newline case a \$-anchor accepts"
+else
+    t_fail "section 25: hostile effort accepted ('$S25E_BAD'), newline=$S25E_NL"
+fi
+
+# Sub-test 25e3: the JSON Schema mirror and the Python grammar admit the SAME
+# values. Two spellings of one rule is how the schema comes to accept what the
+# producer refuses -- the gap section 23 closed for sections[].n, in reverse.
+S25E_AGREE=$(python3 -c "
+import json, re, sys; sys.path.insert(0, '$REPO_ROOT/scripts/todo-graph')
+import cache_schema as cs
+sch = json.load(open('$REPO_ROOT/scripts/todo-graph/schema/cache.schema.json'))
+pat = sch['items']['properties']['effort']['pattern']
+rx = re.compile(pat)
+bad = [v for v in ('1w','3d','12w','0d','007w','4mo','','2 w','x')
+       if bool(rx.match(v) and rx.match(v).end() == len(v)) != bool(cs.EFFORT_REGEX.match(v))]
+print('AGREE' if not bad else 'DISAGREE:' + ','.join(bad))")
+if [ "$S25E_AGREE" = "AGREE" ]; then
+    t_pass "section 25: cache.schema.json effort pattern and cache_schema.EFFORT_REGEX admit the same values"
+else
+    t_fail "section 25: effort grammars disagree ($S25E_AGREE)"
+fi
+
+# Sub-test 25d1: the readiness verbs consult the FILE-level depends_on and say
+# so when there is nothing to rank. The section chose this source deliberately
+# over sections[].depends_on, whose targets are unqualified; the visible note is
+# what stops an unconditionally-empty answer reading as a verdict.
+S25D=$(timeout 60 python3 "$QUERY_PY" --repo-root "$REPO_ROOT" blocking 2>&1)
+S25D_Q=$(timeout 60 python3 "$QUERY_PY" --repo-root "$REPO_ROOT" --quiet blocking 2>&1)
+if echo "$S25D" | grep -q "ranked against 0 file-level" \
+   && ! echo "$S25D_Q" | grep -q "ranked against 0 file-level"; then
+    t_pass "section 25: an empty readiness ranking names its dependency source; --quiet stays machine-clean"
+else
+    t_fail "section 25: dependency-source note missing (out=$S25D) or leaked under --quiet"
+fi
+
+# 25d1-mutation: the note must be CONDITIONAL on the edge set being empty, or it
+# is noise that trains a reader to skip stderr. Give one node an edge and it
+# must go quiet.
+S25D_M=$(python3 -c "
+import sys, io, contextlib; sys.path.insert(0, '$REPO_ROOT/scripts/todo-graph')
+import query as q, json
+nodes = json.load(open('$REPO_ROOT/build/todo-cache.json'))
+nodes[1]['depends_on'] = [nodes[0]['id']]
+ctx = q.Ctx(nodes, '$REPO_ROOT', quiet=False)
+err = io.StringIO()
+with contextlib.redirect_stderr(err):
+    ctx.dependency_source_notice_once()
+print('QUIET' if 'ranked against 0' not in err.getvalue() else 'FIRED')")
+if [ "$S25D_M" = "QUIET" ]; then
+    t_pass "section 25: mutation check -- an authored depends_on edge silences the note (it is not unconditional)"
+else
+    t_fail "section 25: the dependency-source note fires even with edges present, so it is noise not a caveat"
+fi
+
+# Sub-test 25c1: a --diff baseline written by a DIFFERENT producer contract is
+# refused rather than diffed. Until this section validate.py could only ASK the
+# caller to regenerate: shape was all it had, and a field that kept its type and
+# changed its meaning passed, producing deltas nobody authored.
+S25C="$TMP_DIR/s25-baseline"
+s23_tree "$S25C"
+timeout 60 python3 "$BUILD_PY" --quiet --root "$S25C/todo" \
+    --output "$S25C/build/todo-cache.json" --repo-root "$S25C" >/dev/null 2>&1
+cp "$S25C/build/todo-cache.json" "$S25C/old-baseline.json"
+bind_baseline "$S25C/old-baseline.json"
+python3 - "$S25C/old-baseline.json" "$REPO_ROOT/scripts/todo-graph" <<'S25CEOF'
+import hashlib, json, pathlib, sys
+sys.path.insert(0, sys.argv[2])
+import cache_schema as cs
+cache = pathlib.Path(sys.argv[1])
+side = cs.sidecar_path(cache, hashlib.sha256(cache.read_bytes()).hexdigest())
+rec = json.loads(side.read_text())
+# An OLDER contract, which is exactly what a historical artifact carries.
+rec[cs.CACHE_FORMAT_VERSION_KEY] = cs.CACHE_FORMAT_VERSION - 1
+side.write_text(json.dumps(rec, indent=2, sort_keys=True) + "\n")
+S25CEOF
+S25C_OUT=$(REPO_ROOT="$REPO_ROOT" timeout 60 python3 "$VALIDATE_PY" \
+    --cache "$S25C/build/todo-cache.json" --repo-root "$S25C" --quiet \
+    --diff "$S25C/old-baseline.json" 2>&1); S25C_RC=$?
+S25C_BYTES=$(md5sum "$S25C/old-baseline.json" | cut -d' ' -f1)
+if [ "$S25C_RC" = "2" ] && echo "$S25C_OUT" | grep -q "LEGACY_FORMAT" \
+   && ! echo "$S25C_OUT" | grep -q "graph-delta:"; then
+    t_pass "section 25: a baseline from an older producer contract is REFUSED, not diffed"
+else
+    t_fail "section 25: old-contract baseline rc=$S25C_RC out=$S25C_OUT"
+fi
+
+# Sub-test 25c2: and the refusal leaves the caller's artifact byte-identical --
+# a historical baseline is somebody else's file, so the recovery must not reach
+# it. Same ownership rule section 23 established for the current cache.
+S25C_AFTER=$(md5sum "$S25C/old-baseline.json" | cut -d' ' -f1)
+if [ "$S25C_BYTES" = "$S25C_AFTER" ]; then
+    t_pass "section 25: the refused baseline is left byte-identical, never rebuilt over"
+else
+    t_fail "section 25: the refused baseline was rewritten"
+fi
+
+# Sub-test 25c3: a binding whose FIELD SET drifted at the SAME version refuses
+# too, and with a different message -- that is producer/schema drift, not an
+# ordinary old artifact, and the two need different words to the operator.
+S25C_DRIFT=$(REPO_ROOT="$REPO_ROOT" python3 -c "
+import hashlib, json, pathlib, sys
+sys.path.insert(0, '$REPO_ROOT/scripts/todo-graph')
+import cache_schema as cs
+cache = pathlib.Path('$S25C/old-baseline.json')
+blob = cache.read_bytes()
+side = cs.sidecar_path(cache, hashlib.sha256(blob).hexdigest())
+rec = json.loads(side.read_text())
+rec[cs.CACHE_FORMAT_VERSION_KEY] = cs.CACHE_FORMAT_VERSION
+rec[cs.PRODUCER_CONTRACT_DIGEST_KEY] = 'sha256:' + '0' * 64
+side.write_text(json.dumps(rec))
+try:
+    cs.check_cache_format(cache, blob, require_binding=True)
+    print('ACCEPTED')
+except cs.CacheSchemaError as e:
+    print('REFUSED' if 'without a version bump' in str(e) else 'WRONGMSG')")
+if [ "$S25C_DRIFT" = "REFUSED" ]; then
+    t_pass "section 25: a drifted field set at the same version refuses as producer drift, not as an old artifact"
+else
+    t_fail "section 25: same-version digest drift gave '$S25C_DRIFT'"
+fi
+
+# 25c1-mutation: with the identity check reverted, the old-contract baseline
+# must be DIFFED instead of refused -- the pre-section-25 behaviour, and the
+# reason the section exists.
+S25C_MUT="$TMP_DIR/s25-baseline-mut"
+s23_tree "$S25C_MUT"
+s23_tooldir "$S25C_MUT/tool"
+python3 - "$S25C_MUT/tool/cache_schema.py" <<'S25CMEOF'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+src = p.read_text(encoding="utf-8")
+needle = """        check_cache_format(cache_path, blob, require_binding=not check_stale)"""
+assert src.count(needle) == 1, f"mutation needle appears {src.count(needle)}x"
+p.write_text(src.replace(needle, "        pass", 1), encoding="utf-8")
+S25CMEOF
+timeout 60 python3 "$S25C_MUT/tool/build.py" --quiet --root "$S25C_MUT/todo" \
+    --output "$S25C_MUT/build/todo-cache.json" --repo-root "$S25C_MUT" >/dev/null 2>&1
+cp "$S25C_MUT/build/todo-cache.json" "$S25C_MUT/old-baseline.json"
+S25CM_OUT=$(timeout 60 python3 "$S25C_MUT/tool/validate.py" \
+    --cache "$S25C_MUT/build/todo-cache.json" --repo-root "$S25C_MUT" --quiet \
+    --diff "$S25C_MUT/old-baseline.json" 2>&1); S25CM_RC=$?
+if [ "$S25CM_RC" != "2" ]; then
+    t_pass "section 25: mutation check -- without the identity check an unidentified baseline is diffed (fixture is sensitive)"
+else
+    t_fail "section 25: mutation check -- reverted identity still refused, so 25c1 proves nothing (out=$S25CM_OUT)"
+fi
+
+# Sub-test 25c4: the producer may not emit a node key it has not DECLARED. The
+# digest certifies the declaration, so an undeclared key would ship under an
+# identity claiming a field set the cache does not have -- the one failure the
+# identity exists to make impossible. Section 20's "declare, do not infer" rule.
+S25C_DECL="$TMP_DIR/s25-declared"
+s23_tree "$S25C_DECL"
+s23_tooldir "$S25C_DECL/tool"
+python3 - "$S25C_DECL/tool/build.py" <<'S25DEOF'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+src = p.read_text(encoding="utf-8")
+# TWO nodes carry `"file_path": rel,` -- the frontmatter branch and the
+# no-frontmatter one -- so the needle names the frontmatter branch by its
+# preceding line rather than matching both and asserting out.
+needle = """            "title": fm.get("title", title_from_h1),
+            "file_path": rel,"""
+assert src.count(needle) == 1, f"mutation needle appears {src.count(needle)}x"
+p.write_text(src.replace(needle, needle + '\n            "smuggled": 1,', 1),
+             encoding="utf-8")
+S25DEOF
+S25CD_OUT=$(timeout 60 python3 "$S25C_DECL/tool/build.py" --root "$S25C_DECL/todo" \
+    --output "$S25C_DECL/build/todo-cache.json" --repo-root "$S25C_DECL" 2>&1); S25CD_RC=$?
+if [ "$S25CD_RC" != "0" ] && echo "$S25CD_OUT" | grep -q "EMITTED_NODE_FIELDS" \
+   && [ ! -f "$S25C_DECL/build/todo-cache.json" ]; then
+    t_pass "section 25: an undeclared emitted node key refuses the build and writes no cache"
+else
+    t_fail "section 25: undeclared key rc=$S25CD_RC wrote=$([ -f "$S25C_DECL/build/todo-cache.json" ] && echo yes || echo no)"
+fi
+
+# Sub-test 25c5: a binding declaring a DIFFERENT wire format is refused before
+# any of its fields are interpreted. `check_freshness` makes the same
+# comparison, but `--diff` disables freshness and never reaches it -- so the
+# documented rule that bumping SIDECAR_SCHEMA invalidates every existing
+# binding did not hold for the one caller that REQUIRES a binding.
+S25S=$(python3 -c "
+import hashlib, json, pathlib, sys, tempfile
+sys.path.insert(0, '$REPO_ROOT/scripts/todo-graph')
+import cache_schema as cs
+d = pathlib.Path(tempfile.mkdtemp())
+c = d / 'cache.json'
+c.write_bytes(pathlib.Path('$REPO_ROOT/build/todo-cache.json').read_bytes())
+blob = c.read_bytes(); sha = hashlib.sha256(blob).hexdigest()
+def bind(schema):
+    cs.sidecar_path(c, sha).write_text(json.dumps({
+        'schema': schema,
+        cs.CACHE_FORMAT_VERSION_KEY: cs.CACHE_FORMAT_VERSION,
+        cs.PRODUCER_CONTRACT_DIGEST_KEY: cs.PRODUCER_CONTRACT_DIGEST,
+        'cache_sha256': sha}))
+def verdict():
+    try:
+        cs.check_cache_format(c, blob, require_binding=True); return 'ACCEPTED'
+    except cs.CacheSchemaError: return 'REFUSED'
+bind('todo-cache-corpus-v99'); bad = verdict()
+bind(cs.SIDECAR_SCHEMA); good = verdict()
+print(bad, good)")
+if [ "$S25S" = "REFUSED ACCEPTED" ]; then
+    t_pass "section 25: a binding declaring another wire format is refused; the control still passes"
+else
+    t_fail "section 25: sidecar-schema gate gave '$S25S' (want 'REFUSED ACCEPTED')"
+fi
+
+# Sub-test 25e4: the standalone Gantt guard distinguishes an ABSENT effort from
+# a PRESENT null. `node.get()` conflated them, so `{"effort": null}` rendered
+# the 1w default -- more permissive than the validator this guard backstops,
+# and reachable by a caller that imported render.py without cache_schema.
+S25N=$(python3 -c "
+import sys; sys.path.insert(0, '$REPO_ROOT/scripts/todo-graph')
+import render
+absent = render._gantt_effort({'id': 'x'})
+try:
+    render._gantt_effort({'id': 'x', 'effort': None}); present = 'DEFAULTED'
+except ValueError: present = 'RAISED'
+try:
+    render._gantt_effort({'id': 'x', 'effort': '4mo'}); bad = 'DEFAULTED'
+except ValueError: bad = 'RAISED'
+print(absent, present, bad)")
+if [ "$S25N" = "1w RAISED RAISED" ]; then
+    t_pass "section 25: the standalone Gantt guard defaults only on ABSENCE; a present null raises"
+else
+    t_fail "section 25: standalone gantt guard gave '$S25N' (want '1w RAISED RAISED')"
+fi
+
+# Sub-test 25c6: the declared field set and the JSON Schema's property list are
+# the SAME set. They are two spellings of one contract, and the digest certifies
+# only the Python one -- so a field added to the schema alone would be accepted
+# by jsonschema and refused by the producer, while one added to the declaration
+# alone would move the digest and invalidate every artifact for a field the
+# published schema does not admit.
+S25AG=$(python3 -c "
+import json, sys; sys.path.insert(0, '$REPO_ROOT/scripts/todo-graph')
+import cache_schema as cs
+sch = json.load(open('$REPO_ROOT/scripts/todo-graph/schema/cache.schema.json'))
+props = set(sch['items']['properties'])
+only_decl = sorted(cs.EMITTED_NODE_FIELDS - props)
+only_sch = sorted(props - cs.EMITTED_NODE_FIELDS)
+print('AGREE' if not only_decl and not only_sch
+      else f'DISAGREE decl-only={only_decl} schema-only={only_sch}')")
+if [ "$S25AG" = "AGREE" ]; then
+    t_pass "section 25: EMITTED_NODE_FIELDS and cache.schema.json declare the same node fields"
+else
+    t_fail "section 25: declaration and schema disagree ($S25AG)"
+fi
+
+# Sub-test 25c7: the lint consumer maps EVERY cache reason to an exit code. A
+# reason added without a row here printed its refusal and then died on
+# `KeyError`, which is an undocumented traceback out of the handler whose whole
+# job is keeping infrastructure failures out of the verdict channel.
+S25RC=$(python3 -c "
+import sys; sys.path.insert(0, '$REPO_ROOT/scripts/lint')
+sys.path.insert(0, '$REPO_ROOT/scripts/todo-graph')
+import cache_schema as cs
+import check_stub_behind_stamp as chk
+reasons = [getattr(cs, n) for n in dir(cs) if n.startswith('REASON_')]
+missing = sorted(r for r in reasons if r not in chk._CACHE_REASON_RC)
+print('MAPPED' if not missing else 'MISSING:' + ','.join(missing),
+      chk._CACHE_REASON_RC.get(cs.REASON_LEGACY_FORMAT))")
+if [ "$S25RC" = "MAPPED 5" ]; then
+    t_pass "section 25: every cache_schema reason has a lint exit code, LEGACY_FORMAT at 5"
+else
+    t_fail "section 25: reason-to-rc mapping incomplete ($S25RC)"
+fi
+
+# 25c7-mutation: drop LEGACY_FORMAT from the table and the module must REFUSE TO
+# IMPORT, naming the reason -- not wait until a bad cache is being reported.
+S25RCM=$(python3 - "$REPO_ROOT" <<'S25RCEOF'
+import pathlib, subprocess, sys, tempfile
+repo = pathlib.Path(sys.argv[1])
+d = pathlib.Path(tempfile.mkdtemp())
+src = (repo / "scripts/lint/check_stub_behind_stamp.py").read_text()
+needle = "    _cs.REASON_LEGACY_FORMAT: 5,            # ERROR: another producer contract\n"
+if src.count(needle) != 1:
+    print("NEEDLE-MISS"); raise SystemExit
+(d / "check_stub_behind_stamp.py").write_text(src.replace(needle, "", 1))
+r = subprocess.run([sys.executable, "-c",
+                    "import sys; sys.path.insert(0, %r); sys.path.insert(0, %r); "
+                    "import check_stub_behind_stamp"
+                    % (str(d), str(repo / "scripts/todo-graph"))],
+                   capture_output=True, text=True)
+print("REFUSED" if r.returncode != 0 and "LEGACY_FORMAT" in r.stderr else "IMPORTED")
+S25RCEOF
+)
+if [ "$S25RCM" = "REFUSED" ]; then
+    t_pass "section 25: mutation check -- an unmapped reason fails the lint module at import, naming it"
+else
+    t_fail "section 25: unmapped reason gave '$S25RCM' (want REFUSED)"
+fi
+
+# Sub-test 25e5: the FRONTMATTER schema and the producer admit the same effort
+# values. `additionalProperties` is true there, so an undeclared property is
+# silently accepted -- editor-time and ad-hoc jsonschema validation would
+# approve a TODO the generator refuses, breaking the two-layer split.
+S25FM=$(python3 -c "
+import json, re, sys; sys.path.insert(0, '$REPO_ROOT/scripts/todo-graph')
+import build as b
+sch = json.load(open('$REPO_ROOT/docs/infrastructure/todo-metadata.schema.json'))
+prop = sch['properties'].get('effort')
+if not prop:
+    print('UNDECLARED'); raise SystemExit
+rx = re.compile(prop['pattern'])
+def sch_ok(v):
+    return isinstance(v, str) and bool(rx.match(v)) and rx.match(v).end() == len(v)
+def prod_ok(v):
+    fm = {'schema_version': 1, 'id': 'x-y', 'domain': 'd', 'status': 'draft',
+          'title': 't', 'effort': v}
+    return not [m for c, m in b.validate_frontmatter(fm) if c == 'invalid-field']
+bad = [repr(v) for v in ('1w', '3d', '12w', '0d', '007w', '4mo', '', '2 w', 'x')
+       if sch_ok(v) != prod_ok(v)]
+extra = [repr(v) for v in (None, 7, True) if prod_ok(v)]
+print('AGREE' if not bad and not extra else 'DISAGREE:' + ','.join(bad + extra))")
+if [ "$S25FM" = "AGREE" ]; then
+    t_pass "section 25: the frontmatter schema and build.py admit the same effort values"
+else
+    t_fail "section 25: frontmatter schema disagrees with the producer ($S25FM)"
 fi
 
 # ----------------------------------------------------------------------

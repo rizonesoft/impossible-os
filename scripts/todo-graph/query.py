@@ -337,7 +337,7 @@ class Ctx:
     __slots__ = (
         "nodes", "id_index", "path_index", "slug_index", "slug_collisions",
         "stem_collisions", "inbound", "repo_root", "quiet", "pre_notice_fired",
-        "node_by_path", "ambiguous_edges",
+        "node_by_path", "ambiguous_edges", "dep_notice_fired",
     )
 
     def __init__(self, nodes, repo_root, quiet):
@@ -359,6 +359,7 @@ class Ctx:
         self.repo_root = repo_root
         self.quiet = quiet
         self.pre_notice_fired = False
+        self.dep_notice_fired = False
         # Edge tokens naming a BARE stem that more than one file carries are
         # collected, not silently bound to whichever file the flattened index
         # happened to keep. `_build_ctx` turns a non-empty list into a refusal.
@@ -384,6 +385,49 @@ class Ctx:
                 "§5 back-fill. Showing 0 results.\n"
             )
         self.pre_notice_fired = True
+
+    def dependency_source_notice_once(self):
+        """Say what `ready` / `blocked` / `blocking` ranked against.
+
+        AN EMPTY ANSWER MUST NOT READ AS A VERDICT (TODO-06 section 25). These
+        three verbs consult the FILE-level `depends_on` frontmatter key and
+        nothing else, and as measured on 2026-08-08 zero of the 232 live TODOs
+        author it -- so `blocked`
+        and `blocking` return nothing for every possible corpus, and a caller
+        cannot tell "no TODO is blocked" from "this ranking has no edges to
+        rank". That is the same conflation section 22 removed from the refusal
+        path, arriving here through a silent default instead of a dropped row.
+        The counterpart is the docs entry naming the OTHER dependency evidence
+        and why it is deliberately not consulted; see
+        docs/infrastructure/todo-metadata.md ("Which dependency evidence the
+        readiness verbs consult"). NOT todo-graph.md, which is the GENERATED
+        mermaid artifact rather than a prose doc.
+
+        `stats` INHERITS IT, and that is wanted rather than incidental: it
+        reuses `cmd_blocking` for `top_blocking` and reports `avg_dep_depth`,
+        both computed from the same empty edge set, so its 0.0 needs the same
+        caveat its source does.
+
+        Fires ONCE per invocation and only when the edge set is EMPTY. A
+        corpus that authors the field gets the answer it asked for with no
+        commentary, so this cannot become noise that trains a reader to skip
+        stderr -- it appears exactly while the degradation it describes is
+        real. It stays on stderr and under `--quiet`, so no machine-readable
+        stdout changes shape (`--json` consumers are untouched).
+        """
+        if self.dep_notice_fired or self.quiet:
+            return
+        self.dep_notice_fired = True
+        if any(_safe_list(n.get("depends_on")) for n in self.nodes):
+            return
+        sys.stderr.write(
+            "[query.py] note: ranked against 0 file-level `depends_on` edges "
+            f"({len(self.nodes)} nodes, none authoring the field), so this "
+            "answer describes the absence of a graph rather than the state of "
+            "one. Section-level dependencies are NOT consulted here and that "
+            "is deliberate: their targets are unqualified (`TODO-05` matches "
+            "one file per domain). See docs/infrastructure/todo-metadata.md "
+            "\"Which dependency evidence the readiness verbs consult\".\n")
 
 
 def _build_stem_collisions(nodes: list) -> dict:
@@ -680,6 +724,25 @@ def display_id(node: dict) -> str:
 # ----------------------------------------------------------------------
 
 def cmd_ready(ctx: Ctx, args) -> tuple:
+    """TODOs whose every declared dependency is done.
+
+    THE DEPENDENCY SOURCE IS THE FILE-LEVEL `depends_on` FRONTMATTER KEY, and
+    section 25 pinned that deliberately rather than leaving it as the state
+    nobody had chosen. The cache also carries `sections[].depends_on` -- 2,529
+    groups from the Implementation Order tables, far richer than the file-level
+    field, which zero live TODOs author. Redirecting these verbs at it was
+    considered and REJECTED on two measurements: 1,806 of those groups target
+    `self`, and of the 145 distinct cross-file targets, 26 name a bare
+    `TODO-NN` that matches MORE THAN ONE file (`TODO-01` matches 18). The two
+    fields are also different NAMESPACES -- frontmatter `depends_on` holds TODO
+    ids, section groups hold filename stems -- so this is not a source swap but
+    an unresolved-reference problem, and qualified resolution is section 26's.
+
+    Until that lands the honest behaviour is to consult one source and SAY so,
+    which `dependency_source_notice_once` does. See
+    docs/infrastructure/todo-graph.md.
+    """
+    ctx.dependency_source_notice_once()
     rows = []
     for n in ctx.nodes:
         if n.get("status") != "draft":
@@ -706,6 +769,11 @@ def cmd_ready(ctx: Ctx, args) -> tuple:
 
 
 def cmd_blocked(ctx: Ctx, args) -> tuple:
+    """Active TODOs with an unmet dependency. Same single source as `cmd_ready`
+    and the same section 25 reasoning; the notice fires when there are no edges
+    to rank, because an unconditionally empty answer here reads exactly like
+    "nothing is blocked"."""
+    ctx.dependency_source_notice_once()
     rows = []
     for n in ctx.nodes:
         if n.get("status") != "active":
@@ -728,6 +796,11 @@ def cmd_blocked(ctx: Ctx, args) -> tuple:
 
 
 def cmd_blocking(ctx: Ctx, args) -> tuple:
+    """TODOs ranked by inbound dependency count. Same single source as
+    `cmd_ready`; see section 25. This is the verb the OS Comparison table
+    advertises as the critical-path rank, so an empty result that looks like a
+    verdict is the most misleading of the three."""
+    ctx.dependency_source_notice_once()
     counts: dict = {}
     for n in ctx.nodes:
         if n.get("status") not in ("active", "draft"):
