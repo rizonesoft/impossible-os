@@ -46,21 +46,21 @@
 
 |                             |   Files |      Lines |
 | --------------------------- | ------: | ---------: |
-| **Markdown** (`.md`)        |     459 |     128720 |
+| **Markdown** (`.md`)        |     459 |     128715 |
 | **JSON** (`.json`)          |      16 |       1481 |
 | **YAML** (`.yml`/`.yaml`)   |      13 |       1780 |
 | **HTML** (`.html`)          |      17 |       1623 |
 | **CSS** (`.css`)            |       5 |      74498 |
 | **Config** (`.cfg`/`.conf`) |       1 |         82 |
-| **Subtotal**                | **511** | **208184** |
+| **Subtotal**                | **511** | **208179** |
 
 ## Grand Total
 
 |                                |    Files |       Lines |
 | ------------------------------ | -------: | ----------: |
 | **Core code + tooling**        | **1534** |  **804373** |
-| **Supporting text + metadata** |  **511** |  **208184** |
-| **All counted text files**     | **2045** | **1012557** |
+| **Supporting text + metadata** |  **511** |  **208179** |
+| **All counted text files**     | **2045** | **1012552** |
 
 > Vendored code excluded: ~14441 lines (`stb_image.h`, `stb_truetype.h`, `efi.h`)
 >
@@ -88,4 +88,4 @@
 
 ---
 
-*Last updated: 2026-08-08 17:32 · commit `327887d2a`*
+*Last updated: 2026-08-08 17:33 · commit `13e72f431`*
