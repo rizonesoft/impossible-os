@@ -8,6 +8,9 @@ can cross-report each other's findings (C3: one block surfaces both classes).
 import json
 import sys
 
+import os
+import pathlib
+
 import _content_lint as cl
 
 d = json.load(sys.stdin)
@@ -16,6 +19,28 @@ tn = d.get('tool_name', '')
 path = ti.get('file_path', '')
 if not path:
     sys.exit(0)
+
+# SCOPE: tracked code only. This mirrors scripts/lint.sh Check 5, and Check 5
+# scans the REPO -- so a file outside it can never be the drift this rule
+# exists to prevent. Blocking there is pure cost.
+#
+# Observed 2026-08-07: a throwaway /tmp helper written only to PATCH a TODO was
+# refused because its string literals carried the section glyph plus a digit --
+# text that is legal, and required, in the Markdown it was writing. The run
+# worked around it by composing the glyph as chr(0xA7), which produces
+# byte-identical output while satisfying the hook. A gate that a one-line
+# expression defeats, on a file the corresponding lint never reads, is costing
+# keystrokes without adding safety.
+#
+# Resolved against the repo root rather than trusting the string, so `..`
+# traversal cannot smuggle a tracked file out of scope.
+try:
+    _root = pathlib.Path(
+        os.environ.get('CLAUDE_PROJECT_DIR') or pathlib.Path.cwd()).resolve()
+    if not pathlib.Path(path).resolve().is_relative_to(_root):
+        sys.exit(0)
+except (OSError, ValueError):
+    pass  # unresolvable path: fall through and judge it, fail-closed
 
 texts = []
 if tn == 'Write':

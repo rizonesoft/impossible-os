@@ -1596,9 +1596,33 @@ def cli(argv):
         # checkpoint write and the review-resolved verb -- raised UnboundLocalError.)
         root = repo_root()
         try:
-            subprocess.run(
+            # FAIL-CLOSED on the rebuild (2026-08-08). This return value used to
+            # be discarded outright -- not even assigned -- and the oracle ran
+            # unconditionally on whatever cache was on disk.
+            #
+            # That is a hole in the one guarantee this gate exists to give.
+            # `build.py` returns 3 when the corpus moved while it was reading
+            # (or its git history moved) and REFUSES to write, leaving the
+            # PREVIOUS cache in place; the wrapper is invoked with --keep-cache
+            # and `sequencer_triage` loads that cache with check_stale=False.
+            # So a corpus edit racing this checkpoint could leave a stale cache
+            # classifying every file DONE, and the run would declare fixpoint on
+            # evidence it had just failed to refresh. Filed by the Codex
+            # adversarial review of TODO-06 section 21 and confirmed at source.
+            #
+            # build-and-validate.sh propagates build.py's code rather than
+            # flattening it to 1, so a retryable 3 stays distinguishable from a
+            # malformed-input 1 in the refusal message.
+            rebuild = subprocess.run(
                 ["bash", "scripts/todo-graph/build-and-validate.sh", "--keep-cache"],
                 cwd=root, capture_output=True, text=True, timeout=300)
+            if rebuild.returncode != 0:
+                print(f"[sequencer] fixpoint REFUSED: todo-graph rebuild failed "
+                      f"(rc={rebuild.returncode}). The oracle would be reading a "
+                      "cache this run just failed to refresh, so DONE would be "
+                      "unearned. Fail safe -- keep running, do NOT finish.",
+                      file=sys.stderr)
+                return 1
             out = subprocess.run(
                 [sys.executable, str(HOOK_DIR / "sequencer_triage.py"), "--next"],
                 cwd=root, capture_output=True, text=True, timeout=120)
