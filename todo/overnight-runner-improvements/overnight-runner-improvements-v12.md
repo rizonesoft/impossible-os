@@ -111,7 +111,7 @@ Carry the baselines forward. A measurement without one is an anecdote.
 
 ## Operator-raised, 2026-08-08 -- recorded so they are not lost
 
-- [ ] OPERATOR: the `Impossible OS` column dominates OS Comparison row width, but the fix is editorial, not a width setting
+- [ ] OPERATOR: OPEN -- drop the last column's right-padding in wide-last-column tables, and sweep the corpus in the same commit (decided; lands at the next operator disarm)
       Raised 2026-08-08 while reading TODO-06. Measured across all 223 OS Comparison tables under `todo/` before filing, because the framing matters for what the fix can be.
       - Measurement: the last column is a median **30%** of the table's total column width (an even share across 5 columns would be 20%), max **64%**, and the widest single cell is **219 chars**. So it is above its share but NOT uniformly dominant -- the problem is the TAIL, not the column. Worst: `TODO-07-boot-entry-store-menu-policy.md:626` (219 of 341), `TODO-25-kernel-resource-accounting-quotas.md:671` (136 of 404), `TODO-09-repository-transfer-rizonetech.md:384` (132 of 216).
       - The operator's instinct that percentage sizing cannot work is CORRECT, and for a stronger reason than expected: Markdown has no column-width control at all. A renderer decides widths from content and ignores source padding entirely. Confirmed by the corpus: **212 of 223** of these tables carry a column of <= 6 chars, so any uniform percentage would crush the narrow ones.
