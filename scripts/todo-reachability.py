@@ -532,7 +532,28 @@ def main(argv) -> int:
         # mixed-generation verdict: precisely the race this binding exists to
         # close (Codex adversarial round 2, [medium]).
         _load_cache(".")
+        # ROOT CONTAINMENT IS CHECKED HERE, NOT ONLY IN THE CACHE LOOKUP.
+        # Refusing a target from another tree used to depend on a cache being
+        # loaded: the check lived in `_cache_status`, so with NO cache the
+        # missing-cache fallback audited the foreign file per-file and answered
+        # rc 1 with a confident finding about it. Reproduced 2026-08-08 -- a
+        # file under /tmp was reported as `[no-io-row] section 1 ...`, which is
+        # "an answer that looks authoritative and is not", the exact thing the
+        # refusal exists to prevent. The two rationales were never in conflict:
+        # the missing-cache fallback is for auditing YOUR OWN tree before a
+        # cache exists (a fresh clone), and containment is knowable with no
+        # cache at all, so hoisting it satisfies both.
+        base = Path(_CACHE_LOADED["root"]) if _CACHE_LOADED["root"] \
+            else _canonical_root(".")
         for path in _targets(argv):
+            try:
+                Path(path).resolve().relative_to(base)
+            except (OSError, ValueError) as exc:
+                raise CacheUnusable(
+                    REASON_IDENTITY,
+                    f"{path} does not live under the audited root {base}; "
+                    f"this audit describes one tree and cannot answer for a "
+                    f"file from another ({exc})") from exc
             hits = audit(path)
             if hits:
                 findings[path] = hits

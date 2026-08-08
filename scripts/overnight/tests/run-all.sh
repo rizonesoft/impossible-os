@@ -34,6 +34,31 @@ unset GIT_INDEX_FILE GIT_DIR GIT_WORK_TREE GIT_PREFIX GIT_OBJECT_DIRECTORY \
       GIT_COMMITTER_DATE GIT_EDITOR 2>/dev/null || true
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO="$(cd "$HERE/../../.." && pwd)"
+
+# SAME CLASS AS THE GIT-ENV BLOCK ABOVE: a property of how the suite is
+# invoked, not of the code under test. `test_stub_lint_coverage` exercises
+# lint's stub-behind-stamp COVERAGE line, which needs `build/todo-cache.json`;
+# without it the check reports "cache not found" and the test fails naming a
+# fixture, so the suite announces a regression nobody introduced.
+#
+# The cache goes missing routinely and for good reasons: `build-and-validate.sh`
+# WITHOUT `--keep-cache` deletes the artifact it just validated, and any clean
+# build removes `build/` wholesale. Measured 2026-08-08: 67/69 at pre-commit
+# minutes after the same suite returned 69/69, with nothing between the two runs
+# but a lint rebuild and a smoke-matrix clean build. That is almost certainly
+# the unnamed `68 passed, 1 failed` intermittent this suite has been carrying.
+#
+# Building it costs ~1.2s and is idempotent, so the suite declares its own
+# precondition rather than reporting a phantom failure. If the build fails the
+# suite continues: the affected test will then fail honestly, which is the
+# correct outcome for a cache that cannot be built at all.
+if [ ! -f "$REPO/build/todo-cache.json" ]; then
+  echo "run-all: build/todo-cache.json absent -- building it (suite precondition)"
+  bash "$REPO/scripts/todo-graph/build-and-validate.sh" --keep-cache \
+      >/dev/null 2>&1 || echo "run-all: cache build FAILED -- dependent tests will report it"
+fi
+
 FAIL=0
 PASS=0
 
