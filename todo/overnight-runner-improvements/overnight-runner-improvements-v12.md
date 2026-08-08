@@ -58,6 +58,33 @@ Two standing cautions carried from v11, both still live:
 
 ---
 
+## Findings from the TODO-06 section-23 implementation (2026-08-08 run)
+
+- [ ] `bare_section_refs.py` BLOCKs edits to a path `scripts/lint.sh` Check 5 explicitly EXEMPTS, while claiming parity with it
+      The hook's own message says "Same pattern scripts/lint.sh Check 5 enforces at CI time; this hook catches it at edit time so CI never rejects." That parity does not hold: `scripts/lint.sh:340` skips `scripts/todo-graph/*` outright, and the hook has no corresponding case.
+      - OBSERVED, ~05:50: an Edit adding a TODO fixture to `scripts/todo-graph/tests/test_build.sh` was blocked on the fixture's Implementation Order row. CONFIRMED at source: `scripts/lint.sh:337-346` lists `scripts/todo-graph/*) continue ;;` among the path skips; `.claude/hooks/bare_section_refs.py` has spec-qualifier and NTFS-style path exemptions but not this one. That file already contains 51 occurrences of the glyph, all pre-existing and all lint-clean, which is what the exemption is FOR -- the file builds TODO corpora, so the glyph is fixture DATA, not a code comment.
+      - The hook also offers no per-call opt-out env, unlike most gates here, so the only routes are to change the fixture or to not make the edit.
+      - Cost this time was low because `build.py:853` matches the glyph optionally (`§?(\d+)`), so the fixture parses identically with a bare number and the sidestep is honest rather than an evasion. That is luck, not design: a fixture needing the literal glyph -- one testing the PARSER's handling of it -- could not be authored through the hook at all.
+      - Fix is one `case` arm mirroring the lint's skip list. Filed rather than applied: `.claude/hooks/**` is control plane.
+- [ ] `build_offload_reminder.py`: a third shape, two `run-artifact.sh`-wrapped commands inside one backgrounded subshell
+      Same defect as the item above in the section-22 block, new evidence. Blocked twice at ~06:05 on `( bash scripts/overnight/run-artifact.sh s23-build -- bash scripts/build.sh > /tmp/x 2>&1; bash scripts/overnight/run-artifact.sh s23-test -- bash scripts/test.sh QUIET=1 > /tmp/y 2>&1 ) &`.
+      - Both commands were COMPLIANT and wrapped. Quoted: `matched segment: 'bash scripts/build.sh'`. So the splitter finds the wrapped command as a segment and does not credit the wrapper that precedes it on the same line.
+      - Recovery: run the two wrappers as separate FOREGROUND calls, which works but serialises ~7 minutes of build + suite that would otherwise have overlapped the TODO edits. Cost is wall-clock, not tool calls.
+      - This is now observed on three distinct shapes (backgrounded single, heredoc-authored, backgrounded pair). The common factor is that the wrapper prefix and the wrapped command land in different segments; a fix that credits `run-artifact.sh ... -- <cmd>` as satisfying the gate for `<cmd>` closes all three.
+- [ ] `section-pack.py` resolved 0 of 6 symbols for a pure-Python section, and reported the miss only as `unresolved_symbols`
+      The pack for section 23 returned `"resolver": "rg"` with `def: null, refs: 0` for `cache_schema`, `load_and_validate`, `CacheInfo`, `check_corpus_unchanged`, `read_text` and `test_build` -- every one of which exists (`cache_schema.load_and_validate` at `scripts/todo-graph/cache_schema.py:1400`, `CacheInfo` at `:281`).
+      - OBSERVED: the pack's own JSON. INFERRED, untested: the ripgrep fallback looks for C-style definitions and has no Python `def`/`class` pattern, so a section whose symbols are all Python resolves nothing.
+      - Consequence is silent, which is the part worth fixing: `refs: 0` reads like "this symbol is unused" rather than "this resolver cannot see this language", and the packet is presented as the deterministic orientation that REPLACES exploration. Here it cost one `section-context-mapper` dispatch plus four direct reads that the pack was supposed to prevent.
+      - A resolver that cannot handle the file type should say so (`resolver: unsupported-language`) rather than return zeros that are indistinguishable from a real absence.
+- [ ] REASONING: I wrote three probes in one debugging loop that could not have failed, and caught them only because a mutation check disagreed
+      All three were mine, all in ~20 minutes, all the same shape: measuring something the change under test does not affect.
+      - (1) The stale-cache fixture appended PROSE to a TODO to make the cache stale. Prose changes no field `build.py` emits, so the rebuilt cache was byte-identical and the assertion "cache bytes unchanged" passed whether or not a rebuild ran. It only surfaced because the paired MUTATION check -- which requires the bytes to CHANGE -- failed. Without that pairing the inert probe would have shipped green.
+      - (2) Debugging that, I ran `sed -i 's/title: "s23 stamp holder"/.../'` against a file whose title was `"s23 fixture"`, so the edit silently did nothing and I read the unchanged result as evidence the mutation was inert.
+      - (3) Separately, I hand-wrote a regex for the 250-char TODO lead cap and got 80 "violations" on a lint-clean file, because the real rule (`scripts/lint.sh:1396`) allows leading whitespace and mine did not. Repaired by running `scripts/todo-staged-check.py` -- the tool's own machinery -- and then CONTROL-testing it with a deliberately over-cap line to confirm its silence meant clean.
+      - The generalisable rule is the one that saved case (1) and (3) and was missing in (2): a probe needs a control that MUST fire. The mutation-check convention already encodes this for fixtures; nothing encodes it for the ad-hoc measurements taken while debugging them, which is where all three of these lived.
+
+---
+
 ## What shipped in the 2026-08-08 stop, and is therefore under test
 
 New machinery, all of it control plane. If something in this list misbehaves, that is a REGRESSION and the highest-value thing this run can report.

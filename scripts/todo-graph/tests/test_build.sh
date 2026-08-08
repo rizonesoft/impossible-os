@@ -1242,7 +1242,8 @@ title: "fixture clean"
 - [x] Commit
 EOF
 # Hand-craft a STALE cache (pre-pass-6 shape: depends_on as string list)
-cat > "$V_TREE/cache.json" <<'EOF'
+mkdir -p "$V_TREE/build"
+cat > "$V_TREE/build/todo-cache.json" <<'EOF'
 [
   {
     "id": null,
@@ -1263,10 +1264,12 @@ cat > "$V_TREE/cache.json" <<'EOF'
   }
 ]
 EOF
-V_OUT=$(python3 "$VALIDATE_PY" --cache "$V_TREE/cache.json" --repo-root "$V_TREE" 2>&1)
+# No --cache: the GENERATED path is the only one the recovery may overwrite,
+# and this fixture is about the recovery.
+V_OUT=$(python3 "$VALIDATE_PY" --repo-root "$V_TREE" 2>&1)
 V_RC=$?
 # Validator should detect stale shape, rebuild, and then exit cleanly.
-if [ "$V_RC" = "0" ] && echo "$V_OUT" | grep -q "stale.*rebuilding"; then
+if [ "$V_RC" = "0" ] && echo "$V_OUT" | grep -q "unusable.*rebuilding"; then
     t_pass "validate: stale cache shape triggers auto-rebuild instead of AttributeError"
 else
     t_fail "validate: stale-cache detection broken (rc=$V_RC, out=$V_OUT)"
@@ -3791,8 +3794,14 @@ fi
 
 # Sub-test 11b: --help prints usage without running build or validate.
 BNV_OUT=$(bash "$BNV_SH" --help 2>&1); BNV_RC=$?
-if [ "$BNV_RC" = "0" ] && echo "$BNV_OUT" | grep -q "Exit code: validator"; then
-    t_pass "build-and-validate: --help prints usage + exits 0"
+# Asserts the THREE-code contract, not just that an exit-code line exists. The
+# header used to promise "0 if all 7 checks pass, 1 otherwise" while rc 2 was
+# already reachable, so a caller reading --help would treat an infrastructure
+# refusal as a graph failure.
+if [ "$BNV_RC" = "0" ] && echo "$BNV_OUT" | grep -q "Exit code: the validator" \
+    && echo "$BNV_OUT" | grep -q "GRAPH FINDINGS" \
+    && echo "$BNV_OUT" | grep -q "INFRASTRUCTURE REFUSAL"; then
+    t_pass "build-and-validate: --help prints usage + the three-code contract + exits 0"
 else
     t_fail "build-and-validate: --help broken (rc=$BNV_RC)"
 fi
@@ -3854,10 +3863,19 @@ fi
 
 # Sub-test 11f: validate.py --diff reports 0 regressions when baseline
 # equals current cache.
+#
+# THE CURRENT CACHE IS BUILT IN PLACE, not copied. It used to be `cp`'d to a
+# second name, which silently left its corpus binding behind -- the sidecar is
+# keyed by the cache's own path and digest -- and the validator accepted it only
+# because nothing checked. Now that the load is generation-bound, an unbound
+# cache refuses, correctly: a cache separated from its binding cannot certify
+# anything. The BASELINE is still a plain copy, because a baseline is read with
+# freshness disabled and needs no binding, which is the actual asymmetry between
+# the two reads.
 BASE_CACHE="$TMP_DIR/diff-base.json"
 CUR_CACHE="$TMP_DIR/diff-cur.json"
 python3 "$BUILD_PY" --quiet --output "$BASE_CACHE" >/dev/null 2>&1
-cp "$BASE_CACHE" "$CUR_CACHE"
+python3 "$BUILD_PY" --quiet --output "$CUR_CACHE" >/dev/null 2>&1
 DIFF_OUT=$(python3 "$VALIDATE_PY" --cache "$CUR_CACHE" --warnings-only --quiet --diff "$BASE_CACHE" 2>&1)
 if echo "$DIFF_OUT" | grep -q "0 graph-delta vs baseline"; then
     t_pass "validate --diff: identical caches -> 0 graph-delta"
@@ -3869,8 +3887,32 @@ fi
 # tests. No assertion of its own -- the broken-backlink scenarios are
 # covered by 11g2 (typo rename, no referrer -> pass) and 11g3
 # (referenced removal -> fail with source).
+#
+# d_todo writes one real TODO file. The delta fixtures below used to hand-craft
+# BOTH caches over file_paths that existed nowhere on disk, which only worked
+# while the current cache went in unvalidated and an unreadable TODO read as
+# empty text. The CURRENT side is now built by build.py from a real corpus --
+# the same thing CI does -- and only the BASELINE stays hand-crafted, which is
+# what a historical artifact legitimately is.
 DIFF_TREE="$TMP_DIR/diff-break"
 mkdir -p "$DIFF_TREE"
+
+# d_todo <root> <domain> <nn> <slug> <id> <status> [<yaml-depends-list>]
+d_todo() {
+    local root="$1" dom="$2" nn="$3" slug="$4" tid="$5" st="$6" dep="${7:-}"
+    mkdir -p "$root/todo/$dom"
+    {
+        echo "---"
+        echo "schema_version: 1"
+        echo "id: $tid"
+        echo "domain: $dom"
+        echo "status: $st"
+        echo "title: \"$slug\""
+        [ -n "$dep" ] && echo "depends_on: [$dep]"
+        echo "---"
+        echo "body"
+    } > "$root/todo/$dom/TODO-$nn-$slug.md"
+}
 
 # Sub-test 11g2: typo-id correction (nobody references the old id)
 # must NOT trigger broken-backlink. Codex pass 15 H1 regression.
@@ -3889,12 +3931,17 @@ baseline = [
      'stamps_xrefs': [], 'created_at': '2026-04-23T00:00:00Z',
      'last_active_at': '2026-04-23T00:00:00Z'},
 ]
-# Current: typo corrected -> 'correct-id'. Beta unchanged.
-current = [dict(baseline[0], id='correct-id'), baseline[1]]
 with open('$DIFF_TREE/base3.json', 'w') as f: json.dump(baseline, f)
-with open('$DIFF_TREE/cur3.json', 'w') as f: json.dump(current, f)
 "
-DIFF_OUT=$(python3 "$VALIDATE_PY" --cache "$DIFF_TREE/cur3.json" --repo-root "$DIFF_TREE" --quiet --warnings-only --diff "$DIFF_TREE/base3.json" 2>&1); DIFF_RC=$?
+# Current: typo corrected -> 'correct-id'. Beta unchanged. Built from a real
+# corpus so the cache carries its binding and the files it names exist.
+D3="$DIFF_TREE/t3"
+rm -rf "$D3"
+d_todo "$D3" 01-t 01 a correct-id active
+d_todo "$D3" 01-t 02 b beta active
+python3 "$BUILD_PY" --quiet --root "$D3/todo" --output "$DIFF_TREE/cur3.json" \
+    --repo-root "$D3" >/dev/null 2>&1
+DIFF_OUT=$(python3 "$VALIDATE_PY" --cache "$DIFF_TREE/cur3.json" --repo-root "$D3" --quiet --warnings-only --diff "$DIFF_TREE/base3.json" 2>&1); DIFF_RC=$?
 if ! echo "$DIFF_OUT" | grep -q "broken-backlink"; then
     t_pass "validate --diff: typo-id correction does NOT false-positive as broken-backlink"
 else
@@ -3918,12 +3965,16 @@ baseline = [
      'stamps_xrefs': [], 'created_at': '2026-04-23T00:00:00Z',
      'last_active_at': '2026-04-23T00:00:00Z'},
 ]
-# Current: alpha removed but beta still depends on it.
-current = [baseline[1]]
 with open('$DIFF_TREE/base4.json', 'w') as f: json.dump(baseline, f)
-with open('$DIFF_TREE/cur4.json', 'w') as f: json.dump(current, f)
 "
-DIFF_OUT=$(python3 "$VALIDATE_PY" --cache "$DIFF_TREE/cur4.json" --repo-root "$DIFF_TREE" --quiet --warnings-only --diff "$DIFF_TREE/base4.json" 2>&1); DIFF_RC=$?
+# Current: alpha's file is GONE but beta still depends on it. Real corpus, so
+# the removal is a real removal rather than a node edited out of a JSON blob.
+D4="$DIFF_TREE/t4"
+rm -rf "$D4"
+d_todo "$D4" 01-t 02 b beta active "'alpha'"
+python3 "$BUILD_PY" --quiet --root "$D4/todo" --output "$DIFF_TREE/cur4.json" \
+    --repo-root "$D4" >/dev/null 2>&1
+DIFF_OUT=$(python3 "$VALIDATE_PY" --cache "$DIFF_TREE/cur4.json" --repo-root "$D4" --quiet --warnings-only --diff "$DIFF_TREE/base4.json" 2>&1); DIFF_RC=$?
 if [ "$DIFF_RC" = "1" ] && echo "$DIFF_OUT" | grep -q "broken-backlink: id 'alpha'" \
     && echo "$DIFF_OUT" | grep -q "still referenced by:"; then
     t_pass "validate --diff: removed id WITH live referrer fires broken-backlink"
@@ -3973,15 +4024,16 @@ baseline = [{'file_path': 'todo/01-t/TODO-01-a.md', 'id': 'alpha', 'domain': '01
     'sections': [], 'section_headings': [], 'inputs_xrefs': [],
     'stamps_xrefs': [], 'created_at': '2026-04-23T00:00:00Z',
     'last_active_at': '2026-04-23T00:00:00Z'}]
-current = [{'file_path': 'todo/01-t/TODO-01-a.md', 'id': 'alpha', 'domain': '01-t',
-    'status': 'active', 'title': 'A', 'schema_version': 1,
-    'sections': [], 'section_headings': [], 'inputs_xrefs': [],
-    'stamps_xrefs': [], 'created_at': '2026-04-23T00:00:00Z',
-    'last_active_at': '2026-04-23T00:00:00Z'}]
 with open('$DIFF_TREE/base2.json', 'w') as f: json.dump(baseline, f)
-with open('$DIFF_TREE/cur2.json', 'w') as f: json.dump(current, f)
 "
-DIFF_OUT=$(python3 "$VALIDATE_PY" --cache "$DIFF_TREE/cur2.json" --repo-root "$DIFF_TREE" --quiet --warnings-only --diff "$DIFF_TREE/base2.json" 2>&1); DIFF_RC=$?
+# Current: the same file, demoted done -> active. Real corpus on the current
+# side; the baseline above is the historical artifact it is compared against.
+D2="$DIFF_TREE/t2"
+rm -rf "$D2"
+d_todo "$D2" 01-t 01 a alpha active
+python3 "$BUILD_PY" --quiet --root "$D2/todo" --output "$DIFF_TREE/cur2.json" \
+    --repo-root "$D2" >/dev/null 2>&1
+DIFF_OUT=$(python3 "$VALIDATE_PY" --cache "$DIFF_TREE/cur2.json" --repo-root "$D2" --quiet --warnings-only --diff "$DIFF_TREE/base2.json" 2>&1); DIFF_RC=$?
 if [ "$DIFF_RC" = "1" ] && echo "$DIFF_OUT" | grep -q "status-downgrade.*done.*active"; then
     t_pass "validate --diff: detects status-downgrade (done -> active)"
 else
@@ -10638,6 +10690,619 @@ if mkfifo "$PW_FIFO2/todo/01-test/TODO-98-fifo.md" 2>/dev/null; then
     fi
 else
     t_pass "producer window: producer-side FIFO case skipped (mkfifo unavailable on this filesystem)"
+fi
+
+# ======================================================================
+# validate.py rebuild recovery + the --diff baseline cache.
+#
+# Every fixture below is paired with a MUTATION CHECK: the guard under test
+# is reverted in a COPY of the source and the same fixture is re-run, which
+# must then behave the old way. A fixture that passes against both is not
+# testing the guard, it is testing something incidental on the way to it.
+#
+# The Implementation Order rows below spell the Section column as a bare
+# number rather than with the section glyph. build.py:853 matches it
+# optionally, so the fixtures parse identically -- and this file is exempt
+# from the bare-section-ref lint (scripts/lint.sh:340) precisely because it
+# builds TODO corpora, but the edit-time hook does not honour that exemption.
+# ======================================================================
+
+# s23_tree <dir> -- a minimal, valid one-file corpus. Several fixtures below
+# need "a tree build.py can actually build", and inlining it five times is
+# how the copies drift apart.
+s23_tree() {
+    local root="$1"
+    rm -rf "$root"
+    mkdir -p "$root/todo/01-test" "$root/build"
+    cat > "$root/todo/01-test/TODO-01-s23.md" <<'S23EOF'
+---
+schema_version: 1
+id: fm-s23
+domain: 01-test
+status: active
+title: "s23 fixture"
+---
+# TODO-01 -- s23 fixture
+## Inputs
+| Path | Purpose |
+| ---- | ------- |
+| `src/foo` | example |
+## Outcome
+Fixture for the validator's rebuild-recovery and baseline-cache semantics.
+## Implementation Order
+| ⭐ | Order | Section | Deliverable | Depends On | Status |
+| --- | --- | --- | --- | --- | --- |
+| 💎 | 1 | 1 | First | -- | [x] |
+## 1. First Section
+Body for the first section.
+- [x] Item one
+- [x] Commit
+S23EOF
+}
+
+# s23_tooldir <dir> -- a COPY of the todo-graph tool set, so a fixture can
+# replace one of its pieces (a stub producer, a reverted guard) without
+# touching the real tree. validate.py locates build.py next to ITSELF, which
+# is exactly what makes this substitution possible.
+s23_tooldir() {
+    local tool="$1"
+    rm -rf "$tool"
+    mkdir -p "$tool/schema"
+    cp "$REPO_ROOT/scripts/todo-graph/validate.py" \
+       "$REPO_ROOT/scripts/todo-graph/cache_schema.py" \
+       "$REPO_ROOT/scripts/todo-graph/build.py" "$tool/"
+    cp "$REPO_ROOT/scripts/todo-graph/schema/cache.schema.json" "$tool/schema/"
+}
+
+# Sub-test 23r1: a corrupt cache is REBUILT and the rebuild is re-validated,
+# ending in a clean rc 0. This is the recovery the section preserves.
+S23A="$TMP_DIR/s23-rebuild-clean"
+s23_tree "$S23A"
+printf 'CORRUPT{{{' > "$S23A/build/todo-cache.json"
+S23A_OUT=$(timeout 60 python3 "$VALIDATE_PY" \
+    --repo-root "$S23A" --quiet 2>&1); S23A_RC=$?
+if [ "$S23A_RC" = "0" ]; then
+    t_pass "validate recovery: a corrupt cache is rebuilt once and passes (rc 0)"
+else
+    t_fail "validate recovery: corrupt-then-rebuildable gave rc=$S23A_RC out=$S23A_OUT"
+fi
+
+# Sub-test 23r2: a producer that "succeeds" while emitting an unusable
+# artifact must exit 2 after EXACTLY ONE rebuild. rc 1 would read as graph
+# findings, and a retry loop against a deterministically-corrupt producer is
+# a hang rather than a recovery -- so the attempt COUNT is asserted, not just
+# the exit code.
+S23B="$TMP_DIR/s23-rebuild-corrupt"
+s23_tree "$S23B"
+s23_tooldir "$S23B/tool"
+cat > "$S23B/tool/build.py" <<S23BEOF
+import sys
+out = sys.argv[sys.argv.index("--output") + 1]
+open(out, "w").write("STILL CORRUPT")
+open("$S23B/attempts", "a").write("x")
+sys.exit(0)
+S23BEOF
+printf 'CORRUPT' > "$S23B/build/todo-cache.json"
+: > "$S23B/attempts"
+S23B_OUT=$(timeout 60 python3 "$S23B/tool/validate.py" \
+    --repo-root "$S23B" --quiet 2>&1); S23B_RC=$?
+S23B_N=$(wc -c < "$S23B/attempts" | tr -d ' ')
+if [ "$S23B_RC" = "2" ] && [ "$S23B_N" = "1" ]; then
+    t_pass "validate recovery: a still-corrupt rebuild exits 2 after exactly one attempt"
+else
+    t_fail "validate recovery: still-corrupt rebuild gave rc=$S23B_RC attempts=$S23B_N (want 2 / 1) out=$S23B_OUT"
+fi
+
+# 23r2-mutation: revert the second validation to the old bare re-read. The
+# fixture must then STOP exiting 2 -- the traceback lands on rc 1, which is
+# the findings channel this work separates it from.
+S23B_MUT="$TMP_DIR/s23-rebuild-corrupt-mut"
+s23_tree "$S23B_MUT"
+cp -r "$S23B/tool" "$S23B_MUT/tool"
+python3 - "$S23B_MUT/tool/validate.py" <<'S23BMEOF'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+src = p.read_text(encoding="utf-8")
+needle = """    try:
+        return cache_schema.load_and_validate(
+            cache_path, todo_root, profile=cache_schema.PROFILE_VALIDATE)
+    except cache_schema.CacheSchemaError as second:"""
+assert src.count(needle) == 1, f"mutation needle appears {src.count(needle)}x"
+revert = """    if True:
+        return json.loads(cache_path.read_text(encoding="utf-8")), None
+    try:
+        return cache_schema.load_and_validate(
+            cache_path, todo_root, profile=cache_schema.PROFILE_VALIDATE)
+    except cache_schema.CacheSchemaError as second:"""
+p.write_text(src.replace(needle, revert, 1), encoding="utf-8")
+S23BMEOF
+sed -i "s#$S23B/attempts#$S23B_MUT/attempts#" "$S23B_MUT/tool/build.py"
+printf 'CORRUPT' > "$S23B_MUT/build/todo-cache.json"
+: > "$S23B_MUT/attempts"
+timeout 60 python3 "$S23B_MUT/tool/validate.py" \
+    --repo-root "$S23B_MUT" --quiet >/dev/null 2>&1; S23BM_RC=$?
+if [ "$S23BM_RC" != "2" ]; then
+    t_pass "validate recovery: mutation check -- the reverted bare re-read stops returning rc 2 (fixture is sensitive)"
+else
+    t_fail "validate recovery: mutation check -- reverted re-read still gave rc 2, so 23r2 proves nothing"
+fi
+
+# Sub-test 23r2b: a corrupt cache at a NON-canonical path refuses instead of
+# being rebuilt over. The reason (UNREADABLE) is rebuildable and 23r1 proves
+# the same bytes DO get rebuilt at the generated path -- so this isolates
+# ownership as the deciding factor, not the failure reason. The file's bytes
+# are asserted intact: this is a data-loss guard, and rc alone would not catch
+# a rebuild-then-refuse.
+S23J="$TMP_DIR/s23-not-ours"
+s23_tree "$S23J"
+printf 'CORRUPT{{{' > "$S23J/imported-cache.json"
+S23J_BEFORE=$(md5sum "$S23J/imported-cache.json" | cut -d' ' -f1)
+S23J_OUT=$(timeout 60 python3 "$VALIDATE_PY" --cache "$S23J/imported-cache.json" \
+    --repo-root "$S23J" --quiet 2>&1); S23J_RC=$?
+S23J_AFTER=$(md5sum "$S23J/imported-cache.json" | cut -d' ' -f1)
+if [ "$S23J_RC" = "2" ] && [ "$S23J_BEFORE" = "$S23J_AFTER" ] \
+    && echo "$S23J_OUT" | grep -q "does not own"; then
+    t_pass "validate recovery: a corrupt cache this tool does not own refuses instead of being rebuilt over"
+else
+    t_fail "validate recovery: non-canonical cache rc=$S23J_RC bytes-changed=$([ "$S23J_BEFORE" = "$S23J_AFTER" ] && echo no || echo yes) out=$S23J_OUT"
+fi
+
+# 23r2b-mutation: drop the ownership gate. The imported cache must then be
+# REWRITTEN -- the destruction the gate exists to prevent.
+S23J_MUT="$TMP_DIR/s23-not-ours-mut"
+s23_tree "$S23J_MUT"
+s23_tooldir "$S23J_MUT/tool"
+python3 - "$S23J_MUT/tool/validate.py" <<'S23JMEOF'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+src = p.read_text(encoding="utf-8")
+needle = "        if first.reason in _REBUILDABLE_REASONS and not owned:"
+assert src.count(needle) == 1, f"mutation needle appears {src.count(needle)}x"
+p.write_text(src.replace(needle, "        if False:", 1), encoding="utf-8")
+S23JMEOF
+printf 'CORRUPT{{{' > "$S23J_MUT/imported-cache.json"
+S23JM_BEFORE=$(md5sum "$S23J_MUT/imported-cache.json" | cut -d' ' -f1)
+timeout 60 python3 "$S23J_MUT/tool/validate.py" --cache "$S23J_MUT/imported-cache.json" \
+    --repo-root "$S23J_MUT" --quiet >/dev/null 2>&1
+S23JM_AFTER=$(md5sum "$S23J_MUT/imported-cache.json" | cut -d' ' -f1)
+if [ "$S23JM_BEFORE" != "$S23JM_AFTER" ]; then
+    t_pass "validate recovery: mutation check -- without the ownership gate the imported cache is overwritten (fixture is sensitive)"
+else
+    t_fail "validate recovery: mutation check -- reverted ownership gate left the imported cache intact, so 23r2b proves nothing"
+fi
+
+# Sub-test 23r3: a STALE cache REFUSES and is NOT rebuilt. The recovery
+# writes back to the caller-named --cache path, so auto-rebuilding on
+# staleness would destroy a captured or imported cache for being exactly
+# what it is. The cache BYTES are asserted unchanged, which is the property
+# that matters -- rc 2 alone would not catch a rebuild-then-refuse.
+S23C="$TMP_DIR/s23-stale"
+s23_tree "$S23C"
+timeout 60 python3 "$BUILD_PY" --quiet --root "$S23C/todo" \
+    --output "$S23C/build/todo-cache.json" --repo-root "$S23C" >/dev/null 2>&1
+S23C_BEFORE=$(md5sum "$S23C/build/todo-cache.json" | cut -d' ' -f1)
+# The edit must reach a field the cache actually CARRIES. Appending prose to
+# the body changes no emitted field, so the rebuilt cache would be byte-
+# identical and "bytes unchanged" would pass whether or not a rebuild ran --
+# a probe that cannot fail. Rewriting the frontmatter title does land in the
+# cache, which is what makes both assertions below mean something.
+sed -i 's/^title: .*/title: "s23 fixture EDITED"/' "$S23C/todo/01-test/TODO-01-s23.md"
+S23C_OUT=$(timeout 60 python3 "$VALIDATE_PY" \
+    --repo-root "$S23C" --quiet 2>&1); S23C_RC=$?
+S23C_AFTER=$(md5sum "$S23C/build/todo-cache.json" | cut -d' ' -f1)
+if [ "$S23C_RC" = "2" ] && [ "$S23C_BEFORE" = "$S23C_AFTER" ]; then
+    t_pass "validate recovery: a stale cache refuses (rc 2) without overwriting the caller's file"
+else
+    t_fail "validate recovery: stale cache rc=$S23C_RC bytes-changed=$([ "$S23C_BEFORE" = "$S23C_AFTER" ] && echo no || echo yes) out=$S23C_OUT"
+fi
+
+# 23r3-mutation: put STALE back into the rebuildable set. The cache must then
+# be REWRITTEN, which is the data loss the exclusion prevents.
+S23C_MUT="$TMP_DIR/s23-stale-mut"
+s23_tree "$S23C_MUT"
+s23_tooldir "$S23C_MUT/tool"
+python3 - "$S23C_MUT/tool/validate.py" <<'S23CMEOF'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+src = p.read_text(encoding="utf-8")
+needle = "    cache_schema.REASON_EMPTY,\n))"
+assert src.count(needle) == 1, f"mutation needle appears {src.count(needle)}x"
+p.write_text(src.replace(
+    needle, "    cache_schema.REASON_EMPTY,\n    cache_schema.REASON_STALE,\n))",
+    1), encoding="utf-8")
+S23CMEOF
+timeout 60 python3 "$BUILD_PY" --quiet --root "$S23C_MUT/todo" \
+    --output "$S23C_MUT/build/todo-cache.json" --repo-root "$S23C_MUT" >/dev/null 2>&1
+S23CM_BEFORE=$(md5sum "$S23C_MUT/build/todo-cache.json" | cut -d' ' -f1)
+sed -i 's/^title: .*/title: "s23 fixture EDITED"/' "$S23C_MUT/todo/01-test/TODO-01-s23.md"
+timeout 60 python3 "$S23C_MUT/tool/validate.py" \
+    --repo-root "$S23C_MUT" --quiet >/dev/null 2>&1
+S23CM_AFTER=$(md5sum "$S23C_MUT/build/todo-cache.json" | cut -d' ' -f1)
+if [ "$S23CM_BEFORE" != "$S23CM_AFTER" ]; then
+    t_pass "validate recovery: mutation check -- STALE in the rebuildable set overwrites the caller's cache (fixture is sensitive)"
+else
+    t_fail "validate recovery: mutation check -- reverted STALE left the cache untouched, so 23r3 proves nothing"
+fi
+
+# Sub-test 23b1: a malformed --diff baseline is REFUSED, and specifically it
+# does NOT become a graph-delta finding. A delta nobody authored is actioned
+# by a human; a refusal is obviously about the tool.
+S23D="$TMP_DIR/s23-baseline"
+s23_tree "$S23D"
+timeout 60 python3 "$BUILD_PY" --quiet --root "$S23D/todo" \
+    --output "$S23D/cache.json" --repo-root "$S23D" >/dev/null 2>&1
+printf '[{"file_path":"todo/01-test/TODO-01-s23.md"}]' > "$S23D/bad-baseline.json"
+S23D_OUT=$(timeout 60 python3 "$VALIDATE_PY" --cache "$S23D/cache.json" \
+    --repo-root "$S23D" --quiet --diff "$S23D/bad-baseline.json" 2>&1); S23D_RC=$?
+if [ "$S23D_RC" = "2" ] && ! echo "$S23D_OUT" | grep -q "graph-delta:"; then
+    t_pass "validate baseline: a malformed baseline refuses (rc 2) instead of manufacturing graph deltas"
+else
+    t_fail "validate baseline: malformed baseline rc=$S23D_RC out=$S23D_OUT (want rc 2, no graph-delta finding)"
+fi
+
+# Sub-test 23b2: a VALID baseline still diffs cleanly, so the refusal above is
+# not just "the baseline path is broken now".
+S23D_OK=$(timeout 60 python3 "$VALIDATE_PY" --cache "$S23D/cache.json" \
+    --repo-root "$S23D" --quiet --diff "$S23D/cache.json" 2>&1); S23DOK_RC=$?
+if [ "$S23DOK_RC" = "0" ]; then
+    t_pass "validate baseline: a current-producer baseline still diffs (rc 0)"
+else
+    t_fail "validate baseline: valid baseline gave rc=$S23DOK_RC out=$S23D_OK"
+fi
+
+# 23b1-mutation: revert the baseline to the old raw json.loads. The malformed
+# baseline must then stop refusing -- it becomes an invented finding instead.
+S23D_MUT="$TMP_DIR/s23-baseline-mut"
+s23_tree "$S23D_MUT"
+s23_tooldir "$S23D_MUT/tool"
+python3 - "$S23D_MUT/tool/validate.py" <<'S23DMEOF'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+src = p.read_text(encoding="utf-8")
+needle = """        baseline_nodes, _base_info = cache_schema.load_and_validate(
+            baseline_path, repo_root / "todo", check_stale=False,
+            profile=cache_schema.PROFILE_BASELINE)"""
+assert src.count(needle) == 1, f"mutation needle appears {src.count(needle)}x"
+revert = """        baseline_nodes = json.loads(baseline_path.read_text(encoding="utf-8"))"""
+p.write_text(src.replace(needle, revert, 1), encoding="utf-8")
+S23DMEOF
+timeout 60 python3 "$BUILD_PY" --quiet --root "$S23D_MUT/todo" \
+    --output "$S23D_MUT/cache.json" --repo-root "$S23D_MUT" >/dev/null 2>&1
+printf '[{"file_path":"todo/01-test/TODO-01-s23.md"}]' > "$S23D_MUT/bad-baseline.json"
+S23DM_OUT=$(timeout 60 python3 "$S23D_MUT/tool/validate.py" --cache "$S23D_MUT/cache.json" \
+    --repo-root "$S23D_MUT" --quiet --diff "$S23D_MUT/bad-baseline.json" 2>&1); S23DM_RC=$?
+if [ "$S23DM_RC" != "2" ]; then
+    t_pass "validate baseline: mutation check -- the reverted raw read stops refusing (fixture is sensitive)"
+else
+    t_fail "validate baseline: mutation check -- reverted raw read still gave rc 2, so 23b1 proves nothing"
+fi
+
+# Sub-test 23c1: a corpus file edited DURING the check walk is caught by the
+# post-walk re-verification, and NO findings are printed. The output assertion
+# is half the point: a human acts on printed findings, not on an exit code, so
+# a run that reaches no verdict must say nothing about the corpus.
+S23E="$TMP_DIR/s23-midwalk"
+s23_tree "$S23E"
+timeout 60 python3 "$BUILD_PY" --quiet --root "$S23E/todo" \
+    --output "$S23E/cache.json" --repo-root "$S23E" >/dev/null 2>&1
+cat > "$S23E/drive.py" <<S23EEOF
+import sys
+sys.path.insert(0, "$REPO_ROOT/scripts/todo-graph")
+import validate
+_orig = validate.check_duplicate_id
+def _spy(nodes):
+    # Fires INSIDE the walk, after the cache was loaded and bound.
+    with open("$S23E/todo/01-test/TODO-01-s23.md", "a") as fh:
+        fh.write("\\nedited mid-walk\\n")
+    return _orig(nodes)
+validate.check_duplicate_id = _spy
+sys.argv = ["validate.py", "--cache", "$S23E/cache.json",
+            "--repo-root", "$S23E"]
+sys.exit(validate.main())
+S23EEOF
+S23E_OUT=$(timeout 60 python3 "$S23E/drive.py" 2>/dev/null); S23E_RC=$?
+if [ "$S23E_RC" = "2" ] && [ -z "$S23E_OUT" ]; then
+    t_pass "validate binding: a mid-walk corpus edit refuses (rc 2) and prints no findings"
+else
+    t_fail "validate binding: mid-walk edit rc=$S23E_RC stdout='$S23E_OUT' (want rc 2, empty stdout)"
+fi
+
+# 23c1-mutation: drop the post-walk re-verification. The same mid-walk edit
+# must then certify normally -- the window the binding exists to cover.
+S23E_MUT="$TMP_DIR/s23-midwalk-mut"
+s23_tree "$S23E_MUT"
+s23_tooldir "$S23E_MUT/tool"
+python3 - "$S23E_MUT/tool/validate.py" <<'S23EMEOF'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+src = p.read_text(encoding="utf-8")
+needle = "    _reverify_corpus(todo_root, cache_info)\n    for line in out:"
+assert src.count(needle) == 1, f"mutation needle appears {src.count(needle)}x"
+p.write_text(src.replace(needle, "    for line in out:", 1), encoding="utf-8")
+S23EMEOF
+timeout 60 python3 "$BUILD_PY" --quiet --root "$S23E_MUT/todo" \
+    --output "$S23E_MUT/cache.json" --repo-root "$S23E_MUT" >/dev/null 2>&1
+cat > "$S23E_MUT/drive.py" <<S23EMDEOF
+import sys
+sys.path.insert(0, "$S23E_MUT/tool")
+import validate
+_orig = validate.check_duplicate_id
+def _spy(nodes):
+    with open("$S23E_MUT/todo/01-test/TODO-01-s23.md", "a") as fh:
+        fh.write("\\nedited mid-walk\\n")
+    return _orig(nodes)
+validate.check_duplicate_id = _spy
+sys.argv = ["validate.py", "--cache", "$S23E_MUT/cache.json",
+            "--repo-root", "$S23E_MUT"]
+sys.exit(validate.main())
+S23EMDEOF
+timeout 60 python3 "$S23E_MUT/drive.py" >/dev/null 2>&1; S23EM_RC=$?
+if [ "$S23EM_RC" != "2" ]; then
+    t_pass "validate binding: mutation check -- without the post-walk check the mid-walk edit certifies (fixture is sensitive)"
+else
+    t_fail "validate binding: mutation check -- still rc 2 without the post-walk check, so 23c1 proves nothing"
+fi
+
+# Sub-test 23c2: an unreadable TODO file REFUSES rather than reading as empty
+# text. The fail-open version turned a transient read error into orphan-IO-row
+# and dangling-section FAILs against a file nobody had touched.
+S23F="$TMP_DIR/s23-unreadable"
+s23_tree "$S23F"
+timeout 60 python3 "$BUILD_PY" --quiet --root "$S23F/todo" \
+    --output "$S23F/cache.json" --repo-root "$S23F" >/dev/null 2>&1
+if mkfifo "$S23F/fifo-probe" 2>/dev/null; then
+    rm -f "$S23F/fifo-probe"
+    rm -f "$S23F/todo/01-test/TODO-01-s23.md"
+    mkfifo "$S23F/todo/01-test/TODO-01-s23.md"
+    S23F_OUT=$(timeout 30 python3 "$VALIDATE_PY" --cache "$S23F/cache.json" \
+        --repo-root "$S23F" --quiet 2>&1); S23F_RC=$?
+    rm -f "$S23F/todo/01-test/TODO-01-s23.md"
+    if [ "$S23F_RC" = "124" ]; then
+        t_fail "validate snapshot: HUNG on a non-regular TODO file (timed out)"
+    elif [ "$S23F_RC" = "2" ] && ! echo "$S23F_OUT" | grep -q "\[FAIL\]"; then
+        t_pass "validate snapshot: an unreadable TODO refuses (rc 2) instead of reading as empty"
+    else
+        t_fail "validate snapshot: unreadable TODO rc=$S23F_RC out=$S23F_OUT (want rc 2, no [FAIL] lines)"
+    fi
+else
+    t_pass "validate snapshot: unreadable-TODO case skipped (mkfifo unavailable on this filesystem)"
+fi
+
+# Sub-test 23w1: --fix-line-numbers --write refuses when its destination moved
+# since the startup snapshot, instead of silently discarding that edit. This
+# is the ONE walk the global post-run check cannot cover, because a write run
+# changes the corpus itself.
+# TWO files, deliberately: the item-name match is a plain substring scan over
+# every line of the target, so a stamp pointing at its OWN file always matches
+# twice (the checklist line and the stamp line) and is refused as ambiguous
+# before the write is ever reached. Real stamps point across files, and so does
+# this fixture -- TODO-01 holds the stamp, TODO-02 holds the item, and TODO-01
+# is therefore the file the repair rewrites.
+s23_write_tree() {
+    local root="$1"
+    rm -rf "$root"
+    mkdir -p "$root/todo/01-test"
+    cat > "$root/todo/01-test/TODO-01-a.md" <<'S23WAEOF'
+---
+schema_version: 1
+id: fm-s23-a
+domain: 01-test
+status: active
+title: "s23 stamp holder"
+---
+# TODO-01 -- s23 stamp holder
+## Inputs
+| Path | Purpose |
+| ---- | ------- |
+| `src/foo` | example |
+## Outcome
+Holds the stamp whose line number the repair re-resolves.
+## Implementation Order
+| ⭐ | Order | Section | Deliverable | Depends On | Status |
+| --- | --- | --- | --- | --- | --- |
+| 💎 | 1 | 1 | First | -- | [x] |
+## 1. First Section
+Body.
+- [x] Commit
+
+> **Accepted:** finding -> XREF: [`TODO-02`](01-test/TODO-02-b.md) (item: "Wire the resolver" at line 999)
+S23WAEOF
+    cat > "$root/todo/01-test/TODO-02-b.md" <<'S23WBEOF'
+---
+schema_version: 1
+id: fm-s23-b
+domain: 01-test
+status: active
+title: "s23 item holder"
+---
+# TODO-02 -- s23 item holder
+## Inputs
+| Path | Purpose |
+| ---- | ------- |
+| `src/bar` | example |
+## Outcome
+Holds the item the stamp above names.
+## Implementation Order
+| ⭐ | Order | Section | Deliverable | Depends On | Status |
+| --- | --- | --- | --- | --- | --- |
+| 💎 | 1 | 1 | First | -- | [ ] |
+## 1. First Section
+Body.
+- [ ] Wire the resolver
+- [ ] Commit
+S23WBEOF
+}
+
+# s23_write_drive <dir> <tool-dir-or-empty> -- writes a driver that lands a
+# concurrent edit on the rewrite target BETWEEN the snapshot and the write.
+s23_write_drive() {
+    local root="$1" toolpath="${2:-$REPO_ROOT/scripts/todo-graph}"
+    cat > "$root/drive.py" <<S23WDEOF
+import sys
+sys.path.insert(0, "$toolpath")
+import validate
+_orig = validate.load_file_snapshot
+def _spy(repo_root, nodes):
+    snap = _orig(repo_root, nodes)
+    with open("$root/todo/01-test/TODO-01-a.md", "a") as fh:
+        fh.write("\\na concurrent edit\\n")
+    return snap
+validate.load_file_snapshot = _spy
+sys.argv = ["validate.py", "--cache", "$root/cache.json",
+            "--repo-root", "$root", "--fix-line-numbers", "--write", "--quiet"]
+sys.exit(validate.main())
+S23WDEOF
+}
+
+S23G="$TMP_DIR/s23-write-race"
+s23_write_tree "$S23G"
+timeout 60 python3 "$BUILD_PY" --quiet --root "$S23G/todo" \
+    --output "$S23G/cache.json" --repo-root "$S23G" >/dev/null 2>&1
+s23_write_drive "$S23G"
+timeout 60 python3 "$S23G/drive.py" >/dev/null 2>&1; S23G_RC=$?
+if [ "$S23G_RC" = "2" ] && grep -q "a concurrent edit" "$S23G/todo/01-test/TODO-01-a.md"; then
+    t_pass "validate repair: --write refuses a destination that moved since the snapshot, preserving the edit"
+else
+    t_fail "validate repair: write-race rc=$S23G_RC edit-survived=$(grep -q 'a concurrent edit' "$S23G/todo/01-test/TODO-01-a.md" && echo yes || echo no) (want rc 2 / yes)"
+fi
+
+# 23w1-mutation: revert to the blind write. The concurrent edit must then be
+# GONE from the file -- the lost update this guard refuses.
+S23G_MUT="$TMP_DIR/s23-write-race-mut"
+s23_write_tree "$S23G_MUT"
+s23_tooldir "$S23G_MUT/tool"
+python3 - "$S23G_MUT/tool/validate.py" <<'S23GMPEOF'
+import pathlib, sys
+p = pathlib.Path(sys.argv[1])
+src = p.read_text(encoding="utf-8")
+needle = "        if current != old_text:"
+assert src.count(needle) == 1, f"mutation needle appears {src.count(needle)}x"
+p.write_text(src.replace(needle, "        if False:", 1), encoding="utf-8")
+S23GMPEOF
+timeout 60 python3 "$BUILD_PY" --quiet --root "$S23G_MUT/todo" \
+    --output "$S23G_MUT/cache.json" --repo-root "$S23G_MUT" >/dev/null 2>&1
+s23_write_drive "$S23G_MUT" "$S23G_MUT/tool"
+timeout 60 python3 "$S23G_MUT/drive.py" >/dev/null 2>&1
+if ! grep -q "a concurrent edit" "$S23G_MUT/todo/01-test/TODO-01-a.md"; then
+    t_pass "validate repair: mutation check -- the reverted blind write DISCARDS the concurrent edit (fixture is sensitive)"
+else
+    t_fail "validate repair: mutation check -- reverted blind write kept the edit, so 23w1 proves nothing"
+fi
+
+# Sub-test 23w2: a repair that refuses writes NOTHING and says nothing. The
+# write used to happen inside the traversal, so a destination discovered stale
+# on file N left files 1..N-1 already rewritten and their DRY-RUN/WRITE lines
+# already printed -- an rc 2 run that both mutated the tree and published a
+# verdict. Both halves are asserted here: no file changed, and stdout/stderr
+# carry the refusal and nothing else.
+S23K="$TMP_DIR/s23-repair-atomic"
+s23_write_tree "$S23K"
+timeout 60 python3 "$BUILD_PY" --quiet --root "$S23K/todo" \
+    --output "$S23K/cache.json" --repo-root "$S23K" >/dev/null 2>&1
+s23_write_drive "$S23K"
+S23K_OUT=$(timeout 60 python3 "$S23K/drive.py" 2>&1); S23K_RC=$?
+if [ "$S23K_RC" = "2" ] && echo "$S23K_OUT" | grep -q "nothing was written" \
+    && ! echo "$S23K_OUT" | grep -qE "WRITE |DRY-RUN "; then
+    t_pass "validate repair: a refused write publishes only the refusal -- no proposed-rewrite lines"
+else
+    t_fail "validate repair: refused write rc=$S23K_RC out=$S23K_OUT (want rc 2, 'nothing was written', no WRITE/DRY-RUN lines)"
+fi
+# No `.validate-tmp` may survive a refusal or a successful run.
+if [ -z "$(find "$S23K/todo" -name '*.validate-tmp' -print -quit)" ]; then
+    t_pass "validate repair: no temporary rewrite file is left behind"
+else
+    t_fail "validate repair: a .validate-tmp file survived the run"
+fi
+
+# Sub-test 23h1: the section_headings subtree. validate.py dereferences
+# h["n"] at two sites with no isinstance test, so every one of these escaped
+# as a traceback at rc 1 before the subtree existed.
+S23H_OUT=$(timeout 60 python3 - <<'S23HEOF' 2>&1
+import sys
+sys.path.insert(0, "scripts/todo-graph")
+import cache_schema as cs
+
+base = {
+    "file_path": "todo/01-t/TODO-01-h.md", "id": "h", "domain": "01-t",
+    "status": "draft", "title": "h", "schema_version": 1,
+    "sections": [], "section_headings": [], "inputs_xrefs": [],
+    "stamps_xrefs": [], "created_at": None, "last_active_at": None,
+}
+
+def probe(headings, profile=cs.PROFILE_VALIDATE):
+    node = dict(base)
+    node["section_headings"] = headings
+    try:
+        cs.validate_nodes([node], "probe", profile)
+        return "NORAISE"
+    except cs.CacheSchemaError as exc:
+        return exc.reason
+
+results = {
+    "non_dict": probe(["not-a-dict"]),
+    "missing_n": probe([{"title": "t"}]),
+    "non_int_n": probe([{"n": "1", "title": "t"}]),
+    "duplicate_n": probe([{"n": 1, "title": "a"}, {"n": 1, "title": "b"}]),
+    "unknown_key": probe([{"n": 1, "title": "t", "extra": 1}]),
+    "valid": probe([{"n": 1, "title": "t"}]),
+    "baseline_ignores": probe(["not-a-dict"], cs.PROFILE_BASELINE),
+}
+want = {
+    "non_dict": "SHAPE", "missing_n": "SHAPE", "non_int_n": "SHAPE",
+    "duplicate_n": "SHAPE", "unknown_key": "SHAPE",
+    "valid": "NORAISE", "baseline_ignores": "NORAISE",
+}
+print("OK" if results == want else f"MISMATCH {results}")
+S23HEOF
+)
+if [ "$S23H_OUT" = "OK" ]; then
+    t_pass "cache schema: section_headings refuses all five malformed shapes, and the baseline profile does not declare it"
+else
+    t_fail "cache schema: section_headings probe gave '$S23H_OUT'"
+fi
+
+# 23h1-mutation: the claim above is only worth anything if the dereference it
+# guards really is unguarded, so prove THAT directly rather than end-to-end. A
+# malformed heading is handed to the two checks that read it; each must raise
+# an ordinary Python exception, which is neither a CacheSchemaError nor
+# anything either reader catches -- so before the subtree existed it escaped
+# main() as a traceback and exited 1, the findings code. Driving it in-process
+# also avoids rewriting a cache file, which would strip its corpus binding and
+# make the fixture refuse for an unrelated reason.
+S23I_OUT=$(cd "$REPO_ROOT" && timeout 60 python3 - <<'S23IMEOF' 2>&1
+import sys
+sys.path.insert(0, "scripts/todo-graph")
+import validate
+
+node = {
+    "file_path": "todo/01-t/TODO-01-h.md", "id": "h", "domain": "01-t",
+    "status": "active", "title": "h", "schema_version": 1,
+    "sections": [], "inputs_xrefs": [], "stamps_xrefs": [],
+    "section_headings": ["not-a-dict"],
+}
+nodes = [node]
+idx = validate.build_id_index(nodes)
+pidx = validate.build_path_index(nodes)
+seen = []
+for label, call in (
+    ("dangling-section",
+     lambda: validate.check_dangling_section_ref(nodes, idx, pidx)),
+    ("orphan-io-row", lambda: validate.check_orphaned_io_row(nodes)),
+):
+    try:
+        call()
+        seen.append(f"{label}=NORAISE")
+    except (TypeError, KeyError) as exc:
+        seen.append(f"{label}={type(exc).__name__}")
+    except Exception as exc:  # noqa: BLE001 -- any other type is a miss too
+        seen.append(f"{label}=OTHER:{type(exc).__name__}")
+print(" ".join(seen))
+S23IMEOF
+)
+if [ "$S23I_OUT" = "dangling-section=TypeError orphan-io-row=TypeError" ]; then
+    t_pass "cache schema: mutation check -- both section_headings consumers raise on a malformed entry, so the subtree is what stands between the cache and a traceback"
+else
+    t_fail "cache schema: mutation check -- section_headings consumers gave '$S23I_OUT' (want both TypeError)"
 fi
 
 # ----------------------------------------------------------------------

@@ -8,7 +8,17 @@
 #   1. python3 scripts/todo-graph/build.py --quiet --output build/todo-cache.json
 #   2. python3 scripts/todo-graph/validate.py --cache build/todo-cache.json
 #
-# Exit code: validator's exit code (0 if all 7 checks pass, 1 otherwise).
+# Exit code: the validator's exit code, propagated verbatim. It has THREE
+# values, not two, and the third is the one a caller must not misread:
+#   0  clean -- every check passed.
+#   1  GRAPH FINDINGS -- the corpus has problems a human should fix.
+#   2  usage error or INFRASTRUCTURE REFUSAL -- the cache or the --diff
+#      baseline could not be trusted, so NO verdict was reached and nothing is
+#      asserted about the corpus. Re-run after rebuilding rather than treating
+#      it as a graph failure.
+# This header said "0 if all 7 checks pass, 1 otherwise" while rc 2 was already
+# reachable, which is how an infrastructure failure came to read as a graph
+# verdict; scripts/todo-graph/validate.py carries the same contract.
 # If build.py fails (malformed frontmatter, missing-frontmatter FATAL, etc)
 # the script aborts with build.py's exit code and never runs the validator.
 #

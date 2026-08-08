@@ -7,8 +7,26 @@
 #
 # Runs eight graph-integrity checks on the cache and the live TODO files.
 # Each check is independent; failures are tagged by category and printed in
-# the t_pass / t_fail style used by scripts/test-tooling.sh. Exit 0 iff
-# zero failures; exit 1 otherwise so CI (TODO-06 §6) can gate on it.
+# the t_pass / t_fail style used by scripts/test-tooling.sh.
+#
+# EXIT CODES (rebuild-recovery and baseline-cache work in the TODO metadata
+# layer). rc 2 was reachable long before it was written down -- build.py-not-
+# found and the argument errors below all took it -- while this header
+# documented only 0/1, so an infrastructure failure that escaped as a traceback
+# landed on rc 1 and read as a graph verdict. The three codes are now a
+# contract, and scripts/todo-graph/build-and-validate.sh repeats it:
+#
+#   0  clean: every check passed (and, under --diff, no graph delta).
+#   1  GRAPH FINDINGS: the corpus has problems a human should fix. This code
+#      means the validator RAN and reached a verdict.
+#   2  usage error or INFRASTRUCTURE REFUSAL: bad arguments, build.py missing,
+#      or the cache/baseline could not be trusted to answer with. This code
+#      means there is NO verdict. Nothing about the corpus is asserted, and no
+#      findings are printed -- see the output-buffering note in main().
+#
+# The distinction is load-bearing in one direction: a refusal misreported as
+# rc 1 sends someone to fix a graph that was never examined, and a false
+# finding is worse than a refusal because it is actioned.
 #
 #   1. Stale XREF: every depends_on / satisfies / Inputs XREF / Accepted+
 #      Deferred XREF must resolve to an existing id-or-file in the cache.
@@ -28,8 +46,13 @@
 #   7. $schema reachability: per-file frontmatter `$schema` must point
 #      at an existing file (skipped when the field is absent).
 #   8. Duplicate id: frontmatter `id` must be globally unique across
-#      the todo tree. Added 2026-04-23 (§6) to catch rename-into-
-#      collision PRs that build_id_index would otherwise mask.
+#      the todo tree. Added 2026-04-23 to catch rename-into-collision
+#      PRs that build_id_index would otherwise mask.
+#   9. Duplicate resolver key: the DERIVED (domain, TODO-number) identity
+#      must be unique too. Check 8 covered only the authored `id`, so a
+#      collision on the derived key -- which every compact reference and
+#      every query reader binds through -- passed here while the shared
+#      cache validator refused the same cache outright.
 #
 # CLI:
 #   validate.py [--cache PATH] [--quiet] [--warnings-only]
@@ -56,6 +79,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -131,86 +155,192 @@ class Finding:
 
 # --- Cache loader --------------------------------------------------------
 
-def load_or_rebuild_cache(cache_path: Path, repo_root: Path, quiet: bool) -> list:
-    """Load build/todo-cache.json. If absent, invoke build.py to regenerate.
-    If the cache was produced by an older build.py (opaque-string
-    depends_on instead of dict-shape {target, sections[int]}), force a
-    rebuild instead of crashing downstream with AttributeError when the
-    validator dereferences grp.get(...). Codex pass 9 M1."""
-    need_rebuild = not cache_path.exists()
-    if not need_rebuild:
-        try:
-            nodes = json.loads(cache_path.read_text(encoding="utf-8"))
-            if _cache_shape_is_stale(nodes):
-                if not quiet:
-                    sys.stderr.write(
-                        f"[validate.py] cache at {cache_path} is stale (pre-pass-6 "
-                        "sections[].depends_on shape); rebuilding via build.py\n"
-                    )
-                need_rebuild = True
-        except (OSError, json.JSONDecodeError) as exc:
-            if not quiet:
-                sys.stderr.write(f"[validate.py] cache at {cache_path} unreadable ({exc}); rebuilding\n")
-            need_rebuild = True
-    if need_rebuild:
-        if not cache_path.exists() and not quiet:
-            sys.stderr.write(f"[validate.py] cache absent at {cache_path}; rebuilding via build.py\n")
-        # Locate build.py via validate.py's own directory (they're siblings);
-        # don't assume repo_root/scripts/todo-graph/ since --repo-root for
-        # regression fixtures points at a synthetic tree.
-        build_py = Path(__file__).resolve().parent / "build.py"
-        if not build_py.exists():
-            sys.stderr.write(f"[validate.py] FATAL: build.py not found next to validate.py ({build_py})\n")
-            sys.exit(2)
-        result = subprocess.run(
-            [sys.executable, str(build_py),
-             "--quiet", "--output", str(cache_path),
-             "--root", str(repo_root / "todo"),
-             "--repo-root", str(repo_root)],
-            cwd=str(repo_root),
-        )
-        if result.returncode != 0:
-            sys.stderr.write(f"[validate.py] FATAL: build.py failed (exit {result.returncode})\n")
-            sys.exit(2)
-    return json.loads(cache_path.read_text(encoding="utf-8"))
+# Reasons a REBUILD can plausibly repair, because the cache is a DERIVED
+# artifact and regenerating it is the documented recovery. Everything outside
+# this set refuses instead.
+#
+# STALE IS DELIBERATELY NOT IN IT, and that is the one entry worth arguing
+# about. Staleness is exactly what a rebuild fixes, so including it looks
+# obviously right -- but `--cache` names an arbitrary path and the recovery
+# writes the rebuilt artifact BACK to that path (`--output str(cache_path)`
+# below), so auto-rebuilding on staleness would DESTROY any captured or
+# imported cache whose corpus binding merely differs from this checkout. That
+# is data loss triggered by the ordinary, expected state of a historical
+# artifact (Codex design review, section 23, [high]). A stale cache refuses
+# with rc 2 and the operator re-runs build-and-validate.sh, which is the
+# explicit, non-destructive form of the same repair.
+#
+# LEGACY_NO_STAMPED_ITEMS is absent for a different reason: PROFILE_VALIDATE
+# does not set `require_stamped_population`, so this reader can never raise it.
+_REBUILDABLE_REASONS = frozenset((
+    cache_schema.REASON_MISSING,
+    cache_schema.REASON_UNREADABLE,
+    cache_schema.REASON_SHAPE,
+    cache_schema.REASON_EMPTY,
+))
+
+# The ONE path this tool owns and may therefore destroy. It is the argparse
+# default for --cache, which is the point: a caller who did not name a cache is
+# asking for the generated one, and regenerating a file we generate is not data
+# loss.
+#
+# EXCLUDING STALE ALONE WAS NOT ENOUGH, and stopping there was the comfortable
+# half-measure. The rebuild writes `--output <that same path>`, so UNREADABLE /
+# SHAPE / EMPTY destroy a caller-named artifact just as thoroughly -- and SHAPE
+# is the likely one, because an imported or captured older cache is exactly
+# what fails a newly-added subtree. OWNERSHIP, not reason, is what decides
+# whether overwriting is allowed (Codex adversarial, section 23, [high]).
+_CANONICAL_CACHE_REL = "build/todo-cache.json"
 
 
-def _cache_shape_is_stale(nodes: list) -> bool:
-    """Return True when sections[].depends_on still carries the pre-pass-6
-    opaque-string shape instead of the expected {target, sections[]} dict
-    shape. A non-empty dep-group that is a plain string is the tell.
+def _refuse(message: str) -> None:
+    """Every infrastructure refusal leaves through here, at rc 2, so it can
+    never be confused with the rc 1 the eight checks return."""
+    sys.stderr.write(f"[validate.py] REFUSED: {message}\n")
+    sys.exit(2)
 
-    Scans the ENTIRE cache (Codex pass 10 M1): previously this returned
-    False on the first dict-shaped entry seen, which mis-classified a
-    mixed cache (some migrated rows, some legacy rows) as fresh. Any
-    legacy string entry anywhere in the cache now forces a rebuild.
 
-    Robust against malformed caches (non-dict nodes / non-dict sections):
-    they don't prove anything about the shape, so skip them instead of
-    crashing. Downstream Ctx._validate_nodes drops malformed rows."""
-    for n in nodes or []:
-        if not isinstance(n, dict):
-            continue
-        sections = n.get("sections")
-        if not isinstance(sections, list):
-            continue
-        for s in sections:
-            if not isinstance(s, dict):
-                continue
-            deps = s.get("depends_on")
-            if not isinstance(deps, list):
-                continue
-            for grp in deps:
-                if not isinstance(grp, dict):
-                    return True
-    return False
+def _reverify_corpus(todo_root: Path, cache_info) -> None:
+    """Close the generation binding the load only OPENED.
+
+    `check_freshness` proves the cache matched the corpus at ONE instant, at
+    load time. This validator then spends its whole run walking the live TODO
+    files -- eight checks plus, under --diff, a delta pass -- and that walk is
+    precisely the long window the binding exists to cover. Without this call the
+    guarantee was a few milliseconds wide while the exposure was the entire run.
+    """
+    try:
+        cache_schema.check_corpus_unchanged(todo_root, cache_info.corpus)
+    except cache_schema.CacheSchemaError as exc:
+        _refuse(f"the TODO corpus changed while the checks were running, so "
+                f"the findings describe a tree that no longer exists "
+                f"[{exc.reason}]: {exc}")
+
+
+def load_or_rebuild_cache(cache_path: Path, repo_root: Path, quiet: bool):
+    """Load and VALIDATE the cache, rebuilding it AT MOST ONCE. Returns
+    `(nodes, CacheInfo)`.
+
+    Rebuilding a derived artifact is sound recovery and is kept. TRUSTING the
+    result was the defect: the previous implementation ended in a bare
+    `json.loads(cache_path.read_text())` of whatever build.py had just written,
+    so a corrupt post-rebuild cache exited 1 with a traceback -- the code this
+    validator documents as GRAPH FINDINGS. It also read and parsed the file
+    TWICE (once to probe the shape, once to return it), both times unbounded and
+    with the first node graph still live during the second parse.
+
+    Both close together by routing through `cache_schema.load_and_validate`,
+    which reads once through a bounded, generation-bound descriptor and applies
+    the profile this reader declares. The recovery is then: validate; if the
+    reason is one a rebuild can repair, rebuild EXACTLY ONCE and validate again;
+    a second failure is rc 2. There is no loop -- retrying against a
+    deterministically-corrupt producer is a hang, not a recovery.
+    """
+    todo_root = repo_root / "todo"
+    try:
+        return cache_schema.load_and_validate(
+            cache_path, todo_root, profile=cache_schema.PROFILE_VALIDATE)
+    except cache_schema.CacheSchemaError as first:
+        owned = cache_path == (repo_root / _CANONICAL_CACHE_REL)
+        if first.reason in _REBUILDABLE_REASONS and not owned:
+            _refuse(f"cache at {cache_path} is unusable [{first.reason}]: "
+                    f"{first}. Not rebuilt automatically: this is not the "
+                    f"generated cache ({repo_root / _CANONICAL_CACHE_REL}), so "
+                    f"rebuilding would overwrite a file this tool does not own. "
+                    f"Run build.py --output <that path> yourself if it is "
+                    f"disposable, or point --cache at the generated cache")
+        if first.reason not in _REBUILDABLE_REASONS:
+            # The membership test comes FIRST so the set stays the single
+            # switch: a reason added to `_REBUILDABLE_REASONS` becomes
+            # rebuildable, full stop, with no special case silently overriding
+            # it further up. Only the WORDING branches below.
+            if first.reason == cache_schema.REASON_STALE:
+                # Worded separately because the honest answer differs: a
+                # rebuild WOULD repair this one, and declining is a deliberate
+                # choice not to overwrite a file the caller named. "A rebuild
+                # would not repair it" would be false here and would send the
+                # operator looking for a fault that is not there.
+                # Not rebuilt even when the cache IS the one this tool owns.
+                # Ownership decides whether overwriting is PERMITTED; this
+                # refusal is about something else -- silently regenerating a
+                # stale cache would hide the fact that someone forgot to
+                # rebuild, and hiding it is how a run certifies a corpus
+                # nobody re-derived. `build-and-validate.sh` is the sanctioned
+                # rebuild-then-check path and it is one command.
+                _refuse(f"cache at {cache_path} does not match the corpus "
+                        f"[{first.reason}]: {first}. Not rebuilt "
+                        f"automatically -- regenerating it here would hide "
+                        f"the missed rebuild rather than report it. Run "
+                        f"scripts/todo-graph/build-and-validate.sh, which "
+                        f"rebuilds and then checks")
+            _refuse(f"cache at {cache_path} cannot be used and a rebuild would "
+                    f"not repair it [{first.reason}]: {first}")
+        if not quiet:
+            sys.stderr.write(
+                f"[validate.py] cache at {cache_path} unusable "
+                f"[{first.reason}]: {first}; rebuilding via build.py (once)\n")
+
+    # Locate build.py via validate.py's own directory (they're siblings);
+    # don't assume repo_root/scripts/todo-graph/ since --repo-root for
+    # regression fixtures points at a synthetic tree.
+    build_py = Path(__file__).resolve().parent / "build.py"
+    if not build_py.exists():
+        _refuse(f"build.py not found next to validate.py ({build_py})")
+    result = subprocess.run(
+        [sys.executable, str(build_py),
+         "--quiet", "--output", str(cache_path),
+         "--root", str(todo_root),
+         "--repo-root", str(repo_root)],
+        cwd=str(repo_root),
+    )
+    if result.returncode != 0:
+        _refuse(f"build.py failed while rebuilding {cache_path} "
+                f"(exit {result.returncode})")
+
+    try:
+        return cache_schema.load_and_validate(
+            cache_path, todo_root, profile=cache_schema.PROFILE_VALIDATE)
+    except cache_schema.CacheSchemaError as second:
+        # The rebuild ran and its output is still unusable, so the producer --
+        # not the artifact -- is what is broken. One rebuild, one re-validation,
+        # then stop.
+        _refuse(f"cache at {cache_path} is still unusable after one rebuild "
+                f"[{second.reason}]: {second}")
+
+
+# `_cache_shape_is_stale` lived here and is GONE, not moved. It hand-detected
+# ONE shape defect -- a `sections[].depends_on` group that was still an opaque
+# string rather than a `{target, sections[]}` dict -- so the loader could force a
+# rebuild instead of crashing later on `grp.get(...)`. Routing the loader through
+# `cache_schema` subsumes it strictly: `_validate_section_deps` refuses that same
+# group with REASON_SHAPE, which is in `_REBUILDABLE_REASONS`, so the recovery
+# still fires -- and every OTHER shape defect it never looked for now fires too.
+# Keeping a second, narrower detector beside the shared validator is how the two
+# drift apart, which is the failure the shared validator exists to end.
 
 
 def load_file_snapshot(repo_root: Path, nodes: list) -> dict:
     """Read every TODO file's text ONCE at startup and return a mapping
     file_path -> text. Single in-memory snapshot per run so all checks (and
     --fix-line-numbers, if enabled) observe identical repo state. Codex
-    pass 6 M1 atomic-snapshot contract."""
+    pass 6 M1 atomic-snapshot contract.
+
+    FAIL CLOSED, and BOUNDED. Both were fail-open before: a read error became
+    `snapshot[rel] = ""` behind a WARN, and the read itself was an unbounded
+    `read_text`. An empty string is not a neutral value here -- it is a TODO
+    file that reads as having no Implementation Order rows, no `## N.` bodies
+    and no test-runner lines, so a TRANSIENT read failure (ENFILE, a file being
+    rewritten under us, a permission blip) manufactures orphan-IO-row and
+    dangling-section FAILs at rc 1, against a file nobody has touched. That is
+    the infrastructure-failure-reported-as-a-verdict collision this validator's
+    exit-code contract exists to prevent, so an unreadable TODO is now a
+    refusal (Codex design review, section 23, [high]).
+
+    The read goes through `cache_schema.read_corpus_file`, which is the same
+    bounded reader the freshness fingerprint uses -- one rule, one
+    implementation, and a 16 MiB per-file ceiling enforced BEFORE the bytes are
+    materialised.
+    """
     snapshot = {}
     for n in nodes:
         rel = n.get("file_path")
@@ -218,10 +348,13 @@ def load_file_snapshot(repo_root: Path, nodes: list) -> dict:
             continue
         full = repo_root / rel
         try:
-            snapshot[rel] = full.read_text(encoding="utf-8")
-        except (FileNotFoundError, OSError) as exc:
-            sys.stderr.write(f"[validate.py] WARN: cannot read {rel}: {exc}\n")
-            snapshot[rel] = ""
+            snapshot[rel] = cache_schema.read_corpus_file(full).decode("utf-8")
+        except cache_schema.CacheSchemaError as exc:
+            _refuse(f"cannot read TODO file {rel}, so no verdict can be "
+                    f"reached about it [{exc.reason}]: {exc}")
+        except (OSError, ValueError) as exc:
+            _refuse(f"cannot read TODO file {rel}, so no verdict can be "
+                    f"reached about it: {exc}")
     return snapshot
 
 
@@ -879,15 +1012,23 @@ def check_schema_reachability(nodes: list, snapshot: dict, repo_root: Path) -> l
 def fix_line_numbers(nodes: list, snapshot: dict, id_index: dict, path_index: dict,
                      repo_root: Path, write: bool, quiet: bool) -> tuple:
     """Re-resolve every `(item: "NAME" at line N)` in stamps. Returns
-    `(updates_total, ambiguities, unresolvable_targets)`. Codex pass 6 M1
-    contract: FAIL on non-unique item-name match (no first-match-wins);
-    never invent a new item; require explicit --write to actually mutate.
-    Codex pass 7 H2: ambiguity must surface as a non-zero exit so CI
-    cannot silently treat a refused rewrite as success."""
+    `(updates_total, ambiguities, unresolvable_targets, report_lines)`. Codex
+    pass 6 M1 contract: FAIL on non-unique item-name match (no
+    first-match-wins); never invent a new item; require explicit --write to
+    actually mutate. Codex pass 7 H2: ambiguity must surface as a non-zero exit
+    so CI cannot silently treat a refused rewrite as success.
+
+    NOTHING IS PRINTED FROM HERE. Every diagnostic is accumulated into
+    `report_lines` and handed back for the caller to publish -- after the
+    dry-run corpus re-verification, or after the write set has been committed.
+    Emitting inline meant a run that later refused at rc 2 had already told the
+    operator what it found (Codex adversarial, section 23, [medium]).
+    """
     updates_total = 0
-    files_modified: dict = {}
     ambiguities = 0
     unresolvable_targets = 0
+    report: list = []
+    pending_writes: list = []
     for n in nodes:
         rel = n["file_path"]
         text = snapshot.get(rel, "")
@@ -939,7 +1080,19 @@ def fix_line_numbers(nodes: list, snapshot: dict, id_index: dict, path_index: di
                     continue
                 target_text = snapshot.get(target_file)
                 if target_text is None:
-                    target_text = (repo_root / target_file).read_text(encoding="utf-8")
+                    # An XREF target outside the cache's node set, so the
+                    # startup snapshot never read it. Same bounded, fail-closed
+                    # reader as the snapshot itself: an unreadable target here
+                    # used to escape as an OSError traceback at rc 1, and a
+                    # rewrite decided from a partially-read file is worse than
+                    # no rewrite.
+                    try:
+                        target_text = cache_schema.read_corpus_file(
+                            repo_root / target_file).decode("utf-8")
+                    except (cache_schema.CacheSchemaError, OSError,
+                            ValueError) as exc:
+                        _refuse(f"cannot read XREF target {target_file} while "
+                                f"re-resolving line numbers in {rel}: {exc}")
                     snapshot[target_file] = target_text
                 # Find the literal item name in the target file. Match must
                 # be UNIQUE; ambiguity is a hard fail per Codex pass 6 M1.
@@ -951,10 +1104,10 @@ def fix_line_numbers(nodes: list, snapshot: dict, id_index: dict, path_index: di
                     continue  # never invent
                 if len(hits) > 1:
                     ambiguities += 1
-                    sys.stderr.write(
+                    report.append(
                         f"[validate.py] FAIL fix-line-numbers: ambiguous item_name "
                         f"{name!r} matches lines {hits} in {target_file} "
-                        f"(stamp at {rel}); refusing to rewrite\n"
+                        f"(stamp at {rel}); refusing to rewrite"
                     )
                     continue
                 actual_n = hits[0]
@@ -965,8 +1118,9 @@ def fix_line_numbers(nodes: list, snapshot: dict, id_index: dict, path_index: di
                 updates_total += 1
                 modified = True
                 if not quiet:
-                    print(f"[validate.py] {'WRITE' if write else 'DRY-RUN'} "
-                          f"{rel}: {name!r} {stored_n} -> {actual_n}")
+                    report.append(
+                        f"[validate.py] {'WRITE' if write else 'DRY-RUN'} "
+                        f"{rel}: {name!r} {stored_n} -> {actual_n}")
             # Rebuild updated_rest by slicing at match offsets so two
             # clauses with identical literal text bound to different
             # targets each resolve to their own line (Codex pass 9 H1).
@@ -995,20 +1149,81 @@ def fix_line_numbers(nodes: list, snapshot: dict, id_index: dict, path_index: di
             new_text = "\n".join(new_lines)
             if text.endswith("\n") and not new_text.endswith("\n"):
                 new_text += "\n"
-            (repo_root / rel).write_text(new_text, encoding="utf-8")
-            files_modified[rel] = True
+            # STAGED, NOT WRITTEN. See `_commit_rewrites` for why nothing may
+            # touch the disk until every destination has been checked.
+            pending_writes.append((rel, text, new_text))
+    if write and pending_writes:
+        # `files_modified` used to be accumulated here and never read by
+        # anything; removed rather than carried forward into the two-phase
+        # commit, where a second bookkeeping copy of the write set would be one
+        # more thing to keep in step with the real one.
+        _commit_rewrites(repo_root, pending_writes)
     if ambiguities > 0 and write:
-        sys.stderr.write(
+        report.append(
             f"[validate.py] {ambiguities} ambiguous item_name(s) refused; "
-            "fix duplicates manually then re-run\n"
+            "fix duplicates manually then re-run"
         )
     if not quiet:
-        sys.stderr.write(
+        report.append(
             f"[validate.py] fix-line-numbers: {updates_total} update(s), "
             f"{ambiguities} ambiguous, {unresolvable_targets} unresolvable target(s); "
-            f"mode={'WRITE' if write else 'DRY-RUN'}\n"
+            f"mode={'WRITE' if write else 'DRY-RUN'}"
         )
-    return (updates_total, ambiguities, unresolvable_targets)
+    return (updates_total, ambiguities, unresolvable_targets, report)
+
+
+def _commit_rewrites(repo_root: Path, pending: list) -> None:
+    """Apply every staged rewrite, or none of them.
+
+    TWO PHASES, because one phase published a partial repair. The rewrite used
+    to happen inside the per-node loop, so a destination that had moved was
+    discovered only when its turn came -- after earlier files were already
+    rewritten and their DRY-RUN/WRITE lines already printed. The run then
+    refused at rc 2 having both mutated the tree and announced results, which
+    is precisely the "no verdict means say nothing" contract the check path
+    holds to (Codex adversarial, section 23, [medium]).
+
+    Phase 1 re-reads and compares EVERY destination against the snapshot text
+    it was transformed from. Any mismatch or unreadable file refuses before a
+    single byte is written. Phase 2 then replaces each file.
+
+    EACH REPLACEMENT IS ATOMIC. `write_text` truncates the destination in
+    place, so a failure mid-write leaves a half-written TODO -- worse than the
+    lost update it was guarding against. Writing a sibling temp file and
+    `os.replace`-ing it means a reader ever only sees the old file or the new
+    one.
+
+    A RESIDUAL WINDOW REMAINS between the phase-1 compare and the phase-2
+    replace, and it is documented rather than closed. Closing it properly needs
+    an exclusion protocol -- a lock file every writer agrees to take -- and
+    nothing else in this repo takes one, so a lock here would be ceremony that
+    excludes nobody while implying it does. What is bounded is the harm: the
+    window is now microseconds of `os.replace` rather than the whole walk, and
+    no partial file is observable either way.
+    """
+    for rel, old_text, _new_text in pending:
+        dest = repo_root / rel
+        try:
+            current = cache_schema.read_corpus_file(dest).decode("utf-8")
+        except (cache_schema.CacheSchemaError, OSError, ValueError) as exc:
+            _refuse(f"cannot re-read {rel} before rewriting it, so no rewrite "
+                    f"is safe; nothing was written: {exc}")
+        if current != old_text:
+            _refuse(f"{rel} changed since it was read, so rewriting it would "
+                    f"discard that edit; nothing was written. Re-run "
+                    f"--fix-line-numbers against the current tree")
+    for rel, _old_text, new_text in pending:
+        dest = repo_root / rel
+        tmp = dest.with_name(dest.name + ".validate-tmp")
+        try:
+            tmp.write_text(new_text, encoding="utf-8")
+            os.replace(tmp, dest)
+        except OSError as exc:
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+            _refuse(f"failed to rewrite {rel}: {exc}")
 
 
 # --- main ----------------------------------------------------------------
@@ -1036,6 +1251,51 @@ def check_duplicate_id(nodes: list) -> list:
         findings.append(Finding(
             "duplicate-id", paths[0],
             f"id '{nid}' is claimed by {len(paths)} files: {', '.join(paths)}",
+            severity="FAIL",
+        ))
+    return findings
+
+
+def check_duplicate_resolver_key(nodes: list) -> list:
+    """The DERIVED `(domain, TODO-number)` identity, checked the same way the
+    frontmatter `id` is.
+
+    `cache_schema` refuses a cache with two nodes on one resolver key, because
+    every reader that keys a dict on it silently rebinds the loser's edges to
+    the winner. `validate.py` deliberately does NOT take that refusal -- it
+    reports identity collisions rather than declining to run -- but it was only
+    reporting HALF of them: duplicate `id` had a check and the derived key did
+    not. `build_path_index` records the collision and `resolve_xref_target`
+    then refuses to resolve it, so it surfaced only when some XREF happened to
+    use the ambiguous compact form. With no such reference, or only exact
+    relative-path ones, all the other checks pass and this exits 0 -- on a cache
+    `query.py` and the MCP server refuse outright.
+
+    That divergence is the defect: the canonical gate certified a graph the
+    query surface could not answer from. Reported at rc 1, where a corpus
+    problem belongs, so both tools now agree on WHAT is wrong and differ only in
+    what they do about it (Codex adversarial, section 23, [high]).
+    """
+    findings: list = []
+    by_key: dict = {}
+    for n in nodes:
+        rel = n.get("file_path")
+        if not rel:
+            continue
+        key = cache_schema.resolver_key(rel)
+        if key is None:
+            continue
+        by_key.setdefault(key, []).append(rel)
+    for key, paths in sorted(by_key.items()):
+        if len(paths) <= 1:
+            continue
+        dom, num = key
+        findings.append(Finding(
+            "duplicate-resolver-key", paths[0],
+            f"domain {dom} TODO-{num} is claimed by {len(paths)} files: "
+            f"{', '.join(sorted(paths))}; a compact reference to it binds to "
+            f"whichever the cache lists last, and every query reader refuses "
+            f"this cache outright",
             severity="FAIL",
         ))
     return findings
@@ -1148,28 +1408,53 @@ def _count_stale_xrefs(nodes: list, id_index: dict, path_index: dict) -> set:
     return stale
 
 
-def diff_caches(baseline_path: Path, current_nodes: list, quiet: bool) -> list:
+def diff_caches(baseline_path: Path, current_nodes: list, repo_root: Path,
+                quiet: bool) -> list:
     """Return a list of Finding objects describing regressions the PR
     introduced: added orphans, new broken backlinks (ids present in
     baseline but missing in current), status downgrades (done -> active,
     etc), and newly stale XREFs. Each finding is tagged under a single
-    `graph-delta` check name so it surfaces consistently in CI output."""
+    `graph-delta` check name so it surfaces consistently in CI output.
+
+    THE BASELINE IS THE SECOND CACHE THIS TOOL READS, and it was the one nobody
+    had looked at: it went in raw, guarded only into a `graph-delta` FAIL. That
+    guard is the wrong shape twice over. It catches unreadable-or-not-a-list and
+    nothing else, so a schema-valid-looking baseline with a scalar `depends_on`
+    or a non-dict stamp XREF still reached the walk. And where it does fire, it
+    converts an infrastructure problem into a FINDING -- "this PR made the graph
+    worse" -- which a human then acts on. A false delta nobody authored is worse
+    than a refusal, because the refusal is obviously about the tool.
+
+    So the baseline is now validated under its own profile and a failure is a
+    REFUSAL at rc 2, never a delta. The profile differs from the current
+    cache's on the axis the caller-declared-profiles API exists for: freshness
+    is DISABLED (`check_stale=False`). The baseline is deliberately old and is
+    not even built from this checkout's corpus, so a current-corpus staleness
+    verdict against it would be meaningless rather than strict. The generation
+    binding on the bytes actually read is unconditional and is retained.
+    """
     findings: list = []
     try:
-        baseline_nodes = json.loads(baseline_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        findings.append(Finding(
-            "graph-delta", str(baseline_path),
-            f"baseline cache unreadable: {exc}", severity="FAIL",
-        ))
-        return findings
-    if not isinstance(baseline_nodes, list):
-        findings.append(Finding(
-            "graph-delta", str(baseline_path),
-            f"baseline cache is not a list; got {type(baseline_nodes).__name__}",
-            severity="FAIL",
-        ))
-        return findings
+        baseline_nodes, _base_info = cache_schema.load_and_validate(
+            baseline_path, repo_root / "todo", check_stale=False,
+            profile=cache_schema.PROFILE_BASELINE)
+    except cache_schema.CacheSchemaError as exc:
+        # The wording is careful about what was actually established. Only the
+        # SHAPE was checked; whether this artifact came from the current
+        # producer is a REQUIREMENT the caller must meet, not a fact this path
+        # verified -- there is no cache-format identity to verify it against.
+        # An earlier draft asserted the baseline "must be produced by the
+        # CURRENT build.py" in a voice that read like a check result, which is
+        # a claim outrunning the code (Codex adversarial, section 23,
+        # [medium]). Emitting a producer-contract version so it CAN be checked
+        # is filed against the producer, not smuggled in here.
+        _refuse(f"--diff baseline at {baseline_path} cannot be trusted, so no "
+                f"graph delta is reported [{exc.reason}]: {exc}. Note that "
+                f"only the SHAPE is checked here: regenerate the baseline with "
+                f"the current build.py rather than importing an older "
+                f"artifact, because a field that kept its type and changed its "
+                f"meaning would pass this and still produce deltas nobody "
+                f"authored")
 
     base_idx = build_id_index(baseline_nodes)
     base_paths = build_path_index(baseline_nodes)
@@ -1295,17 +1580,35 @@ def main() -> int:
     cache_path = Path(args.cache)
     if not cache_path.is_absolute():
         cache_path = repo_root / cache_path
-    nodes = load_or_rebuild_cache(cache_path, repo_root, args.quiet)
+    nodes, cache_info = load_or_rebuild_cache(cache_path, repo_root, args.quiet)
+    todo_root = repo_root / "todo"
 
     snapshot = load_file_snapshot(repo_root, nodes)
     id_index = build_id_index(nodes)
     path_index = build_path_index(nodes)
 
     if args.fix_line_numbers:
-        _updates, ambig, _unres = fix_line_numbers(
+        _updates, ambig, _unres, report = fix_line_numbers(
             nodes, snapshot, id_index, path_index,
             repo_root, write=args.write, quiet=args.quiet,
         )
+        # REPAIR MODE IS BOUND DIFFERENTLY FROM THE CHECK WALK, deliberately.
+        # A dry run reaches a verdict about a corpus it only read, so it takes
+        # the same post-walk re-verification the eight checks take below. A
+        # --write run CANNOT: it changes the corpus itself, so a global
+        # re-verification would report the tool's own edits as interference and
+        # fail every successful repair. Its binding is per-destination instead,
+        # inside `fix_line_numbers`: each file's bytes are compared against the
+        # snapshot they were transformed from immediately before the replace,
+        # and a mismatch refuses rather than overwrites (Codex design review,
+        # section 23, [high]).
+        if not args.write:
+            _reverify_corpus(todo_root, cache_info)
+        # Published only now: in dry-run after the corpus binding closed, in
+        # write mode after `_commit_rewrites` applied the whole set. Either way
+        # a refusal above exits 2 having said nothing about the corpus.
+        for line in report:
+            sys.stderr.write(line + "\n")
         # Codex pass 7 H2: ambiguity is a hard failure. --write that refused
         # to rewrite because of non-unique item-name match must exit non-zero
         # so CI or hooks cannot silently treat a refused rewrite as success.
@@ -1313,7 +1616,7 @@ def main() -> int:
             return 1
         return 0
 
-    # Run all 7 checks.
+    # Run all 9 checks.
     all_findings: list = []
     check_results: list = []
     for name, check_fn, args_tuple in [
@@ -1325,12 +1628,18 @@ def main() -> int:
         ("status-transition", check_status_transition, (nodes,)),
         ("schema-reachability", check_schema_reachability, (nodes, snapshot, repo_root)),
         ("duplicate-id", check_duplicate_id, (nodes,)),
+        ("duplicate-resolver-key", check_duplicate_resolver_key, (nodes,)),
     ]:
         findings = check_fn(*args_tuple)
         check_results.append((name, findings))
         all_findings.extend(findings)
 
-    # Print findings + per-check pass/fail summary.
+    # BUFFER THE VERDICT, DO NOT STREAM IT. Every line below is collected and
+    # emitted only after the post-walk corpus re-verification passes. Printing
+    # as we go would put `[FAIL] stale-xref: ...` on a human's screen and THEN
+    # refuse at rc 2 -- and the human acts on the findings, not on the exit
+    # code. A run that reaches no verdict must say nothing about the corpus.
+    out: list = []
     fail_count = 0
     warn_count = 0
     for name, findings in check_results:
@@ -1338,19 +1647,19 @@ def main() -> int:
         warns = [f for f in findings if f.severity == "WARN"]
         if not fails and not warns:
             if not args.quiet:
-                print(f"  [PASS] {name}")
+                out.append(f"  [PASS] {name}")
         else:
             if fails:
                 fail_count += len(fails)
-                print(f"  [FAIL] {name}: {len(fails)} failure(s)")
+                out.append(f"  [FAIL] {name}: {len(fails)} failure(s)")
                 for f in fails:
-                    print(f"    {f.format()}")
+                    out.append(f"    {f.format()}")
             if warns:
                 warn_count += len(warns)
                 if not args.quiet:
-                    print(f"  [WARN] {name}: {len(warns)} warning(s)")
+                    out.append(f"  [WARN] {name}: {len(warns)} warning(s)")
                     for f in warns:
-                        print(f"    {f.format()}")
+                        out.append(f"    {f.format()}")
 
     # --diff: run graph-delta check against BASELINE. A delta finding
     # counts as a failure even if all 7 primary checks pass; this is
@@ -1360,17 +1669,23 @@ def main() -> int:
         baseline_path = Path(args.diff)
         if not baseline_path.is_absolute():
             baseline_path = (repo_root / baseline_path).resolve()
-        deltas = diff_caches(baseline_path, nodes, args.quiet)
+        deltas = diff_caches(baseline_path, nodes, repo_root, args.quiet)
         delta_fails = [f for f in deltas if f.severity == "FAIL"]
         if not delta_fails:
             if not args.quiet:
-                print("  [PASS] graph-delta")
+                out.append("  [PASS] graph-delta")
         else:
             delta_fail = len(delta_fails)
-            print(f"  [FAIL] graph-delta: {delta_fail} regression(s) vs {baseline_path}")
+            out.append(f"  [FAIL] graph-delta: {delta_fail} regression(s) vs {baseline_path}")
             for f in delta_fails:
-                print(f"    {f.format()}")
+                out.append(f"    {f.format()}")
         fail_count += delta_fail
+
+    # The walk is over; close the generation binding BEFORE any of it is
+    # published. On refusal this exits 2 and `out` is discarded unprinted.
+    _reverify_corpus(todo_root, cache_info)
+    for line in out:
+        print(line)
 
     # Trailing summary
     total_pass = sum(1 for _, f in check_results if not [x for x in f if x.severity == "FAIL"])

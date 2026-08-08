@@ -148,11 +148,24 @@ _MAX_SECTION_N = 65535
 #   require_stamped_population  WHETHER AN EMPTY POPULATION IS FATAL TO ME.
 #
 # SCOPE IS STILL "FIELDS A READER CONSUMES", unchanged from the header above. A
-# subtree earns a validator when a routed reader reads it, never speculatively:
-# `inputs_xrefs` is deliberately absent because no reader routed in section 19
-# consumes it, and `sections[].depends_on` keeps its bare-array shape for the
-# same reason (its consumer, `validate.py`, is section 23). Adding either would
-# re-commit the exact overreach the header forbids.
+# subtree earns a validator when a routed reader reads it, never speculatively.
+#
+# THE TWO EXAMPLES THIS BLOCK USED TO GIVE HAVE BOTH EXPIRED, and leaving them
+# would have turned a TIMING rule into a prohibition. Section 19 wrote that
+# `inputs_xrefs` was "deliberately absent because no reader routed in section 19
+# consumes it" and that `sections[].depends_on` "keeps its bare-array shape for
+# the same reason (its consumer, `validate.py`, is section 23)". Section 22
+# routed `query.py`, which consumes both: the group item shape became
+# `SUBTREE_SECTION_DEPS`, and the `inputs_xrefs` entry shape moved inside
+# `_validate_node_fields` (:713-749). Section 23 is the section that block
+# named, and it arrived to find the comment still describing the pre-22 world.
+#
+# The live example is now `section_headings`, and it moved the OTHER way in this
+# very section: it was unvalidated because no routed reader dereferenced it, and
+# routing `validate.py` -- which does, at validate.py:644 and :678 -- is what
+# earned it `SUBTREE_SECTION_HEADINGS` below. That is the rule working: a
+# subtree is validated in the section its consumer routes, not before and not
+# after.
 #
 # ONE PROFILE IS DEFINED WITHOUT A ROUTED CONSUMER, and saying so is the point.
 # `PROFILE_STAMP_XREFS` is NOT wired to anything: its intended consumer,
@@ -180,10 +193,32 @@ SUBTREE_INPUTS_XREFS = "inputs_xrefs"
 # scalars and edge collections the readers consume.
 SUBTREE_SECTION_DEPS = "sections.depends_on"
 SUBTREE_NODE_FIELDS = "node_fields"
+# Section 23. The `## N.` headings parsed out of the body, as distinct from the
+# Implementation Order ROWS in `sections[]` -- the two disagree exactly when a
+# file has a section body with no IO row or an IO row with no body, which is
+# what `validate.py`'s dangling-section and orphan-IO-row checks exist to find.
+SUBTREE_SECTION_HEADINGS = "section_headings"
+# The CROSS-NODE uniqueness rules -- `id` and the derived resolver key -- split
+# out of `node_fields`, where they had been bundled with the per-node field
+# shapes. They are not a shape at all: they are a question about the SET, and
+# more importantly they are a question SOME READERS ANSWER THEMSELVES.
+#
+# A reader that keys a dict on `id` cannot survive a duplicate (the second node
+# silently replaces the first, so an edge naming either resolves to whichever
+# won), and for those readers a refusal is the only safe answer. But
+# `validate.py` REPORTS duplicate ids -- that is its duplicate-id check -- and
+# it refuses to resolve an ambiguous resolver key rather than guessing
+# (`build_path_index` records `dn_collisions` / `stem_collisions` for exactly
+# that). Holding it to these rules deleted its own check and re-reported the
+# finding as an infrastructure refusal at the wrong exit code: a corpus problem
+# a human must fix, announced as a broken tool. Caught by the existing
+# duplicate-id fixture the moment `validate.py` was routed.
+SUBTREE_NODE_IDENTITY = "node_identity"
 
 _KNOWN_SUBTREES = frozenset((
     SUBTREE_STAMPED_ITEMS, SUBTREE_SECTIONS, SUBTREE_STAMPS_XREFS,
-    SUBTREE_SECTION_DEPS, SUBTREE_NODE_FIELDS,
+    SUBTREE_SECTION_DEPS, SUBTREE_NODE_FIELDS, SUBTREE_SECTION_HEADINGS,
+    SUBTREE_NODE_IDENTITY,
 ))
 
 
@@ -262,7 +297,70 @@ PROFILE_STAMP_XREFS = Profile("stamp-xrefs", (SUBTREE_STAMPS_XREFS,))
 PROFILE_QUERY = Profile(
     "query",
     (SUBTREE_SECTIONS, SUBTREE_SECTION_DEPS, SUBTREE_STAMPS_XREFS,
-     SUBTREE_NODE_FIELDS),
+     SUBTREE_NODE_FIELDS, SUBTREE_NODE_IDENTITY),
+)
+
+# `validate.py`'s CURRENT cache (section 23). Everything `PROFILE_QUERY` walks,
+# plus `section_headings`, which no earlier reader dereferenced and this one
+# does: `validate.py:644` and `:678` both build `{h["n"] for h in
+# node["section_headings"]}`. Left out, a non-dict entry raises TypeError and a
+# dict missing `n` raises KeyError, and BOTH escape the walk as an uncaught
+# traceback -- exit 1, which this validator documents as GRAPH FINDINGS. That
+# collision is the whole subject of section 23, so a profile that reproduced it
+# one field over would be routing in name only.
+#
+# `requires_history` is FALSE: `validate.py` reads neither `created_at` nor
+# `last_active_at` (grep-confirmed across all eight checks and the diff walk),
+# so it must not pay section 21's three git subprocesses per lint.
+#
+# `SUBTREE_NODE_IDENTITY` IS DELIBERATELY ABSENT, and it is the only profile
+# here that omits it. `validate.py` REPORTS duplicate ids as a graph finding and
+# refuses ambiguous resolver keys inside `build_path_index`, so taking the
+# module's refusals would delete its own check and re-report a corpus problem as
+# a broken tool. Declaring what a caller consumes cuts both ways: this one
+# consumes the field SHAPES and owns the SET question itself.
+PROFILE_VALIDATE = Profile(
+    "validate",
+    (SUBTREE_SECTIONS, SUBTREE_SECTION_DEPS, SUBTREE_STAMPS_XREFS,
+     SUBTREE_NODE_FIELDS, SUBTREE_SECTION_HEADINGS),
+)
+
+# `validate.py --diff BASELINE` (section 23). The SAME file format read under
+# different readiness rules, which is the case the caller-declared profiles API
+# was built for -- and the second cache section 19's inventory missed entirely.
+#
+# NARROWER than PROFILE_VALIDATE by two subtrees, because `diff_caches`
+# (validate.py:1151-1245) consumes strictly less: it reads `id`, `status`,
+# `file_path`, `depends_on`, `satisfies`, `superseded_by`, `inputs_xrefs`,
+# `stamps_xrefs[].target_path` and `sections[].depends_on[].target`, and never
+# `sections[].n` / `.status` / `.deliverable` nor `section_headings`. Declaring
+# either would hold a historical artifact to a contract this walk does not read.
+#
+# THE FRESHNESS AXIS IS THE POINT, and it is the CALLER's to set: the baseline
+# is DELIBERATELY old, and it is not even built from this checkout's corpus --
+# `.github/workflows/todo-graph.yml:89` builds it from a worktree of the PR base
+# with its own `--root`. A current-corpus staleness verdict against it is not a
+# strict check, it is a meaningless one, so the caller passes `check_stale=False`
+# (the generation binding on the bytes read is unconditional and is retained).
+#
+# NO CROSS-VERSION COMPATIBILITY IS CLAIMED, and that is deliberate rather than
+# unfinished. There is no cache-FORMAT version to gate on: `schema_version`
+# (build.py:1020) is the per-node TODO frontmatter version, not an identity for
+# the artifact as a whole. Shape alone cannot detect a field that kept its type
+# and changed its MEANING, so the honest contract is the narrow one -- THE
+# BASELINE MUST COME FROM THE CURRENT `build.py`, which is exactly what CI does,
+# and an imported or older artifact is REFUSED rather than silently diffed
+# (Codex design review, section 23, [medium]).
+# It DOES declare `node_identity`, where `PROFILE_VALIDATE` does not, and the
+# asymmetry is the point: `diff_caches` builds `build_id_index(baseline_nodes)`
+# and keys a dict on the baseline's ids, so a duplicate there silently rebinds
+# a backlink and manufactures a delta -- and a duplicate id in the HISTORICAL
+# corpus is not a finding this run reports, because the run's job is the
+# CURRENT tree. The current cache reports; the baseline refuses.
+PROFILE_BASELINE = Profile(
+    "baseline",
+    (SUBTREE_SECTION_DEPS, SUBTREE_STAMPS_XREFS, SUBTREE_NODE_FIELDS,
+     SUBTREE_NODE_IDENTITY),
 )
 
 
@@ -534,6 +632,81 @@ def _validate_section_deps(node, i: int, path):
                              path, hi=_MAX_SECTION_N)
 
 
+_SECTION_HEADING_KEYS = ("n", "title")
+
+
+def _validate_section_headings(node, i: int, path):
+    """`section_headings[]` -- the `## N.` bodies, consumed by `validate.py`.
+
+    A SEPARATE SUBTREE from `sections`, and the distinction is the reason both
+    exist: `sections[]` is the Implementation Order TABLE and `section_headings`
+    is the BODIES, and `validate.py` compares the two sets against each other
+    (`:644` dangling-section, `:678` orphan-IO-row). A validator that conflated
+    them would be unable to express the very disagreement those checks look for.
+
+    THE DEREFERENCE IS UNGUARDED AT BOTH SITES, which is why this subtree earns
+    a validator now and did not before. Both do `{h["n"] for h in
+    n.get("section_headings", [])}` with no isinstance test and no `.get`: a
+    string entry raises TypeError, a dict without `n` raises KeyError, and
+    neither is a `CacheSchemaError`, so both escape `main()` as a traceback and
+    exit 1 -- the code this validator documents as GRAPH FINDINGS. An
+    infrastructure failure would read as "the graph has problems".
+
+    `n` IS NOT NULLABLE HERE, unlike `sections[].n`. That asymmetry is in the
+    published schema (`cache.schema.json` requires `n`/`title` and types `n` as
+    a bare integer, against `["integer", "null"]` on the section row) and it is
+    correct: a row's Section column is free text that may not parse, whereas a
+    heading is MATCHED by `build.extract_section_headings` (build.py:518) and so
+    cannot exist without a number.
+
+    Bounds and uniqueness mirror `_validate_sections` for the same two reasons:
+    `n` lands in a SET here rather than a dict key, so a duplicate does not
+    overwrite a value -- but it does silently shrink the set, and these sets are
+    compared for MEMBERSHIP against the IO rows, so a duplicated heading number
+    is a heading that vanishes from the comparison. The upper bound is the same
+    CPython hash-collision budget `_MAX_SECTION_N` carries elsewhere.
+
+    LOCAL NAMES ARE DELIBERATELY DISTINCT from every other validator
+    (`heads`/`head`/`seen_head_n`, not `rows`/`row` or `sections`/`s`): the
+    per-rule mutation harness in test_build.sh identifies each rule by a UNIQUE
+    source line and fails when a needle matches twice.
+    """
+    if SUBTREE_SECTION_HEADINGS not in node:
+        _err(REASON_SHAPE,
+             f"cache node {i} is missing required `section_headings` "
+             f"(per {SCHEMA_REL}): {path}")
+    heads = node[SUBTREE_SECTION_HEADINGS]
+    if not isinstance(heads, list):
+        _err(REASON_SHAPE,
+             f"cache node {i} `section_headings` is {type(heads).__name__}, "
+             f"expected array (per {SCHEMA_REL}): {path}")
+    seen_head_n = set()
+    for j, head in enumerate(heads):
+        where = f"cache node {i} section heading {j}"
+        if not isinstance(head, dict):
+            _err(REASON_SHAPE,
+                 f"{where} is not an object ({type(head).__name__}): {path}")
+        for field in _SECTION_HEADING_KEYS:
+            if field not in head:
+                _err(REASON_SHAPE,
+                     f"{where} is missing required `{field}` "
+                     f"(per {SCHEMA_REL}): {path}")
+        extra = [k for k in head if k not in _SECTION_HEADING_KEYS]
+        if extra:
+            _err(REASON_SHAPE,
+                 f"{where} has unknown key(s) {sorted(extra)} "
+                 f"(additionalProperties false per {SCHEMA_REL}): {path}")
+        _require_int(head["n"], 0, where, "n", path, hi=_MAX_SECTION_N)
+        if head["n"] in seen_head_n:
+            _err(REASON_SHAPE,
+                 f"{where} repeats heading number {head['n']} already seen in "
+                 f"this node; the consumer compares these as a SET against the "
+                 f"Implementation Order rows, so a duplicate silently removes a "
+                 f"heading from that comparison: {path}")
+        seen_head_n.add(head["n"])
+        _require_str(head["title"], where, "title", path)
+
+
 def _validate_node_ids_unique(nodes, path):
     """Non-null `id` must be unique across the cache.
 
@@ -646,11 +819,15 @@ def _validate_resolver_keys_unique(nodes, path):
 def _validate_node_fields(node, i: int, path):
     """The NODE-LEVEL fields `query.py` and `render.py` consume.
 
-    SCOPE IS STILL "FIELDS A READER CONSUMES". `owners`, `schema_version` and
-    `section_headings` are deliberately ABSENT from this walk: no routed reader
-    dereferences them, and validating them would advertise a contract this
-    module does not test -- the overreach the header at the top of this file
-    forbids. The inventory below was taken from the readers, not the schema:
+    SCOPE IS STILL "FIELDS A READER CONSUMES". `owners` and `schema_version` are
+    deliberately ABSENT from this walk: no routed reader dereferences them, and
+    validating them would advertise a contract this module does not test -- the
+    overreach the header at the top of this file forbids. `section_headings` was
+    named here too until section 23 routed `validate.py`, which DOES dereference
+    it; it now has its own subtree (`_validate_section_headings`) rather than a
+    place in this one, because its consumer compares it AGAINST `sections[]` and
+    a profile must be able to declare one without the other. The inventory below
+    was taken from the readers, not the schema:
     `query.py` reads id / status / domain / title / last_active_at /
     depends_on / satisfies / superseded_by / inputs_xrefs / file_patterns, and
     `render.py` adds created_at.
@@ -973,10 +1150,15 @@ def validate_nodes(nodes, path, profile: Profile = PROFILE_STAMPED_ITEMS) -> Cac
             _validate_stamps_xrefs(node, i, path)
         if SUBTREE_NODE_FIELDS in profile.subtrees:
             _validate_node_fields(node, i, path)
+        if SUBTREE_SECTION_HEADINGS in profile.subtrees:
+            _validate_section_headings(node, i, path)
 
     # CROSS-NODE rules run after the per-node walk, because they are questions
-    # about the SET rather than about any one node.
-    if SUBTREE_NODE_FIELDS in profile.subtrees:
+    # about the SET rather than about any one node. They are gated on their OWN
+    # subtree, not on `node_fields`: see SUBTREE_NODE_IDENTITY for why a reader
+    # that reports duplicates itself must be able to take the field shapes
+    # without taking the refusals.
+    if SUBTREE_NODE_IDENTITY in profile.subtrees:
         _validate_node_ids_unique(nodes, path)
         _validate_resolver_keys_unique(nodes, path)
 
