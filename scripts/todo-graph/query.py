@@ -68,6 +68,7 @@ import os
 import re
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import time
@@ -134,6 +135,12 @@ MCP_MAX_ROW_LIMIT = 100
 OUTPUT_CEILING_BYTES = 24000
 BYTES_PER_TOKEN = 3.9
 
+# Ceiling on the `code` verb's Notes scan of a cache-named file. 16 MiB is the
+# same bound `resolve_symbol` puts on a source file, and ~80x the largest TODO
+# in the corpus, so it refuses nothing real while keeping a hostile or
+# mistyped `file_path` from being read without limit.
+NOTES_READ_MAX_BYTES = 16 * 1024 * 1024
+
 # Subcommands exempt from row bounding, with the reason each is exempt:
 #   stats  -- shape is O(taxonomy), not O(nodes): scalars plus dicts keyed
 #             by status/domain plus two hardcoded [:3] top-N lists. It
@@ -199,6 +206,77 @@ def _safe_list(v) -> list:
 # stays a real verdict. Keeping the refusal on 2 means no consumer's existing
 # exit-code handling changes meaning.
 EXIT_CACHE_UNUSABLE = 2
+
+# rc 4 is THE REQUEST, not the cache. The command handlers exited 2 for an
+# unresolvable target, an ambiguous name, an unknown `--fields` column and an
+# out-of-range `--offset`, which collided head-on with the documented meaning
+# of 2: a caller told "the cache exists and cannot be trusted" was in fact
+# looking at a perfectly good cache and a typo in its own argv, and the two
+# were indistinguishable because the input errors wrote no body at all.
+# Splitting the code is what lets a consumer act differently -- rebuild the
+# cache versus fix the request (Codex consistency, section 22 review, [medium]).
+EXIT_QUERY_INPUT = 4
+
+
+class QueryInputError(Exception):
+    """The REQUEST cannot be answered; the cache is fine -- PROBABLY.
+
+    CARRIES its reason and detail instead of emitting them, because whether
+    the cache is fine is not knowable at the raise site. Target resolution and
+    ambiguity checks run INSIDE the walk, before `_run_once`'s post-walk
+    `check_corpus_unchanged`, so a corpus edit landing mid-walk can make a
+    perfectly good target look absent. Emitting there published "the cache is
+    usable; correct the request" over what was actually a stale generation --
+    telling the caller to fix a request that was never wrong, and skipping the
+    generation binding that is this section's headline invariant. The caller
+    re-verifies first and decides which envelope is true (Codex
+    re-adversarial, section 22 review round 7, [medium]).
+
+    Raised rather than `sys.exit()` for the same reason `CacheRefused` is, and
+    the omission was the bug: ten command-handler `sys.exit(2)` calls unwound
+    straight through `_run_once_guarded` (which catches `CacheRefused`,
+    `CeilingExceeded`, `RecursionError` and `MemoryError`, but never
+    `SystemExit`) and KILLED the watcher. So `backlinks <id> --watch` on a
+    target that is later renamed -- an ordinary, valid edit -- ended the
+    session, which is precisely the interactive-tool failure this section
+    pinned watch-mode behaviour to avoid (Codex adversarial, section 22
+    review, [medium]).
+    """
+
+    def __init__(self, reason: str, message: str, quiet: bool = False):
+        super().__init__(message)
+        self.reason = reason
+        self.detail = message
+        self.quiet = quiet
+        # Set once the body has been written, so the guard can emit the ones
+        # that never passed through the post-walk check (the argv-shape errors
+        # from `bound_rows`, which do not depend on cache CONTENT and so have
+        # nothing to re-verify) without double-printing the ones that did.
+        self.emitted = False
+
+
+def _write_input_error(exc: "QueryInputError") -> None:
+    """Emit the machine-readable request-error body on stdout.
+
+    Same stdout discipline as `_write_refusal`, and for the same transport
+    reason: `mcp_server.py` captures stdout in-process, so a stderr-only
+    message leaves the buffer empty. The `error` key is what makes the MCP
+    layer classify this as a failure rather than a result.
+    """
+    sys.stdout.write(json.dumps({
+        "error": "query-input",
+        "reason": exc.reason,
+        "detail": exc.detail,
+        "hint": "the cache is usable; correct the request and re-run",
+    }, indent=2, sort_keys=True) + "\n")
+    if not exc.quiet:
+        sys.stderr.write(f"[query.py] error: {exc.reason}: {exc.detail}\n")
+    exc.emitted = True
+
+
+def _input_error(reason: str, message: str, quiet: bool = False):
+    """Raise a request error. Emission is the CALLER's, after re-verification."""
+    raise QueryInputError(reason, message, quiet)
 
 
 class CacheRefused(Exception):
@@ -532,23 +610,23 @@ def resolve_id_to_node(target: str, ctx: Ctx) -> Optional[dict]:
     if not fp:
         stem_collisions = ctx.stem_collisions.get(t)
         if stem_collisions and len(stem_collisions) > 1:
-            sys.stderr.write(
-                f"[query.py] error: id '{t}' matches multiple filename stems:\n"
-                + "\n".join(f"  - {p}" for p in stem_collisions) + "\n"
-                + "[query.py] disambiguate by passing the full file_path.\n"
-            )
-            sys.exit(2)
+            _input_error(
+                "AMBIGUOUS_STEM",
+                f"id '{t}' matches multiple filename stems ("
+                + ", ".join(stem_collisions)
+                + "); disambiguate by passing the full file_path",
+                ctx.quiet)
         fp = ctx.path_index["by_filename"].get(t)
     # 3. Slug (with ambiguity check)
     if not fp:
         collisions = ctx.slug_collisions.get(t)
         if collisions and len(collisions) > 1:
-            sys.stderr.write(
-                f"[query.py] error: id '{t}' is ambiguous; matches:\n"
-                + "\n".join(f"  - {p}" for p in collisions) + "\n"
-                + "[query.py] disambiguate by passing the full file_path.\n"
-            )
-            sys.exit(2)
+            _input_error(
+                "AMBIGUOUS_SLUG",
+                f"id '{t}' is ambiguous; matches "
+                + ", ".join(collisions)
+                + "; disambiguate by passing the full file_path",
+                ctx.quiet)
         fp = ctx.slug_index.get(t)
     # 4. Full cache file_path
     if not fp:
@@ -692,10 +770,10 @@ def cmd_by_domain(ctx: Ctx, args) -> tuple:
 def cmd_backlinks(ctx: Ctx, args) -> tuple:
     node = resolve_id_to_node(args.target, ctx)
     if not node:
-        sys.stderr.write(
-            f"[query.py] error: id '{args.target}' not found. Try: {_id_hint(args.target, ctx)}\n"
-        )
-        sys.exit(2)
+        _input_error(
+            "TARGET_NOT_FOUND",
+            f"id '{args.target}' not found. Try: {_id_hint(args.target, ctx)}",
+            ctx.quiet)
     edges = ctx.inbound.get(node["file_path"], [])
     rows = []
     for e in edges:
@@ -718,10 +796,10 @@ def cmd_backlinks(ctx: Ctx, args) -> tuple:
 def cmd_deferred(ctx: Ctx, args) -> tuple:
     node = resolve_id_to_node(args.target, ctx)
     if not node:
-        sys.stderr.write(
-            f"[query.py] error: id '{args.target}' not found. Try: {_id_hint(args.target, ctx)}\n"
-        )
-        sys.exit(2)
+        _input_error(
+            "TARGET_NOT_FOUND",
+            f"id '{args.target}' not found. Try: {_id_hint(args.target, ctx)}",
+            ctx.quiet)
     rows = []
     for x in _safe_list(node.get("stamps_xrefs")):
         if not isinstance(x, dict):
@@ -752,10 +830,10 @@ def cmd_deferred(ctx: Ctx, args) -> tuple:
 def cmd_deferred_by(ctx: Ctx, args) -> tuple:
     node = resolve_id_to_node(args.target, ctx)
     if not node:
-        sys.stderr.write(
-            f"[query.py] error: id '{args.target}' not found. Try: {_id_hint(args.target, ctx)}\n"
-        )
-        sys.exit(2)
+        _input_error(
+            "TARGET_NOT_FOUND",
+            f"id '{args.target}' not found. Try: {_id_hint(args.target, ctx)}",
+            ctx.quiet)
     rows = []
     for n in ctx.nodes:
         if n["file_path"] == node["file_path"]:
@@ -983,10 +1061,10 @@ def cmd_stats(ctx: Ctx, args) -> tuple:
 def cmd_code(ctx: Ctx, args) -> tuple:
     node = resolve_id_to_node(args.target, ctx)
     if not node:
-        sys.stderr.write(
-            f"[query.py] error: id '{args.target}' not found. Try: {_id_hint(args.target, ctx)}\n"
-        )
-        sys.exit(2)
+        _input_error(
+            "TARGET_NOT_FOUND",
+            f"id '{args.target}' not found. Try: {_id_hint(args.target, ctx)}",
+            ctx.quiet)
     rows = []
     seen = set()
 
@@ -1003,14 +1081,43 @@ def cmd_code(ctx: Ctx, args) -> tuple:
     # Notes-grep for (src/...) / (include/...) references. Enforce a
     # repo-local path boundary on the cache-derived file_path so a
     # poisoned cache entry like `../../etc/passwd` can never be read.
+    #
+    # THE BOUNDARY IS NOT ENOUGH ON ITS OWN, and that gap was real: an
+    # explicitly-supplied `--cache` is validated for SHAPE but deliberately not
+    # for freshness against THIS corpus, so a node's `file_path` is
+    # attacker-influenced text that only has to stay repo-LOCAL. A FIFO at that
+    # path blocks `read_text()` forever and a multi-gigabyte regular file
+    # exhausts memory -- both before any ceiling this reader enforces. So the
+    # read is bounded the same way `cache_schema` bounds its own: stat the
+    # opened descriptor, require a regular file, and cap the bytes (Codex
+    # adversarial, section 22 review, [medium]).
     text = ""
     try:
         resolved = (ctx.repo_root / node["file_path"]).resolve(strict=False)
         repo_resolved = ctx.repo_root.resolve(strict=False)
         resolved.relative_to(repo_resolved)
-        text = resolved.read_text(encoding="utf-8", errors="replace")
+        # O_NONBLOCK IS THE LOAD-BEARING FLAG, and getting this order wrong is
+        # how the first attempt at this fix defended nothing: a plain
+        # `open(path, "rb")` on a FIFO with no writer BLOCKS INSIDE THE OPEN,
+        # so an `fstat` guard placed after it is unreachable and the hang it
+        # was written to prevent happens at the same line as before. Opening
+        # non-blocking returns a descriptor immediately for every file type,
+        # and the fstat then rejects anything that is not a regular file.
+        # `fstat` on the DESCRIPTOR (not a path stat) is what makes this
+        # TOCTOU-free: the object measured is the object read.
+        fd = os.open(resolved, os.O_RDONLY | os.O_NONBLOCK)
+        with os.fdopen(fd, "rb") as fh:
+            st = os.fstat(fh.fileno())
+            if not stat.S_ISREG(st.st_mode):
+                raise OSError(f"not a regular file: {resolved}")
+            if st.st_size > NOTES_READ_MAX_BYTES:
+                raise OSError(
+                    f"{resolved} is {st.st_size} bytes, over the "
+                    f"{NOTES_READ_MAX_BYTES}-byte notes-scan ceiling")
+            text = fh.read(NOTES_READ_MAX_BYTES).decode("utf-8", errors="replace")
     except (OSError, ValueError):
-        # ValueError: path escapes repo_root; OSError: file missing / unreadable.
+        # ValueError: path escapes repo_root; OSError: file missing, unreadable,
+        # not a regular file, or over the ceiling.
         text = ""
     for m in NOTES_PATH_RE.finditer(text):
         p = m.group("path")
@@ -1193,32 +1300,30 @@ def _narrowing_flags(columns, scope_supported: bool, limit: int) -> list:
     return flags
 
 
-def _apply_scope(rows, columns, scope: str, subcommand: str):
+def _apply_scope(rows, columns, scope: str, subcommand: str, quiet: bool = False):
     """Filter rows to a single domain. Fails closed when the subcommand
     exposes no domain column: silently ignoring --scope would let a caller
     believe they narrowed a query that in fact returned everything."""
     if "domain" not in (columns or []):
-        sys.stderr.write(
-            f"[query.py] FATAL: --scope is not supported by '{subcommand}' "
-            f"(no domain column; columns are: {','.join(columns or [])}). "
-            f"Supported on: ready, blocked, blocking, by-domain, backlinks, "
-            f"orphans, stale, code-by.\n"
-        )
-        sys.exit(2)
+        _input_error(
+            "SCOPE_UNSUPPORTED",
+            f"--scope is not supported by '{subcommand}' (no domain column; "
+            f"columns are: {','.join(columns or [])}). Supported on: ready, "
+            f"blocked, blocking, by-domain, backlinks, orphans, stale, code-by",
+            quiet)
     return [r for r in rows if (r.get("domain") or "") == scope]
 
 
-def _apply_fields(rows, columns, fields: str, subcommand: str):
+def _apply_fields(rows, columns, fields: str, subcommand: str, quiet: bool = False):
     """Project rows onto a caller-chosen column subset. An unknown field
     is an error, not a silently-dropped request."""
     want = [f.strip() for f in fields.split(",") if f.strip()]
     unknown = [f for f in want if f not in (columns or [])]
     if unknown:
-        sys.stderr.write(
-            f"[query.py] FATAL: unknown --fields for '{subcommand}': "
-            f"{','.join(unknown)}. Valid columns: {','.join(columns or [])}\n"
-        )
-        sys.exit(2)
+        _input_error(
+            "UNKNOWN_FIELDS",
+            f"unknown --fields for '{subcommand}': {','.join(unknown)}. "
+            f"Valid columns: {','.join(columns or [])}", quiet)
     projected = [{k: r.get(k) for k in want} for r in rows]
     return projected, want
 
@@ -1229,12 +1334,20 @@ def bound_rows(rows, columns, args, subcommand: str):
     meta always carries returned / total_matching / truncated so a caller
     can never mistake a bounded page for the complete set."""
     total_before_scope = len(rows)
+    # THE CALLER'S --quiet REACHES EVERY rc-4 PATH. These four are raised
+    # AFTER the generation check, so they emit from the guard rather than from
+    # `_run_once`; leaving `quiet` to its default there printed a human
+    # diagnostic to stderr under `--quiet`, which the MCP transport always
+    # passes. A consumer merging the streams then read JSON followed by prose,
+    # and the same error class behaved differently depending on where in the
+    # pipeline it was raised (Codex re-adversarial, section 22 review round 8).
+    quiet = bool(getattr(args, "quiet", False))
     scope = getattr(args, "scope", None) or None
     if scope:
-        rows = _apply_scope(rows, columns, scope, subcommand)
+        rows = _apply_scope(rows, columns, scope, subcommand, quiet)
 
     if getattr(args, "fields", None):
-        rows, columns = _apply_fields(rows, columns, args.fields, subcommand)
+        rows, columns = _apply_fields(rows, columns, args.fields, subcommand, quiet)
 
     total_matching = len(rows)
 
@@ -1242,15 +1355,13 @@ def bound_rows(rows, columns, args, subcommand: str):
     limit = DEFAULT_ROW_LIMIT if limit is None else int(limit)
     offset = int(getattr(args, "offset", None) or 0)
     if offset < 0:
-        sys.stderr.write("[query.py] FATAL: --offset must be >= 0\n")
-        sys.exit(2)
+        _input_error("BAD_OFFSET", "--offset must be >= 0", quiet)
 
     if limit == UNLIMITED_ROW_LIMIT:
         page = rows[offset:] if offset else rows
     else:
         if limit < 0:
-            sys.stderr.write("[query.py] FATAL: --limit must be >= 0\n")
-            sys.exit(2)
+            _input_error("BAD_LIMIT", "--limit must be >= 0", quiet)
         page = rows[offset:offset + limit]
 
     truncated = (offset + len(page)) < total_matching or offset > 0
@@ -1381,6 +1492,189 @@ def _snapshot_mtimes(todo_root: Path) -> dict:
     return out
 
 
+# How long to wait for the NEXT event before deciding the burst is over. Long
+# enough that a corpus-wide sweep lands as one batch (a 232-file rewrite
+# finishes well inside it), short enough to stay imperceptible for the ordinary
+# case of a single file being saved.
+WATCH_SETTLE_SECS = 0.25
+
+# Absolute ceilings on ONE drain, so coalescing can never postpone the answer
+# indefinitely under a sustained event stream. Whichever is reached first ends
+# the drain and the tick runs; anything still queued simply coalesces into the
+# NEXT drain, so no event is lost -- only deferred by one tick.
+WATCH_DRAIN_MAX_SECS = 2.0
+WATCH_DRAIN_MAX_EVENTS = 5000
+
+# Hard ceiling on ONE unterminated event record. An inotify line is a path plus
+# an event-name list, so anything approaching this is malformed by
+# construction -- and without the ceiling a producer emitting bytes and no
+# newline grows the reader's buffer without limit. The idle read is
+# deliberately deadline-FREE (the watcher must be able to block until something
+# happens), so this bound is the only thing between a malformed stream and a
+# watcher that consumes memory until it dies. Measured 2026-08-08 before the
+# bound: 1.9 MB, 2.8 MB, 3.5 MB across three successive 50ms reads, still
+# climbing.
+WATCH_MAX_RECORD_BYTES = 64 * 1024
+
+
+class _EventLineReader:
+    """Line reader over a RAW descriptor, with its own buffer.
+
+    SELECT AND A BUFFERED FILE OBJECT CANNOT BE MIXED, and doing it made the
+    first version of this coalescing completely inert. `Popen(..., text=True)`
+    hands back a buffered stream, so one `readline()` can pull an entire burst
+    out of the kernel pipe into Python's buffer; `select()` on the underlying
+    fd then reports NOTHING READABLE -- correctly, the pipe really is empty --
+    while 49 complete lines sit in user space waiting. The drain returned 0 and
+    every event still got its own full rebuild.
+
+    Measured 2026-08-08 with the writer held open, which is the shape
+    `inotifywait -m` actually has: 50 lines written, first line read, drain
+    returned 0. The fixture that "proved" coalescing worked had CLOSED its
+    writer, and the resulting EOF is what kept the descriptor readable -- so it
+    passed while testing the one condition that never occurs live.
+
+    Owning the buffer removes the split: readability is decided by what this
+    class holds plus what `select` says about the fd, which are the same two
+    places the data can be.
+    """
+
+    def __init__(self, fd: int):
+        self.fd = fd
+        # THE TWO STATES ARE HELD APART ON PURPOSE. `_ready` is finished
+        # records; `_buf` is the in-progress tail and NEVER contains a newline
+        # once `_absorb` has run. Keeping them in one buffer is what made the
+        # size ceiling and the resync interfere with each other: the ceiling
+        # measured finished records it had no business discarding, and the
+        # resync could consume a good record's newline as the terminator of the
+        # bad record before it. With the split, each rule can only reach the
+        # bytes it is actually about.
+        self._ready: list = []
+        self._buf = b""
+        self._eof = False
+        # Set when a record blew the size ceiling: bytes up to and including
+        # the NEXT newline belong to that discarded record and must be dropped,
+        # not surfaced as a truncated phantom event.
+        self._resyncing = False
+
+    def _absorb(self, chunk: bytes) -> None:
+        """Fold a raw read into `_ready` + `_buf`, applying resync and ceiling."""
+        data = self._buf + chunk
+        self._buf = b""
+        if self._resyncing:
+            idx = data.find(b"\n")
+            if idx < 0:
+                # Still inside the discarded record, and nothing in `data` can
+                # be anything else -- drop it whole and stay in resync.
+                return
+            data = data[idx + 1:]
+            self._resyncing = False
+        *complete, tail = data.split(b"\n")
+        # A RECORD OVER THE CEILING IS MALFORMED WHETHER OR NOT IT TERMINATED.
+        # Bounding only the unfinished tail is not enough: an oversized record
+        # whose closing newline arrives in the same read becomes a "complete"
+        # line and is emitted as an event, so the ceiling would reject it only
+        # when the writer happened to pause mid-record -- a timing accident,
+        # not a rule. Filtering here makes the bound a property of the record.
+        self._ready.extend(
+            c.decode("utf-8", errors="replace") + "\n"
+            for c in complete if len(c) <= WATCH_MAX_RECORD_BYTES)
+        # `tail` is by construction the only unfinished record, so it is the
+        # only thing the ceiling may judge -- and the finished records ahead of
+        # it are already safe in `_ready`.
+        if len(tail) > WATCH_MAX_RECORD_BYTES:
+            self._resyncing = True
+        else:
+            self._buf = tail
+
+    def _take_buffered_line(self) -> Optional[str]:
+        if self._ready:
+            return self._ready.pop(0)
+        return None
+
+    def next_line(self, timeout: Optional[float]) -> Optional[str]:
+        """Return the next complete line, or None on timeout/EOF.
+
+        `timeout=None` blocks indefinitely, which is what the outer watch loop
+        wants while idle; a finite timeout is what the drain wants.
+
+        A FINITE TIMEOUT IS ABSOLUTE, not per-read. Handing the same `timeout`
+        to every `select` looks equivalent and is not: a writer producing bytes
+        with no newline keeps the descriptor readable forever, so each read
+        succeeds, `_take_buffered_line` never does, and this loop never returns
+        to the caller whose deadline is supposed to bound it. The drain's
+        ceiling is then unreachable -- the same unbounded-coalescing failure it
+        exists to prevent, one level down, plus an unbounded `_buf`.
+        """
+        try:
+            import select
+        except ImportError:  # pragma: no cover -- POSIX-only fallback
+            return None
+        deadline = None if timeout is None else time.monotonic() + timeout
+        while True:
+            line = self._take_buffered_line()
+            if line is not None:
+                return line
+            if self._eof:
+                # A trailing fragment with no newline is still an event --
+                # unless it belongs to a record already being discarded, in
+                # which case surfacing it would emit exactly the truncated
+                # phantom the resync exists to suppress.
+                if self._buf and not self._resyncing:
+                    rest, self._buf = self._buf, b""
+                    return rest.decode("utf-8", errors="replace")
+                return None
+            if deadline is None:
+                remaining = None
+            else:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    # Partial bytes STAY BUFFERED: the line is incomplete, not
+                    # discarded, and the next call resumes where this stopped.
+                    return None
+            try:
+                ready, _, _ = select.select([self.fd], [], [], remaining)
+            except (OSError, ValueError):
+                return None
+            if not ready:
+                return None
+            try:
+                chunk = os.read(self.fd, 65536)
+            except OSError:
+                return None
+            if not chunk:
+                self._eof = True
+                continue
+            self._absorb(chunk)
+
+
+def _drain_pending_events(reader: _EventLineReader) -> int:
+    """Consume events already queued on `reader`, returning how many.
+
+    BOUNDED BY AN ABSOLUTE DEADLINE, not by a per-event window. Re-arming the
+    full settle window on every event -- an earlier shape of this function --
+    reads as "absorb the whole sweep" and is in fact unbounded: any stream
+    producing events faster than the window keeps the drain running forever, so
+    the watcher never rebuilds and never answers. That is a worse failure than
+    the burst it was added to fix, because it has no end state. The whole drain
+    therefore gets ONE deadline, each wait is given only the time remaining,
+    and a hard event cap bounds it a second way.
+
+    Nothing is lost when a bound is hit: whatever is still queued coalesces
+    into the NEXT drain, so an event is at worst deferred by one tick.
+    """
+    deadline = time.monotonic() + WATCH_DRAIN_MAX_SECS
+    drained = 0
+    while drained < WATCH_DRAIN_MAX_EVENTS:
+        remaining = min(WATCH_SETTLE_SECS, deadline - time.monotonic())
+        if remaining <= 0:
+            return drained
+        if reader.next_line(remaining) is None:
+            return drained
+        drained += 1
+    return drained
+
+
 def watch_loop(run_once, todo_root: Path, quiet: bool):
     """Run run_once() once, then re-run whenever a .md file under todo_root
     changes. Prefer inotifywait; fall back to mtime polling every 2s."""
@@ -1403,15 +1697,34 @@ def watch_loop(run_once, todo_root: Path, quiet: bool):
         except OSError:
             proc = None
         if proc is not None:
+            # Read through the RAW descriptor. Calling `proc.stdout.readline()`
+            # here would buffer the burst in user space where `select` cannot
+            # see it, which is exactly what made the drain below return 0.
+            reader = _EventLineReader(proc.stdout.fileno())
             try:
                 while True:
-                    line = proc.stdout.readline()
-                    if not line:
+                    line = reader.next_line(None)
+                    if line is None:
                         break
                     path = line.split(" ", 1)[0]
-                    if path.endswith(".md"):
-                        _banner()
-                        run_once()
+                    if not path.endswith(".md"):
+                        continue
+                    # COALESCE THE BURST. One event used to mean one full tick,
+                    # and a tick rebuilds the whole cache and re-validates it.
+                    # A formatter sweep, a branch checkout or a migration
+                    # touches the corpus wholesale -- 232 files in this repo --
+                    # so the watcher spent minutes replaying obsolete
+                    # intermediate states while the user waited for the answer
+                    # to the LAST edit, which is the only one they asked about
+                    # (Codex perf, section 22 review, [medium]).
+                    #
+                    # Drain whatever else is already readable within a short
+                    # settle window, then run ONE tick for the batch. The
+                    # per-tick refusal semantics above are untouched: a batch
+                    # whose rebuild fails still refuses exactly once.
+                    _drain_pending_events(reader)
+                    _banner()
+                    run_once()
             except KeyboardInterrupt:
                 pass
             finally:
@@ -1746,7 +2059,18 @@ def main(argv=None) -> int:
 
     def _run_once():
         ctx, info = _build_ctx()
-        rows, columns = fn(ctx, args)
+        # A REQUEST ERROR IS ALSO A RESULT DERIVED FROM THE CACHE, so it gets
+        # the same generation binding as a successful answer. "id not found"
+        # and "ambiguous" are computed from the indexes the walk was given; if
+        # the corpus moved underneath, the honest answer is that the cache is
+        # stale, NOT that the caller's request is wrong. Holding the error here
+        # and deciding after re-verification is what keeps rc 4 from
+        # overruling rc 2.
+        input_error = None
+        try:
+            rows, columns = fn(ctx, args)
+        except QueryInputError as exc:
+            input_error = exc
         # THE GENERATION BINDING IS ONLY CLOSED HERE. The validated read proves
         # the cache matched the corpus when it was opened; this proves the
         # corpus did not move while the walk above computed an answer from it.
@@ -1756,7 +2080,13 @@ def main(argv=None) -> int:
         try:
             _cs.check_corpus_unchanged(todo_root, info.corpus)
         except _cs.CacheSchemaError as exc:
+            # Refuses whether or not a request error is pending: a stale
+            # generation is the stronger and truer statement.
             _refuse(exc.reason, str(exc), args.quiet)
+        if input_error is not None:
+            # The corpus held, so the request really was the problem.
+            _write_input_error(input_error)
+            raise input_error
         output_path = getattr(args, "output_path", None)
 
         # Bounding applies to row-returning subcommands only. `stats`
@@ -1828,6 +2158,17 @@ def main(argv=None) -> int:
             # `_refuse` already wrote the envelope to stdout; this only maps it
             # onto the documented infrastructure exit code.
             return EXIT_CACHE_UNUSABLE
+        except QueryInputError as exc:
+            # Catching it HERE is what keeps a watch tick alive: the handlers
+            # used to `sys.exit(2)` and `SystemExit` is not an `Exception`, so
+            # it unwound past every guard below and terminated the watcher on
+            # an ordinary rename of the watched target.
+            if not exc.emitted:
+                # Raised after the generation check (the argv-shape errors in
+                # `bound_rows`), so nothing re-verified it and nothing emitted
+                # it yet.
+                _write_input_error(exc)
+            return EXIT_QUERY_INPUT
         except RecursionError as exc:
             # A RESOURCE failure is infrastructure, not a verdict. Letting it
             # escape exited 1 -- which this reader documents as "the graph has

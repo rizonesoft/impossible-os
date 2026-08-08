@@ -1408,12 +1408,16 @@ else
     t_fail "query: backlinks stem form broken (rc=$Q_RC, out=$Q_OUT)"
 fi
 
-# Sub-test 9h: nonexistent id exits 2 with a nearest-match hint.
+# Sub-test 9h: nonexistent id exits 4 -- THE REQUEST, not the cache -- with a
+# nearest-match hint and a machine-readable body. It asserted rc 2 until the
+# section-22 review: 2 is documented as "the cache cannot be trusted", so a
+# caller with a typo was told to rebuild a cache that was never at fault.
 Q_OUT=$(q_live backlinks nonexistent-slug-xyz 2>&1); Q_RC=$?
-if [ "$Q_RC" = "2" ] && echo "$Q_OUT" | grep -q "not found"; then
-    t_pass "query: backlinks nonexistent id exits 2 with hint"
+if [ "$Q_RC" = "4" ] && echo "$Q_OUT" | grep -q "not found" \
+   && echo "$Q_OUT" | grep -q '"error": "query-input"'; then
+    t_pass "query: backlinks nonexistent id exits 4 with hint + body"
 else
-    t_fail "query: backlinks nonexistent should exit 2 (rc=$Q_RC, out=$Q_OUT)"
+    t_fail "query: backlinks nonexistent should exit 4 (rc=$Q_RC, out=$Q_OUT)"
 fi
 
 # Sub-test 9i: `orphans` is non-empty but much shorter than the total
@@ -1660,10 +1664,10 @@ sed -i 's/ambiguous-in-different-domains-$/ambiguous-in-different-domains-b/' "$
 sed -i 's/domain: 01-test/domain: 02-b/' "$AMB_TREE/todo/02-b/TODO-01-collide.md"
 python3 "$BUILD_PY" --quiet --root "$AMB_TREE/todo" --output "$AMB_TREE/cache.json" --repo-root "$AMB_TREE" >/dev/null 2>&1
 Q_OUT=$(python3 "$QUERY_PY" --cache "$AMB_TREE/cache.json" --repo-root "$AMB_TREE" --quiet backlinks collide 2>&1); Q_RC=$?
-if [ "$Q_RC" = "2" ] && echo "$Q_OUT" | grep -q "ambiguous"; then
-    t_pass "query: ambiguous slug refused with exit 2 + listing"
+if [ "$Q_RC" = "4" ] && echo "$Q_OUT" | grep -q "ambiguous"; then
+    t_pass "query: ambiguous slug refused with exit 4 + listing"
 else
-    t_fail "query: ambiguous slug should exit 2 (rc=$Q_RC, out=$Q_OUT)"
+    t_fail "query: ambiguous slug should exit 4 (rc=$Q_RC, out=$Q_OUT)"
 fi
 
 # Sub-test 9u: TSV output sanitizes embedded tabs/newlines. A title
@@ -2172,6 +2176,802 @@ sys.exit(0 if d['mut_is_empty_array'] and d['real_has_error']
     t_pass "query/MCP: mutation check -- the restored 'or []' turns a body-less failure back into []"
 else
     t_fail "query/MCP: 'or []' mutation did not reproduce the swallow (rc=$MCPMUT_RC, out=$MCPMUT_OUT)"
+fi
+
+# Sub-test 9aa5b: THE MCP STATUS FLAG MUST AGREE WITH THE BODY. Making the body
+# honest (9aa4) fixed what a client sees only if it PARSES the body; the
+# protocol's own `isError` field said success regardless, so a client
+# classifying on status -- which is what the field is for -- was still told a
+# refused query had succeeded. Mutation: pin `isError` back to False and the
+# same refusal must report success.
+MCPERR_OUT=$(cd "$REPO_ROOT" && python3 - "$MAL_TREE" <<'MCPERREOF' 2>&1
+import sys, json, pathlib, importlib.util, shutil
+sys.path.insert(0, "scripts/todo-graph")
+root = pathlib.Path(sys.argv[1])
+(root / "build").mkdir(parents=True, exist_ok=True)
+shutil.copy(root / "cache.json", root / "build" / "todo-cache.json")
+src_path = pathlib.Path("scripts/todo-graph/mcp_server.py")
+src = src_path.read_text(encoding="utf-8")
+needle = '                "isError": _looks_like_error_envelope(text),'
+assert src.count(needle) == 1, f"isError needle appears {src.count(needle)}x"
+
+def load(path, name, text=None):
+    if text is not None:
+        path.write_text(text, encoding="utf-8")
+    spec = importlib.util.spec_from_file_location(name, path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+def probe(mod):
+    req = {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+           "params": {"name": "stats", "arguments": {}}}
+    res = mod._handle_jsonrpc_request(req, root, False)["result"]
+    return {"isError": res["isError"],
+            "has_error_body": "error" in res["content"][0]["text"]}
+
+real = probe(load(src_path, "mcp_err_real"))
+mut_path = src_path.with_name(".mcp_server_err_mut.py")
+try:
+    mut = probe(load(mut_path, "mcp_err_mut",
+                     src.replace(needle, '                "isError": False,', 1)))
+finally:
+    mut_path.unlink(missing_ok=True)
+print(json.dumps({"real": real, "mut": mut}))
+MCPERREOF
+); MCPERR_RC=$?
+if [ "$MCPERR_RC" = "0" ] && echo "$MCPERR_OUT" | python3 -c "
+import json, sys
+d = json.loads(sys.stdin.read())
+sys.exit(0 if d['real']['isError'] and d['real']['has_error_body']
+         and not d['mut']['isError'] else 1)"; then
+    t_pass "query/MCP: a refusal sets isError, and the pinned-False mutation reports success"
+else
+    t_fail "query/MCP: isError classification broken (rc=$MCPERR_RC, out=$MCPERR_OUT)"
+fi
+
+# Sub-test 9aa5c: A BAD REQUEST IS rc 4 AND KEEPS THE WATCHER ALIVE. Ten
+# handlers called `sys.exit(2)`, which overloaded the documented
+# cache-unusable code AND -- because SystemExit is not an Exception -- unwound
+# past `_run_once_guarded`, so renaming the watched target ended the session.
+# Both halves are asserted here, and the second is the one no exit-code check
+# would catch. Mutation: restore `sys.exit(2)` in the not-found path; the code
+# collides again and the guard stops catching it.
+REQERR_OUT=$(cd "$REPO_ROOT" && python3 - <<'REQERREOF' 2>&1
+import sys, io, json, pathlib, importlib.util, contextlib
+sys.path.insert(0, "scripts/todo-graph")
+src_path = pathlib.Path("scripts/todo-graph/query.py")
+src = src_path.read_text(encoding="utf-8")
+needle = ('        _input_error(\n'
+          '            "TARGET_NOT_FOUND",\n')
+assert src.count(needle) == 4, f"not-found needle appears {src.count(needle)}x"
+
+def load(path, name, text=None):
+    if text is not None:
+        path.write_text(text, encoding="utf-8")
+    spec = importlib.util.spec_from_file_location(name, path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+def probe(mod):
+    """Answer a backlinks query for a target that does not exist, exactly as a
+    watch tick would: through the guard, catching only what the guard lets by."""
+    out = {"rc": None, "escaped": None}
+    class _Args:
+        target = "no-such-node-xyz"; quiet = True
+    class _Ctx:
+        quiet = True; nodes = []; id_index = {}; slug_collisions = {}
+        stem_collisions = {}; slug_index = {}
+        path_index = {"by_filename": {}, "by_dn": {}}
+    # The refusal body goes to stdout by design (the MCP transport captures it
+    # there); swallow it here so it cannot interleave with this probe's own
+    # JSON result on the same stream.
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            mod.cmd_backlinks(_Ctx(), _Args())
+        out["rc"] = 0
+    except mod.QueryInputError:
+        out["rc"] = mod.EXIT_QUERY_INPUT
+        out["escaped"] = False
+    except SystemExit as exc:
+        # The pre-fix shape: SystemExit is not an Exception, so the guard that
+        # catches CacheRefused/RecursionError/MemoryError never sees it and the
+        # watch loop dies with it.
+        out["rc"] = exc.code
+        out["escaped"] = True
+    except AttributeError:
+        out["rc"] = "no-QueryInputError"
+    return out
+
+real = probe(load(src_path, "query_req_real"))
+mut_path = src_path.with_name(".query_req_mut.py")
+mut_src = src.replace(
+    needle,
+    '        sys.exit(2)\n        _input_error(\n            "TARGET_NOT_FOUND",\n', 1)
+try:
+    mut = probe(load(mut_path, "query_req_mut", mut_src))
+finally:
+    mut_path.unlink(missing_ok=True)
+print(json.dumps({"real": real, "mut": mut}))
+REQERREOF
+); REQERR_RC=$?
+if [ "$REQERR_RC" = "0" ] && echo "$REQERR_OUT" | python3 -c "
+import json, sys
+d = json.loads(sys.stdin.read())
+sys.exit(0 if d['real']['rc'] == 4 and d['real']['escaped'] is False
+         and d['mut']['rc'] == 2 and d['mut']['escaped'] is True else 1)"; then
+    t_pass "query: a bad request is rc 4 via QueryInputError; the sys.exit mutation escapes the guard"
+else
+    t_fail "query: request-error classification broken (rc=$REQERR_RC, out=$REQERR_OUT)"
+fi
+
+# Sub-test 9aa5c2: A STALE GENERATION OUTRANKS A REQUEST ERROR. Target
+# resolution runs INSIDE the walk, before the post-walk
+# `check_corpus_unchanged`, so a corpus edit landing mid-walk can make a
+# perfectly good target look absent. Emitting rc 4 there told the caller "the
+# cache is usable; correct the request" about a request that was never wrong,
+# and skipped the generation binding this section's whole contract rests on.
+# The corpus is moved here between cache build and query, so the not-found path
+# must yield the rc-2 cache refusal, not rc 4.
+GENRACE_TREE="$TMP_DIR/q-genrace"
+mkdir -p "$GENRACE_TREE/todo/01-test" "$GENRACE_TREE/build"
+cat > "$GENRACE_TREE/todo/01-test/TODO-01-gen.md" <<'EOF'
+---
+schema_version: 1
+id: genrace-fixture
+domain: 01-test
+status: draft
+title: Gen
+---
+body
+EOF
+python3 "$BUILD_PY" --quiet --root "$GENRACE_TREE/todo" \
+    --output "$GENRACE_TREE/build/todo-cache.json" --repo-root "$GENRACE_TREE" >/dev/null 2>&1
+# Move the corpus AFTER the cache was certified against it.
+cat > "$GENRACE_TREE/todo/01-test/TODO-02-late.md" <<'EOF'
+---
+schema_version: 1
+id: genrace-latecomer
+domain: 01-test
+status: draft
+title: Late
+---
+body
+EOF
+GENRACE_OUT=$(cd "$GENRACE_TREE" && python3 "$QUERY_PY" \
+    --repo-root "$GENRACE_TREE" --quiet backlinks genrace-latecomer 2>&1); GENRACE_RC=$?
+if [ "$GENRACE_RC" = "2" ] && echo "$GENRACE_OUT" | grep -q '"error": "cache-unusable"'; then
+    t_pass "query: a corpus that moved mid-walk refuses as stale, not as a bad request"
+else
+    t_fail "query: stale generation reported as a request error (rc=$GENRACE_RC, out=$GENRACE_OUT)"
+fi
+
+# Sub-test 9aa5c3: AN ARGV-SHAPE ERROR STILL CARRIES ITS BODY. Those are raised
+# from `bound_rows`, AFTER the generation check, so they never pass through the
+# re-verification path that emits the others -- moving emission out of
+# `_input_error` would otherwise have left them exiting 4 silently.
+# The streams are captured SEPARATELY: under `--quiet` an rc-4 path must put
+# exactly the JSON envelope on stdout and NOTHING on stderr. Emitting these
+# four from the guard originally lost the caller's quiet flag, so a consumer
+# merging the streams -- and the MCP transport, which always passes --quiet --
+# read JSON followed by a human diagnostic.
+ARGVERR_ERR="$TMP_DIR/argverr.stderr"
+ARGVERR_OUT=$(cd "$REPO_ROOT" && python3 "$QUERY_PY" --quiet stale --offset -1 \
+    2>"$ARGVERR_ERR"); ARGVERR_RC=$?
+ARGVERR_ERRBYTES=$(wc -c < "$ARGVERR_ERR" | tr -d ' ')
+if [ "$ARGVERR_RC" = "4" ] && echo "$ARGVERR_OUT" | grep -q '"reason": "BAD_OFFSET"' \
+   && [ "$ARGVERR_ERRBYTES" = "0" ] \
+   && echo "$ARGVERR_OUT" | python3 -c "import json,sys; json.load(sys.stdin)"; then
+    t_pass "query: an argv-shape error exits 4 with a JSON body and silent stderr under --quiet"
+else
+    t_fail "query: argv-shape error body/quiet broken (rc=$ARGVERR_RC, errbytes=$ARGVERR_ERRBYTES, out=$ARGVERR_OUT)"
+fi
+
+# Sub-test 9aa5d: THE `code` NOTES SCAN IS BOUNDED AND REGULAR-FILE-ONLY. An
+# explicitly-supplied `--cache` is validated for shape but deliberately NOT for
+# freshness against this corpus, so a node's `file_path` is attacker-influenced
+# text that only has to stay repo-local. A FIFO at that path blocked the read
+# forever. Asserted with a real FIFO under a throwaway root, under `timeout` so
+# a regression FAILS rather than hanging the suite.
+FIFO_TREE="$TMP_DIR/q-code-fifo"
+mkdir -p "$FIFO_TREE/todo/01-test" "$FIFO_TREE/build"
+cat > "$FIFO_TREE/todo/01-test/TODO-01-fifo.md" <<'EOF'
+---
+schema_version: 1
+id: fifo-fixture
+domain: 01-test
+status: draft
+title: Fifo
+---
+body
+EOF
+python3 "$BUILD_PY" --quiet --root "$FIFO_TREE/todo" --output "$FIFO_TREE/cache.json" \
+    --repo-root "$FIFO_TREE" >/dev/null 2>&1
+mkfifo "$FIFO_TREE/todo/01-test/blocker.fifo" 2>/dev/null
+# THE REWRITE IS ASSERTED, NOT ASSUMED. The first version of this fixture
+# indexed the cache as `d["nodes"]` -- but the cache root IS the node array, so
+# the rewrite raised, the fixture read an ordinary TODO instead of the FIFO,
+# and it PASSED while exercising nothing. A probe whose setup can silently
+# no-op measures nothing, so the rewrite now fails loudly and the assertion
+# below re-reads the file to confirm the FIFO path is really in the cache.
+python3 - "$FIFO_TREE/cache.json" <<'PY'
+import json, sys, pathlib
+p = pathlib.Path(sys.argv[1]); d = json.loads(p.read_text())
+nodes = d["nodes"] if isinstance(d, dict) else d
+assert nodes, "fixture cache has no nodes to rewrite"
+for n in nodes:
+    n["file_path"] = "todo/01-test/blocker.fifo"
+p.write_text(json.dumps(d))
+back = json.loads(p.read_text())
+back = back["nodes"] if isinstance(back, dict) else back
+assert all(n["file_path"] == "todo/01-test/blocker.fifo" for n in back), \
+    "cache rewrite did not take"
+PY
+FIFO_REWRITE_RC=$?
+FIFO_OUT=$(timeout 15 python3 "$QUERY_PY" --cache "$FIFO_TREE/cache.json" \
+    --repo-root "$FIFO_TREE" --quiet code fifo-fixture 2>&1); FIFO_RC=$?
+if [ "$FIFO_REWRITE_RC" = "0" ] && [ "$FIFO_RC" != "124" ]; then
+    t_pass "query: the code verb does not block on a FIFO named by the cache (rc=$FIFO_RC)"
+else
+    t_fail "query: code verb hung on a cache-named FIFO (rewrite_rc=$FIFO_REWRITE_RC, rc=$FIFO_RC)"
+fi
+
+# Sub-test 9aa5d2: MUTATION for the FIFO rule -- restore the blocking
+# `open(resolved, "rb")` and the SAME fixture must time out. This is the check
+# that would have caught the broken probe above: with the rewrite asserted, a
+# regression is now observable, and without a working non-blocking open the
+# mutation and the real code would behave identically.
+# The mutant lives BESIDE query.py, not in $TMP_DIR: query.py imports
+# `validate` and `cache_schema` from its own directory, so a copy anywhere else
+# exits 1 on ImportError and the fixture would "detect" a hang it never ran.
+FIFOMUT_SRC="$REPO_ROOT/scripts/todo-graph/.query_fifo_mut.py"
+python3 - "$REPO_ROOT/scripts/todo-graph/query.py" "$FIFOMUT_SRC" <<'PY'
+import pathlib, sys
+src = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+needle = "        fd = os.open(resolved, os.O_RDONLY | os.O_NONBLOCK)\n        with os.fdopen(fd, \"rb\") as fh:"
+assert src.count(needle) == 1, f"fifo needle appears {src.count(needle)}x"
+pathlib.Path(sys.argv[2]).write_text(
+    src.replace(needle, "        with open(resolved, \"rb\") as fh:", 1), encoding="utf-8")
+PY
+FIFOMUT_PREP=$?
+timeout 10 python3 "$FIFOMUT_SRC" --cache "$FIFO_TREE/cache.json" \
+    --repo-root "$FIFO_TREE" --quiet code fifo-fixture >/dev/null 2>&1
+FIFOMUT_RC=$?
+rm -f "$FIFOMUT_SRC"
+if [ "$FIFOMUT_PREP" = "0" ] && [ "$FIFOMUT_RC" = "124" ]; then
+    t_pass "query: mutation check -- the blocking open hangs on the same FIFO (fixture is sensitive)"
+else
+    t_fail "query: FIFO mutation did not reproduce the hang (prep=$FIFOMUT_PREP, rc=$FIFOMUT_RC)"
+fi
+
+# Sub-test 9aa5g: THE SERVING PATH IS THE REPO-OWNED JSON-RPC LOOP. The FastMCP
+# handlers return a refusal envelope verbatim and cannot set `isError` without
+# FastMCP rewriting the body out of JSON, so error CLASSIFICATION lives only in
+# `_serve_stdio_jsonrpc`. That is sound exactly while the FastMCP handlers do
+# not serve -- pinned here, so switching the transport cannot silently ship a
+# surface where every refusal reports success.
+SERVEPATH_OUT=$(cd "$REPO_ROOT" && python3 - <<'SERVEEOF' 2>&1
+import ast, json, pathlib
+src = pathlib.Path("scripts/todo-graph/mcp_server.py").read_text(encoding="utf-8")
+tree = ast.parse(src)
+fn = next(n for n in ast.walk(tree)
+          if isinstance(n, ast.FunctionDef) and n.name == "main")
+calls = {c.func.id for c in ast.walk(fn)
+         if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)}
+returns_serve = any(
+    isinstance(r.value, ast.Call) and isinstance(r.value.func, ast.Name)
+    and r.value.func.id == "_serve_stdio_jsonrpc"
+    for r in ast.walk(fn) if isinstance(r, ast.Return) and r.value is not None)
+print(json.dumps({"serves_via_jsonrpc": returns_serve,
+                  "builds_fastmcp": "_build_mcp" in calls}))
+SERVEEOF
+); SERVEPATH_RC=$?
+if [ "$SERVEPATH_RC" = "0" ] && echo "$SERVEPATH_OUT" | python3 -c "
+import json, sys
+d = json.loads(sys.stdin.read())
+sys.exit(0 if d['serves_via_jsonrpc'] else 1)"; then
+    t_pass "mcp_server: main() serves through the repo-owned JSON-RPC loop that classifies isError"
+else
+    t_fail "mcp_server: serving path is no longer the classifying one (rc=$SERVEPATH_RC, out=$SERVEPATH_OUT)"
+fi
+
+# Sub-test 9aa5h: THE DRAIN HAS AN ABSOLUTE DEADLINE. Re-arming the settle
+# window per event made coalescing unbounded: a stream producing events faster
+# than the window postpones the tick forever, so the watcher never answers.
+# Fed continuously here, the drain must still return within its ceiling.
+DRAINBOUND_OUT=$(cd "$REPO_ROOT" && python3 - <<'DRAINBEOF' 2>&1
+import sys, json, os, time, threading
+sys.path.insert(0, "scripts/todo-graph")
+import query as q
+r_fd, w_fd = os.pipe()
+stop = threading.Event()
+def feeder():
+    with os.fdopen(w_fd, "w") as w:
+        while not stop.is_set():
+            try:
+                w.write("/tmp/todo/x.md CLOSE_WRITE\n"); w.flush()
+            except (BrokenPipeError, ValueError):
+                return
+            time.sleep(0.001)
+t = threading.Thread(target=feeder, daemon=True); t.start()
+try:
+    reader = q._EventLineReader(r_fd)
+    started = time.monotonic()
+    drained = q._drain_pending_events(reader)
+    elapsed = time.monotonic() - started
+finally:
+    stop.set()
+    t.join(timeout=2)
+    os.close(r_fd)
+print(json.dumps({"elapsed": elapsed, "drained": drained,
+                  "ceiling": q.WATCH_DRAIN_MAX_SECS}))
+DRAINBEOF
+); DRAINBOUND_RC=$?
+if [ "$DRAINBOUND_RC" = "0" ] && echo "$DRAINBOUND_OUT" | python3 -c "
+import json, sys
+d = json.loads(sys.stdin.read())
+sys.exit(0 if d['elapsed'] < d['ceiling'] + 1.0 and d['drained'] > 0 else 1)"; then
+    t_pass "query: a continuously-fed watch stream still ends the drain at its deadline"
+else
+    t_fail "query: watch drain is unbounded (rc=$DRAINBOUND_RC, out=$DRAINBOUND_OUT)"
+fi
+
+# Sub-test 9aa5e: THE PUBLISHED SCHEMA AND THE READER PROFILE AGREE ON EMPTY
+# STRINGS. cache_schema applied minLength 1 to `depends_on`, `satisfies` and
+# `superseded_by` while cache.schema.json did not, so a cache could pass the
+# PUBLISHED contract and still be refused by every reader -- the exact
+# disagreement the shared validator exists to remove.
+SCHEMA_PARITY_OUT=$(cd "$REPO_ROOT" && python3 - <<'PARITYEOF' 2>&1
+import json, sys, pathlib
+schema = json.loads(pathlib.Path("scripts/todo-graph/schema/cache.schema.json").read_text())
+# The published schema validates the nodes ARRAY directly -- its root is the
+# array, not an object wrapping one -- so the per-node properties hang off
+# `items`, not off a top-level `properties`.
+node = schema["items"]["properties"]
+print(json.dumps({
+    "depends_on": node["depends_on"]["items"].get("minLength"),
+    "satisfies": node["satisfies"]["items"].get("minLength"),
+    "superseded_by": node["superseded_by"].get("minLength"),
+    "file_patterns": node["file_patterns"]["items"].get("minLength"),
+}))
+PARITYEOF
+); SCHEMA_PARITY_RC=$?
+if [ "$SCHEMA_PARITY_RC" = "0" ] && echo "$SCHEMA_PARITY_OUT" | python3 -c "
+import json, sys
+d = json.loads(sys.stdin.read())
+sys.exit(0 if all(v == 1 for v in d.values()) else 1)"; then
+    t_pass "schema: every string field the reader minLength-checks is minLength-checked in the JSON Schema"
+else
+    t_fail "schema: schema/profile minLength parity broken (rc=$SCHEMA_PARITY_RC, out=$SCHEMA_PARITY_OUT)"
+fi
+
+# Sub-test 9aa5f: WATCH EVENTS ARE COALESCED. One event meant one full cache
+# rebuild plus revalidation, so a corpus-wide sweep replayed hundreds of
+# obsolete intermediate states before answering the edit the user cared about.
+# The drain reads only what is ALREADY queued, so it is asserted directly
+# against a pre-filled pipe rather than against wall-clock timing.
+# THE WRITER STAYS OPEN, and that detail is the whole test. An earlier version
+# closed it, and the resulting EOF kept the descriptor readable -- so the
+# fixture passed against a drain that returned 0 under the live
+# `inotifywait -m` shape, where the writer never closes. Holding it open is
+# what makes this measure coalescing rather than EOF handling.
+DRAIN_OUT=$(cd "$REPO_ROOT" && python3 - <<'DRAINEOF' 2>&1
+import sys, json, os
+sys.path.insert(0, "scripts/todo-graph")
+import query as q
+r_fd, w_fd = os.pipe()
+w = os.fdopen(w_fd, "w")
+for i in range(50):
+    w.write(f"/tmp/todo/f{i}.md CLOSE_WRITE\n")
+w.flush()
+try:
+    reader = q._EventLineReader(r_fd)
+    first = reader.next_line(2.0)   # the loop's own read of the first event
+    drained = q._drain_pending_events(reader)
+finally:
+    w.close()
+    os.close(r_fd)
+print(json.dumps({"first": bool(first), "drained": drained}))
+DRAINEOF
+); DRAIN_RC=$?
+if [ "$DRAIN_RC" = "0" ] && echo "$DRAIN_OUT" | python3 -c "
+import json, sys
+d = json.loads(sys.stdin.read())
+sys.exit(0 if d['first'] and d['drained'] == 49 else 1)"; then
+    t_pass "query: a 50-event burst with the writer still open drains to ONE tick"
+else
+    t_fail "query: watch-event coalescing broken (rc=$DRAIN_RC, out=$DRAIN_OUT)"
+fi
+
+# Sub-test 9aa5f2: A FRAGMENTED STREAM STILL HITS THE DEADLINE. A writer that
+# never emits a newline keeps the descriptor readable forever, so a per-read
+# timeout never expires and the caller's absolute deadline is unreachable.
+# Fed unterminated bytes continuously, `next_line` must still return.
+DRAINFRAG_OUT=$(cd "$REPO_ROOT" && python3 - <<'DRAINFRAGEOF' 2>&1
+import sys, json, os, time, threading
+sys.path.insert(0, "scripts/todo-graph")
+import query as q
+r_fd, w_fd = os.pipe()
+stop = threading.Event()
+def feeder():
+    with os.fdopen(w_fd, "wb") as w:
+        while not stop.is_set():
+            try:
+                w.write(b"x"); w.flush()
+            except (BrokenPipeError, ValueError):
+                return
+            time.sleep(0.001)
+t = threading.Thread(target=feeder, daemon=True); t.start()
+try:
+    reader = q._EventLineReader(r_fd)
+    started = time.monotonic()
+    line = reader.next_line(0.5)          # no newline will ever arrive
+    elapsed = time.monotonic() - started
+finally:
+    stop.set(); t.join(timeout=2); os.close(r_fd)
+print(json.dumps({"line": line, "elapsed": elapsed}))
+DRAINFRAGEOF
+); DRAINFRAG_RC=$?
+if [ "$DRAINFRAG_RC" = "0" ] && echo "$DRAINFRAG_OUT" | python3 -c "
+import json, sys
+d = json.loads(sys.stdin.read())
+sys.exit(0 if d['line'] is None and d['elapsed'] < 3.0 else 1)"; then
+    t_pass "query: an endlessly fragmented stream still returns at the absolute deadline"
+else
+    t_fail "query: next_line deadline is per-read, not absolute (rc=$DRAINFRAG_RC, out=$DRAINFRAG_OUT)"
+fi
+
+# Sub-test 9aa5f3: A LINE SPLIT ACROSS READS REASSEMBLES, INCLUDING ONE LARGER
+# THAN THE 64 KiB READ CHUNK. The reader owns the buffer now, so partial-line
+# handling is its responsibility rather than the stream's. The size used here
+# is deliberately UNDER `WATCH_MAX_RECORD_BYTES`: a record over that ceiling is
+# malformed by construction and is discarded, not reassembled -- 9aa5f5/9aa5f6
+# own that case. An earlier version of this fixture asserted a 100 KB line
+# reassembled, which contradicted the ceiling added in the same review round;
+# the ceiling is the correct rule (an inotify record is a path plus event
+# names) and this fixture was the wrong requirement.
+DRAINSPLIT_OUT=$(cd "$REPO_ROOT" && python3 - <<'DRAINSPLITEOF' 2>&1
+import sys, json, os, time, threading
+sys.path.insert(0, "scripts/todo-graph")
+import query as q
+# Over one 64 KiB os.read chunk, under the record ceiling.
+big = "/tmp/todo/" + ("d" * 40000) + ".md"
+assert len(big) > 65536 // 2 and len(big) < q.WATCH_MAX_RECORD_BYTES
+r_fd, w_fd = os.pipe()
+def feeder():
+    with os.fdopen(w_fd, "wb") as w:
+        w.write(b"/tmp/todo/split"); w.flush()
+        time.sleep(0.05)
+        w.write(b"-half.md CLOSE_WRITE\n"); w.flush()
+        w.write((big + " CLOSE_WRITE\n").encode()); w.flush()
+        time.sleep(0.5)
+t = threading.Thread(target=feeder, daemon=True); t.start()
+try:
+    reader = q._EventLineReader(r_fd)
+    first = reader.next_line(5.0)
+    second = reader.next_line(5.0)
+finally:
+    t.join(timeout=3); os.close(r_fd)
+print(json.dumps({"first": (first or "").strip(),
+                  "second_ok": bool(second) and second.startswith(big)}))
+DRAINSPLITEOF
+); DRAINSPLIT_RC=$?
+if [ "$DRAINSPLIT_RC" = "0" ] && echo "$DRAINSPLIT_OUT" | python3 -c "
+import json, sys
+d = json.loads(sys.stdin.read())
+sys.exit(0 if d['first'] == '/tmp/todo/split-half.md CLOSE_WRITE' and d['second_ok'] else 1)"; then
+    t_pass "query: a split line and a multi-chunk line both reassemble across reads"
+else
+    t_fail "query: reader line reassembly broken (rc=$DRAINSPLIT_RC, out=$DRAINSPLIT_OUT)"
+fi
+
+# Sub-test 9aa5f4: THE PRODUCTION CALL SITE READS THROUGH THE READER.
+#
+# HONEST LABEL: this is a STRUCTURAL pin, not a mutation-provable behavioural
+# one, and the distinction is stated rather than glossed. A behavioural version
+# was built first and REJECTED: it drove `watch_loop` against a fake
+# `inotifywait` holding its pipe open and counted ticks for a 40-event burst,
+# but the real and buffered-readline variants both reported 2 ticks over
+# windows from 3 to 10 seconds, while the SAME mutant with a print inside its
+# loop was plainly observed iterating once per event. That contradiction was
+# not resolved, so the counter is not trustworthy evidence and shipping it
+# would assert a guard that does not discriminate -- worse than no guard,
+# because it reads as one.
+#
+# What IS proven, and where: coalescing behaviour is pinned by 9aa5f (49 of 50
+# events drained with the writer held open), its bound by 9aa5f2, and line
+# reassembly by 9aa5f3. The remaining risk this covers is purely the WIRING --
+# that `watch_loop` stops obtaining lines through `_EventLineReader` and goes
+# back to the buffered stream `select` cannot see. That is a structural
+# property, so it is checked structurally.
+# SCOPE, STATED PLAINLY: this pin catches an accidental REGRESSION -- someone
+# reverting the loop to the buffered stream -- and it does NOT resist a crafted
+# rewrite. Three review rounds each defeated the previous version with a new
+# evasion (an unreachable next_line beside a live read, then `next(iter(...))`,
+# then an alias), and each was closed; a fourth shape almost certainly exists,
+# because a purely syntactic check cannot decide what a program does. That is
+# the honest limit and it is written here rather than left for the next reader
+# to discover. The BEHAVIOUR is pinned elsewhere and by execution: 9aa5f, f2,
+# f3, f5, f5b and f6 exercise the reader directly.
+#
+# It checks the DATA PATH, not a bag of independent facts. A first version
+# searched the function for "some next_line", "some _EventLineReader" and "some
+# drain" separately, which a body containing an unreachable `reader.next_line`
+# alongside a live `line = proc.stdout.read(1)` satisfies completely. The
+# predicates below instead follow the bound name: the reader is assigned, the
+# consumed line is assigned FROM that same name, the drain receives it, and the
+# only thing anyone may take from `proc.stdout` is `fileno()`.
+WATCHWIRE_OUT=$(cd "$REPO_ROOT" && python3 - <<'WATCHWIREEOF' 2>&1
+import ast, json, pathlib
+src = pathlib.Path("scripts/todo-graph/query.py").read_text(encoding="utf-8")
+fn = next(n for n in ast.walk(ast.parse(src))
+          if isinstance(n, ast.FunctionDef) and n.name == "watch_loop")
+
+def assigned_from_call(node, pred):
+    """Names assigned from a call matching `pred`, e.g. `x = f(...)`."""
+    out = set()
+    for a in ast.walk(node):
+        if isinstance(a, ast.Assign) and isinstance(a.value, ast.Call) \
+                and len(a.targets) == 1 and isinstance(a.targets[0], ast.Name) \
+                and pred(a.value):
+            out.add(a.targets[0].id)
+    return out
+
+# `<reader> = _EventLineReader(...)`
+readers = assigned_from_call(
+    fn, lambda c: isinstance(c.func, ast.Name) and c.func.id == "_EventLineReader")
+# `<line> = <reader>.next_line(...)`, bound to one of those readers.
+line_names = assigned_from_call(
+    fn, lambda c: isinstance(c.func, ast.Attribute) and c.func.attr == "next_line"
+    and isinstance(c.func.value, ast.Name) and c.func.value.id in readers)
+# ...AND that same name must be what the loop actually parses. Without this the
+# pin accepts `ignored = reader.next_line(None)` beside a live
+# `line = next(iter(proc.stdout))` -- every other predicate is satisfied while
+# the real data path is the buffered stream again.
+parsed_names = {
+    c.func.value.id for c in ast.walk(fn)
+    if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)
+    and c.func.attr == "split" and isinstance(c.func.value, ast.Name)}
+line_names &= parsed_names
+# `_drain_pending_events(<reader>)` on that same name.
+drains_reader = any(
+    isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+    and n.func.id == "_drain_pending_events" and len(n.args) == 1
+    and isinstance(n.args[0], ast.Name) and n.args[0].id in readers
+    for n in ast.walk(fn))
+# NOTHING may be taken from proc.stdout except fileno.
+stdout_attrs = sorted({
+    a.attr for a in ast.walk(fn)
+    if isinstance(a, ast.Attribute) and isinstance(a.value, ast.Attribute)
+    and a.value.attr == "stdout"})
+# ...and it may not be consumed by any other route either: `for x in
+# proc.stdout`, `iter(proc.stdout)`, `next(proc.stdout)`, or passing it as an
+# argument to anything. Only `proc.stdout.fileno()` is legal, so the ONLY place
+# the attribute may appear is as that call's receiver.
+def _is_stdout(node):
+    return isinstance(node, ast.Attribute) and node.attr == "stdout"
+
+iterates_stdout = any(
+    isinstance(n, ast.For) and _is_stdout(n.iter) for n in ast.walk(fn))
+passed_stdout = any(
+    isinstance(n, ast.Call) and any(_is_stdout(a) for a in n.args)
+    for n in ast.walk(fn))
+# ...nor may it be ALIASED. `stream = proc.stdout` followed by
+# `next(iter(stream))` hides every direct-use check above behind one name.
+aliases_stdout = any(
+    isinstance(n, ast.Assign) and _is_stdout(n.value) for n in ast.walk(fn))
+comprehends_stdout = any(
+    _is_stdout(g.iter)
+    for n in ast.walk(fn) if isinstance(n, (ast.ListComp, ast.SetComp,
+                                            ast.DictComp, ast.GeneratorExp))
+    for g in n.generators)
+print(json.dumps({"readers": sorted(readers), "line_names": sorted(line_names),
+                  "drains_reader": drains_reader, "stdout_attrs": stdout_attrs,
+                  "iterates_stdout": iterates_stdout,
+                  "passed_stdout": passed_stdout,
+                  "aliases_stdout": aliases_stdout,
+                  "comprehends_stdout": comprehends_stdout}))
+WATCHWIREEOF
+); WATCHWIRE_RC=$?
+if [ "$WATCHWIRE_RC" = "0" ] && echo "$WATCHWIRE_OUT" | python3 -c "
+import json, sys
+d = json.loads(sys.stdin.read())
+sys.exit(0 if d['readers'] and d['line_names'] and d['drains_reader']
+         and d['stdout_attrs'] == ['fileno'] and not d['iterates_stdout']
+         and not d['passed_stdout'] and not d['comprehends_stdout']
+         and not d['aliases_stdout'] else 1)"; then
+    t_pass "query: watch_loop parses the line bound from the reader; proc.stdout yields only fileno"
+else
+    t_fail "query: watch_loop reader wiring regressed (rc=$WATCHWIRE_RC, out=$WATCHWIRE_OUT)"
+fi
+
+# Sub-test 9aa5f5: THE BUFFER IS BOUNDED ACROSS THE TIMEOUT-TO-BLOCKING
+# TRANSITION. The production loop returns to `next_line(None)` -- deliberately
+# deadline-free -- after a finite drain call expires, so a producer emitting
+# bytes and no newline had nothing left bounding it. Measured before the fix:
+# 1.9 MB, 2.8 MB, 3.5 MB across three successive 50ms reads. The stream here
+# KEEPS RUNNING past the first timeout, which is the transition the earlier
+# fragmented fixture stopped short of.
+BUFBOUND_OUT=$(cd "$REPO_ROOT" && python3 - <<'BUFBOUNDEOF' 2>&1
+import sys, json, os, time, threading
+sys.path.insert(0, "scripts/todo-graph")
+import query as q
+r_fd, w_fd = os.pipe()
+stop = threading.Event()
+def feeder():
+    with os.fdopen(w_fd, "wb") as w:
+        while not stop.is_set():
+            try:
+                w.write(b"y" * 4096); w.flush()
+            except (BrokenPipeError, ValueError, OSError):
+                return
+t = threading.Thread(target=feeder, daemon=True); t.start()
+try:
+    reader = q._EventLineReader(r_fd)
+    peaks = []
+    for _ in range(5):
+        reader.next_line(0.05)
+        peaks.append(len(reader._buf))
+finally:
+    stop.set(); t.join(timeout=2); os.close(r_fd)
+print(json.dumps({"peak": max(peaks), "ceiling": q.WATCH_MAX_RECORD_BYTES}))
+BUFBOUNDEOF
+); BUFBOUND_RC=$?
+if [ "$BUFBOUND_RC" = "0" ] && echo "$BUFBOUND_OUT" | python3 -c "
+import json, sys
+d = json.loads(sys.stdin.read())
+# One chunk may land on top of a just-resynced buffer, so allow the ceiling
+# plus a single 64 KiB read rather than pinning an exact byte count.
+sys.exit(0 if d['peak'] <= d['ceiling'] + 65536 else 1)"; then
+    t_pass "query: an unterminated stream cannot grow the reader buffer past its record ceiling"
+else
+    t_fail "query: reader buffer is unbounded on a newline-free stream (rc=$BUFBOUND_RC, out=$BUFBOUND_OUT)"
+fi
+
+# Sub-test 9aa5f5b: A PENDING FRAGMENT PLUS A FULL CHUNK OF VALID RECORDS
+# KEEPS EVERY RECORD. The size ceiling first measured the WHOLE buffer, so a
+# small unfinished fragment followed by a 64 KiB read carrying many complete
+# newline-delimited events pushed the aggregate over the limit and cleared all
+# of them -- the watcher then missed the very edit that woke it. The ceiling
+# now binds only the unterminated tail, which is the only thing that can be an
+# unfinished record.
+CEILKEEP_OUT=$(cd "$REPO_ROOT" && python3 - <<'CEILKEEPEOF' 2>&1
+import sys, json, os, threading, time
+sys.path.insert(0, "scripts/todo-graph")
+import query as q
+r_fd, w_fd = os.pipe()
+records = [f"/tmp/todo/rec{i}.md CLOSE_WRITE" for i in range(200)]
+def feeder():
+    with os.fdopen(w_fd, "wb") as w:
+        w.write(b"/tmp/todo/frag")                 # 14-byte pending fragment
+        w.flush(); time.sleep(0.05)
+        w.write(b"ment.md CLOSE_WRITE\n")          # completes it...
+        w.write(("\n".join(records) + "\n").encode())   # ...plus many valid ones
+        w.flush(); time.sleep(0.5)
+t = threading.Thread(target=feeder, daemon=True); t.start()
+try:
+    reader = q._EventLineReader(r_fd)
+    seen = []
+    for _ in range(len(records) + 1):
+        line = reader.next_line(3.0)
+        if line is None:
+            break
+        seen.append(line.strip())
+finally:
+    t.join(timeout=3); os.close(r_fd)
+print(json.dumps({"first": seen[0] if seen else "", "count": len(seen),
+                  "expected": len(records) + 1}))
+CEILKEEPEOF
+); CEILKEEP_RC=$?
+if [ "$CEILKEEP_RC" = "0" ] && echo "$CEILKEEP_OUT" | python3 -c "
+import json, sys
+d = json.loads(sys.stdin.read())
+sys.exit(0 if d['first'] == '/tmp/todo/fragment.md CLOSE_WRITE'
+         and d['count'] == d['expected'] else 1)"; then
+    t_pass "query: a pending fragment followed by a full chunk of valid records loses none of them"
+else
+    t_fail "query: the record ceiling discarded complete records (rc=$CEILKEEP_RC, out=$CEILKEEP_OUT)"
+fi
+
+# Sub-test 9aa5f4b: MUTATION for the wiring pin -- the pin must REJECT the
+# buffered-stream data path. Two earlier versions of it passed a body that
+# called `reader.next_line()` into an unused name while really reading
+# `next(iter(proc.stdout))`, which is the exact regression it claims to
+# prevent, so the pin is now run against that mutant and required to fail.
+WIREMUT_OUT=$(cd "$REPO_ROOT" && python3 - <<'WIREMUTEOF' 2>&1
+import ast, json, pathlib, re
+src = pathlib.Path("scripts/todo-graph/query.py").read_text(encoding="utf-8")
+mutants = {
+    # Shape 1: the reader call survives but feeds nothing.
+    "ignored_call": src.replace(
+        "                    line = reader.next_line(None)",
+        "                    ignored = reader.next_line(None)\n"
+        "                    line = next(iter(proc.stdout))", 1),
+    # Shape 2: the reader assignment survives and is then OVERWRITTEN through
+    # an alias, hiding every direct `proc.stdout` use behind one name.
+    "alias_overwrite": src.replace(
+        "                    line = reader.next_line(None)",
+        "                    line = reader.next_line(None)\n"
+        "                    stream = proc.stdout\n"
+        "                    line = next(iter(stream))", 1),
+}
+for name, text in mutants.items():
+    assert text != src, f"wiring mutation {name} did not apply"
+
+def verdict(text):
+    fn = next(n for n in ast.walk(ast.parse(text))
+              if isinstance(n, ast.FunctionDef) and n.name == "watch_loop")
+    def assigned_from_call(pred):
+        return {a.targets[0].id for a in ast.walk(fn)
+                if isinstance(a, ast.Assign) and isinstance(a.value, ast.Call)
+                and len(a.targets) == 1 and isinstance(a.targets[0], ast.Name)
+                and pred(a.value)}
+    readers = assigned_from_call(
+        lambda c: isinstance(c.func, ast.Name) and c.func.id == "_EventLineReader")
+    names = assigned_from_call(
+        lambda c: isinstance(c.func, ast.Attribute) and c.func.attr == "next_line"
+        and isinstance(c.func.value, ast.Name) and c.func.value.id in readers)
+    parsed = {c.func.value.id for c in ast.walk(fn)
+              if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)
+              and c.func.attr == "split" and isinstance(c.func.value, ast.Name)}
+    names &= parsed
+    def is_stdout(n):
+        return isinstance(n, ast.Attribute) and n.attr == "stdout"
+    attrs = sorted({a.attr for a in ast.walk(fn) if isinstance(a, ast.Attribute)
+                    and is_stdout(a.value)})
+    passed = any(isinstance(n, ast.Call) and any(is_stdout(x) for x in n.args)
+                 for n in ast.walk(fn))
+    aliased = any(isinstance(n, ast.Assign) and is_stdout(n.value)
+                  for n in ast.walk(fn))
+    return bool(readers and names and attrs == ["fileno"]
+                and not passed and not aliased)
+
+print(json.dumps({"real_passes": verdict(src),
+                  "mutants_passing": sorted(n for n, t in mutants.items()
+                                            if verdict(t))}))
+WIREMUTEOF
+); WIREMUT_RC=$?
+if [ "$WIREMUT_RC" = "0" ] && echo "$WIREMUT_OUT" | python3 -c "
+import json, sys
+d = json.loads(sys.stdin.read())
+sys.exit(0 if d['real_passes'] and not d['mutants_passing'] else 1)"; then
+    t_pass "query: mutation check -- the wiring pin rejects both buffered-stdout mutants"
+else
+    t_fail "query: wiring pin accepts the buffered mutant (rc=$WIREMUT_RC, out=$WIREMUT_OUT)"
+fi
+
+# Sub-test 9aa5f6: A WELL-FORMED LINE BEHIND A MALFORMED RECORD SURVIVES the
+# resync. Discarding to the LAST newline is what makes that true -- dropping
+# the whole buffer would take the good record with the bad one, turning a
+# malformed producer into silent event loss.
+RESYNC_OUT=$(cd "$REPO_ROOT" && python3 - <<'RESYNCEOF' 2>&1
+import sys, json, os, threading, time
+sys.path.insert(0, "scripts/todo-graph")
+import query as q
+r_fd, w_fd = os.pipe()
+def feeder():
+    with os.fdopen(w_fd, "wb") as w:
+        w.write(b"z" * (q.WATCH_MAX_RECORD_BYTES + 4096))   # malformed record
+        w.write(b"\n/tmp/todo/good.md CLOSE_WRITE\n")       # a real event after it
+        w.flush()
+        time.sleep(1.0)
+t = threading.Thread(target=feeder, daemon=True); t.start()
+try:
+    reader = q._EventLineReader(r_fd)
+    got = reader.next_line(3.0)
+finally:
+    t.join(timeout=3); os.close(r_fd)
+print(json.dumps({"got": (got or "").strip()}))
+RESYNCEOF
+); RESYNC_RC=$?
+if [ "$RESYNC_RC" = "0" ] && echo "$RESYNC_OUT" | python3 -c "
+import json, sys
+d = json.loads(sys.stdin.read())
+sys.exit(0 if d['got'] == '/tmp/todo/good.md CLOSE_WRITE' else 1)"; then
+    t_pass "query: the event behind an over-ceiling malformed record still parses"
+else
+    t_fail "query: resync dropped a well-formed event (rc=$RESYNC_RC, out=$RESYNC_OUT)"
 fi
 
 # Sub-test 9aa6: A DEEP DEPENDENCY CHAIN IS A RESOURCE QUESTION, NOT A VERDICT.
@@ -2749,10 +3549,10 @@ body
 EOF
 python3 "$BUILD_PY" --quiet --root "$STEM_TREE/todo" --output "$STEM_TREE/cache.json" --repo-root "$STEM_TREE" >/dev/null 2>&1
 Q_OUT=$(python3 "$QUERY_PY" --cache "$STEM_TREE/cache.json" --repo-root "$STEM_TREE" --quiet backlinks TODO-01-collide 2>&1); Q_RC=$?
-if [ "$Q_RC" = "2" ] && echo "$Q_OUT" | grep -q "multiple filename stems"; then
-    t_pass "query: ambiguous filename stem refused with exit 2 + listing"
+if [ "$Q_RC" = "4" ] && echo "$Q_OUT" | grep -q "multiple filename stems"; then
+    t_pass "query: ambiguous filename stem refused with exit 4 + listing"
 else
-    t_fail "query: stem collision should exit 2 (rc=$Q_RC, out=$Q_OUT)"
+    t_fail "query: stem collision should exit 4 (rc=$Q_RC, out=$Q_OUT)"
 fi
 
 # Sub-test 9cc: stats.top_longest_deferred uses the same outbound-resolution

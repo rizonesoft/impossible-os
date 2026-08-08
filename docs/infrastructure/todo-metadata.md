@@ -87,10 +87,14 @@ A reader declares what it CONSUMES via a `cache_schema.Profile`, and is validate
 | 1 | A verdict -- the graph itself has findings. |
 | 2 | **Infrastructure: the cache exists and cannot be trusted.** A machine-readable `{"error": "cache-unusable", "reason", "detail"}` body goes to stdout. |
 | 3 | Output-ceiling breach -- a bounded answer, not a refusal. |
+| 4 | **The request, not the cache** -- an unresolvable or ambiguous target, an unsupported `--scope`, an unknown `--fields` column, a negative `--offset`/`--limit`. A `{"error": "query-input", "reason", "detail"}` body goes to stdout. |
 
 - The refusal body is written to **stdout**, not only stderr, because `mcp_server.py` runs `query.main()` in-process with stdout captured; a stderr-only refusal left that buffer empty and the old `buf.getvalue() or "[]"` turned it into an empty result array an agent could not distinguish from "nothing matched".
 - **Freshness is checked for this repo's canonical `build/todo-cache.json`.** A cache supplied with `--cache` pointing elsewhere describes a different corpus by construction, so it is validated for SHAPE (still fail-closed) while freshness is skipped, and the reader says so on stderr. Comparing the RESOLVED path means `--cache build/todo-cache.json` is checked exactly like the default.
 - **After a failed `--watch` rebuild the tick is refused, and the watcher stays alive.** Serving the previous cache would publish a graph predating the edit that broke the build. A rebuild that was never ATTEMPTED (out-of-repo `--cache`, absent `build.py`) is distinct from one that FAILED and does not refuse.
+- **A request error is rc 4, and it too keeps the watcher alive.** The command handlers used to `sys.exit(2)` for an unresolvable target, so a caller could not tell a bad argument from an untrustworthy cache, and -- because `SystemExit` is not an `Exception` -- renaming the watched target terminated the watcher instead of reporting one bad tick. Both now raise `QueryInputError`, which the same guard that maps `CacheRefused` onto rc 2 maps onto rc 4.
+- **The MCP layer's status matches its body.** A refusal or request-error envelope comes back with `isError: true` (the repo-owned JSON-RPC handler classifies with `_looks_like_error_envelope`; the FastMCP handlers raise), so a client that reads the protocol's own error flag is not told a refused query succeeded.
+- **Watch events are coalesced.** One filesystem event used to mean one full cache rebuild, so a corpus-wide sweep replayed hundreds of obsolete intermediate states; the loop now drains the pending burst within a short settle window and answers once for the batch.
 
 ## Parsing Rules
 

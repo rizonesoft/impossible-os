@@ -77,19 +77,22 @@
       "depends_on": {
         "type": "array",
         "items": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "uniqueItems": true
       },
       "satisfies": {
         "type": "array",
         "items": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "uniqueItems": true
       },
       "superseded_by": {
-        "type": "string"
+        "type": "string",
+        "minLength": 1
       },
       "file_patterns": {
         "type": "array",

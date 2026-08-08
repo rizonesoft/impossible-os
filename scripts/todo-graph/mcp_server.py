@@ -367,6 +367,20 @@ def _build_mcp(FastMCP, repo_root: Path, auto_rebuild: bool = True):
             )
 
     def _run(sub: str, ns: argparse.Namespace) -> str:
+        # THE ENVELOPE IS RETURNED VERBATIM, INCLUDING A REFUSAL, and that is a
+        # decision rather than an oversight. Raising here to set `isError` was
+        # tried and reverted: FastMCP rewrites an exception into
+        # `ToolError("Error executing tool <name>: ...")`, so the text a client
+        # receives no longer starts with `{` and the documented
+        # `cache-unusable` / `query-input` envelope stops being JSON-decodable.
+        # That trades a machine-readable body for a status flag, which is the
+        # wrong way round -- the body is the contract this section shipped.
+        #
+        # These handlers do not serve. `main()` registers them for their tool
+        # SCHEMAS and then serves every request through `_serve_stdio_jsonrpc`,
+        # which classifies `isError` from the same envelope and so carries both
+        # properties at once. Sub-test 9aa5g pins that serving path, so this
+        # comment cannot quietly become false.
         return _call_query(sub, ns, repo_root, auto_rebuild=auto_rebuild)
 
     # --- Bounding params, shared by every row-returning tool -----------
@@ -663,7 +677,17 @@ def _handle_jsonrpc_request(req: dict[str, Any], repo_root: Path,
             "id": req_id,
             "result": {
                 "content": [{"type": "text", "text": text}],
-                "isError": False,
+                # THE PROTOCOL-LEVEL STATUS MUST AGREE WITH THE BODY. This was
+                # an unconditional `False`, so a refusal envelope -- the very
+                # thing section 22 stopped `buf.getvalue() or "[]"` from
+                # flattening -- came back as a SUCCESSFUL tool result whose
+                # text happened to describe an error. A client that classifies
+                # on `isError` (the field the protocol provides for exactly
+                # this) rather than parsing an application-specific body was
+                # therefore still told the query succeeded. Making the body
+                # honest while leaving the status lying is the same defect one
+                # layer up (Codex adversarial, section 22 review, [high]).
+                "isError": _looks_like_error_envelope(text),
             },
         }
     if req_id is None:
