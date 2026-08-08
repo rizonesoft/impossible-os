@@ -92,6 +92,48 @@ if [ "${#_TT_CLEARED[@]}" -gt 0 ]; then
 fi
 unset _tt_var
 
+# ---- Mutual exclusion: one suite per worktree -----------------------------
+# Two instances in one tree POISON each other, by this repo's own rule. The
+# suite lints and walks the LIVE corpus and rebuilds caches under it, and
+# live-gotchas.md already records that editing the tree while this runs produces
+# a spurious rc=1 -- a second instance is exactly such a concurrent mutation.
+#
+# Measured 2026-08-08 ~15:19: `pgrep -af test-tooling.sh` showed two independent
+# suite trees walking this worktree, because a backgrounded run had reported
+# itself finished (the harness returns when the SUBSHELL forks, not when the
+# suite exits) while a second was dispatched. One run had to be killed and
+# re-run from scratch on a quiescent tree, ~6 minutes, and neither set of
+# intermediate results could be trusted.
+#
+# A doctrine line cannot fix this: the overlap arose from a run that believed it
+# had already finished, so there was nothing for it to remember. WAIT rather
+# than refuse, because the common contender is a pre-push gate racing a manual
+# run and serialising them is what the caller wants; refuse only after the
+# timeout, loudly, rather than proceeding into a knowingly-poisoned run.
+_TT_LOCK_DIR="${TMPDIR:-/tmp}"
+_TT_LOCK="$_TT_LOCK_DIR/impossible-os-test-tooling.$(printf '%s' "$REPO_ROOT" | cksum | cut -d' ' -f1).lock"
+_TT_LOCK_WAIT="${TT_LOCK_TIMEOUT:-900}"
+#
+# NOTE the brace group around `exec`: `exec 9>f 2>/dev/null` would apply BOTH
+# redirections to the SHELL, permanently silencing stderr for the whole suite
+# (caught while testing this block -- the refusal message vanished). A group
+# runs in the current shell, so fd 9 survives while `2>/dev/null` ends with it.
+_TT_LOCK_HELD=0
+{ exec 9>"$_TT_LOCK"; } 2>/dev/null && _TT_LOCK_HELD=1
+if [ "${TT_NO_LOCK:-0}" != "1" ] && command -v flock >/dev/null 2>&1; then
+    if [ "$_TT_LOCK_HELD" = "1" ]; then
+        if ! flock -n 9 2>/dev/null; then
+            echo "test-tooling: another instance is running in this worktree; waiting up to ${_TT_LOCK_WAIT}s (lock: $_TT_LOCK)" >&2
+            if ! flock -w "$_TT_LOCK_WAIT" 9 2>/dev/null; then
+                echo "test-tooling: REFUSING to start -- another instance still holds the lock after ${_TT_LOCK_WAIT}s." >&2
+                echo "  Two suites in one worktree lint and rebuild caches against the same live tree," >&2
+                echo "  so both verdicts are untrustworthy. Wait for it, or set TT_NO_LOCK=1 to override." >&2
+                exit 1
+            fi
+        fi
+    fi
+fi
+
 # ---- Colors ----
 if [ "$QUIET" = "0" ] && [ -t 1 ]; then
     RED='\033[0;31m'; GREEN='\033[0;32m'; CYAN='\033[0;36m'; DIM='\033[0;90m'; NC='\033[0m'
@@ -4087,6 +4129,81 @@ if echo "$BOR_OUT12" | grep -q "build-offload" && [ "$BOR_RC12" = "2" ]; then
 else
     t_fail "build_offload_dispatch  chained wrapper-then-bare escaped, rc=$BOR_RC12: $BOR_OUT12"
 fi
+# GROUPED wrapped route (v12, filed three times across three sections on
+# 2026-08-08). `command_segments` does not split on parens, so a wrapped call in
+# a subshell arrives with the `(` still attached and the exemption's `^` anchor
+# missed it -- while the inner matcher, which DOES split on parens, found the
+# wrapped suite and blocked. The shape is the rc-capture idiom the ship-sequence
+# doctrine prescribes (`( wrapper ...; echo "rc=$?" ) &`), and the suite must be
+# backgrounded at all because it exceeds the 10-minute tool wall, so the gate was
+# refusing the only route that satisfies both rules.
+# Discriminating: the two subshell shapes and the brace shape all BLOCK against
+# the pre-fix anchor (verified by restoring it in the module and re-running).
+# The trailing-`&` shape was already exempt and is pinned here as a regression
+# guard only -- it proves nothing about this fix, and says so rather than
+# padding the count.
+for BOR_SHAPE in \
+    '( bash scripts/overnight/run-artifact.sh lbl -- bash scripts/test-tooling.sh > /tmp/x 2>&1; echo "rc=$?" >> /tmp/x ) &' \
+    '( bash scripts/overnight/run-artifact.sh b -- bash scripts/build.sh > /tmp/x 2>&1; bash scripts/overnight/run-artifact.sh t -- bash scripts/test.sh QUIET=1 > /tmp/y 2>&1 ) &' \
+    '{ bash scripts/overnight/run-artifact.sh lbl -- bash scripts/build.sh; }' \
+    'bash scripts/overnight/run-artifact.sh lbl -- bash scripts/test-tooling.sh &'
+do
+    BOR_JSON="$(BOR_SHAPE="$BOR_SHAPE" python3 -c 'import json,os; print(json.dumps({"tool_name":"Bash","tool_input":{"command":os.environ["BOR_SHAPE"]}}))')"
+    BOR_OUTN="$(printf '%s' "$BOR_JSON" | python3 "$BOR_HOOK" 2>&1)"; BOR_RCN=$?
+    if [ -z "$BOR_OUTN" ] && [ "$BOR_RCN" = "0" ]; then
+        t_pass "build_offload_group  a grouped/backgrounded wrapped route is still the sanctioned route"
+    else
+        t_fail "build_offload_group  a grouped wrapped route was blocked: $BOR_SHAPE" \
+            "rc=$BOR_RCN: $BOR_OUTN"
+    fi
+done
+# ...and the opener is STEPPED OVER, not ignored: the wrapper must still be the
+# group's first command. These are the mutation controls for the case above --
+# revert the anchor fix and they stay green, so they are what proves it did not
+# open a bypass.
+#
+# The BRACE case is not a control at all: writing it found a live BYPASS that
+# predated this fix. `_split_unquoted` cuts on `;&|()` but not on braces, so
+# `{ bash scripts/test-tooling.sh; }` tokenised with `{` as the command and
+# matched NOTHING -- a bare suite run hidden from the gate entirely, in both
+# directions. Fixed by adding `{` to the transparent-prefix set; this case
+# blocks only with that fix in place.
+for BOR_SHAPE in \
+    '( bash scripts/test.sh QUIET=1; bash scripts/overnight/run-artifact.sh l -- true ) &' \
+    '( bash scripts/overnight/run-artifact.sh l -- true; bash scripts/test.sh QUIET=1 ) &' \
+    '{ bash scripts/test-tooling.sh; }'
+do
+    BOR_JSON="$(BOR_SHAPE="$BOR_SHAPE" python3 -c 'import json,os; print(json.dumps({"tool_name":"Bash","tool_input":{"command":os.environ["BOR_SHAPE"]}}))')"
+    BOR_OUTN="$(printf '%s' "$BOR_JSON" | python3 "$BOR_HOOK" 2>&1)"; BOR_RCN=$?
+    if echo "$BOR_OUTN" | grep -q "build-offload" && [ "$BOR_RCN" = "2" ]; then
+        t_pass "build_offload_group  a bare run inside a group still BLOCKs"
+    else
+        t_fail "build_offload_group  a grouped bare run escaped: $BOR_SHAPE" \
+            "rc=$BOR_RCN: $BOR_OUTN"
+    fi
+done
+# TWO-GATE AGREEMENT. The filed defect was that `build_offload_reminder` and the
+# skill-step observer accepted DISJOINT shapes for `review-todo-section` step 4:
+# a bare build blocked, and the wrapper SCRIPT authored to dodge that block was
+# invisible to the observer, so the commit was refused with "step(s) [4] were
+# never observed". With the grouping fix the backgrounded wrapped form satisfies
+# both -- it is exempt here AND still carries the literal `bash scripts/build.sh`
+# the observer matches. Pinned as one assertion because the two halves are only
+# useful together.
+BOR_SHAPE='( bash scripts/overnight/run-artifact.sh s4 -- bash scripts/build.sh > /tmp/b.json 2>&1; echo "rc=$?" >> /tmp/b.json ) &'
+BOR_JSON="$(BOR_SHAPE="$BOR_SHAPE" python3 -c 'import json,os; print(json.dumps({"tool_name":"Bash","tool_input":{"command":os.environ["BOR_SHAPE"]}}))')"
+BOR_OUTN="$(printf '%s' "$BOR_JSON" | python3 "$BOR_HOOK" 2>&1)"; BOR_RCN=$?
+BOR_STEPS="$(BOR_SHAPE="$BOR_SHAPE" REPO_ROOT="$REPO_ROOT" python3 -c '
+import os, sys
+sys.path.insert(0, os.environ["REPO_ROOT"] + "/.claude/hooks")
+from skill_step_map import match_step
+print(",".join(str(s) for s in match_step("review-todo-section", "Bash", os.environ["BOR_SHAPE"])))')"
+if [ -z "$BOR_OUTN" ] && [ "$BOR_RCN" = "0" ] && [ "$BOR_STEPS" = "4" ]; then
+    t_pass "build_offload_group  one command satisfies BOTH the offload gate and step-4 observation"
+else
+    t_fail "build_offload_group  the two gates disagree on the sanctioned build shape" \
+        "offload rc=$BOR_RCN out=$BOR_OUTN; observed steps=[$BOR_STEPS]"
+fi
 unset OVERNIGHT_SEQUENCER_RUN
 rm -f "$BOR_SEQ" "$BOR_DISP"
 [ -n "$BOR_SEQ_BAK" ] && printf '%s' "$BOR_SEQ_BAK" > "$BOR_SEQ"
@@ -5445,6 +5562,19 @@ PYEOF
     bsg_hook "todo-graph exempt"     "scripts/todo-graph/query.py" "# owner TODO-06 %S%4"     0
     bsg_hook "test-ai-system exempt" "scripts/test-ai-system.sh"   "# %S%7 policy"            0
     bsg_hook "spec qualifier legal"  "src/kernel/foo.c"            "/* xHCI spec %S%4.2 */"   0
+    # ABSOLUTE paths, which is what a hook actually receives -- `tool_input`
+    # carries the resolved path, and every case above uses the relative form.
+    # `_content_lint._norm` stripped a HARDCODED root that was one component
+    # short of this checkout, so nothing was stripped and every `norm`-based
+    # exemption (todo-graph, ntfs spec-code, test-ai-system) silently stopped
+    # applying at edit time while lint Check 5 still exempted them at commit
+    # time. Filed 2026-08-08 as "the hook has no such case"; the case was there
+    # and the normalisation under it was dead. The CONTROL is the third line:
+    # an ordinary kernel file at an absolute path must still BLOCK, or these
+    # would pass on the path simply not reaching the check.
+    bsg_hook "todo-graph exempt (abs)" "$REPO_ROOT/scripts/todo-graph/query.py"  "# owner TODO-06 %S%4"  0
+    bsg_hook "ntfs spec-code (abs)"    "$REPO_ROOT/src/kernel/fs/ntfs/mft.c"     "/* record (%S%4) */"   0
+    bsg_hook "CONTROL kernel c (abs)"  "$REPO_ROOT/src/kernel/mm/vmm.c"          "/* layout (%S%4) */"   2
 fi
 
 

@@ -98,6 +98,44 @@ def test_run_artifact_success_no_ledger():
         assert not (wd / ".claude/state/failure-ledger.jsonl").exists()
 
 
+def test_run_artifact_marks_in_flight_state():
+    """A backgrounded launch returns to the harness when the SUBSHELL forks, so
+    the tool result says `exit code 0` while the command is still running --
+    observed 2026-08-08 against a suite whose envelope later said FAIL. Nothing
+    here can change what the harness reports, so the SINK has to be able to say
+    "not finished": `state` is `running` with `exit` null until the command
+    returns. The assertion is the whole point of the fix, so it reads the sink
+    MID-RUN rather than after."""
+    import time
+    with tempfile.TemporaryDirectory() as d:
+        wd = pathlib.Path(d)
+        sink = wd / ".claude/state/last-artifact.json"
+        proc = subprocess.Popen(
+            ["bash", str(RUN_ARTIFACT), "slow", "--", "sleep", "3"],
+            cwd=str(wd), text=True, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE)
+        try:
+            deadline = time.time() + 5
+            rec = None
+            while time.time() < deadline:
+                if sink.is_file():
+                    try:
+                        rec = json.loads(sink.read_text())
+                    except ValueError:
+                        rec = None
+                    if rec:
+                        break
+                time.sleep(0.05)
+            assert rec is not None, "no in-flight record was written"
+            assert rec["state"] == "running", rec
+            assert rec["exit"] is None, rec
+            assert rec["label"] == "slow", rec
+        finally:
+            proc.wait(timeout=30)
+        done = json.loads(sink.read_text())
+        assert done["state"] == "complete" and done["exit"] == 0, done
+
+
 def test_run_artifact_failure_recurrence_increments():
     with tempfile.TemporaryDirectory() as d:
         wd = pathlib.Path(d)

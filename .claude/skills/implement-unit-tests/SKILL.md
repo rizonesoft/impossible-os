@@ -138,6 +138,15 @@ Always use `test_suite_register_cat()` with the appropriate category.
 > - **Then read the implementation** to verify the tests match real behavior. Adjust only if the spec (TODO) is wrong, not because the code does something different.
 > - If writing a test reveals a bug in the code under test, **fix the bug** using `kernel-code-quality` gates and `superpowers:systematic-debugging` discipline. A test-revealed SMP race needs proper diagnosis, not a quick patch.
 
+**A fixture that cannot fail proves nothing, and it will pass.** Four inert probes shipped green in ONE section review on 2026-08-08, each inert a different way, so "watch it fail" above is not enough on its own -- name which of these you did:
+
+- **Assert the SETUP took.** A fixture rewrote a cache as `d["nodes"]` when this repo's cache root IS the node array; the rewrite raised, the fixture silently read an ordinary file instead, and passed. Read the mutated artifact BACK and assert on it.
+- **Reproduce the LIVE condition, not a convenient stand-in.** A coalescing fixture closed its pipe writer; EOF keeps a descriptor readable, so the drain "worked" -- under a real writer that never closes, the same drain returned 0 of 49 queued events. It tested EOF handling while claiming to test coalescing.
+- **A mutation must edit the PRODUCTION source and run THAT.** A "mutation check" that re-implements the old algorithm inside the test watches its own copy fail; reverting the real call site leaves it green.
+- **Chase a contradiction; do not ship past it.** When the mutant and the original measure the same, either the probe or the mutation is inert. If it cannot be explained, say so and LABEL the fixture as the structural pin it actually is rather than presenting it as a discriminating guard.
+
+The same rule covers the ad-hoc measurements taken while DEBUGGING a fixture, which is where three more inert probes lived on the same day: every probe needs a control that MUST fire, and the filing/claim says that it did.
+
 ## Workflow
 
 ### 1. Read the Unit Tests section

@@ -2000,7 +2000,14 @@ for h in hits[:5]:
     print(h)
 print(f"COUNT={len(hits)}")
 PYOSC
-) || true"
+)" || true
+    # `|| true` belongs to the ASSIGNMENT, not inside the quotes. Written as
+    # `... ) || true"` it was literal text appended to the captured string, so
+    # OSCOMP_OUT ended `COUNT=0 || true`, OSCOMP_N parsed as `0 || true`, and the
+    # `-gt` test errored with "integer expression expected" -- which is FALSE, so
+    # Check 27 could never report a violation. It shipped inert in 34af61ea6 and
+    # printed its own bash error on every lint run. Found during the v12
+    # close-out; the error line in the output is what gave it away.
     OSCOMP_N="$(printf '%s' "$OSCOMP_OUT" | sed -n 's/^COUNT=//p')"
     if [ "${OSCOMP_N:-0}" -gt 0 ]; then
         printf '%s\n' "$OSCOMP_OUT" | grep -v '^COUNT=' | sed 's/^/       /'

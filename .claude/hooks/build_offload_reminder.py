@@ -111,8 +111,26 @@ _RUN_ARTIFACT = r"scripts/overnight/run-artifact\.sh\b"
 # over the same keyword set; the exemption regex simply had not been taught it.
 # NOTE the filed diagnosis blamed the loop's VARIABLE label ("stab$i"); it is
 # the `do` keyword. A variable label outside a loop was never blocked.
+#
+# ...and the GROUPING OPENERS `(` and `{` for the same reason (v12, live
+# 2026-08-08, filed three times across three sections). `command_segments`
+# deliberately does NOT treat parens as separators -- a subshell's text stays
+# attached so a caller sees `(bash foo.sh` with the paren intact -- so a
+# correctly-wrapped call inside one arrives as `( bash .../run-artifact.sh lbl
+# -- bash scripts/test-tooling.sh > /tmp/x 2>&1` and the anchor missed it. The
+# inner matcher DOES split on parens, so it found the wrapped suite and the
+# segment blocked: the exemption was being judged at a coarser granularity than
+# the match. The shape matters because it is the rc-capture idiom the
+# ship-sequence doctrine itself teaches (`( wrapper ...; echo "rc=$?" ) &`), so
+# the gate was blocking the route the rest of the system prescribes.
+#
+# This cannot launder a bare run: the opener is STEPPED OVER, not ignored, so
+# the wrapper must still be the first command of the group. `(bash
+# scripts/test.sh; bash .../run-artifact.sh l -- true)` splits on the `;` and
+# its first segment still blocks -- pinned below.
 _RUN_ARTIFACT_RE = re.compile(
-    r"^\s*(?:(?:do|then|else|elif|time|exec|nohup|command|stdbuf)\s+)*"
+    r"^\s*(?:(?:do|then|else|elif|time|exec|nohup|command|stdbuf)\s+"
+    + r"|\(\s*|\{\s+)*"
     + _ENV_PREFIX
     + "(?:"
     + r"(?:bash|sh)\s+(?:-(?!c\b)\S+\s+)*[\"']?(?:\S*/)?" + _RUN_ARTIFACT
@@ -150,8 +168,16 @@ class _Hit:
 # conditional body arrives as `do bash scripts/test.sh` -- without `do` here the
 # suite escaped through any `for`/`while` loop (review 2026-07-30; the old
 # textual matcher caught it by matching anywhere).
+#
+# `{` is here for a BYPASS found while writing the mutation control for the
+# grouping-opener fix (2026-08-08, close-out): `_split_unquoted` cuts on
+# `;&|()` but NOT on braces, so `{ bash scripts/test-tooling.sh; }` tokenised to
+# `['{', 'bash', 'scripts/test-tooling.sh']`, the head read as `{`, and the
+# segment matched nothing at all. A brace group hid a bare suite run from the
+# gate completely -- in BOTH directions, before and after that fix, which is why
+# the control that was supposed to prove the fix safe is what exposed it.
 _TRANSPARENT = {"time", "exec", "nohup", "command", "stdbuf",
-                "do", "then", "else", "elif", "if", "while", "until", "!"}
+                "do", "then", "else", "elif", "if", "while", "until", "!", "{"}
 _ENV_ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 # A non-executing interpreter option: `-n`/`--noexec`, including inside a short
 # cluster (`-nx`). `--` alone ends option parsing and is not one of these.

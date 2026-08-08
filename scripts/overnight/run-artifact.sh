@@ -22,6 +22,32 @@ mkdir -p "$ART_DIR"
 ART="$ART_DIR/$(date +%Y%m%d-%H%M%S)-${LABEL//[^a-zA-Z0-9_-]/_}.log"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# IN-FLIGHT MARKER, written BEFORE the command runs. A backgrounded launch
+# (`( run-artifact.sh ... ) &`, which the ship sequence requires for anything
+# over the 10-minute tool wall) returns to the harness the moment the SUBSHELL
+# forks, so the tool result reads `completed (exit code 0)` while the suite is
+# still running -- observed 2026-08-08, where the same run's envelope later said
+# `FAIL 1/1293`, and the exit code was the one the notification surfaced.
+#
+# Nothing in this repo can change what the harness reports, so the fix is to
+# make the SINK able to say "not finished": `state` is `running` until the
+# command returns, and `exit` is null in that window. A reader that treats
+# non-zero as failure therefore fails CLOSED on an unfinished run instead of
+# reading a stale green from the previous one.
+python3 - "$LABEL" "$ART" <<'PY'
+import json, os, sys, time
+try:
+    os.makedirs(".claude/state", exist_ok=True)
+    with open(".claude/state/last-artifact.json", "w") as fh:
+        fh.write(json.dumps({
+            "label": sys.argv[1], "artifact": sys.argv[2],
+            "state": "running", "exit": None,
+            "started_ns": time.time_ns(), "pid": os.getppid(),
+        }))
+except Exception:
+    pass
+PY
+
 "$@" > "$ART" 2>&1
 RC=$?
 
@@ -40,6 +66,10 @@ err_re = re.compile(r"(?i)\b(error|fail(ed|ure)?|fatal|panic|assert)\b")
 errors = [ln.strip()[:300] for ln in lines if err_re.search(ln)][:40]
 env = {
     "label": label, "exit": rc, "artifact": art,
+    # Pairs with the `running` record written before the command: a reader can
+    # tell "finished, and this is the verdict" from "still going, the exit code
+    # you were handed belongs to the launcher, not the work".
+    "state": "complete",
     "sha256": hashlib.sha256(data).hexdigest(),
     "lines": len(lines), "errors": errors,
     "tail": [ln[:300] for ln in lines[-8:]],

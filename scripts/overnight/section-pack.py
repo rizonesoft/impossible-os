@@ -97,6 +97,21 @@ def _def_rank(sym: str, line: str, path: str) -> int:
     function DEFINITION above a header DECLARATION so `int f(void);` in a .h
     never wins over `int f(void) {` in a .c."""
     s = re.escape(sym)
+    # Python / shell definitions, for the sections whose surface is the repo's
+    # own tooling rather than the kernel. The C shapes below would give a
+    # `def foo(` line rank 3 by accident (`[\w][\w\s*]*` matches `def `), which
+    # is right by luck and wrong in kind -- a real `def`/`class` should outrank
+    # a call, and a shell `foo() {` should be found at all.
+    if path.endswith(".py"):
+        if re.search(rf"^\s*(?:async\s+)?def\s+{s}\s*\(", line):
+            return 4
+        if re.search(rf"^\s*class\s+{s}\b", line):
+            return 4
+        if re.search(rf"^{s}\s*=", line):
+            return 2       # module-level constant/table
+    if path.endswith((".sh", ".bash")):
+        if re.search(rf"^\s*(?:function\s+)?{s}\s*\(\)", line):
+            return 4
     if re.search(rf"^\s*#define\s+{s}\b", line):
         return 4
     if re.search(rf"^\s*(?:typedef\s+)?(?:struct|enum|union)\s+{s}\b", line):
@@ -323,7 +338,24 @@ def main(argv) -> int:
     except Exception:
         manifest = {}
     likely = manifest.get("likely_files", []) or []
+    # SEARCH SCOPE follows the section, not the kernel. This was hardcoded to
+    # `src include user`, so a section whose surface is the repo's own tooling
+    # resolved NOTHING: the todo-graph cache-validation section reported
+    # `def: null, refs: 0` for all 24 of its symbols -- every one of which
+    # exists under `scripts/todo-graph/`
+    # -- and `refs: 0` reads like "unused", not like "never looked". The pack is
+    # presented as the deterministic orientation that REPLACES exploration, so a
+    # silent miss costs exactly the reads it exists to prevent (one
+    # section-context-mapper dispatch plus four direct reads, 2026-08-08).
+    #
+    # The manifest already knows the section's files; take their top-level dirs
+    # and add them. `search_paths` is reported in the pack so a zero is
+    # attributable: absent from a scope that was searched, versus never searched.
     search_paths = [p for p in ("src", "include", "user") if (root / p).is_dir()]
+    for rel in likely:
+        top = rel.replace("\\", "/").split("/", 1)[0]
+        if top and top not in search_paths and (root / top).is_dir():
+            search_paths.append(top)
 
     # 2. symbols + resolution
     symbols = candidate_symbols(block)
@@ -369,6 +401,7 @@ def main(argv) -> int:
         "required_gates": manifest.get("required_gates", []),
         "complexity": manifest.get("complexity", {}),
         "symbols": resolved,
+        "search_paths": search_paths,
         "symbol_defs": defined,
         "unresolved_symbols": unresolved,
         "registration_touchpoints": reg_hits,
@@ -417,6 +450,7 @@ def main(argv) -> int:
         "symbols_defined": len(defined),
         "symbols_unresolved": len(unresolved),
         "resolver": pack["resolver"],
+        "search_paths": search_paths,
         "registration_touchpoints": reg_hits,
         "abi_impact": abi,
         "bundle_dir": bundle_path,

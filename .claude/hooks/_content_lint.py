@@ -12,6 +12,8 @@ apply to `path`, so a hook can cross-report the other check safely without
 duplicating the path rules. Applicability + regexes mirror scripts/lint.sh
 Check 5 / Check 13 (keep in sync).
 """
+import os
+import pathlib
 import re
 
 # ---- bare section-sign refs (mirror bare_section_refs.py / lint Check 5) ----
@@ -34,9 +36,44 @@ _ALLOW_RE = re.compile(r'CITATION-OK:\s*[A-Za-z]')
 _CITE_SUFFIXES = ('.c', '.h', '.cc', '.cpp', '.hpp', '.asm', '.S', '.s')
 
 
+def _repo_prefixes():
+    """Absolute repo roots to strip, longest first, plus `./`.
+
+    DERIVED, not hardcoded (2026-08-08). The literal here read
+    `/home/derickpayne/impossible-os/` -- one path component short of the real
+    checkout (`.../projects/impossible-os/`) -- so it stripped NOTHING, and
+    every `norm`-based exemption below silently stopped applying to ABSOLUTE
+    paths. That is the shape a hook actually receives: `tool_input.file_path` is
+    absolute, so `scripts/todo-graph/`, `src/kernel/fs/ntfs/`,
+    `scripts/test-ai-system.sh`, `include/stb_truetype.h` and `src/libs/` were
+    all being judged as ordinary code at edit time while `scripts/lint.sh`
+    Check 5 exempted them at commit time. Filed by the run as "the hook has no
+    such case"; the case was there, the normalisation under it was not.
+
+    This module sits at `<root>/.claude/hooks/`, so the root is two parents up;
+    `CLAUDE_PROJECT_DIR` wins when the harness sets it. A stale literal cannot
+    recur because nothing is written down.
+    """
+    roots = []
+    env = os.environ.get('CLAUDE_PROJECT_DIR')
+    if env:
+        roots.append(env)
+    try:
+        roots.append(str(pathlib.Path(__file__).resolve().parents[2]))
+    except (IndexError, OSError):
+        pass
+    out = []
+    for r in roots:
+        r = r.replace('\\', '/').rstrip('/')
+        if r:
+            out.append(r + '/')
+    out.append('./')
+    return sorted(set(out), key=len, reverse=True)
+
+
 def _norm(path):
     p = path.replace('\\', '/')
-    for prefix in ('/home/derickpayne/impossible-os/', './'):
+    for prefix in _repo_prefixes():
         if p.startswith(prefix):
             return p, p[len(prefix):]
     return p, p
