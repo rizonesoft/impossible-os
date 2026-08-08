@@ -52,6 +52,38 @@ SURFACE = (
 
 RECEIPT_REL = ".claude/state/tooling-receipt.json"
 
+# MACHINE-REWRITTEN REGIONS ARE EXCLUDED FROM THE HASH, and this is not a
+# convenience: without it the receipt is useless for the exact workflow it
+# exists for. `.githooks/post-commit` rewrites README.md's lines-of-code badge
+# on EVERY commit, so `run suite -> commit -> push` invalidated the receipt
+# between the run and the push, every time. Found on the first end-to-end use,
+# by the push paying the six minutes the receipt was built to save.
+#
+# Excluding the FILE would be wrong -- the suite asserts that README.md names
+# the wrappers it should, so a real README edit must still invalidate. Only the
+# delimited auto-generated span is dropped, so everything a human writes in that
+# file still counts. Keep this list to regions a HOOK regenerates; anything else
+# belongs in the hash.
+GENERATED_SPANS = {
+    "README.md": ("COUNT-BADGE:START", "COUNT-BADGE:END"),
+}
+
+
+def _hashable_bytes(rel: str, data: bytes) -> bytes:
+    span = GENERATED_SPANS.get(rel)
+    if not span:
+        return data
+    start, end = span
+    out, skipping = [], False
+    for line in data.split(b"\n"):
+        if start.encode() in line:
+            skipping = True
+        if not skipping:
+            out.append(line)
+        if end.encode() in line:
+            skipping = False
+    return b"\n".join(out)
+
 
 def _git(root: Path, *args: str) -> str:
     try:
@@ -78,7 +110,8 @@ def surface_key(root: Path) -> str:
     items = []
     for rel in _surface_files(root):
         try:
-            h = hashlib.sha256((root / rel).read_bytes()).hexdigest()
+            h = hashlib.sha256(
+                _hashable_bytes(rel, (root / rel).read_bytes())).hexdigest()
         except OSError:
             h = "absent"
         items.append((rel, h))

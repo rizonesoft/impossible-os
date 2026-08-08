@@ -681,7 +681,18 @@ else
         if [ "$LM_RC" = "0" ]; then
             t_pass "scripts/lsp-mcp/tests/test_bridge.sh PASS (${LM_SUMMARY:-summary unavailable})"
         else
-            t_fail "scripts/lsp-mcp/tests/test_bridge.sh FAIL (${LM_SUMMARY:-run directly for details})"
+            # NAME THE FAILING SUB-TEST, not just the script. This harness runs
+            # 118 sub-tests and reported only `117/118`, so a pre-push failure
+            # on 2026-08-08 was unactionable: the script passed 3/3 standalone
+            # afterwards and there was nothing recorded to chase. An
+            # intermittent nobody can name is an intermittent nobody can fix --
+            # the same gap that left the control-plane suite's `68 passed, 1
+            # failed` anonymous for a whole cycle. The full output is already in
+            # hand; it just was not being read.
+            LM_FAILED=$(printf '%s\n' "$LM_OUT" \
+                | grep -E '^\[lsp-mcp-tests\] (FAIL|ERROR)' | head -3 | tr '\n' '; ')
+            t_fail "scripts/lsp-mcp/tests/test_bridge.sh FAIL (${LM_SUMMARY:-run directly for details})" \
+                "${LM_FAILED:-no per-sub-test FAIL line matched; full output above}"
         fi
     else
         t_fail "scripts/lsp-mcp/tests/test_bridge.sh not found or not executable"
@@ -4198,7 +4209,29 @@ else
     if tr_check; then t_fail "tooling_receipt: a new untracked hook kept the receipt valid"
     else t_pass "tooling_receipt: a new untracked file invalidates it"; fi
     rm -f "$TR_TMP/.claude/hooks/new_hook.py"
-    # 5. A suite whose inputs moved mid-run must not leave a receipt behind.
+    # 5. The MACHINE-REWRITTEN span must not invalidate, but the rest of the
+    #    same file must. `.githooks/post-commit` rewrites README.md's badge on
+    #    every commit, so without this the receipt died between the suite run
+    #    and the push -- found by the first end-to-end use paying the six
+    #    minutes anyway. Excluding the whole FILE would be wrong: the suite
+    #    asserts README names the wrappers it should.
+    printf 'intro\n<!-- COUNT-BADGE:START -->\nbadge v1\n<!-- COUNT-BADGE:END -->\ntail\n' \
+        > "$TR_TMP/README.md"
+    ( cd "$TR_TMP" && git add -A && git -c user.email=t@t -c user.name=t commit -qm r ) >/dev/null 2>&1
+    TR_K1="$(python3 "$TR" key --project "$TR_TMP")"
+    printf 'intro\n<!-- COUNT-BADGE:START -->\nbadge v2 CHANGED\n<!-- COUNT-BADGE:END -->\ntail\n' \
+        > "$TR_TMP/README.md"
+    TR_K2="$(python3 "$TR" key --project "$TR_TMP")"
+    printf 'intro EDITED BY A HUMAN\n<!-- COUNT-BADGE:START -->\nbadge v1\n<!-- COUNT-BADGE:END -->\ntail\n' \
+        > "$TR_TMP/README.md"
+    TR_K3="$(python3 "$TR" key --project "$TR_TMP")"
+    if [ "$TR_K1" = "$TR_K2" ] && [ "$TR_K1" != "$TR_K3" ]; then
+        t_pass "tooling_receipt: a regenerated badge span is excluded, the rest of the file is not"
+    else
+        t_fail "tooling_receipt: generated-span handling wrong" \
+            "base=$TR_K1 badge-rewrite=$TR_K2 (want same) human-edit=$TR_K3 (want different)"
+    fi
+    # 6. A suite whose inputs moved mid-run must not leave a receipt behind.
     if python3 "$TR" write --expect "deadbeefdeadbeef" --project "$TR_TMP" >/dev/null 2>&1; then
         t_fail "tooling_receipt: wrote a receipt for bytes that changed mid-run"
     else
