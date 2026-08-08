@@ -45,6 +45,7 @@ Two standing cautions carried from v11, both still live:
 - [ ] `build_offload_reminder.py` BLOCKs a suite invocation that is already routed through `run-artifact.sh`, when the call is backgrounded or heredoc-authored
       Observed twice, ~03:20 and ~03:22. Quoted verbatim from the hook: `Overnight SECTIONS phase ran 'bash scripts/test-tooling.sh' BARE in the MAIN context (matched segment: 'bash scripts/test-tooling.sh')`. The first call WAS `( bash scripts/overnight/run-artifact.sh s22rev-tooling2 -- bash scripts/test-tooling.sh > /tmp/tt2.json 2>&1; ... ) &`, i.e. compliant and wrapped; the second was a heredoc WRITING that wrapped command into a script file, so no suite ran at all.
       - OBSERVED: both blocked. INFERRED, untested: the segment splitter treats the text after `--` as its own segment and loses the wrapper prefix, and it scans heredoc bodies as commands.
+      - THIRD SHAPE, observed 2026-08-08 ~15:12 during the section-25 implementation: `( bash scripts/overnight/run-artifact.sh <label> -- bash scripts/test-tooling.sh > /tmp/x 2>&1; echo "rc=$?" >> /tmp/x ) &` was BLOCKED twice with the same "ran BARE" text. The command is the sanctioned wrapper; the only difference is a subshell wrapping it to capture rc. That is the rc-capture idiom the ship-sequence doctrine itself recommends for the push, so the gate blocks a shape the doctrine teaches. Recovery: drop the subshell and use the harness `run_in_background` flag instead -- which then loses the rc, so the two needs are not simultaneously satisfiable.
       - Recovery cost: 2 blocked calls, plus authoring the script through the Write tool to dodge the heredoc scan -- 3 extra tool calls. The workaround IS the finding: a wrapper script the hook cannot see satisfies it exactly as well as compliance does, so on this path the gate costs calls without adding safety.
       - The tooling suite exceeds the 10-minute tool wall, so backgrounding it is REQUIRED by the ship-sequence doctrine shipped in `b1583c3f6`. The two rules currently contradict each other for any suite that must be backgrounded.
 - [ ] The build-offload gate and the skill-step observer accept DISJOINT shapes for the same step, and only one command satisfies both
@@ -71,6 +72,19 @@ Two standing cautions carried from v11, both still live:
       `.githooks/pre-push` is the one place that always runs immediately after a commit, and the fixture that failed (`query.py --quiet stale --offset -1` against the CANONICAL cache) had just become sensitive to whether a `todo/`-touching commit had landed since the last cache rebuild -- because section 24 made `stale` check the corpus git history.
       - Standalone runs passed because I had rebuilt the cache; the gate ran after two commits. Neither run was wrong; they were asking different questions.
       - Both fixes landed in ordinary code (`scripts/todo-graph/tests/test_build.sh`), so this is recorded as evidence for the gate rather than as work: a suite whose fixtures depend on the freshness of a derived artifact will look deterministic to the developer who just rebuilt it.
+
+## Findings from the TODO-06 section-25 implementation (2026-08-08 run)
+
+- [ ] A backgrounded wrapper reports harness exit 0 while the suite is still running, and the envelope said FAIL while that exit said 0
+      Observed 2026-08-08 ~14:42-15:19. `( bash scripts/overnight/run-artifact.sh ... ) &` returns as soon as the SUBSHELL forks, so the harness task-notification said `completed (exit code 0)` while `scripts/test-tooling.sh` ran for six more minutes. The run nearly took that as the green gate.
+      - The same run's envelope tail, read afterwards, said `FAIL 1/1293 tooling tests failed -- test_build.sh ([test_build] 442/443 passed, 1 failed)`. So the harness exit code and the suite verdict DISAGREED, and the exit code was the one the notification surfaced.
+      - OBSERVED: the exit-0 notification and the FAIL envelope, both quoted above. INFERRED, untested: any `( ... ) &` around the wrapper produces this, not just this invocation.
+      - The counterfactual gate is cheap: a wrapper verdict should be read from the envelope's own field, never from the process exit status of whatever launched it. Doctrine already says "quote the tail yourself" -- what is missing is a statement that the harness exit code is NOT the verdict.
+- [ ] Nothing prevents two `test-tooling.sh` runs from overlapping, and the repo's own gotcha says an overlapping run is untrustworthy
+      Observed 2026-08-08 ~15:19: `pgrep -af test-tooling.sh` showed two independent suite trees walking the same worktree, because an earlier backgrounded run had never exited (see the finding above) while a second was dispatched.
+      - This is self-poisoning by the repo's own rule. `live-gotchas.md` records that "editing the tree while `scripts/test-tooling.sh` runs produces a spurious rc=1" because the suite lints and walks the live corpus -- and a second suite writing its own temp trees and rebuilding caches is exactly such a concurrent mutation.
+      - Cost here: one gate run had to be killed and re-run from scratch on a quiescent tree (~6 minutes), and the intermediate results could not be trusted either way.
+      - The fix is a lockfile in the suite itself, refusing to start (or waiting) when another instance holds it -- not a doctrine line asking the run to remember, since the overlap arose from a run that had already reported itself finished.
 
 ## Findings from the TODO-06 section-23 implementation (2026-08-08 run)
 
