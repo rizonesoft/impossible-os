@@ -134,6 +134,16 @@ if [ "${TT_NO_LOCK:-0}" != "1" ] && command -v flock >/dev/null 2>&1; then
     fi
 fi
 
+# Key of the tooling surface as it stands BEFORE any test runs. Compared against
+# the key at the end so a receipt is only written when the suite measured the
+# bytes that are still on disk. Empty if the helper is absent -- then no receipt
+# is written and the gate simply runs the suite, which is the safe default.
+_TT_SURFACE_KEY=""
+if [ -f "$REPO_ROOT/scripts/tooling-receipt.py" ]; then
+    _TT_SURFACE_KEY="$(python3 "$REPO_ROOT/scripts/tooling-receipt.py" key \
+        --project "$REPO_ROOT" 2>/dev/null || true)"
+fi
+
 # ---- Colors ----
 if [ "$QUIET" = "0" ] && [ -t 1 ]; then
     RED='\033[0;31m'; GREEN='\033[0;32m'; CYAN='\033[0;36m'; DIM='\033[0;90m'; NC='\033[0m'
@@ -4154,6 +4164,95 @@ do
         t_pass "build_offload_group  a grouped/backgrounded wrapped route is still the sanctioned route"
     else
         t_fail "build_offload_group  a grouped wrapped route was blocked: $BOR_SHAPE" \
+            "rc=$BOR_RCN: $BOR_OUTN"
+    fi
+done
+# TOOLING RECEIPT. The one mechanism here that lets a gate NOT run, so every
+# state is pinned -- and the three that matter are the ones that must REFUSE.
+# A receipt that survives an edit, an absent receipt read as a pass, or a
+# receipt written by a suite whose inputs moved mid-run would each turn the
+# pre-push gate into a no-op.
+TR="$REPO_ROOT/scripts/tooling-receipt.py"
+if [ ! -f "$TR" ]; then
+    t_fail "tooling_receipt: scripts/tooling-receipt.py missing"
+else
+    TR_TMP="$(mktemp -d)"
+    ( cd "$TR_TMP" && git init -q . && mkdir -p scripts .claude/hooks \
+        && printf 'x\n' > scripts/a.sh && git add -A && git commit -qm init ) >/dev/null 2>&1
+    tr_check() { python3 "$TR" check --project "$TR_TMP" >/dev/null 2>&1; }
+    # 1. No receipt -> REFUSE.
+    if tr_check; then t_fail "tooling_receipt: absent receipt read as a pass"
+    else t_pass "tooling_receipt: absent receipt fails CLOSED"; fi
+    # 2. Written on unchanged bytes -> honoured.
+    TR_KEY="$(python3 "$TR" key --project "$TR_TMP")"
+    python3 "$TR" write --expect "$TR_KEY" --project "$TR_TMP" >/dev/null 2>&1
+    if tr_check; then t_pass "tooling_receipt: a receipt over unchanged bytes is honoured"
+    else t_fail "tooling_receipt: a valid receipt was rejected"; fi
+    # 3. ANY edit invalidates -- tracked file...
+    printf 'y\n' >> "$TR_TMP/scripts/a.sh"
+    if tr_check; then t_fail "tooling_receipt: an edited tracked file kept the receipt valid"
+    else t_pass "tooling_receipt: an edit to a tracked tooling file invalidates it"; fi
+    printf 'x\n' > "$TR_TMP/scripts/a.sh"
+    # 4. ...and a brand-new UNTRACKED file, which a fixed file list would miss.
+    printf 'z\n' > "$TR_TMP/.claude/hooks/new_hook.py"
+    if tr_check; then t_fail "tooling_receipt: a new untracked hook kept the receipt valid"
+    else t_pass "tooling_receipt: a new untracked file invalidates it"; fi
+    rm -f "$TR_TMP/.claude/hooks/new_hook.py"
+    # 5. A suite whose inputs moved mid-run must not leave a receipt behind.
+    if python3 "$TR" write --expect "deadbeefdeadbeef" --project "$TR_TMP" >/dev/null 2>&1; then
+        t_fail "tooling_receipt: wrote a receipt for bytes that changed mid-run"
+    else
+        t_pass "tooling_receipt: refuses to write when the surface moved mid-run"
+    fi
+    rm -rf "$TR_TMP"
+fi
+
+# A heredoc BODY is data, and a `#` inside one must not declare the whole
+# command unsplittable. The unmodelled-grammar screen ran against the RAW text,
+# so `cat > run.sh <<'EOF' ... EOF` writing a correctly-wrapped suite command
+# was BLOCKED for carrying a `#!/usr/bin/env bash` line -- while the identical
+# heredoc with no comment passed. Nothing runs in either case.
+for BOR_SHAPE in \
+    "cat > /tmp/run.sh <<'EOF'
+#!/usr/bin/env bash
+bash scripts/overnight/run-artifact.sh lbl -- bash scripts/test-tooling.sh
+EOF" \
+    "cat > /tmp/run.sh <<'EOF'
+bash scripts/overnight/run-artifact.sh lbl -- bash scripts/test-tooling.sh
+EOF"
+do
+    BOR_JSON="$(BOR_SHAPE="$BOR_SHAPE" python3 -c 'import json,os; print(json.dumps({"tool_name":"Bash","tool_input":{"command":os.environ["BOR_SHAPE"]}}))')"
+    BOR_OUTN="$(printf '%s' "$BOR_JSON" | python3 "$BOR_HOOK" 2>&1)"; BOR_RCN=$?
+    if [ -z "$BOR_OUTN" ] && [ "$BOR_RCN" = "0" ]; then
+        t_pass "build_offload_heredoc  a heredoc WRITING a wrapped command is data, not an invocation"
+    else
+        t_fail "build_offload_heredoc  a heredoc writing a wrapped command was blocked" \
+            "rc=$BOR_RCN: $BOR_OUTN"
+    fi
+done
+# ...and the half that must NOT relax: a SHELL-FED body is COMMANDS, so a bare
+# suite inside one still BLOCKs -- with or without a comment beside it. This is
+# the interaction the change above could have broken, and it is the one that
+# was a live bypass in its own right on 2026-08-07.
+for BOR_SHAPE in \
+    "bash <<'EOF'
+bash scripts/test.sh QUIET=1
+EOF" \
+    "bash <<'EOF'
+# note
+bash scripts/test.sh QUIET=1
+EOF" \
+    "bash -s <<'EOF'
+# note
+bash scripts/test-tooling.sh
+EOF"
+do
+    BOR_JSON="$(BOR_SHAPE="$BOR_SHAPE" python3 -c 'import json,os; print(json.dumps({"tool_name":"Bash","tool_input":{"command":os.environ["BOR_SHAPE"]}}))')"
+    BOR_OUTN="$(printf '%s' "$BOR_JSON" | python3 "$BOR_HOOK" 2>&1)"; BOR_RCN=$?
+    if echo "$BOR_OUTN" | grep -q "build-offload" && [ "$BOR_RCN" = "2" ]; then
+        t_pass "build_offload_heredoc  a shell-FED heredoc body is commands and still BLOCKs"
+    else
+        t_fail "build_offload_heredoc  a bare suite escaped inside a shell-fed heredoc" \
             "rc=$BOR_RCN: $BOR_OUTN"
     fi
 done
@@ -21165,6 +21264,19 @@ else
 fi
 if [ "$QUIET" = "0" ]; then
     echo -e "${CYAN}══════════════════════════════════════════════════${NC}"
+fi
+
+# CONTENT-BOUND RECEIPT, written only by a green run whose inputs did not move.
+# `.githooks/pre-push` consults it to avoid re-running these ~6 minutes over
+# bytes this run already tested -- the duplicate that blew the 10-minute tool
+# wall on 2026-08-08. `--expect` carries the key taken BEFORE the tests ran: if
+# the tooling surface changed underneath them, the result describes bytes that
+# are gone and the receipt is refused rather than written. Never written on a
+# failure, and a write error is not the suite's verdict, so it cannot turn a
+# green run red.
+if [ "$FAIL" = "0" ] && [ -f "$REPO_ROOT/scripts/tooling-receipt.py" ]; then
+    python3 "$REPO_ROOT/scripts/tooling-receipt.py" write \
+        --expect "${_TT_SURFACE_KEY:-}" --project "$REPO_ROOT" >/dev/null || true
 fi
 
 [ "$FAIL" = "0" ] && exit 0 || exit 1

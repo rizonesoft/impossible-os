@@ -642,7 +642,28 @@ def _has_unmodelled_grammar(cmd):
 
     Quote-aware: the same text inside a quoted review prompt is prose, and
     treating it as grammar would fail-closed on legitimate dispatches.
+
+    HEREDOC-AWARE for the same reason (2026-08-08). This ran against the RAW
+    command, so a `#` anywhere -- including inside a heredoc BODY, which is data
+    -- declared the whole command unsplittable and sent the caller down its
+    fail-closed path. Live cost: `cat > run.sh <<'EOF' ... EOF` writing a
+    correctly-wrapped suite command was BLOCKED by build_offload_reminder for
+    carrying a `#!/usr/bin/env bash` line, while the identical heredoc without a
+    comment passed. Nothing ran in either case; the gate was reading a file
+    being written.
+
+    The circularity that made this look like a design decision is not real. The
+    worry was that to know which `#` sits in a body you must strip bodies first,
+    and the stripper can be fooled by a `#`-commented `<<WORD`. But
+    `_strip_heredoc_bodies` KEEPS the introducing line -- so a `#` on a command
+    line survives stripping and is still caught, and an over-strip triggered by
+    such a comment still ends with that `#` in the kept text. It also keeps
+    SHELL-FED bodies, which are commands rather than data. Checking the stripped
+    text is therefore never weaker here, and it is exactly the text
+    `_split_raw_segments` goes on to segment, so the guard and the splitter stop
+    disagreeing about what the command contains.
     """
+    cmd = _strip_heredoc_bodies(cmd)
     bare = []
     quote = None
     i, n = 0, len(cmd)

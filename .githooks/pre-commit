@@ -30,6 +30,29 @@ echo ""
 echo "Pre-commit: running scripts/lint.sh (full-repo, matches CI)..."
 echo ""
 
+# AN AMBIENT `SKIP_LINT_*` MUST NOT WEAKEN THE COMMIT GATE. Those variables are
+# lint's own per-check dials and a deliberate `SKIP_LINT_SECRETS=1 bash
+# scripts/lint.sh` must keep working -- so they are cleared HERE, on the gate
+# path, rather than inside lint.sh where clearing them would break the dial.
+#
+# Measured 2026-08-08 while auditing the same leak that bit `test-tooling.sh`:
+# four checks (including the tracked-secret guard) disabled themselves from an
+# operator's exported environment and the commit gate still passed. lint does
+# announce each one -- `Check 16 ... skipped via SKIP_LINT_SECRETS=1` -- but it
+# announces into a 17-line warning block that nobody reads at commit time, and
+# "visible in principle" is not a gate. CI runs with a clean environment, so
+# this only ever diverged locally, in the weakening direction.
+_PC_CLEARED=()
+for _pc_var in $(compgen -v 2>/dev/null | grep -E '^SKIP_LINT_' || true); do
+    _PC_CLEARED+=("$_pc_var")
+    unset "$_pc_var" 2>/dev/null || true
+done
+if [ "${#_PC_CLEARED[@]}" -gt 0 ]; then
+    echo "Pre-commit: ignoring inherited lint opt-out(s) for the gate: ${_PC_CLEARED[*]}"
+    echo "  (run 'bash scripts/lint.sh' directly if you need them honoured)"
+fi
+unset _pc_var
+
 if ! bash "$REPO_ROOT/scripts/lint.sh"; then
     echo ""
     echo -e "\033[31mFix lint errors before committing\033[0m"

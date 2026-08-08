@@ -93,7 +93,24 @@ if [ -n "$TOOLING_HITS" ]; then
   echo ""
   echo "Pre-push: tooling change in this push -- gating on scripts/test-tooling.sh:"
   printf '%s\n' "$TOOLING_HITS" | sort -u | head -6 | sed 's/^/  touched: /'
-  if [ "${SKIP_TOOLING_SUITE:-}" = "1" ]; then
+  # A GREEN RUN ON EXACTLY THESE BYTES ALREADY HAPPENED -> do not pay for it
+  # twice. `scripts/tooling-receipt.py` hashes the whole tooling surface
+  # (tracked AND untracked), the suite writes the receipt only when it finished
+  # with zero failures and its inputs did not move mid-run, and `check` fails
+  # CLOSED on every other state -- no receipt, unreadable, stale key. So the
+  # only way past this branch is evidence that these exact bytes passed.
+  #
+  # Measured 2026-08-08: the suite ran green, then this gate ran the identical
+  # 1300 tests over the identical tree and was killed at the 10-minute tool
+  # wall. This is NOT `SKIP_TOOLING_SUITE` by another name -- that flag skips
+  # the run on an assertion, this skips it on a content-bound receipt, and any
+  # edit to any tooling file invalidates it.
+  if [ "${SKIP_TOOLING_SUITE:-}" != "1" ] \
+     && [ -f "$REPO_ROOT/scripts/tooling-receipt.py" ] \
+     && python3 "$REPO_ROOT/scripts/tooling-receipt.py" check --project "$REPO_ROOT" 2>/dev/null; then
+    echo -e "\033[32m  receipt: a green tooling suite already ran on these exact bytes -- not re-running\033[0m"
+    echo "  (any edit to scripts/, .claude/hooks/, .githooks/, workflows or CLAUDE.md invalidates it)"
+  elif [ "${SKIP_TOOLING_SUITE:-}" = "1" ]; then
     # Skips the RUN, not just a failure. The sibling runner-suite gate can
     # afford failure-only semantics because run-all.sh takes seconds; this
     # suite takes ~6 minutes, and a gate that cannot be skipped on a known-good

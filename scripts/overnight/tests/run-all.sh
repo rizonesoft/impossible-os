@@ -33,6 +33,32 @@ unset GIT_INDEX_FILE GIT_DIR GIT_WORK_TREE GIT_PREFIX GIT_OBJECT_DIRECTORY \
       GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_AUTHOR_DATE \
       GIT_COMMITTER_DATE GIT_EDITOR 2>/dev/null || true
 
+# ---- Environment hygiene: never inherit an operator opt-out ----------------
+# PROVEN, not assumed (2026-08-08). `test-tooling.sh` was fixed for this in
+# 3d92831ad and this suite was left as "neither proven to leak nor proven not
+# to". It leaks: under an ambient `SKIP_CITATION_BLOCK=1` the suite returns
+# `68 passed, 1 failed`, because `test_content_lint` asserts the citation gate
+# BLOCKS and the ambient opt-out disabled the gate it was asserting about. Same
+# shape as the tooling-suite incident -- the suite stops testing the gates and
+# starts testing the operator's shell.
+#
+# It fails rather than passes falsely, which is the safe direction, but a red
+# gate that blocks a correct commit and points at an innocent test is the exact
+# failure this file's git-env block below already calls the worst kind.
+#
+# Prefix-matched so an opt-out added later is covered the day it is written.
+# Tests that need one of these set it per-command, which unsetting here does
+# not affect.
+_RA_CLEARED=()
+for _ra_var in $(compgen -v 2>/dev/null | grep -E '^(SKIP_|ATTENDED_REPAIR_OVERRIDE$|CODEX_FLAG_OVERRIDE$)' || true); do
+    _RA_CLEARED+=("$_ra_var")
+    unset "$_ra_var" 2>/dev/null || true
+done
+if [ "${#_RA_CLEARED[@]}" -gt 0 ]; then
+    echo "run-all: cleared inherited opt-out env before gate tests: ${_RA_CLEARED[*]}" >&2
+fi
+unset _ra_var
+
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../../.." && pwd)"
 
