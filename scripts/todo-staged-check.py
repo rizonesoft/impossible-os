@@ -144,7 +144,7 @@ OS_COMPARISON_CELL_CAP = 80
 
 
 def _oscomp_over_cap(path, added):
-    """[(lineno, width, cell)] for OS Comparison last-column cells this commit
+    """[(lineno, width, cell)] for OS Comparison claim cells this commit
     ADDS that exceed the cap. Reads the post-image file for table structure and
     intersects with the added line numbers, so legacy rows are never judged."""
     try:
@@ -170,9 +170,17 @@ def _oscomp_over_cap(path, added):
             lineno = start + 1 + i
             if lineno not in added_nos:
                 continue
-            w = fmt._dwidth(row[-1])
-            if w > OS_COMPARISON_CELL_CAP:
-                out.append((lineno, w, row[-1]))
+            # EVERY claim column, not just the last (2026-08-09). The commit
+            # gate mirrored lint Check 27, which scanned `row[-1]` only -- so
+            # prose that would be refused in the Impossible OS column landed in
+            # the Win11 or Linux one instead, and one such row pads every column
+            # in its table (TODO-25 held at 358 columns for content needing 217).
+            for col, cell in enumerate(row):
+                if col == 0:
+                    continue          # decorative glyph column
+                w = fmt._dwidth(cell)
+                if w > OS_COMPARISON_CELL_CAP:
+                    out.append((lineno, w, cell))
     return out
 
 

@@ -2099,9 +2099,19 @@ for rel in files:
         for i, row in enumerate(rows):
             if i == 1 or len(row) != n:
                 continue
-            w = m._dwidth(row[-1])
-            if w > CAP:
-                hits.append(f"{rel}:{s0+1+i}: {w} cols")
+            # EVERY claim column, not just the last (2026-08-09). The cap
+            # shipped scanning `row[-1]` only, so prose crept into the Win11 and
+            # Linux columns instead -- and ONE such row pads every column in its
+            # table: a single row with 119- and 115-column cells held TODO-25's
+            # comparison table at 358 columns when its content needed 217. The
+            # operator saw it as "the table is broken" and it was, in a way the
+            # cap was looking straight past.
+            for col, cell in enumerate(row):
+                if col == 0:
+                    continue          # the decorative glyph column is 2 cols
+                w = m._dwidth(cell)
+                if w > CAP:
+                    hits.append(f"{rel}:{s0+1+i}: col {col} {w} cols")
 for h in hits[:5]:
     print(h)
 print(f"COUNT={len(hits)}")
@@ -2117,7 +2127,7 @@ PYOSC
     OSCOMP_N="$(printf '%s' "$OSCOMP_OUT" | sed -n 's/^COUNT=//p')"
     if [ "${OSCOMP_N:-0}" -gt 0 ]; then
         printf '%s\n' "$OSCOMP_OUT" | grep -v '^COUNT=' | sed 's/^/       /'
-        echo -e "${RED}error${NC}: Check 27 (oscomp-cell-cap) $OSCOMP_N OS Comparison last-column cell(s) over 80 columns -- that column is a claim, not a paragraph; move the justification into the section body"
+        echo -e "${RED}error${NC}: Check 27 (oscomp-cell-cap) $OSCOMP_N OS Comparison cell(s) over 80 columns -- these columns carry claims, not paragraphs, and ONE long cell pads every column in its table; move the justification into the section body"
         ERRORS=$((ERRORS + 1))
     fi
 fi
