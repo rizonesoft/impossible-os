@@ -10561,13 +10561,15 @@ PW_HIST_MUT=$(python3 - "$PW_TREE/mut/scripts/todo-graph/build-hist.py" <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1])
 src = p.read_text()
-needle = "    timestamps, history_id = collect_git_timestamps(repo_root, files)\n"
+needle = ("    timestamps, history_id = collect_git_timestamps("
+          "repo_root, files, todo_root)\n")
 if needle not in src:
     print("STALE-NEEDLE")
 else:
     p.write_text(src.replace(
         needle,
-        "    timestamps, _ignored = collect_git_timestamps(repo_root, files)\n"
+        "    timestamps, _ignored = collect_git_timestamps("
+        "repo_root, files, todo_root)\n"
         "    history_id = _cs.corpus_history_id(todo_root)\n", 1))
     print("OK")
 PY
@@ -11904,6 +11906,11 @@ fi
     cd "$S24_TREE" || exit 1
     git commit -q --no-verify --amend -m "corpus-amended"
 ) >/dev/null 2>&1
+# Exercised through the CALLER PAIRING, not through load alone. Since the load
+# defers the history comparison to a single post-walk probe (Codex perf,
+# section 24, [medium]), `load_and_validate` + `check_history_unchanged` is the
+# unit that carries the guarantee -- which is exactly the sequence query.py
+# runs. Asserting on the load alone would now pin the wrong contract.
 S24_POST=$(python3 -c "
 import pathlib, sys
 sys.path.insert(0, '$REPO_ROOT/scripts/todo-graph')
@@ -11911,7 +11918,9 @@ import cache_schema as cs
 p = pathlib.Path('$S24_TREE/build/todo-cache.json')
 def run(prof):
     try:
-        cs.load_and_validate(p, '$S24_TREE/todo', profile=prof)
+        _, i = cs.load_and_validate(p, '$S24_TREE/todo', profile=prof)
+        cs.check_history_unchanged('$S24_TREE/todo', i.history)
+        cs.check_corpus_unchanged('$S24_TREE/todo', i.corpus)
         return 'ACCEPT'
     except cs.CacheSchemaError as e:
         return e.reason
@@ -11998,8 +12007,8 @@ import cache_schema as cs
 # The walk reports INDETERMINATE while corpus_history_id still answers with a
 # real tip:count -- i.e. git is healthy now, so the failure was transient.
 real = b.collect_git_timestamps
-def failing(repo_root, files):
-    ts, _ = real(repo_root, files)
+def failing(repo_root, files, todo_root=None):
+    ts, _ = real(repo_root, files, todo_root)
     return ts, b.PROVENANCE_INDETERMINATE
 b.collect_git_timestamps = failing
 sys.argv = ['build.py', '--quiet', '--root', '$S24_TREE/todo',
@@ -12068,6 +12077,161 @@ if [ "$S24_SEL" = "CONSUMES SELECTED PAIRED" ]; then
     t_pass "section 24: the per-verb selector covers all three timestamp consumers including the Gantt renderer"
 else
     t_fail "section 24: profile selector coverage gave '$S24_SEL' (want 'CONSUMES SELECTED PAIRED')"
+fi
+
+# 24e: THE TWO QUERY PROFILES DIFFER ON THE HISTORY AXIS AND NOTHING ELSE.
+# They were separate literal tuples, so widening one later would silently let
+# the same reader accept under `stale` a cache it rejects under `ready` (Codex
+# consistency, section 24, [medium]). Pinned by EQUALITY rather than by naming
+# the members, so a legitimate future widening only has to happen once.
+S24_SUBTREE=$(python3 -c "
+import sys
+sys.path.insert(0, '$REPO_ROOT/scripts/todo-graph')
+import cache_schema as cs
+same = cs.PROFILE_QUERY.subtrees == cs.PROFILE_QUERY_HISTORY.subtrees
+axis = (not cs.PROFILE_QUERY.requires_history) and cs.PROFILE_QUERY_HISTORY.requires_history
+ready = cs.PROFILE_QUERY.require_stamped_population == cs.PROFILE_QUERY_HISTORY.require_stamped_population
+print('SAME' if same else 'SKEWED', 'AXIS' if axis else 'NOAXIS',
+      'READY' if ready else 'READYSKEW')
+" 2>&1)
+if [ "$S24_SUBTREE" = "SAME AXIS READY" ]; then
+    t_pass "section 24: the two query profiles differ on the history axis alone"
+else
+    t_fail "section 24: query profile parity gave '$S24_SUBTREE' (want 'SAME AXIS READY')"
+fi
+
+# 24f: NO_DERIVATION TAKES THE WIDER RESCUE SET. A corpus in a repository whose
+# history never touched it returns `no-history:0`, and null timestamps are then
+# the only possible answer -- refusing it rejects a legitimate tree (Codex
+# adversarial, section 24, [medium]). INDETERMINATE must NOT accept the same
+# value, because the walk emits it itself on a successful empty read.
+S24_RESCUE=$(python3 -c "
+import sys
+sys.path.insert(0, '$REPO_ROOT/scripts/todo-graph')
+import build as b
+print('WIDER' if 'no-history:0' in b._DETERMINATE_NO_DERIVATION else 'NARROW',
+      'STRICT' if 'no-history:0' not in b._DETERMINATE_NO_GIT else 'LOOSE',
+      'SUPERSET' if b._DETERMINATE_NO_GIT <= b._DETERMINATE_NO_DERIVATION else 'DIVERGED')
+" 2>&1)
+if [ "$S24_RESCUE" = "WIDER STRICT SUPERSET" ]; then
+    t_pass "section 24: no-history:0 rescues NO_DERIVATION but never INDETERMINATE"
+else
+    t_fail "section 24: marker rescue sets gave '$S24_RESCUE' (want 'WIDER STRICT SUPERSET')"
+fi
+
+# 24g: PRODUCER AND READER NAME THE SAME PATHS. The walk hardcoded `-- todo`
+# while corpus_history_id scopes `.` from the given root, so a corpus in a
+# differently-named in-repo directory refused with rc 3 and nothing concurrent
+# had happened (Codex consistency, section 24, [medium]). Built with --root
+# pointing at `plans`, which is the case the old code got wrong.
+S24_PLANS="$TMP_DIR/s24-plans"
+mkdir -p "$S24_PLANS/plans/00-infrastructure" "$S24_PLANS/build"
+cp "$PW_TREE/todo/01-test/TODO-01-pw.md" "$S24_PLANS/plans/00-infrastructure/"
+(
+    cd "$S24_PLANS" || exit 1
+    git init -q . && git config user.email "t@example.invalid" \
+        && git config user.name "s24 plans fixture" \
+        && git add -A && git commit -q --no-verify -m "corpus in plans/"
+) >/dev/null 2>&1
+S24_PATHSPEC=$(python3 -c "
+import pathlib, sys
+sys.path.insert(0, '$REPO_ROOT/scripts/todo-graph')
+import build as b
+sys.argv = ['build.py', '--quiet', '--root', '$S24_PLANS/plans',
+            '--repo-root', '$S24_PLANS',
+            '--output', '$S24_PLANS/build/todo-cache.json']
+rc = b.main()
+print(rc, pathlib.Path('$S24_PLANS/build/todo-cache.json').exists())
+" 2>&1 | tail -1)
+if [ "$S24_PATHSPEC" = "0 True" ]; then
+    t_pass "section 24: a corpus in a directory not named todo/ builds instead of refusing itself"
+else
+    t_fail "section 24: non-default --root build gave '$S24_PATHSPEC' (want '0 True')"
+fi
+# 24g-magic: THE DERIVED PATHSPEC IS LITERAL. `--` ends option parsing but does
+# NOT stop git interpreting pathspec magic, so a directory whose NAME is magic
+# selected a different tree once the path stopped being the hardcoded `todo`
+# (Codex re-adversarial, section 24, [medium]). A decoy touched by the SAME
+# commits is what makes this more than a refusal: tip and count can agree while
+# the emitted filenames never match, so null timestamps pass the comparison.
+S24_MAGIC="$TMP_DIR/s24-magic"
+mkdir -p "$S24_MAGIC/:(top)plans/00-infrastructure" "$S24_MAGIC/plans" "$S24_MAGIC/build" 2>/dev/null
+if [ -d "$S24_MAGIC/:(top)plans/00-infrastructure" ]; then
+    cp "$PW_TREE/todo/01-test/TODO-01-pw.md" "$S24_MAGIC/:(top)plans/00-infrastructure/"
+    cp "$PW_TREE/todo/01-test/TODO-01-pw.md" "$S24_MAGIC/plans/TODO-99-decoy.md"
+    (
+        cd "$S24_MAGIC" || exit 1
+        git init -q . && git config user.email "t@example.invalid" \
+            && git config user.name "s24 magic fixture" \
+            && git add -A && git commit -q --no-verify -m "both dirs in one commit"
+    ) >/dev/null 2>&1
+    S24_MAGIC_OUT=$(python3 -c "
+import json, pathlib, sys
+sys.path.insert(0, '$REPO_ROOT/scripts/todo-graph')
+import build as b
+sys.argv = ['build.py', '--quiet', '--root', '$S24_MAGIC/:(top)plans',
+            '--repo-root', '$S24_MAGIC',
+            '--output', '$S24_MAGIC/build/todo-cache.json']
+rc = b.main()
+out = pathlib.Path('$S24_MAGIC/build/todo-cache.json')
+if rc != 0 or not out.exists():
+    print('rc', rc, 'nocache')
+else:
+    nodes = json.loads(out.read_text())
+    # The timestamps must be REAL: a magic-interpreted pathspec would walk the
+    # decoy, emit filenames that never match, and leave these null.
+    dated = [n for n in nodes if n.get('created_at') and n.get('last_active_at')]
+    print('rc', rc, 'dated', len(dated), 'of', len(nodes))
+" 2>&1 | tail -1)
+    if [ "$S24_MAGIC_OUT" = "rc 0 dated 1 of 1" ]; then
+        t_pass "section 24: a pathspec-magic corpus directory is taken literally, so its timestamps are real"
+    else
+        t_fail "section 24: magic-named root gave '$S24_MAGIC_OUT' (want 'rc 0 dated 1 of 1')"
+    fi
+else
+    t_pass "section 24: pathspec-magic fixture skipped (filesystem rejects the directory name)"
+fi
+
+# 24h: DEFERRING THE HISTORY COMPARISON IS NOT SKIPPING IT. check_freshness now
+# hands the RECORDED id back instead of probing, so one post-walk probe proves
+# the whole property (Codex perf, section 24, [medium]). A binding with no
+# history id must therefore REFUSE here rather than sail through with None and
+# make the later re-check vacuous.
+S24_DEFER=$(python3 -c "
+import json, pathlib, sys
+sys.path.insert(0, '$REPO_ROOT/scripts/todo-graph')
+import cache_schema as cs
+p = pathlib.Path('$S24_TREE/build/todo-cache.json')
+b = p.read_bytes()
+out = {}
+cs.check_freshness(p, '$S24_TREE/todo', cache_bytes=b,
+                   profile=cs.PROFILE_QUERY_HISTORY, history_out=out)
+got = 'RECORDED' if out.get('recorded') else 'EMPTY'
+# CONTROL: the deferring path must NOT have walked git. Break corpus_history_id
+# and the same call must still succeed.
+cs.corpus_history_id = lambda *a, **k: (_ for _ in ()).throw(AssertionError('probed'))
+try:
+    cs.check_freshness(p, '$S24_TREE/todo', cache_bytes=b,
+                       profile=cs.PROFILE_QUERY_HISTORY, history_out={})
+    noprobe = 'NOPROBE'
+except AssertionError:
+    noprobe = 'PROBED'
+# And a binding with the history id stripped must refuse rather than defer None.
+side = cs.sidecar_path(p, __import__('hashlib').sha256(b).hexdigest())
+rec = json.loads(side.read_bytes()); rec.pop('history_id', None)
+side.write_text(json.dumps(rec))
+try:
+    cs.check_freshness(p, '$S24_TREE/todo', cache_bytes=b,
+                       profile=cs.PROFILE_QUERY_HISTORY, history_out={})
+    closed = 'FAILOPEN'
+except cs.CacheSchemaError:
+    closed = 'FAILCLOSED'
+print(got, noprobe, closed)
+" 2>&1 | tail -1)
+if [ "$S24_DEFER" = "RECORDED NOPROBE FAILCLOSED" ]; then
+    t_pass "section 24: the deferring load hands back the recorded id, walks no git, and refuses a binding with none"
+else
+    t_fail "section 24: deferred-history load gave '$S24_DEFER' (want 'RECORDED NOPROBE FAILCLOSED')"
 fi
 
 # ----------------------------------------------------------------------

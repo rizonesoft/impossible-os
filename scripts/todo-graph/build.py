@@ -201,13 +201,24 @@ PROVENANCE_INDETERMINATE = _Provenance("indeterminate")
 # walk. Both are established by its own explicit probes (`rev-parse --git-dir`
 # reporting not-a-repository, `rev-parse --verify --quiet HEAD` reporting an
 # unborn HEAD), so they are facts about the tree rather than about this moment.
-# `no-history:0` is deliberately ABSENT: the walk produces that itself on a
-# successful empty read, so seeing it only from the fallback means the walk
-# failed while git was healthy -- which is the transient case that must abort.
+# `no-history:0` is deliberately ABSENT from the INDETERMINATE set: the walk
+# produces that itself on a successful empty read, so seeing it only from the
+# fallback means the walk failed while git was healthy -- the transient case
+# that must abort.
 _DETERMINATE_NO_GIT = frozenset(("no-repo", "unborn-head"))
 
+# NO_DERIVATION IS A WEAKER CLAIM AND TAKES A WIDER RESCUE SET (Codex
+# adversarial, section 24, [medium]). Applying the INDETERMINATE rule to both
+# markers over-refused a legitimate tree: when no corpus file lives under
+# `repo_root` NO walk was attempted at all, so `no-history:0` from the fallback
+# is not evidence of a failure -- it says the corpus sits in a repository whose
+# history has never touched it, and null timestamps are then the honest and
+# only possible answer. A REAL `tip:count` is still refused for both markers,
+# because that means a history exists which this build did not read.
+_DETERMINATE_NO_DERIVATION = _DETERMINATE_NO_GIT | frozenset(("no-history:0",))
 
-def collect_git_timestamps(repo_root: Path, files: list) -> dict:
+
+def collect_git_timestamps(repo_root: Path, files: list, todo_root=None) -> dict:
     """Return {relative_path_str: (created_at_iso, last_active_at_iso)} for
     every file. One subprocess call walks the entire log so we don't pay
     per-file fork overhead.
@@ -251,11 +262,19 @@ def collect_git_timestamps(repo_root: Path, files: list) -> dict:
       `corpus_history_id`'s own explicit probes, may rescue it.
 
     A SUCCESSFUL WALK WITH EMPTY OUTPUT IS DETERMINATE, not a failure: an
-    existing HEAD simply has no commit touching `todo` (a tree whose TODO files
-    are still untracked is the ordinary case). That yields `no-history:0`, which
-    is byte-identical to what `corpus_history_id` returns for the same state --
-    the two must not drift, or the producer's own post-walk comparison would
-    reject legitimate builds.
+    existing HEAD simply has no commit touching the corpus (a tree whose TODO
+    files are still untracked is the ordinary case). That yields `no-history:0`,
+    which is byte-identical to what `corpus_history_id` returns for the same
+    state -- the two must not drift, or the producer's own post-walk comparison
+    would reject legitimate builds.
+
+    THE PATHSPEC IS DERIVED FROM `todo_root`, NOT HARDCODED (Codex consistency,
+    section 24, [medium]). This walk used a literal `-- todo` while the reader's
+    `corpus_history_id` scopes `.` from whatever `--root` it was given, so any
+    corpus in a differently-named in-repo directory had the producer recording
+    the `todo/` history and the post-walk comparison measuring the OTHER
+    directory's -- an rc 3 refusal with nothing concurrent about it. Both sides
+    must name the same paths or "the history moved" means nothing.
     """
     rel_paths = set()
     for f in files:
@@ -279,23 +298,46 @@ def collect_git_timestamps(repo_root: Path, files: list) -> dict:
 
     created = {}
     last_active = {}
-    # Path-limit the log walk to `todo/` so runtime scales with TODO
-    # history alone, not total-repo history. Without `-- todo/` the
+    # Path-limit the log walk to the corpus directory so runtime scales with
+    # its history alone, not total-repo history. Without the pathspec the
     # `--reverse` walk visits every commit in the repo (kernel churn,
     # docs churn, scripts churn) before producing the first TODO
     # timestamp, which makes the 2s budget brittle as the repo grows.
     # Codex quality review caught this: a full-repo scan was the
     # observed bottleneck once commit count crosses ~10x.
+    #
+    # The pathspec is the corpus's own repo-relative path, so it names exactly
+    # what `corpus_history_id` scopes as `.` from the same directory. It falls
+    # back to `todo` only when `todo_root` was not supplied or does not sit
+    # under `repo_root` -- in which case `rel_paths` is empty and we returned
+    # NO_DERIVATION above, so the pathspec is never actually consulted.
+    #
+    # `--literal-pathspecs` IS LOAD-BEARING NOW THAT THE PATH IS DERIVED (Codex
+    # re-adversarial, section 24, [medium]). `--` ends OPTION parsing; it does
+    # not stop git interpreting pathspec magic, so a directory legitimately
+    # named `:(top)plans` or containing `*` would select something other than
+    # itself. While the pathspec was the hardcoded literal `todo` that could not
+    # bite; taking it from `--root` makes it caller-controlled. The mismatch is
+    # usually a refusal, but if the decoy and the real directory share commits
+    # the tip/count can agree while the emitted filenames never match
+    # `rel_paths` -- null timestamps that pass the post-walk comparison.
+    pathspec = "todo"
+    if todo_root is not None:
+        try:
+            pathspec = Path(todo_root).relative_to(repo_root).as_posix() or "."
+        except ValueError:
+            pass
     try:
         result = subprocess.run(
             [
                 "git",
+                "--literal-pathspecs",
                 "log",
                 "--name-only",
                 "--format=COMMIT %H %ct",
                 "--reverse",
                 "--",
-                "todo",
+                pathspec,
             ],
             cwd=str(repo_root),
             capture_output=True,
@@ -1346,7 +1388,7 @@ def main():
     # provenance means git could not be consulted, so no timestamp was derived
     # and there is nothing for the history binding to protect; the readers'
     # `corpus_history_id` is then the authority for what to record.
-    timestamps, history_id = collect_git_timestamps(repo_root, files)
+    timestamps, history_id = collect_git_timestamps(repo_root, files, todo_root)
     if isinstance(history_id, _Provenance):
         # NEITHER MARKER MAY BECOME AN IDENTITY BY ITSELF. The fallback probe is
         # allowed to answer only with a DETERMINATE fact about the tree; if it
@@ -1359,7 +1401,10 @@ def main():
         except _cs.CacheSchemaError as exc:
             sys.stderr.write(f"[build.py] FAIL: {exc}; cache NOT written\n")
             return 3
-        if probed not in _DETERMINATE_NO_GIT:
+        allowed = (_DETERMINATE_NO_GIT
+                   if history_id is PROVENANCE_INDETERMINATE
+                   else _DETERMINATE_NO_DERIVATION)
+        if probed not in allowed:
             # THE RULE COVERS BOTH MARKERS, and gating only INDETERMINATE left
             # the same hole one door over (Codex adversarial, section 24,
             # [high]): point `--root` at a corpus that lives in a DIFFERENT

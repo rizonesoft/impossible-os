@@ -243,12 +243,23 @@ class Profile:
     `requires_history` is the third, independent axis: whether this caller
     consumes the fields `build.py` derives from `git log` (`created_at` /
     `last_active_at`). Only a caller that reads them cares whether the corpus
-    HISTORY moved, and establishing that costs three git subprocesses -- 40ms
-    today at 3,788 corpus-touching commits, growing with commit count rather
-    than corpus size (Codex perf, section 21, [medium]: two routed readers were
-    each paying it per lint for data neither consumes). The producer records the
-    history id unconditionally, so turning this on for a future profile needs no
-    migration -- the evidence is already in every binding.
+    HISTORY moved, and establishing that costs FOUR git subprocesses -- 47.9ms
+    measured 2026-08-08, growing with TOTAL REPO commits (Codex perf, section
+    21, [medium]: two routed readers were each paying it per lint for data
+    neither consumes).
+
+    THE SECTION 21 FIGURES THIS COMMENT USED TO CARRY ARE SUPERSEDED, and both
+    were wrong in a way that mattered: it said three subprocesses (it is four)
+    and that the cost grows with CORPUS-TOUCHING commits (it grows with total
+    repo commits, so the crossover arrives ~1.4x sooner). Section 24 re-measured
+    rather than reusing them, which is the only reason the model was corrected;
+    the full measurement and its method live on `corpus_history_id` below.
+    A history-consuming caller pays ONE probe per invocation, not two -- see
+    `check_freshness`'s `history_out`.
+
+    The producer records the history id unconditionally, so turning this on for
+    a future profile needs no migration -- the evidence is already in every
+    binding.
     """
 
     __slots__ = ("name", "subtrees", "require_stamped_population",
@@ -303,11 +314,17 @@ PROFILE_STAMP_XREFS = Profile("stamp-xrefs", (SUBTREE_STAMPS_XREFS,))
 # below. So this profile stays history-blind and costs nothing extra, and the
 # ten verbs routed through it -- ready, deferred, blocked, blocking, backlinks,
 # code, code-by, by-domain, orphans, deferred-by -- pay no history probe at all.
-PROFILE_QUERY = Profile(
-    "query",
-    (SUBTREE_SECTIONS, SUBTREE_SECTION_DEPS, SUBTREE_STAMPS_XREFS,
-     SUBTREE_NODE_FIELDS, SUBTREE_NODE_IDENTITY),
-)
+#
+# ONE TUPLE, TWO PROFILES. `PROFILE_QUERY_HISTORY` below differs from this
+# profile on the history axis ALONE, so the subtrees are named once here rather
+# than repeated. Repeating them meant a later widening of one could silently
+# leave the other narrower, and the same reader would then accept under `stale`
+# a cache it rejects under `ready` (Codex consistency, section 24, [medium]).
+_QUERY_SUBTREES = (SUBTREE_SECTIONS, SUBTREE_SECTION_DEPS,
+                   SUBTREE_STAMPS_XREFS, SUBTREE_NODE_FIELDS,
+                   SUBTREE_NODE_IDENTITY)
+
+PROFILE_QUERY = Profile("query", _QUERY_SUBTREES)
 
 # THE SAME READER, ONE AXIS STRICTER, SELECTED PER VERB (section 24). Identical
 # subtrees to PROFILE_QUERY -- the walk is the same, so narrowing or widening it
@@ -331,12 +348,8 @@ PROFILE_QUERY = Profile(
 # names: an inventory built by grepping `query.py` alone MISSED it, because the
 # renderer lives in a different module behind a CLI-only command (Codex design
 # review, section 24, [medium]).
-PROFILE_QUERY_HISTORY = Profile(
-    "query-history",
-    (SUBTREE_SECTIONS, SUBTREE_SECTION_DEPS, SUBTREE_STAMPS_XREFS,
-     SUBTREE_NODE_FIELDS, SUBTREE_NODE_IDENTITY),
-    requires_history=True,
-)
+PROFILE_QUERY_HISTORY = Profile("query-history", _QUERY_SUBTREES,
+                                requires_history=True)
 
 # `validate.py`'s CURRENT cache (section 23). Everything `PROFILE_QUERY` walks,
 # plus `section_headings`, which no earlier reader dereferenced and this one
@@ -447,6 +460,14 @@ class CacheInfo:
     stale, and the verdict publishable. It is None for a profile that does not
     consume the derived timestamps -- those callers have nothing to re-check and
     must not pay for the probe.
+
+    IT HOLDS THE RECORDED ID, AND CALLING `check_history_unchanged` WITH IT IS
+    NOT OPTIONAL. Since the load defers the history comparison to that one
+    post-walk probe (Codex perf, section 24, [medium]), `load_and_validate`
+    alone no longer refuses a moved history -- the pair does. A caller that
+    declares `requires_history` and then never re-checks gets NO history
+    protection, silently. There is exactly one such caller (`query.py`), the
+    pairing is pinned by a fixture, and any new one must follow it.
     """
 
     __slots__ = ("population", "key_present", "corpus", "history")
@@ -1382,7 +1403,17 @@ def _read_regular(path, ceiling: int, what: str) -> bytes:
                  f"ceiling: {path}")
         with os.fdopen(fd, "rb") as fh:
             fd = -1  # fdopen owns it now
-            blob = fh.read(ceiling + 1)
+            # BOUNDED BY THE FILE, NOT BY THE CEILING (Codex perf, section 24,
+            # [medium]). This asked for `ceiling + 1` on every read, and
+            # `read(n)` pre-allocates an n-byte buffer -- so each of 232 corpus
+            # files paid a 16 MiB allocation to hand back a ~47 KB TODO, twice
+            # per process. Measured: 13.7ms for this wrapper against 4.3ms for
+            # a plain read of the same corpus, which is why the fstat-first
+            # read and not the sha256 was the larger term inside `_scan_corpus`.
+            # The fstat above already knows the size, so ask for exactly one
+            # byte more than that. Every protection is retained: the descriptor
+            # is still opened first, still type-checked, still ceiling-checked.
+            blob = fh.read(min(st.st_size, ceiling) + 1)
     except OSError as exc:
         _err(REASON_STALE, f"{what} unreadable: {path}: {exc}")
     finally:
@@ -1392,6 +1423,13 @@ def _read_regular(path, ceiling: int, what: str) -> bytes:
         _err(REASON_STALE,
              f"{what} grew past the {ceiling}-byte ceiling while being read: "
              f"{path}")
+    if len(blob) > st.st_size:
+        # STRICTER than the ceiling test above, not weaker: the file gained
+        # bytes between the fstat and the read, so hashing what came back would
+        # fingerprint a generation that never existed on disk. That is the
+        # moving-corpus case this module refuses everywhere else.
+        _err(REASON_STALE,
+             f"{what} grew from {st.st_size} bytes while being read: {path}")
     return blob
 
 
@@ -1484,7 +1522,11 @@ def corpus_history_id(todo_root: Path):
     THE CACHE IS NOT A PURE FUNCTION OF THE TODO BYTES (Codex design review,
     section 21, [high]). `build.collect_git_timestamps` runs one path-limited
     `git log` and writes `created_at` / `last_active_at` into every node, and
-    `query.py` sorts `stale` / `deferred` results by `last_active_at`. So a
+    `query.py` sorts `stale` results by `last_active_at`, `stats` builds its
+    longest-deferred table from it, and `render --render-format gantt` uses
+    `created_at` as each bar's start date. (`deferred`, which an earlier version
+    of this sentence named, dereferences NEITHER field -- corrected in section
+    24 along with its twin above.) So a
     corpus whose CONTENT is unchanged while its HISTORY moved -- an amend, a
     rebase, or an edit reverted to identical bytes after being committed --
     produces a cache that a content-only check would happily certify.
@@ -1621,7 +1663,7 @@ _REBUILD = ("rebuild via scripts/todo-graph/build-and-validate.sh --keep-cache")
 
 
 def check_freshness(cache_path: Path, todo_root: Path, cache_bytes: bytes,
-                    profile: 'Profile' = None, live_history=None):
+                    profile: 'Profile' = None, history_out=None):
     """Refuse a cache that was not built from the corpus now on disk.
 
     THE QUESTION CHANGED, AND THAT IS THE POINT (section 21). This used to ask
@@ -1711,13 +1753,28 @@ def check_freshness(cache_path: Path, todo_root: Path, cache_bytes: bytes,
     # turn this on later with no migration.
     if profile is not None and not profile.requires_history:
         return live
-    # `live_history` lets the caller hand in an id it already probed, so a
-    # history-consuming reader pays for ONE `corpus_history_id` call and then
-    # re-uses that same value for its post-walk re-check (section 24). Probing
-    # again here would double the one cost this whole profile axis exists to
-    # ration. Omitted (every standalone fixture call), it is probed here as
-    # before.
-    live_hist = corpus_history_id(todo_root) if live_history is None else live_history
+    # ONE PROBE, NOT TWO (Codex perf, section 24, [medium]). A caller that will
+    # re-verify after its own walk passes `history_out`; it then gets the
+    # RECORDED id handed back and this function does not walk git at all.
+    # Comparing that recorded id against a single post-walk probe proves exactly
+    # what two probes proved -- that the history the cache was built from is
+    # still the history at publication -- for half the cost, because the
+    # load-time comparison was only ever a weaker prefix of the post-walk one.
+    # (An A-to-B-to-A change evades both designs equally; neither claims to
+    # catch it.) Omit `history_out` -- every standalone fixture call -- and the
+    # probe-and-compare below runs exactly as before.
+    if history_out is not None:
+        recorded = rec.get("history_id")
+        if not isinstance(recorded, str) or not recorded:
+            # FAIL CLOSED. Deferring the comparison must never become skipping
+            # it: a binding with no history id cannot be re-verified later, so
+            # it is a rebuild condition here and now.
+            _err(REASON_STALE,
+                 f"cache binding records no history id, so a history-consuming "
+                 f"reader cannot verify it: {side}; {_REBUILD}")
+        history_out["recorded"] = recorded
+        return live
+    live_hist = corpus_history_id(todo_root)
     if rec.get("history_id") != live_hist:
         _err(REASON_STALE,
              f"the corpus git history moved since the cache was built "
@@ -1765,7 +1822,7 @@ def check_corpus_unchanged(todo_root: Path, corpus) -> None:
 
 
 def check_history_unchanged(todo_root: Path, history) -> None:
-    """Re-verify the corpus git history AFTER the caller's own walk.
+    """Verify, after the caller's walk, that the RECORDED history is still live.
 
     THE CONTENT AXIS HAD THIS AND THE HISTORY AXIS DID NOT (Codex design review,
     section 24, [medium]). `check_corpus_unchanged` above closes the caller's
@@ -1775,18 +1832,33 @@ def check_history_unchanged(todo_root: Path, history) -> None:
     could publish timestamps from a history that no longer exists -- past a
     freshness check that had just certified them.
 
+    `history` is the id RECORDED IN THE BINDING, not one probed at load time, so
+    this single comparison proves the whole property end to end: the history the
+    cache was built from is the history live at publication. That is why
+    `check_freshness` no longer probes for a deferring caller.
+
     A no-op when `history` is None, which is every caller whose profile does not
     declare `requires_history`. Those callers dereference no derived timestamp,
     so they have nothing to protect and must not pay the probe.
+
+    THE RESIDUAL WINDOW IS REAL AND IS NOT CLOSED BY ORDERING (Codex
+    adversarial, section 24, [medium]). Two sequential checks cannot both be
+    last: with history first, a history change during the ~28ms content scan is
+    missed; with content first, a corpus edit during the ~48ms history probe is
+    missed. Callers run history FIRST because that leaves the SMALLER window and
+    keeps the content fingerprint -- the cheaper and more frequently-violated
+    axis -- as the final act before publication. Adding a third check would move
+    the window again at another 48ms, not remove it; closing it properly needs
+    one coordinated snapshot, which this module does not have.
     """
     if history is None:
         return
     live = corpus_history_id(todo_root)
     if live != history:
         _err(REASON_STALE,
-             f"the corpus git history moved during the walk (was {history}, "
-             f"now {live}), so the created_at/last_active_at fields this "
-             f"command consumed no longer describe it; re-run rather than "
+             f"the corpus git history moved since the cache was built (was "
+             f"{history}, now {live}), so the created_at/last_active_at fields "
+             f"this command consumed no longer describe it; re-run rather than "
              f"publish a result from a history that changed underneath it")
 
 
@@ -1893,18 +1965,17 @@ def _load_and_validate(cache_path: Path, todo_root: Path,
             # single descriptor opened above, and the corpus binding is located
             # by ITS digest -- never by a fresh read of the pathname, which
             # `build.py` rewrites.
-            # PROBED ONCE, HELD FOR THE RE-CHECK. A history-consuming profile
-            # pays ~48ms for `corpus_history_id` (section 24 measurement), so
-            # the value validated here is the same value handed back on
-            # `info.history` for the caller's post-walk re-verification --
-            # never a second probe.
-            live_history = (corpus_history_id(todo_root)
-                            if profile is not None and profile.requires_history
-                            else None)
+            # NOT PROBED HERE AT ALL. `corpus_history_id` costs ~48ms (section
+            # 24 measurement), and the caller is going to probe once after its
+            # walk anyway -- so this takes the RECORDED id off the binding and
+            # lets that single post-walk probe do the whole comparison.
+            history_out = ({} if profile is not None
+                           and profile.requires_history else None)
             info.corpus = check_freshness(cache_path, todo_root,
                                           cache_bytes=blob, profile=profile,
-                                          live_history=live_history)
-            info.history = live_history
+                                          history_out=history_out)
+            if history_out is not None:
+                info.history = history_out["recorded"]
         # THE GENERATION BINDING IS NOT PART OF THE FRESHNESS POLICY, and it
         # used to sit inside the `if check_stale` block above. That coupled two
         # independent protections behind one flag: `check_stale=False` means "I

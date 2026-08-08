@@ -2,14 +2,20 @@
 # ============================================================================
 # scripts/todo-graph/query.py -- TODO graph query CLI (TODO-06 §4).
 #
-# Consumes build/todo-cache.json produced by build.py. Ten human-facing
+# Consumes build/todo-cache.json produced by build.py. Thirteen human-facing
 # subcommands that answer "what can I work on?", "what references this?",
 # and "what is going stale?" without hand-grepping.
 #
 # Stdlib-only. inotifywait is probed via shutil.which() and used as a
 # subprocess when present; otherwise --watch falls back to 2s mtime polling.
 #
-# Subcommands:
+# Subcommands -- this list is the documented inventory and must match
+# SUBCOMMANDS below. It said "ten", listed twelve, and omitted `render` while
+# the dispatch table defined thirteen (Codex consistency, section 24,
+# [medium]); the per-verb history selector in `_profile_for` is keyed off this
+# same set, so drift here is how a timestamp consumer goes uncharged.
+# The three marked (history) dereference a git-derived timestamp and are the
+# ones routed through PROFILE_QUERY_HISTORY.
 #   ready        -- draft TODOs whose deps are all done
 #   blocked      -- active TODOs with at least one unmet dep
 #   blocking     -- TODOs ranked by inbound depends_on count (critical path)
@@ -19,9 +25,13 @@
 #   deferred-by  -- inbound Accepted/Deferred stamps pointing at <id>
 #   orphans      -- TODOs with zero inbound edges of any kind
 #   stale        -- TODOs whose last_active_at is older than N days (default 90)
+#                   (history)
 #   stats        -- repo-wide summary (total, by-status, by-domain, top-N)
+#                   (history: the longest-deferred table reads last_active_at)
 #   code         -- source paths claimed by <id>'s file_patterns + Notes grep
 #   code-by      -- reverse: TODOs whose file_patterns match <path>
+#   render       -- mermaid / dot / ascii / gantt / markdown views of the graph
+#                   (history: ONLY --render-format gantt, which uses created_at)
 #
 # Flags:
 #   --json               structured output (list of objects; dict for stats)
