@@ -391,17 +391,17 @@ From the stamped section 7:
 
 ## OS Comparison
 
-| ⭐  | Feature                                | Windows                   | Linux                     | Impossible OS                                                                                                       |
-| --- | -------------------------------------- | ------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| 💎  | TPM2 command transport (TIS/CRB)       | tpm.sys TIS/CRB           | tpm_tis/tpm_crb drivers   | ✅ §2 burst-chunked TIS + CRB                                                                                       |
-| 💎  | Secure Boot PCR integration            | Measured Boot             | IMA/TPM tools             | ⚠️ §5 structural SB var reconcile                                                                                   |
-| 💎  | PCR replay                             | internal/Defender         | tpm2-tools                | ✅ §4 SHA-1/256/384/512 replay + tamper verify                                                                      |
-| 💎  | TPM NV index storage (PCR-sealed)      | TBS NV / BitLocker        | tpm2_nvdefine + kernel RM | ✅ §7 NV CRUD + PolicyPCR-sealed baseline index                                                                     |
-| 💎  | Measured-boot baseline (enroll/verify) | Measured Boot baseline    | IMA + systemd-pcrlock     | ⚠️ §6 recovery-gated enroll + Phase-1 verify + generation rotation                                                  |
-| 💎  | Sealed secrets                         | BitLocker                 | systemd-cryptenroll       | ✅ §8 PCR-7 KEYEDHASH seal (PolicyPCR) + FDE/CI hooks + recovery handoff                                            |
-| ⭐  | Boot attestation report (JSON)         | Device Health Attestation | Keylime AK quote JSON     | ⚠️ §9 signed report -> `X:\Diag\attestation.json` (snapshot+quote+AK/EK+coherence); query API + PCR-11 bind pending |
-| 💎  | Remote attestation (TPM2 Quote)        | Device Health Attestation | Keylime AK quote          | ✅ §13 EK->AK provision + TPM2_Quote + nonce anti-replay                                                            |
-| 💎  | PCR allocation policy                  | PCR7+11 BitLocker seal    | systemd-pcrlock CEL       | ✅ §12 event-centric table + derived masks                                                                          |
+| ⭐  | Feature                                | Windows                   | Linux                     | Impossible OS                                                                 |
+| --- | -------------------------------------- | ------------------------- | ------------------------- | ----------------------------------------------------------------------------- |
+| 💎  | TPM2 command transport (TIS/CRB)       | tpm.sys TIS/CRB           | tpm_tis/tpm_crb drivers   | ✅ §2 burst-chunked TIS + CRB                                                 |
+| 💎  | Secure Boot PCR integration            | Measured Boot             | IMA/TPM tools             | ⚠️ §5 structural SB var reconcile                                             |
+| 💎  | PCR replay                             | internal/Defender         | tpm2-tools                | ✅ §4 SHA-1/256/384/512 replay + tamper verify                                |
+| 💎  | TPM NV index storage (PCR-sealed)      | TBS NV / BitLocker        | tpm2_nvdefine + kernel RM | ✅ §7 NV CRUD + PolicyPCR-sealed baseline index                               |
+| 💎  | Measured-boot baseline (enroll/verify) | Measured Boot baseline    | IMA + systemd-pcrlock     | ⚠️ §6 recovery-gated enroll + Phase-1 verify + generation rotation            |
+| 💎  | Sealed secrets                         | BitLocker                 | systemd-cryptenroll       | ✅ §8 PCR-7 KEYEDHASH seal (PolicyPCR) + FDE/CI hooks + recovery handoff      |
+| ⭐  | Boot attestation report (JSON)         | Device Health Attestation | Keylime AK quote JSON     | ⚠️ §9 signed report to `X:\Diag\attestation.json`; query API + PCR-11 pending |
+| 💎  | Remote attestation (TPM2 Quote)        | Device Health Attestation | Keylime AK quote          | ✅ §13 EK->AK provision + TPM2_Quote + nonce anti-replay                      |
+| 💎  | PCR allocation policy                  | PCR7+11 BitLocker seal    | systemd-pcrlock CEL       | ✅ §12 event-centric table + derived masks                                    |
 
 ## Unit Tests
 

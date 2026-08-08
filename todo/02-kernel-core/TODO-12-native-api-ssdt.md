@@ -1326,42 +1326,42 @@ From the stamped section 13:
 
 ## OS Comparison
 
-| ⭐  | Feature                    | 🪟 Win11                    | 🐧 Linux                  | 🚀 Impossible OS                                                                          |
-| --- | -------------------------- | --------------------------- | ------------------------- | ----------------------------------------------------------------------------------------- |
-| 💎  | SYSCALL/SYSRET fast path   | ✅ KiSystemCall64+LSTAR     | ✅ entry_SYSCALL_64       | ✅ §2 LSTAR + SYSRET enabled                                                              |
-| 💎  | Typed failure return       | ✅ NTSTATUS on all NtXxx    | ✅ -ERRNO signed          | ✅ §1 NTSTATUS + 66 codes                                                                 |
-| 💎  | Service descriptor table   | ✅ SSDT + shadow SSDT       | ✅ sys_call_table[]       | ✅ §4 SSDT 475 + shadow stub                                                              |
-| 💎  | SW-interrupt compat path   | ✅ INT 0x2E (legacy)        | ✅ INT 0x80 (32-bit)      | ✅ §3 INT 0x2E + 0x80                                                                     |
-| 💎  | IO_STATUS_BLOCK async I/O  | ✅ IOSB on all file Nt      | ⚠️ io_uring only          | ⬜ §11                                                                                    |
-| 💎  | File metadata syscalls     | ✅ NtQuery/SetInfoFile      | ✅ stat/fstat/utimensat   | ⬜ §13                                                                                    |
-| 💎  | Device I/O control         | ✅ NtDeviceIoControlFile    | ✅ ioctl()                | ⬜ §13                                                                                    |
-| 💎  | I/O completion ports       | ✅ NtCreateIoCompletion     | ✅ epoll/io_uring         | ⬜ §13                                                                                    |
-| 💎  | Process/thread create API  | ✅ NtCreate{Process,Thread} | ✅ clone/execve           | ✅ §7 23 handlers wired                                                                   |
-| 💎  | Thread context get/set     | ✅ NtGet/SetContextThread   | ✅ ptrace GETREGS         | 🔄 §7 stubs (needs TODO-23)                                                               |
-| 💎  | Named sync objects         | ✅ NtCreate{Event,Mutant}   | ✅ POSIX sem + futex      | ✅ §8 Event+Mutant+Semaphore                                                              |
-| 💎  | Multi-object wait          | ✅ NtWaitForMultipleObj     | ⚠️ No direct equivalent   | ✅ §8 all-or-none WaitAll, 64 max                                                         |
-| 💎  | Keyed events (futex)       | ✅ NtWaitForKeyedEvent      | ✅ futex()                | 🔄 §8 stubs (T08-mem §10)                                                                 |
-| 💎  | Virtual memory syscalls    | ✅ NtAllocate/Free/Protect  | ✅ mmap/mprotect/munmap   | ✅ §9 Alloc+Free+Protect+Query                                                            |
-| 💎  | Cross-process memory       | ✅ NtRead/WriteVirtualMem   | ✅ process_vm_readv       | ✅ §9 Read+Write (identity)                                                               |
-| 💎  | OS info query syscall      | ✅ NtQuerySystemInfo        | ✅ sysinfo + /proc        | 🔄 §10 5 classes + defaults                                                               |
-| 💎  | LastError per-thread       | ✅ TEB→LastErrorValue       | ✅ errno via TLS          | ⬜ §11 + TODO-11 §1                                                                       |
-| 💎  | Registry syscalls          | ✅ NtCreate/Open/QueryKey   | ❌ No equivalent          | ⬜ §14 + TODO-14                                                                          |
-| 💎  | Token/access control       | ✅ NtAccessCheck + tokens   | ✅ capabilities + DAC/MAC | ⬜ §16 + TODO-15                                                                          |
-| 💎  | Namespace dir/symlink      | ✅ NtCreateDirectoryObj     | ❌ No kernel namespace    | ⬜ §17                                                                                    |
-| 💎  | Memory-mapped sections     | ✅ NtCreateSection/MapView  | ✅ mmap with MAP_SHARED   | 🟡 §18 SSDT 0x005C-0x0062; unmap-after-close + protection deferred                        |
-| 💎  | Timer objects              | ✅ NtSetTimer periodic      | ✅ timerfd_create         | 🟡 §19 6 SSDT 0x007E-0x0083; absolute-time + SetTimerEx arm + tick-ISR hardening deferred |
-| 💎  | ALPC message ports         | ✅ NtAlpcSendWaitReceive    | ❌ No equivalent          | 🟡 §20 (LPC stub) + §31 (ALPC stub), engine in TODO-24                                    |
-| 💎  | Debug API                  | ✅ NtDebugActiveProcess     | ✅ ptrace                 | ⬜ §21 + TODO-29                                                                          |
-| 💎  | Power management           | ✅ NtSetSystemPowerState    | ✅ sys_reboot + ACPI      | 🔄 §5 NtShutdownSystem wired                                                              |
-| 💎  | Atom table                 | ✅ NtAddAtom/FindAtom       | ❌ No equivalent          | ✅ §23 refcounted global atoms                                                            |
-| ⭐  | Syscall audit/tracing hook | ⚠️ ETW (heavyweight)        | ⚠️ seccomp-bpf / ptrace   | ✅ §24 pre/post SSDT hook, deny + zero-overhead-when-off                                  |
-| 💎  | Default locale / UI lang   | ✅ NtQuery/SetDefaultLocale | ✅ setlocale + LANG       | 🟡 §23 query returns en-US; set fails-closed (priv, TODO-13 §6)                           |
-| ⭐  | ZwXxx CPL-gated aliases    | ✅ Internal, undocumented   | ❌ No equivalent          | ✅ §12 zw.h + ProbeFor*                                                                   |
-| ⭐  | Stable native API contract | ⚠️ Undocumented             | ❌ No stable native API   | ⬜ §4+§12 -- numbered+public                                                              |
-| ⭐  | Syscall audit hook         | ⚠️ ETW, heavyweight         | ⚠️ seccomp-bpf, complex   | ⬜ §24 -- first-class API                                                                 |
-| 💎  | Per-process syscall filter | ✅ SystemCallDisablePolicy  | ✅ seccomp-bpf + Landlock | ⬜ §25 -- bitmap + BPF                                                                    |
-| 💎  | Kernel→user callbacks      | ✅ KeUserModeCallback       | ⚠️ Signals only           | ⬜ §26                                                                                    |
-| ⭐  | SSDT integrity protection  | ⚠️ PatchGuard (periodic)    | ❌ No protection          | ⬜ §27 -- HW write-protect                                                                |
+| ⭐  | Feature                    | 🪟 Win11                    | 🐧 Linux                  | 🚀 Impossible OS                                                            |
+| --- | -------------------------- | --------------------------- | ------------------------- | --------------------------------------------------------------------------- |
+| 💎  | SYSCALL/SYSRET fast path   | ✅ KiSystemCall64+LSTAR     | ✅ entry_SYSCALL_64       | ✅ §2 LSTAR + SYSRET enabled                                                |
+| 💎  | Typed failure return       | ✅ NTSTATUS on all NtXxx    | ✅ -ERRNO signed          | ✅ §1 NTSTATUS + 66 codes                                                   |
+| 💎  | Service descriptor table   | ✅ SSDT + shadow SSDT       | ✅ sys_call_table[]       | ✅ §4 SSDT 475 + shadow stub                                                |
+| 💎  | SW-interrupt compat path   | ✅ INT 0x2E (legacy)        | ✅ INT 0x80 (32-bit)      | ✅ §3 INT 0x2E + 0x80                                                       |
+| 💎  | IO_STATUS_BLOCK async I/O  | ✅ IOSB on all file Nt      | ⚠️ io_uring only          | ⬜ §11                                                                      |
+| 💎  | File metadata syscalls     | ✅ NtQuery/SetInfoFile      | ✅ stat/fstat/utimensat   | ⬜ §13                                                                      |
+| 💎  | Device I/O control         | ✅ NtDeviceIoControlFile    | ✅ ioctl()                | ⬜ §13                                                                      |
+| 💎  | I/O completion ports       | ✅ NtCreateIoCompletion     | ✅ epoll/io_uring         | ⬜ §13                                                                      |
+| 💎  | Process/thread create API  | ✅ NtCreate{Process,Thread} | ✅ clone/execve           | ✅ §7 23 handlers wired                                                     |
+| 💎  | Thread context get/set     | ✅ NtGet/SetContextThread   | ✅ ptrace GETREGS         | 🔄 §7 stubs (needs TODO-23)                                                 |
+| 💎  | Named sync objects         | ✅ NtCreate{Event,Mutant}   | ✅ POSIX sem + futex      | ✅ §8 Event+Mutant+Semaphore                                                |
+| 💎  | Multi-object wait          | ✅ NtWaitForMultipleObj     | ⚠️ No direct equivalent   | ✅ §8 all-or-none WaitAll, 64 max                                           |
+| 💎  | Keyed events (futex)       | ✅ NtWaitForKeyedEvent      | ✅ futex()                | 🔄 §8 stubs (T08-mem §10)                                                   |
+| 💎  | Virtual memory syscalls    | ✅ NtAllocate/Free/Protect  | ✅ mmap/mprotect/munmap   | ✅ §9 Alloc+Free+Protect+Query                                              |
+| 💎  | Cross-process memory       | ✅ NtRead/WriteVirtualMem   | ✅ process_vm_readv       | ✅ §9 Read+Write (identity)                                                 |
+| 💎  | OS info query syscall      | ✅ NtQuerySystemInfo        | ✅ sysinfo + /proc        | 🔄 §10 5 classes + defaults                                                 |
+| 💎  | LastError per-thread       | ✅ TEB→LastErrorValue       | ✅ errno via TLS          | ⬜ §11 + TODO-11 §1                                                         |
+| 💎  | Registry syscalls          | ✅ NtCreate/Open/QueryKey   | ❌ No equivalent          | ⬜ §14 + TODO-14                                                            |
+| 💎  | Token/access control       | ✅ NtAccessCheck + tokens   | ✅ capabilities + DAC/MAC | ⬜ §16 + TODO-15                                                            |
+| 💎  | Namespace dir/symlink      | ✅ NtCreateDirectoryObj     | ❌ No kernel namespace    | ⬜ §17                                                                      |
+| 💎  | Memory-mapped sections     | ✅ NtCreateSection/MapView  | ✅ mmap with MAP_SHARED   | 🟡 §18 SSDT 0x005C-0x0062; unmap-after-close + protection deferred          |
+| 💎  | Timer objects              | ✅ NtSetTimer periodic      | ✅ timerfd_create         | 🟡 §19 6 SSDT 0x007E-0x0083; absolute-time + SetTimerEx + tick-ISR deferred |
+| 💎  | ALPC message ports         | ✅ NtAlpcSendWaitReceive    | ❌ No equivalent          | 🟡 §20 (LPC stub) + §31 (ALPC stub), engine in TODO-24                      |
+| 💎  | Debug API                  | ✅ NtDebugActiveProcess     | ✅ ptrace                 | ⬜ §21 + TODO-29                                                            |
+| 💎  | Power management           | ✅ NtSetSystemPowerState    | ✅ sys_reboot + ACPI      | 🔄 §5 NtShutdownSystem wired                                                |
+| 💎  | Atom table                 | ✅ NtAddAtom/FindAtom       | ❌ No equivalent          | ✅ §23 refcounted global atoms                                              |
+| ⭐  | Syscall audit/tracing hook | ⚠️ ETW (heavyweight)        | ⚠️ seccomp-bpf / ptrace   | ✅ §24 pre/post SSDT hook, deny + zero-overhead-when-off                    |
+| 💎  | Default locale / UI lang   | ✅ NtQuery/SetDefaultLocale | ✅ setlocale + LANG       | 🟡 §23 query returns en-US; set fails-closed (priv, TODO-13 §6)             |
+| ⭐  | ZwXxx CPL-gated aliases    | ✅ Internal, undocumented   | ❌ No equivalent          | ✅ §12 zw.h + ProbeFor*                                                     |
+| ⭐  | Stable native API contract | ⚠️ Undocumented             | ❌ No stable native API   | ⬜ §4+§12 -- numbered+public                                                |
+| ⭐  | Syscall audit hook         | ⚠️ ETW, heavyweight         | ⚠️ seccomp-bpf, complex   | ⬜ §24 -- first-class API                                                   |
+| 💎  | Per-process syscall filter | ✅ SystemCallDisablePolicy  | ✅ seccomp-bpf + Landlock | ⬜ §25 -- bitmap + BPF                                                      |
+| 💎  | Kernel→user callbacks      | ✅ KeUserModeCallback       | ⚠️ Signals only           | ⬜ §26                                                                      |
+| ⭐  | SSDT integrity protection  | ⚠️ PatchGuard (periodic)    | ❌ No protection          | ⬜ §27 -- HW write-protect                                                  |
 
 > **Target after §1–§23 completion:** Impossible OS reaches complete NT native API coverage across 475 syscall endpoints. Current state is partial; many domain and deferred sections remain open.
 > **§12** makes the `ZwXxx` layer an explicit, documented public contract -- Windows keeps it internal/undocumented and Linux has no equivalent.

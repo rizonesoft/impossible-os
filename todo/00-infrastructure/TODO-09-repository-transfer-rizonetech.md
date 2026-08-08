@@ -381,16 +381,16 @@ Close the roadmap by making the final owner state discoverable and removing tran
 
 ## OS Comparison
 
-| ⭐ | Feature                                  | 🪟 Win11             | 🐧 Linux              | 🚀 Impossible OS                    |
-|----|------------------------------------------|---------------------|----------------------|------------------------------------|
-| ⭐ | Repo-owner transfer runbook              | ❌ N/A (closed src) | ⚠️ Ad-hoc per project | ✅ §1-§9 docs/runbook shipped (preflight, transfer, audit, sweep, validation, move-back, closure); operator-validation tail in §2-§7 |
-| ⭐ | Rollback-window discipline               | ❌ N/A              | ⚠️ Project-dependent  | ⏳ §4 shipped; transfer EXECUTED 2026-04-27 (14/16 operator items verified); §7 dispatch + Step 10 TTL-restore remain (see §4) |
-| ⭐ | Pages custom-domain continuity plan      | ❌ N/A              | ⚠️ Project-dependent  | ⏳ §3 shipped: tracked CNAME + 4 URL fixes + DNS plan + validation; one operator TTL drop remains (see §3) |
-| 💎 | Forward move-back / visibility flip plan | ❌ N/A              | ❌ N/A                | ✅ §8 runbook shipped (`repository-move-back-runbook.md`); execution operator-deferred |
-| ⭐ | Post-transfer settings audit             | ❌ N/A              | ⚠️ Tribal-knowledge   | ⏳ §5 shipped 2026-04-27: 19 settings preserved; 3 findings (ruleset bypass, build cancelled, CODEOWNERS drift fixed) -- see §5 |
-| ⭐ | First-party URL / badge / link sweep     | ❌ N/A              | ⚠️ Manual / per-project | ✅ §6 shipped 2026-04-28: URL rewrite across docs + gh-pages + TODOs + render.py base; 229 mermaid URLs flipped (see §6) |
-| ⭐ | End-to-end post-transfer validation      | ❌ N/A              | ⚠️ Manual / per-project | ⏳ §7 shipped 2026-04-28: 5/8 sub-suites green live; 3 operator-deferred (DNS TTL, release dry-run, Copilot UI) -- see §7 |
-| 💎 | AI-policy boundary preserved across move | ❌ N/A              | ❌ N/A                | ⏳ §2+§5+§7 keep no-autonomous-agent stance: 0 forbidden paths live; AGENTS.md sha256 captured; Copilot UI walk operator-only |
+| ⭐  | Feature                                  | 🪟 Win11            | 🐧 Linux                | 🚀 Impossible OS                                                               |
+| --- | ---------------------------------------- | ------------------- | ----------------------- | ------------------------------------------------------------------------------ |
+| ⭐  | Repo-owner transfer runbook              | ❌ N/A (closed src) | ⚠️ Ad-hoc per project   | ✅ §1-§9 docs/runbook shipped end to end; operator-validation tail in §2-§7    |
+| ⭐  | Rollback-window discipline               | ❌ N/A              | ⚠️ Project-dependent    | ⏳ §4 transfer EXECUTED 2026-04-27, 14/16 verified; §7 + TTL restore remain    |
+| ⭐  | Pages custom-domain continuity plan      | ❌ N/A              | ⚠️ Project-dependent    | ⏳ §3 tracked CNAME + 4 URL fixes + DNS plan; one operator TTL drop remains    |
+| 💎  | Forward move-back / visibility flip plan | ❌ N/A              | ❌ N/A                  | ✅ §8 `repository-move-back-runbook.md` shipped; execution operator-deferred   |
+| ⭐  | Post-transfer settings audit             | ❌ N/A              | ⚠️ Tribal-knowledge     | ⏳ §5 19 settings preserved 2026-04-27; 3 findings, CODEOWNERS drift fixed     |
+| ⭐  | First-party URL / badge / link sweep     | ❌ N/A              | ⚠️ Manual / per-project | ✅ §6 URL rewrite across docs, gh-pages, TODOs, render.py; 229 mermaid URLs    |
+| ⭐  | End-to-end post-transfer validation      | ❌ N/A              | ⚠️ Manual / per-project | ⏳ §7 5/8 sub-suites green live; 3 operator-deferred (TTL, release, Copilot)   |
+| 💎  | AI-policy boundary preserved across move | ❌ N/A              | ❌ N/A                  | ⏳ §2+§5+§7 no-autonomous-agent: 0 forbidden paths; Copilot walk operator-only |
 
 > **After §1-§4:** Inventory, org readiness, Pages continuity plan, and a time-boxed transfer runbook with rollback exist before any GitHub setting is touched.
 > **After §5-§7:** Settings audit, first-party URL sweep, and end-to-end validation suite confirm the move did not silently break Pages, Actions, releases, badges, or graph tooling.

@@ -721,29 +721,29 @@ From the stamped section 9:
 
 ## OS Comparison
 
-| ⭐  | Feature                       | 🪟 Win11                      | 🐧 Linux                   | 🚀 Impossible OS                                                                       |
-| --- | ----------------------------- | ----------------------------- | -------------------------- | -------------------------------------------------------------------------------------- |
-| 💎  | Per-process CWD               | ✅ SetCurrentDirectory        | ✅ chdir / getcwd          | ✅ §1 cwd + Nt syscalls                                                                |
-| 💎  | STD handle pre-wiring         | ✅ CreateProcess inherit      | ✅ fd 0/1/2 via fork       | ⬜ §2                                                                                  |
-| 💎  | User-mode heap (brk)          | ✅ NtAllocateVirtualMemory    | ✅ brk / sbrk              | ⬜ §3                                                                                  |
-| 💎  | Process priority class        | ✅ SetPriorityClass           | ✅ nice / setpriority      | ⬜ §4                                                                                  |
-| 💎  | Scheduling policy             | ✅ REALTIME_PRIORITY_CLASS    | ✅ SCHED_FIFO / SCHED_IDLE | ⬜ §5                                                                                  |
-| 💎  | Capability / privilege model  | ✅ Access tokens              | ✅ POSIX capabilities      | ⬜ §6                                                                                  |
-| 💎  | Process accounting            | ✅ ProcessTimes + IoCounters  | ✅ getrusage / times       | ⚠️ §8 fields (ring-3 query deferred)                                                   |
-| 💎  | Per-process resource limits   | ✅ Job Object quotas          | ✅ getrlimit / setrlimit   | 🟡 §9 storage + accessors                                                              |
-| 💎  | Process CPU affinity          | ✅ SetProcessAffinityMask     | ✅ sched_setaffinity       | ⬜ §10                                                                                 |
-| 💎  | Per-process mitigation policy | ✅ SetProcessMitigationPolicy | ⚠️ prctl + seccomp         | 🟡 §11 NO_CHILD field+enforce (ring-3 API deferred)                                    |
-| 💎  | Job Objects / cgroups         | ✅ NtCreateJobObject          | ✅ cgroups v2              | 🟡 §13 lifecycle+accounting+active-limit; CPU/mem enforce deferred                     |
-| 💎  | Process exit cleanup          | ✅ PspExitProcess             | ✅ do_exit + __put_task    | 🟡 §14 shared death-path release walk; byte-lock/oplock/PEB-frame/SMP-barrier deferred |
-| 💎  | Exec commit point (no-return) | ❌ No exec (CreateProcess)    | ✅ point-of-no-return kill | ✅ §19 typed IMAGE_DESTROYED + named exit status                                       |
-| ⭐  | Exec staging-buffer handoff   | ❌ N/A                        | ⚠️ kernel-internal only    | ✅ §19 release-before-publication token                                                |
-| 💎  | Reaping / wait semantics      | ⚠️ Handle signaling (no reap) | ✅ wait4 / waitid          | ⬜ §15/§18 deferred (needs TODO-06 §357 slot reuse)                                    |
-| 💎  | Protected Process Light       | ✅ PS_PROTECTION              | ❌ No equivalent           | ⬜ §16 deferred (needs T12 §7 handle-rights model)                                     |
-| 💎  | Process groups / sessions     | ⚠️ Console ctrl groups        | ✅ setpgid / setsid        | 🟡 §17 groups+sessions+fanout+GenerateConsoleCtrlEvent; orphan SIGHUP/SIGCONT deferred |
-| 💎  | Core-dump / dumpable policy   | ✅ WER / MiniDump             | ✅ core + PR_SET_DUMPABLE  | ⬜ §18 deferred (needs §15 + TODO-27)                                                  |
-| 💎  | Per-process I/O priority      | ✅ ProcessIoPriority          | ✅ ioprio_set/get          | ⬜ Deferred (→ TODO-12 §10)                                                            |
-| ⭐  | Drop-only cap inheritance     | ⚠️ Token elevation            | ⚠️ setcap raises ambient   | ⬜ §7 -- monotonic decrease                                                            |
-| ⭐  | Pledge/unveil restriction     | ❌ None                       | ❌ No simple equivalent    | ✅ §12 pledge+unveil (SSDT dispatch)                                                   |
+| ⭐  | Feature                       | 🪟 Win11                      | 🐧 Linux                   | 🚀 Impossible OS                                                         |
+| --- | ----------------------------- | ----------------------------- | -------------------------- | ------------------------------------------------------------------------ |
+| 💎  | Per-process CWD               | ✅ SetCurrentDirectory        | ✅ chdir / getcwd          | ✅ §1 cwd + Nt syscalls                                                  |
+| 💎  | STD handle pre-wiring         | ✅ CreateProcess inherit      | ✅ fd 0/1/2 via fork       | ⬜ §2                                                                    |
+| 💎  | User-mode heap (brk)          | ✅ NtAllocateVirtualMemory    | ✅ brk / sbrk              | ⬜ §3                                                                    |
+| 💎  | Process priority class        | ✅ SetPriorityClass           | ✅ nice / setpriority      | ⬜ §4                                                                    |
+| 💎  | Scheduling policy             | ✅ REALTIME_PRIORITY_CLASS    | ✅ SCHED_FIFO / SCHED_IDLE | ⬜ §5                                                                    |
+| 💎  | Capability / privilege model  | ✅ Access tokens              | ✅ POSIX capabilities      | ⬜ §6                                                                    |
+| 💎  | Process accounting            | ✅ ProcessTimes + IoCounters  | ✅ getrusage / times       | ⚠️ §8 fields (ring-3 query deferred)                                     |
+| 💎  | Per-process resource limits   | ✅ Job Object quotas          | ✅ getrlimit / setrlimit   | 🟡 §9 storage + accessors                                                |
+| 💎  | Process CPU affinity          | ✅ SetProcessAffinityMask     | ✅ sched_setaffinity       | ⬜ §10                                                                   |
+| 💎  | Per-process mitigation policy | ✅ SetProcessMitigationPolicy | ⚠️ prctl + seccomp         | 🟡 §11 NO_CHILD field+enforce (ring-3 API deferred)                      |
+| 💎  | Job Objects / cgroups         | ✅ NtCreateJobObject          | ✅ cgroups v2              | 🟡 §13 lifecycle+accounting+active-limit; CPU/mem enforce deferred       |
+| 💎  | Process exit cleanup          | ✅ PspExitProcess             | ✅ do_exit + __put_task    | 🟡 §14 shared death-path release walk; byte-lock/oplock/PEB/SMP deferred |
+| 💎  | Exec commit point (no-return) | ❌ No exec (CreateProcess)    | ✅ point-of-no-return kill | ✅ §19 typed IMAGE_DESTROYED + named exit status                         |
+| ⭐  | Exec staging-buffer handoff   | ❌ N/A                        | ⚠️ kernel-internal only    | ✅ §19 release-before-publication token                                  |
+| 💎  | Reaping / wait semantics      | ⚠️ Handle signaling (no reap) | ✅ wait4 / waitid          | ⬜ §15/§18 deferred (needs TODO-06 §357 slot reuse)                      |
+| 💎  | Protected Process Light       | ✅ PS_PROTECTION              | ❌ No equivalent           | ⬜ §16 deferred (needs T12 §7 handle-rights model)                       |
+| 💎  | Process groups / sessions     | ⚠️ Console ctrl groups        | ✅ setpgid / setsid        | 🟡 §17 groups+sessions+fanout+CtrlEvent; orphan SIGHUP/SIGCONT deferred  |
+| 💎  | Core-dump / dumpable policy   | ✅ WER / MiniDump             | ✅ core + PR_SET_DUMPABLE  | ⬜ §18 deferred (needs §15 + TODO-27)                                    |
+| 💎  | Per-process I/O priority      | ✅ ProcessIoPriority          | ✅ ioprio_set/get          | ⬜ Deferred (→ TODO-12 §10)                                              |
+| ⭐  | Drop-only cap inheritance     | ⚠️ Token elevation            | ⚠️ setcap raises ambient   | ⬜ §7 -- monotonic decrease                                              |
+| ⭐  | Pledge/unveil restriction     | ❌ None                       | ❌ No simple equivalent    | ✅ §12 pledge+unveil (SSDT dispatch)                                     |
 
 > **After §1–§6:** Impossible OS matches Windows NT and Linux on all core per-process state APIs.
 > **§7** enforces a strictly drop-only capability model -- neither Windows (token elevation) nor Linux (ambient capabilities) provide this guarantee out of the box.

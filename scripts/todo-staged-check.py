@@ -34,6 +34,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import pathlib
 import sys
 
 CAP = 250
@@ -120,6 +121,61 @@ def wrapped_block(added):
 
 
 
+# OS COMPARISON LAST-COLUMN CAP (2026-08-08). The `Impossible OS` column is a
+# CLAIM column, and it had grown paragraphs: cells reached 219 display columns
+# and dragged whole rows past 400, which is unreadable in the raw source these
+# files are read in. All 223 tables were repaired to <= 80 in one pass; this
+# keeps them there.
+#
+# Enforced on ADDED lines, because the drift arrives one row at a time. A
+# corpus-wide check would pass on the day a single over-cap row lands and only
+# notice once someone re-measures; intersecting the over-cap cells with the
+# lines this commit adds catches it at the commit that introduces it.
+#
+# 80 is the operator's number, chosen against the corpus: it is the p99 of that
+# column (2,593 cells, p50 31, p90 61) so it binds on outliers without touching
+# ordinary entries, and it is 20 narrower than the widest cell that prompted it.
+#
+# NOT a padding cap. `format-md-tables.py` was given a --max-pad once and it was
+# reverted the same day: capping PADDING leaves an over-cap cell unpadded, so
+# its pipe juts out and the column stops aligning. This caps CONTENT, which is
+# the only version that both narrows the table and keeps it aligned.
+OS_COMPARISON_CELL_CAP = 80
+
+
+def _oscomp_over_cap(path, added):
+    """[(lineno, width, cell)] for OS Comparison last-column cells this commit
+    ADDS that exceed the cap. Reads the post-image file for table structure and
+    intersects with the added line numbers, so legacy rows are never judged."""
+    try:
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "_fmt", str(pathlib.Path(__file__).resolve().parent / "format-md-tables.py"))
+        fmt = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(fmt)
+        lines = pathlib.Path(path).read_text(encoding="utf-8").split("\n")
+    except Exception:
+        return []                     # fail-open: never break a commit on this
+    added_nos = {n for n, _ in added}
+    out = []
+    for start, end in fmt._find_tables(lines):
+        rows = [fmt._split_row(l) for l in lines[start:end]]
+        if "Impossible OS" not in " ".join(rows[0]):
+            continue
+        ncols = len(rows[0])
+        for i, row in enumerate(rows):
+            if i == 1 or len(row) != ncols:
+                continue
+            lineno = start + 1 + i
+            if lineno not in added_nos:
+                continue
+            w = fmt._dwidth(row[-1])
+            if w > OS_COMPARISON_CELL_CAP:
+                out.append((lineno, w, row[-1]))
+    return out
+
+
 # SECTION-COUNT CAP (2026-08-02). Enforced on GROWTH past the cap, not on
 # existence above it, so a file already oversized can finish its outstanding
 # work while being forbidden to absorb more.
@@ -170,7 +226,7 @@ def main(argv) -> int:
     files = _staged_todo_files()
     if not files:
         return 0
-    bad, wrapped = [], []
+    bad, wrapped, oscomp = [], [], []
     for f in files:
         added = _added_lines(f)
         for n, ln, text in over_cap(added):
@@ -178,6 +234,8 @@ def main(argv) -> int:
         col = wrapped_block(added)
         if col:
             wrapped.append((f, col))
+        for n, w, cell in _oscomp_over_cap(f, added):
+            oscomp.append((f, n, w, cell))
     # section-count cap: judged per file, on files this commit GROWS
     capped_hard, capped_soft = [], []
     for f in files:
@@ -202,6 +260,21 @@ def main(argv) -> int:
             "[todo-staged-check WARN] %s: this commit adds prose hard-wrapped at "
             "~%d columns. todo/ prose is one paragraph per physical line. Repair: "
             "python3 scripts/todo-reflow.py --write %s\n" % (f, col, f))
+    if oscomp:
+        for f, n, w, cell in oscomp:
+            sys.stderr.write(
+                "\n[todo-staged-check] %s:%d adds an OS Comparison cell of %d "
+                "columns (cap %d):\n    %s\n"
+                % (f, n, w, OS_COMPARISON_CELL_CAP, cell))
+        sys.stderr.write(
+            "\n  That column is a CLAIM, not a paragraph. Keep the verdict glyph and\n"
+            "  a short phrase; move the justification into the section body or a line\n"
+            "  beneath the table -- relocate it, do not delete it.\n"
+            "  All 223 tables were repaired to <= %d on 2026-08-08; this keeps them there.\n"
+            "  Opt-out: SKIP_TODO_STAGED_CHECK=1 git commit ...\n"
+            % OS_COMPARISON_CELL_CAP)
+        return 1
+
     if capped_hard:
         for f, total, new_secs in capped_hard:
             sys.stderr.write(

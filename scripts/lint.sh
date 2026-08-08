@@ -1946,6 +1946,70 @@ elif [ -f "$REPO_ROOT/scripts/lint/check_bucket_emission.py" ] \
 fi
 
 # ============================================================================
+# Check 27: OS Comparison last-column cells stay claims, not paragraphs
+# ============================================================================
+# The `Impossible OS` column had grown to 219 display columns in its worst cell,
+# dragging whole rows past 400 -- unreadable in the raw source these files are
+# actually read in. All 223 tables were repaired to <= 80 on 2026-08-08.
+#
+# ERROR from the start, unlike Check 17 which shipped as a warning and watched
+# 22 files drift anyway: this check ships with the corpus already at zero, so it
+# has no legacy debt to be lenient about. `scripts/todo-staged-check.py` is the
+# per-commit half and catches the single added row; this is the corpus backstop
+# for anything that reaches the tree another way.
+#
+# Skip via SKIP_LINT_OSCOMP_CELL=1.
+# The existence guard and the `|| true` are both load-bearing under `set -e`:
+# a bare command substitution that exits non-zero ABORTS lint.sh with rc 1 and
+# no diagnostic, which is how four fixture-repo tooling tests failed the moment
+# this check was added (they run lint.sh in throwaway repos that carry no
+# scripts/format-md-tables.py). Same shape as the `|| true` abort fixed here
+# 2026-08-07; Check 26 above guards identically.
+if [ "${SKIP_LINT_OSCOMP_CELL:-}" = "1" ]; then
+    echo -e "${YELLOW}warn${NC}: Check 27 (oscomp-cell-cap) skipped via SKIP_LINT_OSCOMP_CELL=1"
+    WARNINGS=$((WARNINGS + 1))
+elif [ ! -f "$REPO_ROOT/scripts/format-md-tables.py" ]; then
+    :   # table formatter absent (fixture repo): nothing to measure against
+else
+    OSCOMP_OUT="$(python3 - "$REPO_ROOT" <<'PYOSC'
+import importlib.util, pathlib, subprocess, sys
+root = pathlib.Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location("f", str(root / "scripts/format-md-tables.py"))
+m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
+CAP = 80
+files = subprocess.run(["git", "-C", str(root), "ls-files", "todo/*.md", "todo/**/*.md"],
+                       capture_output=True, text=True).stdout.split()
+hits = []
+for rel in files:
+    try:
+        lines = (root / rel).read_text(encoding="utf-8").split("\n")
+    except OSError:
+        continue
+    for s0, e0 in m._find_tables(lines):
+        rows = [m._split_row(l) for l in lines[s0:e0]]
+        if "Impossible OS" not in " ".join(rows[0]):
+            continue
+        n = len(rows[0])
+        for i, row in enumerate(rows):
+            if i == 1 or len(row) != n:
+                continue
+            w = m._dwidth(row[-1])
+            if w > CAP:
+                hits.append(f"{rel}:{s0+1+i}: {w} cols")
+for h in hits[:5]:
+    print(h)
+print(f"COUNT={len(hits)}")
+PYOSC
+) || true"
+    OSCOMP_N="$(printf '%s' "$OSCOMP_OUT" | sed -n 's/^COUNT=//p')"
+    if [ "${OSCOMP_N:-0}" -gt 0 ]; then
+        printf '%s\n' "$OSCOMP_OUT" | grep -v '^COUNT=' | sed 's/^/       /'
+        echo -e "${RED}error${NC}: Check 27 (oscomp-cell-cap) $OSCOMP_N OS Comparison last-column cell(s) over 80 columns -- that column is a claim, not a paragraph; move the justification into the section body"
+        ERRORS=$((ERRORS + 1))
+    fi
+fi
+
+# ============================================================================
 # Summary
 # ============================================================================
 echo ""
