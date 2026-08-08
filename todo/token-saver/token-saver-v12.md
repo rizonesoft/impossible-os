@@ -1,5 +1,7 @@
 # Token Saver v12 -- Cost Findings (opened 2026-08-08)
 
+**CLOSED 2026-08-08.** Successor: [`token-saver-v13.md`](token-saver-v13.md). Zero items were filed here, for the second cycle running -- see the verdict on that question below; the standing measurement obligations carry forward.
+
 Cost and token findings from the run armed after the 2026-08-08 close-out of [v11](token-saver-v11.md). CAPTURE surface, not a work queue: it sits outside the sequencer's traversal, so nothing here is implemented by the run. It is the CURRENT capture file -- the sequencer files to the NEWEST `token-saver-vNN.md` in this directory, which is this one until an operator opens v13.
 
 **Why findings land here instead of being fixed.** Cost machinery is control plane (`.claude/hooks/**`, `scripts/overnight/**`) or receipt surface, both off-limits unattended. Record the finding in the same turn it is observed, then continue; a finding carried in-context to "report later" dies with the segment.
@@ -16,6 +18,8 @@ v11 closed with **zero** cost findings across a full day of running -- while the
 - cost observations were being made and not written down, because a cost finding needs a measurement and the run had no cheap way to take one mid-section.
 
 If it is the second, that is a reporting-surface defect and belongs in [`overnight-runner-improvements-v12.md`](../overnight-runner-improvements/overnight-runner-improvements-v12.md), not here.
+
+**VERDICT (close-out 2026-08-08): neither reading, and the question was mis-posed.** v12 also filed zero here -- but the same run filed cost numbers freely NEXT DOOR, inside gate findings: the ~6-minute tooling suite at pre-push, ~7 minutes of build+suite serialised by a blocked background call, one killed and re-run suite (~6 min), and recovery costs quoted in tool calls. So cost observations were made and written down; they routed to whichever file owned the MECHANISM, which is exactly what the "a misfiring gate is both" rule instructs. A cost finding with no gate attached is the rare case, not the common one. Carry the obligations below; do not treat an empty file as silence again without checking the other surface first.
 
 ## Standing measurement obligations
 
