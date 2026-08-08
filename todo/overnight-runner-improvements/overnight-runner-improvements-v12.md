@@ -58,6 +58,20 @@ Two standing cautions carried from v11, both still live:
 
 ---
 
+## Findings from the TODO-06 section-24 implementation (2026-08-08 run)
+
+- [ ] REASONING: I tested a repo-mutating hypothesis in the live repo instead of a throwaway clone, and it rewrote HEAD, the index and the reflog
+      The pre-push tooling gate refused a push at 431/432 while the same suite passed 432/432 standalone. Chasing the difference, I hypothesised that `.githooks/pre-push` exports `GIT_DIR` and that the suite's fixtures were inheriting it, then tested that by running `GIT_DIR=$PWD/.git GIT_INDEX_FILE=$PWD/.git/index bash scripts/todo-graph/tests/test_build.sh` against the LIVE checkout.
+      - OBSERVED: 303/427 passed, and the repo's HEAD moved to a fixture commit ("both dirs in one commit"), every tracked file read as untracked, and the reflog filled with fixture commits. INFERRED and WRONG: that this was the pre-push failure's cause -- it produced 124 failures where the gate reported 1, which should have falsified it immediately.
+      - The hypothesis was reasonable; running it HERE was not. The suite runs `git init` / `git add -A` / `git commit` in dozens of fixtures, so "what happens when git's env leaks into it" is a question whose answer is by construction destructive. A `git clone --local` into /tmp would have answered it identically at no risk.
+      - Recovered with `git reset --mixed <review-commit>`; no work was lost, because the fixtures used the temp dir as work tree so only `.git` metadata was hijacked. That is luck, not margin: with `GIT_WORK_TREE` also set it would have been the checkout.
+      - The tell I walked past: I had already reasoned that git exports `GIT_DIR` to hooks AND that the fixtures run `git commit`. Holding both, the destructive conclusion was available before the probe, not after it.
+      - No gate exists for this and I am not proposing one -- `run_phase_guard.py` cannot know a shell command is a destructive experiment. The rule is the operator-facing one: a probe whose hypothesis is "does this corrupt state" runs on a copy.
+- [ ] The real cause was a determinism gap only the gate could see, which is an argument for the gate's placement
+      `.githooks/pre-push` is the one place that always runs immediately after a commit, and the fixture that failed (`query.py --quiet stale --offset -1` against the CANONICAL cache) had just become sensitive to whether a `todo/`-touching commit had landed since the last cache rebuild -- because section 24 made `stale` check the corpus git history.
+      - Standalone runs passed because I had rebuilt the cache; the gate ran after two commits. Neither run was wrong; they were asking different questions.
+      - Both fixes landed in ordinary code (`scripts/todo-graph/tests/test_build.sh`), so this is recorded as evidence for the gate rather than as work: a suite whose fixtures depend on the freshness of a derived artifact will look deterministic to the developer who just rebuilt it.
+
 ## Findings from the TODO-06 section-23 implementation (2026-08-08 run)
 
 - [ ] `bare_section_refs.py` BLOCKs edits to a path `scripts/lint.sh` Check 5 explicitly EXEMPTS, while claiming parity with it
