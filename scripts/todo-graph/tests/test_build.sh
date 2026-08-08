@@ -12404,21 +12404,24 @@ python3 - "$S25E_MUT/tool/build.py" <<'S25EMEOF'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1])
 src = p.read_text(encoding="utf-8")
-needle = '''        for opt in ("owners", "file_patterns", "depends_on", "satisfies",
-                    "superseded_by", "effort"):'''
+# Revert the DERIVED copy list to a retyped literal that drops `effort` --
+# the pre-review shape. The producer must now REFUSE rather than silently
+# publish a node without the authored field (Codex adversarial, [medium]:
+# a subset check cannot see a field that stops being emitted).
+needle = "        for opt in _EMITTED_OPTIONAL:"
 assert src.count(needle) == 1, f"mutation needle appears {src.count(needle)}x"
-revert = '''        for opt in ("owners", "file_patterns", "depends_on", "satisfies",
-                    "superseded_by"):'''
+revert = ('''        for opt in ("owners", "file_patterns", "depends_on", "satisfies",
+                    "superseded_by"):''')
 p.write_text(src.replace(needle, revert, 1), encoding="utf-8")
 S25EMEOF
-timeout 60 python3 "$S25E_MUT/tool/build.py" --quiet --root "$S25E_MUT/todo" \
-    --output "$S25E_MUT/build/todo-cache.json" --repo-root "$S25E_MUT" >/dev/null 2>&1
-S25EM=$(timeout 60 python3 "$QUERY_PY" --cache "$S25E_MUT/build/todo-cache.json" \
-    --repo-root "$S25E_MUT" --quiet render --render-format gantt 2>&1)
-if echo "$S25EM" | grep -q ", 1w$"; then
-    t_pass "section 25: mutation check -- dropping effort from the copy list restores the 1w default (fixture is sensitive)"
+S25EM_OUT=$(timeout 60 python3 "$S25E_MUT/tool/build.py" --root "$S25E_MUT/todo" \
+    --output "$S25E_MUT/build/todo-cache.json" --repo-root "$S25E_MUT" 2>&1)
+S25EM_RC=$?
+if [ "$S25EM_RC" != "0" ] && echo "$S25EM_OUT" | grep -q "emission-drop" \
+   && [ ! -f "$S25E_MUT/build/todo-cache.json" ]; then
+    t_pass "section 25: mutation check -- a copy list that drops an authored effort REFUSES the build (fixture is sensitive)"
 else
-    t_fail "section 25: mutation check -- reverted copy list still emitted effort, so 25e1 proves nothing (out=$S25EM)"
+    t_fail "section 25: mutation check -- dropped effort published anyway rc=$S25EM_RC, so 25e1 proves nothing (out=$S25EM_OUT)"
 fi
 
 # Sub-test 25e2: hostile effort values are REFUSED by the producer rather than
@@ -12516,10 +12519,26 @@ rec = json.loads(side.read_text())
 rec[cs.CACHE_FORMAT_VERSION_KEY] = cs.CACHE_FORMAT_VERSION - 1
 side.write_text(json.dumps(rec, indent=2, sort_keys=True) + "\n")
 S25CEOF
+# HASH BEFORE THE DESTRUCTIVE OPERATION. This was taken AFTER validate.py
+# ran, so 25c2 below compared two POST-operation digests -- it passed even if
+# the refusal had overwritten the baseline, and would have passed against code
+# that never refused at all. A fixture that cannot fail is not evidence
+# (Codex adversarial, [medium]).
+# THE ARTIFACT IS THE PAIR, not the JSON alone. Hashing only the cache let a
+# destructive repair pass: rebuilding from the same deterministic corpus
+# reproduces byte-identical JSON while REPLACING the deliberately old-contract
+# binding with a current one, so the JSON digest is equal and the thing the
+# fixture exists to protect is gone (Codex re-adversarial, [medium]).
+s25c_fingerprint() {
+    { md5sum "$S25C/old-baseline.json"
+      ls -1 "$S25C"/old-baseline.json.corpus-*.json 2>/dev/null | sort
+      cat "$S25C"/old-baseline.json.corpus-*.json 2>/dev/null | md5sum
+    } | md5sum | cut -d' ' -f1
+}
+S25C_BYTES=$(s25c_fingerprint)
 S25C_OUT=$(REPO_ROOT="$REPO_ROOT" timeout 60 python3 "$VALIDATE_PY" \
     --cache "$S25C/build/todo-cache.json" --repo-root "$S25C" --quiet \
     --diff "$S25C/old-baseline.json" 2>&1); S25C_RC=$?
-S25C_BYTES=$(md5sum "$S25C/old-baseline.json" | cut -d' ' -f1)
 if [ "$S25C_RC" = "2" ] && echo "$S25C_OUT" | grep -q "LEGACY_FORMAT" \
    && ! echo "$S25C_OUT" | grep -q "graph-delta:"; then
     t_pass "section 25: a baseline from an older producer contract is REFUSED, not diffed"
@@ -12530,11 +12549,22 @@ fi
 # Sub-test 25c2: and the refusal leaves the caller's artifact byte-identical --
 # a historical baseline is somebody else's file, so the recovery must not reach
 # it. Same ownership rule section 23 established for the current cache.
-S25C_AFTER=$(md5sum "$S25C/old-baseline.json" | cut -d' ' -f1)
+S25C_AFTER=$(s25c_fingerprint)
 if [ "$S25C_BYTES" = "$S25C_AFTER" ]; then
-    t_pass "section 25: the refused baseline is left byte-identical, never rebuilt over"
+    t_pass "section 25: the refused baseline is left byte-identical, cache AND binding"
 else
-    t_fail "section 25: the refused baseline was rewritten"
+    t_fail "section 25: the refused baseline artifact changed (cache or binding)"
+fi
+
+# 25c2-mutation: replace the binding with a CURRENT-contract one while leaving
+# the cache bytes untouched -- the exact shape a destructive repair produces.
+# The fingerprint must change, or 25c2 proves nothing.
+bind_baseline "$S25C/old-baseline.json"
+S25C_MUT_FP=$(s25c_fingerprint)
+if [ "$S25C_MUT_FP" != "$S25C_BYTES" ]; then
+    t_pass "section 25: mutation check -- swapping the baseline binding alone moves the fingerprint (fixture is sensitive)"
+else
+    t_fail "section 25: the baseline fingerprint ignores the binding, so 25c2 proves nothing"
 fi
 
 # Sub-test 25c3: a binding whose FIELD SET drifted at the SAME version refuses
@@ -12572,9 +12602,14 @@ python3 - "$S25C_MUT/tool/cache_schema.py" <<'S25CMEOF'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1])
 src = p.read_text(encoding="utf-8")
-needle = """        check_cache_format(cache_path, blob, require_binding=not check_stale)"""
-assert src.count(needle) == 1, f"mutation needle appears {src.count(needle)}x"
-p.write_text(src.replace(needle, "        pass", 1), encoding="utf-8")
+# Matched by CALL PREFIX through its closing paren, not by a literal copy:
+# the call gained an assignment target and wrapped onto two lines during the
+# review, and a literal needle silently stops matching on any such edit --
+# which is exactly how this control went quiet once already.
+start = src.index("        binding = check_cache_format(")
+end = src.index("\n", src.index("require_binding=not check_stale)", start))
+needle = src[start:end]
+p.write_text(src.replace(needle, "        binding = None", 1), encoding="utf-8")
 S25CMEOF
 timeout 60 python3 "$S25C_MUT/tool/build.py" --quiet --root "$S25C_MUT/todo" \
     --output "$S25C_MUT/build/todo-cache.json" --repo-root "$S25C_MUT" >/dev/null 2>&1
@@ -12761,6 +12796,104 @@ if [ "$S25FM" = "AGREE" ]; then
     t_pass "section 25: the frontmatter schema and build.py admit the same effort values"
 else
     t_fail "section 25: frontmatter schema disagrees with the producer ($S25FM)"
+fi
+
+# Sub-test 25d2: the dependency caveat survives `--quiet`, which is what the
+# MCP transport always passes. A stderr-only note was invisible to exactly the
+# caller least able to tell an empty ranking from an empty graph -- the same
+# transport section 22 hardened, losing the same distinction.
+S25MCP=$(timeout 60 python3 "$QUERY_PY" --repo-root "$REPO_ROOT" --quiet --json blocking 2>/dev/null)
+S25MCP_ERR=$(timeout 60 python3 "$QUERY_PY" --repo-root "$REPO_ROOT" --quiet --json blocking 2>&1 >/dev/null)
+# `stats` is UNBOUNDED and never reaches bound_rows, yet it reuses cmd_blocking
+# for top_blocking and reports avg_dep_depth from the same empty edge set -- so
+# it needs the caveat by the same argument, and the first fix missed it (Codex
+# re-adversarial, [high]).
+S25MCP_ST=$(timeout 60 python3 "$QUERY_PY" --repo-root "$REPO_ROOT" --quiet --json stats 2>/dev/null)
+if echo "$S25MCP" | grep -q '"dependency_source"' \
+   && echo "$S25MCP" | grep -q '"edges": 0' \
+   && echo "$S25MCP_ST" | grep -q '"dependency_source"' \
+   && [ -z "$S25MCP_ERR" ]; then
+    t_pass "section 25: the dependency caveat rides in the --json envelope for BOTH the bounded verbs and stats"
+else
+    t_fail "section 25: --quiet --json dropped the caveat (blocking=$S25MCP stats=$S25MCP_ST err=$S25MCP_ERR)"
+fi
+
+# 25d2-mutation: the caveat must be CONDITIONAL. Give a node an edge and the
+# envelope must lose the key entirely rather than reporting edges: 0.
+S25MCPM=$(python3 -c "
+import sys, json; sys.path.insert(0, '$REPO_ROOT/scripts/todo-graph')
+import query as q
+nodes = json.load(open('$REPO_ROOT/build/todo-cache.json'))
+nodes[1]['depends_on'] = [nodes[0]['id']]
+ctx = q.Ctx(nodes, '$REPO_ROOT', quiet=True)
+ctx.dependency_source_notice_once()
+class A: pass
+a = A(); a.quiet = True; a.scope = None; a.fields = None; a.limit = 50; a.offset = 0
+_, _, meta = q.bound_rows([], ['id'], a, 'blocking', ctx)
+print('ABSENT' if 'dependency_source' not in meta else 'PRESENT')")
+if [ "$S25MCPM" = "ABSENT" ]; then
+    t_pass "section 25: mutation check -- an authored edge removes the caveat from the envelope (it is not unconditional)"
+else
+    t_fail "section 25: the --json caveat is emitted even with edges present ($S25MCPM)"
+fi
+
+# Sub-test 25c8: a sidecar that is a FIFO must REFUSE, not hang. `open()` on a
+# FIFO with no writer blocks before fstat, so the size ceiling, the JSON
+# handling and every reason-code path below it are unreachable -- a hang
+# needing no overflow. Reachable because freshness-disabled reads take a
+# caller-owned directory.
+S25FIFO=$(timeout 30 python3 -c "
+import hashlib, os, pathlib, sys, tempfile
+sys.path.insert(0, '$REPO_ROOT/scripts/todo-graph')
+import cache_schema as cs
+d = pathlib.Path(tempfile.mkdtemp())
+c = d / 'todo-cache.json'
+c.write_bytes(pathlib.Path('$REPO_ROOT/build/todo-cache.json').read_bytes())
+blob = c.read_bytes()
+os.mkfifo(cs.sidecar_path(c, hashlib.sha256(blob).hexdigest()))
+try:
+    cs.check_cache_format(c, blob, require_binding=True)
+    print('ACCEPTED')
+except cs.CacheSchemaError:
+    print('REFUSED')" 2>&1)
+if [ "$S25FIFO" = "REFUSED" ]; then
+    t_pass "section 25: a FIFO corpus binding is refused rather than blocking the reader forever"
+else
+    t_fail "section 25: FIFO sidecar gave '$S25FIFO' (want REFUSED; empty/timeout means it hung)"
+fi
+
+# Sub-test 25c9: the format check HANDS its validated record to the freshness
+# check. Two independent opens let a reader certify the format from one sidecar
+# generation and the corpus from its replacement.
+S25GEN=$(python3 -c "
+import inspect, sys; sys.path.insert(0, '$REPO_ROOT/scripts/todo-graph')
+import cache_schema as cs
+src = inspect.getsource(cs._load_and_validate)
+passes = 'rec=binding' in src
+returns = inspect.signature(cs.check_freshness).parameters.get('rec') is not None
+print('BOUND' if passes and returns else f'UNBOUND passes={passes} accepts={returns}')")
+if [ "$S25GEN" = "BOUND" ]; then
+    t_pass "section 25: the format and freshness checks consume ONE binding generation"
+else
+    t_fail "section 25: sidecar generations are read independently ($S25GEN)"
+fi
+
+# Sub-test 25e6: the frontmatter schema forbids EVERY cache-only field the
+# producer forbids. It listed two of three, so a hand-authored stamped_items
+# passed the schema and was refused by build.py -- the two-layer split holding
+# in one direction only.
+S25CO=$(python3 -c "
+import json, sys; sys.path.insert(0, '$REPO_ROOT/scripts/todo-graph')
+sch = json.load(open('$REPO_ROOT/docs/infrastructure/todo-metadata.schema.json'))
+forbidden = {r['required'][0] for r in sch.get('not', {}).get('anyOf', [])}
+src = open('$REPO_ROOT/scripts/todo-graph/build.py').read()
+i = src.index('for cache_only in (')
+producer = set(eval(src[src.index('(', i):src.index(')', i) + 1]))
+print('AGREE' if forbidden == producer else f'DISAGREE schema={sorted(forbidden)} producer={sorted(producer)}')")
+if [ "$S25CO" = "AGREE" ]; then
+    t_pass "section 25: the frontmatter schema and build.py forbid the same cache-only fields"
+else
+    t_fail "section 25: cache-only contract disagrees ($S25CO)"
 fi
 
 # ----------------------------------------------------------------------

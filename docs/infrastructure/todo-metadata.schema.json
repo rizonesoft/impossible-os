@@ -96,9 +96,22 @@
     },
     "not": {
         "anyOf": [
-            { "required": ["created_at"] },
-            { "required": ["last_active_at"] }
+            {
+                "required": [
+                    "created_at"
+                ]
+            },
+            {
+                "required": [
+                    "last_active_at"
+                ]
+            },
+            {
+                "required": [
+                    "stamped_items"
+                ]
+            }
         ]
     },
-    "$comment": "created_at and last_active_at are cache-only fields the generator computes from git log during cache emission; they MUST NOT appear in hand-authored frontmatter. The not/anyOf clause enforces that contract at the schema layer."
+    "$comment": "created_at, last_active_at and stamped_items are cache-only fields the generator computes (the first two from git log, the third from the per-item cache extension); they MUST NOT appear in hand-authored frontmatter. The not/anyOf clause enforces that contract at the schema layer. stamped_items was missing from the clause while scripts/todo-graph/build.py refused it, so the schema approved a TODO the generator rejects -- the two-layer split holding in one direction only."
 }

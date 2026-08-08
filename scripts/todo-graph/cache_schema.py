@@ -90,7 +90,7 @@ REASON_SHAPE = "SHAPE"                      # parsed, but violates the schema
 REASON_EMPTY = "EMPTY"                      # readiness: no nodes to walk at all
 REASON_LEGACY_NO_STAMPED_ITEMS = "LEGACY"   # predates the section 9 extension
 REASON_STALE = "STALE"                      # older than the newest TODO
-REASON_LEGACY_FORMAT = "LEGACY_FORMAT"      # root predates the section 25 envelope
+REASON_LEGACY_FORMAT = "LEGACY_FORMAT"      # another producer contract
 
 # Path to the schema these rules implement. Quoted in errors so a failure names
 # the contract it violated instead of just the offending value.
@@ -1561,10 +1561,40 @@ def _read_bounded(path: Path, ceiling: int, what: str) -> bytes:
     """Read a file with the ceiling enforced on the DESCRIPTOR before the
     allocation, then again against what was actually read (so a file that grows
     between the fstat and the read is caught rather than silently truncated).
-    Mirrors the cache's own bounded read."""
-    fh = open(path, "rb")   # FileNotFoundError propagates: callers distinguish it
+    Mirrors the cache's own bounded read.
+
+    `O_NONBLOCK` + `S_ISREG`, the same descriptor-first pattern `_read_regular`
+    above uses, and for the same reason: a plain `open()` on a FIFO with no
+    writer BLOCKS before `fstat`, so the size ceiling, the JSON handling and
+    every reason-code normalisation below are unreachable -- a hang needing no
+    overflow and no overread. That was survivable while this helper only ever
+    read a binding beside the repo's own generated cache; the cache-format
+    identity work pointed it at freshness-disabled foreign caches and `--diff`
+    baselines, where the CALLER owns the directory and can name the sidecar
+    (Codex adversarial, [medium]).
+    """
+    # FileNotFoundError still propagates: callers distinguish it.
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+    # OWNERSHIP SENTINEL, the shape `_read_regular` uses, and not the narrower
+    # `except OSError` this had first: `os.fdopen` can fail with MemoryError,
+    # which is NOT an OSError, and that path left the raw descriptor open --
+    # confirmed by probe as an extra entry in /proc/self/fd. `load_and_validate`
+    # normalises MemoryError into a reason code and the MCP server survives it,
+    # so repeated degraded calls leak until exhaustion (Codex re-adversarial,
+    # [medium]).
+    fh = None
+    try:
+        fh = os.fdopen(fd, "rb")
+    finally:
+        if fh is not None:
+            fd = -1            # fdopen owns it now
+        elif fd >= 0:
+            os.close(fd)
     try:
         st = os.fstat(fh.fileno())
+        if not stat.S_ISREG(st.st_mode):
+            _err(REASON_STALE,
+                 f"{what} is not a regular file (mode {st.st_mode:#o}): {path}")
         if st.st_size > ceiling:
             _err(REASON_STALE,
                  f"{what} is {st.st_size} bytes, past the {ceiling}-byte "
@@ -1787,7 +1817,7 @@ _REBUILD = ("rebuild via scripts/todo-graph/build-and-validate.sh --keep-cache")
 
 
 def check_freshness(cache_path: Path, todo_root: Path, cache_bytes: bytes,
-                    profile: 'Profile' = None, history_out=None):
+                    profile: 'Profile' = None, history_out=None, rec=None):
     """Refuse a cache that was not built from the corpus now on disk.
 
     THE QUESTION CHANGED, AND THAT IS THE POINT (section 21). This used to ask
@@ -1835,20 +1865,28 @@ def check_freshness(cache_path: Path, todo_root: Path, cache_bytes: bytes,
 
     cache_sha = hashlib.sha256(cache_bytes).hexdigest()
     side = sidecar_path(cache_path, cache_sha)
-    try:
-        raw = _read_bounded(side, _MAX_SIDECAR_BYTES, "corpus binding")
-    except FileNotFoundError:
-        _err(REASON_STALE,
-             f"cache carries no corpus binding ({side.name} is absent) -- it "
-             f"predates the section 21 producer contract, was copied without "
-             f"its binding, or was written by a producer that refused to "
-             f"certify it; {_REBUILD}")
-    except OSError as exc:
-        _err(REASON_STALE, f"corpus binding unreadable: {side}: {exc}")
-    try:
-        rec = json.loads(raw.decode("utf-8"))
-    except (ValueError, RecursionError) as exc:
-        _err(REASON_STALE, f"corpus binding is not readable JSON: {side}: {exc}")
+    # THE CALLER MAY HAND US THE RECORD IT ALREADY VALIDATED, and
+    # `_load_and_validate` does. Re-opening the binding here would certify the
+    # CORPUS from a generation the format check never saw, because the producer
+    # can replace the pair between the two opens -- both checks would pass, each
+    # against a different sidecar (Codex adversarial, [medium]). The standalone
+    # path (fixtures calling this directly) still reads it itself.
+    if rec is None:
+        try:
+            raw = _read_bounded(side, _MAX_SIDECAR_BYTES, "corpus binding")
+        except FileNotFoundError:
+            _err(REASON_STALE,
+                 f"cache carries no corpus binding ({side.name} is absent) -- it "
+                 f"predates the section 21 producer contract, was copied without "
+                 f"its binding, or was written by a producer that refused to "
+                 f"certify it; {_REBUILD}")
+        except OSError as exc:
+            _err(REASON_STALE, f"corpus binding unreadable: {side}: {exc}")
+        try:
+            rec = json.loads(raw.decode("utf-8"))
+        except (ValueError, RecursionError) as exc:
+            _err(REASON_STALE,
+                 f"corpus binding is not readable JSON: {side}: {exc}")
     if not isinstance(rec, dict) or rec.get("schema") != SIDECAR_SCHEMA:
         _err(REASON_STALE,
              f"corpus binding is not {SIDECAR_SCHEMA}: {side}; {_REBUILD}")
@@ -2028,6 +2066,13 @@ def check_cache_format(cache_path: Path, cache_bytes: bytes,
     exists to remove (Codex adversarial, section 25, [medium]). The 16 fixtures
     that made the narrower rule tempting hand the tools an unbound cache, which
     is not a supported artifact; they bind it now.
+
+    ONE READ, HANDED ON. The parsed record is RETURNED so `check_freshness`
+    validates the same generation this call certified. Each function used to
+    open the digest-named binding independently, so a reader could certify the
+    FORMAT from one sidecar and the CORPUS from its replacement -- the producer
+    swaps the pair between the two opens and each check passes against a record
+    the other never saw (Codex adversarial, [medium]).
     """
     cache_sha = hashlib.sha256(cache_bytes).hexdigest()
     side = sidecar_path(cache_path, cache_sha)
@@ -2035,7 +2080,7 @@ def check_cache_format(cache_path: Path, cache_bytes: bytes,
         raw = _read_bounded(side, _MAX_SIDECAR_BYTES, "corpus binding")
     except FileNotFoundError:
         if not require_binding:
-            return
+            return None
         _err(REASON_LEGACY_FORMAT,
              f"cache carries no corpus binding ({side.name} is absent), so it "
              f"declares no producer contract: {cache_path}; freshness is "
@@ -2108,6 +2153,7 @@ def check_cache_format(cache_path: Path, cache_bytes: bytes,
              f"{CACHE_FORMAT_VERSION_KEY} {CACHE_FORMAT_VERSION}: "
              f"{cache_path}; the emitted node-field set moved without a version "
              f"bump (cache_schema.EMITTED_NODE_FIELDS); {_REBUILD}")
+    return rec
 
 
 def load_and_validate(cache_path: Path, todo_root: Path,
@@ -2212,7 +2258,8 @@ def _load_and_validate(cache_path: Path, todo_root: Path,
         # a corpus problem that does not exist. Bound to `blob` -- the bytes
         # this descriptor actually yielded -- for the same reason
         # `check_freshness` takes them rather than re-reading the pathname.
-        check_cache_format(cache_path, blob, require_binding=not check_stale)
+        binding = check_cache_format(cache_path, blob,
+                                     require_binding=not check_stale)
         info = validate_nodes(nodes, cache_path, profile)
         if check_stale:
             # The fingerprint returned here is handed to the caller so it can
@@ -2229,7 +2276,8 @@ def _load_and_validate(cache_path: Path, todo_root: Path,
                            and profile.requires_history else None)
             info.corpus = check_freshness(cache_path, todo_root,
                                           cache_bytes=blob, profile=profile,
-                                          history_out=history_out)
+                                          history_out=history_out,
+                                          rec=binding)
             if history_out is not None:
                 info.history = history_out["recorded"]
         # THE GENERATION BINDING IS NOT PART OF THE FRESHNESS POLICY, and it

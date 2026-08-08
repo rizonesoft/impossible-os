@@ -370,11 +370,14 @@ def _parse_iso_date(ts) -> Optional[str]:
 def _gantt_effort(node: dict) -> str:
     """Row duration for one node: the declared `effort`, else the default.
 
-    UNREACHABLE BY DESIGN, and kept anyway. Every route into this renderer runs
-    through `cache_schema` under a profile that validates `effort` against the
-    same grammar `build.py` enforces on the frontmatter, so a bad value refuses
-    at load. This is the last guard before the value is interpolated into a
-    mermaid line, and it RAISES rather than falling back: a silent fallback here
+    Every route into this renderer THAT GOES THROUGH THE CLI runs through
+    `cache_schema` under a profile validating `effort` against the same grammar
+    `build.py` enforces, so a bad value refuses at load and this guard is
+    unreachable. It is kept because that qualifier is real: `render_gantt` takes
+    an in-memory node list, so a caller importing this module directly -- no
+    cache path, no binding, nothing to check an artifact identity against --
+    reaches it with whatever it built (Codex adversarial, [low]). For that
+    caller this IS the only check. It RAISES rather than falling back: a silent fallback here
     would restore precisely the failure TODO-06 section 25 closed -- a duration
     nobody authored, rendered as though somebody had. `ValueError` because the
     caller has already decided this cache is trustworthy, so reaching here is a

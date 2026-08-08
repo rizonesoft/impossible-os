@@ -175,9 +175,9 @@ class Finding:
 # LEGACY_NO_STAMPED_ITEMS is absent for a different reason: PROFILE_VALIDATE
 # does not set `require_stamped_population`, so this reader can never raise it.
 #
-# LEGACY_FORMAT joins the set for the reason the set exists: a cache whose root
-# predates the section 25 envelope, or whose producer contract this reader does
-# not speak, is repaired by running the current producer -- exactly what a
+# LEGACY_FORMAT joins the set for the reason the set exists: a cache whose
+# corpus binding declares a producer contract this reader does not speak (or
+# declares none at all) is repaired by running the current producer -- exactly what a
 # MISSING or SHAPE cache is repaired by. It is deliberately NOT grouped with
 # SHAPE, because the two need different words to the operator (that artifact was
 # valid under the contract it was written against) and because only the

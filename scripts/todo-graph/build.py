@@ -99,6 +99,11 @@ _DupRejectingLoader.add_constructor(
 VALID_STATUSES = {"draft", "active", "blocked", "done", "superseded"}
 ID_REGEX = re.compile(r"^[a-z][a-z0-9-]{0,58}[a-z0-9]$")
 REQUIRED_FIELDS = ("schema_version", "id", "domain", "status", "title")
+# THE PARSER ALLOWLIST -- which frontmatter keys are KNOWN, not which ones are
+# emitted. The two lists differ by exactly one member and saying so here stops
+# the difference reading as a bug: `$schema` is an AUTHORING pointer that tells
+# a validator where to find the sidecar, and it deliberately never enters the
+# cache (Codex consistency, [medium], rejected as a defect on this evidence).
 OPTIONAL_FIELDS = (
     "$schema",
     "owners",
@@ -108,6 +113,9 @@ OPTIONAL_FIELDS = (
     "file_patterns",
     "effort",
 )
+# The authored optional fields that DO reach a cache node, stated once so the
+# copy loop in `build_node` and the drop assertion beside it cannot disagree.
+_EMITTED_OPTIONAL = tuple(f for f in OPTIONAL_FIELDS if f != "$schema")
 SUPPORTED_SCHEMA_VERSION = 1
 
 # Gantt row duration (TODO-06 section 25). `render.py` has read this field
@@ -1159,10 +1167,24 @@ def build_node(file_path: Path, repo_root: Path, timestamps: dict, content: str)
             "created_at": created_at,
             "last_active_at": last_active_at,
         }
-        for opt in ("owners", "file_patterns", "depends_on", "satisfies",
-                    "superseded_by", "effort"):
+        # THE COPY LIST IS DERIVED, NOT RETYPED. `_EMITTED_OPTIONAL` is the
+        # single statement of which authored optional fields reach the cache,
+        # and the assertion below turns "a field stopped being emitted" from an
+        # invisible regression into a refusal. The producer-contract digest
+        # cannot see that class: it certifies the DECLARED field set, so a copy
+        # list that quietly drops a field still publishes under a valid
+        # identity, and the reader's default takes over -- which is exactly the
+        # read-but-never-emitted failure this whole section exists to close,
+        # reappearing one layer down (Codex adversarial, [medium]).
+        for opt in _EMITTED_OPTIONAL:
             if opt in fm:
                 node[opt] = fm[opt]
+        dropped = sorted(k for k in _EMITTED_OPTIONAL if k in fm and k not in node)
+        if dropped:
+            errors.append(
+                ("emission-drop",
+                 f"authored optional field(s) {dropped} did not reach the "
+                 f"cache node; the copy list and _EMITTED_OPTIONAL disagree"))
     else:
         # TODO-06 §5 (back-fill migration) closed 2026-04-23: every
         # TODO-*.md under todo/ now carries a frontmatter block. Missing

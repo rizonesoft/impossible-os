@@ -464,8 +464,10 @@ else
     #       regression and reaches the rc 7 gate instead (section 17).
     #   4 = cache stale       -> ERROR (false-clean risk; rebuild required)
     #   5 = cache malformed   -> ERROR (corrupt JSON, a shape violating
-    #       scripts/todo-graph/schema/cache.schema.json, or an empty node
-    #       array; investigate)
+    #       scripts/todo-graph/schema/cache.schema.json, an empty node
+    #       array, or a cache whose corpus binding declares a producer
+    #       contract this reader does not speak -- or declares none at all;
+    #       investigate)
     #   6 = internal failure  -> ERROR
     #   7 = coverage floor breached -> ERROR (the check went blinder)
     #   8 = baseline invalid  -> ERROR (tracked floor file missing/corrupt)

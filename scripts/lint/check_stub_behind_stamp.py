@@ -28,6 +28,9 @@
 #   5  cache unreadable / malformed JSON, or a shape that violates
 #      scripts/todo-graph/schema/cache.schema.json, or an empty node array
 #      (lint.sh treats as ERROR). Decided by the shared `cache_schema` module.
+#      rc 5 also covers a cache written against a producer contract this
+#      reader does not speak (LEGACY_FORMAT): unreadable in the sense that
+#      matters, since its fields may not mean what this code assumes.
 #   6  internal helper failure (lint.sh treats as ERROR)
 #   7  the coverage gate refused, for EITHER of its two contracts (lint.sh
 #      treats as ERROR and routes on the emitted tag): `COVERAGE REGRESSION`

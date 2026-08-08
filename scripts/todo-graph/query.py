@@ -338,6 +338,7 @@ class Ctx:
         "nodes", "id_index", "path_index", "slug_index", "slug_collisions",
         "stem_collisions", "inbound", "repo_root", "quiet", "pre_notice_fired",
         "node_by_path", "ambiguous_edges", "dep_notice_fired",
+        "dep_edges_empty",
     )
 
     def __init__(self, nodes, repo_root, quiet):
@@ -360,6 +361,10 @@ class Ctx:
         self.quiet = quiet
         self.pre_notice_fired = False
         self.dep_notice_fired = False
+        # None until a readiness verb asks; then True/False. Carried
+        # into the --json envelope so a transport that drops stderr
+        # still receives the caveat.
+        self.dep_edges_empty = None
         # Edge tokens naming a BARE stem that more than one file carries are
         # collected, not silently bound to whichever file the flattened index
         # happened to keep. `_build_ctx` turns a non-empty list into a refusal.
@@ -415,10 +420,20 @@ class Ctx:
         real. It stays on stderr and under `--quiet`, so no machine-readable
         stdout changes shape (`--json` consumers are untouched).
         """
-        if self.dep_notice_fired or self.quiet:
+        if self.dep_notice_fired:
             return
         self.dep_notice_fired = True
-        if any(_safe_list(n.get("depends_on")) for n in self.nodes):
+        # RECORD BEFORE THE `quiet` GATE, and this ordering is the whole fix.
+        # The note was written to stderr and suppressed by `--quiet`, and
+        # `mcp_server.py` invokes this CLI with `--quiet` unconditionally and
+        # reads only stdout -- so an agent asking `blocked` over MCP got an
+        # ordinary empty success with no caveat at all, which is precisely the
+        # ambiguity this note exists to remove and precisely the transport
+        # section 22 hardened for the same reason (Codex adversarial, [high]).
+        # The flag is what `_bounded_page` puts into the `--json` envelope.
+        self.dep_edges_empty = not any(
+            _safe_list(n.get("depends_on")) for n in self.nodes)
+        if not self.dep_edges_empty or self.quiet:
             return
         sys.stderr.write(
             "[query.py] note: ranked against 0 file-level `depends_on` edges "
@@ -1411,7 +1426,21 @@ def _apply_fields(rows, columns, fields: str, subcommand: str, quiet: bool = Fal
     return projected, want
 
 
-def bound_rows(rows, columns, args, subcommand: str):
+# ONE statement of the caveat, consumed by BOTH emission paths -- the bounded
+# envelope and the unbounded `stats` dict. Two copies is how one of them comes
+# to say something the other does not.
+_DEPENDENCY_SOURCE_CAVEAT = {
+    "field": "depends_on",
+    "level": "file",
+    "edges": 0,
+    "note": "ranked against 0 file-level depends_on edges: this describes the "
+            "absence of a graph, not the state of one. Section-level "
+            "dependencies are deliberately not consulted (their targets are "
+            "unqualified). See docs/infrastructure/todo-metadata.md.",
+}
+
+
+def bound_rows(rows, columns, args, subcommand: str, ctx=None):
     """Apply scope -> fields -> offset/limit. Returns (rows, columns, meta).
 
     meta always carries returned / total_matching / truncated so a caller
@@ -1460,6 +1489,14 @@ def bound_rows(rows, columns, args, subcommand: str):
     }
     if scope:
         meta["total_before_scope"] = total_before_scope
+    # THE CAVEAT TRAVELS IN THE DATA, not only on stderr. `--quiet` is what
+    # the MCP transport always passes, so a stderr-only note is invisible to
+    # exactly the caller least able to notice an empty ranking is structural
+    # (Codex adversarial, [high]). Present only when a readiness verb actually
+    # consulted the graph and found no edges, so no other subcommand's
+    # envelope changes shape.
+    if ctx is not None and getattr(ctx, "dep_edges_empty", None):
+        meta["dependency_source"] = _DEPENDENCY_SOURCE_CAVEAT
     return page, columns, meta
 
 
@@ -1511,6 +1548,8 @@ def emit_bounded(rows, columns, fmt: str, meta: dict, ceiling: int,
             envelope["total_before_scope"] = meta.get("total_before_scope")
         if meta.get("unbounded"):
             envelope["unbounded"] = True
+        if meta.get("dependency_source"):
+            envelope["dependency_source"] = meta["dependency_source"]
         if meta["truncated"]:
             envelope["next"] = (
                 f"--limit {meta['limit']} --offset "
@@ -2212,6 +2251,19 @@ def main(argv=None) -> int:
         )
 
         if not bounded:
+            # THE UNBOUNDED PATH NEEDS THE CAVEAT TOO, and missing it was the
+            # first fix's blind spot: `stats` bypasses `bound_rows` entirely,
+            # yet `cmd_stats` reuses `cmd_blocking` for `top_blocking` and
+            # reports `avg_dep_depth` -- both computed from the same empty edge
+            # set. An MCP caller therefore read those scalars as real graph
+            # conclusions while `blocking` beside them carried the warning
+            # (Codex re-adversarial, [high]). Attached to the dict `stats`
+            # already returns, so no other unbounded subcommand changes shape.
+            if (isinstance(rows, dict)
+                    and getattr(ctx, "dep_edges_empty", None)
+                    and "dependency_source" not in rows):
+                rows = dict(rows)
+                rows["dependency_source"] = _DEPENDENCY_SOURCE_CAVEAT
             for flag in ("limit", "offset", "fields"):
                 if getattr(args, flag, None) not in (None, ""):
                     sys.stderr.write(
@@ -2232,7 +2284,7 @@ def main(argv=None) -> int:
             return
 
         page, out_columns, meta = bound_rows(rows, columns, args,
-                                             args.subcommand)
+                                             args.subcommand, ctx)
         ceiling = getattr(args, "max_bytes", None) or OUTPUT_CEILING_BYTES
         scope_supported = "domain" in (columns or [])
 
