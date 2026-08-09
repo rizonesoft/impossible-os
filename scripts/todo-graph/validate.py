@@ -69,6 +69,20 @@
 #                     to multiple lines (no first-match-wins; Codex pass
 #                     6 M1: ambiguity must surface, not be hidden).
 #
+#                     EXIT CONTRACT (section 29). rc 0 = every stamp
+#                     examined is now correct. rc 1 = the run ran and is
+#                     INCOMPLETE -- at least one stamp kept a stale line
+#                     number because the item name was ambiguous, its
+#                     XREF target did not resolve, or the target resolved
+#                     without containing the item; safe rewrites were
+#                     still applied. rc 2 = refused before touching
+#                     anything (colliding ids or resolver keys, or the
+#                     corpus moved mid-run). Each unrepaired stamp is
+#                     named on its own FAIL line, NOT merely counted, and
+#                     those lines are never gated on --quiet: repair mode
+#                     is driven by a --quiet caller, so a count that only
+#                     reached the summary reached nobody.
+#
 # Performance: runs in <2s on the live 223-file tree. All file reads are
 # done once at startup (single in-memory snapshot per run; Codex pass 6 M1
 # atomic-snapshot contract) so cache-based and direct-reread checks
@@ -1499,14 +1513,44 @@ def check_schema_reachability(nodes: list, snapshot: dict, repo_root: Path) -> l
 
 # --- --fix-line-numbers --------------------------------------------------
 
+def _diag(value: str, limit: int = 120) -> str:
+    """A corpus-derived string, bounded and single-line, for a diagnostic.
+
+    `xref_target` and the item `name` are parsed out of a TODO line -- the
+    target as `\\S+`, the name from a quoted clause -- so neither has any length
+    ceiling below the 16 MiB per-file input cap. Every unrepaired clause copies
+    both into the buffered report, and a stamp line may carry many clauses, so
+    one pathological line could amplify into a report far larger than the file
+    it came from (Codex adversarial, section 29, [medium]).
+
+    Bounded HERE rather than by refusing the corpus: a length limit on a
+    DIAGNOSTIC costs nothing, whereas refusing a stamp for carrying too many
+    clauses would reject legitimate multi-XREF lines -- TODO-12 already writes
+    six on one line. Newlines are escaped so one finding stays one line.
+    """
+    text = str(value).replace("\r", "\\r").replace("\n", "\\n")
+    if len(text) <= limit:
+        return text
+    return text[:limit] + f"... [{len(text)} chars]"
+
+
 def fix_line_numbers(nodes: list, snapshot: dict, id_index: dict, path_index: dict,
                      repo_root: Path, write: bool, quiet: bool) -> tuple:
     """Re-resolve every `(item: "NAME" at line N)` in stamps. Returns
-    `(updates_total, ambiguities, unresolvable_targets, report_lines)`. Codex
-    pass 6 M1 contract: FAIL on non-unique item-name match (no
-    first-match-wins); never invent a new item; require explicit --write to
-    actually mutate. Codex pass 7 H2: ambiguity must surface as a non-zero exit
-    so CI cannot silently treat a refused rewrite as success.
+    `(updates_total, ambiguities, unresolvable_targets, missing_items,
+    report_lines)`. Codex pass 6 M1 contract: FAIL on non-unique item-name
+    match (no first-match-wins); never invent a new item; require explicit
+    --write to actually mutate. Codex pass 7 H2: ambiguity must surface as a
+    non-zero exit so CI cannot silently treat a refused rewrite as success.
+
+    THE THREE INCOMPLETE-REPAIR CLASSES ARE COUNTED SEPARATELY AND REPORTED
+    IDENTICALLY. A stamp can go unrepaired because the item name matched more
+    than once (`ambiguities`), because its XREF target did not resolve at all
+    (`unresolvable_targets`), or because the target resolved and does not
+    contain the named item (`missing_items`). All three leave a stale line
+    number behind, so all three emit an unconditional per-instance FAIL line
+    and all three make the caller exit non-zero -- only ambiguity did before
+    section 29, which is how a run that repaired NOTHING reported success.
 
     NOTHING IS PRINTED FROM HERE. Every diagnostic is accumulated into
     `report_lines` and handed back for the caller to publish -- after the
@@ -1517,6 +1561,7 @@ def fix_line_numbers(nodes: list, snapshot: dict, id_index: dict, path_index: di
     updates_total = 0
     ambiguities = 0
     unresolvable_targets = 0
+    missing_items = 0
     report: list = []
     pending_writes: list = []
     for n in nodes:
@@ -1566,7 +1611,16 @@ def fix_line_numbers(nodes: list, snapshot: dict, id_index: dict, path_index: di
                     continue
                 target_file = resolve_xref_target(xref_target, rel, id_index, path_index)
                 if target_file is None:
+                    # NAMED, NOT JUST COUNTED, and never gated on --quiet. The
+                    # count alone reached only the summary line below, which IS
+                    # quiet-gated -- and the sole caller runs --quiet, so this
+                    # whole class of failure produced no output at all.
                     unresolvable_targets += 1
+                    report.append(
+                        f"[validate.py] FAIL fix-line-numbers: unresolvable XREF "
+                        f"target {_diag(xref_target)!r} for item {_diag(name)!r} "
+                        f"(stamp at {rel}); the stored line number was left as-is"
+                    )
                     continue
                 target_text = snapshot.get(target_file)
                 if target_text is None:
@@ -1591,12 +1645,25 @@ def fix_line_numbers(nodes: list, snapshot: dict, id_index: dict, path_index: di
                     if name in target_ln:
                         hits.append(ix)
                 if len(hits) == 0:
-                    continue  # never invent
+                    # NEVER INVENT -- but say so. The target file resolved and
+                    # the named item is simply not in it (renamed, deleted, or
+                    # never written), so the stored line number is stale and
+                    # this run cannot repair it. Silently continuing here was
+                    # the SECOND path to a rc-0 "success" over an unrepaired
+                    # corpus, independent of an unresolvable target (Codex
+                    # design review, section 29, [high]).
+                    missing_items += 1
+                    report.append(
+                        f"[validate.py] FAIL fix-line-numbers: item {_diag(name)!r} "
+                        f"not found in {target_file} (stamp at {rel}); the stored "
+                        f"line number was left as-is"
+                    )
+                    continue
                 if len(hits) > 1:
                     ambiguities += 1
                     report.append(
                         f"[validate.py] FAIL fix-line-numbers: ambiguous item_name "
-                        f"{name!r} matches lines {hits} in {target_file} "
+                        f"{_diag(name)!r} matches lines {hits} in {target_file} "
                         f"(stamp at {rel}); refusing to rewrite"
                     )
                     continue
@@ -1656,10 +1723,11 @@ def fix_line_numbers(nodes: list, snapshot: dict, id_index: dict, path_index: di
     if not quiet:
         report.append(
             f"[validate.py] fix-line-numbers: {updates_total} update(s), "
-            f"{ambiguities} ambiguous, {unresolvable_targets} unresolvable target(s); "
+            f"{ambiguities} ambiguous, {unresolvable_targets} unresolvable target(s), "
+            f"{missing_items} missing item(s); "
             f"mode={'WRITE' if write else 'DRY-RUN'}"
         )
-    return (updates_total, ambiguities, unresolvable_targets, report)
+    return (updates_total, ambiguities, unresolvable_targets, missing_items, report)
 
 
 def _commit_rewrites(repo_root: Path, pending: list) -> None:
@@ -2331,7 +2399,24 @@ def main() -> int:
                     "rewritten against whichever file the cache lists last. "
                     "Nothing was written. Offending: "
                     + "; ".join(f.detail for f in id_collisions))
-        _updates, ambig, _unres, report = fix_line_numbers(
+        # THE SAME REFUSAL, ON THE DERIVED KEY. `check_duplicate_id` above
+        # covers the frontmatter `id`; the `(directory, TODO-number)` resolver
+        # key is the OTHER identity a stamp can name, and a collision there
+        # makes the rewrite destination just as ambiguous -- `build_path_index`
+        # records it and `resolve_xref_target` then refuses EVERY spelling of
+        # that target, so repair would be asked to rewrite against a graph it
+        # cannot resolve. `cache_schema` already refuses such a cache at load,
+        # so this is defence in depth; it earns its place by making the refusal
+        # explicit at the one entry point that MUTATES the corpus rather than
+        # depending on a loader check to have run (section 29).
+        key_collisions = check_duplicate_resolver_key(nodes)
+        if key_collisions:
+            _refuse("cannot re-resolve line numbers while (directory, number) "
+                    "resolver keys collide -- every spelling of a colliding "
+                    "target is refused by the resolver, so a stamp naming one "
+                    "cannot be repaired. Nothing was written. Offending: "
+                    + "; ".join(f.detail for f in key_collisions))
+        _updates, ambig, unres, missing, report = fix_line_numbers(
             nodes, snapshot, id_index, path_index,
             repo_root, write=args.write, quiet=args.quiet,
         )
@@ -2352,10 +2437,23 @@ def main() -> int:
         # a refusal above exits 2 having said nothing about the corpus.
         for line in report:
             sys.stderr.write(line + "\n")
-        # Codex pass 7 H2: ambiguity is a hard failure. --write that refused
-        # to rewrite because of non-unique item-name match must exit non-zero
-        # so CI or hooks cannot silently treat a refused rewrite as success.
-        if ambig > 0:
+        # THE EXIT CONTRACT, STATED ONCE. Three outcomes, and repair mode uses
+        # all three:
+        #   rc 0 -- every stamp this run examined is now correct.
+        #   rc 1 -- the run RAN and is INCOMPLETE: at least one stamp was left
+        #           with a stale line number, because the item name was
+        #           ambiguous, its XREF target did not resolve, or the target
+        #           resolved without containing the item. Any rewrites that
+        #           WERE safe have been applied; this is a report, not a
+        #           rollback.
+        #   rc 2 -- the run REFUSED before touching anything (`_refuse` above):
+        #           colliding ids or resolver keys, or a corpus that moved
+        #           under the check. Nothing was written.
+        # Codex pass 7 H2 established rc 1 for ambiguity alone. Section 29
+        # widened it to the other two classes: exiting 0 over a stamp the run
+        # could not repair told every caller the corpus was clean when the
+        # stale line number it was asked to fix was still there.
+        if ambig > 0 or unres > 0 or missing > 0:
             return 1
         return 0
 

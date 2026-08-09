@@ -13948,6 +13948,340 @@ else
 fi
 
 # ----------------------------------------------------------------------
+# Section 29: repair mode fails VISIBLY on what it could not resolve
+#
+# Before this section `--fix-line-numbers` counted its unresolvable targets and
+# threw the count away (`main()` unpacked it as `_unres`), and a target that
+# resolved to a file NOT containing the named item was skipped in silence at
+# `len(hits) == 0`. Both left a stale line number behind and exited 0. Measured
+# on the live corpus while implementing: 50 unresolvable targets and 75 missing
+# items, none of which produced a single line of output under the `--quiet` the
+# sole caller uses.
+#
+# Every fixture below asserts the EXIT CODE, the DIAGNOSTIC, and that the stale
+# stamp was preserved rather than invented over -- a rc alone would pass on a
+# tool that repaired the wrong thing loudly.
+# ----------------------------------------------------------------------
+
+# s29_tree <root> <holder-stamp-block> [extra-file-basename] [extra-title]
+# Writes a two-file corpus: TODO-02-h.md carries the stamp(s) under test and
+# TODO-03-t.md is the target holding the item they name.
+s29_tree() {
+    local root="$1" stamps="$2"
+    rm -rf "$root"
+    mkdir -p "$root/todo/01-test"
+    s29_file "$root/todo/01-test/TODO-02-h.md" "fm-s29-h" "TODO-02 -- s29 stamp holder" "$stamps"
+    s29_file "$root/todo/01-test/TODO-03-t.md" "fm-s29-t" "TODO-03 -- s29 item holder" ""
+}
+
+# s29_file <path> <id> <title> <trailer>
+s29_file() {
+    local path="$1" fid="$2" title="$3" trailer="$4"
+    cat > "$path" <<S29FEOF
+---
+schema_version: 1
+id: $fid
+domain: 01-test
+status: active
+title: "$title"
+---
+# $title
+## Inputs
+| Path | Purpose |
+| ---- | ------- |
+| \`src/foo\` | example |
+## Outcome
+Body.
+## Implementation Order
+| ⭐ | Order | Section | Deliverable | Depends On | Status |
+| --- | --- | --- | --- | --- | --- |
+| 💎 | 1 | 1 | First | -- | [x] |
+## 1. First Section
+Body.
+- [ ] Wire the resolver
+- [x] Commit
+$trailer
+S29FEOF
+}
+
+# s29_run <root> [python-file] -- build the cache then repair; echoes the rc.
+s29_run() {
+    local root="$1" py="${2:-$VALIDATE_PY}"
+    timeout 60 python3 "$BUILD_PY" --quiet --root "$root/todo" \
+        --output "$root/cache.json" --repo-root "$root" >/dev/null 2>&1
+    timeout 60 python3 "$py" --cache "$root/cache.json" --repo-root "$root" \
+        --fix-line-numbers --write --quiet > "$root/out.txt" 2>&1
+    echo $?
+}
+
+# s29_run_dry <root> -- the same, in the DEFAULT dry-run mode (no --write).
+# The exit contract is a property of repair mode, not of --write, and every
+# fixture here used to pass --write (Codex test-coverage, section 29, [medium]).
+s29_run_dry() {
+    local root="$1"
+    timeout 60 python3 "$BUILD_PY" --quiet --root "$root/todo" \
+        --output "$root/cache.json" --repo-root "$root" >/dev/null 2>&1
+    timeout 60 python3 "$VALIDATE_PY" --cache "$root/cache.json" --repo-root "$root" \
+        --fix-line-numbers --quiet > "$root/dry.txt" 2>&1
+    echo $?
+}
+
+# Sub-test 29a: CONTROL -- a corpus with nothing wrong still exits 0. Without
+# this the rc-1 assertions below could all pass on a tool that returns 1
+# unconditionally.
+S29A="$TMP_DIR/s29-clean"
+s29_tree "$S29A" '> **Accepted:** ok -> XREF: TODO-03-t.md (item: "Wire the resolver" at line 999)'
+S29A_RC=$(s29_run "$S29A")
+S29A_LEFT=$(grep -c 'at line 999' "$S29A/todo/01-test/TODO-02-h.md")
+if [ "$S29A_RC" = "0" ] && [ "$S29A_LEFT" = "0" ]; then
+    t_pass "section 29: CONTROL a fully repairable corpus exits 0 and rewrites the stamp"
+else
+    t_fail "section 29: clean-corpus control rc=$S29A_RC stale_left=$S29A_LEFT (want 0/0)"
+fi
+
+# Sub-test 29b: an unresolvable XREF target exits 1, NAMES the target, and
+# leaves the stored line number alone.
+S29B="$TMP_DIR/s29-unresolvable"
+s29_tree "$S29B" '> **Accepted:** bad -> XREF: TODO-77-does-not-exist.md (item: "Wire the resolver" at line 999)'
+S29B_RC=$(s29_run "$S29B")
+S29B_LEFT=$(grep -c 'at line 999' "$S29B/todo/01-test/TODO-02-h.md")
+if [ "$S29B_RC" = "1" ] && grep -q "unresolvable XREF target" "$S29B/out.txt" \
+    && grep -q "TODO-77-does-not-exist" "$S29B/out.txt" && [ "$S29B_LEFT" = "1" ]; then
+    t_pass "section 29: an unresolvable target exits 1, names the target, and preserves the stale line"
+else
+    t_fail "section 29: unresolvable rc=$S29B_RC stale_left=$S29B_LEFT out=$(cat "$S29B/out.txt")"
+fi
+
+# Sub-test 29c: the target RESOLVES and does not contain the named item. This
+# is the second silent path (Codex design review, section 29, [high]): the file
+# was found, so the unresolvable counter never moved, and `len(hits) == 0` fell
+# through to `continue` without a word.
+S29C="$TMP_DIR/s29-missing-item"
+s29_tree "$S29C" '> **Accepted:** gone -> XREF: TODO-03-t.md (item: "Item that was renamed away" at line 999)'
+S29C_RC=$(s29_run "$S29C")
+S29C_LEFT=$(grep -c 'at line 999' "$S29C/todo/01-test/TODO-02-h.md")
+if [ "$S29C_RC" = "1" ] && grep -q "not found in" "$S29C/out.txt" \
+    && grep -q "Item that was renamed away" "$S29C/out.txt" && [ "$S29C_LEFT" = "1" ]; then
+    t_pass "section 29: a resolved target missing the named item exits 1 and names the item"
+else
+    t_fail "section 29: missing-item rc=$S29C_RC stale_left=$S29C_LEFT out=$(cat "$S29C/out.txt")"
+fi
+
+# Sub-test 29d: rc 1 is a REPORT, not a rollback. A corpus carrying one
+# repairable stamp and one unrepairable one must still apply the safe rewrite
+# AND still exit non-zero. A tool that rolled the good one back would also
+# "pass" an rc-only assertion.
+S29D="$TMP_DIR/s29-partial"
+s29_tree "$S29D" '> **Accepted:** good -> XREF: TODO-03-t.md (item: "Wire the resolver" at line 999)
+> **Accepted:** gone -> XREF: TODO-03-t.md (item: "Item that was renamed away" at line 888)'
+S29D_RC=$(s29_run "$S29D")
+S29D_GOOD=$(grep -c 'at line 999' "$S29D/todo/01-test/TODO-02-h.md")
+S29D_BAD=$(grep -c 'at line 888' "$S29D/todo/01-test/TODO-02-h.md")
+if [ "$S29D_RC" = "1" ] && [ "$S29D_GOOD" = "0" ] && [ "$S29D_BAD" = "1" ]; then
+    t_pass "section 29: a partial repair applies the safe rewrite and still exits 1"
+else
+    t_fail "section 29: partial rc=$S29D_RC good_rewritten=$S29D_GOOD bad_preserved=$S29D_BAD"
+fi
+
+# Sub-test 29e: a corpus whose (directory, number) resolver keys collide is
+# refused UP FRONT at rc 2, with nothing written -- and it is refused for all
+# FOUR spellings of the colliding target, so repair-mode safety cannot come to
+# depend on surface form again.
+#
+# MEASURED while implementing (all three states on this exact tree):
+#   pre-section-29     rc 0, ZERO lines of output, all 4 stamps left stale
+#   refusal reverted   rc 1 and four per-stamp `unresolvable` lines -- section
+#                      26's resolver already fails closed on every spelling, so
+#                      nothing is mis-rewritten; what is missing is the DIAGNOSIS
+#   as shipped         rc 2, one line naming the colliding pair, nothing written
+# That is why this refusal is worth its lines even though section 26 made the
+# corpus safe: it turns N confusing per-stamp errors into one true statement.
+# THE FIFTH STAMP IS LOAD-BEARING. With only the four colliding stamps, none is
+# repairable, so moving the refusal to AFTER fix_line_numbers() would produce
+# the same rc, the same message, the same hash and the same stale count -- the
+# fixture could not see the ordering its comment claims (Codex test-coverage,
+# section 29, [high]). The `safe` stamp below resolves cleanly to TODO-03, so it
+# WOULD be rewritten by a late-refusing build; asserting it is still stale at
+# rc 2 is what pins "refused before touching anything".
+S29E="$TMP_DIR/s29-collision"
+rm -rf "$S29E"; mkdir -p "$S29E/todo/01-test"
+s29_file "$S29E/todo/01-test/TODO-01-a.md" "fm-s29-a" "TODO-01 -- s29 collide a" ""
+s29_file "$S29E/todo/01-test/TODO-01-dup.md" "fm-s29-d" "TODO-01 -- s29 collide dup" ""
+s29_file "$S29E/todo/01-test/TODO-03-t.md" "fm-s29-et" "TODO-03 -- s29 item holder" ""
+s29_file "$S29E/todo/01-test/TODO-02-h.md" "fm-s29-eh" "TODO-02 -- s29 collision holder" \
+'> **Accepted:** q -> XREF: [`TODO-01`](01-test/TODO-01-a.md) (item: "Wire the resolver" at line 999)
+> **Accepted:** b -> XREF: TODO-01 (item: "Wire the resolver" at line 999)
+> **Accepted:** r -> XREF: TODO-01-a.md (item: "Wire the resolver" at line 999)
+> **Accepted:** f -> XREF: todo/01-test/TODO-01-a.md (item: "Wire the resolver" at line 999)
+> **Accepted:** safe -> XREF: TODO-03-t.md (item: "Wire the resolver" at line 777)'
+# Hash the WHOLE tree, not just the holder: a late refusal could touch any file.
+S29E_BEFORE=$(find "$S29E/todo" -type f -name '*.md' | sort | xargs md5sum | md5sum | cut -d' ' -f1)
+S29E_RC=$(s29_run "$S29E")
+S29E_AFTER=$(find "$S29E/todo" -type f -name '*.md' | sort | xargs md5sum | md5sum | cut -d' ' -f1)
+S29E_LEFT=$(grep -c 'at line 999' "$S29E/todo/01-test/TODO-02-h.md")
+S29E_SAFE=$(grep -c 'at line 777' "$S29E/todo/01-test/TODO-02-h.md")
+if [ "$S29E_RC" = "2" ] && grep -q "resolver keys collide" "$S29E/out.txt" \
+    && [ "$S29E_BEFORE" = "$S29E_AFTER" ] && [ "$S29E_LEFT" = "4" ] \
+    && [ "$S29E_SAFE" = "1" ]; then
+    t_pass "section 29: a resolver-key collision refuses up front at rc 2 across all four target spellings, leaving even an independently repairable stamp untouched"
+else
+    t_fail "section 29: collision rc=$S29E_RC unchanged=$([ "$S29E_BEFORE" = "$S29E_AFTER" ] && echo yes || echo no) spellings_left=$S29E_LEFT safe_untouched=$S29E_SAFE out=$(cat "$S29E/out.txt")"
+fi
+
+# Sub-test 29e2: ORDERING MUTATION -- move the collision refusal to AFTER
+# fix_line_numbers() and the `safe` stamp above must get rewritten. This is the
+# control that makes 29e's ordering claim falsifiable; without it the refusal
+# could sit anywhere before the return and nothing would notice.
+S29G="$TMP_DIR/s29-order-mutation"
+mkdir -p "$S29G"
+python3 - "$VALIDATE_PY" "$S29G/validate_late.py" <<'S29GEOF'
+import sys
+src = open(sys.argv[1], encoding="utf-8").read()
+call = "        key_collisions = check_duplicate_resolver_key(nodes)\n"
+guard = """        if key_collisions:
+            _refuse("cannot re-resolve line numbers while (directory, number) "
+"""
+# Delete the up-front call+refusal and re-insert it AFTER the repair call.
+start = src.index(call)
+end = src.index("        _updates, ambig, unres, missing, report = fix_line_numbers(", start)
+block = src[start:end]
+assert guard in block, "collision guard not found in the expected block"
+rest = src[end:]
+anchor = rest.index("\n", rest.index("        )\n")) + 1
+open(sys.argv[2], "w", encoding="utf-8").write(
+    src[:start] + rest[:anchor] + block + rest[anchor:]
+)
+print("LATE-MUTATION-APPLIED")
+S29GEOF
+cp "$REPO_ROOT/scripts/todo-graph/cache_schema.py" "$S29G/cache_schema.py"
+if [ ! -f "$S29G/validate_late.py" ]; then
+    t_fail "section 29: ordering mutation could not be built -- the refusal block moved, update this fixture"
+else
+    S29G_TREE="$TMP_DIR/s29-order-tree"
+    rm -rf "$S29G_TREE"; mkdir -p "$S29G_TREE/todo/01-test"
+    cp "$S29E/todo/01-test/"*.md "$S29G_TREE/todo/01-test/"
+    S29G_RC=$(s29_run "$S29G_TREE" "$S29G/validate_late.py")
+    S29G_SAFE=$(grep -c 'at line 777' "$S29G_TREE/todo/01-test/TODO-02-h.md")
+    if [ "$S29G_SAFE" = "0" ]; then
+        t_pass "section 29: ORDERING MUTATION refusing after the repair rewrites the safe stamp, which 29e forbids"
+    else
+        t_fail "section 29: ordering mutation left the safe stamp stale (rc=$S29G_RC safe_left=$S29G_SAFE) -- 29e cannot detect a late refusal"
+    fi
+fi
+
+# Sub-test 29f: MUTATION -- revert the up-front refusal and the same corpus must
+# stop refusing. Pinned to rc 1 (not merely "not 2"): section 26's resolver
+# still fails closed, so the mutant degrades to per-stamp reports rather than to
+# a wrong rewrite, and asserting that keeps the two layers honestly separated.
+S29F="$TMP_DIR/s29-mutation"
+mkdir -p "$S29F"
+sed 's/^        key_collisions = check_duplicate_resolver_key(nodes)$/        key_collisions = []  # MUTATION/' \
+    "$VALIDATE_PY" > "$S29F/validate_mut.py"
+cp "$REPO_ROOT/scripts/todo-graph/cache_schema.py" "$S29F/cache_schema.py"
+if ! grep -q "# MUTATION" "$S29F/validate_mut.py"; then
+    t_fail "section 29: mutation could not be applied -- the refusal line moved, update this fixture"
+else
+    S29F_TREE="$TMP_DIR/s29-mutation-tree"
+    rm -rf "$S29F_TREE"; mkdir -p "$S29F_TREE/todo/01-test"
+    cp "$S29E/todo/01-test/"*.md "$S29F_TREE/todo/01-test/"
+    S29F_RC=$(s29_run "$S29F_TREE" "$S29F/validate_mut.py")
+    S29F_UNRES=$(grep -c "unresolvable XREF target" "$S29F_TREE/out.txt")
+    if [ "$S29F_RC" = "1" ] && [ "$S29F_UNRES" = "4" ] \
+        && ! grep -q "resolver keys collide" "$S29F_TREE/out.txt"; then
+        t_pass "section 29: MUTATION reverting the refusal drops rc 2 to four per-stamp rc-1 reports"
+    else
+        t_fail "section 29: mutation rc=$S29F_RC unresolvable_lines=$S29F_UNRES (want 1/4)"
+    fi
+fi
+
+# Sub-test 29h: the exit contract holds in DEFAULT DRY-RUN mode too, and a dry
+# run still touches nothing. rc is a statement about the CORPUS, not about
+# whether this particular invocation was allowed to write.
+S29H_OK=1
+S29H_DETAIL=""
+for S29H_CASE in "clean:0" "unresolvable:1" "missing:1"; do
+    S29H_NAME="${S29H_CASE%%:*}"; S29H_WANT="${S29H_CASE##*:}"
+    S29H="$TMP_DIR/s29-dry-$S29H_NAME"
+    case "$S29H_NAME" in
+        clean) s29_tree "$S29H" '> **Accepted:** ok -> XREF: TODO-03-t.md (item: "Wire the resolver" at line 999)' ;;
+        unresolvable) s29_tree "$S29H" '> **Accepted:** bad -> XREF: TODO-77-does-not-exist.md (item: "Wire the resolver" at line 999)' ;;
+        missing) s29_tree "$S29H" '> **Accepted:** gone -> XREF: TODO-03-t.md (item: "Item that was renamed away" at line 999)' ;;
+    esac
+    S29H_HASH_BEFORE=$(md5sum "$S29H/todo/01-test/TODO-02-h.md" | cut -d' ' -f1)
+    S29H_RC=$(s29_run_dry "$S29H")
+    S29H_HASH_AFTER=$(md5sum "$S29H/todo/01-test/TODO-02-h.md" | cut -d' ' -f1)
+    if [ "$S29H_RC" != "$S29H_WANT" ]; then
+        S29H_OK=0; S29H_DETAIL="$S29H_DETAIL $S29H_NAME(rc=$S29H_RC want=$S29H_WANT)"
+    fi
+    if [ "$S29H_HASH_BEFORE" != "$S29H_HASH_AFTER" ]; then
+        S29H_OK=0; S29H_DETAIL="$S29H_DETAIL $S29H_NAME(MUTATED-IN-DRY-RUN)"
+    fi
+done
+if [ "$S29H_OK" = "1" ]; then
+    t_pass "section 29: the rc 0/1 contract holds in default dry-run mode, and dry-run writes nothing"
+else
+    t_fail "section 29: dry-run contract broken --$S29H_DETAIL"
+fi
+
+# Sub-test 29i: ambiguity -- the THIRD incomplete-repair class -- must also
+# reach the --quiet caller as a per-instance line naming the item, the target
+# file, the stamp and the matching lines. The pre-existing fixture 8g greps for
+# `ambiguous item_name`, which the AGGREGATE line ("N ambiguous item_name(s)
+# refused") also contains, so deleting the per-instance append left 8g green
+# (Codex test-coverage, section 29, [medium]). This asserts the parts only the
+# per-instance line carries.
+S29I="$TMP_DIR/s29-ambiguous"
+rm -rf "$S29I"; mkdir -p "$S29I/todo/01-test"
+s29_file "$S29I/todo/01-test/TODO-03-t.md" "fm-s29-it" "TODO-03 -- s29 ambiguous target" \
+'- [ ] Wire the resolver'
+s29_file "$S29I/todo/01-test/TODO-02-h.md" "fm-s29-ih" "TODO-02 -- s29 ambiguity holder" \
+'> **Accepted:** amb -> XREF: TODO-03-t.md (item: "Wire the resolver" at line 999)'
+S29I_RC=$(s29_run "$S29I")
+S29I_LINE=$(grep "FAIL fix-line-numbers: ambiguous item_name" "$S29I/out.txt" | head -1)
+S29I_LEFT=$(grep -c 'at line 999' "$S29I/todo/01-test/TODO-02-h.md")
+if [ "$S29I_RC" = "1" ] && [ -n "$S29I_LINE" ] \
+    && echo "$S29I_LINE" | grep -q "Wire the resolver" \
+    && echo "$S29I_LINE" | grep -q "TODO-03-t.md" \
+    && echo "$S29I_LINE" | grep -q "TODO-02-h.md" \
+    && echo "$S29I_LINE" | grep -qE "matches lines \[[0-9]+, [0-9]+" \
+    && [ "$S29I_LEFT" = "1" ]; then
+    t_pass "section 29: ambiguity reaches the quiet caller naming item, target, stamp and every matching line"
+else
+    t_fail "section 29: quiet ambiguity rc=$S29I_RC stale_left=$S29I_LEFT line='$S29I_LINE'"
+fi
+
+# Sub-test 29j: MUTATION for 29i -- delete the per-instance ambiguity append and
+# 29i's assertions must stop holding, proving they test the line and not the
+# aggregate.
+S29J="$TMP_DIR/s29-amb-mutation"
+mkdir -p "$S29J"
+python3 - "$VALIDATE_PY" "$S29J/validate_noamb.py" <<'S29JEOF'
+import re, sys
+src = open(sys.argv[1], encoding="utf-8").read()
+pat = re.compile(
+    r"                    report\.append\(\n"
+    r"                        f\"\[validate\.py\] FAIL fix-line-numbers: ambiguous item_name \"\n"
+    r".*?\n                    \)\n", re.S)
+out, n = pat.subn("", src, count=1)
+assert n == 1, "ambiguity per-instance append not found"
+open(sys.argv[2], "w", encoding="utf-8").write(out)
+S29JEOF
+cp "$REPO_ROOT/scripts/todo-graph/cache_schema.py" "$S29J/cache_schema.py"
+if [ ! -f "$S29J/validate_noamb.py" ]; then
+    t_fail "section 29: ambiguity mutation could not be built -- the append moved, update this fixture"
+else
+    S29J_TREE="$TMP_DIR/s29-amb-mut-tree"
+    rm -rf "$S29J_TREE"; mkdir -p "$S29J_TREE/todo/01-test"
+    cp "$S29I/todo/01-test/"*.md "$S29J_TREE/todo/01-test/"
+    S29J_RC=$(s29_run "$S29J_TREE" "$S29J/validate_noamb.py")
+    if ! grep -q "FAIL fix-line-numbers: ambiguous item_name" "$S29J_TREE/out.txt"; then
+        t_pass "section 29: MUTATION deleting the per-instance ambiguity line is caught by 29i"
+    else
+        t_fail "section 29: ambiguity mutation still emitted the per-instance line (rc=$S29J_RC)"
+    fi
+fi
+
+# ----------------------------------------------------------------------
 # Summary
 # ----------------------------------------------------------------------
 TOTAL=$((PASS + FAIL))

@@ -77,11 +77,12 @@ title: "TODO-06 -- TODO Metadata Layer and Derived Graph"
 | ⭐  |  26   |   §26   | Domain codes resolve by directory, not by cache order (found by §22 round 7)        | §3, §22    |  [x]   |
 | ⭐  |  27   |   §27   | Effective-history identity: replace refs and grafts (split from the §24 residue)    | §21, §24   |  [x]   |
 | ⭐  |  28   |   §28   | Section-level readiness: verbs that consult the dependency evidence the graph has   | §25, §26   |  [x]   |
-| ⭐  |  29   |   §29   | `--fix-line-numbers` reports success over targets it could not resolve              | §23, §26   |  [ ]   |
+| ⭐  |  29   |   §29   | `--fix-line-numbers` reports success over targets it could not resolve              | §23, §26   |  [x]   |
 | ⭐  |  30   |   §30   | `--watch` never ticks on a history change for the history-consuming verbs (§27)     | §24, §27   |  [ ]   |
 | ⭐  |  31   |   §31   | An equal-count shallow boundary still moves `created_at` under an unchanged id      | §21, §27   |  [ ]   |
 | ⭐  |  32   |   §32   | In-file `](#anchor)` links are checked by nothing (split from §29)                  | §3         |  [ ]   |
 | ⭐  |  33   |   §33   | Stamp-target capture splits a link whose label contains a space (split from §29)    | §2, §26    |  [ ]   |
+| ⭐  |  34   |   §34   | The performance budget times itself on a clock that steps (found verifying §29)     | §2         |  [ ]   |
 
 > 💎 = parity work -- Linux kernel has MAINTAINERS + get_maintainer.pl (person-ownership mapping without a dep graph); Windows has no public equivalent. §1 (frontmatter), §2 (generator), §5 (migration) bring us to partial Linux parity plus graph metadata neither OS ships.
 > ⭐ = competitive edge -- neither Win11 nor mainline Linux ships a first-class TODO dependency graph. §3 (validator), §4 (query CLI), §6 (CI gate), §7 (visualization), §8 (MCP server) are new ground; the surface has direct value for any contributor scanning "what can I work on next?".
@@ -1479,24 +1480,44 @@ The reason this is NOT a small change, and why §25 refused to make it: the two 
 
 Found by §26's round-6 review while that section was tightening the resolver. Two properties of repair mode are independent of the resolver and were not introduced by §26, so they are filed here rather than folded into it: the repair counts unresolvable targets and then discards the count, and it will operate on a graph whose resolver keys collide. Both are pre-existing; §26 only made them legible by making the resolver refuse rather than guess.
 
-- [ ] `main()` must not exit 0 when `fix_line_numbers` reported unresolvable targets
-      `fix_line_numbers` returns `(updates, ambiguities, unresolvable, report)` (`scripts/todo-graph/validate.py:1358`) and its caller drops the third value, so a run that resolved NOTHING still exits 0 and the automatic repair hook records success while every stale line number survives.
-      - Reproduced during §26: with the resolver refusing a malformed token, the probe printed `1 unresolvable target(s)` and `rc=0` in the same breath.
-      - Decide the contract first: an unresolvable target is arguably a WARNING when the operator asked only to fix what it could. State the chosen rule where a reader will find it, then make the exit code match it.
-- [ ] Repair mode must refuse a corpus whose `(directory, number)` slots collide
-      `--fix-line-numbers` checks duplicate IDs only. A colliding slot makes a rewrite destination ambiguous, and the resolver now refuses every spelling of such a target -- so repair can be asked to rewrite against a graph it cannot resolve.
-      - `check_duplicate_resolver_key(nodes)` already computes exactly this; the work is calling it up front and choosing the exit code.
-      - `cache_schema` refuses such a cache at load, so this is defence in depth rather than a live hole -- size the work accordingly.
-- [ ] One repair-mode fixture per spelling, against the same collision
-      Qualified, bare-spelled, relative-spelled and full-path forms of one target, so a future change cannot make repair-mode safety depend on surface form again. Mutation: revert the up-front refusal and require the fixture to fail.
-- [ ] Commit: `"todo-graph: repair mode fails visibly on targets it cannot resolve"`
+Implementation found a THIRD case of the same defect and corrected one premise. The third: a target that resolves to a real file which does not contain the named item was skipped in silence, so fixing only the unresolvable branch would have left this section's title true. The premise: the collision case was filed as defence in depth because `cache_schema` was believed to refuse such a cache at load -- it does not, for `validate.py`'s profile. §26's resolver is what makes it safe; this section makes it legible.
+
+- [x] The exit contract is stated once, and three incomplete-repair classes now reach it
+      CONTRACT CHOSEN: rc 0 = every stamp examined is correct; rc 1 = the run RAN and is INCOMPLETE (safe rewrites still applied -- a report, not a rollback); rc 2 = REFUSED before touching anything. Recorded in the CLI header block of [`validate.py`](../../scripts/todo-graph/validate.py) where `--fix-line-numbers` is documented, and again at the `return` site.
+      - `main()` dropped the count as `_unres`; it now unpacks `unres` and `missing` and returns 1 when `ambig + unres + missing > 0`. WARNING was rejected as the contract: the operator asked for stamp line numbers to be made true, and a stale one that survives means the run did not do that.
+      - A SECOND silent path was found by the design review and fixed with it: a target that RESOLVED but did not contain the named item hit `len(hits) == 0` and `continue`d without counter or message, so fixing only the unresolvable branch would have left the section's own title true. Counted separately as `missing_items`.
+      - Each unrepaired stamp is now NAMED on its own unconditional FAIL line, not merely counted. The count reached only the summary, which is gated on `not quiet` -- and the sole caller runs `--quiet`, so the whole class produced zero output. MEASURED on the live corpus: 50 unresolvable targets and 75 missing items, previously invisible; 528 diagnostic lines now emitted under `--quiet` where 403 (ambiguity alone) were before.
+      - Corpus-derived text in all three diagnostics is bounded by `_diag()` (120 chars, newlines escaped). The target is parsed as `\S+` off a line with no ceiling below the 16 MiB file cap, and every clause copies it into the buffered report.
+- [x] Repair mode refuses a corpus whose `(directory, number)` slots collide, at rc 2 before any write
+      `check_duplicate_resolver_key(nodes)` is called up front beside the existing duplicate-`id` refusal, and `_refuse` names the colliding pair.
+      - The filed premise "cache_schema refuses such a cache at load, so this is defence in depth" was DISPROVEN while implementing: `build.py` builds the cache and `validate.py`'s own profile loads it happily (`check_duplicate_resolver_key`'s docstring says as much -- only `query.py` and MCP refuse outright). The real safety layer is §26's resolver, which fails closed on every spelling.
+      - So the value here is DIAGNOSIS, measured on one tree: pre-§29 rc 0 with zero output and 4 stale stamps; with the refusal reverted rc 1 and four per-stamp `unresolvable` lines; as shipped rc 2 and one line naming the collision.
+- [x] One repair-mode fixture per spelling, against the same collision, plus the classes and controls the review demanded
+      Ten fixtures at the end of [`test_build.sh`](../../scripts/todo-graph/tests/test_build.sh) (`Section 29`): clean-corpus control (rc 0), unresolvable, missing-item, partial-repair-still-exits-1, the four-spelling collision, dry-run rc contract, and quiet-mode ambiguity naming item/target/stamp/hit-lines.
+      - THREE mutation controls, all verified to fire: reverting the refusal (rc 2 -> four rc-1 reports), MOVING the refusal after `fix_line_numbers` (rewrites a stamp that must stay stale), and deleting the per-instance ambiguity line.
+      - The collision fixture carries a fifth, independently repairable stamp. Without it every stamp was unrepairable anyway, so a late-refusing build produced an identical rc, message, hash and stale count -- the fixture could not see the ordering it documents (Codex test-coverage, [high]).
+- [/] The auto-rewrite hook still swallows the two new failure classes -- operator-gated
+      [`.claude/hooks/todo_graph_auto_rewrite.py:61`](../../.claude/hooks/todo_graph_auto_rewrite.py) emits its systemMessage only when `returncode == 1 AND "ambiguous" in combined`, then returns 0 regardless, so an unresolvable-or-missing-only run stays silent for the one caller that runs automatically. Raised by BOTH the design and adversarial reviews.
+      - BLOCKER: `.claude/hooks/**` is control plane, which an unattended run may not edit; only an attended session can land it. Owned by §6, which created the hook, but §6 is stamped -- so it is parked here rather than appended there.
+      - The fix is small and known: surface every non-zero result, with distinct messages for rc 1 (incomplete) and rc 2 (refused), update the exit-contract comment at line 61 and the `.claude/hooks/MANIFEST.md` row, and add an end-to-end fixture per class.
+- [x] Commit: `"todo-graph: repair mode fails visibly on targets it cannot resolve"`
 
 **Test checkpoint:** a repair run over a corpus with one unresolvable target exits non-zero (or warns, per the recorded contract) instead of 0; a repair run over a resolver-key-colliding corpus refuses up front; `bash scripts/todo-graph/tests/test_build.sh` green.
+
+> **Test runner:** `bash scripts/todo-graph/tests/test_build.sh` -- 512/512 pass, of which 10 are this section's (`Section 29`, including three mutation controls).
+
+> **Notes:**
+> - Shipped: repair mode names every stamp it could not repair, counts a third class (`missing_items`), exits 1 on any of the three, and refuses at rc 2 on a resolver-key collision.
+> - Runs through `main()`'s single call site (`fix_line_numbers` now returns a 5-tuple) and the existing `_refuse` path; no gate or CI job invokes repair mode.
+> - Downstream: 125 previously-silent live failures (50 unresolvable, 75 missing) now emit diagnostics -- but only to a caller that reads them; the auto-rewrite hook still discards them.
+> - Canonical doc: the exit contract sits in `validate.py`'s CLI header beside `--fix-line-numbers`, restated at the return site.
+> - Scope boundary: exit contract and collision refusal only; §32 and §33 were split out before implementation, and the hook fix is control plane.
 
 -> XREF: [`TODO-06 §26`](#26-domain-code-resolution-picks-a-directory-by-cache-order) -- the section whose review found this (item: "Commit: `\"todo-graph: domain codes resolve by directory, not by cache order\"`"); it fixed the RESOLVER and deliberately left repair-mode's exit contract alone, because that is a decision about what `--fix-line-numbers` promises rather than about what a reference means.
 -> XREF: [`TODO-06 §23`](#23-validatepy-rebuild-recovery-and-the-baseline-cache) -- the section that owns `validate.py`'s recovery and repair surface (item: "Commit: `\"todo-graph: validate.py rebuild recovery + baseline cache\"`"); it is stamped, so this residue is owned here rather than appended to it.
 -> XREF: [`TODO-06 §32`](#32-in-file-anchor-links-are-checked-by-nothing) -- split out of this section before implementation (item: "Commit: `\"todo-graph: in-file anchor links validated against the file's own headings\"`"); it is a per-file check that needs no cache, no resolver and no repair mode, so it shares nothing with this section but the review that found it.
 -> XREF: [`TODO-06 §33`](#33-stamp-target-capture-splits-a-link-whose-label-contains-a-space) -- split out of this section before implementation (item: "Commit: `\"todo-graph: stamp-target capture takes a whole markdown link\"`"); it is a PRODUCER-side extraction fix with corpus-wide blast radius, where this section is a consumer-side exit-contract decision.
+-> XREF: [`TODO-06 §6`](#6-ci-gate-and-make-target) -- the section that created the auto-rewrite hook parked above (item: "Commit: `\"ci/todo-graph: gate todo/ commits on graph validation (with diff + auto-rewrite)\"`"); it is stamped, so the hook's exit-code handling is parked here as operator-gated rather than appended there.
 
 ---
 
@@ -1605,6 +1626,26 @@ Found 2026-08-09 by §27's consistency review, which caught a dead `](#22-...)` 
 
 ---
 
+## 34. The Performance Budget Times Itself on a Clock That Steps
+
+Observed twice on 2026-08-09 while verifying §29, and reproduced deliberately: `[FAIL] build timing invalid (-822ms) -- clock stepped mid-measurement; re-run`, once inside the full `test-tooling.sh` run and once in 1 of 3 back-to-back direct runs. The sub-test is Test 7 in [`test_build.sh`](../../scripts/todo-graph/tests/test_build.sh), which brackets the build with `date +%s%N` -- CLOCK_REALTIME, which WSL2 resyncs after a suspend or under load.
+
+The negative-reading refusal at `test_build.sh:7618` is CORRECT and must stay: it was added on 2026-08-06 because a naive `-lt 2000` banked a stepped clock as a pass, and "a budget that cannot fail is not a budget". The defect is the SOURCE, not the guard -- a monotonic clock cannot go backwards, so the refusal would stop firing spuriously while still catching a genuinely over-budget build.
+
+- [ ] Time Test 7 from a monotonic source instead of `date +%s%N`
+      `python3 -c 'import time; print(time.monotonic_ns())'` is already a dependency of this suite; bash has no builtin monotonic clock, so a tiny python call is the cheapest correct source.
+      - Keep the `<= 0` refusal exactly as it is. It becomes unreachable in practice rather than removed, which is the point: if it ever fires again the measurement really is broken.
+      - Check whether any OTHER timing assertion in this suite or in `scripts/test-tooling.sh` brackets with `date +%s%N`; the same step hits all of them, and fixing one is what makes the rest look reliable.
+- [ ] Retire the live-gotcha entry once the source is monotonic
+      `.claude/state/live-gotchas.md` carries a 2026-08-09 "re-run before diagnosing" entry for this exact message. It is correct advice today and becomes misleading the moment the clock source changes; the entry is operator-owned, so this item is a reminder to ASK for its removal, not a licence to edit it.
+- [ ] Commit: `"todo-graph: time the build budget on a monotonic clock"`
+
+**Test checkpoint:** Test 7 reports a positive elapsed time across 10 consecutive runs of `bash scripts/todo-graph/tests/test_build.sh`; an artificially over-budget build still fails the 2s assertion; `bash scripts/test-tooling.sh` green.
+
+-> XREF: [`TODO-06 §29`](#29---fix-line-numbers-reports-success-over-targets-it-could-not-resolve) -- the section whose verification surfaced this (item: "Commit: `\"todo-graph: repair mode fails visibly on targets it cannot resolve\"`"); the flake is unrelated to repair mode and was filed rather than folded in, so it would not ship un-reviewed under that section's stamps.
+
+---
+
 ## OS Comparison
 
 | ⭐  | Feature                                                       | 🪟 Win11                | 🐧 Linux                            | 🚀 Impossible OS                                                                 |
@@ -1640,6 +1681,7 @@ Found 2026-08-09 by §27's consistency review, which caught a dead `](#22-...)` 
 | 💎  | The PRODUCER may not certify a cache it invalidated           | ❌ None                 | ❌ None                             | ✅ §21 CONSUMED bytes re-fingerprinted before any write; rc 3 keeps the cache    |
 | 💎  | Cache freshness decided by content, never a clock             | ❌ Timestamp compare    | ❌ mtime / checksum stamps          | ✅ §21 digest-named binding + git-history id; a stepped clock cannot invert it   |
 | ⭐  | Freshness cost charged per COMMAND, not per tool              | ❌ None                 | ❌ Whole-index rebuild either way   | ✅ §24 the 3 verbs reading git timestamps pay 47.9ms; the other 10 pay nothing   |
+| 💎  | An auto-repair NAMES what it could not repair                 | ❌ None                 | ❌ Silent no-op or whole-file fail  | ✅ §29 rc 0/1/2 contract; 125 live failures were counted, never printed          |
 | 💎  | A partial index REFUSES rather than answering thin            | ❌ Silent partial       | ⚠️ ctags/cscope answer from stale   | ✅ §22 rc 2 + machine-readable body; no verb answers from surviving rows         |
 | 💎  | The agent transport cannot flatten a refusal to `[]`          | ❌ Closed               | ❌ None                             | ✅ §22 MCP returns a structured error; a real empty result stays distinguishable |
 | 💎  | A bad REQUEST and an untrustworthy cache differ               | ❌ One error code       | ❌ Conflated                        | ✅ §22 rc 4 vs rc 2, own body each; stale generation outranks a bad request      |
