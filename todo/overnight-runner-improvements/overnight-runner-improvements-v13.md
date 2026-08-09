@@ -124,6 +124,22 @@ Nothing is carried. Every item filed against v12 and every item this close-out o
       - The failure mode is worth naming: when a repo already OWNS a definition of a concept, restating it in new code feels like implementation and is actually a fork. The memory note "reuse the tool's own machinery, never reimplement its rule" was written about measurement probes; it applies to shipped logic identically.
       - Cheap prophylactic before writing any predicate over repo state: grep for an existing function that already decides it. Here the answer was at `.claude/hooks/sequencer_triage.py:194`, importable with no circular-import risk (its only heavy import is function-local).
 
+## Filed by the attended session, 2026-08-09
+
+Both are gates scoped to the TREE rather than to who did the work, which is the same shape as the `todo/`-corpus wedge carried from v11 and fixed for lint Checks 7/17/24 in `dddd811a7`. A shared working tree means "what is true of the repo" and "what is true of this session" have to be different questions.
+
+- [ ] `section_review_required.py` blocks the ATTENDED session for a section the RUN shipped
+      Observed live 2026-08-09 ~15:40, mid attended repair: the run committed a section ship, and the next operator Bash call was refused with `[review-todo-section REQUIRED -- post-ship gate] HEAD commit (todo-graph: --watch ticks when the history moves, not only t) stamps a TODO section [x] but does NOT carry the **Verified:** stamps`. The operator had shipped nothing.
+      - Mechanism CONFIRMED at source, not inferred: the gate reads `git show HEAD -- todo/` (`.claude/hooks/section_review_required.py:138`) and decides from the commit alone. It contains **0** references to `OVERNIGHT_SEQUENCER_RUN`, against 2 in `build_offload_reminder.py`, which was session-scoped on 2026-07-28 for exactly this class after an operator's read-only grep was blocked by a gate meant for the run.
+      - Cost is bounded but sharp: the attended session loses Edit/Write and non-script Bash until it either runs a review it has no business running, or opts out with `SKIP_REVIEW_HOOK=1` -- and blanket-prefixing that variable is itself a known hazard, since it inherits into pre-push and poisons the gate suites.
+      - The fix is NOT to weaken it: it must keep firing for whoever actually shipped. The discriminator already exists -- exempt only when a run is ACTIVE (`sequencer-run.json` active, phase SECTIONS) AND this session is not it. That is precisely the collision case and nothing wider; an operator who ships a section themselves is still gated.
+- [ ] Two control-plane tests fail whenever the run edits `todo/` under them, so the suite cannot be trusted mid-run
+      `test_reachability_gate.py` and `test_stub_lint_coverage.py` fail while the run is working a TODO, blocking any attended control-plane commit. Their own error names the cause: `the TODO corpus changed during the walk (1 file(s), e.g. 00-infrastructure/TODO-06-...)`.
+      - This is NOT the cache-absence case fixed in `5a399ce12` -- the cache exists and is fresh; the corpus moves DURING the test's own walk, so rebuilding first cannot win the race.
+      - Evidence discipline that settled it, worth reusing: neither test references any file in the attended change set (they drive `todo-reachability.py`, `check_stub_behind_stamp.py`, `lint.sh`, `run_phase_guard.py`), and both PASS with the same code in the tree moments after failing. Same code, different corpus state, different result -- so the variable is the corpus, proven rather than asserted, and no `SKIP_RUNNER_SUITE` was needed.
+      - Cost when it bites: an attended control-plane commit is refused by the pre-commit runner-suite gate for a reason unrelated to its diff, and the obvious escape (`SKIP_RUNNER_SUITE=1`) is dishonest for a commit that genuinely does touch the control plane.
+      - Candidate fix, undecided: have those two tests snapshot the corpus (or run against a `git clone --local`) rather than the live tree, so they measure the tool and not the weather.
+
 ## What shipped in the 2026-08-08 close-out, and is therefore under test
 
 New machinery, all of it control plane. If something in this list misbehaves, that is a REGRESSION and the highest-value thing this run can report.
