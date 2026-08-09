@@ -75,9 +75,10 @@ title: "TODO-06 -- TODO Metadata Layer and Derived Graph"
 | ⭐  |  24   |   §24   | The history-identity cost decision: `requires_history` for the query profile        | §21, §22   |  [x]   |
 | ⭐  |  25   |   §25   | Fields the readers consume that the producer never emits (`effort`, `depends_on`)   | §2, §7     |  [x]   |
 | ⭐  |  26   |   §26   | Domain codes resolve by directory, not by cache order (found by §22 round 7)        | §3, §22    |  [x]   |
-| ⭐  |  27   |   §27   | Effective-history identity: replace refs, grafts, watch-mode trigger (from §24)     | §21, §24   |  [ ]   |
+| ⭐  |  27   |   §27   | Effective-history identity: replace refs and grafts (split from the §24 residue)    | §21, §24   |  [ ]   |
 | ⭐  |  28   |   §28   | Section-level readiness: verbs that consult the dependency evidence the graph has   | §25, §26   |  [ ]   |
 | ⭐  |  29   |   §29   | `--fix-line-numbers` reports success over targets it could not resolve              | §23, §26   |  [ ]   |
+| ⭐  |  30   |   §30   | `--watch` never ticks on a history change for the history-consuming verbs (§27)     | §24, §27   |  [ ]   |
 
 > 💎 = parity work -- Linux kernel has MAINTAINERS + get_maintainer.pl (person-ownership mapping without a dep graph); Windows has no public equivalent. §1 (frontmatter), §2 (generator), §5 (migration) bring us to partial Linux parity plus graph metadata neither OS ships.
 > ⭐ = competitive edge -- neither Win11 nor mainline Linux ships a first-class TODO dependency graph. §3 (validator), §4 (query CLI), §6 (CI gate), §7 (visualization), §8 (MCP server) are new ground; the surface has direct value for any contributor scanning "what can I work on next?".
@@ -1362,11 +1363,13 @@ Found on 2026-08-07 by §22's round-7 review, in the one `resolve_xref_target` b
 
 ---
 
-## 27. Effective-History Identity: Replace Refs, Grafts, and Watch-Mode Triggering
+## 27. Effective-History Identity: Replace Refs and Grafts
 
 > **Spawned-by:** §24 (review)
 
-Found by §24's reviews on 2026-08-08, while §24 was pinning what the query profile's identity is derived from. §24 measured the identity's COST, pinned its consumers and enabled the axis for the three commands that read git-derived timestamps; this section carries the two gaps §24 proved remain on that same axis -- what the identity cannot see, and where the enabled check never gets a chance to run. Filed separately because §21 owns `corpus_history_id` and is stamped, and because both repairs are their own machinery rather than the profile wiring §24 changed.
+Found by §24's reviews on 2026-08-08, while §24 was pinning what the query profile's identity is derived from. §24 measured the identity's COST, pinned its consumers and enabled the axis for the three commands that read git-derived timestamps; this section carries what the identity cannot SEE on that same axis. Filed separately because §21 owns `corpus_history_id` and is stamped, and because the repair is its own machinery rather than the profile wiring §24 changed.
+
+**Split 2026-08-09, before implementation.** §24's residue named two gaps on the history axis and the section-manifest complexity predictor flagged the pair `SPLIT-RECOMMENDED`. They share a cause and nothing else: this one is about what the identity PROJECTION discards (git ancestry probing in `cache_schema.corpus_history_id` + `build.collect_git_timestamps`, decided by a choice between refusing and folding), while the other is about a WATCHER that never re-asks (the event loop in `query.watch_loop`, decided by a polling-cost budget). Different files, different failure modes -- a wrong answer versus a stale one -- and different tests. The watch half is now §30.
 
 `corpus_history_id` (`cache_schema.py:1491-1500`) projects the effective history onto two values: the latest corpus-touching commit hash and the count of corpus-touching commits. Those two can collide across genuinely different effective histories. Replace an OLDER corpus-touching commit with one carrying an identical tree and identical parents but a different committer timestamp, and `git log` hands `build.py:269` a different `%ct` -- so `created_at` / `last_active_at` change -- while the latest touching hash and the commit count both stay equal. An equal-depth graft has the same shape. The cache is then certified against a history it did not come from.
 
@@ -1382,15 +1385,11 @@ This is NOT the shallow-deepening case, which the count does catch, and it is no
       §24 narrowed the docstring to depth/cardinality plus effective-boundary changes and named this gap explicitly. Whatever this section decides, that wording is the thing that must stop being true or stay true on purpose.
 - [ ] Fixtures for the chosen behavior, each mutation-checked
       A replace ref that changes `%ct` on an older corpus-touching commit while preserving tree, parents, tip and count must be detected or must be refused, per the decision above. Mutation: revert the chosen mechanism and require that fixture to FAIL.
-- [ ] Give `--watch` a history trigger for the history-consuming verbs
-      `watch_loop` (`query.py:1678`) ticks only on `.md` events under `todo/`, so an amend or a rebase that leaves every worktree byte identical fires no tick at all. §24 routed `stale`, `stats` and `render --render-format gantt` through the stricter profile, but a watcher on those verbs sits on its last answer indefinitely because the check it now declares never gets a chance to run (Codex adversarial, §24, [medium]).
-      - This is a gap in the new capability, not a regression: watch mode never checked history before §24 either, and a tick that DOES run fails closed. That is why it is filed rather than hot-fixed.
-      - A transient refusal in the post-walk history probe has the same shape: one tick refuses and nothing retries until an unrelated TODO edit happens to arrive.
-      - Whatever ships must bound the polling cost -- `corpus_history_id` is 47.9ms measured, so a naive 2s poll is a permanent background tax for a watcher that may be idle for hours.
 - [ ] Commit: `"todo-graph: close the replace-ref and graft axis in the history identity"`
 
 **Test checkpoint:** a replace ref that alters a corpus-touching commit's timestamp without moving the tip or the count is either refused or detected, and the fixture proving it fails when the mechanism is reverted; an ordinary repository with no replace refs and no graft file is unaffected and pays no measurable extra cost; `bash scripts/todo-graph/tests/test_build.sh` and `bash scripts/test-tooling.sh` green.
 
+-> XREF: [`TODO-06 §30`](#30---watch-never-ticks-on-a-history-change-for-the-history-consuming-verbs) -- the watch-mode half of §24's residue, split out of this section before implementation (item: "Give `--watch` a history trigger for the history-consuming verbs"); it consumes whatever probe this section settles on, so it ships after this one.
 -> XREF: [`TODO-06 §24`](#24-the-history-identity-cost-decision-requires_history-for-the-query-profile) -- the section that found this and pinned the identity everywhere else (item: "Pin the chosen identity source for the query profile, with the reasoning recorded"); that section measured the cost and enabled the history axis for the three consumers, and deliberately did NOT close this gap.
 -> XREF: [`TODO-06 §21`](#21-the-producer-side-generation-window-in-buildpy) -- the section that owns `corpus_history_id` and the single-walk provenance rule this must not break (item: "Commit: `\"todo-graph: close the producer-side generation window in build.py\"`"); that section is stamped, so the repair is owned here.
 
@@ -1451,6 +1450,35 @@ Found by §26's round-6 review while that section was tightening the resolver. T
 
 -> XREF: [`TODO-06 §26`](#26-domain-code-resolution-picks-a-directory-by-cache-order) -- the section whose review found this (item: "Commit: `\"todo-graph: domain codes resolve by directory, not by cache order\"`"); it fixed the RESOLVER and deliberately left repair-mode's exit contract alone, because that is a decision about what `--fix-line-numbers` promises rather than about what a reference means.
 -> XREF: [`TODO-06 §23`](#23-validatepy-rebuild-recovery-and-the-baseline-cache) -- the section that owns `validate.py`'s recovery and repair surface (item: "Commit: `\"todo-graph: validate.py rebuild recovery + baseline cache\"`"); it is stamped, so this residue is owned here rather than appended to it.
+
+---
+
+## 30. `--watch` Never Ticks on a History Change for the History-Consuming Verbs
+
+> **Spawned-by:** §27 (split)
+
+Split out of §27 on 2026-08-09, before either half was implemented. Both halves came from §24's reviews and both are about the history axis, but §27 asks what the identity FAILS TO SEE when it is computed, and this section asks why it never gets COMPUTED AGAIN. The machinery is disjoint: §27 works in `cache_schema.corpus_history_id` and `build.collect_git_timestamps`, this one in `query.watch_loop`.
+
+`watch_loop` (`scripts/todo-graph/query.py:1800`) re-runs on `.md` events under `todo/`, via `inotifywait -m` when available and 2s mtime polling otherwise. An amend, a rebase, or a `git checkout` of a branch with identical corpus bytes moves the history while leaving every worktree byte identical, so no event fires and no tick happens. §24 routed `stale`, `stats` and `render --render-format gantt` through the stricter profile that checks `corpus_history_id`, but a watcher on one of those verbs sits on its last answer indefinitely -- the check it now declares never gets a chance to run (Codex adversarial, §24, [medium]).
+
+This is a gap in a NEW capability, not a regression: watch mode never checked history before §24 either, and a tick that DOES run fails closed. That is why §24 filed it rather than hot-fixing it, and it is why the bar here is "the watcher eventually re-asks", not "the watcher is instantaneous".
+
+- [ ] Decide the trigger mechanism against a measured idle cost, and record the number
+      `corpus_history_id` is 47.9ms measured (§24), so a naive 2s poll is a permanent background tax on a watcher that may idle for hours -- roughly 2.4% of one core, forever, to answer a question that changes a few times a day.
+      - Cheaper candidates exist and must be measured rather than assumed: watching `.git/HEAD` + `.git/refs` + `.git/packed-refs` for events (inotify already runs), or a mtime probe on those paths, with the full 47.9ms identity computed ONLY when one of them moves.
+      - Whatever ships states its idle cost in a comment, so a later reader can tell a deliberate budget from an accident.
+- [ ] Fire the trigger only for verbs that actually consume history
+      §24's `requires_history` profile already names them (`stale`, `stats`, `render --render-format gantt`). A watcher on `ready` or `backlinks` must pay nothing, or the cost decision above is moot.
+- [ ] A transient probe refusal must retry rather than latch
+      The post-walk history probe can fail transiently; today one tick refuses and nothing re-runs until an unrelated TODO edit happens to arrive, which turns a momentary failure into a permanently wrong screen.
+- [ ] Fixtures for the chosen trigger, each mutation-checked
+      A history move with byte-identical corpus (amend preserving the tree) must produce a tick; an ordinary unrelated commit that does not touch `todo/` must NOT, or the watcher re-runs on every kernel commit. Mutation: revert the trigger and require the first fixture to FAIL.
+- [ ] Commit: `"todo-graph: --watch ticks when the history moves, not only the bytes"`
+
+**Test checkpoint:** a watcher on `stale` re-runs after an amend that leaves the corpus byte-identical; a watcher on `ready` pays no history cost; a commit touching no `todo/` path fires no tick; the measured idle cost is recorded in the source; `bash scripts/todo-graph/tests/test_build.sh` and `bash scripts/test-tooling.sh` green.
+
+-> XREF: [`TODO-06 §27`](#27-effective-history-identity-replace-refs-and-grafts) -- the section this was split from, which owns what the history identity is computed FROM (item: "Decide between rejecting replacement ancestry and folding it into the identity"); whatever probe it settles on is the probe this section triggers, so it ships first.
+-> XREF: [`TODO-06 §22`](#22-querypy-fail-closed-through-cli-mcp-and-watch-transports) -- the section that owns `query.py`'s watch transport and its fail-closed contract (item: "Commit: `\"todo-graph: query.py fail-closed through CLI, MCP and watch transports\"`"); it is stamped, so this trigger is owned here rather than appended to it.
 
 ---
 
