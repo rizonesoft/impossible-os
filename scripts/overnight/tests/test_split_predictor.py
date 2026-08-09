@@ -71,15 +71,40 @@ def test_calibrated_item_threshold_boundary():
     section carries ~60 turns of fixed review overhead and splitting below
     T ~= 220 costs more than it saves.
 
-    Pinned so the boundary cannot drift back without re-doing that work."""
+    Pinned so the boundary cannot drift back without re-doing that work.
+
+    WHAT IS COUNTED changed 2026-08-09: WORK items, not every open box. Every
+    section carries a `Commit: "..."` line (1,464 corpus-wide) that costs no
+    implementation turns, and counting it meant a section with FOUR real items
+    tripped a threshold calibrated on effort -- every split waiver written
+    against this said so by hand. The NUMBER is untouched; the calibration
+    measured totals including that line, so this raises the effective bar by one
+    and gives back a modelled half-point (+7.0% -> +6.5%), which one avoided
+    split repays several times over at ~60 turns of fixed overhead."""
     with tempfile.TemporaryDirectory() as d:
         cx = _manifest(_repo_with_todo(d, items=5))["complexity"]
         assert "SPLIT-RECOMMENDED" in cx["verdict"], cx
-        assert "5 open items" in cx["verdict"], cx
+        assert "5 work items" in cx["verdict"], cx
     with tempfile.TemporaryDirectory() as d:
         cx = _manifest(_repo_with_todo(d, items=4))["complexity"]
         # 4 items may still SPLIT on files/subsystems, but never on item count.
-        assert "4 open items" not in cx["verdict"], cx
+        assert "4 work items" not in cx["verdict"], cx
+
+
+def test_commit_line_is_not_a_work_item():
+    """The whole point of the 2026-08-09 change, and it fails against the old
+    counter: five boxes of which one is the commit line is FOUR items of work,
+    and must not trip the threshold."""
+    with tempfile.TemporaryDirectory() as d:
+        root = _repo_with_todo(d, items=4)
+        # append the bookkeeping line every shipped section carries
+        for p in pathlib.Path(root).rglob("TODO-*.md"):
+            p.write_text(p.read_text(encoding="utf-8")
+                         + '\n- [ ] Commit: `"subsystem: the change"`\n',
+                         encoding="utf-8")
+        cx = _manifest(root)["complexity"]
+        assert cx["open_items"] == 5, cx
+        assert "SPLIT-RECOMMENDED" not in cx["verdict"], cx
 
 
 def test_validate_split_waiver_structured_only():

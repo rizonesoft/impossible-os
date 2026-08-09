@@ -129,10 +129,28 @@ def validate_continuation_waiver(waiver: object) -> tuple:
 def spawn_chains(lines: list) -> dict:
     """Map section number -> (parent, kind, review_chain_depth).
 
-    Depth counts CONSECUTIVE `(review)` links walking up the chain. A `(split)`
-    link contributes 0, because decomposition is not recursion. A section with no
-    marker is a root, so every pre-existing section is unaffected -- this sensor
-    is additive and silent until sections start declaring provenance.
+    Depth counts `(review)` links walking up the chain. A `(split)` adds no
+    depth of its own -- decomposition is not recursion -- but it PROPAGATES the
+    depth it inherits, which is the whole correction here.
+
+    WHY (measured 2026-08-09 on the todo-metadata-layer TODO, which grew from 9
+    to 35 sections in seven days). A split used to RESET the count to 0, so the
+    sensor never saw a chain deeper than 2 against a limit of 3: it had never
+    once fired, and the cascade ran underneath it. The observed shape was a
+    review-spawn, then a split of that successor into three, each restarting at
+    0, then another review-spawn off one of those, and so on. Eleven splits
+    interleaved with nine review-spawns kept every chain permanently under the
+    limit.
+
+    Splitting a review-spawned section does not make its successors less
+    recursive -- it multiplies the surface that can spawn the next one. So a
+    split now carries its parent's depth forward unchanged, the next
+    review-spawn is one deeper, and the one after that has to answer the
+    continuation waiver instead of quietly becoming another section.
+
+    A section with no marker is a root, so every pre-existing section is
+    unaffected -- this sensor is additive and silent until sections declare
+    provenance.
     """
     parents = {}
     cur = None
@@ -154,7 +172,9 @@ def spawn_chains(lines: list) -> dict:
             return 0
         par, kind = parents[n]
         if kind != "review":
-            return 0
+            # A split CARRIES the chain it was cut from. Returning 0 here is
+            # what let a decomposition launder a recursive chain back to zero.
+            return _depth(par, seen | {n})
         return 1 + _depth(par, seen | {n})
 
     return {n: (parents[n][0], parents[n][1], _depth(n, set()))
@@ -344,15 +364,37 @@ def main(argv) -> int:
     # 9 of 15 rather than 11 or 12. Two long sections (352 and 379 turns) have
     # only 3-4 items and are invisible to ANY item-count rule; catching those
     # needs a different mechanism, not a lower number here.
-    if len(open_items) >= 5:
-        split_reasons.append(f"{len(open_items)} open items")
+    # WORK items, not bookkeeping. Every section carries a `Commit: "..."` item
+    # (1,464 of them corpus-wide) that costs no implementation turns, and it was
+    # being counted toward the split verdict -- so a section with FOUR real
+    # items tripped a threshold calibrated on effort. Every split waiver written
+    # against this argued the same point by hand ("one of the five is the commit
+    # line ... the section carries THREE work items"); when the override is
+    # always the same paragraph, the rule is wrong, not the sections.
+    #
+    # THE TRADE, stated rather than hidden: the calibration above measured
+    # `open_items` INCLUDING the commit line, so dropping it and keeping `>= 5`
+    # raises the effective bar by one and moves the modelled capture from +7.0%
+    # to +6.5% -- half a point. That is worth it because a split is not free
+    # (~60 turns of fixed review overhead per section), so one avoided
+    # unnecessary split repays the difference many times. Recalibrating the
+    # number properly needs a fresh turns-vs-items sample; until then this is a
+    # deliberate half-point, not an oversight.
+    #
+    # Only the commit line is excluded. `Unit tests:` / `Tests:` items look like
+    # boilerplate and are not -- they carry real assertion lists -- so they keep
+    # counting.
+    work_items = [it for it in open_items
+                  if not re.match(r"(?i)\s*commit\b\s*[:\-]?", it["text"])]
+    if len(work_items) >= 5:
+        split_reasons.append(f"{len(work_items)} work items")
     if len(subsystems) > 3:
         split_reasons.append(f"{len(subsystems)} subsystems")
     # P3.1: ABI/SSDT sections are heavier per item (each item touches syscall
     # tables, ABI hashes, tests), so an exactly-8-item ABI section slipped past
     # the old `> 8` gate. Lower the ABI-weighted threshold to `>= 6`.
-    if abi_impact and len(open_items) >= 6:
-        split_reasons.append(f"ABI impact + {len(open_items)} items (>=6 ABI gate)")
+    if abi_impact and len(work_items) >= 6:
+        split_reasons.append(f"ABI impact + {len(work_items)} work items (>=6 ABI gate)")
     complexity = {
         "files": len(likely_files) + len(input_files),
         "subsystems": subsystems,

@@ -226,6 +226,56 @@ def added_sections(added):
             if _SECTION_RE.match(text)]
 
 
+# PARK-INTO-A-SHIPPING-SECTION (2026-08-09). A `- [/]` park is the sanctioned
+# way to file work into a section that is ALREADY closed -- the owner-side
+# stranded sweep is its re-open path. It is NOT a way to dispose of a review
+# finding in the section you are stamping right now, and that is exactly when
+# review findings arrive.
+#
+# MEASURED, which is why this is a refusal and not advice: `stranded_deferrals`
+# reports 61 stranded candidates, and 60 of them "sit in DONE-parked sections
+# (fixpoint never re-visits them -> will NOT flip naturally)". Three are marked
+# `clean` -- the work was finished and nobody flipped the box. A park whose
+# parent is stamped in the same commit joins that pile by construction.
+#
+# The author always has better options at that moment: fix it and record an
+# `- [x]` item, file it in another component's OPEN section, or decide it fails
+# the user-impact test and do not file it. All three keep the work reachable.
+_PARK_RE = re.compile(r"^\s*- \[/\]")
+_STAMP_RE = re.compile(r"^>\s*\*\*(Verified|Quality reviewed):\*\*")
+
+
+def _park_into_shipping_section(path, added):
+    """[(lineno, section_heading, text)] for `- [/]` items this commit ADDS to a
+    section it is ALSO stamping in the same commit."""
+    try:
+        lines = pathlib.Path(path).read_text(encoding="utf-8").split("\n")
+    except OSError:
+        return []                      # fail-open: never break a commit on this
+    added_nos = {n for n, _ in added}
+    # section index -> (start, end) over the post-image
+    bounds, cur, heads = [], None, {}
+    for i, ln in enumerate(lines, 1):
+        if _SECTION_RE.match(ln.strip()):
+            if cur is not None:
+                bounds.append((cur, i - 1))
+            cur = i
+            heads[i] = ln.strip()[:70]
+    if cur is not None:
+        bounds.append((cur, len(lines)))
+    out = []
+    for start, end in bounds:
+        rng = range(start, end + 1)
+        stamped_now = any(n in added_nos and _STAMP_RE.match(lines[n - 1])
+                          for n in rng if n - 1 < len(lines))
+        if not stamped_now:
+            continue
+        for n in rng:
+            if n in added_nos and n - 1 < len(lines) and _PARK_RE.match(lines[n - 1]):
+                out.append((n, heads.get(start, "?"), lines[n - 1].strip()[:90]))
+    return out
+
+
 def main(argv) -> int:
     if "--selftest" in argv:
         return _selftest()
@@ -234,7 +284,7 @@ def main(argv) -> int:
     files = _staged_todo_files()
     if not files:
         return 0
-    bad, wrapped, oscomp = [], [], []
+    bad, wrapped, oscomp, parked = [], [], [], []
     for f in files:
         added = _added_lines(f)
         for n, ln, text in over_cap(added):
@@ -244,6 +294,8 @@ def main(argv) -> int:
             wrapped.append((f, col))
         for n, w, cell in _oscomp_over_cap(f, added):
             oscomp.append((f, n, w, cell))
+        for n, head, text in _park_into_shipping_section(f, added):
+            parked.append((f, n, head, text))
     # section-count cap: judged per file, on files this commit GROWS
     capped_hard, capped_soft = [], []
     for f in files:
@@ -268,6 +320,26 @@ def main(argv) -> int:
             "[todo-staged-check WARN] %s: this commit adds prose hard-wrapped at "
             "~%d columns. todo/ prose is one paragraph per physical line. Repair: "
             "python3 scripts/todo-reflow.py --write %s\n" % (f, col, f))
+    if parked:
+        for f, n, head, text in parked:
+            sys.stderr.write(
+                "\n[todo-staged-check] %s:%d parks an item into a section this "
+                "same commit is STAMPING:\n    %s\n    in: %s\n"
+                % (f, n, text, head))
+        sys.stderr.write(
+            "\n  A `- [/]` park is how you file into a section that is ALREADY\n"
+            "  closed. Parking into one you are closing RIGHT NOW strands it: the\n"
+            "  fixpoint loop never revisits a DONE section, and the stranded sweep\n"
+            "  currently reports 60 items in exactly that state -- three of them\n"
+            "  already finished, with nobody left to tick the box.\n"
+            "  You have three better dispositions, all reachable:\n"
+            "    - fix it now and record it as `- [x]` (the default for a finding\n"
+            "      inside this section's own surface);\n"
+            "    - file `- [ ]` in the OPEN section of the component that owns it;\n"
+            "    - decide it fails the user-impact test and do not file it.\n"
+            "  Opt-out: SKIP_TODO_STAGED_CHECK=1 git commit ...\n")
+        return 1
+
     if oscomp:
         for f, n, w, cell in oscomp:
             sys.stderr.write(

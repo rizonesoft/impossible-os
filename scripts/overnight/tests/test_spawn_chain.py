@@ -55,17 +55,32 @@ def test_review_chain_accumulates_depth():
 
 
 def test_a_split_is_not_recursion():
-    """The TODO-06 shape: decomposition at authoring time is healthy and must
-    NOT accumulate depth. Same work, correctly partitioned -- section 10 kept the
-    parse and 11 took the lint reporting, because they carry opposite failure
-    modes."""
+    """Decomposition at authoring time is healthy and ADDS no depth of its own:
+    same work, correctly partitioned, where the two halves carry opposite
+    failure modes. A split off a ROOT therefore stays at 0.
+
+    But it PROPAGATES the depth it inherits, and that half is load-bearing.
+    Updated 2026-08-09: a split used to RESET the count, which let a cascade run
+    forever under the limit -- eleven splits interleaved with nine review-spawns
+    held the deepest chain in the metadata-layer TODO at 2 against a limit of 3,
+    so the sensor never fired once. Splitting a review-spawned section does not
+    make its successors less recursive; it multiplies the surface that spawns
+    the next one."""
     sm = _load()
     ch = sm.spawn_chains(_chain([(10, None, ""), (11, 10, "split")]))
     assert ch[11][1] == "split" and ch[11][2] == 0, ch
-    # and a split in the MIDDLE of a review chain resets it
+    # A split in the MIDDLE of a review chain CARRIES it forward. Reverting the
+    # propagation makes the last two assertions read 0 and 1 -- which is the
+    # exact blindness this test now exists to prevent.
     ch2 = sm.spawn_chains(_chain([(1, None, ""), (2, 1, "review"),
                                   (3, 2, "split"), (4, 3, "review")]))
-    assert ch2[2][2] == 1 and ch2[3][2] == 0 and ch2[4][2] == 1, ch2
+    assert ch2[2][2] == 1 and ch2[3][2] == 1 and ch2[4][2] == 2, ch2
+    # ...and a chain that alternates review/split still reaches the limit, which
+    # is what the old reset made impossible.
+    ch3 = sm.spawn_chains(_chain([(1, None, ""), (2, 1, "review"),
+                                  (3, 2, "split"), (4, 3, "review"),
+                                  (5, 4, "split"), (6, 5, "review")]))
+    assert ch3[6][2] >= sm.SPAWN_CHAIN_LIMIT, ch3
 
 
 def test_unmarked_sections_are_silent():
