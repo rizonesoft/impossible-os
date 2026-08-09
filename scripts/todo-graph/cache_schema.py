@@ -421,15 +421,16 @@ class Profile:
     `requires_history` is the third, independent axis: whether this caller
     consumes the fields `build.py` derives from `git log` (`created_at` /
     `last_active_at`). Only a caller that reads them cares whether the corpus
-    HISTORY moved, and establishing that costs FIVE git subprocesses -- 54.5ms
+    HISTORY moved, and establishing that costs SIX git subprocesses -- 53.2ms
     measured 2026-08-09, growing with TOTAL REPO commits (Codex perf, section
     21, [medium]: two routed readers were each paying it per lint for data
     neither consumes). It was FOUR subprocesses at 47.9ms until section 31
-    added the shallowness refusal; that figure is the dated pre-section-31
-    baseline and is kept below only where it is labelled as one.
+    bracketed the walk with two shallowness probes; that figure is the dated
+    pre-section-31 baseline and is kept below only where it is labelled as one.
 
     THE SECTION 21 FIGURES THIS COMMENT USED TO CARRY ARE SUPERSEDED, and both
-    were wrong in a way that mattered: it said three subprocesses (it is four)
+    were wrong in a way that mattered: it said three subprocesses (it was four
+    before section 31 added the bracketing shallowness probes, and is six now)
     and that the cost grows with CORPUS-TOUCHING commits (it grows with total
     repo commits, so the crossover arrives ~1.4x sooner). Section 24 re-measured
     rather than reusing them, which is the only reason the model was corrected;
@@ -542,7 +543,10 @@ PROFILE_QUERY_HISTORY = Profile("query-history", _QUERY_SUBTREES,
 #
 # `requires_history` is FALSE: `validate.py` reads neither `created_at` nor
 # `last_active_at` (grep-confirmed across all nine checks and the diff walk),
-# so it must not pay section 21's three git subprocesses per lint.
+# so it must not pay the history check's six git subprocesses per lint (three
+# when section 21 first wrote this line, four after section 27, six once
+# section 31 bracketed the walk with shallowness probes -- the count has only
+# ever grown, which is the reason the routing exists).
 #
 # `SUBTREE_NODE_IDENTITY` IS DELIBERATELY ABSENT, and it is the only profile
 # here that omits it. `validate.py` REPORTS duplicate ids as a graph finding and
@@ -1921,15 +1925,15 @@ def corpus_history_id(todo_root: Path):
     Measured 2026-08-08 on the live corpus (3,807 corpus-touching commits of
     5,387 total): 47.9ms median, of which `rev-list --count` is 44.2ms and the
     three `rev-parse`/`log` probes are ~1.5ms each. Re-measured 2026-08-09 at
-    3,844 corpus-touching commits with the section 31 shallowness probe added:
-    54.5ms median (min 52.1, max 58.8, n=11) against a 55.6ms sum of its five
-    parts, of which `rev-list --count` is 51.1ms and the four cheap probes are
-    ~1.0-1.5ms each. THE NEW PROBE IS ~1.0ms OF THAT, i.e. under 2%; the walk
-    is, as before, the entire cost. A first attempt at this measurement read
-    185ms median with a 114-322ms spread, which was a CONCURRENT BUILD IN
-    ANOTHER SESSION sharing this worktree and not a property of the code -- the
-    sum-of-parts control is what separated the two, and is why it is quoted
-    here alongside the total. AND THE COST GROWS WITH
+    3,844 corpus-touching commits with the section 31 shallowness probes
+    BRACKETING the walk: 53.2ms median (min 49.5, max 60.6, n=15) against a
+    53.2ms sum of its six parts, of which `rev-list --count` is 47.0ms and the
+    five cheap probes are ~1.0-1.8ms each. THE TWO NEW PROBES ARE ~2.2ms OF
+    THAT, i.e. ~4%; the walk is, as before, the entire cost. A first attempt at
+    this measurement read 185ms median with a 114-322ms spread, which was a
+    CONCURRENT BUILD IN ANOTHER SESSION sharing this worktree and not a
+    property of the code -- the sum-of-parts control is what separated the two,
+    and is why it is quoted here alongside the total. AND THE COST GROWS WITH
     TOTAL REPO COMMITS, NOT CORPUS-TOUCHING ONES -- section 21 recorded the
     latter and it is the wrong variable. Measured by walk depth: 8.2ms at 100,
     14.7ms at 1,000, 22.4ms at 2,000, 36.1ms at 4,000, 44.5ms at 5,387 -- about
@@ -2012,19 +2016,30 @@ def corpus_history_id(todo_root: Path):
     # the option (< 2.15) exits nonzero, and a future git could answer something
     # else; both are indeterminate, and an indeterminate shallowness check is
     # not evidence that the history is complete.
-    shallow = _git("rev-parse", "--is-shallow-repository")
-    if isinstance(shallow, subprocess.CalledProcessError):
-        _err(REASON_STALE,
-             f"cannot determine whether the corpus repository is shallow "
-             f"(git exited {shallow.returncode}): "
-             f"{(shallow.stderr or '').strip()[:200]}")
-    if (shallow.stdout or "").strip() != "false":
-        _err(REASON_STALE,
-             "the corpus is in a shallow repository, so its history is "
-             "truncated and `created_at` would carry the timestamp of whatever "
-             "commit the boundary happens to sit on rather than the one that "
-             "introduced the file; run `git fetch --unshallow` and retry")
+    # THE READER BRACKETS ITS WALK EXACTLY AS THE PRODUCER DOES (Codex
+    # consistency, section 31, [high]). A single probe BEFORE the tip/count
+    # reads is not the same policy: let the corpus become shallow after the
+    # probe and stay shallow across those two commands, and they are computed
+    # under a boundary that the probe reported as absent -- which in the
+    # equal-count case this section exists for yields the SAME identity as the
+    # full history, so the cache is certified rather than refused. That is a
+    # SINGLE transition, not the install-and-remove residue documented above.
+    def _refuse_if_shallow(when: str):
+        probe = _git("rev-parse", "--is-shallow-repository")
+        if isinstance(probe, subprocess.CalledProcessError):
+            _err(REASON_STALE,
+                 f"cannot determine whether the corpus repository is shallow "
+                 f"({when} the history walk; git exited {probe.returncode}): "
+                 f"{(probe.stderr or '').strip()[:200]}")
+        if (probe.stdout or "").strip() != "false":
+            _err(REASON_STALE,
+                 f"the corpus is in a shallow repository ({when} the history "
+                 f"walk), so its history is truncated and `created_at` would "
+                 f"carry the timestamp of whatever commit the boundary happens "
+                 f"to sit on rather than the one that introduced the file; run "
+                 f"`git fetch --unshallow` and retry")
 
+    _refuse_if_shallow("before")
     tip = _git("log", "-1", "--format=%H", "--", ".")
     count = _git("rev-list", "--count", "HEAD", "--", ".")
     for r in (tip, count):
@@ -2033,6 +2048,7 @@ def corpus_history_id(todo_root: Path):
                  f"cannot determine the corpus git history "
                  f"(git exited {r.returncode}): "
                  f"{(r.stderr or '').strip()[:200]}")
+    _refuse_if_shallow("after")
     # An empty tip is determinate too: a repo whose corpus has no history yet.
     return f"{tip.stdout.strip() or 'no-history'}:{count.stdout.strip() or '0'}"
 
@@ -2152,8 +2168,8 @@ def check_freshness(cache_path: Path, todo_root: Path, cache_bytes: bytes,
     # HISTORY, NOT JUST CONTENT -- FOR THE CALLERS THAT CONSUME IT. `created_at`
     # / `last_active_at` are derived from the corpus-limited git log, so
     # identical bytes over a rewritten history still means stale nodes (Codex
-    # design review, section 21, [high]). But establishing that forks five git
-    # processes and walks the corpus history (54.5ms today, growing with COMMIT
+    # design review, section 21, [high]). But establishing that forks six git
+    # processes and walks the corpus history (53.2ms today, growing with COMMIT
     # count), and neither routed reader consumes either field -- so it is a
     # profile declaration rather than an unconditional toll (Codex perf, section
     # 21, [medium]). The producer records the id either way, so a profile can

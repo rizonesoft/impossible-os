@@ -15315,14 +15315,15 @@ fi
 python3 - "$REPO_ROOT/scripts/todo-graph/cache_schema.py" "$TMP_DIR/cs_mut.py" <<'S31MUTEOF'
 import sys, pathlib
 src = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
-needle = '    shallow = _git("rev-parse", "--is-shallow-repository")'
-assert src.count(needle) == 1, f"mutation needle appears {src.count(needle)}x"
-head, _, rest = src.partition(needle)
-# Drop the probe and both of its refusal branches, up to the tip read.
-tail_anchor = '    tip = _git("log", "-1", "--format=%H", "--", ".")'
-assert rest.count(tail_anchor) == 1, "mutation tail anchor is not unique"
-pathlib.Path(sys.argv[2]).write_text(
-    head + rest[rest.index(tail_anchor):], encoding="utf-8")
+# Strip BOTH bracketing call sites. The helper definition is left in place and
+# simply goes uncalled, so the mutant differs from the shipped module in
+# exactly the two lines that enforce the policy.
+mutated = src
+for call in ('    _refuse_if_shallow("before")\n',
+             '    _refuse_if_shallow("after")\n'):
+    assert mutated.count(call) == 1, f"mutation needle {call!r} not unique"
+    mutated = mutated.replace(call, "", 1)
+pathlib.Path(sys.argv[2]).write_text(mutated, encoding="utf-8")
 S31MUTEOF
 S31C_OUT=$(python3 - "$TMP_DIR/cs_mut.py" "$REPO_ROOT/scripts/todo-graph" <<'S31CEOF' 2>&1
 import importlib.util, json, os, subprocess, sys, tempfile
@@ -15438,6 +15439,137 @@ sys.exit(0 if (d['walk_refused'] and d['names_walk']
     t_pass "section 31: the producer walk itself refuses a shallow corpus, and the unshallow control still derives 2020-01-01"
 else
     t_fail "section 31: producer-walk refusal check failed (rc=$S31D_RC, out=$S31D_OUT)"
+fi
+
+# Sub-test 31e: the READER brackets its walk too, and this is a SINGLE
+# transition rather than the acknowledged install-and-remove residue. The
+# corpus becomes shallow AFTER the first probe and stays shallow across the
+# tip/count reads, so those reads run under a boundary the probe reported
+# absent -- and in the equal-count case that yields the SAME identity as the
+# full history. The transition is staged deterministically by wrapping the
+# module's own `_git` so the boundary appears immediately after the first
+# `--is-shallow-repository` call. Control: with no transition the same corpus
+# returns a real id.
+S31E_OUT=$(python3 - "$REPO_ROOT/scripts/todo-graph" <<'S31EEOF' 2>&1
+import json, os, subprocess, sys, tempfile
+sys.path.insert(0, sys.argv[1])
+import cache_schema as cs  # noqa: E402
+tmp = tempfile.mkdtemp()
+def git(*a):
+    return subprocess.run(["git", "-C", tmp, *a], capture_output=True,
+                          text=True, check=True).stdout.strip()
+def commit(date, msg):
+    env = dict(os.environ, GIT_AUTHOR_DATE=date, GIT_COMMITTER_DATE=date)
+    git("add", "-A")
+    subprocess.run(["git", "-C", tmp, "commit", "-q", "-m", msg], env=env,
+                   capture_output=True, text=True, check=True)
+git("init", "-q", "-b", "main", ".")
+git("config", "user.email", "t@t"); git("config", "user.name", "t")
+os.mkdir(os.path.join(tmp, "todo"))
+open(os.path.join(tmp, "todo", "a.md"), "w").write("a\n")
+commit("2020-01-01T00:00:00Z", "C0")
+open(os.path.join(tmp, "other.txt"), "w").write("x\n")
+commit("2021-01-01T00:00:00Z", "C1")
+open(os.path.join(tmp, "other.txt"), "a").write("y\n")
+commit("2022-01-01T00:00:00Z", "C2")
+c2 = git("rev-parse", "HEAD")
+open(os.path.join(tmp, "todo", "a.md"), "a").write("b\n")
+commit("2023-01-01T00:00:00Z", "C3")
+root = os.path.join(tmp, "todo")
+boundary = os.path.join(tmp, "boundary")
+open(boundary, "w").write(c2 + "\n")
+
+control = cs.corpus_history_id(root)
+
+# Stage the single transition: the FIRST shallowness probe answers under a
+# clean environment, and the boundary is installed the moment it returns.
+real_env = cs.history_git_env
+state = {"probes": 0}
+def transitioning_env():
+    env = real_env()
+    if state["probes"] >= 1:
+        env["GIT_SHALLOW_FILE"] = boundary
+    return env
+def counting_env():
+    # Count only the shallowness probe by inspecting the caller's argv is not
+    # possible here, so drive it off call ORDER: probes 1..2 are git-dir and
+    # unborn, probe 3 is the before-shallow check. Install after probe 3.
+    state["probes"] += 1
+    return transitioning_env() if state["probes"] > 3 else real_env()
+cs.history_git_env = counting_env
+try:
+    got, refused = cs.corpus_history_id(root), None
+except cs.CacheSchemaError as exc:
+    got, refused = None, str(exc)
+finally:
+    cs.history_git_env = real_env
+print(json.dumps({
+    "control_is_real_id": ":" in control,
+    "refused": refused is not None,
+    "names_after": "after the history walk" in (refused or ""),
+    "did_not_certify_equal": got != control,
+}))
+S31EEOF
+); S31E_RC=$?
+if [ "$S31E_RC" = "0" ] && echo "$S31E_OUT" | python3 -c "
+import json, sys
+d = json.loads(sys.stdin.read())
+sys.exit(0 if (d['control_is_real_id'] and d['refused'] and d['names_after']
+               and d['did_not_certify_equal']) else 1)"; then
+    t_pass "section 31: the reader refuses a boundary installed AFTER its first probe (single transition, not the ABA residue)"
+else
+    t_fail "section 31: reader-bracket check failed (rc=$S31E_RC, out=$S31E_OUT)"
+fi
+
+# Sub-test 31f: the WATCH trigger follows the effective boundary file. The
+# refusal honours GIT_SHALLOW_FILE but `rev-parse --git-path shallow` resolves
+# the DEFAULT one, so watching only the default let a watcher started under an
+# override pointing at an absent file keep serving an answer that a direct
+# query refuses -- no ref moves, no watched file moves, the identity is never
+# re-asked. Control: with no override the trigger still names the default file,
+# and the default stays in the watched set either way.
+S31F_OUT=$(python3 - "$(dirname "$QUERY_PY")" <<'S31FEOF' 2>&1
+import json, os, subprocess, sys, tempfile
+sys.path.insert(0, sys.argv[1])
+import query  # noqa: E402
+tmp = tempfile.mkdtemp()
+def git(*a):
+    return subprocess.run(["git", "-C", tmp, *a], capture_output=True,
+                          text=True, check=True).stdout.strip()
+git("init", "-q", "-b", "main", ".")
+git("config", "user.email", "t@t"); git("config", "user.name", "t")
+os.mkdir(os.path.join(tmp, "todo"))
+open(os.path.join(tmp, "todo", "a.md"), "w").write("a\n")
+git("add", "-A")
+subprocess.run(["git", "-C", tmp, "commit", "-q", "-m", "c"],
+               capture_output=True, text=True, check=True)
+root = os.path.join(tmp, "todo")
+control = query._history_trigger_paths(root)
+override = os.path.join(tmp, "my-boundary")     # deliberately ABSENT
+os.environ["GIT_SHALLOW_FILE"] = override
+try:
+    with_ovr = query._history_trigger_paths(root)
+finally:
+    os.environ.pop("GIT_SHALLOW_FILE", None)
+print(json.dumps({
+    "control_is_default": control[2].endswith(os.path.join(".git", "shallow")),
+    "override_is_effective": with_ovr[2] == os.path.normpath(override),
+    "default_still_watched": any(str(p).endswith(os.path.join(".git", "shallow"))
+                                 for p in with_ovr[1]),
+    "control_default_not_duplicated": not any(
+        str(p).endswith(os.path.join(".git", "shallow")) for p in control[1]),
+}))
+S31FEOF
+); S31F_RC=$?
+if [ "$S31F_RC" = "0" ] && echo "$S31F_OUT" | python3 -c "
+import json, sys
+d = json.loads(sys.stdin.read())
+sys.exit(0 if (d['control_is_default'] and d['override_is_effective']
+               and d['default_still_watched']
+               and d['control_default_not_duplicated']) else 1)"; then
+    t_pass "section 31: the watch trigger follows GIT_SHALLOW_FILE, keeping the default file watched alongside"
+else
+    t_fail "section 31: watch-trigger effective-boundary check failed (rc=$S31F_RC, out=$S31F_OUT)"
 fi
 
 fi  # git available

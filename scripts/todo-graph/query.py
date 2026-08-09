@@ -2196,6 +2196,27 @@ def _history_trigger_paths(todo_root: Path):
     refs, packed, shallow = _path("refs"), _path("packed-refs"), _path("shallow")
     if "no-repo" in (refs, packed, shallow):
         return None
+
+    # THE WATCHED BOUNDARY FILE MUST BE THE EFFECTIVE ONE (Codex adversarial,
+    # section 31, [medium]). `rev-parse --git-path shallow` resolves the DEFAULT
+    # file even when `GIT_SHALLOW_FILE` names another -- section 24 documented
+    # exactly that asymmetry as the reason a file digest could not stand in for
+    # the count. `corpus_history_id` honours the override, so watching only the
+    # default meant a watcher started under an override pointing at an ABSENT
+    # file, later populated, sees no ref move and no watched file move:
+    # `_HistoryAxis.poll` never re-asks, and `stale` / `stats` / Gantt watch mode
+    # keep serving an answer a direct invocation now REFUSES. That defeats the
+    # fail-closed policy for as long as the watcher runs.
+    #
+    # The override is read from this process's own environment, the same source
+    # `history_git_env` copies, so watcher and identity cannot disagree about
+    # which file is effective. The DEFAULT stays watched alongside it -- a
+    # boundary appearing there is still a real history change -- and one extra
+    # `stat` per poll is the whole cost.
+    override = os.environ.get("GIT_SHALLOW_FILE")
+    if override:
+        effective = os.path.normpath(os.path.join(str(todo_root), override))
+        return (refs, [head, packed, shallow], effective)
     return (refs, [head, packed], shallow)
 
 
@@ -2221,7 +2242,8 @@ def _snapshot_history_trigger(trigger):
 
     MEASURED 2026-08-09 on this repo (12 entries): 50.1us median, 77.6us p95 --
     against 54.2ms for `corpus_history_id` (section 30's own measurement; the
-    section 31 re-measurement with the shallowness probe reads 54.5ms, which
+    section 31 re-measurement with the bracketing shallowness probes reads
+    53.2ms, which
     does not move this ratio), i.e. 0.09% of the answer it decides
     whether to ask. At one probe per 2s poll that is 0.0025% of a core, versus
     2.7% for polling the identity itself. THAT MEASUREMENT DESCRIBES THIS REPO
@@ -2541,8 +2563,8 @@ class _HistoryAxis:
 
     THE TRIGGER AND THE PREDICATE ARE DELIBERATELY DIFFERENT THINGS. The trigger
     (a 50.1us pathname snapshot) says "some ref moved"; the predicate
-    (`corpus_history_id`, 54.2ms as section 30 measured it, 54.5ms after
-    section 31's probe) says "the corpus history moved". Ordinary
+    (`corpus_history_id`, 54.2ms as section 30 measured it, 53.2ms after
+    section 31's probes) says "the corpus history moved". Ordinary
     development moves refs constantly and touches `todo/` rarely, so collapsing
     the two -- ticking on any ref movement -- would re-run the whole query on
     every kernel commit, and polling the predicate directly would cost 2.7% of a
@@ -3251,9 +3273,9 @@ def main(argv=None) -> int:
 
     # THE HISTORY AXIS IS PER-VERB, NOT PER-READER (section 24). Only three of
     # this CLI's thirteen commands dereference a git-derived timestamp, and
-    # making the whole reader pay `corpus_history_id` (54.5ms measured 2026-08-09
-    # with section 31's shallowness probe, 47.9ms before it, against
-    # a 169ms invocation) to protect fields the other ten never read is a ~32%
+    # making the whole reader pay `corpus_history_id` (53.2ms measured 2026-08-09
+    # with section 31's two bracketing shallowness probes, 47.9ms before them,
+    # against a 169ms invocation) to protect fields the other ten never read is a ~31%
     # toll for nothing. `stale` and `stats` read `last_active_at`; `render` reads
     # `created_at` ONLY in the Gantt renderer (render.py:375), which is why the
     # format is part of the test rather than the command name alone.
@@ -3362,7 +3384,7 @@ def main(argv=None) -> int:
         try:
             # HISTORY FIRST, CONTENT LAST, and the ORDER is the point (Codex
             # adversarial, section 24, [medium]). The history probe forks git
-            # and costs ~54.5ms; running it AFTER the content check put that whole
+            # and costs ~53.2ms; running it AFTER the content check put that whole
             # window between "the corpus is unchanged" and publication, so a
             # TODO edit landing inside it changed no git history, passed both
             # checks, and shipped anyway. Checking history first keeps the
@@ -3370,7 +3392,7 @@ def main(argv=None) -> int:
             # emitted, which is the property the generation binding rests on.
             # `info.history` is None for every verb outside the three that
             # consume the derived timestamps, making this a no-op there rather
-            # than a second 54.5ms probe.
+            # than a second 53.2ms probe.
             _cs.check_history_unchanged(todo_root, info.history)
             _cs.check_corpus_unchanged(todo_root, info.corpus)
         except _cs.CacheSchemaError as exc:
