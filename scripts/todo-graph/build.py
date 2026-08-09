@@ -426,10 +426,18 @@ def collect_git_timestamps(repo_root: Path, files: list, todo_root=None) -> dict
         except ValueError:
             pass
     try:
+        # THE WALK AND THE ID MUST READ THE SAME ANCESTRY (section 27). The %ct
+        # values below become `created_at` / `last_active_at`, and `git replace`
+        # or a graft file can change them for an OLDER commit while leaving the
+        # tip and the count `corpus_history_id` records exactly equal. Both
+        # sides therefore disable both mechanisms through the same shared
+        # constants, so producer and reader agree BY CONSTRUCTION rather than by
+        # a probe that could observe a different instant than the walk.
         result = subprocess.run(
             [
                 "git",
                 "--literal-pathspecs",
+                *_cs.HISTORY_GIT_GLOBALS,
                 "log",
                 "--name-only",
                 "--format=COMMIT %H %ct",
@@ -438,6 +446,7 @@ def collect_git_timestamps(repo_root: Path, files: list, todo_root=None) -> dict
                 pathspec,
             ],
             cwd=str(repo_root),
+            env=_cs.history_git_env(),
             capture_output=True,
             text=True,
             check=True,

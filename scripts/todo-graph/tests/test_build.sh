@@ -8479,11 +8479,18 @@ PY2
         cd "$GATE_REPO" || exit 1
         git checkout --quiet "$G_PROTO_BASE" -- scripts/todo-graph/cache_schema.py
         python3 - scripts/todo-graph/cache_schema.py <<'PY2'
-import sys, pathlib
+import re, sys, pathlib
+# BUMP WHATEVER IS THERE, never a hardcoded 1 -> 2. The clone is seeded from the
+# WORKING TREE (see the closure copy above), so this file carries the live
+# constant -- and the day section 27 legitimately bumped it to 2, a literal
+# "CACHE_FORMAT_VERSION = 1" needle stopped matching, the fixture committed no
+# change, base and head became identical, and BOTH gate cases failed reporting
+# "not handled" as though the gate had regressed.
 p = pathlib.Path(sys.argv[1]); s = p.read_text(encoding="utf-8")
-old = "CACHE_FORMAT_VERSION = 1"
-assert old in s, "cache format version anchor not found"
-p.write_text(s.replace(old, "CACHE_FORMAT_VERSION = 2", 1), encoding="utf-8")
+m = re.search(r"^CACHE_FORMAT_VERSION = (\d+)$", s, re.M)
+assert m, "cache format version anchor not found"
+p.write_text(s[:m.start()] + f"CACHE_FORMAT_VERSION = {int(m.group(1)) + 1}"
+             + s[m.end():], encoding="utf-8")
 PY2
         git commit --quiet --no-verify -am "22am: hand-bump the producer contract version" >/dev/null 2>&1
     )
@@ -13601,6 +13608,272 @@ if [ "$S25CE" = "REFUSED" ]; then
 else
     t_fail "section 25: conditional emission drop not caught ($S25CE)"
 fi
+
+# ----------------------------------------------------------------------
+# Section 27: replace refs and grafts cannot move a derived timestamp
+# ----------------------------------------------------------------------
+# The axis section 24 left open: `corpus_history_id` projects the history onto
+# (tip, count), and BOTH `git replace` and the deprecated graft file can change
+# what `git log` reports for an OLDER commit while leaving that pair equal. The
+# cache is then certified against a history it did not come from.
+#
+# EVERY CASE BELOW ASSERTS THE PAIR IS UNCHANGED FIRST. Without that control the
+# fixture would pass just as well against section 21's count check, and would be
+# testing cardinality rather than replacement -- the exact confusion the section
+# text warns about.
+S27=$(python3 - "$REPO_ROOT" <<'S27EOF'
+import json, os, pathlib, shutil, subprocess, sys, tempfile
+
+repo = pathlib.Path(sys.argv[1])
+tg = repo / "scripts/todo-graph"
+GITENV = dict(os.environ,
+              GIT_AUTHOR_NAME="s27", GIT_AUTHOR_EMAIL="s27@example.invalid",
+              GIT_COMMITTER_NAME="s27", GIT_COMMITTER_EMAIL="s27@example.invalid")
+out = []
+
+
+git_failures = []
+
+
+def git(d, *args, env_extra=None):
+    """Run git in `d`. A NONZERO exit is RECORDED, never discarded.
+
+    A silently-failing setup command (a `git replace` that did not take, a
+    namespace git refused) would otherwise leave the fixture asserting
+    "protected build is stable" about a repo where nothing was ever replaced
+    (Codex adversarial, section 27, [medium]).
+    """
+    r = subprocess.run(["git", "-C", str(d), *args], capture_output=True,
+                       text=True, env=dict(GITENV, **(env_extra or {})))
+    if r.returncode != 0 and args[:1] != ("for-each-ref",):
+        git_failures.append(f"{args[0]}:{r.returncode}")
+    return r.stdout.strip()
+
+
+def make_repo():
+    """Three corpus-touching commits with pinned, distinct committer dates."""
+    d = pathlib.Path(tempfile.mkdtemp())
+    (d / "todo" / "01-x").mkdir(parents=True)
+    git(d, "init", "-q", ".")
+    for i in (1, 2, 3):
+        (d / "todo" / "01-x" / f"TODO-0{i}-a.md").write_text(
+            f"---\nschema_version: 1\nid: s27-{i}\ndomain: 01-x\nstatus: active\n"
+            f'title: "A{i}"\n---\n\n# A{i}\n\n## 1. One\n\n- [ ] a thing\n')
+        git(d, "add", "-A")
+        subprocess.run(["git", "-C", str(d), "commit", "-q", "--no-verify",
+                        "-m", f"c{i}"], capture_output=True, text=True,
+                       env=dict(GITENV,
+                                GIT_AUTHOR_DATE=f"2020-01-0{i} 00:00:00 +0000",
+                                GIT_COMMITTER_DATE=f"2020-01-0{i} 00:00:00 +0000"))
+    return d
+
+
+def pair(d, env_extra=None):
+    """The (tip, count) `corpus_history_id` projects onto.
+
+    `env_extra` is not optional garnish: a case that sets up under a custom
+    GIT_REPLACE_REF_BASE must MEASURE under it too, or the control describes a
+    different repository than the one under test.
+    """
+    return (git(d, "log", "-1", "--format=%H", "--", "todo",
+                env_extra=env_extra),
+            git(d, "rev-list", "--count", "HEAD", "--", "todo",
+                env_extra=env_extra))
+
+
+def stamps(d, srcdir=None, env_extra=None):
+    """created_at/last_active_at per node, via build.py (real or mutated)."""
+    src = pathlib.Path(srcdir) if srcdir else tg
+    cache = d / "build" / "c.json"
+    cache.parent.mkdir(exist_ok=True)
+    if cache.exists():
+        cache.unlink()   # never let a previous run's cache answer for this one
+    r = subprocess.run([sys.executable, str(src / "build.py"), "--quiet",
+                        "--root", str(d / "todo"), "--repo-root", str(d),
+                        "--output", str(cache)], capture_output=True, text=True,
+                       env=dict(os.environ, **(env_extra or {})))
+    if r.returncode != 0 or not cache.exists():
+        return None
+    return sorted((n["id"], n.get("created_at"), n.get("last_active_at"))
+                  for n in json.loads(cache.read_text()))
+
+
+def mutated_tree(patch):
+    """A copy of the todo-graph module tree with `patch` applied to cache_schema.
+
+    build.py puts its OWN directory at sys.path[0], so patching a copy is the
+    only way to make it import a modified cache_schema. The WHOLE tree is copied
+    rather than the two files: build.py also resolves `schema/cache.schema.json`
+    and its sibling modules against that same directory, and a two-file copy
+    dies at import with FileNotFoundError -- which the mutation leg would then
+    report as "no drift", i.e. as a PASS of the thing it exists to disprove.
+    """
+    m = pathlib.Path(tempfile.mkdtemp()) / "tg"
+    shutil.copytree(tg, m,
+                    ignore=shutil.ignore_patterns("tests", "__pycache__"))
+    text = (m / "cache_schema.py").read_text()
+    old, new = patch
+    if text.count(old) != 1:
+        return None
+    (m / "cache_schema.py").write_text(text.replace(old, new, 1))
+    return m
+
+
+def replace_oldest(d, env_extra=None):
+    """Replace the oldest corpus commit: same tree, same parents, new date."""
+    old = git(d, "rev-list", "--max-parents=0", "HEAD")
+    tree = git(d, "show", "-s", "--format=%T", old)
+    new = subprocess.run(
+        ["git", "-C", str(d), "commit-tree", tree, "-m", "c1"],
+        capture_output=True, text=True,
+        env=dict(GITENV, GIT_AUTHOR_DATE="2021-06-06 06:06:06 +0000",
+                 GIT_COMMITTER_DATE="2021-06-06 06:06:06 +0000")).stdout.strip()
+    git(d, "replace", "-f", old, new, env_extra=env_extra)
+
+
+# -- 27a: a replace ref cannot move a derived timestamp -----------------
+d = make_repo()
+before_pair, before = pair(d), stamps(d)
+if before is None:
+    out.append("A-CONTROL-NO-CACHE")
+else:
+    replace_oldest(d)
+    after_pair, after = pair(d), stamps(d)
+    if after_pair != before_pair:
+        # The replacement moved the pair, so section 21's count/tip check would
+        # already catch it and this fixture proves nothing about section 27.
+        out.append("A-CONTROL-PAIR-MOVED")
+    elif before is None or after is None:
+        out.append("A-BUILD-FAILED")
+    else:
+        out.append("A-STABLE" if after == before else "A-DRIFTED")
+
+# -- 27a-mutation: revert the mechanism, the drift must appear ----------
+mut = mutated_tree(('HISTORY_GIT_GLOBALS = ("--no-replace-objects",)',
+                    "HISTORY_GIT_GLOBALS = ()"))
+if mut is None:
+    out.append("AM-NEEDLE-MISS")
+else:
+    m_after = stamps(d, mut)
+    # A mutant that fails to BUILD produces no drift, which is indistinguishable
+    # from a mutant the mechanism defeated unless it is named separately. It was
+    # exactly that collapse (a two-file copy dying on a missing schema/) that
+    # made this leg first report a false pass.
+    out.append("AM-BUILD-FAILED" if m_after is None else
+               "AM-DRIFTED" if m_after != before else "AM-STABLE")
+
+# -- 27b: a replacement in a NON-DEFAULT namespace is still inert -------
+# This is why a digest of `refs/replace` was rejected as the mechanism: git
+# honours GIT_REPLACE_REF_BASE, and such a digest reads an EMPTY set while the
+# walk is replaced (Codex design review, section 27, [high]).
+#
+# EVERY MEASUREMENT BELOW RUNS UNDER THE CUSTOM BASE, and the leg proves its own
+# control fires by first showing an UNPROTECTED build DRIFTS there. Without that
+# the case passes vacuously: if git ignored the namespace, or `git replace`
+# failed, "protected build is stable" would be true for the wrong reason
+# (Codex adversarial, section 27, [medium]).
+BASE = {"GIT_REPLACE_REF_BASE": "refs/myreplace/"}
+d2 = make_repo()
+b2_pair, b2 = pair(d2, BASE), stamps(d2, env_extra=BASE)
+replace_oldest(d2, BASE)
+if git_failures:
+    out.append("B-CONTROL-GIT-SETUP-FAILED:" + ",".join(git_failures))
+else:
+    # A digest of refs/replace -- candidate B's mechanism -- sees nothing here.
+    digest_would_see = git(d2, "for-each-ref", "--format=%(refname)",
+                           "refs/replace", env_extra=BASE)
+    created = git(d2, "for-each-ref", "--format=%(refname)", "refs/myreplace/",
+                  env_extra=BASE)
+    # CONTROL: an unprotected walk under this base MUST observe the replacement.
+    unprot = mutated_tree(('HISTORY_GIT_GLOBALS = ("--no-replace-objects",)',
+                           "HISTORY_GIT_GLOBALS = ()"))
+    u2 = stamps(d2, unprot, env_extra=BASE) if unprot else None
+    a2_pair, a2 = pair(d2, BASE), stamps(d2, env_extra=BASE)
+    if created == "":
+        out.append("B-CONTROL-NO-REPLACE-REF-CREATED")
+    elif digest_would_see != "":
+        out.append("B-CONTROL-REFS-REPLACE-NONEMPTY")
+    elif u2 is None or u2 == b2:
+        # git ignored the custom namespace, or the mutant did not build: either
+        # way the protected result below would mean nothing.
+        out.append("B-CONTROL-UNPROTECTED-DID-NOT-DRIFT")
+    elif a2_pair != b2_pair:
+        out.append("B-CONTROL-PAIR-MOVED")
+    else:
+        out.append("B-STABLE" if a2 is not None and a2 == b2 else "B-DRIFTED")
+
+# -- 27c: an EQUAL-TIP, EQUAL-COUNT graft is inert ----------------------
+# THE PAIR MUST SURVIVE THE GRAFT, which is the whole point of the case. An
+# earlier version grafted the tip onto the root, which CHANGES the count -- so
+# it proved only that a graft section 21's count already catches is neutralised,
+# not the hidden case this section exists for (Codex adversarial round 2,
+# section 27, [medium]).
+#
+# Construction: three corpus commits C1,C2,C3 plus an independent root S that
+# also touches the corpus with an OLDER date. Reparenting C2 onto S leaves the
+# tip and the corpus-touching count at 3 while the OLDEST corpus commit becomes
+# S -- so `created_at` moves under an identity that compares equal.
+d3 = make_repo()
+b3_pair, b3 = pair(d3), stamps(d3)
+c2 = git(d3, "rev-parse", "HEAD~1")
+# S is built through the index, which is then restored to HEAD.
+zz = d3 / "zz.tmp"
+zz.write_text("independent root\n")
+blob = git(d3, "hash-object", "-w", str(zz))
+git(d3, "read-tree", "--empty")
+git(d3, "update-index", "--add", "--cacheinfo",
+    f"100644,{blob},todo/01-x/TODO-01-a.md")
+s_tree = git(d3, "write-tree")
+s = subprocess.run(["git", "-C", str(d3), "commit-tree", s_tree, "-m", "S"],
+                   capture_output=True, text=True,
+                   env=dict(GITENV,
+                            GIT_AUTHOR_DATE="2019-01-01 00:00:00 +0000",
+                            GIT_COMMITTER_DATE="2019-01-01 00:00:00 +0000")
+                   ).stdout.strip()
+git(d3, "read-tree", "HEAD")
+zz.unlink()
+(d3 / ".git" / "info").mkdir(parents=True, exist_ok=True)
+(d3 / ".git" / "info" / "grafts").write_text(f"{c2} {s}\n")
+a3_pair = pair(d3)
+# CONTROL 1: the graft must be LIVE -- an unprotected walk must see it.
+ungrafted_walk = git(d3, "log", "--format=%ct", "--reverse", "--", "todo",
+                     env_extra={"GIT_GRAFT_FILE": os.devnull})
+grafted_walk = git(d3, "log", "--format=%ct", "--reverse", "--", "todo")
+if git_failures:
+    out.append("C-CONTROL-GIT-SETUP-FAILED:" + ",".join(git_failures))
+elif grafted_walk == ungrafted_walk:
+    out.append("C-CONTROL-GRAFT-INERT")
+# CONTROL 2: and it must be the HIDDEN shape -- the pair unchanged. Without
+# this the case collapses back into section 21's count check.
+elif a3_pair != b3_pair:
+    out.append(f"C-CONTROL-PAIR-MOVED({b3_pair[1]}->{a3_pair[1]})")
+else:
+    a3 = stamps(d3)
+    out.append("C-STABLE" if a3 is not None and a3 == b3 else "C-DRIFTED")
+
+# -- 27c-mutation: drop GIT_GRAFT_FILE, the graft must bite -------------
+mut3 = mutated_tree(('    env["GIT_GRAFT_FILE"] = os.devnull\n', ""))
+if mut3 is None:
+    out.append("CM-NEEDLE-MISS")
+else:
+    m3 = stamps(d3, mut3)
+    out.append("CM-BUILD-FAILED" if m3 is None else
+               "CM-DRIFTED" if m3 != b3 else "CM-STABLE")
+
+print(" ".join(out))
+S27EOF
+)
+S27_WANT="A-STABLE AM-DRIFTED B-STABLE CM-DRIFTED"
+S27_GOT="$S27"
+case "$S27_GOT" in
+    "A-STABLE AM-DRIFTED B-STABLE C-STABLE CM-DRIFTED")
+        t_pass "section 27: replace refs (default and custom namespace) and grafts cannot move a derived timestamp"
+        t_pass "section 27: mutation check -- reverting --no-replace-objects or GIT_GRAFT_FILE lets the history move the timestamps"
+        ;;
+    *)
+        t_fail "section 27: history-neutralisation gave '$S27_GOT' (want 'A-STABLE AM-DRIFTED B-STABLE C-STABLE CM-DRIFTED'; $S27_WANT are the load-bearing legs)"
+        ;;
+esac
 
 # ----------------------------------------------------------------------
 # Summary

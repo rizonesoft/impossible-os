@@ -75,10 +75,11 @@ title: "TODO-06 -- TODO Metadata Layer and Derived Graph"
 | ⭐  |  24   |   §24   | The history-identity cost decision: `requires_history` for the query profile        | §21, §22   |  [x]   |
 | ⭐  |  25   |   §25   | Fields the readers consume that the producer never emits (`effort`, `depends_on`)   | §2, §7     |  [x]   |
 | ⭐  |  26   |   §26   | Domain codes resolve by directory, not by cache order (found by §22 round 7)        | §3, §22    |  [x]   |
-| ⭐  |  27   |   §27   | Effective-history identity: replace refs and grafts (split from the §24 residue)    | §21, §24   |  [ ]   |
+| ⭐  |  27   |   §27   | Effective-history identity: replace refs and grafts (split from the §24 residue)    | §21, §24   |  [x]   |
 | ⭐  |  28   |   §28   | Section-level readiness: verbs that consult the dependency evidence the graph has   | §25, §26   |  [ ]   |
 | ⭐  |  29   |   §29   | `--fix-line-numbers` reports success over targets it could not resolve              | §23, §26   |  [ ]   |
 | ⭐  |  30   |   §30   | `--watch` never ticks on a history change for the history-consuming verbs (§27)     | §24, §27   |  [ ]   |
+| ⭐  |  31   |   §31   | An equal-count shallow boundary still moves `created_at` under an unchanged id      | §21, §27   |  [ ]   |
 
 > 💎 = parity work -- Linux kernel has MAINTAINERS + get_maintainer.pl (person-ownership mapping without a dep graph); Windows has no public equivalent. §1 (frontmatter), §2 (generator), §5 (migration) bring us to partial Linux parity plus graph metadata neither OS ships.
 > ⭐ = competitive edge -- neither Win11 nor mainline Linux ships a first-class TODO dependency graph. §3 (validator), §4 (query CLI), §6 (CI gate), §7 (visualization), §8 (MCP server) are new ground; the surface has direct value for any contributor scanning "what can I work on next?".
@@ -1373,21 +1374,42 @@ Found by §24's reviews on 2026-08-08, while §24 was pinning what the query pro
 
 `corpus_history_id` (`cache_schema.py:1491-1500`) projects the effective history onto two values: the latest corpus-touching commit hash and the count of corpus-touching commits. Those two can collide across genuinely different effective histories. Replace an OLDER corpus-touching commit with one carrying an identical tree and identical parents but a different committer timestamp, and `git log` hands `build.py:269` a different `%ct` -- so `created_at` / `last_active_at` change -- while the latest touching hash and the commit count both stay equal. An equal-depth graft has the same shape. The cache is then certified against a history it did not come from.
 
-This is NOT the shallow-deepening case, which the count does catch, and it is not the `GIT_SHALLOW_FILE` case, which the count also catches because the count is computed under the same effective git environment as the walk. It is specifically the class where ancestry semantics change while cardinality and tip do not.
+This is NOT the shallow-deepening case, which the count does catch because deepening changes the cardinality. It is specifically the class where ancestry semantics change while cardinality and tip do not. The `GIT_SHALLOW_FILE` case splits across that line rather than sitting on one side of it: a boundary move that changes the count is caught, and an EQUAL-COUNT boundary move is not -- reproduced during this section's review and filed as §31, because the count following the effective git environment is not the same property as the count always moving.
 
-- [ ] Decide between rejecting replacement ancestry and folding it into the identity
-      Two shapes were named at design time and neither is obviously right. Rejecting is cheaper and more predictable; folding is more permissive for a repo that legitimately uses replace refs.
-      - Rejecting means `--no-replace-objects` on every git invocation in BOTH `collect_git_timestamps` and `corpus_history_id`, so producer and reader agree by construction and the timestamps describe the real history.
-      - Folding means a digest of `git for-each-ref refs/replace` riding in the identity, which is a SECOND read and therefore inherits the ABA concern that `build.py:195-204` exists to close -- weigh that before choosing it.
-- [ ] Handle the deprecated graft file on whichever path is chosen
-      `.git/info/grafts` is a separate mechanism from `refs/replace` and is not disabled by `--no-replace-objects`. A determinate refusal on its presence is acceptable; silently ignoring it is not.
-- [ ] Narrow or widen `corpus_history_id`'s documented guarantee to match what ships
-      §24 narrowed the docstring to depth/cardinality plus effective-boundary changes and named this gap explicitly. Whatever this section decides, that wording is the thing that must stop being true or stay true on purpose.
-- [ ] Fixtures for the chosen behavior, each mutation-checked
-      A replace ref that changes `%ct` on an older corpus-touching commit while preserving tree, parents, tip and count must be detected or must be refused, per the decision above. Mutation: revert the chosen mechanism and require that fixture to FAIL.
-- [ ] Commit: `"todo-graph: close the replace-ref and graft axis in the history identity"`
+- [x] REJECT replacement ancestry -- `cache_schema.HISTORY_GIT_GLOBALS = ("--no-replace-objects",)` on every git call in both `collect_git_timestamps` and `corpus_history_id`
+      Folding was rejected on evidence, not preference: `git replace` honours `GIT_REPLACE_REF_BASE`, so a digest of `refs/replace` reads an EMPTY set while the walk is replaced.
+      - Measured 2026-08-09 on git 2.43.0 with a control: a replace ref on the oldest corpus commit (identical tree and parents, new committer date) left tip AND count unchanged while `%ct` went 1577836800 -> 1622959566; `--no-replace-objects` restored it, including under a custom ref base.
+      - The flag rides on EVERY probe in `corpus_history_id._git`, not only the two that walk history, so the next probe added there inherits the contract instead of having to remember it.
+- [x] Grafts are inert BY CONSTRUCTION via `cache_schema.history_git_env()` (`GIT_GRAFT_FILE=os.devnull`), not by a presence probe
+      A probe was designed first and rejected: it is a SECOND read not causally bound to the traversal, so a graft can be live for the producer's walk and gone before the reader stats it (Codex design review, [high]).
+      - `--no-replace-objects` does not disable grafts and git offers no flag; an EMPTY graft file is a no-op, so pointing `GIT_GRAFT_FILE` at the null device is the exact equivalent. Verified: an ancestry-changing graft moved the count 3 -> 2 and dropped a commit from the walk; both restored with the env set.
+      - This ignores a graft rather than refusing it, which the original item allowed only if not done SILENTLY -- so the contract is stated in the `corpus_history_id` docstring and in the module comment, not left implicit.
+- [x] `corpus_history_id`'s documented guarantee narrowed to the replacement- and graft-neutralised history, and two FALSE clauses removed
+      The term is deliberately not "raw": shallow ancestry stays EFFECTIVE on both sides, so "raw" would name a stronger contract than the code delivers.
+      - §24's wording claimed the pair covered "boundary changes however they are reached". Verified false 2026-08-09: with C0 adding a TODO, C1/C2 touching nothing under the corpus and C3 touching it, a `GIT_SHALLOW_FILE` boundary at C2 leaves tip AND count identical (2) while `created_at` moves 1577836800 -> 1583020800.
+      - The second false clause said the COUNT was the only half following the effective git environment. The tip follows it too: verified with C0 touching the corpus and C1 not, a boundary at C1 moved the tip from C0 to C1 with the count unchanged at 1.
+      - The docstring now states both limits and names §31 as the owner of the open axis, rather than implying it is covered.
+- [x] `CACHE_FORMAT_VERSION` 1 -> 2, because `history_id` kept its name and type and changed its meaning
+      This is the documented purpose of the hand-bumped integer (`cache_schema.py:136`): a v1 `tip:count` was computed with replacements and grafts APPLIED, a v2 one with both neutralised, and the two strings compare EQUAL in exactly the replacement case that matters.
+      - Without it a v2 reader accepts a v1 cache built under a replacement, and a v1 reader accepts a v2 cache after a rollback -- both silently, since no digest can see a meaning change (Codex adversarial, [high]).
+- [x] Fixtures in `tests/test_build.sh`, every leg controlled and mutation-checked
+      27a replace ref, 27b the same under `GIT_REPLACE_REF_BASE=refs/myreplace/`, 27c an ancestry-changing graft; each asserts the (tip, count) pair is UNCHANGED first, so none of them can pass on §21's count check instead.
+      - Mutation legs revert each mechanism and require the drift to APPEAR. Both initially reported a false pass because a two-file module copy died on a missing `schema/`, so "no drift" and "no build" now report as distinct outcomes.
+      - 27b additionally proves an UNPROTECTED build drifts under the custom base before asserting the protected one is stable, and records every git setup command's exit status (Codex adversarial, [medium]).
+      - Repaired an unrelated fixture the bump exposed: 22am hardcoded a `CACHE_FORMAT_VERSION = 1` needle, so a legitimate bump silently made base and head identical and failed BOTH gate cases as "not handled". It now bumps whatever value it finds.
+- [x] Commit: `"todo-graph: close the replace-ref and graft axis in the history identity"`
 
 **Test checkpoint:** a replace ref that alters a corpus-touching commit's timestamp without moving the tip or the count is either refused or detected, and the fixture proving it fails when the mechanism is reverted; an ordinary repository with no replace refs and no graft file is unaffected and pays no measurable extra cost; `bash scripts/todo-graph/tests/test_build.sh` and `bash scripts/test-tooling.sh` green.
+
+> **Test runner:** `bash scripts/todo-graph/tests/test_build.sh` -- expect 466/466 passed, including the two section-27 lines (the three controlled cases, and the mutation check that reverting either mechanism lets the history move the timestamps).
+
+> **Notes:**
+> - Shipped `cache_schema.HISTORY_GIT_GLOBALS` + `history_git_env()` and routed both git call sites through them (`build.collect_git_timestamps`, `corpus_history_id._git`), so replace refs and grafts are inert for producer and reader alike.
+> - Chose rejection over folding on measured evidence: `GIT_REPLACE_REF_BASE` makes a `refs/replace` digest read empty while the walk is replaced, so candidate B could not see what it was built to see.
+> - Disabling rather than probing is the load-bearing choice -- a probe is a second read that can observe a different instant than the walk, which is the ABA shape §21 already paid for.
+> - `CACHE_FORMAT_VERSION` 1 -> 2 because `history_id` changed meaning at an unchanged name and type; every cache rebuilds, which is free for a gitignored artifact.
+> - Canonical contract: the `corpus_history_id` docstring plus the module comment above `HISTORY_GIT_GLOBALS`, both of which state what is covered and what is not.
+> - Scope boundary: the equal-count shallow-boundary collision is REPRODUCED but deliberately NOT closed here -- it needs a product decision about shallow clones and is filed as §31.
 
 -> XREF: [`TODO-06 §30`](#30---watch-never-ticks-on-a-history-change-for-the-history-consuming-verbs) -- the watch-mode half of §24's residue, split out of this section before implementation (item: "Give `--watch` a history trigger for the history-consuming verbs"); it consumes whatever probe this section settles on, so it ships after this one.
 -> XREF: [`TODO-06 §24`](#24-the-history-identity-cost-decision-requires_history-for-the-query-profile) -- the section that found this and pinned the identity everywhere else (item: "Pin the chosen identity source for the query profile, with the reasoning recorded"); that section measured the cost and enabled the history axis for the three consumers, and deliberately did NOT close this gap.
@@ -1482,53 +1504,82 @@ This is a gap in a NEW capability, not a regression: watch mode never checked hi
 
 ---
 
+## 31. An Equal-Count Shallow Boundary Still Moves `created_at` Under an Unchanged Identity
+
+> **Spawned-by:** §27 (review)
+
+Found by §27's adversarial review on 2026-08-09 and REPRODUCED before filing. §27 closed the replace-ref and graft axis by making both inert on every git call; this is the third mechanism on the same axis, and it is the one §27 could not close because closing it requires a decision about what the tool does in a shallow clone.
+
+`corpus_history_id` projects the history onto `tip:count`. §24 believed the count caught every `GIT_SHALLOW_FILE` case because the count is computed under the same effective git environment as the walk -- and it does catch the ones that CHANGE the count, which is why the shallow-DEEPENING case is genuinely covered. It does not catch an equal-count boundary move.
+
+Reproduced 2026-08-09 on git 2.43.0, with a full-history control: C0 adds a TODO, C1 and C2 touch nothing under the corpus, C3 touches the TODO. The full history walks `{C0, C3}`; a boundary at C2 walks `{C2, C3}`, because git treats a shallow root's tree as an addition. Tip identical, count identical at 2, and `created_at` moves 1577836800 -> 1583020800. A cache built under one boundary is then certified against the other.
+
+- [ ] Decide what a shallow corpus IS to this tool, and record the reasoning
+      This is the whole section: the two shapes have opposite user-visible consequences and neither is free.
+      - REFUSE a shallow corpus determinately (`git rev-parse --is-shallow-repository`, ~1.5ms). Predictable and cheap, but it stops the todo-graph working in any shallow clone -- CI included, so check what `.github/workflows/todo-graph.yml` actually fetches before choosing it.
+      - BIND the boundary into the identity. Keeps shallow clones working, but the boundary is a SECOND read and therefore carries the same ABA objection §27 rejected a graft probe over; if it is chosen, it must be derived from the walk rather than probed beside it.
+- [ ] Whatever ships, the `corpus_history_id` docstring stops naming §31 as the open owner
+      §27 left it saying this axis is open and pointing here. That sentence is the thing that must become false on purpose.
+- [ ] Fixture for the chosen behavior, mutation-checked
+      The C0/C1/C2/C3 shape above, asserting tip AND count are equal across the boundary change first -- otherwise the fixture passes on §21's count check and proves nothing. Mutation: revert the mechanism and require the fixture to FAIL.
+- [ ] Commit: `"todo-graph: close the shallow-boundary axis in the history identity"`
+
+**Test checkpoint:** a corpus walked under two different equal-count shallow boundaries is either refused or produces two different identities, and the fixture proving it fails when the mechanism is reverted; a non-shallow repository pays no measurable extra cost; `bash scripts/todo-graph/tests/test_build.sh` and `bash scripts/test-tooling.sh` green.
+
+-> XREF: [`TODO-06 §27`](#27-effective-history-identity-replace-refs-and-grafts) -- the section whose review found and reproduced this (item: "`corpus_history_id`'s documented guarantee narrowed to the replacement- and graft-neutralised history, and two FALSE clauses removed"); it closed the replace-ref and graft mechanisms and deliberately left this one open, because refusing shallow corpora is a product decision rather than a correctness fix.
+-> XREF: [`TODO-06 §21`](#21-the-producer-side-generation-window-in-buildpy) -- the section that owns `corpus_history_id` and its single-walk provenance rule (item: "Commit: `\"todo-graph: close the producer-side generation window in build.py\"`"); it is stamped, so this axis is owned here.
+
+---
+
 ## OS Comparison
 
-| ⭐  | Feature                                                      | 🪟 Win11                | 🐧 Linux                            | 🚀 Impossible OS                                                                 |
-| --- | ------------------------------------------------------------ | ----------------------- | ----------------------------------- | -------------------------------------------------------------------------------- |
-| 💎  | Structured ownership metadata                                | ⚠️ CODEOWNERS           | ✅ MAINTAINERS + get_maintainer.pl  | ✅ §1 frontmatter on 223/223 TODOs (§5)                                          |
-| ⭐  | Cross-file dependency graph                                  | ❌ Project boards (DB)  | ❌ Ad hoc cover letters             | ✅ §2 generator + JSON cache (0.4s)                                              |
-| ⭐  | Stale-XREF / cycle validator                                 | ❌ None                 | ❌ None                             | ✅ §3 validator (8 checks, incl duplicate-id)                                    |
-| ⭐  | "Ready to work" / backlinks queries                          | ❌ Manual board filters | ❌ None in-tree                     | ✅ §4 query CLI (12 subcommands)                                                 |
-| 💎  | CI gate on dep-graph integrity                               | ⚠️ Per repo             | ❌ Rare                             | ✅ §6 GHA workflow + --diff + auto-rewrite hook                                  |
-| ⭐  | Canonical-markdown + derived-cache invariant                 | ❌ DB-first             | ❌ Flat MAINTAINERS                 | ✅ §1-§2 mirrors settings.json pattern                                           |
-| 💎  | Editor-time frontmatter validation                           | ❌ None                 | ⚠️ Hugo/Jekyll JSON Schema          | ⚠️ §1 sidecar; §6 CI is the gate                                                 |
-| ⭐  | Mermaid/dot graph render                                     | ❌ Manual board views   | ❌ None in-tree                     | ✅ §7 render CLI (5 formats) + docs/infrastructure/todo-graph.md                 |
-| ⭐  | Critical-path / "most-blocking" rank                         | ⚠️ TaskJuggler external | ⚠️ TaskJuggler external             | ⚠️ §4 `blocking`; ranks 0 edges until a TODO authors `depends_on` (§28 owns it)  |
-| ⭐  | Stale-TODO / git-aware tracking                              | ❌ Manual board filters | ❌ None in-tree                     | ✅ §1 git timestamps + §4 `stale`                                                |
-| ⭐  | Source-file backlinks (`code <id>`)                          | ❌ Manual board links   | ⚠️ MAINTAINERS `F:` (people)        | ✅ §1 `file_patterns` + §4 `code <id>`                                           |
-| ⭐  | AI-agent MCP / autocomplete surface                          | ❌ Closed               | ❌ None                             | ✅ §8 MCP server (12 read-only tools)                                            |
-| 💎  | Per-item stamped_items / stub-behind-stamp lint              | ❌ None                 | ❌ None                             | ✅ §9 stamped_items cache + lint Check 7 live                                    |
-| 💎  | Split function-head resolution, no LSP required              | ❌ None                 | ❌ None                             | ✅ §10 two-pass stdlib resolver + corpus mapping gate                            |
-| 💎  | Lint reports its own blind spot as a ratio                   | ❌ None                 | ❌ None                             | ✅ §11 every ref bucketed; buckets must sum or no ratio is published             |
-| 💎  | Resolver follows a header declaration to its impl            | ❌ None                 | ❌ None                             | ✅ §12 basename-unique, non-static, linkage-checked; +54 resolved                |
-| 💎  | Stamped ref repaired against the tree, not stored            | ❌ None                 | ❌ None                             | ✅ §13 basename + section-scope repair at resolution time                        |
-| 💎  | Identity gate verdicts the WHOLE ref population              | ❌ None                 | ❌ None                             | ✅ §14 all 1,626 refs, bucket-for-bucket equal to the lint's own                 |
-| 💎  | Reclassification distinguished from lost coverage            | ❌ None                 | ❌ None                             | ✅ §14 dropped/lost/moved/changed fail; gained/added pass                        |
-| ⭐  | Resolver cache lifecycle split by what pins it               | ❌ None                 | ⚠️ ctags/cscope rebuild wholesale   | ✅ §15 topology walk-scoped, content-bound LRU; eviction can't move a verdict    |
-| 💎  | Mapping gate RUNS itself; no human opt-in                    | ❌ None                 | ❌ None                             | ✅ §16 non-cancellable CI job, range from last-green SHA; unreviewed gains fail  |
-| 💎  | ONE cache-schema rule, every consumer identical              | ❌ None                 | ⚠️ Per-tool ad hoc parsing          | ✅ §17 shared validator; same bad cache refused by both readers, own exit codes  |
-| 💎  | Protocol migration separated from behaviour change           | ❌ None                 | ❌ None                             | ✅ §18 vocabulary/schema as inert data; gate needs byte-identical executables    |
-| 💎  | The cache PRODUCER is differentialled, not trusted           | ❌ None                 | ❌ None                             | ✅ §18 base vs head build.py, BOTH corpora; a dropped stamped ref cannot hide    |
-| ⭐  | Gate proves its consumer DELEGATES, not just runs            | ❌ None                 | ❌ None                             | ✅ §18 lint Check 25: sentinel-verdict propagation, mutation-checked             |
-| 💎  | Each reader validated for what IT consumes                   | ❌ None                 | ⚠️ One-size schema or none          | ✅ §19 caller profiles: subtrees consumed declared apart from readiness required |
-| 💎  | A schema-valid cache cannot SUPPRESS a verdict               | ❌ None                 | ❌ None                             | ✅ §19 node identity, row coverage, one pinned generation; all fail-closed       |
-| 💎  | Emitter DECLARES its vocabulary; retirement provable         | ❌ None                 | ❌ None                             | ✅ §20 declared `EMITTED_BUCKETS` + AST gate + runtime bound; text search gone   |
-| 💎  | The PRODUCER may not certify a cache it invalidated          | ❌ None                 | ❌ None                             | ✅ §21 CONSUMED bytes re-fingerprinted before any write; rc 3 keeps the cache    |
-| 💎  | Cache freshness decided by content, never a clock            | ❌ Timestamp compare    | ❌ mtime / checksum stamps          | ✅ §21 digest-named binding + git-history id; a stepped clock cannot invert it   |
-| ⭐  | Freshness cost charged per COMMAND, not per tool             | ❌ None                 | ❌ Whole-index rebuild either way   | ✅ §24 the 3 verbs reading git timestamps pay 47.9ms; the other 10 pay nothing   |
-| 💎  | A partial index REFUSES rather than answering thin           | ❌ Silent partial       | ⚠️ ctags/cscope answer from stale   | ✅ §22 rc 2 + machine-readable body; no verb answers from surviving rows         |
-| 💎  | The agent transport cannot flatten a refusal to `[]`         | ❌ Closed               | ❌ None                             | ✅ §22 MCP returns a structured error; a real empty result stays distinguishable |
-| 💎  | A bad REQUEST and an untrustworthy cache differ              | ❌ One error code       | ❌ Conflated                        | ✅ §22 rc 4 vs rc 2, own body each; stale generation outranks a bad request      |
-| 💎  | A REFUSAL never reads as a verdict about the corpus          | ❌ Conflated            | ❌ Traceback exits 1 like a finding | ✅ §23 rc 2 vs rc 1 on both cache reads; findings buffered until binding closes  |
-| ⭐  | Recovery is bounded: ONE rebuild, then re-validated          | ❌ None                 | ⚠️ Regenerate-and-trust             | ✅ §23 one attempt, same validation, rc 2 on a second failure; no retry loop     |
-| 💎  | Recovery may not DESTROY a caller-named artifact             | ❌ None                 | ❌ Overwrites in place              | ✅ §23 a stale cache refuses instead of being rebuilt; the rewrite refuses drift |
-| 💎  | The artifact declares which PRODUCER CONTRACT wrote it       | ❌ None                 | ❌ Index has no self-identity       | ✅ §25 version + declaration digest in the binding; meaning and shape both fail  |
-| 💎  | A historical baseline is CHECKED, not asked to be current    | ❌ None                 | ❌ Regenerate-and-hope              | ✅ §25 `--diff` requires the identity, rc 2 otherwise; baseline byte-identical   |
-| ⭐  | An empty ranking NAMES its evidence, through every transport | ❌ Silent zero          | ❌ Silent zero                      | ✅ §25 the caveat rides in `--json` AND `stats`, so `--quiet` cannot flatten it  |
-| 💎  | A reference resolves by the DIRECTORY it names, not a prefix | ❌ Board links are ids  | ❌ Path or nothing                  | ✅ §26 `by_dirnum`/`by_code`; a code owning 2 dirs refuses instead of guessing   |
-| 💎  | A spelled filename is decided by its slug, never its number  | ❌ None                 | ❌ None                             | ✅ §26 exact stem, no number fallback; 6 live edges rebound to the file named    |
-| ⭐  | A malformed link token is refused, not bound to its label    | ❌ None                 | ❌ None                             | ✅ §26 fail-closed on a bracket token that is not one complete markdown link     |
+| ⭐  | Feature                                                       | 🪟 Win11                | 🐧 Linux                            | 🚀 Impossible OS                                                                 |
+| --- | ------------------------------------------------------------- | ----------------------- | ----------------------------------- | -------------------------------------------------------------------------------- |
+| 💎  | Structured ownership metadata                                 | ⚠️ CODEOWNERS           | ✅ MAINTAINERS + get_maintainer.pl  | ✅ §1 frontmatter on 223/223 TODOs (§5)                                          |
+| ⭐  | Cross-file dependency graph                                   | ❌ Project boards (DB)  | ❌ Ad hoc cover letters             | ✅ §2 generator + JSON cache (0.4s)                                              |
+| ⭐  | Stale-XREF / cycle validator                                  | ❌ None                 | ❌ None                             | ✅ §3 validator (8 checks, incl duplicate-id)                                    |
+| ⭐  | "Ready to work" / backlinks queries                           | ❌ Manual board filters | ❌ None in-tree                     | ✅ §4 query CLI (12 subcommands)                                                 |
+| 💎  | CI gate on dep-graph integrity                                | ⚠️ Per repo             | ❌ Rare                             | ✅ §6 GHA workflow + --diff + auto-rewrite hook                                  |
+| ⭐  | Canonical-markdown + derived-cache invariant                  | ❌ DB-first             | ❌ Flat MAINTAINERS                 | ✅ §1-§2 mirrors settings.json pattern                                           |
+| 💎  | Editor-time frontmatter validation                            | ❌ None                 | ⚠️ Hugo/Jekyll JSON Schema          | ⚠️ §1 sidecar; §6 CI is the gate                                                 |
+| ⭐  | Mermaid/dot graph render                                      | ❌ Manual board views   | ❌ None in-tree                     | ✅ §7 render CLI (5 formats) + docs/infrastructure/todo-graph.md                 |
+| ⭐  | Critical-path / "most-blocking" rank                          | ⚠️ TaskJuggler external | ⚠️ TaskJuggler external             | ⚠️ §4 `blocking`; ranks 0 edges until a TODO authors `depends_on` (§28 owns it)  |
+| ⭐  | Stale-TODO / git-aware tracking                               | ❌ Manual board filters | ❌ None in-tree                     | ✅ §1 git timestamps + §4 `stale`                                                |
+| ⭐  | Source-file backlinks (`code <id>`)                           | ❌ Manual board links   | ⚠️ MAINTAINERS `F:` (people)        | ✅ §1 `file_patterns` + §4 `code <id>`                                           |
+| ⭐  | AI-agent MCP / autocomplete surface                           | ❌ Closed               | ❌ None                             | ✅ §8 MCP server (12 read-only tools)                                            |
+| 💎  | Per-item stamped_items / stub-behind-stamp lint               | ❌ None                 | ❌ None                             | ✅ §9 stamped_items cache + lint Check 7 live                                    |
+| 💎  | Split function-head resolution, no LSP required               | ❌ None                 | ❌ None                             | ✅ §10 two-pass stdlib resolver + corpus mapping gate                            |
+| 💎  | Lint reports its own blind spot as a ratio                    | ❌ None                 | ❌ None                             | ✅ §11 every ref bucketed; buckets must sum or no ratio is published             |
+| 💎  | Resolver follows a header declaration to its impl             | ❌ None                 | ❌ None                             | ✅ §12 basename-unique, non-static, linkage-checked; +54 resolved                |
+| 💎  | Stamped ref repaired against the tree, not stored             | ❌ None                 | ❌ None                             | ✅ §13 basename + section-scope repair at resolution time                        |
+| 💎  | Identity gate verdicts the WHOLE ref population               | ❌ None                 | ❌ None                             | ✅ §14 all 1,626 refs, bucket-for-bucket equal to the lint's own                 |
+| 💎  | Reclassification distinguished from lost coverage             | ❌ None                 | ❌ None                             | ✅ §14 dropped/lost/moved/changed fail; gained/added pass                        |
+| ⭐  | Resolver cache lifecycle split by what pins it                | ❌ None                 | ⚠️ ctags/cscope rebuild wholesale   | ✅ §15 topology walk-scoped, content-bound LRU; eviction can't move a verdict    |
+| 💎  | Mapping gate RUNS itself; no human opt-in                     | ❌ None                 | ❌ None                             | ✅ §16 non-cancellable CI job, range from last-green SHA; unreviewed gains fail  |
+| 💎  | ONE cache-schema rule, every consumer identical               | ❌ None                 | ⚠️ Per-tool ad hoc parsing          | ✅ §17 shared validator; same bad cache refused by both readers, own exit codes  |
+| 💎  | Protocol migration separated from behaviour change            | ❌ None                 | ❌ None                             | ✅ §18 vocabulary/schema as inert data; gate needs byte-identical executables    |
+| 💎  | The cache PRODUCER is differentialled, not trusted            | ❌ None                 | ❌ None                             | ✅ §18 base vs head build.py, BOTH corpora; a dropped stamped ref cannot hide    |
+| ⭐  | Gate proves its consumer DELEGATES, not just runs             | ❌ None                 | ❌ None                             | ✅ §18 lint Check 25: sentinel-verdict propagation, mutation-checked             |
+| 💎  | Each reader validated for what IT consumes                    | ❌ None                 | ⚠️ One-size schema or none          | ✅ §19 caller profiles: subtrees consumed declared apart from readiness required |
+| 💎  | A schema-valid cache cannot SUPPRESS a verdict                | ❌ None                 | ❌ None                             | ✅ §19 node identity, row coverage, one pinned generation; all fail-closed       |
+| 💎  | Emitter DECLARES its vocabulary; retirement provable          | ❌ None                 | ❌ None                             | ✅ §20 declared `EMITTED_BUCKETS` + AST gate + runtime bound; text search gone   |
+| 💎  | The PRODUCER may not certify a cache it invalidated           | ❌ None                 | ❌ None                             | ✅ §21 CONSUMED bytes re-fingerprinted before any write; rc 3 keeps the cache    |
+| 💎  | Cache freshness decided by content, never a clock             | ❌ Timestamp compare    | ❌ mtime / checksum stamps          | ✅ §21 digest-named binding + git-history id; a stepped clock cannot invert it   |
+| ⭐  | Freshness cost charged per COMMAND, not per tool              | ❌ None                 | ❌ Whole-index rebuild either way   | ✅ §24 the 3 verbs reading git timestamps pay 47.9ms; the other 10 pay nothing   |
+| 💎  | A partial index REFUSES rather than answering thin            | ❌ Silent partial       | ⚠️ ctags/cscope answer from stale   | ✅ §22 rc 2 + machine-readable body; no verb answers from surviving rows         |
+| 💎  | The agent transport cannot flatten a refusal to `[]`          | ❌ Closed               | ❌ None                             | ✅ §22 MCP returns a structured error; a real empty result stays distinguishable |
+| 💎  | A bad REQUEST and an untrustworthy cache differ               | ❌ One error code       | ❌ Conflated                        | ✅ §22 rc 4 vs rc 2, own body each; stale generation outranks a bad request      |
+| 💎  | A REFUSAL never reads as a verdict about the corpus           | ❌ Conflated            | ❌ Traceback exits 1 like a finding | ✅ §23 rc 2 vs rc 1 on both cache reads; findings buffered until binding closes  |
+| ⭐  | Recovery is bounded: ONE rebuild, then re-validated           | ❌ None                 | ⚠️ Regenerate-and-trust             | ✅ §23 one attempt, same validation, rc 2 on a second failure; no retry loop     |
+| 💎  | Recovery may not DESTROY a caller-named artifact              | ❌ None                 | ❌ Overwrites in place              | ✅ §23 a stale cache refuses instead of being rebuilt; the rewrite refuses drift |
+| 💎  | The artifact declares which PRODUCER CONTRACT wrote it        | ❌ None                 | ❌ Index has no self-identity       | ✅ §25 version + declaration digest in the binding; meaning and shape both fail  |
+| 💎  | A historical baseline is CHECKED, not asked to be current     | ❌ None                 | ❌ Regenerate-and-hope              | ✅ §25 `--diff` requires the identity, rc 2 otherwise; baseline byte-identical   |
+| ⭐  | An empty ranking NAMES its evidence, through every transport  | ❌ Silent zero          | ❌ Silent zero                      | ✅ §25 the caveat rides in `--json` AND `stats`, so `--quiet` cannot flatten it  |
+| 💎  | A reference resolves by the DIRECTORY it names, not a prefix  | ❌ Board links are ids  | ❌ Path or nothing                  | ✅ §26 `by_dirnum`/`by_code`; a code owning 2 dirs refuses instead of guessing   |
+| 💎  | A spelled filename is decided by its slug, never its number   | ❌ None                 | ❌ None                             | ✅ §26 exact stem, no number fallback; 6 live edges rebound to the file named    |
+| ⭐  | A malformed link token is refused, not bound to its label     | ❌ None                 | ❌ None                             | ✅ §26 fail-closed on a bracket token that is not one complete markdown link     |
+| 💎  | Derived timestamps ignore rewritten ancestry on BOTH sides    | ❌ None                 | ❌ None                             | ✅ §27 replace refs + grafts inert by construction; no probe to race the walk    |
+| 💎  | A meaning change to a same-shaped field invalidates the cache | ❌ None                 | ❌ Regenerate-and-hope              | ✅ §27 `CACHE_FORMAT_VERSION` 1 -> 2; an equal `tip:count` no longer certifies   |
 
 > **After §1-§3:** Impossible OS has full Linux-parity ownership metadata plus the dep-graph that neither OS ships, plus automated cross-file XREF integrity checks AND a CI-gated JSON Schema sidecar (consumed by `remark-lint-frontmatter-schema`; no Linux equivalent for project plans). Editor-time diagnostics are best-effort developer convenience via `markdown-yaml-embedded-langservers`; the §6 CI gate is the authoritative line of defense.
 > **After §4-§6:** "what should I work on next?" + "what's most-blocking?" + "what's been stale for 90 days?" are one-command queries, and graph drift is caught at PR time instead of at next-reviewer-sweep time, with `--diff` surfacing graph regressions per-PR. The canonical-markdown / derived-cache invariant matches the existing [Hook Routing Matrix](../../docs/infrastructure/ai-system.md#hook-routing-matrix) architecture, so contributors already understand the mental model.

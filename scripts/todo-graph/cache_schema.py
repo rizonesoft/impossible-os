@@ -163,7 +163,16 @@ _MAX_SECTION_N = 65535
 # artifact in front of this read, exactly like the generation binding at the
 # foot of `_load_and_validate`. A reader that could opt out of identity is a
 # reader that can be handed an unidentifiable cache.
-CACHE_FORMAT_VERSION = 1
+# v1 -> v2 (section 27): `history_id` KEEPS ITS NAME AND TYPE AND CHANGED ITS
+# MEANING, which is the exact case the paragraph above reserves this integer
+# for. A v1 producer computed the tip and the count under the EFFECTIVE history
+# -- replacements and grafts applied; a v2 producer computes them with both
+# neutralised. The two strings compare EQUAL in precisely the case that matters (a
+# replacement preserving tip and count), so without the bump a v2 reader would
+# accept a v1 cache whose timestamps came from a replaced history, and a v1
+# reader would accept a v2 cache after a rollback -- both silently, because no
+# digest can see a meaning change (Codex adversarial, section 27, [high]).
+CACHE_FORMAT_VERSION = 2
 
 # Every key the producer may place on a node, WITH THE MODE IT IS EMITTED IN.
 # `build.py` imports this and refuses to emit a node carrying anything outside
@@ -1737,6 +1746,57 @@ def _scan_corpus(todo_root: Path, on_err):
     return seen
 
 
+# ---------------------------------------------------------------------------
+# THE TWO MECHANISMS THAT REWRITE ANCESTRY WITHOUT MOVING THE TIP OR THE COUNT
+# (section 27). `corpus_history_id` projects the effective history onto a tip
+# and a count, and both `git replace` and the deprecated graft file can change
+# what `git log` reports for an OLDER commit while leaving that pair equal --
+# so the cache gets certified against a history it did not come from.
+#
+# THEY ARE DISABLED BY CONSTRUCTION, NOT DETECTED BY A PROBE, and that choice
+# is the whole design. A probe -- "does a graft file exist?", "digest
+# refs/replace" -- is a SECOND read that is not causally bound to the traversal
+# it is supposed to describe, so a graft can be present for the producer's walk
+# and absent by the time the reader probes (Codex design review, section 27,
+# [high]). Disabling removes the race by removing the probe: producer and
+# reader both read replacement- and graft-neutralised ancestry, so they agree by
+# construction. NOT "raw" ancestry -- a shallow boundary is still effective for
+# both, which is section 31's open axis, not this one's.
+#
+# MEASURED 2026-08-09 on git 2.43.0, in a throwaway repo, each with a control:
+#   - replace ref on the oldest corpus commit (identical tree and parents, new
+#     committer date): tip and count both UNCHANGED, walk %ct 1577836800 ->
+#     1622959566. With `--no-replace-objects`: back to 1577836800.
+#   - `GIT_REPLACE_REF_BASE=refs/myreplace/`: `git for-each-ref refs/replace`
+#     returns EMPTY while the walk is still replaced -- which is why a digest of
+#     refs/replace was rejected as the mechanism. `--no-replace-objects`
+#     defends anyway, because it does not care which namespace was used.
+#   - ancestry-changing graft: count 3 -> 2 and a commit vanished from the
+#     walk. With `GIT_GRAFT_FILE` pointed at an empty file: both restored.
+#
+# The cost of both is zero: no extra process, no extra read.
+HISTORY_GIT_GLOBALS = ("--no-replace-objects",)
+
+
+def history_git_env(base_env=None) -> dict:
+    """Environment for a git call whose answer feeds a derived timestamp.
+
+    Points `GIT_GRAFT_FILE` at the null device so the deprecated graft file is
+    inert for this invocation. An EMPTY graft file is a no-op to git (verified
+    2026-08-09: count stayed 3 with a zero-byte file), so this is the graft
+    equivalent of `--no-replace-objects` -- for which git offers no flag.
+
+    `os.devnull` rather than a literal `/dev/null` so the mechanism does not
+    become the reason this stops working off Linux; the rest of the environment
+    is inherited, because an inherited `GIT_REPLACE_REF_BASE` is already
+    defeated by `--no-replace-objects` and stripping variables we do not
+    understand would be its own hazard.
+    """
+    env = dict(os.environ if base_env is None else base_env)
+    env["GIT_GRAFT_FILE"] = os.devnull
+    return env
+
+
 def corpus_history_id(todo_root: Path):
     """The id of the git history the corpus's DERIVED fields came from, or None.
 
@@ -1763,11 +1823,20 @@ def corpus_history_id(todo_root: Path):
     FIRST commit it sees for each path as `created_at`, so DEEPENING a shallow
     clone changes those values while adding only ancestors -- the tip does not
     move and a tip-only binding would accept the stale cache. The count of
-    corpus-touching commits moves in every direction that matters: deepening
-    raises it, truncation lowers it, a rewrite changes the tip.
+    corpus-touching commits catches the boundary moves that change CARDINALITY:
+    deepening raises it, truncation lowers it, and a rewrite changes the tip.
+    It does NOT catch a boundary move that holds the cardinality fixed -- an
+    earlier wording here claimed it "moves in every direction that matters",
+    which is false and is corrected below (section 27).
 
-    THE COUNT IS ALSO THE ONLY HALF THAT FOLLOWS THE EFFECTIVE GIT ENVIRONMENT,
-    which is the property that killed the cheap replacement section 24 proposed.
+    BOTH HALVES FOLLOW THE EFFECTIVE GIT ENVIRONMENT, which is the property that
+    killed the cheap replacement section 24 proposed. (An earlier wording said
+    the COUNT was the only half that does. It is not -- the tip comes from
+    `git log -1` under that same environment, and a shallow boundary can become
+    the newest apparent corpus touch: verified 2026-08-09 on git 2.43.0 with C0
+    touching the corpus and C1 not, where a boundary at C1 moved the tip from C0
+    to C1 with the count unchanged at 1. Codex adversarial, section 27,
+    [medium].)
     A digest of the shallow-boundary FILE looks equivalent and is not: with
     `GIT_SHALLOW_FILE` pointing elsewhere, `git log` and `git rev-list` both walk
     the overridden boundary while `<git-common-dir>/shallow` stays byte-identical
@@ -1780,14 +1849,39 @@ def corpus_history_id(todo_root: Path):
 
     WHAT THIS PAIR DOES NOT COVER, stated because a projection onto two values
     necessarily discards information (Codex design review, section 24, [medium]).
-    It covers ancestry rewrites, depth and cardinality changes, and boundary
-    changes however they are reached. It does NOT cover a replacement that
-    preserves both: replace an older corpus-touching commit with one carrying an
-    identical tree and identical parents but a different committer timestamp, and
-    the `%ct` that `build.collect_git_timestamps` consumes changes while the
-    latest touching hash and the commit count both stay equal. An equal-depth
-    graft has the same shape. Closing that axis is section 27; do not read this
-    pair as covering it.
+    It covers ancestry rewrites and depth/cardinality changes on the
+    REPLACEMENT- AND GRAFT-NEUTRALISED history. That phrase is deliberately
+    clumsy and deliberately not "raw": shallow ancestry is still EFFECTIVE here,
+    so "raw" would name a stronger contract than the code delivers (Codex
+    adversarial, section 27, [medium]).
+
+    IT DOES NOT COVER AN EQUAL-COUNT SHALLOW BOUNDARY, and the older wording
+    here ("boundary changes however they are reached") was simply wrong
+    (Codex adversarial, section 27, [high]). The count follows the effective git
+    environment, which is why section 24 believed it caught every
+    `GIT_SHALLOW_FILE` case -- but it catches only the ones that CHANGE the
+    count. Reproduced 2026-08-09 on git 2.43.0: with C0 adding a TODO, C1/C2
+    touching nothing under the corpus, and C3 touching the TODO, the full
+    history walks {C0, C3} while a boundary at C2 walks {C2, C3}. Same tip, same
+    count of 2, and `created_at` moves 1577836800 -> 1583020800. Closing that
+    axis needs a decision this section did not own -- refuse shallow corpora
+    outright, or bind the boundary causally to the walk -- and it is section 31.
+
+    THE PAIR STILL CANNOT SEE A REPLACEMENT, AND NO LONGER HAS TO (section 27).
+    Replace an older corpus-touching commit with one carrying an identical tree
+    and identical parents but a different committer timestamp, and the `%ct`
+    that `build.collect_git_timestamps` consumes changes while the latest
+    touching hash and the commit count both stay equal; a graft can do the same.
+    Section 24 named that as this pair's open axis. It is closed NOT by widening
+    the projection -- which would have meant digesting the whole walk, and
+    section 24 measured that at 312ms against 47.9ms for the projection -- but by
+    removing what the projection could not see: every git call on both sides now
+    carries `HISTORY_GIT_GLOBALS` and `history_git_env()`, so replacements and
+    grafts are inert for producer and reader alike. The guarantee is therefore
+    narrower than it looks and deliberately so: this pair identifies the
+    replacement- and graft-neutralised history, which is the history everything
+    here reads -- and NOT the raw one, because the shallow boundary above is
+    still effective on both sides.
 
     Measured 2026-08-08 on the live corpus (3,807 corpus-touching commits of
     5,387 total): 47.9ms median, of which `rev-list --count` is 44.2ms and the
@@ -1813,8 +1907,15 @@ def corpus_history_id(todo_root: Path):
     todo_root = str(todo_root)
 
     def _git(*args):
+        # The globals ride on EVERY probe, not only the two that walk history.
+        # `rev-parse --git-dir` and the unborn-HEAD check do not traverse
+        # replacements today, so this is drift protection rather than a fix:
+        # the next probe added here inherits the contract instead of having to
+        # remember it (Codex design review, section 27, [high]).
         try:
-            return subprocess.run(["git", "-C", todo_root, *args],
+            return subprocess.run(["git", "-C", todo_root,
+                                   *HISTORY_GIT_GLOBALS, *args],
+                                  env=history_git_env(),
                                   capture_output=True, text=True, check=True)
         except subprocess.CalledProcessError as exc:
             return exc
