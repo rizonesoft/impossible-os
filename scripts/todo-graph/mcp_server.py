@@ -3,16 +3,17 @@
 # scripts/todo-graph/mcp_server.py -- MCP transport over the query surface.
 #
 # Owner: TODO-06 §8 (MCP Server) in todo/00-infrastructure/.
-# Exposes the ten read-only query.py subcommands as MCP tools so
+# Exposes the read-only query.py subcommands as MCP tools so
 # Claude Code, Cursor, Aider, and any other MCP-aware agent can call
 # them directly without shelling out to `python3 scripts/todo-graph/
 # query.py`. The cache is the contract; this file is the transport.
 #
 # Registered tools (all read-only):
 #   ready, blocked, blocking, by-domain, backlinks, deferred,
-#   deferred-by, orphans, stale, stats, code, code-by
-#   (12 today -- §8 spec said 10 but includes the spec's own
-#   deferred-by / code-by mirrors shipped in §4)
+#   deferred-by, orphans, stale, stats, code, code-by,
+#   section-ready, section-blocked, section-blocking
+#   (15 today -- the §8 spec said 10; +deferred-by / code-by mirrors
+#   shipped in §4, +the section-level readiness trio in section 28)
 #
 # Usage:
 #   python3 scripts/todo-graph/mcp_server.py              # stdio server
@@ -76,15 +77,24 @@ import query as _query_mod  # noqa: E402
 import build as _build_mod  # noqa: E402
 
 
-# The 12 MCP tool names -- ordering is authoritative for the self-test.
+# The 15 MCP tool names -- ordering is authoritative for the self-test.
 # Matches §4's 10 listed subcommands plus the deferred-by / code-by
-# mirrors that §4 shipped. Each tool has an explicit typed handler
-# registered in _build_mcp() so FastMCP's introspection produces a
-# proper MCP schema with required / optional params named.
+# mirrors that §4 shipped and §28's section-level readiness trio.
+# A name added here must ALSO be handled in `_dispatch_tool`, or
+# tools/list advertises a tool that every tools/call rejects -- the
+# section-28 defect. Each tool has an explicit typed handler registered
+# in _build_mcp() so FastMCP's introspection produces a proper MCP
+# schema with required / optional params named.
 MCP_TOOLS = (
     "ready", "blocked", "blocking", "by-domain",
     "backlinks", "deferred", "deferred-by", "orphans",
     "stale", "stats", "code", "code-by",
+    # Section 28. The file-level trio above rank against frontmatter
+    # `depends_on`, which no live TODO authors -- so over MCP they are the
+    # verbs most likely to be read as a verdict. These three are mirrored
+    # precisely so an agent reaching for "what should I work on next?" can
+    # get an answer from the graph that has edges.
+    "section-ready", "section-blocked", "section-blocking",
 )
 
 
@@ -101,6 +111,15 @@ DESCRIPTIONS = {
     "stats":       "Repo-wide summary: total, by-status, by-domain, top-N.",
     "code":        "Source paths claimed by <target>'s file_patterns + Notes grep.",
     "code-by":     "Reverse of code: TODOs whose file_patterns match <path>.",
+    "section-ready":    ("Open TODO sections whose cross-file AND same-file "
+                         "section dependencies are all satisfied. Ranks over "
+                         "sections[].depends_on, not frontmatter depends_on."),
+    "section-blocked":  ("Open TODO sections with an unmet section dependency, "
+                         "each named with why (open / blocked / file-open / "
+                         "dangling / non-node / unresolved)."),
+    "section-blocking": ("Rank target sections by how many open sections they "
+                         "hold up. The critical-path rank `blocking` cannot "
+                         "answer, because its edge set is empty."),
 }
 
 
@@ -352,7 +371,7 @@ def _try_import_mcp():
 
 
 def _build_mcp(FastMCP, repo_root: Path, auto_rebuild: bool = True):
-    """Instantiate FastMCP and register each of the 12 tools with a
+    """Instantiate FastMCP and register each of the 15 tools with a
     typed handler. Codex pass 17 M1: FastMCP derives the MCP tool
     schema from the Python function signature, so `**kwargs` wrappers
     produce empty schemas that leave agents guessing required params.
@@ -415,6 +434,33 @@ def _build_mcp(FastMCP, repo_root: Path, auto_rebuild: bool = True):
         """Rank TODOs by inbound depends_on count (most-blocking first)."""
         return _run("blocking", argparse.Namespace(**_bounds(limit, scope, fields, offset)))
     srv.tool(name="blocking", description=DESCRIPTIONS["blocking"])(blocking)
+
+    def section_ready(limit: int = _query_mod.DEFAULT_ROW_LIMIT,
+                      scope: Optional[str] = None, fields: Optional[str] = None,
+                      offset: int = 0) -> str:
+        """Open sections whose section-level dependencies are all satisfied."""
+        return _run("section-ready",
+                    argparse.Namespace(**_bounds(limit, scope, fields, offset)))
+    srv.tool(name="section-ready",
+             description=DESCRIPTIONS["section-ready"])(section_ready)
+
+    def section_blocked(limit: int = _query_mod.DEFAULT_ROW_LIMIT,
+                        scope: Optional[str] = None, fields: Optional[str] = None,
+                        offset: int = 0) -> str:
+        """Open sections with an unmet section-level dependency, with reasons."""
+        return _run("section-blocked",
+                    argparse.Namespace(**_bounds(limit, scope, fields, offset)))
+    srv.tool(name="section-blocked",
+             description=DESCRIPTIONS["section-blocked"])(section_blocked)
+
+    def section_blocking(limit: int = _query_mod.DEFAULT_ROW_LIMIT,
+                         scope: Optional[str] = None, fields: Optional[str] = None,
+                         offset: int = 0) -> str:
+        """Rank target sections by how many open sections they hold up."""
+        return _run("section-blocking",
+                    argparse.Namespace(**_bounds(limit, scope, fields, offset)))
+    srv.tool(name="section-blocking",
+             description=DESCRIPTIONS["section-blocking"])(section_blocking)
 
     def orphans(limit: int = _query_mod.DEFAULT_ROW_LIMIT,
                 scope: Optional[str] = None, fields: Optional[str] = None,
@@ -584,7 +630,17 @@ def _dispatch_tool(name: str, arguments: dict[str, Any],
     if name == "stats":
         # Unbounded by shape; takes no narrowing params.
         return _call_query(name, argparse.Namespace(), repo_root, auto_rebuild)
-    if name in {"ready", "blocked", "blocking", "orphans"}:
+    # Bounded, no narrowing params beyond limit/offset/scope/fields.
+    #
+    # THE SECTION-LEVEL TRIO MUST BE LISTED HERE TOO. `_build_mcp` registering
+    # a tool only gives FastMCP its schema; the stdio JSON-RPC path dispatches
+    # through THIS function, so a name missing here is advertised by
+    # `tools/list` and then rejected by every `tools/call` with "unhandled
+    # tool". Section 28 shipped the registration without the dispatch and the
+    # transport test did not catch it, because it asserted the names were
+    # LISTED and then only called `stats`. The wire test now calls every tool.
+    if name in {"ready", "blocked", "blocking", "orphans",
+                "section-ready", "section-blocked", "section-blocking"}:
         return _call_query(name, _bound_ns(arguments), repo_root, auto_rebuild)
     if name == "by-domain":
         return _call_query(

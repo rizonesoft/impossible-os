@@ -1344,7 +1344,8 @@ else
 fi
 
 # ======================================================================
-# Test 9: query.py (§4) -- ten subcommands over build/todo-cache.json.
+# Test 9: query.py (§4) -- the file-level subcommands over build/todo-cache.json.
+# (§28 added the section-level readiness trio; its fixtures are sub-test 28.)
 # Covers pre-migration notice gating, id resolution (slug / stem /
 # frontmatter id / nonexistent), all six live-tree subcommands, the
 # --json and --format markdown output surfaces, synthetic fixtures for
@@ -1597,13 +1598,17 @@ if python3 -c "
 import sys
 sys.path.insert(0, '$REPO_ROOT/scripts/todo-graph')
 import query
-# 13 subcommands post-§7 (12 query + 1 render).
-assert len(query.SUBCOMMANDS) == 13, f'expected 13 subcommands, got {len(query.SUBCOMMANDS)}'
+# 16 subcommands: 12 query + 1 render + the 3 section-level readiness
+# verbs (section 28). The count is asserted rather than ranged so a verb
+# that silently fails to register is a FAIL, not a quieter list.
+assert len(query.SUBCOMMANDS) == 16, f'expected 16 subcommands, got {len(query.SUBCOMMANDS)}'
+assert 'section-ready' in query.SUBCOMMANDS
+assert 'section-blocking' in query.SUBCOMMANDS
 assert 'ready' in query.SUBCOMMANDS
 assert 'code-by' in query.SUBCOMMANDS
 assert 'render' in query.SUBCOMMANDS
 " 2>/dev/null; then
-    t_pass "query: import smoke (13 subcommands exposed)"
+    t_pass "query: import smoke (16 subcommands exposed)"
 else
     t_fail "query: import smoke broken"
 fi
@@ -4745,7 +4750,7 @@ fi
 
 # ======================================================================
 # Test 13: MCP server (§8) -- --self-test exit 0 regardless of SDK
-# presence; tools/list returns 12 entries when SDK is present. Skips
+# presence; tools/list returns 15 entries when SDK is present. Skips
 # cleanly when the mcp package is not installed.
 # ======================================================================
 
@@ -4759,12 +4764,13 @@ if [ "$ST_RC" = "0" ]; then
     if echo "$ST_OUT" | grep -q "SKIP: mcp SDK not installed"; then
         t_pass "mcp_server: --self-test SKIPs cleanly when SDK absent"
     elif echo "$ST_OUT" | grep -qE "OK: [0-9]+ tools registered"; then
-        # SDK present -- tool count must be exactly 12.
+        # SDK present -- tool count must be exactly 15 (12 + the 3
+        # section-level readiness verbs mirrored in section 28).
         COUNT=$(echo "$ST_OUT" | sed -n 's/.*OK: \([0-9]\+\) tools.*/\1/p')
-        if [ "$COUNT" = "12" ]; then
-            t_pass "mcp_server: --self-test registers 12 tools (SDK present)"
+        if [ "$COUNT" = "15" ]; then
+            t_pass "mcp_server: --self-test registers 15 tools (SDK present)"
         else
-            t_fail "mcp_server: --self-test registered $COUNT tools (expected 12)"
+            t_fail "mcp_server: --self-test registered $COUNT tools (expected 15)"
         fi
     else
         t_fail "mcp_server: --self-test exit 0 but unexpected output: $ST_OUT"
@@ -4900,7 +4906,11 @@ try:
     send({"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}})
     lst = recv()
     tools = lst.get("result", {}).get("tools", [])
-    assert len(tools) == 12, f"tool count {len(tools)} != 12"
+    assert len(tools) == 15, f"tool count {len(tools)} != 15"
+    # The section-level readiness verbs must reach the WIRE, not just
+    # MCP_TOOLS: registration and transport are separate failures.
+    for _want in ("section-ready", "section-blocked", "section-blocking"):
+        assert any(t["name"] == _want for t in tools), f"{_want} not exposed"
     # Verify code-by exposes path (not target) in its schema.
     cb = next(t for t in tools if t["name"] == "code-by")
     assert cb["inputSchema"].get("required") == ["path"], f"code-by required: {cb['inputSchema']}"
@@ -4910,6 +4920,19 @@ try:
     txt = call.get("result", {}).get("content", [{}])[0].get("text", "")
     data = json.loads(txt)
     assert data.get("total_nodes", 0) > 0, f"stats.total_nodes not positive: {data}"
+    # CALL every section-level verb, do not merely check it is LISTED.
+    # Section 28 registered all three for tools/list while _dispatch_tool
+    # rejected them, and this test passed anyway because it only called
+    # stats. Advertised-but-uncallable is the exact failure to cover.
+    _rid = 3
+    for _name in ("section-ready", "section-blocked", "section-blocking"):
+        _rid += 1
+        send({"jsonrpc": "2.0", "id": _rid, "method": "tools/call",
+              "params": {"name": _name, "arguments": {"limit": 5}}})
+        _resp = recv()
+        assert "error" not in _resp, f"{_name} tools/call errored: {_resp}"
+        _txt = _resp.get("result", {}).get("content", [{}])[0].get("text", "")
+        json.loads(_txt)  # must be JSON, not a traceback
     print("ROUNDTRIP_OK", "tools=" + str(len(tools)),
           "stats.total_nodes=" + str(data["total_nodes"]))
 finally:
@@ -4918,7 +4941,7 @@ finally:
 PY
     )
     if echo "$RT_OUT" | grep -q "^ROUNDTRIP_OK"; then
-        t_pass "mcp_server: end-to-end JSON-RPC roundtrip (initialize + tools/list + stats)"
+        t_pass "mcp_server: end-to-end JSON-RPC roundtrip (initialize + tools/list + stats + each section verb CALLED)"
     else
         t_fail "mcp_server: JSON-RPC roundtrip broken (out=$RT_OUT)"
     fi
@@ -13874,6 +13897,55 @@ case "$S27_GOT" in
         t_fail "section 27: history-neutralisation gave '$S27_GOT' (want 'A-STABLE AM-DRIFTED B-STABLE C-STABLE CM-DRIFTED'; $S27_WANT are the load-bearing legs)"
         ;;
 esac
+
+# ----------------------------------------------------------------------
+# Section 28: section-level readiness verbs over the resolved dependency graph.
+#
+# The fixtures live in tests/section28_fixtures.py rather than inline: the
+# mutation controls re-exec a PATCHED copy of query.py, which does not survive
+# shell quoting. Each of its lines is one assertion; a missing SUMMARY line
+# means the harness itself died and is a FAIL, not a skip.
+# ----------------------------------------------------------------------
+#
+# THE EXPECTED COUNT IS PINNED. Accepting any SUMMARY line means deleting a
+# fixture or a mutation control silently REDUCES coverage while the suite
+# stays green -- the same "passes either way" defect the controls exist to
+# prevent, one level up. Raise this number when you add assertions.
+S28_EXPECT="SUMMARY 35 / 35"
+S28_OUT=$(REPO_ROOT="$REPO_ROOT" python3 "$REPO_ROOT/scripts/todo-graph/tests/section28_fixtures.py" 2>&1)
+if ! printf '%s\n' "$S28_OUT" | grep -qF "$S28_EXPECT"; then
+    t_fail "section 28: fixture inventory changed -- expected '$S28_EXPECT', got '$(printf '%s' "$S28_OUT" | grep '^SUMMARY ' || echo none)'"
+fi
+if ! printf '%s\n' "$S28_OUT" | grep -q '^SUMMARY '; then
+    t_fail "section 28: fixture harness did not run to completion -- $(printf '%s' "$S28_OUT" | tail -3 | tr '\n' ' ')"
+else
+    while IFS= read -r line; do
+        case "$line" in
+            PASS\ *) t_pass "section 28: ${line#PASS }" ;;
+            FAIL\ *) t_fail "section 28: ${line#FAIL }" ;;
+        esac
+    done <<< "$S28_OUT"
+fi
+
+# 28-live: the three NEW verbs must answer over the REAL corpus without
+# raising, and the three OLD ones must still return exactly what they did.
+# The synthetic fixtures above cannot catch a resolver or classifier
+# interaction that only the 232-node corpus produces.
+S28_LIVE=$(python3 -c "
+import sys; sys.path.insert(0, '$REPO_ROOT/scripts/todo-graph')
+import query as q, json
+nodes = json.load(open('$REPO_ROOT/build/todo-cache.json'))
+ctx = q.Ctx(nodes, '$REPO_ROOT', quiet=True)
+r = len(q.cmd_section_ready(ctx, None)[0])
+b = len(q.cmd_section_blocked(ctx, None)[0])
+k = len(q.cmd_section_blocking(ctx, None)[0])
+old = len(q.cmd_blocked(ctx, None)[0]) + len(q.cmd_blocking(ctx, None)[0])
+print('OK' if (r > 0 and b > 0 and k > 0 and old == 0) else f'BAD r={r} b={b} k={k} old={old}')" 2>&1 | tail -1)
+if [ "$S28_LIVE" = "OK" ]; then
+    t_pass "section 28: the new verbs answer non-empty over the live corpus while the file-level three stay empty"
+else
+    t_fail "section 28: live-corpus check gave '$S28_LIVE' (want OK)"
+fi
 
 # ----------------------------------------------------------------------
 # Summary

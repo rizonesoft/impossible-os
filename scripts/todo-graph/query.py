@@ -338,7 +338,7 @@ class Ctx:
         "nodes", "id_index", "path_index", "slug_index", "slug_collisions",
         "stem_collisions", "inbound", "repo_root", "quiet", "pre_notice_fired",
         "node_by_path", "ambiguous_edges", "dep_notice_fired",
-        "dep_edges_empty",
+        "dep_edges_empty", "section_deps",
     )
 
     def __init__(self, nodes, repo_root, quiet):
@@ -369,6 +369,10 @@ class Ctx:
         # collected, not silently bound to whichever file the flattened index
         # happened to keep. `_build_ctx` turns a non-empty list into a refusal.
         self.ambiguous_edges = []
+        # Section-level dependency index (section 28). Lazily built by
+        # `section_dep_index` -- it reads every TODO's stamps off disk, which
+        # none of the file-level verbs have any use for.
+        self.section_deps = None
         self.inbound = collect_inbound_edges(
             self.nodes, self.id_index, self.path_index,
             self.stem_collisions, self.ambiguous_edges)
@@ -440,8 +444,11 @@ class Ctx:
             f"({len(self.nodes)} nodes, none authoring the field), so this "
             "answer describes the absence of a graph rather than the state of "
             "one. Section-level dependencies are NOT consulted here and that "
-            "is deliberate: their targets are unqualified (`TODO-05` matches "
-            "one file per domain). See docs/infrastructure/todo-metadata.md "
+            "is deliberate -- these three verbs keep answering what they always "
+            "answered. USE `section-ready` / `section-blocked` / "
+            "`section-blocking` (TODO-06 section 28) for the 715 cross-file "
+            "section dependencies the Implementation Order tables do author. "
+            "See docs/infrastructure/todo-metadata.md "
             "\"Which dependency evidence the readiness verbs consult\".\n")
 
 
@@ -836,6 +843,437 @@ def cmd_blocking(ctx: Ctx, args) -> tuple:
         })
     rows.sort(key=lambda r: (-r["inbound_count"], r["id"]))
     return rows, ["id", "title", "inbound_count"]
+
+
+# ----------------------------------------------------------------------
+# Section-level readiness (TODO-06 section 28)
+#
+# The three verbs above rank against the FILE-level `depends_on` frontmatter
+# key, which zero of the 232 live TODOs author -- so they are empty for every
+# possible corpus. The cache separately carries `sections[].depends_on`: 2,533
+# groups parsed from the Implementation Order tables, of which 715 are
+# genuinely cross-file (723 name something other than the literal `self`;
+# 8 of those resolve back to their own file). Section 25 measured that gap and deliberately shipped the caveat
+# rather than silently redirecting the existing verbs at a different graph,
+# because an MCP agent cannot tell a semantics change from a corpus change.
+# These are the NEW verbs that consult it. The old three are untouched.
+#
+# THE AGGREGATION RULE IS PINNED IN PROSE FIRST, at
+# docs/infrastructure/todo-metadata.md "Section-level readiness: the
+# aggregation rule". The summary, and every clause is load-bearing:
+#
+#   1. `self` groups (1,810 of 2,533) are EXCLUDED from the cross-file edge
+#      set at construction, not filtered late -- they are intra-file ordering,
+#      and letting them into the rank would answer a different question. They
+#      are still evaluated SEPARATELY, because a section whose own section 2 is
+#      open is not ready to work on no matter what the other files did.
+#   2. Target tokens resolve through section 26's `resolve_xref_target`.
+#      `None` means unknown OR ambiguous, and both are UNMET -- never
+#      satisfied, never silently dropped.
+#   3. SATISFACTION IS DECIDED BY THE CANONICAL LIFECYCLE CLASSIFIER, NOT BY
+#      THE RAW `[x]` / `[/]` MARKER. This is the correction that the section
+#      28 design review forced, and it is not cosmetic: measured across the
+#      live corpus, 42 sections carry a raw `[x]` the oracle still classifies
+#      NEEDS_WORK (shipped but unstamped) and 421 carry a raw `[/]` it
+#      classifies DONE (a Deferred park, or Verified+Quality-reviewed). Ranking
+#      on the marker would disagree with the runner about both what is runnable
+#      and what is finished, on 463 sections.
+#   4. A group with an EMPTY section list names the whole target FILE, and only
+#      then is a file-level verdict used -- again the classifier's, not the
+#      node's `status` field.
+#   5. A token can resolve to a real path that is NOT a cache node (a domain
+#      `INDEX.md`; 8 live groups do this). That is its own unmet reason, so the
+#      state machine has an outcome for it instead of crashing on the lookup.
+#   6. Ranking dedups on `(source_file, source_section, target_file,
+#      target_section)`. The corpus already contains `{target: D10T11,
+#      sections: [6, 6]}`, which a naive loop counts twice for one dependent.
+# ----------------------------------------------------------------------
+
+# Unmet reasons. `satisfied` is the only value that clears a dependency.
+SEC_SATISFIED = "satisfied"
+SEC_OPEN = "open"                # target section classifies NEEDS_WORK
+SEC_BLOCKED = "blocked"          # target section is a recoverable deferral
+SEC_FILE_OPEN = "file-open"      # whole-file target, file classifies NEEDS_WORK
+SEC_FILE_BLOCKED = "file-blocked"
+SEC_DANGLING = "dangling"        # section number absent from the target file
+SEC_NON_NODE = "non-node"        # resolved to a path outside the cache (INDEX.md)
+SEC_UNRESOLVED = "unresolved"    # resolver refused: unknown or ambiguous
+
+# Every row carries this so a caller can tell WHICH graph produced it. Section
+# 25's precedent was a stderr note; a column survives `--quiet` and `--json`.
+SEC_DEP_SOURCE = "sections[].depends_on"
+
+
+def _load_lifecycle_classifier():
+    """Import the canonical section classifier from the triage oracle.
+
+    REUSED, NOT REIMPLEMENTED. `classify_section` encodes the repo's actual
+    definition of a finished section (shipped `[x]`/`[/]` AND both the
+    Verified and Quality-reviewed stamps, or a Deferred park; a recoverable
+    `awaiting-*` deferral is BLOCKED rather than DONE). A second copy of that
+    rule here would drift from the oracle the runner obeys, and the whole point
+    of these verbs is to agree with it.
+
+    Raises RuntimeError rather than falling back to the raw marker: answering
+    from a different rule than the one advertised is the failure mode this
+    section exists to remove, so refusing beats degrading.
+    """
+    hooks = _HERE.parent.parent / ".claude" / "hooks"
+    if str(hooks) not in sys.path:
+        sys.path.insert(0, str(hooks))
+    try:
+        import sequencer_triage  # noqa: E402
+    except ImportError as exc:  # pragma: no cover - defensive
+        raise RuntimeError(
+            "section-level readiness needs the canonical lifecycle classifier "
+            f"at {hooks}/sequencer_triage.py, which could not be imported "
+            f"({exc}). Refusing rather than ranking on the raw [x]/[/] marker, "
+            "which disagrees with it on 463 live sections.") from None
+    return sequencer_triage
+
+
+def _source_key(path: str, sec: dict, ordinal: int):
+    """Identity for a SOURCE section row: `(file_path, n)`, or
+    `(file_path, "~<ordinal>")` when the row carries no section number.
+
+    THE CACHE CONTRACT PERMITS A NULL `sections[].n` (`cache_schema.py:788`
+    guards `_require_int` behind `if s["n"] is not None`) and does not require
+    nulls to be unique, so keying on `(file_path, n)` alone let two such rows
+    overwrite each other's lifecycle class and MERGE their edges -- quietly
+    understating a dependent count in `section-blocking`.
+
+    Excluding them was the first fix and it was WRONG in the other direction:
+    a null-numbered row's dependency on a real, resolvable target is perfectly
+    good evidence for a TARGET-ranked answer, and dropping it understated the
+    rank just the same. Being unable to NAME a source is not a reason to
+    forget what it points at. The ordinal keeps rows distinct; the `~` prefix
+    cannot collide with an int key, and target lookups are always
+    `(path, int)` so they never reach a sentinel.
+    """
+    n = sec.get("n")
+    return (path, n if n is not None else f"~{ordinal}")
+
+
+def _source_n(key):
+    """The section number to REPORT for a source key, or None if unnumbered."""
+    return key[1] if isinstance(key[1], int) else None
+
+
+def _source_sort(key):
+    # Unnumbered rows sort after numbered ones within a file, stably.
+    return (key[0], key[1] if isinstance(key[1], int) else 1 << 30, str(key[1]))
+
+
+class SectionDeps:
+    """Resolved section-level dependency graph over one corpus.
+
+    `cross` and `selfdeps` are keyed by `(source_file_path, source_section_n)`.
+    `section_class` / `file_class` hold the canonical lifecycle verdicts.
+    """
+
+    __slots__ = ("cross", "selfdeps", "section_class", "file_class",
+                 "deliverable", "DONE")
+
+    def __init__(self):
+        self.cross = {}
+        self.selfdeps = {}
+        self.section_class = {}
+        self.file_class = {}
+        self.deliverable = {}
+        self.DONE = "DONE"
+
+    def is_done(self, key) -> bool:
+        return self.section_class.get(key) == self.DONE
+
+
+def build_section_dep_index(ctx: Ctx) -> SectionDeps:
+    """Resolve every `sections[].depends_on` group against the corpus."""
+    st = _load_lifecycle_classifier()
+    out = SectionDeps()
+    out.DONE = st.DONE
+    root = str(ctx.repo_root)
+
+    stamps = {}
+    for path, node in ctx.node_by_path.items():
+        md = os.path.join(root, path)
+        stamps[path] = st.section_stamps(md)
+        out.file_class[path] = st.classify_file(node, root)[0]
+        for i, sec in enumerate(_safe_list(node.get("sections"))):
+            if not isinstance(sec, dict):
+                continue
+            key = _source_key(path, sec, i)
+            out.section_class[key] = st.classify_section(sec, stamps[path])
+            out.deliverable[key] = sec.get("deliverable") or ""
+
+    for node in ctx.nodes:
+        src = node["file_path"]
+        for i, sec in enumerate(_safe_list(node.get("sections"))):
+            if not isinstance(sec, dict):
+                continue
+            key = _source_key(src, sec, i)
+            for grp in _safe_list(sec.get("depends_on")):
+                if not isinstance(grp, dict):
+                    continue
+                token = grp.get("target")
+                if not token:
+                    continue
+                # Dedup INSIDE the group: `{sections: [6, 6]}` and
+                # `{target: self, sections: [4, 5, 6, 7, 5]}` are both live.
+                # For cross-file groups the per-source pass below subsumes
+                # this; for `self` groups it is the ONLY dedup, so it is
+                # load-bearing rather than belt-and-braces.
+                numbers = list(dict.fromkeys(_safe_list(grp.get("sections"))))
+                # RESOLVE ONCE PER GROUP, AND TREAT AN ALIAS OF THE SOURCE FILE
+                # AS `self`. The literal token is not the only way to name your
+                # own file: 8 live groups say `TODO-04` / `TODO-05` where they
+                # mean `self`, and resolution sends them straight back to the
+                # source. Left in the cross-file set they would satisfy
+                # `section-ready`'s "has a cross-file dependency" eligibility
+                # test with a same-file edge, and show up in `section-blocking`
+                # as critical-path pressure a different file never applied.
+                resolved = (None if token == "self"
+                            else _resolve_edge_target(token, src, ctx.id_index,
+                                                      ctx.path_index))
+                if token == "self" or resolved == src:
+                    # `numbers or [None]` -- an EMPTY section list means the
+                    # whole file here exactly as it does for a cross-file
+                    # group, and iterating `numbers` alone silently dropped
+                    # the edge. 3 of the 8 live self-aliases are this shape,
+                    # so a section could carry an open whole-file prerequisite
+                    # on itself and still be reported ready.
+                    for m in (numbers or [None]):
+                        if m is None:
+                            cls = out.file_class.get(src)
+                            reason = (SEC_SATISFIED if cls == out.DONE
+                                      else SEC_FILE_BLOCKED
+                                      if cls == "BLOCKED" else SEC_FILE_OPEN)
+                        else:
+                            tkey = (src, m)
+                            if tkey not in out.section_class:
+                                reason = SEC_DANGLING
+                            elif out.is_done(tkey):
+                                reason = SEC_SATISFIED
+                            else:
+                                reason = (SEC_BLOCKED
+                                          if out.section_class[tkey] == "BLOCKED"
+                                          else SEC_OPEN)
+                        out.selfdeps.setdefault(key, []).append({
+                            "target_section": m,
+                            "satisfied": reason == SEC_SATISFIED,
+                            "reason": reason,
+                        })
+                    continue
+                for m in (numbers or [None]):
+                    out.cross.setdefault(key, []).append(
+                        _resolve_section_dep(ctx, out, src, token, m,
+                                             resolved=resolved))
+    # Dedup cross edges per source section on (target_path or token, section).
+    # THIS is the pass that makes `section-blocking` count distinct dependents
+    # and keeps `blocked_by` from naming one target twice: a source section can
+    # reach the same target section through two SEPARATE groups, which the
+    # in-group dedup above cannot see. One live source section does exactly
+    # that. Because this runs before any consumer, a further dedup inside
+    # `cmd_section_blocking` would be unreachable, so there isn't one.
+    for key, edges in out.cross.items():
+        seen = set()
+        kept = []
+        for e in edges:
+            eid = (e["target_path"] or e["token"], e["target_section"])
+            if eid in seen:
+                continue
+            seen.add(eid)
+            kept.append(e)
+        out.cross[key] = kept
+    return out
+
+
+def _resolve_section_dep(ctx: Ctx, deps: SectionDeps, src: str,
+                         token: str, m, resolved=None) -> dict:
+    """One `(token, section-or-None)` pair -> a resolved edge record.
+
+    `resolved` is the caller's already-computed resolution for `token`, so a
+    multi-section group resolves once rather than once per section number.
+    """
+    edge = {"token": token, "target_path": None, "target_section": m,
+            "satisfied": False, "reason": SEC_UNRESOLVED}
+    target = resolved
+    if target is None:
+        return edge
+    edge["target_path"] = target
+    if target not in ctx.node_by_path:
+        # A domain INDEX.md is a real file and a legitimate resolution, but it
+        # is not a TODO and carries no sections -- so it has no verdict to give.
+        edge["reason"] = SEC_NON_NODE
+        return edge
+    if m is None:
+        cls = deps.file_class.get(target)
+        if cls == deps.DONE:
+            edge["satisfied"] = True
+            edge["reason"] = SEC_SATISFIED
+        else:
+            edge["reason"] = (SEC_FILE_BLOCKED if cls == "BLOCKED"
+                              else SEC_FILE_OPEN)
+        return edge
+    tkey = (target, m)
+    if tkey not in deps.section_class:
+        edge["reason"] = SEC_DANGLING
+        return edge
+    cls = deps.section_class[tkey]
+    if cls == deps.DONE:
+        edge["satisfied"] = True
+        edge["reason"] = SEC_SATISFIED
+    else:
+        edge["reason"] = SEC_BLOCKED if cls == "BLOCKED" else SEC_OPEN
+    return edge
+
+
+def section_dep_index(ctx: Ctx) -> SectionDeps:
+    if ctx.section_deps is None:
+        ctx.section_deps = build_section_dep_index(ctx)
+    return ctx.section_deps
+
+
+def _sec_label(path: str, n) -> str:
+    """`stem §N`, or `dir/stem` when the stem alone does not identify a file.
+
+    Every domain carries an `INDEX.md`, so a bare `INDEX` names 15 different
+    files -- and a non-node target is exactly the row a reader has to go look
+    at, which they cannot do from an ambiguous label.
+    """
+    p = Path(path)
+    stem = p.stem
+    if stem.upper() == "INDEX" and p.parent.name:
+        stem = f"{p.parent.name}/{stem}"
+    return f"{stem} §{n}" if n is not None else stem
+
+
+def _open_sources(deps: SectionDeps):
+    """Source sections that are NOT done and carry at least one dependency."""
+    keys = set(deps.cross) | set(deps.selfdeps)
+    return sorted((k for k in keys if not deps.is_done(k)), key=_source_sort)
+
+
+def cmd_section_ready(ctx: Ctx, args) -> tuple:
+    """Open sections whose every section-level dependency is satisfied.
+
+    ELIGIBILITY REQUIRES AT LEAST ONE CROSS-FILE GROUP, and that is a
+    deliberate bound rather than an accident: without it the answer is "every
+    open section that happens to declare nothing", which is most of the corpus
+    and tells a reader nothing. The question this verb answers is "what was
+    waiting on another file and no longer is".
+
+    A source section's own `self` prerequisites must ALSO be satisfied. Ranking
+    on cross-file edges alone reported 33 rows on the live corpus, 20 of which
+    had an unmet prerequisite inside their own file -- ready by the letter of
+    the edge set and unworkable in fact.
+
+    THE SOURCE MUST CLASSIFY NEEDS_WORK, NOT MERELY "NOT DONE". A section
+    carrying a recoverable `awaiting-*` deferral classifies BLOCKED, and
+    treating every non-DONE class as runnable pointed this verb straight at
+    work the canonical classifier says is parked on something external. It is
+    still listed by `section-blocked`, where the reason is visible.
+    """
+    deps = section_dep_index(ctx)
+    rows = []
+    for key in _open_sources(deps):
+        if deps.section_class.get(key) != "NEEDS_WORK":
+            continue
+        cross = deps.cross.get(key) or []
+        if not cross:
+            continue
+        if any(not e["satisfied"] for e in cross):
+            continue
+        if any(not d["satisfied"] for d in deps.selfdeps.get(key, [])):
+            continue
+        node = ctx.node_by_path.get(key[0]) or {}
+        rows.append({
+            "domain": node.get("domain") or "",
+            "id": display_id(node) if node else Path(key[0]).stem,
+            "section": _source_n(key),
+            "deliverable": deps.deliverable.get(key, ""),
+            "cross_deps": len(cross),
+            "dep_source": SEC_DEP_SOURCE,
+        })
+    rows.sort(key=lambda r: (r["domain"], r["id"],
+                             r["section"] if r["section"] is not None else 1 << 30))
+    return rows, ["domain", "id", "section", "deliverable", "cross_deps",
+                  "dep_source"]
+
+
+def cmd_section_blocked(ctx: Ctx, args) -> tuple:
+    """Open sections with at least one unsatisfied dependency.
+
+    `blocked_by` names each unmet dependency and WHY it is unmet, because the
+    reasons are not interchangeable: `open` is ordinary pending work,
+    `unresolved` means the target names no single file, `non-node` means it
+    resolved to a domain index rather than a TODO, and `dangling` means the
+    target section does not exist. The last three are corpus defects wearing
+    the same shape as a real dependency, and collapsing them into "blocked"
+    would hide them exactly as the empty edge set used to.
+    """
+    deps = section_dep_index(ctx)
+    rows = []
+    for key in _open_sources(deps):
+        unmet = [e for e in (deps.cross.get(key) or []) if not e["satisfied"]]
+        self_unmet = [d for d in deps.selfdeps.get(key, [])
+                      if not d["satisfied"]]
+        if not unmet and not self_unmet:
+            continue
+        parts = [f"{_sec_label(e['target_path'] or e['token'], e['target_section'])}"
+                 f"({e['reason']})" for e in unmet]
+        parts += [("self" if d["target_section"] is None
+                   else f"self §{d['target_section']}") + f"({d['reason']})"
+                  for d in self_unmet]
+        node = ctx.node_by_path.get(key[0]) or {}
+        rows.append({
+            "domain": node.get("domain") or "",
+            "id": display_id(node) if node else Path(key[0]).stem,
+            "section": _source_n(key),
+            "blocked_by": ",".join(parts),
+            "dep_source": SEC_DEP_SOURCE,
+        })
+    rows.sort(key=lambda r: (r["domain"], r["id"],
+                             r["section"] if r["section"] is not None else 1 << 30))
+    return rows, ["domain", "id", "section", "blocked_by", "dep_source"]
+
+
+def cmd_section_blocking(ctx: Ctx, args) -> tuple:
+    """Target sections ranked by how many open sections they hold up.
+
+    THIS IS THE CRITICAL-PATH RANK THE OS COMPARISON TABLE ADVERTISES, which
+    `blocking` cannot answer because its edge set is empty for every possible
+    corpus. Counting is over DISTINCT `(source_file, source_section,
+    target_file, target_section)` edges: the corpus contains a group naming the
+    same target section twice, which a naive loop scores as two dependents.
+
+    Unresolvable targets are excluded from the rank rather than bucketed under
+    a fabricated key -- `section-blocked` is where they are visible, one row
+    per affected source, which is where a reader can act on them.
+    """
+    deps = section_dep_index(ctx)
+    counts: dict = {}
+    for key in _open_sources(deps):
+        # `deps.cross[key]` is already unique on (target, section) per source
+        # section, so each iteration here IS one distinct
+        # (source_file, source_section, target_file, target_section) edge.
+        for e in (deps.cross.get(key) or []):
+            if e["satisfied"] or not e["target_path"]:
+                continue
+            tkey = (e["target_path"], e["target_section"])
+            counts[tkey] = counts.get(tkey, 0) + 1
+    rows = []
+    for (path, n), count in counts.items():
+        node = ctx.node_by_path.get(path) or {}
+        rows.append({
+            "id": display_id(node) if node else Path(path).stem,
+            "section": n,
+            "deliverable": deps.deliverable.get((path, n), ""),
+            "inbound_count": count,
+            "dep_source": SEC_DEP_SOURCE,
+        })
+    rows.sort(key=lambda r: (-r["inbound_count"], r["id"],
+                             r["section"] if r["section"] is not None else -1))
+    return rows, ["id", "section", "deliverable", "inbound_count", "dep_source"]
 
 
 def cmd_by_domain(ctx: Ctx, args) -> tuple:
@@ -1882,6 +2320,11 @@ SUBCOMMANDS = {
     "ready":       (cmd_ready, []),
     "blocked":     (cmd_blocked, []),
     "blocking":    (cmd_blocking, []),
+    # Section 28. NEW verbs over `sections[].depends_on`; the three above keep
+    # answering exactly what they always answered.
+    "section-ready":    (cmd_section_ready, []),
+    "section-blocked":  (cmd_section_blocked, []),
+    "section-blocking": (cmd_section_blocking, []),
     "by-domain":   (cmd_by_domain, [("domain", "?", None)]),
     "backlinks":   (cmd_backlinks, [("target", None, None)]),
     "deferred":    (cmd_deferred, [("target", None, None)]),

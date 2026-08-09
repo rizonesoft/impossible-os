@@ -6,10 +6,10 @@
 
 Two MCP servers ship with this repo, both `Read`-only over their respective caches:
 
-| Server | Owner | Source | Cache layer |
-|---|---|---|---|
-| `todo-graph` | [TODO Metadata Layer -- MCP Server (AI-Agent Transport over the Cache)](../../todo/00-infrastructure/TODO-06-todo-metadata-layer.md#8-mcp-server-ai-agent-transport-over-the-cache) | [`scripts/todo-graph/mcp_server.py`](../../scripts/todo-graph/mcp_server.py) | `build/todo-cache.json` (auto-rebuilt when stale) |
-| `lsp-bridge` | [LSP-MCP Bridge](../../todo/00-infrastructure/TODO-07-lsp-mcp-bridge.md) | [`scripts/lsp-mcp/bridge.py`](../../scripts/lsp-mcp/bridge.py) | per-language LSP daemons (clangd, asm-lsp, bash-language-server, pyright, PowerShellEditorServices) |
+| Server       | Owner                                                                                                                                                                               | Source                                                                       | Cache layer                                                                                         |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `todo-graph` | [TODO Metadata Layer -- MCP Server (AI-Agent Transport over the Cache)](../../todo/00-infrastructure/TODO-06-todo-metadata-layer.md#8-mcp-server-ai-agent-transport-over-the-cache) | [`scripts/todo-graph/mcp_server.py`](../../scripts/todo-graph/mcp_server.py) | `build/todo-cache.json` (auto-rebuilt when stale)                                                   |
+| `lsp-bridge` | [LSP-MCP Bridge](../../todo/00-infrastructure/TODO-07-lsp-mcp-bridge.md)                                                                                                            | [`scripts/lsp-mcp/bridge.py`](../../scripts/lsp-mcp/bridge.py)               | per-language LSP daemons (clangd, asm-lsp, bash-language-server, pyright, PowerShellEditorServices) |
 
 Both servers are wired in [`.mcp.json`](../../.mcp.json) at project scope; Claude Code loads them at session start. Codex CLI gains the same wiring once the [Codex MCP wiring + cross-config drift validator](../../todo/00-infrastructure/TODO-08-automation-hardening.md#1-codex-mcp-wiring--cross-config-drift-validator) work ships.
 
@@ -27,13 +27,18 @@ lsp-bridge health note: the OPTIONAL per-language LSP binaries (pyright, asm-lsp
 
 ## When to call `todo-graph`
 
-12 read-only queries; all return JSON over stdio MCP transport. Pick by the question being asked:
+15 read-only queries; all return JSON over stdio MCP transport. Pick by the question being asked.
+
+**The first three are FILE-level and the corpus does not author their edge set.** They rank against the frontmatter `depends_on` key, which 0 of 232 live TODOs set, so they return empty for every possible corpus -- an empty answer from them describes the absence of a graph, not the absence of blockers. For "what should I work on next?" use the `section-*` trio, which ranks over the 715 cross-file section dependencies the Implementation Order tables do author. Full rule: [Section-level readiness: the aggregation rule](todo-metadata.md#section-level-readiness-the-aggregation-rule).
 
 | Tool | Use when |
 |---|---|
-| `mcp__todo-graph__ready` | "What TODO sections are ready to implement right now?" -- finds sections whose deps are all `[x]`. |
-| `mcp__todo-graph__blocked` | "What's blocking section X?" -- enumerates incomplete deps. |
-| `mcp__todo-graph__blocking` | "If section X ships, what unblocks?" -- inverse of `blocked`. |
+| `mcp__todo-graph__section-ready` | **"What should I work on next?"** -- open sections whose cross-file AND same-file section dependencies are all satisfied. |
+| `mcp__todo-graph__section-blocked` | "What is section X waiting on?" -- each unmet dependency named with why (`open` / `blocked` / `file-open` / `dangling` / `non-node` / `unresolved`). |
+| `mcp__todo-graph__section-blocking` | "What is most worth finishing?" -- target sections ranked by how many open sections they hold up. The real critical-path rank. |
+| `mcp__todo-graph__ready` | File-level: TODOs whose frontmatter `depends_on` are all done. Empty until a TODO authors the field. |
+| `mcp__todo-graph__blocked` | File-level: TODOs with an unmet frontmatter `depends_on`. Empty until a TODO authors the field. |
+| `mcp__todo-graph__blocking` | File-level: rank by inbound frontmatter `depends_on`. Empty until a TODO authors the field. |
 | `mcp__todo-graph__by-domain <domain>` | "What TODOs live in domain `01-boot-platform`?" -- domain inventory. |
 | `mcp__todo-graph__backlinks <id>` | "Who XREFs TODO Y?" -- walks every inbound XREF / depends_on / satisfies / Inputs / Accepted-stamp / Deferred-stamp pointing at the target. **The fast path for cross-TODO impact analysis.** |
 | `mcp__todo-graph__deferred <id>` | "What does TODO Y defer to elsewhere?" -- outbound `Deferred:` stamps. |
@@ -78,15 +83,15 @@ Specialized (less common):
 
 Stay on built-in tools for:
 
-| Use case | Tool |
-|---|---|
-| Reading a file's actual contents | `Read` (NOT `lsp-bridge` -- it returns symbol metadata, not bytes) |
-| Editing a file | `Edit` / `Write` |
+| Use case                                                        | Tool                                                                                                               |
+| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| Reading a file's actual contents                                | `Read` (NOT `lsp-bridge` -- it returns symbol metadata, not bytes)                                                 |
+| Editing a file                                                  | `Edit` / `Write`                                                                                                   |
 | Markdown body text search ("find every TODO mentioning 'shim'") | `Bash(grep -rn ...)` -- LSP doesn't index markdown bodies; `todo-graph` indexes structural metadata, not free text |
-| Searching `scripts/` shell / Python helpers for a string | `Bash(grep ...)` -- LSP coverage is partial; grep is honest |
-| Build-artifact inspection (`build/*.log`, generated headers) | `Read` / `Bash(grep ...)` -- not in any MCP cache |
-| Git operations (log, diff, blame, show) | `Bash(git ...)` -- no MCP wraps git |
-| Running tests / scripts | `Bash` |
+| Searching `scripts/` shell / Python helpers for a string        | `Bash(grep ...)` -- LSP coverage is partial; grep is honest                                                        |
+| Build-artifact inspection (`build/*.log`, generated headers)    | `Read` / `Bash(grep ...)` -- not in any MCP cache                                                                  |
+| Git operations (log, diff, blame, show)                         | `Bash(git ...)` -- no MCP wraps git                                                                                |
+| Running tests / scripts                                         | `Bash`                                                                                                             |
 
 A useful heuristic: **if the answer is "look at the actual file", use `Read`. If the answer is "look up structural metadata", use the appropriate MCP. If the answer is "find this string anywhere", use `grep`.**
 
