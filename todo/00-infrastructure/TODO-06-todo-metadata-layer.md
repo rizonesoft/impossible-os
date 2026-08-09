@@ -83,6 +83,7 @@ title: "TODO-06 -- TODO Metadata Layer and Derived Graph"
 | ⭐  |  32   |   §32   | In-file `](#anchor)` links are checked by nothing (split from §29)                  | §3         |  [ ]   |
 | ⭐  |  33   |   §33   | Stamp-target capture splits a link whose label contains a space (split from §29)    | §2, §26    |  [ ]   |
 | ⭐  |  34   |   §34   | The performance budget times itself on a clock that steps (found verifying §29)     | §2         |  [ ]   |
+| ⭐  |  35   |   §35   | A same-file stamp matches its own text, so repair answers with the stamp's line     | §29        |  [ ]   |
 
 > 💎 = parity work -- Linux kernel has MAINTAINERS + get_maintainer.pl (person-ownership mapping without a dep graph); Windows has no public equivalent. §1 (frontmatter), §2 (generator), §5 (migration) bring us to partial Linux parity plus graph metadata neither OS ships.
 > ⭐ = competitive edge -- neither Win11 nor mainline Linux ships a first-class TODO dependency graph. §3 (validator), §4 (query CLI), §6 (CI gate), §7 (visualization), §8 (MCP server) are new ground; the surface has direct value for any contributor scanning "what can I work on next?".
@@ -1362,7 +1363,7 @@ Found on 2026-08-07 by §22's round-7 review, in the one `resolve_xref_target` b
 > - The corpus debt this exposed landed as two separate `todo:` commits, each verified green under the pre-change resolver.
 > - Scope boundary: no new reference form is accepted, and `by_dn` keeps its code-keyed answer for genuinely code-qualified `D<dd>T<nn>`.
 > **Verified:** 2026-08-09 | commit `0c5928fe6` | 4/4 items | build OK | test_build 464/464, test-tooling 1319/1319, corpus 9/9 checks 0 failures
-> **Accepted:** [H] stamp-target capture splits a space-bearing markdown label, so a legitimate label cannot resolve (reason: producer-side, `build.py` not the resolver; §26 closed the dangerous half by failing closed) -> XREF: 00-infrastructure/TODO-06 §29 (item: "Stamp-target capture must take a whole markdown link, not `\S+`" at line 1440)
+> **Accepted:** [H] stamp-target capture splits a space-bearing markdown label, so a legitimate label cannot resolve (reason: producer-side, `build.py` not the resolver; §26 closed the dangerous half by failing closed) -> XREF: 00-infrastructure/TODO-06 §33 (item: "Capture the complete markdown link as one target, not `\S+`" at line 1618)
 > **Quality reviewed:** 2026-08-09 | Codex 13x (design, adversarial, re-adversarial, consistency, perf) | 3H+4M+0L fixed, 0 open, 1 rejected | scope: N/A (pure tooling, no Win11/Linux parity surface)
 
 -> XREF: [`TODO-06 §22`](#22-querypy-fail-closed-through-every-transport) -- the section that found this and closed every OTHER arbitrary-member path in the resolver (item: "Route `query.py` through the shared validator, fail-closed"); it made `by_dn`, `by_filename` and the letter branch collision-aware and deliberately left this one, which needs a new index.
@@ -1420,7 +1421,7 @@ This is NOT the shallow-deepening case, which the count does catch because deepe
 > - Scope boundary: the equal-count shallow-boundary collision is REPRODUCED but deliberately NOT closed here -- it needs a product decision about shallow clones and is filed as §31.
 > **Verified:** 2026-08-09 | commit `f814af76f` | 6/6 items | build OK | test_build 466/466, tooling 1319/1319, kernel 28326+17, lint 0 errors, todo-graph 9/9
 > **Deferred:** [M] an equal-count shallow boundary moves `created_at` while tip and count compare equal, so a cache built under one boundary is certified under another (reason: refusing shallow corpora versus binding the boundary is a product decision, not a correctness fix) -> XREF: 00-infrastructure/TODO-06 §31 (item: "Decide what a shallow corpus IS to this tool, and record the reasoning" at line 1528)
-> **Deferred:** [L] `validate.py` never checks in-file `](#...)` anchors, so a retitled heading silently breaks every inbound link (reason: a validator capability, not this section's axis; 3 of 63 links in this file were dead and are repaired in the review commit) -> XREF: 00-infrastructure/TODO-06 §29 (item: "Validate IN-FILE `](#anchor)` links against the file's own headings" at line 1463)
+> **Deferred:** [L] `validate.py` never checks in-file `](#...)` anchors, so a retitled heading silently breaks every inbound link (reason: a validator capability, not this section's axis; 3 of 63 links in this file were dead and are repaired in the review commit) -> XREF: 00-infrastructure/TODO-06 §32 (item: "Validate IN-FILE `](#anchor)` links against the file's own headings" at line 1594)
 > **Quality reviewed:** 2026-08-09 | Codex 6x (design, adversarial x3, consistency, perf) | 6H+5M+0L fixed, 2 open | scope: N/A (host tooling -- no kernel/boot/desktop/shell/userland surface)
 
 -> XREF: [`TODO-06 §30`](#30---watch-never-ticks-on-a-history-change-for-the-history-consuming-verbs) -- the watch-mode half of §24's residue, split out of this section before implementation (item: "Give `--watch` a history trigger for the history-consuming verbs"); it consumes whatever probe this section settles on, so it ships after this one.
@@ -1651,6 +1652,35 @@ The negative-reading refusal at `test_build.sh:7618` is CORRECT and must stay: i
 **Test checkpoint:** Test 7 reports a positive elapsed time across 10 consecutive runs of `bash scripts/todo-graph/tests/test_build.sh`; an artificially over-budget build still fails the 2s assertion; `bash scripts/test-tooling.sh` green.
 
 -> XREF: [`TODO-06 §29`](#29---fix-line-numbers-reports-success-over-targets-it-could-not-resolve) -- the section whose verification surfaced this (item: "Commit: `\"todo-graph: repair mode fails visibly on targets it cannot resolve\"`"); the flake is unrelated to repair mode and was filed rather than folded in, so it would not ship un-reviewed under that section's stamps.
+
+---
+
+## 35. A Same-File Stamp Matches Its Own Text, So Repair Answers With the Stamp's Line
+
+Found 2026-08-09 during §29's review, and REPRODUCED with a control before filing. `fix_line_numbers` locates an item by scanning the target file for the literal item name on ANY line (`scripts/todo-graph/validate.py`, the `for ix, target_ln in enumerate(target_text.splitlines(), ...)` scan). When the stamp and its target are the SAME file -- which every in-file `-> XREF: TODO-06 §N` is -- the stamp line contains the item name by construction, so the scan always matches the stamp itself.
+
+Two consequences, both measured on a three-line fixture:
+
+- A LIVE item yields two hits (the item at line 20, the stamp at line 23) and is reported `ambiguous item_name ... refusing to rewrite`. Every same-file stamp XREF is therefore permanently unrepairable, and is counted as ambiguity rather than as the structural defect it is. The live corpus reports 403 ambiguities and the sampled ones are overwhelmingly same-file (`stamp at TODO-25...` naming `TODO-25...`), so this mechanism plausibly accounts for most of that number -- UNMEASURED as a proportion, and worth measuring first.
+- A DELETED item is worse: the only remaining match is the stamp's own line, so repair exits **rc 0** and rewrites the reference to point at itself (`(item: "Wire the resolver" at line 22)` on line 22). Observed live in this file: §26's `Accepted:` stamp named an item §29's split had moved away, and the auto-rewrite hook silently repointed it from line 1440 to 1365 -- the stamp's own line.
+
+That second shape is the defect §29 was written to close, reached by a path §29 does not cover: §29 added `missing_items` for a target that resolves without the item, and a same-file stamp is never "without the item" because it quotes it. So the new detection is defeated exactly where the reference is most common, and the outcome is a WRONG REWRITE reported as success rather than a silent skip.
+
+- [ ] Match the item name only on CHECKLIST-ITEM lines, not on any line of the target
+      A line beginning `- [ ]` / `- [x]` / `- [/]` (after indentation) is the only thing `(item: "NAME" at line N)` can legitimately name. Restricting the scan excludes stamp lines by construction and fixes both shapes at once.
+      - Verify the ambiguity count falls and record the before/after: this is the first change likely to move the live 403, and the drop IS the evidence that the diagnosis was right.
+      - Do NOT special-case "skip the stamp's own line". It fixes the narrow self-match and leaves a stamp matching a DIFFERENT stamp that quotes the same item name, which the live corpus already contains.
+- [ ] A deleted item in a same-file reference must report, not rewrite
+      With the scan restricted, the deleted case yields zero item-line hits and falls into §29's `missing_items`, exiting 1 and naming the stamp. Assert exactly that, so the two sections' contracts are one contract.
+- [ ] Fixtures for both shapes, mutation-checked
+      Live-item-same-file (must resolve to the ITEM's line, not the stamp's) and deleted-item-same-file (must report missing and exit 1, never rewrite to the stamp's own line). Mutation: restore the any-line scan and require both to FAIL.
+- [ ] Sweep the corpus for stamps this already corrupted
+      A reference whose recorded line equals the line of the stamp itself is a self-match that has already been written. Enumerate them before the fix changes the evidence, and repair or re-point each.
+- [ ] Commit: `"todo-graph: an item reference resolves to an item line, not to the stamp naming it"`
+
+**Test checkpoint:** a same-file stamp naming a live item rewrites to that item's line and exits 0; the same stamp with the item deleted exits 1 reporting a missing item and leaves the stored line untouched; both fixtures fail when the any-line scan is restored; the live ambiguity count is recorded before and after; `bash scripts/todo-graph/tests/test_build.sh` green.
+
+-> XREF: [`TODO-06 §29`](#29---fix-line-numbers-reports-success-over-targets-it-could-not-resolve) -- the section whose review found this (item: "Commit: `\"todo-graph: repair mode fails visibly on targets it cannot resolve\"`"); it added the `missing_items` class this defect defeats, and is stamped, so the residue is owned here.
 
 ---
 
