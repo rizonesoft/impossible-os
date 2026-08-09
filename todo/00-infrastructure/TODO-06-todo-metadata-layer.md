@@ -1351,6 +1351,9 @@ Found on 2026-08-07 by §22's round-7 review, in the one `resolve_xref_target` b
 > - Downstream: `docs/infrastructure/todo-graph.md` regenerates with four corrected edges. Over all 4,480 live targets: 6 rebound, 0 lost, 0 gained.
 > - The corpus debt this exposed landed as two separate `todo:` commits, each verified green under the pre-change resolver.
 > - Scope boundary: no new reference form is accepted, and `by_dn` keeps its code-keyed answer for genuinely code-qualified `D<dd>T<nn>`.
+> **Verified:** 2026-08-09 | commit `0c5928fe6` | 4/4 items | build OK | test_build 464/464, test-tooling 1319/1319, corpus 9/9 checks 0 failures
+> **Accepted:** [H] stamp-target capture splits a space-bearing markdown label, so a legitimate label cannot resolve (reason: producer-side, `build.py` not the resolver; §26 closed the dangerous half by failing closed) -> XREF: 00-infrastructure/TODO-06 §29 (item: "Stamp-target capture must take a whole markdown link, not `\S+`" at line 1440)
+> **Quality reviewed:** 2026-08-09 | Codex 13x (design, adversarial, re-adversarial, consistency, perf) | 3H+4M+0L fixed, 0 open, 1 rejected | scope: N/A (pure tooling, no Win11/Linux parity surface)
 
 -> XREF: [`TODO-06 §22`](#22-querypy-fail-closed-through-every-transport) -- the section that found this and closed every OTHER arbitrary-member path in the resolver (item: "Route `query.py` through the shared validator, fail-closed"); it made `by_dn`, `by_filename` and the letter branch collision-aware and deliberately left this one, which needs a new index.
 -> XREF: [`TODO-06 §3`](#3-validator-stale-xref--dangling-dep--orphan--cycle--bat--status--schema) -- the validator that owns `resolve_xref_target` and reports the stale-XREF findings this changes (item: "Commit: `\"todo-graph: validator with 8 integrity checks\"`"); that section is stamped, so the repair is owned here.
@@ -1437,6 +1440,11 @@ Found by §26's round-6 review while that section was tightening the resolver. T
       - `cache_schema` refuses such a cache at load, so this is defence in depth rather than a live hole -- size the work accordingly.
 - [ ] One repair-mode fixture per spelling, against the same collision
       Qualified, bare-spelled, relative-spelled and full-path forms of one target, so a future change cannot make repair-mode safety depend on surface form again. Mutation: revert the up-front refusal and require the fixture to fail.
+- [ ] Stamp-target capture must take a whole markdown link, not `\S+`
+      `build.py:225` and `fix_line_numbers` both capture an XREF target with `(\S+)`, so a link whose LABEL contains a space is split at that space and only the fragment reaches the resolver. The live corpus writes that shape: `` [`01-boot-platform/TODO-07 §9`](TODO-07-...md) `` in `todo/01-boot-platform/TODO-22-recovery-partition.md`.
+      - §26 closed the dangerous half in the resolver -- a bracket-prefixed token that is not a complete link now FAILS CLOSED instead of being parsed as a path and answering with the file named in the LABEL. That turns a wrong binding into an ordinary unresolved-XREF finding, which is how the one live instance was found and repaired.
+      - The remaining half is the producer: capture the complete link (label, destination and any trailing section marker) as one target, so a legitimate space-bearing label resolves instead of refusing. 124 such labels exist corpus-wide; they resolve today only because the OTHER extractors hand over a whole table cell.
+      - Fixture shape the reviewer asked for: an end-to-end case through `extract_stamps_xrefs` where the label and the destination name DIFFERENT valid files, asserting resolution follows the destination.
 - [ ] Commit: `"todo-graph: repair mode fails visibly on targets it cannot resolve"`
 
 **Test checkpoint:** a repair run over a corpus with one unresolvable target exits non-zero (or warns, per the recorded contract) instead of 0; a repair run over a resolver-key-colliding corpus refuses up front; `bash scripts/todo-graph/tests/test_build.sh` green.
@@ -1490,6 +1498,9 @@ Found by §26's round-6 review while that section was tightening the resolver. T
 | 💎  | The artifact declares which PRODUCER CONTRACT wrote it       | ❌ None                 | ❌ Index has no self-identity       | ✅ §25 version + declaration digest in the binding; meaning and shape both fail  |
 | 💎  | A historical baseline is CHECKED, not asked to be current    | ❌ None                 | ❌ Regenerate-and-hope              | ✅ §25 `--diff` requires the identity, rc 2 otherwise; baseline byte-identical   |
 | ⭐  | An empty ranking NAMES its evidence, through every transport | ❌ Silent zero          | ❌ Silent zero                      | ✅ §25 the caveat rides in `--json` AND `stats`, so `--quiet` cannot flatten it  |
+| 💎  | A reference resolves by the DIRECTORY it names, not a prefix | ❌ Board links are ids  | ❌ Path or nothing                  | ✅ §26 `by_dirnum`/`by_code`; a code owning 2 dirs refuses instead of guessing   |
+| 💎  | A spelled filename is decided by its slug, never its number  | ❌ None                 | ❌ None                             | ✅ §26 exact stem, no number fallback; 6 live edges rebound to the file named    |
+| ⭐  | A malformed link token is refused, not bound to its label    | ❌ None                 | ❌ None                             | ✅ §26 fail-closed on a bracket token that is not one complete markdown link     |
 
 > **After §1-§3:** Impossible OS has full Linux-parity ownership metadata plus the dep-graph that neither OS ships, plus automated cross-file XREF integrity checks AND a CI-gated JSON Schema sidecar (consumed by `remark-lint-frontmatter-schema`; no Linux equivalent for project plans). Editor-time diagnostics are best-effort developer convenience via `markdown-yaml-embedded-langservers`; the §6 CI gate is the authoritative line of defense.
 > **After §4-§6:** "what should I work on next?" + "what's most-blocking?" + "what's been stale for 90 days?" are one-command queries, and graph drift is caught at PR time instead of at next-reviewer-sweep time, with `--diff` surfacing graph regressions per-PR. The canonical-markdown / derived-cache invariant matches the existing [Hook Routing Matrix](../../docs/infrastructure/ai-system.md#hook-routing-matrix) architecture, so contributors already understand the mental model.

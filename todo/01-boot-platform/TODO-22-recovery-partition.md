@@ -93,8 +93,8 @@ Add a read-only recovery partition to the GPT disk layout.
 
 - [x] Recovery boots via a `kind=recovery` entry through the existing `bootx64.c` producer (flips `boot_path=BOOT_PATH_RECOVERY`); ALREADY SHIPPED by TODO-07 §4. -> XREF: [`01-boot-platform/TODO-07 §4`](TODO-07-boot-entry-store-menu-policy.md)
 - [ ] Kernel recovery-mode entry point: Phase-3 routes `boot_path==BOOT_PATH_RECOVERY` into the recovery flow (§3-§7) instead of normal desktop init. §2's real deliverable; non-hollow only once §3-§7 land.
-- [ ] Recovery-load-path contract: define `BOOT_ENTRY_KIND_RECOVERY` + the `BOOT_SELECTION_FALLBACK_ALL_PATHS_BAD` sentinel TODO-07 §9 consumes. -> XREF: [`01-boot-platform/TODO-07 §9`](TODO-07-boot-entry-store-menu-policy.md)
-- [ ] Recovery entry REGISTRATION owned by TODO-07 §9 (integration) + §16 (first-install seeding); §2 provides the load path they register against. -> XREF: [`01-boot-platform/TODO-07 §9`](TODO-07-boot-entry-store-menu-policy.md)
+- [ ] Recovery-load-path contract: define `BOOT_ENTRY_KIND_RECOVERY` + the `BOOT_SELECTION_FALLBACK_ALL_PATHS_BAD` sentinel TODO-07 §9 consumes. -> XREF: [`01-boot-platform/TODO-07`](TODO-07-boot-entry-store-menu-policy.md) §9
+- [ ] Recovery entry REGISTRATION owned by TODO-07 §9 (integration) + §16 (first-install seeding); §2 provides the load path they register against. -> XREF: [`01-boot-platform/TODO-07`](TODO-07-boot-entry-store-menu-policy.md) §9
 - [ ] Shows `"Impossible OS Recovery Environment"` -- rendered by the §7 recovery UI on the recovery-mode entry path
 - [ ] Does NOT touch A/B slots -- recovery operates only on the recovery partition
 - [ ] DROPPED: standalone `recovery.efi` + `\EFI\BOOT\BOOTX64.EFI` fallback-path install (replaces NORMAL boot, HIGH; forked binary drifts vs boot_info validation, HIGH)
@@ -113,7 +113,7 @@ Add a read-only recovery partition to the GPT disk layout.
 > - **Scope boundary:** §2 = load-path contract + kernel recovery-mode entry; TODO-07 §9/§16 own registration; §3-§7 own the flow.
 
 > **Verified:** 2026-06-16 | design-corrected, 0/7 functional items (deferred) | build N/A (no code shipped this pass) | Codex design review adopted (3 HIGH)
-> **Deferred:** [H] §2 credible form is a cross-TODO recovery subsystem (load-path contract + kernel recovery-mode entry + §3-§7 flow), entangled with deferred TODO-07 §9 and unvalidatable until a recovery entry is registered -> XREF: [`01-boot-platform/TODO-07 §9`](TODO-07-boot-entry-store-menu-policy.md) (item: "Widen `supported_kinds_mask` to include `BOOT_ENTRY_KIND_RECOVERY`")
+> **Deferred:** [H] §2 credible form is a cross-TODO recovery subsystem (load-path contract + kernel recovery-mode entry + §3-§7 flow), entangled with deferred TODO-07 §9 and unvalidatable until a recovery entry is registered -> XREF: [`01-boot-platform/TODO-07`](TODO-07-boot-entry-store-menu-policy.md) §9 (item: "Widen `supported_kinds_mask` to include `BOOT_ENTRY_KIND_RECOVERY`")
 
 ---
 

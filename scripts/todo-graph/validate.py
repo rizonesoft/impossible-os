@@ -150,7 +150,23 @@ _NUMBERED_DIR_RE = re.compile(r"^\d{2}-")
 # whitespace and parentheses, which also rules out a link title (`(url "t")`) --
 # a shape this corpus does not use and which must not be silently truncated to
 # the url and resolved.
-_MD_LINK_RE = re.compile(r"^\[.*\]\((?P<url>[^()\s]*)\)$")
+#
+# EXACTLY ONE LINK, and the label may not swallow another one. A greedy `.*`
+# label treats `[a](x.md)[b](y.md)` -- which the `(\S+)` XREF parser hands over
+# whole -- as one link whose destination is `y.md`, so a malformed multi-target
+# token resolved to its LAST destination instead of being refused (Codex
+# adversarial, section 26 review).
+#
+# THE BAN ON `](` IS EXPRESSED AS A LOOKAHEAD, not as a character class. The
+# first cut allowed "an ordinary char OR a bracket pair", and the two
+# alternatives together still admitted `](`: the pair alternative ends at `]`
+# and the ordinary alternative then accepts `(`. So
+# `[[a](x.md)[b](y.md)](z.md)` matched and resolved `z.md` -- the same silent
+# multi-destination bind, one nesting level down (Codex re-adversarial, section
+# 26 review round 2). Refusing the SEQUENCE at every position is what actually
+# states the rule; a label carrying ordinary brackets still matches.
+_MD_LINK_RE = re.compile(
+    r"^\[(?P<label>(?:(?!\]\().)*)\]\((?P<url>[^()\s]*)\)$")
 TODO_NN_RE = re.compile(r"^TODO-(?P<num>\d{1,2})$")
 TODO_FILENAME_RE = re.compile(r"^TODO-(?P<num>\d{1,2})-")
 
@@ -488,6 +504,7 @@ def build_path_index(nodes: list) -> dict:
     stem_collisions = set()
     stem_paths = {}
     by_dirnum = {}
+    dirnum_paths: dict = {}
     dirnum_collisions = set()
     by_code: dict = {}
     dir_paths: dict = {}
@@ -517,6 +534,12 @@ def build_path_index(nodes: list) -> dict:
             if dkey in by_dirnum:
                 dirnum_collisions.add(dkey)
             by_dirnum[dkey] = rel
+            # EVERY candidate for the slot, not just the survivor -- `by_dirnum`
+            # keeps the last one, so the precomputed colliding-path set built
+            # from it alone would silently omit the file that lost the
+            # overwrite, and that file is exactly the one a reference naming it
+            # must be refused for.
+            dirnum_paths.setdefault(dkey, []).append(rel)
         # DIRECTORY MEMBERSHIP IS INDEPENDENT OF THE NUMERIC KEY, and this
         # separation is load-bearing (Codex adversarial, section 26, [medium]).
         # `resolver_key` answers "which (code, number) slot" and so requires a
@@ -578,13 +601,29 @@ def build_path_index(nodes: list) -> dict:
     # Both unions are written with a zero-argument-safe base: `s.union()` with
     # no operands returns a copy, so an empty corpus needs no special case.
     all_paths = frozenset(set(by_filename.values()).union(*stem_paths.values()))
+    # SORTED ONCE, not per edge. The letter branch built a set union over every
+    # stem candidate and SORTED it on each reference it handled -- O(V log V)
+    # per edge against a corpus that only grows (Codex perf, section 26 review,
+    # [high]). The order is part of the contract (it makes an ambiguous letter
+    # match deterministic), so it is preserved and merely hoisted.
+    sorted_paths = tuple(sorted(
+        {q for ps in stem_paths.values() for q in ps} or all_paths))
+    # AND THE COLLISION ANSWER IS PRECOMPUTED TOO. `_collides` re-derived a
+    # path's `(directory, number)` key on every exact-stem or exact-path answer,
+    # re-running `resolver_key` and `_path_dir` over facts this loop already
+    # established: 1,177 calls across 2,673 targets on the live 232-node cache,
+    # about a third of measured resolution time (20.29ms -> 13.58ms median once
+    # indexed; 187.4ms -> 146.5ms at 4,000 relative edges).
+    colliding_paths = frozenset(
+        rel for dkey in dirnum_collisions for rel in dirnum_paths.get(dkey, ()))
     return {"by_dn": by_dn, "by_filename": by_filename,
             "dn_collisions": dn_collisions, "stem_collisions": stem_collisions,
             "stem_paths": stem_paths,
             "by_dirnum": by_dirnum, "dirnum_collisions": dirnum_collisions,
             "by_code": {c: frozenset(d) for c, d in by_code.items()},
             "dir_paths": dir_paths, "dir_path_collisions": dir_path_collisions,
-            "all_paths": all_paths}
+            "all_paths": all_paths, "sorted_paths": sorted_paths,
+            "colliding_paths": colliding_paths}
 
 
 def _dn_lookup(path_index: dict, key) -> Optional[str]:
@@ -646,6 +685,9 @@ def _collides(path_index: dict, file_path: Optional[str]) -> bool:
     is most misleading."""
     if not file_path:
         return False
+    known = path_index.get("colliding_paths")
+    if known is not None:
+        return file_path in known
     key = cache_schema.resolver_key(file_path)
     if key is None:
         return False
@@ -798,6 +840,19 @@ def resolve_xref_target(target: str, source_file: str, id_index: dict, path_inde
     # unmatchable `[T](x.md` and refused every ANCHORED link -- the commonest
     # shape in this corpus (Codex re-adversarial, section 26 round 6, [medium]).
     link_m = _MD_LINK_RE.match(target)
+    # A BRACKET-PREFIXED TOKEN THAT IS NOT A COMPLETE LINK FAILS CLOSED. The
+    # producers capture a stamp target with `\S+`, so a label containing a
+    # SPACE -- ``[`01-boot-platform/TODO-07 §9`](...)``, a shape the live corpus
+    # writes -- is split at that space and only the fragment
+    # ``[`01-boot-platform/TODO-07`` reaches here. Falling through to generic
+    # path resolution then answered with the file named in the LABEL rather than
+    # the one named in the destination, which is a wrong binding reported as a
+    # clean edge (Codex re-adversarial, section 26 review round 3, [high]).
+    # Refusing is the honest verdict: the token is a fragment, and a fragment
+    # names nothing. Fixing the producers to capture a whole link is the other
+    # half and is filed separately -- it belongs to the cache producer, not here.
+    if link_m is None and target.startswith("["):
+        return None
     if link_m:
         # An empty or fragment-only destination names no FILE. `[x](#anchor)`
         # is a same-document jump, which no file-level resolution can answer,
@@ -977,8 +1032,9 @@ def resolve_xref_target(target: str, source_file: str, id_index: dict, path_inde
         # not consult them (Codex adversarial, section 22 round 5, [medium]).
         want_dir = letter_m.group("dir")
         matches = []
-        for fp in sorted({q for ps in path_index.get("stem_paths", {}).values()
-                           for q in ps} or _all_paths(path_index)):
+        for fp in (path_index.get("sorted_paths")
+                   or sorted({q for ps in path_index.get("stem_paths", {}).values()
+                              for q in ps} or _all_paths(path_index))):
             tail = fp.rsplit("/", 1)[-1]
             if not (tail.startswith(stem_fragment + "-")
                     or tail == stem_fragment + ".md"):
@@ -1103,6 +1159,31 @@ def resolve_xref_target(target: str, source_file: str, id_index: dict, path_inde
                 # exists, which is a stale reference, not a number to guess at.
                 if len(rel_parts) >= 3 and rel_parts[0] == "todo":
                     dom_dir = rel_parts[1]
+                    # A SPELLED tail WITHOUT `.md` is still spelled. The exact
+                    # path check above only matches a target carrying the
+                    # suffix, so `./TODO-01-a` fell through to the slugless
+                    # number lookup, missed it, and returned None -- while the
+                    # identical `TODO-01-a` and `14-alpha/TODO-01-a` both
+                    # resolved. Same rule as branch 4a, applied to the
+                    # normalized directory (Codex adversarial, section 26
+                    # review, [medium]).
+                    #
+                    # AND IT IS THE WHOLE NORMALIZED PATH THAT MUST EXIST, not
+                    # its first and last components. Matching on
+                    # `(dom_dir, tail)` discarded every directory in between,
+                    # so `./ghost/TODO-01-a` -- normalizing to
+                    # `todo/14-alpha/ghost/TODO-01-a`, which is nothing --
+                    # resolved to `todo/14-alpha/TODO-01-a.md` and reported no
+                    # stale-XREF finding (Codex re-adversarial, section 26
+                    # review round 2, [high]). Adding the suffix and asking for
+                    # the exact path keeps the depth information the reference
+                    # actually carries.
+                    if re.match(r"^TODO-\d{1,2}-[a-z0-9-]+$", tail):
+                        cand = rel_path + ".md"
+                        if cand not in _all_paths(path_index) \
+                                or _collides(path_index, cand):
+                            return None
+                        return cand
                     num_m = re.match(r"^TODO-(\d{1,2})(?:\.md)?$", tail)
                     if re.match(r"^\d{2}-", dom_dir) and num_m:
                         return _dirnum_lookup(path_index, dom_dir,

@@ -3650,6 +3650,20 @@ CASES = [
     # carried its number in that directory.
     ("../14-alpha/TODO-01-missing.md", None),
     ("../14-alpha/TODO-01-a.md", A),
+    # A SPELLED tail WITHOUT `.md` is still spelled: the exact-path check only
+    # matches a target carrying the suffix, so these fell through to the
+    # slugless number lookup and returned None while the identical non-relative
+    # forms resolved (Codex adversarial, section 26 review).
+    ("./TODO-01-a", A),
+    ("../14-alpha/TODO-01-a", A),
+    ("../14-beta/TODO-02-b", B),
+    ("../14-alpha/TODO-02-missing", None),
+    # THE WHOLE NORMALIZED PATH MUST EXIST. Matching on (directory, tail) alone
+    # discarded every component in between, so a path through a directory that
+    # does not exist resolved to the file with the same name one level up.
+    ("./ghost/TODO-01-a", None),
+    ("../14-alpha/ghost/TODO-01-a", None),
+    ("./ghost/TODO-01-a.md", None),
 ]
 for label, nodes in (("forward", [alpha, beta]), ("reversed", [beta, alpha])):
     p, i = V.build_path_index(nodes), V.build_id_index(nodes)
@@ -3772,7 +3786,22 @@ for tok, want in (("[TODO-02](TODO-02-b.md)", "todo/01-test/TODO-02-b.md"),
                   ("[`TODO-02 §6`](01-test/TODO-02-b.md)", "todo/01-test/TODO-02-b.md"),
                   # No destination, and a same-document jump, name no FILE.
                   ("[TODO-02]()", None),
-                  ("[TODO-02](#anchor)", None)):
+                  ("[TODO-02](#anchor)", None),
+                  # TWO ADJACENT LINKS ARE NOT ONE LINK. A greedy label
+                  # swallowed the first link and resolved the LAST
+                  # destination, so a malformed multi-target token bound
+                  # silently instead of being refused (Codex adversarial,
+                  # section 26 review).
+                  ("[a](TODO-01-a.md)[b](TODO-02-b.md)", None),
+                  ("[a](TODO-02-b.md) trailing", None),
+                  # NESTING IS THE SAME DEFECT ONE LEVEL DOWN: a label built
+                  # from a bracket-pair alternative could end at `]` and let
+                  # the next alternative accept `(`, so the ban on `](` was
+                  # not enforced ACROSS alternatives and this token resolved
+                  # to its outermost destination.
+                  ("[[a](TODO-01-a.md)[b](TODO-02-b.md)](TODO-02-b.md)", None),
+                  # A label carrying ordinary brackets is still legitimate.
+                  ("[a [inner] label](TODO-02-b.md)", "todo/01-test/TODO-02-b.md")):
     got = V.resolve_xref_target(tok, LSRC, i, p)
     assert got == want, f"[md-link] {tok!r} -> {got!r}, expected {want!r}"
 
