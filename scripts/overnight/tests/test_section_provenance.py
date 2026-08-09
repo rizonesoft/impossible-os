@@ -72,9 +72,14 @@ def test_new_section_without_provenance_is_refused():
 
 
 def test_each_declared_form_is_accepted():
+    """The `(review)` case carries a user-impact line because a review-spawn now
+    requires one -- see test_review_spawned_section_must_state_user_impact. A
+    fixture without it would be refused for the RIGHT reason and would stop
+    testing provenance, which is what this case is about."""
     for marker in ("> **Spawned-by:** root",
                    "> **Spawned-by:** section 1 (split)",
-                   "> **Spawned-by:** section 1 (review)"):
+                   "> **Spawned-by:** section 1 (review)\n"
+                   "> **User impact:** a stale cache certifies a moved corpus"):
         with tempfile.TemporaryDirectory() as d:
             root, env = _repo(d)
             _stage(root, env, "todo/00-infrastructure/TODO-01-x.md",
@@ -103,6 +108,51 @@ def test_a_brand_new_todo_file_is_exempt():
         _stage(root, env, "todo/00-infrastructure/TODO-02-new.md",
                "# N\n\n## Implementation Order\n\n| x | 1 | s1 | d | -- | [ ] |\n\n"
                "## 1. Fresh\n\n- [ ] work\n\n## 2. Also fresh\n\n- [ ] work\n")
+        rc, err = _run(root, env)
+        assert rc == 0, (rc, err)
+
+
+def test_review_spawned_section_must_state_user_impact():
+    """Provenance made the cascade countable; this makes each link answer for
+    itself when the answer is cheap. The worked example: a section created for a
+    real section-parser defect that has ZERO live occurrences in 232 TODO files,
+    surfaced only by another section's fixture."""
+    with tempfile.TemporaryDirectory() as d:
+        root, env = _repo(d)
+        _stage(root, env, "todo/00-infrastructure/TODO-01-x.md",
+               BASE + "\n## 2. Two\n\n> **Spawned-by:** section 1 (review)\n\n- [ ] work\n")
+        rc, err = _run(root, env)
+        assert rc == 1, (rc, err)
+        assert "what a user hits" in err, err
+        # the message must say the honest negative answer is allowed, or it
+        # teaches people to invent impact -- which is worse than no rule
+        assert "Nothing today" in err, err
+
+
+def test_user_impact_is_required_only_of_review_spawns():
+    """A root is a capability someone set out to build; a split is justified
+    work being partitioned. Neither is the runaway shape, and demanding the line
+    of them would be ceremony that gets the whole check switched off."""
+    for marker in ("> **Spawned-by:** root",
+                   "> **Spawned-by:** section 1 (split)"):
+        with tempfile.TemporaryDirectory() as d:
+            root, env = _repo(d)
+            _stage(root, env, "todo/00-infrastructure/TODO-01-x.md",
+                   BASE + f"\n## 2. Two\n\n{marker}\n\n- [ ] work\n")
+            rc, err = _run(root, env)
+            assert rc == 0, (marker, rc, err)
+
+
+def test_an_honest_negative_user_impact_is_accepted():
+    """The content is NOT judged. "Nothing today" is the answer that talks an
+    author out of the section, so it has to be sayable -- a check that rejected
+    it would produce invented impact instead of honest ones."""
+    with tempfile.TemporaryDirectory() as d:
+        root, env = _repo(d)
+        _stage(root, env, "todo/00-infrastructure/TODO-01-x.md",
+               BASE + "\n## 2. Two\n\n> **Spawned-by:** section 1 (review)\n"
+                      "> **User impact:** nothing today; only if a TODO ever fences a heading\n\n"
+                      "- [ ] work\n")
         rc, err = _run(root, env)
         assert rc == 0, (rc, err)
 

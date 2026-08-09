@@ -297,6 +297,55 @@ _SPAWNED_BY_RE = re.compile(
     re.I)
 
 
+# USER IMPACT ON A REVIEW-SPAWNED SECTION (2026-08-09). Provenance made the
+# cascade countable; this makes each link ANSWER FOR ITSELF at the moment it is
+# created, which is the only moment the answer is cheap.
+#
+# Scoped to `(review)` deliberately. A `root` is a capability someone set out to
+# build and a `(split)` is work already justified being partitioned -- neither is
+# the shape that runs away. A section created FROM A REVIEW FINDING is, and the
+# question that separates a worthwhile one from refinement is always the same:
+# what does a user hit if this is not done?
+#
+# THE CONTENT IS NOT JUDGED, on purpose. "Nothing today; the parser miscounts
+# only if a TODO ever fences a heading example" is a legitimate and useful
+# answer -- and it is exactly the answer that talks its author out of creating
+# the section. Demanding a WEIGHTY impact would teach people to invent one,
+# which is strictly worse than an honest "nothing". The requirement is that the
+# sentence gets written where a reviewer will read it.
+#
+# The worked example is the section that prompted this: a real defect in the
+# section parser, surfaced by another section's test fixture, with ZERO live
+# occurrences in 232 TODO files.
+_USER_IMPACT_RE = re.compile(r"^>\s*\*\*User impact:\*\*\s*\S", re.I)
+_REVIEW_SPAWN_RE = re.compile(
+    r"^>\s*\*\*Spawned-by:\*\*\s*(?:\u00a7|section\s*)\d+\s*\(review\)", re.I)
+
+
+def _review_sections_missing_user_impact(path, added):
+    """[(lineno, heading)] for `(review)`-spawned sections this commit ADDS that
+    carry no `> **User impact:**` line."""
+    if _file_is_new(path):
+        return []
+    try:
+        lines = pathlib.Path(path).read_text(encoding="utf-8").split("\n")
+    except OSError:
+        return []                      # fail-open: never break a commit on this
+    added_nos = {n for n, _ in added}
+    starts = [i for i, ln in enumerate(lines, 1) if _SECTION_RE.match(ln.strip())]
+    out = []
+    for idx, start in enumerate(starts):
+        if start not in added_nos:
+            continue
+        end = starts[idx + 1] - 1 if idx + 1 < len(starts) else len(lines)
+        body = lines[start:end]
+        if not any(_REVIEW_SPAWN_RE.match(b) for b in body):
+            continue                   # root or split: not the runaway shape
+        if not any(_USER_IMPACT_RE.match(b) for b in body):
+            out.append((start, lines[start - 1].strip()[:70]))
+    return out
+
+
 def _file_is_new(path):
     """True when this commit CREATES the file (no HEAD blob)."""
     try:
@@ -337,7 +386,7 @@ def main(argv) -> int:
     files = _staged_todo_files()
     if not files:
         return 0
-    bad, wrapped, oscomp, parked, noprov = [], [], [], [], []
+    bad, wrapped, oscomp, parked, noprov, noimpact = [], [], [], [], [], []
     for f in files:
         added = _added_lines(f)
         for n, ln, text in over_cap(added):
@@ -351,6 +400,8 @@ def main(argv) -> int:
             parked.append((f, n, head, text))
         for n, head in _sections_missing_provenance(f, added):
             noprov.append((f, n, head))
+        for n, head in _review_sections_missing_user_impact(f, added):
+            noimpact.append((f, n, head))
     # section-count cap: judged per file, on files this commit GROWS
     capped_hard, capped_soft = [], []
     for f in files:
@@ -461,6 +512,27 @@ def main(argv) -> int:
             "  sections in a week with the sensor live and silent throughout.\n"
             "  `root` is a fine answer and costs nothing; saying nothing is not.\n"
             "  A brand-new TODO file is exempt -- its sections are roots by construction.\n"
+            "  Opt-out: SKIP_TODO_STAGED_CHECK=1 git commit ...\n")
+        return 1
+
+    if noimpact:
+        for f, n, head in noimpact:
+            sys.stderr.write(
+                "\n[todo-staged-check] %s:%d is spawned from a REVIEW but does not say "
+                "what a user hits:\n    %s\n" % (f, n, head))
+        sys.stderr.write(
+            "\n  Add one line in the section body:\n"
+            "    > **User impact:** <what a user hits if this is NOT done>\n"
+            "\n  Required only on `(review)`-spawned sections -- a `root` is a capability\n"
+            "  you set out to build and a `(split)` is justified work being partitioned.\n"
+            "  A section created FROM a review finding is the shape that runs away, and\n"
+            "  this is the question that separates a worthwhile one from refinement.\n"
+            "\n  \"Nothing today\" IS a legitimate answer, and often the useful one -- it is\n"
+            "  the answer that talks you out of the section. The content is not judged;\n"
+            "  demanding a weighty impact would only teach people to invent one. Write it\n"
+            "  honestly, then decide: fix it in the section you are in and name it `- [x]`,\n"
+            "  file `- [ ]` in the OPEN section of the component that owns it, or keep the\n"
+            "  new section because the sentence you just wrote justifies it.\n"
             "  Opt-out: SKIP_TODO_STAGED_CHECK=1 git commit ...\n")
         return 1
 
