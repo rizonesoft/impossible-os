@@ -75,13 +75,29 @@
 #                     number because the item name was ambiguous, its
 #                     XREF target did not resolve, or the target resolved
 #                     without containing the item; safe rewrites were
-#                     still applied. rc 2 = refused before touching
-#                     anything (colliding ids or resolver keys, or the
-#                     corpus moved mid-run). Each unrepaired stamp is
-#                     named on its own FAIL line, NOT merely counted, and
-#                     those lines are never gated on --quiet: repair mode
-#                     is driven by a --quiet caller, so a count that only
-#                     reached the summary reached nobody.
+#                     still applied. rc 2 = REFUSED: the run stopped at a
+#                     `_refuse` and reached no verdict about the corpus
+#                     (colliding ids or resolver keys, or the corpus
+#                     moved mid-run).
+#
+#                     rc 2 DOES NOT PROMISE AN UNTOUCHED CORPUS, and must
+#                     not be documented as if it did. The up-front
+#                     refusals do precede every write, but `_commit_
+#                     rewrites` publishes per destination in phase 3 and
+#                     can refuse on a LATER file after earlier ones were
+#                     already `os.replace`d -- the two-phase commit
+#                     narrows that window (see its docstring) and does
+#                     not close it. Read rc 2 as "stop and look", not as
+#                     "nothing happened" (Codex consistency, section 29,
+#                     [high]).
+#
+#                     Each unrepaired stamp is named on its own FAIL
+#                     line, NOT merely counted, and those lines are never
+#                     gated on --quiet: repair mode is driven by a
+#                     --quiet caller, so a count that only reached the
+#                     summary reached nobody. The per-instance listing is
+#                     capped at _MAX_REPAIR_DIAGNOSTICS; the totals stay
+#                     exact.
 #
 # Performance: runs in <2s on the live 223-file tree. All file reads are
 # done once at startup (single in-memory snapshot per run; Codex pass 6 M1
@@ -1534,6 +1550,47 @@ def _diag(value: str, limit: int = 120) -> str:
     return text[:limit] + f"... [{len(text)} chars]"
 
 
+# How many per-instance repair diagnostics are buffered before the report
+# switches to counting. PER-FIELD bounding is not enough on its own: `_diag`
+# caps each string, but nothing capped the NUMBER of entries, and one stamp
+# line may carry arbitrarily many `(item: ...)` clauses. Codex perf review
+# measured a single size-valid file (under the 16 MiB per-file ceiling) with
+# 762,597 unresolvable clauses producing 762,597 entries totalling 126,591,102
+# characters, taking peak RSS from 70 MiB to 230 MiB -- enough to blow the
+# auto-rewrite hook's 20-second budget before anything is published.
+#
+# The COUNTS stay exact and the exit code is unchanged; only the per-instance
+# listing is bounded, because its job is to let a human act on the first few,
+# not to enumerate a pathological corpus.
+#
+# PER CLASS, NOT ONE SHARED BUDGET. A single global cap was written first and
+# measured against the live corpus: the 403 pre-existing AMBIGUITY findings come
+# first in corpus order and consumed the whole allowance, so the run listed 200
+# ambiguity lines, 0 unresolvable and 15 missing -- burying the two classes this
+# section exists to surface behind the one that was already visible. A budget
+# that silences the new signal is worse than no budget. 100 per class is well
+# above the live worst case (75 missing) and still bounds the pathological one.
+_MAX_REPAIR_DIAGNOSTICS_PER_CLASS = 100
+
+
+def _report_diag(report: list, emitted: dict, cls: str, line: str) -> None:
+    """Buffer one per-instance repair diagnostic, up to that CLASS's budget.
+
+    `emitted` maps class name -> count so a flood of one class cannot starve
+    the diagnostics of another.
+    """
+    n = emitted.get(cls, 0) + 1
+    emitted[cls] = n
+    if n <= _MAX_REPAIR_DIAGNOSTICS_PER_CLASS:
+        report.append(line)
+    elif n == _MAX_REPAIR_DIAGNOSTICS_PER_CLASS + 1:
+        report.append(
+            f"[validate.py] fix-line-numbers: further {cls} diagnostics "
+            f"suppressed after {_MAX_REPAIR_DIAGNOSTICS_PER_CLASS}; the "
+            f"summary line still counts every one"
+        )
+
+
 def fix_line_numbers(nodes: list, snapshot: dict, id_index: dict, path_index: dict,
                      repo_root: Path, write: bool, quiet: bool) -> tuple:
     """Re-resolve every `(item: "NAME" at line N)` in stamps. Returns
@@ -1563,6 +1620,7 @@ def fix_line_numbers(nodes: list, snapshot: dict, id_index: dict, path_index: di
     unresolvable_targets = 0
     missing_items = 0
     report: list = []
+    diags_emitted: dict = {}
     pending_writes: list = []
     for n in nodes:
         rel = n["file_path"]
@@ -1616,7 +1674,7 @@ def fix_line_numbers(nodes: list, snapshot: dict, id_index: dict, path_index: di
                     # quiet-gated -- and the sole caller runs --quiet, so this
                     # whole class of failure produced no output at all.
                     unresolvable_targets += 1
-                    report.append(
+                    _report_diag(report, diags_emitted, "unresolvable-target",
                         f"[validate.py] FAIL fix-line-numbers: unresolvable XREF "
                         f"target {_diag(xref_target)!r} for item {_diag(name)!r} "
                         f"(stamp at {rel}); the stored line number was left as-is"
@@ -1653,7 +1711,7 @@ def fix_line_numbers(nodes: list, snapshot: dict, id_index: dict, path_index: di
                     # corpus, independent of an unresolvable target (Codex
                     # design review, section 29, [high]).
                     missing_items += 1
-                    report.append(
+                    _report_diag(report, diags_emitted, "missing-item",
                         f"[validate.py] FAIL fix-line-numbers: item {_diag(name)!r} "
                         f"not found in {target_file} (stamp at {rel}); the stored "
                         f"line number was left as-is"
@@ -1661,9 +1719,17 @@ def fix_line_numbers(nodes: list, snapshot: dict, id_index: dict, path_index: di
                     continue
                 if len(hits) > 1:
                     ambiguities += 1
-                    report.append(
+                    # The MATCH LIST is corpus-derived too, and `_diag` bounds
+                    # strings rather than lists: a short item name that occurs
+                    # on a hundred thousand lines renders a hundred thousand
+                    # integers into one diagnostic. Show enough to disambiguate
+                    # by hand, then say how many more there are.
+                    shown = hits[:20]
+                    hits_text = (f"{shown} (+{len(hits) - len(shown)} more)"
+                                 if len(hits) > len(shown) else f"{hits}")
+                    _report_diag(report, diags_emitted, "ambiguous-item_name",
                         f"[validate.py] FAIL fix-line-numbers: ambiguous item_name "
-                        f"{_diag(name)!r} matches lines {hits} in {target_file} "
+                        f"{_diag(name)!r} matches lines {hits_text} in {target_file} "
                         f"(stamp at {rel}); refusing to rewrite"
                     )
                     continue
@@ -1720,7 +1786,12 @@ def fix_line_numbers(nodes: list, snapshot: dict, id_index: dict, path_index: di
             f"[validate.py] {ambiguities} ambiguous item_name(s) refused; "
             "fix duplicates manually then re-run"
         )
-    if not quiet:
+    # NOT quiet-gated WHEN SOMETHING FAILED. The suppression line above points
+    # at "the summary line", and the summary used to be `if not quiet` -- so
+    # under the --quiet caller the totals it promised were not printed at all,
+    # and a truncated listing became the whole story. A clean run stays silent
+    # under --quiet as before; an incomplete one always states its totals.
+    if not quiet or ambiguities or unresolvable_targets or missing_items:
         report.append(
             f"[validate.py] fix-line-numbers: {updates_total} update(s), "
             f"{ambiguities} ambiguous, {unresolvable_targets} unresolvable target(s), "
@@ -2400,18 +2471,33 @@ def main() -> int:
                     "Nothing was written. Offending: "
                     + "; ".join(f.detail for f in id_collisions))
         # THE SAME REFUSAL, ON THE DERIVED KEY. `check_duplicate_id` above
-        # covers the frontmatter `id`; the `(directory, TODO-number)` resolver
-        # key is the OTHER identity a stamp can name, and a collision there
-        # makes the rewrite destination just as ambiguous -- `build_path_index`
-        # records it and `resolve_xref_target` then refuses EVERY spelling of
-        # that target, so repair would be asked to rewrite against a graph it
-        # cannot resolve. `cache_schema` already refuses such a cache at load,
-        # so this is defence in depth; it earns its place by making the refusal
-        # explicit at the one entry point that MUTATES the corpus rather than
-        # depending on a loader check to have run (section 29).
+        # covers the frontmatter `id`; the resolver key is the OTHER identity a
+        # stamp can name, and a collision there makes the rewrite destination
+        # just as ambiguous -- `build_path_index` records it and
+        # `resolve_xref_target` then refuses EVERY spelling of that target, so
+        # repair would be asked to rewrite against a graph it cannot resolve.
+        #
+        # THE KEY IS (DOMAIN CODE, NUMBER), NOT (DIRECTORY, NUMBER).
+        # `cache_schema.resolver_key` returns `_DOMAIN_DIR_RE.match(parts[-2])`
+        # group 1, and that pattern is `^(\d\d)-` -- the two-digit CODE. So
+        # `01-test/TODO-01-a.md` and `01-other/TODO-01-b.md` collide even though
+        # they sit in different directories. Saying "directory" here would
+        # reintroduce exactly the confusion section 26 existed to remove (Codex
+        # adversarial, section 29, [medium]).
+        #
+        # WHY IT IS WORTH ITS LINES, stated honestly. This was filed as defence
+        # in depth on the belief that `cache_schema` refuses such a cache at
+        # load. It does NOT for this profile -- `build.py` builds it and
+        # `validate.py` loads it happily (only `query.py` and the MCP server
+        # refuse outright, as `check_duplicate_resolver_key`'s own docstring
+        # says). Section 26's resolver is what makes the corpus SAFE by failing
+        # closed on every spelling; measured, reverting this guard yields rc 1
+        # and one confusing `unresolvable` line per stamp rather than a wrong
+        # rewrite. What this refusal adds is the DIAGNOSIS: one accurate line
+        # naming the colliding pair, at the one entry point that MUTATES.
         key_collisions = check_duplicate_resolver_key(nodes)
         if key_collisions:
-            _refuse("cannot re-resolve line numbers while (directory, number) "
+            _refuse("cannot re-resolve line numbers while (domain code, number) "
                     "resolver keys collide -- every spelling of a colliding "
                     "target is refused by the resolver, so a stamp naming one "
                     "cannot be repaired. Nothing was written. Offending: "
@@ -2446,9 +2532,12 @@ def main() -> int:
         #           resolved without containing the item. Any rewrites that
         #           WERE safe have been applied; this is a report, not a
         #           rollback.
-        #   rc 2 -- the run REFUSED before touching anything (`_refuse` above):
+        #   rc 2 -- the run REFUSED at a `_refuse` and reached no verdict:
         #           colliding ids or resolver keys, or a corpus that moved
-        #           under the check. Nothing was written.
+        #           under the check. The refusals above precede every write,
+        #           but rc 2 as a whole does NOT promise an untouched corpus --
+        #           `_commit_rewrites` can refuse on a later destination after
+        #           earlier ones published. See the CLI header block.
         # Codex pass 7 H2 established rc 1 for ambiguity alone. Section 29
         # widened it to the other two classes: exiting 0 over a stamp the run
         # could not repair told every caller the corpus was clean when the

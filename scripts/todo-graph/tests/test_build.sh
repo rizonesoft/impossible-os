@@ -14138,14 +14138,15 @@ python3 - "$VALIDATE_PY" "$S29G/validate_late.py" <<'S29GEOF'
 import sys
 src = open(sys.argv[1], encoding="utf-8").read()
 call = "        key_collisions = check_duplicate_resolver_key(nodes)\n"
-guard = """        if key_collisions:
-            _refuse("cannot re-resolve line numbers while (directory, number) "
-"""
-# Delete the up-front call+refusal and re-insert it AFTER the repair call.
+# STRUCTURE, NOT PROSE. An earlier version pinned the refusal's exact wording
+# and broke the moment the message was corrected -- failing closed, which is
+# right, but for a reason that has nothing to do with ordering. Assert only
+# that the block still guards on the collision and refuses.
 start = src.index(call)
 end = src.index("        _updates, ambig, unres, missing, report = fix_line_numbers(", start)
 block = src[start:end]
-assert guard in block, "collision guard not found in the expected block"
+assert "if key_collisions:" in block and "_refuse(" in block, \
+    "collision guard not found in the expected block"
 rest = src[end:]
 anchor = rest.index("\n", rest.index("        )\n")) + 1
 open(sys.argv[2], "w", encoding="utf-8").write(
@@ -14258,12 +14259,14 @@ mkdir -p "$S29J"
 python3 - "$VALIDATE_PY" "$S29J/validate_noamb.py" <<'S29JEOF'
 import re, sys
 src = open(sys.argv[1], encoding="utf-8").read()
+# Match the per-instance ambiguity emission whatever helper carries it, so a
+# change of buffering mechanism does not masquerade as a missing mutation.
 pat = re.compile(
-    r"                    report\.append\(\n"
+    r"                    _report_diag\([^\n]*\n"
     r"                        f\"\[validate\.py\] FAIL fix-line-numbers: ambiguous item_name \"\n"
     r".*?\n                    \)\n", re.S)
 out, n = pat.subn("", src, count=1)
-assert n == 1, "ambiguity per-instance append not found"
+assert n == 1, "ambiguity per-instance emission not found"
 open(sys.argv[2], "w", encoding="utf-8").write(out)
 S29JEOF
 cp "$REPO_ROOT/scripts/todo-graph/cache_schema.py" "$S29J/cache_schema.py"
@@ -14279,6 +14282,77 @@ else
     else
         t_fail "section 29: ambiguity mutation still emitted the per-instance line (rc=$S29J_RC)"
     fi
+fi
+
+# Sub-test 29k: the per-instance diagnostic listing is BUDGETED while the
+# totals stay exact. Codex perf review measured one size-valid file with
+# 762,597 unresolvable clauses buffering 126,591,102 characters and taking peak
+# RSS from 70 MiB to 230 MiB; `_diag` bounds each FIELD and nothing bounded the
+# entry COUNT. 600 clauses here is well over the 200 cap and still fast.
+S29K="$TMP_DIR/s29-diag-budget"
+rm -rf "$S29K"; mkdir -p "$S29K/todo/01-test"
+s29_file "$S29K/todo/01-test/TODO-03-t.md" "fm-s29-kt" "TODO-03 -- s29 budget target" ""
+{
+    printf '> **Accepted:** many'
+    S29K_I=0
+    while [ "$S29K_I" -lt 600 ]; do
+        printf ' -> XREF: TODO-77-does-not-exist.md (item: "gone%d" at line 999)' "$S29K_I"
+        S29K_I=$((S29K_I + 1))
+    done
+    printf '\n'
+} > "$S29K/stamp.txt"
+s29_file "$S29K/todo/01-test/TODO-02-h.md" "fm-s29-kh" "TODO-02 -- s29 budget holder" "$(cat "$S29K/stamp.txt")"
+S29K_RC=$(s29_run "$S29K")
+S29K_LINES=$(grep -c "FAIL fix-line-numbers: unresolvable" "$S29K/out.txt")
+# The TOTAL must survive truncation, and it must survive --quiet: the
+# suppression line points at the summary, and the summary used to be
+# quiet-gated, so under the only automatic caller the promised totals were
+# never printed. Assert the exact count is present in a --quiet run.
+S29K_TOTAL=$(grep -oE '[0-9]+ unresolvable target\(s\)' "$S29K/out.txt" | grep -oE '^[0-9]+' | head -1)
+# EXACT, not `-le`. A loose bound passes an off-by-one cap, and counting the
+# suppression LINES (not merely grepping for one) is what stops a helper that
+# emits a suppression line per post-cap diagnostic -- which would satisfy a
+# `grep -q` while restoring the O(n) report growth this fixture exists to
+# forbid (Codex re-adversarial, section 29, [medium]).
+S29K_SUPP=$(grep -c "further unresolvable-target diagnostics suppressed" "$S29K/out.txt")
+if [ "$S29K_RC" = "1" ] && [ "$S29K_LINES" = "100" ] && [ "$S29K_SUPP" = "1" ] \
+    && [ "$S29K_TOTAL" = "600" ]; then
+    t_pass "section 29: exactly 100 per-class diagnostics and exactly one suppression line, with --quiet still reporting the exact total of $S29K_TOTAL"
+else
+    t_fail "section 29: diagnostic budget rc=$S29K_RC listed=$S29K_LINES supp=$S29K_SUPP total=$S29K_TOTAL (want rc 1, exactly 100, exactly 1, total 600)"
+fi
+
+# Sub-test 29l: a FLOOD OF ONE CLASS MUST NOT STARVE ANOTHER. Measured on the
+# live corpus with a single shared budget: 403 pre-existing ambiguity findings
+# came first in corpus order and consumed the whole allowance, leaving 0 of 50
+# unresolvable and 15 of 75 missing listed -- the budget silenced exactly the
+# two classes this section added. Per-class budgets are what prevent that.
+S29L="$TMP_DIR/s29-class-starvation"
+rm -rf "$S29L"; mkdir -p "$S29L/todo/01-test"
+s29_file "$S29L/todo/01-test/TODO-03-t.md" "fm-s29-lt" "TODO-03 -- s29 starvation target" \
+'- [ ] Wire the resolver'
+{
+    printf '> **Accepted:** flood'
+    S29L_I=0
+    while [ "$S29L_I" -lt 300 ]; do
+        printf ' -> XREF: TODO-03-t.md (item: "Wire the resolver" at line 999)'
+        S29L_I=$((S29L_I + 1))
+    done
+    # BOTH rare classes, not just one. Checking only the unresolvable class
+    # left the missing-item class free to be starved by the same flood.
+    printf ' -> XREF: TODO-77-does-not-exist.md (item: "rare" at line 888)'
+    printf ' -> XREF: TODO-03-t.md (item: "Item that was renamed away" at line 777)\n'
+} > "$S29L/stamp.txt"
+s29_file "$S29L/todo/01-test/TODO-02-h.md" "fm-s29-lh" "TODO-02 -- s29 starvation holder" "$(cat "$S29L/stamp.txt")"
+S29L_RC=$(s29_run "$S29L")
+S29L_UNRES=$(grep -c "unresolvable XREF target" "$S29L/out.txt")
+S29L_MISS=$(grep -c "FAIL fix-line-numbers: item .* not found in" "$S29L/out.txt")
+S29L_SUM=$(grep -c "1 unresolvable target(s), 1 missing item(s)" "$S29L/out.txt")
+if [ "$S29L_RC" = "1" ] && [ "$S29L_UNRES" = "1" ] && [ "$S29L_MISS" = "1" ] \
+    && [ "$S29L_SUM" = "1" ]; then
+    t_pass "section 29: 300 ambiguity findings starve neither the unresolvable nor the missing-item class, and the exact totals still print"
+else
+    t_fail "section 29: class starvation rc=$S29L_RC unres=$S29L_UNRES missing=$S29L_MISS summary=$S29L_SUM (want 1/1/1/1)"
 fi
 
 # ----------------------------------------------------------------------
