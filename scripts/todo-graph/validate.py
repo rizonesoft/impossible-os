@@ -53,6 +53,10 @@
 #      collision on the derived key -- which every compact reference and
 #      every query reader binds through -- passed here while the shared
 #      cache validator refused the same cache outright.
+#  10. In-file anchor: every fragment-only `](#anchor)` must name a
+#      heading in its OWN file. Check 1 resolves cross-FILE targets and
+#      never looks at a same-file fragment, so a heading retitled after
+#      the link was written broke every inbound anchor silently.
 #
 # CLI:
 #   validate.py [--cache PATH] [--quiet] [--warnings-only]
@@ -115,6 +119,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+from html import unescape
 from pathlib import Path, PurePosixPath
 from typing import Optional
 
@@ -1527,6 +1532,362 @@ def check_schema_reachability(nodes: list, snapshot: dict, repo_root: Path) -> l
     return findings
 
 
+# --- Check 10: in-file anchor links --------------------------------------
+
+# A retitled heading breaks every inbound `](#anchor)` in its own file
+# SILENTLY: `check_stale_xref` resolves cross-FILE targets and never looks at
+# a same-file fragment, so nothing in this validator examined them. Measured
+# 2026-08-09 across 279 files / 159 in-file links: 6 dead, all in TODO-08,
+# both distinct anchors provably produced by a heading being retitled after
+# the link was written.
+_ATX_RE = re.compile(r"^ {0,3}(#{1,6})(?:[ \t]+(.*?))?[ \t]*$")
+_ATX_CLOSE_RE = re.compile(r"[ \t]+#+[ \t]*$")
+_FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
+# A fence closer may carry ONLY spaces or tabs. `str.strip()` is Unicode-aware
+# and accepts NBSP / vertical tab / form feed, which closed a fence early and
+# then re-opened one over the rest of the file.
+_FENCE_TAIL_RE = re.compile(r"^[ \t]*$")
+_HTML_BLOCK_COMMENT_RE = re.compile(r"^ {0,3}<!--")
+_INLINE_COMMENT_RE = re.compile(r"<!--.*?-->")
+_HTML_TAG_RE = re.compile(r"</?[A-Za-z][^>]*>")
+_INLINE_LINK_RE = re.compile(r"\[([^\]]*)\]\([^)]*\)")
+_REF_LINK_RE = re.compile(r"\[([^\]]*)\]\[[^\]]*\]")
+# A fragment link's destination may be bare or angle-bracketed, and may carry
+# a title. Accepting only `](#frag)` meant `](#frag "tip")` and `](<#frag>)`
+# were never scanned at all -- exactly the silence this check exists to end.
+_ANCHOR_LINK_RE = re.compile(
+    r"\]\(\s*(?:<#([^>\s]*)>|#([^)\s]*))"
+    r"(?:\s+(?:\"[^\"]*\"|'[^']*'|\([^)]*\)))?"
+    r"\s*\)"
+)
+
+# One file's dead anchors are BOUNDED in what they may emit. A retitled
+# heading breaks every inbound anchor at once, so the interesting unit is the
+# distinct FRAGMENT, not the occurrence -- and a generated or hostile file
+# inside the 16 MiB ceiling would otherwise mint one Finding per line
+# (measured before this bound: 100k dead anchors -> 100k Finding objects).
+_MAX_ANCHOR_FINDINGS_PER_FILE = 20
+
+
+def _slugify_heading(title: str) -> str:
+    """GitHub's section-link rule: lowercase, delete every character that is
+    not a word char / whitespace / hyphen, then replace EACH space with one
+    hyphen.
+
+    WHITESPACE RUNS ARE NOT COLLAPSED, and that is the whole subtlety. A
+    heading `A / B` loses the slash and keeps BOTH surrounding spaces, so it
+    slugs to `a--b` with two hyphens. A checker that collapses runs reports
+    confident false positives on every heading carrying a `/` or `:`
+    separator -- that exact bug produced 6 wrong hits while this check was
+    being written, before the rule was corrected against the real headings.
+
+    UNDERSCORES SURVIVE, deliberately. `_` is a word char, and CommonMark
+    forbids intraword `_` emphasis, so GitHub renders `boot_info` literally
+    and slugs it with the underscore intact. 13 live anchors in this corpus
+    depend on that (`#23-unify-skip_review_hook-opt-out-scanner-...`,
+    `#10-multi-line-function-head-resolution-in-resolve_symbol`); a design
+    review recommended stripping "inline markup" generally, which would have
+    turned all 13 into false FAILs.
+    """
+    s = title.strip().lower()
+    s = re.sub(r"[^\w\s-]", "", s, flags=re.UNICODE)
+    return s.replace(" ", "-")
+
+
+def _heading_slugs(headings: list) -> set:
+    """Allocate slugs the way github-slugger does: on a collision append
+    `-1`, `-2`, ... and RE-CHECK, so a file carrying `Foo`, `Foo` and a
+    literal `Foo-1` heading resolves the same way GitHub does rather than by
+    counting equal base slugs."""
+    occurrences: dict = {}
+    out: set = set()
+    for title in headings:
+        base = _slugify_heading(title)
+        slug = base
+        while slug in occurrences:
+            occurrences[base] = occurrences.get(base, 0) + 1
+            slug = f"{base}-{occurrences[base]}"
+        occurrences[slug] = 0
+        out.add(slug)
+    return out
+
+
+def _code_span_segments(line: str):
+    """Split ONE line into `(is_code, text)` segments on CommonMark code spans.
+
+    ONE implementation of "where does a code span begin and end", shared by
+    the two consumers that want OPPOSITE things from it: the link scanner
+    DISCARDS span contents (a `](#x)` written as an example is not a link),
+    while the heading renderer KEEPS them, because GitHub slugs the code text
+    into the anchor -- `resolve_symbol` is part of its heading's slug and 13
+    live anchors in this corpus depend on it. Two implementations of this
+    would drift, which is the defect that produced §36.
+
+    CommonMark closes a span only on a run of the SAME length as the opener,
+    so the obvious `` `[^`]*` `` pairs the wrong delimiters whenever a line
+    carries runs of different lengths and silently swallows a real link. An
+    unmatched opening run is literal text, and a BACKSLASH-ESCAPED backtick is
+    literal too -- it opens nothing, which is how `` \\`x [d](#missing)\\` ``
+    hid a live anchor.
+
+    Two passes, and the first keeps only a COUNT PER RUN LENGTH rather than a
+    record per run. That is what bounds the memory: indexing every run cost
+    ~72 bytes of Python objects per backtick and took a 4 MiB
+    alternating-backtick line to 287 MiB, extrapolating past a gigabyte at the
+    16 MiB ceiling this validator must accept. Knowing that NO later run of
+    length L exists is enough to call an opener literal without scanning for
+    it; when one does exist the forward scan consumes everything it passes, so
+    each character is examined at most twice and the scan stays linear
+    (measured at the ceiling: 5.19s, 91 MiB).
+    """
+    if "`" not in line:
+        yield False, line
+        return
+    n = len(line)
+    remaining: dict = {}
+    i = 0
+    while i < n:
+        if line[i] == "`" and not _is_escaped(line, i):
+            j = i
+            while j < n and line[j] == "`":
+                j += 1
+            remaining[j - i] = remaining.get(j - i, 0) + 1
+            i = j
+        else:
+            i += 1
+    buf: list = []
+    i = 0
+    while i < n:
+        if line[i] != "`" or _is_escaped(line, i):
+            buf.append(line[i])
+            i += 1
+            continue
+        j = i
+        while j < n and line[j] == "`":
+            j += 1
+        length = j - i
+        remaining[length] -= 1
+        if remaining[length] <= 0:
+            # Nothing of this length follows, so the run is literal text.
+            buf.append(line[i:j])
+            i = j
+            continue
+        k = j
+        while k < n:
+            if line[k] == "`" and not _is_escaped(line, k):
+                m = k
+                while m < n and line[m] == "`":
+                    m += 1
+                remaining[m - k] -= 1
+                if m - k == length:
+                    break
+                k = m
+            else:
+                k += 1
+        if k >= n:  # unreachable while the counts hold; stay literal if not
+            buf.append(line[i:j])
+            i = j
+            continue
+        if buf:
+            yield False, "".join(buf)
+            buf = []
+        yield True, line[j:k]
+        i = k + length
+    if buf:
+        yield False, "".join(buf)
+
+
+def _strip_code_spans(line: str) -> str:
+    """The line as the LINK scanner sees it: code spans erased to a space."""
+    return "".join(" " if is_code else text
+                   for is_code, text in _code_span_segments(line))
+
+
+def _rendered_inline_text(line: str) -> str:
+    """The line as GitHub RENDERS it, for slug purposes.
+
+    A heading's anchor is built from rendered text, not source. Feeding the
+    raw source to the slugger turned
+    `## Live [label](https://example.test) Heading` into
+    `live-labelhttpsexampletest-heading` -- a PHANTOM slug that both accepted
+    a dead anchor naming it and rejected the real `live-label-heading`.
+
+    Code spans pass through untouched (their contents are rendered text); in
+    prose, a link collapses to its LABEL, HTML comments and tags disappear,
+    and entities decode.
+    """
+    out: list = []
+    for is_code, text in _code_span_segments(line):
+        if is_code:
+            out.append(text)
+            continue
+        text = _INLINE_COMMENT_RE.sub("", text)
+        text = _HTML_TAG_RE.sub("", text)
+        text = _INLINE_LINK_RE.sub(r"\1", text)
+        text = _REF_LINK_RE.sub(r"\1", text)
+        out.append(unescape(text))
+    return "".join(out)
+
+
+def _is_escaped(line: str, idx: int) -> bool:
+    """True when `line[idx]` is backslash-escaped, by PARITY.
+
+    A one-character lookbehind gets this wrong in the direction that matters:
+    `[label\\\\](#dead)` ends in an escaped BACKSLASH, so the `]` is live and
+    CommonMark renders a link -- which the lookbehind suppressed, hiding a
+    dead anchor.
+    """
+    n = 0
+    k = idx - 1
+    while k >= 0 and line[k] == "\\":
+        n += 1
+        k -= 1
+    return n % 2 == 1
+
+
+def _scan_markdown(text: str):
+    """One pass over a TODO file -> (heading titles, [(line, anchor)]).
+
+    Excluded because GitHub does not RENDER them as headings or links:
+    fenced code blocks, HTML comments (which may span lines), inline code
+    spans, and a backslash-escaped `\\](#...)`.
+
+    Inline code spans are stripped PER LINE, not document-wide. A whole-
+    document strip pairs backticks across lines, so one unbalanced backtick
+    anywhere earlier shifts every pairing after it and leaves real prose
+    examples exposed -- observed while section 29 was being written, where two
+    examples in that body were reported as dead links until the strip was
+    scoped to the line. The residual limitation is a code span that genuinely
+    spans lines; it is accepted rather than fixed, because the whole-document
+    alternative is the failure that was measured.
+
+    INDENTED (4-space) CODE BLOCKS ARE DELIBERATELY NOT EXCLUDED. This
+    corpus's mandated TODO body shape is indented `- ` sub-bullets under a
+    short lead, so deep indentation marks a list continuation far more often
+    than a code block -- TODO-06 line 928 is a real, resolving link sitting at
+    six spaces. A blanket indent exclusion would make the check blind to the
+    corpus's dominant authoring style; CommonMark agrees, since an indented
+    code block cannot interrupt a list continuation.
+    """
+    headings: list = []
+    links: list = []
+    fence = None  # (marker char, opening run length)
+    in_comment = False
+    for lineno, raw in enumerate(text.split("\n"), 1):
+        if in_comment:
+            # An HTML block comment consumes THROUGH the line carrying `-->`;
+            # trailing text on that line is still part of the block.
+            if "-->" in raw:
+                in_comment = False
+            continue
+        if fence is not None:
+            # Inside a fence EVERYTHING is literal; only a valid closer ends
+            # it. CommonMark requires the same marker, a run AT LEAST as long
+            # as the opener, and only spaces or tabs after it. Closing on any
+            # three-run let a ``` inside a ````-fenced block end the block, so
+            # the code read as prose and the real closer re-opened a fence
+            # over the rest of the file; accepting Unicode whitespace via
+            # `strip()` did the same thing for a trailing NBSP.
+            m = _FENCE_RE.match(raw)
+            if m:
+                run, rest = m.group(1), m.group(2)
+                if (run[0] == fence[0] and len(run) >= fence[1]
+                        and _FENCE_TAIL_RE.match(rest)):
+                    fence = None
+            continue
+        m = _FENCE_RE.match(raw)
+        if m:
+            run, rest = m.group(1), m.group(2)
+            # A backtick fence's info string may not itself contain a
+            # backtick, which is what keeps an inline span off this path.
+            if not (run[0] == "`" and "`" in rest):
+                fence = (run[0], len(run))
+                continue
+        if _HTML_BLOCK_COMMENT_RE.match(raw):
+            # A line STARTING with `<!--` is an HTML block: the whole line is
+            # hidden, including anything after the `-->`. `<!-- --># Ghost` is
+            # therefore not a heading -- treating it as one minted a phantom
+            # slug that VALIDATED an otherwise dead `#ghost` anchor.
+            if "-->" not in raw:
+                in_comment = True
+            continue
+        # Headings come from the RAW line. Stripping code spans first would
+        # erase the span CONTENTS, and GitHub keeps them: `resolve_symbol` is
+        # part of its heading's slug, which 13 live anchors depend on.
+        h = _ATX_RE.match(raw)
+        if h:
+            headings.append(
+                _rendered_inline_text(_ATX_CLOSE_RE.sub("", h.group(2) or "")))
+            continue
+        # Inline: code spans bind tighter than raw HTML, so strip them FIRST
+        # and only then remove COMPLETE inline comments. An unterminated
+        # inline `<!--` is literal text, not a block start -- treating it as
+        # one let a `<!--` inside a code span swallow every remaining link in
+        # the file.
+        line = _INLINE_COMMENT_RE.sub(" ", _strip_code_spans(raw))
+        for m in _ANCHOR_LINK_RE.finditer(line):
+            if not _is_escaped(line, m.start()):
+                # group 1 = angle-bracketed destination, group 2 = bare.
+                links.append((lineno, m.group(1) if m.group(1) is not None
+                              else m.group(2)))
+    return headings, links
+
+
+def check_in_file_anchor(nodes: list, snapshot: dict) -> list:
+    """Every fragment-only `](#anchor)` must name a heading in its OWN file.
+
+    Scoped to fragment-only links on purpose: a `](other.md#frag)` target is
+    a CROSS-file reference and belongs to the XREF resolver, which already
+    owns path resolution and collision handling.
+    """
+    findings: list = []
+    for n in nodes:
+        rel = n["file_path"]
+        text = snapshot.get(rel, "")
+        if not text:
+            continue
+        # Match build.py's split_frontmatter() tolerances so a BOM- or
+        # CRLF-authored TODO is checked rather than silently skipped.
+        if text.startswith("﻿"):
+            text = text[1:]
+        if "\r\n" in text:
+            text = text.replace("\r\n", "\n")
+        headings, links = _scan_markdown(text)
+        if not links:
+            continue
+        valid = _heading_slugs(headings)
+        # Group by FRAGMENT: one retitled heading breaks every inbound anchor,
+        # and repeating the same dead fragment once per occurrence adds no
+        # information while scaling with the file. The count and first line
+        # are what a repair needs.
+        dead: dict = {}
+        for lineno, anchor in links:
+            if anchor in valid:
+                continue
+            rec = dead.get(anchor)
+            if rec is None:
+                dead[anchor] = [lineno, 1]
+            else:
+                rec[1] += 1
+        for i, (anchor, (lineno, count)) in enumerate(dead.items()):
+            if i >= _MAX_ANCHOR_FINDINGS_PER_FILE:
+                findings.append(Finding(
+                    "in-file-anchor", rel,
+                    f"a further {len(dead) - _MAX_ANCHOR_FINDINGS_PER_FILE} "
+                    f"distinct dead anchor(s) not listed "
+                    f"({len(dead)} distinct dead anchors in this file)",
+                ))
+                break
+            where = (f"line {lineno}" if count == 1
+                     else f"{count}x, first at line {lineno}")
+            findings.append(Finding(
+                "in-file-anchor", rel,
+                f"{where}: `](#{_diag(anchor)})` names no heading in "
+                f"this file (retitled heading, or a hand-guessed slug)",
+            ))
+    return findings
+
+
 # --- --fix-line-numbers --------------------------------------------------
 
 def _diag(value: str, limit: int = 120) -> str:
@@ -2546,7 +2907,7 @@ def main() -> int:
             return 1
         return 0
 
-    # Run all 9 checks.
+    # Run all 10 checks.
     all_findings: list = []
     check_results: list = []
     for name, check_fn, args_tuple in [
@@ -2559,6 +2920,7 @@ def main() -> int:
         ("schema-reachability", check_schema_reachability, (nodes, snapshot, repo_root)),
         ("duplicate-id", check_duplicate_id, (nodes,)),
         ("duplicate-resolver-key", check_duplicate_resolver_key, (nodes,)),
+        ("in-file-anchor", check_in_file_anchor, (nodes, snapshot)),
     ]:
         findings = check_fn(*args_tuple)
         check_results.append((name, findings))
@@ -2592,7 +2954,7 @@ def main() -> int:
                         out.append(f"    {f.format()}")
 
     # --diff: run graph-delta check against BASELINE. A delta finding
-    # counts as a failure even if all 7 primary checks pass; this is
+    # counts as a failure even if all 10 primary checks pass; this is
     # the "this PR makes the graph worse" signal for code review.
     delta_fail = 0
     if args.diff:

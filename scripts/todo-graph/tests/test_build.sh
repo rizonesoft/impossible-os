@@ -1343,6 +1343,296 @@ else
     t_fail "validate: BOM+CRLF schema check broken (rc=$V_RC, out=$V_OUT)"
 fi
 
+# Sub-test 8n: in-file anchor check (§32). ONE fixture carrying every slug
+# hazard at once, and the oracle asserts EXACTLY ONE finding -- so it proves
+# both directions in a single run: the retitled heading's dead anchor IS
+# reported, and none of the hazards (a `/` heading, a `:` heading, an inline
+# code span, a fenced block, an HTML comment, an escaped bracket, a deeply
+# indented list-continuation link) produces a false positive.
+V_TREE="$TMP_DIR/v-anchor"
+v_run "$V_TREE"
+mkdir -p "$V_TREE/todo/01-test"
+cat > "$V_TREE/todo/01-test/TODO-01-anchor.md" <<'EOF'
+---
+schema_version: 1
+id: fm-anchor
+domain: 01-test
+status: active
+title: "fixture anchor"
+---
+# TODO-01 -- Anchor fixture
+
+## Implementation Order
+
+| ⭐ | Order | Section | Deliverable | Depends On | Status |
+| --- | --- | --- | --- | --- | --- |
+| 💎 | 1 | §1 | First | -- | [x] |
+| 💎 | 2 | §2 | Slash | §1 | [x] |
+| 💎 | 3 | §3 | Colon | §1 | [x] |
+| 💎 | 4 | §4 | Code | §1 | [x] |
+| 💎 | 5 | §5 | Retitled | §1 | [x] |
+
+## 1. First Section
+
+A `/` heading keeps BOTH spaces around the removed slash: [slash](#2-alpha--beta).
+A `:` heading keeps only the one space after it: [colon](#3-gamma-delta).
+An inline code span in a heading keeps its underscores: [code](#4-uses-snake_case_id-here).
+This one is DEAD -- §5 was retitled after the link was written: [retitled](#5-old-title).
+
+- A deeply indented list continuation is a LINK, not an indented code block:
+      - [indented](#2-alpha--beta) resolves and must not be skipped.
+
+An inline code span is stripped per line, so `[example](#totally-made-up)` is prose.
+An escaped bracket is literal, so \](#escaped-not-a-link) is not a link.
+
+<!-- A comment hides its contents, so [hidden](#also-made-up) never renders. -->
+
+```
+## Fenced Heading Is Not A Heading
+A fenced block is literal, so [fenced](#never-real) is not a link either.
+```
+
+- [x] Commit
+
+## 2. Alpha / Beta
+
+- [x] Commit
+
+## 3. Gamma: Delta
+
+- [x] Commit
+
+## 4. Uses `snake_case_id` Here
+
+- [x] Commit
+
+## 5. New Title
+
+- [x] Commit
+EOF
+python3 "$BUILD_PY" --quiet --root "$V_TREE/todo" --output "$V_TREE/cache.json" --repo-root "$V_TREE" >/dev/null 2>&1
+V_OUT=$(python3 "$VALIDATE_PY" --cache "$V_TREE/cache.json" --repo-root "$V_TREE" 2>&1)
+V_RC=$?
+V_HITS=$(echo "$V_OUT" | grep -c "\[FAIL\] in-file-anchor:.*TODO-01-anchor")
+if [ "$V_RC" = "1" ] && [ "$V_HITS" = "1" ] && echo "$V_OUT" | grep -q "5-old-title"; then
+    t_pass "validate: in-file-anchor reports the retitled anchor and nothing else (1 hit)"
+else
+    t_fail "validate: in-file-anchor fixture wrong (rc=$V_RC, hits=$V_HITS, out=$V_OUT)"
+fi
+
+# Sub-test 8n2: the slug/scan helpers directly, for the hazards that cannot be
+# expressed as a whole TODO fixture without also binding this test to build.py's
+# heading parser -- closing ATX syntax, 1-3 space heading indentation, a
+# duplicate-slug collision against a naturally-suffixed heading, and an HTML
+# comment that spans lines.
+V_OUT=$(python3 - "$REPO_ROOT/scripts/todo-graph" <<'ANCHEOF' 2>&1
+import sys
+sys.path.insert(0, sys.argv[1])
+import validate as v
+
+fails = []
+def eq(got, want, label):
+    if got != want:
+        fails.append(f"{label}: got {got!r} want {want!r}")
+
+# GitHub does NOT collapse whitespace runs.
+eq(v._slugify_heading("2. Alpha / Beta"), "2-alpha--beta", "slash")
+eq(v._slugify_heading("3. Gamma: Delta"), "3-gamma-delta", "colon")
+# `_` is a word char and CommonMark forbids intraword `_` emphasis, so it survives.
+eq(v._slugify_heading("10. Head Resolution in `resolve_symbol`"),
+   "10-head-resolution-in-resolve_symbol", "underscore")
+
+# Closing ATX syntax is trimmed; 1-3 space indentation is still a heading.
+heads, links = v._scan_markdown("## Closed ##\n   ### Indented\n")
+eq(heads, ["Closed", "Indented"], "atx-close+indent")
+
+# A collision resolves against the literal `-1` heading, github-slugger style.
+eq(sorted(v._heading_slugs(["Foo", "Foo-1", "Foo"])), ["foo", "foo-1", "foo-2"], "collision")
+
+# A fence hides both its headings and its links.
+heads, links = v._scan_markdown("```\n## Fenced\n[a](#x)\n```\n## Real\n")
+eq(heads, ["Real"], "fence-heading")
+eq(links, [], "fence-link")
+
+# A closer must be the SAME marker, AT LEAST as long as the opener, and carry
+# nothing else. Closing a ````-fence on a ``` run read the code as prose AND
+# made the real closer re-open a fence over everything after it, so the link
+# on the last line went missing entirely.
+eq(v._scan_markdown("````\n```\n[dead](#nope)\n````\n[after](#real)\n")[1],
+   [(5, "real")], "fence-run-length")
+eq(v._scan_markdown("```\n```not-a-close\n[in](#x)\n```\n[after](#real)\n")[1],
+   [(5, "real")], "fence-info-string-closer")
+eq(v._scan_markdown("```\n~~~\n[in](#x)\n```\n[after](#real)\n")[1],
+   [(5, "real")], "fence-mixed-markers")
+
+# Escaping is a PARITY question. An even backslash run escapes the backslash,
+# so the `]` is live and CommonMark renders a link.
+eq(v._scan_markdown("[label\\\\](#dead)\n")[1], [(1, "dead")], "escape-even")
+eq(v._scan_markdown("[label\\](#dead)\n")[1], [], "escape-odd")
+
+# Code spans close only on a run of EQUAL length; an opener with no matching
+# closer is literal text, so the link inside it still renders.
+eq(v._scan_markdown("``two [b](#dead)`\n")[1], [(1, "dead")], "span-unequal-runs")
+eq(v._scan_markdown("`one [a](#dead)\n")[1], [(1, "dead")], "span-unmatched-opener")
+eq(v._scan_markdown("see ``[ex](#madeup)`` x\n")[1], [], "span-equal-runs")
+
+# An ESCAPED backtick is literal and opens nothing, so the anchor is live.
+eq(v._scan_markdown("\\`prefix [dead](#missing)\\`\n")[1], [(1, "missing")], "span-escaped-backtick")
+
+# A line STARTING with `<!--` is an HTML block and is hidden WHOLE. Treating
+# the text after `-->` as markdown minted a phantom heading that validated an
+# otherwise dead anchor.
+heads, links = v._scan_markdown("<!-- --># Ghost\n[x](#ghost)\n")
+eq(heads, [], "html-block-no-ghost-heading")
+eq(links, [(2, "ghost")], "html-block-anchor-stays-dead")
+# ...but a comment marker INSIDE a code span is not a block start; treating it
+# as one suppressed every remaining link in the file.
+eq(v._scan_markdown("`<!--` [dead](#missing)\nnext [also](#gone)\n")[1],
+   [(1, "missing"), (2, "gone")], "comment-marker-inside-code")
+eq(v._scan_markdown("<!-- a\nb [x](#h) -->\n[y](#real)\n")[1], [(3, "real")], "multiline-block-comment")
+
+# A fence closer permits ONLY spaces or tabs. `strip()` is Unicode-aware and
+# accepted NBSP, closing early and re-opening a fence over the rest of the file.
+eq(v._scan_markdown("```\n``` \xa0\n[in](#inside)\n```\n[out](#dead)\n")[1],
+   [(5, "dead")], "fence-closer-nbsp")
+
+# A heading's slug comes from RENDERED text, but code-span CONTENTS are
+# rendered text -- GitHub keeps them, and 13 live anchors rely on it.
+def head_slug(src):
+    return v._slugify_heading(v._scan_markdown(src)[0][0])
+
+eq(head_slug("## 10. Res in `resolve_symbol`\n"),
+   "10-res-in-resolve_symbol", "heading-keeps-code-span")
+eq(head_slug("## 3. `bash <a python file>` in three skills\n"),
+   "3-bash-a-python-file-in-three-skills", "heading-code-span-angle-text")
+
+# ...but INLINE MARKUP is not rendered text. Slugging the raw source minted a
+# phantom anchor that both accepted a dead link naming it and rejected the
+# real one.
+eq(head_slug("## Live [label](https://example.test) Heading\n"),
+   "live-label-heading", "heading-link-collapses-to-label")
+eq(head_slug("## A <b>bold</b> C\n"), "a-bold-c", "heading-html-tag-dropped")
+eq(head_slug("## A &amp; B\n"), "a--b", "heading-entity-decoded")
+
+# A fragment destination may be angle-bracketed or carry a title; accepting
+# only `](#frag)` meant neither form was ever scanned.
+eq(v._scan_markdown('[x](#missing "tip")\n')[1], [(1, "missing")], "link-with-title")
+eq(v._scan_markdown("[x](<#missing>)\n")[1], [(1, "missing")], "link-angle-destination")
+
+# An HTML comment hides its contents even across lines.
+heads, links = v._scan_markdown("<!-- [a](#x)\nstill hidden [b](#y) -->\n[c](#z)\n")
+eq(links, [(3, "z")], "multiline-comment")
+
+# An escaped bracket is literal, not a link.
+heads, links = v._scan_markdown("text \\](#nope) more\n")
+eq(links, [], "escaped")
+
+print("FAILS=" + ("|".join(fails) if fails else "none"))
+ANCHEOF
+)
+if echo "$V_OUT" | grep -q "FAILS=none"; then
+    t_pass "validate: in-file-anchor slug/scan helpers handle every slug hazard"
+else
+    t_fail "validate: in-file-anchor helper hazards broken ($V_OUT)"
+fi
+
+# Sub-test 8n2b: resource bounds. The 16 MiB per-file ceiling is generous
+# enough that a comment-dense or anchor-dense line can exhaust the validator
+# on input it is REQUIRED to accept. Both shapes were measured misbehaving
+# before the fix: 100k HTML comments in 0.67 MiB took 1.14s under the
+# quadratic per-comment rebuild, and 100k dead anchors minted 100k Findings.
+V_OUT=$(python3 - "$REPO_ROOT/scripts/todo-graph" <<'BOUNDEOF' 2>&1
+import sys, time, tracemalloc
+sys.path.insert(0, sys.argv[1])
+import validate as v
+
+fails = []
+# Linear comment scanning: 100k comments must not take seconds.
+line = "<!---->" * 100000 + "\n"
+t0 = time.perf_counter(); v._scan_markdown(line); dt = time.perf_counter() - t0
+if dt > 1.0:
+    fails.append(f"comment scan took {dt:.2f}s (quadratic rebuild is back)")
+
+# Backtick-dense line: memory must stay PROPORTIONAL to the line, not
+# amplified. Indexing every run cost ~72 bytes of Python objects per
+# backtick -- a 4 MiB line measured 287 MiB, extrapolating past a gigabyte at
+# the 16 MiB ceiling this validator is required to accept.
+line = "`x" * (4 * 1048576 // 2) + "\n"
+tracemalloc.start()
+v._scan_markdown(line)
+peak = tracemalloc.get_traced_memory()[1]; tracemalloc.stop()
+if peak > 12 * len(line):
+    fails.append(f"backtick indexing peaked at {peak/1048576:.0f} MiB on a 4 MiB line")
+
+# Finding amplification: many occurrences of ONE dead fragment collapse to one
+# finding carrying the count, and distinct fragments are capped.
+nodes = [{"file_path": "t.md"}]
+snap = {"t.md": "## Real\n" + "\n".join("[x](#dead-one)" for _ in range(50000))}
+f = v.check_in_file_anchor(nodes, snap)
+if len(f) != 1 or "50000x" not in f[0].detail:
+    fails.append(f"repeat-fragment collapse wrong: {len(f)} finding(s)")
+
+snap = {"t.md": "## Real\n" + "\n".join(f"[x](#dead-{i})" for i in range(500))}
+f = v.check_in_file_anchor(nodes, snap)
+if len(f) != v._MAX_ANCHOR_FINDINGS_PER_FILE + 1:
+    fails.append(f"distinct-fragment cap wrong: {len(f)} finding(s)")
+elif "500 distinct dead anchors" not in f[-1].detail:
+    fails.append(f"cap summary lost the exact count: {f[-1].detail}")
+
+print("FAILS=" + ("|".join(fails) if fails else "none"))
+BOUNDEOF
+)
+if echo "$V_OUT" | grep -q "FAILS=none"; then
+    t_pass "validate: in-file-anchor scanning is linear and its findings are bounded"
+else
+    t_fail "validate: in-file-anchor resource bounds broken ($V_OUT)"
+fi
+
+# Sub-test 8n3: MUTATION -- collapse whitespace runs in the slug rule. This is
+# the exact bug the check was written against: it produced 6 confident wrong
+# hits before the rule was corrected against the real headings. The `/` heading
+# link must turn into a FALSE POSITIVE, proving the no-collapse rule is what
+# keeps the fixture clean rather than something on the way to it.
+MUT_DIR="$TMP_DIR/anchor-mut-collapse"
+rm -rf "$MUT_DIR"; cp -r "$REPO_ROOT/scripts/todo-graph" "$MUT_DIR"
+python3 - "$MUT_DIR/validate.py" <<'MUTEOF'
+import sys, pathlib
+p = pathlib.Path(sys.argv[1])
+src = p.read_text(encoding="utf-8")
+needle = '    return s.replace(" ", "-")'
+assert src.count(needle) == 1, f"mutation needle appears {src.count(needle)}x"
+p.write_text(src.replace(needle, '    return __import__("re").sub(r"\\s+", "-", s)', 1),
+             encoding="utf-8")
+MUTEOF
+V_OUT=$(python3 "$MUT_DIR/validate.py" --cache "$V_TREE/cache.json" --repo-root "$V_TREE" 2>&1)
+V_HITS=$(echo "$V_OUT" | grep -c "\[FAIL\] in-file-anchor:.*TODO-01-anchor")
+if [ "$V_HITS" -gt "1" ] && echo "$V_OUT" | grep -q "2-alpha--beta"; then
+    t_pass "validate: mutation check -- collapsing whitespace runs makes the '/' heading a false positive"
+else
+    t_fail "validate: whitespace-collapse mutation did not misfire as expected (hits=$V_HITS, out=$V_OUT)"
+fi
+
+# Sub-test 8n4: MUTATION -- revert the check itself (drop it from the registry)
+# and the dead anchor must go UNREPORTED. Without this, 8n would still pass
+# against a build whose rc 1 came from some other check.
+MUT_DIR="$TMP_DIR/anchor-mut-revert"
+rm -rf "$MUT_DIR"; cp -r "$REPO_ROOT/scripts/todo-graph" "$MUT_DIR"
+python3 - "$MUT_DIR/validate.py" <<'MUTEOF'
+import sys, pathlib
+p = pathlib.Path(sys.argv[1])
+src = p.read_text(encoding="utf-8")
+needle = '        ("in-file-anchor", check_in_file_anchor, (nodes, snapshot)),\n'
+assert src.count(needle) == 1, f"revert needle appears {src.count(needle)}x"
+p.write_text(src.replace(needle, "", 1), encoding="utf-8")
+MUTEOF
+V_OUT=$(python3 "$MUT_DIR/validate.py" --cache "$V_TREE/cache.json" --repo-root "$V_TREE" 2>&1)
+V_RC=$?
+if [ "$V_RC" = "0" ] && ! echo "$V_OUT" | grep -q "in-file-anchor"; then
+    t_pass "validate: mutation check -- the reverted check leaves the dead anchor unreported"
+else
+    t_fail "validate: in-file-anchor revert mutation still reported (rc=$V_RC, out=$V_OUT)"
+fi
+
 # ======================================================================
 # Test 9: query.py (§4) -- the file-level subcommands over build/todo-cache.json.
 # (§28 added the section-level readiness trio; its fixtures are sub-test 28.)

@@ -80,10 +80,11 @@ title: "TODO-06 -- TODO Metadata Layer and Derived Graph"
 | ⭐  |  29   |   §29   | `--fix-line-numbers` reports success over targets it could not resolve              | §23, §26   |  [x]   |
 | ⭐  |  30   |   §30   | `--watch` never ticks on a history change for the history-consuming verbs (§27)     | §24, §27   |  [x]   |
 | ⭐  |  31   |   §31   | An equal-count shallow boundary still moves `created_at` under an unchanged id      | §21, §27   |  [x]   |
-| ⭐  |  32   |   §32   | In-file `](#anchor)` links are checked by nothing (split from §29)                  | §3         |  [ ]   |
+| ⭐  |  32   |   §32   | In-file `](#anchor)` links are checked by nothing (split from §29)                  | §3         |  [x]   |
 | ⭐  |  33   |   §33   | Stamp-target capture splits a link whose label contains a space (split from §29)    | §2, §26    |  [ ]   |
 | ⭐  |  34   |   §34   | The performance budget times itself on a clock that steps (found verifying §29)     | §2         |  [ ]   |
 | ⭐  |  35   |   §35   | A same-file stamp matches its own text, so repair answers with the stamp's line     | §29        |  [ ]   |
+| ⭐  |  36   |   §36   | The section parser reads `## N.` headings out of fenced code blocks (found by §32)  | §2, §32    |  [ ]   |
 
 > 💎 = parity work -- Linux kernel has MAINTAINERS + get_maintainer.pl (person-ownership mapping without a dep graph); Windows has no public equivalent. §1 (frontmatter), §2 (generator), §5 (migration) bring us to partial Linux parity plus graph metadata neither OS ships.
 > ⭐ = competitive edge -- neither Win11 nor mainline Linux ships a first-class TODO dependency graph. §3 (validator), §4 (query CLI), §6 (CI gate), §7 (visualization), §8 (MCP server) are new ground; the surface has direct value for any contributor scanning "what can I work on next?".
@@ -1644,18 +1645,31 @@ Reproduced 2026-08-09 on git 2.43.0, with a full-history control: C0 adds a TODO
 
 Found 2026-08-09 by §27's consistency review, which caught a dead `](#22-...)` link that `validate.py` had just passed 9/9 over. The `stale-xref` check resolves cross-FILE XREF targets and never looks at a same-file fragment, so an anchor naming a heading that was later retitled is invisible to every gate. Split out of §29 before implementation: that section is about repair mode's exit contract, and this check touches neither the cache, the resolver, nor repair mode.
 
-- [ ] Validate IN-FILE `](#anchor)` links against the file's own headings
-      A new per-file check beside the existing ones, not a step in the graph walk -- it needs only the file's own heading list.
-      - Measured on TODO-06 on 2026-08-09: 3 of 63 in-file links were dead (one introduced by §27's own split, two pre-existing in §11 and §22's XREF blocks, all three repaired in `review: §27`). A retitled heading breaks every inbound anchor silently, and section titles get retitled often.
+- [x] Validate IN-FILE `](#anchor)` links against the file's own headings
+      Shipped as check 10 `in-file-anchor` in [`scripts/todo-graph/validate.py`](../../scripts/todo-graph/validate.py) -- `check_in_file_anchor` plus the `_slugify_heading` / `_heading_slugs` / `_scan_markdown` helpers, registered beside the other nine and severity FAIL. Scoped to FRAGMENT-ONLY links; a `](other.md#frag)` target stays with the XREF resolver that owns path resolution.
       - The rule is GitHub's: lowercase, strip punctuation except word chars/space/hyphen, then replace EACH space with one hyphen. Do NOT collapse whitespace runs -- a checker that collapses reports false positives on headings containing `/` or `:` separators (that exact bug produced 6 confident wrong hits before the rule was corrected against the real headings).
       - Strip inline code spans PER LINE before matching, not document-wide: an unbalanced backtick anywhere earlier shifts the pairing, and a whole-document strip then leaves prose examples in place and reports them as dead links (observed while §29 was being written -- two examples in that body were flagged until the strip was scoped to the line).
-- [ ] The check runs over the whole corpus before it is declared clean
-      A per-file check that has only ever seen one file proves nothing about the rule. Run it corpus-wide, triage every hit as dead-link-or-false-positive, and record the counts -- the slug rule above was corrected exactly once already by doing this.
-- [ ] Fixture per slug hazard, mutation-checked
-      One case each for a heading with a `/`, a `:`, an inline code span, and a retitled heading whose inbound anchor is now dead. Mutation: revert the check and require the fixtures to FAIL.
-- [ ] Commit: `"todo-graph: in-file anchor links validated against the file's own headings"`
+      - UNDERSCORES SURVIVE the slug, and that is load-bearing. The design review recommended stripping inline markup generally; CommonMark forbids intraword `_` emphasis, so GitHub renders `boot_info` literally and 13 live anchors depend on the underscore being kept. Rejected with that evidence -- stripping would have manufactured 13 false FAILs.
+      - Slug collisions allocate github-slugger style (append `-1`, `-2`, then RE-CHECK), so a file carrying `Foo`, `Foo` and a literal `Foo-1` resolves as GitHub does. Headings tolerate 1-3 space indentation and trailing closing-ATX `##`.
+- [x] The check runs over the whole corpus before it is declared clean
+      Census 2026-08-09 over 279 files / 159 in-file links: **6 dead, 0 false positives**, every hit in `TODO-08-automation-hardening.md` across 2 distinct anchors. Both were triaged to root cause and repaired in this commit: `#3-...-hard-gate--state-file--...` had lost a `/`-to-`:` retitle (5 occurrences), and `#25-observer-step-1313-5-...` was a hand-guessed slug for `Step-13/13.5` (GitHub deletes the `.` rather than hyphenating it).
+- [x] Fixture per slug hazard, mutation-checked
+      Five sub-tests in [`scripts/todo-graph/tests/test_build.sh`](../../scripts/todo-graph/tests/test_build.sh). 8n is one end-to-end TODO carrying every hazard at once whose oracle asserts EXACTLY ONE finding, so it proves both directions in a single run; 8n2 exercises the helpers directly for the hazards that would otherwise bind the test to `build.py`'s heading parser (closing ATX, indented headings, collisions, multi-line HTML comments, escape parity, fence run-length, code-span delimiter runs); 8n2b pins the resource bounds. Two mutations: collapsing whitespace runs turns the `/` heading into a false positive, and reverting the registry entry leaves the dead anchor unreported.
+      - The adversarial round found three real false-NEGATIVE paths, all reproduced before fixing: a fence closed on a shorter run than its opener (so code read as prose and the real closer re-opened a fence over the rest of the file), a one-character escape lookbehind that suppressed the live `]` in an even backslash run, and a code-span regex that paired unequal backtick runs.
+      - Resource bounds landed with them: HTML-comment stripping went from a quadratic per-comment rebuild (100k comments in 0.67 MiB measured 1.14s) to a linear cursor scan at 0.027s, and findings now collapse per distinct fragment with a 20-fragment cap that still reports the exact total.
+- [x] Commit: `"todo-graph: in-file anchor links validated against the file's own headings"`
 
 **Test checkpoint:** a file with a dead `](#anchor)` is reported by `validate.py`; the corpus passes with zero false positives on headings bearing `/`, `:` and inline code; the fixtures fail when the check is reverted; `bash scripts/todo-graph/tests/test_build.sh` green.
+
+> **Notes:**
+> - Shipped: check 10 `in-file-anchor` in `validate.py`, fragment-only scope, FAIL severity; cross-file `path#frag` targets stay with the XREF resolver.
+> - Census before declaring clean: 279 files, 159 in-file links, 6 dead, 0 false positives -- all 6 in TODO-08, both anchors repaired here.
+> - Rejected from the design review: stripping inline markup from slugs (13 live anchors carry underscores) and excluding 4-space-indented lines as code.
+> - Stated residue: a code span spanning lines is not detected; the whole-document strip that would catch it is the measured failure this rule replaced.
+> - Adversarial round fixed three false-NEGATIVE paths (fence closer shorter than its opener, escape parity, unequal code-span runs) and made scanning linear + findings bounded.
+> - Downstream: `build.py`'s section walk still reads `## N.` out of fences, filed as §36 (0 live instances).
+
+> **Test runner:** `bash scripts/todo-graph/tests/test_build.sh` -- 546/546 pass, of which 5 are this section's (`Sub-test 8n`: the all-hazards fixture asserting exactly one finding; `8n2`: the slug/scan helpers; `8n2b`: linear scanning + bounded findings; `8n3`/`8n4`: the whitespace-collapse and check-revert mutations).
 
 -> XREF: [`TODO-06 §29`](#29---fix-line-numbers-reports-success-over-targets-it-could-not-resolve) -- the section this was split out of before implementation (item: "Commit: `\"todo-graph: repair mode fails visibly on targets it cannot resolve\"`").
 -> XREF: [`TODO-06 §3`](#3-validator-stale-xref--dangling-dep--orphan--cycle--bat--status--schema) -- the section that owns `validate.py`'s per-file check surface (item: "Commit: `\"scripts/todo-graph: add validator (stale XREF, dangling dep, orphan, cycle, bat, status, schema)\"`"); it is stamped, so this new check is owned here.
@@ -1736,13 +1750,37 @@ That second shape is the defect §29 was written to close, reached by a path §2
 
 ---
 
+## 36. The Section Parser Reads `## N.` Headings Out of Fenced Code Blocks
+
+> **Spawned-by:** §32 (review)
+> **User impact:** Nothing today -- 0 such headings exist corpus-wide. When it does bite, an author documenting TODO STRUCTURE inside a fenced example gets an `orphan-io-row` FAIL naming a `## N.` section that does not exist, and the only way past it is deleting a legitimate code example. That is not hypothetical: it is precisely how §32's test fixture hit it, and this repo writes TODOs about TODOs constantly.
+
+Found 2026-08-09 by §32's own REVERT mutation, which is the only reason it surfaced: §32's fixture put a `## 99.` heading inside a ``` fence to prove the anchor check ignores it, and `orphan-io-row` fired on that heading instead -- so `build.py` had extracted a fenced heading into the node's `sections`. Latent, not live: **0 `## N.` headings sit inside fences anywhere in the corpus today** (measured 2026-08-09 across 279 files), which is exactly why nothing has ever reported it. `validate.py`'s new `_scan_markdown` already tracks fences correctly, so the two halves of the tool now disagree about what a heading is.
+
+- [ ] Make the section parser fence-aware, matching `_scan_markdown`
+      The producer and the validator must agree on what a heading is; today `validate.py:_scan_markdown` skips fenced blocks and `build.py`'s section walk does not.
+      - Blast radius is every node in the cache, so this is a PRODUCER change sized like §33, not a local fix: a heading that stops counting changes `sections`, the Implementation Order reconciliation, and every downstream consumer that indexes by section number.
+      - Reuse the fence tracker rather than writing a second one. Two implementations of "am I inside a fence" is how the producer and validator drifted apart in the first place.
+- [ ] Prove the corpus is unchanged before and after
+      With 0 live instances the cache must be byte-identical across the change; a differential that moves ANY node is the signal that the fence rule caught something the census missed.
+- [ ] Fixture with a fenced `## N.` heading, mutation-checked
+      A TODO whose fenced block contains `## 99.` must NOT produce an `orphan-io-row` finding. Mutation: restore the fence-blind walk and require the fixture to FAIL -- this is the exact shape that surfaced the defect.
+- [ ] Commit: `"todo-graph: the section parser ignores headings inside fenced code blocks"`
+
+**Test checkpoint:** a TODO carrying `## 99.` inside a fence builds without an `orphan-io-row` finding; the fixture fails when the fence-blind walk is restored; the live cache is byte-identical across the change; `bash scripts/todo-graph/tests/test_build.sh` green.
+
+-> XREF: [`TODO-06 §32`](#32-in-file-anchor-links-are-checked-by-nothing) -- the section whose revert-mutation surfaced this (item: "Commit: `\"todo-graph: in-file anchor links validated against the file's own headings\"`"); it is stamped and owns the VALIDATOR-side fence rule, so the producer-side repair is owned here.
+-> XREF: [`TODO-06 §2`](#2-generator-and-cache-format) -- the section that owns `build.py`'s parser and cache format (item: "Commit: `\"scripts/todo-graph: add cache generator (frontmatter + XREF extraction + git timestamps)\"`"); stamped, so this residue is owned here rather than reopened there.
+
+---
+
 ## OS Comparison
 
 | ⭐  | Feature                                                        | 🪟 Win11                | 🐧 Linux                            | 🚀 Impossible OS                                                                 |
 | --- | -------------------------------------------------------------- | ----------------------- | ----------------------------------- | -------------------------------------------------------------------------------- |
 | 💎  | Structured ownership metadata                                  | ⚠️ CODEOWNERS           | ✅ MAINTAINERS + get_maintainer.pl  | ✅ §1 frontmatter on 223/223 TODOs (§5)                                          |
 | ⭐  | Cross-file dependency graph                                    | ❌ Project boards (DB)  | ❌ Ad hoc cover letters             | ✅ §2 generator + JSON cache (0.4s)                                              |
-| ⭐  | Stale-XREF / cycle validator                                   | ❌ None                 | ❌ None                             | ✅ §3 validator (8 checks, incl duplicate-id)                                    |
+| ⭐  | Stale-XREF / cycle validator                                   | ❌ None                 | ❌ None                             | ✅ §3 validator (10 checks, incl §32 in-file anchor)                             |
 | ⭐  | "Ready to work" / backlinks queries                            | ❌ Manual board filters | ❌ None in-tree                     | ✅ §4 query CLI (12 subcommands)                                                 |
 | 💎  | CI gate on dep-graph integrity                                 | ⚠️ Per repo             | ❌ Rare                             | ✅ §6 GHA workflow + --diff + auto-rewrite hook                                  |
 | ⭐  | Canonical-markdown + derived-cache invariant                   | ❌ DB-first             | ❌ Flat MAINTAINERS                 | ✅ §1-§2 mirrors settings.json pattern                                           |
