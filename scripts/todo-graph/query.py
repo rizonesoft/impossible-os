@@ -2220,7 +2220,9 @@ def _snapshot_history_trigger(trigger):
     section exists to catch.
 
     MEASURED 2026-08-09 on this repo (12 entries): 50.1us median, 77.6us p95 --
-    against 54.2ms for `corpus_history_id`, i.e. 0.09% of the answer it decides
+    against 54.2ms for `corpus_history_id` (section 30's own measurement; the
+    section 31 re-measurement with the shallowness probe reads 54.5ms, which
+    does not move this ratio), i.e. 0.09% of the answer it decides
     whether to ask. At one probe per 2s poll that is 0.0025% of a core, versus
     2.7% for polling the identity itself. THAT MEASUREMENT DESCRIBES THIS REPO
     AND BOUNDS NOTHING (Codex adversarial, section 30, [medium]): a repository
@@ -2539,21 +2541,23 @@ class _HistoryAxis:
 
     THE TRIGGER AND THE PREDICATE ARE DELIBERATELY DIFFERENT THINGS. The trigger
     (a 50.1us pathname snapshot) says "some ref moved"; the predicate
-    (`corpus_history_id`, 54.2ms) says "the corpus history moved". Ordinary
+    (`corpus_history_id`, 54.2ms as section 30 measured it, 54.5ms after
+    section 31's probe) says "the corpus history moved". Ordinary
     development moves refs constantly and touches `todo/` rarely, so collapsing
     the two -- ticking on any ref movement -- would re-run the whole query on
     every kernel commit, and polling the predicate directly would cost 2.7% of a
     core forever to answer a question that changes a few times a day.
 
     ITS PRECISION IS EXACTLY `corpus_history_id`'s, INHERITED (Codex design
-    review, section 30, [high]). That id cannot see an equal-count shallow
-    boundary move -- reproduced and documented at `cache_schema.corpus_history_id`
-    -- so neither can this comparison, and a Gantt watcher would keep displaying
-    the pre-move answer. What is closed HERE is the observable half: a change to
-    the `shallow` file ticks UNCONDITIONALLY, without consulting the id. The
-    unobservable half is an in-flight `GIT_SHALLOW_FILE` override in another
-    process, which no watcher can see and which section 31 owns along with the
-    policy decision it needs.
+    review, section 30, [high]) -- and that is now a stronger guarantee than it
+    was when this paragraph was written. The id could not see an equal-count
+    shallow boundary move, so neither could this comparison, and a Gantt watcher
+    would keep displaying the pre-move answer. Section 31 closed that by
+    REFUSING a shallow corpus outright, so the id never reports on a truncated
+    history at all and there is no stale answer left to display. What is closed
+    HERE remains the observable half: a change to the `shallow` file ticks
+    UNCONDITIONALLY, without consulting the id -- which now surfaces a corpus
+    becoming shallow promptly instead of merely re-deriving it.
     """
 
     def __init__(self, todo_root: Path, quiet: bool = False):
@@ -3247,8 +3251,9 @@ def main(argv=None) -> int:
 
     # THE HISTORY AXIS IS PER-VERB, NOT PER-READER (section 24). Only three of
     # this CLI's thirteen commands dereference a git-derived timestamp, and
-    # making the whole reader pay `corpus_history_id` (47.9ms measured, against
-    # a 169ms invocation) to protect fields the other ten never read is a ~28%
+    # making the whole reader pay `corpus_history_id` (54.5ms measured 2026-08-09
+    # with section 31's shallowness probe, 47.9ms before it, against
+    # a 169ms invocation) to protect fields the other ten never read is a ~32%
     # toll for nothing. `stale` and `stats` read `last_active_at`; `render` reads
     # `created_at` ONLY in the Gantt renderer (render.py:375), which is why the
     # format is part of the test rather than the command name alone.
@@ -3357,7 +3362,7 @@ def main(argv=None) -> int:
         try:
             # HISTORY FIRST, CONTENT LAST, and the ORDER is the point (Codex
             # adversarial, section 24, [medium]). The history probe forks git
-            # and costs ~48ms; running it AFTER the content check put that whole
+            # and costs ~54.5ms; running it AFTER the content check put that whole
             # window between "the corpus is unchanged" and publication, so a
             # TODO edit landing inside it changed no git history, passed both
             # checks, and shipped anyway. Checking history first keeps the
@@ -3365,7 +3370,7 @@ def main(argv=None) -> int:
             # emitted, which is the property the generation binding rests on.
             # `info.history` is None for every verb outside the three that
             # consume the derived timestamps, making this a no-op there rather
-            # than a second 47.9ms probe.
+            # than a second 54.5ms probe.
             _cs.check_history_unchanged(todo_root, info.history)
             _cs.check_corpus_unchanged(todo_root, info.corpus)
         except _cs.CacheSchemaError as exc:

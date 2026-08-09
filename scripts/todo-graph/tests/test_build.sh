@@ -11144,16 +11144,20 @@ PW_HIST_MUT=$(python3 - "$PW_TREE/mut/scripts/todo-graph/build-hist.py" <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1])
 src = p.read_text()
-needle = ("    timestamps, history_id = collect_git_timestamps("
-          "repo_root, files, todo_root)\n")
+# The call sits inside a `try:` since section 31 (the walk can now REFUSE a
+# shallow corpus), so the needle carries that indentation. The mutation itself
+# is unchanged: pin the history with a separate `corpus_history_id` call
+# instead of the walk's own provenance.
+needle = ("        timestamps, history_id = collect_git_timestamps(\n"
+          "            repo_root, files, todo_root)\n")
 if needle not in src:
     print("STALE-NEEDLE")
 else:
     p.write_text(src.replace(
         needle,
-        "    timestamps, _ignored = collect_git_timestamps("
-        "repo_root, files, todo_root)\n"
-        "    history_id = _cs.corpus_history_id(todo_root)\n", 1))
+        "        timestamps, _ignored = collect_git_timestamps(\n"
+        "            repo_root, files, todo_root)\n"
+        "        history_id = _cs.corpus_history_id(todo_root)\n", 1))
     print("OK")
 PY
 )
@@ -15116,6 +15120,324 @@ sys.exit(0 if (d['started_no_repo'] and not d['quiet_when_unchanged']
     t_pass "section 30: a no-repo corpus stays quiet, then is noticed when it becomes a repository"
 else
     t_fail "section 30: no-repo transition check failed (rc=$S30K_RC, out=$S30K_OUT)"
+fi
+
+# ----------------------------------------------------------------------
+# Section 31: a shallow corpus is REFUSED, because tip+count cannot see an
+# equal-count boundary move and no cheap widening of the projection can.
+# ----------------------------------------------------------------------
+
+# Sub-test 31a: the reproduced boundary. THE ORDER OF ASSERTIONS IS THE POINT --
+# tip and count are checked EQUAL first, so this fixture cannot pass by way of
+# section 21's count check and then be mistaken for evidence about section 31.
+# Only after that is the refusal asserted, against a no-boundary control that
+# must still produce a real `tip:count`.
+S31A_OUT=$(python3 - "$REPO_ROOT/scripts/todo-graph" <<'S31AEOF' 2>&1
+import json, os, subprocess, sys, tempfile
+sys.path.insert(0, sys.argv[1])
+import cache_schema as cs  # noqa: E402
+
+tmp = tempfile.mkdtemp()
+def git(*a, **kw):
+    return subprocess.run(["git", "-C", tmp, *a], capture_output=True,
+                          text=True, check=True, **kw).stdout.strip()
+git("init", "-q", "-b", "main", ".")
+git("config", "user.email", "t@t"); git("config", "user.name", "t")
+os.mkdir(os.path.join(tmp, "todo"))
+def commit(date, msg):
+    env = dict(os.environ, GIT_AUTHOR_DATE=date, GIT_COMMITTER_DATE=date)
+    git("add", "-A")
+    subprocess.run(["git", "-C", tmp, "commit", "-q", "-m", msg],
+                   env=env, capture_output=True, text=True, check=True)
+open(os.path.join(tmp, "todo", "a.md"), "w").write("a\n")
+commit("2020-01-01T00:00:00Z", "C0")                      # touches the corpus
+open(os.path.join(tmp, "other.txt"), "w").write("x\n")
+commit("2021-01-01T00:00:00Z", "C1")                      # does not
+open(os.path.join(tmp, "other.txt"), "a").write("y\n")
+commit("2022-01-01T00:00:00Z", "C2")                      # does not
+c2 = git("rev-parse", "HEAD")
+open(os.path.join(tmp, "todo", "a.md"), "a").write("b\n")
+commit("2023-01-01T00:00:00Z", "C3")                      # touches the corpus
+
+root = os.path.join(tmp, "todo")
+shallow = os.path.join(tmp, "boundary")
+open(shallow, "w").write(c2 + "\n")
+
+def raw(env):
+    e = dict(os.environ); e.update(env)
+    def g(*a):
+        return subprocess.run(["git", "-C", root, *a], env=e,
+                              capture_output=True, text=True,
+                              check=True).stdout.strip()
+    # THE PATHSPEC IS RELATIVE TO `-C`, which is the corpus root here, so it is
+    # `a.md` and NOT `todo/a.md`. Written the other way it matches nothing, both
+    # sides read back an empty string, and the fixture passes on equal emptiness
+    # while proving nothing -- which is exactly what it did on first run.
+    return (g("log", "-1", "--format=%H", "--", "."),
+            g("rev-list", "--count", "HEAD", "--", "."),
+            g("log", "--reverse", "--format=%ct", "--", "a.md").split("\n")[0])
+
+full_tip, full_count, full_created = raw({})
+b_tip, b_count, b_created = raw({"GIT_SHALLOW_FILE": shallow})
+
+control = cs.corpus_history_id(root)                       # not shallow
+try:
+    os.environ["GIT_SHALLOW_FILE"] = shallow
+    try:
+        refused = None
+        cs.corpus_history_id(root)
+    except cs.CacheSchemaError as exc:
+        refused = str(exc)
+finally:
+    os.environ.pop("GIT_SHALLOW_FILE", None)
+
+print(json.dumps({
+    "tip_equal": full_tip == b_tip,
+    "count_equal": full_count == b_count,
+    "count": full_count,
+    "created_moved": full_created != b_created,
+    "created_non_empty": bool(full_created) and bool(b_created),
+    "control_is_real_id": control.startswith(full_tip + ":"),
+    "refused": refused is not None,
+    "names_unshallow": "unshallow" in (refused or ""),
+}))
+S31AEOF
+); S31A_RC=$?
+if [ "$S31A_RC" = "0" ] && echo "$S31A_OUT" | python3 -c "
+import json, sys
+d = json.loads(sys.stdin.read())
+sys.exit(0 if (d['tip_equal'] and d['count_equal'] and d['count'] == '2'
+               and d['created_moved'] and d['created_non_empty']
+               and d['control_is_real_id']
+               and d['refused'] and d['names_unshallow']) else 1)"; then
+    t_pass "section 31: an equal-count boundary moves created_at past tip+count, and a shallow corpus is refused"
+else
+    t_fail "section 31: equal-count boundary refusal check failed (rc=$S31A_RC, out=$S31A_OUT)"
+fi
+
+# Sub-test 31b: WHY THE CHEAP FIX WAS REJECTED, pinned so it cannot be
+# reintroduced. Binding a third component -- the oldest commit of the walk --
+# looks like it closes 31a, and it does not: with an unrelated older leg merged
+# in, the boundary moves on one leg while the OTHER leg keeps supplying the
+# traversal's oldest commit, so tip, count AND oldest all hold while created_at
+# moves. Control: the untouched leg's own created_at must NOT move, or the
+# fixture is measuring a wholesale history change rather than a boundary swap.
+S31B_OUT=$(python3 - <<'S31BEOF' 2>&1
+import json, os, subprocess, sys, tempfile
+tmp = tempfile.mkdtemp()
+def git(*a):
+    return subprocess.run(["git", "-C", tmp, *a], capture_output=True,
+                          text=True, check=True).stdout.strip()
+def commit(date, msg):
+    env = dict(os.environ, GIT_AUTHOR_DATE=date, GIT_COMMITTER_DATE=date)
+    git("add", "-A")
+    subprocess.run(["git", "-C", tmp, "commit", "-q", "-m", msg], env=env,
+                   capture_output=True, text=True, check=True)
+git("init", "-q", "-b", "main", ".")
+git("config", "user.email", "t@t"); git("config", "user.name", "t")
+# leg B: an unrelated root, OLDER than anything on leg A.
+git("checkout", "-q", "--orphan", "legb")
+os.makedirs(os.path.join(tmp, "todo"), exist_ok=True)
+open(os.path.join(tmp, "todo", "b.md"), "w").write("b\n")
+commit("2019-01-01T00:00:00Z", "B0")
+b0 = git("rev-parse", "HEAD")
+# leg A: its own root, then two commits that do not touch the corpus.
+git("checkout", "-q", "--orphan", "lega")
+subprocess.run(["git", "-C", tmp, "rm", "-rq", "--cached", "."],
+               capture_output=True, text=True)
+for f in ("todo/b.md",):
+    p = os.path.join(tmp, f)
+    if os.path.exists(p):
+        os.remove(p)
+open(os.path.join(tmp, "todo", "a.md"), "w").write("a\n")
+commit("2020-01-01T00:00:00Z", "A0")
+open(os.path.join(tmp, "other.txt"), "w").write("x\n")
+commit("2021-01-01T00:00:00Z", "A1")
+open(os.path.join(tmp, "other.txt"), "a").write("y\n")
+commit("2022-01-01T00:00:00Z", "A2")
+a2 = git("rev-parse", "HEAD")
+env = dict(os.environ, GIT_AUTHOR_DATE="2023-01-01T00:00:00Z",
+           GIT_COMMITTER_DATE="2023-01-01T00:00:00Z")
+subprocess.run(["git", "-C", tmp, "merge", "-q", "--allow-unrelated-histories",
+                "--no-edit", "-m", "M", b0], env=env, capture_output=True,
+               text=True, check=True)
+open(os.path.join(tmp, "todo", "a.md"), "a").write("c\n")
+commit("2024-01-01T00:00:00Z", "C3")
+
+root = os.path.join(tmp, "todo")
+shallow = os.path.join(tmp, "boundary")
+open(shallow, "w").write(a2 + "\n")
+def probe(env_extra):
+    e = dict(os.environ); e.update(env_extra)
+    def g(*a):
+        return subprocess.run(["git", "-C", root, *a], env=e,
+                              capture_output=True, text=True,
+                              check=True).stdout.strip()
+    return {
+        "tip": g("log", "-1", "--format=%H", "--", "."),
+        "count": g("rev-list", "--count", "HEAD", "--", "."),
+        "oldest": g("log", "--reverse", "--format=%H", "--", ".").split("\n")[0],
+        # Pathspecs are relative to `-C` (the corpus root), so `a.md`/`b.md`.
+        "a": g("log", "--reverse", "--format=%ct", "--", "a.md").split("\n")[0],
+        "b": g("log", "--reverse", "--format=%ct", "--", "b.md").split("\n")[0],
+    }
+f = probe({}); s = probe({"GIT_SHALLOW_FILE": shallow})
+print(json.dumps({
+    "tip_equal": f["tip"] == s["tip"],
+    "count_equal": f["count"] == s["count"],
+    "oldest_equal": f["oldest"] == s["oldest"],
+    "moved_leg_created_moved": f["a"] != s["a"],
+    "untouched_leg_created_held": f["b"] == s["b"],
+    # The two controls the first run of this fixture lacked: an empty read
+    # compares equal to another empty read, so "held" is only evidence when
+    # the value actually exists.
+    "timestamps_non_empty": bool(f["a"]) and bool(f["b"]) and bool(s["b"]),
+}))
+S31BEOF
+); S31B_RC=$?
+if [ "$S31B_RC" = "0" ] && echo "$S31B_OUT" | python3 -c "
+import json, sys
+d = json.loads(sys.stdin.read())
+sys.exit(0 if (d['tip_equal'] and d['count_equal'] and d['oldest_equal']
+               and d['moved_leg_created_moved']
+               and d['untouched_leg_created_held']
+               and d['timestamps_non_empty']) else 1)"; then
+    t_pass "section 31: a multi-root boundary holds tip, count AND oldest while created_at moves (binding was rejected for this)"
+else
+    t_fail "section 31: multi-root collision check failed (rc=$S31B_RC, out=$S31B_OUT)"
+fi
+
+# Sub-test 31c: MUTATION -- delete the shallowness refusal and 31a's boundary
+# repo must stop refusing AND produce an id byte-equal to the unshallow
+# control's. Without this, 31a would still pass against a build whose refusal
+# had been reverted, because a CacheSchemaError can arrive from any of the
+# probes around it; the mutation proves the fixture is sensitive to THIS guard.
+python3 - "$REPO_ROOT/scripts/todo-graph/cache_schema.py" "$TMP_DIR/cs_mut.py" <<'S31MUTEOF'
+import sys, pathlib
+src = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+needle = '    shallow = _git("rev-parse", "--is-shallow-repository")'
+assert src.count(needle) == 1, f"mutation needle appears {src.count(needle)}x"
+head, _, rest = src.partition(needle)
+# Drop the probe and both of its refusal branches, up to the tip read.
+tail_anchor = '    tip = _git("log", "-1", "--format=%H", "--", ".")'
+assert rest.count(tail_anchor) == 1, "mutation tail anchor is not unique"
+pathlib.Path(sys.argv[2]).write_text(
+    head + rest[rest.index(tail_anchor):], encoding="utf-8")
+S31MUTEOF
+S31C_OUT=$(python3 - "$TMP_DIR/cs_mut.py" "$REPO_ROOT/scripts/todo-graph" <<'S31CEOF' 2>&1
+import importlib.util, json, os, subprocess, sys, tempfile
+sys.path.insert(0, sys.argv[2])
+spec = importlib.util.spec_from_file_location("cs_mut", sys.argv[1])
+cs = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(cs)
+tmp = tempfile.mkdtemp()
+def git(*a):
+    return subprocess.run(["git", "-C", tmp, *a], capture_output=True,
+                          text=True, check=True).stdout.strip()
+def commit(date, msg):
+    env = dict(os.environ, GIT_AUTHOR_DATE=date, GIT_COMMITTER_DATE=date)
+    git("add", "-A")
+    subprocess.run(["git", "-C", tmp, "commit", "-q", "-m", msg], env=env,
+                   capture_output=True, text=True, check=True)
+git("init", "-q", "-b", "main", ".")
+git("config", "user.email", "t@t"); git("config", "user.name", "t")
+os.mkdir(os.path.join(tmp, "todo"))
+open(os.path.join(tmp, "todo", "a.md"), "w").write("a\n")
+commit("2020-01-01T00:00:00Z", "C0")
+open(os.path.join(tmp, "other.txt"), "w").write("x\n")
+commit("2021-01-01T00:00:00Z", "C1")
+open(os.path.join(tmp, "other.txt"), "a").write("y\n")
+commit("2022-01-01T00:00:00Z", "C2")
+c2 = git("rev-parse", "HEAD")
+open(os.path.join(tmp, "todo", "a.md"), "a").write("b\n")
+commit("2023-01-01T00:00:00Z", "C3")
+root = os.path.join(tmp, "todo")
+shallow = os.path.join(tmp, "boundary")
+open(shallow, "w").write(c2 + "\n")
+control = cs.corpus_history_id(root)
+os.environ["GIT_SHALLOW_FILE"] = shallow
+try:
+    mutant_id, err = cs.corpus_history_id(root), None
+except cs.CacheSchemaError as exc:
+    mutant_id, err = None, str(exc)
+finally:
+    os.environ.pop("GIT_SHALLOW_FILE", None)
+print(json.dumps({"mutant_refused": err is not None,
+                  "mutant_certifies_boundary": mutant_id == control}))
+S31CEOF
+); S31C_RC=$?
+if [ "$S31C_RC" = "0" ] && echo "$S31C_OUT" | python3 -c "
+import json, sys
+d = json.loads(sys.stdin.read())
+sys.exit(0 if (not d['mutant_refused']
+               and d['mutant_certifies_boundary']) else 1)"; then
+    t_pass "section 31: mutation check -- without the refusal a shallow corpus certifies EQUAL to the full one (fixture is sensitive)"
+else
+    t_fail "section 31: shallow-refusal mutation did not certify as expected (rc=$S31C_RC, out=$S31C_OUT)"
+fi
+
+# Sub-test 31d: THE PRODUCER WALK, not just the reader probe. `corpus_history_id`
+# refuses when IT is asked, but on the normal path the walk mints the identity
+# itself, so a walk that ran under a boundary later removed would be compared
+# by an id that -- in exactly the equal-count case -- matches the full history.
+# Reproduced before the fix: created_at published as the boundary commit's
+# 2022-01-01 against the true 2020-01-01, with nothing refusing. Control: the
+# same corpus with no boundary must still derive 2020-01-01 normally.
+S31D_OUT=$(python3 - "$REPO_ROOT/scripts/todo-graph" <<'S31DEOF' 2>&1
+import json, os, subprocess, sys, tempfile
+sys.path.insert(0, sys.argv[1])
+import build as b, cache_schema as cs  # noqa: E402
+from pathlib import Path  # noqa: E402
+tmp = tempfile.mkdtemp()
+def git(*a):
+    return subprocess.run(["git", "-C", tmp, *a], capture_output=True,
+                          text=True, check=True).stdout.strip()
+def commit(date, msg):
+    env = dict(os.environ, GIT_AUTHOR_DATE=date, GIT_COMMITTER_DATE=date)
+    git("add", "-A")
+    subprocess.run(["git", "-C", tmp, "commit", "-q", "-m", msg], env=env,
+                   capture_output=True, text=True, check=True)
+git("init", "-q", "-b", "main", ".")
+git("config", "user.email", "t@t"); git("config", "user.name", "t")
+os.mkdir(os.path.join(tmp, "todo"))
+open(os.path.join(tmp, "todo", "a.md"), "w").write("a\n")
+commit("2020-01-01T00:00:00Z", "C0")
+open(os.path.join(tmp, "other.txt"), "w").write("x\n")
+commit("2021-01-01T00:00:00Z", "C1")
+open(os.path.join(tmp, "other.txt"), "a").write("y\n")
+commit("2022-01-01T00:00:00Z", "C2")
+c2 = git("rev-parse", "HEAD")
+open(os.path.join(tmp, "todo", "a.md"), "a").write("b\n")
+commit("2023-01-01T00:00:00Z", "C3")
+root = Path(tmp) / "todo"
+files = [root / "a.md"]
+open(os.path.join(tmp, "boundary"), "w").write(c2 + "\n")
+os.environ["GIT_SHALLOW_FILE"] = os.path.join(tmp, "boundary")
+try:
+    b.collect_git_timestamps(Path(tmp), files, root)
+    walk_refused, leaked = False, None
+except cs.CacheSchemaError as exc:
+    walk_refused, leaked = True, str(exc)
+finally:
+    os.environ.pop("GIT_SHALLOW_FILE", None)
+ts, hid = b.collect_git_timestamps(Path(tmp), files, root)
+print(json.dumps({
+    "walk_refused": walk_refused,
+    "names_walk": "across the timestamp walk" in (leaked or ""),
+    "control_created_at": ts["todo/a.md"][0],
+    "control_id_real": bool(hid) and ":" in str(hid),
+}))
+S31DEOF
+); S31D_RC=$?
+if [ "$S31D_RC" = "0" ] && echo "$S31D_OUT" | python3 -c "
+import json, sys
+d = json.loads(sys.stdin.read())
+sys.exit(0 if (d['walk_refused'] and d['names_walk']
+               and d['control_created_at'] == '2020-01-01T00:00:00Z'
+               and d['control_id_real']) else 1)"; then
+    t_pass "section 31: the producer walk itself refuses a shallow corpus, and the unshallow control still derives 2020-01-01"
+else
+    t_fail "section 31: producer-walk refusal check failed (rc=$S31D_RC, out=$S31D_OUT)"
 fi
 
 fi  # git available

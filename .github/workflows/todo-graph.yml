@@ -83,7 +83,16 @@ jobs:
         run: |
           set -e
           BASE_REF="${{ github.event.pull_request.base.sha }}"
-          git fetch --depth=1 origin "$BASE_REF" || true
+          # NO `--depth` HERE. `git fetch --depth=1` SHALLOWS THE WHOLE
+          # REPOSITORY, including the full-history checkout above -- verified
+          # 2026-08-09 on git 2.43.0, where a full clone flips
+          # `rev-parse --is-shallow-repository` from false to true after one
+          # such fetch. build.py then refuses the baseline outright, because a
+          # shallow corpus cannot produce a trustworthy `created_at` (see the
+          # shallowness refusal in `corpus_history_id` /
+          # `collect_git_timestamps`). The base is normally already present from
+          # `fetch-depth: 0`, so this stays a cheap safety net.
+          git fetch --no-tags origin "$BASE_REF" || true
           BASELINE_DIR="$(mktemp -d)"
           git worktree add "$BASELINE_DIR" "$BASE_REF"
           python3 scripts/todo-graph/build.py \

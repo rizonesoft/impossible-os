@@ -433,6 +433,34 @@ def collect_git_timestamps(repo_root: Path, files: list, todo_root=None) -> dict
         # sides therefore disable both mechanisms through the same shared
         # constants, so producer and reader agree BY CONSTRUCTION rather than by
         # a probe that could observe a different instant than the walk.
+        # THE PRODUCER CHECKS SHALLOWNESS AROUND ITS OWN WALK, AND MAY NOT
+        # INHERIT THE READER'S PREFLIGHT (Codex adversarial, section 31,
+        # [high], reproduced before accepting). `corpus_history_id` refuses a
+        # shallow corpus at the moment IT is asked -- but on the normal path
+        # THIS walk mints the identity, so the only later probe is the
+        # post-walk comparison in `build_cache`. Let the walk run under a
+        # boundary and the boundary be gone by that comparison, and the
+        # equal-count case section 31 exists for makes the two ids compare
+        # EQUAL: verified 2026-08-09 that `created_at` publishes as 2022-01-01
+        # (the boundary commit) where the full history says 2020-01-01, with
+        # `moved` False and nothing refusing.
+        #
+        # PROBING BOTH SIDES is what binds the answer to THIS generation rather
+        # than to some later instant. It closes every SINGLE transition --
+        # shallow-then-unshallowed by the before-probe, unshallowed-then-shallow
+        # by the after-probe -- and it deliberately claims no more: a boundary
+        # installed AND removed wholly inside one walk reads false twice.
+        # Closing that residue needs the walk to report its own boundary, which
+        # git does not expose.
+        def _shallow_probe():
+            return subprocess.run(
+                ["git", *_cs.HISTORY_GIT_GLOBALS,
+                 "rev-parse", "--is-shallow-repository"],
+                cwd=str(repo_root), env=_cs.history_git_env(),
+                capture_output=True, text=True, check=True,
+            ).stdout.strip()
+
+        shallow_before = _shallow_probe()
         result = subprocess.run(
             [
                 "git",
@@ -451,6 +479,15 @@ def collect_git_timestamps(repo_root: Path, files: list, todo_root=None) -> dict
             text=True,
             check=True,
         )
+        shallow_after = _shallow_probe()
+        if shallow_before != "false" or shallow_after != "false":
+            _cs._err(
+                _cs.REASON_STALE,
+                f"the corpus was in a shallow repository across the timestamp "
+                f"walk (is-shallow-repository read {shallow_before!r} before "
+                f"and {shallow_after!r} after), so `created_at` would carry "
+                f"the boundary commit's timestamp rather than the commit that "
+                f"introduced the file; run `git fetch --unshallow` and retry")
     except (subprocess.CalledProcessError, FileNotFoundError, OSError):
         # THE WALK DID NOT ANSWER AND THIS PROCESS CANNOT SAY WHY. `git log`
         # exiting nonzero covers a missing binary, a broken repository, a
@@ -1546,7 +1583,15 @@ def main():
     # provenance means git could not be consulted, so no timestamp was derived
     # and there is nothing for the history binding to protect; the readers'
     # `corpus_history_id` is then the authority for what to record.
-    timestamps, history_id = collect_git_timestamps(repo_root, files, todo_root)
+    try:
+        timestamps, history_id = collect_git_timestamps(
+            repo_root, files, todo_root)
+    except _cs.CacheSchemaError as exc:
+        # The walk itself refused -- today only the section 31 shallowness
+        # check, which is a REFUSAL rather than a failed read, so it must not
+        # fall through to the provenance-rescue path below.
+        sys.stderr.write(f"[build.py] FAIL: {exc}; cache NOT written\n")
+        return 3
     if isinstance(history_id, _Provenance):
         # NEITHER MARKER MAY BECOME AN IDENTITY BY ITSELF. The fallback probe is
         # allowed to answer only with a DETERMINATE fact about the tree; if it

@@ -421,10 +421,12 @@ class Profile:
     `requires_history` is the third, independent axis: whether this caller
     consumes the fields `build.py` derives from `git log` (`created_at` /
     `last_active_at`). Only a caller that reads them cares whether the corpus
-    HISTORY moved, and establishing that costs FOUR git subprocesses -- 47.9ms
-    measured 2026-08-08, growing with TOTAL REPO commits (Codex perf, section
+    HISTORY moved, and establishing that costs FIVE git subprocesses -- 54.5ms
+    measured 2026-08-09, growing with TOTAL REPO commits (Codex perf, section
     21, [medium]: two routed readers were each paying it per lint for data
-    neither consumes).
+    neither consumes). It was FOUR subprocesses at 47.9ms until section 31
+    added the shallowness refusal; that figure is the dated pre-section-31
+    baseline and is kept below only where it is labelled as one.
 
     THE SECTION 21 FIGURES THIS COMMENT USED TO CARRY ARE SUPERSEDED, and both
     were wrong in a way that mattered: it said three subprocesses (it is four)
@@ -1760,8 +1762,11 @@ def _scan_corpus(todo_root: Path, on_err):
 # and absent by the time the reader probes (Codex design review, section 27,
 # [high]). Disabling removes the race by removing the probe: producer and
 # reader both read replacement- and graft-neutralised ancestry, so they agree by
-# construction. NOT "raw" ancestry -- a shallow boundary is still effective for
-# both, which is section 31's open axis, not this one's.
+# construction. NOT "raw" ancestry -- a shallow boundary WOULD still be
+# effective for both, and section 31 closed that not by neutralising it the way
+# this comment's two mechanisms are neutralised, but by REFUSING: neither
+# producer nor reader will evaluate a shallow corpus at all, so the boundary
+# never gets to be effective on an answer either of them publishes.
 #
 # MEASURED 2026-08-09 on git 2.43.0, in a throwaway repo, each with a control:
 #   - replace ref on the oldest corpus commit (identical tree and parents, new
@@ -1863,9 +1868,39 @@ def corpus_history_id(todo_root: Path):
     count. Reproduced 2026-08-09 on git 2.43.0: with C0 adding a TODO, C1/C2
     touching nothing under the corpus, and C3 touching the TODO, the full
     history walks {C0, C3} while a boundary at C2 walks {C2, C3}. Same tip, same
-    count of 2, and `created_at` moves 1577836800 -> 1583020800. Closing that
-    axis needs a decision this section did not own -- refuse shallow corpora
-    outright, or bind the boundary causally to the walk -- and it is section 31.
+    count of 2, and `created_at` moves 1577836800 -> 1583020800.
+
+    SO THE PAIR IS NEVER ASKED ABOUT A SHALLOW HISTORY AT ALL (section 31). The
+    probe above refuses one before the walk runs, which closes that axis by
+    removing the input rather than by widening the projection. The alternative
+    -- binding the boundary into the identity -- was designed, reviewed and
+    REJECTED on two grounds, both recorded here because the design is the
+    tempting one:
+
+      * IT DOES NOT WORK, even as a complete-looking `tip:count:oldest`. A
+        single oldest hash cannot bind a MULTI-ROOT walk (Codex design review,
+        section 31, [high], reproduced before accepting). Merge an unrelated leg
+        whose root B0 (2019) touches the corpus into a leg A0 (2020) that also
+        touches it, move the boundary on leg A only, and leg B keeps supplying
+        the traversal's oldest commit: tip, count AND oldest all hold at
+        c8da803e / 4 / 92240d84 while `created_at` for leg A's file moves
+        1577836800 -> 1640995200. Every projection onto a fixed number of
+        endpoints has this shape of hole; only digesting the whole walk closes
+        it, and section 24 measured that at 312ms against 47.9ms.
+      * IT WOULD CERTIFY A VALUE THAT IS WRONG ANYWAY (Codex design review,
+        section 31, [medium]). `created_at` is documented as the file's first
+        commit. Under a boundary it is the timestamp of whatever commit the
+        boundary landed on, because git compares a shallow root against the
+        empty tree -- so binding the boundary only makes an incorrect value
+        consistently fresh. Refusing says the true answer is unavailable, which
+        is the honest claim and the one a caller can act on.
+
+    THE COST OF SUPPORTING SHALLOW CLONES IS PAID BY NOBODY HERE. This repo's
+    own workflows check out `fetch-depth: 0`, and the single `--depth=1` in
+    `.github/workflows/todo-graph.yml` was a self-inflicted re-shallowing of an
+    already-full checkout (verified 2026-08-09: `git fetch --depth=1` flips a
+    full clone to `is-shallow-repository` true), repaired alongside this rather
+    than designed around.
 
     THE PAIR STILL CANNOT SEE A REPLACEMENT, AND NO LONGER HAS TO (section 27).
     Replace an older corpus-touching commit with one carrying an identical tree
@@ -1885,7 +1920,16 @@ def corpus_history_id(todo_root: Path):
 
     Measured 2026-08-08 on the live corpus (3,807 corpus-touching commits of
     5,387 total): 47.9ms median, of which `rev-list --count` is 44.2ms and the
-    three `rev-parse`/`log` probes are ~1.5ms each. AND THE COST GROWS WITH
+    three `rev-parse`/`log` probes are ~1.5ms each. Re-measured 2026-08-09 at
+    3,844 corpus-touching commits with the section 31 shallowness probe added:
+    54.5ms median (min 52.1, max 58.8, n=11) against a 55.6ms sum of its five
+    parts, of which `rev-list --count` is 51.1ms and the four cheap probes are
+    ~1.0-1.5ms each. THE NEW PROBE IS ~1.0ms OF THAT, i.e. under 2%; the walk
+    is, as before, the entire cost. A first attempt at this measurement read
+    185ms median with a 114-322ms spread, which was a CONCURRENT BUILD IN
+    ANOTHER SESSION sharing this worktree and not a property of the code -- the
+    sum-of-parts control is what separated the two, and is why it is quoted
+    here alongside the total. AND THE COST GROWS WITH
     TOTAL REPO COMMITS, NOT CORPUS-TOUCHING ONES -- section 21 recorded the
     latter and it is the wrong variable. Measured by walk depth: 8.2ms at 100,
     14.7ms at 1,000, 22.4ms at 2,000, 36.1ms at 4,000, 44.5ms at 5,387 -- about
@@ -1952,6 +1996,34 @@ def corpus_history_id(todo_root: Path):
         _err(REASON_STALE,
              f"cannot verify the corpus HEAD (git exited {unborn.returncode}): "
              f"{(unborn.stderr or '').strip()[:200]}")
+
+    # A SHALLOW CORPUS IS REFUSED, DETERMINATELY (section 31). This is the one
+    # probe here that is a POLICY rather than a measurement, and it sits before
+    # the walk because the walk's answer is exactly what it distrusts.
+    #
+    # IT FOLLOWS THE EFFECTIVE GIT ENVIRONMENT, which is what makes it a real
+    # check rather than section 24's rejected file digest: verified 2026-08-09
+    # on git 2.43.0 that with `GIT_SHALLOW_FILE` naming an override and NO
+    # `.git/shallow` on disk, `--is-shallow-repository` answers `true` while the
+    # default file is absent. It sees the boundary `log` and `rev-list` are
+    # actually walking, not a file that an environment variable routes around.
+    #
+    # ANY ANSWER THAT IS NOT LITERALLY `false` REFUSES. A git too old to know
+    # the option (< 2.15) exits nonzero, and a future git could answer something
+    # else; both are indeterminate, and an indeterminate shallowness check is
+    # not evidence that the history is complete.
+    shallow = _git("rev-parse", "--is-shallow-repository")
+    if isinstance(shallow, subprocess.CalledProcessError):
+        _err(REASON_STALE,
+             f"cannot determine whether the corpus repository is shallow "
+             f"(git exited {shallow.returncode}): "
+             f"{(shallow.stderr or '').strip()[:200]}")
+    if (shallow.stdout or "").strip() != "false":
+        _err(REASON_STALE,
+             "the corpus is in a shallow repository, so its history is "
+             "truncated and `created_at` would carry the timestamp of whatever "
+             "commit the boundary happens to sit on rather than the one that "
+             "introduced the file; run `git fetch --unshallow` and retry")
 
     tip = _git("log", "-1", "--format=%H", "--", ".")
     count = _git("rev-list", "--count", "HEAD", "--", ".")
@@ -2080,8 +2152,8 @@ def check_freshness(cache_path: Path, todo_root: Path, cache_bytes: bytes,
     # HISTORY, NOT JUST CONTENT -- FOR THE CALLERS THAT CONSUME IT. `created_at`
     # / `last_active_at` are derived from the corpus-limited git log, so
     # identical bytes over a rewritten history still means stale nodes (Codex
-    # design review, section 21, [high]). But establishing that forks three git
-    # processes and walks the corpus history (40ms today, growing with COMMIT
+    # design review, section 21, [high]). But establishing that forks five git
+    # processes and walks the corpus history (54.5ms today, growing with COMMIT
     # count), and neither routed reader consumes either field -- so it is a
     # profile declaration rather than an unconditional toll (Codex perf, section
     # 21, [medium]). The producer records the id either way, so a profile can
