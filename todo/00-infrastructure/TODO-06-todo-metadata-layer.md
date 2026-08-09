@@ -1665,11 +1665,14 @@ Found 2026-08-09 by §27's consistency review, which caught a dead `](#22-...)` 
 > - Shipped: check 10 `in-file-anchor` in `validate.py`, fragment-only scope, FAIL severity; cross-file `path#frag` targets stay with the XREF resolver.
 > - Census before declaring clean: 279 files, 159 in-file links, 6 dead, 0 false positives -- all 6 in TODO-08, both anchors repaired here.
 > - Rejected from the design review: stripping inline markup from slugs (13 live anchors carry underscores) and excluding 4-space-indented lines as code.
-> - Stated residue: a code span spanning lines is not detected; the whole-document strip that would catch it is the measured failure this rule replaced.
-> - Adversarial round fixed three false-NEGATIVE paths (fence closer shorter than its opener, escape parity, unequal code-span runs) and made scanning linear + findings bounded.
+> - Nine Codex rounds fixed false-NEGATIVE paths in the SCANNER, not the rule: fence closers, escape parity, code-span runs, HTML-comment precedence, link titles and rendered heading text each hid a dead anchor or invented a live one.
+> - Stated limits, both with 0 corpus instances: a code span spanning LINES is not detected (the whole-document strip that would catch it is the measured failure this rule replaced), and a MISMATCHED `_` emphasis run is left literal where GitHub consumes part of it.
+> - Bounded on hostile input: scanning is linear (128 KiB of unclosed `<!--` went 3.21s -> 0.000s) and findings collapse per fragment with an exact weighted total.
 > - Downstream: `build.py`'s section walk still reads `## N.` out of fences, filed as §36 (0 live instances).
 
 > **Test runner:** `bash scripts/todo-graph/tests/test_build.sh` -- 546/546 pass, of which 5 are this section's (`Sub-test 8n`: the all-hazards fixture asserting exactly one finding; `8n2`: the slug/scan helpers; `8n2b`: linear scanning + bounded findings; `8n3`/`8n4`: the whitespace-collapse and check-revert mutations).
+> **Verified:** 2026-08-09 | commit `b4f26f6d0` + review fixes | 4/4 items | build OK | test_build 546/546 (5 this section), test-tooling 1319/1319, 28326 kernel + 17 user-mode, validate 10/10 rc 0, lint 0 errors
+> **Quality reviewed:** 2026-08-09 | Codex 9x (design, adversarial x4, consistency, perf, re-adversarial x2) | 3H+16M+1L fixed, 0 open | scope: N/A (host-side Python tooling, no kernel surface); parity N/A (no user-visible OS surface)
 
 -> XREF: [`TODO-06 §29`](#29---fix-line-numbers-reports-success-over-targets-it-could-not-resolve) -- the section this was split out of before implementation (item: "Commit: `\"todo-graph: repair mode fails visibly on targets it cannot resolve\"`").
 -> XREF: [`TODO-06 §3`](#3-validator-stale-xref--dangling-dep--orphan--cycle--bat--status--schema) -- the section that owns `validate.py`'s per-file check surface (item: "Commit: `\"scripts/todo-graph: add validator (stale XREF, dangling dep, orphan, cycle, bat, status, schema)\"`"); it is stamped, so this new check is owned here.

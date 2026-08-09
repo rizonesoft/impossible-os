@@ -627,7 +627,7 @@ v_run() {
     mkdir -p "$tree"
 }
 
-# Sub-test 8a: clean fixture passes all 7 checks.
+# Sub-test 8a: clean fixture passes all 10 checks.
 V_TREE="$TMP_DIR/v-clean"
 v_run "$V_TREE"
 mkdir -p "$V_TREE/todo/01-test"
@@ -676,7 +676,7 @@ python3 "$BUILD_PY" --quiet --root "$V_TREE/todo" --output "$V_TREE/cache.json" 
 V_OUT=$(python3 "$VALIDATE_PY" --cache "$V_TREE/cache.json" --repo-root "$V_TREE" --quiet 2>&1)
 V_RC=$?
 if [ "$V_RC" = "0" ]; then
-    t_pass "validate: clean fixture passes all 7 checks (exit 0)"
+    t_pass "validate: clean fixture passes all 10 checks (exit 0)"
 else
     t_fail "validate: clean fixture should pass; got rc=$V_RC out=$V_OUT"
 fi
@@ -1435,6 +1435,14 @@ def eq(got, want, label):
     if got != want:
         fails.append(f"{label}: got {got!r} want {want!r}")
 
+# `_scan_markdown` yields ("heading", title) / ("link", lineno, anchor) events
+# rather than building whole-file lists, so an anchor-dense file cannot
+# amplify memory. These two adapters keep the assertions readable.
+def links(src):
+    return [(e[1], e[2]) for e in v._scan_markdown(src) if e[0] == "link"]
+def heads(src):
+    return [e[1] for e in v._scan_markdown(src) if e[0] == "heading"]
+
 # GitHub does NOT collapse whitespace runs.
 eq(v._slugify_heading("2. Alpha / Beta"), "2-alpha--beta", "slash")
 eq(v._slugify_heading("3. Gamma: Delta"), "3-gamma-delta", "colon")
@@ -1443,63 +1451,60 @@ eq(v._slugify_heading("10. Head Resolution in `resolve_symbol`"),
    "10-head-resolution-in-resolve_symbol", "underscore")
 
 # Closing ATX syntax is trimmed; 1-3 space indentation is still a heading.
-heads, links = v._scan_markdown("## Closed ##\n   ### Indented\n")
-eq(heads, ["Closed", "Indented"], "atx-close+indent")
+eq(heads("## Closed ##\n   ### Indented\n"), ["Closed", "Indented"], "atx-close+indent")
 
 # A collision resolves against the literal `-1` heading, github-slugger style.
 eq(sorted(v._heading_slugs(["Foo", "Foo-1", "Foo"])), ["foo", "foo-1", "foo-2"], "collision")
 
 # A fence hides both its headings and its links.
-heads, links = v._scan_markdown("```\n## Fenced\n[a](#x)\n```\n## Real\n")
-eq(heads, ["Real"], "fence-heading")
-eq(links, [], "fence-link")
+eq(heads("```\n## Fenced\n[a](#x)\n```\n## Real\n"), ["Real"], "fence-heading")
+eq(links("```\n## Fenced\n[a](#x)\n```\n## Real\n"), [], "fence-link")
 
 # A closer must be the SAME marker, AT LEAST as long as the opener, and carry
 # nothing else. Closing a ````-fence on a ``` run read the code as prose AND
 # made the real closer re-open a fence over everything after it, so the link
 # on the last line went missing entirely.
-eq(v._scan_markdown("````\n```\n[dead](#nope)\n````\n[after](#real)\n")[1],
+eq(links("````\n```\n[dead](#nope)\n````\n[after](#real)\n"),
    [(5, "real")], "fence-run-length")
-eq(v._scan_markdown("```\n```not-a-close\n[in](#x)\n```\n[after](#real)\n")[1],
+eq(links("```\n```not-a-close\n[in](#x)\n```\n[after](#real)\n"),
    [(5, "real")], "fence-info-string-closer")
-eq(v._scan_markdown("```\n~~~\n[in](#x)\n```\n[after](#real)\n")[1],
+eq(links("```\n~~~\n[in](#x)\n```\n[after](#real)\n"),
    [(5, "real")], "fence-mixed-markers")
 
 # Escaping is a PARITY question. An even backslash run escapes the backslash,
 # so the `]` is live and CommonMark renders a link.
-eq(v._scan_markdown("[label\\\\](#dead)\n")[1], [(1, "dead")], "escape-even")
-eq(v._scan_markdown("[label\\](#dead)\n")[1], [], "escape-odd")
+eq(links("[label\\\\](#dead)\n"), [(1, "dead")], "escape-even")
+eq(links("[label\\](#dead)\n"), [], "escape-odd")
 
 # Code spans close only on a run of EQUAL length; an opener with no matching
 # closer is literal text, so the link inside it still renders.
-eq(v._scan_markdown("``two [b](#dead)`\n")[1], [(1, "dead")], "span-unequal-runs")
-eq(v._scan_markdown("`one [a](#dead)\n")[1], [(1, "dead")], "span-unmatched-opener")
-eq(v._scan_markdown("see ``[ex](#madeup)`` x\n")[1], [], "span-equal-runs")
+eq(links("``two [b](#dead)`\n"), [(1, "dead")], "span-unequal-runs")
+eq(links("`one [a](#dead)\n"), [(1, "dead")], "span-unmatched-opener")
+eq(links("see ``[ex](#madeup)`` x\n"), [], "span-equal-runs")
 
 # An ESCAPED backtick is literal and opens nothing, so the anchor is live.
-eq(v._scan_markdown("\\`prefix [dead](#missing)\\`\n")[1], [(1, "missing")], "span-escaped-backtick")
+eq(links("\\`prefix [dead](#missing)\\`\n"), [(1, "missing")], "span-escaped-backtick")
 
 # A line STARTING with `<!--` is an HTML block and is hidden WHOLE. Treating
 # the text after `-->` as markdown minted a phantom heading that validated an
 # otherwise dead anchor.
-heads, links = v._scan_markdown("<!-- --># Ghost\n[x](#ghost)\n")
-eq(heads, [], "html-block-no-ghost-heading")
-eq(links, [(2, "ghost")], "html-block-anchor-stays-dead")
+eq(heads("<!-- --># Ghost\n[x](#ghost)\n"), [], "html-block-no-ghost-heading")
+eq(links("<!-- --># Ghost\n[x](#ghost)\n"), [(2, "ghost")], "html-block-anchor-stays-dead")
 # ...but a comment marker INSIDE a code span is not a block start; treating it
 # as one suppressed every remaining link in the file.
-eq(v._scan_markdown("`<!--` [dead](#missing)\nnext [also](#gone)\n")[1],
+eq(links("`<!--` [dead](#missing)\nnext [also](#gone)\n"),
    [(1, "missing"), (2, "gone")], "comment-marker-inside-code")
-eq(v._scan_markdown("<!-- a\nb [x](#h) -->\n[y](#real)\n")[1], [(3, "real")], "multiline-block-comment")
+eq(links("<!-- a\nb [x](#h) -->\n[y](#real)\n"), [(3, "real")], "multiline-block-comment")
 
 # A fence closer permits ONLY spaces or tabs. `strip()` is Unicode-aware and
 # accepted NBSP, closing early and re-opening a fence over the rest of the file.
-eq(v._scan_markdown("```\n``` \xa0\n[in](#inside)\n```\n[out](#dead)\n")[1],
+eq(links("```\n``` \xa0\n[in](#inside)\n```\n[out](#dead)\n"),
    [(5, "dead")], "fence-closer-nbsp")
 
 # A heading's slug comes from RENDERED text, but code-span CONTENTS are
 # rendered text -- GitHub keeps them, and 13 live anchors rely on it.
 def head_slug(src):
-    return v._slugify_heading(v._scan_markdown(src)[0][0])
+    return v._slugify_heading(heads(src)[0])
 
 eq(head_slug("## 10. Res in `resolve_symbol`\n"),
    "10-res-in-resolve_symbol", "heading-keeps-code-span")
@@ -1516,16 +1521,45 @@ eq(head_slug("## A &amp; B\n"), "a--b", "heading-entity-decoded")
 
 # A fragment destination may be angle-bracketed or carry a title; accepting
 # only `](#frag)` meant neither form was ever scanned.
-eq(v._scan_markdown('[x](#missing "tip")\n')[1], [(1, "missing")], "link-with-title")
-eq(v._scan_markdown("[x](<#missing>)\n")[1], [(1, "missing")], "link-angle-destination")
+eq(links('[x](#missing "tip")\n'), [(1, "missing")], "link-with-title")
+eq(links("[x](<#missing>)\n"), [(1, "missing")], "link-angle-destination")
+# A title may contain an ESCAPED delimiter. Terminating the title there
+# dropped the whole link and hid its dead anchor.
+eq(links('[x](#missing "tip with \\"q\\"")\n'), [(1, "missing")], "link-escaped-title-quote")
+
+# Emphasis delimiters are not rendered text, but an INTRAWORD `_` is, and both
+# directions bite: `_Hello_` must LOSE its delimiters (or the live
+# `#hello-world` is reported dead and a phantom `#_hello_-world` accepted),
+# while `boot_info` must KEEP its underscore (or 13 live anchors in this
+# corpus are reported dead).
+eq(head_slug("## _Hello_ World\n"), "hello-world", "heading-emphasis-stripped")
+eq(head_slug("## __Bold__ Text\n"), "bold-text", "heading-emphasis-double")
+# MISMATCHED runs stay literal. `_a__` renders as emphasized `a` plus a
+# LITERAL `_`; consuming both underscores rejected the valid `#a_` and
+# accepted a phantom `#a`.
+eq(v._rendered_inline_text("_a__"), "_a__", "emphasis-mismatched-run-left")
+eq(v._rendered_inline_text("__a_"), "__a_", "emphasis-mismatched-run-right")
+# An ESCAPED delimiter is literal. `(?<!\w)` alone let `\_Hello_` through,
+# because a backslash is not a word character -- and parity still decides, so
+# `\\_Hello_` is an escaped BACKSLASH and the emphasis is live.
+eq(v._rendered_inline_text("\\_Hello_"), "\\_Hello_", "emphasis-escaped-delimiter")
+eq(v._rendered_inline_text("\\\\_Hello_"), "\\\\Hello", "emphasis-even-backslash-run")
+# A comment leaves NOTHING in rendered heading text (`foo<!--x-->bar` is
+# `foobar`), but the LINK path substitutes a space so removal cannot fuse two
+# tokens into a link nobody wrote.
+eq(head_slug("## foo<!--x-->bar\n"), "foobar", "heading-comment-no-separator")
+eq(links("a<!--c-->[x](#dead)\n"), [(1, "dead")], "link-path-comment-separator")
+eq(head_slug("## 16. boot_info Kernel Validation\n"),
+   "16-boot_info-kernel-validation", "heading-intraword-underscore-kept")
+eq(head_slug("## 23. Unify SKIP_REVIEW_HOOK Opt-Out Scanner Across PreToolUse Gates\n"),
+   "23-unify-skip_review_hook-opt-out-scanner-across-pretooluse-gates",
+   "heading-live-corpus-anchor")
 
 # An HTML comment hides its contents even across lines.
-heads, links = v._scan_markdown("<!-- [a](#x)\nstill hidden [b](#y) -->\n[c](#z)\n")
-eq(links, [(3, "z")], "multiline-comment")
+eq(links("<!-- [a](#x)\nstill hidden [b](#y) -->\n[c](#z)\n"), [(3, "z")], "multiline-comment")
 
 # An escaped bracket is literal, not a link.
-heads, links = v._scan_markdown("text \\](#nope) more\n")
-eq(links, [], "escaped")
+eq(links("text \\](#nope) more\n"), [], "escaped")
 
 print("FAILS=" + ("|".join(fails) if fails else "none"))
 ANCHEOF
@@ -1549,7 +1583,7 @@ import validate as v
 fails = []
 # Linear comment scanning: 100k comments must not take seconds.
 line = "<!---->" * 100000 + "\n"
-t0 = time.perf_counter(); v._scan_markdown(line); dt = time.perf_counter() - t0
+t0 = time.perf_counter(); list(v._scan_markdown(line)); dt = time.perf_counter() - t0
 if dt > 1.0:
     fails.append(f"comment scan took {dt:.2f}s (quadratic rebuild is back)")
 
@@ -1559,7 +1593,7 @@ if dt > 1.0:
 # the 16 MiB ceiling this validator is required to accept.
 line = "`x" * (4 * 1048576 // 2) + "\n"
 tracemalloc.start()
-v._scan_markdown(line)
+list(v._scan_markdown(line))
 peak = tracemalloc.get_traced_memory()[1]; tracemalloc.stop()
 if peak > 12 * len(line):
     fails.append(f"backtick indexing peaked at {peak/1048576:.0f} MiB on a 4 MiB line")
@@ -1578,6 +1612,38 @@ if len(f) != v._MAX_ANCHOR_FINDINGS_PER_FILE + 1:
     fails.append(f"distinct-fragment cap wrong: {len(f)} finding(s)")
 elif "500 distinct dead anchors" not in f[-1].detail:
     fails.append(f"cap summary lost the exact count: {f[-1].detail}")
+# BOUNDED OUTPUT, EXACT TOTAL -- the `_report_diag` contract. Counting emitted
+# LINES reported 21 failures for 500 dead anchors, hiding the scale of the
+# damage from operators and from automation reading the summary.
+if sum(x.weight for x in f) != 500:
+    fails.append(f"weighted total wrong: {sum(x.weight for x in f)} (want 500)")
+
+# MALFORMED markup must not be quadratic. `<!--.*?-->` retried from every
+# unmatched opener: 16/32/64 KiB measured 0.20s/0.80s/3.21s, quadrupling per
+# doubling, and `</?[A-Za-z][^>]*>` plus the link regex scaled the same way.
+# Well-formed input never exercised this path, which is why the first resource
+# test missed it.
+for kb in (32, 128):
+    for label, src in (
+        ("unclosed-comment", "x" + "<!--" * (kb * 1024 // 4) + "\n"),
+        ("unclosed-tag", "x" + "<a" * (kb * 1024 // 2)),
+        ("unclosed-link", "x" + "[x](" * (kb * 1024 // 4)),
+    ):
+        t0 = time.perf_counter()
+        if label == "unclosed-comment":
+            list(v._scan_markdown(src))
+        else:
+            v._rendered_inline_text(src)
+        dt = time.perf_counter() - t0
+        if dt > 1.0:
+            fails.append(f"{label} at {kb} KiB took {dt:.2f}s (quadratic scan is back)")
+
+# Anchor-dense input must not materialize one record per OCCURRENCE.
+tracemalloc.start()
+v.check_in_file_anchor(nodes, {"t.md": "## R\n" + "\n".join("[x](#dead)" for _ in range(4 * 1048576 // 11))})
+peak = tracemalloc.get_traced_memory()[1]; tracemalloc.stop()
+if peak > 48 * 1048576:
+    fails.append(f"anchor-dense 4 MiB peaked at {peak/1048576:.0f} MiB")
 
 print("FAILS=" + ("|".join(fails) if fails else "none"))
 BOUNDEOF

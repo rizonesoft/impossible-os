@@ -5,7 +5,7 @@
 # Owner: TODO-06 §3 (Validator) in todo/00-infrastructure/.
 # Consumer of: build/todo-cache.json (produced by scripts/todo-graph/build.py).
 #
-# Runs eight graph-integrity checks on the cache and the live TODO files.
+# Runs ten graph-integrity checks on the cache and the live TODO files.
 # Each check is independent; failures are tagged by category and printed in
 # the t_pass / t_fail style used by scripts/test-tooling.sh.
 #
@@ -209,13 +209,21 @@ TODO_FILENAME_RE = re.compile(r"^TODO-(?P<num>\d{1,2})-")
 # --- Finding type --------------------------------------------------------
 
 class Finding:
-    __slots__ = ("check", "file", "detail", "severity")
+    # `weight` is how many real problems this ONE line stands for. It is 1 for
+    # every ordinary finding; a check that BOUNDS its output (see
+    # `_MAX_ANCHOR_FINDINGS_PER_FILE`) sets it on the summary line so the
+    # printed total stays exact while the printed detail stays bounded. That
+    # is the `_report_diag` contract -- bounded output, exact counts -- which a
+    # per-line count silently broke.
+    __slots__ = ("check", "file", "detail", "severity", "weight")
 
-    def __init__(self, check: str, file: str, detail: str, severity: str = "FAIL"):
+    def __init__(self, check: str, file: str, detail: str,
+                 severity: str = "FAIL", weight: int = 1):
         self.check = check
         self.file = file
         self.detail = detail
         self.severity = severity
+        self.weight = weight
 
     def format(self) -> str:
         return f"[{self.severity}] {self.check}: {self.file}: {self.detail}"
@@ -322,7 +330,7 @@ def _is_canonical_cache(cache_path: Path, repo_root: Path) -> bool:
 
 def _refuse(message: str) -> None:
     """Every infrastructure refusal leaves through here, at rc 2, so it can
-    never be confused with the rc 1 the nine checks return."""
+    never be confused with the rc 1 the ten checks return."""
     sys.stderr.write(f"[validate.py] REFUSED: {message}\n")
     sys.exit(2)
 
@@ -332,7 +340,7 @@ def _reverify_corpus(todo_root: Path, cache_info) -> None:
 
     `check_freshness` proves the cache matched the corpus at ONE instant, at
     load time. This validator then spends its whole run walking the live TODO
-    files -- nine checks plus, under --diff, a delta pass -- and that walk is
+    files -- ten checks plus, under --diff, a delta pass -- and that walk is
     precisely the long window the binding exists to cover. Without this call the
     guarantee was a few milliseconds wide while the exposure was the entire run.
     """
@@ -1548,16 +1556,33 @@ _FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 # then re-opened one over the rest of the file.
 _FENCE_TAIL_RE = re.compile(r"^[ \t]*$")
 _HTML_BLOCK_COMMENT_RE = re.compile(r"^ {0,3}<!--")
-_INLINE_COMMENT_RE = re.compile(r"<!--.*?-->")
-_HTML_TAG_RE = re.compile(r"</?[A-Za-z][^>]*>")
-_INLINE_LINK_RE = re.compile(r"\[([^\]]*)\]\([^)]*\)")
-_REF_LINK_RE = re.compile(r"\[([^\]]*)\]\[[^\]]*\]")
+# Emphasis delimiters are NOT rendered text, but an INTRAWORD `_` is:
+# CommonMark forbids intraword `_` emphasis, so `boot_info` keeps its
+# underscore while `_Hello_` loses its delimiters.
+#
+# The runs must be EQUAL (`\1`), not independently one-or-two. Allowing them
+# to differ consumed the unmatched delimiter as well: `_a__` renders as
+# emphasized `a` followed by a LITERAL `_` (slug `a_`), and eating both
+# underscores rejected the valid `#a_` while accepting a phantom `#a`. With
+# equal runs a mismatched pair simply stays literal, so no underscore that
+# survives rendering is ever lost. `[^_]+` cannot backtrack across a
+# delimiter, which is what keeps this linear.
+#
+# STATED LIMIT: a MISMATCHED run is left whole rather than partially consumed,
+# so `_a__` slugs `_a__` where GitHub gives `a_` (CommonMark example 455).
+# Closing that needs a delimiter-stack parser with can-open/can-close flanking
+# rules; it is not built because 0 of 279 corpus files contain a heading with
+# flanking `_` emphasis of ANY kind, and the failure mode is a NAMED lint
+# error on the offending line rather than silent corruption.
+_EMPHASIS_US_RE = re.compile(r"(?<!\w)(_{1,2})([^_]+)\1(?!\w)")
 # A fragment link's destination may be bare or angle-bracketed, and may carry
 # a title. Accepting only `](#frag)` meant `](#frag "tip")` and `](<#frag>)`
 # were never scanned at all -- exactly the silence this check exists to end.
+# The title alternatives are ESCAPE-AWARE: a title containing `\"` terminated
+# the match early and dropped the whole link, hiding its dead anchor.
 _ANCHOR_LINK_RE = re.compile(
     r"\]\(\s*(?:<#([^>\s]*)>|#([^)\s]*))"
-    r"(?:\s+(?:\"[^\"]*\"|'[^']*'|\([^)]*\)))?"
+    r"(?:\s+(?:\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|\((?:\\.|[^)\\])*\)))?"
     r"\s*\)"
 )
 
@@ -1721,11 +1746,107 @@ def _rendered_inline_text(line: str) -> str:
         if is_code:
             out.append(text)
             continue
-        text = _INLINE_COMMENT_RE.sub("", text)
-        text = _HTML_TAG_RE.sub("", text)
-        text = _INLINE_LINK_RE.sub(r"\1", text)
-        text = _REF_LINK_RE.sub(r"\1", text)
+        # A comment leaves NOTHING behind in rendered text: `foo<!--x-->bar`
+        # renders as `foobar`, so substituting a space here slugged it
+        # `foo-bar` and rejected the valid `#foobar`. The link scanner wants
+        # the opposite (a separator, so removal cannot fuse two tokens into a
+        # link that was never written), which is why this is a parameter.
+        text = _strip_inline_comments(text, "")
+        text = _strip_html_tags(text)
+        text = _collapse_links(text)
+        # Emphasis delimiters vanish; an intraword `_` is rendered text, and a
+        # BACKSLASH-ESCAPED `_` is literal too. `(?<!\w)` alone let `\_Hello_`
+        # through, because a backslash is not a word character.
+        text = _EMPHASIS_US_RE.sub(
+            lambda m: m.group(0) if _is_escaped(text, m.start()) else m.group(2),
+            text)
         out.append(unescape(text))
+    return "".join(out)
+
+
+def _strip_inline_comments(line: str, replacement: str = " ") -> str:
+    """Remove COMPLETE `<!-- ... -->` pairs in one left-to-right pass.
+
+    `replacement` differs by CALLER and the difference is load-bearing: the
+    link scanner substitutes a space so removal cannot fuse two tokens into a
+    link nobody wrote, while heading rendering substitutes nothing because
+    `foo<!--x-->bar` renders as `foobar` and a space would slug it `foo-bar`.
+
+    `re.sub(r"<!--.*?-->", ...)` retries `.*?` from EVERY unmatched opener, so
+    a line of repeated unclosed `<!--` is quadratic -- 16/32/64 KiB measured
+    0.20s / 0.80s / 3.21s, quadrupling per doubling, on input the 16 MiB
+    ceiling permits and the pre-commit path pays for. Once no `-->` follows a
+    given opener, none follows any later one either, so the scan stops.
+    """
+    start = line.find("<!--")
+    if start < 0:
+        return line
+    out: list = []
+    pos = 0
+    while start >= 0:
+        end = line.find("-->", start + 4)
+        if end < 0:
+            break  # no closer anywhere after here; the remainder is literal
+        out.append(line[pos:start])
+        out.append(replacement)
+        pos = end + 3
+        start = line.find("<!--", pos)
+    out.append(line[pos:])
+    return "".join(out)
+
+
+def _strip_html_tags(line: str) -> str:
+    """Remove `<tag ...>` / `</tag>` in one pass, for the same reason as
+    `_strip_inline_comments`: `</?[A-Za-z][^>]*>` rescans to end of line from
+    every unclosed `<a`."""
+    start = line.find("<")
+    if start < 0:
+        return line
+    out: list = []
+    pos = 0
+    n = len(line)
+    while start >= 0:
+        nxt = start + 1
+        if nxt < n and (line[nxt] == "/" or line[nxt].isalpha()):
+            end = line.find(">", nxt)
+            if end < 0:
+                break  # no `>` after here at all
+            out.append(line[pos:start])
+            pos = end + 1
+            start = line.find("<", pos)
+        else:
+            start = line.find("<", start + 1)
+    out.append(line[pos:])
+    return "".join(out)
+
+
+def _collapse_links(line: str) -> str:
+    """`[label](dest)` and `[label][ref]` -> `label`, in one pass.
+
+    Same hazard as the two above: `\\[([^\\]]*)\\]\\([^)]*\\)` rescans from
+    every unclosed `[x](`.
+    """
+    start = line.find("[")
+    if start < 0:
+        return line
+    out: list = []
+    pos = 0
+    n = len(line)
+    while start >= 0:
+        close = line.find("]", start + 1)
+        if close < 0:
+            break
+        nxt = close + 1
+        if nxt < n and line[nxt] in "([":
+            end = line.find(")" if line[nxt] == "(" else "]", nxt + 1)
+            if end >= 0:
+                out.append(line[pos:start])
+                out.append(line[start + 1:close])
+                pos = end + 1
+                start = line.find("[", pos)
+                continue
+        start = line.find("[", close + 1)
+    out.append(line[pos:])
     return "".join(out)
 
 
@@ -1769,8 +1890,6 @@ def _scan_markdown(text: str):
     corpus's dominant authoring style; CommonMark agrees, since an indented
     code block cannot interrupt a list continuation.
     """
-    headings: list = []
-    links: list = []
     fence = None  # (marker char, opening run length)
     in_comment = False
     for lineno, raw in enumerate(text.split("\n"), 1):
@@ -1816,21 +1935,20 @@ def _scan_markdown(text: str):
         # part of its heading's slug, which 13 live anchors depend on.
         h = _ATX_RE.match(raw)
         if h:
-            headings.append(
-                _rendered_inline_text(_ATX_CLOSE_RE.sub("", h.group(2) or "")))
+            yield ("heading",
+                   _rendered_inline_text(_ATX_CLOSE_RE.sub("", h.group(2) or "")))
             continue
         # Inline: code spans bind tighter than raw HTML, so strip them FIRST
         # and only then remove COMPLETE inline comments. An unterminated
         # inline `<!--` is literal text, not a block start -- treating it as
         # one let a `<!--` inside a code span swallow every remaining link in
         # the file.
-        line = _INLINE_COMMENT_RE.sub(" ", _strip_code_spans(raw))
+        line = _strip_inline_comments(_strip_code_spans(raw))
         for m in _ANCHOR_LINK_RE.finditer(line):
             if not _is_escaped(line, m.start()):
                 # group 1 = angle-bracketed destination, group 2 = bare.
-                links.append((lineno, m.group(1) if m.group(1) is not None
-                              else m.group(2)))
-    return headings, links
+                yield ("link", lineno, m.group(1) if m.group(1) is not None
+                       else m.group(2))
 
 
 def check_in_file_anchor(nodes: list, snapshot: dict) -> list:
@@ -1852,16 +1970,19 @@ def check_in_file_anchor(nodes: list, snapshot: dict) -> list:
             text = text[1:]
         if "\r\n" in text:
             text = text.replace("\r\n", "\n")
-        headings, links = _scan_markdown(text)
-        if not links:
-            continue
-        valid = _heading_slugs(headings)
-        # Group by FRAGMENT: one retitled heading breaks every inbound anchor,
-        # and repeating the same dead fragment once per occurrence adds no
-        # information while scaling with the file. The count and first line
-        # are what a repair needs.
+        # TWO streaming passes, because the heading set must be complete before
+        # any link can be judged and a heading may follow the link naming it.
+        # Retaining every link occurrence instead cost one tuple + fragment
+        # string per link: an anchor-dense 4 MiB file peaked at 58.9 MiB. The
+        # second pass folds straight into per-fragment counts, so peak memory
+        # is O(headings + DISTINCT dead fragments), never O(occurrences).
+        valid = _heading_slugs(
+            ev[1] for ev in _scan_markdown(text) if ev[0] == "heading")
         dead: dict = {}
-        for lineno, anchor in links:
+        for ev in _scan_markdown(text):
+            if ev[0] != "link":
+                continue
+            _, lineno, anchor = ev
             if anchor in valid:
                 continue
             rec = dead.get(anchor)
@@ -1869,13 +1990,21 @@ def check_in_file_anchor(nodes: list, snapshot: dict) -> list:
                 dead[anchor] = [lineno, 1]
             else:
                 rec[1] += 1
+        if not dead:
+            continue
         for i, (anchor, (lineno, count)) in enumerate(dead.items()):
             if i >= _MAX_ANCHOR_FINDINGS_PER_FILE:
+                # Bounded OUTPUT, EXACT total -- the `_report_diag` contract.
+                # Emitting one Finding per printed line made the validator
+                # report 21 failures for 500 dead anchors, hiding the scale of
+                # the damage from operators and from automation reading the
+                # summary. `weight` carries the suppressed ones into the count.
+                rest = len(dead) - _MAX_ANCHOR_FINDINGS_PER_FILE
                 findings.append(Finding(
                     "in-file-anchor", rel,
-                    f"a further {len(dead) - _MAX_ANCHOR_FINDINGS_PER_FILE} "
-                    f"distinct dead anchor(s) not listed "
+                    f"a further {rest} distinct dead anchor(s) not listed "
                     f"({len(dead)} distinct dead anchors in this file)",
+                    weight=rest,
                 ))
                 break
             where = (f"line {lineno}" if count == 1
@@ -2869,7 +2998,7 @@ def main() -> int:
         )
         # REPAIR MODE IS BOUND DIFFERENTLY FROM THE CHECK WALK, deliberately.
         # A dry run reaches a verdict about a corpus it only read, so it takes
-        # the same post-walk re-verification the nine checks take below. A
+        # the same post-walk re-verification the ten checks take below. A
         # --write run CANNOT: it changes the corpus itself, so a global
         # re-verification would report the tool's own edits as interference and
         # fail every successful repair. Its binding is per-destination instead,
@@ -2942,8 +3071,11 @@ def main() -> int:
                 out.append(f"  [PASS] {name}")
         else:
             if fails:
-                fail_count += len(fails)
-                out.append(f"  [FAIL] {name}: {len(fails)} failure(s)")
+                # Sum WEIGHTS, not lines: a check that bounds its printed
+                # detail still reports the exact number of problems it found.
+                n_fail = sum(f.weight for f in fails)
+                fail_count += n_fail
+                out.append(f"  [FAIL] {name}: {n_fail} failure(s)")
                 for f in fails:
                     out.append(f"    {f.format()}")
             if warns:
