@@ -85,8 +85,15 @@ _WAIVER_FIELDS = {
 #               opposite failure modes. Does NOT extend a chain.
 #   (review) -- created from the PREVIOUS section's review. This is the recursion
 #               shape, and consecutive review-spawns are what the chain counts.
+#   (root)   -- nothing spawned it: a capability that stands on its own. Added
+#               2026-08-09 so provenance can be REQUIRED without forcing a
+#               genuinely new section to invent a parent. It contributes 0 depth
+#               exactly like an unmarked section, so it changes no verdict; what
+#               it buys is that "this is not a spawn" becomes a CLAIM someone
+#               made rather than the default you get by saying nothing. The
+#               sensor was blind to 2,390 of 2,410 sections for want of it.
 _SPAWN_RE = re.compile(
-    r"^>\s*\*\*Spawned-by:\*\*\s*(?:§|section\s*)(\d+)\s*\((split|review)\)",
+    r"^>\s*\*\*Spawned-by:\*\*\s*(?:(root)\b|(?:§|section\s*)(\d+)\s*\((split|review)\))",
     re.I | re.M)
 
 # Depth at which a further review-spawn needs an accountable justification.
@@ -163,7 +170,9 @@ def spawn_chains(lines: list) -> dict:
             continue
         sm = _SPAWN_RE.match(ln)
         if sm:
-            parents[cur] = (int(sm.group(1)), sm.group(2).lower())
+            if sm.group(1):          # `(root)`: declared parentless
+                continue             # same as unmarked -- a root, depth 0
+            parents[cur] = (int(sm.group(2)), sm.group(3).lower())
 
     def _depth(n, seen):
         # cycle-safe: a malformed self- or mutual-reference stops at 0 rather

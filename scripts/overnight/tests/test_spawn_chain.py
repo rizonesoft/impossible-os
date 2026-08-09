@@ -83,6 +83,22 @@ def test_a_split_is_not_recursion():
     assert ch3[6][2] >= sm.SPAWN_CHAIN_LIMIT, ch3
 
 
+def test_root_is_a_declarable_provenance():
+    """`(root)` had to become sayable before provenance could be REQUIRED --
+    otherwise a genuinely independent section has to invent a parent. It
+    contributes 0 depth, exactly as silence did, so it changes no verdict; what
+    it buys is that "nothing spawned this" is a claim rather than a default.
+    Added 2026-08-09 alongside the staged-check that refuses an undeclared
+    section."""
+    sm = _load()
+    ch = sm.spawn_chains(["## 1. a", "> **Spawned-by:** root"])
+    assert ch == {}, ch
+    # a root parent still anchors a real chain below it
+    ch2 = sm.spawn_chains(["## 1. a", "> **Spawned-by:** root",
+                           "## 2. b", "> **Spawned-by:** section 1 (review)"])
+    assert ch2[2][2] == 1, ch2
+
+
 def test_unmarked_sections_are_silent():
     """Additive by construction: every pre-existing section has no marker, so the
     sensor reports nothing until sections start declaring provenance. A sensor

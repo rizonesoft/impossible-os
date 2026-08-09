@@ -551,12 +551,14 @@ git pull --rebase origin main || { echo "REBASE FAILED -- do not push"; exit 1; 
 **Every new section records its provenance** as the first line of its body:
 
 ```
+> **Spawned-by:** root           <- nothing spawned it; it stands on its own
 > **Spawned-by:** §N (split)     <- decomposition at authoring time, before code
 > **Spawned-by:** §N (review)    <- created from section N's review findings
 ```
 
-Omit it only for a genuinely independent section (a gap audit, a new capability,
-an operator filing) -- those are roots and need no marker.
+**The line is REQUIRED and `scripts/todo-staged-check.py` refuses a commit that adds a section without one.** A genuinely independent section (a gap audit, a new capability, an operator filing) declares `root` -- it contributes 0 depth exactly as omitting the line used to, so it changes no verdict. What it buys is that "nothing spawned this" becomes a claim someone made rather than the default you get by writing nothing.
+
+Omission was the whole hole: measured 2026-08-09, **20 markers across 2,410 sections**, all in one file, because that is where the run happened to be when the sensor shipped. An undeclared section is a root, so a cascade never accumulates depth, never reaches the limit, and never has to justify itself -- which is how one file went from 9 to 35 sections in a week with the sensor live and silent throughout. A brand-new TODO file is exempt: its sections are roots by construction and stamping ten identical lines on a scaffold is ceremony, not accountability.
 
 **Why the two kinds are not the same thing.** A `(split)` is the same work
 correctly partitioned and is healthy: TODO-06 sections 10/11 split because a

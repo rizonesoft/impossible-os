@@ -54,7 +54,13 @@ def _run(root):
 
 
 def _append_section(f, n, root):
-    f.write_text(f.read_text() + f"## {n}. Newly discovered gap\n\n- [ ] work\n\n")
+    # PROVENANCE IS REQUIRED on a new section as of 2026-08-09, so a fixture
+    # that omits it is refused for a reason this file is not about -- the soft-
+    # cap case then reads as a block instead of a warning. `root` is the honest
+    # declaration here: these fixtures invent a section from nothing.
+    f.write_text(f.read_text()
+                 + f"## {n}. Newly discovered gap\n\n"
+                 + "> **Spawned-by:** root\n\n- [ ] work\n\n")
     _git("add", "-A", cwd=root)
 
 

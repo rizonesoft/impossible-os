@@ -276,6 +276,59 @@ def _park_into_shipping_section(path, added):
     return out
 
 
+# PROVENANCE ON EVERY NEW SECTION (2026-08-09). The spawn-chain sensor counts
+# consecutive `(review)` links and demands an accountable waiver past three --
+# but it can only count sections that DECLARE where they came from, and nothing
+# required the declaration. Measured: 20 markers across 2,410 sections, all of
+# them in one file, because that is where the run happened to be when the sensor
+# shipped. An undeclared section is a root at depth 0, so the limit never fires
+# and the gate binds only while someone keeps a habit.
+#
+# `(root)` is a legal answer and costs nothing at the verdict -- it contributes
+# 0 depth exactly like silence did. The difference is that "nothing spawned
+# this" becomes a claim someone made, instead of the default you get by writing
+# no line at all.
+#
+# EXEMPT: a brand-new TODO file. Every section in a file this commit CREATES is
+# a root by construction, and making `create-todo` stamp ten identical `(root)`
+# lines on a scaffold is ceremony, not accountability.
+_SPAWNED_BY_RE = re.compile(
+    r"^>\s*\*\*Spawned-by:\*\*\s*(?:root\b|(?:\u00a7|section\s*)\d+\s*\((?:split|review)\))",
+    re.I)
+
+
+def _file_is_new(path):
+    """True when this commit CREATES the file (no HEAD blob)."""
+    try:
+        r = subprocess.run(["git", "cat-file", "-e", f"HEAD:{path}"],
+                           capture_output=True)
+        return r.returncode != 0
+    except Exception:
+        return False
+
+
+def _sections_missing_provenance(path, added):
+    """[(lineno, heading)] for `## N.` sections this commit ADDS that carry no
+    `> **Spawned-by:**` line."""
+    if _file_is_new(path):
+        return []
+    try:
+        lines = pathlib.Path(path).read_text(encoding="utf-8").split("\n")
+    except OSError:
+        return []                      # fail-open: never break a commit on this
+    added_nos = {n for n, _ in added}
+    starts = [i for i, ln in enumerate(lines, 1) if _SECTION_RE.match(ln.strip())]
+    out = []
+    for idx, start in enumerate(starts):
+        if start not in added_nos:
+            continue                   # pre-existing section: not this commit's
+        end = starts[idx + 1] - 1 if idx + 1 < len(starts) else len(lines)
+        body = lines[start:end]
+        if not any(_SPAWNED_BY_RE.match(b) for b in body):
+            out.append((start, lines[start - 1].strip()[:70]))
+    return out
+
+
 def main(argv) -> int:
     if "--selftest" in argv:
         return _selftest()
@@ -284,7 +337,7 @@ def main(argv) -> int:
     files = _staged_todo_files()
     if not files:
         return 0
-    bad, wrapped, oscomp, parked = [], [], [], []
+    bad, wrapped, oscomp, parked, noprov = [], [], [], [], []
     for f in files:
         added = _added_lines(f)
         for n, ln, text in over_cap(added):
@@ -296,6 +349,8 @@ def main(argv) -> int:
             oscomp.append((f, n, w, cell))
         for n, head, text in _park_into_shipping_section(f, added):
             parked.append((f, n, head, text))
+        for n, head in _sections_missing_provenance(f, added):
+            noprov.append((f, n, head))
     # section-count cap: judged per file, on files this commit GROWS
     capped_hard, capped_soft = [], []
     for f in files:
@@ -389,6 +444,26 @@ def main(argv) -> int:
                 "corpus improved. `grep -rn <capability> todo/` before filing.\n"
                 "Override (last resort): SKIP_TODO_STAGED_CHECK=1 git commit ...\n\n")
         return 1
+
+    if noprov:
+        for f, n, head in noprov:
+            sys.stderr.write(
+                "\n[todo-staged-check] %s:%d adds a section with no provenance:\n    %s\n"
+                % (f, n, head))
+        sys.stderr.write(
+            "\n  Add ONE line directly under the heading, naming where it came from:\n"
+            "    > **Spawned-by:** root            <- nothing spawned it\n"
+            "    > **Spawned-by:** section N (split)   <- decomposition of section N\n"
+            "    > **Spawned-by:** section N (review)  <- created from section N's review\n"
+            "\n  This is what the spawn-chain sensor counts. Without it a section is a\n"
+            "  root at depth 0, so a review-spawn cascade never reaches the limit and\n"
+            "  never has to justify itself -- which is how one file went from 9 to 35\n"
+            "  sections in a week with the sensor live and silent throughout.\n"
+            "  `root` is a fine answer and costs nothing; saying nothing is not.\n"
+            "  A brand-new TODO file is exempt -- its sections are roots by construction.\n"
+            "  Opt-out: SKIP_TODO_STAGED_CHECK=1 git commit ...\n")
+        return 1
+
     if not bad:
         return 0
     sys.stderr.write(
