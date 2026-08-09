@@ -1625,9 +1625,14 @@ else
 fi
 
 # Sub-test 9r: `--watch` polling fallback triggers a re-run within one
-# polling interval. Uses `timeout` to bound the watch run, and an empty
-# PATH for inotifywait to force the polling code path even on hosts
-# with inotify-tools installed.
+# polling interval. Uses `timeout` to bound the watch run, and the product's own
+# TODOGRAPH_WATCH_FORCE_POLL switch to select the polling code path.
+#
+# IT USED TO NARROW PATH TO `/usr/bin:/bin` AND CALL THAT FORCING, which is
+# where inotify-tools installs inotifywait -- so on any host that had the tool
+# this fixture silently exercised the branch it claimed to exclude, and on the
+# dev host (no inotify-tools at all) the narrowing changed nothing either way.
+# Repaired with section 30 (Codex adversarial, section 30, [medium]).
 WATCH_TREE="$TMP_DIR/q-watch"
 mkdir -p "$WATCH_TREE/todo/01-test"
 cat > "$WATCH_TREE/todo/01-test/TODO-01-watch.md" <<'EOF'
@@ -1649,7 +1654,7 @@ python3 "$BUILD_PY" --quiet --root "$WATCH_TREE/todo" --output "$WATCH_TREE/cach
     sleep 2.5 && touch "$WATCH_TREE/todo/01-test/TODO-01-watch.md"
 ) &
 TOUCH_PID=$!
-PATH="/usr/bin:/bin" timeout --signal=INT 6 \
+TODOGRAPH_WATCH_FORCE_POLL=1 timeout --signal=INT 6 \
     python3 -u "$QUERY_PY" --cache "$WATCH_TREE/cache.json" \
         --repo-root "$WATCH_TREE" --quiet --watch by-domain \
         > "$WATCH_TREE/watch.out" 2>&1 || true
@@ -2989,13 +2994,13 @@ src = pathlib.Path("scripts/todo-graph/query.py").read_text(encoding="utf-8")
 mutants = {
     # Shape 1: the reader call survives but feeds nothing.
     "ignored_call": src.replace(
-        "                    line = reader.next_line(None)",
+        "                    line = reader.next_line(_idle_timeout(axis))",
         "                    ignored = reader.next_line(None)\n"
         "                    line = next(iter(proc.stdout))", 1),
     # Shape 2: the reader assignment survives and is then OVERWRITTEN through
     # an alias, hiding every direct `proc.stdout` use behind one name.
     "alias_overwrite": src.replace(
-        "                    line = reader.next_line(None)",
+        "                    line = reader.next_line(_idle_timeout(axis))",
         "                    line = reader.next_line(None)\n"
         "                    stream = proc.stdout\n"
         "                    line = next(iter(stream))", 1),
@@ -14354,6 +14359,308 @@ if [ "$S29L_RC" = "1" ] && [ "$S29L_UNRES" = "1" ] && [ "$S29L_MISS" = "1" ] \
 else
     t_fail "section 29: class starvation rc=$S29L_RC unres=$S29L_UNRES missing=$S29L_MISS summary=$S29L_SUM (want 1/1/1/1)"
 fi
+
+# ----------------------------------------------------------------------
+# Section 30: `--watch` ticks when the corpus HISTORY moves, not only when its
+# bytes do. Section 24 gave `stale` / `stats` / `render --render-format gantt` a
+# post-walk `corpus_history_id` check; an amend, a rebase or a checkout that
+# leaves every todo/ byte identical fires no filesystem event, so a watcher on
+# one of those verbs never re-ran and the check it declared never got to run.
+# ----------------------------------------------------------------------
+
+# Scratch git corpus builder shared by the fixtures below. Each caller gets its
+# own repo, so a mutation in one cannot leak into another.
+s30_repo() {
+    local T; T=$(mktemp -d "$TMP_DIR/s30-XXXXXX")
+    mkdir -p "$T/todo/01-test" "$T/src"
+    cat > "$T/todo/01-test/TODO-01-w.md" <<'EOF'
+---
+schema_version: 1
+id: s30-watch
+domain: 01-test
+status: draft
+title: Watch history fixture
+---
+# body
+EOF
+    (
+        cd "$T" || exit 1
+        git init -q .
+        git config user.email s30@test.invalid
+        git config user.name s30
+        git add -A
+        git commit -qm "c0 add corpus"
+    ) >/dev/null 2>&1
+    python3 "$BUILD_PY" --quiet --root "$T/todo" --output "$T/cache.json" \
+        --repo-root "$T" >/dev/null 2>&1
+    printf '%s' "$T"
+}
+
+# Run a watcher for a bounded window, mutate the repo mid-window, and report how
+# many RE-RUNS happened. The needle is the per-tick banner on stderr, not rows on
+# stdout: the opening run deliberately emits no banner, so the count IS the
+# number of re-runs -- and it is verb-independent, which matters because `stale`
+# legitimately prints no rows for a fresh corpus.
+s30_reruns() {   # $1=tree $2=verb $3=mutation-shell $4=1 to force the polling path
+    local T="$1" VERB="$2" MUT="$3" FORCE_POLL="${4:-0}" QPY="${5:-$QUERY_PY}"
+    # FORCED WITH THE PRODUCT'S OWN SWITCH, not by narrowing PATH. `/usr/bin` is
+    # exactly where inotify-tools installs inotifywait, so the old trick
+    # selected the branch it claimed to exclude wherever the tool was present
+    # (Codex adversarial, section 30, [medium]). The branch actually taken is
+    # asserted separately by the caller, off the `watch:` marker on stderr.
+    local FP=""; [ "$FORCE_POLL" = "1" ] && FP="1"
+    ( sleep 3; cd "$T" && eval "$MUT" ) >/dev/null 2>&1 &
+    local MP=$!
+    # PYTHONPATH IS WHAT MAKES A MUTANT RUNNABLE, and omitting it is a false
+    # PASS, not a crash you notice: a mutant copied into TMP_DIR resolves its
+    # own `sys.path.insert(_HERE)` to that temp dir, cannot import the sibling
+    # `validate` / `cache_schema`, and dies on import -- producing zero re-runs,
+    # which is exactly what a "the mutation disarmed the trigger" fixture
+    # expects to see. Measured here: 30d passed that way before this line
+    # existed. Pointing PYTHONPATH at the real module directory makes the mutant
+    # differ from the shipped code in one line and nothing else.
+    TODOGRAPH_WATCH_FORCE_POLL="$FP" PYTHONPATH="$(dirname "$QUERY_PY")" \
+    timeout --signal=INT 9 python3 -u "$QPY" --cache "$T/cache.json" \
+        --repo-root "$T" --watch "$VERB" > "$T/out" 2>"$T/err" || true
+    wait $MP 2>/dev/null
+    local N; N=$(grep -c '^----' "$T/err" 2>/dev/null || true)
+    printf '%s' "${N:-0}"
+}
+
+if ! command -v git >/dev/null 2>&1; then
+    t_pass "section 30: SKIPPED -- git is not available on this host"
+else
+
+# EVERY MUTANT BELOW NEEDS build.py BESIDE IT. `_rebuild_cache` locates build.py
+# next to query.py's OWN file, so a mutant living in TMP_DIR finds none, SKIPS
+# the rebuild rather than attempting one, and emits no refusal envelope at all
+# -- indistinguishable, to a "the mutation reproduces the old behaviour"
+# assertion, from a mutant that ran and behaved. Measured here: 30h reported 0
+# envelopes for exactly this reason and read as a code failure. The symlink
+# restores the real rebuild path; the mutant's own imports come from PYTHONPATH.
+ln -sf "$(dirname "$QUERY_PY")/build.py" "$TMP_DIR/build.py"
+
+# Sub-test 30a: the whole point. An amend that rewrites the corpus-touching tip
+# while leaving the worktree byte-identical must produce a re-run on a
+# history-consuming verb. Pre-fix this is 0: no .md changed, so no event fired.
+S30A=$(s30_repo)
+S30A_N=$(s30_reruns "$S30A" stale 'git commit -q --amend -m "c0 reworded"')
+if [ "$S30A_N" -ge 1 ]; then
+    t_pass "section 30: a byte-identical amend re-runs a \`stale\` watcher"
+else
+    t_fail "section 30: amend produced no re-run (reruns=$S30A_N, err=$(tr '\n' ' ' < "$S30A/err" | head -c 300))"
+fi
+
+# Sub-test 30b: CONTROL -- the trigger must not turn every commit into a tick.
+# An ordinary commit touching nothing under todo/ moves refs/heads and costs one
+# 54.2ms identity probe, and `corpus_history_id` is path-limited to the corpus,
+# so the id does not move and no re-run happens. Without this control 30a would
+# also pass a build that simply ticked on any ref movement.
+S30B=$(s30_repo)
+S30B_N=$(s30_reruns "$S30B" stale 'printf k > src/k.c; git add -A; git commit -qm unrelated')
+if [ "$S30B_N" = "0" ]; then
+    t_pass "section 30: CONTROL -- a commit touching no todo/ path fires no tick"
+else
+    t_fail "section 30: unrelated commit produced $S30B_N re-run(s); the trigger is not corpus-scoped"
+fi
+
+# Sub-test 30c: the verb scoping. `ready` dereferences no git-derived timestamp,
+# so it arms no history axis and pays nothing -- the same amend must be invisible
+# to it. This is what makes the cost decision in 30a affordable.
+S30C=$(s30_repo)
+S30C_N=$(s30_reruns "$S30C" ready 'git commit -q --amend -m "c0 reworded"')
+if [ "$S30C_N" = "0" ]; then
+    t_pass "section 30: a \`ready\` watcher arms no history axis (amend ignored)"
+else
+    t_fail "section 30: \`ready\` re-ran $S30C_N time(s) on a history-only move"
+fi
+
+# Sub-test 30d: MUTATION for 30a -- revert the wiring so the history axis is
+# never armed, and the same amend must go back to producing nothing. Without
+# this, 30a would pass against a build that re-ran for some unrelated reason.
+S30_MUT="$TMP_DIR/query_s30_mut.py"
+python3 - "$QUERY_PY" "$S30_MUT" <<'MUTEOF'
+import sys, pathlib
+src = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+needle = "                   history=profile.requires_history)"
+assert src.count(needle) == 1, f"s30 mutation needle appears {src.count(needle)}x"
+pathlib.Path(sys.argv[2]).write_text(
+    src.replace(needle, "                   history=False)", 1), encoding="utf-8")
+MUTEOF
+S30D=$(s30_repo)
+S30D_N=$(s30_reruns "$S30D" stale 'git commit -q --amend -m "c0 reworded"' 0 "$S30_MUT")
+if [ "$S30D_N" = "0" ]; then
+    t_pass "section 30: MUTATION -- with the history axis disarmed the amend is invisible again (fixture is sensitive)"
+else
+    t_fail "section 30: disarmed mutant still re-ran $S30D_N time(s); 30a proves nothing"
+fi
+
+# Sub-test 30e: the same property through the POLLING fallback, forced with the
+# product's own switch. HARD-FAIL, and it PROVES WHICH BRANCH RAN first: a
+# soft-pass here would let a completely broken polling history axis leave the
+# suite green, and the branch assertion is what stops the fixture from passing
+# because it quietly ran the inotify path instead.
+S30E=$(s30_repo)
+S30E_N=$(s30_reruns "$S30E" stale 'git commit -q --amend -m "c0 reworded"' 1)
+S30E_BRANCH=$(grep -o 'watch: [a-z]*' "$S30E/err" | head -1)
+if [ "$S30E_BRANCH" = "watch: polling" ] && [ "$S30E_N" -ge 1 ]; then
+    t_pass "section 30: the POLLING branch (proven) re-runs on a byte-identical amend"
+else
+    t_fail "section 30: polling-branch amend re-run failed (branch='$S30E_BRANCH' want 'watch: polling', reruns=$S30E_N)"
+fi
+
+# Sub-test 30e2: and the INOTIFY branch, which no fixture had ever entered --
+# inotify-tools is not installed on the dev host, so every case above runs the
+# polling loop whatever PATH says. A stub inotifywait on PATH exercises the real
+# branch: the sentinel wait, the raw-descriptor reader, the drain and the tick.
+S30E2=$(s30_repo)
+S30E2_BIN="$S30E2/bin"; mkdir -p "$S30E2_BIN"
+cat > "$S30E2_BIN/inotifywait" <<'STUBEOF'
+#!/usr/bin/env bash
+# Minimal inotifywait stand-in: announce the watches the way inotify-tools does,
+# then emit one .md event and idle so the watcher keeps running.
+echo "Watches established." >&2
+sleep 2
+for a in "$@"; do case "$a" in /*) TARGET="$a";; esac; done
+echo "$TARGET/01-test/TODO-01-w.md CLOSE_WRITE,CLOSE"
+sleep 30
+STUBEOF
+chmod +x "$S30E2_BIN/inotifywait"
+PATH="$S30E2_BIN:$PATH" PYTHONPATH="$(dirname "$QUERY_PY")" \
+timeout --signal=INT 8 python3 -u "$QUERY_PY" --cache "$S30E2/cache.json" \
+    --repo-root "$S30E2" --watch ready > "$S30E2/out" 2>"$S30E2/err" || true
+S30E2_BRANCH=$(grep -o 'watch: [a-z]*' "$S30E2/err" | head -1)
+S30E2_N=$(grep -c '^----' "$S30E2/err" 2>/dev/null || true); S30E2_N=${S30E2_N:-0}
+if [ "$S30E2_BRANCH" = "watch: inotify" ] && [ "$S30E2_N" -ge 1 ]; then
+    t_pass "section 30: the INOTIFY branch arms, waits for its sentinel, and ticks on a .md event"
+else
+    t_fail "section 30: inotify branch not exercised (branch='$S30E2_BRANCH' want 'watch: inotify', reruns=$S30E2_N, err=$(tr '\n' ' ' < "$S30E2/err" | head -c 300))"
+fi
+
+# Sub-test 30e3: an INDETERMINATE history probe must not go silent once the ref
+# churn stops. `git` is shadowed by a stub that fails every call, so the axis
+# cannot resolve its paths at all; the sticky pending state must keep re-asking
+# on its own schedule rather than waiting for a trigger movement that will never
+# come. Proven by the axis object directly -- a timing-free assertion.
+S30E3=$(s30_repo)
+S30E3_OUT=$(python3 - "$S30E3" "$(dirname "$QUERY_PY")" <<'S30E3EOF' 2>&1
+import json, os, subprocess, sys, time
+sys.path.insert(0, sys.argv[2])
+import query  # noqa: E402
+todo = os.path.join(sys.argv[1], "todo")
+real_run = subprocess.run
+def failing(*a, **k):
+    raise OSError("git is unavailable in this fixture")
+subprocess.run = failing
+query._cs.subprocess.run = failing
+axis = query._HistoryAxis(todo, quiet=True)
+unresolved = axis.trigger is None and axis.pending and not axis.no_repo
+# Nothing moved and nothing can move: the pre-fix axis returned False forever.
+axis._next_probe_at = 0.0
+still_asking = axis.poll() is not None and axis.pending
+subprocess.run = real_run
+query._cs.subprocess.run = real_run
+# git is back: the very next due poll must resolve and re-publish, because the
+# axis cannot prove the history held while it was blind.
+axis._next_probe_at = 0.0
+recovered = axis.poll()
+print(json.dumps({"unresolved": unresolved, "still_asking": still_asking,
+                  "recovered": bool(recovered),
+                  "resolved_after": axis.trigger is not None}))
+S30E3EOF
+); S30E3_RC=$?
+if [ "$S30E3_RC" = "0" ] && echo "$S30E3_OUT" | python3 -c "
+import json, sys
+d = json.loads(sys.stdin.read())
+sys.exit(0 if d['unresolved'] and d['still_asking'] and d['recovered']
+         and d['resolved_after'] else 1)"; then
+    t_pass "section 30: an unresolvable git keeps the axis PENDING and it re-publishes once git recovers"
+else
+    t_fail "section 30: indeterminate-probe recovery failed (rc=$S30E3_RC, out=$S30E3_OUT)"
+fi
+
+# Sub-test 30f: the trigger snapshot must see a LOOSE-REF update. This is a
+# deterministic unit check on `_snapshot_history_trigger`, and it carries its own
+# control: `refs/` dir mtime alone does NOT move when `refs/heads/<name>` is
+# written, which is exactly why a three-entry stat of {HEAD, packed-refs, refs}
+# was rejected during design review as blind to the ordinary amend.
+S30F=$(s30_repo)
+S30F_OUT=$(python3 - "$S30F" "$(dirname "$QUERY_PY")" <<'S30FEOF' 2>&1
+import json, os, subprocess, sys
+sys.path.insert(0, sys.argv[2])
+import query  # noqa: E402
+tree = sys.argv[1]
+todo = os.path.join(tree, "todo")
+trig = query._history_trigger_paths(todo)
+refs_dir = trig[0]
+before, before_complete = query._snapshot_history_trigger(trig)
+refs_mtime_before = os.stat(refs_dir).st_mtime_ns
+subprocess.run(["git", "-C", tree, "branch", "s30-loose"], check=True,
+               capture_output=True)
+after, after_complete = query._snapshot_history_trigger(trig)
+print(json.dumps({
+    "snapshot_moved": before != after,
+    "refs_dir_mtime_moved": os.stat(refs_dir).st_mtime_ns != refs_mtime_before,
+    "complete": bool(before_complete and after_complete),
+}))
+S30FEOF
+); S30F_RC=$?
+if [ "$S30F_RC" = "0" ] && echo "$S30F_OUT" | python3 -c "
+import json, sys
+d = json.loads(sys.stdin.read())
+# The snapshot MUST move; the bare refs/ directory mtime MUST NOT -- that gap is
+# the finding the recursive walk exists to close. A fixture repo is far under
+# the ceiling, so an INCOMPLETE snapshot here would mean the bound misfired.
+sys.exit(0 if d['snapshot_moved'] and not d['refs_dir_mtime_moved']
+         and d['complete'] else 1)"; then
+    t_pass "section 30: the trigger snapshot sees a loose-ref write that refs/ dir mtime alone misses"
+else
+    t_fail "section 30: loose-ref detection check failed (rc=$S30F_RC, out=$S30F_OUT)"
+fi
+
+# Sub-test 30g: a REFUSED tick retries on a timer instead of latching. The
+# corpus is broken BEFORE the watcher starts, so nothing touches the filesystem
+# during the observation window at all -- every envelope after the first is the
+# retry schedule firing on its own. Pre-fix this is exactly 1: one refusal, then
+# silence until an unrelated edit happened to arrive.
+S30G=$(s30_repo)
+printf 'not: [valid\nyaml' > "$S30G/todo/01-test/TODO-02-broken.md"
+S30G_STAMP=$(find "$S30G/todo" -type f -printf '%T@ %p\n' | sort | md5sum)
+timeout --signal=INT 13 python3 -u "$QUERY_PY" --cache "$S30G/cache.json" \
+    --repo-root "$S30G" --watch stale > "$S30G/out" 2>"$S30G/err" || true
+S30G_N=$(grep -c 'cache-rebuild-failed' "$S30G/out" 2>/dev/null || true); S30G_N=${S30G_N:-0}
+S30G_STAMP2=$(find "$S30G/todo" -type f -printf '%T@ %p\n' | sort | md5sum)
+if [ "$S30G_N" -ge 2 ] && [ "$S30G_STAMP" = "$S30G_STAMP2" ]; then
+    t_pass "section 30: a refused tick retries on its own timer (${S30G_N} envelopes, corpus untouched)"
+else
+    t_fail "section 30: refusal latched instead of retrying (envelopes=$S30G_N, corpus stable=$([ "$S30G_STAMP" = "$S30G_STAMP2" ] && echo yes || echo no))"
+fi
+
+# Sub-test 30h: MUTATION for 30g -- make the tick report no retry-worthy
+# refusal, and the same broken corpus must produce exactly ONE envelope again.
+S30_MUT2="$TMP_DIR/query_s30_mut2.py"
+python3 - "$QUERY_PY" "$S30_MUT2" <<'MUT2EOF'
+import sys, pathlib
+src = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+needle = "                sys.stdout.flush()\n                return True\n"
+assert src.count(needle) == 1, f"s30 retry needle appears {src.count(needle)}x"
+pathlib.Path(sys.argv[2]).write_text(
+    src.replace(needle, "                sys.stdout.flush()\n                return\n", 1),
+    encoding="utf-8")
+MUT2EOF
+S30H=$(s30_repo)
+printf 'not: [valid\nyaml' > "$S30H/todo/01-test/TODO-02-broken.md"
+PYTHONPATH="$(dirname "$QUERY_PY")" \
+timeout --signal=INT 13 python3 -u "$S30_MUT2" --cache "$S30H/cache.json" \
+    --repo-root "$S30H" --watch stale > "$S30H/out" 2>"$S30H/err" || true
+S30H_N=$(grep -c 'cache-rebuild-failed' "$S30H/out" 2>/dev/null || true); S30H_N=${S30H_N:-0}
+if [ "$S30H_N" = "1" ]; then
+    t_pass "section 30: MUTATION -- without the retry signal the refusal latches at one envelope (fixture is sensitive)"
+else
+    t_fail "section 30: latch mutation produced $S30H_N envelope(s), expected exactly 1"
+fi
+
+fi  # git available
 
 # ----------------------------------------------------------------------
 # Summary

@@ -81,6 +81,7 @@ import signal
 import stat
 import subprocess
 import sys
+import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -2076,6 +2077,178 @@ WATCH_DRAIN_MAX_EVENTS = 5000
 # climbing.
 WATCH_MAX_RECORD_BYTES = 64 * 1024
 
+# How long to wait for inotifywait to report that its watches are live before
+# running the opening query anyway (section 30). Bounded rather than unbounded
+# on purpose: a missing sentinel must degrade to the old ordering, never hang
+# the watcher. The wait normally ends in single-digit milliseconds.
+WATCH_ARM_TIMEOUT_SECS = 5.0
+WATCH_ARM_SENTINEL = "Watches established."
+
+# Retry schedule for a tick that REFUSED, and for a history probe that could not
+# answer (section 30). Today a refusal waits for the next filesystem event, so a
+# momentary git failure or a half-saved file turns into a permanently wrong
+# screen -- the watcher declares a check it then never gets to run again.
+#
+# CAPPED, AND THE CAP IS THE POINT. An uncapped retry rebuilds the cache forever
+# against a tree that is deterministically broken; after the schedule is
+# exhausted the watcher goes quiet and only a REAL event resumes it, which is
+# the correct steady state for a deterministic failure. A transient one clears
+# on the first 5s retry and the schedule resets.
+WATCH_RETRY_BACKOFF_SECS = (5.0, 10.0, 20.0, 40.0, 60.0)
+
+# Re-probe schedule for an INDETERMINATE history probe -- git answered neither
+# "here is the id" nor "this is not a repository" (section 30). Held apart from
+# WATCH_RETRY_BACKOFF_SECS on purpose: sharing one budget let ref churn during a
+# git outage consume every retry slot without a single tick ever running, and
+# once the churn stopped the watcher had neither a pending probe nor a deadline
+# and displayed the pre-change answer forever (Codex adversarial, section 30,
+# [high]). This schedule also never gives up -- a failed probe emits no output,
+# so re-asking once a minute costs 0.09% of a core and nothing on screen.
+WATCH_PROBE_BACKOFF_SECS = (2.0, 5.0, 15.0, 30.0, 60.0)
+
+# Ceilings on ONE trigger snapshot. A repository with 100k loose refs would
+# otherwise pay 100k stats every 2s on the same thread that drains inotify
+# events and services retries (Codex adversarial, section 30, [medium]).
+# Exceeding either does NOT truncate silently: the snapshot is marked
+# INCOMPLETE, the axis says so once, and it degrades to a bounded periodic
+# identity probe -- slower, but never blind.
+WATCH_TRIGGER_MAX_ENTRIES = 20000
+WATCH_TRIGGER_MAX_SECS = 0.25
+WATCH_DEGRADED_PROBE_SECS = 60.0
+
+# Force the polling fallback even where inotifywait is installed. The fallback
+# is otherwise UNTESTABLE on a host that has inotify-tools, and the previous
+# attempt to force it -- narrowing PATH to /usr/bin:/bin -- names the directory
+# the tool conventionally lives in, so the fixture claiming to cover polling was
+# selecting inotify instead (Codex adversarial, section 30, [medium]).
+WATCH_FORCE_POLL_ENV = "TODOGRAPH_WATCH_FORCE_POLL"
+
+
+class _TriggerUnavailable(Exception):
+    """Git could not be asked where the history lives. Distinct from no-repo."""
+
+
+def _history_trigger_paths(todo_root: Path):
+    """The git paths whose movement can mean the corpus history moved, or None.
+
+    RESOLVED WITH `git rev-parse --git-path`, NOT by joining `--git-common-dir`
+    (Codex design review, section 30, [high]). `--git-path HEAD` returns the
+    EFFECTIVE HEAD of this worktree -- `.git/worktrees/<name>/HEAD` in a linked
+    worktree, where the common dir's HEAD belongs to another checkout entirely.
+    Checking out a different branch in a linked worktree moves that worktree's
+    history while the common HEAD never changes, so the common-dir form would
+    watch a file this process does not follow. `--git-path` also answers the
+    per-worktree/shared split for `shallow` and `packed-refs` without this code
+    having to know which is which. Paths come back RELATIVE to the directory git
+    ran in, which is why each is joined onto `todo_root` before use.
+
+    "NOT A REPOSITORY" AND "COULD NOT ASK" ARE DIFFERENT ANSWERS here too, for
+    the same reason `corpus_history_id` separates them (Codex adversarial,
+    section 30, [high]). The first draft collapsed both to None, so ONE
+    transient git failure at start-up armed a permanently blind axis and a
+    partial failure armed a partially blind one -- and neither was ever
+    re-resolved, so a byte-identical amend stayed invisible long after git
+    recovered. That is the exact latch this section exists to remove,
+    reintroduced one layer up. A determinate not-a-repo returns None forever; a
+    failure raises `_TriggerUnavailable` and the caller re-resolves later.
+
+    THE SET IS ALL-OR-NOTHING. `rev-parse --git-path` answers for a file that
+    does not exist yet (`shallow` usually does not), so a None here always means
+    the git call FAILED, never that the path is absent -- which is why a partial
+    result is treated as indeterminate rather than as a smaller trigger set.
+
+    Returns `(refs_dir, file_paths, shallow_path)`, or None when this corpus is
+    not in a git repository at all (test fixtures under /tmp).
+    """
+    def _path(name):
+        try:
+            r = subprocess.run(["git", "-C", str(todo_root),
+                                *_cs.HISTORY_GIT_GLOBALS,
+                                "rev-parse", "--git-path", name],
+                               env=_cs.history_git_env(),
+                               capture_output=True, text=True, check=True)
+        except subprocess.CalledProcessError as exc:
+            if "not a git repository" in (exc.stderr or "").lower():
+                return "no-repo"
+            raise _TriggerUnavailable(
+                f"git rev-parse --git-path {name} exited {exc.returncode}")
+        except OSError as exc:
+            raise _TriggerUnavailable(f"cannot run git: {exc}")
+        out = (r.stdout or "").strip()
+        if not out:
+            raise _TriggerUnavailable(
+                f"git rev-parse --git-path {name} answered nothing")
+        return os.path.normpath(os.path.join(str(todo_root), out))
+
+    head = _path("HEAD")
+    if head == "no-repo":
+        return None
+    refs, packed, shallow = _path("refs"), _path("packed-refs"), _path("shallow")
+    if "no-repo" in (refs, packed, shallow):
+        return None
+    return (refs, [head, packed], shallow)
+
+
+def _snapshot_history_trigger(trigger):
+    """A pathname-keyed mtime/size snapshot of the history trigger set.
+
+    PATHNAMES, NOT INODES, AND NOT INOTIFY (Codex design review, section 30,
+    [high]). git publishes `HEAD` and `packed-refs` by writing `<name>.lock` and
+    RENAMING it over the target, so an inotify watch registered on the original
+    file follows the replaced inode and is silently retired -- the watcher then
+    sees nothing for the very update it was armed for. A stat of the PATHNAME
+    resolves to whatever the name points at now, so the rename is exactly what
+    it detects. It also keeps the git directory out of `inotifywait -r`, whose
+    recursion would otherwise descend into `objects/`.
+
+    `refs` IS WALKED RECURSIVELY, and a three-entry stat of `refs/` is not a
+    substitute (Codex design review, section 30, [high]). Updating
+    `refs/heads/main` changes `refs/heads`, not `refs/` -- measured on this repo
+    at review time: `refs/` mtime 1786242163389184305 against `refs/heads`
+    1786275154647232807, an eight-hour gap across many branch updates. A
+    non-recursive probe is therefore blind to the ordinary amend this whole
+    section exists to catch.
+
+    MEASURED 2026-08-09 on this repo (12 entries): 50.1us median, 77.6us p95 --
+    against 54.2ms for `corpus_history_id`, i.e. 0.09% of the answer it decides
+    whether to ask. At one probe per 2s poll that is 0.0025% of a core, versus
+    2.7% for polling the identity itself. THAT MEASUREMENT DESCRIBES THIS REPO
+    AND BOUNDS NOTHING (Codex adversarial, section 30, [medium]): a repository
+    holding 100k loose refs would pay 100k stats every 2s on the same thread
+    that drains inotify events and services retries. Hence the ceilings.
+
+    Returns `(snapshot, complete)`. `complete` is False when a ceiling was hit,
+    and a False NEVER reads as "unchanged" -- the caller degrades to a slower
+    direct identity probe instead, because a truncated snapshot that compares
+    equal is indistinguishable from a quiet repository.
+    """
+    refs_dir, file_paths, shallow = trigger
+    out = {}
+    for p in file_paths + ([shallow] if shallow else []):
+        try:
+            st = os.stat(p)
+            out[p] = (st.st_mtime_ns, st.st_size)
+        except OSError:
+            out[p] = None
+    if not refs_dir:
+        return (out, True)
+    deadline = time.monotonic() + WATCH_TRIGGER_MAX_SECS
+    for dirpath, _dirs, files in os.walk(refs_dir):
+        if len(out) > WATCH_TRIGGER_MAX_ENTRIES or time.monotonic() > deadline:
+            return (out, False)
+        try:
+            out[dirpath] = (os.stat(dirpath).st_mtime_ns,)
+        except OSError:
+            pass
+        for f in files:
+            p = os.path.join(dirpath, f)
+            try:
+                st = os.stat(p)
+                out[p] = (st.st_mtime_ns, st.st_size)
+            except OSError:
+                continue
+    return (out, True)
+
 
 class _EventLineReader:
     """Line reader over a RAW descriptor, with its own buffer.
@@ -2112,6 +2285,14 @@ class _EventLineReader:
         self._ready: list = []
         self._buf = b""
         self._eof = False
+        # Set when the descriptor itself failed (a `select`/`read` error). Held
+        # apart from `_eof`, which is the ORDERLY end of the stream. Section 30
+        # gave `next_line` a finite idle timeout, and that made the difference
+        # load-bearing: a bare `None` return no longer means "the stream ended",
+        # it means "nothing yet OR the stream ended", so the caller needs
+        # `finished` to tell a quiet second from a dead pipe. Without it a
+        # broken descriptor would spin the loop at full speed instead of exiting.
+        self._closed = False
         # Set when a record blew the size ceiling: bytes up to and including
         # the NEXT newline belong to that discarded record and must be dropped,
         # not surfaced as a truncated phantom event.
@@ -2152,6 +2333,12 @@ class _EventLineReader:
             return self._ready.pop(0)
         return None
 
+    @property
+    def finished(self) -> bool:
+        """True once nothing more can ever arrive AND nothing is left buffered."""
+        return (self._closed
+                or (self._eof and not self._ready and not self._buf))
+
     def next_line(self, timeout: Optional[float]) -> Optional[str]:
         """Return the next complete line, or None on timeout/EOF.
 
@@ -2169,6 +2356,7 @@ class _EventLineReader:
         try:
             import select
         except ImportError:  # pragma: no cover -- POSIX-only fallback
+            self._closed = True
             return None
         deadline = None if timeout is None else time.monotonic() + timeout
         while True:
@@ -2195,12 +2383,14 @@ class _EventLineReader:
             try:
                 ready, _, _ = select.select([self.fd], [], [], remaining)
             except (OSError, ValueError):
+                self._closed = True
                 return None
             if not ready:
                 return None
             try:
                 chunk = os.read(self.fd, 65536)
             except OSError:
+                self._closed = True
                 return None
             if not chunk:
                 self._eof = True
@@ -2235,37 +2425,292 @@ def _drain_pending_events(reader: _EventLineReader) -> int:
     return drained
 
 
-def watch_loop(run_once, todo_root: Path, quiet: bool):
-    """Run run_once() once, then re-run whenever a .md file under todo_root
-    changes. Prefer inotifywait; fall back to mtime polling every 2s."""
+class _HistoryAxis:
+    """Decides when a git-history move warrants a watch tick (section 30).
+
+    ARMED PER VERB, NOT PER WATCHER. Only `stale`, `stats` and
+    `render --render-format gantt` dereference a git-derived timestamp, so only
+    they carry one of these; a watcher on `ready` or `backlinks` allocates
+    nothing and polls nothing, which is what makes the cost decision below
+    affordable in the first place.
+
+    THE TRIGGER AND THE PREDICATE ARE DELIBERATELY DIFFERENT THINGS. The trigger
+    (a 50.1us pathname snapshot) says "some ref moved"; the predicate
+    (`corpus_history_id`, 54.2ms) says "the corpus history moved". Ordinary
+    development moves refs constantly and touches `todo/` rarely, so collapsing
+    the two -- ticking on any ref movement -- would re-run the whole query on
+    every kernel commit, and polling the predicate directly would cost 2.7% of a
+    core forever to answer a question that changes a few times a day.
+
+    ITS PRECISION IS EXACTLY `corpus_history_id`'s, INHERITED (Codex design
+    review, section 30, [high]). That id cannot see an equal-count shallow
+    boundary move -- reproduced and documented at `cache_schema.corpus_history_id`
+    -- so neither can this comparison, and a Gantt watcher would keep displaying
+    the pre-move answer. What is closed HERE is the observable half: a change to
+    the `shallow` file ticks UNCONDITIONALLY, without consulting the id. The
+    unobservable half is an in-flight `GIT_SHALLOW_FILE` override in another
+    process, which no watcher can see and which section 31 owns along with the
+    policy decision it needs.
+    """
+
+    def __init__(self, todo_root: Path, quiet: bool = False):
+        self.todo_root = todo_root
+        self.quiet = quiet
+        self.trigger = None
+        self.no_repo = False
+        self.shallow = None
+        self.prev = {}
+        self.degraded = False
+        self._said_degraded = False
+        self.last_id = None
+        self.id_known = False
+        # PENDING IS STICKY AND IS THE WHOLE ANTI-LATCH MECHANISM. It stays set
+        # until a probe answers determinately, and while it is set `poll` re-asks
+        # on its OWN schedule regardless of whether the trigger moved -- so a
+        # quiet repository after a git outage still gets re-probed. Driving the
+        # re-probe off trigger movement alone is what let the watcher go silent
+        # forever once the churn stopped.
+        self.pending = False
+        self._probe_idx = 0
+        self._next_probe_at = 0.0
+        self._resolve()
+        # BASELINED BEFORE THE OPENING RUN, by construction: this object is
+        # built before `run_once()` fires (Codex design review, section 30,
+        # [medium]). Sampling afterwards would silently swallow any move that
+        # landed while the opening query was computing.
+        if self.trigger:
+            self.sample()
+
+    def _resolve(self) -> None:
+        """Locate the git paths, tolerating a git that cannot answer yet."""
+        if self.no_repo:
+            return
+        try:
+            self.trigger = _history_trigger_paths(self.todo_root)
+        except _TriggerUnavailable:
+            # Indeterminate: leave the axis unresolved and try again next poll.
+            self.trigger = None
+            self.pending = True
+            return
+        if self.trigger is None:
+            self.no_repo = True
+            return
+        self.shallow = self.trigger[2]
+        self.prev, complete = _snapshot_history_trigger(self.trigger)
+        self._note_completeness(complete)
+
+    def _note_completeness(self, complete: bool) -> None:
+        self.degraded = not complete
+        if self.degraded and not self._said_degraded and not self.quiet:
+            self._said_degraded = True
+            sys.stderr.write(
+                f"[query.py] NOTE: the git ref surface exceeded the watch "
+                f"trigger ceiling ({WATCH_TRIGGER_MAX_ENTRIES} entries / "
+                f"{WATCH_TRIGGER_MAX_SECS}s); falling back to a direct history "
+                f"probe every {WATCH_DEGRADED_PROBE_SECS:.0f}s\n")
+
+    def _defer_probe(self) -> None:
+        delay = WATCH_PROBE_BACKOFF_SECS[min(self._probe_idx,
+                                             len(WATCH_PROBE_BACKOFF_SECS) - 1)]
+        self._probe_idx += 1
+        self._next_probe_at = time.monotonic() + delay
+
+    def sample(self) -> bool:
+        """Record the live identity. False when git could not be asked."""
+        try:
+            self.last_id = _cs.corpus_history_id(self.todo_root)
+        except _cs.CacheSchemaError:
+            self.id_known = False
+            self.pending = True
+            self._defer_probe()
+            return False
+        self.id_known = True
+        self.pending = False
+        self._probe_idx = 0
+        return True
+
+    def _decide(self) -> bool:
+        """Probe the identity and say whether the answer must be re-published."""
+        was_known = self.id_known
+        before = self.last_id
+        if not self.sample():
+            return False
+        # A previously-failed probe proves nothing about whether the history
+        # held, so re-ask rather than assume it did.
+        return (not was_known) or self.last_id != before
+
+    def poll(self) -> bool:
+        """True when the answer on screen may no longer describe the history."""
+        if self.no_repo:
+            return False
+        now = time.monotonic()
+        if self.trigger is None:
+            # Still unresolved from a git failure: retry discovery, cheaply.
+            if now < self._next_probe_at:
+                return False
+            self._resolve()
+            if self.trigger is None:
+                self._defer_probe()
+                return False
+            # Newly resolved. Nothing here can prove the history held while the
+            # axis was blind, so publish once and take a baseline.
+            self.sample()
+            return True
+        if self.degraded:
+            # The trigger cannot be trusted to say "nothing moved", so the id is
+            # asked directly on a slow fixed cadence instead.
+            self.prev, complete = _snapshot_history_trigger(self.trigger)
+            self._note_completeness(complete)
+            if now < self._next_probe_at:
+                return False
+            decided = self._decide()
+            # `max`, because a FAILED probe inside `sample` re-arms the short
+            # pending backoff -- which would probe every 2s in exactly the
+            # repository the degraded cadence exists to protect. The slower of
+            # the two always wins here.
+            self._next_probe_at = max(self._next_probe_at,
+                                      now + WATCH_DEGRADED_PROBE_SECS)
+            return decided
+        if self.pending and now >= self._next_probe_at:
+            # An earlier probe was indeterminate. Re-ask even though nothing in
+            # the trigger moved -- this is the path that used to go silent.
+            return self._decide()
+        cur, complete = _snapshot_history_trigger(self.trigger)
+        self._note_completeness(complete)
+        if not complete:
+            self.prev = cur
+            self._next_probe_at = now + WATCH_DEGRADED_PROBE_SECS
+            return self._decide()
+        if cur == self.prev:
+            return False
+        moved_shallow = (self.shallow is not None
+                         and cur.get(self.shallow) != self.prev.get(self.shallow))
+        self.prev = cur
+        if moved_shallow:
+            # Unconditional: the id provably cannot represent this axis.
+            self.sample()
+            return True
+        return self._decide()
+
+
+def watch_loop(run_once, todo_root: Path, quiet: bool, history: bool = False):
+    """Run run_once() once, then re-run whenever the answer could have changed.
+
+    `run_once()` returns truthy when the tick REFUSED and is worth retrying;
+    see WATCH_RETRY_BACKOFF_SECS.
+
+    Two independent axes. The CORPUS axis is `.md` events under todo_root, via
+    `inotifywait -m` when available and 2s mtime polling otherwise. The HISTORY
+    axis (`history=True`, i.e. the verbs that consume git-derived timestamps) is
+    a 2s pathname probe of the git ref surface in BOTH modes -- git paths are
+    never handed to inotifywait, because watching `HEAD`/`packed-refs` by file
+    loses the watch to git's lockfile rename and watching their parent directory
+    means recursing the git dir into `objects/`.
+
+    ORDER OF OPERATIONS AT START-UP IS PART OF THE CONTRACT (Codex design
+    review, section 30, [medium]): arm the watcher, confirm the watches are
+    live, baseline the history, and only THEN publish the opening answer. The
+    code this replaced ran the opening query first, so an edit or an amend
+    landing before the watch existed was never seen by anything.
+    """
     def _banner():
         if quiet:
             return
         sys.stderr.write(f"---- {datetime.now(timezone.utc).isoformat(timespec='seconds')}\n")
 
-    # Initial run.
-    run_once()
+    retry_idx = 0
+    retry_at = None
 
-    inw = shutil.which("inotifywait")
+    def _arm_retry():
+        nonlocal retry_idx, retry_at
+        if retry_idx < len(WATCH_RETRY_BACKOFF_SECS):
+            retry_at = time.monotonic() + WATCH_RETRY_BACKOFF_SECS[retry_idx]
+            retry_idx += 1
+        else:
+            # Schedule exhausted: this failure is deterministic, not transient.
+            # Go quiet and let a REAL event resume it.
+            retry_at = None
+
+    def _tick(*, from_retry: bool, banner: bool = True):
+        nonlocal retry_idx, retry_at
+        if not from_retry:
+            retry_idx = 0
+        if banner:
+            _banner()
+        if run_once():
+            _arm_retry()
+        else:
+            retry_idx = 0
+            retry_at = None
+
+    def _idle_timeout(axis):
+        """Seconds to wait before the loop must do something on its own."""
+        t = POLL_INTERVAL_SECONDS if axis is not None else None
+        if retry_at is not None:
+            left = max(0.0, retry_at - time.monotonic())
+            t = left if t is None else min(t, left)
+        return t
+
+    def _service_timers(axis) -> None:
+        """Run whatever the elapsed idle period made due.
+
+        THE AXIS NO LONGER SPENDS THE TICK-RETRY BUDGET. An indeterminate probe
+        used to call `_arm_retry`, so ref churn during a git outage burned all
+        five slots without running a single tick and left the watcher with
+        neither a pending probe nor a deadline (Codex adversarial, section 30,
+        [high]). The axis owns its own re-probe schedule now, and this budget is
+        only ever advanced by a tick that actually ran.
+        """
+        if axis is not None and axis.poll():
+            _tick(from_retry=False)
+            return
+        if retry_at is not None and time.monotonic() >= retry_at:
+            _tick(from_retry=True)
+
+    inw = None if os.environ.get(WATCH_FORCE_POLL_ENV) else shutil.which("inotifywait")
     if inw:
+        errf = None
         try:
+            errf = tempfile.TemporaryFile()
             proc = subprocess.Popen(
                 [inw, "-e", "close_write,moved_to,create,delete",
                  "-r", "-m", "--format", "%w%f %e", str(todo_root)],
-                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+                stdout=subprocess.PIPE, stderr=errf, text=True,
             )
         except OSError:
             proc = None
         if proc is not None:
+            # A REAL FILE, NOT A PIPE, for stderr. The sentinel below has to be
+            # readable while inotifywait keeps running, and a pipe nobody drains
+            # eventually fills and blocks the writer -- deadlocking the watcher
+            # on its own diagnostics.
+            _await_watches_established(errf)
             # Read through the RAW descriptor. Calling `proc.stdout.readline()`
             # here would buffer the burst in user space where `select` cannot
             # see it, which is exactly what made the drain below return 0.
+            if not quiet:
+                # WHICH BRANCH RAN IS OBSERVABLE, and it has to be: the fixture
+                # that claimed to cover the polling fallback was selecting this
+                # one instead, and nothing in the output could have told anybody
+                # (Codex adversarial, section 30, [medium]).
+                sys.stderr.write("[query.py] watch: inotify\n")
             reader = _EventLineReader(proc.stdout.fileno())
+            axis = _HistoryAxis(todo_root, quiet) if history else None
+            # THE OPENING RUN ARMS THE RETRY TOO, and discarding its result was
+            # the first draft's bug: a watcher started against an already-broken
+            # tree refuses once and then waits for an event, which is precisely
+            # the latch this section removes -- and the case most likely to hit
+            # a user, because they start the watcher when something is wrong.
+            # `banner=False` keeps the documented no-separator opening.
+            _tick(from_retry=False, banner=False)
             try:
                 while True:
-                    line = reader.next_line(None)
+                    line = reader.next_line(_idle_timeout(axis))
                     if line is None:
-                        break
+                        if reader.finished:
+                            break
+                        _service_timers(axis)
+                        continue
                     path = line.split(" ", 1)[0]
                     if not path.endswith(".md"):
                         continue
@@ -2283,8 +2728,16 @@ def watch_loop(run_once, todo_root: Path, quiet: bool):
                     # per-tick refusal semantics above are untouched: a batch
                     # whose rebuild fails still refuses exactly once.
                     _drain_pending_events(reader)
-                    _banner()
-                    run_once()
+                    # THE DRAIN ONLY EVER SWALLOWS CORPUS EVENTS, which is why
+                    # it may still discard their paths (Codex design review,
+                    # section 30, [high]). It returns a count, not a
+                    # classification, so on a MIXED stream a leading ref event
+                    # could absorb a queued `.md` save and then suppress the
+                    # tick as "history unchanged", losing the edit entirely.
+                    # Keeping git paths out of inotifywait removes that shape
+                    # rather than defending against it -- if a later change ever
+                    # feeds them in, this drain must start aggregating classes.
+                    _tick(from_retry=False, banner=True)
             except KeyboardInterrupt:
                 pass
             finally:
@@ -2296,20 +2749,67 @@ def watch_loop(run_once, todo_root: Path, quiet: bool):
                         proc.kill()
                     except OSError:
                         pass
+                if errf is not None:
+                    try:
+                        errf.close()
+                    except OSError:
+                        pass
             return
+        if errf is not None:
+            try:
+                errf.close()
+            except OSError:
+                pass
 
-    # Polling fallback.
+    # Polling fallback. Same start-up order as above: baseline both axes before
+    # the opening answer is published, so a change landing during it is caught
+    # by the first comparison rather than lost.
+    if not quiet:
+        sys.stderr.write("[query.py] watch: polling\n")
     prev = _snapshot_mtimes(todo_root)
+    axis = _HistoryAxis(todo_root, quiet) if history else None
+    _tick(from_retry=False, banner=False)
     try:
         while True:
-            time.sleep(POLL_INTERVAL_SECONDS)
+            time.sleep(min(POLL_INTERVAL_SECONDS,
+                           max(0.0, retry_at - time.monotonic()))
+                       if retry_at is not None else POLL_INTERVAL_SECONDS)
             cur = _snapshot_mtimes(todo_root)
             if cur != prev:
-                _banner()
-                run_once()
                 prev = cur
+                _tick(from_retry=False)
+                continue
+            _service_timers(axis)
     except KeyboardInterrupt:
         return
+
+
+def _await_watches_established(errf) -> bool:
+    """Block until inotifywait reports its watches are live, or time out.
+
+    THE OPENING QUERY MUST NOT OUTRUN THE WATCH (Codex design review, section
+    30, [medium]). `inotifywait -m` registers watches recursively before it
+    emits anything, and on a 232-file corpus that is not instantaneous; running
+    the opening query first left a window in which an edit produced no event and
+    no tick, so the watcher opened on an answer it would never correct.
+
+    BOUNDED, AND FAILURE IS NOT FATAL. If the sentinel never arrives -- an
+    inotify-tools build that words it differently, a locale that translates it,
+    a version that stays silent -- this returns False after
+    WATCH_ARM_TIMEOUT_SECS and the caller proceeds with the old ordering. A
+    watcher that hangs waiting for a diagnostic string would be a far worse
+    failure than the race it is closing.
+    """
+    deadline = time.monotonic() + WATCH_ARM_TIMEOUT_SECS
+    while time.monotonic() < deadline:
+        try:
+            errf.seek(0)
+            if WATCH_ARM_SENTINEL in errf.read().decode("utf-8", "replace"):
+                return True
+        except (OSError, ValueError):
+            return False
+        time.sleep(0.01)
+    return False
 
 
 # ----------------------------------------------------------------------
@@ -2807,6 +3307,15 @@ def main(argv=None) -> int:
         # properties: no stale rows are ever emitted, and the next valid edit
         # produces a fresh successful answer with no restart.
         def _watch_tick():
+            # RETURNS "IS THIS WORTH RETRYING" (section 30). A refused tick used
+            # to be terminal until an unrelated filesystem event happened to
+            # arrive, so a momentary git failure or a half-written file left the
+            # watcher showing a refusal forever while the tree beneath it was
+            # already fine. Only INFRASTRUCTURE refusals qualify: a bad request
+            # (EXIT_QUERY_INPUT) and a ceiling breach (CeilingExceeded, rc 3)
+            # are deterministic properties of the invocation, and re-running
+            # them on a timer would just reprint the same envelope forever.
+            #
             # Bound to a name rather than tested inline so the per-rule
             # mutation harness has a needle unique to the WATCH guard: the
             # identical `if not _rebuild_cache(...)` call also appears on the
@@ -2828,10 +3337,10 @@ def main(argv=None) -> int:
                             "successful rebuild",
                 }, indent=2, sort_keys=True) + "\n")
                 sys.stdout.flush()
-                return
+                return True
             # A ceiling breach must not kill an interactive watcher; the
             # envelope is printed and the loop continues to the next tick.
-            _run_once_guarded()
+            return _run_once_guarded() == EXIT_CACHE_UNUSABLE
         # NO EXPLICIT FIRST TICK -- `watch_loop` performs the initial
         # `run_once()` itself. The code this replaced called `_rebuild_cache`
         # here (a rebuild, no output) before handing a separate runner to the
@@ -2842,7 +3351,14 @@ def main(argv=None) -> int:
         # tick to the loop still gives the intended property: a watcher started
         # against an already-broken tree refuses its first tick instead of
         # opening with a stale answer.
-        watch_loop(_watch_tick, todo_root, args.quiet)
+        #
+        # THE HISTORY AXIS IS ARMED FROM THE SAME PROFILE THE READER ALREADY
+        # RESOLVED (section 30), so the trigger and the post-walk check can
+        # never disagree about which verbs consume a git-derived timestamp:
+        # both read `requires_history`. A watcher on `ready` or `backlinks`
+        # passes False and behaves exactly as it did before this section.
+        watch_loop(_watch_tick, todo_root, args.quiet,
+                   history=profile.requires_history)
         return 0
     return _run_once_guarded()
 
