@@ -27,6 +27,14 @@
 # a key: only the resolver CODE varies between the two walks, so any difference
 # is attributable to it. Nothing to regenerate, nothing to go stale.
 #
+# ONE CACHE HAS EXACTLY ONE EXCEPTION, and it is not a loophole: when the
+# PRODUCER CONTRACT IDENTITY moves base..head, no single artifact is readable
+# by both readers at all, so each side reads a cache built by its own producer
+# and the producer differential -- which compares precisely the population the
+# walks consume -- is what re-establishes the identical key set. See the
+# "PRODUCER CONTRACT IDENTITY" block below for why this is the only shape that
+# can work.
+#
 # WHY NOT A PRE-COMMIT HOOK (the mechanism section 12 tried first):
 #   1. Git hooks are OPT-IN per developer (scripts/install-hooks.sh), so a hook
 #      gate protects only the authors who chose to be protected -- which is the
@@ -782,6 +790,89 @@ if [ "$BUCKETS_CHANGED" -eq 1 ] || [ "$BASE_SCHEMA" != "$HEAD_SCHEMA" ]; then
 fi
 
 # ---------------------------------------------------------------------------
+# PRODUCER CONTRACT IDENTITY, base vs head.
+#
+# `cache_schema` refuses any cache whose corpus binding declares a producer
+# identity other than the reader's own, and that check is deliberately NOT a
+# profile axis -- no reader can opt out of it. Correct for every ordinary
+# consumer, and exactly incompatible with the one-cache design below: the
+# shared cache is built by the HEAD producer, so the moment a commit moves the
+# identity, the BASE reader refuses it and the whole gate dies rc 3.
+#
+# OBSERVED, NOT PROJECTED. ebb3faf6e put the field MODES into the digest
+# payload; every push after it failed todo-graph.yml with "producer contract
+# digest 'sha256:a7cd42b3...' does not match this reader's 'sha256:c068f799...'
+# at the same cache_format_version 1" (run 31287999668, 2026-08-09). It cannot
+# self-clear either: IDENTITY_GATE_LAST_GATED_SHA only advances on a PASS, so
+# the base stays pinned before the change and every later push reproduces it.
+#
+# SPLITTING THE COMMIT CANNOT FIX IT, which is why this is not the
+# "land the data change alone" branch the protocol migration uses. The identity
+# is DECLARED IN cache_schema.py, and cache_schema.py is in the resolver
+# closure -- so a contract change is bundled with a closure change BY
+# CONSTRUCTION. A rule that refused to adjudicate the pair would refuse every
+# contract change that can ever be written.
+#
+# SO EACH SIDE READS ITS OWN PRODUCER'S CACHE, and the producer differential is
+# what makes that sound rather than a widened assertion. Its projection is the
+# stamped-ref population keyed per occurrence with `kind`/`file`/`symbol` --
+# which is EXACTLY and entirely what the walk consumes from the cache:
+# `collect()` reads `file_path` plus `stamped_items[*].{section_n,item_idx,refs}`
+# and `SectionScope` reads nothing beyond those same refs. Its `[head-corpus]`
+# leg compares the two producers over this very corpus, so a PASS says the two
+# caches are indistinguishable to the walks -- the same key-set guarantee the
+# single file gave, established by measurement instead of by construction. The
+# differential is therefore REQUIRED here, not skippable.
+# ---------------------------------------------------------------------------
+contract_of() {  # $1 = tree root -> "<version>|<digest>" | ABSENT | UNREADABLE
+    python3 - "$1" <<'PY' 2>/dev/null || echo UNREADABLE
+import importlib.util, pathlib, sys
+tg = pathlib.Path(sys.argv[1]) / "scripts/todo-graph"
+mod_path = tg / "cache_schema.py"
+# ABSENT IS A VALUE, NOT A FAILURE. A tree predating cache_schema, or predating
+# the identity fields inside it, has no producer identity to compare and no
+# check that can refuse anything -- reporting that as UNREADABLE would wedge
+# this gate against every older base, which is the failure it is here to end.
+if not mod_path.is_file():
+    print("ABSENT")
+    raise SystemExit(0)
+sys.path.insert(0, str(tg))
+spec = importlib.util.spec_from_file_location("cache_schema", mod_path)
+mod = importlib.util.module_from_spec(spec)
+sys.modules["cache_schema"] = mod
+spec.loader.exec_module(mod)
+ver = getattr(mod, "CACHE_FORMAT_VERSION", None)
+dig = getattr(mod, "PRODUCER_CONTRACT_DIGEST", None)
+if ver is None or dig is None:
+    print("ABSENT")
+    raise SystemExit(0)
+# `bool` is an `int`, and a blank digest would compare equal across two trees
+# that both failed to compute one -- either would certify a divergence away.
+if (isinstance(ver, bool) or not isinstance(ver, int)
+        or not isinstance(dig, str) or not dig):
+    print("UNREADABLE")
+    raise SystemExit(0)
+print("%d|%s" % (ver, dig))
+PY
+}
+BASE_CONTRACT="$(contract_of "$BASE_TREE")"
+HEAD_CONTRACT="$(contract_of "$REPO_ROOT")"
+# An identity this gate cannot READ is infrastructure, never "the same as the
+# other side" -- the same rule proto_of applies to the protocol constants, and
+# for the same reason: read as a value it merely compares equal and sends the
+# run down the single-cache path that cannot work.
+for _c in "$BASE_CONTRACT" "$HEAD_CONTRACT"; do
+    if [ "$_c" = "UNREADABLE" ]; then
+        die_infra "cannot read the producer contract identity from one of the trees (base='$BASE_CONTRACT' head='$HEAD_CONTRACT'); cache_schema is present but its CACHE_FORMAT_VERSION/PRODUCER_CONTRACT_DIGEST could not be evaluated"
+    fi
+done
+CONTRACT_DIVERGED=0
+if [ "$BASE_CONTRACT" != "$HEAD_CONTRACT" ]; then
+    CONTRACT_DIVERGED=1
+    log "producer contract identity CHANGED base..head (base=$BASE_CONTRACT head=$HEAD_CONTRACT): no single cache is readable by both readers, so each walk reads a cache built by its own producer and the producer differential below is REQUIRED."
+fi
+
+# ---------------------------------------------------------------------------
 # PRODUCER DIFFERENTIAL, BEFORE the resolver differential (section 18).
 #
 # The resolver differential below builds the cache ONCE and feeds it to both
@@ -800,13 +891,23 @@ fi
 # ---------------------------------------------------------------------------
 PRODUCER_BASE="$(git rev-parse --quiet --verify "$BASE_SHA:scripts/todo-graph/build.py" 2>/dev/null || echo MISSING)"
 PRODUCER_HEAD="$(git hash-object "$REPO_ROOT/scripts/todo-graph/build.py" 2>/dev/null || echo MISSING)"
-if [ "$PRODUCER_BASE" = "$PRODUCER_HEAD" ]; then
+PRODUCER_DIFF_OK=0
+# THE SKIP IS ALSO CONDITIONED ON THE CONTRACT. A byte-identical build.py still
+# emits a DIFFERENT artifact identity when cache_schema moved under it (the
+# digest is declared there, not here), and the per-side caches that divergence
+# forces are only sound because this differential proves their populations
+# equal -- so skipping here would leave the two walks comparing unproven inputs.
+if [ "$PRODUCER_BASE" = "$PRODUCER_HEAD" ] && [ "$CONTRACT_DIVERGED" -eq 0 ]; then
     log "producer differential: skipped, build.py is byte-identical base..head."
 elif [ ! -f "$BASE_TREE/scripts/todo-graph/producer_differential.py" ] \
         && [ ! -f "$REPO_ROOT/scripts/todo-graph/producer_differential.py" ]; then
     die_infra "build.py changed base..head but producer_differential.py is missing from both trees"
 else
-    log "producer differential: build.py changed; comparing both producers over both corpora..."
+    if [ "$PRODUCER_BASE" = "$PRODUCER_HEAD" ]; then
+        log "producer differential: build.py is byte-identical but the contract identity moved; running it anyway, because the per-side caches depend on its verdict..."
+    else
+        log "producer differential: build.py changed; comparing both producers over both corpora..."
+    fi
     # SAME BOUNDED, GROUP-WIDE LIFECYCLE AS THE WALKS. A plain `timeout`
     # waits forever when the monitored command ignores TERM, and this phase
     # executes the CHANGED head producer -- the code most likely to hang -- so
@@ -821,7 +922,8 @@ else
     WALK_PIDS=""
     sed 's/^/    /' "$TMP_DIR/producer.log"
     case "$PROD_RC" in
-        0) log "producer differential PASS -- both producers emit the same stamped-ref population." ;;
+        0) PRODUCER_DIFF_OK=1
+           log "producer differential PASS -- both producers emit the same stamped-ref population." ;;
         1)
             printf '[identity-gate] FAIL: the producer change altered the stamped-ref population.\n' >&2
             printf '[identity-gate] The resolver differential CANNOT see this: a ref missing from the one shared cache is missing from BOTH of its walks.\n' >&2
@@ -854,6 +956,40 @@ case "$CACHE_RC" in
 esac
 [ -s "$CACHE_ABS" ] || die_infra "cache build produced an empty file"
 
+# THE BASE SIDE'S CACHE. Identical to $CACHE_ABS in the ordinary case -- one
+# file, both walks, key set stable by construction. When the producer contract
+# identity moved, the base reader CANNOT read the head-built artifact at all,
+# so it gets one built by its own producer over THIS SAME corpus. The corpus is
+# the head corpus in both branches ($REPO_ROOT), so the only thing that varies
+# is which producer wrote the bytes -- which is exactly what the differential
+# above measured.
+BASE_CACHE_ABS="$CACHE_ABS"
+if [ "$CONTRACT_DIVERGED" -eq 1 ]; then
+    if [ "$PRODUCER_DIFF_OK" -ne 1 ]; then
+        die_infra "the producer contract identity diverged base..head, so the base walk needs a cache of its own -- but the producer differential did not pass, so nothing establishes that the two caches carry the same stamped-ref population. Refusing to differential two walks over unproven inputs."
+    fi
+    BASE_CACHE_ABS="$TMP_DIR/todo-cache-base.json"
+    # --root/--repo-root EXPLICITLY at $REPO_ROOT: the base build.py lives in
+    # the base worktree and would otherwise default to the BASE corpus, which
+    # would make the two walks read different TODO text and attribute every
+    # corpus edit to the resolver.
+    setsid timeout --kill-after=10s "$(remaining)" \
+        python3 "$BASE_TREE/scripts/todo-graph/build.py" --quiet \
+        --root "$REPO_ROOT/todo" --repo-root "$REPO_ROOT" \
+        --output "$BASE_CACHE_ABS" >"$TMP_DIR/build-base.log" 2>&1 &
+    BCACHE_PID=$!
+    WALK_PIDS="$BCACHE_PID"
+    wait "$BCACHE_PID"; BCACHE_RC=$?
+    WALK_PIDS=""
+    case "$BCACHE_RC" in
+        0) ;;
+        124|137) die_infra "the base-side cache build exceeded the ${BUDGET_SECS}s budget and was killed" ;;
+        *) die_infra "the base-side cache build failed (see $TMP_DIR/build-base.log)" ;;
+    esac
+    [ -s "$BASE_CACHE_ABS" ] || die_infra "the base-side cache build produced an empty file"
+    log "base-side cache built by the BASE producer over the HEAD corpus; the two caches are population-identical per the differential above."
+fi
+
 BASELINE="$TMP_DIR/baseline.json"
 HEADSHOT="$TMP_DIR/head.json"
 
@@ -880,7 +1016,7 @@ log "walking with BASE and HEAD resolver code concurrently (budget ${BUDGET_SECS
 # negative duration in the log line below.
 WALK_START="$(python3 -c 'import time; print(int(time.monotonic()))' 2>/dev/null || echo 0)"
 
-STUB_LINT_CACHE="$CACHE_ABS" STUB_LINT_REPO_ROOT="$REPO_ROOT" \
+STUB_LINT_CACHE="$BASE_CACHE_ABS" STUB_LINT_REPO_ROOT="$REPO_ROOT" \
     setsid timeout --kill-after=10s "$(remaining)" python3 \
     "$BASE_TREE/scripts/todo-graph/corpus_resolution_snapshot.py" \
     write "$BASELINE" >"$TMP_DIR/base-walk.log" 2>&1 &

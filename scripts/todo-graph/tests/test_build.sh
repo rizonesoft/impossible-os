@@ -8111,6 +8111,73 @@ PY2
         scripts/todo-graph/snapshot_protocol.py \
         && git commit --quiet --no-verify -am "restore after loader-divergence fixture" >/dev/null 2>&1)
 
+    # 22am / 22an: A MOVED PRODUCER CONTRACT IDENTITY MUST NOT WEDGE THE GATE.
+    # The shared cache is built by the HEAD producer, and cache_schema refuses
+    # any cache whose binding declares an identity other than the reader's own
+    # -- with no profile opt-out, by design. So the BASE reader could not read
+    # the one cache the gate builds, and the gate died rc 3 without walking
+    # anything. NOT hypothetical: ebb3faf6e moved the digest and todo-graph.yml
+    # failed on every push after it (run 31287999668, 2026-08-09), and it could
+    # not self-clear -- the last-gated SHA only advances on a PASS, so the base
+    # stayed pinned before the change.
+    #
+    # Bumping CACHE_FORMAT_VERSION is the smallest honest way to stage it: it is
+    # the documented hand-bump for a semantic change, it moves the digest (the
+    # version is inside the payload), and it touches no emission, so any verdict
+    # difference would be the gate's own doing.
+    (
+        cd "$GATE_REPO" || exit 1
+        git checkout --quiet "$G_PROTO_BASE" -- scripts/todo-graph/cache_schema.py
+        python3 - scripts/todo-graph/cache_schema.py <<'PY2'
+import sys, pathlib
+p = pathlib.Path(sys.argv[1]); s = p.read_text(encoding="utf-8")
+old = "CACHE_FORMAT_VERSION = 1"
+assert old in s, "cache format version anchor not found"
+p.write_text(s.replace(old, "CACHE_FORMAT_VERSION = 2", 1), encoding="utf-8")
+PY2
+        git commit --quiet --no-verify -am "22am: hand-bump the producer contract version" >/dev/null 2>&1
+    )
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head HEAD \
+        >"$TMP_DIR/gate-22am.log" 2>&1)
+    G_RC=$?
+    # ASSERT THE WALK HAPPENED, not merely rc 0. A gate that exited 0 down some
+    # early-exit path would satisfy the code alone while adjudicating nothing --
+    # which is the precise failure shape this whole fixture family exists for.
+    if [ "$G_RC" -eq 0 ] && grep -q 'each walk reads a cache built by its own producer' "$TMP_DIR/gate-22am.log" \
+       && grep -q 'both walks finished' "$TMP_DIR/gate-22am.log"; then
+        t_pass "identity gate: a moved producer contract identity still walks both sides"
+    else
+        t_fail "identity gate: contract-identity change not handled (rc=$G_RC; see $TMP_DIR/gate-22am.log)"
+    fi
+
+    # 22an: THE MUTATION CHECK. Disarm the divergence branch in the clone's own
+    # driver and the SAME fixture must go back to the rc 3 wedge -- otherwise
+    # 22am would pass for some unrelated reason and prove nothing about the fix.
+    python3 - "$GATE_IN_CLONE" <<'PY2'
+import sys, pathlib
+p = pathlib.Path(sys.argv[1]); s = p.read_text(encoding="utf-8")
+old = "    CONTRACT_DIVERGED=1\n"
+assert old in s, "divergence assignment anchor not found"
+p.write_text(s.replace(old, "    CONTRACT_DIVERGED=0\n", 1), encoding="utf-8")
+PY2
+    (cd "$GATE_REPO" && bash "$GATE_IN_CLONE" --base "$G_PROTO_BASE" --head HEAD \
+        >"$TMP_DIR/gate-22an.log" 2>&1)
+    G_RC=$?
+    # THE MESSAGE IS THE VERSION HALF, and that is deliberate rather than a
+    # looser match: `_check_identity` compares the version BEFORE the digest, so
+    # a hand-bump trips the first branch. CI hit the second one (a digest moved
+    # at an unchanged version) -- same check, same refusal, same wedge. Asserting
+    # the exact message this mutation produces keeps the fixture honest; if the
+    # ordering ever changes, this fails loudly instead of matching anything.
+    if [ "$G_RC" -eq 3 ] && grep -q 'this reader speaks' "$TMP_DIR/gate-22an.log"; then
+        t_pass "identity gate: mutation-check -- disarming the divergence branch restores the rc 3 wedge"
+    else
+        t_fail "identity gate: divergence branch is not load-bearing (rc=$G_RC; see $TMP_DIR/gate-22an.log)"
+    fi
+    cp "$REPO_ROOT/scripts/todo-graph/identity-gate.sh" "$GATE_IN_CLONE"
+    (cd "$GATE_REPO" && git checkout --quiet "$G_PROTO_BASE" -- scripts/todo-graph/cache_schema.py \
+        && git commit --quiet --no-verify -am "restore after contract-identity fixture" >/dev/null 2>&1)
+
     # 22ah / 22ai: THE TWO SHAPES THAT DEFEATED THE SOURCE-TEXT PROOF (section
     # 20). Both preserve behaviour, both leave the quoted bucket literal absent,
     # and both therefore PASSED section 18's retirement guard while the resolver
