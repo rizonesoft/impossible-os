@@ -116,6 +116,80 @@ OPTIONAL_FIELDS = (
 # The authored optional fields that DO reach a cache node, stated once so the
 # copy loop in `build_node` and the drop assertion beside it cannot disagree.
 _EMITTED_OPTIONAL = tuple(f for f in OPTIONAL_FIELDS if f != "$schema")
+
+# THE PRODUCER'S SIDE OF THE CONTRACT, DECLARED SO IT CAN BE COMPARED BOTH WAYS.
+# `main`'s runtime scan subtracts `EMITTED_NODE_FIELDS` from the keys actually
+# emitted, so it catches a field ADDED without being declared -- and can never
+# catch one DROPPED, because a key that stopped being emitted simply is not in
+# the set being subtracted. The digest cannot see it either: it certifies the
+# DECLARATION, so a producer that quietly stops emitting `effort` or
+# `depends_on` publishes under a perfectly valid identity and every reader falls
+# back to its default. That is the read-but-never-emitted failure this whole
+# section exists to close, reappearing one layer down (Codex adversarial,
+# section 25, [medium]).
+#
+# Note the earlier `emission-drop` check in `build_node` does NOT close this:
+# it iterates `_EMITTED_OPTIONAL`, the same list the copy loop iterates, so
+# deleting a field from `OPTIONAL_FIELDS` removes it from the copy AND from the
+# check together. Only a comparison against the SHARED declaration is
+# load-bearing, which is why these two tuples exist.
+# DERIVED FROM THE SHARED DECLARATION, never restated here. These were
+# hand-written tuples until the section-25 review, and the duplication was the
+# free parameter every version of this guard was defeated through: a category
+# could be edited on the producer side while the shared name set -- and so the
+# contract digest -- stayed identical. Now the mode lives in
+# `cache_schema.EMITTED_NODE_FIELD_MODES`, is part of the digest, and these are
+# a view of it, so there is no producer-local copy left to drift.
+def _fields_in_mode(mode: str) -> tuple:
+    return tuple(sorted(f for f, m in _cs.EMITTED_NODE_FIELD_MODES.items()
+                        if m == mode))
+
+
+_ALWAYS_EMITTED = _fields_in_mode(_cs.FIELD_ALWAYS)
+# Emitted only when non-empty, by deliberate contract (the key is omitted rather
+# than published as `[]`), so it cannot join the per-node presence check below.
+_CONDITIONAL_EMITTED = _fields_in_mode(_cs.FIELD_CONDITIONAL)
+
+# The one remaining producer-local list is the FRONTMATTER authoring surface, so
+# it is the one that still needs comparing: dropping a name from
+# `OPTIONAL_FIELDS` would stop the copy loop emitting it while the shared
+# declaration still promised it.
+if frozenset(_EMITTED_OPTIONAL) != frozenset(_fields_in_mode(_cs.FIELD_OPTIONAL)):
+    raise AssertionError(
+        "the authored optional fields and cache_schema's optional-mode fields "
+        "disagree; declared-not-authored="
+        f"{sorted(frozenset(_fields_in_mode(_cs.FIELD_OPTIONAL)) - frozenset(_EMITTED_OPTIONAL))}, "
+        "authored-not-declared="
+        f"{sorted(frozenset(_EMITTED_OPTIONAL) - frozenset(_fields_in_mode(_cs.FIELD_OPTIONAL)))}. "
+        "Both sides move together or the producer contract digest certifies a "
+        "field the producer no longer writes")
+
+# THE UNION ALONE IS NOT ENOUGH, because it flattens the EMISSION MODE. Moving
+# `sections` from `_ALWAYS_EMITTED` into `_CONDITIONAL_EMITTED` (and making its
+# assignment conditional) leaves the union identical, leaves the digest
+# identical -- the field name is still declared -- and silently removes the
+# field from the per-node presence scan, which derives from the same reduced
+# tuple. The producer would then publish nodes missing a SCHEMA-REQUIRED field
+# under a binding certifying the current contract (Codex re-adversarial,
+# section 25, round 4, [medium]).
+#
+# `cache.schema.json`'s `required` list is the authority on which fields must be
+# on every node, so the mode is CHECKED AGAINST IT rather than restated: the two
+# were byte-equal hand-written copies, and that duplication was the free
+# parameter every version of this guard was defeated through. Read from the
+# schema beside `cache_schema` (not this file's `__file__`, which the mutation
+# fixtures copy elsewhere).
+_SCHEMA_PATH = Path(_cs.__file__).resolve().parent / "schema" / "cache.schema.json"
+with open(_SCHEMA_PATH, "r", encoding="utf-8") as _sfh:
+    _SCHEMA_REQUIRED = frozenset(json.load(_sfh)["items"].get("required", ()))
+if _SCHEMA_REQUIRED != frozenset(_ALWAYS_EMITTED):
+    raise AssertionError(
+        f"_ALWAYS_EMITTED and the `required` list in {_cs.SCHEMA_REL} disagree; "
+        f"required-not-always={sorted(_SCHEMA_REQUIRED - frozenset(_ALWAYS_EMITTED))}, "
+        f"always-not-required={sorted(frozenset(_ALWAYS_EMITTED) - _SCHEMA_REQUIRED)}. "
+        f"A field the schema REQUIRES must be emitted on every node, so it "
+        f"cannot be reclassified as conditional without the schema saying so")
+
 SUPPORTED_SCHEMA_VERSION = 1
 
 # Gantt row duration (TODO-06 section 25). `render.py` has read this field
@@ -1227,6 +1301,28 @@ def build_node(file_path: Path, repo_root: Path, timestamps: dict, content: str)
     stamped_items = extract_stamped_items(body, rel)
     if stamped_items:
         node["stamped_items"] = stamped_items
+    # A CONDITIONAL EMISSION IS STILL AN EMISSION, and this is the only place
+    # the expectation exists. `stamped_items` is excluded from the per-node
+    # presence check in `main` -- correctly, since its absence is legitimate for
+    # a TODO with no `[x]` items -- so neither that scan nor the undeclared-key
+    # scan nor the contract digest can see the assignment above being deleted:
+    # every node would simply lack the key and all three checks would pass.
+    #
+    # That failure is FAIL-OPEN rather than merely lossy, which is why it earns
+    # a check of its own. `check_stub_behind_stamp.py` reads an all-absent
+    # population as REASON_LEGACY_NO_STAMPED_ITEMS (rc 3), and
+    # `scripts/lint.sh:574` downgrades rc 3 to a WARNING -- so a producer
+    # regression here does not break the build, it silently DISABLES lint
+    # Check 7 (stub-behind-stamp) while reporting a cache that predates an
+    # extension it in fact implements (Codex re-adversarial, section 25,
+    # [medium]).
+    if stamped_items and "stamped_items" not in node:
+        errors.append(
+            ("emission-drop",
+             f"{rel}: {len(stamped_items)} stamped item(s) were extracted but "
+             f"did not reach the cache node; lint Check 7 would read the "
+             f"resulting cache as legacy and DOWNGRADE ITSELF TO A WARNING "
+             f"rather than report the producer regression"))
 
     return node, errors
 
@@ -1594,6 +1690,32 @@ def main():
             f"cache_schema.EMITTED_NODE_FIELDS; declare them there (which moves "
             f"{_cs.PRODUCER_CONTRACT_DIGEST_KEY}) and add them to "
             f"{_cs.SCHEMA_REL}; cache NOT written\n")
+        return 1
+
+    # THE OTHER DIRECTION, AND IT IS THE ONE THE DIGEST CANNOT SEE. The scan
+    # above only subtracts, so it catches an undeclared ADDITION. A key dropped
+    # from the node literal in `build_node` while `_ALWAYS_EMITTED` still
+    # declares it publishes a node the readers expect a field on, under an
+    # identity that still certifies the old field set -- so every reader takes
+    # its default and nothing reports the loss. Checked per node rather than
+    # over the union, because a field missing from ONE node is the same defect
+    # arriving on one file.
+    #
+    # `_CONDITIONAL_EMITTED` is deliberately excluded: `stamped_items` is
+    # omitted when empty by contract, so its absence is not evidence of
+    # anything. The import-time equality assert beside its declaration is what
+    # keeps it from silently leaving the contract.
+    missing = sorted({k for k in _ALWAYS_EMITTED
+                      for n in nodes if k not in n})
+    if missing:
+        offenders = sorted({n.get("file_path") or "<unknown>" for n in nodes
+                            if any(k not in n for k in _ALWAYS_EMITTED)})[:3]
+        sys.stderr.write(
+            f"[build.py] FAIL: node key(s) {missing} are declared in "
+            f"_ALWAYS_EMITTED but absent from emitted node(s) (e.g. "
+            f"{offenders}); the producer stopped writing a field the contract "
+            f"digest still certifies, so every reader would silently take its "
+            f"default; cache NOT written\n")
         return 1
 
     # `sort_keys=True` for byte-identical re-runs; trailing newline so the

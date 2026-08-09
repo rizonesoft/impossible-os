@@ -165,17 +165,79 @@ _MAX_SECTION_N = 65535
 # reader that can be handed an unidentifiable cache.
 CACHE_FORMAT_VERSION = 1
 
-# Every key the producer may place on a node. `build.py` imports this and
-# refuses to emit a node carrying anything outside it, so the declaration and
-# the emission cannot drift apart silently; `cache.schema.json` lists the same
-# names with their types. Adding a field here is a STRUCTURAL change and moves
-# the digest, which is the intended migration path.
-EMITTED_NODE_FIELDS = frozenset((
-    "id", "schema_version", "domain", "status", "title", "file_path",
-    "created_at", "last_active_at", "effort", "owners", "depends_on",
-    "satisfies", "superseded_by", "file_patterns", "sections",
-    "section_headings", "inputs_xrefs", "stamps_xrefs", "stamped_items",
-))
+# Every key the producer may place on a node, WITH THE MODE IT IS EMITTED IN.
+# `build.py` imports this and refuses to emit a node carrying anything outside
+# it, so the declaration and the emission cannot drift apart silently;
+# `cache.schema.json` lists the same names with their types. Adding a field here
+# is a STRUCTURAL change and moves the digest, which is the intended migration
+# path.
+#
+# THE MODE IS PART OF THE DECLARATION, not a build.py-local detail, and that is
+# a section-25 review correction. A bare name set FLATTENS requiredness, so a
+# coordinated edit could move `sections` from always-emitted to conditional --
+# in the producer's tuples AND in `cache.schema.json`'s `required` list -- and
+# every check still passed: the name set was unchanged, so the union assert
+# held and `PRODUCER_CONTRACT_DIGEST` was identical. Nodes missing a formerly
+# required field then published under the SAME identity as the old contract, so
+# a reader could not tell the two apart and fell through to a shape refusal or a
+# silent default (Codex re-adversarial, section 25, rounds 4-5, [medium]).
+#
+# Reclassification is exactly the "keeps its name and type, changes its meaning"
+# case the hand-bumped `CACHE_FORMAT_VERSION` is meant to cover -- but the whole
+# reason a digest sits beside that integer is that humans forget it. Putting the
+# mode in the digest moves this class out of the remembers-to-bump bucket and
+# into the machine-catches bucket, which is the split the two values exist for.
+FIELD_ALWAYS = "always"            # on every node; mirrors cache.schema.json `required`
+FIELD_CONDITIONAL = "conditional"  # emitted only when non-empty, by contract
+FIELD_OPTIONAL = "optional"        # copied from frontmatter when authored
+
+EMITTED_NODE_FIELD_MODES = {
+    "id": FIELD_ALWAYS,
+    "schema_version": FIELD_ALWAYS,
+    "domain": FIELD_ALWAYS,
+    "status": FIELD_ALWAYS,
+    "title": FIELD_ALWAYS,
+    "file_path": FIELD_ALWAYS,
+    "created_at": FIELD_ALWAYS,
+    "last_active_at": FIELD_ALWAYS,
+    "sections": FIELD_ALWAYS,
+    "section_headings": FIELD_ALWAYS,
+    "inputs_xrefs": FIELD_ALWAYS,
+    "stamps_xrefs": FIELD_ALWAYS,
+    "stamped_items": FIELD_CONDITIONAL,
+    "effort": FIELD_OPTIONAL,
+    "owners": FIELD_OPTIONAL,
+    "depends_on": FIELD_OPTIONAL,
+    "satisfies": FIELD_OPTIONAL,
+    "superseded_by": FIELD_OPTIONAL,
+    "file_patterns": FIELD_OPTIONAL,
+}
+EMITTED_NODE_FIELDS = frozenset(EMITTED_NODE_FIELD_MODES)
+
+# THE MODE DOMAIN IS CLOSED, and this assert is what makes the derived sets an
+# exhaustive PARTITION rather than three filters that happen to cover the map.
+# Every producer-side guard selects by exact mode equality, so a value outside
+# the three -- a plain typo, `"conditionl"` -- puts a field in none of the
+# always/conditional/optional sets while leaving it in `EMITTED_NODE_FIELDS`.
+# The name-set check still passes, the schema-required and optional-frontmatter
+# comparisons still pass because neither set changed, and the digest happily
+# hashes the unrecognized mode: the contract is certified and the field is
+# guarded by nothing, so a later lost emission is invisible again (Codex
+# re-adversarial, section 25, round 6, [medium]).
+_FIELD_MODES = frozenset((FIELD_ALWAYS, FIELD_CONDITIONAL, FIELD_OPTIONAL))
+_BAD_MODES = sorted((f, m) for f, m in EMITTED_NODE_FIELD_MODES.items()
+                    if m not in _FIELD_MODES)
+if _BAD_MODES:
+    raise AssertionError(
+        f"EMITTED_NODE_FIELD_MODES declares unknown mode(s) {_BAD_MODES}; "
+        f"every value must be one of {sorted(_FIELD_MODES)}, or the field is "
+        f"certified by the contract digest while no producer guard selects it")
+_PARTITION = frozenset(
+    f for f, m in EMITTED_NODE_FIELD_MODES.items() if m in _FIELD_MODES)
+if _PARTITION != EMITTED_NODE_FIELDS:
+    raise AssertionError(
+        f"the always/conditional/optional sets do not cover "
+        f"EMITTED_NODE_FIELDS; unguarded={sorted(EMITTED_NODE_FIELDS - _PARTITION)}")
 
 # Sidecar keys carrying the identity. Named constants because the producer
 # writes them and this module reads them; a retyped literal on one side is how
@@ -196,6 +258,11 @@ def _producer_contract_digest() -> str:
     payload = json.dumps({
         "cache_format_version": CACHE_FORMAT_VERSION,
         "node_fields": sorted(EMITTED_NODE_FIELDS),
+        # MODES TOO, so a required-to-conditional reclassification moves the
+        # digest even though the name set is untouched. `node_fields` is kept
+        # alongside rather than derived from this, so the payload still states
+        # the name set explicitly and a mode map that lost a key changes both.
+        "node_field_modes": sorted(EMITTED_NODE_FIELD_MODES.items()),
     }, sort_keys=True, separators=(",", ":"))
     return "sha256:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
@@ -1875,6 +1942,11 @@ def check_freshness(cache_path: Path, todo_root: Path, cache_bytes: bytes,
         try:
             raw = _read_bounded(side, _MAX_SIDECAR_BYTES, "corpus binding")
         except FileNotFoundError:
+            # STANDALONE PATH ONLY. Every read that arrives through
+            # `_load_and_validate` has already been refused by
+            # `check_cache_format`, which sees the same absence earlier and
+            # reports it as LEGACY_FORMAT; this branch survives for fixtures
+            # and callers that invoke freshness directly.
             _err(REASON_STALE,
                  f"cache carries no corpus binding ({side.name} is absent) -- it "
                  f"predates the section 21 producer contract, was copied without "
@@ -2041,18 +2113,34 @@ def check_cache_format(cache_path: Path, cache_bytes: bytes,
     ownership rule section 23 already established -- a historical `--diff`
     baseline in this state is refused with its bytes intact, never overwritten.
 
-    A PRESENT BINDING IS ALWAYS CHECKED; `require_binding` decides only what an
-    ABSENT one means, and it is DERIVED from `check_stale` rather than declared
-    per caller. So NO read path can reach `validate_nodes` from an artifact that
-    declares no producer contract:
+    A PRESENT BINDING IS ALWAYS CHECKED; `require_binding` decides only the
+    REASON an absent one carries, and it is DERIVED from `check_stale` rather
+    than declared per caller. Either way the refusal happens HERE, so no read
+    path can reach `validate_nodes` from an artifact that declares no producer
+    contract:
 
-    - Freshness ON: an absent binding is already fatal in `check_freshness`,
-      whose message describes the situation better than anything here. This
-      stays quiet and lets that fire, so an unbound cache still reports STALE
-      rather than flipping to a format complaint.
     - Freshness OFF (`validate.py --diff`, `query.py` with an explicit
       non-canonical `--cache`, `check_consumer_delegation`): nothing else in
-      the read will ever look at the binding, so an absent one refuses HERE.
+      the read will ever look at the binding.
+    - Freshness ON: `check_freshness` would ALSO reject it later, but later is
+      after `validate_nodes`.
+
+    THE ORDERING IS THE FIX; THE REASON IS UNIFORM. An earlier draft returned
+    quietly under freshness-ON and left the refusal to `check_freshness`, which
+    runs AFTER the node walk -- so an unbound cache that ALSO violated a subtree
+    was reported as SHAPE, sending the operator after a corpus fault when the
+    artifact in fact declared no contract at all, and every node was walked
+    before the read was refused regardless (Codex adversarial, section 25,
+    [medium]).
+
+    Refusing HERE as `REASON_STALE` was tried next and was WRONG, which the
+    recovery fixtures caught: STALE is deliberately absent from
+    `validate.py:_REBUILDABLE_REASONS` so a missed rebuild is reported rather
+    than silently regenerated, and routing an unbound cache there converted a
+    RECOVERABLE legacy artifact into a hard refusal -- the auto-rebuild of the
+    one cache this repo owns stopped happening, and the MCP transport's
+    structured-error envelope changed shape. `REASON_LEGACY_FORMAT` is both the
+    honest description (no declared contract) and the rebuildable route.
 
     A PER-CALLER FLAG WAS TRIED FIRST AND WAS WRONG, which is worth recording
     because it is the same conflation the generation binding at the foot of
@@ -2079,13 +2167,24 @@ def check_cache_format(cache_path: Path, cache_bytes: bytes,
     try:
         raw = _read_bounded(side, _MAX_SIDECAR_BYTES, "corpus binding")
     except FileNotFoundError:
-        if not require_binding:
-            return None
+        # ONE REASON FOR ONE CONDITION, and `require_binding` selects only the
+        # explanatory clause. An absent binding means the artifact declares no
+        # producer contract, which is a fact about the ARTIFACT and does not
+        # change because this particular read also intends to check the corpus.
+        # LEGACY_FORMAT is also the reason that keeps the recovery honest: it
+        # is rebuildable, so `validate.py` regenerates the ONE cache it owns
+        # (`_REBUILDABLE_REASONS`) instead of refusing, while STALE is
+        # deliberately non-rebuildable and would have converted a recoverable
+        # legacy cache into a hard stop.
+        why = (f"freshness is disabled for this read, so the binding is the "
+               f"only evidence of which contract wrote it"
+               if require_binding else
+               f"it predates the section 21 producer contract, was copied "
+               f"without its binding, or was written by a producer that "
+               f"refused to certify it")
         _err(REASON_LEGACY_FORMAT,
              f"cache carries no corpus binding ({side.name} is absent), so it "
-             f"declares no producer contract: {cache_path}; freshness is "
-             f"disabled for this read, so the binding is the only evidence of "
-             f"which contract wrote it; {_REBUILD}")
+             f"declares no producer contract: {cache_path}; {why}; {_REBUILD}")
     except OSError as exc:
         _err(REASON_LEGACY_FORMAT,
              f"corpus binding unreadable: {side}: {exc}")

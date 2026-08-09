@@ -2178,13 +2178,30 @@ root = pathlib.Path(sys.argv[1])
 shutil.copy(root / "cache.json", root / "build" / "todo-cache.json")
 ns = argparse.Namespace(limit=5, scope=None, fields=None, offset=None, days=None)
 body = m._call_query("stats", ns, root, False)
-print(json.dumps({"body": body.strip()[:200], "is_empty_array": body.strip() == "[]"}))
+# THE PARSED ENVELOPE, NOT A PREFIX OF ITS TEXT. This used to ship
+# `body.strip()[:200]` and grep it for the substring "error" -- but the body is
+# dumped with sort_keys=True, so `detail` comes first and a longer refusal
+# message pushes the `error` KEY past the truncation. The fixture then failed on
+# a perfectly correct envelope while a body that merely mentioned the word
+# "error" inside `detail` would have passed. Assert the structure this case is
+# actually named for (Codex adversarial, section 25 review).
+try:
+    parsed = json.loads(body)
+except ValueError:
+    parsed = None
+print(json.dumps({
+    "keys": sorted(parsed) if isinstance(parsed, dict) else None,
+    "error": parsed.get("error") if isinstance(parsed, dict) else None,
+    "is_empty_array": body.strip() == "[]",
+}))
 MCPEOF
 ); MCPQ_RC=$?
 if [ "$MCPQ_RC" = "0" ] && echo "$MCPQ_OUT" | python3 -c "
 import json, sys
 d = json.loads(sys.stdin.read())
-sys.exit(0 if not d['is_empty_array'] and 'error' in d['body'] else 1)"; then
+sys.exit(0 if not d['is_empty_array'] and d['keys'] is not None
+         and 'error' in d['keys'] and 'reason' in d['keys'] and d['error']
+         else 1)"; then
     t_pass "query/MCP: an unusable cache surfaces as a structured error, never as []"
 else
     t_fail "query/MCP: unusable cache leaked through the transport (rc=$MCPQ_RC, out=$MCPQ_OUT)"
@@ -10234,6 +10251,14 @@ MD
 # destroys uncommitted work, which this repo has paid for once already.
 cp "$REPO_ROOT/scripts/todo-graph/build.py" "$PW_TREE/mut/scripts/todo-graph/build.py"
 cp "$REPO_ROOT/scripts/todo-graph/cache_schema.py" "$PW_TREE/mut/scripts/todo-graph/cache_schema.py"
+# The SCHEMA travels with them. build.py cross-checks _ALWAYS_EMITTED against
+# the `required` list in schema/cache.schema.json, resolved beside the
+# cache_schema module it imports -- so a mut tree carrying the two .py files and
+# not the contract they are checked against is an INCOMPLETE install, and every
+# producer-window mutant died on FileNotFoundError instead of running.
+mkdir -p "$PW_TREE/mut/scripts/todo-graph/schema"
+cp "$REPO_ROOT/scripts/todo-graph/schema/cache.schema.json" \
+   "$PW_TREE/mut/scripts/todo-graph/schema/cache.schema.json"
 PW_MUT_OK=$(python3 - "$PW_TREE/mut/scripts/todo-graph/build.py" <<'PY'
 import pathlib, sys
 p = pathlib.Path(sys.argv[1])
@@ -12787,14 +12812,23 @@ sch = json.load(open('$REPO_ROOT/docs/infrastructure/todo-metadata.schema.json')
 prop = sch['properties'].get('effort')
 if not prop:
     print('UNDECLARED'); raise SystemExit
-rx = re.compile(prop['pattern'])
+from jsonschema import Draft202012Validator
+_v = Draft202012Validator(prop)
 def sch_ok(v):
-    return isinstance(v, str) and bool(rx.match(v)) and rx.match(v).end() == len(v)
+    # THROUGH THE REAL VALIDATOR, not a hand-rolled re-implementation of it.
+    # This used to compile prop['pattern'] itself and additionally require
+    # match.end() == len(v), which MASKED the divergence it exists to catch:
+    # jsonschema evaluates the pattern with Python re, whose \$ also matches
+    # before a trailing newline, so the schema accepted '2w\n' while the
+    # producer refused it and this fixture reported AGREE (Codex consistency,
+    # section 25, [medium]). Only the validator's own verdict is evidence.
+    return _v.is_valid(v)
 def prod_ok(v):
     fm = {'schema_version': 1, 'id': 'x-y', 'domain': 'd', 'status': 'draft',
           'title': 't', 'effort': v}
     return not [m for c, m in b.validate_frontmatter(fm) if c == 'invalid-field']
-bad = [repr(v) for v in ('1w', '3d', '12w', '0d', '007w', '4mo', '', '2 w', 'x')
+bad = [repr(v) for v in ('1w', '3d', '12w', '0d', '007w', '4mo', '', '2 w', 'x',
+                         '2w\n', '2w\r\n', '\n2w')
        if sch_ok(v) != prod_ok(v)]
 extra = [repr(v) for v in (None, 7, True) if prod_ok(v)]
 print('AGREE' if not bad and not extra else 'DISAGREE:' + ','.join(bad + extra))")
@@ -12900,6 +12934,255 @@ if [ "$S25CO" = "AGREE" ]; then
     t_pass "section 25: the frontmatter schema and build.py forbid the same cache-only fields"
 else
     t_fail "section 25: cache-only contract disagrees ($S25CO)"
+fi
+
+# Sub-test 25g1: BOTH published schemas refuse a trailing-newline effort THROUGH
+# THE VALIDATOR THAT ACTUALLY RUNS. JSON Schema pins no regex engine and the two
+# that read these files disagree on `$`: ECMA anchors at end-of-input, Python's
+# `re` also matches before a final newline, so an anchored-only pattern accepts
+# "2w\n" -- the exact value the grammar exists to refuse, because render.py
+# interpolates it into a mermaid row where a newline ends the row early.
+S25NL=$(python3 -c "
+import json
+from jsonschema import Draft202012Validator
+out = []
+for p, dig in (('$REPO_ROOT/docs/infrastructure/todo-metadata.schema.json', ('properties',)),
+               ('$REPO_ROOT/scripts/todo-graph/schema/cache.schema.json', ('items', 'properties'))):
+    node = json.load(open(p))
+    for k in dig:
+        node = node[k]
+    v = Draft202012Validator(node['effort'])
+    for val, want in (('2w', True), ('3d', True), ('2w\n', False),
+                      ('2w\r\n', False), ('2w\r', False), ('4mo', False)):
+        if v.is_valid(val) != want:
+            out.append(f'{p.split(chr(47))[-1]}:{val!r}')
+print('REFUSED' if not out else 'ACCEPTED:' + ','.join(out))")
+if [ "$S25NL" = "REFUSED" ]; then
+    t_pass "section 25: both schemas refuse a trailing-newline effort through Draft202012Validator"
+else
+    t_fail "section 25: a schema accepts an embedded-newline effort ($S25NL)"
+fi
+
+# 25g1-mutation: strip the `not` clause and the Python validator must ACCEPT
+# "2w\n" again. Without this control the fixture above would still pass on a
+# pattern-only property under an engine whose `$` happens to be strict, which
+# is how the divergence hid in the first place.
+S25NLM=$(python3 -c "
+import json
+from jsonschema import Draft202012Validator
+node = json.load(open('$REPO_ROOT/docs/infrastructure/todo-metadata.schema.json'))['properties']['effort']
+if 'not' not in node:
+    print('NO-CLAUSE'); raise SystemExit
+mut = {k: v for k, v in node.items() if k != 'not'}
+print('ACCEPTED' if Draft202012Validator(mut).is_valid('2w\n') else 'STILL-REFUSED')")
+if [ "$S25NLM" = "ACCEPTED" ]; then
+    t_pass "section 25: mutation check -- dropping the not-clause restores the newline hole"
+else
+    t_fail "section 25: newline mutation gave '$S25NLM' (want ACCEPTED)"
+fi
+
+# Sub-test 25g2: the producer contract is checked in BOTH directions. main()'s
+# runtime scan subtracts EMITTED_NODE_FIELDS from the emitted keys, so it can
+# only ever see an undeclared ADDITION; a field the producer stops emitting is
+# invisible to it AND to the digest, which certifies the declaration rather than
+# the emission. A dropped `effort` would then publish under a valid identity and
+# every reader would silently take its default.
+S25BD=$(python3 - "$REPO_ROOT" <<'S25BDEOF'
+import os, pathlib, subprocess, sys, tempfile
+repo = pathlib.Path(sys.argv[1])
+tg = repo / "scripts/todo-graph"
+src = (tg / "build.py").read_text()
+env = dict(os.environ, PYTHONPATH=str(tg))
+d = pathlib.Path(tempfile.mkdtemp())
+
+def load(text):
+    p = d / "probe_build.py"
+    p.write_text(text)
+    r = subprocess.run([sys.executable, str(p), "--help"],
+                       capture_output=True, text=True, cwd=str(repo), env=env)
+    return r.returncode, r.stderr
+
+rc, _ = load(src)
+if rc != 0:
+    print("CONTROL-FAILED"); raise SystemExit
+# The producer-side authoring list is the only field list left in build.py, so
+# it is the only one a build.py mutation can drift.
+survived = []
+needle = '_EMITTED_OPTIONAL = tuple(f for f in OPTIONAL_FIELDS if f != "$schema")'
+if src.count(needle) != 1:
+    survived.append("drop-optional:needle-miss")
+else:
+    rc, err = load(src.replace(
+        needle,
+        '_EMITTED_OPTIONAL = tuple(f for f in OPTIONAL_FIELDS '
+        'if f not in ("$schema", "effort"))', 1))
+    if rc == 0 or "optional-mode" not in err:
+        survived.append("drop-optional")
+
+# THE COORDINATED RECLASSIFICATION, which is the one no equality check can see.
+# Moving `sections` from always-emitted to conditional in the SHARED
+# declaration AND dropping it from cache.schema.json's `required` list leaves
+# every name set identical, so the union assert and the schema cross-check both
+# pass. Only the digest can refuse it, and only because the MODE is hashed --
+# so this case asserts the identity MOVES, which is what forces a reader to
+# treat the two contracts as different (Codex re-adversarial, round 5).
+cs_src = (tg / "cache_schema.py").read_text()
+mode_needle = '    "sections": FIELD_ALWAYS,\n'
+if cs_src.count(mode_needle) != 1:
+    survived.append("reclassify:needle-miss")
+else:
+    md = pathlib.Path(tempfile.mkdtemp())
+    (md / "cache_schema.py").write_text(
+        cs_src.replace(mode_needle, '    "sections": FIELD_CONDITIONAL,\n', 1))
+    probe = (
+        "import sys; sys.path.insert(0, %r); sys.path.insert(1, %r)\n"
+        "import cache_schema as m\n"
+        "print(m.PRODUCER_CONTRACT_DIGEST)\n" % (str(md), str(tg)))
+    (md / "probe_digest.py").write_text(probe)
+    r = subprocess.run([sys.executable, str(md / "probe_digest.py")],
+                       capture_output=True, text=True, cwd=str(repo))
+    real = subprocess.run(
+        [sys.executable, "-c",
+         "import sys; sys.path.insert(0, %r); import cache_schema as m; "
+         "print(m.PRODUCER_CONTRACT_DIGEST)" % str(tg)],
+        capture_output=True, text=True, cwd=str(repo))
+    if r.returncode != 0 or real.returncode != 0:
+        survived.append("reclassify:probe-failed")
+    elif r.stdout.strip() == real.stdout.strip():
+        survived.append("reclassify")
+
+# AN UNKNOWN MODE, which is the typo case. Every producer guard selects by exact
+# mode equality, so a misspelled value leaves the field declared in
+# EMITTED_NODE_FIELDS and selected by NOTHING -- name set unchanged, schema and
+# optional comparisons unchanged, digest happily hashing the bad value. The
+# module must refuse to import rather than certify a field nothing guards.
+typo_needle = '    "stamped_items": FIELD_CONDITIONAL,\n'
+if cs_src.count(typo_needle) != 1:
+    survived.append("unknown-mode:needle-miss")
+else:
+    td = pathlib.Path(tempfile.mkdtemp())
+    (td / "cache_schema.py").write_text(
+        cs_src.replace(typo_needle, '    "stamped_items": "conditionl",\n', 1))
+    r = subprocess.run(
+        [sys.executable, "-c",
+         "import sys; sys.path.insert(0, %r); sys.path.insert(1, %r); "
+         "import cache_schema" % (str(td), str(tg))],
+        capture_output=True, text=True, cwd=str(repo))
+    if r.returncode == 0 or "unknown mode" not in r.stderr:
+        survived.append("unknown-mode")
+print("REFUSED" if not survived else "SURVIVED:" + ",".join(survived))
+S25BDEOF
+)
+if [ "$S25BD" = "REFUSED" ]; then
+    t_pass "section 25: mutation check -- a dropped optional refuses at import, a reclassified field moves the digest"
+else
+    t_fail "section 25: producer declaration drift not caught ($S25BD)"
+fi
+
+# Sub-test 25g3: IDENTITY BEFORE SHAPE holds when the binding is ABSENT, not
+# only when it is present and wrong. check_cache_format used to return quietly
+# under freshness-ON and leave the refusal to check_freshness, which runs AFTER
+# validate_nodes -- so an unbound cache that also violated a subtree was
+# reported as SHAPE, sending the operator after a corpus fault when the artifact
+# declared no producer contract at all. The reason stays STALE (the honest
+# repair for the canonical cache is a rebuild); only the ORDERING moved.
+S25IO=$(python3 - "$REPO_ROOT" <<'S25IOEOF'
+import hashlib, json, pathlib, subprocess, sys, tempfile
+repo = pathlib.Path(sys.argv[1])
+tg = repo / "scripts/todo-graph"
+sys.path.insert(0, str(tg))
+import cache_schema as cs
+
+tmp = pathlib.Path(tempfile.mkdtemp())
+todo = tmp / "todo"; (todo / "01-x").mkdir(parents=True)
+(todo / "01-x" / "TODO-01-a.md").write_text(
+    "---\nschema_version: 1\nid: probe-a\ndomain: 01-x\nstatus: active\n"
+    "title: \"A\"\n---\n\n# A\n")
+out = tmp / "todo-cache.json"
+r = subprocess.run([sys.executable, str(tg / "build.py"), "--root", str(todo),
+                    "--repo-root", str(tmp), "--output", str(out), "--quiet"],
+                   capture_output=True, text=True)
+if r.returncode != 0:
+    print("FIXTURE-BUILD-FAILED"); raise SystemExit
+nodes = json.loads(out.read_text())
+nodes[0]["inputs_xrefs"] = "not-a-list"          # a genuine SHAPE violation
+blob = (json.dumps(nodes, indent=2, sort_keys=True) + "\n").encode()
+real = json.loads(next(tmp.glob("todo-cache.json.corpus-*.json")).read_text())
+
+def reason(bind):
+    d = pathlib.Path(tempfile.mkdtemp())
+    c = d / "todo-cache.json"; c.write_bytes(blob)
+    if bind:
+        rec = dict(real); rec["cache_sha256"] = hashlib.sha256(blob).hexdigest()
+        cs.sidecar_path(c, rec["cache_sha256"]).write_text(json.dumps(rec))
+    try:
+        cs.load_and_validate(c, todo, check_stale=True,
+                             profile=cs.PROFILE_VALIDATE)
+        return "NO-REFUSAL"
+    except cs.CacheSchemaError as exc:
+        return exc.reason
+
+absent, present = reason(False), reason(True)
+# LEGACY_FORMAT, not STALE: the absence is a missing producer contract, and it
+# must stay in validate.py's _REBUILDABLE_REASONS so the one cache this repo
+# owns is still auto-rebuilt rather than hard-refused.
+# The CONTROL is the second one: a bound cache with the same violation must
+# still report SHAPE, or the fix has degenerated into refusing everything.
+print("OK" if absent == cs.REASON_LEGACY_FORMAT and present == cs.REASON_SHAPE
+      else f"absent={absent} present={present}")
+S25IOEOF
+)
+if [ "$S25IO" = "OK" ]; then
+    t_pass "section 25: an absent binding refuses before the node walk, and a bound cache still reports SHAPE"
+else
+    t_fail "section 25: identity-before-shape ordering wrong ($S25IO)"
+fi
+
+# Sub-test 25g4: the CONDITIONAL emission is guarded too. `stamped_items` is
+# declared in the contract but emitted only when a TODO has `[x]` items, so it
+# is deliberately outside main()'s per-node presence check -- which left a
+# fail-open hole: delete the assignment and every node simply lacks the key, so
+# the undeclared-key scan, the presence scan and the digest all pass. The result
+# is not a broken build but a SILENTLY DISABLED lint Check 7, because an
+# all-absent population reads as REASON_LEGACY_NO_STAMPED_ITEMS -> rc 3 ->
+# warning (scripts/lint.sh:574).
+S25CE=$(python3 - "$REPO_ROOT" <<'S25CEEOF'
+import json, os, pathlib, subprocess, sys, tempfile
+repo = pathlib.Path(sys.argv[1])
+tg = repo / "scripts/todo-graph"
+env = dict(os.environ, PYTHONPATH=str(tg))
+d = pathlib.Path(tempfile.mkdtemp())
+todo = d / "todo"; (todo / "01-x").mkdir(parents=True)
+# A body with a STAMPED item, so the extractor returns something to drop.
+(todo / "01-x" / "TODO-01-a.md").write_text(
+    "---\nschema_version: 1\nid: probe-ce\ndomain: 01-x\nstatus: active\n"
+    "title: \"A\"\n---\n\n# A\n\n## 1. One\n\n- [x] did a thing in `build.py`\n")
+
+def run(text, out):
+    p = d / "probe_build.py"; p.write_text(text)
+    r = subprocess.run([sys.executable, str(p), "--root", str(todo),
+                        "--repo-root", str(d), "--output", str(out), "--quiet"],
+                       capture_output=True, text=True, cwd=str(repo), env=env)
+    return r.returncode, r.stderr
+
+src = (tg / "build.py").read_text()
+rc, err = run(src, d / "c.json")
+if rc != 0:
+    print("CONTROL-FAILED:" + err.strip()[-120:]); raise SystemExit
+if "stamped_items" not in json.loads((d / "c.json").read_text())[0]:
+    print("CONTROL-NO-STAMPED-ITEMS"); raise SystemExit
+
+needle = '    if stamped_items:\n        node["stamped_items"] = stamped_items\n'
+if src.count(needle) != 1:
+    print("NEEDLE-MISS"); raise SystemExit
+rc, err = run(src.replace(needle, "", 1), d / "m.json")
+print("REFUSED" if rc != 0 and "emission-drop" in err else f"PUBLISHED(rc={rc})")
+S25CEEOF
+)
+if [ "$S25CE" = "REFUSED" ]; then
+    t_pass "section 25: mutation check -- dropping the conditional stamped_items emission refuses the build"
+else
+    t_fail "section 25: conditional emission drop not caught ($S25CE)"
 fi
 
 # ----------------------------------------------------------------------

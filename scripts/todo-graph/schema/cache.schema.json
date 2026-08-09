@@ -71,6 +71,10 @@
       "effort": {
         "type": "string",
         "pattern": "^[1-9][0-9]*[dw]$",
+        "not": {
+          "pattern": "[\\r\\n]"
+        },
+        "$comment": "The `not` clause mirrors docs/infrastructure/todo-metadata.schema.json and is required for the same reason: Python's re -- the engine jsonschema uses -- matches `$` before a trailing newline, so the anchored pattern alone ACCEPTS \"2w\\n\" while cache_schema.EFFORT_REGEX (`\\Z`) refuses it. The renderer interpolates this value straight into a mermaid Gantt row, where an embedded newline ends the row early (Codex consistency, TODO-06 section 25, [medium]).",
         "description": "Optional Gantt row duration copied from the TODO's frontmatter: whole days or whole weeks, e.g. '3d' or '2w'. Deliberately narrower than Mermaid's full duration grammar -- every unit this rejects is one that cannot reach the emitted gantt line. Absent means the renderer's 1w default; a present-but-invalid value is refused by build.py rather than defaulted, because silently defaulting hides a typo behind a plausible schedule (TODO-06 section 25)."
       },
       "owners": {

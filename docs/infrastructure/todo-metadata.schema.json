@@ -91,6 +91,10 @@
         "effort": {
             "type": "string",
             "pattern": "^[1-9][0-9]*[dw]$",
+            "not": {
+                "pattern": "[\\r\\n]"
+            },
+            "$comment": "The `not` clause is load-bearing and is NOT redundant with the anchored pattern. JSON Schema does not pin a regex engine, and the two that validate this file disagree on `$`: ECMA-262 without the `m` flag anchors at end-of-input, but Python's `re` -- which jsonschema.Draft202012Validator uses, the validation path docs/infrastructure/todo-metadata.md documents -- also matches immediately before a trailing newline, so `^[1-9][0-9]*[dw]$` ACCEPTS \"2w\\n\" there. cache_schema.EFFORT_REGEX refuses it via `\\Z`, so without this clause the schema would approve a value build.py rejects, which is the exact two-layer divergence this property exists to prevent (Codex consistency review of the cache-format identity work, [medium]). An explicit CR/LF exclusion says the same thing in every engine.",
             "description": "Gantt row duration read by the visualization emitter: whole days or whole weeks, e.g. '3d' or '2w'. Deliberately narrower than Mermaid's full duration grammar -- every unit this rejects is one that cannot reach the emitted gantt line, and the renderer interpolates the value directly into a row. Absent means the renderer's 1w default; a present-but-invalid value FAILS the build rather than defaulting, because a silent default hides a typo behind a plausible schedule. This property is load-bearing because additionalProperties is true here: without it, editor-time and ad-hoc jsonschema validation would approve effort values (null, 7, '4mo') that scripts/todo-graph/build.py refuses, which is precisely the two-layer split this schema exists to keep honest."
         }
     },
