@@ -3592,6 +3592,327 @@ else
     t_fail "validate: ambiguous-binding refusal or specific-form resolution broken"
 fi
 
+# Sub-test 9aa16b: A DOMAIN CODE IS NOT A DIRECTORY (section 26). Two digits are
+# a PREFIX of the directory name, so `14-alpha` and `14-beta` share the code
+# `14` -- and every branch that reduced a reference to `(code, number)` threw
+# the directory away. Order-independence is the property under test, so EVERY
+# case runs with the nodes forward and reversed: a binding decided by cache row
+# order passes half the time, which is how this survived §22's collision sweep.
+#
+# Two distinct defects, and the second is the worse one:
+#   ORDER-DEPENDENT -- `D14` and the named `14-alpha` returned whichever
+#   directory the cache listed first; a coin flip.
+#   FLATLY WRONG -- `14-alpha/TODO-02`, `T02`, `TODO-02` and
+#   `../14-alpha/TODO-02` returned `14-beta`'s file in BOTH orders. The
+#   reference named its directory and was answered with a different one, which
+#   no amount of reordering reveals.
+if python3 - "$REPO_ROOT" <<'DIRCODEEOF'
+import sys, pathlib
+repo = pathlib.Path(sys.argv[1])
+sys.path.insert(0, str(repo / "scripts" / "todo-graph"))
+import validate as V
+
+def node(path, ident):
+    return {"file_path": path, "id": ident, "domain": path.split("/")[1],
+            "status": "draft", "title": ident, "sections": [],
+            "created_at": "2026-04-01T00:00:00Z",
+            "last_active_at": "2026-04-01T00:00:00Z",
+            "inputs_xrefs": [], "stamps_xrefs": []}
+
+alpha = node("todo/14-alpha/TODO-01-a.md", "a")
+beta = node("todo/14-beta/TODO-02-b.md", "b")
+SRC = "todo/14-alpha/TODO-01-a.md"
+A, B = alpha["file_path"], beta["file_path"]
+CASES = [
+    # Compact code-only: two directories own `14`, so there is no answer.
+    ("D14", None),
+    # A NAMED directory resolves to ITSELF, in either order.
+    ("14-alpha", "todo/14-alpha/INDEX.md"),
+    ("14-alpha/INDEX.md", "todo/14-alpha/INDEX.md"),
+    ("14-beta", "todo/14-beta/INDEX.md"),
+    # Directory-qualified file refs: alpha holds no TODO-02, so alpha/TODO-02
+    # is unresolved -- NOT beta's file.
+    ("14-alpha/TODO-02", None),
+    ("14-beta/TODO-02", B),
+    ("14-alpha/TODO-02-b.md", None),
+    ("14-beta/TODO-02-b.md", B),
+    # Same-DIRECTORY compact forms, resolved against the source's own folder.
+    ("T02", None), ("T01", A), ("TODO-02", None), ("TODO-01", A),
+    # Relative forms normalize to a directory and must obey the same rule.
+    ("../14-alpha/TODO-02", None), ("../14-beta/TODO-02", B),
+    # A directory nothing indexes must not borrow a sibling code's existence.
+    ("../14-ghost/INDEX.md", None),
+    ("../14-beta/INDEX.md", "todo/14-beta/INDEX.md"),
+    # A RELATIVE path that SPELLS a filename is decided by that filename. The
+    # slugless number lookup at the end of the relative branch used a regex
+    # (`^TODO-(\d{1,2})(?:-|\.md|$)`) that also matched a fully spelled name, so
+    # a relative target naming no existing file was answered by whichever TODO
+    # carried its number in that directory.
+    ("../14-alpha/TODO-01-missing.md", None),
+    ("../14-alpha/TODO-01-a.md", A),
+]
+for label, nodes in (("forward", [alpha, beta]), ("reversed", [beta, alpha])):
+    p, i = V.build_path_index(nodes), V.build_id_index(nodes)
+    for tok, want in CASES:
+        got = V.resolve_xref_target(tok, SRC, i, p)
+        assert got == want, f"[{label}] {tok!r} -> {got!r}, expected {want!r}"
+
+# THE SINGLE-DIRECTORY CODE IS UNTOUCHED, which is the live corpus's shape --
+# a fix that removed the wrong answer by refusing everything would pass every
+# assertion above and break the whole corpus.
+solo = [node("todo/02-kernel-core/TODO-19-foo.md", "k")]
+p, i = V.build_path_index(solo), V.build_id_index(solo)
+S = solo[0]["file_path"]
+for tok, want in (("D02", "todo/02-kernel-core/INDEX.md"),
+                  ("02-kernel-core", "todo/02-kernel-core/INDEX.md"),
+                  ("D02T19", S), ("02-kernel-core/TODO-19", S),
+                  ("02-kernel-core/TODO-19-foo.md", S), ("T19", S),
+                  ("TODO-19", S), ("TODO-19-foo", S),
+                  ("../02-kernel-core/TODO-19", S)):
+    got = V.resolve_xref_target(tok, S, i, p)
+    assert got == want, f"[single-dir] {tok!r} -> {got!r}, expected {want!r}"
+
+# LETTER-NUMBERED FILES OBEY THE SAME RULE (Codex adversarial, section 26).
+# Branch 4c qualified its candidates by the two-digit code, so a reference that
+# named its directory AND spelled its stem in full still crossed directories:
+# `14-alpha/TODO-A-beta.md` returned beta's file in both orders.
+la = node("todo/14-alpha/TODO-A-alpha.md", "la")
+lb = node("todo/14-beta/TODO-A-beta.md", "lb")
+for label, nodes in (("forward", [la, lb]), ("reversed", [lb, la])):
+    p, i = V.build_path_index(nodes), V.build_id_index(nodes)
+    for src, tok, want in (
+            (la["file_path"], "14-alpha/TODO-A-beta.md", None),
+            (la["file_path"], "14-alpha/TODO-A-alpha.md", la["file_path"]),
+            (la["file_path"], "14-beta/TODO-A-beta.md", lb["file_path"]),
+            # The same-DIRECTORY preference for an unqualified letter token:
+            # each source resolves to the file in its own folder, which is what
+            # makes the common in-folder reference deterministic.
+            (la["file_path"], "TODO-A", la["file_path"]),
+            (lb["file_path"], "TODO-A", lb["file_path"])):
+        got = V.resolve_xref_target(tok, src, i, p)
+        assert got == want, f"[letter {label}] {tok!r} from {src} -> {got!r}, want {want!r}"
+
+# A DIRECTORY WHOSE ONLY FILE IS LETTER-NUMBERED IS STILL A DIRECTORY. Deriving
+# membership inside the numeric-key branch hid it: `D14` saw the code as owning
+# ONE directory and answered confidently with the wrong one, while `14-beta`
+# was refused although its node was indexed -- a wrong answer and an
+# over-refusal from a single omission (Codex adversarial, section 26,
+# [medium]).
+mixed_a = node("todo/14-alpha/TODO-01-a.md", "ma")
+mixed_b = node("todo/14-beta/TODO-A-table.md", "mb")
+for label, nodes in (("forward", [mixed_a, mixed_b]),
+                     ("reversed", [mixed_b, mixed_a])):
+    p, i = V.build_path_index(nodes), V.build_id_index(nodes)
+    assert p["by_code"]["14"] == frozenset({"14-alpha", "14-beta"}), p["by_code"]
+    for tok, want in (("D14", None),
+                      ("14-beta", "todo/14-beta/INDEX.md"),
+                      ("14-beta/INDEX.md", "todo/14-beta/INDEX.md"),
+                      ("14-alpha", "todo/14-alpha/INDEX.md")):
+        got = V.resolve_xref_target(tok, mixed_a["file_path"], i, p)
+        assert got == want, f"[mixed {label}] {tok!r} -> {got!r}, expected {want!r}"
+
+# A FULLY SPELLED NUMERIC FILENAME IS DECIDED BY ITS SLUG, not by its number.
+# Branch 5a matched the token and resolved `(source directory, NN)`, discarding
+# the authored slug -- which also made the exact-stem branches below
+# unreachable for every numeric filename. Live consequence, reproduced against
+# the real corpus before this fixture was written:
+# `TODO-05-win32-file-io-api.md` cited from `todo/02-kernel-core/TODO-21-...`
+# resolved to `todo/02-kernel-core/TODO-05-object-manager.md` (Codex
+# re-adversarial, section 26 round 3, [high]).
+spelled = [node("todo/02-kernel-core/TODO-05-object-manager.md", "om"),
+           node("todo/05-storage-filesystems/TODO-05-win32-file-io-api.md", "fio"),
+           node("todo/02-kernel-core/TODO-21-process-model.md", "pm")]
+for label, nodes in (("forward", spelled), ("reversed", spelled[::-1])):
+    p, i = V.build_path_index(nodes), V.build_id_index(nodes)
+    SRC5 = "todo/02-kernel-core/TODO-21-process-model.md"
+    # The named file wins even though a same-numbered sibling sits in the
+    # SOURCE's own directory -- that sibling is exactly what used to answer.
+    for tok in ("TODO-05-win32-file-io-api.md", "TODO-05-win32-file-io-api"):
+        got = V.resolve_xref_target(tok, SRC5, i, p)
+        assert got == "todo/05-storage-filesystems/TODO-05-win32-file-io-api.md", \
+            f"[spelled {label}] {tok!r} -> {got!r}"
+    # The same-directory file still resolves by its own spelled name...
+    assert V.resolve_xref_target("TODO-05-object-manager.md", SRC5, i, p) \
+        == "todo/02-kernel-core/TODO-05-object-manager.md"
+    # ...and the BARE number still means "my own directory's number 5".
+    assert V.resolve_xref_target("TODO-05", SRC5, i, p) \
+        == "todo/02-kernel-core/TODO-05-object-manager.md"
+    # A stem NO FILE CARRIES is a stale reference, and refusing is the whole
+    # point: falling back to the number is how a renamed or deleted target
+    # silently redirects to whichever TODO inherited its number.
+    assert V.resolve_xref_target("TODO-05-renamed-since.md", SRC5, i, p) is None
+
+# DUPLICATE SPELLED STEMS: prefer the source's own directory, refuse otherwise.
+dup5 = [node("todo/14-alpha/TODO-07-shared-name.md", "d1"),
+        node("todo/14-beta/TODO-07-shared-name.md", "d2"),
+        node("todo/02-kernel-core/TODO-09-elsewhere.md", "d3")]
+for label, nodes in (("forward", dup5), ("reversed", dup5[::-1])):
+    p, i = V.build_path_index(nodes), V.build_id_index(nodes)
+    assert V.resolve_xref_target("TODO-07-shared-name.md",
+                                 "todo/14-alpha/TODO-01-x.md", i, p) \
+        == "todo/14-alpha/TODO-07-shared-name.md", label
+    # From a third directory neither copy is preferred, so it must refuse
+    # rather than pick one.
+    assert V.resolve_xref_target("TODO-07-shared-name.md",
+                                 "todo/02-kernel-core/TODO-09-elsewhere.md",
+                                 i, p) is None, label
+
+# A MARKDOWN LINK IS UNWRAPPED BEFORE THE FRAGMENT IS STRIPPED. `fix_line_numbers`
+# captures an XREF token with `(\S+)`, so a whole `[text](url)` reaches the
+# resolver; stripping `#` first turned `[T](x.md#sec)` into the unmatchable
+# `[T](x.md` and refused every ANCHORED link, which is the commonest shape in
+# this corpus (Codex re-adversarial, section 26 round 6).
+lk = [node("todo/01-test/TODO-01-a.md", "lka"), node("todo/01-test/TODO-02-b.md", "lkb")]
+p, i = V.build_path_index(lk), V.build_id_index(lk)
+LSRC = "todo/01-test/TODO-01-a.md"
+for tok, want in (("[TODO-02](TODO-02-b.md)", "todo/01-test/TODO-02-b.md"),
+                  ("[TODO-02](TODO-02-b.md#section)", "todo/01-test/TODO-02-b.md"),
+                  ("[TODO-02](01-test/TODO-02-b.md#6-x)", "todo/01-test/TODO-02-b.md"),
+                  # A label carrying its own brackets must not truncate the match.
+                  ("[`TODO-02 §6`](01-test/TODO-02-b.md)", "todo/01-test/TODO-02-b.md"),
+                  # No destination, and a same-document jump, name no FILE.
+                  ("[TODO-02]()", None),
+                  ("[TODO-02](#anchor)", None)):
+    got = V.resolve_xref_target(tok, LSRC, i, p)
+    assert got == want, f"[md-link] {tok!r} -> {got!r}, expected {want!r}"
+
+# THE COLLISION RULE IS SPELLING-INVARIANT. Section 22 refuses a reference into
+# a `(domain, number)` slot two files share, but that refusal was reachable only
+# through the branches consulting `by_dn`: the same target spelled as a bare
+# stem, a relative path or a full path resolved anyway, so surface form decided
+# safety (Codex re-adversarial, section 26 round 6).
+coll2 = [node("todo/19-x/TODO-01-first.md", "c1"),
+         node("todo/19-x/TODO-01-second.md", "c2")]
+for label, nodes in (("forward", coll2), ("reversed", coll2[::-1])):
+    p, i = V.build_path_index(nodes), V.build_id_index(nodes)
+    for tok in ("19-x/TODO-01-first.md", "TODO-01-first.md",
+                "./TODO-01-first.md", "todo/19-x/TODO-01-first.md",
+                "[x](todo/19-x/TODO-01-first.md)"):
+        got = V.resolve_xref_target(tok, "todo/19-x/TODO-02-r.md", i, p)
+        assert got is None, f"[collision {label}] {tok!r} resolved to {got!r}"
+# CONTROL: without a collision every one of those spellings must still resolve,
+# or the rule above would be indistinguishable from refusing everything.
+solo2 = [node("todo/19-x/TODO-01-only.md", "s1")]
+p, i = V.build_path_index(solo2), V.build_id_index(solo2)
+for tok in ("19-x/TODO-01-only.md", "TODO-01-only.md", "./TODO-01-only.md",
+            "todo/19-x/TODO-01-only.md"):
+    got = V.resolve_xref_target(tok, "todo/19-x/TODO-02-r.md", i, p)
+    assert got == "todo/19-x/TODO-01-only.md", f"[collision control] {tok!r} -> {got!r}"
+
+# `_all_paths` is PRECOMPUTED, and the accessor still answers for an index
+# built by hand -- the test suite builds one, and an empty answer there would
+# refuse every path-form reference.
+full = V.build_path_index([alpha, beta])
+assert full["all_paths"] == frozenset({A, B}), full["all_paths"]
+assert isinstance(full["all_paths"], frozenset)
+assert V._all_paths({"by_filename": {"TODO-01-a": A}, "stem_paths": {}}) == {A}
+
+# THE HAND-BUILT FALLBACK IS TESTED IN BOTH DIRECTIONS. Asserting only the
+# case that should RESOLVE is what let the fallback keep answering
+# `14-alpha/TODO-02` with beta's file: it reached `by_dn` on the code alone,
+# so the one path with no fixture pressure still ran the old rule (Codex
+# re-adversarial, section 26). A negative case is what makes this a test.
+manual = {"by_filename": {}, "by_dn": {("14", 2): B}}
+assert V.resolve_xref_target("14-beta/TODO-02", SRC, {}, manual) == B
+assert V.resolve_xref_target("14-alpha/TODO-02", SRC, {}, manual) is None
+assert V.resolve_xref_target("14-alpha/TODO-02-b.md", SRC, {}, manual) is None
+# Compact and bare forms resolve against the SOURCE directory, so an alpha
+# source must not reach beta's file through the fallback either.
+assert V.resolve_xref_target("T02", SRC, {}, manual) is None
+assert V.resolve_xref_target("TODO-02", SRC, {}, manual) is None
+assert V.resolve_xref_target("T02", B, {}, manual) == B
+DIRCODEEOF
+then
+    t_pass "validate: domain codes resolve by directory, not by cache order (both orders)"
+else
+    t_fail "validate: domain-code-to-directory resolution broken"
+fi
+
+# Sub-test 9aa16c: MUTATION CHECK. Restore the first-match scan in the one
+# branch that is purely order-dependent and the reversed-order case must FAIL.
+# A fixture that cannot be made to fail is not a fixture -- and this family is
+# especially exposed to that, because half of these assertions would also pass
+# against a resolver that simply refused everything.
+if python3 - "$REPO_ROOT" <<'DIRMUTEOF'
+import importlib.util, shutil, sys, pathlib, tempfile
+repo = pathlib.Path(sys.argv[1])
+tg = repo / "scripts" / "todo-graph"
+sys.path.insert(0, str(tg))
+import validate as V
+
+def node(path, ident):
+    return {"file_path": path, "id": ident, "domain": path.split("/")[1],
+            "status": "draft", "title": ident, "sections": [],
+            "created_at": "2026-04-01T00:00:00Z",
+            "last_active_at": "2026-04-01T00:00:00Z",
+            "inputs_xrefs": [], "stamps_xrefs": []}
+
+alpha = node("todo/14-alpha/TODO-01-a.md", "a")
+beta = node("todo/14-beta/TODO-02-b.md", "b")
+
+# THE MUTATION IS THE OLD CODE: answer a named directory by scanning for the
+# first node whose two-digit prefix matches. Applied to the live module rather
+# than to a copy, so it exercises the shipped resolver's own call path.
+def first_match_scan(path_index, dir_name):
+    for (d, _n), fp in path_index["by_dn"].items():
+        if d == dir_name[:2]:
+            return str(pathlib.PurePosixPath(fp).parent) + "/INDEX.md"
+    return None
+
+original = V._dir_index_path
+V._dir_index_path = first_match_scan
+try:
+    answers = []
+    for nodes in ([alpha, beta], [beta, alpha]):
+        p, i = V.build_path_index(nodes), V.build_id_index(nodes)
+        answers.append(V.resolve_xref_target("14-alpha", nodes[0]["file_path"], i, p))
+finally:
+    V._dir_index_path = original
+
+# The defect IS the disagreement: same reference, same corpus, two answers.
+assert answers[0] != answers[1], (
+    "mutation did not reintroduce order dependence -- the fixture proves nothing: "
+    + repr(answers))
+assert "14-beta" in answers[1], answers
+
+# And with the mutation reverted, the reversed order answers alpha again.
+p, i = V.build_path_index([beta, alpha]), V.build_id_index([beta, alpha])
+assert V.resolve_xref_target("14-alpha", alpha["file_path"], i, p) \
+    == "todo/14-alpha/INDEX.md"
+
+# SECOND MUTATION: the RELATIVE spelled-filename repair, which the mutation
+# above cannot reach (it swaps `_dir_index_path` only). Restoring the
+# slug-permitting regex must make a relative reference to a nonexistent file
+# bind to the same-numbered neighbour again -- otherwise nothing here proves
+# that one-character-class change is load-bearing.
+src = pathlib.Path(tg / "validate.py").read_text(encoding="utf-8")
+OLD_RE = r'num_m = re.match(r"^TODO-(\d{1,2})(?:\.md)?$", tail)'
+NEW_RE = r'num_m = re.match(r"^TODO-(\d{1,2})(?:-|\.md|$)", tail)'
+assert OLD_RE in src, "relative slugless anchor not found -- fixture is inert"
+mut_dir = pathlib.Path(tempfile.mkdtemp())
+for f in ("cache_schema.py", "ref_resolution.py", "resolve_symbol.py",
+          "snapshot_protocol.py", "snapshot_protocol.json"):
+    if (tg / f).exists():
+        shutil.copy(tg / f, mut_dir / f)
+(mut_dir / "validate.py").write_text(src.replace(OLD_RE, NEW_RE, 1), encoding="utf-8")
+sys.path.insert(0, str(mut_dir))
+spec = importlib.util.spec_from_file_location("validate_relmut", mut_dir / "validate.py")
+MUT = importlib.util.module_from_spec(spec)
+sys.modules["validate_relmut"] = MUT
+spec.loader.exec_module(MUT)
+p, i = MUT.build_path_index([alpha, beta]), MUT.build_id_index([alpha, beta])
+leaked = MUT.resolve_xref_target("../14-alpha/TODO-01-missing.md",
+                                 alpha["file_path"], i, p)
+assert leaked == alpha["file_path"], (
+    "restoring the slug-permitting relative regex did NOT reintroduce the wrong "
+    "binding, so the fixture proves nothing: " + repr(leaked))
+DIRMUTEOF
+then
+    t_pass "validate: mutation-check -- the first-match scan reintroduces the order-dependent answer"
+else
+    t_fail "validate: domain-code mutation check did not flip the verdict"
+fi
+
 # Sub-test 9aa17: ONE token normalization, so ambiguity classification and
 # resolution cannot disagree. They were two ordered strip chains that had to
 # stay identical and did not: classification stripped backticks then commas in

@@ -74,9 +74,10 @@ title: "TODO-06 -- TODO Metadata Layer and Derived Graph"
 | ⭐  |  23   |   §23   | `validate.py` rebuild recovery + `--diff` baseline profile (split from §19)         | §19, §3    |  [x]   |
 | ⭐  |  24   |   §24   | The history-identity cost decision: `requires_history` for the query profile        | §21, §22   |  [x]   |
 | ⭐  |  25   |   §25   | Fields the readers consume that the producer never emits (`effort`, `depends_on`)   | §2, §7     |  [x]   |
-| ⭐  |  26   |   §26   | Domain codes resolve by directory, not by cache order (found by §22 round 7)        | §3, §22    |  [ ]   |
+| ⭐  |  26   |   §26   | Domain codes resolve by directory, not by cache order (found by §22 round 7)        | §3, §22    |  [x]   |
 | ⭐  |  27   |   §27   | Effective-history identity: replace refs, grafts, watch-mode trigger (from §24)     | §21, §24   |  [ ]   |
 | ⭐  |  28   |   §28   | Section-level readiness: verbs that consult the dependency evidence the graph has   | §25, §26   |  [ ]   |
+| ⭐  |  29   |   §29   | `--fix-line-numbers` reports success over targets it could not resolve              | §23, §26   |  [ ]   |
 
 > 💎 = parity work -- Linux kernel has MAINTAINERS + get_maintainer.pl (person-ownership mapping without a dep graph); Windows has no public equivalent. §1 (frontmatter), §2 (generator), §5 (migration) bring us to partial Linux parity plus graph metadata neither OS ships.
 > ⭐ = competitive edge -- neither Win11 nor mainline Linux ships a first-class TODO dependency graph. §3 (validator), §4 (query CLI), §6 (CI gate), §7 (visualization), §8 (MCP server) are new ground; the surface has direct value for any contributor scanning "what can I work on next?".
@@ -1319,21 +1320,37 @@ Found on 2026-08-07 while routing `query.py` through the shared validator (§22)
 
 Found on 2026-08-07 by §22's round-7 review, in the one `resolve_xref_target` branch that survived that section's collision sweep. Both domain-only branches answer by SCANNING `by_dn` for the first entry whose two-digit prefix matches, so they return an arbitrary member whenever a code maps to more than one directory. §22 closed every other arbitrary-member path in the resolver; this one needs a new index rather than a guard, which is why it is filed instead of fixed there.
 
-- [ ] Index domain CODES to their full set of parent directories
+- [x] Index domain CODES to their full set of parent directories, and resolve every directory-qualified form through the DIRECTORY
       `validate.py` resolves `D14` and a named domain path by iterating `path_index["by_dn"]` and returning the first `fp` whose `d == dom`. With `todo/14-alpha/TODO-01-a.md` and `todo/14-beta/TODO-02-b.md` both present, `D14` resolves to alpha or beta purely by node order -- and the EXPLICIT token `14-alpha` resolves to beta when beta is inserted first, which is a wrong binding rather than a coin flip.
       - §22's `_validate_resolver_keys_unique` does NOT catch this: the `(domain, number)` keys differ (`('14',1)` vs `('14',2)`), so the cache is valid. The collision is in the code-to-DIRECTORY mapping, which nothing indexes today.
       - Fix direction: build `{domain_code: {parent_dirs}}` alongside `by_dn`. A named domain path must match its parent directory exactly; compact `D14` resolves only when the code owns exactly one directory, and otherwise returns None.
       - The live corpus has one directory per code, so this refuses nothing today -- it removes a silent wrong answer that appears the moment a second directory shares a code.
       - §22's review reproduced it concretely: with `todo/01-a/TODO-01-a.md` and `todo/01-b/TODO-02-b.md`, resolving the EXPLICIT target `01-b/INDEX.md` returns `todo/01-a/INDEX.md`, and reversing cache order reverses the answer. `_validate_resolver_keys_unique` cannot catch it -- the `(domain, number)` keys differ, so the cache is valid.
-- [ ] Precompute the path set the resolver rebuilds per reference
+      - SHIPPED WIDER THAN FILED, because the review found the same substitution in five more branches. `build_path_index` now emits `by_dirnum {(dir,num): path}`, `by_code {code: {dirs}}` and `dir_paths {dir: parent}` with their own collision sets; `D<code>` resolves only when the code owns exactly one directory; `T<n>` and bare `TODO-<n>` resolve against the source file's own DIRECTORY rather than its two digits; and the letter branch qualifies by directory too.
+      - A SPELLED FILENAME IS DECIDED BY ITS SLUG, with no number fallback -- the rule §22 already applied to spelled letter targets. Branches 4a/5a and the relative form reduced `TODO-05-win32-file-io-api.md` to `(dir, 5)`, so it was answered by `TODO-05-object-manager.md`. Measured old-vs-new over all 4,480 live targets: 6 rebound, every one from a wrong file to the file it names; 0 lost, 0 gained.
+      - The corpus debt this exposed was repaired in two separate `todo:` commits (188 pre-renumber directory names; 8 references naming files that do not exist), each green under the OLD resolver so neither is entangled with this change.
+- [x] Precompute the path set the resolver rebuilds per reference
       `_all_paths` (`validate.py:315-328`) walks every indexed path to build a fresh set on each call, and `resolve_xref_target` calls it for relative/path-like references once per graph edge, turning those cases from O(E) into O(E*V). Owned here because this section is already rebuilding that index, so the set lands beside `by_dn` rather than being bolted on afterwards.
       - Measured 2026-08-08: only ~5-6ms today (78 of 2,895 resolution calls take the path), but a synthetic path-heavy corpus went 45.9ms at 500 nodes to 1.815s at 4,000 -- 39.5x for 8x the input. It is a scaling cliff, not a current cost.
       - Compute it ONCE in `build_path_index` and store it in `path_index`, so every membership test is O(1) and no caller can reintroduce the rebuild.
-- [ ] Fixtures in BOTH node orders, each mutation-checked
+      - Shipped as a `frozenset` under `all_paths`, read through the existing `_all_paths` accessor so a hand-built index still answers. Measured old vs new: 29.3ms -> 9.9ms at 500 nodes and 1604.5ms -> 78.5ms at 4,000. The old curve grows 55x for 8x the input, the new one 7.9x -- the cliff is gone, not merely shifted.
+- [x] Fixtures in BOTH node orders, each mutation-checked
       Order-independence is the property under test, so every case runs with the nodes forward and reversed: `D14` with two directories refuses, `14-alpha` resolves to alpha regardless of insertion order, and a single-directory code still resolves both forms. Mutation: restore the first-match scan and require the reversed-order case to FAIL.
-- [ ] Commit: `"todo-graph: domain codes resolve by directory, not by cache order"`
+      - Shipped as sub-tests 9aa16b/9aa16c in `scripts/todo-graph/tests/test_build.sh`: 16 cases x 2 orders, plus a single-directory set proving the live corpus shape is untouched (a fix that refused everything would pass the order assertions), letter-numbered and letter-only-sibling cases, spelled-stem cases, and both directions of the hand-built-index fallback.
+      - The mutation restores the first-match scan on the live module and asserts the two orders DISAGREE, so the fixture fails if the fix is reverted. 464/464 `test_build.sh`, 1319/1319 `test-tooling.sh`.
+- [x] Commit: `"todo-graph: domain codes resolve by directory, not by cache order"`
 
 **Test checkpoint:** a domain code owning two directories refuses the compact form and resolves each named form to its own directory, in both node orders; a single-directory code is unaffected; `bash scripts/todo-graph/tests/test_build.sh` and `bash scripts/test-tooling.sh` green.
+
+> **Test runner:** `bash scripts/todo-graph/tests/test_build.sh` (sub-tests 9aa16b/9aa16c) -- expect 464/464; full gate `bash scripts/test-tooling.sh` expect 1319/1319.
+
+> **Notes:**
+> - `build_path_index` keys directories directly (`by_dirnum`, `by_code`, `dir_paths`, each with a collision set) and precomputes `all_paths` as a frozenset.
+> - Six resolver branches substituted a two-digit code for a directory, not the three filed here; three were flatly wrong rather than order-dependent.
+> - A spelled filename now resolves by its exact stem with no number fallback -- the rule §22 already applied to spelled letter targets.
+> - Downstream: `docs/infrastructure/todo-graph.md` regenerates with four corrected edges. Over all 4,480 live targets: 6 rebound, 0 lost, 0 gained.
+> - The corpus debt this exposed landed as two separate `todo:` commits, each verified green under the pre-change resolver.
+> - Scope boundary: no new reference form is accepted, and `by_dn` keeps its code-keyed answer for genuinely code-qualified `D<dd>T<nn>`.
 
 -> XREF: [`TODO-06 §22`](#22-querypy-fail-closed-through-every-transport) -- the section that found this and closed every OTHER arbitrary-member path in the resolver (item: "Route `query.py` through the shared validator, fail-closed"); it made `by_dn`, `by_filename` and the letter branch collision-aware and deliberately left this one, which needs a new index.
 -> XREF: [`TODO-06 §3`](#3-validator-stale-xref--dangling-dep--orphan--cycle--bat--status--schema) -- the validator that owns `resolve_xref_target` and reports the stale-XREF findings this changes (item: "Commit: `\"todo-graph: validator with 8 integrity checks\"`"); that section is stamped, so the repair is owned here.
@@ -1401,6 +1418,31 @@ The reason this is NOT a small change, and why §25 refused to make it: the two 
 -> XREF: [`TODO-06 §26`](#26-domain-code-resolution-picks-a-directory-by-cache-order) -- BLOCKER: qualified target resolution (item: "Commit: `\"todo-graph: domain codes resolve by directory, not by cache order\"`"); this section cannot start until a bare `TODO-NN` resolves to one file rather than to whichever the cache order happened to keep.
 -> XREF: [`TODO-06 §25`](#25-fields-the-readers-consume-that-the-producer-never-emits) -- the section that measured the gap and chose to state it rather than paper over it (item: "File-level `depends_on` is pinned as the ONE readiness source, and its emptiness is now visible"); it deliberately shipped the caveat and left the capability here.
 -> XREF: [`TODO-06 §4`](#4-query-cli-ready--blocked--blocking--by-domain--backlinks--deferred--orphans--stale--stats--code) -- the stamped section that owns the existing verbs (item: "Commit: `\"scripts/todo-graph: add query CLI (ready, blocked, blocking, by-domain, backlinks, deferred, orphans, stale, stats, code)\"`"); it is stamped, so new verbs are owned here rather than filed into it.
+
+---
+
+## 29. `--fix-line-numbers` Reports Success Over Targets It Could Not Resolve
+
+> **Spawned-by:** §26 (review)
+
+Found by §26's round-6 review while that section was tightening the resolver. Two properties of repair mode are independent of the resolver and were not introduced by §26, so they are filed here rather than folded into it: the repair counts unresolvable targets and then discards the count, and it will operate on a graph whose resolver keys collide. Both are pre-existing; §26 only made them legible by making the resolver refuse rather than guess.
+
+- [ ] `main()` must not exit 0 when `fix_line_numbers` reported unresolvable targets
+      `fix_line_numbers` returns `(updates, ambiguities, unresolvable, report)` (`scripts/todo-graph/validate.py:1358`) and its caller drops the third value, so a run that resolved NOTHING still exits 0 and the automatic repair hook records success while every stale line number survives.
+      - Reproduced during §26: with the resolver refusing a malformed token, the probe printed `1 unresolvable target(s)` and `rc=0` in the same breath.
+      - Decide the contract first: an unresolvable target is arguably a WARNING when the operator asked only to fix what it could. State the chosen rule where a reader will find it, then make the exit code match it.
+- [ ] Repair mode must refuse a corpus whose `(directory, number)` slots collide
+      `--fix-line-numbers` checks duplicate IDs only. A colliding slot makes a rewrite destination ambiguous, and the resolver now refuses every spelling of such a target -- so repair can be asked to rewrite against a graph it cannot resolve.
+      - `check_duplicate_resolver_key(nodes)` already computes exactly this; the work is calling it up front and choosing the exit code.
+      - `cache_schema` refuses such a cache at load, so this is defence in depth rather than a live hole -- size the work accordingly.
+- [ ] One repair-mode fixture per spelling, against the same collision
+      Qualified, bare-spelled, relative-spelled and full-path forms of one target, so a future change cannot make repair-mode safety depend on surface form again. Mutation: revert the up-front refusal and require the fixture to fail.
+- [ ] Commit: `"todo-graph: repair mode fails visibly on targets it cannot resolve"`
+
+**Test checkpoint:** a repair run over a corpus with one unresolvable target exits non-zero (or warns, per the recorded contract) instead of 0; a repair run over a resolver-key-colliding corpus refuses up front; `bash scripts/todo-graph/tests/test_build.sh` green.
+
+-> XREF: [`TODO-06 §26`](#26-domain-code-resolution-picks-a-directory-by-cache-order) -- the section whose review found this (item: "Commit: `\"todo-graph: domain codes resolve by directory, not by cache order\"`"); it fixed the RESOLVER and deliberately left repair-mode's exit contract alone, because that is a decision about what `--fix-line-numbers` promises rather than about what a reference means.
+-> XREF: [`TODO-06 §23`](#23-validatepy-rebuild-recovery-and-the-baseline-cache) -- the section that owns `validate.py`'s recovery and repair surface (item: "Commit: `\"todo-graph: validate.py rebuild recovery + baseline cache\"`"); it is stamped, so this residue is owned here rather than appended to it.
 
 ---
 
