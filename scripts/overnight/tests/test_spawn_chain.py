@@ -83,6 +83,39 @@ def test_a_split_is_not_recursion():
     assert ch3[6][2] >= sm.SPAWN_CHAIN_LIMIT, ch3
 
 
+def test_depth_reaches_the_manifest_where_the_decision_is_made():
+    """The counter was correct and consulted by NOBODY: its only readers were
+    two CLI verbs nothing calls automatically, so a run could sit at depth 3 and
+    never learn it. The manifest (and through it the section-pack summary a
+    fresh worker reads to orient) now carries `spawn_chain`, and a chain at the
+    limit carries the note. INFORMATION, not a gate -- refusing here would push
+    a legitimate finding into a park, and parks in closed sections are the 60
+    stranded items this whole change set exists to stop creating."""
+    import json, subprocess, sys, tempfile, os
+    body = ("# T\n\n## Implementation Order\n\n| x | 1 | s1 | d | -- | [x] |\n\n"
+            "## 1. Root\n\n- [x] a\n\n"
+            "## 2. Two\n\n> **Spawned-by:** section 1 (review)\n\n- [x] a\n\n"
+            "## 3. Three\n\n> **Spawned-by:** section 2 (review)\n\n- [x] a\n\n"
+            "## 4. Four\n\n> **Spawned-by:** section 3 (review)\n\n- [ ] work\n")
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        (root / "todo/00-infrastructure").mkdir(parents=True)
+        (root / "todo/00-infrastructure/TODO-01-x.md").write_text(body, encoding="utf-8")
+        def manifest(n):
+            r = subprocess.run(
+                [sys.executable, str(HERE.parent / "section-manifest.py"),
+                 "todo/00-infrastructure/TODO-01-x.md", str(n), "--project", str(root)],
+                capture_output=True, text=True, cwd=str(root))
+            return json.loads(r.stdout)
+        assert manifest(1)["spawn_chain"] is None, "a root must report no chain"
+        two = manifest(2)
+        assert two["spawn_chain"]["review_depth"] == 1, two["spawn_chain"]
+        assert "note" not in two["spawn_chain"], "a shallow chain needs no nag"
+        four = manifest(4)
+        assert four["spawn_chain"]["review_depth"] == 3, four["spawn_chain"]
+        assert "user_impact" in four["spawn_chain"]["note"], four["spawn_chain"]
+
+
 def test_root_is_a_declarable_provenance():
     """`(root)` had to become sayable before provenance could be REQUIRED --
     otherwise a genuinely independent section has to invent a parent. It

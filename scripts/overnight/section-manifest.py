@@ -418,8 +418,29 @@ def main(argv) -> int:
         "waiver_required": bool(split_reasons),
     }
 
+    # PROVENANCE OF THIS SECTION, surfaced where the decision is actually made.
+    # The spawn-chain depth was computed correctly and consulted by nobody: the
+    # only readers were two CLI verbs nothing calls automatically, so a run
+    # could sit at depth 3 and never learn it. This is deliberately INFORMATION,
+    # not a gate -- a refusal here would push a legitimate finding into a park,
+    # and parks in closed sections are the 60 stranded items this whole change
+    # set exists to stop creating. The run decides; it just decides knowing.
+    _chains = spawn_chains(text.split("\n"))
+    _mine = _chains.get(n)
+    spawn = None
+    if _mine:
+        spawn = {"parent": _mine[0], "kind": _mine[1], "review_depth": _mine[2],
+                 "limit": SPAWN_CHAIN_LIMIT}
+        if _mine[1] == "review" and _mine[2] >= SPAWN_CHAIN_LIMIT:
+            spawn["note"] = (
+                "this section is a deep review-spawn: before creating ANOTHER "
+                "from its review, answer user_impact (what a user hits if it is "
+                "not done) and not_parkable. Prefer fixing the finding here and "
+                "naming it as an `- [x]` item.")
+
     manifest = {
         "todo": todo_rel, "section": n, "heading": heading,
+        "spawn_chain": spawn,
         "open_items": open_items, "done_items": done_items,
         "xrefs": xrefs, "likely_files": likely_files,
         "input_files": input_files, "relevant_tests": tests,

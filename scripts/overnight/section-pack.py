@@ -392,6 +392,7 @@ def main(argv) -> int:
     pack = {
         "todo": todo_rel, "section": n,
         "heading": manifest.get("heading", ""),
+        "spawn_chain": manifest.get("spawn_chain"),
         "digest": section_digest,
         "open_items": manifest.get("open_items", []),
         "xrefs": manifest.get("xrefs", []),
@@ -445,6 +446,12 @@ def main(argv) -> int:
         "pack_path": str((pack_dir / "pack.json").relative_to(root)),
         "digest": section_digest,
         "heading": pack["heading"],
+        # WHERE THIS SECTION CAME FROM, in the bounded summary rather than
+        # only the full pack: the summary is what a fresh worker reads to
+        # orient, and provenance is only useful BEFORE it decides what to do
+        # with its next review finding. null for a root or an undeclared
+        # section; carries a note once a review chain reaches its limit.
+        "spawn_chain": pack["spawn_chain"],
         "open_items": len(pack["open_items"]),
         "likely_files": likely,
         "symbols_defined": len(defined),
