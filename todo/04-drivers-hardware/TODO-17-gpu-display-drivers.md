@@ -19,7 +19,7 @@ title: "TODO-17 -- GPU & Display Drivers"
 - [`src/kernel/gfx/gfx_core.c`](../../src/kernel/gfx/gfx_core.c) -- compositor/rendering layer that will call `display_flush_rect()` after §1 lands
 - → XREF: `04-drivers-hardware/TODO-05-kernel-module-system.md` -- kernel module loader required for §3–§5 loadable modules
 - → XREF: `04-drivers-hardware/TODO-09-hypervisor-abstraction.md §8` -- VirtIO GPU (§4 here) shares VirtIO transport; §1 `display_device_t` vtable is the same interface `hv_ops.display_resize` calls into
-- → XREF: `07-graphics-ui` domain -- compositor calls `display_flush_rect(x,y,w,h)` and `display_set_cursor(image,hotspot)` / `display_move_cursor(x,y)` from the `display_device_t` vtable defined in §1
+- → XREF: `08-graphics-ui` domain -- compositor calls `display_flush_rect(x,y,w,h)` and `display_set_cursor(image,hotspot)` / `display_move_cursor(x,y)` from the `display_device_t` vtable defined in §1
 
 ## Outcome
 
@@ -158,7 +158,7 @@ Extend `display_device_t` registration to a per-head array. Compositor spans or 
 **Files:** `src/kernel/drivers/display_device.c`, `include/kernel/drivers/display_device.h`, `src/desktop/` (compositor span)
 
 > [!NOTE]
-> → XREF: `07-graphics-ui` domain -- compositor layout across monitors is a window manager concern; this section provides the kernel API (`display_get_count()`, `display_get_head(n)`) and syscall stubs that the WM calls.
+> → XREF: `08-graphics-ui` domain -- compositor layout across monitors is a window manager concern; this section provides the kernel API (`display_get_count()`, `display_get_head(n)`) and syscall stubs that the WM calls.
 
 - [ ] `display_register_head(n, display_device_t *dev)` -- register device at head index `n` (0 = primary); replace single-device `g_display_active` with `g_display_heads[MAX_HEADS]`
 - [ ] Boot-time head registration from `boot_info.gop_handles[]` (`gop_handle_count` entries, published by D01 T27 §4): register each `fb_valid` entry as a head, the `is_primary` one at head 0. -> XREF: `01-boot-platform/TODO-27-uefi-advanced.md §4`

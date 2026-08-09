@@ -192,7 +192,7 @@ Register every initialised synchronisation primitive in a global lock registry. 
 - [ ] Update `owner_tid` and `acquire_tick` on `mutex_lock` / `ticket_lock` acquire; clear on release; increment `waiter_count` when thread blocks
 - [ ] `/sys/locks` VFS read callback: iterate registry, format one row per entry: `TYPE  NAME              OWNER   WAITERS  HELD_MS`
 - [ ] `locks` shell command: reads `/sys/locks`, pretty-prints with column alignment
-- [ ] Wire lock registry to Task Manager lock viewer panel (→ XREF: `08-desktop-shell` domain)
+- [ ] Wire lock registry to Task Manager lock viewer panel (→ XREF: `09-desktop-shell` domain)
 - [ ] Commit: `"kernel: /sys/locks named lock browser -- registry, VFS file, locks shell command"`
 
 ## 9. KASAN -- Kernel Address Sanitiser `[Opus]`

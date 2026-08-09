@@ -23,7 +23,7 @@ title: "TODO-05 -- Win32 File I/O API & IRP Layer"
 - → XREF: `10-platform-services` Process Object TODO -- per-process handle table lives in the process object; coordinate on layout
 - → XREF: `05-storage-filesystems/TODO-04-fat32-hardening-vfs-semantics.md §7–10` -- share-mode, delete-on-close, byte-range locks are VFS-layer; `NtCreateFile` in §6 passes these flags down to `vfs_open()`
 - → XREF: `05-storage-filesystems/TODO-03-volume-management-automount.md §4` -- `GetDiskFreeSpaceEx` and `GetVolumeInformation` (§13) depend on Registry volume entries from `vfs_probe()`
-- → XREF: `11-user-platform-sdk` Win32 API TODO -- `CreateFile`/`ReadFile`/`WriteFile` defined here are the kernel implementations; the SDK exposes them as user-mode wrappers
+- → XREF: `12-user-platform-sdk` Win32 API TODO -- `CreateFile`/`ReadFile`/`WriteFile` defined here are the kernel implementations; the SDK exposes them as user-mode wrappers
 - → XREF: `02-kernel-core/TODO-07-irql-model-dpcs.md §11,§12` -- KAPC object and KiDeliverApc; §6 async I/O completion queues a user-mode APC to the issuing thread via KeInsertQueueApc
 - → XREF: `02-kernel-core/TODO-15-security-reference-monitor.md §8` -- `SeAccessCheck` enforcement; `NtCreateFile` in §6 must call `SeAccessCheck` with `FILE_GENERIC_READ`/`WRITE` desired access against the file object's DACL
 

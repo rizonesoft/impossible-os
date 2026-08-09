@@ -37,7 +37,7 @@ title: "TODO-03 -- Update Server Infrastructure"
 - `10-platform-services/TODO-12-long-term-features.md §9` (→ XREF) -- `telemetry_record_event()`; HTTP POST stretch; §2 here builds the receiving server
 - `12-installer-release/TODO-01-release-artifacts.md §6` (→ XREF) -- `release-{version}.json` artifact manifest; §4 here consumes it for CDN upload
 - `12-installer-release/TODO-01-release-artifacts.md §1` (→ XREF) -- `OS_VERSION_STRING`, `increment-build.sh`; §5 promotion pipeline increments and tags versions
-- `11-user-platform-sdk/TODO-06-sdk-distribution.md §8` (→ XREF) -- `release-sdk.sh`; §5 promotion coordinates SDK + OS release
+- `12-user-platform-sdk/TODO-06-sdk-distribution.md §8` (→ XREF) -- `release-sdk.sh`; §5 promotion coordinates SDK + OS release
 - `scripts/build.sh`, `scripts/make-iso.sh`, `scripts/sign-release.sh` -- build pipeline inputs for §4 and §5
 - `include/kernel/net/http.h` -- `http_get()` format change note for §1 (client parse)
 

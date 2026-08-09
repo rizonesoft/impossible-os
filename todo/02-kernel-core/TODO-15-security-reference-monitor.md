@@ -47,7 +47,7 @@ title: "TODO-15 -- Security Reference Monitor"
 - `SeAssignSecurity` propagates inheritable ACEs from parent containers to new objects (files, directories, registry keys) with canonical ordering.
 - AppContainer tokens (`NtCreateLowBoxToken`) provide sandboxed process execution with capability SIDs and default-deny access.
 - Every kernel object type (file, process, thread, event, mutex, registry key) has a default security descriptor and enforces access via `ObpReferenceObjectByHandle`.
-- UAC filtered-token split is structurally in place; consent UI wired in `08-desktop-shell`.
+- UAC filtered-token split is structurally in place; consent UI wired in `09-desktop-shell`.
 - Win32 token API surface (`OpenProcessToken`, `GetTokenInformation`, `AdjustTokenPrivileges`, `CreateRestrictedToken`, etc.) is complete.
 - `NtQueryAccessDenialReason` and `accesswhy.exe` explain exactly which ACE/MIC/privilege caused an access denial -- unique to Impossible OS.
 
@@ -527,7 +527,7 @@ title: "TODO-15 -- Security Reference Monitor"
   3. Wait for consent UI to signal approval or denial event
   4. On approval: `NtSetInformationProcess(ProcessHandle, ProcessAccessToken, &linked_token)` -- replaces the process token with the full-admin linked token
   5. On denial: return `STATUS_PRIVILEGE_NOT_HELD`
-- [ ] Note: full consent UI implementation is in `08-desktop-shell` -- this TODO provides only the kernel side of the handshake
+- [ ] Note: full consent UI implementation is in `09-desktop-shell` -- this TODO provides only the kernel side of the handshake
 - [ ] `WRITE_RESTRICTED` flag: `TOKEN_WRITE_RESTRICTED` token flag; when set, §5's restricted-SID second pass applies ONLY to write-class access, so read/execute is not falsely denied. -> XREF: 02-kernel-core/TODO-15 §5
 - [ ] After the `NtRequestTokenElevation` `ProcessAccessToken` swap to a higher-IL token, call `env_sanitize_for_elevation(process)` to strip blocklisted env vars -> XREF: 02-kernel-core/TODO-22 §16 (item: "env_sanitize_for_elevation(task)")
 - [ ] Commit: `"kernel/security: NtFilterToken, linked token pair, UAC elevation protocol"`

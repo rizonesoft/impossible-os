@@ -11,7 +11,7 @@ title: "TODO-03 -- System Updates & IPKG Package Manager"
 > **Goal:** Make Impossible OS self-maintaining -- deliver the update check/download/verify/apply pipeline and the IPKG package format with installer, uninstaller, and `appwiz.cpl` list. After this TODO the OS can update itself and users can install third-party apps without manual file copying.
 
 > [!IMPORTANT]
-> **Already exists**: `zip_open/extract/list/add_file()` from TODO-04-recycle-zip-scheduler (forward dep). `cng_sha256(data, len, out)` from TODO-07-cng-crypto (forward dep). `http_get(url, buf, size)` + HTTPS from `06-networking/TODO-03` (forward dep). `registry_set/get/delete()` + `HKLM\SOFTWARE\*`, `HKLM\SYSTEM\Version`. `shortcut_create()` from TODO-02-file-associations (forward dep). `file_assoc_set()` from TODO-02 (forward dep). `notify_send()` from TODO-09. `privilege_request()` UAC from TODO-06-security-accounts (install requires admin elevation). `CTRL_LISTVIEW`, `CTRL_PROGRESSBAR`, `dialog_confirm()` from TODO-05 controls. **Missing**: entire update pipeline, IPKG format, installer/uninstaller wizards. **No new syscalls needed** -- all I/O goes through existing VFS + network + ZIP + crypto APIs.
+> **Already exists**: `zip_open/extract/list/add_file()` from TODO-04-recycle-zip-scheduler (forward dep). `cng_sha256(data, len, out)` from TODO-07-cng-crypto (forward dep). `http_get(url, buf, size)` + HTTPS from `07-networking/TODO-03` (forward dep). `registry_set/get/delete()` + `HKLM\SOFTWARE\*`, `HKLM\SYSTEM\Version`. `shortcut_create()` from TODO-02-file-associations (forward dep). `file_assoc_set()` from TODO-02 (forward dep). `notify_send()` from TODO-09. `privilege_request()` UAC from TODO-06-security-accounts (install requires admin elevation). `CTRL_LISTVIEW`, `CTRL_PROGRESSBAR`, `dialog_confirm()` from TODO-05 controls. **Missing**: entire update pipeline, IPKG format, installer/uninstaller wizards. **No new syscalls needed** -- all I/O goes through existing VFS + network + ZIP + crypto APIs.
 
 ## Inputs
 
@@ -26,7 +26,7 @@ title: "TODO-03 -- System Updates & IPKG Package Manager"
 - `include/cpl.h` (TODO-11) -- `CPlApplet_t`, `NEWCPLINFO` -- §8 `wuapp.cpl`, §4 `appwiz.cpl`
 - `include/kernel/sched/task.h` -- `sched_task_add()` -- §4 boot auto-check background task
 - `include/desktop/notification.h` (TODO-09) -- `notify_send()` -- §5 "Update available" toast
-- → XREF: `06-networking/TODO-03` -- HTTPS client; §1 + §9 depend on HTTP GET being available
+- → XREF: `07-networking/TODO-03` -- HTTPS client; §1 + §9 depend on HTTP GET being available
 - → XREF: `09-desktop-shell/TODO-07` -- `cng_sha256()`; §2 verify depends on crypto module
 - → XREF: `09-desktop-shell/TODO-04 §6` -- ZIP/IPKG extract; §3 and §8 depend on `zip_extract()`
 - → XREF: `10-platform-services/TODO-04 §2` -- system restore point; §3 update-apply and §8 app install call `restore_create()` before making changes

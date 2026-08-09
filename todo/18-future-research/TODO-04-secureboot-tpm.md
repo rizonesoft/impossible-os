@@ -43,7 +43,7 @@ title: "TODO-04 -- Secure Boot, TPM 2.0 & Measured Boot"
 - `01-boot-platform/TODO-02-uefi-hardening-secureboot.md` (→ XREF) -- shim chain-loading; MOK key pair; `boot_info.secure_boot_enabled`; §1 here adds PK/KEK/db layer above shim
 - `04-drivers-hardware/TODO-04-security-hardware.md §6` (→ XREF) -- TPM 2.0 command driver (CRB/FIFO, STARTUP, PCR_Read/Extend, GetRandom, PCR[10] kernel integrity); §2 here adds CSPRNG feed + QEMU swtpm
 - `09-desktop-shell/TODO-07-cng-crypto.md §1` (→ XREF) -- `cng_sha256()`, AES-256-GCM, `csprng_read()`; §4 FDE adds AES-256-XTS (XTS mode extension to §1) + Argon2i KDF
-- `11-user-platform-sdk/TODO-01` (→ XREF, if CSPRNG integration) -- entropy pool that `tpm2_get_random()` feeds into -- §2 CSPRNG integration
+- `12-user-platform-sdk/TODO-01` (→ XREF, if CSPRNG integration) -- entropy pool that `tpm2_get_random()` feeds into -- §2 CSPRNG integration
 - `13-future-research/TODO-02-hypervisor.md` (→ XREF) -- ImpossibleHV Phase 2 multi-vCPU; §3 vTPM is a companion feature for that phase
 - `src/kernel/tpm.c` -- existing 312-line PCR event log parser; §2 extends it with command driver (cross-ref `TODO-11 §8`)
 - `include/libs/monocypher.h` -- `crypto_argon2i()` for password-based key derivation in §4 FDE recovery key
@@ -120,7 +120,7 @@ bare-metal deployment.
   - `tpm2_pcr_extend(8, digest32)` -- extend PCR 8 with kernel hash
   - `tpm2_pcr_read(8, pcr8_out)` -- read back PCR 8; log `"[TPM] PCR[8] = {hex}"` to boot serial
   - If Secure Boot enforcement is on (`HKLM\SYSTEM\SecureBoot\Enforce = 1`) and TPM PCR 8 doesn't match stored expected value: refuse to boot
-- [ ] **PCR 9 -- kmod hash extension** (in `src/kernel/kmod.c`, cross-ref `11-user-platform-sdk/TODO-03 §5`):
+- [ ] **PCR 9 -- kmod hash extension** (in `src/kernel/kmod.c`, cross-ref `12-user-platform-sdk/TODO-03 §5`):
   - In `kmod_load()`, after ELF validation but before `init_fn()`:
   - `cng_sha256(kmod_buf, kmod_size, digest32)` + `tpm2_pcr_extend(9, digest32)`
   - Log `"[TPM] PCR[9] extended with kmod={name}, digest={hex[:8]}..."`

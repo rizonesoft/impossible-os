@@ -150,7 +150,7 @@ Evaluate ACPI `_BST` (Battery Status) and `_BIF` (Battery Information) methods v
 - [ ] `time_remaining_min = remaining_cap / present_rate * 60` when discharging; `-1` when charging
 - [ ] Poll every 30 s via `workqueue_enqueue_delayed(&sys_wq, battery_update_work, 30000)`
 - [ ] Write to Registry: `HKLM\HARDWARE\Battery\Percentage`, `State` (`"charging"/"discharging"/"critical"`), `TimeRemainingMin`
-- [ ] System tray integration: set tray battery icon + tooltip string (→ XREF `08-desktop-shell` domain)
+- [ ] System tray integration: set tray battery icon + tooltip string (→ XREF `09-desktop-shell` domain)
 - [ ] Commit: `"acpi: battery status -- _BST/_BIF evaluation, percentage, tray icon, Registry"`
 
 ## 6. CPU Frequency Scaling -- DVFS `[Opus]`

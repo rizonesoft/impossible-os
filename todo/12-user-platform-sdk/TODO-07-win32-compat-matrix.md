@@ -16,7 +16,7 @@ title: "TODO-07 -- Win32 Compatibility Matrix & Bring-Up Ladder"
 > [!IMPORTANT]
 > This TODO owns **tracking and testing infrastructure only** -- it does not implement
 > any Win32 API functions. Implementation of each API lives in its owning TODO
-> (`10-platform-services/TODO-07` through `TODO-08`, `11-user-platform-sdk/TODO-04`
+> (`10-platform-services/TODO-07` through `TODO-08`, `12-user-platform-sdk/TODO-04`
 > through `TODO-05`). Gate conditions reference those TODOs.
 >
 > **`win32_unimpl_stub`** (in-kernel call-count table + `win32log` shell command) is
@@ -35,8 +35,8 @@ title: "TODO-07 -- Win32 Compatibility Matrix & Bring-Up Ladder"
 - `10-platform-services/TODO-07-win32-pe-loader.md` (→ XREF) -- gate TODO for Tiers 1–3
 - `10-platform-services/TODO-08-win32-api-surface.md §9` (→ XREF) -- `win32_unimpl_stub` call-count table; extend here with shmem map
 - `10-platform-services/TODO-08-win32-api-surface.md §5 §4 §3 §6 §7 §10` (→ XREF) -- gate TODOs for Tiers 2–7
-- `11-user-platform-sdk/TODO-04-ntdll-user-runtime.md §4 §3` (→ XREF) -- gate TODO for Tiers 5–7
-- `11-user-platform-sdk/TODO-05-win32-subsystem.md §1–4` (→ XREF) -- gate TODO for Tiers 6–7
+- `12-user-platform-sdk/TODO-04-ntdll-user-runtime.md §4 §3` (→ XREF) -- gate TODO for Tiers 5–7
+- `12-user-platform-sdk/TODO-05-win32-subsystem.md §1–4` (→ XREF) -- gate TODO for Tiers 6–7
 - `02-kernel-core/TODO-14-registry-completion.md` (→ XREF) -- gate TODO for Tier 4 (RegOpenKey etc.)
 - `include/kernel/ipc/` -- `SYS_SHMEM_CREATE=35`, `SYS_SHMEM_MAP=36` for stub counter shared memory
 - `user/` -- `hello.c`, `cmd.c` as reference user-mode program patterns
@@ -212,7 +212,7 @@ title: "TODO-07 -- Win32 Compatibility Matrix & Bring-Up Ladder"
 
 ## 7. Tier 5 -- Memory & Sync `[Sonnet]`
 
-> Gate: `10-platform-services/TODO-08 §3 §6`, `11-user-platform-sdk/TODO-04 §4`
+> Gate: `10-platform-services/TODO-08 §3 §6`, `12-user-platform-sdk/TODO-04 §4`
 
 **~15 additional functions** adds: `VirtualAlloc`, `VirtualFree`, `VirtualProtect`, `VirtualQuery`, `HeapCreate`, `HeapAlloc`, `HeapFree`, `HeapReAlloc`, `GetProcessHeap`, `CreateMutex`, `CreateEvent`, `SetEvent`, `ResetEvent`, `WaitForMultipleObjects`, `InitializeCriticalSection`, `EnterCriticalSection`, `LeaveCriticalSection`, `DeleteCriticalSection`, `InterlockedCompareExchange`, `InterlockedIncrement`, `InterlockedDecrement`
 
@@ -231,7 +231,7 @@ title: "TODO-07 -- Win32 Compatibility Matrix & Bring-Up Ladder"
 
 ## 8. Tier 6 -- MessageBox & Basic GUI `[Sonnet]`
 
-> Gate: `11-user-platform-sdk/TODO-05 §1–3`, `10-platform-services/TODO-08 §10`
+> Gate: `12-user-platform-sdk/TODO-05 §1–3`, `10-platform-services/TODO-08 §10`
 
 **~5 additional functions** adds: `MessageBoxA`, `MessageBoxW`, `LoadIconA`, `LoadCursorA`, `GetSystemMetrics`
 
@@ -248,7 +248,7 @@ title: "TODO-07 -- Win32 Compatibility Matrix & Bring-Up Ladder"
 
 ## 9. Tier 7 -- Full Win32 Window + Controls `[Sonnet]`
 
-> Gate: `11-user-platform-sdk/TODO-05 §4–4`, `10-platform-services/TODO-08 §7 §10 §11`
+> Gate: `12-user-platform-sdk/TODO-05 §4–4`, `10-platform-services/TODO-08 §7 §10 §11`
 
 **~40 additional functions** adds: `RegisterClassExA`, `CreateWindowExA`, `ShowWindow`, `UpdateWindow`, `DestroyWindow`, `GetMessage`, `DispatchMessage`, `DefWindowProcA`, `TranslateMessage`, `PostQuitMessage`, `BeginPaint`, `EndPaint`, `InvalidateRect`, `TextOutA`, `DrawTextA`, `SetBkColor`, `SetTextColor`, `GetDC`, `ReleaseDC`, `CreatePen`, `CreateSolidBrush`, `SelectObject`, `DeleteObject`, `MoveWindow`, `SetWindowTextA`, `GetWindowTextA`, `GetClientRect`, `SetWindowLongPtrA`, `GetWindowLongPtrA`, standard control message set (`WM_COMMAND`, `BM_SETSTATE`, `EM_GETTEXT`, `LB_ADDSTRING`, etc.)
 
@@ -338,7 +338,7 @@ title: "TODO-07 -- Win32 Compatibility Matrix & Bring-Up Ladder"
   - 80%: Tier 8 complete (extended surface + curl + Far Manager)
   - 100%: all tracked functions implemented (long-term target)
 - [ ] **`make compat-check`** target in root `Makefile`: calls `scripts/compat-check.sh`; used in CI
-- [ ] **`sysinfo.exe` integration**: System Information app reads `HKLM\SYSTEM\Win32Compat\Score`; shows `Win32 Compat Score: {N}%` in its table (→ XREF `10-apps/TODO-13 §3`)
+- [ ] **`sysinfo.exe` integration**: System Information app reads `HKLM\SYSTEM\Win32Compat\Score`; shows `Win32 Compat Score: {N}%` in its table (→ XREF `11-apps/TODO-13 §3`)
 
 ---
 

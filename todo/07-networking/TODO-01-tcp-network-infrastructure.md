@@ -18,7 +18,7 @@ title: "TODO-01 -- TCP Protocol & Network Infrastructure"
 - `src/kernel/net/udp.c` + `include/kernel/net/net.h` -- `udp_send()`, `udp_handle()`, pseudo-header checksum pattern; `ipv4_send()` / `ipv4_handle()` for the TX/RX path; `net_cfg` for current IP/MAC -- all used by §1
 - `src/kernel/net/ip.c` -- `ipv4_handle()` dispatches on `protocol` field; add `case IP_PROTO_TCP: tcp_handle(...)` here for §1
 - `include/kernel/net/net.h` -- `struct net_config` → replaced/extended by `struct net_interface` in §5; all existing callers shim through `netif_get_default()`
-- Related (no stable XREF target): `06-networking/TODO-02-*` (future DNS/TLS/HTTP TODOs) -- those callers use `tcp_connect()` / `tcp_send()` / `tcp_recv()` from this TODO
+- Related (no stable XREF target): `07-networking/TODO-02-*` (future DNS/TLS/HTTP TODOs) -- those callers use `tcp_connect()` / `tcp_send()` / `tcp_recv()` from this TODO
 - Related (no stable XREF target): `10-platform-services/TODO-xx-firewall` -- connection tracking hash table (§7) is the backing store for the stateful firewall "allow established" rule
 
 ## Outcome

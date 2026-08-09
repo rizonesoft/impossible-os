@@ -20,7 +20,7 @@ title: "TODO-01 -- Block Storage Hardening"
 - `src/kernel/main/blkdev.c` + `include/kernel/main/blkdev.h` -- `blkdev_t` abstraction; §6 (metrics) and §7 (cache) live here
 - `src/kernel/main/blkdev_adapters.c` -- adapters that register physical drivers with `blkdev`; cross-check `blkdev_register()` signature before §6
 - → XREF: `05-storage-filesystems` VFS TODO (future) -- the disk cache (§7) is the write-back layer VFS drivers call; verify `cache_flush()` is called at shutdown before those TODOs begin
-- → XREF: `10-apps` Task Manager TODO -- §6 I/O metrics hook the Task Manager performance tab and `iostat` shell command
+- → XREF: `11-apps` Task Manager TODO -- §6 I/O metrics hook the Task Manager performance tab and `iostat` shell command
 
 ## Outcome
 
@@ -141,7 +141,7 @@ Add per-device atomic counters to `blkdev_t`. Expose `blkdev_stats()`. Add `iost
 - [ ] `blkdev_stats(dev, blkdev_stats_t *out)`: snapshot all counters into `out`; also call `blkdev_smart_query()` if `dev->smart_read != NULL`
 - [ ] `blkdev_stats_t { uint64_t bytes_read, bytes_written; uint32_t read_ops, write_ops, errors; uint8_t temperature_c; uint32_t reallocated_sectors; }`
 - [ ] `iostat` shell command: iterate registered `blkdev` list; call `blkdev_stats()`; print: `  Device   Reads/s  Writes/s  Read MB/s  Write MB/s  Errors  Temp`; compute rates from delta between two 1 s samples using `timer_ns()`
-- [ ] Task Manager hook: `blkdev_stats()` called by the Task Manager performance tab's disk section (coordinate with `08-desktop-shell` Task Manager TODO)
+- [ ] Task Manager hook: `blkdev_stats()` called by the Task Manager performance tab's disk section (coordinate with `09-desktop-shell` Task Manager TODO)
 - [ ] Commit: `"kernel: blkdev I/O metrics -- atomic counters, blkdev_stats API, iostat shell command"`
 
 ## 7. Block-Level Disk Cache `[Opus]`

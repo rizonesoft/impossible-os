@@ -26,7 +26,7 @@ title: "TODO-01 -- Clipboard System"
 - `include/kernel/time.h` (TODO-10 §1) -- `time_now()` -- §4 history entry timestamps
 - → XREF: `08-graphics-ui/TODO-14-win32-gdi-user32-stubs.md §4` -- `SetClipboardData`/`GetClipboardData` in the USER32 stub table call into §5 of this TODO
 - → XREF: `08-graphics-ui/TODO-09-desktop-shell-features.md §5` -- screenshot (PrintScreen) calls `clipboard_set_bitmap()` from §1
-- Related (no stable XREF target): `10-apps/TODO-*` (terminal, file manager) -- terminal Ctrl+C SIGINT passthrough and File Manager copy/paste depend on §2 keyboard wiring
+- Related (no stable XREF target): `11-apps/TODO-*` (terminal, file manager) -- terminal Ctrl+C SIGINT passthrough and File Manager copy/paste depend on §2 keyboard wiring
 
 ## Outcome
 

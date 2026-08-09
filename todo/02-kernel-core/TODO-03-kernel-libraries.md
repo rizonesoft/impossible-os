@@ -21,7 +21,7 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 > - `kmath.h` -> exists with `fabs`, `floor`, `ceil`, `fmod`, `sqrt` [done]
 >   (incomplete; §2 extends it)
 > **Not in scope for this TODO:**
-> - `dr_wav`, `dr_mp3`, `stb_vorbis`, `pl_mpeg` audio/video codecs -> belong in the multimedia domain (`10-apps` or `08-desktop-shell`).
+> - `dr_wav`, `dr_mp3`, `stb_vorbis`, `pl_mpeg` audio/video codecs -> belong in the multimedia domain (`11-apps` or `09-desktop-shell`).
 > - TLS session management, certificate validation, HTTPS client logic -> networking domain (`07-networking`); §7 of this TODO only ports Mbed TLS as a freestanding library.
 > - IXFS compression, HTTP gzip, package format -- they *use* these libraries; they're out of scope here.
 

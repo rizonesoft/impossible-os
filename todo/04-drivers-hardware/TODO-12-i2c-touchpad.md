@@ -20,8 +20,8 @@ title: "TODO-12 -- I2C/SMBus Bus & Precision Touchpad"
 - [`src/kernel/drivers/mouse.c`](../../src/kernel/drivers/mouse.c), [`src/kernel/drivers/keyboard.c`](../../src/kernel/drivers/keyboard.c) -- event injection targets (`mouse_driver_handle_event()`, `keyboard_driver_handle_event()`)
 - → XREF: `04-drivers-hardware/TODO-03-acpi-power-management.md §1` -- ACPICA AML interpreter required by §3 (ACPI I2C device enumeration from DSDT); §3 is blocked until ACPICA is initialised
 - → XREF: `04-drivers-hardware/TODO-10-usb-stack.md §6` -- PS/2 ↔ USB fallback flags (`usb_keyboard_active`, `usb_mouse_active`); §2 here adds a third tier (`i2c_touchpad_active`); all three must be checked in `mouse_process_event()`
-- → XREF: `08-desktop-shell` domain -- `mouse.cpl` touchpad tab (§9) is a control-panel applet; settings written to Registry are hot-reloaded by the gesture engine (§8)
-- → XREF: `07-graphics-ui` domain -- `WM_GESTURE_ZOOM`, `WM_GESTURE_SWIPE`, `MOUSE_WHEEL` messages are compositor-level message types consumed by the window manager
+- → XREF: `09-desktop-shell` domain -- `mouse.cpl` touchpad tab (§9) is a control-panel applet; settings written to Registry are hot-reloaded by the gesture engine (§8)
+- → XREF: `08-graphics-ui` domain -- `WM_GESTURE_ZOOM`, `WM_GESTURE_SWIPE`, `MOUSE_WHEEL` messages are compositor-level message types consumed by the window manager
 
 ## Outcome
 
@@ -202,7 +202,7 @@ Extend `mouse.cpl` with a "Touchpad" settings tab: enable/disable toggle, tap-to
 **Files:** `src/desktop/mouse_cpl.c` (extend or new), `include/desktop/mouse_cpl.h`
 
 > [!NOTE]
-> → XREF: `08-desktop-shell` domain -- `mouse.cpl` is a control-panel applet opened from the Settings app or Start Menu; it is a compositor-managed window. The "Touchpad" tab appears only if `ptp_device_t` or `synaptics_active` is true at runtime; hidden on desktops with no touchpad detected.
+> → XREF: `09-desktop-shell` domain -- `mouse.cpl` is a control-panel applet opened from the Settings app or Start Menu; it is a compositor-managed window. The "Touchpad" tab appears only if `ptp_device_t` or `synaptics_active` is true at runtime; hidden on desktops with no touchpad detected.
 
 - [ ] Touchpad tab added to `mouse.cpl` window (tab control, only shown if touchpad detected)
 - [ ] Controls: enable/disable toggle (`TouchpadEnabled`), tap-to-click checkbox (`TapToClick`), scroll direction radio (`NaturalScroll`), scroll speed slider 1–10 (`ScrollSpeed`), two-finger scroll checkbox (`TwoFingerScroll`), three-finger gestures checkbox (`ThreeFingerSwipe`), pinch-zoom checkbox (`PinchZoom`), palm rejection slider 10–40 mm (`PalmRejectWidth`)

@@ -21,9 +21,9 @@ title: "TODO-09 -- Email Client"
 - `include/desktop/wm.h` -- `wm_create_window()` for main mail window, compose window, search dialog
 - `src/kernel/fs/vfs.c` -- `vfs_open/read/write/readdir` for `.eml` storage and contacts JSON
 - `include/registry.h` -- account settings in `HKCU\Software\ImpossibleMail\Accounts\{name}\*`
-- → XREF: `06-networking/TODO-03-http-tls.md` -- Mbed TLS (`tls_connect`) is the mandatory prerequisite for all three protocol sections
-- → XREF: `06-networking/TODO-02-dns-sockets.md` -- `dns_resolve()` for SMTP/POP3/IMAP server IPs; extend with `dns_resolve_mx()` for §5 autodiscover
-- → XREF: `06-networking/TODO-06-ntp-status-winsock.md` -- tray icon pattern from §3 (network tray) is reused by §9 mail tray envelope icon
+- → XREF: `07-networking/TODO-03-http-tls.md` -- Mbed TLS (`tls_connect`) is the mandatory prerequisite for all three protocol sections
+- → XREF: `07-networking/TODO-02-dns-sockets.md` -- `dns_resolve()` for SMTP/POP3/IMAP server IPs; extend with `dns_resolve_mx()` for §5 autodiscover
+- → XREF: `07-networking/TODO-06-ntp-status-winsock.md` -- tray icon pattern from §3 (network tray) is reused by §9 mail tray envelope icon
 
 ## Outcome
 

@@ -11,7 +11,7 @@ This domain tracks the low-level and reusable visual building blocks used by the
 ## Does Not Belong Here
 
 - Window manager, taskbar, desktop policies, or other shell behavior. Put that in [08 Desktop Shell](../09-desktop-shell/INDEX.md).
-- App-specific UI backlog. Put that in [10 Apps](../10-apps/INDEX.md).
+- App-specific UI backlog. Put that in [10 Apps](../11-apps/INDEX.md).
 
 ## Likely Source Areas
 

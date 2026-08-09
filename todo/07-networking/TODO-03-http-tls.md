@@ -11,7 +11,7 @@ title: "TODO-03 -- HTTP/HTTPS Client & TLS"
 > **Goal:** Build a complete HTTP/HTTPS client stack: URL parser, HTTP GET/POST (including chunked transfer), `wget`/`curl` shell commands, Mbed TLS ported as a static kernel library, Mozilla CA bundle, HTTPS GET/POST with certificate chain verification, and an HTTP/1.1 keep-alive connection pool. HTTP and TLS are the gateway to the modern internet and prerequisites for the browser, email client, and OS update service.
 
 > [!IMPORTANT]
-> DNS resolution (`dns_resolve()`) and the BSD socket layer (`socket/connect/send/recv/close`) must be complete (→ XREF: `06-networking/TODO-02-dns-sockets.md`) before HTTP GET can be built. The TLS library port (§3) depends on `kmalloc`/`kfree` (`include/kernel/mm/heap.h`) and the kernel time service (→ XREF: `02-kernel-core/TODO-17` or the `uptime_ms()` equivalent) for certificate validity windows. Mbed TLS is compiled under `-ffreestanding -nostdlib -nostdinc` -- **no standard library functions** are permitted; only project headers and Mbed TLS's own self-contained headers are allowed. The keep-alive pool (§6) introduces shared-state concurrency; guard the pool with a spinlock from the kernel sync primitives.
+> DNS resolution (`dns_resolve()`) and the BSD socket layer (`socket/connect/send/recv/close`) must be complete (→ XREF: `07-networking/TODO-02-dns-sockets.md`) before HTTP GET can be built. The TLS library port (§3) depends on `kmalloc`/`kfree` (`include/kernel/mm/heap.h`) and the kernel time service (→ XREF: `02-kernel-core/TODO-17` or the `uptime_ms()` equivalent) for certificate validity windows. Mbed TLS is compiled under `-ffreestanding -nostdlib -nostdinc` -- **no standard library functions** are permitted; only project headers and Mbed TLS's own self-contained headers are allowed. The keep-alive pool (§6) introduces shared-state concurrency; guard the pool with a spinlock from the kernel sync primitives.
 
 ## Inputs
 
@@ -22,9 +22,9 @@ title: "TODO-03 -- HTTP/HTTPS Client & TLS"
 - `src/kernel/fs/vfs.c` -- `vfs_open()`/`vfs_read()` to load `C:\Impossible\System\Certs\ca-bundle.crt` at runtime
 - `resources/certs/ca-bundle.crt` (to be added) -- Mozilla CA bundle (MPL-2.0, ~130 root CAs); installed to `C:\Impossible\System\Certs\ca-bundle.crt` on disk image
 - `src/shell/` -- `cmd_wget.c` + `cmd_curl.c` new shell commands (§4); shell integration as in existing shell command pattern
-- → XREF: `06-networking/TODO-02-dns-sockets.md` -- DNS (`dns_resolve`) and socket layer (§3–§8) are mandatory prerequisites for §2–§4 and §7–§8
-- Related (no stable XREF target): `06-networking/TODO-04-*` (future IPv6) -- `http_get_v6()` stub deferred; URL parser handles IPv6 literal `[::1]` syntax for future use
-- Related (no stable XREF target): `10-apps/TODO-*-browser` (future) -- §7 HTTPS client and §8 keep-alive pool are the direct foundation for the web browser TODO
+- → XREF: `07-networking/TODO-02-dns-sockets.md` -- DNS (`dns_resolve`) and socket layer (§3–§8) are mandatory prerequisites for §2–§4 and §7–§8
+- Related (no stable XREF target): `07-networking/TODO-04-*` (future IPv6) -- `http_get_v6()` stub deferred; URL parser handles IPv6 literal `[::1]` syntax for future use
+- Related (no stable XREF target): `11-apps/TODO-*-browser` (future) -- §7 HTTPS client and §8 keep-alive pool are the direct foundation for the web browser TODO
 
 ## Outcome
 

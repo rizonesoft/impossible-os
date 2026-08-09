@@ -118,7 +118,7 @@ compositor to 4K 120 Hz.
   - **Porting blockers for Impossible OS**:
     - Mesa uses `stdlib`, `stdio`, `pthread`, `mmap` -- all need kernel shims or elimination
     - LLVM backend (~2 M LOC) needed for `llvmpipe` JIT; alternative: `softpipe` (non-JIT, pure C, ~40 K LOC) is more portable
-    - `lavapipe` requires `dlfcn.h` for ICD loading -- needs `dlopen` from `TODO-03 §3` (`11-user-platform-sdk/TODO-03`)
+    - `lavapipe` requires `dlfcn.h` for ICD loading -- needs `dlopen` from `TODO-03 §3` (`12-user-platform-sdk/TODO-03`)
   - **`softpipe` as intermediate target** (Mesa's non-JIT Gallium driver, ~40 K LOC):
     - Portable C, no LLVM dependency
     - Provides full Gallium3D state tracker → Vulkan via `zink` layer

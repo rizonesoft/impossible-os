@@ -17,8 +17,8 @@ title: "TODO-11 -- Input System Enhancement"
 
 - [`src/kernel/drivers/mouse.c`](../../src/kernel/drivers/mouse.c), [`include/kernel/drivers/mouse.h`](../../include/kernel/drivers/mouse.h)
 - [`src/kernel/drivers/keyboard.c`](../../src/kernel/drivers/keyboard.c), [`include/kernel/drivers/keyboard.h`](../../include/kernel/drivers/keyboard.h)
-- → XREF: `07-graphics-ui` domain -- `WM_SCROLL`, `WM_INPUT`, cursor hide/show, and layout indicator popup are message types and UI elements handled by the compositor/window manager
-- → XREF: `08-desktop-shell` domain -- system-tray layout indicator (`EN`/`FR`/`DE`) and layout picker popup are shell components consuming `kbd_get_layout()` / `kbd_set_layout()`
+- → XREF: `08-graphics-ui` domain -- `WM_SCROLL`, `WM_INPUT`, cursor hide/show, and layout indicator popup are message types and UI elements handled by the compositor/window manager
+- → XREF: `09-desktop-shell` domain -- system-tray layout indicator (`EN`/`FR`/`DE`) and layout picker popup are shell components consuming `kbd_get_layout()` / `kbd_set_layout()`
 - → XREF: `04-drivers-hardware/TODO-11-input-system.md §9` -- `SYS_MOUSE_GRAB`/`SYS_MOUSE_RELEASE` syscalls registered in the native API dispatch table (→ XREF `02-kernel-core/TODO-12-native-api-ssdt.md`)
 
 ## Outcome
@@ -186,7 +186,7 @@ Win+Space cycles through installed layouts. A 2-letter indicator in the system t
 **Files:** `src/kernel/drivers/keyboard.c`, `src/desktop/` (tray indicator component)
 
 > [!NOTE]
-> → XREF: `08-desktop-shell` domain -- the system-tray indicator and picker popup are shell UI components; this section defines the kernel API (`kbd_get_layout()` / `kbd_set_layout()`) and the hotkey dispatch; the shell consumes the API.
+> → XREF: `09-desktop-shell` domain -- the system-tray indicator and picker popup are shell UI components; this section defines the kernel API (`kbd_get_layout()` / `kbd_set_layout()`) and the hotkey dispatch; the shell consumes the API.
 
 - [ ] Win+Space hotkey: in global key handler, detect `VK_SPACE` with `MOD_WIN`; call `kbd_cycle_layout()` → advance index in registered layout list; wrap around
 - [ ] `kbd_cycle_layout()` calls `kbd_set_layout(next_code)` and posts `WM_INPUT_LAYOUT_CHANGED(new_code)` to the compositor message queue

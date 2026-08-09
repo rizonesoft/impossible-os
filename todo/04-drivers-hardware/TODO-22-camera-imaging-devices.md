@@ -17,7 +17,7 @@ title: "TODO-22 -- Camera, Video Capture & Imaging Devices"
 - -> XREF: `TODO-06-firmware-loader-device-blobs.md` -- camera/IPU firmware and calibration blobs
 - -> XREF: `TODO-19-hardware-monitoring-sensors.md` -- privacy switch, lid/posture, ALS interaction
 - -> XREF: `02-kernel-core/TODO-15-security-reference-monitor.md` -- camera permissions
-- -> XREF: `08-desktop-shell` / media domain -- camera app and capture UX consume this API
+- -> XREF: `09-desktop-shell` / media domain -- camera app and capture UX consume this API
 
 ## Outcome
 

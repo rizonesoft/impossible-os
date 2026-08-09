@@ -22,7 +22,7 @@ title: "TODO-07 -- IXFS Advanced Storage, Reliability & Enterprise"
 - `src/kernel/drivers/blkdev.c` -- `blkdev_discard(dev, lba, count)` already exists; §6 wires IXFS into it
 - → XREF: `05-storage-filesystems/TODO-06-ixfs-core-win32-compat.md` -- v3 inode with `i_compress_type`, `i_encrypt_key_id`, `i_flags` (sparse/immutable), `i_access_count` (tiering) must be in place
 - -> XREF: `02-kernel-core/TODO-03-kernel-libraries.md` §3 (LZ4) + §9 (Zstd) -- the kernel-libraries codecs §1 compression depends on; LZ4 source is vendored, Zstd §9 is filed and source-pending. Monocypher (D02 T03 §5) for AES-256-XTS and PBKDF2; xxHash64 for dedup hashing (vendored with LZ4). Until §3/§9 ship, stub §1 and §10 behind compile-time feature flags
-- → XREF: `08-desktop-shell` domain -- Disk Manager UI panels (§14 health dashboard, §4 defrag button, §9 Previous Versions, §12 quota panel, §13 tier config) are desktop components; coordinate on the IPC/message interface used to query IXFS stats
+- → XREF: `09-desktop-shell` domain -- Disk Manager UI panels (§14 health dashboard, §4 defrag button, §9 Previous Versions, §12 quota panel, §13 tier config) are desktop components; coordinate on the IPC/message interface used to query IXFS stats
 - → XREF: `04-drivers-hardware/TODO-13-storage-controller-device-drivers.md §7` -- AHCI SMART data feeds the health dashboard (§14) disk temperature + error count fields
 
 ## Outcome

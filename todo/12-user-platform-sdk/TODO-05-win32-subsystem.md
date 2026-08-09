@@ -18,7 +18,7 @@ title: "TODO-05 -- Win32 Subsystem Server (CSRSS)"
 > [!IMPORTANT]
 > **Scope boundary**: `TODO-08` Section 10 contains `user32.dll` function stubs
 > (`RegisterClassExA`, `CreateWindowExA`, `GetMessage`, `DispatchMessage`,
-> `PostQuitMessage`, `SendMessage`, `SetWindowText`) and `TODO-11` (07-graphics-ui)
+> `PostQuitMessage`, `SendMessage`, `SetWindowText`) and `TODO-11` (08-graphics-ui)
 > contains the GDI object table and `GetMessageA` per-window blocking queue. This TODO
 > specifies the **subsystem architecture** those stubs delegate to: the MSG ring-buffer
 > queues, the 256-entry global class table, cross-process delivery via `pipe.h` IPC,

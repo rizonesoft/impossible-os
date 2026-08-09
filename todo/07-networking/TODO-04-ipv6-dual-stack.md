@@ -22,9 +22,9 @@ title: "TODO-04 -- IPv6 Dual-Stack"
 - `include/kernel/net/net.h` -- add IPv6 constants, `struct ipv6_header`, NDP structs, extend `net_interface` from TODO-01 §5 with `ip6_local[16]` (link-local) and `ip6_global[16]` (SLAAC/DHCPv6)
 - `src/kernel/net/socket.c` + `include/kernel/net/socket.h` -- extend with `AF_INET6`, `struct sockaddr_in6`, `IPV6_V6ONLY` from TODO-02 §3 socket layer
 - `src/kernel/net/dns.c` -- activate `dns_resolve6()` AAAA stub (from TODO-02 §5); wire AAAA + A dual query into `dns_resolve_dual()`
-- → XREF: `06-networking/TODO-01-tcp-network-infrastructure.md` -- `net_interface` manager (§5) needs `ip6_local`/`ip6_global` fields added here
-- → XREF: `06-networking/TODO-02-dns-sockets.md` -- DNS AAAA stub (§5) and socket layer (§3–§8) are direct prerequisites and extension points
-- → XREF: `06-networking/TODO-03-http-tls.md` -- `https_get()`/`https_post()` will work over IPv6 once §2 dual-stack sockets are in place (no code change to HTTP layer needed)
+- → XREF: `07-networking/TODO-01-tcp-network-infrastructure.md` -- `net_interface` manager (§5) needs `ip6_local`/`ip6_global` fields added here
+- → XREF: `07-networking/TODO-02-dns-sockets.md` -- DNS AAAA stub (§5) and socket layer (§3–§8) are direct prerequisites and extension points
+- → XREF: `07-networking/TODO-03-http-tls.md` -- `https_get()`/`https_post()` will work over IPv6 once §2 dual-stack sockets are in place (no code change to HTTP layer needed)
 
 ## Outcome
 

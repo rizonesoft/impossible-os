@@ -11,7 +11,7 @@ title: "TODO-18 -- Audio Drivers"
 > **Goal:** Deliver hardware-level PCM playback drivers behind a clean `audio_device_t` vtable that the audio mixing subsystem (a separate desktop-domain TODO) will build on top of -- covering AC97, Intel HDA, VirtIO Sound, and USB Audio Class 1.0 playback, plus hot-plug device switching and a path to convert all drivers to loadable `.kmod` modules.
 
 > [!IMPORTANT]
-> **No audio exists today.** This TODO is a greenfield driver layer. The `audio_device_t` vtable (§1) is the architectural contract: every driver section registers against it, and the desktop audio subsystem (→ XREF `08-desktop-shell`) calls only `audio_device_t` functions -- never driver internals. All drivers are initially built-in (to verify correctness), then converted to `.kmod` in §7 once the module system (→ XREF `04-drivers-hardware/TODO-05-kernel-module-system.md`) is complete.
+> **No audio exists today.** This TODO is a greenfield driver layer. The `audio_device_t` vtable (§1) is the architectural contract: every driver section registers against it, and the desktop audio subsystem (→ XREF `09-desktop-shell`) calls only `audio_device_t` functions -- never driver internals. All drivers are initially built-in (to verify correctness), then converted to `.kmod` in §7 once the module system (→ XREF `04-drivers-hardware/TODO-05-kernel-module-system.md`) is complete.
 
 ## Inputs
 
@@ -19,7 +19,7 @@ title: "TODO-18 -- Audio Drivers"
 - [`src/kernel/drivers/virtio/virtio.c`](../../src/kernel/drivers/virtio/virtio.c) -- VirtIO transport reused by §4 (VirtIO Sound)
 - → XREF: `04-drivers-hardware/TODO-05-kernel-module-system.md` -- module loader required for §7 (kmod conversion); §7 is blocked on TODO-05
 - → XREF: `04-drivers-hardware/TODO-10-usb-stack.md §3` -- xHCI isochronous endpoint support (`xhci_configure_isoch_ep`, `xhci_submit_isoch_transfer`) is now defined in TODO-10 §3; §5 here consumes it via `usb_submit_isoch()` from the USB core API (TODO-10 §1)
-- → XREF: `08-desktop-shell` domain -- the desktop audio mixer/session manager calls `audio_device_t.write()` and `audio_device_t.set_volume()`; it is a consumer of the HAL defined in §1
+- → XREF: `09-desktop-shell` domain -- the desktop audio mixer/session manager calls `audio_device_t.write()` and `audio_device_t.set_volume()`; it is a consumer of the HAL defined in §1
 
 ## Outcome
 
@@ -170,7 +170,7 @@ Notify the audio subsystem when a new audio device appears or disappears. Switch
 **Files:** `src/kernel/drivers/audio_device.c`, `src/kernel/drivers/usb_audio.c`, `src/kernel/drivers/virtio_sound.c`
 
 > [!NOTE]
-> → XREF: `08-desktop-shell` domain -- the desktop audio mixer needs a `WM_AUDIO_DEVICE_CHANGED` message (or similar compositor notification) to update its device selector UI when hot-plug occurs. This section posts that message; the shell handles the UI response.
+> → XREF: `09-desktop-shell` domain -- the desktop audio mixer needs a `WM_AUDIO_DEVICE_CHANGED` message (or similar compositor notification) to update its device selector UI when hot-plug occurs. This section posts that message; the shell handles the UI response.
 
 - [ ] `audio_notify_attach(audio_device_t *dev)`: call `audio_register(dev)`; if new device has higher priority than current active, call `audio_switch_device(dev)`; post `WM_AUDIO_DEVICE_CHANGED(new_dev_name)` to compositor
 - [ ] `audio_notify_detach(audio_device_t *dev)`: remove from registered list; if detached device was active, select next highest-priority device; call `audio_switch_device(next)` or stop audio if none; post `WM_AUDIO_DEVICE_CHANGED(NULL)` to compositor

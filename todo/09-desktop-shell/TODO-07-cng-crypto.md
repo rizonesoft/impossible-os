@@ -23,8 +23,8 @@ title: "TODO-07 -- CNG Crypto & Certificate Store"
 - `include/kernel/fs/ntfs_internal.h` -- NTFS inode attributes -- §6 EFS `$EFS` attribute attachment
 - `include/kernel/auth.h` (TODO-06 §2) -- `auth_get_current_uid()`, `auth_hash_password()` -- §3 key store KEK derivation
 - `include/kernel/klog.h` -- `klog()` -- throughout
-- → XREF: `06-networking/TODO-03-http-tls.md` -- Mbed TLS integration calls `cng_tls_prf()` (§8) and `cng_rsa_pkcs1_sign/verify()` for TLS handshake; §8 is consumed there
-- → XREF: `06-networking/TODO-03-http-tls.md §6` -- Mozilla CA bundle loaded at boot used to seed §2 cert store root CAs
+- → XREF: `07-networking/TODO-03-http-tls.md` -- Mbed TLS integration calls `cng_tls_prf()` (§8) and `cng_rsa_pkcs1_sign/verify()` for TLS handshake; §8 is consumed there
+- → XREF: `07-networking/TODO-03-http-tls.md §6` -- Mozilla CA bundle loaded at boot used to seed §2 cert store root CAs
 - → XREF: `05-storage-filesystems/TODO-02-ntfs-readwrite.md` -- §6 EFS integration hooks into the NTFS data path; EFS `$EFS` attribute parsing lives in NTFS driver
 - → XREF: `08-graphics-ui/TODO-14-win32-gdi-user32-stubs.md` -- establishes `kernel32` stub table; `bcrypt.dll` (§4) and `ncrypt.dll` (§5) follow the same stub table pattern
 - → XREF: `09-desktop-shell/TODO-06-security-accounts.md §2` -- monocypher and `csprng_read()` must be complete before §1 starts

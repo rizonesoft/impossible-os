@@ -13,7 +13,7 @@ title: "TODO-04 -- Email Client"
 > scheduled auto-check with toast + tray notifications, and a keyword-based spam/junk filter.
 
 > [!IMPORTANT]
-> `06-networking/TODO-09-email-client.md` is the canonical email **protocol** implementation TODO
+> `07-networking/TODO-09-email-client.md` is the canonical email **protocol** implementation TODO
 > (message parser, SMTP, POP3, IMAP, account manager, notifications, GUI, compose, contacts,
 > search -- §1–§10). This TODO extends that spec with: richer GUI detail (attachment indicators,
 > search bar, read/unread state), CNG credential encryption specifics (`cng_aes256gcm_encrypt`
@@ -23,7 +23,7 @@ title: "TODO-04 -- Email Client"
 > specifies -- use XREFs to stay aligned.
 >
 > Mbed TLS (`tls_connect`, `tls_send`, `tls_recv`) must be complete before STARTTLS/TLS work
-> begins -- `→ XREF: 06-networking/TODO-03`.
+> begins -- `→ XREF: 07-networking/TODO-03`.
 > CNG AES-256-GCM and key store must be complete before §6 credential storage --
 > `→ XREF: 09-desktop-shell/TODO-07 §1 + §4`.
 
@@ -31,8 +31,8 @@ title: "TODO-04 -- Email Client"
 
 ## Inputs
 
-- `06-networking/TODO-09-email-client.md` -- canonical protocol implementation reference (§1 parser, §2 SMTP, §4 POP3, §5 IMAP, §8 GUI, §9 compose, §10 contacts, §11 search)
-- `include/kernel/net/tls.h` -- `tls_connect(fd, hostname)`, `tls_send()`, `tls_recv()`, `tls_close()` (→ XREF `06-networking/TODO-03`)
+- `07-networking/TODO-09-email-client.md` -- canonical protocol implementation reference (§1 parser, §2 SMTP, §4 POP3, §5 IMAP, §8 GUI, §9 compose, §10 contacts, §11 search)
+- `include/kernel/net/tls.h` -- `tls_connect(fd, hostname)`, `tls_send()`, `tls_recv()`, `tls_close()` (→ XREF `07-networking/TODO-03`)
 - `include/kernel/net/dns.h` -- `dns_resolve(hostname, &ip)`
 - `include/kernel/cng/cng.h` -- `cng_aes256gcm_encrypt()`, `cng_aes256gcm_decrypt()` (→ XREF `09-desktop-shell/TODO-07 §1`)
 - `include/kernel/cng/cng_keystore.h` -- `cng_keystore_get_kek()`, `cng_key_store_import()`, `cng_key_store_get()` (→ XREF `09-desktop-shell/TODO-07 §4`)
@@ -70,7 +70,7 @@ title: "TODO-04 -- Email Client"
 
 ## 1. SMTP Client `[Sonnet]`
 
-> → XREF: `06-networking/TODO-09-email-client.md §2` -- base implementation spec.
+> → XREF: `07-networking/TODO-09-email-client.md §2` -- base implementation spec.
 > This section adds the STARTTLS negotiation detail and error-code retry behavior.
 
 **Source file:** `src/apps/mail/smtp.c`; header `include/apps/mail/smtp.h`
@@ -90,7 +90,7 @@ title: "TODO-04 -- Email Client"
 
 ## 2. POP3 Client + Message Storage `[Sonnet]`
 
-> → XREF: `06-networking/TODO-09-email-client.md §4` -- base implementation spec.
+> → XREF: `07-networking/TODO-09-email-client.md §4` -- base implementation spec.
 
 **Source file:** `src/apps/mail/pop3.c`; header `include/apps/mail/pop3.h`
 
@@ -110,7 +110,7 @@ title: "TODO-04 -- Email Client"
 
 ## 3. IMAP Client (Stretch) `[Opus]`
 
-> → XREF: `06-networking/TODO-09-email-client.md §5` -- base implementation spec.
+> → XREF: `07-networking/TODO-09-email-client.md §5` -- base implementation spec.
 > This section adds IDLE push notification and flag sync detail.
 
 **Source file:** `src/apps/mail/imap.c`; header `include/apps/mail/imap.h`
@@ -129,7 +129,7 @@ title: "TODO-04 -- Email Client"
 
 ## 4. Three-Panel Email GUI `[Opus]`
 
-> → XREF: `06-networking/TODO-09-email-client.md §8`
+> → XREF: `07-networking/TODO-09-email-client.md §8`
 
 **Source file:** `src/apps/mail/mail.c`; window title `Mail`
 
@@ -146,7 +146,7 @@ Layout (fixed proportions): sidebar 200 px | message list 350 px | viewer fills 
 
 ## 5. Compose Window `[Sonnet]`
 
-> → XREF: `06-networking/TODO-09-email-client.md §9`
+> → XREF: `07-networking/TODO-09-email-client.md §9`
 
 **Source file:** `src/apps/mail/compose.c`
 
@@ -163,7 +163,7 @@ Layout (fixed proportions): sidebar 200 px | message list 350 px | viewer fills 
 
 ## 6. Account Management + Credential Store `[Sonnet]`
 
-> → XREF: `06-networking/TODO-09-email-client.md §6` -- base spec.
+> → XREF: `07-networking/TODO-09-email-client.md §6` -- base spec.
 > This section specifies the CNG AES-256-GCM credential encryption and Registry layout.
 
 **Source file:** `src/apps/mail/mail_account.c`
@@ -181,7 +181,7 @@ Layout (fixed proportions): sidebar 200 px | message list 350 px | viewer fills 
 
 ## 7. Auto-Check + Notifications + Tray `[Sonnet]`
 
-> → XREF: `06-networking/TODO-09-email-client.md §7` -- base spec.
+> → XREF: `07-networking/TODO-09-email-client.md §7` -- base spec.
 
 **Source file:** `src/apps/mail/mail_notify.c`; `mail_systray.c`
 
@@ -195,7 +195,7 @@ Layout (fixed proportions): sidebar 200 px | message list 350 px | viewer fills 
 
 ## 8. Contacts Store `[Sonnet]`
 
-> → XREF: `06-networking/TODO-09-email-client.md §10` -- base spec.
+> → XREF: `07-networking/TODO-09-email-client.md §10` -- base spec.
 
 **Source file:** `src/apps/mail/contacts.c`; header `include/apps/mail/contacts.h`
 

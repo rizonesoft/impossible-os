@@ -17,7 +17,7 @@ title: "TODO-05 -- GitHub Releases & Community Launch"
 > [!IMPORTANT]
 > **Upload machinery** (`gh release upload` for disk image, ISO, VM images, SDK ZIP)
 > is specced in `12-installer-release/TODO-03 §9` (`scripts/upload-release.sh`) and
-> `11-user-platform-sdk/TODO-06 §8` (`scripts/release-sdk.sh`). The `create-release.sh`
+> `12-user-platform-sdk/TODO-06 §8` (`scripts/release-sdk.sh`). The `create-release.sh`
 > here **orchestrates** those scripts; do not re-specify artifact upload logic.
 >
 > **`gen-changelog.sh`** is specced in `12-installer-release/TODO-03 §5`; §9 here
@@ -41,8 +41,8 @@ title: "TODO-05 -- GitHub Releases & Community Launch"
 - `12-installer-release/TODO-03-update-server.md §9 §5` (→ XREF) -- `upload-release.sh`; `promote-release.sh`; `gen-changelog.sh`; §1 §9 orchestration
 - `12-installer-release/TODO-01-release-artifacts.md §1 §5` (→ XREF) -- `OS_VERSION_STRING`; signed artifacts; §1 release workflow
 - `12-installer-release/TODO-04-release-qa.md §1` (→ XREF) -- `release-checklist.md` PR template; §2 sign-off gate before `create-release.sh`
-- `11-user-platform-sdk/TODO-06-sdk-distribution.md §8` (→ XREF) -- `release-sdk.sh`; SDK ZIP artifact; §1 coordinate
-- `11-user-platform-sdk/TODO-07-win32-compat-matrix.md §12` (→ XREF) -- `compat-check.sh` score; §5 §8 roadmap metric
+- `12-user-platform-sdk/TODO-06-sdk-distribution.md §8` (→ XREF) -- `release-sdk.sh`; SDK ZIP artifact; §1 coordinate
+- `12-user-platform-sdk/TODO-07-win32-compat-matrix.md §12` (→ XREF) -- `compat-check.sh` score; §5 §8 roadmap metric
 - `README.md`, `CONTRIBUTING.md`, `CHANGELOG.md`, `CODE_OF_CONDUCT.md` -- existing files to overhaul
 - `.github/ISSUE_TEMPLATE/`, `.github/PULL_REQUEST_TEMPLATE.md` -- existing templates to replace
 - `scripts/build.sh` -- quick-start commands; §3 §5
@@ -322,10 +322,10 @@ outsiders can track progress without reading 100+ TODO files.
 - [ ] **GitHub Milestones → TODO domain mapping**:
   ```
   v1.0-kernel       → 01-boot-platform, 02-kernel-core, 03-memory-concurrency, 04-drivers-hardware
-  v1.0-desktop      → 05-filesystem-storage, 06-networking, 07-graphics-ui, 08-desktop-shell
-  v1.0-apps         → 10-platform-services, 10-apps
+  v1.0-desktop      → 05-filesystem-storage, 07-networking, 08-graphics-ui, 09-desktop-shell
+  v1.0-apps         → 10-platform-services, 11-apps
   v1.0-release      → 12-installer-release
-  v1.1-compat       → 11-user-platform-sdk
+  v1.1-compat       → 12-user-platform-sdk
   ```
 - [ ] **`scripts/sync-milestones.sh`**: for each milestone, `gh milestone create` (if not exists) with description = domain `INDEX.md` first paragraph + due date; `gh milestone edit` if exists; idempotent (safe to run repeatedly)
 - [ ] **`scripts/sync-issues.sh`** (lightweight -- P0/P1 only):

@@ -18,7 +18,7 @@ title: "TODO-14 -- Network Drivers"
 - [`src/kernel/drivers/rtl8139.c`](../../src/kernel/drivers/rtl8139.c) -- reference for the existing NIC registration and `ethernet_receive()` call pattern
 - [`src/kernel/drivers/virtio/virtio.c`](../../src/kernel/drivers/virtio/virtio.c) -- VirtIO transport (reused by VirtIO-net)
 - → XREF: `04-drivers-hardware/TODO-05-kernel-module-system.md` -- kernel module loader, `EXPORT_SYMBOL`, `blkdev_register`/`net_ops` HAL vtables; must be complete before §2–§6
-- → XREF: `06-networking` domain -- `ethernet_receive(buf, len)` is the hook into the protocol stack; NIC modules call this on RX; no networking protocol changes needed here
+- → XREF: `07-networking` domain -- `ethernet_receive(buf, len)` is the hook into the protocol stack; NIC modules call this on RX; no networking protocol changes needed here
 - → XREF: `04-drivers-hardware/TODO-08-core-driver-enhancements.md §3` -- MSI/MSI-X interrupt support used by e1000, igc, and RTL8125 for high-performance interrupt delivery
 
 ## Outcome
@@ -177,7 +177,7 @@ Define the `wifi_mac_t` abstraction and station-mode state machine (DISCONNECTED
 **Files:** `include/kernel/net/wifi_mac.h` (new), `src/kernel/net/wifi_mac.c` (new)
 
 > [!NOTE]
-> This section intentionally stops at stub infrastructure. Full 802.11 MAC, MLME, and WPA2-PSK four-way handshake are P1 features tracked in the `06-networking` domain. This section creates the interface so WiFi device drivers (§9, §10) have a registration point.
+> This section intentionally stops at stub infrastructure. Full 802.11 MAC, MLME, and WPA2-PSK four-way handshake are P1 features tracked in the `07-networking` domain. This section creates the interface so WiFi device drivers (§9, §10) have a registration point.
 
 - [ ] `wifi_mac_t { void (*scan)(void); int (*associate)(const char *ssid, const char *psk); void (*deassociate)(void); int (*send_frame)(uint8_t *frame, size_t len); }`
 - [ ] `wifi_state_t` enum: `WIFI_DISCONNECTED`, `WIFI_SCANNING`, `WIFI_ASSOCIATING`, `WIFI_ASSOCIATED`

@@ -21,7 +21,7 @@ title: "TODO-09 -- x86-64 Architecture Enhancements"
 > - HWP/CPPC frequency scaling + thermal monitoring -> `TODO-26`
 > - NUMA-aware page allocator -> `D03` `03-memory-concurrency`
 > - Hybrid P/E-core scheduler policy -> `D03` `03-memory-concurrency`
-> - CPU feature explorer GUI + chiplet visualizer -> `D08` `08-desktop-shell`
+> - CPU feature explorer GUI + chiplet visualizer -> `D08` `09-desktop-shell`
 > - PKS (Protection Keys for Supervisor, `PKRS` MSR): Linux mm uses it for selective kernel writeability; overlaps PTE key bits with PKU. Defer design and enablement to `TODO-10` until kernel direct-map and SMEP/SMAP page attributes match `CLAUDE.md` policy (user PKU stays §5 here)
 
 ---
@@ -377,7 +377,7 @@ title: "TODO-09 -- x86-64 Architecture Enhancements"
   - On NMI: read `0xC001_1035` (RIP), `0xC001_1036` (op data: micro-op info, cache miss, DRAM latency), `0xC001_1037` (data address + NUMA source)
 - [ ] IBS NMI handler: read all IBS MSRs; pack into a ring buffer of `ibs_sample_t` structs (256 entries per CPU, static allocation); re-arm counter; return from NMI
 - [ ] `ibs_start(rate)` / `ibs_stop()` / `ibs_read_samples(buf, max)` API
-- [ ] Future: wire to a profiler GUI in `10-apps`
+- [ ] Future: wire to a profiler GUI in `11-apps`
 - [ ] Commit: `"kernel/pmc: AMD IBS fetch+op sampling, NMI handler, sample ring buffer"`
 
 **Test checkpoint:** With `CPU_FEATURE_IBS`, NMI handler fills ring without nested NMI deadlock; `ibs_read_samples` returns monotonic sequence numbers. Test on: QEMU WHPX, QEMU TCG, VirtualBox, bare metal (AMD).

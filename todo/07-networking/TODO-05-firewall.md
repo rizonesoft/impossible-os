@@ -22,8 +22,8 @@ title: "TODO-05 -- Network Firewall & Packet Filter"
 - `src/kernel/fs/sysfs.c` (or VFS `/sys/` mount point) -- expose `/sys/firewall` read-only file for §9 hit counter dump
 - `src/shell/` -- `cmd_fw.c` (new) for §6 CLI; register in shell command table
 - `src/desktop/controls.c` + desktop compositing -- `firewall.cpl` applet UI in §8
-- → XREF: `06-networking/TODO-01-tcp-network-infrastructure.md` -- §7 stateful connection tracking table (`ct_lookup()`) is mandatory for §2 inbound established auto-allow
-- → XREF: `06-networking/TODO-04-ipv6-dual-stack.md` -- `ipv6_receive()`/`ipv6_send()` hook points needed by §5 IPv6 filter; ICMPv6 ALLOW rule in default ruleset (§6)
+- → XREF: `07-networking/TODO-01-tcp-network-infrastructure.md` -- §7 stateful connection tracking table (`ct_lookup()`) is mandatory for §2 inbound established auto-allow
+- → XREF: `07-networking/TODO-04-ipv6-dual-stack.md` -- `ipv6_receive()`/`ipv6_send()` hook points needed by §5 IPv6 filter; ICMPv6 ALLOW rule in default ruleset (§6)
 
 ## Outcome
 

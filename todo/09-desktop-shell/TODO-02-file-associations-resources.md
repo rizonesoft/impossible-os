@@ -27,7 +27,7 @@ title: "TODO-02 -- File Associations, Shortcuts & System Resources"
 - → XREF: `08-graphics-ui/TODO-11-startmenu-tray-notifications.md §1` -- Start Menu reads `.lnk` files from `C:\Users\Default\AppData\StartMenu\`; §5 must create those default shortcuts on first boot
 - → XREF: `08-graphics-ui/TODO-08-window-manager.md §3` -- desktop icons double-click calls `file_assoc_open()` from §1
 - → XREF: `04-drivers-hardware/TODO-18-audio-drivers.md` (AC97/HDA audio) -- §7 WAV player requires audio output driver; use serial log stub until driver is live
-- Related (no stable XREF target): `10-apps/TODO-*` (File Manager) -- File Manager double-click calls `file_assoc_open()` from §1; File Manager copy/delete integrates with §6 Recycle Bin
+- Related (no stable XREF target): `11-apps/TODO-*` (File Manager) -- File Manager double-click calls `file_assoc_open()` from §1; File Manager copy/delete integrates with §6 Recycle Bin
 
 ## Outcome
 

@@ -11,7 +11,7 @@ title: "TODO-01 -- Kernel Embedded Libraries"
 > **Goal:** Port and consolidate all embedded third-party libraries -- string/math libc,
 > miniz, monocypher, cJSON, Mbed TLS, and STB -- into `src/libs/` with freestanding memory
 > redirects and host-side integration tests. This is a foundational prerequisite consumed by
-> 06-networking, 08-desktop-shell, 10-platform-services, and 10-apps.
+> 07-networking, 09-desktop-shell, 10-platform-services, and 11-apps.
 
 > [!IMPORTANT]
 > **Source migration:** All sections from
@@ -49,7 +49,7 @@ title: "TODO-01 -- Kernel Embedded Libraries"
 - `include/kernel/cpuid.h` -- `CPU_FEATURE_RDRAND` flag check -- §4 CSPRNG seed
 - `include/kernel/syscall.h` -- syscall number table; add `SYS_GETRANDOM` -- §4
 - `02-kernel-core/TODO-03-kernel-libraries.md §6` (→ XREF) -- miniz port + ZIP reader prerequisite -- §5
-- `06-networking/TODO-03-http-tls.md` (→ XREF) -- Mbed TLS TLS 1.2 consumer -- §4
+- `07-networking/TODO-03-http-tls.md` (→ XREF) -- Mbed TLS TLS 1.2 consumer -- §4
 - `10-platform-services/TODO-07` (→ XREF) -- monocypher consumer (WiFi WPA2, SSH crypto) -- §4
 - `include/kernel/klog.h` -- `klog()` for library init diagnostics -- §8
 
@@ -147,7 +147,7 @@ title: "TODO-01 -- Kernel Embedded Libraries"
 - [ ] **Stream API** (exposed from miniz directly, re-declared in `include/libs/miniz.h`):
   - [ ] `mz_stream_deflate_init/push/end` wrappers around `mz_deflate_*`
   - [ ] `mz_stream_inflate_init/push/end` wrappers around `mz_inflate_*`
-  - [ ] Used by HTTP gzip (`Content-Encoding: gzip` in 06-networking) and IXFS block compression
+  - [ ] Used by HTTP gzip (`Content-Encoding: gzip` in 07-networking) and IXFS block compression
 - [ ] **Memory redirect** (if not already done in §4): `#define MZ_MALLOC(sz) kmalloc(sz)`, `MZ_FREE(p) kfree(p)`, custom `MZ_REALLOC` shim using `kmalloc` + `memcpy` + `kfree`; buffers > 4 KB → `pmm_alloc_contiguous`
 - [ ] **Verification**: compress a 64 KB zero-filled buffer → decompress → compare byte-for-byte; open existing 3-file ZIP in-memory → list entries → extract one; create new ZIP → add 2 files → close → re-open as reader → verify entry count
 
@@ -213,7 +213,7 @@ title: "TODO-01 -- Kernel Embedded Libraries"
 
 > Security-critical TLS 1.2 client: certificate chain validation, RSA key exchange, AES-GCM
 > record encryption. No prior Impossible OS TLS implementation exists.
-> → XREF: `06-networking/TODO-03-http-tls.md` -- primary consumer.
+> → XREF: `07-networking/TODO-03-http-tls.md` -- primary consumer.
 
 **Output files:** `src/libs/mbedtls/` (selected source files), `include/libs/mbedtls/`
 

@@ -8,19 +8,19 @@ title: "TODO-02 -- FTP Client, wget/curl & WiFi"
 
 # TODO-02 -- FTP Client, wget/curl & WiFi
 
-**Domain:** `10-apps`
+**Domain:** `11-apps`
 **Goal:** Deliver the file-transfer and command-line download toolbox (FTP, wget, curl) that complete the networking app layer, plus a WiFi framework (stretch) for wireless hardware support.
 
 > [!IMPORTANT]
-> **Depends on:** `06-networking/TODO-03-http-tls.md` -- `http_get()`, `https_get()`, `http_post()`, `kern_socket()`, `kern_connect()`, `kern_send()`, `kern_recv()`, `kern_close()`, `dns_resolve()` must all be complete before any section here begins.
-> **Migration:** Consolidates `TODO-420-FTP.md` (all sections) + `TODO-400-Networking.md` §4.4 (wget/curl) + §9.5 (WiFi) into one file. All other sections of `TODO-400-Networking.md` live in `06-networking`.
+> **Depends on:** `07-networking/TODO-03-http-tls.md` -- `http_get()`, `https_get()`, `http_post()`, `kern_socket()`, `kern_connect()`, `kern_send()`, `kern_recv()`, `kern_close()`, `dns_resolve()` must all be complete before any section here begins.
+> **Migration:** Consolidates `TODO-420-FTP.md` (all sections) + `TODO-400-Networking.md` §4.4 (wget/curl) + §9.5 (WiFi) into one file. All other sections of `TODO-400-Networking.md` live in `07-networking`.
 
 ---
 
 ## Important Notes
 
-- FTP uses **two TCP connections**: control (port 21, ASCII commands) and data (negotiated via `PASV`). Both use `kern_connect()`/`kern_send()`/`kern_recv()` from `06-networking/TODO-02`.
-- `https_get()` / `http_get()` from `06-networking/TODO-03` are the only network primitives `wget` and `curl` call -- no raw socket work needed in those tools.
+- FTP uses **two TCP connections**: control (port 21, ASCII commands) and data (negotiated via `PASV`). Both use `kern_connect()`/`kern_send()`/`kern_recv()` from `07-networking/TODO-02`.
+- `https_get()` / `http_get()` from `07-networking/TODO-03` are the only network primitives `wget` and `curl` call -- no raw socket work needed in those tools.
 - `vfs_open()`, `vfs_write()`, `vfs_read()`, `vfs_stat()` from `include/kernel/fs/vfs.h` are used for file I/O in download and upload operations.
 - `CTRL_LISTVIEW` and `CTRL_PROGRESSBAR` are defined in `08-graphics-ui/TODO-05` -- the FTP GUI (§3) and WiFi settings (§6) depend on them.
 - WiFi (§6) is a **stretch goal** with a hardware dependency (USB RTL8188 or QEMU virtio-wifi). Do not start §6 until §1–5 are complete and working.
@@ -35,12 +35,12 @@ title: "TODO-02 -- FTP Client, wget/curl & WiFi"
 | Path                                               | Purpose                                                                              |
 | -------------------------------------------------- | ------------------------------------------------------------------------------------ |
 | `include/kernel/fs/vfs.h`                          | `vfs_open`, `vfs_write`, `vfs_read`, `vfs_stat` -- local file I/O                    |
-| `06-networking/TODO-03-http-tls.md`                | `http_get`, `https_get`, `http_post` -- wget/curl network ops                        |
-| `06-networking/TODO-02-dns-sockets.md`             | `kern_socket`, `kern_connect`, `kern_send`, `kern_recv`, `kern_close` -- FTP raw TCP |
+| `07-networking/TODO-03-http-tls.md`                | `http_get`, `https_get`, `http_post` -- wget/curl network ops                        |
+| `07-networking/TODO-02-dns-sockets.md`             | `kern_socket`, `kern_connect`, `kern_send`, `kern_recv`, `kern_close` -- FTP raw TCP |
 | `include/registry.h`                               | `registry_get/set()` -- WiFi credentials, ncpa.cpl settings                          |
 | `08-graphics-ui/TODO-05 §*`                        | `CTRL_LISTVIEW`, `CTRL_PROGRESSBAR` -- FTP GUI + WiFi settings panel                 |
-| → XREF: `06-networking/TODO-03`                    | HTTP/HTTPS client -- mandatory for wget/curl                                         |
-| → XREF: `10-apps/TODO-01 §2`                       | HTML link extractor for `wget -r` recursive crawl                                    |
+| → XREF: `07-networking/TODO-03`                    | HTTP/HTTPS client -- mandatory for wget/curl                                         |
+| → XREF: `11-apps/TODO-01 §2`                       | HTML link extractor for `wget -r` recursive crawl                                    |
 | → XREF: `04-drivers-hardware/TODO-10-usb-stack.md` | USB HID stack -- USB WiFi adapter driver prerequisite                                |
 
 ---
@@ -57,14 +57,14 @@ title: "TODO-02 -- FTP Client, wget/curl & WiFi"
 
 ## Implementation Order
 
-| #   | Section                                                   | Tag        | Dep                | Mark |
-| --- | --------------------------------------------------------- | ---------- | ------------------ | ---- |
-| 1   | FTP protocol core (`ftp_connect`, `PASV`, `RETR`, `STOR`) | `[Sonnet]` | 06-net/TODO-02     | 💎   |
-| 2   | FTP shell commands + `wget ftp://`                        | `[Sonnet]` | §1                 | 💎   |
-| 3   | `wget` command (HTTP/HTTPS + progress)                    | `[Sonnet]` | 06-net/TODO-03     | 💎   |
-| 4   | `curl` command (full flag set)                            | `[Sonnet]` | §3                 | 💎   |
-| 5   | FTP GUI client (dual-pane, stretch)                       | `[Sonnet]` | §1, 07-gfx/TODO-05 | 💎   |
-| 6   | WiFi framework (stretch)                                  | `[Opus]`   | 04-drivers/TODO-09 | 💎   |
+| #   | Section                                                   | Tag        | Dep                         | Mark |
+| --- | --------------------------------------------------------- | ---------- | --------------------------- | ---- |
+| 1   | FTP protocol core (`ftp_connect`, `PASV`, `RETR`, `STOR`) | `[Sonnet]` | 07-networking/TODO-02       | 💎   |
+| 2   | FTP shell commands + `wget ftp://`                        | `[Sonnet]` | §1                          | 💎   |
+| 3   | `wget` command (HTTP/HTTPS + progress)                    | `[Sonnet]` | 07-networking/TODO-03       | 💎   |
+| 4   | `curl` command (full flag set)                            | `[Sonnet]` | §3                          | 💎   |
+| 5   | FTP GUI client (dual-pane, stretch)                       | `[Sonnet]` | §1, 08-graphics-ui/TODO-05  | 💎   |
+| 6   | WiFi framework (stretch)                                  | `[Opus]`   | 04-drivers-hardware/TODO-09 | 💎   |
 
 ---
 

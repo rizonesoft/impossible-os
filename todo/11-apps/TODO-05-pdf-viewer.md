@@ -227,8 +227,8 @@ title: "TODO-05 -- PDF Viewer"
 - [ ] Command-line: `pdfview.exe C:\path\to\file.pdf` -- open and display immediately
 - [ ] `pdfview.exe` without args → open-file dialog (`dialog_file_open()`) filtered to `*.pdf`
 - [ ] Open from File Manager double-click → `file_assoc_open()` routes to `pdfview.exe` with path arg
-- [ ] Open from browser download (→ XREF `10-apps/TODO-01 §8`) → same launch path
-- [ ] Open from email attachment (→ XREF `10-apps/TODO-04 §6`) → viewer window per attachment click
+- [ ] Open from browser download (→ XREF `11-apps/TODO-01 §8`) → same launch path
+- [ ] Open from email attachment (→ XREF `11-apps/TODO-04 §6`) → viewer window per attachment click
 - [ ] Recent files: `HKCU\Software\Impossible\PDFViewer\RecentFiles` (up to 10 paths, MRU order)
 
 ---

@@ -11,7 +11,7 @@ This domain owns the storage stack after hardware controllers: block abstraction
 ## Does Not Belong Here
 
 - Controller-specific driver work such as AHCI, VirtIO, NVMe, or USB transport. Put that in [04 Drivers Hardware](../04-drivers-hardware/INDEX.md).
-- Disk GUI apps and user-facing tools. Put that in [10 Apps](../10-apps/INDEX.md).
+- Disk GUI apps and user-facing tools. Put that in [10 Apps](../11-apps/INDEX.md).
 
 ## Likely Source Areas
 

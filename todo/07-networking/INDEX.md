@@ -11,7 +11,7 @@ This domain tracks networking inside the OS runtime: packet flow, protocol layer
 ## Does Not Belong Here
 
 - NIC driver implementation details. Put that in [04 Drivers Hardware](../04-drivers-hardware/INDEX.md).
-- User-facing internet applications such as browser, SSH, FTP, or email. Put that in [10 Apps](../10-apps/INDEX.md).
+- User-facing internet applications such as browser, SSH, FTP, or email. Put that in [10 Apps](../11-apps/INDEX.md).
 
 ## Likely Source Areas
 

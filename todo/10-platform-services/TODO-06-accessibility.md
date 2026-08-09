@@ -11,7 +11,7 @@ title: "TODO-06 -- Accessibility Features"
 > **Goal:** Ensure Impossible OS is usable for users with visual, motor, and cognitive needs -- a requirement for any production-grade OS. The theme system, DPI layer, and animation engine are foundations; this TODO wires eight accessibility features and their unified Control Panel applet on top of them.
 
 > [!IMPORTANT]
-> **Already exists**: `cursor_image_t { images[CURSOR_MAX_SIZES=8] }` + `cursor_draw()` in `cursor.h` -- size struct present; no `cursor_set_size()` yet. Keyboard driver supports Shift/Ctrl/Alt modifier tracking (`keyboard.h` comment confirms). `gfx_blit()` for magnifier. `system_get_ticks()`. **Forward deps**: `theme_reload(theme_id)` + `WM_THEME_CHANGED` broadcast + `THEME_HIGH_CONTRAST` preset (07-graphics-ui theme system). `WM_DPI_CHANGED` + DPI scale factor broadcast (07-graphics-ui DPI). `anim_set_enabled(bool)` / `g_anim_enabled` (07-graphics-ui animation engine). `fb_get_backbuffer()` for magnifier source (framebuffer driver). **Nothing from this TODO needs a new syscall** -- all features are kernel/desktop layer. Note on color blind LUT: 3×3 color matrix applied at `fb_flush()` stage to compositor output; new function `fb_set_color_matrix()` needed in framebuffer driver.
+> **Already exists**: `cursor_image_t { images[CURSOR_MAX_SIZES=8] }` + `cursor_draw()` in `cursor.h` -- size struct present; no `cursor_set_size()` yet. Keyboard driver supports Shift/Ctrl/Alt modifier tracking (`keyboard.h` comment confirms). `gfx_blit()` for magnifier. `system_get_ticks()`. **Forward deps**: `theme_reload(theme_id)` + `WM_THEME_CHANGED` broadcast + `THEME_HIGH_CONTRAST` preset (08-graphics-ui theme system). `WM_DPI_CHANGED` + DPI scale factor broadcast (08-graphics-ui DPI). `anim_set_enabled(bool)` / `g_anim_enabled` (08-graphics-ui animation engine). `fb_get_backbuffer()` for magnifier source (framebuffer driver). **Nothing from this TODO needs a new syscall** -- all features are kernel/desktop layer. Note on color blind LUT: 3×3 color matrix applied at `fb_flush()` stage to compositor output; new function `fb_set_color_matrix()` needed in framebuffer driver.
 
 ## Inputs
 
@@ -46,9 +46,9 @@ title: "TODO-06 -- Accessibility Features"
 
 | ⭐  | Order | Deliverable                                                                                          | Depends On                                                                                   | Status |
 | --- | :---: | ---------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- | :----: |
-| 💎  |   1   | §7 Reduced motion -- `HKLM\SYSTEM\Accessibility\ReducedMotion`; `anim_set_enabled(0)` gate          | `anim_set_enabled()` (07-graphics-ui); `registry_set/get()`                                 |  [ ]   |
-| 💎  |   2   | §1 High contrast -- `THEME_HIGH_CONTRAST` preset; `accessibility_set_high_contrast()`; Registry      | `theme_reload(THEME_HIGH_CONTRAST)` + `WM_THEME_CHANGED` (07-graphics-ui theme)            |  [ ]   |
-| 💎  |   3   | §2 Large text/DPI -- `accessibility_set_dpi(pct)` scale override; `WM_DPI_CHANGED` broadcast        | `WM_DPI_CHANGED` + DPI scale infrastructure (07-graphics-ui DPI TODO)                      |  [ ]   |
+| 💎  |   1   | §7 Reduced motion -- `HKLM\SYSTEM\Accessibility\ReducedMotion`; `anim_set_enabled(0)` gate          | `anim_set_enabled()` (08-graphics-ui); `registry_set/get()`                                 |  [ ]   |
+| 💎  |   2   | §1 High contrast -- `THEME_HIGH_CONTRAST` preset; `accessibility_set_high_contrast()`; Registry      | `theme_reload(THEME_HIGH_CONTRAST)` + `WM_THEME_CHANGED` (08-graphics-ui theme)            |  [ ]   |
+| 💎  |   3   | §2 Large text/DPI -- `accessibility_set_dpi(pct)` scale override; `WM_DPI_CHANGED` broadcast        | `WM_DPI_CHANGED` + DPI scale infrastructure (08-graphics-ui DPI TODO)                      |  [ ]   |
 | 💎  |   4   | §3 Sticky keys -- 5× Shift detection; modifier latch; tray indicator; `HKLM\SYSTEM\Accessibility\StickyKeys` | keyboard modifier hook in `keyboard.h`; tray area (TODO-07)                       |  [ ]   |
 | 💎  |   5   | §4 Large cursor -- `cursor_set_size(px)` 32/48/64/96; color options; Registry                        | `cursor_image_t` (exists); cursor loader (TODO-02 file assoc / cursor theme)               |  [ ]   |
 | ⭐  |   6   | §5 Screen magnifier -- `Win+Plus/Minus` zoom 2×–8×; compositor `gfx_blit` zoom overlay; cursor track | `fb_get_backbuffer()` + `gfx_blit()` (exist); `fb_lock_compositor()` (exists)             |  [ ]   |
@@ -64,12 +64,12 @@ title: "TODO-06 -- Accessibility Features"
 **Files:** `src/kernel/accessibility.c` (new), `include/kernel/accessibility.h` (new)
 
 > [!NOTE]
-> → XREF: `08-graphics-ui/TODO-08` -- `theme_reload(int theme_id)` and `WM_THEME_CHANGED` live there; `THEME_HIGH_CONTRAST` ID must be defined in `theme.h`. `accessibility_set_high_contrast(int on)`: `registry_set("HKLM\\SYSTEM\\Accessibility\\HighContrast", on ? "1" : "0")`; `theme_reload(on ? THEME_HIGH_CONTRAST : THEME_DEFAULT)` → broadcasts `WM_THEME_CHANGED` to all windows. All widgets re-read theme tokens on `WM_THEME_CHANGED` (this is the theme system contract from `07-graphics-ui`). **System tray quick tile**: 16×16 contrast icon in notification area; click → `accessibility_set_high_contrast(!g_high_contrast)`. **Load on boot**: kernel init reads `HKLM\SYSTEM\Accessibility\HighContrast` → if `"1"` → `theme_reload(THEME_HIGH_CONTRAST)` before desktop launch.
+> → XREF: `08-graphics-ui/TODO-08` -- `theme_reload(int theme_id)` and `WM_THEME_CHANGED` live there; `THEME_HIGH_CONTRAST` ID must be defined in `theme.h`. `accessibility_set_high_contrast(int on)`: `registry_set("HKLM\\SYSTEM\\Accessibility\\HighContrast", on ? "1" : "0")`; `theme_reload(on ? THEME_HIGH_CONTRAST : THEME_DEFAULT)` → broadcasts `WM_THEME_CHANGED` to all windows. All widgets re-read theme tokens on `WM_THEME_CHANGED` (this is the theme system contract from `08-graphics-ui`). **System tray quick tile**: 16×16 contrast icon in notification area; click → `accessibility_set_high_contrast(!g_high_contrast)`. **Load on boot**: kernel init reads `HKLM\SYSTEM\Accessibility\HighContrast` → if `"1"` → `theme_reload(THEME_HIGH_CONTRAST)` before desktop launch.
 
 - [ ] `include/kernel/accessibility.h`: global state `g_accessibility_t { int high_contrast, dpi_pct, sticky_keys, cursor_size_px, magnifier_zoom, mouse_keys, reduced_motion, color_blind_mode; }`, all `accessibility_set_*()` prototypes
 - [ ] `src/kernel/accessibility.c`: `accessibility_init()` -- read all `HKLM\SYSTEM\Accessibility\*` Registry keys at boot
 - [ ] `accessibility_set_high_contrast(on)` -- `registry_set()` + `theme_reload()`; read back on WM init
-- [ ] `THEME_HIGH_CONTRAST` token set: `bg=#000000, fg=#FFFFFF, accent=#FFFF00, link=#00FFFF, error=#FF0000` (defined in `07-graphics-ui` theme system)
+- [ ] `THEME_HIGH_CONTRAST` token set: `bg=#000000, fg=#FFFFFF, accent=#FFFF00, link=#00FFFF, error=#FF0000` (defined in `08-graphics-ui` theme system)
 - [ ] `accessibility_init()` called from kernel init sequence before desktop launch
 - [ ] System tray quick tile for high contrast toggle (register with tray manager in TODO-07)
 - [ ] Commit: `"accessibility: high_contrast -- THEME_HIGH_CONTRAST preset, theme_reload(), boot restore"`
@@ -165,7 +165,7 @@ Numpad controls mouse cursor: 4/6=L/R, 2/8=D/U, 7/9/1/3=diagonals, 5=click, +=do
 **Files:** extend `src/kernel/accessibility.c`; extend `src/kernel/drivers/framebuffer.c` for color matrix
 
 > [!NOTE]
-> `accessibility_set_reduced_motion(int on)`: `registry_set("HKLM\\SYSTEM\\Accessibility\\ReducedMotion", ...)` + `anim_set_enabled(!on)` -- call from `07-graphics-ui` animation engine. **Color blind stretch**: `fb_set_color_matrix(float mat[9])` -- applied per-pixel during `fb_flush()` by multiplying `[R, G, B]` × mat. Three presets:
+> `accessibility_set_reduced_motion(int on)`: `registry_set("HKLM\\SYSTEM\\Accessibility\\ReducedMotion", ...)` + `anim_set_enabled(!on)` -- call from `08-graphics-ui` animation engine. **Color blind stretch**: `fb_set_color_matrix(float mat[9])` -- applied per-pixel during `fb_flush()` by multiplying `[R, G, B]` × mat. Three presets:
 > - **Deuteranopia** (green-blind): `[[0.367, 0.861, -0.228], [0.280, 0.673, 0.047], [-0.012, 0.043, 0.969]]`
 > - **Protanopia** (red-blind): `[[0.152, 1.053, -0.205], [0.115, 0.786, 0.099], [-0.004, -0.048, 1.052]]`
 > - **Tritanopia** (blue-blind): `[[1.256, -0.077, -0.179], [-0.078, 0.931, 0.148], [0.005, 0.691, 0.304]]`

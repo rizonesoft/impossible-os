@@ -11,7 +11,7 @@ title: "TODO-02 -- DNS Resolver & BSD Sockets API"
 > **Goal:** Build the DNS resolver (query builder, response parser, 64-entry LRU cache, AAAA support) and a BSD-compatible kernel socket layer (`SOCK_STREAM`/`SOCK_DGRAM`, `socket`/`connect`/`send`/`recv`/`bind`/`listen`/`accept`/`select`), expose them via 8 new syscalls, and provide thin user-mode wrappers. DNS and sockets turn raw IP+port into the hostname-based, file-descriptor API every application uses.
 
 > [!IMPORTANT]
-> TCP (`tcp_connect`/`tcp_send`/`tcp_recv`/`tcp_close`) must be complete (→ XREF: `06-networking/TODO-01-tcp-network-infrastructure.md`) before the `SOCK_STREAM` socket type can be wired. DNS sends queries via `udp_send()` (already working) and receives responses via a `udp_register_handler()` callback. Existing syscall numbers 1–17 and 33–38 are occupied; socket syscalls start at **39** (`SYS_SOCKET=39` through `SYS_SELECT=46`) leaving room below 39 for future kernel syscalls. The 64-bit `select()` event bitmask is capped at 64 sockets -- sufficient for the initial implementation; `poll()` parity is deferred.
+> TCP (`tcp_connect`/`tcp_send`/`tcp_recv`/`tcp_close`) must be complete (→ XREF: `07-networking/TODO-01-tcp-network-infrastructure.md`) before the `SOCK_STREAM` socket type can be wired. DNS sends queries via `udp_send()` (already working) and receives responses via a `udp_register_handler()` callback. Existing syscall numbers 1–17 and 33–38 are occupied; socket syscalls start at **39** (`SYS_SOCKET=39` through `SYS_SELECT=46`) leaving room below 39 for future kernel syscalls. The 64-bit `select()` event bitmask is capped at 64 sockets -- sufficient for the initial implementation; `poll()` parity is deferred.
 
 ## Inputs
 
@@ -20,8 +20,8 @@ title: "TODO-02 -- DNS Resolver & BSD Sockets API"
 - `include/kernel/sched/syscall.h` -- add `SYS_SOCKET=39` through `SYS_SELECT=46`; next free slot after existing `SYS_MUNMAP=38`
 - `src/kernel/sched/syscall.c` -- add 8 new dispatch entries in the syscall handler
 - `user/lib/` -- `socket.c` thin wrappers called from user-mode programs
-- → XREF: `06-networking/TODO-01-tcp-network-infrastructure.md` -- TCP API (§3) and `netif_get_default()` (§5) are prerequisites for `SOCK_STREAM` and `getaddrinfo`
-- Related (no stable XREF target): `06-networking/TODO-04-*` (future IPv6) -- §6 AAAA query stub is the hook point for dual-stack; `dns_resolve6()` is left as a stub returning -ENOTSUP until IPv6 is complete
+- → XREF: `07-networking/TODO-01-tcp-network-infrastructure.md` -- TCP API (§3) and `netif_get_default()` (§5) are prerequisites for `SOCK_STREAM` and `getaddrinfo`
+- Related (no stable XREF target): `07-networking/TODO-04-*` (future IPv6) -- §6 AAAA query stub is the hook point for dual-stack; `dns_resolve6()` is left as a stub returning -ENOTSUP until IPv6 is complete
 
 ## Outcome
 

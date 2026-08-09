@@ -18,8 +18,8 @@ title: "TODO-16 -- Bluetooth Full Stack"
 - `src/kernel/drivers/bt_hci_usb.c` (→ XREF: `04-drivers-hardware/TODO-10-usb-stack.md §13`) -- USB HCI transport: `hci_send_command()`, `hci_recv_event()`, `hci_send_acl()`, `hci_recv_acl()`; `bt_hci_ops_t` registration point
 - `src/kernel/drivers/hid_parser.c` (→ XREF: `04-drivers-hardware/TODO-12-i2c-touchpad.md §5`) -- HID report descriptor parser reused by Bluetooth HID profile (§6)
 - → XREF: `04-drivers-hardware/TODO-04-security-hardware.md §2` -- `hwrng_read()` required for SSP pairing nonce (§9) and A2DP SBC bitpool random seed
-- → XREF: `10-apps` domain -- audio routing: when A2DP headphones connect (§8), the audio subsystem switches `audio_get_active()` to the BT A2DP device; coordinate with the audio mixer TODO
-- → XREF: `08-desktop-shell` domain -- `bluetooth.cpl` (§9) is a control-panel applet; system tray Bluetooth icon is a shell component consuming `bt_manager_get_state()`
+- → XREF: `11-apps` domain -- audio routing: when A2DP headphones connect (§8), the audio subsystem switches `audio_get_active()` to the BT A2DP device; coordinate with the audio mixer TODO
+- → XREF: `09-desktop-shell` domain -- `bluetooth.cpl` (§9) is a control-panel applet; system tray Bluetooth icon is a shell component consuming `bt_manager_get_state()`
 
 ## Outcome
 

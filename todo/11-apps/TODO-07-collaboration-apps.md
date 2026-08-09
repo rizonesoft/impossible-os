@@ -15,20 +15,20 @@ title: "TODO-07 -- Collaboration & Network Client Apps"
 
 > [!IMPORTANT]
 > `ping`, `traceroute`, `ifconfig`, `netstat`, and `nslookup` are already fully specified in
-> `06-networking/TODO-06-ntp-status-winsock.md §4–§7` -- do not re-implement. §4 and §5 here
+> `07-networking/TODO-06-ntp-status-winsock.md §4–§7` -- do not re-implement. §4 and §5 here
 > cover only the gaps (`arp -a`, `route print`) and act as cross-references.
-> RSS fetching depends on `http_get`/`https_get` from `06-networking/TODO-03`.
-> IRC TLS uses `tls_connect`/`tls_send`/`tls_recv` from `06-networking/TODO-03`.
+> RSS fetching depends on `http_get`/`https_get` from `07-networking/TODO-03`.
+> IRC TLS uses `tls_connect`/`tls_send`/`tls_recv` from `07-networking/TODO-03`.
 > VNC auth (DES challenge-response) is security-critical -- marked `[Opus]`.
 
 ---
 
 ## Inputs
 
-- `06-networking/TODO-06-ntp-status-winsock.md §4–§7` -- `ping`, `traceroute`, `ifconfig`, `netstat`, `nslookup`, `arp_cache_dump()` already specified there
+- `07-networking/TODO-06-ntp-status-winsock.md §4–§7` -- `ping`, `traceroute`, `ifconfig`, `netstat`, `nslookup`, `arp_cache_dump()` already specified there
 - `include/kernel/net/net.h` -- `icmp_send_echo()`, `SYS_PING=15`, `dns_resolve()`, `dns_resolve_reverse()`
-- `06-networking/TODO-03-http-tls.md` -- `http_get()`, `https_get()`, `tls_connect()`, `tls_send()`, `tls_recv()`
-- `06-networking/TODO-02-dns-sockets.md §3` -- `kern_socket()`, `kern_connect()`, `kern_send()`, `kern_recv()`, `kern_close()`
+- `07-networking/TODO-03-http-tls.md` -- `http_get()`, `https_get()`, `tls_connect()`, `tls_send()`, `tls_recv()`
+- `07-networking/TODO-02-dns-sockets.md §3` -- `kern_socket()`, `kern_connect()`, `kern_send()`, `kern_recv()`, `kern_close()`
 - `include/desktop/controls.h` -- `CTRL_BUTTON`, `CTRL_TEXTBOX`, `CTRL_LISTVIEW`, `CTRL_SCROLLBAR_VERT`
 - `include/desktop/wm.h` -- `wm_create_window()`, `wm_mark_dirty()`
 - `include/gfx.h` -- `gfx_blit()`, `gfx_fill_rect()`, `gfx_surface_create()`
@@ -152,8 +152,8 @@ title: "TODO-07 -- Collaboration & Network Client Apps"
 
 ## 4. `ping` + `traceroute` Commands `[Sonnet]`
 
-> → XREF: `06-networking/TODO-06-ntp-status-winsock.md §5` -- `ping` (IPv4 + IPv6 + flags).
-> → XREF: `06-networking/TODO-06-ntp-status-winsock.md §6` -- `traceroute` (TTL probe + rDNS).
+> → XREF: `07-networking/TODO-06-ntp-status-winsock.md §5` -- `ping` (IPv4 + IPv6 + flags).
+> → XREF: `07-networking/TODO-06-ntp-status-winsock.md §6` -- `traceroute` (TTL probe + rDNS).
 >
 > Both commands are fully specified in TODO-06. This section registers them as shell commands
 > in `src/shell/` and ensures the `tracert` alias is wired. No new protocol code here.
@@ -166,9 +166,9 @@ title: "TODO-07 -- Collaboration & Network Client Apps"
 
 ## 5. Network Diagnostic Tools: `arp -a` + `route print` `[Sonnet]`
 
-> → XREF: `06-networking/TODO-06-ntp-status-winsock.md §4` -- `ifconfig` (fully specified).
-> → XREF: `06-networking/TODO-06-ntp-status-winsock.md §7` -- `netstat` (fully specified).
-> → XREF: `06-networking/TODO-02-dns-sockets.md` -- `nslookup` (specified in DNS TODO).
+> → XREF: `07-networking/TODO-06-ntp-status-winsock.md §4` -- `ifconfig` (fully specified).
+> → XREF: `07-networking/TODO-06-ntp-status-winsock.md §7` -- `netstat` (fully specified).
+> → XREF: `07-networking/TODO-02-dns-sockets.md` -- `nslookup` (specified in DNS TODO).
 > This section adds only the two gap commands not covered in TODO-06: `arp -a` and `route print`.
 
 **Source file:** `src/shell/cmd_arp.c`; `src/shell/cmd_route.c`

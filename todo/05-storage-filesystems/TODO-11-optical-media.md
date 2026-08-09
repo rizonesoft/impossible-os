@@ -188,7 +188,7 @@ Detect audio tracks from the TOC. Issue READ CD (CDB `0xBE`) for raw 2 352-byte 
 - [ ] `atapi_read_cd_audio(atapi_idx, lba, count, buf)`: issue READ CD with `SectorType=0x01` (CD-DA); buffer must be `count * 2352` bytes; return 0 or error
 - [ ] `atapi_is_audio_disc(atapi_idx)`: call `atapi_get_disc_info()`; return 1 if any track has `audio == 1`
 - [ ] Log: `[ATAPI] %c: audio disc with %u audio track(s)` when audio tracks detected
-- [ ] Mark hook point for future CD ripping: `// TODO: route to audio ripping API when media player is implemented (→ 10-apps/TODO-xx-media-player)`; this TODO does not implement the ripping UI
+- [ ] Mark hook point for future CD ripping: `// TODO: route to audio ripping API when media player is implemented (→ 11-apps/TODO-xx-media-player)`; this TODO does not implement the ripping UI
 - [ ] `ahci_atapi_read_audio(atapi_idx, lba, count, buf)` public API added to `ahci.h`
 - [ ] Commit: `"drivers/atapi: READ CD audio -- 2352-byte raw sectors, audio track detection, ripping hook comment"`
 

@@ -344,7 +344,7 @@ are available via `CreateFiber`/`SwitchToFiber`.
 - [ ] **`abort()`** → `RaiseException(STATUS_FAIL_FAST_EXCEPTION, EXCEPTION_NONCONTINUABLE, 0, NULL)`
 - [ ] **`getenv(name)`** → `GetEnvironmentVariableA(name, buf, 256)`; return static buffer or NULL
 - [ ] **kernel32 conversion + last-error shims**: `MultiByteToWideChar`/`WideCharToMultiByte`, `SetLastError`/`GetLastError` (TEB +0x68), `LocalAlloc`/`LocalFree` over §2 RtlHeap -- prereq for `02-kernel-core/TODO-22 §6`
-- [ ] **`memset/memcpy/strlen/strcmp/strcpy/strcat/sprintf/snprintf`**: link against `src/libs/libc/string.c` (→ XREF `11-user-platform-sdk/TODO-01 §1`) -- do not re-implement
+- [ ] **`memset/memcpy/strlen/strcmp/strcpy/strcat/sprintf/snprintf`**: link against `src/libs/libc/string.c` (→ XREF `12-user-platform-sdk/TODO-01 §1`) -- do not re-implement
 - [ ] **`user/lib/libc.lib`** build rule in Makefile: compile all shims; `llvm-ar-19 rcs libc.lib *.o`
 
 ---

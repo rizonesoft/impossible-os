@@ -26,7 +26,7 @@ title: "TODO-04 -- Recycle Bin, ZIP & Task Scheduler"
 - `include/desktop/shortcut.h` (TODO-02 §5) -- `shortcut_execute()` -- used by §8 `at` command execution
 - → XREF: `09-desktop-shell/TODO-02-file-associations-resources.md §6` -- §1 is the full implementation that replaces the stub; TODO-02 §6 trash icon states wire to `trash_count()` from here
 - → XREF: `09-desktop-shell/TODO-03-service-manager.md §9` -- `registryd` and `ntpd` built-in daemons (TODO-03) consume `registry_flush()` and `ntp_sync()`; §8 built-in scheduled tasks are a complementary general-purpose scheduling layer for one-shot and timed callbacks
-- → XREF: `06-networking/TODO-06-ntp-status-winsock.md` -- `ntp_sync()` called by §7 scheduled NTP task
+- → XREF: `07-networking/TODO-06-ntp-status-winsock.md` -- `ntp_sync()` called by §7 scheduled NTP task
 
 ## Outcome
 

@@ -20,7 +20,7 @@ title: "TODO-09 -- Hypervisor Abstraction Layer"
 - [`src/kernel/drivers/virtio/virtio.c`](../../src/kernel/drivers/virtio/virtio.c) -- VirtIO core init
 - → XREF: `04-drivers-hardware/TODO-08-core-driver-enhancements.md §1` -- PCI ECAM/MCFG needed for PCI `80EE:CAFE` VBox detection
 - → XREF: `04-drivers-hardware/TODO-08-core-driver-enhancements.md §2` -- PCIe capability scanner used to enumerate VirtIO GPU and 9P PCI devices
-- → XREF: `07-graphics-ui` domain -- `wm_display_resized(w,h)` is a compositor API notified by §4, §8, §11 when display resolution changes
+- → XREF: `08-graphics-ui` domain -- `wm_display_resized(w,h)` is a compositor API notified by §4, §8, §11 when display resolution changes
 - → XREF: `04-drivers-hardware/TODO-11-input-system.md §9` -- raw input grab API and `SYS_MOUSE_GRAB` must remain compatible with Hyper-V synthetic HID injecting into the same keyboard/mouse subsystem (§10)
 
 ## Outcome

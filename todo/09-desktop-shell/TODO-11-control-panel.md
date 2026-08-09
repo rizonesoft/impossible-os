@@ -11,7 +11,7 @@ title: "TODO-11 -- Control Panel & Settings"
 > **Goal:** Build the Control Panel -- a Windows CPL-compatible settings hub that ties all underlying APIs together (theme, DPI, network, time, user accounts, audio, power) into one discoverable place, with a Win32-compatible `cpl.h` that lets Win32 `.cpl` applets run natively.
 
 > [!IMPORTANT]
-> **Already exists**: `cpuid_get()->brand` (49-char brand string) + `cpuid_get()->vendor` in `cpuid.h`. `pmm_get_total_frames()` in `pmm.h` (total RAM = frames × 4096). `acpi_get_cpu_count()` + `smp_cpu_count()`. `uptime()` → uint64 seconds in `timer.h`. `vfs_readdir` for `.cpl` file scanning. `registry_get/set` for all per-applet settings. `icon_draw_scaled()` for sidebar icons. **Forward deps (must exist before respective applet)**: `wallpaper_set()` (TODO-07 §2), `g_dpi_pct`/`DPI_SCALE` (TODO-07 §5), `CTRL_SLIDER` (TODO-04 §2), `CTRL_CHECKBOX` (TODO-04 §2), `ntp_sync()` (TODO-04 §1 scheduled task), `auth_create/delete_user/change_password()` (TODO-06 §1), `firewall_enable/rule_add()` (06-networking/TODO-05), `audio_set_volume()` (future audio TODO), `shortcut_execute()` (TODO-02 §5). **Missing**: `cpl.h` entirely, `src/apps/control/`, all applet `.c` files. Complete sections in order: CPL framework → host app → core applets → additional applets → settings search.
+> **Already exists**: `cpuid_get()->brand` (49-char brand string) + `cpuid_get()->vendor` in `cpuid.h`. `pmm_get_total_frames()` in `pmm.h` (total RAM = frames × 4096). `acpi_get_cpu_count()` + `smp_cpu_count()`. `uptime()` → uint64 seconds in `timer.h`. `vfs_readdir` for `.cpl` file scanning. `registry_get/set` for all per-applet settings. `icon_draw_scaled()` for sidebar icons. **Forward deps (must exist before respective applet)**: `wallpaper_set()` (TODO-07 §2), `g_dpi_pct`/`DPI_SCALE` (TODO-07 §5), `CTRL_SLIDER` (TODO-04 §2), `CTRL_CHECKBOX` (TODO-04 §2), `ntp_sync()` (TODO-04 §1 scheduled task), `auth_create/delete_user/change_password()` (TODO-06 §1), `firewall_enable/rule_add()` (07-networking/TODO-05), `audio_set_volume()` (future audio TODO), `shortcut_execute()` (TODO-02 §5). **Missing**: `cpl.h` entirely, `src/apps/control/`, all applet `.c` files. Complete sections in order: CPL framework → host app → core applets → additional applets → settings search.
 
 ## Inputs
 
@@ -32,8 +32,8 @@ title: "TODO-11 -- Control Panel & Settings"
 - → XREF: `08-graphics-ui/TODO-09-desktop-shell-features.md §5` -- `g_dpi_pct` + DPI hot-change for `desk.cpl`
 - → XREF: `08-graphics-ui/TODO-05-widget-library-core.md §3` -- `CTRL_SLIDER` needed for volume, DPI, cursor applets
 - → XREF: `08-graphics-ui/TODO-12-clock-time.md §1` -- `time_now/set/set_timezone()` + `SYS_TIME` for `timedate.cpl`
-- → XREF: `06-networking/TODO-05-firewall.md` -- `firewall_enable/rule_add/remove()` for `firewall.cpl`
-- → XREF: `06-networking/TODO-06-ntp-status-winsock.md` -- `ntp_sync()` for `timedate.cpl` sync button
+- → XREF: `07-networking/TODO-05-firewall.md` -- `firewall_enable/rule_add/remove()` for `firewall.cpl`
+- → XREF: `07-networking/TODO-06-ntp-status-winsock.md` -- `ntp_sync()` for `timedate.cpl` sync button
 
 ## Outcome
 
@@ -142,7 +142,7 @@ Nine applets: `sysdm.cpl` (System), `desk.cpl` (Display), `ncpa.cpl` (Network), 
 >
 > **`appwiz.cpl` -- Programs and Features**: scan `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*` subkeys for `DisplayName`, `DisplayVersion`, `Publisher`, `UninstallString`; also scan `C:\Users\Default\AppData\Startup\*.lnk`; render `CTRL_LISTVIEW` table; "Uninstall" button → `shortcut_execute(uninstall_string)` or `file_assoc_open(path)`; "Repair" stub (if `RepairString` key exists).
 >
-> **`firewall.cpl` -- Firewall**: enabled/disabled `CTRL_CHECKBOX` → `firewall_enable(bool)`; rule `CTRL_LISTVIEW` (Name, Protocol, Port, Action: Allow/Block); Add Rule button → sub-form (name/protocol/port/direction/action); Remove Rule → `firewall_remove_rule(name)`. Forward dep on `06-networking/TODO-05-firewall.md`.
+> **`firewall.cpl` -- Firewall**: enabled/disabled `CTRL_CHECKBOX` → `firewall_enable(bool)`; rule `CTRL_LISTVIEW` (Name, Protocol, Port, Action: Allow/Block); Add Rule button → sub-form (name/protocol/port/direction/action); Remove Rule → `firewall_remove_rule(name)`. Forward dep on `07-networking/TODO-05-firewall.md`.
 >
 > **`datetime.cpl` alias**: `g_cpl_entries` entry with name "datetime.cpl" pointing to same `CPlApplet_t` as `timedate.cpl`; `cpl_load_and_run("datetime.cpl")` routes to same function.
 

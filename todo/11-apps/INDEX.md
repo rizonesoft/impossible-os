@@ -11,7 +11,7 @@ This domain covers end-user applications and utilities shipped with the OS, whet
 ## Does Not Belong Here
 
 - Reusable system services or shared policy engines. Put that in [10 Platform Services](../10-platform-services/INDEX.md).
-- Platform ABI, SDK, and compatibility contract work. Put that in [11 User Platform SDK](../11-user-platform-sdk/INDEX.md).
+- Platform ABI, SDK, and compatibility contract work. Put that in [11 User Platform SDK](../12-user-platform-sdk/INDEX.md).
 
 ## Likely Source Areas
 

@@ -417,7 +417,10 @@ After §1 through §4, Impossible OS matches Windows-style STOP codes, `CONTEXT`
 - [ ] **VFS-bypass**: deliberately trigger a panic after VFS unmount; verify the dump partition header shows `DumpPresent = 1` at sector 0.
 - [ ] **Full dump CRC**: write a full dump; `dmpanalyze.exe` reads and validates `MINIDUMP_HEADER.Checksum` CRC32C; value must match.
 - [ ] **§10 doc:** repository contains `docs/kernel/crashdump-policy-interop.md` with Windows dump-type table, WinDbg KDUMP compression limits, and `makedumpfile` dump_level mapping notes (see §10 checklist).
-- [ ] **Remaining limits**: `dmpanalyze /compare` is a convenience feature; full `!analyze -v` symbol resolution requires `kernel.sym` on the analysis machine; the `[Submit Report]` WER upload path requires the HTTP client from `06-networking` to be complete before it is wired up.
+- [ ] **Remaining limits**: three, none of them blocking the sink itself
+      - `dmpanalyze /compare` is a convenience feature, not part of the dump contract.
+      - Full `!analyze -v` symbol resolution requires `kernel.sym` on the analysis machine.
+      - The `[Submit Report]` WER upload path waits on the HTTP client from `07-networking` before it can be wired up.
 - [ ] Commit: `"kernel/crashdump: KeBugCheckEx, MDMP minidump/kernel/full dump, raw-partition sink, dmpanalyze"`
 
 **Test checkpoint:** Every Verification bullet above passes where hardware allows; `bash scripts/test.sh SUITE=boot` green for `test_crashdump_*`; `tail -1 build/build.log` is `=== BUILD OK ===`. QEMU WHPX, QEMU TCG, VirtualBox, bare metal.

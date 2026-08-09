@@ -28,7 +28,7 @@ title: "TODO-08 -- Win32 API Surface Completion"
 - `kmalloc`/`kfree` in `include/kernel/mm/heap.h` are the backing store for `HeapAlloc`/`HeapFree`. User-mode `VirtualAlloc` maps to `vmm_alloc_user()` (defined in `TODO-07`).
 - File I/O exports (`CreateFile`, `ReadFile`, `WriteFile`, `CloseHandle`, etc.) are **native** Impossible OS API -- `kernel32.dll` simply re-exports the same function pointers.
 - `GetLastError`/`SetLastError` store the error code in `TEB.LastErrorValue` (per-thread, set up in `TODO-07 §9`).
-- `CTRL_LISTVIEW`, `CTRL_TREEVIEW`, `CTRL_TABSTRIP`, `CTRL_CHECKBOX`, `CTRL_RADIO` widgets are defined in `TODO-04` (07-graphics-ui domain); this TODO may reference but not implement them.
+- `CTRL_LISTVIEW`, `CTRL_TREEVIEW`, `CTRL_TABSTRIP`, `CTRL_CHECKBOX`, `CTRL_RADIO` widgets are defined in `TODO-04` (08-graphics-ui domain); this TODO may reference but not implement them.
 - The IxUI toolkit (`sdk/include/ixui.h`) is the **native** Impossible OS GUI framework -- it wraps `wm_create_window()` and the compositor directly, not a Win32 emulation layer.
 
 ---

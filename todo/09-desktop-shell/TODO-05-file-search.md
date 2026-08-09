@@ -26,7 +26,7 @@ title: "TODO-05 -- File Search & Indexing"
 - `include/desktop/wm.h` -- `wm_create_window()`, window event callbacks -- used by §4 Start Menu and §5 File Manager search bars (XREFs)
 - → XREF: `09-desktop-shell/TODO-04-recycle-zip-scheduler.md §1` -- `sched_task_add("index_rebuild", search_index_rebuild, 1800, 1)` is registered there; §2 here provides the real body that stub forwards to
 - → XREF: `08-graphics-ui/TODO-11-startmenu-tray-notifications.md §4` -- Start Menu search bar calls `search_query()`; §5 is the integration layer that wires §2 into the existing search-bar input handler
-- Future dependency (no XREF target yet): `10-apps/TODO-file-manager.md` -- §5 File Manager integration is a forward hook; no File Manager TODO exists yet
+- Future dependency (no XREF target yet): `11-apps/TODO-file-manager.md` -- §5 File Manager integration is a forward hook; no File Manager TODO exists yet
 
 ## Outcome
 
@@ -129,7 +129,7 @@ Search bar in File Manager toolbar calls `search_query_scoped()` constrained to 
 **Files:** `src/desktop/file_manager.c` (extend -- if exists; else stub in `src/desktop/startmenu.c`)
 
 > [!NOTE]
-> File Manager may not exist yet as a standalone app. If `src/desktop/file_manager.c` does not exist, stub this section as a forward integration point -- add `search_query_scoped()` declaration and note that the File Manager TODO (future, under `10-apps/`) must call it. If File Manager exists: add a `CTRL_TEXTBOX` to the existing toolbar; on `WM_KEYDOWN(VK_RETURN)` in the search box: call `search_query_scoped(query, current_dir, results, 128)`; replace file area `CTRL_LISTVIEW` content with results (icon from `file_assoc_get_icon()`, name, full path); click result: if `SEARCH_TYPE_FOLDER` → navigate to folder; else → `file_assoc_open(full_path)`. Press Escape or clear box → restore normal directory listing.
+> File Manager may not exist yet as a standalone app. If `src/desktop/file_manager.c` does not exist, stub this section as a forward integration point -- add `search_query_scoped()` declaration and note that the File Manager TODO (future, under `11-apps/`) must call it. If File Manager exists: add a `CTRL_TEXTBOX` to the existing toolbar; on `WM_KEYDOWN(VK_RETURN)` in the search box: call `search_query_scoped(query, current_dir, results, 128)`; replace file area `CTRL_LISTVIEW` content with results (icon from `file_assoc_get_icon()`, name, full path); click result: if `SEARCH_TYPE_FOLDER` → navigate to folder; else → `file_assoc_open(full_path)`. Press Escape or clear box → restore normal directory listing.
 
 - [ ] Confirm whether `src/desktop/file_manager.c` exists; if not: add comment stub + `search_query_scoped()` API declaration only
 - [ ] If File Manager exists: add toolbar search `CTRL_TEXTBOX`; wire `WM_KEYDOWN(VK_RETURN)` to `search_query_scoped()`

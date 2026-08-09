@@ -27,7 +27,7 @@ title: "TODO-02 -- Unattended Installation & Deployment"
 > (from `include/kernel/boot_info.h`); installer reads `answer=<path>` token from it.
 >
 > **`ipkg_create.exe`** (for OEM package bundling) is specced in
-> `11-user-platform-sdk/TODO-06 §1`; §4 here consumes it.
+> `12-user-platform-sdk/TODO-06 §1`; §4 here consumes it.
 
 ---
 
@@ -36,7 +36,7 @@ title: "TODO-02 -- Unattended Installation & Deployment"
 - `10-platform-services/TODO-11-installer-iso.md` (→ XREF) -- `installer_copy_files`, `gpt_create`, `ixfs_format`, `InstallerMode`, `setup.log`; unattended path (§7) runs through same pipeline
 - `10-platform-services/TODO-04-restore-recovery.md §1` (→ XREF) -- OOBE (`HKLM\SYSTEM\FirstBoot=1`); answer-file sets values OOBE would collect
 - `10-platform-services/TODO-06-auth-security.md` (→ XREF) -- `auth_create_user(username, password, privilege)` -- §2 §3
-- `11-user-platform-sdk/TODO-06-sdk-distribution.md §1` (→ XREF) -- `ipkg_create.exe` for OEM package format -- §4
+- `12-user-platform-sdk/TODO-06-sdk-distribution.md §1` (→ XREF) -- `ipkg_create.exe` for OEM package format -- §4
 - `include/kernel/boot_info.h` -- `boot_info->cmdline` -- §2 `answer=<path>` kernel cmdline token
 - `include/kernel/fs/vfs.h` -- `vfs_open`, `vfs_read`, `vfs_readdir`, `vfs_unlink` -- §1 §2 §4 §5
 - `include/kernel/ipc/` -- `SYS_SHMEM_CREATE/MAP` -- §6 TFTP/DHCP server IPC

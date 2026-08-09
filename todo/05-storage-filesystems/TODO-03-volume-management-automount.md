@@ -21,8 +21,8 @@ title: "TODO-03 -- Volume Management & Auto-mount"
 - → XREF: `04-drivers-hardware/TODO-10-usb-stack.md §8` -- hot-plug TRB events that trigger §3 (USB volume arrival) and §4 (safe removal)
 - → XREF: `05-storage-filesystems/TODO-01-block-storage-hardening.md §7` -- `cache_flush(dev)` / `cache_invalidate(dev)` must be called during unmount (§4 safe removal and §5 `umount`)
 - → XREF: `05-storage-filesystems/TODO-02-ntfs-readwrite.md §3` -- dirty NTFS volume recovery runs inside `ntfs_vfs_mount()`, called by `vfs_probe()` in §1
-- → XREF: `08-desktop-shell` domain -- §3 desktop toast and §4 tray icon safe-remove are shell-facing components; coordinate with the notification/tray TODO
-- → XREF: `10-apps` domain -- File Manager sidebar (§3 real-time update) and Task Manager disk section (§6 volume stats) consume `vfs_probe` Registry entries
+- → XREF: `09-desktop-shell` domain -- §3 desktop toast and §4 tray icon safe-remove are shell-facing components; coordinate with the notification/tray TODO
+- → XREF: `11-apps` domain -- File Manager sidebar (§3 real-time update) and Task Manager disk section (§6 volume stats) consume `vfs_probe` Registry entries
 - → XREF: `01-boot-platform/TODO-05-boot-device-discovery.md §2, §3, §8` -- boot_info.boot_device_type and boot_device_removable inform C: drive assignment and cache policy in §1
 - → XREF: `05-storage-filesystems/TODO-04-fat32-hardening-vfs-semantics.md §2` -- BPB validation fires inside `fat32_init()` which `vfs_probe()` calls
 

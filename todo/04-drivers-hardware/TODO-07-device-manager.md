@@ -18,7 +18,7 @@ title: "TODO-07 -- Device Manager & Driver Diagnostics"
 - [`src/kernel/drivers/pci.c`](../../src/kernel/drivers/pci.c) -- existing `pci_scan()` and `pci_find_device()`; extend to populate `pci_device_db[]`
 - → XREF: `04-drivers-hardware/TODO-05-kernel-module-system.md §3` -- driver model HAL vtables (`net_ops`, `blk_ops`, `input_ops`) define the `driver_name` field used by §3 health registry; module loader must register names
 - → XREF: `04-drivers-hardware/TODO-02-apic-interrupt-routing.md §6` -- per-vector `irq_ns` timing profiler lives in the APIC TODO; §4 here adds `irq_count[]` / `irq_rate()` complementary stats; coordinate to avoid double-tracking
-- → XREF: `07-graphics-ui` domain -- Device Manager window (§7) is a compositor-managed GUI window using the same tree-view and panel widgets as other system tools; widget library must support `tree_view_t` with expand/collapse
+- → XREF: `08-graphics-ui` domain -- Device Manager window (§7) is a compositor-managed GUI window using the same tree-view and panel widgets as other system tools; widget library must support `tree_view_t` with expand/collapse
 - → XREF: `04-drivers-hardware/TODO-10-usb-stack.md` -- USB device tree (§8) walks the `usb_device_t` list populated by the xHCI/EHCI drivers (via §1 usb_core API); USB hot-plug events (§8) must trigger a Device Manager tree refresh; string descriptors (§2) provide device names for `lsusb`
 
 ## Outcome
@@ -151,7 +151,7 @@ Build the Device Manager window: a tree view of PCI devices grouped by class, wi
 **Files:** `src/desktop/devmgr.c` (new), `include/desktop/devmgr.h` (new)
 
 > [!NOTE]
-> → XREF: `07-graphics-ui` domain -- tree-view widget (`tree_view_t`), icon badges, and auto-refresh timer are compositor-level widget primitives. Device Manager is a first-class system window; it should not be modal and should coexist with other windows. The 1 s refresh uses a `wm_set_timer(1000, devmgr_refresh_cb)` compositor timer.
+> → XREF: `08-graphics-ui` domain -- tree-view widget (`tree_view_t`), icon badges, and auto-refresh timer are compositor-level widget primitives. Device Manager is a first-class system window; it should not be modal and should coexist with other windows. The 1 s refresh uses a `wm_set_timer(1000, devmgr_refresh_cb)` compositor timer.
 
 - [ ] Tree structure by PCI class: `Storage (0x01)`, `Network (0x02)`, `Display (0x03)`, `Multimedia (0x04)`, `Bridge (0x06)`, `Input (0x09)`, `USB Controller (0x0C)`, `Other`; use class code from `pci_device_entry_t.class`
 - [ ] Each leaf node: icon (class-specific), `DeviceName (VendorName)`, health badge: `✅ OK` / `⚠️ Warning` / `❌ Error` / `❔ Unknown`

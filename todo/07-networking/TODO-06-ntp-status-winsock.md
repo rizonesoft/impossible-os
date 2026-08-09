@@ -26,10 +26,10 @@ title: "TODO-06 -- NTP, Network Status & Win32 Winsock"
 - `include/kernel/net/net.h` + `net_interface` from TODO-01 §5 -- per-interface `rx_bytes`/`tx_bytes`/`rx_packets`/`tx_packets`/`rx_errors`/`tx_errors` counter fields
 - `src/kernel/fs/sysfs.c` -- `/sys/` VFS mount point for `/sys/net` synthetic file (§8)
 - `user/lib/socket.c` + `include/kernel/net/socket.h` -- BSD socket syscalls from TODO-02; `ws2_32.dll` maps to these
-- → XREF: `06-networking/TODO-01-tcp-network-infrastructure.md` -- `net_interface` manager (§5) extended with stat counters here
-- → XREF: `06-networking/TODO-02-dns-sockets.md` -- `dns_resolve()` for NTP hostname; BSD socket syscalls for `ws2_32.dll` mapping
-- → XREF: `06-networking/TODO-04-ipv6-dual-stack.md` -- ICMPv6 Echo Request/Reply (§3) needed by §6 IPv6 ping; NDP cache for `ndp -an` in `/sys/net`
-- → XREF: `06-networking/TODO-05-firewall.md` -- `/sys/firewall` counters included in `/sys/net` §8 summary
+- → XREF: `07-networking/TODO-01-tcp-network-infrastructure.md` -- `net_interface` manager (§5) extended with stat counters here
+- → XREF: `07-networking/TODO-02-dns-sockets.md` -- `dns_resolve()` for NTP hostname; BSD socket syscalls for `ws2_32.dll` mapping
+- → XREF: `07-networking/TODO-04-ipv6-dual-stack.md` -- ICMPv6 Echo Request/Reply (§3) needed by §6 IPv6 ping; NDP cache for `ndp -an` in `/sys/net`
+- → XREF: `07-networking/TODO-05-firewall.md` -- `/sys/firewall` counters included in `/sys/net` §8 summary
 - → XREF: `02-kernel-core/TODO-17` -- NTP sets system time via `NtSetSystemTime`; coordinate epoch with the kernel time service
 
 ## Outcome

@@ -8,7 +8,7 @@ title: "TODO-07 -- Web Browser"
 
 # TODO-07 -- Web Browser
 
-> **Goal:** Build Impossible OS's flagship internet application in ten progressive sections: text-only browser proving the HTTP stack, a full HTML tokenizer + DOM tree, block/inline layout engine, tab management, image rendering, CSS cascade engine, JavaScript stub, bookmarks manager, download manager with HTTP Range resume, and a privacy + security layer (TLS padlock, cookie jar, mixed-content blocking, HTTP caching). A QUIC/HTTP 2 upgrade path is noted for future work (→ XREF `06-networking/TODO-08` when created).
+> **Goal:** Build Impossible OS's flagship internet application in ten progressive sections: text-only browser proving the HTTP stack, a full HTML tokenizer + DOM tree, block/inline layout engine, tab management, image rendering, CSS cascade engine, JavaScript stub, bookmarks manager, download manager with HTTP Range resume, and a privacy + security layer (TLS padlock, cookie jar, mixed-content blocking, HTTP caching). A QUIC/HTTP 2 upgrade path is noted for future work (→ XREF `07-networking/TODO-08` when created).
 
 > [!IMPORTANT]
 > `http_get()`/`https_get()` from TODO-03 are the mandatory network primitives. `image_load_mem()` from `include/kernel/image.h` handles JPEG/PNG/BMP decoding -- the browser fetches image bytes via HTTP and passes them directly to this function. `wm_create_window()` from `include/desktop/wm.h` is the window creation API; `font_draw_string()` from `include/desktop/font.h` renders text. All source lives under `src/apps/browser/`; headers under `include/apps/browser/`. The DOM tree and layout engine are the two largest allocations in the browser -- use `pmm_alloc_contiguous()` for node arrays and render buffers > 4 KB; `kmalloc` only for small per-node structs (≤ 4 KB each). The CSS style engine (§4) depends on the DOM tree (§9) and the layout engine (§5) being stable before computed styles can be applied. Tab management (§5 in implementation order) must be added before HTML rendering to avoid a global-state refactor.
@@ -22,9 +22,9 @@ title: "TODO-07 -- Web Browser"
 - `include/desktop/controls.h` -- text input box, button, scrollbar controls for address bar and toolbar
 - `src/kernel/fs/vfs.c` -- `vfs_open()`/`vfs_write()`/`vfs_read()` for saving downloads to `C:\Users\Default\Downloads\` and reading bookmarks JSON
 - `include/registry.h` -- cookie persistence and browser settings in `HKCU\Software\ImpossibleBrowser`
-- → XREF: `06-networking/TODO-03-http-tls.md` -- `http_get`, `https_get`, keep-alive pool, HTTP Range header, TLS cert verified flag (for padlock icon)
-- → XREF: `06-networking/TODO-02-dns-sockets.md` -- `dns_resolve_dual()` for mixed-IPv4/IPv6 resource fetches
-- → XREF: `06-networking/TODO-05-firewall.md` -- browser respects outbound firewall rules transparently; no browser-specific changes needed
+- → XREF: `07-networking/TODO-03-http-tls.md` -- `http_get`, `https_get`, keep-alive pool, HTTP Range header, TLS cert verified flag (for padlock icon)
+- → XREF: `07-networking/TODO-02-dns-sockets.md` -- `dns_resolve_dual()` for mixed-IPv4/IPv6 resource fetches
+- → XREF: `07-networking/TODO-05-firewall.md` -- browser respects outbound firewall rules transparently; no browser-specific changes needed
 
 ## Outcome
 
