@@ -80,6 +80,8 @@ title: "TODO-06 -- TODO Metadata Layer and Derived Graph"
 | ⭐  |  29   |   §29   | `--fix-line-numbers` reports success over targets it could not resolve              | §23, §26   |  [ ]   |
 | ⭐  |  30   |   §30   | `--watch` never ticks on a history change for the history-consuming verbs (§27)     | §24, §27   |  [ ]   |
 | ⭐  |  31   |   §31   | An equal-count shallow boundary still moves `created_at` under an unchanged id      | §21, §27   |  [ ]   |
+| ⭐  |  32   |   §32   | In-file `](#anchor)` links are checked by nothing (split from §29)                  | §3         |  [ ]   |
+| ⭐  |  33   |   §33   | Stamp-target capture splits a link whose label contains a space (split from §29)    | §2, §26    |  [ ]   |
 
 > 💎 = parity work -- Linux kernel has MAINTAINERS + get_maintainer.pl (person-ownership mapping without a dep graph); Windows has no public equivalent. §1 (frontmatter), §2 (generator), §5 (migration) bring us to partial Linux parity plus graph metadata neither OS ships.
 > ⭐ = competitive edge -- neither Win11 nor mainline Linux ships a first-class TODO dependency graph. §3 (validator), §4 (query CLI), §6 (CI gate), §7 (visualization), §8 (MCP server) are new ground; the surface has direct value for any contributor scanning "what can I work on next?".
@@ -1481,29 +1483,20 @@ Found by §26's round-6 review while that section was tightening the resolver. T
       `fix_line_numbers` returns `(updates, ambiguities, unresolvable, report)` (`scripts/todo-graph/validate.py:1358`) and its caller drops the third value, so a run that resolved NOTHING still exits 0 and the automatic repair hook records success while every stale line number survives.
       - Reproduced during §26: with the resolver refusing a malformed token, the probe printed `1 unresolvable target(s)` and `rc=0` in the same breath.
       - Decide the contract first: an unresolvable target is arguably a WARNING when the operator asked only to fix what it could. State the chosen rule where a reader will find it, then make the exit code match it.
-- [ ] Validate IN-FILE `](#anchor)` links against the file's own headings
-      Found 2026-08-09 by §27's consistency review, which caught a dead `](#22-...)` link that `validate.py` had just passed 9/9 over -- the `stale-xref` check resolves cross-FILE XREF targets and never looks at a same-file fragment, so an anchor that names a heading which was later retitled is invisible to every gate.
-      - Measured on TODO-06 the same day: 3 of 63 in-file links were dead (one introduced by §27's own split, two pre-existing in §11 and §22's XREF blocks, all three repaired in `review: §27`). A retitled heading breaks every inbound anchor silently, and section titles get retitled often.
-      - The rule is GitHub's: lowercase, strip punctuation except word chars/space/hyphen, then replace EACH space with one hyphen. Do NOT collapse whitespace runs -- a checker that collapses reports false positives on headings containing `/` or `:` separators (that exact bug produced 6 confident wrong hits before the rule was corrected against the real headings).
-      - Strip inline code spans PER LINE before matching, not document-wide: an unbalanced backtick anywhere earlier shifts the pairing, and a whole-document strip then leaves prose examples in place and reports them as dead links (observed while writing this item -- two examples in this very body were flagged until the strip was scoped to the line).
-      - Cheap: it needs no cache and no resolver, only the file's own heading list, so it belongs beside the existing per-file checks rather than in the graph walk.
 - [ ] Repair mode must refuse a corpus whose `(directory, number)` slots collide
       `--fix-line-numbers` checks duplicate IDs only. A colliding slot makes a rewrite destination ambiguous, and the resolver now refuses every spelling of such a target -- so repair can be asked to rewrite against a graph it cannot resolve.
       - `check_duplicate_resolver_key(nodes)` already computes exactly this; the work is calling it up front and choosing the exit code.
       - `cache_schema` refuses such a cache at load, so this is defence in depth rather than a live hole -- size the work accordingly.
 - [ ] One repair-mode fixture per spelling, against the same collision
       Qualified, bare-spelled, relative-spelled and full-path forms of one target, so a future change cannot make repair-mode safety depend on surface form again. Mutation: revert the up-front refusal and require the fixture to fail.
-- [ ] Stamp-target capture must take a whole markdown link, not `\S+`
-      `build.py:225` and `fix_line_numbers` both capture an XREF target with `(\S+)`, so a link whose LABEL contains a space is split at that space and only the fragment reaches the resolver. The live corpus writes that shape: `` [`01-boot-platform/TODO-07 §9`](TODO-07-...md) `` in `todo/01-boot-platform/TODO-22-recovery-partition.md`.
-      - §26 closed the dangerous half in the resolver -- a bracket-prefixed token that is not a complete link now FAILS CLOSED instead of being parsed as a path and answering with the file named in the LABEL. That turns a wrong binding into an ordinary unresolved-XREF finding, which is how the one live instance was found and repaired.
-      - The remaining half is the producer: capture the complete link (label, destination and any trailing section marker) as one target, so a legitimate space-bearing label resolves instead of refusing. 124 such labels exist corpus-wide; they resolve today only because the OTHER extractors hand over a whole table cell.
-      - Fixture shape the reviewer asked for: an end-to-end case through `extract_stamps_xrefs` where the label and the destination name DIFFERENT valid files, asserting resolution follows the destination.
 - [ ] Commit: `"todo-graph: repair mode fails visibly on targets it cannot resolve"`
 
 **Test checkpoint:** a repair run over a corpus with one unresolvable target exits non-zero (or warns, per the recorded contract) instead of 0; a repair run over a resolver-key-colliding corpus refuses up front; `bash scripts/todo-graph/tests/test_build.sh` green.
 
 -> XREF: [`TODO-06 §26`](#26-domain-code-resolution-picks-a-directory-by-cache-order) -- the section whose review found this (item: "Commit: `\"todo-graph: domain codes resolve by directory, not by cache order\"`"); it fixed the RESOLVER and deliberately left repair-mode's exit contract alone, because that is a decision about what `--fix-line-numbers` promises rather than about what a reference means.
 -> XREF: [`TODO-06 §23`](#23-validatepy-rebuild-recovery-and-the-baseline-cache) -- the section that owns `validate.py`'s recovery and repair surface (item: "Commit: `\"todo-graph: validate.py rebuild recovery + baseline cache\"`"); it is stamped, so this residue is owned here rather than appended to it.
+-> XREF: [`TODO-06 §32`](#32-in-file-anchor-links-are-checked-by-nothing) -- split out of this section before implementation (item: "Commit: `\"todo-graph: in-file anchor links validated against the file's own headings\"`"); it is a per-file check that needs no cache, no resolver and no repair mode, so it shares nothing with this section but the review that found it.
+-> XREF: [`TODO-06 §33`](#33-stamp-target-capture-splits-a-link-whose-label-contains-a-space) -- split out of this section before implementation (item: "Commit: `\"todo-graph: stamp-target capture takes a whole markdown link\"`"); it is a PRODUCER-side extraction fix with corpus-wide blast radius, where this section is a consumer-side exit-contract decision.
 
 ---
 
@@ -1560,6 +1553,55 @@ Reproduced 2026-08-09 on git 2.43.0, with a full-history control: C0 adds a TODO
 
 -> XREF: [`TODO-06 §27`](#27-effective-history-identity-replace-refs-and-grafts) -- the section whose review found and reproduced this (item: "`corpus_history_id`'s documented guarantee narrowed to the replacement- and graft-neutralised history, and two FALSE clauses removed"); it closed the replace-ref and graft mechanisms and deliberately left this one open, because refusing shallow corpora is a product decision rather than a correctness fix.
 -> XREF: [`TODO-06 §21`](#21-the-producer-side-generation-window-in-buildpy) -- the section that owns `corpus_history_id` and its single-walk provenance rule (item: "Commit: `\"todo-graph: close the producer-side generation window in build.py\"`"); it is stamped, so this axis is owned here.
+
+---
+
+## 32. In-File Anchor Links Are Checked by Nothing
+
+> **Spawned-by:** §29 (split)
+
+Found 2026-08-09 by §27's consistency review, which caught a dead `](#22-...)` link that `validate.py` had just passed 9/9 over. The `stale-xref` check resolves cross-FILE XREF targets and never looks at a same-file fragment, so an anchor naming a heading that was later retitled is invisible to every gate. Split out of §29 before implementation: that section is about repair mode's exit contract, and this check touches neither the cache, the resolver, nor repair mode.
+
+- [ ] Validate IN-FILE `](#anchor)` links against the file's own headings
+      A new per-file check beside the existing ones, not a step in the graph walk -- it needs only the file's own heading list.
+      - Measured on TODO-06 on 2026-08-09: 3 of 63 in-file links were dead (one introduced by §27's own split, two pre-existing in §11 and §22's XREF blocks, all three repaired in `review: §27`). A retitled heading breaks every inbound anchor silently, and section titles get retitled often.
+      - The rule is GitHub's: lowercase, strip punctuation except word chars/space/hyphen, then replace EACH space with one hyphen. Do NOT collapse whitespace runs -- a checker that collapses reports false positives on headings containing `/` or `:` separators (that exact bug produced 6 confident wrong hits before the rule was corrected against the real headings).
+      - Strip inline code spans PER LINE before matching, not document-wide: an unbalanced backtick anywhere earlier shifts the pairing, and a whole-document strip then leaves prose examples in place and reports them as dead links (observed while §29 was being written -- two examples in that body were flagged until the strip was scoped to the line).
+- [ ] The check runs over the whole corpus before it is declared clean
+      A per-file check that has only ever seen one file proves nothing about the rule. Run it corpus-wide, triage every hit as dead-link-or-false-positive, and record the counts -- the slug rule above was corrected exactly once already by doing this.
+- [ ] Fixture per slug hazard, mutation-checked
+      One case each for a heading with a `/`, a `:`, an inline code span, and a retitled heading whose inbound anchor is now dead. Mutation: revert the check and require the fixtures to FAIL.
+- [ ] Commit: `"todo-graph: in-file anchor links validated against the file's own headings"`
+
+**Test checkpoint:** a file with a dead `](#anchor)` is reported by `validate.py`; the corpus passes with zero false positives on headings bearing `/`, `:` and inline code; the fixtures fail when the check is reverted; `bash scripts/todo-graph/tests/test_build.sh` green.
+
+-> XREF: [`TODO-06 §29`](#29---fix-line-numbers-reports-success-over-targets-it-could-not-resolve) -- the section this was split out of before implementation (item: "Commit: `\"todo-graph: repair mode fails visibly on targets it cannot resolve\"`").
+-> XREF: [`TODO-06 §3`](#3-validator-stale-xref--dangling-dep--orphan--cycle--bat--status--schema) -- the section that owns `validate.py`'s per-file check surface (item: "Commit: `\"scripts/todo-graph: add validator (stale XREF, dangling dep, orphan, cycle, bat, status, schema)\"`"); it is stamped, so this new check is owned here.
+
+---
+
+## 33. Stamp-Target Capture Splits a Link Whose Label Contains a Space
+
+> **Spawned-by:** §29 (split)
+
+`build.py:225` (`XREF_CLAUSE_RE`) and `fix_line_numbers` both capture an XREF target with `(\S+)`, so a link whose LABEL contains a space is split at that space and only the fragment reaches the resolver. The live corpus writes that shape: `` [`01-boot-platform/TODO-07 §9`](TODO-07-...md) `` in `todo/01-boot-platform/TODO-22-recovery-partition.md`. Split out of §29 before implementation: this is a PRODUCER-side extraction change whose blast radius is every stamp in the corpus, where §29 is a consumer-side decision about one exit code.
+
+- [ ] Capture the complete markdown link as one target, not `\S+`
+      Label, destination and any trailing section marker are one token, so a legitimate space-bearing label resolves instead of refusing.
+      - §26 already closed the DANGEROUS half in the resolver: a bracket-prefixed token that is not a complete link now FAILS CLOSED instead of being parsed as a path and answering with the file named in the LABEL. That turned a wrong binding into an ordinary unresolved-XREF finding, which is how the one live instance was found and repaired. So this is a false-refusal fix, not a wrong-answer fix -- size it accordingly.
+      - 124 such labels exist corpus-wide; they resolve today only because the OTHER extractors hand over a whole table cell rather than a whitespace-split token.
+- [ ] Both capture sites change together, or the tool disagrees with itself
+      `build.py`'s `XREF_CLAUSE_RE` and `validate.py`'s `fix_line_numbers` carry the same `(\S+)`. Fixing one leaves the repair path splitting targets the builder resolved, which is worse than both being wrong the same way.
+- [ ] Prove the corpus-wide effect before and after, both directions
+      Record the resolved/unresolved counts across the whole corpus on either side of the change. A capture widening can newly SWALLOW a following token as easily as it fixes a split one, and only the differential shows which happened.
+- [ ] End-to-end fixture where label and destination name DIFFERENT valid files
+      The shape §26's reviewer asked for: through `extract_stamps_xrefs`, asserting resolution follows the DESTINATION and never the label. Mutation: restore `(\S+)` and require the fixture to FAIL.
+- [ ] Commit: `"todo-graph: stamp-target capture takes a whole markdown link"`
+
+**Test checkpoint:** a stamp whose link label contains a space resolves to its destination file; the corpus-wide resolved-count differential shows no newly-unresolved target; the fixture fails when `(\S+)` is restored; `bash scripts/todo-graph/tests/test_build.sh` and `bash scripts/test-tooling.sh` green.
+
+-> XREF: [`TODO-06 §29`](#29---fix-line-numbers-reports-success-over-targets-it-could-not-resolve) -- the section this was split out of before implementation (item: "Commit: `\"todo-graph: repair mode fails visibly on targets it cannot resolve\"`").
+-> XREF: [`TODO-06 §26`](#26-domain-code-resolution-picks-a-directory-by-cache-order) -- the section that closed the resolver half of this defect (item: "Commit: `\"todo-graph: domain codes resolve by directory, not by cache order\"`"); it is stamped, so the producer half is owned here.
 
 ---
 
