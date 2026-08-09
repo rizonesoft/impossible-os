@@ -515,10 +515,21 @@ def _normalize_ref_token(raw) -> str:
     Looping to a fixed point is what makes the order irrelevant: any
     interleaving of backticks, commas, whitespace, an `#anchor` and a trailing
     slash converges on the same token.
+
+    UNWRAP A MARKDOWN LINK FIRST, and only then run the strip chain. The
+    fragment split below turns `[label](file.md#anchor)` into the incomplete
+    `[label](file.md`, which section 26 fails closed on -- so once the
+    producers began capturing a whole link (section 33), every query-side
+    consumer of a stamp edge (backlinks, deferred/deferred-by, stats, and
+    render.py through `_resolve_edge_target`) would silently omit that edge
+    while `validate.py` reported the same target resolved. The unwrap is
+    `cache_schema.unwrap_xref_link`, the one the resolver itself uses, rather
+    than a sixth local spelling of the ordering (Codex design review, section
+    33, [high]).
     """
     if raw is None:
         return ""
-    token = str(raw)
+    token = _cs.unwrap_xref_link(str(raw).strip())
     while True:
         before = token
         token = token.strip().strip("`").strip(",").rstrip("/")

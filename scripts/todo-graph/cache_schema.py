@@ -172,7 +172,25 @@ _MAX_SECTION_N = 65535
 # accept a v1 cache whose timestamps came from a replaced history, and a v1
 # reader would accept a v2 cache after a rollback -- both silently, because no
 # digest can see a meaning change (Codex adversarial, section 27, [high]).
-CACHE_FORMAT_VERSION = 2
+# v2 -> v3 (section 33): `stamps_xrefs[].target_path` KEEPS ITS NAME AND TYPE
+# AND CHANGED ITS MEANING -- the second time this integer has been spent on
+# exactly the case the paragraph above reserves it for. A v2 producer captured
+# the target with `\S+`, so a markdown link whose LABEL contains a space was
+# truncated to the fragment before its first space; a v3 producer captures the
+# COMPLETE link. Both values are strings, so no digest and no schema type can
+# see the difference, and the two agree on every target that contains no space
+# -- which is the whole live corpus today (measured: 1010/1010 stamp targets,
+# per-clause identical across the change). That agreement is precisely what
+# makes the bump necessary rather than optional: a v2 cache is INDISTINGUISHABLE
+# from a v3 one until the first space-bearing label is written, at which point a
+# reader would silently consume a truncated target from a stale artifact --
+# `query.py` rebuilds a canonical cache only when validation or freshness fails,
+# and `validate.py --diff` accepts an imported baseline without either check
+# (Codex adversarial, section 33, [high]). Sub-test 25c is the refusal
+# regression and is version-agnostic by construction: it writes
+# `CACHE_FORMAT_VERSION - 1` into the sidecar and asserts LEGACY_FORMAT, so it
+# proves this bump too without being edited.
+CACHE_FORMAT_VERSION = 3
 
 # Every key the producer may place on a node, WITH THE MODE IT IS EMITTED IN.
 # `build.py` imports this and refuses to emit a node carrying anything outside
@@ -295,6 +313,97 @@ PRODUCER_CONTRACT_DIGEST = _producer_contract_digest()
 # spellings differ on purpose rather than by drift.
 EFFORT_REGEX = re.compile(r"\A[1-9][0-9]*[dw]\Z")
 EFFORT_DEFAULT = "1w"
+
+
+# ---------------------------------------------------------------------------
+# XREF TARGET GRAMMAR (TODO-06 section 33). THE GRAMMAR LIVES HERE for the same
+# reason the Gantt duration above does: it had two copies -- `build.py`'s
+# `XREF_CLAUSE_RE` and `validate.py`'s `fix_line_numbers` -- and both spelled
+# the target `\S+`. A markdown link whose LABEL contains a space, a shape the
+# live corpus writes, is split at that space by `\S+`, so only the fragment
+# ``[`01-boot-platform/TODO-07`` reaches the resolver. Section 26 already made
+# such a fragment FAIL CLOSED instead of resolving to the file named in the
+# LABEL, so what survives is a false refusal, not a wrong binding. Fixing one
+# capture site and not the other would leave the repair path splitting targets
+# the builder resolved, which is worse than both being wrong the same way.
+#
+# THE LABEL'S BRACKETS MUST BALANCE, and that is load-bearing rather than
+# tidiness. Section 26's tempered-dot label (`(?:(?!\]\().)*`) accepts an
+# UNBALANCED one, so a malformed target such as `[broken and [dest](TODO-02.md)`
+# matches as a "complete link" and resolves to that destination -- reversing
+# section 26's own fail-closed rule for exactly the malformed input it was
+# written to refuse (Codex design review, section 33, [high]). Harmless while
+# the producers captured `\S+` (the token never survived the label's space to
+# get here); reachable the moment they capture a whole link.
+#
+# THE DESTINATION EXCLUDES WHITESPACE AND PARENTHESES, which also rules out a
+# markdown link TITLE (`(url "t")`) -- a shape this corpus does not use and
+# which must not be silently truncated to the url and resolved (section 26).
+#
+# EXACTLY ONE LINK, AND THE LABEL MAY NOT SWALLOW ANOTHER. A greedy `.*` label
+# reads `[a](x.md)[b](y.md)` as one link whose destination is `y.md`, so a
+# malformed multi-target token resolved to its LAST destination instead of being
+# refused (Codex adversarial, section 26 review). The ban on `](` is expressed
+# as a LOOKAHEAD rather than a character class for the same reason the guard
+# below exists: an "ordinary char OR bracket pair" pair of alternatives still
+# admits `](`, because the pair ends at `]` and the ordinary arm then accepts
+# `(` (Codex re-adversarial, section 26 review round 2).
+#
+# BANNING BRACKETS OUTRIGHT IS THE WRONG REPAIR -- section 26 asserts that
+# `[a [inner] label](x.md)` still resolves, and a bracket-free label refuses it.
+# So a balanced PAIR is admitted as one unit, and the pair's `]` may not be
+# followed by `(`. That guard is the whole trick: without it the pair
+# alternative walks past a `](` the ban is supposed to stop, which is the
+# nesting defect section 26 recorded one level down
+# (`[[a](x.md)[b](y.md)](y.md)` must refuse). Verified against all 10 of that
+# section's cases plus the malformed one above. Measured on the live corpus:
+# 164 bracket-opening XREF targets, 0 rejected.
+# TWO COMPONENTS, ONE SPELLING EACH. The label and the destination are named
+# separately so the anchored matcher below can be DERIVED from them rather than
+# re-typed with capture groups added -- the first cut spelled the whole grammar
+# twice, in a constant whose own comment claimed single-source (Codex
+# consistency, section 33, [medium]). A second spelling is how the builder and
+# the validator came to disagree in the first place.
+_XREF_LABEL = r"(?:[^\[\]]|\[[^\[\]]*\](?!\())*"
+_XREF_DEST = r"[^()\s]*"
+
+XREF_LINK_PATTERN = r"\[" + _XREF_LABEL + r"\]\(" + _XREF_DEST + r"\)"
+
+# One XREF target token: a COMPLETE markdown link is ONE token even when its
+# label contains spaces; anything else stays whitespace-delimited as before.
+# Arm order is load-bearing -- the link must be tried first or `\S+` truncates
+# it at the label's first space, which is the defect this pattern exists to fix.
+XREF_TARGET_PATTERN = r"(?:" + XREF_LINK_PATTERN + r"|\S+)"
+
+# The same grammar, anchored and with named groups, for a consumer that needs to
+# UNWRAP rather than merely recognise a link.
+XREF_LINK_RE = re.compile(
+    r"\A\[(?P<label>" + _XREF_LABEL + r")\]\((?P<url>" + _XREF_DEST + r")\)\Z")
+
+
+def unwrap_xref_link(token: str) -> str:
+    """Return a link target's DESTINATION, or the token unchanged.
+
+    UNWRAP BEFORE ANY FRAGMENT STRIP -- this helper exists because the other
+    order is a silent edge-dropper. Five consumers normalised a target by
+    splitting at `#` first, which turns `[label](file.md#anchor)` into the
+    incomplete `[label](file.md`; that fails closed, so the edge disappears
+    from backlinks / deferred / stats / render while `validate.py` still
+    reports it resolved (Codex design review, section 33, [high]). Routing
+    every normaliser through here means the ordering cannot be got wrong once
+    per consumer.
+
+    A link with an empty or fragment-only destination (`[x](#anchor)`, a
+    same-document jump) unwraps to the EMPTY STRING: it names no FILE, and
+    returning the bracketed original would let a caller re-parse it as a path.
+    """
+    if not token:
+        return token
+    m = XREF_LINK_RE.match(token.strip())
+    if not m:
+        return token
+    url = (m.group("url") or "").strip().strip("`").strip()
+    return "" if url.startswith("#") else url
 
 
 # ---------------------------------------------------------------------------
@@ -579,9 +688,14 @@ PROFILE_VALIDATE = Profile(
 # (the generation binding on the bytes read is unconditional and is retained).
 #
 # NO CROSS-VERSION COMPATIBILITY IS CLAIMED, and that is deliberate rather than
-# unfinished. There is no cache-FORMAT version to gate on: `schema_version`
-# (build.py:1020) is the per-node TODO frontmatter version, not an identity for
-# the artifact as a whole. Shape alone cannot detect a field that kept its type
+# unfinished. `schema_version` (build.py:1020) is the per-node TODO frontmatter
+# version, not an identity for the artifact as a whole. A cache-FORMAT version
+# to gate on DOES exist -- `CACHE_FORMAT_VERSION`, added by section 25 and now
+# at v3 -- but it rides in the corpus binding sidecar, and this profile sets
+# `check_stale=False`, so it is not consulted on this read (an earlier revision
+# of this paragraph said no such version existed at all, written before section
+# 25 and left standing through the v2 and v3 bumps; Codex consistency, section
+# 33, [medium]). Shape alone cannot detect a field that kept its type
 # and changed its MEANING, so the honest contract is the narrow one -- THE
 # BASELINE MUST COME FROM THE CURRENT `build.py`, which is exactly what CI does.
 # That is a REQUIREMENT ON THE CALLER, not a check this profile performs, and
@@ -1213,11 +1327,20 @@ def _validate_stamps_xrefs(node, i: int, path):
     them: `kind`, `severity`, `target_path`, `target_section` and the optional
     `item_name`.
 
-    NO READER IS ROUTED THROUGH THIS YET (see the profiles block above). The
-    schema carried this as a bare `{"type": "array"}` with no item shape, so a
-    malformed entry passed both the schema and every reader; the shape is
+    The schema carried this as a bare `{"type": "array"}` with no item shape, so
+    a malformed entry passed both the schema and every reader; the shape is
     constrained here and in the schema together (section 19), derived from the
-    994 live entries, and waits for the control-plane routing that will use it.
+    994 live entries. This docstring claimed "NO READER IS ROUTED THROUGH THIS
+    YET" until section 33 -- contradicted by the profiles block above, where
+    `PROFILE_QUERY` and `PROFILE_VALIDATE` both declare `SUBTREE_STAMPS_XREFS`
+    (Codex consistency, section 33, [medium]).
+
+    `target_path` IS THE RAW CAPTURED TARGET TOKEN, not a filesystem path, and
+    since producer contract v3 it may be a COMPLETE MARKDOWN LINK whose label
+    contains spaces. A consumer resolves it through
+    `validate.resolve_xref_target`, which unwraps the link BEFORE stripping any
+    `#fragment`; doing those two in the other order yields an incomplete link
+    that fails closed and silently drops the edge.
     """
     if SUBTREE_STAMPS_XREFS not in node:
         _err(REASON_SHAPE,

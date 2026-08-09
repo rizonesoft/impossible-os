@@ -224,7 +224,7 @@
       },
       "stamps_xrefs": {
         "type": "array",
-        "description": "Accepted/Deferred stamp XREFs as build.py emits them. Item shape added in TODO-06 section 19, derived from the 994 live entries, because this was a bare array that accepted any entry. NO READER IS ROUTED THROUGH IT YET: the intended consumer, scripts/overnight/decision-registry.py, is control plane that an unattended run may not edit, and it currently reads target/target_file/text/raw rather than the fields emitted here -- a filed defect (overnight-runner-improvements-v10), not a contract this schema describes. `item_name` is optional: a stamp clause may name a section rather than a named item (73 of 994 live entries omit it).",
+        "description": "Accepted/Deferred stamp XREFs as build.py emits them. Item shape added in TODO-06 section 19, derived from the 994 live entries, because this was a bare array that accepted any entry. Readers ARE routed through it: cache_schema's PROFILE_QUERY and PROFILE_VALIDATE both declare the stamps_xrefs subtree (query.py walks it for deferred / deferred-by / stats, validate.py for the stale-XREF, orphan and reachability checks). This description previously said no reader was routed through it, which was already false when written and was corrected in section 33. The one genuinely unrouted consumer is scripts/overnight/decision-registry.py, control plane that an unattended run may not edit, which reads target/target_file/text/raw rather than the fields emitted here -- a filed defect (overnight-runner-improvements-v10), not a contract this schema describes. `item_name` is optional: a stamp clause may name a section rather than a named item (73 of 994 live entries omit it).",
         "items": {
           "type": "object",
           "additionalProperties": false,
@@ -242,7 +242,8 @@
               "type": "string"
             },
             "target_path": {
-              "type": "string"
+              "type": "string",
+              "description": "The raw captured target token, NOT a filesystem path. Since producer contract v3 (CACHE_FORMAT_VERSION = 3, TODO-06 section 33) this may be a COMPLETE MARKDOWN LINK -- `[label](destination)` -- whose label contains spaces; before v3 the producer captured with `\\\\S+` and such a token arrived truncated at the label's first space. Both forms are strings, so no schema type can tell them apart, which is why the meaning change is gated by the format version rather than by shape. Resolve it through validate.resolve_xref_target, which unwraps the link BEFORE stripping any `#fragment`; the reverse order yields an incomplete link that fails closed and silently drops the edge."
             },
             "target_section": {
               "type": "string"

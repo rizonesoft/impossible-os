@@ -81,7 +81,7 @@ title: "TODO-06 -- TODO Metadata Layer and Derived Graph"
 | ⭐  |  30   |   §30   | `--watch` never ticks on a history change for the history-consuming verbs (§27)     | §24, §27   |  [x]   |
 | ⭐  |  31   |   §31   | An equal-count shallow boundary still moves `created_at` under an unchanged id      | §21, §27   |  [x]   |
 | ⭐  |  32   |   §32   | In-file `](#anchor)` links are checked by nothing (split from §29)                  | §3         |  [x]   |
-| ⭐  |  33   |   §33   | Stamp-target capture splits a link whose label contains a space (split from §29)    | §2, §26    |  [ ]   |
+| ⭐  |  33   |   §33   | Stamp-target capture splits a link whose label contains a space (split from §29)    | §2, §26    |  [x]   |
 | ⭐  |  34   |   §34   | The performance budget times itself on a clock that steps (found verifying §29)     | §2         |  [ ]   |
 | ⭐  |  35   |   §35   | A same-file stamp matches its own text, so repair answers with the stamp's line     | §29        |  [ ]   |
 | ⭐  |  36   |   §36   | The section parser reads `## N.` headings out of fenced code blocks (found by §32)  | §2, §32    |  [ ]   |
@@ -1685,19 +1685,31 @@ Found 2026-08-09 by §27's consistency review, which caught a dead `](#22-...)` 
 
 `build.py:225` (`XREF_CLAUSE_RE`) and `fix_line_numbers` both capture an XREF target with `(\S+)`, so a link whose LABEL contains a space is split at that space and only the fragment reaches the resolver. The live corpus writes that shape: `` [`01-boot-platform/TODO-07 §9`](TODO-07-...md) `` in `todo/01-boot-platform/TODO-22-recovery-partition.md`. Split out of §29 before implementation: this is a PRODUCER-side extraction change whose blast radius is every stamp in the corpus, where §29 is a consumer-side decision about one exit code.
 
-- [ ] Capture the complete markdown link as one target, not `\S+`
+- [x] Capture the complete markdown link as one target, not `\S+`
       Label, destination and any trailing section marker are one token, so a legitimate space-bearing label resolves instead of refusing.
+      - The grammar moved to `cache_schema.XREF_TARGET_PATTERN` (a complete link OR `\S+`, link arm first), with `XREF_LINK_PATTERN` / `XREF_LINK_RE` derived from shared `_XREF_LABEL` + `_XREF_DEST` components so there is one spelling rather than one per site.
       - §26 already closed the DANGEROUS half in the resolver: a bracket-prefixed token that is not a complete link now FAILS CLOSED instead of being parsed as a path and answering with the file named in the LABEL. That turned a wrong binding into an ordinary unresolved-XREF finding, which is how the one live instance was found and repaired. So this is a false-refusal fix, not a wrong-answer fix -- size it accordingly.
       - 124 such labels exist corpus-wide; they resolve today only because the OTHER extractors hand over a whole table cell rather than a whitespace-split token.
-- [ ] Both capture sites change together, or the tool disagrees with itself
+- [x] Both capture sites change together, or the tool disagrees with itself
       `build.py`'s `XREF_CLAUSE_RE` and `validate.py`'s `fix_line_numbers` carry the same `(\S+)`. Fixing one leaves the repair path splitting targets the builder resolved, which is worse than both being wrong the same way.
-- [ ] Prove the corpus-wide effect before and after, both directions
+      - Both now import the shared pattern. Five CONSUMERS also had to change: `validate.py` x4 (`_orphans`, `_stale_refs`) and `query.py`'s `_normalize_ref_token` each split the target at `#` BEFORE any unwrap, which turns `[label](file.md#anchor)` into an incomplete link that fails closed -- so the edge would have vanished from backlinks/deferred/stats/render while `validate.py` reported it resolved. `cache_schema.unwrap_xref_link` now owns that ordering and `resolve_xref_target` routes through it too.
+- [x] Prove the corpus-wide effect before and after, both directions
       Record the resolved/unresolved counts across the whole corpus on either side of the change. A capture widening can newly SWALLOW a following token as easily as it fixes a split one, and only the differential shows which happened.
-- [ ] End-to-end fixture where label and destination name DIFFERENT valid files
+      - PER-CLAUSE, not just counts: 1010 stamp targets, 1010 resolved, 0 unresolved, and the (file, token, destination) triple is byte-identical before and after. The probe carries a control that must fire -- with the resolver disabled it reads 0/1010, so the identity is evidence rather than an inert measurement.
+      - The 131 stamp clauses `XREF_CLAUSE_RE` drops corpus-wide are a DIFFERENT defect, not this one: every drop is `no-section-marker-after-path` (`-> XREF: 04-drivers-hardware (no concrete owner item yet)`), 0 are link-form splits. Not filed here -- §33 owns the capture grammar, and a missing `§N` is an authoring-shape question.
+- [x] End-to-end fixture where label and destination name DIFFERENT valid files
       The shape §26's reviewer asked for: through `extract_stamps_xrefs`, asserting resolution follows the DESTINATION and never the label. Mutation: restore `(\S+)` and require the fixture to FAIL.
-- [ ] Commit: `"todo-graph: stamp-target capture takes a whole markdown link"`
+      - Five sub-tests in `test_build.sh`: the end-to-end fixture; the `\S+` mutation; a negative case (malformed/unbalanced, bare-fragment and anchor-only targets all still fail closed) carrying POSITIVE controls so it cannot pass by refusing everything; the query-side ordering; and a bypass mutation that re-inlines the unwrap in the wrong order and must break anchored links only.
+- [x] Commit: `"todo-graph: stamp-target capture takes a whole markdown link"`
 
 **Test checkpoint:** a stamp whose link label contains a space resolves to its destination file; the corpus-wide resolved-count differential shows no newly-unresolved target; the fixture fails when `(\S+)` is restored; `bash scripts/todo-graph/tests/test_build.sh` and `bash scripts/test-tooling.sh` green.
+
+**Notes:** the section as filed was a two-line regex change; three of the four things that shipped were found by review, and each was invisible from the capture site itself.
+
+- **The widening made a LOOSE resolver reachable.** §26's label was a tempered dot, which accepts an UNBALANCED bracket, so `[broken and [dest](TODO-02.md)` matched as a complete link. Harmless while the producers captured `\S+` (such a token never survived the label's space to reach the resolver) and reachable the moment they stopped. The first repair -- ban brackets in the label outright -- was WRONG and §26's own fixture caught it: `[a [inner] label](x.md)` must still resolve. The grammar admits a balanced PAIR, with the pair's `]` guarded against a following `(`, which is what keeps §26's nested-link refusal intact.
+- **Five consumers pre-split the target at `#`.** Four in `validate.py` and one in `query.py`'s shared normaliser -- all of them turning `[label](file.md#anchor)` into an incomplete link that fails closed. The failure would have been ASYMMETRIC and therefore quiet: `validate.py` reports the target resolved while backlinks / deferred / stats / render omit the edge.
+- **`target_path` changed meaning without changing type,** which is exactly what `CACHE_FORMAT_VERSION` exists for (v2 -> v3, the second time it has been spent). A v2 and a v3 cache are indistinguishable until the first space-bearing label is written, and `query.py` rebuilds a canonical cache only on validation/freshness failure while `validate.py --diff` checks neither -- so a stale artifact would keep serving truncated targets. Sub-test 25c is the refusal regression and needed no edit: it writes `CACHE_FORMAT_VERSION - 1` and asserts `LEGACY_FORMAT`.
+- **The one live instance was already repaired** by §26's review, so this shipped with ZERO live occurrences of the shape it fixes. That is the honest size of it: a false-refusal fix plus the fail-closed invariant it would otherwise have broken, not a wrong-binding fix.
 
 -> XREF: [`TODO-06 §29`](#29---fix-line-numbers-reports-success-over-targets-it-could-not-resolve) -- the section this was split out of before implementation (item: "Commit: `\"todo-graph: repair mode fails visibly on targets it cannot resolve\"`").
 -> XREF: [`TODO-06 §26`](#26-domain-code-resolution-picks-a-directory-by-cache-order) -- the section that closed the resolver half of this defect (item: "Commit: `\"todo-graph: domain codes resolve by directory, not by cache order\"`"); it is stamped, so the producer half is owned here.

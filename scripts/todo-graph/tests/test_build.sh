@@ -15930,6 +15930,292 @@ fi
 
 fi  # git available
 
+# ======================================================================
+# Section 33: the stamp-target capture takes a WHOLE markdown link.
+#
+# The defect: both producer capture sites spelled the target `\S+`, so a link
+# whose LABEL contains a space split at that space and only the fragment
+# reached the resolver. Section 26 already made that fragment fail closed, so
+# the shape below is a FALSE REFUSAL rather than a wrong binding -- which is
+# exactly why the fixture must assert the DESTINATION is followed, not merely
+# that something resolved.
+#
+# The fixture names DIFFERENT valid files in the label and the destination, so
+# a capture that follows the label resolves to a real file and a capture that
+# follows the destination resolves to a different real file. Both answers are
+# "resolved"; only the coordinates tell them apart. A fixture whose label named
+# a nonexistent file would pass for the wrong reason -- it would be measuring
+# fail-closed behaviour, not which end of the link won.
+# ======================================================================
+
+S33_TREE="$TMP_DIR/s33-linktarget"
+rm -rf "$S33_TREE"; mkdir -p "$S33_TREE/todo/01-test"
+cat > "$S33_TREE/todo/01-test/TODO-01-label-file.md" <<'EOF'
+---
+schema_version: 1
+id: s33-label
+domain: 01-test
+status: active
+title: "the file named in the LABEL"
+---
+# TODO-01 -- Label file
+
+## Implementation Order
+
+| ⭐ | Order | Section | Deliverable | Depends On | Status |
+| --- | --- | --- | --- | --- | --- |
+| 💎 | 1 | §1 | First | -- | [x] |
+
+## 1. First Section
+
+- [x] Commit
+EOF
+cat > "$S33_TREE/todo/01-test/TODO-02-destination-file.md" <<'EOF'
+---
+schema_version: 1
+id: s33-destination
+domain: 01-test
+status: active
+title: "the file named in the DESTINATION"
+---
+# TODO-02 -- Destination file
+
+## Implementation Order
+
+| ⭐ | Order | Section | Deliverable | Depends On | Status |
+| --- | --- | --- | --- | --- | --- |
+| 💎 | 1 | §1 | First | -- | [x] |
+
+## 1. First Section
+
+- [x] Commit
+EOF
+cat > "$S33_TREE/todo/01-test/TODO-03-stamped.md" <<'EOF'
+---
+schema_version: 1
+id: s33-stamped
+domain: 01-test
+status: active
+title: "carries the stamp under test"
+---
+# TODO-03 -- Stamped fixture
+
+## Implementation Order
+
+| ⭐ | Order | Section | Deliverable | Depends On | Status |
+| --- | --- | --- | --- | --- | --- |
+| 💎 | 1 | §1 | First | -- | [x] |
+
+## 1. First Section
+
+> **Deferred:** [M] label and destination name different files -> XREF: [`01-test/TODO-01-label-file.md §1`](TODO-02-destination-file.md) §1 (item: "Commit" at line 19)
+
+- [x] Commit
+EOF
+
+# Sub-test 33a: END-TO-END through extract_stamps_xrefs -> resolve_xref_target.
+# The label names TODO-01, the destination names TODO-02, and BOTH exist, so
+# the assertion is on the coordinates rather than on resolved-vs-unresolved.
+S33_OUT=$(python3 - "$S33_TREE" <<'S33EOF'
+import json, sys, pathlib
+root = pathlib.Path(sys.argv[1])
+sys.path.insert(0, "scripts/todo-graph")
+import build as B, validate as V
+
+text = (root / "todo/01-test/TODO-03-stamped.md").read_text(encoding="utf-8")
+xrefs = B.extract_stamps_xrefs(text)
+import subprocess
+subprocess.run([sys.executable, "scripts/todo-graph/build.py", "--quiet",
+                "--root", str(root / "todo"), "--output", str(root / "cache.json"),
+                "--repo-root", str(root)], check=True, capture_output=True)
+cache = json.loads((root / "cache.json").read_text())
+nodes = cache["nodes"] if isinstance(cache, dict) and "nodes" in cache else cache
+id_index = V.build_id_index(nodes); path_index = V.build_path_index(nodes)
+tp = xrefs[0]["target_path"] if xrefs else ""
+resolved = V.resolve_xref_target(tp, "todo/01-test/TODO-03-stamped.md",
+                                 id_index, path_index) if tp else None
+print(json.dumps({
+    "n_xrefs": len(xrefs),
+    "target_path": tp,
+    "target_section": xrefs[0]["target_section"] if xrefs else "",
+    "item_name": xrefs[0].get("item_name", "") if xrefs else "",
+    "resolved": resolved or "",
+    "follows_destination": bool(resolved and resolved.endswith("TODO-02-destination-file.md")),
+    "follows_label": bool(resolved and resolved.endswith("TODO-01-label-file.md")),
+}))
+S33EOF
+); S33_RC=$?
+if [ "$S33_RC" = "0" ] && echo "$S33_OUT" | python3 -c "
+import json, sys
+d = json.loads(sys.stdin.read())
+sys.exit(0 if (d['n_xrefs'] == 1 and d['follows_destination'] and not d['follows_label']
+               and d['target_section'] == '§1' and d['item_name'] == 'Commit') else 1)"; then
+    t_pass "section 33: a stamp link whose label contains a space resolves to its DESTINATION"
+else
+    t_fail "section 33: whole-link capture fixture failed (rc=$S33_RC, out=$S33_OUT)"
+fi
+
+# Sub-test 33b: MUTATION -- restore the `\S+` target grammar. 33a must FAIL,
+# and specifically it must stop following the destination. Without this, 33a
+# would pass against any build whose capture happened to resolve.
+MUT_DIR="$TMP_DIR/s33-mut-nonspace"
+rm -rf "$MUT_DIR"; cp -r "$REPO_ROOT/scripts/todo-graph" "$MUT_DIR"
+python3 - "$MUT_DIR/cache_schema.py" <<'MUTEOF'
+import sys, pathlib
+p = pathlib.Path(sys.argv[1])
+src = p.read_text(encoding="utf-8")
+needle = 'XREF_TARGET_PATTERN = r"(?:" + XREF_LINK_PATTERN + r"|\\S+)"'
+assert src.count(needle) == 1, f"mutation needle appears {src.count(needle)}x"
+p.write_text(src.replace(needle, 'XREF_TARGET_PATTERN = r"\\S+"', 1), encoding="utf-8")
+MUTEOF
+S33B_OUT=$(python3 - "$S33_TREE" "$MUT_DIR" <<'S33BEOF'
+import json, sys, pathlib
+root, mut = pathlib.Path(sys.argv[1]), sys.argv[2]
+sys.path.insert(0, mut)
+import build as B, validate as V
+text = (root / "todo/01-test/TODO-03-stamped.md").read_text(encoding="utf-8")
+xrefs = B.extract_stamps_xrefs(text)
+import subprocess
+subprocess.run([sys.executable, f"{mut}/build.py", "--quiet",
+                "--root", str(root / "todo"), "--output", str(root / "cache-mut.json"),
+                "--repo-root", str(root)], check=True, capture_output=True)
+cache = json.loads((root / "cache-mut.json").read_text())
+nodes = cache["nodes"] if isinstance(cache, dict) and "nodes" in cache else cache
+id_index = V.build_id_index(nodes); path_index = V.build_path_index(nodes)
+tp = xrefs[0]["target_path"] if xrefs else ""
+resolved = V.resolve_xref_target(tp, "todo/01-test/TODO-03-stamped.md",
+                                 id_index, path_index) if tp else None
+print(json.dumps({
+    "target_path": tp,
+    "resolved": resolved or "",
+    "follows_destination": bool(resolved and resolved.endswith("TODO-02-destination-file.md")),
+}))
+S33BEOF
+); S33B_RC=$?
+if [ "$S33B_RC" = "0" ] && echo "$S33B_OUT" | python3 -c "
+import json, sys
+d = json.loads(sys.stdin.read())
+sys.exit(0 if (not d['follows_destination'] and d['target_path'].startswith('[')) else 1)"; then
+    t_pass "section 33: mutation check -- restoring \\S+ splits the label and stops following the destination"
+else
+    t_fail "section 33: \\S+ mutation did not misfire as expected (rc=$S33B_RC, out=$S33B_OUT)"
+fi
+
+# Sub-test 33c: NEGATIVE -- a MALFORMED bracket target followed by a real link
+# must still fail closed. A tempered-dot label would accept the unbalanced
+# `[broken and [dest](TODO-02...)` as one complete link and resolve it, which
+# is section 26's fail-closed rule running backwards (Codex design review).
+S33C_OUT=$(python3 - "$S33_TREE" <<'S33CEOF'
+import json, sys, pathlib
+root = pathlib.Path(sys.argv[1])
+sys.path.insert(0, "scripts/todo-graph")
+import validate as V
+cache = json.loads((root / "cache.json").read_text())
+nodes = cache["nodes"] if isinstance(cache, dict) and "nodes" in cache else cache
+id_index = V.build_id_index(nodes); path_index = V.build_path_index(nodes)
+src = "todo/01-test/TODO-03-stamped.md"
+cases = {
+    "unbalanced_label": "[broken and [dest](TODO-02-destination-file.md)",
+    "bare_fragment": "[`01-test/TODO-01-label-file",
+    "anchor_only": "[label](#1-first-section)",
+    # POSITIVE CONTROLS. Without these the sub-test passes by refusing
+    # EVERYTHING, which is what an over-tightened label grammar does -- and did:
+    # a bracket-free label refused section 26's legitimate `[a [inner] label]`.
+    "control_plain": "[`01-test/TODO-01 §1`](TODO-02-destination-file.md)",
+    "control_inner_brackets": "[a [inner] label](TODO-02-destination-file.md)",
+}
+print(json.dumps({k: (V.resolve_xref_target(v, src, id_index, path_index) or "")
+                  for k, v in cases.items()}))
+S33CEOF
+); S33C_RC=$?
+if [ "$S33C_RC" = "0" ] && echo "$S33C_OUT" | python3 -c "
+import json, sys
+d = json.loads(sys.stdin.read())
+refused = not any(v for k, v in d.items() if not k.startswith('control_'))
+resolved = all(v.endswith('TODO-02-destination-file.md')
+               for k, v in d.items() if k.startswith('control_'))
+sys.exit(0 if (refused and resolved) else 1)"; then
+    t_pass "section 33: malformed, fragment and anchor-only bracket targets all still fail closed"
+else
+    t_fail "section 33: a malformed bracket target resolved (rc=$S33C_RC, out=$S33C_OUT)"
+fi
+
+# Sub-test 33d: the QUERY-side normalizer must reach the same destination. It
+# split the target at `#` BEFORE any link unwrap, so an anchored whole-link
+# target became the incomplete `[label](file.md` and every query-side stamp
+# consumer (backlinks, deferred, stats, render) silently omitted the edge while
+# validate.py reported the same target resolved (Codex design review, [high]).
+S33D_OUT=$(python3 - <<'S33DEOF'
+import json, sys
+sys.path.insert(0, "scripts/todo-graph")
+import query as Q
+print(json.dumps({
+    "anchored_link": Q._normalize_ref_token("[`01-test/TODO-01 §1`](TODO-02-destination-file.md#1-first)"),
+    "plain_link": Q._normalize_ref_token("[`label with space`](TODO-02-destination-file.md)"),
+    "anchor_only": Q._normalize_ref_token("[label](#1-first-section)"),
+    "control_bare": Q._normalize_ref_token("`02-kernel-core/TODO-05.md`,"),
+}))
+S33DEOF
+); S33D_RC=$?
+if [ "$S33D_RC" = "0" ] && echo "$S33D_OUT" | python3 -c "
+import json, sys
+d = json.loads(sys.stdin.read())
+sys.exit(0 if (d['anchored_link'] == 'TODO-02-destination-file.md'
+               and d['plain_link'] == 'TODO-02-destination-file.md'
+               and d['anchor_only'] == ''
+               and d['control_bare'] == '02-kernel-core/TODO-05.md') else 1)"; then
+    t_pass "section 33: the query-side normalizer unwraps a link before stripping its fragment"
+else
+    t_fail "section 33: query-side normalizer ordering wrong (rc=$S33D_RC, out=$S33D_OUT)"
+fi
+
+# Sub-test 33e: MUTATION -- make the resolver BYPASS the shared helper and do
+# its own unwrap in the wrong order (fragment first). An anchored link must
+# stop resolving. This is what stops `unwrap_xref_link` from becoming a helper
+# everything imports and nothing depends on: the ordering has to be observable
+# from the resolver's behaviour, or a future edit can re-inline it wrongly and
+# every other fixture here still passes.
+MUT_DIR="$TMP_DIR/s33-mut-bypass"
+rm -rf "$MUT_DIR"; cp -r "$REPO_ROOT/scripts/todo-graph" "$MUT_DIR"
+python3 - "$MUT_DIR/validate.py" <<'MUTEOF'
+import sys, pathlib
+p = pathlib.Path(sys.argv[1])
+src = p.read_text(encoding="utf-8")
+needle = "    unwrapped = cache_schema.unwrap_xref_link(target)\n"
+assert src.count(needle) == 1, f"bypass needle appears {src.count(needle)}x"
+# The pre-section-33 ordering: strip the fragment, THEN try to unwrap.
+bypass = ("    _frag = target.split('#', 1)[0]\n"
+          "    _m = cache_schema.XREF_LINK_RE.match(_frag)\n"
+          "    unwrapped = (_m.group('url') if _m else target)\n")
+p.write_text(src.replace(needle, bypass, 1), encoding="utf-8")
+MUTEOF
+S33E_OUT=$(python3 - "$MUT_DIR" <<'S33EEOF'
+import json, sys
+mut = sys.argv[1]
+sys.path.insert(0, mut)
+import validate as V
+def node(fp, i): return {"file_path": fp, "id": i, "sections": [], "stamps_xrefs": []}
+lk = [node("todo/01-test/TODO-01-a.md", "lka"), node("todo/01-test/TODO-02-b.md", "lkb")]
+p, i = V.build_path_index(lk), V.build_id_index(lk)
+S = "todo/01-test/TODO-01-a.md"
+print(json.dumps({
+    "anchored": V.resolve_xref_target("[`TODO-02 §6`](TODO-02-b.md#6-x)", S, i, p) or "",
+    "plain": V.resolve_xref_target("[`TODO-02 §6`](TODO-02-b.md)", S, i, p) or "",
+}))
+S33EEOF
+); S33E_RC=$?
+if [ "$S33E_RC" = "0" ] && echo "$S33E_OUT" | python3 -c "
+import json, sys
+d = json.loads(sys.stdin.read())
+# The ANCHORED link must break under the bypass; the un-anchored one still
+# resolves, which is what proves the mutation hit the ORDERING and not the
+# grammar (a mutation that broke everything would prove nothing).
+sys.exit(0 if (not d['anchored'] and d['plain'].endswith('TODO-02-b.md')) else 1)"; then
+    t_pass "section 33: mutation check -- bypassing the shared unwrap breaks anchored links"
+else
+    t_fail "section 33: unwrap-bypass mutation did not misfire as expected (rc=$S33E_RC, out=$S33E_OUT)"
+fi
+
 # ----------------------------------------------------------------------
 # Summary
 # ----------------------------------------------------------------------

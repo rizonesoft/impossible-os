@@ -179,29 +179,14 @@ DOMAIN_PATH_RE = re.compile(r"^(?P<dir>\d{2}-[a-z0-9-]+)/TODO-(?P<num>\d{1,2})$"
 # resolver_key` matches on `parts[-2]`, but is applied to the DIRECTORY alone so
 # a folder holding only letter-numbered TODOs still counts as indexed.
 _NUMBERED_DIR_RE = re.compile(r"^\d{2}-")
-# `[label](destination)`. The label may itself contain brackets (`[`TODO-06
-# §22`]`), so it is matched greedily up to the LAST `](` rather than with a
-# `[^\]]*` class that stops at the first inner bracket. The destination excludes
-# whitespace and parentheses, which also rules out a link title (`(url "t")`) --
-# a shape this corpus does not use and which must not be silently truncated to
-# the url and resolved.
-#
-# EXACTLY ONE LINK, and the label may not swallow another one. A greedy `.*`
-# label treats `[a](x.md)[b](y.md)` -- which the `(\S+)` XREF parser hands over
-# whole -- as one link whose destination is `y.md`, so a malformed multi-target
-# token resolved to its LAST destination instead of being refused (Codex
-# adversarial, section 26 review).
-#
-# THE BAN ON `](` IS EXPRESSED AS A LOOKAHEAD, not as a character class. The
-# first cut allowed "an ordinary char OR a bracket pair", and the two
-# alternatives together still admitted `](`: the pair alternative ends at `]`
-# and the ordinary alternative then accepts `(`. So
-# `[[a](x.md)[b](y.md)](z.md)` matched and resolved `z.md` -- the same silent
-# multi-destination bind, one nesting level down (Codex re-adversarial, section
-# 26 review round 2). Refusing the SEQUENCE at every position is what actually
-# states the rule; a label carrying ordinary brackets still matches.
-_MD_LINK_RE = re.compile(
-    r"^\[(?P<label>(?:(?!\]\().)*)\]\((?P<url>[^()\s]*)\)$")
+# THE LINK GRAMMAR LIVES IN `cache_schema` (section 33), not here. It was
+# spelled locally as `_MD_LINK_RE` while the PRODUCERS captured a target
+# with `\S+`, so the resolver could accept a shape the producers could not
+# capture -- and did: a link whose label contains a space never arrived
+# whole. `cache_schema.XREF_LINK_RE` carries that grammar and section 26's
+# full reasoning for it (the `](` ban as a lookahead, the nested-link and
+# multi-destination cases it refuses); `unwrap_xref_link` carries the
+# unwrap-before-fragment-strip ordering every consumer needs.
 TODO_NN_RE = re.compile(r"^TODO-(?P<num>\d{1,2})$")
 TODO_FILENAME_RE = re.compile(r"^TODO-(?P<num>\d{1,2})-")
 
@@ -882,27 +867,37 @@ def resolve_xref_target(target: str, source_file: str, id_index: dict, path_inde
     # `)`. Stripping the fragment first turned `[T](x.md#sec)` into the
     # unmatchable `[T](x.md` and refused every ANCHORED link -- the commonest
     # shape in this corpus (Codex re-adversarial, section 26 round 6, [medium]).
-    link_m = _MD_LINK_RE.match(target)
+    # THE UNWRAP IS `cache_schema.unwrap_xref_link`, not a local re-spelling of
+    # it. `query.py`'s normaliser and this resolver had the same ordering to get
+    # right and only one of them had it; routing both through the one helper is
+    # what makes "unwrap before fragment-strip" a property of the codebase
+    # rather than of each consumer's memory (Codex consistency, section 33,
+    # [medium]). The helper returns the destination for a complete link, the
+    # EMPTY STRING for one that names no file, and the token unchanged for a
+    # non-link.
+    unwrapped = cache_schema.unwrap_xref_link(target)
     # A BRACKET-PREFIXED TOKEN THAT IS NOT A COMPLETE LINK FAILS CLOSED. The
-    # producers capture a stamp target with `\S+`, so a label containing a
-    # SPACE -- ``[`01-boot-platform/TODO-07 §9`](...)``, a shape the live corpus
-    # writes -- is split at that space and only the fragment
-    # ``[`01-boot-platform/TODO-07`` reaches here. Falling through to generic
+    # producers used to capture a stamp target with `\S+`, so a label containing
+    # a SPACE -- ``[`01-boot-platform/TODO-07 §9`](...)``, a shape the live
+    # corpus writes -- was split at that space and only the fragment
+    # ``[`01-boot-platform/TODO-07`` reached here. Falling through to generic
     # path resolution then answered with the file named in the LABEL rather than
     # the one named in the destination, which is a wrong binding reported as a
     # clean edge (Codex re-adversarial, section 26 review round 3, [high]).
     # Refusing is the honest verdict: the token is a fragment, and a fragment
-    # names nothing. Fixing the producers to capture a whole link is the other
-    # half and is filed separately -- it belongs to the cache producer, not here.
-    if link_m is None and target.startswith("["):
+    # names nothing. Section 33 fixed the producers to capture a whole link, so
+    # a fragment now reaches here only from malformed input -- which is exactly
+    # when refusing still matters. `unwrapped is target` identifies a token the
+    # helper did NOT recognise as a link.
+    if unwrapped == target and target.startswith("["):
         return None
-    if link_m:
+    if unwrapped != target:
         # An empty or fragment-only destination names no FILE. `[x](#anchor)`
         # is a same-document jump, which no file-level resolution can answer,
         # so it refuses rather than falling through to be parsed as a path.
-        target = (link_m.group("url") or "").strip().strip("`").strip()
-        if not target or target.startswith("#"):
+        if not unwrapped:
             return None
+        target = unwrapped
     # Strip markdown anchor fragments (#section-heading) BEFORE resolution.
     # Anchors target subsections on GitHub; they are never part of a file id
     # or filename. Applying this up front lets every resolution step below
@@ -2134,8 +2129,16 @@ def fix_line_numbers(nodes: list, snapshot: dict, id_index: dict, path_index: di
             # exact same literal text `(item: "X" at line 5)` bound to
             # different targets; str.replace would rewrite both to the
             # first resolved line.
+            # The target grammar is the SHARED one the builder captures with
+            # (`cache_schema.XREF_TARGET_PATTERN`), not a local `\S+`. A link
+            # whose label contains a space is one token; capturing it here with
+            # `\S+` while `build.py` captured the whole link would leave the
+            # repair path splitting targets the builder resolved -- the tool
+            # disagreeing with itself (TODO-06 section 33).
             xref_positions: list = []
-            for m in re.finditer(r"->\s*XREF:\s*(\S+)", rest):
+            for m in re.finditer(
+                    r"->\s*XREF:\s*(" + cache_schema.XREF_TARGET_PATTERN + r")",
+                    rest):
                 xref_positions.append((m.start(), m.group(1).rstrip(",")))
             if not xref_positions:
                 new_lines.append(ln)
@@ -2669,10 +2672,16 @@ def _orphans(nodes: list, id_index: dict, path_index: dict) -> set:
             tgt = id_index.get(sby)
             if tgt and tgt != src:
                 inbound_targets.add(tgt)
+        # NO PRE-SPLIT AT `#` HERE. `resolve_xref_target` unwraps a markdown
+        # link and THEN strips the fragment; splitting first turns
+        # `[label](file.md#anchor)` into the incomplete `[label](file.md`,
+        # which fails closed -- so the edge would silently vanish from the
+        # orphan set once the producers began capturing whole links (TODO-06
+        # section 33; Codex design review, [high]).
         for x in (n.get("inputs_xrefs") or []):
             if isinstance(x, dict):
                 tgt = resolve_xref_target(
-                    (x.get("target_path") or "").split("#", 1)[0].strip(),
+                    (x.get("target_path") or "").strip(),
                     src, id_index, path_index,
                 )
                 if tgt and tgt != src:
@@ -2680,7 +2689,7 @@ def _orphans(nodes: list, id_index: dict, path_index: dict) -> set:
         for x in (n.get("stamps_xrefs") or []):
             if isinstance(x, dict):
                 tgt = resolve_xref_target(
-                    (x.get("target_path") or "").split("#", 1)[0].strip(),
+                    (x.get("target_path") or "").strip(),
                     src, id_index, path_index,
                 )
                 if tgt and tgt != src:
@@ -2729,16 +2738,19 @@ def _count_stale_xrefs(nodes: list, id_index: dict, path_index: dict) -> set:
         sby = n.get("superseded_by")
         if sby and sby not in id_index:
             stale.add((src, f"superseded_by:{sby}"))
+        # Same rule as `_orphans`: no pre-split at `#`, because the resolver
+        # unwraps the link BEFORE stripping the fragment and this order does
+        # not (TODO-06 section 33).
         for x in (n.get("inputs_xrefs") or []):
             if not isinstance(x, dict):
                 continue
-            raw = (x.get("target_path") or "").split("#", 1)[0].strip()
+            raw = (x.get("target_path") or "").strip()
             if raw and resolve_xref_target(raw, src, id_index, path_index) is None:
                 stale.add((src, f"inputs:{raw}"))
         for x in (n.get("stamps_xrefs") or []):
             if not isinstance(x, dict):
                 continue
-            raw = (x.get("target_path") or "").split("#", 1)[0].strip()
+            raw = (x.get("target_path") or "").strip()
             if raw and resolve_xref_target(raw, src, id_index, path_index) is None:
                 stale.add((src, f"stamps:{raw}"))
         for sec in (n.get("sections") or []):

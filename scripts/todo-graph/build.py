@@ -221,8 +221,16 @@ STAMP_HEADER_RE = re.compile(
 # Single XREF clause within a stamp line. Captures one target_path /
 # target_section / optional item_name. Iterated to extract every clause
 # on the same line.
+#
+# The target grammar is `_cs.XREF_TARGET_PATTERN`, NOT a local `\S+`: a
+# complete markdown link is one token even when its label contains a space, and
+# the identical grammar is what `validate.py`'s repair path captures with, so
+# the builder and the repairer cannot disagree about where a target ends
+# (TODO-06 section 33). See that constant for why the label refuses nested
+# brackets.
 XREF_CLAUSE_RE = re.compile(
-    r"->\s+XREF:\s+(?P<target_path>\S+)\s+(?P<target_section>§\S+)"
+    r"->\s+XREF:\s+(?P<target_path>" + _cs.XREF_TARGET_PATTERN + r")"
+    r"\s+(?P<target_section>§\S+)"
     r"(?:\s*\((?:[^()]*?\b(?:item|new\s+item):\s*\"(?P<item_name>[^\"]+)\")?[^()]*\))?"
 )
 

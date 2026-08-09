@@ -204,8 +204,17 @@ def _gblank(text: str) -> str:
 
 # Anchored graph-target: the chunk right after `XREF:` must open with the
 # domain-qualified path IMMEDIATELY followed by the section token, mirroring
-# todo-graph's `->\s+XREF:\s+(?P<target_path>\S+)\s+(?P<target_section>§\S+)`
-# edge regex -- a section marker elsewhere in the clause produces no edge.
+# todo-graph's edge regex (`build.py`'s `XREF_CLAUSE_RE`, whose target grammar
+# is `cache_schema.XREF_TARGET_PATTERN`) -- a section marker elsewhere in the
+# clause produces no edge.
+#
+# THIS BAR STAYS NARROWER THAN THE EDGE REGEX ON PURPOSE, and the gap widened
+# in section 33: the capture now also accepts a COMPLETE MARKDOWN LINK as one
+# target, so a link whose label contains a space stops being split at that
+# space. That is a reader for what the corpus already contains; this is the
+# CANONICAL WRITER bar, and the shape it asks new stamps to be written in is
+# still the bare `NN-domain/TODO-XX §N`. Widening it to admit link-form targets
+# would license a shape the writer has no reason to emit.
 _WRITER_TARGET_RE = re.compile(r"^\s*\d{2}-[a-z0-9-]+/TODO-\d+\s+§\d+\b")
 
 
