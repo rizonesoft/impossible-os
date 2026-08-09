@@ -30,7 +30,7 @@ title: "TODO-04 -- Firmware Table & Platform Inventory"
 - -> XREF: `04-drivers-hardware/TODO-04-security-hardware.md §4` -- IOMMU/VT-d/AMD-Vi parses ACPI DMAR/IVRS; consumer of the §1 firmware-table catalog
 - -> XREF: `04-drivers-hardware/TODO-08-core-driver-enhancements.md §1` -- PCIe ECAM via ACPI MCFG; consumer of the §1 firmware-table catalog
 - -> XREF: `01-boot-platform/TODO-13-tpm-measured-boot-attestation.md` -- TPM TCPA/TPM2 ACPI tables and event-log mirror; this TODO catalogs the table; TODO-13 owns the measured-boot pipeline
-- -> XREF: `16-architecture-ports/TODO-01-multi-arch-port.md` -- IORT (ARM IO Remapping Table) catalog work belongs to the ARM SBSA port; deferred from §1 catalog source enum until that domain activates
+- -> XREF: `18-future-research/TODO-01-multi-arch-port.md` -- IORT (ARM IO Remapping Table) catalog work belongs to the ARM SBSA port; deferred from §1 catalog source enum until that domain activates
 
 ## Outcome
 

@@ -31,7 +31,7 @@ title: "TODO-03 -- SSH Client"
 - `include/desktop/terminal.h` -- `terminal_open()`, `terminal_puts()`, `terminal_trygetchar()`, `TERM_COLS`, `TERM_ROWS`
 - `07-networking/TODO-08-ssh-ftp-clients.md §2–§9` -- SSH protocol reference spec
 - `07-networking/TODO-02-dns-sockets.md §3` -- `kern_socket`, `kern_connect`, `kern_send`, `kern_recv`, `kern_close`, `dns_resolve`
-- `12-user-platform-sdk/TODO-03-kernel-libraries.md §6` -- monocypher: `crypto_x25519_*`, `crypto_chacha20_*`, `crypto_poly1305_*`, `crypto_ed25519_*`, `crypto_blake2b_*`, `csprng_fill`
+- `02-kernel-core/TODO-03-kernel-libraries.md §6` -- monocypher: `crypto_x25519_*`, `crypto_chacha20_*`, `crypto_poly1305_*`, `crypto_ed25519_*`, `crypto_blake2b_*`, `csprng_fill`
 - `include/registry.h` -- `reg_set_string`, `reg_get_string`, `reg_create_key`
 - `11-apps/TODO-02-ftp-wget-wifi.md §2` -- `progress_bar_print(done, total, elapsed_ms)` helper
 

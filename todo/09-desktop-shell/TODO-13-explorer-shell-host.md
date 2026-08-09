@@ -37,7 +37,7 @@ title: "TODO-13 -- Explorer Shell Host (`explorer.exe`)"
 | :---: | ---------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- | :----: |
 |   1   | Minimal `explorer.exe` PE (message loop, hidden or minimal main HWND)                                                        | D10 T07 §7; D10 T08 §10; TODO-A-user32-export-master-table Tier 1 |  [ ]   |
 |   2   | Wire `SHGetFolderPath` subset for Desktop / Startup paths                                                                    | D10 T08 §12; D10 TODO-C Tier 1                                    |  [ ]   |
-|   3   | Taskbar heartbeat: integrate with [`../08-graphics-ui/TODO-10-taskbar.md`](../08-graphics-ui/TODO-10-taskbar.md) window list | D08 TODO-08-taskbar §5                                            |  [ ]   |
+|   3   | Taskbar heartbeat: integrate with [`../08-graphics-ui/TODO-10-taskbar.md`](../08-graphics-ui/TODO-10-taskbar.md) window list | D08 08-graphics-ui/TODO-10-taskbar.md §5                          |  [ ]   |
 |   4   | `ShellExecute` open verb to filemgr or assoc target                                                                          | D10 T08 §14; D09 T09                                              |  [ ]   |
 |   5   | Boot selection: `explorer.exe` default; installer override unchanged                                                         | D10 T11 §2                                                        |  [ ]   |
 
@@ -55,7 +55,7 @@ title: "TODO-13 -- Explorer Shell Host (`explorer.exe`)"
 ## 3. Taskbar and desktop integration
 
 - [ ] Register shell host window class; create invisible or minimal root window for message pump if required by WM.
-- [ ] Subscribe to WM events needed by taskbar (`TODO-08-taskbar` XREF) without duplicating filemgr UI.
+- [ ] Subscribe to WM events needed by taskbar (`08-graphics-ui/TODO-10-taskbar.md` XREF) without duplicating filemgr UI.
 - [ ] Commit: `"desktop: explorer taskbar integration"`
 
 ## 4. ShellExecute open-verb wiring

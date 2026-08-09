@@ -15,7 +15,7 @@ title: "TODO-03 -- System Updates & IPKG Package Manager"
 
 ## Inputs
 
-- `include/kernel/net/http.h` (TODO-06-net §3) -- `http_get(url, buf, max, &len)`, `http_get_to_file(url, path, progress_cb)` -- §1 version check, §2 download
+- `include/kernel/net/http.h` (07-networking/TODO-03-http-tls.md §3) -- `http_get(url, buf, max, &len)`, `http_get_to_file(url, path, progress_cb)` -- §1 version check, §2 download
 - `include/cng.h` (TODO-07-cng §1) -- `cng_sha256(data, len, out32)` -- §2 integrity verification
 - `include/kernel/zip.h` (TODO-04 §6) -- `zip_open/extract/list/close()` -- §3 update apply, §8 app install
 - `include/registry.h` -- `HKLM\SYSTEM\Version`, `HKLM\SOFTWARE\{name}\*`, `HKLM\SYSTEM\Update\*` -- §1 version compare, §6 install manifest, §8 app list
@@ -48,7 +48,7 @@ title: "TODO-03 -- System Updates & IPKG Package Manager"
 | --- | :---: | --------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- | :----: |
 | ⭐  |   1   | §5 IPKG format spec -- `manifest.ini` + `install.ini` + `files/`; parser `ipkg_parse()`             | `zip_open/list()` (TODO-04); `registry_set()` (exists)                                |  [ ]   |
 | ⭐  |   2   | §9 IPKG build tool -- `tools/ipkg_create.c`; `gcc`-compiled; pack dir → `.ipkg`; manifest validate | §5 format spec; host `gcc`; `libzip` or miniz host build                               |  [ ]   |
-| 💎  |   3   | §1 Update check API -- `struct update_info`, `update_check()`, HTTP GET, Registry version compare   | `http_get()` (TODO-06-net §3); `HKLM\SYSTEM\Version`                                  |  [ ]   |
+| 💎  |   3   | §1 Update check API -- `struct update_info`, `update_check()`, HTTP GET, Registry version compare   | `http_get()` (07-networking/TODO-03-http-tls.md §3); `HKLM\SYSTEM\Version`                                  |  [ ]   |
 | 💎  |   4   | §2 Update download & verify -- `update_download()` with progress; `update_verify()` SHA-256 gate   | §1; `cng_sha256()` (TODO-07); `http_get_to_file()`                                    |  [ ]   |
 | 💎  |   5   | §3 Update apply -- restore point, ZIP extract, file replace, version bump, restart prompt           | §2; `zip_extract()` (TODO-04); `restore_create()` (TODO-04 §2)                        |  [ ]   |
 | 💎  |   6   | §4 `wuapp.cpl` -- check/download/apply UI, auto-check boot task, update history, toast             | §1-3; `CTRL_PROGRESSBAR` (TODO-05); `notify_send()` (TODO-09); `sched_task_add()`    |  [ ]   |

@@ -36,7 +36,7 @@ title: "TODO-03 -- Kernel Embedded Libraries"
 - `src/kernel/panic.c` -- legacy comment path still hand-rolls crash text; safe to migrate to `snprintf` when §1 stabilizes in panic path
 - `src/kernel/gfx/stb_truetype_impl.c` -- example of a correctly integrated freestanding stb library; use as the pattern for all new ports
 - `src/kernel/image.c` -- example of tiered kmalloc/pmm allocator delegation for stb_image; replicate the pattern for miniz/monocypher/Mbed TLS
-- -> XREF: `12-user-platform-sdk/TODO-03-kernel-libraries.md` -- COMPLEMENT: ZIP writer + stream deflate after D02 T03 §6 reader/port; do not re-vendor miniz here
+- -> XREF: `02-kernel-core/TODO-03-kernel-libraries.md` -- COMPLEMENT: ZIP writer + stream deflate after D02 T03 §6 reader/port; do not re-vendor miniz here
 - -> XREF: `05-storage-filesystems/TODO-07-ixfs-advanced-enterprise.md §3` -- CONSUMER: IXFS transparent compression selects LZ4 (§3) or Zstd (§9) per file; this TODO owns both codecs (IXFS §3 was the dangling consumer that justified §9)
 - -> XREF: `TODO-26-power-management.md §4` -- S4 hibernation image write uses LZ4 block compression; requires §3 of this TODO to be complete first
 - -> XREF: `TODO-27-crash-dump-generation.md §5, §6` -- crash dump minidump/kernel dump use LZ4 compression; requires §3
