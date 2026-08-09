@@ -71,6 +71,7 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import fnmatch
 import io
 import json
@@ -2123,6 +2124,15 @@ WATCH_DEGRADED_PROBE_SECS = 60.0
 # selecting inotify instead (Codex adversarial, section 30, [medium]).
 WATCH_FORCE_POLL_ENV = "TODOGRAPH_WATCH_FORCE_POLL"
 
+# ABSENT AND UNREADABLE ARE DIFFERENT ANSWERS, and collapsing them is the same
+# false-completeness bug as a truncated walk (Codex re-adversarial, section 30,
+# [medium]). `shallow` legitimately does not exist in most repositories, so
+# ENOENT is a determinate state worth recording as None -- but EACCES or EIO
+# means the trigger does not KNOW, and two such failures compare equal, so the
+# axis would take the nothing-moved path while a HEAD or packed-refs move sat
+# there unread. Anything outside this set makes the snapshot incomplete.
+_TRIGGER_ABSENT_ERRNOS = (errno.ENOENT, errno.ENOTDIR)
+
 
 class _TriggerUnavailable(Exception):
     """Git could not be asked where the history lives. Distinct from no-repo."""
@@ -2228,25 +2238,118 @@ def _snapshot_history_trigger(trigger):
         try:
             st = os.stat(p)
             out[p] = (st.st_mtime_ns, st.st_size)
-        except OSError:
+        except OSError as exc:
+            if exc.errno not in _TRIGGER_ABSENT_ERRNOS:
+                return (out, False)
             out[p] = None
     if not refs_dir:
         return (out, True)
+    # PER-ENTRY, NOT PER-DIRECTORY, and `os.walk` cannot express that (Codex
+    # adversarial + perf, section 30, [high]/[medium], reproduced independently
+    # by both). A check between directories is no bound at all when the fanout
+    # is INSIDE one directory, which is the ordinary shape of `refs/heads`:
+    # `os.walk` has already listed the whole directory before it yields, and the
+    # file loop had no check -- so a ceiling of 5 performed 302 stats and still
+    # returned complete=True, reproduced here before the rewrite. An explicit
+    # scandir stack lets the ceiling be tested before every single stat.
+    # THE BUDGET COUNTS ENTRIES ENCOUNTERED, NOT DICT KEYS (Codex
+    # re-adversarial, section 30, [medium]). Keying the ceiling off `len(out)`
+    # left directories free: they are queued without adding a key and stat'ed
+    # later before any check, so a ceiling of 5 against 12 EMPTY subdirectories
+    # returned 13 entries and complete=True -- the same bypass as the os.walk
+    # version, reached through the other kind of fanout.
+    #
+    # EACH FILESYSTEM OBJECT COUNTS EXACTLY ONCE, at discovery. An earlier fix
+    # counted a directory twice "in the conservative direction", which is not
+    # conservative at all in the shape that matters: a conventional
+    # `refs/pull/<n>/head` hierarchy reaches the ceiling at well under 20,000
+    # real entries, and because the recovery snapshot re-applies the same
+    # accounting the axis then degrades PERMANENTLY on a perfectly ordinary
+    # layout (Codex re-adversarial, section 30, [medium]). The deadline is the
+    # bound on operation COST; this counter bounds the entry set.
     deadline = time.monotonic() + WATCH_TRIGGER_MAX_SECS
-    for dirpath, _dirs, files in os.walk(refs_dir):
-        if len(out) > WATCH_TRIGGER_MAX_ENTRIES or time.monotonic() > deadline:
+    stack = [refs_dir]
+    seen = 1  # the root itself, which nothing else discovers
+    while stack:
+        d = stack.pop()
+        if seen > WATCH_TRIGGER_MAX_ENTRIES or time.monotonic() > deadline:
             return (out, False)
         try:
-            out[dirpath] = (os.stat(dirpath).st_mtime_ns,)
+            out[d] = (os.stat(d).st_mtime_ns,)
+        except OSError as exc:
+            # A vanished directory is a determinate change: its key is simply
+            # absent, the dict differs, and the next comparison ticks. Any
+            # OTHER error is "unknown", which must not read as unchanged.
+            if exc.errno not in _TRIGGER_ABSENT_ERRNOS:
+                return (out, False)
+        # BEFORE THE OPEN, not only before the stat. Opening a directory and
+        # advancing its iterator are themselves blocking filesystem work, so a
+        # budget checked only at the top of the loop body can still launch one
+        # more of them after expiry (Codex re-adversarial, section 30,
+        # [medium]).
+        if time.monotonic() > deadline:
+            return (out, False)
+        try:
+            it = os.scandir(d)
         except OSError:
-            pass
-        for f in files:
-            p = os.path.join(dirpath, f)
-            try:
-                st = os.stat(p)
-                out[p] = (st.st_mtime_ns, st.st_size)
-            except OSError:
-                continue
+            # A SUBTREE THAT COULD NOT BE ENUMERATED IS NOT A COMPLETE
+            # SNAPSHOT (Codex re-adversarial, section 30, [medium]). Skipping
+            # it while still returning complete=True means two failed reads can
+            # produce equal truncated dictionaries, `poll` takes the
+            # "nothing moved" path, and a real history move is never probed --
+            # the precise thing this function's contract says truncation must
+            # never be allowed to mean.
+            return (out, False)
+        with it:
+            while True:
+                # EXPLICIT ITERATION, because `for entry in it` calls `next(it)`
+                # -- a readdir -- BEFORE the loop body can check anything
+                # (Codex re-adversarial, section 30, [medium]). After a slow
+                # stat that overran the budget, the `for` form started one more
+                # blocking directory read before noticing. Checking here puts
+                # the guard ahead of the advance itself.
+                if time.monotonic() > deadline:
+                    return (out, False)
+                try:
+                    entry = next(it)
+                except StopIteration:
+                    break
+                except OSError:
+                    # Same rule as a failed open: a directory read that died
+                    # part-way through leaves a TRUNCATED snapshot, and
+                    # certifying it as complete is what would let a later equal
+                    # comparison suppress a real move.
+                    return (out, False)
+                if seen >= WATCH_TRIGGER_MAX_ENTRIES:
+                    return (out, False)
+                seen += 1  # counted here, and only here, for dirs and files alike
+                try:
+                    # A SYMLINK MAKES THE SNAPSHOT UNCERTAIN, NOT SMALLER
+                    # (Codex re-adversarial, section 30, [medium]). Not
+                    # following it avoids the cycle that would hang this walk,
+                    # but recording only the link's own inode meant a move
+                    # inside a symlinked `refs/heads` compared EQUAL forever and
+                    # the identity was never probed -- git follows those links
+                    # even though this walk must not. Declaring the snapshot
+                    # incomplete degrades to direct identity polling, which is
+                    # slower and correct, where the previous behaviour was fast
+                    # and silently wrong.
+                    if entry.is_symlink():
+                        return (out, False)
+                    if entry.is_dir(follow_symlinks=False):
+                        stack.append(entry.path)
+                        continue
+                    # `is_dir` can itself hit the filesystem where the readdir
+                    # type is unreliable, so the budget is re-checked before the
+                    # stat that follows it.
+                    if time.monotonic() > deadline:
+                        return (out, False)
+                    st = entry.stat(follow_symlinks=False)
+                except OSError as exc:
+                    if exc.errno not in _TRIGGER_ABSENT_ERRNOS:
+                        return (out, False)
+                    continue
+                out[entry.path] = (st.st_mtime_ns, st.st_size)
     return (out, True)
 
 
@@ -2472,29 +2575,54 @@ class _HistoryAxis:
         # forever once the churn stopped.
         self.pending = False
         self._probe_idx = 0
+        self._resolve_idx = 0
         self._next_probe_at = 0.0
         self._resolve()
         # BASELINED BEFORE THE OPENING RUN, by construction: this object is
         # built before `run_once()` fires (Codex design review, section 30,
         # [medium]). Sampling afterwards would silently swallow any move that
         # landed while the opening query was computing.
-        if self.trigger:
-            self.sample()
+        # Sampled UNCONDITIONALLY, including for a no-repo corpus: "no-repo" is
+        # a determinate identity, and holding it as the baseline is what makes a
+        # later `git init` show up as a change rather than as nothing.
+        self.sample()
 
     def _resolve(self) -> None:
-        """Locate the git paths, tolerating a git that cannot answer yet."""
-        if self.no_repo:
-            return
+        """Locate the git paths, tolerating a git that cannot answer yet.
+
+        RE-ENTRANT BY DESIGN, including after a no-repo answer (Codex
+        consistency, section 30, [medium]). `no_repo` used to latch the axis
+        off forever, so a corpus that was `git init`ed and committed under a
+        live watcher -- id moving `no-repo` -> `unborn-head` -> `<tip>:<count>`
+        with the worktree bytes never changing -- was never noticed. It is a
+        determinate BASELINE now, re-checked on the slow cadence, not a switch.
+        """
+        # EVERY RESOLUTION SETS `no_repo` FROM ITS OWN ANSWER (Codex
+        # re-adversarial, section 30, [medium]). Only ever setting it True left
+        # it asserted after the repository appeared, so a later transient
+        # discovery failure was mistaken for a determinate no-repo and pushed
+        # the next attempt out to the 60s cadence instead of the 2s backoff.
         try:
-            self.trigger = _history_trigger_paths(self.todo_root)
+            trigger = _history_trigger_paths(self.todo_root)
         except _TriggerUnavailable:
             # Indeterminate: leave the axis unresolved and try again next poll.
             self.trigger = None
+            self.no_repo = False
             self.pending = True
             return
-        if self.trigger is None:
+        if trigger is None:
+            self.trigger = None
             self.no_repo = True
+            # A determinate no-repo IS successful discovery, so it clears the
+            # failure history too (Codex re-adversarial, section 30, [medium]).
+            # Keeping a stale 60s slot here meant that when the repository
+            # later appeared, one unlucky discovery failure reused it and the
+            # watcher went a minute blind straight after the transition.
+            self._resolve_idx = 0
             return
+        self.no_repo = False
+        self.trigger = trigger
+        self._resolve_idx = 0
         self.shallow = self.trigger[2]
         self.prev, complete = _snapshot_history_trigger(self.trigger)
         self._note_completeness(complete)
@@ -2513,6 +2641,22 @@ class _HistoryAxis:
         delay = WATCH_PROBE_BACKOFF_SECS[min(self._probe_idx,
                                              len(WATCH_PROBE_BACKOFF_SECS) - 1)]
         self._probe_idx += 1
+        self._next_probe_at = time.monotonic() + delay
+
+    def _defer_resolve(self) -> None:
+        """Back off PATH DISCOVERY, on its own index.
+
+        Sharing the probe index made the backoff unreachable in the one case it
+        exists for (Codex re-adversarial, section 30, [medium]): when
+        `rev-parse --git-path` fails persistently while `corpus_history_id`
+        still answers, every poll ran a successful `sample`, which resets the
+        probe index -- so discovery plus a full ~54ms identity walk repeated
+        every 2s forever instead of stepping out to 60s. The two failures are
+        independent and need independent counters.
+        """
+        delay = WATCH_PROBE_BACKOFF_SECS[min(self._resolve_idx,
+                                             len(WATCH_PROBE_BACKOFF_SECS) - 1)]
+        self._resolve_idx += 1
         self._next_probe_at = time.monotonic() + delay
 
     def sample(self) -> bool:
@@ -2541,35 +2685,77 @@ class _HistoryAxis:
 
     def poll(self) -> bool:
         """True when the answer on screen may no longer describe the history."""
-        if self.no_repo:
-            return False
         now = time.monotonic()
         if self.trigger is None:
-            # Still unresolved from a git failure: retry discovery, cheaply.
+            # NO TRIGGER, FOR EITHER REASON -- git could not be asked, or this
+            # is genuinely not a repository. Both retry on a cadence and both
+            # still compare the IDENTITY, which stays askable and cheap; that is
+            # what lets a `git init` under a live watcher be noticed at all.
             if now < self._next_probe_at:
                 return False
             self._resolve()
+            changed = self._decide()
             if self.trigger is None:
-                self._defer_probe()
-                return False
-            # Newly resolved. Nothing here can prove the history held while the
-            # axis was blind, so publish once and take a baseline.
-            self.sample()
-            return True
+                # ORDER MATTERS, AND `pending` COMES FIRST. `no_repo` records
+                # what RESOLUTION answered; `pending` records what the later
+                # IDENTITY probe answered, and the identity is the thing being
+                # waited on. Applying the slow no-repo cadence unconditionally
+                # overwrote the short backoff a failed `sample` had just armed
+                # -- stalling the watcher for a minute precisely while a
+                # `git init` was landing between the two probes (Codex
+                # re-adversarial, section 30, [medium]).
+                if self.pending:
+                    pass          # `sample` already armed the short backoff
+                elif self.no_repo:
+                    # Determinate on both counts: steady slow re-check.
+                    # ANCHORED TO COMPLETION TIME, not to poll entry (Codex
+                    # re-adversarial, section 30, [medium]). `now` predates two
+                    # unbounded git subprocesses; if they took longer than the
+                    # cadence, a deadline computed from it is already expired on
+                    # return and the 2s loop re-runs the expensive work at once
+                    # -- the cooldown deleting itself exactly when the machine
+                    # is slowest.
+                    self._next_probe_at = (time.monotonic()
+                                           + WATCH_DEGRADED_PROBE_SECS)
+                else:
+                    # Discovery failed while the identity answered: back off on
+                    # the RESOLUTION schedule, which a successful sample does
+                    # not reset.
+                    self._defer_resolve()
+            return changed
         if self.degraded:
-            # The trigger cannot be trusted to say "nothing moved", so the id is
-            # asked directly on a slow fixed cadence instead.
-            self.prev, complete = _snapshot_history_trigger(self.trigger)
-            self._note_completeness(complete)
+            # THE CADENCE GATE COMES FIRST, BEFORE ANY TRAVERSAL (Codex perf,
+            # section 30, [medium]). Taking the snapshot and then checking the
+            # deadline ran the very walk that CAUSED degradation ~30 times a
+            # minute, which defeats the entire point of degrading. Below the
+            # deadline this path now does no filesystem work at all.
             if now < self._next_probe_at:
                 return False
+            # SNAPSHOT FIRST, THEN PROBE -- the order is a lost-wakeup fix
+            # (Codex re-adversarial, section 30, [high]). Probing the identity
+            # BEFORE taking the replacement baseline let a move landing between
+            # the two be absorbed into `prev` without ever being probed: the
+            # poll returned False, the next comparison saw the new baseline as
+            # unchanged, and the screen stayed stale until some unrelated ref
+            # moved. Taking the snapshot first means a move after it is caught
+            # by this probe, and a move after the probe is still visible to the
+            # next comparison. (Both orderings satisfy the cadence gate above,
+            # which is why this survived the round that introduced it.)
+            #
+            # Re-attempting the trigger here is also what lets degradation
+            # CLEAR: a ref explosion can be transient, e.g. a fetch that is
+            # later packed.
+            self.prev, complete = _snapshot_history_trigger(self.trigger)
+            self._note_completeness(complete)
             decided = self._decide()
             # `max`, because a FAILED probe inside `sample` re-arms the short
             # pending backoff -- which would probe every 2s in exactly the
             # repository the degraded cadence exists to protect. The slower of
             # the two always wins here.
+            # Completion time, for the same reason as the no-repo cadence above.
             self._next_probe_at = max(self._next_probe_at,
-                                      now + WATCH_DEGRADED_PROBE_SECS)
+                                      time.monotonic()
+                                      + WATCH_DEGRADED_PROBE_SECS)
             return decided
         if self.pending and now >= self._next_probe_at:
             # An earlier probe was indeterminate. Re-ask even though nothing in
@@ -2578,9 +2764,18 @@ class _HistoryAxis:
         cur, complete = _snapshot_history_trigger(self.trigger)
         self._note_completeness(complete)
         if not complete:
+            # THE TRANSITION INTO DEGRADED MODE ANCHORS THE SAME WAY THE
+            # STEADY-STATE BRANCH DOES (Codex re-adversarial, section 30,
+            # [medium]). The completion-time fix covered only polls that ENTERED
+            # already degraded, so the very first degradation -- the one taken
+            # on a machine slow enough to blow the ceiling -- still computed its
+            # cooldown from poll entry and could return already expired.
             self.prev = cur
-            self._next_probe_at = now + WATCH_DEGRADED_PROBE_SECS
-            return self._decide()
+            decided = self._decide()
+            self._next_probe_at = max(self._next_probe_at,
+                                      time.monotonic()
+                                      + WATCH_DEGRADED_PROBE_SECS)
+            return decided
         if cur == self.prev:
             return False
         moved_shallow = (self.shallow is not None
@@ -3352,13 +3547,18 @@ def main(argv=None) -> int:
         # against an already-broken tree refuses its first tick instead of
         # opening with a stale answer.
         #
-        # THE HISTORY AXIS IS ARMED FROM THE SAME PROFILE THE READER ALREADY
-        # RESOLVED (section 30), so the trigger and the post-walk check can
-        # never disagree about which verbs consume a git-derived timestamp:
-        # both read `requires_history`. A watcher on `ready` or `backlinks`
-        # passes False and behaves exactly as it did before this section.
+        # THE HISTORY AXIS IS ARMED FROM WHAT THE POST-WALK CHECK CAN ACTUALLY
+        # ENFORCE, which is `requires_history` AND `check_stale` -- not the
+        # profile alone (Codex consistency, section 30, [medium]). An earlier
+        # wording here claimed the two "can never disagree" because both read
+        # `requires_history`. They can: `load_and_validate` populates
+        # `info.history` only inside its `if check_stale:` branch, so on a
+        # non-canonical `--cache` the post-walk `check_history_unchanged` is a
+        # no-op while an axis armed on the profile alone would still probe the
+        # local repository and re-run on history this reader never consumed.
+        # Inspection mode is exactly the case where that history is not ours.
         watch_loop(_watch_tick, todo_root, args.quiet,
-                   history=profile.requires_history)
+                   history=profile.requires_history and check_stale)
         return 0
     return _run_once_guarded()
 

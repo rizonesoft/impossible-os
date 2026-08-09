@@ -14370,9 +14370,16 @@ fi
 
 # Scratch git corpus builder shared by the fixtures below. Each caller gets its
 # own repo, so a mutation in one cannot leak into another.
+# THE CACHE LIVES AT THE CANONICAL PATH, and that is load-bearing rather than
+# tidy. `check_stale` -- and therefore whether `info.history` is populated at
+# all -- is decided by `cache_path.resolve() == repo_root/build/todo-cache.json`,
+# and the history axis is armed only when the post-walk check can actually
+# enforce something. A fixture pointing `--cache` at `$T/cache.json` is in
+# INSPECTION mode, where arming the axis would be the bug (Codex consistency,
+# section 30, [medium]), so it could never have exercised the shipped path.
 s30_repo() {
     local T; T=$(mktemp -d "$TMP_DIR/s30-XXXXXX")
-    mkdir -p "$T/todo/01-test" "$T/src"
+    mkdir -p "$T/todo/01-test" "$T/src" "$T/build"
     cat > "$T/todo/01-test/TODO-01-w.md" <<'EOF'
 ---
 schema_version: 1
@@ -14391,7 +14398,7 @@ EOF
         git add -A
         git commit -qm "c0 add corpus"
     ) >/dev/null 2>&1
-    python3 "$BUILD_PY" --quiet --root "$T/todo" --output "$T/cache.json" \
+    python3 "$BUILD_PY" --quiet --root "$T/todo" --output "$T/build/todo-cache.json" \
         --repo-root "$T" >/dev/null 2>&1
     printf '%s' "$T"
 }
@@ -14420,7 +14427,7 @@ s30_reruns() {   # $1=tree $2=verb $3=mutation-shell $4=1 to force the polling p
     # existed. Pointing PYTHONPATH at the real module directory makes the mutant
     # differ from the shipped code in one line and nothing else.
     TODOGRAPH_WATCH_FORCE_POLL="$FP" PYTHONPATH="$(dirname "$QUERY_PY")" \
-    timeout --signal=INT 9 python3 -u "$QPY" --cache "$T/cache.json" \
+    timeout --signal=INT 9 python3 -u "$QPY" --cache "$T/build/todo-cache.json" \
         --repo-root "$T" --watch "$VERB" > "$T/out" 2>"$T/err" || true
     wait $MP 2>/dev/null
     local N; N=$(grep -c '^----' "$T/err" 2>/dev/null || true)
@@ -14527,7 +14534,7 @@ sleep 30
 STUBEOF
 chmod +x "$S30E2_BIN/inotifywait"
 PATH="$S30E2_BIN:$PATH" PYTHONPATH="$(dirname "$QUERY_PY")" \
-timeout --signal=INT 8 python3 -u "$QUERY_PY" --cache "$S30E2/cache.json" \
+timeout --signal=INT 8 python3 -u "$QUERY_PY" --cache "$S30E2/build/todo-cache.json" \
     --repo-root "$S30E2" --watch ready > "$S30E2/out" 2>"$S30E2/err" || true
 S30E2_BRANCH=$(grep -o 'watch: [a-z]*' "$S30E2/err" | head -1)
 S30E2_N=$(grep -c '^----' "$S30E2/err" 2>/dev/null || true); S30E2_N=${S30E2_N:-0}
@@ -14626,7 +14633,7 @@ fi
 S30G=$(s30_repo)
 printf 'not: [valid\nyaml' > "$S30G/todo/01-test/TODO-02-broken.md"
 S30G_STAMP=$(find "$S30G/todo" -type f -printf '%T@ %p\n' | sort | md5sum)
-timeout --signal=INT 13 python3 -u "$QUERY_PY" --cache "$S30G/cache.json" \
+timeout --signal=INT 13 python3 -u "$QUERY_PY" --cache "$S30G/build/todo-cache.json" \
     --repo-root "$S30G" --watch stale > "$S30G/out" 2>"$S30G/err" || true
 S30G_N=$(grep -c 'cache-rebuild-failed' "$S30G/out" 2>/dev/null || true); S30G_N=${S30G_N:-0}
 S30G_STAMP2=$(find "$S30G/todo" -type f -printf '%T@ %p\n' | sort | md5sum)
@@ -14651,13 +14658,464 @@ MUT2EOF
 S30H=$(s30_repo)
 printf 'not: [valid\nyaml' > "$S30H/todo/01-test/TODO-02-broken.md"
 PYTHONPATH="$(dirname "$QUERY_PY")" \
-timeout --signal=INT 13 python3 -u "$S30_MUT2" --cache "$S30H/cache.json" \
+timeout --signal=INT 13 python3 -u "$S30_MUT2" --cache "$S30H/build/todo-cache.json" \
     --repo-root "$S30H" --watch stale > "$S30H/out" 2>"$S30H/err" || true
 S30H_N=$(grep -c 'cache-rebuild-failed' "$S30H/out" 2>/dev/null || true); S30H_N=${S30H_N:-0}
 if [ "$S30H_N" = "1" ]; then
     t_pass "section 30: MUTATION -- without the retry signal the refusal latches at one envelope (fixture is sensitive)"
 else
     t_fail "section 30: latch mutation produced $S30H_N envelope(s), expected exactly 1"
+fi
+
+# Sub-test 30i: the trigger ceiling must bind INSIDE one wide directory, which
+# is the ordinary shape of `refs/heads`. Reproduced before the fix with a
+# ceiling of 5 against a 300-entry directory: 302 stats and `complete=True`.
+# Its own control: the same tree UNDER the ceiling must report complete.
+S30I_OUT=$(python3 - "$(dirname "$QUERY_PY")" <<'S30IEOF' 2>&1
+import json, os, sys, tempfile
+sys.path.insert(0, sys.argv[1])
+import query  # noqa: E402
+tmp = tempfile.mkdtemp()
+refs = os.path.join(tmp, "refs")
+heads = os.path.join(refs, "heads")
+os.makedirs(heads)
+for i in range(300):
+    with open(os.path.join(heads, "b%03d" % i), "w") as f:
+        f.write("x")
+trigger = (refs, [], None)
+query.WATCH_TRIGGER_MAX_ENTRIES = 5
+tight, tight_complete = query._snapshot_history_trigger(trigger)
+query.WATCH_TRIGGER_MAX_ENTRIES = 20000
+loose, loose_complete = query._snapshot_history_trigger(trigger)
+# THE OTHER FANOUT: many EMPTY DIRECTORIES. Directories were queued and stat'ed
+# without counting against the budget, so this shape walked straight past a
+# ceiling the wide-file case respected.
+dirtmp = tempfile.mkdtemp()
+drefs = os.path.join(dirtmp, "refs")
+os.makedirs(drefs)
+for i in range(12):
+    os.makedirs(os.path.join(drefs, "d%02d" % i))
+query.WATCH_TRIGGER_MAX_ENTRIES = 5
+dirs_snap, dirs_complete = query._snapshot_history_trigger((drefs, [], None))
+query.WATCH_TRIGGER_MAX_ENTRIES = 20000
+print(json.dumps({"tight_entries": len(tight), "tight_complete": tight_complete,
+                  "loose_complete": loose_complete, "loose_entries": len(loose),
+                  "dirs_entries": len(dirs_snap), "dirs_complete": dirs_complete}))
+S30IEOF
+); S30I_RC=$?
+if [ "$S30I_RC" = "0" ] && echo "$S30I_OUT" | python3 -c "
+import json, sys
+d = json.loads(sys.stdin.read())
+# Bounded: at most the ceiling of entries, and it SAYS it is incomplete.
+# Control: the same directory under a 20000 ceiling completes with all 302.
+# And the empty-DIRECTORY fanout is bounded by the same budget.
+sys.exit(0 if (not d['tight_complete'] and d['tight_entries'] <= 5
+               and d['loose_complete'] and d['loose_entries'] > 300
+               and not d['dirs_complete'] and d['dirs_entries'] <= 5) else 1)"; then
+    t_pass "section 30: the trigger ceiling binds inside one wide directory AND across an empty-directory fanout"
+else
+    t_fail "section 30: wide-directory ceiling check failed (rc=$S30I_RC, out=$S30I_OUT)"
+fi
+
+# Sub-test 30l: the degraded probe must not lose a history move that lands
+# between the trigger snapshot and the identity probe. Probing FIRST let such a
+# move be absorbed into the new baseline without ever being asked about, so the
+# poll returned False and no later comparison could recover it. Simulated
+# deterministically by moving the identity during the snapshot call.
+S30L=$(s30_repo)
+S30L_OUT=$(python3 - "$S30L" "$(dirname "$QUERY_PY")" <<'S30LEOF' 2>&1
+import json, os, sys
+sys.path.insert(0, sys.argv[2])
+import query  # noqa: E402
+todo = os.path.join(sys.argv[1], "todo")
+axis = query._HistoryAxis(todo, quiet=True)
+baseline = axis.last_id
+axis.degraded = True
+axis._next_probe_at = 0.0
+real_snap = query._snapshot_history_trigger
+real_id = query._cs.corpus_history_id
+state = {"id": baseline}
+# The move lands DURING the snapshot -- the exact window the ordering decides.
+def moving_snap(trigger):
+    state["id"] = baseline + "-moved"
+    return real_snap(trigger)
+query._snapshot_history_trigger = moving_snap
+query._cs.corpus_history_id = lambda root: state["id"]
+noticed = axis.poll()
+query._snapshot_history_trigger = real_snap
+query._cs.corpus_history_id = real_id
+print(json.dumps({"noticed": bool(noticed), "baseline": baseline,
+                  "final": axis.last_id}))
+S30LEOF
+); S30L_RC=$?
+if [ "$S30L_RC" = "0" ] && echo "$S30L_OUT" | python3 -c "
+import json, sys
+d = json.loads(sys.stdin.read())
+sys.exit(0 if d['noticed'] and d['final'] != d['baseline'] else 1)"; then
+    t_pass "section 30: a history move during the degraded snapshot is probed, not swallowed"
+else
+    t_fail "section 30: degraded lost-wakeup check failed (rc=$S30L_RC, out=$S30L_OUT)"
+fi
+
+# Sub-test 30m: retry-state hygiene on the no-trigger path -- `no_repo` must be
+# re-derived from each resolution (a stale True turned a later transient failure
+# into a 60s wait), and ONE due failure must advance the backoff ONE slot (both
+# `sample` and `poll` used to defer, jumping 2s straight to ~15s).
+S30M_OUT=$(python3 - "$(dirname "$QUERY_PY")" <<'S30MEOF' 2>&1
+import json, sys, tempfile
+sys.path.insert(0, sys.argv[1])
+import query  # noqa: E402
+axis = query._HistoryAxis.__new__(query._HistoryAxis)
+axis.todo_root = tempfile.mkdtemp()
+axis.quiet = True
+axis.trigger = None
+axis.no_repo = True          # stale from an earlier determinate answer
+axis.shallow = None
+axis.prev = {}
+axis.degraded = False
+axis._said_degraded = False
+axis.last_id = "no-repo"
+axis.id_known = True
+axis.pending = False
+axis._probe_idx = 0
+axis._next_probe_at = 0.0
+def boom(*a, **k):
+    raise query._TriggerUnavailable("simulated")
+query._history_trigger_paths = boom
+query._cs.corpus_history_id = lambda root: (_ for _ in ()).throw(
+    query._cs.CacheSchemaError(query._cs.REASON_STALE, "simulated"))
+axis.poll()
+print(json.dumps({"no_repo_cleared": axis.no_repo is False,
+                  "probe_idx_after_one_failure": axis._probe_idx}))
+S30MEOF
+); S30M_RC=$?
+if [ "$S30M_RC" = "0" ] && echo "$S30M_OUT" | python3 -c "
+import json, sys
+d = json.loads(sys.stdin.read())
+sys.exit(0 if d['no_repo_cleared'] and d['probe_idx_after_one_failure'] == 1 else 1)"; then
+    t_pass "section 30: an indeterminate resolution clears no_repo and advances the backoff exactly one slot"
+else
+    t_fail "section 30: retry-state hygiene check failed (rc=$S30M_RC, out=$S30M_OUT)"
+fi
+
+# Sub-test 30n: path discovery failing while the IDENTITY still answers must
+# back off. Sharing one index made the backoff unreachable in exactly this case
+# -- every poll ran a successful sample, which reset the index -- so discovery
+# plus a ~54ms identity walk repeated every 2s forever.
+S30N_OUT=$(python3 - "$(dirname "$QUERY_PY")" <<'S30NEOF' 2>&1
+import json, sys, tempfile
+sys.path.insert(0, sys.argv[1])
+import query  # noqa: E402
+axis = query._HistoryAxis.__new__(query._HistoryAxis)
+axis.todo_root = tempfile.mkdtemp()
+axis.quiet = True
+axis.trigger = None; axis.no_repo = False; axis.shallow = None
+axis.prev = {}; axis.degraded = False; axis._said_degraded = False
+axis.last_id = "abc:1"; axis.id_known = True; axis.pending = False
+axis._probe_idx = 0; axis._resolve_idx = 0; axis._next_probe_at = 0.0
+def boom(*a, **k):
+    raise query._TriggerUnavailable("discovery down")
+query._history_trigger_paths = boom
+query._cs.corpus_history_id = lambda root: "abc:1"   # identity answers fine
+delays = []
+for _ in range(4):
+    axis._next_probe_at = 0.0
+    base = query.time.monotonic()
+    axis.poll()
+    delays.append(round(axis._next_probe_at - base, 1))
+print(json.dumps({"delays": delays, "probe_idx": axis._probe_idx}))
+S30NEOF
+); S30N_RC=$?
+if [ "$S30N_RC" = "0" ] && echo "$S30N_OUT" | python3 -c "
+import json, sys
+d = json.loads(sys.stdin.read())
+# Must ESCALATE (2,5,15,30), not repeat slot zero forever. The probe index must
+# stay 0 -- the identity never failed, so its own budget is untouched.
+sys.exit(0 if d['delays'] == [2.0, 5.0, 15.0, 30.0] and d['probe_idx'] == 0 else 1)"; then
+    t_pass "section 30: discovery backoff escalates even while the identity probe keeps succeeding"
+else
+    t_fail "section 30: resolution-backoff check failed (rc=$S30N_RC, out=$S30N_OUT)"
+fi
+
+# Sub-test 30o: a conventional HIERARCHICAL ref namespace (refs/pull/<n>/head)
+# well under the ceiling must stay complete. Double-counting directories made
+# this shape degrade at well under 20,000 real entries, permanently.
+S30O_OUT=$(python3 - "$(dirname "$QUERY_PY")" <<'S30OEOF' 2>&1
+import json, os, sys, tempfile
+sys.path.insert(0, sys.argv[1])
+import query  # noqa: E402
+tmp = tempfile.mkdtemp()
+refs = os.path.join(tmp, "refs")
+for n in range(120):                       # 120 dirs + 120 files + pull + refs
+    d = os.path.join(refs, "pull", str(n))
+    os.makedirs(d)
+    with open(os.path.join(d, "head"), "w") as f:
+        f.write("x")
+query.WATCH_TRIGGER_MAX_ENTRIES = 300      # comfortably above the 242 real ones
+snap, complete = query._snapshot_history_trigger((refs, [], None))
+query.WATCH_TRIGGER_MAX_ENTRIES = 20000
+print(json.dumps({"entries": len(snap), "complete": complete}))
+S30OEOF
+); S30O_RC=$?
+if [ "$S30O_RC" = "0" ] && echo "$S30O_OUT" | python3 -c "
+import json, sys
+d = json.loads(sys.stdin.read())
+# 1 refs + 1 pull + 120 dirs + 120 files = 242 entries, and it must COMPLETE.
+sys.exit(0 if d['complete'] and d['entries'] == 242 else 1)"; then
+    t_pass "section 30: a hierarchical refs/pull namespace under the ceiling stays complete"
+else
+    t_fail "section 30: hierarchical-refs check failed (rc=$S30O_RC, out=$S30O_OUT)"
+fi
+
+# Sub-test 30p: a cadence must be measured from when the probe FINISHED, not
+# from when the poll started. Anchoring to poll entry meant that if the git work
+# outran the cadence the new deadline was already expired on return, so the 2s
+# loop immediately re-ran the expensive work -- the cooldown deleting itself
+# exactly when the machine is slowest. Simulated with a probe that burns clock.
+S30P_OUT=$(python3 - "$(dirname "$QUERY_PY")" <<'S30PEOF' 2>&1
+import json, sys, tempfile
+sys.path.insert(0, sys.argv[1])
+import query  # noqa: E402
+axis = query._HistoryAxis.__new__(query._HistoryAxis)
+axis.todo_root = tempfile.mkdtemp()
+axis.quiet = True
+axis.trigger = None; axis.no_repo = True; axis.shallow = None
+axis.prev = {}; axis.degraded = False; axis._said_degraded = False
+axis.last_id = "no-repo"; axis.id_known = True; axis.pending = False
+axis._probe_idx = 0; axis._resolve_idx = 0; axis._next_probe_at = 0.0
+query._history_trigger_paths = lambda root: None      # determinate no-repo
+# A monotonic clock that jumps 90s across the probe -- longer than the cadence.
+real_mono = query.time.monotonic
+state = {"t": real_mono(), "probed": False}
+def fake_mono():
+    return state["t"]
+def slow_id(root):
+    state["probed"] = True
+    state["t"] += 90.0                                # the probe took 90s
+    return "no-repo"
+query.time.monotonic = fake_mono
+query._cs.corpus_history_id = slow_id
+axis.poll()
+remaining = axis._next_probe_at - state["t"]
+query.time.monotonic = real_mono
+print(json.dumps({"probed": state["probed"], "remaining": round(remaining, 1)}))
+S30PEOF
+); S30P_RC=$?
+if [ "$S30P_RC" = "0" ] && echo "$S30P_OUT" | python3 -c "
+import json, sys
+d = json.loads(sys.stdin.read())
+# The full cadence must still be ahead of us. Anchored to poll entry it would be
+# 60 - 90 = -30, i.e. already due, and the next poll would re-run immediately.
+sys.exit(0 if d['probed'] and d['remaining'] == 60.0 else 1)"; then
+    t_pass "section 30: a cadence is measured from probe completion, so slow git cannot delete the cooldown"
+else
+    t_fail "section 30: cadence-anchoring check failed (rc=$S30P_RC, out=$S30P_OUT)"
+fi
+
+# Sub-test 30q: a directory that cannot be ENUMERATED must make the snapshot
+# incomplete, not silently smaller. Two failed reads otherwise produce equal
+# truncated dicts, `poll` takes the nothing-moved path, and a real history move
+# is never probed -- the exact thing truncation must never be allowed to mean.
+S30Q_OUT=$(python3 - "$(dirname "$QUERY_PY")" <<'S30QEOF' 2>&1
+import json, os, sys, tempfile
+sys.path.insert(0, sys.argv[1])
+import query  # noqa: E402
+tmp = tempfile.mkdtemp()
+refs = os.path.join(tmp, "refs")
+os.makedirs(os.path.join(refs, "heads"))
+with open(os.path.join(refs, "heads", "main"), "w") as f:
+    f.write("x")
+# CONTROL: the readable tree completes.
+ok_snap, ok_complete = query._snapshot_history_trigger((refs, [], None))
+real_scandir = os.scandir
+def failing_scandir(path):
+    if path.endswith("heads"):
+        raise OSError("simulated enumeration failure")
+    return real_scandir(path)
+query.os.scandir = failing_scandir
+bad_snap, bad_complete = query._snapshot_history_trigger((refs, [], None))
+query.os.scandir = real_scandir
+print(json.dumps({"ok_complete": ok_complete, "bad_complete": bad_complete,
+                  "bad_smaller": len(bad_snap) < len(ok_snap)}))
+S30QEOF
+); S30Q_RC=$?
+if [ "$S30Q_RC" = "0" ] && echo "$S30Q_OUT" | python3 -c "
+import json, sys
+d = json.loads(sys.stdin.read())
+sys.exit(0 if d['ok_complete'] and not d['bad_complete'] and d['bad_smaller'] else 1)"; then
+    t_pass "section 30: an unreadable ref subtree yields an INCOMPLETE snapshot, never a smaller complete one"
+else
+    t_fail "section 30: enumeration-failure classification check failed (rc=$S30Q_RC, out=$S30Q_OUT)"
+fi
+
+# Sub-test 30r: ABSENT and UNREADABLE must not collapse. `shallow` legitimately
+# does not exist in most repositories, so ENOENT is a determinate None; EACCES
+# means the trigger does not know, and two such failures comparing equal would
+# take the nothing-moved path with a HEAD move sitting there unread.
+S30R_OUT=$(python3 - "$(dirname "$QUERY_PY")" <<'S30REOF' 2>&1
+import errno, json, os, sys, tempfile
+sys.path.insert(0, sys.argv[1])
+import query  # noqa: E402
+tmp = tempfile.mkdtemp()
+head = os.path.join(tmp, "HEAD")
+with open(head, "w") as f:
+    f.write("ref: refs/heads/main\n")
+missing = os.path.join(tmp, "shallow")          # deliberately absent
+trigger = (None, [head], missing)
+# CONTROL: a present HEAD and an ABSENT shallow is a COMPLETE snapshot.
+ok_snap, ok_complete = query._snapshot_history_trigger(trigger)
+real_stat = os.stat
+def unreadable(path, *a, **k):
+    if str(path).endswith("HEAD"):
+        raise OSError(errno.EACCES, "simulated permission failure")
+    return real_stat(path, *a, **k)
+query.os.stat = unreadable
+bad_snap, bad_complete = query._snapshot_history_trigger(trigger)
+query.os.stat = real_stat
+print(json.dumps({"ok_complete": ok_complete,
+                  "shallow_is_none": ok_snap.get(missing) is None,
+                  "bad_complete": bad_complete}))
+S30REOF
+); S30R_RC=$?
+if [ "$S30R_RC" = "0" ] && echo "$S30R_OUT" | python3 -c "
+import json, sys
+d = json.loads(sys.stdin.read())
+sys.exit(0 if (d['ok_complete'] and d['shallow_is_none']
+               and not d['bad_complete']) else 1)"; then
+    t_pass "section 30: an ABSENT trigger file is complete-with-None; an UNREADABLE one is incomplete"
+else
+    t_fail "section 30: absent-vs-unreadable check failed (rc=$S30R_RC, out=$S30R_OUT)"
+fi
+
+# Sub-test 30s: a symlinked ref entry must make the snapshot INCOMPLETE. git
+# follows a symlinked `refs/heads`; this walk must not (a cycle would hang it),
+# so recording only the link's own inode made a move inside the target compare
+# equal forever and the identity was never probed. Control: the same tree with
+# the symlink replaced by a real directory completes normally.
+S30S_OUT=$(python3 - "$(dirname "$QUERY_PY")" <<'S30SEOF' 2>&1
+import json, os, sys, tempfile
+sys.path.insert(0, sys.argv[1])
+import query  # noqa: E402
+def build(use_symlink):
+    tmp = tempfile.mkdtemp()
+    refs = os.path.join(tmp, "refs")
+    target = os.path.join(tmp, "elsewhere")
+    os.makedirs(refs)
+    os.makedirs(target)
+    with open(os.path.join(target, "main"), "w") as f:
+        f.write("x")
+    dest = os.path.join(refs, "heads")
+    if use_symlink:
+        os.symlink(target, dest)
+    else:
+        os.makedirs(dest)
+        with open(os.path.join(dest, "main"), "w") as f:
+            f.write("x")
+    return query._snapshot_history_trigger((refs, [], None))
+_, sym_complete = build(True)
+_, real_complete = build(False)
+print(json.dumps({"symlink_complete": sym_complete,
+                  "real_dir_complete": real_complete}))
+S30SEOF
+); S30S_RC=$?
+if [ "$S30S_RC" = "0" ] && echo "$S30S_OUT" | python3 -c "
+import json, sys
+d = json.loads(sys.stdin.read())
+sys.exit(0 if (not d['symlink_complete'] and d['real_dir_complete']) else 1)"; then
+    t_pass "section 30: a symlinked ref entry yields an INCOMPLETE snapshot; a real directory completes"
+else
+    t_fail "section 30: symlinked-ref check failed (rc=$S30S_RC, out=$S30S_OUT)"
+fi
+
+# Sub-test 30j: once degraded, a poll below the 60s cadence must do NO ref
+# traversal at all. Taking the snapshot and then checking the deadline ran the
+# very walk that caused degradation ~30x/minute, which defeats the fallback.
+S30J=$(s30_repo)
+S30J_OUT=$(python3 - "$S30J" "$(dirname "$QUERY_PY")" <<'S30JEOF' 2>&1
+import json, os, sys
+sys.path.insert(0, sys.argv[2])
+import query  # noqa: E402
+todo = os.path.join(sys.argv[1], "todo")
+axis = query._HistoryAxis(todo, quiet=True)
+calls = {"n": 0}
+real = query._snapshot_history_trigger
+def counting(trigger):
+    calls["n"] += 1
+    return real(trigger)
+query._snapshot_history_trigger = counting
+axis.degraded = True
+axis._next_probe_at = query.time.monotonic() + 3600.0   # deadline far away
+before = calls["n"]
+for _ in range(3):
+    axis.poll()
+below = calls["n"] - before
+axis._next_probe_at = 0.0                                # deadline reached
+axis.poll()
+at_deadline = calls["n"] - before - below
+query._snapshot_history_trigger = real
+print(json.dumps({"walks_below_deadline": below, "walks_at_deadline": at_deadline}))
+S30JEOF
+); S30J_RC=$?
+if [ "$S30J_RC" = "0" ] && echo "$S30J_OUT" | python3 -c "
+import json, sys
+d = json.loads(sys.stdin.read())
+# Zero below the deadline is the fix; the control is that it DOES walk once the
+# deadline arrives, so the fixture cannot pass by the axis simply being inert.
+sys.exit(0 if d['walks_below_deadline'] == 0 and d['walks_at_deadline'] >= 1 else 1)"; then
+    t_pass "section 30: a degraded axis performs ZERO ref walks below its cadence, one at the deadline"
+else
+    t_fail "section 30: degraded-idle walk check failed (rc=$S30J_RC, out=$S30J_OUT)"
+fi
+
+# Sub-test 30k: a corpus that is NOT a repository when the watcher starts, and
+# becomes one under it, must be noticed. `no-repo` is a determinate identity
+# baseline, not a permanent off switch -- latching it off was the same failure
+# class as the transient-git latch, reached by a different route.
+S30K=$(mktemp -d "$TMP_DIR/s30k-XXXXXX")
+mkdir -p "$S30K/todo/01-test"
+cat > "$S30K/todo/01-test/TODO-01-w.md" <<'EOF'
+---
+schema_version: 1
+id: s30-norepo
+domain: 01-test
+status: draft
+title: No-repo fixture
+---
+# body
+EOF
+S30K_OUT=$(python3 - "$S30K" "$(dirname "$QUERY_PY")" <<'S30KEOF' 2>&1
+import json, os, subprocess, sys
+sys.path.insert(0, sys.argv[2])
+import query  # noqa: E402
+tree = sys.argv[1]
+todo = os.path.join(tree, "todo")
+axis = query._HistoryAxis(todo, quiet=True)
+started_no_repo = axis.no_repo and axis.last_id == "no-repo"
+# CONTROL: while it is genuinely not a repo, a due poll must NOT tick.
+axis._next_probe_at = 0.0
+quiet_when_unchanged = axis.poll()
+for cmd in (["git", "init", "-q", "."],
+            ["git", "config", "user.email", "s30@test.invalid"],
+            ["git", "config", "user.name", "s30"],
+            ["git", "add", "-A"],
+            ["git", "commit", "-qm", "c0"]):
+    subprocess.run(cmd, cwd=tree, check=True, capture_output=True)
+axis._next_probe_at = 0.0
+noticed = axis.poll()
+print(json.dumps({"started_no_repo": started_no_repo,
+                  "quiet_when_unchanged": bool(quiet_when_unchanged),
+                  "noticed_init": bool(noticed),
+                  "resolved": axis.trigger is not None}))
+S30KEOF
+); S30K_RC=$?
+if [ "$S30K_RC" = "0" ] && echo "$S30K_OUT" | python3 -c "
+import json, sys
+d = json.loads(sys.stdin.read())
+sys.exit(0 if (d['started_no_repo'] and not d['quiet_when_unchanged']
+               and d['noticed_init'] and d['resolved']) else 1)"; then
+    t_pass "section 30: a no-repo corpus stays quiet, then is noticed when it becomes a repository"
+else
+    t_fail "section 30: no-repo transition check failed (rc=$S30K_RC, out=$S30K_OUT)"
 fi
 
 fi  # git available
