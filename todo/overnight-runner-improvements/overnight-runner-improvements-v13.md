@@ -26,6 +26,21 @@ Carried from v12 and still first-class: file reasoning lessons as `- [ ]` items 
 
 Nothing is carried. Every item filed against v12 and every item this close-out opened is either shipped below or recorded there with the measurement that settled it.
 
+## Filed by the 2026-08-09 run
+
+- [ ] **The convergence gate is BLIND to any section outside `src/`, and answers CONVERGED for it -- so on tooling sections it would skip every re-review.**
+      Observed live on `00-infrastructure/TODO-06` section 25 (review of `scripts/todo-graph/**` + `docs/**`): after three code fixes were applied, `review_convergence.py should-redispatch '<slice>' re-adversarial` returned exit 1, `CONVERGED: re-adversarial inputs unchanged since last verdict (scope: src)`.
+      - Mechanism confirmed at source: `KIND_SCOPES` maps `adversarial` / `re-adversarial` / `perf` / `adversarial-impl` / `test-coverage` to `("src",)` (`.claude/hooks/review_convergence.py:83-89`), and `SRC_PATHS` (`:62-63`) is `src include user resources tools Makefile scripts/build.sh boot.conf`. A section whose whole surface is `scripts/todo-graph/`, `scripts/lint/` or `docs/` therefore fingerprints IDENTICALLY no matter what it changes, so the first recorded verdict makes every later round converge, permanently.
+      - Cost if obeyed, measured on this section: rounds 3-7 were dispatched AGAINST the gate's advice and returned five valid `[medium]` findings, two of them fail-open (a conditional emission whose loss silently downgrades lint Check 7 to a warning; an unknown-mode literal that leaves a field certified by the digest and selected by no guard). Obeying `CONVERGED` would have shipped all five.
+      - The comment at `:80-82` says the scope "errs WIDE on purpose", which is true within `src/` and is exactly inverted here -- the widening never contemplated a section that lives entirely outside it. The fix is a scope that covers the reviewed diff (or a fail-OPEN `None` when the section's paths fall outside every known scope, so an unknown surface redispatches instead of converging).
+      - This is doctrine-visible too: `overnight-sequencer/SKILL.md` calls the convergence gate "the PRIMARY churn mechanism", so a run that trusts it on a tooling file skips its review loop entirely.
+- [ ] **`build/todo-cache.json` disappeared during the gate chain, and the pre-commit lint then SKIPPED Check 7 with a warning on the very commit that edited a TODO.**
+      OBSERVED, mechanism NOT confirmed -- marking the untested half rather than naming a cause I did not verify.
+      - Observed: `build-and-validate.sh --keep-cache` wrote the cache and its binding (verified by `ls` + reading `producer_contract_digest` out of the sidecar). The gate chain then ran `build.sh`, `test.sh`, `test-smoke.sh` and `test-tooling.sh` through `run-artifact.sh`. At `git commit` the pre-commit lint printed `warn: Check 7 (stub-behind-stamp) skipped -- build/todo-cache.json missing`, and `ls` confirmed both cache and sidecar were gone.
+      - NOT confirmed: which of those removed it. `grep` for `todo-cache.json` in `build.sh` / `test.sh` / `test-smoke.sh` returns nothing, and no `rm -rf build/` exists in `scripts/*.sh` or `scripts/overnight/*.sh`. A tooling sub-test that exercises the missing-cache path and fails to restore is a HYPOTHESIS only; it was not tested.
+      - Why it matters independent of cause: the doctrine rule is "rebuild is the LAST action before a commit touching `todo/`", which defends against STALENESS -- Check 7 ERRORs on a stale cache. ABSENCE is the other failure and it only WARNS, so the ordering rule reads as satisfied while the check silently does not run over the TODO edit being committed. Here the rebuild WAS last before the commit and the check still did not run.
+      - Cost this run: one extra rebuild + full lint re-run after the commit to confirm Check 7 actually passes (`resolved=474/1626 baseline=474`, 0 errors). Cheap once, but it is invisible -- nothing in the commit output says the check that gates stub-behind-stamp did not execute.
+
 ## What shipped in the 2026-08-08 close-out, and is therefore under test
 
 New machinery, all of it control plane. If something in this list misbehaves, that is a REGRESSION and the highest-value thing this run can report.
