@@ -46,23 +46,23 @@
 
 |                             |   Files |      Lines |
 | --------------------------- | ------: | ---------: |
-| **Markdown** (`.md`)        |     461 |     129873 |
+| **Markdown** (`.md`)        |     461 |     129876 |
 | **JSON** (`.json`)          |      16 |       1490 |
 | **YAML** (`.yml`/`.yaml`)   |      13 |       1789 |
 | **HTML** (`.html`)          |      17 |       1623 |
-| **CSS** (`.css`)            |       5 |      74498 |
+| **CSS** (`.css`)            |       1 |        458 |
 | **Config** (`.cfg`/`.conf`) |       1 |         82 |
-| **Subtotal**                | **513** | **209355** |
+| **Subtotal**                | **509** | **135318** |
 
 ## Grand Total
 
-|                                |    Files |       Lines |
-| ------------------------------ | -------: | ----------: |
-| **Core code + tooling**        | **1537** |  **815231** |
-| **Supporting text + metadata** |  **513** |  **209355** |
-| **All counted text files**     | **2050** | **1024586** |
+|                                |    Files |      Lines |
+| ------------------------------ | -------: | ---------: |
+| **Core code + tooling**        | **1537** | **815231** |
+| **Supporting text + metadata** |  **509** | **135318** |
+| **All counted text files**     | **2046** | **950549** |
 
-> Vendored code excluded: ~14441 lines (`stb_image.h`, `stb_truetype.h`, `efi.h`)
+> Vendored code excluded: ~88481 lines (`stb_image.h`, `stb_truetype.h`, `efi.h`, and the four imported Fluent System Icons CSS files)
 >
 > Binary assets such as fonts, images, certificates, EFI blobs, and cursor resources are not line-counted.
 
@@ -75,11 +75,13 @@
 > Entire university courses teach that operating systems are a multi-decade, multi-hundred-
 > person endeavor. One developer apparently missed that lecture.*
 
-|                               |         Linux |     Windows |        Impossible OS |
-| ----------------------------- | ------------: | ----------: | -------------------: |
-| **Core code + tooling lines** |   ~28,000,000 | ~50,000,000 |              815,231 |
-| **Developers**                | ~1,000 active | ~5,000 peak |                    1 |
-| **Time span**                 |      33 years |    40 years | 5 month(s), 6 day(s) |
+|                                |                    Linux |                  Windows |        Impossible OS |
+| ------------------------------ | -----------------------: | -----------------------: | -------------------: |
+| **Core code + tooling lines**  |              ~28,000,000 |              ~50,000,000 |              815,231 |
+| **Supporting text + metadata** | not separately published | not separately published |              135,318 |
+| **All authored lines**         |              ~28,000,000 |              ~50,000,000 |              950,549 |
+| **Developers**                 |            ~1,000 active |              ~5,000 peak |                    1 |
+| **Time span**                  |                 33 years |                 40 years | 5 month(s), 6 day(s) |
 
 > At industry rates (10,000 LOC/developer/year -- COCOMO II), writing 815,231
 > lines of core code and tooling would take **190 developers** working for **5 month(s), 6 day(s)**.
@@ -88,4 +90,4 @@
 
 ---
 
-*Last updated: 2026-08-10 12:10 · commit `989bc722f`*
+*Last updated: 2026-08-10 12:19 · commit `08a2b0961`*
