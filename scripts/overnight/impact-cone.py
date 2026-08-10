@@ -78,18 +78,41 @@ def grep_files(root, pattern, paths):
 def main(argv) -> int:
     root = Path(argv[argv.index("--project") + 1]).resolve() \
         if "--project" in argv else Path(".").resolve()
-    if "--range" in argv:
-        rng = argv[argv.index("--range") + 1]
-        diff = git(root, "diff", rng, "--unified=1")
+    rng = argv[argv.index("--range") + 1] if "--range" in argv else None
+    if rng:
         files = git(root, "diff", "--name-only", rng).splitlines()
     else:
         # Default = WORKING TREE vs HEAD (staged + unstaged) plus untracked.
         # `git diff --cached` (staged only) missed the unstaged/untracked
         # changes the runner actually executes (2026-07-11 fix).
-        diff = git(root, "diff", "HEAD", "--unified=1")
         files = changed_paths(root)
     files = [f for f in files if f.strip()]
     src_files = [f for f in files if f.endswith((".c", ".h", ".asm", ".S"))]
+
+    # THE DIFF IS SCOPED TO C-FAMILY FILES (v14 residual, closed 2026-08-11).
+    # Everything derived from `diff` below is a C construct: `FUNC_HUNK_RE` /
+    # `FUNC_DEF_RE` read C definitions, `GLOBAL_RE` matches C declarations, and
+    # `REG_TABLE_MARKERS` are C registration tables. Feeding it a Python or
+    # shell diff produced symbols and "globals" that do not exist in the
+    # language the cone then searches.
+    #
+    # Measured on the commit the finding names (859d96cf0, four files, no C at
+    # all): it yielded `changed_symbols` including `main` and `_diag`, 48
+    # callers, `cone_size 96` and `global_state_escalation true`. Anchoring the
+    # caller regex with `\b` removed 25 substring artifacts; this removes the
+    # rest at the source, because a Python `main` should never have entered a C
+    # caller search in the first place.
+    #
+    # EMPTY src_files MUST YIELD AN EMPTY DIFF, explicitly. `git diff <rng> --`
+    # with no pathspec diffs EVERYTHING, so the natural-looking `*src_files`
+    # splat would silently restore the whole-repo behaviour on exactly the
+    # no-C diffs this exists to fix.
+    if not src_files:
+        diff = ""
+    elif rng:
+        diff = git(root, "diff", rng, "--unified=1", "--", *src_files)
+    else:
+        diff = git(root, "diff", "HEAD", "--unified=1", "--", *src_files)
     # Untracked new source files have no diff-vs-HEAD; synthesize an all-added
     # diff so their new symbols/globals/registrations enter the cone.
     if "--range" not in argv:

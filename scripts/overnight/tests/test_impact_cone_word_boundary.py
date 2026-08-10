@@ -70,6 +70,33 @@ def test_leading_underscore_is_still_bounded():
     assert not pat.search("x_diag(1)")
 
 
+def test_diff_is_scoped_to_c_family_files():
+    """v14 residual, closed 2026-08-11. Everything the cone derives from the
+    diff is a C construct -- `FUNC_HUNK_RE`/`FUNC_DEF_RE` read C definitions,
+    `GLOBAL_RE` matches C declarations, `REG_TABLE_MARKERS` are C registration
+    tables -- so feeding it a Python or shell diff invented symbols and
+    "globals" that do not exist in the language it then searches. Measured on
+    the commit the finding names: cone_size 96 -> 74 (word boundary) -> 4
+    (this), callers 48 -> 23 -> 0, global_state_escalation true -> false."""
+    src = CONE.read_text()
+    assert 'if not src_files:\n        diff = ""' in src, (
+        "an EMPTY src_files must yield an EMPTY diff explicitly -- `git diff "
+        "<rng> --` with no pathspec diffs EVERYTHING, which would silently "
+        "restore whole-repo behaviour on exactly the no-C diffs this fixes")
+    assert 'diff = git(root, "diff", rng, "--unified=1", "--", *src_files)' in src, \
+        "the ranged diff must be pathspec-limited to C-family files"
+    assert 'diff = git(root, "diff", "HEAD", "--unified=1", "--", *src_files)' in src, \
+        "the worktree diff must be pathspec-limited to C-family files"
+
+
+def test_c_family_filter_covers_the_real_extensions():
+    """REFUSAL CONTROL. Narrowing the extension list would blind the cone to
+    real source -- the failure direction that silently shrinks review scope."""
+    src = CONE.read_text()
+    for ext in (".c", ".h", ".asm", ".S"):
+        assert repr(ext) in src or f'"{ext}"' in src, f"{ext} dropped from the C-family filter"
+
+
 if __name__ == "__main__":
     fails = []
     for name, fn in sorted(globals().items()):

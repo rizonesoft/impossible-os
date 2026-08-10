@@ -10969,9 +10969,16 @@ fi
 # references are part of the contract, not commentary on it. This file is
 # excluded because it names the retired id deliberately, as the thing to
 # assert the absence of.
+# EXACT PATH, not a filename substring. `grep -v 'test-tooling.sh'` also
+# excluded anything whose path merely CONTAINS that text -- a backup or variant
+# such as `scripts/my-test-tooling.sh.bak` would have been silently skipped,
+# which is the unsafe direction for a check whose whole job is to find a stale
+# reference. `-F -x` pins it to the one file that names the retired id
+# deliberately. (A stray COPY under scripts/ still trips this, and that is
+# correct: an unexpected duplicate of a tooling script is worth flagging.)
 JSCHEMA_STALE="$(grep -rln 'utest-json-v1' "$REPO_ROOT/todo" "$REPO_ROOT/docs" \
                  "$REPO_ROOT/scripts" 2>/dev/null |
-                 grep -v 'test-tooling.sh' || true)"
+                 grep -vFx "$REPO_ROOT/scripts/test-tooling.sh" || true)"
 if [ -z "$JSCHEMA_STALE" ]; then
     t_pass "json abort: no roadmap or doc reference still owns the retired schema id"
 else
