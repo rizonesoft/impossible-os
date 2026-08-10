@@ -105,9 +105,26 @@ if [ -n "$TOOLING_HITS" ]; then
   # wall. This is NOT `SKIP_TOOLING_SUITE` by another name -- that flag skips
   # the run on an assertion, this skips it on a content-bound receipt, and any
   # edit to any tooling file invalidates it.
+  #
+  # `--commit <local oid>` (2026-08-10) asks the SECOND question when the first
+  # fails: the worktree has moved, but does the receipt describe the surface AS
+  # COMMITTED in the thing being pushed? The run backgrounds its ship push and
+  # keeps working, so by the time this gate evaluates, its own later edits have
+  # moved the worktree key -- invalidating a receipt that still validly attests
+  # the pushed bytes, and paying the six minutes inside the push anyway. Passing
+  # the oid is strictly ADDITIVE: without it `check` keeps its exact prior
+  # semantics, and with it a pass means the suite ran on bytes byte-identical to
+  # the commit. Untracked files can never match a commit key, so they fall
+  # through to running the suite.
+  PUSHED_OID=""
+  while read -r _l _loid _r _roid; do
+    [ -n "${_loid:-}" ] || continue
+    case "$_loid" in *[!0]*) PUSHED_OID="$_loid"; break ;; esac
+  done <<< "$STDIN_DATA"
   if [ "${SKIP_TOOLING_SUITE:-}" != "1" ] \
      && [ -f "$REPO_ROOT/scripts/tooling-receipt.py" ] \
-     && python3 "$REPO_ROOT/scripts/tooling-receipt.py" check --project "$REPO_ROOT" 2>/dev/null; then
+     && python3 "$REPO_ROOT/scripts/tooling-receipt.py" check --project "$REPO_ROOT" \
+          ${PUSHED_OID:+--commit "$PUSHED_OID"} 2>/dev/null; then
     echo -e "\033[32m  receipt: a green tooling suite already ran on these exact bytes -- not re-running\033[0m"
     echo "  (any edit to scripts/, .claude/hooks/, .githooks/, workflows or CLAUDE.md invalidates it)"
   elif [ "${SKIP_TOOLING_SUITE:-}" = "1" ]; then
@@ -124,6 +141,66 @@ if [ -n "$TOOLING_HITS" ]; then
     echo "  now ran ONLY in CI. Fix it here rather than discovering it as a red"
     echo "  build the next run has to repair before it can work."
     echo "  Opt-out (last resort): SKIP_TOOLING_SUITE=1 git push ..."
+    exit 1
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# RESOLVER IDENTITY GATE, LOCALLY (section 39).
+#
+# WHY THIS EXISTS. `scripts/todo-graph/identity-gate.sh` was invoked from
+# exactly ONE place in the repo -- .github/workflows/todo-graph.yml -- so it was
+# the last CI-only gate of its class, and it failed exactly as the tooling suite
+# used to: main went red on 2026-08-10 (runs 31381391940, 31388159279) having
+# passed every local gate, because nothing local runs it. The Test 22 fixtures in
+# scripts/todo-graph/tests/test_build.sh do exercise its LOGIC against synthetic
+# clones -- but only under test-tooling.sh, and never over the REAL base..head
+# range, which is the only place a corpus-vs-producer interaction can appear.
+#
+# THE BASE IS THE REMOTE OID, and that is the right range rather than a
+# convenience. git hands pre-push the remote's current oid per ref, which is
+# precisely "what main already has" -- so the gate adjudicates exactly the
+# commits about to land. It is also strictly conservative against CI's own base
+# (the last SUCCESSFULLY GATED sha, which can be further back): a range this
+# gate passes may still be re-examined server-side over a wider one, and never
+# the reverse.
+#
+# CONDITIONAL ON THE CLOSURE, which costs ~0 on ordinary pushes: this is the
+# gate's OWN early-exit condition, so a push that does not touch the closure
+# would exit 0 within a second anyway. Firing only on closure changes just skips
+# paying process startup for it.
+IDENTITY_CLOSURE_RE='^scripts/todo-graph/(corpus_resolution_snapshot|ref_resolution|resolve_symbol|cache_schema|build|snapshot_protocol|producer_differential)\.py$|^scripts/todo-graph/identity-gate\.sh$|^scripts/todo-graph/snapshot_protocol\.json$|^scripts/lint/check_bucket_emission\.py$'
+IDENTITY_HITS="$(pushed_files | sort -u | grep -E "$IDENTITY_CLOSURE_RE" || true)"
+if [ -n "$IDENTITY_HITS" ] && [ -x "$REPO_ROOT/scripts/todo-graph/identity-gate.sh" ]; then
+  echo ""
+  echo "Pre-push: resolver-closure change in this push -- gating on identity-gate.sh:"
+  printf '%s\n' "$IDENTITY_HITS" | sort -u | sed 's/^/  touched: /'
+  # The FIRST non-deleting ref update's remote oid. A push updating several refs
+  # is not a shape this repo makes (main-only, enforced above), and picking one
+  # deterministically beats gating an ambiguous union.
+  IDENTITY_BASE=""
+  while read -r _l loid _r roid; do
+    [ -n "${loid:-}" ] || continue
+    case "$loid" in *[!0]*) : ;; *) continue ;; esac
+    case "${roid:-}" in *[!0]*) IDENTITY_BASE="$roid"; break ;; esac
+  done <<< "$STDIN_DATA"
+  if [ "${SKIP_IDENTITY_GATE:-}" = "1" ]; then
+    echo -e "\033[33m  SKIP_IDENTITY_GATE=1 set -- resolver identity gate not run\033[0m"
+  elif [ -z "$IDENTITY_BASE" ] \
+       || ! git -C "$REPO_ROOT" rev-parse --quiet --verify "$IDENTITY_BASE^{commit}" >/dev/null 2>&1; then
+    # A FIRST PUSH of a ref has no remote oid, and there is then no local range
+    # to adjudicate. Say so rather than substituting HEAD~1: a base nobody chose
+    # answers a different question than the one this gate was asked, which is the
+    # exact failure identity-gate.sh's own --base handling was hardened against.
+    echo -e "\033[33m  no remote oid for this ref (first push?) -- no local range to gate; CI will adjudicate\033[0m"
+  elif ! IDENTITY_GATE_LAST_GATED_SHA="$IDENTITY_BASE" \
+         bash "$REPO_ROOT/scripts/todo-graph/identity-gate.sh"; then
+    echo ""
+    echo -e "\033[31mResolver identity gate failed -- push blocked\033[0m"
+    echo "  A resolver/producer change did not pass scripts/todo-graph/identity-gate.sh,"
+    echo "  which until now ran ONLY in CI. Fix it here rather than discovering it"
+    echo "  as a red main the next session has to repair before doing any work."
+    echo "  Opt-out (last resort): SKIP_IDENTITY_GATE=1 git push ..."
     exit 1
   fi
 fi

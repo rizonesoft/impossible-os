@@ -143,6 +143,91 @@ def _repo_root():
         return None
 
 
+def _commit_target_root(cmd: str):
+    """Which repository will this `git commit` land in? Returns a realpath, or
+    None when it cannot be determined.
+
+    WHY (v13 carry, resolved 2026-08-10). This gate treats every `git commit` as
+    a candidate SECTION commit, but a test fixture commits into a THROWAWAY repo
+    under /tmp -- a repo with no TODO corpus, no sections and no review state,
+    where the gate's whole question is meaningless. It fired anyway, so every
+    fixture commit carried a standing `SKIP_SKILL_STEP_BLOCK=1`, and a standing
+    opt-out is an opt-out that is set when it should not be too.
+
+    None means UNDETERMINED and the caller must fail CLOSED. A commit whose
+    destination cannot be read is far more likely to be an unusual spelling of a
+    real project commit than a fixture.
+    """
+    try:
+        import shlex
+        # First segment only: a target set by a later `&&` cannot retroactively
+        # move where an earlier `git commit` ran, and the whole chain is only
+        # reached here because it contains one.
+        for sep in ("&&", "||", ";", "|"):
+            cmd = cmd.replace(sep, "\n")
+        target = None
+        for seg in cmd.split("\n"):
+            try:
+                toks = shlex.split(seg)
+            except ValueError:
+                return None
+            if not toks:
+                continue
+            # `cd <dir>` -- the shape a fixture uses, and the shape the repo's
+            # own doctrine discourages for exactly the reason it is parsed here.
+            if toks[0] == "cd" and len(toks) >= 2:
+                target = toks[1]
+                continue
+            if toks[0] == "(" and len(toks) >= 3 and toks[1] == "cd":
+                target = toks[2]
+                continue
+            # `git -C <dir> ... commit`, and the two path-bearing globals.
+            if "git" in toks[0]:
+                for i, t in enumerate(toks):
+                    if t == "-C" and i + 1 < len(toks):
+                        target = toks[i + 1]
+                    elif t.startswith("--work-tree="):
+                        target = t.split("=", 1)[1]
+                    elif t.startswith("--git-dir="):
+                        target = os.path.dirname(t.split("=", 1)[1]) or "."
+                break
+        if target is None:
+            target = os.getcwd()
+        # An unexpanded variable or glob is not a path this can resolve.
+        if any(ch in target for ch in "$*?`"):
+            return None
+        target = os.path.realpath(os.path.expanduser(target))
+        if not os.path.isdir(target):
+            return None
+        out = subprocess.check_output(
+            ["git", "-C", target, "rev-parse", "--show-toplevel"],
+            text=True, timeout=2, stderr=subprocess.DEVNULL,
+        ).strip()
+        return os.path.realpath(out) if out else None
+    except Exception:
+        return None
+
+
+def _commit_is_in_project(cmd: str) -> bool:
+    """True when this commit lands in THIS project's repo (so the gate applies).
+
+    Fails CLOSED in every uncertain direction: an unreadable target, an
+    unreadable project root, or any exception all return True, because a
+    section-ship commit that slips this gate is the failure the gate exists to
+    prevent, while a fixture commit that trips it costs one opt-out.
+    """
+    target = _commit_target_root(cmd)
+    if target is None:
+        return True
+    project = os.environ.get("CLAUDE_PROJECT_DIR") or _repo_root()
+    if not project:
+        return True
+    try:
+        return os.path.realpath(project) == target
+    except Exception:
+        return True
+
+
 def _is_blocking_signature(d: dict) -> bool:
     r"""Return True if the current tool call should be gated by the
     step-state check. Triggers:
@@ -168,7 +253,11 @@ def _is_blocking_signature(d: dict) -> bool:
             is_commit, _ = scg._bash_is_git_commit(cmd)
         except Exception:
             return False
-        return bool(is_commit)
+        if not is_commit:
+            return False
+        # A commit into a THROWAWAY repo is not a section ship. See
+        # _commit_target_root; this fails closed on every uncertainty.
+        return _commit_is_in_project(cmd)
     if tn == "Skill":
         skill = ti.get("skill") or ti.get("name") or ""
         if skill != "review-todo-section":

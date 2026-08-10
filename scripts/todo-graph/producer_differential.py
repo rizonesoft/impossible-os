@@ -45,6 +45,7 @@ able to read both tools the same way:
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -53,6 +54,24 @@ from pathlib import Path
 
 class ProducerError(RuntimeError):
     """Infrastructure: a producer failed or emitted an unusable cache."""
+
+    def __init__(self, message: str, stderr: str = "", returncode: int = 0):
+        super().__init__(message)
+        # CARRIED SO THE CALLER CAN ADJUDICATE, not for prettier output. The
+        # novelty test below has to read the CATEGORY a refusal was emitted
+        # under, and a message string that has already been tail-joined into
+        # prose is not a parseable record of it.
+        self.stderr = stderr
+        self.returncode = returncode
+
+
+# `[build.py] FAIL <file>: <category>: <message>` -- the shape build.py's own
+# exit-code block documents. Anchored on the category being a lowercase-dashed
+# token so the `read error: <exc>` line (which carries a SPACE, and is not a
+# declared category) cannot be mistaken for one: an unparseable FAIL line makes
+# the refusal not-provably-new, which fails closed.
+_FAIL_LINE = re.compile(
+    r"^\[build\.py\] FAIL (?P<file>[^:]+): (?P<cat>[a-z][a-z0-9-]*): ")
 
 
 def _run_producer(tree: Path, corpus: Path, out: Path, label: str) -> None:
@@ -74,12 +93,127 @@ def _run_producer(tree: Path, corpus: Path, out: Path, label: str) -> None:
     except OSError as exc:
         raise ProducerError(f"{label}: cannot launch build.py: {exc}") from exc
     if proc.returncode != 0:
-        tail = (proc.stderr or proc.stdout or "").strip().splitlines()[-6:]
+        raw = proc.stderr or proc.stdout or ""
+        tail = raw.strip().splitlines()[-6:]
         raise ProducerError(
             f"{label}: build.py exited {proc.returncode} over {corpus}: "
-            + " | ".join(tail))
+            + " | ".join(tail), stderr=raw, returncode=proc.returncode)
     if not out.is_file() or out.stat().st_size == 0:
         raise ProducerError(f"{label}: build.py wrote no cache over {corpus}")
+
+
+def declared_categories(tree: Path):
+    """The set of error categories `tree`'s build.py declares it can emit.
+
+    Returns a `set`, or None when the tree cannot answer -- which is a real and
+    expected state, not a failure: every tree predating this probe has no
+    `--emitted-error-categories` flag, and one of those is the BASE on every
+    range until this commit becomes the last-gated SHA. None means "unaskable",
+    and the caller must degrade rather than infer.
+
+    Reads no corpus and writes no cache ON PURPOSE. It is only ever asked about
+    a tree whose corpus the other producer could not process, so a probe that
+    needed a readable corpus would be unanswerable exactly when it is needed.
+    """
+    script = tree / "scripts/todo-graph/build.py"
+    if not script.is_file():
+        return None
+    try:
+        proc = subprocess.run(
+            [sys.executable, str(script), "--emitted-error-categories"],
+            capture_output=True, text=True)
+    except OSError:
+        return None
+    if proc.returncode != 0:
+        return None
+    try:
+        got = json.loads(proc.stdout)
+    except (ValueError, TypeError):
+        return None
+    # SHAPE-CHECKED, not merely parsed. A tree that answers with something other
+    # than a list of non-empty strings has not answered this question, and
+    # `set()` of a wrong shape would silently become an EMPTY declared set --
+    # which would make every category look novel and approve every refusal.
+    if not isinstance(got, list) or not got:
+        return None
+    if not all(isinstance(c, str) and c for c in got):
+        return None
+    return set(got)
+
+
+def refusal_categories(stderr: str):
+    """The fatal categories in a producer's stderr, or None if unparseable.
+
+    None means at least one `FAIL` line did not carry a recognisable category
+    -- a read error, a crash, a message shape this parser does not know. That
+    must fail closed: a refusal whose reason cannot be read is never provably a
+    new check.
+    """
+    cats, saw_fail = set(), False
+    for line in stderr.splitlines():
+        if not line.startswith("[build.py] FAIL "):
+            continue
+        # The trailing summary line (`FAIL: N fatal error(s) ...`) is a count,
+        # not a per-file refusal; it has no category and must not read as one.
+        if line.startswith("[build.py] FAIL: "):
+            continue
+        saw_fail = True
+        m = _FAIL_LINE.match(line)
+        if not m:
+            return None
+        cats.add(m.group("cat"))
+    return cats if saw_fail else None
+
+
+def classify_base_corpus_refusal(exc: ProducerError, base_tree: Path,
+                                 head_tree: Path):
+    """Why did the HEAD producer refuse the BASE corpus? Returns (verdict, why).
+
+    verdict is one of:
+      "new-check"  -- every category it refused under is one the base producer
+                      provably could not emit. The base-corpus leg is unrunnable
+                      BY CONSTRUCTION, not broken.
+      "unproven"   -- the base tree cannot be asked, so novelty cannot be proven
+                      either way.
+      "genuine"    -- anything else. The refusal is a producer failure.
+
+    THE SCOPE IS DELIBERATELY NARROW and every widening of it is a hole:
+      * only the BASE corpus. A refusal of the HEAD corpus is the live tree
+        failing to build and is never exempt.
+      * only the HEAD producer. A BASE-producer refusal of the base corpus means
+        the corpus is broken independently of the change under test.
+      * only when EVERY category is provably new. One familiar category among
+        several new ones is a producer regression wearing a new check as cover.
+    """
+    cats = refusal_categories(exc.stderr)
+    if cats is None:
+        return ("genuine", "the refusal carries no readable error category, so "
+                           "nothing attributes it to a new check")
+    head_set = declared_categories(head_tree)
+    if head_set is None:
+        return ("genuine", "the HEAD tree does not declare its emitted error "
+                           "categories, so novelty cannot be established")
+    undeclared = sorted(cats - head_set)
+    if undeclared:
+        # The head producer emitted a category it does not declare. Its own
+        # runtime binding should have made this impossible, so reaching here
+        # means the declaration is not trustworthy -- and an untrustworthy
+        # declaration must not be the thing that waves a refusal through.
+        return ("genuine", f"the HEAD producer refused under undeclared "
+                           f"category/categories {undeclared}, so its "
+                           f"declaration does not describe what it emits")
+    base_set = declared_categories(base_tree)
+    if base_set is None:
+        return ("unproven", "the BASE tree predates --emitted-error-categories, "
+                            "so it cannot say whether these checks existed")
+    familiar = sorted(cats & base_set)
+    if familiar:
+        return ("genuine", f"category/categories {familiar} existed at BASE "
+                           f"too, so this refusal is not attributable to a new "
+                           f"check")
+    return ("new-check", f"category/categories {sorted(cats)} exist only at "
+                         f"HEAD, so the base corpus predates the repair they "
+                         f"require")
 
 
 def project(cache_path: Path, label: str) -> dict:
@@ -179,6 +313,8 @@ def main(argv) -> int:
             return 3
 
     total_fails = 0
+    legs_run = []
+    legs_skipped = []
     try:
         with tempfile.TemporaryDirectory(prefix="producer-diff.") as tmp:
             tmpd = Path(tmp)
@@ -188,14 +324,52 @@ def main(argv) -> int:
                                          (head_tree, "head-corpus")):
                 b_out = tmpd / f"{corpus_label}-by-base.json"
                 h_out = tmpd / f"{corpus_label}-by-head.json"
+                # BASE PRODUCER FIRST, and the order is load-bearing. Reaching
+                # the head run at all therefore proves the base producer
+                # ACCEPTED this corpus, which is half of what makes a head-side
+                # refusal below attributable to the head change rather than to a
+                # corpus that was already broken.
                 _run_producer(base_tree, corpus, b_out,
                               f"base producer over {corpus_label}")
-                _run_producer(head_tree, corpus, h_out,
-                              f"head producer over {corpus_label}")
+                try:
+                    _run_producer(head_tree, corpus, h_out,
+                                  f"head producer over {corpus_label}")
+                except ProducerError as exc:
+                    # THE NEW-CHECK EXEMPTION (section 39), scoped to exactly
+                    # one leg. A commit that adds a fatal check ships the corpus
+                    # repair that check demands -- it has to, or the producer
+                    # would fail on the live tree -- so the new check is
+                    # UNRUNNABLE over any corpus predating that repair. That is
+                    # a property of the range, not a defect in the producer, and
+                    # rc 3 on it wedges the gate permanently because the last-
+                    # gated SHA only advances on a PASS.
+                    if corpus_label != "base-corpus":
+                        raise
+                    verdict, why = classify_base_corpus_refusal(
+                        exc, base_tree, head_tree)
+                    if verdict == "genuine":
+                        raise
+                    banner = ("NEW CHECK" if verdict == "new-check"
+                              else "UNPROVEN")
+                    print(f"\n[base-corpus] SKIPPED ({banner}): the head "
+                          f"producer refused the base corpus -- {why}.")
+                    print(f"[base-corpus]   {exc}")
+                    print("[base-corpus] This leg proves nothing on this "
+                          "range. The head-corpus leg below is NOT relaxed, "
+                          "and a refusal of the HEAD corpus is never exempt.")
+                    if verdict == "unproven":
+                        print("[base-corpus] NOTE: novelty could not be "
+                              "PROVEN -- the base tree predates the "
+                              "--emitted-error-categories probe. Once a base "
+                              "carrying it becomes the last-gated SHA, this "
+                              "degrades to a proof instead of an assumption.")
+                    legs_skipped.append((corpus_label, verdict))
+                    continue
                 total_fails += diff_one(
                     project(b_out, f"base producer over {corpus_label}"),
                     project(h_out, f"head producer over {corpus_label}"),
                     corpus_label, strict)
+                legs_run.append(corpus_label)
     except ProducerError as exc:
         sys.stderr.write(f"[producer-differential] {exc}\n")
         return 3
@@ -217,6 +391,20 @@ def main(argv) -> int:
               f"CANNOT see this, because a ref missing from the one shared "
               f"cache is missing from both of its walks.")
         return 1
+    # A PASS WITH NO LEG RUN IS NOT A PASS. Every skip above is bounded to the
+    # base corpus, so the head-corpus leg must always have run -- but asserting
+    # it here is what stops a later widening from quietly turning this tool into
+    # one that returns 0 having compared nothing.
+    if "head-corpus" not in legs_run:
+        sys.stderr.write("[producer-differential] the head-corpus leg did not "
+                         "run, so nothing was compared. Refusing to report a "
+                         "pass.\n")
+        return 3
+    if legs_skipped:
+        skipped = ", ".join(f"{lbl} ({v})" for lbl, v in legs_skipped)
+        print(f"\nOK (DEGRADED): both producers emit an identical stamped-ref "
+              f"population over the head corpus. Legs skipped: {skipped}.")
+        return 0
     print("\nOK: both producers emit an identical stamped-ref population over "
           "both corpora.")
     return 0

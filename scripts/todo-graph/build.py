@@ -73,6 +73,92 @@ except ImportError:
     sys.exit(1)
 
 
+# ============================================================================
+# THE DECLARED ERROR-CATEGORY SET (section 39).
+#
+# WHY THIS EXISTS. `identity-gate.sh` runs a PRODUCER DIFFERENTIAL: the HEAD
+# producer over the BASE corpus, and the BASE producer over the HEAD corpus.
+# That comparison silently assumes the producer is CORPUS-AGNOSTIC across the
+# range -- and a commit that ADDS a fatal check breaks the assumption by
+# construction. The new check is unrunnable over any corpus predating the
+# repair it demands, and the repair MUST ship with the check or the producer
+# would fail on the live tree. Observed 2026-08-10: 5851cb4db shipped the
+# `unclosed-fence` check together with the 8-line repair it required, and every
+# push after it failed todo-graph.yml at rc 3 INFRASTRUCTURE, over a base
+# (169990014) that predated both halves. It cannot self-clear either --
+# IDENTITY_GATE_LAST_GATED_SHA only advances on a PASS -- so the wedge is
+# permanent until something teaches the gate to tell the two cases apart.
+#
+# WHAT MAKES THEM DISTINGUISHABLE. "The head producer rejects the base corpus
+# with a check that did not exist at base" and "the head producer is broken"
+# look identical from a return code. They differ in exactly one observable: the
+# CATEGORY the refusal was emitted under, and whether the base producer had a
+# check that could emit it at all. So each tree publishes the set of categories
+# it can emit, and `producer_differential.py` asks both sides.
+#
+# WHY A DECLARATION AND NOT A SOURCE SCAN. Section 20 already paid for this
+# lesson on the bucket vocabulary: searching the emitter's source text for a
+# quoted literal is NOT proof of non-emission, because an indexed, concatenated
+# or table-driven emission preserves behaviour and leaves no literal to find.
+# The same rule applies here, so the same shape does: a DECLARATION, bound to
+# reality at RUNTIME by `_assert_declared_categories` below (which refuses any
+# category not named here), and pinned to a literal AST shape by test_build.sh
+# so it cannot become a computed expression that declares whatever it emits.
+#
+# ADDING A CATEGORY. Add it here in the same commit that adds the check. The
+# runtime binding fails the build otherwise, so this cannot drift unnoticed --
+# which is the property that lets the gate trust the answer.
+# ============================================================================
+# ENUMERATED BY AST, NOT BY GREP -- and the distinction was paid for on the
+# commit that introduced this block. A `grep 'errors.append(("'` found SIX
+# categories; the real set is TWELVE, because six of them are appended in a
+# wrapped call whose category literal sits on its own line. The runtime binding
+# below caught the six missing ones immediately (test_build.sh went 571/577),
+# which is the whole argument for having it: a declaration nothing checks is a
+# declaration that is wrong.
+EMITTED_ERROR_CATEGORIES = frozenset({
+    "emission-drop",
+    "forbidden-field",
+    "invalid-field",
+    "invalid-id",
+    "malformed-yaml",
+    "missing-frontmatter",
+    "missing-required",
+    "schema-version",
+    "unclosed-comment",
+    "unclosed-fence",
+    "unknown-field",
+    "unknown-status",
+})
+
+# The ONE non-fatal category. Named here rather than spelled inline at the two
+# places that branch on it, so "which categories are fatal?" has a single
+# answer: everything declared above except this. That is the allowlist-of-one
+# rule from the exit-code block, expressed as data instead of as a comment.
+WARNING_ERROR_CATEGORIES = frozenset({"unknown-field"})
+
+
+def _assert_declared_categories(errors, rel):
+    """Bind the declaration to reality.
+
+    A category this module can EMIT but does not DECLARE would make
+    `--emitted-error-categories` a lie, and the identity gate reasons about
+    novelty from that answer -- so an undeclared category is not a parse error
+    about the corpus, it is a defect in this file. It must be loud and it must
+    not be confusable with a corpus failure, so it raises rather than joining
+    the fatal-error count.
+    """
+    for cat, _msg in errors:
+        if cat not in EMITTED_ERROR_CATEGORIES:
+            raise AssertionError(
+                f"[build.py] INTERNAL: {rel} emitted the undeclared error "
+                f"category '{cat}'. Add it to EMITTED_ERROR_CATEGORIES -- the "
+                f"identity gate reads that declaration to tell a NEW check "
+                f"apart from a broken producer, and an undeclared category "
+                f"makes that answer unsound."
+            )
+
+
 # PyYAML's default safe loader uses last-key-wins on duplicate mapping keys.
 # The frontmatter spec (docs/infrastructure/todo-metadata.md Parsing Rules)
 # promises duplicate keys are a hard malformed-yaml failure. Subclass
@@ -1755,7 +1841,23 @@ def main():
         default=None,
         help="Repo root (defaults to git toplevel of --root, or its parent)",
     )
+    # THE NOVELTY PROBE. `producer_differential.py` asks BOTH trees this, and
+    # compares the answers to decide whether a head-side refusal of the base
+    # corpus is a check that did not exist at base. It reads no corpus and
+    # writes no cache -- deliberately, so it stays answerable by a tree whose
+    # corpus this producer cannot process, which is the only situation it is
+    # ever asked in.
+    parser.add_argument(
+        "--emitted-error-categories",
+        action="store_true",
+        help="Print the declared EMITTED_ERROR_CATEGORIES as a JSON array and exit",
+    )
     args = parser.parse_args()
+
+    if args.emitted_error_categories:
+        json.dump(sorted(EMITTED_ERROR_CATEGORIES), sys.stdout)
+        sys.stdout.write("\n")
+        return 0
 
     t0 = time.monotonic()
 
@@ -1874,8 +1976,9 @@ def main():
 
         node, errors = build_node(f, repo_root, timestamps, content)
         rel = display_rel
+        _assert_declared_categories(errors, rel)
         for cat, msg in errors:
-            if cat == "unknown-field":
+            if cat in WARNING_ERROR_CATEGORIES:
                 if not args.quiet:
                     sys.stderr.write(f"[build.py] WARN {rel}: {cat}: {msg}\n")
                 warnings += 1

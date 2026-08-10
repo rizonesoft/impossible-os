@@ -87,6 +87,11 @@
           },
           {
             "type": "command",
+            "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/optout_env_prefix_block.py\"",
+            "timeout": 5
+          },
+          {
+            "type": "command",
             "command": "python3 \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/design_review_required.py\""
           },
           {

@@ -17421,6 +17421,228 @@ else
 fi
 
 # ----------------------------------------------------------------------
+# Test 39: THE NEW-CHECK EXEMPTION in producer_differential.py.
+#
+# The bug it closes, observed on main 2026-08-10 (todo-graph.yml runs
+# 31381391940 and 31388159279): 5851cb4db shipped the `unclosed-fence` check
+# together with the 8-line corpus repair that check demands. The producer
+# differential then ran the HEAD producer over a BASE corpus (169990014)
+# predating the repair, the new check fired, and identity-gate.sh reported rc 3
+# INFRASTRUCTURE. It could not self-clear: IDENTITY_GATE_LAST_GATED_SHA only
+# advances on a PASS, so every subsequent push reproduced it.
+#
+# THE TESTS COME IN PAIRS, and the refusal direction is the load-bearing half.
+# An exemption is only worth anything if the thing it does NOT exempt still
+# fails -- so 39b/39c/39d each establish that a refusal which merely RESEMBLES
+# the exempt shape is still fatal. 39a alone would be satisfied by deleting the
+# check entirely.
+# ----------------------------------------------------------------------
+T39="$TMP_DIR/t39"
+PD_PY="$REPO_ROOT/scripts/todo-graph/producer_differential.py"
+
+# A corpus body carrying a stamped ref. The differential refuses an EMPTY
+# projection (a corpus with no stamped refs would pass vacuously), so a fixture
+# without one tests nothing.
+_t39_body='## 1. Sec
+
+- [x] wired `src/kernel/mm/pmm.c:42` and `pmm_alloc()`
+'
+
+# $1 = tree root, $2 = "clean"|"unclosed", $3 = "declare"|"nodeclare"|"live"
+t39_tree() {
+    mkdir -p "$1/scripts/todo-graph" "$1/todo/d"
+    cp "$REPO_ROOT"/scripts/todo-graph/*.py "$1/scripts/todo-graph/"
+    cp "$REPO_ROOT"/scripts/todo-graph/*.json "$1/scripts/todo-graph/" 2>/dev/null || true
+    cp -r "$REPO_ROOT/scripts/todo-graph/schema" "$1/scripts/todo-graph/" 2>/dev/null || true
+    {
+        printf -- '---\nschema_version: 1\nid: t-1\ndomain: d\nstatus: active\ntitle: T\n---\n\n# T\n\n%s' "$_t39_body"
+        [ "$2" = "unclosed" ] && printf '\n```\nnever closed\n'
+    } > "$1/todo/d/TODO-01-a.md"
+    case "$3" in
+        # The BASE-side producer: its `unclosed-fence` CHECK is neutered, so it
+        # accepts a corpus the head producer refuses. Whether it still DECLARES
+        # the category is what separates 39a from 39b.
+        nodeclare)
+            python3 - "$1/scripts/todo-graph/build.py" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+s = s.replace('    "unclosed-fence",\n', '', 1)
+s = s.replace('    if body_unclosed:\n', '    if False:\n', 1)
+open(p, "w").write(s)
+PY
+            ;;
+        declare)
+            python3 - "$1/scripts/todo-graph/build.py" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+s = s.replace('    if body_unclosed:\n', '    if False:\n', 1)
+open(p, "w").write(s)
+PY
+            ;;
+    esac
+}
+
+# --- 39a: PASS direction. A category that exists only at HEAD is a NEW CHECK,
+#          the base-corpus leg is unrunnable by construction, and the gate
+#          reports a DEGRADED pass rather than wedging.
+rm -rf "$T39"; mkdir -p "$T39"
+t39_tree "$T39/base" unclosed nodeclare
+t39_tree "$T39/head" clean live
+T39A_OUT="$(python3 "$PD_PY" "$T39/base" "$T39/head" --strict 2>&1)"; T39A_RC=$?
+if [ "$T39A_RC" = "0" ] \
+   && echo "$T39A_OUT" | grep -q "SKIPPED (NEW CHECK)" \
+   && echo "$T39A_OUT" | grep -q "OK (DEGRADED)" \
+   && echo "$T39A_OUT" | grep -q "head-corpus"; then
+    t_pass "s39a: a HEAD-only error category skips the base-corpus leg as a NEW CHECK, head-corpus leg still compared"
+else
+    t_fail "s39a: new-check exemption did not fire (rc=$T39A_RC): $T39A_OUT"
+fi
+
+# --- 39b: REFUSAL direction. Same refusal, same category NAME -- but the base
+#          producer DECLARED it too, so this is a head-side false positive on an
+#          existing check, not a new one. Must stay fatal. This is the case a
+#          "did only the head producer reject it?" rule would wave through.
+rm -rf "$T39"; mkdir -p "$T39"
+t39_tree "$T39/base" unclosed declare
+t39_tree "$T39/head" clean live
+T39B_OUT="$(python3 "$PD_PY" "$T39/base" "$T39/head" --strict 2>&1)"; T39B_RC=$?
+if [ "$T39B_RC" = "3" ] && ! echo "$T39B_OUT" | grep -q "SKIPPED"; then
+    t_pass "s39b: REFUSAL CONTROL -- a category the BASE also declared stays rc 3, never exempt"
+else
+    t_fail "s39b: a familiar category was wrongly exempted (rc=$T39B_RC): $T39B_OUT"
+fi
+
+# --- 39c: REFUSAL direction. The exemption is scoped to the BASE corpus. A head
+#          producer that refuses the HEAD corpus is the live tree failing to
+#          build, and no category argument may excuse it.
+rm -rf "$T39"; mkdir -p "$T39"
+t39_tree "$T39/base" clean nodeclare
+t39_tree "$T39/head" unclosed live
+T39C_OUT="$(python3 "$PD_PY" "$T39/base" "$T39/head" --strict 2>&1)"; T39C_RC=$?
+if [ "$T39C_RC" = "3" ] && ! echo "$T39C_OUT" | grep -q "SKIPPED"; then
+    t_pass "s39c: REFUSAL CONTROL -- a refusal of the HEAD corpus is fatal even under a HEAD-only category"
+else
+    t_fail "s39c: a head-corpus refusal was wrongly exempted (rc=$T39C_RC): $T39C_OUT"
+fi
+
+# --- 39d: REFUSAL direction. The BASE producer refusing the base corpus means
+#          the corpus is broken independently of the change under test. The
+#          base-first run order is what makes this reachable at all.
+rm -rf "$T39"; mkdir -p "$T39"
+t39_tree "$T39/base" clean live
+t39_tree "$T39/head" clean live
+printf -- '---\nschema_version: 1\nid: [unclosed\ndomain: d\n---\n\n# T\n' \
+    > "$T39/base/todo/d/TODO-01-a.md"
+T39D_OUT="$(python3 "$PD_PY" "$T39/base" "$T39/head" --strict 2>&1)"; T39D_RC=$?
+if [ "$T39D_RC" = "3" ] && ! echo "$T39D_OUT" | grep -q "SKIPPED"; then
+    t_pass "s39d: REFUSAL CONTROL -- a BASE-producer refusal of the base corpus is fatal"
+else
+    t_fail "s39d: a base-producer refusal was wrongly exempted (rc=$T39D_RC): $T39D_OUT"
+fi
+
+# --- 39e: the parsers fail CLOSED. Each of these inputs must yield "not
+#          provably new", because a refusal whose reason cannot be READ is never
+#          evidence about which checks existed.
+T39E="$(python3 - "$REPO_ROOT" <<'PY'
+import sys, pathlib
+sys.path.insert(0, str(pathlib.Path(sys.argv[1]) / "scripts/todo-graph"))
+import producer_differential as pd
+bad = []
+# A crash with no FAIL line at all.
+if pd.refusal_categories("Traceback (most recent call last):\n  boom\n") is not None:
+    bad.append("a traceback with no FAIL line parsed as a category set")
+# A FAIL line whose reason is not a category (build.py's read-error path).
+if pd.refusal_categories(
+        "[build.py] FAIL todo/a.md: read error: [Errno 5] I/O error\n") is not None:
+    bad.append("a read-error FAIL line parsed as a category")
+# The trailing count line is not a per-file refusal and must not read as one.
+if pd.refusal_categories("[build.py] FAIL: 1 fatal error(s) across 2 files\n") is not None:
+    bad.append("the summary count line parsed as a refusal")
+# A declaration of the wrong SHAPE must be None, never an empty set -- an empty
+# set would make every category look novel and approve every refusal.
+class _T:
+    def __init__(self, out): self.out = out
+for shape in ("{}", "[]", '[""]', "[1,2]", "not json"):
+    p = pathlib.Path(sys.argv[1])
+    # exercised directly rather than through a tree: the shape floor is the
+    # property under test, not the subprocess plumbing.
+    import json as _j
+    try:
+        got = _j.loads(shape)
+    except Exception:
+        continue
+    if isinstance(got, list) and got and all(isinstance(c, str) and c for c in got):
+        bad.append("shape %r wrongly accepted by the declared-set floor" % shape)
+print("|".join(bad) if bad else "OK")
+PY
+)"
+if [ "$T39E" = "OK" ]; then
+    t_pass "s39e: REFUSAL CONTROL -- unreadable refusals and malformed declarations fail closed"
+else
+    t_fail "s39e: a parser failed open: $T39E"
+fi
+
+# --- 39f: the DECLARATION IS BOUND TO REALITY at runtime. A category build.py
+#          can emit but does not declare would make --emitted-error-categories a
+#          lie, and the whole novelty argument rests on that answer.
+T39F="$(python3 - "$REPO_ROOT" <<'PY'
+import sys, importlib.util, pathlib
+tg = pathlib.Path(sys.argv[1]) / "scripts/todo-graph"
+sys.path.insert(0, str(tg))
+spec = importlib.util.spec_from_file_location("build_mod", tg / "build.py")
+m = importlib.util.module_from_spec(spec)
+sys.modules["build_mod"] = m
+spec.loader.exec_module(m)
+try:
+    m._assert_declared_categories([("not-a-real-category", "x")], "todo/a.md")
+except AssertionError:
+    print("OK")
+else:
+    print("an undeclared category was accepted")
+PY
+)"
+if [ "$T39F" = "OK" ]; then
+    t_pass "s39f: build.py refuses an undeclared error category at runtime"
+else
+    t_fail "s39f: the declaration is not bound to reality: $T39F"
+fi
+
+# --- 39g: the declaration is a LITERAL, pinned by AST. Section 20 established
+#          that a source-text search is not proof of emission; the mirror-image
+#          hole is a declaration that COMPUTES itself from what the emitters
+#          contain, which would declare whatever it emits and prove nothing.
+T39G="$(python3 - "$REPO_ROOT" <<'PY'
+import ast, sys, pathlib
+src = (pathlib.Path(sys.argv[1]) / "scripts/todo-graph/build.py").read_text()
+tree = ast.parse(src)
+found = None
+for node in tree.body:
+    if isinstance(node, ast.Assign) and any(
+            isinstance(t, ast.Name) and t.id == "EMITTED_ERROR_CATEGORIES"
+            for t in node.targets):
+        found = node.value
+if found is None:
+    print("EMITTED_ERROR_CATEGORIES is not a module-level assignment")
+    raise SystemExit(0)
+# frozenset({...}) of string literals, and nothing else.
+ok = (isinstance(found, ast.Call)
+      and isinstance(found.func, ast.Name) and found.func.id == "frozenset"
+      and len(found.args) == 1 and isinstance(found.args[0], ast.Set)
+      and found.args[0].elts
+      and all(isinstance(e, ast.Constant) and isinstance(e.value, str)
+              for e in found.args[0].elts))
+print("OK" if ok else "the declaration is not a literal frozenset of strings")
+PY
+)"
+if [ "$T39G" = "OK" ]; then
+    t_pass "s39g: EMITTED_ERROR_CATEGORIES is a literal, so it cannot compute itself from the emitters"
+else
+    t_fail "s39g: $T39G"
+fi
+
+# ----------------------------------------------------------------------
 # Summary
 # ----------------------------------------------------------------------
 TOTAL=$((PASS + FAIL))
