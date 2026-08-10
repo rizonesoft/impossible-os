@@ -104,6 +104,15 @@ The last ten v13 carries. Five resolved, four rejected with a stated condition, 
       - FIXED by giving the poll the same bounded shape the Codex wait already has: `timeout 540 bash -c 'until grep -q "^rc=" /tmp/ship-push.log; do sleep 5; done'` -- rc 0 = finished, rc 124 = still running, re-issue. Verified both branches return cleanly. A `for _ in $(seq ...)` header was NOT used: loop headers with command substitution are deliberately blocked, and that block is a pinned control.
       - Watch for: a poll bound that creeps toward 600. The margin exists so the call returns rather than being killed, and 540 leaves 60s of slack for a loaded host.
 
+- [ ] **A finding whose FIX is not in the forbidden set is still being FILED rather than fixed -- and the most urgent v13 item was one of them.**
+      Measured 2026-08-11 by classifying every file the v13 fixes touched against the run's own editing rule.
+      - Of the 21 files the two v13-closing commits changed, 15 were genuinely off-limits (`.claude/hooks/`, `.claude/skills/`, `scripts/overnight/`, `.githooks/`, `settings.json`). SIX were not. Three of those six -- `scripts/todo-graph/build.py`, `producer_differential.py`, `tests/test_build.sh` -- are the entire identity-gate wedge fix, and `scripts/todo-graph/**` is ordinary tooling the run edits routinely as metadata-layer sections.
+      - So the item that left `main` RED across two pushes was repairable BY THE RUN, in a path it already owns, and was instead filed and carried for a full cycle.
+      - THE BUNDLING IS THE MECHANISM, not inattention. That item joined a run-fixable defect ("the producer differential wedges on a corpus predating a new check") to a control-plane decision ("no local gate can see it" -> `.githooks/pre-push`), and its verdict -- "CARRIED, needs a decision about what belongs in the local gate" -- adjudicated only the FORBIDDEN half. The forbidden half held the fixable half hostage.
+      - The doctrine invites this. Both capture files open with "Why findings land here instead of being fixed. The run may not edit its own control plane... Record the finding in the same turn it is observed, then advance." That is a statement about the SURFACE the finding is ABOUT, never a test of where the FIX would land. A defect the run could repair in an afternoon reads as fileable because the symptom was a runner experience.
+      - Candidate fix (doctrine, not code): before filing, ask where the FIX lands, not where the symptom appeared. If every path the fix touches is outside the forbidden set, fix it in the owning TODO and file only the residue. When an item spans both, SPLIT it -- file the control-plane half, fix the rest -- rather than carrying the whole bundle.
+      - Not yet quantified, and worth measuring before acting: how many of v13's other 37 items had a fully-fixable fix. This item establishes the class from one measured instance; it does not establish the rate.
+
 ## Standing measurement obligations
 
 Carry the baselines forward. A measurement without one is an anecdote.
