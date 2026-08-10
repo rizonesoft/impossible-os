@@ -62,6 +62,41 @@ def _state_path(root: Path) -> Path:
 SRC_PATHS = ["src", "include", "user", "resources", "tools",
              "Makefile", "scripts/build.sh", "boot.conf"]
 TODO_PATHS = ["todo"]
+# HOST-SIDE TOOLING (v13 carry, added 2026-08-10). Without this, a section whose
+# entire surface is `scripts/todo-graph/**`, `scripts/lint/**`, `.claude/**` or
+# `docs/**` fingerprints IDENTICALLY no matter what it changes -- so the gate
+# answered CONVERGED on round one and every round after, not because the review
+# found nothing but because it never looked. Measured on TODO-06 section 25:
+# rounds 3-7 were dispatched AGAINST the gate's advice and returned five valid
+# [medium] findings, two of them fail-open. Obeying CONVERGED would have shipped
+# all five.
+#
+# The header below says the scope "errs WIDE on purpose", and that reasoning was
+# true only WITHIN src/ -- it never contemplated a section living entirely
+# outside it. Widening here is the same safe direction: more redispatch, never a
+# skipped review.
+#
+# `.claude` IS LISTED BY ITS REVIEWABLE SUBTREES, never wholesale, and the
+# hook's own selftest is what caught why. This gate writes its verdicts to
+# `.claude/state/review-convergence.json`; with bare `.claude` in scope, calling
+# `record()` CHANGED the very fingerprint the next `should_redispatch` compares
+# against, so nothing could ever converge. It passed against the live repo only
+# because `.claude/state/*` is gitignored and the untracked walk uses
+# `--exclude-standard` -- an accident of .gitignore, not a property of the
+# design. Runtime state is not reviewable content and does not belong here.
+TOOLING_PATHS = ["scripts", ".claude/hooks", ".claude/skills", ".claude/agents",
+                 ".claude/settings.json", ".githooks", ".github", "docs"]
+
+# SCOPE NAME -> PATHS, as a mapping rather than a two-way branch. The previous
+# `SRC_PATHS if s == "src" else TODO_PATHS` silently resolved EVERY unknown
+# scope name to TODO_PATHS, so a typo in KIND_SCOPES would have fingerprinted a
+# kind against the TODO corpus and converged it on unrelated grounds -- a wrong
+# answer delivered confidently. An unknown scope now fails OPEN instead.
+SCOPE_PATHS = {
+    "src": SRC_PATHS,
+    "todo": TODO_PATHS,
+    "tooling": TOOLING_PATHS,
+}
 
 # Per-kind relevant path scopes (P2.2). Keys are normalized review kinds.
 #
@@ -80,16 +115,19 @@ TODO_PATHS = ["todo"]
 # Scope choice errs WIDE on purpose: a wider scope invalidates the stored
 # verdict more often (more redispatch), while a narrow one suppresses more.
 # Only the second direction can skip a review that was actually needed.
+# EVERY kind carries "tooling" since 2026-08-10. A review of a host-side tooling
+# section is a review like any other; before this, five of the nine kinds could
+# not see such a section at all.
 KIND_SCOPES = {
-    "adversarial": ("src",),
-    "re-adversarial": ("src",),
-    "adversarial-impl": ("src",),
-    "perf": ("src",),
-    "performance": ("src",),
-    "test-coverage": ("src",),
-    "consistency": ("src", "todo"),
-    "design": ("src", "todo"),
-    "gap-audit": ("src", "todo"),
+    "adversarial": ("src", "tooling"),
+    "re-adversarial": ("src", "tooling"),
+    "adversarial-impl": ("src", "tooling"),
+    "perf": ("src", "tooling"),
+    "performance": ("src", "tooling"),
+    "test-coverage": ("src", "tooling"),
+    "consistency": ("src", "todo", "tooling"),
+    "design": ("src", "todo", "tooling"),
+    "gap-audit": ("src", "todo", "tooling"),
 }
 
 
@@ -108,7 +146,13 @@ def _fingerprint(root: Path, scopes: tuple) -> str | None:
     untracked file). None on any git failure -> caller fails open to REDISPATCH."""
     paths: list = []
     for s in scopes:
-        paths += SRC_PATHS if s == "src" else TODO_PATHS
+        if s not in SCOPE_PATHS:
+            # FAIL OPEN. A scope this function cannot resolve means the
+            # fingerprint would cover the wrong paths, and a wrong fingerprint
+            # converges a kind on grounds that have nothing to do with it.
+            # None propagates to the caller as REDISPATCH.
+            return None
+        paths += SCOPE_PATHS[s]
     tree = _git(root, "ls-tree", "-r", "HEAD", "--", *paths)
     diff = _git(root, "diff", "HEAD", "--", *paths)
     untracked = _git(root, "ls-files", "-o", "--exclude-standard", "--", *paths)

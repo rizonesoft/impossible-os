@@ -1927,6 +1927,10 @@ The four producers are `build.py`'s `XREF_CLAUSE_RE` (stamp targets), `INPUTS_XR
 - [ ] One clause parser, returning the destinations it found
       A function that answers "how many targets does this clause name, and what are they" once, so a new shape is handled in one place rather than in four call sites that each match `cache_schema.XREF_ADJACENT_TARGET_RE` and each have to be remembered. That constant is what this replaces.
 - [ ] Every producer calls it, and a test proves they cannot disagree
+- [ ] The FOURTH live grammar, in `.claude/hooks/skill_step_block.py:61`, adopts the shared parser -- it is the remaining second spelling outside the consolidation
+      - `_XREF_RE = re.compile(r"->\s*XREF:\s*(?:\[[^\]]*\]\()?([\w./0-9-]+\.md)")`. Its label class `[^\]]*` truncates where the shared grammar does not, so the two disagree on a link whose label contains a bracket.
+      - Lower stakes than the producers and deliberately parked here rather than patched in place: it feeds a read-XREF heuristic, so a miss under-counts evidence rather than binding a wrong file. Fixing a fourth copy while this consolidation is open is the duplication CLAUDE.md forbids.
+      - XREF: transferred from `todo/overnight-runner-improvements/overnight-runner-improvements-v13.md` (item: "A fourth XREF link grammar lives in `skill_step_block.py`, outside the shared one"), closed there 2026-08-10 as owned by this section.
       The parity assertion matters more than the parser: a fixture that runs the SAME malformed clause through all four producers and requires identical treatment is what would have caught rounds 4-7 in one round instead of four.
 - [ ] Prove the corpus effect per clause before and after
       Same bar as §33: the (file, token, destination) triple for all 1010 stamp targets and 945 Inputs rows, plus the repair path's ambiguous / unresolvable / missing counts, with a control that must fire.

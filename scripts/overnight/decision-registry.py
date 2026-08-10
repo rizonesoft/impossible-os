@@ -62,10 +62,44 @@ def extract_answers(root: Path) -> list:
 
 
 def extract_stamp_xrefs(root: Path) -> list:
+    """Stamp XREFs from the todo-graph cache, read THROUGH the shared validator.
+
+    WHY NOT A BARE `json.loads` (v13 carry, fixed 2026-08-10). This reader used
+    to open `build/todo-cache.json` directly -- no `CACHE_FORMAT_VERSION` check,
+    no digest-bound sidecar, no profile. Section 33 bumped that version 2 -> 3
+    precisely because `stamps_xrefs[].target_path` KEPT ITS TYPE and CHANGED ITS
+    MEANING, which is the one shape a defensive reader cannot detect: every key
+    is present and every type is right, so the old-contract artifact parses
+    cleanly and publishes decision records built on a stale meaning.
+
+    This was the SECOND finding against this same reader in two versions -- v10
+    records it reading `target`/`target_file`/`text`/`raw`, key names the cache
+    never had, degrading silently to empty output. Same root shape both times:
+    it consumed the cache without the contract that describes it.
+
+    `cache_schema.load_and_validate` exists for exactly this and is what section
+    17 of the metadata TODO shipped; adopting it here is that adoption, not a
+    competing one-off. It fails CLOSED on LEGACY_FORMAT, so a stale-contract
+    artifact yields NO decision records rather than wrong ones.
+    """
     out = []
+    tg = root / "scripts/todo-graph"
+    if str(tg) not in sys.path:
+        sys.path.insert(0, str(tg))
     try:
-        cache = json.loads((root / "build/todo-cache.json").read_text())
-        entries = cache if isinstance(cache, list) else cache.get("entries", [])
+        import cache_schema as _cs
+    except ImportError:
+        # No validator reachable -> publish nothing. Falling back to a bare
+        # parse here would reinstate exactly the hole this closes.
+        return out
+    try:
+        entries, _info = _cs.load_and_validate(
+            root / "build/todo-cache.json", root / "todo",
+            check_stale=False, profile=_cs.PROFILE_STAMP_XREFS)
+    except _cs.CacheSchemaError:
+        # LEGACY_FORMAT, UNREADABLE, SHAPE -- every one means "this artifact
+        # does not describe the contract this reader was written against".
+        return out
     except (OSError, ValueError):
         return out
     for e in entries:

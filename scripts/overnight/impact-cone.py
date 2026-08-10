@@ -108,9 +108,29 @@ def main(argv) -> int:
     symbols = sorted(symbols)
 
     # Callers: files referencing any changed symbol (excluding the diff files).
+    #
+    # `\b` IS LOAD-BEARING (v13 carry, fixed 2026-08-10). Without it the
+    # alternation is an UNANCHORED SUBSTRING search, so a changed Python symbol
+    # named `main` matched `domain (`, `remain (`, and every other word ending
+    # in those letters. Measured on the commit the finding names (859d96cf0, a
+    # 4-file host-side tooling diff): `cone_size 96`, `global_state_escalation
+    # true`, 48 "callers" -- of which **25 matched ONLY without a word
+    # boundary**, e.g. `include/kernel/quota/quota.h` via the comment "Counter
+    # domain (HARD invariant)". The v13 filing hypothesised a generic token
+    # grepped across `src/` and said so as an untested guess; the real mechanism
+    # is narrower and is this.
+    #
+    # The cost was a wrong ROUTE, not just a wrong number: `review-todo-section`
+    # Phase 1 keys on `cone_size` and `global_state_escalation`, so a 4-file
+    # tooling diff was classed as a large escalated change and told to dispatch
+    # `review-evidence-mapper` -- a Sonnet dispatch per tooling section, for
+    # matches inside unrelated prose.
+    #
+    # `\b` before a leading underscore is intentional: `_diag` must not match
+    # `x_diag`, and `_` is a word character, so the boundary does exactly that.
     callers = set()
     if symbols:
-        pat = "|".join(re.escape(s) + r"\s*\(" for s in symbols[:40])
+        pat = "|".join(r"\b" + re.escape(s) + r"\s*\(" for s in symbols[:40])
         for f in grep_files(root, pat, ["src/", "include/", "user/"]):
             if f not in src_files:
                 callers.add(f)

@@ -12,15 +12,15 @@ Runner-behavior findings from the run armed after the 2026-08-10 close-out of [v
 
 ---
 
-## Carried forward from v13 -- 10 items
+## Carried forward from v13 -- NONE (v13 fully closed)
 
-v13 closed **38 filed / 19 resolved / 3 rejected / 16 carried**, then six of those carries were completed in this cycle on 2026-08-10, leaving **25 resolved / 3 rejected / 10 carried**. Their verdicts were reworked IN v13 rather than re-filed here, so the record of each item stays in one place. The first pass carried 29; the eleven reasoning items and the three commit-message items were then completed rather than deferred, because "it would take one grouped edit" argues for making the edit.
+v13 is **fully closed**: 38 filed, 38 verdicted, **31 resolved / 7 rejected / 0 carried**. The first pass resolved 19 and carried 16; a second attended pass on 2026-08-10 completed six of those carries, and a third closed the remaining ten. Verdicts were reworked IN v13 rather than re-filed here, so each item's record stays in one place.
 
-The carried items are NOT re-listed individually -- they live in [v13](overnight-runner-improvements-v13.md) with a verdict and a "what would settle it" on each, and re-copying them here would fork the record. They cluster as:
+Four of the seven rejections are deliberate and share a single open question rather than being abandonments -- see v13 for the condition that would change each:
 
-- **The convergence-gate scope decision** (`KIND_SCOPES` maps every review kind to `src`, so a tooling section converges permanently after one verdict). Measured cost: five valid findings that only appeared because the run dispatched AGAINST the gate's advice. Needs a decision between following the reviewed diff and failing open on unknown surfaces. The REASONING half shipped 2026-08-10 (dispatch anyway when the diff falls outside the kind's scopes); the scope change itself is still the open call.
-- **Two review-binding questions** -- a newly untracked file cannot bind to a review, and dispatching legs before invoking the skill costs a whole wave. Both turn on whether the binding attaches to the dispatch or the skill invocation; settle them together.
-- **Four items with an owner elsewhere**: the fourth XREF grammar and the bare `json.loads` consumer both belong to consolidations already open in the metadata-layer TODO.
+- **Three review-binding items** (a newly untracked file cannot bind to a review; an opt-out resets the received-flag globally; dispatching legs before invoking the skill costs a wave) all turn on whether the review binding attaches to the DISPATCH or to the skill invocation. They are rejected TOGETHER so that question gets one design pass on the receipt contract instead of three patches that would each half-answer it.
+- **The two corpus-reading control-plane tests** stay rejected with their trigger condition restated, and that trigger has arguably now fired.
+
 
 ## What shipped in the 2026-08-10 close-out, and is therefore under test
 
@@ -73,6 +73,22 @@ Six v13 carries plus the CI repair. Every change below carries a refusal-directi
       - `test_receipt_commit_binding.test_wrong_or_unreadable_commit_fails_closed` asserted `--commit HEAD~1` fails. That holds only when the previous commit touched a `SURFACE` path -- and SURFACE excludes `todo/` and `COUNT.md`, which is most of what this repo commits. A todo-only commit at HEAD made HEAD and HEAD~1 surface-identical, so validating both was CORRECT and the test was wrong. Repaired to CONSTRUCT a differing commit and assert its own premise is non-vacuous.
       - The shared lesson, and why this is filed rather than closed: a test whose fixture depends on unrelated repo history is testing the history. The first one is still shaped that way.
       - Also confirmed: editing the tree WHILE the suite walks it produces failures that look like real regressions. Two of this session's three suite failures were the session's own concurrent edits. The tooling receipt already refuses to be written in that state; the SUITE has no equivalent guard.
+
+## What shipped in the 2026-08-10 final-close pass, and is therefore under test
+
+The last ten v13 carries. Five resolved, four rejected with a stated condition, one closed by transfer.
+
+- **The convergence gate can finally see host-side tooling.** A `tooling` scope joins every kind in `KIND_SCOPES`, so a section living entirely in `scripts/` no longer fingerprints identically forever. Widening was chosen over fail-open-on-unknown-surface, which would have made every unrecognised path redispatch permanently to fix a case widening removes. Watch for: redispatch volume on `src` sections that also touch `scripts/` -- they now redispatch where they previously would not, which is the intended safe direction but is a real cost.
+- **Two further defects surfaced while fixing it, both caught by machinery rather than by reading.** The scope resolver was `SRC_PATHS if s == "src" else TODO_PATHS`, so any unknown scope silently fingerprinted the TODO corpus; unknown scopes now fail open. And scoping bare `.claude` made the gate's own state file perturb the fingerprint it compares against -- caught by the hook's own selftest, and invisible against the live repo only because that path is gitignored. Watch for: any future scope addition that includes a directory the hooks WRITE to.
+- **The impact cone's caller search is word-bounded.** `\b` added to the alternation; on the commit v13 named, `callers` 48 -> 23 and `cone_size` 96 -> 74, because a changed Python `main` had been matching `domain (` inside a C comment. Watch for: the opposite failure -- a caller search that matches nothing narrows review scope silently, so the refusal control asserts genuine calls still match.
+- **`decision-registry.py` reads the cache through `cache_schema.load_and_validate`** with `PROFILE_STAMP_XREFS`, failing closed on a stale contract. Watch for: zero decision records appearing in normal operation -- that now means the cache failed validation rather than that there was nothing to publish, and the two are worth telling apart.
+- **Poll your own artifact log, not the shared slot** -- doctrine in the sequencer wait discipline. Watch for: nothing mechanical enforces it; it competes with the convenience of a fixed path.
+
+- [ ] **RESIDUAL from the impact-cone fix: the cone extracts symbols from EVERY changed file, then searches only C.**
+      Filed rather than fixed, because the obvious patch is worse than the gap.
+      - After the `\b` fix, a changed Python function named `main` still matches every legitimate C `main(`, because symbol extraction is language-blind while the caller search is C-only (`impact-cone.py` greps `src/`, `include/`, `user/`). On the commit v13 named, `global_state_escalation` stayed `true` and `cone_size` stayed 74 for a 4-file host-side tooling diff.
+      - Adding `main` to `NOISE_SYMBOLS` was CONSIDERED AND REJECTED: it would blind the cone to a genuine C `main` change, trading a false positive for a false negative in the direction that silently narrows review scope.
+      - The principled fix is to extract symbols only from C-family files -- `diff-facts.py` already computes exactly that list (`src = [f for f in files if f.endswith((".c",".h",".asm",".S"))]`) and does not pass it down. Worth doing when the cone is next touched.
 
 ## Standing measurement obligations
 
