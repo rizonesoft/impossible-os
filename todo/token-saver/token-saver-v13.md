@@ -1,5 +1,7 @@
 # Token Saver v13 -- Cost Findings (opened 2026-08-08)
 
+**CLOSED 2026-08-10.** Successor: [`token-saver-v14.md`](token-saver-v14.md). Zero items filed here for the THIRD cycle running. v12's close-out settled why and it held again: every cost number this run produced arrived attached to a misfiring gate and filed next door with its mechanism, which is what the scope rule instructs.
+
 Cost and token findings from the run armed after the 2026-08-08 close-out of [v12](token-saver-v12.md). CAPTURE surface, not a work queue: it sits outside the sequencer's traversal, so nothing here is implemented by the run. It is the CURRENT capture file -- the sequencer files to the NEWEST `token-saver-vNN.md` in this directory, which is this one until an operator opens v14.
 
 **Why findings land here instead of being fixed.** Cost machinery is control plane (`.claude/hooks/**`, `scripts/overnight/**`) or receipt surface, both off-limits unattended. Record the finding in the same turn it is observed, then continue; a finding carried in-context to "report later" dies with the segment.

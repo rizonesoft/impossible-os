@@ -21,6 +21,35 @@ d = json.load(sys.stdin)
 tn = d.get('tool_name', '')
 ti = d.get('tool_input', {})
 
+# THE GATE BELONGS TO WHOEVER SHIPPED, NOT TO WHOEVER SHARES THE TREE.
+# This decides from `git show HEAD -- todo/` alone, so while an unattended run
+# holds the worktree its ship commit gated the ATTENDED operator too: the next
+# operator Bash call after the run's ship was refused with a demand to run
+# review-todo-section over work it had not done (observed twice, 2026-08-09).
+#
+# The discriminator already exists and is used for exactly this elsewhere --
+# `build_offload_reminder` was session-scoped on 2026-07-28 after an operator's
+# read-only grep was blocked by a gate meant for the run. OVERNIGHT_SEQUENCER_RUN
+# is set by the arm drop-in and never present in an operator shell.
+#
+# NARROW ON PURPOSE: the exemption needs a run to be ACTIVE *and* this session
+# not to be it. With no run active a section-stamping HEAD is this session's
+# responsibility and the gate fires as before; the run itself is never exempt.
+def _shipped_by_someone_else() -> bool:
+    if os.environ.get('OVERNIGHT_SEQUENCER_RUN') == '1':
+        return False                      # this IS the run: always gated
+    try:
+        from pathlib import Path as _P
+        root = _P(__file__).resolve().parents[2]
+        st = json.loads((root / '.claude/state/sequencer-run.json').read_text())
+        return bool(st.get('active'))     # a run is live and this is not it
+    except Exception:
+        return False                      # unreadable -> gate as before
+
+
+if _shipped_by_someone_else():
+    sys.exit(0)
+
 # Opt-out -- read from BOTH inline cmd env-prefix AND os.environ.
 _cmd_for_skip = ti.get('command', '') if tn == 'Bash' else ''
 if _se.read_skip_envs(_cmd_for_skip, keys=('SKIP_REVIEW_HOOK',)).get('SKIP_REVIEW_HOOK') == '1':

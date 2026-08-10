@@ -106,13 +106,45 @@ def is_review_pipeline_passthrough(cmd: str) -> bool:
     """
     if not isinstance(cmd, str):
         return False
-    cmd_stripped = _skip_leading_assignments(cmd.lstrip())
+    cmd_stripped = _skip_leading_groups(cmd.lstrip())
+    cmd_stripped = _skip_leading_assignments(cmd_stripped)
     if cmd_stripped is None:
         return False
     for prefix in REVIEW_PIPELINE_PREFIXES:
         if cmd_stripped.startswith(prefix):
             return True
     return False
+
+
+# GROUPING OPENERS step aside; LOOP HEADERS do not. A leading `(` or `{` only
+# says "the next thing is a group" -- the first PROGRAM the shell runs is still
+# the token after it, so the allowlist can be applied there unchanged.
+#
+# WHY (six items filed against this gate in v13, 2026-08-09/10). The matcher is
+# first-token-literal, so the sequencer skill's OWN prescribed ship shape --
+# `( git push origin main > /tmp/ship-push.log 2>&1; echo "rc=$?" >> ... ) &` --
+# was refused for starting with `(`. Doctrine and gate were each written
+# deliberately and neither knew about the other, so the run worked around it by
+# re-spelling the push git-first. A gate that its own doctrine cannot satisfy
+# teaches the workaround, which is what got filed.
+#
+# LOOP AND CONDITIONAL HEADERS ARE DELIBERATELY NOT SKIPPED, and this is the
+# security line: `for i in $(seq 1 58); do git status; done` has a command
+# SUBSTITUTION in its header, which executes before the body. Stepping to the
+# body would allowlist a call on the strength of a program that is not the one
+# that runs first. The sanctioned long wait already has allowed spellings --
+# `bash scripts/overnight/wait-for-codex-verdict.sh` or a `python3` heredoc --
+# and the wait discipline prefers one blocking call over a poll loop anyway.
+_GROUP_RE = re.compile(r"^[({]\s*")
+
+
+def _skip_leading_groups(cmd: str) -> str:
+    """Step over leading `(` / `{` grouping tokens. Repeatable: `( ( cmd`."""
+    prev = None
+    while prev != cmd:
+        prev = cmd
+        cmd = _GROUP_RE.sub("", cmd, count=1).lstrip()
+    return cmd
 
 
 # `NAME=` ... up to the unquoted whitespace that ends the assignment's VALUE.
