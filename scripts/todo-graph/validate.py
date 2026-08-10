@@ -1545,11 +1545,14 @@ def check_schema_reachability(nodes: list, snapshot: dict, repo_root: Path) -> l
 # the link was written.
 _ATX_RE = re.compile(r"^ {0,3}(#{1,6})(?:[ \t]+(.*?))?[ \t]*$")
 _ATX_CLOSE_RE = re.compile(r"[ \t]+#+[ \t]*$")
-_FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
-# A fence closer may carry ONLY spaces or tabs. `str.strip()` is Unicode-aware
-# and accepts NBSP / vertical tab / form feed, which closed a fence early and
-# then re-opened one over the rest of the file.
-_FENCE_TAIL_RE = re.compile(r"^[ \t]*$")
+# ONE definition, shared. These moved to `cache_schema` when section 35 needed
+# the same rules for its checklist-item index: a private second copy here is the
+# producer/validator fence drift section 36 is open against. The semantics are
+# unchanged -- a closer may carry ONLY spaces or tabs, because `str.strip()` is
+# Unicode-aware and accepts NBSP / vertical tab / form feed, which closed a
+# fence early and then re-opened one over the rest of the file.
+_FENCE_RE = cache_schema.FENCE_RE
+_FENCE_TAIL_RE = cache_schema.FENCE_TAIL_RE
 _HTML_BLOCK_COMMENT_RE = re.compile(r"^ {0,3}<!--")
 # Emphasis delimiters are NOT rendered text, but an INTRAWORD `_` is:
 # CommonMark forbids intraword `_` emphasis, so `boot_info` keeps its
@@ -1894,29 +1897,23 @@ def _scan_markdown(text: str):
             if "-->" in raw:
                 in_comment = False
             continue
-        if fence is not None:
-            # Inside a fence EVERYTHING is literal; only a valid closer ends
-            # it. CommonMark requires the same marker, a run AT LEAST as long
-            # as the opener, and only spaces or tabs after it. Closing on any
-            # three-run let a ``` inside a ````-fenced block end the block, so
-            # the code read as prose and the real closer re-opened a fence
-            # over the rest of the file; accepting Unicode whitespace via
-            # `strip()` did the same thing for a trailing NBSP.
-            m = _FENCE_RE.match(raw)
-            if m:
-                run, rest = m.group(1), m.group(2)
-                if (run[0] == fence[0] and len(run) >= fence[1]
-                        and _FENCE_TAIL_RE.match(rest)):
-                    fence = None
+        # ONE STATE MACHINE, shared. Inside a fence EVERYTHING is literal and
+        # only a valid closer ends it: CommonMark requires the same marker, a
+        # run AT LEAST as long as the opener, and only spaces or tabs after it.
+        # Closing on any three-run let a ``` inside a ````-fenced block end the
+        # block, so the code read as prose and the real closer re-opened a fence
+        # over the rest of the file; `strip()` did the same for a trailing NBSP.
+        # A backtick fence's info string may not itself contain a backtick,
+        # which is what keeps an inline span off the opener path.
+        #
+        # Those rules used to be spelled out HERE as well as in
+        # `cache_schema.fence_step`. Aliasing the two regexes was not enough --
+        # a second copy of the STATE MACHINE is the same drift risk as a second
+        # copy of the pattern (Codex consistency, section 35 round 2).
+        was_open = fence is not None
+        fence = cache_schema.fence_step(fence, raw)
+        if was_open or fence is not None:
             continue
-        m = _FENCE_RE.match(raw)
-        if m:
-            run, rest = m.group(1), m.group(2)
-            # A backtick fence's info string may not itself contain a
-            # backtick, which is what keeps an inline span off this path.
-            if not (run[0] == "`" and "`" in rest):
-                fence = (run[0], len(run))
-                continue
         if _HTML_BLOCK_COMMENT_RE.match(raw):
             # A line STARTING with `<!--` is an HTML block: the whole line is
             # hidden, including anything after the `-->`. `<!-- --># Ghost` is

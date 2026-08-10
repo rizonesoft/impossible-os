@@ -467,17 +467,103 @@ XREF_ADJACENT_TARGET_RE = re.compile(
 # canonical statuses would turn 60 resolvable references into missing ones.
 # The trailing `\s` is what keeps a one-character markdown link (`- [1](url)`)
 # out: a link puts `(` there, never whitespace.
-CHECKLIST_ITEM_RE = re.compile(r"^\s*[-*]\s*\[[ xX/~]\]\s")
+# The separator after the bullet is `\s+`, not `\s*`: `-[ ] text` is not a
+# Markdown list item at all, and accepting it let a reference resolve to a line
+# no renderer treats as an item (Codex adversarial, section 35 round 2).
+# Zero live instances either way -- requiring it changes no corpus line.
+#
+# UPPERCASE `[X]` IS ACCEPTED, and this reverses a narrowing made earlier in the
+# same review. The narrowing argued consistency with `build.py:865`, which
+# matches `\[x\]` only -- but the two functions answer DIFFERENT questions and
+# do not owe each other this. `extract_stamped_items` EXTRACTS completed items
+# to index code refs, so a tight contract there is correct; this helper
+# RECOGNISES whether a line is an item a reference may name, where the cost of
+# being strict is a false "missing item" on a valid Markdown task list and the
+# cost of being generous is nothing. Zero uppercase items exist today, so this
+# changes no count either way; it changes which way the helper fails when one
+# is written. `[~]` is included for the opposite reason -- it is LIVE in
+# `01-boot-platform` (TODO-08, TODO-14) meaning "N/A", 60 lines.
+CHECKLIST_ITEM_RE = re.compile(r"^\s*[-*]\s+\[[ xX/~]\]\s")
 
-# A fence opener OR closer. Indented because a fence nested inside a list item
-# is indented with it; the info string (```python) is deliberately not captured.
-_FENCE_RE = re.compile(r"^\s*(```|~~~)")
+# An inline code span. The lead cut is searched on a copy with these MASKED,
+# because a checklist item may DOCUMENT the reference syntax inside backticks:
+# `todo/01-boot-platform/TODO-01-boot-protocol-abi-handoff.md` lines 608, 641
+# and 678 each carry a literal `` `-> XREF: §17` `` in their own description,
+# and cutting there erased the rest of a real item's searchable text (Codex
+# re-adversarial, section 35, [medium]). Masking preserves LENGTH so the offset
+# found on the copy indexes the original -- the name itself is matched against
+# the original, backticks and all, since item names routinely contain them.
+_INLINE_CODE_RE = re.compile(r"`[^`]*`")
+
+# A line that STARTS an HTML block comment. Commented-out checklist text is not
+# a destination, and `validate.py:_scan_markdown` already skips these -- leaving
+# them in here would be the producer/validator split this module exists to end.
+# Zero such items exist in the corpus today (4 files contain a comment at all);
+# it is here so the two scanners agree, not because it changes a count.
+_HTML_COMMENT_OPEN_RE = re.compile(r"^ {0,3}<!--")
+# A COMPLETE inline comment, removed from a lead before matching. An item may
+# carry its own history inline -- `- [ ] Replacement <!-- was: Wire the
+# resolver -->` -- and leaving that text searchable let a reference to the OLD
+# name resolve uniquely to the replacement line and report a clean rewrite,
+# instead of reporting the deleted item as missing (Codex adversarial, section
+# 35 round 2). `_scan_markdown` already strips these, so leaving them here was
+# also a producer/validator disagreement. Non-greedy, so two comments on one
+# line do not merge and swallow the text between them.
+_HTML_INLINE_COMMENT_RE = re.compile(r"<!--.*?-->")
+
+# A fence opener OR closer, and the tail a CLOSER may carry. These live here
+# rather than beside either caller for the reason TODO-06 section 36 states
+# outright: two implementations of "am I inside a fence" is how the producer and
+# the validator drifted apart, and a third would be the same mistake again.
+# `validate.py` aliases these; a fence-aware `build.py` section walk (section 36)
+# is meant to take them too.
+#
+# THE PRECISION IS LOAD-BEARING, and a first cut of this helper lost all of it
+# with `^\s*(```|~~~)`. A run of AT LEAST three is required and the closer must
+# repeat the opener's character at no less than its length, or a ``` inside a
+# ````-fenced block ends the block -- the code then reads as prose and the real
+# closer re-opens a fence over the rest of the file. Leading space is bounded at
+# 3 because CommonMark makes a deeper indent an indented code block, not a
+# fence. The tail is `[ \t]*` rather than `str.strip()`, which is Unicode-aware
+# and would accept an NBSP, closing a fence early with the same consequence.
+FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
+FENCE_TAIL_RE = re.compile(r"^[ \t]*$")
+
+
+def fence_step(state, line: str):
+    """Advance fenced-code-block state by one line. `state` is None outside a
+    fence and `(char, length)` inside one; returns the new state.
+
+    A backtick fence's info string may not itself contain a backtick, which is
+    what keeps an inline code span off the opener path.
+    """
+    m = FENCE_RE.match(line)
+    if state is not None:
+        if m:
+            run, rest = m.group(1), m.group(2)
+            if (run[0] == state[0] and len(run) >= state[1]
+                    and FENCE_TAIL_RE.match(rest)):
+                return None
+        return state
+    if m:
+        run, rest = m.group(1), m.group(2)
+        if not (run[0] == "`" and "`" in rest):
+            return (run[0], len(run))
+    return state
 
 # Where a checklist item stops DESCRIBING itself and starts REFERRING elsewhere.
 # Both spellings of the arrow are live in the corpus -- `todo/02-kernel-core/
 # TODO-22-environment-variables.md:698` uses U+2192 -- and a marker matched in
 # only one spelling is a hole exactly where the reference machinery lives.
-_ITEM_LEAD_STOPS = ("-> XREF:", "→ XREF:", '(item: "')
+#
+# THE GRAMMAR, NOT A LITERAL. A first cut matched the exact strings `-> XREF:`
+# and `→ XREF:`, while every producer accepts `->\s*XREF:` -- so an item
+# written with two spaces or a tab after the arrow kept its whole reference
+# tail searchable, and a name quoted in that tail could bind as if it were the
+# item's own description (Codex adversarial, section 35, [high]). Zero live
+# instances today; a literal that merely happens to match the corpus is the
+# kind of agreement that stops holding the day someone types a second space.
+_ITEM_LEAD_STOP_RE = re.compile(r"(?:->|→)\s*XREF:|\(item:\s*\"")
 
 
 def checklist_item_leads(text: str) -> dict:
@@ -511,26 +597,47 @@ def checklist_item_leads(text: str) -> dict:
     to another reference -- and only the lead cut closes both.
     """
     leads: dict = {}
-    in_fence = False
-    fence_tok = None
+    fence = None
+    in_comment = False
     for lineno, line in enumerate(text.splitlines(), start=1):
-        fence = _FENCE_RE.match(line)
-        if fence:
-            tok = fence.group(1)
-            if not in_fence:
-                in_fence, fence_tok = True, tok
-            elif tok == fence_tok:
-                # Only the SAME token closes; a ``` inside a ~~~ block is
-                # content, which is how a fence demonstrating fences works.
-                in_fence, fence_tok = False, None
+        if in_comment:
+            # Trailing text after `-->` stays part of the block, matching
+            # `_scan_markdown`; an item cannot hide on the closing line either.
+            if "-->" in line:
+                in_comment = False
             continue
-        if in_fence or not CHECKLIST_ITEM_RE.match(line):
+        was_open = fence is not None
+        fence = fence_step(fence, line)
+        # A fence DELIMITER is never an item, and neither is anything between
+        # delimiters; checking `was_open or fence` covers the opener line too.
+        if was_open or fence is not None:
+            continue
+        if _HTML_COMMENT_OPEN_RE.match(line):
+            in_comment = "-->" not in line
+            continue
+        if not CHECKLIST_ITEM_RE.match(line):
             continue
         lead = line
-        for stop in _ITEM_LEAD_STOPS:
-            cut = lead.find(stop)
+        if "<!--" in lead:
+            # Complete spans first, then an UNCLOSED opener truncates the lead
+            # and latches the comment state -- a comment that starts on an item
+            # line still hides everything after it.
+            lead = _HTML_INLINE_COMMENT_RE.sub("", lead)
+            cut = lead.find("<!--")
             if cut != -1:
                 lead = lead[:cut]
+                in_comment = True
+        # The substring guard is worth its line: the regex costs ~1.9us per item
+        # line against ~0.46us for the old literal finds, and most of the
+        # corpus's ~20,500 item lines carry no reference at all, so testing two
+        # cheap substrings first keeps the grammar without paying for it on
+        # every line (Codex perf, section 35 round 2, measured +29.67ms).
+        if "XREF" in lead or "(item:" in lead:
+            probe = (_INLINE_CODE_RE.sub(lambda m: " " * (m.end() - m.start()), lead)
+                     if "`" in lead else lead)
+            stop = _ITEM_LEAD_STOP_RE.search(probe)
+            if stop:
+                lead = lead[:stop.start()]
         leads[lineno] = lead
     return leads
 

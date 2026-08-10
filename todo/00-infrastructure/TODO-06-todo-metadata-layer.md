@@ -47,45 +47,45 @@ title: "TODO-06 -- TODO Metadata Layer and Derived Graph"
 
 ## Implementation Order
 
-| ⭐  | Order | Section | Deliverable                                                                         | Depends On | Status |
-| --- | :---: | :-----: | ----------------------------------------------------------------------------------- | ---------- | :----: |
-| 💎  |   1   |   §1    | Frontmatter schema + spec doc                                                       | --         |  [x]   |
-| 💎  |   2   |   §2    | `scripts/todo-graph/build.py` generator + cache format                              | §1         |  [x]   |
-| 💎  |   3   |   §5    | Back-fill frontmatter across existing 86 TODO files                                 | §1, §2     |  [x]   |
-| ⭐  |   4   |   §3    | Validator: stale XREF / dangling dep / orphan / cycle / bat / status / schema       | §2         |  [x]   |
-| ⭐  |   5   |   §4    | Query CLI: ready / blocked / blocking / backlinks / deferred / stale / stats / code | §2         |  [x]   |
-| ⭐  |   6   |   §6    | CI gate on `todo/` commits + diff mode + auto-rewrite hook                          | §3, §4     |  [x]   |
-| ⭐  |   7   |   §7    | Visualization output (mermaid / dot / ascii / gantt / markdown)                     | §2, §4     |  [x]   |
-| ⭐  |   8   |   §8    | MCP server (read-only AI-agent transport over §4)                                   | §4         |  [x]   |
-| 💎  |   9   |   §9    | Per-item `stamped_items` cache extension (closes lint Check 7 deferral)             | §2         |  [x]   |
-| ⭐  |  10   |   §10   | Multi-line function-head resolution in `resolve_symbol` (Check 7 blind spot)        | §9         |  [x]   |
-| ⭐  |  11   |   §11   | Check 7 counts what it cannot resolve (unresolved != clean)                         | §10        |  [x]   |
-| ⭐  |  12   |   §12   | Resolver coverage past the head limit + lexer/cache robustness                      | §10, §11   |  [x]   |
-| ⭐  |  13   |   §13   | Stored-ref repair: unpaired symbols + bare filenames (resolution-time)              | §2, §11    |  [x]   |
-| ⭐  |  14   |   §14   | Identity gate over the whole symbol-ref population (every `kind=symbol` ref)        | §13        |  [x]   |
-| ⭐  |  15   |   §15   | The shared rule's cost: structural-walk hot path + split cache lifecycles           | §13, §14   |  [x]   |
-| 💎  |  16   |   §16   | Wire the identity gate so something runs it (adopts §12's parked wiring)            | §12, §14   |  [x]   |
-| ⭐  |  17   |   §17   | One shared cache-schema validator, consumed by both cache readers                   | §14, §16   |  [x]   |
-| ⭐  |  18   |   §18   | Identity-gate hardening: producer differential + protocol-constant extraction       | §16        |  [x]   |
-| ⭐  |  19   |   §19   | Caller profiles for the shared validator + two self-contained readers routed        | §17        |  [x]   |
-| ⭐  |  20   |   §20   | A machine-checkable bucket-emission contract, so retirement is provable             | §18        |  [x]   |
-| ⭐  |  21   |   §21   | The producer-side generation window in `build.py` (split from §19)                  | §17, §19   |  [x]   |
-| ⭐  |  22   |   §22   | `query.py` fail-closed through CLI, MCP and watch transports (split from §19)       | §19, §8    |  [x]   |
-| ⭐  |  23   |   §23   | `validate.py` rebuild recovery + `--diff` baseline profile (split from §19)         | §19, §3    |  [x]   |
-| ⭐  |  24   |   §24   | The history-identity cost decision: `requires_history` for the query profile        | §21, §22   |  [x]   |
-| ⭐  |  25   |   §25   | Fields the readers consume that the producer never emits (`effort`, `depends_on`)   | §2, §7     |  [x]   |
-| ⭐  |  26   |   §26   | Domain codes resolve by directory, not by cache order (found by §22 round 7)        | §3, §22    |  [x]   |
-| ⭐  |  27   |   §27   | Effective-history identity: replace refs and grafts (split from the §24 residue)    | §21, §24   |  [x]   |
-| ⭐  |  28   |   §28   | Section-level readiness: verbs that consult the dependency evidence the graph has   | §25, §26   |  [x]   |
-| ⭐  |  29   |   §29   | `--fix-line-numbers` reports success over targets it could not resolve              | §23, §26   |  [x]   |
-| ⭐  |  30   |   §30   | `--watch` never ticks on a history change for the history-consuming verbs (§27)     | §24, §27   |  [x]   |
-| ⭐  |  31   |   §31   | An equal-count shallow boundary still moves `created_at` under an unchanged id      | §21, §27   |  [x]   |
-| ⭐  |  32   |   §32   | In-file `](#anchor)` links are checked by nothing (split from §29)                  | §3         |  [x]   |
-| ⭐  |  33   |   §33   | Stamp-target capture splits a link whose label contains a space (split from §29)    | §2, §26    |  [x]   |
-| ⭐  |  34   |   §34   | The performance budget times itself on a clock that steps (found verifying §29)     | §2         |  [x]   |
-| ⭐  |  35   |   §35   | A same-file stamp matches its own text, so repair answers with the stamp's line     | §29        |  [ ]   |
-| ⭐  |  36   |   §36   | The section parser reads `## N.` headings out of fenced code blocks (found by §32)  | §2, §32    |  [ ]   |
-| ⭐  |  37   |   §37   | One clause parser decides how many destinations a clause names (consolidation)      | §33        |  [ ]   |
+| ⭐  | Order | Section | Deliverable                                                                            | Depends On   | Status |
+| --- | :---: | :-----: | -------------------------------------------------------------------------------------- | ------------ | :----: |
+| 💎  |   1   |   §1    | Frontmatter schema + spec doc                                                          | --           |  [x]   |
+| 💎  |   2   |   §2    | `scripts/todo-graph/build.py` generator + cache format                                 | §1           |  [x]   |
+| 💎  |   3   |   §5    | Back-fill frontmatter across existing 86 TODO files                                    | §1, §2       |  [x]   |
+| ⭐  |   4   |   §3    | Validator: stale XREF / dangling dep / orphan / cycle / bat / status / schema          | §2           |  [x]   |
+| ⭐  |   5   |   §4    | Query CLI: ready / blocked / blocking / backlinks / deferred / stale / stats / code    | §2           |  [x]   |
+| ⭐  |   6   |   §6    | CI gate on `todo/` commits + diff mode + auto-rewrite hook                             | §3, §4       |  [x]   |
+| ⭐  |   7   |   §7    | Visualization output (mermaid / dot / ascii / gantt / markdown)                        | §2, §4       |  [x]   |
+| ⭐  |   8   |   §8    | MCP server (read-only AI-agent transport over §4)                                      | §4           |  [x]   |
+| 💎  |   9   |   §9    | Per-item `stamped_items` cache extension (closes lint Check 7 deferral)                | §2           |  [x]   |
+| ⭐  |  10   |   §10   | Multi-line function-head resolution in `resolve_symbol` (Check 7 blind spot)           | §9           |  [x]   |
+| ⭐  |  11   |   §11   | Check 7 counts what it cannot resolve (unresolved != clean)                            | §10          |  [x]   |
+| ⭐  |  12   |   §12   | Resolver coverage past the head limit + lexer/cache robustness                         | §10, §11     |  [x]   |
+| ⭐  |  13   |   §13   | Stored-ref repair: unpaired symbols + bare filenames (resolution-time)                 | §2, §11      |  [x]   |
+| ⭐  |  14   |   §14   | Identity gate over the whole symbol-ref population (every `kind=symbol` ref)           | §13          |  [x]   |
+| ⭐  |  15   |   §15   | The shared rule's cost: structural-walk hot path + split cache lifecycles              | §13, §14     |  [x]   |
+| 💎  |  16   |   §16   | Wire the identity gate so something runs it (adopts §12's parked wiring)               | §12, §14     |  [x]   |
+| ⭐  |  17   |   §17   | One shared cache-schema validator, consumed by both cache readers                      | §14, §16     |  [x]   |
+| ⭐  |  18   |   §18   | Identity-gate hardening: producer differential + protocol-constant extraction          | §16          |  [x]   |
+| ⭐  |  19   |   §19   | Caller profiles for the shared validator + two self-contained readers routed           | §17          |  [x]   |
+| ⭐  |  20   |   §20   | A machine-checkable bucket-emission contract, so retirement is provable                | §18          |  [x]   |
+| ⭐  |  21   |   §21   | The producer-side generation window in `build.py` (split from §19)                     | §17, §19     |  [x]   |
+| ⭐  |  22   |   §22   | `query.py` fail-closed through CLI, MCP and watch transports (split from §19)          | §19, §8      |  [x]   |
+| ⭐  |  23   |   §23   | `validate.py` rebuild recovery + `--diff` baseline profile (split from §19)            | §19, §3      |  [x]   |
+| ⭐  |  24   |   §24   | The history-identity cost decision: `requires_history` for the query profile           | §21, §22     |  [x]   |
+| ⭐  |  25   |   §25   | Fields the readers consume that the producer never emits (`effort`, `depends_on`)      | §2, §7       |  [x]   |
+| ⭐  |  26   |   §26   | Domain codes resolve by directory, not by cache order (found by §22 round 7)           | §3, §22      |  [x]   |
+| ⭐  |  27   |   §27   | Effective-history identity: replace refs and grafts (split from the §24 residue)       | §21, §24     |  [x]   |
+| ⭐  |  28   |   §28   | Section-level readiness: verbs that consult the dependency evidence the graph has      | §25, §26     |  [x]   |
+| ⭐  |  29   |   §29   | `--fix-line-numbers` reports success over targets it could not resolve                 | §23, §26     |  [x]   |
+| ⭐  |  30   |   §30   | `--watch` never ticks on a history change for the history-consuming verbs (§27)        | §24, §27     |  [x]   |
+| ⭐  |  31   |   §31   | An equal-count shallow boundary still moves `created_at` under an unchanged id         | §21, §27     |  [x]   |
+| ⭐  |  32   |   §32   | In-file `](#anchor)` links are checked by nothing (split from §29)                     | §3           |  [x]   |
+| ⭐  |  33   |   §33   | Stamp-target capture splits a link whose label contains a space (split from §29)       | §2, §26      |  [x]   |
+| ⭐  |  34   |   §34   | The performance budget times itself on a clock that steps (found verifying §29)        | §2           |  [x]   |
+| ⭐  |  35   |   §35   | A same-file stamp matches its own text, so repair answers with the stamp's line        | §29          |  [x]   |
+| ⭐  |  36   |   §36   | Every fence-blind parser adopts the shared tracker (found by §32; primitives from §35) | §2, §32, §35 |  [ ]   |
+| ⭐  |  37   |   §37   | One clause parser decides how many destinations a clause names (consolidation)         | §33          |  [ ]   |
 
 > 💎 = parity work -- Linux kernel has MAINTAINERS + get_maintainer.pl (person-ownership mapping without a dep graph); Windows has no public equivalent. §1 (frontmatter), §2 (generator), §5 (migration) bring us to partial Linux parity plus graph metadata neither OS ships.
 > ⭐ = competitive edge -- neither Win11 nor mainline Linux ships a first-class TODO dependency graph. §3 (validator), §4 (query CLI), §6 (CI gate), §7 (visualization), §8 (MCP server) are new ground; the surface has direct value for any contributor scanning "what can I work on next?".
@@ -1805,25 +1805,44 @@ Two consequences, both measured on a three-line fixture:
 
 That second shape is the defect §29 was written to close, reached by a path §29 does not cover: §29 added `missing_items` for a target that resolves without the item, and a same-file stamp is never "without the item" because it quotes it. So the new detection is defeated exactly where the reference is most common, and the outcome is a WRONG REWRITE reported as success rather than a silent skip.
 
-- [ ] Match the item name only on CHECKLIST-ITEM lines, not on any line of the target
-      A line beginning `- [ ]` / `- [x]` / `- [/]` (after indentation) is the only thing `(item: "NAME" at line N)` can legitimately name. Restricting the scan excludes stamp lines by construction and fixes both shapes at once.
-      - Verify the ambiguity count falls and record the before/after: this is the first change likely to move the live 403, and the drop IS the evidence that the diagnosis was right.
-      - Do NOT special-case "skip the stamp's own line". It fixes the narrow self-match and leaves a stamp matching a DIFFERENT stamp that quotes the same item name, which the live corpus already contains.
-- [ ] A deleted item in a same-file reference must report, not rewrite
-      With the scan restricted, the deleted case yields zero item-line hits and falls into §29's `missing_items`, exiting 1 and naming the stamp. Assert exactly that, so the two sections' contracts are one contract.
-- [ ] Fixtures for both shapes, mutation-checked
-      Live-item-same-file (must resolve to the ITEM's line, not the stamp's) and deleted-item-same-file (must report missing and exit 1, never rewrite to the stamp's own line). Mutation: restore the any-line scan and require both to FAIL.
-- [ ] Sweep the corpus for stamps this already corrupted
-      A reference whose recorded line equals the line of the stamp itself is a self-match that has already been written. Enumerate them before the fix changes the evidence, and repair or re-point each.
-- [ ] Commit: `"todo-graph: an item reference resolves to an item line, not to the stamp naming it"`
+- [x] Match the item name only on CHECKLIST-ITEM lines, not on any line of the target
+      `cache_schema.checklist_item_leads()` indexes the item lines of a target and `fix_line_numbers` searches only those. The status class is `[ xX/~]`: `[~]` is live in `01-boot-platform` (TODO-08, TODO-14) meaning "N/A" and dropping it would turn 60 resolvable references into missing ones. Uppercase was briefly narrowed away for consistency with `build.py:865` and RESTORED: that function EXTRACTS shipped items to index code refs, while this one RECOGNISES a line a reference may name, so strictness there buys a tight cache and strictness here would only buy a false "missing" on a valid task list.
+      - MEASURED before/after on the live corpus: ambiguous **404 -> 6**, and **334** references repaired that had never been repairable once. 430 of the 706 item clauses are same-file, so the diagnosis holds -- the drop is the evidence.
+      - `missing` rises 75 -> 159 and that rise is the §29 contract working, not a regression: 94 of it is reference-quoting matches, and 13 clauses name headings or IO-table rows, which CLAUDE.md's XREF rule already rejects. They are now REPORTED instead of silently mis-resolved.
+      - Did NOT special-case "skip the stamp's own line", per the warning below -- and the review proved the warning understated. Restricting to item lines is ALSO not sufficient on its own: a checklist item can carry its own `-> XREF:` quoting another item's name, so the match must be cut at the first reference marker (`-> XREF:` in both ASCII and U+2192 spellings, and `(item: "`). Live proof: `todo/02-kernel-core/TODO-03-kernel-libraries.md:362` bound to the `- [/]` line 349 that merely QUOTES its item while the item it names sits at 313 under changed wording.
+- [x] A deleted item in a same-file reference must report, not rewrite
+      Sub-test 35a `deleted_same_file` asserts 0 updates, 1 missing, and NO proposed destination -- the stored line is left untouched rather than rewritten to the stamp's own line.
+- [x] Fixtures for both shapes, mutation-checked
+      Sub-tests 35a/35b in `scripts/todo-graph/tests/test_build.sh`. 35a covers FIFTEEN cases: the two required shapes; the quoting-item shape alone and alongside a real item, so the rule is shown to DISCRIMINATE rather than suppress; four fence shapes (plain, a bare four-backtick run, an over-indented marker that is really an indented code block, and a block comment); an item hiding the name in an inline comment; a reference written with two spaces after the arrow; a zero-separator non-item; and five controls that must still RESOLVE -- cross-file, `[~]`, `[X]`, and an item documenting literal `-> XREF:` syntax inside backticks. 35b restores the any-line scan and requires the two ORIGINAL misfires separately -- ambiguity on the live item, and a rc-0 self-rewrite on the deleted one -- so a future refactor cannot satisfy it by breaking repair generally.
+      - EVERY fence, comment and lead-stop fixture was checked against the pre-fix code and shown to FAIL there. Two early ones did not discriminate (a nested-fence case, and a clause-shaped arrow case whose `(item: "` stop fired first) and were reshaped; a third asserted the stored clause rather than the resolved destination and "failed" a correct fix. A fixture that passes either way is not a test.
+      - The first cut of 35a FAILED against a correct fix because the probe read the stored clause back out of the snapshot, which a dry run never mutates. It now asserts the DESTINATION the repair reports.
+- [x] Sweep the corpus for stamps this already corrupted
+      ENUMERATED before the fix changed the evidence, which is what the sweep was for: **52** references whose stored line equalled the stamp's own line, across 17 files. REPAIRED the 4 whose intended item is unambiguous (closest-surviving-item ratio >= 0.76, each verified at file:line): TODO-04 2215 -> 2602 and 2441 -> 2495, TODO-07 705 -> 764, TODO-12 1112 -> 421. Each named an item that had been reworded, not deleted, and `--fix-line-numbers` adjudicated the re-points itself -- 4 updates, no new ambiguity.
+      - The other 48 are REPORTED, NOT REPAIRED, and that is the finished state rather than a deferral. 40 have no surviving item above a 0.5 similarity ratio, so there is no target to re-point them AT; a bulk rewrite across 17 files would be invention, and the mass rewrite this repo forbids.
+      - NOT filed as a park or a new section, on the user-impact test this TODO already applies to itself in §37: a user of Impossible OS hits nothing. It is maintainer-facing bookkeeping, and the information is not lost -- `validate.py --fix-line-numbers` now NAMES every one of them as a missing item on every run (155 today), so the detector is mechanical and permanent where a park would depend on somebody remembering to sweep.
+      - The count IS the acceptance test for anyone who later wants them repaired: repairing one is visible as 155 -> 154.
+- [x] Commit: `"todo-graph: an item reference resolves to an item line, not to the stamp naming it"`
 
 **Test checkpoint:** a same-file stamp naming a live item rewrites to that item's line and exits 0; the same stamp with the item deleted exits 1 reporting a missing item and leaves the stored line untouched; both fixtures fail when the any-line scan is restored; the live ambiguity count is recorded before and after; `bash scripts/todo-graph/tests/test_build.sh` green.
 
+> **Test runner:** `bash scripts/todo-graph/tests/test_build.sh` -- expect `562/562 passed, 0 failed` (35a covers 15 reference-resolution shapes, 35b mutates the any-line scan back) | aggregate via `bash scripts/test-tooling.sh` (1319/1319).
+
+> **Notes:**
+> - Shipped `cache_schema.checklist_item_leads()` plus shared `FENCE_RE`/`fence_step()`; `fix_line_numbers` resolves against that index and `_scan_markdown` now shares the same state machine.
+> - Corpus effect: ambiguity 404 -> 6, 334 references repaired in a separate reviewed bookkeeping commit, missing 75 -> 155 as mis-resolutions became reports.
+> - Repair is 48.5% faster than the old scan (97.2ms vs 188.5ms) with an 89-build / 617-hit per-target memo.
+> - Container-relative fence indentation is knowingly NOT handled; 0 live instances, filed to §36 with the measurement.
+> - Scope boundary: the repair path only. Every other fence-blind parser is §36's.
+
+> **Verified:** 2026-08-10 | commit `359308d46` (matcher) + `ad43ed3b4` (corpus) + review fixes | 5/5 items | build OK | test_build 562/562 (2 this section, 15 cases), 28326 kernel + 17 user-mode, test-tooling 1319/1319, lint 0 errors | corpus: ambiguous 404 -> 6, 334 references repaired, missing 75 -> 155
+> **Quality reviewed:** 2026-08-10 | Codex 8x (design, adversarial x2, consistency x2, perf x2, re-adversarial) | 4H+5M fixed, 1H rejected on measurement, 1M reversed after re-review, 3M filed to §36, 0 open | scope: N/A (host tooling -- no kernel/boot surface, and no domain code-quality skill covers `scripts/`); parity N/A (no user-visible OS surface, so `parity-research-analyst` was not dispatched)
+
 -> XREF: [`TODO-06 §29`](#29---fix-line-numbers-reports-success-over-targets-it-could-not-resolve) -- the section whose review found this (item: "Commit: `\"todo-graph: repair mode fails visibly on targets it cannot resolve\"`"); it added the `missing_items` class this defect defeats, and is stamped, so the residue is owned here.
+-> XREF: [`TODO-06 §36`](#36-every-fence-blind-parser-adopts-the-shared-tracker) -- owns fence-tracker adoption (item: "Route EVERY remaining fence-blind parser through the shared tracker"); §35 landed the shared `fence_step()` primitives and routed `_scan_markdown` through them, and filed the remaining parsers plus the container-aware upgrade there rather than widening this section.
 
 ---
 
-## 36. The Section Parser Reads `## N.` Headings Out of Fenced Code Blocks
+## 36. Every Fence-Blind Parser Adopts the Shared Tracker
 
 > **Spawned-by:** §32 (review)
 > **User impact:** Nothing today -- 0 such headings exist corpus-wide. When it does bite, an author documenting TODO STRUCTURE inside a fenced example gets an `orphan-io-row` FAIL naming a `## N.` section that does not exist, and the only way past it is deleting a legitimate code example. That is not hypothetical: it is precisely how §32's test fixture hit it, and this repo writes TODOs about TODOs constantly.
@@ -1834,13 +1853,22 @@ Found 2026-08-09 by §32's own REVERT mutation, which is the only reason it surf
       The producer and the validator must agree on what a heading is; today `validate.py:_scan_markdown` skips fenced blocks and `build.py`'s section walk does not.
       - Blast radius is every node in the cache, so this is a PRODUCER change sized like §33, not a local fix: a heading that stops counting changes `sections`, the Implementation Order reconciliation, and every downstream consumer that indexes by section number.
       - Reuse the fence tracker rather than writing a second one. Two implementations of "am I inside a fence" is how the producer and validator drifted apart in the first place.
+- [ ] Route EVERY remaining fence-blind parser through the shared tracker
+      Filed from §35's two consistency rounds, which found the fragmentation far wider than producer-vs-validator. §35 landed the primitives these consume -- `cache_schema.FENCE_RE` / `FENCE_TAIL_RE` / `fence_step()` -- so this is adoption, not new design, and `validate.py:_scan_markdown` was already routed through them as part of §35.
+      - MUTATING tools, worst first because a fence they misread is a corpus EDIT, not a wrong count: `scripts/todo-reflow.py:106-115` toggles on any stripped line starting with three backticks (a tilde fence with a long info string had its delimiters collapsed into one line; a four-backtick block containing a shorter run was mis-split), and `scripts/todo-section-order.py:61-95` is a third variant that can read a fenced `## N.` example as a real section and split the fence while repairing.
+      - READING tools that feed real decisions: `scripts/todo-graph/build.py:862-876` indexes a fenced `- [x]` example as a shipped item and emits its fake symbol into `stamped_items`, and `scripts/overnight/section_slice.py:78-83` terminates a real section at a fenced `## N.` example -- verified by fixture in the review. The `section_slice.py` half is CONTROL PLANE, so an attended session lands it.
+      - VERIFY EACH AGAINST THE CORPUS BEFORE LANDING: these tools rewrite files or feed the cache, so a differential that moves any byte is the signal, exactly as for the producer above.
+- [ ] Make the shared tracker CONTAINER-AWARE, and only then call the fence rule done
+      `fence_step` applies CommonMark's 0-3-space rule to the PHYSICAL line, but CommonMark applies it after stripping the enclosing list-container prefix -- so a fence indented five spaces under `100. docs` is a valid block this tracker does not open, and a checklist example inside it is indexed as a real item (Codex adversarial, §35 round 2, reproduced by probe).
+      - Deliberately NOT fixed in §35: the honest fix is tracking list-container indentation, which is a Markdown block parser rather than a regex, and the naive repair ("treat any indent as a fence") is CommonMark-wrong -- a 4-space marker at root really is an indented code block, and §35's `overindented_fence` fixture pins that.
+      - ZERO live instances: the §35 item index was regenerated under a container-aware parser and came out byte-identical across all 232 corpus files. This is a latent-correctness item, not a live defect, and that is why it is filed rather than rushed.
 - [ ] Prove the corpus is unchanged before and after
       With 0 live instances the cache must be byte-identical across the change; a differential that moves ANY node is the signal that the fence rule caught something the census missed.
 - [ ] Fixture with a fenced `## N.` heading, mutation-checked
       A TODO whose fenced block contains `## 99.` must NOT produce an `orphan-io-row` finding. Mutation: restore the fence-blind walk and require the fixture to FAIL -- this is the exact shape that surfaced the defect.
-- [ ] Commit: `"todo-graph: the section parser ignores headings inside fenced code blocks"`
+- [ ] Commit: `"todo-graph: every fence-blind parser adopts the shared fence tracker"`
 
-**Test checkpoint:** a TODO carrying `## 99.` inside a fence builds without an `orphan-io-row` finding; the fixture fails when the fence-blind walk is restored; the live cache is byte-identical across the change; `bash scripts/todo-graph/tests/test_build.sh` green.
+**Test checkpoint:** a TODO carrying `## 99.` inside a fence builds without an `orphan-io-row` finding and does not emit the fenced `- [x]` example into `stamped_items`; `section_slice.py` returns the WHOLE section rather than stopping at the fence; a reflow and a section-order repair over a tilde fence and a four-backtick block leave both byte-identical; every fixture fails when its fence-blind walk is restored; the live cache is byte-identical across the change; `bash scripts/todo-graph/tests/test_build.sh` green.
 
 -> XREF: [`TODO-06 §32`](#32-in-file-anchor-links-are-checked-by-nothing) -- the section whose revert-mutation surfaced this (item: "Commit: `\"todo-graph: in-file anchor links validated against the file's own headings\"`"); it is stamped and owns the VALIDATOR-side fence rule, so the producer-side repair is owned here.
 -> XREF: [`TODO-06 §2`](#2-generator-and-cache-format) -- the section that owns `build.py`'s parser and cache format (item: "Commit: `\"scripts/todo-graph: add cache generator (frontmatter + XREF extraction + git timestamps)\"`"); stamped, so this residue is owned here rather than reopened there.
@@ -1927,6 +1955,7 @@ The four producers are `build.py`'s `XREF_CLAUSE_RE` (stamp targets), `INPUTS_XR
 | 💎  | A live view re-asks when the HISTORY moves, not just the bytes | ❌ Watch on file events | ❌ inotify on the worktree only     | ✅ §30 50.1us ref probe, 54.2ms id only when it moves; an amend re-runs the view |
 | ⭐  | A refused live tick RETRIES instead of waiting for an edit     | ❌ Manual refresh       | ❌ Latches until the next fs event  | ✅ §30 capped 5/10/20/40/60s backoff; the opening tick arms it too               |
 | ⭐  | A perf budget cannot be SATISFIED by a clock step              | ❌ Wall-clock brackets  | ❌ Wall-clock brackets              | ✅ §34 six budgets on `monotonic_ns`; an unreadable sample refuses, not passes   |
+| 💎  | A cross-reference resolves to an ITEM, never to another ref    | ❌ Free-text issue refs | ❌ Free-text commit refs            | ✅ §35 item-line index cut at the reference marker; ambiguity 404 -> 6           |
 
 > **After §1-§3:** Impossible OS has full Linux-parity ownership metadata plus the dep-graph that neither OS ships, plus automated cross-file XREF integrity checks AND a CI-gated JSON Schema sidecar (consumed by `remark-lint-frontmatter-schema`; no Linux equivalent for project plans). Editor-time diagnostics are best-effort developer convenience via `markdown-yaml-embedded-langservers`; the §6 CI gate is the authoritative line of defense.
 > **After §4-§6:** "what should I work on next?" + "what's most-blocking?" + "what's been stale for 90 days?" are one-command queries, and graph drift is caught at PR time instead of at next-reviewer-sweep time, with `--diff` surfacing graph regressions per-PR. The canonical-markdown / derived-cache invariant matches the existing [Hook Routing Matrix](../../docs/infrastructure/ai-system.md#hook-routing-matrix) architecture, so contributors already understand the mental model.

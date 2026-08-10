@@ -16859,8 +16859,60 @@ cases["quoting_item_plus_real"] = run(
 #    so the item is missing rather than resolved to the documentation.
 cases["fenced_only"] = run(
     "# A\n\n## 1. S\n\n```markdown\n- [ ] Wire the resolver\n```\n\n" + STAMP + "\n")
-# 6. CONTROL -- an ordinary CROSS-FILE live item must still repair, or the rule
-#    is just breaking the feature it was added to.
+# 5b. A BARE four-backtick fence. Both of these cases were checked against a
+#     loose `^\s*(```|~~~)` tracker to confirm they DISCRIMINATE -- a first pair
+#     of fence fixtures did not, and would have passed either way while their
+#     comment claimed to pin the CommonMark rules. Under the loose tracker this
+#     one yields a LIVE item at line 6 (the run is read as ``` with a stray
+#     backtick, so the opener is rejected); the shared rules open a 4-run fence
+#     and the example stays an example.
+cases["bare_long_fence"] = run(
+    "# A\n\n## 1. S\n\n````\n- [ ] Wire the resolver\n````\n\n" + STAMP + "\n")
+# 5c. A fence indented 4+ spaces is an indented CODE BLOCK, not a fence, so it
+#     opens nothing and the item after it stays a real item.
+cases["overindented_fence"] = run(
+    "# A\n\n## 1. S\n\n    ```\n\n- [ ] Wire the resolver\n\n" + STAMP + "\n")
+# 5d. Commented-out checklist text is not a destination. `_scan_markdown`
+#     already skips HTML blocks; this keeps the two scanners agreeing.
+cases["commented_out"] = run(
+    "# A\n\n## 1. S\n\n<!--\n- [ ] Wire the resolver\n-->\n\n" + STAMP + "\n")
+# 5e. THE LEAD STOP IS A GRAMMAR, NOT A LITERAL. Two spaces after the arrow --
+#     which every producer accepts -- and the referring text names the item in
+#     PROSE rather than in an `(item: ...)` clause. That combination is the only
+#     one that reaches the hole: the literal `(item: "` stop would have cut a
+#     clause-shaped tail no matter how the arrow was spaced, so a clause-shaped
+#     fixture here passes either way and proves nothing (checked). Against the
+#     literal `-> XREF:` stop this binds as a clean update to line 5.
+cases["wide_arrow_quoting_item"] = run(
+    "# A\n\n## 1. S\n\n"
+    "- [x] Other work ->  XREF: TODO-02-b.md §1 -- supersedes Wire the resolver\n\n"
+    + STAMP + "\n")
+# 5f. An item carrying its own history in an INLINE comment. The old name lives
+#     only inside `<!-- ... -->`, so a reference to it must report missing --
+#     not resolve to the replacement line and rewrite cleanly.
+cases["inline_comment_name"] = run(
+    "# A\n\n## 1. S\n\n"
+    "- [ ] Replacement work <!-- was: Wire the resolver -->\n\n" + STAMP + "\n")
+# 5g. A bullet with NO separator is not a Markdown list item, so nothing may
+#     resolve to it.
+cases["zero_separator"] = run(
+    "# A\n\n## 1. S\n\n-[ ] Wire the resolver\n\n" + STAMP + "\n")
+# 5h. CONTROL -- uppercase `[X]` RESOLVES. This helper answers "is this a line a
+#     reference may name", not "is this a shipped item", so being strict here
+#     costs a false missing on a valid Markdown task list and buys nothing.
+#     Pinned because the class was briefly narrowed to lowercase for
+#     consistency with `build.py`'s completed-item extractor, which answers a
+#     different question and does not constrain this one.
+cases["control_uppercase_x"] = run(
+    "# A\n\n## 1. S\n\n- [X] Wire the resolver\n\n" + STAMP + "\n")
+# 5i. CONTROL -- an item DOCUMENTING the reference syntax in inline code keeps
+#     its whole description searchable. Live shape: TODO-01-boot-protocol-abi-
+#     handoff.md:608 carries a literal `-> XREF: §17` inside backticks, and
+#     cutting there hid the rest of the item from every reference naming it.
+cases["literal_syntax_in_code_span"] = run(
+    "# A\n\n## 1. S\n\n"
+    "- [x] On ship: flip item 2 with cross-ref `-> XREF: §17`, then Wire the resolver\n\n"
+    + STAMP + "\n")
 cases["control_cross_file"] = run(
     "# A\n\n## 1. S\n\n" + XSTAMP + "\n",
     "# B\n\n## 1. T\n\n- [ ] Wire the resolver\n")
@@ -16883,6 +16935,21 @@ ok = ok and d['quoting_item_only'] == {'updates': 0, 'ambiguous': 0, 'unresolvab
 # discriminates rather than suppresses: the REAL item (5), not the quoting one (7)
 ok = ok and d['quoting_item_plus_real'] == {'updates': 1, 'ambiguous': 0, 'unresolvable': 0, 'missing': 0, 'resolved': 5}
 ok = ok and d['fenced_only'] == {'updates': 0, 'ambiguous': 0, 'unresolvable': 0, 'missing': 1, 'resolved': None}
+# a bare four-backtick fence opens: the item inside stays an example
+# (NO BACKTICKS IN THIS BLOCK -- it is a double-quoted python3 -c string, so a
+# backtick opens command substitution. Two comments here once carried an odd
+# count each and passed only by cancelling each other out.)
+ok = ok and d['bare_long_fence'] == {'updates': 0, 'ambiguous': 0, 'unresolvable': 0, 'missing': 1, 'resolved': None}
+# an over-indented fence marker is an indented code block, so the item after it is REAL (line 7)
+ok = ok and d['overindented_fence'] == {'updates': 1, 'ambiguous': 0, 'unresolvable': 0, 'missing': 0, 'resolved': 7}
+ok = ok and d['commented_out'] == {'updates': 0, 'ambiguous': 0, 'unresolvable': 0, 'missing': 1, 'resolved': None}
+# two spaces after the arrow: a literal stop would bind this as a clean update to line 5
+ok = ok and d['wide_arrow_quoting_item'] == {'updates': 0, 'ambiguous': 0, 'unresolvable': 0, 'missing': 1, 'resolved': None}
+ok = ok and d['inline_comment_name'] == {'updates': 0, 'ambiguous': 0, 'unresolvable': 0, 'missing': 1, 'resolved': None}
+ok = ok and d['zero_separator'] == {'updates': 0, 'ambiguous': 0, 'unresolvable': 0, 'missing': 1, 'resolved': None}
+ok = ok and d['control_uppercase_x'] == {'updates': 1, 'ambiguous': 0, 'unresolvable': 0, 'missing': 0, 'resolved': 5}
+# the name sits AFTER a literal reference-syntax code span and must stay findable
+ok = ok and d['literal_syntax_in_code_span'] == {'updates': 1, 'ambiguous': 0, 'unresolvable': 0, 'missing': 0, 'resolved': 5}
 ok = ok and d['control_cross_file'] == {'updates': 1, 'ambiguous': 0, 'unresolvable': 0, 'missing': 0, 'resolved': 5}
 ok = ok and d['control_tilde'] == {'updates': 1, 'ambiguous': 0, 'unresolvable': 0, 'missing': 0, 'resolved': 5}
 sys.exit(0 if ok else 1)"; then

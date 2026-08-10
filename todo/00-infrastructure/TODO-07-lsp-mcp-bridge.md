@@ -702,7 +702,7 @@ Current repo is ~215k core LOC (~189k kernel + ~24k tooling per [COUNT.md](../..
 
 > **Verified:** 2026-08-04 | commit `ce4a798c` | 4/4 items | build OK | 101/101 test_bridge.sh, 1282/1282 test-tooling.sh, 28326 kernel + 17 user-mode tests, lint 0 errors
 > **Accepted:** [H] Concurrent `_retire_spawn` can close a pidfd the force sweep is holding (reason: single-owner descriptor handoff is a design change, not a patch); SHIPPED in §22 -> XREF: 00-infrastructure/TODO-07 §22 (item: "Closed the pidfd retirement race" at line 759)
-> **Accepted:** [H] Force sweep walks `/proc` once per recorded leader instead of sharing one enumeration (reason: needs a shared snapshot driving all three passes) -> XREF: 00-infrastructure/TODO-07 §21 (item: "Share ONE procfs enumeration across the force sweep" at line 705)
+> **Accepted:** [H] Force sweep walks `/proc` once per recorded leader instead of sharing one enumeration (reason: needs a shared snapshot driving all three passes) -> XREF: 00-infrastructure/TODO-07 §21 (item: "Shared ONE procfs enumeration across the force sweep" at line 764)
 > **Accepted:** [M] 9a silently skips a truncated ledger row and a row with no start ticks (reason: reader hardening belongs with the harness coverage work); SHIPPED in §22 -> XREF: 00-infrastructure/TODO-07 §22 (item: "Hardened the 9a ledger reader" at line 769)
 > **Quality reviewed:** 2026-08-04 | Codex 26x (design, adversarial x23, consistency, perf) | 2H+2M fixed, 3 open | scope: N/A (host tooling; no kernel/boot domain skill applies)
 > **Notes:**
