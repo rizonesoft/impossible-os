@@ -92,7 +92,7 @@ Write I/O port 0x80 POST codes from the bootloader so hardware POST-code reader 
 > - Integration: QEMU ignores port 0x80 writes silently (no fault); on bare metal an 8-bit POST card shows the high byte `0xB0` (bootloader range) -- per-milestone discrimination is on serial only (low-byte card emission is deferred).
 > - Scope boundary: bootloader-stage codes only; kernel-stage POST display is §2/§3.
 > **Verified:** 2026-04-12 -- Milestone table reconciled to `post_code16`; Codex: disarm watchdog on `init_gop` error return before firmware UI. Accepted: none.
-> **Deferred:** [M] 8-bit POST card shows only the high byte `0xB0`, no per-milestone discrimination (serial is per-milestone) -> XREF: 01-boot-platform/TODO-14 §1 (item: "POST-card milestone discrimination (deferred)" at line 82)
+> **Deferred:** [M] 8-bit POST card shows only the high byte `0xB0`, no per-milestone discrimination (serial is per-milestone) -> XREF: 01-boot-platform/TODO-14 §1 (item: "POST-card milestone discrimination (deferred)" at line 86)
 > **Quality reviewed:** 2026-06-17 | Codex 3x (adversarial, consistency, perf) | 1M deferred (card byte encoding), doc-overstatement fixed | scope: boot-code-quality (re-adversarial skipped -- doc-accuracy fix only, finding deferred not coded)
 
 ---
@@ -120,7 +120,7 @@ High-level named-stage wrapper over the existing `boot_progress()` that adds a 3
 > - Integration: serial `[+NNNms] STAGE: msg`; `boot_timeline_dump_json()` runs at desktop-ready (`boot_desktop.c`); `boot_stage_history_get()` feeds §5 panic forensics.
 > - Scope boundary: `boot_progress_poll()` has no in-tree caller yet (wire with splash/timer when the UI needs a refresh without new history rows).
 > **Verified:** 2026-04-12 -- Named-stage API + `boot_timeline_dump_json` wiring; Codex: safe TSC-to-ms when `freq < 1000`, close timeline parent dir after `create`. Accepted: none.
-> **Deferred:** [H] named-stage API (`boot_stage_report`/`boot_progress_poll`/`boot_get_elapsed_ms`) is unwired (zero callers) + latent issues (stale `s_meta` postcodes, unsaturated tsc-delta, no completeness guard, percent/splash not forwarded) -> XREF: 01-boot-platform/TODO-14 §2 (item: "Wire + harden the named-stage API (deferred)" at line 110)
+> **Deferred:** [H] named-stage API (`boot_stage_report`/`boot_progress_poll`/`boot_get_elapsed_ms`) is unwired (zero callers) + latent issues (stale `s_meta` postcodes, unsaturated tsc-delta, no completeness guard, percent/splash not forwarded) -> XREF: 01-boot-platform/TODO-14 §2 (item: "Wire + harden the named-stage API (deferred)" at line 114)
 > **Quality reviewed:** 2026-06-17 | Codex 3x (adversarial, consistency, perf) | 2H+3M deferred (unwired API + latent fixes) | scope: kernel-code-quality (re-adversarial skipped -- findings deferred not coded; boot_timeline_dump_json live path unaffected in practice)
 
 ---
@@ -143,7 +143,7 @@ Render a 4-digit hex POST code in the top-right framebuffer corner visible on ev
 > - Integration: called from `boot_stage_report()` after the serial write; port 0x80 high byte tracks the 16-bit POST; cleared at `BOOT_STAGE_DESKTOP_READY` over the `POST16_*` geometry.
 > - Scope boundary: skips pixel writes when the framebuffer is unavailable or postcode=0 after config parse.
 > **Verified:** 2026-04-12 -- Desktop-ready clear uses `POST16_*` geometry; same TSC-ms guard as §2. Accepted: none.
-> **Accepted:** [M] explicit clear-on-DESKTOP_READY only runs via the unwired `boot_stage_report`; the live path relies on desktop overdraw -> XREF: 01-boot-platform/TODO-14 §2 (item: "Wire + harden the named-stage API (deferred)" at line 110)
+> **Accepted:** [M] explicit clear-on-DESKTOP_READY only runs via the unwired `boot_stage_report`; the live path relies on desktop overdraw -> XREF: 01-boot-platform/TODO-14 §2 (item: "Wire + harden the named-stage API (deferred)" at line 114)
 > **Quality reviewed:** 2026-06-17 | Codex 3x (adversarial, consistency, perf) | 0 fixed, 1M accepted-XREF (clear-wiring owned by §2); doc-accuracy fixed | scope: kernel-code-quality (re-adversarial skipped -- doc fix, finding accepted to §2)
 
 ---
@@ -197,8 +197,8 @@ Capture a `panic_evidence` struct at fault time into a fixed physical page that 
 > - Canonical doc: [`docs/boot/black-box-artifacts.md`](../../docs/boot/black-box-artifacts.md) (`X:\Diag\*` + `X:\Crash\` artifact index).
 > - Scope boundary: §5 is the warm-reboot evidence page; full minidump (MEMORY.DMP) generation is `02-kernel-core/TODO-27`; the `X:\Crash\` path is owned by TODO-24 §7.
 > **Verified:** 2026-06-14 | ship `a59b8f64` (+ this review commit) | 7/9 items | build OK | smoke PASS + tests 2633
-> **Accepted:** [H] `0x80000` is only kernel-reserved, not bootloader/reboot-reserved (firmware/BOOTX64 can clobber it pre-restore on bare metal) -> XREF: 01-boot-platform/TODO-14 §5 (item: "Bare-metal reboot-reservation of `0x80000`" at line 177)
-> **Accepted:** [H] IXFS `vfs_flush` (C:\ fallback) does not `blkdev_sync`, so consume-after-flush can lose the retry copy (reason: FS-layer durability contract) -> XREF: 01-boot-platform/TODO-14 §5 (item: "last-panic.txt true durability" at line 178)
+> **Accepted:** [H] `0x80000` is only kernel-reserved, not bootloader/reboot-reserved (firmware/BOOTX64 can clobber it pre-restore on bare metal) -> XREF: 01-boot-platform/TODO-14 §5 (item: "Bare-metal reboot-reservation of `0x80000`" at line 361)
+> **Accepted:** [H] IXFS `vfs_flush` (C:\ fallback) does not `blkdev_sync`, so consume-after-flush can lose the retry copy (reason: FS-layer durability contract) -> XREF: 01-boot-platform/TODO-14 §5 (item: "last-panic.txt true durability" at line 362)
 > **Quality reviewed:** 2026-06-14 | Codex 14x (design + test-coverage + adversarial + re-adversarial + adversarial-impl + consistency + perf) | 1C+6H+8M+1L fixed, 2H accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -347,8 +347,8 @@ Win11 `ntbtlog.txt` records every driver/service that loaded or failed during bo
 > - Canonical doc: [`docs/boot/black-box-artifacts.md`](../../docs/boot/black-box-artifacts.md) (`X:\Diag\*` artifact index).
 > - Scope boundary: §11 ships infra + storage/network wiring; granular per-driver coverage + probe-result aggregation + NVMe per-controller status are the open `[ ]` items in this section.
 > **Verified:** 2026-06-14 | ship `657637ec` (+ this review commit) | 6/9 items | build OK | smoke PASS + tests 2605/2605
-> **Accepted:** [H] sequential storage publishes LOADED on probe failure + async marks AHCI/VirtIO absence DEGRADED (reason: needs driver absent-vs-failed split) -> XREF: 01-boot-platform/TODO-14 §11 (item: "Probe-result aggregation (storage + network)" at line 278)
-> **Accepted:** [M] NVMe partial multi-controller failure reads BOOT_OK (reason: nvme_init exposes only the success count) -> XREF: 01-boot-platform/TODO-14 §11 (item: "NVMe per-controller status" at line 279)
+> **Accepted:** [H] sequential storage publishes LOADED on probe failure + async marks AHCI/VirtIO absence DEGRADED (reason: needs driver absent-vs-failed split) -> XREF: 01-boot-platform/TODO-14 §11 (item: "Probe-result aggregation (storage + network)" at line 368)
+> **Accepted:** [M] NVMe partial multi-controller failure reads BOOT_OK (reason: nvme_init exposes only the success count) -> XREF: 01-boot-platform/TODO-14 §11 (item: "NVMe per-controller status" at line 369)
 > **Quality reviewed:** 2026-06-14 | Codex 8x (design + test-coverage + adversarial + re-adversarial + consistency + perf) | 3H+8M+2L fixed, 1H+1M accepted-XREF | scope: kernel-code-quality
 
 ---

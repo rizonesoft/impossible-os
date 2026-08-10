@@ -101,8 +101,8 @@ New header and source file providing the result type, readiness oracle, and prog
 > - Scope: §1 owns the result type / oracle / macros; `boot_async_group` lives in `boot_init.c` but is owned by §13 (carries this review's timeout-quiescence + DEFERRED-rank findings).
 >
 > **Verified:** 2026-06-20 | commit `0d72fce6` | 11/11 items | build OK
-> **Accepted:** [H] async-timeout AP not quiesced before sequential fallback (driver-global corruption, `async_init=1`) -> XREF: 02-kernel-core/TODO-01 §13 (item: "Quiesce the AP on async timeout before sequential fallback" at line 541) (still deferred -- `async_init=1`-only, see §13 Deferred stamp)
-> **Accepted:** [M] `boot_async_group` numeric worst-pick lets BOOT_DEFERRED outrank BOOT_FATAL -> XREF: 02-kernel-core/TODO-01 §13 (item: "Explicit `boot_result_t` severity rank in `boot_async_group`" at line 542) (RESOLVED 2026-06-20 by §13 commit 308eb661: `boot_result_severity()` FATAL>DEGRADED>DEFERRED>OK applied at all 3 worst-pick sites)
+> **Accepted:** [H] async-timeout AP not quiesced before sequential fallback (driver-global corruption, `async_init=1`) -> XREF: 02-kernel-core/TODO-01 §13 (item: "Quiesce the AP on async timeout before sequential fallback" at line 543) (still deferred -- `async_init=1`-only, see §13 Deferred stamp)
+> **Accepted:** [M] `boot_async_group` numeric worst-pick lets BOOT_DEFERRED outrank BOOT_FATAL -> XREF: 02-kernel-core/TODO-01 §13 (item: "Explicit `boot_result_t` severity rank in `boot_async_group`" at line 544) (RESOLVED 2026-06-20 by §13 commit 308eb661: `boot_result_severity()` FATAL>DEGRADED>DEFERRED>OK applied at all 3 worst-pick sites)
 > **Quality reviewed:** 2026-06-20 | Codex 3x (adversarial, consistency, perf) | 1M fixed, 1H+1M accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -251,10 +251,10 @@ Storage, VFS, filesystem mount, registry, network, and AP bringup. BOOT_FATAL on
 >
 > **Verified:** 2026-06-20 | commit `e51737a0` | 20/22 items | build OK | smoke PASS (KVM 2.69s)
 > **Accepted:** [M] VirtIO-blk registry exposure/tuning runs before `registry_init` (silent HKLM loss) -> XREF: 04-drivers-hardware/TODO-13 §4 (item: "Gate VirtIO-blk registry exposure + tuning reads" at line 68)
-> **Accepted:** [M] BlackBox cleanup `path[64]` truncation can unlink wrong file -> XREF: 01-boot-platform/TODO-24 §10 (item: "Harden cleanup path builders" at line 315)
+> **Accepted:** [M] BlackBox cleanup `path[64]` truncation can unlink wrong file -> XREF: 01-boot-platform/TODO-24 §10 (item: "Harden cleanup path builders" at line 318)
 > **Accepted:** [H] BlackBox low-space cleanup unbounded -> WDAT watchdog starvation -> XREF: 01-boot-platform/TODO-24 §10 (item: "Budget + batch the unbounded Logs\ delete loop" at line 319)
 > **Accepted:** [H] FAT32 `vol->lock` (`cli`) held across disk I/O in unlink/rename/write -> XREF: 05-storage-filesystems/TODO-04 §17 (item: "Restructure FAT32 unlink/rename/write/fsck" at line 432)
-> **Deferred:** [H] Phase 2 marks SUBSYS_VFS/REGISTRY ready after unchecked `void` inits; rootless boot reaches desktop (A/B rollback mitigates) -> XREF: 02-kernel-core/TODO-01 §4 (item: "Enforce typed fatal/degraded decisions from Phase 2 init return values" at line 233)
+> **Deferred:** [H] Phase 2 marks SUBSYS_VFS/REGISTRY ready after unchecked `void` inits; rootless boot reaches desktop (A/B rollback mitigates) -> XREF: 02-kernel-core/TODO-01 §4 (item: "Enforce typed fatal/degraded decisions from Phase 2 init return values" at line 235)
 > **Quality reviewed:** 2026-06-20 | Codex 3x (adversarial, consistency, perf) | 2M fixed, 2H+2M accepted-XREF, 1H deferred | scope: kernel-code-quality
 
 ---
@@ -306,7 +306,7 @@ Scheduler, IPC, exec loader, and desktop. The kernel is fully operational before
 > - Two confirmed false-completeness gaps remain (Codex §6, 2 reviewers), deferred to a fresh-context fix: lapic<-acpi gate not enforced; `klog(LOG_FATAL)` halts without the dump.
 > - Scope: §6 owns cross-phase dependency enforcement; per-subsystem typed-init propagation lives in §2/§4/§5.
 >
-> **Deferred:** [H] dependency-gate false-completeness (lapic<-acpi gate unenforced + LOG_FATAL halt skips dump) -> XREF: 02-kernel-core/TODO-01 §6 (item: "Enforce lapic<-acpi gate" at line 263)
+> **Deferred:** [H] dependency-gate false-completeness (lapic<-acpi gate unenforced + LOG_FATAL halt skips dump) -> XREF: 02-kernel-core/TODO-01 §6 (item: "Enforce lapic<-acpi gate" at line 301)
 
 ---
 
@@ -339,7 +339,7 @@ Scheduler, IPC, exec loader, and desktop. The kernel is fully operational before
 > - §7 review (Codex adversarial + consistency + perf) found the matrix bypassed by several fatal paths, a panic-path lock-reentry hazard, and blocking firmware/VFS I/O in the panic path; deferred to a dedicated panic-safe-fatal fix pass (6 items above).
 > - Scope: §7 owns the failure-policy contract; per-phase recovery-screen wiring is §9, the readiness dump is §6.
 >
-> **Deferred:** [H] failure-policy false-completeness: pre-FB fb/vpd writes, panic-path serial/klog lock-reentry, blocking firmware SetVariable + VFS crash-dump in panic path, LOG_FATAL/ISR/raw-hlt bypass matrix+dump, PCID-fatal downgrade, boot.conf restart unimplemented (Codex §7 adversarial+consistency+perf) -> XREF: 02-kernel-core/TODO-01 §7 (item: "Centralize fatal halts behind one panic-safe primitive" at line 292)
+> **Deferred:** [H] failure-policy false-completeness: pre-FB fb/vpd writes, panic-path serial/klog lock-reentry, blocking firmware SetVariable + VFS crash-dump in panic path, LOG_FATAL/ISR/raw-hlt bypass matrix+dump, PCID-fatal downgrade, boot.conf restart unimplemented (Codex §7 adversarial+consistency+perf) -> XREF: 02-kernel-core/TODO-01 §7 (item: "Centralize fatal halts behind one panic-safe primitive" at line 330)
 
 ---
 
@@ -375,7 +375,7 @@ These are bugs and structural violations that must be fixed as part of this TODO
 > - Scope: §8 owns the structural cleanup; the `void`->`boot_result_t` typed-init signatures are distributed to per-subsystem owner TODOs.
 >
 > **Verified:** 2026-06-20 | commit `dc3054a7` | 10/11 items | build OK | smoke PASS (KVM 2.73s)
-> **Deferred:** [M] init functions still `void` (typed `boot_result_t` propagation distributed to 03-memory/TODO-01 §1 + 05-storage/TODO-06 §2 + TODO-14 §8) -> XREF: 02-kernel-core/TODO-01 §8 (item: "Update init functions to return `boot_result_t`" at line 357)
+> **Deferred:** [M] init functions still `void` (typed `boot_result_t` propagation distributed to 03-memory/TODO-01 §1 + 05-storage/TODO-06 §2 + TODO-14 §8) -> XREF: 02-kernel-core/TODO-01 §8 (item: "Update init functions to return `boot_result_t`" at line 359)
 > **Quality reviewed:** 2026-06-20 | Codex 3x (adversarial, consistency, perf) | 1H+2M fixed | scope: kernel-code-quality
 
 ---
@@ -409,8 +409,8 @@ In-kernel graphical recovery UI shown when a Phase 2 subsystem fails non-fatally
 > - Scope: §9 owns the recovery UI; firing-on-real-failure needs §4's `void`->`boot_result_t` propagation.
 >
 > **Verified:** 2026-06-20 | commit `bc60dac7` | 8/10 items | build OK | smoke PASS (KVM 2.72s)
-> **Deferred:** [M] interactive `[C]` degraded-boot serial console not implemented (halts with a banner today) -> XREF: 02-kernel-core/TODO-01 §9 (item: "Implement the interactive **[C]** degraded-boot serial console" at line 390)
-> **Deferred:** [H] recovery never fires on a real Phase 2 mount/registry failure (void inits set SUBSYS_VFS/REGISTRY ready unconditionally) -> XREF: 02-kernel-core/TODO-01 §9 (item: "Observe actual Phase 2 init FAILURE" at line 392)
+> **Deferred:** [M] interactive `[C]` degraded-boot serial console not implemented (halts with a banner today) -> XREF: 02-kernel-core/TODO-01 §9 (item: "Implement the interactive **[C]** degraded-boot serial console" at line 392)
+> **Deferred:** [H] recovery never fires on a real Phase 2 mount/registry failure (void inits set SUBSYS_VFS/REGISTRY ready unconditionally) -> XREF: 02-kernel-core/TODO-01 §9 (item: "Observe actual Phase 2 init FAILURE" at line 394)
 > **Quality reviewed:** 2026-06-20 | Codex 9x (adversarial x2, consistency x2, perf x2, re-adversarial x3) | 4H+4M fixed | scope: kernel-code-quality
 
 ---
@@ -443,7 +443,7 @@ Write the current POST code to a UEFI NVRAM variable (`ImpossiblePOST`) at every
 > - Scope: §10 owns POST persistence; panic-path NVRAM safety is the Failure Policy section's panic-safe primitive.
 >
 > **Verified:** 2026-06-20 | commit `b54714ab` | 10/10 items | build OK | smoke PASS (KVM 2.92s)
-> **Accepted:** [H] panic-path `boot_post_nvram_write16` takes the blocking RT mutex after `cli` (can hang the panic owner) -> XREF: 02-kernel-core/TODO-01 §7 (item: "Panic fatal path must not call blocking firmware `SetVariable`" at line 332)
+> **Accepted:** [H] panic-path `boot_post_nvram_write16` takes the blocking RT mutex after `cli` (can hang the panic owner) -> XREF: 02-kernel-core/TODO-01 §7 (item: "Panic fatal path must not call blocking firmware `SetVariable`" at line 334)
 > **Quality reviewed:** 2026-06-20 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 5M fixed, 1H accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -478,7 +478,7 @@ Move non-critical subsystem init out of the blocking boot path so the desktop ap
 > - Scope: §11 owns the deferred-init mechanism; the placement-vs-first-frame latency is the filed enhancement.
 >
 > **Verified:** 2026-06-20 | commit `a29bf210` | 10/11 items | build OK | smoke PASS (KVM 2.67s)
-> **Deferred:** [H] deferred init runs inline before the first compositor frame, so `mouse_init`'s 300ms-2s PS/2 BAT delays it -> XREF: 02-kernel-core/TODO-01 §11 (item: "Run `boot_run_deferred()` from a compositor one-shot after the first frame" at line 464)
+> **Deferred:** [H] deferred init runs inline before the first compositor frame, so `mouse_init`'s 300ms-2s PS/2 BAT delays it -> XREF: 02-kernel-core/TODO-01 §11 (item: "Run `boot_run_deferred()` from a compositor one-shot after the first frame" at line 466)
 > **Quality reviewed:** 2026-06-20 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 2M fixed, 1H deferred | scope: kernel-code-quality
 
 ---
@@ -517,8 +517,8 @@ Compare `boot_timing` data across reboots to detect init regressions. Win11 uses
 > - Scope: §12 owns the kernel-side boot-perf NVRAM machinery; the user-mode query API + wear budget are filed follow-ups.
 >
 > **Verified:** 2026-06-20 | commit `76b076f6` | 8/10 items | build OK | smoke PASS (KVM 2.67s)
-> **Deferred:** [M] `ImpossibleBootPerf` is an unconditional 1 write/normal-boot with no wear budget -> XREF: 02-kernel-core/TODO-01 §12 (item: "Wear-budget the unconditional `ImpossibleBootPerf` write" at line 498)
-> **Deferred:** [L] `bootperf` shell command blocked on a user-mode boot-perf query API -> XREF: 02-kernel-core/TODO-01 §12 (item: "Add `bootperf` shell command" at line 497)
+> **Deferred:** [M] `ImpossibleBootPerf` is an unconditional 1 write/normal-boot with no wear budget -> XREF: 02-kernel-core/TODO-01 §12 (item: "Wear-budget the unconditional `ImpossibleBootPerf` write" at line 500)
+> **Deferred:** [L] `bootperf` shell command blocked on a user-mode boot-perf query API -> XREF: 02-kernel-core/TODO-01 §12 (item: "Add `bootperf` shell command" at line 499)
 > **Quality reviewed:** 2026-06-20 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 3M fixed, 1M+1L deferred | scope: kernel-code-quality
 
 ---
@@ -549,9 +549,9 @@ Allow independent subsystems within a phase to initialize concurrently on differ
 **Test checkpoint:** Boot with `async_init=1` → storage/input/network init on different CPUs → serial log shows `[ASYNC]` entries with different CPU numbers. Total Phase 2 time decreases vs sequential. Boot with `async_init=0` → sequential behavior unchanged. Verify on QEMU WHPX (2+ vCPUs), TCG, VirtualBox, bare metal. Bare metal is critical -- per-AP fault isolation must work on real hardware.
 
 > **Verified:** 2026-06-20 | commit `308eb661` | 10/13 items | build OK | tests 2836+16 PASS
-> **Deferred:** [H] async timeout marks the AP done+FATAL without quiescing it, so `boot_phase2` reruns storage concurrently (driver corruption) -> XREF: 02-kernel-core/TODO-01 §13 (item: "Quiesce the AP on async timeout before sequential fallback" at line 541)
-> **Deferred:** [H] async storage init runs inside `async_ipi_handler` (interrupt gate, IF cleared), so a sleepable driver (NVMe `sleep_ms`/`hlt`) hangs the AP into the 10s timeout -> XREF: 02-kernel-core/TODO-01 §13 (item: "Run async AP storage init in an IF-enabled worker" at line 543)
-> **Deferred:** [M] async-group `BOOT_DEFERRED` aggregation ranks below DEGRADED with no `boot_phase2` DEFERRED branch, so a not-ready async step records LOADED (latent; no async step returns DEFERRED yet) -> XREF: 02-kernel-core/TODO-01 §13 (item: "Define async-group `BOOT_DEFERRED` aggregation" at line 544)
+> **Deferred:** [H] async timeout marks the AP done+FATAL without quiescing it, so `boot_phase2` reruns storage concurrently (driver corruption) -> XREF: 02-kernel-core/TODO-01 §13 (item: "Quiesce the AP on async timeout before sequential fallback" at line 543)
+> **Deferred:** [H] async storage init runs inside `async_ipi_handler` (interrupt gate, IF cleared), so a sleepable driver (NVMe `sleep_ms`/`hlt`) hangs the AP into the 10s timeout -> XREF: 02-kernel-core/TODO-01 §13 (item: "Run async AP storage init in an IF-enabled worker" at line 545)
+> **Deferred:** [M] async-group `BOOT_DEFERRED` aggregation ranks below DEGRADED with no `boot_phase2` DEFERRED branch, so a not-ready async step records LOADED (latent; no async step returns DEFERRED yet) -> XREF: 02-kernel-core/TODO-01 §13 (item: "Define async-group `BOOT_DEFERRED` aggregation" at line 546)
 > **Quality reviewed:** 2026-06-20 | Codex 6x (adversarial x2, consistency, perf, re-adversarial x2) | 1H+2M fixed, 2H+1M deferred | scope: kernel-code-quality
 
 The default `async_init=0` path (sequential, shipped + tested) is unaffected; all three deferred items gate only the experimental `async_init=1` parallel path. The timeout-publication race (a late AP completion overwriting a fired timeout's FATAL) was fixed this pass with a BSP-local sticky `timed_out` flag.

@@ -184,8 +184,8 @@ Prevent log files growing unbounded on long-running or repeatedly booted systems
 > - A failed stage rename returns the real size and leaves the live log AND every rotated generation untouched -- no truncate, no per-retry generation churn. `MaxSize`/`MaxRotated` from registry with `val_size`-validated REG_DWORD reads.
 > - Rotation unit test deferred (kernel image is at its BSS page budget); covered by 3-round adversarial review + the boot smoke test for now.
 > **Verified:** 2026-06-21 | ship `4879f6a3` + review fixes | 9/10 items | build OK | smoke PASS (TCG 2.58s); 3212 kernel + 16 user PASS
-> **Deferred:** [L] no dedicated rotation unit test (path builder is static + at BSS budget; rotate_log_file does real VFS I/O) -> XREF: 02-kernel-core/TODO-04-system-logging.md Unit Tests (item: "Rotation tests (§4): assert `klog_build_log_path` gen 0/.N/.tmp + cap-overflow" at line 409)
-> **Deferred:** [M] no-RTC serial-log rotation deletes by seq, not recency (filed 2026-06-27 from TODO-08 §5 review; cap bounds growth so not a leak) -> XREF: 02-kernel-core/TODO-04-system-logging.md §4 (item: "No-RTC serial-log recency rotation" at line 170)
+> **Deferred:** [L] no dedicated rotation unit test (path builder is static + at BSS budget; rotate_log_file does real VFS I/O) -> XREF: 02-kernel-core/TODO-04-system-logging.md Unit Tests (item: "Rotation tests (§4): assert `klog_build_log_path` gen 0/.N/.tmp + cap-overflow" at line 568)
+> **Deferred:** [M] no-RTC serial-log rotation deletes by seq, not recency (filed 2026-06-27 from TODO-08 §5 review; cap bounds growth so not a leak) -> XREF: 02-kernel-core/TODO-04-system-logging.md §4 (item: "No-RTC serial-log recency rotation" at line 175)
 > **Quality reviewed:** 2026-06-21 | Codex 5x (adversarial, consistency, perf, re-adversarial x2) + auditor | 1H+3M+1L fixed | scope: kernel-code-quality
 
 ---
@@ -303,7 +303,7 @@ Reserve a physical memory region at boot so the ring buffer survives a kernel pa
 > - Complementary to TODO-27 binary crash dumps; this captures the human-readable text ring for first-pass triage.
 > - Scope: `POST16_KLOG_DISK_OK` real-persistence gating deferred ([/] above) -- needs a verification-flush flow, not crash-persist correctness.
 > **Verified:** 2026-06-21 | ship `62f0a171` + review fixes | 9/10 items | build OK | smoke PASS (TCG 2.69s); 6800 kernel + 16 user PASS
-> **Deferred:** [M] `POST16_KLOG_DISK_OK` is gated on buffer+mount, not a verified `kernel.log` write -> XREF: 02-kernel-core/TODO-04-system-logging.md §8 (item: "Verified-persistence flag gating `POST16_KLOG_DISK_OK`" at line 284)
+> **Deferred:** [M] `POST16_KLOG_DISK_OK` is gated on buffer+mount, not a verified `kernel.log` write -> XREF: 02-kernel-core/TODO-04-system-logging.md §8 (item: "Verified-persistence flag gating `POST16_KLOG_DISK_OK`" at line 291)
 > **Quality reviewed:** 2026-06-21 | Codex 4x (adversarial, consistency, perf, re-adversarial) + auditor | 2H+2M fixed, 1M deferred | scope: kernel-code-quality
 
 ---
@@ -367,7 +367,7 @@ HMAC-chain `events.jsonl` entries so tampering is mathematically detectable. Lin
 
 **Test checkpoint:** Boot with `debug=1`; `events.jsonl` entries contain `"hmac":"..."` field (64 hex chars). `klog_verify_chain("X:\\Logs\\events.jsonl")` returns 0 (valid chain). Manually corrupt one JSON line; `klog_verify_chain()` returns the corrupted line number. Boot with `log_integrity=0`; `events.jsonl` entries have no `"hmac"` field. Verify on QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Deferred:** [Critical] HMAC verifier-key anchoring is an operator-reserved security-architecture decision -- the Codex design review (2026-06-21) found the planned `HKLM` key storage gives a FALSE integrity guarantee (attacker rewrites log + key + all hmacs); the whole section is blocked on the threat-model/key-anchor choice (TPM vs UEFI NVRAM) plus the §6-mirroring chain state machine and rotation epochs -> XREF: 02-kernel-core/TODO-04-system-logging.md §10 (item: "Anchor the verifier key OUTSIDE the mutable log domain" at line 353)
+> **Deferred:** [Critical] HMAC verifier-key anchoring is an operator-reserved security-architecture decision -- the Codex design review (2026-06-21) found the planned `HKLM` key storage gives a FALSE integrity guarantee (attacker rewrites log + key + all hmacs); the whole section is blocked on the threat-model/key-anchor choice (TPM vs UEFI NVRAM) plus the §6-mirroring chain state machine and rotation epochs -> XREF: 02-kernel-core/TODO-04-system-logging.md §10 (item: "Anchor the verifier key OUTSIDE the mutable log domain" at line 360)
 > **Deferred:** [M] `dmpanalyze /verifylog` wiring blocked on the analyzer existing -> XREF: 02-kernel-core/TODO-27-crash-dump-generation.md §9 (item: "`src/apps/dmpanalyze/dmpanalyze.c` -- standalone command-line app" at line 294)
 
 ---
@@ -391,7 +391,7 @@ HMAC-chain `events.jsonl` entries so tampering is mathematically detectable. Lin
 
 **Test checkpoint:** Register a provider GUID, enumerate it by name via `NtQueryTrace`. Enable it into a session with a keyword mask; `NtTraceEvent` with a non-matching keyword does not appear in that session's buffer; a matching event does. Verify on QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Deferred:** [H] §11 needs an ETW ABI redesign before code -- the Codex design review (2026-06-21) found the plan misroutes events (no event-metadata wire ABI for provider/keyword, single-session-vs-broadcast conflict, scalar masks cannot hold multiple providers, registry-under-irqsave-lock); the corrected design (versioned metadata + broadcast routing + per-session provider table + two-phase registration) extends the §7-hardened syscall surface and warrants a focused pass -> XREF: 02-kernel-core/TODO-04-system-logging.md §11 (item: "Define a VERSIONED event-metadata wire ABI" at line 375)
+> **Deferred:** [H] §11 needs an ETW ABI redesign before code -- the Codex design review (2026-06-21) found the plan misroutes events (no event-metadata wire ABI for provider/keyword, single-session-vs-broadcast conflict, scalar masks cannot hold multiple providers, registry-under-irqsave-lock); the corrected design (versioned metadata + broadcast routing + per-session provider table + two-phase registration) extends the §7-hardened syscall surface and warrants a focused pass -> XREF: 02-kernel-core/TODO-04-system-logging.md §11 (item: "Define a VERSIONED event-metadata wire ABI" at line 383)
 
 ---
 
@@ -408,7 +408,7 @@ Deepen ETW to match Win11's diagnostic surface: per-event call-stack capture (us
 
 **Test checkpoint:** Enable stack capture on a provider; a logged event carries a non-empty frame array with at least one image+offset resolved. A registry-declared autologger session is active at first user-mode entry. A self-describing event decodes its field names without an external manifest. Verify on QEMU WHPX, QEMU TCG, VirtualBox, bare metal.
 
-> **Deferred:** [H] blocked on the §11 ETW provider model (stack-walk flag, autologger session, and self-describing schema all build on provider registration + per-session enablement) -> XREF: 02-kernel-core/TODO-04-system-logging.md §11 (item: "Define `etw_provider_t`" at line 374)
+> **Deferred:** [H] blocked on the §11 ETW provider model (stack-walk flag, autologger session, and self-describing schema all build on provider registration + per-session enablement) -> XREF: 02-kernel-core/TODO-04-system-logging.md §11 (item: "Define `etw_provider_t`" at line 382)
 
 ---
 

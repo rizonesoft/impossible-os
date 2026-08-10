@@ -89,7 +89,7 @@ title: "TODO-25 -- Network / PXE / HTTP Boot"
 > - Scope: §2 captures + stages in the bootloader; boot_info handoff §6, Registry §6, BlackBox JSON §9.
 
 > **Verified:** 2026-06-17 | commit `7d32370a` | 4/5 items | build OK | smoke PASS (KVM 2.8s)
-> **Deferred:** [M] child boot DeviceHandle without PXE + firmware lacking DevicePathUtilities skips the sole-handle fallback (best-effort capture) -> XREF: 01-boot-platform/TODO-25 §2 (item: "Best-effort residual" at line 75)
+> **Deferred:** [M] child boot DeviceHandle without PXE + firmware lacking DevicePathUtilities skips the sole-handle fallback (best-effort capture) -> XREF: 01-boot-platform/TODO-25 §2 (item: "Best-effort residual" at line 78)
 > **Quality reviewed:** 2026-06-17 | Codex 3x (adversarial, consistency, perf) | 1M fixed | scope: boot-code-quality
 
 ---

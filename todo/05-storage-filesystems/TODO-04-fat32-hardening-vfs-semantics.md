@@ -99,7 +99,7 @@ Validate critical BPB fields in `fat32_init()` before any further mount operatio
 > - **Scope boundary:** §1 owns BPB validation + dirty-marker handling + auto-fsck-on-mount. §6 owns the fsck implementation itself + the new sector-cache durable-write contract. §3 owns dual-FAT compare/repair (runs after auto-fsck). The partition.c BlackBox-specific auto-fsck path is now redundant but kept for diagnostic logging; the actual repair runs in `fat32_init`.
 
 > **Verified:** 2026-04-30 | 6/6 items | build OK | smoke 2.39s on KVM | 0 FAIL markers; FAT32 BlackBox mount auto-runs through the new gate every boot
-> **Accepted:** [H] FAT32 sector-cache swallows blkdev_write errors -- repair calls see "0 = success" even when the disk write fails -> XREF: 05-storage-filesystems/TODO-04 §6 (item: "Durable repair-write contract" at line 179)
+> **Accepted:** [H] FAT32 sector-cache swallows blkdev_write errors -- repair calls see "0 = success" even when the disk write fails -> XREF: 05-storage-filesystems/TODO-04 §6 (item: "Durable repair-write contract" at line 205)
 > **Quality reviewed:** 2026-04-30 | Codex 6x (adversarial + consistency + perf + re-adversarial x3) | 1C+4H+1M fixed, 1H accepted-XREF | scope: kernel-code-quality
 
 ---

@@ -131,7 +131,7 @@ title: "TODO-15 -- Security Reference Monitor"
 > - Trusted/untrusted split: `RtlLengthSid`/`RtlEqualSid` assume a valid SID (documented sid.h:92-97, Windows-consistent); untrusted callers use `RtlLengthSidBounded`/`RtlValidSid`.
 > - Scope boundary: §16 owns the SHA-1 service-SID + const-time-compare hardening; token-syscall bounding of untrusted SIDs is the systemic NT trust-boundary gap (TODO-12 §29).
 > **Verified:** 2026-07-05 | commit `4a0943d3` | 6/6 items | build OK | 11 security suites
-> **Accepted:** [H] NtAdjustGroupsToken feeds raw caller SIDs into unbounded RtlEqualSid (kernel overread) -- the §1 primitive is correct-as-documented trusted input; the syscall handler must bound untrusted SIDs -> XREF: 02-kernel-core/TODO-12 §29 (item: "Namespace + token syscalls deref raw user pointers" at line 1223)
+> **Accepted:** [H] NtAdjustGroupsToken feeds raw caller SIDs into unbounded RtlEqualSid (kernel overread) -- the §1 primitive is correct-as-documented trusted input; the syscall handler must bound untrusted SIDs -> XREF: 02-kernel-core/TODO-12 §29 (item: "Namespace + token syscalls deref raw user pointers" at line 1232)
 > **Accepted:** [M] FNV-1a service-SID derivation (not Windows SHA-1) + non-constant-time RtlEqualSid -> XREF: 02-kernel-core/TODO-15 §16 (item: "SHA-1 service SID derivation" at line 782, "Constant-time SID comparison" at line 784)
 > **Quality reviewed:** 2026-07-05 | Codex 3x (adversarial, consistency, perf) + Opus kernel-quality-auditor | 2L fixed, 1H+1M accepted-XREF, 1M rejected | scope: kernel-code-quality
 

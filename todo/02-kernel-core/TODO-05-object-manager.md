@@ -125,7 +125,7 @@ Every kernel object body is preceded in memory by an `OBJECT_HEADER`. Types are 
 > - Permanent objects (namespace roots, info files, process/thread pseudo-objects) are torn down by `ObMakeTemporaryObject` + a final deref; the brief ref_count==0 restore window is benign (only at teardown).
 > - Full lookup-then-reference atomicity (the memory-validity half) lands with the handle-table lock; validated by `test_ob.c` (`TEST_CAT_OB`).
 > **Verified:** 2026-06-21 | ship `44db565a` + review fixes | 5/5 items | build OK | tests 323/323 PASS (SUITE=ob)
-> **Deferred:** [Critical] handle lookup-then-reference is not atomic (ObpLookupHandle returns an unreferenced entry; a concurrent ObpFreeHandle can free the object before ObReferenceObject runs -- the safe-ref primitive closes count-0 resurrection but not the freed-memory window) -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive" at line 148)
+> **Deferred:** [Critical] handle lookup-then-reference is not atomic (ObpLookupHandle returns an unreferenced entry; a concurrent ObpFreeHandle can free the object before ObReferenceObject runs -- the safe-ref primitive closes count-0 resurrection but not the freed-memory window) -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive" at line 149)
 > **Quality reviewed:** 2026-06-21 | Codex 5x (adversarial, consistency, perf, re-adversarial x2) + auditor | 1H+2M fixed, 1Critical+2L deferred | scope: kernel-code-quality
 
 ---
@@ -165,7 +165,7 @@ The handle table maps opaque `HANDLE` integer values to (object pointer + grante
 > - SMP-safety hardening (per-handle-table lock + `ObpReferenceObjectByHandle` atomic lookup-then-ref, item 17) is DEFERRED to a focused pass; the corrected lock contract from the 2026-06-21 Codex design review is in the WARNING callout above.
 > - Perf items (per-task view-base index, `task_cleanup` view-pin walk) and the `NtXxxEx` HandleAttributes wiring also remain open `[ ]` here.
 > - This deferral is why `ObReferenceObjectSafe` (§2) closes only count-0 resurrection, not the freed-memory window; that window closes when item 17 lands.
-> **Deferred:** [Critical] handle lookup-then-reference not atomic + SMP-hardening/perf items need a focused implementation pass (design contract in the §3 WARNING callout) -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive" at line 148)
+> **Deferred:** [Critical] handle lookup-then-reference not atomic + SMP-hardening/perf items need a focused implementation pass (design contract in the §3 WARNING callout) -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive" at line 149)
 
 ---
 
@@ -193,7 +193,7 @@ A hierarchical in-memory namespace rooted at `\`. Directories hold named object 
 > - Validation: `test_ob.c` (`TEST_CAT_OB`) incl. new `test_ob_symlink_cycle_bounded`; `scripts\debug\kernel\run-ob-tests.bat` (SUITE=ob).
 > - Open: O(1) teardown caching (deferred perf item below) still `[ ]`; namespace functionality is complete.
 > **Verified:** 2026-06-21 | ship `44db565a` + review fixes | 8/9 items | build OK | tests 327/327 PASS (SUITE=ob)
-> **Deferred:** [M] thread/process teardown does two O(n) namespace scans under an IRQ-off lock on every exit (scheduler hot path) -> XREF: 02-kernel-core/TODO-05 §4 (item: "Cache parent-directory + entry linkage in `OBJECT_HEADER` so teardown avoids path relookup" at line 180)
+> **Deferred:** [M] thread/process teardown does two O(n) namespace scans under an IRQ-off lock on every exit (scheduler hot path) -> XREF: 02-kernel-core/TODO-05 §4 (item: "Cache parent-directory + entry linkage in `OBJECT_HEADER` so teardown avoids path relookup" at line 187)
 > **Quality reviewed:** 2026-06-21 | Codex 4x (adversarial, consistency, perf, re-adversarial) + auditor | 2H+1M+2L fixed | scope: kernel-code-quality
 
 Register VFS nodes, tasks, and threads as first-class Ob-managed objects.
@@ -224,9 +224,9 @@ Implemented across the owning subsystems (VFS, `task.c`, `thread.c`), each regis
 > - Validation: `test_ob.c` (`TEST_CAT_OB`); `scripts\debug\kernel\run-ob-tests.bat` (SUITE=ob).
 > - Open: process handles still allocate from raw `task_t*` (Critical, owned by §9 migration) and the flat-namespace/PEB-TEB-collision items above; section is functional but not fully hardened.
 > **Verified:** 2026-06-21 | ship `44db565a` + review fixes | 3/5 items | build OK | tests 327/327 PASS (SUITE=ob)
-> **Accepted:** [Critical] process handles are allocated from raw `task_t*` not PROCESS_OBJECT bodies (ObpAllocateHandle mis-reads memory before the task as an OBJECT_HEADER on close) -> XREF: 02-kernel-core/TODO-05 §9 (item: "Migrate PID/TID-encoded process/thread handles to OB-allocated handles" at line 323)
-> **Deferred:** [H] `task_exec` PEB/TEB `Process<PID>` dir collides with the process-object name (PEB/TEB unreachable + `proc_dir` leak) -> XREF: 02-kernel-core/TODO-05 §5 (item: "Fix PEB/TEB dir name collision" at line 210)
-> **Deferred:** [M] flat `\KernelObjects` 128-entry cap drops process/thread objects under churn -> XREF: 02-kernel-core/TODO-05 §5 (item: "Scale process/thread namespace beyond the flat 128-entry" at line 211)
+> **Accepted:** [Critical] process handles are allocated from raw `task_t*` not PROCESS_OBJECT bodies (ObpAllocateHandle mis-reads memory before the task as an OBJECT_HEADER on close) -> XREF: 02-kernel-core/TODO-05 §9 (item: "Migrate PID/TID-encoded process/thread handles to OB-allocated handles" at line 330)
+> **Deferred:** [H] `task_exec` PEB/TEB `Process<PID>` dir collides with the process-object name (PEB/TEB unreachable + `proc_dir` leak) -> XREF: 02-kernel-core/TODO-05 §5 (item: "Fix PEB/TEB dir name collision" at line 217)
+> **Deferred:** [M] flat `\KernelObjects` 128-entry cap drops process/thread objects under churn -> XREF: 02-kernel-core/TODO-05 §5 (item: "Scale process/thread namespace beyond the flat 128-entry" at line 218)
 > **Quality reviewed:** 2026-06-21 | Codex 4x (adversarial, consistency, perf, re-adversarial) + auditor | 2H fixed, 1Critical accepted-XREF, 1H+1M deferred, 1M rejected (NT tagged-handle low bits) | scope: kernel-code-quality
 
 ---
@@ -253,10 +253,10 @@ Re-register the existing event, mutex, semaphore, and timer primitives as Ob-man
 > - Validation: `test_ob.c` (`TEST_CAT_OB`); `scripts\debug\kernel\run-ob-tests.bat` (SUITE=ob).
 > - Open (deferred items above): NtOpen leaf-name normalization, sync-primitive waiter-queue locking, timer-tick latency rework; section is functional but the wait/timer paths are not fully SMP-hardened.
 > **Verified:** 2026-06-21 | ship `d91153f5` + review fixes | 7/10 items | build OK | tests 327/327 PASS (SUITE=ob)
-> **Accepted:** [H] `wait_on_handle` blocks on an embedded sync primitive without pinning the object, so a concurrent last-handle close can free it under the waiter -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive" at line 148)
-> **Deferred:** [H] `NtOpen{Event,Mutex,Semaphore}` do not normalize leaf names to `\BaseNamedObjects\%s`, so a named object is not reopenable by leaf name -> XREF: 02-kernel-core/TODO-05 §6 (item: "Normalize `NtOpen{Event,Mutex,Semaphore}` names" at line 239)
-> **Deferred:** [H] the event/mutex/semaphore waiter queues are mutated unlocked, raced between timer-ISR `event_set` and thread-context wait -> XREF: 02-kernel-core/TODO-05 §6 (item: "Lock the event/mutex/semaphore waiter queues" at line 240)
-> **Deferred:** [M] periodic `event_set` runs under `s_armed_lock` and the Phase-B final deref can free in the tick path -> XREF: 02-kernel-core/TODO-05 §6 (item: "Replace the flat NT timer armed list" at line 238)
+> **Accepted:** [H] `wait_on_handle` blocks on an embedded sync primitive without pinning the object, so a concurrent last-handle close can free it under the waiter -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive" at line 149)
+> **Deferred:** [H] `NtOpen{Event,Mutex,Semaphore}` do not normalize leaf names to `\BaseNamedObjects\%s`, so a named object is not reopenable by leaf name -> XREF: 02-kernel-core/TODO-05 §6 (item: "Normalize `NtOpen{Event,Mutex,Semaphore}` names" at line 246)
+> **Deferred:** [H] the event/mutex/semaphore waiter queues are mutated unlocked, raced between timer-ISR `event_set` and thread-context wait -> XREF: 02-kernel-core/TODO-05 §6 (item: "Lock the event/mutex/semaphore waiter queues" at line 247)
+> **Deferred:** [M] periodic `event_set` runs under `s_armed_lock` and the Phase-B final deref can free in the tick path -> XREF: 02-kernel-core/TODO-05 §6 (item: "Replace the flat NT timer armed list" at line 245)
 > **Quality reviewed:** 2026-06-21 | Codex 5x (adversarial, consistency, perf, re-adversarial x2) + auditor | 1Critical+1H fixed, 1H accepted-XREF, 2H+1M deferred | scope: kernel-code-quality
 
 ---
@@ -281,9 +281,9 @@ Sections represent mappable memory objects; the foundation for `MapViewOfFile` a
 > - Validation: `test_ob.c` (`TEST_CAT_OB`); `scripts\debug\kernel\run-ob-tests.bat` (SUITE=ob).
 > - Open (deferred above): map holds `so->lk` across PTE install, handle-path unmap lacks PTE teardown, base-unmap can't find a view after handle close -- focused mapping rework; create/map/unmap-by-base work.
 > **Verified:** 2026-06-21 | ship `4bca949c` + review fixes | 5/8 items | build OK | tests 327/327 PASS (SUITE=ob)
-> **Deferred:** [H] the map path holds the per-section `so->lk` across up to 64K `vmm_share_user_page` calls (long IRQ-off hold, lock-order risk) -> XREF: 02-kernel-core/TODO-05 §7 (item: "Move section PTE install/teardown outside `so->lk`" at line 266)
-> **Deferred:** [H] `ObUnmapViewOfSection` (handle path) drops the section pin without clearing user PTEs, so frames can be freed while still mapped -> XREF: 02-kernel-core/TODO-05 §7 (item: "`ObUnmapViewOfSection` (handle path) must clear user PTEs" at line 267)
-> **Deferred:** [M] a view outlives its section handle, so base-unmap (handle-table scan) can't find it -> XREF: 02-kernel-core/TODO-05 §7 (item: "Resolve section views without a live handle" at line 268)
+> **Deferred:** [H] the map path holds the per-section `so->lk` across up to 64K `vmm_share_user_page` calls (long IRQ-off hold, lock-order risk) -> XREF: 02-kernel-core/TODO-05 §7 (item: "Move section PTE install/teardown outside `so->lk`" at line 273)
+> **Deferred:** [H] `ObUnmapViewOfSection` (handle path) drops the section pin without clearing user PTEs, so frames can be freed while still mapped -> XREF: 02-kernel-core/TODO-05 §7 (item: "`ObUnmapViewOfSection` (handle path) must clear user PTEs" at line 274)
+> **Deferred:** [M] a view outlives its section handle, so base-unmap (handle-table scan) can't find it -> XREF: 02-kernel-core/TODO-05 §7 (item: "Resolve section views without a live handle" at line 275)
 > **Quality reviewed:** 2026-06-21 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 1Critical+1M fixed, 2H+1M deferred | scope: kernel-code-quality
 
 ---
@@ -343,11 +343,11 @@ Core Win32 handle management syscalls routed through the Ob layer.
 > - Validation: `test_ob.c` (`TEST_CAT_OB`) incl. 4 new dup tests (access-cap, close-protected, callback-proof ceiling, no-premature-on_close) + handle-alias rejection; 349 OB + 982 security tests pass.
 > - Scope: the concurrent-close lookup-then-deref race + non-atomic `handle_count` are the shared no-table-lock gap owned by §3; the two `[/]` items below are deferred.
 > **Verified:** 2026-06-21 | core ship `bc41dc9d` + review fixes | 4/6 items | build OK | tests 349 ob + 982 security PASS
-> **Accepted:** [Critical] concurrent `NtClose` vs duplicate/query uses an unpinned handle-table entry (no per-table lock) and `handle_count` is a non-atomic `uint32_t` -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive" at line 148)
+> **Accepted:** [Critical] concurrent `NtClose` vs duplicate/query uses an unpinned handle-table entry (no per-table lock) and `handle_count` is a non-atomic `uint32_t` -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive" at line 149)
 > **Accepted:** [M] `NtDuplicateObject` caps the dup to the source handle's mask (safe pre-SeAccessCheck interim), stricter than Win32 DuplicateHandle which re-authorizes `desired_access` against the SD -> XREF: 02-kernel-core/TODO-15 §5 (item: "In `ObpReferenceObjectByHandle` ... call `SeAccessCheck(...)`; return `STATUS_ACCESS_DENIED` if check fails" at line 343)
-> **Deferred:** [M] `ObjectNameInformation` returns the leaf component name, not the full namespace path -> XREF: 02-kernel-core/TODO-05 §9 (item: "`ObjectNameInformation` full-path reconstruction" at line 322)
-> **Deferred:** [H] process/thread handles are PID/TID-encoded and bypass the handle table, so granted_access/inherit/dup/close do not apply to them -> XREF: 02-kernel-core/TODO-05 §9 (item: "Migrate PID/TID-encoded process/thread handles to OB-allocated handles" at line 323)
-> **Deferred:** [H] the cross-CPU race window between the dup's source re-validation and the close/alloc (and the transient HANDLE_CREATE callback for a dest rolled back in that race) needs the transactional per-handle-table lock -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive" at line 148)
+> **Deferred:** [M] `ObjectNameInformation` returns the leaf component name, not the full namespace path -> XREF: 02-kernel-core/TODO-05 §9 (item: "`ObjectNameInformation` full-path reconstruction" at line 329)
+> **Deferred:** [H] process/thread handles are PID/TID-encoded and bypass the handle table, so granted_access/inherit/dup/close do not apply to them -> XREF: 02-kernel-core/TODO-05 §9 (item: "Migrate PID/TID-encoded process/thread handles to OB-allocated handles" at line 330)
+> **Deferred:** [H] the cross-CPU race window between the dup's source re-validation and the close/alloc (and the transient HANDLE_CREATE callback for a dest rolled back in that race) needs the transactional per-handle-table lock -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive" at line 149)
 > **Quality reviewed:** 2026-06-21 | Codex 11x (adversarial, consistency, perf, re-adversarial x8) + auditor | 1Crit+8H+1M fixed, 1Crit+2H+2M accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -375,8 +375,8 @@ Win32 `CreateProcess` with `bInheritHandles=TRUE` copies inheritable handles int
 > - Validation: `test_ob.c` (`TEST_CAT_OB`) `test_ob_handle_inherit` (stats 1->2->0) + `test_ob_inherit_none`; 355 OB tests pass.
 > - Scope: atomic all-or-fail process creation needs a child-task teardown helper (deferred above); the unlocked-handle-table race is the shared §3 gap.
 > **Verified:** 2026-06-21 | core ship -- review fixes | 5/6 items | build OK | tests 355 ob PASS
-> **Deferred:** [H] CreateProcess leaks the created child task on any post-`task_create` failure (inheritance OOM / handle alloc); needs a `task_destroy` helper for atomic teardown -> XREF: 02-kernel-core/TODO-05 §10 (item: "Atomic CreateProcess teardown on failure" at line 355)
-> **Accepted:** [M] the parent handle table is read without a lock during inheritance (concurrent mutation race) -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive" at line 148)
+> **Deferred:** [H] CreateProcess leaks the created child task on any post-`task_create` failure (inheritance OOM / handle alloc); needs a `task_destroy` helper for atomic teardown -> XREF: 02-kernel-core/TODO-05 §10 (item: "Atomic CreateProcess teardown on failure" at line 364)
+> **Accepted:** [M] the parent handle table is read without a lock during inheritance (concurrent mutation race) -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive" at line 149)
 > **Quality reviewed:** 2026-06-21 | Codex 4x (adversarial, consistency, perf, re-adversarial) + auditor | 2M fixed, 1H+1M deferred-XREF | scope: kernel-code-quality
 
 ---
@@ -404,8 +404,8 @@ Expose the Ob namespace as a queryable tree to user-mode via a dedicated syscall
 > - Validation: `test_ob.c` (`TEST_CAT_OB`) `test_ob_query_directory`; 355 OB tests pass.
 > - Scope: `ReturnLength`-in-bytes is deferred above; the lookup-then-ref race is the shared §3 handle-table-lock gap.
 > **Verified:** 2026-06-21 | core ship -- review fixes | 4/5 items | build OK | tests 355 ob PASS
-> **Deferred:** [M] SSDT `NtQueryDirectoryObject` returns `ReturnLength` as an entry count, not bytes -> XREF: 02-kernel-core/TODO-05 §11 (item: "`NtQueryDirectoryObject` `ReturnLength` in bytes" at line 384)
-> **Accepted:** [H] the directory handle is pinned AFTER an unlocked `ObpLookupHandle` (the lookup-then-ref window races a concurrent `NtClose`) -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive" at line 148)
+> **Deferred:** [M] SSDT `NtQueryDirectoryObject` returns `ReturnLength` as an entry count, not bytes -> XREF: 02-kernel-core/TODO-05 §11 (item: "`NtQueryDirectoryObject` `ReturnLength` in bytes" at line 393)
+> **Accepted:** [H] the directory handle is pinned AFTER an unlocked `ObpLookupHandle` (the lookup-then-ref window races a concurrent `NtClose`) -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive" at line 149)
 > **Accepted:** [H] `ProbeForWrite` is range-check-only (no page touch) and `copy_to_user` has no fault fixup, so a probe-passing-but-unmapped user page #PFs in the copy -- a kernel-wide user-access gap, not §11-specific -> XREF: 02-kernel-core/TODO-23 §13 (item: "`include/kernel/probe.h` -- `ProbeForRead`, `ProbeForWrite`, `try_copy_from_user`, `try_copy_to_user`" at line 52)
 > **Quality reviewed:** 2026-06-21 | Codex 5x (adversarial, consistency, perf, re-adversarial x2) + auditor | 1Crit+2H fixed, 2H+1M accepted-XREF | scope: kernel-code-quality
 
@@ -442,7 +442,7 @@ Track per-type creation counts, live object counts, live handle counts, and peak
 > - Validation: `test_ob.c` (`TEST_CAT_OB`) `test_ob_type_stats` + `test_ob_stat_export_clamp`; 363 OB tests pass.
 > - Scope: counters are SMP-atomic; exactly-once handle-stat accounting needs the §3 per-handle-table lock; Win11 NT-ABI struct shape owned by TODO-12 §30.
 > **Verified:** 2026-06-22 | ship `44db565a` + review fixes | 8/8 items | build OK | tests 363 ob PASS
-> **Accepted:** [H] handle-stat exactly-once accounting races the unserialized handle-table slot claim/free (counters atomic, slot mutation not) -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive" at line 148)
+> **Accepted:** [H] handle-stat exactly-once accounting races the unserialized handle-table slot claim/free (counters atomic, slot mutation not) -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive" at line 149)
 > **Accepted:** [H] exported `OBJECT_TYPE_INFORMATION` is an internal `char[32]`+counters struct, not the Win11 NT ABI (no NT-ABI consumer exists yet) -> XREF: 02-kernel-core/TODO-12 §30 (item: "Expose `NtQueryObject` with the Win11 `OBJECT_TYPE_INFORMATION` NT ABI" at line 1089)
 > **Quality reviewed:** 2026-06-22 | Codex 6x (adversarial, consistency, perf, re-adversarial) | 1H+4M fixed, 2H accepted-XREF | scope: kernel-code-quality
 
@@ -526,8 +526,8 @@ Enforce a configurable per-process handle limit to prevent resource exhaustion f
 > - **Scope boundary** -- §14 owns the per-table quota mechanism; the user-mode `NtSetInformationProcess(ProcessHandleQuota)` setter is `TODO-12 §7` (needs privilege-check infra); the unlocked `count` SMP race is owned by §3's per-handle-table lock work.
 
 > **Verified:** 2026-06-22 | ship `e0361301` + review fixes | 7/8 items | build OK | tests 6892 kernel + 16 user PASS
-> **Accepted:** [H] the quota check + `count++`/`count--` are unsynchronized, so same-process concurrent allocs can overshoot the limit (bounded, self-correcting) -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive" at line 148)
-> **Accepted:** [L] `total_handles_created` is charged to `task_current()`, so cross-process `NtDuplicateObject` mis-attributes the diagnostic counter -> XREF: 02-kernel-core/TODO-05 §3 (item: "Give `HANDLE_TABLE` an owning-task back-pointer" at line 152)
+> **Accepted:** [H] the quota check + `count++`/`count--` are unsynchronized, so same-process concurrent allocs can overshoot the limit (bounded, self-correcting) -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive" at line 149)
+> **Accepted:** [L] `total_handles_created` is charged to `task_current()`, so cross-process `NtDuplicateObject` mis-attributes the diagnostic counter -> XREF: 02-kernel-core/TODO-05 §3 (item: "Give `HANDLE_TABLE` an owning-task back-pointer" at line 153)
 > **Deferred:** [M] `NtSetInformationProcess(ProcessHandleQuota)` user-mode setter not wired (needs `SeSinglePrivilegeCheck` for the privileged raise-above-default) -> XREF: 02-kernel-core/TODO-12-native-api-ssdt.md §7 (item: "`NtSetInformationProcess(0x0035)` ProcessHandleQuota" at line 408)
 > **Quality reviewed:** 2026-06-22 | Codex 5x (adversarial, consistency, perf, re-adversarial x2) + auditor | 2H+4M+1L fixed, 1H+1L accepted-XREF, 1M deferred | scope: kernel-code-quality
 
@@ -564,8 +564,8 @@ Provide tagged reference tracking and optional per-handle event recording for di
 > - **Scope boundary** -- §15 owns object-ref + handle-event tracing; the handle-table `count` SMP race + owning-task back-pointer stay §3's; `NtSetInformationProcess(ProcessHandleQuota)` stays TODO-12 §7.
 
 > **Verified:** 2026-06-25 | commit `bc16df2d` + review fixes | 10/11 items | build OK | tests 6913 kernel + 16 user PASS, smoke PASS (TCG 2.43s)
-> **Accepted:** [M] `ob_handle_table_inherit` reads the parent slot without a table lock, so the broader close-vs-inherit race can still inherit a stale/NULL object (the INHERIT trace itself now snapshots `obj` so it cannot diverge) -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive" at line 148)
-> **Deferred:** [M] handle-event tracing rides normal klog, so the per-subsystem rate limit can drop individual CREATE/FREE/INHERIT lines under churn (klog dropped-count summary accounts the loss) -> XREF: 02-kernel-core/TODO-05 §15 (item: "No-drop handle-trace path: opt-in loss-accounted ring" at line 542)
+> **Accepted:** [M] `ob_handle_table_inherit` reads the parent slot without a table lock, so the broader close-vs-inherit race can still inherit a stale/NULL object (the INHERIT trace itself now snapshots `obj` so it cannot diverge) -> XREF: 02-kernel-core/TODO-05 §3 (item: "Add `ObpReferenceObjectByHandle(table, handle, required_type, required_access, out_body, out_granted)` primitive" at line 149)
+> **Deferred:** [M] handle-event tracing rides normal klog, so the per-subsystem rate limit can drop individual CREATE/FREE/INHERIT lines under churn (klog dropped-count summary accounts the loss) -> XREF: 02-kernel-core/TODO-05 §15 (item: "No-drop handle-trace path: opt-in loss-accounted ring" at line 550)
 > **Quality reviewed:** 2026-06-25 | Codex 8x (adversarial, consistency, perf, re-adversarial) + kernel-quality-auditor | 6M+1L fixed, 1M accepted-XREF, 1M deferred | scope: kernel-code-quality
 
 ---

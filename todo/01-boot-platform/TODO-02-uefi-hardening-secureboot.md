@@ -143,7 +143,7 @@ Thin wrappers around `gRT->GetVariable` / `SetVariable` with error translation.
 > - Canonical doc: legacy native NT ABI spec at TODO-12 §23 (line 707). Master SSDT row at TODO-A-SSDT-Master-Table §0x00D0-0x00DF.
 >
 > **Verified:** 2026-04-27 | commit `7ab63775` | 7/7 items | build OK | tests 2 §2 suites, 0 failures (test_uefi_var_get_secureboot, test_uefi_var_u32_roundtrip)
-> **Accepted:** [H] SSDT dispatcher forwards only 4 args; legacy handlers must not depend on stack-args 5-6 -> XREF: 02-kernel-core/TODO-12 §4 (item: "Extend INT 0x2E + SYSCALL entry to read stack arguments 5-6+" at line 212)
+> **Accepted:** [H] SSDT dispatcher forwards only 4 args; legacy handlers must not depend on stack-args 5-6 -> XREF: 02-kernel-core/TODO-12 §4 (item: "Extend INT 0x2E + SYSCALL entry to read stack arguments 5-6+" at line 246)
 > **Accepted:** [H] PMM bitmap unsynchronized; `pmm_alloc_contiguous` / `pmm_free_frame` race on SMP when uefi_value_alloc routes >4 KiB buffers there (reason: kernel-wide PMM concern, not §2-specific) -> XREF: 03-memory-concurrency/TODO-03 §1 (item: "PMM bitmap SMP locking" at line 103)
 > **Quality reviewed:** 2026-04-27 | Codex 5x (adversarial + consistency + perf + re-adversarial + final-adversarial) | 5H+3M fixed, 2H accepted-XREF | scope: kernel-code-quality (gates walked: SMP-safe by default, memory rules, bare-metal correctness, complete error paths)
 

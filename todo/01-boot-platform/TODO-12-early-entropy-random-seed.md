@@ -205,7 +205,7 @@ title: "TODO-12 -- Early Entropy & Random Seed Handoff"
 
 > **Verified:** 2026-06-12 | commit `08340720` | 5/5 items | build OK | smoke PASS (KVM 2.690s), tests 4565+16 PASS, live 2-boot carryover (seed=ok class=good)
 > **Accepted:** [H] FAT32 vol->lock cli-spinlock spans device I/O on writes while reads scan the cache unlocked -> XREF: 05-storage-filesystems/TODO-04 §15 (item: "FAT32 vol->lock concurrency overhaul" at line 446)
-> **Accepted:** [H] dir-cache rebuilds can reassign a slot a live open handle aims at -> XREF: 05-storage-filesystems/TODO-04 §15 (item: "FAT32 cache-slot stability for live handles" at line 356)
+> **Accepted:** [H] dir-cache rebuilds can reassign a slot a live open handle aims at -> XREF: 05-storage-filesystems/TODO-04 §15 (item: "FAT32 cache-slot stability for live handles" at line 445)
 > **Accepted:** [H] scache_evict discards failed writes + void FAT2 repair reports repaired (false durability) -> XREF: 05-storage-filesystems/TODO-04 §6 (item: "Repair-write remainder" at line 206)
 > **Accepted:** [H] boot_audit/health writers ack NVRAM state on write+close alone -> XREF: 01-boot-platform/TODO-24 §5 (item: "Durable-write retrofit for boot-state X:\ writers" at line 138)
 > **Accepted:** [M] vfs_unmount never clean-marks FAT32 -> XREF: 05-storage-filesystems/TODO-04 §15 (item: "vfs_unmount filesystem hook" at line 447)

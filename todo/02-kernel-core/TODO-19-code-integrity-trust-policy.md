@@ -143,7 +143,7 @@ title: "TODO-19 -- Code Integrity & Trust Policy"
 
 **Test checkpoint:** a signed EIF trailer validates before segment mapping; a malformed/overlapping signed range is rejected with an error (not silently accepted); PE Authenticode digest excludes the checksum + certificate-table fields per spec. Test on: QEMU WHPX + TCG; bare metal.
 >
-> **Deferred:** [H] Embedded-signature validation is architecturally blocked: all three formats need a signer-key delivery decision, plus a compiled trust anchor + anchor-lookup and §2 loader wiring. No code shippable without those. -> XREF: 02-kernel-core/TODO-19 §4 (item: "EIF sig-block ABI decision (prereq)" at line 139); 02-kernel-core/TODO-19 §4 (item: "Anchor-lookup helper (prereq)" at line 142); 02-kernel-core/TODO-19 §1 (item: "Authenticate the policy artifact's own signature against a compiled-in Ed25519 policy-root key" at line 62)
+> **Deferred:** [H] Embedded-signature validation is architecturally blocked: all three formats need a signer-key delivery decision, plus a compiled trust anchor + anchor-lookup and §2 loader wiring. No code shippable without those. -> XREF: 02-kernel-core/TODO-19 §4 (item: "EIF sig-block ABI decision (prereq)" at line 135); 02-kernel-core/TODO-19 §4 (item: "Anchor-lookup helper (prereq)" at line 138); 02-kernel-core/TODO-19 §1 (item: "Authenticate the policy artifact's own signature against a compiled-in Ed25519 policy-root key" at line 243)
 
 ---
 
@@ -158,7 +158,7 @@ title: "TODO-19 -- Code Integrity & Trust Policy"
 
 **Test checkpoint:** a catalog file maps a known image hash to its signer; a hash lookup hits the ERESOURCE-protected cache; Safe Mode with missing catalogs takes the recovery path without hanging. Test on: QEMU WHPX + TCG; bare metal.
 >
-> **Deferred:** [H] Catalog database is blocked on a catalog file-format decision (ASN.1 `.cat` is out of scope for the raw-Ed25519 `ci_crypto` bridge) and on §4 signer identity. The hash-indexed ERESOURCE cache is implementable once the format lands. -> XREF: 02-kernel-core/TODO-19 §5 (item: "Catalog file-format decision (prereq)" at line 157); 02-kernel-core/TODO-19 §4 (item: "EIF sig-block ABI decision (prereq)" at line 139)
+> **Deferred:** [H] Catalog database is blocked on a catalog file-format decision (ASN.1 `.cat` is out of scope for the raw-Ed25519 `ci_crypto` bridge) and on §4 signer identity. The hash-indexed ERESOURCE cache is implementable once the format lands. -> XREF: 02-kernel-core/TODO-19 §5 (item: "Catalog file-format decision (prereq)" at line 153); 02-kernel-core/TODO-19 §4 (item: "EIF sig-block ABI decision (prereq)" at line 135)
 
 ---
 
@@ -173,7 +173,7 @@ title: "TODO-19 -- Code Integrity & Trust Policy"
 
 **Test checkpoint:** a revoked hash is denied even with an otherwise-valid signature; a revoked signer is denied; a revocation-DB update fires the update notification. Test on: QEMU WHPX + TCG; bare metal.
 >
-> **Deferred:** [H] Revocation enforcement is DONE (§1 `ci_hash_revoked` + §2 revocation-first), but registry-backed population + update-notification are blocked on `ci_init` boot-wiring and a mutable/refresh revocation store (the §1 list is sealed-immutable). -> XREF: 02-kernel-core/TODO-19 §1 (item: "Wire `ci_init` at `POLICY_PHASE_POST_REGISTRY`" at line 61); 02-kernel-core/TODO-19 §10 (item: "Add `NtSetSystemInformation(SystemCodeIntegrityPolicyInformation)` for authorized policy refresh" at line 232)
+> **Deferred:** [H] Revocation enforcement is DONE (§1 `ci_hash_revoked` + §2 revocation-first), but registry-backed population + update-notification are blocked on `ci_init` boot-wiring and a mutable/refresh revocation store (the §1 list is sealed-immutable). -> XREF: 02-kernel-core/TODO-19 §1 (item: "Wire `ci_init` at `POLICY_PHASE_POST_REGISTRY`" at line 242); 02-kernel-core/TODO-19 §10 (item: "Add `NtSetSystemInformation(SystemCodeIntegrityPolicyInformation)` for authorized policy refresh" at line 228)
 
 ---
 
@@ -202,7 +202,7 @@ title: "TODO-19 -- Code Integrity & Trust Policy"
 
 **Test checkpoint:** a built-in driver validates against its boot hash table; an unsigned `.kmod` is blocked before relocation/load; signer-class gating rejects a normal-signed image that requests boot-start. Test on: QEMU WHPX + TCG; bare metal.
 >
-> **Deferred:** [H] Driver/module enforcement is blocked on §4 embedded-signature validation, the §2 loader/dynamic-code wiring, and the kernel module loader. No enforcement is possible until a real ALLOW path + loader call sites exist. -> XREF: 02-kernel-core/TODO-19 §4 (item: "EIF sig-block ABI decision (prereq)" at line 139); 02-kernel-core/TODO-19 §2 (item: "Gate dynamic-code sites: `NtAllocateVirtualMemory`..." at line 94); 04-drivers-hardware/TODO-05 (kernel module loader)
+> **Deferred:** [H] Driver/module enforcement is blocked on §4 embedded-signature validation, the §2 loader/dynamic-code wiring, and the kernel module loader. No enforcement is possible until a real ALLOW path + loader call sites exist. -> XREF: 02-kernel-core/TODO-19 §4 (item: "EIF sig-block ABI decision (prereq)" at line 135); 02-kernel-core/TODO-19 §2 (item: "Gate dynamic-code sites: `NtAllocateVirtualMemory`..." at line 94); 04-drivers-hardware/TODO-05 (kernel module loader)
 
 ---
 
@@ -216,7 +216,7 @@ title: "TODO-19 -- Code Integrity & Trust Policy"
 
 **Test checkpoint:** an unsigned user app runs in audit mode but an unsigned elevated/system process is blocked with `STATUS_INVALID_IMAGE_HASH`; a revoked cert yields `STATUS_IMAGE_CERT_REVOKED`; the CI decision appears in the loaded-image registry. Test on: QEMU WHPX + TCG; bare metal.
 >
-> **Deferred:** [H] User-mode image enforcement is blocked on the §2 loader enforcement wiring (no loader calls `ci_validate_image`) + §4 embedded-signature validation for the real ALLOW path. -> XREF: 02-kernel-core/TODO-19 §2 (item: "Loaders call CI before mapping" at line 93); 02-kernel-core/TODO-19 §4 (item: "EIF sig-block ABI decision (prereq)" at line 139)
+> **Deferred:** [H] User-mode image enforcement is blocked on the §2 loader enforcement wiring (no loader calls `ci_validate_image`) + §4 embedded-signature validation for the real ALLOW path. -> XREF: 02-kernel-core/TODO-19 §2 (item: "Loaders call CI before mapping" at line 90); 02-kernel-core/TODO-19 §4 (item: "EIF sig-block ABI decision (prereq)" at line 135)
 
 ---
 
@@ -230,7 +230,7 @@ title: "TODO-19 -- Code Integrity & Trust Policy"
 
 **Test checkpoint:** `NtQuerySystemInformation(SystemCodeIntegrityInformation)` returns the current mode + flags; a deny decision is published via klog/ETW; `ci_dump_policy()` output appears in a crash dump; a post-lock policy downgrade via `NtSetSystemInformation` is rejected. Test on: QEMU WHPX + TCG; bare metal.
 >
-> **Deferred:** [H] CI audit/syscalls are blocked on the SSDT/syscall surface (NtQuery/NtSet) + the tamper-evident HMAC log; per-decision klog audit already ships in §2. `ci_dump_policy()` is the one near-term-implementable item (dumps the §1 policy). -> XREF: 02-kernel-core/TODO-19 §1 (item: "Wire `ci_init` at `POLICY_PHASE_POST_REGISTRY`" at line 61); 04-drivers-hardware/TODO-04 §10 (HMAC log integrity)
+> **Deferred:** [H] CI audit/syscalls are blocked on the SSDT/syscall surface (NtQuery/NtSet) + the tamper-evident HMAC log; per-decision klog audit already ships in §2. `ci_dump_policy()` is the one near-term-implementable item (dumps the §1 policy). -> XREF: 02-kernel-core/TODO-19 §1 (item: "Wire `ci_init` at `POLICY_PHASE_POST_REGISTRY`" at line 242); 04-drivers-hardware/TODO-04 §10 (HMAC log integrity)
 
 ---
 

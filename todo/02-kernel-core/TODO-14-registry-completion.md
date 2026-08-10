@@ -167,8 +167,8 @@ title: "TODO-14 -- Registry System Completion"
 > - Scope boundary: §2 owns advanced key ops + KCB cache; SMP locking is §14; value/name size is §15; real `SeAccessCheck` is TODO-15 §5, privilege eval is §8.
 > **Verified:** 2026-07-04 | commit `a5b7b219` | 8/13 items | build OK | tests 1108 ABI PASS
 > **Note:** RegSaveKey/RegRestoreKey SePrivilegeCheck gates wired 2026-07-05 by TODO-15 §8; the hive I/O bodies + NT FileHandle path stay `[/]`.
-> **Accepted:** [H] NtRenameKey collision test uses the repo-wide ASCII-in-`UNICODE_STRING` convention (handler casts `Buffer` to `char*`); real UTF-16 decode is kernel-wide -> XREF: 02-kernel-core/TODO-14 §5 (item: "UTF-16 decode for `UNICODE_STRING` inputs (kernel-wide)" at line 291)
-> **Accepted:** [L] KCB writes counters/clock on every `reg_walk_path` hop (read-side cacheline contention beyond the lock-free baseline) -> XREF: 02-kernel-core/TODO-14 §14 (item: "KCB cache globals" at line 622)
+> **Accepted:** [H] NtRenameKey collision test uses the repo-wide ASCII-in-`UNICODE_STRING` convention (handler casts `Buffer` to `char*`); real UTF-16 decode is kernel-wide -> XREF: 02-kernel-core/TODO-14 §5 (item: "UTF-16 decode for `UNICODE_STRING` inputs (kernel-wide)" at line 272)
+> **Accepted:** [L] KCB writes counters/clock on every `reg_walk_path` hop (read-side cacheline contention beyond the lock-free baseline) -> XREF: 02-kernel-core/TODO-14 §14 (item: "KCB cache globals" at line 661)
 > **Quality reviewed:** 2026-07-04 | Codex 9x (design, adversarial, consistency, perf, re-adversarial) | 8H+2M+2L fixed, 1H+1L accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -330,8 +330,8 @@ title: "TODO-14 -- Registry System Completion"
 > - Also deferred: kernel-wide `nt_decode_unicode_string` UTF-16 retrofit, HKEY->OB migration, `KeyNodeInformation` completion, transacted ops (KTM), ProbeForRead/Write (SEH).
 > - Canonical doc: registry NT surface in [`src/kernel/nt/nt_registry.c`](../../src/kernel/nt/nt_registry.c).
 > - Scope boundary: §4 is a >10-item mega-section -- the info-class enums + UTF-16 decode + OB migration warrant a section split before a fresh implementation pass.
-> **Deferred:** [H] `NtNotifyChangeKey` + Win32 `RegNotifyChangeKeyValue` wiring blocked on safe watcher lifecycle (handle-close unregister + event deref) -> XREF: 02-kernel-core/TODO-14 §4 (item: "Migrate HKEY to OB handle table" at line 272)
-> **Deferred:** [M] user-mode pointer validation on all Nt args -> XREF: 02-kernel-core/TODO-14 §4 (item: "Wrap every user-mode pointer argument in" at line 268)
+> **Deferred:** [H] `NtNotifyChangeKey` + Win32 `RegNotifyChangeKeyValue` wiring blocked on safe watcher lifecycle (handle-close unregister + event deref) -> XREF: 02-kernel-core/TODO-14 §4 (item: "Migrate HKEY to OB handle table" at line 274)
+> **Deferred:** [M] user-mode pointer validation on all Nt args -> XREF: 02-kernel-core/TODO-14 §4 (item: "Wrap every user-mode pointer argument in" at line 270)
 
 ---
 
@@ -365,7 +365,7 @@ title: "TODO-14 -- Registry System Completion"
 > - Also blocked: `reg_resolve_hkcr` is HKLM-only (no HKCU-first / write-redirect / dedup-enum overlay); RegCloseKey needs the HKEY->OB handle migration (§4) or user open/close loops exhaust the 128-handle pool.
 > - Canonical doc: registry Win32 surface in [`include/registry.h`](../../include/registry.h).
 > - Scope boundary: §5 blocked on user-mode advapi32 surfacing (PE loader / user-mode libc) + HKEY->OB migration (§4) + HKCR overlay; wchar helpers ride with the §4 UTF-16 cluster.
-> **Deferred:** [H] A/W advapi32 Reg* variants + export surface need a real user-mode advapi32 trampoline + the HKEY->OB handle migration before they can execute -> XREF: 02-kernel-core/TODO-14 §4 (item: "Migrate HKEY to OB handle table" at line 272)
+> **Deferred:** [H] A/W advapi32 Reg* variants + export surface need a real user-mode advapi32 trampoline + the HKEY->OB handle migration before they can execute -> XREF: 02-kernel-core/TODO-14 §4 (item: "Migrate HKEY to OB handle table" at line 274)
 
 ---
 
@@ -417,7 +417,7 @@ title: "TODO-14 -- Registry System Completion"
 
 **Test checkpoint:** Low-IL process writes `HKLM\SOFTWARE\Test` → redirected to `HKCU\Software\VirtualStore\MACHINE\SOFTWARE\Test`. Read: VirtualStore value returned first. `REG_KEY_DONT_VIRTUALIZE` on key → low-IL write → `STATUS_ACCESS_DENIED`. `.reg` round-trip: export → delete → import → all values restored byte-for-byte. Serial log: `"[REG] Virtualize: %s -> VirtualStore\\%s"`. Test on: QEMU WHPX + TCG.
 
-> **Deferred:** [H] registry virtualization (low-IL `HKLM\SOFTWARE`->VirtualStore redirect) + `.reg` import/export blocked on the per-process token IntegrityLevel infra (TODO-15 §6 MIC) + the non-existent `NtSetInformationKey` control-flag path; also rides on §5 -> XREF: 02-kernel-core/TODO-14 §6 (item: "Condition for redirect" at line 373)
+> **Deferred:** [H] registry virtualization (low-IL `HKLM\SOFTWARE`->VirtualStore redirect) + `.reg` import/export blocked on the per-process token IntegrityLevel infra (TODO-15 §6 MIC) + the non-existent `NtSetInformationKey` control-flag path; also rides on §5 -> XREF: 02-kernel-core/TODO-14 §6 (item: "Condition for redirect" at line 375)
 
 ---
 
@@ -450,7 +450,7 @@ title: "TODO-14 -- Registry System Completion"
 > - Deferred: a truthful `regedit` cannot be shipped as a shell stub today. User-mode `win32.h` explicitly excludes registry APIs, `cmd.exe` has no argv-preserving external command path for a standalone `regedit.exe`, and the live registry NT surface still has §4 gaps (`NtNotifyChangeKey` stub, HKEY-as-raw-pointer handles, UTF-16 decode, missing `NtSetInformationKey`).
 > - `export`/`import` are also blocked by §6, where `reg_import`/`reg_export` are still unimplemented. Shipping only list/query/set/delete/tree would make the §7 deliverable falsely complete because the section contract explicitly includes export/import.
 > **Verified:** 2026-07-04 | deferral evidence checked against `user/include/win32.h`, `user/cmd.c`, `src/kernel/nt/nt_registry.c`, and §4/§6 owners | no code change
-> **Deferred:** [H] `regedit` shell tool blocked until the user-mode registry API/handle surface and `.reg` import/export exist; a stub command would be false completeness. -> XREF: 02-kernel-core/TODO-14 §4 (item: "Migrate HKEY to OB handle table" at line 272); -> XREF: 02-kernel-core/TODO-14 §6 (item: "`regedit import <file>` shell wrapper" at line 404)
+> **Deferred:** [H] `regedit` shell tool blocked until the user-mode registry API/handle surface and `.reg` import/export exist; a stub command would be false completeness. -> XREF: 02-kernel-core/TODO-14 §4 (item: "Migrate HKEY to OB handle table" at line 274); -> XREF: 02-kernel-core/TODO-14 §6 (item: "`regedit import <file>` shell wrapper" at line 406)
 > **Quality reviewed:** 2026-07-04 | Codex runner review loop (design, adversarial, consistency, perf; test-coverage N/A, no behavior change) | 1M fixed (stale review-infra note), 0 deferred
 
 ---
@@ -607,7 +607,7 @@ Basic `REG_LINK` type, `REG_FLAG_LINK` flag, and transparent symlink resolution 
 **Test checkpoint:** Create a symlink key `HKLM\Test\Link` → `HKLM\Test\Target` via `NtCreateKey(REG_OPTION_CREATE_LINK)` + `NtSetValueKey(REG_LINK)`. `NtOpenKey("HKLM\\Test\\Link")` transparently returns target key. `NtOpenKeyEx("HKLM\\Test\\Link", REG_OPTION_OPEN_LINK)` returns the link key itself. Create circular symlink `A → B → A`; `NtOpenKey("A")` returns `STATUS_REPARSE_POINT_NOT_RESOLVED` (not infinite loop). `CurrentControlSet` symlink resolves to `ControlSet001`. Serial log: `"[REG] Symlink resolve: %s -> %s (depth=%u)"`. Test on: QEMU WHPX + TCG.
 
 > **Test runner:** N/A (deferred, no code) | validation: on implementation, `scripts\debug\kernel\run-abi-tests.bat`
-> **Deferred:** [M] Symlink create/open-link completion deferred -- REG_LINK creation/open needs the HKEY->OB handle-table migration (§4, deferred) and the §14 SMP lock -> XREF: 02-kernel-core/TODO-14 §4 (item: "Migrate HKEY to OB handle table" at line 272)
+> **Deferred:** [M] Symlink create/open-link completion deferred -- REG_LINK creation/open needs the HKEY->OB handle-table migration (§4, deferred) and the §14 SMP lock -> XREF: 02-kernel-core/TODO-14 §4 (item: "Migrate HKEY to OB handle table" at line 274)
 
 ---
 
@@ -634,7 +634,7 @@ Basic `REG_LINK` type, `REG_FLAG_LINK` flag, and transparent symlink resolution 
 **Test checkpoint:** Set schema on `HKLM\Test\SchemaKey`: `_AllowedTypes = "REG_DWORD"`, `_MinValue = 0`, `_MaxValue = 100`. `RegSetValueEx("Value", REG_DWORD, 50)` → succeeds. `RegSetValueEx("Value", REG_DWORD, 200)` → `STATUS_INTEGER_OVERFLOW`. `RegSetValueEx("Value", REG_SZ, "hello")` → `STATUS_OBJECT_TYPE_MISMATCH`. Key with no schema → all writes succeed (opt-in). Serial log: `"[REG] Schema reject: %s type=%u expected=%s"`. Test on: QEMU WHPX + TCG.
 
 > **Test runner:** N/A (deferred, no code) | validation: on implementation, `scripts\debug\kernel\run-abi-tests.bat`
-> **Deferred:** [M] Schema-validated keys deferred -- schema enforcement hooks into the write path (§3 notify + §4 handles) and needs the §14 SMP lock; §4 is deferred -> XREF: 02-kernel-core/TODO-14 §4 (item: "Migrate HKEY to OB handle table" at line 272)
+> **Deferred:** [M] Schema-validated keys deferred -- schema enforcement hooks into the write path (§3 notify + §4 handles) and needs the §14 SMP lock; §4 is deferred -> XREF: 02-kernel-core/TODO-14 §4 (item: "Migrate HKEY to OB handle table" at line 274)
 
 ---
 

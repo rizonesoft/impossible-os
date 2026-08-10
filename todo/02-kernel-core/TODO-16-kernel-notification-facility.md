@@ -76,9 +76,9 @@ title: "TODO-16 -- Kernel Notification Facility"
 > - Canonical doc: this TODO; publish/subscribe/security/retention are the later sections.
 > - Scope boundary: §1 owns the object type + namespace + lifetime/scope/type-id metadata; §2/§3 own publish/subscribe + teardown, §4 owns DACL/token enforcement, §7 owns coalescing/retention + persistent registry backing.
 > **Verified:** 2026-07-05 | commit `678fbd3c` | 8/8 items | build OK | smoke PASS (KVM 3.29s) + test-knf 10/10
-> **Deferred:** [L] `knf_init` failure is silent to boot-health -> XREF: 02-kernel-core/TODO-16 §9 (item: "Report KNF init health" at line 185)
-> **Deferred:** [L] create-or-open can open an existing privileged state via a Temporary request -> XREF: 02-kernel-core/TODO-16 §4 (item: "Gate create-or-open opens by DACL" at line 122)
-> **Deferred:** [L] concurrent create/delete SMP stress (ObpRemoveFromDirectory idempotent -1 path) -> XREF: 02-kernel-core/TODO-16 §10 (item: "Concurrent create/delete SMP stress" at line 197)
+> **Deferred:** [L] `knf_init` failure is silent to boot-health -> XREF: 02-kernel-core/TODO-16 §9 (item: "Report KNF init health" at line 236)
+> **Deferred:** [L] create-or-open can open an existing privileged state via a Temporary request -> XREF: 02-kernel-core/TODO-16 §4 (item: "Gate create-or-open opens by DACL" at line 140)
+> **Deferred:** [L] concurrent create/delete SMP stress (ObpRemoveFromDirectory idempotent -1 path) -> XREF: 02-kernel-core/TODO-16 §10 (item: "Concurrent create/delete SMP stress" at line 258)
 > **Quality reviewed:** 2026-07-05 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 2M+1L fixed, 3L deferred-XREF | scope: kernel-code-quality
 
 ---
@@ -104,8 +104,8 @@ title: "TODO-16 -- Kernel Notification Facility"
 > - Codex adoptions (state-pin lifetime, non-notifying reserve, consume-and-null unsubscribe, UINT64_MAX no-wrap, subscriber cap) in the commit messages; waitable wait/wake + teardown races owned by the waitable section.
 > - Canonical doc: this TODO; §1 owns the object type/namespace, §2 the publish/subscribe primitive, §3 the Ob-handle waitable wait/wake, §4 DACL/token enforcement, §7 coalescing/retention.
 > **Verified:** 2026-07-05 | commit `b59f6e6f` | 8/8 items | build OK | knf tests 134/134 PASS
-> **Accepted:** [M] concurrent unsubscribe/poll on the same handle races the pre-lock `sub->state` read -> XREF: 02-kernel-core/TODO-16 §3 (item: "Concurrent-teardown safety" at line 121)
-> **Accepted:** [M] publish copies up to 4096 bytes under the per-state spinlock (bounded DPC lock-hold) -> XREF: 02-kernel-core/TODO-16 §7 (item: "Shrink publish lock-hold" at line 176)
+> **Accepted:** [M] concurrent unsubscribe/poll on the same handle races the pre-lock `sub->state` read -> XREF: 02-kernel-core/TODO-16 §3 (item: "Concurrent-teardown safety" at line 123)
+> **Accepted:** [M] publish copies up to 4096 bytes under the per-state spinlock (bounded DPC lock-hold) -> XREF: 02-kernel-core/TODO-16 §7 (item: "Shrink publish lock-hold" at line 197)
 > **Quality reviewed:** 2026-07-05 | Codex 9x (design, adversarial, consistency, perf, re-adversarial, test-coverage) | 2H+4M+4L fixed, 2M accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -206,10 +206,10 @@ title: "TODO-16 -- Kernel Notification Facility"
 > - Deferred (see stamps): edge-triggered delivery, secret redaction enforcement, persistent registry backing, active/spare double-buffering. Design review adoptions in the commit message.
 > - Canonical doc: this TODO; §8 owns the user-mode WNF query surface where `KNF_MODE_SECRET` redaction enforces, §9 owns diagnostics counters.
 > **Verified:** 2026-07-06 | commit `31236a97` | 3/7 items | build OK | tests 172/172 PASS
-> **Deferred:** [M] edge-triggered "deliver every update" mode not implemented (needs a bounded per-subscriber delivery ring) -> XREF: 02-kernel-core/TODO-16 §7 (item: "Edge-triggered delivery" at line 194)
-> **Deferred:** [M] secret-payload redaction enforcement lands with the user-mode query surface (the flag ships now) -> XREF: 02-kernel-core/TODO-16 §7 (item: "Secret-payload redaction before user-mode query" at line 195)
-> **Deferred:** [M] persistent-lifetime registry backing (write-on-create + restore-at-init) not implemented -> XREF: 02-kernel-core/TODO-16 §7 (item: "Persistent-lifetime registry backing" at line 197)
-> **Deferred:** [L] publish lock-hold not yet shrunk; needs active/spare double-buffer -> XREF: 02-kernel-core/TODO-16 §7 (item: "Shrink publish lock-hold via active/spare double-buffer" at line 198)
+> **Deferred:** [M] edge-triggered "deliver every update" mode not implemented (needs a bounded per-subscriber delivery ring) -> XREF: 02-kernel-core/TODO-16 §7 (item: "Edge-triggered delivery" at line 195)
+> **Deferred:** [M] secret-payload redaction enforcement lands with the user-mode query surface (the flag ships now) -> XREF: 02-kernel-core/TODO-16 §7 (item: "Secret-payload redaction before user-mode query" at line 194)
+> **Deferred:** [M] persistent-lifetime registry backing (write-on-create + restore-at-init) not implemented -> XREF: 02-kernel-core/TODO-16 §7 (item: "Persistent-lifetime registry backing" at line 196)
+> **Deferred:** [L] publish lock-hold not yet shrunk; needs active/spare double-buffer -> XREF: 02-kernel-core/TODO-16 §7 (item: "Shrink publish lock-hold via active/spare double-buffer" at line 197)
 > **Quality reviewed:** 2026-07-06 | Codex 3x (adversarial, consistency, perf) | 2L fixed | scope: kernel-code-quality
 
 ---

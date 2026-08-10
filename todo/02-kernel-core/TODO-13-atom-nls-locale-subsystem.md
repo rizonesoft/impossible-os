@@ -174,7 +174,7 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 > - **Canonical doc:** [`include/kernel/nt/nls_cp.h`](../../include/kernel/nt/nls_cp.h).
 > - **Scope boundary:** S5 owns UTF-8 + the three SBCS providers + policy + metadata. DBCS providers, best-fit corpus beyond the ASCII lookalikes, and Win32/SSDT exposure are out of scope. UTF-7 not implemented.
 > **Verified:** 2026-07-04 | commit `fbe79801` | 9/9 items | build OK | nls 71/71 PASS
-> **Accepted:** [M] ACP/OEMCP cache snapshots at populate-defaults time, before any hive load (no persisted-policy load exists today) -> XREF: 02-kernel-core/TODO-13-atom-nls-locale-subsystem.md §6 (item: "registry_load_hives" at line 194)
+> **Accepted:** [M] ACP/OEMCP cache snapshots at populate-defaults time, before any hive load (no persisted-policy load exists today) -> XREF: 02-kernel-core/TODO-13-atom-nls-locale-subsystem.md §6 (item: "registry_load_hives" at line 192)
 > **Quality reviewed:** 2026-07-04 | Codex 12x (design, adversarial, re-adversarial, consistency, perf) | 3H+9M fixed, 1M accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -205,9 +205,9 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 > **Verified:** 2026-07-04 | commit `cea10cbc` | 4/9 items | build OK | nls 75/75 PASS
 > **Accepted:** [M] WM_SETTINGCHANGE(intl) locale-change broadcast -> XREF: 08-graphics-ui/TODO-15-win32k-shadow-ssdt.md §25 (item: "NtUserBroadcastSystemMessage" at line 447)
 > **Accepted:** [M] locale-formatted timezone display names -> XREF: 08-graphics-ui/TODO-12-clock-time.md §5 (item: "Timezone database" at line 49)
-> **Deferred:** [M] privileged NtSetDefaultLocale/UILanguage binding stays fail-closed pending the SRM privilege check -> XREF: 02-kernel-core/TODO-13-atom-nls-locale-subsystem.md §6 (item: "Registry policy" at line 188)
-> **Deferred:** [M] per-thread CP_THREAD_ACP wiring needs per-thread locale storage -> XREF: 02-kernel-core/TODO-13-atom-nls-locale-subsystem.md §6 (item: "Per-thread `CP_THREAD_ACP`" at line 193)
-> **Deferred:** [L] NLS cache refresh after registry_load_hives -> XREF: 02-kernel-core/TODO-13-atom-nls-locale-subsystem.md §6 (item: "registry_load_hives" at line 194)
+> **Deferred:** [M] privileged NtSetDefaultLocale/UILanguage binding stays fail-closed pending the SRM privilege check -> XREF: 02-kernel-core/TODO-13-atom-nls-locale-subsystem.md §6 (item: "Registry policy" at line 186)
+> **Deferred:** [M] per-thread CP_THREAD_ACP wiring needs per-thread locale storage -> XREF: 02-kernel-core/TODO-13-atom-nls-locale-subsystem.md §6 (item: "Per-thread `CP_THREAD_ACP`" at line 191)
+> **Deferred:** [L] NLS cache refresh after registry_load_hives -> XREF: 02-kernel-core/TODO-13-atom-nls-locale-subsystem.md §6 (item: "registry_load_hives" at line 192)
 > **Quality reviewed:** 2026-07-04 | Codex 7x (design, adversarial, re-adversarial, consistency, perf) | 1H+2M fixed | scope: kernel-code-quality
 
 ---
@@ -235,7 +235,7 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 > - **Scope boundary:** §7 owns the invariant sort key + narrow normalization + compiled FoldStringW. Culture-aware collation, NFKC/NFKD, and full UAX #15 are user-mode; disk fold-table data is §10.
 
 > **Verified:** 2026-07-04 | commit `9df3044b` | 7/7 items | build OK | tests 253/253 PASS
-> **Accepted:** [M] §7's 2-band sort key forecloses `NORM_IGNORENONSPACE`/`IGNORESYMBOLS` + word-sort flags (diacritic/case weight is baked into the primary band) -> XREF: 02-kernel-core/TODO-13-atom-nls-locale-subsystem.md §8 (item: "Surface `LCMapStringEx`/`CompareStringEx` over §7 sort keys" at line 248)
+> **Accepted:** [M] §7's 2-band sort key forecloses `NORM_IGNORENONSPACE`/`IGNORESYMBOLS` + word-sort flags (diacritic/case weight is baked into the primary band) -> XREF: 02-kernel-core/TODO-13-atom-nls-locale-subsystem.md §8 (item: "Surface `LCMapStringEx`/`CompareStringEx` over §7 sort keys" at line 252)
 > **Quality reviewed:** 2026-07-04 | Codex 5x (adversarial, consistency, perf, re-adversarial x2) | 3M+2L fixed, 1M accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -267,8 +267,8 @@ title: "TODO-13 -- Atom, NLS & Locale Subsystem"
 
 > **Verified:** 2026-07-04 | commit `196cc251` | 2/8 items ([/] partial) | build OK | tests 335/335 PASS
 > **Accepted:** [H] `ProbeFor*IfUser` skips validation on KernelMode but `ssdt_previous_mode()` resolves via a global (not per-CPU) cursor -- systemic SSDT trust-boundary gap on every user-copying handler -> XREF: 03-memory-concurrency/TODO-07-smp-phase2.md §3 (item: "Per-CPU current-thread cursor" at line 120)
-> **Deferred:** [H] `NtGetMUIRegistryInfo` real contract is a Flags-driven null-delimited preferred-UI-language multi-string, not the shipped fixed blob -> XREF: 02-kernel-core/TODO-13-atom-nls-locale-subsystem.md §8 (item: "Full `NtGetMUIRegistryInfo`" at line 250)
-> **Deferred:** [M] `nt_locale`/`nls_locale` UI-language stores diverge after a runtime SET -> XREF: 02-kernel-core/TODO-13-atom-nls-locale-subsystem.md §8 (item: "Unify the UI-language store" at line 251)
+> **Deferred:** [H] `NtGetMUIRegistryInfo` real contract is a Flags-driven null-delimited preferred-UI-language multi-string, not the shipped fixed blob -> XREF: 02-kernel-core/TODO-13-atom-nls-locale-subsystem.md §8 (item: "Full `NtGetMUIRegistryInfo`" at line 248)
+> **Deferred:** [M] `nt_locale`/`nls_locale` UI-language stores diverge after a runtime SET -> XREF: 02-kernel-core/TODO-13-atom-nls-locale-subsystem.md §8 (item: "Unify the UI-language store" at line 249)
 > **Quality reviewed:** 2026-07-04 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 4M+1L fixed, 1H accepted-XREF, 1H+1M deferred | scope: kernel-code-quality
 
 ---

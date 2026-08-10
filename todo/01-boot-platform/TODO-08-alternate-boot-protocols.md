@@ -99,7 +99,7 @@ title: "TODO-08 -- Alternate Boot Protocols & Compatibility Boundary"
 
 **Test checkpoint:** N/A (section retired under `unsupported` policy).
 
-> **Deferred:** [L] Multiboot2 feature parity audit retired -- §1 policy chose `unsupported`; §7 deleted the parser (8117d6c7) -> XREF: 01-boot-platform/TODO-08 §7 (item: "Chose `unsupported`: deleted 5 files" at line 182)
+> **Deferred:** [L] Multiboot2 feature parity audit retired -- §1 policy chose `unsupported`; §7 deleted the parser (8117d6c7) -> XREF: 01-boot-platform/TODO-08 §7 (item: "Chose `unsupported`: deleted 5 files" at line 185)
 
 ---
 
@@ -117,7 +117,7 @@ title: "TODO-08 -- Alternate Boot Protocols & Compatibility Boundary"
 
 **Test checkpoint:** N/A (section retired under `unsupported` policy).
 
-> **Deferred:** [L] Multiboot2 to-boot_info adapter retired -- §1 policy chose `unsupported`; §7 deleted the parser (8117d6c7) -> XREF: 01-boot-platform/TODO-08 §7 (item: "Chose `unsupported`: deleted 5 files" at line 182)
+> **Deferred:** [L] Multiboot2 to-boot_info adapter retired -- §1 policy chose `unsupported`; §7 deleted the parser (8117d6c7) -> XREF: 01-boot-platform/TODO-08 §7 (item: "Chose `unsupported`: deleted 5 files" at line 185)
 
 ---
 
@@ -139,7 +139,7 @@ title: "TODO-08 -- Alternate Boot Protocols & Compatibility Boundary"
 
 **Test checkpoint:** N/A (section retired under `unsupported` policy).
 
-> **Deferred:** [L] Multiboot2 unsupported-feature degradation matrix retired -- §1 policy chose `unsupported`; §7 deleted the parser (8117d6c7) -> XREF: 01-boot-platform/TODO-08 §7 (item: "Chose `unsupported`: deleted 5 files" at line 182)
+> **Deferred:** [L] Multiboot2 unsupported-feature degradation matrix retired -- §1 policy chose `unsupported`; §7 deleted the parser (8117d6c7) -> XREF: 01-boot-platform/TODO-08 §7 (item: "Chose `unsupported`: deleted 5 files" at line 185)
 
 ---
 
@@ -159,7 +159,7 @@ title: "TODO-08 -- Alternate Boot Protocols & Compatibility Boundary"
 
 **Test checkpoint:** N/A (section retired; non-goal content lives in `docs/boot/alt-boot.md`).
 
-> **Deferred:** [L] Multiboot2 GRUB/Limine/legacy BIOS docs retired -- §1 policy chose `unsupported`; §7 deleted the parser (8117d6c7) -> XREF: 01-boot-platform/TODO-08 §7 (item: "Chose `unsupported`: deleted 5 files" at line 182)
+> **Deferred:** [L] Multiboot2 GRUB/Limine/legacy BIOS docs retired -- §1 policy chose `unsupported`; §7 deleted the parser (8117d6c7) -> XREF: 01-boot-platform/TODO-08 §7 (item: "Chose `unsupported`: deleted 5 files" at line 185)
 
 ---
 
@@ -176,7 +176,7 @@ title: "TODO-08 -- Alternate Boot Protocols & Compatibility Boundary"
 
 **Test checkpoint:** N/A (section retired; the canonical UEFI ISO from TODO-06 §4 remains the only ISO artifact).
 
-> **Deferred:** [L] Multiboot2 compatibility test images retired -- §1 policy chose `unsupported`; §7 deleted the parser (8117d6c7) -> XREF: 01-boot-platform/TODO-08 §7 (item: "Chose `unsupported`: deleted 5 files" at line 182)
+> **Deferred:** [L] Multiboot2 compatibility test images retired -- §1 policy chose `unsupported`; §7 deleted the parser (8117d6c7) -> XREF: 01-boot-platform/TODO-08 §7 (item: "Chose `unsupported`: deleted 5 files" at line 185)
 
 ---
 

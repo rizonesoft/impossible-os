@@ -95,7 +95,7 @@ Pin the target virtual layout BEFORE touching code. This section produces a desi
 > - §2/§3 were resequenced 2026-07-16: the original §2 (linker split) could not ship alone -- it links high with nothing mapped there, so it does not boot, and the runner ships+pushes per section. The additive direct-map work was pulled ahead of the flip instead, which `vmm.c:1417-1419` already anticipated ("moves to `mm_phys_to_hhdm()` when the direct map lands"). Each section is now independently bootable, per this TODO's own sequencing rule.
 
 > **Verified:** 2026-07-15 | commit `99d70510` | 8/8 items | build OK | smoke PASS (KVM 3.23s) | tests 21408/21408 PASS | host gate 52/52
-> **Deferred:** [M] the in-kernel `test_highhalf.c` suite cannot ship -- it tripped the BSS guard with zero headroom (reason: the ceiling this TODO exists to retire) -> XREF: 02-kernel-core/TODO-33-higher-half-kernel-relocation.md §7 (item: "Re-add `src/kernel/test/test_highhalf.c`" at line 200)
+> **Deferred:** [M] the in-kernel `test_highhalf.c` suite cannot ship -- it tripped the BSS guard with zero headroom (reason: the ceiling this TODO exists to retire) -> XREF: 02-kernel-core/TODO-33-higher-half-kernel-relocation.md §7 (item: "Re-add `src/kernel/test/test_highhalf.c`" at line 248)
 > **Quality reviewed:** 2026-07-15 | Codex 7x (design, adversarial, consistency, perf, re-adversarial) | 5H+8M+2L fixed, 0 open | scope: kernel-code-quality
 
 ---
@@ -139,7 +139,7 @@ Build the HHDM direct map and install it in an unused PML4 slot while the kernel
 > - Scope boundary: §2 owns HHDM CONSTRUCTION only; §9 owns walker conversion + root phys-vs-walk split + identity-map-disabled test; §7 retires the BSS ceiling blocking the in-kernel suite.
 
 > **Verified:** 2026-07-17 | commit `e9c73f8f` | 9/10 items | build OK | smoke PASS (KVM 3.4s) | tests 21408+16 PASS | host gate 52/52
-> **Deferred:** [M] worst-case arena tail (~4-5 MiB) reserved-but-unused (reason: efficiency, not correctness) -> XREF: 02-kernel-core/TODO-33-higher-half-kernel-relocation.md §2 (item: "Reclaim the unused worst-case arena tail" at line 119)
+> **Deferred:** [M] worst-case arena tail (~4-5 MiB) reserved-but-unused (reason: efficiency, not correctness) -> XREF: 02-kernel-core/TODO-33-higher-half-kernel-relocation.md §2 (item: "Reclaim the unused worst-case arena tail" at line 122)
 > **Quality reviewed:** 2026-07-17 | Codex 5x (design, adversarial, consistency, perf, re-adversarial) | 3H+1M fixed, 1M deferred, 1M rejected | scope: boot-code-quality
 > **Design reviewed:** 2026-07-16 | TWO Codex `[review-kind: design]` rounds. Round 1 NO-SHIP -> SPLIT into §2 (HHDM construction) + §9 (walker conversion). Round 2 (post-split, install-site (a) plan) NO-SHIP -> 3 HIGH adopted into the items above and VERIFIED at file:line: F1 the PMM reclaims an EfiLoaderData arena (pmm.c:203-219 frees Loader/BootServices, reserves only 1 MiB+image) -> retag the arena interval `UEFI_MMAP_RESERVED` in the normalized mmap; F2 sizing must consume the FINAL post-carve plan (W^X carve makes a whole bucket partial) + use the loaded ELF `p_paddr` envelope, not kernel symbols; F3 HHDM spans PML4 slots 273-400 (64 TiB), not one slot -> multi-slot install loop. Q3 NXE safe if CPUID-gated RMW + read-back + FATAL; Q4 no TLB hazard (inactive root, slot 0 untouched). **Design DONE + adopted; §2 items are the implementation-ready spec -- a fresh context implements DIRECTLY (skip re-review, cite this stamp).** Install-site RESOLVED to (a) bootloader.
 

@@ -113,7 +113,7 @@ Replace the current 2-digit POST codes (28 values in 0x10-0x63) with a 4-digit s
 > - Review: Codex 3x fixed a HIGH (`post_display16` x0 underflow on undersized GOP -> OOB, guarded in both paths) + 3M (0xD000 range doc, VPD classifier extended, volatile-vs-NVRAM doc fixes); panic-NVRAM-hang deferred.
 > - Scope boundary: §1 owns the POST16 scheme + corner display; the VPD full-screen renderer is §4; panic-path NVRAM robustness is the deferred item above.
 > **Verified:** 2026-06-15 | this review commit (HIGH + 3M fixes) | 6/7 items | build OK | tests (POST16 uniqueness)
-> **Deferred:** [H] panic-path `boot_post_nvram_write16` can block on the sleepable UEFI RT mutex -> XREF: 01-boot-platform/TODO-15 §1 (item: "Panic-path NVRAM write robustness" at line 102)
+> **Deferred:** [H] panic-path `boot_post_nvram_write16` can block on the sleepable UEFI RT mutex -> XREF: 01-boot-platform/TODO-15 §1 (item: "Panic-path NVRAM write robustness" at line 105)
 > **Quality reviewed:** 2026-06-15 | Codex 3x (adversarial, consistency, perf) | 1H+3M fixed, 1H deferred | scope: kernel-code-quality
 
 ## 2. POST Codes in Every Boot Function
@@ -173,7 +173,7 @@ A zero-dependency pixel font baked into a single header -- renders ASCII text di
 > - Review: Codex 3x -- consistency + perf clean (95 rows, both paths consistent); the raw header helpers have a latent unbounded-fb-write HIGH (uncalled, superseded by `_scaled`) -- deferred + a contract WARNING comment added.
 > - Scope boundary: §3 owns the font data + helpers; the bounded in-tree renderer is `vpd.c` (§4); bounding/retiring the raw helpers is the deferred item above.
 > **Verified:** 2026-06-15 | this review commit (contract warning) | 8/9 items | build OK | manual (smoke boot pending)
-> **Deferred:** [H] raw header render helpers write fb with no extent/NULL check (latent OOB, uncalled) -> XREF: 01-boot-platform/TODO-15 §3 (item: "Bound or retire the raw header render helpers" at line 162)
+> **Deferred:** [H] raw header render helpers write fb with no extent/NULL check (latent OOB, uncalled) -> XREF: 01-boot-platform/TODO-15 §3 (item: "Bound or retire the raw header render helpers" at line 165)
 > **Quality reviewed:** 2026-06-15 | Codex 3x (adversarial, consistency, perf) | 0H+0M fixed, 1H deferred | scope: kernel-code-quality
 
 ## 4. Tier 1: Pre-Splash VPD Renderer
@@ -208,7 +208,7 @@ Replace `HV_BAR` with a structured pre-splash renderer that draws named stage ba
 > - Review: Codex 3x fixed a HIGH (row-overflow left a stale active stage so a later `vpd_stage_fail` marked the wrong row -- now clears `s_has_current`) + a layout doc-drift (8px/7px not 4px/5x5); BGRX color packing deferred.
 > - Scope boundary: §4 owns the Tier 1 renderer; page-flip-after-splash handling is §10; format-aware color packing is the deferred item above.
 > **Verified:** 2026-06-15 | this review commit (HIGH + layout fixes) | 10/11 items | build OK | manual (on-screen pending)
-> **Deferred:** [M] VPD writes BGRX-assumed colors; RGBX framebuffers render swapped channels (red FAIL -> blue) -> XREF: 01-boot-platform/TODO-15 §4 (item: "Format-aware color packing" at line 197)
+> **Deferred:** [M] VPD writes BGRX-assumed colors; RGBX framebuffers render swapped channels (red FAIL -> blue) -> XREF: 01-boot-platform/TODO-15 §4 (item: "Format-aware color packing" at line 200)
 > **Quality reviewed:** 2026-06-15 | Codex 3x (adversarial, consistency, perf) | 1H+1M fixed, 1M deferred | scope: kernel-code-quality
 
 ## 5. `boot.conf` `postbars` Configuration
@@ -304,7 +304,7 @@ On crash-restart, display exactly where the previous boot failed -- always activ
 > - Review: Codex 3x fixed a stale "NVRAM written only twice" comment (`boot_init.c`); the panic-stage-loss finding is Deferred -- the "exact stage" promise is partial.
 > - Scope boundary: §8 owns the crash banner + NVRAM read; the panic-path NVRAM write lives in `panic.c` and is the subject of the Deferred follow-up below.
 > **Verified:** 2026-06-14 | ship `7b5711f9` (+ this review commit) | 7/8 items | build OK | manual (forced-panic reboot pending)
-> **Deferred:** [M] clean panic overwrites the NVRAM stage marker with generic POST16_BOOT_FAILED, so the banner shows a generic failure not the exact stage -> XREF: 01-boot-platform/TODO-15 §8 (item: "Preserve the failing stage" at line 293)
+> **Deferred:** [M] clean panic overwrites the NVRAM stage marker with generic POST16_BOOT_FAILED, so the banner shows a generic failure not the exact stage -> XREF: 01-boot-platform/TODO-15 §8 (item: "Preserve the failing stage" at line 296)
 > **Quality reviewed:** 2026-06-14 | Codex 3x (adversarial, consistency, perf) | 0H+1M+0L fixed, 1M deferred | scope: kernel-code-quality
 
 ## 9. Tier 2: Splash-Integrated Progress *(deferred)*
@@ -411,8 +411,8 @@ On crash, the VPD marks the active stage as failed. On next boot, the failure is
 > - Review: Codex 3x fixed the 0xFFFE info-header misclassification (now "FAILED (panic)" not "Phase 3") + a stale `boot_halt` NVRAM comment; exact-stage preservation deferred (shared with §8).
 > - Scope boundary: §13 owns the at-panic stage-red marking; the next-boot banner is §8; Tier 2 post-splash panic display is deferred to §9.
 > **Verified:** 2026-06-14 | this review commit (fixes in-commit) | 4/5 items | build OK | manual (forced-panic pending)
-> **Deferred:** [M] Tier 2 post-splash panic display unimplemented (depends on the Tier 2 splash) -> XREF: 01-boot-platform/TODO-15 §13 (item: "Tier 2 post-splash panic display" at line 400)
-> **Deferred:** [M] exact failing stage lost on clean panic (generic POST16_BOOT_FAILED), shared with §8 -> XREF: 01-boot-platform/TODO-15 §8 (item: "Preserve the failing stage" at line 293)
+> **Deferred:** [M] Tier 2 post-splash panic display unimplemented (depends on the Tier 2 splash) -> XREF: 01-boot-platform/TODO-15 §13 (item: "Tier 2 post-splash panic display" at line 403)
+> **Deferred:** [M] exact failing stage lost on clean panic (generic POST16_BOOT_FAILED), shared with §8 -> XREF: 01-boot-platform/TODO-15 §8 (item: "Preserve the failing stage" at line 296)
 > **Quality reviewed:** 2026-06-14 | Codex 3x (adversarial, consistency, perf) | 0H+2M fixed, 1M deferred | scope: kernel-code-quality
 
 ---

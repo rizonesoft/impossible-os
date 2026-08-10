@@ -212,8 +212,8 @@ Add bounded timeouts to all bulk transfers. The current code polls the xHCI even
 > - Hardening: bulk transfers can no longer hang forever (5s software bound); a multi-fragment bulk-IN stops on the first short so CSW bytes never DMA into the data buffer; INQUIRY min-length checks the host count, not the device residue.
 > - Scope boundary: §5 owns bulk timeouts + host-residual; EP0/control-transfer timeout recovery is deferred (own item); shared event-ring per-event correlation + command-ring locking is §16.
 > **Verified:** 2026-06-15 | review commit | 9/10 items | build OK | storage 400 kernel + 16 user-mode PASS (host-short matrix)
-> **Accepted:** [H] a failed timeout abort (Stop Endpoint / Set TR Dequeue rejected) leaves the stale TRB owned, so a later retry could enqueue behind it -> XREF: 01-boot-platform/TODO-19 §16 (item: "Timeout-tainted endpoint recovery: when `xhci_abort_endpoint` fails the stale TRB stays owned" at line 393)
-> **Deferred:** [M] EP0 / control-transfer timeout recovery -- distinct EP0-abort design needed (§4 recovery rejects EP0) -> XREF: 01-boot-platform/TODO-19 §5 (item: "DEFERRED: EP0 / control-transfer timeout recovery" at line 203)
+> **Accepted:** [H] a failed timeout abort (Stop Endpoint / Set TR Dequeue rejected) leaves the stale TRB owned, so a later retry could enqueue behind it -> XREF: 01-boot-platform/TODO-19 §16 (item: "Timeout-tainted endpoint recovery: when `xhci_abort_endpoint` fails the stale TRB stays owned" at line 510)
+> **Deferred:** [M] EP0 / control-transfer timeout recovery -- distinct EP0-abort design needed (§4 recovery rejects EP0) -> XREF: 01-boot-platform/TODO-19 §5 (item: "DEFERRED: EP0 / control-transfer timeout recovery" at line 204)
 > **Quality reviewed:** 2026-06-15 | Codex 8x (design, adversarial x2, re-adversarial x3, consistency, perf) | 4H+2M fixed, 1H accepted-XREF | scope: kernel-code-quality
 
 **Regression risk:** MEDIUM -- adds a per-poll timeout check on the bulk path. Rollback: raise `USB_BULK_TIMEOUT_MS` to effectively disable the bulk timeout while keeping the infrastructure.
@@ -264,7 +264,7 @@ On Intel 7/8/9-series chipsets, USB 2.0 ports are routed from EHCI to xHCI via t
 > - Deferred: spec-backed event-driven early-exit (route-capable port-identity tracking) kept as a `[ ]` item in this section; Codex design + 3x re-adversarial adoptions in the ship commit.
 > - Scope boundary: §7 owns the routing + bounded settle; §6 owns the (already-absent) global post-`xhci_init` sleep; per-port reset/enumeration stays in `xhci_enumerate_ports`.
 > **Verified:** 2026-06-15 | commit `c4f0e128` | 3/4 items | build OK | live-PCI/MMIO (validated bare metal i5-4210U + i5-11600K skip-path)
-> **Deferred:** [M] event-driven early-exit to shorten the 500ms on routing HW -- unsafe without spec-backed routed-port identity tracking -> XREF: 01-boot-platform/TODO-19 §7 (item: "DEFERRED: spec-backed event-driven early-exit" at line 251)
+> **Deferred:** [M] event-driven early-exit to shorten the 500ms on routing HW -- unsafe without spec-backed routed-port identity tracking -> XREF: 01-boot-platform/TODO-19 §7 (item: "DEFERRED: spec-backed event-driven early-exit" at line 255)
 > **Quality reviewed:** 2026-06-15 | Codex 8x (design, adversarial x2, re-adversarial x3, consistency, perf) | 1H+1M fixed, 0 open | scope: kernel-code-quality
 
 ---
@@ -290,8 +290,8 @@ Fix the unbounded flush loop that hangs 10+ minutes on USB 2.0.
 > - Hardening (review): the `flushing` guard is now an atomic test-and-set (SMP-safe, one CPU enters); the cursor advances only on verified full `vfs_write` returns (stop-on-first-failure); the done-path reports `flush FAILED` honestly when persistence did not complete.
 > - Scope boundary: this section owns the bounded loop + progress + slow-media DETECTION; the deferred-flush mode (RAM batching that acts on the flag) is the next section.
 > **Verified:** 2026-06-15 | commit `8ed6ca69` | 4/6 items | build OK | live serial+VFS (validated bare metal USB 2.0 i5-4210U)
-> **Deferred:** [H] all-or-nothing kernel.log retry (truncate-to-pre-flush-size rollback for clean retry) -> XREF: 01-boot-platform/TODO-19 §8 (item: "DEFERRED: all-or-nothing kernel.log retry" at line 276)
-> **Deferred:** [M] durable per-subsystem-file cursor (subsystem routing currently best-effort) -> XREF: 01-boot-platform/TODO-19 §8 (item: "DEFERRED: durable per-subsystem-file cursor" at line 277)
+> **Deferred:** [H] all-or-nothing kernel.log retry (truncate-to-pre-flush-size rollback for clean retry) -> XREF: 01-boot-platform/TODO-19 §8 (item: "DEFERRED: all-or-nothing kernel.log retry" at line 280)
+> **Deferred:** [M] durable per-subsystem-file cursor (subsystem routing currently best-effort) -> XREF: 01-boot-platform/TODO-19 §8 (item: "DEFERRED: durable per-subsystem-file cursor" at line 281)
 > **Quality reviewed:** 2026-06-15 | Codex 8x (design, adversarial x2, re-adversarial x3, consistency, perf) | 3H+3M fixed, 2 deferred | scope: kernel-code-quality
 
 ---

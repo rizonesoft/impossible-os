@@ -254,7 +254,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 > **Accepted:** [H] fork does not copy the parent environ, so exec(envp==NULL) inherits empty; race-safe env_copy needs atomic slot publication -> XREF: 02-kernel-core/TODO-12-native-api-ssdt.md §7 (item: "Wire `env_copy()` into every child path")
 > **Accepted:** [M] PEB CommandLine truncates a >~2 KiB full-argv command line + UTF-8 argv mojibakes (single-page RTLPP, byte-widening) -> XREF: 02-kernel-core/TODO-11 §5 (item: "`CommandLine` fidelity" at line 198)
 > **Accepted:** [M] `copy_from_user` is not fault-recoverable (in-range unmapped page faults in kernel) -> XREF: 03-memory-concurrency/TODO-02 §4 (item: "Audit all syscall handlers" at line 132)
-> **Deferred:** [M] full exec-commit transactionality (roll back / terminate on a task_exec failure after the argv/env commit) -> XREF: 02-kernel-core/TODO-22 §4 (item: "Follow-up: make SYS_EXEC argv/env commit transactional" at line 233)
+> **Deferred:** [M] full exec-commit transactionality (roll back / terminate on a task_exec failure after the argv/env commit) -> XREF: 02-kernel-core/TODO-22 §4 (item: "Follow-up: make SYS_EXEC argv/env commit transactional" at line 238)
 > **Quality reviewed:** 2026-07-13 | Codex 5x (adversarial, consistency, perf, re-adversarial) | 1H+1L fixed, 2H+2M accepted-XREF, 1M deferred | scope: kernel-code-quality
 
 ---
@@ -586,7 +586,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 > **Verified:** 2026-07-15 | commit `1d3ba8f4` | 4/4 items | build OK | tests 1860/1860 PASS | [/] Win32 export deferred
 > **Accepted:** [H] not a user-callable shell32 API -- kernel primitive only (extra `caller` param, `cmdline_free_argv` not `LocalFree`), like SearchPathW §14 -> XREF: 10-platform-services/TODO-C §"Tier 1" (item: "`CommandLineToArgvW`" at line 68)
 > **Accepted:** [H] LocalAlloc/LocalFree-compatible user Win32 stub not implemented -> XREF: 12-user-platform-sdk/TODO-02 §6 (item: "`CommandLineToArgvW(lpCmdLine, pNumArgs)` Win32 stub" at line 206)
-> **Accepted:** [M] `argv_to_cmdline` is not a general inverse for a special `argv[0]` (encoder over-escapes the program name) -> XREF: 02-kernel-core/TODO-22 §4 (item: "give `argv_to_cmdline` a Windows program-name encoder for `argv[0]`" at line 234)
+> **Accepted:** [M] `argv_to_cmdline` is not a general inverse for a special `argv[0]` (encoder over-escapes the program name) -> XREF: 02-kernel-core/TODO-22 §4 (item: "give `argv_to_cmdline` a Windows program-name encoder for `argv[0]`" at line 239)
 > **Accepted:** [M] blocks > 4 KiB ride `pmm_alloc_contiguous`, which mutates the frame bitmap unsynchronized (pre-existing exposure, not new to §15) -> XREF: 03-memory-concurrency/TODO-03 §1 (item: "PMM bitmap SMP locking" at line 103)
 > **Quality reviewed:** 2026-07-15 | Codex 5x (design, adversarial, consistency, perf, re-adversarial) | 2H+6M fixed, 4M accepted-XREF | scope: kernel-code-quality
 
@@ -640,7 +640,7 @@ title: "TODO-22 -- Environment Variables & Process Arguments"
 > - **Scope boundary** -- §17 owns the lookup/register primitives; §7 owns the shell `shell_find_command` wiring; TODO-03 owns installer callers; TODO-15 §5 owns real registry-DACL authorization (elevation gate stands in until it lands).
 > **Verified:** 2026-07-15 | commit `2ca1683f` | 4/5 items | build OK | tests 5 App Paths suites PASS
 > **Accepted:** [H] non-atomic default+`Path` pair (concurrent register/lookup can interleave -- lock-free-registry class) -> XREF: 02-kernel-core/TODO-14 §14 (item: "Batched atomic multi-value write under one `reg_lock` hold" at line 663)
-> **Deferred:** [M] `shell_find_command` App Paths fallback wiring (no kernel shell exists yet) -> XREF: 02-kernel-core/TODO-22 §7 (item: "`shell_find_command(name, out_path, max)`" at line 323)
+> **Deferred:** [M] `shell_find_command` App Paths fallback wiring (no kernel shell exists yet) -> XREF: 02-kernel-core/TODO-22 §7 (item: "`shell_find_command(name, out_path, max)`" at line 329)
 > **Quality reviewed:** 2026-07-15 | Codex 9x (design + adversarial + consistency + perf + re-adversarial) | 5H+6M+1L fixed, 1H accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -682,7 +682,7 @@ Two latent defects in the SHIPPED §3 UTF-16 expansion path (`nt_rtlenv.c`), fix
 > - **Canonical doc:** [`include/kernel/nt/nt_rtlenv.h`](../../include/kernel/nt/nt_rtlenv.h) (cap rationale + return set).
 > - **Scope boundary:** §20 owns the three BLOCKING gates review filed there (lookup-work bound, foreign-block extent, the expand-path 2 MiB PMM alloc the raise made live) plus the at-cap allocation test; §21 owns the four Rtl exports and stays non-user-reachable until §20 clears -- nothing here is user-reachable until §21 wires an export; §3 owns the expansion primitives.
 > **Verified:** 2026-07-15 | commit `b0c184e0` + review fixes | 4/5 items | build OK | tests 21290 kernel + 16 user-mode PASS
-> **Deferred:** [H] the raise took the NULL-env path's worst case from 128 KiB to 2 MiB (`pmm_alloc_contiguous(512)`) under the PER-TASK `environ_lock`, which serializes nothing across tasks, so two CPUs can double-allocate the same frames -> XREF: 02-kernel-core/TODO-22 §20 (item: "**BLOCKING before a user-reachable export:** expand path takes 2 MiB" at line 697)
+> **Deferred:** [H] the raise took the NULL-env path's worst case from 128 KiB to 2 MiB (`pmm_alloc_contiguous(512)`) under the PER-TASK `environ_lock`, which serializes nothing across tasks, so two CPUs can double-allocate the same frames -> XREF: 02-kernel-core/TODO-22 §20 (item: "**BLOCKING before a user-reachable export:** expand path takes 2 MiB" at line 698)
 > **Accepted:** [M] the unsynchronized PMM frame bitmap that lets the above double-allocate is a pre-existing kernel-wide gap this section AMPLIFIES (32 -> 512 frames), not originates -> XREF: 03-memory-concurrency/TODO-03 §1 (item: "**PMM bitmap SMP locking**" at line 103)
 > **Quality reviewed:** 2026-07-15 | Codex 5x (design, adversarial, consistency, perf, re-adversarial) | 2M+3L fixed, 3H+1M deferred-XREF, 1M accepted-XREF | scope: kernel-code-quality + kernel-quality-auditor
 
@@ -814,7 +814,7 @@ The `env.c` half of the completeness work §20's review deferred, split from the
 > - Canonical doc: `include/kernel/nt/nt_rtlenv.h` (per-entry contracts) + `include/kernel/env.h` (substrate contracts).
 > - Scope boundary: §23 owns block-LIFECYCLE adoption over `env.c`; §24 owns the counted-block boundary probe+copy + expansion completeness; §25 owns the counted (non-`_U`) Rtl read forms.
 > **Verified:** 2026-07-18 | commit `9f43238d` | 12/12 items | build OK | tests 2124/2124 + 16 user PASS, 0 leaked (KVM)
-> **Accepted:** [L] restore-token cap 65536 WCHARs < 1 MiB store cap; a 64K-1M-WCHAR env fails `RtlSetCurrentEnvironment` on the old-store serialize (reason: pre-existing env_create_block format cap, gated) -> XREF: 02-kernel-core/TODO-22 §24 (item: "Restore-token cap parity" at line 837)
+> **Accepted:** [L] restore-token cap 65536 WCHARs < 1 MiB store cap; a 64K-1M-WCHAR env fails `RtlSetCurrentEnvironment` on the old-store serialize (reason: pre-existing env_create_block format cap, gated) -> XREF: 02-kernel-core/TODO-22 §24 (item: "Restore-token cap parity" at line 838)
 > **Quality reviewed:** 2026-07-18 | Codex 7x (design, adversarial x2, re-adversarial x2, consistency, perf) | 1H+6M+1L fixed, 1L accepted-XREF, 1L rejected | scope: kernel-code-quality + kernel-quality-auditor + concurrency-evidence-mapper
 
 ---

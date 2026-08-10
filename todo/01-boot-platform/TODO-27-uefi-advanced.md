@@ -147,7 +147,7 @@ Enforce write-XOR-execute on UEFI runtime memory regions by walking the `EFI_MEM
 > - Scope boundary: the runtime `EFI_MEMORY_ATTRIBUTE_PROTOCOL` sync (item below, DEFERRED -- needs a boot_info ABI add, UEFI 2.10-only) stays this section; static MAT enforcement is the shipped core.
 
 > **Verified:** 2026-06-17 | commit `031c5a9b` | 4/5 items | build OK | tests 112/112 PASS (mm) + smoke PASS (no-MAT graceful-skip)
-> **Deferred:** [M] `EFI_MEMORY_ATTRIBUTE_PROTOCOL` runtime sync (firmware-page-table mirror of OS NX/RO flips) needs a boot_info ABI add + bootloader LocateProtocol pre-EBS; UEFI 2.10-only, absent on older firmware (Codex design review recommended defer) -> XREF: 01-boot-platform/TODO-27 §3 (item: "EFI_MEMORY_ATTRIBUTE_PROTOCOL runtime sync" at line 128)
+> **Deferred:** [M] `EFI_MEMORY_ATTRIBUTE_PROTOCOL` runtime sync (firmware-page-table mirror of OS NX/RO flips) needs a boot_info ABI add + bootloader LocateProtocol pre-EBS; UEFI 2.10-only, absent on older firmware (Codex design review recommended defer) -> XREF: 01-boot-platform/TODO-27 §3 (item: "EFI_MEMORY_ATTRIBUTE_PROTOCOL runtime sync" at line 135)
 > **Quality reviewed:** 2026-06-17 | Codex 5x (design, adversarial, consistency, perf, re-adversarial) | 3H+1M fixed | scope: kernel-code-quality
 
 ---

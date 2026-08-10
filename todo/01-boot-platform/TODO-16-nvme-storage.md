@@ -155,8 +155,8 @@ Create one I/O Submission/Completion Queue pair and implement read/write sector 
 > - Review: Codex 3x fixed 1C+1M -- read/write bounds-check the LBA range against `ns_lba_count` (was unchecked -> wraparound overwrite); byte copy replaced with `memcpy`.
 > - Scope boundary: §3 owns the I/O queue + read/write; multi-page PRP + persistent DMA buffer are deferred perf (Accepted); io_busy/shutdown lifecycle is §6.
 > **Verified:** 2026-06-15 | this review commit | 8/8 items | build OK | smoke PASS 2.6s
-> **Accepted:** [H] large transfers chunked into many single-page PRP1 4 KiB commands with 1ms-poll latency -> XREF: 01-boot-platform/TODO-16 §5 (item: "Multi-page PRP2 / PRP-list transfers" at line 184)
-> **Accepted:** [M] per-read/write `pmm_alloc_contiguous`/free on the storage hot path -> XREF: 01-boot-platform/TODO-16 §5 (item: "Persistent per-controller DMA bounce buffer" at line 185)
+> **Accepted:** [H] large transfers chunked into many single-page PRP1 4 KiB commands with 1ms-poll latency -> XREF: 01-boot-platform/TODO-16 §5 (item: "Multi-page PRP2 / PRP-list transfers" at line 207)
+> **Accepted:** [M] per-read/write `pmm_alloc_contiguous`/free on the storage hot path -> XREF: 01-boot-platform/TODO-16 §5 (item: "Persistent per-controller DMA bounce buffer" at line 208)
 > **Quality reviewed:** 2026-06-15 | Codex 3x (adversarial, consistency, perf) | 1C+2H+3M fixed, 2H accepted (§1-§4 consolidated) | scope: kernel-code-quality
 
 ---

@@ -123,7 +123,7 @@ Select the best monotonic source available: invariant TSC → HPET → ACPI PMTM
 > - Canonical: `src/kernel/time/mono_clock.c`.
 > - Scope boundary: §2 owns source selection + the PMTMR clocksource; the drift watchdog is §18; ordered-`rdtsc` / AP-TSC-sync is §3.
 > **Verified:** 2026-06-27 | commit `54345492` | 8/8 items | build OK | 208 kernel + 16 user PASS | smoke PASS (TCG 2.6s)
-> **Accepted:** [H] a multi-second tick quiesce can lose 24-bit PMTMR wraps (the monotonic floor blocks backward steps meanwhile) -> XREF: 02-kernel-core/TODO-08-time-filetime-management.md §18 (item: "PMTMR epoch refresh across tick quiesce" at line 334)
+> **Accepted:** [H] a multi-second tick quiesce can lose 24-bit PMTMR wraps (the monotonic floor blocks backward steps meanwhile) -> XREF: 02-kernel-core/TODO-08-time-filetime-management.md §18 (item: "PMTMR epoch refresh across tick quiesce" at line 539)
 > **Quality reviewed:** 2026-06-27 | Codex 4x (adversarial, consistency, perf, re-adversarial) | 2H+2M fixed, 1H accepted (per-tick PMTMR-read deferral resolved in §16: read retained, amortized) | scope: kernel-code-quality
 
 ---
@@ -211,7 +211,7 @@ Seed the kernel wall clock at boot. The wall clock is a `FILETIME` anchor point 
 > - Canonical: `src/kernel/drivers/rtc.c`; consumer seam `src/kernel/time/wall_clock.c`.
 > - Scope boundary: the hard gate is the hardware-safety boundary for all CMOS consumers (compositor/desktop call `rtc_read()` directly, protected, no port I/O); §6+ own the higher-level time service.
 > **Verified:** 2026-06-27 | commit `d2930860` | 7/7 items | build OK | 229 kernel + 16 user PASS | smoke PASS (TCG 2.56s, RTC present -> Serial_26062701.log)
-> **Accepted:** [M] no-RTC serial-log rotation deletes by seq not recency (cap bounds growth, so not a leak; needs a cross-boot counter) -> XREF: 02-kernel-core/TODO-04-system-logging.md §4 (item: "No-RTC serial-log recency rotation" at line 170)
+> **Accepted:** [M] no-RTC serial-log rotation deletes by seq not recency (cap bounds growth, so not a leak; needs a cross-boot counter) -> XREF: 02-kernel-core/TODO-04-system-logging.md §4 (item: "No-RTC serial-log recency rotation" at line 175)
 > **Quality reviewed:** 2026-06-27 | Codex 5x (adversarial, consistency, perf, re-adversarial x2) + kernel-quality-auditor | 2H+2M+1L fixed, 1M accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -236,7 +236,7 @@ Provide the stable kernel-level time API used by everything above PASSIVE_LEVEL:
 > - Canonical: `src/kernel/time/wall_clock.c`.
 > - Scope boundary: §6 owns the Ke* service; the Nt* SSDT handlers' user-pointer probing is §9; the coarse cached-read fast path is §16.
 > **Verified:** 2026-06-27 | ship `8ba23931` + review fixes | 6/6 items | build OK | 236 kernel + 16 user PASS | smoke PASS (TCG 2.47s)
-> **Accepted:** [H] the three time SSDT handlers deref user pointers without probe/copy (a `prev_ptr` can fault the kernel or write to a kernel address) -> XREF: 02-kernel-core/TODO-08-time-filetime-management.md §9 (item: "User-pointer safety" at line 267)
+> **Accepted:** [H] the three time SSDT handlers deref user pointers without probe/copy (a `prev_ptr` can fault the kernel or write to a kernel address) -> XREF: 02-kernel-core/TODO-08-time-filetime-management.md §9 (item: "User-pointer safety" at line 307)
 > **Quality reviewed:** 2026-06-27 | Codex 7x (adversarial, consistency, perf, re-adversarial x4) + kernel-quality-auditor | 3H+3M+2L fixed, 1H accepted-XREF | scope: kernel-code-quality
 
 ---
@@ -396,8 +396,8 @@ The timer ISR must update the `KUSER_SHARED_DATA` time fields (SystemTime, Inter
 > - Scope boundary: §12 owns the page + ISR time update; full static-field population is TODO-11 §11; coarse cached reads are §16; the QPC fast path is gated on 10-platform-services/TODO-09 §1.
 > **Verified:** 2026-06-27 | ship `da9c78f3` + review fixes | 7/9 items | build OK | 243 kernel + 16 user PASS | smoke PASS (TCG 2.49s)
 > **Accepted:** [H] the KUSD huge-page split leaves the 511 identity siblings user-accessible (the KUSD leaf itself is user-RO) -- the global SMEP-disabled boot map (User on all identity pages), not §12-specific -> XREF: 03-memory-concurrency/TODO-02-memory-security.md §3 (item: "set CR4 bit 20 (`CR4.SMEP`)" at line 109)
-> **Deferred:** [H] move the Impossible-OS ABI header out of `KUSER_SHARED_DATA` to a private page (Win11-QPC-tail collision) -> XREF: 02-kernel-core/TODO-08-time-filetime-management.md §12 (item: "Reconcile ABI-header / Win11-QPC-tail collision" at line 386)
-> **Deferred:** [M] Win11 24H2 QPC-bypass fields (QpcBypassEnabled stays 0 until a user-mode reader exists) -> XREF: 02-kernel-core/TODO-08-time-filetime-management.md §12 (item: "Win11 24H2 KUSD QPC fast-path fields" at line 385)
+> **Deferred:** [H] move the Impossible-OS ABI header out of `KUSER_SHARED_DATA` to a private page (Win11-QPC-tail collision) -> XREF: 02-kernel-core/TODO-08-time-filetime-management.md §12 (item: "Reconcile ABI-header / Win11-QPC-tail collision" at line 385)
+> **Deferred:** [M] Win11 24H2 QPC-bypass fields (QpcBypassEnabled stays 0 until a user-mode reader exists) -> XREF: 02-kernel-core/TODO-08-time-filetime-management.md §12 (item: "Win11 24H2 KUSD QPC fast-path fields" at line 384)
 > **Quality reviewed:** 2026-06-27 | Codex 6x (design, adversarial, consistency, perf, re-adversarial x2) + kernel-quality-auditor | 1H+4M+1L fixed, 1H accepted-XREF, 1H+1M deferred | scope: kernel-code-quality
 
 ---
@@ -553,8 +553,8 @@ Continuously cross-check the active monotonic clock source against a reference a
 > - Canonical: `src/kernel/time/mono_clock.c`.
 > - Scope boundary: §18 owns clocksource qualification + drift demotion; NTP wall-time discipline is §19; AP TSC sync stays §3-deferred; S3 resume is power-management.
 > **Verified:** 2026-06-27 | commit `10613f9a` | 6/9 items | build OK | tests 291/291 PASS | smoke PASS (TCG 2.53s)
-> **Deferred:** [H] PMTMR-reference watchdog monitoring (auto-monitoring is HPET-reference-only; PMTMR wrap unboundable by an independent continuous clock) -> XREF: 02-kernel-core/TODO-08 §18 (item: "PMTMR-reference watchdog monitoring" at line 543)
-> **Deferred:** [M] per-CPU/batched `mono_floor` fast path for the always-on TSC read -> XREF: 02-kernel-core/TODO-08 §18 (item: "Optimization (perf review [M])" at line 544)
+> **Deferred:** [H] PMTMR-reference watchdog monitoring (auto-monitoring is HPET-reference-only; PMTMR wrap unboundable by an independent continuous clock) -> XREF: 02-kernel-core/TODO-08 §18 (item: "PMTMR-reference watchdog monitoring" at line 541)
+> **Deferred:** [M] per-CPU/batched `mono_floor` fast path for the always-on TSC read -> XREF: 02-kernel-core/TODO-08 §18 (item: "Optimization (perf review [M])" at line 542)
 > **Quality reviewed:** 2026-06-27 | Codex 12x (design, adversarial, consistency, perf, re-adversarial) | 8H+3M+1L fixed, 3 deferred | scope: kernel-code-quality
 
 ---

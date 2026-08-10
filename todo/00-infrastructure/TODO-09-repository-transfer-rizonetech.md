@@ -374,7 +374,7 @@ Close the roadmap by making the final owner state discoverable and removing tran
 > - **Scope boundary:** documentation sync only; the operator-validation tail (DNS TTL restore, release dry-run, org Copilot UI check) stays owned by §2-§7 `[/]`, and the move-back execution by §8.
 
 > **Verified:** 2026-06-13 | commit `c0ff7a2b` | 8/8 items | build N/A (documentation closure -- no kernel/test surface) | github-setup.md owner-state synced, owner-ref inventory clean, todo-graph 8/8
-> **Deferred:** [M] §5/§7 push-state wording still reads contradictory ("blocked" vs "proven") until the operator restores the ruleset admin bypass; pushes land via the "expected" check today -> XREF: 00-infrastructure/TODO-09 §5 (item: "Branch protection / ruleset structure preserved BUT bypass actors empty" at line 220)
+> **Deferred:** [M] §5/§7 push-state wording still reads contradictory ("blocked" vs "proven") until the operator restores the ruleset admin bypass; pushes land via the "expected" check today -> XREF: 00-infrastructure/TODO-09 §5 (item: "Branch protection / ruleset structure preserved BUT bypass actors empty" at line 226)
 > **Quality reviewed:** 2026-06-13 | Codex 6x (adversarial + consistency + perf + re-adversarial) | 2H+4M fixed, 1M deferred | scope: N/A (documentation closure)
 
 ---

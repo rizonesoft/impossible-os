@@ -228,8 +228,8 @@ Design the Executable Impossible Format -- minimal parsing, native OS metadata, 
 > - Scope boundary: signature verification is §17; per-process physical isolation of the user range shares the future VMM prerequisite tracked in §2.
 
 > **Verified:** 2026-07-10 | commit `bbdf6baf` | 11/13 items | build OK | exec 637 kernel + 16 user PASS | 11 EIF reject tests
-> **Deferred:** [L] §4 rule-4 `api_version` gating not enforced (no OS-wide API-version authority/constant exists yet) -> XREF: 02-kernel-core/TODO-17 §5 (item: "Enforce §4 rule 4" at line 216)
-> **Deferred:** [L] non-zero reserved header/segment fields + reserved flag bits not rejected (spec "must be zero"; v1.1 may repurpose under a version bump) -> XREF: 02-kernel-core/TODO-17 §5 (item: "Reject non-zero reserved header/segment fields" at line 217)
+> **Deferred:** [L] §4 rule-4 `api_version` gating not enforced (no OS-wide API-version authority/constant exists yet) -> XREF: 02-kernel-core/TODO-17 §5 (item: "Enforce §4 rule 4" at line 217)
+> **Deferred:** [L] non-zero reserved header/segment fields + reserved flag bits not rejected (spec "must be zero"; v1.1 may repurpose under a version bump) -> XREF: 02-kernel-core/TODO-17 §5 (item: "Reject non-zero reserved header/segment fields" at line 218)
 > **Quality reviewed:** 2026-07-10 | Codex 7x (adversarial, consistency, perf, re-adversarial) | 1H+6M+2L fixed, 2L deferred | scope: kernel-code-quality
 
 ## 6. Module List Registration (LDR_DATA_TABLE_ENTRY)
@@ -272,9 +272,9 @@ Every loaded executable and shared library must be registered in the per-process
 > - Scope boundary: pe_load section loading is §8; import resolution §9; base relocation §10.
 
 > **Verified:** 2026-07-10 | commit `617a12bf` | 5/7 items | build OK | exec 647 kernel + 16 user PASS | 10 PE parser tests
-> **Deferred:** [M] `SizeOfOptionalHeader >= 240` rejects spec-valid reduced-directory PE32+ (fail-closed; no real Windows image affected) -> XREF: 02-kernel-core/TODO-17 §7 (item: "Support reduced-directory PE32+" at line 260)
-> **Deferred:** [L] odd-alignment / odd-e_lfanew test fixture pending a parameterized builder (the read_u64 fix is byte-safe by construction) -> XREF: 02-kernel-core/TODO-17 §7 (item: "Add odd-e_lfanew" at line 261)
-> **Accepted:** [M] the 3 pe_load section-loader tests transitively call live boot/PMM/VMM infra via pe_load (Gate 8) -> XREF: 02-kernel-core/TODO-17 §8 (item: "Make the 3 pe_load section-loader tests side-effect-free" at line 273)
+> **Deferred:** [M] `SizeOfOptionalHeader >= 240` rejects spec-valid reduced-directory PE32+ (fail-closed; no real Windows image affected) -> XREF: 02-kernel-core/TODO-17 §7 (item: "Support reduced-directory PE32+" at line 261)
+> **Deferred:** [L] odd-alignment / odd-e_lfanew test fixture pending a parameterized builder (the read_u64 fix is byte-safe by construction) -> XREF: 02-kernel-core/TODO-17 §7 (item: "Add odd-e_lfanew" at line 262)
+> **Accepted:** [M] the 3 pe_load section-loader tests transitively call live boot/PMM/VMM infra via pe_load (Gate 8) -> XREF: 02-kernel-core/TODO-17 §8 (item: "Make the 3 pe_load section-loader tests side-effect-free" at line 288)
 > **Quality reviewed:** 2026-07-10 | Codex 3x (adversarial, consistency, perf) | 2M+2L fixed, 1M+1L deferred, 1M accepted-XREF | scope: kernel-code-quality
 
 ## 8. PE32+ Section Loader + `.pdata` Registration
@@ -323,9 +323,9 @@ This bridges PE executables to the Impossible OS Win32 API -- every `CreateFile`
 > - Scope boundary: making the IAT actually CALLABLE (user-mode syscall trampolines) and validating RVAs against mapped pages are the open items below; SizeOfImage full-mapping is §8.
 
 > **Verified:** 2026-07-10 | commit `a1b6f8d5` | 5/8 items | build OK | exec 647 kernel + 16 user PASS | resolver bounds hardened
-> **Deferred:** [Critical] IAT holds raw SSDT service numbers, not callable addresses -- PE imports fault on call until user-mode syscall trampolines exist -> XREF: 02-kernel-core/TODO-17 §9 (item: "Make resolved imports CALLABLE" at line 307)
-> **Deferred:** [H] import RVAs validated against SizeOfImage, not actual mapped pages -- a section-gap RVA faults the kernel -> XREF: 02-kernel-core/TODO-17 §9 (item: "Validate import RVAs against actually-mapped regions" at line 308)
-> **Deferred:** [M] resolver-walk logic untested (static fns + §8 pe_load Gate-8 block) -> XREF: 02-kernel-core/TODO-17 §9 (item: "Add resolver-walk unit tests" at line 309)
+> **Deferred:** [Critical] IAT holds raw SSDT service numbers, not callable addresses -- PE imports fault on call until user-mode syscall trampolines exist -> XREF: 02-kernel-core/TODO-17 §9 (item: "Make resolved imports CALLABLE" at line 311)
+> **Deferred:** [H] import RVAs validated against SizeOfImage, not actual mapped pages -- a section-gap RVA faults the kernel -> XREF: 02-kernel-core/TODO-17 §9 (item: "Validate import RVAs against actually-mapped regions" at line 312)
+> **Deferred:** [M] resolver-walk logic untested (static fns + §8 pe_load Gate-8 block) -> XREF: 02-kernel-core/TODO-17 §9 (item: "Add resolver-walk unit tests" at line 313)
 > **Quality reviewed:** 2026-07-10 | Codex 5x (adversarial, consistency, perf, re-adversarial) | 3H+1M+2L fixed, 1Crit+1H+1M deferred | scope: kernel-code-quality
 
 ## 10. PE32+ Base Relocation
@@ -337,8 +337,8 @@ This bridges PE executables to the Impossible OS Win32 API -- every `CreateFile`
 
 **Test checkpoint:** Serial log shows `"pe: relocated <N> entries, delta=0x<delta>"`. A PE loaded at non-preferred base calls a function pointer without crash. Test on: QEMU WHPX + TCG; bare metal.
 
-> **Deferred:** [H] §10 base relocation not implemented -- a naive parser page-faults on section-gap reloc RVAs and its failure path exercises the ownership-unsafe pe_load rollback (design review 2 HIGH); functionally dormant until ASLR (§15) supplies a non-preferred base (delta is 0 today) -> XREF: 02-kernel-core/TODO-17 §8 (item: "Ownership-journal rollback in pe_load" at line 288)
-> **Deferred:** [H] safe reloc reads/writes need the loader mapped-aware read + full-image-reservation infrastructure -> XREF: 02-kernel-core/TODO-17 §8 (item: "Mapped-aware loader reads" at line 289)
+> **Deferred:** [H] §10 base relocation not implemented -- a naive parser page-faults on section-gap reloc RVAs and its failure path exercises the ownership-unsafe pe_load rollback (design review 2 HIGH); functionally dormant until ASLR (§15) supplies a non-preferred base (delta is 0 today) -> XREF: 02-kernel-core/TODO-17 §8 (item: "Ownership-journal rollback in pe_load" at line 289)
+> **Deferred:** [H] safe reloc reads/writes need the loader mapped-aware read + full-image-reservation infrastructure -> XREF: 02-kernel-core/TODO-17 §8 (item: "Mapped-aware loader reads" at line 290)
 
 ## 11. PE32+ TLS Directory Processing
 
@@ -353,8 +353,8 @@ PE binaries using `__declspec(thread)` or C11 `_Thread_local` store TLS template
 
 **Test checkpoint:** Serial log shows `"pe: TLS index=<N>, raw data <size> bytes, <M> callbacks"`. TLS callback log: `"pe: TLS callback DLL_PROCESS_ATTACH at 0x<addr>"`. Thread-local variable read returns initialized value. Test on: QEMU WHPX + TCG; bare metal.
 
-> **Deferred:** [H] §11 PE TLS not implemented -- TLS callbacks must run in ring 3 before main() but PE binaries do not execute yet (imports are non-callable) -> XREF: 02-kernel-core/TODO-17 §9 (item: "Make resolved imports CALLABLE" at line 307)
-> **Deferred:** [M] TLS directory read/write + per-thread block need the loader mapped-aware reads (§8) and TEB TlsSlots -> XREF: 02-kernel-core/TODO-17 §8 (item: "Mapped-aware loader reads" at line 289)
+> **Deferred:** [H] §11 PE TLS not implemented -- TLS callbacks must run in ring 3 before main() but PE binaries do not execute yet (imports are non-callable) -> XREF: 02-kernel-core/TODO-17 §9 (item: "Make resolved imports CALLABLE" at line 311)
+> **Deferred:** [M] TLS directory read/write + per-thread block need the loader mapped-aware reads (§8) and TEB TlsSlots -> XREF: 02-kernel-core/TODO-17 §8 (item: "Mapped-aware loader reads" at line 290)
 
 ## 12. PE32+ Load Config and CFG Bitmap
 
@@ -370,8 +370,8 @@ Modern PE binaries carry an `IMAGE_LOAD_CONFIG_DIRECTORY64` (DataDirectory entry
 - [/] Legacy fallback (Load Config absent/zero-size -> no CFG/CET, warn) -- BLOCKED with the parse above
 - [ ] Commit: `"kernel: pe -- Load Config directory, CFG bitmap, CET metadata"`
 
-> **Deferred:** [H] §12 Load Config/CFG/CET metadata not implemented -- parses/writes the sparsely-mapped image (needs §8 mapped-aware reads) and its output (CFG bitmap, CET flags, cookie) is dead until PE binaries execute and TODO-23 enforces CFG/CET -> XREF: 02-kernel-core/TODO-17 §8 (item: "Mapped-aware loader reads" at line 289)
-> **Deferred:** [M] CFG/CET enforcement + security-cookie use require runnable PE + the CET engine -> XREF: 02-kernel-core/TODO-17 §9 (item: "Make resolved imports CALLABLE" at line 307)
+> **Deferred:** [H] §12 Load Config/CFG/CET metadata not implemented -- parses/writes the sparsely-mapped image (needs §8 mapped-aware reads) and its output (CFG bitmap, CET flags, cookie) is dead until PE binaries execute and TODO-23 enforces CFG/CET -> XREF: 02-kernel-core/TODO-17 §8 (item: "Mapped-aware loader reads" at line 290)
+> **Deferred:** [M] CFG/CET enforcement + security-cookie use require runnable PE + the CET engine -> XREF: 02-kernel-core/TODO-17 §9 (item: "Make resolved imports CALLABLE" at line 311)
 
 **Test checkpoint:** Serial log shows `"pe: CFG bitmap: <N> valid targets"` for CFG-instrumented PE. Shows `"pe: security cookie initialized"`. Legacy PE without Load Config shows `"pe: no Load Config -- legacy binary"`. `POST16(0xD814)` on entry, `POST16(0xD815)` after CFG bitmap populated. Test on: QEMU WHPX + TCG; bare metal.
 
@@ -496,8 +496,8 @@ Modern Windows binaries frequently import `api-ms-win-*` / `ext-ms-*` contract D
 
 **Test checkpoint:** A PE importing `api-ms-win-core-processthreads-l1-1-0.dll!ExitProcess` resolves through the API-set map to a concrete export and executes. A sample delay-load import resolves on first call and logs `"pe: delay import resolved <dll>!<name>"`. Bound-import timestamp mismatch logs fallback and continues. Test on: QEMU WHPX + TCG; bare metal.
 
-> **Deferred:** [H] §19 API-set/delay-load/bound/forwarder not implemented -- it extends the §9 PE import resolver whose imports are non-callable and whose reads need §8 mapped-aware infra; delay-load first-call resolution requires PE binaries to execute -> XREF: 02-kernel-core/TODO-17 §9 (item: "Make resolved imports CALLABLE" at line 307)
-> **Deferred:** [M] all directory parses (API-set/delay/bound/export) need the loader mapped-aware reads -> XREF: 02-kernel-core/TODO-17 §8 (item: "Mapped-aware loader reads" at line 289)
+> **Deferred:** [H] §19 API-set/delay-load/bound/forwarder not implemented -- it extends the §9 PE import resolver whose imports are non-callable and whose reads need §8 mapped-aware infra; delay-load first-call resolution requires PE binaries to execute -> XREF: 02-kernel-core/TODO-17 §9 (item: "Make resolved imports CALLABLE" at line 311)
+> **Deferred:** [M] all directory parses (API-set/delay/bound/export) need the loader mapped-aware reads -> XREF: 02-kernel-core/TODO-17 §8 (item: "Mapped-aware loader reads" at line 290)
 
 ---
 
