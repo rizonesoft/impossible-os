@@ -23,6 +23,23 @@ import tempfile
 
 CHECK = pathlib.Path(__file__).resolve().parents[2] / "todo-staged-check.py"
 
+# CAPS READ FROM THE CHECK ITSELF, never restated. These fixtures hardcoded 41
+# and 61 against a soft cap of 40, so raising it to 50 on 2026-08-10 broke a test
+# that was pinning the number rather than the BEHAVIOUR -- exactly the failure
+# this repo already learned about measurement probes ("reuse the tool's own
+# machinery, never reimplement its rule"). Sized relative to the constants, the
+# cases survive the next change and keep asserting what they mean: one section
+# past soft warns, past hard refuses.
+def _caps():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("_tsc", str(CHECK))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.SECTION_SOFT_CAP, mod.SECTION_HARD_CAP
+
+
+SOFT_CAP, HARD_CAP = _caps()
+
 
 def _git(*a, cwd):
     return subprocess.run(["git", *a], cwd=cwd, capture_output=True,
@@ -66,7 +83,7 @@ def _append_section(f, n, root):
 
 def test_growth_past_the_hard_cap_is_blocked():
     with tempfile.TemporaryDirectory() as td:
-        root, f = _repo(td, 61)
+        root, f = _repo(td, HARD_CAP + 1)
         _append_section(f, 62, root)
         rc, out = _run(root)
         assert rc == 1, f"expected a block, got rc={rc}\n{out}"
@@ -76,7 +93,7 @@ def test_growth_past_the_hard_cap_is_blocked():
 def test_the_block_names_the_destination_and_forbids_dropping_the_work():
     """The cap must never read as 'stop filing gaps'."""
     with tempfile.TemporaryDirectory() as td:
-        root, f = _repo(td, 61)
+        root, f = _repo(td, HARD_CAP + 1)
         _append_section(f, 62, root)
         _, out = _run(root)
         assert "DO NOT DROP THE WORK" in out, out
@@ -93,9 +110,9 @@ def test_an_oversized_file_may_still_finish_its_existing_work():
     """Existence above the cap is NOT an error -- only growth is. An oversized
     file must be able to tick items, add stamps and close."""
     with tempfile.TemporaryDirectory() as td:
-        root, f = _repo(td, 63)
-        f.write_text(f.read_text().replace("## 63. Section 63\n\n- [x] item",
-                                           "## 63. Section 63\n\n- [x] item\n- [x] more work"))
+        root, f = _repo(td, HARD_CAP + 3)
+        old_h = f"## {HARD_CAP + 3}. Section {HARD_CAP + 3}\n\n- [x] item"
+        f.write_text(f.read_text().replace(old_h, old_h + "\n- [x] more work"))
         _git("add", "-A", cwd=root)
         rc, out = _run(root)
         assert rc == 0, f"an oversized file must still be able to progress\n{out}"
@@ -103,8 +120,8 @@ def test_an_oversized_file_may_still_finish_its_existing_work():
 
 def test_soft_cap_warns_without_blocking():
     with tempfile.TemporaryDirectory() as td:
-        root, f = _repo(td, 41)
-        _append_section(f, 42, root)
+        root, f = _repo(td, SOFT_CAP + 1)
+        _append_section(f, SOFT_CAP + 2, root)
         rc, out = _run(root)
         assert rc == 0, f"soft cap must not block, got rc={rc}\n{out}"
         assert "soft cap" in out, out
@@ -125,4 +142,4 @@ if __name__ == "__main__":
     test_an_oversized_file_may_still_finish_its_existing_work()
     test_soft_cap_warns_without_blocking()
     test_a_small_file_is_untouched()
-    print("PASS: TODO section-count cap (40 soft / 60 hard)")
+    print(f"PASS: TODO section-count cap ({SOFT_CAP} soft / {HARD_CAP} hard)")

@@ -190,7 +190,81 @@ def spawn_chains(lines: list) -> dict:
             for n in parents}
 
 
-def validate_split_waiver(waiver: object) -> tuple:
+# CAP HEADROOM. The section cap is a fixed BUDGET, and splitting spends it:
+# measured 2026-08-10 on the todo-metadata-layer TODO, 13 of its 39 sections are
+# split CHILDREN -- a third of the file's cap consumption is re-partitioning work
+# that already existed, and every slot spent that way is a slot unavailable to a
+# review finding that genuinely needs a home.
+#
+# The predictor is blind to this by construction. Its calibration optimised turns
+# PER SECTION and priced a split at ~60 turns of fixed review overhead; it never
+# modelled that a section also consumes a cap slot AND brings its own
+# adversarial/consistency/perf wave, which is the surface that generates the next
+# finding. The local metric is well-tuned, the global one is not in the model.
+#
+# So the bar rises as a file approaches its cap -- precisely when a slot is worth
+# more spent on a finding than on decomposition. Below the window nothing
+# changes, because a file with room to grow should decompose freely.
+#
+# The soft cap is IMPORTED, never restated: `scripts/todo-staged-check.py` owns
+# that number and a second copy here would drift the day one of them moves. If
+# the import fails the headroom is UNKNOWN and the ordinary threshold applies --
+# fail-soft to today's behaviour rather than to a guessed constant.
+# 20, chosen so the tight zone starts at 30 sections with the soft cap at 50.
+# MEASURED against the todo-metadata-layer TODO's own 13 split children: a
+# trigger at 30 would have applied the higher bar to 5 of them (the two recent
+# 2-way splits plus one earlier), 25 is indistinguishable from 30 on this data,
+# and 35 catches only 2. A trigger at 20 catches 9 -- but it would also have hit
+# the file's most defensible decomposition, a genuinely oversized section split
+# three ways early on. Applying the hardest test to the best split is the wrong
+# trade, so the window stops short of it.
+#
+# 30 is also where that file's growth actually turned: it sat at 9 sections for
+# weeks, then went 23 -> 26 -> 33 -> 39 in four days.
+HEADROOM_WINDOW = 20          # sections from the soft cap where the bar rises
+ITEM_THRESHOLD = 5            # normal
+ITEM_THRESHOLD_TIGHT = 8      # inside the window
+
+
+def _soft_cap():
+    """The section soft cap, from its owner. None when it cannot be read."""
+    try:
+        import importlib.util
+        src = Path(__file__).resolve().parents[1] / "todo-staged-check.py"
+        spec = importlib.util.spec_from_file_location("_tsc", str(src))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        cap = getattr(mod, "SECTION_SOFT_CAP", None)
+        return cap if isinstance(cap, int) else None
+    except Exception:
+        return None
+
+
+def section_total(lines: list) -> int:
+    """Sections in the file, counted with the SHARED heading rule."""
+    return sum(1 for ln in lines if SECTION_RE.match(ln))
+
+
+def item_threshold(total_sections: int) -> tuple:
+    """(threshold, headroom, tight). `headroom` is None when the cap is unknown."""
+    cap = _soft_cap()
+    if cap is None:
+        return (ITEM_THRESHOLD, None, False)
+    headroom = cap - total_sections
+    tight = headroom <= HEADROOM_WINDOW
+    return (ITEM_THRESHOLD_TIGHT if tight else ITEM_THRESHOLD, headroom, tight)
+
+
+# When headroom is SHORT the waiver must also answer the budget question. Every
+# section is a cap slot, so overriding a split near the cap is not just "this is
+# cohesive" -- it is "this decomposition is worth a slot that a pending review
+# finding will then not have". That is a different claim and it deserves saying
+# out loud. Required ONLY inside the window; below it a split is cheap and the
+# ordinary five fields stand.
+_WAIVER_TIGHT_FIELD = "cap_tradeoff"
+
+
+def validate_split_waiver(waiver: object, tight: bool = False) -> tuple:
     """P3.1: a SPLIT-RECOMMENDED verdict may be overridden ONLY by a STRUCTURED
     waiver, never a free-form "cohesive". Requires a concrete ESTIMATE for each
     dimension the split predictor scores, so overriding the split is an
@@ -199,7 +273,10 @@ def validate_split_waiver(waiver: object) -> tuple:
         return (False, ["<waiver must be a JSON object with "
                         + ", ".join(_WAIVER_FIELDS) + ">"])
     missing = []
-    for key, typ in _WAIVER_FIELDS.items():
+    fields = dict(_WAIVER_FIELDS)
+    if tight:
+        fields[_WAIVER_TIGHT_FIELD] = str
+    for key, typ in fields.items():
         val = waiver.get(key)
         ok = isinstance(val, typ) and not isinstance(val, bool)
         if ok and isinstance(val, str) and not val.strip():
@@ -223,11 +300,16 @@ def main(argv) -> int:
         except Exception as exc:
             print(json.dumps({"ok": False, "error": f"unreadable waiver: {exc}"}))
             return 1
-        ok, missing = validate_split_waiver(waiver)
-        print(json.dumps({"ok": ok, "missing": missing,
+        _tight = "--tight" in argv
+        ok, missing = validate_split_waiver(waiver, tight=_tight)
+        print(json.dumps({"ok": ok, "missing": missing, "tight": _tight,
                           "note": ("structured waiver accepted" if ok else
                                    "SPLIT-RECOMMENDED override needs a structured "
-                                   "waiver; a free-form 'cohesive' is not enough")}))
+                                   "waiver; a free-form 'cohesive' is not enough"
+                                   + (" -- and near the cap it must also say why "
+                                      "this decomposition earns a slot a pending "
+                                      "finding will not get (cap_tradeoff)"
+                                      if _tight else ""))}))
         return 0 if ok else 1
     if len(argv) >= 1 and argv[0] == "spawn-chain":
         # section-manifest.py spawn-chain <todo-path>
@@ -395,15 +477,21 @@ def main(argv) -> int:
     # counting.
     work_items = [it for it in open_items
                   if not re.match(r"(?i)\s*commit\b\s*[:\-]?", it["text"])]
-    if len(work_items) >= 5:
-        split_reasons.append(f"{len(work_items)} work items")
+    _thresh, _headroom, _tight = item_threshold(section_total(text.split("\n")))
+    if len(work_items) >= _thresh:
+        split_reasons.append(
+            f"{len(work_items)} work items"
+            + (f" (>= {_thresh}; {_headroom} sections of cap headroom left)"
+               if _tight else ""))
     if len(subsystems) > 3:
         split_reasons.append(f"{len(subsystems)} subsystems")
     # P3.1: ABI/SSDT sections are heavier per item (each item touches syscall
     # tables, ABI hashes, tests), so an exactly-8-item ABI section slipped past
     # the old `> 8` gate. Lower the ABI-weighted threshold to `>= 6`.
-    if abi_impact and len(work_items) >= 6:
-        split_reasons.append(f"ABI impact + {len(work_items)} work items (>=6 ABI gate)")
+    if abi_impact and len(work_items) >= (_thresh + 1 if _tight else 6):
+        split_reasons.append(
+            f"ABI impact + {len(work_items)} work items "
+            f"(>={_thresh + 1 if _tight else 6} ABI gate)")
     complexity = {
         "files": len(likely_files) + len(input_files),
         "subsystems": subsystems,

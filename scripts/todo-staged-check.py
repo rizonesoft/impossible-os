@@ -202,7 +202,19 @@ def _oscomp_over_cap(path, added):
 # work, which is strictly worse. So the cap changes the DESTINATION of a new
 # section, never the decision to file one: at the cap, the gap goes to the
 # domain-correct TODO with a reciprocal XREF.
-SECTION_SOFT_CAP = 40
+# RAISED 40 -> 50 (2026-08-10). The cap was calibrated 2026-08-02 against a
+# corpus whose largest file OTHER than the usermode-test-framework TODO was 32
+# sections; the todo-metadata-layer TODO is now 39, so the distribution moved and
+# a 40 threshold fires constantly on a file where the honest answer to "does this
+# belong in a domain-correct TODO?" is yes, it belongs here. A warning always
+# answered the same way stops being read.
+#
+# The HARD cap deliberately stays at 60. The usermode-test-framework TODO sits at
+# 62 -- over it, which is what stops it growing, enforced on growth rather than
+# existence. Raising the hard cap would hand the one genuinely oversized file in
+# the repo fresh slots, and CLAUDE.md already rejected a cap of 99 on the grounds
+# that a number above every file can never bind.
+SECTION_SOFT_CAP = 50
 SECTION_HARD_CAP = 60
 _SECTION_RE = re.compile(r"^## (\d+)\.")
 

@@ -107,6 +107,49 @@ def test_commit_line_is_not_a_work_item():
         assert "SPLIT-RECOMMENDED" not in cx["verdict"], cx
 
 
+def test_the_bar_rises_as_a_file_approaches_its_cap():
+    """The cap is a fixed BUDGET and splitting spends it: measured 2026-08-10,
+    13 of one file's 39 sections were split CHILDREN, so a third of its cap
+    consumption was re-partitioning work that already existed -- each slot
+    unavailable to a review finding that needs a home. The predictor was blind
+    to this: it optimised turns PER SECTION and never modelled that a section
+    also costs a slot and brings its own review wave.
+
+    Below the window nothing changes; a file with room should decompose freely."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "sm", str(pathlib.Path(__file__).resolve().parent.parent / "section-manifest.py"))
+    sm = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(sm)
+    cap = sm._soft_cap()
+    assert cap, "the soft cap must be readable from its owner, not restated here"
+    trigger = cap - sm.HEADROOM_WINDOW
+    loose_t, _, loose_tight = sm.item_threshold(trigger - 1)
+    tight_t, _, tight_tight = sm.item_threshold(trigger)
+    assert (loose_t, loose_tight) == (sm.ITEM_THRESHOLD, False), (loose_t, loose_tight)
+    assert (tight_t, tight_tight) == (sm.ITEM_THRESHOLD_TIGHT, True), (tight_t, tight_tight)
+    assert sm.ITEM_THRESHOLD_TIGHT > sm.ITEM_THRESHOLD, "the tight bar must be HIGHER"
+
+
+def test_a_waiver_near_the_cap_must_answer_the_budget_question():
+    """Overriding a split near the cap is not just "this is cohesive" -- it is
+    "this decomposition is worth a slot a pending finding will not get". A
+    different claim, so a different field. Below the window the ordinary five
+    stand, or the extra field would be ceremony on every small file."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "sm", str(pathlib.Path(__file__).resolve().parent.parent / "section-manifest.py"))
+    sm = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(sm)
+    five = {"est_files": 4, "subsystems": ["a"], "est_tests": 8,
+            "context_budget": "180K", "rationale": "cohesive because ..."}
+    assert sm.validate_split_waiver(five) == (True, [])
+    ok, missing = sm.validate_split_waiver(five, tight=True)
+    assert not ok and missing == ["cap_tradeoff"], (ok, missing)
+    six = dict(five, cap_tradeoff="earns a slot ahead of a pending finding because ...")
+    assert sm.validate_split_waiver(six, tight=True) == (True, [])
+
+
 def test_validate_split_waiver_structured_only():
     mod = _load()
     good = {"est_files": 3, "subsystems": ["src/kernel"], "est_tests": 4,
