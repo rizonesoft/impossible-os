@@ -16216,6 +16216,293 @@ else
     t_fail "section 33: unwrap-bypass mutation did not misfire as expected (rc=$S33E_RC, out=$S33E_OUT)"
 fi
 
+# Sub-test 33f: THE TWO CAPTURE SITES AGREE ON WHERE A TARGET ENDS. Sharing the
+# grammar was not sufficient: `build.py` requires `\s+§\S+` after the target, so
+# on a malformed adjacent-link token its link arm cannot stop mid-token and
+# backtracks to `\S+`, handing the WHOLE token to a resolver that refuses it.
+# `fix_line_numbers` had no such requirement, so its link arm stopped at the
+# first `)` and bound the FIRST destination -- at rc 0, with zero
+# incomplete-repair counts, and under `--write` a line number rewritten from the
+# wrong file. The sub-tests above could not see it: they exercise the resolver
+# directly, not this capture site (Codex adversarial, section 33 post-ship).
+S33F_OUT=$(python3 - <<'S33FEOF'
+import json, re, sys
+sys.path.insert(0, "scripts/todo-graph")
+import build as B, cache_schema as cs
+
+# The capture expression `fix_line_numbers` uses, kept in step with it here.
+RX = re.compile(r"->\s*XREF:\s*(" + cs.XREF_TARGET_PATTERN + r")(?=\s|$)")
+SRC = re.compile(r'r"->\\s\*XREF:\\s\*\("\s*\+\s*cache_schema\.XREF_TARGET_PATTERN\s*'
+                 r'\+\s*r"\)\(\?=\\s\|\$\)"', re.S)
+src = open("scripts/todo-graph/validate.py", encoding="utf-8").read()
+
+cases = {
+    # malformed adjacent links: BOTH sites must hand over the whole token
+    "adjacent": '[a](TODO-01-a.md)[b](TODO-02-b.md)',
+    # nested: same
+    "nested": '[[a](TODO-01-a.md)[b](TODO-02-b.md)](TODO-02-b.md)',
+    # legitimate space-bearing label: BOTH must capture the whole link
+    "spaced": '[`01-test/TODO-01 §1`](TODO-02-b.md)',
+    # trailing comma on a bare token stays supported
+    "comma": 'TODO-02-b.md,',
+}
+out = {"boundary_present": bool(SRC.search(src))}
+for name, tok in cases.items():
+    line = f'> **Deferred:** [M] x -> XREF: {tok} §1 (item: "C" at line 3)'
+    h = B.STAMP_HEADER_RE.match(line)
+    b = [m.group("target_path") for m in B.XREF_CLAUSE_RE.finditer(line, pos=h.end())]
+    v = [m.group(1).rstrip(",") for m in RX.finditer(line[h.end():])]
+    out[name] = {"build": b, "validate": v, "agree": b == v}
+print(json.dumps(out))
+S33FEOF
+); S33F_RC=$?
+if [ "$S33F_RC" = "0" ] && echo "$S33F_OUT" | python3 -c "
+import json, sys
+d = json.loads(sys.stdin.read())
+ok = d['boundary_present'] and all(d[k]['agree'] for k in ('adjacent','nested','spaced'))
+# and the agreement must be on the WHOLE token, not on a shared truncation
+ok = ok and d['adjacent']['build'] == ['[a](TODO-01-a.md)[b](TODO-02-b.md)']
+ok = ok and d['spaced']['build'] == ['[\`01-test/TODO-01 §1\`](TODO-02-b.md)']
+# The comma case is the ONE deliberate difference and is asserted as such, not
+# waived: the repair site strips trailing punctuation because it has no section
+# marker to bound the token, where build.py's \`\\s+§\\S+\` already does. Both
+# still name the same FILE, which is what a resolver consumes.
+ok = ok and d['comma']['build'] == ['TODO-02-b.md,'] and d['comma']['validate'] == ['TODO-02-b.md']
+sys.exit(0 if ok else 1)"; then
+    t_pass "section 33: the builder and the repair path agree on where a target ends"
+else
+    t_fail "section 33: capture-boundary agreement failed (rc=$S33F_RC, out=$S33F_OUT)"
+fi
+
+# Sub-test 33g: THE GRAMMAR COMPILES ON THE DECLARED PYTHON FLOOR, and no
+# Inputs XREF ever emits an empty target_path. Two post-ship re-adversarial
+# findings, kept in one sub-test because both are properties of the same
+# shared-grammar change.
+#
+# The floor check is a SYNTAX check, not a version check: an atomic group
+# `(?>...)` is Python 3.11+ and this repo's floor is 3.8, and because the
+# pattern compiles at MODULE IMPORT the failure takes build/validate/query/
+# render down together on a supported host. A CI runner is unlikely to be
+# below 3.11, so the regression asserts the pattern uses no 3.11-only
+# construct rather than trying to find an old interpreter to prove it on.
+S33G_OUT=$(python3 - <<'S33GEOF'
+import json, re, sys
+sys.path.insert(0, "scripts/todo-graph")
+import cache_schema as cs, build as B
+
+# 3.11+ regex constructs that would break the declared floor.
+MODERN = (r"(?>", r"*+", r"++", r"?+", r"}+")
+uses_modern = [c for c in MODERN
+               if c in cs.XREF_LINK_PATTERN or c in cs.XREF_TARGET_PATTERN
+               or c in cs.XREF_LINK_RE.pattern]
+
+# The bound must exist and must clear the live corpus by a wide margin.
+bounded = bool(re.search(r"\{0,(\d+)\}", cs.XREF_LINK_PATTERN))
+bound = int(re.search(r"\{0,(\d+)\}", cs.XREF_LINK_PATTERN).group(1)) if bounded else 0
+
+# A label at the bound still matches; one past it falls through rather than
+# blowing up -- fails closed.
+at = "[" + "a" * (bound - 1) + "](x.md)"
+over = "[" + "a" * (bound + 50) + "](x.md)"
+# THE BOUND MUST COUNT CHARACTERS, NOT ATOMS. `{0,N}` on the repetition alone
+# left the bracket-pair atom holding an unbounded inner class, so 4,096 fat
+# pairs still built a ~16 MiB label while the comment claimed a 4,096-character
+# cap -- a bound that was documented but did not exist (Codex perf, section 33
+# post-ship round 6). A flat-label fixture cannot see this shape.
+fat_pair = "[" + "x" * 4088 + "]"
+fat = "[" + fat_pair * 8 + "](x.md)"
+
+# No Inputs XREF form may yield an empty target_path.
+empties = []
+for probe in ("- -> XREF: [x]() -- desc",
+              "- -> XREF: [x](#anchor) -- desc",
+              "- -> XREF: [a [inner] label](TODO-02-b.md) §1 -- desc",
+              "- -> XREF: `02-kernel-core/TODO-05` §7 -- desc"):
+    m = B.INPUTS_XREF_RE.match(probe)
+    if not m:
+        continue
+    tgt = (cs.unwrap_xref_link(m.group(1)) or m.group(1)) if m.group(1) else m.group(2)
+    if not tgt:
+        empties.append(probe)
+
+print(json.dumps({
+    "uses_modern": uses_modern,
+    "bounded": bounded,
+    "bound": bound,
+    "at_bound_matches": bool(cs.XREF_LINK_RE.match(at)),
+    "over_bound_refuses": not bool(cs.XREF_LINK_RE.match(over)),
+    "fat_pairs_refused": not bool(cs.XREF_LINK_RE.match(fat)),
+    "fat_pair_len": len(fat),
+    "empty_targets": empties,
+    "inner_bracket_label": (lambda m: cs.unwrap_xref_link(m.group(1)) if m and m.group(1) else "")(
+        B.INPUTS_XREF_RE.match("- -> XREF: [a [inner] label](TODO-02-b.md) §1 -- desc")),
+}))
+S33GEOF
+); S33G_RC=$?
+if [ "$S33G_RC" = "0" ] && echo "$S33G_OUT" | python3 -c "
+import json, sys
+d = json.loads(sys.stdin.read())
+ok = (not d['uses_modern'] and d['bounded'] and d['bound'] >= 1000
+      and d['at_bound_matches'] and d['over_bound_refuses']
+      and d['fat_pairs_refused'] and d['fat_pair_len'] > 32000
+      and not d['empty_targets']
+      and d['inner_bracket_label'] == 'TODO-02-b.md')
+sys.exit(0 if ok else 1)"; then
+    t_pass "section 33: the grammar holds the Python floor, bounds its label, and never emits an empty Inputs target"
+else
+    t_fail "section 33: floor/bound/empty-target check failed (rc=$S33G_RC, out=$S33G_OUT)"
+fi
+
+# Sub-test 33h: BOTH Inputs surface forms use the shared grammar and the same
+# boundary. The bullet form was centralized first and the TABLE form was filed
+# as out-of-scope on the incorrect grounds that it was the Depends-On grammar;
+# it is inside `extract_inputs_xrefs` and emits the same subtree, so an Inputs
+# ROW with a spaced label produced no edge while the identical BULLET resolved.
+# The parity assertion is what makes that class of mistake fail a test instead
+# of surviving a scope argument (Codex consistency, section 33 post-ship).
+S33H_OUT=$(python3 - <<'S33HEOF'
+import json, sys
+sys.path.insert(0, "scripts/todo-graph")
+import build as B
+
+def inputs(body):
+    return B.extract_inputs_xrefs("## Inputs\n\n" + body + "\n")
+
+# (name, bullet form, table form) -- both must yield the SAME target.
+PAIRS = [
+    ("spaced_label",
+     "- -> XREF: [`01-test/TODO-01 §1`](TODO-02-b.md) §1 -- desc",
+     "| -> XREF: [`01-test/TODO-01 §1`](TODO-02-b.md) §1 | x |"),
+    ("inner_brackets",
+     "- -> XREF: [a [inner] label](TODO-02-b.md) §1 -- desc",
+     "| -> XREF: [a [inner] label](TODO-02-b.md) §1 | x |"),
+    ("plain_path",
+     "- -> XREF: `02-kernel-core/TODO-05` §7 -- desc",
+     "| -> XREF: `02-kernel-core/TODO-05` §7 | x |"),
+]
+out = {}
+for name, bullet, table in PAIRS:
+    b = inputs(bullet)
+    t = inputs(table)
+    out[name] = {
+        "bullet": [x["target_path"] for x in b],
+        "table": [x["target_path"] for x in t],
+        "parity": [x["target_path"] for x in b] == [x["target_path"] for x in t],
+    }
+# Adjacent links must NOT bind the first destination in either form -- and
+# neither must WHITESPACE-SEPARATED ones, which the trailing boundary accepts
+# by construction and which therefore needed their own refusal.
+adj = inputs("- -> XREF: [a](TODO-01-a.md)[b](TODO-02-b.md) §1 -- desc")
+out["adjacent_bullet"] = [x["target_path"] for x in adj]
+out["spaced_bullet"] = inputs("- -> XREF: [a](TODO-01-a.md) [b](TODO-02-b.md) §1 -- desc")
+out["spaced_table"] = inputs("| -> XREF: [a](TODO-01-a.md) [b](TODO-02-b.md) §1 | x |")
+# No form may emit an empty target.
+empt = inputs("- -> XREF: [x]() -- desc\n- -> XREF: [y](#anchor) -- desc")
+out["empty_targets"] = [x["target_path"] for x in empt if not x["target_path"]]
+print(json.dumps(out))
+S33HEOF
+); S33H_RC=$?
+if [ "$S33H_RC" = "0" ] && echo "$S33H_OUT" | python3 -c "
+import json, sys
+d = json.loads(sys.stdin.read())
+ok = all(d[k]['parity'] for k in ('spaced_label','inner_brackets','plain_path'))
+ok = ok and d['spaced_label']['bullet'] == ['TODO-02-b.md']
+ok = ok and d['inner_brackets']['bullet'] == ['TODO-02-b.md']
+ok = ok and d['plain_path']['bullet'] == ['02-kernel-core/TODO-05']
+# the adjacent-link token must never bind the FIRST destination alone
+ok = ok and d['adjacent_bullet'] != ['TODO-01-a.md']
+ok = ok and d['spaced_bullet'] == [] and d['spaced_table'] == []
+ok = ok and not d['empty_targets']
+sys.exit(0 if ok else 1)"; then
+    t_pass "section 33: bullet and table Inputs XREFs agree, and neither binds an adjacent-link prefix"
+else
+    t_fail "section 33: Inputs surface-form parity failed (rc=$S33H_RC, out=$S33H_OUT)"
+fi
+
+# Sub-test 33i: A MULTI-TARGET CLAUSE IS REFUSED LOUDLY BY THE REPAIR PATH,
+# with or without a space between the links. The trailing boundary alone closed
+# only the adjacent form; one space reopened it, because whitespace is what the
+# boundary accepts. The assertion is on `fix_line_numbers` itself -- its return
+# counts and its report -- not on a regex, because the defect that matters is a
+# rewrite proposed from the WRONG FILE while the run reports success.
+S33I_OUT=$(python3 - <<'S33IEOF'
+import json, sys
+sys.path.insert(0, "scripts/todo-graph")
+import validate as V
+
+def node(fp, i): return {"file_path": fp, "id": i, "sections": [], "stamps_xrefs": []}
+NODES = [node("todo/01-test/TODO-03-s.md", "s3")]
+IDX_N = NODES + [node("todo/01-test/TODO-01-a.md", "a1"),
+                 node("todo/01-test/TODO-02-b.md", "b2"),
+                 node("todo/01-test/TODO-04-c.md", "c4")]
+id_index, path_index = V.build_id_index(IDX_N), V.build_path_index(IDX_N)
+
+TARGET_BODY = "# T\n\n## 1. First\n\n- [x] Needle\n"
+def run(stamp):
+    snap = {"todo/01-test/TODO-03-s.md": "# S\n\n" + stamp + "\n",
+            "todo/01-test/TODO-01-a.md": TARGET_BODY,
+            "todo/01-test/TODO-02-b.md": TARGET_BODY,
+            "todo/01-test/TODO-04-c.md": TARGET_BODY}
+    return V.fix_line_numbers(NODES, snap, id_index, path_index,
+                              __import__("pathlib").Path("."), False, True)
+
+cases = {
+    "adjacent": '> **Deferred:** [M] x -> XREF: [a](TODO-01-a.md)[b](TODO-02-b.md) §1 (item: "Needle" at line 99)',
+    "spaced":   '> **Deferred:** [M] x -> XREF: [a](TODO-01-a.md) [b](TODO-02-b.md) §1 (item: "Needle" at line 99)',
+    # CONTROL: one well-formed target must still repair, or the guard is just
+    # breaking the feature.
+    "control":  '> **Deferred:** [M] x -> XREF: [`01-test/TODO-01 §1`](TODO-01-a.md) §1 (item: "Needle" at line 99)',
+    # BARRIER: a valid clause FOLLOWED BY a malformed one. Refusing the
+    # malformed target is not enough -- dropping its position let the second
+    # item fall through to the first clause's target and propose a rewrite
+    # from the wrong file, at 2 updates. The valid clause must still repair
+    # (1 update) and the malformed one must not.
+    "barrier":  ('> **Deferred:** [M] x -> XREF: [`t`](TODO-01-a.md) §1 (item: "Needle" at line 99)'
+                 ' -> XREF: [b](TODO-02-b.md) [c](TODO-04-c.md) §1 (item: "Needle" at line 98)'),
+    # A second target need not be another LINK. A bracket-only test left these
+    # two binding the first destination while the builder rejected the same
+    # clause -- reported by three review legs independently (rounds 6-7).
+    "link_plus_bare": '> **Deferred:** [M] x -> XREF: [a](TODO-01-a.md) TODO-02-b.md §1 (item: "Needle" at line 99)',
+    "post_section":   '> **Deferred:** [M] x -> XREF: [a](TODO-01-a.md) §1 [b](TODO-02-b.md) (item: "Needle" at line 99)',
+}
+# CONTROL that must still repair: a description mentioning another TODO is
+# clause TEXT, not a second target. Without this the rule could refuse half the
+# corpus and every other assertion here would still pass.
+CONTROL_PROSE = '> **Deferred:** [M] x -> XREF: TODO-01-a.md §1 -- some prose about TODO-02 (item: "Needle" at line 99)' 
+out = {}
+for name, stamp in cases.items():
+    updates, ambig, unres, missing, rep = run(stamp)
+    # EITHER refusal message counts. The two malformed shapes are caught by
+    # two different mechanisms and that is correct: the SPACED form is stopped
+    # by the adjacency guard, while the ADJACENT form never satisfies the
+    # boundary at all, so `\S+` hands the whole token to the resolver and
+    # section 26's fail-closed rule refuses it there. What the fixture asserts
+    # is the OUTCOME both must reach -- no rewrite, and a named diagnostic.
+    out[name] = {"updates": updates, "unresolvable": unres,
+                 "reported": any(("malformed XREF" in r) or
+                                 ("unresolvable XREF target" in r) for r in rep)}
+u, a, un, mi, rep = run(CONTROL_PROSE)
+out["control_prose"] = {"updates": u, "unresolvable": un, "reported": False}
+print(json.dumps(out))
+S33IEOF
+); S33I_RC=$?
+if [ "$S33I_RC" = "0" ] && echo "$S33I_OUT" | python3 -c "
+import json, sys
+d = json.loads(sys.stdin.read())
+ok = all(d[k]['updates'] == 0 and d[k]['unresolvable'] >= 1 and d[k]['reported']
+         for k in ('adjacent', 'spaced'))
+ok = ok and d['control']['updates'] == 1 and d['control']['unresolvable'] == 0
+# the barrier case repairs the VALID clause only: 1 update, not 2
+ok = ok and d['barrier']['updates'] == 1 and d['barrier']['unresolvable'] == 1
+ok = ok and all(d[k]['updates'] == 0 and d[k]['unresolvable'] >= 1
+                for k in ('link_plus_bare', 'post_section'))
+ok = ok and d['control_prose']['updates'] == 1 and d['control_prose']['unresolvable'] == 0
+sys.exit(0 if ok else 1)"; then
+    t_pass "section 33: a multi-target stamp clause is refused and reported, spaced or not"
+else
+    t_fail "section 33: multi-target repair refusal failed (rc=$S33I_RC, out=$S33I_OUT)"
+fi
+
 # ----------------------------------------------------------------------
 # Summary
 # ----------------------------------------------------------------------

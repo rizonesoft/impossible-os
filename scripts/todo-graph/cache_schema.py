@@ -174,19 +174,31 @@ _MAX_SECTION_N = 65535
 # digest can see a meaning change (Codex adversarial, section 27, [high]).
 # v2 -> v3 (section 33): `stamps_xrefs[].target_path` KEEPS ITS NAME AND TYPE
 # AND CHANGED ITS MEANING -- the second time this integer has been spent on
-# exactly the case the paragraph above reserves it for. A v2 producer captured
-# the target with `\S+`, so a markdown link whose LABEL contains a space was
-# truncated to the fragment before its first space; a v3 producer captures the
-# COMPLETE link. Both values are strings, so no digest and no schema type can
-# see the difference, and the two agree on every target that contains no space
-# -- which is the whole live corpus today (measured: 1010/1010 stamp targets,
-# per-clause identical across the change). That agreement is precisely what
-# makes the bump necessary rather than optional: a v2 cache is INDISTINGUISHABLE
-# from a v3 one until the first space-bearing label is written, at which point a
-# reader would silently consume a truncated target from a stale artifact --
-# `query.py` rebuilds a canonical cache only when validation or freshness fails,
-# and `validate.py --diff` accepts an imported baseline without either check
-# (Codex adversarial, section 33, [high]). Sub-test 25c is the refusal
+# exactly the case the paragraph above reserves it for.
+#
+# WHAT ACTUALLY CHANGED IS OMISSION VS EMISSION, not truncation. An earlier
+# revision of this paragraph said a v2 producer truncated a space-bearing label
+# to the fragment before its first space. IT DID NOT, and the difference
+# matters: `XREF_CLAUSE_RE` required `\s+§\S+` after the target, so on
+# `[label with space](x.md) §1` the `\S+` arm could never reach the section
+# marker and the clause produced NO MATCH AT ALL -- measured, and the same
+# measurement was in hand when the wrong sentence was written (Codex
+# consistency, section 33 post-ship round 6, [medium]). So a v2 cache OMITS
+# that edge where a v3 cache emits it with a complete-link target, and
+# `target_path`'s domain widens to include a value it could never previously
+# hold. Both are strings, so no digest and no schema type can see it, and the
+# two producers agree on every clause whose target contains no space -- the
+# whole live corpus today (measured: 1010/1010 stamp targets, per-clause
+# identical across the change). That agreement is what makes the bump necessary
+# rather than optional: a v2 cache is INDISTINGUISHABLE from a v3 one until the
+# first space-bearing label is written, at which point a reader would silently
+# consume a graph missing that edge from a stale artifact --
+# `query.py` rebuilds a canonical cache only when validation or freshness fails
+# (Codex adversarial, section 33, [high]). This sentence also claimed
+# `validate.py --diff` accepts an imported baseline without either check; that
+# was FALSE and is struck -- `_load_and_validate` calls `check_cache_format`
+# unconditionally, so the baseline path refuses a pre-v3 artifact outright.
+# Sub-test 25c is the refusal
 # regression and is version-agnostic by construction: it writes
 # `CACHE_FORMAT_VERSION - 1` into the sidecar and asserts LEGACY_FORMAT, so it
 # proves this bump too without being edited.
@@ -364,7 +376,43 @@ EFFORT_DEFAULT = "1w"
 # twice, in a constant whose own comment claimed single-source (Codex
 # consistency, section 33, [medium]). A second spelling is how the builder and
 # the validator came to disagree in the first place.
-_XREF_LABEL = r"(?:[^\[\]]|\[[^\[\]]*\](?!\())*"
+# THE LABEL REPETITION IS BOUNDED, and the bound is a MEMORY guard rather than
+# a time one. The alternation is prefix-disjoint (a `[` can only start a pair,
+# a `]` can only end one), so it never backtracked exponentially -- measured
+# LINEAR at 0.075s per 1M label characters and 0.402s per 4M. What it DID do is
+# record a backtracking position per ordinary character: ~135 MB of RSS per 1M,
+# so a 15 MiB label costs ~2.1 GB against a 16 MiB per-file ceiling. `\S+`
+# could not reach that -- it stopped at the first space -- so capturing a whole
+# link is precisely what makes a multi-megabyte label ONE token (Codex perf,
+# section 33 post-ship).
+#
+# `{0,4096}` RATHER THAN AN ATOMIC GROUP, because `(?>...)` is Python 3.11+ and
+# this repo's declared floor is 3.8 (`scripts/setup.sh --versions`). The atomic
+# form was written and measured first -- flat RSS, and faster -- and it would
+# have raised `re.error: unknown extension ?>` AT IMPORT on a supported host,
+# taking build / validate / query / render down together rather than degrading
+# (Codex re-adversarial, section 33 post-ship, [high]). The measurement was
+# sound; the portability check simply had not been done.
+#
+# BOTH THE ATOM COUNT AND THE PAIR CONTENTS ARE BOUNDED, because bounding only
+# the repetition does not bound the LABEL. A first cut wrote `{0,4096}` and
+# documented it as a 4096-CHARACTER cap; the repetition counts ATOMS, and the
+# bracket-pair atom held an unbounded `[^\[\]]*`, so 4,096 fat pairs still
+# built a ~16 MiB label and the documented bound was simply not the bound that
+# existed -- measured 15,006 characters accepted from three atoms (Codex perf,
+# section 33 post-ship round 6, [medium]). The inner class carries its own
+# `{0,1024}`, so the cap is now real: worst case 1,024 x 1,026 ~= 1.05 MB of
+# label, MEASURED at 0.002s and no meaningful RSS, and a 16 MiB-shaped label
+# REFUSES in 0.003s.
+#
+# The two numbers against the live corpus: the longest markdown-link label is
+# 99 characters (`todo/00-infrastructure/TODO-08-automation-hardening.md:1042`)
+# and the longest bracketed run anywhere in `todo/` is 531, so the atom cap has
+# ~10x headroom and the inner cap ~2x. Past either bound the link arm stops
+# matching and the target falls through to `\S+` or refuses -- fails closed,
+# which is the right answer for a label orders of magnitude outside anything a
+# human writes.
+_XREF_LABEL = r"(?:[^\[\]]|\[[^\[\]]{0,1024}\](?!\()){0,1024}"
 _XREF_DEST = r"[^()\s]*"
 
 XREF_LINK_PATTERN = r"\[" + _XREF_LABEL + r"\]\(" + _XREF_DEST + r"\)"
@@ -379,6 +427,37 @@ XREF_TARGET_PATTERN = r"(?:" + XREF_LINK_PATTERN + r"|\S+)"
 # UNWRAP rather than merely recognise a link.
 XREF_LINK_RE = re.compile(
     r"\A\[(?P<label>" + _XREF_LABEL + r")\]\((?P<url>" + _XREF_DEST + r")\)\Z")
+
+# A SECOND TARGET AFTER THE FIRST. Every producer refuses a clause that names
+# more than one destination, and they refuse it by this one test -- the
+# trailing boundary each of them carries cannot see it, because whitespace is
+# exactly what a boundary ACCEPTS, so `[a](x.md) [b](y.md)` bound the first
+# destination and dropped the rest (Codex adversarial, section 33 post-ship
+# rounds 4-5).
+#
+# IT RECOGNISES A BARE OR BACKTICKED SECOND TARGET, AND ONE PLACED AFTER THE
+# `§N`, not just another bracketed link. A bracket-only test (`\s*\[`) left
+# `[a](x.md) TODO-02-b.md §1` and `[a](x.md) §1 [b](y.md)` binding the first
+# destination while the builder rejected the same clause -- reported by the
+# adversarial, consistency and perf legs independently (rounds 6-7).
+#
+# THE ALTERNATIVES ARE TARGET SHAPES, NOT ANY TOKEN, so ordinary clause text
+# cannot trip it: a `--` description, an `(item: ...)` parenthetical, or prose
+# after the section marker do not match, and the scan is anchored immediately
+# after the captured target. Measured against every producer-visible clause in
+# the live corpus: 0 refusals, so the rule changes no behaviour today and
+# exists to keep the four producers agreeing tomorrow.
+#
+# It lives HERE rather than beside each caller for the reason the whole section
+# exists: a first cut put a private copy in `build.py` and justified it on the
+# import direction (`validate.py` does not import `build.py`). Both import THIS
+# module, so the justification was false and the copy was the very duplication
+# under repair. Anchored with `.match(text, pos)` by every caller, so the check
+# allocates nothing on a long stamp line.
+XREF_ADJACENT_TARGET_RE = re.compile(
+    r"\s*(?:§\S+\s+)?(?:" + XREF_LINK_PATTERN
+    + r"|`?(?:\d{2}-[a-z0-9-]+/)?TODO-\d{1,2}[\w./§-]*`?"
+    + r"|`?[\w./-]+\.md`?)")
 
 
 def unwrap_xref_link(token: str) -> str:
@@ -459,11 +538,18 @@ def unwrap_xref_link(token: str) -> str:
 # `scripts/overnight/decision-registry.py`, lives under `scripts/overnight/**`,
 # which an unattended run may not edit, so section 19 filed the routing instead
 # of doing it. An earlier revision of this block named that file as the
-# consumer in the present tense, which was false in two ways at once -- the
-# reader is not routed here, and it dereferences `target`/`target_file`/`text`/
-# `raw` (decision-registry.py:76-77) while the producer emits `target_path`/
-# `target_section`/`item_name`, which is a filed defect in its own right
-# (overnight-runner-improvements-v10). The SHAPE below is still derived from
+# consumer in the present tense, which was false: the reader is not routed
+# here. It also said that reader dereferences `target`/`target_file`/`text`/
+# `raw` -- true when written, FIXED SINCE, and left standing here through
+# section 33's first sweep, which corrected the same stale sentence in
+# `cache.schema.json` and missed this copy (Codex consistency, section 33
+# post-ship, [medium]). It now reads `target_path`/`target_section`/
+# `item_name`/`severity` (decision-registry.py:78-96). What remains true, and
+# is the reason this profile still matters, is that it reads
+# `build/todo-cache.json` with a bare `json.loads` -- no sidecar, no
+# `CACHE_FORMAT_VERSION` check -- so it would accept a pre-v3 artifact and
+# publish ownership records from a graph MISSING the edges v3 emits (filed,
+# overnight-runner-improvements). The SHAPE below is still derived from
 # the producer's live output rather than guessed -- all 994 entries in the live
 # cache satisfy it, and the fixtures pin it -- but until the control-plane
 # routing lands, the profile is available and unused. Codex consistency,
@@ -689,23 +775,33 @@ PROFILE_VALIDATE = Profile(
 #
 # NO CROSS-VERSION COMPATIBILITY IS CLAIMED, and that is deliberate rather than
 # unfinished. `schema_version` (build.py:1020) is the per-node TODO frontmatter
-# version, not an identity for the artifact as a whole. A cache-FORMAT version
-# to gate on DOES exist -- `CACHE_FORMAT_VERSION`, added by section 25 and now
-# at v3 -- but it rides in the corpus binding sidecar, and this profile sets
-# `check_stale=False`, so it is not consulted on this read (an earlier revision
-# of this paragraph said no such version existed at all, written before section
-# 25 and left standing through the v2 and v3 bumps; Codex consistency, section
-# 33, [medium]). Shape alone cannot detect a field that kept its type
-# and changed its MEANING, so the honest contract is the narrow one -- THE
+# version, not an identity for the artifact as a whole. THE ARTIFACT'S OWN
+# FORMAT VERSION IS CHECKED HERE, THOUGH, and unconditionally: `_load_and_
+# validate` calls `check_cache_format` before it walks anything, with
+# `require_binding=not check_stale` -- so disabling freshness makes this read
+# STRICTER, not laxer, and a pre-v3 baseline refuses as LEGACY_FORMAT. Two
+# earlier revisions of this paragraph got that backwards in opposite
+# directions: the first said no cache-format version existed at all (written
+# before section 25, left standing through the v2 and v3 bumps), and the
+# section-33 correction to it then claimed the version was not consulted on
+# this read (Codex consistency, section 33, [medium] x2). What is NOT claimed
+# is compatibility ACROSS versions. Shape alone cannot detect a field that kept
+# its type and changed its MEANING, so the honest contract stays narrow -- THE
 # BASELINE MUST COME FROM THE CURRENT `build.py`, which is exactly what CI does.
-# That is a REQUIREMENT ON THE CALLER, not a check this profile performs, and
-# the distinction is the whole point: an older artifact that still satisfies
-# every consumed field's SHAPE is accepted here and can manufacture deltas. An
-# earlier revision of this comment said such an artifact "is REFUSED", which
-# contradicted the sentence above it and promised a guarantee no code delivers
-# (Codex consistency, section 23 review, [medium]). Making it enforceable needs
-# a cache-format identity from the producer, filed against the section that
-# owns fields the readers consume and the producer never emits.
+#
+# WHAT THE FORMAT CHECK DOES AND DOES NOT BUY, since this paragraph has now
+# been wrong in three different directions. It refuses an artifact written
+# under a DIFFERENT DECLARED CONTRACT -- a bumped `CACHE_FORMAT_VERSION` or a
+# moved `PRODUCER_CONTRACT_DIGEST` -- and that refusal is unconditional here.
+# It cannot refuse an artifact written by the SAME declared contract whose
+# values have since drifted, because nothing distinguishes those bytes. So a
+# same-contract stale baseline can still manufacture deltas, and the caller's
+# obligation to regenerate stands; what CANNOT happen any more is a pre-v3
+# baseline being walked under v3 rules. Section 23's review corrected an
+# earlier "is REFUSED" that promised more than the code delivered; section 33's
+# first correction then over-swung into "the version is not consulted" (Codex
+# consistency, section 33 post-ship, [medium]). Both halves are stated here so
+# the next reader does not have to re-derive which one is true.
 # It DOES declare `node_identity`, where `PROFILE_VALIDATE` does not, and the
 # asymmetry is the point: `diff_caches` builds `build_id_index(baseline_nodes)`
 # and keys a dict on the baseline's ids, so a duplicate there silently rebinds

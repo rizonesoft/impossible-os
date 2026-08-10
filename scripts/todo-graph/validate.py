@@ -2135,10 +2135,67 @@ def fix_line_numbers(nodes: list, snapshot: dict, id_index: dict, path_index: di
             # `\S+` while `build.py` captured the whole link would leave the
             # repair path splitting targets the builder resolved -- the tool
             # disagreeing with itself (TODO-06 section 33).
+            #
+            # THE TRAILING BOUNDARY IS PART OF THE GRAMMAR, not punctuation.
+            # Sharing the pattern was not enough: `build.py` requires
+            # `\s+§\S+` after the target, so on the malformed
+            # `[a](TODO-01-a.md)[b](TODO-02-b.md)` its link arm cannot stop
+            # mid-token and backtracks to `\S+`, handing the WHOLE token to a
+            # resolver that refuses it. This site had no such requirement, so
+            # the link arm stopped at the first `)` and resolved the FIRST
+            # destination -- one update, zero incomplete-repair counts, rc 0,
+            # and under `--write` a line number rewritten from the wrong file
+            # (Codex adversarial, section 33 post-ship, [high]). `(?=\s|$)`
+            # gives both sites the same boundary, so both fail closed on the
+            # same input.
+            #
+            # A SECOND TARGET AFTER THE FIRST MEANS THE CLAUSE IS MALFORMED,
+            # whether or not a space separates them. The boundary above closed
+            # `[a](x.md)[b](y.md)`; one space reopened it, because whitespace
+            # is exactly what the boundary accepts -- so the link arm matched
+            # `[a](x.md)`, bound the item to x.md, and reported a clean update
+            # while `extract_stamps_xrefs` rejected the same clause outright
+            # (Codex adversarial, section 33 post-ship round 4, [high]).
+            #
+            # THE TEST IS ADJACENCY, NOT A REQUIRED `§`. Demanding the section
+            # marker the builder demands would agree with it by construction,
+            # but 70 live XREF targets on item-bearing stamp lines carry no
+            # section marker and are repaired correctly today; that many silent
+            # regressions is a worse trade than the hole. So a target followed
+            # by another `[`-opening token is refused, and refused LOUDLY --
+            # it counts as an unresolvable target, which is what makes the
+            # caller exit non-zero rather than reporting a clean run (the
+            # section 29 contract).
             xref_positions: list = []
             for m in re.finditer(
-                    r"->\s*XREF:\s*(" + cache_schema.XREF_TARGET_PATTERN + r")",
+                    r"->\s*XREF:\s*(" + cache_schema.XREF_TARGET_PATTERN
+                    + r")(?=\s|$)",
                     rest):
+                # A MALFORMED TARGET IS A BARRIER, NOT A GAP. Dropping its
+                # position let the NEXT `(item: ...)` fall through to the
+                # nearest EARLIER valid target -- so a stamp carrying one good
+                # clause and one malformed clause proposed two rewrites, the
+                # second against the wrong file, and `--write` published both
+                # even though the run exited non-zero (Codex adversarial,
+                # section 33 post-ship round 5, [high]). Recording `None`
+                # makes the nearest-preceding lookup below yield no target for
+                # anything after it, so those items are left alone.
+                #
+                # The scan is INDEX-ANCHORED (`match(rest, m.end())`) rather
+                # than `rest[m.end():].lstrip()`, which copied the remainder of
+                # the line once per captured target -- O(line) per clause on
+                # stamps that carry up to 6 (Codex perf, same round).
+                if cache_schema.XREF_ADJACENT_TARGET_RE.match(rest, m.end()):
+                    unresolvable_targets += 1
+                    _report_diag(report, diags_emitted, "unresolvable-target",
+                        f"[validate.py] FAIL fix-line-numbers: malformed XREF "
+                        f"clause {_diag(m.group(1))!r} is followed by a second "
+                        f"target (stamp at {rel}); the clause names more than "
+                        f"one destination, so no line number was rewritten "
+                        f"for it or for any item after it on this line"
+                    )
+                    xref_positions.append((m.start(), None))
+                    continue
                 xref_positions.append((m.start(), m.group(1).rstrip(",")))
             if not xref_positions:
                 new_lines.append(ln)

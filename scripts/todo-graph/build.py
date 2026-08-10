@@ -238,8 +238,24 @@ XREF_CLAUSE_RE = re.compile(
 #   - plain-text reference (compact TNN section-prefix shorthand)
 #   - `- -> XREF: [link text](markdown-path) -- description`
 # Extract the target slug + section number where present.
+# THE LINK ARM IS THE SHARED GRAMMAR, not a third spelling. It was
+# `\[[^\]]+\]\(([^)]+)\)`, whose label class stops at the first `]`, so the
+# balanced-inner-bracket label the stamp grammar deliberately admits
+# (`[a [inner] label](x.md)`) captured as `[a` here and produced no edge --
+# the same split-brain section 33 exists to remove, one producer over (Codex
+# consistency, section 33 post-ship, [medium]). This arm captures the whole
+# link and `resolve_xref_target` unwraps it, so the destination is followed
+# rather than a truncated label.
+# THE TRAILING BOUNDARY IS PART OF THE GRAMMAR, exactly as at the stamp-repair
+# site. Without it the link arm can finish at the first `)` even when another
+# link follows, so `[a](TODO-01-a.md)[b](TODO-02-b.md)` emitted `TODO-01-a.md`
+# as a clean edge and dropped both the second link and the `§N` -- silently
+# binding malformed authoring to the FIRST destination where the bare-token arm
+# used to hand over the whole token and fail closed. Reported independently by
+# the adversarial and perf legs (section 33 post-ship, [medium]).
 INPUTS_XREF_RE = re.compile(
-    r"^-\s+->\s+XREF:\s+(?:\[[^\]]+\]\(([^)]+)\)|`?([^`\s]+))(?:[`\s]+(§\S+))?",
+    r"^-\s+->\s+XREF:\s+(?:(" + _cs.XREF_LINK_PATTERN + r")|`?([^`\s]+))(?=[`\s]|$)"
+    r"(?:[`\s]+(§\S+))?",
     re.MULTILINE,
 )
 
@@ -1174,8 +1190,38 @@ def extract_inputs_xrefs(body: str) -> list:
         normalized = ln.replace("\u2192", "->")
         # Bullet form (existing).
         m = INPUTS_XREF_RE.match(normalized)
+        # A SECOND TARGET AFTER THE FIRST MAKES THE BULLET MALFORMED, and the
+        # trailing boundary alone does not catch it -- whitespace is exactly
+        # what that boundary accepts, so `[a](x.md) [b](y.md) §1` published
+        # `x.md` as a clean edge and dropped both the second link and the
+        # section marker. Same defect and same test as the stamp-repair site
+        # (Codex adversarial, section 33 post-ship round 5, [medium]). Skipping
+        # the bullet entirely is the fail-closed answer here: unlike the repair
+        # path there is no line to rewrite, so the malformed row simply
+        # contributes no edge rather than a confidently wrong one.
+        if m and _cs.XREF_ADJACENT_TARGET_RE.match(
+                normalized, m.end(1) if m.group(1) else m.end(2)):
+            continue
         if m:
-            target = m.group(1) or m.group(2)
+            # UNWRAP HERE so `inputs_xrefs[].target_path` keeps meaning what it
+            # always meant -- a DESTINATION. The link arm now captures the whole
+            # link (one grammar, shared with the stamp target), and unwrapping
+            # at the point of use gets the shared label rule without changing a
+            # second subtree's field semantics on top of section 33's.
+            #
+            # FALL BACK TO THE RAW TOKEN when the unwrap yields nothing. A link
+            # that names no FILE -- `[x]()` or the same-document `[x](#anchor)`
+            # -- unwraps to the empty string by design, and the old link arm
+            # (`([^)]+)`, 1+ chars) never matched those at all, so they fell to
+            # the bare-token arm and were emitted raw. Emitting `""` instead
+            # would publish a `target_path` that violates the schema's
+            # minLength and make routed consumers reject the whole cache
+            # (Codex re-adversarial, section 33 post-ship, [medium]). Keeping
+            # the raw token preserves the prior behaviour exactly: it does not
+            # resolve, so it surfaces as an ordinary stale-XREF finding rather
+            # than as a corrupt artifact.
+            target = (_cs.unwrap_xref_link(m.group(1)) or m.group(1)
+                      if m.group(1) else m.group(2))
             section = m.group(3)
             out.append({"target_path": target, "target_section": section})
             continue
@@ -1191,12 +1237,39 @@ def extract_inputs_xrefs(body: str) -> list:
                 head_clean = re.sub(r"^->\s*XREF:\s*", "", head).strip()
                 # Path may be wrapped in backticks
                 head_clean = head_clean.strip("`")
-                # Split into target + optional section
-                path_match = re.match(r"^(\S+?)(?:\s+(§\S+))?$", head_clean)
+                # THE TABLE FORM USES THE SHARED GRAMMAR TOO. It parsed the
+                # target with a bare `(\S+?)`, so an Inputs row written as
+                # `[label with space](TODO-02.md) §1` -- or with a
+                # balanced-inner-bracket label -- produced NO edge at all,
+                # while the identical bullet form resolved correctly. This
+                # branch is inside `extract_inputs_xrefs` and appends to the
+                # same `inputs_xrefs` subtree, so the graph was silently
+                # incomplete in one of its two surface forms (Codex
+                # consistency, section 33 post-ship, [high]).
+                #
+                # A first pass at section 33 filed this as out-of-scope on the
+                # grounds that it was the Depends-On table grammar. That was
+                # simply wrong about which function it lives in, and the
+                # mistake is worth naming: the scope argument sounded right and
+                # was never checked against the enclosing def.
+                path_match = re.match(
+                    r"^(" + _cs.XREF_TARGET_PATTERN + r")(?:\s+(§\S+))?$",
+                    head_clean)
                 if path_match:
+                    # STRIP BACKTICKS FROM THE TOKEN, not just the cell. The
+                    # cell-level `strip("`")` above cannot reach them when a
+                    # section marker follows -- `` `path` §7 `` ends in `7`, so
+                    # only the LEADING backtick came off and the target kept a
+                    # trailing one. Pre-existing (the old `(\S+?)` captured it
+                    # too) and cosmetic, since `resolve_xref_target` strips
+                    # backticks itself, but it made the table form disagree
+                    # with the bullet form -- whose bare arm excludes backticks
+                    # outright. Found by the surface-form parity fixture.
+                    tgt = (_cs.unwrap_xref_link(path_match.group(1))
+                           or path_match.group(1)).strip("`")
                     out.append(
                         {
-                            "target_path": path_match.group(1),
+                            "target_path": tgt,
                             "target_section": path_match.group(2),
                         }
                     )
