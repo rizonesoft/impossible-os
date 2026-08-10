@@ -56,6 +56,80 @@ t_fail() {
     printf '  [FAIL] %s\n' "$1" >&2
 }
 
+# mono_ns -- nanoseconds from a MONOTONIC source, or empty output on failure.
+#
+# NEVER time a duration with `date +%s` / `+%s%N` / `+%s.%N`. Those read
+# CLOCK_REALTIME, which WSL2 resyncs after a suspend or under load, and a
+# BACKWARD step makes an elapsed reading NEGATIVE -- which silently SATISFIES
+# every upper-bound assertion in this suite and turns a budget into a
+# guaranteed green. Observed on 2026-08-06 and twice on 2026-08-09 in Test 7
+# below. `time.monotonic_ns()` cannot go backwards by definition, so the
+# refusals guarding those assertions stop firing spuriously while still
+# catching a genuinely over-budget run. Same source, and the same reasoning, as
+# scripts/todo-graph/identity-gate.sh:204.
+#
+# bash has no builtin monotonic clock, so a python3 call is the cheapest
+# correct source (python3 is already a hard dependency of every test here). It
+# costs ~25ms of interpreter startup per reading, and only the CLOSING reading
+# of a pair lands inside the measured interval: ~1.25% of Test 7's 2s budget,
+# well inside the margin every ceiling in this suite carries.
+#
+# It never returns non-zero: a caller under `set -e` must reach its valid_ns
+# check and report an unreadable clock as a test failure, not die before the
+# guard runs.
+mono_ns() {
+    python3 -c 'import time; print(time.monotonic_ns())' 2>/dev/null || true
+}
+
+# valid_ns <reading> -- 0 when <reading> is safe to feed to bash arithmetic.
+#
+# Bash arithmetic re-evaluates a variable's CONTENTS as an expression, so
+# unchecked helper output is not merely wrong, it is executable -- and three
+# separate shapes have to be refused, not one:
+#
+#   * an EXPRESSION (`2000+1`) evaluates to a plausible positive number and
+#     sails straight through a non-positive refusal into a green budget;
+#   * a bare IDENTIFIER (`foo`) aborts the whole suite under `set -u` instead
+#     of failing one test;
+#   * a DIGITS-ONLY string is still not safe. `08` is invalid octal to bash and
+#     kills the caller mid-function -- in test_bridge.sh under `set -e` that is
+#     before its cleanup runs, leaking driver children -- and a value past
+#     INT64 wraps silently, which can turn a corrupt huge interval back into a
+#     small non-negative one that PASSES an upper bound.
+#
+# So: non-empty, all digits, no non-canonical leading zero, bounded to 18
+# digits (~31 years of uptime in ns, comfortably inside INT64, so no difference
+# of two ACCEPTED readings can overflow either). The empty case also covers the
+# ordinary failure mode of a missing or broken python3.
+valid_ns() {
+    case "${1-}" in
+        '' | *[!0-9]*) return 1 ;;
+        0) return 0 ;;
+        0*) return 1 ;;
+    esac
+    [ "${#1}" -le 18 ] || return 1
+    return 0
+}
+
+# elapsed_ms <start_ns> <end_ns> -- milliseconds between two mono_ns readings.
+#
+# Prints the delta and returns 0; prints NOTHING and returns 1 when either
+# reading is unusable. This exists so validate-then-subtract is ONE
+# behaviourally testable thing rather than a pattern re-typed at six call
+# sites: 7b/7c mutation-check it, and 7d then checks that no harness subtracts
+# a mono_ns reading behind its back. Every timing site in this suite, in
+# scripts/test-tooling.sh, and in scripts/lsp-mcp/tests/test_bridge.sh goes
+# through it.
+#
+# Callers use `if ! MS=$(elapsed_ms "$a" "$b"); then <report unreadable>`, which
+# keeps the refusal inside an `if` condition -- so `set -e` cannot kill the
+# harness before it reports, and a bad reading can never reach a comparison.
+elapsed_ms() {
+    valid_ns "${1-}" || return 1
+    valid_ns "${2-}" || return 1
+    printf '%s\n' "$(( (${2} - ${1}) / 1000000 ))"
+}
+
 # bind_cache <cache-path> <todo-root> -- write the corpus binding a hand-authored
 # fixture cache needs in order to be READ (section 21).
 #
@@ -3625,17 +3699,25 @@ nodes += [node(f'{i+1:05d}-leaf', f'L{i}') for i in range(N)]
 with open('$STAR_TREE/star.json', 'w') as f:
     json.dump(nodes, f)
 "
-STAR_START=$(date +%s)
+STAR_START=$(mono_ns)
 bind_baseline "$STAR_TREE/star.json"
 STAR_OUT=$(python3 "$QUERY_PY" --cache "$STAR_TREE/star.json" --repo-root "$STAR_TREE" --quiet stats --json 2>&1); STAR_RC=$?
-STAR_ELAPSED=$(( $(date +%s) - STAR_START ))
+STAR_END=$(mono_ns)
 # A generous ceiling: the quadratic form took ~1.4s of pure list copying on top
 # of parse time, and a loaded CI host must not flake. Linear traversal has a
-# wide margin under this.
-if [ "$STAR_RC" = "0" ] && [ "$STAR_ELAPSED" -le 20 ]; then
-    t_pass "query: a 20k-wide dependency list traverses linearly (${STAR_ELAPSED}s)"
+# wide margin under this. Timed on mono_ns because the old `date +%s` bracket
+# made a BACKWARD clock step satisfy `-le 20` -- a quadratic regression would
+# have passed this ceiling on exactly the loaded host most likely to step.
+if ! STAR_ELAPSED_MS=$(elapsed_ms "$STAR_START" "$STAR_END"); then
+    t_fail "query: wide-star timing unreadable (start='$STAR_START' end='$STAR_END') -- monotonic clock source failed"
 else
-    t_fail "query: wide-star traversal rc=$STAR_RC elapsed=${STAR_ELAPSED}s (quadratic regression?)"
+    if [ "$STAR_ELAPSED_MS" -lt 0 ]; then
+        t_fail "query: wide-star timing invalid (${STAR_ELAPSED_MS}ms) -- the monotonic clock went backwards"
+    elif [ "$STAR_RC" = "0" ] && [ "$STAR_ELAPSED_MS" -le 20000 ]; then
+        t_pass "query: a 20k-wide dependency list traverses linearly (${STAR_ELAPSED_MS}ms)"
+    else
+        t_fail "query: wide-star traversal rc=$STAR_RC elapsed=${STAR_ELAPSED_MS}ms (quadratic regression?)"
+    fi
 fi
 
 # Sub-test 9aa11: ASCII render survives a chain deeper than the recursion
@@ -5812,20 +5894,24 @@ import os, sys, time
 sys.path.insert(0, os.environ["REPO_ROOT"] + "/scripts/todo-graph")
 import resolve_symbol as rs
 out = []
+# time.monotonic(), never time.time(): a CLOCK_REALTIME step backwards makes
+# the delta negative, and `< 1.0` then passes no matter how slow the resolve
+# actually was -- which would retire this guard against the quadratic lead
+# regex silently, on precisely the loaded host where the clock steps.
 a = os.environ["SI_TREE"] + "/src/quad_a.c"
 with open(a, "w") as f:
     f.write("static int\n" + " " * 60000 + "foo_qa;\nint z;\n")
 rs.cache_clear()
-t = time.time()
+t = time.monotonic()
 ra = rs.resolve_symbol(a, "foo_qa")
-out.append(f"{ra is None}:{time.time() - t < 1.0}")
+out.append(f"{ra is None}:{time.monotonic() - t < 1.0}")
 b = os.environ["SI_TREE"] + "/src/quad_b.c"
 with open(b, "w") as f:
     f.write("static int\n/* " + "x" * 60000 + " foo_qb( */ y;\nint z;\n")
 rs.cache_clear()
-t = time.time()
+t = time.monotonic()
 rb = rs.resolve_symbol(b, "foo_qb")
-out.append(f"{rb is None}:{time.time() - t < 1.0}")
+out.append(f"{rb is None}:{time.monotonic() - t < 1.0}")
 print(" ".join(out))
 PY
 )"
@@ -7965,23 +8051,134 @@ fi
 # ----------------------------------------------------------------------
 # Test 7: performance budget (under 2s wall-clock per the generator spec).
 # ----------------------------------------------------------------------
-START_NS=$(date +%s%N)
+START_NS=$(mono_ns)
 python3 "$BUILD_PY" --quiet --output "$TMP_DIR/cache-perf.json" >/dev/null 2>&1
-END_NS=$(date +%s%N)
-ELAPSED_MS=$(( (END_NS - START_NS) / 1000000 ))
+END_NS=$(mono_ns)
 # A NON-POSITIVE elapsed is an invalid MEASUREMENT, not a fast build, and the
 # naive `-lt 2000` banked it as a pass -- so a clock step turned this budget
 # into a guaranteed green. Observed three times on 2026-08-06 under WSL2
 # (`-1158ms` in this very test, plus `-262ms`/`-246ms` in hand timings), where
 # the host clock resyncs after a suspend. Refuse the reading instead of
 # trusting it: a budget that cannot fail is not a budget.
-if [ "$ELAPSED_MS" -le 0 ]; then
-    t_fail "build timing invalid (${ELAPSED_MS}ms) -- clock stepped mid-measurement; re-run"
-elif [ "$ELAPSED_MS" -lt 2000 ]; then
-    t_pass "build under 2s wall-clock (${ELAPSED_MS}ms)"
+#
+# The SOURCE is now monotonic (mono_ns), so this refusal is unreachable in
+# practice rather than removed -- which is the point. If it ever fires again
+# the measurement really is broken, and the right response is to diagnose it,
+# not to re-run until it passes.
+if ! ELAPSED_MS=$(elapsed_ms "$START_NS" "$END_NS"); then
+    t_fail "build timing unreadable (start='$START_NS' end='$END_NS') -- monotonic clock source failed"
 else
-    t_fail "build exceeded 2s budget: ${ELAPSED_MS}ms"
+    if [ "$ELAPSED_MS" -le 0 ]; then
+        t_fail "build timing invalid (${ELAPSED_MS}ms) -- the monotonic clock did not advance"
+    elif [ "$ELAPSED_MS" -lt 2000 ]; then
+        t_pass "build under 2s wall-clock (${ELAPSED_MS}ms)"
+    else
+        t_fail "build exceeded 2s budget: ${ELAPSED_MS}ms"
+    fi
 fi
+
+# ----------------------------------------------------------------------
+# Tests 7a-7c: the monotonic clock source itself.
+#
+# Test 7 above, the star-traversal ceiling, and the teardown budgets in
+# scripts/test-tooling.sh + scripts/lsp-mcp/tests/test_bridge.sh all now rest
+# on mono_ns/valid_ns, so those two helpers are load-bearing and get the same
+# treatment as any other gate here: prove they FAIL on the shapes they exist to
+# catch, not merely that they pass on a good reading.
+# ----------------------------------------------------------------------
+
+# 7a: mono_ns yields an all-digits reading that never goes backwards.
+MONO_A=$(mono_ns); MONO_B=$(mono_ns)
+if valid_ns "$MONO_A" && valid_ns "$MONO_B" && [ "$MONO_B" -ge "$MONO_A" ]; then
+    t_pass "mono_ns: readings are all-digits and non-decreasing"
+else
+    t_fail "mono_ns: bad readings a='$MONO_A' b='$MONO_B'"
+fi
+
+# 7b: elapsed_ms REFUSES every malformed reading, on either side, and returns a
+# correct delta on good ones. Each shape below is a distinct hazard, not a
+# variation on one: `2000+1` evaluates to a plausible POSITIVE number under
+# unguarded arithmetic and would sail through a non-positive refusal; `foo`
+# aborts the whole suite under `set -u`; `08` is invalid octal to bash and kills
+# the caller mid-function; a 19-digit value is past INT64 and wraps silently.
+EM_BAD=0
+for em_shape in '' '2000+1' 'foo' '-5' '1.5' '12 34' ' 12' $'12\n34' '08' '0008' '9223372036854775808' '99999999999999999999'; do
+    if EM_OUT=$(elapsed_ms "$em_shape" 2000000000) 2>/dev/null; then
+        t_fail "elapsed_ms: accepted malformed START '$em_shape' (returned '$EM_OUT')"
+        EM_BAD=1
+    elif [ -n "${EM_OUT:-}" ]; then
+        t_fail "elapsed_ms: refused START '$em_shape' but still printed '$EM_OUT'"
+        EM_BAD=1
+    fi
+    if EM_OUT=$(elapsed_ms 1000000000 "$em_shape") 2>/dev/null; then
+        t_fail "elapsed_ms: accepted malformed END '$em_shape' (returned '$EM_OUT')"
+        EM_BAD=1
+    fi
+done
+if [ "$EM_BAD" = "0" ] && [ "$(elapsed_ms 1000000000 3500000000)" = "2500" ] \
+   && [ "$(elapsed_ms 0 0)" = "0" ]; then
+    t_pass "elapsed_ms: refuses expression, identifier, octal, overflow and multi-token readings; correct on good ones"
+else
+    t_fail "elapsed_ms: guard/delta check failed (bad=$EM_BAD, 1s-3.5s=$(elapsed_ms 1000000000 3500000000 || echo REFUSED))"
+fi
+
+# 7c: the mutation that proves 7b is worth running -- the SAME expression-shaped
+# string, fed to bash arithmetic UNGUARDED (which is what every one of these
+# sites did before), evaluates to a positive number and would therefore pass a
+# `-le 0` refusal, while elapsed_ms refuses it AND the caller pattern lands in
+# its failure branch instead of aborting. If this stops holding, 7b is guarding
+# a hazard bash no longer has.
+EM_MUT="2000+1"
+EM_BRANCH=none
+if ! EM_MS=$(elapsed_ms 1000000000 "$EM_MUT"); then EM_BRANCH=refused; else EM_BRANCH="measured:$EM_MS"; fi
+if [ "$(( EM_MUT ))" -gt 0 ] && [ "$EM_BRANCH" = "refused" ]; then
+    t_pass "elapsed_ms: mutation check -- unguarded arithmetic banks '$EM_MUT' as $(( EM_MUT )), the caller takes the refusal branch"
+else
+    t_fail "elapsed_ms: mutation check did not flip (arith=$(( EM_MUT )), branch=$EM_BRANCH)"
+fi
+
+# 7d: the WIRING pin. 7b/7c prove the helper is sound, which is not the same as
+# proving the timing sites USE it -- delete any single call-site guard and both
+# stay green (Codex adversarial review, Medium). So assert the property
+# directly, across all three harnesses: a variable assigned from `$(mono_ns)`
+# must never appear inside an arithmetic expansion. elapsed_ms takes its
+# readings as ARGUMENTS, so a correctly-wired file has zero hits, and reverting
+# one site to a raw `$(( end - start ))` fires this immediately.
+EM_WIRE="$(python3 - "$REPO_ROOT" <<'PY'
+import re, sys
+root = sys.argv[1]
+files = ["scripts/todo-graph/tests/test_build.sh",
+         "scripts/test-tooling.sh",
+         "scripts/lsp-mcp/tests/test_bridge.sh"]
+bad, wired = [], []
+for rel in files:
+    try:
+        text = open(f"{root}/{rel}", encoding="utf-8").read()
+    except OSError as e:
+        bad.append(f"{rel}: unreadable ({e})")
+        continue
+    names = set(re.findall(r'(\w+)="?\$\(mono_ns\)', text))
+    if not names:
+        bad.append(f"{rel}: no mono_ns readings found (did the helper get renamed?)")
+        continue
+    if "elapsed_ms " not in text:
+        bad.append(f"{rel}: reads mono_ns but never calls elapsed_ms")
+    for lineno, line in enumerate(text.splitlines(), 1):
+        if line.lstrip().startswith("#"):
+            continue
+        for expr in re.findall(r'\$\(\((.*?)\)\)', line):
+            hit = [n for n in names if re.search(rf'\b{re.escape(n)}\b', expr)]
+            if hit:
+                bad.append(f"{rel}:{lineno}: raw arithmetic on mono_ns reading(s) "
+                           f"{sorted(hit)} -- route it through elapsed_ms")
+    wired.append(f"{rel}({len(names)})")
+print("OK " + " ".join(wired) if not bad else "BAD " + " | ".join(bad))
+PY
+)"
+case "$EM_WIRE" in
+    OK\ *) t_pass "elapsed_ms: every mono_ns reading in all three harnesses is routed through it (${EM_WIRE#OK })" ;;
+    *)     t_fail "elapsed_ms: wiring pin -- ${EM_WIRE#BAD }" ;;
+esac
 
 # ----------------------------------------------------------------------
 # Tests 22a-22f: the section 16 identity GATE (scripts/todo-graph/

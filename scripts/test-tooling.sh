@@ -168,6 +168,50 @@ t_fail() {
     [ -n "${2:-}" ] && [ "$QUIET" = "0" ] && echo -e "        ${DIM}${2}${NC}"
 }
 
+# mono_ns / valid_ns -- monotonic duration timing. See the long rationale at
+# scripts/todo-graph/tests/test_build.sh (same helpers, same reasoning): a
+# duration must NEVER be bracketed with `date +%s` / `+%s%N` / `+%s.%N`,
+# because those read CLOCK_REALTIME, WSL2 steps it under load, and a backward
+# step makes an elapsed reading NEGATIVE -- which silently SATISFIES every
+# upper-bound assertion in this suite. valid_ns must gate every mono_ns reading
+# before bash arithmetic touches it, since bash re-evaluates a variable's
+# contents as an expression and expression-shaped output would read as a
+# plausible positive number.
+#
+# This does NOT apply to a wall-clock TIMESTAMP. Fixtures that stamp a file
+# mtime, age a state file, or hand a hook a `timestamp_ns` it will compare
+# against Python's `time.time_ns()` must stay on `date +%s`-family realtime --
+# see NOW_NS below, which is read back by
+# .claude/hooks/build_offload_reminder.py against `time.time_ns()`.
+# mono_ns never returns non-zero: a caller under `set -e` must reach its
+# valid_ns check and report an unreadable clock, not die before the guard runs.
+mono_ns() {
+    python3 -c 'import time; print(time.monotonic_ns())' 2>/dev/null || true
+}
+
+# valid_ns additionally refuses a non-canonical leading zero (`08` is invalid
+# octal to bash and kills the caller mid-function) and bounds the magnitude to
+# 18 digits, so no difference of two accepted readings can wrap INT64 back into
+# a small non-negative value that PASSES an upper bound. elapsed_ms is the only
+# thing callers should use: it validates BOTH readings and then subtracts, so
+# the guard cannot be forgotten at a call site -- sub-test 7d in test_build.sh
+# pins that property across this file too.
+valid_ns() {
+    case "${1-}" in
+        '' | *[!0-9]*) return 1 ;;
+        0) return 0 ;;
+        0*) return 1 ;;
+    esac
+    [ "${#1}" -le 18 ] || return 1
+    return 0
+}
+
+elapsed_ms() {
+    valid_ns "${1-}" || return 1
+    valid_ns "${2-}" || return 1
+    printf '%s\n' "$(( (${2} - ${1}) / 1000000 ))"
+}
+
 assert_exit_zero() {
     local desc="$1"; shift
     local output
@@ -3360,18 +3404,24 @@ PY
             sleep 0.05
             _fd_waited=$((_fd_waited + 1))
         done
-        START=$(date +%s.%N)
+        START=$(mono_ns)
         PAYLOAD='{"tool_name":"Skill","tool_input":{"skill":"codex-perf-review","prompt":"[review-kind: perf] Target: todo/00-infrastructure/TODO-99-fdgate-fixture.md S1\nReview angles."}}'
         WARN_OUT=$(printf '%s' "$PAYLOAD" | \
             python3 ".claude/hooks/codex_review_completed.py" 2>&1 >/dev/null)
-        END=$(date +%s.%N)
-        ELAPSED=$(echo "$END $START" | awk '{ printf "%.2f", $1 - $2 }')
+        END=$(mono_ns)
+        # Monotonic integers, not an awk float over `date +%s.%N`: a backward
+        # realtime step made ELAPSED negative, and `t < 3.5` accepted it, so the
+        # 3.5s bound this sub-test enforces could not fail on the loaded host
+        # where the lock contention it measures is most likely to be slow.
+        ELAPSED_MS=$(elapsed_ms "$START" "$END") || ELAPSED_MS=-1
         wait "$HOLDER_PID" 2>/dev/null || true
-        if echo "$WARN_OUT" | grep -q "could not acquire" && \
-           awk -v t="$ELAPSED" 'BEGIN { exit (t < 3.5) ? 0 : 1 }'; then
-            echo "TEST_OK $ELAPSED $WARN_OUT" > /tmp/fdgate_d_result.$$
+        if [ "$ELAPSED_MS" -lt 0 ]; then
+            echo "TEST_FAIL timing unreadable (start='$START' end='$END') warn=$WARN_OUT" \
+                > /tmp/fdgate_d_result.$$
+        elif echo "$WARN_OUT" | grep -q "could not acquire" && [ "$ELAPSED_MS" -lt 3500 ]; then
+            echo "TEST_OK ${ELAPSED_MS}ms $WARN_OUT" > /tmp/fdgate_d_result.$$
         else
-            echo "TEST_FAIL elapsed=$ELAPSED warn=$WARN_OUT" > /tmp/fdgate_d_result.$$
+            echo "TEST_FAIL elapsed=${ELAPSED_MS}ms warn=$WARN_OUT" > /tmp/fdgate_d_result.$$
         fi
     )
     if [ -f "/tmp/fdgate_d_result.$$" ] && grep -q "^TEST_OK " "/tmp/fdgate_d_result.$$"; then
@@ -6633,12 +6683,18 @@ CRSW_PAYLOAD=$(cat <<'JSON'
 }
 JSON
 )
-CRSW_T0=$(date +%s%N)
+CRSW_T0=$(mono_ns)
 echo "$CRSW_PAYLOAD" | ( cd "$CRSW_REPO" && CODEX_REVIEW_DEBUG=1 python3 .claude/hooks/codex_review_completed.py >/dev/null 2>&1 )
 CRSW_RC=$?
-CRSW_T1=$(date +%s%N)
-CRSW_DELTA_MS=$(( (CRSW_T1 - CRSW_T0) / 1000000 ))
-if [ "$CRSW_RC" = "0" ] && [ -s "$CRSW_REPO/.claude/state/last-codex-review.json" ] && [ "$CRSW_DELTA_MS" -lt 1000 ]; then
+CRSW_T1=$(mono_ns)
+# Monotonic, and refused when unreadable or non-advancing: a realtime bracket
+# let a backward clock step produce a negative delta that satisfied `-lt 1000`,
+# so the 1s bound this sub-test exists to enforce could not fail.
+CRSW_DELTA_MS=$(elapsed_ms "$CRSW_T0" "$CRSW_T1") || CRSW_DELTA_MS=-1
+if [ "$CRSW_DELTA_MS" -lt 0 ]; then
+    t_fail "codex_review_state_write: crsw_synthetic_dispatch" \
+           "timing unreadable (t0='$CRSW_T0' t1='$CRSW_T1') -- monotonic clock source failed"
+elif [ "$CRSW_RC" = "0" ] && [ -s "$CRSW_REPO/.claude/state/last-codex-review.json" ] && [ "$CRSW_DELTA_MS" -lt 1000 ]; then
     if grep -q '"received": false' "$CRSW_REPO/.claude/state/last-codex-review.json" \
        && grep -q '"trigger": "Bash(' "$CRSW_REPO/.claude/state/last-codex-review.json"; then
         t_pass "codex_review_state_write: crsw_synthetic_dispatch (${CRSW_DELTA_MS} ms)"

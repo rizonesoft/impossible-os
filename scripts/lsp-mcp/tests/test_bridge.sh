@@ -447,6 +447,48 @@ cd "$REPO_ROOT"
 # pattern-matching one. Both variables are OVERWRITTEN unconditionally
 # so a stale value inherited from the caller's environment cannot make
 # this run adopt another run's children.
+# mono_ns / valid_ns -- monotonic duration timing for the teardown budgets in
+# 9d/9e below. See the long rationale at scripts/todo-graph/tests/test_build.sh
+# (same helpers, same reasoning): a duration must NEVER be bracketed with
+# `date +%s%N`, because that reads CLOCK_REALTIME, WSL2 steps it under load,
+# and a backward step makes an elapsed reading NEGATIVE -- which silently
+# SATISFIES a `-gt ceiling` budget check. valid_ns must gate every reading
+# before bash arithmetic touches it, since bash re-evaluates a variable's
+# contents as an expression. mono_ns never returns non-zero, so the `set -e` at
+# the top of this file cannot kill the harness before the guard reports.
+#
+# LSP_RUN_ID below is deliberately NOT converted: it mints a unique id, not a
+# duration, and realtime is the right source for that.
+mono_ns() {
+    python3 -c 'import time; print(time.monotonic_ns())' 2>/dev/null || true
+}
+
+# valid_ns additionally refuses a non-canonical leading zero and bounds the
+# magnitude to 18 digits. Both matter MORE here than anywhere else: `08` is
+# invalid octal to bash, and under this file's `set -e` that kills the budget
+# function mid-flight -- before lsp_9b_cleanup runs and before the driver's
+# children are reaped -- so a malformed reading would leak processes rather
+# than fail a test. elapsed_ms validates BOTH readings and then subtracts, and
+# returns non-zero instead of printing, so its callers keep the refusal inside
+# an `if` condition where `set -e` cannot fire. Sub-test 7d in
+# scripts/todo-graph/tests/test_build.sh pins that this file has no raw
+# arithmetic on a mono_ns reading left anywhere.
+valid_ns() {
+    case "${1-}" in
+        '' | *[!0-9]*) return 1 ;;
+        0) return 0 ;;
+        0*) return 1 ;;
+    esac
+    [ "${#1}" -le 18 ] || return 1
+    return 0
+}
+
+elapsed_ms() {
+    valid_ns "${1-}" || return 1
+    valid_ns "${2-}" || return 1
+    printf '%s\n' "$(( (${2} - ${1}) / 1000000 ))"
+}
+
 LSP_BIN_NAMES='clangd-19 clangd asm-lsp bash-language-server pyright-langserver pwsh'
 LSP_RUN_ID="test-bridge-$$-$(date +%s%N)"
 LSP_PID_LEDGER="$(mktemp -t lsp-bridge-pids.XXXXXX)"
@@ -1729,9 +1771,12 @@ fn = srv._tool_manager._tools['completion'].fn
 # envelope (cold-cache hosts may not finish indexing in 15 s); what
 # we MUST NOT see is a path-resolution / type-validation failure.
 import time
-t0 = time.time()
+# monotonic, not time.time(): this value is only printed, so a clock step
+# cannot bank a false green here -- but a negative "OK in -3.42s" is a
+# misleading log line on the same host where the assertions below matter.
+t0 = time.monotonic()
 result = fn(path='src/kernel/main.c', line=10, character=0)
-elapsed = time.time() - t0
+elapsed = time.monotonic() - t0
 
 # Tolerate either a successful completion list OR a clangd-isn't-
 # ready envelope. Anything else is a real failure.
@@ -6590,7 +6635,7 @@ lsp_budget_run() {
     err="$(mktemp -t lsp-budget-err.XXXXXX)"
     fifo=""
     printf '%s' "$LSP_BUDGET_DRIVER" > "$drv"
-    tstart="$(date +%s%N)"
+    tstart="$(mono_ns)"
     if [ "$mode" = "budget_satstderr" ]; then
         # A pipe with a reader that never drains. Opened O_RDWR by the
         # shell, so there is no FIFO open rendezvous for either side to
@@ -6656,7 +6701,7 @@ lsp_budget_run() {
         # the poll rather than the bound.
         t0="$tstart"
         if [ -n "$sig" ]; then
-            t0="$(date +%s%N)"
+            t0="$(mono_ns)"
             # A swallowed kill failure means the driver was already gone,
             # and every assertion below would then be measuring a teardown
             # that no signal caused (Codex adversarial review, Medium).
@@ -6676,12 +6721,24 @@ lsp_budget_run() {
         while kill -0 "$pid" 2>/dev/null && [ "$waited" -lt 60 ]; do
             sleep 0.1; waited=$((waited + 1))
         done
-        t1="$(date +%s%N)"
-        elapsed=$(( (t1 - t0) / 1000000 ))
+        t1="$(mono_ns)"
+        # Refuse an unreadable or backward reading rather than measuring with
+        # it: a realtime bracket let a backward clock step produce a NEGATIVE
+        # elapsed, which satisfies `-gt "$ceiling"` and turned this teardown
+        # budget into a guaranteed pass.
+        elapsed="$(elapsed_ms "$t0" "$t1")" || elapsed=-1
         if kill -0 "$pid" 2>/dev/null; then
             kill -9 "$pid" 2>/dev/null
             printf '[%s] FAIL: %s never exited within the 6s watchdog\n' \
                 "$tag" "$mode" >&2
+        elif [ "$elapsed" -lt 0 ]; then
+            kill -9 "$pid" 2>/dev/null || true
+            wait "$pid" 2>/dev/null || true
+            printf '[%s] FAIL: %s teardown timing unreadable (t0=%s t1=%s) --\n' \
+                "$tag" "$mode" "${t0:-<empty>}" "${t1:-<empty>}" >&2
+            printf '     the monotonic clock source failed, so the %ss budget\n' \
+                "$budget" >&2
+            printf '     was never measured\n' >&2
         elif [ "$elapsed" -gt "$ceiling" ]; then
             wait "$pid" 2>/dev/null || true
             printf '[%s] FAIL: %s teardown took %sms against a %ss budget\n' \

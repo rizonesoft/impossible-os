@@ -82,7 +82,7 @@ title: "TODO-06 -- TODO Metadata Layer and Derived Graph"
 | ⭐  |  31   |   §31   | An equal-count shallow boundary still moves `created_at` under an unchanged id      | §21, §27   |  [x]   |
 | ⭐  |  32   |   §32   | In-file `](#anchor)` links are checked by nothing (split from §29)                  | §3         |  [x]   |
 | ⭐  |  33   |   §33   | Stamp-target capture splits a link whose label contains a space (split from §29)    | §2, §26    |  [x]   |
-| ⭐  |  34   |   §34   | The performance budget times itself on a clock that steps (found verifying §29)     | §2         |  [ ]   |
+| ⭐  |  34   |   §34   | The performance budget times itself on a clock that steps (found verifying §29)     | §2         |  [x]   |
 | ⭐  |  35   |   §35   | A same-file stamp matches its own text, so repair answers with the stamp's line     | §29        |  [ ]   |
 | ⭐  |  36   |   §36   | The section parser reads `## N.` headings out of fenced code blocks (found by §32)  | §2, §32    |  [ ]   |
 | ⭐  |  37   |   §37   | One clause parser decides how many destinations a clause names (consolidation)      | §33        |  [ ]   |
@@ -1756,15 +1756,35 @@ Observed twice on 2026-08-09 while verifying §29, and reproduced deliberately: 
 
 The negative-reading refusal at `test_build.sh:7618` is CORRECT and must stay: it was added on 2026-08-06 because a naive `-lt 2000` banked a stepped clock as a pass, and "a budget that cannot fail is not a budget". The defect is the SOURCE, not the guard -- a monotonic clock cannot go backwards, so the refusal would stop firing spuriously while still catching a genuinely over-budget build.
 
-- [ ] Time Test 7 from a monotonic source instead of `date +%s%N`
-      `python3 -c 'import time; print(time.monotonic_ns())'` is already a dependency of this suite; bash has no builtin monotonic clock, so a tiny python call is the cheapest correct source.
-      - Keep the `<= 0` refusal exactly as it is. It becomes unreachable in practice rather than removed, which is the point: if it ever fires again the measurement really is broken.
-      - Check whether any OTHER timing assertion in this suite or in `scripts/test-tooling.sh` brackets with `date +%s%N`; the same step hits all of them, and fixing one is what makes the rest look reliable.
-- [ ] Retire the live-gotcha entry once the source is monotonic
-      `.claude/state/live-gotchas.md` carries a 2026-08-09 "re-run before diagnosing" entry for this exact message. It is correct advice today and becomes misleading the moment the clock source changes; the entry is operator-owned, so this item is a reminder to ASK for its removal, not a licence to edit it.
-- [ ] Commit: `"todo-graph: time the build budget on a monotonic clock"`
+- [x] Time Test 7 from a monotonic source instead of `date +%s%N`
+      Shipped as `mono_ns()` + `valid_ns()` in [`test_build.sh`](../../scripts/todo-graph/tests/test_build.sh) (`python3 -c 'import time; print(time.monotonic_ns())'`, ~25ms of interpreter startup per reading against a 2s budget). Test 7 now brackets the build with `mono_ns`.
+      - The `<= 0` refusal is kept verbatim and its comment now says WHY it survives: unreachable in practice rather than removed, so a firing means the measurement really is broken.
+      - `mono_ns` never returns non-zero, so a caller under `set -e` reaches its `valid_ns` check instead of dying before the guard reports.
+- [x] Convert every OTHER duration assertion the same clock step could bank as a pass
+      The audit was widened from the `date +%s%N` spelling to the SEMANTICS (any elapsed compared against an upper bound), which is what found the last three: a clock spelling is not the defect, an unguarded subtraction is (Codex design review, High).
+      - [`test_build.sh`](../../scripts/todo-graph/tests/test_build.sh): the 20k-wide star-traversal ceiling (`date +%s` delta vs `-le 20`) and the two embedded `time.time()` deltas vs `< 1.0` guarding the quadratic lead-regex regression.
+      - [`test-tooling.sh`](../../scripts/test-tooling.sh): the `crsw_synthetic_dispatch` 1s bound and the `four_dispatch_gate: D` 3.5s bound (an awk float over `date +%s.%N`, now integer ms).
+      - [`test_bridge.sh`](../../scripts/lsp-mcp/tests/test_bridge.sh): the 9d/9e teardown budgets (`-gt "$ceiling"`), plus the print-only `time.time()` elapsed at the completion smoke test so its log line cannot read negative.
+      - DELIBERATELY LEFT ON REALTIME, with the reason recorded in each helper comment: `test-tooling.sh` `NOW_NS` (read back against Python `time.time_ns()` in [`build_offload_reminder.py`](../../.claude/hooks/build_offload_reminder.py)), the `os.utime` mtime fixtures, and the unique-ID mints in `test_bridge.sh` / `test.sh`. A timestamp is not a duration.
+      - Two boundaries moved by sub-second amounts and both moved toward accuracy: `-le 20` on truncated seconds became `-le 20000` ms (removing up to 1s of truncation slack on a ceiling the measured run clears at ~800ms), and the awk `%.2f` rounding that failed a true 3.496s against `< 3.5` became an exact `-lt 3500`.
+- [x] Make the readings safe to feed to bash arithmetic
+      Validate-then-subtract is ONE helper, `elapsed_ms <start> <end>`, which validates both readings and prints the delta, or prints nothing and returns 1. Callers write `if ! MS=$(elapsed_ms "$a" "$b")`, so the refusal stays inside an `if` condition where `set -e` cannot fire and no unvalidated reading can reach a comparison.
+      - `valid_ns` refuses four shapes, not one: an EXPRESSION (`2000+1` evaluates to a plausible positive 2001 under bash's re-evaluation of variable contents and sails through a non-positive refusal), a bare IDENTIFIER (aborts the suite under `set -u`), a NON-CANONICAL LEADING ZERO (`08` is invalid octal to bash and kills the caller mid-function -- under `test_bridge.sh`'s `set -e` that is before `lsp_9b_cleanup`, leaking driver children), and anything past 18 digits (an INT64 wrap can turn a corrupt huge interval into a small non-negative one that PASSES a ceiling). The last two came from Codex adversarial review, Medium.
+      - Sub-tests 7a-7d pin it. 7c is the mutation check on the helper; 7d is the WIRING pin, because a sound helper is not the same as a used one -- it asserts across all three harnesses that no variable assigned from `$(mono_ns)` ever appears inside an arithmetic expansion, and reverting a single call site to a raw `$(( end - start ))` was verified to flip it (Codex adversarial review, Medium).
+- [x] Retire the live-gotcha entry once the source is monotonic
+      The 2026-08-07 and 2026-08-09 "re-run before diagnosing" entries in `.claude/state/live-gotchas.md` are operator-owned, and an unattended run cannot ask for their removal, so they were left in place and a 2026-08-10 entry was APPENDED that supersedes them: the old message no longer exists, and the two messages that replace it can only mean a genuinely broken measurement, so the advice is now diagnose rather than re-run.
+- [x] Commit: `"todo-graph: time the build budget on a monotonic clock"`
 
 **Test checkpoint:** Test 7 reports a positive elapsed time across 10 consecutive runs of `bash scripts/todo-graph/tests/test_build.sh`; an artificially over-budget build still fails the 2s assertion; `bash scripts/test-tooling.sh` green.
+
+> **Test runner:** `bash scripts/todo-graph/tests/test_build.sh` -- expect `559/559 passed, 0 failed` (sub-tests 7a-7d cover the clock source, the malformed-reading guard, the mutation check that proves the guard is load-bearing, and the wiring pin over all three harnesses); aggregate via `bash scripts/test-tooling.sh` at `1319/1319`, which also runs the converted `test_bridge.sh` budgets at `118/118`. No kernel test surface: this is host tooling, so there is no `TEST_CAT_*` category or bat.
+
+> **Notes:**
+> - Shipped `mono_ns`/`valid_ns`/`elapsed_ms` into all three bash test harnesses; six duration assertions now read `time.monotonic_ns()`, so a WSL2 clock step cannot bank a negative elapsed as a pass.
+> - The audit criterion is SEMANTIC, not textual: any elapsed compared against a bound, whatever clock produced it -- which caught the `date +%s`, `date +%s.%N` and `time.time()` sites the `date +%s%N` grep missed.
+> - Validate-then-subtract is ONE helper, so no call site can forget it and 7d can pin that none does; digits-only was not enough, because `08` aborts bash and a >INT64 reading wraps.
+> - Timestamps stay on realtime by design (`NOW_NS` vs `time.time_ns()`, `os.utime` fixtures, unique-ID mints); each is annotated in place so a later sweep does not "fix" it.
+> - Scope boundary: test harnesses only. Production timing in `build.py`, `query.py`, `identity-gate.sh` and the lsp-mcp client was already monotonic and is untouched.
 
 -> XREF: [`TODO-06 §29`](#29---fix-line-numbers-reports-success-over-targets-it-could-not-resolve) -- the section whose verification surfaced this (item: "Commit: `\"todo-graph: repair mode fails visibly on targets it cannot resolve\"`"); the flake is unrelated to repair mode and was filed rather than folded in, so it would not ship un-reviewed under that section's stamps.
 
@@ -1902,6 +1922,7 @@ The four producers are `build.py`'s `XREF_CLAUSE_RE` (stamp targets), `INPUTS_XR
 | 💎  | A meaning change to a same-shaped field invalidates the cache  | ❌ None                 | ❌ Regenerate-and-hope              | ✅ §27 `CACHE_FORMAT_VERSION` 1 -> 2; an equal `tip:count` no longer certifies   |
 | 💎  | A live view re-asks when the HISTORY moves, not just the bytes | ❌ Watch on file events | ❌ inotify on the worktree only     | ✅ §30 50.1us ref probe, 54.2ms id only when it moves; an amend re-runs the view |
 | ⭐  | A refused live tick RETRIES instead of waiting for an edit     | ❌ Manual refresh       | ❌ Latches until the next fs event  | ✅ §30 capped 5/10/20/40/60s backoff; the opening tick arms it too               |
+| ⭐  | A perf budget cannot be SATISFIED by a clock step              | ❌ Wall-clock brackets  | ❌ Wall-clock brackets              | ✅ §34 six budgets on `monotonic_ns`; an unreadable sample refuses, not passes   |
 
 > **After §1-§3:** Impossible OS has full Linux-parity ownership metadata plus the dep-graph that neither OS ships, plus automated cross-file XREF integrity checks AND a CI-gated JSON Schema sidecar (consumed by `remark-lint-frontmatter-schema`; no Linux equivalent for project plans). Editor-time diagnostics are best-effort developer convenience via `markdown-yaml-embedded-langservers`; the §6 CI gate is the authoritative line of defense.
 > **After §4-§6:** "what should I work on next?" + "what's most-blocking?" + "what's been stale for 90 days?" are one-command queries, and graph drift is caught at PR time instead of at next-reviewer-sweep time, with `--diff` surfacing graph regressions per-PR. The canonical-markdown / derived-cache invariant matches the existing [Hook Routing Matrix](../../docs/infrastructure/ai-system.md#hook-routing-matrix) architecture, so contributors already understand the mental model.
