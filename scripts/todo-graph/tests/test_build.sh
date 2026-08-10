@@ -8180,6 +8180,92 @@ case "$EM_WIRE" in
     *)     t_fail "elapsed_ms: wiring pin -- ${EM_WIRE#BAD }" ;;
 esac
 
+# 7e: the DRIFT pin. 7b/7c run the vector against THIS file's helpers and 7d
+# proves the other two harnesses call theirs -- neither notices if a copy's
+# BEHAVIOUR diverges. The helpers are duplicated per script on purpose (three
+# standalone harnesses, no shared sourcing), so flipping `0*) return 1` to
+# `return 0` in one copy silently restores the octal-abort hazard and every
+# test above stays green (Codex consistency audit, Medium).
+#
+# So run the malformed-input vector against ALL THREE COPIES and require an
+# identical verdict from each. The copies are extracted textually and sourced
+# in a subshell -- these harnesses cannot be sourced whole, because doing so
+# would execute the entire suite.
+EM_HDIR="$TMP_DIR/helper-copies"
+mkdir -p "$EM_HDIR"
+EM_EXTRACT="$(python3 - "$REPO_ROOT" "$EM_HDIR" <<'PY'
+import re, sys
+root, outdir = sys.argv[1], sys.argv[2]
+files = {"tb": "scripts/todo-graph/tests/test_build.sh",
+         "tt": "scripts/test-tooling.sh",
+         "br": "scripts/lsp-mcp/tests/test_bridge.sh"}
+missing = []
+for tag, rel in files.items():
+    text = open(f"{root}/{rel}", encoding="utf-8").read()
+    body = []
+    for fn in ("mono_ns", "valid_ns", "elapsed_ms"):
+        m = re.search(rf'^{fn}\(\) \{{\n(?:.*?\n)*?\}}$', text, re.M)
+        if not m:
+            missing.append(f"{rel}: {fn}() not found at column 0")
+            continue
+        body.append(m.group(0))
+    with open(f"{outdir}/{tag}.sh", "w", encoding="utf-8") as f:
+        f.write("\n".join(body) + "\n")
+print("OK" if not missing else "BAD " + " | ".join(missing))
+PY
+)"
+if [ "$EM_EXTRACT" != "OK" ]; then
+    t_fail "elapsed_ms: drift pin could not extract the helper copies -- ${EM_EXTRACT#BAD }"
+else
+    # em_probe <helpers-file> -- a one-line behavioural signature of one copy.
+    #
+    # Each probe records the RETURN (A:<value> accepted / R refused) and, on a
+    # separate axis, whether the call wrote to STDERR (`+E`). The second axis is
+    # load-bearing: this probe runs without `set -e`, so a copy that wrongly
+    # ACCEPTS `08` does not abort here the way it would in the real harness --
+    # bash reports the invalid-octal error and the function returns non-zero, so
+    # a status-only signature would read the hazard as a clean refusal and the
+    # drift would be invisible. The stderr text itself is not compared, only its
+    # presence, so the signature does not depend on bash's wording.
+    em_probe() (
+        # shellcheck disable=SC1090
+        . "$1"
+        errf="$EM_HDIR/probe.err"
+        sig=""
+        for p in '' '2000+1' 'foo' '-5' '1.5' '08' '0008' '9223372036854775808' '0' '7'; do
+            : > "$errf"
+            if o=$(elapsed_ms "$p" 3000000000 2>"$errf"); then tok="A:$o"; else tok="R"; fi
+            [ -s "$errf" ] && tok="$tok+E"
+            sig="$sig|$tok"
+        done
+        printf '%s\n' "${sig}|D:$(elapsed_ms 1000000000 3500000000 2>/dev/null || echo REFUSED)"
+    )
+    EM_SIG_TB=$(em_probe "$EM_HDIR/tb.sh")
+    EM_SIG_TT=$(em_probe "$EM_HDIR/tt.sh")
+    EM_SIG_BR=$(em_probe "$EM_HDIR/br.sh")
+    # The signature the vector MUST produce: every malformed shape refused, the
+    # two canonical readings accepted, the good delta exact. Pinned literally so
+    # a drift that happens to hit all three copies at once is caught too.
+    EM_SIG_WANT="|R|R|R|R|R|R|R|R|A:3000|A:2999|D:2500"
+    # Mutation: drift ONE copy's leading-zero branch, exactly as a careless edit
+    # would, and require the signature to change. Without this, 7e could be
+    # comparing three copies of a probe that tests nothing.
+    sed 's/^        0\*) return 1 ;;$/        0*) return 0 ;;/' \
+        "$EM_HDIR/tt.sh" > "$EM_HDIR/tt-drifted.sh"
+    EM_SIG_MUT=$(em_probe "$EM_HDIR/tt-drifted.sh")
+    if [ "$EM_SIG_TB" != "$EM_SIG_WANT" ]; then
+        t_fail "elapsed_ms: drift pin -- test_build.sh copy: got '$EM_SIG_TB' want '$EM_SIG_WANT'"
+    elif [ "$EM_SIG_TT" != "$EM_SIG_WANT" ]; then
+        t_fail "elapsed_ms: drift pin -- test-tooling.sh copy diverged: got '$EM_SIG_TT' want '$EM_SIG_WANT'"
+    elif [ "$EM_SIG_BR" != "$EM_SIG_WANT" ]; then
+        t_fail "elapsed_ms: drift pin -- test_bridge.sh copy diverged: got '$EM_SIG_BR' want '$EM_SIG_WANT'"
+    elif [ "$EM_SIG_MUT" = "$EM_SIG_WANT" ]; then
+        t_fail "elapsed_ms: drift pin did not flip on a drifted copy -- the probe proves nothing"
+    else
+        t_pass "elapsed_ms: all three harness copies behave identically, and a drifted copy is detected"
+    fi
+fi
+
 # ----------------------------------------------------------------------
 # Tests 22a-22f: the section 16 identity GATE (scripts/todo-graph/
 # identity-gate.sh).
