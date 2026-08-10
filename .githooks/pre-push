@@ -121,6 +121,19 @@ if [ -n "$TOOLING_HITS" ]; then
     [ -n "${_loid:-}" ] || continue
     case "$_loid" in *[!0]*) PUSHED_OID="$_loid"; break ;; esac
   done <<< "$STDIN_DATA"
+  # SCOPED RUN (2026-08-10). Hand the suite the exact set of files this push
+  # changes so it can skip NESTED suites that set provably cannot reach --
+  # measured, `test_build.sh` is 252s and `test_bridge.sh` 219s of a ~790s pack,
+  # and a push touching only `.claude/hooks/` reaches neither. That 471s is what
+  # took the stack past the 10-minute tool wall and killed two pushes on
+  # 2026-08-10. The suite DEFAULTS to running everything when this file is absent
+  # or unreadable, so CI (which passes nothing) is untouched and a scoping bug
+  # costs time, never coverage. Skips are printed in the suite's own summary, so
+  # a scoped run can never be mistaken for a full one.
+  TT_CHANGED="$(mktemp -t prepush-changed.XXXXXX 2>/dev/null || echo "")"
+  if [ -n "$TT_CHANGED" ]; then
+    pushed_files | sort -u > "$TT_CHANGED" 2>/dev/null || : > "$TT_CHANGED"
+  fi
   if [ "${SKIP_TOOLING_SUITE:-}" != "1" ] \
      && [ -f "$REPO_ROOT/scripts/tooling-receipt.py" ] \
      && python3 "$REPO_ROOT/scripts/tooling-receipt.py" check --project "$REPO_ROOT" \
@@ -134,7 +147,9 @@ if [ -n "$TOOLING_HITS" ]; then
     # push is one that gets disabled wholesale. Measured immediately: it timed
     # out the very push that introduced it.
     echo -e "\033[33m  SKIP_TOOLING_SUITE=1 set -- tooling suite not run\033[0m"
-  elif ! bash "$REPO_ROOT/scripts/test-tooling.sh" --quiet; then
+  elif ! TEST_TOOLING_CHANGED_PATHS="$TT_CHANGED" \
+         bash "$REPO_ROOT/scripts/test-tooling.sh" --quiet; then
+    rm -f "$TT_CHANGED" 2>/dev/null || true
     echo ""
     echo -e "\033[31mTooling suite failed -- push blocked\033[0m"
     echo "  A tooling change did not pass scripts/test-tooling.sh, which until"
@@ -143,6 +158,11 @@ if [ -n "$TOOLING_HITS" ]; then
     echo "  Opt-out (last resort): SKIP_TOOLING_SUITE=1 git push ..."
     exit 1
   fi
+  # Every path out of the branch above except `exit 1` lands here, including the
+  # receipt short-circuit and the SKIP_TOOLING_SUITE branch that never used the
+  # file. Removing it in the failure branch alone leaked one temp file per
+  # successful push.
+  rm -f "$TT_CHANGED" 2>/dev/null || true
 fi
 
 # ---------------------------------------------------------------------------

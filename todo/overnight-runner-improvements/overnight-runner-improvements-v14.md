@@ -56,6 +56,20 @@ Six v13 carries plus the CI repair. Every change below carries a refusal-directi
       - The working sequence, if this stays unfixed: run the suite out-of-band, write the receipt, THEN push. That is three operator steps for what should be one, and it is exactly the shape a run cannot perform for itself.
       - What would settle it: decide whether the pre-push suite should run in the BACKGROUND against the pushed commit (reporting after the push, since CI gates anyway) rather than blocking it. That is a real design decision about what pre-push is for -- a gate that cannot fit inside the tool wall is not a gate, it is a retry loop -- and it should not be made hastily.
 
+- [x] **RESOLVED 2026-08-10 (same session): the pre-push tooling pack is now SCOPED, cutting a hooks-only push from ~790s to ~320s.**
+      The fix for the item above, chosen over raising the tool wall because it reduces work rather than accommodating it.
+      - Measured first, and the obvious hypothesis was WRONG: the pack has 637s of nominal `sleep` across 49 sites, which looked like the answer. Per-line timestamping showed the real cost is two NESTED suites -- `test_build.sh` at 252s and the lsp-mcp harnesses at 219s, 60% of an ~790s pack -- both invoked unconditionally (`test-tooling.sh:655`, `:790`). A hooks-only push reached neither and paid 471s for them.
+      - `TEST_TOOLING_CHANGED_PATHS` is opt-in and the DEFAULT is the safety property: absent, empty or unreadable runs everything, so CI (which passes nothing) keeps full coverage and a scoping bug costs time rather than coverage. Verified: clean default run 1320/1320 in 801s, scoped hooks-only run 1320/1320 in 320s.
+      - Triggers were derived by extracting every repo path each harness references, not guessed, and are deliberately generous: `.githooks/` is in the todo-graph trigger because its section-30 tests exercise commit ticks. Refusal controls in `test_tooling_scoped_suites.py` assert each trigger fires for every path class its suite reads; mutation-checked by narrowing a trigger and by flipping the empty-set fast path to skip -- each caught by the intended test.
+      - Watch for: a trigger that is too narrow. Only that direction is silent, which is why the skip is NAMED in the summary and the notice is not suppressed by `--quiet` (the pre-push caller uses `--quiet`, which is exactly where reduced coverage matters).
+
+- [ ] **Two suite tests read live repo STATE rather than the change under test, and both passed by luck until this session.**
+      Observed 2026-08-10 while validating the scoping change; both were mine to fix, and one is still latent elsewhere.
+      - `test-tooling.sh:10974` greps `scripts/` for a retired schema id and excludes only paths matching `test-tooling.sh`. A debug COPY at `scripts/.tt-debug.sh` carried the string, did not match the filter, and failed the suite. Arguably correct (a stray copy of a tooling script under `scripts/` is worth flagging) but the diagnosis cost a 13-minute run, because the failure names the id rather than the file that introduced it.
+      - `test_receipt_commit_binding.test_wrong_or_unreadable_commit_fails_closed` asserted `--commit HEAD~1` fails. That holds only when the previous commit touched a `SURFACE` path -- and SURFACE excludes `todo/` and `COUNT.md`, which is most of what this repo commits. A todo-only commit at HEAD made HEAD and HEAD~1 surface-identical, so validating both was CORRECT and the test was wrong. Repaired to CONSTRUCT a differing commit and assert its own premise is non-vacuous.
+      - The shared lesson, and why this is filed rather than closed: a test whose fixture depends on unrelated repo history is testing the history. The first one is still shaped that way.
+      - Also confirmed: editing the tree WHILE the suite walks it produces failures that look like real regressions. Two of this session's three suite failures were the session's own concurrent edits. The tooling receipt already refuses to be written in that state; the SUITE has no equivalent guard.
+
 ## Standing measurement obligations
 
 Carry the baselines forward. A measurement without one is an anecdote.

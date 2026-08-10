@@ -36,6 +36,18 @@ Usage:
   bash scripts/test-tooling.sh --quiet      Summary line only
   bash scripts/test-tooling.sh --help
 
+Environment:
+  TEST_TOOLING_CHANGED_PATHS=<file>
+      Opt-in SCOPED run. <file> holds repo-relative changed paths, one per
+      line; nested suites whose surface none of them can reach are skipped
+      and NAMED in the summary. Measured: a hooks-only change runs in ~320s
+      instead of ~790s, because test_build.sh (252s) and the lsp-mcp
+      harnesses (219s) cannot be affected by it.
+      Absent, empty or unreadable => run EVERYTHING. CI passes nothing and so
+      keeps full coverage; a scoping bug costs time, never coverage.
+  TEST_TOOLING_SKIP_LSP_MCP=1
+      Skip the lsp-mcp harnesses outright (assertion, not evidence).
+
 What this tests:
   - Every wrapper script (build/test/lint/run-qemu/debug/test-smoke/
     install-hooks/setup/tooling-doctor) has a --help that exits 0
@@ -92,6 +104,60 @@ if [ "${#_TT_CLEARED[@]}" -gt 0 ]; then
 fi
 unset _tt_var
 
+# ---- Nested-suite scoping (2026-08-10) ------------------------------------
+# THE PROBLEM, MEASURED. Two NESTED regression suites are invoked here
+# unconditionally, and together they are 60% of the wall-clock:
+# `scripts/todo-graph/tests/test_build.sh` at 252s and
+# `scripts/lsp-mcp/tests/test_bridge.sh` at 219s, against ~320s for the other
+# ~740 tests. `.githooks/pre-push` runs this whole pack whenever a push touches
+# `scripts/lint/`, `scripts/todo-graph/`, `scripts/test-tooling.sh` or
+# `.claude/hooks/` -- so a push touching ONLY `.claude/hooks/` paid 471s for two
+# suites whose surface it cannot reach. That is what pushed the pre-push stack
+# past the 10-minute tool wall on 2026-08-10, killing two consecutive pushes.
+#
+# DEFAULT IS RUN-EVERYTHING, and that is the safety property, not a fallback.
+# CI (.github/workflows/build.yml) passes nothing and therefore still runs all
+# 1320 tests. Only a caller that KNOWS the changed set opts in, by pointing
+# TEST_TOOLING_CHANGED_PATHS at a file of repo-relative paths, one per line.
+# Every uncertain state -- unset, empty, unreadable, no matches parsed -- runs
+# everything. A scoping bug must cost time, never coverage.
+#
+# AND A SKIP IS ANNOUNCED, never silent. A suite that quietly stops running
+# reads exactly like a suite that passed, which is the failure mode the whole
+# receipt/gate discipline in this repo exists to prevent. Skips are collected
+# and printed in the final summary whether or not --quiet is set.
+_TT_CHANGED_FILE="${TEST_TOOLING_CHANGED_PATHS:-}"
+_TT_CHANGED=""
+if [ -n "$_TT_CHANGED_FILE" ] && [ -r "$_TT_CHANGED_FILE" ]; then
+    _TT_CHANGED="$(tr -d '\r' < "$_TT_CHANGED_FILE" | sed '/^[[:space:]]*$/d' || true)"
+fi
+_TT_SKIPPED=()
+
+# _tt_suite_needed <label> <trigger-regex>
+#   0 = run it (needed, or scoping not in use, or anything uncertain)
+#   1 = provably unaffected by this change set
+_tt_suite_needed() {
+    local label="$1" re="$2"
+    [ -n "$_TT_CHANGED" ] || return 0          # not scoping -> run everything
+    printf '%s\n' "$_TT_CHANGED" | grep -qE "$re" && return 0
+    _TT_SKIPPED+=("$label")
+    return 1
+}
+
+# TRIGGER SETS ARE DERIVED FROM WHAT EACH SUITE ACTUALLY READS, measured by
+# extracting every repo path each references -- not guessed, and deliberately
+# GENEROUS. Being too wide costs the suite's runtime; being too narrow skips a
+# suite that mattered, and only the second failure is silent. When in doubt a
+# path belongs in the trigger.
+#
+# test_build.sh: its own tree and fixtures, the live todo/ corpus it primes a
+# cache from, the lint checks it drives, tools/ and docs/infrastructure/ files
+# it asserts against, .githooks/pre-push (section 30 commit-tick tests), and
+# this file (it is invoked from here).
+_TT_TRIG_TODO_GRAPH='^(scripts/todo-graph/|scripts/lint/|scripts/lint\.sh$|scripts/todo-reachability\.py$|scripts/setup-deps\.sh$|todo/|tools/|docs/infrastructure/|\.githooks/|scripts/test-tooling\.sh$)'
+# test_bridge.sh: the bridge and its tests, plus this file.
+_TT_TRIG_LSP_MCP='^(scripts/lsp-mcp/|scripts/machines/|scripts/test-tooling\.sh$)'
+
 # ---- Mutual exclusion: one suite per worktree -----------------------------
 # Two instances in one tree POISON each other, by this repo's own rule. The
 # suite lints and walks the LIVE corpus and rebuilds caches under it, and
@@ -147,8 +213,10 @@ fi
 # ---- Colors ----
 if [ "$QUIET" = "0" ] && [ -t 1 ]; then
     RED='\033[0;31m'; GREEN='\033[0;32m'; CYAN='\033[0;36m'; DIM='\033[0;90m'; NC='\033[0m'
+    YELLOW='\033[0;33m'
 else
     RED=''; GREEN=''; CYAN=''; DIM=''; NC=''
+    YELLOW=''
 fi
 
 # ---- Test runner ----
@@ -652,7 +720,9 @@ assert_grep "build.sh WRITES the sentinel (not just mentions it)" \
 # into this aggregate runner without re-implementing each assertion.
 [ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[todo-graph]${NC}"
 TODO_GRAPH_TEST="$REPO_ROOT/scripts/todo-graph/tests/test_build.sh"
-if [ -x "$TODO_GRAPH_TEST" ]; then
+if ! _tt_suite_needed "todo-graph (test_build.sh, ~252s)" "$_TT_TRIG_TODO_GRAPH"; then
+    t_pass "scripts/todo-graph/tests/test_build.sh SKIPPED -- no changed path can reach it (scoped run)"
+elif [ -x "$TODO_GRAPH_TEST" ]; then
     # Capture the "[test_build] N/N passed, 0 failed" summary so the
     # aggregate runner's message tracks the current sub-test count
     # instead of drifting (prior hard-coded "37 sub-tests" went stale
@@ -729,6 +799,16 @@ fi
 if [ "${TEST_TOOLING_SKIP_LSP_MCP:-0}" = "1" ]; then
     [ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[lsp-mcp]${NC}"
     t_pass "lsp-mcp harness skipped (TEST_TOOLING_SKIP_LSP_MCP=1; run directly via test_bridge.sh + test_boundary.sh)"
+elif ! _tt_suite_needed "lsp-mcp (test_bridge.sh + test_boundary.sh, ~219s)" "$_TT_TRIG_LSP_MCP"; then
+    [ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[lsp-mcp]${NC}"
+    # BOTH harnesses, named individually. The else-branch below runs
+    # test_bridge.sh AND test_boundary.sh, so a single skip line here would
+    # under-report the skip by one suite AND drop the total by one -- a scoped
+    # run silently covering less than its own summary claims, which is the exact
+    # failure this scoping was built to avoid. Caught by the count going
+    # 1320 -> 1319 on the first scoped run.
+    t_pass "scripts/lsp-mcp/tests/test_bridge.sh SKIPPED -- no changed path can reach it (scoped run)"
+    t_pass "scripts/lsp-mcp/tests/test_boundary.sh SKIPPED -- no changed path can reach it (scoped run)"
 else
     [ "$QUIET" = "0" ] && echo "" && echo -e "${DIM}[lsp-mcp]${NC}"
     LSP_MCP_TEST="$REPO_ROOT/scripts/lsp-mcp/tests/test_bridge.sh"
@@ -21409,6 +21489,17 @@ else
     for f in "${FAILURES[@]}"; do
         echo -e "        ${DIM}- $f${NC}"
     done
+fi
+# NO SILENT CAPS. A scoped run covers less than a full one, and a skipped suite
+# reads exactly like a passing one unless the summary says otherwise. Printed
+# regardless of --quiet, because --quiet is what the pre-push gate uses and that
+# is precisely where the reduced coverage matters.
+if [ "${#_TT_SKIPPED[@]}" -gt 0 ]; then
+    echo -e "  ${YELLOW}SCOPED${NC}  ${#_TT_SKIPPED[@]} nested suite(s) skipped as unreachable from the changed paths:"
+    for s in "${_TT_SKIPPED[@]}"; do
+        echo -e "        ${DIM}- $s${NC}"
+    done
+    echo -e "        ${DIM}(CI runs the full pack; unset TEST_TOOLING_CHANGED_PATHS to run everything here)${NC}"
 fi
 if [ "$QUIET" = "0" ]; then
     echo -e "${CYAN}══════════════════════════════════════════════════${NC}"

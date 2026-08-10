@@ -143,13 +143,38 @@ def test_a_real_committed_tooling_change_still_fails():
 
 
 def test_wrong_or_unreadable_commit_fails_closed():
-    """REFUSAL CONTROL: every uncertain state means 'run the suite'."""
+    """REFUSAL CONTROL: every uncertain state means 'run the suite'.
+
+    'WRONG COMMIT' MUST BE CONSTRUCTED, NOT ASSUMED TO BE HEAD~1. The first cut
+    asserted that `--commit HEAD~1` fails, which is only true when the previous
+    commit happened to touch a SURFACE path -- and SURFACE excludes `todo/`,
+    `COUNT.md` and everything else this repo commits most often. It passed by
+    luck until a todo-only commit landed at HEAD, at which point HEAD and HEAD~1
+    had byte-identical tooling surfaces and validating both was CORRECT. A test
+    that depends on unrelated repo history is testing the history.
+    """
     tr, root = _tr(), _clone()
     subprocess.run([sys.executable, str(RECEIPT), "write", "--project", str(root)],
                    check=True, capture_output=True)
+    # A commit whose surface genuinely differs from the receipt's.
     with open(root / "scripts/lint.sh", "a") as fh:
-        fh.write("\n# later edit\n")
-    assert _check(root, "--commit", _git(root, "rev-parse", "HEAD~1").stdout.strip()) == 1
+        fh.write("\n# a surface change, committed\n")
+    _git(root, "add", "scripts/lint.sh", check=True)
+    _git(root, "-c", "user.email=t@t", "-c", "user.name=t",
+         "commit", "-q", "-m", "surface change", check=True)
+    other = _git(root, "rev-parse", "HEAD").stdout.strip()
+    # THE FIXTURE'S OWN PREMISE, asserted for real. If the constructed commit's
+    # surface equalled the receipt's, the refusal below would be vacuous -- it
+    # would pass while proving nothing, which is the failure this whole test was
+    # just repaired for.
+    import json as _json
+    receipt_key = _json.loads((root / ".claude/state/tooling-receipt.json").read_text())["key"]
+    assert tr.surface_key_at_commit(root, other) != receipt_key, \
+        "fixture is vacuous: the constructed commit has the receipt's own surface"
+    with open(root / "scripts/lint.sh", "a") as fh:
+        fh.write("\n# later uncommitted edit\n")
+    assert _check(root, "--commit", other) == 1, \
+        "a commit whose surface differs from the receipt must not be attested"
     assert _check(root, "--commit", "0" * 40) == 1
     assert _check(root, "--commit", "not-a-ref") == 1
     # And the underlying probe returns None rather than a hashable empty set --
