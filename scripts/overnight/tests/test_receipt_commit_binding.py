@@ -17,6 +17,29 @@ THE REFUSAL DIRECTION IS THE POINT. A receipt that can be satisfied too easily
 is a gate that is not running, so most of what follows asserts that things
 still FAIL: a different commit, an unreadable commit, and -- the one that
 matters -- a real change to the committed tooling surface.
+
+GUARD vs PIN, measured rather than asserted (mutation check 2026-08-10:
+`if commit:` neutered to `if False:` on a copy, this file run against it):
+
+  * GUARD -- fails when the fix is reverted, so it is what proves the fix works:
+      test_unrelated_later_edit_no_longer_voids_the_pushed_commit
+  * PINS -- pass in BOTH directions, so they prove nothing about the fix and
+    everything about what must not change around it. That is their job and they
+    are labelled rather than mistaken for guards:
+      test_a_real_committed_tooling_change_still_fails
+      test_wrong_or_unreadable_commit_fails_closed
+      test_no_commit_arg_preserves_original_semantics
+      test_worktree_and_commit_keys_agree_on_a_clean_tree
+
+A file of pins alone would go green over a fix that never shipped. A file of
+guards alone would go green over a fix that shipped and broke the gate. Both
+kinds are needed and they are not interchangeable.
+
+THIS FILE HAS ALREADY GONE INERT ONCE, which is why `_clone` asserts its own
+premise: the moment the subject under test was COMMITTED, the fixture's
+copy-then-commit became a no-op and `git commit` failed outright. It failed
+loudly that time. The dangerous version of the same drift is the one that
+fails quietly.
 """
 import importlib.util
 import pathlib
@@ -50,9 +73,19 @@ def _check(root, *extra):
 
 
 def _clone():
-    """A clone with the CURRENT receipt script committed, so its clean worktree
-    genuinely equals its HEAD. Cloning a dirty repo and copying one file in
-    leaves the two unequal, which silently invalidates the whole fixture."""
+    """A clone whose clean worktree genuinely equals its HEAD, carrying the
+    receipt script UNDER TEST.
+
+    The copy-then-commit is conditional, and that is not defensive coding -- it
+    is the difference between a live fixture and an inert one. While the fix is
+    uncommitted, the working copy differs from the clone's HEAD and must be
+    committed or every key comparison below measures a tree that does not match
+    its own HEAD. Once the fix IS committed, the copy is byte-identical and
+    `git commit` fails with "nothing to commit" -- which is exactly how this
+    test failed the moment its own subject landed. Commit only when something
+    is actually staged; the invariant this guarantees (worktree == HEAD) holds
+    either way, which is the only thing the fixture needs.
+    """
     d = pathlib.Path(tempfile.mkdtemp(prefix="receipt-bind."))
     root = d / "c"
     subprocess.run(["git", "clone", "-q", "--no-hardlinks", str(REPO), str(root)],
@@ -60,8 +93,13 @@ def _clone():
     (root / "scripts/tooling-receipt.py").write_bytes(RECEIPT.read_bytes())
     (root / ".claude/state").mkdir(parents=True, exist_ok=True)
     _git(root, "add", "scripts/tooling-receipt.py", check=True)
-    _git(root, "-c", "user.email=t@t", "-c", "user.name=t",
-         "commit", "-q", "-m", "receipt under test", check=True)
+    if _git(root, "diff", "--cached", "--quiet").returncode != 0:
+        _git(root, "-c", "user.email=t@t", "-c", "user.name=t",
+             "commit", "-q", "-m", "receipt under test", check=True)
+    # The fixture's whole premise, asserted rather than assumed: a clean clone
+    # must have nothing outstanding, or the key comparisons measure noise.
+    assert not _git(root, "status", "--porcelain").stdout.strip(), \
+        "fixture clone is not clean; every key comparison below would be noise"
     return root
 
 
