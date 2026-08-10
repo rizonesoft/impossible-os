@@ -14,6 +14,16 @@ VENDORED=(
     "$ROOT/include/stb_image.h"
     "$ROOT/include/stb_truetype.h"
     "$ROOT/src/boot/uefi/efi.h"
+    # Microsoft's Fluent System Icons, imported wholesale: 73,416 lines of
+    # generated glyph-class CSS. COUNT.md already states that vendored code is
+    # excluded, but the list only covered three C headers, so this rode along
+    # inside "supporting text" -- 35% of that bucket, none of it written here.
+    # Found 2026-08-10 while deciding whether supporting text belongs in the
+    # headline figure: it does, and this does not.
+    "$ROOT/resources/icons/FluentSystemIcons-Filled.css"
+    "$ROOT/resources/icons/FluentSystemIcons-Regular.css"
+    "$ROOT/resources/icons/FluentSystemIcons-Resizable.css"
+    "$ROOT/resources/icons/FluentSystemIcons-Light.css"
 )
 
 # Count lines by extension in given directories, excluding vendored files
@@ -260,6 +270,8 @@ grand_total_table="$(make_table3 "" "Files" "Lines" \
 
 impossibility_table="$(make_table4 "" "Linux" "Windows" "Impossible OS" \
     $'**Core code + tooling lines**\t~28,000,000\t~50,000,000\t'"$(fmt "${core_total_lines}")" \
+    $'**Supporting text + metadata**\tnot separately published\tnot separately published\t'"$(fmt "${support_lines}")" \
+    $'**All authored lines**\t~28,000,000\t~50,000,000\t'"$(fmt "${counted_total_lines}")" \
     $'**Developers**\t~1,000 active\t~5,000 peak\t1' \
     $'**Time span**\t33 years\t40 years\t'"${ELAPSED_STR}")"
 
@@ -297,7 +309,7 @@ ${support_table}
 
 ${grand_total_table}
 
-> Vendored code excluded: ~${vendored_lines} lines (\`stb_image.h\`, \`stb_truetype.h\`, \`efi.h\`)
+> Vendored code excluded: ~${vendored_lines} lines (\`stb_image.h\`, \`stb_truetype.h\`, \`efi.h\`, and the four imported Fluent System Icons CSS files)
 >
 > Binary assets such as fonts, images, certificates, EFI blobs, and cursor resources are not line-counted.
 
