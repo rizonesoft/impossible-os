@@ -46,6 +46,16 @@ Six v13 carries plus the CI repair. Every change below carries a refusal-directi
 
 **NOT VERIFIED, and the next session should close this:** the batched adversarial review over this close-out's diff was dispatched and hung on the known long-prompt failure, then not retried for context. The diff widens a gate's allowlist, which is exactly the class that most wants a second pair of eyes. Re-dispatch it TIGHT (short prompt) against `_review_pipeline_passthrough.py` and `section_review_required.py` before trusting them under an unattended run.
 
+## Filed by the 2026-08-10 attended carry-completion session
+
+- [ ] **A pre-push gate stack that exceeds the tool wall costs TWO full suite runs, and the receipt cannot break the loop when the fix itself touches `scripts/`.**
+      Observed live 2026-08-10 while pushing this cycle's own work, twice in a row.
+      - The mechanism, confirmed: `.githooks/pre-push` runs the tooling suite (~7 min), then the new identity gate (~1 min), then the CI-parity compile. A `git push` at the 10-minute tool wall is killed mid-suite, nothing is pushed, and the work is repeated on the next attempt. Measured: one push killed at 550s having completed nothing.
+      - The receipt is the designed escape and it CANNOT apply here, which is the actual finding. `tooling-receipt.py:SURFACE` includes `scripts`, so any commit that fixes a tooling script invalidates the receipt for its own push -- and a close-out cycle consists almost entirely of such commits. The `check --commit` binding shipped this cycle does not help either: the pushed commit genuinely changed a surface file, so refusing is correct.
+      - Second-order cost: the killed push's suite kept running and held `/tmp/impossible-os-test-tooling.<hash>.lock`, so the next out-of-band suite run waited on it rather than starting. The lock behaved correctly; the point is that a killed push leaves work in flight that the next attempt must wait out.
+      - The working sequence, if this stays unfixed: run the suite out-of-band, write the receipt, THEN push. That is three operator steps for what should be one, and it is exactly the shape a run cannot perform for itself.
+      - What would settle it: decide whether the pre-push suite should run in the BACKGROUND against the pushed commit (reporting after the push, since CI gates anyway) rather than blocking it. That is a real design decision about what pre-push is for -- a gate that cannot fit inside the tool wall is not a gate, it is a retry loop -- and it should not be made hastily.
+
 ## Standing measurement obligations
 
 Carry the baselines forward. A measurement without one is an anecdote.
