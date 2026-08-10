@@ -1,6 +1,10 @@
 # Overnight Runner Improvements v14 -- Findings (opened 2026-08-10)
 
-Runner-behavior findings from the run armed after the 2026-08-10 close-out of [v13](overnight-runner-improvements-v13.md). CAPTURE surface, not a work queue: it sits outside the sequencer's traversal, so nothing here is implemented by the run. It is the CURRENT capture file -- the sequencer files to the NEWEST `overnight-runner-improvements-vNN.md` in this directory, which is this one until an operator opens v15.
+Opened as the capture surface for the run armed after the 2026-08-10 close-out of [v13](overnight-runner-improvements-v13.md). **That run has not started.** What follows is therefore not run findings: it is three attended close-out passes' worth of shipped work recorded as UNDER TEST, plus the findings observed while doing that work. The `Watch for:` line on each entry is a hypothesis for the next run to exercise, not a verdict already reached.
+
+CAPTURE surface, not a work queue: it sits outside the sequencer's traversal, so nothing here is implemented by the run. It is the CURRENT capture file -- the sequencer files to the NEWEST `overnight-runner-improvements-vNN.md` in this directory, which is this one until an operator opens v15.
+
+**It is deliberately left OPEN despite v13 being fully closed.** Closing a capture file whose newest sibling is closed is exactly what `arm-sequencer.sh:62-72` refuses to arm against, in BOTH capture directories -- so closing this without opening v15 would block the next arm. More to the point, closing it would verdict ~40 lines of under-test records before anything exercised them, and would separate them from the run that is supposed to validate them. The sibling [`token-saver-v14.md`](../token-saver/token-saver-v14.md) is still empty for the same reason: no run has filed to it yet.
 
 **Scope:** flow, gates, wedges, and machinery correctness. Cost findings go to [`token-saver-v14.md`](../token-saver/token-saver-v14.md) -- but a MISFIRING GATE is both, and belongs here with its mechanism. Three cycles have now confirmed that is the common case, not the exception.
 
