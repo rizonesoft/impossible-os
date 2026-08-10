@@ -460,6 +460,81 @@ XREF_ADJACENT_TARGET_RE = re.compile(
     + r"|`?[\w./-]+\.md`?)")
 
 
+# A CHECKLIST-ITEM LINE, at any indent, with any of the four live status
+# markers. The corpus carries `[ ]` 13,661 / `[x]` 6,089 / `[/]` 620 / `[~]` 60
+# (measured 2026-08-10), and `~` is a real marker in `01-boot-platform`
+# (TODO-08, TODO-14) meaning "N/A", so restricting the class to the three
+# canonical statuses would turn 60 resolvable references into missing ones.
+# The trailing `\s` is what keeps a one-character markdown link (`- [1](url)`)
+# out: a link puts `(` there, never whitespace.
+CHECKLIST_ITEM_RE = re.compile(r"^\s*[-*]\s*\[[ xX/~]\]\s")
+
+# A fence opener OR closer. Indented because a fence nested inside a list item
+# is indented with it; the info string (```python) is deliberately not captured.
+_FENCE_RE = re.compile(r"^\s*(```|~~~)")
+
+# Where a checklist item stops DESCRIBING itself and starts REFERRING elsewhere.
+# Both spellings of the arrow are live in the corpus -- `todo/02-kernel-core/
+# TODO-22-environment-variables.md:698` uses U+2192 -- and a marker matched in
+# only one spelling is a hole exactly where the reference machinery lives.
+_ITEM_LEAD_STOPS = ("-> XREF:", "→ XREF:", '(item: "')
+
+
+def checklist_item_leads(text: str) -> dict:
+    """Map `{lineno: descriptive_lead}` for every checklist item in `text`.
+
+    TWO RESTRICTIONS, EACH PAID FOR BY A MEASURED WRONG REWRITE. Callers use
+    this to answer "which line does `(item: "NAME" at line N)` name?", and the
+    naive answer -- scan every line for NAME -- binds a reference to whatever
+    quotes it rather than to what it names.
+
+    FENCE-AWARE, because checklist-shaped text inside a fence is an EXAMPLE,
+    not an item. 24 such lines exist in the live corpus (measured 2026-08-10);
+    a documentation fence showing `- [ ] Do the thing` is not a thing to do.
+    A file that ends inside an unterminated fence therefore yields no items
+    past it -- fail-closed, and visible as a missing item rather than as a
+    confident wrong line number. No corpus file is unbalanced today.
+
+    LEAD-ONLY, because an item may itself carry an `-> XREF:` naming some OTHER
+    item, so its line contains that item's name verbatim. Truncating at the
+    first reference marker is what stops a reference resolving to a reference.
+    Measured on the live corpus: without it, the stamp at
+    `todo/02-kernel-core/TODO-03-kernel-libraries.md:362` resolves its item to
+    line 349 -- a `- [/]` line that merely QUOTES the name -- and rewrites the
+    stored line to it at rc 0, while the item it actually names sits at line
+    313 under changed wording and should be reported missing (Codex design
+    review, section 35, [high]).
+
+    Restricting to item lines is NOT the same fix and does not subsume this
+    one: line 349 is a perfectly good checklist item. The stamp shape and the
+    quoting-item shape are two instances of one defect -- a reference binding
+    to another reference -- and only the lead cut closes both.
+    """
+    leads: dict = {}
+    in_fence = False
+    fence_tok = None
+    for lineno, line in enumerate(text.splitlines(), start=1):
+        fence = _FENCE_RE.match(line)
+        if fence:
+            tok = fence.group(1)
+            if not in_fence:
+                in_fence, fence_tok = True, tok
+            elif tok == fence_tok:
+                # Only the SAME token closes; a ``` inside a ~~~ block is
+                # content, which is how a fence demonstrating fences works.
+                in_fence, fence_tok = False, None
+            continue
+        if in_fence or not CHECKLIST_ITEM_RE.match(line):
+            continue
+        lead = line
+        for stop in _ITEM_LEAD_STOPS:
+            cut = lead.find(stop)
+            if cut != -1:
+                lead = lead[:cut]
+        leads[lineno] = lead
+    return leads
+
+
 def unwrap_xref_link(token: str) -> str:
     """Return a link target's DESTINATION, or the token unchanged.
 

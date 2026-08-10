@@ -16787,6 +16787,172 @@ else
 fi
 
 # ----------------------------------------------------------------------
+# Sub-test 35a: A REFERENCE RESOLVES TO AN ITEM, NEVER TO ANOTHER REFERENCE.
+# `fix_line_numbers` scanned every line of the target for the item name, so any
+# line QUOTING the item matched as well as the item -- and a same-file stamp
+# quotes it by construction. Two shapes, both measured on the live corpus before
+# the fix: a LIVE item matched twice (item + stamp) and was refused as ambiguous,
+# making all 430 same-file clauses permanently unrepairable; a DELETED item
+# matched ONCE on the stamp's own line, so repair pointed the reference at
+# itself and exited 0 (52 such self-matches were already written to the corpus).
+#
+# The two extra shapes are NOT decoration. Restricting the scan to checklist-item
+# lines fixes the stamp shapes and still binds a reference to a reference when
+# the quoting line is itself an item -- live at `TODO-03-kernel-libraries.md:362`,
+# which resolved to a `- [/]` line that merely quotes the name while the item it
+# names sits elsewhere under changed wording. And checklist-shaped text inside a
+# fence is an EXAMPLE (24 such lines in the corpus), not a destination.
+S35A_OUT=$(python3 - <<'S35AEOF'
+import json, pathlib, re, sys
+sys.path.insert(0, "scripts/todo-graph")
+import validate as V
+
+SELF = "todo/01-test/TODO-01-a.md"
+def node(fp, i): return {"file_path": fp, "id": i, "sections": [], "stamps_xrefs": []}
+NODES = [node(SELF, "a1")]
+IDX = NODES + [node("todo/01-test/TODO-02-b.md", "b2")]
+id_index, path_index = V.build_id_index(IDX), V.build_path_index(IDX)
+
+STAMP = ('> **Deferred:** [M] parked -> XREF: TODO-01-a.md §1'
+         ' (item: "Wire the resolver" at line 99)')
+XSTAMP = ('> **Deferred:** [M] parked -> XREF: TODO-02-b.md §1'
+          ' (item: "Wire the resolver" at line 99)')
+
+def run(self_body, other_body="# B\n"):
+    snap = {SELF: self_body, "todo/01-test/TODO-02-b.md": other_body}
+    # quiet=False so the per-rewrite report line is emitted; the DESTINATION it
+    # names is the assertion that matters. A first cut read the stored clause
+    # back out of the snapshot instead -- which a dry run never mutates, so it
+    # reported the stored 99 for every case and "failed" a correct fix.
+    updates, ambig, unres, missing, rep = V.fix_line_numbers(
+        NODES, snap, id_index, path_index, pathlib.Path("."), False, False)
+    resolved = None
+    for line in rep:
+        m = re.search(r"'Wire the resolver' (\d+) -> (\d+)$", line)
+        if m:
+            resolved = int(m.group(2))
+    return {"updates": updates, "ambiguous": ambig, "unresolvable": unres,
+            "missing": missing, "resolved": resolved}
+
+cases = {}
+# 1. LIVE item in the SAME file: must resolve to the ITEM's line (5), never to
+#    the stamp's own line (7), and never be refused as ambiguous.
+cases["live_same_file"] = run(
+    "# A\n\n## 1. S\n\n- [ ] Wire the resolver\n\n" + STAMP + "\n")
+# 2. DELETED item in the SAME file: the only remaining occurrence is the stamp
+#    itself. Must report missing and exit-worthy, NEVER rewrite to its own line.
+cases["deleted_same_file"] = run("# A\n\n## 1. S\n\n" + STAMP + "\n")
+# 3. The quoting line is itself a CHECKLIST ITEM and the real item is gone.
+#    Restricting to item lines is not enough; the lead cut is what refuses this.
+cases["quoting_item_only"] = run(
+    "# A\n\n## 1. S\n\n"
+    '- [/] Other work -> XREF: TODO-02-b.md §1 (item: "Wire the resolver" at line 3)\n\n'
+    + STAMP + "\n")
+# 4. Both a REAL item and a quoting item: must resolve UNIQUELY to the real one
+#    (line 5), not report ambiguity. This is the shape that proves the lead cut
+#    discriminates rather than merely suppresses.
+cases["quoting_item_plus_real"] = run(
+    "# A\n\n## 1. S\n\n- [ ] Wire the resolver\n\n"
+    '- [x] Other -> XREF: TODO-02-b.md §1 (item: "Wire the resolver" at line 5)\n\n'
+    + STAMP + "\n")
+# 5. The only occurrence is checklist-shaped text inside a FENCE: an example,
+#    so the item is missing rather than resolved to the documentation.
+cases["fenced_only"] = run(
+    "# A\n\n## 1. S\n\n```markdown\n- [ ] Wire the resolver\n```\n\n" + STAMP + "\n")
+# 6. CONTROL -- an ordinary CROSS-FILE live item must still repair, or the rule
+#    is just breaking the feature it was added to.
+cases["control_cross_file"] = run(
+    "# A\n\n## 1. S\n\n" + XSTAMP + "\n",
+    "# B\n\n## 1. T\n\n- [ ] Wire the resolver\n")
+# 7. CONTROL -- `[~]` is a live marker in 01-boot-platform (60 lines). Dropping
+#    it from the status class would silently turn those into missing items.
+cases["control_tilde"] = run(
+    "# A\n\n## 1. S\n\n- [~] Wire the resolver\n\n" + STAMP + "\n")
+print(json.dumps(cases))
+S35AEOF
+); S35A_RC=$?
+if [ "$S35A_RC" = "0" ] && echo "$S35A_OUT" | python3 -c "
+import json, sys
+d = json.loads(sys.stdin.read())
+ok = True
+# the live same-file item repairs to the ITEM's line (5), not the stamp's (7)
+ok = ok and d['live_same_file'] == {'updates': 1, 'ambiguous': 0, 'unresolvable': 0, 'missing': 0, 'resolved': 5}
+# a deleted item REPORTS and proposes NO destination -- never the stamp's own line
+ok = ok and d['deleted_same_file'] == {'updates': 0, 'ambiguous': 0, 'unresolvable': 0, 'missing': 1, 'resolved': None}
+ok = ok and d['quoting_item_only'] == {'updates': 0, 'ambiguous': 0, 'unresolvable': 0, 'missing': 1, 'resolved': None}
+# discriminates rather than suppresses: the REAL item (5), not the quoting one (7)
+ok = ok and d['quoting_item_plus_real'] == {'updates': 1, 'ambiguous': 0, 'unresolvable': 0, 'missing': 0, 'resolved': 5}
+ok = ok and d['fenced_only'] == {'updates': 0, 'ambiguous': 0, 'unresolvable': 0, 'missing': 1, 'resolved': None}
+ok = ok and d['control_cross_file'] == {'updates': 1, 'ambiguous': 0, 'unresolvable': 0, 'missing': 0, 'resolved': 5}
+ok = ok and d['control_tilde'] == {'updates': 1, 'ambiguous': 0, 'unresolvable': 0, 'missing': 0, 'resolved': 5}
+sys.exit(0 if ok else 1)"; then
+    t_pass "section 35: an item reference resolves to an item line, not to the stamp or item naming it"
+else
+    t_fail "section 35: same-file item reference resolution wrong (rc=$S35A_RC, out=$S35A_OUT)"
+fi
+
+# Sub-test 35b: MUTATION -- restore the any-line scan. Both shapes 35a pins must
+# misfire in their ORIGINAL, DIFFERENT ways: the live item becomes ambiguous
+# (item + stamp) and the deleted item is rewritten to the stamp's own line at
+# zero incomplete-repair counts. Asserting the two distinct misfires, rather
+# than "35a fails", is what stops a future refactor satisfying this by breaking
+# repair generally.
+S35B_MUT="$TMP_DIR/s35-mut-anyline"
+rm -rf "$S35B_MUT"; cp -r "$REPO_ROOT/scripts/todo-graph" "$S35B_MUT"
+python3 - "$S35B_MUT/validate.py" <<'S35BMUTEOF'
+import sys, pathlib
+p = pathlib.Path(sys.argv[1])
+src = p.read_text(encoding="utf-8")
+needle = """                target_leads = leads_cache.get(target_file)
+                if target_leads is None:
+                    target_leads = cache_schema.checklist_item_leads(target_text)
+                    leads_cache[target_file] = target_leads
+                hits = sorted(ix for ix, lead in target_leads.items()
+                              if name in lead)"""
+assert src.count(needle) == 1, f"mutation needle appears {src.count(needle)}x"
+restored = """                hits = [ix for ix, tl in enumerate(target_text.splitlines(), start=1)
+                        if name in tl]"""
+p.write_text(src.replace(needle, restored, 1), encoding="utf-8")
+S35BMUTEOF
+S35B_OUT=$(python3 - "$S35B_MUT" <<'S35BEOF'
+import json, pathlib, sys
+sys.path.insert(0, sys.argv[1])
+import validate as V
+
+SELF = "todo/01-test/TODO-01-a.md"
+def node(fp, i): return {"file_path": fp, "id": i, "sections": [], "stamps_xrefs": []}
+NODES = [node(SELF, "a1")]
+id_index, path_index = V.build_id_index(NODES), V.build_path_index(NODES)
+STAMP = ('> **Deferred:** [M] parked -> XREF: TODO-01-a.md §1'
+         ' (item: "Wire the resolver" at line 99)')
+
+def run(body):
+    snap = {SELF: body}
+    u, a, un, m, rep = V.fix_line_numbers(NODES, snap, id_index, path_index,
+                                          pathlib.Path("."), False, True)
+    return {"updates": u, "ambiguous": a, "missing": m}
+
+print(json.dumps({
+    "live": run("# A\n\n## 1. S\n\n- [ ] Wire the resolver\n\n" + STAMP + "\n"),
+    "deleted": run("# A\n\n## 1. S\n\n" + STAMP + "\n"),
+}))
+S35BEOF
+); S35B_RC=$?
+if [ "$S35B_RC" = "0" ] && echo "$S35B_OUT" | python3 -c "
+import json, sys
+d = json.loads(sys.stdin.read())
+# live item: refused as ambiguous instead of repaired
+live_misfires = d['live']['ambiguous'] == 1 and d['live']['updates'] == 0
+# deleted item: SILENTLY rewritten (to the stamp's own line) at rc-0 shape
+deleted_misfires = (d['deleted']['updates'] == 1 and d['deleted']['missing'] == 0
+                    and d['deleted']['ambiguous'] == 0)
+sys.exit(0 if (live_misfires and deleted_misfires) else 1)"; then
+    t_pass "section 35: mutation check -- the any-line scan reports ambiguity and self-rewrites"
+else
+    t_fail "section 35: any-line mutation did not misfire as expected (rc=$S35B_RC, out=$S35B_OUT)"
+fi
+
+# ----------------------------------------------------------------------
 # Summary
 # ----------------------------------------------------------------------
 TOTAL=$((PASS + FAIL))

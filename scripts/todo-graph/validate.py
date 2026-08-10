@@ -2107,6 +2107,12 @@ def fix_line_numbers(nodes: list, snapshot: dict, id_index: dict, path_index: di
     report: list = []
     diags_emitted: dict = {}
     pending_writes: list = []
+    # Per-target checklist-item index, built once per file. Sound to cache for
+    # the whole run because nothing here mutates `snapshot`: rewrites are staged
+    # into `pending_writes` and applied by `_commit_rewrites` only after the
+    # loop, and a rewrite edits digits inside an existing clause, so it can
+    # never move the item lines this index records.
+    leads_cache: dict = {}
     for n in nodes:
         rel = n["file_path"]
         text = snapshot.get(rel, "")
@@ -2248,10 +2254,33 @@ def fix_line_numbers(nodes: list, snapshot: dict, id_index: dict, path_index: di
                     snapshot[target_file] = target_text
                 # Find the literal item name in the target file. Match must
                 # be UNIQUE; ambiguity is a hard fail per Codex pass 6 M1.
-                hits: list = []
-                for ix, target_ln in enumerate(target_text.splitlines(), start=1):
-                    if name in target_ln:
-                        hits.append(ix)
+                #
+                # A REFERENCE RESOLVES TO AN ITEM, NEVER TO ANOTHER REFERENCE.
+                # This scanned EVERY line for the name, so any line QUOTING the
+                # item matched as well as the item itself -- and the stamp doing
+                # the asking quotes it by construction. Same-file references are
+                # the common case (430 of 706 clauses), so the bug was the norm,
+                # not an edge:
+                #   - a LIVE item matched twice (item + stamp) and was reported
+                #     ambiguous, making every same-file stamp permanently
+                #     unrepairable -- 404 of the corpus's 706 clauses;
+                #   - a DELETED item matched ONCE, on the stamp's own line, so
+                #     repair rewrote the reference to point at itself and exited
+                #     0. 52 such self-matches were already written to the corpus
+                #     before this fix (measured 2026-08-10).
+                # `checklist_item_leads` answers with the item lines only, cut at
+                # the first reference marker. Measured effect on the live corpus:
+                # 404 ambiguous -> 6, and 334 references repaired that had never
+                # been repairable. `missing` rises 75 -> 159 because the 94
+                # stamp-quoting matches and 13 clauses naming headings/table rows
+                # are now REPORTED rather than silently mis-resolved -- that rise
+                # is the section 29 contract working, not a regression.
+                target_leads = leads_cache.get(target_file)
+                if target_leads is None:
+                    target_leads = cache_schema.checklist_item_leads(target_text)
+                    leads_cache[target_file] = target_leads
+                hits = sorted(ix for ix, lead in target_leads.items()
+                              if name in lead)
                 if len(hits) == 0:
                     # NEVER INVENT -- but say so. The target file resolved and
                     # the named item is simply not in it (renamed, deleted, or
