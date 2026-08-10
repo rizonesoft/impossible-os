@@ -368,8 +368,14 @@ information or judgment; none of this weakens a gate):**
 ```bash
 git pull --rebase origin main || { echo "REBASE FAILED -- do not push"; exit 1; }
 ( git push origin main > /tmp/ship-push.log 2>&1; echo "rc=$?" >> /tmp/ship-push.log ) & echo started
-# then poll /tmp/ship-push.log for the rc= line, as with J1
+# Poll in a SEPARATE, BOUNDED call. 540 < the 600s wall, so this RETURNS
+# instead of being killed: rc 0 = the push finished (read the rc= line),
+# rc 124 = still running -> re-issue this exact call. Never an unbounded
+# `until` loop -- that is what gets killed at the wall.
+timeout 540 bash -c 'until grep -q "^rc=" /tmp/ship-push.log; do sleep 5; done'
+grep -E "^rc=|main -> main" /tmp/ship-push.log | tail -3
 ```
+- **BOUND EVERY POLL BELOW THE WALL -- the ship push had no prescribed shape and that is a real gap, not a style note.** The Codex wait was given a bounded waiter for exactly this reason (`--max 540` + tool `timeout: 600000`, exit 3 = STILL RUNNING); the ship-push poll said only "poll `/tmp/ship-push.log` for the `rc=` line, as with J1" and left the shape to the reader. The natural reading is an unbounded `until` loop, which is KILLED at the 600s wall. Observed twice on 2026-08-11 in an attended session, on pushes that ran 963s and 755s: the push itself survived both times (it is backgrounded, so the kill only reaches the poller), but each kill costs a turn and reads like a failure. A killed poller is NOT a failed push -- re-issue the same bounded call and read the `rc=` line, which is the only verdict. The push is genuinely slow whenever the commit touches the tooling surface, because that invalidates the receipt and the pre-push suite runs in full; 900s+ is normal there, not a hang.
 - **The harness exit code is NOT the verdict for anything you backgrounded.** `( bash scripts/overnight/run-artifact.sh ... ) &` returns to the harness the moment the SUBSHELL forks, so the task notification says `completed (exit code 0)` while the command runs for another six minutes -- observed 2026-08-08, where the same run's envelope said `FAIL 1/1293 tooling tests failed` and the exit code was the one the notification surfaced. The run nearly took that 0 as its green gate. Read the verdict from the envelope's own fields: `.claude/state/last-artifact.json` now carries `state` (`running` -> `complete`) alongside the real `exit`, so `state != "complete"` means the work has not finished and there is no verdict yet, whatever the tool result said. A green tool result on a backgrounded launch is evidence that the launcher forked, and nothing else.
 - **Never run two `scripts/test-tooling.sh` instances in one worktree.** They lint and rebuild caches against the same live tree, so both verdicts are untrustworthy -- the repo's own gotcha records the spurious rc=1 that produces. The suite now holds a per-worktree `flock` and waits (then refuses after `TT_LOCK_TIMEOUT`, default 900s) rather than starting on a poisoned tree, so this is enforced rather than remembered; the reason it needed enforcing is that the overlap came from a backgrounded run that had already reported itself finished.
 
