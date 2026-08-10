@@ -12,15 +12,13 @@ Runner-behavior findings from the run armed after the 2026-08-10 close-out of [v
 
 ---
 
-## Carried forward from v13 -- 29 items, and why that number is a problem
+## Carried forward from v13 -- 16 items
 
-v13 closed 38 filed / 6 resolved / 3 rejected / 29 carried. **More carried than resolved-plus-rejected is the shape of a backlog turning into an archive**, and it is stated here rather than buried so the next close-out starts from an honest position.
+v13 closed **38 filed / 19 resolved / 3 rejected / 16 carried**. The first pass carried 29; the eleven reasoning items and the three commit-message items were then completed rather than deferred, because "it would take one grouped edit" argues for making the edit.
 
 The carried items are NOT re-listed individually -- they live in [v13](overnight-runner-improvements-v13.md) with a verdict and a "what would settle it" on each, and re-copying them here would fork the record. They cluster as:
 
-- **Eleven reasoning/doctrine items** wanting ONE grouped edit to the code-quality and unit-test skills, not eleven separate ones. The strongest are: a measurement whose coverage does not match the checker's is not evidence; verification-before-completion applies to NUMBERS, not just pass/fail; a control that passes both ways is a pin, not a guard.
 - **The convergence-gate scope decision** (`KIND_SCOPES` maps every review kind to `src`, so a tooling section converges permanently after one verdict). Measured cost: five valid findings that only appeared because the run dispatched AGAINST the gate's advice. Needs a decision between following the reviewed diff and failing open on unknown surfaces.
-- **The commit-message backtick cluster** (three items). A commit message is unreviewed input to a shell, the repo lints source but never messages, and it has already created a stray file in the repo root. Needs a decision about adding an always-on commit-msg gate.
 - **Two review-binding questions** -- a newly untracked file cannot bind to a review, and dispatching legs before invoking the skill costs a whole wave. Both turn on whether the binding attaches to the dispatch or the skill invocation; settle them together.
 - **Four items with an owner elsewhere**: the fourth XREF grammar and the bare `json.loads` consumer both belong to consolidations already open in the metadata-layer TODO.
 
@@ -28,6 +26,8 @@ The carried items are NOT re-listed individually -- they live in [v13](overnight
 
 - **`_review_pipeline_passthrough` sees through grouping.** `is_review_pipeline_passthrough` steps over leading `(` / `{` before applying its first-token allowlist, so the sequencer's own prescribed ship shape -- `( git push ... ; echo "rc=$?" ) &` -- is no longer refused by the gate its own doctrine has to satisfy. Closed five v13 items with one fix. Watch for: any shell form that reaches a program the allowlist would refuse.
 - **Loop headers are deliberately still blocked**, and that is the security line: a `for i in $(...)` header runs a substitution before the body, so stepping into the body would allowlist a call on the strength of a program that is not the one that runs first. Pinned as a control. Watch for: pressure to widen it -- the sanctioned long wait already has allowed spellings.
+- **A commit-message substitution gate.** `commit_msg_backtick_block.py` refuses a `git commit -m` whose double-quoted body carries an unescaped backtick or `$(`. It is a PreToolUse gate, NOT a `commit-msg` hook: bash substitutes at parse time, so a commit-msg hook receives the already-damaged text. Watch for: a false block on a legitimate message -- single quotes, `-F -` heredocs and escaped ticks are all unmatched.
+- **Eight grouped doctrine rules** -- four probe-discipline in `implement-unit-tests`, four review-discipline in `review-todo-section`. Watch for: whether they change behaviour or just exist.
 - **`section_review_required` is scoped to whoever shipped.** It exempts a session when a run is ACTIVE and this session is not it, using the same `OVERNIGHT_SEQUENCER_RUN` discriminator `build_offload_reminder` was given for the identical class in July. Watch for: a real section ship going unreviewed -- the run itself is never exempt, and with no run active nothing changed.
 
 **NOT VERIFIED, and the next session should close this:** the batched adversarial review over this close-out's diff was dispatched and hung on the known long-prompt failure, then not retried for context. The diff widens a gate's allowlist, which is exactly the class that most wants a second pair of eyes. Re-dispatch it TIGHT (short prompt) against `_review_pipeline_passthrough.py` and `section_review_required.py` before trusting them under an unattended run.

@@ -1,6 +1,6 @@
 ---
 name: close-canary-run
-description: Close out a finished overnight canary -- triage EVERY item the run filed in the newest token-saver + overnight-runner-improvements versions (in batches, so a 99-item month-run file is fully triaged rather than partly carried), verify each claim against the current tree before implementing it, reject with `- [-]` and a reason where a fix is not worth its blast radius, run one batched adversarial review over the close-out diff, record a verdict for every item, then close those versions and open the next. Use after any canary or overnight run stops (deadline, disarm, breaker, fixpoint).
+description: Close out a finished overnight canary -- triage EVERY item the run filed in the newest token-saver + overnight-runner-improvements versions (in batches, so a 99-item month-run file is fully triaged rather than partly carried), verify each claim against the current tree before implementing it, reject with `- [-]` and a reason where a fix is not worth its blast radius, record a verdict for every item, then close those versions and open the next. Use after any canary or overnight run stops (deadline, disarm, breaker, fixpoint).
 ---
 
 # Close a canary run
@@ -119,32 +119,28 @@ Ordinary repo discipline applies -- these are real changes:
   it blocking would wedge the next run's commits.
 - **Order by blast radius, and re-verify after each.** The close-out's own
   changes interact: a gate fixed in item 3 can change what item 7 measures.
+- **EVERY control-plane change ships a REFUSAL-DIRECTION control** -- a case that
+  must still be BLOCKED, not merely a case that now passes. This is the one
+  obligation that replaces an external review pass here, and it is not
+  ceremony: it covers the axis nothing else can reach.
+
+  A canary run is a real integration test of the control plane -- a gate change
+  gets exercised across dozens of commits within hours, which is stronger
+  evidence than any reading of a diff. But it exercises the HAPPY PATH at scale
+  and structurally cannot exercise the refusal path, which is the entire purpose
+  of a gate. Worked example, 2026-08-10: widening the review gate's allowlist to
+  see through `(` grouping was exercised by the run passing `( git push ... )`
+  hundreds of times, and the run would NEVER have tried `( rm -rf / )`. The
+  canary going green proved nothing about whether the widening opened a hole.
+  What actually covered it was a fixture asserting that grouping does not
+  allowlist a bad program, and that a loop header whose substitution executes
+  first stays refused.
+
+  So: name the case that must still be refused, write it, and watch it fail if
+  the change is reverted. Seconds, deterministic, and it never hangs.
 
 **Do not bulk-fix a large filed backlog.** Per-item repair needs per-item
 judgment; a mass rewrite moves the problem rather than fixing it.
-
-## 2a. One batched adversarial review over the close-out diff
-
-RECOMMENDED, and deliberately DILUTED relative to `review-todo-section`: one
-review over the cumulative diff at the end, not the full per-section pipeline
-per item.
-
-- **Why any review at all.** A close-out edits hooks, gates and skills -- the
-  surface where a bad edit is unrecoverable with nobody watching, which is the
-  entire reason the run is forbidden to touch it. That is the strongest possible
-  argument for a second pair of eyes, and it is exactly the class where "the
-  tests pass" is weakest: a gate can be green and still refuse the wrong party.
-- **Why diluted.** The full pipeline is adversarial + consistency + perf +
-  re-adversarial to convergence, per section. Against 40 close-out items that is
-  absurd, and an unaffordable gate is one that gets skipped wholesale. ONE
-  adversarial pass over the whole diff finds the cross-item interactions that
-  per-item reviews structurally cannot see.
-- **When to skip it honestly:** the diff touches no hook, gate, skill or
-  `.githooks/` file. Doc-only and capture-file-only close-outs do not need it.
-- **Findings come back through `superpowers:receiving-code-review`** like any
-  other: verified at file:line, classified Fix / Reject / Accept. A reviewer
-  that fires on a close-out is reviewing the machinery that guards the next
-  month of runs.
 
 ## 3. Record a verdict for EVERY item -- silence is the failure mode
 

@@ -147,6 +147,13 @@ Always use `test_suite_register_cat()` with the appropriate category.
 
 **Route a mutation through a helper that asserts its anchor.** `gate_mutate()` in `scripts/todo-graph/tests/test_build.sh` is the shape: it reads the production file, and `if anchor not in src: sys.exit(7)`, so a mutation whose needle has moved fails loudly instead of silently patching nothing. A repo-wide lint for this was measured on 2026-08-08 and REJECTED: requiring a production write near every mutation-claiming `t_pass` flagged 23 of 35 on a clean corpus, which is the precision that gets a check disabled wholesale. The helper's own assert is the enforcement that works, so put new mutations behind one.
 
+**Four more ways a probe lies, each paid for in a real cycle.** These are the reasoning findings from the 2026-08-09 canary, grouped here because they are one lesson seen from four sides: a probe reports on what it actually exercised, never on what you labelled it.
+
+- **A measurement whose COVERAGE does not match the checker's is not evidence.** Measuring one set and concluding about another produced five wrong numbers across two sessions. Before quoting a count, confirm the probe walked the same population the checker walks -- ideally by calling the checker's own machinery rather than re-deriving its rule.
+- **Verification-before-completion applies to NUMBERS, not just to pass/fail.** A stale test count carried into a stamp is a false claim with the same weight as a false green. Re-read the number from the run you are about to cite, not from the last one you remember.
+- **A control that passes BOTH ways is a pin, not a guard, and must be labelled as one.** If a fixture passes with the change and without it, it proves the code compiles and nothing else. Say so in the test name or the comment; an unlabelled pin reads as protection nobody has.
+- **Re-measure after a BOUNDING change.** Capping output, narrowing a scan or adding a limit can erase the very signal that motivated the work. One such fix was nearly shipped that would have silenced the diagnostic the section had just added, and only re-running the original measurement caught it.
+
 The same rule covers the ad-hoc measurements taken while DEBUGGING a fixture, which is where three more inert probes lived on the same day: every probe needs a control that MUST fire, and the filing/claim says that it did.
 
 ## Workflow
