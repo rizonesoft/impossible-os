@@ -132,12 +132,64 @@ def _reescape(cell: str) -> str:
     return cell.replace("|", "\\|")
 
 
+class MaskUnavailable(RuntimeError):
+    """The shared fence mask could not be obtained. Fatal for a MUTATING tool."""
+
+
+def _fence_mask(lines: list[str]) -> list[bool]:
+    """Per-line "this is not ordinary Markdown" mask, from the shared tracker.
+
+    FAILS CLOSED. The first cut swallowed every exception into an all-False
+    mask so the script would stay standalone-runnable -- which silently turns
+    the safety off in the one mode where it matters: this tool REWRITES files,
+    and lint Check 17 shells out to its `--check` to decide whether to block a
+    commit, so a swallowed ImportError would both corrupt fenced content and
+    tell the operator to run the corrupting repair (Codex adversarial, [high]).
+    A mutating tool with an unavailable safety check must refuse, not proceed.
+    """
+    try:
+        import importlib.util
+        src = Path(__file__).resolve().parent / "todo-graph" / "cache_schema.py"
+        spec = importlib.util.spec_from_file_location("_cs_fmt", str(src))
+        if spec is None or spec.loader is None:
+            raise MaskUnavailable(f"cannot load a module spec from {src}")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        mask = mod.fence_mask(lines)
+    except MaskUnavailable:
+        raise
+    except Exception as exc:                       # noqa: BLE001 -- reported, not hidden
+        raise MaskUnavailable(
+            f"shared fence mask unavailable ({type(exc).__name__}: {exc})") from exc
+    # Shape-check the result too: a mask of the wrong length would silently
+    # mis-align against `lines` and re-open the same hole one layer down.
+    if not isinstance(mask, list) or len(mask) != len(lines):
+        raise MaskUnavailable(
+            f"shared fence mask has wrong shape ({type(mask).__name__}, "
+            f"len {len(mask) if hasattr(mask, '__len__') else '?'} "
+            f"vs {len(lines)} line(s))")
+    return [bool(x) for x in mask]
+
+
 def _find_tables(lines: list[str]) -> list[tuple[int, int]]:
-    """Return (start, end_exclusive) line-index ranges of table blocks."""
+    """Return (start, end_exclusive) line-index ranges of table blocks.
+
+    FENCE-AWARE, because this script REWRITES what it finds. A `|` row inside a
+    fenced block is example text, and re-aligning it is a corpus edit to
+    literal content -- measured 2026-08-10, this stripped the indentation off a
+    table inside a fenced README example, which exited the enclosing list
+    container and made CommonMark end the fence early, silently re-breaking the
+    very fence repair the todo-metadata-layer TODO had just landed on that file. A table this
+    tool must not touch is worse than a table it fails to align.
+    """
     tables = []
+    masked = _fence_mask(lines)
     i = 0
     n = len(lines)
     while i < n - 1:
+        if masked[i]:
+            i += 1
+            continue
         if _ROW_RE.match(lines[i]):
             sep_cells = _split_row(lines[i + 1]) if _ROW_RE.match(lines[i + 1]) else None
             if sep_cells and all(_SEP_CELL_RE.match(c) for c in sep_cells) and sep_cells:
@@ -155,6 +207,17 @@ def _find_tables(lines: list[str]) -> list[tuple[int, int]]:
 
 def _render_table(lines: list[str], start: int, end: int, max_cell: int,
                   max_pad: int = 0) -> list[str] | None:
+    # INDENTATION IS PRESERVED, NOT NORMALISED, and this is the root fix rather
+    # than the fence mask above. Emitting every row at column 0 is what made
+    # this tool destructive: a table indented to sit INSIDE a list item was
+    # re-emitted at column 0, which exits the list container, which ends an
+    # enclosing fence early -- silently undoing a corpus fence repair. Keeping
+    # each block's own leading whitespace makes that corruption impossible for
+    # ANY indented table, including the container-indented fences the shared
+    # mask still cannot see (owned by the todo-metadata-layer roadmap's
+    # container-awareness section). Alignment is what this tool is for; moving
+    # a block between Markdown containers never was.
+    indent = re.match(r"[ \t]*", lines[start]).group(0)
     rows = [_split_row(l) for l in lines[start:end]]
     ncols = len(rows[0])
     if any(len(r) != ncols for r in rows):
@@ -249,9 +312,9 @@ def _render_table(lines: list[str], start: int, end: int, max_cell: int,
                 else:
                     cell = "-" * w
                 cells.append(cell)
-            out.append("| " + " | ".join(_reescape(c) for c in cells) + " |")
+            out.append(indent + "| " + " | ".join(_reescape(c) for c in cells) + " |")
         else:
-            out.append("| " + " | ".join(
+            out.append(indent + "| " + " | ".join(
                 pad(_reescape(row[c]), widths[c], aligns[c]) for c in range(ncols)
             ) + " |")
     return out

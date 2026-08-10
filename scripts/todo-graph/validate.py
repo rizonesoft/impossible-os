@@ -1553,7 +1553,12 @@ _ATX_CLOSE_RE = re.compile(r"[ \t]+#+[ \t]*$")
 # fence early and then re-opened one over the rest of the file.
 _FENCE_RE = cache_schema.FENCE_RE
 _FENCE_TAIL_RE = cache_schema.FENCE_TAIL_RE
-_HTML_BLOCK_COMMENT_RE = re.compile(r"^ {0,3}<!--")
+# ALIASED, not re-declared, for the same reason as the fence regexes above: the
+# producer's `fence_scan` became comment-aware in section 36 (a ``` at the start
+# of a line inside a comment was opening a fence that never closed), so both
+# halves now consume comments and a second copy of the pattern is a second thing
+# to drift.
+_HTML_BLOCK_COMMENT_RE = cache_schema.HTML_BLOCK_COMMENT_RE
 # Emphasis delimiters are NOT rendered text, but an INTRAWORD `_` is:
 # CommonMark forbids intraword `_` emphasis, so `boot_info` keeps its
 # underscore while `_Hello_` loses its delimiters.

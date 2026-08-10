@@ -17020,6 +17020,407 @@ else
 fi
 
 # ----------------------------------------------------------------------
+# Section 36: the cache producer is fence-aware
+#
+# A `## N.` heading, a `- [x]` item, an Implementation Order row, an Inputs
+# XREF and a Deferred stamp are all STRUCTURE when they sit in prose and
+# DOCUMENTATION when they sit in a fenced block. Five separate walks in
+# build.py read them, and every one was fence-blind: the fixture below is the
+# exact shape that made section 32's anchor test emit an `orphan-io-row`
+# naming a section that does not exist.
+#
+# THE FIXTURE USES A 4-BACKTICK OUTER FENCE containing a 3-backtick inner one,
+# because that is the shape the naive `startswith("```")` toggle gets wrong --
+# it pairs delimiters by parity, so it closes the outer block at the inner
+# closer and inverts every delimiter after it. One live corpus file was
+# malformed in exactly that way and the correct rule is what found it
+# (todo/15-installer-release/TODO-05-github-release-community.md, 2026-08-10).
+# ----------------------------------------------------------------------
+s36_fixture() {
+    local T; T=$(mktemp -d "$TMP_DIR/s36-XXXXXX")
+    mkdir -p "$T/todo/01-test" "$T/build"
+    cat > "$T/todo/01-test/TODO-01-fence.md" <<'S36EOF'
+---
+schema_version: 1
+id: s36-fence
+domain: 01-test
+status: draft
+title: Fence fixture
+---
+
+# Fence fixture
+
+Documenting what a TODO looks like. The fenced block comes FIRST on purpose:
+the Implementation Order and Inputs walks stop at the next `## ` heading, so a
+fence-blind walk does not merely ADD the fake rows -- it reads them INSTEAD of
+the real ones further down, and the file's real table never gets parsed.
+
+````markdown
+## 99. Fake Section
+
+- [x] `fake_sym()` shipped
+
+## Implementation Order
+
+| ⭐  | Order | Section | Deliverable      | Depends On | Status |
+| --- | :---: | :-----: | ---------------- | ---------- | :----: |
+| 💎  |   2   |   §99   | Fake deliverable | --         |  [x]   |
+
+## Inputs
+
+| -> XREF: [fake](../09-fake/TODO-99-fake.md) §7 | fake edge |
+
+> **Deferred:** [H] fake reason -> XREF: `09-fake/TODO-99-fake.md` §7
+
+```bash
+echo "a three-backtick block nested inside the four-backtick one"
+```
+````
+
+## Implementation Order
+
+| ⭐  | Order | Section | Deliverable      | Depends On | Status |
+| --- | :---: | :-----: | ---------------- | ---------- | :----: |
+| 💎  |   1   |   §1    | Real deliverable | --         |  [x]   |
+
+## Inputs
+
+| Path          | Purpose    |
+| ------------- | ---------- |
+| `src/real.c`  | real input |
+
+## 1. Real Section
+
+- [x] `real_sym()` shipped
+
+## Verification
+
+- [ ] nothing
+S36EOF
+    (
+        cd "$T" || exit 1
+        git init -q .
+        git config user.email s36@test.invalid
+        git config user.name s36
+        git add -A
+        git commit -qm "s36 fixture"
+    ) >/dev/null 2>&1
+    printf '%s' "$T"
+}
+
+# Report what the node actually contains, so PASS and the MUTATION check read
+# the same five fields off the same builder.
+s36_probe() {   # $1=tree $2=build.py to run
+    python3 "$2" --quiet --root "$1/todo" --output "$1/build/todo-cache.json" \
+        --repo-root "$1" >/dev/null 2>&1 || { printf 'BUILD-FAILED'; return; }
+    python3 - "$1/build/todo-cache.json" <<'S36PY'
+import json, sys
+n = json.load(open(sys.argv[1]))[0]
+print(json.dumps({
+    "headings":   sorted(h["n"] if isinstance(h, dict) else h
+                         for h in n.get("section_headings", [])),
+    "io_rows":    sorted(s.get("n") for s in n.get("sections", [])
+                         if s.get("n") is not None),
+    "stamped":    sorted(i.get("section_n") for i in n.get("stamped_items", [])),
+    "inputs":     len(n.get("inputs_xrefs", [])),
+    "stamps":     len(n.get("stamps_xrefs", [])),
+}, sort_keys=True))
+S36PY
+}
+
+S36_T="$(s36_fixture)"
+S36_REAL="$(s36_probe "$S36_T" "$BUILD_PY")"
+if echo "$S36_REAL" | python3 -c "
+import json, sys
+d = json.loads(sys.stdin.read())
+sys.exit(0 if (d['headings'] == [1] and d['io_rows'] == [1]
+               and d['stamped'] == [1] and d['inputs'] == 0
+               and d['stamps'] == 0) else 1)"; then
+    t_pass "section 36: fenced heading/item/IO-row/Inputs-XREF/stamp contribute nothing"
+else
+    t_fail "section 36: fenced structure leaked into the node (got=$S36_REAL)"
+fi
+
+# MUTATION -- neuter fence_mask so every line reads as unfenced, which is the
+# pre-section-36 behaviour, and require the fixture to FAIL. Without this the
+# test above passes just as happily against a builder that never had a fence
+# rule at all. PYTHONPATH points at the real module dir: a mutant copied into
+# TMP_DIR resolves its own sibling imports to the temp dir, dies on import, and
+# produces the empty result the fixture is looking for -- a false PASS.
+# THE WHOLE MODULE DIRECTORY IS COPIED, not just build.py. build.py inserts its
+# own directory at sys.path[0] to reach `cache_schema` / `validate`, so a lone
+# copy in TMP_DIR dies on import -- and a dead mutant emits the same empty node
+# the assertion above wants, which is a false PASS rather than a crash anyone
+# notices. Mutating inside a full copy changes one line and nothing else.
+S36_MUTDIR="$TMP_DIR/s36-mutant"
+rm -rf "$S36_MUTDIR"
+cp -r "$REPO_ROOT/scripts/todo-graph" "$S36_MUTDIR"
+S36_MUT="$S36_MUTDIR/build.py"
+# THE MUTATION IS ANCHORED, AND THE GUARD LOOKS FOR A STRING THE SHIPPED CODE
+# DOES NOT CONTAIN. The first version targeted a line inside `fence_scan` and
+# guarded on `out.append(False)` -- then `fence_scan` was rewritten, the sed
+# stopped matching, and the guard still passed because the real code now
+# contains `out.append(False)` legitimately. The mutation went inert and the
+# test reported a PASS-shaped failure. A guard is only a guard if it fails when
+# the anchor moves.
+sed -i 's|^    return out, state is not None, in_comment$|    return [False] * len(lines), state is not None, in_comment|' \
+    "$S36_MUTDIR/cache_schema.py"
+if ! grep -q "return \[False\] \* len(lines)" "$S36_MUTDIR/cache_schema.py"; then
+    t_fail "section 36: mutation did not apply -- fence_scan return anchor not found"
+else
+    S36_MUT_OUT="$(s36_probe "$S36_T" "$S36_MUT")"
+    if echo "$S36_MUT_OUT" | python3 -c "
+import json, sys
+try:
+    d = json.loads(sys.stdin.read())
+except Exception:
+    sys.exit(1)
+# The fence-blind builder must pick the FENCED section 99 up in every walk it
+# feeds, and for the two walks that stop at the next heading it must read the
+# fake table INSTEAD of the real one -- displacement, not addition. Anything
+# less means the mutation did not reach the code under test.
+sys.exit(0 if (99 in d['headings'] and 99 in d['stamped']
+               and d['io_rows'] == [99] and d['inputs'] >= 1
+               and d['stamps'] >= 1) else 1)"; then
+        t_pass "section 36: mutation check -- the fence-blind walks index the fenced example"
+    else
+        t_fail "section 36: fence-blind mutation did not misfire (out=$S36_MUT_OUT)"
+    fi
+    rm -rf "$S36_MUTDIR"
+fi
+
+# Fence SHAPES the naive toggle gets wrong: a tilde fence, a 4-backtick block
+# containing a shorter run, and an unterminated fence (which must fail CLOSED --
+# everything after it is masked, so structure goes MISSING rather than wrong).
+S36_SHAPES="$(python3 - <<'S36SPY'
+import sys
+sys.path.insert(0, "scripts/todo-graph")
+from cache_schema import fence_mask
+def m(t): return fence_mask(t.split("\n"))
+tilde  = m("a\n~~~text with a long info string\n## 9. x\n~~~\nb")
+quad   = m("a\n````md\n```\n## 9. x\n```\n````\nb")
+unterm = m("a\n```\n## 9. x\nb")
+print(",".join(str(int(x)) for x in tilde),
+      ",".join(str(int(x)) for x in quad),
+      ",".join(str(int(x)) for x in unterm))
+S36SPY
+)"
+if [ "$S36_SHAPES" = "0,1,1,1,0 0,1,1,1,1,1,0 0,1,1,1" ]; then
+    t_pass "section 36: tilde, nested-4-backtick and unterminated fences mask correctly"
+else
+    t_fail "section 36: fence shape masks wrong (got='$S36_SHAPES')"
+fi
+
+# A document that ends inside a fence masks every line to EOF, so all five walks
+# return empty -- which emits no WRONG structure but silently ERASES real
+# structure. Measured 2026-08-10 before the fix: a fixture with a real
+# Implementation Order, a real `## 1.` heading and a real `- [x]` item behind an
+# unclosed opener built at rc 0 with all three empty, and nothing reported it
+# (Codex adversarial, section 36, [medium]). The producer must REFUSE instead.
+# Asserted at the BUILDER, not on the mask: the mask behaving correctly is what
+# produces the erasure, so a mask-only fixture cannot see this at all.
+S36U="$(mktemp -d "$TMP_DIR/s36u-XXXXXX")"
+mkdir -p "$S36U/todo/01-test" "$S36U/build"
+cat > "$S36U/todo/01-test/TODO-01-unclosed.md" <<'S36UEOF'
+---
+schema_version: 1
+id: s36-unclosed
+domain: 01-test
+status: draft
+title: Unclosed fence fixture
+---
+
+# Unclosed fence fixture
+
+```text
+this fence is never closed, and real structure follows it
+
+## Implementation Order
+
+| ⭐  | Order | Section | Deliverable      | Depends On | Status |
+| --- | :---: | :-----: | ---------------- | ---------- | :----: |
+| 💎  |   1   |   §1    | Real deliverable | --         |  [x]   |
+
+## 1. Real Section
+
+- [x] `real_sym()` shipped
+S36UEOF
+(
+    cd "$S36U" || exit 1
+    git init -q .
+    git config user.email s36u@test.invalid
+    git config user.name s36u
+    git add -A
+    git commit -qm "s36 unclosed fixture"
+) >/dev/null 2>&1
+S36U_ERR="$(python3 "$BUILD_PY" --quiet --root "$S36U/todo" \
+    --output "$S36U/build/todo-cache.json" --repo-root "$S36U" 2>&1)"
+S36U_RC=$?
+if [ "$S36U_RC" = "1" ] && echo "$S36U_ERR" | grep -q "unclosed-fence" \
+   && [ ! -f "$S36U/build/todo-cache.json" ]; then
+    t_pass "section 36: a document ending inside a fence REFUSES the build"
+else
+    t_fail "section 36: unclosed fence did not refuse (rc=$S36U_RC, cache_written=$([ -f "$S36U/build/todo-cache.json" ] && echo yes || echo no), err=$S36U_ERR)"
+fi
+
+# The threaded context must not change any answer: every walk called with the
+# shared `doc=` must return exactly what it returns computing its own mask.
+# Without this, the perf fix could silently feed one walk a stale mask.
+S36T="$(python3 - <<'S36TPY'
+import sys, pathlib, json
+sys.path.insert(0, "scripts/todo-graph")
+import build as B
+same = True
+for p in sorted(pathlib.Path("todo").rglob("*.md")):
+    body = p.read_text(encoding="utf-8", errors="replace")
+    lines, mask, _, _ = B.scan_body(body)
+    pairs = [
+        (B.extract_section_headings(body), B._walk_section_headings(lines, mask)),
+        (B.extract_implementation_order(body), B._walk_implementation_order(lines, mask)),
+        (B.extract_inputs_xrefs(body), B._walk_inputs_xrefs(lines, mask)),
+        (B.extract_stamps_xrefs(body), B._walk_stamps_xrefs(lines, mask)),
+        (B.extract_stamped_items(body, str(p)), B._walk_stamped_items(lines, mask, str(p))),
+    ]
+    if any(a != b for a, b in pairs):
+        same = False
+        break
+print("same" if same else "DIFFER")
+S36TPY
+)"
+if [ "$S36T" = "same" ]; then
+    t_pass "section 36: the rescanning wrapper and the walk build_node calls agree on every corpus file"
+else
+    t_fail "section 36: threaded context changed a walk's answer (got='$S36T')"
+fi
+
+# The shared fence scan is NOT on the public surface, and that is the assertion.
+# Four rounds tried to make a caller-supplied context safe -- a validated tuple,
+# an opaque class, an exact-type check, frozen write-once slots -- and each closed
+# one forgery route while revealing the next (`zip()` truncation on a short mask,
+# a same-length stale mask, a subclass overriding `mask`, `del ctx._frozen`,
+# `__new__` with empty slots). The surface was removed instead: `extract_*(body)`
+# takes only a body and rescans, `build_node` calls the private `_walk_*` with its
+# own locals, and there is nothing to forge because nothing can be passed.
+S36C="$(python3 - <<'S36CPY'
+import sys, inspect
+sys.path.insert(0, "scripts/todo-graph")
+import build as B
+bad = []
+# No context object, and no context parameter on any public extractor.
+for gone in ("ScannedBody", "_doc"):
+    if hasattr(B, gone):
+        bad.append("still-exposed:" + gone)
+publics = ["extract_section_headings", "extract_implementation_order",
+           "extract_inputs_xrefs", "extract_stamps_xrefs", "extract_stamped_items"]
+for name in publics:
+    params = list(inspect.signature(getattr(B, name)).parameters)
+    if any(p in ("doc", "mask", "lines") for p in params):
+        bad.append("context-param:" + name)
+# Each public walk must agree with the private one build_node actually calls,
+# so the rescanning wrapper cannot drift from the threaded path.
+body = "## 1. First\n## 2. Second\n"
+lines, mask, unclosed, _ = B.scan_body(body)
+if B.extract_section_headings(body) != B._walk_section_headings(lines, mask):
+    bad.append("wrapper-differs")
+if unclosed is not False:
+    bad.append("unclosed-wrong")
+if B.scan_body("```\nx\n")[2] is not True:
+    bad.append("unclosed-not-detected")
+print("ok" if not bad else "BAD:" + ",".join(sorted(bad)))
+S36CPY
+)"
+if [ "$S36C" = "ok" ]; then
+    t_pass "section 36: no forgeable body context exists on the public extractor surface"
+else
+    t_fail "section 36: body-context surface is still forgeable (got='$S36C')"
+fi
+
+# A ``` written at the start of a line INSIDE an HTML block comment is not a
+# fence. Before the scan tracked comments it opened one that never closed, and
+# since the producer now REFUSES an unclosed fence that turned a legal comment
+# into a hard build failure (Codex adversarial, section 36, round 7). Two
+# controls run beside it: the same marker outside a comment must still refuse,
+# and a `<!--` INSIDE a fence must stay literal so the fence still closes.
+S36H="$(python3 - <<'S36HPY'
+import sys
+sys.path.insert(0, "scripts/todo-graph")
+import build as B
+def probe(body):
+    lines, mask, unclosed, _ = B.scan_body(body)
+    return unclosed, [n for n, _ in B.extract_section_headings(body)]
+in_comment = probe("# T\n\n<!--\n```\nexample\n-->\n\n## 1. Real\n")
+control_bare = probe("# T\n\n```\nexample\n\n## 1. Real\n")
+control_infence = probe("# T\n\n```\n<!--\n```\n\n## 1. Real\n")
+bad = []
+if in_comment != (False, [1]):
+    bad.append("comment-fence-misread:%r" % (in_comment,))
+if control_bare != (True, []):
+    bad.append("control-bare-did-not-fire:%r" % (control_bare,))
+if control_infence != (False, [1]):
+    bad.append("control-comment-in-fence:%r" % (control_infence,))
+print("ok" if not bad else "BAD:" + ";".join(bad))
+S36HPY
+)"
+if [ "$S36H" = "ok" ]; then
+    t_pass "section 36: a fence marker inside an HTML comment neither opens a fence nor refuses the build"
+else
+    t_fail "section 36: comment-aware fence scan is wrong (got='$S36H')"
+fi
+
+# An unterminated HTML COMMENT erases a node exactly as an unterminated fence
+# does -- it masks to EOF, so every walk returns empty -- and the first
+# comment-aware scan reported only fence state, so `build_node` saw
+# `unclosed=False` and published the erased node with no error at all (Codex
+# adversarial, section 36, round 8, [high]). It gets its OWN refusal, and its own
+# message, because telling an author to close a fence when the unclosed thing is
+# a comment sends them to the wrong line. Asserted at the BUILDER.
+S36K="$(mktemp -d "$TMP_DIR/s36k-XXXXXX")"
+mkdir -p "$S36K/todo/01-test" "$S36K/build"
+cat > "$S36K/todo/01-test/TODO-01-comment.md" <<'S36KEOF'
+---
+schema_version: 1
+id: s36-comment
+domain: 01-test
+status: draft
+title: Unclosed comment fixture
+---
+
+# Unclosed comment fixture
+
+<!--
+this comment is never closed, and real structure follows it
+
+## Implementation Order
+
+| ⭐  | Order | Section | Deliverable      | Depends On | Status |
+| --- | :---: | :-----: | ---------------- | ---------- | :----: |
+| 💎  |   1   |   §1    | Real deliverable | --         |  [x]   |
+
+## 1. Real Section
+
+- [x] `real_sym()` shipped
+S36KEOF
+(
+    cd "$S36K" || exit 1
+    git init -q .
+    git config user.email s36k@test.invalid
+    git config user.name s36k
+    git add -A
+    git commit -qm "s36 comment fixture"
+) >/dev/null 2>&1
+S36K_ERR="$(python3 "$BUILD_PY" --quiet --root "$S36K/todo" \
+    --output "$S36K/build/todo-cache.json" --repo-root "$S36K" 2>&1)"
+S36K_RC=$?
+# It must name the COMMENT, not the fence, and must write no cache.
+if [ "$S36K_RC" = "1" ] && echo "$S36K_ERR" | grep -q "unclosed-comment" \
+   && ! echo "$S36K_ERR" | grep -q "unclosed-fence" \
+   && [ ! -f "$S36K/build/todo-cache.json" ]; then
+    t_pass "section 36: a document ending inside an HTML comment REFUSES, naming the comment"
+else
+    t_fail "section 36: unclosed comment did not refuse correctly (rc=$S36K_RC, err=$S36K_ERR)"
+fi
+
+# ----------------------------------------------------------------------
 # Summary
 # ----------------------------------------------------------------------
 TOTAL=$((PASS + FAIL))

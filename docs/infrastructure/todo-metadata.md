@@ -145,7 +145,9 @@ A reader declares what it CONSUMES via a `cache_schema.Profile`, and is validate
 ## Parsing Rules
 
 - **Frontmatter detection.** The opening `---` MUST be the first three bytes (after an optional UTF-8 BOM, which is stripped). The closing `---` MUST be on its own line. CRLF line endings (`\r\n`) are normalized to LF before fence detection so Windows-authored TODOs parse correctly.
-- **Absence is not an error during migration.** Files without frontmatter parse into a node with `id=null`, `status="no-frontmatter"`. The validator surfaces these counts but does not fail the build until the migration completes.
+- **Absence of frontmatter is a HARD ERROR.** A file with no frontmatter block fails the build with `missing-frontmatter`. This replaced the migration-era rule, under which such a file parsed into a node with `id=null`, `status="no-frontmatter"` and the validator only counted them; the back-fill completed 2026-04-23 and every corpus file carries frontmatter, so the fallback now only hides a regression.
+- **A body that never closes an HTML comment is the same hard error.** `<!--` with no `-->` masks to EOF exactly as an unclosed fence does; it is `unclosed-comment` rather than `unclosed-fence` so the message points at the right delimiter.
+- **A body that never closes a fence is a hard error too.** Masking to EOF emits no WRONG structure but silently erases real structure: a file with a real Implementation Order, heading and `- [x]` item behind an unclosed opener built at rc 0 with all three empty (measured 2026-08-10). `unclosed-fence` names it instead. This is the BODY; an unclosed frontmatter delimiter is `malformed-yaml`.
 - **Malformed YAML is a hard error.** Unclosed fences, tab indentation, duplicate keys, and any PyYAML parse error fail the build with a `file:line: malformed-yaml: <detail>` message. The cache file is NOT written when any file fails (fail-closed) so a partial cache cannot mask a regression.
 - **Top-level type.** The frontmatter MUST be a YAML mapping (key: value pairs). Sequences or scalars at the top level are rejected as malformed.
 - **Unknown fields.** Top-level fields not listed in this spec emit a `unknown-field` warning but do NOT fail the build. This is forward-compat: a newer generator that adds a field can ship cache files older generators read without breaking.
@@ -163,10 +165,18 @@ The generator's full error catalog (1:1 with the parser branches) is:
 | `invalid-field`      | Optional field present but wrong type / shape / uniqueness: e.g. `owners` is a scalar, `depends_on` has duplicates or contains a non-id string, `$schema` is not a string, `title` / `domain` is empty. Mirrors the JSON Schema sidecar's per-field constraints | FATAL    |
 | `missing-required`   | Any of `schema_version`, `id`, `domain`, `status`, `title` absent                                                     | FATAL    |
 | `schema-version`     | `schema_version` not int (bool rejected too), OR < 1, OR > supported by current generator (forward-incompatible)      | FATAL    |
-| `forbidden-field`    | Hand-authored frontmatter contains `created_at` or `last_active_at` (cache-only fields, not allowed in source)        | FATAL    |
+| `forbidden-field`    | Hand-authored frontmatter contains `created_at`, `last_active_at` or `stamped_items` (cache-only fields, not allowed in source) | FATAL    |
+| `unclosed-comment`   | The BODY ends inside an unclosed HTML block comment. Same erasure as `unclosed-fence` -- everything from the opener is masked, so every body walk reads as empty -- and reported separately so the message names the delimiter the author must close | FATAL    |
+| `missing-frontmatter` | The file has no frontmatter block at all. Hard failure since the 2026-04-23 back-fill; there is no `status: no-frontmatter` fallback node any more | FATAL    |
+| `emission-drop`      | The producer built a node that DROPPED a field it declares it emits (an authored optional present in frontmatter but absent from the node, or extracted `stamped_items` that never reached it). Catches a copy-list/declared-set disagreement that would otherwise publish under a valid contract identity | FATAL    |
+| `unclosed-fence`     | The BODY (not the frontmatter) ends inside an unclosed fenced code block, so every body walk reads as empty. Distinct from `malformed-yaml`, which covers an unclosed frontmatter delimiter | FATAL    |
 | `unknown-field`      | Top-level field not listed in Required + Optional                                                                     | WARNING  |
 
 FATAL categories print `[build.py] FAIL <file>: <category>: <message>` to stderr, exit the build with code 1, and do NOT write the cache file. WARNING categories print `[build.py] WARN ...` (suppressed under `--quiet`) but the build still succeeds.
+
+**The rule is an allowlist of ONE, not an enumerated fatal set** (`build.py:main`): `unknown-field` is downgraded to a warning and *every other category string is fatal by the `else` branch*. A category added later is therefore fatal by default -- which is the safe direction, and the reason this table can drift without anything failing open.
+
+**Separately, some fatal conditions carry no category at all** and so never appear in this table: a per-file read error, an empty corpus, a corpus whose git history moved mid-build, a shallow-repo timestamp walk, and the two whole-run emission-contract assertions. Those exit 1 or 3 directly rather than through the per-node `errors` list.
 
 ## ID Naming Rules
 

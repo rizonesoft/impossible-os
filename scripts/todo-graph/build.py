@@ -19,9 +19,17 @@
 #
 # Exit codes:
 #   0  clean parse of every file
-#   1  any file's frontmatter is malformed (file:line + category printed to
-#      stderr); cache file is NOT written so a partial cache cannot mask a
-#      regression
+#   1  any file emitted an error category other than `unknown-field`. That is
+#      the actual rule -- an ALLOWLIST OF ONE, not an enumerated fatal set -- so
+#      a category added later is fatal by default. Today that covers malformed
+#      or missing frontmatter, every field-validation category, an emission
+#      drop, and the two body-Markdown refusals `unclosed-fence` /
+#      `unclosed-comment` (each masks to EOF, so an erased node would otherwise
+#      be indistinguishable from an empty TODO). `<file>: <category>: <message>`
+#      is printed to stderr -- a line number only when the category carries one,
+#      which the body-Markdown refusals do not. The cache file is NOT written,
+#      so a partial cache cannot mask a regression. Canonical list:
+#      docs/infrastructure/todo-metadata.md "Error Catalog""
 #   3  the corpus moved underneath this run (a TODO changed between being read
 #      and the cache being published, or the corpus git history moved). Nothing
 #      is written and any previous cache is left byte-identical -- see
@@ -794,11 +802,88 @@ def extract_title(content: str) -> Optional[str]:
     return None
 
 
+def scan_body(body: str):
+    """`(lines, mask, unclosed_fence, unclosed_comment)` for a TODO body -- the
+    shared parsed-document context, computed ONCE per node and passed to the
+    private `_walk_*` functions below.
+
+    A PLAIN TUPLE OF LOCALS, deliberately, and NOT a context object on the
+    public surface. The five walks originally each ran `splitlines()` +
+    `fence_mask()`, which cost +29% node assembly; threading a `(lines, mask)`
+    tuple into them fixed the cost and opened a worse hole -- `zip()` silently
+    truncated on a short mask, and a same-length stale mask misclassified every
+    fenced line. Four hardening rounds each closed one forgery route and
+    revealed the next (validated tuple -> opaque class -> exact-type check ->
+    frozen slots -> `__new__` with empty slots), which is the signature of
+    defending the wrong boundary.
+
+    So there is nothing for a caller to forge, because no caller can pass one:
+    `extract_*(body)` keeps its original one-argument signature and rescans,
+    while `build_node` scans once and calls the `_walk_*` functions with its own
+    locals. The cost fix and the safety property come from the same decision.
+
+    Returns `(lines, mask, unclosed_fence, unclosed_comment)`. `mask` marks a
+    line that is fenced-code content, a fence delimiter, OR inside an HTML block
+    comment -- everything that is not ordinary Markdown structure. The two
+    trailing flags are True when the document ends INSIDE a fence or INSIDE an
+    HTML comment. `build_node` treats either as a refusal rather than
+    as an empty document -- both mask to EOF, so the node would otherwise be
+    published with every field empty. They are reported separately so the
+    message names the delimiter the author actually has to close.
+    """
+    lines = body.splitlines()
+    mask, unclosed_fence, unclosed_comment = _cs.fence_scan(lines)
+    return lines, mask, unclosed_fence, unclosed_comment
+
+
+# A body that ends inside a fence masks everything from the opener to EOF, so
+# EVERY walk below returns empty. That is fail-closed in the sense that no WRONG
+# structure is emitted, but it is fail-SILENT at the graph level: measured
+# 2026-08-10, a fixture with a real Implementation Order, a real `## 1.` heading
+# and a real `- [x]` item behind an unclosed opener built at rc 0 with empty
+# `section_headings`, empty `sections` and zero stamped items, and nothing
+# downstream reported it (Codex adversarial, section 36). An erased node is
+# indistinguishable from an empty TODO, so the producer names it here instead of
+# publishing the erasure.
+#
+# SCOPED TO ROOT-LEVEL FENCES: `FENCE_RE` applies CommonMark's 0-3-space rule to
+# the physical line, so a fence indented under a list container is not
+# recognised and an unterminated one is neither masked nor refused. That gap is
+# TODO-06 section 39's container-awareness work, not a hole in this check.
+_UNCLOSED_FENCE_MSG = (
+    "document ends inside an unclosed fenced code block, so every body walk "
+    "reads as empty; close the fence (a fence nested inside another must use a "
+    "LONGER run than the block containing it)"
+)
+
+# The same erasure, one construct over. An HTML block comment masks to EOF just
+# as a fence does, and folding it into the fence message would send an author to
+# the wrong delimiter.
+_UNCLOSED_COMMENT_MSG = (
+    "document ends inside an unclosed HTML comment, so every body walk reads "
+    "as empty; close the comment with `-->`"
+)
+
+
 def extract_section_headings(body: str) -> list:
     """Return list of (n, title) tuples for every `## N. Title` heading.
-    `n` is the integer section number; `title` is the prose after the dot."""
+    `n` is the integer section number; `title` is the prose after the dot.
+
+    FENCE-AWARE: a `## N.` inside a fenced block is an EXAMPLE, not a section.
+    This walk and `validate.py:_scan_markdown` must agree on what a heading is;
+    they did not until section 36, which is how a fixture documenting TODO
+    structure produced an `orphan-io-row` FAIL naming a section that does not
+    exist."""
+    lines, mask, _, _ = scan_body(body)
+    return _walk_section_headings(lines, mask)
+
+
+def _walk_section_headings(lines, masked) -> list:
+    """Shared by `extract_section_headings` and `build_node`; see that docstring."""
     out = []
-    for ln in body.splitlines():
+    for ln, fenced in zip(lines, masked):
+        if fenced:
+            continue
         m = re.match(r"^## (\d+)\.\s+(.+?)\s*$", ln)
         if m:
             out.append((int(m.group(1)), m.group(2)))
@@ -855,6 +940,16 @@ def extract_stamped_items(body: str, todo_rel: str) -> list:
     section_n / item_idx pair is stable as long as the section's `[x]`
     item ordering is preserved (1-based section_n, 0-based item_idx).
     """
+    lines, mask, _, _ = scan_body(body)
+    return _walk_stamped_items(lines, mask, todo_rel)
+
+
+def _walk_stamped_items(lines, masked, todo_rel: str) -> list:
+    """Shared by `extract_stamped_items` and `build_node`; see that docstring.
+
+    Fence-aware: a `## N.` heading or a `- [x]` line inside a fenced block is
+    documentation, not a section or a shipped item. Indexing one emitted a fake
+    symbol into `stamped_items` under a section that does not exist."""
     out = []
     cur_section = None
     cur_item_idx = 0
@@ -863,7 +958,9 @@ def extract_stamped_items(body: str, todo_rel: str) -> list:
     # indent; reject blockquoted (`>`) lines because stamp continuations
     # never carry `[x]`.
     item_re = re.compile(r"^\s*[-*]\s*\[x\]\s+(.+?)\s*$")
-    for ln in body.splitlines():
+    for ln, fenced in zip(lines, masked):
+        if fenced:
+            continue
         sec_m = sec_hdr_re.match(ln)
         if sec_m:
             cur_section = int(sec_m.group(1))
@@ -1079,10 +1176,23 @@ def extract_implementation_order(body: str) -> list:
     status). The Section column, when present, names the body section
     (`§N`) which can differ from execution Order.
     """
+    lines, mask, _, _ = scan_body(body)
+    return _walk_implementation_order(lines, mask)
+
+
+def _walk_implementation_order(lines, masked) -> list:
+    """Shared by `extract_implementation_order` and `build_node`.
+
+    Fence-aware: a fenced `## Implementation Order` example would otherwise open
+    a second, fake scan, and a fenced `|` row inside the real table would be read
+    as a real row. Because this walk STOPS at the next `## ` heading, a fenced
+    example placed before the real table DISPLACES it rather than adding to it."""
     out = []
     in_io = False
     header_cols = None
-    for ln in body.splitlines():
+    for ln, fenced in zip(lines, masked):
+        if fenced:
+            continue
         if ln.startswith("## Implementation Order"):
             in_io = True
             continue
@@ -1174,9 +1284,21 @@ def extract_inputs_xrefs(body: str) -> list:
     All three are graph edges; plain Inputs entries (path-only) are
     consumed-file references and stay out of the graph.
     """
+    lines, mask, _, _ = scan_body(body)
+    return _walk_inputs_xrefs(lines, mask)
+
+
+def _walk_inputs_xrefs(lines, masked) -> list:
+    """Shared by `extract_inputs_xrefs` and `build_node`.
+
+    Fence-aware for the same reason as the Implementation Order walk: a fenced
+    Inputs example emits a graph EDGE to a TODO that does not exist, corrupting
+    dependency and scheduling answers rather than a count."""
     out = []
     in_inputs = False
-    for ln in body.splitlines():
+    for ln, fenced in zip(lines, masked):
+        if fenced:
+            continue
         if ln.startswith("## Inputs"):
             in_inputs = True
             continue
@@ -1287,8 +1409,20 @@ def extract_stamps_xrefs(body: str) -> list:
     every deferred-work obligation in the graph instead of dropping all
     but the first.
     """
+    lines, mask, _, _ = scan_body(body)
+    return _walk_stamps_xrefs(lines, mask)
+
+
+def _walk_stamps_xrefs(lines, masked) -> list:
+    """Shared by `extract_stamps_xrefs` and `build_node`.
+
+    Fence-aware: a documented stamp example inside a fence is not a stamp. It
+    otherwise emits a real deferred/accepted graph edge from a line whose whole
+    purpose is to show readers what a stamp looks like."""
     out = []
-    for ln in body.splitlines():
+    for ln, fenced in zip(lines, masked):
+        if fenced:
+            continue
         header_m = STAMP_HEADER_RE.match(ln)
         if not header_m:
             continue
@@ -1350,10 +1484,15 @@ def build_node(file_path: Path, repo_root: Path, timestamps: dict, content: str)
             else:
                 errors.append((cat, msg))
 
-    sections_io = extract_implementation_order(body)
-    inputs_xrefs = extract_inputs_xrefs(body)
-    stamps_xrefs = extract_stamps_xrefs(body)
-    section_headings = extract_section_headings(body)
+    body_lines, body_mask, body_unclosed, body_uncommented = scan_body(body)
+    if body_unclosed:
+        errors.append(("unclosed-fence", _UNCLOSED_FENCE_MSG))
+    if body_uncommented:
+        errors.append(("unclosed-comment", _UNCLOSED_COMMENT_MSG))
+    sections_io = _walk_implementation_order(body_lines, body_mask)
+    inputs_xrefs = _walk_inputs_xrefs(body_lines, body_mask)
+    stamps_xrefs = _walk_stamps_xrefs(body_lines, body_mask)
+    section_headings = _walk_section_headings(body_lines, body_mask)
 
     created_at, last_active_at = timestamps.get(rel, (None, None))
 
@@ -1425,7 +1564,7 @@ def build_node(file_path: Path, repo_root: Path, timestamps: dict, content: str)
     # omitted to keep the cache compact and the schema's optional contract
     # honest. Lint Check 7 reads stamped_items as the source of truth for
     # stub-behind-stamp findings.
-    stamped_items = extract_stamped_items(body, rel)
+    stamped_items = _walk_stamped_items(body_lines, body_mask, rel)
     if stamped_items:
         node["stamped_items"] = stamped_items
     # A CONDITIONAL EMISSION IS STILL AN EMISSION, and this is the only place

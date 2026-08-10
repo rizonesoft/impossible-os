@@ -190,25 +190,25 @@ must tick the release readiness checklist before `promote-release.sh stable` is 
   ```markdown
   ## Hardware: {Make/Model} -- Tested by: {Tester} -- Date: {YYYY-MM-DD}
 
-| Component        | Test                                                 | Pass/Fail | Notes |
-| ---------------- | ---------------------------------------------------- | --------- | ----- |
-| UEFI boot        | Secure Boot OFF; boots from USB; reaches desktop     |           |       |
-| Display (GOP)    | Native resolution framebuffer; no artifacts          |           |       |
-| Keyboard PS/2    | All keys register correctly                          |           |       |
-| Keyboard USB HID | USB keyboard all keys                                |           |       |
-| Mouse PS/2       | Movement + all buttons                               |           |       |
-| Mouse USB HID    | USB mouse movement + buttons                         |           |       |
-| Storage AHCI     | AHCI SSD detected; R/W 100 MiB stress test           |           |       |
-| Storage NVMe     | NVMe SSD detected (if present)                       |           |       |
-| NIC Realtek      | RTL8111 DHCP lease + ping 8.8.8.8                    |           |       |
-| NIC Intel        | I219/I225 DHCP lease + ping 8.8.8.8                  |           |       |
-| Audio HD Audio   | HD Audio controller detected; audio output (stretch) |           |       |
-| USB 2.0 hub      | USB flash drive mounts as drive letter               |           |       |
-| USB 3.0 hub      | USB 3.0 flash drive mounts + correct speed           |           |       |
-| ACPI shutdown    | Shutdown from menu → power off                       |           |       |
-| ACPI reboot      | Reboot → re-boots to OS                              |           |       |
-| ACPI sleep S3    | Sleep + resume (if S3 supported)                     |           |       |
-| SMP              | All CPU cores detected in `sysinfo.exe`              |           |       |
+  | Component        | Test                                                 | Pass/Fail | Notes |
+  | ---------------- | ---------------------------------------------------- | --------- | ----- |
+  | UEFI boot        | Secure Boot OFF; boots from USB; reaches desktop     |           |       |
+  | Display (GOP)    | Native resolution framebuffer; no artifacts          |           |       |
+  | Keyboard PS/2    | All keys register correctly                          |           |       |
+  | Keyboard USB HID | USB keyboard all keys                                |           |       |
+  | Mouse PS/2       | Movement + all buttons                               |           |       |
+  | Mouse USB HID    | USB mouse movement + buttons                         |           |       |
+  | Storage AHCI     | AHCI SSD detected; R/W 100 MiB stress test           |           |       |
+  | Storage NVMe     | NVMe SSD detected (if present)                       |           |       |
+  | NIC Realtek      | RTL8111 DHCP lease + ping 8.8.8.8                    |           |       |
+  | NIC Intel        | I219/I225 DHCP lease + ping 8.8.8.8                  |           |       |
+  | Audio HD Audio   | HD Audio controller detected; audio output (stretch) |           |       |
+  | USB 2.0 hub      | USB flash drive mounts as drive letter               |           |       |
+  | USB 3.0 hub      | USB 3.0 flash drive mounts + correct speed           |           |       |
+  | ACPI shutdown    | Shutdown from menu → power off                       |           |       |
+  | ACPI reboot      | Reboot → re-boots to OS                              |           |       |
+  | ACPI sleep S3    | Sleep + resume (if S3 supported)                     |           |       |
+  | SMP              | All CPU cores detected in `sysinfo.exe`              |           |       |
   ```
 - [ ] **Minimum coverage before stable release**: results from ≥ 3 distinct physical machines (different manufacturers/chipsets); all `Pass` in critical rows (UEFI, Display, Keyboard, Mouse, Storage, NIC, ACPI Shutdown/Reboot)
 - [ ] **Results archive**: store completed checklists in `docs/guides/hardware-test-results/v{version}/` -- one file per machine tested; linked from release notes

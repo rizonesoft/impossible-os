@@ -495,12 +495,19 @@ CHECKLIST_ITEM_RE = re.compile(r"^\s*[-*]\s+\[[ xX/~]\]\s")
 # the original, backticks and all, since item names routinely contain them.
 _INLINE_CODE_RE = re.compile(r"`[^`]*`")
 
-# A line that STARTS an HTML block comment. Commented-out checklist text is not
-# a destination, and `validate.py:_scan_markdown` already skips these -- leaving
-# them in here would be the producer/validator split this module exists to end.
-# Zero such items exist in the corpus today (4 files contain a comment at all);
-# it is here so the two scanners agree, not because it changes a count.
-_HTML_COMMENT_OPEN_RE = re.compile(r"^ {0,3}<!--")
+# A line that STARTS an HTML block comment, under CommonMark's same 0-3-space
+# bound as a fence. Commented-out checklist text is not a destination, and
+# `validate.py:_scan_markdown` already skips these -- leaving them in here would
+# be the producer/validator split this module exists to end. Zero such items
+# exist in the corpus today (4 files contain a comment at all); it is here so
+# the scanners agree, not because it changes a count.
+#
+# ONE DEFINITION, THREE CONSUMERS: `checklist_item_leads` below, `fence_scan`,
+# and `validate.py` (which aliases it). It briefly had two identical
+# definitions -- a private one here and a public one beside `fence_scan` -- which
+# is precisely the drift route this module exists to close, reintroduced by the
+# change that closed it elsewhere (Codex consistency, section 36, round 9).
+HTML_BLOCK_COMMENT_RE = re.compile(r"^ {0,3}<!--")
 # A COMPLETE inline comment, removed from a lead before matching. An item may
 # carry its own history inline -- `- [ ] Replacement <!-- was: Wire the
 # resolver -->` -- and leaving that text searchable let a reference to the OLD
@@ -550,6 +557,102 @@ def fence_step(state, line: str):
         if not (run[0] == "`" and "`" in rest):
             return (run[0], len(run))
     return state
+
+
+def fence_scan(lines):
+    """`(mask, unclosed_fence, unclosed_comment)` in ONE traversal -- the
+    primitive `fence_mask` wraps.
+
+    COMMENT-AWARE, in the same ORDER `validate.py:_scan_markdown` uses: a line
+    is tested for fence state FIRST (inside a fence a `<!--` is literal text),
+    and only outside a fence can it open an HTML block comment. Without this a
+    ``` written at the start of a line INSIDE a `<!-- ... -->` block opened a
+    fence that never closed, which -- now that the producer refuses an unclosed
+    fence -- turned a perfectly legal comment into a hard build failure
+    (Codex adversarial, section 36, round 7). The validator already consumed
+    comments correctly, so the two halves of the tool disagreed again, which is
+    the exact drift this shared primitive exists to remove.
+
+    Comment lines are MASKED along with fenced ones: a `## N.` or `- [x]` inside
+    a comment is not structure either, and both callers want the same answer.
+
+    AN UNTERMINATED COMMENT IS REPORTED SEPARATELY, and reporting it at all is
+    the point. Masking to EOF hides real structure exactly as an unclosed fence
+    does, so a `<!--` with no `-->` produced a node with every field empty and NO
+    error -- the same silent erasure this scan was hardened to prevent, one
+    construct over (Codex adversarial, section 36, round 8). It is a DISTINCT
+    flag rather than folded into `unclosed_fence`, because the producer's message
+    tells an author which delimiter to close and naming the wrong one sends them
+    to the wrong line.
+
+    FUSED ON PURPOSE. `fence_mask` already calls `fence_step` for every line, so
+    recovering the terminal state with a second walk doubles the only real cost
+    in this module: measured across the 232-file builder corpus, fusing them cut
+    median node assembly from 291.1ms to 271.6ms (Codex perf, section 36, round
+    2). Callers that need both -- the producer, which must REFUSE a document
+    ending inside a fence -- take this; callers that need only the mask take the
+    wrapper below.
+    """
+    out = []
+    state = None
+    in_comment = False
+    for line in lines:
+        if in_comment:
+            # A block comment consumes THROUGH the line carrying `-->`;
+            # trailing text on that line is still part of the block.
+            if "-->" in line:
+                in_comment = False
+            out.append(True)
+            continue
+        nxt = fence_step(state, line)
+        # Masked when we were inside before the line OR are inside after it --
+        # which covers the content and both delimiters in one expression.
+        fenced = state is not None or nxt is not None
+        state = nxt
+        if fenced:
+            out.append(True)
+            continue
+        if HTML_BLOCK_COMMENT_RE.match(line):
+            # A line STARTING with `<!--` is an HTML block: the whole line is
+            # hidden, including anything after a `-->` on it.
+            if "-->" not in line:
+                in_comment = True
+            out.append(True)
+            continue
+        out.append(False)
+    return out, state is not None, in_comment
+
+
+def fence_mask(lines) -> list:
+    """One mask per document: `True` where a line is fenced-code content OR is
+    itself a fence delimiter, `False` where it is ordinary markdown structure.
+
+    ONE MASK PER DOCUMENT, not one tracker per parser. Every caller that asks
+    "is this `## N.` / `- [x]` / `|` row real?" answers it from this, because
+    the alternative -- each parser carrying its own fence state -- is exactly
+    how the producer and the validator came to disagree about what a heading
+    is (section 36). A file is scanned once and the answer is indexed.
+
+    THE DELIMITER LINE IS MASKED TOO, deliberately. No caller takes a fence
+    delimiter as semantic input (a delimiter can never be a heading, a
+    checklist item or a table row), so masking it costs nothing, and it makes
+    the mask a correct VERBATIM-REGION marker for the tools that rewrite files
+    rather than merely read them.
+
+    FAIL-CLOSED ON AN UNTERMINATED FENCE: everything from an unclosed opener to
+    EOF is masked, matching `checklist_item_leads`. A malformed file therefore
+    yields MISSING structure -- visible as an absent section or a refused
+    repair -- rather than confident wrong structure. Measured 2026-08-10: one
+    corpus file was unbalanced this way, and it was found BY this rule.
+
+    KNOWN LIMIT, owned by section 39: `FENCE_RE` applies CommonMark's 0-3-space
+    rule to the PHYSICAL line, but CommonMark applies it after stripping the
+    enclosing list-container prefix. A fence indented five spaces under
+    `100. docs` is therefore not recognised at all, so neither this mask nor the
+    producer's unclosed-fence refusal covers it.
+    """
+    return fence_scan(lines)[0]
+
 
 # Where a checklist item stops DESCRIBING itself and starts REFERRING elsewhere.
 # Both spellings of the arrow are live in the corpus -- `todo/02-kernel-core/
@@ -612,7 +715,7 @@ def checklist_item_leads(text: str) -> dict:
         # delimiters; checking `was_open or fence` covers the opener line too.
         if was_open or fence is not None:
             continue
-        if _HTML_COMMENT_OPEN_RE.match(line):
+        if HTML_BLOCK_COMMENT_RE.match(line):
             in_comment = "-->" not in line
             continue
         if not CHECKLIST_ITEM_RE.match(line):

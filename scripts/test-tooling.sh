@@ -669,6 +669,24 @@ else
     t_fail "scripts/todo-graph/tests/test_build.sh not found or not executable"
 fi
 
+# Markdown table formatter (scripts/tests/test_format_md_tables.py). WIRED
+# HERE 2026-08-10, having existed unwired since it was written: nothing ran it,
+# so a stale assertion sat green-by-absence while the tool's prose-table rule
+# moved from per-cell to per-column underneath it. An unwired test is not a
+# test. It matters more than most because this tool MUTATES files and lint
+# Check 17 shells out to its --check to decide whether to block a commit.
+FMT_TABLE_TEST="$REPO_ROOT/scripts/tests/test_format_md_tables.py"
+if [ -f "$FMT_TABLE_TEST" ]; then
+    FMT_OUT=$(python3 "$FMT_TABLE_TEST" 2>&1)
+    if [ "$?" = "0" ]; then
+        t_pass "scripts/tests/test_format_md_tables.py PASS ($(printf '%s\n' "$FMT_OUT" | tail -1))"
+    else
+        t_fail "scripts/tests/test_format_md_tables.py FAIL ($(printf '%s\n' "$FMT_OUT" | tail -2 | tr '\n' ' '))"
+    fi
+else
+    t_fail "scripts/tests/test_format_md_tables.py not found"
+fi
+
 # Query-surface output bounds (test_query_bounds.sh). Separate suite from
 # test_build.sh: that one owns subcommand SEMANTICS, this one owns what
 # comes OUT of them (default limit, fail-closed ceiling, envelope fields,

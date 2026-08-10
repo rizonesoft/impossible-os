@@ -211,7 +211,7 @@ outsiders can track progress without reading 100+ TODO files.
 **Source:** `README.md` (overhaul existing file)
 
 - [ ] **README structure**:
-  ```markdown
+  ````markdown
   # Impossible OS
 
   > A production-quality 64-bit OS built from scratch.
@@ -231,12 +231,12 @@ outsiders can track progress without reading 100+ TODO files.
 
   ## Download
 
-| Format                  | Link                  | SHA-256            |
-| ----------------------- | --------------------- | ------------------ |
-| Disk image (`.img.zst`) | [v{latest}](releases) | [sha256](releases) |
-| Bootable ISO            | [v{latest}](releases) | [sha256](releases) |
-| VirtualBox OVA          | [v{latest}](releases) | [sha256](releases) |
-| SDK                     | [v{latest}](releases) | [sha256](releases) |
+  | Format                  | Link                  | SHA-256            |
+  | ----------------------- | --------------------- | ------------------ |
+  | Disk image (`.img.zst`) | [v{latest}](releases) | [sha256](releases) |
+  | Bootable ISO            | [v{latest}](releases) | [sha256](releases) |
+  | VirtualBox OVA          | [v{latest}](releases) | [sha256](releases) |
+  | SDK                     | [v{latest}](releases) | [sha256](releases) |
 
   ## Feature Status
   <!-- feature status table, kept in sync with README -->
@@ -253,7 +253,7 @@ outsiders can track progress without reading 100+ TODO files.
   ## License
 
   GPL-3.0 -- Copyright © 2026 [Rizonetech (Pty) Ltd](https://rizonetech.com)
-  ```
+  ````
 - [ ] **Desktop screenshot**: capture QEMU framebuffer at `1280×720` showing desktop with taskbar, wallpaper, and at least one open window; save as `docs/screenshots/desktop-v{version}.png`; script `scripts/take-screenshot.sh` (QEMU `-screenshot` option on a specific frame or `sendkey` sequence to open a window)
 - [ ] **CI status badge**: `[![CI](https://github.com/rizonetech/impossible-os/actions/workflows/build.yml/badge.svg)](...)` -- auto-shows green/red from GHA
 - [ ] **Tooling-command sync**: README quick start and test guidance must reuse the canonical commands from `D00 T01 §1-§7`; no stale `make test`, `run-tests.sh`, or obsolete ISO-only launcher wording
