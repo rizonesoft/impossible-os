@@ -360,6 +360,12 @@ STAMP_HEADER_RE = re.compile(
 # surface, and all that remains here, is that the arrow must open the bullet.
 INPUTS_XREF_LEAD_RE = re.compile(r"^-\s+->\s+XREF:\s+")
 
+# A table cell that closes its code span and then carries the sentence's own
+# punctuation. Anchored at the end and limited to ONE character so it can only
+# ever describe that shape; the cell-level unwrap runs after it, and by then the
+# distinction is unrecoverable (see the call site in `_walk_inputs_xrefs`).
+_CELL_SPAN_TAIL_RE = re.compile(r"(`)[.:]$")
+
 
 def _inputs_target(token: str) -> str:
     """Normalise one Inputs target token to a DESTINATION.
@@ -1550,6 +1556,16 @@ def _walk_inputs_xrefs(lines, masked) -> list:
             # section 37, while the stamp surface keeps whatever the token
             # carries; normalising in the parser would silently change the
             # stamp subtree's values to fix a cosmetic difference in this one.
+            #
+            # THE SECTION FIELD WENT THE OTHER WAY, DELIBERATELY (section 40).
+            # That is not an inconsistency: the two fields differ in whether the
+            # surfaces disagreed. The stamp subtree's TARGETS are correct as they
+            # stand, so a parser-side normalisation there would be a change with
+            # no defect behind it -- whereas the closing backtick landed in the
+            # SECTION value on both subtrees alike (508 Inputs rows and 132 stamp
+            # rows), so leaving that one here would have fixed one surface and
+            # left its sibling wrong. Where a defect is shared, the rule belongs
+            # to the parser; where it is not, the caller keeps its own policy.
             out.append({"target_path": _inputs_target(m.target),
                         "target_section": m.section})
             continue
@@ -1567,11 +1583,29 @@ def _walk_inputs_xrefs(lines, masked) -> list:
                 # cell wraps the WHOLE `path §N` construct in one span, so the
                 # unwrap has to happen here or the section marker keeps the
                 # closing backtick -- measured: dropping this step outright
-                # turned 8 live rows' `§1` into `` §1` ``. But it used to be a
+                # turned 8 live rows' `§1` into `` §1` ``. THAT HALF OF THE
+                # RATIONALE IS NOW THE PARSER'S (section 40): the marker stops at
+                # the delimiter wherever it is parsed, which is what made the
+                # BULLET surface agree with this one. The unwrap stays for the
+                # TARGET and for the whole-cell anchor below, so this branch is
+                # unchanged -- but a reader comparing the two surfaces should
+                # know the section marker no longer depends on it. It used to be a
                 # two-ended `strip("`")`, which disagreed with the token arm on
                 # a doubled delimiter and let the same token emit an
                 # unresolvable value as a bullet and a clean edge as a table row
                 # (Codex consistency, [medium]). One rule, both places.
+                # PROSE PUNCTUATION AFTER THE CLOSED SPAN COMES OFF FIRST, and
+                # it has to happen HERE because the unwrap below is what
+                # destroys the evidence: once the delimiters are gone the parser
+                # sees `path <marker>.` and cannot tell the author's full stop
+                # from marker content, so the same cell that a bullet reports as
+                # a bare marker came back with the period attached -- the exact
+                # four-surface disagreement this section exists to remove (Codex
+                # adversarial, [medium]). ONE character, and only against a
+                # closing backtick: a cell whose span is followed by anything
+                # wordier is still malformed and must still emit nothing, which
+                # is what the whole-cell anchor below decides.
+                head_clean = _CELL_SPAN_TAIL_RE.sub(r"\1", head_clean)
                 head_clean = _cell_code_span(head_clean)
                 # THE TABLE FORM USES THE SHARED GRAMMAR TOO. It parsed the
                 # target with a bare `(\S+?)`, so an Inputs row written as

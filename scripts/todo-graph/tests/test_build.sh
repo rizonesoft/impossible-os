@@ -18121,6 +18121,412 @@ else
 fi
 
 # ----------------------------------------------------------------------
+# Test 40: THE SECTION MARKER STOPS AT THE CODE-SPAN DELIMITER.
+#
+# The defect: `_XREF_SECTION_RE` captured a non-space run, so a span wrapping
+# the whole path-and-marker construct put its closing backtick INSIDE the
+# value. The table surface unwraps its cell before parsing and the bullet
+# surface does not, so one reference had two spellings -- 508 of 945 live
+# Inputs rows and 132 of 1017 stamp rows.
+#
+# EVERY SUB-TEST CARRIES ITS CONTROL, and the controls are the load-bearing
+# half: each re-installs the old pattern and asserts the fixture FAILS under
+# it. Without that, 40a is satisfied by a parser that emits a constant and 40d
+# by a corpus that happens to contain no spans.
+# ----------------------------------------------------------------------
+
+# Sub-test 40a: SURFACE PARITY. Wherever the span sits -- around the path,
+# around the whole construct, or absent -- the bullet and table forms must
+# agree on target AND section. `span-around-both` is the shape that split.
+T40A="$(python3 - <<'PY'
+import re, sys
+sys.path.insert(0, "scripts/todo-graph")
+import build as B, cache_schema as cs
+bad = []
+
+SHAPES = {
+    "span-around-path": "`TODO-02-b.md` §7",
+    "span-around-both": "`TODO-02-b.md §7`",
+    "no-span":          "TODO-02-b.md §7",
+}
+WANT = ("TODO-02-b.md", "§7")
+
+def surfaces(ref):
+    bullet = B.extract_inputs_xrefs("## Inputs\n\n- -> XREF: %s\n" % ref)
+    table = B.extract_inputs_xrefs("## Inputs\n\n| -> XREF: %s | x |\n" % ref)
+    pair = lambda rows: [(r["target_path"], r["target_section"]) for r in rows]
+    return pair(bullet), pair(table)
+
+for name, ref in SHAPES.items():
+    bullet, table = surfaces(ref)
+    if bullet != [WANT]:
+        bad.append("%s bullet: %r (want %r)" % (name, bullet, [WANT]))
+    if table != [WANT]:
+        bad.append("%s table: %r (want %r)" % (name, table, [WANT]))
+    if bullet != table:
+        bad.append("%s: surfaces disagree %r vs %r" % (name, bullet, table))
+
+# CONTROL. Under the non-space run the bullet form keeps the delimiter and the
+# table form does not -- the exact split this section removed. A fixture that
+# cannot see that difference is not testing the fix. BOTH names are restored to
+# the old rule: the parser picks between them on the target's backtick parity,
+# so patching one leaves the spanned path -- the path that split -- untouched,
+# and the mutation would silently stop reaching the code under test.
+saved = (cs._XREF_SECTION_RE, cs._XREF_SECTION_IN_SPAN_RE)
+cs._XREF_SECTION_RE = cs._XREF_SECTION_IN_SPAN_RE = re.compile(r"[`\s]*(§\S+)")
+try:
+    bullet, table = surfaces(SHAPES["span-around-both"])
+    if bullet != [("TODO-02-b.md", "§7`")]:
+        bad.append("CONTROL did not reproduce the bullet split: %r" % (bullet,))
+    if bullet == table:
+        bad.append("CONTROL: surfaces agreed under the old pattern")
+finally:
+    cs._XREF_SECTION_RE, cs._XREF_SECTION_IN_SPAN_RE = saved
+print("OK" if not bad else "; ".join(bad))
+PY
+)"
+if [ "$T40A" = "OK" ]; then
+    t_pass "s40a: both Inputs surfaces emit the same clean section marker"
+else
+    t_fail "s40a: $T40A"
+fi
+
+# Sub-test 40b: THE DELIMITER IS CONSUMED, NOT MERELY EXCLUDED. The item
+# parenthetical is matched at the position the section match ended, so a
+# capture that stops ON the backtick leaves that position there and the clause
+# loses its item name -- 160 live clauses, found by the pre-edit design review
+# [medium] against the first version of this fix. Pin item AND clause end.
+T40B="$(python3 - <<'PY'
+import re, sys
+sys.path.insert(0, "scripts/todo-graph")
+import build as B, cache_schema as cs
+bad = []
+
+LINE = '> **Deferred:** [M] x -> XREF: `TODO-01-a.md §3` (item: "Do the thing")'
+def parse():
+    return cs.parse_xref_clause(LINE, cs.XREF_LEAD_RE.search(LINE).end())
+
+c = parse()
+if c.section != "§3":
+    bad.append("section %r (want the bare marker)" % (c.section,))
+if c.item_name != "Do the thing":
+    bad.append("item_name %r (want 'Do the thing')" % (c.item_name,))
+if c.end != len(LINE):
+    bad.append("clause.end %d does not cover the parenthetical (%d)" % (c.end, len(LINE)))
+rows = B._walk_stamps_xrefs([LINE], [False])
+if [(r["target_section"], r.get("item_name")) for r in rows] != [("§3", "Do the thing")]:
+    bad.append("stamp row: %r" % (rows,))
+
+# CONTROL A: stop the clause where the CAPTURE ended instead of where the span
+# does, and the item is lost. This mutates `_masked_run_end` rather than the
+# regex ON PURPOSE: the regression the design review caught belongs to whatever
+# advances past the delimiter, and after round 3 that is the mask walk, not the
+# pattern. A control aimed at the old location kept passing while proving
+# nothing, which is the failure mode controls exist to have.
+# CONTROL B: the old single rule keeps the item and dirties the section. The
+# shipped code is the only one of the three that gets both, which is why
+# neither control alone would have caught the regression.
+saved_end = cs._span_end_after
+saved_res = (cs._XREF_SECTION_RE, cs._XREF_SECTION_IN_SPAN_RE)
+try:
+    cs._span_end_after = lambda masked, start, limit: start
+    naive = parse()
+    if naive.item_name is not None:
+        bad.append("CONTROL A kept the item name; the regression is unreachable")
+    cs._span_end_after = saved_end
+    cs._XREF_SECTION_RE = cs._XREF_SECTION_IN_SPAN_RE = re.compile(r"[`\s]*(§\S+)")
+    old = parse()
+    if old.item_name != "Do the thing" or "`" not in (old.section or ""):
+        bad.append("CONTROL B: old pattern behaved unexpectedly: %r" % (old,))
+finally:
+    cs._span_end_after = saved_end
+    cs._XREF_SECTION_RE, cs._XREF_SECTION_IN_SPAN_RE = saved_res
+print("OK" if not bad else "; ".join(bad))
+PY
+)"
+if [ "$T40B" = "OK" ]; then
+    t_pass "s40b: the delimiter is consumed, so the item parenthetical still parses"
+else
+    t_fail "s40b: $T40B"
+fi
+
+# Sub-test 40c: THE CORPUS VOCABULARY IS NOT A GRAMMAR. A marker grammar of
+# digits with comma/dash joins was designed and rejected because it truncates
+# live values: ranges written with a unicode dash cut at the first number,
+# silently narrowing the reference. What a marker says INTERNALLY is corpus
+# vocabulary this parser does not adjudicate; only the enclosing delimiter is
+# its business. These values must pass through byte-for-byte. The dash is built
+# from its code point so this source file carries no such glyph of its own.
+T40C="$(python3 - <<'PY'
+import sys
+sys.path.insert(0, "scripts/todo-graph")
+import cache_schema as cs
+bad = []
+S = "§"
+DASH = chr(0x2013)
+PASSTHROUGH = [
+    S + "10" + DASH + "13",   # range, unicode dash (8 live values)
+    S + "1-" + S + "5",       # range, ascii
+    S + "3," + S + "4",       # comma join
+    S + "5,",                 # trailing separator: pre-existing, NOT this fix
+    S + "*",                  # not a number at all
+]
+for want in PASSTHROUGH:
+    line = "> **Deferred:** [M] x -> XREF: TODO-01-a.md " + want
+    got = cs.parse_xref_clause(line, cs.XREF_LEAD_RE.search(line).end()).section
+    if got != want:
+        bad.append("%r came back as %r" % (want, got))
+print("OK" if not bad else "; ".join(bad))
+PY
+)"
+if [ "$T40C" = "OK" ]; then
+    t_pass "s40c: marker values are passed through, never re-grammared"
+else
+    t_fail "s40c: $T40C"
+fi
+
+# Sub-test 40d: THE INVARIANT OVER THE LIVE CORPUS, which is the differential
+# in permanent form. Counting rows would go stale the day a TODO is written;
+# the property does not: no emitted marker may end in a code-span delimiter.
+# The control re-installs the old pattern and requires the corpus to produce
+# some, so a corpus that stopped containing spans cannot pass this vacuously.
+T40D="$(python3 - <<'PY'
+import re, sys, pathlib
+sys.path.insert(0, "scripts/todo-graph")
+import build as B, cache_schema as cs
+bad = []
+DIRTY = re.compile(r"[`]+[.:]?$")
+
+def sections():
+    out = []
+    for p in sorted(pathlib.Path("todo").rglob("*.md")):
+        body = p.read_text(encoding="utf-8", errors="replace")
+        for r in B.extract_inputs_xrefs(body) + B.extract_stamps_xrefs(body):
+            s = r.get("target_section")
+            if s:
+                out.append((str(p), s))
+    return out
+
+live = sections()
+if len(live) < 500:
+    bad.append("corpus walk found only %d markers; the fixture is not exercising it" % len(live))
+dirty = [x for x in live if DIRTY.search(x[1])]
+if dirty:
+    bad.append("%d markers end in a delimiter, e.g. %r" % (len(dirty), dirty[:3]))
+
+saved = (cs._XREF_SECTION_RE, cs._XREF_SECTION_IN_SPAN_RE)
+cs._XREF_SECTION_RE = cs._XREF_SECTION_IN_SPAN_RE = re.compile(r"[`\s]*(§\S+)")
+try:
+    control = [x for x in sections() if DIRTY.search(x[1])]
+    if not control:
+        bad.append("CONTROL produced no delimiter-bearing marker; the corpus "
+                   "no longer contains the shape, so this test proves nothing")
+finally:
+    cs._XREF_SECTION_RE, cs._XREF_SECTION_IN_SPAN_RE = saved
+print("OK" if not bad else "; ".join(bad))
+PY
+)"
+if [ "$T40D" = "OK" ]; then
+    t_pass "s40d: no live corpus marker carries a code-span delimiter"
+else
+    t_fail "s40d: $T40D"
+fi
+
+# Sub-test 40e: A BACKTICK THAT OPENS A SPAN IS NOT A CLOSER. The first version
+# of this fix consumed the delimiter context-free, which ended the clause early
+# enough for `iter_xref_clauses` to start a SECOND clause inside the resulting
+# inline-code token -- publishing a quoted filename as a real edge and moving
+# the item name onto it (Codex adversarial, [high]). Outside a span the old
+# non-space run is the correct read, and this pins both directions.
+T40E="$(python3 - <<'PY'
+import re, sys
+sys.path.insert(0, "scripts/todo-graph")
+import build as B, cache_schema as cs
+bad = []
+BT = "`"
+
+# Marker in PROSE, immediately followed by a span that quotes another lead.
+LINE = ('> **Deferred:** [M] x -> XREF: TODO-01-a.md §3' + BT
+        + '->XREF:TODO-02-b.md §4' + BT + ' (item: "Do")')
+clauses = list(cs.iter_xref_clauses(LINE))
+if len(clauses) != 1:
+    bad.append("prose marker started %d clauses (want 1)" % len(clauses))
+edges = [r["target_path"] for r in B._walk_stamps_xrefs([LINE], [False])]
+if edges != ["TODO-01-a.md"]:
+    bad.append("fabricated edge: %r" % (edges,))
+
+# CONTROL: the context-free suffix MUST fabricate it, or this fixture is inert.
+saved_plain, saved_span = cs._XREF_SECTION_RE, cs._XREF_SECTION_IN_SPAN_RE
+try:
+    cs._XREF_SECTION_RE = cs._XREF_SECTION_IN_SPAN_RE
+    ctl = [r["target_path"] for r in B._walk_stamps_xrefs([LINE], [False])]
+    if ctl == ["TODO-01-a.md"]:
+        bad.append("CONTROL did not fabricate; the regression is unreachable")
+finally:
+    cs._XREF_SECTION_RE, cs._XREF_SECTION_IN_SPAN_RE = saved_plain, saved_span
+
+# The span-around-path form closes INSIDE the target token (even parity), so its
+# marker sits in prose and must not lose anything to a delimiter rule.
+rows = B.extract_inputs_xrefs("## Inputs\n\n- -> XREF: " + BT + "TODO-02-b.md" + BT + " §7\n")
+if [(r["target_path"], r["target_section"]) for r in rows] != [("TODO-02-b.md", "§7")]:
+    bad.append("span-around-path: %r" % (rows,))
+print("OK" if not bad else "; ".join(bad))
+PY
+)"
+if [ "$T40E" = "OK" ]; then
+    t_pass "s40e: an opening backtick is never consumed as a closing delimiter"
+else
+    t_fail "s40e: $T40E"
+fi
+
+# Sub-test 40f: THE TABLE CELL KEEPS ITS PUNCTUATION BOUNDARY. The cell unwrap
+# removes the delimiters before the shared parser sees them, so a full stop
+# after the span was indistinguishable from marker content and the same
+# reference read one way as a bullet and another as a table row (Codex
+# adversarial, [medium]). Parity is asserted WITH the punctuation, and the
+# malformed-cell contract is asserted beside it so the repair cannot have been
+# bought by loosening the whole-cell anchor.
+T40F="$(python3 - <<'PY'
+import sys
+sys.path.insert(0, "scripts/todo-graph")
+import build as B
+bad = []
+BT = "`"
+pair = lambda rows: [(r["target_path"], r["target_section"]) for r in rows]
+for tail in ("", ".", ":"):
+    ref = BT + "TODO-02-b.md §7" + BT + tail
+    bullet = pair(B.extract_inputs_xrefs("## Inputs\n\n- -> XREF: %s\n" % ref))
+    table = pair(B.extract_inputs_xrefs("## Inputs\n\n| -> XREF: %s | x |\n" % ref))
+    if bullet != [("TODO-02-b.md", "§7")] or table != bullet:
+        bad.append("tail %r: bullet=%r table=%r" % (tail, bullet, table))
+# A wordier trailing remainder is still malformed and still emits nothing.
+if B.extract_inputs_xrefs("## Inputs\n\n| -> XREF: " + BT + "TODO-02-b.md" + BT + " trailing prose | x |\n"):
+    bad.append("trailing-prose cell emitted an edge")
+# And the punctuation strip is ONE character against a CLOSER, not a general trim.
+rows = B.extract_inputs_xrefs("## Inputs\n\n| -> XREF: TODO-02-b.md §7. | x |\n")
+if [r["target_section"] for r in rows] != ["§7."]:
+    bad.append("unspanned cell was trimmed anyway: %r" % (rows,))
+print("OK" if not bad else "; ".join(bad))
+PY
+)"
+if [ "$T40F" = "OK" ]; then
+    t_pass "s40f: bullet and table agree even when prose punctuation follows the span"
+else
+    t_fail "s40f: $T40F"
+fi
+
+# Sub-test 40g: THE VERSION BUMP HAS A REGRESSION OF ITS OWN. Sub-test 25c is
+# version-AGNOSTIC by construction (it writes `CACHE_FORMAT_VERSION - 1`), which
+# proves the refusal MECHANISM and cannot notice a reverted constant: revert 5
+# to 4 and it simply writes 3 and stays green (Codex test-coverage, [medium]).
+# This one pins the LITERAL historical version instead, so reverting the bump
+# makes a v4 artifact current, the refusal stops firing, and this fails.
+S40G="$TMP_DIR/s40g"
+s23_tree "$S40G"
+timeout 60 python3 "$BUILD_PY" --quiet --root "$S40G/todo" \
+    --output "$S40G/build/todo-cache.json" --repo-root "$S40G" >/dev/null 2>&1
+cp "$S40G/build/todo-cache.json" "$S40G/old-baseline.json"
+bind_baseline "$S40G/old-baseline.json"
+python3 - "$S40G/old-baseline.json" "$REPO_ROOT/scripts/todo-graph" <<'S40GEOF'
+import hashlib, json, pathlib, sys
+sys.path.insert(0, sys.argv[2])
+import cache_schema as cs
+cache = pathlib.Path(sys.argv[1])
+side = cs.sidecar_path(cache, hashlib.sha256(cache.read_bytes()).hexdigest())
+rec = json.loads(side.read_text())
+# LITERAL 4: the contract in force before the section-marker meaning changed.
+rec[cs.CACHE_FORMAT_VERSION_KEY] = 4
+side.write_text(json.dumps(rec, indent=2, sort_keys=True) + "\n")
+S40GEOF
+S40G_OUT=$(REPO_ROOT="$REPO_ROOT" timeout 60 python3 "$VALIDATE_PY" \
+    --cache "$S40G/build/todo-cache.json" --repo-root "$S40G" --quiet \
+    --diff "$S40G/old-baseline.json" 2>&1); S40G_RC=$?
+if [ "$S40G_RC" = "2" ] && echo "$S40G_OUT" | grep -q "LEGACY_FORMAT"; then
+    t_pass "s40g: a literal-v4 baseline is refused, so reverting the bump fails a test"
+else
+    t_fail "s40g: literal-v4 baseline rc=$S40G_RC out=$S40G_OUT"
+fi
+
+# Sub-test 40h: THE SPAN QUESTION IS THE SEGMENTER'S, NOT ARITHMETIC. Two
+# hand-rolled proxies for "is a span open at this marker" shipped into review
+# and both fabricated an edge: consuming the delimiter unconditionally, then
+# counting the target token's backticks -- which an ESCAPED backtick in a link
+# label defeats, since it is not an opener but still counts (Codex adversarial
+# rounds 1 and 2, both [high]). The shapes below are the ones each proxy got
+# wrong, plus the run-length and nesting cases the canonical mask already
+# handles. Every one must yield exactly ONE edge with the item name attached to
+# the intended target.
+T40H="$(python3 - <<'PY'
+import sys
+sys.path.insert(0, "scripts/todo-graph")
+import build as B, cache_schema as cs
+bad = []
+BT = "`"
+STAMP = '> **Deferred:** [M] x -> XREF: '
+
+# `keeps_item` is FALSE for the two prose shapes on purpose. There the marker
+# is not in a span, so the non-space run swallows the text up to the following
+# span and the parenthetical is out of reach -- which is precisely what the
+# pre-change producer did with them, verified by replay. Demanding the item
+# there would be demanding an IMPROVEMENT this section did not make, and the
+# defect under test is the fabricated SECOND edge that steals it.
+CASES = {
+    # An escaped backtick in a link label: not an opener, but it counts.
+    "escaped-label": ("[literal \\" + BT + "](TODO-01-a.md) §3" + BT
+                      + "->XREF:TODO-02-b.md §4" + BT + ' (item: "Do")',
+                      "[literal \\" + BT + "](TODO-01-a.md)", False),
+    # A bare marker followed by a span that quotes another lead.
+    "prose-then-span": ("TODO-01-a.md §3" + BT + "->XREF:TODO-02-b.md §4" + BT
+                        + ' (item: "Do")', "TODO-01-a.md", False),
+    # A genuine whole-construct span: the delimiter rule SHOULD apply.
+    "whole-span": (BT + "TODO-01-a.md §3" + BT + ' (item: "Do")',
+                   BT + "TODO-01-a.md", True),
+    # A doubled delimiter run closes only on a run of the same length.
+    "doubled": (BT + BT + "TODO-01-a.md §3" + BT + BT + ' (item: "Do")',
+                BT + BT + "TODO-01-a.md", True),
+    # A SHORTER run INSIDE that span is literal content, not the closer. The
+    # backtick-run version of this rule stopped there and published the rest of
+    # the span as a second edge (Codex adversarial round 3, [high]).
+    "doubled-inner-1": (BT * 2 + "TODO-01-a.md §3" + BT + "-> XREF: TODO-02-b.md §4"
+                        + BT * 2 + ' (item: "Do")', BT * 2 + "TODO-01-a.md", True),
+    # And one length deeper, so the fixture cannot pass by special-casing two.
+    "triple-inner-2": (BT * 3 + "TODO-01-a.md §3" + BT * 2 + "-> XREF: TODO-02-b.md §4"
+                       + BT * 3 + ' (item: "Do")', BT * 3 + "TODO-01-a.md", True),
+    # A SECOND span one space away is not a continuation of the first. The
+    # walk-while-it-looks-masked version could not tell that gap from a space
+    # inside the span, ran through it, and attached this parenthetical across an
+    # intervening span (Codex adversarial round 4, [medium]).
+    "adjacent-spans": (BT + "TODO-01-a.md §3" + BT + " " + BT + "context" + BT
+                       + ' (item: "Do")', BT + "TODO-01-a.md", False),
+}
+for name, (body, want_target, keeps_item) in CASES.items():
+    line = STAMP + body
+    n = len(list(cs.iter_xref_clauses(line)))
+    if n != 1:
+        bad.append("%s: %d clauses (want 1)" % (name, n))
+    rows = B._walk_stamps_xrefs([line], [False])
+    got = [(r["target_path"], r.get("item_name")) for r in rows]
+    want = [(want_target, "Do" if keeps_item else None)]
+    if got != want:
+        bad.append("%s: %r (want %r)" % (name, got, want))
+
+# The spanned shapes must ALSO come back with a clean marker -- one edge is
+# only half the contract, and asserting it alone would pass on the old rule.
+for name in ("whole-span", "doubled", "doubled-inner-1", "triple-inner-2",
+             "adjacent-spans"):
+    rows = B._walk_stamps_xrefs([STAMP + CASES[name][0]], [False])
+    if [r["target_section"] for r in rows] != ["§3"]:
+        bad.append("%s: marker %r" % (name, [r.get("target_section") for r in rows]))
+print("OK" if not bad else "; ".join(bad))
+PY
+)"
+if [ "$T40H" = "OK" ]; then
+    t_pass "s40h: an escaped, doubled or nested delimiter is judged by the canonical mask"
+else
+    t_fail "s40h: $T40H"
+fi
+
+# ----------------------------------------------------------------------
 # Summary
 # ----------------------------------------------------------------------
 TOTAL=$((PASS + FAIL))
