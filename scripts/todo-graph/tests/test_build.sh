@@ -18229,7 +18229,7 @@ if [(r["target_section"], r.get("item_name")) for r in rows] != [("§3", "Do the
 saved_end = cs._span_end_after
 saved_res = (cs._XREF_SECTION_RE, cs._XREF_SECTION_IN_SPAN_RE)
 try:
-    cs._span_end_after = lambda masked, start, limit: start
+    cs._span_end_after = lambda text, masked, start, limit: start
     naive = parse()
     if naive.item_name is not None:
         bad.append("CONTROL A kept the item name; the regression is unreachable")
@@ -18524,6 +18524,97 @@ if [ "$T40H" = "OK" ]; then
     t_pass "s40h: an escaped, doubled or nested delimiter is judged by the canonical mask"
 else
     t_fail "s40h: $T40H"
+fi
+
+# Sub-test 40i: PROSE PUNCTUATION AFTER THE SPAN STILL REACHES THE ITEM. The
+# item parenthetical is matched at whatever offset the span walk returns, so
+# stopping dead on the closing delimiter left a `.` or `:` in the way and the
+# clause lost its item name -- a REGRESSION against the pre-change parser, which
+# swallowed that character in its non-space run (Codex adversarial, [medium]).
+# Both the marker and the item are asserted: fixing one by breaking the other is
+# exactly the trade this section kept almost making.
+T40I="$(python3 - <<'PY'
+import sys
+sys.path.insert(0, "scripts/todo-graph")
+import build as B, cache_schema as cs
+bad = []
+BT = "`"
+for tail in (".", ":"):
+    line = ('> **Deferred:** [M] x -> XREF: ' + BT + "TODO-01-a.md §3" + BT + tail
+            + ' (item: "Do the thing")')
+    c = cs.parse_xref_clause(line, cs.XREF_LEAD_RE.search(line).end())
+    if (c.section, c.item_name) != ("§3", "Do the thing"):
+        bad.append("tail %r: section=%r item=%r" % (tail, c.section, c.item_name))
+    rows = B._walk_stamps_xrefs([line], [False])
+    if [(r["target_section"], r.get("item_name")) for r in rows] != [("§3", "Do the thing")]:
+        bad.append("tail %r stamp row: %r" % (tail, rows))
+# ONE character, and only these two: a wordier remainder still ends the clause,
+# so the allowance cannot grow into "skip whatever follows".
+line = '> **Deferred:** [M] x -> XREF: ' + BT + "TODO-01-a.md §3" + BT + '?! (item: "Do")'
+if cs.parse_xref_clause(line, cs.XREF_LEAD_RE.search(line).end()).item_name is not None:
+    bad.append("a two-character tail was skipped as well")
+print("OK" if not bad else "; ".join(bad))
+PY
+)"
+if [ "$T40I" = "OK" ]; then
+    t_pass "s40i: one prose character after the span does not detach the item name"
+else
+    t_fail "s40i: $T40I"
+fi
+
+# Sub-test 40j: THE MASK IS BOUNDED BY WHAT THE LINE ACTUALLY ASKS. Masking each
+# whole line put a constant-factor cliff on input `_MAX_TODO_BYTES` explicitly
+# permits: a stamp with one early XREF and a dense backtick tail went from
+# 0.0002s to 0.94s at 1 MiB and 0.0008s to 3.88s at 4 MiB, against a 2s
+# whole-build target (Codex perf, [high]). The scan now stops once nothing
+# pending can still mask what the caller asks about.
+#
+# THE ASSERTION COMPARES BOUNDED AGAINST UNBOUNDED ON THE SAME INPUT, not one
+# size against another and not a wall-clock budget. A cross-size ratio was tried
+# FIRST and is wrong: scanning for leads and for the last marker is linear in
+# the line either way, so both the fixed and the broken version quadruple when
+# the input quadruples (measured 7.4x vs a 4x expectation, on a fix that was
+# working). What the fix removed is a ~1000x CONSTANT, which only a same-input
+# comparison can see. Timing is monotonic per section 34.
+T40J="$(python3 - <<'PY'
+import sys, time
+sys.path.insert(0, "scripts/todo-graph")
+import cache_schema as cs
+BT = "`"
+bad = []
+
+tail = "x " + (BT + "y ") * ((1024 * 1024) // 4)
+line = "> **Deferred:** [M] x -> XREF: TODO-01-a.md §3 " + tail
+marker = line.rfind("§")
+
+def clocked(fn):
+    t = time.monotonic()
+    fn()
+    return time.monotonic() - t
+
+bounded = clocked(lambda: cs._mask_marking_span_ends(line, marker))
+unbounded = clocked(lambda: cs._mask_marking_span_ends(line))
+if len(list(cs.iter_xref_clauses(line))) != 1:
+    bad.append("clause count moved on the large line")
+if bounded <= 0:
+    bad.append("bounded scan timed at zero; the measurement is unusable")
+elif unbounded / bounded < 20:
+    bad.append("the bound is not biting: unbounded is only %.1fx the bounded scan"
+               % (unbounded / bounded))
+# The bound must not change the ANSWER, only the work -- checked on a line whose
+# span genuinely crosses the marker, which is the case the early exit must not
+# cut short.
+crossing = "-> XREF: " + BT + "TODO-01-a.md §3 and more" + BT + " tail"
+if (cs._mask_marking_span_ends(crossing, crossing.rfind("§"))
+        != cs._mask_marking_span_ends(crossing)):
+    bad.append("bounded and unbounded masks disagree on a span crossing the marker")
+print("OK" if not bad else "; ".join(bad))
+PY
+)"
+if [ "$T40J" = "OK" ]; then
+    t_pass "s40j: a backtick tail beyond the last marker is not scanned"
+else
+    t_fail "s40j: $T40J"
 fi
 
 # ----------------------------------------------------------------------

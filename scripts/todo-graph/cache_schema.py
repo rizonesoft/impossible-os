@@ -642,7 +642,7 @@ class XrefClause(NamedTuple):
         return self.targets[0]
 
 
-def _span_end_after(masked, start, limit):
+def _span_end_after(text, masked, start, limit):
     """End of the code span that `start` sits inside, per the marked mask.
 
     EXACT, BECAUSE IT IS THE SCAN'S OWN ANSWER. An earlier version walked
@@ -660,7 +660,20 @@ def _span_end_after(masked, start, limit):
     its caller's window rather than running to end of line.
     """
     idx = masked.find(SPAN_END_MARK, start, limit)
-    return start if idx < 0 else idx + 1
+    if idx < 0:
+        return start
+    end = idx + 1
+    # AND ONE PIECE OF PROSE PUNCTUATION OUTSIDE IT, which is not cosmetic: the
+    # item parenthetical is matched at whatever offset this returns, so leaving
+    # a `.` or `:` sitting there detaches the item name from its clause. The
+    # pre-change parser swallowed that character in its non-space run and kept
+    # the name; stopping dead at the delimiter silently lost it on every
+    # deferred edge written that way (Codex adversarial, [medium]). One
+    # character, and only these two, so a wordier remainder still ends the
+    # clause and is still judged by the caller.
+    if end < limit and text[end] in ".:":
+        end += 1
+    return end
 
 
 def parse_xref_clause(text, pos=0, limit=None, masked=None):
@@ -727,10 +740,12 @@ def parse_xref_clause(text, pos=0, limit=None, masked=None):
         # offset. Recomputing is the fail-safe, and costs nothing on the path
         # that passes the right one.
         if masked is None or len(masked) != len(text):
-            masked = _mask_marking_span_ends(text)
+            # Bounded at THIS marker -- a direct caller parses one clause, so
+            # nothing beyond it can be asked about (see `iter_xref_clauses`).
+            masked = _mask_marking_span_ends(text, s0)
         if masked[s0] != text[s0]:
             sm = _XREF_SECTION_IN_SPAN_RE.match(text, p, end_limit)
-            in_span_end = _span_end_after(masked, sm.end(1), end_limit)
+            in_span_end = _span_end_after(text, masked, sm.end(1), end_limit)
     if sm:
         section, section_span = sm.group(1), (sm.start(1), sm.end(1))
         # THE SPAN'S END IS THE SEGMENTER'S ANSWER, NOT A BACKTICK MATCH. An
@@ -791,7 +806,17 @@ def iter_xref_clauses(text, pos=0):
     # because this is the only layer that knows a line may carry many clauses.
     # Per-clause recomputation would be O(line) each and turn a 6-clause stamp
     # into quadratic work -- the exact regression sub-test 37h pins.
-    masked = _mask_marking_span_ends(text)
+    #
+    # BOUNDED AT THE LAST MARKER, which keeps that property while paying for
+    # only the part of the line any clause can ask about. Every clause's marker
+    # is at or before the last one, so a single scan to there serves them all,
+    # and a line whose backticks sit BEYOND its markers -- the shape that made
+    # this a perf finding -- stops early instead of masking the tail. A line
+    # carrying no marker can never consult the mask (the lookup happens only
+    # once a section has matched), so its own text stands in and nothing is
+    # scanned at all.
+    last_marker = text.rfind("§")
+    masked = text if last_marker < 0 else _mask_marking_span_ends(text, last_marker)
     for lead in XREF_LEAD_RE.finditer(text, pos):
         if lead.start() < pos:
             continue
@@ -865,7 +890,7 @@ def mask_code_spans(s: str) -> str:
     return _scan_code_spans(s, False)
 
 
-def _mask_marking_span_ends(s: str) -> str:
+def _mask_marking_span_ends(s: str, stop=None) -> str:
     """The same mask, with `SPAN_END_MARK` over each span's final character.
 
     THE PARSER NEEDS THE SPAN'S END, NOT A GUESS AT IT. Deriving it from the
@@ -877,10 +902,10 @@ def _mask_marking_span_ends(s: str) -> str:
     exactly at the moment it closes a span, so this hands over what it knew
     instead of having a caller reconstruct it downstream.
     """
-    return _scan_code_spans(s, True)
+    return _scan_code_spans(s, True, stop)
 
 
-def _scan_code_spans(s: str, mark_ends: bool) -> str:
+def _scan_code_spans(s: str, mark_ends: bool, stop=None) -> str:
     if "`" not in s:
         return s
     # ONE FORWARD PASS, BOUNDED MEMORY. Only the earliest unmatched opener of
@@ -952,6 +977,21 @@ def _scan_code_spans(s: str, mark_ends: bool) -> str:
                 # Not escaped: it may OPEN a span. Keep the earliest live one.
                 pending[length] = i
         i = j
+        # BOUNDED SCAN. Nothing that STARTS after `stop` can mask an offset at
+        # or before it, so once the cursor is past `stop` with no opener still
+        # pending from before it, the rest of the line cannot change any answer
+        # the caller will ask for. Without this the parser masked whole lines it
+        # only needed a prefix of: measured on a stamp carrying one early XREF
+        # followed by a dense backtick tail, 0.0002s -> 0.94s at 1 MiB and
+        # 0.0008s -> 3.88s at 4 MiB, against a 2s whole-build target, on input
+        # `_MAX_TODO_BYTES` explicitly permits (Codex perf, [high]).
+        #
+        # A span that is still OPEN across `stop` keeps the scan running to its
+        # closer, which is exactly the case the caller needs marked -- so this
+        # bounds work without bounding correctness.
+        if (stop is not None and i > stop
+                and not any(v <= stop for v in pending.values())):
+            break
     return s if out is None else "".join(out)
 
 # A line that STARTS an HTML block comment, under CommonMark's same 0-3-space
