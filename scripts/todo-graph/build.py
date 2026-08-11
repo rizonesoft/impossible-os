@@ -322,18 +322,17 @@ STAMP_HEADER_RE = re.compile(
 # the builder and the repairer cannot disagree about where a target ends
 # (TODO-06 section 33). See that constant for why the label refuses nested
 # brackets.
-# SECTION 37 RETIRED THE TARGET HALF OF THIS GRAMMAR. `_walk_stamps_xrefs`
-# now finds each clause with `cache_schema.XREF_LEAD_RE` and parses it with
-# `cache_schema.parse_xref_clause`, which owns the target, the section marker
-# and the item parenthetical for all four producers. The constant is kept
-# because `render.py` and the tests still match stamp clauses as a WHOLE for
-# display and fixture purposes, where a single regex is the right tool -- but
-# it is no longer what decides how many destinations a clause names.
-XREF_CLAUSE_RE = re.compile(
-    r"->\s+XREF:\s+(?P<target_path>" + _cs.XREF_TARGET_PATTERN + r")"
-    r"\s+(?P<target_section>§\S+)"
-    r"(?:\s*\((?:[^()]*?\b(?:item|new\s+item):\s*\"(?P<item_name>[^\"]+)\")?[^()]*\))?"
-)
+# SECTION 37 DELETED `XREF_CLAUSE_RE` OUTRIGHT, and the reason it survived the
+# first cut is worth keeping: it was retained on the stated grounds that
+# "`render.py` and the tests still match stamp clauses as a whole for display".
+# THAT WAS FALSE -- `render.py` contains no reference to it, and its only
+# executable consumer was `scripts/test-tooling.sh`, using it as a proxy for
+# "does todo-graph produce an edge for this text?". So the justification was
+# reasoned rather than checked, and what it justified was a SECOND clause parser
+# left standing inside the section whose entire purpose is that there be one
+# (Codex consistency, [medium]). The tooling assertions now ask the real
+# producer via `cache_schema.iter_xref_clauses` plus the stamp policy, which is
+# what they meant all along.
 
 # Inputs XREF line. Two surface forms in the wild:
 #   - plain-text reference (compact TNN section-prefix shorthand)
@@ -391,16 +390,77 @@ def _inputs_target(token: str) -> str:
     1, [medium]). Section 33 established the same rule for the link arm; this is
     that rule, one token shape over: fall back to the RAW token, which does not
     resolve and therefore surfaces as an ordinary stale-XREF finding.
+
+    THE CELL AND THE TOKEN SHARE THE LEADING-SPAN UNWRAP AND NOTHING MORE, and
+    claiming they were "one rule" is what broke 33h. A bare TOKEN must also stop
+    at an INTERNAL backtick, because the arm this replaced did
+    (`` `path.md`: prose `` is one non-space run); a CELL must not, because a
+    cell legitimately holds a markdown link whose label contains backticks.
     """
     if token.startswith("["):
         return _cs.unwrap_xref_link(token) or token
-    raw = token
-    if token.startswith("`"):
-        token = token[1:]
-    cut = token.find("`")
+    inner = _code_span_inner(token)
+    cut = inner.find("`")
     if cut >= 0:
-        token = token[:cut]
-    return token or raw
+        inner = inner[:cut]
+    return inner or token
+
+
+def _cell_code_span(text: str) -> str:
+    """Remove a leading code span's DELIMITERS, keeping everything after it.
+
+    A TABLE CELL IS NOT A TOKEN, and conflating them cost a real regression. The
+    cell may be `` `path.md` §7 `` -- span around the path, section marker
+    OUTSIDE it -- which section 33 records as a live authoring form. Truncating
+    at the closing backtick (what `_code_span_inner` does, correctly, for a
+    TOKEN) silently dropped the `§7`: the base commit emitted
+    `target_section: "§7"` and the truncating version emitted None. It also
+    turned a malformed `` `path.md` trailing prose `` cell into a clean edge,
+    because the discarded prose is exactly what the whole-cell check exists to
+    reject (Codex re-adversarial, [medium]).
+
+    So the delimiters come off and the remainder stays, and the whole-cell
+    parser then decides -- which is what the two-ended `strip("`")` was reaching
+    for before doubled delimiters broke it.
+    """
+    if not text.startswith("`"):
+        return text
+    cut = text.find("`", 1)
+    if cut < 0:
+        # Unclosed: the opener still comes off, matching the retired behaviour.
+        return text[1:] or text
+    inner = text[1:cut]
+    return (inner + text[cut + 1:]) if inner else text
+
+
+def _code_span_inner(text: str) -> str:
+    """Unwrap a LEADING code span. Anything not opening with a backtick is returned as-is.
+
+    THE GUARD IS THE WHOLE FUNCTION, and dropping it was a real regression
+    caught by sub-test 33h: without it, a table cell holding a link whose LABEL
+    is backticked (`` [`01-test/TODO-01 §1`](TODO-02-b.md) ``) was cut at that
+    label's first backtick and emitted `[` as the destination. A backtick only
+    opens a span when it is FIRST.
+
+    A LEADING BACKTICK COMES OFF EVEN WHEN THE SPAN NEVER CLOSES, which is
+    bug-compatibility with the arm this replaced rather than tidiness:
+    `` `?([^`\\s]+) `` consumed the opener unconditionally, so a BULLET whose
+    span wraps the whole `path §N` construct yielded a clean path and a section
+    that kept the closing backtick. Returning the raw token instead re-attached
+    the opener to 8 live targets -- measured, and visible only because the
+    corpus differential is per clause rather than by count.
+
+    Falls back to the RAW text when the span is empty (`` ``path.md`` ``),
+    because `inputs_xrefs[].target_path` carries a schema `minLength` of 1 and
+    an empty destination is a cache a routed consumer rejects WHOLE.
+    """
+    if not text.startswith("`"):
+        return text
+    inner = text[1:]
+    cut = inner.find("`")
+    if cut >= 0:
+        inner = inner[:cut]
+    return inner or text
 
 # Implementation Order header: detect optional Section column.
 # Looking for table row patterns under `## Implementation Order`.
@@ -1499,8 +1559,16 @@ def _walk_inputs_xrefs(lines, masked) -> list:
                 head = cells[0]
                 # Trim arrow + XREF prefix
                 head_clean = re.sub(r"^->\s*XREF:\s*", "", head).strip()
-                # Path may be wrapped in backticks
-                head_clean = head_clean.strip("`")
+                # THE CELL-LEVEL UNWRAP USES THE SHARED CODE-SPAN RULE. A table
+                # cell wraps the WHOLE `path §N` construct in one span, so the
+                # unwrap has to happen here or the section marker keeps the
+                # closing backtick -- measured: dropping this step outright
+                # turned 8 live rows' `§1` into `` §1` ``. But it used to be a
+                # two-ended `strip("`")`, which disagreed with the token arm on
+                # a doubled delimiter and let the same token emit an
+                # unresolvable value as a bullet and a clean edge as a table row
+                # (Codex consistency, [medium]). One rule, both places.
+                head_clean = _cell_code_span(head_clean)
                 # THE TABLE FORM USES THE SHARED GRAMMAR TOO. It parsed the
                 # target with a bare `(\S+?)`, so an Inputs row written as
                 # `[label with space](TODO-02.md) §1` -- or with a

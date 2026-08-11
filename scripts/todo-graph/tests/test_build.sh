@@ -16521,14 +16521,26 @@ import build as B, cache_schema as cs
 # together. Both sites now call `cache_schema.parse_xref_clause`, so the
 # boundary is asserted where it lives and the two sites are exercised through
 # their real entry points.
-def repair_targets(rest):
-    """The repair site's two lines: shared parser, then its LOCAL comma policy."""
-    out = []
-    for lead in cs.XREF_LEAD_RE.finditer(rest):
-        c = cs.parse_xref_clause(rest, lead.end())
-        if c is not None:
-            out.append(c.target.rstrip(","))
-    return out
+# THE REPAIR SIDE IS THE REAL ENTRY POINT, not a re-spelling of its two lines.
+# An earlier cut of this sub-test imitated `fix_line_numbers` locally, which is
+# the same defect it was rewritten to remove: a test that re-spells the producer
+# cannot notice the producer changing (Codex consistency, [medium]).
+import validate as V, pathlib
+def _node(fp, i): return {"file_path": fp, "id": i, "sections": [], "stamps_xrefs": []}
+_NODES = [_node("todo/01-test/TODO-03-s.md", "s3")]
+_IDX = _NODES + [_node("todo/01-test/TODO-01-a.md", "a1"),
+                 _node("todo/01-test/TODO-02-b.md", "b2")]
+_ID, _PATH = V.build_id_index(_IDX), V.build_path_index(_IDX)
+_BODY = "# T\n\n## 1. First\n\n- [x] Needle\n"
+
+def repair_unresolvable(stamp):
+    """Real repair producer: how many targets did it refuse on this stamp?"""
+    snap = {"todo/01-test/TODO-03-s.md": "# S\n\n" + stamp + "\n",
+            "todo/01-test/TODO-01-a.md": _BODY,
+            "todo/01-test/TODO-02-b.md": _BODY}
+    _u, _a, unres, _m, _r = V.fix_line_numbers(
+        _NODES, snap, _ID, _PATH, pathlib.Path("."), False, True)
+    return unres
 
 cases = {
     # malformed adjacent links: BOTH sites must hand over the whole token
@@ -16552,26 +16564,38 @@ out = {
     "no_reinlined_capture": not (RE_INLINED.search(src_b) or RE_INLINED.search(src_v)),
 }
 for name, tok in cases.items():
-    line = f'> **Deferred:** [M] x -> XREF: {tok} §1 (item: "C" at line 3)'
-    h = B.STAMP_HEADER_RE.match(line)
+    line = f'> **Deferred:** [M] x -> XREF: {tok} §1 (item: "Needle" at line 99)'
     b = [e["target_path"] for e in B._walk_stamps_xrefs([line], [False])]
-    v = repair_targets(line[h.end():])
-    out[name] = {"build": b, "validate": v, "agree": b == v}
+    # OUTCOME parity across the two REAL producers: a clause the builder refuses
+    # to make an edge from is a clause the repair path refuses to rewrite from.
+    # A MALFORMED CLAUSE IS REFUSED BY BOTH, BUT THEY REFUSE IT DIFFERENTLY, and
+    # that difference is section 33's deliberate design rather than drift: the
+    # builder EMITS the whole malformed token (which then fails closed at the
+    # resolver, since no such file exists) while the repair path counts an
+    # unresolvable target and rewrites nothing. So the parity assertion is
+    # "neither binds it to a real file", not "both emit nothing".
+    v_unres = repair_unresolvable(line)
+    # Only `adjacent` and `nested` are MALFORMED. `spaced` is the legitimate
+    # space-bearing label section 33 exists to make resolve, and `comma` is a
+    # well-formed target with trailing punctuation -- both must repair cleanly,
+    # or this sub-test would be asserting that section 33 broke its own feature.
+    expect_refusal = name in ("adjacent", "nested")
+    out[name] = {"build": b, "repair_unresolvable": v_unres,
+                 "agree": (v_unres > 0) == expect_refusal}
 print(json.dumps(out))
 S33FEOF
 ); S33F_RC=$?
 if [ "$S33F_RC" = "0" ] && echo "$S33F_OUT" | python3 -c "
 import json, sys
 d = json.loads(sys.stdin.read())
-ok = d['boundary_present'] and d['no_reinlined_capture'] and all(d[k]['agree'] for k in ('adjacent','nested','spaced'))
+ok = d['boundary_present'] and d['no_reinlined_capture'] and all(d[k]['agree'] for k in ('adjacent','nested','spaced','comma'))
 # and the agreement must be on the WHOLE token, not on a shared truncation
 ok = ok and d['adjacent']['build'] == ['[a](TODO-01-a.md)[b](TODO-02-b.md)']
 ok = ok and d['spaced']['build'] == ['[\`01-test/TODO-01 §1\`](TODO-02-b.md)']
-# The comma case is the ONE deliberate difference and is asserted as such, not
-# waived: the repair site strips trailing punctuation because it has no section
-# marker to bound the token, where build.py's \`\\s+§\\S+\` already does. Both
-# still name the same FILE, which is what a resolver consumes.
-ok = ok and d['comma']['build'] == ['TODO-02-b.md,'] and d['comma']['validate'] == ['TODO-02-b.md']
+# The comma case must RESOLVE on both sides -- it is a well-formed target with
+# trailing punctuation, so the builder emits an edge and the repair path must
+# refuse nothing.
+ok = ok and d['comma']['build'] == ['TODO-02-b.md,'] and d['comma']['repair_unresolvable'] == 0
 sys.exit(0 if ok else 1)"; then
     t_pass "section 33: the builder and the repair path agree on where a target ends"
 else
@@ -17733,10 +17757,24 @@ BAD = {
     "bare-second": '[a](TODO-01-a.md) TODO-02-b.md',
     "after-mark":  '[a](TODO-01-a.md) §1 [b](TODO-02-b.md)',
 }
+import validate as V, pathlib
+def _node(fp, i): return {"file_path": fp, "id": i, "sections": [], "stamps_xrefs": []}
+_NODES = [_node("todo/01-test/TODO-03-s.md", "s3")]
+_IDX = _NODES + [_node("todo/01-test/TODO-01-a.md", "a1"),
+                 _node("todo/01-test/TODO-02-b.md", "b2")]
+_ID, _PATH = V.build_id_index(_IDX), V.build_path_index(_IDX)
+_BODY = "# T\n\n## 1. First\n\n- [x] Needle\n"
+
+def repair_unresolvable(stamp):
+    snap = {"todo/01-test/TODO-03-s.md": "# S\n\n" + stamp + "\n",
+            "todo/01-test/TODO-01-a.md": _BODY, "todo/01-test/TODO-02-b.md": _BODY}
+    return V.fix_line_numbers(_NODES, snap, _ID, _PATH,
+                              pathlib.Path("."), False, True)[2]
+
 bad = []
 for name, tok in BAD.items():
     # The parser's verdict.
-    line = '> **Deferred:** [M] x -> XREF: %s §1 (item: "C" at line 3)' % tok
+    line = '> **Deferred:** [M] x -> XREF: %s §1 (item: "Needle" at line 99)' % tok
     lead = cs.XREF_LEAD_RE.search(line)
     c = cs.parse_xref_clause(line, lead.end())
     multi = c is not None and len(c.targets) > 1 and c.malformed
@@ -17746,12 +17784,21 @@ for name, tok in BAD.items():
     # caught as multi-destination here.
     if name != "adjacent" and not multi:
         bad.append("%s: parser did not see two destinations (%r)" % (name, c))
-    # Builder policy: no stamp edge, silently.
-    if B._walk_stamps_xrefs([line], [False]) and name != "adjacent":
+    if name == "adjacent":
+        continue
+    # EVERY PRODUCER'S OWN POLICY, THROUGH ITS REAL ENTRY POINT. An earlier cut
+    # asserted "every producer" while running only the parser, the stamp walk
+    # and the Inputs bullet -- the table branch and the repair path never ran,
+    # so two of the four consolidated consumers were unasserted while the
+    # sub-test advertised them (Codex consistency, [medium]).
+    if B._walk_stamps_xrefs([line], [False]):
         bad.append("%s: stamp producer emitted an edge" % name)
-    # Builder policy: no Inputs bullet edge.
-    if B.extract_inputs_xrefs("## Inputs\n\n- -> XREF: %s §1 -- d\n" % tok) and name != "adjacent":
-        bad.append("%s: inputs bullet emitted an edge" % name)
+    if B.extract_inputs_xrefs("## Inputs\n\n- -> XREF: %s §1 -- d\n" % tok):
+        bad.append("%s: inputs BULLET emitted an edge" % name)
+    if B.extract_inputs_xrefs("## Inputs\n\n| -> XREF: %s §1 | d |\n" % tok):
+        bad.append("%s: inputs TABLE emitted an edge" % name)
+    if repair_unresolvable(line) < 1:
+        bad.append("%s: repair path did not count an unresolvable target" % name)
 print("OK" if not bad else "; ".join(bad))
 PY
 )"
@@ -17806,49 +17853,50 @@ else
     t_fail "s37c: $T37C"
 fi
 
-# Sub-test 37d: WHAT THE CLAUSE BOUND ACTUALLY PROTECTS. The first version of
-# this sub-test asserted that removing the bound breaks the multi-XREF control,
-# and it FAILED: the extra-target scan is anchored and `->` matches none of its
-# target shapes, so it stops at the arrow with or without a bound. The bound is
-# therefore defensive today, and this sub-test pins the condition under which it
-# stops being defensive -- widen the adjacency grammar to admit an arrow-led
-# target, and the bound is the only thing keeping a legitimate second clause
-# from being read as the first clause's second destination.
+# Sub-test 37d: WHAT KEEPS A LEGITIMATE NEXT CLAUSE FROM BEING READ AS THIS
+# CLAUSE'S SECOND DESTINATION. Two earlier versions of this sub-test defended a
+# positional clause bound; both were wrong, and the bound is gone. A position
+# cannot know whether it is inside a token, which is why every version of it cut
+# inside a markdown-link label somewhere. The real invariant is a property of
+# the GRAMMAR and is directly checkable: the extra-target pattern must never
+# match a `-> XREF:` lead. If a future widening breaks that, this fails.
 T37D="$(python3 - <<'PY'
-import re, sys
+import sys
 sys.path.insert(0, "scripts/todo-graph")
 import build as B, cache_schema as cs
 
+bad = []
+# THE INVARIANT, asserted directly on the grammar.
+for lead_text in (" -> XREF: TODO-02-b.md", "-> XREF: TODO-02-b.md",
+                  "  ->  XREF:  TODO-02-b.md", " §1 -> XREF: TODO-02-b.md"):
+    if cs._XREF_ADJACENT_TARGET_RE.match(lead_text):
+        bad.append("adjacency grammar matched a lead: %r" % lead_text)
+
+# The behaviour that invariant protects.
 line = ('> **Accepted:** [M] x -> XREF: TODO-01-a.md §1 (item: "A" at line 3)'
         ' -> XREF: TODO-02-b.md §2 (item: "B" at line 4)')
-if len(B._walk_stamps_xrefs([line], [False])) != 2:
-    print("control did not hold before the mutation"); raise SystemExit
+edges = B._walk_stamps_xrefs([line], [False])
+if [e["target_path"] for e in edges] != ["TODO-01-a.md", "TODO-02-b.md"]:
+    bad.append("multi-XREF stamp: %r" % (edges,))
 
-# Widen the adjacency grammar so an arrow-led target IS a target shape.
-real_adj = cs._XREF_ADJACENT_TARGET_RE
-real_parse = cs.parse_xref_clause
+# MUTATION: widen the grammar so a lead IS a target shape, and the protection
+# must visibly fail -- which is what proves the invariant above is load-bearing
+# rather than a restatement of something that cannot break.
+import re
+real = cs._XREF_ADJACENT_TARGET_RE
 cs._XREF_ADJACENT_TARGET_RE = re.compile(
-    r"\s*(?:->\s*XREF:\s*)?(?:§\S+\s+)?(?:`?[\w./-]+\.md`?)")
+    r"\s*(?:->\s*XREF:\s*)?(?:§\S+\s+)?(?P<dest>`?[\w./-]+\.md`?)")
 try:
-    bounded = len(B._walk_stamps_xrefs([line], [False]))
-    def unbounded(text, pos=0, limit=None):
-        return real_parse(text, pos, len(text))     # ignore the next-clause bound
-    cs.parse_xref_clause = unbounded
-    unbound = len(B._walk_stamps_xrefs([line], [False]))
+    mutated = len(B._walk_stamps_xrefs([line], [False]))
 finally:
-    cs._XREF_ADJACENT_TARGET_RE = real_adj
-    cs.parse_xref_clause = real_parse
-
-if bounded != 2:
-    print("bound failed to protect the control under a widened grammar (%d edges)" % bounded)
-elif unbound >= 2:
-    print("widened+unbounded still emitted %d edges -- mutation inert" % unbound)
-else:
-    print("OK")
+    cs._XREF_ADJACENT_TARGET_RE = real
+if mutated >= 2:
+    bad.append("mutation inert: widened grammar still emitted %d edges" % mutated)
+print("OK" if not bad else "; ".join(bad))
 PY
 )"
 if [ "$T37D" = "OK" ]; then
-    t_pass "s37d: the clause bound is what saves multi-XREF stamps once the adjacency grammar widens"
+    t_pass "s37d: the adjacency grammar never matches a lead, and the mutation proves that is load-bearing"
 else
     t_fail "s37d: $T37D"
 fi
@@ -17981,6 +18029,88 @@ if [ "$T37H" = "OK" ]; then
     t_pass "s37h: multi-clause parsing scales linearly, not quadratically"
 else
     t_fail "s37h: $T37H"
+fi
+
+# Sub-test 37i: A LEAD INSIDE A SECOND DESTINATION'S LABEL. The round-1 fix
+# moved the clause bound but kept one, and the bound then landed inside the
+# label of the SECOND target -- so the extra-target scan could not see the
+# complete link, the clause reported CLEAN, and the iterator published the
+# label fragment `details](TODO-02-b.md)` as a real edge. Found independently
+# by the adversarial and perf legs, [high]. Every positional bound had this
+# shape of bug; the fix was to remove it, and this is the regression.
+T37I="$(python3 - <<'PY'
+import sys
+sys.path.insert(0, "scripts/todo-graph")
+import build as B, cache_schema as cs
+bad = []
+
+SHAPES = {
+    # second destination is a LINK whose label carries a lead
+    "link-label": 'TODO-01-a.md §1 [see -> XREF: details](TODO-02-b.md) §2',
+    # ... and after the item parenthetical
+    "post-item":  'TODO-01-a.md §1 (item: "A" at line 3) [see -> XREF: d](TODO-02-b.md)',
+}
+for name, body in SHAPES.items():
+    line = '> **Deferred:** [M] x -> XREF: ' + body
+    lead = cs.XREF_LEAD_RE.search(line)
+    c = cs.parse_xref_clause(line, lead.end())
+    if not c.malformed or len(c.targets) < 2:
+        bad.append("%s: clause read clean (%r)" % (name, c))
+    edges = [e["target_path"] for e in B._walk_stamps_xrefs([line], [False])]
+    if edges:
+        bad.append("%s: emitted %r" % (name, edges))
+
+# THE TABLE CELL KEEPS WHAT FOLLOWS ITS CODE SPAN, section marker included.
+# A cell may put the span around the PATH ONLY (`` `path.md` §7 ``), so a
+# normaliser that truncates at the closing backtick drops the section -- the
+# base commit emitted it and the first fix did not (Codex re-adversarial,
+# [medium]). Parity is asserted on target AND section, not target alone.
+CELLS = {
+    "span-around-path":  ("`TODO-02-b.md` §7", "TODO-02-b.md", "§7"),
+    "span-around-both":  ("`TODO-02-b.md §7`", "TODO-02-b.md", "§7"),
+    "no-span":           ("TODO-02-b.md §7",   "TODO-02-b.md", "§7"),
+}
+for name, (cell, want_t, want_s) in CELLS.items():
+    rows = B.extract_inputs_xrefs("## Inputs\n\n| -> XREF: %s | x |\n" % cell)
+    got = [(r["target_path"], r["target_section"]) for r in rows]
+    if got != [(want_t, want_s)]:
+        bad.append("cell %s: %r (want %r)" % (name, got, [(want_t, want_s)]))
+# A cell whose span is followed by PROSE is malformed and must emit nothing --
+# the discarded remainder is what the whole-cell check exists to catch.
+if B.extract_inputs_xrefs("## Inputs\n\n| -> XREF: `TODO-02-b.md` trailing prose | x |\n"):
+    bad.append("cell with trailing prose emitted an edge")
+
+# CONTROL: a BACKTICKED clause example is documentation, not a destination.
+# `-> XREF: a.md §1 `-> XREF: b.md`` quotes the syntax rather than naming a
+# second file, which is the same category as the prose-mention control in 37c --
+# so it must NOT be refused. Note the deliberate asymmetry this pins: a bare
+# backticked TARGET (`` `b.md` ``) IS a second destination and section 33 closed
+# it; the lead is what makes this one an example.
+line = '> **Deferred:** [M] x -> XREF: TODO-01-a.md §1 `-> XREF: TODO-02-b.md`'
+c = cs.parse_xref_clause(line, cs.XREF_LEAD_RE.search(line).end())
+if c.malformed:
+    bad.append("backticked syntax example wrongly refused: %r" % (c,))
+if [e["target_path"] for e in B._walk_stamps_xrefs([line], [False])] != ["TODO-01-a.md"]:
+    bad.append("backticked syntax example lost the real edge")
+
+# EVERY reported destination must be a destination, never a section prefix --
+# the tuple exists to be usable in a diagnostic.
+line = '> **Deferred:** [M] x -> XREF: TODO-01-a.md §1 TODO-02-b.md'
+c = cs.parse_xref_clause(line, cs.XREF_LEAD_RE.search(line).end())
+if c.targets != ('TODO-01-a.md', 'TODO-02-b.md'):
+    bad.append("targets carried a section prefix or dropped one: %r" % (c.targets,))
+# THREE destinations are all reported, not just the first two.
+line = '> **Deferred:** [M] x -> XREF: TODO-01-a.md §1 TODO-02-b.md TODO-01-a.md'
+c = cs.parse_xref_clause(line, cs.XREF_LEAD_RE.search(line).end())
+if len(c.targets) != 3:
+    bad.append("three-target clause reported %d: %r" % (len(c.targets), c.targets))
+print("OK" if not bad else "; ".join(bad))
+PY
+)"
+if [ "$T37I" = "OK" ]; then
+    t_pass "s37i: a lead inside a second destination is caught, and every destination is reported"
+else
+    t_fail "s37i: $T37I"
 fi
 
 # ----------------------------------------------------------------------

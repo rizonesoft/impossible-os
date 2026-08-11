@@ -88,6 +88,7 @@ title: "TODO-06 -- TODO Metadata Layer and Derived Graph"
 | ⭐  |  37   |   §37   | One clause parser decides how many destinations a clause names (consolidation)         | §33          |  [x]   |
 | ⭐  |  38   |   §38   | Every mutating and gate parser adopts the shared fence tracker (split out of §36)      | §36          |  [ ]   |
 | ⭐  |  39   |   §39   | The shared fence tracker becomes container-aware (split out of §36)                    | §36, §38     |  [ ]   |
+| ⭐  |  40   |   §40   | An Inputs section marker keeps its closing backtick, so one dependency is two edges    | §37          |  [ ]   |
 
 > 💎 = parity work -- Linux kernel has MAINTAINERS + get_maintainer.pl (person-ownership mapping without a dep graph); Windows has no public equivalent. §1 (frontmatter), §2 (generator), §5 (migration) bring us to partial Linux parity plus graph metadata neither OS ships.
 > ⭐ = competitive edge -- neither Win11 nor mainline Linux ships a first-class TODO dependency graph. §3 (validator), §4 (query CLI), §6 (CI gate), §7 (visualization), §8 (MCP server) are new ground; the surface has direct value for any contributor scanning "what can I work on next?".
@@ -1962,7 +1963,13 @@ The four producers are `build.py`'s `XREF_CLAUSE_RE` (stamp targets), `INPUTS_XR
 > - Scope boundary: the three in-repo producers. The fourth grammar in `.claude/hooks/skill_step_block.py` is control plane, parked operator-gated with an unresolved import-path question.
 > - A claim written here was FALSE and its own fixture caught it: the clause bound was called load-bearing, and 37d measured 2 edges with and without it.
 
+> **Verified:** 2026-08-11 | commit `42c9c395d` + review fixes | 4/5 items (1 parked operator-gated) | build OK | test_build 586/586 (9 this section), test-tooling 1320/1320, todo-graph 10/10 checks, 28326 kernel + 17 user-mode tests, lint 0 errors | corpus per-clause differential: 1010 stamp targets and 945 Inputs rows byte-identical, repair unchanged at 0/6/51/155, malformed-verdict control zeroes both producers
+> **Accepted:** [M] the fourth XREF link grammar in `.claude/hooks/skill_step_block.py:61` still spells its own label class and disagrees with the shared one on a bracketed label (reason: `.claude/hooks/**` is control plane an unattended run may not edit, and the adopter needs an import-path decision first) -> XREF: overnight-runner-improvements/overnight-runner-improvements-v14 (item: "A fourth XREF link grammar lives in `.claude/hooks/skill_step_block.py:61`, outside the consolidation" at line 118)
+> **Deferred:** [M] the bullet Inputs surface keeps a trailing backtick on `target_section` where the table surface does not, so 508 of 945 live rows split one dependency across two edge identities (reason: PRE-EXISTING -- this section's differential is byte-identical -- and repairing it moves more than half the Inputs corpus) -> XREF: 00-infrastructure/TODO-06 §40 (item: "Normalise the section marker on both Inputs surfaces, and prove it with a per-clause differential" at line 2049)
+> **Quality reviewed:** 2026-08-11 | Codex 7x (design, adversarial x2, consistency, perf, re-adversarial x2) | 5H+8M fixed, 2 open (accepted + deferred with XREF) | scope: N/A (host tooling -- no kernel/boot surface, and no domain code-quality skill covers `scripts/`); parity N/A (no user-visible OS surface, so `parity-research-analyst` was not dispatched)
+
 -> XREF: [`TODO-06 §33`](#33-stamp-target-capture-splits-a-link-whose-label-contains-a-space) -- the section whose review found this class and closed every shape of it (item: "Refuse a multi-target stamp clause at the repair site, spaced or not (post-ship adversarial round 4, [high])"); it is stamped, so the consolidation is owned here.
+-> XREF: [`TODO-06 §40`](#40-an-inputs-section-marker-keeps-its-closing-backtick-so-one-dependency-is-two-edges) -- the pre-existing section-marker split this section's re-adversarial round 2 surfaced and did NOT fix (item: "Normalise the section marker on both Inputs surfaces, and prove it with a per-clause differential"); this section consolidated the TARGET field only.
 
 ---
 
@@ -2029,6 +2036,33 @@ Split out of §36 at authoring time. This is the only item in the original filin
 **Test checkpoint:** a fence indented five spaces under an ordered-list marker opens a real block and its `- [ ]` content is not indexed; a 4-space fence marker at root is still an indented code block (§35's `overindented_fence` fixture green); the corpus index is byte-identical across the change; `bash scripts/todo-graph/tests/test_build.sh` green.
 
 -> XREF: [`TODO-06 §36`](#36-the-cache-producer-adopts-the-shared-fence-tracker) -- the section this split out of, which owns the shared tracker this section changes (item: "Publish `fence_mask()` beside `fence_step()` in `cache_schema.py`").
+
+---
+
+## 40. An Inputs Section Marker Keeps Its Closing Backtick, So One Dependency Is Two Edges
+
+> **Spawned-by:** §37 (review)
+> **User impact:** The TODO dependency graph under-reports Inputs edges. `query.py:1094` keys edge identity on `(target_path, target_section)`, so `§7` and a backticked `§7` are two different edges naming the same dependency -- and `backlinks` / `deferred` / `blocked` are what the runner and a contributor read to decide what is ready to build. Work that looks unblocked can sit behind an edge nobody queries.
+
+> **Continuation waiver** (review-spawn at depth 3, the limit):
+> - **user_impact:** as above -- 508 of the 945 live Inputs rows carry the backticked spelling, so this is the majority case rather than an edge case.
+> - **not_parkable:** a parked item in §37 would be stranded, because §37 is stamped DONE in the same pass and the fixpoint loop never revisits a DONE section. §38 and §39 are open but own the fence tracker, an unrelated subject.
+> - **severity_trend:** falling and converging -- §37's review went 1H+4M, then 1M, then this 1M, and this is the FIRST finding that is not a defect §37 introduced.
+> - **surface:** `build.py:extract_inputs_xrefs` (the bullet surface's `target_section` capture) and its consumers in `query.py` -- the same producer family §37 consolidated, one field over.
+
+Found by §37's re-adversarial round 2, and PRE-EXISTING rather than a regression: §37's corpus differential is byte-identical, and the baseline it was measured against already contained all 508 rows. The bullet surface captures the section marker with a non-space run, which swallows the closing backtick when a code span wraps the whole path-and-section construct; the table surface removes the span delimiters before parsing and emits a clean marker. So the two Inputs surfaces describe the same reference differently -- the split-brain §37 removed for the TARGET field and did not reach for the SECTION field.
+
+- [ ] Normalise the section marker on both Inputs surfaces, and prove it with a per-clause differential
+      The bar §33 and §37 both used: the (file, target, section) triple for all 945 Inputs rows before and after, with a control that must fire. Unlike those two the expected differential is NOT nil -- it is exactly the 508 rows losing a trailing backtick, and any OTHER moved row is the bug.
+- [ ] Establish what the 508 rows currently cost before changing them
+      Measure the edges that split today: how many `backlinks` / `deferred` / `blocked` answers change when the two spellings are unified. A repair whose benefit is unmeasured is a mass rewrite with a rationale attached.
+- [ ] Decide whether `CACHE_FORMAT_VERSION` moves again
+      §37 took it to 4 for an omission-vs-emission change. This one changes a FIELD VALUE on more than half the Inputs rows, so a consumer holding a v4 cache would disagree with a v5 producer about edge identity -- the same test that justified the last bump.
+- [ ] Commit: `"todo-graph: an Inputs section marker means one edge, not two"`
+
+**Test checkpoint:** the bullet and table forms of a whole-span reference both emit the same target and the same clean section marker; the 945-row differential moves exactly the rows whose section carried a trailing backtick and no others; a control with the normalisation disabled reproduces the split; `bash scripts/todo-graph/tests/test_build.sh` and `bash scripts/test-tooling.sh` green.
+
+-> XREF: [`TODO-06 §37`](#37-one-clause-parser-decides-how-many-destinations-a-clause-names) -- the section whose re-adversarial round 2 found this (item: "Every producer calls it, and a test proves they cannot disagree"); it is stamped, and it consolidated the TARGET field only, so the SECTION field is owned here.
 
 ---
 

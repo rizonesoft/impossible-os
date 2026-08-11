@@ -471,8 +471,13 @@ XREF_LINK_RE = re.compile(
 # module, so the justification was false and the copy was the very duplication
 # under repair. Anchored with `.match(text, pos)` by every caller, so the check
 # allocates nothing on a long stamp line.
+# THE DESTINATION IS A NAMED GROUP, not the whole match. This pattern optionally
+# consumes a leading section marker, so reporting `group(0)` as a destination
+# reported `§1 b.md` -- not a destination, and it made `XrefClause.targets`
+# contradict the contract that justified its existence over a boolean (Codex
+# consistency, [medium]).
 _XREF_ADJACENT_TARGET_RE = re.compile(
-    r"\s*(?:§\S+\s+)?(?:" + XREF_LINK_PATTERN
+    r"\s*(?:§\S+\s+)?(?P<dest>" + XREF_LINK_PATTERN
     + r"|`?(?:\d{2}-[a-z0-9-]+/)?TODO-\d{1,2}[\w./§-]*`?"
     + r"|`?[\w./-]+\.md`?)")
 
@@ -563,33 +568,27 @@ def parse_xref_clause(text, pos=0, limit=None):
 
     Returns an `XrefClause`, or None when no target token starts there.
 
-    THE CLAUSE BOUND IS COMPUTED AFTER EACH SELF-DELIMITING PART IS CONSUMED,
-    NEVER BY SEARCHING FROM `pos`. Searching from `pos` is context-blind: it
-    finds `-> XREF:` written INSIDE a markdown-link label or inside an
-    `(item: "...")` name and cuts the clause there, so
-    `-> XREF: [see -> XREF: details](foo.md) §1` bound a fragment instead of the
-    link (Codex adversarial round 1, [high]). This repo writes TODOs about TODO
-    syntax constantly -- sub-test 33g's own probes quote `-> XREF:` inside item
-    text -- so the shape is ordinary authoring, not an adversarial curiosity.
-    The target token and the item parenthetical are each self-delimiting, so the
-    honest boundary is: consume them first, then look for the next lead from
-    where they END.
+    THERE IS NO POSITIONAL CLAUSE BOUND, AND REMOVING IT IS WHAT MADE THIS
+    CORRECT. Two successive versions tried to bound the clause at the next
+    `-> XREF:` and each was context-blind in a different place. Searching from
+    `pos` cut the clause inside a markdown-link label
+    (`-> XREF: [see -> XREF: details](foo.md) §1`). Searching from the end of
+    each consumed part still cut inside the label of a SECOND target
+    (`-> XREF: a.md §1 [see -> XREF: details](b.md) §2`), so the clause read
+    CLEAN and the iterator then published `details](b.md)` as a fabricated edge
+    -- found independently by the adversarial and perf legs, [high]. Every
+    version of the bound had the same shape of bug because a position cannot
+    know whether it is inside a token.
 
-    The bound is DEFENSIVE rather than load-bearing against the extra-target
-    scan itself -- stated precisely because an earlier version of this docstring
-    claimed the opposite and sub-test 37d disproved it, reporting 2 edges with
-    and without the bound (`->` matches none of the scan's target shapes, so it
-    stops at the arrow regardless). 37d now pins the widening under which the
-    bound becomes real instead.
+    What actually keeps a legitimate NEXT clause from being read as this
+    clause's second destination is a property of the GRAMMAR, not of a position:
+    `_XREF_ADJACENT_TARGET_RE` does not match a `-> XREF:` lead. Sub-test 37d
+    pins exactly that invariant, which is checkable, whereas the bound was a
+    guess about offsets. The tokens are self-delimiting, so scanning to
+    `end_limit` and letting the target grammar decide where things end is both
+    simpler and the only version that has been right.
     """
     end_limit = len(text) if limit is None else limit
-
-    def _next_lead(frm):
-        """The next TOP-LEVEL lead, searched from past an already-consumed part."""
-        if limit is not None:
-            return limit
-        nxt = XREF_LEAD_RE.search(text, frm)
-        return nxt.start() if nxt else len(text)
 
     # NO PREFIX SLICING ANYWHERE BELOW. Every match passes `endpos` instead of
     # copying `text[:limit]`, which cost a fresh prefix copy per clause and made
@@ -602,7 +601,6 @@ def parse_xref_clause(text, pos=0, limit=None):
     targets = [m.group(1)]
     target_span = (m.start(1), m.end(1))
     p = m.end(1)
-    bound = _next_lead(p)
 
     # THE FIRST EXTRA-TARGET TEST RUNS HERE, immediately after the target and
     # before the section marker is consumed, because that is where the four
@@ -610,10 +608,10 @@ def parse_xref_clause(text, pos=0, limit=None):
     # optionally steps over one section marker, which is how section 33's
     # `[a](x.md) §1 [b](y.md)` shape is caught. Moving the test later would
     # silently change which shapes refuse.
-    extra = _XREF_ADJACENT_TARGET_RE.match(text, p, bound)
+    extra = _XREF_ADJACENT_TARGET_RE.match(text, p, end_limit)
 
     section = section_span = None
-    sm = _XREF_SECTION_RE.match(text, p, bound)
+    sm = _XREF_SECTION_RE.match(text, p, end_limit)
     if sm:
         section, section_span, p = sm.group(1), (sm.start(1), sm.end(1)), sm.end()
 
@@ -621,7 +619,6 @@ def parse_xref_clause(text, pos=0, limit=None):
     im = _XREF_ITEM_RE.match(text, p, end_limit)
     if im:
         item_name, item_span, p = im.group("item_name"), (im.start(), im.end()), im.end()
-        bound = _next_lead(p)
 
     # A SECOND TARGET AFTER THE ITEM PARENTHETICAL was reachable by none of the
     # four producers, so `-> XREF: a.md §1 (item: "X") b.md` bound `a.md` and
@@ -630,14 +627,21 @@ def parse_xref_clause(text, pos=0, limit=None):
     # today and closes the shape rather than waiting for the next review round
     # to find it (design review, second finding).
     if not extra:
-        extra = _XREF_ADJACENT_TARGET_RE.match(text, p, bound)
+        extra = _XREF_ADJACENT_TARGET_RE.match(text, p, end_limit)
 
+    # COLLECT EVERY DESTINATION, NOT JUST THE SECOND. `targets` is a tuple
+    # BECAUSE the contract is "how many destinations, and what are they"; a
+    # version that recorded one extra and stopped described a three-target
+    # clause as a two-target one, and reported `§1 b.md` as a destination
+    # because it appended the whole match rather than the `dest` group (Codex
+    # consistency, [medium]).
     malformed = None
     end = p
-    if extra:
-        targets.append(extra.group(0).strip())
+    while extra:
+        targets.append(extra.group("dest"))
         malformed = "multiple-destinations"
         end = extra.end()
+        extra = _XREF_ADJACENT_TARGET_RE.match(text, end, end_limit)
     return XrefClause(tuple(targets), target_span, section, section_span,
                       item_name, item_span, end, malformed)
 

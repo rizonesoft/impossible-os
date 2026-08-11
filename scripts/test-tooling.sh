@@ -7417,11 +7417,20 @@ check("writer_rejects_paren_inside_quoted_prose",
 # immediately followed by section + concrete item parenthetical (consistency +
 # final-adversarial findings); cross-checked against todo-graph's actual regex
 sys.path.insert(0, "scripts/todo-graph")
-import build as tg
+import cache_schema as tg_cs
+# ASK THE REAL PRODUCER, not a regex proxy. These three checks used
+# `build.XREF_CLAUSE_RE` to stand in for "does todo-graph make an edge from
+# this text?"; the shared-clause-parser consolidation deleted that constant
+# precisely because it was a second parser free to drift. The stamp
+# producer's policy IS "a well-formed clause carrying a section marker", so
+# that is what is asserted now.
+def tg_edge(s):
+    return any(c.section and not c.malformed
+               for _lead, c in tg_cs.iter_xref_clauses(s))
 GOOD = f'[M] g -> XREF: 00-infrastructure/TODO-11 {S}2 (item: "Real" at line 7)'
 check("writer_accept_implies_graph_edge_shape",
       xref.writer_has_concrete(GOOD) and not xref.writer_bare_xrefs(GOOD)
-      and tg.XREF_CLAUSE_RE.search(GOOD) is not None)
+      and tg_edge(GOOD))
 NONCANON = '[M] g -> XREF: TODO-11 (item: "X" at line 20)'
 check("writer_rejects_sectionless_or_bare_domain",
       bool(xref.writer_bare_xrefs(NONCANON)) and not xref.writer_has_concrete(NONCANON))
@@ -7429,12 +7438,12 @@ check("writer_rejects_sectionless_or_bare_domain",
 ADJ = f'[M] g -> XREF: 00-infrastructure/TODO-11 (item: "X" at line 20) see {S}1'
 check("writer_rejects_non_adjacent_section",
       bool(xref.writer_bare_xrefs(ADJ)) and not xref.writer_has_concrete(ADJ)
-      and tg.XREF_CLAUSE_RE.search(ADJ) is None)
+      and not tg_edge(ADJ))
 # the arrow prefix is part of the edge grammar -> writer rejects arrowless clauses
 NOARROW = f'[M] g XREF: 00-infrastructure/TODO-11 {S}2 (item: "Real" at line 7)'
 check("writer_rejects_arrowless_clause",
       bool(xref.writer_bare_xrefs(NOARROW)) and not xref.writer_has_concrete(NOARROW)
-      and tg.XREF_CLAUSE_RE.search(NOARROW) is None)
+      and not tg_edge(NOARROW))
 # helper; is HOOK-tier only: its semicolon is a raw terminator, so the writer can
 # never accept it -- pinned as a documented decision (new stamps use the item form)
 HLP = f'[M] g -> XREF: 00-infrastructure/TODO-11 {S}2 (helper; add kmem helper)'
