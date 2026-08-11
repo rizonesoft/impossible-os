@@ -41,27 +41,21 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # ONE invocation of the gate, not the rule.
 GATE_EXCLUDED_TODO=""
 GATE_STAGED_TODO=""
-# ...and the files that are in the commit AND carry LATER unstaged edits. Those
-# are the only ones whose committed bytes differ from the bytes on disk, so they
-# are the only ones a check has to read out of the INDEX. Checks 10/11 need this
-# because they became fence-aware: an unstaged fence wrapped around a staged
-# violation would otherwise MASK it (fail-open), and an unstaged unclosed fence
-# would refuse a commit that does not contain it (false block). Both routes are
-# NEW -- a fence-blind check could not be steered by either -- and both were
-# found by adversarial review before shipping.
+# WHY CHECKS 10/11 CARE ABOUT THE STAGED-VS-WORKTREE DISTINCTION AT ALL. They
+# became fence-aware, which gave a pre-existing worktree read two routes it
+# never had: an unstaged fence wrapped around a staged violation MASKS it
+# (fail-open), and an unstaged unclosed fence REFUSES a commit that does not
+# contain it (false block). Neither is reachable against a fence-blind check.
 #
-# A SEPARATE, NORMALLY-EMPTY SET rather than reading all 281 files from the
-# index: for a file with no unstaged edits the index blob and the worktree bytes
-# are identical by construction, so reading them would cost a `git show` per file
-# at every commit and could not change a verdict.
-GATE_DIVERGED_TODO=""
+# There is deliberately NO "which files diverge" set here. That was the first
+# repair and it was unsound four ways -- a staged-new file deleted from disk is
+# never visited by a filesystem walk, `--name-only` C-quotes non-ASCII paths so
+# they never match, `assume-unchanged` hides a difference entirely, and the
+# diff-then-read gap is a TOCTOU window. Checks 10/11 read the whole document
+# set out of the index instead (`todo_fence.staged_docs`), so no per-file
+# decision exists to get wrong.
 if [ "${LINT_GATE_SCOPE_STAGED:-}" = "1" ]; then
     GATE_STAGED_TODO="$(git -C "$REPO_ROOT" diff --cached --name-only -- 'todo/*.md' 'todo/**/*.md' 2>/dev/null | sort -u)"
-    GATE_DIVERGED_TODO="$(
-        comm -12 \
-            <(git -C "$REPO_ROOT" diff --name-only -- 'todo/*.md' 'todo/**/*.md' 2>/dev/null | sort -u) \
-            <(git -C "$REPO_ROOT" diff --cached --name-only -- 'todo/*.md' 'todo/**/*.md' 2>/dev/null | sort -u) \
-        2>/dev/null || true)"
     # UNTRACKED counts too: a run that OPENS a new TODO (a fresh capture file,
     # a split section) has a file that is equally not part of this commit, and
     # leaving it in meant the wedge simply moved to new files. Staged wins over
@@ -74,11 +68,26 @@ if [ "${LINT_GATE_SCOPE_STAGED:-}" = "1" ]; then
             <(git -C "$REPO_ROOT" diff --cached --name-only -- 'todo/*.md' 'todo/**/*.md' 2>/dev/null | sort -u) \
         2>/dev/null || true)"
     if [ -n "$GATE_EXCLUDED_TODO" ]; then
-        echo -e "${DIM:-}gate scope: $(printf '%s\n' "$GATE_EXCLUDED_TODO" | wc -l | tr -d ' ') todo file(s) modified outside this commit are not judged by Checks 7/10/11/17/24${NC:-}"
+        # NAMES ONLY THE CHECKS THAT ACTUALLY EXCLUDE PER FILE. The banner used
+        # to claim 7/17/24; a consistency review found that Check 7 only
+        # DOWNGRADES a stale-cache error using this set (it still reports every
+        # finding in the current cache) and Check 17 does not consult it at all.
+        # An over-claiming scope line is worse than none: it tells a reader a
+        # wedge cannot happen from a file they are not committing, and one can.
+        echo -e "${DIM:-}gate scope: $(printf '%s\n' "$GATE_EXCLUDED_TODO" | wc -l | tr -d ' ') todo file(s) modified outside this commit are not judged by Checks 10/11/24 (Check 7 only downgrades a stale-cache error)${NC:-}"
     fi
 fi
 
 # True when $1 is a todo file the commit does not touch.
+#
+# CURRENTLY UNCALLED, and that is the finding rather than the fix. Every
+# consumer reaches for `$GATE_EXCLUDED_TODO` directly instead -- Check 7 for its
+# stale-cache downgrade, Check 24 for a JSON filter, Checks 10/11 through the
+# environment -- so this helper is the only place the rule is stated once, and
+# deleting it would remove the statement without giving any consumer the shared
+# predicate. Wiring the remaining consumers through it is filed as its own item
+# rather than done here, because Check 7 excluding per file CHANGES verdicts and
+# that is a decision, not an adoption (Codex consistency, section 38 review).
 gate_excluded() {
     [ -n "$GATE_EXCLUDED_TODO" ] || return 1
     printf '%s\n' "$GATE_EXCLUDED_TODO" | grep -qxF "${1#"$REPO_ROOT"/}"
@@ -733,7 +742,6 @@ if [ "${SKIP_LINT_STAMP_REGION:-}" = "1" ] && [ "${SKIP_LINT_OS_COMPARISON:-}" =
     WARNINGS=$((WARNINGS + 2))
 else
     LINT_OUT="$(LINT_GATE_EXCLUDED_TODO="$GATE_EXCLUDED_TODO" \
-                LINT_GATE_DIVERGED_TODO="$GATE_DIVERGED_TODO" \
                 python3 - "$REPO_ROOT" <<'PYEOF'
 import os
 import re
@@ -880,87 +888,20 @@ def os_row_for_section(os_block, section_num, deliverable_substring):
 # computes these two sets for why fence-awareness made that distinction matter.
 _STAGED_SCOPE = os.environ.get("LINT_GATE_SCOPE_STAGED", "") == "1"
 _EXCLUDED = {p for p in os.environ.get("LINT_GATE_EXCLUDED_TODO", "").split("\n") if p}
-_DIVERGED = {p for p in os.environ.get("LINT_GATE_DIVERGED_TODO", "").split("\n") if p}
-
-
-def staged_snapshot(root):
-    """`{rel: text}` for every `todo/**.md` IN THE INDEX, or None if unreadable.
-
-    ONE FIXED SNAPSHOT, enumerated from the index rather than from the disk.
-    Reading the index only for files that `git diff` calls modified was tried
-    first and is unsound in at least four ways, each of which lets an unstaged
-    edit steer a gate that judges a commit (Codex adversarial, section 38
-    round 2, [high]):
-      * a staged-NEW file deleted from the worktree without staging the
-        deletion is still in the commit, but a filesystem walk never visits it;
-      * `git diff --name-only` C-QUOTES a path containing a newline or a
-        non-ASCII byte, so it can never match the plain path string it is
-        compared against;
-      * `assume-unchanged` / `skip-worktree` / a clean-smudge filter leaves the
-        worktree different without the file appearing in `git diff` at all;
-      * anything saved between the diff and the read is a plain TOCTOU window.
-    Enumerating the index closes all four at once, which is why this is a
-    snapshot rather than a per-file decision.
-
-    NUL-separated, and blobs are fetched by SHA through one `cat-file --batch`:
-    a path is never used as a protocol delimiter, and 281 blobs cost one
-    subprocess instead of 281.
-    """
-    ls = subprocess.run(["git", "-C", root, "ls-files", "-z", "-s", "--", "todo"],
-                        capture_output=True, check=False)
-    if ls.returncode != 0:
-        return None
-    entries = []
-    for rec in ls.stdout.split(b"\0"):
-        if not rec:
-            continue
-        meta, _, path = rec.partition(b"\t")
-        parts = meta.split()
-        if len(parts) != 3:
-            return None
-        _mode, sha, stage = parts
-        if stage != b"0":
-            return None                  # unmerged path: not a commitable tree
-        if not path.endswith(b".md"):
-            continue
-        entries.append((sha.decode("ascii"), path))
-    if not entries:
-        return {}
-    batch = subprocess.run(["git", "-C", root, "cat-file", "--batch"],
-                           input=b"\n".join(s.encode() for s, _ in entries) + b"\n",
-                           capture_output=True, check=False)
-    if batch.returncode != 0:
-        return None
-    out, pos, docs = batch.stdout, 0, {}
-    for _sha, path in entries:
-        nl = out.find(b"\n", pos)
-        if nl < 0:
-            return None
-        hdr = out[pos:nl].split()
-        if len(hdr) != 3 or hdr[1] != b"blob":
-            return None
-        size = int(hdr[2])
-        body = out[nl + 1:nl + 1 + size]
-        pos = nl + 1 + size + 1          # blob, then git's trailing newline
-        try:
-            docs[path.decode("utf-8")] = body.decode("utf-8")
-        except UnicodeDecodeError:
-            continue                     # same skip the worktree read takes
-    return docs
 
 
 # THE DOCUMENT SET. Under the commit gate it comes from the index snapshot, so
 # what is judged is what is being committed; otherwise it is the worktree, which
 # is what a bare `bash scripts/lint.sh` and CI both want.
 if _STAGED_SCOPE:
-    _SNAPSHOT = staged_snapshot(sys.argv[1])
-    if _SNAPSHOT is None:
-        # A blob-read failure is INFRASTRUCTURE, not a clean bill: passing here
-        # would mean passing the commit unread. Emitted through the block's own
-        # ERROR channel so it lands in the lint summary like any other finding.
-        print("ERROR todo/: Check 10/11 could not read the staged snapshot "
-              "(unmerged path, or git could not produce the index blobs) -- "
-              "refusing rather than judging the working tree instead")
+    try:
+        _SNAPSHOT, _TREE = _fence.staged_docs(sys.argv[1])
+    except _fence.StagedSnapshotError as _exc:
+        # INFRASTRUCTURE, not a clean bill: passing here would mean passing the
+        # commit unread. Emitted through the block's own ERROR channel so it
+        # lands in the lint summary like any other finding.
+        print("ERROR todo/: Check 10/11 could not read the staged snapshot -- "
+              "%s; refusing rather than judging the working tree instead" % _exc)
         raise SystemExit(0)
     _DOCS = sorted(_SNAPSHOT.items())
 else:

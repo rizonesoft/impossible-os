@@ -27,12 +27,14 @@ today. That is the argument for adding it now rather than when it first fires.
 from __future__ import annotations
 
 import importlib.util
+import subprocess
 import sys
 from pathlib import Path
 
 __all__ = [
     "fence_scan", "fence_mask", "scan_text", "unclosed_reason",
     "mask_text", "unmasked",
+    "StagedSnapshotError", "index_tree", "staged_docs",
 ]
 
 _CS = None
@@ -117,6 +119,142 @@ def unmasked(lines, mask):
     number or slice the untouched document.
     """
     return ((i, l) for i, l in enumerate(lines) if not mask[i])
+
+
+class StagedSnapshotError(RuntimeError):
+    """The staged index could not be read as one coherent generation.
+
+    An EXCEPTION rather than a None return, because every caller here is a GATE:
+    silently degrading to the working tree is the exact failure this helper
+    exists to remove, and a return value invites exactly that.
+    """
+
+
+def _git(root, *args, **kw):
+    return subprocess.run(["git", "-C", str(root)] + list(args),
+                          capture_output=True, check=False, **kw)
+
+
+def index_tree(root) -> str:
+    """The tree id of the CURRENT index -- a generation fingerprint.
+
+    `git write-tree` also REFUSES an index with unmerged paths, so a conflicted
+    tree is rejected here rather than each caller inventing its own check.
+    """
+    r = _git(root, "write-tree")
+    if r.returncode != 0:
+        raise StagedSnapshotError(
+            "cannot pin the index (unmerged paths, or git refused write-tree): "
+            + r.stderr.decode("utf-8", "replace").strip()[:200])
+    return r.stdout.decode("ascii").strip()
+
+
+# Git object modes that are a readable text document. A symlink (120000) is
+# ALSO reported as a blob by `cat-file`, but its content is the link TARGET
+# PATHNAME -- scanning that as Markdown finds no headings, no rows and no
+# stamps, so a symlinked TODO would sail through a gate that a worktree
+# `read_text()` (which follows the link) would have judged on the real file.
+# A gitlink (160000) refuses only incidentally, because its object type is
+# `commit` rather than `blob`. Both are named here instead (Codex adversarial,
+# section 38 review, [high]).
+_TEXT_MODES = (b"100644", b"100755")
+
+
+def staged_docs(root):
+    """`(docs, tree_id)` for every `todo/**.md` IN THE INDEX.
+
+    `docs` maps a repo-relative path to its staged text. Raises
+    `StagedSnapshotError` on anything that would make the answer partial or
+    ambiguous -- an unmerged index, a non-regular entry, malformed `cat-file`
+    framing, an undecodable blob, or an index that MOVED while being read.
+
+    ONE SNAPSHOT, SHARED BY BOTH STAGED GATES. `lint.sh` Checks 10/11 and
+    `todo-staged-check.py` were each enumerating the index their own way and
+    disagreed about three real cases: git C-QUOTES a non-ASCII or newline path
+    in `--name-only` output so one gate never saw such a file at all, an
+    unmerged entry fell back to worktree bytes in one and refused in the other,
+    and an undecodable blob raised in one and was skipped in the other. Two
+    mechanisms for one invariant is the drift this module exists to end
+    (Codex consistency, section 38 review, [medium]).
+
+    GENERATION-BOUND. The tree id is taken before AND after the read and must
+    match, so a `git add` landing mid-read cannot hand a caller a mask from one
+    generation and line numbers from another. Callers that derive anything
+    ELSE from the index (a diff, say) re-check `index_tree()` against the
+    returned id afterwards.
+    """
+    tree_before = index_tree(root)
+    ls = _git(root, "ls-files", "-z", "-s", "--", "todo")
+    if ls.returncode != 0:
+        raise StagedSnapshotError("git ls-files failed on todo/")
+    entries = []
+    for rec in ls.stdout.split(b"\0"):
+        if not rec:
+            continue
+        meta, sep, path = rec.partition(b"\t")
+        parts = meta.split()
+        if not sep or len(parts) != 3:
+            raise StagedSnapshotError("unparseable ls-files record")
+        mode, sha, stage = parts
+        if stage != b"0":
+            raise StagedSnapshotError(
+                "unmerged index entry: " + path.decode("utf-8", "replace"))
+        if not path.endswith(b".md"):
+            continue
+        if mode not in _TEXT_MODES:
+            raise StagedSnapshotError(
+                "non-regular index entry (mode %s): %s -- a symlink or gitlink "
+                "is not a document this gate can read"
+                % (mode.decode(), path.decode("utf-8", "replace")))
+        entries.append((sha.decode("ascii"), path))
+    docs = {}
+    if entries:
+        batch = _git(root, "cat-file", "--batch",
+                     input=b"\n".join(s.encode() for s, _ in entries) + b"\n")
+        if batch.returncode != 0:
+            raise StagedSnapshotError("git cat-file --batch failed")
+        out, pos = batch.stdout, 0
+        # STRICT FRAMING. Every field is checked because none of them is free:
+        # an unchecked size desynchronises the walk so one file's content is
+        # attributed to another path, and an unchecked response id means a
+        # `missing`/`ambiguous` reply is silently consumed as the next blob
+        # (Codex adversarial, section 38 review, [medium]).
+        for want_sha, path in entries:
+            nl = out.find(b"\n", pos)
+            if nl < 0:
+                raise StagedSnapshotError("truncated cat-file response")
+            hdr = out[pos:nl].split()
+            if len(hdr) != 3 or hdr[1] != b"blob":
+                raise StagedSnapshotError(
+                    "unexpected cat-file response: "
+                    + out[pos:nl].decode("utf-8", "replace")[:120])
+            if hdr[0].decode("ascii") != want_sha:
+                raise StagedSnapshotError("cat-file returned a different object")
+            try:
+                size = int(hdr[2])
+            except ValueError:
+                raise StagedSnapshotError("non-numeric cat-file size")
+            body_start = nl + 1
+            if size < 0 or body_start + size + 1 > len(out):
+                raise StagedSnapshotError("cat-file size out of range")
+            body = out[body_start:body_start + size]
+            if out[body_start + size:body_start + size + 1] != b"\n":
+                raise StagedSnapshotError("missing cat-file record separator")
+            pos = body_start + size + 1
+            try:
+                docs[path.decode("utf-8")] = body.decode("utf-8")
+            except UnicodeDecodeError:
+                raise StagedSnapshotError(
+                    "undecodable staged blob: "
+                    + path.decode("utf-8", "replace"))
+        if pos != len(out):
+            raise StagedSnapshotError("trailing bytes after the last cat-file record")
+    tree_after = index_tree(root)
+    if tree_after != tree_before:
+        raise StagedSnapshotError(
+            "the index changed while it was being read (a concurrent `git add`) "
+            "-- refusing rather than mixing two generations")
+    return docs, tree_before
 
 
 def mask_text(text: str) -> str:

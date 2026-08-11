@@ -195,7 +195,16 @@ def _io_rows(lines, mask):
             inside = l[3:].strip().lower().startswith("implementation order")
             sec_col = None
             continue
-        if not inside or not l.startswith("|"):
+        if not inside:
+            continue
+        if not l.startswith("|"):
+            # A NON-TABLE LINE ENDS THE TABLE, so the next one declares its own
+            # header. Latching `sec_col` for the whole `## Implementation Order`
+            # section instead meant a legend or example table placed before the
+            # real one fixed the column permanently, and the real header was
+            # then consumed as data with no way to correct it (Codex
+            # adversarial, section 38 review, [medium]).
+            sec_col = None
             continue
         cells = [c.strip() for c in l.strip().strip("|").split("|")]
         # THE HEADER DECLARES WHICH COLUMN HOLDS THE SECTION, and the marker is
@@ -234,13 +243,24 @@ def _io_rows(lines, mask):
         # the integrity check, so a row with order 1 and marker 41 lets a real
         # section 1 that has open work and no IO row of its own pass silently
         # (Codex adversarial, section 38 round 2, [high], against that repair).
+        # THE MARKER GLYPH IS WHAT MAKES THE COLUMN AUTHORITATIVE, not the
+        # header word. `Section` names two different things in this corpus: the
+        # section NUMBER in the six-column layout, where the cell carries the
+        # marker glyph; and the section TITLE in the older four-column one
+        # (`| 1 | Win32 Type Definitions | [Sonnet] | ... |`, where the number
+        # is column 0). Keying on the header word alone read 1,522 titles as
+        # unparseable and produced a refusal for nearly every section in those
+        # files -- measured, and caught only because the corpus differential was
+        # re-run after the change rather than reasoned about.
+        #
+        # So: a marker in the declared column WINS and is used alone, which is
+        # what keeps an order number out of the membership set. Anything else
+        # falls through to the digit rule, which is correct for the legacy
+        # layout because there the digit IS the section number.
         if sec_col is not None and sec_col < len(cells):
             m = SECTION_MARKER_RE.match(cells[sec_col])
             if m:
                 rows.add(int(m.group(1)))
-                continue
-            if cells[sec_col].isdigit():      # marker glyph omitted
-                rows.add(int(cells[sec_col]))
                 continue
         for cell in cells[:2]:
             if cell.isdigit():

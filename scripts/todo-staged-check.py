@@ -65,45 +65,46 @@ def _fence():
     return mod
 
 
-def _post_image(path):
-    """The STAGED post-image text for `path`, or None when it cannot be read.
+def _staged_snapshot():
+    """`(docs, tree_id)` from `todo_fence.staged_docs`, or `(None, reason)`.
 
     THE SNAPSHOT HAS TO MATCH THE COORDINATES. `_added_lines` derives every line
     number from `git diff --cached`, i.e. from the INDEX, while every structural
     walk below used to read the WORKING TREE. Those are the same file only when
-    nothing is partially staged. Under partial staging an unstaged insertion or
-    deletion shifts every later line, so a staged coordinate indexes a different
-    line -- and once a fence mask is derived from that snapshot the mismatch
-    also decides which lines are considered fenced. The checker could then
-    ignore a staged section, provenance violation, over-cap item or cap
-    increase, or refuse content that is not in the commit at all (Codex design
-    review, section 38, [high]).
+    nothing is partially staged; under partial staging an unstaged edit shifts
+    every later line, so a staged coordinate indexes a different line -- and
+    once a fence mask is derived from that snapshot, the mismatch also decides
+    which lines count as fenced (Codex design review, section 38, [high]).
 
-    Falls back to None (caller reads the working tree) when git cannot produce
-    the blob -- outside a repo, or a path staged as a deletion. Every caller
-    already fails open on an unreadable file, and a gate that started refusing
-    commits when run outside a work tree would be worse than the drift.
+    THE ENUMERATION IS SHARED WITH `lint.sh`, deliberately. Each gate reading
+    the index its own way is how they came to disagree about three real cases:
+    git C-QUOTES a non-ASCII path in `--name-only` output so one gate never saw
+    the file, an unmerged entry fell back to worktree bytes here and refused
+    there, and an undecodable blob raised here and was skipped there. Two
+    mechanisms for one invariant is exactly the drift the shared tracker exists
+    to end (Codex consistency, section 38 review, [medium]).
     """
     try:
-        r = subprocess.run(["git", "show", f":{path}"],
-                           capture_output=True, text=True, check=False)
-    except OSError:
-        return None
-    return r.stdout if r.returncode == 0 else None
+        return _fence().staged_docs(_git_root()), None
+    except Exception as exc:                  # StagedSnapshotError or OSError
+        return None, str(exc)
 
 
-def _post_image_lines(path):
-    """`(lines, mask, unclosed_reason)` over the staged post-image.
+def _git_root():
+    """The repo this gate is judging: the CWD one, not the script's own.
 
-    One helper so all five structural walks share ONE snapshot and ONE mask
-    rather than each re-reading and re-scanning the file.
+    `_staged_todo_files` and `_added_lines` both shell out without `-C`, so
+    they already speak to the invoking repository -- a pre-commit hook runs at
+    its root. Resolving the snapshot from `__file__` instead would read THIS
+    checkout's index while the coordinates came from the caller's, which is the
+    same generation mismatch one directory over (caught by this gate's own
+    fixtures, which stage into a scratch repo).
     """
-    text = _post_image(path)
-    if text is None:
-        try:
-            text = pathlib.Path(path).read_text(encoding="utf-8")
-        except OSError:
-            return [], [], None
+    return "."
+
+
+def _post_image_lines(text):
+    """`(lines, mask, unclosed_reason)` for one staged document."""
     fence = _fence()
     lines, mask, uf, uc = fence.scan_text(text)
     return lines, mask, fence.unclosed_reason(uf, uc)
@@ -450,15 +451,30 @@ def main(argv) -> int:
     files = _staged_todo_files()
     if not files:
         return 0
+    # ONE index snapshot for the whole run, generation-pinned. Every structural
+    # walk below reads from it, and `_added_lines`'s coordinates are re-bound to
+    # the same generation afterwards -- two git invocations against a moving
+    # index is how a mask from one generation ends up indexing another's lines.
+    snap, snap_err = _staged_snapshot()
+    if snap is None:
+        sys.stderr.write(
+            "\n[todo-staged-check] cannot read the staged index: %s\n"
+            "\n  Refusing rather than judging the working tree instead: the\n"
+            "  coordinates this gate uses come from the index, so a snapshot it\n"
+            "  cannot trust would judge one generation's lines against\n"
+            "  another's text.\n"
+            "  Opt-out: SKIP_TODO_STAGED_CHECK=1 git commit ...\n" % snap_err)
+        return 1
+    docs, tree_id = snap
     bad, wrapped, oscomp, parked, noprov, noimpact = [], [], [], [], [], []
     unscannable = []
     # section-count cap: judged per file, on files this commit GROWS
     capped_hard, capped_soft = [], []
     for f in files:
-        # ONE staged snapshot and ONE fence mask per file, shared by every walk
-        # below. The snapshot is the INDEX post-image, not the working tree, so
-        # it matches the coordinates `_added_lines` produces (section 38).
-        lines, mask, unclosed = _post_image_lines(f)
+        text = docs.get(f)
+        if text is None:
+            continue                   # staged deletion: nothing to judge
+        lines, mask, unclosed = _post_image_lines(text)
         if unclosed:
             unscannable.append((f, unclosed))
             continue
@@ -490,6 +506,23 @@ def main(argv) -> int:
                 capped_hard.append((f, total, new_secs))
             elif total >= SECTION_SOFT_CAP:
                 capped_soft.append((f, total, new_secs))
+    # RE-BIND THE COORDINATES. Everything above read one pinned generation, but
+    # `_added_lines` shelled out to `git diff --cached` separately -- so a
+    # `git add` landing in between would have paired this run's masks with
+    # another generation's line numbers. Checking the tree id once at the end
+    # costs one `write-tree` and turns that race into a refusal.
+    try:
+        if _fence().index_tree(_git_root()) != tree_id:
+            sys.stderr.write(
+                "\n[todo-staged-check] the index changed while this gate ran "
+                "(a concurrent `git add`) -- refusing rather than reporting a "
+                "verdict about two different generations. Re-run the commit.\n")
+            return 1
+    except Exception as exc:
+        sys.stderr.write(
+            "\n[todo-staged-check] cannot re-verify the index generation: %s\n"
+            % exc)
+        return 1
     if unscannable:
         for f, why in unscannable:
             sys.stderr.write(

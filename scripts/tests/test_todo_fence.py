@@ -287,6 +287,36 @@ def test_reachability():
     check("reachability: a header-less table still yields its data row",
           reach._io_rows(hl, hm) == {1})
 
+    # A "Section" header that holds the section TITLE, not its number. This is
+    # the older four-column layout and it is most of the corpus; keying on the
+    # header word alone made 1,522 titles unparseable and refused nearly every
+    # section in those files.
+    titled = "\n".join([
+        "## Implementation Order",
+        "| #   | Section | Tag | Dep | Mark |",
+        "| --- | ------- | --- | --- | ---- |",
+        "| 1   | Win32 Type Definitions | `[Sonnet]` | -- | x |",
+        ""])
+    tl, tm, _, _ = tf.scan_text(titled)
+    check("reachability: a Section column holding a TITLE falls back to the number",
+          reach._io_rows(tl, tm) == {1})
+
+    # A legend table BEFORE the real one, inside the same heading. The header
+    # must not latch for the whole section: a non-table line ends the table.
+    twotables = "\n".join([
+        "## Implementation Order",
+        "| Legend | Section | Meaning |",
+        "| - | - | - |",
+        "| x | shipped | done |",
+        "",
+        "| S | Order | Section | Deliverable | Dep | Status |",
+        "| - | :-: | :-: | - | - | :-: |",
+        "| x |  39   | " + S + "41 | A re-sequenced section | -- |  [x]   |",
+        ""])
+    wl, wm, _, _ = tf.scan_text(twotables)
+    check("reachability: a preceding legend table does not latch the column",
+          41 in reach._io_rows(wl, wm))
+
     # A fenced `- [ ]` and a fenced stamp must not reach the body scans either.
     body = next(b for n, _, b in reach._sections(lines, mask) if n == 1)
     check("reachability: no fenced open item in the real section's body",
