@@ -1512,10 +1512,15 @@ def eq(got, want, label):
 # `_scan_markdown` yields ("heading", title) / ("link", lineno, anchor) events
 # rather than building whole-file lists, so an anchor-dense file cannot
 # amplify memory. These two adapters keep the assertions readable.
+# `_scan_markdown` takes the SHARED scan's (lines, mask) since section 39, so
+# the producer and the validator cannot drift about what is fenced. These
+# adapters do here what the production caller does once per file.
+def sm(src):
+    return v._scan_markdown(*v.cache_schema.scan_text(src)[:2])
 def links(src):
-    return [(e[1], e[2]) for e in v._scan_markdown(src) if e[0] == "link"]
+    return [(e[1], e[2]) for e in sm(src) if e[0] == "link"]
 def heads(src):
-    return [e[1] for e in v._scan_markdown(src) if e[0] == "heading"]
+    return [e[1] for e in sm(src) if e[0] == "heading"]
 
 # GitHub does NOT collapse whitespace runs.
 eq(v._slugify_heading("2. Alpha / Beta"), "2-alpha--beta", "slash")
@@ -1655,9 +1660,11 @@ sys.path.insert(0, sys.argv[1])
 import validate as v
 
 fails = []
+def sm(src):
+    return v._scan_markdown(*v.cache_schema.scan_text(src)[:2])
 # Linear comment scanning: 100k comments must not take seconds.
 line = "<!---->" * 100000 + "\n"
-t0 = time.perf_counter(); list(v._scan_markdown(line)); dt = time.perf_counter() - t0
+t0 = time.perf_counter(); list(sm(line)); dt = time.perf_counter() - t0
 if dt > 1.0:
     fails.append(f"comment scan took {dt:.2f}s (quadratic rebuild is back)")
 
@@ -1667,7 +1674,7 @@ if dt > 1.0:
 # the 16 MiB ceiling this validator is required to accept.
 line = "`x" * (4 * 1048576 // 2) + "\n"
 tracemalloc.start()
-list(v._scan_markdown(line))
+list(sm(line))
 peak = tracemalloc.get_traced_memory()[1]; tracemalloc.stop()
 if peak > 12 * len(line):
     fails.append(f"backtick indexing peaked at {peak/1048576:.0f} MiB on a 4 MiB line")
@@ -1705,7 +1712,7 @@ for kb in (32, 128):
     ):
         t0 = time.perf_counter()
         if label == "unclosed-comment":
-            list(v._scan_markdown(src))
+            list(sm(src))
         else:
             v._rendered_inline_text(src)
         dt = time.perf_counter() - t0

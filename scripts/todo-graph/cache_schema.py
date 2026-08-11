@@ -706,6 +706,89 @@ CHECKLIST_ITEM_RE = re.compile(r"^\s*[-*]\s+\[[ xX/~]\]\s")
 # the original, backticks and all, since item names routinely contain them.
 _INLINE_CODE_RE = re.compile(r"`[^`]*`")
 
+
+def mask_code_spans(s: str) -> str:
+    """`s` with every inline code span blanked to spaces of the SAME length.
+
+    DELIMITER-RUN AWARE, which a regex over single backticks is not. CommonMark
+    opens a span with a run of N backticks and closes it with a run of exactly
+    N, so ``` ``<!--`` ``` is one span containing a literal comment opener. The
+    old `` `[^`]*` `` pattern could not see it, left the `<!--` visible to the
+    comment probe, and suppressed every following checklist item -- which in the
+    mutating repair path can turn a missing target into a false unique match
+    (Codex adversarial, section 39 round 4, [medium]).
+
+    Length is preserved so an offset found on the result indexes the original.
+    """
+    if "`" not in s:
+        return s
+    # ONE FORWARD PASS, BOUNDED MEMORY. Only the earliest unmatched opener of
+    # each run LENGTH is remembered, so the state is bounded by the number of
+    # distinct lengths rather than by the number of runs.
+    #
+    # THE FIRST TWO CUTS EACH FAILED ON REAL INPUT. Rescanning the suffix for
+    # every unmatched run was quadratic -- 5.6s on a 336 KB line (Codex round
+    # 9). Indexing every run position fixed the time and not the space: a
+    # PERMITTED 16 MiB line of alternating backticks is ~8.4M runs, measured at
+    # 95 bytes of Python objects per input byte, i.e. ~1.5 GiB, which
+    # `--fix-line-numbers` would hit as an OOM (Codex round 11). This keeps
+    # both bounded.
+    #
+    # ESCAPING APPLIES TO OPENERS ONLY, and that asymmetry is CommonMark, not a
+    # shortcut: a backslash escapes in normal text, but INSIDE a code span
+    # everything is literal, so a backslash-prefixed run still closes the span
+    # it is inside. Treating an escaped run as invisible let the span run on to
+    # a later backtick and swallow a real `<!--` (Codex round 11, [high]).
+    out = None
+    pending = {}          # run length -> start offset of its earliest opener
+    span_end = 0          # end of the last masked span; earlier openers are void
+    i, n = 0, len(s)
+    while i < n:
+        if s[i] != "`":
+            i += 1
+            continue
+        j = i
+        while j < n and s[j] == "`":
+            j += 1
+        length = j - i
+        start = pending.get(length)
+        if start is not None and start >= span_end:
+            if out is None:
+                out = list(s)
+            for t in range(start, j):
+                out[t] = " "
+            span_end = j
+            del pending[length]
+        else:
+            b = i
+            while b > 0 and s[b - 1] == "\\":
+                b -= 1
+            if (i - b) % 2:
+                # ONLY THE FIRST BACKTICK IS ESCAPED. A backslash escapes one
+                # character, so the REST of a longer run is still an eligible
+                # delimiter -- `\``` opens a two-backtick span. Voiding the
+                # whole run left a real `<!--` unmasked and truncated a valid
+                # item name at it (Codex adversarial, section 39 round 12,
+                # [medium]).
+                if length > 1:
+                    length -= 1
+                    i += 1
+                    start = pending.get(length)
+                    if start is not None and start >= span_end:
+                        if out is None:
+                            out = list(s)
+                        for t in range(start, j):
+                            out[t] = " "
+                        span_end = j
+                        del pending[length]
+                    elif start is None or start < span_end:
+                        pending[length] = i
+            elif start is None or start < span_end:
+                # Not escaped: it may OPEN a span. Keep the earliest live one.
+                pending[length] = i
+        i = j
+    return s if out is None else "".join(out)
+
 # A line that STARTS an HTML block comment, under CommonMark's same 0-3-space
 # bound as a fence. Commented-out checklist text is not a destination, and
 # `validate.py:_scan_markdown` already skips these -- leaving them in here would
@@ -747,6 +830,314 @@ _HTML_INLINE_COMMENT_RE = re.compile(r"<!--.*?-->")
 FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 FENCE_TAIL_RE = re.compile(r"^[ \t]*$")
 
+# ---- CommonMark CONTAINER blocks (TODO-06 section 39) ----
+#
+# WHY THE LEAF RULES ARE NOT ENOUGH ON THEIR OWN. `FENCE_RE` bounds the opener
+# at 3 leading spaces because a 4-space marker is an indented code block. That
+# is the correct CommonMark rule -- but CommonMark applies it to the line with
+# every enclosing CONTAINER prefix already stripped, not to the physical line.
+# A fence indented five spaces under `100. docs`, or one written inside a
+# blockquote, is therefore a real fenced block that a physical-line tracker
+# never opens. Measured 2026-08-11 with markdown-it-py over all 281 files under
+# `todo/`: 105 such lines across 6 files (77 list-indented, 27 blockquote-
+# prefixed), every one invisible to the tracker before this.
+#
+# THE FACTORING, and why it is not a rewrite. These helpers do only what
+# CommonMark's block phase does -- consume the open containers' prefixes, then
+# hand the REMAINDER to the unchanged leaf matcher. `fence_step` keeps its
+# per-line `(char, length)` contract and stays the single definition of the
+# closer-character, closer-length, blank-tail and backtick-info-string rules;
+# it simply now receives the line CommonMark would have given it. A second
+# fence matcher here would be the exact drift section 36 existed to end.
+_BLOCKQUOTE_RE = re.compile(r"^ {0,3}>")
+# A list marker must be FOLLOWED by whitespace or end the line: `-item` is a
+# paragraph, `- item` opens a container. The ordered form is bounded at 9
+# digits because CommonMark bounds it there.
+_LIST_MARKER_RE = re.compile(r"^ {0,3}([-*+]|\d{1,9}[.)])(?=[ \t]|$)")
+# BOTH OPENERS IN ONE MATCH. `_open_containers` runs on every unfenced line and
+# tried each pattern separately, so an ordinary prose line paid two anchored
+# match calls to learn it opens nothing. Group 1 is a blockquote marker, group 2
+# a list marker; exactly one can be set.
+_CONTAINER_OPEN_RE = re.compile(
+    r"^( {0,3})(?:(>)|([-*+]|\d{1,9}[.)])(?=[ \t]|$))")
+# LEAF BLOCKS THAT ARE NOT PARAGRAPH TEXT. Paragraph state drives CommonMark's
+# list-interruption and lazy-continuation rules, and treating "any non-blank
+# line" as a paragraph got BOTH wrong: an ATX heading or a setext underline
+# closes the paragraph, so `Title` / `=====` / `10. item` opens a list that a
+# non-blank-means-paragraph model refused (Codex adversarial, section 39 round
+# 3, [high]).
+_ATX_HEADING_RE = re.compile(r"^ {0,3}#{1,6}(?:[ \t]|$)")
+_THEMATIC_BREAK_RE = re.compile(r"^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$")
+_SETEXT_UNDERLINE_RE = re.compile(r"^ {0,3}(?:=+|-+)[ \t]*$")
+# A LINK REFERENCE DEFINITION is not a paragraph, so nothing follows it that a
+# list could "interrupt". Counting it as prose made `[foo]: /url` / `10. item`
+# refuse to open the item and the fence inside it went unseen (Codex
+# adversarial, section 39 round 4, [high]).
+#
+# SINGLE-LINE ONLY, and that bound is stated rather than hidden. CommonMark
+# allows the title to sit on following lines, and deciding where such a
+# definition ENDS needs content-dependent parsing this three-flag model does
+# not have -- which is the structural limit the reviewer named. Measured
+# 2026-08-11: 0 link reference definitions of ANY form under `todo/`, so the
+# multi-line remainder is OWNED by TODO-06 section 42 (item: "Model MULTI-LINE
+# link reference definitions, the one bound section 39 states rather than
+# solves") rather than approximated here, where a wrong guess would silently
+# mis-model a paragraph. The first version of this note named section 42
+# without section 42 carrying the item -- an owner that does not own it is a
+# black hole, and the review caught that before it shipped.
+_LINK_REF_DEF_RE = re.compile(r"^ {0,3}\[(?:[^\]\\]|\\.)+\]:[ \t]*\S")
+# The only characters that can begin a fence delimiter. Testing membership
+# before calling `FENCE_RE` turns the common case -- a prose line with no
+# delimiter character anywhere -- into a C-level scan instead of a regex call.
+_FENCE_CHARS = ("`", "~")
+
+
+def _indent_cols(s: str, start_col: int = 0) -> int:
+    """Leading whitespace of `s` measured in COLUMNS, tabs to 4-column stops.
+
+    Columns rather than characters because CommonMark measures container
+    indentation that way, and a tab is worth between 1 and 4 of them depending
+    on where it starts. One corpus file carries tabs today and all of them sit
+    inside already-masked regions, so this changes no live answer; it is here
+    so the rule is right rather than accidentally right.
+
+    SPACE-ONLY FAST PATH, and it is not premature. This runs per line over the
+    whole corpus, and a per-character Python loop here was most of a measured
+    4.7x regression in `fence_scan` (23.5ms -> 109.4ms across 281 files), which
+    the builder felt as a 2s budget breach. `lstrip` does the same walk in C;
+    the column loop is entered only when a TAB is actually in the leading run.
+    """
+    n = len(s) - len(s.lstrip(" "))
+    if n == len(s) or s[n] != "\t":
+        return n
+    col, i = start_col + n, n
+    while i < len(s):
+        ch = s[i]
+        if ch == " ":
+            col += 1
+        elif ch == "\t":
+            col += 4 - (col % 4)
+        else:
+            break
+        i += 1
+    return col - start_col
+
+
+def _dedent_cols(line: str, cols: int, start_col: int = 0):
+    """`line` with exactly `cols` columns of leading whitespace removed, or None.
+
+    None means the line is not indented that far, which is how a caller learns
+    a list container did NOT continue. A tab STRADDLING the cut is replaced by
+    the spaces it still owes, so the remainder keeps the column alignment the
+    original had -- dropping the whole tab would under-indent the rest of the
+    line and could turn an indented code block into a fence.
+    """
+    # SPACE-ONLY FAST PATH -- see `_indent_cols`. A pure-space leading run is
+    # the overwhelmingly common case and slices in C.
+    #
+    # ANY TAB IN THE LEADING RUN FORCES EXPANSION FIRST, and narrowing that to
+    # "a tab exactly on the cut" is a bug this went through twice. A tab is
+    # worth `4 - (col % 4)` columns measured from its ORIGINAL column, and
+    # slicing `cols` characters shifts every retained character left by `cols`
+    # -- so a retained tab re-expands from the wrong origin whenever
+    # `cols % 4 != 0`, wherever in the run it sits. The first cut repaired only
+    # `rest[0]` and `- item` + `   \t```` still masked NOTHING where CommonMark
+    # opens a fence, letting the builder index the fenced `- [ ]` inside it
+    # (Codex adversarial, section 39 round 2, [high]). Expanding the run to
+    # spaces makes the cut a pure character slice, which is the only form that
+    # cannot get the arithmetic wrong.
+    n = len(line) - len(line.lstrip(" "))
+    if n == len(line) or line[n] != "\t":
+        return line[cols:] if n >= cols else None
+    col, i = start_col + n, n
+    while i < len(line):
+        ch = line[i]
+        if ch == " ":
+            col += 1
+        elif ch == "\t":
+            col += 4 - (col % 4)
+        else:
+            break
+        i += 1
+    col -= start_col
+    return " " * (col - cols) + line[i:] if col >= cols else None
+
+
+def _match_containers(containers, line: str):
+    """`(matched, rest, base)` -- how many open containers this line continues.
+
+    `rest` is the line with those containers' prefixes consumed, which is what
+    the leaf matchers must see. `matched < len(containers)` means the tail of
+    the stack closed on this line.
+
+    A BLANK LINE CONTINUES A LIST ITEM BUT NOT A BLOCKQUOTE, and the asymmetry
+    is load-bearing rather than a nicety. `100. item` / blank / five-space
+    fence is ONE list item containing a fenced block: closing the list at the
+    blank would leave the fence unopened and let its literal `- [ ]` content
+    reach every consumer as a real checklist item (Codex design review, section
+    39, [high], confirmed against markdown-it-py before it was implemented). A
+    blockquote is the other way round -- an unmarked blank line ends it.
+    """
+    rest = line
+    matched = 0
+    # THE ABSOLUTE COLUMN of `rest[0]`, carried so tab stops stay physical. A
+    # tab expands to the next 4-column stop measured from where it really sits
+    # in the LINE, not from where it sits in the remainder after prefixes were
+    # stripped -- and losing that made `- a` / `  -\tb` / `    \t```` open a
+    # fence CommonMark does not have and report the document as unclosed, so
+    # the builder and every gate refused a valid TODO (Codex adversarial,
+    # section 39 round 6, [high]).
+    base = 0
+    for kind, arg, filled in containers:
+        if kind == "bq":
+            m = _BLOCKQUOTE_RE.match(rest)
+            if not m:
+                break
+            base += m.end()
+            rest = rest[m.end():]
+            # The marker may be followed by ONE optional space, which belongs
+            # to the prefix rather than to the content. A TAB there is worth
+            # `4 - (base % 4)` columns measured from the marker's ABSOLUTE end,
+            # so consuming one column leaves the rest -- a fixed three spaces
+            # is only right when the `>` sits at column 0, and inside a nested
+            # container it is not (Codex adversarial, section 39 round 7,
+            # [high]).
+            if rest[:1] == " ":
+                rest = rest[1:]
+                base += 1
+            elif rest[:1] == "\t":
+                rest = " " * (4 - (base % 4) - 1) + rest[1:]
+                base += 1
+        else:
+            if not rest.strip():
+                # A BLANK LINE CONTINUES A LIST ITEM -- unless the item has no
+                # content yet. `10.` followed by a blank closes the item, so an
+                # indented run after it is a ROOT indented code block, not the
+                # item's content. Continuing it instead opened a fence there
+                # and reported the document as ending inside one, refusing a
+                # legal file (Codex adversarial, section 39 round 3, [medium]).
+                if not filled:
+                    break
+                rest = ""
+                matched += 1
+                continue
+            d = _dedent_cols(rest, arg, base)
+            if d is None:
+                break
+            rest = d
+            base += arg
+        matched += 1
+    return matched, rest, base
+
+
+def _fill(containers) -> None:
+    """Mark EVERY open container as having content.
+
+    ALL OF THEM, not just the innermost. A blank-first outer item whose first
+    content is another container was left provisional, because opening the
+    inner container only filled the inner one -- so the next blank line closed
+    the outer item and took an open fence with it (Codex adversarial, section
+    39 round 4, [high]). Content nested at any depth is content for every
+    ancestor holding it.
+    """
+    for c in containers:
+        c[2] = True
+
+
+def _open_containers(containers, rest: str, can_interrupt: bool = True,
+                     base: int = 0) -> str:
+    """Push every container `rest` OPENS, returning the leaf content.
+
+    Mutates `containers`. The loop is what makes nesting work: a blockquote
+    marker followed by a list marker opens both, and only the remainder after
+    each prefix can be a fence.
+
+    `can_interrupt` is False when the PREVIOUS line left a paragraph open. A
+    list may interrupt a paragraph only if its first line is non-blank and, when
+    ordered, starts at 1 -- so `para` / `10. faux` is ONE paragraph to
+    CommonMark, not a list. Opening a container there was not merely cosmetic:
+    the following indented line then read as a fence and the document was
+    reported as ending inside an unclosed one, so `build.py` REFUSED a
+    perfectly valid file (Codex adversarial, section 39, [medium], reproduced
+    against markdown-it-py before fixing). A blockquote has no such
+    restriction and always opens.
+    """
+    while True:
+        m = _CONTAINER_OPEN_RE.match(rest)
+        if m is None:
+            return rest
+        # Opening a container is content for everything already open.
+        _fill(containers)
+        if m.group(3) and not can_interrupt:
+            marker = m.group(3)
+            after_m = rest[m.end():]
+            if not after_m.strip():
+                return rest          # an empty item cannot interrupt
+            # BY VALUE, NOT SPELLING. CommonMark reads `01.` as the number 1,
+            # so it may interrupt a paragraph exactly as `1.` does; comparing
+            # the text refused it and the fence below went unopened (Codex
+            # adversarial, section 39 round 5, [high]).
+            if marker[-1] in ".)" and int(marker[:-1]) != 1:
+                return rest          # only a marker whose value is 1 interrupts
+        if m.group(2):
+            containers.append(["bq", 0, True])
+            base += m.end()
+            rest = rest[m.end():]
+            # See `_match_containers`: the optional tab's width comes from the
+            # marker's absolute end column.
+            if rest[:1] == " ":
+                rest = rest[1:]
+                base += 1
+            elif rest[:1] == "\t":
+                rest = " " * (4 - (base % 4) - 1) + rest[1:]
+                base += 1
+            continue
+        # THE LEAD COMES FROM THE MATCH, not from a second scan of the line:
+        # the regex already consumed those 0-3 spaces, and `_indent_cols` here
+        # was ~200k redundant calls across the corpus.
+        marker_cols = len(m.group(1)) + len(m.group(3))
+        abs_marker_end = base + marker_cols
+        after = rest[m.end():]
+        # INLINE SPACE-ONLY FAST PATH. `after` is the text following the
+        # marker; in the corpus it is virtually always exactly one space then
+        # content, so the helpers are entered only when a tab is in play.
+        if not after or after.isspace():
+            # A marker alone on its line, whatever the trailing whitespace is.
+            # Tested with `isspace` rather than `strip()` because this runs per
+            # line and `strip()` allocates; it also keeps an all-TAB tail on
+            # this branch instead of computing a content indent from it.
+            # A BLANK-FIRST ITEM is provisional: CommonMark closes it if the
+            # next line is also blank, so it is pushed with `filled=False`.
+            containers.append(["li", marker_cols + 1, False])
+            rest = ""
+            continue
+        spaces = len(after) - len(after.lstrip(" "))
+        if spaces < len(after) and after[spaces] == "\t":
+            # MEASURED FROM THE MARKER'S OWN COLUMN. A tab after `-` advances
+            # to the next 4-column stop from column 1, not from column 0, so
+            # measuring it in isolation gave `-\titem` a content indent of 5
+            # instead of 4 and the fence under it was never opened (Codex
+            # adversarial, section 39 round 5, [high]).
+            spaces = _indent_cols(after, abs_marker_end)
+            tabbed = True
+        else:
+            tabbed = False
+        if 1 <= spaces <= 4:
+            content = marker_cols + spaces
+            rest = (_dedent_cols(after, spaces, abs_marker_end) if tabbed
+                    else after[spaces:])
+        else:
+            # 5+ spaces after the marker: the content indent is marker + 1
+            # and the content itself STARTS as an indented code block. Only
+            # one column is consumed for exactly that reason -- the
+            # remaining 4+ are what keep such a run from opening a fence.
+            content = marker_cols + 1
+            rest = (_dedent_cols(after, 1, abs_marker_end) if tabbed
+                    else after[1:])
+        containers.append(["li", content, True])
+        base += content
+        continue
+
 
 def fence_step(state, line: str):
     """Advance fenced-code-block state by one line. `state` is None outside a
@@ -754,6 +1145,12 @@ def fence_step(state, line: str):
 
     A backtick fence's info string may not itself contain a backtick, which is
     what keeps an inline code span off the opener path.
+
+    THE LEAF RULE ONLY. `line` must already have its enclosing container
+    prefixes stripped -- `fence_scan` is what does that. Called on a physical
+    line this applies CommonMark's 0-3-space bound in the wrong coordinate
+    system and misses every container-indented fence; that was the KNOWN LIMIT
+    section 39 closed, and a caller that skips the container phase re-opens it.
     """
     m = FENCE_RE.match(line)
     if state is not None:
@@ -805,32 +1202,183 @@ def fence_scan(lines):
     wrapper below.
     """
     out = []
-    state = None
+    containers = []          # the open CommonMark container stack
+    state = None             # fence state, `(char, length)` while open
+    depth = 0                # len(containers) when the fence/comment opened
     in_comment = False
+    para_open = False        # the previous line left a paragraph open
+    para_depth = 0           # the container depth that paragraph belongs to
     for line in lines:
+        matched, rest, base = _match_containers(containers, line)
+        # A LEAF BLOCK DIES WITH ITS CONTAINER. When the list item or
+        # blockquote holding an open fence stops matching, CommonMark ends the
+        # fence there -- code blocks have no lazy continuation. This is not a
+        # theoretical rule: section 36 round 3 measured two corpus files that
+        # opened a fence inside a checklist item and then left the container
+        # with an unindented table, so the apparent closer read as a NEW root
+        # opener and swallowed six headings. A physical-line tracker sees
+        # neither end of that.
         if in_comment:
-            # A block comment consumes THROUGH the line carrying `-->`;
-            # trailing text on that line is still part of the block.
-            if "-->" in line:
-                in_comment = False
-            out.append(True)
+            if matched >= depth:
+                # A block comment consumes THROUGH the line carrying `-->`;
+                # trailing text on that line is still part of the block.
+                if "-->" in rest:
+                    in_comment = False
+                out.append(True)
+                continue
+            in_comment = False
+        elif state is not None:
+            if matched >= depth:
+                # A closer must carry a delimiter character, so a line with
+                # none cannot change the state -- skip the regex entirely.
+                if "`" in rest or "~" in rest:
+                    state = fence_step(state, rest)
+                out.append(True)
+                continue
+            state = None
+        # LAZY CONTINUATION. A paragraph line may omit its container prefixes
+        # entirely and still belong to the paragraph, so a shorter match does
+        # NOT always mean the container closed. `10. first` / `lazy
+        # continuation` / an indented fence is one ordered item to CommonMark;
+        # truncating the stack at the lazy line dropped the container, the
+        # fence never opened, and its `- [ ]` was indexed as a real item (Codex
+        # adversarial, section 39 round 3, [high]).
+        #
+        # ONLY PARAGRAPH TEXT IS LAZY. A fence, an ATX heading, a thematic
+        # break, a blockquote marker or a list marker all START a block, which
+        # closes the paragraph and really does end the container -- so each is
+        # excluded here rather than being allowed to inherit the stack.
+        _lazy_stripped = rest.lstrip(" \t") if para_open else ""
+        _lazy_lead = _lazy_stripped[:1]
+        if (para_open and matched < para_depth and _lazy_stripped
+                and not (_lazy_lead == "#" and _ATX_HEADING_RE.match(rest))
+                and not (_lazy_lead in ("-", "*", "_")
+                         and _THEMATIC_BREAK_RE.match(rest))
+                and not _CONTAINER_OPEN_RE.match(rest)
+                and not HTML_BLOCK_COMMENT_RE.match(rest)
+                and not (("`" in rest or "~" in rest)
+                         and fence_step(None, rest) is not None)):
+            out.append(False)
             continue
-        nxt = fence_step(state, line)
-        # Masked when we were inside before the line OR are inside after it --
-        # which covers the content and both delimiters in one expression.
-        fenced = state is not None or nxt is not None
-        state = nxt
-        if fenced:
-            out.append(True)
+        del containers[matched:]
+        # A PARAGRAPH BELONGS TO THE CONTAINER IT STARTED IN, and tracking only
+        # a global "is a paragraph open" flag was wrong in the erasure
+        # direction. In `1. first` / `2. second`, the paragraph `first` lives
+        # INSIDE item 1; line 2 is indented too little to continue it, so the
+        # item closes and `2.` is a SIBLING opening a new item -- not an
+        # interruption, and the start-at-1 rule must not apply. The flat flag
+        # rejected it, the following indented line then failed to open its
+        # fence, and the fenced `- [ ]` was indexed as a real item (Codex
+        # adversarial, section 39 round 2, [high]). A paragraph survives only
+        # while the line still matches the depth it started at.
+        #
+        # A THEMATIC BREAK OUTRANKS A LIST MARKER: `- - -` matches the marker
+        # pattern but CommonMark reads it as a break, so it must not open a
+        # container.
+        # FIRST-CHARACTER GUARDS on the three leaf recognisers below. Each is
+        # anchored and can only match a line whose first non-space character is
+        # in a tiny set, so a `lstrip` + membership test in C replaces the regex
+        # call on most lines. Measured over all 281 corpus files: `fence_scan`
+        # 145.3ms -> 137.3ms, which is modest -- the paragraph/lazy state this
+        # section added costs what it costs, and the number that matters is the
+        # BUILDER, which the whole change moves from 1.02s to ~1.06s against a
+        # 2s budget.
+        _lead = rest.lstrip(" \t")[:1]
+        if _lead in ("-", "*", "_") and _THEMATIC_BREAK_RE.match(rest):
+            out.append(False)
+            para_open = False
             continue
-        if HTML_BLOCK_COMMENT_RE.match(line):
+        rest = _open_containers(
+            containers, rest, not (para_open and matched >= para_depth), base)
+        # THE TWO GUARDS ARE THE HOT PATH, not micro-optimisation for its own
+        # sake. `FENCE_RE` can only match a line containing a backtick or a
+        # tilde and `HTML_BLOCK_COMMENT_RE` only one containing `<!--`, so an
+        # ordinary prose line -- the overwhelming majority of the corpus -- used
+        # to pay two anchored regex calls to learn it is ordinary. Measured over
+        # all 281 files, the container phase took `fence_scan` from 23.5ms to
+        # 128.8ms and tripped the builder's 2s budget; these guards plus the
+        # combined opener regex are what bring it back.
+        nxt = None
+        if "`" in rest or "~" in rest:
+            nxt = fence_step(None, rest)
+        if nxt is not None:
+            state = nxt
+            depth = len(containers)
+            out.append(True)
+            # A fenced block is a LEAF: it closes any open paragraph, so the
+            # line after the block cannot be a lazy continuation of one.
+            para_open = False
+            # ...and it is CONTENT, so the blank-first rule may no longer close
+            # the item holding it. Without this, `- ` / a fence / a blank line
+            # closed the item at the blank and took the open fence with it.
+            _fill(containers)
+            continue
+        if "<!--" in rest and HTML_BLOCK_COMMENT_RE.match(rest):
             # A line STARTING with `<!--` is an HTML block: the whole line is
             # hidden, including anything after a `-->` on it.
-            if "-->" not in line:
+            if "-->" not in rest:
                 in_comment = True
+                depth = len(containers)
             out.append(True)
+            _fill(containers)
+            para_open = False
             continue
         out.append(False)
+        # REAL PARAGRAPH STATE, not "the line was non-blank". An ATX heading
+        # replaces a paragraph and a setext underline closes the one above it;
+        # treating either as paragraph text left the interruption restriction
+        # active and swallowed the list that followed.
+        # RECOMPUTED, not reused: `_open_containers` reassigned `rest` above, so
+        # the pre-container lead is a different string here.
+        _stripped = rest.lstrip(" \t")
+        _lead = _stripped[:1]
+        if not _stripped or (_lead == "#" and _ATX_HEADING_RE.match(rest)):
+            para_open = False
+        elif (para_open and _lead in ("=", "-")
+                and _SETEXT_UNDERLINE_RE.match(rest)):
+            para_open = False
+        elif not para_open and _lead == "[" and _LINK_REF_DEF_RE.match(rest):
+            para_open = False
+        elif not para_open and _indent_cols(rest) >= 4:
+            # INDENTED CODE IS STILL CONTENT. It is not a paragraph, so
+            # `para_open` stays false -- but the item holding it is no longer
+            # provisional, and skipping `_fill` here let the next blank line
+            # close an item that plainly had content in it.
+            _fill(containers)
+            # AN INDENTED CODE BLOCK IS NOT A PARAGRAPH. With no paragraph open
+            # a 4-column indent starts code, so nothing follows that a list
+            # could "interrupt" -- counting it as prose made `    indented` /
+            # `- ` refuse to open the item, and the fence inside it went unseen.
+            # (When a paragraph IS open the same line is a lazy continuation of
+            # it, which is why this is reached only in the not-open case.)
+            para_open = False
+        else:
+            # This line is paragraph text, so the innermost container now has
+            # content and can no longer be closed by the blank-first rule.
+            _fill(containers)
+            para_open = True
+            para_depth = len(containers)
+    # THE TERMINAL FLAG IS REPORTED HONESTLY, and an attempt to soften it was
+    # REVERTED. Block precedence between a lazy paragraph line and an indented
+    # code block is the one CommonMark rule this model gets wrong (section 42
+    # owns it, measured at 4 of 1,679,616 generated documents and 0 corpus
+    # instances); in that shape a fence can open against a stale stack, so the
+    # document is reported as ending inside a fence when CommonMark sees none.
+    #
+    # The mitigation tried was a `lazy_seen` latch suppressing the flag once any
+    # lazy continuation had occurred. It was wrong for a reason worth recording:
+    # a whole-document latch also suppressed GENUINE unclosed fences -- both one
+    # opening immediately after a valid lazy line and an unrelated root fence
+    # later in the same file -- so a document whose structure really was erased
+    # to EOF would be published instead of refused (Codex adversarial, section
+    # 39 round 8, [high]). Per-fence scoping does not rescue it either: the
+    # divergent shape and the genuine one present identically to this model,
+    # which is precisely what "the rule is architectural" means.
+    #
+    # So the trade is taken deliberately in the fail-CLOSED direction. A false
+    # refusal is loud, rare and recoverable by reformatting; a false accept
+    # silently erases every heading, item, row and stamp past the opener, which
+    # is the failure this scan exists to prevent (see the module docstring).
     return out, state is not None, in_comment
 
 
@@ -856,13 +1404,127 @@ def fence_mask(lines) -> list:
     repair -- rather than confident wrong structure. Measured 2026-08-10: one
     corpus file was unbalanced this way, and it was found BY this rule.
 
-    KNOWN LIMIT, owned by section 39: `FENCE_RE` applies CommonMark's 0-3-space
-    rule to the PHYSICAL line, but CommonMark applies it after stripping the
-    enclosing list-container prefix. A fence indented five spaces under
-    `100. docs` is therefore not recognised at all, so neither this mask nor the
-    producer's unclosed-fence refusal covers it.
+    CONTAINER-AWARE since section 39. `fence_scan` consumes the enclosing
+    blockquote and list-item prefixes before applying the leaf rules, so the
+    0-3-space bound lands in CommonMark's coordinate system rather than on the
+    physical line, and a fence indented five spaces under `100. docs` is a real
+    block here exactly as it is in a renderer.
+
+    KNOWN LIMIT, owned by TODO-06 section 42: HTML blocks other than `<!--`
+    comments. CommonMark also opens a block on `<script>` / `<pre>` / `<style>`
+    / `<textarea>`, a processing instruction, a declaration and CDATA (which run
+    to EOF when unterminated), and on the ~60 known tag names of type 6 (which
+    end at a blank line). This scan enters HTML state only for a comment.
+    Measured 2026-08-11 across all 281 corpus files: 0 EOF-consuming openers and
+    30 type-6 lines, none of which carry a heading, checklist item, table row or
+    stamp -- so nothing is mis-indexed today. Closing it needs the terminal
+    contract to carry the block KIND, which is why it is a section and not a
+    line.
     """
     return fence_scan(lines)[0]
+
+
+# Every character `str.splitlines()` treats as a line break but `split("\n")`
+# does not. The producer walks bodies with `splitlines()` and the validator
+# splits on `"\n"`, so a body containing any of these was literally TWO
+# DIFFERENT DOCUMENTS to the two halves of the tool: a `## N.` after a lone CR
+# is a heading to the producer and invisible to the validator, which is the
+# erasure direction. Normalising to `\n` first makes the two splits agree by
+# construction instead of by luck. Measured 2026-08-11: 0 of 281 corpus files
+# contain any of them, so this changes no live answer -- it removes a way for
+# the halves to disagree the next time one is authored.
+# Spelled as ESCAPES, never as literals: U+2028 and U+2029 are invisible in
+# an editor, so a literal here reads as a stray space and the next person to
+# touch this line deletes it.
+_ODD_BREAKS = "\r\v\f\x1c\x1d\x1e\x85\u2028\u2029"
+_BREAK_MAP = {ord(c): "\n" for c in _ODD_BREAKS}
+# SEARCH BEFORE TRANSLATING. `str.translate` with a dict walks every character
+# of the document through a dict lookup: measured 855ms across the 11.1 MB
+# corpus, which alone took the builder from 1.02s to 1.9s and tripped its 2s
+# budget -- an 800ms tax to fix zero files. A compiled character-class search
+# fails in C on the first pass and costs ~10ms, so the rewrite is paid for only
+# by a document that actually contains one of these.
+_ODD_BREAK_RE = re.compile("[" + re.escape(_ODD_BREAKS) + "]")
+
+
+def normalize_newlines(text: str) -> str:
+    """`text` with every `splitlines()` break spelled `\\n`, BOM stripped.
+
+    CRLF is collapsed FIRST so it does not become a blank line, then the
+    remaining odd breaks are mapped one for one -- which preserves the line
+    COUNT, so a line number derived after this call still names the line an
+    author would count.
+    """
+    if text.startswith("\ufeff"):
+        text = text[1:]
+    if "\r\n" in text:
+        text = text.replace("\r\n", "\n")
+    return text.translate(_BREAK_MAP) if _ODD_BREAK_RE.search(text) else text
+
+
+def scan_text(text: str):
+    """`(lines, mask, unclosed_fence, unclosed_comment)` for a whole document.
+
+    Normalises line endings first, so the `lines` handed back are the same
+    lines `splitlines()` would give the producer. Callers that need to index
+    the ORIGINAL bytes must normalise before they split, which is what the two
+    entry points here do.
+    """
+    lines = normalize_newlines(text).split("\n")
+    mask, unclosed_fence, unclosed_comment = fence_scan(lines)
+    return lines, mask, unclosed_fence, unclosed_comment
+
+
+# A `## N. Title` section heading. ONE MATCHER, because `build.py` had two --
+# `_walk_section_headings` used `^## (\d+)\.\s+(.+?)\s*$` and
+# `_walk_stamped_items` used `^## (\d+)\.\s+`, so the two walks could disagree
+# about the same line in two ways at once (section 39, filed by the section-36
+# review). Both are now this.
+#
+# 0-3 LEADING SPACES, matching CommonMark and `validate.py:_ATX_RE`. The walks
+# anchored at column 0 while the validator accepted an indent, which is the
+# ERASURE direction: an indented `## 1.` was invisible to the producer and
+# visible to the validator, so the graph would omit a section the link checker
+# believed in. Measured 2026-08-11: 0 indented `## N.` headings corpus-wide.
+#
+# THE TITLE IS OPTIONAL HERE and the walks decide separately what to do with a
+# bare `## 5.`, because they always did: the heading walk required a title and
+# skipped it, the item walk did not and opened a section. Folding that into the
+# pattern would have silently picked a winner. Measured: 0 title-less section
+# headings corpus-wide, so it is a latent disagreement rather than a live bug,
+# and it is now at least stated in one place.
+#
+# STILL ANCHORED ON THE PHYSICAL LINE, not on the container-stripped remainder:
+# a `## N.` indented SIX spaces inside a list item is a heading to CommonMark
+# and is not matched here. Measured: 0 such headings corpus-wide. Closing it
+# means giving the walks the container phase's output rather than the raw line,
+# which is section 42's work, not a wider regex.
+SECTION_HEADING_RE = re.compile(r"^ {0,3}## (\d+)\.(?:\s+(.+?))?\s*$")
+
+
+def unclosed_reason(unclosed_fence: bool, unclosed_comment: bool):
+    """One wording for every consumer, or None when the document is well-formed.
+
+    HERE RATHER THAN IN THE SHIM, because the validator lives beside this module
+    and cannot reach `scripts/todo_fence.py` without a `sys.path` insertion that
+    would make every later plain-name import in the process resolve against
+    `scripts/`. `todo_fence.unclosed_reason` now delegates to this, so the four
+    gates, the producer and the validator all quote the same sentence.
+
+    Named separately per construct because the message has to tell an author
+    WHICH delimiter to close -- naming the wrong one sends them to the wrong
+    line, which is the same reason `fence_scan` reports the two flags apart.
+    """
+    if unclosed_fence:
+        return ("document ends inside an unclosed fenced code block, so every "
+                "structural walk past the opener reads as empty; close the "
+                "fence (a fence nested inside another must use a LONGER run "
+                "than the block containing it)")
+    if unclosed_comment:
+        return ("document ends inside an unclosed `<!--` HTML comment, so "
+                "every structural walk past the opener reads as empty; close "
+                "it with `-->`")
+    return None
 
 
 # Where a checklist item stops DESCRIBING itself and starts REFERRING elsewhere.
@@ -911,44 +1573,143 @@ def checklist_item_leads(text: str) -> dict:
     to another reference -- and only the lead cut closes both.
     """
     leads: dict = {}
-    fence = None
+    # THE SHARED SCAN, not a private walk. This ran `fence_step` on PHYSICAL
+    # lines and tracked comment state itself, which was equivalent to
+    # `fence_scan` only while the tracker had no container phase. Once section
+    # 39 gave it one the two disagreed: for `100. docs` + a five-space fence,
+    # `scan_text` masks the block while this walk still returned the fenced
+    # `- [ ] ...` inside it as a real item -- and `validate.py` feeds this to
+    # `--fix-line-numbers`, so a documentation example could become the unique
+    # match and a stamp be rewritten to point at it (Codex adversarial, section
+    # 39, [high], reproduced before fixing). A mask consumer cannot be left
+    # behind when the mask learns a new construct.
+    # THROUGH `scan_text`, so this helper shares the producer's NORMALISATION
+    # as well as its mask. Calling `fence_scan(text.splitlines())` left a UTF-8
+    # BOM attached to a first-line fence opener, so a BOM-authored document
+    # masked differently here than in the builder and `--fix-line-numbers`
+    # could steer off a fenced example (Codex adversarial, section 39 round 4,
+    # [medium]).
+    lines, mask, _uf, _uc = scan_text(text)
+    # THE MASK DOES NOT MODEL AN INLINE COMMENT THAT SPANS LINES, and the latch
+    # below is what covers it. `fence_scan` handles a comment that STARTS a
+    # line (CommonMark HTML block); a `<!--` opened mid-item and closed two
+    # lines later is inline markup inside a paragraph, which the mask has no
+    # concept of. The lead-truncation code already latched `in_comment` for
+    # exactly this, and routing the walk through the mask left that write with
+    # no reader -- so `- [ ] Real <!-- comment` / `- [ ] Phantom` /
+    # `continues -->` began returning the commented-out Phantom as a real item
+    # (Codex adversarial, section 39 round 2, [high]).
     in_comment = False
-    for lineno, line in enumerate(text.splitlines(), start=1):
+    comment_indent = 0
+    item_boundary = None     # content indent + 4 of the item being read
+    for lineno, line in enumerate(lines, start=1):
         if in_comment:
-            # Trailing text after `-->` stays part of the block, matching
-            # `_scan_markdown`; an item cannot hide on the closing line either.
-            if "-->" in line:
+            # THE LATCH IS BLOCK-SCOPED, not delimiter-scoped. An unmatched
+            # `<!--` in an item's inline text is LITERAL text, so it cannot
+            # reach into a SIBLING item: in `- [ ] Real <!-- unclosed` /
+            # `- [ ] Target`, CommonMark renders Target as a real item, while a
+            # latch that ran to the next `-->` anywhere hid it -- and
+            # `--fix-line-numbers` then reported a valid target missing and
+            # refused its repair (Codex adversarial, section 39 round 5,
+            # [high]).
+            #
+            # THE BOUNDARY IS THE ITEM'S CONTENT INDENT PLUS FOUR, not the
+            # opener's own indent. A marker one to five spaces in is still a
+            # sibling or a NESTED item -- a separate block either way -- and
+            # only at content-indent + 4 does the line become indented code,
+            # which cannot interrupt a paragraph and so really is a lazy
+            # continuation of it. Using the opener's indent hid every real item
+            # in that one-to-five-space band (Codex adversarial, section 39
+            # round 6, [high]); the earlier fixture happened to test only the
+            # zero-space and six-space ends and missed the range between.
+            stripped = line.strip()
+            if not stripped or _indent_cols(line) < comment_indent:
                 in_comment = False
-            continue
-        was_open = fence is not None
-        fence = fence_step(fence, line)
-        # A fence DELIMITER is never an item, and neither is anything between
-        # delimiters; checking `was_open or fence` covers the opener line too.
-        if was_open or fence is not None:
-            continue
-        if HTML_BLOCK_COMMENT_RE.match(line):
-            in_comment = "-->" not in line
+            else:
+                # Trailing text after `-->` stays part of the block, matching
+                # `_scan_markdown`; an item cannot hide on the closing line.
+                if "-->" in line:
+                    in_comment = False
+                continue
+        if mask[lineno - 1]:
             continue
         if not CHECKLIST_ITEM_RE.match(line):
+            # A CONTINUATION LINE CAN OPEN A COMMENT TOO. Comment detection used
+            # to run only after `CHECKLIST_ITEM_RE` matched, so `- [ ] Real` /
+            # `      continuation <!-- c` / `- [ ] Phantom` / `-->` indexed
+            # Phantom even though CommonMark renders it inside the comment --
+            # and a repair could bind a stamp to commented-out structure (Codex
+            # adversarial, section 39 round 11, [high] -- though the document
+            # the review cited is NOT one: with the later item at column 0,
+            # markdown-it renders TWO list items and escapes `<!-- c` as
+            # literal text, because a sibling ends the paragraph and an
+            # unterminated inline comment is not a comment. Verified against
+            # the oracle before implementing. The INDENTED variant is the real
+            # case, which is why only an indented continuation latches here.
+            if (item_boundary is not None and "<!--" in line
+                    and _indent_cols(line) >= item_boundary - 4):
+                probe = mask_code_spans(line) if "`" in line else line
+                probe = _HTML_INLINE_COMMENT_RE.sub("", probe)
+                if "<!--" in probe:
+                    in_comment = True
+                    # THE CONTAINING ITEM'S boundary, not this line's indent.
+                    # Using the opener line's own indent erased REAL nested
+                    # items across the 1-5 space band, which is the same
+                    # mistake the item-line path had made and had already
+                    # fixed -- reintroduced one branch over (Codex adversarial,
+                    # section 39 round 12, [high]).
+                    comment_indent = item_boundary
             continue
+        # The boundary this item's continuations are measured against: its
+        # content indent plus the 4 columns that make a line indented code.
+        _im = _CONTAINER_OPEN_RE.match(line)
+        if _im and _im.group(3):
+            _mc = len(_im.group(1)) + len(_im.group(3))
+            _after = line[_im.end():]
+            _sp = _indent_cols(_after, _mc)
+            item_boundary = _mc + (_sp if 1 <= _sp <= 4 else 1) + 4
+        else:
+            item_boundary = _indent_cols(line) + 4
         lead = line
         if "<!--" in lead:
             # Complete spans first, then an UNCLOSED opener truncates the lead
             # and latches the comment state -- a comment that starts on an item
             # line still hides everything after it.
+            #
+            # SEARCHED ON A CODE-SPAN-MASKED COPY, because an item may DOCUMENT
+            # the syntax: ``- [ ] First `<!--` `` is one item and a literal
+            # backtick-quoted opener, not a comment. Latching on it swallowed
+            # every following item, which can turn an ambiguity into a false
+            # unique match and let `--fix-line-numbers` rewrite a stamp to the
+            # wrong line (Codex adversarial, section 39 round 3, [high]). The
+            # mask preserves LENGTH, so an offset found on the copy indexes the
+            # original -- the same trick the reference-marker cut below uses.
             lead = _HTML_INLINE_COMMENT_RE.sub("", lead)
-            cut = lead.find("<!--")
+            probe = mask_code_spans(lead) if "`" in lead else lead
+            cut = probe.find("<!--")
             if cut != -1:
                 lead = lead[:cut]
                 in_comment = True
+                # Content indent of the item that opened the comment, plus the
+                # 4 columns that make a line indented code rather than a block.
+                comment_indent = item_boundary
         # The substring guard is worth its line: the regex costs ~1.9us per item
         # line against ~0.46us for the old literal finds, and most of the
         # corpus's ~20,500 item lines carry no reference at all, so testing two
         # cheap substrings first keeps the grammar without paying for it on
         # every line (Codex perf, section 35 round 2, measured +29.67ms).
         if "XREF" in lead or "(item:" in lead:
-            probe = (_INLINE_CODE_RE.sub(lambda m: " " * (m.end() - m.start()), lead)
-                     if "`" in lead else lead)
+            # THE SAME MASKER AS THE COMMENT PROBE. This kept the old
+            # single-backtick regex after the comment path moved to
+            # `mask_code_spans`, so a DOUBLED-run span documenting the marker
+            # (`` ``-> XREF:`` ``) was not recognised as code: the lead was cut
+            # inside it and the rest of the item name was dropped, which makes
+            # `--fix-line-numbers` report a valid item missing and leave its
+            # stamp unrepaired (Codex adversarial, section 39 round 11,
+            # [medium]). Both probes must answer "is this inside code?" the
+            # same way, and both rely on the mask preserving LENGTH so an
+            # offset found here indexes the original.
+            probe = mask_code_spans(lead) if "`" in lead else lead
             stop = _ITEM_LEAD_STOP_RE.search(probe)
             if stop:
                 lead = lead[:stop.start()]

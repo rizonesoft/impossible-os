@@ -68,29 +68,93 @@ if [ "${LINT_GATE_SCOPE_STAGED:-}" = "1" ]; then
             <(git -C "$REPO_ROOT" diff --cached --name-only -- 'todo/*.md' 'todo/**/*.md' 2>/dev/null | sort -u) \
         2>/dev/null || true)"
     if [ -n "$GATE_EXCLUDED_TODO" ]; then
-        # NAMES ONLY THE CHECKS THAT ACTUALLY EXCLUDE PER FILE. The banner used
-        # to claim 7/17/24; a consistency review found that Check 7 only
-        # DOWNGRADES a stale-cache error using this set (it still reports every
-        # finding in the current cache) and Check 17 does not consult it at all.
-        # An over-claiming scope line is worse than none: it tells a reader a
-        # wedge cannot happen from a file they are not committing, and one can.
-        echo -e "${DIM:-}gate scope: $(printf '%s\n' "$GATE_EXCLUDED_TODO" | wc -l | tr -d ' ') todo file(s) modified outside this commit are not judged by Checks 10/11/24 (Check 7 only downgrades a stale-cache error)${NC:-}"
+        # NAMES ONLY WHAT ACTUALLY EXCLUDES PER FILE: Checks 10/11/17/24
+        # wholly, and Check 7's FINDINGS but not its rc-7 coverage/population
+        # gate. An over-claiming scope line is worse than none -- it tells a
+        # reader a wedge cannot happen from a file they are not committing, and
+        # one can -- so this line has been wrong in BOTH directions and each was
+        # found by reading the code rather than the banner. It first claimed
+        # 7/17/24 while Check 7 only downgraded a stale-cache error; the
+        # correction then dropped to 10/11/24 on the further claim that "Check
+        # 17 does not consult it at all", which was false at the time it was
+        # written -- Check 17 has filtered `TABLE_ALIGN_RAW` per file all along.
+        # Section 39 made Check 7 exclude its FINDINGS too. It says so
+        # precisely rather than claiming the whole check, because the exclusion
+        # runs on the helper's stdout and cannot reach the coverage/population
+        # accounting behind rc 7 -- an excluded file that moves the stamped
+        # symbol population still blocks. Passing the set INTO the helper is
+        # filed in section 42; over-claiming here would be the third wrong
+        # version of this line (Codex adversarial, section 39 round 7,
+        # [medium]).
+        echo -e "${DIM:-}gate scope: $(printf '%s\n' "$GATE_EXCLUDED_TODO" | wc -l | tr -d ' ') todo file(s) modified outside this commit are not judged by Checks 10/11/17/24, nor by Check 7's findings (its coverage/population gate stays repo-wide)${NC:-}"
     fi
 fi
 
 # True when $1 is a todo file the commit does not touch.
-#
-# CURRENTLY UNCALLED, and that is the finding rather than the fix. Every
-# consumer reaches for `$GATE_EXCLUDED_TODO` directly instead -- Check 7 for its
-# stale-cache downgrade, Check 24 for a JSON filter, Checks 10/11 through the
-# environment -- so this helper is the only place the rule is stated once, and
-# deleting it would remove the statement without giving any consumer the shared
-# predicate. Wiring the remaining consumers through it is filed as its own item
-# rather than done here, because Check 7 excluding per file CHANGES verdicts and
-# that is a decision, not an adoption (Codex consistency, section 38 review).
 gate_excluded() {
     [ -n "$GATE_EXCLUDED_TODO" ] || return 1
     printf '%s\n' "$GATE_EXCLUDED_TODO" | grep -qxF "${1#"$REPO_ROOT"/}"
+}
+
+# The same rule, applied to a STREAM of findings: drop every line that names an
+# excluded todo file anywhere in it. Reads stdin, writes stdout.
+#
+# THE DECISION SECTION 39 OWED (filed by the section-38 consistency review).
+# Check 7 now honours the exclusion set, which it did not: it reported every
+# finding in a current cache and only DOWNGRADED a stale-cache error. That was
+# the odd one out -- Checks 10/11 exclude through the environment, Check 24
+# through a JSON filter, and Check 17 has excluded per file all along at the
+# `TABLE_ALIGN_RAW` filter below. Its finding is exactly the shape the exclusion
+# set exists for: an unattended run stamps an item `[x]` while its
+# implementation is still in flight, and an attended commit touching only
+# `scripts/` is blocked by a TODO it never opened -- which happened three times
+# on 2026-08-07 and is why the pre-commit hook scopes the gate at all.
+#
+# $1 names WHERE the owning todo path is found in a line:
+#   stamp-owner  -- Check 7: `... (stamped [x] in <todo> section N: "...")`
+#   leading-path -- Check 17: `<todo>: message`
+#
+# THE OWNER IS EXTRACTED AND COMPARED EXACTLY, never matched as a substring.
+# Check 7 reports at the SOURCE file that defines the stub (`report_rel =
+# result.def_rel`, `scripts/lint/check_stub_behind_stamp.py:272`) and names the
+# owning TODO only inside the message -- so a filter anchored on the leading
+# `path:line:` field would match no todo path ever and be a silent no-op. The
+# obvious repair, `grep -vFf` over the WHOLE line, overshoots the other way: the
+# message embeds arbitrary `item_text`, and cross-TODO mentions are routine
+# here, so a genuine finding owned by a STAGED file would be discarded because
+# its item text happens to name an excluded one -- turning a real
+# stub-behind-stamp error into a clean result (Codex adversarial, section 39,
+# [medium]). A gate may not acquire a silent false negative to gain a scope.
+# THE TWO MODES DIFFER BECAUSE THE TWO OUTPUTS DIFFER, not for symmetry.
+# Check 17 emits `would align: <path>` (`scripts/format-md-tables.py:375`) and
+# nothing else, so the only path on the line IS the owner, a substring match
+# cannot reach anything else, and it absorbs the fact that the emitted path is
+# ABSOLUTE while the exclusion set is repo-relative. Check 7 embeds arbitrary
+# `item_text`, so its owner must be extracted and compared exactly.
+#
+# Collapsing both onto one exact matcher looked tidier and silently disabled
+# Check 17's exclusion outright -- `^([^:]+):` captures the literal
+# `would align`, so no finding could ever match the set and an unaligned TODO
+# edited outside the commit kept wedging it (Codex adversarial, section 39
+# round 2, [medium]).
+gate_exclude_lines() {
+    if [ -z "$GATE_EXCLUDED_TODO" ]; then cat; return 0; fi
+    if [ "$1" = "leading-path" ]; then
+        grep -vFf <(printf '%s\n' "$GATE_EXCLUDED_TODO") || true
+        return 0
+    fi
+    GATE_EXCL="$GATE_EXCLUDED_TODO" python3 -c '
+import os, re, sys
+excluded = {p for p in os.environ.get("GATE_EXCL", "").split("\n") if p}
+owner = re.compile(r"stamped \[x\] in (\S+) section")
+for line in sys.stdin:
+    m = owner.search(line)
+    # NO OWNER, NO EXCLUSION. A line this filter cannot attribute is kept, so a
+    # message-format change degrades to reporting too much rather than to
+    # silently dropping a finding.
+    if m is None or m.group(1) not in excluded:
+        sys.stdout.write(line)
+'
 }
 
 # ---- Help ----
@@ -558,7 +622,9 @@ else
     STUB_LINT_CACHE="$CACHE" STUB_LINT_REPO_ROOT="$REPO_ROOT" \
         python3 "$REPO_ROOT/scripts/lint/check_stub_behind_stamp.py" \
         >"$STUB_OUT_FILE" 2>"$STUB_ERR_FILE" || STUB_RC=$?
-    STUB_OUT="$(cat "$STUB_OUT_FILE")"
+    # Drop findings owned by a todo file this commit does not touch -- see
+    # `gate_exclude_lines`. With no exclusion set this is a pass-through.
+    STUB_OUT="$(gate_exclude_lines stamp-owner < "$STUB_OUT_FILE")"
     case "$STUB_RC" in
         0)
             while IFS=: read -r f l rest; do
@@ -1410,12 +1476,12 @@ else
     # debt (measured 2026-07-05: 213/251 todo/*.md files), and per-file WARN
     # spam here would drown out every other check on every future commit.
     TABLE_ALIGN_RAW=$( { python3 "$REPO_ROOT/scripts/format-md-tables.py" --check "$REPO_ROOT/todo" 2>/dev/null || true; } )
-    # Drop findings in files the commit does not touch (see GATE_EXCLUDED_TODO).
-    # A mid-edit table is ragged for a moment by nature; that is the editing
-    # session's business, not this commit's.
-    if [ -n "$GATE_EXCLUDED_TODO" ] && [ -n "$TABLE_ALIGN_RAW" ]; then
-        TABLE_ALIGN_RAW=$(printf '%s\n' "$TABLE_ALIGN_RAW" \
-            | grep -vFf <(printf '%s\n' "$GATE_EXCLUDED_TODO") || true)
+    # Drop findings in files the commit does not touch, through the SHARED
+    # predicate rather than a second copy of it (section 39). A mid-edit table
+    # is ragged for a moment by nature; that is the editing session's business,
+    # not this commit's.
+    if [ -n "$TABLE_ALIGN_RAW" ]; then
+        TABLE_ALIGN_RAW=$(printf '%s\n' "$TABLE_ALIGN_RAW" | gate_exclude_lines leading-path)
     fi
     TABLE_ALIGN_COUNT=$(printf '%s' "$TABLE_ALIGN_RAW" | grep -c . || true)
     if [ "${TABLE_ALIGN_COUNT:-0}" -gt 0 ]; then

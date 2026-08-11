@@ -1869,8 +1869,13 @@ def _is_escaped(line: str, idx: int) -> bool:
     return n % 2 == 1
 
 
-def _scan_markdown(text: str):
+def _scan_markdown(lines, mask):
     """One pass over a TODO file -> (heading titles, [(line, anchor)]).
+
+    Takes the SHARED scan's `(lines, mask)` rather than the raw text: the
+    caller runs `cache_schema.fence_scan` once, acts on its terminal flags, and
+    passes the result to both passes, so the two streaming walks pay for one
+    scan and neither can drift from the producer's view of the document.
 
     Excluded because GitHub does not RENDER them as headings or links:
     fenced code blocks, HTML comments (which may span lines), inline code
@@ -1893,39 +1898,22 @@ def _scan_markdown(text: str):
     corpus's dominant authoring style; CommonMark agrees, since an indented
     code block cannot interrupt a list continuation.
     """
-    fence = None  # (marker char, opening run length)
-    in_comment = False
-    for lineno, raw in enumerate(text.split("\n"), 1):
-        if in_comment:
-            # An HTML block comment consumes THROUGH the line carrying `-->`;
-            # trailing text on that line is still part of the block.
-            if "-->" in raw:
-                in_comment = False
-            continue
-        # ONE STATE MACHINE, shared. Inside a fence EVERYTHING is literal and
-        # only a valid closer ends it: CommonMark requires the same marker, a
-        # run AT LEAST as long as the opener, and only spaces or tabs after it.
-        # Closing on any three-run let a ``` inside a ````-fenced block end the
-        # block, so the code read as prose and the real closer re-opened a fence
-        # over the rest of the file; `strip()` did the same for a trailing NBSP.
-        # A backtick fence's info string may not itself contain a backtick,
-        # which is what keeps an inline span off the opener path.
+    for lineno, raw in enumerate(lines, 1):
+        # ONE SCAN, SHARED, MASK AND ALL. This walk used to run
+        # `cache_schema.fence_step` itself and re-implement comment state beside
+        # it, which meant the validator and the producer agreed about a fence
+        # and could still disagree about a comment, an EOF, or -- since section
+        # 39 -- a container-indented fence, because only one of them had a
+        # container phase. Aliasing the regexes was never enough: a second copy
+        # of the STATE MACHINE is the same drift risk as a second copy of the
+        # pattern (Codex consistency, section 35 round 2), and re-deriving the
+        # mask here would have been a third.
         #
-        # Those rules used to be spelled out HERE as well as in
-        # `cache_schema.fence_step`. Aliasing the two regexes was not enough --
-        # a second copy of the STATE MACHINE is the same drift risk as a second
-        # copy of the pattern (Codex consistency, section 35 round 2).
-        was_open = fence is not None
-        fence = cache_schema.fence_step(fence, raw)
-        if was_open or fence is not None:
-            continue
-        if _HTML_BLOCK_COMMENT_RE.match(raw):
-            # A line STARTING with `<!--` is an HTML block: the whole line is
-            # hidden, including anything after the `-->`. `<!-- --># Ghost` is
-            # therefore not a heading -- treating it as one minted a phantom
-            # slug that VALIDATED an otherwise dead `#ghost` anchor.
-            if "-->" not in raw:
-                in_comment = True
+        # A masked line is fenced content, a fence delimiter, or an HTML block
+        # comment. `<!-- --># Ghost` is therefore not a heading -- treating it
+        # as one minted a phantom slug that VALIDATED an otherwise dead
+        # `#ghost` anchor.
+        if mask[lineno - 1]:
             continue
         # Headings come from the RAW line. Stripping code spans first would
         # erase the span CONTENTS, and GitHub keeps them: `resolve_symbol` is
@@ -1961,22 +1949,47 @@ def check_in_file_anchor(nodes: list, snapshot: dict) -> list:
         text = snapshot.get(rel, "")
         if not text:
             continue
-        # Match build.py's split_frontmatter() tolerances so a BOM- or
-        # CRLF-authored TODO is checked rather than silently skipped.
-        if text.startswith("﻿"):
-            text = text[1:]
-        if "\r\n" in text:
-            text = text.replace("\r\n", "\n")
-        # TWO streaming passes, because the heading set must be complete before
-        # any link can be judged and a heading may follow the link naming it.
-        # Retaining every link occurrence instead cost one tuple + fragment
-        # string per link: an anchor-dense 4 MiB file peaked at 58.9 MiB. The
-        # second pass folds straight into per-fragment counts, so peak memory
-        # is O(headings + DISTINCT dead fragments), never O(occurrences).
+        # ONE NORMALISER, shared with the producer, so a BOM- or CRLF-authored
+        # TODO is checked rather than silently skipped -- and so a body carrying
+        # a lone CR is the SAME document to both halves. This was two
+        # hand-rolled BOM/CRLF strips that agreed about those two cases and
+        # disagreed about every other break `splitlines()` honours.
+        # ONE SHARED SCAN, then TWO streaming passes over its result. The two
+        # passes exist because the heading set must be complete before any link
+        # can be judged and a heading may follow the link naming it; retaining
+        # every link occurrence instead cost one tuple + fragment string per
+        # link (an anchor-dense 4 MiB file peaked at 58.9 MiB). The second pass
+        # folds straight into per-fragment counts, so peak memory is
+        # O(headings + DISTINCT dead fragments), never O(occurrences). The mask
+        # is O(lines) and is computed ONCE for both, so sharing it costs
+        # nothing and removes the second walk's chance to disagree with the
+        # first.
+        lines, mask, unclosed_fence, unclosed_comment = \
+            cache_schema.scan_text(text)
+        # THE VALIDATOR NOW REFUSES WHAT THE PRODUCER REFUSES. An unclosed fence
+        # or comment masks to EOF, so every heading and link past the opener
+        # reads as absent -- which this check would otherwise report as a file
+        # with no anchors at all rather than as a file it could not read.
+        # `build.py` has refused exactly this since section 36; the validator
+        # treating the same document as merely empty was the two halves of the
+        # tool disagreeing about it (section 38 consistency review). Measured
+        # 2026-08-11: 0 of 281 corpus files trip either flag, so this changes no
+        # live verdict -- it changes which way the check fails when one does.
+        reason = cache_schema.unclosed_reason(unclosed_fence, unclosed_comment)
+        if reason:
+            # REFUSAL, not a finding, and the distinction is the whole point.
+            # A Finding becomes rc 1, whose documented meaning is "validation
+            # ran and reached a graph verdict about the corpus" -- so
+            # automation would read an UNREADABLE document as an actionable
+            # corpus defect. `_refuse` is the infrastructure channel (rc 2),
+            # which is what the producer does with the same input. The Notes
+            # claimed the validator now refuses; it appended a finding (Codex
+            # adversarial, section 39 round 7, [medium]).
+            _refuse(f"{rel}: {reason}")
         valid = _heading_slugs(
-            ev[1] for ev in _scan_markdown(text) if ev[0] == "heading")
+            ev[1] for ev in _scan_markdown(lines, mask) if ev[0] == "heading")
         dead: dict = {}
-        for ev in _scan_markdown(text):
+        for ev in _scan_markdown(lines, mask):
             if ev[0] != "link":
                 continue
             _, lineno, anchor = ev

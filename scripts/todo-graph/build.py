@@ -773,15 +773,13 @@ def split_frontmatter(content: str):
         fence search so a Windows-authored TODO with valid frontmatter
         is parsed instead of misclassified as no-frontmatter.
     """
-    # Strip UTF-8 BOM if present (Windows editors).
-    if content.startswith("\ufeff"):
-        content = content[1:]
-    # Normalize CRLF to LF for fence detection. Body line endings are
-    # preserved by working off the original content for the body slice
-    # only when normalization changed nothing; otherwise we work entirely
-    # in normalized form (which is fine -- downstream parsers accept LF).
-    if "\r\n" in content:
-        content = content.replace("\r\n", "\n")
+    # ONE NORMALISER, shared with `validate.py` (section 39). It strips the
+    # BOM and folds CRLF exactly as the two hand-rolled strips here did, and
+    # ALSO folds the other breaks `str.splitlines()` honours -- a lone CR
+    # above all. The body walks below use `splitlines()` while the validator
+    # splits on `"\n"`, so a body carrying one of those was two different
+    # documents to the two halves of the tool. Downstream parsers accept LF.
+    content = _cs.normalize_newlines(content)
     if not content.startswith("---\n"):
         return None, content, None
     # Find closing fence on its own line.
@@ -1041,10 +1039,11 @@ def scan_body(body: str):
 # indistinguishable from an empty TODO, so the producer names it here instead of
 # publishing the erasure.
 #
-# SCOPED TO ROOT-LEVEL FENCES: `FENCE_RE` applies CommonMark's 0-3-space rule to
-# the physical line, so a fence indented under a list container is not
-# recognised and an unterminated one is neither masked nor refused. That gap is
-# TODO-06 section 39's container-awareness work, not a hole in this check.
+# CONTAINER FENCES ARE IN SCOPE since section 39. `fence_scan` consumes the
+# enclosing blockquote and list-item prefixes before applying the 0-3-space
+# rule, so a fence indented five spaces under `100. docs` is masked like any
+# other and an unterminated one is refused here like any other. The scope that
+# remains is HTML blocks other than `<!--` comments, owned by section 42.
 _UNCLOSED_FENCE_MSG = (
     "document ends inside an unclosed fenced code block, so every body walk "
     "reads as empty; close the fence (a fence nested inside another must use a "
@@ -1079,8 +1078,13 @@ def _walk_section_headings(lines, masked) -> list:
     for ln, fenced in zip(lines, masked):
         if fenced:
             continue
-        m = re.match(r"^## (\d+)\.\s+(.+?)\s*$", ln)
-        if m:
+        m = _cs.SECTION_HEADING_RE.match(ln)
+        # A TITLE IS REQUIRED HERE, as it always was: this walk feeds
+        # `section_headings`, whose consumers render `N. Title`. The shared
+        # matcher makes the title optional so `_walk_stamped_items` can keep its
+        # own (looser) reading of a bare `## 5.`; the difference is stated at the
+        # pattern rather than hidden in two regexes.
+        if m and m.group(2):
             out.append((int(m.group(1)), m.group(2)))
     return out
 
@@ -1148,7 +1152,7 @@ def _walk_stamped_items(lines, masked, todo_rel: str) -> list:
     out = []
     cur_section = None
     cur_item_idx = 0
-    sec_hdr_re = re.compile(r"^## (\d+)\.\s+")
+    sec_hdr_re = _cs.SECTION_HEADING_RE
     # Match a `[x]` checklist line. Allow `-` or `*` bullets at any
     # indent; reject blockquoted (`>`) lines because stamp continuations
     # never carry `[x]`.

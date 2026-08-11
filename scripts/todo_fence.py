@@ -72,14 +72,18 @@ def _cache_schema():
 def fence_step(state, line: str):
     """One line of fenced-block state -- see `cache_schema.fence_step`.
 
-    Re-exported for the tools that need the STEP rather than a whole-document
-    mask: `todo-reflow.py` runs it over indent-stripped lines to cover the
-    container-indented fences the mask's CommonMark 0-3-space bound cannot see
-    (`cache_schema.fence_mask`, KNOWN LIMIT, owned by section 39). Taking the
-    primitive rather than writing a second `(char, length)` matcher is the whole
-    point of this module -- the first cut of that matcher was a bare toggle, and
-    it closed a ```` block on an inner ``` (Codex adversarial, section 41,
-    [high]).
+    THE LEAF RULE, and it expects a line whose enclosing container prefixes are
+    already stripped. `validate.py` is the one caller that steps line by line
+    rather than taking a whole-document mask, and it drives the container phase
+    itself for exactly that reason.
+
+    Its other caller was `todo-reflow.py`, which ran it over indent-stripped
+    lines to cover the container-indented fences the mask could not see. Section
+    39 made `fence_scan` container-aware and that fallback was retired: an
+    indent-stripped step is a heuristic superset that cannot tell a container
+    fence from a root indented code block, so it is the wrong tool now that the
+    shared scan answers the question properly. A caller reaching for this to
+    hand-roll container handling is re-opening the closed limit.
     """
     return _cache_schema().fence_step(state, line)
 
@@ -97,35 +101,33 @@ def fence_mask(lines):
 def scan_text(text: str):
     """`(lines, mask, unclosed_fence, unclosed_comment)` for a whole document.
 
-    Splits on `"\\n"` rather than `splitlines()` to match what every caller here
-    already does, so a line NUMBER derived from this list indexes the same line
-    the caller's own `read_text().split("\\n")` would give. `splitlines()` also
-    breaks on lone CR, `\\x0b`, `\\x0c` and U+2028, which would shift every later
-    index relative to the caller's coordinates. (That producer-side divergence
-    is section 39's to reconcile; this module must not introduce a second one.)
+    THE SHARED NORMALISER, same as the producer and the validator. This split
+    on `"\\n"` alone so a line number indexed the caller's own
+    `read_text().split("\\n")`, and once `cache_schema.scan_text` began folding
+    every `splitlines()` break the two disagreed about the same document: a
+    valid CRLF file with a CLOSED fence reported `unclosed_fence=True` through
+    this shim while the producer reported False, so the gates would refuse a
+    file the builder accepts (Codex adversarial, section 39 round 3, [medium]).
+    That is exactly the producer/gate split this module exists to end, so the
+    shim adopts the contract rather than keeping its own.
+
+    The coordinate promise still holds where it matters: normalisation only
+    REPLACES a separator with `\\n`, never inserts or removes one, so the line
+    COUNT and every line INDEX are unchanged.
     """
-    lines = text.split("\n")
-    mask, unclosed_fence, unclosed_comment = fence_scan(lines)
-    return lines, mask, unclosed_fence, unclosed_comment
+    return _cache_schema().scan_text(text)
 
 
 def unclosed_reason(unclosed_fence: bool, unclosed_comment: bool):
-    """One wording for all four gates, or None when the document is well-formed.
+    """One wording for all four gates -- see `cache_schema.unclosed_reason`.
 
-    Named separately per construct because the message has to tell an author
-    WHICH delimiter to close -- naming the wrong one sends them to the wrong
-    line, which is the same reason `fence_scan` reports the two flags apart.
+    The sentence MOVED to `cache_schema` in section 39 rather than being copied
+    there: `validate.py` sits beside that module and cannot import this shim
+    without a `sys.path` insertion, and a second copy of the wording is the same
+    drift this module exists to end. This stays because the gates reach the
+    tracker through here and should not each learn where it really lives.
     """
-    if unclosed_fence:
-        return ("document ends inside an unclosed fenced code block, so every "
-                "structural walk past the opener reads as empty; close the "
-                "fence (a fence nested inside another must use a LONGER run "
-                "than the block containing it)")
-    if unclosed_comment:
-        return ("document ends inside an unclosed `<!--` HTML comment, so "
-                "every structural walk past the opener reads as empty; close "
-                "it with `-->`")
-    return None
+    return _cache_schema().unclosed_reason(unclosed_fence, unclosed_comment)
 
 
 def unmasked(lines, mask):
@@ -324,9 +326,18 @@ def staged_docs(root):
 def mask_text(text: str) -> str:
     """`text` with every fenced/commented line blanked to same-length spaces.
 
-    Same length so every character offset in the result is the offset of the
-    same character in the original -- a whole-text regex caller keeps its
-    coordinates and can still slice the untouched document.
+    Same length LINE FOR LINE, so a whole-text regex caller keeps its
+    coordinates within the returned string and can still slice it.
+
+    THE COORDINATE BASE IS THE RETURNED TEXT, not the argument, and saying so
+    is the honest version of the older promise. `scan_text` now applies the
+    shared newline normaliser, which strips a BOM and folds CRLF -- both change
+    the byte length -- so an offset here indexes the NORMALISED document. Every
+    caller works entirely within this result (`lint.sh:991` regexes the
+    returned string and never mixes it with the raw bytes), which is the usage
+    the guarantee is written for; a caller needing raw-byte offsets must
+    normalise first and use that as its own base (Codex adversarial, section 39
+    round 3, [medium]).
 
     ONLY SAFE WITH LINE-LOCAL PATTERNS, and that is not a style preference.
     `\\s` and a negated class like `[^|]` both match a newline, so blanking the

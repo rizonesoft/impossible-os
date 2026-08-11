@@ -213,9 +213,11 @@ def _render_table(lines: list[str], start: int, end: int, max_cell: int,
     # re-emitted at column 0, which exits the list container, which ends an
     # enclosing fence early -- silently undoing a corpus fence repair. Keeping
     # each block's own leading whitespace makes that corruption impossible for
-    # ANY indented table, including the container-indented fences the shared
-    # mask still cannot see (owned by the todo-metadata-layer roadmap's
-    # container-awareness section). Alignment is what this tool is for; moving
+    # ANY indented table, including tables inside the container-indented fences
+    # the shared mask now DOES see (the metadata-layer roadmap's
+    # container-awareness section closed that gap; this tool's own guarantee
+    # never depended on it, which is why it is stated as a property of keeping
+    # the whitespace rather than of the mask). Alignment is what this tool is for; moving
     # a block between Markdown containers never was.
     indent = re.match(r"[ \t]*", lines[start]).group(0)
     rows = [_split_row(l) for l in lines[start:end]]

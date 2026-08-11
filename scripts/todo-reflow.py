@@ -55,58 +55,32 @@ LO, HI = 78, 138
 
 _BULLET = re.compile(r"^(\s*)([-*+]\s+|\d+[.)]\s+)")
 
-# THE CONTAINER-FENCE FALLBACK, and why the shared mask alone is not yet enough
-# for this tool. `cache_schema.fence_mask` applies CommonMark's 0-3-space bound
-# to the PHYSICAL line, but CommonMark applies it after stripping the enclosing
-# list-container prefix, so a fence indented five spaces under `100. docs` is
-# not recognised at all -- a KNOWN LIMIT owned by section 39
-# (`cache_schema.py:859`). The pre-adoption walk toggled on any stripped line
-# starting with three backticks, so it happened to protect exactly those blocks;
-# dropping it outright would expose their bodies to the prose heuristic, and
-# `_norm()` cannot catch that because joining lines preserves content (Codex
-# design review, section 41, [high]). 14 such delimiter lines sit in 5 corpus
-# files today.
+# THE CONTAINER-FENCE FALLBACK IS RETIRED (section 39). This tool used to carry
+# a SECOND, looser fence walk beside the shared mask -- `fence_step` run on the
+# line with its indent stripped -- because `cache_schema.fence_mask` applied
+# CommonMark's 0-3-space bound to the PHYSICAL line and so could not see a fence
+# indented five spaces under `100. docs`. The union was deliberately
+# conservative and deliberately temporary: its own comment said to retire it
+# when section 39 made the shared tracker container-aware, and that is what this
+# change did.
 #
-# It is a UNION with the mask, never a replacement: a line is verbatim when the
-# MASK says so OR this fallback is open. A union can only make the tool MORE
-# conservative than either rule alone, which is the only direction a repair tool
-# that rewrites files may move. Retire it when section 39 makes the shared
-# tracker container-aware.
+# WHY IT COULD NOT SIMPLY BE LEFT IN PLACE. Stripping the indent made the opener
+# a HEURISTIC SUPERSET -- it cannot tell a container fence from an indented CODE
+# BLOCK whose content happens to contain a ``` line, which is exactly the
+# distinction the 0-3-space bound draws. Left beside a tracker that now draws
+# that line correctly, it would keep this tool answering a DIFFERENT fence
+# question from every other consumer, and would keep suppressing real repairs
+# behind root indented code (Codex design review, section 39, [medium]). The
+# container-aware mask is strictly better on both counts: it claims the
+# container-indented blocks the fallback was there to protect, and it claims
+# nothing for a root 4-space block that merely contains a literal delimiter.
 #
-# IT RUNS THE SHARED `fence_step`, on the line with its container indent
-# removed -- it is NOT a second matcher. A first cut WAS a bare toggle on any
-# 3+ run, and it closed a five-space-indented ```` block on the ``` line inside
-# it: the body then reflowed, the real closer re-opened the fallback, and
-# `_norm()` accepted the result because joining lines preserves content (Codex
-# adversarial, section 41, [high], reproduced before fixing). Delegating gets
-# the closer character/length rule, the blank-tail rule and the
-# backtick-info-string rule from one definition.
-#
-# AN UNCLOSED LOOSE FENCE IS REFUSED BEHAVIOURALLY, not syntactically, and that
-# distinction is the whole argument. Stripping the indent makes this opener a
-# HEURISTIC SUPERSET: it cannot tell a container fence from an indented CODE
-# BLOCK whose content happens to contain a ``` line, which is exactly what the
-# 0-3-space bound separates -- so refusing on the syntax alone fails closed on
-# legal documents. The first cut refused NOTHING for that reason, and that was
-# worse: an unclosed opener masks every later line, so real hard-wrapped prose
-# after it is hidden, `new == original`, and `--check` certifies as CLEAN a file
-# it could not read (Codex adversarial, section 41 round 2, [medium]; verified
-# by reproducing it before changing anything). A silent false negative in a gate
-# is not a safer trade than a loud false positive.
-#
-# So `process()` refuses exactly when the ambiguity has a CONSEQUENCE: the loose
-# state is still open at EOF **and** the fallback actually suppressed a repair
-# the shared mask alone would have made. An inert false opener changes no
-# outcome and is not reported; an ambiguous one is named, and BOTH readings of
-# it want a human -- an unclosed container fence should be closed, and an
-# indented code block should not be swallowing the prose after it. Measured
-# 2026-08-11: 0 of 281 corpus files end inside an unclosed loose fence, so the
-# extra pass costs nothing today.
-
-
-def _loose_step(state, line: str):
-    """`fence_step` with the container indent removed. See the block above."""
-    return _fence.fence_step(state, line.lstrip(" \t"))
+# THE AMBIGUITY REFUSAL WENT WITH IT, and that is the same decision rather than
+# a second one: `process()` refused a file when the indent-stripped opener had
+# actually suppressed a repair, because such an opener was a GUESS and a run
+# would otherwise certify a file whose reading it could not defend. There is no
+# longer a guess to report. An unclosed FENCE is still refused, through the
+# shared `unclosed_reason()` contract every gate uses.
 
 
 def _classify(line: str, prev_blank: bool) -> str:
@@ -152,59 +126,24 @@ def _hard_wrapped(block) -> bool:
     return mid >= max(2, int(0.6 * len(head)))
 
 
-def verbatim_scan(lines, mask=None):
-    """`(vmask, loose_open)` -- the mask plus the fallback's TERMINAL state.
-
-    The terminal flag is returned for the same reason `cache_schema.fence_scan`
-    returns its own: a state still open at EOF has masked everything after its
-    opener, and a caller that cannot see that reports success over a document it
-    could not read. `process()` is the caller that acts on it.
-    """
-    vmask, loose = _verbatim(lines, mask)
-    return vmask, loose is not None
-
-
 def verbatim_mask(lines, mask=None):
     """`True` per line where reflow must copy the line through untouched.
 
-    The union described at `_loose_step`: the shared tracker's mask, OR an open
-    loose-fence state for the container-indented delimiters the tracker cannot
-    see yet. Returned as one list so the walk in `reflow` has a single question
-    to ask per line instead of two interleaved state machines -- which is what
-    the pre-adoption code got wrong, testing its fence flag BEFORE its
-    indented-code-block flag, so a ``` inside an indented code block toggled it.
+    THE SHARED MASK, AND NOTHING ELSE, since section 39 made it container-aware.
+    This wrapper survives the fallback it used to union in because it is where
+    the tool STATES that its verbatim regions are exactly the shared tracker's
+    -- the property that keeps a repair tool from rewriting a region a gate
+    parser reads as opaque. A future divergence would be a bug here, not a
+    second walk to add back.
 
-    `mask` is injectable for the SAME reason the four gate parsers take one
-    (`scripts/tests/test_todo_fence.py`): passing `[False] * len(lines)` isolates
-    the fallback from the shared tracker, so a fixture can prove which of the two
-    is doing the work and cannot pass by asserting nothing.
+    `mask` stays injectable for the reason the gate parsers take one
+    (`scripts/tests/test_todo_fence.py`): a fixture can pass a deliberately
+    wrong mask -- `[False] * len(lines)` -- and prove the tracker is what
+    protects a block, so the test cannot pass by asserting nothing.
     """
-    return _verbatim(lines, mask)[0]
-
-
-def _verbatim(lines, mask=None):
-    """`(vmask, terminal loose state)`. See `verbatim_scan` / `verbatim_mask`."""
     if mask is None:
         mask, _uf, _uc = _fence.fence_scan(lines)
-    loose = None
-    out = []
-    for i, line in enumerate(lines):
-        # THE FALLBACK ONLY SEES WHAT THE MASK DID NOT CLAIM. Letting it also
-        # step on masked lines would let a ``` written INSIDE a ````-fenced
-        # block open it, and it would then stay open past the real closer and
-        # silently suppress reflow for the rest of the file. Restricted this
-        # way it can only ever describe the container-indented delimiters the
-        # tracker does not model, which is the whole of its job.
-        if mask[i]:
-            out.append(True)
-            continue
-        nxt = _loose_step(loose, line)
-        # Verbatim when we were inside before the line OR are inside after it,
-        # which covers the content and BOTH delimiters in one expression --
-        # the same formulation `cache_schema.fence_scan` uses for the mask.
-        out.append(loose is not None or nxt is not None)
-        loose = nxt
-    return out, loose
+    return mask
 
 
 def reflow(text: str, vmask=None) -> str:
@@ -309,37 +248,14 @@ def process(path: str, mode: str) -> int:
     if reason:
         print(f"{path}: REFUSED -- {reason}. Left untouched.", file=sys.stderr)
         return 2
-    vmask, loose_open = verbatim_scan(lines, shared_mask)
-    new = reflow(original, vmask=vmask)
-    # THE AMBIGUOUS CONTAINER FENCE, refused whenever it COSTS something -- see
-    # the `_loose_step` block. Comparing the two reflows is what makes this
-    # behavioural: if they agree, the fallback suppressed nothing and the file is
-    # genuinely clean; if they differ, this run would otherwise report a clean
-    # file while hiding a repair behind a delimiter it cannot prove is one.
-    #
-    # NOT CONDITIONED ON THE FENCE STAYING OPEN. It first was, and that left the
-    # same hole one shape over: two indented code blocks each carrying a matching
-    # literal delimiter CLOSE the loose state, so the terminal flag is clear
-    # while everything between them was still masked (Codex adversarial, section
-    # 41 round 7, [medium]). The terminal state now only chooses the WORDING,
-    # because an author fixes an unclosed delimiter differently from a paired
-    # one. Measured across all 281 corpus files: 5 rely on the fallback and 0 of
-    # them change verdict, so the broader rule refuses nothing that exists today.
-    #
-    # GUARDED ON THE MASKS, not run unconditionally. Equal masks deterministically
-    # produce equal output, so the second reflow was pure waste on the 276 of 281
-    # corpus files whose fallback claims nothing -- measured at ~54ms, about 19%
-    # of a command that runs in the pre-commit hook (Codex perf, section 41
-    # post-commit, [medium]). Comparing the masks first preserves the proof
-    # exactly: where they are equal there is nothing for the comparison to find.
-    if vmask != shared_mask and reflow(original, vmask=shared_mask) != new:
-        which = ("opens a fence that never closes" if loose_open
-                 else "pairs with a later one to form a fence")
-        print(f"{path}: REFUSED -- an indented ``` or ~~~ delimiter {which}, "
-              f"and it is hiding hard-wrapped prose. Close it, or de-indent it "
-              f"below four spaces if it is meant as code. Left untouched.",
-              file=sys.stderr)
-        return 2
+    # ONE MASK, ONE REFLOW (section 39). This used to compute a second, looser
+    # mask and refuse the file when the two disagreed about a repair, because
+    # the looser one was a guess about what an indented delimiter meant. The
+    # shared tracker now answers that question correctly, so there is one mask,
+    # no comparison, and no refusal to make -- and the ~54ms second reflow that
+    # guarded it (about 19% of a command the pre-commit hook runs) is gone with
+    # it.
+    new = reflow(original, vmask=shared_mask)
     if new == original:
         return 0
     if _norm(new) != _norm(original):

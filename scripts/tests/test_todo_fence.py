@@ -30,6 +30,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import tracemalloc
 
 REPO = pathlib.Path(__file__).resolve().parents[2]
 
@@ -874,16 +875,18 @@ def test_reflow():
     check("reflow refuses an unclosed fence (rc 2)", rc == 2)
     check("...and writes nothing", after == before)
 
-    # The container-fence fallback is the OTHER half of the union: a fence
-    # indented past the tracker's 0-3-space bound (section 39's known limit) is
-    # still verbatim. NO BLANK LINE before the delimiter -- with one, the
-    # indented-code-block path already protects the body and the fixture proves
-    # nothing about the fallback. Measured both shapes; only this one moves.
+    # THE CONTAINER-INDENTED FENCE, now claimed by the SHARED tracker rather
+    # than by this tool's retired fallback (section 39). NO BLANK LINE before
+    # the delimiter -- with one, the indented-code-block path in `_classify`
+    # would protect the body anyway and the fixture would prove nothing about
+    # the tracker. Measured both shapes; only this one moves.
     deep = "- 1. item\n     ```\n     " + "\n     ".join(_WRAPPED_BODY) + \
            "\n     ```\n"
     # THE HOSTILE SHAPE: a container-indented ```` block carrying a SHORTER ```
     # run. A bare toggle closes on the inner run, reflows the body, and re-opens
-    # on the real closer -- the first cut of this fallback did exactly that.
+    # on the real closer -- the first cut of the retired fallback did exactly
+    # that, which is why the container phase delegates to `fence_step` for the
+    # closer-length rule instead of re-deriving it.
     hostile = "100. docs\n     ````markdown\n     ```\n     " + \
         "\n     ".join(_WRAPPED_BODY) + "\n     ```\n     ````\n"
     for name, src in (("container-indented fence", deep),
@@ -891,27 +894,30 @@ def test_reflow():
         lines = src.split("\n")
         mask_only = rf._fence.fence_scan(lines)[0]
         check(f"reflow leaves a {name} byte-identical", rf.reflow(src) == src)
-        check(f"CONTROL: the shared mask alone claims none of the {name}",
-              not any(mask_only))
-        check(f"...and without the fallback the {name} body IS joined",
-              rf.reflow(src, vmask=mask_only) != src)
-        # THE TWO JOBS ARE SEPARATE. `reflow()` never rewrites the block -- that
-        # is the fallback protecting it. `process()` REFUSES the same document,
-        # because that protection rested on a guess about what an indented
-        # delimiter means, and this run would otherwise certify the file clean
-        # while the guess was load-bearing. Note these fences are CLOSED: the
-        # refusal does not depend on the loose state surviving to EOF.
+        # The mask claims the delimiters AND the body -- every line but the
+        # unfenced marker line and the trailing empty one.
+        check(f"the shared mask alone now claims the whole {name}",
+              all(mask_only[1:-1]) and not mask_only[0])
+        # CONTROL: a deliberately WRONG mask must join the body, or the two
+        # assertions above would pass on a tool that never reflows anything.
+        check(f"CONTROL: with an all-False mask the {name} body IS joined",
+              rf.reflow(src, vmask=[False] * len(lines)) != src)
+        # NO LONGER REFUSED. The refusal existed because an indent-stripped
+        # opener was a GUESS; the tracker now decides it the way a renderer
+        # does, so the file is simply clean and is written through untouched.
         with tempfile.TemporaryDirectory() as d:
             p = _write(d, src)
             rc = rf.process(str(p), "write")
             after = p.read_text(encoding="utf-8")
-        check(f"--write REFUSES the {name} rather than certifying it", rc == 2)
+        check(f"--write accepts the {name} rather than refusing it", rc == 0)
         check(f"...and leaves the {name} on disk untouched", after == src)
 
-    # A FALSE OPENER THAT COSTS SOMETHING IS REFUSED, not silently masked. An
-    # indented code block carrying a literal ``` opens the indent-stripped
-    # fallback, which then masks the real hard-wrapped prose after it -- the
-    # pre-fix code returned "clean" for exactly this file.
+    # THE FALSE OPENER IS GONE WITH THE FALLBACK. A ROOT 4-space block carrying
+    # a literal ``` used to open the indent-stripped walk and mask the real
+    # hard-wrapped prose after it, so the tool refused the file. CommonMark says
+    # that block is an indented CODE BLOCK and its delimiter is literal text, so
+    # the tracker claims nothing, the prose after it is visible, and the repair
+    # is reported instead of being hidden behind a refusal.
     prose = [
         "a prose line that is long enough to look like a wrapped line at about ninety columns",
         "another prose line that is long enough to look like a wrapped line at ninety columns",
@@ -924,28 +930,33 @@ def test_reflow():
                "\n".join(prose) + "\n")
         lines = src.split("\n")
         mask_only = rf._fence.fence_scan(lines)[0]
-        check(f"CONTROL: the {name} false opener really does hide a repair",
-              rf.reflow(src) == src and rf.reflow(src, vmask=mask_only) != src)
+        check(f"the {name} root code block opens NO fence in the tracker",
+              not any(mask_only))
+        check(f"...so the {name} file's hard-wrapped prose is still repairable",
+              rf.reflow(src) != src)
         with tempfile.TemporaryDirectory() as d:
             p = _write(d, src)
             rc = rf.process(str(p), "check")
             after = p.read_text(encoding="utf-8")
-        check(f"...so --check REFUSES the {name} file rather than passing it",
-              rc == 2)
+        check(f"...and --check REPORTS the {name} repair (rc 1), not a refusal",
+              rc == 1)
         check("...and writes nothing", after == src)
 
-    # ...but an INERT unclosed fallback state suppresses nothing, so it must not
-    # refuse: refusing on the syntax alone is what fails closed on legal files.
+    # A root indented code block that merely CONTAINS a delimiter is inert: it
+    # was inert before (the fallback opened but suppressed nothing) and it is
+    # inert now for a better reason -- nothing opened at all.
     inert = "# T\n\nintro on one line.\n\n    ```\n    a literal fence\n"
     with tempfile.TemporaryDirectory() as d:
         p = _write(d, inert)
         rc = rf.process(str(p), "check")
-    check("an inert unclosed fallback state is NOT refused", rc == 0)
+    check("a root indented code block carrying a delimiter is NOT refused",
+          rc == 0)
 
-    # PERF GUARD: the ambiguity proof compares masks BEFORE reflowing a second
-    # time, so an ordinary document pays exactly one reflow. Counted rather than
-    # timed -- a wall-clock assertion on a loaded host is a flake, and the
-    # property is structural.
+    # PERF GUARD: with the fallback and its ambiguity comparison retired there
+    # is ONE mask and ONE reflow per document, unconditionally -- the second
+    # reflow that guarded the comparison is gone. Counted rather than timed: a
+    # wall-clock assertion on a loaded host is a flake, and the property is
+    # structural.
     calls = []
     real = rf.reflow
     try:
@@ -955,14 +966,20 @@ def test_reflow():
             rf.process(str(p), "check")
     finally:
         rf.reflow = real
-    check("an equal-mask document is reflowed exactly once", len(calls) == 1)
+    check("a document is reflowed exactly once", len(calls) == 1)
 
     # THE PRODUCTION CONSUMER, not just process(). A refusal the lint discards
     # is a refusal nobody sees -- Check 19 sent stderr to /dev/null and turned
     # every nonzero exit into success, so the tool returned 2 and the gate
     # reported nothing (Codex adversarial, section 41 round 3).
-    hidden = ("# T\n\nintro on one line.\n\n    ```\n    a literal fence inside "
-              "an indented code block\n\n" + "\n".join(prose) + "\n")
+    # THE REFUSING FIXTURE IS NOW AN UNCLOSED FENCE. It used to be a root
+    # indented code block carrying a literal delimiter, which the retired
+    # fallback treated as an ambiguous opener; that shape is legal CommonMark
+    # and is no longer refused by anything. An unclosed fence still is, through
+    # the `unclosed_reason()` contract every gate shares, so it is what proves
+    # the lint surfaces a refusal.
+    hidden = ("# T\n\nintro on one line.\n\n" + "\n".join(prose) +
+              "\n\n```\nunclosed\n")
     block = _lint_check19_wrap_block(
         (REPO / "scripts/lint.sh").read_text(encoding="utf-8"))
     check("lint 19: the wrap block was extracted", bool(block))
@@ -1136,8 +1153,470 @@ def test_section_order():
     check("--check-placement reports it rather than passing silently", hits == 1)
 
 
+def test_container_aware_fences():
+    """Section 39: the 0-3-space rule lands AFTER the container prefix.
+
+    Every expectation here was taken from a real CommonMark parser before it was
+    written down, not from reading the spec and guessing. The oracle is not
+    imported at runtime -- `markdown-it-py` is not a dependency of this repo, and
+    a test that silently skips when an optional package is missing is a test that
+    reports success for doing nothing.
+    """
+    sys.path.insert(0, str(REPO / "scripts"))
+    import todo_fence as tf
+
+    def mask_of(src):
+        return tf.scan_text(src)[1]
+
+    # THE NAMED CASE. A five-space fence under `100. docs` is a real block, so
+    # the `- [ ]` inside it is an EXAMPLE and must not reach the item index.
+    src = "100. docs\n     ```\n     - [ ] not an item\n     ```\n\n## 9. Real\n"
+    m = mask_of(src)
+    check("a 5-space fence under an ordered marker opens a real block",
+          m[1] and m[2] and m[3])
+    check("...so its `- [ ]` content is masked, not indexed", m[2])
+    check("...and the heading after it is still structure", not m[5])
+
+    # BLANK LINE BETWEEN THE MARKER AND THE FENCE (Codex design review, [high]).
+    # A blank line does NOT close a list item, so this is the same block one
+    # line down. Getting this wrong leaves the fence unopened and leaks the item.
+    src = ("100. docs\n\n     ```\n     - [ ] not an item\n     ```\n\n"
+           "## 9. Real\n")
+    m = mask_of(src)
+    check("a blank line does not close a list container before its fence",
+          m[2] and m[3] and m[4])
+    check("...and the heading after it survives", not m[6])
+
+    # THE ROOT 4-SPACE MARKER IS STILL AN INDENTED CODE BLOCK, which is the
+    # regression the container work most easily causes: widening the bound to
+    # "any indent" would break this, and section 35's `overindented_fence`
+    # fixture pins the same property from the producer side.
+    src = "# T\n\n    ```\n    - [ ] literal\n    ```\n\n## 9. Real\n"
+    check("a 4-space fence marker at root opens nothing", not any(mask_of(src)))
+
+    # A LIST ITEM WHOSE CONTENT IS ITSELF OVER-INDENTED. 5+ spaces after the
+    # marker put the content indent at marker+1, so the remainder is an indented
+    # code block and the delimiter stays literal.
+    src = "-      ```\n       still code\n"
+    check("5+ spaces after a marker leave an indented code block, not a fence",
+          not any(mask_of(src)))
+
+    # BLOCKQUOTES ARE CONTAINERS TOO -- 27 of the corpus lines this change
+    # claimed were blockquote-prefixed, not list-indented.
+    src = "> ```\n> - [ ] not an item\n> ```\n\n## 9. Real\n"
+    m = mask_of(src)
+    check("a fence inside a blockquote opens a real block", m[0] and m[1] and m[2])
+    check("...and the heading after it is still structure", not m[4])
+
+    # NESTED CONTAINERS, both orders.
+    src = "> - item\n>   ```\n>   - [ ] not an item\n>   ```\n"
+    m = mask_of(src)
+    check("a fence nested in a list inside a blockquote opens", m[1] and m[2])
+
+    # A LEAF BLOCK DIES WITH ITS CONTAINER -- the section-36 round-3 shape. The
+    # blockquote ends at the unprefixed line, so CommonMark ends the fence there
+    # rather than letting it swallow the rest of the document.
+    src = "> ```\n> code\n\n## 9. Real\n"
+    m = mask_of(src)
+    check("leaving a blockquote closes the fence inside it", m[0] and m[1])
+    check("...so a later heading is NOT swallowed", not m[3])
+    check("...and the document does not read as ending inside a fence",
+          not tf.scan_text(src)[2])
+
+    # THE TERMINAL FLAG STILL FIRES for a genuinely unclosed container fence,
+    # which is what stops the container work from turning a loud refusal into a
+    # silent erasure.
+    src = "100. docs\n     ```\n     code\n"
+    check("an unclosed container-indented fence sets unclosed_fence",
+          tf.scan_text(src)[2])
+
+    # AND THE CLOSER RULES ARE STILL THE LEAF'S. A shorter run inside a longer
+    # container-indented block must not close it.
+    src = "100. docs\n     ````\n     ```\n     code\n     ````\n\n## 9. Real\n"
+    m = mask_of(src)
+    check("a shorter inner run does not close a container-indented fence",
+          all(m[1:5]) and not m[6])
+
+    # ---- The four findings from this section's adversarial round ----
+
+    # [high] EVERY mask consumer, not just the mask. `checklist_item_leads` ran
+    # the leaf matcher on physical lines, so it returned a fenced example as a
+    # real item -- and `--fix-line-numbers` consumes that, so a stamp could be
+    # rewritten to point at documentation.
+    sys.path.insert(0, str(REPO / "scripts" / "todo-graph"))
+    import cache_schema as cs
+    src = "100. docs\n     ```\n     - [ ] Phantom target\n     ```\n"
+    check("checklist_item_leads sees the container-indented fence",
+          list(cs.checklist_item_leads(src)) == [])
+    check("CONTROL: a real item at root is still found",
+          list(cs.checklist_item_leads("## 1. T\n\n- [ ] Real\n")) == [3])
+
+    # [high] A TAB ON THE CUT. The space-only fast path sliced `cols`
+    # characters and handed back a tab that re-expands from column 0, so a real
+    # fence went unseen and the builder indexed its `- [x]` content.
+    src = "- item\n  \t```\n  \t- [x] Fake -> `fake_fn()`\n  \t```\n"
+    m = mask_of(src)
+    check("a tab straddling a list content indent still opens the fence",
+          m[1] and m[2] and m[3])
+    check("...so the fenced `- [x]` is not a stamped item",
+          list(cs.checklist_item_leads(src)) == [])
+
+    # [medium] LIST INTERRUPTION. Only a bullet or `1.` may interrupt a
+    # paragraph, so `10.` after a prose line is paragraph text. Opening a
+    # container there made the next indented line read as a fence and the
+    # document report as ending inside an unclosed one -- a REFUSAL of a
+    # perfectly valid file.
+    src = "para\n10. faux\n    ```\n    trailing prose\n"
+    lines, mask, uf, uc = tf.scan_text(src)
+    check("an ordered marker other than 1 cannot interrupt a paragraph",
+          not any(mask))
+    check("...and the document is NOT reported as unclosed", not uf)
+    check("CONTROL: `1.` may interrupt, and its fence is real",
+          any(mask_of("para\n1. real\n   ```\n   code\n   ```\n")))
+    check("CONTROL: a bullet may interrupt too",
+          any(mask_of("para\n- real\n  ```\n  code\n  ```\n")))
+    check("CONTROL: after a BLANK line, `10.` opens normally",
+          any(mask_of("para\n\n10. real\n    ```\n    code\n    ```\n")))
+
+    # ---- Round 2: three of these were regressions in the round-1 fixes ----
+
+    # [high] A tab ANYWHERE in the retained leading run, not just on the cut.
+    # Slicing shifts every retained character by `cols`, so a tab re-expands
+    # from the wrong origin whenever `cols % 4 != 0`. The first repair patched
+    # only `rest[0]` and this shape still masked nothing.
+    for label, src in (
+        ("spaces-then-tab", "- item\n   \t```\n   \t- [ ] Phantom\n   \t```\n"),
+        ("tab on the cut", "- item\n  \t```\n  \t- [x] Fake\n  \t```\n"),
+    ):
+        m = mask_of(src)
+        check(f"a {label} list indent still opens the fence", all(m[1:4]))
+        check(f"...and the {label} fenced item is not indexed",
+              list(cs.checklist_item_leads(src)) == [])
+    check("CONTROL: consecutive tabs are an indented code block, not a fence",
+          not any(mask_of("- item\n\t\t```\n\t\tcode\n\t\t```\n")))
+
+    # [high] AN ORDERED SIBLING IS NOT AN INTERRUPTION. The paragraph `first`
+    # lives inside item 1; line 2 is indented too little to continue it, so the
+    # item closes and `2.` opens a sibling. A flat `para_open` flag rejected it
+    # and the fence below went unopened -- the erasure direction.
+    src = "1. first\n2. second\n    ```\n    - [ ] Phantom\n    ```\n"
+    m = mask_of(src)
+    check("an ordered SIBLING opens, and its fence with it", all(m[2:5]))
+    check("...so its fenced item is not indexed",
+          list(cs.checklist_item_leads(src)) == [])
+    check("a third sibling behaves the same",
+          any(mask_of("1. a\n2. b\n3. c\n   ```\n   code\n   ```\n")))
+
+    # [high] AN INLINE COMMENT SPANNING LINES is not an HTML block, so the mask
+    # has no concept of it; `checklist_item_leads` keeps its own latch for that
+    # case. Routing the walk through the mask left the latch with no reader.
+    src = "- [ ] Real <!-- comment\n      - [ ] Phantom\n      continues -->\n"
+    check("a checklist line inside a multi-line inline comment is not an item",
+          list(cs.checklist_item_leads(src)) == [1])
+
+    # ---- Round 3: real block state, not an approximation of it ----
+
+    # [high] LAZY CONTINUATION. A paragraph line may omit its container prefix
+    # entirely and still belong to the item, so a shorter container match does
+    # not always mean the container closed.
+    src = "10. first\nlazy continuation\n    ```\n    - [ ] Phantom\n    ```\n"
+    check("a lazy paragraph continuation keeps its list container",
+          all(mask_of(src)[2:5]))
+    check("...so the fence inside it is not a phantom item",
+          list(cs.checklist_item_leads(src)) == [])
+
+    # [high] PARAGRAPH STATE, not "the line was non-blank". A setext underline
+    # closes the paragraph above it and an ATX heading replaces it, so the list
+    # that follows is NOT interrupting anything.
+    for label, src in (
+        ("setext underline",
+         "Title\n=====\n10. item\n    ```\n    - [ ] Phantom\n    ```\n"),
+        ("ATX heading", "# Title\n10. item\n    ```\n    - [ ] Phantom\n    ```\n"),
+        ("thematic break", "para\n---\n10. item\n    ```\n    code\n    ```\n"),
+    ):
+        check(f"a list after a {label} opens normally", any(mask_of(src)))
+
+    # [medium] A BLANK-FIRST LIST ITEM closes on the following blank, so what
+    # comes after is root indented code -- not the item's content, and not an
+    # unclosed fence the producer should refuse.
+    lines, mask, uf, uc = tf.scan_text("10.\n\n    ```\n    literal\n")
+    check("a blank-first list item does not swallow the indented run",
+          not any(mask))
+    check("...and the document is not reported as unclosed", not uf)
+    check("CONTROL: a FILLED item still continues across a blank",
+          any(mask_of("10. x\n\n    ```\n    code\n    ```\n")))
+
+    # [high] AN INLINE CODE SPAN IS NOT A COMMENT OPENER.
+    check("a backticked `<!--` does not latch the comment state",
+          list(cs.checklist_item_leads("- [ ] First `<!--`\n- [ ] Second\n"))
+          == [1, 2])
+
+    # [medium] THE SHIM SHARES THE PRODUCER'S NEWLINE CONTRACT. A CRLF document
+    # with a CLOSED fence must not be reported unclosed by the gates while the
+    # builder accepts it.
+    crlf = "a\r\n```\r\ncode\r\n```\r\n"
+    check("the shim agrees with the producer about a CRLF document",
+          tf.scan_text(crlf)[2] is False and cs.scan_text(crlf)[2] is False)
+
+    # ---- Round 4: classes the stateful oracle alphabet could not generate ----
+
+    # [high] A LINK REFERENCE DEFINITION is not a paragraph, so a list after it
+    # is not interrupting anything.
+    src = "[foo]: /url\n10. item\n    ```\n    - [ ] Phantom\n    ```\n"
+    check("a list after a link reference definition opens normally",
+          all(mask_of(src)[2:5]))
+    check("...so its fenced item is not indexed",
+          list(cs.checklist_item_leads(src)) == [])
+
+    # [high] NESTED CONTENT FILLS EVERY ENCLOSING ITEM. A blank-first outer item
+    # whose first content is another container stayed provisional, so the next
+    # blank closed it and took the open fence with it.
+    for label, src in (
+        ("list", "10.\n    - child\n\n    ```\n    - [ ] Phantom\n    ```\n"),
+        ("blockquote", "10.\n    > q\n\n    ```\n    code\n    ```\n"),
+    ):
+        check(f"a nested {label} fills its blank-first outer item",
+              all(mask_of(src)[3:6]))
+    check("CONTROL: a blank-first item with NO content still closes",
+          not any(mask_of("10.\n\n    ```\n    literal\n")))
+
+    # [medium] CODE SPANS ARE DELIMITER-RUN AWARE. A doubled or tripled backtick
+    # run around `<!--` is a literal span, not a comment opener.
+    for label, doc in (
+        ("double", "- [ ] First ``<!--``\n- [ ] Second\n"),
+        ("triple", "- [ ] A ```<!--```\n- [ ] B\n"),
+    ):
+        check(f"a {label}-backtick span holding an opener does not latch",
+              list(cs.checklist_item_leads(doc)) == [1, 2])
+    # CONTROL, and note the shape: the hidden line must be an INDENTED
+    # continuation of the same item. This control was first written with a
+    # sibling `- [ ] P` at column 0 and passed, because the latch was not yet
+    # block-scoped -- so the control was pinning the round-5 [high] defect
+    # rather than the behaviour. A test written against unverified behaviour
+    # inherits its bugs.
+    check("CONTROL: a REAL unclosed comment still latches over its own item",
+          list(cs.checklist_item_leads(
+              "- [ ] R <!-- c\n      - [ ] P\n      -->\n")) == [1])
+
+    # [medium] BOM PARITY with the producer: the helper takes `scan_text`, so a
+    # BOM before a first-line fence is normalised away for both.
+    check("a BOM-prefixed fence hides its item from the helper too",
+          list(cs.checklist_item_leads("﻿```\n- [ ] Phantom\n```\n")) == [])
+
+    # ---- Round 5: marker forms the alphabet had not sampled ----
+
+    # [high] A TAB AFTER THE MARKER expands from the MARKER's column, not from
+    # column 0, so `-\titem` has content indent 4 and not 5.
+    src = "-\titem\n    ```\n    - [ ] Phantom\n    ```\n"
+    check("a tab after a bullet marker gives the right content indent",
+          all(mask_of(src)[1:4]))
+    check("...so the fence under it is not a phantom item",
+          list(cs.checklist_item_leads(src)) == [])
+
+    # [high] AN ORDERED MARKER INTERRUPTS BY VALUE, not by spelling: `01.` is
+    # the number 1 and may interrupt a paragraph exactly as `1.` does.
+    for label, doc in (("01.", "para\n01. item\n    ```\n    code\n    ```\n"),
+                       ("001.", "para\n001. i\n     ```\n     code\n     ```\n")):
+        check(f"a zero-padded {label} may interrupt a paragraph", any(mask_of(doc)))
+    check("CONTROL: `02.` still may NOT interrupt",
+          not any(mask_of("para\n02. item\n    ```\n    trailing\n")))
+
+    # [high] THE COMMENT LATCH IS BLOCK-SCOPED. An unmatched `<!--` in an item's
+    # inline text is literal, so it cannot hide a SIBLING item -- which would
+    # make `--fix-line-numbers` report a valid target missing.
+    check("an unclosed inline comment does not hide the next sibling item",
+          list(cs.checklist_item_leads(
+              "- [ ] Real <!-- unclosed\n- [ ] Target\ncontinues -->\n")) == [1, 2])
+    check("CONTROL: an indented continuation of the SAME item is still hidden",
+          list(cs.checklist_item_leads(
+              "- [ ] Real <!-- comment\n      - [ ] Phantom\n      ends -->\n")) == [1])
+    check("CONTROL: a blank line ends the latch",
+          list(cs.checklist_item_leads("- [ ] R <!-- c\n\n- [ ] T\n")) == [1, 3])
+
+    # [medium] The single-line link-reference bound is OWNED, not merely stated:
+    # section 42 carries the item the code comment names.
+    _s42 = (REPO / "todo/00-infrastructure/TODO-06-todo-metadata-layer.md"
+            ).read_text(encoding="utf-8").split("## 42.")[-1].split("\n---")[0]
+    check("section 42 owns the multi-line link-reference-definition gap",
+          "MULTI-LINE link reference definitions" in _s42)
+
+    # ---- Round 6: the two classes the 2.56M-document alphabet could not reach ----
+
+    # [high] A TAB STOP IS PHYSICAL. Inside a nested container the absolute
+    # column must survive prefix stripping, or a tab expands from the wrong
+    # origin and the scan invents a fence -- reporting a VALID document as
+    # ending inside an unclosed one, which makes the builder refuse it.
+    lines, mask, uf, uc = tf.scan_text("- a\n  -\tb\n    \t```\n    \tliteral\n")
+    check("a tab inside a NESTED container expands from its physical column",
+          not any(mask))
+    check("...so a valid nested-tab document is not refused", not uf)
+
+    # [high] THE LATCH BOUNDARY IS CONTENT-INDENT + 4, exercised across the
+    # whole band rather than at its two ends. CommonMark keeps two list items
+    # for indents 0-5 and folds to one at 6, where the line becomes indented
+    # code and can only be a lazy paragraph continuation.
+    for sp in range(0, 6):
+        doc = f"- [ ] Real <!-- unclosed\n{' ' * sp}- [ ] Target\ncontinues -->\n"
+        check(f"an unclosed inline comment does not hide a sibling at indent {sp}",
+              list(cs.checklist_item_leads(doc)) == [1, 2])
+    for sp in (6, 8):
+        doc = f"- [ ] Real <!-- unclosed\n{' ' * sp}- [ ] Target\ncontinues -->\n"
+        check(f"...but a continuation at indent {sp} IS still hidden",
+              list(cs.checklist_item_leads(doc)) == [1])
+
+    # ---- Round 7 ----
+
+    # [high] A TAB AFTER `>` is worth `4 - (col % 4)` columns from the marker's
+    # ABSOLUTE end, so a fixed three spaces is right only at column 0.
+    for label, doc in (("root", ">\tq\n"), ("nested", "> - a\n>  -\tb\n")):
+        lines, mask, uf, uc = tf.scan_text(doc)
+        check(f"a tab after a {label} blockquote marker parses without inventing"
+              f" a block", not any(mask) and not uf)
+
+    # [high] THE TERMINAL FLAG IS HONEST, INCLUDING WHERE THE MASK IS NOT. The
+    # lazy-continuation residual (section 42) can report a valid document as
+    # ending inside a fence. Suppressing the flag after a lazy line was tried
+    # and REVERTED: it also suppressed GENUINE unclosed fences, publishing an
+    # EOF-erased document instead of refusing it. These four pin the direction
+    # of that trade so it cannot be quietly re-softened.
+    for label, doc in (
+            ("root", "# T\n\n```\nunclosed\n"),
+            ("container", "100. docs\n     ```\n     code\n"),
+            ("immediately after a lazy line",
+             "10. first\nlazy continuation\n    ```\n    unclosed\n"),
+            ("unrelated, later in a file with a lazy line",
+             "10. a\nlazy\n\npara\n\n```\nunclosed\n")):
+        check(f"a real unclosed fence {label} is still reported",
+              tf.scan_text(doc)[2] is True)
+
+    # [medium] CODE-SPAN MASKING IS LINEAR, asserted DETERMINISTICALLY. The
+    # first cut rescanned the whole remaining string for every UNMATCHED
+    # backtick run, which is quadratic on input the repository controls --
+    # `--fix-line-numbers` reaches it on files accepted up to 16 MiB, so one
+    # line could stall a repair for minutes (5.6s on the shape below).
+    #
+    # NOT A WALL-CLOCK BOUND. The first version of this test called
+    # `perf_counter()` and required under a second while claiming to test
+    # complexity class -- which is neither, and is exactly the flake that can
+    # block a commit on a loaded runner. It failed in the reviewer's own
+    # sandbox, which is how the contradiction surfaced. Counting executed lines
+    # with `settrace` is host-independent: it measures WORK.
+    def _work(fn, *a):
+        n = 0
+        def tracer(frame, event, arg):
+            nonlocal n
+            if event == "line":
+                n += 1
+            return tracer
+        sys.settrace(tracer)
+        try:
+            out = fn(*a)
+        finally:
+            sys.settrace(None)
+        return out, n
+
+    # BOUNDED PER BYTE, which is the actual linearity claim. Comparing two RUN
+    # COUNTS does not work: run k carries k backticks, so the byte length grows
+    # quadratically with the run count and a linear implementation legitimately
+    # costs ~14x more work for 4x the runs. Measured on this input: the linear
+    # version does 2.3 executed lines per byte, the quadratic one 283.9 -- so a
+    # bound of 8 accepts the former and rejects the latter by two orders of
+    # magnitude, which is what makes this a real guard rather than a number
+    # that happens to pass today.
+    big = "".join("`" * k + "x" * 20 for k in range(1, 401)) + "<!--"
+    big_masked, w_big = _work(cs.mask_code_spans, big)
+    check("code-span masking work is linear in input size",
+          w_big < 8 * len(big))
+    check("...preserving length", len(big_masked) == len(big))
+    check("...and leaving its unmatched runs as literal text",
+          "`" in big_masked)
+
+    # [high] AN ESCAPED BACKTICK IS LITERAL TEXT, so it cannot open a span and
+    # cannot hide a real `<!--`. Odd backslashes escape; even ones do not.
+    check("an escaped backtick does not open a code span",
+          "<!--" in cs.mask_code_spans("- [ ] Real \\`<!-- c\\`"))
+    check("...so the comment it opens still hides the lines after it",
+          list(cs.checklist_item_leads(
+              "- [ ] Real \\`<!-- c\\`\n      - [ ] Phantom\n      ends -->\n"))
+          == [1])
+    check("CONTROL: an EVEN backslash run leaves the delimiter live",
+          "<!--" not in cs.mask_code_spans("- [ ] Real \\\\`<!--`"))
+
+    # ---- Round 11 ----
+
+    # [high] ESCAPING IS AN OPENER RULE ONLY. Inside a span everything is
+    # literal, so a backslash-prefixed run still CLOSES the span it is in.
+    # Ignoring it ran the span on to a later backtick and swallowed a real
+    # `<!--`.
+    check("an escaped-looking run still closes the span it is inside",
+          "<!-- c" in cs.mask_code_spans("- [ ] Real `x \\` <!-- c`"))
+    check("...so the comment it exposes hides the item after it",
+          list(cs.checklist_item_leads(
+              "- [ ] Real `x \\` <!-- c`\n      - [ ] Phantom\n      -->\n")) == [1])
+
+    # [medium] BOTH PROBES ANSWER "IS THIS CODE?" THE SAME WAY. The lead-stop
+    # cut kept the old single-backtick regex after the comment probe moved on,
+    # so a doubled-run span documenting the marker truncated a real item name.
+    check("a doubled-run span holding a stop marker does not cut the lead",
+          list(cs.checklist_item_leads(
+              "- [ ] Prefix ``-> XREF:`` Tail\n").values())
+          == ["- [ ] Prefix ``-> XREF:`` Tail"])
+    check("CONTROL: a REAL reference tail is still cut",
+          list(cs.checklist_item_leads("- [ ] Name -> XREF: other\n").values())
+          == ["- [ ] Name "])
+
+    # [high] A CONTINUATION LINE CAN OPEN A COMMENT. Note the shape: the hidden
+    # item must be INDENTED. The review's example put it at column 0, where
+    # markdown-it renders two list items and escapes the opener as literal text
+    # -- a sibling ends the paragraph, so there is no comment to be inside.
+    check("an indented continuation line's comment hides the item under it",
+          list(cs.checklist_item_leads(
+              "- [ ] Real\n      cont <!-- c\n      - [ ] Phantom\n      -->\n")) == [1])
+    check("CONTROL: at column 0 the later item is REAL and stays indexed",
+          list(cs.checklist_item_leads(
+              "- [ ] Real\n      cont <!-- c\n- [ ] Phantom\n-->\n")) == [1, 3])
+
+    # [medium] BOUNDED MEMORY on a dense-run line. Per-run tuples plus a
+    # per-length index measured 95 bytes of Python objects per input byte, so a
+    # permitted 16 MiB line was ~1.5 GiB.
+    dense = "`x" * 100000
+    tracemalloc.start()
+    cs.mask_code_spans(dense)
+    peak = tracemalloc.get_traced_memory()[1]
+    tracemalloc.stop()
+    check("dense-run masking stays bounded in memory", peak < 20 * len(dense))
+
+    # ---- Round 12 ----
+
+    # [high] A CONTINUATION OPENER IS BOUNDED BY ITS ITEM, not by its own
+    # indent. Swept across the whole band, because using the opener line's
+    # indent erased REAL nested items at 1-5 spaces -- the same mistake the
+    # item-line path had already fixed, reintroduced one branch over.
+    for sp in range(0, 6):
+        doc = (f"- [ ] Real\n{' ' * sp}continuation <!-- c\n"
+               f"{' ' * sp}- [ ] Phantom\n{' ' * sp}-->\n")
+        check(f"a continuation opener at indent {sp} does not erase a real item",
+              list(cs.checklist_item_leads(doc)) == [1, 3])
+    for sp in (6, 8):
+        doc = (f"- [ ] Real\n{' ' * sp}continuation <!-- c\n"
+               f"{' ' * sp}- [ ] Phantom\n{' ' * sp}-->\n")
+        check(f"...but at indent {sp} the item IS inside the comment",
+              list(cs.checklist_item_leads(doc)) == [1])
+
+    # [medium] A BACKSLASH ESCAPES ONE BACKTICK, not a whole run: the remaining
+    # run of a `\``-prefixed sequence still opens a span.
+    check("an escaped FIRST backtick leaves the rest of the run eligible",
+          "<!--" not in cs.mask_code_spans("- [ ] Prefix \\``<!--` Tail"))
+    check("...so the item name is not truncated at it",
+          list(cs.checklist_item_leads("- [ ] Prefix \\``<!--` Tail\n").values())
+          == ["- [ ] Prefix \\``<!--` Tail"])
+    check("CONTROL: a single escaped backtick is still literal",
+          "<!--" in cs.mask_code_spans("- [ ] Real \\`<!--\\`"))
+
+
 def main():
     test_shim()
+    test_container_aware_fences()
     test_mask_text_cannot_join_lines()
     test_reachability()
     test_orphan_check()
