@@ -471,19 +471,12 @@ OUTCOME_JSON="$(python3 "$SCRIPT_DIR/run-outcome.py" "$PROJECT_DIR" \
   --run-secs "$(( $(date +%s) - RUN_START_EPOCH ))" \
   ${SNOOZED_ARG[@]+"${SNOOZED_ARG[@]}"} 2>>"$REPORT" || true)"
 echo "run outcome: ${OUTCOME_JSON:-unavailable}" >> "$REPORT"
-# NO-SHIP STREAK (2026-07-31). Feeds deadline-check.sh's abort condition. HEAD
-# movement is the test rather than the outcome label: a segment that commits
-# nothing produced nothing, whatever it called itself. Reset on any movement so
-# a single slow segment cannot trip the abort.
-NOSHIP_FILE="$RUNTIME_BASE/noship-streak"
-END_HEAD="$(git -C "$PROJECT_DIR" rev-parse HEAD 2>/dev/null || echo "")"
-if [ -n "$END_HEAD" ] && [ "$END_HEAD" != "${START_HEAD:-}" ]; then
-  rm -f "$NOSHIP_FILE" 2>/dev/null || true
-else
-  PREV_NOSHIP="$(awk 'NR==1{print $1+0}' "$NOSHIP_FILE" 2>/dev/null || echo 0)"
-  echo "$(( ${PREV_NOSHIP:-0} + 1 ))" > "$NOSHIP_FILE" 2>/dev/null || true
-  echo "no-ship streak: $(( ${PREV_NOSHIP:-0} + 1 )) (HEAD unmoved this segment)" >> "$REPORT"
-fi
+# NO-SHIP STREAK (2026-07-31; outcome-aware + extracted 2026-08-11). Feeds
+# deadline-check.sh's abort. The rules and the incident that reshaped them (a
+# verified-rollover rotation counted as a dead segment, and the breaker stopped
+# a healthy run at streak 2) live in noship-update.sh -- one owner, testable.
+bash "$SCRIPT_DIR/noship-update.sh" "$PROJECT_DIR" "${START_HEAD:-}" \
+  "${OUTCOME_JSON:-}" >> "$REPORT" 2>&1 || true
 
 if printf '%s' "$OUTCOME_JSON" | grep -q '"breaker": true'; then
   python3 "$SCRIPT_DIR/collect-questions.py" "$PROJECT_DIR" --stamp "$(date -Is)" >/dev/null 2>&1 || true

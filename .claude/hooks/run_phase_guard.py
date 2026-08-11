@@ -1152,6 +1152,19 @@ def _build_suite_receipts_ok(root: Path):
     return True, ""
 
 
+def _current_head(root: Path):
+    """Current HEAD sha, or None when unreadable. None must FAIL OPEN at every
+    caller (skip the check that needed it), never masquerade as a sha: two
+    unreadable reads comparing equal would refuse work on a broken repo."""
+    try:
+        out = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"],
+                             capture_output=True, text=True, timeout=10)
+        sha = out.stdout.strip()
+        return sha if out.returncode == 0 and sha else None
+    except Exception:
+        return None
+
+
 def _review_resolution_valid(root: Path):
     """A5: (ok, why). A mid-section WIP rotation must stand on a RESOLVED review
     cycle proven green at THIS HEAD, not merely a received:true bit. The
@@ -1459,6 +1472,11 @@ def cli(argv):
             # R1 baseline: ships from BEFORE this run must not block the first
             # cursor move; only a ship inside the run demands a rotation.
             "last_rollover_epoch": int(time.time()),
+            # Idle-rollover baseline for the FIRST segment: the launcher's
+            # mark-rotation is a no-op before `start` activates the run, so
+            # without this the first segment has no baseline and the idle
+            # check fails open.
+            "segment_start_head": _current_head(repo_root()),
         }
         save_state(state)
         # NOTE: the armed marker is intentionally NOT removed here. It is the
@@ -1750,6 +1768,16 @@ def cli(argv):
             return 0  # not-yet-started run: `start` sets its own epoch
         state["last_rollover_epoch"] = int(time.time())
         state.pop("rollover", None)
+        # IDLE-ROLLOVER BASELINE (2026-08-11). Record where this segment STARTS
+        # so the rollover verb can tell "I did work and am rotating" from "I
+        # arrived on an already-checkpointed tree and am about to end without
+        # doing anything". Observed live: §41 shipped at 12:04 and its session
+        # rolled over at 12:08; the next TWO segments each re-verified a
+        # rollover of the same HEAD and ended -- HEAD unmoved, no-ship streak
+        # 2, breaker stop. The verification is a pure state check (clean tree,
+        # pushed, receipts), so a fresh context on a shipped tree passes it
+        # forever. None (unreadable HEAD) fails OPEN: the rollover check skips.
+        state["segment_start_head"] = _current_head(repo_root())
         save_state(state)
         print("[sequencer] rotation boundary stamped (fresh worker context)",
               file=sys.stderr)
@@ -1772,6 +1800,39 @@ def cli(argv):
         # relaunches a fresh session on its next tick.
         if not state.get("active"):
             print("[sequencer] rollover REFUSED: no active run", file=sys.stderr)
+            return 1
+        # IDLE-ROLLOVER REFUSAL (2026-08-11). A rollover is EARNED by work, not
+        # owed by arrival. The verification below is a pure state check (clean
+        # tree, pushed, receipts valid) -- every one of which is ALREADY true
+        # when a fresh context lands on a tree whose previous segment shipped
+        # and rolled over. Observed live: two consecutive segments each
+        # re-verified a rollover of the same HEAD (9ebeff0b7), ended their
+        # turns, shipped nothing, and tripped the no-ship breaker -- an
+        # infinite loop at ~$2.50/3min that only the breaker stopped.
+        #
+        # THE REDIRECT IS THE LOAD-BEARING HALF. A bare refusal would swap the
+        # VERIFIED loop for a REFUSED loop (same no-ship, same breaker): the
+        # guard's instructions are followed verbatim -- the VERIFIED path's
+        # "END the turn" is precisely what produced the loop -- so the refusal
+        # must name the next action with equal force.
+        #
+        # DELIBERATELY NOT `rollover_refused`: that P3.2 flag BLOCKS a cursor
+        # advance until a rollover verifies, which here would wedge the run --
+        # this refusal means "go work", not "repair the checkpoint and retry".
+        # Fail-open by construction: no baseline recorded, or HEAD unreadable,
+        # or HEAD moved -> fall through to the normal verification.
+        _seg_head = state.get("segment_start_head")
+        _now_head = _current_head(repo_root())
+        if _seg_head and _now_head and _seg_head == _now_head:
+            print("[sequencer] rollover REFUSED: nothing to roll over -- HEAD "
+                  f"({_now_head[:12]}) has not moved since this segment "
+                  "started, so this state is already checkpointed (the "
+                  "previous segment's rollover covered it). Do NOT end the "
+                  "turn and do NOT retry rollover. CONTINUE WORKING at the "
+                  "cursor: pick the next open section and start it now. If "
+                  "you are mid-section with uncommitted WIP and genuinely "
+                  "need a context rotation, use `rollover-wip` (it commits "
+                  "the WIP, which moves HEAD).", file=sys.stderr)
             return 1
         fails = _rollover_failures(repo_root(), state)
         if fails:
