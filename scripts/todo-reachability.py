@@ -54,6 +54,16 @@ except ImportError as _exc:                                  # pragma: no cover
                      f"cache-schema validator: {_exc}\n")
     raise
 
+# The shared fence tracker (section 38). It reuses the `cache_schema` imported
+# just above rather than loading a second copy -- see `todo_fence._cache_schema`.
+sys.path.insert(0, str(_REPO_ROOT / "scripts"))
+try:
+    import todo_fence as _fence
+except ImportError as _exc:                                  # pragma: no cover
+    sys.stderr.write(f"todo-reachability: cannot import the shared "
+                     f"fence tracker: {_exc}\n")
+    raise
+
 # EXIT CODES. 0 = clean, 1 = FINDINGS, 2 = infrastructure.
 #
 # `2` is NEW with the shared-cache-validator routing, and exists because 1 was
@@ -110,6 +120,10 @@ DEFERRED_RE = re.compile(r"^> \*\*Deferred:")
 QUALITY_RE = re.compile(r"^> \*\*Quality reviewed:")
 AWAITING_RE = re.compile(r"awaiting-[a-z]+")
 IO_ROW_RE = re.compile(r"^\|[^|]*\|\s*(\d+)\s*\|")
+# An Implementation Order "Section" cell: the section marker glyph plus digits,
+# optionally wrapped in backticks or a link label. Built from an escape so the
+# repo's no-bare-section-refs rule is not tripped by the source itself.
+SECTION_MARKER_RE = re.compile(r"^[`\[]*§\s*(\d+)\b")
 
 # An owner is anything a later pass can act on: an XREF, a named TODO, an
 # explicit awaiting-* token, or a file path. Deliberately generous -- the point
@@ -123,7 +137,7 @@ OWNER_RE = re.compile(
 ANY_H2_RE = re.compile(r"^## ")
 
 
-def _sections(lines):
+def _sections(lines, mask):
     """(number, line, body) with the body ending at the next `## ` of ANY kind.
 
     Ending only at the next NUMBERED section is wrong and was caught on
@@ -133,19 +147,29 @@ def _sections(lines):
     `- [ ]` items. That made every file's final section look like it held
     unreachable open work, and produced 11 confident findings that evaporated
     on inspection (each section actually had 0 open items of its own).
+
+    FENCE-AWARE (section 38): `mask` comes from `todo_fence.fence_scan` and
+    marks fenced-code and HTML-comment lines. A `## 99.` inside a fence is an
+    EXAMPLE, and reading it as a real heading splits a real section so its
+    later items are attributed to a number with no Implementation Order row --
+    a blocking `no-io-row` verdict on text that is a code sample, from the
+    parser that gates `phase FIXPOINT`. The BODY is filtered too, not just the
+    boundary: the item and stamp scans in `audit` run over what is yielded
+    here, so a fenced `- [ ]` or a fenced `> **Verified:**` would otherwise
+    still be counted.
     """
     starts = [(i, int(m.group(1))) for i, l in enumerate(lines)
-              if (m := SECTION_RE.match(l))]
-    for idx, (ln, num) in enumerate(starts):
+              if not mask[i] and (m := SECTION_RE.match(l))]
+    for ln, num in starts:
         end = len(lines)
         for j in range(ln + 1, len(lines)):
-            if ANY_H2_RE.match(lines[j]):
+            if not mask[j] and ANY_H2_RE.match(lines[j]):
                 end = j
                 break
-        yield num, ln, lines[ln:end]
+        yield num, ln, [lines[j] for j in range(ln, end) if not mask[j]]
 
 
-def _io_rows(lines):
+def _io_rows(lines, mask):
     """Section numbers listed in the `## Implementation Order` table.
 
     SCOPED to that table, and tolerant of BOTH row shapes found in the corpus
@@ -154,16 +178,70 @@ def _io_rows(lines):
     (`| 1 | Section | Tag | Dep |`). Scanning every table in the file instead
     produced 304 false "no IO row" findings, because an Inputs table's rows
     never carry a section number.
+
+    FENCE-AWARE (section 38), in BOTH directions. A fenced `## Implementation
+    Order` heading would flip `inside` on for an example table -- inventing
+    rows -- and a fenced `## Something` inside the real table's span would flip
+    it back off, dropping every row after it. Skipping masked lines entirely
+    leaves the toggle driven only by real headings.
     """
     rows = set()
     inside = False
-    for l in lines:
+    sec_col = None            # index of the header's "Section" column, if any
+    for i, l in enumerate(lines):
+        if mask[i]:
+            continue
         if l.startswith("## "):
             inside = l[3:].strip().lower().startswith("implementation order")
+            sec_col = None
             continue
         if not inside or not l.startswith("|"):
             continue
         cells = [c.strip() for c in l.strip().strip("|").split("|")]
+        # THE HEADER DECLARES WHICH COLUMN HOLDS THE SECTION, and the marker is
+        # read from THAT column only. Scanning the whole row for a marker looks
+        # equivalent and is not: the `Depends On` cell carries section markers
+        # too, so on the many tables with no Section column at all (TODO-01,
+        # TODO-04) a row's DEPENDENCY was read as the row's own section -- which
+        # produced 59 phantom `no-io-row` refusals against the live corpus the
+        # first time this was tried. Measured, not reasoned.
+        #
+        # THE HEADER IS FOUND BY CONTENT, NEVER BY POSITION. Skipping "the first
+        # row after the heading" is the obvious reading and it silently ate the
+        # only data row of a header-less table -- which is exactly the shape
+        # `test_build.sh`'s routed-reader fixture uses, so the file declared no
+        # rows at all and the cache-COVERAGE refusal it exists to prove stopped
+        # firing. A separator row needs no special case: its cells are neither
+        # digits nor markers, so it contributes nothing on its own.
+        low = [c.lower() for c in cells]
+        if sec_col is None and "section" in low:
+            sec_col = low.index("section")
+            continue                      # this row IS the header
+        # THE EXPLICIT SECTION MARKER WINS; the digit rule is the FALLBACK for
+        # layouts that carry no marker, not an additional source.
+        #
+        # The digit rule takes the first all-digit cell of the first two
+        # columns, which in the dominant six-column layout is the ORDER column,
+        # while the caller compares this set against SECTION numbers from the
+        # `## N.` headings. The two agree only while a file's order and section
+        # numbers cover the same range, and they stop agreeing the moment a
+        # section is re-sequenced.
+        #
+        # COLLECTING BOTH LOOKS CONSERVATIVE AND IS THE OPPOSITE. The first
+        # repair of this function did exactly that, on the reasoning that a
+        # larger set can only REMOVE a false refusal -- which is true only when
+        # ABSENCE is the actionable signal. Here PRESENCE is: `num in rows` is
+        # the integrity check, so a row with order 1 and marker 41 lets a real
+        # section 1 that has open work and no IO row of its own pass silently
+        # (Codex adversarial, section 38 round 2, [high], against that repair).
+        if sec_col is not None and sec_col < len(cells):
+            m = SECTION_MARKER_RE.match(cells[sec_col])
+            if m:
+                rows.add(int(m.group(1)))
+                continue
+            if cells[sec_col].isdigit():      # marker glyph omitted
+                rows.add(int(cells[sec_col]))
+                continue
         for cell in cells[:2]:
             if cell.isdigit():
                 rows.add(int(cell))
@@ -448,13 +526,24 @@ def _is_done(status, verified, quality, deferred, awaiting):
 def audit(path, root="."):
     """[(kind, section, detail)] for unreachable work in one file."""
     try:
-        lines = Path(path).read_text(encoding="utf-8").split("\n")
+        text = Path(path).read_text(encoding="utf-8")
     except OSError:
         return []
-    rows = _io_rows(lines)
+    lines, mask, unclosed_fence, unclosed_comment = _fence.scan_text(text)
+    # A malformed document masks from its opener to EOF, so EVERY walk below
+    # returns empty and this gate -- the one that holds `phase FIXPOINT` open --
+    # would report the file clean precisely because it could not read it. Name
+    # it instead. `build.py:1030` makes the same call on the producer side; a
+    # gate that went quiet here would silently disagree with it about the same
+    # file (Codex design review, section 38, [high]).
+    reason = _fence.unclosed_reason(unclosed_fence, unclosed_comment)
+    if reason:
+        return [("unclosed-fence" if unclosed_fence else "unclosed-comment",
+                 0, reason)]
+    rows = _io_rows(lines, mask)
     status_map = _io_status(path, root, rows)
     out = []
-    for num, ln, body in _sections(lines):
+    for num, ln, body in _sections(lines, mask):
         opens = [b.strip()[:90] for b in body if OPEN_ITEM_RE.match(b)]
         parked = [b.strip() for b in body if PARKED_ITEM_RE.match(b)]
         deferred = any(DEFERRED_RE.match(b) for b in body)

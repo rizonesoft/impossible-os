@@ -63,16 +63,32 @@ def _triage(root: Path):
     return mod
 
 
+def _fence():
+    """The shared fence tracker (section 38), loaded the same way as `_triage`."""
+    spec = importlib.util.spec_from_file_location(
+        "todo_fence", _repo_root() / "scripts/todo_fence.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
 OPEN_ITEM_RE = re.compile(r"^\s*- \[ \]")
 # An Implementation Order row: `| <marker> | <order> | ... | [x] |`. The status
 # is the LAST cell; the order number is the first all-digit cell.
 IO_ROW_RE = re.compile(r"^\|.*\|\s*\[([ x/])\]\s*\|\s*$")
 
 
-def _io_statuses(lines):
-    """{section_number: status_char} parsed from the Implementation Order table."""
+def _io_statuses(lines, mask):
+    """{section_number: status_char} parsed from the Implementation Order table.
+
+    FENCE-AWARE (section 38): a fenced Implementation Order row is an example,
+    and taking it as real invents a section status -- which is the input to the
+    DONE test below, so it decides whether an item is called an orphan.
+    """
     out = {}
-    for ln in lines:
+    for i, ln in enumerate(lines):
+        if mask[i]:
+            continue
         m = IO_ROW_RE.match(ln)
         if not m:
             continue
@@ -83,14 +99,23 @@ def _io_statuses(lines):
     return out
 
 
-def scan_file(path: Path, tri) -> list:
-    """[(section, heading, [item lines])] orphans in one TODO file."""
+def scan_file(path: Path, tri, fence=None) -> list:
+    """[(section, heading, [item lines])] orphans in one TODO file.
+
+    A malformed document (unclosed fence or unclosed `<!--`) is NOT scanned:
+    `malformed()` reports it and `main` refuses. Returning [] here would read
+    as "no orphans" on a file this walk cannot see (Codex design review,
+    section 38, [high]).
+    """
     try:
         text = path.read_text(encoding="utf-8")
     except OSError:
         return []
-    lines = text.split("\n")
-    statuses = _io_statuses(lines)
+    fence = fence or _fence()
+    lines, mask, unclosed_fence, unclosed_comment = fence.scan_text(text)
+    if fence.unclosed_reason(unclosed_fence, unclosed_comment):
+        return []
+    statuses = _io_statuses(lines, mask)
     if not statuses:
         return []
     # Walk sections once, collecting stamps and open items per section.
@@ -98,7 +123,14 @@ def scan_file(path: Path, tri) -> list:
     stamps: dict = {}
     items: dict = {}
     heads: dict = {}
-    for ln in lines:
+    for i, ln in enumerate(lines):
+        # A fenced `## N.` heading, `- [ ]` item or stamp is an EXAMPLE. Taking
+        # the heading as real re-scopes every following line to a section that
+        # does not exist, and taking a fenced `> **Verified:**` as real is the
+        # highest-impact shape of all: it is half of the DONE test that decides
+        # whether the items below it are orphans (section 38).
+        if mask[i]:
+            continue
         m = tri.SECTION_HEADING_RE.match(ln)
         if m:
             cur = int(m.group(1))
@@ -137,11 +169,22 @@ def scan_file(path: Path, tri) -> list:
     return out
 
 
+def malformed(path: Path, fence) -> str:
+    """The unclosed-delimiter reason for one file, or "" when it is well-formed."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    _, _, uf, uc = fence.scan_text(text)
+    return fence.unclosed_reason(uf, uc) or ""
+
+
 def main(argv) -> int:
     root = _repo_root()
     if "--repo" in argv:
         root = Path(argv[argv.index("--repo") + 1]).resolve()
     tri = _triage(_repo_root())          # regex source is always the live hook
+    fence = _fence()
     paths = [Path(a) for a in argv if not a.startswith("-")
              and a != str(root)] or None
     if paths is None:
@@ -149,7 +192,13 @@ def main(argv) -> int:
             glob.glob(str(root / "todo/**/*.md"), recursive=True))]
     rc = 0
     for p in paths:
-        for n, head, its in scan_file(p, tri):
+        why = malformed(p, fence)
+        if why:
+            rc = 1
+            rel = p.relative_to(root) if p.is_absolute() else p
+            print(f"{rel}: UNSCANNABLE -- {why}")
+            continue
+        for n, head, its in scan_file(p, tri, fence):
             rc = 1
             rel = p.relative_to(root) if p.is_absolute() else p
             print(f"{rel} sec {n}: {len(its)} orphaned [ ] behind a stamped "

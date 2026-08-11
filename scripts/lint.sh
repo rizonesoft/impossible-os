@@ -41,8 +41,27 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 # ONE invocation of the gate, not the rule.
 GATE_EXCLUDED_TODO=""
 GATE_STAGED_TODO=""
+# ...and the files that are in the commit AND carry LATER unstaged edits. Those
+# are the only ones whose committed bytes differ from the bytes on disk, so they
+# are the only ones a check has to read out of the INDEX. Checks 10/11 need this
+# because they became fence-aware: an unstaged fence wrapped around a staged
+# violation would otherwise MASK it (fail-open), and an unstaged unclosed fence
+# would refuse a commit that does not contain it (false block). Both routes are
+# NEW -- a fence-blind check could not be steered by either -- and both were
+# found by adversarial review before shipping.
+#
+# A SEPARATE, NORMALLY-EMPTY SET rather than reading all 281 files from the
+# index: for a file with no unstaged edits the index blob and the worktree bytes
+# are identical by construction, so reading them would cost a `git show` per file
+# at every commit and could not change a verdict.
+GATE_DIVERGED_TODO=""
 if [ "${LINT_GATE_SCOPE_STAGED:-}" = "1" ]; then
     GATE_STAGED_TODO="$(git -C "$REPO_ROOT" diff --cached --name-only -- 'todo/*.md' 'todo/**/*.md' 2>/dev/null | sort -u)"
+    GATE_DIVERGED_TODO="$(
+        comm -12 \
+            <(git -C "$REPO_ROOT" diff --name-only -- 'todo/*.md' 'todo/**/*.md' 2>/dev/null | sort -u) \
+            <(git -C "$REPO_ROOT" diff --cached --name-only -- 'todo/*.md' 'todo/**/*.md' 2>/dev/null | sort -u) \
+        2>/dev/null || true)"
     # UNTRACKED counts too: a run that OPENS a new TODO (a fresh capture file,
     # a split section) has a file that is equally not part of this commit, and
     # leaving it in meant the wedge simply moved to new files. Staged wins over
@@ -55,7 +74,7 @@ if [ "${LINT_GATE_SCOPE_STAGED:-}" = "1" ]; then
             <(git -C "$REPO_ROOT" diff --cached --name-only -- 'todo/*.md' 'todo/**/*.md' 2>/dev/null | sort -u) \
         2>/dev/null || true)"
     if [ -n "$GATE_EXCLUDED_TODO" ]; then
-        echo -e "${DIM:-}gate scope: $(printf '%s\n' "$GATE_EXCLUDED_TODO" | wc -l | tr -d ' ') todo file(s) modified outside this commit are not judged by Checks 7/17/24${NC:-}"
+        echo -e "${DIM:-}gate scope: $(printf '%s\n' "$GATE_EXCLUDED_TODO" | wc -l | tr -d ' ') todo file(s) modified outside this commit are not judged by Checks 7/10/11/17/24${NC:-}"
     fi
 fi
 
@@ -713,9 +732,12 @@ if [ "${SKIP_LINT_STAMP_REGION:-}" = "1" ] && [ "${SKIP_LINT_OS_COMPARISON:-}" =
     echo -e "${YELLOW}warn${NC}: Check 10 + Check 11 both skipped via SKIP_LINT_STAMP_REGION + SKIP_LINT_OS_COMPARISON"
     WARNINGS=$((WARNINGS + 2))
 else
-    LINT_OUT="$(python3 - <<'PYEOF'
+    LINT_OUT="$(LINT_GATE_EXCLUDED_TODO="$GATE_EXCLUDED_TODO" \
+                LINT_GATE_DIVERGED_TODO="$GATE_DIVERGED_TODO" \
+                python3 - "$REPO_ROOT" <<'PYEOF'
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -731,13 +753,51 @@ todo_root = Path("todo")
 errors = []
 warnings = []
 
+# THE SHARED FENCE TRACKER (section 38). Checks 10/11 scan raw Markdown, so a
+# fenced Implementation Order row plus a fenced heading used to read as a
+# shipped section and raise a blocking stamp-region error over a code sample.
+# `mask_text` blanks every fenced / HTML-comment line to spaces of the SAME
+# length, which keeps every character offset below pointing at the same
+# character of the original file.
+#
+# THE TOOL COMES FROM $REPO_ROOT; THE CORPUS COMES FROM CWD. That split is not
+# incidental -- lint.sh's own fixtures in `scripts/test-tooling.sh` run it from
+# a temp directory holding a synthetic `todo/`, so a CWD-relative path to this
+# module made the loader miss and take every Check 10/11 fixture down with it
+# (14 tooling failures, 2026-08-11). `todo_root` below stays CWD-relative for
+# exactly the reason this path must not be.
+try:
+    import importlib.util as _ilu
+    _spec = _ilu.spec_from_file_location(
+        "todo_fence", str(Path(sys.argv[1]) / "scripts" / "todo_fence.py"))
+    _fence = _ilu.module_from_spec(_spec)
+    _spec.loader.exec_module(_fence)
+except Exception as _exc:
+    sys.stderr.write("lint: Check 10/11 cannot load the shared fence "
+                     "tracker (%s)\n" % _exc)
+    sys.exit(2)
+
+# EVERY PATTERN BELOW IS LINE-LOCAL, and that is load-bearing rather than
+# tidiness. `\s` and a negated class like `[^|]` both match a NEWLINE, so once
+# the lines between two real ones are blanked a pattern spanning `\s+` can JOIN
+# them: reproduced 2026-08-11, a bare `##` line, a fenced block and a later
+# `12. Title` line together satisfy `^##\s+12\.\s+(.+?)$` though nothing matches
+# before masking -- a section the file does not have. `| a | b` followed by a
+# real row does the same to an `[^|]*`-based IO pattern. `[ \t]` and `[^|\n]`
+# cannot cross a line, so masking can only ever REMOVE a match (Codex design
+# review, section 38, [medium]). The hazard also predates masking: these
+# patterns could already span lines in an unmasked file.
+
 # Parse the IO table for [x] rows: capture section number + deliverable.
 IO_ROW_RE = re.compile(
-    r"^\|[^|]*\|[^|]*\|\s*§?\s*(\d+)\s*\|([^|]+)\|[^|]*\|\s*\[x\]\s*\|",
+    r"^\|[^|\n]*\|[^|\n]*\|[ \t]*§?[ \t]*(\d+)[ \t]*\|([^|\n]+)\|[^|\n]*\|[ \t]*\[x\][ \t]*\|",
     re.MULTILINE,
 )
 
-# Section header anchor.
+# Section header anchor. DEFINED AND NEVER CONSUMED -- the live heading match is
+# the inline regex inside section_body(). Deliberately left as-is: "fixing" a
+# pattern nothing reads is a no-op dressed as a fix (section 36 round-5
+# consistency review, restated by section 38's checklist).
 SEC_HDR_RE = re.compile(r"^##\s+(\d+)\.\s+(.+?)$", re.MULTILINE)
 
 # Body end-sentinels: stop scanning a section body at any of these.
@@ -749,21 +809,21 @@ SEC_HDR_RE = re.compile(r"^##\s+(\d+)\.\s+(.+?)$", re.MULTILINE)
 # own sub-headings, so a bare `## ` boundary needs no allowlist and cannot
 # go stale as new trailing blocks are added. Same defect class as the
 # section_block over-capture fixed in scripts/overnight/section_slice.py.
-BODY_END_RE = re.compile(r"^##\s+\S", re.MULTILINE)
+BODY_END_RE = re.compile(r"^##[ \t]+\S", re.MULTILINE)
 
 # Verified date extraction.
 VERIFIED_DATE_RE = re.compile(
-    r"^>\s*\*\*Verified:\*\*\s*(\d{4}-\d{2}-\d{2})",
+    r"^>[ \t]*\*\*Verified:\*\*[ \t]*(\d{4}-\d{2}-\d{2})",
     re.MULTILINE,
 )
 
 # Stamp-region required pieces (Check 10).
-NOTES_RE = re.compile(r"^>\s*\*\*Notes:\*\*", re.MULTILINE)
-TEST_RUNNER_RE = re.compile(r"^>\s*\*\*Test runner:\*\*", re.MULTILINE)
-VERIFIED_RE = re.compile(r"^>\s*\*\*Verified:\*\*", re.MULTILINE)
-QUALITY_RE = re.compile(r"^>\s*\*\*Quality reviewed:\*\*", re.MULTILINE)
+NOTES_RE = re.compile(r"^>[ \t]*\*\*Notes:\*\*", re.MULTILINE)
+TEST_RUNNER_RE = re.compile(r"^>[ \t]*\*\*Test runner:\*\*", re.MULTILINE)
+VERIFIED_RE = re.compile(r"^>[ \t]*\*\*Verified:\*\*", re.MULTILINE)
+QUALITY_RE = re.compile(r"^>[ \t]*\*\*Quality reviewed:\*\*", re.MULTILINE)
 NO_TEST_SURFACE_RE = re.compile(
-    r"\*\*Note:\*\*\s*No\s+\w+\s+test\s+surface", re.IGNORECASE
+    r"\*\*Note:\*\*[ \t]*No[ \t]+\w+[ \t]+test[ \t]+surface", re.IGNORECASE
 )
 
 OS_SHIPPED_GLYPHS = ("✅", "✓")
@@ -772,7 +832,7 @@ OS_NOT_SHIPPED_GLYPHS = ("⬜", "⚠️", "Planned")
 
 def section_body(text, section_num):
     m = re.search(
-        r"^##\s+" + str(section_num) + r"\.\s+(.+?)$",
+        r"^##[ \t]+" + str(section_num) + r"\.[ \t]+(.+?)$",
         text, re.MULTILINE,
     )
     if not m:
@@ -784,11 +844,11 @@ def section_body(text, section_num):
 
 
 def os_table_block(text):
-    m = re.search(r"^##\s+OS Comparison\b", text, re.MULTILINE)
+    m = re.search(r"^##[ \t]+OS Comparison\b", text, re.MULTILINE)
     if not m:
         return ""
     start = m.end()
-    end_m = re.search(r"^##\s+\w", text[start:], re.MULTILINE)
+    end_m = re.search(r"^##[ \t]+\w", text[start:], re.MULTILINE)
     end = start + end_m.start() if end_m else len(text)
     return text[start:end]
 
@@ -815,12 +875,121 @@ def os_row_for_section(os_block, section_num, deliverable_substring):
     return None
 
 
-for md_path in sorted(todo_root.rglob("*.md")):
+# COMMIT-GATE SCOPE. Under `LINT_GATE_SCOPE_STAGED` these two checks judge the
+# bytes the COMMIT carries, not the bytes on disk -- see the shell block that
+# computes these two sets for why fence-awareness made that distinction matter.
+_STAGED_SCOPE = os.environ.get("LINT_GATE_SCOPE_STAGED", "") == "1"
+_EXCLUDED = {p for p in os.environ.get("LINT_GATE_EXCLUDED_TODO", "").split("\n") if p}
+_DIVERGED = {p for p in os.environ.get("LINT_GATE_DIVERGED_TODO", "").split("\n") if p}
+
+
+def staged_snapshot(root):
+    """`{rel: text}` for every `todo/**.md` IN THE INDEX, or None if unreadable.
+
+    ONE FIXED SNAPSHOT, enumerated from the index rather than from the disk.
+    Reading the index only for files that `git diff` calls modified was tried
+    first and is unsound in at least four ways, each of which lets an unstaged
+    edit steer a gate that judges a commit (Codex adversarial, section 38
+    round 2, [high]):
+      * a staged-NEW file deleted from the worktree without staging the
+        deletion is still in the commit, but a filesystem walk never visits it;
+      * `git diff --name-only` C-QUOTES a path containing a newline or a
+        non-ASCII byte, so it can never match the plain path string it is
+        compared against;
+      * `assume-unchanged` / `skip-worktree` / a clean-smudge filter leaves the
+        worktree different without the file appearing in `git diff` at all;
+      * anything saved between the diff and the read is a plain TOCTOU window.
+    Enumerating the index closes all four at once, which is why this is a
+    snapshot rather than a per-file decision.
+
+    NUL-separated, and blobs are fetched by SHA through one `cat-file --batch`:
+    a path is never used as a protocol delimiter, and 281 blobs cost one
+    subprocess instead of 281.
+    """
+    ls = subprocess.run(["git", "-C", root, "ls-files", "-z", "-s", "--", "todo"],
+                        capture_output=True, check=False)
+    if ls.returncode != 0:
+        return None
+    entries = []
+    for rec in ls.stdout.split(b"\0"):
+        if not rec:
+            continue
+        meta, _, path = rec.partition(b"\t")
+        parts = meta.split()
+        if len(parts) != 3:
+            return None
+        _mode, sha, stage = parts
+        if stage != b"0":
+            return None                  # unmerged path: not a commitable tree
+        if not path.endswith(b".md"):
+            continue
+        entries.append((sha.decode("ascii"), path))
+    if not entries:
+        return {}
+    batch = subprocess.run(["git", "-C", root, "cat-file", "--batch"],
+                           input=b"\n".join(s.encode() for s, _ in entries) + b"\n",
+                           capture_output=True, check=False)
+    if batch.returncode != 0:
+        return None
+    out, pos, docs = batch.stdout, 0, {}
+    for _sha, path in entries:
+        nl = out.find(b"\n", pos)
+        if nl < 0:
+            return None
+        hdr = out[pos:nl].split()
+        if len(hdr) != 3 or hdr[1] != b"blob":
+            return None
+        size = int(hdr[2])
+        body = out[nl + 1:nl + 1 + size]
+        pos = nl + 1 + size + 1          # blob, then git's trailing newline
+        try:
+            docs[path.decode("utf-8")] = body.decode("utf-8")
+        except UnicodeDecodeError:
+            continue                     # same skip the worktree read takes
+    return docs
+
+
+# THE DOCUMENT SET. Under the commit gate it comes from the index snapshot, so
+# what is judged is what is being committed; otherwise it is the worktree, which
+# is what a bare `bash scripts/lint.sh` and CI both want.
+if _STAGED_SCOPE:
+    _SNAPSHOT = staged_snapshot(sys.argv[1])
+    if _SNAPSHOT is None:
+        # A blob-read failure is INFRASTRUCTURE, not a clean bill: passing here
+        # would mean passing the commit unread. Emitted through the block's own
+        # ERROR channel so it lands in the lint summary like any other finding.
+        print("ERROR todo/: Check 10/11 could not read the staged snapshot "
+              "(unmerged path, or git could not produce the index blobs) -- "
+              "refusing rather than judging the working tree instead")
+        raise SystemExit(0)
+    _DOCS = sorted(_SNAPSHOT.items())
+else:
+    _DOCS = [(str(p), None) for p in sorted(todo_root.rglob("*.md"))]
+
+for rel, staged_text in _DOCS:
+    md_path = Path(rel)
+    # A file the commit does not touch is not this commit's to judge. Checks
+    # 7/17/24 already worked this way; 10/11 join them because the new
+    # unclosed-delimiter refusal would otherwise let a run's mid-edit TODO
+    # block an unrelated commit -- the exact wedge that scoping exists to stop.
+    if _STAGED_SCOPE and rel in _EXCLUDED:
+        continue
     try:
-        text = md_path.read_text(encoding="utf-8")
+        raw = staged_text if staged_text is not None \
+            else md_path.read_text(encoding="utf-8")
     except Exception:
         continue
-    rel = str(md_path)
+    # An unclosed fence or `<!--` masks its opener to EOF, so every walk below
+    # would find no IO rows and report the file clean because it could not read
+    # it. Say so instead -- `build.py` refuses the same documents, and a gate
+    # that went quiet would silently disagree with the producer about the same
+    # file (Codex design review, section 38, [high]).
+    _lines, _mask, _uf, _uc = _fence.scan_text(raw)
+    _why = _fence.unclosed_reason(_uf, _uc)
+    if _why:
+        errors.append(f"{rel}: cannot be checked -- {_why} (Check 10/11)")
+        continue
+    text = _fence.mask_text(raw)
     os_block = os_table_block(text)
     for m in IO_ROW_RE.finditer(text):
         sec_num = int(m.group(1))
@@ -1775,36 +1944,76 @@ def norm(p):
 json.dump({k: v for k, v in d.items() if norm(k) not in excl}, sys.stdout)
 " 2>/dev/null || printf '%s' "$LINT24_OUT")"
     fi
-    LINT24_ERR="$(printf '%s' "$LINT24_OUT" | python3 -c "
-import json,sys
-try: d=json.load(sys.stdin)
-except Exception: d={}
-n=sum(1 for v in d.values() for k,_,_ in v if k=='open-in-done')
-print(n)" 2>/dev/null || echo 0)"
-    # BOTH numbers. The record is per SECTION and carries its own item count in
-    # the message; reporting the record count while calling it "items" understated
-    # the backlog 4.8x (333 sections vs 1595 items, measured 2026-08-05) and that
-    # wrong figure had propagated into the capture files and the doctrine.
-    LINT24_WARN="$(printf '%s' "$LINT24_OUT" | python3 -c "
-import json,sys
-try: d=json.load(sys.stdin)
-except Exception: d={}
-n=sum(1 for v in d.values() for k,_,_ in v if k=='open-in-deferred')
-print(n)" 2>/dev/null || echo 0)"
-    LINT24_ITEMS="$(printf '%s' "$LINT24_OUT" | python3 -c "
+    # ONE EXHAUSTIVE AGGREGATION, and it FAILS CLOSED on a kind it does not
+    # know. This used to be three independent passes keyed on two kind names,
+    # which is a shape that goes silent every time the tool learns a new one --
+    # and it had already gone silent twice. `no-io-row` (todo-reachability.py's
+    # oldest kind, and the one that gates `phase FIXPOINT`) was counted by
+    # NOTHING: rc 1 plus valid JSON passed the rc-vs-shape pair and then no
+    # branch matched, so a section with open work and no Implementation Order
+    # row produced no lint error at all. The `unclosed-*` refusal records added
+    # alongside this work landed in the same hole. Counting handled records and
+    # comparing against the total is what makes the next new kind LOUD instead
+    # of invisible (Codex adversarial, section 38 round 2, [high]; the
+    # `unclosed-*` half was this section's own self-review).
+    #
+    # BOTH numbers for the deferred bucket. The record is per SECTION and
+    # carries its own item count in the message; reporting the record count
+    # while calling it "items" understated the backlog 4.8x (333 sections vs
+    # 1595 items, measured 2026-08-05) and that wrong figure had propagated
+    # into the capture files and the doctrine.
+    LINT24_AGG="$(printf '%s' "$LINT24_OUT" | python3 -c "
 import json,re,sys
 try: d=json.load(sys.stdin)
 except Exception: d={}
-n=0
-for v in d.values():
-    for k,_,msg in v:
-        if k=='open-in-deferred':
-            m=re.match(r'^(\\d+) open', msg)
-            n+= int(m.group(1)) if m else 1
-print(n)" 2>/dev/null || echo 0)"
+KNOWN={'open-in-done','open-in-deferred','no-io-row','unclosed-fence','unclosed-comment'}
+recs=[(f,k,msg) for f,v in d.items() for k,_,msg in v]
+def n(kind): return sum(1 for _,k,_ in recs if k==kind)
+def first(*kinds):
+    for f,k,m in recs:
+        if k in kinds: return f+' -- '+m[:120]
+    return ''
+items=0
+for _,k,msg in recs:
+    if k=='open-in-deferred':
+        m=re.match(r'^(\\d+) open', msg)
+        items+= int(m.group(1)) if m else 1
+unknown=sorted({k for _,k,_ in recs if k not in KNOWN})
+print('done=%d' % n('open-in-done'))
+print('deferred=%d' % n('open-in-deferred'))
+print('items=%d' % items)
+print('noio=%d' % n('no-io-row'))
+print('unreadable=%d' % (n('unclosed-fence')+n('unclosed-comment')))
+print('unknown=%d' % len(unknown))
+print('unknown_names=%s' % ','.join(unknown))
+print('first_unreadable=%s' % first('unclosed-fence','unclosed-comment'))
+print('first_noio=%s' % first('no-io-row'))" 2>/dev/null || echo 'parse_failed=1')"
+    lint24_field() { printf '%s\n' "$LINT24_AGG" | sed -n "s/^$1=//p" | head -1; }
+    if printf '%s\n' "$LINT24_AGG" | grep -q '^parse_failed=1$'; then
+        error "scripts/todo-reachability.py" "0" \
+            "Check 24 could not aggregate the reachability findings -- refusing rather than reporting zero"
+    fi
+    LINT24_ERR="$(lint24_field done)"
+    LINT24_WARN="$(lint24_field deferred)"
+    LINT24_ITEMS="$(lint24_field items)"
+    LINT24_NOIO="$(lint24_field noio)"
+    LINT24_UNREADABLE="$(lint24_field unreadable)"
+    LINT24_UNKNOWN="$(lint24_field unknown)"
     if [ "${LINT24_ERR:-0}" -gt 0 ] 2>/dev/null; then
         echo -e "${RED}error${NC}: Check 24 (reachability) ${LINT24_ERR} open item(s) in DONE sections are unreachable -- nothing will revisit them. Run: python3 scripts/todo-reachability.py"
         ERRORS=$((ERRORS + LINT24_ERR))
+    fi
+    if [ "${LINT24_NOIO:-0}" -gt 0 ] 2>/dev/null; then
+        echo -e "${RED}error${NC}: Check 24 (reachability) ${LINT24_NOIO} section(s) hold open work with no Implementation Order row -- the oracle classifies from the row and never reads the body: $(lint24_field first_noio)"
+        ERRORS=$((ERRORS + LINT24_NOIO))
+    fi
+    if [ "${LINT24_UNREADABLE:-0}" -gt 0 ] 2>/dev/null; then
+        echo -e "${RED}error${NC}: Check 24 (reachability) ${LINT24_UNREADABLE} todo file(s) could not be read: $(lint24_field first_unreadable)"
+        ERRORS=$((ERRORS + LINT24_UNREADABLE))
+    fi
+    if [ "${LINT24_UNKNOWN:-0}" -gt 0 ] 2>/dev/null; then
+        echo -e "${RED}error${NC}: Check 24 (reachability) reported ${LINT24_UNKNOWN} finding kind(s) this gate does not handle ($(lint24_field unknown_names)) -- add a branch rather than letting them pass uncounted"
+        ERRORS=$((ERRORS + LINT24_UNKNOWN))
     fi
     if [ "${LINT24_WARN:-0}" -gt 0 ] 2>/dev/null; then
         echo -e "${YELLOW}warn${NC}: Check 24 (reachability) ${LINT24_ITEMS} open \`- [ ]\` item(s) across ${LINT24_WARN} Deferred section(s); repair shape is \`- [/]\` naming the blocker"

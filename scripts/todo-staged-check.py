@@ -52,6 +52,63 @@ def _staged_todo_files():
             if f.strip().startswith("todo/") and f.strip().endswith(".md")]
 
 
+def _fence():
+    """The shared fence tracker (section 38), memoised on the function."""
+    mod = getattr(_fence, "_mod", None)
+    if mod is None:
+        import importlib.util
+        src = pathlib.Path(__file__).resolve().parent / "todo_fence.py"
+        spec = importlib.util.spec_from_file_location("todo_fence", src)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _fence._mod = mod
+    return mod
+
+
+def _post_image(path):
+    """The STAGED post-image text for `path`, or None when it cannot be read.
+
+    THE SNAPSHOT HAS TO MATCH THE COORDINATES. `_added_lines` derives every line
+    number from `git diff --cached`, i.e. from the INDEX, while every structural
+    walk below used to read the WORKING TREE. Those are the same file only when
+    nothing is partially staged. Under partial staging an unstaged insertion or
+    deletion shifts every later line, so a staged coordinate indexes a different
+    line -- and once a fence mask is derived from that snapshot the mismatch
+    also decides which lines are considered fenced. The checker could then
+    ignore a staged section, provenance violation, over-cap item or cap
+    increase, or refuse content that is not in the commit at all (Codex design
+    review, section 38, [high]).
+
+    Falls back to None (caller reads the working tree) when git cannot produce
+    the blob -- outside a repo, or a path staged as a deletion. Every caller
+    already fails open on an unreadable file, and a gate that started refusing
+    commits when run outside a work tree would be worse than the drift.
+    """
+    try:
+        r = subprocess.run(["git", "show", f":{path}"],
+                           capture_output=True, text=True, check=False)
+    except OSError:
+        return None
+    return r.stdout if r.returncode == 0 else None
+
+
+def _post_image_lines(path):
+    """`(lines, mask, unclosed_reason)` over the staged post-image.
+
+    One helper so all five structural walks share ONE snapshot and ONE mask
+    rather than each re-reading and re-scanning the file.
+    """
+    text = _post_image(path)
+    if text is None:
+        try:
+            text = pathlib.Path(path).read_text(encoding="utf-8")
+        except OSError:
+            return [], [], None
+    fence = _fence()
+    lines, mask, uf, uc = fence.scan_text(text)
+    return lines, mask, fence.unclosed_reason(uf, uc)
+
+
 def _added_lines(path):
     """[(lineno_in_new_file, text)] for lines this commit ADDS."""
     try:
@@ -143,10 +200,12 @@ def wrapped_block(added):
 OS_COMPARISON_CELL_CAP = 80
 
 
-def _oscomp_over_cap(path, added):
+def _oscomp_over_cap(lines, added):
     """[(lineno, width, cell)] for OS Comparison claim cells this commit
-    ADDS that exceed the cap. Reads the post-image file for table structure and
-    intersects with the added line numbers, so legacy rows are never judged."""
+    ADDS that exceed the cap. Takes the staged post-image (fenced lines already
+    blanked) for table structure and intersects with the added line numbers, so
+    legacy rows are never judged and a fenced example table is never judged at
+    all."""
     try:
         sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
         import importlib.util
@@ -154,7 +213,6 @@ def _oscomp_over_cap(path, added):
             "_fmt", str(pathlib.Path(__file__).resolve().parent / "format-md-tables.py"))
         fmt = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(fmt)
-        lines = pathlib.Path(path).read_text(encoding="utf-8").split("\n")
     except Exception:
         return []                     # fail-open: never break a commit on this
     added_nos = {n for n, _ in added}
@@ -219,12 +277,13 @@ SECTION_HARD_CAP = 60
 _SECTION_RE = re.compile(r"^## (\d+)\.")
 
 
-def _section_total(path):
-    try:
-        with open(path, "r", encoding="utf-8") as fh:
-            return sum(1 for line in fh if _SECTION_RE.match(line))
-    except OSError:
-        return 0
+def _section_total(lines):
+    """Sections in the staged post-image, counting only UNFENCED headings.
+
+    A fenced `## 99.` example used to count toward the cap, so a file could be
+    pushed over the soft or hard cap by a code sample (section 38).
+    """
+    return sum(1 for line in lines if _SECTION_RE.match(line))
 
 
 def added_sections(added):
@@ -257,13 +316,14 @@ _PARK_RE = re.compile(r"^\s*- \[/\]")
 _STAMP_RE = re.compile(r"^>\s*\*\*(Verified|Quality reviewed):\*\*")
 
 
-def _park_into_shipping_section(path, added):
+def _park_into_shipping_section(lines, added):
     """[(lineno, section_heading, text)] for `- [/]` items this commit ADDS to a
-    section it is ALSO stamping in the same commit."""
-    try:
-        lines = pathlib.Path(path).read_text(encoding="utf-8").split("\n")
-    except OSError:
-        return []                      # fail-open: never break a commit on this
+    section it is ALSO stamping in the same commit.
+
+    `lines` is the staged post-image with fenced lines blanked, so a fenced
+    `> **Verified:**` cannot make a section look stamped-now and a fenced
+    `- [/]` cannot look like a park (section 38).
+    """
     added_nos = {n for n, _ in added}
     # section index -> (start, end) over the post-image
     bounds, cur, heads = [], None, {}
@@ -334,15 +394,11 @@ _REVIEW_SPAWN_RE = re.compile(
     r"^>\s*\*\*Spawned-by:\*\*\s*(?:\u00a7|section\s*)\d+\s*\(review\)", re.I)
 
 
-def _review_sections_missing_user_impact(path, added):
+def _review_sections_missing_user_impact(path, lines, added):
     """[(lineno, heading)] for `(review)`-spawned sections this commit ADDS that
     carry no `> **User impact:**` line."""
     if _file_is_new(path):
         return []
-    try:
-        lines = pathlib.Path(path).read_text(encoding="utf-8").split("\n")
-    except OSError:
-        return []                      # fail-open: never break a commit on this
     added_nos = {n for n, _ in added}
     starts = [i for i, ln in enumerate(lines, 1) if _SECTION_RE.match(ln.strip())]
     out = []
@@ -368,15 +424,11 @@ def _file_is_new(path):
         return False
 
 
-def _sections_missing_provenance(path, added):
+def _sections_missing_provenance(path, lines, added):
     """[(lineno, heading)] for `## N.` sections this commit ADDS that carry no
     `> **Spawned-by:**` line."""
     if _file_is_new(path):
         return []
-    try:
-        lines = pathlib.Path(path).read_text(encoding="utf-8").split("\n")
-    except OSError:
-        return []                      # fail-open: never break a commit on this
     added_nos = {n for n, _ in added}
     starts = [i for i, ln in enumerate(lines, 1) if _SECTION_RE.match(ln.strip())]
     out = []
@@ -399,32 +451,57 @@ def main(argv) -> int:
     if not files:
         return 0
     bad, wrapped, oscomp, parked, noprov, noimpact = [], [], [], [], [], []
+    unscannable = []
+    # section-count cap: judged per file, on files this commit GROWS
+    capped_hard, capped_soft = [], []
     for f in files:
-        added = _added_lines(f)
+        # ONE staged snapshot and ONE fence mask per file, shared by every walk
+        # below. The snapshot is the INDEX post-image, not the working tree, so
+        # it matches the coordinates `_added_lines` produces (section 38).
+        lines, mask, unclosed = _post_image_lines(f)
+        if unclosed:
+            unscannable.append((f, unclosed))
+            continue
+        # Fenced and commented lines blanked IN PLACE, so every line NUMBER
+        # still indexes the same line while a fenced heading, stamp, park or
+        # table row can no longer match anything. Blanking is safe here because
+        # every walk below matches per line; the whole-text callers that cannot
+        # do this are handled in lint.sh.
+        vis = ["" if mask[i] else l for i, l in enumerate(lines)]
+        masked_nos = {i + 1 for i, m in enumerate(mask) if m}
+        added = [(n, t) for n, t in _added_lines(f) if n not in masked_nos]
         for n, ln, text in over_cap(added):
             bad.append((f, n, ln, text))
         col = wrapped_block(added)
         if col:
             wrapped.append((f, col))
-        for n, w, cell in _oscomp_over_cap(f, added):
+        for n, w, cell in _oscomp_over_cap(vis, added):
             oscomp.append((f, n, w, cell))
-        for n, head, text in _park_into_shipping_section(f, added):
+        for n, head, text in _park_into_shipping_section(vis, added):
             parked.append((f, n, head, text))
-        for n, head in _sections_missing_provenance(f, added):
+        for n, head in _sections_missing_provenance(f, vis, added):
             noprov.append((f, n, head))
-        for n, head in _review_sections_missing_user_impact(f, added):
+        for n, head in _review_sections_missing_user_impact(f, vis, added):
             noimpact.append((f, n, head))
-    # section-count cap: judged per file, on files this commit GROWS
-    capped_hard, capped_soft = [], []
-    for f in files:
-        new_secs = added_sections(_added_lines(f))
-        if not new_secs:
-            continue
-        total = _section_total(f)
-        if total > SECTION_HARD_CAP:
-            capped_hard.append((f, total, new_secs))
-        elif total >= SECTION_SOFT_CAP:
-            capped_soft.append((f, total, new_secs))
+        new_secs = added_sections(added)
+        if new_secs:
+            total = _section_total(vis)
+            if total > SECTION_HARD_CAP:
+                capped_hard.append((f, total, new_secs))
+            elif total >= SECTION_SOFT_CAP:
+                capped_soft.append((f, total, new_secs))
+    if unscannable:
+        for f, why in unscannable:
+            sys.stderr.write(
+                "\n[todo-staged-check] %s cannot be checked: %s\n" % (f, why))
+        sys.stderr.write(
+            "\n  Every structural walk in this gate stops at an unclosed\n"
+            "  delimiter, so passing the file would mean passing it UNREAD --\n"
+            "  and an unclosed opener added by this very commit would hide\n"
+            "  every section, park and stamp below it. `build.py` refuses the\n"
+            "  same documents rather than publishing the erasure.\n"
+            "  Opt-out: SKIP_TODO_STAGED_CHECK=1 git commit ...\n")
+        return 1
     for f, total, new_secs in capped_soft:
         sys.stderr.write(
             "[todo-staged-check WARN] %s now has %d sections (soft cap %d). "

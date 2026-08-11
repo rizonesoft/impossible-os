@@ -158,6 +158,24 @@ _TT_TRIG_TODO_GRAPH='^(scripts/todo-graph/|scripts/lint/|scripts/lint\.sh$|scrip
 # test_bridge.sh: the bridge and its tests, plus this file.
 _TT_TRIG_LSP_MCP='^(scripts/lsp-mcp/|scripts/machines/|scripts/test-tooling\.sh$)'
 
+# LINT.SH DOES NOT STAND ALONE. Its Check 10/11 block loads
+# `scripts/todo_fence.py`, which loads `scripts/todo-graph/cache_schema.py`, so a
+# fixture repo that copies ONLY lint.sh gets a hard refusal from the loader.
+# That refusal is correct -- a blocking gate silently losing fence-awareness is
+# the fail-open the shared tracker exists to remove -- so the fixture installs
+# the closure instead of the gate being softened to tolerate a missing tool.
+# Measured 2026-08-11: without this, FIVE scratch repos took the loader exit and
+# 14 lint fixtures failed, including four that have nothing to do with fences
+# (Check 16, agent-runner-class, Check 6) -- one missing dependency reads as a
+# broad, unrelated lint breakage, which is exactly how long it took to diagnose.
+tt_install_lint() {                     # $1 = scratch repo root
+    mkdir -p "$1/scripts/todo-graph"
+    cp "$REPO_ROOT/scripts/lint.sh"                    "$1/scripts/lint.sh"
+    cp "$REPO_ROOT/scripts/todo_fence.py"              "$1/scripts/todo_fence.py"
+    cp "$REPO_ROOT/scripts/todo-graph/cache_schema.py" "$1/scripts/todo-graph/cache_schema.py"
+    chmod +x "$1/scripts/lint.sh"
+}
+
 # ---- Mutual exclusion: one suite per worktree -----------------------------
 # Two instances in one tree POISON each other, by this repo's own rule. The
 # suite lints and walks the LIVE corpus and rebuilds caches under it, and
@@ -757,6 +775,24 @@ else
     t_fail "scripts/tests/test_format_md_tables.py not found"
 fi
 
+# Fence-awareness of the four TODO GATE parsers (scripts/tests/test_todo_fence.py).
+# These four decide whether a commit or a fixpoint is REFUSED, and each used to
+# read raw Markdown with no fence state, so a literal example in a ``` block
+# could produce a blocking verdict about a code sample. Every fixture is paired
+# with a fence-BLIND control (an all-False mask, i.e. the pre-adoption walk), so
+# a fixture that asserts nothing cannot pass.
+FENCE_TEST="$REPO_ROOT/scripts/tests/test_todo_fence.py"
+if [ -f "$FENCE_TEST" ]; then
+    FENCE_OUT=$(python3 "$FENCE_TEST" 2>&1)
+    if [ "$?" = "0" ]; then
+        t_pass "scripts/tests/test_todo_fence.py PASS ($(printf '%s\n' "$FENCE_OUT" | tail -1))"
+    else
+        t_fail "scripts/tests/test_todo_fence.py FAIL ($(printf '%s\n' "$FENCE_OUT" | tail -3 | tr '\n' ' '))"
+    fi
+else
+    t_fail "scripts/tests/test_todo_fence.py not found"
+fi
+
 # Query-surface output bounds (test_query_bounds.sh). Separate suite from
 # test_build.sh: that one owns subcommand SEMANTICS, this one owns what
 # comes OUT of them (default limit, fail-closed ceiling, envelope fields,
@@ -1331,7 +1367,7 @@ assert_exit_zero "memmap layout gate: constants + translation helpers" \
 SEC_TMP="$(mktemp -d)"
 SEC_REPO="$SEC_TMP/repo"
 mkdir -p "$SEC_REPO/scripts/lint" "$SEC_REPO/docs" "$SEC_REPO/src"
-cp "$REPO_ROOT/scripts/lint.sh" "$SEC_REPO/scripts/lint.sh"
+tt_install_lint "$SEC_REPO"
 cp -r "$REPO_ROOT/scripts/lint/." "$SEC_REPO/scripts/lint/" 2>/dev/null || true
 ( cd "$SEC_REPO" && git init -q && git config user.email t@t && git config user.name t )
 echo "clean doc" > "$SEC_REPO/docs/ok.md"
@@ -1445,7 +1481,7 @@ fi
 ARC_TMP="$(mktemp -d)"
 ARC_REPO="$ARC_TMP/repo"
 mkdir -p "$ARC_REPO/scripts/lint" "$ARC_REPO/.claude/agents" "$ARC_REPO/src"
-cp "$REPO_ROOT/scripts/lint.sh" "$ARC_REPO/scripts/lint.sh"
+tt_install_lint "$ARC_REPO"
 cp -r "$REPO_ROOT/scripts/lint/." "$ARC_REPO/scripts/lint/" 2>/dev/null || true
 printf 'int arc_ok(void) { return 0; }\n' > "$ARC_REPO/src/ok.c"
 ( cd "$ARC_REPO" && git init -q && git config user.email t@t && git config user.name t \
@@ -4802,7 +4838,7 @@ EOF
 # Copy lint.sh + the python tautology helper into the synthetic tree so
 # the lint script's REPO_ROOT resolves to $ASL_REPO and finds the helper.
 mkdir -p "$ASL_REPO/scripts/lint"
-cp "$REPO_ROOT/scripts/lint.sh" "$ASL_REPO/scripts/lint.sh"
+tt_install_lint "$ASL_REPO"
 cp "$REPO_ROOT/scripts/lint/check_tautological_test.py" \
     "$ASL_REPO/scripts/lint/check_tautological_test.py"
 
@@ -5626,7 +5662,7 @@ else
     SC_TMP="$(mktemp -d)"
     SC_REPO="$SC_TMP/repo"
     mkdir -p "$SC_REPO/scripts" "$SC_REPO/todo/00-infrastructure" "$SC_REPO/src"
-    cp "$REPO_ROOT/scripts/lint.sh" "$SC_REPO/scripts/lint.sh"
+    tt_install_lint "$SC_REPO"
     chmod +x "$SC_REPO/scripts/lint.sh"
     # lint.sh bails early when no .c/.h files exist; provide a stub
     # so the new Check 10/11 walk runs against the synthetic todo/.
@@ -5843,7 +5879,7 @@ else
     BSG_TMP="$(mktemp -d)"
     BSG_REPO="$BSG_TMP/repo"
     mkdir -p "$BSG_REPO/scripts" "$BSG_REPO/tools" "$BSG_REPO/src/boot"
-    cp "$REPO_ROOT/scripts/lint.sh" "$BSG_REPO/scripts/lint.sh"
+    tt_install_lint "$BSG_REPO"
     chmod +x "$BSG_REPO/scripts/lint.sh"
     python3 - "$BSG_REPO" <<'PYEOF'
 import sys, pathlib
