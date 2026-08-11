@@ -1030,8 +1030,8 @@ def _match_containers(containers, line: str):
     return matched, rest, base
 
 
-def _fill(containers) -> None:
-    """Mark EVERY open container as having content.
+def _fill(containers, state) -> None:
+    """Mark every open container as having content, in amortised O(1).
 
     ALL OF THEM, not just the innermost. A blank-first outer item whose first
     content is another container was left provisional, because opening the
@@ -1039,13 +1039,29 @@ def _fill(containers) -> None:
     the outer item and took an open fence with it (Codex adversarial, section
     39 round 4, [high]). Content nested at any depth is content for every
     ancestor holding it.
+
+    AMORTISED, because the obvious loop is quadratic on input a repository
+    controls. Walking the whole stack per container opener made a line of
+    repeated `> ` prefixes O(n^2): measured 0.77s at 25 KB, 3.37s at 50 KB and
+    11.8s at 100 KB against a 16 MiB input contract, which stalls every
+    builder and gate (Codex adversarial, section 39 post-commit, [high]).
+    `state[0]` is the index of the first container that may still be
+    provisional; everything before it is known filled, so each container is
+    visited once across the document.
     """
-    for c in containers:
-        c[2] = True
+    i = state[0]
+    n = len(containers)
+    if i >= n:
+        state[0] = n
+        return
+    while i < n:
+        containers[i][2] = True
+        i += 1
+    state[0] = n
 
 
 def _open_containers(containers, rest: str, can_interrupt: bool = True,
-                     base: int = 0) -> str:
+                     base: int = 0, fill_state=None) -> str:
     """Push every container `rest` OPENS, returning the leaf content.
 
     Mutates `containers`. The loop is what makes nesting work: a blockquote
@@ -1067,7 +1083,8 @@ def _open_containers(containers, rest: str, can_interrupt: bool = True,
         if m is None:
             return rest
         # Opening a container is content for everything already open.
-        _fill(containers)
+        if fill_state is not None:
+            _fill(containers, fill_state)
         if m.group(3) and not can_interrupt:
             marker = m.group(3)
             after_m = rest[m.end():]
@@ -1207,6 +1224,7 @@ def fence_scan(lines):
     depth = 0                # len(containers) when the fence/comment opened
     in_comment = False
     para_open = False        # the previous line left a paragraph open
+    fill_state = [0]         # first container that may still be provisional
     para_depth = 0           # the container depth that paragraph belongs to
     for line in lines:
         matched, rest, base = _match_containers(containers, line)
@@ -1261,6 +1279,8 @@ def fence_scan(lines):
             out.append(False)
             continue
         del containers[matched:]
+        if fill_state[0] > len(containers):
+            fill_state[0] = len(containers)
         # A PARAGRAPH BELONGS TO THE CONTAINER IT STARTED IN, and tracking only
         # a global "is a paragraph open" flag was wrong in the erasure
         # direction. In `1. first` / `2. second`, the paragraph `first` lives
@@ -1289,7 +1309,8 @@ def fence_scan(lines):
             para_open = False
             continue
         rest = _open_containers(
-            containers, rest, not (para_open and matched >= para_depth), base)
+            containers, rest, not (para_open and matched >= para_depth), base,
+            fill_state)
         # THE TWO GUARDS ARE THE HOT PATH, not micro-optimisation for its own
         # sake. `FENCE_RE` can only match a line containing a backtick or a
         # tilde and `HTML_BLOCK_COMMENT_RE` only one containing `<!--`, so an
@@ -1311,7 +1332,7 @@ def fence_scan(lines):
             # ...and it is CONTENT, so the blank-first rule may no longer close
             # the item holding it. Without this, `- ` / a fence / a blank line
             # closed the item at the blank and took the open fence with it.
-            _fill(containers)
+            _fill(containers, fill_state)
             continue
         if "<!--" in rest and HTML_BLOCK_COMMENT_RE.match(rest):
             # A line STARTING with `<!--` is an HTML block: the whole line is
@@ -1320,7 +1341,7 @@ def fence_scan(lines):
                 in_comment = True
                 depth = len(containers)
             out.append(True)
-            _fill(containers)
+            _fill(containers, fill_state)
             para_open = False
             continue
         out.append(False)
@@ -1344,7 +1365,7 @@ def fence_scan(lines):
             # `para_open` stays false -- but the item holding it is no longer
             # provisional, and skipping `_fill` here let the next blank line
             # close an item that plainly had content in it.
-            _fill(containers)
+            _fill(containers, fill_state)
             # AN INDENTED CODE BLOCK IS NOT A PARAGRAPH. With no paragraph open
             # a 4-column indent starts code, so nothing follows that a list
             # could "interrupt" -- counting it as prose made `    indented` /
@@ -1355,7 +1376,7 @@ def fence_scan(lines):
         else:
             # This line is paragraph text, so the innermost container now has
             # content and can no longer be closed by the blank-first rule.
-            _fill(containers)
+            _fill(containers, fill_state)
             para_open = True
             para_depth = len(containers)
     # THE TERMINAL FLAG IS REPORTED HONESTLY, and an attempt to soften it was

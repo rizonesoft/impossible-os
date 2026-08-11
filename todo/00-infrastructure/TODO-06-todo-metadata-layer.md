@@ -2230,6 +2230,7 @@ Filed by §39's design review rather than shipped inside it, on the reviewer's o
 - [ ] Model MULTI-LINE link reference definitions, the one bound section 39 states rather than solves
       `_LINK_REF_DEF_RE` (`scripts/todo-graph/cache_schema.py`) clears paragraph state for the SINGLE-LINE form, so `[foo]: /url` no longer blocks the list after it. CommonMark also allows the destination and title to sit on FOLLOWING lines, and deciding where such a definition ENDS needs content-dependent parsing that section 39's three-flag block model does not have.
       - Consequence if unmodelled, which is why it is filed rather than shrugged at: `[foo]:` / `  /url` / `  "title"` / `10. item` / an indented fence is a list-contained fence to CommonMark, while the scan masks NOTHING and its `- [ ] ...` content reaches the item index as real structure (Codex adversarial, section 39 round 5, [medium]).
+      - STRONGER THAN FIRST RECORDED: §39's post-commit review reproduced the fenced `- [x] Fake -> \`fake_fn()\`` being emitted by `extract_stamped_items` as a SHIPPED item, not merely indexed -- so the stub-behind-stamp resolver would chase a symbol that only exists in documentation (Codex adversarial, §39 post-commit, [high]).
       - Measured 2026-08-11: **0** link reference definitions of ANY form under `todo/`, so this is insurance, not a live defect -- and it is exactly the "measured zero" premise section 36 was burned by, so it gets an owner instead of a comment.
       - Acceptance: the shape above masks its fence and indexes no item; a differential over the corpus stays nil; the reciprocal pointer at `_LINK_REF_DEF_RE` names this item.
 - [ ] Reconcile the lazy-continuation / nested-container interaction, the second residual class
@@ -2244,6 +2245,12 @@ Filed by §39's design review rather than shipped inside it, on the reviewer's o
       - Acceptance: an rc-7 regression fixture where an excluded file moves the population and the commit is NOT blocked, plus the banner restored to naming Check 7 wholly.
 - [ ] Consider whether the section walks should read container-stripped lines
       `SECTION_HEADING_RE` is anchored on the physical line, so a `## N.` indented six spaces inside a list item is a heading to CommonMark and invisible to the producer. Measured: 0 corpus instances. The fix is giving the walks the container phase's output, which belongs with this section's other contract work rather than with a wider regex.
+- [ ] Finish the one-contract consolidation §39 started, in the five places it did not reach
+      §39's post-commit consistency review found the "one fence/newline/heading contract" claim still has five holes, none of them in code §39 edited -- which is why they are filed here rather than fixed under its stamp.
+      - `scripts/todo-reachability.py:106` carries a SECOND, narrower heading grammar; `scripts/todo-graph/validate.py:1677` retains a conflicting code-span state machine. Both are the drift §36-§39 exist to end.
+      - `scripts/todo-reachability.py:552` returns an unclosed document as a graph FINDING where §39 made `validate.py` `_refuse` it (rc 2); the rc-1-vs-rc-2 contract must be the same in both.
+      - `scripts/format-md-tables.py:139` consumes the mask but discards the terminal flags and the normaliser -- half the contract; and `scripts/lint.sh:1475` erases every formatter refusal, which is the exact defect Check 19 was hardened against in §41.
+      - Acceptance: one grammar and one code-span state machine repo-wide, the same exit-code contract in every consumer, and a lint fixture proving a formatter refusal reaches the summary.
 - [ ] Commit: `"todo-graph: html blocks join the tracker"`
 
 **Test checkpoint:** a balanced and an unterminated fixture for every supported HTML block type, the unterminated one REFUSED by `build.py` with a message naming that construct; a `<details>` block containing a `## 99.` heading resolves the type-6 decision the way this section chose and a fixture pins it; the corpus index is byte-identical across the change; `bash scripts/todo-graph/tests/test_build.sh` and `python3 scripts/tests/test_todo_fence.py` green.
