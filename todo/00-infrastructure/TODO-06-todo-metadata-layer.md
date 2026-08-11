@@ -47,48 +47,49 @@ title: "TODO-06 -- TODO Metadata Layer and Derived Graph"
 
 ## Implementation Order
 
-| ⭐  | Order | Section | Deliverable                                                                            | Depends On   | Status |
-| --- | :---: | :-----: | -------------------------------------------------------------------------------------- | ------------ | :----: |
-| 💎  |   1   |   §1    | Frontmatter schema + spec doc                                                          | --           |  [x]   |
-| 💎  |   2   |   §2    | `scripts/todo-graph/build.py` generator + cache format                                 | §1           |  [x]   |
-| 💎  |   3   |   §5    | Back-fill frontmatter across existing 86 TODO files                                    | §1, §2       |  [x]   |
-| ⭐  |   4   |   §3    | Validator: stale XREF / dangling dep / orphan / cycle / bat / status / schema          | §2           |  [x]   |
-| ⭐  |   5   |   §4    | Query CLI: ready / blocked / blocking / backlinks / deferred / stale / stats / code    | §2           |  [x]   |
-| ⭐  |   6   |   §6    | CI gate on `todo/` commits + diff mode + auto-rewrite hook                             | §3, §4       |  [x]   |
-| ⭐  |   7   |   §7    | Visualization output (mermaid / dot / ascii / gantt / markdown)                        | §2, §4       |  [x]   |
-| ⭐  |   8   |   §8    | MCP server (read-only AI-agent transport over §4)                                      | §4           |  [x]   |
-| 💎  |   9   |   §9    | Per-item `stamped_items` cache extension (closes lint Check 7 deferral)                | §2           |  [x]   |
-| ⭐  |  10   |   §10   | Multi-line function-head resolution in `resolve_symbol` (Check 7 blind spot)           | §9           |  [x]   |
-| ⭐  |  11   |   §11   | Check 7 counts what it cannot resolve (unresolved != clean)                            | §10          |  [x]   |
-| ⭐  |  12   |   §12   | Resolver coverage past the head limit + lexer/cache robustness                         | §10, §11     |  [x]   |
-| ⭐  |  13   |   §13   | Stored-ref repair: unpaired symbols + bare filenames (resolution-time)                 | §2, §11      |  [x]   |
-| ⭐  |  14   |   §14   | Identity gate over the whole symbol-ref population (every `kind=symbol` ref)           | §13          |  [x]   |
-| ⭐  |  15   |   §15   | The shared rule's cost: structural-walk hot path + split cache lifecycles              | §13, §14     |  [x]   |
-| 💎  |  16   |   §16   | Wire the identity gate so something runs it (adopts §12's parked wiring)               | §12, §14     |  [x]   |
-| ⭐  |  17   |   §17   | One shared cache-schema validator, consumed by both cache readers                      | §14, §16     |  [x]   |
-| ⭐  |  18   |   §18   | Identity-gate hardening: producer differential + protocol-constant extraction          | §16          |  [x]   |
-| ⭐  |  19   |   §19   | Caller profiles for the shared validator + two self-contained readers routed           | §17          |  [x]   |
-| ⭐  |  20   |   §20   | A machine-checkable bucket-emission contract, so retirement is provable                | §18          |  [x]   |
-| ⭐  |  21   |   §21   | The producer-side generation window in `build.py` (split from §19)                     | §17, §19     |  [x]   |
-| ⭐  |  22   |   §22   | `query.py` fail-closed through CLI, MCP and watch transports (split from §19)          | §19, §8      |  [x]   |
-| ⭐  |  23   |   §23   | `validate.py` rebuild recovery + `--diff` baseline profile (split from §19)            | §19, §3      |  [x]   |
-| ⭐  |  24   |   §24   | The history-identity cost decision: `requires_history` for the query profile           | §21, §22     |  [x]   |
-| ⭐  |  25   |   §25   | Fields the readers consume that the producer never emits (`effort`, `depends_on`)      | §2, §7       |  [x]   |
-| ⭐  |  26   |   §26   | Domain codes resolve by directory, not by cache order (found by §22 round 7)           | §3, §22      |  [x]   |
-| ⭐  |  27   |   §27   | Effective-history identity: replace refs and grafts (split from the §24 residue)       | §21, §24     |  [x]   |
-| ⭐  |  28   |   §28   | Section-level readiness: verbs that consult the dependency evidence the graph has      | §25, §26     |  [x]   |
-| ⭐  |  29   |   §29   | `--fix-line-numbers` reports success over targets it could not resolve                 | §23, §26     |  [x]   |
-| ⭐  |  30   |   §30   | `--watch` never ticks on a history change for the history-consuming verbs (§27)        | §24, §27     |  [x]   |
-| ⭐  |  31   |   §31   | An equal-count shallow boundary still moves `created_at` under an unchanged id         | §21, §27     |  [x]   |
-| ⭐  |  32   |   §32   | In-file `](#anchor)` links are checked by nothing (split from §29)                     | §3           |  [x]   |
-| ⭐  |  33   |   §33   | Stamp-target capture splits a link whose label contains a space (split from §29)       | §2, §26      |  [x]   |
-| ⭐  |  34   |   §34   | The performance budget times itself on a clock that steps (found verifying §29)        | §2           |  [x]   |
-| ⭐  |  35   |   §35   | A same-file stamp matches its own text, so repair answers with the stamp's line        | §29          |  [x]   |
-| ⭐  |  36   |   §36   | The cache producer adopts the shared fence tracker (found by §32; primitives from §35) | §2, §32, §35 |  [x]   |
-| ⭐  |  37   |   §37   | One clause parser decides how many destinations a clause names (consolidation)         | §33          |  [x]   |
-| ⭐  |  38   |   §38   | Every mutating and gate parser adopts the shared fence tracker (split out of §36)      | §36          |  [ ]   |
-| ⭐  |  39   |   §39   | The shared fence tracker becomes container-aware (split out of §36)                    | §36, §38     |  [ ]   |
-| ⭐  |  40   |   §40   | An Inputs section marker keeps its closing backtick, so one dependency is two edges    | §37          |  [ ]   |
+| ⭐  | Order | Section | Deliverable                                                                            | Depends On    | Status |
+| --- | :---: | :-----: | -------------------------------------------------------------------------------------- | ------------- | :----: |
+| 💎  |   1   |   §1    | Frontmatter schema + spec doc                                                          | --            |  [x]   |
+| 💎  |   2   |   §2    | `scripts/todo-graph/build.py` generator + cache format                                 | §1            |  [x]   |
+| 💎  |   3   |   §5    | Back-fill frontmatter across existing 86 TODO files                                    | §1, §2        |  [x]   |
+| ⭐  |   4   |   §3    | Validator: stale XREF / dangling dep / orphan / cycle / bat / status / schema          | §2            |  [x]   |
+| ⭐  |   5   |   §4    | Query CLI: ready / blocked / blocking / backlinks / deferred / stale / stats / code    | §2            |  [x]   |
+| ⭐  |   6   |   §6    | CI gate on `todo/` commits + diff mode + auto-rewrite hook                             | §3, §4        |  [x]   |
+| ⭐  |   7   |   §7    | Visualization output (mermaid / dot / ascii / gantt / markdown)                        | §2, §4        |  [x]   |
+| ⭐  |   8   |   §8    | MCP server (read-only AI-agent transport over §4)                                      | §4            |  [x]   |
+| 💎  |   9   |   §9    | Per-item `stamped_items` cache extension (closes lint Check 7 deferral)                | §2            |  [x]   |
+| ⭐  |  10   |   §10   | Multi-line function-head resolution in `resolve_symbol` (Check 7 blind spot)           | §9            |  [x]   |
+| ⭐  |  11   |   §11   | Check 7 counts what it cannot resolve (unresolved != clean)                            | §10           |  [x]   |
+| ⭐  |  12   |   §12   | Resolver coverage past the head limit + lexer/cache robustness                         | §10, §11      |  [x]   |
+| ⭐  |  13   |   §13   | Stored-ref repair: unpaired symbols + bare filenames (resolution-time)                 | §2, §11       |  [x]   |
+| ⭐  |  14   |   §14   | Identity gate over the whole symbol-ref population (every `kind=symbol` ref)           | §13           |  [x]   |
+| ⭐  |  15   |   §15   | The shared rule's cost: structural-walk hot path + split cache lifecycles              | §13, §14      |  [x]   |
+| 💎  |  16   |   §16   | Wire the identity gate so something runs it (adopts §12's parked wiring)               | §12, §14      |  [x]   |
+| ⭐  |  17   |   §17   | One shared cache-schema validator, consumed by both cache readers                      | §14, §16      |  [x]   |
+| ⭐  |  18   |   §18   | Identity-gate hardening: producer differential + protocol-constant extraction          | §16           |  [x]   |
+| ⭐  |  19   |   §19   | Caller profiles for the shared validator + two self-contained readers routed           | §17           |  [x]   |
+| ⭐  |  20   |   §20   | A machine-checkable bucket-emission contract, so retirement is provable                | §18           |  [x]   |
+| ⭐  |  21   |   §21   | The producer-side generation window in `build.py` (split from §19)                     | §17, §19      |  [x]   |
+| ⭐  |  22   |   §22   | `query.py` fail-closed through CLI, MCP and watch transports (split from §19)          | §19, §8       |  [x]   |
+| ⭐  |  23   |   §23   | `validate.py` rebuild recovery + `--diff` baseline profile (split from §19)            | §19, §3       |  [x]   |
+| ⭐  |  24   |   §24   | The history-identity cost decision: `requires_history` for the query profile           | §21, §22      |  [x]   |
+| ⭐  |  25   |   §25   | Fields the readers consume that the producer never emits (`effort`, `depends_on`)      | §2, §7        |  [x]   |
+| ⭐  |  26   |   §26   | Domain codes resolve by directory, not by cache order (found by §22 round 7)           | §3, §22       |  [x]   |
+| ⭐  |  27   |   §27   | Effective-history identity: replace refs and grafts (split from the §24 residue)       | §21, §24      |  [x]   |
+| ⭐  |  28   |   §28   | Section-level readiness: verbs that consult the dependency evidence the graph has      | §25, §26      |  [x]   |
+| ⭐  |  29   |   §29   | `--fix-line-numbers` reports success over targets it could not resolve                 | §23, §26      |  [x]   |
+| ⭐  |  30   |   §30   | `--watch` never ticks on a history change for the history-consuming verbs (§27)        | §24, §27      |  [x]   |
+| ⭐  |  31   |   §31   | An equal-count shallow boundary still moves `created_at` under an unchanged id         | §21, §27      |  [x]   |
+| ⭐  |  32   |   §32   | In-file `](#anchor)` links are checked by nothing (split from §29)                     | §3            |  [x]   |
+| ⭐  |  33   |   §33   | Stamp-target capture splits a link whose label contains a space (split from §29)       | §2, §26       |  [x]   |
+| ⭐  |  34   |   §34   | The performance budget times itself on a clock that steps (found verifying §29)        | §2            |  [x]   |
+| ⭐  |  35   |   §35   | A same-file stamp matches its own text, so repair answers with the stamp's line        | §29           |  [x]   |
+| ⭐  |  36   |   §36   | The cache producer adopts the shared fence tracker (found by §32; primitives from §35) | §2, §32, §35  |  [x]   |
+| ⭐  |  37   |   §37   | One clause parser decides how many destinations a clause names (consolidation)         | §33           |  [x]   |
+| ⭐  |  38   |   §38   | Every gate parser adopts the shared fence tracker (split out of §36)                   | §36           |  [ ]   |
+| ⭐  |  39   |   §41   | The two mutating repair tools adopt the shared fence tracker (split out of §38)        | §36, §38      |  [ ]   |
+| ⭐  |  40   |   §39   | The shared fence tracker becomes container-aware (split out of §36)                    | §36, §38, §41 |  [ ]   |
+| ⭐  |  41   |   §40   | An Inputs section marker keeps its closing backtick, so one dependency is two edges    | §37           |  [ ]   |
 
 > 💎 = parity work -- Linux kernel has MAINTAINERS + get_maintainer.pl (person-ownership mapping without a dep graph); Windows has no public equivalent. §1 (frontmatter), §2 (generator), §5 (migration) bring us to partial Linux parity plus graph metadata neither OS ships.
 > ⭐ = competitive edge -- neither Win11 nor mainline Linux ships a first-class TODO dependency graph. §3 (validator), §4 (query CLI), §6 (CI gate), §7 (visualization), §8 (MCP server) are new ground; the surface has direct value for any contributor scanning "what can I work on next?".
@@ -1844,7 +1845,7 @@ That second shape is the defect §29 was written to close, reached by a path §2
 > **Quality reviewed:** 2026-08-10 | Codex 8x (design, adversarial x2, consistency x2, perf x2, re-adversarial) | 4H+5M fixed, 1H rejected on measurement, 1M reversed after re-review, 3M filed to §36 (since split into §36/§38/§39), 0 open | scope: N/A (host tooling -- no kernel/boot surface, and no domain code-quality skill covers `scripts/`); parity N/A (no user-visible OS surface, so `parity-research-analyst` was not dispatched)
 
 -> XREF: [`TODO-06 §29`](#29---fix-line-numbers-reports-success-over-targets-it-could-not-resolve) -- the section whose review found this (item: "Commit: `\"todo-graph: repair mode fails visibly on targets it cannot resolve\"`"); it added the `missing_items` class this defect defeats, and is stamped, so the residue is owned here.
--> XREF: [`TODO-06 §38`](#38-every-mutating-and-gate-parser-adopts-the-shared-fence-tracker) -- owns adoption by the remaining fence-blind parsers (item: "Route the two MUTATING repair tools through the mask"); §35 landed the shared `fence_step()` primitives and routed `_scan_markdown` through them, and filed the remaining parsers plus the container-aware upgrade rather than widening this section. That filing was §36, which split at authoring time into §36 (cache producer), §38 (mutating and gate parsers) and §39 (container-awareness).
+-> XREF: [`TODO-06 §41`](#41-the-two-mutating-repair-tools-adopt-the-shared-fence-tracker) -- owns adoption by the two file-rewriting parsers (item: "Route the two MUTATING repair tools through the mask"); §35 landed the shared `fence_step()` primitives and routed `_scan_markdown` through them, and filed the remaining parsers plus the container-aware upgrade rather than widening this section. That filing was §36, which split at authoring time into §36 (cache producer), §38 (parsers) and §39 (container-awareness); §38 split again on 2026-08-11 into §38 (gate parsers) and §41 (mutating repair tools).
 
 ---
 
@@ -1907,7 +1908,9 @@ Found 2026-08-09 by §32's own REVERT mutation, which is the only reason it surf
 
 -> XREF: [`TODO-06 §32`](#32-in-file-anchor-links-are-checked-by-nothing) -- the section whose revert-mutation surfaced this (item: "Commit: `\"todo-graph: in-file anchor links validated against the file's own headings\"`"); it is stamped and owns the VALIDATOR-side fence rule, so the producer-side repair is owned here.
 -> XREF: [`TODO-06 §2`](#2-generator-and-cache-format) -- the section that owns `build.py`'s parser and cache format (item: "Commit: `\"scripts/todo-graph: add cache generator (frontmatter + XREF extraction + git timestamps)\"`"); stamped, so this residue is owned here rather than reopened there.
--> XREF: [`TODO-06 §38`](#38-every-mutating-and-gate-parser-adopts-the-shared-fence-tracker) -- the mutating and gate parsers split out of this section at authoring time, which consume the primitive published here (item: "Route the two MUTATING repair tools through the mask").
+-> XREF: [`TODO-06 §38`](#38-every-gate-parser-adopts-the-shared-fence-tracker) -- the gate parsers split out of this section at authoring time, which consume the primitive published here (item: "Route the four GATE parsers that return blocking verdicts").
+
+-> XREF: [`TODO-06 §41`](#41-the-two-mutating-repair-tools-adopt-the-shared-fence-tracker) -- the mutating repair tools, split out of §38 on 2026-08-11, which consume the same primitive (item: "Route the two MUTATING repair tools through the mask").
 -> XREF: [`TODO-06 §39`](#39-the-shared-fence-tracker-becomes-container-aware) -- the container-awareness design split out of this section, which changes the tracker itself once every caller routes through it (item: "Make `fence_step` apply CommonMark's 0-3-space rule after the list-container prefix"). It also owns the one gap in THIS section's unclosed-fence refusal: a container-indented fence is not recognised, so an unterminated one is neither masked nor refused.
 
 ---
@@ -1973,18 +1976,14 @@ The four producers are `build.py`'s `XREF_CLAUSE_RE` (stamp targets), `INPUTS_XR
 
 ---
 
-## 38. Every Mutating and Gate Parser Adopts the Shared Fence Tracker
+## 38. Every Gate Parser Adopts the Shared Fence Tracker
 
 > **Spawned-by:** §36 (split)
 
-Split out of §36 at authoring time, before code, once its design review widened the parser inventory from the two originally filed to eleven across six files. The split is by RISK CLASS, not by size: §36 changes what the CACHE says, and this section changes what tools DO -- two of them rewrite TODO files in place and four of them return blocking verdicts. A wrong mask here is a corpus edit or a wedged commit, not a wrong count, so each adopter needs its own corpus differential before landing. §36 lands first because it publishes `fence_mask()`; this section is adoption only.
+Split out of §36 at authoring time, before code, once its design review widened the parser inventory from the two originally filed to eleven across six files. The split is by RISK CLASS, not by size: §36 changes what the CACHE says, and this section changes what tools DECIDE -- four parsers here return blocking verdicts that can refuse a commit or a fixpoint. A wrong mask here is a wedged commit, not a wrong count, so each adopter needs its own corpus differential before landing. §36 lands first because it publishes `fence_mask()`; this section is adoption only.
 
-- [ ] Route the two MUTATING repair tools through the mask
-      Worst first: a fence either of these misreads is a file EDIT. Both must be byte-identical over the whole corpus after the change, run under `--diff` before `--write`.
-      - `scripts/todo-reflow.py:106` (`reflow`) toggles `incode` on any stripped line starting with three backticks -- no tilde support, no closer char/length match, and `strip()` instead of CommonMark's 0-3-space bound. A tilde fence with a long info string had its delimiters collapsed into one line; a 4-backtick block containing a shorter run was mis-split.
-      - `scripts/todo-section-order.py:61` (`parse`) can read a fenced `## N.` example as a real section and split a fence while repairing.
-- [ ] Fix the SECOND heading scan in `todo-section-order.py`, not just `parse()`
-      Found by §36's design review: `sections_after_closing` (`todo-section-order.py:106`) scans `SECTION_RE` and `ANY_H2_RE` independently of `parse`, and it feeds BOTH `reorder` (`todo-section-order.py:149`) and `_check_placement` (`todo-section-order.py:191`), which `scripts/lint.sh` Check 22b calls as a blocking gate. Compute one mask per document and use it in all three.
+Split AGAIN 2026-08-11, before code, on the sequencer's SPLIT-RECOMMENDED verdict (8 subsystems, waiver declined): the two MUTATING repair tools moved to §41. The axis is the one this section's own text already named, and it is a clean file boundary -- no file is touched by both sections -- because the two halves have DIFFERENT acceptance oracles. A gate adopter is proven by identical blocking VERDICTS across the corpus; a mutating adopter is proven by a byte-identical corpus under `--diff`. The waiver was declined rather than written because §36 -- the same change class against ONE producer -- needed eight review rounds, so "six adopters fit one worker context" was not a prediction that could be made honestly.
+
 - [ ] Route the four GATE parsers that return blocking verdicts
       Each of these can refuse a commit or a fixpoint over a literal example in a fence, which is the failure mode that costs a run the most.
       - `scripts/todo-reachability.py:126` (`_sections`) and `:148` (`_io_rows`) -- a fenced `## 99.` splits a real section so its later items are attributed to a section with no IO row, producing a blocking `no-io-row` verdict; this parser gates `phase FIXPOINT`.
@@ -2001,13 +2000,15 @@ Split out of §36 at authoring time, before code, once its design review widened
 - [/] `scripts/overnight/section_slice.py:82` (`SECTION_END_RE`, defined `:64`) terminates a real section at a fenced `## N.` example -- PARKED, control plane, operator-gated
       `scripts/overnight/**` is control plane: the unattended run may not edit it, so only an attended session can land this one. Verified by fixture during §32's review. It is a READ path, so the consequence is a truncated section slice rather than a corpus edit or a refused commit.
       - Reciprocal owner filed at [`overnight-runner-improvements-v13`](../overnight-runner-improvements/overnight-runner-improvements-v13.md) under "Filed by the 2026-08-10 run, TODO-06 section 36 ship", so an attended session has a concrete item to act on rather than a park with no re-open path.
-- [ ] Prove every adopter is corpus-neutral before landing
-      Per tool, not once for the set: a reflow differential, a section-order differential, and all FOUR gate verdicts (reachability, orphan-check, staged-check, lint Checks 10/11) over all 232 files, each compared before and after. Any moved byte or changed verdict is the signal, exactly as in §36.
-- [ ] Commit: `"todo-graph: every mutating and gate parser adopts the shared fence tracker"`
+- [ ] Prove every gate adopter is verdict-neutral before landing
+      Per tool, not once for the set: all FOUR gate verdicts (reachability, orphan-check, staged-check, lint Checks 10/11) over all 232 files, each compared before and after. Any changed verdict is the signal, exactly as in §36.
+- [ ] Commit: `"todo-graph: every gate parser adopts the shared fence tracker"`
 
-**Test checkpoint:** a reflow and a section-order repair over a tilde fence, a 4-backtick block containing a shorter run, and an unterminated fence all leave the file byte-identical; `--check-placement` is clean on a fixture whose fenced block contains a recognised closing heading followed by a real numbered section; all four gate parsers -- reachability, orphan-check, staged-check and lint Checks 10/11 -- return no finding on a fixture whose fence contains a `## 99.` heading, a `- [ ]` example and an Implementation Order row; every fixture fails when its fence-blind walk is restored; `bash scripts/test-tooling.sh` green.
+**Test checkpoint:** all four gate parsers -- reachability, orphan-check, staged-check and lint Checks 10/11 -- return no finding on a fixture whose fence contains a `## 99.` heading, a `- [ ]` example, an Implementation Order row and an OS Comparison table; every fixture fails when its fence-blind walk is restored; the four gate verdicts are unchanged over all 232 corpus files; `bash scripts/test-tooling.sh` green.
 
 -> XREF: [`TODO-06 §36`](#36-the-cache-producer-adopts-the-shared-fence-tracker) -- the section this split out of, which publishes the `fence_mask()` primitive every adopter here consumes (item: "Publish `fence_mask()` beside `fence_step()` in `cache_schema.py`").
+
+-> XREF: [`TODO-06 §41`](#41-the-two-mutating-repair-tools-adopt-the-shared-fence-tracker) -- the mutating half this section split out on 2026-08-11, which owns `todo-reflow.py` and both heading scans in `todo-section-order.py` (item: "Route the two MUTATING repair tools through the mask").
 
 ---
 
@@ -2063,6 +2064,31 @@ Found by §37's re-adversarial round 2, and PRE-EXISTING rather than a regressio
 **Test checkpoint:** the bullet and table forms of a whole-span reference both emit the same target and the same clean section marker; the 945-row differential moves exactly the rows whose section carried a trailing backtick and no others; a control with the normalisation disabled reproduces the split; `bash scripts/todo-graph/tests/test_build.sh` and `bash scripts/test-tooling.sh` green.
 
 -> XREF: [`TODO-06 §37`](#37-one-clause-parser-decides-how-many-destinations-a-clause-names) -- the section whose re-adversarial round 2 found this (item: "Every producer calls it, and a test proves they cannot disagree"); it is stamped, and it consolidated the TARGET field only, so the SECTION field is owned here.
+
+---
+
+## 41. The Two Mutating Repair Tools Adopt the Shared Fence Tracker
+
+> **Spawned-by:** §38 (split)
+
+Split out of §38 on 2026-08-11, before code, on the sequencer's SPLIT-RECOMMENDED verdict. §38 kept the four parsers that return blocking VERDICTS; this section takes the two that REWRITE TODO files in place, because the two halves are proven by different oracles and share no file. A gate adopter is right when its verdict is unchanged over the corpus; a mutating adopter is right when the corpus is byte-identical after it runs. Worst first was the original ordering argument, and it still holds -- a fence either of these misreads is a file EDIT, so both run under `--diff` over all 232 files before `--write` is ever considered. Adoption only: `fence_mask()` shipped in §36.
+
+- [ ] Route the two MUTATING repair tools through the mask
+      Both must be byte-identical over the whole corpus after the change, run under `--diff` before `--write`.
+      - `scripts/todo-reflow.py:106` (`reflow`) toggles `incode` on any stripped line starting with three backticks -- no tilde support, no closer char/length match, and `strip()` instead of CommonMark's 0-3-space bound. A tilde fence with a long info string had its delimiters collapsed into one line; a 4-backtick block containing a shorter run was mis-split.
+      - `scripts/todo-section-order.py:61` (`parse`) can read a fenced `## N.` example as a real section and split a fence while repairing.
+- [ ] Fix the SECOND heading scan in `todo-section-order.py`, not just `parse()`
+      Found by §36's design review: `sections_after_closing` (`todo-section-order.py:106`) scans `SECTION_RE` and `ANY_H2_RE` independently of `parse`, and it feeds BOTH `reorder` (`todo-section-order.py:149`) and `_check_placement` (`todo-section-order.py:191`), which `scripts/lint.sh` Check 22b calls as a blocking gate. Compute one mask per document and use it in all three.
+      - This is why `todo-section-order.py` is owned HERE rather than in §38 even though one of its consumers is a gate: the file has two heading scans and splitting a FILE across two sections would leave each one proving half a tool. The gate consequence is covered by this section's own placement differential.
+- [ ] Prove both tools are corpus-neutral before landing
+      Per tool, not once for the pair: a `todo-reflow.py --diff` differential and a `todo-section-order.py` differential over all 232 files, each compared before and after, plus `--check-placement` clean corpus-wide. Any moved byte is the signal, exactly as in §36.
+- [ ] Commit: `"todo-graph: the two mutating repair tools adopt the shared fence tracker"`
+
+**Test checkpoint:** a reflow and a section-order repair over a tilde fence, a 4-backtick block containing a shorter run, and an unterminated fence all leave the file byte-identical; `--check-placement` is clean on a fixture whose fenced block contains a recognised closing heading followed by a real numbered section; every fixture fails when its fence-blind walk is restored; the corpus is byte-identical under both tools' `--diff`; `bash scripts/test-tooling.sh` green.
+
+-> XREF: [`TODO-06 §38`](#38-every-gate-parser-adopts-the-shared-fence-tracker) -- the section this split out of, which owns the four gate parsers and the two control-plane parks (item: "Route the four GATE parsers that return blocking verdicts").
+
+-> XREF: [`TODO-06 §36`](#36-the-cache-producer-adopts-the-shared-fence-tracker) -- publishes the `fence_mask()` primitive both tools here consume (item: "Publish `fence_mask()` beside `fence_step()` in `cache_schema.py`").
 
 ---
 
