@@ -1867,7 +1867,20 @@ if [ "${SKIP_LINT_SECTION_ORDER:-}" = "1" ]; then
     echo -e "${YELLOW}warn${NC}: Check 22 (todo-section-order) skipped via SKIP_LINT_SECTION_ORDER=1"
     WARNINGS=$((WARNINGS + 1))
 elif [ -f "$REPO_ROOT/scripts/todo-section-order.py" ]; then
-    LINT22_OUT="$(cd "$REPO_ROOT" && python3 scripts/todo-section-order.py --check 2>/dev/null || true)"
+    # THE EXIT CODE IS VALIDATED AS AN ENVELOPE, exactly as Check 19 does. This
+    # discarded stderr and erased every status with `|| true`, so the tool's
+    # documented rc 2 REFUSAL -- and, before section 41 bounded the section
+    # number, an outright ValueError traceback -- reached the gate as SILENCE
+    # (Codex adversarial + consistency, section 41 post-commit). rc 1 is
+    # "sections out of order" and must come with records on stdout; anything
+    # else is a refusal or a crash, and both are errors here.
+    LINT22_ERR="$(mktemp 2>/dev/null)" || LINT22_ERR=""
+    LINT22_RC=0
+    if [ -n "$LINT22_ERR" ]; then
+        LINT22_OUT="$(cd "$REPO_ROOT" && python3 scripts/todo-section-order.py --check 2>"$LINT22_ERR")" || LINT22_RC=$?
+    else
+        LINT22_OUT="$(cd "$REPO_ROOT" && python3 scripts/todo-section-order.py --check 2>/dev/null)" || LINT22_RC=$?
+    fi
     if [ -n "$LINT22_OUT" ]; then
         while IFS= read -r line; do
             [ -n "$line" ] || continue
@@ -1875,6 +1888,28 @@ elif [ -f "$REPO_ROOT/scripts/todo-section-order.py" ]; then
             ERRORS=$((ERRORS + 1))
         done <<< "$LINT22_OUT"
     fi
+    LINT22_BAD=0
+    case "$LINT22_RC" in
+        0) ;;
+        1) [ -n "$LINT22_OUT" ] || LINT22_BAD=1 ;;
+        *) LINT22_BAD=1 ;;
+    esac
+    if [ "$LINT22_BAD" = "1" ]; then
+        LINT22_SAID=0
+        if [ -n "$LINT22_ERR" ]; then
+            while IFS= read -r line; do
+                [ -n "$line" ] || continue
+                echo -e "${RED}error${NC}: Check 22 (todo-section-order) $line"
+                ERRORS=$((ERRORS + 1))
+                LINT22_SAID=1
+            done < "$LINT22_ERR"
+        fi
+        if [ "$LINT22_SAID" = "0" ]; then
+            echo -e "${RED}error${NC}: Check 22 (todo-section-order) scripts/todo-section-order.py exited $LINT22_RC with no diagnostic -- the section-order scan did not run"
+            ERRORS=$((ERRORS + 1))
+        fi
+    fi
+    [ -n "$LINT22_ERR" ] && rm -f "$LINT22_ERR"
 fi
 
 # Check 24: reachability -- can a future pass still SEE this item?
@@ -2081,12 +2116,22 @@ fi
 # scan returns clean. The 60-section hard cap prevents the condition from being
 # reintroduced at scale, so blocking is now safe rather than merely correct.
 if [ -f "$REPO_ROOT/scripts/todo-section-order.py" ]; then
-    LINT22B_OUT="$(cd "$REPO_ROOT" && python3 scripts/todo-section-order.py --check-placement 2>/dev/null || true)"
+    # Envelope-validated for the same reason as Check 22 above: this mode turns
+    # a malformed document into an rc 1 stdout record, so a SILENT nonzero (or
+    # any other code) means the scan did not run rather than that it found
+    # nothing.
+    LINT22B_RC=0
+    LINT22B_OUT="$(cd "$REPO_ROOT" && python3 scripts/todo-section-order.py --check-placement 2>/dev/null)" || LINT22B_RC=$?
     if [ -n "$LINT22B_OUT" ]; then
         while IFS= read -r line; do
             [ -n "$line" ] && echo -e "${RED}error${NC}: Check 22b (todo-section-placement) $line"
             ERRORS=$((ERRORS + 1))
         done <<< "$LINT22B_OUT"
+    fi
+    if { [ "$LINT22B_RC" = "1" ] && [ -z "$LINT22B_OUT" ]; } || \
+       { [ "$LINT22B_RC" != "0" ] && [ "$LINT22B_RC" != "1" ]; }; then
+        echo -e "${RED}error${NC}: Check 22b (todo-section-placement) scripts/todo-section-order.py --check-placement exited $LINT22B_RC with no findings on stdout -- the placement scan did not run"
+        ERRORS=$((ERRORS + 1))
     fi
 fi
 

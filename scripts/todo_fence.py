@@ -27,13 +27,14 @@ today. That is the argument for adding it now rather than when it first fires.
 from __future__ import annotations
 
 import importlib.util
+import os
 import subprocess
 import sys
 from pathlib import Path
 
 __all__ = [
     "fence_step", "fence_scan", "fence_mask", "scan_text", "unclosed_reason",
-    "mask_text", "unmasked",
+    "mask_text", "unmasked", "replace_atomically",
     "StagedSnapshotError", "index_tree", "staged_docs",
 ]
 
@@ -134,6 +135,54 @@ def unmasked(lines, mask):
     number or slice the untouched document.
     """
     return ((i, l) for i, l in enumerate(lines) if not mask[i])
+
+
+def replace_atomically(path, text: str, expect: str) -> None:
+    """Rewrite `path` with `text`, or raise having changed nothing.
+
+    THE OBVIOUS SPELLING DESTROYS DATA. `open(path, "w")` TRUNCATES before the
+    new bytes are committed, so a full disk, an interruption, or a killed
+    process leaves a TODO empty or half-written -- and both repair tools that
+    call this run unattended, where a truncated roadmap is not noticed until
+    something else refuses to parse it (Codex adversarial, section 41
+    post-commit, [high]). Writing a sibling temp file, flushing it to disk and
+    then `os.replace`-ing means the file is either the old bytes or the new
+    ones, never neither.
+
+    `expect` closes the read-modify-write race the same way: these tools read a
+    document, compute a rewrite, and only then write. An edit landing in that
+    window would be silently overwritten by a rewrite of the version we read,
+    so the bytes on disk are re-checked immediately before the swap. It is not
+    a lock -- a writer between this check and the replace still wins -- but it
+    turns the common case (an editor save, an operator repair, a concurrent
+    hook) from silent loss into a refusal the caller reports.
+
+    The directory fsync is what makes the RENAME durable rather than merely the
+    file contents; without it a crash can leave the directory entry pointing at
+    the old inode with the new data already on disk.
+    """
+    path = Path(path)
+    current = path.read_text(encoding="utf-8")
+    if current != expect:
+        raise OSError(f"{path}: changed on disk since it was read; not rewritten")
+    tmp = path.with_name(f".{path.name}.todo-tmp-{os.getpid()}")
+    try:
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write(text)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise
+    dir_fd = os.open(path.parent or ".", os.O_RDONLY)
+    try:
+        os.fsync(dir_fd)
+    finally:
+        os.close(dir_fd)
 
 
 class StagedSnapshotError(RuntimeError):

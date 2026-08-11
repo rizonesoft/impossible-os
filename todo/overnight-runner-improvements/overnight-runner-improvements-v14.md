@@ -132,6 +132,14 @@ The last ten v13 carries. Five resolved, four rejected with a stated condition, 
   - NOT TESTED: whether earlier runs' same-round CONVERGED verdicts have the same cause. I did not re-read those logs, so treat the count as unknown rather than zero.
   - Fix shape, not applied (control plane): fingerprint at DISPATCH and store it in `last-codex-review.json` for `record` to copy, or bind the stored fingerprint to the `review_run_id`. Then a post-verdict edit correctly reads as changed.
 
+- **`.claude/hooks/todo_wrap_reminder.py` still carries the naive fence toggle that TODO-06 sections 36/38/41 removed from every other TODO parser.**
+  - `_blocks` (`:109-119`) and `long_continuation` (`:177-185`) each toggle an `incode` bool on any stripped line starting with three backticks -- no tilde fences, no closer character/length match, no CommonMark 0-3-space bound, no comment awareness. It is the exact state machine section 41 deleted from `todo-reflow.py`.
+  - Found by section 41's post-commit consistency review, at source, not projected: the two scans are independent of each other as well as of the shared tracker.
+  - Consequence is bounded and that is why it is a park: this hook emits an authoring WARNING, so it can nag about a literal fenced example or miss a real hard-wrap after one. No verdict, no commit refusal, no file edit.
+  - Blocker is authority, not difficulty: `.claude/hooks/**` is control plane the unattended run may not edit. Adoption is `todo_fence.scan_text` plus the same `sys.path` bootstrap the four gate parsers already use.
+  - Owner side: `00-infrastructure/TODO-06-todo-metadata-layer.md` section 38 (item: "`.claude/hooks/todo_wrap_reminder.py:109` (`_blocks`) and `:177` (`long_continuation`) each carry their own `incode` toggle -- PARKED, control plane, operator-gated").
+  - Also observed, NOT filed as TODO work: `tools/boot-info-manifest/check-doc-coverage.py:178` has a copy too. It is not a TODO parser, so the consolidation claim does not cover it; recorded here so the next person to grep does not think it was missed.
+
 - **A backgrounded `run-artifact.sh` reports `completed (exit code 0)` to the harness while the suite is still running, and the doctrine's own remedy is easy to defeat by accident.**
   - OBSERVED: launching the tooling suite inside a `run_in_background` Bash call whose body ended in `&` produced a task notification saying completed/exit 0 within seconds, while `.claude/state/last-artifact.json` still read `state: running`. Reading the notification would have certified a suite that had not started its first test.
   - The doctrine already says the harness exit code is not the verdict for backgrounded work and to read `state`/`exit` from the envelope. What it does not say is that putting `&` INSIDE an already-backgrounded call re-creates the hazard the background flag was supposed to remove -- the tracked process is then the launcher, not the work.

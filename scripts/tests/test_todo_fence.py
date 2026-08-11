@@ -942,6 +942,21 @@ def test_reflow():
         rc = rf.process(str(p), "check")
     check("an inert unclosed fallback state is NOT refused", rc == 0)
 
+    # PERF GUARD: the ambiguity proof compares masks BEFORE reflowing a second
+    # time, so an ordinary document pays exactly one reflow. Counted rather than
+    # timed -- a wall-clock assertion on a loaded host is a flake, and the
+    # property is structural.
+    calls = []
+    real = rf.reflow
+    try:
+        rf.reflow = lambda *a, **k: (calls.append(1), real(*a, **k))[1]
+        with tempfile.TemporaryDirectory() as d:
+            p = _write(d, "# T\n\nordinary one-line prose.\n")
+            rf.process(str(p), "check")
+    finally:
+        rf.reflow = real
+    check("an equal-mask document is reflowed exactly once", len(calls) == 1)
+
     # THE PRODUCTION CONSUMER, not just process(). A refusal the lint discards
     # is a refusal nobody sees -- Check 19 sent stderr to /dev/null and turned
     # every nonzero exit into success, so the tool returned 2 and the gate
@@ -1050,6 +1065,61 @@ def test_section_order():
             os.chdir(cwd)
         check("a symlinked todo/ root yields no targets at all",
               linked_root == [])
+
+    # A symlinked ANCESTOR is the shape a final-component filter misses: the
+    # walk enumerated todo/link/ext.md and --fix could rewrite a file outside
+    # the repository entirely.
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        (root / "todo").mkdir()
+        (root / "todo" / "real.md").write_text("# T\n", encoding="utf-8")
+        (root / "outside").mkdir()
+        (root / "outside" / "ext.md").write_text("# X\n", encoding="utf-8")
+        os.symlink(root / "outside", root / "todo" / "link")
+        cwd = os.getcwd()
+        try:
+            os.chdir(root)
+            names = {p.name for p in so._targets([])}
+        finally:
+            os.chdir(cwd)
+        check("a symlinked SUBDIRECTORY is not descended into",
+              names == {"real.md"})
+
+    # An over-long section number crashed `int()` and exited 1 with empty
+    # stdout, which lint Check 22 read as clean.
+    huge = "## " + "9" * 5000 + ". Huge\nx\n\n## 2. B\ny\n\n## OS Comparison\nt\n"
+    with tempfile.TemporaryDirectory() as d:
+        p = _write(d, huge)
+        rc = so.main(["--check", str(p)])
+        placement = so._check_placement([p])
+    check("an over-long section number REFUSES (rc 2), not ValueError", rc == 2)
+    check("...and --check-placement reports it as a finding", placement == 1)
+
+    # THE WRITE IS ATOMIC AND RACE-CHECKED. A rewrite computed from bytes that
+    # have since changed on disk must refuse rather than overwrite the newer
+    # content with a repair of the older.
+    doc = ("# T\n\n## 1. A\nbody a\n\n## 3. C\nbody c\n\n## 2. B\nbody b\n\n"
+           "## OS Comparison\ntail\n")
+    with tempfile.TemporaryDirectory() as d:
+        p = _write(d, doc)
+        new = so.reorder(doc)
+        p.write_text(doc + "\nconcurrent edit\n", encoding="utf-8")
+        raised = False
+        try:
+            so._fence.replace_atomically(p, new, doc)
+        except OSError:
+            raised = True
+        after = p.read_text(encoding="utf-8")
+    check("a concurrent edit makes the atomic write REFUSE", raised)
+    check("...and the concurrent edit survives", after.endswith("concurrent edit\n"))
+    # And the happy path really does replace, leaving no temp file behind.
+    with tempfile.TemporaryDirectory() as d:
+        p = _write(d, doc)
+        so._fence.replace_atomically(p, "# replaced\n", doc)
+        left = sorted(x.name for x in p.parent.iterdir())
+        after = p.read_text(encoding="utf-8")
+    check("the atomic write replaces the file", after == "# replaced\n")
+    check("...and leaves no temp file behind", left == [p.name])
 
     for name, src in (("unclosed fence", UNCLOSED_FENCE),
                       ("unclosed comment", UNCLOSED_COMMENT)):

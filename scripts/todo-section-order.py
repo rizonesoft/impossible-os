@@ -37,7 +37,7 @@ it as an error.
 """
 from __future__ import annotations
 
-import glob
+import os
 import re
 import sys
 from pathlib import Path
@@ -56,7 +56,17 @@ except ImportError as _exc:                                  # pragma: no cover
                      f"tracker: {_exc}\n")
     raise
 
-SECTION_RE = re.compile(r"^## (\d+)\.")
+# A section number is BOUNDED, and the bound is the point. `(\d+)` went straight
+# into `int()`, and CPython refuses a string conversion over 4,300 digits -- so a
+# heading carrying a 5,000-digit number raised ValueError, exited 1 with an EMPTY
+# stdout, and lint Checks 22/22b (which discard stderr and erase the status with
+# `|| true`) read the crash as CLEAN. Reproduced before fixing (Codex
+# adversarial, section 41 post-commit, [medium]). Nine digits cannot be reached
+# by any real roadmap and cannot overflow anything downstream; a longer run does
+# not match at all, and `_OVERLONG_SECTION_RE` then NAMES it rather than letting
+# it silently stop being a heading.
+SECTION_RE = re.compile(r"^## (\d{1,9})\.")
+_OVERLONG_SECTION_RE = re.compile(r"^## \d{10,}\.")
 ANY_H2_RE = re.compile(r"^## ")
 
 # File-level CLOSING MATTER. A numbered section is allowed to be relocated in
@@ -77,6 +87,20 @@ ANY_H2_RE = re.compile(r"^## ")
 CLOSING_MATTER = {"OS Comparison", "Unit Tests", "Verification", "History",
                   "Completed (Reference)", "Codex Adversarial Review",
                   "Format Quick Reference"}
+
+
+def overlong_section(lines, mask):
+    """1-based line number of an over-long `## N.` heading, or None.
+
+    Reported rather than ignored: the bounded `SECTION_RE` makes such a heading
+    stop being a section, and silently dropping a heading from a REORDER is how
+    a block gets reparented. Masked lines are exempt -- a fenced example may
+    legitimately contain anything.
+    """
+    for i, line in enumerate(lines):
+        if not mask[i] and _OVERLONG_SECTION_RE.match(line):
+            return i + 1
+    return None
 
 
 def scan(text: str):
@@ -250,9 +274,21 @@ def _targets(argv):
     root = Path("todo")
     if root.is_symlink() or not root.is_dir():
         return []
-    return [p for p in (Path(x) for x in
-                        sorted(glob.glob("todo/**/*.md", recursive=True)))
-            if p.is_file() and not p.is_symlink()]
+    # `os.walk(followlinks=False)` rather than a recursive glob. Filtering the
+    # final candidate with `is_symlink()` catches `todo/x.md -> elsewhere` and
+    # MISSES an ancestor: `todo/link -> /outside` made the walk enumerate
+    # `todo/link/ext.md`, so Checks 22/22b could traverse an unbounded external
+    # tree and `--fix` could rewrite a file outside the repository entirely
+    # (Codex adversarial, section 41 post-commit, [high]; reproduced before
+    # fixing). Pruning `dirs` in place is what stops the descent.
+    out = []
+    for base, dirs, files in os.walk(root, followlinks=False):
+        dirs[:] = [d for d in dirs if not Path(base, d).is_symlink()]
+        for name in files:
+            p = Path(base, name)
+            if name.endswith(".md") and p.is_file() and not p.is_symlink():
+                out.append(p)
+    return sorted(out)
 
 
 def _check_placement(paths) -> int:
@@ -280,6 +316,12 @@ def _check_placement(paths) -> int:
         # mask alone. Printed on stdout because lint Check 22b counts one error
         # per line it reads there.
         reason = _fence.unclosed_reason(*sc[2:])
+        if reason is None:
+            ln = overlong_section(sc[0], sc[1])
+            if ln is not None:
+                reason = (f"line {ln} carries a `## N.` heading whose number "
+                          f"exceeds 9 digits, so it is not a section this tool "
+                          f"can order")
         if reason:
             hits += 1
             print(f"{path}: cannot check placement -- {reason}")
@@ -329,6 +371,12 @@ def main(argv) -> int:
         # alike (Codex design review, section 41, [medium]). Same exit-2 contract
         # `todo-reflow.py` uses for the same condition.
         reason = _fence.unclosed_reason(*sc[2:])
+        if reason is None:
+            ln = overlong_section(sc[0], sc[1])
+            if ln is not None:
+                reason = (f"line {ln} carries a `## N.` heading whose number "
+                          f"exceeds 9 digits, so it is not a section this tool "
+                          f"can order")
         if reason:
             print(f"{path}: REFUSED -- {reason}. Left untouched.",
                   file=sys.stderr)
@@ -348,7 +396,16 @@ def main(argv) -> int:
                 str(path), str(path) + " (ordered)"))
             rc = 1
         else:
-            path.write_text(new, encoding="utf-8")
+            try:
+                # Atomic, and race-checked against `text` as read above. A bare
+                # `write_text` truncated first AND let its OSError escape as an
+                # uncaught traceback (rc 1, this tool's "out of order" code).
+                _fence.replace_atomically(path, new, text)
+            except OSError as exc:
+                print(f"{path}: REFUSED -- cannot write ({exc}).",
+                      file=sys.stderr)
+                refused = True
+                continue
             print(f"{path}: reordered {nums} -> {sorted(nums)}")
     return 2 if refused else rc
 

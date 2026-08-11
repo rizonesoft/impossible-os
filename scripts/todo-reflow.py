@@ -325,7 +325,14 @@ def process(path: str, mode: str) -> int:
     # because an author fixes an unclosed delimiter differently from a paired
     # one. Measured across all 281 corpus files: 5 rely on the fallback and 0 of
     # them change verdict, so the broader rule refuses nothing that exists today.
-    if reflow(original, vmask=shared_mask) != new:
+    #
+    # GUARDED ON THE MASKS, not run unconditionally. Equal masks deterministically
+    # produce equal output, so the second reflow was pure waste on the 276 of 281
+    # corpus files whose fallback claims nothing -- measured at ~54ms, about 19%
+    # of a command that runs in the pre-commit hook (Codex perf, section 41
+    # post-commit, [medium]). Comparing the masks first preserves the proof
+    # exactly: where they are equal there is nothing for the comparison to find.
+    if vmask != shared_mask and reflow(original, vmask=shared_mask) != new:
         which = ("opens a fence that never closes" if loose_open
                  else "pairs with a later one to form a fence")
         print(f"{path}: REFUSED -- an indented ``` or ~~~ delimiter {which}, "
@@ -345,8 +352,9 @@ def process(path: str, mode: str) -> int:
             fromfile=path, tofile=path + " (reflowed)"))
     elif mode == "write":
         try:
-            with open(path, "w", encoding="utf-8") as fh:
-                fh.write(new)
+            # Atomic, and race-checked against the bytes we read at the top of
+            # this function -- see `todo_fence.replace_atomically`.
+            _fence.replace_atomically(path, new, original)
         except OSError as exc:
             print(f"{path}: cannot write ({exc})", file=sys.stderr)
             return 2
