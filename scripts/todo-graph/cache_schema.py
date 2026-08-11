@@ -81,6 +81,7 @@ import re
 import stat
 import subprocess
 from pathlib import Path, PurePosixPath
+from typing import NamedTuple, Optional, Tuple
 
 # Reason tags. Callers map these to their OWN documented exit codes; a caller
 # that grows a new code maps it here rather than re-deriving the rule.
@@ -197,12 +198,28 @@ _MAX_SECTION_N = 65535
 # (Codex adversarial, section 33, [high]). This sentence also claimed
 # `validate.py --diff` accepts an imported baseline without either check; that
 # was FALSE and is struck -- `_load_and_validate` calls `check_cache_format`
-# unconditionally, so the baseline path refuses a pre-v3 artifact outright.
+# unconditionally, so the baseline path refuses an out-of-contract artifact
+# outright. (Written version-agnostically on purpose: this comment named "pre-v3"
+# and went stale the moment section 37 bumped to v4.)
 # Sub-test 25c is the refusal
 # regression and is version-agnostic by construction: it writes
 # `CACHE_FORMAT_VERSION - 1` into the sidecar and asserts LEGACY_FORMAT, so it
 # proves this bump too without being edited.
-CACHE_FORMAT_VERSION = 3
+#
+# V3 -> V4 (TODO-06 section 37), the THIRD time this integer has been spent, and
+# spent on the same kind of change it was spent on at v2 -> v3: OMISSION VERSUS
+# EMISSION, with no field name or type moving. One clause parser now decides how
+# many destinations a clause names, so two emission semantics changed for shapes
+# the live corpus does not contain -- a clause naming a second target AFTER its
+# `(item: ...)` parenthetical now emits no edge where a v3 producer emitted the
+# first destination, and a doubled-backtick Inputs token normalises differently.
+# THE LIVE DIFFERENTIAL IS NIL (1010 stamp targets and 945 Inputs rows
+# byte-identical), and that is precisely why the bump is needed rather than why
+# it is not: a v3 and a v4 cache are indistinguishable BY SHAPE and by producer
+# digest until one of those clauses is written, so without the bump a stale
+# artifact keeps serving a graph that disagrees with the current producer and
+# nothing reports it (Codex adversarial round 1, [high]).
+CACHE_FORMAT_VERSION = 4
 
 # Every key the producer may place on a node, WITH THE MODE IT IS EMITTED IN.
 # `build.py` imports this and refuses to emit a node carrying anything outside
@@ -454,10 +471,200 @@ XREF_LINK_RE = re.compile(
 # module, so the justification was false and the copy was the very duplication
 # under repair. Anchored with `.match(text, pos)` by every caller, so the check
 # allocates nothing on a long stamp line.
-XREF_ADJACENT_TARGET_RE = re.compile(
+_XREF_ADJACENT_TARGET_RE = re.compile(
     r"\s*(?:§\S+\s+)?(?:" + XREF_LINK_PATTERN
     + r"|`?(?:\d{2}-[a-z0-9-]+/)?TODO-\d{1,2}[\w./§-]*`?"
     + r"|`?[\w./-]+\.md`?)")
+
+
+# --- One clause parser (TODO-06 section 37) -------------------------------
+#
+# WHAT THIS REPLACES, and why the seam is where it is.
+#
+# Four producers read a `-> XREF:` clause -- `build.py`'s stamp grammar and its
+# two Inputs surface forms (bullet and table), and `validate.py`'s repair path.
+# Each captured the target with the SHARED `XREF_TARGET_PATTERN` after section
+# 33, but each still decided ON ITS OWN whether the clause names more than one
+# destination, and only two of them decided it deliberately:
+#
+#   stamp   (build.py)     required a section marker in the SAME regex, so a
+#                          second destination made the whole match fail and the
+#                          clause vanished -- refused, but as a side effect of a
+#                          different constraint, and silently
+#   bullet  (build.py)     matched `_XREF_ADJACENT_TARGET_RE` explicitly
+#   table   (build.py)     anchored the whole cell, so a second destination
+#                          failed the anchor -- emergent again
+#   repair  (validate.py)  matched `_XREF_ADJACENT_TARGET_RE` explicitly
+#
+# Section 33 closed five multi-destination shapes one review round at a time
+# (adjacent links, whitespace-separated links, a malformed clause inheriting the
+# previous target, a bare or backticked second target, one after the section
+# marker). Every round found a real defect and the next round found the next
+# shape -- the signature of a missing abstraction rather than of five bugs. So
+# the knowledge "a clause names ONE destination" moves here, into a parser the
+# producers CALL, instead of staying in a pattern they each match against and
+# each have to remember.
+#
+# THE LEAD-IN IS NOT PART OF THIS PARSER, AND THE BOUNDARY IS DELIBERATE. Each
+# producer recognises its own surface (a stamp line, an Inputs bullet, a table
+# cell, a repair scan) and hands over the offset just past `XREF:`. Everything
+# from the target rightwards -- tokenisation, the optional section marker, the
+# optional `(item: "...")` parenthetical, and the extra-destination test -- is
+# decided HERE. The design review's first finding was that a lead-in which also
+# owns the target (as the stamp and table grammars did) never lets the parser
+# SEE the malformed clause it exists to judge, which would have relocated the
+# drift rather than removing it.
+#
+# POLICY STAYS WITH THE CALLER, by design, because the four genuinely differ:
+# the stamp and table forms drop a malformed clause silently, the bullet skips
+# it, and the repair path counts it, names it in a diagnostic, and installs a
+# barrier so no later item clause falls through to an earlier target. This
+# parser reports WHAT IT FOUND; it does not decide what that should cost.
+XREF_LEAD_PATTERN = r"->\s*XREF:\s*"
+XREF_LEAD_RE = re.compile(XREF_LEAD_PATTERN)
+
+# The target token plus the trailing boundary section 33 gave both capture
+# sites, so a link arm cannot stop mid-token when another link follows.
+_XREF_TARGET_TOKEN_RE = re.compile(r"(" + XREF_TARGET_PATTERN + r")(?=[`\s]|$)")
+_XREF_SECTION_RE = re.compile(r"[`\s]*(§\S+)")
+# The optional trailing parenthetical, matching the stamp grammar's shape: the
+# `item:` / `new item:` name is optional WITHIN it, so `(some prose)` is
+# consumed as a clause tail without yielding a name.
+_XREF_ITEM_RE = re.compile(
+    r"\s*\((?:[^()]*?\b(?:item|new\s+item):\s*\"(?P<item_name>[^\"]+)\")?[^()]*\)")
+
+
+class XrefClause(NamedTuple):
+    """Every destination ONE `-> XREF:` clause names, and where the clause ends.
+
+    `targets` is a tuple rather than a single token plus a boolean because the
+    question this parser answers is "how many destinations, and what are they":
+    a bool records that a caller should refuse without recording WHAT it
+    refused, which is unusable in a diagnostic and untestable for parity.
+    """
+
+    targets: Tuple[str, ...]
+    target_span: Tuple[int, int]
+    section: Optional[str]
+    section_span: Optional[Tuple[int, int]]
+    item_name: Optional[str]
+    item_span: Optional[Tuple[int, int]]
+    end: int
+    malformed: Optional[str]
+
+    @property
+    def target(self) -> str:
+        """The primary destination -- the one a caller binds when it binds."""
+        return self.targets[0]
+
+
+def parse_xref_clause(text, pos=0, limit=None):
+    """Parse ONE `-> XREF:` clause starting at `pos` (just past `XREF:`).
+
+    Returns an `XrefClause`, or None when no target token starts there.
+
+    THE CLAUSE BOUND IS COMPUTED AFTER EACH SELF-DELIMITING PART IS CONSUMED,
+    NEVER BY SEARCHING FROM `pos`. Searching from `pos` is context-blind: it
+    finds `-> XREF:` written INSIDE a markdown-link label or inside an
+    `(item: "...")` name and cuts the clause there, so
+    `-> XREF: [see -> XREF: details](foo.md) §1` bound a fragment instead of the
+    link (Codex adversarial round 1, [high]). This repo writes TODOs about TODO
+    syntax constantly -- sub-test 33g's own probes quote `-> XREF:` inside item
+    text -- so the shape is ordinary authoring, not an adversarial curiosity.
+    The target token and the item parenthetical are each self-delimiting, so the
+    honest boundary is: consume them first, then look for the next lead from
+    where they END.
+
+    The bound is DEFENSIVE rather than load-bearing against the extra-target
+    scan itself -- stated precisely because an earlier version of this docstring
+    claimed the opposite and sub-test 37d disproved it, reporting 2 edges with
+    and without the bound (`->` matches none of the scan's target shapes, so it
+    stops at the arrow regardless). 37d now pins the widening under which the
+    bound becomes real instead.
+    """
+    end_limit = len(text) if limit is None else limit
+
+    def _next_lead(frm):
+        """The next TOP-LEVEL lead, searched from past an already-consumed part."""
+        if limit is not None:
+            return limit
+        nxt = XREF_LEAD_RE.search(text, frm)
+        return nxt.start() if nxt else len(text)
+
+    # NO PREFIX SLICING ANYWHERE BELOW. Every match passes `endpos` instead of
+    # copying `text[:limit]`, which cost a fresh prefix copy per clause and made
+    # a many-clause line quadratic -- measured by the reviewer at ~1.47s for a
+    # 1.09 MiB line and ~6.92s at 2.18 MiB, against a 16 MiB per-file allowance
+    # (Codex adversarial round 1, [medium]).
+    m = _XREF_TARGET_TOKEN_RE.match(text, pos, end_limit)
+    if not m:
+        return None
+    targets = [m.group(1)]
+    target_span = (m.start(1), m.end(1))
+    p = m.end(1)
+    bound = _next_lead(p)
+
+    # THE FIRST EXTRA-TARGET TEST RUNS HERE, immediately after the target and
+    # before the section marker is consumed, because that is where the four
+    # producers tested it before this parser existed -- and the pattern itself
+    # optionally steps over one section marker, which is how section 33's
+    # `[a](x.md) §1 [b](y.md)` shape is caught. Moving the test later would
+    # silently change which shapes refuse.
+    extra = _XREF_ADJACENT_TARGET_RE.match(text, p, bound)
+
+    section = section_span = None
+    sm = _XREF_SECTION_RE.match(text, p, bound)
+    if sm:
+        section, section_span, p = sm.group(1), (sm.start(1), sm.end(1)), sm.end()
+
+    item_name = item_span = None
+    im = _XREF_ITEM_RE.match(text, p, end_limit)
+    if im:
+        item_name, item_span, p = im.group("item_name"), (im.start(), im.end()), im.end()
+        bound = _next_lead(p)
+
+    # A SECOND TARGET AFTER THE ITEM PARENTHETICAL was reachable by none of the
+    # four producers, so `-> XREF: a.md §1 (item: "X") b.md` bound `a.md` and
+    # dropped `b.md` without a word. Measured before adding it: ZERO live
+    # clauses put a target-shaped token there, so closing it is corpus-neutral
+    # today and closes the shape rather than waiting for the next review round
+    # to find it (design review, second finding).
+    if not extra:
+        extra = _XREF_ADJACENT_TARGET_RE.match(text, p, bound)
+
+    malformed = None
+    end = p
+    if extra:
+        targets.append(extra.group(0).strip())
+        malformed = "multiple-destinations"
+        end = extra.end()
+    return XrefClause(tuple(targets), target_span, section, section_span,
+                      item_name, item_span, end, malformed)
+
+
+def iter_xref_clauses(text, pos=0):
+    """Yield every clause on `text`, NON-OVERLAPPING, from `pos`.
+
+    THE NON-OVERLAP IS THE OTHER HALF OF THE CONTEXT-BLINDNESS FIX, and it is
+    the half a per-clause bound cannot reach. Callers used to iterate leads with
+    a plain `finditer`, so a `-> XREF:` inside a link label or an item name was
+    not merely a bad boundary -- it STARTED A CLAUSE OF ITS OWN and published a
+    second, fabricated edge. The retired `XREF_CLAUSE_RE.finditer` never had
+    that exposure: it consumed the whole clause, so an inner lead could not be a
+    match start. Resuming from `clause.end` restores exactly that property, in
+    one place rather than at each of the callers.
+    """
+    n = len(text)
+    for lead in XREF_LEAD_RE.finditer(text, pos):
+        if lead.start() < pos:
+            continue
+        clause = parse_xref_clause(text, lead.end())
+        if clause is None:
+            continue
+        yield lead, clause
+        pos = max(clause.end, lead.end())
+        if pos >= n:
+            return
 
 
 # A CHECKLIST-ITEM LINE, at any indent, with any of the four live status

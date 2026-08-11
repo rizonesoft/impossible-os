@@ -113,6 +113,15 @@ The last ten v13 carries. Five resolved, four rejected with a stated condition, 
       - Candidate fix (doctrine, not code): before filing, ask where the FIX lands, not where the symptom appeared. If every path the fix touches is outside the forbidden set, fix it in the owning TODO and file only the residue. When an item spans both, SPLIT it -- file the control-plane half, fix the rest -- rather than carrying the whole bundle.
       - Not yet quantified, and worth measuring before acting: how many of v13's other 37 items had a fully-fixable fix. This item establishes the class from one measured instance; it does not establish the rate.
 
+## Filed by the 2026-08-11 run, TODO-06 section 37 ship
+
+- **A fourth XREF link grammar lives in `.claude/hooks/skill_step_block.py:61`, outside the consolidation §37 just landed.**
+  - `_XREF_RE = re.compile(r"->\s*XREF:\s*(?:\[[^\]]*\]\()?([\w./0-9-]+\.md)")`. Its label class `[^\]]*` truncates where the shared grammar does not, so the two disagree on a link whose label contains a bracket -- the shared grammar admits a balanced inner pair (`cache_schema._XREF_LABEL`).
+  - LOWER STAKES THAN THE THREE PRODUCERS, and that is why it was parked rather than patched: it feeds a read-XREF heuristic, so a miss UNDER-COUNTS evidence rather than binding a wrong file. Nothing observed live; this is a consistency finding, not an incident.
+  - The blocker is authority, not difficulty: `.claude/hooks/**` is control plane the unattended run may not edit. Adoption is two lines against `cache_schema.parse_xref_clause`.
+  - ONE REAL DESIGN QUESTION FIRST, raised by §37's Codex design review: `cache_schema` lives in `scripts/todo-graph/` and the hook runs from an arbitrary working directory, so the adopter needs a path bootstrap. A vendored copy would recreate exactly the duplication §37 removed, so the import path is the decision, not the regex.
+  - Owner side: `00-infrastructure/TODO-06-todo-metadata-layer.md` §37 (item: "The FOURTH live grammar, in `.claude/hooks/skill_step_block.py:61`, adopts the shared parser -- PARKED, control plane, operator-gated").
+
 ## Standing measurement obligations
 
 Carry the baselines forward. A measurement without one is an anecdote.

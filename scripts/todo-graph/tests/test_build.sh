@@ -16513,11 +16513,22 @@ import json, re, sys
 sys.path.insert(0, "scripts/todo-graph")
 import build as B, cache_schema as cs
 
-# The capture expression `fix_line_numbers` uses, kept in step with it here.
-RX = re.compile(r"->\s*XREF:\s*(" + cs.XREF_TARGET_PATTERN + r")(?=\s|$)")
-SRC = re.compile(r'r"->\\s\*XREF:\\s\*\("\s*\+\s*cache_schema\.XREF_TARGET_PATTERN\s*'
-                 r'\+\s*r"\)\(\?=\\s\|\$\)"', re.S)
-src = open("scripts/todo-graph/validate.py", encoding="utf-8").read()
+# SECTION 37 MOVED THE GRAMMAR AND THIS PROBE MOVED WITH IT. This sub-test used
+# to keep its OWN copy of the repair site's capture expression "in step with it
+# here", and to assert the boundary by grepping `validate.py` for the literal
+# regex -- a fifth spelling of the thing section 37 exists to have exactly one
+# of, and a probe that would report agreement even if both sites drifted
+# together. Both sites now call `cache_schema.parse_xref_clause`, so the
+# boundary is asserted where it lives and the two sites are exercised through
+# their real entry points.
+def repair_targets(rest):
+    """The repair site's two lines: shared parser, then its LOCAL comma policy."""
+    out = []
+    for lead in cs.XREF_LEAD_RE.finditer(rest):
+        c = cs.parse_xref_clause(rest, lead.end())
+        if c is not None:
+            out.append(c.target.rstrip(","))
+    return out
 
 cases = {
     # malformed adjacent links: BOTH sites must hand over the whole token
@@ -16529,12 +16540,22 @@ cases = {
     # trailing comma on a bare token stays supported
     "comma": 'TODO-02-b.md,',
 }
-out = {"boundary_present": bool(SRC.search(src))}
+# The boundary is part of the SHARED token grammar now, so it is asserted
+# there. NEITHER producer may re-inline a target capture of its own: that
+# duplication is the defect section 37 removed, and a re-inlined copy is how it
+# would come back.
+src_b = open("scripts/todo-graph/build.py", encoding="utf-8").read()
+src_v = open("scripts/todo-graph/validate.py", encoding="utf-8").read()
+RE_INLINED = re.compile(r"XREF_TARGET_PATTERN\s*\+\s*r?\"\)\(\?=")
+out = {
+    "boundary_present": cs._XREF_TARGET_TOKEN_RE.pattern.endswith(r"(?=[`\s]|$)"),
+    "no_reinlined_capture": not (RE_INLINED.search(src_b) or RE_INLINED.search(src_v)),
+}
 for name, tok in cases.items():
     line = f'> **Deferred:** [M] x -> XREF: {tok} §1 (item: "C" at line 3)'
     h = B.STAMP_HEADER_RE.match(line)
-    b = [m.group("target_path") for m in B.XREF_CLAUSE_RE.finditer(line, pos=h.end())]
-    v = [m.group(1).rstrip(",") for m in RX.finditer(line[h.end():])]
+    b = [e["target_path"] for e in B._walk_stamps_xrefs([line], [False])]
+    v = repair_targets(line[h.end():])
     out[name] = {"build": b, "validate": v, "agree": b == v}
 print(json.dumps(out))
 S33FEOF
@@ -16542,7 +16563,7 @@ S33FEOF
 if [ "$S33F_RC" = "0" ] && echo "$S33F_OUT" | python3 -c "
 import json, sys
 d = json.loads(sys.stdin.read())
-ok = d['boundary_present'] and all(d[k]['agree'] for k in ('adjacent','nested','spaced'))
+ok = d['boundary_present'] and d['no_reinlined_capture'] and all(d[k]['agree'] for k in ('adjacent','nested','spaced'))
 # and the agreement must be on the WHOLE token, not on a shared truncation
 ok = ok and d['adjacent']['build'] == ['[a](TODO-01-a.md)[b](TODO-02-b.md)']
 ok = ok and d['spaced']['build'] == ['[\`01-test/TODO-01 §1\`](TODO-02-b.md)']
@@ -16595,18 +16616,22 @@ over = "[" + "a" * (bound + 50) + "](x.md)"
 fat_pair = "[" + "x" * 4088 + "]"
 fat = "[" + fat_pair * 8 + "](x.md)"
 
-# No Inputs XREF form may yield an empty target_path.
+# No Inputs XREF form may yield an empty target_path. SECTION 37: driven
+# through the REAL producer (`extract_inputs_xrefs`) rather than through a
+# re-spelling of its retired regex -- the emptiness this guards against is a
+# property of what the producer EMITS, so probing the producer is both the
+# honest oracle and immune to the next grammar move.
+def inputs_of(bullet):
+    return B.extract_inputs_xrefs("## Inputs\n\n" + bullet + "\n")
+
 empties = []
 for probe in ("- -> XREF: [x]() -- desc",
               "- -> XREF: [x](#anchor) -- desc",
               "- -> XREF: [a [inner] label](TODO-02-b.md) §1 -- desc",
               "- -> XREF: `02-kernel-core/TODO-05` §7 -- desc"):
-    m = B.INPUTS_XREF_RE.match(probe)
-    if not m:
-        continue
-    tgt = (cs.unwrap_xref_link(m.group(1)) or m.group(1)) if m.group(1) else m.group(2)
-    if not tgt:
-        empties.append(probe)
+    for row in inputs_of(probe):
+        if not row.get("target_path"):
+            empties.append(probe)
 
 print(json.dumps({
     "uses_modern": uses_modern,
@@ -16617,8 +16642,8 @@ print(json.dumps({
     "fat_pairs_refused": not bool(cs.XREF_LINK_RE.match(fat)),
     "fat_pair_len": len(fat),
     "empty_targets": empties,
-    "inner_bracket_label": (lambda m: cs.unwrap_xref_link(m.group(1)) if m and m.group(1) else "")(
-        B.INPUTS_XREF_RE.match("- -> XREF: [a [inner] label](TODO-02-b.md) §1 -- desc")),
+    "inner_bracket_label": (inputs_of("- -> XREF: [a [inner] label](TODO-02-b.md) §1 -- desc")
+                            or [{}])[0].get("target_path", ""),
 }))
 S33GEOF
 ); S33G_RC=$?
@@ -17640,6 +17665,322 @@ if [ "$T39G" = "OK" ]; then
     t_pass "s39g: EMITTED_ERROR_CATEGORIES is a literal, so it cannot compute itself from the emitters"
 else
     t_fail "s39g: $T39G"
+fi
+
+# ----------------------------------------------------------------------
+# Section 37: ONE clause parser decides how many destinations a clause names.
+#
+# Section 33 closed five multi-destination shapes in six review rounds, one per
+# round, because four producers each carried their own copy of the rule. These
+# sub-tests pin the consolidation the way the design review asked for it: the
+# shared PARSE is asserted identical across the four surface embeddings, and
+# each producer's POLICY is asserted separately -- because the policies
+# legitimately differ and a verdict-only "identical treatment" assertion would
+# pass while two callers bound different destinations.
+# ----------------------------------------------------------------------
+
+# Sub-test 37a: THE SAME CLAUSE PARSES IDENTICALLY IN ALL FOUR SURFACES. The
+# lead-ins differ by surface; everything from the target rightwards must not.
+T37A="$(python3 - <<'PY'
+import sys
+sys.path.insert(0, "scripts/todo-graph")
+import build as B, cache_schema as cs
+
+# One clause body, embedded in each producer's surface. If any lead-in still
+# owns part of the target grammar, these parses diverge.
+BODY = '[a b](TODO-02-b.md) §1 (item: "C" at line 3)'
+surfaces = {
+    "stamp":  ('> **Deferred:** [M] x -> XREF: ' + BODY, None),
+    "bullet": ('- -> XREF: ' + BODY, None),
+    "repair": ('x -> XREF: ' + BODY, None),
+}
+parses = {}
+for name, (line, _) in surfaces.items():
+    lead = cs.XREF_LEAD_RE.search(line)
+    c = cs.parse_xref_clause(line, lead.end())
+    parses[name] = (c.targets, c.section, c.item_name, c.malformed)
+# The table surface hands over a bare cell, so it is parsed at offset 0.
+c = cs.parse_xref_clause('[a b](TODO-02-b.md) §1', 0)
+parses["table"] = (c.targets, c.section, c.item_name, c.malformed)
+
+vals = {k: (v[0], v[1], v[3]) for k, v in parses.items()}
+if len(set(vals.values())) != 1:
+    print("surfaces disagree: %r" % (parses,)); raise SystemExit
+if parses["stamp"][0] != ('[a b](TODO-02-b.md)',):
+    print("spaced label not captured whole: %r" % (parses["stamp"],)); raise SystemExit
+if parses["stamp"][2] != "C":
+    print("item name lost: %r" % (parses["stamp"],)); raise SystemExit
+print("OK")
+PY
+)"
+if [ "$T37A" = "OK" ]; then
+    t_pass "s37a: one clause parses identically in all four producer surfaces"
+else
+    t_fail "s37a: $T37A"
+fi
+
+# Sub-test 37b: A MULTI-DESTINATION CLAUSE IS REFUSED BY EVERY PRODUCER, and
+# each one's OWN policy is asserted rather than a shared "treated the same":
+# the builder surfaces drop silently, the repair path counts + barriers.
+T37B="$(python3 - <<'PY'
+import sys
+sys.path.insert(0, "scripts/todo-graph")
+import build as B, cache_schema as cs
+
+BAD = {
+    "adjacent":    '[a](TODO-01-a.md)[b](TODO-02-b.md)',
+    "spaced":      '[a](TODO-01-a.md) [b](TODO-02-b.md)',
+    "bare-second": '[a](TODO-01-a.md) TODO-02-b.md',
+    "after-mark":  '[a](TODO-01-a.md) §1 [b](TODO-02-b.md)',
+}
+bad = []
+for name, tok in BAD.items():
+    # The parser's verdict.
+    line = '> **Deferred:** [M] x -> XREF: %s §1 (item: "C" at line 3)' % tok
+    lead = cs.XREF_LEAD_RE.search(line)
+    c = cs.parse_xref_clause(line, lead.end())
+    multi = c is not None and len(c.targets) > 1 and c.malformed
+    # `adjacent` is the one shape with no separator, so the token itself is one
+    # non-space run and the parser hands the WHOLE thing over -- fail-closed at
+    # the resolver, exactly as section 33 left it. Every OTHER shape must be
+    # caught as multi-destination here.
+    if name != "adjacent" and not multi:
+        bad.append("%s: parser did not see two destinations (%r)" % (name, c))
+    # Builder policy: no stamp edge, silently.
+    if B._walk_stamps_xrefs([line], [False]) and name != "adjacent":
+        bad.append("%s: stamp producer emitted an edge" % name)
+    # Builder policy: no Inputs bullet edge.
+    if B.extract_inputs_xrefs("## Inputs\n\n- -> XREF: %s §1 -- d\n" % tok) and name != "adjacent":
+        bad.append("%s: inputs bullet emitted an edge" % name)
+print("OK" if not bad else "; ".join(bad))
+PY
+)"
+if [ "$T37B" = "OK" ]; then
+    t_pass "s37b: every producer refuses a clause naming two destinations"
+else
+    t_fail "s37b: $T37B"
+fi
+
+# Sub-test 37c: THE CONTROLS. These are the shapes a too-eager parser breaks,
+# and the multi-XREF stamp is the one that would have cost the whole corpus:
+# 25 live lines carry more than one clause, so a scan that ran to end-of-line
+# would read clause two's legitimate destination as clause one's second one.
+T37C="$(python3 - <<'PY'
+import sys
+sys.path.insert(0, "scripts/todo-graph")
+import build as B, cache_schema as cs
+bad = []
+
+# CONTROL 1: two legitimate clauses on one stamp line -> TWO edges, not a refusal.
+line = ('> **Accepted:** [M] x -> XREF: TODO-01-a.md §1 (item: "A" at line 3)'
+        ' -> XREF: TODO-02-b.md §2 (item: "B" at line 4)')
+edges = B._walk_stamps_xrefs([line], [False])
+if [e["target_path"] for e in edges] != ["TODO-01-a.md", "TODO-02-b.md"]:
+    bad.append("multi-XREF stamp not preserved: %r" % (edges,))
+if [e.get("item_name") for e in edges] != ["A", "B"]:
+    bad.append("multi-XREF item names not preserved: %r" % (edges,))
+
+# CONTROL 2: a `--` description that MENTIONS another TODO is prose, not a target.
+line = '> **Deferred:** [M] x -> XREF: TODO-01-a.md §1 -- the section TODO-02-b.md owns'
+edges = B._walk_stamps_xrefs([line], [False])
+if [e["target_path"] for e in edges] != ["TODO-01-a.md"]:
+    bad.append("prose mention refused the clause: %r" % (edges,))
+
+# CONTROL 3: the `(item: ...)` parenthetical is a clause tail, not a destination.
+line = '> **Deferred:** [M] x -> XREF: TODO-01-a.md §1 (item: "C" at line 3)'
+if len(B._walk_stamps_xrefs([line], [False])) != 1:
+    bad.append("item parenthetical broke the clause")
+
+# CONTROL 4: a backticked Inputs target is a code span and ends at its closing
+# backtick -- the one live row that proved the two Inputs forms disagreed.
+rows = B.extract_inputs_xrefs(
+    "## Inputs\n\n- -> XREF: `12-user/TODO-05-x.md`: CSRSS creates its port\n")
+if [r["target_path"] for r in rows] != ["12-user/TODO-05-x.md"]:
+    bad.append("backticked inputs target not unwrapped: %r" % (rows,))
+print("OK" if not bad else "; ".join(bad))
+PY
+)"
+if [ "$T37C" = "OK" ]; then
+    t_pass "s37c: controls -- multi-XREF stamps, prose mentions, item tails and code spans survive"
+else
+    t_fail "s37c: $T37C"
+fi
+
+# Sub-test 37d: WHAT THE CLAUSE BOUND ACTUALLY PROTECTS. The first version of
+# this sub-test asserted that removing the bound breaks the multi-XREF control,
+# and it FAILED: the extra-target scan is anchored and `->` matches none of its
+# target shapes, so it stops at the arrow with or without a bound. The bound is
+# therefore defensive today, and this sub-test pins the condition under which it
+# stops being defensive -- widen the adjacency grammar to admit an arrow-led
+# target, and the bound is the only thing keeping a legitimate second clause
+# from being read as the first clause's second destination.
+T37D="$(python3 - <<'PY'
+import re, sys
+sys.path.insert(0, "scripts/todo-graph")
+import build as B, cache_schema as cs
+
+line = ('> **Accepted:** [M] x -> XREF: TODO-01-a.md §1 (item: "A" at line 3)'
+        ' -> XREF: TODO-02-b.md §2 (item: "B" at line 4)')
+if len(B._walk_stamps_xrefs([line], [False])) != 2:
+    print("control did not hold before the mutation"); raise SystemExit
+
+# Widen the adjacency grammar so an arrow-led target IS a target shape.
+real_adj = cs._XREF_ADJACENT_TARGET_RE
+real_parse = cs.parse_xref_clause
+cs._XREF_ADJACENT_TARGET_RE = re.compile(
+    r"\s*(?:->\s*XREF:\s*)?(?:§\S+\s+)?(?:`?[\w./-]+\.md`?)")
+try:
+    bounded = len(B._walk_stamps_xrefs([line], [False]))
+    def unbounded(text, pos=0, limit=None):
+        return real_parse(text, pos, len(text))     # ignore the next-clause bound
+    cs.parse_xref_clause = unbounded
+    unbound = len(B._walk_stamps_xrefs([line], [False]))
+finally:
+    cs._XREF_ADJACENT_TARGET_RE = real_adj
+    cs.parse_xref_clause = real_parse
+
+if bounded != 2:
+    print("bound failed to protect the control under a widened grammar (%d edges)" % bounded)
+elif unbound >= 2:
+    print("widened+unbounded still emitted %d edges -- mutation inert" % unbound)
+else:
+    print("OK")
+PY
+)"
+if [ "$T37D" = "OK" ]; then
+    t_pass "s37d: the clause bound is what saves multi-XREF stamps once the adjacency grammar widens"
+else
+    t_fail "s37d: $T37D"
+fi
+
+# Sub-test 37e: A SECOND TARGET AFTER THE ITEM PARENTHETICAL. Reachable by none
+# of the four producers before section 37, and measured at zero live instances
+# -- so closing it is corpus-neutral, which is exactly why it is closed here
+# rather than left for the next review round to rediscover.
+T37E="$(python3 - <<'PY'
+import sys
+sys.path.insert(0, "scripts/todo-graph")
+import cache_schema as cs
+line = 'x -> XREF: TODO-01-a.md §1 (item: "C" at line 3) TODO-02-b.md'
+lead = cs.XREF_LEAD_RE.search(line)
+c = cs.parse_xref_clause(line, lead.end())
+if not c.malformed or len(c.targets) != 2:
+    print("post-item second target not seen: %r" % (c,)); raise SystemExit
+# Control: the same clause WITHOUT the trailing target stays clean.
+line = 'x -> XREF: TODO-01-a.md §1 (item: "C" at line 3)'
+lead = cs.XREF_LEAD_RE.search(line)
+c = cs.parse_xref_clause(line, lead.end())
+print("OK" if c.malformed is None else "control clause wrongly refused: %r" % (c,))
+PY
+)"
+if [ "$T37E" = "OK" ]; then
+    t_pass "s37e: a second target after the item parenthetical is refused, control unaffected"
+else
+    t_fail "s37e: $T37E"
+fi
+
+# Sub-test 37f: A LEAD WRITTEN INSIDE A LABEL OR AN ITEM NAME IS NOT A CLAUSE.
+# The first cut searched for the next `-> XREF:` from the clause START, which is
+# context-blind: it cut the clause inside a markdown-link label and, separately,
+# let the inner lead START a fabricated second clause. This repo documents XREF
+# syntax inside TODOs constantly, so the shape is ordinary authoring.
+T37F="$(python3 - <<'PY'
+import sys
+sys.path.insert(0, "scripts/todo-graph")
+import build as B, cache_schema as cs
+bad = []
+
+# The label contains a literal lead. ONE edge, bound to the whole link.
+line = '> **Deferred:** [M] x -> XREF: [see -> XREF: details](TODO-02-b.md) §1'
+edges = B._walk_stamps_xrefs([line], [False])
+if [e["target_path"] for e in edges] != ["[see -> XREF: details](TODO-02-b.md)"]:
+    bad.append("label lead: %r" % (edges,))
+
+# The ITEM NAME contains a literal lead. One edge, item name intact.
+line = ('> **Deferred:** [M] x -> XREF: TODO-01-a.md §1'
+        ' (item: "document the -> XREF: syntax")')
+edges = B._walk_stamps_xrefs([line], [False])
+if len(edges) != 1 or edges[0].get("item_name") != "document the -> XREF: syntax":
+    bad.append("item-name lead: %r" % (edges,))
+
+# U+2192 spelling inside a label, on the Inputs surface (which normalises it).
+rows = B.extract_inputs_xrefs(
+    "## Inputs\n\n- → XREF: [see → XREF: details](TODO-02-b.md) §1 -- d\n")
+if [r["target_path"] for r in rows] != ["TODO-02-b.md"]:
+    bad.append("u2192 label lead: %r" % (rows,))
+
+# CONTROL: two genuinely separate clauses still yield two edges.
+line = ('> **Accepted:** [M] x -> XREF: TODO-01-a.md §1'
+        ' -> XREF: TODO-02-b.md §2')
+if len(B._walk_stamps_xrefs([line], [False])) != 2:
+    bad.append("control: real multi-clause stamp lost an edge")
+print("OK" if not bad else "; ".join(bad))
+PY
+)"
+if [ "$T37F" = "OK" ]; then
+    t_pass "s37f: a lead inside a label or item name neither cuts nor starts a clause"
+else
+    t_fail "s37f: $T37F"
+fi
+
+# Sub-test 37g: NO INPUTS FORM EVER EMITS AN EMPTY target_path. The schema sets
+# minLength 1, so an empty destination is not a lax value -- a routed consumer
+# rejects the whole cache. A doubled delimiter cuts to nothing at offset zero.
+T37G="$(python3 - <<'PY'
+import sys
+sys.path.insert(0, "scripts/todo-graph")
+import build as B
+bad = []
+for probe in ("- -> XREF: ``path.md`` §1 -- d",
+              "- -> XREF: `` §1 -- d",
+              "- -> XREF: `path.md §1 -- d",
+              "- -> XREF: `path.md`: prose -- d",
+              "- -> XREF: [x]() -- d"):
+    for row in B.extract_inputs_xrefs("## Inputs\n\n" + probe + "\n"):
+        if not row.get("target_path"):
+            bad.append(probe)
+# CONTROL: the ordinary shapes still normalise to the destination.
+rows = B.extract_inputs_xrefs("## Inputs\n\n- -> XREF: `path.md`: prose -- d\n")
+if [r["target_path"] for r in rows] != ["path.md"]:
+    bad.append("control code-span: %r" % (rows,))
+print("OK" if not bad else "empty/......: " + "; ".join(map(str, bad)))
+PY
+)"
+if [ "$T37G" = "OK" ]; then
+    t_pass "s37g: no Inputs token shape normalises to an empty target_path"
+else
+    t_fail "s37g: $T37G"
+fi
+
+# Sub-test 37h: MULTI-CLAUSE PARSING SCALES LINEARLY. The first cut copied
+# `text[:limit]` once per clause, so a many-clause line grew quadratically
+# (~1.47s at 64k clauses, ~6.92s at 128k). Every match is `endpos`-bounded now.
+# The assertion is on the RATIO, not a wall-clock budget, so it does not become
+# a flake on a loaded host.
+T37H="$(python3 - <<'PY'
+import sys, time
+sys.path.insert(0, "scripts/todo-graph")
+import cache_schema as cs
+
+def elapsed(n):
+    line = "x" + " -> XREF: TODO-01-a.md §1" * n
+    t = time.monotonic()
+    c = sum(1 for _ in cs.iter_xref_clauses(line))
+    return time.monotonic() - t, c
+
+t1, c1 = elapsed(2000)
+t2, c2 = elapsed(8000)
+if c1 != 2000 or c2 != 8000:
+    print("clause counts wrong: %d %d" % (c1, c2)); raise SystemExit
+# 4x the input must not cost ~16x. Quadratic would; linear lands near 4x.
+ratio = t2 / t1 if t1 > 0 else 0
+print("OK" if ratio < 9 else "superlinear: 4x input cost %.1fx time" % ratio)
+PY
+)"
+if [ "$T37H" = "OK" ]; then
+    t_pass "s37h: multi-clause parsing scales linearly, not quadratically"
+else
+    t_fail "s37h: $T37H"
 fi
 
 # ----------------------------------------------------------------------

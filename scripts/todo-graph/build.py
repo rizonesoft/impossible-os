@@ -322,6 +322,13 @@ STAMP_HEADER_RE = re.compile(
 # the builder and the repairer cannot disagree about where a target ends
 # (TODO-06 section 33). See that constant for why the label refuses nested
 # brackets.
+# SECTION 37 RETIRED THE TARGET HALF OF THIS GRAMMAR. `_walk_stamps_xrefs`
+# now finds each clause with `cache_schema.XREF_LEAD_RE` and parses it with
+# `cache_schema.parse_xref_clause`, which owns the target, the section marker
+# and the item parenthetical for all four producers. The constant is kept
+# because `render.py` and the tests still match stamp clauses as a WHOLE for
+# display and fixture purposes, where a single regex is the right tool -- but
+# it is no longer what decides how many destinations a clause names.
 XREF_CLAUSE_RE = re.compile(
     r"->\s+XREF:\s+(?P<target_path>" + _cs.XREF_TARGET_PATTERN + r")"
     r"\s+(?P<target_section>§\S+)"
@@ -347,11 +354,53 @@ XREF_CLAUSE_RE = re.compile(
 # binding malformed authoring to the FIRST destination where the bare-token arm
 # used to hand over the whole token and fail closed. Reported independently by
 # the adversarial and perf legs (section 33 post-ship, [medium]).
-INPUTS_XREF_RE = re.compile(
-    r"^-\s+->\s+XREF:\s+(?:(" + _cs.XREF_LINK_PATTERN + r")|`?([^`\s]+))(?=[`\s]|$)"
-    r"(?:[`\s]+(§\S+))?",
-    re.MULTILINE,
-)
+# SECTION 37 CUT THIS DOWN TO THE LEAD-IN. It used to carry its own target
+# arms, its own trailing boundary and its own section-marker tail -- a third
+# spelling of a grammar two other producers also spelled -- and the target now
+# belongs to `cache_schema.parse_xref_clause`. What is genuinely LOCAL to this
+# surface, and all that remains here, is that the arrow must open the bullet.
+INPUTS_XREF_LEAD_RE = re.compile(r"^-\s+->\s+XREF:\s+")
+
+
+def _inputs_target(token: str) -> str:
+    """Normalise one Inputs target token to a DESTINATION.
+
+    Both Inputs surfaces resolve a token to a destination the same way and now
+    say so once. The shared clause parser deliberately returns the RAW token --
+    the stamp subtree keeps its backticks (194 live targets do, and
+    `resolve_xref_target` strips them at the point of use), so normalising in
+    the parser would rewrite that subtree to fix a difference that only exists
+    here.
+
+    A BACKTICKED TARGET IS A CODE SPAN AND ENDS AT ITS CLOSING BACKTICK. The
+    bullet arm used to encode that as `` `?([^`\\s]+) `` and the table arm as a
+    two-ended `strip`, which disagree on a token whose backtick is INTERNAL:
+    `` `path.md`: description `` is one non-space run, so a two-ended strip
+    leaves the trailing `` `: `` attached and publishes a destination no
+    resolver can match. Exactly one live row does this
+    (`todo/02-kernel-core/TODO-24-alpc-message-ports.md:40`), and the shared
+    parser is what surfaced it -- the old bullet regex hid it by never letting
+    the token past the backtick in the first place.
+
+    NEVER RETURNS EMPTY. `inputs_xrefs[].target_path` carries a schema
+    `minLength` of 1, so an empty destination is not a lax value but a cache a
+    routed consumer REJECTS WHOLE. A doubled delimiter (`` ``path.md`` ``) cuts
+    to nothing at offset zero, and the retired bullet arm never matched that
+    shape at all -- so normalising it to `""` would let a malformed row poison
+    the artifact where it previously produced no edge (Codex adversarial round
+    1, [medium]). Section 33 established the same rule for the link arm; this is
+    that rule, one token shape over: fall back to the RAW token, which does not
+    resolve and therefore surfaces as an ordinary stale-XREF finding.
+    """
+    if token.startswith("["):
+        return _cs.unwrap_xref_link(token) or token
+    raw = token
+    if token.startswith("`"):
+        token = token[1:]
+    cut = token.find("`")
+    if cut >= 0:
+        token = token[:cut]
+    return token or raw
 
 # Implementation Order header: detect optional Section column.
 # Looking for table row patterns under `## Implementation Order`.
@@ -1396,8 +1445,10 @@ def _walk_inputs_xrefs(lines, masked) -> list:
         # match consistency. CLAUDE.md only forbids en/em DASHES; the
         # unicode arrow is allowed and shows up in some Inputs tables.
         normalized = ln.replace("\u2192", "->")
-        # Bullet form (existing).
-        m = INPUTS_XREF_RE.match(normalized)
+        # Bullet form. The LEAD-IN is recognised here -- this surface, unlike
+        # the stamp, requires the arrow to open the bullet -- and everything
+        # from the target rightwards is the shared parser's (TODO-06 §37).
+        #
         # A SECOND TARGET AFTER THE FIRST MAKES THE BULLET MALFORMED, and the
         # trailing boundary alone does not catch it -- whitespace is exactly
         # what that boundary accepts, so `[a](x.md) [b](y.md) §1` published
@@ -1407,10 +1458,11 @@ def _walk_inputs_xrefs(lines, masked) -> list:
         # the bullet entirely is the fail-closed answer here: unlike the repair
         # path there is no line to rewrite, so the malformed row simply
         # contributes no edge rather than a confidently wrong one.
-        if m and _cs.XREF_ADJACENT_TARGET_RE.match(
-                normalized, m.end(1) if m.group(1) else m.end(2)):
+        lead = INPUTS_XREF_LEAD_RE.match(normalized)
+        m = _cs.parse_xref_clause(normalized, lead.end()) if lead else None
+        if m is not None and m.malformed:
             continue
-        if m:
+        if m is not None:
             # UNWRAP HERE so `inputs_xrefs[].target_path` keeps meaning what it
             # always meant -- a DESTINATION. The link arm now captures the whole
             # link (one grammar, shared with the stamp target), and unwrapping
@@ -1428,10 +1480,14 @@ def _walk_inputs_xrefs(lines, masked) -> list:
             # the raw token preserves the prior behaviour exactly: it does not
             # resolve, so it surfaces as an ordinary stale-XREF finding rather
             # than as a corrupt artifact.
-            target = (_cs.unwrap_xref_link(m.group(1)) or m.group(1)
-                      if m.group(1) else m.group(2))
-            section = m.group(3)
-            out.append({"target_path": target, "target_section": section})
+            #
+            # BACKTICK STRIPPING STAYS HERE rather than moving into the parser.
+            # The bare arm of this surface excluded backticks outright before
+            # section 37, while the stamp surface keeps whatever the token
+            # carries; normalising in the parser would silently change the
+            # stamp subtree's values to fix a cosmetic difference in this one.
+            out.append({"target_path": _inputs_target(m.target),
+                        "target_section": m.section})
             continue
         # Table-row form: `| -> XREF: <path>[ §N] | ... |` or
         # `| `<path>`[ §N] | ... |` (some files just put the path in a
@@ -1460,9 +1516,20 @@ def _walk_inputs_xrefs(lines, masked) -> list:
                 # simply wrong about which function it lives in, and the
                 # mistake is worth naming: the scope argument sounded right and
                 # was never checked against the enclosing def.
-                path_match = re.match(
-                    r"^(" + _cs.XREF_TARGET_PATTERN + r")(?:\s+(§\S+))?$",
-                    head_clean)
+                #
+                # THE ANCHOR IS NOW AN EXPLICIT WHOLE-CELL REQUIREMENT rather
+                # than a regex `$`. This branch refused a two-destination cell
+                # only because the anchor failed -- correct, but emergent, so
+                # the rule lived in punctuation instead of in a decision. It
+                # asks the shared parser now and keeps exactly the old contract
+                # locally: the clause must consume the ENTIRE cell and carry no
+                # trailing parenthetical, which is what `^TARGET( §N)?$` meant
+                # (TODO-06 §37).
+                clause = _cs.parse_xref_clause(head_clean, 0)
+                path_match = (clause if clause is not None
+                              and clause.malformed is None
+                              and clause.item_span is None
+                              and clause.end == len(head_clean) else None)
                 if path_match:
                     # STRIP BACKTICKS FROM THE TOKEN, not just the cell. The
                     # cell-level `strip("`")` above cannot reach them when a
@@ -1473,12 +1540,10 @@ def _walk_inputs_xrefs(lines, masked) -> list:
                     # backticks itself, but it made the table form disagree
                     # with the bullet form -- whose bare arm excludes backticks
                     # outright. Found by the surface-form parity fixture.
-                    tgt = (_cs.unwrap_xref_link(path_match.group(1))
-                           or path_match.group(1)).strip("`")
                     out.append(
                         {
-                            "target_path": tgt,
-                            "target_section": path_match.group(2),
+                            "target_path": _inputs_target(path_match.target),
+                            "target_section": path_match.section,
                         }
                     )
     return out
@@ -1514,17 +1579,29 @@ def _walk_stamps_xrefs(lines, masked) -> list:
             continue
         kind = header_m.group("kind").lower()
         severity = header_m.group("severity") or ""
-        # Iterate every XREF clause from after the header onward.
-        for clause in XREF_CLAUSE_RE.finditer(ln, pos=header_m.end()):
+        # Iterate every XREF clause from after the header onward, through the
+        # SHARED parser (TODO-06 section 37). This site used to bind the target
+        # and its REQUIRED section marker in one regex, which meant a clause
+        # naming two destinations simply failed to match and vanished -- the
+        # right outcome, reached without ever asking the question, so the rule
+        # could not be shared and had to be rediscovered here every time
+        # section 33 found another shape.
+        #
+        # THE POLICY IS UNCHANGED AND STAYS LOCAL: a malformed clause, or one
+        # with no section marker, contributes no edge and says nothing. Adding a
+        # diagnostic here would be new output from a refactor that is supposed
+        # to be behaviour-preserving.
+        for _lead, clause in _cs.iter_xref_clauses(ln, header_m.end()):
+            if clause.malformed or clause.section is None:
+                continue
             entry = {
                 "kind": kind,
                 "severity": severity,
-                "target_path": clause.group("target_path"),
-                "target_section": clause.group("target_section"),
+                "target_path": clause.target,
+                "target_section": clause.section,
             }
-            item = clause.group("item_name")
-            if item:
-                entry["item_name"] = item
+            if clause.item_name:
+                entry["item_name"] = clause.item_name
             out.append(entry)
     return out
 

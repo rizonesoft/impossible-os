@@ -85,7 +85,7 @@ title: "TODO-06 -- TODO Metadata Layer and Derived Graph"
 | ⭐  |  34   |   §34   | The performance budget times itself on a clock that steps (found verifying §29)        | §2           |  [x]   |
 | ⭐  |  35   |   §35   | A same-file stamp matches its own text, so repair answers with the stamp's line        | §29          |  [x]   |
 | ⭐  |  36   |   §36   | The cache producer adopts the shared fence tracker (found by §32; primitives from §35) | §2, §32, §35 |  [x]   |
-| ⭐  |  37   |   §37   | One clause parser decides how many destinations a clause names (consolidation)         | §33          |  [ ]   |
+| ⭐  |  37   |   §37   | One clause parser decides how many destinations a clause names (consolidation)         | §33          |  [x]   |
 | ⭐  |  38   |   §38   | Every mutating and gate parser adopts the shared fence tracker (split out of §36)      | §36          |  [ ]   |
 | ⭐  |  39   |   §39   | The shared fence tracker becomes container-aware (split out of §36)                    | §36, §38     |  [ ]   |
 
@@ -1924,19 +1924,43 @@ So this is a refactor with a named risk, not a repair. Do it when the fifth prod
 
 The four producers are `build.py`'s `XREF_CLAUSE_RE` (stamp targets), `INPUTS_XREF_RE` (Inputs bullets), the table branch inside `extract_inputs_xrefs`, and `validate.py`'s `fix_line_numbers` (the repair path).
 
-- [ ] One clause parser, returning the destinations it found
-      A function that answers "how many targets does this clause name, and what are they" once, so a new shape is handled in one place rather than in four call sites that each match `cache_schema.XREF_ADJACENT_TARGET_RE` and each have to be remembered. That constant is what this replaces.
-- [ ] Every producer calls it, and a test proves they cannot disagree
-- [ ] The FOURTH live grammar, in `.claude/hooks/skill_step_block.py:61`, adopts the shared parser -- it is the remaining second spelling outside the consolidation
+- [x] One clause parser, returning the destinations it found
+      `cache_schema.parse_xref_clause(text, pos, limit=None)` returns an immutable `XrefClause` -- `targets` (a TUPLE, every destination the clause names), the primary target's span, the section marker and its span, the item name and the parenthetical's span, the consumed end offset, and a `malformed` reason. `XREF_ADJACENT_TARGET_RE` is now the private `_XREF_ADJACENT_TARGET_RE`, reachable only through the parser.
+      - `targets` is a tuple rather than a target plus a boolean because the design review's second finding was that a bool records that a caller should refuse WITHOUT recording what it refused -- unusable in a diagnostic and untestable for parity.
+      - THE SEAM MOVED IN RESPONSE TO THE DESIGN REVIEW'S FIRST FINDING. The draft kept each producer's grammar and called the parser after it matched, which for the stamp and table surfaces means the parser never sees the malformed clause at all: `build.py:325` bound the target and its REQUIRED section marker in one regex, and the table branch anchored the whole cell, so a two-destination clause simply failed to match. A lead-in that owns the target relocates the drift instead of removing it. Lead-ins now end at `XREF:`.
+- [x] Every producer calls it, and a test proves they cannot disagree
+      All four route through it: `_walk_stamps_xrefs` (via `XREF_LEAD_RE`), the Inputs bullet (`INPUTS_XREF_LEAD_RE`, cut down to just the lead-in), the Inputs table branch, and `validate.py:fix_line_numbers`. Sub-test 37a runs ONE clause body through all four surface embeddings and requires an identical parse; 37b asserts each producer's own POLICY separately, because the policies legitimately differ and a verdict-only "identical treatment" assertion would pass while two callers bound different destinations.
+      - POLICY STAYED LOCAL BY DESIGN: the stamp and table surfaces drop silently, the bullet skips, and the repair path counts the clause, names it in a diagnostic and installs a `None` barrier. The parser reports what it found; it does not decide what that costs. No diagnostic was added at the two silent sites -- that would be new output from a behaviour-preserving refactor.
+- [/] The FOURTH live grammar, in `.claude/hooks/skill_step_block.py:61`, adopts the shared parser -- PARKED, control plane, operator-gated
+      `.claude/hooks/**` is control plane the unattended run may not edit, so only an attended session can land it; this is a park with a named owner, not an omission.
+      - The adopter also needs an import path decision the three producers do not: `cache_schema` lives in `scripts/todo-graph/`, and the hook runs from an arbitrary working directory, so it needs a path bootstrap or a vendored copy -- and a vendored copy would recreate the very duplication this section removed. Raised by this section's design review, which asked for the hook to be tested as a fifth consumer "including import behavior from outside the repository working directory".
+      - Reciprocal owner filed at [`overnight-runner-improvements-v14`](../overnight-runner-improvements/overnight-runner-improvements-v14.md) under "Filed by the 2026-08-11 run, TODO-06 section 37 ship".
       - `_XREF_RE = re.compile(r"->\s*XREF:\s*(?:\[[^\]]*\]\()?([\w./0-9-]+\.md)")`. Its label class `[^\]]*` truncates where the shared grammar does not, so the two disagree on a link whose label contains a bracket.
       - Lower stakes than the producers and deliberately parked here rather than patched in place: it feeds a read-XREF heuristic, so a miss under-counts evidence rather than binding a wrong file. Fixing a fourth copy while this consolidation is open is the duplication CLAUDE.md forbids.
       - XREF: transferred from `todo/overnight-runner-improvements/overnight-runner-improvements-v13.md` (item: "A fourth XREF link grammar lives in `skill_step_block.py`, outside the shared one"), closed there 2026-08-10 as owned by this section.
       The parity assertion matters more than the parser: a fixture that runs the SAME malformed clause through all four producers and requires identical treatment is what would have caught rounds 4-7 in one round instead of four.
-- [ ] Prove the corpus effect per clause before and after
-      Same bar as §33: the (file, token, destination) triple for all 1010 stamp targets and 945 Inputs rows, plus the repair path's ambiguous / unresolvable / missing counts, with a control that must fire.
-- [ ] Commit: `"todo-graph: one parser decides how many destinations a clause names"`
+- [x] Prove the corpus effect per clause before and after
+      NIL in both directions, per clause rather than by count: all 1010 stamp targets and 945 Inputs rows byte-identical on the (file, target, section, item) tuple, and the repair path unchanged at 0 updates / 6 ambiguous / 51 unresolvable / 155 missing.
+      - TWO CONTROLS, and both fire: forcing the parser to report every clause malformed takes the producers to 0/0, and forcing it to find no clause also takes them to 0/0. The first is the one that matters -- it proves each producer genuinely CONSULTS the shared verdict rather than merely importing the module.
+      - ONE ROW MOVED AND WAS PUT BACK. The shared token grammar keeps backticks (194 stamp targets carry them; `resolve_xref_target` strips them at the point of use), while the retired bullet arm excluded them -- so `` `path.md`: description `` gained a trailing `` `: ``. The fix is `build.py:_inputs_target`, ONE code-span rule now shared by both Inputs surfaces, which the two forms previously spelled differently (`` `?([^`\s]+) `` vs a two-ended `strip`).
+      - The first probe of this section over-counted, exactly as this section's own preamble warns: scanning every `-> XREF:` line found 3 "multi-destination" clauses, all of them ordinary checklist items no producer reads. Re-measured through the producers themselves: 0.
+- [x] Bound the clause at TOP LEVEL, and iterate clauses non-overlapping (post-ship adversarial round 1, [high])
+      The first cut searched for the next `-> XREF:` from the clause START, which is context-blind: `-> XREF: [see -> XREF: details](foo.md) §1` cut the clause inside the link label. The boundary is computed after each self-delimiting part (target, item parenthetical) is consumed instead.
+      - THE REVIEWER NAMED HALF OF IT. The callers still iterated leads with a plain `finditer`, so an inner lead did not merely cut the clause -- it STARTED one, publishing a fabricated second edge. The retired `XREF_CLAUSE_RE.finditer` never had that exposure because it consumed the whole clause. `cache_schema.iter_xref_clauses` restores non-overlap in one place; 37f pins ASCII and U+2192 spellings in both a label and an item name.
+      - Also from this round: no Inputs token may normalise to an empty `target_path` (schema `minLength` 1, and a doubled delimiter cut to nothing -- 37g), and every match is `endpos`-bounded rather than slicing `text[:limit]`, which was quadratic in clause count (37h asserts the ratio, not a wall-clock budget).
+- [x] Commit: `"todo-graph: one parser decides how many destinations a clause names"`
 
 **Test checkpoint:** the same malformed clause is treated identically by all four producers; the shapes §33 closed stay closed (adjacent, spaced, bare-plus-link, post-section-marker, and the barrier case); controls -- a `--` description mentioning another TODO, an `(item: ...)` parenthetical, a legitimate multi-XREF stamp line -- are unaffected; the corpus differential is nil; `bash scripts/todo-graph/tests/test_build.sh` and `bash scripts/test-tooling.sh` green.
+
+> **Test runner:** `bash scripts/todo-graph/tests/test_build.sh` -- expect `585/585 passed, 0 failed`, of which 8 are this section's (`37a` four-surface parse identity; `37b` per-producer refusal policy; `37c` the controls -- multi-XREF stamps, prose mentions, item tails, code spans; `37d` the clause bound under a widened adjacency grammar; `37e` a second target after the item parenthetical; `37f` a lead written inside a label or item name; `37g` no shape normalises to an empty target; `37h` linear multi-clause scaling). Sub-tests `33f` and `33g` were repaired to probe the producers instead of their retired regexes. Aggregate via `bash scripts/test-tooling.sh` at `1320/1320`. No kernel test surface: host tooling, so no `TEST_CAT_*` category or bat.
+
+> **Notes:**
+> - Shipped `cache_schema.parse_xref_clause` + the immutable `XrefClause`, `XREF_LEAD_RE`, and `build.py:_inputs_target`; `XREF_ADJACENT_TARGET_RE` is now private, reachable only through the parser.
+> - The seam is the LEAD-IN boundary, not the constant: each producer hands over the offset past `XREF:` and everything rightwards is the parser's, with policy staying local (silent drop, skip, or count-name-and-barrier).
+> - `CACHE_FORMAT_VERSION` 3 -> 4, the third time it has been spent and again for omission-vs-emission with no field name or type moving: a v3 and v4 cache are indistinguishable by shape until one of the changed clause shapes is written.
+> - Corpus effect nil per clause: 1010 stamp targets and 945 Inputs rows byte-identical, repair unchanged at 0/6/51/155, with a malformed-verdict control that zeroes both producers.
+> - Scope boundary: the three in-repo producers. The fourth grammar in `.claude/hooks/skill_step_block.py` is control plane, parked operator-gated with an unresolved import-path question.
+> - A claim written here was FALSE and its own fixture caught it: the clause bound was called load-bearing, and 37d measured 2 edges with and without it.
 
 -> XREF: [`TODO-06 §33`](#33-stamp-target-capture-splits-a-link-whose-label-contains-a-space) -- the section whose review found this class and closed every shape of it (item: "Refuse a multi-target stamp clause at the repair site, spaced or not (post-ship adversarial round 4, [high])"); it is stamped, so the consolidation is owned here.
 

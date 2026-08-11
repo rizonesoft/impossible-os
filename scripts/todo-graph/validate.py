@@ -2174,11 +2174,15 @@ def fix_line_numbers(nodes: list, snapshot: dict, id_index: dict, path_index: di
             # it counts as an unresolvable target, which is what makes the
             # caller exit non-zero rather than reporting a clean run (the
             # section 29 contract).
+            #
+            # SECTION 37: the target grammar, the boundary and the
+            # extra-destination test are all `cache_schema.parse_xref_clause`
+            # now. This site keeps its POLICY -- count it, name it, and install
+            # a barrier -- which is exactly what differs from the three builder
+            # surfaces, and is the reason the parser reports rather than
+            # decides.
             xref_positions: list = []
-            for m in re.finditer(
-                    r"->\s*XREF:\s*(" + cache_schema.XREF_TARGET_PATTERN
-                    + r")(?=\s|$)",
-                    rest):
+            for lead, m in cache_schema.iter_xref_clauses(rest):
                 # A MALFORMED TARGET IS A BARRIER, NOT A GAP. Dropping its
                 # position let the NEXT `(item: ...)` fall through to the
                 # nearest EARLIER valid target -- so a stamp carrying one good
@@ -2193,18 +2197,18 @@ def fix_line_numbers(nodes: list, snapshot: dict, id_index: dict, path_index: di
                 # than `rest[m.end():].lstrip()`, which copied the remainder of
                 # the line once per captured target -- O(line) per clause on
                 # stamps that carry up to 6 (Codex perf, same round).
-                if cache_schema.XREF_ADJACENT_TARGET_RE.match(rest, m.end()):
+                if m.malformed:
                     unresolvable_targets += 1
                     _report_diag(report, diags_emitted, "unresolvable-target",
                         f"[validate.py] FAIL fix-line-numbers: malformed XREF "
-                        f"clause {_diag(m.group(1))!r} is followed by a second "
+                        f"clause {_diag(m.target)!r} is followed by a second "
                         f"target (stamp at {rel}); the clause names more than "
                         f"one destination, so no line number was rewritten "
                         f"for it or for any item after it on this line"
                     )
-                    xref_positions.append((m.start(), None))
+                    xref_positions.append((lead.start(), None))
                     continue
-                xref_positions.append((m.start(), m.group(1).rstrip(",")))
+                xref_positions.append((lead.start(), m.target.rstrip(",")))
             if not xref_positions:
                 new_lines.append(ln)
                 continue
