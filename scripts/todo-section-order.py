@@ -25,8 +25,15 @@ narrow thing is one you can run without reading the diff.
   todo-section-order.py --check [paths...]   exit 1 if any file is out of order
   todo-section-order.py --fix   [paths...]   rewrite in place (pure move)
   todo-section-order.py --diff  [paths...]   show what --fix would do
+  todo-section-order.py --check-placement    exit 1 on sections after the tail
 
 With no paths, walks todo/**/*.md.
+
+EXIT 2 IS A REFUSAL, not a finding: the document ends inside an unclosed fence
+or HTML comment, so the shared tracker masks everything past the opener and no
+walk over it can be trusted. The three rewrite modes say so on stderr and touch
+nothing; `--check-placement` reports it on stdout, where lint Check 22b counts
+it as an error.
 """
 from __future__ import annotations
 
@@ -34,6 +41,20 @@ import glob
 import re
 import sys
 from pathlib import Path
+
+# The shared fence tracker (section 38, wrapping the section-36 primitive).
+# BOTH heading scans in this file take their mask from it: `parse`, which feeds
+# the pure-move rewrite, and `sections_after_closing`, which feeds the blocking
+# lint Check 22b. Two independent fence-blind walks over one document is the
+# exact drift the shared tracker exists to end -- and here it would have let a
+# `## N.` written inside a fenced EXAMPLE split a real section block.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+try:
+    import todo_fence as _fence
+except ImportError as _exc:                                  # pragma: no cover
+    sys.stderr.write(f"todo-section-order: cannot import the shared fence "
+                     f"tracker: {_exc}\n")
+    raise
 
 SECTION_RE = re.compile(r"^## (\d+)\.")
 ANY_H2_RE = re.compile(r"^## ")
@@ -58,10 +79,32 @@ CLOSING_MATTER = {"OS Comparison", "Unit Tests", "Verification", "History",
                   "Format Quick Reference"}
 
 
-def parse(text: str):
-    """(head, [(num, block)], tail) or None when the shape is unsafe to touch."""
-    lines = text.split("\n")
-    starts = [i for i, l in enumerate(lines) if SECTION_RE.match(l)]
+def scan(text: str):
+    """`(lines, mask, unclosed_fence, unclosed_comment)` -- ONE scan per document.
+
+    Threaded through `parse` and `sections_after_closing` rather than recomputed
+    by each, so `reorder` (which calls both) and `_check_placement` pay for the
+    walk once and, more importantly, cannot end up judging the same document by
+    two different masks.
+    """
+    return _fence.scan_text(text)
+
+
+def parse(text: str, sc=None):
+    """(head, [(num, block)], tail) or None when the shape is unsafe to touch.
+
+    REFUSES a document ending inside an unclosed fence or HTML comment. The mask
+    hides everything from the opener to EOF, so the sections after it simply
+    vanish -- and this function's answer drives a file REWRITE, where vanished
+    sections would be silently dropped or reparented. `None` is this function's
+    existing "I cannot model this shape" verdict, and every caller already
+    treats it as do-nothing.
+    """
+    lines, mask, unclosed_fence, unclosed_comment = sc or scan(text)
+    if unclosed_fence or unclosed_comment:
+        return None
+    starts = [i for i, l in enumerate(lines)
+              if not mask[i] and SECTION_RE.match(l)]
     if len(starts) < 2:
         return None
     first, last = starts[0], starts[-1]
@@ -72,6 +115,8 @@ def parse(text: str):
     # History blocks, i.e. past the end of the file's closing matter.
     closing = []
     for i in range(first, len(lines)):
+        if mask[i]:
+            continue
         if ANY_H2_RE.match(lines[i]) and not SECTION_RE.match(lines[i]):
             title = lines[i][3:].strip()
             if i < last and title not in CLOSING_MATTER:
@@ -95,15 +140,15 @@ def parse(text: str):
     return (tuple(lines[:first]), blocks, tail)
 
 
-def is_ordered(text: str) -> bool:
-    p = parse(text)
+def is_ordered(text: str, sc=None) -> bool:
+    p = parse(text, sc)
     if p is None:
         return True                      # nothing we can judge
     nums = [n for n, _ in p[1]]
     return nums == sorted(nums)
 
 
-def sections_after_closing(text: str):
+def sections_after_closing(text: str, sc=None):
     """`## N.` sections that sit AFTER the closing matter, in file order.
 
     A SEPARATE predicate from `is_ordered` on purpose. Sections appended past
@@ -120,8 +165,9 @@ def sections_after_closing(text: str):
     wedge whatever run is mid-section in that file. Report first, repair at a
     boundary, promote after.
     """
-    lines = text.split("\n")
-    starts = [i for i, l in enumerate(lines) if SECTION_RE.match(l)]
+    lines, mask, _uf, _uc = sc or scan(text)
+    starts = [i for i, l in enumerate(lines)
+              if not mask[i] and SECTION_RE.match(l)]
     if not starts:
         return []
     # Only a recognised heading that FOLLOWS the first numbered section is
@@ -131,6 +177,8 @@ def sections_after_closing(text: str):
     # widening the vocabulary -- the scan caught the error on its next run).
     first_closing = None
     for i in range(starts[0] + 1, len(lines)):
+        if mask[i]:
+            continue
         l = lines[i]
         if ANY_H2_RE.match(l) and not SECTION_RE.match(l):
             if l[3:].strip() in CLOSING_MATTER:
@@ -140,15 +188,18 @@ def sections_after_closing(text: str):
         return []
     out = []
     for i in range(first_closing, len(lines)):
+        if mask[i]:
+            continue
         m = SECTION_RE.match(lines[i])
         if m:
             out.append((int(m.group(1)), i + 1, lines[i].strip()))
     return out
 
 
-def reorder(text: str):
+def reorder(text: str, sc=None):
     """Reordered text, or None if unsafe / already ordered."""
-    p = parse(text)
+    sc = sc or scan(text)
+    p = parse(text, sc)
     if p is None:
         return None
     head, blocks, tail = p
@@ -160,7 +211,7 @@ def reorder(text: str):
     # on three files (TODO-04 usermode x10, TODO-07 lsp-mcp x1, TODO-04
     # system-logging x1). The rebuild below always emits head + sorted sections
     # + tail, so it repairs placement for free once it is allowed to run.
-    if nums == sorted(nums) and not sections_after_closing(text):
+    if nums == sorted(nums) and not sections_after_closing(text, sc):
         return None
     ordered = sorted(blocks, key=lambda nb: nb[0])
     out_lines = list(head)
@@ -182,10 +233,26 @@ def reorder(text: str):
 
 
 def _targets(argv):
+    """Explicit paths, or the repository's own `todo/` corpus.
+
+    SYMLINKS ARE NOT PART OF THE CORPUS. A symlinked `todo/` -- or a symlinked
+    `*.md` inside it -- makes this walk read whatever the link points at, so a
+    root replaced with a link to `$HOME` or `/` turns two blocking lint checks
+    (22 and 22b run this tool) into an unbounded traversal of somewhere else
+    entirely. Guarding only `lint.sh`'s own Check 19 left that escape open
+    through this tool's glob (Codex adversarial, section 41 round 8, [medium]).
+    Explicit paths are still honoured as given: naming a file is a deliberate
+    act, and `main()` refuses what it cannot read.
+    """
     paths = [a for a in argv if not a.startswith("-")]
     if paths:
         return [Path(p) for p in paths]
-    return [Path(p) for p in sorted(glob.glob("todo/**/*.md", recursive=True))]
+    root = Path("todo")
+    if root.is_symlink() or not root.is_dir():
+        return []
+    return [p for p in (Path(x) for x in
+                        sorted(glob.glob("todo/**/*.md", recursive=True)))
+            if p.is_file() and not p.is_symlink()]
 
 
 def _check_placement(paths) -> int:
@@ -193,9 +260,31 @@ def _check_placement(paths) -> int:
     for path in paths:
         try:
             text = Path(path).read_text(encoding="utf-8")
-        except Exception:
+        except OSError as exc:
+            hits += 1
+            print(f"{path}: cannot check placement -- unreadable ({exc})")
             continue
-        bad = sections_after_closing(text)
+        except UnicodeDecodeError as exc:
+            # SAME FAIL-OPEN, one function over. A bare `except: continue` here
+            # meant a file this gate could not read passed it, which is the
+            # exact shape the comment below refuses for unclosed fences.
+            hits += 1
+            print(f"{path}: cannot check placement -- not valid UTF-8 ({exc})")
+            continue
+        sc = scan(text)
+        # AN UNPARSEABLE DOCUMENT IS A FINDING, not a clean file. The mask hides
+        # everything past an unclosed opener, so `sections_after_closing` would
+        # return `[]` and this gate would go SILENT on exactly the malformed
+        # document it should be loudest about -- fail-open, which is what
+        # `todo_fence`'s module docstring warns a gate must never do with the
+        # mask alone. Printed on stdout because lint Check 22b counts one error
+        # per line it reads there.
+        reason = _fence.unclosed_reason(*sc[2:])
+        if reason:
+            hits += 1
+            print(f"{path}: cannot check placement -- {reason}")
+            continue
+        bad = sections_after_closing(text, sc)
         if bad:
             hits += 1
             names = ", ".join(f"section {n} (line {ln})" for n, ln, _ in bad[:6])
@@ -210,15 +299,45 @@ def main(argv) -> int:
     mode = ("fix" if "--fix" in argv else
             "diff" if "--diff" in argv else "check")
     rc = 0
+    refused = False
     for path in _targets(argv):
         try:
             text = path.read_text(encoding="utf-8")
-        except OSError:
+        except OSError as exc:
+            # AN UNREADABLE TARGET IS A REFUSAL, not a skip. Continuing here
+            # returned rc 0 from `--check`, `--diff` and `--fix` for a path that
+            # was never scanned -- and the clean-corpus gate in
+            # `scripts/test-tooling.sh` reads rc 0 as proof that EVERY target
+            # was (Codex adversarial, section 41 round 7, [medium]).
+            print(f"{path}: REFUSED -- unreadable ({exc}). Left untouched.",
+                  file=sys.stderr)
+            refused = True
             continue
-        new = reorder(text)
+        except UnicodeDecodeError as exc:
+            # A DECODE FAILURE IS THE SAME REFUSAL as an unclosed fence, not a
+            # traceback. Uncaught it exited 1, which is this tool's "sections
+            # out of order" code, so a non-UTF-8 file reported findings it never
+            # computed (Codex adversarial, section 41 round 6, [medium]).
+            print(f"{path}: REFUSED -- not valid UTF-8 ({exc}). Left untouched.",
+                  file=sys.stderr)
+            refused = True
+            continue
+        sc = scan(text)
+        # `reorder` returns None for BOTH "already ordered" and "malformed", and
+        # the loop below treats None as success -- so without this a file nobody
+        # can parse produced a silent rc 0 from `--check`, `--diff` and `--fix`
+        # alike (Codex design review, section 41, [medium]). Same exit-2 contract
+        # `todo-reflow.py` uses for the same condition.
+        reason = _fence.unclosed_reason(*sc[2:])
+        if reason:
+            print(f"{path}: REFUSED -- {reason}. Left untouched.",
+                  file=sys.stderr)
+            refused = True
+            continue
+        new = reorder(text, sc)
         if new is None:
             continue
-        nums = [n for n, _ in parse(text)[1]]
+        nums = [n for n, _ in parse(text, sc)[1]]
         if mode == "check":
             print(f"{path}: sections out of order: {nums}")
             rc = 1
@@ -231,7 +350,7 @@ def main(argv) -> int:
         else:
             path.write_text(new, encoding="utf-8")
             print(f"{path}: reordered {nums} -> {sorted(nums)}")
-    return rc
+    return 2 if refused else rc
 
 
 def _selftest() -> int:

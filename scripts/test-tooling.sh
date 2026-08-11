@@ -173,6 +173,11 @@ tt_install_lint() {                     # $1 = scratch repo root
     cp "$REPO_ROOT/scripts/lint.sh"                    "$1/scripts/lint.sh"
     cp "$REPO_ROOT/scripts/todo_fence.py"              "$1/scripts/todo_fence.py"
     cp "$REPO_ROOT/scripts/todo-graph/cache_schema.py" "$1/scripts/todo-graph/cache_schema.py"
+    # Check 19's hard-wrap half runs this one, and since section 41 it treats a
+    # nonzero exit as an ERROR -- so an absent script (python3's own exit 2)
+    # would make every scratch repo report errors it has nothing to do with.
+    # Same closure argument as the three above, found the same way.
+    cp "$REPO_ROOT/scripts/todo-reflow.py"             "$1/scripts/todo-reflow.py"
     chmod +x "$1/scripts/lint.sh"
 }
 
@@ -4702,6 +4707,28 @@ if [ "$_reflow_rc" = "2" ]; then
     t_fail "todo_reflow_no_refusals  reflow would alter content in some todo file"
 else
     t_pass "todo_reflow_no_refusals  content-preserving across every todo/ file"
+fi
+# The OTHER mutating repair tool. Its selftest was never wired (section 41) even
+# though `--fix` rewrites files and `--check`/`--check-placement` back two
+# blocking lint checks -- so its pure-move proof was only ever run by hand.
+if python3 "$REPO_ROOT/scripts/todo-section-order.py" --selftest >/dev/null 2>&1; then
+    t_pass "todo_section_order_selftest  reorder is a pure block move"
+else
+    t_fail "todo_section_order_selftest  embedded selftest failed"
+fi
+# A CLEAN-CORPUS GATE REQUIRES rc 0, not merely "not 2". Failing only on 2 let
+# every other outcome report as clean -- including rc 1, which is both "sections
+# out of order" AND, before this section fixed it, an uncaught decode crash
+# (Codex adversarial, section 41 round 6). Diagnostics are kept for the failure
+# message rather than discarded to /dev/null.
+_order_rc=0
+_order_out="$(cd "$REPO_ROOT" && python3 scripts/todo-section-order.py --check 2>&1)" \
+    || _order_rc=$?
+if [ "$_order_rc" = "0" ]; then
+    t_pass "todo_section_order_clean_corpus  every todo/ file scans in order"
+else
+    t_fail "todo_section_order_clean_corpus  rc=$_order_rc" \
+           "out: $(printf '%s' "$_order_out" | head -3)"
 fi
 
 # search_offload_gate is RETIRED (2026-07-28): the headless run it was scoped to

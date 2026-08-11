@@ -1584,9 +1584,112 @@ else
         echo -e "${YELLOW}warn${NC}: Check 19 (todo-item-length) $LINT19_ITEMS checklist item(s) over the 250-char cap across $LINT19_FILES file(s) (legacy debt; NEW ones are blocked at commit by scripts/todo-staged-check.py)"
         WARNINGS=$((WARNINGS + 1))
     fi
-    LINT19_WRAP=$( { python3 "$REPO_ROOT/scripts/todo-reflow.py" --check \
-        $(find "$REPO_ROOT/todo" -name '*.md' 2>/dev/null) 2>/dev/null || true; } \
-        | grep -c 'would reflow' || true)
+    # THE REFUSAL IS PROPAGATED, not swallowed. This used to send stderr to
+    # /dev/null, turn every nonzero exit into success with `|| true`, and count
+    # only stdout lines saying "would reflow" -- so `todo-reflow.py`'s exit 2
+    # (the document ends inside an unclosed fence or HTML comment, or an
+    # indented delimiter is hiding hard-wrapped prose) reached the lint as
+    # SILENCE. Measured: the tool returned 2 on the hostile fixture while this
+    # check reported 0 files (Codex adversarial, section 41 round 3, [medium]).
+    # A gate adopting the shared tracker and then discarding its refusal is the
+    # exact fail-open shape `todo_fence`'s module docstring exists to prevent.
+    LINT19_WRAP=0
+    # CORPUS DISCOVERY IS GUARDED THREE WAYS, and each guard was paid for.
+    #   -d: lint.sh runs under `set -euo pipefail`, so ASSIGNING from a `find`
+    #       over a MISSING todo/ aborts the WHOLE linter -- rc 1, no diagnostic,
+    #       every later check silently skipped. Measured: it killed
+    #       `lint_check6_marker` in the tooling suite, whose scratch repo has no
+    #       todo/ (Codex adversarial, section 41 round 5, [medium]). The
+    #       pre-existing `$(find ...)` uses above survive only because they are
+    #       command ARGUMENTS, whose substitution status set -e ignores.
+    #   `|| rc`: any OTHER find failure is reported rather than swallowed.
+    #   -print0 + array: filenames reach the tool quoted, not word-split.
+    # An EMPTY list is skipped rather than passed on: with no FILE arguments the
+    # tool prints its usage and exits 2, which this check reads as a refusal.
+    #   -L: a SYMLINKED todo/ is REFUSED, not followed. `[ -d ]` follows the
+    #       link while a plain find does not traverse it, so the scan enumerated
+    #       NOTHING and passed as if the corpus were empty (round 6, [medium];
+    #       measured 0 files vs 1). `find -H` fixed that and was then WITHDRAWN
+    #       on round 7: it makes the link's target the corpus, so a todo/
+    #       pointing at $HOME or / has the linter reading, and hard-wrap
+    #       checking, the whole of it. This scanner wants the repository's own
+    #       corpus, and "that is not it" is a better answer than either
+    #       traversing elsewhere or silently finding nothing.
+    #   mktemp guarded: it is a command substitution in an assignment, so under
+    #       set -e a full or unwritable TMPDIR takes the whole linter down.
+    #       Measured: `export TMPDIR=/nonexistent; V="$(mktemp)"` exits 1.
+    LINT19_FILES=()
+    LINT19_FIND_RC=0
+    LINT19_INFRA=""
+    if [ -L "$REPO_ROOT/todo" ]; then
+        LINT19_INFRA="todo/ is a symlink; the hard-wrap scan requires a real directory inside the repository"
+    elif [ -d "$REPO_ROOT/todo" ]; then
+        if LINT19_LIST="$(mktemp 2>/dev/null)"; then
+            # -type f excludes a symlinked DESCENDANT too: refusing only a
+            # symlinked root still let `todo/x.md -> /etc/passwd` be opened and
+            # scanned (round 8, [medium]).
+            find "$REPO_ROOT/todo" -name '*.md' -type f -print0 > "$LINT19_LIST" 2>/dev/null \
+                || LINT19_FIND_RC=$?
+            while IFS= read -r -d '' LINT19_F; do
+                LINT19_FILES+=("$LINT19_F")
+            done < "$LINT19_LIST"
+            rm -f "$LINT19_LIST"
+        else
+            LINT19_INFRA="could not create a temporary file (mktemp failed)"
+        fi
+    fi
+    if [ "$LINT19_FIND_RC" != "0" ]; then
+        LINT19_INFRA="could not enumerate todo/*.md (find exited $LINT19_FIND_RC)"
+    fi
+    if [ -n "$LINT19_INFRA" ]; then
+        echo -e "${RED}error${NC}: Check 19 (todo-hard-wrap) $LINT19_INFRA -- the hard-wrap scan did not run"
+        ERRORS=$((ERRORS + 1))
+    fi
+    if [ "${#LINT19_FILES[@]}" -gt 0 ] && LINT19_WRAP_ERR="$(mktemp 2>/dev/null)"; then
+        LINT19_WRAP_RC=0
+        LINT19_WRAP_OUT="$(python3 "$REPO_ROOT/scripts/todo-reflow.py" --check \
+            "${LINT19_FILES[@]}" 2>"$LINT19_WRAP_ERR")" || LINT19_WRAP_RC=$?
+        # Counted, never branched on the exit status of a `grep -v`: this host's
+        # grep is ugrep, whose `-v` status does not follow the GNU rule.
+        LINT19_WRAP=$(printf '%s\n' "$LINT19_WRAP_OUT" | grep -c 'would reflow' || true)
+        # THE EXIT CODE IS VALIDATED AS AN ENVELOPE, not just tested for 2.
+        # `rc 1` is the tool's "found hard-wrapped prose" code and must come
+        # with at least one record on stdout; anything else exiting 1 is a CRASH
+        # wearing the findings code -- an uncaught decode error did exactly that
+        # and this check counted zero (Codex adversarial, section 41 round 4).
+        # A missing interpreter or script is python3's own 2, and lands here too.
+        LINT19_WRAP_BAD=0
+        case "$LINT19_WRAP_RC" in
+            0) ;;
+            1) [ "${LINT19_WRAP:-0}" -gt 0 ] || LINT19_WRAP_BAD=1 ;;
+            *) LINT19_WRAP_BAD=1 ;;
+        esac
+        if [ "$LINT19_WRAP_BAD" = "1" ]; then
+            # ERROR, matching Check 22b's refusal on the same condition: a file
+            # the repair tool cannot read is not a style warning.
+            LINT19_WRAP_SAID=0
+            while IFS= read -r line; do
+                [ -n "$line" ] || continue
+                echo -e "${RED}error${NC}: Check 19 (todo-hard-wrap) $line"
+                ERRORS=$((ERRORS + 1))
+                LINT19_WRAP_SAID=1
+            done < "$LINT19_WRAP_ERR"
+            # A silent nonzero still has to be reported, or the fail-open this
+            # branch exists to close reappears whenever stderr happens to be
+            # empty.
+            if [ "$LINT19_WRAP_SAID" = "0" ]; then
+                echo -e "${RED}error${NC}: Check 19 (todo-hard-wrap) scripts/todo-reflow.py exited $LINT19_WRAP_RC with no diagnostic -- the hard-wrap scan did not run"
+                ERRORS=$((ERRORS + 1))
+            fi
+        fi
+        rm -f "$LINT19_WRAP_ERR"
+    elif [ "${#LINT19_FILES[@]}" -gt 0 ]; then
+        # Files to scan, but no temp file to capture diagnostics into. Reported
+        # rather than skipped: silence here is the same fail-open as swallowing
+        # the exit code.
+        echo -e "${RED}error${NC}: Check 19 (todo-hard-wrap) could not create a temporary file (mktemp failed) -- the hard-wrap scan did not run"
+        ERRORS=$((ERRORS + 1))
+    fi
     if [ "${LINT19_WRAP:-0}" -gt 0 ]; then
         echo -e "${YELLOW}warn${NC}: Check 19 (todo-hard-wrap) $LINT19_WRAP todo/*.md file(s) contain hard-wrapped prose (one paragraph per line is the convention; repair with: python3 scripts/todo-reflow.py --write <file>)"
         WARNINGS=$((WARNINGS + 1))

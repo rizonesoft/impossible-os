@@ -32,7 +32,7 @@ import sys
 from pathlib import Path
 
 __all__ = [
-    "fence_scan", "fence_mask", "scan_text", "unclosed_reason",
+    "fence_step", "fence_scan", "fence_mask", "scan_text", "unclosed_reason",
     "mask_text", "unmasked",
     "StagedSnapshotError", "index_tree", "staged_docs",
 ]
@@ -66,6 +66,21 @@ def _cache_schema():
         spec.loader.exec_module(mod)
         _CS = mod
     return _CS
+
+
+def fence_step(state, line: str):
+    """One line of fenced-block state -- see `cache_schema.fence_step`.
+
+    Re-exported for the tools that need the STEP rather than a whole-document
+    mask: `todo-reflow.py` runs it over indent-stripped lines to cover the
+    container-indented fences the mask's CommonMark 0-3-space bound cannot see
+    (`cache_schema.fence_mask`, KNOWN LIMIT, owned by section 39). Taking the
+    primitive rather than writing a second `(char, length)` matcher is the whole
+    point of this module -- the first cut of that matcher was a bare toggle, and
+    it closed a ```` block on an inner ``` (Codex adversarial, section 41,
+    [high]).
+    """
+    return _cache_schema().fence_step(state, line)
 
 
 def fence_scan(lines):

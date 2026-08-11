@@ -708,6 +708,364 @@ def test_check24_counts_the_refusal():
     check("...and that is exactly the kind audit() emits", kinds == {"unclosed-fence"})
 
 
+# --------------------------------------------------------------------------
+# 9. The two MUTATING repair tools (section 41). A gate adopter is right when
+#    its verdict is unchanged; these two are right when the FILE is unchanged,
+#    so every fixture asserts byte-identity and the control asserts that the
+#    fence-blind walk moves a byte.
+# --------------------------------------------------------------------------
+# Shapes the pre-adoption `strip().startswith("```")` toggle gets wrong. Each
+# body is three clustered ~90-column lines breaking mid-sentence -- the exact
+# hard-wrap signature `_hard_wrapped` fires on -- so a walk that fails to see
+# the fence WILL join them.
+_WRAPPED_BODY = [
+    "a fenced example line that is long enough to look like a wrapped line at about ninety cols",
+    "another fenced example line that is long enough to look like a wrapped line at ninety cols",
+    "a third fenced example line that is long enough to look like a wrapped line at ninety cols",
+    "end.",
+]
+#
+# The blank lines INSIDE each fence are load-bearing, not decoration. Without
+# them the blind walk treats the delimiter and the `end.` line as part of the
+# same prose run, and `_hard_wrapped` rejects the run on the short lines --
+# so the control passes, the fixture looks green, and it is asserting nothing.
+# Caught by the control on first run; the widths above were 72-73 and below the
+# tool's own 78-column floor for the same reason.
+TILDE_FENCE = "# T\n\nIntro on one line.\n\n~~~text info string\n\n" + \
+    "\n".join(_WRAPPED_BODY) + "\n\n~~~\n\ntail on one line.\n"
+# A ```` block whose body contains a SHORTER ``` run: the closer must repeat the
+# opener's character at no less than its length, or the inner run ends the block
+# and the real closer re-opens a fence over the rest of the file.
+NESTED_FENCE = "# T\n\nIntro on one line.\n\n````markdown\n```\n" + \
+    "\n".join(_WRAPPED_BODY) + "\n```\n````\n\ntail on one line.\n"
+# A fenced block carrying a recognised CLOSING-MATTER heading, followed by a
+# real numbered section. Fence-blind, the fenced `## OS Comparison` becomes the
+# closing matter and section 2 reads as filed after it.
+PLACEMENT_FIXTURE = (
+    "# T\n\n## 1. First\n\nAn example of a closed file:\n\n"
+    "```markdown\n## OS Comparison\n| a | b |\n```\n\n"
+    "## 2. Second\n\nbody\n\n## OS Comparison\n\ntail\n"
+)
+
+
+def _lint_check19_wrap_block(lint_text):
+    """The Check 19 hard-wrap SHELL block from lint.sh, or "" if not locatable.
+
+    Anchored on content (`LINT19_WRAP_ERR=` ... `rm -f "$LINT19_WRAP_ERR"`) for
+    the reason `_lint_check_block` states: a lint.sh refactor that moves this
+    block must FAIL the test rather than silently skip it, which is why the
+    caller asserts the extraction is non-empty.
+    """
+    lines = lint_text.split("\n")
+    start = rm = end = None
+    for i, l in enumerate(lines):
+        s = l.strip()
+        if start is None:
+            if s == "LINT19_WRAP=0":
+                start = i
+        elif rm is None:
+            if s == 'rm -f "$LINT19_WRAP_ERR"':
+                rm = i
+        elif s == "fi":
+            # The `fi` closing the empty-corpus guard, which the block needs to
+            # be balanced shell. Anchoring on `rm -f` alone returned a fragment
+            # that bash could not run at all -- and every fixture then failed
+            # for that reason rather than for anything under test.
+            end = i
+            break
+    return "\n".join(lines[start:end + 1]) if end is not None else ""
+
+
+def _run_lint19_wrap(block, corpus_text, tool=True, corpus=True, raw=None,
+                     symlink=False, env=None):
+    """`(stderr+stdout, ERRORS)` from running that block over a synthetic corpus.
+
+    `scripts` is SYMLINKED to the real tree so the tool under test is the real
+    `todo-reflow.py` while the corpus is synthetic -- the same split
+    `_run_lint_block` uses. `tool=False` omits the script (the scratch-repo
+    shape that has no dependency closure), `corpus=False` omits every todo file,
+    and `raw` writes bytes instead of text.
+    """
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        # A SYMLINKED todo/ passes `[ -d ]` but is not traversed by a find that
+        # lacks -H, so the scan silently enumerates nothing.
+        todo_dir = (root / "_real_todo") if symlink else (root / "todo")
+        if symlink:
+            todo_dir.mkdir(parents=True, exist_ok=True)
+            os.symlink(todo_dir, root / "todo")
+        if corpus is True:
+            p = todo_dir / "00-infrastructure" / "TODO-99-fixture.md"
+            p.parent.mkdir(parents=True, exist_ok=True)
+            if raw is not None:
+                p.write_bytes(raw)
+            else:
+                p.write_text(corpus_text, encoding="utf-8")
+        elif corpus == "empty":
+            todo_dir.mkdir(parents=True, exist_ok=True)
+        # corpus is False -> todo/ does not exist AT ALL, which is the shape
+        # several tt_install_lint scratch repos have and is NOT the same test as
+        # an empty directory: under `set -euo pipefail` the missing path aborted
+        # the whole linter.
+        if tool:
+            os.symlink(REPO / "scripts", root / "scripts")
+        else:
+            (root / "scripts").mkdir(parents=True, exist_ok=True)
+        script = root / "_c19.sh"
+        # `set -euo pipefail` MATCHES lint.sh:17. Without it this harness was a
+        # false equivalence: the production abort it is meant to detect cannot
+        # happen in a shell that does not set -e, so the fixture passed while
+        # the real gate died.
+        script.write_text(
+            'set -euo pipefail\nRED=""\nNC=""\nERRORS=0\nREPO_ROOT="$1"\n' +
+            block + '\necho "ERRORS=$ERRORS"\n', encoding="utf-8")
+        e = dict(os.environ)
+        e.update(env or {})
+        r = subprocess.run(["bash", str(script), str(root)], cwd=d,
+                           capture_output=True, text=True, env=e)
+        out = r.stdout + r.stderr
+        n = 0
+        for line in r.stdout.split("\n"):
+            if line.startswith("ERRORS="):
+                n = int(line.split("=", 1)[1])
+        return out, n
+
+
+def _pre_adoption_mask(lines):
+    """The fence-BLIND walk `todo-reflow.py` shipped before section 41.
+
+    A faithful transcription of the deleted state machine -- `incode` toggled by
+    `line.strip().startswith("```")`, no tilde fences, no closer char/length
+    match, no CommonMark indent bound -- kept in the TEST rather than the tool
+    because the tool must not carry a second definition of "am I inside a fence".
+    It is the control every fixture below is paired with: if the fixture passes
+    under this too, it is asserting nothing.
+    """
+    out, incode = [], False
+    for line in lines:
+        if line.strip().startswith("```"):
+            out.append(True)
+            incode = not incode
+            continue
+        out.append(incode)
+    return out
+
+
+def test_reflow():
+    rf = load("todo_reflow", "scripts/todo-reflow.py")
+    for name, src in (("tilde fence", TILDE_FENCE),
+                      ("nested longer fence", NESTED_FENCE)):
+        lines = src.split("\n")
+        check(f"reflow leaves a {name} byte-identical", rf.reflow(src) == src)
+        # CONTROL: the pre-adoption walk MUST move a byte on this shape, or the
+        # fixture is passing for a reason that has nothing to do with the fence.
+        check(f"...and the fence-blind walk rewrites the {name}",
+              rf.reflow(src, vmask=_pre_adoption_mask(lines)) != src)
+
+    # An unclosed fence is REFUSED whole, not partially reflowed: the prose
+    # BEFORE the opener is inside the file the mask cannot vouch for.
+    with tempfile.TemporaryDirectory() as d:
+        p = _write(d, "\n".join(_WRAPPED_BODY) + "\n\n```\nunclosed\n")
+        before = p.read_text(encoding="utf-8")
+        rc = rf.process(str(p), "write")
+        # READ BACK INSIDE the tempdir's lifetime -- outside it the path is gone
+        # and the comparison raises (or, guarded, passes vacuously).
+        after = p.read_text(encoding="utf-8")
+    check("reflow refuses an unclosed fence (rc 2)", rc == 2)
+    check("...and writes nothing", after == before)
+
+    # The container-fence fallback is the OTHER half of the union: a fence
+    # indented past the tracker's 0-3-space bound (section 39's known limit) is
+    # still verbatim. NO BLANK LINE before the delimiter -- with one, the
+    # indented-code-block path already protects the body and the fixture proves
+    # nothing about the fallback. Measured both shapes; only this one moves.
+    deep = "- 1. item\n     ```\n     " + "\n     ".join(_WRAPPED_BODY) + \
+           "\n     ```\n"
+    # THE HOSTILE SHAPE: a container-indented ```` block carrying a SHORTER ```
+    # run. A bare toggle closes on the inner run, reflows the body, and re-opens
+    # on the real closer -- the first cut of this fallback did exactly that.
+    hostile = "100. docs\n     ````markdown\n     ```\n     " + \
+        "\n     ".join(_WRAPPED_BODY) + "\n     ```\n     ````\n"
+    for name, src in (("container-indented fence", deep),
+                      ("container fence with a shorter inner run", hostile)):
+        lines = src.split("\n")
+        mask_only = rf._fence.fence_scan(lines)[0]
+        check(f"reflow leaves a {name} byte-identical", rf.reflow(src) == src)
+        check(f"CONTROL: the shared mask alone claims none of the {name}",
+              not any(mask_only))
+        check(f"...and without the fallback the {name} body IS joined",
+              rf.reflow(src, vmask=mask_only) != src)
+        # THE TWO JOBS ARE SEPARATE. `reflow()` never rewrites the block -- that
+        # is the fallback protecting it. `process()` REFUSES the same document,
+        # because that protection rested on a guess about what an indented
+        # delimiter means, and this run would otherwise certify the file clean
+        # while the guess was load-bearing. Note these fences are CLOSED: the
+        # refusal does not depend on the loose state surviving to EOF.
+        with tempfile.TemporaryDirectory() as d:
+            p = _write(d, src)
+            rc = rf.process(str(p), "write")
+            after = p.read_text(encoding="utf-8")
+        check(f"--write REFUSES the {name} rather than certifying it", rc == 2)
+        check(f"...and leaves the {name} on disk untouched", after == src)
+
+    # A FALSE OPENER THAT COSTS SOMETHING IS REFUSED, not silently masked. An
+    # indented code block carrying a literal ``` opens the indent-stripped
+    # fallback, which then masks the real hard-wrapped prose after it -- the
+    # pre-fix code returned "clean" for exactly this file.
+    prose = [
+        "a prose line that is long enough to look like a wrapped line at about ninety columns",
+        "another prose line that is long enough to look like a wrapped line at ninety columns",
+        "a third prose line that is long enough to look like a wrapped line at ninety columns",
+        "end.",
+    ]
+    for name, indent in (("space-indented", "    "), ("tab-indented", "\t")):
+        src = ("# T\n\nintro on one line.\n\n" + indent + "```\n" + indent +
+               "a literal fence inside an indented code block\n\n" +
+               "\n".join(prose) + "\n")
+        lines = src.split("\n")
+        mask_only = rf._fence.fence_scan(lines)[0]
+        check(f"CONTROL: the {name} false opener really does hide a repair",
+              rf.reflow(src) == src and rf.reflow(src, vmask=mask_only) != src)
+        with tempfile.TemporaryDirectory() as d:
+            p = _write(d, src)
+            rc = rf.process(str(p), "check")
+            after = p.read_text(encoding="utf-8")
+        check(f"...so --check REFUSES the {name} file rather than passing it",
+              rc == 2)
+        check("...and writes nothing", after == src)
+
+    # ...but an INERT unclosed fallback state suppresses nothing, so it must not
+    # refuse: refusing on the syntax alone is what fails closed on legal files.
+    inert = "# T\n\nintro on one line.\n\n    ```\n    a literal fence\n"
+    with tempfile.TemporaryDirectory() as d:
+        p = _write(d, inert)
+        rc = rf.process(str(p), "check")
+    check("an inert unclosed fallback state is NOT refused", rc == 0)
+
+    # THE PRODUCTION CONSUMER, not just process(). A refusal the lint discards
+    # is a refusal nobody sees -- Check 19 sent stderr to /dev/null and turned
+    # every nonzero exit into success, so the tool returned 2 and the gate
+    # reported nothing (Codex adversarial, section 41 round 3).
+    hidden = ("# T\n\nintro on one line.\n\n    ```\n    a literal fence inside "
+              "an indented code block\n\n" + "\n".join(prose) + "\n")
+    block = _lint_check19_wrap_block(
+        (REPO / "scripts/lint.sh").read_text(encoding="utf-8"))
+    check("lint 19: the wrap block was extracted", bool(block))
+    err, errors = _run_lint19_wrap(block, hidden)
+    check("lint Check 19 reports the refusal as an error",
+          "Check 19" in err and "REFUSED" in err)
+    check("...and counts it", errors == 1)
+    # CONTROL: an ordinary hard-wrapped file must NOT become an error, or the
+    # fixture is only proving that any input trips the new branch.
+    clean_wrap = "# T\n\n" + "\n".join(prose) + "\n"
+    err2, errors2 = _run_lint19_wrap(block, clean_wrap)
+    check("CONTROL: an ordinary hard-wrapped file is not an error",
+          errors2 == 0 and "REFUSED" not in err2)
+
+    # The three shapes that made rc alone the wrong test. A CRASH must not wear
+    # the findings code, a repo with no todo files must not be invoked at all,
+    # and a scratch repo missing the tool must say so rather than report a
+    # style finding it never computed.
+    _, errors3 = _run_lint19_wrap(block, "", raw=b"x\xff\xfey\n")
+    check("a non-UTF-8 todo file is an error, not a silent rc 1", errors3 == 1)
+    err4, errors4 = _run_lint19_wrap(block, "", corpus="empty")
+    check("an empty todo corpus is skipped, not invoked with no FILE args",
+          errors4 == 0 and "REFUSED" not in err4)
+    # The sentinel is the assertion here: under `set -euo pipefail` an aborted
+    # block prints NOTHING, and "no error was reported" reads identical to
+    # "the block ran and found nothing". Reaching `ERRORS=` proves it ran.
+    err6, errors6 = _run_lint19_wrap(block, "", corpus=False)
+    check("an ABSENT todo/ directory does not abort the linter",
+          "ERRORS=" in err6 and errors6 == 0)
+    err5, errors5 = _run_lint19_wrap(block, clean_wrap, tool=False)
+    check("a missing todo-reflow.py is reported, not counted as zero findings",
+          errors5 >= 1)
+    check("...and the message names the check", "Check 19" in err5)
+
+    # A SYMLINKED todo/ passes `[ -d ]` but a find without -H does not traverse
+    # it, so the scan would enumerate nothing and the sentinel alone would still
+    # say ERRORS=0. The assertion is therefore that the scan RAN: the hostile
+    # corpus must still be refused through the symlink.
+    err7, errors7 = _run_lint19_wrap(block, hidden, symlink=True)
+    check("a symlinked todo/ is REFUSED, not followed and not silently skipped",
+          errors7 == 1 and "symlink" in err7)
+    # An unusable TMPDIR must be a named error, not an abort that takes the rest
+    # of the linter with it -- the sentinel is what distinguishes the two.
+    err8, errors8 = _run_lint19_wrap(block, clean_wrap,
+                                     env={"TMPDIR": "/nonexistent-lint19-xyz"})
+    check("an unusable TMPDIR is reported, not an abort",
+          "ERRORS=" in err8 and errors8 >= 1 and "mktemp failed" in err8)
+
+
+def test_section_order():
+    so = load("todo_section_order", "scripts/todo-section-order.py")
+
+    blind = lambda t: (t.split("\n"), [False] * len(t.split("\n")), False, False)
+
+    bad = so.sections_after_closing(PLACEMENT_FIXTURE, blind(PLACEMENT_FIXTURE))
+    check("CONTROL: fence-blind placement sees the fenced closing heading",
+          [n for n, _, _ in bad] == [2])
+    check("fence-aware placement is clean",
+          so.sections_after_closing(PLACEMENT_FIXTURE) == [])
+
+    # The same fenced heading must not split a block during a REPAIR. Sections
+    # are out of order, so `reorder` genuinely runs rather than short-circuiting.
+    doc = ("# T\n\n## 1. A\n\nbody a\n\n```markdown\n## 9. Fenced example\n"
+           "fenced body\n```\n\n## 3. C\n\nbody c\n\n## 2. B\n\nbody b\n\n"
+           "## OS Comparison\n\ntail\n")
+    out = so.reorder(doc)
+    check("reorder still repairs a real out-of-order file", out is not None)
+    check("...as a pure move (same bytes)", len(out) == len(doc))
+    check("...keeping the fenced example inside section 1",
+          "## 1. A\n\nbody a\n\n```markdown\n## 9. Fenced example\n"
+          "fenced body\n```\n" in out)
+    check("...and numbering the real sections only",
+          [n for n, _ in so.parse(out)[1]] == [1, 2, 3])
+    check("CONTROL: the fence-blind parse sees the fenced heading as a section",
+          [n for n, _ in so.parse(doc, blind(doc))[1]] == [1, 9, 3, 2])
+
+    # CONTAINMENT: neither a symlinked corpus root nor a symlinked *.md inside
+    # it is part of the corpus, or Checks 22/22b traverse wherever it points.
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        (root / "real").mkdir()
+        _write(root / "todo", "# T\n", name="a.md")
+        outside = root / "outside.md"
+        outside.write_text("# outside\n", encoding="utf-8")
+        os.symlink(outside, root / "todo" / "linked.md")
+        cwd = os.getcwd()
+        try:
+            os.chdir(root)
+            names = {p.name for p in so._targets([])}
+        finally:
+            os.chdir(cwd)
+        check("a symlinked *.md inside todo/ is not a target",
+              names == {"a.md"})
+        os.rename(root / "todo", root / "real_todo")
+        os.symlink(root / "real_todo", root / "todo")
+        try:
+            os.chdir(root)
+            linked_root = so._targets([])
+        finally:
+            os.chdir(cwd)
+        check("a symlinked todo/ root yields no targets at all",
+              linked_root == [])
+
+    for name, src in (("unclosed fence", UNCLOSED_FENCE),
+                      ("unclosed comment", UNCLOSED_COMMENT)):
+        check(f"parse refuses an {name}", so.parse(src) is None)
+        check(f"reorder refuses an {name}", so.reorder(src) is None)
+    with tempfile.TemporaryDirectory() as d:
+        p = _write(d, UNCLOSED_FENCE)
+        before = p.read_text(encoding="utf-8")
+        rc = so.main(["--fix", str(p)])
+        hits = so._check_placement([p])
+        after = p.read_text(encoding="utf-8")
+    check("--fix refuses an unclosed fence (rc 2)", rc == 2)
+    check("...and writes nothing", after == before)
+    check("--check-placement reports it rather than passing silently", hits == 1)
+
+
 def main():
     test_shim()
     test_mask_text_cannot_join_lines()
@@ -717,6 +1075,8 @@ def main():
     test_lint_checks_10_11()
     test_lint_staged_scope()
     test_check24_counts_the_refusal()
+    test_reflow()
+    test_section_order()
     if _FAILS:
         sys.stderr.write("test_todo_fence FAIL (%d):\n  - %s\n"
                          % (len(_FAILS), "\n  - ".join(_FAILS)))

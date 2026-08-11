@@ -122,6 +122,21 @@ The last ten v13 carries. Five resolved, four rejected with a stated condition, 
   - ONE REAL DESIGN QUESTION FIRST, raised by §37's Codex design review: `cache_schema` lives in `scripts/todo-graph/` and the hook runs from an arbitrary working directory, so the adopter needs a path bootstrap. A vendored copy would recreate exactly the duplication §37 removed, so the import path is the decision, not the regex.
   - Owner side: `00-infrastructure/TODO-06-todo-metadata-layer.md` §37 (item: "The FOURTH live grammar, in `.claude/hooks/skill_step_block.py:61`, adopts the shared parser -- PARKED, control plane, operator-gated").
 
+## Filed by the 2026-08-11 run, TODO-06 section 41 ship
+
+- **`review_convergence.py record` fingerprints the tree at CALL time, so recording a resolved round makes the NEXT `should-redispatch` answer CONVERGED over a tree no reviewer has seen.**
+  - OBSERVED live, section 41 round 2: the verdict landed, I fixed the finding (structurally -- a new refusal path plus a `verbatim_scan` API), then ran `record ... adversarial` and then `should-redispatch ... adversarial`. It answered `CONVERGED: adversarial inputs unchanged since last verdict (scope: src+tooling)`, exit 1, meaning SKIP. The inputs had changed twice since the reviewer read them.
+  - MECHANISM CONFIRMED AT SOURCE, not inferred: `record` (`.claude/hooks/review_convergence.py:202-216`) calls `_fingerprint(root, scopes)` over the CURRENT worktree and stores it; `should_redispatch` (`:217-231`) re-fingerprints and compares. Nothing binds the stored fingerprint to the diff the verdict was actually produced from.
+  - The skill wording is what makes it reachable: "record once K's round resolves" reads naturally as "after its findings are fixed", which is exactly the call order that poisons the comparison. Recording at VERDICT time gives the intended answer, and the two readings differ by a whole review round.
+  - I re-dispatched anyway and said so; rounds 3-8 then found a real defect EVERY round, including one [high] regression I had introduced (`tt_install_lint` missing a dependency the changed Check 19 now requires). Had I obeyed the gate at round 2, all of that ships.
+  - NOT TESTED: whether earlier runs' same-round CONVERGED verdicts have the same cause. I did not re-read those logs, so treat the count as unknown rather than zero.
+  - Fix shape, not applied (control plane): fingerprint at DISPATCH and store it in `last-codex-review.json` for `record` to copy, or bind the stored fingerprint to the `review_run_id`. Then a post-verdict edit correctly reads as changed.
+
+- **A backgrounded `run-artifact.sh` reports `completed (exit code 0)` to the harness while the suite is still running, and the doctrine's own remedy is easy to defeat by accident.**
+  - OBSERVED: launching the tooling suite inside a `run_in_background` Bash call whose body ended in `&` produced a task notification saying completed/exit 0 within seconds, while `.claude/state/last-artifact.json` still read `state: running`. Reading the notification would have certified a suite that had not started its first test.
+  - The doctrine already says the harness exit code is not the verdict for backgrounded work and to read `state`/`exit` from the envelope. What it does not say is that putting `&` INSIDE an already-backgrounded call re-creates the hazard the background flag was supposed to remove -- the tracked process is then the launcher, not the work.
+  - No repo defect; this is a usage trap. Worth one line in the wait-discipline reference: background the command with the flag, never with `&` as well.
+
 ## Standing measurement obligations
 
 Carry the baselines forward. A measurement without one is an anecdote.
