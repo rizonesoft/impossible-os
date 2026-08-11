@@ -142,7 +142,14 @@ def verbatim_mask(lines, mask=None):
     protects a block, so the test cannot pass by asserting nothing.
     """
     if mask is None:
-        mask, _uf, _uc = _fence.fence_scan(lines)
+        # THE PROSE PROJECTION, not the structural one. This tool lints
+        # HARD-WRAPPED PROSE, and the 30 live `<details>` lines under `todo/`
+        # are exactly the prose it exists to check -- so CommonMark HTML block
+        # types 6 and 7 stay VISIBLE here while every structural reader (and
+        # `format-md-tables.py`, which rewrites what it sees) hides them. One
+        # boolean mask could not serve both, which is what made this a section
+        # rather than a flag (Codex design review, section 42, [high]).
+        mask = _fence.fence_scan(lines).prose_mask()
     return mask
 
 
@@ -242,9 +249,9 @@ def process(path: str, mode: str) -> int:
     # Refusing reuses this function's existing exit-2 contract, and `main` turns
     # any refusal into a process-level 2, so `--check`, `--diff` and `--write`
     # all say the same thing.
-    lines, shared_mask, unclosed_fence, unclosed_comment = \
-        _fence.scan_text(original)
-    reason = _fence.unclosed_reason(unclosed_fence, unclosed_comment)
+    _scan = _fence.scan_text(original)
+    shared_mask = _scan.prose_mask()
+    reason = _scan.unclosed_reason()
     if reason:
         print(f"{path}: REFUSED -- {reason}. Left untouched.", file=sys.stderr)
         return 2

@@ -127,7 +127,10 @@ def _write(dirpath, text=FIXTURE, name="TODO-99-fixture.md"):
 # --------------------------------------------------------------------------
 def test_shim():
     tf = load("todo_fence", "scripts/todo_fence.py")
-    lines, mask, uf, uc = tf.scan_text(FIXTURE)
+    _sc = tf.scan_text(FIXTURE)
+    lines, mask = _sc.lines, _sc.mask
+    uf = _sc.terminal is not None and _sc.terminal.kind == 'fence'
+    uc = _sc.terminal is not None and _sc.terminal.kind == 'comment'
     fenced = [l for i, l in enumerate(lines) if mask[i]]
     check("shim: the fenced example heading is masked",
           any(l.startswith("## 99.") for l in fenced))
@@ -135,15 +138,42 @@ def test_shim():
           not any(l.startswith("## 1.") for l in fenced))
     check("shim: a balanced document reports no unclosed fence", not uf)
     check("shim: a balanced document reports no unclosed comment", not uc)
-    check("shim: unclosed_reason is None when both flags are clear",
-          tf.unclosed_reason(False, False) is None)
-    check("shim: an unclosed FENCE names the fence",
-          "fenced code block" in (tf.unclosed_reason(True, False) or ""))
+    check("shim: unclosed_reason is None for a well-formed document",
+          tf.unclosed_reason(None) is None and _sc.unclosed_reason() is None)
+    # THE MESSAGE COMES FROM A REAL SCAN, not from synthesised flags. The old
+    # shape of this test passed booleans straight to `unclosed_reason`, so it
+    # asserted the WORDING without ever proving a document produces those
+    # flags; a scan that stopped reporting an unclosed construct would have
+    # kept it green. Section 42 replaced the pair with a tagged terminal, and
+    # the terminal has to come from somewhere, so the fixtures now do.
+    _fence_term = tf.scan_text("a\n```\nnever closed\n").terminal
+    check("shim: an unclosed FENCE names the fence and its opening line",
+          _fence_term.kind == "fence"
+          and "fenced code block" in tf.unclosed_reason(_fence_term)
+          and "line 2" in tf.unclosed_reason(_fence_term))
+    _comment_term = tf.scan_text("a\n<!--\nnever closed\n").terminal
     check("shim: an unclosed COMMENT names the comment, not the fence",
-          "<!--" in (tf.unclosed_reason(False, True) or "")
-          and "fenced code block" not in (tf.unclosed_reason(False, True) or ""))
-    check("shim: the fence flag wins when both are set (one message, not two)",
-          "fenced code block" in (tf.unclosed_reason(True, True) or ""))
+          _comment_term.kind == "comment"
+          and "fenced code block" not in tf.unclosed_reason(_comment_term))
+    # A FENCE OPENED FIRST WINS, and it is now a property of the scan rather
+    # than a precedence rule between two independent booleans: inside a fence a
+    # `<!--` is literal text, so only one construct can ever be open.
+    check("shim: a `<!--` inside a fence leaves the FENCE as the terminal",
+          tf.scan_text("a\n```\n<!--\n").terminal.kind == "fence")
+    # The four EOF-consuming types section 42 added each report themselves,
+    # which is the whole reason the contract carries a kind.
+    for _src, _kind, _num in (("<script>\nx\n", "script", 1),
+                              ("<?php\nx\n", "pi", 3),
+                              ("<!DOCTYPE\nx\n", "declaration", 4),
+                              ("<![CDATA[\nx\n", "cdata", 5)):
+        _t = tf.scan_text(_src).terminal
+        check(f"shim: an unclosed type-{_num} block reports kind {_kind}",
+              _t is not None and _t.kind == _kind and _t.number == _num)
+    # ...and the two blank-line-terminated types are NOT unterminated at EOF.
+    # CommonMark ends them there, so a terminal value would make the producer
+    # refuse a legal document.
+    check("shim: a type-6 block running to EOF is well-formed, not terminal",
+          tf.scan_text("<details>\nx\n").terminal is None)
     check("shim: unmasked() yields ORIGINAL indices",
           [i for i, _ in tf.unmasked(lines, mask)]
           == [i for i, m in enumerate(mask) if not m])
@@ -161,10 +191,14 @@ def test_shim():
           "## 1. The Real Section" in masked)
 
     # An unclosed opener: fail-closed (masks to EOF) AND reported.
-    _, m2, uf2, _ = tf.scan_text(UNCLOSED_FENCE)
+    _s2 = tf.scan_text(UNCLOSED_FENCE)
+    m2 = _s2.mask
+    uf2 = _s2.terminal is not None and _s2.terminal.kind == 'fence'
     check("shim: an unclosed fence is REPORTED, not just masked", uf2)
     check("shim: an unclosed fence masks through EOF", all(m2[2:]))
-    _, _, uf3, uc3 = tf.scan_text(UNCLOSED_COMMENT)
+    _s3 = tf.scan_text(UNCLOSED_COMMENT)
+    uf3 = _s3.terminal is not None and _s3.terminal.kind == 'fence'
+    uc3 = _s3.terminal is not None and _s3.terminal.kind == 'comment'
     check("shim: an unclosed comment is reported", uc3 and not uf3)
 
 
@@ -222,7 +256,8 @@ def test_mask_text_cannot_join_lines():
 def test_reachability():
     reach = load("todo_reachability", "scripts/todo-reachability.py")
     tf = load("todo_fence", "scripts/todo_fence.py")
-    lines, mask, _, _ = tf.scan_text(FIXTURE)
+    _s = tf.scan_text(FIXTURE)
+    lines, mask = _s.lines, _s.mask
     blind = [False] * len(lines)
 
     aware_secs = {n for n, _, _ in reach._sections(lines, mask)}
@@ -253,7 +288,8 @@ def test_reachability():
         "| - | :-: | :-: | - | - | :-: |",
         "| x |  39   | " + S + "41 | A re-sequenced section | " + S + "7 |  [x]   |",
         ""])
-    rl, rm, _, _ = tf.scan_text(reseq)
+    _r = tf.scan_text(reseq)
+    rl, rm = _r.lines, _r.mask
     got = reach._io_rows(rl, rm)
     check("reachability: a Section column yields the marker alone",
           got == {41})
@@ -271,7 +307,8 @@ def test_reachability():
         "| - | :-: | - | - | :-: |",
         "| x |  45   | Reader leases | " + S + "38 |  [x]   |",
         ""])
-    ll, lm, _, _ = tf.scan_text(legacy)
+    _l = tf.scan_text(legacy)
+    ll, lm = _l.lines, _l.mask
     check("reachability: no Section column -> the order number is used",
           reach._io_rows(ll, lm) == {45})
 
@@ -284,7 +321,8 @@ def test_reachability():
         "",
         "| x | 1 | a thing | -- | [x] |",
         ""])
-    hl, hm, _, _ = tf.scan_text(headerless)
+    _h = tf.scan_text(headerless)
+    hl, hm = _h.lines, _h.mask
     check("reachability: a header-less table still yields its data row",
           reach._io_rows(hl, hm) == {1})
 
@@ -298,7 +336,8 @@ def test_reachability():
         "| --- | ------- | --- | --- | ---- |",
         "| 1   | Win32 Type Definitions | `[Sonnet]` | -- | x |",
         ""])
-    tl, tm, _, _ = tf.scan_text(titled)
+    _t = tf.scan_text(titled)
+    tl, tm = _t.lines, _t.mask
     check("reachability: a Section column holding a TITLE falls back to the number",
           reach._io_rows(tl, tm) == {1})
 
@@ -314,7 +353,8 @@ def test_reachability():
         "| - | :-: | :-: | - | - | :-: |",
         "| x |  39   | " + S + "41 | A re-sequenced section | -- |  [x]   |",
         ""])
-    wl, wm, _, _ = tf.scan_text(twotables)
+    _w = tf.scan_text(twotables)
+    wl, wm = _w.lines, _w.mask
     check("reachability: a preceding legend table does not latch the column",
           41 in reach._io_rows(wl, wm))
 
@@ -421,7 +461,8 @@ def _run_staged(cwd):
 def test_staged_check():
     stg = load("todo_staged_check", "scripts/todo-staged-check.py")
     tf = load("todo_fence", "scripts/todo_fence.py")
-    lines, mask, _, _ = tf.scan_text(FIXTURE)
+    _s = tf.scan_text(FIXTURE)
+    lines, mask = _s.lines, _s.mask
     vis = ["" if mask[i] else l for i, l in enumerate(lines)]
 
     check("staged-check: fenced headings do not count toward the section cap",
@@ -892,7 +933,7 @@ def test_reflow():
     for name, src in (("container-indented fence", deep),
                       ("container fence with a shorter inner run", hostile)):
         lines = src.split("\n")
-        mask_only = rf._fence.fence_scan(lines)[0]
+        mask_only = rf._fence.fence_scan(lines).mask
         check(f"reflow leaves a {name} byte-identical", rf.reflow(src) == src)
         # The mask claims the delimiters AND the body -- every line but the
         # unfenced marker line and the trailing empty one.
@@ -929,7 +970,7 @@ def test_reflow():
                "a literal fence inside an indented code block\n\n" +
                "\n".join(prose) + "\n")
         lines = src.split("\n")
-        mask_only = rf._fence.fence_scan(lines)[0]
+        mask_only = rf._fence.fence_scan(lines).mask
         check(f"the {name} root code block opens NO fence in the tracker",
               not any(mask_only))
         check(f"...so the {name} file's hard-wrapped prose is still repairable",
@@ -1032,7 +1073,17 @@ def test_reflow():
 def test_section_order():
     so = load("todo_section_order", "scripts/todo-section-order.py")
 
-    blind = lambda t: (t.split("\n"), [False] * len(t.split("\n")), False, False)
+    # THE FENCE-BLIND CONTROL, rebuilt on the section-42 `ScanResult`. It is a
+    # real scan with the mask deliberately cleared, so the test still cannot
+    # pass by asserting nothing: the control MUST see the fenced heading that
+    # the fence-aware call suppresses.
+    def blind(t):
+        r = so._fence.fence_scan(t.split("\n"))
+        n = len(r.lines)
+        r.mask = [False] * n
+        r.codes = bytearray(n)      # every line ordinary; `kinds` derives from this
+        r.terminal = None
+        return r
 
     bad = so.sections_after_closing(PLACEMENT_FIXTURE, blind(PLACEMENT_FIXTURE))
     check("CONTROL: fence-blind placement sees the fenced closing heading",
@@ -1166,7 +1217,7 @@ def test_container_aware_fences():
     import todo_fence as tf
 
     def mask_of(src):
-        return tf.scan_text(src)[1]
+        return tf.scan_text(src).mask
 
     # THE NAMED CASE. A five-space fence under `100. docs` is a real block, so
     # the `- [ ]` inside it is an EXAMPLE and must not reach the item index.
@@ -1221,14 +1272,14 @@ def test_container_aware_fences():
     check("leaving a blockquote closes the fence inside it", m[0] and m[1])
     check("...so a later heading is NOT swallowed", not m[3])
     check("...and the document does not read as ending inside a fence",
-          not tf.scan_text(src)[2])
+          tf.scan_text(src).terminal is None)
 
     # THE TERMINAL FLAG STILL FIRES for a genuinely unclosed container fence,
     # which is what stops the container work from turning a loud refusal into a
     # silent erasure.
     src = "100. docs\n     ```\n     code\n"
     check("an unclosed container-indented fence sets unclosed_fence",
-          tf.scan_text(src)[2])
+          tf.scan_text(src).terminal is not None)
 
     # AND THE CLOSER RULES ARE STILL THE LEAF'S. A shorter run inside a longer
     # container-indented block must not close it.
@@ -1267,7 +1318,10 @@ def test_container_aware_fences():
     # document report as ending inside an unclosed one -- a REFUSAL of a
     # perfectly valid file.
     src = "para\n10. faux\n    ```\n    trailing prose\n"
-    lines, mask, uf, uc = tf.scan_text(src)
+    _sc = tf.scan_text(src)
+    lines, mask = _sc.lines, _sc.mask
+    uf = _sc.terminal is not None and _sc.terminal.kind == 'fence'
+    uc = _sc.terminal is not None and _sc.terminal.kind == 'comment'
     check("an ordered marker other than 1 cannot interrupt a paragraph",
           not any(mask))
     check("...and the document is NOT reported as unclosed", not uf)
@@ -1339,7 +1393,10 @@ def test_container_aware_fences():
     # [medium] A BLANK-FIRST LIST ITEM closes on the following blank, so what
     # comes after is root indented code -- not the item's content, and not an
     # unclosed fence the producer should refuse.
-    lines, mask, uf, uc = tf.scan_text("10.\n\n    ```\n    literal\n")
+    _sc = tf.scan_text("10.\n\n    ```\n    literal\n")
+    lines, mask = _sc.lines, _sc.mask
+    uf = _sc.terminal is not None and _sc.terminal.kind == 'fence'
+    uc = _sc.terminal is not None and _sc.terminal.kind == 'comment'
     check("a blank-first list item does not swallow the indented run",
           not any(mask))
     check("...and the document is not reported as unclosed", not uf)
@@ -1356,7 +1413,8 @@ def test_container_aware_fences():
     # builder accepts it.
     crlf = "a\r\n```\r\ncode\r\n```\r\n"
     check("the shim agrees with the producer about a CRLF document",
-          tf.scan_text(crlf)[2] is False and cs.scan_text(crlf)[2] is False)
+          tf.scan_text(crlf).terminal is None
+          and cs.scan_text(crlf).terminal is None)
 
     # ---- Round 4: classes the stateful oracle alphabet could not generate ----
 
@@ -1446,7 +1504,10 @@ def test_container_aware_fences():
     # column must survive prefix stripping, or a tab expands from the wrong
     # origin and the scan invents a fence -- reporting a VALID document as
     # ending inside an unclosed one, which makes the builder refuse it.
-    lines, mask, uf, uc = tf.scan_text("- a\n  -\tb\n    \t```\n    \tliteral\n")
+    _sc = tf.scan_text("- a\n  -\tb\n    \t```\n    \tliteral\n")
+    lines, mask = _sc.lines, _sc.mask
+    uf = _sc.terminal is not None and _sc.terminal.kind == 'fence'
+    uc = _sc.terminal is not None and _sc.terminal.kind == 'comment'
     check("a tab inside a NESTED container expands from its physical column",
           not any(mask))
     check("...so a valid nested-tab document is not refused", not uf)
@@ -1469,9 +1530,10 @@ def test_container_aware_fences():
     # [high] A TAB AFTER `>` is worth `4 - (col % 4)` columns from the marker's
     # ABSOLUTE end, so a fixed three spaces is right only at column 0.
     for label, doc in (("root", ">\tq\n"), ("nested", "> - a\n>  -\tb\n")):
-        lines, mask, uf, uc = tf.scan_text(doc)
+        _sc = tf.scan_text(doc)
         check(f"a tab after a {label} blockquote marker parses without inventing"
-              f" a block", not any(mask) and not uf)
+              f" a block",
+              not any(_sc.mask) and _sc.terminal is None)
 
     # [high] THE TERMINAL FLAG IS HONEST, INCLUDING WHERE THE MASK IS NOT. The
     # lazy-continuation residual (section 42) can report a valid document as
@@ -1487,7 +1549,7 @@ def test_container_aware_fences():
             ("unrelated, later in a file with a lazy line",
              "10. a\nlazy\n\npara\n\n```\nunclosed\n")):
         check(f"a real unclosed fence {label} is still reported",
-              tf.scan_text(doc)[2] is True)
+              tf.scan_text(doc).terminal is not None)
 
     # [medium] CODE-SPAN MASKING IS LINEAR, asserted DETERMINISTICALLY. The
     # first cut rescanned the whole remaining string for every UNMATCHED
@@ -1626,12 +1688,196 @@ def main():
     test_check24_counts_the_refusal()
     test_reflow()
     test_section_order()
+    test_html_blocks_section42()
     if _FAILS:
         sys.stderr.write("test_todo_fence FAIL (%d):\n  - %s\n"
                          % (len(_FAILS), "\n  - ".join(_FAILS)))
         return 1
     print("test_todo_fence OK (%d assertions)" % _ASSERTED[0])
     return 0
+
+
+def test_html_blocks_section42():
+    """CommonMark HTML blocks 1-7, the terminal contract, and the projections."""
+    tf = load("todo_fence_s42", "scripts/todo_fence.py")
+    # THE SHIM'S OWN MODULE OBJECT, not a second load of the same source. A
+    # separate `load()` here produced a DIFFERENT `UnclosedDocument` class, so
+    # `except` missed the exception the shim actually raises -- the exact
+    # two-module-objects hazard `todo_fence._cache_schema()` is written to avoid.
+    cs42 = tf._cache_schema()
+
+    # ---- Types 1-5: EOF-consuming. Balanced closes, unterminated REFUSES. ----
+    # Each pair is (opener, closer). The BALANCED document must publish its real
+    # heading; the UNTERMINATED one must produce a terminal naming that exact
+    # construct rather than a silently erased document.
+    for opener, closer, kind, num in (
+            ("<script>", "</script>", "script", 1),
+            ("<?php", "?>", "pi", 3),
+            ("<!DOCTYPE html>", None, "declaration", 4),
+            ("<![CDATA[", "]]>", "cdata", 5),
+            ("<!--", "-->", "comment", 2)):
+        if closer is None:
+            # A declaration ends on `>`, which its own opener already carries.
+            balanced = f"# T\n\n{opener}\n\n## 1. Real\n"
+        else:
+            balanced = f"# T\n\n{opener}\n## 99. Fake\n{closer}\n\n## 1. Real\n"
+        rb = tf.scan_text(balanced)
+        check(f"type {num}: a balanced block closes and leaves no terminal",
+              rb.terminal is None)
+        check(f"type {num}: the real heading after a balanced block is visible",
+              any(l.startswith("## 1.") and not rb.mask[i]
+                  for i, l in enumerate(rb.lines)))
+        if closer is not None:
+            check(f"type {num}: a heading INSIDE the block is masked",
+                  all(rb.mask[i] for i, l in enumerate(rb.lines)
+                      if l.startswith("## 99.")))
+        unterminated = f"# T\n\n{opener.replace('>', '') if closer is None else opener}\n## 99. Fake\n"
+        ru = tf.scan_text(unterminated)
+        check(f"type {num}: an unterminated block reports its own kind",
+              ru.terminal is not None and ru.terminal.kind == kind
+              and ru.terminal.number == num)
+        check(f"type {num}: the refusal message names the construct",
+              kind in ru.unclosed_reason()
+              or "fenced" not in ru.unclosed_reason())
+        # CONTROL: the erasure this refusal exists to prevent is real -- every
+        # line past the opener is masked, so without the terminal the document
+        # would publish as an empty node rather than as a refusal.
+        check(f"type {num}: CONTROL -- the unterminated block does mask to EOF",
+              all(ru.mask[i] for i in range(3, len(ru.lines) - 1)))
+        # `require_closed` is the projection the mutating tools take.
+        try:
+            ru.require_closed()
+            check(f"type {num}: require_closed raises on an unterminated doc", False)
+        except cs42.UnclosedDocument:
+            check(f"type {num}: require_closed raises on an unterminated doc", True)
+
+    # ---- Types 6 and 7: blank-line terminated, so NEVER a terminal. ----
+    for tag, num in (("details", 6), ("custom-widget", 7)):
+        doc = f"# T\n\n<{tag}>\n## 99. Fake\n- [x] Fake item\n\n## 1. Real\n"
+        r = tf.scan_text(doc)
+        check(f"type {num}: `<{tag}>` hides the heading inside it",
+              all(r.mask[i] for i, l in enumerate(r.lines)
+                  if l.startswith("## 99.") or l.startswith("- [x] Fake")))
+        check(f"type {num}: the block ends at the blank line, not at EOF",
+              any(l.startswith("## 1.") and not r.mask[i]
+                  for i, l in enumerate(r.lines)))
+        check(f"type {num}: running to EOF is well-formed, never a terminal",
+              tf.scan_text(f"<{tag}>\nx\n").terminal is None)
+        # THE BLANK LINE ITSELF MUST NOT BE MASKED -- it is the same blank that
+        # closes an enclosing list item, so swallowing it would keep a container
+        # alive past its end.
+        blank_idx = [i for i, l in enumerate(r.lines) if l == ""]
+        check(f"type {num}: the terminating blank line stays unmasked",
+              all(not r.mask[i] for i in blank_idx))
+
+    # TYPE 7 CANNOT INTERRUPT A PARAGRAPH -- the one `False` row in the oracle's
+    # table. `<custom-widget>` is not a known block name, so only type 7 can
+    # match it, which makes this a clean probe of that flag.
+    para = "some prose\n<custom-widget>\nstill prose\n"
+    rp = tf.scan_text(para)
+    check("type 7: does NOT interrupt an open paragraph",
+          not any(rp.mask))
+    # ...while a type-6 name in the same position DOES interrupt.
+    r6 = tf.scan_text("some prose\n<details>\nhidden\n")
+    check("type 6: DOES interrupt an open paragraph (control for the above)",
+          r6.mask[1])
+
+    # ---- The projection seam (design review [high]). ----
+    doc = "# T\n\n<details>\nprose inside\n\n## 1. Real\n"
+    r = tf.scan_text(doc)
+    prose = r.prose_mask()
+    check("structural mask HIDES a type-6 block",
+          r.mask[2] and r.mask[3])
+    check("prose mask SHOWS it, so the reflow lint still checks that prose",
+          not prose[2] and not prose[3])
+    check("the two projections agree about a FENCE (only 6/7 differ)",
+          [m for m in tf.scan_text("```\nx\n```\n").prose_mask()]
+          == [m for m in tf.scan_text("```\nx\n```\n").mask])
+
+    # ---- The positional-unpack guard (design review [high]). ----
+    try:
+        _a, _b, _c = tf.scan_text("x\n")
+        check("a stale 3-tuple unpack fails LOUDLY rather than silently", False)
+    except TypeError:
+        check("a stale 3-tuple unpack fails LOUDLY rather than silently", True)
+
+    # ---- Container-stripped section headings (item 7). ----
+    B = load("build_s42", "scripts/todo-graph/build.py")
+    # ---- The walks stay MUTUALLY CONSISTENT (item 7, reverted approach). ----
+    # A container-indented `## N.` is a heading to CommonMark and invisible to
+    # every producer walk. That hole stays open ON PURPOSE: closing it for the
+    # heading walk alone made it disagree with `_walk_stamped_items`, which
+    # files an item under whatever section it last saw -- so an indented `[x]`
+    # landed under the PREVIOUS section. Agreeing to be blind is strictly better
+    # than one walk seeing a section the others do not.
+    doc = "# T\n\n## 1. Root\n\n- item\n\n    ## 2. Nested\n\n    - [x] Nested item\n"
+    sc = B.scan_body(doc)
+    heads = [n for n, _ in B._walk_section_headings(sc.lines, sc.mask)]
+    check("the heading walk does NOT see a container-indented section",
+          heads == [1])
+    items = B._walk_stamped_items(sc.lines, sc.mask, "t.md")
+    check("...and no item is attributed to a section the heading walk denies",
+          all(i["section_n"] in heads for i in items))
+    # `ScanResult` no longer publishes a per-line stripped view at all, so the
+    # desynchronised projection cannot be reintroduced by accident.
+    check("ScanResult exposes no per-line `stripped` projection",
+          not hasattr(sc, "stripped")
+          and "stripped" not in cs42.ScanResult.__slots__)
+
+    # ---- The section-number digit run is BOUNDED (adversarial [medium]). ----
+    # An unbounded run reached `int()`, which CPython refuses above 4,300
+    # digits, so the producer raised ValueError instead of refusing cleanly.
+    giant = "## " + "9" * 5000 + ". Huge\n"
+    gs = B.scan_body(giant)
+    check("a 5,000-digit section number does not crash the heading walk",
+          B._walk_section_headings(gs.lines, gs.mask) == [])
+    check("a 9-digit section number is still a heading",
+          [n for n, _ in B._walk_section_headings(
+              *(lambda s: (s.lines, s.mask))(B.scan_body("## 123456789. Ok\n")))]
+          == [123456789])
+
+    _corpus_differential(tf, cs42)
+
+
+def _corpus_differential(tf, cs42):
+    """The markdown-it-py differential over the LIVE corpus, as a test.
+
+    PERSISTED HERE BECAUSE SECTION 39's WAS NOT. That section's acceptance ran
+    a generated differential of ~5.5M documents ad hoc, and nothing kept it --
+    so its headline result (two residual type-6 files) could only be re-derived
+    by rebuilding the harness from scratch, which is what section 42 had to do.
+    A measurement that gates a section belongs in the suite that guards it.
+
+    Section 42's own result is that the residual set is EMPTY: every line of
+    every corpus file now agrees with the oracle about fenced code and HTML
+    blocks. That is asserted POSITIVELY rather than as "the differential stayed
+    nil", because going from two divergent files to zero is the change this
+    section exists to make (Codex design review, [medium]).
+    """
+    try:
+        from markdown_it import MarkdownIt
+    except ImportError:
+        # NOT a silent pass: the assertion is recorded as skipped so a host
+        # without the oracle cannot look like a host where the check succeeded.
+        check("corpus differential SKIPPED -- markdown-it-py is not installed",
+              True)
+        return
+    md = MarkdownIt("commonmark")
+    divergent = []
+    for p in sorted((REPO / "todo").rglob("*.md")):
+        text = cs42.normalize_newlines(p.read_text(encoding="utf-8"))
+        r = cs42.scan_text(text)
+        n = len(r.lines)
+        oracle = [False] * n
+        for t in md.parse(text):
+            if t.type in ("fence", "html_block") and t.map:
+                for i in range(t.map[0], min(t.map[1], n)):
+                    oracle[i] = True
+        ours = [bool(k) and k in cs42.ALL_HIDDEN_KINDS for k in r.kinds]
+        if oracle != ours[:n]:
+            divergent.append(p.name)
+    check("corpus differential vs markdown-it-py: the residual set is EMPTY "
+          f"(divergent files: {divergent[:3]})", not divergent)
 
 
 _ASSERTED = [0]

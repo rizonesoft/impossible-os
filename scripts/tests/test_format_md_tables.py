@@ -208,6 +208,65 @@ def test_missing_shared_mask_fails_closed():
         raise AssertionError("mask unavailable did not fail closed")
 
 
+def test_table_inside_an_html_block_is_never_touched():
+    """A `|` row inside a type-6/7 HTML block is raw HTML, not a table.
+
+    CommonMark reads the contents of `<details>` as raw HTML, so re-aligning a
+    pipe row in there is a corpus edit to literal content -- the same class as
+    rewriting a fenced example. This tool is NOT a prose consumer (that is
+    `todo-reflow.py`, which takes the prose projection); it REWRITES what it
+    sees, so it takes the structural mask (Codex design review, section 42,
+    [high]).
+    """
+    with tempfile.TemporaryDirectory() as d:
+        content = (
+            "# T\n\n"
+            "<details>\n"
+            "| a | bb |\n"
+            "|-|-|\n"
+            "| 1 | 2 |\n"
+            "</details>\n"
+        )
+        p = _write(d, "a.md", content)
+        r = _run(str(p))
+        assert r.returncode == 0, r.stderr
+        assert p.read_text() == content, "an HTML-block table was rewritten"
+        c = _run("--check", str(p))
+        assert c.returncode == 0, f"--check flagged an HTML block: {c.stdout}{c.stderr}"
+
+
+def test_unterminated_html_block_is_refused():
+    """A document ending inside an EOF-consuming HTML block is REFUSED.
+
+    The mask erases everything from the opener, so a formatter that proceeded
+    would re-align a document whose tables it can no longer see -- and lint
+    Check 17 shells out to this `--check` to decide whether to block a commit.
+    Section 42 added the constructs and the refusal in the same change,
+    deliberately: a section of lag here is a corpus-corrupting window.
+    """
+    for opener in ("<script>", "<!--", "<?php", "<![CDATA["):
+        with tempfile.TemporaryDirectory() as d:
+            content = f"# T\n\n| a | bb |\n|-|-|\n| 1 | 2 |\n\n{opener}\nnever closed\n"
+            p = _write(d, "a.md", content)
+            r = _run(str(p))
+            assert r.returncode != 0, (
+                f"{opener}: an unterminated document was not refused")
+            assert p.read_text() == content, (
+                f"{opener}: refused but the file was rewritten anyway")
+            c = _run("--check", str(p))
+            assert c.returncode != 0, f"{opener}: --check did not refuse"
+
+
+def test_balanced_html_block_still_formats_tables_around_it():
+    """CONTROL: the refusal is about UNTERMINATED blocks, not HTML as such."""
+    with tempfile.TemporaryDirectory() as d:
+        p = _write(d, "a.md",
+                   "# T\n\n<!-- note -->\n\n| A | Bee |\n|-|-|\n| 1 | two |\n")
+        r = _run(str(p))
+        assert r.returncode == 0, r.stderr
+        assert "| A | Bee |" not in p.read_text(), "table was not aligned"
+
+
 if __name__ == "__main__":
     test_ragged_table_gets_aligned()
     test_idempotent_second_run_no_change()
@@ -221,4 +280,7 @@ if __name__ == "__main__":
     test_fenced_table_is_never_touched()
     test_table_after_a_fence_is_still_aligned()
     test_missing_shared_mask_fails_closed()
+    test_table_inside_an_html_block_is_never_touched()
+    test_unterminated_html_block_is_refused()
+    test_balanced_html_block_still_formats_tables_around_it()
     print("PASS: format-md-tables")

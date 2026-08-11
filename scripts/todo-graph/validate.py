@@ -1964,8 +1964,8 @@ def check_in_file_anchor(nodes: list, snapshot: dict) -> list:
         # is O(lines) and is computed ONCE for both, so sharing it costs
         # nothing and removes the second walk's chance to disagree with the
         # first.
-        lines, mask, unclosed_fence, unclosed_comment = \
-            cache_schema.scan_text(text)
+        _scan = cache_schema.scan_text(text)
+        lines, mask = _scan.lines, _scan.mask
         # THE VALIDATOR NOW REFUSES WHAT THE PRODUCER REFUSES. An unclosed fence
         # or comment masks to EOF, so every heading and link past the opener
         # reads as absent -- which this check would otherwise report as a file
@@ -1975,7 +1975,7 @@ def check_in_file_anchor(nodes: list, snapshot: dict) -> list:
         # tool disagreeing about it (section 38 consistency review). Measured
         # 2026-08-11: 0 of 281 corpus files trip either flag, so this changes no
         # live verdict -- it changes which way the check fails when one does.
-        reason = cache_schema.unclosed_reason(unclosed_fence, unclosed_comment)
+        reason = _scan.unclosed_reason()
         if reason:
             # REFUSAL, not a finding, and the distinction is the whole point.
             # A Finding becomes rc 1, whose documented meaning is "validation

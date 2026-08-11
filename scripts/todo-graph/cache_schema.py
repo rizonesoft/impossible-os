@@ -1091,10 +1091,252 @@ _SETEXT_UNDERLINE_RE = re.compile(r"^ {0,3}(?:=+|-+)[ \t]*$")
 # without section 42 carrying the item -- an owner that does not own it is a
 # black hole, and the review caught that before it shipped.
 _LINK_REF_DEF_RE = re.compile(r"^ {0,3}\[(?:[^\]\\]|\\.)+\]:[ \t]*\S")
+# MULTI-LINE FORM: ATTEMPTED AND REVERTED ON MEASUREMENT (section 42,
+# 2026-08-12). CommonMark lets the destination and title sit on lines FOLLOWING
+# the label, and a three-state machine was written for exactly that -- label
+# seen -> want destination -> want optional title, abandoned on a blank line.
+# It measured WORSE against the markdown-it-py oracle on the very shapes it
+# targeted: 509 divergent of 2,000 generated link-reference documents before,
+# 524 after. The corpus differential stayed nil in both directions (0 link
+# reference definitions of any form exist under `todo/`), so the change bought
+# nothing live and cost accuracy on the class it was for.
+#
+# WHY IT IS WORSE, so the next attempt does not rediscover it: deciding whether
+# `[foo]:` is a definition or a paragraph is not decidable line-by-line. A
+# following `[bar]:` is simultaneously a plausible DESTINATION for the first
+# label and a plausible new LABEL, and this single-pass model has to commit
+# before it can know. CommonMark resolves it by parsing the definition as a
+# unit with backtracking, which the three-flag block model does not have.
+#
+# So the single-line bound STAYS, stated rather than hidden, and the multi-line
+# remainder keeps its owner. Do not spend a third attempt on a line-at-a-time
+# state machine; the next one needs backtracking or it is the same shape again.
 # The only characters that can begin a fence delimiter. Testing membership
 # before calling `FENCE_RE` turns the common case -- a prose line with no
 # delimiter character anywhere -- into a C-level scan instead of a regex call.
 _FENCE_CHARS = ("`", "~")
+
+# ---- CommonMark HTML BLOCKS, types 1-7 (TODO-06 section 42) ----
+#
+# THE RULES ARE COPIED FROM THE DIFFERENTIAL ORACLE, not paraphrased from the
+# spec, because parity with markdown-it-py is this section's acceptance bar:
+# `markdown_it/rules_block/html_block.py` `HTML_SEQUENCES`. A paraphrase is how
+# the producer and the validator drifted apart in the first place, and here the
+# oracle is the thing we are measured against, so it is the thing to copy.
+#
+# TWO END RULES, and conflating them is a silent-erasure bug in either
+# direction. Types 1-5 end on a SUBSTRING and the terminator LINE IS PART OF
+# THE BLOCK. Types 6-7 end at a BLANK LINE that is NOT part of the block and
+# must still reach the container and paragraph phases -- masking it would drop
+# the very blank that closes the enclosing list item. A single "expected
+# terminator string" expresses neither half (Codex design review, section 42,
+# [medium]).
+END_ON_SUBSTRING = "substring"
+END_ON_BLANK = "blank"
+
+# ONLY TYPES 1-5 CAN BE UNTERMINATED. A type 6 or 7 block that runs to EOF is
+# well-formed CommonMark -- it simply ends there -- so it must never produce a
+# terminal value, or the producer would refuse a legal document.
+_HTML_UNTERMINATABLE = (END_ON_SUBSTRING,)
+
+_ATTR_NAME = r"[a-zA-Z_:][a-zA-Z0-9:._-]*"
+_ATTR_VALUE = r"(?:[^\"'=<>`\x00-\x20]+|'[^']*'|\"[^\"]*\")"
+_ATTRIBUTE = r"(?:\s+" + _ATTR_NAME + r"(?:\s*=\s*" + _ATTR_VALUE + r")?)"
+_OPEN_TAG = r"<[A-Za-z][A-Za-z0-9\-]*" + _ATTRIBUTE + r"*\s*/?>"
+_CLOSE_TAG = r"</[A-Za-z][A-Za-z0-9\-]*\s*>"
+
+# The 62 type-6 tag names, verbatim from `markdown_it.common.html_blocks`.
+_HTML_BLOCK_NAMES = (
+    "address|article|aside|base|basefont|blockquote|body|caption|center|col|"
+    "colgroup|dd|details|dialog|dir|div|dl|dt|fieldset|figcaption|figure|"
+    "footer|form|frame|frameset|h1|h2|h3|h4|h5|h6|head|header|hr|html|iframe|"
+    "legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|"
+    "param|section|source|summary|table|tbody|td|tfoot|th|thead|title|tr|"
+    "track|ul")
+
+
+class HtmlBlockRule(NamedTuple):
+    """One row of CommonMark's HTML-block table."""
+    number: int          # CommonMark's own numbering, 1-7
+    kind: str            # the stable tag carried by `kinds` and by `Terminal`
+    opener: object       # matched against the container-stripped, de-indented line
+    closer: object       # meaning depends on `end_rule`
+    end_rule: str
+    can_interrupt: bool  # may it start while a paragraph is open?
+    terminator: str      # human-facing, for the refusal message
+
+    @property
+    def code(self):
+        """This rule's per-line kind CODE (see `KIND_CODE_NONE`)."""
+        return _CODE_BY_KIND[self.kind]
+
+
+# Ordered: CommonMark tries the rows in this order and takes the first match,
+# which is why type 7 (the catch-all complete tag) must come last -- `<pre>`
+# is a valid complete open tag too, and matching it as type 7 would give it a
+# blank-line end rule instead of `</pre>`.
+HTML_BLOCK_RULES = (
+    HtmlBlockRule(
+        1, "script",
+        re.compile(r"^<(script|pre|style|textarea)(?=(\s|>|$))", re.I),
+        re.compile(r"</(script|pre|style|textarea)>", re.I),
+        END_ON_SUBSTRING, True,
+        "`</script>`, `</pre>`, `</style>` or `</textarea>`"),
+    HtmlBlockRule(
+        2, "comment", re.compile(r"^<!--"), re.compile(r"-->"),
+        END_ON_SUBSTRING, True, "`-->`"),
+    HtmlBlockRule(
+        3, "pi", re.compile(r"^<\?"), re.compile(r"\?>"),
+        END_ON_SUBSTRING, True, "`?>`"),
+    HtmlBlockRule(
+        4, "declaration", re.compile(r"^<![A-Z]"), re.compile(r">"),
+        END_ON_SUBSTRING, True, "`>`"),
+    HtmlBlockRule(
+        5, "cdata", re.compile(r"^<!\[CDATA\["), re.compile(r"\]\]>"),
+        END_ON_SUBSTRING, True, "`]]>`"),
+    HtmlBlockRule(
+        6, "tag-block",
+        re.compile("^</?(" + _HTML_BLOCK_NAMES + r")(?=(\s|/?>|$))", re.I),
+        None, END_ON_BLANK, True, "a blank line"),
+    # TYPE 7 IS THE ONLY ROW THAT CANNOT INTERRUPT A PARAGRAPH. Without that
+    # flag an ordinary prose line ending in a complete tag would start a block
+    # and hide everything to the next blank line.
+    HtmlBlockRule(
+        7, "tag-any",
+        re.compile(r"^(?:" + _OPEN_TAG + r"|" + _CLOSE_TAG + r")\s*$"),
+        None, END_ON_BLANK, False, "a blank line"),
+)
+
+# `kinds[i]` is None for an ordinary line, else one of these.
+KIND_FENCE = "fence"
+ALL_HIDDEN_KINDS = frozenset(
+    [KIND_FENCE] + [r.kind for r in HTML_BLOCK_RULES])
+
+# ONE BYTE PER LINE, NOT ONE POINTER PER LINE. The scan stores its per-line
+# classification in a `bytearray` and materialises the string view only when a
+# caller asks for `.kinds`. A parallel Python list would hold an 8-byte object
+# reference per line even though every value is `None` or a shared constant:
+# measured on 1,000,001 blank lines, such a list occupied 8,448,728 bytes
+# against a `bytearray`'s 1,000,058, and at the accepted 16 MiB per-TODO
+# ceiling (~16.8M lines) that is ~135 MiB added to an already large
+# splitlines+mask peak -- enough to stall or OOM the builder and every migrated
+# gate on a size-VALID file (Codex perf, section 42, [high]). Storing small
+# ints in a list does not help; the pointer is the cost.
+KIND_CODE_NONE = 0
+_KIND_BY_CODE = (None, KIND_FENCE) + tuple(r.kind for r in HTML_BLOCK_RULES)
+_CODE_BY_KIND = {k: i for i, k in enumerate(_KIND_BY_CODE) if k is not None}
+KIND_CODE_FENCE = _CODE_BY_KIND[KIND_FENCE]
+# TYPE 6 AND 7 ARE THE PROJECTION SEAM. They are raw HTML to CommonMark, so no
+# STRUCTURAL reader may see a `## N.` or a `- [x]` inside one -- and neither may
+# `format-md-tables.py`, which REWRITES pipe rows that CommonMark reads as raw
+# text in there. `todo-reflow.py` is the one consumer that deliberately looks
+# inside, because the 30 live `<details>` prose lines are exactly what its
+# hard-wrap lint exists to check (Codex design review, section 42, [high]).
+PROSE_VISIBLE_KINDS = frozenset(("tag-block", "tag-any"))
+PROSE_HIDDEN_KINDS = ALL_HIDDEN_KINDS - PROSE_VISIBLE_KINDS
+_PROSE_HIDDEN_CODES = frozenset(_CODE_BY_KIND[k] for k in PROSE_HIDDEN_KINDS)
+
+
+class Terminal(NamedTuple):
+    """What the document was still inside when it ended.
+
+    Carries the CONSTRUCT rather than a pair of booleans, so a fourth
+    EOF-consuming block type has somewhere to report itself and the message can
+    name the delimiter the author actually has to close.
+    """
+    kind: str
+    number: int          # 0 for a fence, else the CommonMark block type
+    terminator: str
+    line: int            # 0-based index of the opener
+
+
+class ScanResult:
+    """`fence_scan` / `scan_text` result -- DELIBERATELY NOT A TUPLE.
+
+    Nine consumers used to unpack `(mask, unclosed_fence, unclosed_comment)`
+    positionally. Widening that tuple would have let a half-migrated consumer
+    keep unpacking three values and read a truthy `Terminal` object as
+    `unclosed_fence=True`, or -- worse -- bind the new element to a name it then
+    tested for truth in the fail-OPEN direction. There is no `__iter__`,
+    `__len__` or `__getitem__` here, so every stale unpack raises `TypeError` at
+    the call site instead (Codex design review, section 42, [high]).
+
+    NO PER-LINE `stripped` VIEW. One was published briefly in section 42 and
+    removed in the same section: its only consumer desynchronised the heading
+    walk from its siblings (see `build._walk_section_headings`), and retaining a
+    string reference per line tripled this scanner's per-line storage for a
+    projection nothing could safely use. Measured by the review: a 4 MiB
+    newline-only document held 4,194,305 entries per array (Codex adversarial,
+    section 42, [medium]). `mask` and `kinds` are index-parallel to `lines` and
+    are the whole surface.
+    """
+
+    __slots__ = ("lines", "mask", "codes", "terminal")
+
+    def __init__(self, lines, mask, codes, terminal):
+        self.lines = lines
+        self.mask = mask            # the STRUCTURAL projection; the safe default
+        self.codes = codes          # bytearray, one KIND CODE per line
+        self.terminal = terminal    # `Terminal` or None
+
+    @property
+    def kinds(self):
+        """Per-line kind STRINGS -- materialised on demand, never stored.
+
+        Convenient for tests and differentials; `codes` is what the scan keeps,
+        because a string view costs a pointer per line (see `KIND_CODE_NONE`).
+        """
+        return [_KIND_BY_CODE[c] for c in self.codes]
+
+    def unclosed_reason(self):
+        """One wording for every consumer, or None when the document closed."""
+        return unclosed_reason(self.terminal)
+
+    def require_closed(self):
+        """Raise `UnclosedDocument` unless the document is well-formed.
+
+        THE PROJECTION FOR A REFUSING CALLER -- the producer, the four gates and
+        both mutating repair tools. Each of them previously spelled its own
+        `if unclosed_fence or unclosed_comment` test, and `format-md-tables.py`
+        simply forgot to, which is how a REWRITING tool came to operate on a
+        mask that erases to EOF.
+        """
+        reason = self.unclosed_reason()
+        if reason:
+            raise UnclosedDocument(reason)
+
+    def prose_mask(self):
+        """The mask a consumer takes when it lints PROSE rather than structure.
+
+        Type 6 and 7 blocks stay VISIBLE. Only `todo-reflow.py` wants this; see
+        `PROSE_VISIBLE_KINDS`.
+        """
+        hidden = _PROSE_HIDDEN_CODES
+        return [c in hidden for c in self.codes]
+
+
+class UnclosedDocument(RuntimeError):
+    """A document ended inside a construct that consumes to EOF."""
+
+
+# The producer's error CATEGORY per terminal kind. The two pre-section-42
+# categories keep their exact meaning -- a fence is still `unclosed-fence` and
+# an HTML COMMENT is still `unclosed-comment` -- so every existing consumer,
+# fixture and lint aggregation keeps working unchanged. The four newly-tracked
+# EOF-consuming types get their own category rather than being folded into
+# `unclosed-comment`, because a category that says "comment" for an unclosed
+# `<script>` is a name that stopped being true, which is the drift this file
+# keeps paying for.
+CATEGORY_BY_KIND = {
+    KIND_FENCE: "unclosed-fence",
+    "comment": "unclosed-comment",
+}
+CATEGORY_HTML = "unclosed-html"
+
+
+def terminal_category(terminal) -> str:
+    """The producer error category for a `Terminal`."""
+    return CATEGORY_BY_KIND.get(terminal.kind, CATEGORY_HTML)
 
 
 def _indent_cols(s: str, start_col: int = 0) -> int:
@@ -1361,6 +1603,33 @@ def _open_containers(containers, rest: str, can_interrupt: bool = True,
         continue
 
 
+def _html_block_opener(rest: str, para_open: bool):
+    """The first `HTML_BLOCK_RULES` row `rest` opens, or None.
+
+    `rest` is the CONTAINER-STRIPPED remainder, matching the coordinate system
+    the oracle uses (it matches from the line's first non-space character with
+    the container prefixes already consumed).
+
+    A FOUR-COLUMN INDENT IS CODE, NOT HTML, which the oracle spells as its
+    `state.is_code_block(startLine)` guard. Without it an indented `<div>`
+    example inside a list item would open a real HTML block and hide the
+    structure after it.
+
+    `para_open` excludes type 7, the one row that cannot interrupt a paragraph:
+    an ordinary prose line that happens to end in a complete tag must stay
+    prose.
+    """
+    lead = rest.lstrip(" \t")
+    if not lead.startswith("<") or _indent_cols(rest) >= 4:
+        return None
+    for rule in HTML_BLOCK_RULES:
+        if para_open and not rule.can_interrupt:
+            continue
+        if rule.opener.search(lead):
+            return rule
+    return None
+
+
 def fence_step(state, line: str):
     """Advance fenced-code-block state by one line. `state` is None outside a
     fence and `(char, length)` inside one; returns the new state.
@@ -1424,14 +1693,17 @@ def fence_scan(lines):
     wrapper below.
     """
     out = []
+    codes = bytearray()      # per line: a KIND CODE, 0 for ordinary
     containers = []          # the open CommonMark container stack
     state = None             # fence state, `(char, length)` while open
-    depth = 0                # len(containers) when the fence/comment opened
-    in_comment = False
+    depth = 0                # len(containers) when the fence/HTML block opened
+    html = None              # the open `HtmlBlockRule`, or None
+    open_line = 0            # index of the line that opened `state` / `html`
+    fence_terminator = ""    # human-facing closer for the open fence
     para_open = False        # the previous line left a paragraph open
     fill_state = [0]         # first container that may still be provisional
     para_depth = 0           # the container depth that paragraph belongs to
-    for line in lines:
+    for lineno, line in enumerate(lines):
         matched, rest, base = _match_containers(containers, line)
         # A LEAF BLOCK DIES WITH ITS CONTAINER. When the list item or
         # blockquote holding an open fence stops matching, CommonMark ends the
@@ -1441,15 +1713,30 @@ def fence_scan(lines):
         # with an unindented table, so the apparent closer read as a NEW root
         # opener and swallowed six headings. A physical-line tracker sees
         # neither end of that.
-        if in_comment:
+        if html is not None:
             if matched >= depth:
-                # A block comment consumes THROUGH the line carrying `-->`;
-                # trailing text on that line is still part of the block.
-                if "-->" in rest:
-                    in_comment = False
-                out.append(True)
-                continue
-            in_comment = False
+                if html.end_rule is END_ON_BLANK:
+                    # THE BLANK LINE IS NOT PART OF THE BLOCK, and must not be
+                    # masked: it is the same blank that closes the enclosing
+                    # list item, so swallowing it here would keep a container
+                    # alive past its end. Fall THROUGH to the ordinary path.
+                    if rest.strip():
+                        out.append(True)
+                        codes.append(html.code)
+                        continue
+                    html = None
+                else:
+                    # Types 1-5 consume THROUGH the terminator line; trailing
+                    # text on that line is still part of the block, so the kind
+                    # is read BEFORE the state is cleared.
+                    kind_code = html.code
+                    if html.closer.search(rest):
+                        html = None
+                    out.append(True)
+                    codes.append(kind_code)
+                    continue
+            else:
+                html = None
         elif state is not None:
             if matched >= depth:
                 # A closer must carry a delimiter character, so a line with
@@ -1457,6 +1744,7 @@ def fence_scan(lines):
                 if "`" in rest or "~" in rest:
                     state = fence_step(state, rest)
                 out.append(True)
+                codes.append(KIND_CODE_FENCE)
                 continue
             state = None
         # LAZY CONTINUATION. A paragraph line may omit its container prefixes
@@ -1478,10 +1766,11 @@ def fence_scan(lines):
                 and not (_lazy_lead in ("-", "*", "_")
                          and _THEMATIC_BREAK_RE.match(rest))
                 and not _CONTAINER_OPEN_RE.match(rest)
-                and not HTML_BLOCK_COMMENT_RE.match(rest)
+                and not _html_block_opener(rest, para_open=True)
                 and not (("`" in rest or "~" in rest)
                          and fence_step(None, rest) is not None)):
             out.append(False)
+            codes.append(KIND_CODE_NONE)
             continue
         del containers[matched:]
         if fill_state[0] > len(containers):
@@ -1511,6 +1800,7 @@ def fence_scan(lines):
         _lead = rest.lstrip(" \t")[:1]
         if _lead in ("-", "*", "_") and _THEMATIC_BREAK_RE.match(rest):
             out.append(False)
+            codes.append(KIND_CODE_NONE)
             para_open = False
             continue
         rest = _open_containers(
@@ -1530,7 +1820,11 @@ def fence_scan(lines):
         if nxt is not None:
             state = nxt
             depth = len(containers)
+            open_line = lineno
+            fence_terminator = "a closing `%s` run of at least %d" % (
+                nxt[0] * nxt[1], nxt[1])
             out.append(True)
+            codes.append(KIND_CODE_FENCE)
             # A fenced block is a LEAF: it closes any open paragraph, so the
             # line after the block cannot be a lazy continuation of one.
             para_open = False
@@ -1539,17 +1833,24 @@ def fence_scan(lines):
             # closed the item at the blank and took the open fence with it.
             _fill(containers, fill_state)
             continue
-        if "<!--" in rest and HTML_BLOCK_COMMENT_RE.match(rest):
-            # A line STARTING with `<!--` is an HTML block: the whole line is
-            # hidden, including anything after a `-->` on it.
-            if "-->" not in rest:
-                in_comment = True
+        _rule = _html_block_opener(rest, para_open)
+        if _rule is not None:
+            # The whole opening line is hidden, including anything after a
+            # terminator on it. A block whose terminator is already present on
+            # the opener is one line long and never enters the open state.
+            if _rule.end_rule is END_ON_BLANK or not _rule.closer.search(rest):
+                # A blank-terminated block is only OPEN if this line is not
+                # itself blank -- and an opener never is, since it matched a tag.
+                html = _rule
                 depth = len(containers)
+                open_line = lineno
             out.append(True)
+            codes.append(_rule.code)
             _fill(containers, fill_state)
             para_open = False
             continue
         out.append(False)
+        codes.append(KIND_CODE_NONE)
         # REAL PARAGRAPH STATE, not "the line was non-blank". An ATX heading
         # replaces a paragraph and a setext underline closes the one above it;
         # treating either as paragraph text left the interruption restriction
@@ -1605,7 +1906,17 @@ def fence_scan(lines):
     # refusal is loud, rare and recoverable by reformatting; a false accept
     # silently erases every heading, item, row and stamp past the opener, which
     # is the failure this scan exists to prevent (see the module docstring).
-    return out, state is not None, in_comment
+    #
+    # A TYPE 6 OR 7 BLOCK RUNNING TO EOF IS WELL-FORMED and must NOT produce a
+    # terminal value: CommonMark ends it there. Only the substring-terminated
+    # types can be genuinely unterminated, which is why the end rule -- not the
+    # mere fact that a block is open -- decides this.
+    terminal = None
+    if state is not None:
+        terminal = Terminal(KIND_FENCE, 0, fence_terminator, open_line)
+    elif html is not None and html.end_rule in _HTML_UNTERMINATABLE:
+        terminal = Terminal(html.kind, html.number, html.terminator, open_line)
+    return ScanResult(lines, out, codes, terminal)
 
 
 def fence_mask(lines) -> list:
@@ -1636,18 +1947,13 @@ def fence_mask(lines) -> list:
     physical line, and a fence indented five spaces under `100. docs` is a real
     block here exactly as it is in a renderer.
 
-    KNOWN LIMIT, owned by TODO-06 section 42: HTML blocks other than `<!--`
-    comments. CommonMark also opens a block on `<script>` / `<pre>` / `<style>`
-    / `<textarea>`, a processing instruction, a declaration and CDATA (which run
-    to EOF when unterminated), and on the ~60 known tag names of type 6 (which
-    end at a blank line). This scan enters HTML state only for a comment.
-    Measured 2026-08-11 across all 281 corpus files: 0 EOF-consuming openers and
-    30 type-6 lines, none of which carry a heading, checklist item, table row or
-    stamp -- so nothing is mis-indexed today. Closing it needs the terminal
-    contract to carry the block KIND, which is why it is a section and not a
-    line.
+    ALL SEVEN CommonMark HTML block types are tracked since section 42, so this
+    is the STRUCTURAL projection: fenced code, comments, the four EOF-consuming
+    types, and the two blank-line-terminated ones. A consumer that lints PROSE
+    rather than structure wants `ScanResult.prose_mask()` instead, which leaves
+    types 6 and 7 visible.
     """
-    return fence_scan(lines)[0]
+    return fence_scan(lines).mask
 
 
 # Every character `str.splitlines()` treats as a line break but `split("\n")`
@@ -1689,16 +1995,14 @@ def normalize_newlines(text: str) -> str:
 
 
 def scan_text(text: str):
-    """`(lines, mask, unclosed_fence, unclosed_comment)` for a whole document.
+    """A `ScanResult` for a whole document, `lines` included.
 
     Normalises line endings first, so the `lines` handed back are the same
     lines `splitlines()` would give the producer. Callers that need to index
     the ORIGINAL bytes must normalise before they split, which is what the two
     entry points here do.
     """
-    lines = normalize_newlines(text).split("\n")
-    mask, unclosed_fence, unclosed_comment = fence_scan(lines)
-    return lines, mask, unclosed_fence, unclosed_comment
+    return fence_scan(normalize_newlines(text).split("\n"))
 
 
 # A `## N. Title` section heading. ONE MATCHER, because `build.py` had two --
@@ -1725,10 +2029,22 @@ def scan_text(text: str):
 # and is not matched here. Measured: 0 such headings corpus-wide. Closing it
 # means giving the walks the container phase's output rather than the raw line,
 # which is section 42's work, not a wider regex.
-SECTION_HEADING_RE = re.compile(r"^ {0,3}## (\d+)\.(?:\s+(.+?))?\s*$")
+#
+# THE DIGIT RUN IS BOUNDED, and an unbounded one was a live crash rather than a
+# style point. Every consumer feeds group 1 straight to `int()`, and CPython
+# REFUSES a string->int conversion over 4,300 digits -- so a heading carrying a
+# 5,000-digit number raised `ValueError` out of the producer instead of
+# producing a controlled refusal (Codex adversarial, section 42, [medium]).
+# `todo-section-order.py:68` already bounds its own copy of this grammar at nine
+# digits for exactly that reason, having paid for it once; the two disagreeing
+# about what a heading is was the drift this shared matcher exists to end. Nine
+# digits cannot be reached by any real roadmap and cannot overflow anything
+# downstream, and `_MAX_SECTION_N` still bounds the VALUE at cache-validation
+# time. A longer run simply does not match, exactly as it does not there.
+SECTION_HEADING_RE = re.compile(r"^ {0,3}## (\d{1,9})\.(?:\s+(.+?))?\s*$")
 
 
-def unclosed_reason(unclosed_fence: bool, unclosed_comment: bool):
+def unclosed_reason(terminal):
     """One wording for every consumer, or None when the document is well-formed.
 
     HERE RATHER THAN IN THE SHIM, because the validator lives beside this module
@@ -1737,20 +2053,24 @@ def unclosed_reason(unclosed_fence: bool, unclosed_comment: bool):
     `scripts/`. `todo_fence.unclosed_reason` now delegates to this, so the four
     gates, the producer and the validator all quote the same sentence.
 
-    Named separately per construct because the message has to tell an author
-    WHICH delimiter to close -- naming the wrong one sends them to the wrong
-    line, which is the same reason `fence_scan` reports the two flags apart.
+    TAKES THE TERMINAL VALUE, not a pair of booleans. The message has to tell an
+    author WHICH delimiter to close and WHERE it opened -- naming the wrong one
+    sends them to the wrong line -- and with seven block types plus fences there
+    is no longer a fixed set of flags to enumerate here (section 42).
     """
-    if unclosed_fence:
-        return ("document ends inside an unclosed fenced code block, so every "
-                "structural walk past the opener reads as empty; close the "
-                "fence (a fence nested inside another must use a LONGER run "
-                "than the block containing it)")
-    if unclosed_comment:
-        return ("document ends inside an unclosed `<!--` HTML comment, so "
-                "every structural walk past the opener reads as empty; close "
-                "it with `-->`")
-    return None
+    if terminal is None:
+        return None
+    if terminal.kind == KIND_FENCE:
+        return ("document ends inside an unclosed fenced code block opened at "
+                "line %d, so every structural walk past the opener reads as "
+                "empty; close it with %s (a fence nested inside another must "
+                "use a LONGER run than the block containing it)"
+                % (terminal.line + 1, terminal.terminator))
+    return ("document ends inside an unclosed HTML block (CommonMark type %d, "
+            "`%s`) opened at line %d, so every structural walk past the opener "
+            "reads as empty; close it with %s"
+            % (terminal.number, terminal.kind, terminal.line + 1,
+               terminal.terminator))
 
 
 # Where a checklist item stops DESCRIBING itself and starts REFERRING elsewhere.
@@ -1815,7 +2135,8 @@ def checklist_item_leads(text: str) -> dict:
     # masked differently here than in the builder and `--fix-line-numbers`
     # could steer off a fenced example (Codex adversarial, section 39 round 4,
     # [medium]).
-    lines, mask, _uf, _uc = scan_text(text)
+    _scan = scan_text(text)
+    lines, mask = _scan.lines, _scan.mask
     # THE MASK DOES NOT MODEL AN INLINE COMMENT THAT SPANS LINES, and the latch
     # below is what covers it. `fence_scan` handles a comment that STARTS a
     # line (CommonMark HTML block); a `<!--` opened mid-item and closed two

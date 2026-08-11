@@ -991,8 +991,7 @@ for rel, staged_text in _DOCS:
     # it. Say so instead -- `build.py` refuses the same documents, and a gate
     # that went quiet would silently disagree with the producer about the same
     # file (Codex design review, section 38, [high]).
-    _lines, _mask, _uf, _uc = _fence.scan_text(raw)
-    _why = _fence.unclosed_reason(_uf, _uc)
+    _why = _fence.scan_text(raw).unclosed_reason()
     if _why:
         errors.append(f"{rel}: cannot be checked -- {_why} (Check 10/11)")
         continue
@@ -2111,7 +2110,7 @@ json.dump({k: v for k, v in d.items() if norm(k) not in excl}, sys.stdout)
 import json,re,sys
 try: d=json.load(sys.stdin)
 except Exception: d={}
-KNOWN={'open-in-done','open-in-deferred','no-io-row','unclosed-fence','unclosed-comment'}
+KNOWN={'open-in-done','open-in-deferred','no-io-row','unclosed-fence','unclosed-comment','unclosed-html'}
 recs=[(f,k,msg) for f,v in d.items() for k,_,msg in v]
 def n(kind): return sum(1 for _,k,_ in recs if k==kind)
 def first(*kinds):
@@ -2128,10 +2127,10 @@ print('done=%d' % n('open-in-done'))
 print('deferred=%d' % n('open-in-deferred'))
 print('items=%d' % items)
 print('noio=%d' % n('no-io-row'))
-print('unreadable=%d' % (n('unclosed-fence')+n('unclosed-comment')))
+print('unreadable=%d' % (n('unclosed-fence')+n('unclosed-comment')+n('unclosed-html')))
 print('unknown=%d' % len(unknown))
 print('unknown_names=%s' % ','.join(unknown))
-print('first_unreadable=%s' % first('unclosed-fence','unclosed-comment'))
+print('first_unreadable=%s' % first('unclosed-fence','unclosed-comment','unclosed-html'))
 print('first_noio=%s' % first('no-io-row'))" 2>/dev/null || echo 'parse_failed=1')"
     lint24_field() { printf '%s\n' "$LINT24_AGG" | sed -n "s/^$1=//p" | head -1; }
     if printf '%s\n' "$LINT24_AGG" | grep -q '^parse_failed=1$'; then

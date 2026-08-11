@@ -105,9 +105,8 @@ def _git_root():
 
 def _post_image_lines(text):
     """`(lines, mask, unclosed_reason)` for one staged document."""
-    fence = _fence()
-    lines, mask, uf, uc = fence.scan_text(text)
-    return lines, mask, fence.unclosed_reason(uf, uc)
+    scan = _fence().scan_text(text)
+    return scan.lines, scan.mask, scan.unclosed_reason()
 
 
 def _added_lines(path):

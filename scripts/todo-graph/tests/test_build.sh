@@ -1516,7 +1516,8 @@ def eq(got, want, label):
 # the producer and the validator cannot drift about what is fenced. These
 # adapters do here what the production caller does once per file.
 def sm(src):
-    return v._scan_markdown(*v.cache_schema.scan_text(src)[:2])
+    _s = v.cache_schema.scan_text(src)
+    return v._scan_markdown(_s.lines, _s.mask)
 def links(src):
     return [(e[1], e[2]) for e in sm(src) if e[0] == "link"]
 def heads(src):
@@ -1661,7 +1662,8 @@ import validate as v
 
 fails = []
 def sm(src):
-    return v._scan_markdown(*v.cache_schema.scan_text(src)[:2])
+    _s = v.cache_schema.scan_text(src)
+    return v._scan_markdown(_s.lines, _s.mask)
 # Linear comment scanning: 100k comments must not take seconds.
 line = "<!---->" * 100000 + "\n"
 t0 = time.perf_counter(); list(sm(line)); dt = time.perf_counter() - t0
@@ -17219,9 +17221,21 @@ S36_MUT="$S36_MUTDIR/build.py"
 # contains `out.append(False)` legitimately. The mutation went inert and the
 # test reported a PASS-shaped failure. A guard is only a guard if it fails when
 # the anchor moves.
-sed -i 's|^    return out, state is not None, in_comment$|    return [False] * len(lines), state is not None, in_comment|' \
+# Re-anchored in section 42, when `fence_scan` began returning a `ScanResult`
+# instead of a 3-tuple. The guard below caught the move exactly as its comment
+# promises it would -- the sed stopped matching and the test FAILED rather than
+# going quietly inert.
+# ANCHORED ON THE STABLE PREFIX, not the full argument list. Section 42 moved
+# this line three times while its own review ran (3-tuple -> ScanResult, then
+# dropping `stripped`, then `kinds` -> `codes`), and each move broke the sed
+# and correctly FAILED this test. Matching only `ScanResult(lines, out,` and
+# rewriting the MASK argument keeps the guard sensitive to the thing it is
+# actually about -- a blinded mask -- without re-breaking whenever a later field
+# is added or renamed. The grep below still fails loudly if even this stops
+# matching.
+sed -i 's|^    return ScanResult(lines, out, |    return ScanResult(lines, [False] * len(lines), |' \
     "$S36_MUTDIR/cache_schema.py"
-if ! grep -q "return \[False\] \* len(lines)" "$S36_MUTDIR/cache_schema.py"; then
+if ! grep -q "ScanResult(lines, \[False\] \* len(lines)" "$S36_MUTDIR/cache_schema.py"; then
     t_fail "section 36: mutation did not apply -- fence_scan return anchor not found"
 else
     S36_MUT_OUT="$(s36_probe "$S36_T" "$S36_MUT")"
@@ -17329,7 +17343,8 @@ import build as B
 same = True
 for p in sorted(pathlib.Path("todo").rglob("*.md")):
     body = p.read_text(encoding="utf-8", errors="replace")
-    lines, mask, _, _ = B.scan_body(body)
+    _sb = B.scan_body(body)
+    lines, mask = _sb.lines, _sb.mask
     pairs = [
         (B.extract_section_headings(body), B._walk_section_headings(lines, mask)),
         (B.extract_implementation_order(body), B._walk_implementation_order(lines, mask)),
@@ -17375,12 +17390,14 @@ for name in publics:
 # Each public walk must agree with the private one build_node actually calls,
 # so the rescanning wrapper cannot drift from the threaded path.
 body = "## 1. First\n## 2. Second\n"
-lines, mask, unclosed, _ = B.scan_body(body)
+_sb = B.scan_body(body)
+lines, mask = _sb.lines, _sb.mask
+unclosed = _sb.terminal is not None
 if B.extract_section_headings(body) != B._walk_section_headings(lines, mask):
     bad.append("wrapper-differs")
 if unclosed is not False:
     bad.append("unclosed-wrong")
-if B.scan_body("```\nx\n")[2] is not True:
+if B.scan_body("```\nx\n").terminal is None:
     bad.append("unclosed-not-detected")
 print("ok" if not bad else "BAD:" + ",".join(sorted(bad)))
 S36CPY
@@ -17402,7 +17419,8 @@ import sys
 sys.path.insert(0, "scripts/todo-graph")
 import build as B
 def probe(body):
-    lines, mask, unclosed, _ = B.scan_body(body)
+    _sb = B.scan_body(body)
+    unclosed = _sb.terminal is not None
     return unclosed, [n for n, _ in B.extract_section_headings(body)]
 in_comment = probe("# T\n\n<!--\n```\nexample\n-->\n\n## 1. Real\n")
 control_bare = probe("# T\n\n```\nexample\n\n## 1. Real\n")
@@ -17524,7 +17542,13 @@ import sys
 p = sys.argv[1]
 s = open(p).read()
 s = s.replace('    "unclosed-fence",\n', '', 1)
-s = s.replace('    if body_unclosed:\n', '    if False:\n', 1)
+_neutered = s.replace('    if _body.terminal is not None:\n', '    if False:\n', 1)
+# A MISSED ANCHOR MUST FAIL LOUDLY. Section 42 renamed this condition, and the
+# silent version of this patch left the check LIVE while the category was
+# undeclared -- which surfaced as an unrelated INTERNAL assertion from the
+# producer rather than as "the test's mutation stopped applying".
+assert _neutered != s, "t39_tree: the unclosed-check anchor moved; update it"
+s = _neutered
 open(p, "w").write(s)
 PY
             ;;
@@ -17533,7 +17557,13 @@ PY
 import sys
 p = sys.argv[1]
 s = open(p).read()
-s = s.replace('    if body_unclosed:\n', '    if False:\n', 1)
+_neutered = s.replace('    if _body.terminal is not None:\n', '    if False:\n', 1)
+# A MISSED ANCHOR MUST FAIL LOUDLY. Section 42 renamed this condition, and the
+# silent version of this patch left the check LIVE while the category was
+# undeclared -- which surfaced as an unrelated INTERNAL assertion from the
+# producer rather than as "the test's mutation stopped applying".
+assert _neutered != s, "t39_tree: the unclosed-check anchor moved; update it"
+s = _neutered
 open(p, "w").write(s)
 PY
             ;;

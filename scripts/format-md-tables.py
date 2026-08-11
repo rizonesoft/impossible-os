@@ -155,7 +155,27 @@ def _fence_mask(lines: list[str]) -> list[bool]:
             raise MaskUnavailable(f"cannot load a module spec from {src}")
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
-        mask = mod.fence_mask(lines)
+        scan = mod.fence_scan(lines)
+        # REFUSES AN UNTERMINATED DOCUMENT, same as the producer and the four
+        # gates. Taking only the mask was safe while the tracker knew about
+        # fences and `<!--` alone; section 42 added the four other EOF-consuming
+        # HTML block types, and an unterminated one masks to EOF -- so this
+        # tool, which REWRITES files and whose `--check` tells lint Check 17
+        # whether to block a commit, would have re-aligned a document whose
+        # every table had just become invisible. The adoption is in the SAME
+        # section that adds the constructs, deliberately: a section of lag here
+        # is a corpus-corrupting window (Codex design review, section 42,
+        # [high]).
+        reason = scan.unclosed_reason()
+        if reason:
+            raise MaskUnavailable(reason)
+        # THE STRUCTURAL PROJECTION. CommonMark reads a `|` row inside a type-6
+        # or type-7 HTML block as raw text, not as a table, so this tool must
+        # NOT see one -- it is not a prose consumer (that is `todo-reflow.py`,
+        # which takes `prose_mask()`), it is a REWRITER, and re-aligning literal
+        # HTML content is the same class of corpus edit as re-aligning a fenced
+        # example (Codex design review, section 42, [high]).
+        mask = scan.mask
     except MaskUnavailable:
         raise
     except Exception as exc:                       # noqa: BLE001 -- reported, not hidden

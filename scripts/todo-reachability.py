@@ -103,7 +103,19 @@ class CacheUnusable(RuntimeError):
         super().__init__(message)
         self.reason = reason
 
-SECTION_RE = re.compile(r"^## (\d+)\.")
+# THE DIGIT RUN IS BOUNDED, for the reason `todo-section-order.py:68` and
+# `cache_schema.SECTION_HEADING_RE` are: line 161 feeds group 1 straight to
+# `int()`, and CPython refuses a string->int conversion over 4,300 digits, so a
+# heading carrying a 5,000-digit number raised ValueError out of THIS gate --
+# the one that holds `phase FIXPOINT` open, where a crash is worse than a
+# finding (Codex adversarial + consistency, section 42, [medium]).
+#
+# THIS IS ONLY THE DIGIT WIDTH. This grammar still differs from the shared
+# `cache_schema.SECTION_HEADING_RE` in anchoring (that one allows CommonMark's
+# 0-3 leading spaces, this one demands column 0), so the two still disagree
+# about an indented heading. Unifying them is section 43's one-grammar work;
+# this bound closes the crash without pretending the drift is gone.
+SECTION_RE = re.compile(r"^## (\d{1,9})\.")
 OPEN_ITEM_RE = re.compile(r"^\s*- \[ \]")
 PARKED_ITEM_RE = re.compile(r"^\s*- \[/\]")
 # AUTHOR-TIME marker for a recurring/standing task -- work that is
@@ -549,17 +561,20 @@ def audit(path, root="."):
         text = Path(path).read_text(encoding="utf-8")
     except OSError:
         return []
-    lines, mask, unclosed_fence, unclosed_comment = _fence.scan_text(text)
+    scan = _fence.scan_text(text)
+    lines, mask = scan.lines, scan.mask
     # A malformed document masks from its opener to EOF, so EVERY walk below
     # returns empty and this gate -- the one that holds `phase FIXPOINT` open --
     # would report the file clean precisely because it could not read it. Name
     # it instead. `build.py:1030` makes the same call on the producer side; a
     # gate that went quiet here would silently disagree with it about the same
     # file (Codex design review, section 38, [high]).
-    reason = _fence.unclosed_reason(unclosed_fence, unclosed_comment)
+    reason = scan.unclosed_reason()
     if reason:
-        return [("unclosed-fence" if unclosed_fence else "unclosed-comment",
-                 0, reason)]
+        # The CATEGORY comes from the shared mapping too, not from a local
+        # if/else over two flags -- with seven HTML block types a hand-written
+        # ternary here would silently label an unclosed `<script>` a comment.
+        return [(_fence.terminal_category(scan.terminal), 0, reason)]
     rows = _io_rows(lines, mask)
     status_map = _io_status(path, root, rows)
     out = []

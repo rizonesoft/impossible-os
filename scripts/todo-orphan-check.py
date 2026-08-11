@@ -112,9 +112,10 @@ def scan_file(path: Path, tri, fence=None) -> list:
     except OSError:
         return []
     fence = fence or _fence()
-    lines, mask, unclosed_fence, unclosed_comment = fence.scan_text(text)
-    if fence.unclosed_reason(unclosed_fence, unclosed_comment):
+    scan = fence.scan_text(text)
+    if scan.unclosed_reason():
         return []
+    lines, mask = scan.lines, scan.mask
     statuses = _io_statuses(lines, mask)
     if not statuses:
         return []
@@ -175,8 +176,7 @@ def malformed(path: Path, fence) -> str:
         text = path.read_text(encoding="utf-8")
     except OSError:
         return ""
-    _, _, uf, uc = fence.scan_text(text)
-    return fence.unclosed_reason(uf, uc) or ""
+    return fence.scan_text(text).unclosed_reason() or ""
 
 
 def main(argv) -> int:

@@ -104,7 +104,7 @@ def overlong_section(lines, mask):
 
 
 def scan(text: str):
-    """`(lines, mask, unclosed_fence, unclosed_comment)` -- ONE scan per document.
+    """The shared `ScanResult` -- ONE scan per document.
 
     Threaded through `parse` and `sections_after_closing` rather than recomputed
     by each, so `reorder` (which calls both) and `_check_placement` pay for the
@@ -124,9 +124,10 @@ def parse(text: str, sc=None):
     existing "I cannot model this shape" verdict, and every caller already
     treats it as do-nothing.
     """
-    lines, mask, unclosed_fence, unclosed_comment = sc or scan(text)
-    if unclosed_fence or unclosed_comment:
+    scanned = sc or scan(text)
+    if scanned.terminal is not None:
         return None
+    lines, mask = scanned.lines, scanned.mask
     starts = [i for i, l in enumerate(lines)
               if not mask[i] and SECTION_RE.match(l)]
     if len(starts) < 2:
@@ -189,7 +190,8 @@ def sections_after_closing(text: str, sc=None):
     wedge whatever run is mid-section in that file. Report first, repair at a
     boundary, promote after.
     """
-    lines, mask, _uf, _uc = sc or scan(text)
+    _s = sc or scan(text)
+    lines, mask = _s.lines, _s.mask
     starts = [i for i, l in enumerate(lines)
               if not mask[i] and SECTION_RE.match(l)]
     if not starts:
@@ -315,9 +317,9 @@ def _check_placement(paths) -> int:
         # `todo_fence`'s module docstring warns a gate must never do with the
         # mask alone. Printed on stdout because lint Check 22b counts one error
         # per line it reads there.
-        reason = _fence.unclosed_reason(*sc[2:])
+        reason = sc.unclosed_reason()
         if reason is None:
-            ln = overlong_section(sc[0], sc[1])
+            ln = overlong_section(sc.lines, sc.mask)
             if ln is not None:
                 reason = (f"line {ln} carries a `## N.` heading whose number "
                           f"exceeds 9 digits, so it is not a section this tool "
@@ -370,9 +372,9 @@ def main(argv) -> int:
         # can parse produced a silent rc 0 from `--check`, `--diff` and `--fix`
         # alike (Codex design review, section 41, [medium]). Same exit-2 contract
         # `todo-reflow.py` uses for the same condition.
-        reason = _fence.unclosed_reason(*sc[2:])
+        reason = sc.unclosed_reason()
         if reason is None:
-            ln = overlong_section(sc[0], sc[1])
+            ln = overlong_section(sc.lines, sc.mask)
             if ln is not None:
                 reason = (f"line {ln} carries a `## N.` heading whose number "
                           f"exceeds 9 digits, so it is not a section this tool "

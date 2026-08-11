@@ -34,7 +34,7 @@ from pathlib import Path
 
 __all__ = [
     "fence_step", "fence_scan", "fence_mask", "scan_text", "unclosed_reason",
-    "mask_text", "unmasked", "replace_atomically",
+    "terminal_category", "mask_text", "unmasked", "replace_atomically",
     "StagedSnapshotError", "index_tree", "staged_docs",
 ]
 
@@ -89,17 +89,23 @@ def fence_step(state, line: str):
 
 
 def fence_scan(lines):
-    """`(mask, unclosed_fence, unclosed_comment)` -- see `cache_schema.fence_scan`."""
+    """A `ScanResult` -- see `cache_schema.fence_scan`.
+
+    NOT A TUPLE since section 42. A gate takes `.mask` and calls
+    `.require_closed()` (or reads `.terminal`); the old positional unpack now
+    raises `TypeError` rather than silently reading the terminal object as a
+    boolean flag.
+    """
     return _cache_schema().fence_scan(list(lines))
 
 
 def fence_mask(lines):
     """`mask` only. Use `fence_scan` in a GATE; see the module docstring."""
-    return fence_scan(lines)[0]
+    return fence_scan(lines).mask
 
 
 def scan_text(text: str):
-    """`(lines, mask, unclosed_fence, unclosed_comment)` for a whole document.
+    """A `ScanResult` for a whole document, `lines` included.
 
     THE SHARED NORMALISER, same as the producer and the validator. This split
     on `"\\n"` alone so a line number indexed the caller's own
@@ -118,8 +124,12 @@ def scan_text(text: str):
     return _cache_schema().scan_text(text)
 
 
-def unclosed_reason(unclosed_fence: bool, unclosed_comment: bool):
+def unclosed_reason(terminal):
     """One wording for all four gates -- see `cache_schema.unclosed_reason`.
+
+    Takes the `Terminal` value (or None) since section 42, not a pair of
+    booleans: with seven HTML block types plus fences there is no fixed set of
+    flags to pass, and the message names the construct AND its opening line.
 
     The sentence MOVED to `cache_schema` in section 39 rather than being copied
     there: `validate.py` sits beside that module and cannot import this shim
@@ -127,7 +137,17 @@ def unclosed_reason(unclosed_fence: bool, unclosed_comment: bool):
     drift this module exists to end. This stays because the gates reach the
     tracker through here and should not each learn where it really lives.
     """
-    return _cache_schema().unclosed_reason(unclosed_fence, unclosed_comment)
+    return _cache_schema().unclosed_reason(terminal)
+
+
+def terminal_category(terminal) -> str:
+    """The producer error category for a `Terminal` -- see `cache_schema`.
+
+    Shared so a gate reporting an unreadable document labels it exactly as
+    `build.py` does; a local two-flag ternary would call an unclosed `<script>`
+    a comment.
+    """
+    return _cache_schema().terminal_category(terminal)
 
 
 def unmasked(lines, mask):
@@ -350,6 +370,6 @@ def mask_text(text: str) -> str:
     (Codex design review, section 38, [medium]). `scripts/tests/test_todo_fence.py`
     pins both the fabrication and its line-local suppression.
     """
-    lines, mask, _, _ = scan_text(text)
-    return "\n".join(" " * len(l) if mask[i] else l
-                     for i, l in enumerate(lines))
+    r = scan_text(text)
+    return "\n".join(" " * len(l) if r.mask[i] else l
+                     for i, l in enumerate(r.lines))

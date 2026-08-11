@@ -127,6 +127,11 @@ EMITTED_ERROR_CATEGORIES = frozenset({
     "schema-version",
     "unclosed-comment",
     "unclosed-fence",
+    # Section 42: the four OTHER EOF-consuming CommonMark HTML block types
+    # (`<script>`/`<pre>`/`<style>`/`<textarea>`, a processing instruction, a
+    # declaration, CDATA). Separate from `unclosed-comment` so the category
+    # never claims "comment" about a construct that is not one.
+    "unclosed-html",
     "unknown-field",
     "unknown-status",
 })
@@ -1002,7 +1007,7 @@ def extract_title(content: str) -> Optional[str]:
 
 
 def scan_body(body: str):
-    """`(lines, mask, unclosed_fence, unclosed_comment)` for a TODO body -- the
+    """The shared `ScanResult` for a TODO body -- the
     shared parsed-document context, computed ONCE per node and passed to the
     private `_walk_*` functions below.
 
@@ -1021,18 +1026,16 @@ def scan_body(body: str):
     while `build_node` scans once and calls the `_walk_*` functions with its own
     locals. The cost fix and the safety property come from the same decision.
 
-    Returns `(lines, mask, unclosed_fence, unclosed_comment)`. `mask` marks a
-    line that is fenced-code content, a fence delimiter, OR inside an HTML block
-    comment -- everything that is not ordinary Markdown structure. The two
-    trailing flags are True when the document ends INSIDE a fence or INSIDE an
-    HTML comment. `build_node` treats either as a refusal rather than
-    as an empty document -- both mask to EOF, so the node would otherwise be
-    published with every field empty. They are reported separately so the
-    message names the delimiter the author actually has to close.
+    Returns the shared `ScanResult`. `.mask` marks a line that is fenced-code
+    content, a fence delimiter, or inside ANY of CommonMark's seven HTML block
+    types -- everything that is not ordinary Markdown structure. `.terminal` is
+    non-None when the document ends inside a construct that consumes to EOF (a
+    fence or HTML types 1-5); `build_node` treats that as a refusal rather than
+    as an empty document, because it masks to EOF and the node would otherwise
+    be published with every field empty. The terminal value names the construct
+    and its opening line so the message sends the author to the right delimiter.
     """
-    lines = body.splitlines()
-    mask, unclosed_fence, unclosed_comment = _cs.fence_scan(lines)
-    return lines, mask, unclosed_fence, unclosed_comment
+    return _cs.fence_scan(body.splitlines())
 
 
 # A body that ends inside a fence masks everything from the opener to EOF, so
@@ -1050,19 +1053,12 @@ def scan_body(body: str):
 # rule, so a fence indented five spaces under `100. docs` is masked like any
 # other and an unterminated one is refused here like any other. The scope that
 # remains is HTML blocks other than `<!--` comments, owned by section 42.
-_UNCLOSED_FENCE_MSG = (
-    "document ends inside an unclosed fenced code block, so every body walk "
-    "reads as empty; close the fence (a fence nested inside another must use a "
-    "LONGER run than the block containing it)"
-)
-
-# The same erasure, one construct over. An HTML block comment masks to EOF just
-# as a fence does, and folding it into the fence message would send an author to
-# the wrong delimiter.
-_UNCLOSED_COMMENT_MSG = (
-    "document ends inside an unclosed HTML comment, so every body walk reads "
-    "as empty; close the comment with `-->`"
-)
+# THE WORDING IS NOT SPELLED HERE ANY MORE. Section 42 routes it through
+# `cache_schema.unclosed_reason(terminal)`, which every gate, the validator and
+# both repair tools already quote -- and with seven CommonMark HTML block types
+# plus fences there is no fixed pair of messages left to hardcode. The producer
+# keeps the DECISION (refuse rather than publish an erased node) and takes the
+# sentence from the shared contract, which is what "one wording" means.
 
 
 def extract_section_headings(body: str) -> list:
@@ -1074,12 +1070,32 @@ def extract_section_headings(body: str) -> list:
     they did not until section 36, which is how a fixture documenting TODO
     structure produced an `orphan-io-row` FAIL naming a section that does not
     exist."""
-    lines, mask, _, _ = scan_body(body)
+    _scan = scan_body(body)
+    lines, mask = _scan.lines, _scan.mask
     return _walk_section_headings(lines, mask)
 
 
 def _walk_section_headings(lines, masked) -> list:
-    """Shared by `extract_section_headings` and `build_node`; see that docstring."""
+    """Shared by `extract_section_headings` and `build_node`; see that docstring.
+
+    STILL ANCHORED ON THE PHYSICAL LINE -- section 42 tried the alternative and
+    REVERTED it. Giving this ONE walk the container-stripped view closed a real
+    hole (a `## N.` indented inside a list item is a heading to CommonMark and
+    invisible here) but desynchronised it from its siblings, which all still
+    read physical lines. Reproduced by the review: a root `## 1.`, a
+    list-contained `## 2.` and an indented `[x]` item made this walk emit
+    sections 1 and 2 while `_walk_stamped_items` missed the nested heading and
+    filed the item under section 1 -- shipped-work evidence attributed to the
+    wrong section (Codex adversarial, section 42, [high]).
+
+    That is precisely the "two walks disagree about what a heading is" drift
+    sections 36-39 exist to end, so making one walk container-aware in isolation
+    is not an improvement on leaving them equally blind. The real repair is ONE
+    parsed section-context projection consumed by the heading, item, IO-row and
+    XREF walks together -- section 43's one-grammar work, not a parameter here.
+    Measured: 0 corpus lines where the two views disagree, so nothing live is
+    wrong meanwhile.
+    """
     out = []
     for ln, fenced in zip(lines, masked):
         if fenced:
@@ -1145,7 +1161,8 @@ def extract_stamped_items(body: str, todo_rel: str) -> list:
     section_n / item_idx pair is stable as long as the section's `[x]`
     item ordering is preserved (1-based section_n, 0-based item_idx).
     """
-    lines, mask, _, _ = scan_body(body)
+    _scan = scan_body(body)
+    lines, mask = _scan.lines, _scan.mask
     return _walk_stamped_items(lines, mask, todo_rel)
 
 
@@ -1381,7 +1398,8 @@ def extract_implementation_order(body: str) -> list:
     status). The Section column, when present, names the body section
     (`§N`) which can differ from execution Order.
     """
-    lines, mask, _, _ = scan_body(body)
+    _scan = scan_body(body)
+    lines, mask = _scan.lines, _scan.mask
     return _walk_implementation_order(lines, mask)
 
 
@@ -1489,7 +1507,8 @@ def extract_inputs_xrefs(body: str) -> list:
     All three are graph edges; plain Inputs entries (path-only) are
     consumed-file references and stay out of the graph.
     """
-    lines, mask, _, _ = scan_body(body)
+    _scan = scan_body(body)
+    lines, mask = _scan.lines, _scan.mask
     return _walk_inputs_xrefs(lines, mask)
 
 
@@ -1666,7 +1685,8 @@ def extract_stamps_xrefs(body: str) -> list:
     every deferred-work obligation in the graph instead of dropping all
     but the first.
     """
-    lines, mask, _, _ = scan_body(body)
+    _scan = scan_body(body)
+    lines, mask = _scan.lines, _scan.mask
     return _walk_stamps_xrefs(lines, mask)
 
 
@@ -1753,11 +1773,11 @@ def build_node(file_path: Path, repo_root: Path, timestamps: dict, content: str)
             else:
                 errors.append((cat, msg))
 
-    body_lines, body_mask, body_unclosed, body_uncommented = scan_body(body)
-    if body_unclosed:
-        errors.append(("unclosed-fence", _UNCLOSED_FENCE_MSG))
-    if body_uncommented:
-        errors.append(("unclosed-comment", _UNCLOSED_COMMENT_MSG))
+    _body = scan_body(body)
+    body_lines, body_mask = _body.lines, _body.mask
+    if _body.terminal is not None:
+        errors.append((_cs.terminal_category(_body.terminal),
+                       _body.unclosed_reason()))
     sections_io = _walk_implementation_order(body_lines, body_mask)
     inputs_xrefs = _walk_inputs_xrefs(body_lines, body_mask)
     stamps_xrefs = _walk_stamps_xrefs(body_lines, body_mask)
